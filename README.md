@@ -22,19 +22,55 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 
 ---
 
-## Planned Features
+## Key Features (Planned)
 
-- [ ] OpenHPSDR Protocol 1 & Protocol 2 support
-- [ ] WDSP DSP engine integration (AGC, NR, NB, ANF, demodulation, PureSignal)
-- [ ] GPU-accelerated waterfall and spectrum display (QRhi)
-- [ ] Multi-panadapter layout (up to 4 independent panadapters)
-- [ ] Full RX/TX controls with per-receiver DSP state
-- [ ] PureSignal PA linearization
-- [ ] Legacy Thetis skin compatibility
-- [ ] TCI protocol server
-- [ ] CAT control (rigctld)
-- [ ] DAX virtual audio channels
-- [ ] Cross-platform support (Windows, Linux, macOS)
+- GPU-accelerated waterfall and spectrum display (QRhi — Vulkan, Metal, D3D12, OpenGL)
+- Up to 4 independent panadapters in configurable layouts
+- Full WDSP DSP engine (AGC, NR/NR2, NB/NB2, ANF, EQ, compression, PureSignal)
+- Configurable floating/dockable containers — put any control anywhere, across multiple monitors
+- Thetis-inspired skin system with 4-pan support
+- OpenHPSDR Protocol 1 and Protocol 2
+- TCI protocol server, CAT control (rigctld), DAX virtual audio
+- Cross-platform: Windows, Linux, macOS
+
+---
+
+## Roadmap
+
+### Phase 1 — Architectural Analysis ✅
+
+| Deliverable | Status |
+|---|---|
+| 1A: AetherSDR architecture deep dive | Complete |
+| 1B: Thetis architecture deep dive | Complete |
+| 1C: WDSP API investigation (256 functions mapped) | Complete |
+
+### Phase 2 — Architecture Design ✅
+
+| Deliverable | Status |
+|---|---|
+| 2A: Radio abstraction (P1/P2, MetisFrameParser, ReceiverManager) | Complete |
+| 2B: Multi-panadapter layout engine (5 layout modes) | Complete |
+| 2C: GPU waterfall rendering (FFTW3, QRhi, shaders) | Complete |
+| 2D: Skin compatibility (Thetis skin import + extended format) | Complete |
+| 2E: WDSP integration (RxChannel/TxChannel, PureSignal, thread safety) | Complete |
+
+### Phase 3 — Implementation
+
+| Phase | Goal | Status |
+|---|---|---|
+| **3A: Radio Connection** | Connect to ANAN-G2 via Protocol 2, receive I/Q | Next up |
+| **3B: WDSP Integration** | Process I/Q through WDSP, demodulate audio | Planned |
+| **3C: Audio Pipeline** | RX audio to speakers, TX audio from mic | Planned |
+| **3D: GPU Spectrum** | Live FFT spectrum + waterfall from I/Q | Planned |
+| **3E: Multi-Panadapter** | 1-4 pans in configurable layouts | Planned |
+| **3F: Container System** | Unified float/dock containers with 16 widget types | Planned |
+| **3G: Skin System** | Thetis-inspired skins with 4-pan support | Planned |
+| **3H: TCI Server** | TCI v2.0 WebSocket for external apps | Planned |
+| **3I: Protocol 1** | P1 support for Hermes Lite 2 / older ANAN | Planned |
+| **3J: Packaging** | AppImage, Windows installer, macOS DMG | Planned |
+
+See [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) for the full implementation plan.
 
 ---
 
@@ -65,20 +101,7 @@ cmake --build build -j$(nproc)
 ./build/NereusSDR
 ```
 
----
-
-## Project Phases
-
-### Phase 1 — Architectural Analysis
-Deep dive into AetherSDR (architecture template), Thetis (feature source), and WDSP (DSP engine).
-
-### Phase 2 — Architecture Design
-Radio abstraction layer, multi-panadapter layout engine, GPU waterfall rendering, WDSP integration architecture, legacy skin compatibility.
-
-### Phase 3 — Implementation
-Radio protocol support, WDSP integration, GPU rendering, multi-pan layout, audio pipeline, full DSP control UI, skin compatibility, TCI, cross-platform packaging.
-
-See [docs/project-brief.md](docs/project-brief.md) for the full project brief.
+See [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) for the full implementation plan and [docs/project-brief.md](docs/project-brief.md) for the project brief.
 
 ---
 
