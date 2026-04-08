@@ -216,18 +216,19 @@ void RadioModel::teardownConnection()
         return;
     }
 
-    // Disconnect all signals FIRST (prevents use-after-free)
+    // Disconnect all signals FIRST (prevents new work being queued)
     QObject::disconnect(m_connection, nullptr, this, nullptr);
     QObject::disconnect(m_connection, nullptr, m_receiverManager, nullptr);
 
-    // Ask worker thread to disconnect — use a short timeout to avoid deadlock
     if (m_connThread && m_connThread->isRunning()) {
-        // Queue the disconnect call
+        // Queue disconnect() then quit() on the worker thread.
+        // disconnect() closes sockets/timers, then quit() exits the event loop.
+        // Both are queued as events — they execute in order when the loop is free.
         QMetaObject::invokeMethod(m_connection, &RadioConnection::disconnect);
-        // Request the thread to exit its event loop
         m_connThread->quit();
-        // Wait up to 2 seconds for clean shutdown
-        if (!m_connThread->wait(2000)) {
+
+        // Wait for thread to finish. If it doesn't stop in time, force it.
+        if (!m_connThread->wait(3000)) {
             qCWarning(lcConnection) << "Worker thread did not stop in time, terminating";
             m_connThread->terminate();
             m_connThread->wait(1000);
@@ -237,10 +238,8 @@ void RadioModel::teardownConnection()
     delete m_connection;
     m_connection = nullptr;
 
-    if (m_connThread) {
-        delete m_connThread;
-        m_connThread = nullptr;
-    }
+    delete m_connThread;
+    m_connThread = nullptr;
 }
 
 void RadioModel::onConnectionStateChanged(ConnectionState state)

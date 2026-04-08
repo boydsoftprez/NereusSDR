@@ -13,6 +13,8 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <cstdlib>
+
 namespace NereusSDR {
 
 MainWindow::MainWindow(QWidget* parent)
@@ -233,14 +235,16 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Stop discovery to prevent new signals during shutdown
     m_radioModel->discovery()->stopDiscovery();
 
-    // Disconnect synchronously before closing
+    // Tear down connection (sends stop command, closes sockets, joins thread)
     m_radioModel->disconnectFromRadio();
 
     AppSettings::instance().save();
     event->accept();
 
-    // Force quit the application — prevents zombie processes from worker threads
-    QApplication::quit();
+    // Force process exit. Worker threads and active QObjects can prevent
+    // the Qt event loop from returning. Settings are saved, sockets closed,
+    // and stop command sent to the radio — safe to exit now.
+    std::exit(0);
 }
 
 } // namespace NereusSDR
