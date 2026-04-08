@@ -29,28 +29,40 @@ P2RadioConnection::~P2RadioConnection()
 
 void P2RadioConnection::init()
 {
-    // Create sockets on the worker thread
+    // Create sockets on the worker thread.
+    // P2 protocol uses fixed port numbers — both PC and radio use the same ports.
+    // The PC must bind to the standard ports so the radio's responses arrive correctly.
+
+    // Command socket — ephemeral port, sends to radio on ports 1024-1027
     m_cmdSocket = new QUdpSocket(this);
     if (!m_cmdSocket->bind(QHostAddress::Any, 0)) {
         qCWarning(lcConnection) << "P2: Failed to bind command socket";
     }
 
-    m_dataSocket = new QUdpSocket(this);
-    if (!m_dataSocket->bind(QHostAddress::Any, 0)) {
-        qCWarning(lcConnection) << "P2: Failed to bind data socket";
-    } else {
-        m_localDataPort = m_dataSocket->localPort();
-    }
-    connect(m_dataSocket, &QUdpSocket::readyRead, this, &P2RadioConnection::onDataReady);
-
+    // High-priority status socket — bind to port 1025 (radio sends status here)
     m_highPriStatusSocket = new QUdpSocket(this);
-    if (!m_highPriStatusSocket->bind(QHostAddress::Any, 0)) {
-        qCWarning(lcConnection) << "P2: Failed to bind high-priority status socket";
-    } else {
-        m_localHighPriStatusPort = m_highPriStatusSocket->localPort();
+    if (!m_highPriStatusSocket->bind(QHostAddress::Any, kPortHighPriFrom)) {
+        qCWarning(lcConnection) << "P2: Failed to bind status socket on port"
+                                << kPortHighPriFrom << "- trying ephemeral";
+        if (!m_highPriStatusSocket->bind(QHostAddress::Any, 0)) {
+            qCWarning(lcConnection) << "P2: Failed to bind status socket at all";
+        }
     }
+    m_localHighPriStatusPort = m_highPriStatusSocket->localPort();
     connect(m_highPriStatusSocket, &QUdpSocket::readyRead,
             this, &P2RadioConnection::onHighPriorityStatusReady);
+
+    // Data socket — bind to port 1035 (radio sends DDC0 I/Q data here)
+    m_dataSocket = new QUdpSocket(this);
+    if (!m_dataSocket->bind(QHostAddress::Any, kPortDdcBase)) {
+        qCWarning(lcConnection) << "P2: Failed to bind data socket on port"
+                                << kPortDdcBase << "- trying ephemeral";
+        if (!m_dataSocket->bind(QHostAddress::Any, 0)) {
+            qCWarning(lcConnection) << "P2: Failed to bind data socket at all";
+        }
+    }
+    m_localDataPort = m_dataSocket->localPort();
+    connect(m_dataSocket, &QUdpSocket::readyRead, this, &P2RadioConnection::onDataReady);
 
     // High-priority timer — periodic resend of frequencies/run state
     m_highPriorityTimer = new QTimer(this);
@@ -248,15 +260,14 @@ void P2RadioConnection::onDataReady()
         QNetworkDatagram datagram = m_dataSocket->receiveDatagram();
         QByteArray data = datagram.data();
 
-        // Determine DDC index from sender port
-        quint16 senderPort = datagram.senderPort();
-        if (senderPort >= kPortDdcBase && senderPort < kPortDdcBase + kMaxDdc) {
-            int ddcIndex = senderPort - kPortDdcBase;
-            processIqPacket(data, ddcIndex);
-        } else if (senderPort == kPortRxAudio) {
-            // RX audio packets — skip for now (Phase 3C)
-        } else {
-            qCDebug(lcProtocol) << "P2: Unknown data from port" << senderPort;
+        // On the DDC data socket (bound to port 1035), all packets are DDC0 I/Q.
+        // For multiple DDCs, we'd bind additional sockets on ports 1036-1041.
+        // For now, treat everything on this socket as DDC0.
+        if (data.size() >= kIqDataOffset + (kSamplesPerPacket * kIqBytesPerSample)) {
+            processIqPacket(data, 0);
+        } else if (data.size() > 4) {
+            qCDebug(lcProtocol) << "P2: Data packet, size:" << data.size()
+                                << "from port" << datagram.senderPort();
         }
     }
 }
@@ -304,32 +315,29 @@ void P2RadioConnection::sendAllCommands()
 QByteArray P2RadioConnection::buildCmdGeneral()
 {
     // 60-byte General command → port 1024
-    // Tells the radio which ports we're listening on
+    // Port assignments follow Thetis ChannelMaster convention:
+    //   Bytes 5-10: ports the radio receives data FROM the PC (PC source ports)
+    //   Bytes 11-22: ports the radio sends data OUT to the PC (radio source ports)
+    // Both sides use the same standard port numbers (base 1025).
     QByteArray pkt(60, 0);
     writeBE32(pkt, 0, m_seqGeneral++);
 
     // Byte 4: Command type = 0x00 (general)
     pkt[4] = 0x00;
 
-    // Port assignments (tell radio where to send data)
-    // Bytes 5-6: RX Specific port (our listen port for high-pri status)
-    writeBE16(pkt, 5, m_localHighPriStatusPort);
-    // Bytes 7-8: TX Specific port
-    writeBE16(pkt, 7, kPortTxConfig);
-    // Bytes 9-10: High Priority From port (radio→PC)
-    writeBE16(pkt, 9, m_localHighPriStatusPort);
-    // Bytes 11-12: High Priority to PC port
-    writeBE16(pkt, 11, m_localHighPriStatusPort);
-    // Bytes 13-14: RX Audio port
-    writeBE16(pkt, 13, m_localDataPort);
-    // Bytes 15-16: TX0 IQ port
-    writeBE16(pkt, 15, kPortMicData);
-    // Bytes 17-18: RX0 DDC port (base)
-    writeBE16(pkt, 17, m_localDataPort);
-    // Bytes 19-20: Mic samples port
-    writeBE16(pkt, 19, kPortTxConfig);
-    // Bytes 21-22: Wideband ADC0 port
-    writeBE16(pkt, 21, m_localDataPort);
+    // Ports the radio RECEIVES from PC (PC outbound source ports)
+    quint16 base = kBasePort + 1;  // 1025
+    writeBE16(pkt, 5, base);          // Bytes 5-6: RX Specific #1025
+    writeBE16(pkt, 7, base + 1);      // Bytes 7-8: TX Specific #1026
+    writeBE16(pkt, 9, base + 2);      // Bytes 9-10: High Priority from PC #1027
+    writeBE16(pkt, 13, base + 3);     // Bytes 13-14: RX Audio #1028
+    writeBE16(pkt, 15, base + 4);     // Bytes 15-16: TX0 IQ #1029
+
+    // Ports the radio SENDS to PC (radio outbound source ports)
+    writeBE16(pkt, 11, base);         // Bytes 11-12: High Priority to PC #1025
+    writeBE16(pkt, 17, base + 10);    // Bytes 17-18: RX0 DDC IQ #1035
+    writeBE16(pkt, 19, base + 1);     // Bytes 19-20: Mic Samples #1026
+    writeBE16(pkt, 21, base + 2);     // Bytes 21-22: Wideband ADC0 #1027
 
     return pkt;
 }

@@ -238,6 +238,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
     AppSettings::instance().save();
     event->accept();
+
+    // Force quit the application — prevents zombie processes from worker threads
+    QApplication::quit();
 }
 
 } // namespace NereusSDR
