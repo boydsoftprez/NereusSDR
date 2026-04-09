@@ -15,7 +15,7 @@
 |  WdspEngine, AppSettings                     |
 +---------------------------------------------+
 |              Protocol Layer                   |
-|  OpenHPSDR P1 (UDP 1024), P2 (TCP+UDP)      |
+|  OpenHPSDR P1 (UDP 1024), P2 (UDP multi-port)|
 +---------------------------------------------+
 |                DSP Layer                      |
 |  WDSP (demod, AGC, NR, NB, ANF, PureSignal) |

@@ -85,7 +85,8 @@ Two protocol versions are supported:
 
 - **Protocol 1:** UDP-only on port 1024. 1032-byte Metis frames with C&C control
   bytes and 24-bit I/Q samples. Used by Metis, Hermes, Angelia, Orion boards.
-- **Protocol 2:** TCP command channel + UDP data streams. Structured commands.
+- **Protocol 2:** UDP-only on multiple dedicated ports. Structured command
+  packets to ports 1024-1027, per-DDC I/Q data on ports 1035-1041.
   Used by Orion MkII, Saturn (ANAN-G2).
 
 See `docs/protocols/` for detailed protocol documentation.

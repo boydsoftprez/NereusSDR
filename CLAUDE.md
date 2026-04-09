@@ -189,12 +189,12 @@ Key source directories: `src/core/` (protocol, audio, DSP), `src/models/`
 
 * `RadioModel` — central state, owns connection + all sub-models + WdspEngine
 * `RadioDiscovery` — OpenHPSDR radio discovery on UDP port 1024
-* `RadioConnection` — Protocol 1 (UDP) and Protocol 2 (TCP+UDP) connections
+* `RadioConnection` — Protocol 1 (UDP) and Protocol 2 (UDP multi-port) connections
 * `WdspEngine` — WDSP lifecycle manager (wisdom, channels, impulse cache)
 * `RxChannel` — per-receiver WDSP channel wrapper (fexchange2, NB, mode/filter/AGC)
 * `AudioEngine` — QAudioSink output (Int16 stereo, timer-based drain)
 * `FFTEngine` — FFTW3 spectrum computation (worker thread, I/Q → dBm bins)
-* `SpectrumWidget` — spectrum trace + waterfall display (QPainter, future QRhi GPU)
+* `SpectrumWidget` — GPU spectrum trace + waterfall display (QRhiWidget — Metal/Vulkan/D3D12)
 * `AppSettings` — custom XML settings persistence (NOT QSettings)
 * `MainWindow` — wires everything together, signal routing hub
 
@@ -265,6 +265,7 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | [gpu-waterfall.md](docs/architecture/gpu-waterfall.md) | FFTEngine, SpectrumWidget, QRhi shaders, overlay system, color schemes |
 | [wdsp-integration.md](docs/architecture/wdsp-integration.md) | RxChannel/TxChannel wrappers, PureSignal, thread safety, WDSP channel lifecycle |
 | [skin-compatibility.md](docs/architecture/skin-compatibility.md) | SkinParser, extended skin format, Thetis import, 4-pan support |
+| [adc-ddc-panadapter-mapping.md](docs/architecture/adc-ddc-panadapter-mapping.md) | ADC->DDC->Receiver->FFT->Pan signal chain, Thetis UpdateDDCs() analysis, per-board DDC assignment, bandwidth limits |
 
 ### Implementation Plans (`docs/architecture/phase*-plan.md`)
 
@@ -280,16 +281,17 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | 1B: Thetis Analysis | Dual-thread DSP (RX1/RX2), pre-allocated receivers, one-way protocol, skin system |
 | 1C: WDSP Analysis | 256 API functions, channel-based DSP, fexchange2() for I/Q, PureSignal feedback loop |
 
-### Current Phase: 3D — GPU Spectrum & Waterfall
+### Current Phase: 3E — VFO & Controls
 
 | Phase | Goal | Status |
 | --- | --- | --- |
 | 3A: Radio Connection | Connect to ANAN-G2 via P2, receive I/Q | **Complete** |
 | 3B: WDSP Integration | Process I/Q through WDSP, audio output | **Complete** |
 | 3C: macOS Build | Cross-platform WDSP build + wisdom crash fix | **Complete** |
-| **3D: Spectrum Display** | **GPU spectrum + waterfall (QRhi Metal/Vulkan/D3D12)** | **Complete** |
-| 3E: VFO & Controls | Tuning, mode selection, filter, AGC | Next up |
-| 3F: Container System | Unified dock/float container architecture | Planned |
+| 3D: Spectrum Display | GPU spectrum + waterfall (QRhi Metal/Vulkan/D3D12) | **Complete** |
+| **3E: VFO & Controls** | **Tuning, mode selection, filter, AGC** | **Next up** |
+| 3F: Multi-Panadapter | 1-4 pans in configurable layouts | Planned |
+| 3G: Container System | Unified dock/float container architecture | Planned |
 
 ---
 

@@ -19,7 +19,7 @@ before any public disclosure.
 ## Scope
 
 NereusSDR communicates with OpenHPSDR-compatible radios over local network
-protocols (UDP for Protocol 1, TCP+UDP for Protocol 2). Security concerns
+protocols (UDP for Protocol 1, UDP multi-port for Protocol 2). Security concerns
 include:
 
 - Buffer overflows in OpenHPSDR protocol packet parsing (1032-byte P1 Metis frames, P2 UDP data)

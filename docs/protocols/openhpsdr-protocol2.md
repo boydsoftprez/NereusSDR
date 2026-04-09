@@ -5,12 +5,16 @@
 ## Overview
 
 Protocol 2 is the newer OpenHPSDR protocol used by Orion MkII, Saturn (ANAN-G2),
-and newer boards. It uses TCP for commands and UDP for high-bandwidth data.
+and newer boards. It uses UDP-only communication on multiple dedicated ports
+(commands to ports 1024-1027, per-DDC I/Q data on ports 1035-1041).
+
+**CORRECTION (Phase 3A):** Originally assumed to be TCP+UDP, confirmed as
+UDP-only by pcap analysis and Thetis ChannelMaster/network.c source.
 
 ## Key Characteristics
 
-- **Command channel:** TCP
-- **Data channel:** UDP with separate streams per data type
+- **Command channel:** UDP packets to ports 1024-1027
+- **Data channel:** UDP with separate streams per DDC (ports 1035-1041)
 - **Discovery:** UDP broadcast/multicast on port 1024
 - **Independent receiver streams:** Each receiver has its own data stream
 - **Wider bandwidth support:** Higher sample rates possible

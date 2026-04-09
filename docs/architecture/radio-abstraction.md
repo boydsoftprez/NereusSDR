@@ -664,34 +664,31 @@ public slots:
     void setAntenna(int rx, int antennaIndex) override;
 
 private slots:
-    void onTcpConnected();
-    void onTcpReadyRead();
-    void onTcpError(QAbstractSocket::SocketError error);
     void onUdpReadyRead();
     void onReconnectTimeout();
+    void onSendCommands();       // Timer-driven command packet transmission
 
 private:
-    // --- Command Channel ---
-    // Send a structured command via TCP. Returns a sequence number for
-    // matching the response.
-    quint32 sendCommand(quint8 commandType, const QByteArray& payload);
-
-    // Parse a TCP response packet.
-    void processCommandResponse(const QByteArray& data);
+    // --- Command Packets ---
+    // Build and send structured UDP command packets to radio ports 1024-1027.
+    void sendCmdGeneral();       // Port 1024: config, watchdog
+    void sendCmdRx();            // Port 1025: DDC enables, rates, ADC assignment
+    void sendCmdHighPriority();  // Port 1027: run, freq, drive
 
     // --- P2 Data Parsing ---
-    // P2 uses separate UDP streams; each datagram is tagged with stream type.
-    void processDataPacket(const QByteArray& data, const QHostAddress& sender);
+    // Dispatch incoming datagrams by source port.
+    void processDataPacket(const QByteArray& data, quint16 sourcePort);
 
     // P2 encodes frequency directly in Hz (no phase word conversion).
     static QByteArray encodeFrequency(quint64 frequencyHz);
 
     // --- Sockets ---
-    QTcpSocket* m_tcpSocket{nullptr};     // Command channel
-    QUdpSocket* m_dataSocket{nullptr};    // I/Q data streams
+    // NOTE: P2 is UDP-only (corrected from original TCP+UDP assumption).
+    // Single socket for all communication, matching Thetis listenSock pattern.
+    QUdpSocket* m_socket{nullptr};
 
+    QTimer* m_sendTimer{nullptr};       // Command packet cadence
     QTimer* m_reconnectTimer{nullptr};
-    QByteArray m_tcpReadBuffer;
 
     quint32 m_commandSequence{0};
 
@@ -707,23 +704,25 @@ private:
 
 ### P2 Connection Sequence
 
-1. TCP connect to radio IP, P2 command port
-2. Send discovery/identification command
-3. Radio responds with hardware capabilities
-4. Configure receivers via TCP commands (frequency, sample rate, count)
-5. Start high-speed data via TCP command
-6. Radio begins streaming I/Q data via UDP
-7. PC sends control updates via TCP as needed
+**CORRECTION (Phase 3A):** P2 is UDP-only on multiple ports, NOT TCP+UDP.
+Confirmed by pcap analysis and Thetis ChannelMaster/network.c source.
+
+1. Bind a single UDP socket (matching Thetis `listenSock` pattern)
+2. Send CmdGeneral to port 1024 with WDT=1 (watchdog) to start radio
+3. Send CmdRx to port 1025 (DDC enables, sample rates, ADC assignments)
+4. Send CmdHighPriority to port 1027 (run=1, frequencies, drive level)
+5. Radio begins streaming: I/Q from ports 1035-1041, status from 1025, mic from 1026
+6. PC continues sending command packets periodically to maintain watchdog
 
 ### P2 vs P1 Key Differences
 
 | Aspect | Protocol 1 | Protocol 2 |
 |--------|-----------|-----------|
 | Frequency encoding | Phase word: `freq * 2^32 / 122880000` | Direct Hz (32-bit integer) |
-| Control transport | C&C bytes embedded in data frames | Separate TCP commands |
-| Data transport | Single UDP stream, multiplexed | Per-receiver UDP streams |
-| Acknowledgment | None (fire-and-forget) | TCP responses with status |
-| Bandwidth | Limited by frame rate | Higher, structured packets |
+| Control transport | C&C bytes embedded in data frames | Dedicated UDP command packets to ports 1024-1027 |
+| Data transport | Single UDP stream, multiplexed | Per-DDC independent UDP streams (ports 1035-1041) |
+| Acknowledgment | None (fire-and-forget) | Status feedback on port 1025 |
+| Bandwidth | Limited by frame rate | Higher, no inter-receiver penalty |
 | Receiver independence | All RX interleaved in EP6 | Independent data streams |
 
 ---
@@ -1245,8 +1244,7 @@ in the data path.
 │  │ (or P2RadioConnection) │──►│ (P1 only)        │                      │
 │  └────────────────────────┘   └──────────────────┘                      │
 │           │                                                              │
-│     QUdpSocket (I/O)                                                     │
-│     QTcpSocket (P2 commands)                                             │
+│     QUdpSocket (I/O — single socket for P1 and P2)                       │
 └──────────────────────────────────────────────────────────────────────────┘
          │ iqDataReceived signal (auto-queued)
          ▼

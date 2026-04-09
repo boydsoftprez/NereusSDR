@@ -30,6 +30,7 @@ NereusSDR is a ground-up port of Thetis (OpenHPSDR SDR console) from C# to Qt6/C
 | 2C: GPU Waterfall | 1,571 | FFTEngine (FFTW3), QRhiWidget, ring-buffer waterfall, 6 GLSL shaders, overlay system |
 | 2D: Skin Compatibility | 864 | SkinParser (ZIP/XML/PNG), SkinRenderer, control mapping (70+ controls), remote servers |
 | 2E: WDSP Integration | 1,968 | RxChannel/TxChannel wrappers, PureSignal, thread safety, channel lifecycle, meter/spectrum |
+| 2F: ADC-DDC-Pan Mapping | 310 | Full ADC->DDC->Receiver->FFT->Pan signal chain, Thetis UpdateDDCs() analysis, per-board DDC assignment, bandwidth limits |
 
 ### Completed: Phase 3A — Radio Connection (P2 / ANAN-G2)
 - P2RadioConnection faithfully ported from Thetis ChannelMaster/network.c
@@ -96,19 +97,20 @@ NereusSDR is a ground-up port of Thetis (OpenHPSDR SDR console) from C# to Qt6/C
 | Project Brief Objective | Plan Coverage | Status |
 |---|---|---|
 | Port Thetis from C# to Qt6/C++20 | Full architecture designed | Phase 1+2 done |
-| Cross-platform, GPU-accelerated SDR console | QRhi GPU rendering designed (2C) | Design done |
+| Cross-platform, GPU-accelerated SDR console | QRhi GPU rendering (2C) | **3D complete** |
 | Preserve full feature set of Thetis | 33 panels + 11 groups mapped to 16 widget types | Design done |
-| Multi-panadapter (up to 4) | PanadapterStack with 5 layouts (2B) | Design done |
-| Waterfall fluidity | Client-side FFT + ring-buffer GPU waterfall (2C) | Design done |
+| Multi-panadapter (up to 4) | PanadapterStack with 5 layouts (2B), ADC-DDC-Pan chain (2F) | Design done |
+| Waterfall fluidity | Client-side FFT + ring-buffer GPU waterfall (2C) | **3D complete** |
 | Protocol 1 and Protocol 2 support | P2 first (ANAN-G2), P1 later (2A) | **P2 working** |
-| WDSP integration (100% feature parity) | 256 API functions mapped, RxChannel/TxChannel designed (2E) | Design done |
+| WDSP integration (100% feature parity) | 256 API functions mapped, RxChannel/TxChannel designed (2E) | **3B complete** |
 | Legacy skin compatibility | Extended skin format + Thetis import (2D) | Design done |
 | Configurable containers (Thetis multi-meter) | Unified container system (float/dock/axis-lock) | Design done |
-| PureSignal PA linearization | Feedback RX channel + pscc() loop designed (2E) | Design done |
-| TCI protocol | Planned as Phase 3H | Not started |
+| PureSignal PA linearization | Feedback RX channel + pscc() loop designed (2E), DDC sync (2F) | Design done |
+| TCI protocol | Planned as Phase 3J | Not started |
 | Cross-platform packaging | CI workflows in place (AppImage, Windows, macOS) | CI done |
 | AetherSDR architecture patterns | RadioModel hub, signal/slot, worker threads, AppSettings | Adopted |
 | Radio-authoritative state | Designed per AetherSDR pattern | Adopted |
+| Multi-receiver ADC/DDC mapping | Full signal chain analyzed (2F), UpdateDDCs() porting needed | Design done |
 
 **All project brief objectives are covered.** No gaps identified.
 
@@ -189,19 +191,36 @@ Key design reference: `docs/architecture/gpu-waterfall.md`
 
 Verification: See live spectrum + waterfall from the ANAN-G2 while receiving.
 
-### Phase 3E: Multi-Panadapter Layout
-**Goal:** Support 1-4 panadapters in configurable layouts.
+### Phase 3E: VFO & Controls
+**Goal:** Tuning, mode selection, filter, AGC controls.
+
+Files to modify/create:
+- `src/gui/widgets/VfoDisplay.h/.cpp` — **new** — frequency readout, band buttons, RIT/XIT
+- `src/gui/widgets/RxControls.h/.cpp` — **new** — mode, filter, AGC, AF/RF, squelch
+- `src/models/SliceModel.h/.cpp` — frequency, mode, filter, AGC properties
+- `src/gui/MainWindow.cpp` — VFO-to-model wiring, keyboard tuning
+
+Key design reference: `docs/architecture/multi-panadapter.md` (slice-to-pan association)
+
+Verification: Tune to different frequencies/modes via VFO display. Mode/filter changes reflect in WDSP demodulation.
+
+### Phase 3F: Multi-Panadapter Layout
+**Goal:** Support 1-4 panadapters in configurable layouts with proper DDC-to-ADC mapping.
 
 Files to modify/create:
 - `src/gui/PanadapterStack.h/.cpp` — **new** — QSplitter layout manager
 - `src/gui/PanadapterApplet.h/.cpp` — **new** — single pan container
 - `src/gui/MainWindow.cpp` — wirePanadapter(), layout menu, slice-to-pan routing
+- `src/core/ReceiverManager.cpp` — port UpdateDDCs() DDC assignment strategy from Thetis console.cs:8186
+- `src/core/FFTRouter.h/.cpp` — **new** — map receiver FFT output to panadapter(s)
 
-Key design reference: `docs/architecture/multi-panadapter.md`
+Key design references:
+- `docs/architecture/multi-panadapter.md`
+- `docs/architecture/adc-ddc-panadapter-mapping.md`
 
-Verification: 4 pans in 2x2 grid, each with independent FFT/waterfall.
+Verification: 4 pans in 2x2 grid, each with independent FFT/waterfall. RX1 on DDC2, RX2 on DDC3 (2-ADC boards).
 
-### Phase 3F: Container System & DSP Control UI
+### Phase 3G: Container System & DSP Control UI
 **Goal:** Unified container system with all Thetis DSP controls as widget types.
 
 Files to create:
@@ -230,7 +249,7 @@ Key design reference: Container System section in this plan
 
 Verification: Create containers, add/remove widgets, float/dock, persist across restart.
 
-### Phase 3G: Skin System
+### Phase 3H: Skin System
 **Goal:** Thetis-inspired skin format with 4-pan support + legacy skin import.
 
 Files to create:
@@ -242,21 +261,33 @@ Key design reference: `docs/architecture/skin-compatibility.md`
 
 Verification: Load a Thetis skin, see colors/images applied, 4 pans still work.
 
-### Phase 3H: TCI Protocol Server
+### Phase 3I: TX Pipeline
+**Goal:** Transmit audio from microphone through WDSP to radio.
+
+Files to create:
+- `src/core/TxChannel.h/.cpp` — **new** — TX WDSP channel wrapper
+- `src/core/AudioEngine.h/.cpp` — add mic input via QAudioSource
+- `src/core/P2RadioConnection.cpp` — send TX I/Q (port 1029) and audio (port 1028)
+
+Key design reference: `docs/architecture/wdsp-integration.md`
+
+Verification: Key radio into TX, transmit SSB/CW/AM signal.
+
+### Phase 3J: TCI Protocol Server
 **Goal:** TCI v2.0 WebSocket server for external app integration.
 
 Files to create:
 - `src/core/TciServer.h/.cpp` — **new** — WebSocket server
 - `src/core/TciProtocol.h/.cpp` — **new** — TCI command parsing
 
-### Phase 3I: Protocol 1 Support
+### Phase 3K: Protocol 1 Support
 **Goal:** Add P1 support for Hermes Lite 2 and older ANAN radios.
 
 Files to create:
 - `src/core/P1RadioConnection.h/.cpp` — **new** — UDP-only Metis framing
 - `src/core/MetisFrameParser.h/.cpp` — **new** — 1032-byte frame parsing
 
-### Phase 3J: Cross-Platform Packaging
+### Phase 3L: Cross-Platform Packaging
 **Goal:** Release builds for Linux, Windows, macOS.
 
 CI workflows already in place. Finalize:
@@ -266,26 +297,29 @@ CI workflows already in place. Finalize:
 
 ---
 
-## Recommended Next Step: Phase 3B — WDSP Integration Layer
+## Recommended Next Step: Phase 3E — VFO & Controls
 
-Phase 3A is complete — I/Q data is streaming from the ANAN-G2. Next: feed the I/Q data through WDSP for demodulation and audio output.
+Phases 3A-3D are complete — the radio connects, demodulates audio, and renders
+live GPU spectrum + waterfall. Next: add VFO tuning, mode selection, filter,
+and AGC controls so the user can actually operate the radio.
 
 ### Key References
-- Thetis: `cmaster.cs` (channel master), `wdsp.cs` (P/Invoke declarations)
-- WDSP source: `../wdsp/src/` (channel.c, RXA.c, TXA.c)
-- Design doc: `docs/architecture/wdsp-integration.md`
+- Thetis: `console.cs` (VFO, band, mode, filter logic)
+- Design docs: `docs/architecture/multi-panadapter.md` (slice-to-pan association),
+  `docs/architecture/adc-ddc-panadapter-mapping.md` (DDC assignment for multi-RX)
+- AetherSDR: SliceModel pattern for frequency/mode/filter state
 
 ### Implementation Steps
-1. Build WDSP from source in `third_party/wdsp/`
-2. Port channel lifecycle from Thetis cmaster.cs
-3. Implement RxChannel wrapper (I/Q in → audio out via fexchange2)
-4. Wire ReceiverManager::iqDataForChannel → WdspEngine
-5. Extract FFT data from WDSP for spectrum display
+1. Implement SliceModel frequency/mode/filter/AGC properties
+2. Create VfoDisplay widget with click-to-tune digit editing
+3. Wire frequency changes through RadioConnection to hardware NCO
+4. Add mode/filter/AGC controls with WDSP parameter routing
+5. Implement band stacking registers for per-band memory
 
 ### Verification
-- Feed I/Q from radio into WDSP channel
-- Hear demodulated audio (SSB/AM/CW) through speakers
-- Tune to a known signal on the ANAN-G2
+- Tune to different frequencies by clicking VFO digits
+- Change mode (USB/LSB/CW/AM) and hear correct demodulation
+- Adjust filter bandwidth, see passband overlay update on spectrum
 
 ---
 

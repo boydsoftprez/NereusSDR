@@ -73,6 +73,7 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 | 2C: GPU waterfall rendering (FFTW3, QRhi, shaders) | Complete |
 | 2D: Skin compatibility (Thetis skin import + extended format) | Complete |
 | 2E: WDSP integration (RxChannel/TxChannel, PureSignal, thread safety) | Complete |
+| 2F: ADC-DDC-Panadapter mapping (signal chain, DDC assignment, bandwidth) | Complete |
 
 ### Phase 3 — Implementation
 
@@ -80,15 +81,16 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 |---|---|---|
 | **3A: Radio Connection** | Connect to ANAN-G2 via Protocol 2, receive I/Q | **Complete** |
 | **3B: WDSP Integration** | Process I/Q through WDSP, demodulate audio | **Complete** |
-| **3C: Spectrum Display** | GPU spectrum + waterfall (QRhi Metal/Vulkan/D3D12) | **Complete** |
-| **3D: VFO & Controls** | Tuning, mode selection, filter, AGC controls | Next up |
-| **3E: Multi-Panadapter** | 1-4 pans in configurable layouts | Planned |
-| **3F: Container System** | Unified float/dock containers with 16 widget types | Planned |
-| **3G: Skin System** | Thetis-inspired skins with 4-pan support | Planned |
-| **3H: TX Pipeline** | Mic → WDSP → radio, TX audio + silence frames | Planned |
-| **3I: TCI Server** | TCI v2.0 WebSocket for external apps | Planned |
-| **3J: Protocol 1** | P1 support for Hermes Lite 2 / older ANAN | Planned |
-| **3K: Packaging** | AppImage, Windows installer, macOS DMG | Planned |
+| **3C: macOS Build** | Cross-platform WDSP build + wisdom crash fix | **Complete** |
+| **3D: Spectrum Display** | GPU spectrum + waterfall (QRhi Metal/Vulkan/D3D12) | **Complete** |
+| **3E: VFO & Controls** | Tuning, mode selection, filter, AGC controls | Next up |
+| **3F: Multi-Panadapter** | 1-4 pans in configurable layouts | Planned |
+| **3G: Container System** | Unified float/dock containers with 16 widget types | Planned |
+| **3H: Skin System** | Thetis-inspired skins with 4-pan support | Planned |
+| **3I: TX Pipeline** | Mic → WDSP → radio, TX audio + silence frames | Planned |
+| **3J: TCI Server** | TCI v2.0 WebSocket for external apps | Planned |
+| **3K: Protocol 1** | P1 support for Hermes Lite 2 / older ANAN | Planned |
+| **3L: Packaging** | AppImage, Windows installer, macOS DMG | Planned |
 
 See [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) for the full implementation plan.
 
