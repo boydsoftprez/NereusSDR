@@ -8,6 +8,9 @@ Port **Thetis** (the OpenHPSDR / Apache Labs SDR console, written in C#) to a
 Protocol 1 and Protocol 2 devices, including the Apache Labs ANAN line and
 Hermes Lite 2.
 
+**Critical implication:** The client does ALL signal processing (DSP, FFT,
+demodulation). The radio is essentially an ADC/DAC with network transport.
+
 ---
 
 ## ⚠️ SOURCE-FIRST PORTING PROTOCOL (Read This Before Every Task)
@@ -70,6 +73,17 @@ static constexpr float kAgcDecayFactor = 0.98f;
 file or class should I look in?" Do NOT fabricate an implementation. It is
 always better to ask than to guess wrong.
 
+### The Two-Source Rule
+
+| Question | Source |
+| --- | --- |
+| **What** does the code do? | Thetis (C# source) |
+| **How** do we structure it in Qt6? | AetherSDR (C++20/Qt6 patterns) |
+
+AetherSDR provides the **skeleton** (class structure, signals/slots, threading,
+state management patterns). Thetis provides the **organs** (logic, algorithms,
+constants, protocol handling, DSP flow, feature behavior).
+
 ### Thetis Source Layout Quick Reference
 
 ```
@@ -93,33 +107,7 @@ always better to ask than to guess wrong.
 │           └── ...
 ```
 
-### The Two-Source Rule
-
-| Question | Source |
-| --- | --- |
-| **What** does the code do? | Thetis (C# source) |
-| **How** do we structure it in Qt6? | AetherSDR (C++20/Qt6 patterns) |
-
-AetherSDR provides the **skeleton** (class structure, signals/slots, threading,
-state management patterns). Thetis provides the **organs** (logic, algorithms,
-constants, protocol handling, DSP flow, feature behavior).
-
 ---
-
-## Key Design Differences from AetherSDR
-
-| Aspect | AetherSDR | NereusSDR |
-| --- | --- | --- |
-| Protocol | SmartSDR (TCP + VITA-49 UDP) | OpenHPSDR P1 (UDP only) + P2 (TCP + UDP) |
-| DSP | Radio-side (FlexRadio firmware) | Client-side (WDSP library) |
-| FFT/Waterfall | Radio sends FFT bins + WF tiles | Client computes from raw I/Q via FFTW3 |
-| Audio path | Radio sends decoded PCM audio | Client decodes via WDSP from raw I/Q |
-| Slice ownership | Radio-authoritative | Client-managed (radio has no slice concept) |
-| PureSignal | N/A (FlexRadio has SmartSignal) | Client-side PA linearization via WDSP |
-
-**Critical implication:** In NereusSDR, the client does ALL signal processing.
-The radio is essentially an ADC/DAC with network transport. This means higher
-client CPU/GPU usage and a fundamentally different data pipeline.
 
 ## AI Agent Guidelines
 
@@ -129,7 +117,6 @@ When helping with NereusSDR:
 * Keep classes small and single-responsibility
 * Use RAII everywhere (no naked new/delete)
 * Comment non-obvious protocol decisions with protocol version (P1 vs P2)
-* When suggesting code: show **diff-style** changes or full function/class if small
 * Never suggest Wine/Crossover workarounds — goal is native cross-platform
 * Flag any proposal that would break the core RX path (I/Q → WDSP → audio)
 * If unsure about protocol behavior → ask for pcap captures first
@@ -157,6 +144,8 @@ AI agents must **NOT** autonomously change:
 When in doubt, implement the fix and note in the PR that design decisions need
 maintainer review.
 
+---
+
 ## C++ Style Guide
 
 * **No `goto`** — use early returns, break, or restructure the logic
@@ -170,6 +159,8 @@ maintainer review.
 * **Atomic parameters for cross-thread DSP** — main thread writes via `std::atomic`, audio thread reads. Never hold a mutex in the audio callback.
 * **Error handling**: log with `qCWarning(lcCategory)`, don't throw exceptions
 * **Thetis origin comments**: when porting logic, add `// From Thetis [file]:[line or function]` comments
+
+---
 
 ## Build
 
@@ -189,10 +180,10 @@ Current version: **0.1.0** (set in `CMakeLists.txt`).
 
 ---
 
-## Architecture Overview
+## Architecture Quick Reference
 
 Key source directories: `src/core/` (protocol, audio, DSP), `src/models/`
-(RadioModel, SliceModel, etc.), `src/gui/` (MainWindow, future SpectrumWidget, applets).
+(RadioModel, SliceModel, etc.), `src/gui/` (MainWindow, SpectrumWidget, applets).
 
 **Key classes:**
 
@@ -205,95 +196,18 @@ Key source directories: `src/core/` (protocol, audio, DSP), `src/models/`
 * `AppSettings` — custom XML settings persistence (NOT QSettings)
 * `MainWindow` — wires everything together, signal routing hub
 
-**Design principle:** RadioModel owns all sub-models on the main thread.
-Worker threads communicate exclusively via auto-queued signals. Never hold
-a mutex in the audio callback.
+**Thread Architecture:**
 
-### Data Flow (Phase 3B — VERIFIED WORKING)
+| Thread | Components |
+| --- | --- |
+| **Main** | GUI rendering, RadioModel, all sub-models, user input |
+| **Connection** | RadioConnection (UDP/TCP I/O, protocol framing) |
+| **Audio** | AudioEngine + WdspEngine (I/Q processing, DSP, audio output) |
+| **Spectrum** | FFT computation, waterfall data generation |
 
-```
-Radio (ADC) → UDP port 1037 (DDC2) → P2RadioConnection
-    ↓ iqDataReceived signal (238 samples/packet, interleaved float I/Q)
-RadioModel accumulation buffer (238 → 1024 samples)
-    ↓
-RxChannel::processIq()
-    ├── xanbEXTF (NB1, if enabled)
-    ├── xnobEXTF (NB2, if enabled)
-    └── fexchange2() → WDSP RX chain (demod, AGC, NR, ANF, filter)
-    ↓ decoded audio (float L/R)
-AudioEngine::feedAudio() → float→int16 conversion → m_rxBuffer
-    ↓ 10ms timer drain (AetherSDR pattern)
-QAudioSink (48kHz stereo Int16) → Speakers
-
-User TX → Mic → AudioEngine → WdspEngine (TX channel) [FUTURE]
-```
-
----
-
-## OpenHPSDR Protocol
-
-### Protocol 1 (Metis/Hermes/Angelia/Orion)
-
-* **Transport:** UDP only, port 1024
-* **Discovery:** Broadcast UDP packet to port 1024, radios respond with board type and MAC
-* **Data format:** 1032-byte Metis frames containing:
-  + 8-byte header (sync 0xEFFE, endpoint, sequence)
-  + Two 512-byte USB frames, each with 5 bytes of C&C (command and control) data + 63 I/Q sample triplets
-* **I/Q samples:** 24-bit big-endian, interleaved I-Q-I-Q or I-Q-Mic depending on receiver count
-* **Control:** C&C bytes in the USB frame headers (bidirectional)
-* **Endpoints:** EP2 (PC→Radio commands), EP4 (PC→Radio wideband data), EP6 (Radio→PC I/Q + mic)
-* **Receiver count:** 1-7 receivers multiplexed in EP6 stream, configured via C&C
-
-### Protocol 2 (Orion MkII / Saturn / ANAN-G2)
-
-* **Transport:** UDP-only on multiple dedicated ports (NOT TCP — confirmed via pcap)
-* **Discovery:** 60-byte UDP packet with byte[4]=0x02 broadcast to port 1024
-* **Commands:** Single UDP socket sends to radio ports 1024-1027
-* **Data:** Radio responds from ports 1025-1041 to the PC's socket port
-* **Dispatch:** By source port of incoming packets (matching Thetis ReadUDPFrame)
-* **Watchdog:** CmdGeneral byte 38 must be 1 (WDT enabled) or radio won't stream
-* **DDC mapping:** ANAN-G2 uses DDC2 as primary receiver (from Thetis UpdateDDCs)
-* **Supports:** Independent receiver streams, wider bandwidth, more control
-
-### Key Protocol Facts
-
-* Radio has NO concept of "slices" — that is a client-side abstraction
-* Radio sends raw I/Q samples; ALL DSP is done client-side via WDSP
-* Radio does NOT compute FFT — client must compute spectrum from raw I/Q
-* Discovery uses UDP port 1024 (not 4992 like SmartSDR)
-* No VITA-49 framing (unlike FlexRadio) — protocol-specific binary framing
-
----
-
-## WDSP Integration
-
-WDSP (by Warren Pratt NR0V) provides ALL signal processing:
-
-* **Demodulation:** AM, SAM, FM, USB, LSB, CW, DIGU, DIGL, DRM, SPEC
-* **AGC:** multiple modes (Off, Long, Slow, Medium, Fast, Custom)
-* **Noise blanker:** NB and NB2
-* **Noise reduction:** NR (LMS) and NR2 (spectral)
-* **Auto-notch filter:** ANF
-* **Bandpass filtering:** variable width per mode
-* **Equalization:** RX and TX multi-band EQ
-* **TX processing:** compression, CESSB, VOX/DEXP
-* **PureSignal:** PA linearization using feedback I/Q
-* **Spectrum/FFT:** WDSP can compute display spectrum data
-
-### WDSP Architecture in NereusSDR (Phase 3B — WORKING)
-
-* **WDSP v1.29** (TAPR/OpenHPSDR-wdsp) built as static library in `third_party/wdsp/`
-* Cross-platform via `linux_port.h/c` from g0orx/wdsp (Windows/Linux/macOS)
-* FFTW3 dependency: pre-built on Windows (`third_party/fftw3/`), system packages on Linux/macOS
-* `wdsp_api.h` — extern "C" declarations for all WDSP functions
-* `WdspTypes.h` — C++ enum wrappers (DSPMode, AGCMode, RxMeterType)
-* `WdspEngine` — system lifecycle (WDSPwisdom, impulse cache, channel management)
-* `RxChannel` — per-receiver wrapper, calls fexchange2 for I/Q→audio processing
-* `AudioEngine` — QAudioSink output (48kHz stereo Int16, timer-based drain from AetherSDR)
-* FFTW wisdom generated on first run (~15 min with FFTW_PATIENT), cached for subsequent launches
-* I/Q accumulation: 238-sample P2 packets → 1024-sample WDSP buffers
-* Audio device persisted via AppSettings key `AudioOutputDeviceId`
-* **Status:** First audio achieved — ANAN-G2 I/Q → WDSP USB demod → speakers
+Cross-thread communication uses auto-queued signals exclusively.
+RadioModel owns all sub-models on the main thread. Never hold a mutex in the
+audio callback.
 
 ---
 
@@ -315,17 +229,12 @@ bool on = s.value("MyFeatureEnabled", "False").toString() == "True";
 
 ### Radio-Authoritative Settings Policy
 
-The radio is authoritative for hardware state (sample rate, ADC configuration,
-attenuator, preamp, TX power level). NereusSDR must not override these from
-saved settings on reconnect.
-
 **Radio-authoritative (do NOT persist):** ADC attenuation, preamp, TX power,
 antenna selection, hardware sample rate.
 
 **Client-authoritative (persist in AppSettings):** VFO frequency, mode, filter,
 DSP settings (AGC, NR, NB, ANF), layout arrangement, UI preferences, display
-preferences. These are all client-side because OpenHPSDR radios don't store
-per-slice state.
+preferences. OpenHPSDR radios don't store per-slice state.
 
 ### GUI↔Model Sync (No Feedback Loops)
 
@@ -334,16 +243,51 @@ per-slice state.
 * Use `m_updatingFromModel` guard or `QSignalBlocker` to prevent echo loops
 * Follow AetherSDR's proven pattern exactly
 
-### Thread Architecture
+---
 
-| Thread | Components |
+## Documentation Index
+
+### Master Plan & Progress
+
+| Document | Description |
 | --- | --- |
-| **Main** | GUI rendering, RadioModel, all sub-models, user input |
-| **Connection** | RadioConnection (UDP/TCP I/O, protocol framing) |
-| **Audio** | AudioEngine + WdspEngine (I/Q processing, DSP, audio output) |
-| **Spectrum** | FFT computation, waterfall data generation |
+| [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) | Full phased roadmap, menu bar layout, GUI container mapping (Thetis → NereusSDR), skin system design, progress tracking |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines, coding conventions, PR process |
 
-Cross-thread communication uses auto-queued signals exclusively.
+### Architecture Design Docs (`docs/architecture/`)
+
+| Document | Scope |
+| --- | --- |
+| [radio-abstraction.md](docs/architecture/radio-abstraction.md) | P1/P2 connections, MetisFrameParser, ReceiverManager, C&C register map, protocol details |
+| [multi-panadapter.md](docs/architecture/multi-panadapter.md) | PanadapterStack (5 layouts), PanadapterApplet, wirePanadapter(), FFTRouter |
+| [gpu-waterfall.md](docs/architecture/gpu-waterfall.md) | FFTEngine, SpectrumWidget, QRhi shaders, overlay system, color schemes |
+| [wdsp-integration.md](docs/architecture/wdsp-integration.md) | RxChannel/TxChannel wrappers, PureSignal, thread safety, WDSP channel lifecycle |
+| [skin-compatibility.md](docs/architecture/skin-compatibility.md) | SkinParser, extended skin format, Thetis import, 4-pan support |
+
+### Implementation Plans (`docs/architecture/phase*-plan.md`)
+
+| Plan | Phase | Status |
+| --- | --- | --- |
+| [phase3d-spectrum-waterfall-plan.md](docs/architecture/phase3d-spectrum-waterfall-plan.md) | 3D: GPU Spectrum & Waterfall | **In Progress** |
+
+### Phase 1 Analysis Docs (`docs/phase1/`)
+
+| Document | Key Findings |
+| --- | --- |
+| 1A: AetherSDR Analysis | RadioModel hub, auto-queued signals, worker threads, AppSettings XML, GPU rendering via QRhi |
+| 1B: Thetis Analysis | Dual-thread DSP (RX1/RX2), pre-allocated receivers, one-way protocol, skin system |
+| 1C: WDSP Analysis | 256 API functions, channel-based DSP, fexchange2() for I/Q, PureSignal feedback loop |
+
+### Current Phase: 3D — GPU Spectrum & Waterfall
+
+| Phase | Goal | Status |
+| --- | --- | --- |
+| 3A: Radio Connection | Connect to ANAN-G2 via P2, receive I/Q | **Complete** |
+| 3B: WDSP Integration | Process I/Q through WDSP, audio output | **Complete** |
+| 3C: macOS Build | Cross-platform WDSP build + wisdom crash fix | **Complete** |
+| **3D: Spectrum Display** | **Live FFT spectrum + waterfall from I/Q** | **In Progress** |
+| 3E: VFO & Controls | Tuning, mode selection, filter, AGC | Planned |
+| 3F: Container System | Unified dock/float container architecture | Planned |
 
 ---
 

@@ -50,9 +50,25 @@ NereusSDR is a ground-up port of Thetis (OpenHPSDR SDR console) from C# to Qt6/C
 - 12 new files, ~3500 lines of new code
 - Verified with ANAN-G2 (Orion MkII, FW 27) at 192.168.109.45
 
+### Completed: Phase 3B — WDSP Integration + Audio Pipeline
+- WDSP v1.29 built as static library in third_party/wdsp/
+- Cross-platform via linux_port.h/c (Windows/Linux/macOS)
+- RxChannel wrapper: I/Q accumulation (238→1024), fexchange2(), NB1/NB2
+- AudioEngine: QAudioSink 48kHz stereo Int16, 10ms timer drain
+- Full RX pipeline verified: Radio ADC → UDP I/Q → WDSP → speakers
+- FFTW wisdom generation with progress dialog, cached for subsequent launches
+- Audio device selection and persistence via AppSettings
+
+### Completed: Phase 3C — macOS Build + Crash Fix
+- WDSP linux_port.h: added stdlib.h, string.h, fcntl.h, LPCRITICAL_SECTION
+- ARM64 flush-to-zero guard, AVRT stubs, ResetEvent, AllocConsole/FreeConsole
+- Fixed use-after-free crash: wisdom poll timer accessing deleted QThread
+- Builds and runs on macOS Apple Silicon (commit bdb55e0)
+
 ### CI Status: GREEN
 - Build passes on Ubuntu 24.04 with Qt6, cmake, ninja, fftw3
 - Windows local build passes with Qt 6.11.0 / MinGW 13.1
+- macOS Apple Silicon build passes (local, commit bdb55e0)
 
 ---
 
