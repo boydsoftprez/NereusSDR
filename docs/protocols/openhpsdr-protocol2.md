@@ -21,10 +21,10 @@ UDP-only by pcap analysis and Thetis ChannelMaster/network.c source.
 
 ## Advantages over Protocol 1
 
-- Reliable command delivery (TCP)
-- Independent receiver data streams (not multiplexed)
+- Structured command packets with dedicated ports (vs multiplexed C&C bytes)
+- Independent receiver data streams (not multiplexed in EP6 frames)
 - Better scalability for multiple receivers
-- Structured command/response protocol
+- Per-DDC sample rate control
 
 ## Official Specification
 

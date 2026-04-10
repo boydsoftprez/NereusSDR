@@ -55,7 +55,7 @@ implementation patterns. Read it before making changes.
 ### Key Patterns
 
 - **Model → Radio**: Model setters emit signals → `RadioConnection` sends
-  protocol commands via UDP (P1) or TCP (P2).
+  protocol commands via UDP (both P1 and P2).
 - **Radio → Model**: Protocol responses → `RadioModel` routes to model's
   `applyStatus()`.
 - **Model → GUI**: Models emit signals → GUI widgets update via slots.
@@ -71,7 +71,7 @@ implementation patterns. Read it before making changes.
 | Thread | Components |
 |--------|-----------|
 | **Main** | GUI rendering, RadioModel, all sub-models, user input |
-| **Connection** | RadioConnection (UDP/TCP I/O, protocol framing) |
+| **Connection** | RadioConnection (UDP I/O, protocol framing) |
 | **Audio** | AudioEngine + WdspEngine (I/Q processing, DSP, audio output) |
 | **Spectrum** | FFT computation, waterfall data generation |
 
@@ -115,9 +115,9 @@ See `docs/protocols/` for detailed protocol documentation.
 
 - All GUI follows the dark theme: `#0f0f1a` background, `#c8d8e8` text,
   `#00b4d8` accent, `#203040` borders.
-- Use `GuardedSlider` (from `GuardedSlider.h`) instead of `QSlider` — it
-  prevents wheel events from leaking to parent widgets.
-- Use `GuardedComboBox` for combo boxes in scrollable areas.
+- Use `GuardedSlider` (from `GuardedSlider.h`, planned) instead of `QSlider` — it
+  will prevent wheel events from leaking to parent widgets.
+- Use `GuardedComboBox` (planned) for combo boxes in scrollable areas.
 - Disable `autoDefault` on QPushButtons inside QDialogs.
 
 ### Optional Dependencies

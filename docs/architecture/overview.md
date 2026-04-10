@@ -50,7 +50,7 @@ This means:
 | Thread | Components |
 |--------|-----------|
 | **Main** | GUI rendering, RadioModel, all sub-models, user input |
-| **Connection** | RadioConnection (UDP/TCP I/O, protocol framing) |
+| **Connection** | RadioConnection (UDP I/O, protocol framing) |
 | **Audio** | AudioEngine + WdspEngine (I/Q processing, DSP, audio output) |
 | **Spectrum** | FFT computation, waterfall data generation |
 

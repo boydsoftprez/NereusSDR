@@ -206,7 +206,7 @@ Key source directories: `src/core/` (protocol, audio, DSP), `src/models/`
 | Thread | Components |
 | --- | --- |
 | **Main** | GUI rendering, RadioModel, all sub-models, user input |
-| **Connection** | RadioConnection (UDP/TCP I/O, protocol framing) |
+| **Connection** | RadioConnection (UDP I/O, protocol framing) |
 | **Audio** | AudioEngine + WdspEngine (I/Q processing, DSP, audio output) |
 | **Spectrum** | FFT computation, waterfall data generation |
 
@@ -283,11 +283,14 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | --- | --- |
 | [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) | Full phased roadmap, menu bar layout, GUI container mapping (Thetis → NereusSDR), skin system design, progress tracking |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines, coding conventions, PR process |
+| [STYLEGUIDE.md](STYLEGUIDE.md) | Applet color palette, button states, gauge zones, slider/combo styling |
+| [CHANGELOG.md](CHANGELOG.md) | Version history and per-phase feature additions |
 
 ### Architecture Design Docs (`docs/architecture/`)
 
 | Document | Scope |
 | --- | --- |
+| [overview.md](docs/architecture/overview.md) | Layer diagram, thread architecture, RX/TX data flow overview |
 | [radio-abstraction.md](docs/architecture/radio-abstraction.md) | P1/P2 connections, MetisFrameParser, ReceiverManager, C&C register map, protocol details |
 | [multi-panadapter.md](docs/architecture/multi-panadapter.md) | PanadapterStack (5 layouts), PanadapterApplet, wirePanadapter(), FFTRouter |
 | [gpu-waterfall.md](docs/architecture/gpu-waterfall.md) | FFTEngine, SpectrumWidget, QRhi shaders, overlay system, color schemes |
@@ -301,6 +304,13 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | --- | --- | --- |
 | [phase3d-spectrum-waterfall-plan.md](docs/architecture/phase3d-spectrum-waterfall-plan.md) | 3D: GPU Spectrum & Waterfall | **Complete** |
 | [phase3f-multi-panadapter-plan.md](docs/architecture/phase3f-multi-panadapter-plan.md) | 3F: Multi-Panadapter + DDC Assignment | Planning |
+
+### Protocol Reference (`docs/protocols/`)
+
+| Document | Scope |
+| --- | --- |
+| [openhpsdr-protocol1.md](docs/protocols/openhpsdr-protocol1.md) | P1 UDP framing, 1032-byte Metis frames, C&C bytes, EP6 I/Q format |
+| [openhpsdr-protocol2.md](docs/protocols/openhpsdr-protocol2.md) | P2 UDP multi-port, command packets, per-DDC I/Q streams |
 
 ### Phase 1 Analysis Docs (`docs/phase1/`)
 
