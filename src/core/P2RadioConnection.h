@@ -149,6 +149,13 @@ private:
     CwState m_cw;
 
     // --- Mic state (from Thetis _radionet._mic, network.h:169-189) ---
+    // mic_control bit-field (from Thetis network.c:1227-1233):
+    //   Bit 0: Line In (0=off, 1=on)
+    //   Bit 1: Mic Boost (0=off, 1=on)
+    //   Bit 2: Orion Mic PTT (0=enabled, 1=disabled)
+    //   Bit 3: Tip/Ring (0=ptt-ring/mic-tip, 1=ptt-tip/mic-ring)
+    //   Bit 4: Mic Bias (0=disabled, 1=enabled)
+    //   Bit 5: Balanced Input (0=disabled, 1=enabled, Saturn only)
     struct MicState {
         unsigned char micControl{0};
         int lineInGain{0};
