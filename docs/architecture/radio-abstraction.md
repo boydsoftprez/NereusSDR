@@ -675,6 +675,7 @@ private:
     // Build and send structured UDP command packets to radio ports 1024-1027.
     void sendCmdGeneral();       // Port 1024: config, watchdog
     void sendCmdRx();            // Port 1025: DDC enables, rates, ADC assignment
+    void sendCmdTx();            // Port 1026: CW keyer, mic control, TX config
     void sendCmdHighPriority();  // Port 1027: run, freq, drive
 
     // --- P2 Data Parsing ---
@@ -1608,7 +1609,7 @@ bool MetisFrameParser::parseFrame(const QByteArray& frame) {
 
 | AetherSDR | NereusSDR | Reason |
 |-----------|-----------|--------|
-| TCP 4992 command/response | UDP 1024 Metis frames (P1) / TCP+UDP (P2) | Different protocol |
+| TCP 4992 command/response | UDP 1024 Metis frames (P1) / UDP multi-port (P2) | Different protocol |
 | VITA-49 UDP parsing | MetisFrameParser (1032-byte frames) | Different framing |
 | Radio-computed FFT/WF | Client-side FFTW3 from raw I/Q | Radio is just ADC |
 | Radio-authoritative slices | Client-managed ReceiverManager | Radio has no slice concept |
@@ -1636,7 +1637,7 @@ bool MetisFrameParser::parseFrame(const QByteArray& frame) {
 - [x] RadioDiscovery with P1/P2 response parsing and staleness detection
 - [x] RadioConnection abstract base with protocol-agnostic interface
 - [x] P1RadioConnection with MetisFrameParser and C&C management
-- [x] P2RadioConnection with TCP command + UDP data architecture
+- [x] P2RadioConnection with UDP multi-port architecture
 - [x] ReceiverManager for client-side receiver lifecycle
 - [x] Thread architecture and signal routing
 - [x] Class diagram and integration wiring
