@@ -113,7 +113,7 @@ private:
     struct TxState {
         int id{0};
         int frequency{0};            // prn->tx[i].frequency (Hz)
-        int samplingRate{48};        // prn->tx[i].sampling_rate
+        int samplingRate{192};       // From Thetis create_rnet (netInterface.c:1513) — P2 always 192
         int cwx{0};                  // prn->tx[i].cwx
         int dash{0};
         int dot{0};
