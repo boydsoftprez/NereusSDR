@@ -195,6 +195,7 @@ set(GUI_SOURCES
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
+    src/gui/meters/MeterWidget.cpp
 )
 
 # --------------------------------------------------------------------------
