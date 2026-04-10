@@ -268,7 +268,7 @@ Key design references:
 Verification: Tune to different frequencies/modes via VFO display. Mode/filter changes
 reflect in WDSP demodulation. I/Q flows through ReceiverManager (no regression).
 
-### Phase 3G-1: Container Infrastructure ← NEXT
+### Phase 3G-1: Container Infrastructure ✅ COMPLETE
 **Goal:** Dock/float/resize/persist container shells — no rendering yet.
 
 Scope:
@@ -525,17 +525,18 @@ CI workflows already in place. Finalize:
 
 ---
 
-## Recommended Next Step: Phase 3G-1 — Container Infrastructure
+## Recommended Next Step: Phase 3G-2 — MeterWidget GPU Renderer
 
-Phases 3A–3E are complete — the radio connects, demodulates audio, renders live GPU
-spectrum + waterfall, and supports full VFO tuning with CTUN panadapter mode.
+Phases 3A–3E and 3G-1 are complete — the radio connects, demodulates audio, renders
+live GPU spectrum + waterfall, supports full VFO tuning with CTUN panadapter mode,
+and the container infrastructure (dock/float/resize/persist) is in place with a
+QSplitter-based right panel (Container #0).
 
-Next: build the container/widget framework (3G-1..6) so the right-side panel has GPU-
-rendered meters, band buttons, mode controls, and full composability. Then TX pipeline
-(3I-1..4) including PureSignal. Multi-panadapter (3F) comes last — by then the single-
-receiver experience is fully complete, and multi-pan just adds more of the same.
+Next: build the MeterWidget QRhi renderer (3G-2) so containers can display live GPU-
+rendered meter items. Then core meter groups (3G-3), interactive items (3G-5), and the
+AetherSDR-style AppletPanel (3G-AP) for the default right-panel experience.
 
-Execution order: **3G-1..6 → 3I-1..4 → 3F → 3H → 3J+**
+Execution order: **3G-2..6 → 3I-1..4 → 3F → 3H → 3J+**
 
 ---
 

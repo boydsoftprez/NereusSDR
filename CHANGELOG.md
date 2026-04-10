@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added — Phase 3G-1: Container Infrastructure
+- ContainerWidget: dock/float/resize container shell with title bar, axis-lock (8 positions), content slot
+- FloatingContainer: top-level window wrapper with pin-on-top, minimize-with-console, geometry persist
+- ContainerManager: singleton lifecycle — 3 dock modes (PanelDocked/OverlayDocked/Floating)
+- QSplitter-based MainWindow layout: spectrum left, Container #0 right panel
+- Axis-lock repositioning: docked containers track main window resize per anchor position
+- 24-field pipe-delimited serialization (Thetis-compatible + DockMode extension)
+- Container + splitter state persistence to AppSettings
+- Hover-reveal title bar with dock-mode-aware buttons (float/dock, axis cycle, pin, settings)
+- Ctrl-snap to 10px grid during drag and resize
+- Phase roadmap: AetherSDR-style AppletPanel planned for Container #0 in Phase 3G-AP
+
 ### Added — Phase 3E: VFO & Controls + CTUN Panadapter
 - Floating VFO flag widget (AetherSDR pattern): frequency display, mode/filter/AGC tabs, antenna buttons
 - SliceModel: DSPMode enum, AGCMode, per-mode filter defaults from Thetis, tuning step, AF/RF gain
