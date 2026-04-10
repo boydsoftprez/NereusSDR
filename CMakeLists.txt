@@ -269,6 +269,15 @@ if(NEREUS_GPU_SPECTRUM)
                 resources/shaders/overlay.vert
                 resources/shaders/overlay.frag
         )
+
+        qt_add_shaders(NereusSDR "nereus_meter_shaders"
+            PREFIX "/shaders"
+            FILES
+                resources/shaders/meter_textured.vert
+                resources/shaders/meter_textured.frag
+                resources/shaders/meter_geometry.vert
+                resources/shaders/meter_geometry.frag
+        )
     endif()
 endif()
 
