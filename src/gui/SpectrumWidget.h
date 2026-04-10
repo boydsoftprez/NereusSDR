@@ -310,6 +310,7 @@ private:
     // From AetherSDR: kMaxFftBins = 8192, kFftVertStride = 6
     static constexpr int kMaxFftBins = 65536;
     static constexpr int kFftVertStride = 6;  // x, y, r, g, b, a
+    int m_visibleBinCount{0};  // bins rendered this frame (for draw call count)
 
     void markOverlayDirty() {
         m_overlayStaticDirty = true;

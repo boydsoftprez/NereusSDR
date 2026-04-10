@@ -1587,7 +1587,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     // ---- FFT spectrum vertices ----
     if (!m_smoothed.isEmpty() && m_fftLineVbo && m_fftFillVbo) {
-        const int n = qMin(m_smoothed.size(), kMaxFftBins);
+        auto [firstBin, lastBin] = visibleBinRange(m_smoothed.size());
+        const int count = lastBin - firstBin + 1;
+        const int n = qMin(count, kMaxFftBins);
+        m_visibleBinCount = n;
         const float minDbm = m_refLevel - m_dynamicRange;
         const float range = m_dynamicRange;
         const float yBot = -1.0f;
@@ -1601,8 +1604,9 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         QVector<float> lineVerts(n * kFftVertStride);
         QVector<float> fillVerts(n * 2 * kFftVertStride);
 
-        for (int i = 0; i < n; ++i) {
-            float x = 2.0f * i / (n - 1) - 1.0f;
+        for (int j = 0; j < n; ++j) {
+            int i = firstBin + j;
+            float x = (n > 1) ? 2.0f * j / (n - 1) - 1.0f : 0.0f;
             float t = qBound(0.0f, (m_smoothed[i] - minDbm) / range, 1.0f);
             float y = yBot + t * (yTop - yBot);
 
@@ -1624,7 +1628,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             }
 
             // Line vertex
-            int li = i * kFftVertStride;
+            int li = j * kFftVertStride;
             lineVerts[li]     = x;
             lineVerts[li + 1] = y;
             lineVerts[li + 2] = cr;
@@ -1633,7 +1637,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             lineVerts[li + 5] = 0.9f;
 
             // Fill vertices (top at signal, bottom at base)
-            int fi = i * 2 * kFftVertStride;
+            int fi = j * 2 * kFftVertStride;
             fillVerts[fi]     = x;
             fillVerts[fi + 1] = y;
             fillVerts[fi + 2] = cr;
@@ -1678,8 +1682,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     }
 
     // Draw FFT spectrum
-    if (m_fftFillPipeline && m_fftLinePipeline && !m_smoothed.isEmpty()) {
-        const int n = qMin(m_smoothed.size(), kMaxFftBins);
+    if (m_fftFillPipeline && m_fftLinePipeline && m_visibleBinCount > 0) {
         float specVpX = static_cast<float>(specRect.x()) * dpr;
         float specVpY = static_cast<float>(h - specRect.bottom() - 1) * dpr;
         float specVpW = static_cast<float>(specRect.width()) * dpr;
@@ -1692,7 +1695,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->setViewport(specVp);
         const QRhiCommandBuffer::VertexInput fillVbuf(m_fftFillVbo, 0);
         cb->setVertexInput(0, 1, &fillVbuf);
-        cb->draw(n * 2);
+        cb->draw(m_visibleBinCount * 2);
 
         // Line pass
         cb->setGraphicsPipeline(m_fftLinePipeline);
@@ -1700,7 +1703,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->setViewport(specVp);
         const QRhiCommandBuffer::VertexInput lineVbuf(m_fftLineVbo, 0);
         cb->setVertexInput(0, 1, &lineVbuf);
-        cb->draw(n);
+        cb->draw(m_visibleBinCount);
     }
 
     // Draw overlay
