@@ -9,6 +9,8 @@
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QApplication>
+#include <QMap>
+#include <QStringList>
 #include <algorithm>
 
 namespace NereusSDR {
@@ -553,13 +555,157 @@ void ContainerWidget::doResize(int w, int h)
     }
 }
 
-// --- Serialization stubs (Task 4) ---
+// --- Serialization ---
 
-QString ContainerWidget::axisLockToString(AxisLock) { return QStringLiteral("TOPLEFT"); }
-AxisLock ContainerWidget::axisLockFromString(const QString&) { return AxisLock::TopLeft; }
-QString ContainerWidget::dockModeToString(DockMode) { return QStringLiteral("OVERLAY"); }
-DockMode ContainerWidget::dockModeFromString(const QString&) { return DockMode::OverlayDocked; }
-QString ContainerWidget::serialize() const { return QString(); }
-bool ContainerWidget::deserialize(const QString&) { return false; }
+QString ContainerWidget::axisLockToString(AxisLock lock)
+{
+    static const char* names[] = {
+        "LEFT", "TOPLEFT", "TOP", "TOPRIGHT",
+        "RIGHT", "BOTTOMRIGHT", "BOTTOM", "BOTTOMLEFT"
+    };
+    int idx = static_cast<int>(lock);
+    return (idx >= 0 && idx < 8) ? QString::fromLatin1(names[idx]) : QStringLiteral("TOPLEFT");
+}
+
+AxisLock ContainerWidget::axisLockFromString(const QString& str)
+{
+    static const QMap<QString, AxisLock> map = {
+        {QStringLiteral("LEFT"), AxisLock::Left},
+        {QStringLiteral("TOPLEFT"), AxisLock::TopLeft},
+        {QStringLiteral("TOP"), AxisLock::Top},
+        {QStringLiteral("TOPRIGHT"), AxisLock::TopRight},
+        {QStringLiteral("RIGHT"), AxisLock::Right},
+        {QStringLiteral("BOTTOMRIGHT"), AxisLock::BottomRight},
+        {QStringLiteral("BOTTOM"), AxisLock::Bottom},
+        {QStringLiteral("BOTTOMLEFT"), AxisLock::BottomLeft},
+    };
+    return map.value(str.toUpper(), AxisLock::TopLeft);
+}
+
+QString ContainerWidget::dockModeToString(DockMode mode)
+{
+    switch (mode) {
+    case DockMode::PanelDocked:   return QStringLiteral("PANEL");
+    case DockMode::OverlayDocked: return QStringLiteral("OVERLAY");
+    case DockMode::Floating:      return QStringLiteral("FLOATING");
+    }
+    return QStringLiteral("OVERLAY");
+}
+
+DockMode ContainerWidget::dockModeFromString(const QString& str)
+{
+    if (str == QStringLiteral("PANEL")) {
+        return DockMode::PanelDocked;
+    }
+    if (str == QStringLiteral("FLOATING")) {
+        return DockMode::Floating;
+    }
+    return DockMode::OverlayDocked;
+}
+
+QString ContainerWidget::serialize() const
+{
+    // Based on Thetis ucMeter.cs:1012-1038, extended with DockMode (field 23)
+    QStringList p;
+    p << m_id;                                                              // 0
+    p << QString::number(m_rxSource);                                       // 1
+    p << QString::number(m_dockedLocation.x());                             // 2
+    p << QString::number(m_dockedLocation.y());                             // 3
+    p << QString::number(m_dockedSize.width());                             // 4
+    p << QString::number(m_dockedSize.height());                            // 5
+    p << (isFloating() ? QStringLiteral("true") : QStringLiteral("false")); // 6 (Thetis compat)
+    p << QString::number(m_delta.x());                                      // 7
+    p << QString::number(m_delta.y());                                      // 8
+    p << axisLockToString(m_axisLock);                                      // 9
+    p << (m_pinOnTop ? QStringLiteral("true") : QStringLiteral("false"));   // 10
+    p << (m_border ? QStringLiteral("true") : QStringLiteral("false"));     // 11
+    p << m_backgroundColor.name(QColor::HexArgb);                           // 12
+    p << (m_noControls ? QStringLiteral("true") : QStringLiteral("false")); // 13
+    p << (m_enabled ? QStringLiteral("true") : QStringLiteral("false"));    // 14
+    p << m_notes;                                                           // 15
+    p << (m_containerMinimises ? QStringLiteral("true") : QStringLiteral("false")); // 16
+    p << (m_autoHeight ? QStringLiteral("true") : QStringLiteral("false")); // 17
+    p << (m_showOnRx ? QStringLiteral("true") : QStringLiteral("false"));   // 18
+    p << (m_showOnTx ? QStringLiteral("true") : QStringLiteral("false"));   // 19
+    p << (m_locked ? QStringLiteral("true") : QStringLiteral("false"));     // 20
+    p << (m_containerHidesWhenRxNotUsed ? QStringLiteral("true") : QStringLiteral("false")); // 21
+    p << (m_hiddenByMacro ? QStringLiteral("true") : QStringLiteral("false")); // 22
+    p << dockModeToString(m_dockMode);                                      // 23 (NereusSDR extension)
+    return p.join(QLatin1Char('|'));
+}
+
+bool ContainerWidget::deserialize(const QString& data)
+{
+    // Based on Thetis ucMeter.cs:1039-1160, backward-compatible
+    if (data.isEmpty()) {
+        return false;
+    }
+
+    QStringList p = data.split(QLatin1Char('|'));
+    if (p.size() < 13) {
+        qCWarning(lcContainer) << "deserialize: too few fields:" << p.size();
+        return false;
+    }
+
+    if (p[0].isEmpty()) {
+        return false;
+    }
+    setId(p[0]);
+
+    bool ok = false;
+    int rx = p[1].toInt(&ok);
+    if (!ok) { return false; }
+    setRxSource(rx);
+
+    int x = p[2].toInt(&ok); if (!ok) { return false; }
+    int y = p[3].toInt(&ok); if (!ok) { return false; }
+    int w = p[4].toInt(&ok); if (!ok) { return false; }
+    int h = p[5].toInt(&ok); if (!ok) { return false; }
+    setDockedLocation(QPoint(x, y));
+    setDockedSize(QSize(w, h));
+
+    // Field 6: Thetis floating bool — used as fallback if field 23 absent
+    bool thetisFloating = (p[6].toLower() == QStringLiteral("true"));
+
+    x = p[7].toInt(&ok); if (!ok) { return false; }
+    y = p[8].toInt(&ok); if (!ok) { return false; }
+    setDelta(QPoint(x, y));
+
+    setAxisLock(axisLockFromString(p[9]));
+    setPinOnTop(p[10].toLower() == QStringLiteral("true"));
+    setBorder(p[11].toLower() == QStringLiteral("true"));
+
+    QColor bgColor(p[12]);
+    if (bgColor.isValid()) {
+        m_backgroundColor = bgColor;
+        m_contentHolder->setStyleSheet(
+            QStringLiteral("background: %1;").arg(bgColor.name(QColor::HexArgb)));
+    }
+
+    if (p.size() > 13) { setNoControls(p[13].toLower() == QStringLiteral("true")); }
+    if (p.size() > 14) { setContainerEnabled(p[14].toLower() == QStringLiteral("true")); }
+    if (p.size() > 15) { setNotes(p[15]); }
+    if (p.size() > 16) { setContainerMinimises(p[16].toLower() == QStringLiteral("true")); }
+    if (p.size() > 17) { setAutoHeight(p[17].toLower() == QStringLiteral("true")); }
+    if (p.size() > 19) {
+        setShowOnRx(p[18].toLower() == QStringLiteral("true"));
+        setShowOnTx(p[19].toLower() == QStringLiteral("true"));
+    }
+    if (p.size() > 20) { setLocked(p[20].toLower() == QStringLiteral("true")); }
+    if (p.size() > 21) { setContainerHidesWhenRxNotUsed(p[21].toLower() == QStringLiteral("true")); }
+    if (p.size() > 22) { setHiddenByMacro(p[22].toLower() == QStringLiteral("true")); }
+
+    // Field 23: NereusSDR DockMode extension
+    if (p.size() > 23) {
+        setDockMode(dockModeFromString(p[23]));
+    } else {
+        setDockMode(thetisFloating ? DockMode::Floating : DockMode::OverlayDocked);
+    }
+
+    qCDebug(lcContainer) << "Deserialized:" << m_id << "rx:" << m_rxSource
+                          << "mode:" << dockModeToString(m_dockMode)
+                          << "pos:" << m_dockedLocation << "size:" << m_dockedSize;
+    return true;
+}
 
 } // namespace NereusSDR
