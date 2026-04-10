@@ -53,6 +53,10 @@ private:
     SpectrumWidget* m_spectrumWidget{nullptr};
     FFTEngine*      m_fftEngine{nullptr};
     QThread*        m_fftThread{nullptr};
+
+    // Re-entrancy guard: prevents centerChanged from firing a second
+    // forceHardwareFrequency while frequencyChanged is already retuning the DDC
+    bool m_handlingBandJump{false};
 };
 
 } // namespace NereusSDR

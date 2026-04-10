@@ -291,30 +291,40 @@ void MainWindow::wireSliceToSpectrum()
     // In traditional mode: pan follows VFO (auto-scroll handled in setVfoFrequency).
     // Band changes (large jumps) always recenter regardless of mode.
     connect(slice, &SliceModel::frequencyChanged, this, [this, vfo, slice](double freq) {
+        if (m_handlingBandJump) {
+            return;
+        }
+
         double center = m_spectrumWidget->centerFrequency();
         double halfBw = m_spectrumWidget->bandwidth() / 2.0;
         bool offScreen = (freq < center - halfBw) || (freq > center + halfBw);
+
         if (!m_spectrumWidget->ctunEnabled() || offScreen) {
-            // Traditional mode or band jump: recenter, retune DDC to VFO
+            m_handlingBandJump = true;
+
+            bool wasCTUN = m_spectrumWidget->ctunEnabled();
             m_radioModel->receiverManager()->setDdcFrequencyLocked(false);
+
             m_spectrumWidget->setCenterFrequency(freq);
-            // DDC retunes via RadioModel path now that lock is off
-            // Force it explicitly too in case RadioModel already fired
+
             int rxIdx = slice->receiverIndex();
             if (rxIdx >= 0) {
                 m_radioModel->receiverManager()->forceHardwareFrequency(
                     rxIdx, static_cast<quint64>(freq));
             }
+
             RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
             if (rxCh) {
                 rxCh->setShiftFrequency(0.0);
             }
-            if (m_spectrumWidget->ctunEnabled()) {
+
+            if (wasCTUN) {
                 m_radioModel->receiverManager()->setDdcFrequencyLocked(true);
             }
+
+            m_handlingBandJump = false;
         } else {
-            // CTUN: VFO within pan — DDC stays at pan center, shift for audio
-            // From Thetis radio.cs:1417 — SetRXAShiftFreq receives +(freq - center)
+            // From Thetis radio.rs:1417 — WDSP shift = +(freq - center)
             double shiftHz = freq - center;
             RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
             if (rxCh) {
@@ -430,6 +440,9 @@ void MainWindow::wireSliceToSpectrum()
     // Traditional mode: pan drag retunes the VFO (DDC follows VFO naturally).
     connect(m_spectrumWidget, &SpectrumWidget::centerChanged,
             this, [this, slice](double centerHz) {
+        if (m_handlingBandJump) {
+            return;
+        }
         if (!m_spectrumWidget->ctunEnabled()) {
             slice->setFrequency(centerHz);
         } else {
