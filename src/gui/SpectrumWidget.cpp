@@ -907,15 +907,17 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     }
 
     // 2. Divider bar (thin line) — resize spectrum/waterfall split up/down
-    if (my >= dividerY && my < dividerY + kDividerH) {
+    // Grab zone extends 6px above/below the 4px visual line for easier targeting
+    static constexpr int kDividerGrab = 6;
+    if (my >= dividerY - kDividerGrab && my < dividerY + kDividerH + kDividerGrab) {
         m_draggingDivider = true;
         setCursor(Qt::SplitVCursor);
         return;
     }
 
-    // 3. Frequency scale bar (bottom with freq text) — zoom bandwidth left/right
-    int freqScaleY = h - kFreqScaleH;
-    if (my >= freqScaleY) {
+    // 3. Frequency scale bar (wider gray bar below divider) — zoom bandwidth left/right
+    int freqBarY = dividerY + kDividerH;
+    if (my >= freqBarY && my < freqBarY + kFreqScaleH) {
         m_draggingBandwidth = true;
         m_bwDragStartX = mx;
         m_bwDragStartBw = m_bandwidthHz;
@@ -1077,13 +1079,13 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     // --- Hover cursor feedback (not dragging) ---
     // From AetherSDR SpectrumWidget.cpp:1242-1344
 
-    int freqScaleY = h - kFreqScaleH;
+    int freqBarY = specH + kDividerH;
     if (mx < kDbmStripW) {
         setCursor(Qt::SizeVerCursor);
-    } else if (my >= freqScaleY) {
-        setCursor(Qt::SizeHorCursor);
-    } else if (my >= specH && my < specH + kDividerH) {
+    } else if (my >= specH - 6 && my < specH + kDividerH + 6) {
         setCursor(Qt::SplitVCursor);
+    } else if (my >= freqBarY && my < freqBarY + kFreqScaleH) {
+        setCursor(Qt::SizeHorCursor);
     } else {
         // Check filter edges and passband
         double loHz = m_vfoHz + m_filterLowHz;
