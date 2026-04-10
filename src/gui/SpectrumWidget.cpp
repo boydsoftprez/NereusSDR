@@ -1083,8 +1083,8 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     if (m_draggingBandwidth) {
         // Zoom bandwidth by horizontal drag
         // From AetherSDR SpectrumWidget.cpp:868-876
-        // Drag right = zoom out (wider), drag left = zoom in (narrower)
-        int dx = mx - m_bwDragStartX;
+        // Drag right = zoom in (narrower), drag left = zoom out (wider)
+        int dx = m_bwDragStartX - mx;
         double factor = 1.0 + dx * 0.003;  // 0.3% per pixel
         double newBw = m_bwDragStartBw * factor;
         newBw = std::clamp(newBw, 1000.0, m_sampleRateHz);
