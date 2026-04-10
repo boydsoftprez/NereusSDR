@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QStringList>
 
 #ifdef NEREUS_GPU_SPECTRUM
 #include <QFile>
@@ -102,18 +103,48 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
 }
 
 // ============================================================================
-// Serialization (stubs — full implementation in Task 7)
+// Serialization
 // ============================================================================
 
 QString MeterWidget::serializeItems() const
 {
-    return {};
+    QStringList lines;
+    for (const MeterItem* item : m_items) {
+        lines << item->serialize();
+    }
+    return lines.join(QLatin1Char('\n'));
 }
 
 bool MeterWidget::deserializeItems(const QString& data)
 {
-    Q_UNUSED(data);
-    return false;
+    if (data.isEmpty()) { return false; }
+
+    clearItems();
+    QStringList lines = data.split(QLatin1Char('\n'));
+    for (const QString& line : lines) {
+        if (line.isEmpty()) { continue; }
+
+        QString type = line.section(QLatin1Char('|'), 0, 0);
+        MeterItem* item = nullptr;
+        if (type == QStringLiteral("BAR")) {
+            item = new BarItem();
+        } else if (type == QStringLiteral("SOLID")) {
+            item = new SolidColourItem();
+        } else if (type == QStringLiteral("IMAGE")) {
+            item = new ImageItem();
+        } else if (type == QStringLiteral("SCALE")) {
+            item = new ScaleItem();
+        } else if (type == QStringLiteral("TEXT")) {
+            item = new TextItem();
+        }
+
+        if (item && item->deserialize(line)) {
+            addItem(item);
+        } else {
+            delete item;
+        }
+    }
+    return !m_items.isEmpty();
 }
 
 // ============================================================================
