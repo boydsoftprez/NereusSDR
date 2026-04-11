@@ -14,6 +14,7 @@
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
 #include "containers/ContainerWidget.h"
+#include "containers/ContainerSettingsDialog.h"
 #include "meters/MeterWidget.h"
 #include "meters/MeterItem.h"
 #include "meters/ItemGroup.h"
@@ -831,19 +832,19 @@ void MainWindow::buildMenuBar()
     QMenu* containersMenu = menuBar()->addMenu(QStringLiteral("Contai&ners"));
 
     {
-        QAction* newContAction = containersMenu->addAction(QStringLiteral("&New Container..."));
-        newContAction->setEnabled(false);
-        newContAction->setToolTip(QStringLiteral("NYI — Phase 3G-6"));
-    }
-    {
         QAction* contSettingsAction = containersMenu->addAction(QStringLiteral("Container &Settings..."));
-        contSettingsAction->setEnabled(false);
-        contSettingsAction->setToolTip(QStringLiteral("NYI — Phase 3G-6"));
+        connect(contSettingsAction, &QAction::triggered, this, [this]() {
+            ContainerWidget* c = m_containerManager ? m_containerManager->panelContainer() : nullptr;
+            if (c) {
+                ContainerSettingsDialog dialog(c, this);
+                dialog.exec();
+            }
+        });
     }
     {
         QAction* resetAction = containersMenu->addAction(QStringLiteral("&Reset Default Layout"));
         resetAction->setEnabled(false);
-        resetAction->setToolTip(QStringLiteral("NYI — Phase 3G-6"));
+        resetAction->setToolTip(QStringLiteral("NYI"));
     }
 
     containersMenu->addSeparator();
