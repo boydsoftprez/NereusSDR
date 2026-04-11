@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QMouseEvent>
 #include <QStringList>
 
 #ifdef NEREUS_GPU_SPECTRUM
@@ -24,6 +25,7 @@ MeterWidget::MeterWidget(QWidget* parent)
     setMinimumSize(100, 80);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
+    setMouseTracking(true);
 
 #ifdef NEREUS_GPU_SPECTRUM
     // Platform-specific QRhi backend selection.
@@ -181,6 +183,78 @@ void MeterWidget::resizeEvent(QResizeEvent* event)
     markOverlayDirty();
     m_bgDirty = true;
 #endif
+}
+
+void MeterWidget::mousePressEvent(QMouseEvent* event)
+{
+    const int w = width();
+    const int h = height();
+    const QPointF pos = event->position();
+
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        MeterItem* item = m_items[i];
+        if (item->hitTest(pos, w, h)) {
+            if (item->handleMousePress(event, w, h)) {
+                update();
+                return;
+            }
+        }
+    }
+    MeterBaseClass::mousePressEvent(event);
+}
+
+void MeterWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    const int w = width();
+    const int h = height();
+    const QPointF pos = event->position();
+
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        MeterItem* item = m_items[i];
+        if (item->hitTest(pos, w, h)) {
+            if (item->handleMouseRelease(event, w, h)) {
+                update();
+                return;
+            }
+        }
+    }
+    MeterBaseClass::mouseReleaseEvent(event);
+}
+
+void MeterWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    const int w = width();
+    const int h = height();
+    const QPointF pos = event->position();
+
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        MeterItem* item = m_items[i];
+        if (item->hitTest(pos, w, h)) {
+            if (item->handleMouseMove(event, w, h)) {
+                update();
+                return;
+            }
+        }
+    }
+    MeterBaseClass::mouseMoveEvent(event);
+}
+
+void MeterWidget::wheelEvent(QWheelEvent* event)
+{
+    const int w = width();
+    const int h = height();
+    const QPointF pos = event->position();
+
+    for (int i = m_items.size() - 1; i >= 0; --i) {
+        MeterItem* item = m_items[i];
+        if (item->hitTest(pos, w, h)) {
+            if (item->handleWheel(event, w, h)) {
+                update();
+                return;
+            }
+        }
+    }
+    MeterBaseClass::wheelEvent(event);
 }
 
 void MeterWidget::drawItems(QPainter& p)
