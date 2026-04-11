@@ -42,6 +42,18 @@ public:
     void setDarkMode(bool d) { m_darkMode = d; }
     bool darkMode() const { return m_darkMode; }
 
+    // --- CrossNeedle extensions (Phase 3G-4) ---
+    // From Thetis AddCrossNeedle() (MeterManager.cs:22817-23002)
+    enum class Direction { Clockwise, CounterClockwise };
+    void setDirection(Direction d) { m_direction = d; }
+    Direction direction() const { return m_direction; }
+
+    void setNeedleOffset(const QPointF& off) { m_needleOffset = off; }
+    QPointF needleOffset() const { return m_needleOffset; }
+
+    void setLengthFactor(float f) { m_lengthFactor = f; }
+    float lengthFactor() const { return m_lengthFactor; }
+
     // Scale calibration: value (0-100 normalized) → normalized (x,y) position on gauge face
     void setScaleCalibration(const QMap<float, QPointF>& cal) { m_calibration = cal; }
     QMap<float, QPointF> scaleCalibration() const { return m_calibration; }
@@ -67,6 +79,10 @@ private:
     bool    m_showMarkers{true};
     float   m_maxPower{150.0f};
     bool    m_darkMode{false};
+    // CrossNeedle extensions
+    Direction m_direction{Direction::Clockwise};
+    QPointF   m_needleOffset{0.0, 0.0};
+    float     m_lengthFactor{1.0f};
     QMap<float, QPointF> m_calibration;
 };
 

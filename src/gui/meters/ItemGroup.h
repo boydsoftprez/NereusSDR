@@ -89,6 +89,10 @@ public:
     // From Thetis AddAnanMM() (MeterManager.cs:22461-22815)
     static ItemGroup* createAnanMMPreset(QObject* parent = nullptr);
 
+    // Cross-Needle: dual crossing needles (fwd/rev power)
+    // From Thetis AddCrossNeedle() (MeterManager.cs:22817-23002)
+    static ItemGroup* createCrossNeedlePreset(QObject* parent = nullptr);
+
     static ItemGroup* createMagicEyePreset(int bindingId, QObject* parent = nullptr);
     static ItemGroup* createSignalTextPreset(int bindingId, QObject* parent = nullptr);
     static ItemGroup* createHistoryPreset(int bindingId, QObject* parent = nullptr);

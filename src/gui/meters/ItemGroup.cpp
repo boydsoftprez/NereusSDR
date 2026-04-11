@@ -927,6 +927,167 @@ ItemGroup* ItemGroup::createAnanMMPreset(QObject* parent)
     return group;
 }
 
+// createCrossNeedlePreset
+// From Thetis AddCrossNeedle() (MeterManager.cs:22817-23002)
+// Dual crossing needles: forward power (Clockwise) and reverse power (CounterClockwise)
+// with background images and NeedleScalePwrItem companions.
+ItemGroup* ItemGroup::createCrossNeedlePreset(QObject* parent)
+{
+    ItemGroup* group = new ItemGroup(QStringLiteral("Cross Needle"), parent);
+
+    // Helper: populate calibration map from initializer list
+    // From Thetis MeterManager.cs calibration point arrays
+    auto addCal = [](NeedleItem* ni, std::initializer_list<std::pair<float, QPointF>> points) {
+        QMap<float, QPointF> cal;
+        for (const auto& [val, pos] : points) {
+            cal.insert(val, pos);
+        }
+        ni->setScaleCalibration(cal);
+    };
+    auto addCalScale = [](NeedleScalePwrItem* ni, std::initializer_list<std::pair<float, QPointF>> points) {
+        QMap<float, QPointF> cal;
+        for (const auto& [val, pos] : points) {
+            cal.insert(val, pos);
+        }
+        ni->setScaleCalibration(cal);
+    };
+
+    // 1. Background image (z=1)
+    // From Thetis MeterManager.cs:22817-22820
+    ImageItem* bg = new ImageItem();
+    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setImagePath(QStringLiteral("resources/meters/cross-needle.png"));
+    bg->setZOrder(1);
+    group->addItem(bg);
+
+    // 2. Bottom band image (z=5)
+    // From Thetis MeterManager.cs:22821-22823
+    ImageItem* band = new ImageItem();
+    band->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    band->setImagePath(QStringLiteral("resources/meters/cross-needle-bg.png"));
+    band->setZOrder(5);
+    group->addItem(band);
+
+    // Forward power calibration — from Thetis MeterManager.cs:22823-22862
+    const std::initializer_list<std::pair<float, QPointF>> fwdCal = {
+        {  0.0f, QPointF(0.052, 0.732)},
+        {  5.0f, QPointF(0.146, 0.528)},
+        { 10.0f, QPointF(0.188, 0.434)},
+        { 15.0f, QPointF(0.235, 0.387)},
+        { 20.0f, QPointF(0.258, 0.338)},
+        { 25.0f, QPointF(0.303, 0.313)},
+        { 30.0f, QPointF(0.321, 0.272)},
+        { 35.0f, QPointF(0.361, 0.257)},
+        { 40.0f, QPointF(0.381, 0.223)},
+        { 50.0f, QPointF(0.438, 0.181)},
+        { 60.0f, QPointF(0.483, 0.155)},
+        { 70.0f, QPointF(0.532, 0.13)},
+        { 80.0f, QPointF(0.577, 0.111)},
+        { 90.0f, QPointF(0.619, 0.098)},
+        {100.0f, QPointF(0.662, 0.083)}
+    };
+
+    // 3. Forward power needle — bindingId=TxPower, Clockwise
+    // From Thetis MeterManager.cs:22864-22888
+    NeedleItem* fwdNeedle = new NeedleItem();
+    fwdNeedle->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    fwdNeedle->setBindingId(MeterBinding::TxPower);
+    fwdNeedle->setZOrder(10);
+    fwdNeedle->setDirection(NeedleItem::NeedleDirection::Clockwise);
+    fwdNeedle->setNeedleOffset(QPointF(0.322, 0.611));
+    fwdNeedle->setLengthFactor(1.62f);
+    fwdNeedle->setStrokeWidth(2.5f);
+    fwdNeedle->setNeedleColor(Qt::black);
+    fwdNeedle->setHistoryEnabled(true);
+    fwdNeedle->setHistoryDuration(4000);
+    fwdNeedle->setHistoryColor(QColor(255, 0, 0, 96));
+    fwdNeedle->setAttackRatio(0.2f);
+    fwdNeedle->setDecayRatio(0.1f);
+    fwdNeedle->setNormaliseTo100W(true);
+    fwdNeedle->setSourceLabel(QStringLiteral("Fwd Power"));
+    addCal(fwdNeedle, fwdCal);
+    group->addItem(fwdNeedle);
+
+    // 4. Forward power scale — NeedleScalePwrItem companion
+    // From Thetis MeterManager.cs:22890-22893
+    NeedleScalePwrItem* fwdScale = new NeedleScalePwrItem();
+    fwdScale->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    fwdScale->setZOrder(11);
+    fwdScale->setMarks(8);
+    fwdScale->setFontFamily(QStringLiteral("Trebuchet MS"));
+    fwdScale->setFontSize(16.0f);
+    fwdScale->setFontBold(true);
+    fwdScale->setLowColour(Qt::gray);
+    fwdScale->setHighColour(Qt::red);
+    fwdScale->setDirection(NeedleScalePwrItem::Direction::Clockwise);
+    fwdScale->setNeedleOffset(QPointF(0.318, 0.611));
+    fwdScale->setLengthFactor(1.685f);
+    addCalScale(fwdScale, fwdCal);
+    group->addItem(fwdScale);
+
+    // Reverse power calibration — from Thetis MeterManager.cs:22894-22937
+    const std::initializer_list<std::pair<float, QPointF>> revCal = {
+        { 0.00f, QPointF(0.948, 0.74)},
+        { 0.25f, QPointF(0.913, 0.7)},
+        { 0.50f, QPointF(0.899, 0.638)},
+        { 0.75f, QPointF(0.875, 0.594)},
+        { 1.00f, QPointF(0.854, 0.538)},
+        { 2.00f, QPointF(0.814, 0.443)},
+        { 3.00f, QPointF(0.769, 0.4)},
+        { 4.00f, QPointF(0.744, 0.351)},
+        { 5.00f, QPointF(0.702, 0.321)},
+        { 6.00f, QPointF(0.682, 0.285)},
+        { 7.00f, QPointF(0.646, 0.268)},
+        { 8.00f, QPointF(0.626, 0.234)},
+        { 9.00f, QPointF(0.596, 0.228)},
+        {10.00f, QPointF(0.569, 0.196)},
+        {12.00f, QPointF(0.524, 0.166)},
+        {14.00f, QPointF(0.476, 0.14)},
+        {16.00f, QPointF(0.431, 0.121)},
+        {18.00f, QPointF(0.393, 0.109)},
+        {20.00f, QPointF(0.349, 0.098)}
+    };
+
+    // 5. Reverse power needle — bindingId=TxReversePower, CounterClockwise
+    // From Thetis MeterManager.cs:22938-22968
+    NeedleItem* revNeedle = new NeedleItem();
+    revNeedle->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    revNeedle->setBindingId(MeterBinding::TxReversePower);
+    revNeedle->setZOrder(10);
+    revNeedle->setDirection(NeedleItem::NeedleDirection::CounterClockwise);
+    revNeedle->setNeedleOffset(QPointF(-0.322, 0.611));  // Negative X creates mirror
+    revNeedle->setLengthFactor(1.62f);
+    revNeedle->setStrokeWidth(2.5f);
+    revNeedle->setNeedleColor(Qt::black);
+    revNeedle->setHistoryEnabled(true);
+    revNeedle->setHistoryColor(QColor(100, 149, 237, 96));  // Cornflower blue alpha
+    revNeedle->setAttackRatio(0.2f);
+    revNeedle->setDecayRatio(0.1f);
+    revNeedle->setNormaliseTo100W(true);
+    revNeedle->setSourceLabel(QStringLiteral("Rev Power"));
+    addCal(revNeedle, revCal);
+    group->addItem(revNeedle);
+
+    // 6. Reverse power scale — NeedleScalePwrItem companion, CounterClockwise
+    // From Thetis MeterManager.cs:22970-22974
+    NeedleScalePwrItem* revScale = new NeedleScalePwrItem();
+    revScale->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    revScale->setZOrder(11);
+    revScale->setMarks(8);
+    revScale->setFontFamily(QStringLiteral("Trebuchet MS"));
+    revScale->setFontSize(16.0f);
+    revScale->setFontBold(true);
+    revScale->setLowColour(Qt::gray);
+    revScale->setHighColour(Qt::red);
+    revScale->setDirection(NeedleScalePwrItem::Direction::CounterClockwise);
+    revScale->setNeedleOffset(QPointF(-0.322, 0.611));
+    revScale->setLengthFactor(1.685f);
+    addCalScale(revScale, revCal);
+    group->addItem(revScale);
+
+    return group;
+}
+
 // createMagicEyePreset
 // Single MagicEyeItem fills the full group rect.
 // From Thetis MeterManager.cs clsMagicEye usage.
