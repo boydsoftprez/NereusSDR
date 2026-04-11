@@ -40,7 +40,6 @@ private:
     QButtonGroup*   m_tabGroup{nullptr};
     QPushButton*    m_phoneTabBtn{nullptr};
     QPushButton*    m_cwTabBtn{nullptr};
-    QPushButton*    m_fmTabBtn{nullptr};
 
     // ── Phone page (13 controls) ──────────────────────────────────────────────
     // #1  Mic level gauge (HGauge -40..+10 dBFS, yellow -10, red 0)
