@@ -219,9 +219,13 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
     buildDspFlyout();
     buildDisplayFlyout();
     buildDaxFlyout();
+    buildZoomButtons();
 
-    // Install event filter for auto-close on outside click
+    // Install event filter for auto-close on outside click and parent resize tracking
     qApp->installEventFilter(this);
+    if (parentWidget()) {
+        parentWidget()->installEventFilter(this);
+    }
 
     updateLayout();
 }
@@ -230,6 +234,7 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
 
 bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
 {
+    // Auto-close flyout on outside click (from AetherSDR)
     if (event->type() == QEvent::MouseButtonPress && m_activeFlyout) {
         auto* me = static_cast<QMouseEvent*>(event);
         QPoint gp = me->globalPosition().toPoint();
@@ -243,6 +248,12 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
             hideFlyout();
         }
     }
+
+    // Reposition zoom buttons when parent (spectrum widget) resizes
+    if (obj == parentWidget() && event->type() == QEvent::Resize) {
+        repositionZoomButtons();
+    }
+
     return QWidget::eventFilter(obj, event);
 }
 
@@ -303,6 +314,7 @@ void SpectrumOverlayPanel::toggle()
         hideFlyout();
     }
     updateLayout();
+    emit collapsed(!m_expanded);
 }
 
 // ── Band flyout ───────────────────────────────────────────────────────────────
@@ -1002,5 +1014,80 @@ void SpectrumOverlayPanel::toggleDaxFlyout()
 void SpectrumOverlayPanel::wheelEvent(QWheelEvent* event) { event->accept(); }
 void SpectrumOverlayPanel::mousePressEvent(QMouseEvent* event) { event->accept(); }
 void SpectrumOverlayPanel::mouseReleaseEvent(QMouseEvent* event) { event->accept(); }
+
+// ── Waterfall zoom buttons ─────────────────────────────────────────────────────
+// Four small buttons [S][B][-][+] docked at bottom-left of the spectrum widget.
+// [S] = Segment zoom (fit visible slice passband), [B] = Band zoom (fit whole band),
+// [-] = zoom out, [+] = zoom in.
+// From AetherSDR SpectrumOverlayMenu.cpp zoom controls section.
+
+void SpectrumOverlayPanel::buildZoomButtons()
+{
+    // Parent: same spectrum widget as the panel (parentWidget())
+    m_zoomStrip = new QWidget(parentWidget());
+    m_zoomStrip->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    m_zoomStrip->setAttribute(Qt::WA_NoSystemBackground, true);
+
+    static constexpr int kZBtnW = 24;
+    static constexpr int kZBtnH = 20;
+    static constexpr int kZGap  = 2;
+
+    const QString zBtnStyle =
+        "QPushButton { background: rgba(20, 30, 45, 200); "
+        "border: 1px solid rgba(255, 255, 255, 40); border-radius: 2px; "
+        "color: #c8d8e8; font-size: 10px; font-weight: bold; }"
+        "QPushButton:hover { background: rgba(0, 112, 192, 180); "
+        "border: 1px solid #0090e0; }"
+        "QPushButton:pressed { background: rgba(0, 144, 224, 200); }";
+
+    auto makeZBtn = [&](const QString& text) -> QPushButton* {
+        auto* btn = new QPushButton(text, m_zoomStrip);
+        btn->setFixedSize(kZBtnW, kZBtnH);
+        btn->setStyleSheet(zBtnStyle);
+        return btn;
+    };
+
+    m_zoomSegBtn  = makeZBtn(QStringLiteral("S"));
+    m_zoomBandBtn = makeZBtn(QStringLiteral("B"));
+    m_zoomOutBtn  = makeZBtn(QStringLiteral("-"));
+    m_zoomInBtn   = makeZBtn(QStringLiteral("+"));
+
+    m_zoomSegBtn->setToolTip(QStringLiteral("Segment zoom — fit visible slice passband"));
+    m_zoomBandBtn->setToolTip(QStringLiteral("Band zoom — fit entire amateur band"));
+    m_zoomOutBtn->setToolTip(QStringLiteral("Zoom out — increase visible bandwidth"));
+    m_zoomInBtn->setToolTip(QStringLiteral("Zoom in — decrease visible bandwidth"));
+
+    connect(m_zoomSegBtn,  &QPushButton::clicked, this, &SpectrumOverlayPanel::zoomSegment);
+    connect(m_zoomBandBtn, &QPushButton::clicked, this, &SpectrumOverlayPanel::zoomBand);
+    connect(m_zoomOutBtn,  &QPushButton::clicked, this, &SpectrumOverlayPanel::zoomOut);
+    connect(m_zoomInBtn,   &QPushButton::clicked, this, &SpectrumOverlayPanel::zoomIn);
+
+    // Lay out horizontally inside the strip
+    int xOff = kZGap;
+    for (QPushButton* btn : {m_zoomSegBtn, m_zoomBandBtn, m_zoomOutBtn, m_zoomInBtn}) {
+        btn->move(xOff, kZGap);
+        xOff += kZBtnW + kZGap;
+    }
+    m_zoomStrip->setFixedSize(xOff, kZBtnH + 2 * kZGap);
+    m_zoomStrip->show();
+    m_zoomStrip->raise();
+
+    repositionZoomButtons();
+}
+
+void SpectrumOverlayPanel::repositionZoomButtons()
+{
+    if (!m_zoomStrip || !parentWidget()) { return; }
+    QWidget* spectrum = parentWidget();
+    // Place at bottom-left of the waterfall area, above the frequency scale
+    // (approximate: leave 32px from bottom for frequency scale bar)
+    static constexpr int kFreqScaleH = 32;
+    static constexpr int kMargin     = 4;
+    int x = kMargin;
+    int y = spectrum->height() - kFreqScaleH - m_zoomStrip->height() - kMargin;
+    y = std::max(kMargin, y);
+    m_zoomStrip->move(x, y);
+    m_zoomStrip->raise();
+}
 
 } // namespace NereusSDR

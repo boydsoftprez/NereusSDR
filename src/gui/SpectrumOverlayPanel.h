@@ -43,6 +43,15 @@ signals:
     void wfBlackLevelChanged(int level);
     void colorSchemeChanged(int scheme);
 
+    // Zoom buttons
+    void zoomSegment();
+    void zoomBand();
+    void zoomOut();
+    void zoomIn();
+
+    // Collapse
+    void collapsed(bool isCollapsed);
+
     // NYI placeholders
     void addRxClicked();
     void addTnfClicked();
@@ -53,10 +62,16 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
 
+public:
+    // Reposition zoom buttons to bottom-left of parent spectrum widget.
+    // Must be called after parent resize.
+    void repositionZoomButtons();
+
 private:
     // Layout
     void updateLayout();
     void toggle();
+    void buildZoomButtons();
 
     // Flyout builders
     void buildBandFlyout();
@@ -130,6 +145,13 @@ private:
     QWidget*   m_daxFlyout{nullptr};
     QComboBox* m_daxCmb{nullptr};
     QComboBox* m_daxIqCmb{nullptr};
+
+    // ── Waterfall zoom buttons (bottom-left of spectrum widget) ──────────
+    QWidget*     m_zoomStrip{nullptr};   // container for the 4 zoom buttons
+    QPushButton* m_zoomSegBtn{nullptr};
+    QPushButton* m_zoomBandBtn{nullptr};
+    QPushButton* m_zoomOutBtn{nullptr};
+    QPushButton* m_zoomInBtn{nullptr};
 };
 
 } // namespace NereusSDR
