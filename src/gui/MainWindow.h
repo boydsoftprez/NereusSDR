@@ -2,6 +2,9 @@
 
 #include <QMainWindow>
 #include <QLabel>
+#include <QAction>
+#include <QActionGroup>
+#include <QTimer>
 
 class QProgressDialog;
 class QThread;
@@ -29,6 +32,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onConnectionStateChanged();
@@ -47,9 +51,14 @@ private:
     ConnectionPanel* m_connectionPanel{nullptr};
     SupportDialog* m_supportDialog{nullptr};
 
-    // Status bar widgets
+    // Status bar widgets (double-height AetherSDR design, 46px)
     QLabel* m_connStatusLabel{nullptr};
-    QLabel* m_radioInfoLabel{nullptr};
+    QLabel* m_radioModelLabel{nullptr};
+    QLabel* m_radioFwLabel{nullptr};
+    QLabel* m_callsignLabel{nullptr};
+    QLabel* m_utcTimeLabel{nullptr};
+    QTimer* m_clockTimer{nullptr};
+    QLabel* m_tnfLabel{nullptr};
 
     // Wisdom generation dialog (shown on first run)
     QProgressDialog* m_wisdomDialog{nullptr};
@@ -75,6 +84,47 @@ private:
     MeterWidget* m_meterWidget{nullptr};
     MeterPoller* m_meterPoller{nullptr};
     void populateDefaultMeter();
+
+    // Menu DSP actions (for overlay sync — Phase 3-UI)
+    QAction* m_nrAction  = nullptr;
+    QAction* m_nbAction  = nullptr;
+    QAction* m_anfAction = nullptr;
+
+    // Mode menu actions (12 modes, mutual exclusion via QActionGroup)
+    QAction*      m_modeActions[12]  = {};
+    QActionGroup* m_modeActionGroup  = nullptr;
+
+    // AGC menu action group (Task 12)
+    QActionGroup* m_agcGroup = nullptr;
+
+    // Dark theme checkable action (Task 12)
+    QAction* m_darkThemeAction = nullptr;
+
+    // Status bar members (Task 13)
+    QLabel*  m_cpuTopLabel{nullptr};   // "CPU: X.X%"
+    QLabel*  m_cpuBotLabel{nullptr};   // "Mem: —"
+    QTimer*  m_cpuTimer{nullptr};
+    QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
+
+    // Applets (Phase 3-UI)
+    class RxApplet* m_rxApplet{nullptr};
+    class PhoneCwApplet* m_phoneCwApplet{nullptr};
+    class EqApplet* m_eqApplet{nullptr};
+
+    // Applets — Tasks 7-10 (NYI shells, hidden until Task 15 Container wiring)
+    class DigitalApplet*    m_digitalApplet{nullptr};
+    class PureSignalApplet* m_pureSignalApplet{nullptr};
+    class DiversityApplet*  m_diversityApplet{nullptr};
+    class CwxApplet*        m_cwxApplet{nullptr};
+    class DvkApplet*        m_dvkApplet{nullptr};
+    class CatApplet*        m_catApplet{nullptr};
+    class TunerApplet*      m_tunerApplet{nullptr};
+
+    // Spectrum overlay panel
+    class SpectrumOverlayPanel* m_overlayPanel{nullptr};
+
+    // Applet panel — scrollable content widget inside Container #0
+    class AppletPanelWidget* m_appletPanel{nullptr};
 };
 
 } // namespace NereusSDR
