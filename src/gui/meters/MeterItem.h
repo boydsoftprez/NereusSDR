@@ -10,6 +10,8 @@
 #include <QString>
 
 class QPainter;
+class QMouseEvent;
+class QWheelEvent;
 
 namespace NereusSDR {
 
@@ -62,6 +64,13 @@ public:
 
     virtual QString serialize() const;
     virtual bool deserialize(const QString& data);
+
+    // --- Mouse interaction (Phase 3G-5) ---
+    virtual bool hitTest(const QPointF& pos, int widgetW, int widgetH) const;
+    virtual bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH);
+    virtual bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH);
+    virtual bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH);
+    virtual bool handleWheel(QWheelEvent* event, int widgetW, int widgetH);
 
 protected:
     QRect pixelRect(int widgetW, int widgetH) const {

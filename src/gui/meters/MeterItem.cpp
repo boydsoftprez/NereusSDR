@@ -1,6 +1,7 @@
 #include "MeterItem.h"
 
 #include <QPainter>
+#include <QMouseEvent>
 #include <QFont>
 #include <QFontMetrics>
 #include <QStringList>
@@ -45,6 +46,39 @@ bool MeterItem::deserialize(const QString& data)
     setBindingId(bid);
     setZOrder(zo);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// MeterItem base — mouse interaction (Phase 3G-5)
+// ---------------------------------------------------------------------------
+
+bool MeterItem::hitTest(const QPointF& pos, int widgetW, int widgetH) const
+{
+    return pixelRect(widgetW, widgetH).contains(pos.toPoint());
+}
+
+bool MeterItem::handleMousePress(QMouseEvent* event, int widgetW, int widgetH)
+{
+    Q_UNUSED(event); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+    return false;
+}
+
+bool MeterItem::handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH)
+{
+    Q_UNUSED(event); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+    return false;
+}
+
+bool MeterItem::handleMouseMove(QMouseEvent* event, int widgetW, int widgetH)
+{
+    Q_UNUSED(event); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+    return false;
+}
+
+bool MeterItem::handleWheel(QWheelEvent* event, int widgetW, int widgetH)
+{
+    Q_UNUSED(event); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+    return false;
 }
 
 // ---------------------------------------------------------------------------
