@@ -199,6 +199,7 @@ set(GUI_SOURCES
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/MeterPoller.cpp
+    src/gui/HGauge.cpp
 )
 
 # --------------------------------------------------------------------------
