@@ -8,14 +8,16 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSizePolicy>
+#include <QResizeEvent>
 
 namespace NereusSDR {
 
 AppletPanelWidget::AppletPanelWidget(QWidget* parent)
     : QWidget(parent)
 {
-    // From AetherSDR AppletPanel.cpp: fixedWidth 260, background #0a0a18
-    setFixedWidth(Style::kAppletPanelW);
+    // Minimum width matches AetherSDR AppletPanel (260px), but allow
+    // dynamic expansion when the user drags the splitter handle wider.
+    setMinimumWidth(Style::kAppletPanelW);
     setStyleSheet(QStringLiteral("AppletPanelWidget { background: %1; }")
                       .arg(Style::kPanelBg));
 
@@ -61,19 +63,31 @@ AppletPanelWidget::AppletPanelWidget(QWidget* parent)
 }
 
 void AppletPanelWidget::setHeaderWidget(QWidget* widget, const QString& title,
-                                         int fixedHeight)
+                                         float aspectRatio)
 {
     if (!widget) { return; }
+    m_headerAspect = aspectRatio;
+    m_headerWidget = widget;
 
-    // Set fixed height so the meter never gets compressed.
-    // Force minimum width to fill the panel — QRhiWidgets may not expand naturally.
-    widget->setFixedHeight(fixedHeight);
-    widget->setMinimumWidth(Style::kAppletPanelW - 2);  // panel width minus tiny margin
+    // Let the widget expand to fill width; height set dynamically in resizeEvent
     widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     QWidget* wrapped = wrapWithTitleBar(widget, title);
     wrapped->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_headerLayout->addWidget(wrapped);
+
+    // Set initial height based on current width
+    int h = qMax(80, static_cast<int>(width() / aspectRatio));
+    widget->setFixedHeight(h);
+}
+
+void AppletPanelWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (m_headerWidget && m_headerAspect > 0.0f) {
+        int h = qMax(80, static_cast<int>(event->size().width() / m_headerAspect));
+        m_headerWidget->setFixedHeight(h);
+    }
 }
 
 void AppletPanelWidget::addApplet(AppletWidget* applet)

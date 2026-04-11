@@ -458,25 +458,11 @@ NeedleItem::NeedleItem(QObject* parent)
 // Centers the meter drawing area within the item's pixel rect.
 QRect NeedleItem::meterRect(int widgetW, int widgetH) const
 {
-    const QRect pr = pixelRect(widgetW, widgetH);
-    const int pw = pr.width();
-    const int ph = pr.height();
-    const float currentAspect = static_cast<float>(pw) / qMax(1.0f, static_cast<float>(ph));
-
-    int ew, eh;
-    if (currentAspect > kTargetAspect) {
-        // Too wide — constrain by height
-        eh = ph;
-        ew = static_cast<int>(ph * kTargetAspect);
-    } else {
-        // Too tall — constrain by width
-        ew = pw;
-        eh = static_cast<int>(pw / kTargetAspect);
-    }
-
-    const int ex = pr.left() + (pw - ew) / 2;
-    const int ey = pr.top() + (ph - eh) / 2;
-    return QRect(ex, ey, ew, eh);
+    // Use the full pixel rect — no aspect-ratio letterboxing.
+    // The arc geometry already adapts via effectiveW = min(pw, ph * kTargetAspect)
+    // in each paint method, so the needle scales properly while the background
+    // and text labels fill the full available width.
+    return pixelRect(widgetW, widgetH);
 }
 
 bool NeedleItem::participatesIn(Layer layer) const
@@ -569,8 +555,7 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     const float pw = static_cast<float>(rect.width());
     const float ph = static_cast<float>(rect.height());
     const float cx = rect.left() + pw * 0.5f;
-    const float effectiveW = std::min(pw, ph * kTargetAspect);
-    const float radius = effectiveW * kRadiusRatio;
+    const float radius = pw * kRadiusRatio;
     const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
     const float pivotY = rect.top() + ph + 6.0f;
 
@@ -609,8 +594,7 @@ void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
     // From AetherSDR: cx = width*0.5, radius = width*0.85
     // cy = height + radius - height*0.65
     const float cx = rect.left() + pw * 0.5f;
-    const float effectiveW = std::min(pw, ph * kTargetAspect);
-    const float radius = effectiveW * kRadiusRatio;
+    const float radius = pw * kRadiusRatio;
     const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
 
     const QRectF arcRect(cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
@@ -659,8 +643,7 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     const float pw = static_cast<float>(rect.width());
     const float ph = static_cast<float>(rect.height());
     const float cx = rect.left() + pw * 0.5f;
-    const float effectiveW = std::min(pw, ph * kTargetAspect);
-    const float radius = effectiveW * kRadiusRatio;
+    const float radius = pw * kRadiusRatio;
     const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
 
     // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
@@ -768,8 +751,7 @@ void NeedleItem::paintOverlayStatic(QPainter& p, int widgetW, int widgetH)
     const float pw = static_cast<float>(rect.width());
     const float ph = static_cast<float>(rect.height());
     const float cx = rect.left() + pw * 0.5f;
-    const float effectiveW = std::min(pw, ph * kTargetAspect);
-    const float radius = effectiveW * kRadiusRatio;
+    const float radius = pw * kRadiusRatio;
     const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
 
     // Tick definitions from AetherSDR SMeterWidget.cpp lines 340-347

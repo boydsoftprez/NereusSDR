@@ -26,9 +26,10 @@ class AppletPanelWidget : public QWidget {
 public:
     explicit AppletPanelWidget(QWidget* parent = nullptr);
 
-    // Set a fixed header widget (e.g., MeterWidget) that stays visible above
-    // the scroll area. Only one header — subsequent calls replace the previous.
-    void setHeaderWidget(QWidget* widget, const QString& title, int fixedHeight = 300);
+    // Set a header widget (e.g., MeterWidget) that stays visible above
+    // the scroll area. Height scales dynamically with width using the
+    // given aspect ratio (default 2.0 = AetherSDR's 280:140).
+    void setHeaderWidget(QWidget* widget, const QString& title, float aspectRatio = 2.0f);
 
     // Add an applet — wraps it with a title bar and adds to the scroll stack
     void addApplet(AppletWidget* applet);
@@ -42,6 +43,9 @@ public:
 
     QList<AppletWidget*> applets() const { return m_applets; }
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
     QWidget* wrapWithTitleBar(QWidget* child, const QString& title);
 
@@ -51,6 +55,8 @@ private:
     QVBoxLayout* m_stackLayout = nullptr;    // inside scroll area
     QList<AppletWidget*> m_applets;
     QMap<AppletWidget*, QWidget*> m_wrappers;  // applet → wrapper widget
+    QWidget* m_headerWidget = nullptr;         // header widget for dynamic resize
+    float m_headerAspect = 0.0f;               // width/height ratio for header
 };
 
 } // namespace NereusSDR
