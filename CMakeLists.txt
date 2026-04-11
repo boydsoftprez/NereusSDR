@@ -202,6 +202,7 @@ set(GUI_SOURCES
     src/gui/HGauge.cpp
     src/gui/applets/AppletWidget.cpp
     src/gui/applets/NyiOverlay.cpp
+    src/gui/applets/AppletPanelWidget.cpp
 )
 
 # --------------------------------------------------------------------------
