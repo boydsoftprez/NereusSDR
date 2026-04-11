@@ -199,6 +199,11 @@ void MainWindow::buildUI()
     if (m_containerManager->containerCount() == 0) {
         createDefaultContainers();
     }
+    // Always populate the panel container's content (meters + applets).
+    // On first run, createDefaultContainers() creates the shell; on restore,
+    // restoreState() recreates the shell but content is lost. This ensures
+    // the applet panel is always populated regardless of restore path.
+    populateDefaultMeter();
     m_containerManager->restoreSplitterState();
 
     // Default splitter sizes on first run: ~80% spectrum, ~20% panel
@@ -301,6 +306,13 @@ void MainWindow::populateDefaultMeter()
     ContainerWidget* c0 = m_containerManager->panelContainer();
     if (!c0) {
         qCWarning(lcContainer) << "No panel container for meter widget";
+        return;
+    }
+
+    // Guard: don't repopulate if real content (AppletPanelWidget) already exists.
+    // The container constructor creates a placeholder QLabel("Container") which
+    // we need to replace. Check if content is already an AppletPanelWidget.
+    if (qobject_cast<AppletPanelWidget*>(c0->content()) != nullptr) {
         return;
     }
 

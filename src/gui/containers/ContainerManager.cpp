@@ -399,7 +399,13 @@ void ContainerManager::restoreState()
         m_containers.insert(container->id(), container);
         m_floatingForms.insert(container->id(), floatingForm);
 
-        // Apply dock mode
+        // Track the first restored container as the panel container, regardless
+        // of its current dock mode. This ensures panelContainer() returns it so
+        // MainWindow can populate its content (meters + applets).
+        if (m_panelContainerId.isEmpty()) {
+            m_panelContainerId = container->id();
+        }
+
         switch (container->dockMode()) {
         case DockMode::PanelDocked:
             container->setParent(m_splitter);
