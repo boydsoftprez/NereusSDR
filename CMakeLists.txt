@@ -196,6 +196,7 @@ set(GUI_SOURCES
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
+    src/gui/containers/ContainerSettingsDialog.cpp
     src/gui/meters/MeterWidget.cpp
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
