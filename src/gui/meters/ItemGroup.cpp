@@ -698,6 +698,235 @@ ItemGroup* ItemGroup::createCustomBarPreset(int bindingId, double minVal, double
 // Phase 3G-4 composite presets
 // ---------------------------------------------------------------------------
 
+// createAnanMMPreset
+// From Thetis AddAnanMM() (MeterManager.cs:22461-22815)
+// 7-needle composite meter: Signal, Volts, Amps, Power, SWR, Compression, ALC
+// with NeedleScalePwrItem for power labels.
+ItemGroup* ItemGroup::createAnanMMPreset(QObject* parent)
+{
+    ItemGroup* group = new ItemGroup(QStringLiteral("ANAN MM"), parent);
+
+    // Helper: populate calibration map from initializer list
+    // From Thetis MeterManager.cs calibration point arrays
+    auto addCal = [](NeedleItem* ni, std::initializer_list<std::pair<float, QPointF>> points) {
+        QMap<float, QPointF> cal;
+        for (const auto& [val, pos] : points) {
+            cal.insert(val, pos);
+        }
+        ni->setScaleCalibration(cal);
+    };
+
+    // Shared needle geometry — from Thetis MeterManager.cs:22487-22489
+    const QPointF sharedOffset(0.004, 0.736);
+    const QPointF sharedRadius(1.0, 0.58);
+
+    // 1. Background image (z=1)
+    ImageItem* bg = new ImageItem();
+    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setImagePath(QStringLiteral("resources/meters/ananMM.png"));
+    bg->setZOrder(1);
+    group->addItem(bg);
+
+    // 2. Signal needle — bindingId=SignalAvg, onlyWhenRx=true
+    // From Thetis MeterManager.cs:22491-22510
+    NeedleItem* signal = new NeedleItem();
+    signal->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    signal->setBindingId(MeterBinding::SignalAvg);
+    signal->setZOrder(10);
+    signal->setNeedleColor(QColor(233, 51, 50));
+    signal->setAttackRatio(0.8f);
+    signal->setDecayRatio(0.2f);
+    signal->setLengthFactor(1.65f);
+    signal->setNeedleOffset(sharedOffset);
+    signal->setRadiusRatio(sharedRadius);
+    signal->setOnlyWhenRx(true);
+    signal->setSourceLabel(QStringLiteral("Signal"));
+    // 16-point calibration — from Thetis MeterManager.cs:22491-22506
+    addCal(signal, {
+        {-127.0f, QPointF(0.076, 0.31)},  {-121.0f, QPointF(0.131, 0.272)},
+        {-115.0f, QPointF(0.189, 0.254)},  {-109.0f, QPointF(0.233, 0.211)},
+        {-103.0f, QPointF(0.284, 0.207)},  { -97.0f, QPointF(0.326, 0.177)},
+        { -91.0f, QPointF(0.374, 0.177)},  { -85.0f, QPointF(0.414, 0.151)},
+        { -79.0f, QPointF(0.459, 0.168)},  { -73.0f, QPointF(0.501, 0.142)},
+        { -63.0f, QPointF(0.564, 0.172)},  { -53.0f, QPointF(0.63, 0.164)},
+        { -43.0f, QPointF(0.695, 0.203)},  { -33.0f, QPointF(0.769, 0.211)},
+        { -23.0f, QPointF(0.838, 0.272)},  { -13.0f, QPointF(0.926, 0.31)}
+    });
+    group->addItem(signal);
+
+    // 3. Volts needle — bindingId=HwVolts
+    // From Thetis MeterManager.cs:22530-22545
+    NeedleItem* volts = new NeedleItem();
+    volts->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    volts->setBindingId(MeterBinding::HwVolts);
+    volts->setZOrder(10);
+    volts->setNeedleColor(Qt::black);
+    volts->setAttackRatio(0.2f);
+    volts->setDecayRatio(0.2f);
+    volts->setLengthFactor(0.75f);
+    volts->setNeedleOffset(sharedOffset);
+    volts->setRadiusRatio(sharedRadius);
+    volts->setSourceLabel(QStringLiteral("Volts"));
+    // 3-point calibration — from Thetis MeterManager.cs:22535-22537
+    addCal(volts, {
+        {10.0f,  QPointF(0.559, 0.756)},
+        {12.5f,  QPointF(0.605, 0.772)},
+        {15.0f,  QPointF(0.665, 0.784)}
+    });
+    group->addItem(volts);
+
+    // 4. Amps needle — bindingId=HwAmps, onlyWhenTx=true, displayGroup=4
+    // From Thetis MeterManager.cs:22548-22570
+    NeedleItem* amps = new NeedleItem();
+    amps->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    amps->setBindingId(MeterBinding::HwAmps);
+    amps->setZOrder(10);
+    amps->setNeedleColor(Qt::black);
+    amps->setLengthFactor(1.15f);
+    amps->setNeedleOffset(sharedOffset);
+    amps->setRadiusRatio(sharedRadius);
+    amps->setOnlyWhenTx(true);
+    amps->setDisplayGroup(4);
+    amps->setSourceLabel(QStringLiteral("Amps"));
+    // 11-point calibration — from Thetis MeterManager.cs:22555-22565
+    addCal(amps, {
+        { 0.0f, QPointF(0.199, 0.576)},  { 2.0f, QPointF(0.27,  0.54)},
+        { 4.0f, QPointF(0.333, 0.516)},  { 6.0f, QPointF(0.393, 0.504)},
+        { 8.0f, QPointF(0.448, 0.492)},  {10.0f, QPointF(0.499, 0.492)},
+        {12.0f, QPointF(0.554, 0.488)},  {14.0f, QPointF(0.608, 0.5)},
+        {16.0f, QPointF(0.667, 0.516)},  {18.0f, QPointF(0.728, 0.54)},
+        {20.0f, QPointF(0.799, 0.576)}
+    });
+    group->addItem(amps);
+
+    // 5. Power needle — bindingId=TxPower, onlyWhenTx=true, displayGroup=1
+    // From Thetis MeterManager.cs:22573-22605
+    NeedleItem* power = new NeedleItem();
+    power->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    power->setBindingId(MeterBinding::TxPower);
+    power->setZOrder(10);
+    power->setNeedleColor(QColor(233, 51, 50));
+    power->setAttackRatio(0.2f);
+    power->setDecayRatio(0.1f);
+    power->setLengthFactor(1.55f);
+    power->setNeedleOffset(sharedOffset);
+    power->setRadiusRatio(sharedRadius);
+    power->setOnlyWhenTx(true);
+    power->setDisplayGroup(1);
+    power->setNormaliseTo100W(true);
+    power->setHistoryEnabled(true);
+    power->setHistoryDuration(4000);
+    power->setHistoryColor(QColor(64, 233, 51, 50));
+    power->setSourceLabel(QStringLiteral("Power"));
+    // 10-point calibration — from Thetis MeterManager.cs:22580-22589
+    addCal(power, {
+        {  0.0f, QPointF(0.099, 0.352)},  {  5.0f, QPointF(0.164, 0.312)},
+        { 10.0f, QPointF(0.224, 0.28)},   { 25.0f, QPointF(0.335, 0.236)},
+        { 30.0f, QPointF(0.367, 0.228)},  { 40.0f, QPointF(0.436, 0.22)},
+        { 50.0f, QPointF(0.499, 0.212)},  { 60.0f, QPointF(0.559, 0.216)},
+        {100.0f, QPointF(0.751, 0.272)},  {150.0f, QPointF(0.899, 0.352)}
+    });
+    group->addItem(power);
+
+    // 6. Power scale — NeedleScalePwrItem companion
+    // From Thetis MeterManager.cs:22607-22620
+    NeedleScalePwrItem* pwrScale = new NeedleScalePwrItem();
+    pwrScale->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    pwrScale->setZOrder(11);
+    pwrScale->setMarks(7);
+    pwrScale->setFontFamily(QStringLiteral("Trebuchet MS"));
+    pwrScale->setFontSize(22.0f);
+    pwrScale->setFontBold(true);
+    pwrScale->setLowColour(Qt::gray);
+    pwrScale->setHighColour(Qt::red);
+    pwrScale->setMaxPower(150.0f);
+    // Same calibration as power needle
+    {
+        QMap<float, QPointF> cal;
+        cal.insert(0.0f,   QPointF(0.099, 0.352));
+        cal.insert(5.0f,   QPointF(0.164, 0.312));
+        cal.insert(10.0f,  QPointF(0.224, 0.28));
+        cal.insert(25.0f,  QPointF(0.335, 0.236));
+        cal.insert(30.0f,  QPointF(0.367, 0.228));
+        cal.insert(40.0f,  QPointF(0.436, 0.22));
+        cal.insert(50.0f,  QPointF(0.499, 0.212));
+        cal.insert(60.0f,  QPointF(0.559, 0.216));
+        cal.insert(100.0f, QPointF(0.751, 0.272));
+        cal.insert(150.0f, QPointF(0.899, 0.352));
+        pwrScale->setScaleCalibration(cal);
+    }
+    group->addItem(pwrScale);
+
+    // 7. SWR needle — bindingId=TxSwr, onlyWhenTx=true, displayGroup=1
+    // From Thetis MeterManager.cs:22622-22645
+    NeedleItem* swr = new NeedleItem();
+    swr->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    swr->setBindingId(MeterBinding::TxSwr);
+    swr->setZOrder(10);
+    swr->setNeedleColor(Qt::black);
+    swr->setLengthFactor(1.36f);
+    swr->setNeedleOffset(sharedOffset);
+    swr->setRadiusRatio(sharedRadius);
+    swr->setOnlyWhenTx(true);
+    swr->setDisplayGroup(1);
+    swr->setHistoryEnabled(true);
+    swr->setHistoryDuration(4000);
+    swr->setHistoryColor(QColor(64, 100, 149, 237));  // Cornflower blue at alpha 64
+    swr->setSourceLabel(QStringLiteral("SWR"));
+    // 6-point calibration — from Thetis MeterManager.cs:22630-22635
+    addCal(swr, {
+        { 1.0f, QPointF(0.152, 0.468)},  { 1.5f, QPointF(0.28,  0.404)},
+        { 2.0f, QPointF(0.393, 0.372)},  { 2.5f, QPointF(0.448, 0.36)},
+        { 3.0f, QPointF(0.499, 0.36)},   {10.0f, QPointF(0.847, 0.476)}
+    });
+    group->addItem(swr);
+
+    // 8. Compression needle — bindingId=TxAlcGain, onlyWhenTx=true, displayGroup=2
+    // From Thetis MeterManager.cs:22647-22670
+    NeedleItem* comp = new NeedleItem();
+    comp->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    comp->setBindingId(MeterBinding::TxAlcGain);
+    comp->setZOrder(10);
+    comp->setNeedleColor(Qt::black);
+    comp->setLengthFactor(0.96f);
+    comp->setNeedleOffset(sharedOffset);
+    comp->setRadiusRatio(sharedRadius);
+    comp->setOnlyWhenTx(true);
+    comp->setDisplayGroup(2);
+    comp->setSourceLabel(QStringLiteral("Compression"));
+    // 7-point calibration — from Thetis MeterManager.cs:22655-22661
+    addCal(comp, {
+        { 0.0f, QPointF(0.249, 0.68)},   { 5.0f, QPointF(0.342, 0.64)},
+        {10.0f, QPointF(0.425, 0.624)},  {15.0f, QPointF(0.499, 0.62)},
+        {20.0f, QPointF(0.571, 0.628)},  {25.0f, QPointF(0.656, 0.64)},
+        {30.0f, QPointF(0.751, 0.688)}
+    });
+    group->addItem(comp);
+
+    // 9. ALC needle — bindingId=TxAlcGroup, onlyWhenTx=true, displayGroup=3
+    // From Thetis MeterManager.cs:22672-22690
+    NeedleItem* alc = new NeedleItem();
+    alc->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    alc->setBindingId(MeterBinding::TxAlcGroup);
+    alc->setZOrder(10);
+    alc->setNeedleColor(Qt::black);
+    alc->setLengthFactor(0.75f);
+    alc->setNeedleOffset(sharedOffset);
+    alc->setRadiusRatio(sharedRadius);
+    alc->setOnlyWhenTx(true);
+    alc->setDisplayGroup(3);
+    alc->setSourceLabel(QStringLiteral("ALC"));
+    // 3-point calibration — from Thetis MeterManager.cs:22680-22682
+    addCal(alc, {
+        {-30.0f, QPointF(0.295, 0.804)},
+        {  0.0f, QPointF(0.332, 0.784)},
+        { 25.0f, QPointF(0.499, 0.756)}
+    });
+    group->addItem(alc);
+
+    return group;
+}
+
 // createMagicEyePreset
 // Single MagicEyeItem fills the full group rect.
 // From Thetis MeterManager.cs clsMagicEye usage.

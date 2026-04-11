@@ -85,6 +85,10 @@ public:
                                              const QString& name, QObject* parent = nullptr);
 
     // --- Phase 3G-4 composite presets ---
+    // ANAN Multi-Meter: 7-needle composite with background images
+    // From Thetis AddAnanMM() (MeterManager.cs:22461-22815)
+    static ItemGroup* createAnanMMPreset(QObject* parent = nullptr);
+
     static ItemGroup* createMagicEyePreset(int bindingId, QObject* parent = nullptr);
     static ItemGroup* createSignalTextPreset(int bindingId, QObject* parent = nullptr);
     static ItemGroup* createHistoryPreset(int bindingId, QObject* parent = nullptr);
