@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — Phase 3G-3: Core Meter Groups (in progress)
+- NeedleItem: arc-style S-meter needle participating in all 4 GPU render pipelines
+  - P1 Background: QPainter arc segments (white S0-S9, red S9+, blue inner TX arc)
+  - P2 Geometry: uniform-width needle quad + shadow + amber peak marker triangle
+  - P3 OverlayStatic: tick marks and labels (1,3,5,7,9,+20,+40) via needleDir vector
+  - P3 OverlayDynamic: S-unit readout (cyan) + dBm readout (light steel)
+- Multi-layer MeterItem infrastructure: participatesIn() + paintForLayer() virtuals
+- Exponential smoothing (SMOOTH_ALPHA=0.3 from AetherSDR) + peak hold (Medium preset)
+- S-unit scaling from Thetis: S0=-127dBm, S9=-73dBm, 6dB/S-unit
+- Aspect-ratio-locked meterRect() helper (2:1 matching AetherSDR sizeHint 280x140)
+- TX MeterBinding constants 100-105 (Power, ReversePower, SWR, Mic, Comp, ALC)
+- Preset factories: createSMeterPreset, createPowerSwrPreset, createAlcPreset, createMicPreset, createCompPreset
+- ItemGroup::installInto() for positioning groups within MeterWidget sub-regions
+- Default Container #0 layout: S-Meter (55%) + Power/SWR (30%) + ALC (15%)
+- NEEDLE serialization format + deserializer registration
+- NOTE: S-meter will be re-implemented as dedicated SMeterWidget (direct AetherSDR port)
+  for pixel-identical fidelity — the MeterItem/NeedleItem approach introduces rendering
+  artifacts from GPU pipeline splitting and texture-based text
+
 ### Added — Phase 3G-2: MeterWidget GPU Renderer
 - MeterWidget (QRhiWidget): 3-pipeline GPU rendering engine for meters inside ContainerWidget
   - Pipeline 1 (textured quad): cached background textures and images

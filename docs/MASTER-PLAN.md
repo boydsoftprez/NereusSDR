@@ -305,10 +305,20 @@ Verification: Container #0 displays live H_BAR bound to WDSP SignalPeak, updatin
 **Goal:** Ship the meters operators expect on day one.
 
 Scope:
-- NeedleItem (NEEDLE, NEEDLE_SCALE_PWR) + `meter_needle` shader
-- Default presets: S-Meter (needle+scale+text+background), Power/SWR, ALC bar, Mic/Comp bars
-- Default Container #0 pre-loaded with: S-Meter, Power/SWR, ALC
+- SMeterWidget: dedicated QWidget port of AetherSDR's SMeterWidget for pixel-identical S-meter
+- NeedleItem (MeterItem system): composable arc needle for custom meter configurations
+- Default presets: Power/SWR, ALC bar, Mic/Comp bars (via MeterItem system)
+- Default Container #0 pre-loaded with: SMeterWidget (top), Power/SWR + ALC (bottom)
+- TX MeterBinding constants 100-105 (stubs until TxChannel in Phase 3I-1)
 - Data binding: SIGNAL_STRENGTH, AVG_SIGNAL_STRENGTH, ADC, AGC_GAIN, PWR, REVERSE_PWR, SWR, MIC, COMP, ALC
+
+Status:
+- ✅ Multi-layer MeterItem infrastructure (participatesIn + paintForLayer)
+- ✅ NeedleItem with arc rendering, smoothing, peak hold, S-unit scaling
+- ✅ TX MeterBinding constants (100-105)
+- ✅ Preset factories (S-Meter, Power/SWR, ALC, Mic, Comp)
+- ✅ Default Container #0 layout (S-Meter 55% + Power/SWR 30% + ALC 15%)
+- 🔄 SMeterWidget: direct AetherSDR port for pixel-identical fidelity (next)
 
 Verification: Live S-meter needle, Power/SWR during TX, correct readings vs Thetis on same signal.
 

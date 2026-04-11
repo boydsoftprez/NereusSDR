@@ -24,7 +24,7 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 
 ## Current Status
 
-**Phase 3G-2 complete — GPU-rendered meters.** NereusSDR connects to an ANAN-G2 (Orion MkII) via Protocol 2, receives raw I/Q data, demodulates audio through WDSP, renders a live GPU-accelerated spectrum + waterfall with VFO tuning (CTUN mode), and displays live GPU-rendered signal meters in dockable/floatable containers. The meter engine uses the same QRhi 3-pipeline architecture as the spectrum display, polling WDSP meters at 10 FPS.
+**Phase 3G-3 in progress — core meter groups.** NereusSDR connects to an ANAN-G2 (Orion MkII) via Protocol 2, receives raw I/Q data, demodulates audio through WDSP, renders a live GPU-accelerated spectrum + waterfall with VFO tuning (CTUN mode), and displays live GPU-rendered signal meters in dockable/floatable containers. Container #0 shows an arc-style S-meter (NeedleItem), Power/SWR bars, and ALC bar. A dedicated SMeterWidget (direct AetherSDR port) is next for pixel-identical S-meter rendering.
 
 ## Key Features
 
@@ -95,7 +95,7 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 | **3E: VFO + Multi-RX Foundation** | VFO controls + rewire I/Q pipeline for N receivers + CTUN panadapter | **Complete** |
 | **3G-1: Container Infrastructure** | **Dock/float/resize/persist container shells** | **Complete** |
 | **3G-2: MeterWidget GPU Renderer** | **QRhi-based meter rendering engine** | **Complete** |
-| 3G-3: Core Meter Groups | S-Meter, Power/SWR, ALC presets | **Next up** |
+| **3G-3: Core Meter Groups** | **S-Meter, Power/SWR, ALC presets** | **In Progress** |
 | 3G-4: Advanced Meter Items | History graph, magic eye, dial, LED | Planned |
 | 3G-5: Interactive Meter Items | Band/mode/filter buttons, VFO display, clock | Planned |
 | 3G-6: Container Settings Dialog | Full composability UI, import/export | Planned |
