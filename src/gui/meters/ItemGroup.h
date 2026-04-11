@@ -7,6 +7,8 @@
 
 namespace NereusSDR {
 
+class MeterWidget;
+
 class ItemGroup : public QObject {
     Q_OBJECT
 
@@ -35,6 +37,33 @@ public:
     // Colors from AetherSDR: cyan bar (#00b4d8), red zone (#ff4444), dark bg (#0f0f1a).
     static ItemGroup* createHBarPreset(int bindingId, double minVal, double maxVal,
                                         const QString& name, QObject* parent = nullptr);
+
+    // S-Meter preset: arc-style NeedleItem with full readout.
+    // From AetherSDR SMeterWidget visual style.
+    static ItemGroup* createSMeterPreset(int bindingId, const QString& name,
+                                          QObject* parent = nullptr);
+
+    // Power/SWR preset: two stacked horizontal bars.
+    // From Thetis MeterManager.cs AddPWRBar/AddSWRBar calibration.
+    static ItemGroup* createPowerSwrPreset(const QString& name,
+                                            QObject* parent = nullptr);
+
+    // ALC preset: horizontal bar for TX ALC level.
+    // From Thetis MeterManager.cs ALC scale (-30 to 0 dB).
+    static ItemGroup* createAlcPreset(QObject* parent = nullptr);
+
+    // Mic level preset: horizontal bar for TX mic level.
+    // From Thetis MeterManager.cs MIC scale (-30 to 0 dB).
+    static ItemGroup* createMicPreset(QObject* parent = nullptr);
+
+    // Compressor level preset: horizontal bar for TX compressor.
+    // From Thetis MeterManager.cs COMP scale (-25 to 0 dB).
+    static ItemGroup* createCompPreset(QObject* parent = nullptr);
+
+    // Install all items from this group into a MeterWidget, transforming
+    // their normalized 0-1 positions into the given target rect.
+    // Transfers item ownership to widget; clears this group's item list.
+    void installInto(MeterWidget* widget, float gx, float gy, float gw, float gh);
 
 private:
     QString m_name;

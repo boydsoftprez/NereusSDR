@@ -1,4 +1,6 @@
 #include "ItemGroup.h"
+#include "MeterWidget.h"
+#include "MeterPoller.h"
 
 #include <QStringList>
 #include <QtAlgorithms>
@@ -239,6 +241,198 @@ ItemGroup* ItemGroup::createHBarPreset(int bindingId, double minVal, double maxV
     group->addItem(scale);
 
     return group;
+}
+
+// ---------------------------------------------------------------------------
+// installInto
+// Transforms each item's normalized 0-1 rect into the target rect and
+// transfers ownership to the given MeterWidget.
+// ---------------------------------------------------------------------------
+
+void ItemGroup::installInto(MeterWidget* widget, float gx, float gy, float gw, float gh)
+{
+    for (MeterItem* item : m_items) {
+        item->setRect(
+            gx + item->x() * gw,
+            gy + item->y() * gh,
+            item->itemWidth() * gw,
+            item->itemHeight() * gh
+        );
+        item->setParent(widget);
+        widget->addItem(item);
+    }
+    m_items.clear();
+}
+
+// ---------------------------------------------------------------------------
+// createSMeterPreset
+// From AetherSDR SMeterWidget — single NeedleItem handles all rendering.
+// ---------------------------------------------------------------------------
+
+ItemGroup* ItemGroup::createSMeterPreset(int bindingId, const QString& name,
+                                          QObject* parent)
+{
+    ItemGroup* group = new ItemGroup(name, parent);
+
+    NeedleItem* needle = new NeedleItem();
+    needle->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    needle->setBindingId(bindingId);
+    needle->setSourceLabel(name);
+    needle->setZOrder(5);
+    group->addItem(needle);
+
+    return group;
+}
+
+// ---------------------------------------------------------------------------
+// createPowerSwrPreset
+// From Thetis MeterManager.cs AddPWRBar (line 23862) + AddSWRBar (line 23990)
+// Power: 0-120W, HighPoint at 100W (75%). DecayRatio = 0.1
+// SWR: 1:1-5:1, HighPoint at 3:1 (75%). DecayRatio = 0.1
+// ---------------------------------------------------------------------------
+
+ItemGroup* ItemGroup::createPowerSwrPreset(const QString& name, QObject* parent)
+{
+    ItemGroup* group = new ItemGroup(name, parent);
+
+    // Background
+    SolidColourItem* bg = new SolidColourItem();
+    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setColour(QColor(0x0f, 0x0f, 0x1a));
+    bg->setZOrder(0);
+    group->addItem(bg);
+
+    // --- Forward Power section (top half) ---
+
+    TextItem* pwrLabel = new TextItem();
+    pwrLabel->setRect(0.02f, 0.0f, 0.5f, 0.15f);
+    pwrLabel->setLabel(QStringLiteral("Power"));
+    pwrLabel->setBindingId(-1);
+    pwrLabel->setTextColor(QColor(0x80, 0x90, 0xa0));
+    pwrLabel->setFontSize(10);
+    pwrLabel->setBold(false);
+    pwrLabel->setZOrder(10);
+    group->addItem(pwrLabel);
+
+    TextItem* pwrReadout = new TextItem();
+    pwrReadout->setRect(0.5f, 0.0f, 0.48f, 0.15f);
+    pwrReadout->setBindingId(MeterBinding::TxPower);
+    pwrReadout->setTextColor(QColor(0xc8, 0xd8, 0xe8));
+    pwrReadout->setFontSize(13);
+    pwrReadout->setBold(true);
+    pwrReadout->setSuffix(QStringLiteral(" W"));
+    pwrReadout->setDecimals(0);
+    pwrReadout->setZOrder(10);
+    group->addItem(pwrReadout);
+
+    // From Thetis MeterManager.cs AddPWRBar: 0-120W, red at 100W
+    BarItem* pwrBar = new BarItem();
+    pwrBar->setRect(0.02f, 0.17f, 0.96f, 0.22f);
+    pwrBar->setOrientation(BarItem::Orientation::Horizontal);
+    pwrBar->setRange(0.0, 120.0);
+    pwrBar->setBindingId(MeterBinding::TxPower);
+    pwrBar->setBarColor(QColor(0x00, 0xb4, 0xd8));
+    pwrBar->setBarRedColor(QColor(0xff, 0x44, 0x44));
+    pwrBar->setRedThreshold(100.0);   // From Thetis: HighPoint = 100W
+    pwrBar->setAttackRatio(0.8f);     // From Thetis MeterManager.cs
+    pwrBar->setDecayRatio(0.1f);      // From Thetis: PWR DecayRatio = 0.1
+    pwrBar->setZOrder(5);
+    group->addItem(pwrBar);
+
+    ScaleItem* pwrScale = new ScaleItem();
+    pwrScale->setRect(0.02f, 0.40f, 0.96f, 0.12f);
+    pwrScale->setOrientation(ScaleItem::Orientation::Horizontal);
+    pwrScale->setRange(0.0, 120.0);
+    pwrScale->setMajorTicks(7);       // 0, 20, 40, 60, 80, 100, 120
+    pwrScale->setMinorTicks(3);
+    pwrScale->setFontSize(8);
+    pwrScale->setZOrder(10);
+    group->addItem(pwrScale);
+
+    // --- SWR section (bottom half) ---
+
+    TextItem* swrLabel = new TextItem();
+    swrLabel->setRect(0.02f, 0.55f, 0.5f, 0.12f);
+    swrLabel->setLabel(QStringLiteral("SWR"));
+    swrLabel->setBindingId(-1);
+    swrLabel->setTextColor(QColor(0x80, 0x90, 0xa0));
+    swrLabel->setFontSize(10);
+    swrLabel->setBold(false);
+    swrLabel->setZOrder(10);
+    group->addItem(swrLabel);
+
+    TextItem* swrReadout = new TextItem();
+    swrReadout->setRect(0.5f, 0.55f, 0.48f, 0.12f);
+    swrReadout->setBindingId(MeterBinding::TxSwr);
+    swrReadout->setTextColor(QColor(0xc8, 0xd8, 0xe8));
+    swrReadout->setFontSize(13);
+    swrReadout->setBold(true);
+    swrReadout->setSuffix(QStringLiteral(":1"));
+    swrReadout->setDecimals(1);
+    swrReadout->setZOrder(10);
+    group->addItem(swrReadout);
+
+    // From Thetis MeterManager.cs AddSWRBar: 1:1-5:1, red at 3:1
+    BarItem* swrBar = new BarItem();
+    swrBar->setRect(0.02f, 0.69f, 0.96f, 0.15f);
+    swrBar->setOrientation(BarItem::Orientation::Horizontal);
+    swrBar->setRange(1.0, 5.0);
+    swrBar->setBindingId(MeterBinding::TxSwr);
+    swrBar->setBarColor(QColor(0x00, 0xb4, 0xd8));
+    swrBar->setBarRedColor(QColor(0xff, 0x44, 0x44));
+    swrBar->setRedThreshold(3.0);     // From Thetis: HighPoint = SWR 3:1
+    swrBar->setAttackRatio(0.8f);
+    swrBar->setDecayRatio(0.1f);      // From Thetis: SWR DecayRatio = 0.1
+    swrBar->setZOrder(5);
+    group->addItem(swrBar);
+
+    ScaleItem* swrScale = new ScaleItem();
+    swrScale->setRect(0.02f, 0.86f, 0.96f, 0.12f);
+    swrScale->setOrientation(ScaleItem::Orientation::Horizontal);
+    swrScale->setRange(1.0, 5.0);
+    swrScale->setMajorTicks(5);       // 1, 2, 3, 4, 5
+    swrScale->setMinorTicks(1);
+    swrScale->setFontSize(8);
+    swrScale->setZOrder(10);
+    group->addItem(swrScale);
+
+    return group;
+}
+
+// ---------------------------------------------------------------------------
+// createAlcPreset
+// ALC preset: horizontal bar, -30 to 0 dB range.
+// From Thetis MeterManager.cs ALC scale: 0 dB = 66.5% bar
+// ---------------------------------------------------------------------------
+
+ItemGroup* ItemGroup::createAlcPreset(QObject* parent)
+{
+    return createHBarPreset(MeterBinding::TxAlc, -30.0, 0.0,
+                            QStringLiteral("ALC"), parent);
+}
+
+// ---------------------------------------------------------------------------
+// createMicPreset
+// Mic level preset: horizontal bar, -30 to 0 dB range.
+// From Thetis MeterManager.cs MIC scale
+// ---------------------------------------------------------------------------
+
+ItemGroup* ItemGroup::createMicPreset(QObject* parent)
+{
+    return createHBarPreset(MeterBinding::TxMic, -30.0, 0.0,
+                            QStringLiteral("Mic"), parent);
+}
+
+// ---------------------------------------------------------------------------
+// createCompPreset
+// Compressor level preset: horizontal bar, -25 to 0 dB range.
+// From Thetis MeterManager.cs COMP scale
+// ---------------------------------------------------------------------------
+
+ItemGroup* ItemGroup::createCompPreset(QObject* parent)
+{
+    return createHBarPreset(MeterBinding::TxComp, -25.0, 0.0,
+                            QStringLiteral("Comp"), parent);
 }
 
 } // namespace NereusSDR
