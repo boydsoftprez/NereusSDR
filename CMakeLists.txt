@@ -199,16 +199,25 @@ set(GUI_SOURCES
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/MeterPoller.cpp
-<<<<<<< HEAD
     src/gui/HGauge.cpp
+    src/gui/SpectrumOverlayPanel.cpp
+    src/gui/SetupDialog.cpp
+    src/gui/SetupPage.cpp
     src/gui/applets/AppletWidget.cpp
     src/gui/applets/NyiOverlay.cpp
     src/gui/applets/AppletPanelWidget.cpp
-=======
-    src/gui/applets/AppletWidget.cpp
-    src/gui/applets/NyiOverlay.cpp
+    src/gui/applets/RxApplet.cpp
+    src/gui/applets/TxApplet.cpp
+    src/gui/applets/PhoneCwApplet.cpp
     src/gui/applets/EqApplet.cpp
->>>>>>> worktree-agent-ab456fc2
+    src/gui/applets/FmApplet.cpp
+    src/gui/applets/DigitalApplet.cpp
+    src/gui/applets/PureSignalApplet.cpp
+    src/gui/applets/DiversityApplet.cpp
+    src/gui/applets/CwxApplet.cpp
+    src/gui/applets/DvkApplet.cpp
+    src/gui/applets/CatApplet.cpp
+    src/gui/applets/TunerApplet.cpp
 )
 
 # --------------------------------------------------------------------------

@@ -18,6 +18,8 @@
 #include "meters/MeterItem.h"
 #include "meters/ItemGroup.h"
 #include "meters/MeterPoller.h"
+#include "applets/AppletPanelWidget.h"
+#include "applets/PhoneCwApplet.h"
 
 #include <cmath>
 
@@ -26,10 +28,17 @@
 #include <QCloseEvent>
 #include <QResizeEvent>
 #include <QMenuBar>
+#include <QMenu>
+#include <QAction>
+#include <QActionGroup>
 #include <QStatusBar>
 #include <QLabel>
+#include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSplitter>
+#include <QDateTime>
+#include <QPainter>
+#include <QPixmap>
 #include <QProgressDialog>
 #include <QTimer>
 #include <QThread>
@@ -291,25 +300,68 @@ void MainWindow::populateDefaultMeter()
     alc->installInto(m_meterWidget, 0.0f, 0.85f, 1.0f, 0.15f);
     delete alc;
 
-    c0->setContent(m_meterWidget);
+    // Build an AppletPanelWidget: MeterWidget on top, PhoneCwApplet below.
+    auto* panel = new AppletPanelWidget();
+    panel->addWidget(m_meterWidget, QStringLiteral("Meters"));
+
+    // PhoneCwApplet — 30 controls (Phone 13 + CW 9 + FM 8), all NYI.
+    m_phoneCwApplet = new PhoneCwApplet(m_radioModel, nullptr);
+    panel->addApplet(m_phoneCwApplet);
+
+    c0->setContent(panel);
     qCDebug(lcMeter) << "Installed default meter layout: S-Meter + Power/SWR + ALC";
+    qCDebug(lcContainer) << "Added PhoneCwApplet to Container #0";
 }
 
 void MainWindow::buildMenuBar()
 {
-    // --- File ---
-    auto* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
-    fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit,
+    // =========================================================================
+    // FILE
+    // =========================================================================
+    QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
+
+    fileMenu->addAction(QStringLiteral("&Settings..."), this, [this]() {
+        // SetupDialog NYI — placeholder until SetupDialog class is implemented
+        qCDebug(lcConnection) << "SetupDialog NYI";
+    });
+
+    {
+        QMenu* profilesMenu = fileMenu->addMenu(QStringLiteral("&Profiles"));
+        profilesMenu->addAction(QStringLiteral("Profile &Manager..."), this, [this]() {
+            qCDebug(lcConnection) << "Profile Manager NYI";
+        });
+        profilesMenu->addAction(QStringLiteral("&Import/Export..."), this, [this]() {
+            qCDebug(lcConnection) << "Import/Export NYI";
+        });
+    }
+
+    fileMenu->addSeparator();
+
+    fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence(Qt::CTRL | Qt::Key_Q),
                         qApp, &QApplication::quit);
 
-    // --- Radio ---
-    auto* radioMenu = menuBar()->addMenu(QStringLiteral("&Radio"));
+    // =========================================================================
+    // RADIO
+    // =========================================================================
+    QMenu* radioMenu = menuBar()->addMenu(QStringLiteral("&Radio"));
 
     radioMenu->addAction(QStringLiteral("&Connect..."), QKeySequence(Qt::CTRL | Qt::Key_K),
                          this, &MainWindow::showConnectionPanel);
 
     radioMenu->addAction(QStringLiteral("&Disconnect"), this, [this]() {
         m_radioModel->disconnectFromRadio();
+    });
+
+    radioMenu->addSeparator();
+
+    radioMenu->addAction(QStringLiteral("&Radio Setup..."), this, [this]() {
+        qCDebug(lcConnection) << "Radio Setup NYI";
+    });
+    radioMenu->addAction(QStringLiteral("&Antenna Setup..."), this, [this]() {
+        qCDebug(lcConnection) << "Antenna Setup NYI";
+    });
+    radioMenu->addAction(QStringLiteral("Trans&verters..."), this, [this]() {
+        qCDebug(lcConnection) << "Transverters NYI";
     });
 
     radioMenu->addSeparator();
@@ -326,11 +378,404 @@ void MainWindow::buildMenuBar()
         }
     });
 
-    // --- Help ---
-    auto* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
-    helpMenu->addAction(QStringLiteral("&Support..."), this,
-                        &MainWindow::showSupportDialog);
+    // =========================================================================
+    // VIEW
+    // =========================================================================
+    QMenu* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
+
+    {
+        QMenu* panLayoutMenu = viewMenu->addMenu(QStringLiteral("Pan &Layout"));
+        panLayoutMenu->addAction(QStringLiteral("&1-up"), this, [this]() {
+            qCDebug(lcConnection) << "Pan Layout 1-up NYI";
+        });
+        panLayoutMenu->addAction(QStringLiteral("2 &Vertical"), this, [this]() {
+            qCDebug(lcConnection) << "Pan Layout 2 Vertical NYI";
+        });
+        panLayoutMenu->addAction(QStringLiteral("2 &Horizontal"), this, [this]() {
+            qCDebug(lcConnection) << "Pan Layout 2 Horizontal NYI";
+        });
+        panLayoutMenu->addAction(QStringLiteral("2×&2 Grid"), this, [this]() {
+            qCDebug(lcConnection) << "Pan Layout 2x2 Grid NYI";
+        });
+        panLayoutMenu->addAction(QStringLiteral("1+2 &Horizontal"), this, [this]() {
+            qCDebug(lcConnection) << "Pan Layout 1+2 Horizontal NYI";
+        });
+    }
+
+    viewMenu->addAction(QStringLiteral("&Add Panadapter"), this, [this]() {
+        qCDebug(lcConnection) << "Add Panadapter NYI";
+    });
+    viewMenu->addAction(QStringLiteral("&Remove Panadapter"), this, [this]() {
+        qCDebug(lcConnection) << "Remove Panadapter NYI";
+    });
+
+    viewMenu->addSeparator();
+
+    {
+        QMenu* bandPlanMenu = viewMenu->addMenu(QStringLiteral("&Band Plan"));
+        bandPlanMenu->addAction(QStringLiteral("&Off"), this, [this]() {
+            qCDebug(lcConnection) << "Band Plan Off NYI";
+        });
+        bandPlanMenu->addAction(QStringLiteral("&Small"), this, [this]() {
+            qCDebug(lcConnection) << "Band Plan Small NYI";
+        });
+        bandPlanMenu->addAction(QStringLiteral("&Medium"), this, [this]() {
+            qCDebug(lcConnection) << "Band Plan Medium NYI";
+        });
+        bandPlanMenu->addAction(QStringLiteral("&Large"), this, [this]() {
+            qCDebug(lcConnection) << "Band Plan Large NYI";
+        });
+    }
+
+    {
+        QMenu* displayModeMenu = viewMenu->addMenu(QStringLiteral("&Display Mode"));
+        displayModeMenu->addAction(QStringLiteral("&Panadapter"), this, [this]() {
+            qCDebug(lcConnection) << "Display Mode Panadapter NYI";
+        });
+        displayModeMenu->addAction(QStringLiteral("&Waterfall"), this, [this]() {
+            qCDebug(lcConnection) << "Display Mode Waterfall NYI";
+        });
+        displayModeMenu->addAction(QStringLiteral("Pan+&WF"), this, [this]() {
+            qCDebug(lcConnection) << "Display Mode Pan+WF NYI";
+        });
+        displayModeMenu->addAction(QStringLiteral("&Scope"), this, [this]() {
+            qCDebug(lcConnection) << "Display Mode Scope NYI";
+        });
+    }
+
+    viewMenu->addSeparator();
+
+    {
+        QMenu* uiScaleMenu = viewMenu->addMenu(QStringLiteral("&UI Scale"));
+        uiScaleMenu->addAction(QStringLiteral("&100%"), this, [this]() {
+            qCDebug(lcConnection) << "UI Scale 100% NYI";
+        });
+        uiScaleMenu->addAction(QStringLiteral("&125%"), this, [this]() {
+            qCDebug(lcConnection) << "UI Scale 125% NYI";
+        });
+        uiScaleMenu->addAction(QStringLiteral("&150%"), this, [this]() {
+            qCDebug(lcConnection) << "UI Scale 150% NYI";
+        });
+        uiScaleMenu->addAction(QStringLiteral("&175%"), this, [this]() {
+            qCDebug(lcConnection) << "UI Scale 175% NYI";
+        });
+        uiScaleMenu->addAction(QStringLiteral("&200%"), this, [this]() {
+            qCDebug(lcConnection) << "UI Scale 200% NYI";
+        });
+    }
+
+    viewMenu->addAction(QStringLiteral("Dark/&Light Theme"), this, [this]() {
+        qCDebug(lcConnection) << "Dark/Light Theme NYI";
+    });
+    viewMenu->addAction(QStringLiteral("&Minimal Mode"), QKeySequence(Qt::CTRL | Qt::Key_M),
+                        this, [this]() {
+        qCDebug(lcConnection) << "Minimal Mode NYI";
+    });
+
+    viewMenu->addSeparator();
+
+    viewMenu->addAction(QStringLiteral("&Keyboard Shortcuts..."), this, [this]() {
+        qCDebug(lcConnection) << "Keyboard Shortcuts NYI";
+    });
+    viewMenu->addAction(QStringLiteral("&Configure Shortcuts..."), this, [this]() {
+        qCDebug(lcConnection) << "Configure Shortcuts NYI";
+    });
+
+    // =========================================================================
+    // DSP
+    // =========================================================================
+    QMenu* dspMenu = menuBar()->addMenu(QStringLiteral("&DSP"));
+
+    // Checkable DSP toggles — stored as members so the overlay panel can sync
+    m_nrAction = dspMenu->addAction(QStringLiteral("&NR"));
+    m_nrAction->setCheckable(true);
+    connect(m_nrAction, &QAction::toggled, this, [this](bool on) {
+        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+        if (rxCh) {
+            rxCh->setNrEnabled(on);
+        }
+    });
+
+    QAction* nr2Action = dspMenu->addAction(QStringLiteral("NR&2"));
+    nr2Action->setCheckable(true);
+    connect(nr2Action, &QAction::toggled, this, [this](bool /*on*/) {
+        qCDebug(lcConnection) << "NR2 NYI";
+    });
+
+    m_nbAction = dspMenu->addAction(QStringLiteral("N&B"));
+    m_nbAction->setCheckable(true);
+    connect(m_nbAction, &QAction::toggled, this, [this](bool on) {
+        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+        if (rxCh) {
+            rxCh->setNb1Enabled(on);
+        }
+    });
+
+    QAction* nb2Action = dspMenu->addAction(QStringLiteral("NB&2"));
+    nb2Action->setCheckable(true);
+    connect(nb2Action, &QAction::toggled, this, [this](bool /*on*/) {
+        qCDebug(lcConnection) << "NB2 NYI";
+    });
+
+    m_anfAction = dspMenu->addAction(QStringLiteral("&ANF"));
+    m_anfAction->setCheckable(true);
+    connect(m_anfAction, &QAction::toggled, this, [this](bool on) {
+        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAnfEnabled(on);
+        }
+    });
+
+    QAction* tnfAction = dspMenu->addAction(QStringLiteral("&TNF"));
+    tnfAction->setCheckable(true);
+    connect(tnfAction, &QAction::toggled, this, [this](bool /*on*/) {
+        qCDebug(lcConnection) << "TNF NYI";
+    });
+
+    QAction* binAction = dspMenu->addAction(QStringLiteral("&BIN"));
+    binAction->setCheckable(true);
+    connect(binAction, &QAction::toggled, this, [this](bool /*on*/) {
+        qCDebug(lcConnection) << "BIN NYI";
+    });
+
+    dspMenu->addSeparator();
+
+    {
+        QMenu* agcMenu = dspMenu->addMenu(QStringLiteral("&AGC"));
+        // AGCMode enum: Off=0, Long=1, Slow=2, Med=3, Fast=4, Custom=5
+        // From Thetis dsp.cs AGCMode — Long is present in the enum but the
+        // spec menu has: Off, Slow, Med, Fast, Custom
+        agcMenu->addAction(QStringLiteral("&Off"), this, [this]() {
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (slice) { slice->setAgcMode(AGCMode::Off); }
+        });
+        agcMenu->addAction(QStringLiteral("&Slow"), this, [this]() {
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (slice) { slice->setAgcMode(AGCMode::Slow); }
+        });
+        agcMenu->addAction(QStringLiteral("&Med"), this, [this]() {
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (slice) { slice->setAgcMode(AGCMode::Med); }
+        });
+        agcMenu->addAction(QStringLiteral("&Fast"), this, [this]() {
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (slice) { slice->setAgcMode(AGCMode::Fast); }
+        });
+        agcMenu->addAction(QStringLiteral("&Custom"), this, [this]() {
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (slice) { slice->setAgcMode(AGCMode::Custom); }
+        });
+    }
+
+    dspMenu->addSeparator();
+
+    dspMenu->addAction(QStringLiteral("&Equalizer..."), this, [this]() {
+        qCDebug(lcConnection) << "Equalizer NYI";
+    });
+    dspMenu->addAction(QStringLiteral("&PureSignal..."), this, [this]() {
+        qCDebug(lcConnection) << "PureSignal NYI";
+    });
+    dspMenu->addAction(QStringLiteral("&Diversity..."), this, [this]() {
+        qCDebug(lcConnection) << "Diversity NYI";
+    });
+
+    // =========================================================================
+    // BAND
+    // =========================================================================
+    QMenu* bandMenu = menuBar()->addMenu(QStringLiteral("&Band"));
+
+    {
+        QMenu* hfMenu = bandMenu->addMenu(QStringLiteral("&HF"));
+        // Frequency values from Thetis console.cs band definitions
+        struct { const char* label; double freqHz; } hfBands[] = {
+            { "160m (1.8 MHz)",    1.8e6   },
+            { "80m (3.5 MHz)",     3.5e6   },
+            { "60m (5.3 MHz)",     5.3e6   },
+            { "40m (7.0 MHz)",     7.0e6   },
+            { "30m (10.1 MHz)",   10.1e6   },
+            { "20m (14.0 MHz)",   14.0e6   },
+            { "17m (18.068 MHz)", 18.068e6 },
+            { "15m (21.0 MHz)",   21.0e6   },
+            { "12m (24.89 MHz)",  24.89e6  },
+            { "10m (28.0 MHz)",   28.0e6   },
+            { "6m (50.0 MHz)",    50.0e6   },
+        };
+        for (const auto& band : hfBands) {
+            double freq = band.freqHz;
+            hfMenu->addAction(QString::fromUtf8(band.label), this, [this, freq]() {
+                SliceModel* slice = m_radioModel->activeSlice();
+                if (slice) {
+                    slice->setFrequency(freq);
+                }
+            });
+        }
+    }
+
+    {
+        QMenu* vhfMenu = bandMenu->addMenu(QStringLiteral("&VHF"));
+        vhfMenu->addAction(QStringLiteral("2m (144.0 MHz)"), this, [this]() {
+            qCDebug(lcConnection) << "VHF 2m NYI";
+        });
+        vhfMenu->addAction(QStringLiteral("70cm (432.0 MHz)"), this, [this]() {
+            qCDebug(lcConnection) << "VHF 70cm NYI";
+        });
+    }
+
+    bandMenu->addAction(QStringLiteral("&GEN"), this, [this]() {
+        qCDebug(lcConnection) << "GEN band NYI";
+    });
+
+    bandMenu->addAction(QStringLiteral("&WWV (10.0 MHz)"), this, [this]() {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (slice) {
+            slice->setFrequency(10.0e6);
+        }
+    });
+
+    bandMenu->addSeparator();
+
+    bandMenu->addAction(QStringLiteral("Band &Stacking..."), this, [this]() {
+        qCDebug(lcConnection) << "Band Stacking NYI";
+    });
+
+    // =========================================================================
+    // MODE
+    // =========================================================================
+    QMenu* modeMenu = menuBar()->addMenu(QStringLiteral("&Mode"));
+
+    // 12 modes in display order (spec order): LSB, USB, DSB, CWL, CWU, AM,
+    // SAM, FM, DIGL, DIGU, DRM, SPEC.
+    // Maps to DSPMode enum values from WdspTypes.h.
+    // From Thetis dsp.cs DSPMode enum — enum values used directly, not indices.
+    struct { const char* label; DSPMode mode; } modes[] = {
+        { "LSB",  DSPMode::LSB  },
+        { "USB",  DSPMode::USB  },
+        { "DSB",  DSPMode::DSB  },
+        { "CWL",  DSPMode::CWL  },
+        { "CWU",  DSPMode::CWU  },
+        { "AM",   DSPMode::AM   },
+        { "SAM",  DSPMode::SAM  },
+        { "FM",   DSPMode::FM   },
+        { "DIGL", DSPMode::DIGL },
+        { "DIGU", DSPMode::DIGU },
+        { "DRM",  DSPMode::DRM  },
+        { "SPEC", DSPMode::SPEC },
+    };
+
+    m_modeActionGroup = new QActionGroup(this);
+    m_modeActionGroup->setExclusive(true);
+
+    for (int i = 0; i < 12; ++i) {
+        DSPMode mode = modes[i].mode;
+        QAction* act = modeMenu->addAction(QString::fromUtf8(modes[i].label),
+                                           this, [this, mode]() {
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (slice) {
+                slice->setDspMode(mode);
+            }
+        });
+        act->setCheckable(true);
+        m_modeActionGroup->addAction(act);
+        m_modeActions[i] = act;
+    }
+
+    // Sync checked mode action when SliceModel reports a mode change.
+    // Connection is deferred until slice 0 is available (sliceAdded signal).
+    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
+        if (index != 0) { return; }
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (!slice) { return; }
+        connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
+            DSPMode displayOrder[] = {
+                DSPMode::LSB, DSPMode::USB, DSPMode::DSB, DSPMode::CWL,
+                DSPMode::CWU, DSPMode::AM,  DSPMode::SAM,  DSPMode::FM,
+                DSPMode::DIGL, DSPMode::DIGU, DSPMode::DRM, DSPMode::SPEC,
+            };
+            for (int i = 0; i < 12; ++i) {
+                if (m_modeActions[i]) {
+                    m_modeActions[i]->setChecked(displayOrder[i] == mode);
+                }
+            }
+        });
+    });
+
+    // =========================================================================
+    // CONTAINERS
+    // =========================================================================
+    QMenu* containersMenu = menuBar()->addMenu(QStringLiteral("Contai&ners"));
+
+    containersMenu->addAction(QStringLiteral("&New Container..."), this, [this]() {
+        qCDebug(lcConnection) << "New Container NYI";
+    });
+    containersMenu->addAction(QStringLiteral("Container &Settings..."), this, [this]() {
+        qCDebug(lcConnection) << "Container Settings NYI";
+    });
+
+    containersMenu->addSeparator();
+
+    containersMenu->addAction(QStringLiteral("&Reset Default Layout"), this, [this]() {
+        qCDebug(lcConnection) << "Reset Default Layout NYI";
+    });
+
+    // =========================================================================
+    // TOOLS
+    // =========================================================================
+    QMenu* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
+
+    toolsMenu->addAction(QStringLiteral("C&WX..."), this, [this]() {
+        qCDebug(lcConnection) << "CWX NYI";
+    });
+    toolsMenu->addAction(QStringLiteral("&Memory Manager..."), this, [this]() {
+        qCDebug(lcConnection) << "Memory Manager NYI";
+    });
+    toolsMenu->addAction(QStringLiteral("&CAT Control..."), this, [this]() {
+        qCDebug(lcConnection) << "CAT Control NYI";
+    });
+    toolsMenu->addAction(QStringLiteral("&TCI Server..."), this, [this]() {
+        qCDebug(lcConnection) << "TCI Server NYI";
+    });
+    toolsMenu->addAction(QStringLiteral("&DAX Audio..."), this, [this]() {
+        qCDebug(lcConnection) << "DAX Audio NYI";
+    });
+
+    toolsMenu->addSeparator();
+
+    toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."), this, [this]() {
+        qCDebug(lcConnection) << "MIDI Mapping NYI";
+    });
+    toolsMenu->addAction(QStringLiteral("Macro &Buttons..."), this, [this]() {
+        qCDebug(lcConnection) << "Macro Buttons NYI";
+    });
+
+    toolsMenu->addSeparator();
+
+    toolsMenu->addAction(QStringLiteral("&Network Diagnostics..."), this, [this]() {
+        qCDebug(lcConnection) << "Network Diagnostics NYI";
+    });
+    toolsMenu->addAction(QStringLiteral("&Support Bundle..."), this,
+                         &MainWindow::showSupportDialog);
+
+    // =========================================================================
+    // HELP
+    // =========================================================================
+    QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
+
+    helpMenu->addAction(QStringLiteral("&Getting Started..."), this, [this]() {
+        qCDebug(lcConnection) << "Getting Started NYI";
+    });
+    helpMenu->addAction(QStringLiteral("&NereusSDR Help..."), this, [this]() {
+        qCDebug(lcConnection) << "NereusSDR Help NYI";
+    });
+    helpMenu->addAction(QStringLiteral("Understanding &Data Modes..."), this, [this]() {
+        qCDebug(lcConnection) << "Understanding Data Modes NYI";
+    });
+
     helpMenu->addSeparator();
+
+    helpMenu->addAction(QStringLiteral("What's &New..."), this, [this]() {
+        qCDebug(lcConnection) << "What's New NYI";
+    });
+
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
         Q_UNUSED(this);
     });
@@ -338,28 +783,222 @@ void MainWindow::buildMenuBar()
 
 void MainWindow::buildStatusBar()
 {
-    // Connection status indicator (left side)
-    m_connStatusLabel = new QLabel(QStringLiteral(" Disconnected "), this);
-    m_connStatusLabel->setStyleSheet(QStringLiteral(
-        "QLabel {"
-        "  color: #8090a0;"
-        "  background: #1a2a3a;"
-        "  border: 1px solid #203040;"
-        "  border-radius: 3px;"
-        "  padding: 2px 8px;"
-        "  font-size: 12px;"
-        "}"));
-    statusBar()->addWidget(m_connStatusLabel);
+    // AetherSDR double-height status bar (46px fixed height, 3-section layout)
+    QStatusBar* sb = statusBar();
+    sb->setFixedHeight(46);
+    sb->setSizeGripEnabled(false);
+    sb->setStyleSheet(QStringLiteral(
+        "QStatusBar { background: #0a0a14; border-top: 1px solid #203040; }"
+        "QStatusBar::item { border: none; }"));
 
-    // Radio info (center)
-    m_radioInfoLabel = new QLabel(this);
-    m_radioInfoLabel->setStyleSheet(QStringLiteral(
+    // Wrapper widget for the full-width custom layout
+    QWidget* barWidget = new QWidget(sb);
+    barWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    QHBoxLayout* hbox = new QHBoxLayout(barWidget);
+    hbox->setContentsMargins(6, 0, 6, 0);
+    hbox->setSpacing(6);
+
+    // ── Left section ──────────────────────────────────────────────────────────
+
+    // Band Stack: three grey circles (NYI)
+    auto* bandStackLabel = new QLabel(barWidget);
+    bandStackLabel->setFixedSize(10, 22);
+    {
+        QPixmap pm(10, 22);
+        pm.fill(Qt::transparent);
+        QPainter painter(&pm);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(QColor(0x40, 0x48, 0x58));
+        painter.setPen(Qt::NoPen);
+        for (int i = 0; i < 3; ++i) {
+            painter.drawEllipse(0, i * 7, 9, 6);
+        }
+        painter.end();
+        bandStackLabel->setPixmap(pm);
+    }
+    bandStackLabel->setToolTip(QStringLiteral("Band Stack (NYI)"));
+    hbox->addWidget(bandStackLabel);
+
+    // +PAN icon (NYI)
+    auto* panLabel = new QLabel(QStringLiteral("+PAN"), barWidget);
+    panLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #404858; font-weight: bold; font-size: 22px; }"));
+    panLabel->setToolTip(QStringLiteral("+PAN (NYI)"));
+    hbox->addWidget(panLabel);
+
+    // Panel toggle (☰)
+    auto* panelToggleLabel = new QLabel(QStringLiteral("☰"), barWidget);
+    panelToggleLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #404858; font-weight: bold; font-size: 22px; }"));
+    panelToggleLabel->setToolTip(QStringLiteral("Toggle panel"));
+    hbox->addWidget(panelToggleLabel);
+
+    // TNF toggle
+    m_tnfLabel = new QLabel(QStringLiteral("TNF"), barWidget);
+    m_tnfLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+    m_tnfLabel->setToolTip(QStringLiteral("Tracking Notch Filter (NYI)"));
+    hbox->addWidget(m_tnfLabel);
+
+    // CWX
+    auto* cwxLabel = new QLabel(QStringLiteral("CWX"), barWidget);
+    cwxLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+    cwxLabel->setToolTip(QStringLiteral("CW Keyer (NYI)"));
+    hbox->addWidget(cwxLabel);
+
+    // DVK
+    auto* dvkLabel = new QLabel(QStringLiteral("DVK"), barWidget);
+    dvkLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+    dvkLabel->setToolTip(QStringLiteral("Digital Voice Keyer (NYI)"));
+    hbox->addWidget(dvkLabel);
+
+    // FDX
+    auto* fdxLabel = new QLabel(QStringLiteral("FDX"), barWidget);
+    fdxLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+    fdxLabel->setToolTip(QStringLiteral("Full Duplex (NYI)"));
+    hbox->addWidget(fdxLabel);
+
+    // Separator ·
+    auto* sep1 = new QLabel(QStringLiteral(" · "), barWidget);
+    sep1->setStyleSheet(QStringLiteral(
+        "QLabel { color: #304050; font-size: 21px; }"));
+    hbox->addWidget(sep1);
+
+    // Radio info: stacked model + firmware labels
+    auto* radioInfoWidget = new QWidget(barWidget);
+    QVBoxLayout* radioVbox = new QVBoxLayout(radioInfoWidget);
+    radioVbox->setContentsMargins(0, 0, 0, 0);
+    radioVbox->setSpacing(0);
+
+    m_radioModelLabel = new QLabel(QStringLiteral("—"), radioInfoWidget);
+    m_radioModelLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8aa8c0; font-size: 12px; }"));
+    radioVbox->addWidget(m_radioModelLabel);
+
+    m_radioFwLabel = new QLabel(QStringLiteral("—"), radioInfoWidget);
+    m_radioFwLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #607080; font-size: 12px; }"));
-    statusBar()->addWidget(m_radioInfoLabel, 1);  // stretch factor 1
+    radioVbox->addWidget(m_radioFwLabel);
 
-    // Click status label to open connection panel
-    m_connStatusLabel->setCursor(Qt::PointingHandCursor);
-    m_connStatusLabel->installEventFilter(this);
+    // Keep m_connStatusLabel pointing at model label (legacy compat)
+    m_connStatusLabel = m_radioModelLabel;
+
+    hbox->addWidget(radioInfoWidget);
+
+    // ── Stretch ───────────────────────────────────────────────────────────────
+    hbox->addStretch(1);
+
+    // ── Center section: STATION callsign ─────────────────────────────────────
+    auto* stationContainer = new QWidget(barWidget);
+    stationContainer->setStyleSheet(QStringLiteral(
+        "QWidget { border: 1px solid rgba(255,255,255,128); background: #0a0a14; padding: 2px 12px; }"));
+    QHBoxLayout* stationHbox = new QHBoxLayout(stationContainer);
+    stationHbox->setContentsMargins(0, 0, 0, 0);
+    stationHbox->setSpacing(6);
+
+    auto* stationLabel = new QLabel(QStringLiteral("STATION:"), stationContainer);
+    stationLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8aa8c0; font-size: 21px; border: none; background: transparent; padding: 0; }"));
+    stationHbox->addWidget(stationLabel);
+
+    m_callsignLabel = new QLabel(stationContainer);
+    QString callsign = AppSettings::instance().value(
+        QStringLiteral("StationCallsign"), QStringLiteral("—")).toString();
+    m_callsignLabel->setText(callsign);
+    m_callsignLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #c8d8e8; font-size: 21px; border: none; background: transparent; padding: 0; }"));
+    stationHbox->addWidget(m_callsignLabel);
+
+    hbox->addWidget(stationContainer);
+
+    // ── Stretch ───────────────────────────────────────────────────────────────
+    hbox->addStretch(1);
+
+    // ── Right section: indicators ────────────────────────────────────────────
+
+    // Helper lambda: create a stacked indicator pair (top label + bottom label)
+    auto makeIndicator = [&](const QString& top, const QString& bottom) -> QWidget* {
+        QWidget* w = new QWidget(barWidget);
+        w->setMinimumWidth(84);
+        QVBoxLayout* vl = new QVBoxLayout(w);
+        vl->setContentsMargins(0, 0, 0, 0);
+        vl->setSpacing(0);
+        auto* topLbl = new QLabel(top, w);
+        topLbl->setStyleSheet(QStringLiteral(
+            "QLabel { color: #8aa8c0; font-size: 12px; }"));
+        auto* botLbl = new QLabel(bottom, w);
+        botLbl->setStyleSheet(QStringLiteral(
+            "QLabel { color: #607080; font-size: 12px; }"));
+        vl->addWidget(topLbl);
+        vl->addWidget(botLbl);
+        return w;
+    };
+
+    // CAT
+    hbox->addWidget(makeIndicator(QStringLiteral("CAT"), QStringLiteral("Off")));
+
+    // Separator ·
+    auto* sep2 = new QLabel(QStringLiteral(" · "), barWidget);
+    sep2->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
+    hbox->addWidget(sep2);
+
+    // TCI
+    hbox->addWidget(makeIndicator(QStringLiteral("TCI"), QStringLiteral("Off")));
+
+    // Separator ·
+    auto* sep3 = new QLabel(QStringLiteral(" · "), barWidget);
+    sep3->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
+    hbox->addWidget(sep3);
+
+    // PA Voltage
+    hbox->addWidget(makeIndicator(QStringLiteral("PA"), QStringLiteral("— V")));
+
+    // Separator ·
+    auto* sep4 = new QLabel(QStringLiteral(" · "), barWidget);
+    sep4->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
+    hbox->addWidget(sep4);
+
+    // CPU
+    hbox->addWidget(makeIndicator(QStringLiteral("CPU"), QStringLiteral("—%")));
+
+    // Separator ·
+    auto* sep5 = new QLabel(QStringLiteral(" · "), barWidget);
+    sep5->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
+    hbox->addWidget(sep5);
+
+    // TX indicator
+    auto* txLabel = new QLabel(QStringLiteral("TX"), barWidget);
+    txLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: rgba(255,255,255,128); font-weight: bold; font-size: 21px; }"));
+    txLabel->setToolTip(QStringLiteral("Transmit active"));
+    hbox->addWidget(txLabel);
+
+    // Separator ·
+    auto* sep6 = new QLabel(QStringLiteral(" · "), barWidget);
+    sep6->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
+    hbox->addWidget(sep6);
+
+    // UTC clock
+    m_utcTimeLabel = new QLabel(barWidget);
+    m_utcTimeLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #c8d8e8; font-size: 21px; }"));
+    m_utcTimeLabel->setText(QDateTime::currentDateTimeUtc().toString(
+        QStringLiteral("hh:mm:ss UTC")));
+    hbox->addWidget(m_utcTimeLabel);
+
+    // UTC clock timer (1-second updates)
+    m_clockTimer = new QTimer(this);
+    connect(m_clockTimer, &QTimer::timeout, this, [this]() {
+        m_utcTimeLabel->setText(QDateTime::currentDateTimeUtc().toString(
+            QStringLiteral("hh:mm:ss UTC")));
+    });
+    m_clockTimer->start(1000);
+
+    // Add the full-width bar widget to the status bar
+    sb->addWidget(barWidget, 1);
 }
 
 void MainWindow::wireSliceToSpectrum()
@@ -662,33 +1301,18 @@ void MainWindow::showSupportDialog()
 void MainWindow::onConnectionStateChanged()
 {
     if (m_radioModel->isConnected()) {
-        m_connStatusLabel->setText(QStringLiteral(" Connected "));
-        m_connStatusLabel->setStyleSheet(QStringLiteral(
-            "QLabel {"
-            "  color: #ffffff;"
-            "  background: #007a3d;"
-            "  border: 1px solid #00a050;"
-            "  border-radius: 3px;"
-            "  padding: 2px 8px;"
-            "  font-size: 12px;"
-            "}"));
-        m_radioInfoLabel->setText(QStringLiteral("%1  —  FW %2")
-            .arg(m_radioModel->name(), m_radioModel->version()));
-        m_radioInfoLabel->setStyleSheet(QStringLiteral(
+        m_radioModelLabel->setText(m_radioModel->name());
+        m_radioModelLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: #c8d8e8; font-size: 12px; }"));
+        m_radioFwLabel->setText(QStringLiteral("FW %1").arg(m_radioModel->version()));
+        m_radioFwLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: #8aa8c0; font-size: 12px; }"));
     } else {
-        m_connStatusLabel->setText(QStringLiteral(" Disconnected "));
-        m_connStatusLabel->setStyleSheet(QStringLiteral(
-            "QLabel {"
-            "  color: #8090a0;"
-            "  background: #1a2a3a;"
-            "  border: 1px solid #203040;"
-            "  border-radius: 3px;"
-            "  padding: 2px 8px;"
-            "  font-size: 12px;"
-            "}"));
-        m_radioInfoLabel->setText(QString());
-        m_radioInfoLabel->setStyleSheet(QStringLiteral(
+        m_radioModelLabel->setText(QStringLiteral("—"));
+        m_radioModelLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: #8aa8c0; font-size: 12px; }"));
+        m_radioFwLabel->setText(QStringLiteral("—"));
+        m_radioFwLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: #607080; font-size: 12px; }"));
     }
 }

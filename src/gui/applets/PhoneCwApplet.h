@@ -1,165 +1,139 @@
+// src/gui/applets/PhoneCwApplet.h
+// Phone/CW/FM stacked applet — NYI shell (Phase 3I-1 / 3I-2 / 3I-3).
+// 30 controls total: Phone 13, CW 9, FM 8.
 #pragma once
+
 #include "AppletWidget.h"
 
-#include <QLabel>
-#include <QPushButton>
-#include <QComboBox>
-#include <QSlider>
-#include <QButtonGroup>
-#include <QStackedWidget>
+class QStackedWidget;
+class QButtonGroup;
+class QSlider;
+class QPushButton;
+class QLabel;
+class QComboBox;
 
 namespace NereusSDR {
 
-// PhoneCwApplet — Phone/CW/FM transmit voice controls applet.
-// 30 controls total: Phone 13, CW 9, FM 8.
-// Complete NYI shell for Phase 3I-1, 3I-2, 3I-3, 3-DAX.
+class HGauge;
+
+// PhoneCwApplet — QStackedWidget with Phone (0) and CW (1) pages.
+// FM is a separate FmApplet per the reconciled design spec.
+// Phone page: 13 controls — Phase 3I-1 / 3I-3 / 3-DAX
+// CW page:     9 controls — Phase 3I-2
 class PhoneCwApplet : public AppletWidget {
     Q_OBJECT
 
 public:
     explicit PhoneCwApplet(RadioModel* model, QWidget* parent = nullptr);
-    ~PhoneCwApplet() override = default;
 
-    QString appletId()    const override { return QStringLiteral("phonecw"); }
+    QString appletId()    const override { return QStringLiteral("PHCW"); }
     QString appletTitle() const override { return QStringLiteral("Phone / CW"); }
-
     void syncFromModel() override;
 
 private:
     void buildUI();
-    QWidget* buildPhonePage();
-    QWidget* buildCwPage();
-    QWidget* buildFmPage();
-
-    // Tab selector
+    void buildPhonePage(QWidget* page);
+    void buildCwPage(QWidget* page);
+    void buildFmPage(QWidget* page);
+    // ── Shared ───────────────────────────────────────────────────────────────
     QStackedWidget* m_stack{nullptr};
     QButtonGroup*   m_tabGroup{nullptr};
     QPushButton*    m_phoneTabBtn{nullptr};
     QPushButton*    m_cwTabBtn{nullptr};
     QPushButton*    m_fmTabBtn{nullptr};
 
-    // ---- Phone page controls ----
-
-    // Phone #1 — Mic Level gauge (HGauge -40..+10 dBFS)
-    QWidget* m_micLevelGauge{nullptr};
-
-    // Phone #2 — Compression gauge (HGauge -25..0 dB, reversed)
-    QWidget* m_compGauge{nullptr};
-
-    // Phone #3 — Mic profile combo
-    QComboBox* m_micProfileCombo{nullptr};
-
-    // Phone #4 — Mic source combo (fixed 55px)
-    QComboBox* m_micSrcCombo{nullptr};
-
-    // Phone #5 — Mic level slider + value
-    QSlider* m_micLvlSlider{nullptr};
-    QLabel*  m_micLvlValue{nullptr};
-
-    // Phone #6 — +ACC button (green toggle 48px)
+    // ── Phone page (13 controls) ──────────────────────────────────────────────
+    // #1  Mic level gauge (HGauge -40..+10 dBFS, yellow -10, red 0)
+    HGauge*      m_levelGauge{nullptr};
+    // #2  Compression gauge (HGauge -25..0 dB, reversed=true)
+    HGauge*      m_compGauge{nullptr};
+    // #3  Mic profile combo
+    QComboBox*   m_micProfileCombo{nullptr};
+    // #4  Mic source combo (fixed 55px)
+    QComboBox*   m_micSourceCombo{nullptr};
+    // #5  Mic level slider (0-100) + inset "50"
+    QSlider*     m_micLevelSlider{nullptr};
+    QLabel*      m_micLevelLabel{nullptr};
+    // #6  +ACC button (green toggle, 48px)
     QPushButton* m_accBtn{nullptr};
-
-    // Phone #7 — PROC button + slider
+    // #7  PROC button (green 48px) + slider (0-100) + inset "50"
     QPushButton* m_procBtn{nullptr};
     QSlider*     m_procSlider{nullptr};
-    QLabel*      m_procValue{nullptr};
-
-    // Phone #8 — DAX button (blue toggle 48px)
+    QLabel*      m_procLabel{nullptr};
+    // #8  DAX button (blue toggle, 48px)
     QPushButton* m_daxBtn{nullptr};
-
-    // Phone #9 — MON button + slider
+    // #9  MON button (green 48px) + slider (0-100) + inset "50"
     QPushButton* m_monBtn{nullptr};
     QSlider*     m_monSlider{nullptr};
-    QLabel*      m_monValue{nullptr};
-
-    // Phone #10 — VOX toggle + level slider + delay slider
+    QLabel*      m_monLabel{nullptr};
+    // #10 VOX toggle (36px) + level slider + delay slider + 2 insets
     QPushButton* m_voxBtn{nullptr};
-    QSlider*     m_voxLvlSlider{nullptr};
-    QLabel*      m_voxLvlValue{nullptr};
+    QSlider*     m_voxSlider{nullptr};
+    QLabel*      m_voxLvlLabel{nullptr};
     QSlider*     m_voxDlySlider{nullptr};
-    QLabel*      m_voxDlyValue{nullptr};
-
-    // Phone #11 — DEXP toggle + level slider
+    QLabel*      m_voxDlyLabel{nullptr};
+    // #11 DEXP toggle (36px) + level slider + inset
     QPushButton* m_dexpBtn{nullptr};
     QSlider*     m_dexpSlider{nullptr};
-    QLabel*      m_dexpValue{nullptr};
+    QLabel*      m_dexpLabel{nullptr};
+    // #12 TX filter Low/High sliders + 2 insets
+    QSlider*     m_txFiltLowSlider{nullptr};
+    QLabel*      m_txFiltLowLabel{nullptr};
+    QSlider*     m_txFiltHighSlider{nullptr};
+    QLabel*      m_txFiltHighLabel{nullptr};
+    // #13 AM Carrier level slider (0-100) + inset "25"
+    QSlider*     m_amCarSlider{nullptr};
+    QLabel*      m_amCarLabel{nullptr};
 
-    // Phone #12 — TX filter Low/High sliders
-    QSlider* m_txFiltLoSlider{nullptr};
-    QLabel*  m_txFiltLoValue{nullptr};
-    QSlider* m_txFiltHiSlider{nullptr};
-    QLabel*  m_txFiltHiValue{nullptr};
-
-    // Phone #13 — AM Carrier level slider
-    QSlider* m_amCarSlider{nullptr};
-    QLabel*  m_amCarValue{nullptr};
-
-    // ---- CW page controls ----
-
-    // CW #1 — ALC gauge (HGauge 0-100, yellow/red 80)
-    QWidget* m_alcGauge{nullptr};
-
-    // CW #2 — CW speed slider (1-60 WPM)
-    QSlider* m_cwSpeedSlider{nullptr};
-    QLabel*  m_cwSpeedValue{nullptr};
-
-    // CW #3 — CW pitch stepper
-    QPushButton* m_cwPitchDn{nullptr};
-    QLabel*      m_cwPitchValue{nullptr};
-    QPushButton* m_cwPitchUp{nullptr};
-
-    // CW #4 — Delay slider (0-1000ms)
-    QSlider* m_cwDelaySlider{nullptr};
-    QLabel*  m_cwDelayValue{nullptr};
-
-    // CW #5 — Sidetone toggle + slider
-    QPushButton* m_sideBtn{nullptr};
-    QSlider*     m_sideSlider{nullptr};
-    QLabel*      m_sideValue{nullptr};
-
-    // CW #6 — Break-in (QSK) amber toggle
-    QPushButton* m_qskBtn{nullptr};
-
-    // CW #7 — Iambic blue toggle
+    // ── CW page (9 controls) ─────────────────────────────────────────────────
+    // #1  ALC gauge (HGauge 0-100, yellow/red 80)
+    HGauge*      m_alcGauge{nullptr};
+    // #2  CW speed slider (1-60 WPM) + inset "20"
+    QSlider*     m_speedSlider{nullptr};
+    QLabel*      m_speedLabel{nullptr};
+    // #3  CW pitch stepper ◀ [inset "600 Hz" 56px] ▶
+    QPushButton* m_pitchDown{nullptr};
+    QLabel*      m_pitchLabel{nullptr};
+    QPushButton* m_pitchUp{nullptr};
+    // #4  Delay slider (0-1000ms) + inset "300"
+    QSlider*     m_delaySlider{nullptr};
+    QLabel*      m_delayLabel{nullptr};
+    // #5  Sidetone toggle (48px) + slider + inset "50"
+    QPushButton* m_sidetoneBtn{nullptr};
+    QSlider*     m_sidetoneSlider{nullptr};
+    QLabel*      m_sidetoneLabel{nullptr};
+    // #6  Break-in (QSK) amber toggle
+    QPushButton* m_breakinBtn{nullptr};
+    // #7  Iambic blue toggle
     QPushButton* m_iambicBtn{nullptr};
-
-    // CW #8 — Firmware keyer green toggle
+    // #8  Firmware keyer green toggle
     QPushButton* m_fwKeyerBtn{nullptr};
+    // #9  CW pan slider (-100..100) + inset "C"
+    QSlider*     m_cwPanSlider{nullptr};
+    QLabel*      m_cwPanLabel{nullptr};
 
-    // CW #9 — CW pan slider (-100..100)
-    QSlider* m_cwPanSlider{nullptr};
-    QLabel*  m_cwPanValue{nullptr};
-
-    // ---- FM page controls ----
-
-    // FM #1 — FM MIC slider
-    QSlider* m_fmMicSlider{nullptr};
-    QLabel*  m_fmMicValue{nullptr};
-
-    // FM #2 — Deviation buttons (5.0k / 2.5k)
+    // ── FM page (8 controls) ─────────────────────────────────────────────────
+    // #1  FM MIC slider (0-100) + inset value
+    QSlider*     m_fmMicSlider{nullptr};
+    QLabel*      m_fmMicLabel{nullptr};
+    // #2  Deviation buttons 5.0k / 2.5k (blue toggle)
     QPushButton* m_dev5kBtn{nullptr};
     QPushButton* m_dev25kBtn{nullptr};
-
-    // FM #3 — CTCSS enable + tone combo
+    // #3  CTCSS enable (green) + tone combo
     QPushButton* m_ctcssBtn{nullptr};
     QComboBox*   m_ctcssCombo{nullptr};
-
-    // FM #4 — Simplex toggle
+    // #4  Simplex toggle (green)
     QPushButton* m_simplexBtn{nullptr};
-
-    // FM #5 — Repeater offset slider (0-10000 kHz)
-    QSlider* m_rptOffsetSlider{nullptr};
-    QLabel*  m_rptOffsetValue{nullptr};
-
-    // FM #6 — Offset direction buttons (- / + / Rev)
+    // #5  Repeater offset slider (0-10000 kHz) + inset "600"
+    QSlider*     m_rptOffsetSlider{nullptr};
+    QLabel*      m_rptOffsetLabel{nullptr};
+    // #6  Offset direction: [-] [+] [Rev] (blue toggles)
     QPushButton* m_offsetMinusBtn{nullptr};
     QPushButton* m_offsetPlusBtn{nullptr};
     QPushButton* m_offsetRevBtn{nullptr};
-
-    // FM #7 — FM TX Profile combo
-    QComboBox* m_fmProfileCombo{nullptr};
-
-    // FM #8 — FM Memory combo + nav
+    // #7  FM TX Profile combo
+    QComboBox*   m_fmProfileCombo{nullptr};
+    // #8  FM Memory combo + nav
     QComboBox*   m_fmMemCombo{nullptr};
     QPushButton* m_fmMemPrev{nullptr};
     QPushButton* m_fmMemNext{nullptr};
