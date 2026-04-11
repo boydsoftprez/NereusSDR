@@ -9,6 +9,7 @@
 #include "NyiOverlay.h"
 #include "gui/ComboStyle.h"
 #include "gui/StyleConstants.h"
+#include "gui/widgets/FilterPassbandWidget.h"
 #include "models/SliceModel.h"
 
 #include <QAction>
@@ -276,16 +277,16 @@ void RxApplet::buildUi()
         leftCol->addWidget(m_filterContainer);
     }
 
-    // Control 8: FilterPassband placeholder (NYI Phase 3I)
-    // minimumHeight 40, plain QWidget painted dark
+    // Control 8: FilterPassband — visual filter with drag-to-adjust
+    // From AetherSDR RxApplet.cpp lines 504-513
     {
-        m_filterPassband = new QWidget(this);
+        m_filterPassband = new FilterPassbandWidget(this);
         m_filterPassband->setMinimumHeight(40);
         m_filterPassband->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        m_filterPassband->setStyleSheet(QStringLiteral(
-            "QWidget { background: %1; border: 1px solid %2; border-radius: 2px; }"
-        ).arg(Style::kInsetBg, Style::kInsetBorder));
-        NyiOverlay::markNyi(m_filterPassband, QStringLiteral("Phase 3I"));
+        connect(m_filterPassband, &FilterPassbandWidget::filterChanged,
+                this, [this](int lo, int hi) {
+            if (m_slice) { m_slice->setFilter(lo, hi); }
+        });
         leftCol->addWidget(m_filterPassband);
     }
 
@@ -710,9 +711,11 @@ void RxApplet::syncFromModel()
     m_rxAntBtn->setText(m_slice->rxAntenna());
     m_txAntBtn->setText(m_slice->txAntenna());
 
-    // Filter label + preset buttons
+    // Filter label + preset buttons + passband widget
     updateFilterLabel();
     updateFilterButtons();
+    m_filterPassband->setFilter(m_slice->filterLow(), m_slice->filterHigh());
+    m_filterPassband->setMode(SliceModel::modeName(m_slice->dspMode()));
 
     m_updatingFromModel = false;
 }
@@ -721,7 +724,7 @@ void RxApplet::connectSlice(SliceModel* s)
 {
     if (!s) { return; }
 
-    // Mode change → update combo
+    // Mode change → update combo + passband widget
     connect(s, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
         m_updatingFromModel = true;
         const QString name = SliceModel::modeName(mode);
@@ -730,6 +733,7 @@ void RxApplet::connectSlice(SliceModel* s)
         m_updatingFromModel = false;
         updateFilterLabel();
         updateFilterButtons();
+        m_filterPassband->setMode(name);
     });
 
     // AGC change → update combo
@@ -752,10 +756,11 @@ void RxApplet::connectSlice(SliceModel* s)
         m_updatingFromModel = false;
     });
 
-    // Filter change → update label + buttons
-    connect(s, &SliceModel::filterChanged, this, [this](int, int) {
+    // Filter change → update label + buttons + passband widget
+    connect(s, &SliceModel::filterChanged, this, [this](int lo, int hi) {
         updateFilterLabel();
         updateFilterButtons();
+        m_filterPassband->setFilter(lo, hi);
     });
 
     // Antenna changes → update button labels

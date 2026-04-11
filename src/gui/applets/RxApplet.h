@@ -20,6 +20,7 @@ class QSlider;
 
 namespace NereusSDR {
 
+class FilterPassbandWidget;
 class SliceModel;
 
 // TriBtn — fixed-size 22×22 button that paints a filled triangle.
@@ -47,7 +48,7 @@ private:
 //  5.  Filter width label
 //  6.  Mode combo (Tier 1 wired)
 //  7.  Filter preset buttons × 10 (Tier 1 wired)
-//  8.  FilterPassband placeholder (NYI Phase 3I)
+//  8.  FilterPassband widget (ported from AetherSDR, Tier 1 wired)
 //  9.  AGC combo (Tier 1 wired)
 //  10. AGC threshold slider (NYI — setAgcThreshold not in SliceModel yet)
 //  11. AF gain slider (Tier 1 wired)
@@ -116,8 +117,8 @@ private:
     QWidget*     m_filterContainer = nullptr;
     QGridLayout* m_filterGrid      = nullptr;
 
-    // Control 8: FilterPassband placeholder
-    QWidget*     m_filterPassband  = nullptr;
+    // Control 8: FilterPassband (ported from AetherSDR FilterPassbandWidget)
+    FilterPassbandWidget* m_filterPassband = nullptr;
 
     // ── Right column ──────────────────────────────────────────────────────
     // Controls 11 + 12: Mute + AF gain
