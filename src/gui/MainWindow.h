@@ -32,6 +32,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onConnectionStateChanged();
@@ -98,6 +99,12 @@ private:
 
     // Dark theme checkable action (Task 12)
     QAction* m_darkThemeAction = nullptr;
+
+    // Status bar members (Task 13)
+    QLabel*  m_cpuTopLabel{nullptr};   // "CPU: X.X%"
+    QLabel*  m_cpuBotLabel{nullptr};   // "Mem: —"
+    QTimer*  m_cpuTimer{nullptr};
+    QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
 
     // Applets (Phase 3-UI)
     class RxApplet* m_rxApplet{nullptr};

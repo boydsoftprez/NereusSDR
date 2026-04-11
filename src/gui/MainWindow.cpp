@@ -39,6 +39,8 @@
 #include <QSlider>
 #include <QCloseEvent>
 #include <QResizeEvent>
+#include <QEvent>
+#include <QMouseEvent>
 #include <QMenuBar>
 #include <QMenu>
 #include <QAction>
@@ -57,6 +59,10 @@
 #include <QThread>
 
 #include <cstdlib>
+
+#ifdef Q_OS_MAC
+#include <sys/resource.h>
+#endif
 
 namespace NereusSDR {
 
@@ -936,9 +942,16 @@ void MainWindow::buildStatusBar()
     hbox->setContentsMargins(6, 0, 6, 0);
     hbox->setSpacing(6);
 
+    // Helper: styled separator dot
+    auto makeSep = [&]() -> QLabel* {
+        auto* sep = new QLabel(QStringLiteral(" · "), barWidget);
+        sep->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 18px; }"));
+        return sep;
+    };
+
     // ── Left section ──────────────────────────────────────────────────────────
 
-    // Band Stack: three grey circles (NYI)
+    // Band Stack: three grey circles (NYI — clickable placeholder)
     auto* bandStackLabel = new QLabel(barWidget);
     bandStackLabel->setFixedSize(10, 22);
     {
@@ -955,55 +968,68 @@ void MainWindow::buildStatusBar()
         bandStackLabel->setPixmap(pm);
     }
     bandStackLabel->setToolTip(QStringLiteral("Band Stack (NYI)"));
+    bandStackLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(bandStackLabel);
 
     // +PAN icon (NYI)
     auto* panLabel = new QLabel(QStringLiteral("+PAN"), barWidget);
     panLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 22px; }"));
-    panLabel->setToolTip(QStringLiteral("+PAN (NYI)"));
+        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
+    panLabel->setToolTip(QStringLiteral("+PAN (NYI — Phase 3F)"));
+    panLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(panLabel);
 
-    // Panel toggle (☰)
+    // Panel toggle (☰) — wired to QSplitter right pane visibility
     auto* panelToggleLabel = new QLabel(QStringLiteral("☰"), barWidget);
     panelToggleLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 22px; }"));
-    panelToggleLabel->setToolTip(QStringLiteral("Toggle panel"));
+        "QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+    panelToggleLabel->setToolTip(QStringLiteral("Toggle container panel"));
+    panelToggleLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(panelToggleLabel);
+
+    // Wire ☰ click: toggle QSplitter right pane (widget index 1) visibility.
+    // When hiding: save sizes so we can restore them. When showing: restore.
+    connect(panelToggleLabel, &QLabel::linkActivated, this, [](const QString&){});
+    // QLabel doesn't emit click directly — install event filter via lambda via
+    // a helper QObject. Use mousePressEvent via event filter on the label.
+    panelToggleLabel->installEventFilter(this);
+    // We need to store the label pointer to recognise it in eventFilter.
+    // Use a property to mark it.
+    panelToggleLabel->setProperty("isPanelToggle", true);
 
     // TNF toggle
     m_tnfLabel = new QLabel(QStringLiteral("TNF"), barWidget);
     m_tnfLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     m_tnfLabel->setToolTip(QStringLiteral("Tracking Notch Filter (NYI)"));
+    m_tnfLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(m_tnfLabel);
 
     // CWX
     auto* cwxLabel = new QLabel(QStringLiteral("CWX"), barWidget);
     cwxLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     cwxLabel->setToolTip(QStringLiteral("CW Keyer (NYI)"));
+    cwxLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(cwxLabel);
 
     // DVK
     auto* dvkLabel = new QLabel(QStringLiteral("DVK"), barWidget);
     dvkLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     dvkLabel->setToolTip(QStringLiteral("Digital Voice Keyer (NYI)"));
+    dvkLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(dvkLabel);
 
     // FDX
     auto* fdxLabel = new QLabel(QStringLiteral("FDX"), barWidget);
     fdxLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 24px; }"));
+        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
     fdxLabel->setToolTip(QStringLiteral("Full Duplex (NYI)"));
+    fdxLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(fdxLabel);
 
-    // Separator ·
-    auto* sep1 = new QLabel(QStringLiteral(" · "), barWidget);
-    sep1->setStyleSheet(QStringLiteral(
-        "QLabel { color: #304050; font-size: 21px; }"));
-    hbox->addWidget(sep1);
+    hbox->addWidget(makeSep());
 
     // Radio info: stacked model + firmware labels
     auto* radioInfoWidget = new QWidget(barWidget);
@@ -1013,12 +1039,12 @@ void MainWindow::buildStatusBar()
 
     m_radioModelLabel = new QLabel(QStringLiteral("—"), radioInfoWidget);
     m_radioModelLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #8aa8c0; font-size: 12px; }"));
+        "QLabel { color: #8aa8c0; font-size: 11px; }"));
     radioVbox->addWidget(m_radioModelLabel);
 
     m_radioFwLabel = new QLabel(QStringLiteral("—"), radioInfoWidget);
     m_radioFwLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #607080; font-size: 12px; }"));
+        "QLabel { color: #607080; font-size: 11px; }"));
     radioVbox->addWidget(m_radioFwLabel);
 
     // Keep m_connStatusLabel pointing at model label (legacy compat)
@@ -1032,22 +1058,25 @@ void MainWindow::buildStatusBar()
     // ── Center section: STATION callsign ─────────────────────────────────────
     auto* stationContainer = new QWidget(barWidget);
     stationContainer->setStyleSheet(QStringLiteral(
-        "QWidget { border: 1px solid rgba(255,255,255,128); background: #0a0a14; padding: 2px 12px; }"));
+        "QWidget { border: 1px solid rgba(0,180,216,80); background: #0a0a14;"
+        " padding: 1px 10px; border-radius: 3px; }"));
     QHBoxLayout* stationHbox = new QHBoxLayout(stationContainer);
     stationHbox->setContentsMargins(0, 0, 0, 0);
     stationHbox->setSpacing(6);
 
     auto* stationLabel = new QLabel(QStringLiteral("STATION:"), stationContainer);
     stationLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #8aa8c0; font-size: 21px; border: none; background: transparent; padding: 0; }"));
+        "QLabel { color: #00b4d8; font-size: 13px; border: none;"
+        " background: transparent; padding: 0; }"));
     stationHbox->addWidget(stationLabel);
 
     m_callsignLabel = new QLabel(stationContainer);
     QString callsign = AppSettings::instance().value(
-        QStringLiteral("StationCallsign"), QStringLiteral("—")).toString();
+        QStringLiteral("StationCallsign"), QStringLiteral("NereusSDR")).toString();
     m_callsignLabel->setText(callsign);
     m_callsignLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #c8d8e8; font-size: 21px; border: none; background: transparent; padding: 0; }"));
+        "QLabel { color: #c8d8e8; font-size: 13px; font-weight: bold;"
+        " border: none; background: transparent; padding: 0; }"));
     stationHbox->addWidget(m_callsignLabel);
 
     hbox->addWidget(stationContainer);
@@ -1058,82 +1087,137 @@ void MainWindow::buildStatusBar()
     // ── Right section: indicators ────────────────────────────────────────────
 
     // Helper lambda: create a stacked indicator pair (top label + bottom label)
-    auto makeIndicator = [&](const QString& top, const QString& bottom) -> QWidget* {
+    // Returns the widget; sets topLbl/botLbl via out-params for wiring.
+    auto makeIndicator = [&](const QString& top, const QString& bottom,
+                              QLabel** outTop = nullptr, QLabel** outBot = nullptr) -> QWidget* {
         QWidget* w = new QWidget(barWidget);
-        w->setMinimumWidth(84);
+        w->setMinimumWidth(60);
         QVBoxLayout* vl = new QVBoxLayout(w);
         vl->setContentsMargins(0, 0, 0, 0);
         vl->setSpacing(0);
         auto* topLbl = new QLabel(top, w);
         topLbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: #8aa8c0; font-size: 12px; }"));
+            "QLabel { color: #607080; font-size: 11px; }"));
         auto* botLbl = new QLabel(bottom, w);
         botLbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: #607080; font-size: 12px; }"));
+            "QLabel { color: #404858; font-size: 11px; }"));
         vl->addWidget(topLbl);
         vl->addWidget(botLbl);
+        if (outTop) { *outTop = topLbl; }
+        if (outBot) { *outBot = botLbl; }
         return w;
     };
 
-    // CAT
+    // CAT Serial
     hbox->addWidget(makeIndicator(QStringLiteral("CAT"), QStringLiteral("Off")));
-
-    // Separator ·
-    auto* sep2 = new QLabel(QStringLiteral(" · "), barWidget);
-    sep2->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
-    hbox->addWidget(sep2);
+    hbox->addWidget(makeSep());
 
     // TCI
     hbox->addWidget(makeIndicator(QStringLiteral("TCI"), QStringLiteral("Off")));
-
-    // Separator ·
-    auto* sep3 = new QLabel(QStringLiteral(" · "), barWidget);
-    sep3->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
-    hbox->addWidget(sep3);
+    hbox->addWidget(makeSep());
 
     // PA Voltage
     hbox->addWidget(makeIndicator(QStringLiteral("PA"), QStringLiteral("— V")));
+    hbox->addWidget(makeSep());
 
-    // Separator ·
-    auto* sep4 = new QLabel(QStringLiteral(" · "), barWidget);
-    sep4->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
-    hbox->addWidget(sep4);
+    // CPU usage — stacked "CPU: X.X%" / "Mem: —"
+    // Wired to 1.5s QTimer using getrusage (macOS / POSIX).
+    {
+        QWidget* cpuWidget = makeIndicator(
+            QStringLiteral("CPU: —"), QStringLiteral("Mem: —"),
+            &m_cpuTopLabel, &m_cpuBotLabel);
+        cpuWidget->setMinimumWidth(72);
+        hbox->addWidget(cpuWidget);
+    }
+    hbox->addWidget(makeSep());
 
-    // CPU
-    hbox->addWidget(makeIndicator(QStringLiteral("CPU"), QStringLiteral("—%")));
-
-    // Separator ·
-    auto* sep5 = new QLabel(QStringLiteral(" · "), barWidget);
-    sep5->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
-    hbox->addWidget(sep5);
-
-    // TX indicator
+    // TX indicator — dim red when not transmitting; bright red when TX active (NYI)
     auto* txLabel = new QLabel(QStringLiteral("TX"), barWidget);
     txLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: rgba(255,255,255,128); font-weight: bold; font-size: 21px; }"));
-    txLabel->setToolTip(QStringLiteral("Transmit active"));
+        "QLabel { color: rgba(180,40,40,120); font-weight: bold; font-size: 14px; }"));
+    txLabel->setToolTip(QStringLiteral("Transmit (NYI)"));
     hbox->addWidget(txLabel);
+    hbox->addWidget(makeSep());
 
-    // Separator ·
-    auto* sep6 = new QLabel(QStringLiteral(" · "), barWidget);
-    sep6->setStyleSheet(QStringLiteral("QLabel { color: #304050; font-size: 21px; }"));
-    hbox->addWidget(sep6);
+    // Time display: stacked UTC + date / local
+    // Top row: UTC time (hh:mm:ss UTC)
+    // Bottom row: date + local time
+    {
+        auto* timeWidget = new QWidget(barWidget);
+        timeWidget->setMinimumWidth(130);
+        QVBoxLayout* tvl = new QVBoxLayout(timeWidget);
+        tvl->setContentsMargins(0, 0, 0, 0);
+        tvl->setSpacing(0);
 
-    // UTC clock
-    m_utcTimeLabel = new QLabel(barWidget);
-    m_utcTimeLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #c8d8e8; font-size: 21px; }"));
-    m_utcTimeLabel->setText(QDateTime::currentDateTimeUtc().toString(
-        QStringLiteral("hh:mm:ss UTC")));
-    hbox->addWidget(m_utcTimeLabel);
+        m_utcTimeLabel = new QLabel(timeWidget);
+        m_utcTimeLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: #8aa8c0; font-size: 11px; }"));
+        m_utcTimeLabel->setToolTip(QStringLiteral("UTC time"));
+        tvl->addWidget(m_utcTimeLabel);
 
-    // UTC clock timer (1-second updates)
-    m_clockTimer = new QTimer(this);
-    connect(m_clockTimer, &QTimer::timeout, this, [this]() {
-        m_utcTimeLabel->setText(QDateTime::currentDateTimeUtc().toString(
-            QStringLiteral("hh:mm:ss UTC")));
+        auto* localDateLabel = new QLabel(timeWidget);
+        localDateLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: #607080; font-size: 11px; }"));
+        localDateLabel->setToolTip(QStringLiteral("Local date/time"));
+        tvl->addWidget(localDateLabel);
+
+        hbox->addWidget(timeWidget);
+
+        // Combined clock timer — 1s updates for UTC+date+local
+        m_clockTimer = new QTimer(this);
+        connect(m_clockTimer, &QTimer::timeout, this, [this, localDateLabel]() {
+            QDateTime utcNow = QDateTime::currentDateTimeUtc();
+            QDateTime localNow = QDateTime::currentDateTime();
+            m_utcTimeLabel->setText(utcNow.toString(QStringLiteral("hh:mm:ss UTC")));
+            localDateLabel->setText(
+                localNow.toString(QStringLiteral("yyyy-MM-dd  hh:mm")));
+        });
+        // Fire once immediately so labels are populated before first tick
+        QDateTime utcNow = QDateTime::currentDateTimeUtc();
+        QDateTime localNow = QDateTime::currentDateTime();
+        m_utcTimeLabel->setText(utcNow.toString(QStringLiteral("hh:mm:ss UTC")));
+        localDateLabel->setText(localNow.toString(QStringLiteral("yyyy-MM-dd  hh:mm")));
+        m_clockTimer->start(1000);
+    }
+
+    // ── CPU usage timer (1.5s, macOS getrusage) ───────────────────────────────
+    // Track cumulative CPU time between samples to compute percentage.
+    // From macOS man page: getrusage(RUSAGE_SELF, &ru) gives ru_utime + ru_stime.
+#ifdef Q_OS_MAC
+    m_cpuTimer = new QTimer(this);
+    // Snapshot state for delta calculation
+    struct timeval prevUser{0, 0};
+    struct timeval prevSys{0, 0};
+    qint64 prevWallUs = QDateTime::currentMSecsSinceEpoch() * 1000LL;
+
+    connect(m_cpuTimer, &QTimer::timeout, this,
+            [this, prevUser, prevSys, prevWallUs]() mutable {
+        struct rusage ru{};
+        if (getrusage(RUSAGE_SELF, &ru) != 0) { return; }
+
+        qint64 nowUs = QDateTime::currentMSecsSinceEpoch() * 1000LL;
+        qint64 wallDelta = nowUs - prevWallUs;
+        if (wallDelta <= 0) { return; }
+
+        auto toUs = [](const struct timeval& tv) -> qint64 {
+            return static_cast<qint64>(tv.tv_sec) * 1'000'000LL + tv.tv_usec;
+        };
+        qint64 userDelta = toUs(ru.ru_utime) - toUs(prevUser);
+        qint64 sysDelta  = toUs(ru.ru_stime) - toUs(prevSys);
+        double cpuPct = 100.0 * static_cast<double>(userDelta + sysDelta)
+                        / static_cast<double>(wallDelta);
+
+        prevUser    = ru.ru_utime;
+        prevSys     = ru.ru_stime;
+        prevWallUs  = nowUs;
+
+        if (m_cpuTopLabel) {
+            m_cpuTopLabel->setText(
+                QStringLiteral("CPU: %1%").arg(cpuPct, 0, 'f', 1));
+        }
     });
-    m_clockTimer->start(1000);
+    m_cpuTimer->start(1500);
+#endif
 
     // Add the full-width bar widget to the status bar
     sb->addWidget(barWidget, 1);
@@ -1395,6 +1479,41 @@ void MainWindow::resizeEvent(QResizeEvent* event)
             m_containerManager->updateDockedPositions(m_hDelta, m_vDelta);
         }
     }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // Handle ☰ panel toggle click — label has property "isPanelToggle"
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* label = qobject_cast<QLabel*>(watched);
+        if (label && label->property("isPanelToggle").toBool()) {
+            // Toggle QSplitter right pane (index 1) visibility.
+            // Save/restore sizes so spectrum expands when panel is hidden.
+            if (!m_mainSplitter || m_mainSplitter->count() < 2) {
+                return QMainWindow::eventFilter(watched, event);
+            }
+            QWidget* rightPane = m_mainSplitter->widget(1);
+            if (rightPane->isVisible()) {
+                // Hide: save current sizes, then collapse right to 0
+                m_splitterSizesBeforeHide = m_mainSplitter->sizes();
+                rightPane->hide();
+                label->setStyleSheet(QStringLiteral(
+                    "QLabel { color: #404858; font-weight: bold; font-size: 16px; }"));
+            } else {
+                // Show: restore saved sizes (or default 80/20 if none saved)
+                rightPane->show();
+                if (!m_splitterSizesBeforeHide.isEmpty()) {
+                    m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
+                } else {
+                    m_mainSplitter->setSizes({1024, 256});
+                }
+                label->setStyleSheet(QStringLiteral(
+                    "QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+            }
+            return true;  // event consumed
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::applyDarkTheme()
