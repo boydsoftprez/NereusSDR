@@ -52,6 +52,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QProgressDialog>
+#include <QMessageBox>
 #include <QTimer>
 #include <QThread>
 
@@ -360,20 +361,32 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
 
-    fileMenu->addAction(QStringLiteral("&Settings..."), this, [this]() {
-        auto* dialog = new SetupDialog(m_radioModel, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        dialog->show();
-    });
+    {
+        QAction* settingsAction = fileMenu->addAction(QStringLiteral("&Settings..."),
+            this, [this]() {
+                auto* dialog = new SetupDialog(m_radioModel, this);
+                dialog->setAttribute(Qt::WA_DeleteOnClose);
+                dialog->show();
+            });
+        settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+        settingsAction->setToolTip(QStringLiteral("Open application settings"));
+    }
 
     {
         QMenu* profilesMenu = fileMenu->addMenu(QStringLiteral("&Profiles"));
-        profilesMenu->addAction(QStringLiteral("Profile &Manager..."), this, [this]() {
-            qCDebug(lcConnection) << "Profile Manager NYI";
-        });
-        profilesMenu->addAction(QStringLiteral("&Import/Export..."), this, [this]() {
-            qCDebug(lcConnection) << "Import/Export NYI";
-        });
+        QAction* txProfilesAction = profilesMenu->addAction(QStringLiteral("&TX Profiles..."));
+        txProfilesAction->setEnabled(false);
+        txProfilesAction->setToolTip(QStringLiteral("NYI — Phase X"));
+        QAction* micProfilesAction = profilesMenu->addAction(QStringLiteral("&Mic Profiles..."));
+        micProfilesAction->setEnabled(false);
+        micProfilesAction->setToolTip(QStringLiteral("NYI — Phase X"));
+        profilesMenu->addSeparator();
+        QAction* importAction = profilesMenu->addAction(QStringLiteral("&Import..."));
+        importAction->setEnabled(false);
+        importAction->setToolTip(QStringLiteral("NYI — Phase X"));
+        QAction* exportAction = profilesMenu->addAction(QStringLiteral("&Export..."));
+        exportAction->setEnabled(false);
+        exportAction->setToolTip(QStringLiteral("NYI — Phase X"));
     }
 
     fileMenu->addSeparator();
@@ -386,8 +399,19 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* radioMenu = menuBar()->addMenu(QStringLiteral("&Radio"));
 
-    radioMenu->addAction(QStringLiteral("&Connect..."), QKeySequence(Qt::CTRL | Qt::Key_K),
+    radioMenu->addAction(QStringLiteral("&Discover..."), QKeySequence(Qt::CTRL | Qt::Key_K),
                          this, &MainWindow::showConnectionPanel);
+
+    {
+        QAction* connectAction = radioMenu->addAction(QStringLiteral("&Connect"),
+            this, [this]() {
+                // Connect uses last known radio — opens panel if not connected
+                if (!m_radioModel->isConnected()) {
+                    showConnectionPanel();
+                }
+            });
+        connectAction->setToolTip(QStringLiteral("Connect to last radio"));
+    }
 
     radioMenu->addAction(QStringLiteral("&Disconnect"), this, [this]() {
         m_radioModel->disconnectFromRadio();
@@ -395,15 +419,21 @@ void MainWindow::buildMenuBar()
 
     radioMenu->addSeparator();
 
-    radioMenu->addAction(QStringLiteral("&Radio Setup..."), this, [this]() {
-        qCDebug(lcConnection) << "Radio Setup NYI";
-    });
-    radioMenu->addAction(QStringLiteral("&Antenna Setup..."), this, [this]() {
-        qCDebug(lcConnection) << "Antenna Setup NYI";
-    });
-    radioMenu->addAction(QStringLiteral("Trans&verters..."), this, [this]() {
-        qCDebug(lcConnection) << "Transverters NYI";
-    });
+    {
+        QAction* radioSetupAction = radioMenu->addAction(QStringLiteral("&Radio Setup..."));
+        radioSetupAction->setEnabled(false);
+        radioSetupAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* antennaSetupAction = radioMenu->addAction(QStringLiteral("&Antenna Setup..."));
+        antennaSetupAction->setEnabled(false);
+        antennaSetupAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* transvertersAction = radioMenu->addAction(QStringLiteral("Trans&verters..."));
+        transvertersAction->setEnabled(false);
+        transvertersAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
 
     radioMenu->addSeparator();
 
@@ -426,101 +456,123 @@ void MainWindow::buildMenuBar()
 
     {
         QMenu* panLayoutMenu = viewMenu->addMenu(QStringLiteral("Pan &Layout"));
-        panLayoutMenu->addAction(QStringLiteral("&1-up"), this, [this]() {
-            qCDebug(lcConnection) << "Pan Layout 1-up NYI";
-        });
-        panLayoutMenu->addAction(QStringLiteral("2 &Vertical"), this, [this]() {
-            qCDebug(lcConnection) << "Pan Layout 2 Vertical NYI";
-        });
-        panLayoutMenu->addAction(QStringLiteral("2 &Horizontal"), this, [this]() {
-            qCDebug(lcConnection) << "Pan Layout 2 Horizontal NYI";
-        });
-        panLayoutMenu->addAction(QStringLiteral("2×&2 Grid"), this, [this]() {
-            qCDebug(lcConnection) << "Pan Layout 2x2 Grid NYI";
-        });
-        panLayoutMenu->addAction(QStringLiteral("1+2 &Horizontal"), this, [this]() {
-            qCDebug(lcConnection) << "Pan Layout 1+2 Horizontal NYI";
-        });
+        QActionGroup* layoutGroup = new QActionGroup(this);
+        layoutGroup->setExclusive(true);
+        const struct { const char* label; } layouts[] = {
+            { "&Single" }, { "2 &Vertical" }, { "2 &Horizontal" },
+            { "2×&2" }, { "1+2 &Horizontal" }
+        };
+        bool first = true;
+        for (const auto& l : layouts) {
+            QAction* a = panLayoutMenu->addAction(QString::fromUtf8(l.label));
+            a->setCheckable(true);
+            a->setEnabled(false);
+            a->setToolTip(QStringLiteral("NYI — Phase 3F"));
+            if (first) { a->setChecked(true); first = false; }
+            layoutGroup->addAction(a);
+        }
     }
 
-    viewMenu->addAction(QStringLiteral("&Add Panadapter"), this, [this]() {
-        qCDebug(lcConnection) << "Add Panadapter NYI";
-    });
-    viewMenu->addAction(QStringLiteral("&Remove Panadapter"), this, [this]() {
-        qCDebug(lcConnection) << "Remove Panadapter NYI";
-    });
+    {
+        QAction* addPanAction = viewMenu->addAction(QStringLiteral("&Add Panadapter"));
+        addPanAction->setEnabled(false);
+        addPanAction->setToolTip(QStringLiteral("NYI — Phase 3F"));
+    }
+    {
+        QAction* rmPanAction = viewMenu->addAction(QStringLiteral("&Remove Panadapter"));
+        rmPanAction->setEnabled(false);
+        rmPanAction->setToolTip(QStringLiteral("NYI — Phase 3F"));
+    }
 
     viewMenu->addSeparator();
 
     {
         QMenu* bandPlanMenu = viewMenu->addMenu(QStringLiteral("&Band Plan"));
-        bandPlanMenu->addAction(QStringLiteral("&Off"), this, [this]() {
-            qCDebug(lcConnection) << "Band Plan Off NYI";
-        });
-        bandPlanMenu->addAction(QStringLiteral("&Small"), this, [this]() {
-            qCDebug(lcConnection) << "Band Plan Small NYI";
-        });
-        bandPlanMenu->addAction(QStringLiteral("&Medium"), this, [this]() {
-            qCDebug(lcConnection) << "Band Plan Medium NYI";
-        });
-        bandPlanMenu->addAction(QStringLiteral("&Large"), this, [this]() {
-            qCDebug(lcConnection) << "Band Plan Large NYI";
-        });
+        QActionGroup* bpGroup = new QActionGroup(this);
+        bpGroup->setExclusive(true);
+        const struct { const char* label; } bpModes[] = {
+            { "&Off" }, { "&Small" }, { "&Medium" }, { "&Large" }
+        };
+        bool first = true;
+        for (const auto& m : bpModes) {
+            QAction* a = bandPlanMenu->addAction(QString::fromUtf8(m.label));
+            a->setCheckable(true);
+            a->setEnabled(false);
+            a->setToolTip(QStringLiteral("NYI — Phase X"));
+            if (first) { a->setChecked(true); first = false; }
+            bpGroup->addAction(a);
+        }
+        bandPlanMenu->addSeparator();
+        QMenu* regionMenu = bandPlanMenu->addMenu(QStringLiteral("&Region"));
+        QActionGroup* regionGroup = new QActionGroup(this);
+        regionGroup->setExclusive(true);
+        const struct { const char* label; } regions[] = {
+            { "&US" }, { "&EU" }, { "&JA" }, { "&Other" }
+        };
+        bool firstRegion = true;
+        for (const auto& r : regions) {
+            QAction* a = regionMenu->addAction(QString::fromUtf8(r.label));
+            a->setCheckable(true);
+            a->setEnabled(false);
+            a->setToolTip(QStringLiteral("NYI — Phase X"));
+            if (firstRegion) { a->setChecked(true); firstRegion = false; }
+            regionGroup->addAction(a);
+        }
     }
 
     {
         QMenu* displayModeMenu = viewMenu->addMenu(QStringLiteral("&Display Mode"));
-        displayModeMenu->addAction(QStringLiteral("&Panadapter"), this, [this]() {
-            qCDebug(lcConnection) << "Display Mode Panadapter NYI";
-        });
-        displayModeMenu->addAction(QStringLiteral("&Waterfall"), this, [this]() {
-            qCDebug(lcConnection) << "Display Mode Waterfall NYI";
-        });
-        displayModeMenu->addAction(QStringLiteral("Pan+&WF"), this, [this]() {
-            qCDebug(lcConnection) << "Display Mode Pan+WF NYI";
-        });
-        displayModeMenu->addAction(QStringLiteral("&Scope"), this, [this]() {
-            qCDebug(lcConnection) << "Display Mode Scope NYI";
-        });
+        QAction* placeholder = displayModeMenu->addAction(QStringLiteral("(NYI placeholder)"));
+        placeholder->setEnabled(false);
+        placeholder->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+
+    {
+        QMenu* uiScaleMenu = viewMenu->addMenu(QStringLiteral("&UI Scale"));
+        QActionGroup* scaleGroup = new QActionGroup(this);
+        scaleGroup->setExclusive(true);
+        const struct { const char* label; bool isDefault; } scales[] = {
+            { "&75%",  false },
+            { "&100%", true  },
+            { "&125%", false },
+            { "&150%", false },
+            { "&175%", false },
+            { "&200%", false },
+        };
+        for (const auto& s : scales) {
+            QAction* a = uiScaleMenu->addAction(QString::fromUtf8(s.label));
+            a->setCheckable(true);
+            a->setEnabled(false);
+            a->setToolTip(QStringLiteral("NYI — Phase X"));
+            if (s.isDefault) { a->setChecked(true); }
+            scaleGroup->addAction(a);
+        }
+    }
+
+    viewMenu->addSeparator();
+
+    m_darkThemeAction = viewMenu->addAction(QStringLiteral("&Dark Theme"));
+    m_darkThemeAction->setCheckable(true);
+    m_darkThemeAction->setChecked(true);
+    m_darkThemeAction->setToolTip(QStringLiteral("Toggle dark theme (NYI — Phase X)"));
+    connect(m_darkThemeAction, &QAction::toggled, this, [](bool /*on*/) {
+        qCDebug(lcConnection) << "Dark Theme toggle NYI";
+    });
+
+    {
+        QAction* minimalAction = viewMenu->addAction(QStringLiteral("&Minimal Mode"));
+        minimalAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
+        minimalAction->setEnabled(false);
+        minimalAction->setToolTip(QStringLiteral("NYI — Phase X"));
     }
 
     viewMenu->addSeparator();
 
     {
-        QMenu* uiScaleMenu = viewMenu->addMenu(QStringLiteral("&UI Scale"));
-        uiScaleMenu->addAction(QStringLiteral("&100%"), this, [this]() {
-            qCDebug(lcConnection) << "UI Scale 100% NYI";
-        });
-        uiScaleMenu->addAction(QStringLiteral("&125%"), this, [this]() {
-            qCDebug(lcConnection) << "UI Scale 125% NYI";
-        });
-        uiScaleMenu->addAction(QStringLiteral("&150%"), this, [this]() {
-            qCDebug(lcConnection) << "UI Scale 150% NYI";
-        });
-        uiScaleMenu->addAction(QStringLiteral("&175%"), this, [this]() {
-            qCDebug(lcConnection) << "UI Scale 175% NYI";
-        });
-        uiScaleMenu->addAction(QStringLiteral("&200%"), this, [this]() {
-            qCDebug(lcConnection) << "UI Scale 200% NYI";
-        });
+        QAction* kbAction = viewMenu->addAction(QStringLiteral("&Keyboard Shortcuts..."));
+        kbAction->setEnabled(false);
+        kbAction->setToolTip(QStringLiteral("NYI — Phase X"));
     }
-
-    viewMenu->addAction(QStringLiteral("Dark/&Light Theme"), this, [this]() {
-        qCDebug(lcConnection) << "Dark/Light Theme NYI";
-    });
-    viewMenu->addAction(QStringLiteral("&Minimal Mode"), QKeySequence(Qt::CTRL | Qt::Key_M),
-                        this, [this]() {
-        qCDebug(lcConnection) << "Minimal Mode NYI";
-    });
-
-    viewMenu->addSeparator();
-
-    viewMenu->addAction(QStringLiteral("&Keyboard Shortcuts..."), this, [this]() {
-        qCDebug(lcConnection) << "Keyboard Shortcuts NYI";
-    });
-    viewMenu->addAction(QStringLiteral("&Configure Shortcuts..."), this, [this]() {
-        qCDebug(lcConnection) << "Configure Shortcuts NYI";
-    });
 
     // =========================================================================
     // DSP
@@ -532,93 +584,107 @@ void MainWindow::buildMenuBar()
     m_nrAction->setCheckable(true);
     connect(m_nrAction, &QAction::toggled, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) {
-            rxCh->setNrEnabled(on);
-        }
+        if (rxCh) { rxCh->setNrEnabled(on); }
     });
 
     QAction* nr2Action = dspMenu->addAction(QStringLiteral("NR&2"));
     nr2Action->setCheckable(true);
-    connect(nr2Action, &QAction::toggled, this, [this](bool /*on*/) {
-        qCDebug(lcConnection) << "NR2 NYI";
-    });
+    nr2Action->setEnabled(false);
+    nr2Action->setToolTip(QStringLiteral("NYI — Phase X"));
 
     m_nbAction = dspMenu->addAction(QStringLiteral("N&B"));
     m_nbAction->setCheckable(true);
     connect(m_nbAction, &QAction::toggled, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) {
-            rxCh->setNb1Enabled(on);
-        }
+        if (rxCh) { rxCh->setNb1Enabled(on); }
     });
 
     QAction* nb2Action = dspMenu->addAction(QStringLiteral("NB&2"));
     nb2Action->setCheckable(true);
-    connect(nb2Action, &QAction::toggled, this, [this](bool /*on*/) {
-        qCDebug(lcConnection) << "NB2 NYI";
-    });
+    nb2Action->setEnabled(false);
+    nb2Action->setToolTip(QStringLiteral("NYI — Phase X"));
 
     m_anfAction = dspMenu->addAction(QStringLiteral("&ANF"));
     m_anfAction->setCheckable(true);
     connect(m_anfAction, &QAction::toggled, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) {
-            rxCh->setAnfEnabled(on);
-        }
+        if (rxCh) { rxCh->setAnfEnabled(on); }
     });
 
     QAction* tnfAction = dspMenu->addAction(QStringLiteral("&TNF"));
     tnfAction->setCheckable(true);
-    connect(tnfAction, &QAction::toggled, this, [this](bool /*on*/) {
-        qCDebug(lcConnection) << "TNF NYI";
-    });
+    tnfAction->setEnabled(false);
+    tnfAction->setToolTip(QStringLiteral("NYI — Phase X"));
 
     QAction* binAction = dspMenu->addAction(QStringLiteral("&BIN"));
     binAction->setCheckable(true);
-    connect(binAction, &QAction::toggled, this, [this](bool /*on*/) {
-        qCDebug(lcConnection) << "BIN NYI";
-    });
+    binAction->setEnabled(false);
+    binAction->setToolTip(QStringLiteral("NYI — Phase X"));
 
     dspMenu->addSeparator();
 
     {
+        // AGC submenu — checkable exclusive via QActionGroup.
+        // AGCMode enum from WdspTypes.h: Off=0, Long=1, Slow=2, Med=3, Fast=4, Custom=5
+        // From Thetis dsp.cs AGCMode — all 6 modes wired to SliceModel::setAgcMode().
         QMenu* agcMenu = dspMenu->addMenu(QStringLiteral("&AGC"));
-        // AGCMode enum: Off=0, Long=1, Slow=2, Med=3, Fast=4, Custom=5
-        // From Thetis dsp.cs AGCMode — Long is present in the enum but the
-        // spec menu has: Off, Slow, Med, Fast, Custom
-        agcMenu->addAction(QStringLiteral("&Off"), this, [this]() {
+        m_agcGroup = new QActionGroup(this);
+        m_agcGroup->setExclusive(true);
+
+        const struct { const char* label; AGCMode mode; } agcModes[] = {
+            { "&Off",    AGCMode::Off    },
+            { "&Long",   AGCMode::Long   },
+            { "&Slow",   AGCMode::Slow   },
+            { "&Med",    AGCMode::Med    },
+            { "&Fast",   AGCMode::Fast   },
+            { "&Custom", AGCMode::Custom },
+        };
+        for (const auto& agc : agcModes) {
+            AGCMode agcMode = agc.mode;
+            QAction* a = agcMenu->addAction(QString::fromUtf8(agc.label),
+                this, [this, agcMode]() {
+                    SliceModel* slice = m_radioModel->activeSlice();
+                    if (slice) { slice->setAgcMode(agcMode); }
+                });
+            a->setCheckable(true);
+            m_agcGroup->addAction(a);
+        }
+
+        // Sync AGC checked state when SliceModel changes
+        connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
+            if (index != 0) { return; }
             SliceModel* slice = m_radioModel->activeSlice();
-            if (slice) { slice->setAgcMode(AGCMode::Off); }
-        });
-        agcMenu->addAction(QStringLiteral("&Slow"), this, [this]() {
-            SliceModel* slice = m_radioModel->activeSlice();
-            if (slice) { slice->setAgcMode(AGCMode::Slow); }
-        });
-        agcMenu->addAction(QStringLiteral("&Med"), this, [this]() {
-            SliceModel* slice = m_radioModel->activeSlice();
-            if (slice) { slice->setAgcMode(AGCMode::Med); }
-        });
-        agcMenu->addAction(QStringLiteral("&Fast"), this, [this]() {
-            SliceModel* slice = m_radioModel->activeSlice();
-            if (slice) { slice->setAgcMode(AGCMode::Fast); }
-        });
-        agcMenu->addAction(QStringLiteral("&Custom"), this, [this]() {
-            SliceModel* slice = m_radioModel->activeSlice();
-            if (slice) { slice->setAgcMode(AGCMode::Custom); }
+            if (!slice) { return; }
+            connect(slice, &SliceModel::agcModeChanged, this, [this](AGCMode mode) {
+                QList<QAction*> acts = m_agcGroup->actions();
+                const AGCMode agcOrder[] = {
+                    AGCMode::Off, AGCMode::Long, AGCMode::Slow,
+                    AGCMode::Med, AGCMode::Fast, AGCMode::Custom
+                };
+                for (int i = 0; i < acts.size() && i < 6; ++i) {
+                    acts[i]->setChecked(agcOrder[i] == mode);
+                }
+            });
         });
     }
 
     dspMenu->addSeparator();
 
-    dspMenu->addAction(QStringLiteral("&Equalizer..."), this, [this]() {
-        qCDebug(lcConnection) << "Equalizer NYI";
-    });
-    dspMenu->addAction(QStringLiteral("&PureSignal..."), this, [this]() {
-        qCDebug(lcConnection) << "PureSignal NYI";
-    });
-    dspMenu->addAction(QStringLiteral("&Diversity..."), this, [this]() {
-        qCDebug(lcConnection) << "Diversity NYI";
-    });
+    {
+        QAction* eqAction = dspMenu->addAction(QStringLiteral("&Equalizer..."));
+        eqAction->setEnabled(false);
+        eqAction->setToolTip(QStringLiteral("NYI — Phase 3I-3"));
+    }
+    {
+        QAction* psAction = dspMenu->addAction(QStringLiteral("&PureSignal..."));
+        psAction->setEnabled(false);
+        psAction->setToolTip(QStringLiteral("NYI — Phase 3I-4"));
+    }
+    {
+        QAction* divAction = dspMenu->addAction(QStringLiteral("&Diversity..."));
+        divAction->setEnabled(false);
+        divAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
 
     // =========================================================================
     // BAND
@@ -628,7 +694,7 @@ void MainWindow::buildMenuBar()
     {
         QMenu* hfMenu = bandMenu->addMenu(QStringLiteral("&HF"));
         // Frequency values from Thetis console.cs band definitions
-        struct { const char* label; double freqHz; } hfBands[] = {
+        const struct { const char* label; double freqHz; } hfBands[] = {
             { "160m (1.8 MHz)",    1.8e6   },
             { "80m (3.5 MHz)",     3.5e6   },
             { "60m (5.3 MHz)",     5.3e6   },
@@ -645,39 +711,37 @@ void MainWindow::buildMenuBar()
             double freq = band.freqHz;
             hfMenu->addAction(QString::fromUtf8(band.label), this, [this, freq]() {
                 SliceModel* slice = m_radioModel->activeSlice();
-                if (slice) {
-                    slice->setFrequency(freq);
-                }
+                if (slice) { slice->setFrequency(freq); }
             });
         }
     }
 
     {
         QMenu* vhfMenu = bandMenu->addMenu(QStringLiteral("&VHF"));
-        vhfMenu->addAction(QStringLiteral("2m (144.0 MHz)"), this, [this]() {
-            qCDebug(lcConnection) << "VHF 2m NYI";
-        });
-        vhfMenu->addAction(QStringLiteral("70cm (432.0 MHz)"), this, [this]() {
-            qCDebug(lcConnection) << "VHF 70cm NYI";
-        });
+        QAction* placeholder = vhfMenu->addAction(QStringLiteral("(NYI — Phase X)"));
+        placeholder->setEnabled(false);
+        placeholder->setToolTip(QStringLiteral("VHF bands NYI — Phase X"));
     }
 
-    bandMenu->addAction(QStringLiteral("&GEN"), this, [this]() {
-        qCDebug(lcConnection) << "GEN band NYI";
-    });
+    {
+        QMenu* genMenu = bandMenu->addMenu(QStringLiteral("&GEN"));
+        QAction* placeholder = genMenu->addAction(QStringLiteral("(NYI — Phase X)"));
+        placeholder->setEnabled(false);
+        placeholder->setToolTip(QStringLiteral("GEN coverage NYI — Phase X"));
+    }
 
     bandMenu->addAction(QStringLiteral("&WWV (10.0 MHz)"), this, [this]() {
         SliceModel* slice = m_radioModel->activeSlice();
-        if (slice) {
-            slice->setFrequency(10.0e6);
-        }
+        if (slice) { slice->setFrequency(10.0e6); }
     });
 
     bandMenu->addSeparator();
 
-    bandMenu->addAction(QStringLiteral("Band &Stacking..."), this, [this]() {
-        qCDebug(lcConnection) << "Band Stacking NYI";
-    });
+    {
+        QAction* bandStackAction = bandMenu->addAction(QStringLiteral("Band &Stacking..."));
+        bandStackAction->setEnabled(false);
+        bandStackAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
 
     // =========================================================================
     // MODE
@@ -688,7 +752,7 @@ void MainWindow::buildMenuBar()
     // SAM, FM, DIGL, DIGU, DRM, SPEC.
     // Maps to DSPMode enum values from WdspTypes.h.
     // From Thetis dsp.cs DSPMode enum — enum values used directly, not indices.
-    struct { const char* label; DSPMode mode; } modes[] = {
+    const struct { const char* label; DSPMode mode; } modes[] = {
         { "LSB",  DSPMode::LSB  },
         { "USB",  DSPMode::USB  },
         { "DSB",  DSPMode::DSB  },
@@ -711,9 +775,7 @@ void MainWindow::buildMenuBar()
         QAction* act = modeMenu->addAction(QString::fromUtf8(modes[i].label),
                                            this, [this, mode]() {
             SliceModel* slice = m_radioModel->activeSlice();
-            if (slice) {
-                slice->setDspMode(mode);
-            }
+            if (slice) { slice->setDspMode(mode); }
         });
         act->setCheckable(true);
         m_modeActionGroup->addAction(act);
@@ -727,7 +789,7 @@ void MainWindow::buildMenuBar()
         SliceModel* slice = m_radioModel->activeSlice();
         if (!slice) { return; }
         connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
-            DSPMode displayOrder[] = {
+            const DSPMode displayOrder[] = {
                 DSPMode::LSB, DSPMode::USB, DSPMode::DSB, DSPMode::CWL,
                 DSPMode::CWU, DSPMode::AM,  DSPMode::SAM,  DSPMode::FM,
                 DSPMode::DIGL, DSPMode::DIGU, DSPMode::DRM, DSPMode::SPEC,
@@ -745,54 +807,74 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* containersMenu = menuBar()->addMenu(QStringLiteral("Contai&ners"));
 
-    containersMenu->addAction(QStringLiteral("&New Container..."), this, [this]() {
-        qCDebug(lcConnection) << "New Container NYI";
-    });
-    containersMenu->addAction(QStringLiteral("Container &Settings..."), this, [this]() {
-        qCDebug(lcConnection) << "Container Settings NYI";
-    });
+    {
+        QAction* newContAction = containersMenu->addAction(QStringLiteral("&New Container..."));
+        newContAction->setEnabled(false);
+        newContAction->setToolTip(QStringLiteral("NYI — Phase 3G-6"));
+    }
+    {
+        QAction* contSettingsAction = containersMenu->addAction(QStringLiteral("Container &Settings..."));
+        contSettingsAction->setEnabled(false);
+        contSettingsAction->setToolTip(QStringLiteral("NYI — Phase 3G-6"));
+    }
+    {
+        QAction* resetAction = containersMenu->addAction(QStringLiteral("&Reset Default Layout"));
+        resetAction->setEnabled(false);
+        resetAction->setToolTip(QStringLiteral("NYI — Phase 3G-6"));
+    }
 
     containersMenu->addSeparator();
-
-    containersMenu->addAction(QStringLiteral("&Reset Default Layout"), this, [this]() {
-        qCDebug(lcConnection) << "Reset Default Layout NYI";
-    });
+    // Dynamic container show/hide list — populated by Task 15
 
     // =========================================================================
     // TOOLS
     // =========================================================================
     QMenu* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
 
-    toolsMenu->addAction(QStringLiteral("C&WX..."), this, [this]() {
-        qCDebug(lcConnection) << "CWX NYI";
-    });
-    toolsMenu->addAction(QStringLiteral("&Memory Manager..."), this, [this]() {
-        qCDebug(lcConnection) << "Memory Manager NYI";
-    });
-    toolsMenu->addAction(QStringLiteral("&CAT Control..."), this, [this]() {
-        qCDebug(lcConnection) << "CAT Control NYI";
-    });
-    toolsMenu->addAction(QStringLiteral("&TCI Server..."), this, [this]() {
-        qCDebug(lcConnection) << "TCI Server NYI";
-    });
-    toolsMenu->addAction(QStringLiteral("&DAX Audio..."), this, [this]() {
-        qCDebug(lcConnection) << "DAX Audio NYI";
-    });
+    {
+        QAction* cwxAction = toolsMenu->addAction(QStringLiteral("C&WX..."));
+        cwxAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_X));
+        cwxAction->setEnabled(false);
+        cwxAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* memAction = toolsMenu->addAction(QStringLiteral("&Memory Manager..."));
+        memAction->setEnabled(false);
+        memAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* catAction = toolsMenu->addAction(QStringLiteral("&CAT Control..."));
+        catAction->setEnabled(false);
+        catAction->setToolTip(QStringLiteral("NYI — Phase 3K"));
+    }
+    {
+        QAction* tciAction = toolsMenu->addAction(QStringLiteral("&TCI Server..."));
+        tciAction->setEnabled(false);
+        tciAction->setToolTip(QStringLiteral("NYI — Phase 3J"));
+    }
+    {
+        QAction* daxAction = toolsMenu->addAction(QStringLiteral("&DAX Audio..."));
+        daxAction->setEnabled(false);
+        daxAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* midiAction = toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."));
+        midiAction->setEnabled(false);
+        midiAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* macroAction = toolsMenu->addAction(QStringLiteral("Macro &Buttons..."));
+        macroAction->setEnabled(false);
+        macroAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
 
     toolsMenu->addSeparator();
 
-    toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."), this, [this]() {
-        qCDebug(lcConnection) << "MIDI Mapping NYI";
-    });
-    toolsMenu->addAction(QStringLiteral("Macro &Buttons..."), this, [this]() {
-        qCDebug(lcConnection) << "Macro Buttons NYI";
-    });
-
-    toolsMenu->addSeparator();
-
-    toolsMenu->addAction(QStringLiteral("&Network Diagnostics..."), this, [this]() {
-        qCDebug(lcConnection) << "Network Diagnostics NYI";
-    });
+    {
+        QAction* netDiagAction = toolsMenu->addAction(QStringLiteral("&Network Diagnostics..."));
+        netDiagAction->setEnabled(false);
+        netDiagAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
     toolsMenu->addAction(QStringLiteral("&Support Bundle..."), this,
                          &MainWindow::showSupportDialog);
 
@@ -801,24 +883,39 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
 
-    helpMenu->addAction(QStringLiteral("&Getting Started..."), this, [this]() {
-        qCDebug(lcConnection) << "Getting Started NYI";
-    });
-    helpMenu->addAction(QStringLiteral("&NereusSDR Help..."), this, [this]() {
-        qCDebug(lcConnection) << "NereusSDR Help NYI";
-    });
-    helpMenu->addAction(QStringLiteral("Understanding &Data Modes..."), this, [this]() {
-        qCDebug(lcConnection) << "Understanding Data Modes NYI";
-    });
+    {
+        QAction* gettingStartedAction = helpMenu->addAction(QStringLiteral("&Getting Started"));
+        gettingStartedAction->setEnabled(false);
+        gettingStartedAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* helpAction = helpMenu->addAction(QStringLiteral("&NereusSDR Help"));
+        helpAction->setEnabled(false);
+        helpAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+    {
+        QAction* dataModesAction = helpMenu->addAction(QStringLiteral("Understanding &Data Modes"));
+        dataModesAction->setEnabled(false);
+        dataModesAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
 
     helpMenu->addSeparator();
 
-    helpMenu->addAction(QStringLiteral("What's &New..."), this, [this]() {
-        qCDebug(lcConnection) << "What's New NYI";
-    });
+    {
+        QAction* whatsNewAction = helpMenu->addAction(QStringLiteral("What's &New"));
+        whatsNewAction->setEnabled(false);
+        whatsNewAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
+
+    helpMenu->addSeparator();
 
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
-        Q_UNUSED(this);
+        QMessageBox::about(this,
+            QStringLiteral("About NereusSDR"),
+            QStringLiteral("<b>NereusSDR</b> v%1<br><br>"
+                           "An open-source SDR console for OpenHPSDR radios.<br><br>"
+                           "Built with Qt6 and WDSP.")
+                .arg(NEREUSSDR_VERSION));
     });
 }
 

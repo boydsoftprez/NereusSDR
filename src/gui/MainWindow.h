@@ -93,6 +93,12 @@ private:
     QAction*      m_modeActions[12]  = {};
     QActionGroup* m_modeActionGroup  = nullptr;
 
+    // AGC menu action group (Task 12)
+    QActionGroup* m_agcGroup = nullptr;
+
+    // Dark theme checkable action (Task 12)
+    QAction* m_darkThemeAction = nullptr;
+
     // Applets (Phase 3-UI)
     class RxApplet* m_rxApplet{nullptr};
     class PhoneCwApplet* m_phoneCwApplet{nullptr};
