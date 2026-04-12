@@ -8,6 +8,7 @@
 #include <QMap>
 #include <QPointF>
 #include <QString>
+#include <QUuid>
 
 class QPainter;
 class QMouseEvent;
@@ -57,6 +58,27 @@ public:
     int  displayGroup() const { return m_displayGroup; }
     void setDisplayGroup(int g) { m_displayGroup = g; }
 
+    // Phase 3G-6 block 5 — MMIO binding. Null guid + empty (or
+    // "--DEFAULT--") variable name means "no MMIO binding, fall back
+    // to the WDSP-backed bindingId()". Set by the per-item editor's
+    // "Variable…" picker popup. Serialization is deliberately out of
+    // scope for block 5 — set lives only in the in-memory item.
+    QUuid   mmioGuid() const { return m_mmioGuid; }
+    QString mmioVariable() const { return m_mmioVariable; }
+    bool    hasMmioBinding() const {
+        return !m_mmioGuid.isNull()
+            && !m_mmioVariable.isEmpty()
+            && m_mmioVariable != QLatin1String("--DEFAULT--");
+    }
+    void setMmioBinding(const QUuid& guid, const QString& variableName) {
+        m_mmioGuid = guid;
+        m_mmioVariable = variableName;
+    }
+    void clearMmioBinding() {
+        m_mmioGuid = QUuid();
+        m_mmioVariable.clear();
+    }
+
     virtual Layer renderLayer() const = 0;
     virtual void paint(QPainter& p, int widgetW, int widgetH) = 0;
     virtual void emitVertices(QVector<float>& verts, int widgetW, int widgetH) {
@@ -105,6 +127,13 @@ protected:
     bool m_onlyWhenRx{false};
     bool m_onlyWhenTx{false};
     int  m_displayGroup{0};
+
+    // Phase 3G-6 block 5 — MMIO binding (in-memory only, not
+    // serialized yet). When hasMmioBinding() is true, MeterPoller
+    // reads the value from the bound endpoint's variable cache
+    // instead of the WDSP-backed bindingId() path.
+    QUuid   m_mmioGuid;
+    QString m_mmioVariable;
 };
 
 // ---------------------------------------------------------------------------

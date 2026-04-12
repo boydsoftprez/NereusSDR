@@ -2,13 +2,16 @@
 
 #include "../../meters/MeterItem.h"
 #include "../../meters/MeterPoller.h"
+#include "../MmioVariablePickerPopup.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QPushButton>
 #include <QLabel>
 #include <QFrame>
 
@@ -96,7 +99,35 @@ void BaseItemEditor::buildBaseForm()
         m_item->setBindingId(m_comboBinding->currentData().toInt());
         notifyChanged();
     });
-    addRow(QStringLiteral("Binding"), m_comboBinding);
+    // Phase 3G-6 block 5: Binding row composes the WDSP binding
+    // combo with a "Variable…" button that opens the MMIO picker.
+    // The button text flips to the picked variable name after a
+    // binding is set, or back to "Variable…" when cleared.
+    auto* bindingRow = new QWidget(this);
+    auto* bindingLay = new QHBoxLayout(bindingRow);
+    bindingLay->setContentsMargins(0, 0, 0, 0);
+    bindingLay->setSpacing(4);
+    bindingLay->addWidget(m_comboBinding, 1);
+    auto* btnVariable = new QPushButton(QStringLiteral("Variable\u2026"), bindingRow);
+    btnVariable->setToolTip(
+        QStringLiteral("Bind this item to an MMIO endpoint variable"));
+    bindingLay->addWidget(btnVariable);
+    connect(btnVariable, &QPushButton::clicked, this, [this, btnVariable]() {
+        if (!m_item) { return; }
+        MmioVariablePickerPopup dlg(m_item->mmioGuid(),
+                                     m_item->mmioVariable(),
+                                     this);
+        if (dlg.exec() != QDialog::Accepted) { return; }
+        if (dlg.wasCleared()) {
+            m_item->clearMmioBinding();
+            btnVariable->setText(QStringLiteral("Variable\u2026"));
+        } else {
+            m_item->setMmioBinding(dlg.selectedGuid(), dlg.selectedVariable());
+            btnVariable->setText(dlg.selectedVariable());
+        }
+        notifyChanged();
+    });
+    addRow(QStringLiteral("Binding"), bindingRow);
 
     m_spinZ = makeIntRow(QStringLiteral("Z-order"), 0, 999);
 
