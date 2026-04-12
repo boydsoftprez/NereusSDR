@@ -135,6 +135,11 @@ bool AppSettings::contains(const QString& key) const
     return m_settings.contains(key);
 }
 
+QStringList AppSettings::allKeys() const
+{
+    return m_settings.keys();
+}
+
 QVariant AppSettings::stationValue(const QString& key, const QVariant& defaultValue) const
 {
     auto it = m_stationSettings.constFind(key);

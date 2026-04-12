@@ -772,7 +772,7 @@ ItemGroup* ItemGroup::createAnanMMPreset(QObject* parent)
     // 1. Background image (z=1)
     ImageItem* bg = new ImageItem();
     bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-    bg->setImagePath(QStringLiteral("resources/meters/ananMM.png"));
+    bg->setImagePath(QStringLiteral(":/meters/ananMM.png"));
     bg->setZOrder(1);
     group->addItem(bg);
 
@@ -889,6 +889,13 @@ ItemGroup* ItemGroup::createAnanMMPreset(QObject* parent)
     pwrScale->setLowColour(Qt::gray);
     pwrScale->setHighColour(Qt::red);
     pwrScale->setMaxPower(150.0f);
+    // Pair the power scale labels with the power/SWR needle group so
+    // they hide in RX and in TX groups other than 1. Thetis's nspi has
+    // no filter of its own (MeterManager.cs:22647+), but the ANANMM
+    // port previously rendered the pwr labels over the S-meter scale
+    // in RX — this is the deliberate NereusSDR fix for that overlap.
+    pwrScale->setOnlyWhenTx(true);
+    pwrScale->setDisplayGroup(1);
     // Same calibration as power needle
     {
         QMap<float, QPointF> cal;
@@ -1005,7 +1012,7 @@ ItemGroup* ItemGroup::createCrossNeedlePreset(QObject* parent)
     // From Thetis MeterManager.cs:22817-22820
     ImageItem* bg = new ImageItem();
     bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-    bg->setImagePath(QStringLiteral("resources/meters/cross-needle.png"));
+    bg->setImagePath(QStringLiteral(":/meters/cross-needle.png"));
     bg->setZOrder(1);
     group->addItem(bg);
 
@@ -1013,7 +1020,7 @@ ItemGroup* ItemGroup::createCrossNeedlePreset(QObject* parent)
     // From Thetis MeterManager.cs:22821-22823
     ImageItem* band = new ImageItem();
     band->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-    band->setImagePath(QStringLiteral("resources/meters/cross-needle-bg.png"));
+    band->setImagePath(QStringLiteral(":/meters/cross-needle-bg.png"));
     band->setZOrder(5);
     group->addItem(band);
 

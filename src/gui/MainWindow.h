@@ -9,6 +9,7 @@
 class QProgressDialog;
 class QThread;
 class QSplitter;
+class QMenu;
 
 namespace NereusSDR {
 
@@ -79,6 +80,15 @@ private:
     int m_vDelta{0};
 
     void createDefaultContainers();
+
+    // Phase 3G-6 block 6: dynamic "Edit Container ▸" submenu,
+    // populated from ContainerManager::allContainers() and rebuilt
+    // whenever a container is added, removed, or retitled. Addresses
+    // the block 4 review observation that there was no way to see
+    // or manage already-created containers from the menu bar.
+    QMenu* m_editContainerMenu{nullptr};
+    void rebuildEditContainerSubmenu();
+    void resetDefaultLayout();
 
     // Meter system (Phase 3G-2)
     MeterWidget* m_meterWidget{nullptr};

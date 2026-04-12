@@ -197,6 +197,48 @@ set(GUI_SOURCES
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerSettingsDialog.cpp
+    src/gui/containers/MmioEndpointsDialog.cpp
+    src/gui/containers/MmioVariablePickerPopup.cpp
+    src/core/mmio/ITransportWorker.cpp
+    src/core/mmio/MmioEndpoint.cpp
+    src/core/mmio/ExternalVariableEngine.cpp
+    src/core/mmio/FormatParser.cpp
+    src/core/mmio/UdpEndpointWorker.cpp
+    src/core/mmio/TcpListenerEndpointWorker.cpp
+    src/core/mmio/TcpClientEndpointWorker.cpp
+    src/core/mmio/SerialEndpointWorker.cpp
+    src/gui/containers/meter_property_editors/BaseItemEditor.cpp
+    src/gui/containers/meter_property_editors/BarItemEditor.cpp
+    src/gui/containers/meter_property_editors/SolidColourItemEditor.cpp
+    src/gui/containers/meter_property_editors/SpacerItemEditor.cpp
+    src/gui/containers/meter_property_editors/FadeCoverItemEditor.cpp
+    src/gui/containers/meter_property_editors/ImageItemEditor.cpp
+    src/gui/containers/meter_property_editors/ScaleItemEditor.cpp
+    src/gui/containers/meter_property_editors/NeedleItemEditor.cpp
+    src/gui/containers/meter_property_editors/NeedleScalePwrItemEditor.cpp
+    src/gui/containers/meter_property_editors/TextItemEditor.cpp
+    src/gui/containers/meter_property_editors/TextOverlayItemEditor.cpp
+    src/gui/containers/meter_property_editors/SignalTextItemEditor.cpp
+    src/gui/containers/meter_property_editors/LedItemEditor.cpp
+    src/gui/containers/meter_property_editors/HistoryGraphItemEditor.cpp
+    src/gui/containers/meter_property_editors/MagicEyeItemEditor.cpp
+    src/gui/containers/meter_property_editors/DialItemEditor.cpp
+    src/gui/containers/meter_property_editors/WebImageItemEditor.cpp
+    src/gui/containers/meter_property_editors/FilterDisplayItemEditor.cpp
+    src/gui/containers/meter_property_editors/RotatorItemEditor.cpp
+    src/gui/containers/meter_property_editors/ClockItemEditor.cpp
+    src/gui/containers/meter_property_editors/VfoDisplayItemEditor.cpp
+    src/gui/containers/meter_property_editors/ClickBoxItemEditor.cpp
+    src/gui/containers/meter_property_editors/DataOutItemEditor.cpp
+    src/gui/containers/meter_property_editors/ButtonBoxItemEditor.cpp
+    src/gui/containers/meter_property_editors/BandButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/ModeButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/FilterButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/AntennaButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/TuneStepButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/OtherButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/VoiceRecordPlayItemEditor.cpp
+    src/gui/containers/meter_property_editors/DiscordButtonItemEditor.cpp
     src/gui/meters/MeterWidget.cpp
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp

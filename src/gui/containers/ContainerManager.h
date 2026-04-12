@@ -25,6 +25,13 @@ public:
     ContainerWidget* createContainer(int rxSource, DockMode mode);
     void destroyContainer(const QString& id);
 
+    // Create a new floating container that clones the user-editable
+    // state of an existing container. Meter items are NOT copied here;
+    // block 3's dialog rewrite wires the Duplicate button and will
+    // copy items via MeterWidget::serializeItems round-trip.
+    // From Thetis MeterManager.cs duplicate-container path.
+    ContainerWidget* duplicateContainer(const QString& id);
+
     // --- Dock mode transitions ---
     void floatContainer(const QString& id);
     void dockContainer(const QString& id);
@@ -55,6 +62,10 @@ public:
 signals:
     void containerAdded(const QString& id);
     void containerRemoved(const QString& id);
+    // Emitted when a container's notes change (notes are the source
+    // of the display title). MainWindow consumes this in commit 45 to
+    // rebuild the Containers → Edit Container submenu.
+    void containerTitleChanged(const QString& id, const QString& title);
 
 private:
     void setMeterFloating(ContainerWidget* container, FloatingContainer* form);

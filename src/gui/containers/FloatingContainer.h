@@ -48,6 +48,13 @@ signals:
 protected:
     void closeEvent(QCloseEvent* event) override;
 
+private slots:
+    // Collapse the top-level window to title-bar height when the owner
+    // ContainerWidget enters the minimised runtime state, restore the
+    // previous height when it leaves. From Thetis frmMeterDisplay
+    // minimise path (MeterManager.cs ContainerMinimised handler).
+    void onOwnerMinimisedChanged(bool minimised);
+
 private:
     void updateTitle();
 
@@ -58,6 +65,7 @@ private:
     bool m_formEnabled{true};
     bool m_floating{false};
     bool m_hiddenByMacro{false};
+    int  m_unminimisedHeight{0};   // cached height before minimise collapse
 };
 
 } // namespace NereusSDR

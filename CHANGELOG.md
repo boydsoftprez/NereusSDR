@@ -2,32 +2,131 @@
 
 ## [Unreleased]
 
-### In Progress — Phase 3G-6 (One-Shot): Container Settings Dialog + Full Thetis Parity + MMIO
+### Phase 3G-6 (One-Shot) — Container Settings Dialog + Full Thetis Parity + MMIO
 
-**Status:** Plan frozen, execution pending. See [`docs/architecture/phase3g6a-plan.md`](docs/architecture/phase3g6a-plan.md) for the authoritative plan and [`docs/architecture/phase3g6-oneshot-handoff.md`](docs/architecture/phase3g6-oneshot-handoff.md) for the execution handoff.
+**Status:** Complete. Branch `feature/phase3g6-oneshot`, PR #2.
+Plan: [`docs/architecture/phase3g6a-plan.md`](docs/architecture/phase3g6a-plan.md).
 
-Phase 3G-6 was originally landed as WIP after a prior session built the dialog infrastructure but left it with multiple rendering bugs and a minimal property editor. A debug pass (see `docs/architecture/phase3g6-debug-handoff.md`) identified:
+40 GPG-signed commits across 7 execution blocks landed the
+biggest single phase in NereusSDR's history, covering the
+complete user-facing surface for the meter system.
 
-- ANANMM/CrossNeedle backgrounds referenced missing `resources/meters/*.png` paths not registered as Qt resources.
-- `NeedleScalePwrItem` did not honor `onlyWhenRx`/`onlyWhenTx`/`displayGroup`, causing scale label collisions on multi-needle presets.
-- Live preview panel rendered as solid black when editing Container #0 (nested QRhiWidget in modal dialog, edit-path-specific).
-- Per-item property editors existed for only 6 of ~30 item types, each minimal.
-- No menu-based access to floating containers other than Container #0.
+#### Block 1 — rendering plumbing + Thetis filter rule
+- Meter PNGs registered as Qt resources (`:/meters/ananMM.png`,
+  CrossNeedle stopgap placeholders).
+- `onlyWhenRx` / `onlyWhenTx` / `displayGroup` moved to
+  `MeterItem` base, default 0 per Thetis sentinel.
+- Thetis filter rule (MeterManager.cs:31366-31368) ported into
+  `MeterWidget::shouldRender()`, wired into all 5 paint paths.
+- ANANMM `NeedleScalePwrItem` pinned to power/SWR group to fix
+  RX label overlap.
 
-An interview pass decided the fix is a single one-shot phase covering the entire Thetis meter-configuration surface rather than incremental 3G-6a/6b/6c sub-phases. Scope includes:
+#### Block 2 — container surface + NeedleItem calibration
+- `m_titleBarVisible`, `m_minimised`, `m_highlighted` on
+  `ContainerWidget` (the latter painting a 2px accent outline).
+- `ContainerManager::duplicateContainer`, `containerTitleChanged`
+  signal chain.
+- `FloatingContainer` collapses on `minimisedChanged(true)`.
+- `NeedleItem` rewritten for calibration-driven painting:
+  serializes the full factory state (16-point calibration map,
+  needle color, geometry, smoothing); paint routines early-return
+  when calibration is non-empty so the background ImageItem
+  shows through; emitVertices honors `m_radiusRatio` /
+  `m_lengthFactor` and reads needle color from `m_needleColor`.
 
-- Rendering fixes: Qt-resource-registered meter backgrounds (ananMM, cross-needle), `displayGroup` filtering ported from Thetis `clsMeterItem`, scale label clean-up.
-- Dialog rewrite to Thetis's 3-column layout (container dropdown, Available / In-use / Properties columns).
-- Replace live preview with in-place editing + snapshot/revert on Cancel.
-- Thetis-parity container-level controls: Lock, Notes, Highlight for setup, Title-bar toggle, Minimises, Auto height, Hides-when-RX-not-used, Duplicate.
-- Per-item property editors for every implemented MeterItem subclass (~30 types), 100% Thetis parity on exposed fields.
-- MMIO (Multi-Meter I/O) variable system: TCP/UDP/serial transports, variable registry, picker UI, parse rules, thread-safe value cache, persistence. New `src/core/mmio/` subsystem.
-- Containers menu submenu listing all open containers for menu-based editing.
-- Copy/Paste item settings, Reset Default Layout verification.
+#### Block 3 — `ContainerSettingsDialog` rewrite
+- Live preview panel removed.
+- Thetis 3-column layout: Available / In-use / Properties.
+- Container-switch dropdown populated from
+  `ContainerManager::allContainers()` (auto-commit on switch
+  landed in block 7).
+- Snapshot + revert on Cancel.
+- Categorized Available list (RX / TX / Special).
+- Two-row container property bar with all 8 plan controls plus
+  Duplicate / Delete buttons.
+- Footer: Save / Load / MMIO Variables (last became real in
+  block 5).
 
-**Branch:** `feature/phase3g6-container-settings-dialog` (PR #1, will be force-updated as execution proceeds).
-**Commit plan:** ≈48 atomic GPG-signed commits in 7 review blocks.
-**User-supplied assets required before execution:** `resources/meters/ananMM.png` (in place), `resources/meters/cross-needle.png` (pending), `resources/meters/cross-needle-bg.png` (pending).
+#### Block 4 — per-item property editors (parallel agents)
+- `BaseItemEditor` shared base class with 9 common form rows.
+- 30 subclass editors built in parallel by 4 subagents:
+  primitives (5), needles (3 — `NeedleItemEditor` includes a
+  fully-editable calibration `QTableWidget`), text/signal/history
+  (6), interactive + button-box (17). 62 files, ~155 fields,
+  zero manual fixups.
+- Dialog factory wires the right editor per item type tag and
+  pushes property changes live via
+  `propertyChanged → applyToContainer`.
+- Block 4b polish: editor pages wrapped in `QScrollArea`,
+  dialog grown to 1100×750, splitter rebalanced, minimum field
+  widths in `BaseItemEditor` helpers.
+
+#### Block 5 — MMIO subsystem
+- Started with a docs commit (`f090dcf`) that rewrote section
+  6 of the plan after a Thetis Explore agent found the
+  original draft's per-variable parse-rule taxonomy was
+  imaginary. Real Thetis is endpoint-centric with format-driven
+  (JSON / XML / RAW) discovery.
+- Core scaffold: `ExternalVariableEngine` singleton on its own
+  worker `QThread`, `MmioEndpoint` value-object + per-endpoint
+  `QHash<QString, QVariant>` cache behind a `QReadWriteLock`,
+  `FormatParser` free functions, `ITransportWorker` abstract
+  base, `lcMmio` logging category.
+- Four parallel-built transport workers:
+  `UdpEndpointWorker`, `TcpListenerEndpointWorker`,
+  `TcpClientEndpointWorker`, `SerialEndpointWorker` (the last
+  gated on `HAVE_SERIALPORT`). All Qt event-driven instead of
+  Thetis's 50ms polling loops.
+- XML persistence under `AppSettings/MmioEndpoints/<guid>/*`
+  instead of Thetis's opaque Base64 binary blob.
+- `MmioEndpointsDialog` 3-column manager (endpoint list +
+  property form + discovered-variables tree).
+- `MmioVariablePickerPopup` tree-of-endpoints picker for the
+  per-item editor's new "Variable…" button.
+- `MeterItem::m_mmioGuid` / `m_mmioVariable` in-memory binding
+  + `MeterPoller` branch that reads bound values and pushes
+  them into items at 10 fps.
+- App startup wires `ExternalVariableEngine::instance().init()`.
+
+#### Block 6 — `Containers → Edit Container` submenu
+- Replaces the static "Container Settings…" action with a
+  dynamic submenu populated from
+  `ContainerManager::allContainers()`, alphabetized by notes.
+- Rebuild on `containerAdded` / `containerRemoved` /
+  `containerTitleChanged`.
+- `Reset Default Layout` finally functional (was disabled NYI).
+
+#### Block 7 — polish + docs
+- Dead-code cleanup: 720 lines of legacy
+  `buildXItemEditor`/`buildCommonPropsPage`/etc. methods
+  removed from `ContainerSettingsDialog.cpp`.
+- `lcMmio` registered in `LogManager` runtime metadata.
+- Copy / Paste item settings (plan commit 35).
+- Container-dropdown auto-commit on switch (plan commit 13's
+  deferred half).
+- This CHANGELOG entry + phase-table flip + debug-handoff
+  marked Resolved.
+
+### Known limitations after block 7
+
+- `MeterItem::m_mmioBinding` (guid + variable name) is
+  in-memory only — not serialized through the dialog's clone
+  round-trip. Bindings survive within a single dialog session
+  but are lost on Apply or save/load. The fix is a 30+
+  subclass append-pair sweep that's tracked as future polish.
+- Real CrossNeedle PNG artwork still pending.
+- TX wiring from `RadioModel` / `TransmitModel` into
+  `MeterWidget::setMox()` is phase 3I-1 territory.
+- Plan section 5 lists fields for several item types whose
+  `MeterItem` subclasses don't yet have setters
+  (`TextOverlayItem`, `LEDItem` amber/red/condition,
+  `HistoryGraphItem` keepFor/ignoreHistory/axis, `MagicEyeItem`
+  darkMode/eyeScale, etc.). Additive subclass work, not editor
+  work.
+- `ButtonBoxItem` per-button `ButtonState`-struct fields
+  need a per-button-index sub-selector UI.
+- `NeedleItemEditor` `QGroupBox` grouping and a hand-rolled-
+  widget width sweep are pending future polish.
 
 ### Added — Phase 3G-5: Interactive Meter Items
 

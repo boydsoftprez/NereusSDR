@@ -19,6 +19,7 @@ Q_LOGGING_CATEGORY(lcDsp,        "nereus.dsp",    QtInfoMsg)
 Q_LOGGING_CATEGORY(lcSpectrum,   "nereus.spectrum", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcContainer,  "nereus.container")
 Q_LOGGING_CATEGORY(lcMeter,      "nereus.meter")
+Q_LOGGING_CATEGORY(lcMmio,       "nereus.mmio")
 
 // --- LogManager ---
 
@@ -51,6 +52,8 @@ LogManager::LogManager()
           QStringLiteral("Container dock/float/resize, lifecycle, persistence"), false },
         { QStringLiteral("nereus.meter"),    QStringLiteral("Meter"),
           QStringLiteral("Meter widget rendering, polling, and item lifecycle"), false },
+        { QStringLiteral("nereus.mmio"),     QStringLiteral("MMIO"),
+          QStringLiteral("Multi-Meter I/O endpoints, transports, parsers"), false },
     };
 }
 

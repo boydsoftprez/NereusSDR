@@ -10,4 +10,9 @@
     <qresource prefix="/help">
         <file alias="getting-started.md">resources/help/getting-started.md</file>
     </qresource>
+    <qresource prefix="/meters">
+        <file alias="ananMM.png">resources/meters/ananMM.png</file>
+        <file alias="cross-needle.png">resources/meters/cross-needle.png</file>
+        <file alias="cross-needle-bg.png">resources/meters/cross-needle-bg.png</file>
+    </qresource>
 </RCC>

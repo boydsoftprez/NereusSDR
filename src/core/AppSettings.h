@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <QMap>
 
@@ -34,6 +35,10 @@ public:
     void setValue(const QString& key, const QVariant& val);
     void remove(const QString& key);
     bool contains(const QString& key) const;
+    // Return every top-level key currently in the settings store.
+    // Used by the MMIO engine to group keys under the MmioEndpoints/
+    // prefix at app startup.
+    QStringList allKeys() const;
 
     // Per-station settings (nested under <StationName> element).
     QVariant stationValue(const QString& key, const QVariant& defaultValue = {}) const;

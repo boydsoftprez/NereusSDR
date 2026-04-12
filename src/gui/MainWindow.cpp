@@ -291,6 +291,75 @@ void MainWindow::buildUI()
     });
 }
 
+void MainWindow::rebuildEditContainerSubmenu()
+{
+    if (!m_editContainerMenu) { return; }
+    m_editContainerMenu->clear();
+
+    if (!m_containerManager) {
+        auto* none = m_editContainerMenu->addAction(
+            QStringLiteral("(no containers)"));
+        none->setEnabled(false);
+        return;
+    }
+
+    const QList<ContainerWidget*> all = m_containerManager->allContainers();
+    if (all.isEmpty()) {
+        auto* none = m_editContainerMenu->addAction(
+            QStringLiteral("(no containers)"));
+        none->setEnabled(false);
+        return;
+    }
+
+    // Alphabetical by title so the menu order is predictable even
+    // when containers are created in different orders.
+    QList<ContainerWidget*> sorted = all;
+    std::sort(sorted.begin(), sorted.end(),
+              [](ContainerWidget* a, ContainerWidget* b) {
+        const QString na = a->notes().isEmpty()
+            ? a->id().left(8) : a->notes();
+        const QString nb = b->notes().isEmpty()
+            ? b->id().left(8) : b->notes();
+        return na.localeAwareCompare(nb) < 0;
+    });
+
+    for (ContainerWidget* c : sorted) {
+        const QString label = c->notes().isEmpty()
+            ? (QStringLiteral("(unnamed) ") + c->id().left(8))
+            : c->notes();
+        QAction* act = m_editContainerMenu->addAction(label);
+        const QString id = c->id();
+        connect(act, &QAction::triggered, this, [this, id]() {
+            if (!m_containerManager) { return; }
+            ContainerWidget* target = m_containerManager->container(id);
+            if (!target) { return; }
+            ContainerSettingsDialog dialog(target, this, m_containerManager);
+            dialog.exec();
+        });
+    }
+}
+
+void MainWindow::resetDefaultLayout()
+{
+    if (!m_containerManager) { return; }
+
+    // Destroy every non-panel container. Collect IDs first because
+    // destroyContainer mutates the underlying map.
+    const QList<ContainerWidget*> all = m_containerManager->allContainers();
+    ContainerWidget* panel = m_containerManager->panelContainer();
+    QStringList toRemove;
+    for (ContainerWidget* c : all) {
+        if (c == panel) { continue; }
+        toRemove.append(c->id());
+    }
+    for (const QString& id : toRemove) {
+        m_containerManager->destroyContainer(id);
+    }
+    rebuildEditContainerSubmenu();
+    qCInfo(lcContainer) << "Reset default layout: removed"
+                         << toRemove.size() << "non-panel containers";
+}
+
 void MainWindow::createDefaultContainers()
 {
     // Container #0: panel-docked right side (AetherSDR pattern).
@@ -847,7 +916,7 @@ void MainWindow::buildMenuBar()
             c->setContent(meter);
 
             // Open settings dialog so user can configure it
-            ContainerSettingsDialog dialog(c, this);
+            ContainerSettingsDialog dialog(c, this, m_containerManager);
             if (dialog.exec() == QDialog::Rejected) {
                 // User cancelled — destroy the container
                 m_containerManager->destroyContainer(c->id());
@@ -855,20 +924,34 @@ void MainWindow::buildMenuBar()
         });
     }
     {
-        // Edit settings for the panel-docked Container #0 (S-Meter / applet panel)
-        QAction* contSettingsAction = containersMenu->addAction(QStringLiteral("Container &Settings..."));
-        connect(contSettingsAction, &QAction::triggered, this, [this]() {
-            ContainerWidget* c = m_containerManager ? m_containerManager->panelContainer() : nullptr;
-            if (c) {
-                ContainerSettingsDialog dialog(c, this);
-                dialog.exec();
-            }
-        });
+        // Phase 3G-6 block 6 commit 45: dynamic "Edit Container ▸"
+        // submenu populated from ContainerManager::allContainers().
+        // Replaces the old static "Container Settings..." action that
+        // could only edit Container #0. Rebuilds on
+        // containerAdded / containerRemoved / containerTitleChanged
+        // signals so menu entries stay in sync with the live
+        // container set.
+        m_editContainerMenu = containersMenu->addMenu(
+            QStringLiteral("&Edit Container"));
+        rebuildEditContainerSubmenu();
+        if (m_containerManager) {
+            connect(m_containerManager, &ContainerManager::containerAdded,
+                    this, [this](const QString&) { rebuildEditContainerSubmenu(); });
+            connect(m_containerManager, &ContainerManager::containerRemoved,
+                    this, [this](const QString&) { rebuildEditContainerSubmenu(); });
+            connect(m_containerManager, &ContainerManager::containerTitleChanged,
+                    this, [this](const QString&, const QString&) {
+                rebuildEditContainerSubmenu();
+            });
+        }
     }
     {
+        // Phase 3G-6 block 6 commit 46: Reset Default Layout — now
+        // functional. Destroys every non-panel container and
+        // rebuilds the submenu.
         QAction* resetAction = containersMenu->addAction(QStringLiteral("&Reset Default Layout"));
-        resetAction->setEnabled(false);
-        resetAction->setToolTip(QStringLiteral("NYI"));
+        connect(resetAction, &QAction::triggered, this,
+                &MainWindow::resetDefaultLayout);
     }
 
     containersMenu->addSeparator();

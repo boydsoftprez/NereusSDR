@@ -175,41 +175,115 @@ Every editor page is its own `QWidget` subclass in `src/gui/containers/meter_pro
 
 Thetis's MMIO lets meter items bind to data sources outside WDSP. The NereusSDR port introduces a new namespace/subsystem under `src/core/mmio/`.
 
+> **2026-04-12 revision.** This section was substantially rewritten after a targeted Thetis reverse-engineering pass (setup.cs:30710-30822, MeterManager.cs:39457-41422, frmVariablePicker.cs). The previous draft described a per-variable registry with pluggable parse rules (regex/scanf/hex-le/hex-be/last-line); that model does **not** match how Thetis actually works. The paragraphs below reflect Thetis's real architecture plus two deliberate NereusSDR deviations, flagged as such.
+
+#### 6a. Architecture: endpoint-centric, not variable-centric
+
+Thetis does **not** pre-configure individual MMIO variables. Instead:
+
+- The user configures **endpoints** — one per TCP/UDP/serial connection. Each endpoint is a `(QUuid guid, QString name, TransportType, FormatType, transport_params)` tuple.
+- Each endpoint has **one** `FormatType`: **JSON**, **XML**, or **RAW**. The endpoint's worker parses every inbound message with that format and populates a key-value store.
+- **Variables are discovered**, not declared. Key names are derived from the parsed payload structure:
+  - JSON: recursive descent builds dot-paths like `"GUID.gateway.temperature"`.
+  - XML: element walk produces dot-paths for attributes and text nodes.
+  - RAW: colon-delimited `"key1:value1:key2:value2"` pairs split into `"GUID.key1"`, `"GUID.key2"`.
+- A meter item binds to an MMIO value via `(QUuid endpointGuid, QString variableName)`. The reserved sentinel name `"--DEFAULT--"` means "no binding, fall back to the WDSP binding." Matches Thetis frmVariablePicker.cs:233-236.
+
+There is no regex / scanf / hex-le / hex-be / last-line parse rule in Thetis. Those were imagined in the pre-revision plan and are **out of scope**. If a user needs regex parsing, that's a future enhancement.
+
+#### 6b. Transports
+
+**Four** transport workers, not three. Thetis splits TCP into "listener" (NereusSDR waits for an inbound connection) and "client" (NereusSDR dials out to a remote server). From MeterManager.cs:39899-40816.
+
+| Transport | Class | Qt backing | Thetis reference |
+|---|---|---|---|
+| UDP listener | `UdpEndpointWorker` | `QUdpSocket` bound to (host, port) | MeterManager.cs:40403-40588 |
+| TCP listener | `TcpListenerEndpointWorker` | `QTcpServer` accepting single-client | MeterManager.cs:39899-40160 |
+| TCP client | `TcpClientEndpointWorker` | `QTcpSocket` with reconnect | MeterManager.cs:40160-40403 |
+| Serial | `SerialEndpointWorker` | `QSerialPort`, gated on `HAVE_SERIALPORT` | MeterManager.cs:40589-40816 |
+
+**Deviation from Thetis:** Thetis's transports use 50 ms polling loops on `Available()` / `Pending()`. NereusSDR uses Qt's event-driven `readyRead()` / `newConnection()` / `DataReceived` signals. No sleep loops, lower latency, less CPU. Port note from the Explore agent agrees this is the cleaner Qt idiom.
+
+#### 6c. Files
+
 **New files (core):**
-- `src/core/mmio/ExternalVariableEngine.h/.cpp` — singleton, owns variable registry, manages transport workers on its own thread.
-- `src/core/mmio/VariableDefinition.h/.cpp` — value object: name, transport type, address, parse rule, update policy (poll interval / event-driven).
-- `src/core/mmio/ITransportWorker.h` — abstract base for transport workers.
-- `src/core/mmio/TcpTransportWorker.h/.cpp` — TCP client. Reconnect on drop. Emits `valueReceived(varName, bytes)`.
-- `src/core/mmio/UdpTransportWorker.h/.cpp` — UDP listener. Source IP/port filter. Emits on packet.
-- `src/core/mmio/SerialTransportWorker.h/.cpp` — QSerialPort-backed. Compile-gated behind `HAVE_SERIALPORT`.
-- `src/core/mmio/ParseRule.h/.cpp` — converts raw bytes to float. Supported rule kinds (minimum viable set, matching Thetis's capability): `ascii` (parse printf-style), `scanf` (`%f`), `hex-le` / `hex-be` (fixed-width integer), `regex-group-1` (regex first capture → double), `last-line` (text protocol, take last newline-delimited field). Exact Thetis rule set is TBD during implementation.
-- `src/core/mmio/VariableCache.h/.cpp` — thread-safe `QHash<QString, std::atomic<double>>`. Written by transport workers, read by MeterPoller.
+- `src/core/mmio/ExternalVariableEngine.h/.cpp` — singleton, owns the `QMap<QUuid, MmioEndpoint*>` registry, dispatches save/load to `AppSettings`, starts/stops endpoint workers on its own thread. Accessed as `ExternalVariableEngine::instance()`.
+- `src/core/mmio/MmioEndpoint.h/.cpp` — value object + live variable cache. Fields: `QUuid guid`, `QString name`, `TransportType transport`, `FormatType format`, transport params (host, port, serial device, baud, etc.). Cache: `QHash<QString, QVariant>` protected by `QReadWriteLock`. Written by the worker thread, read by `MeterPoller` on the main thread.
+- `src/core/mmio/ITransportWorker.h` — abstract base. Signals: `valueBatchReceived(QHash<QString, QVariant>)`, `connectionStateChanged(State)`, `errorOccurred(QString)`. Virtual `start()` / `stop()`.
+- `src/core/mmio/UdpEndpointWorker.h/.cpp`
+- `src/core/mmio/TcpListenerEndpointWorker.h/.cpp`
+- `src/core/mmio/TcpClientEndpointWorker.h/.cpp`
+- `src/core/mmio/SerialEndpointWorker.h/.cpp` — compile-gated behind `HAVE_SERIALPORT`.
+- `src/core/mmio/FormatParser.h/.cpp` — free functions `parseJson(const QByteArray&, const QUuid&) -> QHash<QString, QVariant>`, `parseXml(...)`, `parseRaw(...)`. No class, no polymorphism needed.
 
-**MeterPoller integration:**
-- `MeterBinding` namespace gets a new reserved ID range for MMIO variables (e.g. `MmioBindingBase = 10000`).
-- New API: `MeterPoller::registerMmioVariable(name) -> int bindingId`. Poller's `poll()` slot reads the current value from `VariableCache::value(name)` and broadcasts `updateMeterValue(bindingId, value)`.
-- Items subscribe via existing `setBindingId()` plumbing. No MeterItem changes needed beyond the binding ID range.
+**New files (UI):**
+- `src/gui/containers/MmioEndpointsDialog.h/.cpp` — the endpoint manager. List of endpoints, Add / Edit / Remove buttons, per-endpoint property panel with transport-specific fields (host / port / baud rate / etc.), connection status indicator (Connected / Listening / Reconnecting / Error), live "discovered variables" tree. Opened from the container settings dialog's `MMIO Variables…` footer button (block 3 commit 18 stub, replaced here).
+- `src/gui/containers/MmioEndpointEditDialog.h/.cpp` — add/edit a single endpoint. Transport dropdown, format dropdown, transport-specific fields, test button, OK/Cancel.
+- `src/gui/containers/MmioVariablePickerPopup.h/.cpp` — tree of `Endpoint → variable names` shown when the user clicks the `Variable…` button on an item editor's Binding row. Matches Thetis `frmVariablePicker` (Console/frmVariablePicker.cs).
 
-**UI:**
-- `src/gui/containers/MmioVariablesDialog.h/.cpp` — the variable manager dialog. Lists all defined variables, per-variable add/edit/remove, live status indicator (connected / waiting / error), last-received timestamp and value. Accessible from the main dialog's `MMIO Variables…` button.
-- `src/gui/containers/MmioVariableEditDialog.h/.cpp` — add/edit one variable: name, transport type (TCP/UDP/serial), transport-specific fields, parse rule type, parse rule parameters, update policy, test button.
-- **Variable picker button** in every per-item property editor: next to the Data Binding dropdown, a small `Variable…` button opens a popup listing user-defined MMIO variables. Picking one sets the item's binding ID to the MMIO variable's reserved ID. Matches Thetis `btnMMIO_variable` at setup.cs:25479.
+**Modified files:**
+- `src/gui/meters/MeterItem.h/.cpp` — add `m_mmioBinding` (a `QPair<QUuid, QString>` or a tiny struct `{guid, name}`). Getter / setter / serialize / deserialize. When non-empty and `name != "--DEFAULT--"`, the item reads from the endpoint's variable cache instead of the WDSP-backed binding id. Deviation from Thetis: Thetis stores it on `clsIGSettings`; NereusSDR puts it on `MeterItem` itself so every item type inherits it uniformly — same pattern as the block 1 `onlyWhenRx/Tx/displayGroup` move.
+- `src/gui/meters/MeterPoller.h/.cpp` — in `poll()`, for each `MeterItem` whose `m_mmioBinding` is set, read `MmioEndpoint::value(name)` from `ExternalVariableEngine` and call `item->setValue(v)`. No new API surface — just a branch inside the existing poll loop.
+- `src/gui/containers/meter_property_editors/BaseItemEditor.h/.cpp` — add a small `Variable…` button next to the Binding dropdown. Click opens `MmioVariablePickerPopup`; on OK, writes the chosen `(guid, name)` onto `m_item` and calls `notifyChanged`.
+- `src/gui/containers/ContainerSettingsDialog.cpp` — replace the `onOpenMmioDialog` stub (block 3 commit 18) with a real `MmioEndpointsDialog` invocation.
+- `CMakeLists.txt` — register all new MMIO files. `HAVE_SERIALPORT` gates the serial worker.
 
-**Persistence:**
-- Variable definitions stored in `AppSettings` under key prefix `MmioVariables/`. Each variable serializes to a single XML attribute blob (name, transport, params, parse rule, interval). On app start, `ExternalVariableEngine::init()` reads all variables, starts workers.
+#### 6d. Threading
 
-**Threading:**
-- `ExternalVariableEngine` owns a dedicated `QThread` for all transport workers. Transports live on that thread. Workers emit `valueReceived` signals, auto-queued to the engine on its own thread, which writes atomically into `VariableCache`.
-- `MeterPoller::poll()` (on the main thread) reads from the cache via atomic load. No mutex in the poll hot path.
-- No UI code runs on the MMIO thread.
+- `ExternalVariableEngine` owns a dedicated `QThread` (`m_workerThread`) on which every endpoint worker lives. Workers are moved to the thread via `QObject::moveToThread` before `start()`. Never on the main thread.
+- Each worker's signals (`valueBatchReceived`, etc.) are auto-queued to the engine which runs on its own thread. The engine writes the batch into the endpoint's variable cache under its `QReadWriteLock` write-lock.
+- `MeterPoller::poll()` runs on the main thread, takes the `QReadWriteLock` read-lock for each endpoint it reads from, and copies the scalar value out. Short-held read locks — fine in the poll hot path because `QReadWriteLock` is cheap for read-heavy workloads.
+- No UI code runs on `m_workerThread`. Dialog populates the status indicator and discovered-variables tree by reading the same locked cache via queued signals from the engine.
 
-**Error handling:**
-- Transport errors are logged via `qCWarning(lcMmio)`. Connection state is surfaced in the MMIO Variables dialog as a per-variable status column (Connected / Reconnecting / Error). The meter item shows its last-known good value on transport error; after a configurable timeout with no updates, the item paints a dashed "stale" overlay.
+#### 6e. Persistence
 
-**Thetis reference:**
-- `btnMMIO_variable` / `btnMMIO_variable_2` (setup.cs:25479-25548) — picker buttons.
-- `clsIGSettings.SetSetting<T>` (MeterManager.cs:1516) — Thetis's per-item settings mechanism we don't strictly need to mirror since we have AppSettings.
-- The exact Thetis transport + parse classes are TBD during implementation — they live somewhere under `Project Files/Source/Console/` and will need their own Explore agent pass when we get to MMIO.
+**Deviation from Thetis:** Thetis serializes the entire `ConcurrentDictionary<Guid, clsMMIO>` to an opaque Base64 binary blob (`SerializeToBase64<T>` — MeterManager.cs:41019-41024). That's version-fragile and unreadable outside Thetis. NereusSDR uses `AppSettings` XML instead.
+
+One entry per endpoint under the `MmioEndpoints/` key prefix:
+
+```
+MmioEndpoints/<guid>/Name     = "My Weather Station"
+MmioEndpoints/<guid>/Transport = "UdpListener"
+MmioEndpoints/<guid>/Format    = "JSON"
+MmioEndpoints/<guid>/Host      = "0.0.0.0"
+MmioEndpoints/<guid>/Port      = "12345"
+MmioEndpoints/<guid>/Baud      = "9600"    (serial only)
+MmioEndpoints/<guid>/Device    = "/dev/tty.usbserial" (serial only)
+...
+```
+
+On app startup, `ExternalVariableEngine::init()` reads every `MmioEndpoints/<guid>/*` group, reconstructs `MmioEndpoint` objects, and starts their workers. On any change (add / edit / remove) via the dialog, the affected key group is rewritten immediately.
+
+#### 6f. Error handling and stale values
+
+- Transport errors are logged via `qCWarning(lcMmio)`. A new logging category `lcMmio` lands in `src/core/LogCategories.h`.
+- Connection state surfaces in `MmioEndpointsDialog` as a per-endpoint status column: **Connected** / **Listening** / **Reconnecting** / **Error**. Icon color: green / blue / amber / red.
+- Each endpoint's variable cache tracks `lastUpdate` timestamps per variable. Meter items that bind to MMIO check the age on each paint; if older than a configurable threshold (default 5 s), the item paints a dashed "stale" overlay. **Deviation from Thetis** — Thetis has no stale-value detection, and values are forever-valid until overwritten. NereusSDR adds the timestamp because silent staleness is a worse failure mode than an obvious visual indicator.
+
+#### 6g. Variable picker flow
+
+- Every per-item property editor has a small `Variable…` button next to its Binding dropdown (added to `BaseItemEditor`).
+- Click opens `MmioVariablePickerPopup`: a tree with endpoints as top-level nodes and their currently-discovered variable names as leaves. A `[Clear]` button resets the binding to `(empty guid, "--DEFAULT--")`, matching Thetis's clear-affordance semantics.
+- On OK, the popup writes `(guid, name)` onto `m_item->setMmioBinding(...)` and triggers `propertyChanged`.
+- The endpoint's variable cache is populated lazily by incoming messages, so the picker is only useful after the endpoint has received at least one message — this is a natural consequence of Thetis's discovery-based model and is the expected UX.
+
+#### 6h. Thetis reference citations
+
+- MMIO variable picker button: setup.cs:30710-30822
+- `frmVariablePicker` dialog: Console/frmVariablePicker.cs:104 (ctor), 174 (init), 233 (clear)
+- Binding storage on meter items: MeterManager.cs:1971-1986 (clsIGSettings.SetSetting), 1481-1482 (`_mmio_guid`, `_mmio_variable`)
+- Transport classes: MeterManager.cs:39899-40816 (UdpListener, TcpListener, TcpClientHandler, SerialPortHandler)
+- Format parsing: MeterManager.cs:40320-40353 (format switch), 41325-41422 (per-format parse routines)
+- Value cache and flow: MeterManager.cs:39457, 40003, 15263-15277 (read site during meter paint), 41362-41366 (write site on received data)
+- Persistence: MeterManager.cs:41019-41024 (save), 41074-41102 (restore)
+
+#### 6i. Out of scope for block 5 (explicitly)
+
+- **Regex / scanf / hex-le / hex-be / last-line parse rules** — don't exist in Thetis, don't port, don't add.
+- **MMIO OUT direction** — Thetis supports IN / OUT / BOTH for some endpoints. NereusSDR block 5 ships IN only. OUT is a follow-up if there's demand.
+- **Thetis's `MultiMeterIO` toolbox form with test-send button** — the setup.cs MMIO network configuration section has an elaborate UI that is not worth cloning. The `MmioEndpointsDialog` is a simpler, Qt-native replacement.
+- **Base64 binary persistence format** — replaced with XML per 6e.
+- **50 ms polling transport loop** — replaced with Qt signal/slot per 6b deviation note.
 
 ### 7. Dialog edit model
 

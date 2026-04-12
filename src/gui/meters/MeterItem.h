@@ -8,6 +8,7 @@
 #include <QMap>
 #include <QPointF>
 #include <QString>
+#include <QUuid>
 
 class QPainter;
 class QMouseEvent;
@@ -45,6 +46,38 @@ public:
 
     int zOrder() const { return m_zOrder; }
     void setZOrder(int z) { m_zOrder = z; }
+
+    // Visibility filter (from Thetis clsMeterItem, MeterManager.cs:6741-6744 /
+    // 6937-7096). The container's paint loop applies the rule from
+    // MeterManager.cs:31366-31368 — see MeterWidget::shouldRender().
+    // displayGroup == 0 means "always visible" (matches Thetis default).
+    bool onlyWhenRx() const { return m_onlyWhenRx; }
+    void setOnlyWhenRx(bool v) { m_onlyWhenRx = v; }
+    bool onlyWhenTx() const { return m_onlyWhenTx; }
+    void setOnlyWhenTx(bool v) { m_onlyWhenTx = v; }
+    int  displayGroup() const { return m_displayGroup; }
+    void setDisplayGroup(int g) { m_displayGroup = g; }
+
+    // Phase 3G-6 block 5 — MMIO binding. Null guid + empty (or
+    // "--DEFAULT--") variable name means "no MMIO binding, fall back
+    // to the WDSP-backed bindingId()". Set by the per-item editor's
+    // "Variable…" picker popup. Serialization is deliberately out of
+    // scope for block 5 — set lives only in the in-memory item.
+    QUuid   mmioGuid() const { return m_mmioGuid; }
+    QString mmioVariable() const { return m_mmioVariable; }
+    bool    hasMmioBinding() const {
+        return !m_mmioGuid.isNull()
+            && !m_mmioVariable.isEmpty()
+            && m_mmioVariable != QLatin1String("--DEFAULT--");
+    }
+    void setMmioBinding(const QUuid& guid, const QString& variableName) {
+        m_mmioGuid = guid;
+        m_mmioVariable = variableName;
+    }
+    void clearMmioBinding() {
+        m_mmioGuid = QUuid();
+        m_mmioVariable.clear();
+    }
 
     virtual Layer renderLayer() const = 0;
     virtual void paint(QPainter& p, int widgetW, int widgetH) = 0;
@@ -89,6 +122,18 @@ protected:
     int m_bindingId{-1};
     double m_value{-140.0};
     int m_zOrder{0};
+
+    // Visibility filter (see public accessors above)
+    bool m_onlyWhenRx{false};
+    bool m_onlyWhenTx{false};
+    int  m_displayGroup{0};
+
+    // Phase 3G-6 block 5 — MMIO binding (in-memory only, not
+    // serialized yet). When hasMmioBinding() is true, MeterPoller
+    // reads the value from the bound endpoint's variable cache
+    // instead of the WDSP-backed bindingId() path.
+    QUuid   m_mmioGuid;
+    QString m_mmioVariable;
 };
 
 // ---------------------------------------------------------------------------
@@ -372,15 +417,6 @@ public:
     void setDirection(NeedleDirection d) { m_direction = d; }
     NeedleDirection direction() const { return m_direction; }
 
-    void setOnlyWhenRx(bool v) { m_onlyWhenRx = v; }
-    bool onlyWhenRx() const { return m_onlyWhenRx; }
-
-    void setOnlyWhenTx(bool v) { m_onlyWhenTx = v; }
-    bool onlyWhenTx() const { return m_onlyWhenTx; }
-
-    void setDisplayGroup(int g) { m_displayGroup = g; }
-    int displayGroup() const { return m_displayGroup; }
-
     void setHistoryEnabled(bool v) { m_historyEnabled = v; }
     bool historyEnabled() const { return m_historyEnabled; }
 
@@ -455,11 +491,6 @@ private:
 
     // Direction
     NeedleDirection m_direction{NeedleDirection::Clockwise};
-
-    // Visibility filtering
-    bool m_onlyWhenRx{false};
-    bool m_onlyWhenTx{false};
-    int  m_displayGroup{-1};  // -1 = always visible
 
     // History trail
     bool   m_historyEnabled{false};

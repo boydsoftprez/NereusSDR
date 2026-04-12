@@ -1,5 +1,6 @@
 #include "gui/MainWindow.h"
 #include "core/AppSettings.h"
+#include "core/mmio/ExternalVariableEngine.h"
 #include "core/LogCategories.h"
 
 #include <QApplication>
@@ -124,8 +125,18 @@ int main(int argc, char* argv[])
 
     qDebug() << "Starting NereusSDR" << app.applicationVersion();
 
+    // Phase 3G-6 block 5: bring up the MMIO subsystem so persisted
+    // endpoints (under AppSettings MmioEndpoints/<guid>/*) start
+    // their transport workers before the main window is shown.
+    NereusSDR::ExternalVariableEngine::instance().init();
+
     NereusSDR::MainWindow window;
     window.show();
 
-    return app.exec();
+    const int rc = app.exec();
+
+    // Graceful shutdown so worker threads drain before the engine
+    // singleton is destroyed.
+    NereusSDR::ExternalVariableEngine::instance().shutdown();
+    return rc;
 }

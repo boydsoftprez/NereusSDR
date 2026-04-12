@@ -136,6 +136,13 @@ QString NeedleScalePwrItem::serialize() const
             .arg(it.value().y());
     }
 
+    // Phase 3G-6 block 1: append filter fields after calibration points.
+    // Older state that lacks them still deserializes (read is optional).
+    s += QStringLiteral("|%1|%2|%3")
+        .arg(m_onlyWhenRx ? 1 : 0)
+        .arg(m_onlyWhenTx ? 1 : 0)
+        .arg(m_displayGroup);
+
     return s;
 }
 
@@ -213,6 +220,14 @@ bool NeedleScalePwrItem::deserialize(const QString& data)
     m_maxPower    = maxPower;
     m_darkMode    = darkMode;
     m_calibration = calibration;
+
+    // Phase 3G-6 block 1: optional trailing filter fields.
+    const int filterStart = 16 + calCount;
+    if (parts.size() >= filterStart + 3) {
+        m_onlyWhenRx   = (parts[filterStart].toInt() != 0);
+        m_onlyWhenTx   = (parts[filterStart + 1].toInt() != 0);
+        m_displayGroup = parts[filterStart + 2].toInt();
+    }
 
     return true;
 }

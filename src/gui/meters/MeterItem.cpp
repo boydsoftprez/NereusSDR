@@ -746,6 +746,14 @@ void NeedleItem::paint(QPainter& p, int widgetW, int widgetH)
 // From AetherSDR SMeterWidget.cpp paintEvent() — arc drawing section
 void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
 {
+    // Phase 3G-6 block 2: calibration-driven mode (ANANMM, CrossNeedle)
+    // paints the gauge face via a companion ImageItem earlier in the
+    // Background layer. Skip the default arc + fillRect entirely so
+    // that image is visible.
+    if (!m_scaleCalibration.isEmpty()) {
+        return;
+    }
+
     const QRect rect = meterRect(widgetW, widgetH);
     const float pw = static_cast<float>(rect.width());
     const float ph = static_cast<float>(rect.height());
@@ -799,27 +807,58 @@ void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
 // Needle geometry: tapered quad from pivot to tip (2 triangles = 6 verts).
 // Peak marker: amber triangle at arc edge (3 verts).
 // From AetherSDR SMeterWidget.cpp paintEvent() — needle drawing section
+//
+// Phase 3G-6 block 2: branches on m_scaleCalibration. If non-empty,
+// the pivot and tip come from m_needleOffset + calibratedPosition()
+// (normalized gauge-face coordinates) with m_radiusRatio applied as
+// an elliptical scale around the pivot and m_lengthFactor as a
+// radial multiplier. The peak marker is suppressed in this mode —
+// it isn't meaningful on a TX power/SWR gauge.
 void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
 {
     const QRect rect = meterRect(widgetW, widgetH);
     const float pw = static_cast<float>(rect.width());
     const float ph = static_cast<float>(rect.height());
-    const float cx = rect.left() + pw * 0.5f;
-    const float radius = pw * kRadiusRatio;
-    const float cy = rect.top() + ph + radius - ph * kCenterYRatio;
 
-    // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
-    const float pivotX = cx;
-    const float pivotY = rect.top() + ph + 6.0f;
+    const bool calibrated = !m_scaleCalibration.isEmpty();
 
-    const float frac = dbmToFraction(m_smoothedDbm);
-    const float angleDeg = kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg);
-    const float angleRad = qDegreesToRadians(angleDeg);
+    float pivotX = 0.0f, pivotY = 0.0f, tipX = 0.0f, tipY = 0.0f;
+    // Arc-mode intermediates reused by the peak marker block below.
+    float arcCx = 0.0f, arcCy = 0.0f, arcRadius = 0.0f;
 
-    // From AetherSDR: needle tip at radius + 14
-    const float tipDist = radius + 14.0f;
-    const float tipX = cx + tipDist * std::cos(angleRad);
-    const float tipY = cy - tipDist * std::sin(angleRad);
+    if (calibrated) {
+        // Pivot = m_needleOffset * rect (normalized to pixels).
+        pivotX = rect.left() + pw * static_cast<float>(m_needleOffset.x());
+        pivotY = rect.top()  + ph * static_cast<float>(m_needleOffset.y());
+
+        // Tip: calibrated normalized position for the current value,
+        // then apply per-axis radius ratio and length factor as an
+        // offset from the pivot.
+        const QPointF tipNorm = calibratedPosition(static_cast<float>(m_smoothedDbm));
+        const float dxN = (static_cast<float>(tipNorm.x()) - static_cast<float>(m_needleOffset.x()))
+                        * static_cast<float>(m_radiusRatio.x()) * m_lengthFactor;
+        const float dyN = (static_cast<float>(tipNorm.y()) - static_cast<float>(m_needleOffset.y()))
+                        * static_cast<float>(m_radiusRatio.y()) * m_lengthFactor;
+        tipX = pivotX + pw * dxN;
+        tipY = pivotY + ph * dyN;
+    } else {
+        arcCx = rect.left() + pw * 0.5f;
+        arcRadius = pw * kRadiusRatio;
+        arcCy = rect.top() + ph + arcRadius - ph * kCenterYRatio;
+
+        // From AetherSDR: needleCy = height + 6.0f (pivot below widget bottom)
+        pivotX = arcCx;
+        pivotY = rect.top() + ph + 6.0f;
+
+        const float frac = dbmToFraction(m_smoothedDbm);
+        const float angleDeg = kArcEndDeg - frac * (kArcEndDeg - kArcStartDeg);
+        const float angleRad = qDegreesToRadians(angleDeg);
+
+        // From AetherSDR: needle tip at radius + 14
+        const float tipDist = arcRadius + 14.0f;
+        tipX = arcCx + tipDist * std::cos(angleRad);
+        tipY = arcCy - tipDist * std::sin(angleRad);
+    }
 
     // Perpendicular direction for needle width
     const float dx = tipX - pivotX;
@@ -858,9 +897,13 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     verts << ndcX(sp2x) << ndcY(sp2y) << sr << sg << sb << sa;
     verts << ndcX(sp4x) << ndcY(sp4y) << sr << sg << sb << sa;
 
-    // --- Needle quad (white, uniform width) ---
-    // From AetherSDR SMeterWidget.cpp line 433: QPen(#ffffff, 2)
-    const float nr = 1.0f, ng = 1.0f, nb = 1.0f, na = 1.0f;
+    // --- Needle quad (color from m_needleColor, uniform width) ---
+    // From AetherSDR SMeterWidget.cpp line 433: QPen(#ffffff, 2).
+    // Phase 3G-6 block 2: honour per-needle color from the factory.
+    const float nr = static_cast<float>(m_needleColor.redF());
+    const float ng = static_cast<float>(m_needleColor.greenF());
+    const float nb = static_cast<float>(m_needleColor.blueF());
+    const float na = static_cast<float>(m_needleColor.alphaF());
     const float np1x = pivotX + perpX * needleHW, np1y = pivotY + perpY * needleHW;
     const float np2x = pivotX - perpX * needleHW, np2y = pivotY - perpY * needleHW;
     const float np3x = tipX + perpX * needleHW,   np3y = tipY + perpY * needleHW;
@@ -875,8 +918,10 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
     verts << ndcX(np4x) << ndcY(np4y) << nr << ng << nb << na;
 
     // --- Peak marker triangle (amber, points INWARD toward center) ---
-    // From AetherSDR SMeterWidget.cpp lines 437-462: tip at radius-2, base 6px behind
-    if (m_peakDbm > m_smoothedDbm + 1.0f) {
+    // From AetherSDR SMeterWidget.cpp lines 437-462: tip at radius-2, base 6px behind.
+    // Phase 3G-6 block 2: calibration mode (TX power/SWR/etc.) has no
+    // peak marker — skip emitting the triangle entirely.
+    if (!calibrated && m_peakDbm > m_smoothedDbm + 1.0f) {
         const float peakFrac = dbmToFraction(m_peakDbm);
         const float peakAngleDeg = kArcEndDeg - peakFrac * (kArcEndDeg - kArcStartDeg);
         const float peakAngleRad = qDegreesToRadians(peakAngleDeg);
@@ -886,16 +931,16 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
         const float sinA = std::sin(peakAngleRad);
 
         // Tip at radius-2 (inside the arc), base 6px behind toward center
-        const float markerTipR = radius - 2.0f;
-        const float markerBaseR = radius - 8.0f;
+        const float markerTipR = arcRadius - 2.0f;
+        const float markerBaseR = arcRadius - 8.0f;
         const float markerHalf = 3.0f;
 
         // Tip (inward, on arc inner edge)
-        const float mtx = cx + markerTipR * cosA;
-        const float mty = cy - markerTipR * sinA;
+        const float mtx = arcCx + markerTipR * cosA;
+        const float mty = arcCy - markerTipR * sinA;
         // Base center (further inward)
-        const float mbcx = cx + markerBaseR * cosA;
-        const float mbcy = cy - markerBaseR * sinA;
+        const float mbcx = arcCx + markerBaseR * cosA;
+        const float mbcy = arcCy - markerBaseR * sinA;
         // Perpendicular at base — from AetherSDR: perpCos = -sinA, perpSin = cosA
         const float mpx = -sinA * markerHalf;
         const float mpy =  cosA * markerHalf;
@@ -909,6 +954,14 @@ void NeedleItem::emitVertices(QVector<float>& verts, int widgetW, int widgetH)
 // From AetherSDR SMeterWidget.cpp paintEvent() — tick drawing section
 void NeedleItem::paintOverlayStatic(QPainter& p, int widgetW, int widgetH)
 {
+    // Phase 3G-6 block 2: calibration-driven mode gets its scale ticks
+    // and source labels from the companion ImageItem gauge face /
+    // NeedleScalePwrItem. Skip the built-in S-meter ticks + source
+    // label entirely.
+    if (!m_scaleCalibration.isEmpty()) {
+        return;
+    }
+
     const QRect rect = meterRect(widgetW, widgetH);
     const float pw = static_cast<float>(rect.width());
     const float ph = static_cast<float>(rect.height());
@@ -996,6 +1049,12 @@ void NeedleItem::paintOverlayStatic(QPainter& p, int widgetW, int widgetH)
 // From AetherSDR SMeterWidget.cpp paintEvent() — readout drawing section
 void NeedleItem::paintOverlayDynamic(QPainter& p, int widgetW, int widgetH)
 {
+    // Phase 3G-6 block 2: calibration-driven mode has no S-unit / dBm
+    // readouts — the gauge face provides the reference frame visually.
+    if (!m_scaleCalibration.isEmpty()) {
+        return;
+    }
+
     const QRect rect = meterRect(widgetW, widgetH);
     const float ph = static_cast<float>(rect.height());
 
@@ -1029,12 +1088,49 @@ void NeedleItem::paintOverlayDynamic(QPainter& p, int widgetW, int widgetH)
     p.drawText(QPointF(rect.right() - dbmW - 6.0f, topY), dbmText);
 }
 
-// Format: NEEDLE|x|y|w|h|bindingId|zOrder|sourceLabel
+// Format:
+//   NEEDLE|x|y|w|h|bindingId|zOrder|sourceLabel
+//     [|onlyRx|onlyTx|displayGroup]                    -- added block 1
+//     [|calCount|v:x:y|v:x:y|...]                      -- added block 2
+//     [|needleColor|offsetX|offsetY|radX|radY|lenFactor|direction|normalise100|maxPower|attack|decay]
+//                                                      -- added block 2
+// Each trailing group is optional for backward compatibility: older
+// serialized state deserializes cleanly with defaults for any missing
+// tail fields.
 QString NeedleItem::serialize() const
 {
-    return QStringLiteral("NEEDLE|%1|%2")
+    QString s = QStringLiteral("NEEDLE|%1|%2|%3|%4|%5")
         .arg(baseFields(*this))
-        .arg(m_sourceLabel);
+        .arg(m_sourceLabel)
+        .arg(m_onlyWhenRx ? 1 : 0)
+        .arg(m_onlyWhenTx ? 1 : 0)
+        .arg(m_displayGroup);
+
+    // Calibration map — value:x:y triplets with a leading count.
+    s += QStringLiteral("|%1").arg(m_scaleCalibration.size());
+    for (auto it = m_scaleCalibration.constBegin();
+         it != m_scaleCalibration.constEnd(); ++it) {
+        s += QStringLiteral("|%1:%2:%3")
+            .arg(static_cast<double>(it.key()))
+            .arg(it.value().x())
+            .arg(it.value().y());
+    }
+
+    // Visual / geometry / smoothing extras.
+    s += QStringLiteral("|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11")
+        .arg(m_needleColor.name(QColor::HexArgb))
+        .arg(m_needleOffset.x())
+        .arg(m_needleOffset.y())
+        .arg(m_radiusRatio.x())
+        .arg(m_radiusRatio.y())
+        .arg(static_cast<double>(m_lengthFactor))
+        .arg(static_cast<int>(m_direction))
+        .arg(m_normaliseTo100W ? 1 : 0)
+        .arg(static_cast<double>(m_maxPower))
+        .arg(static_cast<double>(m_attackRatio))
+        .arg(static_cast<double>(m_decayRatio));
+
+    return s;
 }
 
 bool NeedleItem::deserialize(const QString& data)
@@ -1047,6 +1143,51 @@ bool NeedleItem::deserialize(const QString& data)
         return false;
     }
     m_sourceLabel = parts[7];
+
+    // Filter fields (block 1)
+    int idx = 8;
+    if (parts.size() >= idx + 3) {
+        m_onlyWhenRx   = (parts[idx++].toInt() != 0);
+        m_onlyWhenTx   = (parts[idx++].toInt() != 0);
+        m_displayGroup = parts[idx++].toInt();
+    }
+
+    // Calibration map (block 2)
+    if (parts.size() > idx) {
+        bool ok = false;
+        const int calCount = parts[idx].toInt(&ok);
+        if (ok && calCount >= 0 && parts.size() >= idx + 1 + calCount) {
+            ++idx;
+            QMap<float, QPointF> cal;
+            for (int i = 0; i < calCount; ++i) {
+                const QStringList tri = parts[idx + i].split(QLatin1Char(':'));
+                if (tri.size() < 3) { cal.clear(); break; }
+                bool okv = true, okx = true, oky = true;
+                const float v  = tri[0].toFloat(&okv);
+                const float nx = tri[1].toFloat(&okx);
+                const float ny = tri[2].toFloat(&oky);
+                if (!okv || !okx || !oky) { cal.clear(); break; }
+                cal.insert(v, QPointF(nx, ny));
+            }
+            m_scaleCalibration = cal;
+            idx += calCount;
+        }
+    }
+
+    // Visual / geometry / smoothing extras (block 2)
+    if (parts.size() >= idx + 11) {
+        const QColor col(parts[idx]);
+        if (col.isValid()) { m_needleColor = col; }
+        m_needleOffset    = QPointF(parts[idx + 1].toDouble(), parts[idx + 2].toDouble());
+        m_radiusRatio     = QPointF(parts[idx + 3].toDouble(), parts[idx + 4].toDouble());
+        m_lengthFactor    = parts[idx + 5].toFloat();
+        m_direction       = static_cast<NeedleDirection>(parts[idx + 6].toInt());
+        m_normaliseTo100W = (parts[idx + 7].toInt() != 0);
+        m_maxPower        = parts[idx + 8].toFloat();
+        m_attackRatio     = parts[idx + 9].toFloat();
+        m_decayRatio      = parts[idx + 10].toFloat();
+    }
+
     return true;
 }
 

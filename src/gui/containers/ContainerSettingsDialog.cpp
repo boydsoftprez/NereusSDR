@@ -1,4 +1,39 @@
 #include "ContainerSettingsDialog.h"
+#include "ContainerManager.h"
+#include "MmioEndpointsDialog.h"
+
+// Phase 3G-6 block 4 — per-item property editors
+#include "meter_property_editors/BaseItemEditor.h"
+#include "meter_property_editors/BarItemEditor.h"
+#include "meter_property_editors/SolidColourItemEditor.h"
+#include "meter_property_editors/SpacerItemEditor.h"
+#include "meter_property_editors/FadeCoverItemEditor.h"
+#include "meter_property_editors/ImageItemEditor.h"
+#include "meter_property_editors/ScaleItemEditor.h"
+#include "meter_property_editors/NeedleItemEditor.h"
+#include "meter_property_editors/NeedleScalePwrItemEditor.h"
+#include "meter_property_editors/TextItemEditor.h"
+#include "meter_property_editors/TextOverlayItemEditor.h"
+#include "meter_property_editors/SignalTextItemEditor.h"
+#include "meter_property_editors/LedItemEditor.h"
+#include "meter_property_editors/HistoryGraphItemEditor.h"
+#include "meter_property_editors/MagicEyeItemEditor.h"
+#include "meter_property_editors/DialItemEditor.h"
+#include "meter_property_editors/WebImageItemEditor.h"
+#include "meter_property_editors/FilterDisplayItemEditor.h"
+#include "meter_property_editors/RotatorItemEditor.h"
+#include "meter_property_editors/ClockItemEditor.h"
+#include "meter_property_editors/VfoDisplayItemEditor.h"
+#include "meter_property_editors/ClickBoxItemEditor.h"
+#include "meter_property_editors/DataOutItemEditor.h"
+#include "meter_property_editors/BandButtonItemEditor.h"
+#include "meter_property_editors/ModeButtonItemEditor.h"
+#include "meter_property_editors/FilterButtonItemEditor.h"
+#include "meter_property_editors/AntennaButtonItemEditor.h"
+#include "meter_property_editors/TuneStepButtonItemEditor.h"
+#include "meter_property_editors/OtherButtonItemEditor.h"
+#include "meter_property_editors/VoiceRecordPlayItemEditor.h"
+#include "meter_property_editors/DiscordButtonItemEditor.h"
 #include "ContainerWidget.h"
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
@@ -43,6 +78,10 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QFileDialog>
+#include <QFile>
+#include <QTextStream>
+#include <QScrollArea>
 #include <QFrame>
 #include <QColorDialog>
 #include <QColor>
@@ -131,18 +170,31 @@ QPushButton* makeBtn(const QString& text, QWidget* parent)
 // ---------------------------------------------------------------------------
 
 ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
-                                                 QWidget* parent)
+                                                 QWidget* parent,
+                                                 ContainerManager* manager)
     : QDialog(parent)
     , m_container(container)
+    , m_manager(manager)
 {
     // Window title uses the first 8 chars of the container ID
     const QString shortId = m_container ? m_container->id().left(8) : QStringLiteral("????????");
     setWindowTitle(QStringLiteral("Container Settings \u2014 ") + shortId);
 
-    setMinimumSize(800, 500);
-    resize(900, 600);
+    // Phase 3G-6 block 4b: grown defaults so the Properties column
+    // has usable vertical and horizontal room for the type-specific
+    // editors landed in block 4. Users can still resize smaller, but
+    // the opening size shows the typical editor comfortably.
+    setMinimumSize(960, 600);
+    resize(1100, 750);
+    setSizeGripEnabled(true);
 
     buildLayout();
+
+    // Phase 3G-6 block 3 commit 14: snapshot the current container
+    // state so Cancel can fully revert the in-progress edits. Must
+    // happen AFTER buildLayout so populateItemList has already
+    // captured items into m_workingItems from the live MeterWidget.
+    takeSnapshot();
 }
 
 ContainerSettingsDialog::~ContainerSettingsDialog()
@@ -172,26 +224,27 @@ void ContainerSettingsDialog::buildLayout()
     m_splitter->setStyleSheet(
         "QSplitter::handle { background: #203040; width: 3px; }");
 
-    // Left panel wrapper
-    QWidget* leftWrapper = new QWidget(m_splitter);
-    buildLeftPanel(leftWrapper);
-    m_splitter->addWidget(leftWrapper);
+    // Phase 3G-6 block 3 commit 12: Thetis 3-column layout.
+    // Left = Available (catalog), center = In-use, right = Properties.
+    QWidget* availWrapper = new QWidget(m_splitter);
+    buildAvailablePanel(availWrapper);
+    m_splitter->addWidget(availWrapper);
 
-    // Center panel wrapper
-    QWidget* centerWrapper = new QWidget(m_splitter);
-    buildCenterPanel(centerWrapper);
-    m_splitter->addWidget(centerWrapper);
+    QWidget* inUseWrapper = new QWidget(m_splitter);
+    buildInUsePanel(inUseWrapper);
+    m_splitter->addWidget(inUseWrapper);
 
-    // Right panel wrapper
-    QWidget* rightWrapper = new QWidget(m_splitter);
-    buildRightPanel(rightWrapper);
-    m_splitter->addWidget(rightWrapper);
+    QWidget* propsWrapper = new QWidget(m_splitter);
+    buildPropertiesPanel(propsWrapper);
+    m_splitter->addWidget(propsWrapper);
 
-    // Set initial panel widths: 200 / stretch / 200
+    // Phase 3G-6 block 4b: Properties column gets the lion's share
+    // because it houses 20+ form rows per editor; Available and
+    // In-use are content-sized catalogs that don't grow much.
     m_splitter->setStretchFactor(0, 0);
-    m_splitter->setStretchFactor(1, 1);
-    m_splitter->setStretchFactor(2, 0);
-    m_splitter->setSizes({200, 460, 200});
+    m_splitter->setStretchFactor(1, 0);
+    m_splitter->setStretchFactor(2, 1);
+    m_splitter->setSizes({200, 200, 700});
 
     root->addWidget(m_splitter, 1);
 
@@ -199,13 +252,51 @@ void ContainerSettingsDialog::buildLayout()
     buildButtonBar();
 }
 
-void ContainerSettingsDialog::buildLeftPanel(QWidget* parent)
+// ---------------------------------------------------------------------------
+// Phase 3G-6 block 3 commit 12: Thetis 3-column layout
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::buildAvailablePanel(QWidget* parent)
+{
+    // Mirrors Thetis lstMetersAvailable (setup.cs:24522-24566). Commit 15
+    // adds RX / TX / Special category headers; for this commit the list
+    // is flat alphabetical.
+    QVBoxLayout* layout = new QVBoxLayout(parent);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+
+    QLabel* header = new QLabel(QStringLiteral("Available"), parent);
+    header->setStyleSheet(kSectionHeaderStyle);
+    layout->addWidget(header);
+
+    m_availableList = new QListWidget(parent);
+    m_availableList->setStyleSheet(kListStyle);
+    layout->addWidget(m_availableList, 1);
+
+    QHBoxLayout* btnRow = new QHBoxLayout;
+    btnRow->setSpacing(3);
+    m_btnAddFromAvailable = makeBtn(QStringLiteral("Add \u2192"), parent);
+    m_btnAddFromAvailable->setToolTip(
+        QStringLiteral("Add the selected available item to the in-use list"));
+    btnRow->addStretch();
+    btnRow->addWidget(m_btnAddFromAvailable);
+    layout->addLayout(btnRow);
+
+    connect(m_btnAddFromAvailable, &QPushButton::clicked,
+            this, &ContainerSettingsDialog::onAddFromAvailable);
+    connect(m_availableList, &QListWidget::itemDoubleClicked, this,
+            [this](QListWidgetItem*) { onAddFromAvailable(); });
+
+    populateAvailableList();
+}
+
+void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
 {
     QVBoxLayout* layout = new QVBoxLayout(parent);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
 
-    QLabel* header = new QLabel(QStringLiteral("Content Items"), parent);
+    QLabel* header = new QLabel(QStringLiteral("In-use items"), parent);
     header->setStyleSheet(kSectionHeaderStyle);
     layout->addWidget(header);
 
@@ -216,16 +307,18 @@ void ContainerSettingsDialog::buildLeftPanel(QWidget* parent)
     connect(m_itemList, &QListWidget::currentRowChanged,
             this, &ContainerSettingsDialog::onItemSelectionChanged);
 
-    // Action buttons row
+    // Action buttons row — the legacy + (popup) button is kept for
+    // parity with the old flow; it sits alongside the new Remove /
+    // Up / Down controls.
     QHBoxLayout* btnRow = new QHBoxLayout;
     btnRow->setSpacing(3);
 
-    m_btnAdd    = makeBtn(QStringLiteral("+"),  parent);
-    m_btnRemove = makeBtn(QStringLiteral("\u2212"), parent);  // − (minus sign)
-    m_btnMoveUp = makeBtn(QStringLiteral("\u25b2"), parent);  // ▲
-    m_btnMoveDown = makeBtn(QStringLiteral("\u25bc"), parent); // ▼
+    m_btnAdd      = makeBtn(QStringLiteral("+"),           parent);
+    m_btnRemove   = makeBtn(QStringLiteral("\u2212"),      parent);
+    m_btnMoveUp   = makeBtn(QStringLiteral("\u25b2"),      parent);
+    m_btnMoveDown = makeBtn(QStringLiteral("\u25bc"),      parent);
 
-    m_btnAdd->setToolTip(QStringLiteral("Add item"));
+    m_btnAdd->setToolTip(QStringLiteral("Add item (popup)"));
     m_btnRemove->setToolTip(QStringLiteral("Remove selected item"));
     m_btnMoveUp->setToolTip(QStringLiteral("Move item up"));
     m_btnMoveDown->setToolTip(QStringLiteral("Move item down"));
@@ -246,13 +339,13 @@ void ContainerSettingsDialog::buildLeftPanel(QWidget* parent)
     populateItemList();
 }
 
-void ContainerSettingsDialog::buildCenterPanel(QWidget* parent)
+void ContainerSettingsDialog::buildPropertiesPanel(QWidget* parent)
 {
     QVBoxLayout* layout = new QVBoxLayout(parent);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
 
-    QLabel* header = new QLabel(QStringLiteral("Item Properties"), parent);
+    QLabel* header = new QLabel(QStringLiteral("Properties"), parent);
     header->setStyleSheet(kSectionHeaderStyle);
     layout->addWidget(header);
 
@@ -272,24 +365,113 @@ void ContainerSettingsDialog::buildCenterPanel(QWidget* parent)
 
     layout->addWidget(m_propertyStack, 1);
 
-    // Pre-build the common props page so it's ready immediately
-    buildCommonPropsPage();
+    // Phase 3G-6 block 7 commit 2: Copy / Paste Settings buttons
+    // under the property stack. Mirrors Thetis's per-item clipboard
+    // affordance — copies the entire serialized item form, paste
+    // only enabled when clipboard's type tag matches the selected
+    // item's type.
+    QHBoxLayout* cpRow = new QHBoxLayout();
+    cpRow->setContentsMargins(0, 0, 0, 0);
+    cpRow->setSpacing(4);
+    m_btnCopySettings  = makeBtn(QStringLiteral("Copy settings"),  parent);
+    m_btnPasteSettings = makeBtn(QStringLiteral("Paste settings"), parent);
+    m_btnCopySettings->setEnabled(false);
+    m_btnPasteSettings->setEnabled(false);
+    cpRow->addWidget(m_btnCopySettings);
+    cpRow->addWidget(m_btnPasteSettings);
+    cpRow->addStretch();
+    layout->addLayout(cpRow);
+    connect(m_btnCopySettings,  &QPushButton::clicked,
+            this, &ContainerSettingsDialog::onCopyItemSettings);
+    connect(m_btnPasteSettings, &QPushButton::clicked,
+            this, &ContainerSettingsDialog::onPasteItemSettings);
 }
 
-void ContainerSettingsDialog::buildRightPanel(QWidget* parent)
+// ---------------------------------------------------------------------------
+// Available list catalog and Add-from-available flow
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::populateAvailableList()
 {
-    QVBoxLayout* layout = new QVBoxLayout(parent);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    if (!m_availableList) { return; }
+    m_availableList->clear();
 
-    QLabel* header = new QLabel(QStringLiteral("Live Preview"), parent);
-    header->setStyleSheet(kSectionHeaderStyle);
-    layout->addWidget(header);
+    // Phase 3G-6 block 3 commit 15: Thetis lstMetersAvailable
+    // categorization (setup.cs:24522-24566) — three sections, each
+    // alphabetical. Section headers are non-selectable disabled
+    // QListWidgetItems in a highlight color. Block 4 will revisit
+    // the per-entry mapping once the per-item editors are in place
+    // and we know exactly which default bindings each type ships
+    // with.
+    struct Entry { const char* tag; const char* label; };
+    static const Entry kRxItems[] = {
+        {"NEEDLE",         "Needle Meter"},
+        {"SIGNALTEXT",     "Signal Text"},
+        {"TEXT",           "Text Readout"},
+    };
+    static const Entry kTxItems[] = {
+        {"BAR",            "Bar Meter"},
+        {"LED",            "LED"},
+        {"NEEDLESCALEPWR", "Needle Scale Power"},
+        {"SCALE",          "Scale"},
+    };
+    static const Entry kSpecialItems[] = {
+        {"CLICKBOX",       "Click Box"},
+        {"CLOCK",          "Clock"},
+        {"DATAOUT",        "Data Out"},
+        {"DIAL",           "Dial Meter"},
+        {"FADECOVER",      "Fade Cover"},
+        {"FILTERDISPLAY",  "Filter Display"},
+        {"HISTORY",        "History Graph"},
+        {"IMAGE",          "Image"},
+        {"MAGICEYE",       "Magic Eye"},
+        {"ROTATOR",        "Rotator"},
+        {"SOLID",          "Solid Colour"},
+        {"SPACER",         "Spacer"},
+        {"TEXTOVERLAY",    "Text Overlay"},
+        {"VFODISPLAY",     "VFO Display"},
+        {"WEBIMAGE",       "Web Image"},
+    };
 
-    m_previewWidget = new MeterWidget(parent);
-    m_previewWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    layout->addWidget(m_previewWidget, 1);
+    auto addHeader = [this](const QString& text) {
+        auto* h = new QListWidgetItem(text, m_availableList);
+        QFont f = h->font();
+        f.setBold(true);
+        h->setFont(f);
+        h->setForeground(QColor(0x8a, 0xa8, 0xc0));
+        h->setBackground(QColor(0x1a, 0x2a, 0x38));
+        h->setFlags(Qt::NoItemFlags);   // non-selectable, non-enabled
+    };
+    auto addEntry = [this](const Entry& e) {
+        auto* item = new QListWidgetItem(
+            QStringLiteral("  ") + QString::fromLatin1(e.label),
+            m_availableList);
+        item->setData(Qt::UserRole, QString::fromLatin1(e.tag));
+    };
+
+    addHeader(QStringLiteral("RX meters"));
+    for (const auto& e : kRxItems) { addEntry(e); }
+
+    addHeader(QStringLiteral("TX meters"));
+    for (const auto& e : kTxItems) { addEntry(e); }
+
+    addHeader(QStringLiteral("Special"));
+    for (const auto& e : kSpecialItems) { addEntry(e); }
 }
+
+void ContainerSettingsDialog::onAddFromAvailable()
+{
+    if (!m_availableList) { return; }
+    QListWidgetItem* sel = m_availableList->currentItem();
+    if (!sel) { return; }
+    const QString tag = sel->data(Qt::UserRole).toString();
+    if (tag.isEmpty()) { return; }
+    addNewItem(tag);
+}
+
+// Phase 3G-6 block 3 commit 11: buildRightPanel / live preview deleted.
+// Commit 12 reintroduces a Properties column here under the Thetis
+// 3-column layout.
 
 void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* parentLayout)
 {
@@ -298,9 +480,68 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     bar->setStyleSheet(
         "QFrame { background: #111122; border: 1px solid #203040; border-radius: 4px; }");
 
-    QHBoxLayout* barLayout = new QHBoxLayout(bar);
-    barLayout->setContentsMargins(8, 4, 8, 4);
+    // Phase 3G-6 block 3 commit 17: two-row layout. Row 1 holds the
+    // container-switch dropdown, title, bg, rx, and visibility
+    // controls. Row 2 holds the remaining container-level toggles
+    // plus the Duplicate / Delete actions on the right.
+    QVBoxLayout* outer = new QVBoxLayout(bar);
+    outer->setContentsMargins(8, 4, 8, 4);
+    outer->setSpacing(4);
+
+    QHBoxLayout* barLayout = new QHBoxLayout;
+    barLayout->setContentsMargins(0, 0, 0, 0);
     barLayout->setSpacing(10);
+    outer->addLayout(barLayout);
+
+    // Phase 3G-6 block 3 commit 13: container-switch dropdown.
+    // Populated from ContainerManager::allContainers() when a manager
+    // is available. The switching behavior (auto-commit + new
+    // snapshot) lands in commit 14 alongside the snapshot/revert
+    // machinery; this commit just lays down the UI.
+    QLabel* contLabel = new QLabel(QStringLiteral("Container:"), bar);
+    contLabel->setStyleSheet(kLabelStyle);
+    m_containerDropdown = new QComboBox(bar);
+    m_containerDropdown->setStyleSheet(
+        "QComboBox { background: #0a0a18; color: #c8d8e8;"
+        "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px 4px;"
+        "  min-width: 160px; }"
+        "QComboBox QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
+        "  border: 1px solid #205070; selection-background-color: #00b4d8; }");
+    if (m_manager) {
+        const QList<ContainerWidget*> all = m_manager->allContainers();
+        int activeIdx = -1;
+        for (ContainerWidget* c : all) {
+            const QString label = c->notes().isEmpty()
+                ? c->id().left(8)
+                : c->notes();
+            m_containerDropdown->addItem(label, c->id());
+            if (c == m_container) {
+                activeIdx = m_containerDropdown->count() - 1;
+            }
+        }
+        if (activeIdx >= 0) {
+            m_containerDropdown->setCurrentIndex(activeIdx);
+        }
+    } else if (m_container) {
+        // Legacy single-container path: show just the current container.
+        const QString label = m_container->notes().isEmpty()
+            ? m_container->id().left(8)
+            : m_container->notes();
+        m_containerDropdown->addItem(label, m_container->id());
+    }
+    // Phase 3G-6 block 7 commit 2: dropdown is fully active when a
+    // manager is available and there's more than one container.
+    m_containerDropdown->setEnabled(m_manager != nullptr
+                                    && m_containerDropdown->count() > 1);
+    if (m_manager) {
+        connect(m_containerDropdown,
+                qOverload<int>(&QComboBox::currentIndexChanged),
+                this,
+                &ContainerSettingsDialog::onContainerDropdownChanged);
+    }
+
+    barLayout->addWidget(contLabel);
+    barLayout->addWidget(m_containerDropdown);
 
     // Title
     QLabel* titleLabel = new QLabel(QStringLiteral("Title:"), bar);
@@ -378,7 +619,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     barLayout->addWidget(m_showOnTxCheck);
     barLayout->addStretch();
 
-    // Populate from container
+    // Populate row 1 from container
     if (m_container) {
         m_titleEdit->setText(m_container->notes());
         m_borderCheck->setChecked(m_container->hasBorder());
@@ -391,6 +632,81 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         m_showOnTxCheck->setChecked(m_container->showOnTx());
     }
 
+    // -------- Row 2: additional container-level controls --------
+    QHBoxLayout* row2 = new QHBoxLayout;
+    row2->setContentsMargins(0, 0, 0, 0);
+    row2->setSpacing(10);
+    outer->addLayout(row2);
+
+    auto makeCheck = [bar](const QString& label, bool initial) {
+        auto* cb = new QCheckBox(label, bar);
+        cb->setStyleSheet("QCheckBox { color: #c8d8e8; }");
+        cb->setChecked(initial);
+        return cb;
+    };
+
+    m_lockCheck              = makeCheck(QStringLiteral("Lock"),
+                                         m_container && m_container->isLocked());
+    m_hideTitleCheck         = makeCheck(QStringLiteral("Hide title"),
+                                         m_container && !m_container->isTitleBarVisible());
+    m_minimisesCheck         = makeCheck(QStringLiteral("Minimises"),
+                                         m_container && m_container->containerMinimises());
+    m_autoHeightCheck        = makeCheck(QStringLiteral("Auto height"),
+                                         m_container && m_container->autoHeight());
+    m_hidesWhenRxNotUsedCheck = makeCheck(QStringLiteral("Hide when RX unused"),
+                                         m_container && m_container->containerHidesWhenRxNotUsed());
+    m_highlightCheck         = makeCheck(QStringLiteral("Highlight"),
+                                         m_container && m_container->isHighlighted());
+
+    row2->addWidget(m_lockCheck);
+    row2->addWidget(m_hideTitleCheck);
+    row2->addWidget(m_minimisesCheck);
+    row2->addWidget(m_autoHeightCheck);
+    row2->addWidget(m_hidesWhenRxNotUsedCheck);
+    row2->addWidget(m_highlightCheck);
+    row2->addStretch();
+
+    m_btnDuplicate = makeBtn(QStringLiteral("Duplicate"), bar);
+    m_btnDelete    = makeBtn(QStringLiteral("Delete"),    bar);
+    m_btnDelete->setStyleSheet(
+        "QPushButton { background: #401010; color: #ffb0b0; border: 1px solid #802020;"
+        "  border-radius: 3px; padding: 2px 8px; }"
+        "QPushButton:hover { background: #602020; }");
+    row2->addWidget(m_btnDuplicate);
+    row2->addWidget(m_btnDelete);
+
+    // Highlight is the only one that takes effect immediately — it's
+    // a pure runtime UI affordance showing the user which container
+    // is being edited. The others latch into the container on Apply
+    // / OK via applyToContainer (live-edit push machinery is block
+    // 4 territory).
+    if (m_container) {
+        m_container->setHighlighted(m_highlightCheck->isChecked());
+    }
+    connect(m_highlightCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_container) { m_container->setHighlighted(on); }
+    });
+
+    connect(m_btnDuplicate, &QPushButton::clicked, this, [this]() {
+        if (m_manager && m_container) {
+            ContainerWidget* dup = m_manager->duplicateContainer(m_container->id());
+            if (dup && m_containerDropdown) {
+                const QString label = dup->notes().isEmpty() ? dup->id().left(8) : dup->notes();
+                m_containerDropdown->addItem(label, dup->id());
+            }
+        }
+    });
+    connect(m_btnDelete, &QPushButton::clicked, this, [this]() {
+        if (!m_manager || !m_container) { return; }
+        const QString id = m_container->id();
+        // Leaving the dialog open pointing at a freed container is a
+        // crash waiting to happen, so destroy + close together.
+        m_snapshotTaken = false;   // prevent revert-into-freed-container on reject
+        m_container = nullptr;
+        m_manager->destroyContainer(id);
+        reject();
+    });
+
     parentLayout->addWidget(bar);
 }
 
@@ -399,14 +715,20 @@ void ContainerSettingsDialog::buildButtonBar()
     QHBoxLayout* barLayout = new QHBoxLayout;
     barLayout->setSpacing(6);
 
-    // Left cluster: Presets / Import / Export
+    // Left cluster: Save / Load / Presets / Import / Export / MMIO
+    m_btnSave   = makeBtn(QStringLiteral("Save\u2026"),    this);
+    m_btnLoad   = makeBtn(QStringLiteral("Load\u2026"),    this);
     m_btnPreset = makeBtn(QStringLiteral("Presets\u2026"), this);
     m_btnImport = makeBtn(QStringLiteral("Import"),        this);
     m_btnExport = makeBtn(QStringLiteral("Export"),        this);
+    m_btnMmio   = makeBtn(QStringLiteral("MMIO Variables\u2026"), this);
 
+    barLayout->addWidget(m_btnSave);
+    barLayout->addWidget(m_btnLoad);
     barLayout->addWidget(m_btnPreset);
     barLayout->addWidget(m_btnImport);
     barLayout->addWidget(m_btnExport);
+    barLayout->addWidget(m_btnMmio);
     barLayout->addStretch();
 
     // Right cluster: Apply / Cancel / OK
@@ -426,8 +748,20 @@ void ContainerSettingsDialog::buildButtonBar()
     connect(m_btnPreset, &QPushButton::clicked, this, &ContainerSettingsDialog::onLoadPreset);
     connect(m_btnExport, &QPushButton::clicked, this, &ContainerSettingsDialog::onExport);
     connect(m_btnImport, &QPushButton::clicked, this, &ContainerSettingsDialog::onImport);
+    connect(m_btnSave,   &QPushButton::clicked, this, &ContainerSettingsDialog::onSaveToFile);
+    connect(m_btnLoad,   &QPushButton::clicked, this, &ContainerSettingsDialog::onLoadFromFile);
+    connect(m_btnMmio,   &QPushButton::clicked, this, &ContainerSettingsDialog::onOpenMmioDialog);
     connect(m_btnApply,  &QPushButton::clicked, this, &ContainerSettingsDialog::applyToContainer);
-    connect(m_btnCancel, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_btnCancel, &QPushButton::clicked, this, [this]() {
+        // Phase 3G-6 block 3 commit 14: Cancel reverts the container
+        // and its meter items to the snapshot captured on dialog
+        // open, then closes. Applied changes from Apply clicks are
+        // NOT reverted — that's intentional: Apply is a "commit"
+        // action and the snapshot is only a safety net for
+        // un-Applied edits.
+        revertFromSnapshot();
+        reject();
+    });
     connect(m_btnOk,     &QPushButton::clicked, this, [this]() {
         applyToContainer();
         accept();
@@ -450,26 +784,67 @@ void ContainerSettingsDialog::onItemSelectionChanged()
 
     if (row < 0 || row >= m_workingItems.size()) {
         m_propertyStack->setCurrentWidget(m_emptyPage);
+        updateCopyPasteButtonState();
         return;
     }
+    updateCopyPasteButtonState();
 
-    if (!m_commonPropsPage) {
-        buildCommonPropsPage();
-    }
-
-    m_propertyStack->setCurrentWidget(m_commonPropsPage);
-    loadCommonProperties(row);
-
-    // Replace type-specific editor
+    // Phase 3G-6 block 4: replace the legacy "common props + type
+    // editor" pair with a single BaseItemEditor subclass that
+    // handles everything for the selected item's type. The editor
+    // is built on demand and installed as a fresh page in the
+    // property stack.
     if (m_currentTypeEditor) {
-        m_typePropsLayout->removeWidget(m_currentTypeEditor);
+        m_propertyStack->removeWidget(m_currentTypeEditor);
         delete m_currentTypeEditor;
         m_currentTypeEditor = nullptr;
     }
 
-    m_currentTypeEditor = buildTypeSpecificEditor(m_workingItems[row]);
-    if (m_currentTypeEditor) {
-        m_typePropsLayout->addWidget(m_currentTypeEditor);
+    QWidget* editor = buildTypeSpecificEditor(m_workingItems[row]);
+    if (!editor) {
+        m_propertyStack->setCurrentWidget(m_emptyPage);
+        return;
+    }
+
+    // Phase 3G-6 block 4b: wrap every editor page in a QScrollArea
+    // so tall editors (NeedleItemEditor with 26+ rows + calibration
+    // table) don't get clipped by the bottom edge of the dialog.
+    // setWidgetResizable(true) makes the inner widget track the
+    // viewport width so the form rows don't squeeze horizontally.
+    auto* scroll = new QScrollArea(m_propertyStack);
+    scroll->setWidget(editor);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet(
+        "QScrollArea { background: #0a0a18; border: 1px solid #203040; }"
+        "QScrollArea > QWidget > QWidget { background: #0a0a18; }"
+        "QScrollBar:vertical {"
+        "  background: #0f0f1a; width: 10px; margin: 0;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "  background: #205070; border-radius: 4px; min-height: 24px;"
+        "}"
+        "QScrollBar::handle:vertical:hover { background: #00b4d8; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        "  height: 0;"
+        "}");
+
+    // Track the scroll area as the "current type editor" so the
+    // next selection change removes and deletes the whole wrapper
+    // (the inner editor is re-parented to the scroll area, so
+    // deleting the scroll area cleans up both).
+    m_currentTypeEditor = scroll;
+    m_propertyStack->addWidget(scroll);
+    m_propertyStack->setCurrentWidget(scroll);
+
+    // Live-edit push: every property change on the working item
+    // flushes m_workingItems back to the real container. Block 4
+    // can refine this to only redraw the affected item, but for
+    // now a full applyToContainer on every edit is correct and
+    // cheap enough for interactive use.
+    if (auto* base = qobject_cast<BaseItemEditor*>(editor)) {
+        connect(base, &BaseItemEditor::propertyChanged,
+                this, &ContainerSettingsDialog::applyToContainer);
     }
 }
 
@@ -990,21 +1365,219 @@ void ContainerSettingsDialog::populateItemList()
 
 void ContainerSettingsDialog::updatePreview()
 {
-    if (!m_previewWidget) {
+    // Phase 3G-6 block 3 commit 11: live preview removed. In-place
+    // editing with snapshot/revert (commit 14) will push working-item
+    // changes directly to the target container's MeterWidget; until
+    // then this is a no-op so the existing ~30 callsites keep
+    // compiling without being rewritten one-by-one.
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3G-6 block 3 commits 18 + 19: footer buttons
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::onSaveToFile()
+{
+    if (!m_container) { return; }
+    const QString path = QFileDialog::getSaveFileName(this,
+        QStringLiteral("Save Container"),
+        QString(),
+        QStringLiteral("NereusSDR Container (*.nscontainer);;All Files (*)"));
+    if (path.isEmpty()) { return; }
+
+    // Pipe-delimited container serialize + newline + MeterWidget
+    // serialized items, so the two halves round-trip together.
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, QStringLiteral("Save Failed"),
+            QStringLiteral("Could not open %1 for writing.").arg(path));
         return;
     }
-
-    m_previewWidget->clearItems();
-
-    for (const MeterItem* item : m_workingItems) {
-        const QString serialized = item->serialize();
-        MeterItem* clone = createItemFromSerialized(serialized);
-        if (clone) {
-            m_previewWidget->addItem(clone);
-        }
+    QTextStream out(&f);
+    out << m_container->serialize() << '\n';
+    if (MeterWidget* meter = findMeterWidget()) {
+        out << meter->serializeItems();
     }
+}
 
-    m_previewWidget->update();
+void ContainerSettingsDialog::onLoadFromFile()
+{
+    if (!m_container) { return; }
+    const QString path = QFileDialog::getOpenFileName(this,
+        QStringLiteral("Load Container"),
+        QString(),
+        QStringLiteral("NereusSDR Container (*.nscontainer);;All Files (*)"));
+    if (path.isEmpty()) { return; }
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, QStringLiteral("Load Failed"),
+            QStringLiteral("Could not open %1 for reading.").arg(path));
+        return;
+    }
+    QTextStream in(&f);
+    const QString containerLine = in.readLine();
+    const QString itemsPayload  = in.readAll();
+
+    if (!containerLine.isEmpty()) {
+        m_container->deserialize(containerLine);
+    }
+    if (MeterWidget* meter = findMeterWidget()) {
+        meter->deserializeItems(itemsPayload);
+        meter->update();
+    }
+    // Refresh dialog state from the newly-loaded container.
+    populateItemList();
+    m_container->update();
+}
+
+void ContainerSettingsDialog::onOpenMmioDialog()
+{
+    // Phase 3G-6 block 5 phase 3: real MMIO endpoints dialog. The
+    // block 3 commit 18 stub is gone — this now opens the endpoint
+    // manager with live add/edit/remove backed by
+    // ExternalVariableEngine.
+    MmioEndpointsDialog dlg(this);
+    dlg.exec();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3G-6 block 7 commit 2: container-dropdown auto-commit + switch
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::onContainerDropdownChanged(int index)
+{
+    if (!m_manager || index < 0) { return; }
+    if (!m_containerDropdown) { return; }
+
+    const QString newId = m_containerDropdown->itemData(index).toString();
+    if (newId.isEmpty()) { return; }
+
+    ContainerWidget* newContainer = m_manager->container(newId);
+    if (!newContainer || newContainer == m_container) { return; }
+
+    // Auto-commit current edits to the outgoing container so the
+    // user doesn't lose work just by switching the dropdown.
+    applyToContainer();
+
+    // Switch the dialog's bound container.
+    m_container = newContainer;
+
+    // Repopulate everything from the new container's state.
+    populateItemList();
+
+    // Reload the property bar checkboxes / spinners from the new
+    // container — the bar widgets are persistent, only their values
+    // come from m_container.
+    if (m_titleEdit) { m_titleEdit->setText(m_container->notes()); }
+    if (m_borderCheck) { m_borderCheck->setChecked(m_container->hasBorder()); }
+    if (m_rxSourceCombo) {
+        const int idx = m_rxSourceCombo->findData(m_container->rxSource());
+        if (idx >= 0) { m_rxSourceCombo->setCurrentIndex(idx); }
+    }
+    if (m_showOnRxCheck) { m_showOnRxCheck->setChecked(m_container->showOnRx()); }
+    if (m_showOnTxCheck) { m_showOnTxCheck->setChecked(m_container->showOnTx()); }
+    if (m_lockCheck) { m_lockCheck->setChecked(m_container->isLocked()); }
+    if (m_hideTitleCheck) { m_hideTitleCheck->setChecked(!m_container->isTitleBarVisible()); }
+    if (m_minimisesCheck) { m_minimisesCheck->setChecked(m_container->containerMinimises()); }
+    if (m_autoHeightCheck) { m_autoHeightCheck->setChecked(m_container->autoHeight()); }
+    if (m_hidesWhenRxNotUsedCheck) {
+        m_hidesWhenRxNotUsedCheck->setChecked(m_container->containerHidesWhenRxNotUsed());
+    }
+    if (m_highlightCheck) { m_highlightCheck->setChecked(m_container->isHighlighted()); }
+
+    // Take a fresh snapshot of the new container so Cancel reverts
+    // to its state-on-switch, not the original opening state.
+    takeSnapshot();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3G-6 block 7 commit 2: copy/paste item settings clipboard
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::onCopyItemSettings()
+{
+    const int row = m_itemList ? m_itemList->currentRow() : -1;
+    if (row < 0 || row >= m_workingItems.size()) { return; }
+    MeterItem* item = m_workingItems[row];
+    if (!item) { return; }
+
+    m_clipboardSerialized = item->serialize();
+    const int pipeIdx = m_clipboardSerialized.indexOf(QLatin1Char('|'));
+    m_clipboardTypeTag = (pipeIdx >= 0)
+        ? m_clipboardSerialized.left(pipeIdx)
+        : m_clipboardSerialized;
+    updateCopyPasteButtonState();
+}
+
+void ContainerSettingsDialog::onPasteItemSettings()
+{
+    if (m_clipboardSerialized.isEmpty()) { return; }
+    const int row = m_itemList ? m_itemList->currentRow() : -1;
+    if (row < 0 || row >= m_workingItems.size()) { return; }
+    MeterItem* item = m_workingItems[row];
+    if (!item) { return; }
+
+    // Type-tag check: only allow paste between items of the same
+    // class so we don't try to deserialize NEEDLE bytes into a TEXT
+    // item. Matches Thetis paste-settings behavior.
+    const QString cur = item->serialize();
+    const int pipeIdx = cur.indexOf(QLatin1Char('|'));
+    const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
+    if (curTag != m_clipboardTypeTag) { return; }
+
+    item->deserialize(m_clipboardSerialized);
+    applyToContainer();
+
+    // Force the editor stack to rebuild so the property fields
+    // reload from the freshly-pasted item state.
+    onItemSelectionChanged();
+}
+
+void ContainerSettingsDialog::updateCopyPasteButtonState()
+{
+    const int row = m_itemList ? m_itemList->currentRow() : -1;
+    const bool haveSelection = (row >= 0 && row < m_workingItems.size());
+    if (m_btnCopySettings) {
+        m_btnCopySettings->setEnabled(haveSelection);
+    }
+    if (m_btnPasteSettings) {
+        bool typeMatches = false;
+        if (haveSelection && !m_clipboardTypeTag.isEmpty()) {
+            const QString cur = m_workingItems[row]->serialize();
+            const int pipeIdx = cur.indexOf(QLatin1Char('|'));
+            const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
+            typeMatches = (curTag == m_clipboardTypeTag);
+        }
+        m_btnPasteSettings->setEnabled(typeMatches);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3G-6 block 3 commit 14: snapshot + revert
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::takeSnapshot()
+{
+    if (!m_container) {
+        m_snapshotTaken = false;
+        return;
+    }
+    m_containerSnapshot = m_container->serialize();
+    MeterWidget* meter = findMeterWidget();
+    m_itemsSnapshot = meter ? meter->serializeItems() : QString();
+    m_snapshotTaken = true;
+}
+
+void ContainerSettingsDialog::revertFromSnapshot()
+{
+    if (!m_snapshotTaken || !m_container) { return; }
+    m_container->deserialize(m_containerSnapshot);
+    if (MeterWidget* meter = findMeterWidget()) {
+        meter->deserializeItems(m_itemsSnapshot);
+        meter->update();
+    }
+    m_container->update();
 }
 
 void ContainerSettingsDialog::applyToContainer()
@@ -1022,6 +1595,24 @@ void ContainerSettingsDialog::applyToContainer()
 
     m_container->setShowOnRx(m_showOnRxCheck->isChecked());
     m_container->setShowOnTx(m_showOnTxCheck->isChecked());
+
+    // Phase 3G-6 block 3 commit 17: write the new toggles back too.
+    if (m_lockCheck) {
+        m_container->setLocked(m_lockCheck->isChecked());
+    }
+    if (m_hideTitleCheck) {
+        m_container->setTitleBarVisible(!m_hideTitleCheck->isChecked());
+    }
+    if (m_minimisesCheck) {
+        m_container->setContainerMinimises(m_minimisesCheck->isChecked());
+    }
+    if (m_autoHeightCheck) {
+        m_container->setAutoHeight(m_autoHeightCheck->isChecked());
+    }
+    if (m_hidesWhenRxNotUsedCheck) {
+        m_container->setContainerHidesWhenRxNotUsed(
+            m_hidesWhenRxNotUsedCheck->isChecked());
+    }
 
     // Write items back to the real MeterWidget
     MeterWidget* target = findMeterWidget();
@@ -1293,249 +1884,9 @@ void ContainerSettingsDialog::onImport()
 }
 
 // ---------------------------------------------------------------------------
-// buildCommonPropsPage — property editor page added to m_propertyStack
-// ---------------------------------------------------------------------------
-
-void ContainerSettingsDialog::buildCommonPropsPage()
-{
-    if (m_commonPropsPage) {
-        return;  // Already built
-    }
-
-    // Wrap in a scroll area so small dialogs don't clip content.
-    // m_commonPropsPage must point to the scroll area (the widget added to
-    // m_propertyStack) so that setCurrentWidget(m_commonPropsPage) works.
-    QScrollArea* scroll = new QScrollArea(m_propertyStack);
-    scroll->setWidgetResizable(true);
-    scroll->setStyleSheet(
-        "QScrollArea { background: #0a0a18; border: none; }"
-        "QScrollBar:vertical { background: #111122; width: 8px; }"
-        "QScrollBar::handle:vertical { background: #203040; border-radius: 3px; }");
-
-    m_commonPropsPage = scroll;  // Stack switches on this widget
-
-    QWidget* innerPage = new QWidget();
-    innerPage->setStyleSheet("background: #0a0a18;");
-    scroll->setWidget(innerPage);
-
-    QVBoxLayout* pageLayout = new QVBoxLayout(innerPage);
-    pageLayout->setContentsMargins(8, 8, 8, 8);
-    pageLayout->setSpacing(6);
-
-    // --- Position section ---
-    QLabel* posHeader = new QLabel(QStringLiteral("Position (normalized 0\u20131)"), innerPage);
-    posHeader->setStyleSheet(kSectionHeaderStyle);
-    pageLayout->addWidget(posHeader);
-
-    auto makeDoubleSpinBox = [&](double min, double max, double step, int decimals) -> QDoubleSpinBox* {
-        QDoubleSpinBox* sb = new QDoubleSpinBox(innerPage);
-        sb->setRange(min, max);
-        sb->setSingleStep(step);
-        sb->setDecimals(decimals);
-        sb->setStyleSheet(kSpinStyle);
-        return sb;
-    };
-
-    QGridLayout* posGrid = new QGridLayout();
-    posGrid->setSpacing(4);
-
-    QLabel* xLabel = new QLabel(QStringLiteral("X:"), innerPage);
-    xLabel->setStyleSheet(kLabelStyle);
-    QLabel* yLabel = new QLabel(QStringLiteral("Y:"), innerPage);
-    yLabel->setStyleSheet(kLabelStyle);
-    QLabel* wLabel = new QLabel(QStringLiteral("W:"), innerPage);
-    wLabel->setStyleSheet(kLabelStyle);
-    QLabel* hLabel = new QLabel(QStringLiteral("H:"), innerPage);
-    hLabel->setStyleSheet(kLabelStyle);
-
-    m_propX = makeDoubleSpinBox(0.0, 1.0, 0.01, 3);
-    m_propY = makeDoubleSpinBox(0.0, 1.0, 0.01, 3);
-    m_propW = makeDoubleSpinBox(0.0, 1.0, 0.01, 3);
-    m_propH = makeDoubleSpinBox(0.0, 1.0, 0.01, 3);
-
-    posGrid->addWidget(xLabel, 0, 0);
-    posGrid->addWidget(m_propX, 0, 1);
-    posGrid->addWidget(yLabel, 0, 2);
-    posGrid->addWidget(m_propY, 0, 3);
-    posGrid->addWidget(wLabel, 1, 0);
-    posGrid->addWidget(m_propW, 1, 1);
-    posGrid->addWidget(hLabel, 1, 2);
-    posGrid->addWidget(m_propH, 1, 3);
-    pageLayout->addLayout(posGrid);
-
-    // --- Z-Order section ---
-    QLabel* zHeader = new QLabel(QStringLiteral("Z-Order"), innerPage);
-    zHeader->setStyleSheet(kSectionHeaderStyle);
-    pageLayout->addWidget(zHeader);
-
-    QHBoxLayout* zRow = new QHBoxLayout();
-    QLabel* zLabel = new QLabel(QStringLiteral("Z:"), innerPage);
-    zLabel->setStyleSheet(kLabelStyle);
-    m_propZOrder = new QSpinBox(innerPage);
-    m_propZOrder->setRange(-100, 100);
-    m_propZOrder->setStyleSheet(kSpinStyle);
-    zRow->addWidget(zLabel);
-    zRow->addWidget(m_propZOrder);
-    zRow->addStretch();
-    pageLayout->addLayout(zRow);
-
-    // --- Binding section ---
-    QLabel* bindHeader = new QLabel(QStringLiteral("Data Binding"), innerPage);
-    bindHeader->setStyleSheet(kSectionHeaderStyle);
-    pageLayout->addWidget(bindHeader);
-
-    QHBoxLayout* bindRow = new QHBoxLayout();
-    QLabel* bindLabel = new QLabel(QStringLiteral("Source:"), innerPage);
-    bindLabel->setStyleSheet(kLabelStyle);
-    m_propBinding = new QComboBox(innerPage);
-    m_propBinding->setStyleSheet(
-        "QComboBox { background: #0a0a18; color: #c8d8e8;"
-        "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px; }"
-        "QComboBox QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
-        "  border: 1px solid #205070; selection-background-color: #00b4d8; }");
-    populateBindingCombo();
-    bindRow->addWidget(bindLabel);
-    bindRow->addWidget(m_propBinding, 1);
-    pageLayout->addLayout(bindRow);
-
-    // --- Separator ---
-    QFrame* sep = new QFrame(innerPage);
-    sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet("QFrame { color: #203040; }");
-    pageLayout->addWidget(sep);
-
-    // --- Type-specific area ---
-    m_typePropsContainer = new QWidget(innerPage);
-    m_typePropsLayout = new QVBoxLayout(m_typePropsContainer);
-    m_typePropsLayout->setContentsMargins(0, 0, 0, 0);
-    m_typePropsLayout->setSpacing(4);
-    pageLayout->addWidget(m_typePropsContainer);
-
-    // Stretch at bottom
-    pageLayout->addStretch();
-
-    // Connect all controls to save + preview (no list rebuild to avoid re-trigger)
-    auto connectSave = [this]() {
-        const int row = m_itemList->currentRow();
-        if (row >= 0 && row < m_workingItems.size()) {
-            saveCommonProperties(row);
-            updatePreview();
-        }
-    };
-
-    connect(m_propX,       QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, connectSave);
-    connect(m_propY,       QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, connectSave);
-    connect(m_propW,       QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, connectSave);
-    connect(m_propH,       QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, connectSave);
-    connect(m_propZOrder,  QOverload<int>::of(&QSpinBox::valueChanged),          this, connectSave);
-    connect(m_propBinding, QOverload<int>::of(&QComboBox::currentIndexChanged),  this, connectSave);
-
-    // Add scroll area (m_commonPropsPage) to stack
-    m_propertyStack->addWidget(m_commonPropsPage);
-}
-
-// ---------------------------------------------------------------------------
-// populateBindingCombo — fill the data-source combo box
-// ---------------------------------------------------------------------------
-
-void ContainerSettingsDialog::populateBindingCombo()
-{
-    if (!m_propBinding) {
-        return;
-    }
-
-    struct BindingEntry { const char* name; int id; };
-    static constexpr BindingEntry kEntries[] = {
-        { "None",              -1  },
-        { "Signal Peak",        0  },
-        { "Signal Avg",         1  },
-        { "ADC Peak",           2  },
-        { "ADC Avg",            3  },
-        { "AGC Gain",           4  },
-        { "AGC Peak",           5  },
-        { "AGC Avg",            6  },
-        { "Signal MaxBin",      7  },
-        { "PBSNR",              8  },
-        { "TX Power",         100  },
-        { "TX Reverse Power", 101  },
-        { "TX SWR",           102  },
-        { "TX Mic",           103  },
-        { "TX Comp",          104  },
-        { "TX ALC",           105  },
-        { "TX EQ",            106  },
-        { "TX Leveler",       107  },
-        { "TX Leveler Gain",  108  },
-        { "TX ALC Gain",      109  },
-        { "TX ALC Group",     110  },
-        { "TX CFC",           111  },
-        { "TX CFC Gain",      112  },
-        { "HW Volts",         200  },
-        { "HW Amps",          201  },
-        { "HW Temperature",   202  },
-        { "Rotator Az",       300  },
-        { "Rotator Ele",      301  },
-    };
-
-    m_propBinding->clear();
-    for (const BindingEntry& e : kEntries) {
-        m_propBinding->addItem(QString::fromLatin1(e.name), e.id);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// loadCommonProperties — populate controls from m_workingItems[row]
-// ---------------------------------------------------------------------------
-
-void ContainerSettingsDialog::loadCommonProperties(int row)
-{
-    if (row < 0 || row >= m_workingItems.size()) {
-        return;
-    }
-
-    MeterItem* item = m_workingItems[row];
-
-    QSignalBlocker bX(m_propX);
-    QSignalBlocker bY(m_propY);
-    QSignalBlocker bW(m_propW);
-    QSignalBlocker bH(m_propH);
-    QSignalBlocker bZ(m_propZOrder);
-    QSignalBlocker bBind(m_propBinding);
-
-    m_propX->setValue(static_cast<double>(item->x()));
-    m_propY->setValue(static_cast<double>(item->y()));
-    m_propW->setValue(static_cast<double>(item->itemWidth()));
-    m_propH->setValue(static_cast<double>(item->itemHeight()));
-    m_propZOrder->setValue(item->zOrder());
-
-    // Find binding index by data value
-    const int bindId = item->bindingId();
-    const int comboIdx = m_propBinding->findData(bindId);
-    m_propBinding->setCurrentIndex(comboIdx >= 0 ? comboIdx : 0);
-}
-
-// ---------------------------------------------------------------------------
-// saveCommonProperties — read controls and apply to m_workingItems[row]
-// ---------------------------------------------------------------------------
-
-void ContainerSettingsDialog::saveCommonProperties(int row)
-{
-    if (row < 0 || row >= m_workingItems.size()) {
-        return;
-    }
-
-    MeterItem* item = m_workingItems[row];
-    item->setRect(
-        static_cast<float>(m_propX->value()),
-        static_cast<float>(m_propY->value()),
-        static_cast<float>(m_propW->value()),
-        static_cast<float>(m_propH->value())
-    );
-    item->setZOrder(m_propZOrder->value());
-    item->setBindingId(m_propBinding->currentData().toInt());
-}
-
-// ---------------------------------------------------------------------------
-// buildTypeSpecificEditor — dispatch to per-type editor builders (Task 5)
+// buildTypeSpecificEditor — type-tag dispatch to BaseItemEditor subclass
+// (block 4 phase 3, restored after block 7 commit 1 deleted the legacy
+// buildXItemEditor methods that lived above this in the file).
 // ---------------------------------------------------------------------------
 
 QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
@@ -1548,445 +1899,43 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
     const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
     const QString typeTag = (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
 
-    if (typeTag == QLatin1String("BAR")) {
-        return buildBarItemEditor(static_cast<BarItem*>(item));
-    } else if (typeTag == QLatin1String("NEEDLE")) {
-        return buildNeedleItemEditor(static_cast<NeedleItem*>(item));
-    } else if (typeTag == QLatin1String("TEXT")) {
-        return buildTextItemEditor(static_cast<TextItem*>(item));
-    } else if (typeTag == QLatin1String("SCALE")) {
-        return buildScaleItemEditor(static_cast<ScaleItem*>(item));
-    } else if (typeTag == QLatin1String("SOLID")) {
-        return buildSolidItemEditor(static_cast<SolidColourItem*>(item));
-    } else if (typeTag == QLatin1String("LED")) {
-        return buildLedItemEditor(static_cast<LEDItem*>(item));
+    BaseItemEditor* ed = nullptr;
+
+    if      (typeTag == QLatin1String("BAR"))            ed = new BarItemEditor(this);
+    else if (typeTag == QLatin1String("SOLID"))          ed = new SolidColourItemEditor(this);
+    else if (typeTag == QLatin1String("SPACER"))         ed = new SpacerItemEditor(this);
+    else if (typeTag == QLatin1String("FADECOVER"))      ed = new FadeCoverItemEditor(this);
+    else if (typeTag == QLatin1String("IMAGE"))          ed = new ImageItemEditor(this);
+    else if (typeTag == QLatin1String("SCALE"))          ed = new ScaleItemEditor(this);
+    else if (typeTag == QLatin1String("NEEDLE"))         ed = new NeedleItemEditor(this);
+    else if (typeTag == QLatin1String("NEEDLESCALEPWR")) ed = new NeedleScalePwrItemEditor(this);
+    else if (typeTag == QLatin1String("TEXT"))           ed = new TextItemEditor(this);
+    else if (typeTag == QLatin1String("TEXTOVERLAY"))    ed = new TextOverlayItemEditor(this);
+    else if (typeTag == QLatin1String("SIGNALTEXT"))     ed = new SignalTextItemEditor(this);
+    else if (typeTag == QLatin1String("LED"))            ed = new LedItemEditor(this);
+    else if (typeTag == QLatin1String("HISTORY"))        ed = new HistoryGraphItemEditor(this);
+    else if (typeTag == QLatin1String("MAGICEYE"))       ed = new MagicEyeItemEditor(this);
+    else if (typeTag == QLatin1String("DIAL"))           ed = new DialItemEditor(this);
+    else if (typeTag == QLatin1String("WEBIMAGE"))       ed = new WebImageItemEditor(this);
+    else if (typeTag == QLatin1String("FILTERDISPLAY"))  ed = new FilterDisplayItemEditor(this);
+    else if (typeTag == QLatin1String("ROTATOR"))        ed = new RotatorItemEditor(this);
+    else if (typeTag == QLatin1String("CLOCK"))          ed = new ClockItemEditor(this);
+    else if (typeTag == QLatin1String("VFODISPLAY"))     ed = new VfoDisplayItemEditor(this);
+    else if (typeTag == QLatin1String("CLICKBOX"))       ed = new ClickBoxItemEditor(this);
+    else if (typeTag == QLatin1String("DATAOUT"))        ed = new DataOutItemEditor(this);
+    else if (typeTag == QLatin1String("BANDBUTTON"))     ed = new BandButtonItemEditor(this);
+    else if (typeTag == QLatin1String("MODEBUTTON"))     ed = new ModeButtonItemEditor(this);
+    else if (typeTag == QLatin1String("FILTERBUTTON"))   ed = new FilterButtonItemEditor(this);
+    else if (typeTag == QLatin1String("ANTENNABUTTON"))  ed = new AntennaButtonItemEditor(this);
+    else if (typeTag == QLatin1String("TUNESTEPBUTTON")) ed = new TuneStepButtonItemEditor(this);
+    else if (typeTag == QLatin1String("OTHERBUTTON"))    ed = new OtherButtonItemEditor(this);
+    else if (typeTag == QLatin1String("VOICERECPLAY"))   ed = new VoiceRecordPlayItemEditor(this);
+    else if (typeTag == QLatin1String("DISCORDBUTTON"))  ed = new DiscordButtonItemEditor(this);
+
+    if (ed) {
+        ed->setItem(item);
     }
-
-    return nullptr;
-}
-
-// ---------------------------------------------------------------------------
-// Helper: create a color picker button
-// ---------------------------------------------------------------------------
-
-namespace {
-
-QPushButton* makeColorBtn(const QColor& color, QWidget* parent)
-{
-    QPushButton* btn = new QPushButton(parent);
-    btn->setFixedSize(40, 22);
-    btn->setAutoDefault(false);
-    btn->setDefault(false);
-    btn->setStyleSheet(
-        QStringLiteral("background: %1; border: 1px solid #205070; border-radius: 3px;")
-            .arg(color.name()));
-    return btn;
-}
-
-QLabel* makePropLabel(const QString& text, QWidget* parent)
-{
-    QLabel* lbl = new QLabel(text, parent);
-    lbl->setStyleSheet(kLabelStyle);
-    return lbl;
-}
-
-QLabel* makeSectionLabel(const QString& text, QWidget* parent)
-{
-    QLabel* lbl = new QLabel(text, parent);
-    lbl->setStyleSheet(kSectionHeaderStyle);
-    return lbl;
-}
-
-} // anonymous namespace
-
-// ---------------------------------------------------------------------------
-// buildBarItemEditor
-// ---------------------------------------------------------------------------
-
-QWidget* ContainerSettingsDialog::buildBarItemEditor(BarItem* item)
-{
-    QWidget* w = new QWidget(m_typePropsContainer);
-    QVBoxLayout* layout = new QVBoxLayout(w);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
-
-    layout->addWidget(makeSectionLabel(QStringLiteral("Bar Meter Properties"), w));
-
-    // Min / Max
-    QGridLayout* grid = new QGridLayout();
-    grid->setSpacing(4);
-
-    QDoubleSpinBox* minSpin = new QDoubleSpinBox(w);
-    minSpin->setRange(-200.0, 200.0);
-    minSpin->setDecimals(1);
-    minSpin->setStyleSheet(kSpinStyle);
-    minSpin->setValue(item->minVal());
-
-    QDoubleSpinBox* maxSpin = new QDoubleSpinBox(w);
-    maxSpin->setRange(-200.0, 200.0);
-    maxSpin->setDecimals(1);
-    maxSpin->setStyleSheet(kSpinStyle);
-    maxSpin->setValue(item->maxVal());
-
-    QDoubleSpinBox* redSpin = new QDoubleSpinBox(w);
-    redSpin->setRange(-200.0, 1000.0);
-    redSpin->setDecimals(1);
-    redSpin->setStyleSheet(kSpinStyle);
-    redSpin->setValue(item->redThreshold());
-
-    QDoubleSpinBox* attackSpin = new QDoubleSpinBox(w);
-    attackSpin->setRange(0.0, 1.0);
-    attackSpin->setSingleStep(0.05);
-    attackSpin->setDecimals(2);
-    attackSpin->setStyleSheet(kSpinStyle);
-    attackSpin->setValue(static_cast<double>(item->attackRatio()));
-
-    QDoubleSpinBox* decaySpin = new QDoubleSpinBox(w);
-    decaySpin->setRange(0.0, 1.0);
-    decaySpin->setSingleStep(0.05);
-    decaySpin->setDecimals(2);
-    decaySpin->setStyleSheet(kSpinStyle);
-    decaySpin->setValue(static_cast<double>(item->decayRatio()));
-
-    QComboBox* styleCombo = new QComboBox(w);
-    styleCombo->addItem(QStringLiteral("Filled"), static_cast<int>(BarItem::BarStyle::Filled));
-    styleCombo->addItem(QStringLiteral("Edge"),   static_cast<int>(BarItem::BarStyle::Edge));
-    styleCombo->setStyleSheet(
-        "QComboBox { background: #0a0a18; color: #c8d8e8;"
-        "  border: 1px solid #1e2e3e; border-radius: 3px; padding: 2px; }"
-        "QComboBox QAbstractItemView { background: #0a0a18; color: #c8d8e8;"
-        "  border: 1px solid #205070; selection-background-color: #00b4d8; }");
-    styleCombo->setCurrentIndex(item->barStyle() == BarItem::BarStyle::Edge ? 1 : 0);
-
-    QPushButton* colorBtn = makeColorBtn(item->barColor(), w);
-
-    grid->addWidget(makePropLabel(QStringLiteral("Min:"),    w), 0, 0);
-    grid->addWidget(minSpin,                                      0, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Max:"),    w), 0, 2);
-    grid->addWidget(maxSpin,                                      0, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Red >:"),  w), 1, 0);
-    grid->addWidget(redSpin,                                      1, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Attack:"), w), 2, 0);
-    grid->addWidget(attackSpin,                                   2, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Decay:"),  w), 2, 2);
-    grid->addWidget(decaySpin,                                    2, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Style:"),  w), 3, 0);
-    grid->addWidget(styleCombo,                                   3, 1, 1, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Color:"),  w), 4, 0);
-    grid->addWidget(colorBtn,                                     4, 1);
-
-    layout->addLayout(grid);
-
-    // Live update connections
-    connect(minSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item, minSpin, maxSpin]() {
-            item->setRange(minSpin->value(), maxSpin->value());
-            updatePreview();
-        });
-    connect(maxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item, minSpin, maxSpin]() {
-            item->setRange(minSpin->value(), maxSpin->value());
-            updatePreview();
-        });
-    connect(redSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item](double v) { item->setRedThreshold(v); updatePreview(); });
-    connect(attackSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item](double v) { item->setAttackRatio(static_cast<float>(v)); updatePreview(); });
-    connect(decaySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item](double v) { item->setDecayRatio(static_cast<float>(v)); updatePreview(); });
-    connect(styleCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), w,
-        [this, item, styleCombo](int) {
-            item->setBarStyle(static_cast<BarItem::BarStyle>(styleCombo->currentData().toInt()));
-            updatePreview();
-        });
-    connect(colorBtn, &QPushButton::clicked, w, [this, item, colorBtn]() {
-        QColor chosen = QColorDialog::getColor(item->barColor(), this, QStringLiteral("Bar Color"));
-        if (chosen.isValid()) {
-            item->setBarColor(chosen);
-            colorBtn->setStyleSheet(
-                QStringLiteral("background: %1; border: 1px solid #205070; border-radius: 3px;")
-                    .arg(chosen.name()));
-            updatePreview();
-        }
-    });
-
-    return w;
-}
-
-// ---------------------------------------------------------------------------
-// buildTextItemEditor
-// ---------------------------------------------------------------------------
-
-QWidget* ContainerSettingsDialog::buildTextItemEditor(TextItem* item)
-{
-    QWidget* w = new QWidget(m_typePropsContainer);
-    QVBoxLayout* layout = new QVBoxLayout(w);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
-
-    layout->addWidget(makeSectionLabel(QStringLiteral("Text Readout Properties"), w));
-
-    QGridLayout* grid = new QGridLayout();
-    grid->setSpacing(4);
-
-    QLineEdit* labelEdit = new QLineEdit(w);
-    labelEdit->setStyleSheet(kEditStyle);
-    labelEdit->setText(item->label());
-
-    QLineEdit* suffixEdit = new QLineEdit(w);
-    suffixEdit->setStyleSheet(kEditStyle);
-    suffixEdit->setText(item->suffix());
-
-    QSpinBox* fontSpin = new QSpinBox(w);
-    fontSpin->setRange(8, 48);
-    fontSpin->setStyleSheet(kSpinStyle);
-    fontSpin->setValue(item->fontSize());
-
-    QSpinBox* decimalsSpin = new QSpinBox(w);
-    decimalsSpin->setRange(0, 4);
-    decimalsSpin->setStyleSheet(kSpinStyle);
-    decimalsSpin->setValue(item->decimals());
-
-    QCheckBox* boldCheck = new QCheckBox(QStringLiteral("Bold"), w);
-    boldCheck->setStyleSheet("QCheckBox { color: #c8d8e8; }");
-    boldCheck->setChecked(item->bold());
-
-    grid->addWidget(makePropLabel(QStringLiteral("Label:"),    w), 0, 0);
-    grid->addWidget(labelEdit,                                      0, 1, 1, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Suffix:"),   w), 1, 0);
-    grid->addWidget(suffixEdit,                                     1, 1, 1, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Font sz:"),  w), 2, 0);
-    grid->addWidget(fontSpin,                                       2, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Decimals:"), w), 2, 2);
-    grid->addWidget(decimalsSpin,                                   2, 3);
-    grid->addWidget(boldCheck,                                      3, 0, 1, 2);
-
-    layout->addLayout(grid);
-
-    connect(labelEdit,    &QLineEdit::textChanged,                     w,
-        [this, item](const QString& t) { item->setLabel(t); updatePreview(); });
-    connect(suffixEdit,   &QLineEdit::textChanged,                     w,
-        [this, item](const QString& t) { item->setSuffix(t); updatePreview(); });
-    connect(fontSpin,     QOverload<int>::of(&QSpinBox::valueChanged), w,
-        [this, item](int v) { item->setFontSize(v); updatePreview(); });
-    connect(decimalsSpin, QOverload<int>::of(&QSpinBox::valueChanged), w,
-        [this, item](int v) { item->setDecimals(v); updatePreview(); });
-    connect(boldCheck,    &QCheckBox::toggled,                         w,
-        [this, item](bool v) { item->setBold(v); updatePreview(); });
-
-    return w;
-}
-
-// ---------------------------------------------------------------------------
-// buildScaleItemEditor
-// ---------------------------------------------------------------------------
-
-QWidget* ContainerSettingsDialog::buildScaleItemEditor(ScaleItem* item)
-{
-    QWidget* w = new QWidget(m_typePropsContainer);
-    QVBoxLayout* layout = new QVBoxLayout(w);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
-
-    layout->addWidget(makeSectionLabel(QStringLiteral("Scale Properties"), w));
-
-    QGridLayout* grid = new QGridLayout();
-    grid->setSpacing(4);
-
-    QDoubleSpinBox* minSpin = new QDoubleSpinBox(w);
-    minSpin->setRange(-200.0, 200.0);
-    minSpin->setDecimals(1);
-    minSpin->setStyleSheet(kSpinStyle);
-    minSpin->setValue(item->minVal());
-
-    QDoubleSpinBox* maxSpin = new QDoubleSpinBox(w);
-    maxSpin->setRange(-200.0, 200.0);
-    maxSpin->setDecimals(1);
-    maxSpin->setStyleSheet(kSpinStyle);
-    maxSpin->setValue(item->maxVal());
-
-    QSpinBox* majorSpin = new QSpinBox(w);
-    majorSpin->setRange(2, 20);
-    majorSpin->setStyleSheet(kSpinStyle);
-    majorSpin->setValue(item->majorTicks());
-
-    QSpinBox* minorSpin = new QSpinBox(w);
-    minorSpin->setRange(0, 10);
-    minorSpin->setStyleSheet(kSpinStyle);
-    minorSpin->setValue(item->minorTicks());
-
-    grid->addWidget(makePropLabel(QStringLiteral("Min:"),         w), 0, 0);
-    grid->addWidget(minSpin,                                           0, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Max:"),         w), 0, 2);
-    grid->addWidget(maxSpin,                                           0, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Major ticks:"), w), 1, 0);
-    grid->addWidget(majorSpin,                                         1, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Minor ticks:"), w), 1, 2);
-    grid->addWidget(minorSpin,                                         1, 3);
-
-    layout->addLayout(grid);
-
-    connect(minSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item, minSpin, maxSpin]() {
-            item->setRange(minSpin->value(), maxSpin->value());
-            updatePreview();
-        });
-    connect(maxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item, minSpin, maxSpin]() {
-            item->setRange(minSpin->value(), maxSpin->value());
-            updatePreview();
-        });
-    connect(majorSpin, QOverload<int>::of(&QSpinBox::valueChanged), w,
-        [this, item](int v) { item->setMajorTicks(v); updatePreview(); });
-    connect(minorSpin, QOverload<int>::of(&QSpinBox::valueChanged), w,
-        [this, item](int v) { item->setMinorTicks(v); updatePreview(); });
-
-    return w;
-}
-
-// ---------------------------------------------------------------------------
-// buildNeedleItemEditor
-// ---------------------------------------------------------------------------
-
-QWidget* ContainerSettingsDialog::buildNeedleItemEditor(NeedleItem* item)
-{
-    QWidget* w = new QWidget(m_typePropsContainer);
-    QVBoxLayout* layout = new QVBoxLayout(w);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
-
-    layout->addWidget(makeSectionLabel(QStringLiteral("Needle Meter Properties"), w));
-
-    QGridLayout* grid = new QGridLayout();
-    grid->setSpacing(4);
-
-    QLineEdit* labelEdit = new QLineEdit(w);
-    labelEdit->setStyleSheet(kEditStyle);
-    labelEdit->setText(item->sourceLabel());
-
-    QPushButton* needleColorBtn = makeColorBtn(item->needleColor(), w);
-
-    grid->addWidget(makePropLabel(QStringLiteral("Label:"),        w), 0, 0);
-    grid->addWidget(labelEdit,                                          0, 1, 1, 3);
-    grid->addWidget(makePropLabel(QStringLiteral("Needle color:"), w), 1, 0);
-    grid->addWidget(needleColorBtn,                                     1, 1);
-
-    layout->addLayout(grid);
-
-    connect(labelEdit, &QLineEdit::textChanged, w,
-        [this, item](const QString& t) { item->setSourceLabel(t); updatePreview(); });
-    connect(needleColorBtn, &QPushButton::clicked, w, [this, item, needleColorBtn]() {
-        QColor chosen = QColorDialog::getColor(item->needleColor(), this,
-                                               QStringLiteral("Needle Color"));
-        if (chosen.isValid()) {
-            item->setNeedleColor(chosen);
-            needleColorBtn->setStyleSheet(
-                QStringLiteral("background: %1; border: 1px solid #205070; border-radius: 3px;")
-                    .arg(chosen.name()));
-            updatePreview();
-        }
-    });
-
-    return w;
-}
-
-// ---------------------------------------------------------------------------
-// buildSolidItemEditor
-// ---------------------------------------------------------------------------
-
-QWidget* ContainerSettingsDialog::buildSolidItemEditor(SolidColourItem* item)
-{
-    QWidget* w = new QWidget(m_typePropsContainer);
-    QVBoxLayout* layout = new QVBoxLayout(w);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
-
-    layout->addWidget(makeSectionLabel(QStringLiteral("Solid Colour Properties"), w));
-
-    QHBoxLayout* row = new QHBoxLayout();
-    row->addWidget(makePropLabel(QStringLiteral("Color:"), w));
-
-    QPushButton* colorBtn = makeColorBtn(item->colour(), w);
-    row->addWidget(colorBtn);
-    row->addStretch();
-
-    layout->addLayout(row);
-
-    connect(colorBtn, &QPushButton::clicked, w, [this, item, colorBtn]() {
-        QColor chosen = QColorDialog::getColor(item->colour(), this,
-                                               QStringLiteral("Fill Color"));
-        if (chosen.isValid()) {
-            item->setColour(chosen);
-            colorBtn->setStyleSheet(
-                QStringLiteral("background: %1; border: 1px solid #205070; border-radius: 3px;")
-                    .arg(chosen.name()));
-            updatePreview();
-        }
-    });
-
-    return w;
-}
-
-// ---------------------------------------------------------------------------
-// buildLedItemEditor
-// ---------------------------------------------------------------------------
-
-QWidget* ContainerSettingsDialog::buildLedItemEditor(LEDItem* item)
-{
-    QWidget* w = new QWidget(m_typePropsContainer);
-    QVBoxLayout* layout = new QVBoxLayout(w);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
-
-    layout->addWidget(makeSectionLabel(QStringLiteral("LED Indicator Properties"), w));
-
-    QGridLayout* grid = new QGridLayout();
-    grid->setSpacing(4);
-
-    QDoubleSpinBox* threshSpin = new QDoubleSpinBox(w);
-    threshSpin->setRange(-200.0, 1000.0);
-    threshSpin->setDecimals(1);
-    threshSpin->setStyleSheet(kSpinStyle);
-    threshSpin->setValue(item->greenThreshold());
-
-    QPushButton* onColorBtn  = makeColorBtn(item->trueColour(),  w);
-    QPushButton* offColorBtn = makeColorBtn(item->falseColour(), w);
-
-    grid->addWidget(makePropLabel(QStringLiteral("Threshold:"), w), 0, 0);
-    grid->addWidget(threshSpin,                                       0, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("On color:"),  w), 1, 0);
-    grid->addWidget(onColorBtn,                                       1, 1);
-    grid->addWidget(makePropLabel(QStringLiteral("Off color:"), w), 2, 0);
-    grid->addWidget(offColorBtn,                                      2, 1);
-
-    layout->addLayout(grid);
-
-    connect(threshSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), w,
-        [this, item](double v) { item->setGreenThreshold(v); updatePreview(); });
-    connect(onColorBtn, &QPushButton::clicked, w, [this, item, onColorBtn]() {
-        QColor chosen = QColorDialog::getColor(item->trueColour(), this,
-                                               QStringLiteral("On Color"));
-        if (chosen.isValid()) {
-            item->setTrueColour(chosen);
-            onColorBtn->setStyleSheet(
-                QStringLiteral("background: %1; border: 1px solid #205070; border-radius: 3px;")
-                    .arg(chosen.name()));
-            updatePreview();
-        }
-    });
-    connect(offColorBtn, &QPushButton::clicked, w, [this, item, offColorBtn]() {
-        QColor chosen = QColorDialog::getColor(item->falseColour(), this,
-                                               QStringLiteral("Off Color"));
-        if (chosen.isValid()) {
-            item->setFalseColour(chosen);
-            offColorBtn->setStyleSheet(
-                QStringLiteral("background: %1; border: 1px solid #205070; border-radius: 3px;")
-                    .arg(chosen.name()));
-            updatePreview();
-        }
-    });
-
-    return w;
+    return ed;
 }
 
 } // namespace NereusSDR
