@@ -28,12 +28,30 @@ class VfoWidget;
 
 // Waterfall color scheme presets.
 // Default matches AetherSDR/SmartSDR style.
-// From Thetis enums.cs:68-79 (ColorScheme enum)
+// From Thetis enums.cs:68-79 (ColorScheme enum). Expanded 4 → 7 in
+// Phase 3G-8 commit 5 (plan §7 W17 waterfall colour schemes expansion).
 enum class WfColorScheme : int {
     Default = 0,    // AetherSDR: black → blue → cyan → green → yellow → red
     Enhanced,       // Thetis enhanced (9-band progression)
     Spectran,       // SPECTRAN
     BlackWhite,     // Grayscale
+    LinLog,         // Linear in low, log in high — Thetis LinLog
+    LinRad,         // Linradiance-style cool → hot
+    Custom,         // User-defined custom stops (reads from AppSettings)
+    Count
+};
+
+// Frequency label alignment for the bottom scale bar.
+// From Thetis comboDisplayLabelAlign (setup.designer.cs:34635).
+// Thetis exposes 5 options (Left/Center/Right/Auto/Off); NereusSDR
+// Phase 3G-8 commit 5 expands the previous 2-mode implementation to
+// match.
+enum class FreqLabelAlign : int {
+    Left = 0,
+    Center,
+    Right,
+    Auto,   // centered when room, otherwise left
+    Off,    // suppress frequency labels entirely
     Count
 };
 
@@ -181,6 +199,37 @@ public:
     bool showRxZeroLineOnWaterfall() const { return m_showRxZeroLineOnWaterfall; }
     void setShowTxZeroLineOnWaterfall(bool on);
     bool showTxZeroLineOnWaterfall() const { return m_showTxZeroLineOnWaterfall; }
+
+    // ---- Grid / scales renderer controls (Phase 3G-8 commit 5) ----
+
+    void setGridEnabled(bool on);
+    bool gridEnabled() const { return m_gridEnabled; }
+
+    void setShowZeroLine(bool on);
+    bool showZeroLine() const { return m_showZeroLine; }
+
+    void setShowFps(bool on);
+    bool showFps() const { return m_showFps; }
+
+    void setFreqLabelAlign(FreqLabelAlign a);
+    FreqLabelAlign freqLabelAlign() const { return m_freqLabelAlign; }
+
+    // Configurable grid/text/zero-line/band-edge colours. Previously
+    // hardcoded. Ported from Thetis setup.cs:1040-1044 Display.GridColor
+    // / GridPenDark / HGridColor / GridTextColor / GridZeroColor and
+    // display.cs:1941 BandEdgeColor.
+    void setGridColor(const QColor& c);
+    QColor gridColor() const { return m_gridColor; }
+    void setGridFineColor(const QColor& c);
+    QColor gridFineColor() const { return m_gridFineColor; }
+    void setHGridColor(const QColor& c);
+    QColor hGridColor() const { return m_hGridColor; }
+    void setGridTextColor(const QColor& c);
+    QColor gridTextColor() const { return m_gridTextColor; }
+    void setZeroLineColor(const QColor& c);
+    QColor zeroLineColor() const { return m_zeroLineColor; }
+    void setBandEdgeColor(const QColor& c);
+    QColor bandEdgeColor() const { return m_bandEdgeColor; }
 
     // ---- Per-pan settings persistence ----
     void setPanIndex(int idx) { m_panIndex = idx; }
@@ -350,6 +399,25 @@ private:
 
     // Rate-limit waterfall pushes per m_wfUpdatePeriodMs.
     qint64 m_wfLastPushMs{0};
+
+    // ---- Phase 3G-8 commit 5: grid / scales renderer state ----
+
+    bool  m_gridEnabled{true};
+    bool  m_showZeroLine{false};
+    bool  m_showFps{false};
+    FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
+
+    QColor m_gridColor{255, 255, 255, 40};       // vertical freq grid
+    QColor m_gridFineColor{255, 255, 255, 20};   // 1/5 step fine grid
+    QColor m_hGridColor{255, 255, 255, 40};      // horizontal dBm grid
+    QColor m_gridTextColor{255, 255, 0};         // yellow text default
+    QColor m_zeroLineColor{255, 0, 0};           // red default (Thetis)
+    QColor m_bandEdgeColor{255, 0, 0};           // red default (Thetis)
+
+    // FPS overlay tracking
+    int    m_fpsFrameCount{0};
+    qint64 m_fpsLastUpdateMs{0};
+    float  m_fpsDisplayValue{0.0f};
 
     // ---- VFO / filter overlay ----
     double m_vfoHz{0.0};

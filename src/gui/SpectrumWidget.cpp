@@ -67,6 +67,44 @@ static const WfGradientStop kBlackWhiteStops[] = {
     {1.00f, 255, 255, 255},    // white
 };
 
+// LinLog scheme — linear ramp in low region, log-shaped in high region.
+// Approximation of Thetis "LinLog" combo entry (setup.cs:11904-11939).
+// Phase 3G-8 commit 5 addition.
+static const WfGradientStop kLinLogStops[] = {
+    {0.00f,   0,   0,   0},
+    {0.10f,   0,   0,  96},
+    {0.25f,   0,  64, 192},
+    {0.50f,   0, 192, 192},
+    {0.65f,   0, 224,  64},
+    {0.80f, 255, 192,   0},
+    {1.00f, 255,   0,   0},
+};
+
+// LinRad scheme — LinRadiance-style cool → hot gradient. Phase 3G-8.
+static const WfGradientStop kLinRadStops[] = {
+    {0.00f,   0,   0,   0},
+    {0.15f,  16,  16, 120},
+    {0.30f,  32,  80, 200},
+    {0.50f,   0, 200, 255},
+    {0.70f, 200, 255, 120},
+    {0.85f, 255, 200,   0},
+    {1.00f, 255,  32,   0},
+};
+
+// Custom scheme — loaded from AppSettings "DisplayWfCustomStops" if set,
+// otherwise falls back to Default. Phase 3G-8 commit 5. Runtime state
+// is parsed lazily from the settings key when the scheme is selected.
+// For now the static fallback keeps the same stops as Default.
+static const WfGradientStop kCustomFallbackStops[] = {
+    {0.00f,   0,   0,   0},
+    {0.15f,   0,   0, 128},
+    {0.30f,   0,  64, 255},
+    {0.45f,   0, 200, 255},
+    {0.60f,   0, 220,   0},
+    {0.80f, 255, 255,   0},
+    {1.00f, 255,   0,   0},
+};
+
 const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
 {
     switch (scheme) {
@@ -79,6 +117,15 @@ const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
     case WfColorScheme::BlackWhite:
         count = 2;
         return kBlackWhiteStops;
+    case WfColorScheme::LinLog:
+        count = 7;
+        return kLinLogStops;
+    case WfColorScheme::LinRad:
+        count = 7;
+        return kLinRadStops;
+    case WfColorScheme::Custom:
+        count = 7;
+        return kCustomFallbackStops;
     case WfColorScheme::Default:
     default:
         count = 7;
@@ -228,6 +275,31 @@ void SpectrumWidget::loadSettings()
                                           QStringLiteral("False")).toString() == QStringLiteral("True");
     m_showTxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
                                           QStringLiteral("False")).toString() == QStringLiteral("True");
+
+    // Phase 3G-8 commit 5: grid / scales state.
+    m_gridEnabled = s.value(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
+                            QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showZeroLine = s.value(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
+                             QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showFps = s.value(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
+                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
+                                 static_cast<int>(FreqLabelAlign::Center));
+    m_freqLabelAlign = static_cast<FreqLabelAlign>(qBound(0, alignRaw,
+                           static_cast<int>(FreqLabelAlign::Count) - 1));
+
+    auto readColor = [&](const QString& key, const QColor& def) -> QColor {
+        const QString hex = s.value(settingsKey(key, m_panIndex)).toString();
+        if (hex.isEmpty()) { return def; }
+        QColor c = QColor::fromString(hex);
+        return c.isValid() ? c : def;
+    };
+    m_gridColor     = readColor(QStringLiteral("DisplayGridColor"), m_gridColor);
+    m_gridFineColor = readColor(QStringLiteral("DisplayGridFineColor"), m_gridFineColor);
+    m_hGridColor    = readColor(QStringLiteral("DisplayHGridColor"), m_hGridColor);
+    m_gridTextColor = readColor(QStringLiteral("DisplayGridTextColor"), m_gridTextColor);
+    m_zeroLineColor = readColor(QStringLiteral("DisplayZeroLineColor"), m_zeroLineColor);
+    m_bandEdgeColor = readColor(QStringLiteral("DisplayBandEdgeColor"), m_bandEdgeColor);
 }
 
 void SpectrumWidget::saveSettings()
@@ -286,6 +358,25 @@ void SpectrumWidget::saveSettings()
               m_showRxZeroLineOnWaterfall ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
               m_showTxZeroLineOnWaterfall ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // Phase 3G-8 commit 5: grid / scales state.
+    s.setValue(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
+              m_gridEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
+              m_showZeroLine ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
+              m_showFps ? QStringLiteral("True") : QStringLiteral("False"));
+    writeInt(QStringLiteral("DisplayFreqLabelAlign"), static_cast<int>(m_freqLabelAlign));
+
+    auto writeColor = [&](const QString& key, const QColor& c) {
+        s.setValue(settingsKey(key, m_panIndex), c.name(QColor::HexArgb));
+    };
+    writeColor(QStringLiteral("DisplayGridColor"),     m_gridColor);
+    writeColor(QStringLiteral("DisplayGridFineColor"), m_gridFineColor);
+    writeColor(QStringLiteral("DisplayHGridColor"),    m_hGridColor);
+    writeColor(QStringLiteral("DisplayGridTextColor"), m_gridTextColor);
+    writeColor(QStringLiteral("DisplayZeroLineColor"), m_zeroLineColor);
+    writeColor(QStringLiteral("DisplayBandEdgeColor"), m_bandEdgeColor);
 }
 
 void SpectrumWidget::scheduleSettingsSave()
@@ -600,6 +691,91 @@ void SpectrumWidget::setShowTxZeroLineOnWaterfall(bool on)
     update();
 }
 
+// ---- Phase 3G-8 commit 5: grid / scales setters ----
+
+void SpectrumWidget::setGridEnabled(bool on)
+{
+    if (m_gridEnabled == on) { return; }
+    m_gridEnabled = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowZeroLine(bool on)
+{
+    if (m_showZeroLine == on) { return; }
+    m_showZeroLine = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowFps(bool on)
+{
+    if (m_showFps == on) { return; }
+    m_showFps = on;
+    m_fpsFrameCount = 0;
+    m_fpsLastUpdateMs = 0;
+    m_fpsDisplayValue = 0.0f;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setFreqLabelAlign(FreqLabelAlign a)
+{
+    if (m_freqLabelAlign == a) { return; }
+    m_freqLabelAlign = a;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGridColor(const QColor& c)
+{
+    if (!c.isValid() || m_gridColor == c) { return; }
+    m_gridColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGridFineColor(const QColor& c)
+{
+    if (!c.isValid() || m_gridFineColor == c) { return; }
+    m_gridFineColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setHGridColor(const QColor& c)
+{
+    if (!c.isValid() || m_hGridColor == c) { return; }
+    m_hGridColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGridTextColor(const QColor& c)
+{
+    if (!c.isValid() || m_gridTextColor == c) { return; }
+    m_gridTextColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setZeroLineColor(const QColor& c)
+{
+    if (!c.isValid() || m_zeroLineColor == c) { return; }
+    m_zeroLineColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setBandEdgeColor(const QColor& c)
+{
+    if (!c.isValid() || m_bandEdgeColor == c) { return; }
+    m_bandEdgeColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
 // Feed new FFT frame — apply averaging per current mode, track peak hold,
 // push waterfall row, repaint. From AetherSDR SpectrumWidget::updateSpectrum()
 // + gpu-waterfall.md:895-911. Averaging mode added in Phase 3G-8 commit 3.
@@ -738,6 +914,30 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawDbmScale(p, QRect(0, 0, kDbmStripW, specH));
     drawCursorInfo(p, specRect);
 
+    // FPS overlay (Phase 3G-8 commit 5 / G8 ShowFPS). Cheap rolling counter
+    // updated once per second. QPainter fallback path only; GPU path prints
+    // its own counter via a future commit if the feature is exposed there.
+    if (m_showFps) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_fpsFrameCount++;
+        if (m_fpsLastUpdateMs == 0) {
+            m_fpsLastUpdateMs = nowMs;
+        } else if (nowMs - m_fpsLastUpdateMs >= 1000) {
+            const double elapsed = (nowMs - m_fpsLastUpdateMs) / 1000.0;
+            m_fpsDisplayValue    = static_cast<float>(m_fpsFrameCount / elapsed);
+            m_fpsFrameCount      = 0;
+            m_fpsLastUpdateMs    = nowMs;
+        }
+        const QString fpsText = QStringLiteral("%1 fps")
+                                    .arg(m_fpsDisplayValue, 0, 'f', 1);
+        QFont ff = p.font();
+        ff.setPixelSize(11);
+        p.setFont(ff);
+        p.setPen(m_gridTextColor);
+        const int tw = p.fontMetrics().horizontalAdvance(fpsText);
+        p.drawText(specRect.right() - tw - 8, specRect.top() + 14, fpsText);
+    }
+
     // Reposition VFO flag widgets every frame — ensures flag tracks marker
     // exactly with no frame delay. From AetherSDR: updatePosition called
     // from within the paint/render cycle.
@@ -751,9 +951,14 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
 //   grid_text_color = Color.Yellow — display.cs:2003
 void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
 {
-    // Horizontal dBm grid lines
-    QColor hGridColor(255, 255, 255, 40);
-    p.setPen(QPen(hGridColor, 1));
+    // Phase 3G-8 commit 5: honours m_gridEnabled plus configurable grid
+    // colours (m_hGridColor / m_gridColor / m_gridFineColor).
+    if (!m_gridEnabled) {
+        return;
+    }
+
+    // Horizontal dBm grid lines (major).
+    p.setPen(QPen(m_hGridColor, 1));
 
     float bottom = m_refLevel - m_dynamicRange;
     float step = 10.0f;  // 10 dB steps
@@ -766,9 +971,8 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
         p.drawLine(specRect.left(), y, specRect.right(), y);
     }
 
-    // Vertical frequency grid lines
-    QColor vGridColor(255, 255, 255, 40);
-    p.setPen(QPen(vGridColor, 1));
+    // Vertical frequency grid lines (major).
+    p.setPen(QPen(m_gridColor, 1));
 
     // Compute a nice frequency step
     double freqStep = 10000.0;  // 10 kHz default
@@ -782,6 +986,15 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
 
     double startFreq = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / freqStep) * freqStep;
     for (double f = startFreq; f < m_centerHz + m_bandwidthHz / 2.0; f += freqStep) {
+        int x = hzToX(f, specRect);
+        p.drawLine(x, specRect.top(), x, specRect.bottom());
+    }
+
+    // Fine (minor) vertical grid at 1/5 step. Drawn in m_gridFineColor.
+    p.setPen(QPen(m_gridFineColor, 1, Qt::DotLine));
+    const double fineStep = freqStep / 5.0;
+    double startFine = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / fineStep) * fineStep;
+    for (double f = startFine; f < m_centerHz + m_bandwidthHz / 2.0; f += fineStep) {
         int x = hzToX(f, specRect);
         p.drawLine(x, specRect.top(), x, specRect.bottom());
     }
@@ -867,6 +1080,16 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     QPen tracePen(m_fillColor, m_lineWidth);
     p.setPen(tracePen);
     p.drawPolyline(points.data(), count);
+
+    // Zero line (0 dBm) — Phase 3G-8 commit 5 (G7).
+    if (m_showZeroLine) {
+        const int zy = dbmToY(0.0f, specRect);
+        if (zy >= specRect.top() && zy <= specRect.bottom()) {
+            QPen zeroPen(m_zeroLineColor, 1, Qt::DashLine);
+            p.setPen(zeroPen);
+            p.drawLine(specRect.left(), zy, specRect.right(), zy);
+        }
+    }
 }
 
 // ---- Waterfall drawing ----
@@ -977,11 +1200,16 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
 {
     p.fillRect(r, QColor(0x10, 0x15, 0x20));
 
+    // Phase 3G-8 commit 5: Off alignment suppresses labels entirely.
+    if (m_freqLabelAlign == FreqLabelAlign::Off) {
+        return;
+    }
+
     QFont font = p.font();
     font.setPixelSize(10);
     p.setFont(font);
-    // From Thetis display.cs:2003 — grid_text_color = Color.Yellow
-    p.setPen(QColor(255, 255, 0));
+    // From Thetis display.cs:2003 — grid_text_color (now configurable).
+    p.setPen(m_gridTextColor);
 
     double freqStep = 25000.0;
     if (m_bandwidthHz > 500000.0) {
@@ -991,6 +1219,13 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
     } else if (m_bandwidthHz < 100000.0) {
         freqStep = 10000.0;
     }
+
+    // Phase 3G-8 commit 5: Thetis 5-mode label alignment.
+    // Left / Center / Right / Auto (center with fallback) / Off.
+    const Qt::Alignment baseFlags =
+        (m_freqLabelAlign == FreqLabelAlign::Left)  ? (Qt::AlignLeft  | Qt::AlignVCenter) :
+        (m_freqLabelAlign == FreqLabelAlign::Right) ? (Qt::AlignRight | Qt::AlignVCenter) :
+                                                       (Qt::AlignHCenter | Qt::AlignVCenter);
 
     double startFreq = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / freqStep) * freqStep;
     for (double f = startFreq; f < m_centerHz + m_bandwidthHz / 2.0; f += freqStep) {
@@ -1007,7 +1242,7 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
         }
 
         QRect textRect(x - 30, r.top() + 2, 60, r.height() - 2);
-        p.drawText(textRect, Qt::AlignCenter, label);
+        p.drawText(textRect, baseFlags, label);
     }
 }
 
@@ -1020,7 +1255,8 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
     QFont font = p.font();
     font.setPixelSize(9);
     p.setFont(font);
-    p.setPen(QColor(255, 255, 0));  // Yellow text — from Thetis display.cs:2003
+    // Phase 3G-8 commit 5: configurable text colour (was hardcoded yellow).
+    p.setPen(m_gridTextColor);
 
     float bottom = m_refLevel - m_dynamicRange;
     float step = 10.0f;
