@@ -32,6 +32,19 @@ public:
 
     void updateMeterValue(int bindingId, double value);
 
+    // Container-level mode state, consumed by the Thetis visibility filter
+    // rule (MeterManager.cs:31366-31368). mox == true means TX active;
+    // displayGroup selects which TX group is currently visible. Both default
+    // to the Thetis "RX, no group restriction" state.
+    void setMox(bool mox);
+    bool mox() const { return m_mox; }
+    void setDisplayGroup(int group);
+    int  displayGroup() const { return m_displayGroup; }
+
+    // Returns true if an item should paint under the current mode/group.
+    // Mirrors Thetis MeterManager.cs:31366-31368 verbatim.
+    bool shouldRender(const MeterItem* item) const;
+
     QString serializeItems() const;
     bool deserializeItems(const QString& data);
 
@@ -51,6 +64,10 @@ protected:
 private:
     void drawItems(QPainter& p);
     QVector<MeterItem*> m_items;
+
+    // Visibility filter state — see setMox/setDisplayGroup doc.
+    bool m_mox{false};
+    int  m_displayGroup{0};
 
 #ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};

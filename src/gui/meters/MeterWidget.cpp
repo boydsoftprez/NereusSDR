@@ -341,8 +341,44 @@ void MeterWidget::drawItems(QPainter& p)
     const int w = width();
     const int h = height();
     for (MeterItem* item : m_items) {
+        if (!shouldRender(item)) { continue; }
         item->paint(p, w, h);
     }
+}
+
+// From Thetis MeterManager.cs:31366-31368 — the per-item render gate
+// evaluated by the container's paint loop for every meter item.
+bool MeterWidget::shouldRender(const MeterItem* item) const
+{
+    if (!item) { return false; }
+    const bool baseOk =
+        ((m_mox && item->onlyWhenTx()) || (!m_mox && item->onlyWhenRx()))
+        || (!item->onlyWhenTx() && !item->onlyWhenRx());
+    if (!baseOk) { return false; }
+    const int ig = item->displayGroup();
+    return (m_displayGroup == 0 || ig == 0 || ig == m_displayGroup);
+}
+
+void MeterWidget::setMox(bool mox)
+{
+    if (m_mox == mox) { return; }
+    m_mox = mox;
+#ifdef NEREUS_GPU_SPECTRUM
+    markOverlayDirty();
+    m_bgDirty = true;
+#endif
+    update();
+}
+
+void MeterWidget::setDisplayGroup(int group)
+{
+    if (m_displayGroup == group) { return; }
+    m_displayGroup = group;
+#ifdef NEREUS_GPU_SPECTRUM
+    markOverlayDirty();
+    m_bgDirty = true;
+#endif
+    update();
 }
 
 // ============================================================================
@@ -586,6 +622,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             QPainter p(&m_bgImage);
             p.setRenderHint(QPainter::Antialiasing, false);
             for (MeterItem* item : m_items) {
+                if (!shouldRender(item)) { continue; }
                 if (item->participatesIn(MeterItem::Layer::Background)) {
                     item->paintForLayer(p, w, h, MeterItem::Layer::Background);
                 }
@@ -602,6 +639,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         QVector<float> verts;
         verts.reserve(kMaxGeomVerts * kGeomVertStride);
         for (MeterItem* item : m_items) {
+            if (!shouldRender(item)) { continue; }
             if (item->participatesIn(MeterItem::Layer::Geometry)) {
                 item->emitVertices(verts, w, h);
             }
@@ -640,6 +678,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             QPainter p(&m_overlayStatic);
             p.setRenderHint(QPainter::Antialiasing, false);
             for (MeterItem* item : m_items) {
+                if (!shouldRender(item)) { continue; }
                 if (item->participatesIn(MeterItem::Layer::OverlayStatic)) {
                     item->paintForLayer(p, w, h, MeterItem::Layer::OverlayStatic);
                 }
@@ -654,6 +693,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             QPainter p(&m_overlayDynamic);
             p.setRenderHint(QPainter::Antialiasing, false);
             for (MeterItem* item : m_items) {
+                if (!shouldRender(item)) { continue; }
                 if (item->participatesIn(MeterItem::Layer::OverlayDynamic)) {
                     item->paintForLayer(p, w, h, MeterItem::Layer::OverlayDynamic);
                 }
