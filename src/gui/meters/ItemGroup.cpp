@@ -1259,14 +1259,21 @@ ItemGroup* ItemGroup::createVfoDisplayPreset(QObject* parent)
 
 ItemGroup* ItemGroup::createClockPreset(QObject* parent)
 {
+    // Clock preset is a single narrow strip at the top of its target
+    // region (0..0.15 normalized). The previous version installed
+    // both the background and the ClockItem at full container size
+    // (0,0,1,1), which collided with auto-stacking heuristics: every
+    // subsequent item the user added landed on top of the clock
+    // instead of beside it. Now the bg + clock share the same narrow
+    // strip and the auto-stacker treats them as a real stack member.
     auto* group = new ItemGroup(QStringLiteral("Clock"), parent);
     auto* bg = new SolidColourItem(group);
-    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setRect(0.0f, 0.0f, 1.0f, 0.15f);
     bg->setColour(QColor(0x0f, 0x0f, 0x1a));
     bg->setZOrder(0);
     group->addItem(bg);
     auto* clock = new ClockItem(group);
-    clock->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    clock->setRect(0.0f, 0.0f, 1.0f, 0.15f);
     clock->setZOrder(1);
     group->addItem(clock);
     return group;
