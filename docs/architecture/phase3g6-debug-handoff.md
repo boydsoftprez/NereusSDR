@@ -1,5 +1,35 @@
 # Phase 3G-6: Container Settings Dialog — Debug Handoff
 
+> **Status:** **RESOLVED 2026-04-12.** Every issue identified in
+> this handoff is fixed by the Phase 3G-6 (one-shot) rewrite on
+> branch `feature/phase3g6-oneshot` (PR #2). See
+> [`phase3g6a-plan.md`](phase3g6a-plan.md) for the executed plan
+> and [`../../CHANGELOG.md`](../../CHANGELOG.md) for the per-block
+> commit summary. Specific resolutions:
+>
+> - **ANANMM/CrossNeedle missing PNG paths** → block 1 commits 1-2:
+>   meter PNGs registered as Qt resources under `/meters` qresource
+>   prefix, ItemGroup paths switched to `:/meters/...`.
+> - **Scale labels overlap from `NeedleScalePwrItem`** → block 1
+>   commits 3-5: `onlyWhenRx`/`onlyWhenTx`/`displayGroup` ported to
+>   `MeterItem` base, Thetis filter rule wired into
+>   `MeterWidget::shouldRender()`, ANANMM `NeedleScalePwrItem`
+>   pinned to power/SWR group.
+> - **Live preview panel rendered as solid black** → block 3
+>   commit 11: live preview panel removed entirely; replaced by
+>   in-place editing against the live container with
+>   snapshot/revert on Cancel (block 3 commit 14).
+> - **Property editors only existed for 6 of ~30 item types** →
+>   block 4: every implemented `MeterItem` subclass has a
+>   dedicated `BaseItemEditor` subclass under
+>   `src/gui/containers/meter_property_editors/`. 31 editors
+>   produced in parallel by 4 subagents.
+> - **No menu-based access to floating containers** → block 6:
+>   `Containers → Edit Container` submenu populated dynamically
+>   from `ContainerManager::allContainers()`.
+>
+> Original handoff text retained below for historical context.
+
 > **Status:** Infrastructure complete, needs visual debugging and UX polish.
 > **Branch:** `feature/phase3g6-container-settings-dialog`
 > **PR:** boydsoftprez/NereusSDR#1
