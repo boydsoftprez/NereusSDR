@@ -52,6 +52,8 @@ LogManager::LogManager()
           QStringLiteral("Container dock/float/resize, lifecycle, persistence"), false },
         { QStringLiteral("nereus.meter"),    QStringLiteral("Meter"),
           QStringLiteral("Meter widget rendering, polling, and item lifecycle"), false },
+        { QStringLiteral("nereus.mmio"),     QStringLiteral("MMIO"),
+          QStringLiteral("Multi-Meter I/O endpoints, transports, parsers"), false },
     };
 }
 

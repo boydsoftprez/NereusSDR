@@ -84,20 +84,9 @@ private:
     // inside AppletPanelWidget as a header widget.
     MeterWidget* findMeterWidget() const;
 
-    // Common property editor (Task 4)
-    void buildCommonPropsPage();
-    void loadCommonProperties(int row);
-    void saveCommonProperties(int row);
-    void populateBindingCombo();
+    // Phase 3G-6 block 4 dispatch — instantiates the per-item
+    // BaseItemEditor subclass for the selected item's type tag.
     QWidget* buildTypeSpecificEditor(MeterItem* item);
-
-    // Type-specific editors (Task 5)
-    QWidget* buildBarItemEditor(BarItem* item);
-    QWidget* buildNeedleItemEditor(NeedleItem* item);
-    QWidget* buildTextItemEditor(TextItem* item);
-    QWidget* buildScaleItemEditor(ScaleItem* item);
-    QWidget* buildSolidItemEditor(SolidColourItem* item);
-    QWidget* buildLedItemEditor(LEDItem* item);
 
     ContainerWidget* m_container{nullptr};
     ContainerManager* m_manager{nullptr};
@@ -132,22 +121,13 @@ private:
     QPushButton* m_btnMoveUp{nullptr};
     QPushButton* m_btnMoveDown{nullptr};
 
-    // Center panel
+    // Right panel: properties stack
     QStackedWidget* m_propertyStack{nullptr};
     QWidget* m_emptyPage{nullptr};
 
-    // Common property controls
-    QWidget* m_commonPropsPage{nullptr};
-    QDoubleSpinBox* m_propX{nullptr};
-    QDoubleSpinBox* m_propY{nullptr};
-    QDoubleSpinBox* m_propW{nullptr};
-    QDoubleSpinBox* m_propH{nullptr};
-    QSpinBox* m_propZOrder{nullptr};
-    QComboBox* m_propBinding{nullptr};
-
-    // Type-specific property area
-    QWidget* m_typePropsContainer{nullptr};
-    QVBoxLayout* m_typePropsLayout{nullptr};
+    // Currently-installed BaseItemEditor wrapper (a QScrollArea
+    // containing the per-item editor). Replaced on every selection
+    // change in onItemSelectionChanged.
     QWidget* m_currentTypeEditor{nullptr};
 
     // Phase 3G-6 block 3 commit 11: m_previewWidget deleted. The Thetis
