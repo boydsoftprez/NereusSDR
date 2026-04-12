@@ -346,7 +346,8 @@ preferences. OpenHPSDR radios don't store per-slice state.
 
 | Document | Scope |
 | --- | --- |
-| [openhpsdr-protocol1.md](docs/protocols/openhpsdr-protocol1.md) | P1 UDP framing, 1032-byte Metis frames, C&C bytes, EP6 I/Q format |
+| [openhpsdr-protocol1.md](docs/protocols/openhpsdr-protocol1.md) | P1 summary + pointer to capture reference; Thetis P1 source map |
+| [openhpsdr-protocol1-capture-reference.md](docs/protocols/openhpsdr-protocol1-capture-reference.md) | Annotated HL2↔Thetis capture: discovery, start/stop, EP6/EP2 frames, C0 maps, cadence, band/TX traces, HL2 quirks, Phase 3L checklist |
 | [openhpsdr-protocol2.md](docs/protocols/openhpsdr-protocol2.md) | P2 UDP multi-port, command packets, per-DDC I/Q streams |
 
 ### Phase 1 Analysis Docs (`docs/phase1/`)
