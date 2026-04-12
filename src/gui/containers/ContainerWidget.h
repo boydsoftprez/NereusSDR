@@ -140,6 +140,7 @@ signals:
     void dockModeChanged(DockMode mode);
     void titleBarVisibilityChanged(bool visible);
     void minimisedChanged(bool minimised);
+    void notesChanged(const QString& notes);
 
     // --- Phase 3G-5 interactive item signals ---
     void bandClicked(int bandIndex);

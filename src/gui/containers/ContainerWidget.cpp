@@ -324,9 +324,12 @@ void ContainerWidget::setContainerHidesWhenRxNotUsed(bool hides) { m_containerHi
 
 void ContainerWidget::setNotes(const QString& notes)
 {
-    m_notes = notes;
-    m_notes.remove(QLatin1Char('|'));
+    QString scrubbed = notes;
+    scrubbed.remove(QLatin1Char('|'));
+    if (m_notes == scrubbed) { return; }
+    m_notes = scrubbed;
     updateTitle();
+    emit notesChanged(m_notes);
 }
 
 void ContainerWidget::setNoControls(bool noControls) { m_noControls = noControls; }

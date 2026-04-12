@@ -36,6 +36,42 @@ void ContainerManager::wireContainer(ContainerWidget* container)
         ContainerSettingsDialog dialog(container, container->window());
         dialog.exec();
     });
+    connect(container, &ContainerWidget::notesChanged, this,
+            [this, container](const QString& notes) {
+        emit containerTitleChanged(container->id(), notes);
+    });
+}
+
+ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
+{
+    ContainerWidget* src = container(sourceId);
+    if (!src) {
+        qCWarning(lcContainer) << "duplicateContainer: unknown id:" << sourceId;
+        return nullptr;
+    }
+
+    ContainerWidget* dup = createContainer(src->rxSource(), DockMode::Floating);
+    if (!dup) { return nullptr; }
+
+    // Copy user-editable state. The auto-generated ID on the new
+    // container is deliberately preserved; everything else mirrors
+    // the source.
+    dup->setNotes(src->notes());
+    dup->setBorder(src->hasBorder());
+    dup->setLocked(src->isLocked());
+    dup->setContainerEnabled(src->isContainerEnabled());
+    dup->setShowOnRx(src->showOnRx());
+    dup->setShowOnTx(src->showOnTx());
+    dup->setContainerMinimises(src->containerMinimises());
+    dup->setContainerHidesWhenRxNotUsed(src->containerHidesWhenRxNotUsed());
+    dup->setAutoHeight(src->autoHeight());
+    dup->setTitleBarVisible(src->isTitleBarVisible());
+    dup->setPinOnTop(src->isPinOnTop());
+    dup->setAxisLock(src->axisLock());
+    dup->setDockedSize(src->dockedSize());
+
+    qCDebug(lcContainer) << "Duplicated container:" << sourceId << "->" << dup->id();
+    return dup;
 }
 
 ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
