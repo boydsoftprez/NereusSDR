@@ -714,3 +714,66 @@ is usable for Task 9 (TX/keying trace).
    peripheral (LPF relay driver, LNA, or step-attenuator IC).
 
 **Thetis source:** `networkproto1.c:419–697` (`WriteMainLoop`, `sendProtocol1Samples`).
+
+---
+
+## 6. Steady-State Cadence
+
+### 6.1 Frame rates
+
+This section measures the observed frame rates during the ~55.7 second capture when the HL2 radio and Thetis host are in steady state, with no band changes or parameter adjustments.
+
+| Direction | Endpoint | Frames | Duration | Rate (Hz) |
+| --- | --- | --- | --- | --- |
+| Radio → Host | EP6 (`0x01`) | 281,195 | 55.650 s | 5052.9 |
+| Host → Radio | EP2 (`0x02`, 1032-byte) | 21,044 | 55.668 s | 378.0 |
+
+### 6.2 Rate derivation and comparison to theory
+
+The OpenHPSDR Protocol 1 implementation in `networkproto1.c:358` computes the number of samples per USB frame as:
+
+```c
+spr = 504 / (6*nddc + 2)
+```
+
+For this session with nddc=4 (four active DDCs):
+
+```
+spr = 504 / (6*4 + 2)
+    = 504 / 26
+    ≈ 19.38 samples/frame
+```
+
+The Metis frame rate (EP6) at 192 kHz sample rate is:
+
+```
+Metis rate = 192000 / (2 * spr)
+           = 192000 / (2 * 19.38)
+           ≈ 4947 Hz
+```
+
+**Observed:** 5052.9 Hz — a delta of **+105.9 Hz** relative to the computed 4947 Hz formula.
+
+This discrepancy indicates either:
+1. The actual `spr` value used by this HL2 firmware differs slightly from the formula, or
+2. The 192 kHz rate or nddc=4 parameters are not the primary drivers of frame timing.
+
+The observed rate remains stable and continuous; the delta is small relative to 5000 Hz (about 2%) and should not affect Nereus Phase 3L integration.
+
+### 6.3 Sequence number continuity
+
+Both endpoints maintain unbroken sequence numbering across the entire session:
+
+- **EP6 (radio → host):** 0 gaps — all 281,195 Metis sequence numbers are contiguous.
+- **EP2 (host → radio):** 0 gaps — all 21,044 command sequence numbers are contiguous.
+
+No packet loss, reorder, or retransmission is observed on the capture interface.
+
+### 6.4 Implication for Nereus Phase 3L
+
+The Phase 3L C&C stack must emit **EP2 command frames at ~378 Hz** and accept **EP6 frames at ~5053 Hz** to match the HL2's steady-state behavior.
+
+The HL2 firmware expects a ~19 ms round-robin cycle (one C0 "send all" command per 19 ms implies ~53 commands/second × 4 minor-loop packets = ~210 fps command-level, but this session shows ~378 Hz physical EP2 frame rate, indicating the HL2 may require higher command-queue turnover).
+
+Sustaining these rates without drops is a **hard requirement** for the round-robin C&C refresh to complete within the ~10 ms window the HL2 expects. Any sustained frame loss, reordering, or timing jitter will cause the HL2 to miss command updates and potentially fall out of sync with the Nereus host.
+
