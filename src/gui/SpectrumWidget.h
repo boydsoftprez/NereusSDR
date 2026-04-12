@@ -37,6 +37,20 @@ enum class WfColorScheme : int {
     Count
 };
 
+// Spectrum averaging mode. Ported from Thetis comboDispPanAveraging
+// (setup.designer.cs:34835, target console.specRX.GetSpecRX(0).AverageMode).
+// Thetis options: None / Recursive / Time Window / Log Recursive.
+// NereusSDR names: None / Weighted / TimeWindow / Logarithmic — the
+// previous single smoothing behavior (kSmoothAlpha * new + (1-a) * prev)
+// corresponds to Weighted.
+enum class AverageMode : int {
+    None = 0,        // pass frame through unchanged
+    Weighted,        // kSmoothAlpha exponential (current NereusSDR behavior)
+    Logarithmic,     // log-domain exponential (matches Thetis Log Recursive)
+    TimeWindow,      // approximated as slower exponential for now
+    Count
+};
+
 // Gradient stop for waterfall color mapping.
 struct WfGradientStop { float pos; int r, g, b; };
 
@@ -83,6 +97,47 @@ public:
     void setWfColorScheme(WfColorScheme scheme);
     void setWfColorGain(int gain) { m_wfColorGain = gain; }
     void setWfBlackLevel(int level) { m_wfBlackLevel = level; }
+
+    // ---- Spectrum renderer controls (Phase 3G-8 commit 3) ----
+
+    // Averaging mode applied in updateSpectrum() before drawing.
+    void setAverageMode(AverageMode m);
+    AverageMode averageMode() const { return m_averageMode; }
+
+    // Smoothing time constant for Weighted / Logarithmic / TimeWindow.
+    // 0.0 = no smoothing, 1.0 = infinite smoothing. Default kSmoothAlpha.
+    void setAverageAlpha(float alpha);
+    float averageAlpha() const { return m_averageAlpha; }
+
+    // Peak hold: track per-bin max, decay after delay.
+    void setPeakHoldEnabled(bool on);
+    bool peakHoldEnabled() const { return m_peakHoldEnabled; }
+    void setPeakHoldDelayMs(int ms);
+    int  peakHoldDelayMs() const { return m_peakHoldDelayMs; }
+
+    // Trace fill (under-the-curve shaded region).
+    void setPanFillEnabled(bool on);
+    bool panFillEnabled() const { return m_panFill; }
+    void setFillAlpha(float a);       // 0.0 .. 1.0
+    float fillAlpha() const { return m_fillAlpha; }
+
+    // Trace line width (QPainter pen width). GPU path uses line list
+    // default width until commit 5 renderer additions.
+    void setLineWidth(float w);
+    float lineWidth() const { return m_lineWidth; }
+
+    // Trace gradient: when enabled, the QPainter fill gradient ramps
+    // from transparent at baseline to the fill color at the trace,
+    // and the trace uses a vertical color gradient. GPU path keeps
+    // its existing per-vertex heatmap coloring (wire-up in commit 5).
+    void setGradientEnabled(bool on);
+    bool gradientEnabled() const { return m_gradientEnabled; }
+
+    // Display calibration offset added to every bin before it's mapped
+    // to screen Y. Ported from Thetis Display.RX1DisplayCalOffset
+    // (display.cs:1372). Range: -30 .. +30 dB.
+    void setDbmCalOffset(float db);
+    float dbmCalOffset() const { return m_dbmCalOffset; }
 
     // ---- Per-pan settings persistence ----
     void setPanIndex(int idx) { m_panIndex = idx; }
@@ -210,6 +265,22 @@ private:
     QColor m_fillColor{0x00, 0xe5, 0xff};  // cyan
     float  m_fillAlpha{0.70f};
     bool   m_panFill{true};
+
+    // ---- Phase 3G-8 commit 3: spectrum renderer state ----
+
+    AverageMode m_averageMode{AverageMode::Weighted};
+    float       m_averageAlpha{kSmoothAlpha};  // 0..1 exp-smoothing factor
+
+    bool        m_peakHoldEnabled{false};
+    int         m_peakHoldDelayMs{2000};
+    QVector<float> m_peakHoldBins;
+    QTimer*     m_peakHoldDecayTimer{nullptr};
+
+    float       m_lineWidth{1.5f};
+    bool        m_gradientEnabled{false};
+
+    // Ported from Thetis Display.RX1DisplayCalOffset (display.cs:1372).
+    float       m_dbmCalOffset{0.0f};
 
     // ---- VFO / filter overlay ----
     double m_vfoHz{0.0};
