@@ -107,3 +107,80 @@ Field legend (P1 parser: `clsRadioDiscovery.cs:1122` — `parseDiscoveryReply()`
   (not read by the P1 parser branch; 39 bytes total)
 
 **Thetis source:** `clsRadioDiscovery.cs:1301` (send — `buildDiscoveryPacketP1`), `:1122` (parse — `parseDiscoveryReply`)
+
+## 3. Start / Stop Commands
+
+P1 start/stop is a small 64-byte Metis frame sent to the radio. Byte 2 is the
+command (`04`), byte 3 selects start/stop and which data streams to enable.
+The frame is NOT a full 1032-byte Metis frame — it carries no C&C or I/Q
+payload, just the 4-byte command header followed by 60 zero bytes.
+
+### 3.1 Start Command (host → radio :1024)
+
+Captured frame 10, relative timestamp 1.007829900 s (first confirmed start
+after IQ stream begins flowing).
+
+UDP payload (64 bytes, offsets shown relative to UDP payload start):
+
+```text
+Offset  Hex                                               ASCII
+------  ------------------------------------------------  -----
+00      ef fe 04 01 00 00 00 00 00 00 00 00 00 00 00 00  ................
+10      00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+20      00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+30      00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+```
+
+Field legend:
+
+- **bytes 0–1** `EF FE` — P1 sync / frame marker
+- **byte 2** `04` — command: start/stop
+- **byte 3** `01` — mode: start with IQ data stream enabled
+  (`outpacket.packetbuf[3] = 0x01` — `networkproto1.c:50`)
+- **bytes 4–63** `00 * 60` — zero padding
+
+Note: frame 7 (t=0.944 s) contains byte 3 = `00` (a stop command sent before
+the first start — consistent with `SendStartToMetis()` calling
+`ForceCandCFrame(1)` then immediately sending start, with the radio possibly
+echoing a cleanup stop first).
+
+### 3.2 Stop Command (host → radio :1024)
+
+Captured frame 302249, relative timestamp 56.658037300 s (end of session).
+
+UDP payload (64 bytes):
+
+```text
+Offset  Hex                                               ASCII
+------  ------------------------------------------------  -----
+00      ef fe 04 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+10      00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+20      00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+30      00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+```
+
+Field legend:
+
+- **bytes 0–1** `EF FE` — P1 sync / frame marker
+- **byte 2** `04` — command: start/stop
+- **byte 3** `00` — mode: stop all data streams
+  (`outpacket.packetbuf[3] = 0x00` — `networkproto1.c:85`)
+- **bytes 4–63** `00 * 60` — zero padding
+
+### 3.3 Mode Byte (byte 3) Decode Table
+
+Values taken directly from `networkproto1.c` (`SendStartToMetis` and
+`SendStopToMetis`). No other values appear in this source file.
+
+| Value | Meaning | Source |
+| --- | --- | --- |
+| `0x00` | Stop — all data streams off | `networkproto1.c:85` |
+| `0x01` | Start — IQ data stream enabled | `networkproto1.c:50` |
+
+The capture contains only `0x00` and `0x01`. The values `0x02` (wideband only)
+and `0x03` (IQ + wideband) are referenced in the OpenHPSDR P1 specification
+but do NOT appear in `SendStartToMetis()` or `SendStopToMetis()`. They are not
+documented here as they cannot be verified against this source or capture.
+
+**Thetis source:** `networkproto1.c:50` (start send — `SendStartToMetis`),
+`networkproto1.c:85` (stop send — `SendStopToMetis`)
