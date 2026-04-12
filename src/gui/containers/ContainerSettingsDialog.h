@@ -103,6 +103,17 @@ private:
     ContainerManager* m_manager{nullptr};
     QVector<MeterItem*> m_workingItems;
 
+    // Snapshot/revert (commit 14). Captured on dialog open and on
+    // every container-switch via dropdown. Cancel restores the
+    // currently-selected container to its snapshot; OK / Close /
+    // Apply discards the snapshot and the in-progress edits stick.
+    QString m_containerSnapshot;
+    QString m_itemsSnapshot;
+    bool    m_snapshotTaken{false};
+
+    void takeSnapshot();
+    void revertFromSnapshot();
+
     // Container-switch dropdown (block 3 commit 13). Read-only until
     // commit 14 wires auto-commit + snapshot on switch.
     QComboBox* m_containerDropdown{nullptr};

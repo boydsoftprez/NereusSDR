@@ -146,6 +146,12 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     resize(900, 600);
 
     buildLayout();
+
+    // Phase 3G-6 block 3 commit 14: snapshot the current container
+    // state so Cancel can fully revert the in-progress edits. Must
+    // happen AFTER buildLayout so populateItemList has already
+    // captured items into m_workingItems from the live MeterWidget.
+    takeSnapshot();
 }
 
 ContainerSettingsDialog::~ContainerSettingsDialog()
@@ -553,7 +559,16 @@ void ContainerSettingsDialog::buildButtonBar()
     connect(m_btnExport, &QPushButton::clicked, this, &ContainerSettingsDialog::onExport);
     connect(m_btnImport, &QPushButton::clicked, this, &ContainerSettingsDialog::onImport);
     connect(m_btnApply,  &QPushButton::clicked, this, &ContainerSettingsDialog::applyToContainer);
-    connect(m_btnCancel, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_btnCancel, &QPushButton::clicked, this, [this]() {
+        // Phase 3G-6 block 3 commit 14: Cancel reverts the container
+        // and its meter items to the snapshot captured on dialog
+        // open, then closes. Applied changes from Apply clicks are
+        // NOT reverted — that's intentional: Apply is a "commit"
+        // action and the snapshot is only a safety net for
+        // un-Applied edits.
+        revertFromSnapshot();
+        reject();
+    });
     connect(m_btnOk,     &QPushButton::clicked, this, [this]() {
         applyToContainer();
         accept();
@@ -1121,6 +1136,33 @@ void ContainerSettingsDialog::updatePreview()
     // changes directly to the target container's MeterWidget; until
     // then this is a no-op so the existing ~30 callsites keep
     // compiling without being rewritten one-by-one.
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3G-6 block 3 commit 14: snapshot + revert
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::takeSnapshot()
+{
+    if (!m_container) {
+        m_snapshotTaken = false;
+        return;
+    }
+    m_containerSnapshot = m_container->serialize();
+    MeterWidget* meter = findMeterWidget();
+    m_itemsSnapshot = meter ? meter->serializeItems() : QString();
+    m_snapshotTaken = true;
+}
+
+void ContainerSettingsDialog::revertFromSnapshot()
+{
+    if (!m_snapshotTaken || !m_container) { return; }
+    m_container->deserialize(m_containerSnapshot);
+    if (MeterWidget* meter = findMeterWidget()) {
+        meter->deserializeItems(m_itemsSnapshot);
+        meter->update();
+    }
+    m_container->update();
 }
 
 void ContainerSettingsDialog::applyToContainer()
