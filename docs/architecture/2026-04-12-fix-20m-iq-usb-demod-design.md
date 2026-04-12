@@ -2,7 +2,8 @@
 
 **Date:** 2026-04-12
 **Branch:** `fix/20m-iq-upper-sideband`
-**Status:** Design — awaiting user review
+**Status:** **Hypothesis refuted during diagnosis — see "Diagnosis Outcome"
+at end of document. Real root cause and fix are in commit `07dbdce`.**
 **Scope:** Bug fix only. Right-side panel wiring and Setup→Display→RX1 palette
 work are explicitly out of scope and belong on separate branches.
 
@@ -288,3 +289,105 @@ the first is addressed here. The other two belong on their own branches:
   the desire to match SmartSDR / AetherSDR waterfall palette range) —
   feature work, separate design, separate branch. This may require
   revisiting the palette slider ranges in `SpectrumWidget` as a follow-up.
+
+---
+
+## 7. Diagnosis Outcome — Hypothesis Refuted
+
+**Added 2026-04-12, after live-radio diagnosis against an ANAN-G2.**
+
+The hypothesis in §2 (three disagreeing default states leaving WDSP in an
+incoherent `(mode, bandpass)` pair) was **refuted** by the Phase A
+instrumentation log. With the live app on 20m USB experiencing the Donald
+Duck symptom, `createRxChannel` logged `WDSP mode=USB(1) bounds=(100,3000)`
+and a one-shot `RESYNC PROBE` confirmed the WDSP state was exactly that —
+the "correct" state the Phase B fix would have set. Yet the audio was
+still wrong. The Phase B plan (seed channel from slice, make `RxChannel`
+cache self-consistent, resync bandpass after mode change) was abandoned
+before commit.
+
+Further diagnosis ruled out stereo decorrelation from a non-dual-mono
+`fexchange2` output (adding `SetRXAPanelBinaural(channelId, 0)` made
+`outI == outQ` per a live diagnostic log, but the audio remained garbled
+on everything except LSB). That narrowed the problem to the WDSP SSB
+filter chain itself.
+
+Reading Thetis `RXA.c` line-by-line exposed **two** bugs, both from
+NereusSDR not calling WDSP APIs that Thetis always calls:
+
+### Real root cause 1 — `nbp0` filter was never updated
+
+WDSP's RXA pipeline has two bandpass filters:
+
+- **`bp1`** — updated by `SetRXABandpassFreqs`. Only runs when `AMD`,
+  `SNBA`, `EMNR`, `ANF`, or `ANR` is enabled (`RXA.c:883-895`).
+- **`nbp0`** — updated by `RXANBPSetFreqs`. Runs unconditionally in the
+  plain SSB / AM / CW audio path (`RXA.c:624`, `xnbp`).
+
+NereusSDR only called `SetRXABandpassFreqs`, which silently updated a
+filter that wasn't even active in the audio path. `nbp0` stayed at its
+create-time default of `(-4150.0, -150.0)` forever — LSB-shaped. That
+silently broke every non-LSB demodulator:
+
+| Mode | Passband | `nbp0` stuck at `(-4150, -150)` |
+|---|---|---|
+| LSB | `(-3000, -100)` | intersects → **clean voice** |
+| USB | `(+100, +3000)` | disjoint → **Donald Duck** |
+| AM  | `(-5000, +5000)` | only negative half passes → **garbled** |
+| CW  | narrow around ±600 | partial overlap near DC → **sounds OK** |
+
+Thetis always calls both setters together (`rxa.cs:110-111`, `116-117`,
+`radio.cs:603-604`).
+
+### Real root cause 2 — RXA patch panel was in binaural mode
+
+WDSP's `create_panel` default is `copy=0` — binaural mode, where `outI`
+and `outQ` carry phase-shifted content for a headphone stereo image
+(`patchpanel.c:55-101`, `RXA.c:512-523`). Through laptop speakers, the
+two acoustically-mixed phase-shifted streams produce pitched, hollow
+comb-filtered audio.
+
+Thetis calls `SetRXAPanelBinaural(channel, false)` via its `BinOn`
+property (`radio.cs:1157`), which defaults to `false` → dual-mono
+(`copy=1`, `Q := I`).
+
+This bug was masked by root cause 1 (everything sounded broken anyway
+on USB/AM), and only became visible after the `nbp0` fix was in place.
+Both fixes are needed.
+
+### The fix
+
+Commit `07dbdce` — `fix(dsp): USB/AM audio broken — call RXANBPSetFreqs
+and disable binaural panel`. Three-file diff:
+
+- `src/core/RxChannel.cpp` — `setFilterFreqs` now calls both
+  `SetRXABandpassFreqs` and `RXANBPSetFreqs`
+- `src/core/WdspEngine.cpp` — `createRxChannel` seeds both filters at
+  create time and calls `SetRXAPanelBinaural(channelId, 0)`
+- `src/core/wdsp_api.h` — declarations for the two newly-called WDSP
+  functions
+
+The Phase A diagnostic instrumentation from commit `c3164fd` is also
+removed by `07dbdce` since it served its purpose and is no longer
+needed.
+
+### Lessons
+
+- **Don't trust equality guards on cache state when the underlying
+  resource has multiple setters.** The `setFilterFreqs` guard was
+  correctly detecting cache-equality, but the *cache* only mirrored
+  one of two WDSP filters. A guard on a single-slot cache can never
+  catch a bug caused by a second shadow filter.
+- **Follow CLAUDE.md's READ → SHOW → TRANSLATE literally, not in
+  spirit.** This bug was hiding in plain sight in `RXA.c:883-895`
+  (the comment on `bp1` says "used only with AM || ANF || ANR ||
+  EMNR") and `RXA.c:90-106` (where `nbp0` is created with LSB-shaped
+  defaults). A line-by-line read of `RXA.c` at channel-wiring time
+  would have caught this before it shipped. The temptation to reason
+  about what WDSP "probably does" instead of reading the actual source
+  is real and should be actively resisted.
+- **Acoustic bugs deserve live-radio verification early.** The original
+  hypothesis survived a plausible-sounding code review but didn't
+  survive the first live log. Phase A instrumentation was the right
+  investment — it's what caught the refutation in <10 minutes once
+  the radio was connected.
