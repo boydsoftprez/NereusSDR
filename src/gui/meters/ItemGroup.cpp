@@ -889,6 +889,13 @@ ItemGroup* ItemGroup::createAnanMMPreset(QObject* parent)
     pwrScale->setLowColour(Qt::gray);
     pwrScale->setHighColour(Qt::red);
     pwrScale->setMaxPower(150.0f);
+    // Pair the power scale labels with the power/SWR needle group so
+    // they hide in RX and in TX groups other than 1. Thetis's nspi has
+    // no filter of its own (MeterManager.cs:22647+), but the ANANMM
+    // port previously rendered the pwr labels over the S-meter scale
+    // in RX — this is the deliberate NereusSDR fix for that overlap.
+    pwrScale->setOnlyWhenTx(true);
+    pwrScale->setDisplayGroup(1);
     // Same calibration as power needle
     {
         QMap<float, QPointF> cal;
