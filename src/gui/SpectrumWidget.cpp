@@ -178,6 +178,25 @@ void SpectrumWidget::loadSettings()
     int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
     m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
                           static_cast<int>(WfColorScheme::Count) - 1));
+
+    // Phase 3G-8 commit 3: spectrum renderer state.
+    const int avgRaw = readInt(QStringLiteral("DisplayAverageMode"),
+                               static_cast<int>(AverageMode::Weighted));
+    m_averageMode = static_cast<AverageMode>(qBound(0, avgRaw,
+                          static_cast<int>(AverageMode::Count) - 1));
+    m_averageAlpha     = readFloat(QStringLiteral("DisplayAverageAlpha"), kSmoothAlpha);
+    m_peakHoldDelayMs  = readInt(QStringLiteral("DisplayPeakHoldDelayMs"), 2000);
+    m_lineWidth        = readFloat(QStringLiteral("DisplayLineWidth"), 1.5f);
+    m_dbmCalOffset     = readFloat(QStringLiteral("DisplayCalOffset"), 0.0f);
+    const bool peakOn = s.value(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
+                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    const bool gradOn = s.value(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
+                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_gradientEnabled = gradOn;
+    // Delay the peak hold enable path until the timer infra is ready.
+    if (peakOn) {
+        setPeakHoldEnabled(true);
+    }
 }
 
 void SpectrumWidget::saveSettings()
@@ -204,6 +223,17 @@ void SpectrumWidget::saveSettings()
     writeInt(QStringLiteral("DisplayWfColorScheme"), static_cast<int>(m_wfColorScheme));
     s.setValue(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
               m_ctunEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // Phase 3G-8 commit 3: spectrum renderer state.
+    writeInt(QStringLiteral("DisplayAverageMode"), static_cast<int>(m_averageMode));
+    writeFloat(QStringLiteral("DisplayAverageAlpha"), m_averageAlpha);
+    writeInt(QStringLiteral("DisplayPeakHoldDelayMs"), m_peakHoldDelayMs);
+    writeFloat(QStringLiteral("DisplayLineWidth"), m_lineWidth);
+    writeFloat(QStringLiteral("DisplayCalOffset"), m_dbmCalOffset);
+    s.setValue(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
+              m_peakHoldEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
+              m_gradientEnabled ? QStringLiteral("True") : QStringLiteral("False"));
 }
 
 void SpectrumWidget::scheduleSettingsSave()
@@ -280,20 +310,183 @@ void SpectrumWidget::setWfColorScheme(WfColorScheme scheme)
     update();
 }
 
-// Feed new FFT frame — apply smoothing, push waterfall row, repaint.
-// From AetherSDR SpectrumWidget::updateSpectrum() + gpu-waterfall.md:895-911
+// ---- Phase 3G-8 commit 3 setters ----
+
+void SpectrumWidget::setAverageMode(AverageMode m)
+{
+    if (m_averageMode == m) {
+        return;
+    }
+    m_averageMode = m;
+    // Force a fresh baseline for the new mode so a switch doesn't
+    // carry stale smoothed state forward.
+    m_smoothed.clear();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setAverageAlpha(float alpha)
+{
+    alpha = qBound(0.0f, alpha, 1.0f);
+    if (qFuzzyCompare(m_averageAlpha, alpha)) {
+        return;
+    }
+    m_averageAlpha = alpha;
+    scheduleSettingsSave();
+}
+
+void SpectrumWidget::setPeakHoldEnabled(bool on)
+{
+    if (m_peakHoldEnabled == on) {
+        return;
+    }
+    m_peakHoldEnabled = on;
+    if (!on) {
+        m_peakHoldBins.clear();
+        if (m_peakHoldDecayTimer) {
+            m_peakHoldDecayTimer->stop();
+        }
+    } else {
+        if (!m_peakHoldDecayTimer) {
+            m_peakHoldDecayTimer = new QTimer(this);
+            m_peakHoldDecayTimer->setSingleShot(false);
+            connect(m_peakHoldDecayTimer, &QTimer::timeout, this, [this]() {
+                // Decay: reset peak hold to current smoothed data so fresh
+                // peaks start tracking again from "now".
+                if (m_peakHoldEnabled) {
+                    m_peakHoldBins = m_smoothed;
+                    update();
+                }
+            });
+        }
+        m_peakHoldDecayTimer->start(m_peakHoldDelayMs);
+    }
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setPeakHoldDelayMs(int ms)
+{
+    ms = qBound(100, ms, 60000);
+    if (m_peakHoldDelayMs == ms) {
+        return;
+    }
+    m_peakHoldDelayMs = ms;
+    if (m_peakHoldDecayTimer && m_peakHoldDecayTimer->isActive()) {
+        m_peakHoldDecayTimer->start(ms);
+    }
+    scheduleSettingsSave();
+}
+
+void SpectrumWidget::setPanFillEnabled(bool on)
+{
+    if (m_panFill == on) {
+        return;
+    }
+    m_panFill = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setFillAlpha(float a)
+{
+    a = qBound(0.0f, a, 1.0f);
+    if (qFuzzyCompare(m_fillAlpha, a)) {
+        return;
+    }
+    m_fillAlpha = a;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setLineWidth(float w)
+{
+    w = qBound(0.5f, w, 8.0f);
+    if (qFuzzyCompare(m_lineWidth, w)) {
+        return;
+    }
+    m_lineWidth = w;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGradientEnabled(bool on)
+{
+    if (m_gradientEnabled == on) {
+        return;
+    }
+    m_gradientEnabled = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setDbmCalOffset(float db)
+{
+    db = qBound(-30.0f, db, 30.0f);
+    if (qFuzzyCompare(m_dbmCalOffset, db)) {
+        return;
+    }
+    m_dbmCalOffset = db;
+    scheduleSettingsSave();
+    update();
+}
+
+// Feed new FFT frame — apply averaging per current mode, track peak hold,
+// push waterfall row, repaint. From AetherSDR SpectrumWidget::updateSpectrum()
+// + gpu-waterfall.md:895-911. Averaging mode added in Phase 3G-8 commit 3.
 void SpectrumWidget::updateSpectrum(int receiverId, const QVector<float>& binsDbm)
 {
     Q_UNUSED(receiverId);
     m_bins = binsDbm;
 
-    // Exponential smoothing for spectrum trace
     if (m_smoothed.size() != binsDbm.size()) {
         m_smoothed = binsDbm;  // first frame: no smoothing
     } else {
-        for (int i = 0; i < binsDbm.size(); ++i) {
-            m_smoothed[i] = kSmoothAlpha * binsDbm[i]
-                          + (1.0f - kSmoothAlpha) * m_smoothed[i];
+        const float a = qBound(0.0f, m_averageAlpha, 1.0f);
+        switch (m_averageMode) {
+            case AverageMode::None:
+                m_smoothed = binsDbm;
+                break;
+            case AverageMode::Weighted:
+            default:
+                for (int i = 0; i < binsDbm.size(); ++i) {
+                    m_smoothed[i] = a * binsDbm[i] + (1.0f - a) * m_smoothed[i];
+                }
+                break;
+            case AverageMode::Logarithmic: {
+                // Log-domain recursive: Thetis "Log Recursive" mode.
+                // Mix in linear power space, then convert back to dB.
+                for (int i = 0; i < binsDbm.size(); ++i) {
+                    const float linNew = std::pow(10.0f, binsDbm[i] / 10.0f);
+                    const float linOld = std::pow(10.0f, m_smoothed[i] / 10.0f);
+                    const float mix    = a * linNew + (1.0f - a) * linOld;
+                    m_smoothed[i] = 10.0f * std::log10(mix > 0.0f ? mix : 1e-30f);
+                }
+                break;
+            }
+            case AverageMode::TimeWindow: {
+                // Approximated as a slower exponential — plan §7 notes
+                // this as a TODO for a true sliding time window.
+                const float slow = a * 0.33f;
+                for (int i = 0; i < binsDbm.size(); ++i) {
+                    m_smoothed[i] = slow * binsDbm[i]
+                                  + (1.0f - slow) * m_smoothed[i];
+                }
+                break;
+            }
+        }
+    }
+
+    // Peak hold: track per-bin maximum over the decay window.
+    if (m_peakHoldEnabled) {
+        if (m_peakHoldBins.size() != binsDbm.size()) {
+            m_peakHoldBins = binsDbm;
+        } else {
+            for (int i = 0; i < binsDbm.size(); ++i) {
+                if (binsDbm[i] > m_peakHoldBins[i]) {
+                    m_peakHoldBins[i] = binsDbm[i];
+                }
+            }
         }
     }
 
@@ -426,6 +619,11 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
 }
 
 // ---- Spectrum trace drawing ----
+// Phase 3G-8 commit 3: honors m_lineWidth, m_gradientEnabled,
+// m_peakHoldEnabled. See drawSpectrum() call site in paintEvent for
+// the QPainter fallback path. GPU path uses its own vertex generation
+// in renderGpuFrame() — line width and gradient wire-up there lands
+// in commit 5.
 void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 {
     if (m_smoothed.isEmpty()) {
@@ -459,15 +657,45 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         fillPath.lineTo(points.last().x(), specRect.bottom());
         fillPath.closeSubpath();
 
-        QColor fill = m_fillColor;
-        fill.setAlphaF(m_fillAlpha * 0.4f);  // softer fill
-        p.fillPath(fillPath, fill);
+        if (m_gradientEnabled) {
+            // Vertical gradient: transparent at baseline → fillColor at top.
+            QLinearGradient grad(QPointF(0, specRect.top()),
+                                 QPointF(0, specRect.bottom()));
+            QColor topCol = m_fillColor;
+            topCol.setAlphaF(qBound(0.0f, m_fillAlpha, 1.0f));
+            QColor botCol = m_fillColor;
+            botCol.setAlphaF(0.0f);
+            grad.setColorAt(0.0, topCol);
+            grad.setColorAt(1.0, botCol);
+            p.fillPath(fillPath, QBrush(grad));
+        } else {
+            QColor fill = m_fillColor;
+            fill.setAlphaF(m_fillAlpha * 0.4f);  // softer fill
+            p.fillPath(fillPath, fill);
+        }
+    }
+
+    // Peak hold trace underneath the main trace so the live line stays
+    // visually on top.
+    if (m_peakHoldEnabled && m_peakHoldBins.size() == m_smoothed.size()) {
+        QVector<QPointF> peakPoints(count);
+        for (int j = 0; j < count; ++j) {
+            float x = specRect.left() + static_cast<float>(j) * xStep;
+            float y = static_cast<float>(dbmToY(m_peakHoldBins[firstBin + j], specRect));
+            peakPoints[j] = QPointF(x, y);
+        }
+        QColor peakCol = m_fillColor;
+        peakCol.setAlphaF(0.55f);
+        QPen peakPen(peakCol, qMax(1.0f, m_lineWidth * 0.75f));
+        peakPen.setStyle(Qt::DotLine);
+        p.setPen(peakPen);
+        p.drawPolyline(peakPoints.data(), count);
     }
 
     // Draw trace line
     // From Thetis display.cs:2184 — data_line_color = Color.White
-    // We use the fill color for consistency with AetherSDR style
-    QPen tracePen(m_fillColor, 1.5);
+    // We use the fill color for consistency with AetherSDR style.
+    QPen tracePen(m_fillColor, m_lineWidth);
     p.setPen(tracePen);
     p.drawPolyline(points.data(), count);
 }
@@ -607,8 +835,11 @@ std::pair<int, int> SpectrumWidget::visibleBinRange(int binCount) const
 
 int SpectrumWidget::dbmToY(float dbm, const QRect& r) const
 {
+    // Phase 3G-8: apply display calibration offset before mapping to Y.
+    // From Thetis display.cs:1372 Display.RX1DisplayCalOffset.
+    const float calibrated = dbm + m_dbmCalOffset;
     float bottom = m_refLevel - m_dynamicRange;
-    float frac = (dbm - bottom) / m_dynamicRange;
+    float frac = (calibrated - bottom) / m_dynamicRange;
     frac = qBound(0.0f, frac, 1.0f);
     return r.bottom() - static_cast<int>(frac * r.height());
 }
