@@ -242,6 +242,11 @@ void MainWindow::buildUI()
     connect(m_fftEngine, &FFTEngine::fftReady,
             m_spectrumWidget, &SpectrumWidget::updateSpectrum);
 
+    // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
+    // reach the renderer / FFT engine without depending on MainWindow.
+    m_radioModel->setSpectrumWidget(m_spectrumWidget);
+    m_radioModel->setFftEngine(m_fftEngine);
+
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution
     // Target: ~500-1000 bins across the visible bandwidth for good detail
     connect(m_spectrumWidget, &SpectrumWidget::bandwidthChangeRequested,

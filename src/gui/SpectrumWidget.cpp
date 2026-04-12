@@ -5,6 +5,7 @@
 
 #include <QHoverEvent>
 
+#include <QDateTime>
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
@@ -66,6 +67,44 @@ static const WfGradientStop kBlackWhiteStops[] = {
     {1.00f, 255, 255, 255},    // white
 };
 
+// LinLog scheme — linear ramp in low region, log-shaped in high region.
+// Approximation of Thetis "LinLog" combo entry (setup.cs:11904-11939).
+// Phase 3G-8 commit 5 addition.
+static const WfGradientStop kLinLogStops[] = {
+    {0.00f,   0,   0,   0},
+    {0.10f,   0,   0,  96},
+    {0.25f,   0,  64, 192},
+    {0.50f,   0, 192, 192},
+    {0.65f,   0, 224,  64},
+    {0.80f, 255, 192,   0},
+    {1.00f, 255,   0,   0},
+};
+
+// LinRad scheme — LinRadiance-style cool → hot gradient. Phase 3G-8.
+static const WfGradientStop kLinRadStops[] = {
+    {0.00f,   0,   0,   0},
+    {0.15f,  16,  16, 120},
+    {0.30f,  32,  80, 200},
+    {0.50f,   0, 200, 255},
+    {0.70f, 200, 255, 120},
+    {0.85f, 255, 200,   0},
+    {1.00f, 255,  32,   0},
+};
+
+// Custom scheme — loaded from AppSettings "DisplayWfCustomStops" if set,
+// otherwise falls back to Default. Phase 3G-8 commit 5. Runtime state
+// is parsed lazily from the settings key when the scheme is selected.
+// For now the static fallback keeps the same stops as Default.
+static const WfGradientStop kCustomFallbackStops[] = {
+    {0.00f,   0,   0,   0},
+    {0.15f,   0,   0, 128},
+    {0.30f,   0,  64, 255},
+    {0.45f,   0, 200, 255},
+    {0.60f,   0, 220,   0},
+    {0.80f, 255, 255,   0},
+    {1.00f, 255,   0,   0},
+};
+
 const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
 {
     switch (scheme) {
@@ -78,6 +117,15 @@ const WfGradientStop* wfSchemeStops(WfColorScheme scheme, int& count)
     case WfColorScheme::BlackWhite:
         count = 2;
         return kBlackWhiteStops;
+    case WfColorScheme::LinLog:
+        count = 7;
+        return kLinLogStops;
+    case WfColorScheme::LinRad:
+        count = 7;
+        return kLinRadStops;
+    case WfColorScheme::Custom:
+        count = 7;
+        return kCustomFallbackStops;
     case WfColorScheme::Default:
     default:
         count = 7;
@@ -178,6 +226,80 @@ void SpectrumWidget::loadSettings()
     int scheme = readInt(QStringLiteral("DisplayWfColorScheme"), 0);
     m_wfColorScheme = static_cast<WfColorScheme>(qBound(0, scheme,
                           static_cast<int>(WfColorScheme::Count) - 1));
+
+    // Phase 3G-8 commit 3: spectrum renderer state.
+    const int avgRaw = readInt(QStringLiteral("DisplayAverageMode"),
+                               static_cast<int>(AverageMode::Weighted));
+    m_averageMode = static_cast<AverageMode>(qBound(0, avgRaw,
+                          static_cast<int>(AverageMode::Count) - 1));
+    m_averageAlpha     = readFloat(QStringLiteral("DisplayAverageAlpha"), kSmoothAlpha);
+    m_peakHoldDelayMs  = readInt(QStringLiteral("DisplayPeakHoldDelayMs"), 2000);
+    m_lineWidth        = readFloat(QStringLiteral("DisplayLineWidth"), 1.5f);
+    m_dbmCalOffset     = readFloat(QStringLiteral("DisplayCalOffset"), 0.0f);
+    const bool peakOn = s.value(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
+                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    const bool gradOn = s.value(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
+                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_gradientEnabled = gradOn;
+    // Delay the peak hold enable path until the timer infra is ready.
+    if (peakOn) {
+        setPeakHoldEnabled(true);
+    }
+
+    // Phase 3G-8 commit 4: waterfall renderer state.
+    m_wfAgcEnabled = s.value(settingsKey(QStringLiteral("DisplayWfAgc"), m_panIndex),
+                             QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfReverseScroll = s.value(settingsKey(QStringLiteral("DisplayWfReverseScroll"), m_panIndex),
+                                QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
+    m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 50);
+    m_wfUseSpectrumMinMax = s.value(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
+                                    QStringLiteral("False")).toString() == QStringLiteral("True");
+    const int wfAvgRaw = readInt(QStringLiteral("DisplayWfAverageMode"),
+                                 static_cast<int>(AverageMode::None));
+    m_wfAverageMode = static_cast<AverageMode>(qBound(0, wfAvgRaw,
+                          static_cast<int>(AverageMode::Count) - 1));
+    const int tsPosRaw = readInt(QStringLiteral("DisplayWfTimestampPos"),
+                                 static_cast<int>(TimestampPosition::None));
+    m_wfTimestampPos = static_cast<TimestampPosition>(qBound(0, tsPosRaw,
+                           static_cast<int>(TimestampPosition::Count) - 1));
+    const int tsModeRaw = readInt(QStringLiteral("DisplayWfTimestampMode"),
+                                  static_cast<int>(TimestampMode::UTC));
+    m_wfTimestampMode = static_cast<TimestampMode>(qBound(0, tsModeRaw,
+                            static_cast<int>(TimestampMode::Count) - 1));
+    m_showRxFilterOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxFilterOnWaterfall"), m_panIndex),
+                                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showTxFilterOnRxWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), m_panIndex),
+                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showRxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxZeroLine"), m_panIndex),
+                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showTxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
+                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+
+    // Phase 3G-8 commit 5: grid / scales state.
+    m_gridEnabled = s.value(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
+                            QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showZeroLine = s.value(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
+                             QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_showFps = s.value(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
+                        QStringLiteral("False")).toString() == QStringLiteral("True");
+    const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
+                                 static_cast<int>(FreqLabelAlign::Center));
+    m_freqLabelAlign = static_cast<FreqLabelAlign>(qBound(0, alignRaw,
+                           static_cast<int>(FreqLabelAlign::Count) - 1));
+
+    auto readColor = [&](const QString& key, const QColor& def) -> QColor {
+        const QString hex = s.value(settingsKey(key, m_panIndex)).toString();
+        if (hex.isEmpty()) { return def; }
+        QColor c = QColor::fromString(hex);
+        return c.isValid() ? c : def;
+    };
+    m_gridColor     = readColor(QStringLiteral("DisplayGridColor"), m_gridColor);
+    m_gridFineColor = readColor(QStringLiteral("DisplayGridFineColor"), m_gridFineColor);
+    m_hGridColor    = readColor(QStringLiteral("DisplayHGridColor"), m_hGridColor);
+    m_gridTextColor = readColor(QStringLiteral("DisplayGridTextColor"), m_gridTextColor);
+    m_zeroLineColor = readColor(QStringLiteral("DisplayZeroLineColor"), m_zeroLineColor);
+    m_bandEdgeColor = readColor(QStringLiteral("DisplayBandEdgeColor"), m_bandEdgeColor);
 }
 
 void SpectrumWidget::saveSettings()
@@ -204,6 +326,57 @@ void SpectrumWidget::saveSettings()
     writeInt(QStringLiteral("DisplayWfColorScheme"), static_cast<int>(m_wfColorScheme));
     s.setValue(settingsKey(QStringLiteral("DisplayCtunEnabled"), m_panIndex),
               m_ctunEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // Phase 3G-8 commit 3: spectrum renderer state.
+    writeInt(QStringLiteral("DisplayAverageMode"), static_cast<int>(m_averageMode));
+    writeFloat(QStringLiteral("DisplayAverageAlpha"), m_averageAlpha);
+    writeInt(QStringLiteral("DisplayPeakHoldDelayMs"), m_peakHoldDelayMs);
+    writeFloat(QStringLiteral("DisplayLineWidth"), m_lineWidth);
+    writeFloat(QStringLiteral("DisplayCalOffset"), m_dbmCalOffset);
+    s.setValue(settingsKey(QStringLiteral("DisplayPeakHoldEnabled"), m_panIndex),
+              m_peakHoldEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayGradientEnabled"), m_panIndex),
+              m_gradientEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // Phase 3G-8 commit 4: waterfall renderer state.
+    s.setValue(settingsKey(QStringLiteral("DisplayWfAgc"), m_panIndex),
+              m_wfAgcEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayWfReverseScroll"), m_panIndex),
+              m_wfReverseScroll ? QStringLiteral("True") : QStringLiteral("False"));
+    writeInt(QStringLiteral("DisplayWfOpacity"), m_wfOpacity);
+    writeInt(QStringLiteral("DisplayWfUpdatePeriodMs"), m_wfUpdatePeriodMs);
+    s.setValue(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
+              m_wfUseSpectrumMinMax ? QStringLiteral("True") : QStringLiteral("False"));
+    writeInt(QStringLiteral("DisplayWfAverageMode"), static_cast<int>(m_wfAverageMode));
+    writeInt(QStringLiteral("DisplayWfTimestampPos"), static_cast<int>(m_wfTimestampPos));
+    writeInt(QStringLiteral("DisplayWfTimestampMode"), static_cast<int>(m_wfTimestampMode));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowRxFilterOnWaterfall"), m_panIndex),
+              m_showRxFilterOnWaterfall ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), m_panIndex),
+              m_showTxFilterOnRxWaterfall ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowRxZeroLine"), m_panIndex),
+              m_showRxZeroLineOnWaterfall ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
+              m_showTxZeroLineOnWaterfall ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // Phase 3G-8 commit 5: grid / scales state.
+    s.setValue(settingsKey(QStringLiteral("DisplayGridEnabled"), m_panIndex),
+              m_gridEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowZeroLine"), m_panIndex),
+              m_showZeroLine ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
+              m_showFps ? QStringLiteral("True") : QStringLiteral("False"));
+    writeInt(QStringLiteral("DisplayFreqLabelAlign"), static_cast<int>(m_freqLabelAlign));
+
+    auto writeColor = [&](const QString& key, const QColor& c) {
+        s.setValue(settingsKey(key, m_panIndex), c.name(QColor::HexArgb));
+    };
+    writeColor(QStringLiteral("DisplayGridColor"),     m_gridColor);
+    writeColor(QStringLiteral("DisplayGridFineColor"), m_gridFineColor);
+    writeColor(QStringLiteral("DisplayHGridColor"),    m_hGridColor);
+    writeColor(QStringLiteral("DisplayGridTextColor"), m_gridTextColor);
+    writeColor(QStringLiteral("DisplayZeroLineColor"), m_zeroLineColor);
+    writeColor(QStringLiteral("DisplayBandEdgeColor"), m_bandEdgeColor);
 }
 
 void SpectrumWidget::scheduleSettingsSave()
@@ -280,20 +453,395 @@ void SpectrumWidget::setWfColorScheme(WfColorScheme scheme)
     update();
 }
 
-// Feed new FFT frame — apply smoothing, push waterfall row, repaint.
-// From AetherSDR SpectrumWidget::updateSpectrum() + gpu-waterfall.md:895-911
+// ---- Phase 3G-8 commit 3 setters ----
+
+void SpectrumWidget::setAverageMode(AverageMode m)
+{
+    if (m_averageMode == m) {
+        return;
+    }
+    m_averageMode = m;
+    // Force a fresh baseline for the new mode so a switch doesn't
+    // carry stale smoothed state forward.
+    m_smoothed.clear();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setAverageAlpha(float alpha)
+{
+    alpha = qBound(0.0f, alpha, 1.0f);
+    if (qFuzzyCompare(m_averageAlpha, alpha)) {
+        return;
+    }
+    m_averageAlpha = alpha;
+    scheduleSettingsSave();
+}
+
+void SpectrumWidget::setPeakHoldEnabled(bool on)
+{
+    if (m_peakHoldEnabled == on) {
+        return;
+    }
+    m_peakHoldEnabled = on;
+    if (!on) {
+        m_peakHoldBins.clear();
+        if (m_peakHoldDecayTimer) {
+            m_peakHoldDecayTimer->stop();
+        }
+    } else {
+        if (!m_peakHoldDecayTimer) {
+            m_peakHoldDecayTimer = new QTimer(this);
+            m_peakHoldDecayTimer->setSingleShot(false);
+            connect(m_peakHoldDecayTimer, &QTimer::timeout, this, [this]() {
+                // Decay: reset peak hold to current smoothed data so fresh
+                // peaks start tracking again from "now".
+                if (m_peakHoldEnabled) {
+                    m_peakHoldBins = m_smoothed;
+                    update();
+                }
+            });
+        }
+        m_peakHoldDecayTimer->start(m_peakHoldDelayMs);
+    }
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setPeakHoldDelayMs(int ms)
+{
+    ms = qBound(100, ms, 60000);
+    if (m_peakHoldDelayMs == ms) {
+        return;
+    }
+    m_peakHoldDelayMs = ms;
+    if (m_peakHoldDecayTimer && m_peakHoldDecayTimer->isActive()) {
+        m_peakHoldDecayTimer->start(ms);
+    }
+    scheduleSettingsSave();
+}
+
+void SpectrumWidget::setPanFillEnabled(bool on)
+{
+    if (m_panFill == on) {
+        return;
+    }
+    m_panFill = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setFillAlpha(float a)
+{
+    a = qBound(0.0f, a, 1.0f);
+    if (qFuzzyCompare(m_fillAlpha, a)) {
+        return;
+    }
+    m_fillAlpha = a;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setLineWidth(float w)
+{
+    w = qBound(0.5f, w, 8.0f);
+    if (qFuzzyCompare(m_lineWidth, w)) {
+        return;
+    }
+    m_lineWidth = w;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGradientEnabled(bool on)
+{
+    if (m_gradientEnabled == on) {
+        return;
+    }
+    m_gradientEnabled = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setDbmCalOffset(float db)
+{
+    db = qBound(-30.0f, db, 30.0f);
+    if (qFuzzyCompare(m_dbmCalOffset, db)) {
+        return;
+    }
+    m_dbmCalOffset = db;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setFillColor(const QColor& c)
+{
+    if (!c.isValid() || m_fillColor == c) {
+        return;
+    }
+    m_fillColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+// ---- Phase 3G-8 commit 4: waterfall setters ----
+
+void SpectrumWidget::setWfHighThreshold(float dbm)
+{
+    if (qFuzzyCompare(m_wfHighThreshold, dbm)) { return; }
+    m_wfHighThreshold = dbm;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfLowThreshold(float dbm)
+{
+    if (qFuzzyCompare(m_wfLowThreshold, dbm)) { return; }
+    m_wfLowThreshold = dbm;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfAgcEnabled(bool on)
+{
+    if (m_wfAgcEnabled == on) { return; }
+    m_wfAgcEnabled = on;
+    m_wfAgcPrimed = false;  // reprime envelope on next frame
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfReverseScroll(bool on)
+{
+    if (m_wfReverseScroll == on) { return; }
+    m_wfReverseScroll = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfOpacity(int percent)
+{
+    percent = qBound(0, percent, 100);
+    if (m_wfOpacity == percent) { return; }
+    m_wfOpacity = percent;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfUpdatePeriodMs(int ms)
+{
+    ms = qBound(10, ms, 500);  // matches NereusSDR UI range per plan §10
+    if (m_wfUpdatePeriodMs == ms) { return; }
+    m_wfUpdatePeriodMs = ms;
+    scheduleSettingsSave();
+}
+
+void SpectrumWidget::setWfUseSpectrumMinMax(bool on)
+{
+    if (m_wfUseSpectrumMinMax == on) { return; }
+    m_wfUseSpectrumMinMax = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfAverageMode(AverageMode m)
+{
+    if (m_wfAverageMode == m) { return; }
+    m_wfAverageMode = m;
+    m_wfSmoothedBins.clear();
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
+{
+    if (m_wfTimestampPos == p) { return; }
+    m_wfTimestampPos = p;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setWfTimestampMode(TimestampMode m)
+{
+    if (m_wfTimestampMode == m) { return; }
+    m_wfTimestampMode = m;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowRxFilterOnWaterfall(bool on)
+{
+    if (m_showRxFilterOnWaterfall == on) { return; }
+    m_showRxFilterOnWaterfall = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowTxFilterOnRxWaterfall(bool on)
+{
+    if (m_showTxFilterOnRxWaterfall == on) { return; }
+    m_showTxFilterOnRxWaterfall = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowRxZeroLineOnWaterfall(bool on)
+{
+    if (m_showRxZeroLineOnWaterfall == on) { return; }
+    m_showRxZeroLineOnWaterfall = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowTxZeroLineOnWaterfall(bool on)
+{
+    if (m_showTxZeroLineOnWaterfall == on) { return; }
+    m_showTxZeroLineOnWaterfall = on;
+    scheduleSettingsSave();
+    update();
+}
+
+// ---- Phase 3G-8 commit 5: grid / scales setters ----
+
+void SpectrumWidget::setGridEnabled(bool on)
+{
+    if (m_gridEnabled == on) { return; }
+    m_gridEnabled = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowZeroLine(bool on)
+{
+    if (m_showZeroLine == on) { return; }
+    m_showZeroLine = on;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setShowFps(bool on)
+{
+    if (m_showFps == on) { return; }
+    m_showFps = on;
+    m_fpsFrameCount = 0;
+    m_fpsLastUpdateMs = 0;
+    m_fpsDisplayValue = 0.0f;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setFreqLabelAlign(FreqLabelAlign a)
+{
+    if (m_freqLabelAlign == a) { return; }
+    m_freqLabelAlign = a;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGridColor(const QColor& c)
+{
+    if (!c.isValid() || m_gridColor == c) { return; }
+    m_gridColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGridFineColor(const QColor& c)
+{
+    if (!c.isValid() || m_gridFineColor == c) { return; }
+    m_gridFineColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setHGridColor(const QColor& c)
+{
+    if (!c.isValid() || m_hGridColor == c) { return; }
+    m_hGridColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setGridTextColor(const QColor& c)
+{
+    if (!c.isValid() || m_gridTextColor == c) { return; }
+    m_gridTextColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setZeroLineColor(const QColor& c)
+{
+    if (!c.isValid() || m_zeroLineColor == c) { return; }
+    m_zeroLineColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+void SpectrumWidget::setBandEdgeColor(const QColor& c)
+{
+    if (!c.isValid() || m_bandEdgeColor == c) { return; }
+    m_bandEdgeColor = c;
+    scheduleSettingsSave();
+    update();
+}
+
+// Feed new FFT frame — apply averaging per current mode, track peak hold,
+// push waterfall row, repaint. From AetherSDR SpectrumWidget::updateSpectrum()
+// + gpu-waterfall.md:895-911. Averaging mode added in Phase 3G-8 commit 3.
 void SpectrumWidget::updateSpectrum(int receiverId, const QVector<float>& binsDbm)
 {
     Q_UNUSED(receiverId);
     m_bins = binsDbm;
 
-    // Exponential smoothing for spectrum trace
     if (m_smoothed.size() != binsDbm.size()) {
         m_smoothed = binsDbm;  // first frame: no smoothing
     } else {
-        for (int i = 0; i < binsDbm.size(); ++i) {
-            m_smoothed[i] = kSmoothAlpha * binsDbm[i]
-                          + (1.0f - kSmoothAlpha) * m_smoothed[i];
+        const float a = qBound(0.0f, m_averageAlpha, 1.0f);
+        switch (m_averageMode) {
+            case AverageMode::None:
+                m_smoothed = binsDbm;
+                break;
+            case AverageMode::Weighted:
+            default:
+                for (int i = 0; i < binsDbm.size(); ++i) {
+                    m_smoothed[i] = a * binsDbm[i] + (1.0f - a) * m_smoothed[i];
+                }
+                break;
+            case AverageMode::Logarithmic: {
+                // Log-domain recursive: Thetis "Log Recursive" mode.
+                // Mix in linear power space, then convert back to dB.
+                for (int i = 0; i < binsDbm.size(); ++i) {
+                    const float linNew = std::pow(10.0f, binsDbm[i] / 10.0f);
+                    const float linOld = std::pow(10.0f, m_smoothed[i] / 10.0f);
+                    const float mix    = a * linNew + (1.0f - a) * linOld;
+                    m_smoothed[i] = 10.0f * std::log10(mix > 0.0f ? mix : 1e-30f);
+                }
+                break;
+            }
+            case AverageMode::TimeWindow: {
+                // Approximated as a slower exponential — plan §7 notes
+                // this as a TODO for a true sliding time window.
+                const float slow = a * 0.33f;
+                for (int i = 0; i < binsDbm.size(); ++i) {
+                    m_smoothed[i] = slow * binsDbm[i]
+                                  + (1.0f - slow) * m_smoothed[i];
+                }
+                break;
+            }
+        }
+    }
+
+    // Peak hold: track per-bin maximum over the decay window.
+    if (m_peakHoldEnabled) {
+        if (m_peakHoldBins.size() != binsDbm.size()) {
+            m_peakHoldBins = binsDbm;
+        } else {
+            for (int i = 0; i < binsDbm.size(); ++i) {
+                if (binsDbm[i] > m_peakHoldBins[i]) {
+                    m_peakHoldBins[i] = binsDbm[i];
+                }
+            }
         }
     }
 
@@ -376,6 +924,30 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawDbmScale(p, QRect(0, 0, kDbmStripW, specH));
     drawCursorInfo(p, specRect);
 
+    // FPS overlay (Phase 3G-8 commit 5 / G8 ShowFPS). Cheap rolling counter
+    // updated once per second. QPainter fallback path only; GPU path prints
+    // its own counter via a future commit if the feature is exposed there.
+    if (m_showFps) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_fpsFrameCount++;
+        if (m_fpsLastUpdateMs == 0) {
+            m_fpsLastUpdateMs = nowMs;
+        } else if (nowMs - m_fpsLastUpdateMs >= 1000) {
+            const double elapsed = (nowMs - m_fpsLastUpdateMs) / 1000.0;
+            m_fpsDisplayValue    = static_cast<float>(m_fpsFrameCount / elapsed);
+            m_fpsFrameCount      = 0;
+            m_fpsLastUpdateMs    = nowMs;
+        }
+        const QString fpsText = QStringLiteral("%1 fps")
+                                    .arg(m_fpsDisplayValue, 0, 'f', 1);
+        QFont ff = p.font();
+        ff.setPixelSize(11);
+        p.setFont(ff);
+        p.setPen(m_gridTextColor);
+        const int tw = p.fontMetrics().horizontalAdvance(fpsText);
+        p.drawText(specRect.right() - tw - 8, specRect.top() + 14, fpsText);
+    }
+
     // Reposition VFO flag widgets every frame — ensures flag tracks marker
     // exactly with no frame delay. From AetherSDR: updatePosition called
     // from within the paint/render cycle.
@@ -389,9 +961,14 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
 //   grid_text_color = Color.Yellow — display.cs:2003
 void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
 {
-    // Horizontal dBm grid lines
-    QColor hGridColor(255, 255, 255, 40);
-    p.setPen(QPen(hGridColor, 1));
+    // Phase 3G-8 commit 5: honours m_gridEnabled plus configurable grid
+    // colours (m_hGridColor / m_gridColor / m_gridFineColor).
+    if (!m_gridEnabled) {
+        return;
+    }
+
+    // Horizontal dBm grid lines (major).
+    p.setPen(QPen(m_hGridColor, 1));
 
     float bottom = m_refLevel - m_dynamicRange;
     float step = 10.0f;  // 10 dB steps
@@ -404,9 +981,8 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
         p.drawLine(specRect.left(), y, specRect.right(), y);
     }
 
-    // Vertical frequency grid lines
-    QColor vGridColor(255, 255, 255, 40);
-    p.setPen(QPen(vGridColor, 1));
+    // Vertical frequency grid lines (major).
+    p.setPen(QPen(m_gridColor, 1));
 
     // Compute a nice frequency step
     double freqStep = 10000.0;  // 10 kHz default
@@ -423,9 +999,23 @@ void SpectrumWidget::drawGrid(QPainter& p, const QRect& specRect)
         int x = hzToX(f, specRect);
         p.drawLine(x, specRect.top(), x, specRect.bottom());
     }
+
+    // Fine (minor) vertical grid at 1/5 step. Drawn in m_gridFineColor.
+    p.setPen(QPen(m_gridFineColor, 1, Qt::DotLine));
+    const double fineStep = freqStep / 5.0;
+    double startFine = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / fineStep) * fineStep;
+    for (double f = startFine; f < m_centerHz + m_bandwidthHz / 2.0; f += fineStep) {
+        int x = hzToX(f, specRect);
+        p.drawLine(x, specRect.top(), x, specRect.bottom());
+    }
 }
 
 // ---- Spectrum trace drawing ----
+// Phase 3G-8 commit 3: honors m_lineWidth, m_gradientEnabled,
+// m_peakHoldEnabled. See drawSpectrum() call site in paintEvent for
+// the QPainter fallback path. GPU path uses its own vertex generation
+// in renderGpuFrame() — line width and gradient wire-up there lands
+// in commit 5.
 void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 {
     if (m_smoothed.isEmpty()) {
@@ -459,17 +1049,57 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         fillPath.lineTo(points.last().x(), specRect.bottom());
         fillPath.closeSubpath();
 
-        QColor fill = m_fillColor;
-        fill.setAlphaF(m_fillAlpha * 0.4f);  // softer fill
-        p.fillPath(fillPath, fill);
+        if (m_gradientEnabled) {
+            // Vertical gradient: transparent at baseline → fillColor at top.
+            QLinearGradient grad(QPointF(0, specRect.top()),
+                                 QPointF(0, specRect.bottom()));
+            QColor topCol = m_fillColor;
+            topCol.setAlphaF(qBound(0.0f, m_fillAlpha, 1.0f));
+            QColor botCol = m_fillColor;
+            botCol.setAlphaF(0.0f);
+            grad.setColorAt(0.0, topCol);
+            grad.setColorAt(1.0, botCol);
+            p.fillPath(fillPath, QBrush(grad));
+        } else {
+            QColor fill = m_fillColor;
+            fill.setAlphaF(m_fillAlpha * 0.4f);  // softer fill
+            p.fillPath(fillPath, fill);
+        }
+    }
+
+    // Peak hold trace underneath the main trace so the live line stays
+    // visually on top.
+    if (m_peakHoldEnabled && m_peakHoldBins.size() == m_smoothed.size()) {
+        QVector<QPointF> peakPoints(count);
+        for (int j = 0; j < count; ++j) {
+            float x = specRect.left() + static_cast<float>(j) * xStep;
+            float y = static_cast<float>(dbmToY(m_peakHoldBins[firstBin + j], specRect));
+            peakPoints[j] = QPointF(x, y);
+        }
+        QColor peakCol = m_fillColor;
+        peakCol.setAlphaF(0.55f);
+        QPen peakPen(peakCol, qMax(1.0f, m_lineWidth * 0.75f));
+        peakPen.setStyle(Qt::DotLine);
+        p.setPen(peakPen);
+        p.drawPolyline(peakPoints.data(), count);
     }
 
     // Draw trace line
     // From Thetis display.cs:2184 — data_line_color = Color.White
-    // We use the fill color for consistency with AetherSDR style
-    QPen tracePen(m_fillColor, 1.5);
+    // We use the fill color for consistency with AetherSDR style.
+    QPen tracePen(m_fillColor, m_lineWidth);
     p.setPen(tracePen);
     p.drawPolyline(points.data(), count);
+
+    // Zero line (0 dBm) — Phase 3G-8 commit 5 (G7).
+    if (m_showZeroLine) {
+        const int zy = dbmToY(0.0f, specRect);
+        if (zy >= specRect.top() && zy <= specRect.bottom()) {
+            QPen zeroPen(m_zeroLineColor, 1, Qt::DashLine);
+            p.setPen(zeroPen);
+            p.drawLine(specRect.left(), zy, specRect.right(), zy);
+        }
+    }
 }
 
 // ---- Waterfall drawing ----
@@ -479,25 +1109,99 @@ void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& wfRect)
         return;
     }
 
-    // Ring buffer display — newest row at top, oldest at bottom.
-    // From Thetis display.cs:7719-7729: new row written at top, old content shifts down.
-    // Our ring buffer equivalent: m_wfWriteRow is where the NEWEST row lives.
-    // Display order: writeRow → wrapping down → back to writeRow-1 (oldest).
-    int wfH = m_waterfall.height();
-
-    // Part 1 (top of screen): from writeRow to end of image
-    int part1Rows = wfH - m_wfWriteRow;
-    if (part1Rows > 0) {
-        QRect src(0, m_wfWriteRow, m_waterfall.width(), part1Rows);
-        QRect dst(wfRect.left(), wfRect.top(), wfRect.width(), part1Rows);
-        p.drawImage(dst, m_waterfall, src);
+    // Phase 3G-8 commit 4: global opacity for the waterfall image. Overlays
+    // (filter bands, zero line, timestamp) are drawn afterward at full alpha.
+    const float opacity = qBound(0, m_wfOpacity, 100) / 100.0f;
+    const float savedOpacity = static_cast<float>(p.opacity());
+    if (!qFuzzyCompare(opacity, 1.0f)) {
+        p.setOpacity(opacity);
     }
 
-    // Part 2 (bottom of screen): from 0 to writeRow
-    if (m_wfWriteRow > 0) {
-        QRect src(0, 0, m_waterfall.width(), m_wfWriteRow);
-        QRect dst(wfRect.left(), wfRect.top() + part1Rows, wfRect.width(), m_wfWriteRow);
-        p.drawImage(dst, m_waterfall, src);
+    // Ring buffer display — newest row at top, oldest at bottom (normal scroll).
+    // Reverse scroll flips that vertically: oldest at top, newest at bottom.
+    // From Thetis display.cs:7719-7729: new row written at top, old content shifts down.
+    int wfH = m_waterfall.height();
+
+    if (!m_wfReverseScroll) {
+        // Part 1 (top of screen): from writeRow to end of image
+        int part1Rows = wfH - m_wfWriteRow;
+        if (part1Rows > 0) {
+            QRect src(0, m_wfWriteRow, m_waterfall.width(), part1Rows);
+            QRect dst(wfRect.left(), wfRect.top(), wfRect.width(), part1Rows);
+            p.drawImage(dst, m_waterfall, src);
+        }
+        if (m_wfWriteRow > 0) {
+            QRect src(0, 0, m_waterfall.width(), m_wfWriteRow);
+            QRect dst(wfRect.left(), wfRect.top() + part1Rows, wfRect.width(), m_wfWriteRow);
+            p.drawImage(dst, m_waterfall, src);
+        }
+    } else {
+        // Reverse: oldest row at top, newest at bottom. writeRow points at
+        // the newest row, so we render backward.
+        int part1Rows = m_wfWriteRow + 1;
+        int part2Rows = wfH - part1Rows;
+        if (part2Rows > 0) {
+            QRect src(0, m_wfWriteRow + 1, m_waterfall.width(), part2Rows);
+            QRect dst(wfRect.left(), wfRect.top(), wfRect.width(), part2Rows);
+            p.drawImage(dst, m_waterfall, src);
+        }
+        if (part1Rows > 0) {
+            QRect src(0, 0, m_waterfall.width(), part1Rows);
+            QRect dst(wfRect.left(), wfRect.top() + part2Rows, wfRect.width(), part1Rows);
+            p.drawImage(dst, m_waterfall, src);
+        }
+    }
+
+    if (!qFuzzyCompare(opacity, 1.0f)) {
+        p.setOpacity(savedOpacity);
+    }
+
+    // ---- Overlays (full opacity) ----
+
+    // RX filter passband as a translucent vertical band spanning the
+    // waterfall height. Uses m_vfoHz + m_filterLowHz/m_filterHighHz.
+    if (m_showRxFilterOnWaterfall && m_vfoHz > 0.0) {
+        const double loHz = m_vfoHz + m_filterLowHz;
+        const double hiHz = m_vfoHz + m_filterHighHz;
+        const int x1 = hzToX(loHz, wfRect);
+        const int x2 = hzToX(hiHz, wfRect);
+        if (x2 > x1) {
+            QColor band(0x00, 0xb4, 0xd8, 50);
+            p.fillRect(QRect(x1, wfRect.top(), x2 - x1, wfRect.height()), band);
+        }
+    }
+
+    // TX filter overlay on the RX waterfall — currently unused until the
+    // TX state model exposes a TX VFO/filter pair (post-3I-1). Scaffolding
+    // in place so commit 7's checkbox wiring has a renderer hook.
+    Q_UNUSED(m_showTxFilterOnRxWaterfall);
+    Q_UNUSED(m_showTxZeroLineOnWaterfall);
+
+    if (m_showRxZeroLineOnWaterfall && m_vfoHz > 0.0) {
+        const int x = hzToX(m_vfoHz, wfRect);
+        if (x >= wfRect.left() && x <= wfRect.right()) {
+            QPen zeroPen(QColor(255, 0, 0, 180), 1);
+            p.setPen(zeroPen);
+            p.drawLine(x, wfRect.top(), x, wfRect.bottom());
+        }
+    }
+
+    // Timestamp overlay on waterfall (NereusSDR extensions W8/W9).
+    if (m_wfTimestampPos != TimestampPosition::None) {
+        const QDateTime now = (m_wfTimestampMode == TimestampMode::UTC)
+                              ? QDateTime::currentDateTimeUtc()
+                              : QDateTime::currentDateTime();
+        const QString stamp = now.toString(QStringLiteral("hh:mm:ss"));
+        QFont f = p.font();
+        f.setPixelSize(10);
+        p.setFont(f);
+        p.setPen(QColor(200, 220, 255));
+        const int pad = 4;
+        const int textW = p.fontMetrics().horizontalAdvance(stamp);
+        int x = (m_wfTimestampPos == TimestampPosition::Left)
+                ? (wfRect.left() + pad)
+                : (wfRect.right() - textW - pad);
+        p.drawText(x, wfRect.top() + 12, stamp);
     }
 }
 
@@ -506,11 +1210,16 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
 {
     p.fillRect(r, QColor(0x10, 0x15, 0x20));
 
+    // Phase 3G-8 commit 5: Off alignment suppresses labels entirely.
+    if (m_freqLabelAlign == FreqLabelAlign::Off) {
+        return;
+    }
+
     QFont font = p.font();
     font.setPixelSize(10);
     p.setFont(font);
-    // From Thetis display.cs:2003 — grid_text_color = Color.Yellow
-    p.setPen(QColor(255, 255, 0));
+    // From Thetis display.cs:2003 — grid_text_color (now configurable).
+    p.setPen(m_gridTextColor);
 
     double freqStep = 25000.0;
     if (m_bandwidthHz > 500000.0) {
@@ -520,6 +1229,13 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
     } else if (m_bandwidthHz < 100000.0) {
         freqStep = 10000.0;
     }
+
+    // Phase 3G-8 commit 5: Thetis 5-mode label alignment.
+    // Left / Center / Right / Auto (center with fallback) / Off.
+    const Qt::Alignment baseFlags =
+        (m_freqLabelAlign == FreqLabelAlign::Left)  ? (Qt::AlignLeft  | Qt::AlignVCenter) :
+        (m_freqLabelAlign == FreqLabelAlign::Right) ? (Qt::AlignRight | Qt::AlignVCenter) :
+                                                       (Qt::AlignHCenter | Qt::AlignVCenter);
 
     double startFreq = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / freqStep) * freqStep;
     for (double f = startFreq; f < m_centerHz + m_bandwidthHz / 2.0; f += freqStep) {
@@ -536,7 +1252,7 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
         }
 
         QRect textRect(x - 30, r.top() + 2, 60, r.height() - 2);
-        p.drawText(textRect, Qt::AlignCenter, label);
+        p.drawText(textRect, baseFlags, label);
     }
 }
 
@@ -549,7 +1265,8 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
     QFont font = p.font();
     font.setPixelSize(9);
     p.setFont(font);
-    p.setPen(QColor(255, 255, 0));  // Yellow text — from Thetis display.cs:2003
+    // Phase 3G-8 commit 5: configurable text colour (was hardcoded yellow).
+    p.setPen(m_gridTextColor);
 
     float bottom = m_refLevel - m_dynamicRange;
     float step = 10.0f;
@@ -607,8 +1324,11 @@ std::pair<int, int> SpectrumWidget::visibleBinRange(int binCount) const
 
 int SpectrumWidget::dbmToY(float dbm, const QRect& r) const
 {
+    // Phase 3G-8: apply display calibration offset before mapping to Y.
+    // From Thetis display.cs:1372 Display.RX1DisplayCalOffset.
+    const float calibrated = dbm + m_dbmCalOffset;
     float bottom = m_refLevel - m_dynamicRange;
-    float frac = (dbm - bottom) / m_dynamicRange;
+    float frac = (calibrated - bottom) / m_dynamicRange;
     frac = qBound(0.0f, frac, 1.0f);
     return r.bottom() - static_cast<int>(frac * r.height());
 }
@@ -617,11 +1337,24 @@ int SpectrumWidget::dbmToY(float dbm, const QRect& r) const
 // From Thetis display.cs:7719 — new row at top, old content shifts down.
 // Ring buffer equivalent: decrement write pointer so newest row is always
 // at m_wfWriteRow, and display reads forward from there (wrapping).
+//
+// Phase 3G-8 commit 4: respects m_wfUpdatePeriodMs (rate-limit),
+// m_wfAverageMode (waterfall-specific averaging), m_wfAgcEnabled (auto
+// level tracking), m_wfUseSpectrumMinMax (borrow spectrum thresholds),
+// m_wfReverseScroll (write at opposite end of ring so newest is bottom).
 void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins)
 {
     if (m_waterfall.isNull()) {
         return;
     }
+
+    // Rate-limit per configured update period.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_wfUpdatePeriodMs > 0 && m_wfLastPushMs != 0 &&
+        now - m_wfLastPushMs < m_wfUpdatePeriodMs) {
+        return;
+    }
+    m_wfLastPushMs = now;
 
     auto [firstBin, lastBin] = visibleBinRange(bins.size());
     int subsetCount = lastBin - firstBin + 1;
@@ -629,9 +1362,61 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins)
         return;
     }
 
+    // Waterfall-specific averaging. Applied to a local smoothed copy so
+    // the spectrum trace and waterfall can diverge in smoothing.
+    const QVector<float>* src = &bins;
+    QVector<float> wfLocal;
+    if (m_wfAverageMode != AverageMode::None) {
+        if (m_wfSmoothedBins.size() != bins.size()) {
+            m_wfSmoothedBins = bins;
+        } else {
+            const float a = qBound(0.0f, m_averageAlpha, 1.0f);
+            for (int i = 0; i < bins.size(); ++i) {
+                m_wfSmoothedBins[i] = a * bins[i]
+                                    + (1.0f - a) * m_wfSmoothedBins[i];
+            }
+        }
+        wfLocal = m_wfSmoothedBins;
+        src = &wfLocal;
+    }
+
+    // AGC: track a slow envelope of visible-range min/max and bias the
+    // effective thresholds toward it. Simple one-pole follower.
+    if (m_wfAgcEnabled) {
+        float mn = (*src)[firstBin];
+        float mx = mn;
+        for (int i = firstBin + 1; i <= lastBin; ++i) {
+            const float v = (*src)[i];
+            if (v < mn) { mn = v; }
+            if (v > mx) { mx = v; }
+        }
+        if (!m_wfAgcPrimed) {
+            m_wfAgcRunMin = mn;
+            m_wfAgcRunMax = mx;
+            m_wfAgcPrimed = true;
+        } else {
+            constexpr float kAgcAlpha = 0.05f;
+            m_wfAgcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_wfAgcRunMin;
+            m_wfAgcRunMax = kAgcAlpha * mx + (1.0f - kAgcAlpha) * m_wfAgcRunMax;
+        }
+        // Expand slightly so the hottest signal doesn't clip.
+        const float margin = 3.0f;
+        m_wfLowThreshold  = m_wfAgcRunMin - margin;
+        m_wfHighThreshold = m_wfAgcRunMax + margin;
+    } else if (m_wfUseSpectrumMinMax) {
+        // Borrow spectrum grid thresholds.
+        m_wfHighThreshold = m_refLevel;
+        m_wfLowThreshold  = m_refLevel - m_dynamicRange;
+    }
+
     int h = m_waterfall.height();
-    // Decrement write pointer (wrapping) — newest data at top of display
-    m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
+    // Decrement (normal) or increment (reverse) write pointer so the newest
+    // row lands at the appropriate edge.
+    if (m_wfReverseScroll) {
+        m_wfWriteRow = (m_wfWriteRow + 1) % h;
+    } else {
+        m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
+    }
 
     int w = m_waterfall.width();
     QRgb* scanline = reinterpret_cast<QRgb*>(m_waterfall.scanLine(m_wfWriteRow));
@@ -640,7 +1425,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins)
     for (int x = 0; x < w; ++x) {
         int srcBin = firstBin + static_cast<int>(static_cast<float>(x) * binScale);
         srcBin = qBound(firstBin, srcBin, lastBin);
-        scanline[x] = dbmToRgb(bins[srcBin]);
+        scanline[x] = dbmToRgb((*src)[srcBin]);
     }
 }
 

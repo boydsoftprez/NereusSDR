@@ -2,10 +2,13 @@
 
 namespace NereusSDR {
 
-// From Thetis clsBandButtonBox (MeterManager.cs:11482+)
+// From Thetis clsBandButtonBox (MeterManager.cs:11482+).
+// Order matches NereusSDR::Band enum (src/models/Band.h) — keep in sync
+// when adding/reordering bands. WWV and XVTR added in Phase 3G-8 commit 2.
 static const char* const kBandLabels[] = {
     "160m", "80m", "60m", "40m", "30m", "20m",
-    "17m", "15m", "12m", "10m", "6m", "GEN"
+    "17m",  "15m", "12m", "10m", "6m",  "GEN",
+    "WWV",  "XVTR"
 };
 
 BandButtonItem::BandButtonItem(QObject* parent)

@@ -63,6 +63,16 @@ public:
     int addPanadapter();
     void removePanadapter(int index);
 
+    // View hooks: non-owning pointers to the primary spectrum widget and
+    // FFT engine so setup pages (Phase 3G-8+) can call renderer/FFT
+    // setters without depending on MainWindow. Wired by MainWindow after
+    // constructing each view. Not owned, not lifetime-tracked — MainWindow
+    // outlives both.
+    class SpectrumWidget* spectrumWidget() const { return m_spectrumWidget; }
+    void setSpectrumWidget(class SpectrumWidget* w) { m_spectrumWidget = w; }
+    class FFTEngine* fftEngine() const { return m_fftEngine; }
+    void setFftEngine(class FFTEngine* e) { m_fftEngine = e; }
+
     // Radio info
     QString name() const { return m_name; }
     QString model() const { return m_model; }
@@ -114,6 +124,10 @@ private:
     QList<SliceModel*> m_slices;
     QList<PanadapterModel*> m_panadapters;
     SliceModel* m_activeSlice{nullptr};
+
+    // View hooks (non-owning, set by MainWindow). Phase 3G-8.
+    class SpectrumWidget* m_spectrumWidget{nullptr};
+    class FFTEngine*      m_fftEngine{nullptr};
 
     // Radio info
     QString m_name;

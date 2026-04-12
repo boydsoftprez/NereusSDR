@@ -179,6 +179,7 @@ set(CORE_SOURCES
 
 set(MODEL_SOURCES
     src/models/RadioModel.cpp
+    src/models/Band.cpp
     src/models/SliceModel.cpp
     src/models/PanadapterModel.cpp
     src/models/MeterModel.cpp
@@ -269,6 +270,7 @@ set(GUI_SOURCES
     src/gui/meters/ClickBoxItem.cpp
     src/gui/meters/DataOutItem.cpp
     src/gui/HGauge.cpp
+    src/gui/ColorSwatchButton.cpp
     src/gui/SpectrumOverlayPanel.cpp
     src/gui/SetupDialog.cpp
     src/gui/SetupPage.cpp

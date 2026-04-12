@@ -2,6 +2,98 @@
 
 ## [Unreleased]
 
+### Phase 3G-8 — RX1 Display Parity (complete)
+
+**Status:** Complete. Branch `feature/phase3g8-rx1-display-parity`
+off `feature/phase3g7-polish`. 9 GPG-signed code commits plus
+three doc-amend prep commits. Brings the Display → Spectrum
+Defaults / Waterfall Defaults / Grid & Scales pages from "every
+control disabled with NYI tooltip" to feature parity with Thetis
+for RX1.
+
+See [`docs/architecture/phase3g8-rx1-display-parity-plan.md`](docs/architecture/phase3g8-rx1-display-parity-plan.md)
+for the design (plan §13 open questions resolved in commit
+`0308b1b`, §5.3 architectural correction in `b8045cc`).
+
+**What landed:**
+
+- **Commit 1** — `ColorSwatchButton` reusable widget. Replaces
+  the dead `makeColorSwatch` placeholder with a real
+  `QPushButton + QColorDialog` pair. Used by 9 call sites across
+  this phase and available to future TX Display / skin editor
+  work.
+- **Commit 2** — per-band grid storage on `PanadapterModel`.
+  New `Band` enum (14 bands: 160m–6m + GEN + WWV + XVTR), new
+  `BandGridSettings { dbMax, dbMin }` struct, per-band hash, 28
+  persistence keys, `bandChanged` signal, and `setCenterFrequency`
+  auto-derive. `BandButtonItem` expanded 12 → 14 buttons.
+  Initialised to Thetis uniform -40 / -140 per plan §13 Q4.
+- **Commits 3–5** — `SpectrumWidget` + `FFTEngine` renderer
+  additions: averaging mode (None/Weighted/Log/TimeWindow),
+  peak hold + decay, trace line width, fill + alpha, gradient,
+  cal offset, waterfall AGC, reverse scroll, opacity, update
+  period rate limiting, waterfall averaging, use-spectrum-min/max,
+  filter/zero-line overlays, timestamp overlay, 3 new colour
+  schemes (LinLog / LinRad / Custom, total now 7), configurable
+  grid / grid-fine / h-grid / text / zero-line / band-edge
+  colours, 5-mode frequency label alignment, FPS overlay. GPU
+  line width and gradient shader wire-up deferred to a future
+  polish pass.
+- **Commits 6–8** — wire each Display setup page to the new
+  state:
+  - Spectrum Defaults: 17 controls including FFT size / window
+    (routed to FFTEngine), FPS, averaging + time + decimation,
+    fill + alpha, line width, gradient, cal offset, peak hold
+    + delay, 3 colour pickers, thread priority.
+  - Waterfall Defaults: 17 controls including high / low
+    thresholds, AGC, low colour, use-spectrum-min/max, update
+    period, reverse scroll, opacity, 7-scheme colour combo,
+    WF averaging, 4 filter / zero-line overlay toggles,
+    timestamp position + mode.
+  - Grid & Scales: 13 controls including show grid, live
+    per-band dB Max / Min with "Editing band: N" label that
+    updates on PanadapterModel::bandChanged, global dB Step,
+    5-mode frequency label align, show zero line, show FPS,
+    6 colour pickers (grid / grid-fine / h-grid / text /
+    zero-line / band-edge).
+- **Commit 9** — this CHANGELOG entry + verification matrix
+  checklist at
+  [`docs/architecture/phase3g8-verification/README.md`](docs/architecture/phase3g8-verification/README.md).
+
+**Architectural additions:**
+
+- `RadioModel::spectrumWidget()` / `fftEngine()` non-owning
+  view hooks, wired by `MainWindow` during construction, so
+  setup pages can reach the renderer without depending on
+  `MainWindow` directly.
+- `src/models/Band.h` — first-class 14-band enum with label,
+  key-name, frequency lookup (IARU Region 2), and UI-index
+  mapping.
+
+**Authorized divergences from Thetis (plan §10):**
+
+- New per-band grid slots initialise to Thetis uniform
+  -40 / -140 rather than NereusSDR's existing -20 / -160,
+  per user decision 2026-04-12. Existing users see the grid
+  shift on first launch after upgrade.
+- Source-first protocol (`CLAUDE.md`) stays as written. This
+  phase is a one-off exception, not a precedent.
+
+**Known deferrals (tracked for future phases):**
+
+- GPU path line width and gradient shader wiring. QPainter
+  fallback path fully implemented.
+- FFT decimation (S16) — UI is scaffolded; FFTEngine has no
+  decimation setter yet.
+- W12 / W14 TX filter / zero-line overlays — renderer call
+  path in place, activates once the TX state model provides
+  a TX VFO/filter pair (post-3I-1).
+- Data Line Color / Data Fill Color share `m_fillColor` — UX
+  polish to split these is deferred until verification
+  screenshots show whether users actually need them separate.
+- W10 Waterfall Low Color — persisted; runtime gradient
+  rebuild waits for the Custom-scheme AppSettings parser.
+
 ### Phase 3G-7 — Polish (complete)
 
 **Status:** Complete. Branch `feature/phase3g7-polish` off
