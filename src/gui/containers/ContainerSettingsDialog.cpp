@@ -331,11 +331,26 @@ void ContainerSettingsDialog::populateAvailableList()
     if (!m_availableList) { return; }
     m_availableList->clear();
 
-    // Flat alphabetical catalog. Commit 15 categorizes this into
-    // RX / TX / Special sections per Thetis lstMetersAvailable.
+    // Phase 3G-6 block 3 commit 15: Thetis lstMetersAvailable
+    // categorization (setup.cs:24522-24566) — three sections, each
+    // alphabetical. Section headers are non-selectable disabled
+    // QListWidgetItems in a highlight color. Block 4 will revisit
+    // the per-entry mapping once the per-item editors are in place
+    // and we know exactly which default bindings each type ships
+    // with.
     struct Entry { const char* tag; const char* label; };
-    static const Entry kCatalog[] = {
+    static const Entry kRxItems[] = {
+        {"NEEDLE",         "Needle Meter"},
+        {"SIGNALTEXT",     "Signal Text"},
+        {"TEXT",           "Text Readout"},
+    };
+    static const Entry kTxItems[] = {
         {"BAR",            "Bar Meter"},
+        {"LED",            "LED"},
+        {"NEEDLESCALEPWR", "Needle Scale Power"},
+        {"SCALE",          "Scale"},
+    };
+    static const Entry kSpecialItems[] = {
         {"CLICKBOX",       "Click Box"},
         {"CLOCK",          "Clock"},
         {"DATAOUT",        "Data Out"},
@@ -344,25 +359,39 @@ void ContainerSettingsDialog::populateAvailableList()
         {"FILTERDISPLAY",  "Filter Display"},
         {"HISTORY",        "History Graph"},
         {"IMAGE",          "Image"},
-        {"LED",            "LED"},
         {"MAGICEYE",       "Magic Eye"},
-        {"NEEDLE",         "Needle Meter"},
-        {"NEEDLESCALEPWR", "Needle Scale Power"},
         {"ROTATOR",        "Rotator"},
-        {"SCALE",          "Scale"},
-        {"SIGNALTEXT",     "Signal Text"},
         {"SOLID",          "Solid Colour"},
         {"SPACER",         "Spacer"},
-        {"TEXT",           "Text Readout"},
         {"TEXTOVERLAY",    "Text Overlay"},
         {"VFODISPLAY",     "VFO Display"},
         {"WEBIMAGE",       "Web Image"},
     };
 
-    for (const auto& e : kCatalog) {
-        auto* item = new QListWidgetItem(QString::fromLatin1(e.label), m_availableList);
+    auto addHeader = [this](const QString& text) {
+        auto* h = new QListWidgetItem(text, m_availableList);
+        QFont f = h->font();
+        f.setBold(true);
+        h->setFont(f);
+        h->setForeground(QColor(0x8a, 0xa8, 0xc0));
+        h->setBackground(QColor(0x1a, 0x2a, 0x38));
+        h->setFlags(Qt::NoItemFlags);   // non-selectable, non-enabled
+    };
+    auto addEntry = [this](const Entry& e) {
+        auto* item = new QListWidgetItem(
+            QStringLiteral("  ") + QString::fromLatin1(e.label),
+            m_availableList);
         item->setData(Qt::UserRole, QString::fromLatin1(e.tag));
-    }
+    };
+
+    addHeader(QStringLiteral("RX meters"));
+    for (const auto& e : kRxItems) { addEntry(e); }
+
+    addHeader(QStringLiteral("TX meters"));
+    for (const auto& e : kTxItems) { addEntry(e); }
+
+    addHeader(QStringLiteral("Special"));
+    for (const auto& e : kSpecialItems) { addEntry(e); }
 }
 
 void ContainerSettingsDialog::onAddFromAvailable()
