@@ -52,8 +52,34 @@ void FloatingContainer::takeOwner(ContainerWidget* container)
     container->show();
     container->raise();
 
+    // Phase 3G-6 block 2: listen for the runtime minimised flag on
+    // the owner so this top-level window can collapse to the title
+    // bar and restore on un-minimise. Title-bar visibility is handled
+    // entirely inside ContainerWidget and needs no FloatingContainer
+    // involvement (the window just shrinks/grows to fit content).
+    connect(container, &ContainerWidget::minimisedChanged, this,
+            &FloatingContainer::onOwnerMinimisedChanged,
+            Qt::UniqueConnection);
+
     qCDebug(lcContainer) << "FloatingContainer" << m_id
                           << "took ownership of" << container->id();
+}
+
+void FloatingContainer::onOwnerMinimisedChanged(bool minimised)
+{
+    if (minimised) {
+        m_unminimisedHeight = height();
+        // Collapse to just the title bar (plus frame margins). The
+        // minimum is the inner title-bar height; give it a few pixels
+        // slack for borders.
+        const int collapsed = ContainerWidget::kTitleBarHeight + 4;
+        resize(width(), collapsed);
+    } else {
+        if (m_unminimisedHeight > 0) {
+            resize(width(), m_unminimisedHeight);
+        }
+        m_unminimisedHeight = 0;
+    }
 }
 
 void FloatingContainer::onConsoleWindowStateChanged(Qt::WindowStates state, bool rx2Enabled)
