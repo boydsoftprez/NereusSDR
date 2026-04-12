@@ -31,7 +31,9 @@ void ClockItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
     m_chkShow24Hour->setChecked(c->show24Hour());
     m_chkShowType->setChecked(c->showType());
-    // ClockItem has no color read-back getters; buttons retain last value.
+    applyBtnColor(m_btnTimeColour,  c->timeColour());
+    applyBtnColor(m_btnDateColour,  c->dateColour());
+    applyBtnColor(m_btnTitleColour, c->typeTitleColour());
     endProgrammaticUpdate();
 }
 

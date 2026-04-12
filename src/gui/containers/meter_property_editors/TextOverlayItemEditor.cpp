@@ -30,16 +30,27 @@ void TextOverlayItemEditor::setItem(MeterItem* item)
 
     beginProgrammaticUpdate();
 
-    // Populate what TextOverlayItem exposes getters for.
-    // Note: fontFamily1/2, fontSize1/2, fontBold1/2, textBackColour1/2,
-    // panelBackColour1/2, padding, showTextBack1/2 have no public getters —
-    // those widgets are left at their default/previous values.
     m_editText1->setText(x->text1());
     applyColor(m_btnColour1, x->textColour1());
+    applyColor(m_btnBackColour1, x->textBackColour1());
+    m_chkShowBack1->setChecked(x->showTextBackColour1());
+    m_fontCombo1->setCurrentFont(QFont(x->fontFamily1()));
+    m_spinFontSize1->setValue(static_cast<double>(x->fontSize1()));
+    m_chkBold1->setChecked(x->fontBold1());
+
     m_editText2->setText(x->text2());
     applyColor(m_btnColour2, x->textColour2());
+    applyColor(m_btnBackColour2, x->textBackColour2());
+    m_chkShowBack2->setChecked(x->showTextBackColour2());
+    m_fontCombo2->setCurrentFont(QFont(x->fontFamily2()));
+    m_spinFontSize2->setValue(static_cast<double>(x->fontSize2()));
+    m_chkBold2->setChecked(x->fontBold2());
+
     m_chkShowPanel->setChecked(x->showBackPanel());
+    applyColor(m_btnPanelBack1, x->panelBackColour1());
+    applyColor(m_btnPanelBack2, x->panelBackColour2());
     m_spinScrollX->setValue(static_cast<double>(x->scrollX()));
+    m_spinPadding->setValue(static_cast<double>(x->padding()));
 
     endProgrammaticUpdate();
 }

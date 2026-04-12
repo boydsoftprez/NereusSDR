@@ -29,30 +29,43 @@ public:
     QColor textColour2() const { return m_textColour2; }
 
     void setTextBackColour1(const QColor& c) { m_textBackColour1 = c; }
+    QColor textBackColour1() const { return m_textBackColour1; }
     void setTextBackColour2(const QColor& c) { m_textBackColour2 = c; }
+    QColor textBackColour2() const { return m_textBackColour2; }
 
     void setShowTextBackColour1(bool s) { m_showTextBack1 = s; }
+    bool showTextBackColour1() const { return m_showTextBack1; }
     void setShowTextBackColour2(bool s) { m_showTextBack2 = s; }
+    bool showTextBackColour2() const { return m_showTextBack2; }
 
     void setShowBackPanel(bool s) { m_showBackPanel = s; }
     bool showBackPanel() const { return m_showBackPanel; }
 
     void setPanelBackColour1(const QColor& c) { m_panelBack1 = c; }
+    QColor panelBackColour1() const { return m_panelBack1; }
     void setPanelBackColour2(const QColor& c) { m_panelBack2 = c; }
+    QColor panelBackColour2() const { return m_panelBack2; }
 
     void setFontFamily1(const QString& f) { m_fontFamily1 = f; }
+    QString fontFamily1() const { return m_fontFamily1; }
     void setFontFamily2(const QString& f) { m_fontFamily2 = f; }
+    QString fontFamily2() const { return m_fontFamily2; }
 
     void setFontSize1(float s) { m_fontSize1 = s; }
+    float fontSize1() const { return m_fontSize1; }
     void setFontSize2(float s) { m_fontSize2 = s; }
+    float fontSize2() const { return m_fontSize2; }
 
     void setFontBold1(bool b) { m_fontBold1 = b; }
+    bool fontBold1() const { return m_fontBold1; }
     void setFontBold2(bool b) { m_fontBold2 = b; }
+    bool fontBold2() const { return m_fontBold2; }
 
     void setScrollX(float s) { m_scrollX = s; }
     float scrollX() const { return m_scrollX; }
 
     void setPadding(float p) { m_padding = p; }
+    float padding() const { return m_padding; }
 
     // External variable registry for substitution
     void setVariable(const QString& name, const QString& value) {

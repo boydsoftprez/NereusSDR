@@ -16,8 +16,11 @@ public:
     bool showType() const { return m_showType; }
 
     void setTimeColour(const QColor& c) { m_timeColour = c; }
+    QColor timeColour() const { return m_timeColour; }
     void setDateColour(const QColor& c) { m_dateColour = c; }
+    QColor dateColour() const { return m_dateColour; }
     void setTypeTitleColour(const QColor& c) { m_typeTitleColour = c; }
+    QColor typeTitleColour() const { return m_typeTitleColour; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;

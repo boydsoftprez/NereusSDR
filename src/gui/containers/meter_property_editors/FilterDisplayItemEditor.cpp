@@ -45,9 +45,19 @@ void FilterDisplayItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
     m_comboDisplayMode->setCurrentIndex(
         m_comboDisplayMode->findData(static_cast<int>(f->displayMode())));
-    // Note: FilterDisplayItem exposes no read-back getters for colors, palette,
-    // fill, padding, or spec range — only setters. Color buttons and spin boxes
-    // retain their last-set value; they will be correct after the user edits once.
+    m_comboWfPalette->setCurrentIndex(
+        m_comboWfPalette->findData(static_cast<int>(f->waterfallPalette())));
+    m_chkFill->setChecked(f->fillSpectrum());
+    m_spinPadding->setValue(static_cast<double>(f->padding()));
+    m_spinMinDb->setValue(static_cast<double>(f->specMinDb()));
+    m_spinMaxDb->setValue(static_cast<double>(f->specMaxDb()));
+    applyBtnColor(m_btnDataLine, f->dataLineColour());
+    applyBtnColor(m_btnDataFill, f->dataFillColour());
+    applyBtnColor(m_btnEdgesRx,  f->edgesColourRX());
+    applyBtnColor(m_btnEdgesTx,  f->edgesColourTX());
+    applyBtnColor(m_btnNotch,    f->notchColour());
+    applyBtnColor(m_btnBack,     f->meterBackColour());
+    applyBtnColor(m_btnText,     f->textColour());
     endProgrammaticUpdate();
 }
 

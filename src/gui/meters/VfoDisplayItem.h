@@ -29,11 +29,17 @@ public:
     void setSplit(bool split) { m_split = split; }
 
     void setFrequencyColour(const QColor& c) { m_freqColour = c; }
+    QColor frequencyColour() const { return m_freqColour; }
     void setModeColour(const QColor& c) { m_modeColour = c; }
+    QColor modeColour() const { return m_modeColour; }
     void setFilterColour(const QColor& c) { m_filterColour = c; }
+    QColor filterColour() const { return m_filterColour; }
     void setBandColour(const QColor& c) { m_bandColour = c; }
+    QColor bandColour() const { return m_bandColour; }
     void setRxColour(const QColor& c) { m_rxColour = c; }
+    QColor rxColour() const { return m_rxColour; }
     void setTxColour(const QColor& c) { m_txColour = c; }
+    QColor txColour() const { return m_txColour; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;

@@ -32,17 +32,26 @@ public:
     float beamWidth() const { return m_beamWidth; }
 
     void setBeamWidthAlpha(float a) { m_beamWidthAlpha = a; }
+    float beamWidthAlpha() const { return m_beamWidthAlpha; }
 
     void setDarkMode(bool d) { m_darkMode = d; }
+    bool darkMode() const { return m_darkMode; }
     void setPadding(float p) { m_padding = p; }
+    float padding() const { return m_padding; }
 
     // Colors (from Thetis clsRotatorItem properties)
     void setBigBlobColour(const QColor& c) { m_bigBlobColour = c; }
+    QColor bigBlobColour() const { return m_bigBlobColour; }
     void setSmallBlobColour(const QColor& c) { m_smallBlobColour = c; }
+    QColor smallBlobColour() const { return m_smallBlobColour; }
     void setOuterTextColour(const QColor& c) { m_outerTextColour = c; }
+    QColor outerTextColour() const { return m_outerTextColour; }
     void setArrowColour(const QColor& c) { m_arrowColour = c; }
+    QColor arrowColour() const { return m_arrowColour; }
     void setBeamWidthColour(const QColor& c) { m_beamWidthColour = c; }
+    QColor beamWidthColour() const { return m_beamWidthColour; }
     void setBackgroundColour(const QColor& c) { m_backgroundColour = c; }
+    QColor backgroundColour() const { return m_backgroundColour; }
 
     // Background image (file-based, user-replaceable)
     void setBackgroundImagePath(const QString& path);

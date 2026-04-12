@@ -43,7 +43,12 @@ void VfoDisplayItemEditor::setItem(MeterItem* item)
     beginProgrammaticUpdate();
     m_comboDisplayMode->setCurrentIndex(
         m_comboDisplayMode->findData(static_cast<int>(v->displayMode())));
-    // VfoDisplayItem has no public color read-back getters; buttons retain last value.
+    applyBtnColor(m_btnFreqColour,   v->frequencyColour());
+    applyBtnColor(m_btnModeColour,   v->modeColour());
+    applyBtnColor(m_btnFilterColour, v->filterColour());
+    applyBtnColor(m_btnBandColour,   v->bandColour());
+    applyBtnColor(m_btnRxColour,     v->rxColour());
+    applyBtnColor(m_btnTxColour,     v->txColour());
     endProgrammaticUpdate();
 }
 

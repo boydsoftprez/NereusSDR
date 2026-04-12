@@ -38,19 +38,31 @@ public:
 
     // Colors
     void setDataLineColour(const QColor& c) { m_dataLineColour = c; }
+    QColor dataLineColour() const { return m_dataLineColour; }
     void setDataFillColour(const QColor& c) { m_dataFillColour = c; }
+    QColor dataFillColour() const { return m_dataFillColour; }
     void setEdgesColourRX(const QColor& c) { m_edgesColourRX = c; }
+    QColor edgesColourRX() const { return m_edgesColourRX; }
     void setEdgesColourTX(const QColor& c) { m_edgesColourTX = c; }
+    QColor edgesColourTX() const { return m_edgesColourTX; }
     void setNotchColour(const QColor& c) { m_notchColour = c; }
+    QColor notchColour() const { return m_notchColour; }
     void setMeterBackColour(const QColor& c) { m_meterBackColour = c; }
+    QColor meterBackColour() const { return m_meterBackColour; }
     void setTextColour(const QColor& c) { m_textColour = c; }
+    QColor textColour() const { return m_textColour; }
 
     void setFillSpectrum(bool f) { m_fillSpectrum = f; }
+    bool fillSpectrum() const { return m_fillSpectrum; }
     void setPadding(float p) { m_padding = p; }
+    float padding() const { return m_padding; }
     void setWaterfallPalette(WaterfallPalette pal) { m_waterfallPalette = pal; }
+    WaterfallPalette waterfallPalette() const { return m_waterfallPalette; }
 
     // Spectrum range
     void setSpecGridRange(float minDb, float maxDb) { m_specMinDb = minDb; m_specMaxDb = maxDb; }
+    float specMinDb() const { return m_specMinDb; }
+    float specMaxDb() const { return m_specMaxDb; }
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;

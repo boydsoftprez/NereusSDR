@@ -56,9 +56,16 @@ void RotatorItemEditor::setItem(MeterItem* item)
     m_chkShowCardinals->setChecked(r->showCardinals());
     m_chkShowBeamWidth->setChecked(r->showBeamWidth());
     m_spinBeamWidth->setValue(static_cast<double>(r->beamWidth()));
+    m_spinBeamAlpha->setValue(static_cast<double>(r->beamWidthAlpha()));
+    m_chkDarkMode->setChecked(r->darkMode());
+    m_spinPadding->setValue(static_cast<double>(r->padding()));
     m_editBgPath->setText(r->backgroundImagePath());
-    // Note: beamWidthAlpha, darkMode, padding have no public read-back getter.
-    // Color buttons retain their last-set values between item switches.
+    applyBtnColor(m_btnBigBlob,    r->bigBlobColour());
+    applyBtnColor(m_btnSmallBlob,  r->smallBlobColour());
+    applyBtnColor(m_btnOuterText,  r->outerTextColour());
+    applyBtnColor(m_btnArrow,      r->arrowColour());
+    applyBtnColor(m_btnBeamWidth,  r->beamWidthColour());
+    applyBtnColor(m_btnBackground, r->backgroundColour());
     endProgrammaticUpdate();
 }
 
