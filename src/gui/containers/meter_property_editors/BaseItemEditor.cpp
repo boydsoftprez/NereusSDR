@@ -84,6 +84,7 @@ void BaseItemEditor::buildBaseForm()
 
     m_comboBinding = new QComboBox(this);
     m_comboBinding->setStyleSheet(kComboStyle);
+    m_comboBinding->setMinimumWidth(kDefaultFieldWidth);
     populateBindingCombo();
     connect(m_comboBinding, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
@@ -216,6 +217,12 @@ void BaseItemEditor::loadBaseFields()
     endProgrammaticUpdate();
 }
 
+// Phase 3G-6 block 4b: minimum widths so fields don't shrink-wrap
+// to their default size. Without these, a QDoubleSpinBox with a
+// small range (0..1) renders only about 50 px wide, which looks
+// squeezed inside the Properties column.
+static constexpr int kDefaultFieldWidth = 140;
+
 QDoubleSpinBox* BaseItemEditor::makeDoubleRow(const QString& label,
                                               double min, double max,
                                               double step, int decimals)
@@ -225,6 +232,7 @@ QDoubleSpinBox* BaseItemEditor::makeDoubleRow(const QString& label,
     spin->setRange(min, max);
     spin->setSingleStep(step);
     spin->setDecimals(decimals);
+    spin->setMinimumWidth(kDefaultFieldWidth);
     addRow(label, spin);
     return spin;
 }
@@ -234,6 +242,7 @@ QSpinBox* BaseItemEditor::makeIntRow(const QString& label, int min, int max)
     auto* spin = new QSpinBox(this);
     spin->setStyleSheet(kSpinStyle);
     spin->setRange(min, max);
+    spin->setMinimumWidth(kDefaultFieldWidth);
     addRow(label, spin);
     return spin;
 }
