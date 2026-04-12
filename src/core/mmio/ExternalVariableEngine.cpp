@@ -1,6 +1,12 @@
 #include "ExternalVariableEngine.h"
 #include "MmioEndpoint.h"
 #include "ITransportWorker.h"
+#include "UdpEndpointWorker.h"
+#include "TcpListenerEndpointWorker.h"
+#include "TcpClientEndpointWorker.h"
+#ifdef HAVE_SERIALPORT
+#include "SerialEndpointWorker.h"
+#endif
 
 #include "../LogCategories.h"
 #include "../AppSettings.h"
@@ -164,13 +170,25 @@ void ExternalVariableEngine::updateEndpoint(MmioEndpoint* ep)
 
 ITransportWorker* ExternalVariableEngine::makeWorker(MmioEndpoint* ep)
 {
-    // Actual transport worker subclasses are produced by block 5
-    // phase 2 (parallel agents). This stub returns nullptr until
-    // those files land — the engine logs a warning and doesn't
-    // start a worker.
-    Q_UNUSED(ep);
-    qCWarning(lcMmio) << "makeWorker: transport workers not yet compiled in; "
-                        "endpoint will not start receiving data";
+    if (!ep) { return nullptr; }
+
+    switch (ep->transport()) {
+    case MmioEndpoint::Transport::UdpListener:
+        return new UdpEndpointWorker(ep);
+    case MmioEndpoint::Transport::TcpListener:
+        return new TcpListenerEndpointWorker(ep);
+    case MmioEndpoint::Transport::TcpClient:
+        return new TcpClientEndpointWorker(ep);
+    case MmioEndpoint::Transport::Serial:
+#ifdef HAVE_SERIALPORT
+        return new SerialEndpointWorker(ep);
+#else
+        qCWarning(lcMmio) << "Serial transport requested but Qt6::SerialPort "
+                            "not available at build time; endpoint"
+                          << ep->name() << "will not start";
+        return nullptr;
+#endif
+    }
     return nullptr;
 }
 
