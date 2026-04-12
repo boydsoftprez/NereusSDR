@@ -1,31 +1,39 @@
 # OpenHPSDR Protocol 1
 
-## Status: Reference placeholder
-
-## Overview
+## Status: Reference
 
 Protocol 1 is the original OpenHPSDR protocol used by Metis, Hermes, Angelia,
-Orion, and Hermes Lite 2 boards. It uses UDP-only communication on port 1024.
+Orion, and Hermes Lite 2 boards. UDP-only on port 1024, 1032-byte Metis
+frames, 24-bit big-endian interleaved I/Q.
 
-## Key Characteristics
+## Primary Reference
+
+For byte-level layouts, command/status decode, cadence, and HL2-specific
+quirks, see the annotated capture reference:
+
+**[openhpsdr-protocol1-capture-reference.md](openhpsdr-protocol1-capture-reference.md)**
+
+That document is derived from a live HL2↔Thetis capture and is the
+authoritative source for NereusSDR Phase 3L (P1 implementation).
+
+## Quick Summary
 
 - **Transport:** UDP only, port 1024
-- **Frame size:** 1032 bytes (Metis frame)
-- **Frame structure:** 8-byte header + two 512-byte USB frames
-- **I/Q format:** 24-bit big-endian, interleaved
-- **Control:** C&C (Command & Control) bytes in USB frame headers
-- **Discovery:** UDP broadcast to port 1024
+- **Frame size:** 1032 bytes (Metis frame: 8-byte header + two 512-byte USB frames)
+- **Header:** `EF FE 01 <endpoint> <seq32_big_endian>` — endpoint `0x06` for EP6 (radio→host data), `0x02` for EP2 (host→radio commands)
+- **I/Q format (EP6):** 24-bit big-endian signed, interleaved I/Q + 16-bit BE mic
+- **Samples per USB frame:** `spr = 504 / (6*nddc + 2)` (from `networkproto1.c:358`)
+- **Control:** 5 C&C bytes per USB frame — 3-byte sync `7F 7F 7F`, C0 round-robin status/command index, C1..C4 payload
+- **Discovery:** UDP broadcast to port 1024, `EF FE 02 ...`
 
-## Frame Format
+## Thetis P1 Source Map
 
-```
-Bytes 0-1:   Sync (0xEF 0xFE)
-Byte 2:      Endpoint (0x06 = EP6 data from radio)
-Byte 3:      Sequence number
-Bytes 4-7:   Sequence number (32-bit)
-Bytes 8-519: USB Frame 1 (5 C&C bytes + 504 I/Q/audio bytes)
-Bytes 520-1031: USB Frame 2 (5 C&C bytes + 504 I/Q/audio bytes)
-```
+Most P1 byte-level code lives in the unmanaged ChannelMaster C source, not C#:
+
+- **Discovery:** `Project Files/Source/Console/HPSDR/clsRadioDiscovery.cs`
+- **Metis start/stop, EP2 build, EP6 parse, seq#:** `Project Files/Source/ChannelMaster/networkproto1.c`
+- **Metis socket setup:** `Project Files/Source/ChannelMaster/network.c`
+- **C# P/Invoke surface:** `Project Files/Source/Console/HPSDR/NetworkIOImports.cs`
 
 ## Official Specification
 
