@@ -56,6 +56,12 @@ void SetRXAMode(int channel, int mode);
 
 void SetRXABandpassFreqs(int channel, double f_low, double f_high);
 
+// CRITICAL: SetRXABandpassFreqs only updates bp1, which only runs when
+// AMD/SNBA/EMNR/ANF/ANR is enabled. For plain SSB the active filter is
+// nbp0, controlled by RXANBPSetFreqs. Thetis always calls BOTH together
+// (rxa.cs:110-111, radio.cs:603-604). Call both in setFilterFreqs.
+void RXANBPSetFreqs(int channel, double flow, double fhigh);
+
 void SetRXABandpassNC(int channel, int nc);
 
 void SetRXABandpassMP(int channel, int mp);
@@ -75,6 +81,15 @@ void SetRXAShiftFreq(int channel, double fshift);
 // ---------------------------------------------------------------------------
 
 void RXANBPSetShiftFrequency(int channel, double shift);
+
+// ---------------------------------------------------------------------------
+// Patch panel (patchpanel.h) — final mix stage in RXA pipeline
+// ---------------------------------------------------------------------------
+
+// bin=0 → copy=1 → dual mono (Q := I, same audio on both channels)
+// bin=1 → copy=0 → binaural (I and Q separate, for headphone stereo image)
+// From Thetis radio.cs:1157 — Thetis default BinOn=false → dual mono
+void SetRXAPanelBinaural(int channel, int bin);
 
 // ---------------------------------------------------------------------------
 // AGC (wcpAGC.h)

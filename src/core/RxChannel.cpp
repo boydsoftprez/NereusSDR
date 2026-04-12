@@ -52,7 +52,15 @@ void RxChannel::setFilterFreqs(double lowHz, double highHz)
     m_filterHigh = highHz;
 
 #ifdef HAVE_WDSP
+    // From Thetis rxa.cs:110-111, radio.cs:603-604 — both bp1 and nbp0
+    // filters must be updated together. SetRXABandpassFreqs only touches
+    // bp1, which runs only when AMD/SNBA/EMNR/ANF/ANR is enabled.
+    // RXANBPSetFreqs touches nbp0, the filter that runs unconditionally
+    // in the SSB/CW/AM audio path. Calling only one leaves the SSB
+    // bandpass stuck at nbp0's create-time default of -4150..-150
+    // (LSB-shaped), which silently breaks USB, AM, and FM demod.
     SetRXABandpassFreqs(m_channelId, lowHz, highHz);
+    RXANBPSetFreqs(m_channelId, lowHz, highHz);
 #endif
 
     emit filterChanged(lowHz, highHz);

@@ -271,7 +271,9 @@ void RadioModel::wireConnectionSignals()
             rxCh->processIq(m_iqAccumI.data(), m_iqAccumQ.data(),
                             outI.data(), outQ.data(), kWdspBufSize);
 
-            // WDSP outputs out_size samples (64 at 768k→48k decimation)
+            // WDSP outputs out_size samples (64 at 768k→48k decimation).
+            // outI == outQ because SetRXAPanelBinaural(channel, 0) puts the
+            // RXA patch panel in dual-mono mode in WdspEngine::createRxChannel.
             m_audioEngine->feedAudio(0, outI.data(), outQ.data(), kWdspOutSize);
 
             // Remove processed samples
