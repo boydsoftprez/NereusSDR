@@ -175,6 +175,7 @@ void ContainerWidget::setContent(QWidget* widget)
         }
         layout->addWidget(m_content);
     }
+    emit contentChanged(m_content);
 }
 
 void ContainerWidget::updateTitleBar()

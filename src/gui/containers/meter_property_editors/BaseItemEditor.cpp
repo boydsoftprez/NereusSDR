@@ -92,6 +92,10 @@ void BaseItemEditor::buildBaseForm()
     m_comboBinding = new QComboBox(this);
     m_comboBinding->setStyleSheet(kComboStyle);
     m_comboBinding->setMinimumWidth(kDefaultFieldWidth);
+    m_comboBinding->setToolTip(QStringLiteral(
+        "Built-in meter source: WDSP RX/TX channels, PA hardware "
+        "(volts/amps/temp), and rotator readings. For external MMIO "
+        "endpoint variables use the MMIO Variable\u2026 button."));
     populateBindingCombo();
     connect(m_comboBinding, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
@@ -108,9 +112,10 @@ void BaseItemEditor::buildBaseForm()
     bindingLay->setContentsMargins(0, 0, 0, 0);
     bindingLay->setSpacing(4);
     bindingLay->addWidget(m_comboBinding, 1);
-    auto* btnVariable = new QPushButton(QStringLiteral("Variable\u2026"), bindingRow);
-    btnVariable->setToolTip(
-        QStringLiteral("Bind this item to an MMIO endpoint variable"));
+    auto* btnVariable = new QPushButton(QStringLiteral("MMIO Variable\u2026"), bindingRow);
+    btnVariable->setToolTip(QStringLiteral(
+        "Bind this item to an MMIO endpoint variable. For built-in "
+        "WDSP / PA / rotator meters use the dropdown to the left."));
     bindingLay->addWidget(btnVariable);
     connect(btnVariable, &QPushButton::clicked, this, [this, btnVariable]() {
         if (!m_item) { return; }

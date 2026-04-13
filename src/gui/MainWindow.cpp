@@ -137,6 +137,22 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Auto-reconnect to last radio if it appears
     tryAutoReconnect();
+
+    // Defensive save on aboutToQuit. closeEvent is fine for ⌘Q but
+    // does NOT run when the process is signaled (SIGTERM from
+    // pkill, Activity Monitor force-quit, debugger detach). Without
+    // this hook, any container/state change made mid-session is
+    // lost on signal-based shutdown — which is exactly the symptom
+    // we hit during automated test cycles where pkill killed the
+    // app before saveState ran. saveState is idempotent so the
+    // ⌘Q path (closeEvent → saveState; aboutToQuit → saveState
+    // again) is harmless.
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() {
+        if (m_containerManager) {
+            m_containerManager->saveState();
+        }
+        AppSettings::instance().save();
+    });
 }
 
 MainWindow::~MainWindow() = default;
@@ -196,6 +212,31 @@ void MainWindow::buildUI()
 
     // --- Container Infrastructure (Phase 3G-1) ---
     m_containerManager = new ContainerManager(spectrumPane, m_mainSplitter, this);
+
+    // Create the MeterPoller BEFORE restoreState / populateDefaultMeter
+    // so the meterReadyForPolling signal fires into a live poller as
+    // each container's MeterWidget is materialized. Previously the
+    // poller was created later and only the panel container's
+    // m_meterWidget was registered manually — every user-created
+    // container's meter sat orphaned and bars never received setValue()
+    // calls, the root of the "BarMeter not drawing" symptom.
+    m_meterPoller = new MeterPoller(this);
+    connect(m_containerManager, &ContainerManager::meterReadyForPolling,
+            this, [this](MeterWidget* meter) {
+        if (!meter || !m_meterPoller) { return; }
+        m_meterPoller->addTarget(meter);
+        // Auto-unregister when the meter is destroyed (e.g.
+        // ContainerWidget::setContent deleteLater()s a previous
+        // content during a swap). Without this the poller would
+        // dereference a dangling pointer on its next tick.
+        connect(meter, &QObject::destroyed, m_meterPoller,
+                [this](QObject* obj) {
+            if (m_meterPoller) {
+                m_meterPoller->removeTarget(static_cast<MeterWidget*>(obj));
+            }
+        });
+    });
+
     m_containerManager->restoreState();
     if (m_containerManager->containerCount() == 0) {
         createDefaultContainers();
@@ -268,9 +309,11 @@ void MainWindow::buildUI()
     m_fftThread->start();
 
     // --- Meter Poller (Phase 3G-2) ---
-    m_meterPoller = new MeterPoller(this);
-    populateDefaultMeter();
-
+    // Poller was created earlier so the meterReadyForPolling signal
+    // could catch container restore + populateDefaultMeter emits.
+    // m_meterWidget is registered automatically via that signal —
+    // the call here is a defensive belt only and dedupes inside
+    // MeterPoller::addTarget.
     if (m_meterWidget) {
         m_meterPoller->addTarget(m_meterWidget);
     }
@@ -391,25 +434,45 @@ void MainWindow::populateDefaultMeter()
         return;
     }
 
+    // ContainerManager::restoreState may have set a MeterWidget with
+    // user-saved items as the panel container's content. Capture that
+    // payload before we overwrite c0's content. We can't reuse the
+    // pointer directly because ContainerWidget::setContent() calls
+    // deleteLater on the previous m_content; round-tripping through
+    // serialize/deserialize transfers the items into a fresh
+    // m_meterWidget that becomes the AppletPanelWidget header.
+    QString restoredItems;
+    if (auto* existingMeter = qobject_cast<MeterWidget*>(c0->content())) {
+        if (!existingMeter->items().isEmpty()) {
+            restoredItems = existingMeter->serializeItems();
+        }
+    }
+
     m_meterWidget = new MeterWidget();
 
-    // S-Meter: top 45% — arc needle bound to SignalAvg
-    // From Thetis MeterManager.cs: ANAN needle uses AVG_SIGNAL_STRENGTH
-    ItemGroup* smeter = ItemGroup::createSMeterPreset(
-        MeterBinding::SignalAvg, QStringLiteral("S-Meter"), m_meterWidget);
-    smeter->installInto(m_meterWidget, 0.0f, 0.0f, 1.0f, 0.45f);
-    delete smeter;
+    if (!restoredItems.isEmpty()) {
+        m_meterWidget->deserializeItems(restoredItems);
+        qCDebug(lcContainer) << "Restored" << m_meterWidget->items().size()
+                             << "panel meter items from saved state";
+    } else {
+        // S-Meter: top 45% — arc needle bound to SignalAvg
+        // From Thetis MeterManager.cs: ANAN needle uses AVG_SIGNAL_STRENGTH
+        ItemGroup* smeter = ItemGroup::createSMeterPreset(
+            MeterBinding::SignalAvg, QStringLiteral("S-Meter"), m_meterWidget);
+        smeter->installInto(m_meterWidget, 0.0f, 0.0f, 1.0f, 0.45f);
+        delete smeter;
 
-    // Power/SWR: middle 40% — stacked bars (stub TX bindings)
-    ItemGroup* pwrSwr = ItemGroup::createPowerSwrPreset(
-        QStringLiteral("Power/SWR"), m_meterWidget);
-    pwrSwr->installInto(m_meterWidget, 0.0f, 0.45f, 1.0f, 0.40f);
-    delete pwrSwr;
+        // Power/SWR: middle 40% — stacked bars (stub TX bindings)
+        ItemGroup* pwrSwr = ItemGroup::createPowerSwrPreset(
+            QStringLiteral("Power/SWR"), m_meterWidget);
+        pwrSwr->installInto(m_meterWidget, 0.0f, 0.45f, 1.0f, 0.40f);
+        delete pwrSwr;
 
-    // ALC: bottom 15% — compact single-line bar (stub TX binding)
-    ItemGroup* alc = ItemGroup::createAlcPreset(m_meterWidget);
-    alc->installInto(m_meterWidget, 0.0f, 0.85f, 1.0f, 0.15f);
-    delete alc;
+        // ALC: bottom 15% — compact single-line bar (stub TX binding)
+        ItemGroup* alc = ItemGroup::createAlcPreset(m_meterWidget);
+        alc->installInto(m_meterWidget, 0.0f, 0.85f, 1.0f, 0.15f);
+        delete alc;
+    }
 
     // Build an AppletPanelWidget: MeterWidget on top, then all applets below.
     // This is a single scrollable content widget per the v2 plan.

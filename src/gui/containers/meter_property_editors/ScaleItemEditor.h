@@ -1,6 +1,7 @@
 #pragma once
 #include "BaseItemEditor.h"
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QSpinBox;
@@ -27,6 +28,9 @@ private:
     QPushButton*    m_btnTickColor{nullptr};
     QPushButton*    m_btnLabelColor{nullptr};
     QSpinBox*       m_spinFontSize{nullptr};
+    // Phase B4 — ShowType centered title (Thetis clsScaleItem.ShowType)
+    QCheckBox*      m_chkShowType{nullptr};
+    QPushButton*    m_btnTitleColor{nullptr};
 };
 
 } // namespace NereusSDR

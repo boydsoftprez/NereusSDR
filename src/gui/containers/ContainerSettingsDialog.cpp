@@ -404,6 +404,43 @@ void ContainerSettingsDialog::populateAvailableList()
     // and we know exactly which default bindings each type ships
     // with.
     struct Entry { const char* tag; const char* label; };
+
+    // Phase E port of Thetis Setup → Appearance → Meters/Gadgets
+    // lstMetersAvailable left column. Each PRESET_* tag dispatches to
+    // a factory in ItemGroup that returns a full Thetis-parity bar
+    // row composition (SolidColour backdrop + BarItem with Line style
+    // + ScaleItem with ShowType red title). When the user double-
+    // clicks or presses the "Add →" button on one of these, the
+    // dispatch lands in appendPresetRow() which rescales the preset's
+    // 0..1 items into the next stack slot so rows naturally pile up
+    // in the container — matching how Thetis's "Add Container"
+    // right-arrow works in the Appearance dialog.
+    static const Entry kMeterRxItems[] = {
+        {"PRESET_SignalBar",    "Signal Strength Peak"},
+        {"PRESET_AvgSignalBar", "Signal Strength Avg"},
+        {"PRESET_MaxBinBar",    "Signal Max FFT Bin"},
+        {"PRESET_SignalText",   "Signal Strength Text"},
+        {"PRESET_AdcBar",       "ADC"},
+        {"PRESET_AdcMaxMag",    "Max ADC Magnitude"},
+        {"PRESET_AgcBar",       "AGC"},
+        {"PRESET_AgcGainBar",   "AGC Gain"},
+        {"PRESET_PbsnrBar",     "Estimated PBSNR"},
+    };
+    static const Entry kMeterTxItems[] = {
+        {"PRESET_Alc",          "ALC"},
+        {"PRESET_AlcGain",      "ALC Compression"},
+        {"PRESET_AlcGroup",     "ALC Group"},
+        {"PRESET_CfcBar",       "CFC Compression Average"},
+        {"PRESET_CfcGainBar",   "CFC Compression"},
+        {"PRESET_Comp",         "Compression"},
+        {"PRESET_Eq",           "EQ"},
+        {"PRESET_Leveler",      "Leveler"},
+        {"PRESET_LevelerGain",  "Leveler Gain"},
+        {"PRESET_Mic",          "Mic"},
+        // "Power", "Reverse Power", "SWR" are PowerSwr composite —
+        // deferred until a dedicated createPowerBarRowPreset ships.
+    };
+    // --- Raw building-block items (low-level MeterItem subclasses) ---
     static const Entry kRxItems[] = {
         {"NEEDLE",         "Needle Meter"},
         {"SIGNALTEXT",     "Signal Text"},
@@ -449,10 +486,19 @@ void ContainerSettingsDialog::populateAvailableList()
         item->setData(Qt::UserRole, QString::fromLatin1(e.tag));
     };
 
-    addHeader(QStringLiteral("RX meters"));
+    // High-level Thetis-style meter compositions first — these are
+    // what most users reach for when building a multimeter container.
+    addHeader(QStringLiteral("RX Meters (Thetis)"));
+    for (const auto& e : kMeterRxItems) { addEntry(e); }
+
+    addHeader(QStringLiteral("TX Meters (Thetis)"));
+    for (const auto& e : kMeterTxItems) { addEntry(e); }
+
+    // Raw building blocks below — for custom meter construction.
+    addHeader(QStringLiteral("RX items"));
     for (const auto& e : kRxItems) { addEntry(e); }
 
-    addHeader(QStringLiteral("TX meters"));
+    addHeader(QStringLiteral("TX items"));
     for (const auto& e : kTxItems) { addEntry(e); }
 
     addHeader(QStringLiteral("Special"));
@@ -466,7 +512,86 @@ void ContainerSettingsDialog::onAddFromAvailable()
     if (!sel) { return; }
     const QString tag = sel->data(Qt::UserRole).toString();
     if (tag.isEmpty()) { return; }
+    // Phase E — PRESET_* tags map to full Thetis-parity meter row
+    // compositions rather than raw building-block items. Route to
+    // appendPresetRow() which rescales the factory's 0..1 preset
+    // into the next stack slot so rows pile up vertically.
+    if (tag.startsWith(QLatin1String("PRESET_"))) {
+        const QString presetName = tag.mid(7);   // strip "PRESET_"
+        appendPresetRow(presetName);
+        return;
+    }
     addNewItem(tag);
+}
+
+void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
+{
+    // Build the preset ItemGroup via the matching factory, then
+    // rescale its items (which occupy the preset's 0..1 local space)
+    // into a narrow horizontal slot at the current stack bottom. The
+    // result: each click adds one row beneath the previous one, up
+    // to ~10 rows before the stack clamps at y=0.9. Mirrors Thetis's
+    // Setup → Appearance → Meters/Gadgets right-arrow "Add to
+    // Container" flow.
+    ItemGroup* group = nullptr;
+
+    if      (presetName == QLatin1String("SignalBar"))    group = ItemGroup::createSignalBarPreset(this);
+    else if (presetName == QLatin1String("AvgSignalBar")) group = ItemGroup::createAvgSignalBarPreset(this);
+    else if (presetName == QLatin1String("MaxBinBar"))    group = ItemGroup::createMaxBinBarPreset(this);
+    else if (presetName == QLatin1String("SignalText"))   group = ItemGroup::createSignalTextPreset(0, this);
+    else if (presetName == QLatin1String("AdcBar"))       group = ItemGroup::createAdcBarPreset(this);
+    else if (presetName == QLatin1String("AdcMaxMag"))    group = ItemGroup::createAdcMaxMagPreset(this);
+    else if (presetName == QLatin1String("AgcBar"))       group = ItemGroup::createAgcBarPreset(this);
+    else if (presetName == QLatin1String("AgcGainBar"))   group = ItemGroup::createAgcGainBarPreset(this);
+    else if (presetName == QLatin1String("PbsnrBar"))     group = ItemGroup::createPbsnrBarPreset(this);
+    else if (presetName == QLatin1String("Alc"))          group = ItemGroup::createAlcPreset(this);
+    else if (presetName == QLatin1String("AlcGain"))      group = ItemGroup::createAlcGainBarPreset(this);
+    else if (presetName == QLatin1String("AlcGroup"))     group = ItemGroup::createAlcGroupBarPreset(this);
+    else if (presetName == QLatin1String("CfcBar"))       group = ItemGroup::createCfcBarPreset(this);
+    else if (presetName == QLatin1String("CfcGainBar"))   group = ItemGroup::createCfcGainBarPreset(this);
+    else if (presetName == QLatin1String("Comp"))         group = ItemGroup::createCompPreset(this);
+    else if (presetName == QLatin1String("Eq"))           group = ItemGroup::createEqBarPreset(this);
+    else if (presetName == QLatin1String("Leveler"))      group = ItemGroup::createLevelerBarPreset(this);
+    else if (presetName == QLatin1String("LevelerGain"))  group = ItemGroup::createLevelerGainBarPreset(this);
+    else if (presetName == QLatin1String("Mic"))          group = ItemGroup::createMicPreset(this);
+
+    if (!group) { return; }
+
+    // Compute the target stack slot. yPos is the current bottom of
+    // the stack (ignoring full-container background items). slotH is
+    // sized so ~10 rows fit — Thetis Default Multimeter containers
+    // pack about 10-16 rows so this is a reasonable default; the
+    // user can resize the container taller to fit more.
+    const float yPos  = nextStackYPos(m_workingItems);
+    constexpr float kRowSlotH = 0.10f;
+    const float slotH = qMin(kRowSlotH, 0.95f - yPos);
+    if (slotH < 0.02f) {
+        // No room at the bottom — bail out rather than clobbering
+        // existing items.
+        delete group;
+        return;
+    }
+
+    for (MeterItem* src : group->items()) {
+        MeterItem* clone = createItemFromSerialized(src->serialize());
+        if (!clone) { continue; }
+        // Rescale the item's 0..1 rect into [yPos, yPos+slotH].
+        clone->setRect(clone->x(),
+                       yPos + clone->y() * slotH,
+                       clone->itemWidth(),
+                       clone->itemHeight() * slotH);
+        if (src->hasMmioBinding()) {
+            clone->setMmioBinding(src->mmioGuid(), src->mmioVariable());
+        }
+        m_workingItems.append(clone);
+    }
+    delete group;
+
+    refreshItemList();
+    if (!m_workingItems.isEmpty()) {
+        m_itemList->setCurrentRow(m_workingItems.size() - 1);
+    }
+    updatePreview();
 }
 
 // Phase 3G-6 block 3 commit 11: buildRightPanel / live preview deleted.
@@ -973,19 +1098,37 @@ void ContainerSettingsDialog::onMoveItemDown()
 // addNewItem — create and insert a new item after the current selection
 // ---------------------------------------------------------------------------
 
-void ContainerSettingsDialog::addNewItem(const QString& typeTag)
+float ContainerSettingsDialog::nextStackYPos(const QVector<MeterItem*>& items)
 {
-    // Calculate yPos: max (y + height) of existing items, clamped to 0.9
+    // Compute the next vertical-stack y-position. Skip items that
+    // span more than 70% of the container vertically — those are
+    // background / overlay-style items (ImageItem backgrounds, ANANMM
+    // full-container needles) and don't participate in the stack.
+    // Without this filter the next-position math would clamp every
+    // newly-added item at y=0.9 the moment a full-container item
+    // existed, piling new items on top of each other.
+    constexpr float kBackgroundSpanThreshold = 0.7f;
+    constexpr float kBottomClamp = 0.9f;
     float yPos = 0.0f;
-    for (const MeterItem* item : m_workingItems) {
+    for (const MeterItem* item : items) {
+        if (!item) { continue; }
+        if (item->itemHeight() > kBackgroundSpanThreshold) {
+            continue;
+        }
         const float bottom = item->y() + item->itemHeight();
         if (bottom > yPos) {
             yPos = bottom;
         }
     }
-    if (yPos > 0.9f) {
-        yPos = 0.9f;
+    if (yPos > kBottomClamp) {
+        yPos = kBottomClamp;
     }
+    return yPos;
+}
+
+void ContainerSettingsDialog::addNewItem(const QString& typeTag)
+{
+    const float yPos = nextStackYPos(m_workingItems);
 
     MeterItem* newItem = nullptr;
 
@@ -1837,9 +1980,21 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
     }
 
     if (group) {
+        // Offset every cloned preset item by the current stack
+        // position so the preset doesn't overlap existing narrow
+        // items at the top of the container. Without this offset, a
+        // user who adds a single Bar (lands at y=0) and then loads
+        // the Clock preset (factory items also at y=0) sees the bar
+        // and clocks piled on top of each other. Computed BEFORE the
+        // loop so the offset is constant for all items in the preset.
+        const float yOffset = nextStackYPos(m_workingItems);
         for (MeterItem* src : group->items()) {
             MeterItem* clone = createItemFromSerialized(src->serialize());
             if (clone) {
+                clone->setRect(clone->x(),
+                               clone->y() + yOffset,
+                               clone->itemWidth(),
+                               clone->itemHeight());
                 // Phase 3G-7: factory presets won't normally have MMIO
                 // bindings, but copy them defensively in case a future
                 // preset wires one.

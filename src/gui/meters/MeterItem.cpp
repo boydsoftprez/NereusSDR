@@ -1,4 +1,5 @@
 #include "MeterItem.h"
+#include "MeterPoller.h"  // MeterBinding namespace
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -10,6 +11,53 @@
 #include <QtMath>
 
 namespace NereusSDR {
+
+// ---------------------------------------------------------------------------
+// readingName — ported verbatim from Thetis MeterManager.cs:2258-2318
+// ReadingName() switch. Used by ScaleItem::ShowType to label bar-row
+// presets with their canonical Thetis names (e.g. "Signal Max FFT Bin").
+// ---------------------------------------------------------------------------
+QString readingName(int bindingId)
+{
+    switch (bindingId) {
+        // RX
+        case MeterBinding::SignalPeak:   return QStringLiteral("Signal Peak");
+        case MeterBinding::SignalAvg:    return QStringLiteral("Signal Average");
+        case MeterBinding::AdcPeak:      return QStringLiteral("ADC Peak");
+        case MeterBinding::AdcAvg:       return QStringLiteral("ADC Average");
+        case MeterBinding::AgcGain:      return QStringLiteral("AGC Gain");
+        case MeterBinding::AgcPeak:      return QStringLiteral("AGC Peak");
+        case MeterBinding::AgcAvg:       return QStringLiteral("AGC Average");
+        case MeterBinding::SignalMaxBin: return QStringLiteral("Signal Max FFT Bin");
+        case MeterBinding::PbSnr:        return QStringLiteral("Estimated PBSNR");
+        // TX
+        case MeterBinding::TxPower:        return QStringLiteral("Power");
+        case MeterBinding::TxReversePower: return QStringLiteral("Reverse Power");
+        case MeterBinding::TxSwr:          return QStringLiteral("SWR");
+        case MeterBinding::TxMic:          return QStringLiteral("MIC");
+        case MeterBinding::TxComp:         return QStringLiteral("Compression");
+        case MeterBinding::TxAlc:          return QStringLiteral("ALC");
+        case MeterBinding::TxEq:           return QStringLiteral("EQ");
+        case MeterBinding::TxLeveler:      return QStringLiteral("Leveler");
+        case MeterBinding::TxLevelerGain:  return QStringLiteral("Leveler Gain");
+        // Thetis has no ReadingName for ALC_GAIN specifically; ALC_G is
+        // "ALC Compression". NereusSDR splits these two signals into
+        // separate bindings so we use the natural label for ALC Gain.
+        case MeterBinding::TxAlcGain:      return QStringLiteral("ALC Gain");
+        case MeterBinding::TxAlcGroup:     return QStringLiteral("ALC Group");
+        case MeterBinding::TxCfc:          return QStringLiteral("CFC Compression Average");
+        case MeterBinding::TxCfcGain:      return QStringLiteral("CFC Compression");
+        // Hardware
+        case MeterBinding::HwVolts:       return QStringLiteral("Volts");
+        case MeterBinding::HwAmps:        return QStringLiteral("Amps");
+        case MeterBinding::HwTemperature: return QStringLiteral("Temperature");
+        // Rotator
+        case MeterBinding::RotatorAz:  return QStringLiteral("Azimuth");
+        case MeterBinding::RotatorEle: return QStringLiteral("Elevation");
+    }
+    return QString();
+}
+
 
 // ---------------------------------------------------------------------------
 // MeterItem base — serialize / deserialize
@@ -185,6 +233,51 @@ bool ImageItem::deserialize(const QString& data)
 
 // Override setValue() for exponential smoothing.
 // From Thetis MeterManager.cs — attack when rising, decay when falling.
+// ---------------------------------------------------------------------------
+// BarItem — Phase A4 ScaleCalibration (non-linear value → X map).
+// From Thetis clsBarItem (MeterManager.cs:20192 field, 21547-21549 addSMeterBar
+// 3-point S-meter calibration, 21638-21640 AddADCMaxMag 3-point ADC curve).
+// ---------------------------------------------------------------------------
+void BarItem::addScaleCalibration(double value, float normalizedX)
+{
+    m_scaleCalibration.insert(value, normalizedX);
+}
+
+float BarItem::valueToNormalizedX(double value) const
+{
+    // Empty calibration: fall back to linear minVal..maxVal mapping. This
+    // preserves pre-A4 behavior for every Filled/Edge preset.
+    if (m_scaleCalibration.isEmpty()) {
+        const double range = m_maxVal - m_minVal;
+        if (range <= 0.0) { return 0.0f; }
+        const double frac = std::clamp((value - m_minVal) / range, 0.0, 1.0);
+        return static_cast<float>(frac);
+    }
+
+    // Clamp below the first waypoint.
+    auto itFirst = m_scaleCalibration.constBegin();
+    if (value <= itFirst.key()) {
+        return itFirst.value();
+    }
+    // Clamp above the last waypoint.
+    auto itLast = std::prev(m_scaleCalibration.constEnd());
+    if (value >= itLast.key()) {
+        return itLast.value();
+    }
+
+    // Piecewise-linear interpolation between adjacent waypoints.
+    auto hi = m_scaleCalibration.upperBound(value);
+    auto lo = std::prev(hi);
+    const double k0 = lo.key();
+    const double k1 = hi.key();
+    const float  x0 = lo.value();
+    const float  x1 = hi.value();
+    const double span = k1 - k0;
+    if (span <= 0.0) { return x0; }
+    const double t = (value - k0) / span;
+    return static_cast<float>(x0 + (x1 - x0) * t);
+}
+
 void BarItem::setValue(double v)
 {
     MeterItem::setValue(v);
@@ -194,6 +287,29 @@ void BarItem::setValue(double v)
     } else {
         m_smoothedValue = static_cast<double>(m_decayRatio) * v
                         + (1.0 - static_cast<double>(m_decayRatio)) * m_smoothedValue;
+    }
+    // Phase A1/A3 — peak-hold tracking. When PeakHoldDecayRatio == 0 the
+    // peak sticks at the highest value ever seen (A1 behavior). When > 0,
+    // the peak decays geometrically toward the live value on every frame
+    // where v < peak, matching Thetis clsBarItem peak-hold marker semantics
+    // (MeterManager.cs:21541, 21544).
+    if (v > m_peakValue || !std::isfinite(m_peakValue)) {
+        m_peakValue = v;
+    } else if (m_peakHoldDecayRatio > 0.0f) {
+        const double r = static_cast<double>(m_peakHoldDecayRatio);
+        m_peakValue = m_peakValue + (v - m_peakValue) * r;
+    }
+
+    // Phase A2 — history ring buffer. Thetis clsBarItem pushes samples at
+    // UpdateInterval and keeps (HistoryDuration / UpdateInterval) entries.
+    // Without a poll-clock reference at setValue time we bound the buffer
+    // by a conservative upper limit (HistoryDurationMs at 100 Hz = 400).
+    if (m_showHistory) {
+        m_history.append(v);
+        const int maxSamples = qMax(2, m_historyDurationMs / 10);
+        while (m_history.size() > maxSamples) {
+            m_history.removeFirst();
+        }
     }
 }
 
@@ -207,20 +323,106 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     const QRect rect = pixelRect(widgetW, widgetH);
-    const double range = m_maxVal - m_minVal;
-    const double frac  = (range > 0.0)
-        ? std::clamp((m_smoothedValue - m_minVal) / range, 0.0, 1.0)
-        : 0.0;
+    const QColor& fillColor = (m_smoothedValue >= m_redThreshold)
+                                  ? m_barRedColor : m_barColor;
 
-    const QColor& fillColor = (m_smoothedValue >= m_redThreshold) ? m_barRedColor : m_barColor;
-
-    if (m_orientation == Orientation::Horizontal) {
-        const int fillW = static_cast<int>(frac * rect.width());
-        p.fillRect(QRect(rect.left(), rect.top(), fillW, rect.height()), fillColor);
-    } else {
+    // Bar body. Uses valueToNormalizedX() so both the linear min..max
+    // fallback (empty calibration) and the Phase A4 piecewise-linear
+    // calibration route through one code path. Only Horizontal
+    // orientation supports the Phase A extensions; Vertical keeps its
+    // pre-A1 behavior because no Thetis preset uses it.
+    if (m_orientation == Orientation::Vertical) {
+        const double range = m_maxVal - m_minVal;
+        const double frac  = (range > 0.0)
+            ? std::clamp((m_smoothedValue - m_minVal) / range, 0.0, 1.0)
+            : 0.0;
         const int fillH = static_cast<int>(frac * rect.height());
-        // Vertical fills from bottom
-        p.fillRect(QRect(rect.left(), rect.bottom() - fillH, rect.width(), fillH), fillColor);
+        p.fillRect(QRect(rect.left(), rect.bottom() - fillH,
+                         rect.width(), fillH),
+                   fillColor);
+        return;
+    }
+
+    const float fracLive = valueToNormalizedX(m_smoothedValue);
+    const int fillW = static_cast<int>(fracLive * rect.width());
+
+    // Phase A2 — history trailing fill. Drawn FIRST so the live bar
+    // overlays it. Each sample produces one vertical line at its own
+    // calibrated X, with full-height alpha-blended stroke using
+    // m_historyColour. Older samples fade via the alpha in the colour
+    // itself; a stronger trail effect will come with VBO work later.
+    if (m_showHistory && !m_history.isEmpty()) {
+        p.setPen(QPen(m_historyColour, 1));
+        for (double v : m_history) {
+            const float hx = valueToNormalizedX(v);
+            const int px = rect.left() + static_cast<int>(hx * rect.width());
+            p.drawLine(px, rect.top(), px, rect.bottom());
+        }
+    }
+
+    // Phase A4 — Line style draws only a thin baseline at the bottom
+    // of the bar rect instead of a filled quad. Matches Thetis
+    // BarStyle.Line where the "bar" is really a baseline + markers +
+    // labels composition.
+    if (m_barStyle == BarStyle::Line) {
+        p.setPen(QPen(fillColor, 2));
+        const int baselineY = rect.bottom() - 2;
+        p.drawLine(rect.left(), baselineY,
+                   rect.left() + fillW, baselineY);
+    } else {
+        // Default Filled bar (existing pre-A behavior, now routed
+        // through valueToNormalizedX so a calibrated Filled bar also
+        // works if anyone wants it).
+        p.fillRect(QRect(rect.left(), rect.top(),
+                         fillW, rect.height()),
+                   fillColor);
+    }
+
+    // Phase A3 — live value marker + peak-hold marker (Thetis
+    // MeterManager.cs:21543-21544). Thin vertical lines at the live
+    // smoothed X and the separate peak X.
+    if (m_showMarker) {
+        p.setPen(QPen(m_markerColour, 2));
+        const int liveX = rect.left() + static_cast<int>(fracLive * rect.width());
+        p.drawLine(liveX, rect.top(), liveX, rect.bottom());
+
+        if (std::isfinite(m_peakValue)) {
+            p.setPen(QPen(m_peakHoldMarkerColour, 2));
+            const float fracPeak = valueToNormalizedX(m_peakValue);
+            const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
+            p.drawLine(peakX, rect.top(), peakX, rect.bottom());
+        }
+    }
+
+    // Phase A1 / E — ShowValue / ShowPeakValue text labels. ShowValue
+    // is drawn top-left in m_fontColour (Thetis default white), and
+    // ShowPeakValue top-right in peakFontColour() (Thetis default red
+    // — per Setup → Appearance → Meters/Gadgets Peak Value swatch).
+    // Both use a small proportional bold font. Idle values (−inf)
+    // are skipped.
+    if (m_showValue || m_showPeakValue) {
+        QFont font = p.font();
+        const int fontPx = qMax(9, rect.height() / 3);
+        font.setPixelSize(fontPx);
+        font.setBold(true);
+        p.setFont(font);
+        const QFontMetrics fm(font);
+
+        if (m_showValue && std::isfinite(m_smoothedValue)) {
+            p.setPen(m_fontColour);
+            const QString s = QString::number(m_smoothedValue, 'f', 1);
+            p.drawText(rect.left() + 2,
+                       rect.top() + fm.ascent(),
+                       s);
+        }
+        if (m_showPeakValue && std::isfinite(m_peakValue)) {
+            p.setPen(peakFontColour());
+            const QString s = QString::number(m_peakValue, 'f', 1);
+            const int w = fm.horizontalAdvance(s);
+            p.drawText(rect.right() - w - 2,
+                       rect.top() + fm.ascent(),
+                       s);
+        }
     }
 }
 
@@ -313,9 +515,11 @@ void BarItem::paintEdge(QPainter& p, int widgetW, int widgetH)
 
 QString BarItem::serialize() const
 {
-    // Fields 0-14: BAR|x|y|w|h|bindingId|zOrder|orientation|min|max|barColor|barRedColor|redThreshold|attack|decay
+    // Fields 0-14:  BAR|x|y|w|h|bindingId|zOrder|orientation|min|max|
+    //               barColor|barRedColor|redThreshold|attack|decay
     // Fields 15-19: barStyle|edgeBgColor|edgeLowColor|edgeHighColor|edgeAvgColor
-    return QStringLiteral("BAR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14")
+    // Fields 20-22: showValue|showPeakValue|fontColour           (Phase A1)
+    QString base = QStringLiteral("BAR|%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12|%13|%14")
         .arg(baseFields(*this))
         .arg(m_orientation == Orientation::Horizontal ? QStringLiteral("H") : QStringLiteral("V"))
         .arg(m_minVal)
@@ -325,11 +529,41 @@ QString BarItem::serialize() const
         .arg(m_redThreshold)
         .arg(static_cast<double>(m_attackRatio))
         .arg(static_cast<double>(m_decayRatio))
-        .arg(m_barStyle == BarStyle::Edge ? QStringLiteral("Edge") : QStringLiteral("Filled"))
+        .arg(m_barStyle == BarStyle::Edge ? QStringLiteral("Edge")
+            : (m_barStyle == BarStyle::Line ? QStringLiteral("Line")
+                                            : QStringLiteral("Filled")))
         .arg(m_edgeBgColor.name(QColor::HexArgb))
         .arg(m_edgeLowColor.name(QColor::HexArgb))
         .arg(m_edgeHighColor.name(QColor::HexArgb))
         .arg(m_edgeAvgColor.name(QColor::HexArgb));
+    // Append-only tail (Phase A1). Legacy readers stop at field 19 and
+    // these get the defaults — see tail-tolerant parse below.
+    base += QLatin1Char('|') + (m_showValue     ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + (m_showPeakValue ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + m_fontColour.name(QColor::HexArgb);
+    // Phase A2 tail: showHistory | historyColour | historyDurationMs
+    base += QLatin1Char('|') + (m_showHistory ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + m_historyColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + QString::number(m_historyDurationMs);
+    // Phase A3 tail: showMarker | markerColour | peakHoldMarkerColour | peakHoldDecayRatio
+    base += QLatin1Char('|') + (m_showMarker ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + m_markerColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + m_peakHoldMarkerColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + QString::number(static_cast<double>(m_peakHoldDecayRatio));
+    // Phase A4 tail: scaleCalibration (semicolon-separated value=x pairs).
+    // Empty-calibration BarItems emit an empty string, keeping the parser
+    // identical for pre-A4 saves. The barStyle field (index 15) is already
+    // serialized above — the Line value just joins Filled/Edge in the
+    // existing string slot, so no new slot is needed for the enum itself.
+    QStringList calParts;
+    for (auto it = m_scaleCalibration.constBegin();
+         it != m_scaleCalibration.constEnd(); ++it) {
+        calParts << QStringLiteral("%1=%2")
+                        .arg(it.key())
+                        .arg(static_cast<double>(it.value()));
+    }
+    base += QLatin1Char('|') + calParts.join(QLatin1Char(';'));
+    return base;
 }
 
 bool BarItem::deserialize(const QString& data)
@@ -357,11 +591,75 @@ bool BarItem::deserialize(const QString& data)
     // Optional Edge mode fields (new format, 20 fields total)
     // From Thetis console.cs:12612-12678
     if (parts.size() >= 20) {
-        m_barStyle    = (parts[15] == QLatin1String("Edge")) ? BarStyle::Edge : BarStyle::Filled;
+        // Phase A4: BarStyle is now a 3-way enum (Filled, Edge, Line)
+        if (parts[15] == QLatin1String("Edge")) {
+            m_barStyle = BarStyle::Edge;
+        } else if (parts[15] == QLatin1String("Line")) {
+            m_barStyle = BarStyle::Line;
+        } else {
+            m_barStyle = BarStyle::Filled;
+        }
         QColor ec1 = QColor(parts[16]); if (ec1.isValid()) { m_edgeBgColor   = ec1; }
         QColor ec2 = QColor(parts[17]); if (ec2.isValid()) { m_edgeLowColor  = ec2; }
         QColor ec3 = QColor(parts[18]); if (ec3.isValid()) { m_edgeHighColor = ec3; }
         QColor ec4 = QColor(parts[19]); if (ec4.isValid()) { m_edgeAvgColor  = ec4; }
+    }
+
+    // Phase A1 — ShowValue / ShowPeakValue / FontColour (append-only tail)
+    if (parts.size() >= 21) { m_showValue     = (parts[20] == QLatin1String("1")); }
+    if (parts.size() >= 22) { m_showPeakValue = (parts[21] == QLatin1String("1")); }
+    if (parts.size() >= 23) {
+        QColor fc = QColor(parts[22]);
+        if (fc.isValid()) { m_fontColour = fc; }
+    }
+
+    // Phase A2 — ShowHistory / HistoryColour / HistoryDurationMs
+    if (parts.size() >= 24) { m_showHistory = (parts[23] == QLatin1String("1")); }
+    if (parts.size() >= 25) {
+        QColor hc = QColor(parts[24]);
+        if (hc.isValid()) { m_historyColour = hc; }
+    }
+    if (parts.size() >= 26) {
+        bool okDur = true;
+        int dur = parts[25].toInt(&okDur);
+        if (okDur) { m_historyDurationMs = dur; }
+    }
+
+    // Phase A3 — ShowMarker / MarkerColour / PeakHoldMarkerColour / PeakHoldDecayRatio
+    if (parts.size() >= 27) { m_showMarker = (parts[26] == QLatin1String("1")); }
+    if (parts.size() >= 28) {
+        QColor mc = QColor(parts[27]);
+        if (mc.isValid()) { m_markerColour = mc; }
+    }
+    if (parts.size() >= 29) {
+        QColor pc = QColor(parts[28]);
+        if (pc.isValid()) { m_peakHoldMarkerColour = pc; }
+    }
+    if (parts.size() >= 30) {
+        bool okR = true;
+        float r = parts[29].toFloat(&okR);
+        if (okR) { m_peakHoldDecayRatio = r; }
+    }
+
+    // Phase A4 — ScaleCalibration (semicolon-separated value=x pairs).
+    if (parts.size() >= 31) {
+        m_scaleCalibration.clear();
+        const QString& calStr = parts[30];
+        if (!calStr.isEmpty()) {
+            const QStringList calParts =
+                calStr.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+            for (const QString& p : calParts) {
+                const int eq = p.indexOf(QLatin1Char('='));
+                if (eq <= 0) { continue; }
+                bool okK = true;
+                bool okV = true;
+                const double k = p.left(eq).toDouble(&okK);
+                const float  v = p.mid(eq + 1).toFloat(&okV);
+                if (okK && okV) {
+                    m_scaleCalibration.insert(k, v);
+                }
+            }
+        }
     }
 
     return true;
@@ -377,6 +675,136 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
 {
     const QRect rect = pixelRect(widgetW, widgetH);
     const double range = m_maxVal - m_minVal;
+
+    // Phase B2 — ShowType centered title.
+    // From Thetis MeterManager.cs:31879-31886. Thetis draws the title
+    // above the scale rect in the container background area. NereusSDR
+    // draws it inside the top ~25% of the ScaleItem's own rect so the
+    // item owns its title space; presets leave room at the top when
+    // building the row (Phase D1).
+    if (m_showType) {
+        const QString title = readingName(m_bindingId);
+        if (!title.isEmpty()) {
+            const int titleHeight = qMax(8, rect.height() / 3);
+            QFont titleFont = p.font();
+            titleFont.setPixelSize(titleHeight);
+            titleFont.setBold(true);
+            p.setFont(titleFont);
+            p.setPen(m_titleColour);
+            const QRect titleRect(rect.left(),
+                                  rect.top(),
+                                  rect.width(),
+                                  titleHeight);
+            p.drawText(titleRect, Qt::AlignCenter, title);
+        }
+    }
+
+    // Phase B3 — if the scale is in GeneralScale mode, render the
+    // two-tone Thetis-style baseline + ticks instead of the NereusSDR
+    // evenly-spaced renderer below. Ported from MeterManager.cs:32338-32423
+    // generalScale(). Text labels (per-tick numeric values) are drawn
+    // using the existing QFontMetrics-based positioning; colours come
+    // from m_lowColour / m_highColour / m_labelColor.
+    if (m_scaleStyle == ScaleStyle::GeneralScale) {
+        const float rx = static_cast<float>(rect.left());
+        const float ry = static_cast<float>(rect.top());
+        const float rw = static_cast<float>(rect.width());
+        const float rh = static_cast<float>(rect.height());
+
+        // lowToHighPoint — the x-fraction at which the two-tone split
+        // happens. Falls back to the even (lowLongTicks-1)/(totalTicks-1)
+        // distribution when m_centrePerc < 0 (Thetis default).
+        float lowToHighPoint =
+            static_cast<float>(m_lowLongTicks - 1)
+                / static_cast<float>(m_lowLongTicks + m_highLongTicks - 1);
+        if (m_centrePerc >= 0.0f) {
+            lowToHighPoint = m_centrePerc;
+        }
+
+        // Per-segment spacing. `lowSpacing` is the distance between
+        // consecutive long ticks in the low half; `highSpacing` is the
+        // same for the high half but measured over (w - lowSpan - w*0.01)
+        // so the high baseline stops at x + w*0.99 — matches Thetis.
+        const float lowSpacing =
+            (rw * lowToHighPoint) / static_cast<float>(m_lowLongTicks - 1);
+        const float lowSpan = lowSpacing * static_cast<float>(m_lowLongTicks - 1);
+        const float highSpacing =
+            ((rw - lowSpan) - (rw * 0.01f))
+                / static_cast<float>(m_highLongTicks);
+
+        const float fLineBaseY = ry + (rh * 0.85f);
+
+        // Baseline horizontal line, split at end of low segment.
+        p.setPen(QPen(m_lowColour, 2));
+        p.drawLine(QPointF(rx, fLineBaseY),
+                   QPointF(rx + lowSpan, fLineBaseY));
+        p.setPen(QPen(m_highColour, 2));
+        p.drawLine(QPointF(rx + lowSpan, fLineBaseY),
+                   QPointF(rx + rw * 0.99f, fLineBaseY));
+
+        // Pick a font for the per-tick labels.
+        const int dynFontPx = qMax(m_fontSize, rect.height() / 4);
+        QFont font = p.font();
+        font.setPixelSize(dynFontPx);
+        p.setFont(font);
+        const QFontMetrics fm(font);
+
+        auto drawTick = [&](float tickX, bool isMajor, const QColor& colour) {
+            const float topY = fLineBaseY
+                             - (rh * (isMajor ? 0.30f : 0.15f));
+            p.setPen(QPen(colour, 2));
+            p.drawLine(QPointF(tickX, fLineBaseY), QPointF(tickX, topY));
+        };
+
+        auto drawLabel = [&](float tickX, const QString& text,
+                             const QColor& colour, bool rightAligned) {
+            const float topY = fLineBaseY - (rh * 0.30f);
+            const int w = fm.horizontalAdvance(text);
+            const int h = fm.height();
+            float lx = rightAligned
+                ? (rx + rw - w)
+                : (tickX - w / 2.0f);
+            p.setPen(colour);
+            p.drawText(QPointF(lx, topY - (h - fm.ascent())), text);
+        };
+
+        // Low segment ticks + labels.
+        for (int i = 1; i < m_lowLongTicks; ++i) {
+            // Short tick offset half a space to the left of the long one
+            // (Thetis line 32373).
+            const float shortX = rx + (static_cast<float>(i) * lowSpacing)
+                                    - (lowSpacing * 0.5f);
+            drawTick(shortX, /*isMajor*/ false, m_lowColour);
+
+            const float longX = rx + (static_cast<float>(i) * lowSpacing);
+            drawTick(longX, /*isMajor*/ true, m_lowColour);
+
+            const int val = m_lowStartNumber + i * m_lowIncrement;
+            drawLabel(longX, QString::number(val), m_labelColor,
+                      /*rightAligned*/ false);
+        }
+
+        // High segment ticks + labels.
+        for (int i = 1; i < m_highLongTicks + 1; ++i) {
+            const float shortX = rx + lowSpan
+                               + (static_cast<float>(i) * highSpacing)
+                               - (highSpacing * 0.5f);
+            drawTick(shortX, /*isMajor*/ false, m_highColour);
+
+            const float longX = rx + lowSpan
+                              + (static_cast<float>(i) * highSpacing);
+            drawTick(longX, /*isMajor*/ true, m_highColour);
+
+            const int val = (m_highEndNumber - (m_highLongTicks * m_highIncrement))
+                          + i * m_highIncrement;
+            const bool isLast = (i == m_highLongTicks);
+            drawLabel(longX, QString::number(val), m_labelColor,
+                      /*rightAligned*/ isLast);
+        }
+
+        return;
+    }
+
     if (range <= 0.0 || m_majorTicks < 2) {
         return;
     }
@@ -451,7 +879,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
 
 QString ScaleItem::serialize() const
 {
-    return QStringLiteral("SCALE|%1|%2|%3|%4|%5|%6|%7|%8|%9")
+    QString base = QStringLiteral("SCALE|%1|%2|%3|%4|%5|%6|%7|%8|%9")
         .arg(baseFields(*this))
         .arg(m_orientation == Orientation::Horizontal ? QStringLiteral("H") : QStringLiteral("V"))
         .arg(m_minVal)
@@ -461,6 +889,25 @@ QString ScaleItem::serialize() const
         .arg(m_tickColor.name(QColor::HexArgb))
         .arg(m_labelColor.name(QColor::HexArgb))
         .arg(m_fontSize);
+    // Phase B2 tail (append-only): showType | titleColour
+    base += QLatin1Char('|') + (m_showType ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + m_titleColour.name(QColor::HexArgb);
+    // Phase B3 tail (append-only): scaleStyle | lowColour | highColour |
+    //   lowLongTicks | highLongTicks | lowStartNumber | highEndNumber |
+    //   lowIncrement | highIncrement | centrePerc
+    base += QLatin1Char('|') + (m_scaleStyle == ScaleStyle::GeneralScale
+                                    ? QStringLiteral("GS")
+                                    : QStringLiteral("L"));
+    base += QLatin1Char('|') + m_lowColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + m_highColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + QString::number(m_lowLongTicks);
+    base += QLatin1Char('|') + QString::number(m_highLongTicks);
+    base += QLatin1Char('|') + QString::number(m_lowStartNumber);
+    base += QLatin1Char('|') + QString::number(m_highEndNumber);
+    base += QLatin1Char('|') + QString::number(m_lowIncrement);
+    base += QLatin1Char('|') + QString::number(m_highIncrement);
+    base += QLatin1Char('|') + QString::number(static_cast<double>(m_centrePerc));
+    return base;
 }
 
 bool ScaleItem::deserialize(const QString& data)
@@ -483,6 +930,38 @@ bool ScaleItem::deserialize(const QString& data)
     m_tickColor  = QColor(parts[12]);       if (!m_tickColor.isValid()) { return false; }
     m_labelColor = QColor(parts[13]);       if (!m_labelColor.isValid()) { return false; }
     m_fontSize   = parts[14].toInt(&ok);    if (!ok) { return false; }
+
+    // Phase B2 — ShowType / TitleColour (append-only tail)
+    if (parts.size() >= 16) { m_showType = (parts[15] == QLatin1String("1")); }
+    if (parts.size() >= 17) {
+        QColor tc = QColor(parts[16]);
+        if (tc.isValid()) { m_titleColour = tc; }
+    }
+
+    // Phase B3 — GeneralScale parameters (append-only tail)
+    if (parts.size() >= 18) {
+        m_scaleStyle = (parts[17] == QLatin1String("GS"))
+                           ? ScaleStyle::GeneralScale
+                           : ScaleStyle::Linear;
+    }
+    if (parts.size() >= 19) {
+        QColor c = QColor(parts[18]);
+        if (c.isValid()) { m_lowColour = c; }
+    }
+    if (parts.size() >= 20) {
+        QColor c = QColor(parts[19]);
+        if (c.isValid()) { m_highColour = c; }
+    }
+    {
+        bool ok2 = true;
+        if (parts.size() >= 21) { int v = parts[20].toInt(&ok2); if (ok2) { m_lowLongTicks = v; } }
+        if (parts.size() >= 22) { int v = parts[21].toInt(&ok2); if (ok2) { m_highLongTicks = v; } }
+        if (parts.size() >= 23) { int v = parts[22].toInt(&ok2); if (ok2) { m_lowStartNumber = v; } }
+        if (parts.size() >= 24) { int v = parts[23].toInt(&ok2); if (ok2) { m_highEndNumber = v; } }
+        if (parts.size() >= 25) { int v = parts[24].toInt(&ok2); if (ok2) { m_lowIncrement = v; } }
+        if (parts.size() >= 26) { int v = parts[25].toInt(&ok2); if (ok2) { m_highIncrement = v; } }
+        if (parts.size() >= 27) { float v = parts[26].toFloat(&ok2); if (ok2) { m_centrePerc = v; } }
+    }
 
     return true;
 }
@@ -597,11 +1076,27 @@ void NeedleItem::setValue(double v)
 {
     MeterItem::setValue(v);
 
-    const float dbm = static_cast<float>(v);
+    const float val = static_cast<float>(v);
 
     // Exponential smoothing (from AetherSDR SMOOTH_ALPHA = 0.3)
-    m_smoothedDbm += kSmoothAlpha * (dbm - m_smoothedDbm);
-    m_smoothedDbm = std::clamp(m_smoothedDbm, kS0Dbm, kMaxDbm);
+    m_smoothedDbm += kSmoothAlpha * (val - m_smoothedDbm);
+
+    // Clamp to the appropriate value range. Calibrated needles
+    // (ANANMM Volts/Amps/Power/SWR/Compression/ALC) use the
+    // calibration map's key range — they're in native units (volts,
+    // amps, watts, etc.), NOT dBm. Clamping a 13V reading to the
+    // [-127, -13] dBm range mangles it to -13, then
+    // calibratedPosition() looks up -13 in a {10, 12.5, 15} map and
+    // returns the first calibration point — the symptom was every
+    // calibrated needle drawing as a near-horizontal line at the
+    // offset row.
+    if (m_scaleCalibration.isEmpty()) {
+        m_smoothedDbm = std::clamp(m_smoothedDbm, kS0Dbm, kMaxDbm);
+    } else {
+        const float minKey = m_scaleCalibration.firstKey();
+        const float maxKey = m_scaleCalibration.lastKey();
+        m_smoothedDbm = std::clamp(m_smoothedDbm, minKey, maxKey);
+    }
 
     // Peak tracking (from AetherSDR Medium preset: 500ms hold, 10 dB/sec decay)
     if (m_smoothedDbm > m_peakDbm) {

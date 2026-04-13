@@ -141,6 +141,10 @@ signals:
     void titleBarVisibilityChanged(bool visible);
     void minimisedChanged(bool minimised);
     void notesChanged(const QString& notes);
+    // Emitted from setContent() after the new content widget is
+    // installed. ContainerManager listens so it can scan for an inner
+    // MeterWidget and announce it for poller registration.
+    void contentChanged(QWidget* widget);
 
     // --- Phase 3G-5 interactive item signals ---
     void bandClicked(int bandIndex);

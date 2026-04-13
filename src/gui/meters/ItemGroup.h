@@ -53,8 +53,26 @@ public:
     static ItemGroup* createPowerSwrPreset(const QString& name,
                                             QObject* parent = nullptr);
 
+    // --- Phase E: Thetis-parity per-reading bar rows ---
+    // Shared builder used by every create*BarRowPreset below.
+    // Builds the canonical 5-item composition from Thetis
+    // AddALCBar:23326-23411 (and every sibling Add*Bar that clones the
+    // same layout):
+    //   z=1  SolidColourItem dark gray(32,32,32), full rect
+    //   z=2  BarItem Line style, ShowValue + ShowPeakValue + ShowHistory
+    //         + ShowMarker + 3-point ScaleCalibration
+    //   z=3  ScaleItem ShowType=true with the same bindingId so the row
+    //         labels itself via readingName()
+    // Different readings differ only in: bindingId, 3-point calibration
+    // tuple, and historyColour.
+    static ItemGroup* buildBarRow(int bindingId,
+                                  double lowVal, double midVal, double highVal,
+                                  float midX, float highX,
+                                  const QColor& historyColour,
+                                  QObject* parent);
+
     // ALC preset: horizontal bar for TX ALC level.
-    // From Thetis MeterManager.cs ALC scale (-30 to 0 dB).
+    // From Thetis MeterManager.cs AddALCBar:23326-23411.
     static ItemGroup* createAlcPreset(QObject* parent = nullptr);
 
     // Mic level preset: horizontal bar for TX mic level.

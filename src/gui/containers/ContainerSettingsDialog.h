@@ -45,6 +45,17 @@ public:
                                      ContainerManager* manager = nullptr);
     ~ContainerSettingsDialog() override;
 
+    // Compute the next y-position for an item being appended to a
+    // vertically-stacked layout. Items spanning more than 70% of the
+    // container vertically are treated as background / overlay-style
+    // items (ANANMM's full-container needles, ImageItem backgrounds,
+    // etc.) and excluded from the stack calculation — otherwise an
+    // ANANMM container would clamp every newly-added item to y=0.9
+    // and pile them on top of each other. Public + static so the
+    // tst_container_persistence suite can exercise it without
+    // instantiating the dialog.
+    static float nextStackYPos(const QVector<MeterItem*>& items);
+
 private slots:
     void onItemSelectionChanged();
     void onAddItem();
@@ -77,6 +88,12 @@ private:
     void addNewItem(const QString& typeTag);
     static MeterItem* createDefaultItem(const QString& typeTag);
     void loadPresetByName(const QString& name);
+    // Phase E — Thetis-parity "Add to Container" stacking flow.
+    // Called from onAddFromAvailable for PRESET_* list entries.
+    // Builds the named bar row preset and rescales its 0..1 items
+    // into the next stack slot so rows pile up vertically instead
+    // of overlapping.
+    void appendPresetRow(const QString& presetName);
 
     void populateItemList();
     void updatePreview();

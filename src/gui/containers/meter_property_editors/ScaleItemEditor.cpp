@@ -1,11 +1,12 @@
 #include "ScaleItemEditor.h"
 #include "../../meters/MeterItem.h"
 
+#include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
-#include <QSpinBox>
 #include <QPushButton>
-#include <QColorDialog>
+#include <QSpinBox>
 
 namespace NereusSDR {
 
@@ -57,6 +58,12 @@ void ScaleItemEditor::setItem(MeterItem* item)
     };
     applyTickColor(scale->tickColor());
     applyLabelColor(scale->labelColor());
+
+    // Phase B4 — ShowType + title colour
+    m_chkShowType->setChecked(scale->showType());
+    m_btnTitleColor->setStyleSheet(
+        QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
+            .arg(scale->titleColour().name(QColor::HexArgb)));
 
     endProgrammaticUpdate();
 }
@@ -169,6 +176,39 @@ void ScaleItemEditor::buildTypeSpecific()
         scale->setFontSize(v);
         notifyChanged();
     });
+
+    // --- Phase B4: ShowType + title colour ---
+    // From Thetis clsScaleItem.ShowType (MeterManager.cs:14827). When
+    // checked, ScaleItem::paint draws readingName(bindingId) centered
+    // in the top strip — used by every bar-row preset.
+    m_chkShowType = makeCheckRow(QStringLiteral("Show type title"));
+    connect(m_chkShowType, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        ScaleItem* scale = qobject_cast<ScaleItem*>(m_item);
+        if (!scale) { return; }
+        scale->setShowType(on);
+        notifyChanged();
+    });
+
+    m_btnTitleColor = new QPushButton(this);
+    m_btnTitleColor->setFixedSize(40, 18);
+    auto applyTitleBtn = [this](const QColor& c) {
+        m_btnTitleColor->setStyleSheet(
+            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
+                .arg(c.name(QColor::HexArgb)));
+    };
+    connect(m_btnTitleColor, &QPushButton::clicked, this, [this, applyTitleBtn]() {
+        ScaleItem* scale = qobject_cast<ScaleItem*>(m_item);
+        if (!scale) { return; }
+        const QColor chosen = QColorDialog::getColor(scale->titleColour(), this,
+                                                     QStringLiteral("Title color"));
+        if (chosen.isValid()) {
+            scale->setTitleColour(chosen);
+            applyTitleBtn(chosen);
+            notifyChanged();
+        }
+    });
+    addRow(QStringLiteral("Title color"), m_btnTitleColor);
 }
 
 } // namespace NereusSDR

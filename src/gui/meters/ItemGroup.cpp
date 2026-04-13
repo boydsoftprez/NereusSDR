@@ -473,18 +473,73 @@ void ItemGroup::installInto(MeterWidget* widget, float gx, float gy, float gw, f
 // From AetherSDR SMeterWidget — single NeedleItem handles all rendering.
 // ---------------------------------------------------------------------------
 
+// From Thetis MeterManager.cs:21523-21616  addSMeterBar
+// Canonical Thetis S-meter composition: dark gray background +
+// Line-style BarItem with 3-point non-linear calibration (S0 edge
+// to S9+60) + ScaleItem showing the reading title and a two-tone
+// GeneralScale. Accepts SignalPeak / SignalAvg / SignalMaxBin
+// bindings — same composition, different data source.
 ItemGroup* ItemGroup::createSMeterPreset(int bindingId, const QString& name,
                                           QObject* parent)
 {
     ItemGroup* group = new ItemGroup(name, parent);
 
-    NeedleItem* needle = new NeedleItem();
-    needle->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-    needle->setBindingId(bindingId);
-    needle->setSourceLabel(name);
-    needle->setZOrder(5);
-    group->addItem(needle);
+    // Dark gray backdrop (Thetis Color.FromArgb(32,32,32), MeterManager.cs:21571)
+    // Fills the whole preset rect so title + bar + ticks all sit on it.
+    SolidColourItem* bg = new SolidColourItem();
+    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setColour(QColor(32, 32, 32));
+    bg->setZOrder(1);
+    group->addItem(bg);
 
+    // Line-style bar with Thetis calibration curve
+    // (MeterManager.cs:21529-21555). The bar occupies the bottom ~55%
+    // of the preset rect, leaving ~45% at the top for the ScaleItem
+    // title strip.
+    BarItem* bar = new BarItem();
+    bar->setRect(0.02f, 0.45f, 0.96f, 0.50f);
+    bar->setOrientation(BarItem::Orientation::Horizontal);
+    bar->setBindingId(bindingId);
+    bar->setRange(-140.0, 0.0);  // dBm range for value labels
+    bar->setBarStyle(BarItem::BarStyle::Line);
+    bar->setAttackRatio(0.8f);
+    bar->setDecayRatio(0.2f);
+    bar->setHistoryDurationMs(4000);
+    bar->setShowHistory(true);
+    bar->setHistoryColour(QColor(255, 0, 0, 128));   // Red(128)
+    bar->setShowValue(true);
+    bar->setShowMarker(true);
+    bar->setPeakHoldMarkerColour(QColor(Qt::red));
+    bar->setFontColour(QColor(Qt::yellow));
+    bar->setBarColor(QColor(0x5f, 0x9e, 0xa0));      // CadetBlue
+    // Thetis addSMeterBar non-linear calibration
+    // (MeterManager.cs:21547-21549). -133 places S0 at the left edge
+    // (S0 is actually -127 dBm but Thetis uses -133 for the bar
+    // origin), -73 is S9 at mid-scale, -13 is S9+60 at 99% width.
+    bar->addScaleCalibration(-133.0, 0.0f);
+    bar->addScaleCalibration( -73.0, 0.5f);
+    bar->addScaleCalibration( -13.0, 0.99f);
+    bar->setZOrder(2);
+    group->addItem(bar);
+
+    // Scale with centered title and Thetis-style two-tone GeneralScale
+    // baseline (MeterManager.cs:21557-21564 + dispatch at 31911-31916:
+    //   generalScale(x,y,w,h, scale, 6, 3, -1, 60, 2, 20, ..., 0.5f, true, true)
+    // lowLongTicks=6, highLongTicks=3, lowStart=-1, highEnd=60,
+    // lowInc=2, highInc=20, centrePerc=0.5. The +/- trailing-plus
+    // flags are cosmetic label decorations we don't port yet.
+    ScaleItem* scale = new ScaleItem();
+    scale->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    scale->setBindingId(bindingId);
+    scale->setRange(-140.0, 0.0);
+    scale->setShowType(true);
+    scale->setTitleColour(QColor(Qt::red));
+    scale->setScaleStyle(ScaleItem::ScaleStyle::GeneralScale);
+    scale->setGeneralScaleParams(6, 3, -1, 60, 2, 20, 0.5f);
+    scale->setZOrder(3);
+    group->addItem(scale);
+
+    Q_UNUSED(name);  // Thetis uses MeterType instead of a free label
     return group;
 }
 
@@ -608,133 +663,266 @@ ItemGroup* ItemGroup::createPowerSwrPreset(const QString& name, QObject* parent)
 }
 
 // ---------------------------------------------------------------------------
-// createAlcPreset
-// ALC preset: horizontal bar, -30 to 0 dB range.
-// From Thetis MeterManager.cs ALC scale: 0 dB = 66.5% bar
 // ---------------------------------------------------------------------------
+// Phase E — per-reading bar row port from Thetis Add*Bar factories.
+// Shared builder + 16 thin wrappers. Each per-reading factory differs
+// only in bindingId, 3-point calibration, and historyColour.
+// ---------------------------------------------------------------------------
+
+// From Thetis MeterManager.cs:23326-23411 (AddALCBar) — canonical
+// 5-item bar row composition replicated across every Add*Bar factory:
+//   clsSolidColour dark gray (32,32,32) z=1   — backdrop
+//   clsBarItem PRIMARY z=2                    — peak bar, ShowHistory,
+//       ShowValue, ShowMarker, MarkerColour Yellow, Line style,
+//       3-point calibration, attack 0.8 / decay 0.1
+//   clsScaleItem z=3 ShowType=true            — centered red title via
+//       readingName(bindingId)
+//
+// NereusSDR collapses Thetis's dual-BarItem (separate _PK + _AV bars
+// chained via PostDrawItem) into a single BarItem whose ShowPeakValue
+// + m_peakValue tracking provides the same visual effect: one bar
+// shows the live average, one marker holds the decaying peak.
+ItemGroup* ItemGroup::buildBarRow(int bindingId,
+                                  double lowVal, double midVal, double highVal,
+                                  float midX, float highX,
+                                  const QColor& historyColour,
+                                  QObject* parent)
+{
+    ItemGroup* group = new ItemGroup(readingName(bindingId), parent);
+
+    // z=1 dark gray backdrop (Thetis line 23390-23396 sc)
+    SolidColourItem* bg = new SolidColourItem();
+    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setColour(QColor(32, 32, 32));
+    bg->setZOrder(1);
+    group->addItem(bg);
+
+    // z=2 Line-style bar with ShowValue + ShowPeakValue + ShowHistory
+    // + ShowMarker + PeakHoldMarker (Thetis line 23332-23354).
+    //
+    // Colours pinned from the live Thetis dialog at
+    // Setup → Appearance → Meters/Gadgets ("ALC Compression" selected):
+    //   Low          = white
+    //   High         = red
+    //   Indicator    = yellow   (marker)
+    //   Peak Value   = red      (text and peak-hold marker)
+    //   Show History = LemonChiffon(128) — caller-supplied
+    //   Meter Title  = red      (set on the ScaleItem below)
+    //   Current value text = white (same as Low colour)
+    BarItem* bar = new BarItem();
+    bar->setRect(0.02f, 0.45f, 0.96f, 0.50f);
+    bar->setOrientation(BarItem::Orientation::Horizontal);
+    bar->setBindingId(bindingId);
+    bar->setRange(lowVal, highVal);
+    bar->setBarStyle(BarItem::BarStyle::Line);
+    bar->setAttackRatio(0.8f);
+    bar->setDecayRatio(0.1f);
+    bar->setHistoryDurationMs(2000);
+    bar->setShowHistory(true);
+    bar->setHistoryColour(historyColour);
+    bar->setShowValue(true);
+    bar->setShowPeakValue(true);
+    bar->setShowMarker(true);
+    bar->setMarkerColour(QColor(Qt::yellow));
+    bar->setPeakHoldMarkerColour(QColor(Qt::red));
+    bar->setPeakHoldDecayRatio(0.02f);
+    bar->setFontColour(QColor(Qt::white));
+    bar->setPeakFontColour(QColor(Qt::red));
+    bar->setBarColor(QColor(Qt::white));
+    bar->setBarRedColor(QColor(Qt::red));
+    bar->setRedThreshold(midVal);
+    // 3-point calibration — maps lowVal -> 0.0, midVal -> midX,
+    // highVal -> highX. Matches Thetis per-reading ScaleCalibration
+    // calls (AddALCBar line 23347-23349, AddMicBar 23025-23027, etc.).
+    bar->addScaleCalibration(lowVal,  0.0f);
+    bar->addScaleCalibration(midVal,  midX);
+    bar->addScaleCalibration(highVal, highX);
+    bar->setZOrder(2);
+    group->addItem(bar);
+
+    // z=3 Scale with ShowType centered title + linear tick layout
+    // (Thetis line 23381-23388). Falls through to the NereusSDR
+    // Linear scale renderer since each bar row uses a linear tick
+    // layout — GeneralScale's two-tone is reserved for the S-Meter
+    // preset where lowStart/highEnd are asymmetric.
+    ScaleItem* scale = new ScaleItem();
+    scale->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    scale->setBindingId(bindingId);
+    scale->setRange(lowVal, highVal);
+    scale->setShowType(true);
+    scale->setTitleColour(QColor(Qt::red));
+    scale->setMajorTicks(6);
+    scale->setMinorTicks(4);
+    scale->setZOrder(3);
+    group->addItem(scale);
+
+    return group;
+}
+
+// The 16 per-reading factories — each a one-liner call to buildBarRow
+// with the reading's bindingId, min/mid/high calibration, and
+// reference-sourced historyColour.
 
 ItemGroup* ItemGroup::createAlcPreset(QObject* parent)
 {
-    return createCompactHBarPreset(MeterBinding::TxAlc, -30.0, 0.0,
-                                   QStringLiteral("ALC"), parent);
+    // From Thetis AddALCBar:23347-23349 — cal (-30 -> 0, 0 -> 0.665, 12 -> 0.99)
+    //        AddALCBar:23345      — historyColour LemonChiffon(128)
+    return buildBarRow(MeterBinding::TxAlc,
+                       -30.0, 0.0, 12.0, 0.665f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
-
-// ---------------------------------------------------------------------------
-// createMicPreset
-// Mic level preset: horizontal bar, -30 to 0 dB range.
-// From Thetis MeterManager.cs MIC scale
-// ---------------------------------------------------------------------------
 
 ItemGroup* ItemGroup::createMicPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxMic, -30.0, 0.0,
-                            QStringLiteral("Mic"), parent);
+    // From Thetis AddMicBar:23025-23027 — cal (-30, 0@0.665, 12@0.99)
+    //        AddMicBar:23023      — historyColour Red(128)
+    return buildBarRow(MeterBinding::TxMic,
+                       -30.0, 0.0, 12.0, 0.665f, 0.99f,
+                       QColor(255, 0, 0, 128),
+                       parent);
 }
-
-// ---------------------------------------------------------------------------
-// createCompPreset
-// Compressor level preset: horizontal bar, -25 to 0 dB range.
-// From Thetis MeterManager.cs COMP scale
-// ---------------------------------------------------------------------------
 
 ItemGroup* ItemGroup::createCompPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxComp, -25.0, 0.0,
-                            QStringLiteral("Comp"), parent);
+    // From Thetis AddCompBar:23681+ — same calibration shape as ALC
+    return buildBarRow(MeterBinding::TxComp,
+                       -30.0, 0.0, 12.0, 0.665f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
-
-// ---------------------------------------------------------------------------
-// Phase 3G-4 bar presets (from Thetis MeterManager.cs AddMeter factory)
-// ---------------------------------------------------------------------------
 
 ItemGroup* ItemGroup::createSignalBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::SignalPeak, -140.0, 0.0,
-                            QStringLiteral("Signal"), parent);
+    // Linear -140..0 range for direct dBm signal readout. The S-Meter
+    // calibrated 3-point (S0/S9/S9+60) lives in createSMeterPreset.
+    return buildBarRow(MeterBinding::SignalPeak,
+                       -140.0, -70.0, 0.0, 0.5f, 0.99f,
+                       QColor(255, 0, 0, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAvgSignalBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::SignalAvg, -140.0, 0.0,
-                            QStringLiteral("Avg Signal"), parent);
+    return buildBarRow(MeterBinding::SignalAvg,
+                       -140.0, -70.0, 0.0, 0.5f, 0.99f,
+                       QColor(255, 0, 0, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createMaxBinBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::SignalMaxBin, -140.0, 0.0,
-                            QStringLiteral("Max Bin"), parent);
+    return buildBarRow(MeterBinding::SignalMaxBin,
+                       -140.0, -70.0, 0.0, 0.5f, 0.99f,
+                       QColor(255, 0, 0, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAdcBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::AdcAvg, -140.0, 0.0,
-                            QStringLiteral("ADC"), parent);
+    // From Thetis AddADCBar:21740+
+    return buildBarRow(MeterBinding::AdcAvg,
+                       -140.0, -70.0, 0.0, 0.5f, 0.99f,
+                       QColor(100, 149, 237, 128),  // CornflowerBlue(128)
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAdcMaxMagPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::AdcPeak, -140.0, 0.0,
-                            QStringLiteral("ADC Max"), parent);
+    // From Thetis AddADCMaxMag:21638-21640 — cal (0 -> 0, 25000 -> 0.8333, 32768 -> 0.99)
+    return buildBarRow(MeterBinding::AdcPeak,
+                       0.0, 25000.0, 32768.0, 0.8333f, 0.99f,
+                       QColor(100, 149, 237, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAgcBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::AgcAvg, -20.0, 120.0,
-                            QStringLiteral("AGC"), parent);
+    // Thetis renderScale dispatch AGC_AV: generalScale(.., -125, 125, 25, 25, ..)
+    return buildBarRow(MeterBinding::AgcAvg,
+                       -125.0, 0.0, 125.0, 0.5f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAgcGainBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::AgcGain, -20.0, 120.0,
-                            QStringLiteral("AGC Gain"), parent);
+    // Thetis renderScale AGC_GAIN: generalScale(.., -50, 125, 25, 25, ..)
+    return buildBarRow(MeterBinding::AgcGain,
+                       -50.0, 25.0, 125.0, 0.428f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createPbsnrBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::PbSnr, 0.0, 60.0,
-                            QStringLiteral("PBSNR"), parent);
+    return buildBarRow(MeterBinding::PbSnr,
+                       0.0, 30.0, 60.0, 0.5f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createEqBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxEq, -30.0, 0.0,
-                            QStringLiteral("EQ"), parent);
+    // From Thetis AddEQBar:23091+ — same calibration as ALC/Mic
+    return buildBarRow(MeterBinding::TxEq,
+                       -30.0, 0.0, 12.0, 0.665f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createLevelerBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxLeveler, -30.0, 0.0,
-                            QStringLiteral("Leveler"), parent);
+    // From Thetis AddLevelerBar:23179+
+    return buildBarRow(MeterBinding::TxLeveler,
+                       -30.0, 0.0, 12.0, 0.665f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createLevelerGainBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxLevelerGain, 0.0, 30.0,
-                            QStringLiteral("Leveler Gain"), parent);
+    // From Thetis AddLevelerGainBar:23265+
+    return buildBarRow(MeterBinding::TxLevelerGain,
+                       0.0, 10.0, 30.0, 0.333f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAlcGainBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxAlcGain, 0.0, 30.0,
-                            QStringLiteral("ALC Gain"), parent);
+    // From Thetis AddALCGainBar:23412+
+    return buildBarRow(MeterBinding::TxAlcGain,
+                       0.0, 10.0, 30.0, 0.333f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createAlcGroupBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxAlcGroup, -30.0, 25.0,
-                            QStringLiteral("ALC Group"), parent);
+    // From Thetis AddALCGroupBar:23473+
+    return buildBarRow(MeterBinding::TxAlcGroup,
+                       -30.0, 0.0, 25.0, 0.545f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createCfcBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxCfc, -30.0, 0.0,
-                            QStringLiteral("CFC"), parent);
+    // From Thetis AddCFCBar:23534+
+    return buildBarRow(MeterBinding::TxCfc,
+                       -30.0, 0.0, 12.0, 0.665f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createCfcGainBarPreset(QObject* parent)
 {
-    return createHBarPreset(MeterBinding::TxCfcGain, 0.0, 30.0,
-                            QStringLiteral("CFC Gain"), parent);
+    // From Thetis AddCFCGainBar:23620+
+    return buildBarRow(MeterBinding::TxCfcGain,
+                       0.0, 10.0, 30.0, 0.333f, 0.99f,
+                       QColor(255, 250, 205, 128),
+                       parent);
 }
 
 ItemGroup* ItemGroup::createCustomBarPreset(int bindingId, double minVal, double maxVal,
@@ -1259,14 +1447,21 @@ ItemGroup* ItemGroup::createVfoDisplayPreset(QObject* parent)
 
 ItemGroup* ItemGroup::createClockPreset(QObject* parent)
 {
+    // Clock preset is a single narrow strip at the top of its target
+    // region (0..0.15 normalized). The previous version installed
+    // both the background and the ClockItem at full container size
+    // (0,0,1,1), which collided with auto-stacking heuristics: every
+    // subsequent item the user added landed on top of the clock
+    // instead of beside it. Now the bg + clock share the same narrow
+    // strip and the auto-stacker treats them as a real stack member.
     auto* group = new ItemGroup(QStringLiteral("Clock"), parent);
     auto* bg = new SolidColourItem(group);
-    bg->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    bg->setRect(0.0f, 0.0f, 1.0f, 0.15f);
     bg->setColour(QColor(0x0f, 0x0f, 0x1a));
     bg->setZOrder(0);
     group->addItem(bg);
     auto* clock = new ClockItem(group);
-    clock->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    clock->setRect(0.0f, 0.0f, 1.0f, 0.15f);
     clock->setZOrder(1);
     group->addItem(clock);
     return group;

@@ -9,12 +9,20 @@
 #include <QPointF>
 #include <QString>
 #include <QUuid>
+#include <limits>
 
 class QPainter;
 class QMouseEvent;
 class QWheelEvent;
 
 namespace NereusSDR {
+
+// Free function — maps a MeterBinding::* constant to the centered title
+// string ScaleItem renders when setShowType(true). Ported verbatim from
+// Thetis MeterManager.cs:2258-2318 ReadingName(). Returns an empty
+// QString for unmapped binding IDs (ScaleItem skips empty titles).
+QString readingName(int bindingId);
+
 
 class MeterItem : public QObject {
     Q_OBJECT
@@ -185,7 +193,12 @@ class BarItem : public MeterItem {
     Q_OBJECT
 public:
     enum class Orientation { Horizontal, Vertical };
-    enum class BarStyle { Filled, Edge };
+    // From Thetis clsBarItem.BarStyle (MeterManager.cs:19927-19934):
+    //   None, Line, SolidFilled, GradientFilled, Segments.
+    // NereusSDR maps SolidFilled -> Filled for back-compat with pre-A4
+    // presets and adds Line. Edge is a NereusSDR extension (mapped from
+    // Thetis console.cs edge meters).
+    enum class BarStyle { Filled, Edge, Line };
 
     explicit BarItem(QObject* parent = nullptr) : MeterItem(parent) {}
 
@@ -227,11 +240,111 @@ public:
     void setEdgeAvgColor(const QColor& c) { m_edgeAvgColor = c; }
     QColor edgeAvgColor() const { return m_edgeAvgColor; }
 
+    // --- Phase A1: ShowValue / ShowPeakValue / FontColour ---
+    // From Thetis clsBarItem (MeterManager.cs:19939-19940, 21541, 21550,
+    // 21706-21708). ShowValue draws the current value as text top-left of
+    // the bar; ShowPeakValue draws the rolling peak top-right. FontColour
+    // is the shared text color (Thetis default Yellow).
+    void setShowValue(bool on) { m_showValue = on; }
+    bool showValue() const { return m_showValue; }
+
+    void setShowPeakValue(bool on) { m_showPeakValue = on; }
+    bool showPeakValue() const { return m_showPeakValue; }
+
+    void setFontColour(const QColor& c) { m_fontColour = c; }
+    QColor fontColour() const { return m_fontColour; }
+
+    // ShowPeakValue uses a separate colour so the current-value text
+    // can be white while the peak text is red (Thetis default — see
+    // Setup → Appearance → Meters/Gadgets "Peak Value" swatch, which
+    // ships red). If unset, falls back to m_fontColour for
+    // backward compat with pre-Phase-E BarItems that only had one
+    // font colour.
+    void setPeakFontColour(const QColor& c) { m_peakFontColour = c; }
+    QColor peakFontColour() const
+    {
+        return m_peakFontColour.isValid() ? m_peakFontColour : m_fontColour;
+    }
+
+    // Rolling high-water-mark of all values seen via setValue(). Consumed
+    // by ShowPeakValue text render and (in A3) the peak-hold marker.
+    double peakValue() const { return m_peakValue; }
+
+    // --- Phase A2: ShowHistory / HistoryColour / HistoryDuration ---
+    // From Thetis clsBarItem (MeterManager.cs:19938, 19881, 19945-19946,
+    // 20040-20053). History draws a translucent trailing fill behind the
+    // live bar showing recent values. Thetis default HistoryDuration is
+    // 4000ms (see addSMeterBar:21539 and AddADCMaxMag:21633).
+    void setShowHistory(bool on) { m_showHistory = on; }
+    bool showHistory() const { return m_showHistory; }
+
+    void setHistoryColour(const QColor& c) { m_historyColour = c; }
+    QColor historyColour() const { return m_historyColour; }
+
+    void setHistoryDurationMs(int ms) { m_historyDurationMs = ms; }
+    int historyDurationMs() const { return m_historyDurationMs; }
+
+    // Introspection for tests + the render pass.
+    int historySampleCount() const { return static_cast<int>(m_history.size()); }
+
+    // --- Phase A3: ShowMarker / MarkerColour / PeakHoldMarkerColour ---
+    // From Thetis clsBarItem (MeterManager.cs:21543-21544). ShowMarker
+    // draws a thin vertical line at the live smoothed value; the separate
+    // peak-hold marker draws at the decaying peakValue(). The peak-hold
+    // decay ratio is independent of attack/decay smoothing — when non-zero,
+    // peakValue() falls toward the live value when values drop.
+    void setShowMarker(bool on) { m_showMarker = on; }
+    bool showMarker() const { return m_showMarker; }
+
+    void setMarkerColour(const QColor& c) { m_markerColour = c; }
+    QColor markerColour() const { return m_markerColour; }
+
+    void setPeakHoldMarkerColour(const QColor& c) { m_peakHoldMarkerColour = c; }
+    QColor peakHoldMarkerColour() const { return m_peakHoldMarkerColour; }
+
+    void setPeakHoldDecayRatio(float r) { m_peakHoldDecayRatio = r; }
+    float peakHoldDecayRatio() const { return m_peakHoldDecayRatio; }
+
+    // --- Phase A4: ScaleCalibration (non-linear value → X map) ---
+    // From Thetis clsBarItem.ScaleCalibration (MeterManager.cs:20192,
+    // 21547-21549 addSMeterBar, 21638-21640 AddADCMaxMag). When calibration
+    // waypoints are set, the bar uses piecewise-linear interpolation
+    // between them instead of the linear minVal..maxVal mapping. Used by
+    // the S-meter to map the non-linear dBm→S-unit curve. When empty,
+    // BarItem falls back to linear range mapping (pre-A4 behavior).
+    void addScaleCalibration(double value, float normalizedX);
+    void clearScaleCalibration() { m_scaleCalibration.clear(); }
+    int scaleCalibrationSize() const
+    {
+        return static_cast<int>(m_scaleCalibration.size());
+    }
+
+    // Map a raw value to a normalized X position in [0, 1]. Uses
+    // ScaleCalibration if populated, otherwise linear range mapping.
+    // Consumed by paint() for bar fill length, live marker, peak marker,
+    // and history polyline — the single source of truth for "where on
+    // the bar does this value sit".
+    float valueToNormalizedX(double value) const;
+
     // Override setValue() for exponential smoothing
     // From Thetis MeterManager.cs — attack/decay smoothing
     void setValue(double v) override;
 
+    // renderLayer() stays at Geometry for legacy code that queries it,
+    // but participatesIn() opts the bar out of the GPU Geometry pass
+    // and into the OverlayDynamic QPainter pass. Phase D1b needs every
+    // A-phase render (history polyline, ShowValue text, ShowMarker +
+    // PeakHold lines, BarStyle::Line baseline, calibrated value
+    // positioning) and none of those can be expressed as a GPU vertex
+    // quad without major shader work. Running through the overlay
+    // QPainter is simpler and matches how ScaleItem + TextItem already
+    // render in the same render cycle. emitVertices() below is kept
+    // as a safety no-op fall-through in case some other code path
+    // still iterates Geometry items directly.
     Layer renderLayer() const override { return Layer::Geometry; }
+    bool participatesIn(Layer layer) const override {
+        return layer == Layer::OverlayDynamic;
+    }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     void emitVertices(QVector<float>& verts, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -256,6 +369,26 @@ private:
     QColor      m_edgeLowColor{Qt::white};
     QColor      m_edgeHighColor{Qt::red};
     QColor      m_edgeAvgColor{Qt::yellow};
+    // Phase A1 — clsBarItem text/peak fields
+    bool        m_showValue{false};
+    bool        m_showPeakValue{false};
+    QColor      m_fontColour{Qt::yellow};
+    QColor      m_peakFontColour{};  // invalid = use m_fontColour
+    double      m_peakValue{-std::numeric_limits<double>::infinity()};
+    // Phase A2 — clsBarItem history fields
+    bool        m_showHistory{false};
+    QColor      m_historyColour{255, 0, 0, 128};  // Thetis default Red(128)
+    int         m_historyDurationMs{4000};         // Thetis default
+    QVector<double> m_history;                     // rolling sample buffer
+    // Phase A3 — clsBarItem marker fields
+    bool        m_showMarker{false};
+    QColor      m_markerColour{Qt::yellow};
+    QColor      m_peakHoldMarkerColour{Qt::red};
+    float       m_peakHoldDecayRatio{0.0f};        // 0 = hold forever
+    // Phase A4 — non-linear value→X calibration waypoints.
+    // QMap keeps entries sorted by key (value) which is what the
+    // interpolation in valueToNormalizedX() relies on.
+    QMap<double, float> m_scaleCalibration;
 };
 
 // ---------------------------------------------------------------------------
@@ -290,6 +423,61 @@ public:
     void setFontSize(int sz) { m_fontSize = sz; }
     int fontSize() const { return m_fontSize; }
 
+    // --- Phase B2: ShowType centered title ---
+    // From Thetis clsScaleItem (MeterManager.cs:14827 ShowType property,
+    // 31879-31886 render pass). When true, paint() draws readingName()
+    // of the scale's bindingId centered in the top strip of the scale
+    // rect. Used by every bar-row preset to label its row with the
+    // canonical Thetis reading name in red.
+    void setShowType(bool on) { m_showType = on; }
+    bool showType() const { return m_showType; }
+
+    void setTitleColour(const QColor& c) { m_titleColour = c; }
+    QColor titleColour() const { return m_titleColour; }
+
+    // --- Phase B3: GeneralScale two-tone render + baseline at y + h*0.85 ---
+    // From Thetis MeterManager.cs:32338-32423 generalScale(). When
+    // scaleStyle() == GeneralScale, paint() draws a two-tone horizontal
+    // baseline split at centrePerc with major+minor ticks extending
+    // upward from the baseline, matching Thetis exactly. The default
+    // ScaleStyle::Linear leaves the pre-B3 NereusSDR evenly-spaced tick
+    // renderer untouched, so existing Filled presets don't regress.
+    //
+    // Opt in by calling setScaleStyle(GeneralScale) and configuring
+    // setGeneralScaleParams(low, high, start, end, lowInc, highInc,
+    // centrePerc). setLowColour / setHighColour override the default
+    // tick colours for the two halves of the scale.
+    enum class ScaleStyle { Linear, GeneralScale };
+
+    void setScaleStyle(ScaleStyle s) { m_scaleStyle = s; }
+    ScaleStyle scaleStyle() const { return m_scaleStyle; }
+
+    void setLowColour(const QColor& c) { m_lowColour = c; }
+    QColor lowColour() const { return m_lowColour; }
+
+    void setHighColour(const QColor& c) { m_highColour = c; }
+    QColor highColour() const { return m_highColour; }
+
+    void setGeneralScaleParams(int lowLongTicks,
+                               int highLongTicks,
+                               int lowStartNumber,
+                               int highEndNumber,
+                               int lowIncrement,
+                               int highIncrement,
+                               float centrePerc)
+    {
+        m_lowLongTicks   = lowLongTicks;
+        m_highLongTicks  = highLongTicks;
+        m_lowStartNumber = lowStartNumber;
+        m_highEndNumber  = highEndNumber;
+        m_lowIncrement   = lowIncrement;
+        m_highIncrement  = highIncrement;
+        m_centrePerc     = centrePerc;
+    }
+
+    int lowLongTicks() const { return m_lowLongTicks; }
+    int highLongTicks() const { return m_highLongTicks; }
+
     Layer renderLayer() const override { return Layer::OverlayStatic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -305,7 +493,24 @@ private:
     QColor      m_tickColor{0xc8, 0xd8, 0xe8};
     QColor      m_labelColor{0x80, 0x90, 0xa0};
     int         m_fontSize{10};
+    // Phase B2 — ShowType title
+    bool        m_showType{false};
+    QColor      m_titleColour{Qt::red};   // Thetis default per screenshot
+    // Phase B3 — GeneralScale two-tone renderer
+    ScaleStyle  m_scaleStyle{ScaleStyle::Linear};
+    QColor      m_lowColour{0xc8, 0xd8, 0xe8};
+    QColor      m_highColour{0xff, 0x80, 0x40};
+    int         m_lowLongTicks{6};
+    int         m_highLongTicks{3};
+    int         m_lowStartNumber{-1};
+    int         m_highEndNumber{60};
+    int         m_lowIncrement{2};
+    int         m_highIncrement{20};
+    float       m_centrePerc{-1.0f};  // -1 = auto from tick counts
 };
+
+// Forward-declare the private render helper called from ScaleItem::paint.
+// (No public API; kept in the cpp file.)
 
 // ---------------------------------------------------------------------------
 // TextItem — Dynamic value readout
@@ -446,6 +651,16 @@ public:
     QPointF calibratedPosition(float value) const;
 
     void setValue(double v) override;
+
+    // Smoothed value as currently held by the needle. Named
+    // m_smoothedDbm historically because the needle started life as a
+    // dBm-only S-meter; for calibrated needles (ANANMM Volts/Amps/
+    // Power/SWR/Compression/ALC) it holds the value in the calibration
+    // map's native units (volts, amps, watts, etc.) — see setValue()
+    // for the per-mode clamp logic. Exposed so tests can assert the
+    // post-smoothing value without round-tripping through paint
+    // geometry.
+    float smoothedValue() const { return m_smoothedDbm; }
 
     // Multi-layer: participates in all 4 pipeline layers
     bool participatesIn(Layer layer) const override;
