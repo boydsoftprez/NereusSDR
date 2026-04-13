@@ -1,5 +1,6 @@
 #include "gui/MainWindow.h"
 #include "core/AppSettings.h"
+#include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/LogCategories.h"
 
@@ -116,6 +117,9 @@ int main(int argc, char* argv[])
 
     // Fusion style as a clean cross-platform base
     app.setStyle(QStyleFactory::create("Fusion"));
+
+    // Register custom metatypes for cross-thread signal/slot connections.
+    qRegisterMetaType<NereusSDR::RadioConnectionError>();
 
     // Load XML settings
     NereusSDR::AppSettings::instance().load();

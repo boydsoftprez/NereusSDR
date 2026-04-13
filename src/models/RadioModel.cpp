@@ -294,7 +294,8 @@ void RadioModel::wireConnectionSignals()
 
     // Error handling
     connect(m_connection, &RadioConnection::errorOccurred,
-            this, [this](const QString& msg) {
+            this, [this](NereusSDR::RadioConnectionError code, const QString& msg) {
+        Q_UNUSED(code);
         qCWarning(lcConnection) << "Connection error:" << msg;
     });
 

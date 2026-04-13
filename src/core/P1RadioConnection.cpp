@@ -336,12 +336,29 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     m_reconnectAttempts = 0;
     m_lastEp6At = QDateTime();
 
-    // Check firmware minimum — warn but don't block (Task 11 adds hard gate)
+    // Apply per-board quirks (attenuator clamp, OC zero-force, etc.) now that
+    // m_caps is set. Source: specHPSDR.cs per-HPSDRHW branches.
+    applyBoardQuirks();
+
+    // Firmware minimum refusal.
+    // Source: Thetis NetworkIO.cs / specHPSDR.cs per-board firmware version checks.
     if (info.firmwareVersion > 0 && m_caps->minFirmwareVersion > 0 &&
         info.firmwareVersion < m_caps->minFirmwareVersion) {
-        qCWarning(lcConnection) << "P1: firmware" << info.firmwareVersion
-                                << "below minimum" << m_caps->minFirmwareVersion
-                                << "for" << m_caps->displayName;
+        const QString msg = QStringLiteral("Firmware v%1 is too old. Minimum supported is v%2.")
+            .arg(info.firmwareVersion).arg(m_caps->minFirmwareVersion);
+        qCWarning(lcConnection) << msg;
+        setState(ConnectionState::Error);
+        emit errorOccurred(RadioConnectionError::FirmwareTooOld, msg);
+        return;
+    }
+    // Non-fatal stale firmware warning.
+    if (info.firmwareVersion > 0 && m_caps->knownGoodFirmware > 0 &&
+        info.firmwareVersion < m_caps->knownGoodFirmware) {
+        const QString msg = QStringLiteral("Firmware v%1 is older than recommended v%2.")
+            .arg(info.firmwareVersion).arg(m_caps->knownGoodFirmware);
+        qCWarning(lcConnection) << msg;
+        // Non-fatal — still emit but proceed.
+        emit errorOccurred(RadioConnectionError::FirmwareStale, msg);
     }
 
     setState(ConnectionState::Connecting);
@@ -411,11 +428,49 @@ void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
 void P1RadioConnection::setTxFrequency(quint64 frequencyHz)  { m_txFreqHz = frequencyHz; }
 void P1RadioConnection::setActiveReceiverCount(int count)    { m_activeRxCount = count; }
 void P1RadioConnection::setSampleRate(int sampleRate)        { m_sampleRate = sampleRate; }
-void P1RadioConnection::setAttenuator(int dB)                { m_atten = dB; }
+void P1RadioConnection::setAttenuator(int dB)
+{
+    // Source: specHPSDR.cs per-HPSDRHW branches + BoardCapabilities registry.
+    // Clamp to board-reported range so UI callers can't exceed hardware limits.
+    if (m_caps && m_caps->attenuator.present) {
+        if (dB > m_caps->attenuator.maxDb) { dB = m_caps->attenuator.maxDb; }
+        if (dB < m_caps->attenuator.minDb) { dB = m_caps->attenuator.minDb; }
+    } else if (m_caps && !m_caps->attenuator.present) {
+        dB = 0;
+    }
+    m_atten = dB;
+}
 void P1RadioConnection::setPreamp(bool enabled)              { m_preamp = enabled; }
 void P1RadioConnection::setTxDrive(int /*level*/)            { /* stub — Task 7 */ }
 void P1RadioConnection::setMox(bool enabled)                 { m_mox = enabled; }
 void P1RadioConnection::setAntenna(int antennaIndex)         { m_antennaIdx = antennaIndex; }
+
+// ---------------------------------------------------------------------------
+// applyBoardQuirks
+//
+// Reads BoardCapabilities (m_caps) and enforces runtime constraints.
+// Must be called after m_caps is set in connectToRadio() and from
+// setBoardForTest() in unit tests.
+//
+// Source: specHPSDR.cs per-HPSDRHW branches + BoardCapabilities registry.
+// Thetis clamps the step-attenuator value in SetupForm per board type and
+// enforces the limits again in NetworkIO.cs before sending C&C frames.
+//
+// (HL2 IoBoardHl2 TLV init + bandwidth monitor come in Task 12)
+// ---------------------------------------------------------------------------
+void P1RadioConnection::applyBoardQuirks()
+{
+    if (!m_caps) { return; }
+
+    // Clamp attenuator to board range.
+    // Source: specHPSDR.cs — per-HPSDRHW min/max dB ranges enforced at setup.
+    if (m_caps->attenuator.present) {
+        if (m_atten > m_caps->attenuator.maxDb) { m_atten = m_caps->attenuator.maxDb; }
+        if (m_atten < m_caps->attenuator.minDb) { m_atten = m_caps->attenuator.minDb; }
+    } else {
+        m_atten = 0;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // onReadyRead
@@ -508,7 +563,8 @@ void P1RadioConnection::onWatchdogTick()
                                 << "); transitioning to Error and scheduling reconnect";
         m_watchdogTimer->stop();
         setState(ConnectionState::Error);
-        emit errorOccurred(QStringLiteral("Radio stopped responding"));
+        emit errorOccurred(RadioConnectionError::NoDataTimeout,
+                           QStringLiteral("Radio stopped responding"));
 
         // Arm the reconnect timer for the next retry attempt (or first if from Connected).
         // Source: NereusSDR design doc §3.6 — 5-second reconnect interval.
@@ -667,10 +723,9 @@ void P1RadioConnection::composeCcAlexRx(quint8*)  { /* Task 7 */ }
 void P1RadioConnection::composeCcAlexTx(quint8*)  { /* Task 7 */ }
 void P1RadioConnection::composeCcOcOutputs(quint8*) { /* Task 7 */ }
 
-void P1RadioConnection::applyBoardQuirks(HPSDRHW) { /* Task 11 */ }
 void P1RadioConnection::hl2SendIoBoardTlv(const QByteArray&) { /* Task 12 */ }
 void P1RadioConnection::hl2CheckBandwidthMonitor() { /* Task 12 */ }
-void P1RadioConnection::checkFirmwareMinimum(int)  { /* Task 11 */ }
+void P1RadioConnection::checkFirmwareMinimum(int)  { /* superseded by connectToRadio firmware check (Task 11) */ }
 
 // ---------------------------------------------------------------------------
 // scaleSample24

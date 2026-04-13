@@ -10,6 +10,20 @@
 
 namespace NereusSDR {
 
+// Structured error taxonomy — design doc §6.1.
+enum class RadioConnectionError {
+    None,
+    DiscoveryNicFailure,
+    DiscoveryAllFailed,
+    RadioInUse,
+    FirmwareTooOld,
+    FirmwareStale,           // non-fatal warning
+    SocketBindFailure,
+    NoDataTimeout,
+    UnknownBoardType,
+    ProtocolMismatch
+};
+
 // Connection state for a radio.
 enum class ConnectionState {
     Disconnected,
@@ -66,7 +80,7 @@ public slots:
 signals:
     // --- State ---
     void connectionStateChanged(NereusSDR::ConnectionState state);
-    void errorOccurred(const QString& message);
+    void errorOccurred(NereusSDR::RadioConnectionError code, const QString& message);
 
     // --- Data ---
     // Emitted for each receiver's I/Q block.
@@ -97,3 +111,4 @@ protected:
 } // namespace NereusSDR
 
 Q_DECLARE_METATYPE(NereusSDR::ConnectionState)
+Q_DECLARE_METATYPE(NereusSDR::RadioConnectionError)

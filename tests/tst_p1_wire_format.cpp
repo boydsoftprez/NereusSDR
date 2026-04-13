@@ -1,5 +1,6 @@
 #include <QtTest/QtTest>
 #include "core/P1RadioConnection.h"
+#include "core/HpsdrModel.h"
 #include <vector>
 
 using namespace NereusSDR;
@@ -216,6 +217,30 @@ private slots:
         QVERIFY(P1RadioConnection::parseEp6Frame(frame, 1, perRx));
         QVERIFY(qAbs(perRx[0][0] - 0.5f) < 0.0001f);   // I
         QVERIFY(qAbs(perRx[0][1] - (-0.5f)) < 0.0001f); // Q
+    }
+
+    // --- Per-board quirks (Task 11) ---
+
+    void hermesLiteAttenClampsTo60() {
+        // HL2 range is 0..60 per BoardCapabilities.cpp kHermesLite.
+        // Source: specHPSDR.cs per-HPSDRHW atten limits.
+        P1RadioConnection conn;
+        conn.init();
+        conn.setBoardForTest(HPSDRHW::HermesLite);
+        conn.setAttenuator(80);  // above max
+        QCOMPARE(conn.currentAttenForTest(), 60);
+        conn.setAttenuator(-5);  // below min
+        QCOMPARE(conn.currentAttenForTest(), 0);
+    }
+
+    void hermesAttenClampsTo31() {
+        // Hermes range is 0..31 per BoardCapabilities.cpp kHermes.
+        // Source: specHPSDR.cs per-HPSDRHW atten limits.
+        P1RadioConnection conn;
+        conn.init();
+        conn.setBoardForTest(HPSDRHW::Hermes);
+        conn.setAttenuator(80);  // above max
+        QCOMPARE(conn.currentAttenForTest(), 31);
     }
 };
 

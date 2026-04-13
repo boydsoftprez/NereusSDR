@@ -146,7 +146,7 @@ void P1FakeRadio::handleDiscoveryProbe(const QHostAddress& from, quint16 port)
     reply[6] = static_cast<char>(0x11);
     reply[7] = static_cast<char>(0x22);
     reply[8] = static_cast<char>(0x33);
-    reply[9]  = static_cast<char>(0x48);  // fw 72
+    reply[9]  = static_cast<char>(m_firmwareVersion & 0xFF);  // configurable fw version (default 72)
     reply[10] = static_cast<char>(0x06);  // HL2
     m_socket->writeDatagram(reply, from, port);
 }

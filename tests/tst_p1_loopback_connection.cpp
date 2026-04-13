@@ -11,6 +11,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include "core/P1RadioConnection.h"
+#include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/HpsdrModel.h"
 #include "fakes/P1FakeRadio.h"
@@ -80,7 +81,36 @@ private slots:
         fake.stop();
     }
 
-    // Test 2: disconnect() stops the radio stream
+    // Test 2: firmware below minimum refuses connect, emits FirmwareTooOld
+    void firmwareBelowMinimumRefusesConnect() {
+        P1FakeRadio fake;
+        fake.setFirmwareVersion(50);  // HL2 minFirmwareVersion is 70 (see BoardCapabilities.cpp)
+        fake.start();
+
+        RadioInfo info;
+        info.address         = fake.localAddress();
+        info.port            = fake.localPort();
+        info.boardType       = HPSDRHW::HermesLite;
+        info.protocol        = ProtocolVersion::Protocol1;
+        info.firmwareVersion = 50;   // below HL2 minimum
+        info.macAddress      = QStringLiteral("aa:bb:cc:11:22:33");
+
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy errSpy(&conn, &RadioConnection::errorOccurred);
+        conn.connectToRadio(info);
+
+        // Should be in Error state synchronously — no async path needed for refusal.
+        QTRY_VERIFY_WITH_TIMEOUT(conn.state() == ConnectionState::Error, 2000);
+        QVERIFY(errSpy.count() >= 1);
+        auto args = errSpy.first();
+        auto code = args.at(0).value<RadioConnectionError>();
+        QCOMPARE(code, RadioConnectionError::FirmwareTooOld);
+
+        fake.stop();
+    }
+
+    // Test 3: disconnect() stops the radio stream
     void disconnectStopsData() {
         P1FakeRadio fake;
         fake.start();

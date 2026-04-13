@@ -24,9 +24,12 @@ target_compile_definitions(tst_radio_discovery_parse PRIVATE
 )
 
 nereus_add_test(tst_p1_wire_format)
+target_compile_definitions(tst_p1_wire_format PRIVATE NEREUS_BUILD_TESTS)
 
 # P1 loopback integration test — uses P1FakeRadio from tests/fakes/
 nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS)
 
 # P1 reconnection state machine test — uses P1FakeRadio auto-streaming (Task 10)
 nereus_add_test(tst_reconnect_on_silence fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_reconnect_on_silence PRIVATE NEREUS_BUILD_TESTS)

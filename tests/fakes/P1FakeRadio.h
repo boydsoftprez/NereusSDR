@@ -43,6 +43,9 @@ public:
     int  ep2FramesReceived() const { return m_ep2Count; }
     bool isRunning()         const { return m_running; }
 
+    // Override the firmware version reported in discovery replies (default: 72).
+    void setFirmwareVersion(int fw) { m_firmwareVersion = fw; }
+
 private slots:
     void onReadyRead();
     void onAutoStreamTick();
@@ -64,6 +67,7 @@ private:
     bool         m_silent{false};
     int          m_ep2Count{0};
     quint32      m_ep6Seq{0};
+    int          m_firmwareVersion{72};  // default matches HL2 kHermesLite knownGoodFirmware
 };
 
 } // namespace NereusSDR::Test

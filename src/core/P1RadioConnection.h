@@ -89,7 +89,7 @@ private:
     void composeCcOcOutputs(quint8* out);
 
     // --- Per-board quirks — implemented in Tasks 11 & 12 ---
-    void applyBoardQuirks(HPSDRHW board);
+    void applyBoardQuirks();
     void hl2SendIoBoardTlv(const QByteArray& tlv);
     void hl2CheckBandwidthMonitor();
     void checkFirmwareMinimum(int fw);
@@ -126,6 +126,13 @@ private:
     int     m_antennaIdx{0};
 
     const BoardCapabilities* m_caps{nullptr};
+
+#ifdef NEREUS_BUILD_TESTS
+public:
+    // Test-only helpers — allow unit tests to inject board caps without a live radio.
+    void setBoardForTest(HPSDRHW board) { m_caps = &BoardCapsTable::forBoard(board); applyBoardQuirks(); }
+    int currentAttenForTest() const { return m_atten; }
+#endif
 };
 
 } // namespace NereusSDR
