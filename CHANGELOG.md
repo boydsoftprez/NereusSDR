@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.1-test2] - 2026-04-12
+
+Phase 3N release pipeline shakedown — disposable. Not a real release.
+
+This tag and the corresponding draft GitHub release exist solely to prove
+`release.yml` produces every expected artifact (2×AppImage, 2×DMG, portable
+ZIP, NSIS setup.exe, source tarball, SHA256SUMS + detached GPG sigs) before
+the legacy workflows are deleted in Phase 3N task 8. The commit that bumps
+CMakeLists.txt to 0.0.1 and adds this changelog entry will be reverted
+immediately after shakedown.
+
 ## [Unreleased]
 
 ### Phase 3G-8 — RX1 Display Parity (complete)
