@@ -615,34 +615,99 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
         }
     }
 
-    // Compute the target stack slot. yPos is the current bottom of
-    // the stack (ignoring full-container background items). slotH is
-    // sized so ~10 rows fit — Thetis Default Multimeter containers
-    // pack about 10-16 rows so this is a reasonable default; the
-    // user can resize the container taller to fit more.
-    const float yPos  = nextStackYPos(m_workingItems);
-    constexpr float kRowSlotH = 0.10f;
-    constexpr float kStackBottom = 0.95f;
-    constexpr float kMinSlotH = 0.02f;
-    const float slotH = qMin(kRowSlotH, kStackBottom - yPos);
-    if (slotH < kMinSlotH) {
-        // No room at the bottom — bail out rather than clobbering
-        // existing items. This is the path that used to overlap
-        // rows: nextStackYPos would clamp yPos back to 0.9 so
-        // slotH recomputed to 0.05, the guard never fired, and the
-        // new row landed exactly on top of the previous one. With
-        // the unclamped yPos the guard now fires cleanly. Future
-        // polish: surface a "container full — resize taller or
-        // remove a row" hint in the dialog status bar.
+    // Proportional stack layout. The bar-row "band" runs from
+    // bandTop (0.70 if a composite has been compressed, else 0) to
+    // bandBottom=0.95. Cluster every existing non-composite,
+    // non-background item into rows by overlapping y-intervals.
+    // Then pick a slot height that's either the natural default
+    // (0.10) or, if more rows would overflow the band, bandH /
+    // (numExisting + 1) — and shrink every existing row to that
+    // height before appending the new one. On each append the stack
+    // fills as much of the band as needed: first three rows stay at
+    // 0.10 tall, the fourth forces everyone to 0.0625, ten rows
+    // shrink to 0.025 etc. The container's pixel height then
+    // controls how many rows are actually readable — resize it
+    // taller and the normalized 0..1 layout scales automatically.
+    constexpr float kRowSlotH       = 0.10f;
+    constexpr float kStackBottom    = 0.95f;
+    constexpr float kMinSlotH       = 0.015f;
+    constexpr float kBackgroundSpan = 0.7f;
+
+    const float bandTop = hasComposite ? 0.70f : 0.0f;
+    const float bandH   = kStackBottom - bandTop;
+
+    struct RowCluster {
+        float yMin;
+        float yMax;
+        QVector<MeterItem*> items;
+    };
+    QVector<RowCluster> clusters;
+    for (MeterItem* mi : m_workingItems) {
+        if (!mi) { continue; }
+        if (isComposite(mi)) { continue; }
+        if (mi->itemHeight() > kBackgroundSpan) { continue; }
+        const float yMin = mi->y();
+        const float yMax = mi->y() + mi->itemHeight();
+        bool placed = false;
+        for (RowCluster& c : clusters) {
+            if (yMin <= c.yMax && yMax >= c.yMin) {
+                c.yMin = qMin(c.yMin, yMin);
+                c.yMax = qMax(c.yMax, yMax);
+                c.items.append(mi);
+                placed = true;
+                break;
+            }
+        }
+        if (!placed) {
+            clusters.append({yMin, yMax, {mi}});
+        }
+    }
+    std::sort(clusters.begin(), clusters.end(),
+              [](const RowCluster& a, const RowCluster& b) {
+                  return a.yMin < b.yMin;
+              });
+
+    const int numExisting = clusters.size();
+    const int numAfter    = numExisting + 1;
+    const float newSlotH  = qMin(kRowSlotH, bandH / static_cast<float>(numAfter));
+
+    if (newSlotH < kMinSlotH) {
         qWarning("ContainerSettingsDialog: no room to append '%s' "
-                 "(yPos=%.3f, slotH=%.3f < %.2f); stack full",
+                 "(newSlotH=%.4f < %.3f, %d existing rows in band %.2f..%.2f); "
+                 "resize container taller or remove a row",
                  qPrintable(presetName),
-                 static_cast<double>(yPos),
-                 static_cast<double>(slotH),
-                 static_cast<double>(kMinSlotH));
+                 static_cast<double>(newSlotH),
+                 static_cast<double>(kMinSlotH),
+                 numExisting,
+                 static_cast<double>(bandTop),
+                 static_cast<double>(kStackBottom));
         delete group;
         return;
     }
+
+    // Redistribute existing rows if the new slot size forces them
+    // to shrink. Each cluster's items are repositioned proportionally
+    // within their new slot so the SolidBg/Bar/Scale relative layout
+    // is preserved.
+    for (int i = 0; i < numExisting; ++i) {
+        RowCluster& c = clusters[i];
+        const float oldYMin  = c.yMin;
+        const float oldSlotH = c.yMax - c.yMin;
+        const float newYMin  = bandTop + static_cast<float>(i) * newSlotH;
+        if (oldSlotH <= 0.0f) { continue; }
+        for (MeterItem* mi : c.items) {
+            const float localY = (mi->y() - oldYMin) / oldSlotH;
+            const float localH = mi->itemHeight() / oldSlotH;
+            mi->setRect(mi->x(),
+                        newYMin + localY * newSlotH,
+                        mi->itemWidth(),
+                        localH * newSlotH);
+        }
+    }
+
+    // Append the new row into its slot at the bottom of the band.
+    const float yPos  = bandTop + static_cast<float>(numExisting) * newSlotH;
+    const float slotH = newSlotH;
 
     for (MeterItem* src : group->items()) {
         MeterItem* clone = createItemFromSerialized(src->serialize());
