@@ -613,6 +613,112 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
         }
     }
 
+    // Phase B3 — if the scale is in GeneralScale mode, render the
+    // two-tone Thetis-style baseline + ticks instead of the NereusSDR
+    // evenly-spaced renderer below. Ported from MeterManager.cs:32338-32423
+    // generalScale(). Text labels (per-tick numeric values) are drawn
+    // using the existing QFontMetrics-based positioning; colours come
+    // from m_lowColour / m_highColour / m_labelColor.
+    if (m_scaleStyle == ScaleStyle::GeneralScale) {
+        const float rx = static_cast<float>(rect.left());
+        const float ry = static_cast<float>(rect.top());
+        const float rw = static_cast<float>(rect.width());
+        const float rh = static_cast<float>(rect.height());
+
+        // lowToHighPoint — the x-fraction at which the two-tone split
+        // happens. Falls back to the even (lowLongTicks-1)/(totalTicks-1)
+        // distribution when m_centrePerc < 0 (Thetis default).
+        float lowToHighPoint =
+            static_cast<float>(m_lowLongTicks - 1)
+                / static_cast<float>(m_lowLongTicks + m_highLongTicks - 1);
+        if (m_centrePerc >= 0.0f) {
+            lowToHighPoint = m_centrePerc;
+        }
+
+        // Per-segment spacing. `lowSpacing` is the distance between
+        // consecutive long ticks in the low half; `highSpacing` is the
+        // same for the high half but measured over (w - lowSpan - w*0.01)
+        // so the high baseline stops at x + w*0.99 — matches Thetis.
+        const float lowSpacing =
+            (rw * lowToHighPoint) / static_cast<float>(m_lowLongTicks - 1);
+        const float lowSpan = lowSpacing * static_cast<float>(m_lowLongTicks - 1);
+        const float highSpacing =
+            ((rw - lowSpan) - (rw * 0.01f))
+                / static_cast<float>(m_highLongTicks);
+
+        const float fLineBaseY = ry + (rh * 0.85f);
+
+        // Baseline horizontal line, split at end of low segment.
+        p.setPen(QPen(m_lowColour, 2));
+        p.drawLine(QPointF(rx, fLineBaseY),
+                   QPointF(rx + lowSpan, fLineBaseY));
+        p.setPen(QPen(m_highColour, 2));
+        p.drawLine(QPointF(rx + lowSpan, fLineBaseY),
+                   QPointF(rx + rw * 0.99f, fLineBaseY));
+
+        // Pick a font for the per-tick labels.
+        const int dynFontPx = qMax(m_fontSize, rect.height() / 4);
+        QFont font = p.font();
+        font.setPixelSize(dynFontPx);
+        p.setFont(font);
+        const QFontMetrics fm(font);
+
+        auto drawTick = [&](float tickX, bool isMajor, const QColor& colour) {
+            const float topY = fLineBaseY
+                             - (rh * (isMajor ? 0.30f : 0.15f));
+            p.setPen(QPen(colour, 2));
+            p.drawLine(QPointF(tickX, fLineBaseY), QPointF(tickX, topY));
+        };
+
+        auto drawLabel = [&](float tickX, const QString& text,
+                             const QColor& colour, bool rightAligned) {
+            const float topY = fLineBaseY - (rh * 0.30f);
+            const int w = fm.horizontalAdvance(text);
+            const int h = fm.height();
+            float lx = rightAligned
+                ? (rx + rw - w)
+                : (tickX - w / 2.0f);
+            p.setPen(colour);
+            p.drawText(QPointF(lx, topY - (h - fm.ascent())), text);
+        };
+
+        // Low segment ticks + labels.
+        for (int i = 1; i < m_lowLongTicks; ++i) {
+            // Short tick offset half a space to the left of the long one
+            // (Thetis line 32373).
+            const float shortX = rx + (static_cast<float>(i) * lowSpacing)
+                                    - (lowSpacing * 0.5f);
+            drawTick(shortX, /*isMajor*/ false, m_lowColour);
+
+            const float longX = rx + (static_cast<float>(i) * lowSpacing);
+            drawTick(longX, /*isMajor*/ true, m_lowColour);
+
+            const int val = m_lowStartNumber + i * m_lowIncrement;
+            drawLabel(longX, QString::number(val), m_labelColor,
+                      /*rightAligned*/ false);
+        }
+
+        // High segment ticks + labels.
+        for (int i = 1; i < m_highLongTicks + 1; ++i) {
+            const float shortX = rx + lowSpan
+                               + (static_cast<float>(i) * highSpacing)
+                               - (highSpacing * 0.5f);
+            drawTick(shortX, /*isMajor*/ false, m_highColour);
+
+            const float longX = rx + lowSpan
+                              + (static_cast<float>(i) * highSpacing);
+            drawTick(longX, /*isMajor*/ true, m_highColour);
+
+            const int val = (m_highEndNumber - (m_highLongTicks * m_highIncrement))
+                          + i * m_highIncrement;
+            const bool isLast = (i == m_highLongTicks);
+            drawLabel(longX, QString::number(val), m_labelColor,
+                      /*rightAligned*/ isLast);
+        }
+
+        return;
+    }
+
     if (range <= 0.0 || m_majorTicks < 2) {
         return;
     }
@@ -700,6 +806,21 @@ QString ScaleItem::serialize() const
     // Phase B2 tail (append-only): showType | titleColour
     base += QLatin1Char('|') + (m_showType ? QStringLiteral("1") : QStringLiteral("0"));
     base += QLatin1Char('|') + m_titleColour.name(QColor::HexArgb);
+    // Phase B3 tail (append-only): scaleStyle | lowColour | highColour |
+    //   lowLongTicks | highLongTicks | lowStartNumber | highEndNumber |
+    //   lowIncrement | highIncrement | centrePerc
+    base += QLatin1Char('|') + (m_scaleStyle == ScaleStyle::GeneralScale
+                                    ? QStringLiteral("GS")
+                                    : QStringLiteral("L"));
+    base += QLatin1Char('|') + m_lowColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + m_highColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + QString::number(m_lowLongTicks);
+    base += QLatin1Char('|') + QString::number(m_highLongTicks);
+    base += QLatin1Char('|') + QString::number(m_lowStartNumber);
+    base += QLatin1Char('|') + QString::number(m_highEndNumber);
+    base += QLatin1Char('|') + QString::number(m_lowIncrement);
+    base += QLatin1Char('|') + QString::number(m_highIncrement);
+    base += QLatin1Char('|') + QString::number(static_cast<double>(m_centrePerc));
     return base;
 }
 
@@ -729,6 +850,31 @@ bool ScaleItem::deserialize(const QString& data)
     if (parts.size() >= 17) {
         QColor tc = QColor(parts[16]);
         if (tc.isValid()) { m_titleColour = tc; }
+    }
+
+    // Phase B3 — GeneralScale parameters (append-only tail)
+    if (parts.size() >= 18) {
+        m_scaleStyle = (parts[17] == QLatin1String("GS"))
+                           ? ScaleStyle::GeneralScale
+                           : ScaleStyle::Linear;
+    }
+    if (parts.size() >= 19) {
+        QColor c = QColor(parts[18]);
+        if (c.isValid()) { m_lowColour = c; }
+    }
+    if (parts.size() >= 20) {
+        QColor c = QColor(parts[19]);
+        if (c.isValid()) { m_highColour = c; }
+    }
+    {
+        bool ok2 = true;
+        if (parts.size() >= 21) { int v = parts[20].toInt(&ok2); if (ok2) { m_lowLongTicks = v; } }
+        if (parts.size() >= 22) { int v = parts[21].toInt(&ok2); if (ok2) { m_highLongTicks = v; } }
+        if (parts.size() >= 23) { int v = parts[22].toInt(&ok2); if (ok2) { m_lowStartNumber = v; } }
+        if (parts.size() >= 24) { int v = parts[23].toInt(&ok2); if (ok2) { m_highEndNumber = v; } }
+        if (parts.size() >= 25) { int v = parts[24].toInt(&ok2); if (ok2) { m_lowIncrement = v; } }
+        if (parts.size() >= 26) { int v = parts[25].toInt(&ok2); if (ok2) { m_highIncrement = v; } }
+        if (parts.size() >= 27) { float v = parts[26].toFloat(&ok2); if (ok2) { m_centrePerc = v; } }
     }
 
     return true;

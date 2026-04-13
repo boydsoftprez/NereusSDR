@@ -174,6 +174,101 @@ private slots:
         QVERIFY(s.deserialize(legacy));
         QCOMPARE(s.showType(), false);
     }
+
+    // ---- Phase B3: GeneralScale two-tone + baseline at y + h*0.85 ----
+
+    void scaleStyle_defaults_to_Linear()
+    {
+        ScaleItem s;
+        QCOMPARE(s.scaleStyle(), ScaleItem::ScaleStyle::Linear);
+    }
+
+    void scaleStyle_GeneralScale_roundtrip()
+    {
+        ScaleItem s;
+        s.setScaleStyle(ScaleItem::ScaleStyle::GeneralScale);
+        QCOMPARE(s.scaleStyle(), ScaleItem::ScaleStyle::GeneralScale);
+
+        const QString serialized = s.serialize();
+        ScaleItem s2;
+        QVERIFY(s2.deserialize(serialized));
+        QCOMPARE(s2.scaleStyle(), ScaleItem::ScaleStyle::GeneralScale);
+    }
+
+    void generalScale_low_high_colours_roundtrip()
+    {
+        ScaleItem s;
+        s.setLowColour(QColor(Qt::green));
+        s.setHighColour(QColor(Qt::blue));
+        QCOMPARE(s.lowColour(), QColor(Qt::green));
+        QCOMPARE(s.highColour(), QColor(Qt::blue));
+    }
+
+    void generalScale_params_roundtrip()
+    {
+        // From Thetis addSMeterBar's dispatch (MeterManager.cs:31915):
+        //   (6, 3, -1, 60, 2, 20, ..., 0.5f, true, true)
+        ScaleItem s;
+        s.setGeneralScaleParams(6, 3, -1, 60, 2, 20, 0.5f);
+        QCOMPARE(s.lowLongTicks(), 6);
+        QCOMPARE(s.highLongTicks(), 3);
+    }
+
+    void generalScale_paints_two_tone_baseline()
+    {
+        // Paint a GeneralScale into a QImage and scan for a green baseline
+        // in the left 50% and a blue baseline in the right 50% at
+        // y = h * 0.85.
+        QImage img(200, 100, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            ScaleItem s;
+            s.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            s.setRange(-140.0, 0.0);
+            s.setScaleStyle(ScaleItem::ScaleStyle::GeneralScale);
+            s.setLowColour(QColor(Qt::green));
+            s.setHighColour(QColor(Qt::blue));
+            // centrePerc 0.5 → split at the horizontal midpoint
+            s.setGeneralScaleParams(6, 3, -1, 60, 2, 20, 0.5f);
+            s.paint(p, img.width(), img.height());
+        }
+        const int baselineY = static_cast<int>(img.height() * 0.85f);
+        // Scan a 3-pixel-tall band around the baseline to tolerate
+        // anti-aliasing and stroke width.
+        const QRect leftBand(0, baselineY - 1,
+                             img.width() / 2, 3);
+        const QRect rightBand(img.width() / 2, baselineY - 1,
+                              img.width() / 2, 3);
+        const int greenInLeft  = countMatching(img, leftBand,  QColor(Qt::green), 60);
+        const int blueInRight  = countMatching(img, rightBand, QColor(Qt::blue),  60);
+        QVERIFY2(greenInLeft > 0,
+                 "GeneralScale should draw low-colour baseline in left half");
+        QVERIFY2(blueInRight > 0,
+                 "GeneralScale should draw high-colour baseline in right half");
+    }
+
+    void generalScale_Linear_style_does_not_draw_horizontal_baseline()
+    {
+        // Sanity check the opt-in design — with style=Linear (the
+        // NereusSDR default), no wide horizontal baseline appears at
+        // y + h*0.85, just the existing evenly-spaced vertical ticks.
+        QImage img(200, 100, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            ScaleItem s;
+            s.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            s.setRange(-140.0, 0.0);
+            // Default style is Linear; no setScaleStyle() call.
+            s.setLowColour(QColor(Qt::green));
+            s.paint(p, img.width(), img.height());
+        }
+        const int baselineY = static_cast<int>(img.height() * 0.85f);
+        const QRect leftBand(0, baselineY - 1, img.width() / 2, 3);
+        const int greenInLeft = countMatching(img, leftBand, QColor(Qt::green), 60);
+        QCOMPARE(greenInLeft, 0);
+    }
 };
 
 QTEST_MAIN(TstMeterItemScale)

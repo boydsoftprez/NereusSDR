@@ -408,6 +408,49 @@ public:
     void setTitleColour(const QColor& c) { m_titleColour = c; }
     QColor titleColour() const { return m_titleColour; }
 
+    // --- Phase B3: GeneralScale two-tone render + baseline at y + h*0.85 ---
+    // From Thetis MeterManager.cs:32338-32423 generalScale(). When
+    // scaleStyle() == GeneralScale, paint() draws a two-tone horizontal
+    // baseline split at centrePerc with major+minor ticks extending
+    // upward from the baseline, matching Thetis exactly. The default
+    // ScaleStyle::Linear leaves the pre-B3 NereusSDR evenly-spaced tick
+    // renderer untouched, so existing Filled presets don't regress.
+    //
+    // Opt in by calling setScaleStyle(GeneralScale) and configuring
+    // setGeneralScaleParams(low, high, start, end, lowInc, highInc,
+    // centrePerc). setLowColour / setHighColour override the default
+    // tick colours for the two halves of the scale.
+    enum class ScaleStyle { Linear, GeneralScale };
+
+    void setScaleStyle(ScaleStyle s) { m_scaleStyle = s; }
+    ScaleStyle scaleStyle() const { return m_scaleStyle; }
+
+    void setLowColour(const QColor& c) { m_lowColour = c; }
+    QColor lowColour() const { return m_lowColour; }
+
+    void setHighColour(const QColor& c) { m_highColour = c; }
+    QColor highColour() const { return m_highColour; }
+
+    void setGeneralScaleParams(int lowLongTicks,
+                               int highLongTicks,
+                               int lowStartNumber,
+                               int highEndNumber,
+                               int lowIncrement,
+                               int highIncrement,
+                               float centrePerc)
+    {
+        m_lowLongTicks   = lowLongTicks;
+        m_highLongTicks  = highLongTicks;
+        m_lowStartNumber = lowStartNumber;
+        m_highEndNumber  = highEndNumber;
+        m_lowIncrement   = lowIncrement;
+        m_highIncrement  = highIncrement;
+        m_centrePerc     = centrePerc;
+    }
+
+    int lowLongTicks() const { return m_lowLongTicks; }
+    int highLongTicks() const { return m_highLongTicks; }
+
     Layer renderLayer() const override { return Layer::OverlayStatic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
@@ -426,7 +469,21 @@ private:
     // Phase B2 — ShowType title
     bool        m_showType{false};
     QColor      m_titleColour{Qt::red};   // Thetis default per screenshot
+    // Phase B3 — GeneralScale two-tone renderer
+    ScaleStyle  m_scaleStyle{ScaleStyle::Linear};
+    QColor      m_lowColour{0xc8, 0xd8, 0xe8};
+    QColor      m_highColour{0xff, 0x80, 0x40};
+    int         m_lowLongTicks{6};
+    int         m_highLongTicks{3};
+    int         m_lowStartNumber{-1};
+    int         m_highEndNumber{60};
+    int         m_lowIncrement{2};
+    int         m_highIncrement{20};
+    float       m_centrePerc{-1.0f};  // -1 = auto from tick counts
 };
+
+// Forward-declare the private render helper called from ScaleItem::paint.
+// (No public API; kept in the cpp file.)
 
 // ---------------------------------------------------------------------------
 // TextItem — Dynamic value readout
