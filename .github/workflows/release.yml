@@ -233,10 +233,12 @@ jobs:
             arch: arm64
             dmg_suffix: macOS-apple-silicon
             deployment_target: "14.0"
-          - runner: macos-13
-            arch: x86_64
-            dmg_suffix: macOS-intel
-            deployment_target: "11.0"
+    # Intel Mac (macos-13) build dropped: GitHub Actions reports the runner
+    # label as unsupported ("configuration 'macos-13-us-default' is not
+    # supported") as of Phase 3N shakedown 2026-04-12. Intel Mac users should
+    # build from source until either the runner is restored OR we cross-
+    # compile an x86_64 binary on macos-15 via CMAKE_OSX_ARCHITECTURES.
+    # Tracked for Phase 3N+1.
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -338,7 +340,7 @@ jobs:
         run: |
           $fftw_dir = "third_party/fftw3"
           New-Item -ItemType Directory -Force -Path "$fftw_dir/include", "$fftw_dir/lib", "$fftw_dir/bin"
-          Invoke-WebRequest -Uri "https://www.fftw.org/fftw-3.3.5-dll64.zip" -OutFile fftw.zip
+          Invoke-WebRequest -Uri "https://fftw.org/pub/fftw/fftw-3.3.5-dll64.zip" -OutFile fftw.zip
           Expand-Archive -Path fftw.zip -DestinationPath fftw-tmp
           Copy-Item fftw-tmp/fftw3.h "$fftw_dir/include/"
           Copy-Item fftw-tmp/libfftw3-3.dll "$fftw_dir/bin/"

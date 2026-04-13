@@ -15,9 +15,11 @@ chmod +x NereusSDR-vX.Y.Z-*.AppImage
 ### macOS
 
 **Apple Silicon (M1/M2/M3/M4):** `NereusSDR-vX.Y.Z-macOS-apple-silicon.dmg`
-**Intel:** `NereusSDR-vX.Y.Z-macOS-intel.dmg`
 
-These builds are **ad-hoc signed** (no Apple Developer ID yet). On first launch:
+Intel Macs are not currently built on CI (GitHub Actions has retired the
+`macos-13` runner label). Intel Mac users should build from source for now.
+
+This build is **ad-hoc signed** (no Apple Developer ID yet). On first launch:
 1. Open the DMG, drag NereusSDR to Applications.
 2. **Right-click** NereusSDR.app → **Open** → **Open** in the dialog.
 3. After the first launch, double-clicking works normally.
