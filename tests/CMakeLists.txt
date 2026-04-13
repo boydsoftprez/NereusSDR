@@ -53,3 +53,8 @@ target_compile_definitions(tst_hardware_page_capability_gating PRIVATE NEREUS_BU
 
 # HardwarePage per-MAC persistence round-trip (Phase 3I Task 21)
 nereus_add_test(tst_hardware_page_persistence)
+
+# Regression test for Windows shutdown/disconnect crash — cross-thread
+# destruction of RadioConnection (and its worker-affined QTimers).
+nereus_add_test(tst_cross_thread_teardown fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_cross_thread_teardown PRIVATE NEREUS_BUILD_TESTS)

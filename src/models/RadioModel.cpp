@@ -1,5 +1,6 @@
 #include "RadioModel.h"
 #include "core/RadioConnection.h"
+#include "core/RadioConnectionTeardown.h"
 #include "core/RadioDiscovery.h"
 #include "core/BoardCapabilities.h"
 #include "core/ReceiverManager.h"
@@ -527,26 +528,12 @@ void RadioModel::teardownConnection()
     QObject::disconnect(m_connection, nullptr, m_receiverManager, nullptr);
     QObject::disconnect(m_receiverManager, nullptr, this, nullptr);
 
-    if (m_connThread && m_connThread->isRunning()) {
-        // Queue disconnect() then quit() on the worker thread.
-        // disconnect() closes sockets/timers, then quit() exits the event loop.
-        // Both are queued as events — they execute in order when the loop is free.
-        QMetaObject::invokeMethod(m_connection, &RadioConnection::disconnect);
-        m_connThread->quit();
-
-        // Wait for thread to finish. If it doesn't stop in time, force it.
-        if (!m_connThread->wait(3000)) {
-            qCWarning(lcConnection) << "Worker thread did not stop in time, terminating";
-            m_connThread->terminate();
-            m_connThread->wait(1000);
-        }
-    }
-
-    delete m_connection;
-    m_connection = nullptr;
-
-    delete m_connThread;
-    m_connThread = nullptr;
+    // Tear down the connection on its own worker thread via the shared
+    // helper. See src/core/RadioConnectionTeardown.h for why this must
+    // run on the worker — short version: the RadioConnection's QTimers
+    // are thread-affined to the worker and destroying them on any other
+    // thread emits cross-thread warnings and can crash on Windows.
+    teardownWorkerThreadedConnection(m_connection, m_connThread);
 }
 
 void RadioModel::onConnectionStateChanged(ConnectionState state)
