@@ -1,6 +1,7 @@
 #include "RadioModel.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
+#include "core/BoardCapabilities.h"
 #include "core/ReceiverManager.h"
 #include "core/AudioEngine.h"
 #include "core/WdspEngine.h"
@@ -121,7 +122,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     m_intentionalDisconnect = false;
 
     m_name = info.displayName();
-    m_model = RadioInfo::boardTypeName(info.boardType);
+    m_model = QString::fromLatin1(BoardCapsTable::forBoard(info.boardType).displayName);
     m_version = QString::number(info.firmwareVersion);
     emit infoChanged();
 

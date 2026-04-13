@@ -1,5 +1,7 @@
 #pragma once
 
+#include "HpsdrModel.h"
+
 #include <QObject>
 #include <QHostAddress>
 #include <QUdpSocket>
@@ -8,21 +10,6 @@
 #include <QMetaType>
 
 namespace NereusSDR {
-
-// OpenHPSDR board types (from Protocol 1/2 discovery responses).
-enum class BoardType : int {
-    Metis       = 0,
-    Hermes      = 1,
-    Griffin     = 2,
-    // 3 unused
-    Angelia     = 4,
-    Orion       = 5,
-    HermesLite  = 6,
-    // 7-9 unused
-    OrionMkII   = 10,
-    Saturn      = 11,
-    Unknown     = -1
-};
 
 // Protocol version supported by the radio.
 enum class ProtocolVersion : int {
@@ -39,7 +26,7 @@ struct RadioInfo {
     quint16 port{1024};                  // Always 1024 for OpenHPSDR
 
     // Hardware
-    BoardType boardType{BoardType::Unknown};
+    HPSDRHW boardType{HPSDRHW::Unknown};
     int firmwareVersion{0};
     int adcCount{1};                     // Derived from boardType (1 or 2)
     int maxReceivers{4};                 // Board-dependent max simultaneous RX
@@ -55,9 +42,8 @@ struct RadioInfo {
 
     // Display helpers
     QString displayName() const;
-    static QString boardTypeName(BoardType type);
-    static int adcCountForBoard(BoardType type);
-    static int maxReceiversForBoard(BoardType type);
+    static int adcCountForBoard(HPSDRHW type);
+    static int maxReceiversForBoard(HPSDRHW type);
 
     // Comparison — radios are identified by MAC address
     bool operator==(const RadioInfo& other) const {
@@ -107,5 +93,4 @@ private:
 } // namespace NereusSDR
 
 Q_DECLARE_METATYPE(NereusSDR::RadioInfo)
-Q_DECLARE_METATYPE(NereusSDR::BoardType)
 Q_DECLARE_METATYPE(NereusSDR::ProtocolVersion)

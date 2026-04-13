@@ -1,4 +1,5 @@
 #include "RadioDiscovery.h"
+#include "BoardCapabilities.h"
 #include "LogCategories.h"
 
 #include <QDateTime>
@@ -16,49 +17,36 @@ QString RadioInfo::displayName() const
     if (!name.isEmpty()) {
         return name;
     }
-    return boardTypeName(boardType) + " (" + macAddress + ")";
+    return QString::fromLatin1(BoardCapsTable::forBoard(boardType).displayName)
+           + " (" + macAddress + ")";
 }
 
-QString RadioInfo::boardTypeName(BoardType type)
+int RadioInfo::adcCountForBoard(HPSDRHW type)
 {
     switch (type) {
-    case BoardType::Metis:      return QStringLiteral("Metis");
-    case BoardType::Hermes:     return QStringLiteral("Hermes");
-    case BoardType::Griffin:    return QStringLiteral("Griffin");
-    case BoardType::Angelia:    return QStringLiteral("Angelia");
-    case BoardType::Orion:      return QStringLiteral("Orion");
-    case BoardType::HermesLite: return QStringLiteral("Hermes Lite");
-    case BoardType::OrionMkII:  return QStringLiteral("Orion MkII");
-    case BoardType::Saturn:     return QStringLiteral("Saturn");
-    case BoardType::Unknown:    return QStringLiteral("Unknown");
-    }
-    return QStringLiteral("Unknown (%1)").arg(static_cast<int>(type));
-}
-
-int RadioInfo::adcCountForBoard(BoardType type)
-{
-    switch (type) {
-    case BoardType::Angelia:
-    case BoardType::Orion:
-    case BoardType::OrionMkII:
-    case BoardType::Saturn:
+    case HPSDRHW::Angelia:
+    case HPSDRHW::Orion:
+    case HPSDRHW::OrionMKII:
+    case HPSDRHW::Saturn:
+    case HPSDRHW::SaturnMKII:
         return 2;
     default:
         return 1;
     }
 }
 
-int RadioInfo::maxReceiversForBoard(BoardType type)
+int RadioInfo::maxReceiversForBoard(HPSDRHW type)
 {
     switch (type) {
-    case BoardType::Metis:      return 3;
-    case BoardType::Hermes:     return 4;
-    case BoardType::Griffin:    return 4;
-    case BoardType::HermesLite: return 4;
-    case BoardType::Angelia:    return 7;
-    case BoardType::Orion:      return 7;
-    case BoardType::OrionMkII:  return 7;
-    case BoardType::Saturn:     return 7;
+    case HPSDRHW::Atlas:        return 3;
+    case HPSDRHW::Hermes:       return 4;
+    case HPSDRHW::HermesII:     return 4;
+    case HPSDRHW::HermesLite:   return 4;
+    case HPSDRHW::Angelia:      return 7;
+    case HPSDRHW::Orion:        return 7;
+    case HPSDRHW::OrionMKII:    return 7;
+    case HPSDRHW::Saturn:       return 7;
+    case HPSDRHW::SaturnMKII:   return 7;
     default:                    return 1;
     }
 }
@@ -214,7 +202,7 @@ void RadioDiscovery::onReadyRead()
             info.inUse = (status == 0x03);
             info.macAddress = macToString(data.constData() + 3);  // bytes 3-8
             info.firmwareVersion = static_cast<quint8>(data[9]);
-            info.boardType = static_cast<BoardType>(static_cast<quint8>(data[10]));
+            info.boardType = static_cast<HPSDRHW>(static_cast<quint8>(data[10]));
 
         } else if (firstByte == 0x00 && data.size() >= 21) {
             // Protocol 2 discovery response
@@ -235,7 +223,7 @@ void RadioDiscovery::onReadyRead()
             info.protocol = ProtocolVersion::Protocol2;
             info.inUse = (status == 0x03);
             info.macAddress = macToString(data.constData() + 5);  // bytes 5-10
-            info.boardType = static_cast<BoardType>(static_cast<quint8>(data[11]));
+            info.boardType = static_cast<HPSDRHW>(static_cast<quint8>(data[11]));
             info.firmwareVersion = static_cast<quint8>(data[13]);
 
             // Byte 20: number of hardware receivers (if present)
@@ -247,7 +235,7 @@ void RadioDiscovery::onReadyRead()
             }
 
             qCDebug(lcDiscovery) << "P2 response from" << info.address.toString()
-                                 << "board:" << RadioInfo::boardTypeName(info.boardType)
+                                 << "board:" << BoardCapsTable::forBoard(info.boardType).displayName
                                  << "fw:" << info.firmwareVersion;
         } else {
             continue;  // Unknown response format
@@ -258,10 +246,10 @@ void RadioDiscovery::onReadyRead()
         if (info.maxReceivers <= 0) {
             info.maxReceivers = RadioInfo::maxReceiversForBoard(info.boardType);
         }
-        info.name = RadioInfo::boardTypeName(info.boardType);
+        info.name = QString::fromLatin1(BoardCapsTable::forBoard(info.boardType).displayName);
         info.hasDiversityReceiver = (info.adcCount >= 2);
-        info.hasPureSignal = (info.boardType != BoardType::Metis
-                              && info.boardType != BoardType::Unknown);
+        info.hasPureSignal = (info.boardType != HPSDRHW::Atlas
+                              && info.boardType != HPSDRHW::Unknown);
 
         // P2 boards support higher sample rates
         if (info.protocol == ProtocolVersion::Protocol2) {

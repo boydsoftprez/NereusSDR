@@ -31,16 +31,27 @@ significantly more complex.
 
 ### Supported Hardware
 
-| Board Type | Code | Protocol | ADCs | Max RX | Radios |
+`HPSDRHW` integer values are wire-format constants from mi0bot enums.cs:388 /
+ChannelMaster/network.h:446. **Do not renumber them.**
+
+| `HPSDRHW` | Code | Protocol | ADCs | Max RX | Radios |
 |-----------|------|----------|------|--------|--------|
-| Metis | 0 | P1 | 1 | 3 | Metis board |
-| Hermes | 1 | P1 | 1 | 4 | ANAN-10/10E/100 |
-| Griffin | 2 | P1 | 1 | 4 | (deprecated) |
-| Angelia | 4 | P1 | 2 | 7 | ANAN-100D |
-| Orion | 5 | P1 | 2 | 7 | ANAN-200D |
-| Hermes Lite | 6 | P1 | 1 | 4 | Hermes Lite 2 |
-| Orion MkII | 10 | P2 | 2 | 7 | ANAN-7000DLE/8000DLE |
-| Saturn | 11 | P2 | 2 | 7+ | ANAN-G2 |
+| `Atlas` | 0 | P1 | 1 | 3 | Metis / HPSDR kit |
+| `Hermes` | 1 | P1 | 1 | 4 | ANAN-10 / ANAN-100 |
+| `HermesII` | 2 | P1 | 1 | 4 | ANAN-10E / ANAN-100B |
+| `Angelia` | 3 | P1 | 2 | 7 | ANAN-100D |
+| `Orion` | 4 | P1 | 2 | 7 | ANAN-200D |
+| `OrionMKII` | 5 | P2 | 2 | 7 | ANAN-7000DLE / 8000DLE / AnvelinaPro3 / ANAN_G2_1K |
+| `HermesLite` | 6 | P1 | 1 | 4 | Hermes Lite 2 |
+| _(7–9 reserved)_ | — | — | — | — | DO NOT REUSE (Thetis wire format) |
+| `Saturn` | 10 | P2 | 2 | 7+ | ANAN-G2 |
+| `SaturnMKII` | 11 | P2 | 2 | 7+ | ANAN-G2 MkII board revision |
+| `Unknown` | 999 | — | — | — | Fallback for unrecognized boards |
+
+> **Note:** The old `BoardType::Griffin = 2` slot was a docs-era mistake.
+> mi0bot enums.cs:392 clarifies slot 2 as `HermesII` (ANAN-10E / ANAN-100B).
+> `Griffin` was never shipped and never had real users on slot 2.
+> Corrected in Task 3I-3 (commit on `feature/phase3i-radio-connector-port`).
 
 ---
 
@@ -50,22 +61,11 @@ significantly more complex.
 value-type, copyable, and protocol-agnostic.
 
 ```cpp
-// src/core/RadioDiscovery.h
+// src/core/RadioDiscovery.h  (BoardType enum removed in 3I-3; uses HpsdrModel.h)
 namespace NereusSDR {
 
-enum class BoardType : int {
-    Metis       = 0,
-    Hermes      = 1,
-    Griffin     = 2,
-    // 3 is unused
-    Angelia     = 4,
-    Orion       = 5,
-    HermesLite  = 6,
-    // 7-9 unused
-    OrionMkII   = 10,
-    Saturn      = 11,
-    Unknown     = -1
-};
+// HPSDRHW is defined in src/core/HpsdrModel.h (Task 3I-1).
+// ProtocolVersion stays in RadioDiscovery.h (used by BoardCapabilities.h).
 
 enum class ProtocolVersion : int {
     Protocol1 = 1,
@@ -74,13 +74,13 @@ enum class ProtocolVersion : int {
 
 struct RadioInfo {
     // Identity
-    QString name;                        // User-friendly name, e.g. "ANAN-7000DLE"
+    QString name;                        // User-friendly name, e.g. "ANAN-G2"
     QString macAddress;                  // MAC as "AA:BB:CC:DD:EE:FF" (primary key)
     QHostAddress address;                // IP address on local network
     quint16 port{1024};                  // Always 1024 for OpenHPSDR
 
     // Hardware
-    BoardType boardType{BoardType::Unknown};
+    HPSDRHW boardType{HPSDRHW::Unknown};
     int firmwareVersion{0};              // P1: byte 9 of discovery response
     int adcCount{1};                     // Derived from boardType (1 or 2)
     int maxReceivers{4};                 // Board-dependent max simultaneous RX
@@ -90,15 +90,14 @@ struct RadioInfo {
     bool inUse{false};                   // Another client already connected
 
     // Capabilities (derived from boardType at parse time)
-    bool hasDiversityReceiver{false};    // Angelia+ have 2 ADCs for diversity
+    bool hasDiversityReceiver{false};    // 2-ADC boards support diversity
     bool hasPureSignal{false};           // Boards supporting PA linearization
     int maxSampleRate{384000};           // Max supported sample rate in Hz
 
-    // Display helpers
+    // Display helpers — boardTypeName() removed; use BoardCapsTable::forBoard(boardType).displayName
     QString displayName() const;
-    static QString boardTypeName(BoardType type);
-    static int adcCountForBoard(BoardType type);
-    static int maxReceiversForBoard(BoardType type);
+    static int adcCountForBoard(HPSDRHW type);
+    static int maxReceiversForBoard(HPSDRHW type);
 
     // Comparison — radios are identified by MAC address
     bool operator==(const RadioInfo& other) const {
@@ -113,30 +112,38 @@ Q_DECLARE_METATYPE(NereusSDR::RadioInfo)
 
 ### Board-Derived Capabilities
 
+Capability lookup now delegates to `BoardCapsTable::forBoard()` from
+`BoardCapabilities.h` (Task 3I-2) rather than local switch statements.
+`RadioInfo` retains lightweight helpers that mirror `BoardCapabilities`
+values for callers that have a `RadioInfo` but haven't pulled in
+`BoardCapabilities.h`:
+
 ```cpp
 // RadioDiscovery.cpp
-int RadioInfo::adcCountForBoard(BoardType type) {
+int RadioInfo::adcCountForBoard(HPSDRHW type) {
     switch (type) {
-        case BoardType::Angelia:
-        case BoardType::Orion:
-        case BoardType::OrionMkII:
-        case BoardType::Saturn:
+        case HPSDRHW::Angelia:
+        case HPSDRHW::Orion:
+        case HPSDRHW::OrionMKII:
+        case HPSDRHW::Saturn:
+        case HPSDRHW::SaturnMKII:
             return 2;
         default:
             return 1;
     }
 }
 
-int RadioInfo::maxReceiversForBoard(BoardType type) {
+int RadioInfo::maxReceiversForBoard(HPSDRHW type) {
     switch (type) {
-        case BoardType::Metis:      return 3;
-        case BoardType::Hermes:     return 4;
-        case BoardType::Griffin:    return 4;
-        case BoardType::HermesLite: return 4;
-        case BoardType::Angelia:    return 7;
-        case BoardType::Orion:      return 7;
-        case BoardType::OrionMkII:  return 7;
-        case BoardType::Saturn:     return 7;
+        case HPSDRHW::Atlas:        return 3;
+        case HPSDRHW::Hermes:       return 4;
+        case HPSDRHW::HermesII:     return 4;
+        case HPSDRHW::HermesLite:   return 4;
+        case HPSDRHW::Angelia:      return 7;
+        case HPSDRHW::Orion:        return 7;
+        case HPSDRHW::OrionMKII:    return 7;
+        case HPSDRHW::Saturn:       return 7;
+        case HPSDRHW::SaturnMKII:   return 7;
         default:                    return 1;
     }
 }
