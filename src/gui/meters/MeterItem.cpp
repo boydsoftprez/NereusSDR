@@ -405,8 +405,10 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // is drawn top-left in m_fontColour (Thetis default white), and
     // ShowPeakValue top-right in peakFontColour() (Thetis default red
     // — per Setup → Appearance → Meters/Gadgets Peak Value swatch).
-    // Both use a small proportional bold font. Idle values (−inf)
-    // are skipped.
+    // Both use a small proportional bold font. Idle ShowValue is
+    // skipped; idle ShowPeakValue renders "--" as a placeholder so
+    // parked bindings (TX-only readings while RX active, etc.) still
+    // show a slot where the peak text lives.
     if (m_showValue || m_showPeakValue) {
         QFont font = p.font();
         const int fontPx = qMax(9, rect.height() / 3);
@@ -422,9 +424,11 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
                        rect.top() + fm.ascent(),
                        s);
         }
-        if (m_showPeakValue && std::isfinite(m_peakValue)) {
+        if (m_showPeakValue) {
+            const QString s = std::isfinite(m_peakValue)
+                ? QString::number(m_peakValue, 'f', 1)
+                : QStringLiteral("--");
             p.setPen(peakFontColour());
-            const QString s = QString::number(m_peakValue, 'f', 1);
             const int w = fm.horizontalAdvance(s);
             p.drawText(rect.right() - w - 2,
                        rect.top() + fm.ascent(),
