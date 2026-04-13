@@ -101,29 +101,14 @@ jobs:
           ccache --max-size=2G
           ccache --zero-stats
 
-      - name: Setup sccache (Windows)
-        if: runner.os == 'Windows'
-        uses: mozilla-actions/sccache-action@v0.0.6
-
-      - name: Probe sccache (Windows)
-        if: runner.os == 'Windows'
-        id: sccache_probe
-        shell: bash
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-        run: |
-          # sccache --show-stats forces the server to start. If the GHA cache
-          # backend (Azure Blob) is having an outage, startup fails and every
-          # subsequent compile invocation errors. Catch that here and fall back
-          # to an unlaunched build instead of killing the whole job.
-          if sccache --show-stats >/tmp/sccache-probe.log 2>&1; then
-            echo "sccache reachable — using it as compiler launcher"
-            echo "launcher=sccache" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::sccache backend unreachable — building without compiler cache"
-            cat /tmp/sccache-probe.log || true
-            echo "launcher=" >> "$GITHUB_OUTPUT"
-          fi
+      # Windows intentionally skips sccache. The GitHub Actions Cache backend
+      # (Azure Blob) had a multi-hour outage during Phase 3N shakedown that
+      # caused sccache startup to fail hard ("Server startup failed: cache
+      # storage failed to read: <h2>Our services aren't available right now</h2>"),
+      # and sccache has no graceful fallback. 'sccache --show-stats' is not a
+      # reliable probe because it queries a freshly started empty server that
+      # hasn't touched the backend yet. Qt install is already cached via
+      # install-qt-action's cache: true, which is the dominant cost anyway.
 
       # ------------------------------------------------------------------
       # Configure
@@ -148,16 +133,9 @@ jobs:
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        env:
-          SCCACHE_GHA_ENABLED: "true"
         run: |
-          LAUNCHER_FLAGS=""
-          if [[ "${{ steps.sccache_probe.outputs.launcher }}" == "sccache" ]]; then
-            LAUNCHER_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
-          fi
           cmake -B build -G "MinGW Makefiles" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            $LAUNCHER_FLAGS
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
       # ------------------------------------------------------------------
       # Build
@@ -169,8 +147,6 @@ jobs:
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        env:
-          SCCACHE_GHA_ENABLED: "true"
         run: cmake --build build -j$NUMBER_OF_PROCESSORS
 
       # ------------------------------------------------------------------

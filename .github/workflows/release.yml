@@ -330,27 +330,8 @@ jobs:
           choco install ninja -y
           choco install nsis -y
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-
-      - name: Probe sccache
-        id: sccache_probe
-        shell: bash
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-        run: |
-          # sccache --show-stats forces the server to start. If the GHA cache
-          # backend is having an outage, startup fails and every compile
-          # invocation errors. Fall back to no launcher instead of killing
-          # the job.
-          if sccache --show-stats >/tmp/sccache-probe.log 2>&1; then
-            echo "sccache reachable"
-            echo "launcher=sccache" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::sccache backend unreachable — building without compiler cache"
-            cat /tmp/sccache-probe.log || true
-            echo "launcher=" >> "$GITHUB_OUTPUT"
-          fi
+      # sccache intentionally not used on Windows — see ci.yml for the
+      # explanation. Qt is already cached via install-qt-action.
 
       - name: Setup FFTW3
         shell: pwsh
@@ -368,21 +349,12 @@ jobs:
 
       - name: Configure
         shell: bash
-        env:
-          SCCACHE_GHA_ENABLED: "true"
         run: |
-          LAUNCHER_FLAGS=""
-          if [[ "${{ steps.sccache_probe.outputs.launcher }}" == "sccache" ]]; then
-            LAUNCHER_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
-          fi
           cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            $LAUNCHER_FLAGS
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         shell: bash
-        env:
-          SCCACHE_GHA_ENABLED: "true"
         run: cmake --build build -j${NUMBER_OF_PROCESSORS}
 
       - name: Test
