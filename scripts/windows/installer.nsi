@@ -3,6 +3,7 @@
 ; Invoked by .github/workflows/release.yml build-windows job.
 
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 
 ;--- Variables passed in via /D on the makensis command line ---
 ; NSDR_VERSION   — full version string, e.g. 0.2.0
@@ -75,6 +76,34 @@ Section "NereusSDR (required)" SecMain
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
               "NoRepair" 1
 
+  ; Windows Firewall inbound UDP allow for NereusSDR.exe.
+  ;
+  ; OpenHPSDR Protocol 2 radios (ANAN, Hermes, HL2, Saturn) stream
+  ; DDC I/Q data from UDP source ports 1035-1041 to the client PC. Those
+  ; packets are "unsolicited inbound UDP" from Windows Defender Firewall's
+  ; stateful-inspection point of view — the PC never sends to those source
+  ; ports so the firewall has no return-flow mapping and silently drops
+  ; every DDC packet. Result: the spectrum/waterfall stays empty even
+  ; though the radio is connected and streaming correctly. Control
+  ; packets (high-priority status on 1025, mic samples on 1026) flow fine
+  ; because the PC sends CmdRx/CmdTx to those radio ports, which opens
+  ; the return flow. Pre-v0.1.2 installers had no firewall rule and
+  ; users had to either allow manually or disable the firewall; this
+  ; rule is what Thetis, PowerSDR, SparkSDR, and every other OpenHPSDR
+  ; client installer creates at install time.
+  ;
+  ; netsh errors are non-fatal — log and continue so the installer still
+  ; succeeds on systems where the firewall service is disabled or a
+  ; policy blocks the change. The user can always allow manually.
+  DetailPrint "Adding Windows Firewall rule: NereusSDR (inbound UDP)"
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NereusSDR (inbound UDP)"'
+  Pop $0
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="NereusSDR (inbound UDP)" dir=in action=allow program="$INSTDIR\NereusSDR.exe" protocol=UDP profile=any description="Allow inbound UDP from OpenHPSDR radios (DDC IQ streams, control)"'
+  Pop $0
+  ${If} $0 != 0
+    DetailPrint "netsh returned $0 — firewall rule may not be active. You can allow NereusSDR manually via Windows Security → Firewall & network protection."
+  ${EndIf}
+
   WriteUninstaller "$INSTDIR\uninstall.exe"
 SectionEnd
 
@@ -94,6 +123,13 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\NereusSDR\NereusSDR.lnk"
   Delete "$SMPROGRAMS\NereusSDR\Uninstall NereusSDR.lnk"
   RMDir  "$SMPROGRAMS\NereusSDR"
+
+  ; Remove the firewall rule we created at install time. Ignore the
+  ; return code — if the rule is already gone (user removed it manually,
+  ; or a previous uninstall already cleaned up), that's fine.
+  DetailPrint "Removing Windows Firewall rule: NereusSDR (inbound UDP)"
+  nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="NereusSDR (inbound UDP)"'
+  Pop $0
 
   RMDir /r "$INSTDIR"
 

@@ -39,7 +39,13 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          # CodeQL runs on Ubuntu with apt-managed Qt 6.4.2, which is
+          # older than QRhiWidget's 6.7+ requirement. GPU spectrum is
+          # explicitly disabled here so CMake's FATAL_ERROR path does
+          # not trip. Same reasoning as Linux ci.yml Configure step.
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DNEREUS_GPU_SPECTRUM=OFF
           cmake --build build -j$(nproc)
 
       - name: Perform CodeQL Analysis

@@ -116,10 +116,19 @@ jobs:
       - name: Configure (Linux)
         if: runner.os == 'Linux'
         run: |
+          # Linux CI uses Ubuntu's system Qt 6 via apt (qt6-base-dev),
+          # which on ubuntu-24.04 is Qt 6.4.2 — too old for QRhiWidget
+          # (requires 6.7+). GPU spectrum is explicitly disabled here
+          # so CMake's new FATAL_ERROR path does not trip. Upgrading
+          # the Linux CI runner to install-qt-action-managed Qt 6.7+
+          # (matching release.yml) is a separate ticket; for now this
+          # matches the historical behavior of Linux CI silently
+          # falling back to the CPU path.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DNEREUS_GPU_SPECTRUM=OFF
 
       - name: Configure (macOS)
         if: runner.os == 'macOS'
@@ -134,8 +143,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          # -DNEREUS_GPU_SPECTRUM=ON is explicit so CMake's FATAL_ERROR
+          # fires at configure time if the Qt install is missing the
+          # ShaderTools or Gui private modules. v0.1.1 silently shipped
+          # without GPU spectrum because this flag was implicit; never
+          # again.
           cmake -B build -G "MinGW Makefiles" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DNEREUS_GPU_SPECTRUM=ON
 
       # ------------------------------------------------------------------
       # Build

@@ -251,7 +251,10 @@ private slots:
                 mi->paint(p, W, H);
             }
         }
-        QVERIFY(img.save(QStringLiteral("/tmp/threeRowStack.png"), "PNG"));
+        // Dump to the platform temp dir (QDir::temp resolves to /tmp on
+        // Linux/macOS and %TEMP% on Windows). The hardcoded /tmp path
+        // used to ship here was the reason this test failed on Windows.
+        QVERIFY(img.save(QDir::temp().absoluteFilePath("threeRowStack.png"), "PNG"));
         qDeleteAll(working);
     }
 
@@ -290,15 +293,15 @@ private slots:
                 mi->paint(p, W, H);
             }
         }
-        QVERIFY(img.save(QStringLiteral("/tmp/alcBarRow.png"), "PNG"));
+        QVERIFY(img.save(QDir::temp().absoluteFilePath("alcBarRow.png"), "PNG"));
         delete g;
     }
 
     // --- Headless visual dump of the createSMeterBarPreset composition ---
     // Renders every item in the Thetis bar-variant preset through its
     // real paint() function into a shared QImage and writes the result
-    // to /tmp/sMeterPreset.png so the image can be read back out-of-
-    // process for debugging. This is what the container would actually
+    // to <tempdir>/sMeterPreset.png so the image can be read back
+    // out-of-process for debugging. This is what the container would actually
     // show if a MeterWidget routed its paint through QPainter instead
     // of QRhi.
     void SMeterBar_dump_full_composition_to_png()
@@ -338,9 +341,10 @@ private slots:
             }
         }
 
-        const QString outPath = QStringLiteral("/tmp/sMeterPreset.png");
+        const QString outPath = QDir::temp().absoluteFilePath(
+            QStringLiteral("sMeterPreset.png"));
         QVERIFY2(img.save(outPath, "PNG"),
-                 "failed to save /tmp/sMeterPreset.png");
+                 qPrintable(QStringLiteral("failed to save ") + outPath));
 
         delete g;
     }

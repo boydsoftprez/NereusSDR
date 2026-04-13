@@ -153,22 +153,89 @@ endif()
 
 # --------------------------------------------------------------------------
 # GPU-accelerated spectrum/waterfall (QRhi — requires Qt 6.7+)
+#
+# History: v0.1.1 shipped a Windows installer that silently disabled
+# GPU spectrum because this block used `message(STATUS)` fallbacks when
+# the private-module detection failed, and the shipping pipeline never
+# explicitly requested -DNEREUS_GPU_SPECTRUM=ON. Users saw a blank
+# spectrum area and no log line from SpectrumWidget::initialize().
+#
+# The check now does three things differently:
+#   1. Probes for both a _FOUND variable AND an imported target, since
+#      Qt's private-module CMake exports have varied across 6.x minor
+#      releases and install-qt-action layouts.
+#   2. Captures a specific reason string when either component is
+#      missing so the error message can point the user at the fix.
+#   3. Promotes the fallback to FATAL_ERROR when the caller opted in
+#      to GPU spectrum (the default) — silently shipping a CPU-only
+#      binary is the exact footgun that caused v0.1.1. Users who
+#      genuinely want the CPU path must pass -DNEREUS_GPU_SPECTRUM=OFF
+#      explicitly to acknowledge it.
 # --------------------------------------------------------------------------
-option(NEREUS_GPU_SPECTRUM "Enable GPU-accelerated spectrum/waterfall via QRhi" ON)
+option(NEREUS_GPU_SPECTRUM "Enable GPU-accelerated spectrum/waterfall via QRhi (requires Qt 6.7+ with ShaderTools and Gui private headers)" ON)
+
+# Remember whether the caller requested it before any auto-disable, so
+# we can produce a hard failure if we can't honor the request.
+set(_nereus_gpu_spectrum_requested ${NEREUS_GPU_SPECTRUM})
+set(_nereus_gpu_fail_reason "")
+
 if(NEREUS_GPU_SPECTRUM)
     if(Qt6_VERSION VERSION_LESS "6.7")
-        message(STATUS "Qt ${Qt6_VERSION} < 6.7 — GPU spectrum disabled (requires QRhiWidget)")
+        set(_nereus_gpu_fail_reason
+            "Qt ${Qt6_VERSION} is older than 6.7 (QRhiWidget requires 6.7+)")
         set(NEREUS_GPU_SPECTRUM OFF)
     else()
-        find_package(Qt6 QUIET COMPONENTS ShaderTools)
-        find_package(Qt6 QUIET COMPONENTS GuiPrivate)
-        if(Qt6ShaderTools_FOUND AND Qt6GuiPrivate_FOUND)
+        # Ask CMake to locate the private modules. QUIET so we can emit
+        # a single, context-rich failure message below instead of
+        # multiple cryptic find_package warnings.
+        find_package(Qt6 QUIET COMPONENTS ShaderTools GuiPrivate)
+
+        # Belt-and-braces detection: accept either the _FOUND variable
+        # or the imported target. install-qt-action on Windows has
+        # shipped Qt 6.7/6.8 layouts where Qt6GuiPrivate_FOUND is not
+        # set even though the Qt6::GuiPrivate target exists, which is
+        # what silently broke v0.1.1.
+        set(_nereus_have_shadertools FALSE)
+        set(_nereus_have_guiprivate  FALSE)
+        if(Qt6ShaderTools_FOUND OR TARGET Qt6::ShaderTools)
+            set(_nereus_have_shadertools TRUE)
+        endif()
+        if(Qt6GuiPrivate_FOUND OR TARGET Qt6::GuiPrivate)
+            set(_nereus_have_guiprivate TRUE)
+        endif()
+
+        if(_nereus_have_shadertools AND _nereus_have_guiprivate)
             message(STATUS "QRhi support enabled — GPU spectrum/waterfall active")
         else()
-            message(STATUS "Qt6 ShaderTools or GuiPrivate not found — GPU spectrum disabled")
+            set(_nereus_gpu_fail_reason "Qt6 private modules missing:")
+            if(NOT _nereus_have_shadertools)
+                string(APPEND _nereus_gpu_fail_reason " ShaderTools")
+            endif()
+            if(NOT _nereus_have_guiprivate)
+                string(APPEND _nereus_gpu_fail_reason " GuiPrivate")
+            endif()
             set(NEREUS_GPU_SPECTRUM OFF)
         endif()
     endif()
+endif()
+
+# Fail loudly if the caller asked for GPU spectrum and we couldn't
+# deliver it. This prevents a repeat of the v0.1.1 silent-CPU-fallback
+# shipping incident.
+if(_nereus_gpu_spectrum_requested AND NOT NEREUS_GPU_SPECTRUM)
+    message(FATAL_ERROR
+        "NEREUS_GPU_SPECTRUM was requested but cannot be enabled.\n"
+        "Reason: ${_nereus_gpu_fail_reason}\n"
+        "Fix options:\n"
+        "  - install-qt-action: ensure 'qtshadertools' is in the modules list; "
+        "private headers come with qtbase by default on Linux/macOS but some "
+        "install-qt-action Windows layouts need the private headers pulled in "
+        "via the Qt installer.\n"
+        "  - Local dev: install Qt with ShaderTools and private headers "
+        "(official online installer: check 'Qt Shader Tools' and 'Qt 5 Compat' "
+        "isn't needed, but private headers ship with the base Qt module).\n"
+        "  - To build without GPU spectrum (CPU-only fallback), re-run cmake "
+        "with -DNEREUS_GPU_SPECTRUM=OFF.")
 endif()
 
 # --------------------------------------------------------------------------
