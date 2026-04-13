@@ -255,10 +255,11 @@ void ConnectionPanel::buildUI()
     m_addManuallyBtn->setToolTip(QStringLiteral("Coming in Task 16 — TODO(3I-T16)"));
     btnLayout->addWidget(m_addManuallyBtn);
 
-    // Forget — Task 15 stub
+    // Forget — Phase 3I Task 15
     m_forgetBtn = makeBtn(QStringLiteral("Forget"), kDestructiveStyle);
     m_forgetBtn->setEnabled(false);
-    m_forgetBtn->setToolTip(QStringLiteral("Coming in Task 15 — TODO(3I-T15)"));
+    m_forgetBtn->setToolTip(QStringLiteral("Remove this radio from the saved list"));
+    connect(m_forgetBtn, &QPushButton::clicked, this, &ConnectionPanel::onForgetClicked);
     btnLayout->addWidget(m_forgetBtn);
 
     btnLayout->addStretch();
@@ -571,6 +572,33 @@ void ConnectionPanel::onDisconnectClicked()
     m_radioModel->disconnectFromRadio();
 }
 
+// Phase 3I Task 15 — Forget wired.
+// Removes the radio from the persistent saved-radio list and from the table.
+void ConnectionPanel::onForgetClicked()
+{
+    int row = m_radioTable->currentRow();
+    if (row < 0) {
+        return;
+    }
+    QTableWidgetItem* cell = m_radioTable->item(row, ColMac);
+    const QString mac = cell ? cell->text() : QString();
+    if (mac.isEmpty()) {
+        return;
+    }
+
+    AppSettings::instance().forgetRadio(mac);
+    AppSettings::instance().save();
+
+    m_discoveredRadios.remove(mac);
+    m_radioTable->removeRow(row);
+
+    int n = m_radioTable->rowCount();
+    setStatusText(n > 0
+        ? QStringLiteral("Found %1 radio(s)").arg(n)
+        : QStringLiteral("No radios — start discovery"));
+    updateButtonStates();
+}
+
 // ---------------------------------------------------------------------------
 // Selection + double-click
 // ---------------------------------------------------------------------------
@@ -622,9 +650,9 @@ void ConnectionPanel::onContextMenuRequested(const QPoint& pos)
     QAction* actCopyMac    = menu.addAction(QStringLiteral("Copy MAC"));
     menu.addSeparator();
 
-    // Task 15 stub
-    QAction* actForget     = menu.addAction(QStringLiteral("Forget  [TODO(3I-T15)]"));
-    actForget->setEnabled(false);
+    // Phase 3I Task 15 — Forget wired
+    QAction* actForget     = menu.addAction(QStringLiteral("Forget"));
+    actForget->setEnabled(!info.macAddress.isEmpty());
 
     actConnect->setEnabled(!info.macAddress.isEmpty() && !connected);
     actDisconnect->setEnabled(connected);
@@ -642,6 +670,8 @@ void ConnectionPanel::onContextMenuRequested(const QPoint& pos)
     } else if (triggered == actCopyMac) {
         QApplication::clipboard()->setText(info.macAddress);
         setStatusText(QStringLiteral("Copied MAC: %1").arg(info.macAddress));
+    } else if (triggered == actForget) {
+        onForgetClicked();
     }
 }
 
@@ -666,8 +696,8 @@ void ConnectionPanel::updateButtonStates()
 
     m_connectBtn->setEnabled(canConnect && !connected);
     m_disconnectBtn->setEnabled(connected);
-    // Forget stub — always disabled until Task 15
-    m_forgetBtn->setEnabled(false);
+    // Forget: enabled when a row with a MAC is selected (saved or discovered)
+    m_forgetBtn->setEnabled(hasSelection && !selectedRadio().macAddress.isEmpty());
 }
 
 // ---------------------------------------------------------------------------

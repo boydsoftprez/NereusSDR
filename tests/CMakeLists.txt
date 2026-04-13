@@ -33,3 +33,6 @@ target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS
 # P1 reconnection state machine test — uses P1FakeRadio auto-streaming (Task 10)
 nereus_add_test(tst_reconnect_on_silence fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_reconnect_on_silence PRIVATE NEREUS_BUILD_TESTS)
+
+# Saved-radio persistence round-trip (Phase 3I Task 15)
+nereus_add_test(tst_connection_panel_saved_radios)

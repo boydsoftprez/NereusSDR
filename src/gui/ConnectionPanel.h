@@ -57,6 +57,7 @@ public slots:
 private slots:
     void onConnectClicked();
     void onDisconnectClicked();
+    void onForgetClicked();    // Phase 3I Task 15 — removes radio from saved list
     void onStartDiscoveryClicked();
     void onStopDiscoveryClicked();
     void onRadioSelectionChanged();
