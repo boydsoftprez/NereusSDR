@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -72,6 +76,46 @@ jobs:
           cp /tmp/fftw3/libfftw3-3.def $GITHUB_WORKSPACE/third_party/fftw3/lib/
 
       # ------------------------------------------------------------------
+      # Compiler cache (ccache for Linux/macOS, sccache for Windows)
+      # ------------------------------------------------------------------
+      - name: Install ccache (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y ccache
+
+      - name: Install ccache (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ccache
+
+      - name: Restore ccache
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Configure ccache
+        if: runner.os != 'Windows'
+        run: |
+          ccache --max-size=2G
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
+
+      - name: Setup sccache (Windows)
+        if: runner.os == 'Windows'
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure sccache env (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      # ------------------------------------------------------------------
       # Configure
       # ------------------------------------------------------------------
       - name: Configure (Linux)
@@ -103,3 +147,41 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: cmake --build build -j$NUMBER_OF_PROCESSORS
+
+      # ------------------------------------------------------------------
+      # Test
+      # ------------------------------------------------------------------
+      - name: Test
+        working-directory: build
+        shell: bash
+        run: ctest --output-on-failure --no-tests=ignore
+
+      # ------------------------------------------------------------------
+      # PR artifact upload
+      # ------------------------------------------------------------------
+      - name: Locate built binary
+        if: github.event_name == 'pull_request'
+        id: locate
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux)   echo "binary=build/NereusSDR" >> "$GITHUB_OUTPUT" ;;
+            macOS)   echo "binary=build/NereusSDR.app" >> "$GITHUB_OUTPUT" ;;
+            Windows) echo "binary=build/NereusSDR.exe" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Upload PR build artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NereusSDR-pr${{ github.event.number }}-${{ matrix.name }}
+          path: ${{ steps.locate.outputs.binary }}
+          retention-days: 7
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # Cache stats
+      # ------------------------------------------------------------------
+      - name: ccache stats
+        if: runner.os != 'Windows'
+        run: ccache --show-stats
