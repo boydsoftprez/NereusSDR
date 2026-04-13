@@ -195,12 +195,16 @@ void BarItem::setValue(double v)
         m_smoothedValue = static_cast<double>(m_decayRatio) * v
                         + (1.0 - static_cast<double>(m_decayRatio)) * m_smoothedValue;
     }
-    // Phase A1 — rolling high-water-mark for ShowPeakValue + peak-hold marker.
-    // From Thetis clsBarItem (MeterManager.cs:21541, 21544) — peak tracks the
-    // highest raw value; decay is handled by a separate peak-hold timer in
-    // Phase A3, not here.
-    if (v > m_peakValue) {
+    // Phase A1/A3 — peak-hold tracking. When PeakHoldDecayRatio == 0 the
+    // peak sticks at the highest value ever seen (A1 behavior). When > 0,
+    // the peak decays geometrically toward the live value on every frame
+    // where v < peak, matching Thetis clsBarItem peak-hold marker semantics
+    // (MeterManager.cs:21541, 21544).
+    if (v > m_peakValue || !std::isfinite(m_peakValue)) {
         m_peakValue = v;
+    } else if (m_peakHoldDecayRatio > 0.0f) {
+        const double r = static_cast<double>(m_peakHoldDecayRatio);
+        m_peakValue = m_peakValue + (v - m_peakValue) * r;
     }
 
     // Phase A2 — history ring buffer. Thetis clsBarItem pushes samples at
@@ -360,6 +364,11 @@ QString BarItem::serialize() const
     base += QLatin1Char('|') + (m_showHistory ? QStringLiteral("1") : QStringLiteral("0"));
     base += QLatin1Char('|') + m_historyColour.name(QColor::HexArgb);
     base += QLatin1Char('|') + QString::number(m_historyDurationMs);
+    // Phase A3 tail: showMarker | markerColour | peakHoldMarkerColour | peakHoldDecayRatio
+    base += QLatin1Char('|') + (m_showMarker ? QStringLiteral("1") : QStringLiteral("0"));
+    base += QLatin1Char('|') + m_markerColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + m_peakHoldMarkerColour.name(QColor::HexArgb);
+    base += QLatin1Char('|') + QString::number(static_cast<double>(m_peakHoldDecayRatio));
     return base;
 }
 
@@ -413,6 +422,22 @@ bool BarItem::deserialize(const QString& data)
         bool okDur = true;
         int dur = parts[25].toInt(&okDur);
         if (okDur) { m_historyDurationMs = dur; }
+    }
+
+    // Phase A3 — ShowMarker / MarkerColour / PeakHoldMarkerColour / PeakHoldDecayRatio
+    if (parts.size() >= 27) { m_showMarker = (parts[26] == QLatin1String("1")); }
+    if (parts.size() >= 28) {
+        QColor mc = QColor(parts[27]);
+        if (mc.isValid()) { m_markerColour = mc; }
+    }
+    if (parts.size() >= 29) {
+        QColor pc = QColor(parts[28]);
+        if (pc.isValid()) { m_peakHoldMarkerColour = pc; }
+    }
+    if (parts.size() >= 30) {
+        bool okR = true;
+        float r = parts[29].toFloat(&okR);
+        if (okR) { m_peakHoldDecayRatio = r; }
     }
 
     return true;

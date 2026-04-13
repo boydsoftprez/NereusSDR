@@ -120,6 +120,72 @@ private slots:
         b.setValue(-80.0);
         QCOMPARE(b.historySampleCount(), 0);
     }
+
+    // ---- Phase A3: ShowMarker / MarkerColour / PeakHoldMarkerColour ----
+
+    void showMarker_default_is_false()
+    {
+        BarItem b;
+        QCOMPARE(b.showMarker(), false);
+    }
+
+    void showMarker_roundtrip()
+    {
+        // addSMeterBar sets ShowMarker = true (MeterManager.cs:21543).
+        BarItem b;
+        b.setShowMarker(true);
+        QCOMPARE(b.showMarker(), true);
+    }
+
+    void markerColour_roundtrip()
+    {
+        BarItem b;
+        const QColor orange(0xff, 0xa5, 0x00);
+        b.setMarkerColour(orange);
+        QCOMPARE(b.markerColour(), orange);
+    }
+
+    void peakHoldMarkerColour_roundtrip()
+    {
+        // addSMeterBar sets PeakHoldMarkerColour = Red
+        // (MeterManager.cs:21544).
+        BarItem b;
+        const QColor red(0xff, 0x00, 0x00);
+        b.setPeakHoldMarkerColour(red);
+        QCOMPARE(b.peakHoldMarkerColour(), red);
+    }
+
+    void peakHold_decays_when_rate_is_nonzero()
+    {
+        // Thetis clsBarItem applies an independent decay to the peak-hold
+        // marker value so it slowly drops back toward the live value.
+        // With a decay ratio > 0, a subsequent lower setValue() should
+        // nudge peakValue() downward from the prior high.
+        BarItem b;
+        b.setRange(-140.0, 0.0);
+        b.setPeakHoldDecayRatio(0.5f);
+        b.setValue(-50.0);           // peak = -50
+        const double peakAfterHigh = b.peakValue();
+        b.setValue(-80.0);           // decay kicks in
+        QVERIFY2(b.peakValue() < peakAfterHigh,
+                 "peakValue should decay toward live value when "
+                 "PeakHoldDecayRatio > 0");
+        QVERIFY2(b.peakValue() > -80.0,
+                 "peak should not collapse all the way to the live value "
+                 "in one step");
+    }
+
+    void peakHold_holds_when_rate_is_zero()
+    {
+        // Default behavior (A1) — no decay. Rate 0 means the marker sticks
+        // at the highest value forever, matching the A1 test.
+        BarItem b;
+        b.setRange(-140.0, 0.0);
+        b.setPeakHoldDecayRatio(0.0f);
+        b.setValue(-40.0);
+        b.setValue(-70.0);
+        QCOMPARE(b.peakValue(), -40.0);
+    }
 };
 
 QTEST_MAIN(TstMeterItemBar)

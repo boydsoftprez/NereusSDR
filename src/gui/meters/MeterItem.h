@@ -263,6 +263,24 @@ public:
     // Introspection for tests + the render pass.
     int historySampleCount() const { return static_cast<int>(m_history.size()); }
 
+    // --- Phase A3: ShowMarker / MarkerColour / PeakHoldMarkerColour ---
+    // From Thetis clsBarItem (MeterManager.cs:21543-21544). ShowMarker
+    // draws a thin vertical line at the live smoothed value; the separate
+    // peak-hold marker draws at the decaying peakValue(). The peak-hold
+    // decay ratio is independent of attack/decay smoothing — when non-zero,
+    // peakValue() falls toward the live value when values drop.
+    void setShowMarker(bool on) { m_showMarker = on; }
+    bool showMarker() const { return m_showMarker; }
+
+    void setMarkerColour(const QColor& c) { m_markerColour = c; }
+    QColor markerColour() const { return m_markerColour; }
+
+    void setPeakHoldMarkerColour(const QColor& c) { m_peakHoldMarkerColour = c; }
+    QColor peakHoldMarkerColour() const { return m_peakHoldMarkerColour; }
+
+    void setPeakHoldDecayRatio(float r) { m_peakHoldDecayRatio = r; }
+    float peakHoldDecayRatio() const { return m_peakHoldDecayRatio; }
+
     // Override setValue() for exponential smoothing
     // From Thetis MeterManager.cs — attack/decay smoothing
     void setValue(double v) override;
@@ -302,6 +320,11 @@ private:
     QColor      m_historyColour{255, 0, 0, 128};  // Thetis default Red(128)
     int         m_historyDurationMs{4000};         // Thetis default
     QVector<double> m_history;                     // rolling sample buffer
+    // Phase A3 — clsBarItem marker fields
+    bool        m_showMarker{false};
+    QColor      m_markerColour{Qt::yellow};
+    QColor      m_peakHoldMarkerColour{Qt::red};
+    float       m_peakHoldDecayRatio{0.0f};        // 0 = hold forever
 };
 
 // ---------------------------------------------------------------------------
