@@ -1196,6 +1196,28 @@ ItemGroup* ItemGroup::createAnanMMPreset(QObject* parent)
     });
     group->addItem(alc);
 
+    // Shrink the whole composite into the Thetis-nominal 0..0.441
+    // normalized y band. The background image + every needle + the
+    // power scale were authored above at (0, 0, 1, 1); scale them
+    // all uniformly in y so the composite reserves only the top
+    // 44.1% of the container (matching Thetis
+    // MeterManager.cs:22472 `ni.Size = new SizeF(1f, 0.441f)`).
+    // Because the needles' calibration points are in RECT-local
+    // 0..1 space, scaling the rect down naturally pulls the needle
+    // tips onto the correctly-sized image without changing any
+    // calibration value. Bar rows appended to the container below
+    // this composite by ContainerSettingsDialog will stack starting
+    // at y=0.441 automatically (MeterWidget::reflowStackedItems
+    // picks up the composite's bottom as the stack bandTop).
+    constexpr float kAnanMMHeight = 0.441f;
+    for (MeterItem* mi : group->items()) {
+        if (!mi) { continue; }
+        mi->setRect(mi->x(),
+                    mi->y() * kAnanMMHeight,
+                    mi->itemWidth(),
+                    mi->itemHeight() * kAnanMMHeight);
+    }
+
     return group;
 }
 

@@ -567,83 +567,27 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
 
     if (!group) { return; }
 
-    // Phase E4 (revised) — if the working list already contains a
-    // full-height composite widget (ANAN MM, Cross Needle, Magic Eye,
-    // Dial, History Graph, or a standalone ImageItem / NeedleItem),
-    // the user wants to STACK the new bar row below the composite,
-    // not replace it or overlay it. Because composites normally
-    // occupy the entire 0..1 container, we first SHRINK every such
-    // item to live in the top 70% of the container, then append the
-    // bar row into the bottom 30% slot. This matches the Thetis
-    // Appearance dialog flow where adding a meter under a full-size
-    // needle panel compresses the needle panel to make room.
+    // Thetis-parity stack layout with a NereusSDR pixel floor.
     //
-    // Items with y+h already <= 0.7 are treated as already-room-
-    // making — no compression needed, just append under them.
-    auto isComposite = [](const MeterItem* mi) {
-        return qobject_cast<const NeedleItem*>(mi)
-            || qobject_cast<const MagicEyeItem*>(mi)
-            || qobject_cast<const DialItem*>(mi)
-            || qobject_cast<const HistoryGraphItem*>(mi)
-            || qobject_cast<const NeedleScalePwrItem*>(mi)
-            || qobject_cast<const ImageItem*>(mi);
-    };
-
-    float compositeBottom = 0.0f;
-    bool hasComposite = false;
-    for (const MeterItem* mi : m_workingItems) {
-        if (isComposite(mi)) {
-            hasComposite = true;
-            const float b = mi->y() + mi->itemHeight();
-            if (b > compositeBottom) { compositeBottom = b; }
-        }
-    }
-
-    if (hasComposite && compositeBottom > 0.70f) {
-        // Compress every composite item so its bottom sits at y=0.70.
-        // Scale both y and h by (0.70 / compositeBottom). Bar-row items
-        // in the list (SolidColour/BarItem/ScaleItem/TextItem) are
-        // left alone — they should already live in a reserved slot
-        // that was below the composite before compression.
-        const float scale = 0.70f / compositeBottom;
-        for (MeterItem* mi : m_workingItems) {
-            if (!isComposite(mi)) { continue; }
-            mi->setRect(mi->x(),
-                        mi->y() * scale,
-                        mi->itemWidth(),
-                        mi->itemHeight() * scale);
-        }
-    }
-
-    // Pixel-minimum stack layout (Thetis-parity). Each bar row gets
-    // tagged with a stack slot index + within-slot local rect; the
-    // target MeterWidget's reflowStackedItems() (called on every
-    // resize and right below at append time) projects the slot onto
-    // its current pixel height at the constant MeterWidget::
-    // kBarRowHeightPx (~40 px per row). The container can shrink and
-    // rows clip off the bottom naturally; it can grow and more rows
-    // become visible. No proportional redistribution — the user's
-    // row-height budget is pixel-fixed, matching Thetis Default
-    // Multimeter behaviour.
+    // Composite presets (ANAN MM, CrossNeedle, etc.) are authored
+    // at their Thetis-nominal normalized size directly by the
+    // factory — e.g. ANAN MM occupies y=0..0.441 per Thetis
+    // MeterManager.cs:22472 `Size=(1, 0.441)`. No compress step
+    // runs here; the composite's existing rect is left alone.
     //
-    // Preset items keep their canonical 0..1 layout (SolidBg full
-    // row, BarItem middle band, ScaleItem over the full row) stored
-    // in m_slotLocalY/m_slotLocalH. The outer m_y/m_h are derived
-    // at reflow time, so existing stack rows never need to be
-    // re-positioned by the dialog.
-    const float bandTop = hasComposite ? 0.70f : 0.0f;
-
-    // If we just compressed a composite (bandTop=0.7), every already-
-    // stacked item needs its stackBandTop bumped and its stack slot
-    // shifted so the existing rows sit below the new composite band.
-    // Items that were NOT stacked are left alone.
-    if (hasComposite) {
-        for (MeterItem* mi : m_workingItems) {
-            if (!mi) { continue; }
-            if (mi->stackSlot() < 0) { continue; }
-            mi->setStackBandTop(bandTop);
-        }
-    }
+    // Bar-row presets tag themselves with a stack slot index +
+    // within-slot 0..1 local rect snapshot. MeterWidget::
+    // reflowStackedItems() picks up every reflow and computes
+    //
+    //   slotHpx = max(0.05 * widgetH, 24 px)
+    //   bandTop = max(y + itemHeight) over composite items
+    //             (anything with itemHeight() > 0.30)
+    //
+    // then re-lays every stacked item. Thetis `_fHeight=0.05` from
+    // MeterManager.cs:21266 + a NereusSDR pixel floor so rows stay
+    // readable in tight containers. Rows past widgetH clip
+    // naturally at the container bottom — Thetis Default
+    // Multimeter parity.
 
     // Next slot index = max existing stack slot + 1.
     int nextSlot = 0;
@@ -657,12 +601,10 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     for (MeterItem* src : group->items()) {
         MeterItem* clone = createItemFromSerialized(src->serialize());
         if (!clone) { continue; }
-        // The preset factory produced items in 0..1 local space
-        // already — snapshot that into the slot-local fields so
-        // the reflow can project them back out.
+        // Snapshot the preset factory's canonical within-slot 0..1
+        // layout so reflow can project it back out.
         clone->setSlotLocalY(clone->y());
         clone->setSlotLocalH(clone->itemHeight());
-        clone->setStackBandTop(bandTop);
         clone->setStackSlot(nextSlot);
         if (src->hasMmioBinding()) {
             clone->setMmioBinding(src->mmioGuid(), src->mmioVariable());
@@ -675,13 +617,7 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     // layout at the current target-widget size. The widget's own
     // resizeEvent keeps this in sync going forward.
     if (MeterWidget* meter = findMeterWidget()) {
-        const int widgetH = meter->height();
-        if (widgetH > 0) {
-            for (MeterItem* mi : m_workingItems) {
-                if (!mi) { continue; }
-                mi->layoutInStackSlot(widgetH, MeterWidget::kBarRowHeightPx);
-            }
-        }
+        meter->reflowStackedItems();
     }
 
     refreshItemList();
@@ -1626,7 +1562,6 @@ void ContainerSettingsDialog::populateItemList()
             m_workingItems[i]->setStackSlot(liveItems[i]->stackSlot());
             m_workingItems[i]->setSlotLocalY(liveItems[i]->slotLocalY());
             m_workingItems[i]->setSlotLocalH(liveItems[i]->slotLocalH());
-            m_workingItems[i]->setStackBandTop(liveItems[i]->stackBandTop());
         }
     }
 
@@ -1928,12 +1863,11 @@ void ContainerSettingsDialog::applyToContainer()
             // cloned item on the target MeterWidget participates in
             // reflowStackedItems() on the next resize (and right
             // below, when we kick a reflow so the Apply preview
-            // reflects the pixel-minimum slot layout immediately).
+            // reflects the Thetis-style slot layout immediately).
             if (item->stackSlot() >= 0) {
                 clone->setStackSlot(item->stackSlot());
                 clone->setSlotLocalY(item->slotLocalY());
                 clone->setSlotLocalH(item->slotLocalH());
-                clone->setStackBandTop(item->stackBandTop());
             }
             target->addItem(clone);
             // Re-wire interactive item signals through the container

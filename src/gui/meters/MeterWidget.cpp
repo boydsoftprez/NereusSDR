@@ -269,9 +269,29 @@ void MeterWidget::reflowStackedItems()
 {
     const int h = height();
     if (h <= 0) { return; }
+
+    // Thetis-parity stack layout with NereusSDR pixel floor:
+    //   slotHpx = max(kNormalRowHNorm * widgetH, kMinRowHeightPx)
+    //   bandTop = max(y + itemHeight) over items with itemHeight > 0.30
+    // Re-lays every stacked item from those two values so adding,
+    // removing, or resizing a composite shifts the stack without
+    // touching any per-item metadata.
+    constexpr float kNormalRowHNorm = 0.05f;  // Thetis _fHeight @ MeterManager.cs:21266
+    constexpr int   kMinRowHeightPx = 24;     // NereusSDR pixel floor
+    const int normalRowPx = static_cast<int>(kNormalRowHNorm * static_cast<float>(h));
+    const int slotHeightPx = qMax(normalRowPx, kMinRowHeightPx);
+
+    float bandTop = 0.0f;
+    for (const MeterItem* item : m_items) {
+        if (!item) { continue; }
+        if (item->itemHeight() <= 0.30f) { continue; }
+        const float bottom = item->y() + item->itemHeight();
+        if (bottom > bandTop) { bandTop = bottom; }
+    }
+
     for (MeterItem* item : m_items) {
         if (!item) { continue; }
-        item->layoutInStackSlot(h, kBarRowHeightPx);
+        item->layoutInStackSlot(h, slotHeightPx, bandTop);
     }
 }
 
@@ -327,10 +347,8 @@ void MeterWidget::inferStackFromGeometry()
     std::sort(clusters.begin(), clusters.end(),
               [](const Cluster& a, const Cluster& b) { return a.yMin < b.yMin; });
 
-    // Snap inferred bandTop to a supported value.
-    const float topYMin = clusters.first().yMin;
-    const float bandTop = (topYMin >= 0.6f) ? 0.70f : 0.0f;
-
+    // No per-item bandTop to set — reflowStackedItems() detects
+    // the composite band dynamically on every call.
     for (int i = 0; i < clusters.size(); ++i) {
         Cluster& c = clusters[i];
         const float oldYMin  = c.yMin;
@@ -341,7 +359,6 @@ void MeterWidget::inferStackFromGeometry()
             const float localH = mi->itemHeight() / oldSlotH;
             mi->setSlotLocalY(qBound(0.0f, localY, 1.0f));
             mi->setSlotLocalH(qBound(0.0f, localH, 1.0f));
-            mi->setStackBandTop(bandTop);
             mi->setStackSlot(i);
         }
     }

@@ -48,16 +48,18 @@ public:
     QString serializeItems() const;
     bool deserializeItems(const QString& data);
 
-    // Pixel-minimum stacked-row layout (Phase 3G-9 post-revert).
-    // kBarRowHeightPx is the constant row height used by stacked bar-row
-    // items (Thetis Default Multimeter parity — approx 40 px per row).
-    // Reflow recomputes every stacked item's m_y/m_h from its
-    // slot index + current widget height; called on every resize and
-    // from ContainerSettingsDialog::appendPresetRow after tagging new
-    // rows. inferStackFromGeometry rebuilds the runtime stack
-    // metadata after a deserialize so saved containers keep their
-    // reflow-on-resize behaviour without a persistence format change.
-    static constexpr int kBarRowHeightPx = 40;
+    // Thetis-parity stack layout with a NereusSDR pixel floor
+    // (Phase 3G-9 post-revert).
+    //
+    // reflowStackedItems() is called on every resize. It computes a
+    // per-reflow slot height (0.05 * widgetH normalized, floored at
+    // 24 px) and a bandTop (max of y+h over composite items with
+    // itemHeight > 0.30), then re-lays every stacked item.
+    //
+    // inferStackFromGeometry() rebuilds m_stackSlot + m_slotLocalY/H
+    // after a deserialize from the saved geometry so existing
+    // containers keep participating in reflow-on-resize without a
+    // persistence format bump.
     void reflowStackedItems();
     void inferStackFromGeometry();
 

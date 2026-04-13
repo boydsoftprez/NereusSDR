@@ -100,23 +100,34 @@ bool MeterItem::deserialize(const QString& data)
 // MeterItem base — stacked-row layout (Phase 3G-9 post-revert)
 // ---------------------------------------------------------------------------
 //
-// When an item is tagged as stacked (m_stackSlot >= 0) its effective
-// m_y / m_h come from a pixel-minimum slot projected onto the
-// widget's current height, not from a saved normalized position.
-// MeterWidget::reflowStackedItems() calls this on every resize so
-// each bar row keeps its kBarRowHeightPx minimum and rows past the
-// bottom of the widget overflow naturally. The within-slot layout
-// (SolidBg fills the row, BarItem takes the middle band, ScaleItem
-// sits at the top) is preserved via m_slotLocalY / m_slotLocalH.
+// Thetis-parity stack layout. Each row's effective normalized y/h
+// is computed from:
+//
+//   slotHNorm = slotHeightPx / widgetHeightPx
+//   slotYNorm = bandTop + stackSlot * slotHNorm
+//   m_y       = slotYNorm + m_slotLocalY * slotHNorm
+//   m_h       = m_slotLocalH * slotHNorm
+//
+// The caller is responsible for choosing slotHeightPx — in the
+// normal NereusSDR path that's
+// `max(kNormalRowHNorm * widgetHeightPx, kMinRowPx)` (Thetis's
+// `_fHeight = 0.05f` with a pixel floor so rows stay readable when
+// the container is unusually small). bandTop is derived per-reflow
+// from the composite sitting above the stack — typically 0 when no
+// composite is present, or the composite's max y+h otherwise.
+// Rows with slotYNorm + m_h > 1.0 overflow the widget bottom and
+// clip naturally at paint time, matching Thetis Default Multimeter
+// container behaviour when more rows are added than fit.
 
-void MeterItem::layoutInStackSlot(int widgetHeightPx, int slotHeightPx)
+void MeterItem::layoutInStackSlot(int widgetHeightPx, int slotHeightPx,
+                                   float bandTop)
 {
     if (m_stackSlot < 0 || widgetHeightPx <= 0 || slotHeightPx <= 0) {
         return;
     }
     const float slotHNorm = static_cast<float>(slotHeightPx)
                           / static_cast<float>(widgetHeightPx);
-    const float slotYNorm = m_stackBandTop
+    const float slotYNorm = bandTop
                           + static_cast<float>(m_stackSlot) * slotHNorm;
     m_y = slotYNorm + m_slotLocalY * slotHNorm;
     m_h = m_slotLocalH * slotHNorm;

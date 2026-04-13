@@ -116,49 +116,53 @@ public:
 public:
     // --- Stacked-row metadata (runtime only, not serialized) ---
     //
-    // When m_stackSlot >= 0 the item is part of a pixel-minimum stack
-    // (e.g. a Thetis Default Multimeter bar row). MeterWidget calls
-    // `layoutInStackSlot` on every resize so each row stays at its
-    // fixed pixel height and overflows past the bottom of the widget
-    // clip naturally. This matches the Thetis Appearance dialog
-    // behaviour where adding a row uses a constant bar height and
-    // a taller container reveals more rows.
+    // Thetis-parity stack model with a NereusSDR pixel floor.
+    // When m_stackSlot >= 0 the item is part of a bar-row stack.
+    // At every MeterWidget reflow the outer m_y/m_h are recomputed
+    // from:
     //
-    // m_slotLocalY/m_slotLocalH are the item's within-slot 0..1
-    // coordinates (the preset factory's canonical layout — e.g.
-    // SolidBg 0..1, BarItem 0.2..0.8, ScaleItem 0..1). After
-    // layoutInStackSlot runs, m_y/m_h hold the effective normalized
-    // coordinates for paint/hitTest; the local-within-slot source of
-    // truth stays in m_slotLocalY/H and is not overwritten.
+    //   slotHNorm = slotHeightPx / widgetHeightPx
+    //   slotYNorm = bandTop + stackSlot * slotHNorm
+    //   m_y       = slotYNorm + m_slotLocalY * slotHNorm
+    //   m_h       = m_slotLocalH * slotHNorm
     //
-    // m_stackBandTop is the normalized y of the top of the stack
-    // region — 0.0 when no composite is present, or 0.70 after a
-    // composite (ANAN MM, CrossNeedle, etc.) has been compressed to
-    // leave room for stacked rows beneath it.
+    // where slotHeightPx = max(0.05 * widgetHeightPx, 24) —
+    // Thetis `_fHeight = 0.05f` (MeterManager.cs:21266) with a
+    // 24-pixel floor so rows stay readable when the container is
+    // small. bandTop is derived per-reflow from the composite
+    // sitting above the stack (max of y+h among items with
+    // itemHeight() > 0.30), so the stack shifts automatically when
+    // a composite is added or removed.
+    //
+    // m_slotLocalY/m_slotLocalH hold the preset factory's
+    // canonical within-slot 0..1 layout (SolidBg 0..1, BarItem
+    // 0.2..0.8, ScaleItem 0..1 etc.) and are the source of truth
+    // across reflows — the outer m_y/m_h are derived every time.
     //
     // These fields are deliberately NOT serialized: on load
-    // MeterWidget::inferStackFromGeometry() walks deserialized items
-    // and rebuilds the stack tagging from geometry, so old containers
-    // keep working without a format bump.
+    // MeterWidget::inferStackFromGeometry() walks deserialized
+    // items and rebuilds the stack tagging from geometry so
+    // existing containers keep working without a format bump.
     int   stackSlot() const { return m_stackSlot; }
     float slotLocalY() const { return m_slotLocalY; }
     float slotLocalH() const { return m_slotLocalH; }
-    float stackBandTop() const { return m_stackBandTop; }
     void  setStackSlot(int s) { m_stackSlot = s; }
     void  setSlotLocalY(float y) { m_slotLocalY = y; }
     void  setSlotLocalH(float h) { m_slotLocalH = h; }
-    void  setStackBandTop(float t) { m_stackBandTop = t; }
     void  clearStackMetadata() {
         m_stackSlot = -1;
         m_slotLocalY = 0.0f;
         m_slotLocalH = 1.0f;
-        m_stackBandTop = 0.0f;
     }
 
-    // Recompute m_y/m_h from stack metadata + pixel constants.
-    // No-op when m_stackSlot < 0. Called from
+    // Recompute m_y/m_h from stack metadata. No-op when
+    // m_stackSlot < 0. Called from
     // MeterWidget::reflowStackedItems() on every resize.
-    void layoutInStackSlot(int widgetHeightPx, int slotHeightPx);
+    // `bandTop` is the normalized y at which the stack starts
+    // (0 when no composite is present, else the composite's
+    // max y+h).
+    void layoutInStackSlot(int widgetHeightPx, int slotHeightPx,
+                           float bandTop);
 
 protected:
     QRect pixelRect(int widgetW, int widgetH) const {
@@ -182,7 +186,6 @@ protected:
     int   m_stackSlot{-1};
     float m_slotLocalY{0.0f};
     float m_slotLocalH{1.0f};
-    float m_stackBandTop{0.0f};
 
     // Visibility filter (see public accessors above)
     bool m_onlyWhenRx{false};
