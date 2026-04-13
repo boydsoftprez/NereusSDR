@@ -1,4 +1,5 @@
 #include "MeterItem.h"
+#include "MeterPoller.h"  // MeterBinding namespace
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -10,6 +11,53 @@
 #include <QtMath>
 
 namespace NereusSDR {
+
+// ---------------------------------------------------------------------------
+// readingName — ported verbatim from Thetis MeterManager.cs:2258-2318
+// ReadingName() switch. Used by ScaleItem::ShowType to label bar-row
+// presets with their canonical Thetis names (e.g. "Signal Max FFT Bin").
+// ---------------------------------------------------------------------------
+QString readingName(int bindingId)
+{
+    switch (bindingId) {
+        // RX
+        case MeterBinding::SignalPeak:   return QStringLiteral("Signal Peak");
+        case MeterBinding::SignalAvg:    return QStringLiteral("Signal Average");
+        case MeterBinding::AdcPeak:      return QStringLiteral("ADC Peak");
+        case MeterBinding::AdcAvg:       return QStringLiteral("ADC Average");
+        case MeterBinding::AgcGain:      return QStringLiteral("AGC Gain");
+        case MeterBinding::AgcPeak:      return QStringLiteral("AGC Peak");
+        case MeterBinding::AgcAvg:       return QStringLiteral("AGC Average");
+        case MeterBinding::SignalMaxBin: return QStringLiteral("Signal Max FFT Bin");
+        case MeterBinding::PbSnr:        return QStringLiteral("Estimated PBSNR");
+        // TX
+        case MeterBinding::TxPower:        return QStringLiteral("Power");
+        case MeterBinding::TxReversePower: return QStringLiteral("Reverse Power");
+        case MeterBinding::TxSwr:          return QStringLiteral("SWR");
+        case MeterBinding::TxMic:          return QStringLiteral("MIC");
+        case MeterBinding::TxComp:         return QStringLiteral("Compression");
+        case MeterBinding::TxAlc:          return QStringLiteral("ALC");
+        case MeterBinding::TxEq:           return QStringLiteral("EQ");
+        case MeterBinding::TxLeveler:      return QStringLiteral("Leveler");
+        case MeterBinding::TxLevelerGain:  return QStringLiteral("Leveler Gain");
+        // Thetis has no ReadingName for ALC_GAIN specifically; ALC_G is
+        // "ALC Compression". NereusSDR splits these two signals into
+        // separate bindings so we use the natural label for ALC Gain.
+        case MeterBinding::TxAlcGain:      return QStringLiteral("ALC Gain");
+        case MeterBinding::TxAlcGroup:     return QStringLiteral("ALC Group");
+        case MeterBinding::TxCfc:          return QStringLiteral("CFC Compression Average");
+        case MeterBinding::TxCfcGain:      return QStringLiteral("CFC Compression");
+        // Hardware
+        case MeterBinding::HwVolts:       return QStringLiteral("Volts");
+        case MeterBinding::HwAmps:        return QStringLiteral("Amps");
+        case MeterBinding::HwTemperature: return QStringLiteral("Temperature");
+        // Rotator
+        case MeterBinding::RotatorAz:  return QStringLiteral("Azimuth");
+        case MeterBinding::RotatorEle: return QStringLiteral("Elevation");
+    }
+    return QString();
+}
+
 
 // ---------------------------------------------------------------------------
 // MeterItem base — serialize / deserialize

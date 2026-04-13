@@ -17,6 +17,13 @@ class QWheelEvent;
 
 namespace NereusSDR {
 
+// Free function — maps a MeterBinding::* constant to the centered title
+// string ScaleItem renders when setShowType(true). Ported verbatim from
+// Thetis MeterManager.cs:2258-2318 ReadingName(). Returns an empty
+// QString for unmapped binding IDs (ScaleItem skips empty titles).
+QString readingName(int bindingId);
+
+
 class MeterItem : public QObject {
     Q_OBJECT
 
