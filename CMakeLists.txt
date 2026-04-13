@@ -307,29 +307,34 @@ set(GUI_SOURCES
 qt_add_resources(RESOURCES resources.qrc)
 
 # --------------------------------------------------------------------------
-# Executable
+# Object library — shared between the app executable and test targets so
+# the same translation units are compiled once and consumed by both.
+# Properties on NereusSDRObjs propagate to consumers (PUBLIC) via the
+# CMake INTERFACE; the thin executable just links src/main.cpp on top.
 # --------------------------------------------------------------------------
-add_executable(NereusSDR
-    src/main.cpp
+add_library(NereusSDRObjs OBJECT
     ${CORE_SOURCES}
     ${MODEL_SOURCES}
     ${GUI_SOURCES}
     ${RESOURCES}
 )
 
+add_executable(NereusSDR src/main.cpp)
+target_link_libraries(NereusSDR PRIVATE NereusSDRObjs)
+
 set_target_properties(NereusSDR PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
 
-target_include_directories(NereusSDR PRIVATE
+target_include_directories(NereusSDRObjs PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
 
 # --------------------------------------------------------------------------
 # Linking
 # --------------------------------------------------------------------------
-target_link_libraries(NereusSDR PRIVATE
+target_link_libraries(NereusSDRObjs PUBLIC
     Qt6::Core
     Qt6::Widgets
     Qt6::Network
@@ -337,30 +342,30 @@ target_link_libraries(NereusSDR PRIVATE
 )
 
 if(Qt6SerialPort_FOUND)
-    target_link_libraries(NereusSDR PRIVATE Qt6::SerialPort)
-    target_compile_definitions(NereusSDR PRIVATE HAVE_SERIALPORT)
+    target_link_libraries(NereusSDRObjs PUBLIC Qt6::SerialPort)
+    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_SERIALPORT)
 endif()
 
 if(Qt6WebSockets_FOUND)
-    target_link_libraries(NereusSDR PRIVATE Qt6::WebSockets)
-    target_compile_definitions(NereusSDR PRIVATE HAVE_WEBSOCKETS)
+    target_link_libraries(NereusSDRObjs PUBLIC Qt6::WebSockets)
+    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WEBSOCKETS)
 endif()
 
 if(FFTW3_FOUND)
-    target_include_directories(NereusSDR PRIVATE ${FFTW3_INCLUDE_DIRS})
-    target_link_libraries(NereusSDR PRIVATE ${FFTW3_LIBRARIES})
-    target_compile_definitions(NereusSDR PRIVATE HAVE_FFTW3)
+    target_include_directories(NereusSDRObjs PUBLIC ${FFTW3_INCLUDE_DIRS})
+    target_link_libraries(NereusSDRObjs PUBLIC ${FFTW3_LIBRARIES})
+    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_FFTW3)
 endif()
 
 if(WDSP_FOUND)
     add_subdirectory(third_party/wdsp)
-    target_link_libraries(NereusSDR PRIVATE wdsp_static)
-    target_compile_definitions(NereusSDR PRIVATE HAVE_WDSP)
+    target_link_libraries(NereusSDRObjs PUBLIC wdsp_static)
+    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WDSP)
 endif()
 
 if(NEREUS_GPU_SPECTRUM)
-    target_link_libraries(NereusSDR PRIVATE Qt6::GuiPrivate)
-    target_compile_definitions(NereusSDR PRIVATE NEREUS_GPU_SPECTRUM)
+    target_link_libraries(NereusSDRObjs PUBLIC Qt6::GuiPrivate)
+    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_GPU_SPECTRUM)
 
     if(Qt6ShaderTools_FOUND)
         qt_add_shaders(NereusSDR "nereus_shaders"
@@ -388,7 +393,7 @@ endif()
 # --------------------------------------------------------------------------
 # Version define
 # --------------------------------------------------------------------------
-target_compile_definitions(NereusSDR PRIVATE
+target_compile_definitions(NereusSDRObjs PUBLIC
     NEREUSSDR_VERSION="${PROJECT_VERSION}"
 )
 
@@ -396,11 +401,11 @@ target_compile_definitions(NereusSDR PRIVATE
 # Compiler warnings
 # --------------------------------------------------------------------------
 if(MSVC)
-    target_compile_options(NereusSDR PRIVATE /W3 /Zc:__cplusplus)
+    target_compile_options(NereusSDRObjs PRIVATE /W3 /Zc:__cplusplus)
 else()
-    target_compile_options(NereusSDR PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(NereusSDRObjs PRIVATE -Wall -Wextra -Wpedantic)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        target_compile_options(NereusSDR PRIVATE -fsanitize=address)
+        target_compile_options(NereusSDRObjs PUBLIC -fsanitize=address)
         target_link_options(NereusSDR PRIVATE -fsanitize=address)
     endif()
 endif()
@@ -413,3 +418,12 @@ install(TARGETS NereusSDR
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE  DESTINATION .
 )
+
+# --------------------------------------------------------------------------
+# Tests (Qt6::Test). Opt-in via -DNEREUS_BUILD_TESTS=ON.
+# --------------------------------------------------------------------------
+option(NEREUS_BUILD_TESTS "Build NereusSDR test suite" OFF)
+if(NEREUS_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
