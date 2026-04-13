@@ -13,6 +13,8 @@
 
 #include <QtTest/QtTest>
 #include <QColor>
+#include <QImage>
+#include <QPainter>
 
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"  // MeterBinding namespace
@@ -345,6 +347,102 @@ private slots:
         QCOMPARE(b.showMarker(),         false);
         QCOMPARE(b.peakHoldDecayRatio(), 0.0f);
         QCOMPARE(b.scaleCalibrationSize(), 0);
+    }
+
+    // ---- Phase D1b: BarStyle::Line render path ----
+
+    static int countMatching(const QImage& img, const QRect& region,
+                             const QColor& wanted, int tol = 50)
+    {
+        int hits = 0;
+        for (int y = region.top(); y <= region.bottom(); ++y) {
+            for (int x = region.left(); x <= region.right(); ++x) {
+                const QColor c = img.pixelColor(x, y);
+                if (std::abs(c.red()   - wanted.red())   <= tol &&
+                    std::abs(c.green() - wanted.green()) <= tol &&
+                    std::abs(c.blue()  - wanted.blue())  <= tol) {
+                    ++hits;
+                }
+            }
+        }
+        return hits;
+    }
+
+    void Line_style_paints_bar_using_scaleCalibration()
+    {
+        // A Line-style BarItem with the Thetis S-meter calibration and
+        // value = -73 (S9, calibration midpoint = 0.5) should paint bar
+        // pixels across the left half of the widget and leave the right
+        // half unfilled.
+        QImage img(200, 40, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            b.setBarStyle(BarItem::BarStyle::Line);
+            b.setBarColor(QColor(Qt::cyan));
+            b.addScaleCalibration(-133.0, 0.0f);
+            b.addScaleCalibration( -73.0, 0.5f);
+            b.addScaleCalibration( -13.0, 0.99f);
+            // setValue applies attack smoothing — drive it hard so
+            // smoothedValue reaches -73 quickly.
+            for (int i = 0; i < 20; ++i) { b.setValue(-73.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        const QRect leftHalf(0, 0, img.width() / 2 - 5, img.height());
+        const QRect rightQuarter(img.width() * 3 / 4, 0,
+                                 img.width() / 4, img.height());
+        const int cyanLeft  = countMatching(img, leftHalf, QColor(Qt::cyan), 60);
+        const int cyanRight = countMatching(img, rightQuarter, QColor(Qt::cyan), 60);
+        QVERIFY2(cyanLeft  > 0,   "Line bar should fill the left half at S9");
+        QCOMPARE(cyanRight, 0);
+    }
+
+    void Line_style_ShowValue_draws_yellow_text_top_left()
+    {
+        QImage img(240, 60, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            b.setBarStyle(BarItem::BarStyle::Line);
+            b.setBarColor(QColor(Qt::darkGray));  // avoid confusion with yellow
+            b.setShowValue(true);
+            b.setFontColour(QColor(Qt::yellow));
+            b.setRange(-140.0, 0.0);
+            for (int i = 0; i < 20; ++i) { b.setValue(-50.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        // Yellow text should land in the top-left quadrant
+        const QRect topLeft(0, 0, img.width() / 2, img.height() / 2);
+        const int hits = countMatching(img, topLeft, QColor(Qt::yellow), 50);
+        QVERIFY2(hits > 0, "ShowValue should draw yellow text in top-left");
+    }
+
+    void Line_style_ShowMarker_draws_peak_and_live_lines()
+    {
+        QImage img(240, 60, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        {
+            QPainter p(&img);
+            BarItem b;
+            b.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+            b.setBarStyle(BarItem::BarStyle::Line);
+            b.setRange(-140.0, 0.0);
+            b.setShowMarker(true);
+            b.setMarkerColour(QColor(Qt::green));
+            b.setPeakHoldMarkerColour(QColor(Qt::magenta));
+            // push a high peak, then settle lower so live < peak
+            for (int i = 0; i < 20; ++i) { b.setValue(-20.0); }
+            for (int i = 0; i < 20; ++i) { b.setValue(-80.0); }
+            b.paint(p, img.width(), img.height());
+        }
+        const int greenHits   = countMatching(img, img.rect(), QColor(Qt::green),   60);
+        const int magentaHits = countMatching(img, img.rect(), QColor(Qt::magenta), 60);
+        QVERIFY2(greenHits > 0,   "live marker should paint in green");
+        QVERIFY2(magentaHits > 0, "peak-hold marker should paint in magenta");
     }
 
     void deserialize_garbled_calibration_field_is_tolerated()

@@ -323,20 +323,102 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     const QRect rect = pixelRect(widgetW, widgetH);
-    const double range = m_maxVal - m_minVal;
-    const double frac  = (range > 0.0)
-        ? std::clamp((m_smoothedValue - m_minVal) / range, 0.0, 1.0)
-        : 0.0;
+    const QColor& fillColor = (m_smoothedValue >= m_redThreshold)
+                                  ? m_barRedColor : m_barColor;
 
-    const QColor& fillColor = (m_smoothedValue >= m_redThreshold) ? m_barRedColor : m_barColor;
-
-    if (m_orientation == Orientation::Horizontal) {
-        const int fillW = static_cast<int>(frac * rect.width());
-        p.fillRect(QRect(rect.left(), rect.top(), fillW, rect.height()), fillColor);
-    } else {
+    // Bar body. Uses valueToNormalizedX() so both the linear min..max
+    // fallback (empty calibration) and the Phase A4 piecewise-linear
+    // calibration route through one code path. Only Horizontal
+    // orientation supports the Phase A extensions; Vertical keeps its
+    // pre-A1 behavior because no Thetis preset uses it.
+    if (m_orientation == Orientation::Vertical) {
+        const double range = m_maxVal - m_minVal;
+        const double frac  = (range > 0.0)
+            ? std::clamp((m_smoothedValue - m_minVal) / range, 0.0, 1.0)
+            : 0.0;
         const int fillH = static_cast<int>(frac * rect.height());
-        // Vertical fills from bottom
-        p.fillRect(QRect(rect.left(), rect.bottom() - fillH, rect.width(), fillH), fillColor);
+        p.fillRect(QRect(rect.left(), rect.bottom() - fillH,
+                         rect.width(), fillH),
+                   fillColor);
+        return;
+    }
+
+    const float fracLive = valueToNormalizedX(m_smoothedValue);
+    const int fillW = static_cast<int>(fracLive * rect.width());
+
+    // Phase A2 — history trailing fill. Drawn FIRST so the live bar
+    // overlays it. Each sample produces one vertical line at its own
+    // calibrated X, with full-height alpha-blended stroke using
+    // m_historyColour. Older samples fade via the alpha in the colour
+    // itself; a stronger trail effect will come with VBO work later.
+    if (m_showHistory && !m_history.isEmpty()) {
+        p.setPen(QPen(m_historyColour, 1));
+        for (double v : m_history) {
+            const float hx = valueToNormalizedX(v);
+            const int px = rect.left() + static_cast<int>(hx * rect.width());
+            p.drawLine(px, rect.top(), px, rect.bottom());
+        }
+    }
+
+    // Phase A4 — Line style draws only a thin baseline at the bottom
+    // of the bar rect instead of a filled quad. Matches Thetis
+    // BarStyle.Line where the "bar" is really a baseline + markers +
+    // labels composition.
+    if (m_barStyle == BarStyle::Line) {
+        p.setPen(QPen(fillColor, 2));
+        const int baselineY = rect.bottom() - 2;
+        p.drawLine(rect.left(), baselineY,
+                   rect.left() + fillW, baselineY);
+    } else {
+        // Default Filled bar (existing pre-A behavior, now routed
+        // through valueToNormalizedX so a calibrated Filled bar also
+        // works if anyone wants it).
+        p.fillRect(QRect(rect.left(), rect.top(),
+                         fillW, rect.height()),
+                   fillColor);
+    }
+
+    // Phase A3 — live value marker + peak-hold marker (Thetis
+    // MeterManager.cs:21543-21544). Thin vertical lines at the live
+    // smoothed X and the separate peak X.
+    if (m_showMarker) {
+        p.setPen(QPen(m_markerColour, 2));
+        const int liveX = rect.left() + static_cast<int>(fracLive * rect.width());
+        p.drawLine(liveX, rect.top(), liveX, rect.bottom());
+
+        if (std::isfinite(m_peakValue)) {
+            p.setPen(QPen(m_peakHoldMarkerColour, 2));
+            const float fracPeak = valueToNormalizedX(m_peakValue);
+            const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
+            p.drawLine(peakX, rect.top(), peakX, rect.bottom());
+        }
+    }
+
+    // Phase A1 — ShowValue / ShowPeakValue text labels. ShowValue is
+    // drawn top-left and ShowPeakValue top-right, both in m_fontColour
+    // using a small proportional font. Idle values (−inf) are skipped.
+    if (m_showValue || m_showPeakValue) {
+        QFont font = p.font();
+        const int fontPx = qMax(9, rect.height() / 3);
+        font.setPixelSize(fontPx);
+        font.setBold(true);
+        p.setFont(font);
+        p.setPen(m_fontColour);
+        const QFontMetrics fm(font);
+
+        if (m_showValue && std::isfinite(m_smoothedValue)) {
+            const QString s = QString::number(m_smoothedValue, 'f', 1);
+            p.drawText(rect.left() + 2,
+                       rect.top() + fm.ascent(),
+                       s);
+        }
+        if (m_showPeakValue && std::isfinite(m_peakValue)) {
+            const QString s = QString::number(m_peakValue, 'f', 1);
+            const int w = fm.horizontalAdvance(s);
+            p.drawText(rect.right() - w - 2,
+                       rect.top() + fm.ascent(),
+                       s);
+        }
     }
 }
 
