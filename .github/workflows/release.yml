@@ -222,3 +222,84 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: NereusSDR-*.AppImage
           retention-days: 7
+
+  build-macos:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            dmg_suffix: macOS-apple-silicon
+            deployment_target: "14.0"
+          - runner: macos-13
+            arch: x86_64
+            dmg_suffix: macOS-intel
+            deployment_target: "11.0"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install dependencies
+        run: brew install qt@6 ninja create-dmg fftw ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ccache
+          key: release-ccache-macos-${{ matrix.arch }}-${{ needs.prepare.outputs.tag }}
+          restore-keys: |
+            release-ccache-macos-${{ matrix.arch }}-
+
+      - name: Configure
+        run: |
+          ccache --max-size=2G
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --no-tests=ignore
+
+      - name: Bundle Qt frameworks
+        run: |
+          $(brew --prefix qt@6)/bin/macdeployqt build/NereusSDR.app \
+            -verbose=1 -always-overwrite
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - build/NereusSDR.app
+          codesign --verify --verbose=2 build/NereusSDR.app
+
+      - name: Create DMG
+        run: |
+          create-dmg \
+            --volname "NereusSDR" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "NereusSDR.app" 150 110 \
+            --hide-extension "NereusSDR.app" \
+            --app-drop-link 450 110 \
+            "NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.dmg_suffix }}.dmg" \
+            "build/NereusSDR.app" \
+          || true
+          ls -la NereusSDR-*.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: NereusSDR-*.dmg
+          retention-days: 7
