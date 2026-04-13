@@ -354,6 +354,11 @@ target_link_libraries(NereusSDR PRIVATE
     Qt6::Multimedia
 )
 
+if(WIN32)
+    # Needed by RadioDiscovery.cpp's setsockopt() call for SO_BROADCAST.
+    target_link_libraries(NereusSDR PRIVATE ws2_32)
+endif()
+
 if(Qt6SerialPort_FOUND)
     target_link_libraries(NereusSDR PRIVATE Qt6::SerialPort)
     target_compile_definitions(NereusSDR PRIVATE HAVE_SERIALPORT)

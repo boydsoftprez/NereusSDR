@@ -5,7 +5,11 @@
 #include <QNetworkDatagram>
 #include <QNetworkInterface>
 
+#ifdef Q_OS_WIN
+#include <winsock2.h>
+#else
 #include <sys/socket.h>
+#endif
 
 namespace NereusSDR {
 
@@ -103,11 +107,15 @@ void RadioDiscovery::startDiscovery()
         return;
     }
 
-    // Enable SO_BROADCAST so writeDatagram to broadcast addresses works
-    int fd = m_socket->socketDescriptor();
+    // Enable SO_BROADCAST so writeDatagram to broadcast addresses works.
+    // On Windows, setsockopt's optval is `const char*`; on POSIX it's
+    // `const void*`. Casting to `const char*` is valid on both.
+    const auto fd = m_socket->socketDescriptor();
     if (fd >= 0) {
         int broadcastEnable = 1;
-        ::setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable));
+        ::setsockopt(static_cast<int>(fd), SOL_SOCKET, SO_BROADCAST,
+                     reinterpret_cast<const char*>(&broadcastEnable),
+                     sizeof(broadcastEnable));
     }
 
     connect(m_socket, &QUdpSocket::readyRead, this, &RadioDiscovery::onReadyRead);
