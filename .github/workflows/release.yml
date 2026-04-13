@@ -94,3 +94,131 @@ jobs:
           name: release-notes
           path: release_notes.md
           retention-days: 1
+
+  build-linux:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+            use_aqt: true
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            use_aqt: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config ccache \
+            libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-randr0 libxcb-xfixes0 \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-pulseaudio gstreamer1.0-gl \
+            libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
+            libfuse2 file desktop-file-utils \
+            libfftw3-dev imagemagick
+
+      - name: Install system Qt (ARM only)
+        if: matrix.use_aqt == false
+        run: |
+          sudo apt-get install -y qt6-base-dev qt6-multimedia-dev \
+            qt6-base-private-dev
+
+      - name: Install Qt 6.7 via aqtinstall (x86_64)
+        if: matrix.use_aqt == true
+        run: |
+          pip3 install aqtinstall
+          aqt install-qt linux desktop 6.7.3 linux_gcc_64 \
+            -m qtmultimedia \
+            --outputdir ${{ github.workspace }}/Qt
+          echo "Qt6_DIR=${{ github.workspace }}/Qt/6.7.3/gcc_64/lib/cmake/Qt6" >> $GITHUB_ENV
+          echo "CMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64" >> $GITHUB_ENV
+          echo "PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64/bin:$PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: release-ccache-linux-${{ matrix.arch }}-${{ needs.prepare.outputs.tag }}
+          restore-keys: |
+            release-ccache-linux-${{ matrix.arch }}-
+
+      - name: Configure
+        run: |
+          ccache --max-size=2G
+          CMAKE_EXTRA=""
+          if [ "${{ matrix.use_aqt }}" = "true" ]; then
+            CMAKE_EXTRA="-DCMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64"
+          fi
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            $CMAKE_EXTRA
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --no-tests=ignore
+
+      - name: Install to AppDir
+        run: |
+          DESTDIR=${{ github.workspace }}/AppDir cmake --install build
+
+      - name: Download linuxdeploy + Qt plugin
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${{ matrix.arch }}.AppImage
+          chmod +x linuxdeploy-${{ matrix.arch }}.AppImage linuxdeploy-plugin-qt-${{ matrix.arch }}.AppImage
+
+      - name: Build AppImage
+        env:
+          LDAI_OUTPUT: NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.AppImage
+          QT_SELECT: qt6
+          EXTRA_QT_PLUGINS: multimedia
+        run: |
+          if [ "${{ matrix.use_aqt }}" = "true" ]; then
+            export QMAKE=${{ github.workspace }}/Qt/6.7.3/gcc_64/bin/qmake
+          else
+            export QMAKE=$(which qmake6 2>/dev/null || which qmake)
+          fi
+          mkdir -p AppDir/usr/share/applications
+          cat > AppDir/usr/share/applications/NereusSDR.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=NereusSDR
+          Exec=NereusSDR
+          Icon=nereussdr
+          Categories=HamRadio;Audio;
+          Comment=Cross-platform OpenHPSDR SDR Console
+          DESKTOP
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          convert -size 256x256 xc:"#0f0f1a" -fill "#00b4d8" -gravity center \
+            -pointsize 48 -annotate +0+0 "NSDR" \
+            AppDir/usr/share/icons/hicolor/256x256/apps/nereussdr.png 2>/dev/null || \
+          touch AppDir/usr/share/icons/hicolor/256x256/apps/nereussdr.png
+
+          ./linuxdeploy-${{ matrix.arch }}.AppImage \
+            --appdir AppDir \
+            --plugin qt \
+            --desktop-file AppDir/usr/share/applications/NereusSDR.desktop \
+            --output appimage
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: NereusSDR-*.AppImage
+          retention-days: 7
