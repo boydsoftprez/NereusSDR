@@ -18,6 +18,9 @@
 !ifndef NSDR_OUTFILE
   !define NSDR_OUTFILE "NereusSDR-setup.exe"
 !endif
+!ifndef NSDR_VERSION_NUMERIC
+  !define NSDR_VERSION_NUMERIC "0.0.0"
+!endif
 
 Name "NereusSDR ${NSDR_VERSION}"
 OutFile "${NSDR_OUTFILE}"
@@ -26,7 +29,7 @@ InstallDir "$PROGRAMFILES64\NereusSDR"
 InstallDirRegKey HKLM "Software\NereusSDR" "InstallDir"
 RequestExecutionLevel admin
 
-VIProductVersion "${NSDR_VERSION}.0"
+VIProductVersion "${NSDR_VERSION_NUMERIC}.0"
 VIAddVersionKey "ProductName" "NereusSDR"
 VIAddVersionKey "FileDescription" "NereusSDR — cross-platform OpenHPSDR SDR console"
 VIAddVersionKey "FileVersion" "${NSDR_VERSION}"

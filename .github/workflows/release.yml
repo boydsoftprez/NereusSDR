@@ -388,10 +388,14 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.prepare.outputs.version }}"
+          # Strip any prerelease suffix (e.g. 0.1.0-alpha -> 0.1.0) for VIProductVersion,
+          # which NSIS requires to be exactly 4 numeric dot-separated components.
+          $versionNumeric = $version -replace '-.*$', ''
           $deploy  = (Resolve-Path deploy).Path
           $outfile = "NereusSDR-$version-Windows-x64-setup.exe"
           & "C:\Program Files (x86)\NSIS\makensis.exe" `
               /DNSDR_VERSION=$version `
+              /DNSDR_VERSION_NUMERIC=$versionNumeric `
               /DNSDR_DEPLOYDIR=$deploy `
               /DNSDR_OUTFILE=$outfile `
               scripts\windows\installer.nsi
