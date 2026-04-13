@@ -20,9 +20,24 @@
 |---|---|
 | `.github/workflows/release.yml` | Tag-triggered consolidated release workflow (4 jobs) |
 | `.github/release-notes-template.md` | Template appended to every draft release body |
+| `scripts/windows/installer.nsi` | NSIS installer script (Start Menu, uninstaller, install dir) |
 | `~/.claude/skills/release/SKILL.md` | Skill instructions for Claude Code |
 | `~/.claude/skills/release/bin/release.sh` | Deterministic shell helper invoked by the skill |
 | `docs/architecture/2026-04-12-phase3n-release-pipeline-plan.md` | This plan |
+
+**Release artifact set (mirrors AetherSDR shape):**
+
+| Artifact | Job | Notes |
+|---|---|---|
+| `NereusSDR-vX.Y.Z-x86_64.AppImage` | build-linux (x86_64) | |
+| `NereusSDR-vX.Y.Z-aarch64.AppImage` | build-linux (aarch64) | |
+| `NereusSDR-vX.Y.Z-macOS-apple-silicon.dmg` | build-macos (arm64) | ad-hoc signed |
+| `NereusSDR-vX.Y.Z-macOS-intel.dmg` | build-macos (x86_64) | ad-hoc signed, macos-13 runner |
+| `NereusSDR-vX.Y.Z-Windows-x64-portable.zip` | build-windows | extract-and-run |
+| `NereusSDR-vX.Y.Z-Windows-x64-setup.exe` | build-windows | NSIS installer w/ Start Menu + uninstaller |
+| `NereusSDR-vX.Y.Z-source.tar.gz` | sign-and-publish | git archive of the tag |
+| `SHA256SUMS.txt` + `.asc` | sign-and-publish | GPG-signed by KG4VCF |
+| `*.asc` for each binary | sign-and-publish | detached GPG signatures |
 
 **Modified files:**
 
@@ -40,7 +55,8 @@
 
 **Notes:**
 - The existing `appimage.yml` builds both `x86_64` and `aarch64`. The plan **preserves both** in the new `build-linux` matrix.
-- The existing `windows-installer.yml` produces a portable ZIP, not an NSIS installer. The plan **keeps the portable ZIP** for Phase 3N — NSIS installer is Phase 3N+1 work alongside Authenticode signing. Portable ZIP is actually better for "alpha to debuggers."
+- The existing `macos-dmg.yml` builds Apple Silicon only. The plan **adds Intel** as a second matrix entry on `macos-13` (Apple's last Intel-capable runner) to mirror the AetherSDR release shape.
+- The existing `windows-installer.yml` is misnamed — it produces a portable ZIP, not a real installer. The plan **ships both** a portable ZIP (extract-and-run, power users) and an NSIS-built `setup.exe` (Start Menu shortcut, uninstaller, normal users). Authenticode signing of the `setup.exe` is Phase 3N+1.
 - Tests do not currently exist on `main` (they live on a worktree branch). Plan adds `ctest --output-on-failure` calls anyway — `ctest` returns success when no tests are registered, and the worktree merge will retroactively populate them.
 
 ---
@@ -322,20 +338,36 @@
 
   ## Installation
 
-  ### Linux (AppImage)
+  ### Linux
+
+  **x86_64:** download `NereusSDR-vX.Y.Z-x86_64.AppImage`
+  **aarch64:** download `NereusSDR-vX.Y.Z-aarch64.AppImage`
+
   ```bash
-  chmod +x NereusSDR-*-x86_64.AppImage
-  ./NereusSDR-*-x86_64.AppImage
+  chmod +x NereusSDR-vX.Y.Z-*.AppImage
+  ./NereusSDR-vX.Y.Z-*.AppImage
   ```
 
-  ### macOS (DMG)
-  This build is **ad-hoc signed** (no Apple Developer ID yet). On first launch:
+  ### macOS
+
+  **Apple Silicon (M1/M2/M3/M4):** `NereusSDR-vX.Y.Z-macOS-apple-silicon.dmg`
+  **Intel:** `NereusSDR-vX.Y.Z-macOS-intel.dmg`
+
+  These builds are **ad-hoc signed** (no Apple Developer ID yet). On first launch:
   1. Open the DMG, drag NereusSDR to Applications.
   2. **Right-click** NereusSDR.app → **Open** → **Open** in the dialog.
   3. After the first launch, double-clicking works normally.
 
-  ### Windows (Portable ZIP)
-  Unzip and run `NereusSDR.exe`. SmartScreen may flag the binary on first run
+  ### Windows
+
+  Two options — pick one:
+
+  - **Installer (recommended):** `NereusSDR-vX.Y.Z-Windows-x64-setup.exe` — installs
+    to `Program Files`, adds Start Menu shortcut, registers an uninstaller.
+  - **Portable:** `NereusSDR-vX.Y.Z-Windows-x64-portable.zip` — extract and run
+    `NereusSDR.exe`. No install footprint.
+
+  Both are unsigned at the moment. SmartScreen may flag the binary on first run
   (no Authenticode signature yet); click **More info → Run anyway**.
 
   ## Verification
@@ -541,19 +573,31 @@
 
 ---
 
-## Task 4: Add `build-macos` job to `release.yml`
+## Task 4: Add `build-macos` job to `release.yml` (matrix: apple-silicon + intel)
 
 **Files:**
 - Modify: `.github/workflows/release.yml`
 
-- [ ] **Step 4.1: Append the `build-macos` job**
+- [ ] **Step 4.1: Append the `build-macos` job with matrix**
 
   Add after `build-linux`:
 
   ```yaml
     build-macos:
       needs: prepare
-      runs-on: macos-15
+      strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - runner: macos-15
+              arch: arm64
+              dmg_suffix: macOS-apple-silicon
+              deployment_target: "14.0"
+            - runner: macos-13
+              arch: x86_64
+              dmg_suffix: macOS-intel
+              deployment_target: "11.0"
+      runs-on: ${{ matrix.runner }}
       steps:
         - uses: actions/checkout@v4
           with:
@@ -566,16 +610,17 @@
           uses: actions/cache@v4
           with:
             path: ~/Library/Caches/ccache
-            key: release-ccache-macos-${{ needs.prepare.outputs.tag }}
+            key: release-ccache-macos-${{ matrix.arch }}-${{ needs.prepare.outputs.tag }}
             restore-keys: |
-              release-ccache-macos-
+              release-ccache-macos-${{ matrix.arch }}-
 
         - name: Configure
           run: |
             ccache --max-size=2G
             cmake -B build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_OSX_DEPLOYMENT_TARGET="14.0" \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
+              -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
               -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
               -DCMAKE_C_COMPILER_LAUNCHER=ccache \
               -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -607,7 +652,7 @@
               --icon "NereusSDR.app" 150 110 \
               --hide-extension "NereusSDR.app" \
               --app-drop-link 450 110 \
-              "NereusSDR-${{ needs.prepare.outputs.version }}-macos-arm64.dmg" \
+              "NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.dmg_suffix }}.dmg" \
               "build/NereusSDR.app" \
             || true
             ls -la NereusSDR-*.dmg
@@ -615,10 +660,15 @@
         - name: Upload DMG artifact
           uses: actions/upload-artifact@v4
           with:
-            name: macos-arm64
+            name: macos-${{ matrix.arch }}
             path: NereusSDR-*.dmg
             retention-days: 7
   ```
+
+  Notes:
+  - `macos-13` is Apple's last Intel-capable runner. Apple has announced retirement; if it disappears before we reach 1.0, the Intel matrix entry can be dropped without restructuring.
+  - `CMAKE_OSX_ARCHITECTURES` forces single-arch build per matrix entry (no fat binaries — keeps DMG sizes down and matches AetherSDR's split).
+  - Intel uses an older deployment target (11.0 / Big Sur) since Intel users often run older macOS than Apple Silicon users.
 
 - [ ] **Step 4.2: Lint and commit**
 
@@ -640,12 +690,119 @@
 
 ---
 
-## Task 5: Add `build-windows` job to `release.yml`
+## Task 5: Add `build-windows` job to `release.yml` (portable ZIP + NSIS installer)
 
 **Files:**
+- Create: `scripts/windows/installer.nsi`
 - Modify: `.github/workflows/release.yml`
 
-**Note:** ships portable ZIP (matches existing `windows-installer.yml`). NSIS installer is Phase 3N+1.
+**Note:** ships **both** a portable ZIP and an NSIS-built `setup.exe` to mirror the AetherSDR release shape. Authenticode signing of the `setup.exe` is Phase 3N+1.
+
+- [ ] **Step 5.0: Create the NSIS installer script**
+
+  Create `scripts/windows/installer.nsi`:
+
+  ```nsis
+  ; NereusSDR NSIS installer script
+  ; Builds: NereusSDR-vX.Y.Z-Windows-x64-setup.exe
+  ; Invoked by .github/workflows/release.yml build-windows job.
+
+  !include "MUI2.nsh"
+
+  ;--- Variables passed in via /D on the makensis command line ---
+  ; NSDR_VERSION   — full version string, e.g. 0.2.0
+  ; NSDR_DEPLOYDIR — path to the windeployqt'd deploy/ directory
+  ; NSDR_OUTFILE   — full output path for the .exe
+
+  !ifndef NSDR_VERSION
+    !define NSDR_VERSION "0.0.0"
+  !endif
+  !ifndef NSDR_DEPLOYDIR
+    !define NSDR_DEPLOYDIR "deploy"
+  !endif
+  !ifndef NSDR_OUTFILE
+    !define NSDR_OUTFILE "NereusSDR-setup.exe"
+  !endif
+
+  Name "NereusSDR ${NSDR_VERSION}"
+  OutFile "${NSDR_OUTFILE}"
+  Unicode True
+  InstallDir "$PROGRAMFILES64\NereusSDR"
+  InstallDirRegKey HKLM "Software\NereusSDR" "InstallDir"
+  RequestExecutionLevel admin
+
+  VIProductVersion "${NSDR_VERSION}.0"
+  VIAddVersionKey "ProductName" "NereusSDR"
+  VIAddVersionKey "FileDescription" "NereusSDR — cross-platform OpenHPSDR SDR console"
+  VIAddVersionKey "FileVersion" "${NSDR_VERSION}"
+  VIAddVersionKey "ProductVersion" "${NSDR_VERSION}"
+  VIAddVersionKey "LegalCopyright" "© JJ Boyd ~KG4VCF"
+
+  ;--- Modern UI pages ---
+  !define MUI_ABORTWARNING
+  !insertmacro MUI_PAGE_WELCOME
+  !insertmacro MUI_PAGE_LICENSE "..\..\LICENSE"
+  !insertmacro MUI_PAGE_DIRECTORY
+  !insertmacro MUI_PAGE_INSTFILES
+  !insertmacro MUI_PAGE_FINISH
+
+  !insertmacro MUI_UNPAGE_CONFIRM
+  !insertmacro MUI_UNPAGE_INSTFILES
+
+  !insertmacro MUI_LANGUAGE "English"
+
+  Section "NereusSDR (required)" SecMain
+    SectionIn RO
+    SetOutPath "$INSTDIR"
+    File /r "${NSDR_DEPLOYDIR}\*.*"
+
+    WriteRegStr HKLM "Software\NereusSDR" "InstallDir" "$INSTDIR"
+    WriteRegStr HKLM "Software\NereusSDR" "Version" "${NSDR_VERSION}"
+
+    ; Add/Remove Programs entry
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "DisplayName" "NereusSDR ${NSDR_VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "DisplayVersion" "${NSDR_VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "Publisher" "JJ Boyd ~KG4VCF"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "InstallLocation" "$INSTDIR"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "DisplayIcon" "$INSTDIR\NereusSDR.exe"
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
+                "NoRepair" 1
+
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+  SectionEnd
+
+  Section "Start Menu shortcut" SecStartMenu
+    CreateDirectory "$SMPROGRAMS\NereusSDR"
+    CreateShortcut "$SMPROGRAMS\NereusSDR\NereusSDR.lnk" "$INSTDIR\NereusSDR.exe"
+    CreateShortcut "$SMPROGRAMS\NereusSDR\Uninstall NereusSDR.lnk" "$INSTDIR\uninstall.exe"
+  SectionEnd
+
+  Section "Desktop shortcut" SecDesktop
+    CreateShortcut "$DESKTOP\NereusSDR.lnk" "$INSTDIR\NereusSDR.exe"
+  SectionEnd
+
+  ;--- Uninstaller ---
+  Section "Uninstall"
+    Delete "$DESKTOP\NereusSDR.lnk"
+    Delete "$SMPROGRAMS\NereusSDR\NereusSDR.lnk"
+    Delete "$SMPROGRAMS\NereusSDR\Uninstall NereusSDR.lnk"
+    RMDir  "$SMPROGRAMS\NereusSDR"
+
+    RMDir /r "$INSTDIR"
+
+    DeleteRegKey HKLM "Software\NereusSDR"
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR"
+  SectionEnd
+  ```
 
 - [ ] **Step 5.1: Append the `build-windows` job**
 
@@ -673,8 +830,10 @@
             modules: 'qtmultimedia qtserialport qtwebsockets qtshadertools'
             cache: true
 
-        - name: Install Ninja
-          run: choco install ninja -y
+        - name: Install Ninja and NSIS
+          run: |
+            choco install ninja -y
+            choco install nsis -y
 
         - name: Setup sccache
           uses: mozilla-actions/sccache-action@v0.0.6
@@ -727,14 +886,33 @@
         - name: Create portable ZIP
           shell: pwsh
           run: |
-            $name = "NereusSDR-${{ needs.prepare.outputs.version }}-windows-x64-portable.zip"
+            $name = "NereusSDR-${{ needs.prepare.outputs.version }}-Windows-x64-portable.zip"
             Compress-Archive -Path deploy\* -DestinationPath $name
 
-        - name: Upload Windows artifact
+        - name: Build NSIS installer
+          shell: pwsh
+          run: |
+            $version = "${{ needs.prepare.outputs.version }}"
+            $deploy  = (Resolve-Path deploy).Path
+            $outfile = "NereusSDR-$version-Windows-x64-setup.exe"
+            & "C:\Program Files (x86)\NSIS\makensis.exe" `
+                /DNSDR_VERSION=$version `
+                /DNSDR_DEPLOYDIR=$deploy `
+                /DNSDR_OUTFILE=$outfile `
+                scripts\windows\installer.nsi
+            if (-not (Test-Path $outfile)) {
+              Write-Error "NSIS did not produce $outfile"
+              exit 1
+            }
+            Get-Item $outfile
+
+        - name: Upload Windows artifacts
           uses: actions/upload-artifact@v4
           with:
             name: windows-x64
-            path: NereusSDR-*.zip
+            path: |
+              NereusSDR-*.zip
+              NereusSDR-*-setup.exe
             retention-days: 7
   ```
 
@@ -789,6 +967,7 @@
               -name '*.AppImage' -o \
               -name '*.dmg' -o \
               -name '*.zip' -o \
+              -name '*-setup.exe' -o \
               -name 'release_notes.md' \
             \) -exec cp {} artifacts/ \;
             ls -la artifacts/
@@ -823,7 +1002,7 @@
             GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           working-directory: artifacts
           run: |
-            for f in *.AppImage *.dmg *.zip *.tar.gz SHA256SUMS.txt; do
+            for f in *.AppImage *.dmg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
               [ -f "$f" ] || continue
               gpg --batch --yes --pinentry-mode loopback \
                 --passphrase "$GPG_PASSPHRASE" \
@@ -851,6 +1030,7 @@
               artifacts/*.AppImage \
               artifacts/*.dmg \
               artifacts/*.zip \
+              artifacts/*-setup.exe \
               artifacts/*.tar.gz \
               artifacts/SHA256SUMS.txt \
               artifacts/*.asc
@@ -956,7 +1136,16 @@
   gh run watch
   ```
 
-  Expected: workflow runs all 4 jobs to completion. May take 30–45 min on cold caches. A **draft prerelease** appears at <https://github.com/boydsoftprez/NereusSDR/releases>.
+  Expected: workflow runs all 4 jobs to completion (build-linux × 2 archs, build-macos × 2 archs, build-windows × 1, then sign-and-publish). May take 30–60 min on cold caches. A **draft prerelease** appears at <https://github.com/boydsoftprez/NereusSDR/releases> with these artifacts:
+
+  - `NereusSDR-0.0.1-test2-x86_64.AppImage` (+ `.asc`)
+  - `NereusSDR-0.0.1-test2-aarch64.AppImage` (+ `.asc`)
+  - `NereusSDR-0.0.1-test2-macOS-apple-silicon.dmg` (+ `.asc`)
+  - `NereusSDR-0.0.1-test2-macOS-intel.dmg` (+ `.asc`)
+  - `NereusSDR-0.0.1-test2-Windows-x64-portable.zip` (+ `.asc`)
+  - `NereusSDR-0.0.1-test2-Windows-x64-setup.exe` (+ `.asc`)
+  - `NereusSDR-0.0.1-test2-source.tar.gz` (+ `.asc`)
+  - `SHA256SUMS.txt` (+ `.asc`)
 
 - [ ] **Step 7.8: Download every artifact from the draft and smoke test**
 
@@ -970,9 +1159,12 @@
   Expected: GPG signature `Good signature`, all sha256sums match.
 
   Then on each platform locally:
-  - **Linux:** `chmod +x NereusSDR-0.0.1-test2-x86_64.AppImage && ./NereusSDR-0.0.1-test2-x86_64.AppImage` — launches, About dialog shows `0.0.1`.
-  - **macOS:** open the DMG, drag to Applications, right-click → Open. Launches.
-  - **Windows:** unzip, run `NereusSDR.exe`. Launches.
+  - **Linux x86_64:** `chmod +x NereusSDR-0.0.1-test2-x86_64.AppImage && ./NereusSDR-0.0.1-test2-x86_64.AppImage` — launches, About dialog shows `0.0.1`.
+  - **Linux aarch64:** same on a Pi or ARM box if available; skip if no hardware.
+  - **macOS Apple Silicon:** open the DMG, drag to Applications, right-click → Open. Launches.
+  - **macOS Intel:** same on an Intel Mac if available; skip if no hardware.
+  - **Windows portable:** unzip, run `NereusSDR.exe`. Launches.
+  - **Windows installer:** run `NereusSDR-0.0.1-test2-Windows-x64-setup.exe`, click through the wizard, verify Start Menu shortcut works, verify Add/Remove Programs entry appears, then uninstall and verify clean removal.
 
 - [ ] **Step 7.9: Delete the draft release and the test tag**
 
@@ -1381,7 +1573,8 @@
   ## Releases & Installation
 
   Pre-built binaries for Linux (AppImage, x86_64 + aarch64), macOS (DMG, Apple
-  Silicon), and Windows (portable ZIP, x64) are published as GitHub Releases:
+  Silicon + Intel), and Windows (NSIS installer + portable ZIP, x64) are
+  published as GitHub Releases:
 
   **<https://github.com/boydsoftprez/NereusSDR/releases>**
 
@@ -1494,8 +1687,10 @@ Append to release notes once cut, run by hand:
 
 - [ ] Linux x86_64 AppImage launches; About dialog shows correct version
 - [ ] Linux aarch64 AppImage launches on a Pi or ARM box (or skip if no hardware)
-- [ ] macOS DMG mounts; right-click → Open works first time; About dialog correct
-- [ ] Windows ZIP extracts; `NereusSDR.exe` runs; SmartScreen click-through works
+- [ ] macOS Apple Silicon DMG mounts; right-click → Open works first time; About dialog correct
+- [ ] macOS Intel DMG mounts and launches on an Intel Mac (or skip if no hardware)
+- [ ] Windows portable ZIP extracts; `NereusSDR.exe` runs; SmartScreen click-through works
+- [ ] Windows installer runs; Start Menu shortcut created; About dialog correct; uninstaller cleanly removes everything
 - [ ] On at least one platform: connect to a real radio, verify spectrum renders
 - [ ] On at least one platform: verify settings file persists across runs
 - [ ] `gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt` returns Good signature
