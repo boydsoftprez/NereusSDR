@@ -1,30 +1,78 @@
+// src/gui/ConnectionPanel.cpp
+//
+// Thetis ucRadioList port — radio list UI for NereusSDR.
+//
+// Porting notes:
+//   ucRadioList.cs (ramdor/Thetis) — custom-painted card list, 4 info lines per row:
+//     Line 1 (bold):  RadioModel  IP  MAC              (buildLine1, ~:1276)
+//     Line 2:         Protocol     Version  [PLL]      (buildLine2, ~:1324)
+//     Line 3:         NIC description                  (buildNicLine3, ~:1383)
+//     Line 4:         NIC IP/mask  type                (buildNicLine4, ~:1406)
+//   Color coding: connectedFill green, selectedFill blue, hoverFill light-blue (~:1115)
+//
+//   clsDiscoveredRadioPicker.cs — DataGridView columns (~:99):
+//     Pick(checkbox) | Hardware | IP | Base Port | Mac Address | Protocol | Version
+//
+//   NereusSDR maps both sources to QTableWidget with 8 columns per plan §5.2.
+
 #include "ConnectionPanel.h"
 #include "models/RadioModel.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
+#include "core/BoardCapabilities.h"
+#include "core/HpsdrModel.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
+#include <QHeaderView>
+#include <QTableWidgetItem>
+#include <QApplication>
+#include <QClipboard>
 #include <QFont>
+#include <QColor>
 
 namespace NereusSDR {
+
+// ---------------------------------------------------------------------------
+// Color constants — from ucRadioList.cs ~:1115 (adapted to dark theme)
+// ucRadioList uses light background; NereusSDR uses dark background.
+// ---------------------------------------------------------------------------
+// From ucRadioList.cs:1118 — connectedFill = Color.FromArgb(235, 248, 235)
+static constexpr QColor kColorOnlineFree  { 20, 80, 30};    // dark green — online + free
+// From ucRadioList.cs:1117 — selectedFill = Color.FromArgb(225, 240, 255)
+static constexpr QColor kColorOnlineInUse { 80, 60, 10};    // dark amber — online + in-use
+static constexpr QColor kColorOffline     { 30, 30, 40};    // dark grey — offline
+static constexpr QColor kColorError       { 80, 20, 20};    // dark red — error
 
 ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
     : QDialog(parent)
     , m_radioModel(model)
 {
     setWindowTitle(QStringLiteral("Connect to Radio"));
-    setMinimumSize(400, 350);
-    resize(420, 400);
+    setMinimumSize(750, 420);
+    resize(860, 480);
 
     buildUI();
 
     // Wire discovery signals
     RadioDiscovery* disc = m_radioModel->discovery();
     connect(disc, &RadioDiscovery::radioDiscovered, this, &ConnectionPanel::onRadioDiscovered);
-    connect(disc, &RadioDiscovery::radioUpdated, this, &ConnectionPanel::onRadioUpdated);
-    connect(disc, &RadioDiscovery::radioLost, this, &ConnectionPanel::onRadioLost);
+    connect(disc, &RadioDiscovery::radioUpdated,    this, &ConnectionPanel::onRadioUpdated);
+    connect(disc, &RadioDiscovery::radioLost,       this, &ConnectionPanel::onRadioLost);
+    connect(disc, &RadioDiscovery::discoveryStarted,  this, [this]() {
+        setStatusText(QStringLiteral("Searching for radios..."));
+        m_startDiscoveryBtn->setEnabled(false);
+        m_stopDiscoveryBtn->setEnabled(true);
+    });
+    connect(disc, &RadioDiscovery::discoveryFinished, this, [this]() {
+        int n = m_radioTable->rowCount();
+        setStatusText(n > 0
+            ? QStringLiteral("Found %1 radio(s)").arg(n)
+            : QStringLiteral("No radios found — try again"));
+        m_startDiscoveryBtn->setEnabled(true);
+        m_stopDiscoveryBtn->setEnabled(false);
+    });
 
     // Wire connection state
     connect(m_radioModel, &RadioModel::connectionStateChanged,
@@ -36,10 +84,10 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
         onRadioDiscovered(info);
     }
 
-    // Ensure discovery is running
+    // Start discovery automatically when panel opens
     disc->startDiscovery();
 
-    if (m_radioList->count() == 0) {
+    if (m_radioTable->rowCount() == 0) {
         setStatusText(QStringLiteral("Searching for radios..."));
     }
 }
@@ -49,101 +97,190 @@ ConnectionPanel::~ConnectionPanel()
     // Don't stop discovery here — RadioModel owns it and it keeps running
 }
 
+// ---------------------------------------------------------------------------
+// UI construction
+// ---------------------------------------------------------------------------
+
 void ConnectionPanel::buildUI()
 {
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(10);
+    mainLayout->setSpacing(8);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
 
-    // --- Status ---
+    // --- Status label ---
     m_statusLabel = new QLabel(this);
     m_statusLabel->setAlignment(Qt::AlignCenter);
     m_statusLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #8090a0; padding: 4px; }"));
     mainLayout->addWidget(m_statusLabel);
 
-    // --- Discovered Radios ---
+    // --- Radio table (QTableWidget — simpler than QTreeView for this use case) ---
+    // Source: clsDiscoveredRadioPicker.cs:81 — DataGridView with SelectionMode FullRowSelect
     auto* radioGroup = new QGroupBox(QStringLiteral("Discovered Radios"), this);
     auto* radioLayout = new QVBoxLayout(radioGroup);
 
-    m_radioList = new QListWidget(this);
-    m_radioList->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_radioList->setStyleSheet(QStringLiteral(
-        "QListWidget {"
+    m_radioTable = new QTableWidget(0, ColCount, this);
+
+    // Column headers — mapping clsDiscoveredRadioPicker.cs columns (~:99) to 8-col layout
+    // clsDiscoveredRadioPicker.cs columns: Hardware(:111), IP(:118), Base Port(:126),
+    //   Mac Address(:134), Protocol(:142), Version(:150)
+    // NereusSDR adds: status dot (col 0), Board type (col 2), In-Use (col 7)
+    QStringList headers;
+    headers << QStringLiteral("●")           // Col 0 — status dot
+            << QStringLiteral("Name")        // Col 1 — clsDiscoveredRadioPicker.cs:112 "Hardware"
+            << QStringLiteral("Board")       // Col 2 — HPSDRHW board type name
+            << QStringLiteral("Protocol")    // Col 3 — clsDiscoveredRadioPicker.cs:143 "Protocol"
+            << QStringLiteral("IP")          // Col 4 — clsDiscoveredRadioPicker.cs:119 "IP"
+            << QStringLiteral("MAC")         // Col 5 — clsDiscoveredRadioPicker.cs:135 "Mac Address"
+            << QStringLiteral("Firmware")    // Col 6 — clsDiscoveredRadioPicker.cs:151 "Version"
+            << QStringLiteral("In-Use");     // Col 7 — ucRadioList.cs:101 RadioIsBusy
+    m_radioTable->setHorizontalHeaderLabels(headers);
+
+    // Source: clsDiscoveredRadioPicker.cs:87 — FullRowSelect
+    m_radioTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_radioTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_radioTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_radioTable->setAlternatingRowColors(false);
+    m_radioTable->setShowGrid(false);
+    m_radioTable->verticalHeader()->setVisible(false);
+    m_radioTable->horizontalHeader()->setStretchLastSection(true);
+    m_radioTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+
+    // Fixed width for narrow columns
+    m_radioTable->setColumnWidth(ColStatus,   28);
+    m_radioTable->setColumnWidth(ColName,    180);
+    m_radioTable->setColumnWidth(ColBoard,   100);
+    m_radioTable->setColumnWidth(ColProtocol, 60);
+    m_radioTable->setColumnWidth(ColIp,      130);
+    m_radioTable->setColumnWidth(ColMac,     140);
+    m_radioTable->setColumnWidth(ColFirmware, 70);
+    // ColInUse stretches
+
+    m_radioTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_radioTable->setStyleSheet(QStringLiteral(
+        "QTableWidget {"
         "  background: #0a0a15;"
         "  color: #c8d8e8;"
         "  border: 1px solid #203040;"
-        "  font-size: 13px;"
+        "  font-family: Consolas, 'Courier New', monospace;"
+        "  font-size: 12px;"
+        "  gridline-color: #1a2a3a;"
         "}"
-        "QListWidget::item {"
-        "  padding: 8px;"
-        "  border-bottom: 1px solid #1a2a3a;"
-        "}"
-        "QListWidget::item:selected {"
-        "  background: #00b4d8;"
-        "  color: #ffffff;"
-        "}"
-        "QListWidget::item:hover {"
-        "  background: #1a3a4a;"
-        "}"));
-    connect(m_radioList, &QListWidget::itemSelectionChanged,
-            this, &ConnectionPanel::onRadioSelectionChanged);
-    connect(m_radioList, &QListWidget::itemDoubleClicked,
-            this, &ConnectionPanel::onConnectClicked);
-    radioLayout->addWidget(m_radioList);
-
-    // Refresh button
-    m_refreshBtn = new QPushButton(QStringLiteral("Refresh"), this);
-    m_refreshBtn->setAutoDefault(false);
-    connect(m_refreshBtn, &QPushButton::clicked, this, [this]() {
-        m_radioList->clear();
-        m_discoveredRadios.clear();
-        m_radioModel->discovery()->startDiscovery();
-        setStatusText(QStringLiteral("Searching for radios..."));
-    });
-    radioLayout->addWidget(m_refreshBtn);
-
-    mainLayout->addWidget(radioGroup);
-
-    // --- Connect / Disconnect Buttons ---
-    auto* btnLayout = new QHBoxLayout();
-    btnLayout->addStretch();
-
-    m_connectBtn = new QPushButton(QStringLiteral("Connect"), this);
-    m_connectBtn->setAutoDefault(false);
-    m_connectBtn->setEnabled(false);
-    m_connectBtn->setMinimumWidth(100);
-    m_connectBtn->setStyleSheet(QStringLiteral(
-        "QPushButton {"
-        "  background: #00b4d8;"
-        "  color: #ffffff;"
+        "QTableWidget::item {"
+        "  padding: 4px 6px;"
         "  border: none;"
-        "  border-radius: 4px;"
-        "  padding: 8px 16px;"
-        "  font-weight: bold;"
+        "}"
+        "QTableWidget::item:selected {"
+        "  background: #005578;"
+        "  color: #ffffff;"
+        "}"
+        "QHeaderView::section {"
+        "  background: #12202e;"
+        "  color: #8090a0;"
+        "  border: none;"
+        "  border-right: 1px solid #203040;"
+        "  border-bottom: 1px solid #203040;"
+        "  padding: 4px 6px;"
+        "  font-size: 11px;"
+        "}"));
+
+    connect(m_radioTable, &QTableWidget::itemSelectionChanged,
+            this, &ConnectionPanel::onRadioSelectionChanged);
+    connect(m_radioTable, &QTableWidget::cellDoubleClicked,
+            this, &ConnectionPanel::onTableDoubleClicked);
+    connect(m_radioTable, &QTableWidget::customContextMenuRequested,
+            this, &ConnectionPanel::onContextMenuRequested);
+
+    radioLayout->addWidget(m_radioTable);
+    mainLayout->addWidget(radioGroup, /*stretch=*/1);
+
+    // --- Bottom strip buttons (plan §5.2 + Thetis layout) ---
+    auto* btnLayout = new QHBoxLayout();
+    btnLayout->setSpacing(6);
+
+    // Helper lambda for button styling
+    auto makeBtn = [this](const QString& label,
+                          const QString& style = {}) -> QPushButton* {
+        auto* btn = new QPushButton(label, this);
+        btn->setAutoDefault(false);
+        btn->setMinimumWidth(90);
+        if (!style.isEmpty()) {
+            btn->setStyleSheet(style);
+        }
+        return btn;
+    };
+
+    static const QString kPrimaryStyle = QStringLiteral(
+        "QPushButton {"
+        "  background: #00b4d8; color: #fff;"
+        "  border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold;"
         "}"
         "QPushButton:hover { background: #0096b7; }"
-        "QPushButton:disabled { background: #303850; color: #606878; }"));
+        "QPushButton:disabled { background: #303850; color: #606878; }");
+
+    static const QString kSecondaryStyle = QStringLiteral(
+        "QPushButton {"
+        "  background: #304050; color: #c8d8e8;"
+        "  border: 1px solid #405060; border-radius: 4px; padding: 6px 12px;"
+        "}"
+        "QPushButton:hover { background: #405060; }"
+        "QPushButton:disabled { background: #1a2a3a; color: #404858; border-color: #203040; }");
+
+    static const QString kDestructiveStyle = QStringLiteral(
+        "QPushButton {"
+        "  background: #4a2020; color: #c8a8a8;"
+        "  border: 1px solid #6a3030; border-radius: 4px; padding: 6px 12px;"
+        "}"
+        "QPushButton:hover { background: #602020; }"
+        "QPushButton:disabled { background: #1a2a3a; color: #404858; border-color: #203040; }");
+
+    // Start Discovery button
+    m_startDiscoveryBtn = makeBtn(QStringLiteral("Start Discovery"), kSecondaryStyle);
+    connect(m_startDiscoveryBtn, &QPushButton::clicked,
+            this, &ConnectionPanel::onStartDiscoveryClicked);
+    btnLayout->addWidget(m_startDiscoveryBtn);
+
+    // Stop Discovery button
+    m_stopDiscoveryBtn = makeBtn(QStringLiteral("Stop Discovery"), kSecondaryStyle);
+    m_stopDiscoveryBtn->setEnabled(false);
+    connect(m_stopDiscoveryBtn, &QPushButton::clicked,
+            this, &ConnectionPanel::onStopDiscoveryClicked);
+    btnLayout->addWidget(m_stopDiscoveryBtn);
+
+    btnLayout->addStretch();
+
+    // Add Manually — Task 16 stub
+    m_addManuallyBtn = makeBtn(QStringLiteral("Add Manually"), kSecondaryStyle);
+    m_addManuallyBtn->setEnabled(false);
+    m_addManuallyBtn->setToolTip(QStringLiteral("Coming in Task 16 — TODO(3I-T16)"));
+    btnLayout->addWidget(m_addManuallyBtn);
+
+    // Forget — Task 15 stub
+    m_forgetBtn = makeBtn(QStringLiteral("Forget"), kDestructiveStyle);
+    m_forgetBtn->setEnabled(false);
+    m_forgetBtn->setToolTip(QStringLiteral("Coming in Task 15 — TODO(3I-T15)"));
+    btnLayout->addWidget(m_forgetBtn);
+
+    btnLayout->addStretch();
+
+    // Connect
+    m_connectBtn = makeBtn(QStringLiteral("Connect"), kPrimaryStyle);
+    m_connectBtn->setEnabled(false);
     connect(m_connectBtn, &QPushButton::clicked, this, &ConnectionPanel::onConnectClicked);
     btnLayout->addWidget(m_connectBtn);
 
-    m_disconnectBtn = new QPushButton(QStringLiteral("Disconnect"), this);
-    m_disconnectBtn->setAutoDefault(false);
+    // Disconnect
+    m_disconnectBtn = makeBtn(QStringLiteral("Disconnect"), kSecondaryStyle);
     m_disconnectBtn->setEnabled(false);
-    m_disconnectBtn->setMinimumWidth(100);
-    m_disconnectBtn->setStyleSheet(QStringLiteral(
-        "QPushButton {"
-        "  background: #304050;"
-        "  color: #c8d8e8;"
-        "  border: 1px solid #405060;"
-        "  border-radius: 4px;"
-        "  padding: 8px 16px;"
-        "}"
-        "QPushButton:hover { background: #405060; }"
-        "QPushButton:disabled { background: #1a2a3a; color: #404858; border-color: #203040; }"));
-    connect(m_disconnectBtn, &QPushButton::clicked, this, &ConnectionPanel::onDisconnectClicked);
+    connect(m_disconnectBtn, &QPushButton::clicked,
+            this, &ConnectionPanel::onDisconnectClicked);
     btnLayout->addWidget(m_disconnectBtn);
 
-    btnLayout->addStretch();
+    // Close
+    m_closeBtn = makeBtn(QStringLiteral("Close"), kSecondaryStyle);
+    connect(m_closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+    btnLayout->addWidget(m_closeBtn);
+
     mainLayout->addLayout(btnLayout);
 
     // Apply dark theme to dialog
@@ -165,6 +302,10 @@ void ConnectionPanel::buildUI()
     updateButtonStates();
 }
 
+// ---------------------------------------------------------------------------
+// Status text
+// ---------------------------------------------------------------------------
+
 void ConnectionPanel::setStatusText(const QString& text)
 {
     if (m_statusLabel) {
@@ -172,30 +313,140 @@ void ConnectionPanel::setStatusText(const QString& text)
     }
 }
 
-// --- Discovery Slots ---
+// ---------------------------------------------------------------------------
+// Row helpers
+// ---------------------------------------------------------------------------
+
+// Apply background color to a table row based on radio state.
+// Color coding from ucRadioList.cs:1115-1126:
+//   connectedFill  = Color.FromArgb(235, 248, 235)  → kColorOnlineFree
+//   inUseFill      = amber (not in Thetis, NereusSDR addition)
+//   offline/error  = grey/red
+void ConnectionPanel::applyRowColor(int row, const RadioInfo& info)
+{
+    QColor bg;
+    QColor fg{0xc8, 0xd8, 0xe8};
+
+    if (info.inUse) {
+        bg = kColorOnlineInUse;
+        fg = QColor{0xe0, 0xc0, 0x80};
+    } else {
+        // Radios in m_discoveredRadios are always "online" — seen in last scan.
+        // Offline tracking would require a separate set; for now all discovered = online+free.
+        bg = kColorOnlineFree;
+        fg = QColor{0x80, 0xe0, 0x80};
+    }
+
+    for (int col = 0; col < ColCount; ++col) {
+        QTableWidgetItem* cell = m_radioTable->item(row, col);
+        if (cell) {
+            cell->setBackground(bg);
+            cell->setForeground(fg);
+        }
+    }
+}
+
+// Populate a table row from a RadioInfo.
+// Column mapping per plan §5.2 and clsDiscoveredRadioPicker.cs:
+//   Col 0 ●  : status dot — "●" (U+25CF)
+//   Col 1 Name: displayName() or BoardCapsTable fallback
+//             (clsDiscoveredRadioPicker.cs:112 "Hardware")
+//   Col 2 Board: HPSDRHW enum name
+//   Col 3 Protocol: "P1" / "P2"  (clsDiscoveredRadioPicker.cs:143 "Protocol")
+//   Col 4 IP: address.toString() (clsDiscoveredRadioPicker.cs:119 "IP")
+//   Col 5 MAC: macAddress        (clsDiscoveredRadioPicker.cs:135 "Mac Address")
+//   Col 6 Firmware: firmwareVersion (clsDiscoveredRadioPicker.cs:151 "Version")
+//   Col 7 In-Use: "free" / "in use" (ucRadioList.cs:101 RadioIsBusy)
+void ConnectionPanel::populateRow(int row, const RadioInfo& info)
+{
+    // Derive display strings
+    const QString& capDisplayName =
+        QString::fromUtf8(BoardCapsTable::forBoard(info.boardType).displayName);
+    const QString name = capDisplayName.isEmpty() ? info.displayName() : capDisplayName;
+
+    // Board string — HPSDRHW enum to friendly name
+    QString boardStr;
+    switch (info.boardType) {
+        case HPSDRHW::Atlas:      boardStr = QStringLiteral("Atlas");       break;
+        case HPSDRHW::Hermes:     boardStr = QStringLiteral("Hermes");      break;
+        case HPSDRHW::HermesII:   boardStr = QStringLiteral("Hermes II");   break;
+        case HPSDRHW::Angelia:    boardStr = QStringLiteral("Angelia");     break;
+        case HPSDRHW::Orion:      boardStr = QStringLiteral("Orion");       break;
+        case HPSDRHW::OrionMKII:  boardStr = QStringLiteral("Orion MkII"); break;
+        case HPSDRHW::HermesLite: boardStr = QStringLiteral("HL2");        break;
+        case HPSDRHW::Saturn:     boardStr = QStringLiteral("Saturn");      break;
+        case HPSDRHW::SaturnMKII: boardStr = QStringLiteral("Saturn MkII"); break;
+        default:                  boardStr = QStringLiteral("Unknown");     break;
+    }
+
+    // Protocol string — ucRadioList.cs:1342 "Protocol-1" / "Protocol-2"
+    const QString protoStr = (info.protocol == ProtocolVersion::Protocol2)
+                             ? QStringLiteral("P2") : QStringLiteral("P1");
+
+    // In-use string — ucRadioList.cs:101 RadioIsBusy
+    const QString inUseStr = info.inUse
+                             ? QStringLiteral("in use") : QStringLiteral("free");
+
+    auto makeItem = [&](const QString& text) {
+        auto* item = new QTableWidgetItem(text);
+        item->setTextAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+        // Store MAC in every cell of the row for easy retrieval
+        item->setData(kMacRole, info.macAddress);
+        return item;
+    };
+
+    m_radioTable->setItem(row, ColStatus,   makeItem(QStringLiteral("●")));
+    m_radioTable->setItem(row, ColName,     makeItem(name));
+    m_radioTable->setItem(row, ColBoard,    makeItem(boardStr));
+    m_radioTable->setItem(row, ColProtocol, makeItem(protoStr));
+    m_radioTable->setItem(row, ColIp,       makeItem(info.address.toString()));
+    m_radioTable->setItem(row, ColMac,      makeItem(info.macAddress));
+    m_radioTable->setItem(row, ColFirmware, makeItem(QString::number(info.firmwareVersion)));
+    m_radioTable->setItem(row, ColInUse,    makeItem(inUseStr));
+
+    // Center the status dot
+    if (QTableWidgetItem* dot = m_radioTable->item(row, ColStatus)) {
+        dot->setTextAlignment(Qt::AlignCenter);
+    }
+
+    applyRowColor(row, info);
+}
+
+int ConnectionPanel::rowForMac(const QString& mac) const
+{
+    for (int r = 0; r < m_radioTable->rowCount(); ++r) {
+        QTableWidgetItem* cell = m_radioTable->item(r, 0);
+        if (cell && cell->data(kMacRole).toString() == mac) {
+            return r;
+        }
+    }
+    return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Discovery slots
+// ---------------------------------------------------------------------------
 
 void ConnectionPanel::onRadioDiscovered(const RadioInfo& info)
 {
-    m_discoveredRadios.insert(info.macAddress, info);
-
-    // Build display text
-    QString protocolStr = (info.protocol == ProtocolVersion::Protocol2)
-                          ? QStringLiteral("P2") : QStringLiteral("P1");
-    QString statusStr = info.inUse ? QStringLiteral(" [In Use]") : QString();
-    QString text = QStringLiteral("%1  —  %2  (FW %3)%4\n%5  %6")
-        .arg(info.displayName(), protocolStr)
-        .arg(info.firmwareVersion)
-        .arg(statusStr, info.address.toString(), info.macAddress);
-
-    auto* item = new QListWidgetItem(text, m_radioList);
-    item->setData(kMacRole, info.macAddress);
-
-    // If this is the only radio, select it automatically
-    if (m_radioList->count() == 1) {
-        m_radioList->setCurrentRow(0);
+    // Don't add duplicates
+    if (rowForMac(info.macAddress) >= 0) {
+        onRadioUpdated(info);
+        return;
     }
 
-    setStatusText(QStringLiteral("Found %1 radio(s)").arg(m_radioList->count()));
+    m_discoveredRadios.insert(info.macAddress, info);
+
+    int row = m_radioTable->rowCount();
+    m_radioTable->insertRow(row);
+    populateRow(row, info);
+
+    // Auto-select the first radio
+    if (m_radioTable->rowCount() == 1) {
+        m_radioTable->selectRow(0);
+    }
+
+    setStatusText(QStringLiteral("Found %1 radio(s)").arg(m_radioTable->rowCount()));
     updateButtonStates();
 
     qCDebug(lcDiscovery) << "Panel: radio discovered" << info.displayName()
@@ -206,60 +457,92 @@ void ConnectionPanel::onRadioUpdated(const RadioInfo& info)
 {
     m_discoveredRadios.insert(info.macAddress, info);
 
-    // Find and update the list item
-    for (int i = 0; i < m_radioList->count(); ++i) {
-        QListWidgetItem* item = m_radioList->item(i);
-        if (item->data(kMacRole).toString() == info.macAddress) {
-            QString protocolStr = (info.protocol == ProtocolVersion::Protocol2)
-                                  ? QStringLiteral("P2") : QStringLiteral("P1");
-            QString statusStr = info.inUse ? QStringLiteral(" [In Use]") : QString();
-            QString text = QStringLiteral("%1  —  %2  (FW %3)%4\n%5  %6")
-                .arg(info.displayName(), protocolStr)
-                .arg(info.firmwareVersion)
-                .arg(statusStr, info.address.toString(), info.macAddress);
-            item->setText(text);
-            break;
-        }
+    int row = rowForMac(info.macAddress);
+    if (row < 0) {
+        onRadioDiscovered(info);
+        return;
     }
+
+    populateRow(row, info);
+    updateButtonStates();
 }
 
 void ConnectionPanel::onRadioLost(const QString& macAddress)
 {
     m_discoveredRadios.remove(macAddress);
 
-    for (int i = 0; i < m_radioList->count(); ++i) {
-        if (m_radioList->item(i)->data(kMacRole).toString() == macAddress) {
-            delete m_radioList->takeItem(i);
-            break;
+    int row = rowForMac(macAddress);
+    if (row >= 0) {
+        // Grey out the row rather than removing it (offline state)
+        // ucRadioList.cs has no "offline" concept — it removes them.
+        // NereusSDR keeps them greyed for user context.
+        for (int col = 0; col < ColCount; ++col) {
+            QTableWidgetItem* cell = m_radioTable->item(row, col);
+            if (cell) {
+                cell->setBackground(kColorOffline);
+                cell->setForeground(QColor{0x60, 0x60, 0x70});
+            }
+        }
+        if (QTableWidgetItem* inUse = m_radioTable->item(row, ColInUse)) {
+            inUse->setText(QStringLiteral("offline"));
         }
     }
 
-    if (m_radioList->count() == 0) {
-        setStatusText(QStringLiteral("Searching for radios..."));
-    } else {
-        setStatusText(QStringLiteral("Found %1 radio(s)").arg(m_radioList->count()));
-    }
+    int n = m_radioTable->rowCount();
+    setStatusText(n > 0
+        ? QStringLiteral("Found %1 radio(s)").arg(m_discoveredRadios.size())
+        : QStringLiteral("Searching for radios..."));
 
     updateButtonStates();
 }
 
-// --- Connection State ---
+// ---------------------------------------------------------------------------
+// Connection state
+// ---------------------------------------------------------------------------
 
 void ConnectionPanel::onConnectionStateChanged()
 {
     if (m_radioModel->isConnected()) {
         setStatusText(QStringLiteral("Connected to %1").arg(m_radioModel->name()));
     } else {
-        if (m_radioList->count() > 0) {
-            setStatusText(QStringLiteral("Found %1 radio(s)").arg(m_radioList->count()));
-        } else {
-            setStatusText(QStringLiteral("Disconnected"));
-        }
+        int n = m_discoveredRadios.size();
+        setStatusText(n > 0
+            ? QStringLiteral("Found %1 radio(s)").arg(n)
+            : QStringLiteral("Disconnected"));
     }
     updateButtonStates();
 }
 
-// --- Button Handlers ---
+// ---------------------------------------------------------------------------
+// Button handlers
+// ---------------------------------------------------------------------------
+
+// Source: clsDiscoveredRadioPicker.cs — "Start Discovery" drives NIC scan
+void ConnectionPanel::onStartDiscoveryClicked()
+{
+    // Clear offline rows from previous scan
+    for (int r = m_radioTable->rowCount() - 1; r >= 0; --r) {
+        QTableWidgetItem* cell = m_radioTable->item(r, ColInUse);
+        if (cell && cell->text() == QStringLiteral("offline")) {
+            m_radioTable->removeRow(r);
+        }
+    }
+    m_radioModel->discovery()->startDiscovery();
+    setStatusText(QStringLiteral("Searching for radios..."));
+    m_startDiscoveryBtn->setEnabled(false);
+    m_stopDiscoveryBtn->setEnabled(true);
+}
+
+void ConnectionPanel::onStopDiscoveryClicked()
+{
+    m_radioModel->discovery()->stopDiscovery();
+    m_startDiscoveryBtn->setEnabled(true);
+    m_stopDiscoveryBtn->setEnabled(false);
+    int n = m_discoveredRadios.size();
+    setStatusText(n > 0
+        ? QStringLiteral("Found %1 radio(s)").arg(n)
+        : QStringLiteral("Discovery stopped"));
+}
 
 void ConnectionPanel::onConnectClicked()
 {
@@ -275,9 +558,9 @@ void ConnectionPanel::onConnectClicked()
     }
     m_connectBtn->setEnabled(false);
 
-    // Save last connected radio MAC for auto-reconnect
+    // Save last connected radio MAC for auto-reconnect (Task 17)
     AppSettings::instance().setValue(QStringLiteral("LastConnectedRadioMac"),
-                                    info.macAddress);
+                                     info.macAddress);
 
     m_radioModel->connectToRadio(info);
 }
@@ -288,27 +571,120 @@ void ConnectionPanel::onDisconnectClicked()
     m_radioModel->disconnectFromRadio();
 }
 
+// ---------------------------------------------------------------------------
+// Selection + double-click
+// ---------------------------------------------------------------------------
+
 void ConnectionPanel::onRadioSelectionChanged()
 {
     updateButtonStates();
 }
 
-void ConnectionPanel::updateButtonStates()
+// Source: ucRadioList.cs double-click action — select and connect
+// From clsDiscoveredRadioPicker.cs flow: double-click calls Accept on the form
+void ConnectionPanel::onTableDoubleClicked(int /*row*/, int /*column*/)
 {
-    bool hasSelection = (m_radioList->currentItem() != nullptr);
+    if (!m_connectBtn->isEnabled()) {
+        return;
+    }
+    onConnectClicked();
+}
+
+// ---------------------------------------------------------------------------
+// Context menu — right-click
+// Source: ucRadioList.cs context (trash icon = remove), clsDiscoveredRadioPicker.cs
+// NereusSDR provides: Connect, Disconnect, Copy MAC
+// Deferred stubs: Forget (Task 15), Edit IP (Task 16)
+// ---------------------------------------------------------------------------
+
+void ConnectionPanel::onContextMenuRequested(const QPoint& pos)
+{
+    QTableWidgetItem* item = m_radioTable->itemAt(pos);
+    if (!item) {
+        return;
+    }
+
+    int row = item->row();
+    m_radioTable->selectRow(row);
+
+    RadioInfo info = selectedRadio();
     bool connected = m_radioModel->isConnected();
 
-    m_connectBtn->setEnabled(hasSelection && !connected);
-    m_disconnectBtn->setEnabled(connected);
+    QMenu menu(this);
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background: #12202e; color: #c8d8e8; border: 1px solid #203040; }"
+        "QMenu::item:selected { background: #005578; }"
+        "QMenu::item:disabled { color: #404858; }"));
+
+    QAction* actConnect    = menu.addAction(QStringLiteral("Connect"));
+    QAction* actDisconnect = menu.addAction(QStringLiteral("Disconnect"));
+    menu.addSeparator();
+    QAction* actCopyMac    = menu.addAction(QStringLiteral("Copy MAC"));
+    menu.addSeparator();
+
+    // Task 15 stub
+    QAction* actForget     = menu.addAction(QStringLiteral("Forget  [TODO(3I-T15)]"));
+    actForget->setEnabled(false);
+
+    actConnect->setEnabled(!info.macAddress.isEmpty() && !connected);
+    actDisconnect->setEnabled(connected);
+    actCopyMac->setEnabled(!info.macAddress.isEmpty());
+
+    QAction* triggered = menu.exec(m_radioTable->viewport()->mapToGlobal(pos));
+    if (!triggered) {
+        return;
+    }
+
+    if (triggered == actConnect) {
+        onConnectClicked();
+    } else if (triggered == actDisconnect) {
+        onDisconnectClicked();
+    } else if (triggered == actCopyMac) {
+        QApplication::clipboard()->setText(info.macAddress);
+        setStatusText(QStringLiteral("Copied MAC: %1").arg(info.macAddress));
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Button state management
+// ---------------------------------------------------------------------------
+
+void ConnectionPanel::updateButtonStates()
+{
+    bool hasSelection = (m_radioTable->currentRow() >= 0);
+    bool connected    = m_radioModel->isConnected();
+
+    // Selected row must not be an "offline" row to allow connect
+    bool canConnect = false;
+    if (hasSelection) {
+        QTableWidgetItem* inUseCell = m_radioTable->item(
+            m_radioTable->currentRow(), ColInUse);
+        if (inUseCell && inUseCell->text() != QStringLiteral("offline")) {
+            canConnect = true;
+        }
+    }
+
+    m_connectBtn->setEnabled(canConnect && !connected);
+    m_disconnectBtn->setEnabled(connected);
+    // Forget stub — always disabled until Task 15
+    m_forgetBtn->setEnabled(false);
+}
+
+// ---------------------------------------------------------------------------
+// Selected radio lookup
+// ---------------------------------------------------------------------------
 
 RadioInfo ConnectionPanel::selectedRadio() const
 {
-    QListWidgetItem* item = m_radioList->currentItem();
-    if (!item) {
+    int row = m_radioTable->currentRow();
+    if (row < 0) {
         return {};
     }
-    QString mac = item->data(kMacRole).toString();
+    QTableWidgetItem* cell = m_radioTable->item(row, 0);
+    if (!cell) {
+        return {};
+    }
+    QString mac = cell->data(kMacRole).toString();
     return m_discoveredRadios.value(mac);
 }
 
