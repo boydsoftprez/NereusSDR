@@ -445,6 +445,29 @@ private slots:
         QVERIFY2(magentaHits > 0, "peak-hold marker should paint in magenta");
     }
 
+    void peakFontColour_roundtrip_preserves_explicit_override()
+    {
+        // Phase E2 tail field — explicit override must survive
+        // serialize/deserialize. Invalid (default) -> blank slot ->
+        // falls back to m_fontColour at render time.
+        BarItem a;
+        a.setRange(-140.0, 0.0);
+        a.setFontColour(QColor(Qt::yellow));
+        a.setPeakFontColour(QColor(0xff, 0x00, 0x00));  // Thetis red
+        const QString blob = a.serialize();
+
+        BarItem b;
+        QVERIFY(b.deserialize(blob));
+        QCOMPARE(b.peakFontColour(), QColor(0xff, 0x00, 0x00));
+
+        // Unset override round-trips as invalid -> fallback to fontColour.
+        BarItem c;
+        c.setFontColour(QColor(Qt::yellow));
+        BarItem d;
+        QVERIFY(d.deserialize(c.serialize()));
+        QCOMPARE(d.peakFontColour(), QColor(Qt::yellow));
+    }
+
     void deserialize_garbled_calibration_field_is_tolerated()
     {
         // Malformed calibration pairs are silently dropped — prevents

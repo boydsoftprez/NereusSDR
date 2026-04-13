@@ -227,8 +227,15 @@ bool ImageItem::deserialize(const QString& data)
 
 // ---------------------------------------------------------------------------
 // BarItem
-// Format: BAR|x|y|w|h|bindingId|zOrder|orientation|minVal|maxVal|
-//             barColor|barRedColor|redThreshold|attackRatio|decayRatio
+// Format (fields 0-14 legacy, 15-19 Edge, 20-22 Phase A1, 23-25 A2,
+// 26-29 A3, 30 A4, 31 E2):
+//   BAR|x|y|w|h|bindingId|zOrder|orientation|minVal|maxVal|
+//       barColor|barRedColor|redThreshold|attackRatio|decayRatio|
+//       barStyle|edgeBgColor|edgeLowColor|edgeHighColor|edgeAvgColor|
+//       showValue|showPeakValue|fontColour|
+//       showHistory|historyColour|historyDurationMs|
+//       showMarker|markerColour|peakHoldMarkerColour|peakHoldDecayRatio|
+//       scaleCalibration|peakFontColour
 // ---------------------------------------------------------------------------
 
 // Override setValue() for exponential smoothing.
@@ -563,6 +570,14 @@ QString BarItem::serialize() const
                         .arg(static_cast<double>(it.value()));
     }
     base += QLatin1Char('|') + calParts.join(QLatin1Char(';'));
+    // Phase E2 tail: peakFontColour (field 31). Invalid QColor means
+    // "fall back to m_fontColour" at render time — emit an empty slot
+    // to preserve that sentinel across round-trip. Legacy readers stop
+    // at field 30 and keep their default invalid m_peakFontColour.
+    base += QLatin1Char('|');
+    if (m_peakFontColour.isValid()) {
+        base += m_peakFontColour.name(QColor::HexArgb);
+    }
     return base;
 }
 
@@ -659,6 +674,18 @@ bool BarItem::deserialize(const QString& data)
                     m_scaleCalibration.insert(k, v);
                 }
             }
+        }
+    }
+
+    // Phase E2 — PeakFontColour (append-only, field 31). Empty slot
+    // means "leave invalid" so peakFontColour() falls back to
+    // m_fontColour at render time; a populated hex string restores
+    // the explicit override the user picked in the editor.
+    if (parts.size() >= 32) {
+        const QString& pfcStr = parts[31];
+        if (!pfcStr.isEmpty()) {
+            QColor pfc(pfcStr);
+            if (pfc.isValid()) { m_peakFontColour = pfc; }
         }
     }
 
