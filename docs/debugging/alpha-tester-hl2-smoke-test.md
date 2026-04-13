@@ -40,7 +40,7 @@ The short version: **single-receiver RX works end-to-end on any supported ANAN/H
 
 ### Touring the app
 
-When you launch NereusSDR, you'll see a main window that's modelled after Thetis but rebuilt in Qt6. Here's what's where:
+When you launch NereusSDR, you'll see a main window **modelled after [AetherSDR](https://github.com/ten9876/AetherSDR)** — the modern Qt6 FlexRadio console that gave us our architectural template. The overall look, dock structure, and interaction patterns are AetherSDR's. The **feature set and radio behaviour** is a reimagination of [Thetis](https://github.com/ramdor/Thetis) — we're not cloning Thetis's WinForms layout, we're rebuilding its functionality on a cleaner chassis. Here's what's where:
 
 **Main window layout**
 - **Spectrum + waterfall widget** dominates the upper-middle of the window. GPU-rendered, ~30 FPS, 4096-point FFT with FFT-shift + mirror, Blackman-Harris window. Click anywhere on the spectrum to retune the VFO. Scroll-wheel over the spectrum drags the reference level; scroll over the frequency bar zooms. Drag the filter passband to resize filters. Right-click for a display-settings popup.
