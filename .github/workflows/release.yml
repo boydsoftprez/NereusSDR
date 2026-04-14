@@ -396,6 +396,17 @@ jobs:
           if (Test-Path "third_party\fftw3\bin\libfftw3-3.dll") {
             copy third_party\fftw3\bin\libfftw3-3.dll deploy\
           }
+          # libfftw3f-3.dll (single-precision) is the one FFTEngine actually
+          # imports — committed in-tree at third_party/fftw3/bin/. windeployqt
+          # only resolves Qt DLLs, so this non-Qt dependency must be staged
+          # by hand or the .exe fails to start on clean installs with
+          # "libfftw3f-3.dll was not found" (shipped broken in v0.1.2).
+          if (Test-Path "third_party\fftw3\bin\libfftw3f-3.dll") {
+            copy third_party\fftw3\bin\libfftw3f-3.dll deploy\
+          } else {
+            Write-Error "libfftw3f-3.dll missing from third_party\fftw3\bin\ — Windows artifact would ship broken"
+            exit 1
+          }
 
       - name: Create portable ZIP
         shell: pwsh
