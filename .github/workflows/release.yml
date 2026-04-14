@@ -137,7 +137,7 @@ jobs:
         run: |
           pip3 install aqtinstall
           aqt install-qt linux desktop 6.7.3 linux_gcc_64 \
-            -m qtmultimedia \
+            -m qtmultimedia qtshadertools \
             --outputdir ${{ github.workspace }}/Qt
           echo "Qt6_DIR=${{ github.workspace }}/Qt/6.7.3/gcc_64/lib/cmake/Qt6" >> $GITHUB_ENV
           echo "CMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64" >> $GITHUB_ENV
@@ -158,6 +158,10 @@ jobs:
           CMAKE_EXTRA=""
           if [ "${{ matrix.use_aqt }}" = "true" ]; then
             CMAKE_EXTRA="-DCMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64"
+          else
+            # Ubuntu 24.04 ARM ships Qt 6.4.2; QRhiWidget requires 6.7+.
+            # Mirror ci.yml linux-gcc: CPU-only spectrum on this runner.
+            CMAKE_EXTRA="-DNEREUS_GPU_SPECTRUM=OFF"
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
