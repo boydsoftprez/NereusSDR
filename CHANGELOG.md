@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.1.2] - 2026-04-13
+
+### Features
+- (none)
+
+### Fixes
+- fix(ci): ship real NereusSDR icon in AppImage instead of placeholder
+- fix(wdsp): linux_port LinuxCreateSemaphore ignored initial_count
+- fix(installer): add Windows Firewall inbound UDP allow for OpenHPSDR DDC streams
+- fix(build): fail loudly when NEREUS_GPU_SPECTRUM cannot be enabled
+- fix(radio): tear down RadioConnection on its worker thread
+
+### Docs
+- docs(architecture): record Linux GPU backend = OpenGL, not Vulkan
+- docs: reframe intro as independent client informed by Thetis
+- docs(alpha-test): expand alpha-tester guide to full OpenHPSDR family
+
+### CI / Build
+- ci: disable GPU spectrum on Linux/CodeQL (Ubuntu Qt 6.4.2 too old)
+
+### Other
+- (none)
+
+### Tests
+- test(meters): dump PNGs to QDir::temp() instead of hardcoded /tmp
+- test: auto-sandbox every test via TestSandboxInit global ctor
+
+### Refactors
+- refactor(dsp): move RX I/Q processing to dedicated DSP thread
+
+
 ## [0.1.1] - 2026-04-13
 
 **First tagged alpha release.** This is a debugger/developer-tester build. The
