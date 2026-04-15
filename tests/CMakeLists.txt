@@ -22,6 +22,7 @@ function(nereus_add_test name)
 endfunction()
 
 # ── Pre-existing tests from main (smoke + 3G-9 meter suite) ────────────────
+nereus_add_test(tst_setup_helpers)
 nereus_add_test(tst_smoke)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_meter_item_bar)

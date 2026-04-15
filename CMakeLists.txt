@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)  # for clangd / IDE integration
 
 # macOS: ensure Homebrew lib/include paths are in the search path
 if(APPLE)
@@ -370,6 +371,7 @@ set(GUI_SOURCES
     src/gui/setup/AudioSetupPages.cpp
     src/gui/setup/DspSetupPages.cpp
     src/gui/setup/DisplaySetupPages.cpp
+    src/gui/setup/SetupHelpers.cpp
     src/gui/setup/TransmitSetupPages.cpp
     src/gui/setup/AppearanceSetupPages.cpp
     src/gui/setup/CatNetworkSetupPages.cpp
