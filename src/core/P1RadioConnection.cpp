@@ -132,16 +132,28 @@ void P1RadioConnection::composeCcBank0(quint8 out[5], int sampleRate, bool mox,
 // ---------------------------------------------------------------------------
 // composeCcBankRxFreq
 //
-// Source: networkproto1.c:653-663 — case 2 (RX1/DDC0 frequency)
+// Source: networkproto1.c:484-494 — case 2 (RX1/DDC0 frequency)
 //   rxIndex 0 → C0 |= 4 (address 0x02)
 //   rxIndex 1 → C0 |= 6 (address 0x03)  [case 3]
 //   rxIndex 2 → C0 |= 8 (address 0x04)  [case 5]
-//   C1..C4 = frequency bytes big-endian
+//   C1..C4 = (prn->rx[id].frequency >> {24,16,8,0}) & 0xff — raw Hz, big-endian
 //
-// Note: Thetis actually uses a phase-word (Freq2PhaseWord) for Ethernet P1,
-// but the NetworkIO.cs:222 path for P1-USB sends raw Hz. For NereusSDR Task 7
-// scope we store raw Hz exactly as the case 2 source shows; phase-word
-// conversion is a TODO for the send-path wiring in Task 9.
+// P1 (Protocol 1 / ENC "USB") sends **raw Hz** on the wire — NOT a phase
+// word. Thetis NetworkIO.cs:215-223 VFOfreq() selects the encoding based on
+// CurrentRadioProtocol:
+//
+//     if (CurrentRadioProtocol == RadioProtocol.USB)   // USB == P1
+//         SetVFOfreq(id, f_freq, tx);                   // raw Hz
+//     else SetVFOfreq(id, Freq2PhaseWord(f_freq), tx);  // phase word (P2)
+//
+// The RadioProtocol.USB enum value maps to Protocol 1 (see cmaster.cs:520
+// "case RadioProtocol.USB: //p1"). The native side (networkproto1.c:491-494)
+// then splats prn->rx[0].frequency directly into C1..C4 with no conversion.
+//
+// Previous revisions of this helper pre-converted to a phase word and the
+// on-wire bytes were interpreted by Hermes firmware as raw Hz far above
+// Nyquist, which produced an aliased waterfall and a non-tracking VFO on
+// ANAN-10E (pcap4 from alpha tester, 2026-04-15).
 // ---------------------------------------------------------------------------
 void P1RadioConnection::composeCcBankRxFreq(quint8 out[5], int rxIndex, quint64 freqHz) noexcept
 {
@@ -156,44 +168,36 @@ void P1RadioConnection::composeCcBankRxFreq(quint8 out[5], int rxIndex, quint64 
     quint8 addrBits = (rxIndex >= 0 && rxIndex < 7) ? kRxC0Address[rxIndex] : 4;
     out[0] = addrBits;  // MOX=0; address is already left-shifted in the table
 
-    // Ethernet P1 radios (ANAN-10/10E/100/100D, Orion, Angelia) tune via an
-    // NCO phase word, NOT raw Hz. Thetis NetworkIO.cs:220-223 branches on
-    // CurrentRadioProtocol: USB -> raw Hz, else -> Freq2PhaseWord. The
-    // converted value is stored in prn->rx[id].frequency (netInterface.c:517)
-    // and networkproto1.c case 2 (:491-494) writes those bytes directly into
-    // C1..C4.
-    //
-    //   Freq2PhaseWord(freq) = (2^32 * freq) / 122880000   (NetworkIO.cs:249-253)
-    //
-    // 122.88 MHz is the only phase-word divisor in Thetis source (searched:
-    // that constant appears only at NetworkIO.cs:251 and one commented-out
-    // duplicate). HL2 uses the same ChannelMaster source path and therefore
-    // the same divisor.
-    quint32 pw32 = static_cast<quint32>((freqHz << 32) / 122880000ull);
-    out[1] = static_cast<quint8>((pw32 >> 24) & 0xFF);
-    out[2] = static_cast<quint8>((pw32 >> 16) & 0xFF);
-    out[3] = static_cast<quint8>((pw32 >>  8) & 0xFF);
-    out[4] = static_cast<quint8>( pw32        & 0xFF);
+    // Raw Hz, big-endian — see header comment for Thetis source citations.
+    // Thetis stores freq as int32 in prn->rx[0].frequency; clamp to 32 bits
+    // here so anything above ~4.29 GHz (impossible for HF) truncates cleanly.
+    const quint32 hz = static_cast<quint32>(freqHz);
+    out[1] = static_cast<quint8>((hz >> 24) & 0xFF);
+    out[2] = static_cast<quint8>((hz >> 16) & 0xFF);
+    out[3] = static_cast<quint8>((hz >>  8) & 0xFF);
+    out[4] = static_cast<quint8>( hz        & 0xFF);
 }
 
 // ---------------------------------------------------------------------------
 // composeCcBankTxFreq
 //
-// Source: networkproto1.c:645-651 — case 1 (TX VFO frequency)
+// Source: networkproto1.c:476-482 — case 1 (TX VFO frequency)
 //   C0 |= 2 → address 0x01
-//   C1..C4 = frequency bytes big-endian
+//   C1..C4 = (prn->tx[0].frequency >> {24,16,8,0}) & 0xff — raw Hz, big-endian
+//
+// Same raw-Hz encoding as composeCcBankRxFreq — see that function's header
+// comment for the NetworkIO.cs:215-223 branching rule.
 // ---------------------------------------------------------------------------
 void P1RadioConnection::composeCcBankTxFreq(quint8 out[5], quint64 freqHz) noexcept
 {
     // Source: networkproto1.c:477 — C0 |= 2  (case 1 = TX VFO)
     out[0] = 0x02;  // address 0x01, MOX=0
 
-    // Same phase-word conversion as RX freq — Ethernet P1 NCO tuning word.
-    quint32 pw32 = static_cast<quint32>((freqHz << 32) / 122880000ull);
-    out[1] = static_cast<quint8>((pw32 >> 24) & 0xFF);
-    out[2] = static_cast<quint8>((pw32 >> 16) & 0xFF);
-    out[3] = static_cast<quint8>((pw32 >>  8) & 0xFF);
-    out[4] = static_cast<quint8>( pw32        & 0xFF);
+    const quint32 hz = static_cast<quint32>(freqHz);
+    out[1] = static_cast<quint8>((hz >> 24) & 0xFF);
+    out[2] = static_cast<quint8>((hz >> 16) & 0xFF);
+    out[3] = static_cast<quint8>((hz >>  8) & 0xFF);
+    out[4] = static_cast<quint8>( hz        & 0xFF);
 }
 
 // ---------------------------------------------------------------------------
