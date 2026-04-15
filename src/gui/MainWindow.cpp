@@ -304,19 +304,11 @@ void MainWindow::buildUI()
     m_radioModel->setSpectrumWidget(m_spectrumWidget);
     m_radioModel->setFftEngine(m_fftEngine);
 
-    // Phase 3G-9b: re-invoke the first-launch smooth-defaults check after
-    // the SpectrumWidget pointer is wired. The RadioModel constructor's
-    // own attempt runs too early to see the widget — this is where the
-    // profile actually takes effect on first launch. If the gate has
-    // already been flipped to "True" from a previous run, this is a no-op.
-    {
-        const QString profileFlag = AppSettings::instance()
-            .value(QStringLiteral("DisplayProfileApplied"),
-                   QStringLiteral("False")).toString();
-        if (profileFlag != QStringLiteral("True")) {
-            m_radioModel->applyClaritySmoothDefaults();
-        }
-    }
+    // Phase 3G-9b: no first-launch auto-apply of smooth defaults. Per
+    // user decision 2026-04-15, the out-of-box waterfall stays on
+    // WfColorScheme::Default; ClarityBlue is reachable only via the
+    // "Reset to Smooth Defaults" button on SpectrumDefaultsPage or by
+    // manually selecting "Clarity Blue" from the Waterfall Defaults combo.
 
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution
     // Target: ~500-1000 bins across the visible bandwidth for good detail

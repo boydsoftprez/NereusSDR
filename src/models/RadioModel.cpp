@@ -27,24 +27,13 @@ RadioModel::RadioModel(QObject* parent)
     , m_audioEngine(new AudioEngine(this))
     , m_wdspEngine(new WdspEngine(this))
 {
-    // Connection starts null — created by connectToRadio() via factory
-
-    // Phase 3G-9b: first-launch smooth defaults. On the very first run
-    // (or after the user blows away NereusSDR.settings), apply the
-    // Clarity Blue profile so the waterfall looks good out of the box.
-    // Existing users with their own tuned values stay untouched.
+    // Connection starts null — created by connectToRadio() via factory.
     //
-    // spectrumWidget() is likely null at this point — MainWindow wires
-    // it after construction. applyClaritySmoothDefaults() guards on null
-    // and becomes a no-op; Task 3 adds a MainWindow re-invocation after
-    // the wiring completes, which is what actually applies the profile
-    // on first launch.
-    const QString profileFlag = AppSettings::instance()
-        .value(QStringLiteral("DisplayProfileApplied"),
-               QStringLiteral("False")).toString();
-    if (profileFlag != QStringLiteral("True")) {
-        applyClaritySmoothDefaults();
-    }
+    // Phase 3G-9b: the smooth-defaults profile is reachable only via the
+    // "Reset to Smooth Defaults" button on SpectrumDefaultsPage per user
+    // decision 2026-04-15 (Default should stay the out-of-box default).
+    // No first-launch auto-apply here. The `DisplayProfileApplied`
+    // AppSettings key is reserved for PR3 (Clarity) to repurpose.
 }
 
 RadioModel::~RadioModel()
