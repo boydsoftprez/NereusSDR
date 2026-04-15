@@ -6,9 +6,9 @@
 //
 // Bidirectional sync uses QSignalBlocker to prevent signal feedback loops.
 
-#include <QWidget>
 #include <QString>
 
+class QWidget;
 class QSlider;
 class QSpinBox;
 class QDoubleSpinBox;
