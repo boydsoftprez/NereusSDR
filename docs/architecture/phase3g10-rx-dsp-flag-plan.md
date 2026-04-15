@@ -10,6 +10,10 @@
 
 ---
 
+> **🪓 Branch-split note (2026-04-15):** Stage 1 was cut at the **S1.2–S1.7 line** and shipped as a partial PR on this branch. Tasks **S1.8, S1.9, S1.10, S1.11 are deferred to a follow-up branch** (`feature/phase3g10-stage1-tabs`) to keep the first PR reviewable and to give the maintainer a chance to validate the widget library + SliceModel surface before the larger VfoWidget tab rewrite lands. The plan text below (§S1.8 onward) is unchanged and serves as the specification for the follow-up branch — see `docs/architecture/phase3g10-handoff.md` for amendment notes that apply before dispatching S1.8. Stage 2 is unaffected; it still lands on whichever branch has Stage 1 fully complete.
+
+---
+
 ## 0. Pre-flight checks (one-time, at the start of the plan)
 
 - [ ] **0.1** Verify we are on the correct branch:
