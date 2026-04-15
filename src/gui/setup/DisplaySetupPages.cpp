@@ -210,7 +210,7 @@ void SpectrumDefaultsPage::buildUI()
     m_averagingCombo = new QComboBox(renderGroup);
     m_averagingCombo->addItems({QStringLiteral("None"), QStringLiteral("Weighted"),
                                 QStringLiteral("Logarithmic"), QStringLiteral("Time Window")});
-    // Thetis: setup.designer.cs (comboDispPanAveraging) — no upstream tooltip; rewritten
+    // Thetis: setup.designer.cs:34835 (comboDispPanAveraging) — no upstream tooltip; rewritten
     // Thetis original: (none)
     m_averagingCombo->setToolTip(QStringLiteral("Panadapter spectrum averaging mode. Weighted and Time Window smooth the display; None shows raw FFT output."));
     connect(m_averagingCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -226,8 +226,11 @@ void SpectrumDefaultsPage::buildUI()
     m_averagingTimeSpin->setSingleStep(10);
     m_averagingTimeSpin->setSuffix(QStringLiteral(" ms"));
     m_averagingTimeSpin->setValue(100);
-    // Thetis: setup.designer.cs:34902 (udDisplayAVGTime)
-    m_averagingTimeSpin->setToolTip(QStringLiteral("When averaging, use this number of buffers to calculate the average."));
+    // Thetis: setup.designer.cs:34902 (udDisplayAVGTime) — rewritten
+    // Thetis original: "When averaging, use this number of buffers to calculate the average."
+    // Rewritten because NereusSDR expresses this as a millisecond window that's
+    // converted to a smoothing alpha, not a discrete buffer count.
+    m_averagingTimeSpin->setToolTip(QStringLiteral("Duration of the averaging window in milliseconds. Longer = heavier smoothing, slower response to signal changes."));
     connect(m_averagingTimeSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int ms) {
         // Translate ms to an alpha between 0.05 (slow) and 0.95 (fast).
@@ -287,8 +290,9 @@ void SpectrumDefaultsPage::buildUI()
     }
 
     m_gradientToggle = new QCheckBox(QStringLiteral("Trace gradient"), renderGroup);
-    // Thetis: setup.designer.cs:53918 (chkDataLineGradient)
-    m_gradientToggle->setToolTip(QStringLiteral("The data line is also uses the gradient if checked"));
+    // Thetis: setup.designer.cs:53918 (chkDataLineGradient) — rewritten (grammar fix)
+    // Thetis original: "The data line is also uses the gradient if checked"
+    m_gradientToggle->setToolTip(QStringLiteral("When checked, the spectrum trace line renders with the gradient colour applied."));
     connect(m_gradientToggle, &QCheckBox::toggled, this, [this](bool on) {
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setGradientEnabled(on);
