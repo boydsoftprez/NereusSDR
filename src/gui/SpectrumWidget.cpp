@@ -212,6 +212,14 @@ void SpectrumWidget::loadSettings()
     m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -40.0f)
                      - readFloat(QStringLiteral("DisplayGridMin"), -140.0f);
     m_spectrumFrac   = readFloat(QStringLiteral("DisplaySpectrumFrac"), 0.40f);
+
+    // Phase 3G-12: persist the spectrum zoom level (visible bandwidth)
+    // across app restarts. Center frequency is persisted indirectly via
+    // SliceModel (slice frequency), so only bandwidth needs its own key.
+    // Default 200000 Hz = 200 kHz matches the pre-3G-12 hardcoded default
+    // in PanadapterModel / SpectrumWidget construction.
+    m_bandwidthHz    = static_cast<double>(
+                          readFloat(QStringLiteral("DisplayBandwidth"), 200000.0f));
     m_wfColorGain    = readInt(QStringLiteral("DisplayWfColorGain"), 50);
     m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 15);
     m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -80.0f);
@@ -316,6 +324,7 @@ void SpectrumWidget::saveSettings()
     writeFloat(QStringLiteral("DisplayGridMax"), m_refLevel);
     writeFloat(QStringLiteral("DisplayGridMin"), m_refLevel - m_dynamicRange);
     writeFloat(QStringLiteral("DisplaySpectrumFrac"), m_spectrumFrac);
+    writeFloat(QStringLiteral("DisplayBandwidth"), static_cast<float>(m_bandwidthHz));  // Phase 3G-12
     writeInt(QStringLiteral("DisplayWfColorGain"), m_wfColorGain);
     writeInt(QStringLiteral("DisplayWfBlackLevel"), m_wfBlackLevel);
     writeFloat(QStringLiteral("DisplayWfHighLevel"), m_wfHighThreshold);
@@ -394,10 +403,18 @@ void SpectrumWidget::scheduleSettingsSave()
 
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 {
+    const bool bwChanged = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
     m_centerHz = centerHz;
     m_bandwidthHz = bandwidthHz;
     updateVfoPositions();
     update();
+
+    // Phase 3G-12: persist zoom level on every bandwidth change so the
+    // visible span survives app restarts. Center frequency is not saved
+    // here — it's persisted via SliceModel's own save path.
+    if (bwChanged) {
+        scheduleSettingsSave();
+    }
 }
 
 void SpectrumWidget::setCenterFrequency(double centerHz)
