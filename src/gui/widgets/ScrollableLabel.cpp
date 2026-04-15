@@ -40,14 +40,24 @@ ScrollableLabel::ScrollableLabel(QWidget* parent)
     // firing is harmless. We connect only editingFinished to avoid double handling.
     connect(m_edit, &QLineEdit::editingFinished, this, &ScrollableLabel::commitEdit);
 
+    // Esc handling: QLineEdit::editingFinished does not fire on Esc, so we
+    // catch KeyPress via an event filter installed for the widget's lifetime.
+    m_edit->installEventFilter(this);
+
     updateLabel();
 }
 
 void ScrollableLabel::setRange(int minVal, int maxVal) {
     m_min = minVal;
     m_max = maxVal;
-    // Re-clamp current value if it falls outside the new range
-    setValue(m_value);
+    // Silently clamp stored value to the new range — setRange is a constraint
+    // change, not a value change. Callers wanting a signal should call setValue()
+    // after setRange() explicitly.
+    const int clamped = std::clamp(m_value, m_min, m_max);
+    if (clamped != m_value) {
+        m_value = clamped;
+        updateLabel();
+    }
 }
 
 void ScrollableLabel::setStep(int step) {
@@ -124,8 +134,7 @@ void ScrollableLabel::enterEditMode() {
     m_edit->selectAll();
     m_edit->setFocus();
 
-    // Install a key filter to catch Esc (editingFinished does not fire on Esc)
-    m_edit->installEventFilter(this);
+    // Event filter for Esc is installed once in the constructor for the widget's lifetime.
 }
 
 // Override eventFilter to handle Esc key in the line edit
