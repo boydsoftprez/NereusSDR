@@ -277,11 +277,14 @@ set(GUI_SOURCES
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/widgets/CenterMarkSlider.h
     src/gui/widgets/FilterPassbandWidget.cpp
+    src/gui/widgets/GuardedComboBox.h
     src/gui/widgets/GuardedSlider.h
     src/gui/widgets/ResetSlider.h
     src/gui/widgets/ScrollableLabel.cpp
     src/gui/widgets/TriBtn.h
     src/gui/widgets/VfoLevelBar.cpp
+    src/gui/widgets/VfoModeContainers.cpp
+    src/gui/widgets/VfoModeContainers.h
     src/gui/widgets/VfoStyles.h
     src/gui/widgets/VfoWidget.cpp
     src/gui/containers/ContainerWidget.cpp

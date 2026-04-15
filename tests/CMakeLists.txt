@@ -76,3 +76,4 @@ nereus_add_test(tst_rx_dsp_worker_thread)
 # ── Phase 3G-10 VFO DSP parity + AetherSDR flag port ─────────────────────
 nereus_add_test(tst_vfo_level_bar)
 nereus_add_test(tst_scrollable_label)
+nereus_add_test(tst_vfo_mode_containers)

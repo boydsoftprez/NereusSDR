@@ -63,7 +63,8 @@
 | `src/gui/widgets/VfoLevelBar.cpp` | `paintEvent` ports AetherSDR `LevelBar::paintEvent` (`src/gui/VfoWidget.cpp:43-61`) and adds a S-unit tick strip rendered above the bar. |
 | `src/gui/widgets/ScrollableLabel.h` | NereusSDR native `QStackedWidget` subclass with wheel-step + double-click inline edit (`label \| QLineEdit`). Qt skeleton pattern informed by AetherSDR's trivial `ScrollableLabel` in `GuardedSlider.h:81-100`. |
 | `src/gui/widgets/ScrollableLabel.cpp` | Implementation. |
-| `src/gui/widgets/VfoModeContainers.h` | Four `QWidget` subclasses: `FmOptContainer`, `DigOffsetContainer`, `RttyMarkShiftContainer`, `CwAutotuneContainer`. Each with `setSlice(SliceModel*)` + `syncFromSlice()`. |
+| `src/gui/widgets/GuardedComboBox.h` | NereusSDR native `QComboBox` subclass (Qt skeleton pattern informed by AetherSDR `GuardedSlider.h:56-76`): wheel events only when popup visible, honors `ControlsLock`. |
+| `src/gui/widgets/VfoModeContainers.h` | Three `QWidget` subclasses: `FmOptContainer`, `DigOffsetContainer`, `RttyMarkShiftContainer`. Each with `setSlice(SliceModel*)` + `syncFromSlice()`. (CW autotune cut from Stage 1 — see §S1.5 amendment.) |
 | `src/gui/widgets/VfoModeContainers.cpp` | Implementations. |
 | `src/gui/widgets/ResetSlider.h` | Ported utility (AetherSDR `VfoWidget.cpp:68-76`). |
 | `src/gui/widgets/CenterMarkSlider.h` | Ported utility (AetherSDR `VfoWidget.cpp:79-94`). |
@@ -465,113 +466,85 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Commit S1.5 — VfoModeContainers
+## Commit S1.5 — VfoModeContainers (FM / DIG / RTTY)
 
-### Task S1.5 — Four mode-specific container widgets (standalone)
+### Task S1.5 — Three mode-specific container widgets (NereusSDR native, informed by AetherSDR)
 
 **Files:**
+- Create: `src/gui/widgets/GuardedComboBox.h` (deferred from S1.4 per that task's scope lock)
 - Create: `src/gui/widgets/VfoModeContainers.h`, `.cpp`
 - Create: `tests/tst_vfo_mode_containers.cpp`
-- Sources: `~/AetherSDR/src/gui/VfoWidget.cpp` — search for `m_fmContainer`, `m_digContainer`, `m_rttyContainer`, `m_cwAutotune*` to find construction blocks. Expect them to be inside `buildTabContent()` around lines 1000–1500.
+- Informed by: `~/AetherSDR/src/gui/VfoWidget.cpp:996-1300` (mode sub-widget blocks)
+
+**Amendment (post-review, 2026-04-15):** Reframed from a "verbatim port" task to a **NereusSDR native widget commit informed by AetherSDR patterns**. Scouting AetherSDR revealed three blockers that forced this reframe:
+
+1. **`CwAutotuneContainer` cut from Stage 1.** Neither AetherSDR nor Thetis has a CW-autotune container — AetherSDR's closest code is dynamic button insertion in `updateTabsForMode()` (not a container); Thetis has no CW autotune feature at all (`EnableApolloAutoTune` matches are for the Apollo antenna tuner, not matched-filter auto-adjust). Deferred to a future phase with an explicit native design. S1.5 ships **three** containers: FM / DIG / RTTY.
+
+2. **SliceModel API gap.** AetherSDR's containers bound to properties our S1.6 stubs didn't have in the right shape (single `digOffsetHz` vs per-sideband, `fmSimplex` bool vs `FmTxMode` enum). Resolved by a third S1.6 fixup commit (`c753836`) that split `digOffsetHz` → `diglOffsetHz`+`diguOffsetHz` and replaced `fmSimplex{bool}` with `fmTxMode{FmTxMode enum}`, both Thetis-authoritative.
+
+3. **`ScrollableLabel` is different-shaped.** AetherSDR's `ScrollableLabel` is a trivial 20-line `QLabel` emitting `scrolled(±1)`; NereusSDR's (S1.3) is a richer composite emitting `valueChanged(int)`. Container connect lambdas target our API, not AetherSDR's. Also ports `GuardedComboBox` here (deferred from S1.4 per that task's scope lock).
+
+Per `feedback_source_first_ui_vs_dsp.md`: control surfaces are native; Thetis source-first still applies to DSP behavior the containers will bind to in Stage 2 (routing, scaling, enum-to-WDSP translation).
 
 Build the four containers as independent standalone widgets. This commit does *not* embed them in `VfoWidget`; it only ships the widgets and their tests.
 
-- [ ] **S1.5.1** Read AetherSDR `VfoWidget.cpp` `m_fmContainer` construction block (grep for `m_fmContainer = new QWidget`) and record the contained controls:
-  - `m_fmToneModeCmb` — QComboBox (Off / CTCSS Enc / CTCSS Dec / CTCSS Enc+Dec / DCS / ...)
-  - `m_fmToneValueCmb` — QComboBox populated with the standard 50-tone CTCSS list
-  - `m_fmOffsetSpin` — QDoubleSpinBox (kHz, range typically ±10 MHz)
-  - `m_fmOffsetDown` / `m_fmOffsetUp` — `TriBtn`s
-  - `m_fmSimplexBtn` — `QPushButton` (kDspToggle)
-  - `m_fmRevBtn` — `QPushButton` (kDspToggle)
+- [x] **S1.5.1** Scouted AetherSDR `VfoWidget.cpp` for mode container blocks. Documented controls for FM, DIG, and RTTY. CW autotune dropped (see amendment above). Controls for FM:
+  - `m_toneModeCmb` — `GuardedComboBox` (Off / CTCSS Encode / CTCSS Decode / CTCSS Enc+Dec)
+  - `m_toneValueCmb` — `GuardedComboBox` populated with 41-entry ITU CTCSS tone table
+  - `m_offsetKhzSpin` — `QSpinBox` (0–10000 kHz, suffix " kHz", step 50)
+  - `m_txLowBtn` / `m_simplexBtn` / `m_txHighBtn` — mutually exclusive `QPushButton` (kDspToggle)
+  - `m_revBtn` — independent `QPushButton` (kDspToggle), checkable
 
-- [ ] **S1.5.2** Write the header `src/gui/widgets/VfoModeContainers.h`:
+- [x] **S1.5.2** Wrote `src/gui/widgets/VfoModeContainers.h` — three NereusSDR native containers:
+  `FmOptContainer`, `DigOffsetContainer`, `RttyMarkShiftContainer`. All use `setObjectName` on child
+  widgets for test-friendly `findChild` discovery. `GuardedComboBox` also written in `GuardedComboBox.h`.
 
-```cpp
-#pragma once
-#include <QWidget>
-#include <QPointer>
-namespace NereusSDR {
-class SliceModel;
+- [x] **S1.5.3** Wrote implementations in `VfoModeContainers.cpp`:
+  - `FmOptContainer::buildUi()` — 41-entry ITU CTCSS table, kDspToggle style, `QSignalBlocker` in `syncFromSlice()`.
+  - `DigOffsetContainer` — routes read/write through `dspMode()` to `diglOffsetHz`/`diguOffsetHz`.
+  - `RttyMarkShiftContainer` — Mark range 1000–3500 Hz step 25, Shift range 50–1000 Hz step 5.
+  - All lambdas guard on `if (!m_slice) return;`.
 
-class FmOptContainer : public QWidget {
-    Q_OBJECT
-public:
-    explicit FmOptContainer(QWidget* parent = nullptr);
-    void setSlice(SliceModel* s);
-    void syncFromSlice();
-signals:
-    void toneModeChanged(int);
-    void toneValueHzChanged(double);
-    void offsetHzChanged(int);
-    void simplexToggled(bool);
-    void reverseToggled(bool);
-private:
-    void buildUi();
-    QPointer<SliceModel> m_slice;
-    // ... members per §7.2
-};
+- [x] **S1.5.4** Wrote `tests/tst_vfo_mode_containers.cpp` — 9 test cases covering tone mode,
+  tone value, FM offset, TX direction, FM reverse, DIG offset routing (DIGL/DIGU), RTTY mark, RTTY shift.
 
-class DigOffsetContainer : public QWidget { Q_OBJECT /* similar shape */ };
-class RttyMarkShiftContainer : public QWidget { Q_OBJECT /* similar shape */ };
-class CwAutotuneContainer : public QWidget {
-    Q_OBJECT
-public:
-    explicit CwAutotuneContainer(QWidget* parent = nullptr);
-    void setSlice(SliceModel* s);
-signals:
-    void autotuneOnceRequested();
-    void autotuneLoopToggled(bool);
-private:
-    QPointer<SliceModel> m_slice;
-};
-}
-```
+- [x] **S1.5.5** Built + tested. All 21 tests pass; `tst_vfo_mode_containers` PASS;
+  `tst_p1_loopback_connection` fails as before (pre-existing).
 
-(Full declaration shape follows the AetherSDR source — port member-by-member.)
-
-- [ ] **S1.5.3** Port the implementations into `.cpp`. For each container:
-  - Construct child widgets inside `buildUi()` using `VfoStyles.h` constants.
-  - Populate the CTCSS tone list from the standard 50-entry table (67.0, 71.9, 74.4, 77.0, ... 254.1 Hz). **Do not** invent values — copy the list from AetherSDR `buildTabContent` verbatim. Add a `// From AetherSDR src/gui/VfoWidget.cpp:NN-NN` comment citing the range.
-  - Wire internal widgets to the container's `signals:` via lambdas.
-  - Implement `syncFromSlice()` to call `SliceModel` getters (which may not exist yet — that's fine, Stage 1 Task S1.6 adds the stubs; for this commit, the container references are guarded by `if (!m_slice) return;` at the top of `syncFromSlice` and the compile-time references to getters go unused until S1.6 lands).
-
-**Ordering note:** commit S1.6 (SliceModel stub getters) must land *before* this one if the container compiles against `SliceModel::fmCtcssMode()` etc. Reorder S1.5 and S1.6 if necessary — the plan author found it cleaner to land SliceModel stubs *first*, then the containers, then the flag rewrite. **Apply the reorder**: make S1.6 commit first, then S1.5.
-
-- [ ] **S1.5.4** Write `tests/tst_vfo_mode_containers.cpp` that exercises each container's `syncFromSlice` path. For each container, instantiate a `SliceModel`, set the relevant per-band stub values, call `syncFromSlice`, and assert the contained widgets reflect the state.
-
-Example for `FmOptContainer`:
-
-```cpp
-void FmContainerReflectsSliceToneValue() {
-    SliceModel s;
-    s.setFmCtcssValueHz(100.0);  // stub setter from S1.6
-    FmOptContainer c;
-    c.setSlice(&s);
-    c.syncFromSlice();
-    // Assert: the tone combo's currentText is "100.0"
-    auto* combo = c.findChild<QComboBox*>("m_fmToneValueCmb");
-    QVERIFY(combo);
-    QCOMPARE(combo->currentText(), QStringLiteral("100.0"));
-}
-```
-
-- [ ] **S1.5.5** Build + test:
+- [x] **S1.5.6** Committed (see commit message template below):
   ```
-  cmake --build build -j && ctest --test-dir build -R tst_vfo_mode_containers --output-on-failure
-  ```
-  Expected: PASS.
+  git add src/gui/widgets/GuardedComboBox.h \
+          src/gui/widgets/VfoModeContainers.{h,cpp} \
+          tests/tst_vfo_mode_containers.cpp \
+          CMakeLists.txt tests/CMakeLists.txt \
+          docs/architecture/phase3g10-rx-dsp-flag-plan.md
+  git commit -S -m "phase3g10(widget): add VfoModeContainers (FM/DIG/RTTY) + GuardedComboBox
 
-- [ ] **S1.5.6** Commit:
-  ```
-  git add src/gui/widgets/VfoModeContainers.{h,cpp} tests/tst_vfo_mode_containers.cpp CMakeLists.txt
-  git commit -S -m "phase3g10(widget): add VfoModeContainers (FM/DIG/RTTY/CW)
+Three NereusSDR native mode containers informed by AetherSDR Qt
+skeleton patterns, each bound to the S1.6 SliceModel stub API:
 
-Four standalone containers ported from AetherSDR VfoWidget.cpp
-mode-specific sub-widget blocks. Each exposes setSlice + syncFromSlice
-and emits typed signals for the owning VfoWidget. Tests cover the
-sync path on each container.
+- FmOptContainer: CTCSS mode + value combos, FM repeater offset
+  spinbox (kHz), 3-way TX direction (Low/Simplex/High) + independent
+  Reverse toggle.
+- DigOffsetContainer: single offset control routed by dspMode() to
+  diglOffsetHz or diguOffsetHz (Thetis splits these per-sideband).
+- RttyMarkShiftContainer: Mark (2295 default) and Shift (170 default)
+  scrollable labels + nudge buttons.
 
-Not yet embedded in VfoWidget — done in phase3g10(flag) commits.
+CW autotune container dropped from Stage 1 scope — no Thetis source
+exists (only Apollo antenna tuner matches), deferred to a future phase
+with explicit native design.
+
+Also ports GuardedComboBox from AetherSDR GuardedSlider.h (deferred
+from S1.4 per that task's scope lock) — wheel events only when popup
+is visible, honors ControlsLock for mouse press.
+
+Tests exercise each container's setSlice/syncFromSlice path and the
+DIG container's mode-based routing. Not yet embedded in VfoWidget
+(done in S1.7).
+
+Plan §S1.5 amended with the source-first reframe, CW drop, and
+SliceModel API resolution story.
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
   ```
