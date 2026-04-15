@@ -1,4 +1,5 @@
 #include "DisplaySetupPages.h"
+#include "SetupHelpers.h"
 #include "gui/ColorSwatchButton.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
@@ -191,11 +192,12 @@ void SpectrumDefaultsPage::buildUI()
     auto* renderForm  = new QFormLayout(renderGroup);
     renderForm->setSpacing(6);
 
-    m_fpSlider = new QSlider(Qt::Horizontal, renderGroup);
-    m_fpSlider->setRange(10, 60);
-    m_fpSlider->setValue(30);
-    connect(m_fpSlider, &QSlider::valueChanged, this, [this](int v) { pushFps(v); });
-    renderForm->addRow(QStringLiteral("FPS (10–60):"), m_fpSlider);
+    {
+        auto row = makeSliderRow(10, 60, 30, QStringLiteral(" fps"), renderGroup);
+        m_fpSlider = row.slider;
+        connect(m_fpSlider, &QSlider::valueChanged, this, [this](int v) { pushFps(v); });
+        renderForm->addRow(QStringLiteral("FPS:"), row.container);
+    }
 
     m_averagingCombo = new QComboBox(renderGroup);
     m_averagingCombo->addItems({QStringLiteral("None"), QStringLiteral("Weighted"),
@@ -238,25 +240,27 @@ void SpectrumDefaultsPage::buildUI()
     });
     renderForm->addRow(QString(), m_fillToggle);
 
-    m_fillAlphaSlider = new QSlider(Qt::Horizontal, renderGroup);
-    m_fillAlphaSlider->setRange(0, 100);
-    m_fillAlphaSlider->setValue(70);
-    connect(m_fillAlphaSlider, &QSlider::valueChanged, this, [this](int v) {
-        if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setFillAlpha(v / 100.0f);
-        }
-    });
-    renderForm->addRow(QStringLiteral("Fill Alpha:"), m_fillAlphaSlider);
+    {
+        auto row = makeSliderRow(0, 100, 70, QStringLiteral("%"), renderGroup);
+        m_fillAlphaSlider = row.slider;
+        connect(m_fillAlphaSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
+                w->setFillAlpha(v / 100.0f);
+            }
+        });
+        renderForm->addRow(QStringLiteral("Fill Alpha:"), row.container);
+    }
 
-    m_lineWidthSlider = new QSlider(Qt::Horizontal, renderGroup);
-    m_lineWidthSlider->setRange(1, 3);
-    m_lineWidthSlider->setValue(1);
-    connect(m_lineWidthSlider, &QSlider::valueChanged, this, [this](int v) {
-        if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setLineWidth(static_cast<float>(v));
-        }
-    });
-    renderForm->addRow(QStringLiteral("Line Width:"), m_lineWidthSlider);
+    {
+        auto row = makeSliderRow(1, 3, 1, QStringLiteral(" px"), renderGroup);
+        m_lineWidthSlider = row.slider;
+        connect(m_lineWidthSlider, &QSlider::valueChanged, this, [this](int v) {
+            if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
+                w->setLineWidth(static_cast<float>(v));
+            }
+        });
+        renderForm->addRow(QStringLiteral("Line Width:"), row.container);
+    }
 
     m_gradientToggle = new QCheckBox(QStringLiteral("Trace gradient"), renderGroup);
     connect(m_gradientToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -287,17 +291,18 @@ void SpectrumDefaultsPage::buildUI()
     });
     colorForm->addRow(QStringLiteral("Data Line Color:"), m_dataLineColorBtn);
 
-    m_dataLineAlphaSlider = new QSlider(Qt::Horizontal, colorGroup);
-    m_dataLineAlphaSlider->setRange(0, 255);
-    m_dataLineAlphaSlider->setValue(230);
-    connect(m_dataLineAlphaSlider, &QSlider::valueChanged, this, [this](int a) {
-        if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            QColor c = w->fillColor();
-            c.setAlpha(a);
-            w->setFillColor(c);
-        }
-    });
-    colorForm->addRow(QStringLiteral("Line Alpha:"), m_dataLineAlphaSlider);
+    {
+        auto row = makeSliderRow(0, 255, 230, QString(), colorGroup);
+        m_dataLineAlphaSlider = row.slider;
+        connect(m_dataLineAlphaSlider, &QSlider::valueChanged, this, [this](int a) {
+            if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
+                QColor c = w->fillColor();
+                c.setAlpha(a);
+                w->setFillColor(c);
+            }
+        });
+        colorForm->addRow(QStringLiteral("Line Alpha:"), row.container);
+    }
 
     m_dataFillColorBtn = new ColorSwatchButton(initLine, colorGroup);
     connect(m_dataFillColorBtn, &ColorSwatchButton::colorChanged,
