@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.7] - 2026-04-16
 
 RedPitaya / Hermes P1 protocol fixes driven by pcap analysis in issue #38,
 plus Windows D3D11 container lifecycle fixes from issue #42.
