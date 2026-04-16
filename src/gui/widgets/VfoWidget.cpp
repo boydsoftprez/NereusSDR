@@ -537,7 +537,8 @@ void VfoWidget::buildAudioTab()
         NyiOverlay::markNyi(m_sqlSlider, QStringLiteral("phase3g10-stage2"));
     }
 
-    // 6. AGC threshold slider row (NYI)
+    // 6. AGC threshold slider row
+    // From Thetis Project Files/Source/Console/console.cs:45977 — agc_thresh_point, range -160..0
     {
         auto* row = new QHBoxLayout;
         auto* label = new QLabel(QStringLiteral("AGC-T"), audioWidget);
@@ -546,18 +547,18 @@ void VfoWidget::buildAudioTab()
         row->addWidget(label);
 
         m_agcTSlider = new QSlider(Qt::Horizontal, audioWidget);
-        m_agcTSlider->setRange(0, 100);
+        m_agcTSlider->setRange(-160, 0);
         m_agcTSlider->setSingleStep(1);
-        m_agcTSlider->setValue(0);
+        m_agcTSlider->setValue(-20);
         m_agcTSlider->setStyleSheet(
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
                             "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
         m_agcTSlider->setToolTip(QStringLiteral("AGC threshold (dBu) — adjusts the level at which AGC begins to act"));
         row->addWidget(m_agcTSlider);
 
-        m_agcTLabel = new QLabel(QStringLiteral("0"), audioWidget);
+        m_agcTLabel = new QLabel(QStringLiteral("-20"), audioWidget);
         m_agcTLabel->setStyleSheet(QStringLiteral("color: #c8d8e8; font-size: 11px;"));
-        m_agcTLabel->setFixedWidth(24);
+        m_agcTLabel->setFixedWidth(32);
         m_agcTLabel->setAlignment(Qt::AlignRight);
         row->addWidget(m_agcTLabel);
 
@@ -1403,7 +1404,7 @@ void VfoWidget::setSsqlThresh(double dB)
 void VfoWidget::setAgcThreshold(int dBu)
 {
     if (m_agcTSlider) {
-        int val = std::max(0, std::min(100, dBu));
+        int val = std::max(-160, std::min(0, dBu));
         if (m_agcTSlider->value() != val) {
             m_updatingFromModel = true;
             m_agcTSlider->setValue(val);
