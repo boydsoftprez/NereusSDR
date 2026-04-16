@@ -130,6 +130,12 @@ void FmOptContainer::buildUi()
 
     // ── Signal connections ────────────────────────────────────────────────
 
+    // TODO Phase 3M-3: CTCSS decode requires a sub-audible tone detector
+    // (bandpass at ctcssValueHz + threshold). WDSP FMSQ handles noise-level
+    // squelch only, not tone-coded squelch. The SliceModel properties
+    // (fmCtcssMode, fmCtcssValueHz) store the user's selection for when
+    // the tone detector is implemented.
+
     connect(m_toneModeCmb,   QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
         if (!m_slice) { return; }
@@ -149,6 +155,7 @@ void FmOptContainer::buildUi()
         m_slice->setFmOffsetHz(kHz * 1000);
     });
 
+    // Phase 3M-1: wire TX CTCSS encode and keydown repeater shift
     connect(m_txLowBtn, &QPushButton::clicked, this, [this]() {
         if (!m_slice) { return; }
         m_slice->setFmTxMode(FmTxMode::Low);
@@ -157,14 +164,19 @@ void FmOptContainer::buildUi()
         m_txHighBtn->setChecked(false);
     });
 
+    // Phase 3M-1: wire TX CTCSS encode and keydown repeater shift
     connect(m_simplexBtn, &QPushButton::clicked, this, [this]() {
         if (!m_slice) { return; }
         m_slice->setFmTxMode(FmTxMode::Simplex);
         m_txLowBtn->setChecked(false);
         m_simplexBtn->setChecked(true);
         m_txHighBtn->setChecked(false);
+        // Simplex: no repeater offset. The offset spinbox retains its last
+        // non-simplex value (Thetis console.cs:40412 chkFMTXSimplex_CheckedChanged
+        // does not zero udFMOffset). TX effects deferred to Phase 3M-1.
     });
 
+    // Phase 3M-1: wire TX CTCSS encode and keydown repeater shift
     connect(m_txHighBtn, &QPushButton::clicked, this, [this]() {
         if (!m_slice) { return; }
         m_slice->setFmTxMode(FmTxMode::High);
@@ -173,6 +185,8 @@ void FmOptContainer::buildUi()
         m_txHighBtn->setChecked(true);
     });
 
+    // fmReverse is display-only in 3G-10. TX repeater listen reversal
+    // (swapping TX/RX frequencies on keydown) is Phase 3M-1.
     connect(m_revBtn, &QPushButton::toggled, this, [this](bool checked) {
         if (!m_slice) { return; }
         m_slice->setFmReverse(checked);

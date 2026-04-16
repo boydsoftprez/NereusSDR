@@ -114,3 +114,6 @@ nereus_add_test(tst_slice_rit_xit)
 
 # ── Phase 3G-10 Stage 2: Frequency lock (S2.9) ──────────────────────────────
 nereus_add_test(tst_slice_frequency_lock)
+
+# ── Phase 3G-10 Stage 2: FM OPT container wire (S2.10a) ─────────────────────
+nereus_add_test(tst_fm_opt_container_wire)
