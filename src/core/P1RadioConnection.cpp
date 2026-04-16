@@ -157,14 +157,20 @@ void P1RadioConnection::composeCcBank0(quint8 out[5], int sampleRate, bool mox,
 // ---------------------------------------------------------------------------
 void P1RadioConnection::composeCcBankRxFreq(quint8 out[5], int rxIndex, quint64 freqHz) noexcept
 {
-    // Address assignments from networkproto1.c:
-    //   rxIndex 0 → case 2: C0 |= 4   (networkproto1.c:485)
-    //   rxIndex 1 → case 3: C0 |= 6   (networkproto1.c:498)
-    //   rxIndex 2 → case 5: C0 |= 8   (networkproto1.c:526)
-    //   rxIndex 3 → case 7: C0 |= 0x0c
-    //   rxIndex 4 → case 8: C0 |= 0x0e
-    //   rxIndex 5 → case 9: C0 |= 0x10
-    static const quint8 kRxC0Address[] = { 4, 6, 8, 0x0c, 0x0e, 0x10, 0x12 };
+    // Address assignments from networkproto1.c (C0 OR bits; the table stores
+    // the already-shifted value so callers just assign out[0] = addrBits):
+    //   rxIndex 0 → case 2 (:485):  C0 |= 0x04  (RX1 / DDC0)
+    //   rxIndex 1 → case 3 (:498):  C0 |= 0x06  (RX2 / DDC1)
+    //   rxIndex 2 → case 5 (:526):  C0 |= 0x08  (RX3 / DDC2)
+    //   rxIndex 3 → case 6 (:539):  C0 |= 0x0A  (RX4 / DDC3)
+    //   rxIndex 4 → case 7 (:549):  C0 |= 0x0C  (RX5 / DDC4)
+    //   rxIndex 5 → case 8      :  C0 |= 0x0E  (RX6 / DDC5)
+    //   rxIndex 6 → case 9 (:569):  C0 |= 0x10  (RX7 / DDC6)
+    //
+    // History: prior revision had {4,6,8,0x0C,0x0E,0x10,0x12}, dropping 0x0A
+    // entirely and aliasing rxIndex 6 onto bank 10's 0x12 slot. Fixed per
+    // pcap analysis of RedPitaya (#38).
+    static const quint8 kRxC0Address[] = { 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10 };
     quint8 addrBits = (rxIndex >= 0 && rxIndex < 7) ? kRxC0Address[rxIndex] : 4;
     out[0] = addrBits;  // MOX=0; address is already left-shifted in the table
 
