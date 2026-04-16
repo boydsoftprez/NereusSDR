@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AppletWidget.h"
+#include "gui/widgets/TriBtn.h"
 
 #include <QPushButton>
 #include <QStringList>
@@ -22,21 +23,6 @@ namespace NereusSDR {
 
 class FilterPassbandWidget;
 class SliceModel;
-
-// TriBtn — fixed-size 22×22 button that paints a filled triangle.
-// From AetherSDR RxApplet.cpp (TriBtn class).
-class TriBtn : public QPushButton {
-    Q_OBJECT
-public:
-    enum Dir { Left, Right };
-    explicit TriBtn(Dir dir, QWidget* parent = nullptr);
-
-protected:
-    void paintEvent(QPaintEvent* ev) override;
-
-private:
-    Dir m_dir;
-};
 
 // RxApplet — per-slice RX controls applet.
 //

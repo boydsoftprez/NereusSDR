@@ -621,10 +621,9 @@ void RadioModel::applyClaritySmoothDefaults()
     sw->setPanFillEnabled(false);
 
     // 6. Waterfall AGC — tracks band conditions automatically. With AGC on,
-    //    the Low/High threshold values are continuously overwritten by the
-    //    running min/max of visible FFT bins (see SpectrumWidget.cpp
-    //    pushWaterfallRow), so setting them in this profile is redundant.
-    sw->setWfAgcEnabled(true);
+    //    Phase 3G-9c: Waterfall AGC is superseded by ClarityController.
+    //    The setWfAgcEnabled call was removed here. Clarity is enabled via
+    //    the master toggle in Setup → Display → Spectrum Defaults.
 
     // 7. Waterfall update period — 30 ms for smooth scroll motion.
     sw->setWfUpdatePeriodMs(30);

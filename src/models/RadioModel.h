@@ -77,6 +77,8 @@ public:
     void setSpectrumWidget(class SpectrumWidget* w) { m_spectrumWidget = w; }
     class FFTEngine* fftEngine() const { return m_fftEngine; }
     void setFftEngine(class FFTEngine* e) { m_fftEngine = e; }
+    class ClarityController* clarityController() const { return m_clarityController; }
+    void setClarityController(class ClarityController* c) { m_clarityController = c; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -154,9 +156,10 @@ private:
     QList<PanadapterModel*> m_panadapters;
     SliceModel* m_activeSlice{nullptr};
 
-    // View hooks (non-owning, set by MainWindow). Phase 3G-8.
-    class SpectrumWidget* m_spectrumWidget{nullptr};
-    class FFTEngine*      m_fftEngine{nullptr};
+    // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
+    class SpectrumWidget*     m_spectrumWidget{nullptr};
+    class FFTEngine*          m_fftEngine{nullptr};
+    class ClarityController*  m_clarityController{nullptr};
 
     // Radio info
     QString m_name;

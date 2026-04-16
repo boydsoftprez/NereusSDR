@@ -11,6 +11,10 @@
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
+#include "core/ClarityController.h"
+#include "models/PanadapterModel.h"
+#include "models/Band.h"
+#include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
 #include "containers/ContainerWidget.h"
@@ -314,6 +318,35 @@ void MainWindow::buildUI()
     // WfColorScheme::Default; ClarityBlue is reachable only via the
     // "Reset to Smooth Defaults" button on SpectrumDefaultsPage or by
     // manually selecting "Clarity Blue" from the Waterfall Defaults combo.
+
+    // --- Phase 3G-9c: Clarity adaptive display tuning ---
+    m_clarityController = new ClarityController(this);
+    m_radioModel->setClarityController(m_clarityController);
+
+    // Restore enabled state from AppSettings
+    {
+        auto& s = AppSettings::instance();
+        bool clarityOn = s.value(QStringLiteral("ClarityEnabled"), QStringLiteral("False"))
+                            .toString() == QStringLiteral("True");
+        m_clarityController->setEnabled(clarityOn);
+    }
+
+    // Feed FFT bins to Clarity (auto-queued: spectrum thread → main)
+    connect(m_fftEngine, &FFTEngine::fftReady,
+            m_clarityController, [this](int /*rxId*/, const QVector<float>& binsDbm) {
+        m_clarityController->feedBins(binsDbm);
+    });
+
+    // TX pause: MOX signal → ClarityController
+    connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
+            m_clarityController, &ClarityController::setTransmitting);
+
+    // Clarity → SpectrumWidget threshold update
+    connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
+            m_spectrumWidget, [this](float low, float high) {
+        m_spectrumWidget->setWfLowThreshold(low);
+        m_spectrumWidget->setWfHighThreshold(high);
+    });
 
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution
     // Target: ~500-1000 bins across the visible bandwidth for good detail

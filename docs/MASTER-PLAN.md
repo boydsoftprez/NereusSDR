@@ -478,22 +478,30 @@ Verification: 47-control matrix at `docs/architecture/phase3g8-verification/READ
 
 Shipped as three sequential PRs off `main`. Strict dependency: PR1 helpers feed PR2, PR2 static defaults feed PR3 as the Clarity-off fallback.
 
-#### Phase 3G-9a: Source-First Audit + Tooltips + Slider Readouts (PR1)
+#### Phase 3G-9a: Source-First Audit + Tooltips + Slider Readouts (PR1) ✅ COMPLETE
+**Shipped 2026-04-15** as PR #25 (merged). 11 GPG-signed commits.
+
 - Per-control Thetis source citation comments on all 47 controls
 - Tooltip port — verbatim where Thetis is substantive, rewritten where weak (annotated with original)
-- `SliderRow` / `SliderRowD` helpers: every numeric slider gets a bidirectional spinbox companion with unit suffix (matches Thetis `udDisplay*` NumericUpDown pattern)
-- Target: 47/47 controls with tooltips (current 10/47), 12 sliders converted
-- No renderer or model changes; ~600 LOC delta
-- Risk: low — mechanical refactor + docs
+- `SliderRow` / `SliderRowD` helpers in new `src/gui/setup/SetupHelpers.{h,cpp}`: every numeric slider gets a bidirectional spinbox companion with unit suffix (matches Thetis `udDisplay*` NumericUpDown pattern)
+- 47/47 controls with tooltips (from 10/47), 8 sliders converted (4 in Spectrum + 4 in Waterfall; GridScales has no sliders)
+- `setToolTip` count in `DisplaySetupPages.cpp`: 10 → 62
+- New `tst_setup_helpers` 6-slot QtTest smoke locking bidirectional sync + no-feedback-loop
+- Implementation plan: `docs/architecture/2026-04-15-phase3g9a-display-audit-plan.md`
 
-#### Phase 3G-9b: Smooth Defaults + Clarity Blue Palette (PR2)
-- New `WfColorScheme::ClarityBlue` — narrow-band monochrome (80% dark navy for noise floor, top 15% bright cyan-white for signals) — the AetherSDR readability look
-- `PanadapterModel::applyClaritySmoothDefaults()` with first-launch gate on `"DisplayProfileApplied"` AppSettings key (existing users untouched)
-- "Reset to Smooth Defaults" button on Spectrum Defaults page
-- Wire any stubbed renderer hooks (Waterfall AGC W3, update period W4) — prerequisites for PR3
-- New rationale doc `docs/architecture/waterfall-tuning.md` with before/after screenshots and per-parameter justification
-- The seven recipes: palette, averaging mode, averaging τ, trace color, threshold gap, waterfall AGC, update period
-- ~400 LOC code + ~250 lines doc; Risk: medium — opinionated numbers, may need live-radio iteration
+#### Phase 3G-9b: Smooth Defaults + Clarity Blue Palette (PR2) 🚧 IN FLIGHT
+**Opened 2026-04-15** as PR #26 (awaiting merge). 11 GPG-signed commits.
+
+The PR2 design underwent significant iteration during live-radio tuning. What was originally specced as a narrow-band navy-only palette turned out to be wrong — the reference AetherSDR look is actually a **full-spectrum rainbow** (black → blue → cyan → green → yellow → red → magenta) where the "blue look" comes from AGC + tight thresholds keeping normal signals in the cool region. The final ClarityBlue palette is a 10-stop rainbow with a deep-black floor.
+
+- New `WfColorScheme::ClarityBlue` — 10-stop full-spectrum rainbow, selectable from Waterfall Defaults (8th palette option)
+- `RadioModel::applyClaritySmoothDefaults()` sets the seven recipe values (ClarityBlue palette, log-recursive averaging, `0.05f` alpha, pure-white `#ffffff` α230 thin trace, pan-fill off, waterfall AGC on, 30 ms update period)
+- "Reset to Smooth Defaults" button on `Setup → Display → Spectrum Defaults` — the **only** entry point. **Decision 2026-04-15:** no first-launch auto-apply. Out-of-box default stays `WfColorScheme::Default`.
+- **AGC margin widened 3 dB → 12 dB** in `SpectrumWidget::pushWaterfallRow` — gives palette breathing room for FFT skirt falloff across signal amplitude. Affects all palettes when AGC is on; pure quality improvement.
+- New rationale doc `docs/architecture/waterfall-tuning.md` with before/after/reference screenshots (iter0 → iter6 live-tuning progression) and per-recipe source attribution (Thetis-native vs NereusSDR-native)
+- Recipe #5 (explicit thresholds) dropped during implementation: AGC overwrites Low/High every frame so setting them in the profile was redundant
+- New `tst_clarity_defaults` 5-slot QtTest locking palette invariants (enum ordinal, deep-black floor, monotonic stops, rainbow progression with warm upper-half stop, vivid peak)
+- Implementation plan: `docs/architecture/2026-04-15-phase3g9b-smooth-defaults-plan.md`
 
 #### Phase 3G-9c: Clarity Adaptive Display Tuning (PR3)
 - **Research-doc gated** — no code until `docs/architecture/clarity-design.md` is written and signed off

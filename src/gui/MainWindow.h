@@ -19,6 +19,7 @@ class SupportDialog;
 class WdspEngine;
 class FFTEngine;
 class SpectrumWidget;
+class ClarityController;
 class ContainerManager;
 class MeterWidget;
 class MeterPoller;
@@ -65,9 +66,10 @@ private:
     QProgressDialog* m_wisdomDialog{nullptr};
 
     // Spectrum display
-    SpectrumWidget* m_spectrumWidget{nullptr};
-    FFTEngine*      m_fftEngine{nullptr};
-    QThread*        m_fftThread{nullptr};
+    SpectrumWidget*     m_spectrumWidget{nullptr};
+    FFTEngine*          m_fftEngine{nullptr};
+    QThread*            m_fftThread{nullptr};
+    ClarityController*  m_clarityController{nullptr};
 
     // Re-entrancy guard: prevents centerChanged from firing a second
     // forceHardwareFrequency while frequencyChanged is already retuning the DDC

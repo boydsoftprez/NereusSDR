@@ -5,6 +5,7 @@
 #include "gui/HGauge.h"
 #include "gui/ComboStyle.h"
 #include "gui/StyleConstants.h"
+#include "gui/widgets/TriBtn.h"
 #include "NyiOverlay.h"
 
 #include <QButtonGroup>
@@ -18,49 +19,6 @@
 #include <QVBoxLayout>
 
 namespace NereusSDR {
-
-// ── TriBtn: triangle stepper button (same pattern as AetherSDR CwTriBtn) ──────
-// File-local: wrapped in an anonymous namespace so it doesn't ODR-collide with
-// NereusSDR::TriBtn declared in RxApplet.h. FmApplet.cpp uses the same pattern.
-namespace {
-
-class TriBtn : public QPushButton {
-public:
-    enum Dir { Left, Right };
-    explicit TriBtn(Dir dir, QWidget* parent = nullptr)
-        : QPushButton(parent), m_dir(dir)
-    {
-        setFlat(false);
-        setFixedSize(22, 22);
-        setStyleSheet(
-            "QPushButton { background: #1a2a3a; border: 1px solid #203040; "
-            "border-radius: 3px; padding: 0; margin: 0; min-width: 0; min-height: 0; }"
-            "QPushButton:hover { background: #203040; }"
-            "QPushButton:pressed { background: #00b4d8; }");
-    }
-protected:
-    void paintEvent(QPaintEvent* ev) override {
-        QPushButton::paintEvent(ev);
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setBrush(isDown() ? QColor(0, 0, 0) : QColor(0xc8, 0xd8, 0xe8));
-        p.setPen(Qt::NoPen);
-        const int cx = width() / 2;
-        const int cy = height() / 2;
-        QPolygon tri;
-        if (m_dir == Left) {
-            tri << QPoint(cx - 5, cy) << QPoint(cx + 4, cy - 5) << QPoint(cx + 4, cy + 5);
-        } else {
-            tri << QPoint(cx + 5, cy) << QPoint(cx - 4, cy - 5) << QPoint(cx - 4, cy + 5);
-        }
-        p.drawPolygon(tri);
-    }
-private:
-    Dir m_dir;
-};
-
-} // anonymous namespace
-
 
 // ── Style constants (adapted from AetherSDR PhoneCwApplet.cpp) ────────────────
 

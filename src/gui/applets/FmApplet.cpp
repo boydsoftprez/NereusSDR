@@ -1,4 +1,5 @@
 #include "FmApplet.h"
+#include "gui/widgets/TriBtn.h"
 #include "NyiOverlay.h"
 
 #include <QComboBox>
@@ -7,69 +8,8 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QPainter>
-#include <QPolygon>
 
 namespace NereusSDR {
-
-// --------------------------------------------------------------------------
-// TriBtn — 22x22 triangle step button (STYLEGUIDE.md, "Triangle step button")
-// --------------------------------------------------------------------------
-namespace {
-
-class TriBtn : public QPushButton {
-public:
-    enum class Dir { Left, Right };
-
-    explicit TriBtn(Dir dir, QWidget* parent = nullptr)
-        : QPushButton(parent)
-        , m_dir(dir)
-    {
-        setFixedSize(22, 22);
-        setStyleSheet(QStringLiteral(
-            "QPushButton {"
-            "  background: #1a2a3a; border: 1px solid #203040; border-radius: 3px;"
-            "}"
-            "QPushButton:hover { background: #203040; }"
-            "QPushButton:pressed { background: #00b4d8; }"));
-    }
-
-protected:
-    void paintEvent(QPaintEvent* event) override
-    {
-        QPushButton::paintEvent(event);
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-
-        bool pressed = isDown();
-        QColor fill = pressed ? Qt::black : QColor(0xc8, 0xd8, 0xe8);
-        p.setBrush(fill);
-        p.setPen(Qt::NoPen);
-
-        QRect r = rect();
-        int cx = r.center().x();
-        int cy = r.center().y();
-        int hw = 4; // half-width of triangle base
-        int hh = 5; // half-height
-
-        QPolygon tri;
-        if (m_dir == Dir::Left) {
-            tri << QPoint(cx - hh, cy)
-                << QPoint(cx + hw, cy - hw)
-                << QPoint(cx + hw, cy + hw);
-        } else {
-            tri << QPoint(cx + hh, cy)
-                << QPoint(cx - hw, cy - hw)
-                << QPoint(cx - hw, cy + hw);
-        }
-        p.drawPolygon(tri);
-    }
-
-private:
-    Dir m_dir;
-};
-
-} // anonymous namespace
 
 // --------------------------------------------------------------------------
 // Style constants
@@ -249,7 +189,7 @@ void FmApplet::buildUI()
         lbl->setFixedWidth(44);
         row->addWidget(lbl);
 
-        auto* stepLeft = new TriBtn(TriBtn::Dir::Left, this);
+        auto* stepLeft = new TriBtn(TriBtn::Left, this);
         row->addWidget(stepLeft);
 
         m_offsetLbl = new QLabel(QStringLiteral("0.600 MHz"), this);
@@ -258,7 +198,7 @@ void FmApplet::buildUI()
         m_offsetLbl->setAlignment(Qt::AlignCenter);
         row->addWidget(m_offsetLbl);
 
-        auto* stepRight = new TriBtn(TriBtn::Dir::Right, this);
+        auto* stepRight = new TriBtn(TriBtn::Right, this);
         row->addWidget(stepRight);
 
         root->addLayout(row);

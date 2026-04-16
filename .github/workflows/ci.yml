@@ -64,6 +64,10 @@ jobs:
           tools: 'tools_mingw1310'
           cache: true
 
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y
+
       - name: Download FFTW3 (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -148,7 +152,7 @@ jobs:
           # ShaderTools or Gui private modules. v0.1.1 silently shipped
           # without GPU spectrum because this flag was implicit; never
           # again.
-          cmake -B build -G "MinGW Makefiles" \
+          cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DNEREUS_GPU_SPECTRUM=ON
 

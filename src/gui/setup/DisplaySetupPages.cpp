@@ -4,6 +4,8 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
 #include "core/FFTEngine.h"
+#include "core/ClarityController.h"
+#include "core/AppSettings.h"
 #include "models/Band.h"
 #include "models/PanadapterModel.h"
 #include "models/RadioModel.h"
@@ -183,6 +185,30 @@ void SpectrumDefaultsPage::buildUI()
         }
     });
     contentLayout()->addWidget(resetBtn);
+
+    // Phase 3G-9c: Clarity adaptive display tuning master toggle.
+    // When on, ClarityController drives Waterfall Low/High thresholds
+    // from a percentile-based noise-floor estimate. When off, thresholds
+    // stay at whatever value they were last set to (no AGC fallback).
+    auto* clarityToggle = new QCheckBox(
+        QStringLiteral("Enable Clarity (adaptive waterfall tuning)"), this);
+    clarityToggle->setToolTip(QStringLiteral(
+        "Clarity keeps the waterfall thresholds centered on the actual "
+        "noise floor as band conditions and tuning change. Uses a 30th-"
+        "percentile estimator with 3-second EWMA smoothing and a ±2 dB "
+        "deadband. When off, thresholds are fixed at their last values."));
+    if (auto* cc = model() ? model()->clarityController() : nullptr) {
+        clarityToggle->setChecked(cc->isEnabled());
+        connect(clarityToggle, &QCheckBox::toggled, this, [this](bool on) {
+            if (auto* cc2 = model() ? model()->clarityController() : nullptr) {
+                cc2->setEnabled(on);
+                AppSettings::instance().setValue(
+                    QStringLiteral("ClarityEnabled"),
+                    on ? QStringLiteral("True") : QStringLiteral("False"));
+            }
+        });
+    }
+    contentLayout()->addWidget(clarityToggle);
 
     auto* sw = model() ? model()->spectrumWidget() : nullptr;
     auto* fe = model() ? model()->fftEngine() : nullptr;
@@ -495,7 +521,6 @@ void WaterfallDefaultsPage::loadFromRenderer()
     if (!sw) { return; }
     QSignalBlocker b1(m_highThresholdSlider);
     QSignalBlocker b2(m_lowThresholdSlider);
-    QSignalBlocker b3(m_agcToggle);
     QSignalBlocker b4(m_useSpectrumMinMaxToggle);
     QSignalBlocker b5(m_updatePeriodSlider);
     QSignalBlocker b6(m_reverseToggle);
@@ -511,7 +536,6 @@ void WaterfallDefaultsPage::loadFromRenderer()
 
     m_highThresholdSlider->setValue(static_cast<int>(sw->wfHighThreshold()));
     m_lowThresholdSlider->setValue(static_cast<int>(sw->wfLowThreshold()));
-    m_agcToggle->setChecked(sw->wfAgcEnabled());
     m_useSpectrumMinMaxToggle->setChecked(sw->wfUseSpectrumMinMax());
     m_updatePeriodSlider->setValue(sw->wfUpdatePeriodMs());
     m_reverseToggle->setChecked(sw->wfReverseScroll());
@@ -565,15 +589,15 @@ void WaterfallDefaultsPage::buildUI()
         levForm->addRow(QStringLiteral("Low Threshold:"), row.container);
     }
 
-    m_agcToggle = new QCheckBox(QStringLiteral("AGC"), levGroup);
-    // Thetis: setup.designer.cs:34069 (chkRX1WaterfallAGC)
-    m_agcToggle->setToolTip(QStringLiteral("Automatically calculates Low Level Threshold for Waterfall."));
-    connect(m_agcToggle, &QCheckBox::toggled, this, [this](bool on) {
-        if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
-            w->setWfAgcEnabled(on);
-        }
-    });
-    levForm->addRow(QString(), m_agcToggle);
+    // Phase 3G-9c: legacy Waterfall AGC checkbox replaced by inert label.
+    // ClarityController supersedes the running-min/max AGC — its
+    // percentile-based estimator is more robust against strong carriers.
+    // Thetis origin: setup.designer.cs:34069 (chkRX1WaterfallAGC).
+    m_agcDeprecationLabel = new QLabel(
+        QStringLiteral("AGC — superseded by Clarity (see Spectrum Defaults)"),
+        levGroup);
+    m_agcDeprecationLabel->setEnabled(false);
+    levForm->addRow(QString(), m_agcDeprecationLabel);
 
     m_useSpectrumMinMaxToggle = new QCheckBox(QStringLiteral("Use spectrum min/max"), levGroup);
     // Thetis: setup.designer.cs:34054 (chkWaterfallUseRX1SpectrumMinMax)

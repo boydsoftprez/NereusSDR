@@ -15,8 +15,9 @@ constexpr int kThetisDefaultDbMax = -40;
 constexpr int kThetisDefaultDbMin = -140;
 constexpr int kDefaultGridStep    = 10;  // NereusSDR divergence (§10).
 
-QString gridMaxKey(Band b) { return QStringLiteral("DisplayGridMax_") + bandKeyName(b); }
-QString gridMinKey(Band b) { return QStringLiteral("DisplayGridMin_") + bandKeyName(b); }
+QString gridMaxKey(Band b)      { return QStringLiteral("DisplayGridMax_") + bandKeyName(b); }
+QString gridMinKey(Band b)      { return QStringLiteral("DisplayGridMin_") + bandKeyName(b); }
+QString clarityFloorKey(Band b) { return QStringLiteral("ClarityFloor_")   + bandKeyName(b); }
 
 } // namespace
 
@@ -136,6 +137,22 @@ void PanadapterModel::setPerBandDbMin(Band b, int dbMin)
     }
 }
 
+float PanadapterModel::clarityFloor(Band b) const
+{
+    return m_perBandGrid.value(b).clarityFloor;
+}
+
+void PanadapterModel::setClarityFloor(Band b, float floor)
+{
+    BandGridSettings& slot = m_perBandGrid[b];
+    if ((!qIsNaN(floor) && !qIsNaN(slot.clarityFloor) && qFuzzyCompare(slot.clarityFloor, floor)) ||
+        (qIsNaN(floor) && qIsNaN(slot.clarityFloor))) {
+        return;
+    }
+    slot.clarityFloor = floor;
+    saveBandGridToSettings(b);
+}
+
 void PanadapterModel::setGridStep(int step)
 {
     if (step <= 0 || m_gridStep == step) {
@@ -160,9 +177,11 @@ void PanadapterModel::loadPerBandGridFromSettings()
         const Band b = static_cast<Band>(i);
         const QVariant maxV = s.value(gridMaxKey(b));
         const QVariant minV = s.value(gridMinKey(b));
+        const QVariant cfV  = s.value(clarityFloorKey(b));
         BandGridSettings slot = m_perBandGrid.value(b, BandGridSettings{ kThetisDefaultDbMax, kThetisDefaultDbMin });
         if (maxV.isValid()) { slot.dbMax = maxV.toInt(); }
         if (minV.isValid()) { slot.dbMin = minV.toInt(); }
+        if (cfV.isValid())  { slot.clarityFloor = cfV.toFloat(); }
         m_perBandGrid.insert(b, slot);
     }
 
@@ -181,6 +200,9 @@ void PanadapterModel::saveBandGridToSettings(Band b) const
     auto& s = AppSettings::instance();
     s.setValue(gridMaxKey(b), slot.dbMax);
     s.setValue(gridMinKey(b), slot.dbMin);
+    if (!qIsNaN(slot.clarityFloor)) {
+        s.setValue(clarityFloorKey(b), slot.clarityFloor);
+    }
 }
 
 } // namespace NereusSDR

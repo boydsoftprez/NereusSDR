@@ -256,6 +256,8 @@ set(CORE_SOURCES
     src/core/WdspEngine.cpp
     src/core/RxChannel.cpp
     src/core/FFTEngine.cpp
+    src/core/NoiseFloorEstimator.cpp
+    src/core/ClarityController.cpp
 )
 
 set(MODEL_SOURCES
@@ -282,6 +284,7 @@ set(GUI_SOURCES
     src/gui/widgets/ResetSlider.h
     src/gui/widgets/ScrollableLabel.cpp
     src/gui/widgets/TriBtn.h
+    src/gui/widgets/TriBtn.cpp
     src/gui/widgets/VfoLevelBar.cpp
     src/gui/widgets/VfoModeContainers.cpp
     src/gui/widgets/VfoModeContainers.h
