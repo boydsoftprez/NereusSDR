@@ -94,6 +94,10 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
     buildAutoAttGroup();
 
     if (m_ctrl) {
+        // Re-range setup spinboxes from board capabilities (may be 61 dB).
+        int maxDb = m_ctrl->maxAttenuation();
+        m_spnRx1StepAttValue->setRange(0, maxDb);
+        m_spnRx2StepAttValue->setRange(0, maxDb);
         connectController();
     }
 }
@@ -250,8 +254,12 @@ void GeneralOptionsPage::buildAutoAttGroup()
             connect(chkUndo, &QCheckBox::toggled, this, [this](bool on) {
                 m_ctrl->setAutoAttUndo(on);
             });
-            connect(spnHold, &QSpinBox::valueChanged, this, [this](int sec) {
-                m_ctrl->setAutoUndoDelaySec(sec);
+            connect(spnHold, &QSpinBox::valueChanged, this, [this, cmbMode](int sec) {
+                if (cmbMode->currentIndex() == static_cast<int>(AutoAttMode::Adaptive)) {
+                    m_ctrl->setAutoAttHoldSeconds(static_cast<double>(sec));
+                } else {
+                    m_ctrl->setAutoUndoDelaySec(sec);
+                }
             });
         }
 

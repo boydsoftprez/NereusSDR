@@ -119,6 +119,7 @@ public:
     void setPreampMode(PreampMode mode);
 
     // Maximum attenuator value (hardware limit, typically 31 dB).
+    int maxAttenuation() const { return m_maxAttDb; }
     void setMaxAttenuation(int dB);
 
     // Wire to a RadioConnection for adcOverflow signals.
@@ -178,6 +179,10 @@ private:
     // Tick interval (ms) — Thetis pollOverloadSyncSeqErr ~400ms,
     // NereusSDR uses 100ms for snappier response.
     static constexpr int kTickIntervalMs = 100;
+
+    // Push a new ATT value to hardware + emit signal.  Used by auto-att
+    // paths that bypass setAttenuation() (which also stores per-band state).
+    void applyAttToHardware(int dB);
 
     // Per-ADC state. From Thetis console.cs:21212-21214.
     struct AdcState {

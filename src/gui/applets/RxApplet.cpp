@@ -805,9 +805,10 @@ void RxApplet::connectSlice(SliceModel* s)
         });
 
         connect(m_preampCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [attCtrl](int idx) {
+                this, [this, attCtrl](int idx) {
             if (idx < 0) { return; }  // guard during clear/repopulate
-            attCtrl->setPreampMode(static_cast<PreampMode>(idx));
+            int modeInt = m_preampCombo->itemData(idx).toInt();
+            attCtrl->setPreampMode(static_cast<PreampMode>(modeInt));
         });
 
         connect(attCtrl, &StepAttenuatorController::attenuationChanged,
@@ -819,7 +820,13 @@ void RxApplet::connectSlice(SliceModel* s)
         connect(attCtrl, &StepAttenuatorController::preampModeChanged,
                 this, [this](PreampMode mode) {
             QSignalBlocker blk(m_preampCombo);
-            m_preampCombo->setCurrentIndex(static_cast<int>(mode));
+            int modeInt = static_cast<int>(mode);
+            for (int i = 0; i < m_preampCombo->count(); ++i) {
+                if (m_preampCombo->itemData(i).toInt() == modeInt) {
+                    m_preampCombo->setCurrentIndex(i);
+                    return;
+                }
+            }
         });
 
         // React to step-att-enabled changes (ATT ↔ S-ATT mode switch)
@@ -840,7 +847,13 @@ void RxApplet::connectSlice(SliceModel* s)
         }
         {
             QSignalBlocker blk(m_preampCombo);
-            m_preampCombo->setCurrentIndex(static_cast<int>(attCtrl->preampMode()));
+            int modeInt = static_cast<int>(attCtrl->preampMode());
+            for (int i = 0; i < m_preampCombo->count(); ++i) {
+                if (m_preampCombo->itemData(i).toInt() == modeInt) {
+                    m_preampCombo->setCurrentIndex(i);
+                    break;
+                }
+            }
         }
     }
 }

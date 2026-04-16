@@ -252,9 +252,8 @@ void StepAttenuatorController::applyClassicAutoAtt(int adc)
             if (m_classicSavedAttDb < 0) {
                 m_classicSavedAttDb = m_attDb;
             }
-            m_attDb = newAtt;
+            applyAttToHardware(newAtt);
             m_lastAutoAttTimeMs = QDateTime::currentMSecsSinceEpoch();
-            emit attenuationChanged(m_attDb);
             setAutoAttApplied(true);
         }
     } else {
@@ -308,8 +307,7 @@ void StepAttenuatorController::applyClassicUndo()
     // only gates the timer-based automatic path, not explicit disable.
     if (m_stepAttEnabled && m_classicSavedAttDb >= 0) {
         if (m_classicSavedAttDb != m_attDb) {
-            m_attDb = m_classicSavedAttDb;
-            emit attenuationChanged(m_attDb);
+            applyAttToHardware(m_classicSavedAttDb);
         }
     } else if (!m_stepAttEnabled && m_classicSavedAttDb >= 0) {
         if (m_classicSavedPreamp != m_preampMode) {
@@ -335,9 +333,8 @@ void StepAttenuatorController::applyAdaptiveAutoAtt(int adc)
             newAtt = m_maxAttDb;
         }
         if (newAtt != m_attDb) {
-            m_attDb = newAtt;
+            applyAttToHardware(newAtt);
             m_adaptiveLastAttackMs = now;
-            emit attenuationChanged(m_attDb);
             setAutoAttApplied(true);
         }
     } else {
@@ -357,9 +354,8 @@ void StepAttenuatorController::applyAdaptiveAutoAtt(int adc)
         }
 
         if (m_attDb > floor) {
-            m_attDb--;
+            applyAttToHardware(m_attDb - 1);
             m_adaptiveLastDecayMs = now;
-            emit attenuationChanged(m_attDb);
             if (m_attDb <= floor) {
                 setAutoAttApplied(false);
             }
@@ -367,6 +363,17 @@ void StepAttenuatorController::applyAdaptiveAutoAtt(int adc)
             setAutoAttApplied(false);
         }
     }
+}
+
+// --- Hardware push helper ---
+
+void StepAttenuatorController::applyAttToHardware(int dB)
+{
+    m_attDb = dB;
+    if (m_connection) {
+        m_connection->setAttenuator(dB);
+    }
+    emit attenuationChanged(m_attDb);
 }
 
 // --- Helpers ---
