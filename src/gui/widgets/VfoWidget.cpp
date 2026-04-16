@@ -74,7 +74,18 @@ VfoWidget::VfoWidget(QWidget* parent)
     buildUI();
 }
 
-VfoWidget::~VfoWidget() = default;
+VfoWidget::~VfoWidget()
+{
+    // Floating buttons are parented to parentWidget() (SpectrumWidget),
+    // not to this widget, so Qt's parent chain won't auto-delete them.
+    // AetherSDR VfoWidget.cpp:223-233 pattern: explicit delete on destruction.
+    // All four pointers are initialized to nullptr in the header, so deletes
+    // are safe even if buildFloatingButtons() was never called.
+    delete m_closeBtn;
+    delete m_lockBtn;
+    delete m_recBtn;
+    delete m_playBtn;
+}
 
 void VfoWidget::buildUI()
 {
@@ -1437,13 +1448,27 @@ void VfoWidget::buildFloatingButtons()
         }
     });
 
-    // Record button — not wired yet
-    m_recBtn = makeBtn(QStringLiteral("\u23FA"), kFloatingBtnDisabled);
-    m_recBtn->setToolTip(QStringLiteral("Record (not implemented)"));
+    // Record button — checkable, NYI-badged (no consumer in Stage 1)
+    m_recBtn = makeBtn(QStringLiteral("\u23FA"), kFloatingBtn);
+    m_recBtn->setToolTip(QStringLiteral("Record audio"));
+    m_recBtn->setCheckable(true);
+    connect(m_recBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (!m_updatingFromModel) {
+            emit recordToggled(on);
+        }
+    });
+    NyiOverlay::markNyi(m_recBtn, QStringLiteral("phase3g10-stage2"));
 
-    // Play button — not wired yet
-    m_playBtn = makeBtn(QStringLiteral("\u25B6"), kFloatingBtnDisabled);
-    m_playBtn->setToolTip(QStringLiteral("Play (not implemented)"));
+    // Play button — checkable, NYI-badged (no consumer in Stage 1)
+    m_playBtn = makeBtn(QStringLiteral("\u25B6"), kFloatingBtn);
+    m_playBtn->setToolTip(QStringLiteral("Play recording"));
+    m_playBtn->setCheckable(true);
+    connect(m_playBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (!m_updatingFromModel) {
+            emit playToggled(on);
+        }
+    });
+    NyiOverlay::markNyi(m_playBtn, QStringLiteral("phase3g10-stage2"));
 }
 
 // ---- Lock state: applyLockedState + setLocked (S1.8a review — I3) ----

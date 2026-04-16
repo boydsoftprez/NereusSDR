@@ -136,6 +136,10 @@ signals:
     // --- Mode tab signals (S1.8c) ---
     void quickModeRequested(int index);
 
+    // --- Record/play signals (S1.10 — NYI in Stage 1, wired to future recording subsystem) ---
+    void recordToggled(bool recording);
+    void playToggled(bool playing);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
