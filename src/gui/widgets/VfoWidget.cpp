@@ -910,7 +910,7 @@ void VfoWidget::buildXRitTab()
         m_xritLockBtn->setCheckable(true);
         m_xritLockBtn->setStyleSheet(kDspToggle);
         m_xritLockBtn->setFixedHeight(22);
-        m_xritLockBtn->setToolTip(QStringLiteral("Lock VFO frequency against tuning changes — wired in S2.9"));
+        m_xritLockBtn->setToolTip(QStringLiteral("Lock VFO frequency to prevent accidental tuning"));
         row->addWidget(m_xritLockBtn);
 
         // Step cycle button — NOT NYI (wires to live SliceModel::setStepHz)
@@ -986,7 +986,7 @@ void VfoWidget::buildXRitTab()
     NyiOverlay::markNyi(m_xitBtn,      QStringLiteral("XIT — TX gated by Phase 3M-1"));
     NyiOverlay::markNyi(m_xitLabel,    QStringLiteral("XIT — TX gated by Phase 3M-1"));
     NyiOverlay::markNyi(m_xitZeroBtn,  QStringLiteral("XIT — TX gated by Phase 3M-1"));
-    // LOCK badge removed in S2.9 commit
+    // LOCK is live in S2.9 — no NYI badge.
 
     m_tabStack->addWidget(ritWidget);
 }

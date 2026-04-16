@@ -113,7 +113,8 @@ void RxApplet::buildUi()
         row->addWidget(m_sliceBadge);
 
         // Control 2: Lock button (checkable, 20×20, emoji 🔓/🔒)
-        // Checked color: #4488ff. NYI — SliceModel has no setFrequencyLocked yet.
+        // Live in S2.9 — wired to SliceModel::setLocked (client-side guard).
+        // Checked color: #4488ff.
         m_lockBtn = new QPushButton(QString::fromUtf8("\xF0\x9F\x94\x93"), this); // 🔓
         m_lockBtn->setCheckable(true);
         m_lockBtn->setFixedSize(20, 20);
@@ -126,10 +127,12 @@ void RxApplet::buildUi()
             m_lockBtn->setText(locked
                 ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
                 : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
-            // TODO Phase 3I: m_slice->setFrequencyLocked(locked);
+            if (!m_updatingFromModel && m_slice) {
+                m_slice->setLocked(locked);
+            }
         });
         row->addWidget(m_lockBtn);
-        NyiOverlay::markNyi(m_lockBtn, QStringLiteral("Phase 3I"));
+        // Lock is live in S2.9 — no NYI badge.
 
         // Control 3: RX antenna button (flat, color #4488ff, transparent bg)
         // From AetherSDR RxApplet.cpp lines 270-289
@@ -740,6 +743,12 @@ void RxApplet::syncFromModel()
     m_filterPassband->setFilter(m_slice->filterLow(), m_slice->filterHigh());
     m_filterPassband->setMode(SliceModel::modeName(m_slice->dspMode()));
 
+    // Lock state (S2.9)
+    m_lockBtn->setChecked(m_slice->locked());
+    m_lockBtn->setText(m_slice->locked()
+        ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
+        : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+
     // RIT state (S2.8)
     m_ritOnBtn->setChecked(m_slice->ritEnabled());
     {
@@ -801,6 +810,16 @@ void RxApplet::connectSlice(SliceModel* s)
     });
     connect(s, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
         m_txAntBtn->setText(ant);
+    });
+
+    // Lock model → UI sync (S2.9)
+    connect(s, &SliceModel::lockedChanged, this, [this](bool locked) {
+        m_updatingFromModel = true;
+        m_lockBtn->setChecked(locked);
+        m_lockBtn->setText(locked
+            ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
+            : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+        m_updatingFromModel = false;
     });
 
     // RIT model → UI sync (S2.8)

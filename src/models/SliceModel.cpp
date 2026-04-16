@@ -17,6 +17,9 @@ SliceModel::~SliceModel() = default;
 
 void SliceModel::setFrequency(double freq)
 {
+    // 3G-10 S2.9: client-side lock guard. When locked, setFrequency is a
+    // no-op — prevents accidental tuning. The hardware VFO is not changed.
+    if (m_locked) { return; }
     if (!qFuzzyCompare(m_frequency, freq)) {
         m_frequency = freq;
         emit frequencyChanged(freq);

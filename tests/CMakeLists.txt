@@ -111,3 +111,6 @@ nereus_add_test(tst_rxchannel_nb2_polish)
 
 # ── Phase 3G-10 Stage 2: RIT/XIT client offset (S2.8) ───────────────────────
 nereus_add_test(tst_slice_rit_xit)
+
+# ── Phase 3G-10 Stage 2: Frequency lock (S2.9) ──────────────────────────────
+nereus_add_test(tst_slice_frequency_lock)
