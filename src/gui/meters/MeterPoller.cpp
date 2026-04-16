@@ -88,13 +88,21 @@ void MeterPoller::poll()
     if (!m_rxChannel) { return; }
 
     // Poll all RX meter types. GetRXAMeter is lock-free.
+    double smeterDbm = -140.0;
     for (int bindingId = MeterBinding::SignalPeak;
          bindingId <= MeterBinding::AgcAvg; ++bindingId) {
         double value = m_rxChannel->getMeter(static_cast<RxMeterType>(bindingId));
+        if (bindingId == MeterBinding::SignalAvg) {
+            smeterDbm = value;
+        }
         for (MeterWidget* target : m_targets) {
             target->updateMeterValue(bindingId, value);
         }
     }
+
+    // Push S-meter value to VfoWidget level bar.
+    // smeterUpdated connects to VfoWidget::setSmeter in MainWindow.
+    emit smeterUpdated(smeterDbm);
 }
 
 } // namespace NereusSDR

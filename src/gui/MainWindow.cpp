@@ -1900,6 +1900,13 @@ void MainWindow::wireSliceToSpectrum()
     // Position the VFO flag
     m_spectrumWidget->updateVfoPositions();
 
+    // --- S-meter → VfoWidget level bar ---
+    // MeterPoller emits smeterUpdated(double dbm) on each poll tick (100ms).
+    // VfoWidget::setSmeter drives the VfoLevelBar S-meter indicator.
+    if (m_meterPoller) {
+        connect(m_meterPoller, &MeterPoller::smeterUpdated, vfo, &VfoWidget::setSmeter);
+    }
+
     // --- Wire RxApplet to active slice ---
     if (m_rxApplet) {
         m_rxApplet->setSlice(slice);

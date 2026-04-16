@@ -73,6 +73,11 @@ public:
     void start();
     void stop();
 
+signals:
+    // Emitted on each poll tick with the current S-meter (SignalAvg) dBm value.
+    // Connect to VfoWidget::setSmeter to drive the VFO level bar.
+    void smeterUpdated(double dbm);
+
 private slots:
     void poll();
 
