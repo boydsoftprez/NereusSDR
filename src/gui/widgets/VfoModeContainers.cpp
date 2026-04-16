@@ -77,6 +77,8 @@ void FmOptContainer::buildUi()
             m_toneValueCmb->addItem(text, QVariant(text));
         }
 
+        m_toneModeCmb->setToolTip(QStringLiteral("CTCSS tone mode (Off / Encode / Decode / Enc+Dec)"));
+        m_toneValueCmb->setToolTip(QStringLiteral("CTCSS sub-audible tone frequency (Hz)"));
         row->addWidget(m_toneModeCmb, 1);
         row->addWidget(m_toneValueCmb, 1);
         vbox->addLayout(row);
@@ -112,9 +114,13 @@ void FmOptContainer::buildUi()
         m_revBtn     = new QPushButton(QStringLiteral("Rev"), this);
 
         m_txLowBtn->setObjectName("txLowBtn");
+        m_txLowBtn->setToolTip(QStringLiteral("TX below RX (repeater Low offset) — Phase 3M-1"));
         m_simplexBtn->setObjectName("simplexBtn");
+        m_simplexBtn->setToolTip(QStringLiteral("Simplex — TX on same frequency as RX"));
         m_txHighBtn->setObjectName("txHighBtn");
+        m_txHighBtn->setToolTip(QStringLiteral("TX above RX (repeater High offset) — Phase 3M-1"));
         m_revBtn->setObjectName("revBtn");
+        m_revBtn->setToolTip(QStringLiteral("Reverse — listen on the repeater output frequency"));
 
         for (QPushButton* btn : {m_txLowBtn, m_simplexBtn, m_txHighBtn, m_revBtn}) {
             btn->setCheckable(true);
@@ -258,8 +264,10 @@ void DigOffsetContainer::buildUi()
     m_plusBtn    = new TriBtn(TriBtn::Right, this);
 
     m_minusBtn->setObjectName("minusBtn");
+    m_minusBtn->setToolTip(QStringLiteral("Decrease DIG offset"));
     m_offsetLabel->setObjectName("offsetLabel");
     m_plusBtn->setObjectName("plusBtn");
+    m_plusBtn->setToolTip(QStringLiteral("Increase DIG offset"));
 
     m_offsetLabel->setRange(-10000, 10000);
     m_offsetLabel->setStep(kDigStep);
@@ -363,8 +371,10 @@ void RttyMarkShiftContainer::buildUi()
         m_markPlus  = new TriBtn(TriBtn::Right, this);
 
         m_markMinus->setObjectName("markMinus");
+        m_markMinus->setToolTip(QStringLiteral("Decrease RTTY mark frequency"));
         m_markLabel->setObjectName("markLabel");
         m_markPlus->setObjectName("markPlus");
+        m_markPlus->setToolTip(QStringLiteral("Increase RTTY mark frequency"));
 
         // From Thetis setup.designer.cs:40635 — RTTY mark default 2295 Hz
         m_markLabel->setRange(1000, 3500);
@@ -383,8 +393,10 @@ void RttyMarkShiftContainer::buildUi()
         m_shiftPlus  = new TriBtn(TriBtn::Right, this);
 
         m_shiftMinus->setObjectName("shiftMinus");
+        m_shiftMinus->setToolTip(QStringLiteral("Decrease RTTY shift spacing"));
         m_shiftLabel->setObjectName("shiftLabel");
         m_shiftPlus->setObjectName("shiftPlus");
+        m_shiftPlus->setToolTip(QStringLiteral("Increase RTTY shift spacing"));
 
         // From Thetis radio.cs:2043-2044 — shift = mark(2295) − space(2125) = 170 Hz
         m_shiftLabel->setRange(50, 1000);
