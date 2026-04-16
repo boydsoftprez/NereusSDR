@@ -104,11 +104,15 @@ void RxChannel::setAgcThreshold(int dBu)
     m_agcThreshold.store(dBu);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/console.cs:45977
-    //   WDSP.SetRXAAGCThresh(WDSP.id(0, 0), agc_thresh_point, size, sample_rate_rx1)
+    // From Thetis Project Files/Source/Console/console.cs:45976-45977
+    //   size = (double)specRX.GetSpecRX(0).FFTSize;  // 4096
+    //   WDSP.SetRXAAGCThresh(WDSP.id(0, 0), agc_thresh_point, size, sample_rate_rx1);
     // WDSP third_party/wdsp/src/wcpAGC.c:504
+    // NB: 'size' is the DSP analysis buffer size (4096, matching OpenChannel dsp_size),
+    //     NOT the fexchange2 input chunk size (m_bufferSize).
+    static constexpr double kDspSize = 4096.0;
     SetRXAAGCThresh(m_channelId, static_cast<double>(dBu),
-                    static_cast<double>(m_bufferSize),
+                    kDspSize,
                     static_cast<double>(m_sampleRate));
 #else
     Q_UNUSED(dBu);

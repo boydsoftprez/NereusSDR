@@ -523,7 +523,7 @@ void RxApplet::buildUi()
     m_muteBtn->setToolTip(QStringLiteral("Mute this slice audio output"));
     m_afSlider->setToolTip(QStringLiteral("Audio output volume for this slice"));
     m_agcCombo->setToolTip(QStringLiteral("AGC speed: Off/Slow/Med/Fast"));
-    m_agcTSlider->setToolTip(QStringLiteral("AGC threshold (NYI)"));
+    m_agcTSlider->setToolTip(QStringLiteral("AGC threshold (dBu) — adjusts the level at which AGC begins to act"));
     m_ritOnBtn->setToolTip(QStringLiteral("Receive Incremental Tuning (NYI)"));
     m_xitOnBtn->setToolTip(QStringLiteral("Transmit Incremental Tuning (NYI)"));
 }

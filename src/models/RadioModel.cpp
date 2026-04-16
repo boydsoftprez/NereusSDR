@@ -193,6 +193,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                      m_activeSlice->filterHigh());
                 rxCh->setAgcMode(m_activeSlice->agcMode());
                 rxCh->setAgcTop(m_activeSlice->rfGain());
+                // AGC advanced — push slice state to WDSP (Stage 2)
+                rxCh->setAgcThreshold(m_activeSlice->agcThreshold());
+                rxCh->setAgcHang(m_activeSlice->agcHang());
+                rxCh->setAgcSlope(m_activeSlice->agcSlope());
+                rxCh->setAgcAttack(m_activeSlice->agcAttack());
+                rxCh->setAgcDecay(m_activeSlice->agcDecay());
             }
             rxCh->setActive(true);
         }

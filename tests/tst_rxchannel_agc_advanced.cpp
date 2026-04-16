@@ -8,8 +8,6 @@
 //      The setter is never called, so WDSP is never invoked.
 //   2. Same-value idempotency — setter early-returns when value equals the
 //      currently stored atomic. WDSP call skipped by the early return guard.
-//   3. Two-step value change via manual atomic verification: set to non-default,
-//      then set the same non-default again (idempotency on new value).
 //
 // This avoids calling OpenChannel / WDSPwisdom in the test binary, which
 // would require the FFTW wisdom file to exist (slow/absent in CI). The
