@@ -77,6 +77,9 @@ public slots:
     virtual void setMox(bool enabled) = 0;
     virtual void setAntenna(int antennaIndex) = 0;
 
+    // --- ADC Mapping ---
+    virtual int getAdcForDdc(int /*ddc*/) const { return 0; }
+
 signals:
     // --- State ---
     void connectionStateChanged(NereusSDR::ConnectionState state);

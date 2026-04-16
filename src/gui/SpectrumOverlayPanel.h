@@ -52,6 +52,9 @@ signals:
     // Collapse
     void collapsed(bool isCollapsed);
 
+    // Clarity adaptive tuning (Phase 3G-9c)
+    void clarityRetuneRequested();
+
     // NYI placeholders
     void addRxClicked();
     void addTnfClicked();
@@ -66,6 +69,10 @@ public:
     // Reposition zoom buttons to bottom-left of parent spectrum widget.
     // Must be called after parent resize.
     void repositionZoomButtons();
+
+    // Phase 3G-9c: update the Clarity status badge.
+    // active=true → green "C", paused=true → amber "C", both false → hidden.
+    void setClarityStatus(bool active, bool paused);
 
 private:
     // Layout
@@ -140,6 +147,10 @@ private:
     QSlider*     m_noiseFloorSlider{nullptr};
     QLabel*      m_noiseFloorLabel{nullptr};
     QPushButton* m_weightedAvgBtn{nullptr};
+
+    // ── Clarity badge + Re-tune (Phase 3G-9c) ────────────────────────────
+    QLabel*      m_clarityBadge{nullptr};
+    QPushButton* m_clarityRetuneBtn{nullptr};
 
     // ── DAX flyout ───────────────────────────────────────────────────────
     QWidget*   m_daxFlyout{nullptr};

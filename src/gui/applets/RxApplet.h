@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AppletWidget.h"
+#include "gui/widgets/TriBtn.h"
 
 #include <QPushButton>
 #include <QStringList>
@@ -17,26 +18,13 @@ class QGridLayout;
 class QHBoxLayout;
 class QLabel;
 class QSlider;
+class QSpinBox;
+class QStackedWidget;
 
 namespace NereusSDR {
 
 class FilterPassbandWidget;
 class SliceModel;
-
-// TriBtn — fixed-size 22×22 button that paints a filled triangle.
-// From AetherSDR RxApplet.cpp (TriBtn class).
-class TriBtn : public QPushButton {
-    Q_OBJECT
-public:
-    enum Dir { Left, Right };
-    explicit TriBtn(Dir dir, QWidget* parent = nullptr);
-
-protected:
-    void paintEvent(QPaintEvent* ev) override;
-
-private:
-    Dir m_dir;
-};
 
 // RxApplet — per-slice RX controls applet.
 //
@@ -131,6 +119,12 @@ private:
     // Control 14: Squelch
     QPushButton* m_sqlBtn      = nullptr;
     QSlider*     m_sqlSlider   = nullptr;
+
+    // ATT/S-ATT row (between Squelch and AGC)
+    QLabel*         m_attLabel{nullptr};
+    QStackedWidget* m_attStack{nullptr};
+    QComboBox*      m_preampCombo{nullptr};   // Page 0: ATT mode
+    QSpinBox*       m_stepAttSpin{nullptr};   // Page 1: S-ATT mode
 
     // Controls 9 + 10: AGC
     QComboBox*   m_agcCombo    = nullptr;   // Control 9

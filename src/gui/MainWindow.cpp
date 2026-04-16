@@ -11,6 +11,12 @@
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
+#include "core/ClarityController.h"
+#include "core/StepAttenuatorController.h"
+#include "core/BoardCapabilities.h"
+#include "models/PanadapterModel.h"
+#include "models/Band.h"
+#include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
 #include "containers/ContainerWidget.h"
@@ -314,6 +320,66 @@ void MainWindow::buildUI()
     // WfColorScheme::Default; ClarityBlue is reachable only via the
     // "Reset to Smooth Defaults" button on SpectrumDefaultsPage or by
     // manually selecting "Clarity Blue" from the Waterfall Defaults combo.
+
+    // --- Phase 3G-13: Step attenuator + ADC overload ---
+    m_stepAttController = new StepAttenuatorController(this);
+    m_radioModel->setStepAttController(m_stepAttController);
+
+    // --- Phase 3G-9c: Clarity adaptive display tuning ---
+    m_clarityController = new ClarityController(this);
+    m_radioModel->setClarityController(m_clarityController);
+
+    // Restore enabled state from AppSettings + sync the clarityActive
+    // flag on SpectrumWidget so legacy AGC knows to stand down.
+    {
+        auto& s = AppSettings::instance();
+        bool clarityOn = s.value(QStringLiteral("ClarityEnabled"), QStringLiteral("False"))
+                            .toString() == QStringLiteral("True");
+        m_clarityController->setEnabled(clarityOn);
+        m_spectrumWidget->setClarityActive(clarityOn);
+    }
+
+    // Feed FFT bins to Clarity (auto-queued: spectrum thread → main)
+    connect(m_fftEngine, &FFTEngine::fftReady,
+            m_clarityController, [this](int /*rxId*/, const QVector<float>& binsDbm) {
+        m_clarityController->feedBins(binsDbm);
+    });
+
+    // TX pause: MOX signal → ClarityController
+    connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
+            m_clarityController, &ClarityController::setTransmitting);
+
+    // Clarity → SpectrumWidget threshold update + clarityActive flag
+    connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
+            m_spectrumWidget, [this](float low, float high) {
+        m_spectrumWidget->setClarityActive(true);
+        m_spectrumWidget->setWfLowThreshold(low);
+        m_spectrumWidget->setWfHighThreshold(high);
+    });
+
+    // When Clarity pauses or is disabled, let legacy AGC resume.
+    connect(m_clarityController, &ClarityController::pausedChanged,
+            m_spectrumWidget, [this](bool paused) {
+        if (paused) {
+            m_spectrumWidget->setClarityActive(false);
+        }
+    });
+
+    // Clarity ↔ overlay panel: badge + Re-tune button (wired after
+    // m_overlayPanel creation in buildUI, which runs before this point).
+    if (m_overlayPanel) {
+        connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
+                m_overlayPanel, [this](float, float) {
+            m_overlayPanel->setClarityStatus(/*active=*/true, /*paused=*/false);
+        });
+        connect(m_clarityController, &ClarityController::pausedChanged,
+                m_overlayPanel, [this](bool paused) {
+            bool enabled = m_clarityController->isEnabled();
+            m_overlayPanel->setClarityStatus(enabled, paused);
+        });
+        connect(m_overlayPanel, &SpectrumOverlayPanel::clarityRetuneRequested,
+                m_clarityController, &ClarityController::retuneNow);
+    }
 
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution
     // Target: ~500-1000 bins across the visible bandwidth for good detail
@@ -1358,6 +1424,56 @@ void MainWindow::buildStatusBar()
         " border: none; background: transparent; padding: 0; }"));
     stationHbox->addWidget(m_callsignLabel);
 
+    // ── ADC Overload indicator ─────────────────────────────────────────────
+    // From Thetis console.cs ucInfoBar Warning() + pbAutoAttWarningRX1.
+    m_adcOvlLabel = new QLabel(barWidget);
+    m_adcOvlLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #FFD700; font-size: 12px; font-weight: bold;"
+        " border: none; background: transparent; padding: 0 4px; }"));
+    m_adcOvlLabel->hide();
+    hbox->addWidget(m_adcOvlLabel);
+
+    connect(m_stepAttController, &StepAttenuatorController::overloadStatusChanged,
+            this, [this](int /*adc*/, OverloadLevel /*level*/) {
+        // Build text from all ADCs
+        QString text;
+        bool anyRed = false;
+        for (int i = 0; i < 3; ++i) {
+            const OverloadLevel lvl = m_stepAttController->overloadLevel(i);
+            if (lvl != OverloadLevel::None) {
+                if (!text.isEmpty()) { text += QStringLiteral(" "); }
+                text += QStringLiteral("ADC%1 OVL").arg(i);
+                if (lvl == OverloadLevel::Red) {
+                    anyRed = true;
+                }
+            }
+        }
+
+        if (text.isEmpty()) {
+            m_adcOvlLabel->hide();
+        } else {
+            const QString color = anyRed ? QStringLiteral("#FF3333")
+                                         : QStringLiteral("#FFD700");
+            m_adcOvlLabel->setStyleSheet(
+                QStringLiteral("QLabel { color: %1; font-size: 12px; font-weight: bold;"
+                               " border: none; background: transparent;"
+                               " padding: 0 4px; }").arg(color));
+            m_adcOvlLabel->setText(text);
+            m_adcOvlLabel->show();
+        }
+
+        // Tooltip: per-ADC detail
+        // From Thetis console.cs: pbAutoAttWarningRX1 tooltip
+        QString tip;
+        for (int i = 0; i < 3; ++i) {
+            if (m_stepAttController->overloadLevel(i) != OverloadLevel::None) {
+                if (!tip.isEmpty()) { tip += QStringLiteral("\n"); }
+                tip += QStringLiteral("ADC%1: overload").arg(i);
+            }
+        }
+        m_adcOvlLabel->setToolTip(tip);
+    });
+
     hbox->addWidget(stationContainer);
 
     // ── Stretch ───────────────────────────────────────────────────────────────
@@ -2044,6 +2160,15 @@ void MainWindow::onConnectionStateChanged()
         m_radioFwLabel->setText(QStringLiteral("FW %1").arg(m_radioModel->version()));
         m_radioFwLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: #8aa8c0; font-size: 12px; }"));
+
+        // Wire step attenuator controller to the live radio connection
+        // and set max attenuation from board capabilities.
+        // From Thetis console.cs ucInfoBar Warning() + SetupForm attenuator init.
+        m_stepAttController->setRadioConnection(m_radioModel->connection());
+        const auto& caps = BoardCapsTable::forBoard(
+            m_radioModel->connection()->radioInfo().boardType);
+        m_stepAttController->setMaxAttenuation(caps.attenuator.maxDb);
+        m_stepAttController->loadSettings(m_radioModel->connection()->radioInfo().macAddress);
     } else {
         m_radioModelLabel->setText(QStringLiteral("—"));
         m_radioModelLabel->setStyleSheet(QStringLiteral(
@@ -2051,6 +2176,14 @@ void MainWindow::onConnectionStateChanged()
         m_radioFwLabel->setText(QStringLiteral("—"));
         m_radioFwLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: #607080; font-size: 12px; }"));
+
+        // Save step attenuator settings before disconnecting.
+        if (m_radioModel->connection()) {
+            m_stepAttController->saveSettings(m_radioModel->connection()->radioInfo().macAddress);
+        }
+
+        // Disconnect step attenuator from radio
+        m_stepAttController->setRadioConnection(nullptr);
     }
 }
 

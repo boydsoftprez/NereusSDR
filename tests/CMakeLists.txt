@@ -33,6 +33,10 @@ nereus_add_test(tst_meter_presets)
 # ── Phase 3G-9b clarity defaults invariants ───────────────────────────────
 nereus_add_test(tst_clarity_defaults)
 
+# ── Phase 3G-9c Clarity adaptive display tuning ──────────────────────────
+nereus_add_test(tst_noise_floor_estimator)
+nereus_add_test(tst_clarity_controller)
+
 # ── Phase 3I radio-connector tests ────────────────────────────────────────
 nereus_add_test(tst_hpsdr_enums)
 nereus_add_test(tst_board_capabilities)
@@ -123,3 +127,6 @@ nereus_add_test(tst_dig_rtty_wire)
 
 # ── Phase 3G-10 Stage 2: per-slice-per-band DSP persistence (S2.P) ───────────
 nereus_add_test(tst_slice_persistence_per_band)
+
+# ── Step attenuator / ADC overload detection ─────────────────────────────
+nereus_add_test(tst_step_attenuator_controller)

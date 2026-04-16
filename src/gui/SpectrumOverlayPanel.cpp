@@ -897,6 +897,33 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
         ++row;
     }
 
+    // Phase 3G-9c: Clarity adaptive tuning — status badge + Re-tune button
+    {
+        auto* lbl = new QLabel("Clarity:");
+        lbl->setStyleSheet(labelStyle);
+        grid->addWidget(lbl, row, 0);
+
+        m_clarityBadge = new QLabel("C");
+        m_clarityBadge->setFixedSize(18, 18);
+        m_clarityBadge->setAlignment(Qt::AlignCenter);
+        m_clarityBadge->setToolTip("Clarity status: green = active, amber = paused");
+        m_clarityBadge->hide();
+        grid->addWidget(m_clarityBadge, row, 1);
+
+        m_clarityRetuneBtn = new QPushButton("Re-tune");
+        m_clarityRetuneBtn->setFixedSize(52, 18);
+        m_clarityRetuneBtn->setStyleSheet(
+            "QPushButton { background: #1a3050; color: #c8d8e8; border: 1px solid #304050;"
+            "  border-radius: 2px; font-size: 10px; padding: 0; }"
+            "QPushButton:hover { background: #254060; }"
+            "QPushButton:pressed { background: #0d2040; }");
+        m_clarityRetuneBtn->setToolTip("Force Clarity to re-estimate the noise floor now");
+        grid->addWidget(m_clarityRetuneBtn, row, 2, 1, 2, Qt::AlignRight);
+        connect(m_clarityRetuneBtn, &QPushButton::clicked,
+                this, &SpectrumOverlayPanel::clarityRetuneRequested);
+        ++row;
+    }
+
     // Separator
     {
         auto* sep = new QFrame;
@@ -1088,6 +1115,25 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     y = std::max(kMargin, y);
     m_zoomStrip->move(x, y);
     m_zoomStrip->raise();
+}
+
+// ── Clarity status badge (Phase 3G-9c) ───────────────────────────────────────
+
+void SpectrumOverlayPanel::setClarityStatus(bool active, bool paused)
+{
+    if (!m_clarityBadge) { return; }
+    if (!active && !paused) {
+        m_clarityBadge->hide();
+        return;
+    }
+    const QString color = paused
+        ? QStringLiteral("#d4a017")   // amber
+        : QStringLiteral("#22b14c");  // green
+    m_clarityBadge->setStyleSheet(
+        QStringLiteral("QLabel { background: %1; color: #0f0f1a; "
+                        "border-radius: 9px; font-size: 11px; "
+                        "font-weight: bold; }").arg(color));
+    m_clarityBadge->show();
 }
 
 } // namespace NereusSDR

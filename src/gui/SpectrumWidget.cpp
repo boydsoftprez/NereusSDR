@@ -649,9 +649,14 @@ void SpectrumWidget::setWfAgcEnabled(bool on)
 {
     if (m_wfAgcEnabled == on) { return; }
     m_wfAgcEnabled = on;
-    m_wfAgcPrimed = false;  // reprime envelope on next frame
+    m_wfAgcPrimed = false;
     scheduleSettingsSave();
     update();
+}
+
+void SpectrumWidget::setClarityActive(bool on)
+{
+    m_clarityActive = on;
 }
 
 void SpectrumWidget::setWfReverseScroll(bool on)
@@ -1456,7 +1461,9 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins)
 
     // AGC: track a slow envelope of visible-range min/max and bias the
     // effective thresholds toward it. Simple one-pole follower.
-    if (m_wfAgcEnabled) {
+    // Phase 3G-9c: skipped when Clarity is actively driving thresholds —
+    // both can be enabled but Clarity takes priority when active.
+    if (m_wfAgcEnabled && !m_clarityActive) {
         float mn = (*src)[firstBin];
         float mx = mn;
         for (int i = firstBin + 1; i <= lastBin; ++i) {
@@ -1473,15 +1480,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins)
             m_wfAgcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_wfAgcRunMin;
             m_wfAgcRunMax = kAgcAlpha * mx + (1.0f - kAgcAlpha) * m_wfAgcRunMax;
         }
-        // Phase 3G-9b: widened from 3 dB to 12 dB. The previous tight
-        // margin collapsed the threshold window so narrow carriers
-        // pinned the max at the very top of the palette, leaving no
-        // room for intermediate colours across signal falloff. 12 dB
-        // gives the palette breathing room so a strong signal's FFT
-        // sidelobe skirt can render through cyan → green → yellow
-        // → red as amplitude drops from peak to noise floor, which
-        // matches the AetherSDR reference look. Still tighter than the
-        // default -200/0 window so AGC remains useful.
+        // Phase 3G-9b: 12 dB margin for palette breathing room.
         const float margin = 12.0f;
         m_wfLowThreshold  = m_wfAgcRunMin - margin;
         m_wfHighThreshold = m_wfAgcRunMax + margin;

@@ -478,22 +478,30 @@ Verification: 47-control matrix at `docs/architecture/phase3g8-verification/READ
 
 Shipped as three sequential PRs off `main`. Strict dependency: PR1 helpers feed PR2, PR2 static defaults feed PR3 as the Clarity-off fallback.
 
-#### Phase 3G-9a: Source-First Audit + Tooltips + Slider Readouts (PR1)
+#### Phase 3G-9a: Source-First Audit + Tooltips + Slider Readouts (PR1) ✅ COMPLETE
+**Shipped 2026-04-15** as PR #25 (merged). 11 GPG-signed commits.
+
 - Per-control Thetis source citation comments on all 47 controls
 - Tooltip port — verbatim where Thetis is substantive, rewritten where weak (annotated with original)
-- `SliderRow` / `SliderRowD` helpers: every numeric slider gets a bidirectional spinbox companion with unit suffix (matches Thetis `udDisplay*` NumericUpDown pattern)
-- Target: 47/47 controls with tooltips (current 10/47), 12 sliders converted
-- No renderer or model changes; ~600 LOC delta
-- Risk: low — mechanical refactor + docs
+- `SliderRow` / `SliderRowD` helpers in new `src/gui/setup/SetupHelpers.{h,cpp}`: every numeric slider gets a bidirectional spinbox companion with unit suffix (matches Thetis `udDisplay*` NumericUpDown pattern)
+- 47/47 controls with tooltips (from 10/47), 8 sliders converted (4 in Spectrum + 4 in Waterfall; GridScales has no sliders)
+- `setToolTip` count in `DisplaySetupPages.cpp`: 10 → 62
+- New `tst_setup_helpers` 6-slot QtTest smoke locking bidirectional sync + no-feedback-loop
+- Implementation plan: `docs/architecture/2026-04-15-phase3g9a-display-audit-plan.md`
 
-#### Phase 3G-9b: Smooth Defaults + Clarity Blue Palette (PR2)
-- New `WfColorScheme::ClarityBlue` — narrow-band monochrome (80% dark navy for noise floor, top 15% bright cyan-white for signals) — the AetherSDR readability look
-- `PanadapterModel::applyClaritySmoothDefaults()` with first-launch gate on `"DisplayProfileApplied"` AppSettings key (existing users untouched)
-- "Reset to Smooth Defaults" button on Spectrum Defaults page
-- Wire any stubbed renderer hooks (Waterfall AGC W3, update period W4) — prerequisites for PR3
-- New rationale doc `docs/architecture/waterfall-tuning.md` with before/after screenshots and per-parameter justification
-- The seven recipes: palette, averaging mode, averaging τ, trace color, threshold gap, waterfall AGC, update period
-- ~400 LOC code + ~250 lines doc; Risk: medium — opinionated numbers, may need live-radio iteration
+#### Phase 3G-9b: Smooth Defaults + Clarity Blue Palette (PR2) 🚧 IN FLIGHT
+**Opened 2026-04-15** as PR #26 (awaiting merge). 11 GPG-signed commits.
+
+The PR2 design underwent significant iteration during live-radio tuning. What was originally specced as a narrow-band navy-only palette turned out to be wrong — the reference AetherSDR look is actually a **full-spectrum rainbow** (black → blue → cyan → green → yellow → red → magenta) where the "blue look" comes from AGC + tight thresholds keeping normal signals in the cool region. The final ClarityBlue palette is a 10-stop rainbow with a deep-black floor.
+
+- New `WfColorScheme::ClarityBlue` — 10-stop full-spectrum rainbow, selectable from Waterfall Defaults (8th palette option)
+- `RadioModel::applyClaritySmoothDefaults()` sets the seven recipe values (ClarityBlue palette, log-recursive averaging, `0.05f` alpha, pure-white `#ffffff` α230 thin trace, pan-fill off, waterfall AGC on, 30 ms update period)
+- "Reset to Smooth Defaults" button on `Setup → Display → Spectrum Defaults` — the **only** entry point. **Decision 2026-04-15:** no first-launch auto-apply. Out-of-box default stays `WfColorScheme::Default`.
+- **AGC margin widened 3 dB → 12 dB** in `SpectrumWidget::pushWaterfallRow` — gives palette breathing room for FFT skirt falloff across signal amplitude. Affects all palettes when AGC is on; pure quality improvement.
+- New rationale doc `docs/architecture/waterfall-tuning.md` with before/after/reference screenshots (iter0 → iter6 live-tuning progression) and per-recipe source attribution (Thetis-native vs NereusSDR-native)
+- Recipe #5 (explicit thresholds) dropped during implementation: AGC overwrites Low/High every frame so setting them in the profile was redundant
+- New `tst_clarity_defaults` 5-slot QtTest locking palette invariants (enum ordinal, deep-black floor, monotonic stops, rainbow progression with warm upper-half stop, vivid peak)
+- Implementation plan: `docs/architecture/2026-04-15-phase3g9b-smooth-defaults-plan.md`
 
 #### Phase 3G-9c: Clarity Adaptive Display Tuning (PR3)
 - **Research-doc gated** — no code until `docs/architecture/clarity-design.md` is written and signed off
@@ -508,7 +516,7 @@ Shipped as three sequential PRs off `main`. Strict dependency: PR1 helpers feed 
 
 **Non-goals:** RX2/TX display surface, Spectrum Overlay flyout refactors, skin system, Thetis default-value adoption beyond the seven PR2 recipes. Source-first protocol per CLAUDE.md governs everything else; 3G-8's §10 divergence exception is **not** extended.
 
-### Phase 3G-11: P1 Field-Report Fixes
+### Phase 3G-12: P1 Field-Report Fixes
 **Goal:** Close out the bugs surfaced by alpha testers running Protocol 1 hardware after 3I shipped. Grouped under one phase so each fix doesn't have to claim its own number. Each bullet below lands from its own session / branch.
 
 - **P1 RX/TX VFO frequency encoding** — `P1RadioConnection::composeCcBankRxFreq` / `composeCcBankTxFreq` were pre-converting Hz to an NCO phase word (`freqHz * 2^32 / 122.88e6`). P1 firmware expects raw Hz; Thetis `NetworkIO.cs:215-223` only calls `Freq2PhaseWord` on the P2 (`ETH`) branch, and the native `networkproto1.c:476-494` splats `prn->{tx,rx}[0].frequency` directly into C1..C4 with no conversion. Symptom reproduced in alpha tester pcap4 (2026-04-15, ANAN-10E): 319 consecutive `C0=0x04` frames pinned at phase word `0x080D5555`, aliased waterfall, VFO did not track dial. Fix aligns with pre-existing `tst_p1_wire_format` assertions that had silently drifted unvalidated. Branch `fix/p1-freq-encoding`, confirmed working against live ANAN-10E 2026-04-15.
@@ -773,10 +781,11 @@ The next meaningful steps:
 
 - **3G-9 (Display Refactor)** — three-PR polish pass on the 3G-8 Display surface: audit + tooltips + slider readouts → smooth defaults + Clarity Blue palette → Clarity adaptive auto-tune. Independent of TX work; can ship in parallel with 3G-10 and 3M-1 prep.
 - **3G-10 (RX DSP Parity + AetherSDR Flag Port)** — two-stage phase: **Complete.** Stage 1 (PRs #28 + #30): VfoWidget visual shell with 4×2 DSP grid, mode containers, tooltip coverage test. Stage 2: 10 WDSP feature slices wired (AGC-adv, EMNR, SNB, APF, squelch, mute/pan/binaural, NB2 polish, RIT/XIT, frequency lock, mode containers), per-slice-per-band persistence, Thetis-first tooltips. CW autotune deferred (no WDSP API).
+- **3G-13 (Step Attenuator & ADC Overload)** — **PR #34 in flight on `feature/step-attenuator`**. StepAttenuatorController with Classic (Thetis 1:1) and Adaptive (NereusSDR attack/hold/decay with per-band memory) auto-att modes. P1/P2 adcOverflow emission, ADC OVL status badge (yellow/red, per-ADC), Setup→General→Options page, RxApplet ATT/S-ATT row with per-model preamp items from Thetis SetComboPreampForHPSDR (console.cs:40755), stepAttMaxDb 31/61 from setup.cs:15765, per-MAC persistence, 9 unit tests. Smoke-tested on ANAN-G2. **Note:** HL2 ATT logic may need cross-checking against mi0bot/Thetis-HL2 fork before HL2 field testing.
 - **3M-1 (Basic SSB TX)** (formerly 3I-1; renumbered after Phase 3I became the radio connector port) — TxChannel WDSP wrapper, mic input, MOX state machine, TX I/Q
   output. Proves the TX path end-to-end and unblocks 3M-2..4, 3F, 3H.
 
-Execution order: **(3G-9a..c ∥ 3G-10) → 3M-1..4 → 3F → 3H → 3J+** (3G-9 and 3G-10 run in parallel; both land before 3M-1)
+Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-13) → 3M-1..4 → 3F → 3H → 3J+** (3G-9, 3G-10, and 3G-13 run in parallel; all land before 3M-1)
 
 ### Phase Dependencies
 
@@ -793,7 +802,7 @@ Execution order: **(3G-9a..c ∥ 3G-10) → 3M-1..4 → 3F → 3H → 3J+** (3G-
                        states (DDC0+DDC1 sync at 192kHz)
 ```
 
-3G-9 and 3G-10 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring.
+3G-9, 3G-10, and 3G-13 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring; 3G-13 owns the step attenuator + ADC overload protection (protocol layer + Setup Options + RxApplet ATT row + status bar).
 
 Independent phases (can start anytime): 3J (TCI), 3K (CAT), 3L (P1), 3M (Recording).
 

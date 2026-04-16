@@ -5,14 +5,19 @@
 #include <QHash>
 #include <QObject>
 
+#include <limits>
+
 namespace NereusSDR {
 
 // Per-band grid scale storage. Added in Phase 3G-8 (commit 2).
 // dbStep is NOT per-band — Thetis keeps it as a single global value
 // (verified console.cs:14242-14436).
+// clarityFloor added in Phase 3G-9c: Clarity adaptive tuning stores the
+// smoothed noise floor per band so band-switch can snap instantly.
 struct BandGridSettings {
-    int dbMax;
-    int dbMin;
+    int   dbMax;
+    int   dbMin;
+    float clarityFloor = std::numeric_limits<float>::quiet_NaN();
 };
 
 // Represents a single panadapter display.
@@ -70,6 +75,10 @@ public:
     BandGridSettings perBandGrid(Band b) const;
     void setPerBandDbMax(Band b, int dbMax);
     void setPerBandDbMin(Band b, int dbMin);
+
+    // Clarity per-band floor memory (Phase 3G-9c). NaN = no data yet.
+    float clarityFloor(Band b) const;
+    void setClarityFloor(Band b, float floor);
 
     // Grid step (single global value, matches Thetis). Persisted under
     // the "DisplayGridStep" key.

@@ -869,6 +869,14 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
         return;
     }
 
+    // From Thetis networkproto1.c — ADC overflow in C&C status bytes.
+    // C0[0] bit 0 = LT2208 overflow (ADC0).
+    const quint8 c0_sub0 = frame[11];
+    const quint8 c0_sub1 = frame[523];
+    if ((c0_sub0 & 0x01) || (c0_sub1 & 0x01)) {
+        emit adcOverflow(0);
+    }
+
     // Emit iqDataReceived for each receiver
     // Contract: hwReceiverIndex (0-based), interleaved float I/Q pairs, [-1, 1]
     // Source: RadioConnection.h:82 iqDataReceived signal
@@ -1098,6 +1106,14 @@ bool P1RadioConnection::parseEp6Frame(const quint8 frame[1032],
     parseSubframe(528);
 
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// getAdcForDdc
+// ---------------------------------------------------------------------------
+int P1RadioConnection::getAdcForDdc(int /*ddc*/) const
+{
+    return 0;  // All P1 DDCs map to ADC0 for now
 }
 
 } // namespace NereusSDR

@@ -3,6 +3,7 @@
 
 // General
 #include "setup/GeneralSetupPages.h"
+#include "setup/GeneralOptionsPage.h"
 // Hardware
 #include "setup/HardwarePage.h"
 // Audio
@@ -129,6 +130,7 @@ void SetupDialog::buildTree()
     add(general, "Startup & Preferences", new StartupPrefsPage(m_model));
     add(general, "UI Scale & Theme",       new UiScalePage(m_model));
     add(general, "Navigation",             new NavigationPage(m_model));
+    add(general, "Options",                new GeneralOptionsPage(m_model));
 
     // ── Hardware ─────────────────────────────────────────────────────────────
     QTreeWidgetItem* hardware = addCategory("Hardware");

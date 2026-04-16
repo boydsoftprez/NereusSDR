@@ -27,6 +27,8 @@ public:
     explicit P1RadioConnection(QObject* parent = nullptr);
     ~P1RadioConnection() override;
 
+    int getAdcForDdc(int ddc) const override;
+
     // Wire-format compose helpers — static, testable in isolation.
     // Each implementation cites its Thetis source line.
     static void composeEp2Frame(quint8 out[1032], quint32 seq, int ccAddress,

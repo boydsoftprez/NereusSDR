@@ -434,5 +434,130 @@ std::span<const BoardCapabilities> all() noexcept {
     return std::span<const BoardCapabilities>(kTable.data(), kTable.size());
 }
 
+// --- Per-model preamp item tables ---
+// From Thetis console.cs:40755-40825 SetComboPreampForHPSDR().
+// PreampMode mapping: 0=Off(-20dB HPSDR), 1=On(0dB), 2=Minus10, 3=Minus20,
+//                     4=Minus30, 5=Minus40, 6=Minus50.
+
+// on_off_preamp_settings = { "0dB", "-20dB" }
+static constexpr PreampItem kOnOff[] = {
+    {"0dB",   1},  // PreampMode::On
+    {"-20dB", 0},  // PreampMode::Off
+};
+
+// anan100d_preamp_settings = { "0dB", "-10dB", "-20dB", "-30dB" }
+static constexpr PreampItem kAnan100d[] = {
+    {"0dB",   1},  // PreampMode::On
+    {"-10dB", 2},  // PreampMode::Minus10
+    {"-20dB", 3},  // PreampMode::Minus20
+    {"-30dB", 4},  // PreampMode::Minus30
+};
+
+// alex_preamp_settings = { "-10db", "-20db", "-30db", "-40db", "-50db" }
+// (lowercase "db" distinguishes ALEX modes from SA modes in Thetis)
+
+// Combined: on_off + alex (for HPSDR/Hermes/ANAN100/etc with ALEX)
+static constexpr PreampItem kOnOffPlusAlex[] = {
+    {"0dB",   1},  // PreampMode::On
+    {"-20dB", 0},  // PreampMode::Off
+    {"-10db", 2},  // PreampMode::Minus10 (ALEX)
+    {"-20db", 3},  // PreampMode::Minus20 (ALEX)
+    {"-30db", 4},  // PreampMode::Minus30 (ALEX)
+    {"-40db", 5},  // PreampMode::Minus40 (ALEX)
+    {"-50db", 6},  // PreampMode::Minus50 (ALEX)
+};
+
+// Hermes Lite 2: preamp on only, no bypass/attenuation options.
+static constexpr PreampItem kHl2[] = {
+    {"0dB", 1},  // PreampMode::On
+};
+
+// Helper to produce dynamic-extent spans from static arrays.
+template<std::size_t N>
+static constexpr std::span<const PreampItem> items(const PreampItem (&a)[N]) noexcept {
+    return {a, N};
+}
+
+std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) noexcept
+{
+    // From Thetis console.cs:40755 SetComboPreampForHPSDR — per-model switch.
+    switch (hw) {
+    case HPSDRHW::Atlas:
+        return alexPresent ? items(kOnOffPlusAlex)
+                           : items(kOnOff);
+
+    case HPSDRHW::Hermes:
+        // Hermes: with ALEX → on_off + alex; without → anan100d (4-step).
+        // ANAN-10 uses Hermes board but always gets anan100d (no ALEX check).
+        // ANAN-100 uses Hermes board but always gets on_off+alex.
+        // Since we dispatch by HPSDRHW not HPSDRModel, and Hermes covers
+        // both ANAN-10 and ANAN-100, we use the ALEX flag to differentiate.
+        return alexPresent ? items(kOnOffPlusAlex)
+                           : items(kAnan100d);
+
+    case HPSDRHW::HermesII:
+        // HermesII: ANAN-10E (no ALEX, anan100d) and ANAN-100B (always on_off+alex).
+        return alexPresent ? items(kOnOffPlusAlex)
+                           : items(kAnan100d);
+
+    case HPSDRHW::Angelia:
+        // ANAN-100D: with ALEX → on_off+alex; without → anan100d.
+        return alexPresent ? items(kOnOffPlusAlex)
+                           : items(kAnan100d);
+
+    case HPSDRHW::Orion:
+        // ANAN-200D: same as Angelia.
+        return alexPresent ? items(kOnOffPlusAlex)
+                           : items(kAnan100d);
+
+    case HPSDRHW::OrionMKII:
+    case HPSDRHW::Saturn:
+        // ANAN-7000D/8000D/OrionMkII/G2/G2-1K/AnvelinaPro3: always anan100d.
+        return items(kAnan100d);
+
+    case HPSDRHW::HermesLite:
+        // HL2: preamp on only, no variable attenuation.
+        return items(kHl2);
+
+    default:
+        return items(kAnan100d);
+    }
+}
+
+std::span<const PreampItem> rx2PreampItemsForBoard(HPSDRHW hw) noexcept
+{
+    // From Thetis console.cs:40815 — RX2 always uses either on_off or anan100d.
+    switch (hw) {
+    case HPSDRHW::Angelia:
+    case HPSDRHW::Orion:
+    case HPSDRHW::OrionMKII:
+    case HPSDRHW::Saturn:
+        return items(kAnan100d);
+    default:
+        return items(kOnOff);
+    }
+}
+
+int stepAttMaxDb(HPSDRHW hw, bool alexPresent) noexcept
+{
+    // From Thetis setup.cs:15765 — 61 dB when ALEX present and board is NOT
+    // in the exclusion list (ANAN-10/10E/7000D/8000D/OrionMkII/G2/G2-1K/
+    // AnvelinaPro3/RedPitaya). NereusSDR maps by HPSDRHW, not HPSDRModel.
+    // Exclusion list boards: OrionMKII, Saturn (G2/G2-1K), HermesLite.
+    // Boards that CAN reach 61: Atlas, Hermes, HermesII, Angelia, Orion.
+    if (!alexPresent) { return 31; }
+
+    switch (hw) {
+    case HPSDRHW::Atlas:
+    case HPSDRHW::Hermes:
+    case HPSDRHW::HermesII:
+    case HPSDRHW::Angelia:
+    case HPSDRHW::Orion:
+        return 61;
+    default:
+        return 31;
+    }
+}
+
 } // namespace BoardCapsTable
 } // namespace NereusSDR

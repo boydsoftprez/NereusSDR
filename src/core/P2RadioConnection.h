@@ -23,6 +23,8 @@ public:
     explicit P2RadioConnection(QObject* parent = nullptr);
     ~P2RadioConnection() override;
 
+    int getAdcForDdc(int ddc) const override;
+
 public slots:
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;
@@ -197,6 +199,9 @@ private:
     // Build Alex0 and Alex1 32-bit register values from current state.
     quint32 buildAlex0() const;
     quint32 buildAlex1() const;
+
+    // --- DDC→ADC mapping register (from Thetis network.c rx_adc_ctrl1) ---
+    quint32 m_rxAdcCtrl1{0};
 
     // --- I/Q buffers and packet counters ---
     std::array<QVector<float>, kMaxDdc> m_iqBuffers;

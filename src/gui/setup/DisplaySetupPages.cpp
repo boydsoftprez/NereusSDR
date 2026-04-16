@@ -4,6 +4,8 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
 #include "core/FFTEngine.h"
+#include "core/ClarityController.h"
+#include "core/AppSettings.h"
 #include "models/Band.h"
 #include "models/PanadapterModel.h"
 #include "models/RadioModel.h"
@@ -183,6 +185,36 @@ void SpectrumDefaultsPage::buildUI()
         }
     });
     contentLayout()->addWidget(resetBtn);
+
+    // Phase 3G-9c: Clarity adaptive display tuning master toggle.
+    // When on, ClarityController drives Waterfall Low/High thresholds
+    // from a percentile-based noise-floor estimate. When off, thresholds
+    // stay at whatever value they were last set to (no AGC fallback).
+    auto* clarityToggle = new QCheckBox(
+        QStringLiteral("Enable Clarity (adaptive waterfall tuning)"), this);
+    clarityToggle->setToolTip(QStringLiteral(
+        "Clarity keeps the waterfall thresholds centered on the actual "
+        "noise floor as band conditions and tuning change. Uses a 30th-"
+        "percentile estimator with 3-second EWMA smoothing and a ±2 dB "
+        "deadband. When off, thresholds are fixed at their last values."));
+    if (auto* cc = model() ? model()->clarityController() : nullptr) {
+        clarityToggle->setChecked(cc->isEnabled());
+        connect(clarityToggle, &QCheckBox::toggled, this, [this](bool on) {
+            if (auto* cc2 = model() ? model()->clarityController() : nullptr) {
+                cc2->setEnabled(on);
+                AppSettings::instance().setValue(
+                    QStringLiteral("ClarityEnabled"),
+                    on ? QStringLiteral("True") : QStringLiteral("False"));
+            }
+            // Sync the clarityActive flag so legacy AGC knows whether
+            // to stand down. Off = AGC free to run, On = AGC yields
+            // once Clarity emits its first threshold update.
+            if (auto* sw2 = model() ? model()->spectrumWidget() : nullptr) {
+                if (!on) { sw2->setClarityActive(false); }
+            }
+        });
+    }
+    contentLayout()->addWidget(clarityToggle);
 
     auto* sw = model() ? model()->spectrumWidget() : nullptr;
     auto* fe = model() ? model()->fftEngine() : nullptr;

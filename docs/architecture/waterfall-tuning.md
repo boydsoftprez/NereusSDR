@@ -154,15 +154,22 @@ Tuning the palette against a band dominated by narrow carriers (CW, digital, unm
 
 **Recommended test content:** 80m SSB at night, 40m SSB evenings, 20m SSB daytime.
 
-## Open questions for PR3 (Clarity adaptive)
+## Clarity adaptive tuning (PR3 — Phase 3G-9c, resolved)
 
-PR3 builds an adaptive auto-tune system (`Clarity`) on top of these static defaults. Open questions at the time of this doc:
+PR3 shipped `ClarityController` as an **add-on** to the existing Waterfall AGC, not a replacement. Both coexist:
 
-- Does Waterfall AGC (§6 here) get superseded by Clarity's noise-floor estimator? Likely yes — Clarity's percentile-based estimator is more robust than running min/max AGC (which pumps badly on strong carriers), and having both produces conflicting behaviour.
-- Should the static defaults in §5 be replaced by adaptive initial values? Probably keep them as the fallback when Clarity is off.
-- The AGC margin (12 dB here) should probably be user-configurable in PR3 — or replaced entirely by Clarity's deadband mechanism.
+- **Waterfall AGC on, Clarity off** — legacy running-min/max one-pole follower with 12 dB margin (PR2 behavior, unchanged).
+- **Clarity on** — percentile-based noise-floor estimator (30th percentile, EWMA τ=3s, ±2 dB deadband) drives Waterfall Low/High thresholds. Legacy AGC yields via `m_clarityActive` flag in `pushWaterfallRow()`.
+- **Clarity paused** (TX, manual slider drag) — legacy AGC resumes if its checkbox is on.
+- **Both off** — thresholds are purely user-set (manual mode).
 
-See `docs/architecture/2026-04-15-display-refactor-design.md` §6 for the PR3 design.
+Resolved open questions from the PR2 draft:
+
+1. **Does Clarity supersede Waterfall AGC?** No — they coexist. Clarity takes priority when active; AGC runs when Clarity is off or paused. User chooses their preferred mode.
+2. **Should PR2 static defaults be replaced by adaptive initial values?** No — the smooth-defaults profile stays as the fallback when Clarity is off. Clarity sits on top.
+3. **AGC margin (12 dB) user-configurable?** Not in PR3 — the margin stays at 12 dB for the legacy AGC path. Clarity uses its own threshold margins (-5 / +55 dB around the smoothed floor, 60 dB total range) with a 30 dB minimum-gap clamp for empty bands.
+
+See `docs/architecture/2026-04-15-display-refactor-design.md` §6 for the full PR3 design.
 
 ## Related follow-ups flagged during PR2 tuning
 

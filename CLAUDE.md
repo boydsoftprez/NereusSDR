@@ -384,6 +384,7 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | **3I: Radio Connector & Radio-Model Port** | **P1 full family (Atlas/Hermes/HermesII/Angelia/Orion/HL2), BoardCapabilities registry, ConnectionPanel, HardwarePage 9-tab capability-gated, per-MAC persistence, mi0bot RadioDiscovery port, RadioConnectionError taxonomy** | **Complete** |
 | 3G-9: Display Refactor | Source-first audit + Thetis-first tooltip port + slider/spinbox refactor (3G-9a merged as PR #25); 3G-9b smooth defaults + Clarity palette and 3G-9c adaptive auto-tune planned | **3G-9a Complete** |
 | **3G-10: RX DSP Parity + AetherSDR Flag Port** | **Stage 1: widget library + SliceModel stubs + VfoWidget S-meter (PR #28), tab rewrite + mode containers + tooltip coverage (PR #30). Stage 2: 10 WDSP feature slices wired (AGC-adv/EMNR/SNB/APF/squelch/mute-pan-bin/NB2/RIT-XIT/lock/mode-containers), per-slice-per-band persistence, Thetis-first tooltips.** | **Complete** |
+| **3G-13: Step Attenuator & ADC Overload** | **StepAttenuatorController (Classic + Adaptive auto-att), P1/P2 adcOverflow emission, ADC OVL status badge, Setup→General→Options page, RxApplet ATT/S-ATT row, per-model preamp items from Thetis SetComboPreampForHPSDR, stepAttMaxDb (31/61), per-MAC persistence, 9 tests. PR #34.** | **In flight** |
 | 3M-1: Basic SSB TX (was 3I-TX) | TxChannel, mic input, MOX state machine, I/Q output | Next |
 | 3M-2: CW TX (was 3I-CW) | Sidetone, firmware keyer, QSK/break-in | Planned |
 | 3M-3: TX Processing | 18-stage TXA chain + TX-side RX DSP additions | Planned |
