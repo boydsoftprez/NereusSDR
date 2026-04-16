@@ -781,11 +781,11 @@ The next meaningful steps:
 
 - **3G-9 (Display Refactor)** — three-PR polish pass on the 3G-8 Display surface: audit + tooltips + slider readouts → smooth defaults + Clarity Blue palette → Clarity adaptive auto-tune. Independent of TX work; can ship in parallel with 3G-10 and 3M-1 prep.
 - **3G-10 (RX DSP Parity + AetherSDR Flag Port)** — two-stage phase: **Stage 1 complete (PRs #28 + #30)** — VfoWidget visual shell with 4×2 DSP grid, mode containers, tooltip coverage test. **Stage 2 next** — wires every RX-side DSP NYI through WDSP with per-slice-per-band bandstack persistence. Parallelizable with 3G-9; no file overlap. Blocks 3M-1 mostly by sharing reviewer attention, not by code dependency.
-- **3G-12 (Step Attenuator & ADC Overload)** — **PR #34 in flight on `feature/step-attenuator`**. StepAttenuatorController with Classic (Thetis 1:1) and Adaptive (NereusSDR attack/hold/decay with per-band memory) auto-att modes. P1/P2 adcOverflow emission, ADC OVL status badge (yellow/red, per-ADC), Setup→General→Options page, RxApplet ATT/S-ATT row with per-model preamp items from Thetis SetComboPreampForHPSDR (console.cs:40755), stepAttMaxDb 31/61 from setup.cs:15765, per-MAC persistence, 9 unit tests. Smoke-tested on ANAN-G2. **Note:** HL2 ATT logic may need cross-checking against mi0bot/Thetis-HL2 fork before HL2 field testing.
+- **3G-13 (Step Attenuator & ADC Overload)** — **PR #34 in flight on `feature/step-attenuator`**. StepAttenuatorController with Classic (Thetis 1:1) and Adaptive (NereusSDR attack/hold/decay with per-band memory) auto-att modes. P1/P2 adcOverflow emission, ADC OVL status badge (yellow/red, per-ADC), Setup→General→Options page, RxApplet ATT/S-ATT row with per-model preamp items from Thetis SetComboPreampForHPSDR (console.cs:40755), stepAttMaxDb 31/61 from setup.cs:15765, per-MAC persistence, 9 unit tests. Smoke-tested on ANAN-G2. **Note:** HL2 ATT logic may need cross-checking against mi0bot/Thetis-HL2 fork before HL2 field testing.
 - **3M-1 (Basic SSB TX)** (formerly 3I-1; renumbered after Phase 3I became the radio connector port) — TxChannel WDSP wrapper, mic input, MOX state machine, TX I/Q
   output. Proves the TX path end-to-end and unblocks 3M-2..4, 3F, 3H.
 
-Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-12) → 3M-1..4 → 3F → 3H → 3J+** (3G-9, 3G-10, and 3G-12 run in parallel; all land before 3M-1)
+Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-13) → 3M-1..4 → 3F → 3H → 3J+** (3G-9, 3G-10, and 3G-13 run in parallel; all land before 3M-1)
 
 ### Phase Dependencies
 
@@ -802,7 +802,7 @@ Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-12) → 3M-1..4 → 3F → 3H → 
                        states (DDC0+DDC1 sync at 192kHz)
 ```
 
-3G-9, 3G-10, and 3G-12 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring; 3G-12 owns the step attenuator + ADC overload protection (protocol layer + Setup Options + RxApplet ATT row + status bar).
+3G-9, 3G-10, and 3G-13 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring; 3G-13 owns the step attenuator + ADC overload protection (protocol layer + Setup Options + RxApplet ATT row + status bar).
 
 Independent phases (can start anytime): 3J (TCI), 3K (CAT), 3L (P1), 3M (Recording).
 

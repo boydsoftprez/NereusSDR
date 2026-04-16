@@ -321,7 +321,7 @@ void MainWindow::buildUI()
     // "Reset to Smooth Defaults" button on SpectrumDefaultsPage or by
     // manually selecting "Clarity Blue" from the Waterfall Defaults combo.
 
-    // --- Phase 3G-12: Step attenuator + ADC overload ---
+    // --- Phase 3G-13: Step attenuator + ADC overload ---
     m_stepAttController = new StepAttenuatorController(this);
     m_radioModel->setStepAttController(m_stepAttController);
 
