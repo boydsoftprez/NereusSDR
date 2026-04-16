@@ -64,6 +64,17 @@
 #include <QMessageBox>
 #include <QTimer>
 #include <QThread>
+#include <QPushButton>
+#include <QToolBar>
+#include <QClipboard>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QVersionNumber>
+#include <QPointer>
 
 #include <cstdlib>
 
@@ -1268,6 +1279,83 @@ void MainWindow::buildMenuBar()
                                    "github.com/boydsoftprez/NereusSDR"))
                 .arg(QCoreApplication::applicationVersion(), QString::fromUtf8(qVersion())));
     });
+
+    // =========================================================================
+    // 💡 ISSUE REPORTER — toolbar button (Phase 3G-14)
+    // Ported from AetherSDR TitleBar::showFeatureRequestDialog()
+    // Uses a QToolBar so the button is visible on macOS (native menu bar)
+    // and on Linux/Windows (in-window menu bar) alike.
+    // =========================================================================
+    auto* featureBar = new QToolBar(this);
+    featureBar->setMovable(false);
+    featureBar->setFloatable(false);
+    featureBar->setIconSize(QSize(28, 28));
+    featureBar->setFixedHeight(32);
+    featureBar->setStyleSheet(QStringLiteral(
+        "QToolBar { background: #0f0f1a; border-bottom: 1px solid #203040; spacing: 0; padding: 0 4px; }"));
+
+    auto* spacer = new QWidget;
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    featureBar->addWidget(spacer);
+
+    // Paint a lightbulb icon so it renders cleanly at any DPI
+    auto makeBulbIcon = [](QColor bulbColor, QColor baseColor) -> QIcon {
+        constexpr int sz = 64;  // paint large, Qt scales down
+        QPixmap pm(sz, sz);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+
+        // Bulb (circle)
+        p.setPen(Qt::NoPen);
+        p.setBrush(bulbColor);
+        p.drawEllipse(QRectF(14, 4, 36, 36));
+
+        // Neck (trapezoid connecting bulb to base)
+        QPolygonF neck;
+        neck << QPointF(22, 36) << QPointF(42, 36)
+             << QPointF(40, 44) << QPointF(24, 44);
+        p.drawPolygon(neck);
+
+        // Base (screw threads — 3 thin lines)
+        p.setPen(QPen(baseColor, 2.5));
+        p.drawLine(QPointF(24, 46), QPointF(40, 46));
+        p.drawLine(QPointF(25, 50), QPointF(39, 50));
+        p.drawLine(QPointF(27, 54), QPointF(37, 54));
+
+        // Tip
+        p.setPen(Qt::NoPen);
+        p.setBrush(baseColor);
+        p.drawEllipse(QRectF(29, 56, 6, 4));
+
+        // Filament lines inside bulb
+        p.setPen(QPen(baseColor, 1.5));
+        p.drawLine(QPointF(28, 34), QPointF(28, 22));
+        p.drawLine(QPointF(28, 22), QPointF(32, 16));
+        p.drawLine(QPointF(32, 16), QPointF(36, 22));
+        p.drawLine(QPointF(36, 22), QPointF(36, 34));
+
+        p.end();
+        return QIcon(pm);
+    };
+
+    QIcon bulbIcon = makeBulbIcon(QColor(0xFF, 0xD0, 0x60), QColor(0x80, 0x60, 0x20));
+
+    m_featureBtn = new QPushButton;
+    m_featureBtn->setIcon(bulbIcon);
+    m_featureBtn->setIconSize(QSize(22, 22));
+    m_featureBtn->setFixedSize(28, 28);
+    m_featureBtn->setToolTip(QStringLiteral("Submit a feature request or bug report"));
+    m_featureBtn->setAccessibleName(QStringLiteral("Feature request"));
+    m_featureBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #3a2a00; border: 1px solid #806020; "
+        "border-radius: 4px; padding: 0; }"
+        "QPushButton:hover { background: #504000; border-color: #a08030; }"));
+    connect(m_featureBtn, &QPushButton::clicked,
+            this, &MainWindow::showFeatureRequestDialog);
+    featureBar->addWidget(m_featureBtn);
+
+    addToolBar(Qt::TopToolBarArea, featureBar);
 }
 
 void MainWindow::buildStatusBar()
@@ -2311,6 +2399,213 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // against a destructed QRegularExpression in the PII-redaction message
     // handler, segfaulting every close (~100 diagnostic reports in one day).
     QCoreApplication::quit();
+}
+
+// =============================================================================
+// Phase 3G-14: AI-Assisted Issue Reporter
+// Ported from AetherSDR TitleBar::showFeatureRequestDialog() /
+// showFeatureRequestDialogImpl()
+// =============================================================================
+
+void MainWindow::showFeatureRequestDialog()
+{
+    // Version check gate — warn if not on latest release before filing
+    auto* nam = new QNetworkAccessManager(this);
+    QNetworkRequest req(QUrl(QStringLiteral(
+        "https://api.github.com/repos/boydsoftprez/NereusSDR/releases/latest")));
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("NereusSDR"));
+    auto* reply = nam->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, nam] {
+        reply->deleteLater();
+        nam->deleteLater();
+
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            QString latest = doc.object().value(QStringLiteral("tag_name")).toString();
+            if (latest.startsWith(QLatin1Char('v'))) {
+                latest = latest.mid(1);
+            }
+            QVersionNumber latestVer = QVersionNumber::fromString(latest);
+            QVersionNumber currentVer = QVersionNumber::fromString(
+                QCoreApplication::applicationVersion());
+            if (!latestVer.isNull() && currentVer < latestVer) {
+                auto answer = QMessageBox::warning(this,
+                    QStringLiteral("Outdated Version"),
+                    QStringLiteral(
+                        "<p>You are running <b>v%1</b> but <b>v%2</b> is available.</p>"
+                        "<p>Your issue may already be fixed in the latest release. "
+                        "Please update before filing a bug report.</p>"
+                        "<p>Continue anyway?</p>")
+                        .arg(QCoreApplication::applicationVersion(), latest),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (answer != QMessageBox::Yes) {
+                    return;
+                }
+            }
+        }
+        // Proceed to show the issue dialog
+        showFeatureRequestDialogImpl();
+    });
+}
+
+void MainWindow::showFeatureRequestDialogImpl()
+{
+    static const QString kPrompt = QStringLiteral(
+        "IMPORTANT — before doing anything else, fetch the complete list of open\n"
+        "issues by reading pages sequentially until you get fewer than 100 results:\n"
+        "  Page 1: https://github.com/boydsoftprez/NereusSDR/issues?state=open&per_page=100&page=1\n"
+        "  Page 2: https://github.com/boydsoftprez/NereusSDR/issues?state=open&per_page=100&page=2\n"
+        "  ... continue until a page returns fewer than 100 issues.\n"
+        "Do NOT rely on cached or training data for the issue list.\n\n"
+        "Also fetch CLAUDE.md fresh (do not use cached versions):\n"
+        "  https://raw.githubusercontent.com/boydsoftprez/NereusSDR/main/CLAUDE.md\n\n"
+        "I want to report an issue or request a feature for NereusSDR, a cross-platform\n"
+        "Qt6/C++20 SDR console for OpenHPSDR radios (ANAN, Hermes Lite 2, etc.). It uses\n"
+        "the OpenHPSDR Protocol 1 and Protocol 2 over UDP, with client-side DSP via WDSP.\n\n"
+        "DUPLICATE CHECK — this is mandatory. Search the fetched issue list for keywords\n"
+        "related to my description below. Check titles AND bodies. If you find an existing\n"
+        "issue that covers the same thing, STOP and tell me:\n"
+        "  > Duplicate found: #<number> — <title>\n"
+        "  > I recommend adding a +1 reaction and a comment describing your use case.\n"
+        "Do NOT write a new issue if a duplicate exists.\n\n"
+        "If no duplicate exists, determine whether my description is a BUG REPORT or a\n"
+        "FEATURE REQUEST, then write a GitHub issue using the appropriate format below.\n"
+        "Use GitHub-flavored Markdown formatting (headers, code blocks, bullet points).\n\n"
+        "FOR FEATURE REQUESTS include:\n"
+        "1. A clear, concise title (imperative mood)\n"
+        "2. ## What — what the feature does from the user's perspective\n"
+        "3. ## Why — what problem it solves\n"
+        "4. ## How Other Clients Do It — how Thetis, PowerSDR, SparkSDR, etc. handle this\n"
+        "5. ## Suggested Behavior — specific UX: what the user clicks, sees, what happens.\n"
+        "   Reference NereusSDR UI elements (AppletPanel, VfoWidget, RxApplet, SetupDialog, etc.)\n"
+        "6. ## Protocol Hints — relevant OpenHPSDR commands, or \"Unknown — needs research\"\n"
+        "7. ## Acceptance Criteria — 3-5 bullet points defining done vs not-done\n\n"
+        "FOR BUG REPORTS include:\n"
+        "1. A clear title describing the broken behavior\n"
+        "2. ## What happened — describe the incorrect behavior\n"
+        "3. ## What I expected — describe the correct behavior\n"
+        "4. ## Steps to reproduce — numbered steps to trigger the bug\n"
+        "5. ## Environment — OS, radio model, protocol version, firmware version if relevant\n"
+        "6. ## Suggested fix — if you have an idea what's wrong, describe it\n\n"
+        "Suggest appropriate labels from: enhancement, bug, documentation,\n"
+        "help wanted, good first issue, question\n\n"
+        "Here is my idea or bug report:\n\n"
+        "[Describe your feature or bug here in plain English]");
+
+    // Reuse existing dialog if still open
+    static QPointer<QDialog> sDlg;
+    if (sDlg) {
+        sDlg->raise();
+        sDlg->activateWindow();
+        return;
+    }
+
+    auto* dlg = new QDialog(this);
+    sDlg = dlg;
+    dlg->setWindowTitle(QStringLiteral("AI-Assisted Issue Reporter"));
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setStyleSheet(QStringLiteral("QDialog { background: #0f0f1a; }"));
+    dlg->setMinimumWidth(620);
+
+    auto* vbox = new QVBoxLayout(dlg);
+    vbox->setSpacing(8);
+    vbox->setContentsMargins(16, 16, 16, 16);
+
+    auto* header = new QLabel(QStringLiteral(
+        "<h3 style='color:#c8d8e8;'>AI-Assisted Issue Reporter</h3>"
+        "<p style='color:#8090a0;'>Use any AI assistant to write a detailed bug report or feature request.</p>"
+        "<ol style='color:#c8d8e8;'>"
+        "<li><b>Choose your AI</b> below — prompt is copied to your clipboard</li>"
+        "<li><b>Paste the prompt</b> into the AI chat</li>"
+        "<li><b>Describe your idea</b> — edit the [bracketed] section</li>"
+        "<li><b>Copy the AI's output</b> and click <b>Submit Your Idea</b></li>"
+        "</ol>"));
+    header->setWordWrap(true);
+    vbox->addWidget(header);
+
+    // Status label — shows after provider selected
+    auto* statusLabel = new QLabel;
+    statusLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #20c060; font-size: 11px; font-weight: bold; }"));
+    statusLabel->setAlignment(Qt::AlignCenter);
+    statusLabel->hide();
+    vbox->addWidget(statusLabel);
+
+    // AI provider buttons
+    const QString btnStyle = QStringLiteral(
+        "QPushButton { background: #1a2a3a; border: 1px solid #304050; "
+        "border-radius: 3px; color: #c8d8e8; font-size: 12px; font-weight: bold; "
+        "padding: 6px 12px; }"
+        "QPushButton:hover { background: #203040; }");
+
+    auto* btnRow1 = new QHBoxLayout;
+    struct Provider { const char* name; const char* url; };
+    static constexpr Provider providers[] = {
+        {"Claude",     "https://claude.ai/new"},
+        {"ChatGPT",    "https://chat.openai.com/"},
+        {"Gemini",     "https://gemini.google.com/"},
+        {"Grok",       "https://grok.x.ai/"},
+        {"Perplexity", "https://www.perplexity.ai/"},
+    };
+    for (const auto& p : providers) {
+        auto* btn = new QPushButton(QString::fromUtf8(p.name), dlg);
+        btn->setStyleSheet(btnStyle);
+        btn->setAutoDefault(false);
+        QString url = QString::fromUtf8(p.url);
+        connect(btn, &QPushButton::clicked, dlg, [url, statusLabel] {
+            QApplication::clipboard()->setText(kPrompt);
+            QDesktopServices::openUrl(QUrl(url));
+            statusLabel->setText(QStringLiteral(
+                "Prompt copied to clipboard — paste into the AI, "
+                "then come back and click Submit Your Idea"));
+            statusLabel->show();
+        });
+        btnRow1->addWidget(btn);
+    }
+    vbox->addLayout(btnRow1);
+
+    vbox->addSpacing(8);
+
+    // Submit / Report / Close
+    auto* btnRow2 = new QHBoxLayout;
+
+    auto* submitBtn = new QPushButton(QStringLiteral("Submit Your Idea"), dlg);
+    submitBtn->setAutoDefault(false);
+    submitBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #00b4d8; color: #0f0f1a; font-weight: bold; "
+        "border-radius: 4px; padding: 8px 20px; font-size: 13px; }"
+        "QPushButton:hover { background: #00c8f0; }"));
+    connect(submitBtn, &QPushButton::clicked, dlg, [dlg] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral(
+            "https://github.com/boydsoftprez/NereusSDR/issues/new?template=feature_request.yml")));
+        QTimer::singleShot(500, dlg, &QDialog::close);
+    });
+    btnRow2->addWidget(submitBtn);
+
+    auto* bugBtn = new QPushButton(QStringLiteral("Report a Bug"), dlg);
+    bugBtn->setAutoDefault(false);
+    bugBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #cc4040; color: #ffffff; font-weight: bold; "
+        "border-radius: 4px; padding: 8px 20px; font-size: 13px; }"
+        "QPushButton:hover { background: #dd5050; }"));
+    connect(bugBtn, &QPushButton::clicked, dlg, [dlg] {
+        QDesktopServices::openUrl(QUrl(QStringLiteral(
+            "https://github.com/boydsoftprez/NereusSDR/issues/new?template=bug_report.yml")));
+        QTimer::singleShot(500, dlg, &QDialog::close);
+    });
+    btnRow2->addWidget(bugBtn);
+
+    auto* closeBtn = new QPushButton(QStringLiteral("Close"), dlg);
+    closeBtn->setAutoDefault(false);
+    closeBtn->setStyleSheet(btnStyle);
+    connect(closeBtn, &QPushButton::clicked, dlg, &QDialog::close);
+    btnRow2->addWidget(closeBtn);
+    vbox->addLayout(btnRow2);
+
+    // Copy prompt to clipboard on first open
+    QApplication::clipboard()->setText(kPrompt);
+
+    dlg->show();
 }
 
 } // namespace NereusSDR

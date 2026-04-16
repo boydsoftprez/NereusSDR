@@ -573,6 +573,21 @@ Deferred (see design §9 + verification doc): TX IQ producer (Phase 3M), PureSig
 **Plan doc:** `docs/architecture/phase3i-radio-connector-port-plan.md` (23 tasks, 2575 lines)
 **Smoke test:** `docs/debugging/phase3i-smoke-test.md`
 
+### Phase 3G-14: 💡 AI-Assisted Issue Reporter
+**Goal:** Port AetherSDR's light-bulb issue reporter — a 💡 button in the menu bar corner widget that guides users through filing feature requests or bug reports with AI assistance.
+
+Ported from AetherSDR `TitleBar::showFeatureRequestDialog()` / `showFeatureRequestDialogImpl()`.
+
+Scope:
+- **💡 corner widget** — amber-styled QPushButton via `QMenuBar::setCornerWidget()`, always visible
+- **Version check gate** — hits `api.github.com/repos/boydsoftprez/NereusSDR/releases/latest`, warns if outdated before filing
+- **AI-assisted issue dialog** — structured prompt copied to clipboard (adapted for NereusSDR: OpenHPSDR radios, Thetis reference, `boydsoftprez/NereusSDR` URLs, NereusSDR label set), provider buttons (Claude, ChatGPT, Gemini, Grok, Perplexity), "Submit Your Idea" → `feature_request.yml`, "Report a Bug" → `bug_report.yml`
+- Existing SupportDialog "File an Issue" flow unchanged
+
+Files touched: `MainWindow.h`, `MainWindow.cpp`. No new source files. Requires Qt6::Network (already linked).
+
+Independent of all other phases — no file overlap with 3G-9, 3G-10, 3G-13, or 3M-*.
+
 ### Phase 3M-1: Basic SSB TX
 **Goal:** Get RF out the door — prove the TX I/Q output path works.
 
@@ -802,9 +817,9 @@ Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-13) → 3M-1..4 → 3F → 3H → 
                        states (DDC0+DDC1 sync at 192kHz)
 ```
 
-3G-9, 3G-10, and 3G-13 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring; 3G-13 owns the step attenuator + ADC overload protection (protocol layer + Setup Options + RxApplet ATT row + status bar).
+3G-9, 3G-10, 3G-13, and 3G-14 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring; 3G-13 owns the step attenuator + ADC overload protection (protocol layer + Setup Options + RxApplet ATT row + status bar); 3G-14 owns the 💡 issue reporter (menu bar corner widget + dialog).
 
-Independent phases (can start anytime): 3J (TCI), 3K (CAT), 3L (P1), 3M (Recording).
+Independent phases (can start anytime): 3G-14 (issue reporter), 3J (TCI), 3K (CAT), 3L (P1), 3M (Recording).
 
 ---
 
@@ -937,6 +952,14 @@ Combines AetherSDR's organized hierarchy with Thetis's quick-access approach:
 - ─────
 - What's New...
 - About NereusSDR
+
+### 💡 Issue Reporter (menu bar corner widget)
+- Always-visible amber 💡 button in menu bar corner (right side)
+- Version check gate → AI-assisted issue dialog
+- Provider buttons: Claude, ChatGPT, Gemini, Grok, Perplexity
+- "Submit Your Idea" → `feature_request.yml` template
+- "Report a Bug" → `bug_report.yml` template
+- Ported from AetherSDR `TitleBar::showFeatureRequestDialog()`
 
 ---
 
