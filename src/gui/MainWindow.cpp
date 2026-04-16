@@ -1783,8 +1783,12 @@ void MainWindow::wireSliceToSpectrum()
     connect(vfo, &VfoWidget::binauralChanged, this, [slice](bool v) {
         slice->setBinauralEnabled(v);
     });
-    connect(vfo, &VfoWidget::quickModeRequested, this, [](int) {
-        // Stage 2: map index → DSPMode and apply
+    connect(vfo, &VfoWidget::quickModeRequested, this, [slice](int index) {
+        // Quick-mode buttons: 0=USB, 1=CW, 2=DIG (matching AetherSDR defaults)
+        static constexpr DSPMode kQuickModes[] = {DSPMode::USB, DSPMode::CWU, DSPMode::DIGU};
+        if (index >= 0 && index < 3) {
+            slice->setDspMode(kQuickModes[index]);
+        }
     });
 
     // --- VfoWidget → MainWindow: open Setup dialog (e.g. AGC-T right-click) ---

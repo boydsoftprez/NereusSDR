@@ -811,7 +811,6 @@ void VfoWidget::buildModeTab()
                 }
             });
             modeRow->addWidget(m_quickModeBtns[i]);
-            NyiOverlay::markNyi(m_quickModeBtns[i], QStringLiteral("phase3g10-stage2"));
         }
         modeLayout->addLayout(modeRow);
     }
