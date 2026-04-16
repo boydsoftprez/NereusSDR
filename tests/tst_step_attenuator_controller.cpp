@@ -175,6 +175,133 @@ private slots:
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.first().at(0).toInt(), 1);
     }
+
+    void classicAutoAtt_bumpsOnRed()
+    {
+        // Classic auto-att bumps the step attenuator by the ADC overload
+        // level value when Red threshold is exceeded.
+        // From Thetis console.cs:21548-21567.
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setStepAttEnabled(true);
+        ctrl.setAutoAttEnabled(true);
+        ctrl.setAutoAttMode(AutoAttMode::Classic);
+        ctrl.setAutoAttUndo(false);
+
+        QSignalSpy spy(&ctrl, &StepAttenuatorController::attenuationChanged);
+
+        // Push ADC 0 to Red: 4 consecutive overflow+tick cycles.
+        // Level goes 0→1→2→3→4. Red fires at level 4 (> kRedThreshold=3).
+        for (int i = 0; i < 4; ++i) {
+            ctrl.onAdcOverflow(0);
+            ctrl.tick();
+        }
+
+        QCOMPARE(ctrl.overloadLevel(0), OverloadLevel::Red);
+        QVERIFY2(spy.count() >= 1, "attenuationChanged should fire on Red");
+        // Classic bumps by the level value (4 at Red), so ATT > 0.
+        int att = spy.last().at(0).toInt();
+        QVERIFY2(att > 0, "ATT should be bumped above 0 on Red");
+    }
+
+    void adaptiveAttack_rampsGradually()
+    {
+        // Adaptive mode ramps ATT by 1 dB per tick while Red overload
+        // persists. Verify gradual ramp over multiple attack ticks.
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setStepAttEnabled(true);
+        ctrl.setAutoAttEnabled(true);
+        ctrl.setAutoAttMode(AutoAttMode::Adaptive);
+
+        QSignalSpy spy(&ctrl, &StepAttenuatorController::attenuationChanged);
+
+        // 7 ticks with sustained overflow: first 4 reach Red,
+        // ticks 5-7 are 3 attack cycles at +1 dB each.
+        for (int i = 0; i < 7; ++i) {
+            ctrl.onAdcOverflow(0);
+            ctrl.tick();
+        }
+
+        // Should have at least 3 attenuationChanged emissions (from the
+        // 3 attack ticks after reaching Red on tick 4).
+        QVERIFY2(spy.count() >= 3, "Expected >= 3 attack emissions");
+
+        // Verify gradual ramp: each emission should be +1 dB from prior.
+        for (int i = 1; i < spy.count(); ++i) {
+            int prev = spy.at(i - 1).at(0).toInt();
+            int curr = spy.at(i).at(0).toInt();
+            QCOMPARE(curr, prev + 1);
+        }
+
+        // Final ATT should be >= 3 (at least 3 attack ticks after Red).
+        int finalAtt = spy.last().at(0).toInt();
+        QVERIFY2(finalAtt >= 3, "ATT should be >= 3 after 3+ attack ticks");
+    }
+
+    void adaptiveDecay_relaxesAfterHold()
+    {
+        // Adaptive mode decays ATT by 1 dB per decay interval after the
+        // hold period elapses with no further overload. The decay path
+        // uses wall-clock time, so we set very short hold/decay values
+        // and use QTest::qWait() to advance past them.
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setStepAttEnabled(true);
+        ctrl.setAutoAttEnabled(true);
+        ctrl.setAutoAttMode(AutoAttMode::Adaptive);
+        ctrl.setAutoAttUndo(true);
+        // Short hold (50ms) and fast decay (1ms per step) for test speed.
+        ctrl.setAutoAttHoldSeconds(0.05);   // 50ms hold
+        ctrl.setAdaptiveDecayMs(1);         // 1ms decay rate
+
+        QSignalSpy spy(&ctrl, &StepAttenuatorController::attenuationChanged);
+
+        // Push to Red (4 ticks) + 2 more attack ticks = 6 overflow+tick
+        // cycles. Level caps at 5. Attack fires on ticks 4-6 (+1 dB each).
+        for (int i = 0; i < 6; ++i) {
+            ctrl.onAdcOverflow(0);
+            ctrl.tick();
+        }
+
+        // After stopping overflow, the hysteresis counter decays naturally:
+        // 5→4 (still Red, attack continues), 4→3 (Yellow, no more attack).
+        // So we tick without overflow to let the counter drain below Red.
+        // These ticks may produce additional attack emissions while Red.
+        for (int i = 0; i < 3; ++i) {
+            ctrl.tick();
+        }
+
+        // Record peak ATT value — includes any extra attack ticks during
+        // counter drain from Red.
+        QVERIFY2(spy.count() >= 1, "Should have attack emissions");
+        int peakAtt = spy.last().at(0).toInt();
+        QVERIFY2(peakAtt >= 2, "Peak ATT should be >= 2 after attack ticks");
+
+        spy.clear();
+
+        // Wait past the hold period (50ms + generous margin).
+        QTest::qWait(150);
+
+        // Tick without overflow to trigger decay path.
+        // Each tick calls applyAdaptiveAutoAtt(-1) which decays 1 dB if
+        // hold has elapsed and decay interval has passed.
+        for (int i = 0; i < 20; ++i) {
+            ctrl.tick();
+            QTest::qWait(5);  // Ensure decay rate (1ms) is satisfied.
+        }
+
+        // Verify decay happened: at least one emission with value < peak.
+        QVERIFY2(spy.count() >= 1, "Should have decay emissions after hold");
+        bool decayed = false;
+        for (int i = 0; i < spy.count(); ++i) {
+            if (spy.at(i).at(0).toInt() < peakAtt) {
+                decayed = true;
+                break;
+            }
+        }
+        QVERIFY2(decayed, "ATT should decay below peak after hold period");
+    }
 };
 
 QTEST_MAIN(TestStepAttenuatorController)
