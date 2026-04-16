@@ -195,6 +195,66 @@ void ConnectionPanel::buildUI()
     radioLayout->addWidget(m_radioTable);
     mainLayout->addWidget(radioGroup, /*stretch=*/1);
 
+    // --- Selected Radio detail panel (Phase 3I-RP) ---
+    m_detailGroup = new QGroupBox(QStringLiteral("Selected Radio"), this);
+    m_detailGroup->setVisible(false);
+    auto* detailLayout = new QVBoxLayout(m_detailGroup);
+    detailLayout->setSpacing(4);
+
+    // Info row 1: Board + Protocol + Firmware
+    auto* infoRow1 = new QHBoxLayout();
+    m_detailBoardLabel = new QLabel(m_detailGroup);
+    m_detailProtoLabel = new QLabel(m_detailGroup);
+    m_detailFwLabel    = new QLabel(m_detailGroup);
+    for (auto* lbl : {m_detailBoardLabel, m_detailProtoLabel, m_detailFwLabel}) {
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: #8090a0; font-size: 12px; }"));
+    }
+    infoRow1->addWidget(m_detailBoardLabel);
+    infoRow1->addWidget(m_detailProtoLabel);
+    infoRow1->addWidget(m_detailFwLabel);
+    infoRow1->addStretch();
+    detailLayout->addLayout(infoRow1);
+
+    // Info row 2: IP + MAC
+    auto* infoRow2 = new QHBoxLayout();
+    m_detailIpLabel  = new QLabel(m_detailGroup);
+    m_detailMacLabel = new QLabel(m_detailGroup);
+    for (auto* lbl : {m_detailIpLabel, m_detailMacLabel}) {
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: #8090a0; font-size: 12px; }"));
+    }
+    infoRow2->addWidget(m_detailIpLabel);
+    infoRow2->addWidget(m_detailMacLabel);
+    infoRow2->addStretch();
+    detailLayout->addLayout(infoRow2);
+
+    // Model selector row
+    auto* modelRow = new QHBoxLayout();
+    auto* modelLabel = new QLabel(QStringLiteral("Radio Model:"), m_detailGroup);
+    modelLabel->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-weight: bold; }"));
+    m_modelCombo = new QComboBox(m_detailGroup);
+    m_modelCombo->setMinimumWidth(200);
+    m_modelCombo->setStyleSheet(QStringLiteral(
+        "QComboBox { background: #1a2a3a; color: #c8d8e8; border: 1px solid #304050;"
+        "  border-radius: 3px; padding: 4px 8px; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background: #12202e; color: #c8d8e8;"
+        "  selection-background-color: #005578; }"));
+    connect(m_modelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ConnectionPanel::onModelComboChanged);
+    modelRow->addWidget(modelLabel);
+    modelRow->addWidget(m_modelCombo);
+    modelRow->addStretch();
+    detailLayout->addLayout(modelRow);
+
+    // Hint label
+    m_modelHintLabel = new QLabel(m_detailGroup);
+    m_modelHintLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #b08020; font-size: 11px; font-style: italic; }"));
+    m_modelHintLabel->setVisible(false);
+    detailLayout->addWidget(m_modelHintLabel);
+
+    mainLayout->addWidget(m_detailGroup);
+
     // --- Bottom strip buttons (plan §5.2 + Thetis layout) ---
     auto* btnLayout = new QHBoxLayout();
     btnLayout->setSpacing(6);
@@ -587,6 +647,12 @@ void ConnectionPanel::onConnectClicked()
         return;
     }
 
+    // Apply model override from dropdown (Phase 3I-RP)
+    if (m_modelCombo && m_modelCombo->currentIndex() >= 0) {
+        int modelInt = m_modelCombo->itemData(m_modelCombo->currentIndex()).toInt();
+        info.modelOverride = static_cast<HPSDRModel>(modelInt);
+    }
+
     if (info.inUse) {
         setStatusText(QStringLiteral("Warning: radio reports in use — attempting connection anyway"));
     } else {
@@ -676,6 +742,7 @@ void ConnectionPanel::onForgetClicked()
 void ConnectionPanel::onRadioSelectionChanged()
 {
     updateButtonStates();
+    updateDetailPanel();
 }
 
 // Source: ucRadioList.cs double-click action — select and connect
@@ -786,6 +853,88 @@ RadioInfo ConnectionPanel::selectedRadio() const
     }
     QString mac = cell->data(kMacRole).toString();
     return m_discoveredRadios.value(mac);
+}
+
+// ---------------------------------------------------------------------------
+// Detail panel — Phase 3I-RP
+// ---------------------------------------------------------------------------
+
+void ConnectionPanel::updateDetailPanel()
+{
+    RadioInfo info = selectedRadio();
+    if (info.macAddress.isEmpty()) {
+        m_detailGroup->setVisible(false);
+        return;
+    }
+
+    m_detailGroup->setVisible(true);
+
+    QString boardName = QString::fromLatin1(
+        BoardCapsTable::forBoard(info.boardType).displayName);
+    m_detailBoardLabel->setText(QStringLiteral("Board: %1 (0x%2)")
+        .arg(boardName)
+        .arg(static_cast<int>(info.boardType), 2, 16, QLatin1Char('0')));
+    m_detailProtoLabel->setText(QStringLiteral("Protocol: P%1")
+        .arg(info.protocol == ProtocolVersion::Protocol2 ? 2 : 1));
+    m_detailFwLabel->setText(QStringLiteral("Firmware: %1").arg(info.firmwareVersion));
+    m_detailIpLabel->setText(QStringLiteral("IP: %1").arg(info.address.toString()));
+    m_detailMacLabel->setText(QStringLiteral("MAC: %1").arg(info.macAddress));
+
+    // Populate model combo
+    m_modelCombo->blockSignals(true);
+    m_modelCombo->clear();
+    QList<HPSDRModel> models = compatibleModels(info.boardType);
+    HPSDRModel defaultModel = defaultModelForBoard(info.boardType);
+
+    HPSDRModel persisted = AppSettings::instance().modelOverride(info.macAddress);
+    HPSDRModel selected = (persisted != HPSDRModel::FIRST) ? persisted : defaultModel;
+
+    int selectIdx = 0;
+    for (int i = 0; i < models.size(); ++i) {
+        m_modelCombo->addItem(
+            QString::fromLatin1(displayName(models[i])),
+            static_cast<int>(models[i]));
+        if (models[i] == selected) {
+            selectIdx = i;
+        }
+    }
+    m_modelCombo->setCurrentIndex(selectIdx);
+    m_modelCombo->blockSignals(false);
+
+    if (selected != defaultModel) {
+        m_modelHintLabel->setText(QStringLiteral("Board reports \"%1\" -- model override applied")
+            .arg(boardName));
+        m_modelHintLabel->setVisible(true);
+    } else {
+        m_modelHintLabel->setVisible(false);
+    }
+}
+
+void ConnectionPanel::onModelComboChanged(int index)
+{
+    if (index < 0) { return; }
+    RadioInfo info = selectedRadio();
+    if (info.macAddress.isEmpty()) { return; }
+
+    int modelInt = m_modelCombo->itemData(index).toInt();
+    auto model = static_cast<HPSDRModel>(modelInt);
+
+    AppSettings::instance().setModelOverride(info.macAddress, model);
+    AppSettings::instance().save();
+
+    HPSDRModel defaultModel = defaultModelForBoard(info.boardType);
+    QString boardName = QString::fromLatin1(
+        BoardCapsTable::forBoard(info.boardType).displayName);
+    if (model != defaultModel) {
+        m_modelHintLabel->setText(QStringLiteral("Board reports \"%1\" -- model override applied")
+            .arg(boardName));
+        m_modelHintLabel->setVisible(true);
+    } else {
+        m_modelHintLabel->setVisible(false);
+    }
+
+    setStatusText(QStringLiteral("Model set to %1 for %2")
+        .arg(QString::fromLatin1(displayName(model)), info.macAddress));
 }
 
 } // namespace NereusSDR

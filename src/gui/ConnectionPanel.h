@@ -2,8 +2,11 @@
 
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
+#include "core/HardwareProfile.h"
 
+#include <QComboBox>
 #include <QDialog>
+#include <QGroupBox>
 #include <QTableWidget>
 #include <QPushButton>
 #include <QLabel>
@@ -74,6 +77,9 @@ private:
     // online=false renders the row with offline colour (manual adds start offline).
     void upsertRowForInfo(const RadioInfo& info, bool online);
 
+    void onModelComboChanged(int index);
+    void updateDetailPanel();
+
     // Get the RadioInfo for the currently selected table row
     RadioInfo selectedRadio() const;
     // Find row index by MAC, returns -1 if not found
@@ -91,6 +97,16 @@ private:
     QPushButton*   m_forgetBtn{nullptr};
     QPushButton*   m_closeBtn{nullptr};
     QLabel*        m_statusLabel{nullptr};
+
+    // Detail panel (Phase 3I-RP)
+    QGroupBox*   m_detailGroup{nullptr};
+    QLabel*      m_detailBoardLabel{nullptr};
+    QLabel*      m_detailProtoLabel{nullptr};
+    QLabel*      m_detailFwLabel{nullptr};
+    QLabel*      m_detailIpLabel{nullptr};
+    QLabel*      m_detailMacLabel{nullptr};
+    QComboBox*   m_modelCombo{nullptr};
+    QLabel*      m_modelHintLabel{nullptr};
 
     // Track discovered radios by MAC (row data role = MAC string)
     QMap<QString, RadioInfo> m_discoveredRadios;
