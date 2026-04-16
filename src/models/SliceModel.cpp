@@ -1,5 +1,8 @@
 #include "SliceModel.h"
 
+#include "Band.h"
+#include "core/AppSettings.h"
+
 #include <algorithm>
 
 namespace NereusSDR {
@@ -17,6 +20,9 @@ SliceModel::~SliceModel() = default;
 
 void SliceModel::setFrequency(double freq)
 {
+    // 3G-10 S2.9: client-side lock guard. When locked, setFrequency is a
+    // no-op — prevents accidental tuning. The hardware VFO is not changed.
+    if (m_locked) { return; }
     if (!qFuzzyCompare(m_frequency, freq)) {
         m_frequency = freq;
         emit frequencyChanged(freq);
@@ -539,6 +545,230 @@ DSPMode SliceModel::modeFromName(const QString& name)
     if (name == QLatin1String("SAM"))  return DSPMode::SAM;
     if (name == QLatin1String("DRM"))  return DSPMode::DRM;
     return DSPMode::USB;
+}
+
+// ---------------------------------------------------------------------------
+// Per-slice-per-band persistence (Phase 3G-10 Stage 2 — S2.P)
+// ---------------------------------------------------------------------------
+//
+// Key layout:
+//   Per-band DSP: Slice<N>/Band<key>/<Field>   (varies by band)
+//   Session state: Slice<N>/<Field>             (band-agnostic)
+//
+// <N> comes from m_sliceIndex. <key> comes from bandKeyName(band).
+
+namespace {
+
+// Build the per-band prefix string, e.g. "Slice0/Band20m/".
+QString bandPrefix(int sliceIndex, Band band)
+{
+    return QStringLiteral("Slice%1/Band%2/")
+               .arg(sliceIndex)
+               .arg(bandKeyName(band));
+}
+
+// Build the session-state prefix string, e.g. "Slice0/".
+QString slicePrefix(int sliceIndex)
+{
+    return QStringLiteral("Slice%1/").arg(sliceIndex);
+}
+
+// Boolean → AppSettings canonical string.
+QString boolStr(bool v) { return v ? QStringLiteral("True") : QStringLiteral("False"); }
+
+} // namespace
+
+void SliceModel::saveToSettings(Band band)
+{
+    auto& s = AppSettings::instance();
+    const QString bp = bandPrefix(m_sliceIndex, band);
+    const QString sp = slicePrefix(m_sliceIndex);
+
+    // ── Per-band DSP state ────────────────────────────────────────────────────
+    s.setValue(bp + QStringLiteral("Frequency"),    m_frequency);
+    s.setValue(bp + QStringLiteral("AgcThreshold"), m_agcThreshold);
+    s.setValue(bp + QStringLiteral("AgcHang"),      m_agcHang);
+    s.setValue(bp + QStringLiteral("AgcSlope"),     m_agcSlope);
+    s.setValue(bp + QStringLiteral("AgcAttack"),    m_agcAttack);
+    s.setValue(bp + QStringLiteral("AgcDecay"),     m_agcDecay);
+    s.setValue(bp + QStringLiteral("FilterLow"),    m_filterLow);
+    s.setValue(bp + QStringLiteral("FilterHigh"),   m_filterHigh);
+    s.setValue(bp + QStringLiteral("DspMode"),      static_cast<int>(m_dspMode));
+    s.setValue(bp + QStringLiteral("AgcMode"),      static_cast<int>(m_agcMode));
+    s.setValue(bp + QStringLiteral("StepHz"),       m_stepHz);
+
+    // ── Session state (band-agnostic) ─────────────────────────────────────────
+    s.setValue(sp + QStringLiteral("Locked"),     boolStr(m_locked));
+    s.setValue(sp + QStringLiteral("Muted"),      boolStr(m_muted));
+    s.setValue(sp + QStringLiteral("RitEnabled"), boolStr(m_ritEnabled));
+    s.setValue(sp + QStringLiteral("RitHz"),      m_ritHz);
+    s.setValue(sp + QStringLiteral("XitEnabled"), boolStr(m_xitEnabled));
+    s.setValue(sp + QStringLiteral("XitHz"),      m_xitHz);
+    s.setValue(sp + QStringLiteral("AfGain"),     m_afGain);
+    s.setValue(sp + QStringLiteral("RfGain"),     m_rfGain);
+    s.setValue(sp + QStringLiteral("RxAntenna"),  m_rxAntenna);
+    s.setValue(sp + QStringLiteral("TxAntenna"),  m_txAntenna);
+}
+
+void SliceModel::restoreFromSettings(Band band)
+{
+    auto& s = AppSettings::instance();
+    const QString bp = bandPrefix(m_sliceIndex, band);
+    const QString sp = slicePrefix(m_sliceIndex);
+
+    // ── Per-band DSP state ────────────────────────────────────────────────────
+    // Each key: if absent, leave the current SliceModel default unchanged.
+
+    if (s.contains(bp + QStringLiteral("Frequency"))) {
+        setFrequency(s.value(bp + QStringLiteral("Frequency")).toDouble());
+    }
+    if (s.contains(bp + QStringLiteral("AgcThreshold"))) {
+        setAgcThreshold(s.value(bp + QStringLiteral("AgcThreshold")).toInt());
+    }
+    if (s.contains(bp + QStringLiteral("AgcHang"))) {
+        setAgcHang(s.value(bp + QStringLiteral("AgcHang")).toInt());
+    }
+    if (s.contains(bp + QStringLiteral("AgcSlope"))) {
+        setAgcSlope(s.value(bp + QStringLiteral("AgcSlope")).toInt());
+    }
+    if (s.contains(bp + QStringLiteral("AgcAttack"))) {
+        setAgcAttack(s.value(bp + QStringLiteral("AgcAttack")).toInt());
+    }
+    if (s.contains(bp + QStringLiteral("AgcDecay"))) {
+        setAgcDecay(s.value(bp + QStringLiteral("AgcDecay")).toInt());
+    }
+    if (s.contains(bp + QStringLiteral("DspMode"))) {
+        // Set mode WITHOUT applying the default filter — filter follows below.
+        // We must update m_dspMode before reading FilterLow/FilterHigh so
+        // the final setFilter call is not superseded by setDspMode's default.
+        DSPMode mode = static_cast<DSPMode>(
+            s.value(bp + QStringLiteral("DspMode")).toInt());
+        // Directly assign mode without calling setDspMode() (which also
+        // resets the filter). Emit the signal manually to keep observers in sync.
+        if (m_dspMode != mode) {
+            m_dspMode = mode;
+            emit dspModeChanged(mode);
+        }
+    }
+    if (s.contains(bp + QStringLiteral("FilterLow")) &&
+        s.contains(bp + QStringLiteral("FilterHigh"))) {
+        setFilter(s.value(bp + QStringLiteral("FilterLow")).toInt(),
+                  s.value(bp + QStringLiteral("FilterHigh")).toInt());
+    }
+    if (s.contains(bp + QStringLiteral("AgcMode"))) {
+        setAgcMode(static_cast<AGCMode>(
+            s.value(bp + QStringLiteral("AgcMode")).toInt()));
+    }
+    if (s.contains(bp + QStringLiteral("StepHz"))) {
+        setStepHz(s.value(bp + QStringLiteral("StepHz")).toInt());
+    }
+
+    // ── Session state (band-agnostic) ─────────────────────────────────────────
+
+    if (s.contains(sp + QStringLiteral("Locked"))) {
+        setLocked(s.value(sp + QStringLiteral("Locked")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("Muted"))) {
+        setMuted(s.value(sp + QStringLiteral("Muted")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("RitEnabled"))) {
+        setRitEnabled(s.value(sp + QStringLiteral("RitEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("RitHz"))) {
+        setRitHz(s.value(sp + QStringLiteral("RitHz")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("XitEnabled"))) {
+        setXitEnabled(s.value(sp + QStringLiteral("XitEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("XitHz"))) {
+        setXitHz(s.value(sp + QStringLiteral("XitHz")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("AfGain"))) {
+        setAfGain(s.value(sp + QStringLiteral("AfGain")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RfGain"))) {
+        setRfGain(s.value(sp + QStringLiteral("RfGain")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("RxAntenna"))) {
+        setRxAntenna(s.value(sp + QStringLiteral("RxAntenna")).toString());
+    }
+    if (s.contains(sp + QStringLiteral("TxAntenna"))) {
+        setTxAntenna(s.value(sp + QStringLiteral("TxAntenna")).toString());
+    }
+}
+
+// One-shot migration of the legacy flat key format (VfoFrequency, VfoDspMode,
+// etc.) to the new per-slice-per-band namespace. Called once at startup before
+// restoreFromSettings(). If the legacy key is absent the function is a no-op.
+void SliceModel::migrateLegacyKeys()
+{
+    auto& s = AppSettings::instance();
+
+    if (!s.contains(QStringLiteral("VfoFrequency"))) {
+        return; // Nothing to migrate.
+    }
+
+    // Derive the band from the persisted frequency.
+    double freq = s.value(QStringLiteral("VfoFrequency"), 14225000.0).toDouble();
+    Band band = bandFromFrequency(freq);
+
+    // Slice 0 — the only slice that can have legacy data.
+    const QString bp = bandPrefix(0, band);
+    const QString sp = slicePrefix(0);
+
+    // Per-band DSP — migrate each key that exists.
+    s.setValue(bp + QStringLiteral("Frequency"), freq);
+
+    if (s.contains(QStringLiteral("VfoDspMode"))) {
+        s.setValue(bp + QStringLiteral("DspMode"),
+                   s.value(QStringLiteral("VfoDspMode")));
+    }
+    if (s.contains(QStringLiteral("VfoFilterLow"))) {
+        s.setValue(bp + QStringLiteral("FilterLow"),
+                   s.value(QStringLiteral("VfoFilterLow")));
+    }
+    if (s.contains(QStringLiteral("VfoFilterHigh"))) {
+        s.setValue(bp + QStringLiteral("FilterHigh"),
+                   s.value(QStringLiteral("VfoFilterHigh")));
+    }
+    if (s.contains(QStringLiteral("VfoAgcMode"))) {
+        s.setValue(bp + QStringLiteral("AgcMode"),
+                   s.value(QStringLiteral("VfoAgcMode")));
+    }
+    if (s.contains(QStringLiteral("VfoStepHz"))) {
+        s.setValue(bp + QStringLiteral("StepHz"),
+                   s.value(QStringLiteral("VfoStepHz")));
+    }
+
+    // Session state — migrate each key that exists.
+    if (s.contains(QStringLiteral("VfoAfGain"))) {
+        s.setValue(sp + QStringLiteral("AfGain"),
+                   s.value(QStringLiteral("VfoAfGain")));
+    }
+    if (s.contains(QStringLiteral("VfoRfGain"))) {
+        s.setValue(sp + QStringLiteral("RfGain"),
+                   s.value(QStringLiteral("VfoRfGain")));
+    }
+    if (s.contains(QStringLiteral("VfoRxAntenna"))) {
+        s.setValue(sp + QStringLiteral("RxAntenna"),
+                   s.value(QStringLiteral("VfoRxAntenna")));
+    }
+    if (s.contains(QStringLiteral("VfoTxAntenna"))) {
+        s.setValue(sp + QStringLiteral("TxAntenna"),
+                   s.value(QStringLiteral("VfoTxAntenna")));
+    }
+
+    // Remove all legacy flat keys.
+    s.remove(QStringLiteral("VfoFrequency"));
+    s.remove(QStringLiteral("VfoDspMode"));
+    s.remove(QStringLiteral("VfoFilterLow"));
+    s.remove(QStringLiteral("VfoFilterHigh"));
+    s.remove(QStringLiteral("VfoAgcMode"));
+    s.remove(QStringLiteral("VfoStepHz"));
+    s.remove(QStringLiteral("VfoAfGain"));
+    s.remove(QStringLiteral("VfoRfGain"));
+    s.remove(QStringLiteral("VfoRxAntenna"));
+    s.remove(QStringLiteral("VfoTxAntenna"));
 }
 
 } // namespace NereusSDR

@@ -140,6 +140,9 @@ signals:
     void recordToggled(bool recording);
     void playToggled(bool playing);
 
+    // --- Setup dialog request (e.g. AGC-T right-click → open settings) ---
+    void openSetupRequested();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -202,9 +205,6 @@ private:
     // --- Mode tab ---
     QComboBox*          m_modeCmb{nullptr};
     QWidget*            m_filterBtnContainer{nullptr};
-    QSlider*            m_rfGainSlider{nullptr};
-    QLabel*             m_rfGainLabel{nullptr};
-    QPushButton*        m_quickModeBtns[3]{};    // USB/CW/DIG shortcut slots (NYI)
 
     // --- Audio tab ---
     QSlider*            m_afGainSlider{nullptr};

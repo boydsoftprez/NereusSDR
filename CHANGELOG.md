@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- **Phase 3G-10 Stage 2 — WDSP wiring + per-slice-per-band persistence:**
+  - Wire 10 RX DSP feature slices through full stack: SliceModel → RadioModel → RxChannel → WDSP
+  - AGC advanced (threshold/hang/slope/attack/decay), EMNR (NR2), SNB, APF (SPCW module),
+    squelch (SSB/AM/FM 3-variant), mute/audio pan/binaural, NB2 advanced params,
+    RIT/XIT client offset, frequency lock, mode containers (FM OPT/DIG/RTTY)
+  - Per-slice-per-band persistence via AppSettings (`Slice<N>/Band<key>/*` namespace)
+    with one-shot legacy key migration and band-change save/restore cycle
+  - Thetis-first tooltip sweep: 18 controls updated with verbatim Thetis text
+  - CW autotune deferred (matchedCW.h is APF filter type, not tone detector)
+  - 17 new test files, 40/40 tests pass
 - **Phase 3G-10 Stage 1 tail — VfoWidget tab rewrite** (PR #30):
   - X/RIT tab populated with RIT/XIT toggle + offset ScrollableLabels, LOCK button, STEP cycle button
   - DspTab rewritten as 4×2 toggle grid (NB/NB2/NR/NR2/ANF/SNB/APF) with APF tune slider and embedded FmOptContainer/DigOffsetContainer/RttyMarkShiftContainer (mode-driven visibility)

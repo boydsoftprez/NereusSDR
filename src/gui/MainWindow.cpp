@@ -875,8 +875,11 @@ void MainWindow::buildMenuBar()
 
     QAction* nr2Action = dspMenu->addAction(QStringLiteral("NR&2"));
     nr2Action->setCheckable(true);
-    nr2Action->setEnabled(false);
-    nr2Action->setToolTip(QStringLiteral("NYI — Phase X"));
+    nr2Action->setToolTip(QStringLiteral("Toggle enhanced multiband noise reduction (NR2/EMNR)"));
+    connect(nr2Action, &QAction::toggled, this, [this](bool on) {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (slice) { slice->setEmnrEnabled(on); }
+    });
 
     m_nbAction = dspMenu->addAction(QStringLiteral("N&B"));
     m_nbAction->setCheckable(true);
@@ -1896,8 +1899,19 @@ void MainWindow::wireSliceToSpectrum()
     connect(vfo, &VfoWidget::binauralChanged, this, [slice](bool v) {
         slice->setBinauralEnabled(v);
     });
-    connect(vfo, &VfoWidget::quickModeRequested, this, [](int) {
-        // Stage 2: map index → DSPMode and apply
+    connect(vfo, &VfoWidget::quickModeRequested, this, [slice](int index) {
+        // Quick-mode buttons: 0=USB, 1=CW, 2=DIG (matching AetherSDR defaults)
+        static constexpr DSPMode kQuickModes[] = {DSPMode::USB, DSPMode::CWU, DSPMode::DIGU};
+        if (index >= 0 && index < 3) {
+            slice->setDspMode(kQuickModes[index]);
+        }
+    });
+
+    // --- VfoWidget → MainWindow: open Setup dialog (e.g. AGC-T right-click) ---
+    connect(vfo, &VfoWidget::openSetupRequested, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
     });
 
     // --- VfoWidget → SliceModel: RIT/XIT outbound (S1.8a stubs) ---
@@ -2012,6 +2026,13 @@ void MainWindow::wireSliceToSpectrum()
 
     // Position the VFO flag
     m_spectrumWidget->updateVfoPositions();
+
+    // --- S-meter → VfoWidget level bar ---
+    // MeterPoller emits smeterUpdated(double dbm) on each poll tick (100ms).
+    // VfoWidget::setSmeter drives the VfoLevelBar S-meter indicator.
+    if (m_meterPoller) {
+        connect(m_meterPoller, &MeterPoller::smeterUpdated, vfo, &VfoWidget::setSmeter);
+    }
 
     // --- Wire RxApplet to active slice ---
     if (m_rxApplet) {

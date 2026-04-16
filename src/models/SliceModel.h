@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Band.h"
 #include "core/WdspTypes.h"
 
 #include <QObject>
@@ -256,6 +257,16 @@ public:
     int    rttyShiftHz()     const { return m_rttyShiftHz; }
     void   setRttyShiftHz(int hz);
 
+    // ---- RIT helper ----
+    // Effective receive frequency = base frequency + RIT offset (when enabled).
+    // This is the frequency fed to the WDSP shift path for demodulation.
+    // RIT is a demodulation offset, NOT a VFO/hardware frequency change.
+    // From Thetis console.cs — RIT applies a receive-side offset without
+    // retuning the hardware VFO.
+    double effectiveRxFrequency() const {
+        return m_frequency + (m_ritEnabled ? static_cast<double>(m_ritHz) : 0.0);
+    }
+
     // ---- Per-mode filter defaults ----
     // Returns the F5 (default) filter low/high for a given mode.
     // Ported from Thetis console.cs:5180-5575 InitFilterPresets.
@@ -266,6 +277,29 @@ public:
 
     // Returns DSPMode from name string (e.g., "LSB" → DSPMode::LSB)
     static DSPMode modeFromName(const QString& name);
+
+    // ── Phase 3G-10 Stage 2: per-slice-per-band persistence ──────────────────
+    //
+    // Key namespace (see AppSettings.h §Per-slice-per-band DSP state):
+    //   Per-band DSP: Slice<N>/Band<key>/AgcThreshold  etc.
+    //   Session state: Slice<N>/Locked  etc.
+    //
+    // saveToSettings(band):
+    //   Writes per-band DSP keys and session-state keys to AppSettings.
+    //   Does NOT call AppSettings::save() — caller is responsible for flushing.
+    //
+    // restoreFromSettings(band):
+    //   Reads per-band DSP keys and session-state keys from AppSettings.
+    //   Missing keys fall back to current SliceModel defaults (no change).
+    //
+    // migrateLegacyKeys():
+    //   One-shot migration. Checks for the legacy "VfoFrequency" flat key.
+    //   If found, migrates to Slice0/Band<current>/... using the persisted
+    //   frequency to derive the band. Then removes all legacy Vfo* keys.
+    //   Call once on startup, before restoreFromSettings().
+    void saveToSettings(NereusSDR::Band band);
+    void restoreFromSettings(NereusSDR::Band band);
+    static void migrateLegacyKeys();
 
 signals:
     void frequencyChanged(double freq);
@@ -338,7 +372,7 @@ private:
     bool   m_muted{false};            // Neutral default — no Thetis citation needed
     double m_audioPan{0.0};           // Neutral default — center pan (−1..+1), no Thetis citation needed
     bool   m_ssqlEnabled{false};      // Neutral default — feature off at start
-    double m_ssqlThresh{-150.0};      // From Thetis radio.cs:1164-1165 — rx_squelch_threshold = -150.0f
+    double m_ssqlThresh{16.0};        // Slider units 0–100; From Thetis radio.cs:1187 _fSSqlThreshold = 0.16f → 16 in slider scale
     bool   m_amsqEnabled{false};      // Neutral default — feature off at start
     double m_amsqThresh{-150.0};      // From Thetis radio.cs:1164-1165 — rx_squelch_threshold = -150.0f (AM reuses same field)
     bool   m_fmsqEnabled{false};      // Neutral default — feature off at start

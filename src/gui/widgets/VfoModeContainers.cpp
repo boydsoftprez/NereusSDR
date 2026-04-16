@@ -77,6 +77,8 @@ void FmOptContainer::buildUi()
             m_toneValueCmb->addItem(text, QVariant(text));
         }
 
+        m_toneModeCmb->setToolTip(QStringLiteral("CTCSS tone mode (Off / Encode / Decode / Enc+Dec)"));
+        m_toneValueCmb->setToolTip(QStringLiteral("CTCSS sub-audible tone frequency (Hz)"));
         row->addWidget(m_toneModeCmb, 1);
         row->addWidget(m_toneValueCmb, 1);
         vbox->addLayout(row);
@@ -112,9 +114,13 @@ void FmOptContainer::buildUi()
         m_revBtn     = new QPushButton(QStringLiteral("Rev"), this);
 
         m_txLowBtn->setObjectName("txLowBtn");
+        m_txLowBtn->setToolTip(QStringLiteral("TX below RX (repeater Low offset) — Phase 3M-1"));
         m_simplexBtn->setObjectName("simplexBtn");
+        m_simplexBtn->setToolTip(QStringLiteral("Simplex — TX on same frequency as RX"));
         m_txHighBtn->setObjectName("txHighBtn");
+        m_txHighBtn->setToolTip(QStringLiteral("TX above RX (repeater High offset) — Phase 3M-1"));
         m_revBtn->setObjectName("revBtn");
+        m_revBtn->setToolTip(QStringLiteral("Reverse — listen on the repeater output frequency"));
 
         for (QPushButton* btn : {m_txLowBtn, m_simplexBtn, m_txHighBtn, m_revBtn}) {
             btn->setCheckable(true);
@@ -129,6 +135,12 @@ void FmOptContainer::buildUi()
     }
 
     // ── Signal connections ────────────────────────────────────────────────
+
+    // TODO Phase 3M-3: CTCSS decode requires a sub-audible tone detector
+    // (bandpass at ctcssValueHz + threshold). WDSP FMSQ handles noise-level
+    // squelch only, not tone-coded squelch. The SliceModel properties
+    // (fmCtcssMode, fmCtcssValueHz) store the user's selection for when
+    // the tone detector is implemented.
 
     connect(m_toneModeCmb,   QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int idx) {
@@ -149,6 +161,7 @@ void FmOptContainer::buildUi()
         m_slice->setFmOffsetHz(kHz * 1000);
     });
 
+    // Phase 3M-1: wire TX CTCSS encode and keydown repeater shift
     connect(m_txLowBtn, &QPushButton::clicked, this, [this]() {
         if (!m_slice) { return; }
         m_slice->setFmTxMode(FmTxMode::Low);
@@ -157,14 +170,19 @@ void FmOptContainer::buildUi()
         m_txHighBtn->setChecked(false);
     });
 
+    // Phase 3M-1: wire TX CTCSS encode and keydown repeater shift
     connect(m_simplexBtn, &QPushButton::clicked, this, [this]() {
         if (!m_slice) { return; }
         m_slice->setFmTxMode(FmTxMode::Simplex);
         m_txLowBtn->setChecked(false);
         m_simplexBtn->setChecked(true);
         m_txHighBtn->setChecked(false);
+        // Simplex: no repeater offset. The offset spinbox retains its last
+        // non-simplex value (Thetis console.cs:40412 chkFMTXSimplex_CheckedChanged
+        // does not zero udFMOffset). TX effects deferred to Phase 3M-1.
     });
 
+    // Phase 3M-1: wire TX CTCSS encode and keydown repeater shift
     connect(m_txHighBtn, &QPushButton::clicked, this, [this]() {
         if (!m_slice) { return; }
         m_slice->setFmTxMode(FmTxMode::High);
@@ -173,6 +191,8 @@ void FmOptContainer::buildUi()
         m_txHighBtn->setChecked(true);
     });
 
+    // fmReverse is display-only in 3G-10. TX repeater listen reversal
+    // (swapping TX/RX frequencies on keydown) is Phase 3M-1.
     connect(m_revBtn, &QPushButton::toggled, this, [this](bool checked) {
         if (!m_slice) { return; }
         m_slice->setFmReverse(checked);
@@ -244,8 +264,10 @@ void DigOffsetContainer::buildUi()
     m_plusBtn    = new TriBtn(TriBtn::Right, this);
 
     m_minusBtn->setObjectName("minusBtn");
+    m_minusBtn->setToolTip(QStringLiteral("Decrease DIG offset"));
     m_offsetLabel->setObjectName("offsetLabel");
     m_plusBtn->setObjectName("plusBtn");
+    m_plusBtn->setToolTip(QStringLiteral("Increase DIG offset"));
 
     m_offsetLabel->setRange(-10000, 10000);
     m_offsetLabel->setStep(kDigStep);
@@ -349,8 +371,10 @@ void RttyMarkShiftContainer::buildUi()
         m_markPlus  = new TriBtn(TriBtn::Right, this);
 
         m_markMinus->setObjectName("markMinus");
+        m_markMinus->setToolTip(QStringLiteral("Decrease RTTY mark frequency"));
         m_markLabel->setObjectName("markLabel");
         m_markPlus->setObjectName("markPlus");
+        m_markPlus->setToolTip(QStringLiteral("Increase RTTY mark frequency"));
 
         // From Thetis setup.designer.cs:40635 — RTTY mark default 2295 Hz
         m_markLabel->setRange(1000, 3500);
@@ -369,8 +393,10 @@ void RttyMarkShiftContainer::buildUi()
         m_shiftPlus  = new TriBtn(TriBtn::Right, this);
 
         m_shiftMinus->setObjectName("shiftMinus");
+        m_shiftMinus->setToolTip(QStringLiteral("Decrease RTTY shift spacing"));
         m_shiftLabel->setObjectName("shiftLabel");
         m_shiftPlus->setObjectName("shiftPlus");
+        m_shiftPlus->setToolTip(QStringLiteral("Increase RTTY shift spacing"));
 
         // From Thetis radio.cs:2043-2044 — shift = mark(2295) − space(2125) = 170 Hz
         m_shiftLabel->setRange(50, 1000);
@@ -431,5 +457,26 @@ void RttyMarkShiftContainer::syncFromSlice()
     m_markLabel->setValue(m_slice->rttyMarkHz());
     m_shiftLabel->setValue(m_slice->rttyShiftHz());
 }
+
+// ── CW autotune (S2.10c) ──────────────────────────────────────────────────
+//
+// TODO (deferred — no WDSP API):
+// CW autotune would require a pitch detection algorithm that identifies
+// the received CW carrier frequency and applies a correction offset.
+//
+// Investigation of matchedCW.h (third_party/wdsp/src/matchedCW.h) shows
+// that the "matched" module is a Gaussian partitioned-overlap-save filter
+// with SetRXAMatchedRun/Freqs/Gain API — it is the APF "selection=1" type,
+// not a CW tone detector or autotune controller.
+//
+// Implementing CW autotune natively would require:
+//   1. A pitch detector (e.g., FFT peak-finder or autocorrelation) in the
+//      audio-frequency range (~200–900 Hz for typical CW pitches)
+//   2. A frequency error signal fed back to RxChannel::setShiftFrequency()
+//      or slice->setRitHz() to center the tone on the APF frequency
+//   3. A one-shot or polling mode (QTimer @ ~500ms per original plan)
+//
+// This is a substantial addition beyond the current phase scope.
+// Deferred to a future phase with an explicit native design document.
 
 }  // namespace NereusSDR

@@ -16,6 +16,8 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QComboBox>
 #include <QGridLayout>
@@ -75,7 +77,8 @@ void RxApplet::buildUi()
         row->addWidget(m_sliceBadge);
 
         // Control 2: Lock button (checkable, 20×20, emoji 🔓/🔒)
-        // Checked color: #4488ff. NYI — SliceModel has no setFrequencyLocked yet.
+        // Live in S2.9 — wired to SliceModel::setLocked (client-side guard).
+        // Checked color: #4488ff.
         m_lockBtn = new QPushButton(QString::fromUtf8("\xF0\x9F\x94\x93"), this); // 🔓
         m_lockBtn->setCheckable(true);
         m_lockBtn->setFixedSize(20, 20);
@@ -88,10 +91,12 @@ void RxApplet::buildUi()
             m_lockBtn->setText(locked
                 ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
                 : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
-            // TODO Phase 3I: m_slice->setFrequencyLocked(locked);
+            if (!m_updatingFromModel && m_slice) {
+                m_slice->setLocked(locked);
+            }
         });
         row->addWidget(m_lockBtn);
-        NyiOverlay::markNyi(m_lockBtn, QStringLiteral("Phase 3I"));
+        // Lock is live in S2.9 — no NYI badge.
 
         // Control 3: RX antenna button (flat, color #4488ff, transparent bg)
         // From AetherSDR RxApplet.cpp lines 270-289
@@ -418,19 +423,19 @@ void RxApplet::buildUi()
         row->addWidget(m_agcCombo);
 
         // Control 10: AGC threshold slider
-        // NYI — SliceModel has no setAgcThreshold() yet
+        // From Thetis Project Files/Source/Console/console.cs:45977 — agc_thresh_point
         m_agcTSlider = new QSlider(Qt::Horizontal, this);
-        m_agcTSlider->setRange(0, 100);
-        m_agcTSlider->setValue(65);
+        m_agcTSlider->setRange(-160, 0);
+        m_agcTSlider->setValue(-20);
         m_agcTSlider->setFixedHeight(18);
         m_agcTSlider->setStyleSheet(Style::sliderHStyle());
+        // From Thetis console.resx:8397 — ptbRF.ToolTip (ptbRF is the AGC-T slider)
+        m_agcTSlider->setToolTip(QStringLiteral("AGC Max Gain - Operates similarly to traditional RF Gain. Right click AUTO based on noise floor."));
         connect(m_agcTSlider, &QSlider::valueChanged, this, [this](int v) {
-            m_agcTSlider->setToolTip(
-                QStringLiteral("AGC Threshold: %1").arg(v));
-            // TODO Phase 3I: m_slice->setAgcThreshold(v);
+            if (m_updatingFromModel || !m_slice) { return; }
+            m_slice->setAgcThreshold(v);
         });
         row->addWidget(m_agcTSlider, 1);
-        NyiOverlay::markNyi(m_agcTSlider, QStringLiteral("Phase 3I"));
 
         rightCol->addLayout(row);
     }
@@ -438,8 +443,8 @@ void RxApplet::buildUi()
     rightCol->addStretch(1);
 
     // Control 15: RIT toggle + offset + zero
-    // amberToggle + insetValue + QPushButton("0")
-    // NYI — SliceModel has no setRit() yet
+    // Live-wired in S2.8 — SliceModel::setRitEnabled/setRitHz feed the
+    // existing RxChannel::setShiftFrequency path via RadioModel.
     // From AetherSDR RxApplet.cpp lines 773-823
     {
         auto* row = new QHBoxLayout;
@@ -469,15 +474,36 @@ void RxApplet::buildUi()
         m_ritPlus = new TriBtn(TriBtn::Right, this);
         row->addWidget(m_ritPlus);
 
+        // Wire RIT controls to SliceModel (live in S2.8).
+        // Toggle → enable/disable RIT on the slice.
+        connect(m_ritOnBtn, &QPushButton::toggled, this, [this](bool on) {
+            if (m_updatingFromModel || !m_slice) { return; }
+            m_slice->setRitEnabled(on);
+        });
+        // Minus/Plus → decrement/increment by current step, clamped to ±10000 Hz.
+        connect(m_ritMinus, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            int step = m_slice->stepHz();
+            m_slice->setRitHz(std::clamp(m_slice->ritHz() - step, -10000, 10000));
+        });
+        connect(m_ritPlus, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            int step = m_slice->stepHz();
+            m_slice->setRitHz(std::clamp(m_slice->ritHz() + step, -10000, 10000));
+        });
+        // Zero → reset RIT offset to 0.
+        connect(m_ritZero, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            m_slice->setRitHz(0);
+        });
+
         rightCol->addLayout(row);
 
-        NyiOverlay::markNyi(m_ritOnBtn, QStringLiteral("Phase 3I"));
-        NyiOverlay::markNyi(m_ritMinus, QStringLiteral("Phase 3I"));
-        NyiOverlay::markNyi(m_ritPlus,  QStringLiteral("Phase 3I"));
+        // RIT controls are live — no NYI badge.
     }
 
     // Control 16: XIT toggle + offset + zero
-    // Same structure as RIT. NYI.
+    // Same structure as RIT. XIT stored for 3M-1 (TX phase); keep NYI badge.
     // From AetherSDR RxApplet.cpp lines 825-876
     {
         auto* row = new QHBoxLayout;
@@ -509,27 +535,40 @@ void RxApplet::buildUi()
 
         rightCol->addLayout(row);
 
-        NyiOverlay::markNyi(m_xitOnBtn, QStringLiteral("Phase 3I"));
-        NyiOverlay::markNyi(m_xitMinus, QStringLiteral("Phase 3I"));
-        NyiOverlay::markNyi(m_xitPlus,  QStringLiteral("Phase 3I"));
+        // XIT stored for 3M-1; keep NYI badges.
+        NyiOverlay::markNyi(m_xitOnBtn, QStringLiteral("XIT — TX gated by Phase 3M-1"));
+        NyiOverlay::markNyi(m_xitMinus, QStringLiteral("XIT — TX gated by Phase 3M-1"));
+        NyiOverlay::markNyi(m_xitPlus,  QStringLiteral("XIT — TX gated by Phase 3M-1"));
     }
 
     columns->addLayout(rightCol, 3);
     root->addLayout(columns);
 
     // ── Tooltips ──────────────────────────────────────────────────────────
+    // NereusSDR native — no Thetis per-slice badge equivalent
     m_sliceBadge->setToolTip(QStringLiteral("Slice identifier"));
-    m_lockBtn->setToolTip(QStringLiteral("Lock VFO frequency to prevent accidental tuning"));
-    m_rxAntBtn->setToolTip(QStringLiteral("Select the receive antenna port"));
+    // From Thetis console.resx:5787 — chkVFOLock.ToolTip
+    m_lockBtn->setToolTip(QStringLiteral("Keeps the VFO from changing while in the middle of a QSO."));
+    // From Thetis console.resx:8277 — chkRxAnt.ToolTip
+    m_rxAntBtn->setToolTip(QStringLiteral("Toggles receive antenna between RX and TX antennas for RX1"));
+    // NereusSDR native — no single Thetis TX-antenna tooltip
     m_txAntBtn->setToolTip(QStringLiteral("Select the transmit antenna port"));
+    // NereusSDR native — filter width label, no Thetis equivalent control
     m_filterWidthLbl->setToolTip(QStringLiteral("Current filter passband width"));
+    // NereusSDR native — Thetis uses discrete radio buttons per mode
     m_modeCombo->setToolTip(QStringLiteral("Select operating mode"));
-    m_muteBtn->setToolTip(QStringLiteral("Mute this slice audio output"));
-    m_afSlider->setToolTip(QStringLiteral("Audio output volume for this slice"));
-    m_agcCombo->setToolTip(QStringLiteral("AGC speed: Off/Slow/Med/Fast"));
-    m_agcTSlider->setToolTip(QStringLiteral("AGC threshold (NYI)"));
-    m_ritOnBtn->setToolTip(QStringLiteral("Receive Incremental Tuning (NYI)"));
-    m_xitOnBtn->setToolTip(QStringLiteral("Transmit Incremental Tuning (NYI)"));
+    // From Thetis console.resx:1560 — chkRX2Mute.ToolTip (same text for RX1)
+    m_muteBtn->setToolTip(QStringLiteral("Mute - Mutes the output to the speaker."));
+    // From Thetis console.resx:8433 — ptbAF.ToolTip
+    m_afSlider->setToolTip(QStringLiteral("AF Gain - Monitor Volume for RX/TX"));
+    // From Thetis console.resx:4554 — comboAGC.ToolTip
+    m_agcCombo->setToolTip(QStringLiteral("Automatic Gain Control Mode Setting"));
+    // From Thetis console.resx:8397 — ptbRF.ToolTip (ptbRF is the AGC-T slider)
+    m_agcTSlider->setToolTip(QStringLiteral("AGC Max Gain - Operates similarly to traditional RF Gain. Right click AUTO based on noise floor."));
+    // From Thetis console.resx:4335 — chkRIT.ToolTip
+    m_ritOnBtn->setToolTip(QStringLiteral("Receive Incremental Tuning - offset RX frequency by value below in Hz."));
+    // From Thetis console.resx:4416 — chkXIT.ToolTip (TX gated by Phase 3M-1)
+    m_xitOnBtn->setToolTip(QStringLiteral("Transmit Incremental Tuning - offset TX frequency by the value below in Hz."));
 }
 
 void RxApplet::rebuildFilterButtons()
@@ -720,6 +759,21 @@ void RxApplet::syncFromModel()
     m_filterPassband->setFilter(m_slice->filterLow(), m_slice->filterHigh());
     m_filterPassband->setMode(SliceModel::modeName(m_slice->dspMode()));
 
+    // Lock state (S2.9)
+    m_lockBtn->setChecked(m_slice->locked());
+    m_lockBtn->setText(m_slice->locked()
+        ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
+        : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+
+    // RIT state (S2.8)
+    m_ritOnBtn->setChecked(m_slice->ritEnabled());
+    {
+        const int hz = m_slice->ritHz();
+        m_ritLabel->setText(QStringLiteral("%1%2 Hz")
+            .arg(hz >= 0 ? QStringLiteral("+") : QString{})
+            .arg(hz));
+    }
+
     m_updatingFromModel = false;
 }
 
@@ -772,6 +826,28 @@ void RxApplet::connectSlice(SliceModel* s)
     });
     connect(s, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
         m_txAntBtn->setText(ant);
+    });
+
+    // Lock model → UI sync (S2.9)
+    connect(s, &SliceModel::lockedChanged, this, [this](bool locked) {
+        m_updatingFromModel = true;
+        m_lockBtn->setChecked(locked);
+        m_lockBtn->setText(locked
+            ? QString::fromUtf8("\xF0\x9F\x94\x92")   // 🔒
+            : QString::fromUtf8("\xF0\x9F\x94\x93")); // 🔓
+        m_updatingFromModel = false;
+    });
+
+    // RIT model → UI sync (S2.8)
+    connect(s, &SliceModel::ritEnabledChanged, this, [this](bool on) {
+        m_updatingFromModel = true;
+        m_ritOnBtn->setChecked(on);
+        m_updatingFromModel = false;
+    });
+    connect(s, &SliceModel::ritHzChanged, this, [this](int hz) {
+        m_ritLabel->setText(QStringLiteral("%1%2 Hz")
+            .arg(hz >= 0 ? QStringLiteral("+") : QString{})
+            .arg(hz));
     });
 
     // ATT/S-ATT — wire to StepAttenuatorController if available

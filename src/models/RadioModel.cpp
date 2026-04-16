@@ -12,6 +12,9 @@
 #include "core/LogCategories.h"
 #include "gui/SpectrumWidget.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <QMetaObject>
 #include <QStandardPaths>
 #include <QThread>
@@ -105,6 +108,20 @@ int RadioModel::addPanadapter()
     auto* pan = new PanadapterModel(this);
     int index = m_panadapters.size();
     m_panadapters.append(pan);
+
+    // Wire bandChanged for per-band DSP bandstack persistence.
+    // This fires whenever the VFO crosses a band boundary: save the old
+    // band's DSP state then restore the new band's DSP state.
+    // Only the first panadapter drives the active slice; additional pans
+    // are wired the same way for completeness (multi-pan is 3F scope).
+    connect(pan, &PanadapterModel::bandChanged, this, [this](Band newBand) {
+        if (m_activeSlice) {
+            m_activeSlice->saveToSettings(m_lastBand);
+            m_activeSlice->restoreFromSettings(newBand);
+            m_lastBand = newBand;
+        }
+    });
+
     emit panadapterAdded(index);
     return index;
 }
@@ -193,6 +210,50 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                      m_activeSlice->filterHigh());
                 rxCh->setAgcMode(m_activeSlice->agcMode());
                 rxCh->setAgcTop(m_activeSlice->rfGain());
+                // AGC advanced — push slice state to WDSP (Stage 2)
+                rxCh->setAgcThreshold(m_activeSlice->agcThreshold());
+                rxCh->setAgcHang(m_activeSlice->agcHang());
+                rxCh->setAgcSlope(m_activeSlice->agcSlope());
+                rxCh->setAgcAttack(m_activeSlice->agcAttack());
+                rxCh->setAgcDecay(m_activeSlice->agcDecay());
+                // NB2 sub-parameter defaults — From Thetis cmaster.c:55-68 (create_nobEXT)
+                // These are set-and-forget; the run flag is gated by processIq() atomics.
+                // Declared in specHPSDR.cs:922-937; WDSP nobII.c:658,686,697,707
+                rxCh->setNb2Mode(0);         // cmaster.c:61  mode=0 (zero)
+                rxCh->setNb2Tau(0.0001);     // cmaster.c:62  slewtime=0.0001 s
+                rxCh->setNb2LeadTime(0.0001);// cmaster.c:63  advtime=0.0001 s
+                rxCh->setNb2HangTime(0.0001);// cmaster.c:65  hangtime=0.0001 s
+                // EMNR sub-parameter defaults — From Thetis radio.cs:2062,2081,2101,2235
+                // These are set-and-forget on channel creation; run flag follows slice.
+                rxCh->setEmnrGainMethod(2);   // radio.cs:2062 rx_nr2_gain_method = 2
+                rxCh->setEmnrNpeMethod(0);    // radio.cs:2081 rx_nr2_npe_method = 0
+                rxCh->setEmnrAeRun(true);     // radio.cs:2101 rx_nr2_ae_run = 1
+                rxCh->setEmnrPosition(1);     // radio.cs:2235 rx_nr2_position = 1 (post-AGC)
+                rxCh->setEmnrEnabled(m_activeSlice->emnrEnabled());
+                rxCh->setSnbEnabled(m_activeSlice->snbEnabled());
+                // APF sub-parameter defaults — From Thetis radio.cs:1986,1948,1967,1929
+                // These are set-and-forget on channel creation; run flag follows slice.
+                // selection=3 (bi-quad), bw=600Hz, gain=1.0, freq=600.0Hz
+                rxCh->setApfSelection(3);       // radio.cs:1986 _rx_apf_type = 3 (bi-quad)
+                rxCh->setApfBandwidth(600.0);   // radio.cs:1948 rx_apf_bw = 600.0 Hz
+                rxCh->setApfGain(1.0);          // radio.cs:1967 rx_apf_gain = 1.0
+                rxCh->setApfFreq(600.0);        // radio.cs:1929 rx_apf_freq = 600.0 Hz
+                rxCh->setApfEnabled(m_activeSlice->apfEnabled());
+                // Squelch initial push — From Thetis radio.cs:1185,1164,1274,1293,1312
+                rxCh->setSsqlEnabled(m_activeSlice->ssqlEnabled());
+                // Model stores 0–100 (slider units); WDSP expects 0.0–1.0 linear.
+                rxCh->setSsqlThresh(std::clamp(m_activeSlice->ssqlThresh() / 100.0, 0.0, 1.0));
+                rxCh->setAmsqEnabled(m_activeSlice->amsqEnabled());
+                rxCh->setAmsqThresh(m_activeSlice->amsqThresh());
+                rxCh->setFmsqEnabled(m_activeSlice->fmsqEnabled());
+                rxCh->setFmsqThresh(m_activeSlice->fmsqThresh());
+                // Audio panel initial push
+                // Mute: From Thetis dsp.cs:393-394 — panel runs by default (unmuted)
+                // Pan: From Thetis radio.cs:1386 — pan = 0.5f (center); NereusSDR 0.0 center
+                // Binaural: From Thetis radio.cs:1145 — bin_on = false (dual-mono)
+                rxCh->setMuted(m_activeSlice->muted());
+                rxCh->setAudioPan(m_activeSlice->audioPan());
+                rxCh->setBinauralEnabled(m_activeSlice->binauralEnabled());
             }
             rxCh->setActive(true);
         }
@@ -387,6 +448,14 @@ void RadioModel::wireSliceSignals()
                 conn->setTxFrequency(freqHz);
             });
         }
+        // Track band from VFO frequency so per-band saves target the correct
+        // band even when the panadapter center hasn't crossed the boundary.
+        Band newBand = bandFromFrequency(freq);
+        if (newBand != m_lastBand) {
+            m_activeSlice->saveToSettings(m_lastBand);
+            m_activeSlice->restoreFromSettings(newBand);
+            m_lastBand = newBand;
+        }
         scheduleSettingsSave();
     });
 
@@ -417,17 +486,285 @@ void RadioModel::wireSliceSignals()
         scheduleSettingsSave();
     });
 
+    // AGC advanced → WDSP
+    // From Thetis Project Files/Source/Console/console.cs:45977 — AGCThresh
+    // From Thetis Project Files/Source/Console/radio.cs:1037-1124 — Decay/Hang/Slope
+    // From Thetis Project Files/Source/Console/dsp.cs:116-120 — P/Invoke decls
+    //
+    // Bidirectional sync: SetRXAAGCThresh and SetRXAAGCTop both write max_gain
+    // in WDSP wcpAGC.c. After either changes, read back the sibling value and
+    // update the paired control. m_syncingAgc guards against A→B→A feedback loops.
+    // From Thetis console.cs:45960-46006 — bidirectional AGC sync pattern.
+    connect(slice, &SliceModel::agcThresholdChanged, this, [this](int dBu) {
+        if (m_syncingAgc) { return; }
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            m_syncingAgc = true;
+            rxCh->setAgcThreshold(dBu);
+            // Read back resulting AGC Top and sync RF Gain display.
+            // From Thetis console.cs:45978 — GetRXAAGCTop after SetRXAAGCThresh
+            double top = rxCh->readBackAgcTop();
+            int rfGain = static_cast<int>(std::round(top));
+            SliceModel* s = m_activeSlice;
+            if (s && s->rfGain() != rfGain) {
+                s->setRfGain(rfGain);
+            }
+            m_syncingAgc = false;
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::agcHangChanged, this, [this](int ms) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAgcHang(ms);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::agcSlopeChanged, this, [this](int slope) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAgcSlope(slope);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::agcAttackChanged, this, [this](int ms) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAgcAttack(ms);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::agcDecayChanged, this, [this](int ms) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAgcDecay(ms);
+        }
+        scheduleSettingsSave();
+    });
+
+    // EMNR (NR2) → WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:2216-2232
+    // WDSP: third_party/wdsp/src/emnr.c:1283
+    connect(slice, &SliceModel::emnrEnabledChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setEmnrEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+
+    // SNB → WDSP
+    // From Thetis Project Files/Source/Console/console.cs:36347
+    //   WDSP.SetRXASNBARun(WDSP.id(0, 0), chkDSPNB2.Checked)
+    // WDSP: third_party/wdsp/src/snb.c:579
+    connect(slice, &SliceModel::snbEnabledChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setSnbEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+
+    // APF → WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1910-1927
+    //   WDSP.SetRXASPCWRun(WDSP.id(thread, subrx), value)
+    // WDSP: third_party/wdsp/src/apfshadow.c:93
+    connect(slice, &SliceModel::apfEnabledChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setApfEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+
+    // APF tune offset → WDSP freq
+    // From Thetis Project Files/Source/Console/setup.cs:17068-17073
+    //   freq = CWPitch + tuneOffset; slider offset range -250..+250
+    //   CW pitch default 600 Hz from Thetis console.cs
+    // WDSP: third_party/wdsp/src/apfshadow.c:117
+    connect(slice, &SliceModel::apfTuneHzChanged, this, [this](int hz) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            // From Thetis setup.cs:17071 — freq = CWPitch + tuneOffset
+            // CW pitch default 600 Hz from Thetis console.cs
+            static constexpr double kCwPitchHz = 600.0;
+            rxCh->setApfFreq(kCwPitchHz + static_cast<double>(hz));
+        }
+        scheduleSettingsSave();
+    });
+
+    // Squelch — SSB → WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1185-1229
+    // WDSP: third_party/wdsp/src/ssql.c:331,339
+    connect(slice, &SliceModel::ssqlEnabledChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setSsqlEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::ssqlThreshChanged, this, [this](double threshold) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            // Model stores 0–100 (slider units); WDSP expects 0.0–1.0 linear.
+            // From Thetis radio.cs:1217-1218 — clamped 0..1, default 0.16.
+            double normalized = std::clamp(threshold / 100.0, 0.0, 1.0);
+            rxCh->setSsqlThresh(normalized);
+        }
+        scheduleSettingsSave();
+    });
+
+    // Squelch — AM → WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1164-1178, 1293-1310
+    // WDSP: third_party/wdsp/src/amsq.c (SetRXAAMSQRun, SetRXAAMSQThreshold)
+    connect(slice, &SliceModel::amsqEnabledChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAmsqEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::amsqThreshChanged, this, [this](double dB) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAmsqThresh(dB);
+        }
+        scheduleSettingsSave();
+    });
+
+    // Squelch — FM → WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1274-1329
+    // WDSP: third_party/wdsp/src/fmsq.c:236,244
+    // SliceModel stores fmsqThresh in dB; RxChannel::setFmsqThresh converts to linear
+    connect(slice, &SliceModel::fmsqEnabledChanged, this, [this](bool on) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setFmsqEnabled(on);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::fmsqThreshChanged, this, [this](double dB) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setFmsqThresh(dB);
+        }
+        scheduleSettingsSave();
+    });
+
+    // Audio panel — mute / pan / binaural → WDSP PatchPanel
+    // From Thetis Project Files/Source/Console/radio.cs:1386-1403 (pan)
+    // From Thetis Project Files/Source/Console/radio.cs:1145-1162 (binaural)
+    // WDSP: third_party/wdsp/src/patchpanel.c:126,159,187
+    connect(slice, &SliceModel::mutedChanged, this, [this](bool v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setMuted(v);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::audioPanChanged, this, [this](double pan) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setAudioPan(pan);
+        }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::binauralEnabledChanged, this, [this](bool v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) {
+            rxCh->setBinauralEnabled(v);
+        }
+        scheduleSettingsSave();
+    });
+
+    // RIT + DIG offset → WDSP shift frequency
+    //
+    // RIT (Receive Incremental Tuning): client-side demodulation offset that
+    // does NOT retune the hardware VFO.
+    // From Thetis console.cs — RIT adjusts receive demodulation without moving
+    // the hardware DDC center.
+    //
+    // DIG offset: per-mode click-tune demodulation offset for DIGL/DIGU.
+    // From Thetis console.cs:14637 (DIGUClickTuneOffset) and :14672
+    // (DIGLClickTuneOffset). Both are int offsets in Hz; Thetis uses per-mode
+    // filter re-centering internally, but NereusSDR implements DIG offset as
+    // an additive shift on the same setShiftFrequency path as RIT.
+    //
+    // Combined: shift = ritOffset + digOffset (where digOffset is mode-gated).
+    // For 3G-10 (single RX, no CTUN), the shift = these two terms only.
+    auto updateShiftFrequency = [this, slice]() {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (!rxCh) { return; }
+        double offset = slice->ritEnabled()
+                        ? static_cast<double>(slice->ritHz())
+                        : 0.0;
+        // DIG offset per mode — Thetis console.cs:14637,14672
+        if (slice->dspMode() == DSPMode::DIGL) {
+            offset += static_cast<double>(slice->diglOffsetHz());
+        } else if (slice->dspMode() == DSPMode::DIGU) {
+            offset += static_cast<double>(slice->diguOffsetHz());
+        }
+        rxCh->setShiftFrequency(offset);
+    };
+    connect(slice, &SliceModel::ritEnabledChanged,  this, updateShiftFrequency);
+    connect(slice, &SliceModel::ritHzChanged,        this, updateShiftFrequency);
+    connect(slice, &SliceModel::diglOffsetHzChanged, this, updateShiftFrequency);
+    connect(slice, &SliceModel::diguOffsetHzChanged, this, updateShiftFrequency);
+    connect(slice, &SliceModel::dspModeChanged,      this, updateShiftFrequency);
+
+    // RTTY mark + shift → bandpass filter
+    //
+    // RTTY uses two audio tones: mark (freq1 = 2295 Hz) and space (freq0 = 2125 Hz).
+    // From Thetis radio.cs:2024-2060 — rx_dolly_freq0/freq1 are stored and fed to
+    // SetRXAmpeakFilFreq (the IIR audio peak filter / "dolly" filter). NereusSDR
+    // does not yet implement the ampeak dolly filter (it is not in RxChannel),
+    // so the mark/shift values are used to compute a bandpass window that covers
+    // both tones:
+    //   filterLow  = markHz − shiftHz/2 − 100
+    //   filterHigh = markHz + shiftHz/2 + 100
+    // The ±100 Hz guard band keeps both tones well inside the passband.
+    //
+    // Note: Thetis uses DIGU/DIGL DSP modes for RTTY (there is no DSPMode::RTTY
+    // in WDSP — see Thetis enums.cs:252-268). The bandpass update fires whenever
+    // mark or shift changes, matching Thetis setup.cs:17203 (udDSPRX1DollyF0_ValueChanged)
+    // which fires unconditionally on control change.
+    //
+    // Full dolly-filter support (SetRXAmpeakFilFreq wiring) is deferred to a later
+    // phase when the ampeak API is added to RxChannel.
+    auto updateRttyFilter = [this, slice]() {
+        const int mark  = slice->rttyMarkHz();
+        const int shift = slice->rttyShiftHz();
+        const int low   = mark - shift / 2 - 100;
+        const int high  = mark + shift / 2 + 100;
+        slice->setFilter(low, high);
+    };
+    connect(slice, &SliceModel::rttyMarkHzChanged,  this, updateRttyFilter);
+    connect(slice, &SliceModel::rttyShiftHzChanged, this, updateRttyFilter);
+
+    // XIT stored for 3M-1 (TX phase) to consume on keydown. No RX effect in 3G-10.
+
     // AF gain → AudioEngine volume
     connect(slice, &SliceModel::afGainChanged, this, [this](int gain) {
         m_audioEngine->setVolume(gain / 100.0f);
         scheduleSettingsSave();
     });
 
-    // RF gain → WDSP AGC top
+    // RF gain → WDSP AGC top, with bidirectional sync back to AGC-T.
+    // From Thetis console.cs:50350 pattern — GetRXAAGCThresh after SetRXAAGCTop
     connect(slice, &SliceModel::rfGainChanged, this, [this](int gain) {
+        if (m_syncingAgc) { return; }
         RxChannel* rxCh = m_wdspEngine->rxChannel(0);
         if (rxCh) {
+            m_syncingAgc = true;
             rxCh->setAgcTop(static_cast<double>(gain));
+            // Read back resulting threshold and sync AGC-T display.
+            double thresh = rxCh->readBackAgcThresh();
+            int threshInt = static_cast<int>(std::round(thresh));
+            SliceModel* s = m_activeSlice;
+            if (s && s->agcThreshold() != threshInt) {
+                s->setAgcThreshold(threshInt);
+            }
+            m_syncingAgc = false;
         }
         scheduleSettingsSave();
     });
@@ -467,58 +804,36 @@ void RadioModel::wireSliceSignals()
 }
 
 // Load persisted VFO state from AppSettings into a slice.
+// Migrates legacy flat keys first, then restores per-band state for the
+// current band (derived from the panadapter center frequency or the slice
+// default frequency).
 void RadioModel::loadSliceState(SliceModel* slice)
 {
     if (!slice) {
         return;
     }
 
-    auto& s = AppSettings::instance();
+    // One-shot migration of legacy Vfo* flat keys. No-op if already migrated.
+    SliceModel::migrateLegacyKeys();
 
-    double freq = s.value(QStringLiteral("VfoFrequency"), 14225000.0).toDouble();
-    slice->setFrequency(freq);
-
-    int modeInt = s.value(QStringLiteral("VfoDspMode"),
-                          static_cast<int>(DSPMode::USB)).toInt();
-    DSPMode mode = static_cast<DSPMode>(modeInt);
-    // Set mode without auto-applying default filter (load persisted filter instead)
-    // We need to set the mode field directly and then load filter separately
-    slice->setDspMode(mode);
-
-    // Override filter with persisted values if they exist
-    if (s.contains(QStringLiteral("VfoFilterLow")) &&
-        s.contains(QStringLiteral("VfoFilterHigh"))) {
-        int low = s.value(QStringLiteral("VfoFilterLow")).toInt();
-        int high = s.value(QStringLiteral("VfoFilterHigh")).toInt();
-        slice->setFilter(low, high);
+    // Derive current band. Use the first panadapter's band if available;
+    // otherwise fall back to bandFromFrequency on the slice's default freq.
+    Band currentBand = Band::Band20m;
+    if (!m_panadapters.isEmpty()) {
+        currentBand = m_panadapters.first()->band();
+    } else {
+        currentBand = bandFromFrequency(slice->frequency());
     }
+    m_lastBand = currentBand;
 
-    int agcInt = s.value(QStringLiteral("VfoAgcMode"),
-                         static_cast<int>(AGCMode::Med)).toInt();
-    slice->setAgcMode(static_cast<AGCMode>(agcInt));
+    slice->restoreFromSettings(currentBand);
 
-    int stepHz = s.value(QStringLiteral("VfoStepHz"), 100).toInt();
-    slice->setStepHz(stepHz);
-
-    int afGain = s.value(QStringLiteral("VfoAfGain"), 50).toInt();
-    slice->setAfGain(afGain);
-
-    int rfGain = s.value(QStringLiteral("VfoRfGain"), 80).toInt();
-    slice->setRfGain(rfGain);
-
-    QString rxAnt = s.value(QStringLiteral("VfoRxAntenna"),
-                            QStringLiteral("ANT1")).toString();
-    slice->setRxAntenna(rxAnt);
-
-    QString txAnt = s.value(QStringLiteral("VfoTxAntenna"),
-                            QStringLiteral("ANT1")).toString();
-    slice->setTxAntenna(txAnt);
-
-    qCInfo(lcDsp) << "Loaded VFO state:"
-                  << SliceModel::modeName(mode)
-                  << freq / 1e6 << "MHz"
-                  << "AGC:" << agcInt
-                  << "AF:" << afGain << "RF:" << rfGain;
+    qCInfo(lcDsp) << "Loaded slice state for band:"
+                  << bandKeyName(currentBand)
+                  << SliceModel::modeName(slice->dspMode())
+                  << slice->frequency() / 1e6 << "MHz"
+                  << "AGC:" << static_cast<int>(slice->agcMode())
+                  << "AF:" << slice->afGain() << "RF:" << slice->rfGain();
 }
 
 // Coalesce settings saves to avoid writing on every scroll tick.
@@ -534,24 +849,14 @@ void RadioModel::scheduleSettingsSave()
     });
 }
 
-// Persist current slice state to AppSettings.
+// Persist current slice state to AppSettings (per-band + session state).
 void RadioModel::saveSliceState(SliceModel* slice)
 {
     if (!slice) {
         return;
     }
 
-    auto& s = AppSettings::instance();
-    s.setValue(QStringLiteral("VfoFrequency"), slice->frequency());
-    s.setValue(QStringLiteral("VfoDspMode"), static_cast<int>(slice->dspMode()));
-    s.setValue(QStringLiteral("VfoFilterLow"), slice->filterLow());
-    s.setValue(QStringLiteral("VfoFilterHigh"), slice->filterHigh());
-    s.setValue(QStringLiteral("VfoAgcMode"), static_cast<int>(slice->agcMode()));
-    s.setValue(QStringLiteral("VfoStepHz"), slice->stepHz());
-    s.setValue(QStringLiteral("VfoAfGain"), slice->afGain());
-    s.setValue(QStringLiteral("VfoRfGain"), slice->rfGain());
-    s.setValue(QStringLiteral("VfoRxAntenna"), slice->rxAntenna());
-    s.setValue(QStringLiteral("VfoTxAntenna"), slice->txAntenna());
+    slice->saveToSettings(m_lastBand);
 }
 
 void RadioModel::teardownConnection()

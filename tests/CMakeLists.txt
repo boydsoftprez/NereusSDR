@@ -86,5 +86,47 @@ nereus_add_test(tst_scrollable_label)
 nereus_add_test(tst_vfo_mode_containers)
 nereus_add_test(tst_vfo_tooltip_coverage)
 
+# ── Phase 3G-10 Stage 2: WDSP wiring — AGC advanced ──────────────────────
+nereus_add_test(tst_rxchannel_agc_advanced)
+nereus_add_test(tst_slice_agc_advanced)
+
+# ── Phase 3G-10 Stage 2: WDSP wiring — EMNR (NR2) ────────────────────────
+nereus_add_test(tst_rxchannel_emnr)
+nereus_add_test(tst_slice_emnr)
+
+# ── Phase 3G-10 Stage 2: WDSP wiring — SNB ───────────────────────────────
+nereus_add_test(tst_rxchannel_snb)
+nereus_add_test(tst_slice_snb)
+
+# ── Phase 3G-10 Stage 2: WDSP wiring — APF (Audio Peak Filter) ───────────
+nereus_add_test(tst_rxchannel_apf)
+nereus_add_test(tst_slice_apf)
+
+# ── Phase 3G-10 Stage 2: WDSP wiring — Squelch (SSB/AM/FM) ─────────────
+nereus_add_test(tst_rxchannel_squelch)
+nereus_add_test(tst_slice_squelch)
+
+# ── Phase 3G-10 Stage 2: WDSP wiring — Mute / Audio Pan / Binaural (S2.6) ──
+nereus_add_test(tst_rxchannel_audio_panel)
+nereus_add_test(tst_slice_audio_panel)
+
+# ── Phase 3G-10 Stage 2: WDSP wiring — NB2 polish (S2.7) ───────────────────
+nereus_add_test(tst_rxchannel_nb2_polish)
+
+# ── Phase 3G-10 Stage 2: RIT/XIT client offset (S2.8) ───────────────────────
+nereus_add_test(tst_slice_rit_xit)
+
+# ── Phase 3G-10 Stage 2: Frequency lock (S2.9) ──────────────────────────────
+nereus_add_test(tst_slice_frequency_lock)
+
+# ── Phase 3G-10 Stage 2: FM OPT container wire (S2.10a) ─────────────────────
+nereus_add_test(tst_fm_opt_container_wire)
+
+# ── Phase 3G-10 Stage 2: DIG offset + RTTY mark/shift (S2.10b) ──────────────
+nereus_add_test(tst_dig_rtty_wire)
+
+# ── Phase 3G-10 Stage 2: per-slice-per-band DSP persistence (S2.P) ───────────
+nereus_add_test(tst_slice_persistence_per_band)
+
 # ── Step attenuator / ADC overload detection ─────────────────────────────
 nereus_add_test(tst_step_attenuator_controller)

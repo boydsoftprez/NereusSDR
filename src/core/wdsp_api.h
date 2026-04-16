@@ -86,9 +86,23 @@ void RXANBPSetShiftFrequency(int channel, double shift);
 // Patch panel (patchpanel.h) — final mix stage in RXA pipeline
 // ---------------------------------------------------------------------------
 
+// Enable/disable the audio panel (mute when run=0, unmute when run=1).
+// From Thetis Project Files/Source/Console/dsp.cs:393-394 — P/Invoke decl
+// WDSP: third_party/wdsp/src/patchpanel.c:126
+void SetRXAPanelRun(int channel, int run);
+
+// Set stereo pan position. pan=0.0 → full left, pan=0.5 → center, pan=1.0 → full right.
+// WDSP applies sin-law panning: adjusts gain2I/gain2Q via sin(pan*PI).
+// NereusSDR uses -1..+1 range; convert with wdsp_pan = (nereus_pan + 1.0) / 2.0.
+// From Thetis Project Files/Source/Console/radio.cs:1386-1403
+//   pan default = 0.5f (center), dsp.cs:402-403 P/Invoke decl
+// WDSP: third_party/wdsp/src/patchpanel.c:159
+void SetRXAPanelPan(int channel, double pan);
+
 // bin=0 → copy=1 → dual mono (Q := I, same audio on both channels)
 // bin=1 → copy=0 → binaural (I and Q separate, for headphone stereo image)
 // From Thetis radio.cs:1157 — Thetis default BinOn=false → dual mono
+// WDSP: third_party/wdsp/src/patchpanel.c:187
 void SetRXAPanelBinaural(int channel, int bin);
 
 // ---------------------------------------------------------------------------
@@ -131,6 +145,20 @@ void SetRXAANFRun(int channel, int setit);
 
 void SetRXAEMNRRun(int channel, int run);
 
+// EMNR sub-parameters — From Thetis dsp.cs:243-297 P/Invoke declarations
+// WDSP: third_party/wdsp/src/emnr.c:1298,1306,1314,1322
+void SetRXAEMNRgainMethod(int channel, int method);
+void SetRXAEMNRnpeMethod(int channel, int method);
+void SetRXAEMNRaeRun(int channel, int run);
+void SetRXAEMNRPosition(int channel, int position);
+
+// ---------------------------------------------------------------------------
+// Spectral noise blanker (snb.h) — From Thetis dsp.cs P/Invoke declarations
+// ---------------------------------------------------------------------------
+
+// WDSP: third_party/wdsp/src/snb.c:579
+void SetRXASNBARun(int channel, int run);
+
 // ---------------------------------------------------------------------------
 // Noise blanker — external (nob.h, nob.c)
 // ---------------------------------------------------------------------------
@@ -165,8 +193,81 @@ void xnobEXT(int id, double* in, double* out);
 // Float version (nobII.c — not in header, but exported)
 void xnobEXTF(int id, float* I, float* Q);
 
+// NB2 advanced sub-parameters — called after create_nobEXT to override defaults.
+// Declared in Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:922-937
+// WDSP: third_party/wdsp/src/nobII.c:658,686,697,707,727
+
+// mode: 0=zero, 1=sample-hold, 2=mean-hold, 3=hold-sample, 4=interpolate
+// From Thetis specHPSDR.cs:937 — SetEXTNOBMode(int id, int mode)
+// WDSP: third_party/wdsp/src/nobII.c:658
+void SetEXTNOBMode(int id, int mode);
+
+// tau: slew time constant in seconds (sets both advslewtime and hangslewtime)
+// From Thetis specHPSDR.cs:922 — SetEXTNOBTau(int id, double tau)
+// WDSP: third_party/wdsp/src/nobII.c:686
+void SetEXTNOBTau(int id, double tau);
+
+// hangtime: hang time in seconds after blanked impulse
+// From Thetis specHPSDR.cs:925 — SetEXTNOBHangtime(int id, double time)
+// WDSP: third_party/wdsp/src/nobII.c:697
+void SetEXTNOBHangtime(int id, double time);
+
+// advtime: advance/lead time in seconds before detected impulse
+// From Thetis specHPSDR.cs:928 — SetEXTNOBAdvtime(int id, double time)
+// WDSP: third_party/wdsp/src/nobII.c:707
+void SetEXTNOBAdvtime(int id, double time);
+
+// threshold: detection threshold (dimensionless ratio; create default 30.0)
+// From Thetis specHPSDR.cs:934 — SetEXTNOBThreshold(int id, double thresh)
+// WDSP: third_party/wdsp/src/nobII.c:727
+void SetEXTNOBThreshold(int id, double thresh);
+
 // ---------------------------------------------------------------------------
-// Squelch (amsq.h)
+// APF — Audio Peak Filter (apfshadow.c / apfshadow.h)
+//
+// The APF shadow coordinates 4 underlying filter types via a single facade.
+// From Thetis Project Files/Source/Console/radio.cs:1910-2008
+// WDSP: third_party/wdsp/src/apfshadow.c:45,93,117,141,165
+// ---------------------------------------------------------------------------
+
+// Select filter type: 0=double-pole, 1=matched, 2=gaussian, 3=bi-quad
+// From Thetis radio.cs:1986 — _rx_apf_type = 3 (bi-quad)
+void SetRXASPCWSelection(int channel, int selection);
+
+// Enable/disable APF processing
+// From Thetis radio.cs:1910 — rx_apf_run default = false
+void SetRXASPCWRun(int channel, int run);
+
+// Set center frequency in Hz
+// From Thetis radio.cs:1929 — rx_apf_freq default = 600.0 Hz
+void SetRXASPCWFreq(int channel, double f_center);
+
+// Set bandwidth in Hz
+// From Thetis radio.cs:1948 — rx_apf_bw default = 600.0 Hz
+void SetRXASPCWBandwidth(int channel, double bandwidth);
+
+// Set gain (linear scale)
+// From Thetis radio.cs:1967 — rx_apf_gain default = 1.0
+void SetRXASPCWGain(int channel, double gain);
+
+// ---------------------------------------------------------------------------
+// Squelch — SSB (ssql.c / ssql.h)
+//
+// From Thetis Project Files/Source/Console/radio.cs:1185-1229
+// WDSP: third_party/wdsp/src/ssql.c:331,339
+// threshold: 0.0..1.0 linear (Thetis default _fSSqlThreshold = 0.16f)
+// ---------------------------------------------------------------------------
+
+void SetRXASSQLRun(int channel, int run);
+
+void SetRXASSQLThreshold(int channel, double threshold);
+
+// ---------------------------------------------------------------------------
+// Squelch — AM (amsq.h)
+//
+// From Thetis Project Files/Source/Console/radio.cs:1164-1178, 1293-1310
+// WDSP: third_party/wdsp/src/amsq.c — threshold in dB (pow(10,t/20) applied internally)
+// threshold: rx_squelch_threshold default = -150.0 dB
 // ---------------------------------------------------------------------------
 
 void SetRXAAMSQRun(int channel, int run);
@@ -174,6 +275,19 @@ void SetRXAAMSQRun(int channel, int run);
 void SetRXAAMSQThreshold(int channel, double threshold);
 
 void SetRXAAMSQMaxTail(int channel, double tail);
+
+// ---------------------------------------------------------------------------
+// Squelch — FM (fmsq.c / fmsq.h)
+//
+// From Thetis Project Files/Source/Console/radio.cs:1274-1329
+// WDSP: third_party/wdsp/src/fmsq.c:236,244
+// SetRXAFMSQRun is NOT declared in fmsq.h but is exported from fmsq.c.
+// threshold: linear 0..1 scale (Thetis fm_squelch_threshold = 1.0f, not dB)
+// ---------------------------------------------------------------------------
+
+void SetRXAFMSQRun(int channel, int run);
+
+void SetRXAFMSQThreshold(int channel, double threshold);
 
 // ---------------------------------------------------------------------------
 // Metering (meter.h)

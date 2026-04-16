@@ -95,6 +95,131 @@ void RxChannel::setAgcTop(double topdB)
 #endif
 }
 
+double RxChannel::readBackAgcTop() const
+{
+#ifdef HAVE_WDSP
+    // Read resulting max_gain after SetRXAAGCThresh modified it.
+    // From Thetis console.cs:45978 — GetRXAAGCTop after SetRXAAGCThresh
+    // Clamp matches Thetis console.cs:45988-45989 guard on RFGain slider range.
+    double top = 0.0;
+    GetRXAAGCTop(m_channelId, &top);
+    return std::clamp(top, -20.0, 120.0);
+#else
+    return 80.0;
+#endif
+}
+
+double RxChannel::readBackAgcThresh() const
+{
+#ifdef HAVE_WDSP
+    // Read resulting threshold after SetRXAAGCTop modified it.
+    // From Thetis console.cs:50350 pattern — GetRXAAGCThresh after SetRXAAGCTop
+    // kDspSize must match the size passed to SetRXAAGCThresh (4096).
+    static constexpr double kDspSize = 4096.0;
+    double thresh = 0.0;
+    GetRXAAGCThresh(m_channelId, &thresh, kDspSize, static_cast<double>(m_sampleRate));
+    return std::clamp(thresh, -160.0, 0.0);
+#else
+    return -20.0;
+#endif
+}
+
+void RxChannel::setAgcThreshold(int dBu)
+{
+    if (dBu == m_agcThreshold.load()) {
+        return;
+    }
+
+    m_agcThreshold.store(dBu);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/console.cs:45976-45977
+    //   size = (double)specRX.GetSpecRX(0).FFTSize;  // 4096
+    //   WDSP.SetRXAAGCThresh(WDSP.id(0, 0), agc_thresh_point, size, sample_rate_rx1);
+    // WDSP third_party/wdsp/src/wcpAGC.c:504
+    // NB: 'size' is the DSP analysis buffer size (4096, matching OpenChannel dsp_size),
+    //     NOT the fexchange2 input chunk size (m_bufferSize).
+    static constexpr double kDspSize = 4096.0;
+    SetRXAAGCThresh(m_channelId, static_cast<double>(dBu),
+                    kDspSize,
+                    static_cast<double>(m_sampleRate));
+#else
+    Q_UNUSED(dBu);
+#endif
+}
+
+void RxChannel::setAgcHang(int ms)
+{
+    if (ms == m_agcHang.load()) {
+        return;
+    }
+
+    m_agcHang.store(ms);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1056-1073
+    //   WDSP.SetRXAAGCHang(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/wcpAGC.c:436
+    SetRXAAGCHang(m_channelId, ms);
+#else
+    Q_UNUSED(ms);
+#endif
+}
+
+void RxChannel::setAgcSlope(int slope)
+{
+    if (slope == m_agcSlope.load()) {
+        return;
+    }
+
+    m_agcSlope.store(slope);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1107-1124
+    //   WDSP.SetRXAAGCSlope(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/wcpAGC.c:537
+    SetRXAAGCSlope(m_channelId, slope);
+#else
+    Q_UNUSED(slope);
+#endif
+}
+
+void RxChannel::setAgcAttack(int ms)
+{
+    if (ms == m_agcAttack.load()) {
+        return;
+    }
+
+    m_agcAttack.store(ms);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/dsp.cs:116-117
+    //   SetRXAAGCAttack declared; no explicit radio.cs call site (disabled in UI)
+    // WDSP third_party/wdsp/src/wcpAGC.c:418
+    SetRXAAGCAttack(m_channelId, ms);
+#else
+    Q_UNUSED(ms);
+#endif
+}
+
+void RxChannel::setAgcDecay(int ms)
+{
+    if (ms == m_agcDecay.load()) {
+        return;
+    }
+
+    m_agcDecay.store(ms);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1037-1054
+    //   WDSP.SetRXAAGCDecay(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/wcpAGC.c:427
+    SetRXAAGCDecay(m_channelId, ms);
+#else
+    Q_UNUSED(ms);
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Noise blanker
 // ---------------------------------------------------------------------------
@@ -110,6 +235,59 @@ void RxChannel::setNb2Enabled(bool enabled)
 {
     m_nb2Enabled.store(enabled);
     // NB2 is applied in processIq() — same pattern as NB1.
+}
+
+void RxChannel::setNb2Mode(int mode)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:937
+    //   SetEXTNOBMode(int id, int mode)
+    //   mode: 0=zero, 1=sample-hold, 2=mean-hold, 3=hold-sample, 4=interpolate
+    // Thetis cmaster.c default: mode=0 (zero)
+    // WDSP: third_party/wdsp/src/nobII.c:658
+    SetEXTNOBMode(m_channelId, mode);
+#else
+    Q_UNUSED(mode);
+#endif
+}
+
+void RxChannel::setNb2Tau(double tau)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:922
+    //   SetEXTNOBTau(int id, double tau) — sets advslewtime + hangslewtime
+    // Thetis cmaster.c default: slewtime=0.0001 s
+    // WDSP: third_party/wdsp/src/nobII.c:686
+    SetEXTNOBTau(m_channelId, tau);
+#else
+    Q_UNUSED(tau);
+#endif
+}
+
+void RxChannel::setNb2LeadTime(double time)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:928
+    //   SetEXTNOBAdvtime(int id, double time) — advance/lead time
+    // Thetis cmaster.c default: advtime=0.0001 s
+    // WDSP: third_party/wdsp/src/nobII.c:707
+    SetEXTNOBAdvtime(m_channelId, time);
+#else
+    Q_UNUSED(time);
+#endif
+}
+
+void RxChannel::setNb2HangTime(double time)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:925
+    //   SetEXTNOBHangtime(int id, double time) — hang time
+    // Thetis cmaster.c default: hangtime=0.0001 s
+    // WDSP: third_party/wdsp/src/nobII.c:697
+    SetEXTNOBHangtime(m_channelId, time);
+#else
+    Q_UNUSED(time);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +309,345 @@ void RxChannel::setAnfEnabled(bool enabled)
 
 #ifdef HAVE_WDSP
     SetRXAANFRun(m_channelId, enabled ? 1 : 0);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// EMNR (NR2)
+// ---------------------------------------------------------------------------
+
+void RxChannel::setEmnrEnabled(bool enabled)
+{
+    if (enabled == m_emnrEnabled.load()) {
+        return;
+    }
+
+    m_emnrEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:2216-2232
+    //   WDSP.SetRXAEMNRRun(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/emnr.c:1283
+    SetRXAEMNRRun(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+void RxChannel::setEmnrGainMethod(int method)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:2062-2078
+    //   WDSP.SetRXAEMNRgainMethod(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/emnr.c:1298
+    SetRXAEMNRgainMethod(m_channelId, method);
+#else
+    Q_UNUSED(method);
+#endif
+}
+
+void RxChannel::setEmnrNpeMethod(int method)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:2081-2097
+    //   WDSP.SetRXAEMNRnpeMethod(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/emnr.c:1306
+    SetRXAEMNRnpeMethod(m_channelId, method);
+#else
+    Q_UNUSED(method);
+#endif
+}
+
+void RxChannel::setEmnrAeRun(bool run)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:2101-2117
+    //   WDSP.SetRXAEMNRaeRun(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/emnr.c:1314
+    SetRXAEMNRaeRun(m_channelId, run ? 1 : 0);
+#else
+    Q_UNUSED(run);
+#endif
+}
+
+void RxChannel::setEmnrPosition(int position)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:2235-2251
+    //   WDSP.SetRXAEMNRPosition(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/emnr.c:1322
+    // position=1 → post-AGC placement (Thetis default rx_nr2_position=1)
+    SetRXAEMNRPosition(m_channelId, position);
+#else
+    Q_UNUSED(position);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// SNB (Spectral Noise Blanker)
+// ---------------------------------------------------------------------------
+
+void RxChannel::setSnbEnabled(bool enabled)
+{
+    if (enabled == m_snbEnabled.load()) {
+        return;
+    }
+
+    m_snbEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/console.cs:36347
+    //   WDSP.SetRXASNBARun(WDSP.id(0, 0), chkDSPNB2.Checked)
+    // Thetis dsp.cs:692-693 — P/Invoke declaration
+    // WDSP third_party/wdsp/src/snb.c:579
+    SetRXASNBARun(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// APF — Audio Peak Filter
+// ---------------------------------------------------------------------------
+
+void RxChannel::setApfEnabled(bool enabled)
+{
+    if (enabled == m_apfEnabled.load()) {
+        return;
+    }
+
+    m_apfEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1910-1927
+    //   WDSP.SetRXASPCWRun(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/apfshadow.c:93
+    SetRXASPCWRun(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+void RxChannel::setApfFreq(double hz)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1929-1946
+    //   WDSP.SetRXASPCWFreq(WDSP.id(thread, subrx), value)
+    //   Freq = CWPitch + tuneOffset (setup.cs:17071)
+    // WDSP third_party/wdsp/src/apfshadow.c:117
+    SetRXASPCWFreq(m_channelId, hz);
+#else
+    Q_UNUSED(hz);
+#endif
+}
+
+void RxChannel::setApfBandwidth(double hz)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1948-1965
+    //   WDSP.SetRXASPCWBandwidth(WDSP.id(thread, subrx), value)
+    //   Default rx_apf_bw = 600.0 Hz
+    // WDSP third_party/wdsp/src/apfshadow.c:141
+    SetRXASPCWBandwidth(m_channelId, hz);
+#else
+    Q_UNUSED(hz);
+#endif
+}
+
+void RxChannel::setApfGain(double gain)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1967-1984
+    //   WDSP.SetRXASPCWGain(WDSP.id(thread, subrx), value)
+    //   Default rx_apf_gain = 1.0 (linear)
+    // WDSP third_party/wdsp/src/apfshadow.c:165
+    SetRXASPCWGain(m_channelId, gain);
+#else
+    Q_UNUSED(gain);
+#endif
+}
+
+void RxChannel::setApfSelection(int selection)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1986-2008
+    //   WDSP.SetRXASPCWSelection(WDSP.id(thread, subrx), value)
+    //   Default _rx_apf_type = 3 (bi-quad)
+    //   0=double-pole, 1=matched, 2=gaussian, 3=bi-quad
+    // WDSP third_party/wdsp/src/apfshadow.c:45
+    SetRXASPCWSelection(m_channelId, selection);
+#else
+    Q_UNUSED(selection);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Squelch — SSB (syllabic squelch)
+// ---------------------------------------------------------------------------
+
+void RxChannel::setSsqlEnabled(bool enabled)
+{
+    if (enabled == m_ssqlEnabled.load()) {
+        return;
+    }
+
+    m_ssqlEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1185-1207
+    //   WDSP.SetRXASSQLRun(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/ssql.c:331
+    SetRXASSQLRun(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+void RxChannel::setSsqlThresh(double threshold)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1209-1228
+    //   WDSP.SetRXASSQLThreshold(WDSP.id(thread, subrx), _fSSqlThreshold)
+    //   threshold range clamped 0.0..1.0 as per ssql.c
+    //   Thetis default _fSSqlThreshold = 0.16f
+    // WDSP third_party/wdsp/src/ssql.c:339
+    SetRXASSQLThreshold(m_channelId, threshold);
+#else
+    Q_UNUSED(threshold);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Squelch — AM
+// ---------------------------------------------------------------------------
+
+void RxChannel::setAmsqEnabled(bool enabled)
+{
+    if (enabled == m_amsqEnabled.load()) {
+        return;
+    }
+
+    m_amsqEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1293-1310
+    //   WDSP.SetRXAAMSQRun(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/amsq.c (SetRXAAMSQRun)
+    SetRXAAMSQRun(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+void RxChannel::setAmsqThresh(double dB)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1164-1178
+    //   WDSP.SetRXAAMSQThreshold(WDSP.id(thread, subrx), value)
+    //   value is in dB; WDSP amsq.c applies pow(10.0, threshold/20.0) internally
+    //   Thetis default rx_squelch_threshold = -150.0f dB
+    // WDSP third_party/wdsp/src/amsq.c (SetRXAAMSQThreshold)
+    SetRXAAMSQThreshold(m_channelId, dB);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Squelch — FM
+// ---------------------------------------------------------------------------
+
+void RxChannel::setFmsqEnabled(bool enabled)
+{
+    if (enabled == m_fmsqEnabled.load()) {
+        return;
+    }
+
+    m_fmsqEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1312-1329
+    //   WDSP.SetRXAFMSQRun(WDSP.id(thread, subrx), value)
+    // WDSP third_party/wdsp/src/fmsq.c:236
+    SetRXAFMSQRun(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
+#endif
+}
+
+void RxChannel::setFmsqThresh(double dB)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/radio.cs:1274-1291
+    //   WDSP.SetRXAFMSQThreshold(WDSP.id(thread, subrx), value)
+    //   Thetis fm_squelch_threshold = 1.0f is LINEAR (0..1 scale).
+    //   SliceModel stores in dB domain (m_fmsqThresh = -150.0 default).
+    //   Convert dB → linear before passing to WDSP.
+    //   -150.0 dB → ~3.16e-8 (effectively muted = squelch open on FM)
+    // WDSP third_party/wdsp/src/fmsq.c:244 — assigns threshold directly to tail_thresh (linear)
+    const double linear = std::pow(10.0, dB / 20.0);
+    SetRXAFMSQThreshold(m_channelId, linear);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Audio panel — mute / pan / binaural
+// ---------------------------------------------------------------------------
+
+void RxChannel::setMuted(bool muted)
+{
+    if (muted == m_muted.load()) {
+        return;
+    }
+
+    m_muted.store(muted);
+
+#ifdef HAVE_WDSP
+    // Mute → run=0 (panel disabled), unmute → run=1 (panel enabled).
+    // From Thetis Project Files/Source/Console/dsp.cs:393-394 — P/Invoke decl
+    // WDSP: third_party/wdsp/src/patchpanel.c:126
+    SetRXAPanelRun(m_channelId, muted ? 0 : 1);
+#else
+    Q_UNUSED(muted);
+#endif
+}
+
+void RxChannel::setAudioPan(double pan)
+{
+#ifdef HAVE_WDSP
+    // Convert NereusSDR -1.0..+1.0 to WDSP 0.0..1.0:
+    //   wdsp_pan = (nereus_pan + 1.0) / 2.0
+    //   -1.0 → 0.0 (full left), 0.0 → 0.5 (center), +1.0 → 1.0 (full right)
+    // WDSP applies sin-law: gain2I = sin(pan*PI), gain2Q = 1 when pan>0.5
+    // From Thetis Project Files/Source/Console/radio.cs:1386-1403
+    //   default pan = 0.5f (center in WDSP 0..1 scale → NereusSDR 0.0)
+    // WDSP: third_party/wdsp/src/patchpanel.c:159
+    const double wdspPan = (pan + 1.0) / 2.0;
+    SetRXAPanelPan(m_channelId, wdspPan);
+#else
+    Q_UNUSED(pan);
+#endif
+}
+
+void RxChannel::setBinauralEnabled(bool enabled)
+{
+    if (enabled == m_binauralEnabled.load()) {
+        return;
+    }
+
+    m_binauralEnabled.store(enabled);
+
+#ifdef HAVE_WDSP
+    // bin=1 → copy=0 → binaural (I/Q separate headphone stereo image)
+    // bin=0 → copy=1 → dual-mono (Q := I, same audio on both channels)
+    // From Thetis Project Files/Source/Console/radio.cs:1145-1162
+    //   default bin_on = false → dual-mono
+    // WDSP: third_party/wdsp/src/patchpanel.c:187
+    SetRXAPanelBinaural(m_channelId, enabled ? 1 : 0);
+#else
+    Q_UNUSED(enabled);
 #endif
 }
 

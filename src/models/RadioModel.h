@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Band.h"
 #include "SliceModel.h"
 #include "PanadapterModel.h"
 #include "MeterModel.h"
@@ -177,8 +178,17 @@ private:
     // RxDspWorker (src/models/RxDspWorker.h) so the DSP thread owns
     // its own state and the main thread never touches it.
 
+    // Per-slice-per-band persistence: track the last-known band so
+    // bandChanged can save the old band's state before restoring the new one.
+    Band m_lastBand{Band::Band20m};
+
     // Settings save coalescing
     bool m_settingsSaveScheduled{false};
+
+    // AGC bidirectional sync guard — prevents infinite feedback loop between
+    // agcThresholdChanged and rfGainChanged handlers.
+    // From Thetis console.cs:45960-46006 — bidirectional sync pattern.
+    bool m_syncingAgc{false};
 };
 
 } // namespace NereusSDR

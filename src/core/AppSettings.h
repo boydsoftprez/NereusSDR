@@ -123,6 +123,43 @@ public:
     void             setDiscoveryProfile(DiscoveryProfile p);
 
     // -------------------------------------------------------------------------
+    // Per-slice-per-band DSP state (Phase 3G-10 Stage 2 — S2.P).
+    //
+    // Keys are stored as flat top-level AppSettings entries. The namespace
+    // uses PascalCase path segments separated by "/".
+    //
+    // Per-band DSP state (varies by band — restored on band change):
+    //   Slice<N>/Band<key>/AgcThreshold   — int dBu
+    //   Slice<N>/Band<key>/AgcHang        — int ms
+    //   Slice<N>/Band<key>/AgcSlope       — int dB
+    //   Slice<N>/Band<key>/AgcAttack      — int ms
+    //   Slice<N>/Band<key>/AgcDecay       — int ms
+    //   Slice<N>/Band<key>/FilterLow      — int Hz
+    //   Slice<N>/Band<key>/FilterHigh     — int Hz
+    //   Slice<N>/Band<key>/DspMode        — int (DSPMode enum)
+    //   Slice<N>/Band<key>/AgcMode        — int (AGCMode enum)
+    //   Slice<N>/Band<key>/StepHz         — int Hz
+    //
+    // Session state (band-agnostic — restored on startup, not on band change):
+    //   Slice<N>/Locked     — "True"/"False"
+    //   Slice<N>/Muted      — "True"/"False"
+    //   Slice<N>/RitEnabled — "True"/"False"
+    //   Slice<N>/RitHz      — int Hz
+    //   Slice<N>/XitEnabled — "True"/"False"
+    //   Slice<N>/XitHz      — int Hz
+    //   Slice<N>/AfGain     — int 0-100
+    //   Slice<N>/RfGain     — int 0-100
+    //   Slice<N>/RxAntenna  — string (e.g. "ANT1")
+    //   Slice<N>/TxAntenna  — string (e.g. "ANT1")
+    //
+    // <N> = slice index (0-based). <key> = bandKeyName(band) from Band.h
+    // (e.g. "20m", "40m", "GEN"). Written by SliceModel::saveToSettings();
+    // read by SliceModel::restoreFromSettings(). Legacy "Vfo*" flat keys
+    // are one-shot migrated to this namespace by SliceModel::migrateLegacyKeys()
+    // on startup.
+    // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
     // Hardware tab persistence (Phase 3I Task 21).
     // Keys stored under hardware/<mac>/<tabKey>/<field>.
     // The MAC address and internal slashes/colons are encoded via the same
