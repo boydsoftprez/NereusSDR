@@ -360,7 +360,21 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     }
 
     m_radioInfo = info;
-    m_caps = &BoardCapsTable::forBoard(info.boardType);
+    // Use HardwareProfile for caps (Phase 3I-RP)
+    m_caps = m_hardwareProfile.caps;
+
+    // Initialize per-ADC state from profile
+    for (int i = 0; i < 3; ++i) {
+        m_dither[i] = true;
+        m_random[i] = true;
+        m_rxPreamp[i] = false;
+        m_stepAttn[i] = 0;
+    }
+    m_txStepAttn = 0;
+    m_paEnabled = m_hardwareProfile.caps->hasPaProfile;
+    m_duplex = true;
+    m_reconnectedLogged = false;
+
     m_intentionalDisconnect = false;
     m_epSendSeq = 0;
     m_epRecvSeqExpected = 0;
@@ -460,6 +474,7 @@ void P1RadioConnection::disconnect()
     // Source: NereusSDR design doc §3.6 — user reconnect resets the cycle.
     m_reconnectAttempts = 0;
     m_lastEp6At = QDateTime();
+    m_reconnectedLogged = false;
 
     if (m_running && m_socket && !m_radioInfo.address.isNull()) {
         m_running = false;
@@ -496,9 +511,9 @@ void P1RadioConnection::setAttenuator(int dB)
     } else if (m_caps && !m_caps->attenuator.present) {
         dB = 0;
     }
-    m_atten = dB;
+    m_stepAttn[0] = dB;
 }
-void P1RadioConnection::setPreamp(bool enabled)              { m_preamp = enabled; }
+void P1RadioConnection::setPreamp(bool enabled)              { m_rxPreamp[0] = enabled; }
 void P1RadioConnection::setTxDrive(int /*level*/)            { /* stub — Task 7 */ }
 void P1RadioConnection::setMox(bool enabled)                 { m_mox = enabled; }
 void P1RadioConnection::setAntenna(int antennaIndex)         { m_antennaIdx = antennaIndex; }
@@ -523,10 +538,10 @@ void P1RadioConnection::applyBoardQuirks()
     // Clamp attenuator to board range.
     // Source: specHPSDR.cs — per-HPSDRHW min/max dB ranges enforced at setup.
     if (m_caps->attenuator.present) {
-        if (m_atten > m_caps->attenuator.maxDb) { m_atten = m_caps->attenuator.maxDb; }
-        if (m_atten < m_caps->attenuator.minDb) { m_atten = m_caps->attenuator.minDb; }
+        if (m_stepAttn[0] > m_caps->attenuator.maxDb) { m_stepAttn[0] = m_caps->attenuator.maxDb; }
+        if (m_stepAttn[0] < m_caps->attenuator.minDb) { m_stepAttn[0] = m_caps->attenuator.minDb; }
     } else {
-        m_atten = 0;
+        m_stepAttn[0] = 0;
     }
 }
 
@@ -585,7 +600,10 @@ void P1RadioConnection::onReadyRead()
                 if (m_reconnectTimer) { m_reconnectTimer->stop(); }
                 if (!m_watchdogTimer->isActive()) { m_watchdogTimer->start(); }
                 setState(ConnectionState::Connected);
-                qCDebug(lcConnection) << "P1: Reconnected — ep6 stream restored";
+                if (!m_reconnectedLogged) {
+                    qCDebug(lcConnection) << "P1: Reconnected — ep6 stream restored";
+                    m_reconnectedLogged = true;
+                }
             }
 
             parseEp6Frame(data);
@@ -647,6 +665,7 @@ void P1RadioConnection::onWatchdogTick()
                                 << "ms (state=" << static_cast<int>(cs)
                                 << "); transitioning to Error and scheduling reconnect";
         m_watchdogTimer->stop();
+        m_reconnectedLogged = false;
         setState(ConnectionState::Error);
         emit errorOccurred(RadioConnectionError::NoDataTimeout,
                            QStringLiteral("Radio stopped responding"));
@@ -778,17 +797,14 @@ void P1RadioConnection::sendCommandFrame(bool sub1TxBank)
     frame[6] = static_cast<quint8>((seq >>  8) & 0xFF);
     frame[7] = static_cast<quint8>( seq        & 0xFF);
 
-    // Subframe 0: sync + bank 0 (general settings)
+    // Subframe 0: bank 0 (general settings) — use instance state
     frame[8]  = 0x7F;
     frame[9]  = 0x7F;
     frame[10] = 0x7F;
     quint8 cc0[5] = {};
-    composeCcBank0(cc0, m_sampleRate, m_mox, m_activeRxCount);
-    frame[11] = cc0[0];
-    frame[12] = cc0[1];
-    frame[13] = cc0[2];
-    frame[14] = cc0[3];
-    frame[15] = cc0[4];
+    composeCcBank0Full(cc0);
+    frame[11] = cc0[0]; frame[12] = cc0[1]; frame[13] = cc0[2];
+    frame[14] = cc0[3]; frame[15] = cc0[4];
 
     // Subframe 1: sync + selectable bank (TX freq or RX1 freq).
     // Match Thetis networkproto1.c:134-139 ForceCandCFrame which sends
@@ -892,6 +908,41 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             emit iqDataReceived(r, samples);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// composeCcBank0Full — instance-level bank 0 using actual state
+//
+// Source: Thetis networkproto1.c:450-471 (WriteMainLoop case 0)
+// ---------------------------------------------------------------------------
+void P1RadioConnection::composeCcBank0Full(quint8 out[5]) const
+{
+    // C0: MOX bit (networkproto1.c:446)
+    out[0] = m_mox ? 0x01 : 0x00;
+
+    // C1: sample rate (networkproto1.c:451)
+    quint8 srBits = 0;
+    if      (m_sampleRate >= 384000) { srBits = 3; }
+    else if (m_sampleRate >= 192000) { srBits = 2; }
+    else if (m_sampleRate >= 96000)  { srBits = 1; }
+    out[1] = srBits & 0x03;
+
+    // C2: OC outputs (networkproto1.c:452)
+    out[2] = (m_ocOutput << 1) & 0xFE;
+
+    // C3: preamp, dither, random, RX input (networkproto1.c:453-461)
+    out[3] = (m_rxPreamp[0] ? 0x04 : 0)
+           | (m_dither[0]   ? 0x08 : 0)
+           | (m_random[0]   ? 0x10 : 0);
+    // RX input select: default Rx_1_In (networkproto1.c:458)
+    out[3] |= 0x20;
+
+    // C4: antenna, duplex, NDDCs, diversity (networkproto1.c:463-471)
+    out[4] = static_cast<quint8>(m_antennaIdx & 0x03);
+    out[4] |= 0x04; // duplex bit
+    int nddc = (m_activeRxCount < 1) ? 1 : (m_activeRxCount > 7 ? 7 : m_activeRxCount);
+    out[4] |= static_cast<quint8>((nddc - 1) << 3);
+    out[4] |= (m_diversity ? 0x80 : 0);
 }
 
 void P1RadioConnection::composeCcBank0(quint8*) { /* full implementation in Task 7 static helpers */ }
