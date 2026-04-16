@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.8] - 2026-04-16
+
+RedPitaya / Hermes P1 protocol fixes driven by pcap analysis in issue #38.
+
+### Fixed
+- **P1 RedPitaya / Hermes family (#38):** restore DDC3 NCO command on the wire.
+  The `kRxC0Address` lookup table was missing the `0x0A` address entry,
+  which caused bank 6 (RX4 / DDC3 frequency) to be dropped and bank 9
+  (RX7 / DDC6) to alias onto bank 10's `0x12` TX-drive slot. Verified
+  byte-for-byte against Thetis `networkproto1.c` cases 6 and 9.
+- **P1 EP2 send cadence (#38):** host→radio packets are now paced by a
+  dedicated 2 ms `Qt::PreciseTimer` with a `QElapsedTimer`-driven catch-up
+  loop, yielding ~200-400 pps (target: Thetis' 380.95 pps from its 48 kHz
+  audio clock). Previously we ran ~40 pps, starving the radio's audio DAC
+  and stretching the 17-bank C&C round-robin to ~213 ms per cycle.
+
 ## [0.1.7-rc1] - 2026-04-16
 
 Radio model selector and P1 protocol completion for RedPitaya and non-standard
