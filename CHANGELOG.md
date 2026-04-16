@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.7-rc1] - 2026-04-16
+
+Radio model selector and P1 protocol completion for RedPitaya and non-standard
+Hermes devices.
+
+### Added
+- **Radio model selector** — per-MAC model override in ConnectionPanel detail panel;
+  users can select their actual radio model (e.g. "Red Pitaya") when the discovery
+  board byte is ambiguous (e.g. reports "Hermes")
+- **HardwareProfile engine** — port of Thetis clsHardwareSpecific.cs; maps 16
+  HPSDRModel variants to correct ADC count, BPF, supply voltage, and board capabilities
+- **P1 C&C full 17-bank round-robin** — port of Thetis networkproto1.c WriteMainLoop
+  cases 0-17; was only sending 3 of 17 banks with zeros for dither/random/preamp/Alex filters
+- **Radio Setup menu item** wired (was disabled NYI)
+- Auto-reconnect loads persisted model override from AppSettings
+
+### Fixed
+- P1 bank 0 C3/C4 sent all zeros — dither, random, preamp, duplex now populated
+- P1 reconnect log spam (30-80 duplicate "Reconnected" lines per cycle → 1 line)
+- SaturnMKII board byte falls back to Saturn-family model instead of Hermes
+- Null-guard on HardwareProfile caps pointer in P1/P2 connection setup
+
+### Docs
+- Phase 3I-RP design spec and implementation plan
+
+
 ## [0.1.6] - 2026-04-16
 
 About dialog and built-in issue reporter.
