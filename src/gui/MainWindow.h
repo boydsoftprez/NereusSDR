@@ -6,6 +6,7 @@
 #include <QActionGroup>
 #include <QTimer>
 
+class QPushButton;
 class QProgressDialog;
 class QThread;
 class QSplitter;
@@ -40,6 +41,8 @@ private slots:
     void onConnectionStateChanged();
     void showConnectionPanel();
     void showSupportDialog();
+    void showFeatureRequestDialog();
+    void showFeatureRequestDialogImpl();
 
 private:
     void buildUI();
@@ -140,6 +143,9 @@ private:
 
     // Spectrum overlay panel
     class SpectrumOverlayPanel* m_overlayPanel{nullptr};
+
+    // Phase 3G-14: Issue reporter corner widget
+    QPushButton* m_featureBtn{nullptr};
 
     // Applet panel — scrollable content widget inside Container #0
     class AppletPanelWidget* m_appletPanel{nullptr};
