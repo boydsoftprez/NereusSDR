@@ -37,12 +37,17 @@ Before you dive in, here's the honest state of the overall application so you ha
 | 3A | Protocol 2 radio discovery + connection (ANAN-G2 / Saturn first) | Working |
 | 3B | WDSP DSP engine integration — RX1 demod (USB/LSB/AM/CW), AGC, NB1/NB2, bandpass filters, audio pipeline | Working |
 | 3C | macOS build + crash fixes | Working |
-| 3D | GPU-accelerated spectrum + waterfall via Qt's QRhi abstraction (Metal on macOS, D3D12 on Windows, Vulkan on Linux) | Working |
+| 3D | GPU-accelerated spectrum + waterfall via Qt's QRhi abstraction (Metal on macOS, D3D12 on Windows, OpenGL on Linux) | Working |
 | 3E | VFO tuning, mode selection, filter controls, multi-receiver foundation | Working (RX1 only in the UI) |
 | 3-UI | Full UI skeleton: 12 applets, 9 menus, 47-page SetupDialog, spectrum overlay panel, status bar | Skeleton + partial wiring |
 | 3F | Up to 4 independent panadapters in configurable layouts | **Not started** |
 | 3G-1..7 | Dockable/floatable container system, GPU-rendered meter engine with 31 item types, container settings dialog, MMIO external-data subsystem | Working |
 | 3G-8 | RX1 Display parity — every control on the Setup → Display pages wired to the renderer (47 controls) | Working |
+| 3G-9 | Display refactor — Clarity Blue waterfall palette, ClarityController adaptive auto-tune (EWMA + deadband + noise floor estimator), per-band Clarity memory, zoom persistence, Thetis-cited tooltips on 47 setup controls | Working |
+| 3G-10 | RX DSP parity — 10 WDSP feature slices wired (AGC advanced, EMNR/NR2, SNB, APF, squelch, mute/pan/binaural, NB2 advanced, RIT/XIT, frequency lock, mode containers FM/DIG/RTTY), per-slice-per-band persistence, VfoWidget 4-tab rewrite with S-meter | Working |
+| 3G-11 | P1 field fixes — VFO frequency encoding as raw Hz | Working |
+| 3G-13 | Step attenuator — Classic + Adaptive auto-attenuation, ADC overflow detection, OVL status badge, per-model preamp items | Working |
+| 3G-14 | About dialog + built-in AI-assisted issue reporter (💡 menu bar widget) | Working |
 | 3H | Thetis-inspired skin system | **Not started** |
 | 3I | **Protocol 1 support** for the full ANAN/Hermes family including HL2 (discovery, connection, capability gating, Hardware page, saved radios, auto-reconnect) | Working |
 | 3J | TCI protocol server (for N1MM+, Log4OM etc.) | Not started |
@@ -58,18 +63,18 @@ The short version: **single-receiver RX works end-to-end on any supported OpenHP
 When you launch NereusSDR, you'll see a main window **modelled after [AetherSDR](https://github.com/ten9876/AetherSDR)** — the modern Qt6 FlexRadio console that gave us our architectural template. The overall look, dock structure, and interaction patterns are AetherSDR's. The **feature set and radio behaviour** is a reimagination of [Thetis](https://github.com/ramdor/Thetis) — we're not cloning Thetis's WinForms layout, we're rebuilding its functionality on a cleaner chassis. Here's what's where:
 
 **Main window layout**
-- **Spectrum + waterfall widget** dominates the upper-middle of the window. GPU-rendered, ~30 FPS, 4096-point FFT with FFT-shift + mirror, Blackman-Harris window. Click anywhere on the spectrum to retune the VFO. Scroll-wheel over the spectrum drags the reference level; scroll over the frequency bar zooms. Drag the filter passband to resize filters. Right-click for a display-settings popup.
+- **Spectrum + waterfall widget** dominates the upper-middle of the window. GPU-rendered (Metal on macOS, D3D12 on Windows, OpenGL on Linux), ~30 FPS, 4096-point FFT with FFT-shift + mirror, Blackman-Harris window. Click anywhere on the spectrum to retune the VFO. Scroll-wheel over the spectrum drags the reference level; scroll over the frequency bar zooms. Drag the filter passband to resize filters. Right-click for a display-settings popup. The **Clarity Blue** waterfall palette with adaptive auto-tune adjusts noise floor and gain per-band automatically.
 - **Floating VFO marker** with a flag widget showing the current tune frequency, mode, and filter passband overlay. Double-click the marker to recenter the panadapter.
 - **Dockable/floatable container panels** around the edges — these hold the meters, applets, and control widgets. You can drag them to float, dock them to any edge, pin them on top, axis-lock them, or hide their title bars. Layout persists across restarts.
 - **Menu bar** across the top — 9 menus (File, Radio, View, DSP, Band, Mode, Containers, Tools, Help), ~60 items. Some are wired, some are stubs.
 - **Status bar** across the bottom — double-height, shows UTC clock, radio info, TX/RX indicators, signal level, CPU usage.
 
 **Applet panel (right side by default)**
-- **12 applets** from Thetis, ported as Qt widgets. The most complete one is **RX** — mode, AGC, AF gain, filter presets are all wired to the live slice. The others (TX, PhoneCw, EQ, FM, Digital, PureSignal, Diversity, CWX, DVK, CAT, Tuner) have their UI built out but most of their controls don't drive anything yet. You can click them, they'll look right, they won't do anything.
+- **12 applets** from Thetis, ported as Qt widgets. The most complete one is **RX** — mode, AGC, AF gain, filter presets, step attenuator (Classic + Adaptive auto-att), preamp, ADC overflow (OVL) badge, and S-meter are all wired to the live slice. The **VfoWidget** floats above the spectrum with a 4-tab layout (Audio/DSP/Mode/X-RIT), a 4x2 DSP toggle grid, AGC 5-button row, and S-meter level bar with dBm readout. The other applets (TX, PhoneCw, EQ, FM, Digital, PureSignal, Diversity, CWX, DVK, CAT, Tuner) have their UI built out but most of their controls don't drive anything yet.
 
 **Meter widgets**
 - A **GPU-rendered meter engine** powers everything meter-shaped. ~31 item types in the engine: bars, needles, arc-style S-meters, dials, text overlays, rotators, clocks, magic-eye tubes, image atoms, LEDs, history graphs, multi-meter displays, data out, and interactive button grids.
-- **What actually updates with real data** (any supported radio): the signal S-meter (arc needle), the noise-floor / RF power bars bound to the live RX1 channel, the clocks, and the basic button grids (band, mode, filter, antenna, tuning step).
+- **What actually updates with real data** (any supported radio): the signal S-meter (arc needle + VfoWidget level bar with dBm readout), the noise-floor / RF power bars bound to the live RX1 channel, the clocks, and the basic button grids (band, mode, filter, antenna, tuning step). The S-meter in the VfoWidget shows a cyan→green gradient at the S9 boundary.
 - **What doesn't update:** most TX-side meters (forward/reverse power, SWR, ALC, compression, mic gain), PureSignal feedback indicators, PA-related gauges, the magic eye, data out. They render their backgrounds and needles-at-zero correctly but there's no source pushing data into them. That's because the underlying pipelines (TX, PureSignal, PA control) are later phases.
 
 **Container settings**
@@ -78,11 +83,12 @@ When you launch NereusSDR, you'll see a main window **modelled after [AetherSDR]
 
 **SetupDialog**
 - **47 pages across 10 categories.** The ones that are **fully functional right now**:
-  - **Display → Spectrum Defaults** (17 controls: averaging, peak hold, trace fill/width/colour, gradient, cal offset, FPS overlay, etc.)
-  - **Display → Waterfall Defaults** (17 controls: AGC, reverse scroll, opacity, update rate, overlays, timestamp, low/mid/high colours)
+  - **Display → Spectrum Defaults** (17 controls: averaging, peak hold, trace fill/width/colour, gradient, cal offset, FPS overlay, Clarity adaptive auto-tune, etc.)
+  - **Display → Waterfall Defaults** (17 controls: AGC, reverse scroll, opacity, update rate, overlays, timestamp, low/mid/high colours, Clarity Blue palette)
   - **Display → Grid & Scales** (13 controls, including per-band Max/Min storage across all 14 bands — 160 m through 6 m + GEN + WWV + XVTR)
+  - **General → Options** — step attenuator configuration (Classic / Adaptive auto-att modes)
   - **Hardware Config** — 9 capability-gated sub-tabs. Which tabs you see depends on your radio. On an HL2 most tabs hide because the hardware isn't there; on an ANAN-7000 / 8000 / G2 all 9 tabs are visible.
-- The **other ~40 pages** mostly exist as stub widgets with `NYI` (Not Yet Implemented) tooltips on disabled controls. You can navigate into them, they won't crash, but they won't affect anything.
+- The **other ~35 pages** mostly exist as stub widgets with `NYI` (Not Yet Implemented) tooltips on disabled controls. You can navigate into them, they won't crash, but they won't affect anything.
 
 **Spectrum overlay panel**
 - Hover-reveal overlay button strip on the spectrum widget — 10 buttons with 5 flyout sub-panels (display, filter, noise, spots, tools). Partially wired; auto-closes on outside click.
@@ -96,22 +102,26 @@ Not just the Phase 3I connector — this is the **total** functional surface are
 
 1. **Discover + connect + disconnect** any P1 or P2 OpenHPSDR radio on your LAN
 2. **Tune RX1** anywhere in the HF range (P1 radios go up to 61.44 MHz; P2 boards like Saturn have broader range)
-3. **Hear live audio** demodulated through WDSP in USB, LSB, AM, or CW with adjustable AGC, noise blanker (NB1 or NB2), bandpass filter, notch, and volume
+3. **Hear live audio** demodulated through WDSP in USB, LSB, AM, CW, or FM with adjustable AGC (basic + advanced: threshold/hang/slope/attack/decay), noise blanker (NB1 or NB2 with advanced params), EMNR (NR2), SNB, APF, squelch (SSB/AM/FM 3-variant), bandpass filter, notch, mute, audio pan, binaural, and volume
 4. **See real-time spectrum** (GPU-accelerated, ~30 FPS, configurable averaging, peak hold, colours, grids, labels, FPS overlay)
-5. **See real-time waterfall** (GPU-accelerated, configurable colour scheme, AGC, opacity, reverse scroll, timestamps, overlays)
+5. **See real-time waterfall** (GPU-accelerated, Clarity Blue palette with adaptive auto-tune, configurable colour scheme, AGC, opacity, reverse scroll, timestamps, overlays)
 6. **Click-to-tune** on the spectrum and waterfall, scroll-to-zoom, drag-to-adjust-reference-level, drag-filter-passband
 7. **CTUN mode** — independent panadapter center and VFO, WDSP frequency shift
-8. **Band switching** via the band button grid (14 bands: 160/80/60/40/30/20/17/15/12/10/6 m + GEN + WWV + XVTR), with per-band display settings
-9. **Mode switching** via the mode button grid — USB/LSB/AM/SAM/FM/CW/CWL/CWU/DIGL/DIGU/DRM/SPEC
+8. **Band switching** via the band button grid (14 bands: 160/80/60/40/30/20/17/15/12/10/6 m + GEN + WWV + XVTR), with per-band display settings and **per-band Clarity memory**
+9. **Mode switching** via the mode button grid — USB/LSB/AM/SAM/FM/CW/CWL/CWU/DIGL/DIGU/DRM/SPEC, with mode containers (FM OPT/DIG/RTTY)
 10. **Filter presets** via the filter button grid
-11. **VFO display** with per-digit mouse-wheel tuning
-12. **Signal S-meter** (arc needle, live from WDSP)
-13. **Attenuator / preamp / sample rate** controls for all supported boards, capability-gated per board (HL2 has its own 0–60 dB range and step granularity; ANAN boards use the stock 0–31 dB / 0–40 dB ranges)
-14. **Saved radio profiles** keyed by MAC — discover once, re-use next launch with auto-reconnect
-15. **Manually-added radios** outside the local subnet via the Add Manually dialog
-16. **Full container system** with drag-to-dock, layout persistence, per-container settings
-17. **31 meter item types** styled and placed, with 38+ presets in the library
-18. **47-page Setup dialog** — Display section fully wired (47 controls), Hardware Config section with capability-gated tabs, other pages stubbed
+11. **VFO display** with per-digit mouse-wheel tuning, **RIT/XIT client offset**, and **frequency lock**
+12. **Signal S-meter** (arc needle + VfoWidget level bar with dBm readout, cyan→green gradient at S9, live from WDSP)
+13. **Step attenuator** with Classic + Adaptive auto-attenuation modes, hysteresis, and per-MAC persistence. **ADC overflow detection** with OVL status badge. **Preamp** controls capability-gated per board (HL2 has its own 0–60 dB range; ANAN boards use stock 0–31 dB / 0–61 dB ranges with per-model preamp items from Thetis)
+14. **Per-slice-per-band DSP persistence** — all DSP settings saved per band, restored automatically on band change
+15. **Saved radio profiles** keyed by MAC — discover once, re-use next launch with auto-reconnect
+16. **Manually-added radios** outside the local subnet via the Add Manually dialog
+17. **Full container system** with drag-to-dock, layout persistence, per-container settings
+18. **31 meter item types** styled and placed, with 38+ presets in the library
+19. **47-page Setup dialog** — Display section fully wired (47 controls), Hardware Config section with capability-gated tabs, General → Options for step ATT config, other pages stubbed
+20. **About dialog** (Help → About NereusSDR) — version, build info, Qt/WDSP versions, heritage credits, license, GPG fingerprint
+21. **Built-in issue reporter** — click the 💡 in the menu bar to file bug reports or feature requests directly to GitHub with structured templates
+22. **Zoom persistence** — visible bandwidth saved/restored across restarts
 
 **Single-radio, single-receiver, receive-only.** Everything else listed in the "Planned" column of the phase table above is either not started or scaffolded but inert.
 
@@ -133,7 +143,7 @@ On a modern laptop (M-series Mac, recent AMD/Intel desktop, decent mid-range Lin
 - **Audio:** no dropouts at 48 / 96 / 192 / 384 kHz where the hardware supports it (HL2 maxes at 384 k; ANAN boards go higher)
 - **Spectrum:** ~30 FPS steady on the GPU path
 - **Memory:** ~250–500 MB resident depending on container layout
-- **First-launch FFTW wisdom caching:** the very first time you run the app it will pop a progress dialog while FFTW plans its optimal FFT routines for your CPU. This takes ~10–60 seconds, once, ever. Subsequent launches skip it.
+- **First-launch FFTW wisdom caching:** the very first time you run the app it will pop a progress dialog while FFTW plans its optimal FFT routines for your CPU. This can take up to ~15 minutes depending on your hardware. It only happens once; results are cached under `~/.config/NereusSDR/` for subsequent launches.
 
 ---
 
@@ -142,8 +152,8 @@ On a modern laptop (M-series Mac, recent AMD/Intel desktop, decent mid-range Lin
 ### Things you need
 
 - An **OpenHPSDR-compatible radio** (see "Supported radios" above) powered up and on the same Ethernet/Wi-Fi LAN as your computer.
-- Recent firmware on your radio. Per-family minimums:
-  - **Hermes Lite 2:** v70 or newer. The app refuses older firmware and tells you why.
+- Recent firmware on your radio. There are no hard-coded firmware minimums — if your radio speaks the OpenHPSDR protocol, NereusSDR will try to talk to it. That said, we recommend:
+  - **Hermes Lite 2:** v70 or newer for best results.
   - **ANAN-G2 / Saturn:** recent radioberry / Saturn firmware — the P2 path has been tested against current production firmware.
   - **Other ANAN / Hermes / Metis / Angelia / Orion:** run whatever firmware you'd use with Thetis. If Thetis connects, NereusSDR should.
 - Speakers or headphones plugged into your computer's audio output (NereusSDR decodes audio on the computer side, not on the radio).
@@ -252,7 +262,7 @@ Within about 2 seconds:
 
 **✅ Success bar for step 3:** state reaches Connected without a crash. If the app crashes within the first second of clicking Connect, please grab the crash report — there's been a history of WDSP init races that we chased down, and a regression there is worth knowing about.
 
-**Known rough edge:** HL2 firmware below v70 is refused with a "Firmware too old" error. That's by design. Flash newer firmware and try again. Other boards have no hard-coded minimum — the app just tries to speak the protocol and bails if the board doesn't respond correctly.
+**Known rough edge:** there are no hard-coded firmware minimums (those were dropped in v0.1.4), so even older firmware should attempt to connect. If the board doesn't respond correctly to the protocol handshake, the app will bail with an error. Older HL2 firmware (below v70) may exhibit quirks — we recommend updating if you can.
 
 ### 4. Listen to a live signal — THE BIG ONE
 
@@ -283,13 +293,18 @@ This is the single most important thing to verify.
 
 While listening to a live signal:
 
-- **Attenuator / preamp:** find the attenuator control (probably in one of the applets on the right). Slide it across its range. Background noise should drop audibly and visibly on the spectrum. The exact range depends on your board (HL2: 0–60 dB in 1 dB steps; Hermes/ANAN-10/100/100B: preamp on/off plus 0–31 dB attenuator; ANAN-100D/200D/7000/8000/G2: 0–31 dB in 1 dB steps with separate preamp bits). If the control's range matches what your board actually supports, capability gating is working.
+- **Step attenuator / preamp:** find the ATT/S-ATT row in the RX applet. The step attenuator has two modes: **Classic** (manual slider) and **Adaptive** (auto-attenuation with hysteresis). Slide the attenuator across its range — background noise should drop audibly and visibly on the spectrum. The range depends on your board (HL2: 0–60 dB in 1 dB steps; Hermes/ANAN-10/100/100B: preamp on/off plus 0–31 dB; ANAN-100D/200D/7000/8000/G2: 0–31 dB or 0–61 dB with per-model preamp items). If the control's range matches your board, capability gating is working. Watch for the **OVL** (ADC overload) badge — it should light up if the ADC is clipping.
+- **DSP controls:** in the VfoWidget's DSP tab, toggle NR2 (EMNR), SNB, APF, NB2. Each should audibly affect the received audio. Try the AGC row (OFF/SLOW/MED/FAST/CUSTOM) — switching AGC modes should change how the audio responds to signal level changes.
+- **Squelch:** try the squelch control — on SSB/AM/FM it should mute audio below the threshold. FM squelch behaves differently than SSB squelch (three variants ported from Thetis).
+- **Mode containers:** switch to FM, DIG, or RTTY mode. Each has its own option container with mode-specific controls.
 - **Sample rate:** open **Setup → Hardware Config → Radio Info**, change the sample rate combo. Available rates depend on the board (HL2: 48/96/192/384 k; ANAN: usually 48/96/192/384 k, some boards go higher on P2). The spectrum span should widen/narrow correspondingly. No crash on rate change.
 - **Mode:** switch LSB ↔ USB. Audio character should change (on SSB the wrong sideband sounds like Donald Duck).
+- **RIT/XIT:** in the VfoWidget X-RIT tab, enable RIT and adjust the offset. The received audio should shift without changing the displayed VFO frequency.
 - **Volume:** the volume control should work.
 - **Disconnect and reconnect:** click Disconnect, wait for the spectrum to go quiet, click Connect again. Audio should resume.
+- **Band change persistence:** switch bands a few times. When you return to a previous band, all your DSP settings (AGC mode, NR, NB, squelch level, etc.) should be restored exactly as you left them.
 
-**✅ Success bar for step 5:** at least the attenuator, volume, and mode controls visibly/audibly affect what you're hearing, and a disconnect/reconnect round trip doesn't crash.
+**✅ Success bar for step 5:** at least the attenuator, DSP toggles, volume, and mode controls visibly/audibly affect what you're hearing, band-change persistence restores your settings, and a disconnect/reconnect round trip doesn't crash.
 
 ### 6. Hardware Config tabs
 
@@ -340,7 +355,6 @@ This is the list of things you will see in the UI that look like they should wor
 - **No CW transmit.** Same reason.
 - **No PureSignal linearization.** Scaffold only; no DSP behind the switch.
 - **No external PTT input routing** — the HL2 I/O Board tab and the ANAN OC Outputs tab have combos for PTT pin, CW key pin, and aux outputs, but they just persist the setting. They don't drive real GPIO yet. Phase 3L / Phase 3M.
-- **No aux output assignments active** — same story. Tab remembers your pick, nothing acts on it yet.
 
 ### Controls that look live but are cold
 
@@ -382,10 +396,15 @@ Beyond the basic "can I hear signals" test, these are the spicier scenarios we h
 5. **Try Add Manually with a wrong IP.** Does the app handle "radio doesn't respond" gracefully, or does it freeze?
 6. **Cold / warm / hot swap radios.** If you have more than one supported board on your network, switch between them: connect to A, disconnect, connect to B. No crash, no stale state bleeding from the first radio.
 7. **Exercise the capability gating.** Open Hardware Config on each board you have and confirm the right tabs appear/hide. If you see a tab that shouldn't be there (e.g. PureSignal on a Hermes-classic), that's a capability-registry bug.
+8. **Adaptive auto-attenuation.** Switch the step attenuator to Adaptive mode (Setup → General → Options). Tune to a band with strong signals. Does the auto-att respond to ADC overload by increasing attenuation? Does it back off when the strong signal goes away?
+9. **Per-band DSP persistence torture test.** Set up different DSP configurations on 3–4 bands (e.g. NR2 on 40m, APF on 20m, high squelch on 2m). Switch bands rapidly. Do all settings restore correctly every time?
+10. **Clarity adaptive auto-tune.** On the spectrum overlay panel, check the Clarity status badge. Re-tune to a quiet band vs. a noisy band. The noise floor estimator should adapt. Try the "Reset to Smooth Defaults" button on Setup → Display → Spectrum Defaults.
 
 ---
 
 ## Reporting bugs
+
+**Easiest way:** click the **💡 lightbulb** in the top-right corner of the menu bar. The built-in issue reporter walks you through filing a structured bug report or feature request, then opens the GitHub issue with the fields pre-filled. You can also file directly at <https://github.com/boydsoftprez/NereusSDR/issues/new/choose>.
 
 When something goes wrong, the more of these you can include, the faster we can fix it:
 
@@ -395,7 +414,7 @@ One line describing what you clicked / typed right before the problem. Example: 
 
 ### 2. Which version
 
-From **Help → About**, or from the terminal:
+From **Help → About NereusSDR** (shows version, build info, Qt/WDSP versions, and GPG fingerprint), or from the terminal:
 
 ```bash
 cd NereusSDR
@@ -430,7 +449,7 @@ Attach the whole file to the bug report. It's usually 30–100 KB of text.
 
 ### 6. File the report
 
-Open a new issue at <https://github.com/boydsoftprez/NereusSDR/issues/new> and tag it `alpha-test` plus your radio family (e.g. `hl2`, `anan-g2`, `anan-100d`, `hermes`, etc.).
+Use the **💡 in-app reporter** (easiest), or open a new issue at <https://github.com/boydsoftprez/NereusSDR/issues/new/choose> and pick **Bug Report** or **Feature Request**. The structured templates ask for your radio model, OS, version, and steps to reproduce.
 
 **What's useful:**
 - Repro steps
@@ -454,7 +473,9 @@ If at the end of this test you:
 2. Discovered your radio in ConnectionPanel
 3. Connected to it without a crash
 4. Heard a live SSB QSO with a working spectrum and waterfall
-5. Quit cleanly
+5. Toggled a few DSP features (NR, AGC, attenuator) and heard them work
+6. Switched bands and had your settings come back
+7. Quit cleanly
 
 …then we've hit our **alpha-test success criterion**. Everything beyond that is a bonus.
 
