@@ -578,6 +578,19 @@ void VfoWidget::buildAudioTab()
                 emit agcThreshChanged(val);
             }
         });
+
+        // Right-click on AGC-T slider → context menu to open AGC settings
+        // From Thetis console.resx:8397 — ptbRF right-click invokes auto-threshold
+        m_agcTSlider->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_agcTSlider, &QWidget::customContextMenuRequested,
+                this, [this](const QPoint& pos) {
+            QMenu menu(m_agcTSlider);
+            menu.addAction(QStringLiteral("AGC Settings..."), this, [this]() {
+                emit openSetupRequested();
+            });
+            menu.exec(m_agcTSlider->mapToGlobal(pos));
+        });
+
         audioLayout->addLayout(row);
     }
 
@@ -592,10 +605,13 @@ void VfoWidget::buildDspTab()
     dspLayout->setContentsMargins(4, 4, 4, 4);
     dspLayout->setSpacing(4);
 
-    // 4×2 grid of DSP toggles
+    // 4×2 grid of DSP toggles — equal column stretch so row 1 (3 items) matches row 0 (4 items)
     auto* grid = new QGridLayout;
     grid->setContentsMargins(0, 0, 0, 0);
     grid->setSpacing(2);
+    for (int col = 0; col < 4; ++col) {
+        grid->setColumnStretch(col, 1);
+    }
 
     auto makeToggle = [dspWidget](const QString& label) -> QPushButton* {
         auto* btn = new QPushButton(label, dspWidget);
@@ -730,13 +746,22 @@ void VfoWidget::buildModeTab()
     modeLayout->setContentsMargins(4, 4, 4, 4);
     modeLayout->setSpacing(4);
 
-    // Mode combo
+    // Mode combo + quick-mode buttons on one row — matches AetherSDR VfoWidget.cpp:1401-1403
+    // [mode combo (stretch)] [USB] [CW] [DIG]
     {
-        auto* row = new QHBoxLayout;
-        auto* label = new QLabel(QStringLiteral("Mode"), modeWidget);
-        label->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
-        label->setFixedWidth(32);
-        row->addWidget(label);
+        static const char* kQmLabels[] = { "USB", "CW", "DIG" };
+        // NereusSDR native — Thetis uses individual radio buttons per mode (radModeUSB etc.)
+        // Quick-mode buttons are a NereusSDR shortcut for frequently used modes.
+        // Wiring deferred to Stage 2 (quickModeRequested signal exists).
+        static const char* kQmTooltips[] = {
+            "Quick-select USB mode",
+            "Quick-select CW mode",
+            "Quick-select DIG mode"
+        };
+
+        auto* modeRow = new QHBoxLayout;
+        modeRow->setSpacing(2);
+        modeRow->setContentsMargins(0, 0, 0, 0);
 
         m_modeCmb = new QComboBox(modeWidget);
         // NereusSDR native — Thetis uses discrete radio buttons (radModeUSB, radModeLSB, ...)
@@ -772,24 +797,8 @@ void VfoWidget::buildModeTab()
                 emit modeChanged(mode);
             }
         });
-        row->addWidget(m_modeCmb);
-        modeLayout->addLayout(row);
-    }
+        modeRow->addWidget(m_modeCmb, 1);  // stretch — combo fills available space
 
-    // Quick-mode shortcut buttons (NYI — Stage 2 maps index → configurable DSPMode)
-    {
-        static const char* kQmLabels[] = { "USB", "CW", "DIG" };
-        // NereusSDR native — Thetis uses individual radio buttons per mode (radModeUSB etc.)
-        // Quick-mode buttons are a NereusSDR shortcut for frequently used modes.
-        // Wiring deferred to Stage 2 (quickModeRequested signal exists).
-        static const char* kQmTooltips[] = {
-            "Quick-select USB mode",
-            "Quick-select CW mode",
-            "Quick-select DIG mode"
-        };
-        auto* row = new QHBoxLayout;
-        row->setSpacing(2);
-        row->setContentsMargins(0, 0, 0, 0);
         for (int i = 0; i < 3; ++i) {
             m_quickModeBtns[i] = new QPushButton(
                 QString::fromLatin1(kQmLabels[i]), modeWidget);
@@ -801,10 +810,10 @@ void VfoWidget::buildModeTab()
                     emit quickModeRequested(i);
                 }
             });
-            row->addWidget(m_quickModeBtns[i]);
+            modeRow->addWidget(m_quickModeBtns[i]);
             NyiOverlay::markNyi(m_quickModeBtns[i], QStringLiteral("phase3g10-stage2"));
         }
-        modeLayout->addLayout(row);
+        modeLayout->addLayout(modeRow);
     }
 
     // Filter preset buttons (dynamic per mode)

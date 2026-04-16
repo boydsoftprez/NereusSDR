@@ -140,6 +140,9 @@ signals:
     void recordToggled(bool recording);
     void playToggled(bool playing);
 
+    // --- Setup dialog request (e.g. AGC-T right-click → open settings) ---
+    void openSetupRequested();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;

@@ -1787,6 +1787,13 @@ void MainWindow::wireSliceToSpectrum()
         // Stage 2: map index → DSPMode and apply
     });
 
+    // --- VfoWidget → MainWindow: open Setup dialog (e.g. AGC-T right-click) ---
+    connect(vfo, &VfoWidget::openSetupRequested, this, [this]() {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    });
+
     // --- VfoWidget → SliceModel: RIT/XIT outbound (S1.8a stubs) ---
     connect(vfo, &VfoWidget::ritEnabledChanged, this, [slice](bool on) {
         slice->setRitEnabled(on);
