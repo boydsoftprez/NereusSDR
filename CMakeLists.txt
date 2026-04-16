@@ -276,6 +276,7 @@ set(GUI_SOURCES
     src/gui/ConnectionPanel.cpp
     src/gui/AddCustomRadioDialog.cpp
     src/gui/SupportDialog.cpp
+    src/gui/AboutDialog.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/widgets/CenterMarkSlider.h

@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "ConnectionPanel.h"
 #include "SupportDialog.h"
+#include "AboutDialog.h"
 #include "SpectrumWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -1272,12 +1273,8 @@ void MainWindow::buildMenuBar()
     helpMenu->addSeparator();
 
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
-        QMessageBox::about(this, QStringLiteral("About NereusSDR"),
-            QString(QStringLiteral("NereusSDR v%1\n\n"
-                                   "Cross-platform SDR Console\n"
-                                   "Qt %2\n\n"
-                                   "github.com/boydsoftprez/NereusSDR"))
-                .arg(QCoreApplication::applicationVersion(), QString::fromUtf8(qVersion())));
+        AboutDialog dlg(this);
+        dlg.exec();
     });
 
     // =========================================================================
