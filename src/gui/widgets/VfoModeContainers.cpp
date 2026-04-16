@@ -446,4 +446,25 @@ void RttyMarkShiftContainer::syncFromSlice()
     m_shiftLabel->setValue(m_slice->rttyShiftHz());
 }
 
+// ── CW autotune (S2.10c) ──────────────────────────────────────────────────
+//
+// TODO (deferred — no WDSP API):
+// CW autotune would require a pitch detection algorithm that identifies
+// the received CW carrier frequency and applies a correction offset.
+//
+// Investigation of matchedCW.h (third_party/wdsp/src/matchedCW.h) shows
+// that the "matched" module is a Gaussian partitioned-overlap-save filter
+// with SetRXAMatchedRun/Freqs/Gain API — it is the APF "selection=1" type,
+// not a CW tone detector or autotune controller.
+//
+// Implementing CW autotune natively would require:
+//   1. A pitch detector (e.g., FFT peak-finder or autocorrelation) in the
+//      audio-frequency range (~200–900 Hz for typical CW pitches)
+//   2. A frequency error signal fed back to RxChannel::setShiftFrequency()
+//      or slice->setRitHz() to center the tone on the APF frequency
+//   3. A one-shot or polling mode (QTimer @ ~500ms per original plan)
+//
+// This is a substantial addition beyond the current phase scope.
+// Deferred to a future phase with an explicit native design document.
+
 }  // namespace NereusSDR
