@@ -256,6 +256,7 @@ set(CORE_SOURCES
     src/core/WdspEngine.cpp
     src/core/RxChannel.cpp
     src/core/FFTEngine.cpp
+    src/core/NoiseFloorEstimator.cpp
 )
 
 set(MODEL_SOURCES
