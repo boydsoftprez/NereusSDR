@@ -122,6 +122,10 @@ public:
     DiscoveryProfile discoveryProfile() const;
     void             setDiscoveryProfile(DiscoveryProfile p);
 
+    // Model override for a specific radio MAC (Phase 3I-RP).
+    HPSDRModel modelOverride(const QString& macKey) const;
+    void setModelOverride(const QString& macKey, HPSDRModel model);
+
     // -------------------------------------------------------------------------
     // Per-slice-per-band DSP state (Phase 3G-10 Stage 2 — S2.P).
     //

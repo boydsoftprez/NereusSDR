@@ -257,6 +257,12 @@ void AppSettings::saveRadio(const RadioInfo& info, bool pinToMac, bool autoConne
     m_settings.insert(prefix + QStringLiteral("autoConnect"),     autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
     m_settings.insert(prefix + QStringLiteral("lastSeen"),
                       QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    // Model override (Phase 3I-RP). FIRST = no override.
+    if (info.modelOverride != HPSDRModel::FIRST) {
+        m_settings.insert(prefix + QStringLiteral("modelOverride"),
+                          QString::number(static_cast<int>(info.modelOverride)));
+    }
 }
 
 void AppSettings::forgetRadio(const QString& macKey)
@@ -345,6 +351,15 @@ std::optional<SavedRadio> AppSettings::savedRadio(const QString& macKey) const
         sr.lastSeen = QDateTime::fromString(lastSeenStr, Qt::ISODate);
     }
 
+    // Model override (Phase 3I-RP)
+    const QString moStr = m_settings.value(prefix + QStringLiteral("modelOverride"),
+                                            QStringLiteral("-1"));
+    int moInt = moStr.toInt();
+    if (moInt > static_cast<int>(HPSDRModel::FIRST) &&
+        moInt < static_cast<int>(HPSDRModel::LAST)) {
+        sr.info.modelOverride = static_cast<HPSDRModel>(moInt);
+    }
+
     return sr;
 }
 
@@ -419,6 +434,30 @@ void AppSettings::clearHardwareValues(const QString& mac)
             m_settings.remove(k);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Model override (Phase 3I-RP)
+// ---------------------------------------------------------------------------
+
+HPSDRModel AppSettings::modelOverride(const QString& macKey) const
+{
+    const QString prefix = radioKeyPrefix(macKey);
+    const QString val = m_settings.value(prefix + QStringLiteral("modelOverride"),
+                                          QStringLiteral("-1"));
+    int v = val.toInt();
+    if (v > static_cast<int>(HPSDRModel::FIRST) &&
+        v < static_cast<int>(HPSDRModel::LAST)) {
+        return static_cast<HPSDRModel>(v);
+    }
+    return HPSDRModel::FIRST;
+}
+
+void AppSettings::setModelOverride(const QString& macKey, HPSDRModel model)
+{
+    const QString prefix = radioKeyPrefix(macKey);
+    m_settings.insert(prefix + QStringLiteral("modelOverride"),
+                      QString::number(static_cast<int>(model)));
 }
 
 } // namespace NereusSDR

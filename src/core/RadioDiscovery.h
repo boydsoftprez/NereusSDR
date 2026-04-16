@@ -40,6 +40,10 @@ struct RadioInfo {
     bool hasPureSignal{false};           // Boards supporting PA linearization
     int maxSampleRate{384000};           // Max supported sample rate in Hz
 
+    // Model override — set by user in ConnectionPanel, persisted per-MAC.
+    // When set to a value other than FIRST, overrides the auto-detected model.
+    HPSDRModel modelOverride{HPSDRModel::FIRST}; // FIRST = no override (auto-detect)
+
     // Display helpers
     QString displayName() const;
     static int adcCountForBoard(HPSDRHW type);
