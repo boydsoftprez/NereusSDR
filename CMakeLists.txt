@@ -455,6 +455,9 @@ set_target_properties(NereusSDR PROPERTIES
     MACOSX_BUNDLE_ICON_FILE "NereusSDR.icns"
     MACOSX_BUNDLE_BUNDLE_NAME "NereusSDR"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.boydsoftprez.NereusSDR"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_COPYRIGHT "© 2026 J.J. Boyd (KG4VCF); GPL port of Thetis (ramdor/Thetis) and mi0bot/OpenHPSDR-Thetis; descends from FlexRadio PowerSDR lineage. GPLv3."
 )
 
 target_include_directories(NereusSDRObjs PUBLIC
