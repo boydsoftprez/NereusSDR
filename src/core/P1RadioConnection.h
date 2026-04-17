@@ -12,6 +12,7 @@
 //   Thetis is a C# implementation of a Software Defined Radio.
 //   Copyright (C) 2010-2020  Doug Wigley (W5WC)
 //   Copyright (C) 2020  Doug Wigley (W5WC) [ChannelMaster networkproto1.c — LGPL]
+//   Copyright (C) 2019-2026  Richard Samphire (MW0LGE) — rationalises dual-license stanza
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
