@@ -20,6 +20,11 @@
 //   Copyright (C) 2013-2017  Warren Pratt (NR0V) [dsp.cs]
 //   Copyright (C) 2019-2026  Richard Samphire (MW0LGE) — heavily modified
 //   Waterfall AGC Modifications Copyright (C) 2013  Phil Harman (VK6APH)
+//   Copyright (C) 2017-2019  Chris Codella (W2PA) — console.cs / setup.cs / NetworkIO.cs inline mods
+//   Copyright (C) 2018-2025  Laurence Barker (G8NJJ) — Andromeda / Aries / Saturn / ANAN-G2
+//   Copyright (C) 2020-2025  Joe (WD5Y) — console.cs UI tweaks / mute / ForeColor
+//   Copyright (C) 2020-2025  MI0BOT — Hermes-Lite 2 fork contributions
+//   Copyright (C) 2000-2025  Original authors — enums.cs placeholder
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License

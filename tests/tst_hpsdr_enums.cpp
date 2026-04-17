@@ -13,6 +13,8 @@
 //   Copyright (C) 2000-2025  Original authors
 //   Copyright (C) 2015-2020  Doug Wigley (W5WC) [ChannelMaster — LGPL]
 //   Copyright (C) 2020-2025  Richard Samphire (MW0LGE)
+//   Copyright (C) 2018-2025  Laurence Barker (G8NJJ) — Andromeda / Aries / Saturn / ANAN-G2
+//   Copyright (C) 2020-2025  MI0BOT — Hermes-Lite 2 fork contributions
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License

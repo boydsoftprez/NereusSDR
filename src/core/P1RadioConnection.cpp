@@ -17,6 +17,10 @@
 //   Copyright (C) 2020  Doug Wigley (W5WC) [ChannelMaster networkproto1.c — LGPL]
 //   Copyright (C) 2000-2025  Original authors [cmaster.cs]
 //   Copyright (C) 2020-2025  Richard Samphire (MW0LGE)
+//   Copyright (C) 2017-2019  Chris Codella (W2PA) — console.cs / setup.cs / NetworkIO.cs inline mods
+//   Copyright (C) 2018-2025  Laurence Barker (G8NJJ) — Andromeda / Aries / Saturn / ANAN-G2
+//   Copyright (C) 2020-2025  Joe (WD5Y) — console.cs UI tweaks / mute / ForeColor
+//   Copyright (C) 2006-2007  Bill Tracey (KD5TFD) — NetworkIO.cs / netInterface.c historical
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License

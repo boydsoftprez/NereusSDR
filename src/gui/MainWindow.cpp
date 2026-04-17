@@ -18,6 +18,10 @@
 //   Copyright (C) 2013-2017  Warren Pratt (NR0V) [dsp.cs]
 //   Copyright (C) 2019-2026  Richard Samphire (MW0LGE) — heavily modified
 //   Copyright (C) 2020-2026  Richard Samphire (MW0LGE) [MeterManager.cs]
+//   Copyright (C) 2017-2019  Chris Codella (W2PA) — console.cs / setup.cs / NetworkIO.cs inline mods
+//   Copyright (C) 2018-2025  Laurence Barker (G8NJJ) — Andromeda / Aries / Saturn / ANAN-G2
+//   Copyright (C) 2020-2025  Joe (WD5Y) — console.cs UI tweaks / mute / ForeColor
+//   Copyright (C) 2023-2025  Bryan Rambo (W4WMT) — Resampler / VAC / cmASIO / setup.cs [2.10.3.5]
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
