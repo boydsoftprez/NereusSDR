@@ -22,6 +22,10 @@
 //   Copyright (C) 2013-2019  Warren Pratt (NR0V) — dsp.cs / cmaster.c / setup.cs resampler
 //   Copyright (C) 2023-2025  Bryan Rambo (W4WMT) — Resampler / VAC / cmASIO / setup.cs [2.10.3.5]
 //
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
 //   as published by the Free Software Foundation; either version 2
@@ -53,6 +57,10 @@
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code. Combines logic from the Thetis sources
 //                 listed above.
+//                 Per-slice `Q_PROPERTY` + signal shape ported from AetherSDR
+//                 `src/models/SliceModel.{h,cpp}` (NereusSDR swaps
+//                 SmartSDR slice/pan fields for OpenHPSDR DDC/receiver
+//                 fields; DSP behaviour is Thetis, see Copyright block).
 // =================================================================
 
 #include "Band.h"

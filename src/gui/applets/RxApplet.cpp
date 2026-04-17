@@ -19,6 +19,10 @@
 //   Copyright (C) 2013-2019  Warren Pratt (NR0V) — dsp.cs / cmaster.c / setup.cs resampler
 //   Copyright (C) 2023-2025  Bryan Rambo (W4WMT) — Resampler / VAC / cmASIO / setup.cs [2.10.3.5]
 //
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
 //   as published by the Free Software Foundation; either version 2
@@ -48,8 +52,10 @@
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
-//                 Claude Code. Structural template follows AetherSDR
-//                 (ten9876/AetherSDR) Qt6 conventions.
+//                 Claude Code. Layout adapted from AetherSDR `src/gui/RxApplet.{h,cpp}`
+//                 (18-control RX panel). Tier-1 SliceModel wiring
+//                 follows AetherSDR GUI↔model pattern; DSP behaviour
+//                 is Thetis.
 // =================================================================
 
 // src/gui/applets/RxApplet.cpp

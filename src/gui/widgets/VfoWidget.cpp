@@ -26,6 +26,10 @@
 //   Copyright (C) 2020-2025  MI0BOT — Hermes-Lite 2 fork contributions
 //   Copyright (C) 2000-2025  Original authors — enums.cs placeholder
 //
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
 //   as published by the Free Software Foundation; either version 2
@@ -57,6 +61,10 @@
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code. Combines logic from the Thetis sources
 //                 listed above.
+//                 Floating VFO-flag widget ported from AetherSDR
+//                 `src/gui/VfoWidget.{h,cpp}`. DSP field values
+//                 (frequency, mode, filter, AGC) come from Thetis
+//                 `console.cs`; see Copyright block.
 // =================================================================
 
 #include "VfoWidget.h"

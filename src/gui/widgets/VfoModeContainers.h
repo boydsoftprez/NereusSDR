@@ -19,6 +19,10 @@
 //   Copyright (C) 2018-2025  Laurence Barker (G8NJJ) — Andromeda / Aries / Saturn / ANAN-G2
 //   Copyright (C) 2020-2025  Joe (WD5Y) — console.cs UI tweaks / mute / ForeColor
 //
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
 //   as published by the Free Software Foundation; either version 2
@@ -50,6 +54,8 @@
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code. Combines logic from the Thetis sources
 //                 listed above.
+//                 Mode sub-widget containers lifted from AetherSDR
+//                 `src/gui/VfoWidget.cpp:996-1300`.
 // =================================================================
 
 // NereusSDR native mode container widgets; Qt skeleton patterns informed
