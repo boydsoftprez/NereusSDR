@@ -13,6 +13,9 @@
 //   Copyright (C) 2019-2026  Richard Samphire (MW0LGE) — Thetis heavy modifications
 //   Copyright (C) 2020-2026  Reid Campbell (MI0BOT) — Hermes-Lite fork contributions
 //
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — pattern-level contributions (https://github.com/ten9876/AetherSDR)
+//
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
 //   as published by the Free Software Foundation; either version 2
@@ -43,8 +46,10 @@
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
-//                 Claude Code. Structural template follows AetherSDR
-//                 (ten9876/AetherSDR) Qt6 conventions.
+//                 Claude Code. Discovery parsing ported from mi0bot/Thetis-HL2
+//                 `HPSDR/clsRadioDiscovery.cs`; UDP listener shell
+//                 (rebind-on-error, stale-entry timer) follows AetherSDR
+//                 `src/core/RadioDiscovery.{h,cpp}`.
 // =================================================================
 
 // From mi0bot/Thetis@Hermes-Lite clsRadioDiscovery.cs
