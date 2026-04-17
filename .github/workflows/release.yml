@@ -1,8 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  # Tag-push trigger disabled during compliance/v0.2.0-remediation work.
+  # Re-enable only after the compliance branch has merged and Richie's
+  # pre-release courtesy review has cleared. See
+  # docs/architecture/2026-04-16-gpl-compliance-remediation-design.md §4.4.
+  # push:
+  #   tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:

@@ -2,6 +2,16 @@
 
 **A cross-platform SDR console for OpenHPSDR radios**
 
+> ⚠ **NereusSDR v0.1.x alpha builds withdrawn**
+>
+> An unforeseen issue was identified in the v0.1.x alpha builds that needs
+> to be addressed before further public distribution. All v0.1.x binaries
+> have been withdrawn from the Releases page. **If you installed a v0.1.x
+> build, please uninstall it.** A fresh v0.2.0 will follow once the work
+> is complete; we'll announce it here when it's ready.
+>
+> — J.J. Boyd ~ KG4VCF
+
 [![CI](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml/badge.svg)](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
