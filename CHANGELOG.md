@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0] - 2026-04-17
+
+### License compliance remediation
+
+- Restored Thetis copyright, GPLv2-or-later permission, per-contributor
+  attribution, and Samphire dual-licensing notices across all derived
+  source files.
+- Added per-file modification history blocks disclosing reimplementation
+  date, author, and AI-assisted transformation, per GPL notice-preservation
+  requirements.
+- Published `docs/attribution/THETIS-PROVENANCE.md` — complete
+  file-by-file provenance inventory covering ramdor/Thetis,
+  mi0bot/Thetis-HL2, and TAPR WDSP derivations.
+- Replaced `resources/meters/ananMM.png` and `cross-needle*.png` with
+  original NereusSDR artwork (generators committed under `tools/`);
+  audited remaining assets and documented in
+  `docs/attribution/ASSETS.md`.
+- Re-framed README to accurately describe NereusSDR as a C++20/Qt6 port
+  of Thetis within the FlexRadio / OpenHPSDR / Thetis lineage.
+- Added non-negotiable license-preservation rule to the source-first
+  porting protocol in CLAUDE.md and to CONTRIBUTING.md.
+- No functional changes.
+
+**Binaries from v0.1.1–v0.1.7 remain withdrawn and should not be
+redistributed.**
+
 ## [0.1.7] - 2026-04-16
 
 RedPitaya / Hermes P1 protocol fixes driven by pcap analysis in issue #38,
