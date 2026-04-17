@@ -116,10 +116,19 @@ dual-licensing block; keep the two-copyright-line form.
 
 ## Variant 3 — `mi0bot`
 
-**Use when:** the source file comes from the mi0bot/Thetis-HL2 fork. Adds
-the mi0bot fork maintainer's attribution (callsign `MI0BOT`; Thetis source
-writes only the callsign, no full name) and keeps the upstream Thetis
-chain the fork itself descends from.
+**Use when:** the NereusSDR file ports a Thetis source file that BOTH the
+mi0bot fork AND ramdor/Thetis upstream carry, but the NereusSDR port
+specifically draws on mi0bot's fork-added HL2 modifications. Keeps the
+upstream Thetis contributor chain AND credits Reid Campbell (MI0BOT) for
+the fork contributions.
+
+Full-name attribution "Reid Campbell (MI0BOT)" is verified from the fork's
+own `Project Files/Source/Console/HPSDR/IoBoardHl2.cs` header
+(`Copyright (C) 2025 Reid Campbell, MI0BOT, mi0bot@trom.uk`).
+
+For files that are UNIQUE to the mi0bot fork (e.g. `IoBoardHl2.cs` —
+solo Reid Campbell authorship, no FlexRadio / Wigley / Samphire
+contributions), use **Variant 5** instead.
 
 ```cpp
 // =================================================================
@@ -135,7 +144,7 @@ chain the fork itself descends from.
 //   Copyright (C) 2004-2009  FlexRadio Systems
 //   Copyright (C) 2010-2020  Doug Wigley (W5WC)
 //   Copyright (C) 2019-2026  Richard Samphire (MW0LGE) — Thetis heavy modifications
-//   Copyright (C) <YEAR_RANGE>  MI0BOT — Hermes-Lite fork contributions
+//   Copyright (C) <YEAR_RANGE>  Reid Campbell (MI0BOT) — Hermes-Lite fork contributions
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License
@@ -206,6 +215,56 @@ Skeleton (adapt copyright lines to match union of cited sources):
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code. Combines logic from the Thetis sources
 //                 listed above.
+// =================================================================
+```
+
+---
+
+## Variant 5 — `mi0bot-solo`
+
+**Use when:** the NereusSDR file ports a file that exists ONLY in the
+mi0bot/OpenHPSDR-Thetis fork (not in ramdor/Thetis upstream) and whose
+header names Reid Campbell (MI0BOT) as the sole author with no
+FlexRadio / Wigley / Samphire contributions. Currently applies to
+derivatives of `Project Files/Source/Console/HPSDR/IoBoardHl2.cs`.
+
+```cpp
+// =================================================================
+// <FILENAME>  (NereusSDR)
+// =================================================================
+//
+// Ported from mi0bot/OpenHPSDR-Thetis source:
+<THETIS_SOURCE_PATHS>
+//
+// This file is a mi0bot-fork-unique source authored solely by Reid
+// Campbell (MI0BOT) — it does not exist in ramdor/Thetis upstream and
+// carries no FlexRadio / Wigley / Samphire contributions. Its header
+// attribution is reproduced verbatim below, per GNU GPL preservation
+// requirements.
+//
+// Original copyright and license (preserved from upstream header):
+//
+//   Copyright (C) <YEAR>  Reid Campbell (MI0BOT), mi0bot@trom.uk
+//
+//   This program is free software; you can redistribute it and/or modify
+//   it under the terms of the GNU General Public License as published by
+//   the Free Software Foundation; either version 2 of the License, or
+//   (at your option) any later version.
+//
+//   This program is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU General Public License for more details.
+//
+//   You should have received a copy of the GNU General Public License
+//   along with this program; if not, write to the Free Software
+//   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307, USA.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   <PORT_DATE> — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Anthropic
+//                Claude Code.
 // =================================================================
 ```
 

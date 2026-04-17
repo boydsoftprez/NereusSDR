@@ -11,7 +11,7 @@
 //   Copyright (C) 2004-2009  FlexRadio Systems
 //   Copyright (C) 2010-2020  Doug Wigley (W5WC)
 //   Copyright (C) 2019-2026  Richard Samphire (MW0LGE) — Thetis heavy modifications
-//   Copyright (C) 2020-2026  MI0BOT — Hermes-Lite fork contributions
+//   Copyright (C) 2020-2026  Reid Campbell (MI0BOT) — Hermes-Lite fork contributions
 //
 //   This program is free software; you can redistribute it and/or
 //   modify it under the terms of the GNU General Public License

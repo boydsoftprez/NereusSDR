@@ -60,11 +60,13 @@ def parse_provenance(text: str):
         rel = candidate.replace("`", "")
         if not (REPO / rel).is_file():
             continue
-        # Use the variant cell (index 4) directly to avoid false positives
-        # (e.g. "thetis-no-samphire" contains the word "samphire").
-        variant_cell = cells[4].lower() if len(cells) > 4 else ""
-        joined = " ".join(c.lower() for c in cells)
-        if variant_cell == "thetis-samphire" or "mi0bot" in joined or "multi-source" in joined:
+        # Use the variant cell (index 4) exact-match to avoid false positives:
+        # "thetis-no-samphire" contains the substring "samphire"; "mi0bot-solo"
+        # matches any "mi0bot..." prefix. Samphire dual-license stanza is
+        # required only for variants whose upstream actually has Samphire
+        # content.
+        variant_cell = cells[4].strip().lower() if len(cells) > 4 else ""
+        if variant_cell in ("thetis-samphire", "mi0bot", "multi-source"):
             variant = "samphire-required"
         else:
             variant = "plain"

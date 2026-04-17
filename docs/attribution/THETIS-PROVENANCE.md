@@ -199,11 +199,11 @@ Discovery-reply hex fixtures are covered by `tests/fixtures/discovery/README.md`
 
 | NereusSDR file | mi0bot source | Line ranges | Type | Variant | Notes |
 | --- | --- | --- | --- | --- | --- |
-| src/core/RadioDiscovery.cpp | HPSDR/clsRadioDiscovery.cs | 1145-1195; 1201-1226; 49-70 | port | mi0bot | mi0bot fork not locally cloned; copyright chain via ramdor/Thetis (Samphire sole author upstream) + MI0BOT callsign for fork contributions (Thetis source writes no surname) |
-| src/core/RadioDiscovery.h | HPSDR/clsRadioDiscovery.cs | 49-70 | port | mi0bot | mi0bot fork not locally cloned; ramdor/Thetis upstream used as copyright reference |
-| src/gui/setup/hardware/Hl2IoBoardTab.cpp | HPSDR/IoBoardHl2.cs | 79; 139; 194-198 | port | mi0bot | IoBoardHl2.cs does NOT exist in ramdor/Thetis — mi0bot/Thetis-HL2 fork addition; copyright not directly extractable |
-| src/gui/setup/hardware/Hl2IoBoardTab.h | HPSDR/IoBoardHl2.cs | 79; 139; 194-198 | port | mi0bot | mi0bot fork file, not available locally |
-| tests/tst_radio_discovery_parse.cpp | HPSDR/clsRadioDiscovery.cs | 1145-1195; 1201-1226 | port | mi0bot | mi0bot fork not locally cloned; ramdor/Thetis upstream used |
+| src/core/RadioDiscovery.cpp | HPSDR/clsRadioDiscovery.cs | 1145-1195; 1201-1226; 49-70 | port | mi0bot | fork diff vs ramdor/Thetis adds 9 HL2-specific MI0BOT blocks (IpAddressFixedHL2/EeConfigHL2 fields, P1 discovery-reply HL2 parser, board-id 6 → HermesLite mapping) — our port carries those; Reid Campbell (MI0BOT) name verified from fork IoBoardHl2.cs header |
+| src/core/RadioDiscovery.h | HPSDR/clsRadioDiscovery.cs | 49-70 | port | mi0bot | port of the RadioInfo additions mi0bot added for HL2 support |
+| src/gui/setup/hardware/Hl2IoBoardTab.cpp | HPSDR/IoBoardHl2.cs | 79; 139; 194-198 | port | mi0bot-solo | IoBoardHl2.cs is fork-unique: authored solely by Reid Campbell (MI0BOT), `Copyright (C) 2025 Reid Campbell, MI0BOT, mi0bot@trom.uk`, no FlexRadio/Wigley/Samphire contributions, no dual-license stanza |
+| src/gui/setup/hardware/Hl2IoBoardTab.h | HPSDR/IoBoardHl2.cs | 79; 139; 194-198 | port | mi0bot-solo | same attribution as Hl2IoBoardTab.cpp — Reid Campbell (MI0BOT) solo |
+| tests/tst_radio_discovery_parse.cpp | HPSDR/clsRadioDiscovery.cs | 1145-1195; 1201-1226 | port | mi0bot | tests the mi0bot-added HL2 discovery parsing; attribution matches RadioDiscovery.cpp |
 
 ## Files derived from TAPR WDSP
 
