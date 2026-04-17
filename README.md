@@ -2,12 +2,22 @@
 
 **A cross-platform SDR console for OpenHPSDR radios**
 
+> ⚠ **NereusSDR v0.1.x alpha builds withdrawn**
+>
+> An unforeseen issue was identified in the v0.1.x alpha builds that needs
+> to be addressed before further public distribution. All v0.1.x binaries
+> have been withdrawn from the Releases page. **If you installed a v0.1.x
+> build, please uninstall it.** A fresh v0.2.0 will follow once the work
+> is complete; we'll announce it here when it's ready.
+>
+> — J.J. Boyd ~ KG4VCF
+
 [![CI](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml/badge.svg)](https://github.com/boydsoftprez/NereusSDR/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![Qt6](https://img.shields.io/badge/Qt-6-green.svg)](https://www.qt.io/)
 
-NereusSDR is an independent cross-platform SDR client deeply informed by the workflow, feature set, and operating style of [Thetis](https://github.com/ramdor/Thetis), reimagined with a new GUI, a modernized architecture, and native support for macOS, Linux, and Windows.
+NereusSDR is a C++20/Qt6 port of [Thetis](https://github.com/ramdor/Thetis) — the canonical OpenHPSDR / Apache Labs SDR console, itself descended from FlexRadio PowerSDR — carrying its radio logic, DSP integration, and feature set forward to a native cross-platform codebase (macOS, Linux, Windows) with a Qt-based GUI. The Thetis contributor lineage (FlexRadio Systems, Doug Wigley W5WC, Richard Samphire MW0LGE, and the wider OpenHPSDR community) is preserved per-file in source headers and summarized in [docs/attribution/THETIS-PROVENANCE.md](https://github.com/boydsoftprez/NereusSDR/blob/compliance/v0.2.0-remediation/docs/attribution/THETIS-PROVENANCE.md) (pending merge from the compliance branch). Distributed under GPLv3, compatible with Thetis's GPLv2-or-later terms.
 
 ![NereusSDR v0.1.6 — ANAN-G2 on 40m LSB](docs/images/nereussdr-v016-screenshot.jpg)
 
@@ -264,4 +274,4 @@ NereusSDR stands on the shoulders of these projects:
 
 NereusSDR is free and open-source software licensed under the [GNU General Public License v3](LICENSE).
 
-*NereusSDR is an independent project and is not affiliated with or endorsed by Apache Labs or the OpenHPSDR project.*
+*NereusSDR is a derivative work of Thetis licensed under the GNU General Public License. It is not affiliated with or endorsed by Apache Labs, FlexRadio Systems, ramdor/Thetis, or the OpenHPSDR project.*
