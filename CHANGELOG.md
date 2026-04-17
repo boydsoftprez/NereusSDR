@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Hardware Config → Radio Info sample-rate wiring (#35):** sample-rate combo
+  now actually drives the wire rate used on the next connection (previously
+  emitted to AppSettings but was never read back; `RadioModel::connectToRadio`
+  hardcoded `isP1 ? 192000 : 768000`). Active-RX count spinbox now emits on
+  change (its `valueChanged` signal was not connected).
+
+### Changed
+- **Sample-rate combo full Thetis-parity rates (#35):** per-protocol selections
+  now match Thetis setup.cs:866. P1 = 48/96/192 kHz (plus 384 on RedPitaya),
+  P2 = 48/96/192/384/768/1536 kHz. Default is 192 kHz instead of the previous
+  "always max rate" UX.
+- **Hardware Config RX2 sample-rate stub (#35):** RX2 combo added as a disabled
+  control for Phase 3F multi-panadapter. Thetis force-equal rules (setup.cs:7065-7073,
+  7155-7156) documented at the combo creation site.
+- **RadioInfoTab reconnect banner (#35):** shows a "⚠ Reconnect to apply new
+  sample rate" warning when the combo differs from the active wire rate. Disappears
+  when live-apply lands in the follow-up PR.
+
+## [0.1.7] - 2026-04-16
+
 RedPitaya / Hermes P1 protocol fixes driven by pcap analysis in issue #38,
 plus Windows D3D11 container lifecycle fixes from issue #42.
 
@@ -39,23 +60,6 @@ plus Windows D3D11 container lifecycle fixes from issue #42.
     fixed `kNormalRowHNorm = 0.05` assumes fixed-aspect containers; stack
     now shares `(1 − bandTop)` equally among rows. 24 px floor preserved
     for small widgets.
-- **Hardware Config → Radio Info sample-rate wiring (#35):** sample-rate combo
-  now actually drives the wire rate used on the next connection (previously
-  emitted to AppSettings but was never read back; `RadioModel::connectToRadio`
-  hardcoded `isP1 ? 192000 : 768000`). Active-RX count spinbox now emits on
-  change (its `valueChanged` signal was not connected).
-
-### Changed
-- **Sample-rate combo full Thetis-parity rates (#35):** per-protocol selections
-  now match Thetis setup.cs:866. P1 = 48/96/192 kHz (plus 384 on RedPitaya),
-  P2 = 48/96/192/384/768/1536 kHz. Default is 192 kHz instead of the previous
-  "always max rate" UX.
-- **Hardware Config RX2 sample-rate stub (#35):** RX2 combo added as a disabled
-  control for Phase 3F multi-panadapter. Thetis force-equal rules (setup.cs:7065-7073,
-  7155-7156) documented at the combo creation site.
-- **RadioInfoTab reconnect banner (#35):** shows a "⚠ Reconnect to apply new
-  sample rate" warning when the combo differs from the active wire rate. Disappears
-  when live-apply lands in the follow-up PR.
 
 ### Known issues
 - **ANAN MM preset** still shows empty space below the needle panel when
