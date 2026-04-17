@@ -149,7 +149,7 @@ HardwareProfile profileForModel(HPSDRModel model)
             p.adcSupplyVoltage  = 50;
             p.lrAudioSwap       = false;
             break;
-        case HPSDRModel::ANAN_G2_1K:
+        case HPSDRModel::ANAN_G2_1K:  // G8NJJ: likely to need further changes for PA [Thetis clsHardwareSpecific.cs:164]
             p.effectiveBoard    = HPSDRHW::Saturn;
             p.adcCount          = 2;
             p.mkiiBpf           = true;

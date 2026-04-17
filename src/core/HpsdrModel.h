@@ -97,10 +97,10 @@ enum class HPSDRModel : int {
     ORIONMKII    =  8,
     ANAN7000D    =  9,
     ANAN8000D    = 10,
-    ANAN_G2      = 11,  // G8NJJ contribution
-    ANAN_G2_1K   = 12,  // G8NJJ contribution
+    ANAN_G2      = 11,  // G8NJJ [Thetis enums.cs:125]
+    ANAN_G2_1K   = 12,  // G8NJJ [Thetis enums.cs:126]
     ANVELINAPRO3 = 13,
-    HERMESLITE   = 14,  // MI0BOT contribution
+    HERMESLITE   = 14,  // MI0BOT [Thetis enums.cs:128]
     REDPITAYA    = 15,  // DH1KLM contribution — enum slot preserved, impl deferred
     LAST         = 16
 };
@@ -114,9 +114,9 @@ enum class HPSDRHW : int {
     Angelia    =   3,  // ANAN-100D
     Orion      =   4,  // ANAN-200D
     OrionMKII  =   5,  // ANAN-7000DLE / 8000DLE / AnvelinaPro3
-    HermesLite =   6,  // Hermes Lite 2
+    HermesLite =   6,  // Hermes Lite 2 — MI0BOT: HL2 allocated number [Thetis network.h:422 / enums.cs:396]
     // 7..9 reserved — DO NOT REUSE (Thetis wire format compares these ints)
-    Saturn     =  10,  // ANAN-G2
+    Saturn     =  10,  // ANAN-G2: added G8NJJ [Thetis network.h:423 / enums.cs:397]
     SaturnMKII =  11,  // ANAN-G2 MkII board revision
     Unknown    = 999
 };
