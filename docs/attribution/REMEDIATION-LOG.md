@@ -332,4 +332,16 @@ Exact Thetis marker text preserved; square-bracket citation added so a reader ca
 
 ---
 
+## 2026-04-17 — Missing LICENSE-DUAL-LICENSING file at repo root
+
+**Discovered by:** J.J. Boyd (maintainer compliance-audit self-review)
+**Reported via:** GPL §1 audit — checking that every license-relevant notice present in the Thetis repo is mirrored in NereusSDR
+**Affected files:** (new) `LICENSE-DUAL-LICENSING` at repo root
+**Gap:** Thetis maintains **two** license-related files at its repo root — `LICENSE` (GPLv2-or-later text) and `LICENSE-DUAL-LICENSING` (Samphire's project-level dual-licensing statement applying only to his own contributions). NereusSDR had only `LICENSE` (GPLv3 text). The dual-licensing statement was preserved inline within source files via Pass 5's verbatim header copying wherever Thetis sources embedded it, but the standalone project-level file was not mirrored. GPL §1's "keep intact all the notices that refer to this License" applies to that standalone file too, since it is a project-level licensing-context notice Samphire maintains upstream.
+**Root cause:** Phase 1–4 header work focused on per-file copyright and license preservation. Project-level licensing-notice files beyond the main `LICENSE` weren't checked against upstream.
+**Fix:** Copied `/Users/j.j.boyd/Thetis/LICENSE-DUAL-LICENSING` verbatim (byte-identical diff) to `/Users/j.j.boyd/NereusSDR/LICENSE-DUAL-LICENSING`. No text modifications — Samphire's statement references "the GNU General Public License granted in LICENCE" (British spelling) which stays as the source writes it; the cross-reference to our American-spelled `LICENSE` file is close enough for a reader to follow and editing the text would violate the verbatim-preservation rule.
+**Process improvement:** Future upstream audits should check the repo-root directory for ANY license-related files (e.g. `LICENSE-*`, `COPYING*`, `NOTICE*`, `AUTHORS*`, `CONTRIBUTORS*`), not just the main `LICENSE`. Each such file carries license-relevant notices that §1 "keep intact" applies to.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*
