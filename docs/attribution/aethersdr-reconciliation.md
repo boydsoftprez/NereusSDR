@@ -425,3 +425,50 @@ should replay that grep and match each hit to one of the four buckets.
    line for an unrelated runtime dependency. 25c should remove.
 
 End of Task 25b.
+
+---
+
+## Bucket D — Deferred files (Task 25c deferral note)
+
+Added by Task 25c. These 7 files were NOT auto-edited. Each is flagged
+for human review.
+
+### D.1 — Original Bucket D: incidental inline AetherSDR mentions (5 files)
+
+These 5 files were classified Bucket D by Task 25b because they cite
+AetherSDR only in incidental inline comments — not in a formal
+Modification-History attribution claim.  25c did NOT touch them.
+
+| File | AetherSDR mention | Reason deferred |
+|---|---|---|
+| `src/core/WdspEngine.cpp` | Line 59: `// From AetherSDR AudioEngine::needsWisdomGeneration() pattern.` | Single method UI-pattern note. File Copyright block is Thetis-only (WDSP is TAPR/Thetis); no formal AetherSDR attribution needed. Leave as-is unless J.J. determines otherwise. |
+| `src/gui/AboutDialog.cpp` | Lines 106-107: contributor-table data `Contributor{"Jeremy", "KK7GWY", "AetherSDR", …}` | This is **data** (contributor attribution), not a code-origin claim. Leave as-is. Optional: add AetherSDR attribution to the Copyright block if/when AboutDialog.cpp gets a full Phase 4 header treatment. |
+| `tests/tst_about_dialog.cpp` | Line 41: `QStringLiteral("ten9876/AetherSDR")` | Test literal asserting correctness of the About-dialog data. Not a file-origin claim. Leave as-is. |
+| `tests/tst_container_persistence.cpp` | Line 219: `// NeedleItem::setValue historically clamped to the AetherSDR…` | Single-line test-body comment explaining clamp-range history. Not a header claim. Leave as-is. |
+| `tests/CMakeLists.txt` | Line 83: `# ── Phase 3G-10 VFO DSP parity + AetherSDR flag port ─────────` | Section banner / phase-naming separator. Not a copyright claim. Leave as-is. |
+
+### D.2 — Reclassified from Bucket C: MainWindow files (2 files)
+
+Task 25b classified `src/gui/MainWindow.h` and `src/gui/MainWindow.cpp`
+as **Bucket C** (mixed Thetis + AetherSDR lineage) because the
+AetherSDR debt is load-bearing (signal-routing hub, double-height status
+bar, feature-request dialog port from AetherSDR `src/gui/MainWindow.{h,cpp}`
+and `src/gui/TitleBar.{h,cpp}`).
+
+Task 25c moved them to Bucket D because **neither file currently carries
+a formal Modification-History block** — they open with `#pragma once`
+and Qt/std includes, with no Copyright or mod-history comment.  The
+mechanical Bucket C action ("tighten the Modification-History AetherSDR
+line") cannot be applied to a file with no such block.
+
+Recommended follow-up task:
+1. Add a full dual-attribution header to both files (Thetis `console.cs`
+   command dispatch + AetherSDR `MainWindow.{h,cpp}` signal-routing hub).
+2. Register both in `THETIS-PROVENANCE.md` under a new "gui/MainWindow"
+   subsection.
+3. Apply the Bucket C copyright-block form at that time.
+
+Until then, the files are compliant with the verifier (they are not
+listed in `THETIS-PROVENANCE.md`) but carry no formal attribution.
+
+End of Task 25c deferral note.
