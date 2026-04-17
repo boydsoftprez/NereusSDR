@@ -191,18 +191,39 @@ void AboutDialog::buildUI()
     mainLayout->addWidget(div3);
 
     // ── Footer ──────────────────────────────────────────────────────────
-    auto* copyright = new QLabel(QStringLiteral("© 2026 JJ Boyd"), this);
+    // GPLv2 §2(c) compliance: interactive programs must, on startup or via
+    // an equivalent About announcement, display the copyright notice, an
+    // absence-of-warranty statement, a redistribute-under-these-conditions
+    // notice, and tell the user how to view the License. GPLv3 dropped the
+    // §2(c) obligation but our source files preserve GPLv2-or-later
+    // headers, so recipients using the v2 grant are still owed §2(c)-form
+    // wording. Hence the full four-element block below.
+    auto* copyright = new QLabel(
+        QStringLiteral("Copyright © 2026 J.J. Boyd (KG4VCF)"),
+        this);
     copyright->setAlignment(Qt::AlignCenter);
     copyright->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
     mainLayout->addWidget(copyright);
 
+    auto* warranty = new QLabel(
+        QStringLiteral("This program comes with ABSOLUTELY NO WARRANTY."),
+        this);
+    warranty->setAlignment(Qt::AlignCenter);
+    warranty->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    mainLayout->addWidget(warranty);
+
     auto* license = new QLabel(
-        QStringLiteral("Licensed under "
+        QStringLiteral("This is free software, and you are welcome to "
+                       "redistribute it under the terms of the "
                        "<a href=\"https://www.gnu.org/licenses/gpl-3.0.html\">"
-                       "GPLv3</a>"),
+                       "GNU General Public License v3</a>; "
+                       "see <a href=\"https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE\">LICENSE</a> "
+                       "and <a href=\"https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE-DUAL-LICENSING\">LICENSE-DUAL-LICENSING</a> "
+                       "for details."),
         this);
     license->setAlignment(Qt::AlignCenter);
     license->setOpenExternalLinks(true);
+    license->setWordWrap(true);
     license->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
     mainLayout->addWidget(license);
 

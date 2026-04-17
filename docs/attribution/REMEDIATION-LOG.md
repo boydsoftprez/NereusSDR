@@ -344,4 +344,63 @@ Exact Thetis marker text preserved; square-bracket citation added so a reader ca
 
 ---
 
+## 2026-04-17 — Pass 7: additional-contributors declarations for inline-attributed copyright holders
+
+**Discovered by:** J.J. Boyd (maintainer compliance-audit self-review, prompted by the MI0BOT header question)
+**Reported via:** GPL §1 audit — "an appropriate copyright notice" must include every copyright holder whose code is in the file; inline `//-CALLSIGN` markers (Pass 6c) are §2(a) modification notices, not §1 copyright declarations
+**Affected files:** 5 NereusSDR derivative files where Pass 6c preserved inline markers for contributors NOT named in the verbatim source block
+**Gap:** Pass 6c correctly preserved block-level inline markers for G8NJJ, MI0BOT, and similar contributors who added code inline in Thetis sources without adding themselves to the file's top-level copyright block. When we port that code, the inline markers travel with it, but our file-header copyright block (verbatim from upstream) doesn't name them. A strict reading of §1's "appropriate copyright notice" wants explicit declaration for every copyright holder whose work the file contains.
+
+**Fix (commit `5b2fb46`):** Added "Additional copyright holders whose code is preserved in this file via inline markers" section to the NereusSDR top block (not the verbatim source block — Richie's "keep intact" rule applies there) for each affected file. The verbatim source block stays untouched.
+
+**Per-file outcome:**
+- `src/core/HpsdrModel.h` — added G8NJJ (Saturn/ANAN-G2 enum mappings) + MI0BOT (HermesLite enum mappings)
+- `src/core/HardwareProfile.cpp` — added G8NJJ (ANAN-G2_1K capability note)
+- `src/core/RadioDiscovery.cpp` — added MI0BOT (board-ID 6 / HermesLite discovery parsing)
+- `tests/tst_radio_discovery_parse.cpp` — added MI0BOT
+- `tests/tst_hpsdr_enums.cpp` — added MI0BOT + G8NJJ
+
+**Files where no addition was needed** (MW0LGE/Samphire was already in the verbatim source block):
+- `P1RadioConnection.cpp` — cmaster.cs and console.cs headers name MW0LGE
+- `P2RadioConnection.cpp` — console.cs header names MW0LGE
+- `WdspTypes.h` — wdsp.cs/setup.cs/console.cs headers name MW0LGE
+- `StepAttenuatorController.h` — console.cs header names MW0LGE
+
+**Process improvement:** When future NereusSDR ports preserve an inline `//-CALLSIGN` marker, the standard procedure is: check whether that callsign is in the file's verbatim source block; if not, add to the NereusSDR-block "Additional copyright holders" section. This is the canonical bridge between §2(a) inline-preservation obligations and §1 copyright-declaration obligations.
+
+Verifier: 171/171. Build: clean.
+
+---
+
+## 2026-04-17 — Pass 8: GPLv2 §2(c) interactive announcement in About dialog
+
+**Discovered by:** J.J. Boyd (maintainer compliance-audit self-review)
+**Reported via:** GPL §2(c) audit — interactive GUI programs must announce copyright, no-warranty, redistribute-under-these-conditions, and how-to-view-License on startup or via an equivalent mechanism (typically an About dialog)
+**Affected files:** `src/gui/AboutDialog.cpp`
+**Gap:** Pre-fix About dialog showed only two of the four required elements:
+- ✅ Copyright notice (`© 2026 JJ Boyd`)
+- ❌ No warranty disclaimer
+- ❌ Redistribute-under-these-conditions statement
+- ✅ License reference link (to gnu.org/licenses/gpl-3.0.html)
+
+GPLv3 dropped §2(c) as a hard requirement, but our source files preserve GPLv2-or-later headers. A recipient electing to use the v2 grant is owed the §2(c)-form announcement. Strict posture: satisfy the v2 obligation.
+
+**Fix (commit `<pending>`):** Expanded the About dialog footer to the canonical four-element GPL notice:
+
+```
+Copyright © 2026 J.J. Boyd (KG4VCF)
+This program comes with ABSOLUTELY NO WARRANTY.
+This is free software, and you are welcome to redistribute it under
+the terms of the GNU General Public License v3; see LICENSE and
+LICENSE-DUAL-LICENSING for details.
+```
+
+Links to both GPLv3 upstream + both root license files (LICENSE and LICENSE-DUAL-LICENSING) so a user can view them. Comment above the Qt widget code cites GPLv2 §2(c) as the governing clause for future maintainers.
+
+**Process improvement:** §2(c) compliance is now embedded in the About dialog's code. Future About-dialog refactors should preserve all four elements.
+
+Verifier: 171/171. Build: clean.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*
