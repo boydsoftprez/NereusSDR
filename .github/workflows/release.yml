@@ -296,6 +296,12 @@ jobs:
           $(brew --prefix qt@6)/bin/macdeployqt build/NereusSDR.app \
             -verbose=1 -always-overwrite
 
+      - name: Copy license notices into app bundle
+        run: |
+          mkdir -p build/NereusSDR.app/Contents/Resources/licenses
+          cp -r packaging/third-party-licenses/. build/NereusSDR.app/Contents/Resources/licenses/
+          cp LICENSE build/NereusSDR.app/Contents/Resources/licenses/
+
       - name: Ad-hoc codesign
         run: |
           codesign --force --deep --sign - build/NereusSDR.app
@@ -407,6 +413,10 @@ jobs:
             Write-Error "libfftw3f-3.dll missing from third_party\fftw3\bin\ — Windows artifact would ship broken"
             exit 1
           }
+          # Copy third-party license notices and root LICENSE into the portable
+          # deploy tree so both the ZIP and the NSIS installer pick them up.
+          Copy-Item -Recurse packaging\third-party-licenses deploy\licenses
+          Copy-Item LICENSE deploy\licenses\
 
       - name: Create portable ZIP
         shell: pwsh

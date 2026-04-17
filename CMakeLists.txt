@@ -557,6 +557,14 @@ install(TARGETS NereusSDR
     BUNDLE  DESTINATION .
 )
 
+# Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
+install(DIRECTORY packaging/third-party-licenses/
+        DESTINATION share/doc/nereussdr/licenses
+        COMPONENT licenses)
+install(FILES LICENSE
+        DESTINATION share/doc/nereussdr
+        COMPONENT licenses)
+
 # --------------------------------------------------------------------------
 # Tests (Qt6::Test). Opt-in via -DNEREUS_BUILD_TESTS=ON.
 # --------------------------------------------------------------------------

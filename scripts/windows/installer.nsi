@@ -56,6 +56,11 @@ Section "NereusSDR (required)" SecMain
   SetOutPath "$INSTDIR"
   File /r "${NSDR_DEPLOYDIR}\*.*"
 
+  ; Third-party license notices (already staged into deploy\licenses\ by release.yml)
+  SetOutPath "$INSTDIR\licenses"
+  File /r "${NSDR_DEPLOYDIR}\licenses\*.*"
+  SetOutPath "$INSTDIR"
+
   WriteRegStr HKLM "Software\NereusSDR" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\NereusSDR" "Version" "${NSDR_VERSION}"
 
