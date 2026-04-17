@@ -281,4 +281,55 @@ Verifier post-rewrite: 171/171 pass. Provenance sync: 169/169 pass. Build: clean
 
 ---
 
+## 2026-04-17 — Pass 6: inline-mod attribution preservation at block level
+
+**Discovered by:** Richard Samphire (MW0LGE), as a follow-up clarification after Pass 5
+**Reported via:** Discord message: *"each part we ported needs its attribution"*
+**Affected surface:** inline modification markers in Thetis source file BODIES — `//-W2PA`, `//MW0LGE [x.y.z]`, `// added G8NJJ for X`, `//-MI0BOT: ...`, etc. These are §2(a) block-level modification notices. When NereusSDR ports a specific function/block, the markers attached to that Thetis block must travel with the ported code at the corresponding position.
+
+**Gap:** Pass 5 preserved file-HEADER blocks verbatim but left the file BODIES (our C++ ports of Thetis C# / C code) without any inline attribution. An inline marker like `//-W2PA Necessary for Behringer MIDI changes` in Thetis `console.cs:52` carries W2PA's §2(a) modification notice for that specific line. When we port that line (or the surrounding function) to NereusSDR, the marker is the only thing that identifies W2PA as the contributor of the attached code. Removing it strips Thetis's own §2(a) compliance artifact.
+
+**Root cause:** File-header preservation was the headline compliance issue Richie flagged initially; inline-mod preservation at block granularity is a more subtle follow-up obligation that only became clear once headers were correct. Phases 1–5 didn't address it.
+
+**Fix (5 commits across 3 sub-passes):**
+
+**Pass 6a** (`a373547`): `docs/attribution/thetis-inline-mods-index.md` — catalogued 1,458 inline mod markers across 30 cited Thetis source files. Per-contributor: MW0LGE 1306 (mostly self-references in MW0LGE-authored files); G8NJJ 85; W2PA 49; MI0BOT 14; WD5Y 8; others single-digit.
+
+**Pass 6b** (`55a2ca9`): `docs/attribution/inline-mod-reconciliation.md` — consumed the 6a index, mapped markers to NereusSDR ported locations. Key filter: exclude MW0LGE self-references inside MW0LGE-authored files where the file header's MW0LGE copyright line already covers authorship; include every non-MW0LGE callsign and every MW0LGE `[version]` tag that sits on a specific translated feature block. Result: **only 33 insertions across 13 files actually need to propagate** — the rest of the 1,458 markers attach to Thetis features NereusSDR hasn't ported yet (Behringer MIDI, Andromeda/Aries hardware, CAT extended access, HL2 FixedIp fields, RX2 mute labels, etc.). Those are queued as revisit triggers for future phases (3K CAT, 3L HL2 ChannelMaster, 3M-2 CW TX, future Andromeda UI).
+
+**Pass 6c** (`e1e2d3f` + `ad4f7a1` + `d5f70a5`): Applied 14 actual edits (some reconciliation-doc entries resolved to the same physical edit, and 2 were confirmed no-target skips). Distribution:
+- `HpsdrModel.h` — 5 enum-row markers (HermesLite / Saturn / ANAN_G2 / ANAN_G2_1K for G8NJJ + MI0BOT)
+- `HardwareProfile.cpp` — 1 ANAN_G2_1K case marker (G8NJJ)
+- `RadioDiscovery.cpp` — extended existing MI0BOT comment with Thetis line citation
+- `P1RadioConnection.cpp` / `P2RadioConnection.cpp` — MW0LGE [2.10.3.13] ADC-overflow markers
+- `WdspTypes.h` — 3 MW0LGE [2.9.0.7] AGC-type markers (AgcPeak, AgcAvg, CfcAvg)
+- `StepAttenuatorController.h` — 1 Minus20 / MW0LGE_21d marker
+- `tests/tst_radio_discovery_parse.cpp` — 1 HermesLite marker
+- `tests/tst_hpsdr_enums.cpp` — 2 markers (HermesLite==6, Saturn==10)
+
+**Skipped (no target in current NereusSDR port — parked for future phases):**
+- `SliceModel` cw_pitch clamp (W2PA console.cs:18191) — no clamp exists in our port; range-limited at widget level. Revisit when SliceModel gains a setCwPitch setter.
+- `RadioModel.cpp` Saturn DDC switch (G8NJJ console.cs:8559) — Saturn DDC count is resolved through `BoardCapabilities` table, not a direct switch. The enum-row citation in `HpsdrModel.h` is the single point of truth.
+
+**Marker format applied (verbatim from Thetis + citation):**
+```cpp
+HermesLite = 6,    //-MI0BOT: HL2 added [Thetis clsRadioDiscovery.cs:1239]
+```
+Exact Thetis marker text preserved; square-bracket citation added so a reader can trace back.
+
+**NereusSDR-side inline markers (Option 3):** not added in this pass — our ports are straight C# / C → C++20/Qt6 translation without significant post-port logic changes at the marked blocks. When future NereusSDR work makes post-port modifications inside a marked region, the `//-KG4VCF [v0.2.x] description` pattern (matching Thetis's release-version convention) applies.
+
+**Verification after Pass 6c:**
+- `verify-thetis-headers.py`: 171/171 pass
+- `verify-provenance-sync.py`: 169/169 pass
+- Build: clean (49/49 objects, final binary linked)
+
+**Process improvements:**
+- Pass 6's three-stage pattern (index → reconciliation → application) is now a reusable pattern for any future upstream audit. Pass 6a is mechanical grep; Pass 6b is judgment; Pass 6c is mechanical application.
+- The 7 parked revisit triggers are documented in `inline-mod-reconciliation.md` § "Revisit when we port ...". When Phase 3K (CAT), 3L (HL2 ChannelMaster), 3M-2 (CW TX), or Andromeda UI work lands, the relevant Thetis inline markers are ready to be propagated alongside the new ports.
+
+**Header preservation + inline-mod preservation together now cover both GPL §1 ("keep intact") and §2(a) ("prominent notices ... of any change") at both file and block granularity.** Pending Richie's review of the compliance-branch tip.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*
