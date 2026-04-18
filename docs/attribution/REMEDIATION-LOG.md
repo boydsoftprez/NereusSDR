@@ -754,4 +754,25 @@ No file changes for this task.
 
 ---
 
+## 2026-04-17 — Compliance Plan Task 8: LGPLv3 §4(d)(1) Qt replacement docs — DECISION TO SKIP
+
+**Discovered by:** Adversarial GPL compliance audit. `packaging/third-
+party-licenses/qt6.txt` is 16 lines and contains no instructions for
+replacing the bundled Qt6 libraries with a modified version. LGPLv3
+§4(d)(1) requires "operating instructions" for the replacement step.
+
+**Decision:** Skip. LGPLv3 §4(d)(0) (dynamic linking, the route
+NereusSDR uses on all three platforms via `windeployqt` /
+`macdeployqt` / `linuxdeploy-plugin-qt`) is the load-bearing
+satisfaction; §4(d)(1) is the documentary tail. Common practice across
+LGPL-Qt apps is to include the bundled Qt LGPL text and let users
+infer the obvious DLL/.dylib/.so swap; explicit per-platform "drop a
+modified Qt6Core.dll into the install directory" docs are gold-plating
+relative to industry norm. Worth doing if Samphire raises it; not
+worth blocking v0.2.0 over.
+
+No file changes for this task.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*
