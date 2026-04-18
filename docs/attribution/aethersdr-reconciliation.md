@@ -14,7 +14,7 @@ the AetherSDR clone at `/Users/j.j.boyd/AetherSDR/`.
 
 | Bucket | Meaning | Count | 25c action |
 |---|---|---:|---|
-| **A** | Genuine AetherSDR derivation — add project-level attribution | 33 | Insert AetherSDR copyright line + specify source file(s) in mod-history |
+| **A** | Genuine AetherSDR derivation — add project-level attribution | 45 | Insert AetherSDR copyright line + specify source file(s) in mod-history |
 | **B** | False citation (boilerplate "Structural template follows AetherSDR" with no real counterpart) — remove line | 126 | Delete the two "Structural template follows AetherSDR (ten9876/AetherSDR) Qt6 conventions." lines from Modification-History |
 | **C** | Mixed lineage — keep both citations, tighten wording | 12 | Keep Thetis block + AetherSDR line, but say what came from where |
 | **D** | Uncertain — human review | 5 | Flag for human judgement; do not auto-edit |
@@ -64,7 +64,7 @@ claim), or when 25a couldn't positively disprove the claim.
 
 ---
 
-## Bucket A — Genuine AetherSDR derivations (33 files)
+## Bucket A — Genuine AetherSDR derivations (45 files)
 
 25c action for every file below:
 1. Add a project-level attribution line to the Copyright block (after
@@ -120,6 +120,16 @@ claim), or when 25a couldn't positively disprove the claim.
 |---|---|---|---|
 | `src/gui/applets/AppletPanelWidget.h` | `src/gui/AppletPanel.{h,cpp}` | Lines 15, 19, 31: "AetherSDR AppletPanel styling", constants from AetherSDR AppletPanel.cpp, "2.0 = AetherSDR's 280:140". | "Scrollable applet-panel pattern (260px fixed width, 16px title bars) ported from AetherSDR `src/gui/AppletPanel.{h,cpp}`." |
 | `src/gui/applets/AppletPanelWidget.cpp` | Same | Inline lines 18, 172, 182, 189 reference AetherSDR AppletPanel / AppletTitleBar styling. | Same. |
+| `src/gui/applets/AppletWidget.h` | `src/gui/AppletPanel.{h,cpp}` | Shared base for all NereusSDR applets; hoists AetherSDR AppletPanel title-bar gradient + slider-row + toggle-button styling up so every applet inherits identical visuals. Same styling pattern already covered by AppletPanelWidget Bucket A entry above. | "Shared applet base class; title-bar gradient, slider-row, and toggle-button helpers extracted from the AetherSDR `src/gui/AppletPanel.{h,cpp}` styling pattern." |
+| `src/gui/applets/AppletWidget.cpp` | Same | Same — inherits the title-bar and toggle-button styles from Style::titleBarStyle() / buttonBaseStyle() which themselves come from AetherSDR. | Same. |
+| `src/gui/applets/CatApplet.h` | `src/gui/CatApplet.{h,cpp}` | NereusSDR applet mirrors AetherSDR CatApplet layout (serial CAT / rigctl / TCI enable rows + PTT LEDs). AetherSDR counterpart exists at `~/AetherSDR/src/gui/CatApplet.{h,cpp}`. | "Layout mirrors AetherSDR `src/gui/CatApplet.{h,cpp}` (serial CAT / rigctl / TCI enable rows + PTT LEDs). All controls NYI." |
+| `src/gui/applets/CatApplet.cpp` | Same | Same. | Same. |
+| `src/gui/applets/CwxApplet.h` | `src/gui/CwxPanel.{h,cpp}` | NereusSDR port of AetherSDR CwxPanel (CW text entry + WPM slider + message-slot buttons). Renamed from CwxPanel → CwxApplet for NereusSDR's applet naming convention. | "Port of AetherSDR `src/gui/CwxPanel.{h,cpp}` (CW text entry + WPM + message-slot buttons); renamed to CwxApplet in NereusSDR. All controls NYI." |
+| `src/gui/applets/CwxApplet.cpp` | Same | Same. | Same. |
+| `src/gui/applets/DvkApplet.h` | `src/gui/DvkPanel.{h,cpp}` | NereusSDR port of AetherSDR DvkPanel (DVK F-key slot grid + record/play controls). Renamed from DvkPanel → DvkApplet for naming convention. | "Port of AetherSDR `src/gui/DvkPanel.{h,cpp}` (DVK F-key slot grid + record/play controls); renamed to DvkApplet in NereusSDR. All controls NYI." |
+| `src/gui/applets/DvkApplet.cpp` | Same | Same. | Same. |
+| `src/gui/applets/TunerApplet.h` | `src/gui/TunerApplet.{h,cpp}` | Layout mirrors AetherSDR TunerApplet (ATU/tune controls + SWR progress bar). | "Layout from AetherSDR `src/gui/TunerApplet.{h,cpp}` (ATU/tune controls + SWR progress bar). All controls NYI." |
+| `src/gui/applets/TunerApplet.cpp` | Same | Same. | Same. |
 | `src/gui/applets/RxApplet.h` | `src/gui/RxApplet.{h,cpp}` | Line 5 "Layout adapted from AetherSDR RxApplet.cpp." Line 39 "FilterPassband widget (ported from AetherSDR, Tier 1 wired)". | "Layout adapted from AetherSDR `src/gui/RxApplet.{h,cpp}` (18-control RX panel). Tier-1 SliceModel wiring follows AetherSDR GUI↔model pattern; DSP behaviour is Thetis." |
 | `src/gui/applets/RxApplet.cpp` | Same | 15 inline `// From AetherSDR RxApplet.cpp lines X-Y` citations (117, 156, 183, 226, 251, 293, 304, 323, 453, 502, 561, 637, 656, 677). | Same. |
 | `src/gui/applets/TxApplet.h` | `src/gui/TxApplet.{h,cpp}` | Line 13 "Layout (AetherSDR TxApplet.cpp pattern)". | "Layout pattern from AetherSDR `src/gui/TxApplet.{h,cpp}`. Wiring deferred to Phase 3M." |
