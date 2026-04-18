@@ -1,4 +1,28 @@
-// src/gui/AboutDialog.cpp
+// =================================================================
+// src/gui/AboutDialog.cpp  (NereusSDR)
+// =================================================================
+//
+// Design and layout inspired by AetherSDR (ten9876/AetherSDR, GPLv3):
+//   src/gui/MainWindow.cpp (about-box section) and
+//   src/gui/TitleBar.{h,cpp}. AetherSDR has no per-file headers;
+//   project-level citation per docs/attribution/HOW-TO-PORT.md rule 6.
+//
+// No Thetis-derived code — Thetis's About is in console.cs and was not
+// used as a source for this dialog.
+//
+// no-port-check: this file mentions Thetis sources (console.cs) and
+// contributor callsigns only as data in the displayed contributor list;
+// no Thetis code is ported here. AetherSDR design lineage is cited
+// above per HOW-TO-PORT.md rule 6.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-17 — Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted authoring via Anthropic
+//                 Claude Code. Contributor list, copyright string,
+//                 and §5(d) notice content are NereusSDR-specific.
+// =================================================================
+
 #include "AboutDialog.h"
 #include "StyleConstants.h"
 
@@ -191,18 +215,59 @@ void AboutDialog::buildUI()
     mainLayout->addWidget(div3);
 
     // ── Footer ──────────────────────────────────────────────────────────
-    auto* copyright = new QLabel(QStringLiteral("© 2026 JJ Boyd"), this);
+    // GPLv3 §5(d) "Appropriate Legal Notices" compliance: interactive
+    // programs must display copyright, no-warranty, redistribute-under-
+    // these-conditions, and a how-to-view-the-License notice. The four-
+    // element block below satisfies §5(d) directly; it also satisfies
+    // GPLv2 §2(c) for downstream recipients who elect the v2 grant
+    // available via the "or later" clause in upstream Thetis source-file
+    // headers. Hence the full four-element block below.
+    // The copyright line names the principal copyright-holding individuals
+    // whose code appears in the running binary. NereusSDR is a derivative
+    // work; the full per-file contributor chain — including inline-mod
+    // attributions — is carried in the source tree's file headers and
+    // summarized in docs/attribution/ (THETIS-PROVENANCE.md,
+    // aethersdr-contributor-index.md, WDSP-PROVENANCE.md, etc.). The
+    // pointer routes interested readers to the authoritative chain.
+    auto* copyright = new QLabel(
+        QStringLiteral(
+            "Copyright © 2004-2026 FlexRadio Systems, "
+            "Bill Tracey (KD5TFD), Doug Wigley (W5WC), "
+            "Richard Samphire (MW0LGE), Warren Pratt (NR0V), "
+            "Phil Harman (VK6APH), Chris Codella (W2PA), "
+            "Laurence Barker (G8NJJ), Reid Campbell (MI0BOT), DH1KLM, "
+            "Jeremy (KK7GWY), other Thetis / mi0bot / AetherSDR / WDSP / "
+            "OpenHPSDR contributors, and J.J. Boyd (KG4VCF). "
+            "See source file headers and "
+            "<a href=\"https://github.com/boydsoftprez/NereusSDR/tree/main/docs/attribution\">"
+            "docs/attribution</a> for the full contributor chain."),
+        this);
     copyright->setAlignment(Qt::AlignCenter);
+    copyright->setWordWrap(true);
+    copyright->setOpenExternalLinks(true);
     copyright->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
     mainLayout->addWidget(copyright);
 
+    auto* warranty = new QLabel(
+        QStringLiteral("This program comes with ABSOLUTELY NO WARRANTY; "
+                       "see sections 15-16 of the License for details."),
+        this);
+    warranty->setAlignment(Qt::AlignCenter);
+    warranty->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    mainLayout->addWidget(warranty);
+
     auto* license = new QLabel(
-        QStringLiteral("Licensed under "
+        QStringLiteral("This is free software, and you are welcome to "
+                       "redistribute it under the terms of the "
                        "<a href=\"https://www.gnu.org/licenses/gpl-3.0.html\">"
-                       "GPLv3</a>"),
+                       "GNU General Public License v3</a>; "
+                       "see <a href=\"https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE\">LICENSE</a> "
+                       "and <a href=\"https://github.com/boydsoftprez/NereusSDR/blob/main/LICENSE-DUAL-LICENSING\">LICENSE-DUAL-LICENSING</a> "
+                       "for details."),
         this);
     license->setAlignment(Qt::AlignCenter);
     license->setOpenExternalLinks(true);
+    license->setWordWrap(true);
     license->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
     mainLayout->addWidget(license);
 

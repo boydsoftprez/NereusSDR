@@ -1,10 +1,87 @@
-// src/core/HpsdrModel.h
+// =================================================================
+// src/core/HpsdrModel.h  (NereusSDR)
+// =================================================================
 //
-// Port of HPSDR radio model and board-type enums.
-// Source: mi0bot/Thetis@Hermes-Lite Project Files/Source/Console/enums.cs
-//         :109 (HPSDRModel) and :388 (HPSDRHW).
-// Integer values preserved exactly — including the 7..9 reserved gap in
-// HPSDRHW — because the Thetis wire format compares these ints.
+// Ported from Thetis sources:
+//   Project Files/Source/Console/enums.cs, original licence from Thetis source is included below
+//   Project Files/Source/ChannelMaster/network.h, original licence from Thetis source is included below
+//
+// =================================================================
+// Additional copyright holders whose code is preserved in this file via
+// inline markers (upstream file-header blocks do not name them):
+//   Laurence Barker (G8NJJ) — ANAN-G2 / Saturn hardware support (preserved
+//     via inline markers on HPSDRHW::Saturn enum and HPSDRModel::ANAN_G2/ANAN_G2_1K)
+//   Reid Campbell (MI0BOT) — HermesLite 2 enum mappings (preserved via
+//     inline markers on HPSDRModel::HERMESLITE and HPSDRHW::HermesLite)
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+// =================================================================
+
+/*  enums.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2000-2025 Original authors
+Copyright (C) 2020-2025 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+/*  network.h
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2015-2020 Doug Wigley, W5WC
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+*/
 
 #pragma once
 
@@ -27,10 +104,10 @@ enum class HPSDRModel : int {
     ORIONMKII    =  8,
     ANAN7000D    =  9,
     ANAN8000D    = 10,
-    ANAN_G2      = 11,  // G8NJJ contribution
-    ANAN_G2_1K   = 12,  // G8NJJ contribution
+    ANAN_G2      = 11,  // G8NJJ [Thetis enums.cs:125]
+    ANAN_G2_1K   = 12,  // G8NJJ [Thetis enums.cs:126]
     ANVELINAPRO3 = 13,
-    HERMESLITE   = 14,  // MI0BOT contribution
+    HERMESLITE   = 14,  // MI0BOT [Thetis enums.cs:128]
     REDPITAYA    = 15,  // DH1KLM contribution — enum slot preserved, impl deferred
     LAST         = 16
 };
@@ -44,9 +121,9 @@ enum class HPSDRHW : int {
     Angelia    =   3,  // ANAN-100D
     Orion      =   4,  // ANAN-200D
     OrionMKII  =   5,  // ANAN-7000DLE / 8000DLE / AnvelinaPro3
-    HermesLite =   6,  // Hermes Lite 2
+    HermesLite =   6,  // Hermes Lite 2 — MI0BOT: HL2 allocated number [Thetis network.h:422 / enums.cs:396]
     // 7..9 reserved — DO NOT REUSE (Thetis wire format compares these ints)
-    Saturn     =  10,  // ANAN-G2
+    Saturn     =  10,  // ANAN-G2: added G8NJJ [Thetis network.h:423 / enums.cs:397]
     SaturnMKII =  11,  // ANAN-G2 MkII board revision
     Unknown    = 999
 };

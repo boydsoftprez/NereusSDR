@@ -1,3 +1,14 @@
+// =================================================================
+// src/core/ClarityController.cpp  (NereusSDR)
+// =================================================================
+//
+// Independently implemented from ClarityController.h interface.
+// The .h cites Thetis display.cs:5866 (processNoiseFloor) as the
+// lineage that NereusSDR's percentile-based estimator deliberately
+// REPLACES, not ports. This .cpp is the percentile-based estimator —
+// original NereusSDR work licensed under GPLv3.
+// =================================================================
+
 #include "ClarityController.h"
 
 #include <QDateTime>

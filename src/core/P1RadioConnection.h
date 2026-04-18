@@ -1,12 +1,41 @@
-// src/core/P1RadioConnection.h
+// =================================================================
+// src/core/P1RadioConnection.h  (NereusSDR)
+// =================================================================
 //
-// Protocol 1 connection for Atlas/Hermes/HermesII/Angelia/Orion/HermesLite.
-// Faithfully ported from Thetis networkproto1.c + NetworkIO.cs +
-// mi0bot IoBoardHl2.cs + bandwidth_monitor.{c,h}.
+// Ported from Thetis sources:
+//   Project Files/Source/ChannelMaster/networkproto1.c, original licence from Thetis source is included below
+//   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //
-// Follows the same pattern as P2RadioConnection (which ports network.c).
-// Instances live on the Connection worker thread.
-// Call init() after moveToThread() to create sockets/timers on the worker.
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+// =================================================================
+
+/*
+ * networkprot1.c
+ * Copyright (C) 2020 Doug Wigley (W5WC)
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ */
+
+//
+// Upstream source 'Project Files/Source/Console/HPSDR/NetworkIO.cs' has no top-of-file GPL header —
+// project-level Thetis LICENSE applies.
 
 #pragma once
 

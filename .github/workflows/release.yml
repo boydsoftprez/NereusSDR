@@ -206,7 +206,7 @@ jobs:
           Exec=NereusSDR
           Icon=nereussdr
           Categories=HamRadio;Audio;
-          Comment=Cross-platform OpenHPSDR SDR Console
+          Comment=Cross-platform OpenHPSDR SDR Console (GPLv3 port of Thetis / mi0bot / FlexRadio PowerSDR lineage)
           DESKTOP
           # Install the real NereusSDR icon at standard hicolor sizes.
           # Uses the pre-rendered PNGs from resources/icons/NereusSDR.iconset/
@@ -295,6 +295,12 @@ jobs:
         run: |
           $(brew --prefix qt@6)/bin/macdeployqt build/NereusSDR.app \
             -verbose=1 -always-overwrite
+
+      - name: Copy license notices into app bundle
+        run: |
+          mkdir -p build/NereusSDR.app/Contents/Resources/licenses
+          cp -r packaging/third-party-licenses/. build/NereusSDR.app/Contents/Resources/licenses/
+          cp LICENSE LICENSE-DUAL-LICENSING build/NereusSDR.app/Contents/Resources/licenses/
 
       - name: Ad-hoc codesign
         run: |
@@ -407,6 +413,12 @@ jobs:
             Write-Error "libfftw3f-3.dll missing from third_party\fftw3\bin\ — Windows artifact would ship broken"
             exit 1
           }
+          # Copy third-party license notices + both root license files
+          # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
+          # tree so both the ZIP and the NSIS installer pick them up.
+          Copy-Item -Recurse packaging\third-party-licenses deploy\licenses
+          Copy-Item LICENSE deploy\licenses\
+          Copy-Item LICENSE-DUAL-LICENSING deploy\licenses\
 
       - name: Create portable ZIP
         shell: pwsh
@@ -481,6 +493,18 @@ jobs:
           git archive --format=tar.gz \
             --prefix="NereusSDR-${VERSION}/" \
             "${TAG}" > "artifacts/NereusSDR-${VERSION}-source.tar.gz"
+
+      - name: Fetch FFTW3 corresponding source (GPLv2 §3 / GPLv3 §6)
+        # The Windows installer + portable ZIP bundle a prebuilt
+        # libfftw3f-3.dll. FFTW is GPLv2-or-later, so the binary
+        # distribution must be accompanied by the corresponding source on
+        # the same medium (a GitHub Release IS the medium). Ship the exact
+        # upstream source archive used to build the bundled DLL alongside
+        # the installer artifacts so recipients receive both atomically.
+        run: |
+          curl -fsSL "https://fftw.org/pub/fftw/fftw-3.3.5.tar.gz" \
+            -o "artifacts/fftw-3.3.5.tar.gz"
+          ls -la artifacts/fftw-3.3.5.tar.gz
 
       - name: Generate SHA256SUMS
         working-directory: artifacts

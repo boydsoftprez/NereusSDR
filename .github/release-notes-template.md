@@ -46,6 +46,31 @@ gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
 sha256sum -c SHA256SUMS.txt
 ```
 
+## Source for bundled binaries (GPL §6 corresponding source)
+
+NereusSDR is GPLv3, and several bundled or linked third-party libraries
+carry their own GPL/LGPL obligations. The corresponding source for every
+binary on this release page is provided here on the same medium:
+
+- **NereusSDR** itself — `NereusSDR-vX.Y.Z-source.tar.gz` (this release).
+  Equivalent to a `git archive` of the tag commit.
+- **FFTW3** (GPLv2-or-later) — `fftw-3.3.5.tar.gz` (this release).
+  Exact upstream archive used to build the bundled `libfftw3f-3.dll`
+  shipped in the Windows installer and portable ZIP. Upstream:
+  <https://fftw.org/pub/fftw/fftw-3.3.5.tar.gz>.
+- **Qt6** (LGPLv3) — dynamically linked on all platforms; replace the
+  bundled Qt6 libraries with your own modified build per
+  `licenses/qt6.txt` in the install tree (Linux: `libQt6*.so.6` in the
+  AppImage's `usr/lib/`; macOS: `Qt*.framework` in the app bundle's
+  `Contents/Frameworks/`; Windows: `Qt6*.dll` in the install directory).
+  Upstream source: <https://download.qt.io/archive/qt/>.
+- **WDSP** (GPLv2-or-later) — statically aggregated; corresponding source
+  is in NereusSDR's `third_party/wdsp/` (included in
+  `NereusSDR-vX.Y.Z-source.tar.gz`).
+
+A written 3-year offer for the same source is also available on request
+to <kg4vcf@gmail.com> (GPLv2 §3(b) / GPLv3 §6(b) compliance).
+
 ## Reporting Issues
 
 This is an alpha build for debuggers/testers. Please report issues at

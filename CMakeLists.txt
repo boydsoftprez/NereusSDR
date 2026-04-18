@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NereusSDR VERSION 0.1.7 LANGUAGES C CXX)
+project(NereusSDR VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -455,6 +455,9 @@ set_target_properties(NereusSDR PROPERTIES
     MACOSX_BUNDLE_ICON_FILE "NereusSDR.icns"
     MACOSX_BUNDLE_BUNDLE_NAME "NereusSDR"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.boydsoftprez.NereusSDR"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_COPYRIGHT "© 2026 J.J. Boyd (KG4VCF); GPL port of Thetis (ramdor/Thetis) and mi0bot/OpenHPSDR-Thetis; descends from FlexRadio PowerSDR lineage. GPLv3."
 )
 
 target_include_directories(NereusSDRObjs PUBLIC
@@ -553,6 +556,18 @@ install(TARGETS NereusSDR
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE  DESTINATION .
 )
+
+# Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
+# LICENSE-DUAL-LICENSING is shipped alongside LICENSE because Thetis maintains
+# both at project root and GPL §1 "keep intact all notices that refer to this
+# License" extends to every license-related file upstream, not only the main
+# LICENSE text. A binary recipient obtaining the source is owed both files.
+install(DIRECTORY packaging/third-party-licenses/
+        DESTINATION share/doc/nereussdr/licenses
+        COMPONENT licenses)
+install(FILES LICENSE LICENSE-DUAL-LICENSING
+        DESTINATION share/doc/nereussdr
+        COMPONENT licenses)
 
 # --------------------------------------------------------------------------
 # Tests (Qt6::Test). Opt-in via -DNEREUS_BUILD_TESTS=ON.

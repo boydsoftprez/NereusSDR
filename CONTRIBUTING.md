@@ -41,7 +41,7 @@ that matches our conventions.
 2. **One issue per PR.** Keep changes focused and reviewable.
 3. **Follow the coding conventions** below.
 4. **Test your changes** against a real OpenHPSDR radio if possible.
-5. **Sign your commits** with GPG (required by branch protection).
+5. **Sign your commits** with GPG when contributing back to this repository's `main` branch (required by this repo's branch protection — not a license obligation; downstream forks and redistributions are not required to sign).
 6. **Open a pull request** against `main` with a clear description.
 
 ---
@@ -141,7 +141,7 @@ Use `#ifdef HAVE_*` guards. Features must degrade gracefully when unavailable.
 
 ### Commit Signing
 
-All commits to `main` must be GPG-signed. Setup:
+All commits merged to **this repository's** `main` branch must be GPG-signed (this is a project-policy branch-protection rule for this upstream repo only — it is not a GPL contribution prerequisite, and forks/downstream redistributions are not required to sign). Setup:
 
 ```bash
 # Generate key
@@ -189,6 +189,18 @@ GitHub issue with: your analysis, relevant log output, code references,
 and proposed fix.
 
 ---
+
+## License Preservation on Derived Code
+
+Any PR that ports, translates, or materially adapts Thetis source code
+into NereusSDR must preserve the original license header, copyright
+lines, and dual-licensing notices from the Thetis source file, and append
+a dated modification note to the NereusSDR file. See
+[docs/attribution/HEADER-TEMPLATES.md](docs/attribution/HEADER-TEMPLATES.md)
+for templates and [docs/attribution/THETIS-PROVENANCE.md](docs/attribution/THETIS-PROVENANCE.md)
+for the existing provenance inventory.
+
+This is a merge-blocking requirement, not a style preference.
 
 ## Code of Conduct
 

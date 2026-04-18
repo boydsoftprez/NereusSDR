@@ -1,27 +1,62 @@
-// src/core/ClarityController.h
+// =================================================================
+// src/core/ClarityController.h  (NereusSDR)
+// =================================================================
 //
-// Clarity adaptive display tuning controller (Phase 3G-9c). Wraps the
-// NoiseFloorEstimator with EWMA smoothing, deadband gating, poll-rate
-// throttling, TX/override pause, and a cold-start grace window, then
-// emits Waterfall Low/High threshold updates downstream.
+// Ported from Thetis source:
+//   Project Files/Source/Console/display.cs, original licence from Thetis source is included below
 //
-// Lineage: Thetis processNoiseFloor() in display.cs:5866 uses a similar
-// lerp-toward-bin-average approach over an attack-time window (default
-// 2000 ms). Clarity inherits the "slow EWMA over estimated floor" idea
-// but swaps the mean estimator for a percentile so no upstream filter is
-// needed and strong carriers do not pull the estimate up.
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+// =================================================================
+
+//=================================================================
+// display.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley (W5WC)
 //
-// Locked parameters from 2026-04-15-display-refactor-design.md §6.2.2:
-//   - 30th percentile (NoiseFloorEstimator default)
-//   - 500 ms poll interval (2 Hz)
-//   - τ = 3 s EWMA smoothing
-//   - ±2 dB deadband before a threshold update is emitted
-//   - 30 dB minimum gap clamp (§6.2.4 empty-band failure mode)
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
 //
-// Threshold shape: lowMarginDb / highMarginDb straddle the smoothed floor.
-// Defaults (-5, +55) give 60 dB total dynamic range, comfortably above the
-// 30 dB minimum gap. Replaces the PR2 running-min/max AGC with its 12 dB
-// margin — see waterfall-tuning.md "Open questions for PR3".
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Waterfall AGC Modifications Copyright (C) 2013 Phil Harman (VK6APH)
+// Transitions to directX and continual modifications Copyright (C) 2020-2025 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
 
 #pragma once
 

@@ -35,7 +35,8 @@ VIAddVersionKey "ProductName" "NereusSDR"
 VIAddVersionKey "FileDescription" "NereusSDR — cross-platform OpenHPSDR SDR console"
 VIAddVersionKey "FileVersion" "${NSDR_VERSION}"
 VIAddVersionKey "ProductVersion" "${NSDR_VERSION}"
-VIAddVersionKey "LegalCopyright" "© JJ Boyd ~KG4VCF"
+VIAddVersionKey "LegalCopyright" "© 2026 J.J. Boyd (KG4VCF); GPLv3 port of Thetis + mi0bot/Thetis-HL2 within the OpenHPSDR / FlexRadio lineage."
+VIAddVersionKey "CompanyName" "J.J. Boyd (KG4VCF)"
 
 ;--- Modern UI pages ---
 !define MUI_ABORTWARNING
@@ -55,6 +56,11 @@ Section "NereusSDR (required)" SecMain
   SetOutPath "$INSTDIR"
   File /r "${NSDR_DEPLOYDIR}\*.*"
 
+  ; Third-party license notices (already staged into deploy\licenses\ by release.yml)
+  SetOutPath "$INSTDIR\licenses"
+  File /r "${NSDR_DEPLOYDIR}\licenses\*.*"
+  SetOutPath "$INSTDIR"
+
   WriteRegStr HKLM "Software\NereusSDR" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\NereusSDR" "Version" "${NSDR_VERSION}"
 
@@ -64,7 +70,7 @@ Section "NereusSDR (required)" SecMain
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
               "DisplayVersion" "${NSDR_VERSION}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
-              "Publisher" "JJ Boyd ~KG4VCF"
+              "Publisher" "J.J. Boyd (KG4VCF) — GPLv3 port of Thetis / OpenHPSDR lineage"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \
               "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NereusSDR" \

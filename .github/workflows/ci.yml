@@ -30,6 +30,27 @@ jobs:
       - uses: actions/checkout@v4
 
       # ------------------------------------------------------------------
+      # Compliance verification (Linux only)
+      # ------------------------------------------------------------------
+      - name: Verify Thetis license headers
+        if: runner.os == 'Linux'
+        run: python3 scripts/verify-thetis-headers.py
+
+      - name: Check for un-attributed new ports (PR diff scan)
+        # Reverse-attribution check: scans added/modified C/C++ files in
+        # the PR diff for Thetis-style markers (callsigns, upstream
+        # filenames, cls*/uc*/frm* class patterns) and fails if any look
+        # like a port but aren't in PROVENANCE.md or marked as opt-out.
+        # Closes the gap left by verify-thetis-headers.py, which only
+        # checks files already registered in PROVENANCE.
+        if: runner.os == 'Linux' && github.event_name == 'pull_request'
+        env:
+          CHECK_NEW_PORTS_BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=100
+          python3 scripts/check-new-ports.py
+
+      # ------------------------------------------------------------------
       # Linux dependencies
       # ------------------------------------------------------------------
       - name: Install dependencies (Linux)

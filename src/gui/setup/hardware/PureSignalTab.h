@@ -1,18 +1,59 @@
 #pragma once
-// PureSignalTab.h
+
+// =================================================================
+// src/gui/setup/hardware/PureSignalTab.h  (NereusSDR)
+// =================================================================
 //
-// "Pure Signal" sub-tab of HardwarePage.
-// Exposes the PureSignal enable toggle, feedback source selector,
-// auto-calibrate options, and RX feedback attenuator.
+// Ported from Thetis source:
+//   Project Files/Source/Console/PSForm.cs, original licence from Thetis source is included below
 //
-// Source: Thetis PSForm.cs — chkPSAutoAttenuate (line 841),
-// checkLoopback (line 846), AutoCalEnabled property (line 272),
-// _restoreON / _autoON state flags (lines 93-96), AutoAttenuate
-// property (lines 291-311).
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
+// =================================================================
+
+/*  PSForm.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2000-2025 Original authors
+Copyright (C) 2020-2025 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
 //
-// Phase 3I: PureSignal is COLD — controls persist state via
-// settingChanged(key, value) but do NOT start the PS feedback loop.
-// DSP hookup is deferred to Phase 3I-4.
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
 
 #include <QVariant>
 #include <QWidget>

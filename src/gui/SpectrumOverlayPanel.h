@@ -5,6 +5,30 @@
 //
 // 10 buttons (68×22px, stacked vertically) + 5 flyout sub-panels.
 // Positioned via move() as a child of the spectrum widget.
+
+// =================================================================
+// src/gui/SpectrumOverlayPanel.h  (NereusSDR)
+// =================================================================
+//
+// Source attribution (AetherSDR — GPLv3):
+//
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+//   This file is a port or structural derivative of AetherSDR source.
+//   AetherSDR is licensed under the GNU General Public License v3.
+//   NereusSDR is also GPLv3. Attribution follows GPLv3 §5 requirements.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                 via Anthropic Claude Code.
+//                 Ported from AetherSDR `src/gui/SpectrumOverlayMenu.{h,cpp}`
+//                 (left button strip + 5 flyout panels).
+// =================================================================
+
 #pragma once
 
 #include <QWidget>

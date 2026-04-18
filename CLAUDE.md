@@ -34,6 +34,24 @@ For every piece of logic you write that has a Thetis equivalent:
    the Qt6 structure (signals/slots, class layout, threading), but the
    **behavior and logic** must come from Thetis.
 
+### License-preservation rule (non-negotiable)
+
+When porting any Thetis file, you MUST — in the same commit that introduces
+the port — copy the following from the Thetis source into the NereusSDR
+file's header comment:
+
+1. All `Copyright (C)` lines naming contributors (FlexRadio, Wigley,
+   Samphire, W2PA, mi0bot, etc.)
+2. The GPLv2-or-later permission block verbatim
+3. The Samphire dual-licensing statement — ONLY if the Thetis source file
+   contains Samphire-authored contributions
+4. A trailing "Modification history (NereusSDR)" block with the port date,
+   human author, and AI tooling disclosure
+
+Templates live in `docs/attribution/HEADER-TEMPLATES.md`. Failure to
+preserve these notices on a new port is a GPL compliance bug, not a style
+nit — reject the PR.
+
 ### What Counts As "Guessing" (NEVER Do These)
 
 - Writing a function body without first reading the Thetis equivalent
@@ -44,6 +62,7 @@ For every piece of logic you write that has a Thetis equivalent:
 - Assuming protocol message formats or byte layouts without reading the code
 - "Improving" or "simplifying" Thetis logic without being asked to
 - Using general DSP knowledge instead of the actual WDSP API calls Thetis makes
+- Porting a Thetis file without copying its license header and appending a modification note
 
 ### Constants and Magic Numbers
 

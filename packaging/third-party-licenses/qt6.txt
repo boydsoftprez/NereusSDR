@@ -1,0 +1,16 @@
+Qt 6 — LGPLv3 (dynamic linking)
+
+Copyright (C) The Qt Company Ltd.
+
+Qt is licensed under multiple licenses including LGPLv3 and commercial
+terms. NereusSDR links Qt6 dynamically under LGPLv3.
+
+For the full LGPLv3 license text, see:
+  https://www.gnu.org/licenses/lgpl-3.0.txt
+
+Qt source code and additional license information:
+  https://www.qt.io/licensing/
+
+On installation-time build systems, Qt's own LICENSES/ directory is
+typically installed alongside the Qt runtime and provides all applicable
+license texts.

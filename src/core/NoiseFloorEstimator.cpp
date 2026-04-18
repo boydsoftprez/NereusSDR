@@ -1,3 +1,15 @@
+// =================================================================
+// src/core/NoiseFloorEstimator.cpp  (NereusSDR)
+// =================================================================
+//
+// Independently implemented from NoiseFloorEstimator.h interface.
+// This .cpp implements NereusSDR's percentile-based noise-floor
+// estimator, which deliberately replaces (does not port) Thetis's
+// processNoiseFloor algorithm in display.cs:5866. The .h carries the
+// Thetis citation for contrast; this implementation is original
+// NereusSDR work licensed under GPLv3.
+// =================================================================
+
 #include "NoiseFloorEstimator.h"
 
 #include <QtNumeric>
