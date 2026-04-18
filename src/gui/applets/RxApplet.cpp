@@ -592,15 +592,11 @@ void RxApplet::buildUi()
             m_slice->setAgcThreshold(v);
         });
 
-        // Right-click on AGC-T slider → open Setup dialog to AGC/ALC page
+        // Right-click on AGC-T slider → directly open Setup dialog
         m_agcTSlider->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_agcTSlider, &QWidget::customContextMenuRequested,
-                this, [this](const QPoint& pos) {
-            QMenu menu(m_agcTSlider);
-            menu.addAction(QStringLiteral("AGC Settings..."), this, [this]() {
-                emit openSetupRequested();
-            });
-            menu.exec(m_agcTSlider->mapToGlobal(pos));
+                this, [this](const QPoint& /*pos*/) {
+            emit openSetupRequested();
         });
 
         agcRow->addWidget(m_agcTContainer, 1);

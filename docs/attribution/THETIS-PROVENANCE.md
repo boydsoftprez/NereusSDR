@@ -212,6 +212,7 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | tests/tst_rxchannel_snb.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/dsp.cs | 36347; 692-693 | port | multi-source | |
 | tests/tst_rxchannel_squelch.cpp | Project Files/Source/Console/radio.cs | 1185; 1293; 1312 | port | thetis-samphire | |
 | tests/tst_slice_agc_advanced.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1037-1124; 45977 | port | thetis-samphire | |
+| tests/tst_slice_auto_agc.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/setup.cs | 45913-45954; 38586-38682 | port | thetis-samphire | |
 | tests/tst_slice_apf.cpp | Project Files/Source/Console/radio.cs | 1910-2008 | port | thetis-samphire | |
 | tests/tst_slice_audio_panel.cpp | Project Files/Source/Console/dsp.cs; Project Files/Source/Console/radio.cs | 393-394; 1386-1403; 1145-1162 | port | multi-source | |
 | tests/tst_slice_emnr.cpp | Project Files/Source/Console/radio.cs | 2216-2232 | port | thetis-samphire | |

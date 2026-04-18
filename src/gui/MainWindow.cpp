@@ -2265,6 +2265,10 @@ void MainWindow::wireSliceToSpectrum()
         dialog->show();
     });
 
+    // --- VfoWidget AUTO button → SliceModel auto-AGC toggle ---
+    connect(vfo, &VfoWidget::autoAgcToggled,
+            slice, &SliceModel::setAutoAgcEnabled);
+
     // --- VfoWidget → SliceModel: RIT/XIT outbound (S1.8a stubs) ---
     connect(vfo, &VfoWidget::ritEnabledChanged, this, [slice](bool on) {
         slice->setRitEnabled(on);
@@ -2388,6 +2392,17 @@ void MainWindow::wireSliceToSpectrum()
     // --- Wire RxApplet to active slice ---
     if (m_rxApplet) {
         m_rxApplet->setSlice(slice);
+
+        // AUTO button toggle → SliceModel
+        connect(m_rxApplet, &RxApplet::autoAgcToggled,
+                slice, &SliceModel::setAutoAgcEnabled);
+
+        // Right-click "AGC Settings..." → open Setup dialog
+        connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
+            auto* dialog = new SetupDialog(m_radioModel, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->show();
+        });
     }
 
     // --- Wire overlay Band flyout to slice ---
