@@ -100,6 +100,21 @@ void SetupDialog::showEvent(QShowEvent* event)
     }
 }
 
+void SetupDialog::selectPage(const QString& label)
+{
+    // Search all tree items (top-level categories + children) for matching text
+    for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* cat = m_tree->topLevelItem(i);
+        for (int j = 0; j < cat->childCount(); ++j) {
+            QTreeWidgetItem* child = cat->child(j);
+            if (child->text(0) == label) {
+                m_tree->setCurrentItem(child);
+                return;
+            }
+        }
+    }
+}
+
 // ── Tree builder ──────────────────────────────────────────────────────────────
 
 void SetupDialog::buildTree()

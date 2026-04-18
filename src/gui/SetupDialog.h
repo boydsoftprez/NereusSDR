@@ -18,6 +18,9 @@ class SetupDialog : public QDialog {
 public:
     explicit SetupDialog(RadioModel* model, QWidget* parent = nullptr);
 
+    // Navigate to a page by its label text (e.g. "AGC/ALC").
+    void selectPage(const QString& label);
+
 protected:
     void showEvent(QShowEvent* event) override;
 

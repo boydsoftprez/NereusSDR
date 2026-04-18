@@ -2277,10 +2277,11 @@ void MainWindow::wireSliceToSpectrum()
         }
     });
 
-    // --- VfoWidget → MainWindow: open Setup dialog (e.g. AGC-T right-click) ---
+    // --- VfoWidget → MainWindow: open Setup dialog to AGC/ALC page ---
     connect(vfo, &VfoWidget::openSetupRequested, this, [this]() {
         auto* dialog = new SetupDialog(m_radioModel, this);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->selectPage(QStringLiteral("AGC/ALC"));
         dialog->show();
     });
 
@@ -2427,10 +2428,11 @@ void MainWindow::wireSliceToSpectrum()
         connect(m_rxApplet, &RxApplet::autoAgcToggled,
                 slice, &SliceModel::setAutoAgcEnabled);
 
-        // Right-click "AGC Settings..." → open Setup dialog
+        // Right-click AGC-T slider → open Setup dialog to AGC/ALC page
         connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
             auto* dialog = new SetupDialog(m_radioModel, this);
             dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->selectPage(QStringLiteral("AGC/ALC"));
             dialog->show();
         });
     }
