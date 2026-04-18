@@ -467,6 +467,60 @@ void RxChannel::setAgcDecay(int ms)
 #endif
 }
 
+void RxChannel::setAgcHangThreshold(int val)
+{
+    if (val == m_agcHangThreshold.load()) {
+        return;
+    }
+
+    m_agcHangThreshold.store(val);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/setup.cs:9081
+    //   WDSP.SetRXAAGCHangThreshold(WDSP.id(0, 0), value)
+    // WDSP third_party/wdsp/src/wcpAGC.c
+    SetRXAAGCHangThreshold(m_channelId, val);
+#else
+    Q_UNUSED(val);
+#endif
+}
+
+void RxChannel::setAgcFixedGain(int dB)
+{
+    if (dB == m_agcFixedGain.load()) {
+        return;
+    }
+
+    m_agcFixedGain.store(dB);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/setup.cs:9001
+    //   WDSP.SetRXAAGCFixed(WDSP.id(0, 0), value)
+    // WDSP third_party/wdsp/src/wcpAGC.c
+    SetRXAAGCFixed(m_channelId, static_cast<double>(dB));
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+void RxChannel::setAgcMaxGain(int dB)
+{
+    if (dB == m_agcMaxGain.load()) {
+        return;
+    }
+
+    m_agcMaxGain.store(dB);
+
+#ifdef HAVE_WDSP
+    // From Thetis Project Files/Source/Console/setup.cs:9011
+    //   WDSP.SetRXAAGCTop(WDSP.id(0, 0), (double)value)
+    // WDSP third_party/wdsp/src/wcpAGC.c
+    SetRXAAGCTop(m_channelId, static_cast<double>(dB));
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Noise blanker
 // ---------------------------------------------------------------------------

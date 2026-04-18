@@ -278,6 +278,15 @@ public:
     int agcDecay() const { return m_agcDecay.load(); }
     void setAgcDecay(int ms);
 
+    int agcHangThreshold() const { return m_agcHangThreshold.load(); }
+    void setAgcHangThreshold(int val);
+
+    int agcFixedGain() const { return m_agcFixedGain.load(); }
+    void setAgcFixedGain(int dB);
+
+    int agcMaxGain() const { return m_agcMaxGain.load(); }
+    void setAgcMaxGain(int dB);
+
     // --- Noise blanker ---
 
     bool nb1Enabled() const { return m_nb1Enabled.load(); }
@@ -465,6 +474,12 @@ private:
     std::atomic<int> m_agcAttack{2};
     // decay: From Thetis radio.cs:1037-1038 — rx_agc_decay = 250 ms
     std::atomic<int> m_agcDecay{250};
+    // hangThreshold: From Thetis v2.10.3.13 setup.designer.cs:39418
+    std::atomic<int> m_agcHangThreshold{0};
+    // fixedGain: From Thetis v2.10.3.13 setup.designer.cs:39320
+    std::atomic<int> m_agcFixedGain{20};
+    // maxGain: From Thetis v2.10.3.13 setup.designer.cs:39245
+    std::atomic<int> m_agcMaxGain{90};
 
     // Cached filter state
     double m_filterLow{150.0};
