@@ -23,6 +23,13 @@
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code. Contributor list, copyright string,
 //                 and §5(d) notice content are NereusSDR-specific.
+//   2026-04-18 — Brought lineage forward to full Thetis-roster parity:
+//                 scrollable contributor list reproducing
+//                 Thetis/frmAbout.Designer.cs:57-81 verbatim, Links
+//                 section, revised licence text reflecting v2-or-later
+//                 headers + v3 distribution, AI-assisted-port
+//                 disclosure. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QDialog>
