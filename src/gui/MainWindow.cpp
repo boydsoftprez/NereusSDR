@@ -620,6 +620,13 @@ void MainWindow::buildUI()
             this, [nfTracker](NereusSDR::DSPMode /*mode*/) {
         nfTracker->triggerFastAttack();
     });
+    // From Thetis v2.10.3.13 display.cs:890 — OnAttenuatorDataChanged
+    if (m_stepAttController) {
+        connect(m_stepAttController, &StepAttenuatorController::attenuationChanged,
+                this, [nfTracker](int /*dB*/) {
+            nfTracker->triggerFastAttack();
+        });
+    }
 
     // Periodic visual update: auto-AGC timer → refresh NF visuals on both widgets
     if (m_radioModel->autoAgcTimer()) {

@@ -102,6 +102,8 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     m_agcModeCombo = new QComboBox;
     m_agcModeCombo->addItems({"Off", "Long", "Slow", "Med", "Fast", "Custom"});
     m_agcModeCombo->setCurrentIndex(static_cast<int>(slice->agcMode()));
+    // From Thetis v2.10.3.13 console.resx:4555 — comboAGC.ToolTip
+    m_agcModeCombo->setToolTip(QStringLiteral("Automatic Gain Control Mode Setting"));
     addLabeledCombo(agcLay, "Mode", m_agcModeCombo);
 
     m_agcAttack = new QSpinBox;
@@ -114,34 +116,46 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     m_agcDecay->setRange(1, 5000);
     m_agcDecay->setSuffix(" ms");
     m_agcDecay->setValue(slice->agcDecay());
+    // From Thetis v2.10.3.13 setup.designer.cs:39390 — udDSPAGCDecay.ToolTip
+    m_agcDecay->setToolTip(QStringLiteral("Time-constant to increase signal amplitude after strong signal"));
     addLabeledSpinner(agcLay, "Decay", m_agcDecay);
 
     m_agcHang = new QSpinBox;
     m_agcHang->setRange(10, 5000);
     m_agcHang->setSuffix(" ms");
     m_agcHang->setValue(slice->agcHang());
+    // From Thetis v2.10.3.13 setup.designer.cs:39294 — udDSPAGCHangTime.ToolTip
+    m_agcHang->setToolTip(QStringLiteral("Time to hold constant gain after strong signal"));
     addLabeledSpinner(agcLay, "Hang", m_agcHang);
 
     m_agcSlope = new QSlider(Qt::Horizontal);
     m_agcSlope->setRange(0, 20);
     m_agcSlope->setValue(slice->agcSlope() / 10);
+    // From Thetis v2.10.3.13 setup.designer.cs:39358 — udDSPAGCSlope.ToolTip
+    m_agcSlope->setToolTip(QStringLiteral("Gain difference for weak and strong signals"));
     addLabeledSlider(agcLay, "Slope", m_agcSlope);
 
     m_agcMaxGain = new QSpinBox;
     m_agcMaxGain->setRange(-20, 120);
     m_agcMaxGain->setSuffix(" dB");
     m_agcMaxGain->setValue(slice->agcMaxGain());
+    // From Thetis v2.10.3.13 setup.designer.cs:39325 — udDSPAGCMaxGaindB.ToolTip
+    m_agcMaxGain->setToolTip(QStringLiteral("Threshold AGC: no gain over this Max Gain is applied, irrespective of signal weakness"));
     addLabeledSpinner(agcLay, "Max Gain", m_agcMaxGain);
 
     m_agcFixedGain = new QSpinBox;
     m_agcFixedGain->setRange(-20, 120);
     m_agcFixedGain->setSuffix(" dB");
     m_agcFixedGain->setValue(slice->agcFixedGain());
+    // From Thetis v2.10.3.13 setup.designer.cs:39448 — udDSPAGCFixedGaindB.ToolTip
+    m_agcFixedGain->setToolTip(QStringLiteral("Gain when AGC is disabled"));
     addLabeledSpinner(agcLay, "Fixed Gain", m_agcFixedGain);
 
     m_agcHangThresh = new QSlider(Qt::Horizontal);
     m_agcHangThresh->setRange(0, 100);
     m_agcHangThresh->setValue(slice->agcHangThreshold());
+    // From Thetis v2.10.3.13 setup.designer.cs:39250 — tbDSPAGCHangThreshold.ToolTip
+    m_agcHangThresh->setToolTip(QStringLiteral("Level at which the 'hang' function is engaged"));
     addLabeledSlider(agcLay, "Hang Threshold", m_agcHangThresh);
 
     // ── Wire AGC controls to SliceModel ──────────────────────────────────────
@@ -184,12 +198,16 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
 
     m_autoAgcChk = new QCheckBox("Auto AGC RX1");
     m_autoAgcChk->setChecked(slice->autoAgcEnabled());
+    // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
+    m_autoAgcChk->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
     autoAgcLay->addWidget(m_autoAgcChk);
 
     m_autoAgcOffset = new QSpinBox;
     m_autoAgcOffset->setRange(-60, 60);
     m_autoAgcOffset->setSuffix(" dB");
     m_autoAgcOffset->setValue(static_cast<int>(slice->autoAgcOffset()));
+    // From Thetis v2.10.3.13 setup.designer.cs:38649 — udRX1AutoAGCOffset.ToolTip
+    m_autoAgcOffset->setToolTip(QStringLiteral("dB shift from noise floor"));
     addLabeledSpinner(autoAgcLay, "± Offset", m_autoAgcOffset);
 
     connect(m_autoAgcChk, &QCheckBox::toggled,

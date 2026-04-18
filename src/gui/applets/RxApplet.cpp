@@ -573,6 +573,8 @@ void RxApplet::buildUi()
         m_agcAutoLabel->setFixedHeight(14);
         m_agcAutoLabel->setFixedWidth(30);
         m_agcAutoLabel->setCursor(Qt::PointingHandCursor);
+        // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
+        m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
         connect(m_agcAutoLabel, &QPushButton::clicked, this, [this]() {
             emit autoAgcToggled(!m_autoAgcActive);
         });
