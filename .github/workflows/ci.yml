@@ -50,6 +50,19 @@ jobs:
           git fetch origin "${{ github.base_ref }}" --depth=100
           python3 scripts/check-new-ports.py
 
+      - name: Check for un-attributed ports (full-tree sweep)
+        # Complements the diff scan above by sweeping every src/**/*.{cpp,h}
+        # against the union of THETIS-PROVENANCE, WDSP-PROVENANCE, and
+        # aethersdr-reconciliation. Catches historical gap cases — files
+        # that were committed before the diff heuristic existed and
+        # slipped through without attribution. Extends the heuristic to
+        # AetherSDR tells (KK7GWY, "Ported from AetherSDR" comments,
+        # AetherSDR filenames adjacent to the "AetherSDR" marker).
+        if: runner.os == 'Linux'
+        env:
+          CHECK_NEW_PORTS_FULL: "1"
+        run: python3 scripts/check-new-ports.py
+
       # ------------------------------------------------------------------
       # Linux dependencies
       # ------------------------------------------------------------------
