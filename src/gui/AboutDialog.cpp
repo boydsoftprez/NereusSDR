@@ -207,10 +207,11 @@ void AboutDialog::buildUI()
     // pointer routes interested readers to the authoritative chain.
     auto* copyright = new QLabel(
         QStringLiteral(
-            "Copyright © 2004-2026 FlexRadio Systems, Doug Wigley (W5WC), "
+            "Copyright © 2004-2026 FlexRadio Systems, "
+            "Bill Tracey (KD5TFD), Doug Wigley (W5WC), "
             "Richard Samphire (MW0LGE), Warren Pratt (NR0V), "
             "Phil Harman (VK6APH), Chris Codella (W2PA), "
-            "Laurence Barker (G8NJJ), Reid Campbell (MI0BOT), "
+            "Laurence Barker (G8NJJ), Reid Campbell (MI0BOT), DH1KLM, "
             "Jeremy (KK7GWY), other Thetis / mi0bot / AetherSDR / WDSP / "
             "OpenHPSDR contributors, and J.J. Boyd (KG4VCF). "
             "See source file headers and "

@@ -612,4 +612,48 @@ Verifier: 182/182 (shaders are not under verifier scope).
 
 ---
 
+## 2026-04-17 — Compliance Plan Task 4: KD5TFD + DH1KLM in About dialog
+
+**Discovered by:** Adversarial GPL compliance audit. The About dialog's
+copyright string named 8 principal contributors but two more whose code
+ships in NereusSDR were attributed in source-file headers and missing
+from the dialog — a strict GPLv3 §5(a) "appropriate copyright notice"
+gap (notices preserved at file level but stripped from the interactive
+notice).
+
+Sweep methodology: ran `grep -rhE "Copyright \(C\)" src/` and
+`grep -rhoE "(callsign-pattern)" src/` to enumerate every named
+copyright holder appearing anywhere in the shipped source tree, then
+diffed against the dialog's principal-name list.
+
+**Affected files:**
+- `src/gui/AboutDialog.cpp` — added two names to the copyright line:
+  - **Bill Tracey (KD5TFD)** — copyright preserved in
+    `src/core/P2RadioConnection.{cpp,h}` headers
+    (`Copyright (C) 2006,2007 Bill Tracey (bill@ejwt.com) (KD5TFD)`).
+    Inserted chronologically between FlexRadio (2004-2009) and
+    Wigley (2010-2020).
+  - **DH1KLM** — cited inline at `src/core/P1RadioConnection.cpp:1167`
+    (`// From networkproto1.c:606-616 (DH1KLM fix)`) and
+    `src/core/HpsdrModel.h:111` (RedPitaya enum slot, version tag
+    `[2.10.3.9]DH1KLM` from upstream networkproto1.c:612). Upstream
+    Thetis source records only the callsign with no expanded name;
+    same convention used here.
+
+**Names verified already present** (no action needed): FlexRadio
+Systems, W5WC, MW0LGE, NR0V, VK6APH, W2PA, G8NJJ, MI0BOT, KK7GWY,
+KG4VCF (principal copyright string); G0ORX (John Melton, "Standing on
+the Shoulders of Giants" Contributor row, AboutDialog.cpp:112).
+
+Other callsigns not found anywhere in `src/` (W4WMT, KE9NS, K5SO,
+OE3IDE, KD0OSS, AA6E, N1GP) — not attributed because no shipped code
+carries their copyright lines or inline credits.
+
+**Fix (commit `<pending>`):** Two-name addition to a single QLabel
+QStringLiteral. No structural change to the dialog layout.
+
+Verifier: 182/182. Build: clean.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*
