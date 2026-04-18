@@ -148,6 +148,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/setup/GeneralOptionsPage.cpp | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | grpHermesStepAttenuator, groupBoxTS47, chkAutoATTRx1/2 |
 | src/gui/setup/GeneralOptionsPage.h | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | grpHermesStepAttenuator, groupBoxTS47 |
 | src/gui/setup/hardware/AntennaAlexTab.cpp | Project Files/Source/Console/setup.cs | 13393-13478; 6185-6246; 2892-2898; 18639 | port | thetis-samphire | InitAlexAntTables(), radAlexR/T enable, chkRxOutOnTx, chkEnableXVTRHF |
+| src/gui/setup/hardware/BandwidthMonitorTab.cpp | Project Files/Source/ChannelMaster/bandwidth_monitor.h | full | port | thetis-samphire | Qt sub-tab around Samphire's C byte-accounting API; wires static controls only — live feed deferred to Phase 3L |
+| src/gui/setup/hardware/BandwidthMonitorTab.h | Project Files/Source/ChannelMaster/bandwidth_monitor.h | full | port | thetis-samphire | sub-tab declaration; pairs with BandwidthMonitorTab.cpp |
 | src/gui/setup/hardware/AntennaAlexTab.h | Project Files/Source/Console/setup.cs | 13393; 2892-2898 | port | thetis-samphire | InitAlexAntTables() + per-band row structure |
 | src/gui/setup/hardware/DiversityTab.cpp | Project Files/Source/Console/DiversityForm.cs | full | port | thetis-samphire | |
 | src/gui/setup/hardware/DiversityTab.h | Project Files/Source/Console/DiversityForm.cs | 1216; 1228 | port | thetis-samphire | chkLockAngle, chkLockR |
@@ -175,7 +177,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/models/PanadapterModel.h | Project Files/Source/Console/console.cs | 14242-14436 | port | thetis-samphire | per-band defaults |
 | src/models/RadioModel.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/setup.cs; Project Files/Source/Console/radio.cs; Project Files/Source/Console/dsp.cs; Project Files/Source/Console/HPSDR/NetworkIO.cs; Project Files/Source/ChannelMaster/cmaster.c | full | port | multi-source | UpdateDDCs, band defaults, CW pitch, AGC sync, filter presets, DIGL/DIGU offsets |
 | src/models/RadioModel.h | Project Files/Source/Console/console.cs | 45960-46006 | port | thetis-samphire | bidirectional sync pattern |
-| src/models/RxDspWorker.h | Project Files/Source/Console/console.cs | full | port | thetis-samphire | buffer-size formula in_size = 64 * rate / 48000; .cpp is Qt worker plumbing (no Thetis citation) |
+| src/models/RxDspWorker.cpp | Project Files/Source/Console/console.cs | full | port | thetis-samphire | Qt worker plumbing implementing the .h's buffer-size formula and DSP wiring |
+| src/models/RxDspWorker.h | Project Files/Source/Console/console.cs | full | port | thetis-samphire | buffer-size formula in_size = 64 * rate / 48000 |
 | src/models/SliceModel.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/display.cs | 5180-5575; 7559-7565; 14636; 14671; 1023 | port | multi-source | InitFilterPresets, CW pitch band filter, DIGU/DIGL offsets |
 | src/models/SliceModel.h | Project Files/Source/Console/console.cs; Project Files/Source/Console/radio.cs; Project Files/Source/Console/setup.designer.cs | full | port | multi-source | InitFilterPresets, RIT, tune_step_list, ctcss_freq, FMTXMode, AGC defaults, dolly |
 | tests/tst_dig_rtty_wire.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/enums.cs; Project Files/Source/Console/radio.cs; Project Files/Source/Console/setup.designer.cs | 14637; 14672; 252-268; 2043-2044; 40635-40637 | port | multi-source | verifies ported DIGU/DIGL/RTTY defaults |

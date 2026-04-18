@@ -515,4 +515,36 @@ Verifier: 179/179 (was 172; +7 for new PROVENANCE rows).
 
 ---
 
+## 2026-04-17 — Compliance Plan Task 2B: BandwidthMonitorTab pair + RxDspWorker.cpp
+
+**Discovered by:** Same audit pass as T2A. `BandwidthMonitorTab.{h,cpp}`
+were a bare pair entirely missing from PROVENANCE, despite both files
+opening with `// Source: ChannelMaster/bandwidth_monitor.h` admission
+comments. `RxDspWorker.cpp` was a sibling-orphan whose .h was already
+in PROVENANCE; the .h's notes column previously said ".cpp is Qt worker
+plumbing (no Thetis citation)" — but the .cpp implements the .h's
+Samphire-derived buffer-size formula and DSP wiring, so the hedge was
+itself a compliance gap.
+
+**Affected files (3 source + 1 PROVENANCE):**
+- `src/gui/setup/hardware/BandwidthMonitorTab.h` (bare → full header)
+- `src/gui/setup/hardware/BandwidthMonitorTab.cpp` (bare → full header)
+- `src/models/RxDspWorker.cpp` (bare → console.cs verbatim header
+  cloned byte-identical from sibling RxDspWorker.h)
+- `docs/attribution/THETIS-PROVENANCE.md` — 3 new rows; updated
+  RxDspWorker.h notes column (removed obsolete "no Thetis citation"
+  hedge).
+
+**Fix (commit `<pending>`):** BandwidthMonitorTab files now carry the
+verbatim `bandwidth_monitor.h` Samphire 2025 header (fetched from
+upstream `ramdor/Thetis/Project Files/Source/ChannelMaster/`,
+byte-identical) plus a developer-note block preserving the original
+"NereusSDR wires only static controls; live feed deferred to Phase 3L"
+context. RxDspWorker.cpp received the same console.cs Samphire-variant
+verbatim block its sibling .h carries (byte-compared identical).
+
+Verifier: 182/182 (was 179; +3 for new PROVENANCE rows).
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*
