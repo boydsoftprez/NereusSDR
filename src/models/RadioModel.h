@@ -87,6 +87,7 @@ class ReceiverManager;
 class AudioEngine;
 class WdspEngine;
 class RxDspWorker;
+class NoiseFloorTracker;
 
 // RadioModel is the central data model for a connected radio.
 // It owns the RadioConnection (on a worker thread), ReceiverManager,
@@ -150,6 +151,9 @@ public:
     void setClarityController(class ClarityController* c) { m_clarityController = c; }
     class StepAttenuatorController* stepAttController() const { return m_stepAttController; }
     void setStepAttController(class StepAttenuatorController* c) { m_stepAttController = c; }
+    NoiseFloorTracker* noiseFloorTracker() const { return m_noiseFloorTracker; }
+    void setNoiseFloorTracker(NoiseFloorTracker* t) { m_noiseFloorTracker = t; }
+    QTimer* autoAgcTimer() const { return m_autoAgcTimer; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -259,6 +263,10 @@ private:
     // agcThresholdChanged and rfGainChanged handlers.
     // From Thetis console.cs:45960-46006 — bidirectional sync pattern.
     bool m_syncingAgc{false};
+
+    // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
+    QTimer* m_autoAgcTimer{nullptr};
+    NoiseFloorTracker* m_noiseFloorTracker{nullptr};
 };
 
 } // namespace NereusSDR

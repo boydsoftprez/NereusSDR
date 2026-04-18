@@ -256,6 +256,7 @@ warren@wpratt.com
 #include "core/FFTEngine.h"
 #include "core/ClarityController.h"
 #include "core/StepAttenuatorController.h"
+#include "core/NoiseFloorTracker.h"
 #include "core/BoardCapabilities.h"
 #include "models/PanadapterModel.h"
 #include "models/Band.h"
@@ -597,6 +598,27 @@ void MainWindow::buildUI()
     connect(m_fftEngine, &FFTEngine::fftReady,
             m_clarityController, [this](int /*rxId*/, const QVector<float>& binsDbm) {
         m_clarityController->feedBins(binsDbm);
+    });
+
+    // ── NoiseFloorTracker for Auto AGC-T ────────────────────────────────
+    auto* nfTracker = new NoiseFloorTracker;
+    m_radioModel->setNoiseFloorTracker(nfTracker);
+
+    connect(m_fftEngine, &FFTEngine::fftReady,
+            this, [nfTracker](int /*rxId*/, const QVector<float>& binsDbm) {
+        static constexpr float kFrameIntervalMs = 33.0f;
+        nfTracker->feed(binsDbm, kFrameIntervalMs);
+    });
+
+    // Fast-attack triggers
+    // From Thetis v2.10.3.13 display.cs:905 — freq change triggers fast attack
+    connect(m_radioModel->activeSlice(), &SliceModel::frequencyChanged,
+            this, [nfTracker](double /*hz*/) {
+        nfTracker->triggerFastAttack();
+    });
+    connect(m_radioModel->activeSlice(), &SliceModel::dspModeChanged,
+            this, [nfTracker](NereusSDR::DSPMode /*mode*/) {
+        nfTracker->triggerFastAttack();
     });
 
     // TX pause: MOX signal → ClarityController
