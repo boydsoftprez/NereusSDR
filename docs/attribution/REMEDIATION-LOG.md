@@ -584,4 +584,32 @@ within an existing PROVENANCE row).
 
 ---
 
+## 2026-04-17 — Compliance Plan Task 3: Reconcile shader attribution
+
+**Discovered by:** Adversarial GPL compliance audit. `resources/shaders/
+waterfall.frag:18` admitted `// From AetherSDR texturedquad.frag` while
+`docs/attribution/ASSETS.md:86-88` simultaneously claimed "All GLSL
+shaders are original NereusSDR artwork… No shader source was copied
+from… any other project." Worst-shape inconsistency in the tree — a
+reviewer would quote both side-by-side.
+
+**Affected files:**
+- `resources/shaders/waterfall.frag` — added NereusSDR port-citation
+  block + AetherSDR project-level citation per HOW-TO-PORT.md rule 6.
+  GLSL has no upstream verbatim header to copy; the project-level form
+  names ten9876/AetherSDR + the source filename + GPLv3.
+- `docs/attribution/ASSETS.md` — rewrote the `## resources/shaders/`
+  intro paragraph to stop denying external derivation; updated the
+  table row for `waterfall.frag` to disclose AetherSDR origin and the
+  mixed-license shape (NereusSDR contributions GPL-2.0-or-later,
+  AetherSDR-derived sampling line GPLv3).
+
+**Fix (commit `<pending>`):** No code-behavior changes. Shader recompiled
+clean via Qt's `qsb` step at build time; the comment block doesn't
+affect GLSL output.
+
+Verifier: 182/182 (shaders are not under verifier scope).
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*

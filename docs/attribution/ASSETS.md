@@ -83,9 +83,13 @@ branding.
 
 ## resources/shaders/
 
-All GLSL shaders are original NereusSDR artwork, written specifically for Qt6
-QRhi-based spectrum, waterfall, and meter rendering. No shader source was
-copied from Thetis (which uses GDI+/WinForms rendering) or any other project.
+GLSL shaders for Qt6 QRhi-based spectrum, waterfall, and meter rendering.
+Most are original NereusSDR work; one (`waterfall.frag`) inherits its
+ring-buffer UV-offset sampling pattern from AetherSDR
+(ten9876/AetherSDR, GPLv3) and is annotated as such in its file header
+per `docs/attribution/HOW-TO-PORT.md` rule 6 (project-level citation —
+AetherSDR has no per-file shader headers to copy verbatim). No shader
+source was ported from Thetis (which uses GDI+/WinForms rendering).
 
 | File | Purpose | License |
 | --- | --- | --- |
@@ -93,7 +97,7 @@ copied from Thetis (which uses GDI+/WinForms rendering) or any other project.
 | `overlay.vert` | Vertex shader for the overlay layer | GPL-2.0-or-later |
 | `spectrum.frag` | Fragment shader for the spectrum trace (filled gradient trace + peak hold) | GPL-2.0-or-later |
 | `spectrum.vert` | Vertex shader for spectrum trace geometry | GPL-2.0-or-later |
-| `waterfall.frag` | Fragment shader for the waterfall display (color-maps dBm to palette) | GPL-2.0-or-later |
+| `waterfall.frag` | Fragment shader for the waterfall display (color-maps dBm to palette); UV-fract sampling pattern derived from AetherSDR `texturedquad.frag` (GPLv3) | GPL-2.0-or-later (NereusSDR contributions) + GPLv3 (AetherSDR-derived line) |
 | `waterfall.vert` | Vertex shader for waterfall geometry | GPL-2.0-or-later |
 | `meter_geometry.frag` | Fragment shader for MeterWidget vector-geometry pipeline (bar meters, needle arcs) | GPL-2.0-or-later |
 | `meter_geometry.vert` | Vertex shader for meter geometry pipeline | GPL-2.0-or-later |
