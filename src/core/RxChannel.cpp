@@ -476,7 +476,7 @@ void RxChannel::setAgcHangThreshold(int val)
     m_agcHangThreshold.store(val);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/setup.cs:9081
+    // From Thetis v2.10.3.13 setup.cs:9081
     //   WDSP.SetRXAAGCHangThreshold(WDSP.id(0, 0), value)
     // WDSP third_party/wdsp/src/wcpAGC.c
     SetRXAAGCHangThreshold(m_channelId, val);
@@ -494,7 +494,7 @@ void RxChannel::setAgcFixedGain(int dB)
     m_agcFixedGain.store(dB);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/setup.cs:9001
+    // From Thetis v2.10.3.13 setup.cs:9001
     //   WDSP.SetRXAAGCFixed(WDSP.id(0, 0), value)
     // WDSP third_party/wdsp/src/wcpAGC.c
     SetRXAAGCFixed(m_channelId, static_cast<double>(dB));
@@ -512,7 +512,7 @@ void RxChannel::setAgcMaxGain(int dB)
     m_agcMaxGain.store(dB);
 
 #ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/setup.cs:9011
+    // From Thetis v2.10.3.13 setup.cs:9011
     //   WDSP.SetRXAAGCTop(WDSP.id(0, 0), (double)value)
     // WDSP third_party/wdsp/src/wcpAGC.c
     SetRXAAGCTop(m_channelId, static_cast<double>(dB));
