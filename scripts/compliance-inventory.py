@@ -54,8 +54,43 @@ def _paths_from_table(md_path: Path) -> set[str]:
     return paths
 
 
+def _aethersdr_bucket_a_paths(md_path: Path) -> set[str]:
+    """Bucket-A-only extractor for aethersdr-reconciliation.md.
+
+    The reconciliation doc's tables cover four buckets (A: genuine
+    derivations, B: false boilerplate, C: mixed, D: incidental mentions).
+    Only Bucket A files carry a real AetherSDR derivation claim that
+    needs the project-level attribution header. The inventory must not
+    flag Buckets B/C/D as "aethersdr-port" — those rows are either
+    deletions or incidental mentions.
+    """
+    if not md_path.exists():
+        return set()
+    paths: set[str] = set()
+    in_bucket_a = False
+    for line in md_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## Bucket A"):
+            in_bucket_a = True
+            continue
+        if stripped.startswith("## Bucket "):
+            in_bucket_a = False
+            continue
+        if not in_bucket_a:
+            continue
+        if not stripped.startswith("|") or stripped.startswith("|---"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if not cells:
+            continue
+        first = cells[0].strip("`")
+        if first.startswith(("src/", "tests/")):
+            paths.add(first)
+    return paths
+
+
 THETIS_PORTS = _paths_from_table(THETIS_PROVENANCE)
-AETHER_PORTS = _paths_from_table(AETHER_RECONCILIATION)
+AETHER_PORTS = _aethersdr_bucket_a_paths(AETHER_RECONCILIATION)
 
 
 def classify(path: str) -> str:
@@ -109,9 +144,11 @@ REQUIRED_MARKERS: dict[str, list[str]] = {
 TEXT_SUFFIXES = {".c", ".h", ".hpp", ".cpp", ".cc", ".py"}
 
 # Within wdsp-vendored, these basenames are documented as utility/data/no-
-# header files per WDSP-PROVENANCE.md and must not be flagged.
+# header files per WDSP-PROVENANCE.md and must not be flagged. Keep in
+# sync with WDSP_HEADER_EXEMPTIONS in scripts/verify-thetis-headers.py.
 WDSP_NO_HEADER_BASENAMES = {
-    "calculus.c", "calculus.h", "FDnoiseIQ.c", "resource.h", "resource1.h",
+    "calculus.c", "calculus.h", "FDnoiseIQ.c", "FDnoiseIQ.h",
+    "resource.h", "resource1.h",
     "version.c", "version.h", "fastmath.h", "fftw3.h",
 }
 

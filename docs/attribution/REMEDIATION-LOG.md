@@ -1021,4 +1021,98 @@ checked, all properly attributed or skip-marked." Build: clean.
 
 ---
 
+## 2026-04-18 — Full-tree audit sweep (Phases 0–6 of the 2026-04-18 plan)
+
+**Discovered by:** Internal audit — J.J. Boyd (KG4VCF)
+**Reported via:** `docs/architecture/2026-04-18-gpl-compliance-full-audit-plan.md`
+**Affected files:** Tree-wide — 724 tracked files classified; 207 PROVENANCE-listed ports verified; 138 WDSP sources censused
+**Gap:** Three categories surfaced by the expanded auditors.
+
+1. **Binary recipients got URLs, not licence text.** Pre-sweep,
+   `packaging/third-party-licenses/{fftw3,qt6,wdsp}.txt` pointed at
+   gnu.org links for the actual licence text. GPLv2 §1 / LGPLv3 §4
+   require text-alongside, not text-by-reference.
+2. **Per-upstream-project notices absent from binary.** Binary-only
+   recipients saw no mention of Thetis, mi0bot/Thetis-HL2, or AetherSDR
+   as upstream origins of code compiled into NereusSDR; per-file
+   attribution was only in source headers and `docs/attribution/`.
+3. **No written source offer bundled.** GPLv3 §6(b) fallback (three-year
+   written offer) was absent from the release artifacts; the §6(a)
+   "source alongside binary" claim hinged on the Releases page being
+   up at fetch time.
+4. **Header verifier did not cover AetherSDR or WDSP lineages.**
+   `verify-thetis-headers.py` pre-sweep only enforced Thetis markers;
+   AetherSDR Bucket-A files and WDSP vendored sources were unaudited.
+5. **No tree-wide inline-cite stamp sweep.** PR-diff enforcement was
+   in place (via `check-new-ports.py`) but no mechanism caught
+   historical cites that pre-dated the diff-gate.
+6. **Inventory script flagged two incidental-reference test files.**
+   `tst_about_dialog.cpp` and `tst_container_persistence.cpp` matched
+   the `aethersdr-reconciliation.md` path parser even though they sit
+   in Buckets B/D (deletions / incidental mentions, not real
+   derivations).
+
+**Root cause:** The 2026-04-17 v0.2.0 remediation focused on the source
+tree. The 2026-04-18 plan added four additional audit axes — binary
+distribution artifacts, inline-cite version stamps, non-Thetis lineage
+headers, and tree-wide inventory — and these surfaced the gaps above.
+
+**Fix (commit range `49b576a..<pending>` on branches
+`compliance/full-audit-2026-04-18` + `compliance/audit-followup-2026-04-18`):**
+
+- Binary-distribution fixes (PR #55):
+  - Added verbatim `GPLv2.txt`, `GPLv3.txt`, `LGPLv3.txt` under
+    `packaging/third-party-licenses/` (fetched byte-identical from
+    gnu.org; SHA-256 recorded in the commit message).
+  - Added `thetis.txt`, `mi0bot-thetis.txt`, `aethersdr.txt` listing
+    upstream copyright chains.
+  - Added `SOURCE-OFFER.txt` formalising GPLv3 §6(a) + §6(b) + LGPLv3 §4
+    Qt source pointers.
+  - Refreshed existing per-dependency notices to reference bundled
+    full-text files instead of URLs.
+- Audit-infrastructure fixes (follow-up PR):
+  - `scripts/verify-thetis-headers.py` gained `--kind=aethersdr` and
+    `--kind=wdsp` modes with a documented 10-file WDSP exemption list
+    matching `WDSP-PROVENANCE.md`. Result: 43/43 AetherSDR Bucket-A,
+    128/128 WDSP eligible files pass.
+  - `scripts/verify-inline-cites.py` + `tests/compliance/test_inline_cites.py`
+    + `tests/compliance/inline-cites-baseline.json` added. Baseline
+    captured at 288 unstamped cites; regression gate passes today.
+  - `scripts/audit-inline-markers.py` added — sampling comparator
+    between Thetis upstream line ranges and NereusSDR ports; output
+    parked here for human triage (restructures legitimately drop
+    marker counts, so this is not a merge gate).
+  - `scripts/audit-wdsp-headers.py` added — independent census
+    confirming `WDSP-PROVENANCE.md`'s 128 + 10 split (and catches
+    future drift on upstream re-sync).
+  - `scripts/compliance-inventory.py` now scopes
+    `aethersdr-reconciliation.md` parsing to Bucket A only, eliminating
+    the three pre-existing false-positive flags on
+    `tst_about_dialog.cpp`, `tst_container_persistence.cpp`, and
+    (via the refined WDSP-NO-HEADER set) `FDnoiseIQ.h`.
+    Regenerated `docs/attribution/COMPLIANCE-INVENTORY.md` baseline.
+
+**Process improvement:**
+- Task 15 (follow-up): wire every auditor in `ci.yml` as merge-gated.
+- Task 16 (follow-up): add the new auditors to the pre-push hook.
+- Task 17 (follow-up): document the Thetis-upstream-sync cadence so
+  inline-cite stamps refresh automatically at each upstream pull.
+
+**Auditor status at sweep close:**
+
+| Auditor | Result |
+| --- | --- |
+| `verify-thetis-headers.py --kind=thetis` | 209/209 pass |
+| `verify-thetis-headers.py --kind=aethersdr` | 43/43 pass |
+| `verify-thetis-headers.py --kind=wdsp` | 128/128 pass |
+| `verify-provenance-sync.py` | 207/207 pass |
+| `verify-inline-cites.py` | 288 grandfathered, at baseline |
+| `audit-wdsp-headers.py` | Census matches WDSP-PROVENANCE.md |
+| `audit-inline-markers.py` | 68/75 below 0.5 ratio — sampling, human triage (expected noise on multi-source "full" rows) |
+| `compliance-inventory.py --fail-on-unclassified` | Exit 0 |
+| `check-new-ports.py` (full-tree) | 322/322 pass |
+| `pytest tests/compliance/` | 10/10 passing |
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*

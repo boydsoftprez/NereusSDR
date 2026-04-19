@@ -32,13 +32,12 @@ inventory and per-component provenance docs.
 
 # Compliance Inventory
 
-Total tracked files: **711**
+Total tracked files: **724**
 
-## aethersdr-port (38)
+## aethersdr-port (34)
 
 - `src/core/AudioEngine.cpp`
 - `src/core/AudioEngine.h`
-- `src/gui/AboutDialog.cpp`
 - `src/gui/SetupPage.cpp`
 - `src/gui/SpectrumOverlayMenu.h`
 - `src/gui/SpectrumOverlayPanel.cpp`
@@ -71,13 +70,11 @@ Total tracked files: **711**
 - `src/gui/widgets/TriBtn.h`
 - `src/gui/widgets/VfoLevelBar.cpp`
 - `src/gui/widgets/VfoStyles.h`
-- `tests/CMakeLists.txt`
-- `tests/tst_about_dialog.cpp`  warning: missing: Modification history (NereusSDR)
-- `tests/tst_container_persistence.cpp`  warning: missing: Modification history (NereusSDR)
 
-## attribution-doc (17)
+## attribution-doc (18)
 
 - `docs/attribution/ASSETS.md`
+- `docs/attribution/COMPLIANCE-INVENTORY.md`
 - `docs/attribution/FFTW3-PROVENANCE.md`
 - `docs/attribution/HOW-TO-PORT.md`
 - `docs/attribution/LICENSE-GPLv2`
@@ -195,7 +192,7 @@ Total tracked files: **711**
 - `third_party/fftw3/lib/libfftw3f-3.a`
 - `third_party/fftw3/lib/libfftw3f-3.def`
 
-## nereussdr-original (134)
+## nereussdr-original (138)
 
 - `.claude/commands/triage.md`
 - `.gitattributes`
@@ -215,6 +212,8 @@ Total tracked files: **711**
 - `captures/.gitignore`
 - `captures/thetis-3865-lsb-pcap-analysis.md`
 - `scripts/.gitkeep`
+- `scripts/audit-inline-markers.py`
+- `scripts/audit-wdsp-headers.py`
 - `scripts/check-new-ports.py`
 - `scripts/compliance-inventory.py`
 - `scripts/fix-multisource-samphire.py`
@@ -224,6 +223,7 @@ Total tracked files: **711**
 - `scripts/install-hooks.sh`
 - `scripts/repair-multisource-headers.py`
 - `scripts/rewrite-verbatim-headers.py`
+- `scripts/verify-inline-cites.py`
 - `scripts/verify-provenance-sync.py`
 - `scripts/verify-thetis-headers.py`
 - `scripts/windows/installer.nsi`
@@ -239,6 +239,7 @@ Total tracked files: **711**
 - `src/core/mmio/ITransportWorker.cpp`
 - `src/core/mmio/ITransportWorker.h`
 - `src/core/mmio/MmioEndpoint.cpp`
+- `src/gui/AboutDialog.cpp`
 - `src/gui/AboutDialog.h`
 - `src/gui/ColorSwatchButton.cpp`
 - `src/gui/ColorSwatchButton.h`
@@ -332,7 +333,7 @@ Total tracked files: **711**
 - `src/models/TransmitModel.h`
 - `third_party/.gitkeep`
 
-## packaging (13)
+## packaging (20)
 
 - `.github/ISSUE_TEMPLATE/bug_report.yml`
 - `.github/ISSUE_TEMPLATE/config.yml`
@@ -343,9 +344,16 @@ Total tracked files: **711**
 - `.github/workflows/codeql.yml`
 - `.github/workflows/docker-ci-image.yml`
 - `.github/workflows/release.yml`
+- `packaging/third-party-licenses/GPLv2.txt`
+- `packaging/third-party-licenses/GPLv3.txt`
+- `packaging/third-party-licenses/LGPLv3.txt`
 - `packaging/third-party-licenses/README.md`
+- `packaging/third-party-licenses/SOURCE-OFFER.txt`
+- `packaging/third-party-licenses/aethersdr.txt`
 - `packaging/third-party-licenses/fftw3.txt`
+- `packaging/third-party-licenses/mi0bot-thetis.txt`
 - `packaging/third-party-licenses/qt6.txt`
+- `packaging/third-party-licenses/thetis.txt`
 - `packaging/third-party-licenses/wdsp.txt`
 
 ## resource (34)
@@ -385,11 +393,14 @@ Total tracked files: **711**
 - `resources/shaders/waterfall.frag`
 - `resources/shaders/waterfall.vert`
 
-## test (32)
+## test (37)
 
+- `tests/CMakeLists.txt`
 - `tests/TestSandboxInit.cpp`
 - `tests/compliance/__init__.py`
+- `tests/compliance/inline-cites-baseline.json`
 - `tests/compliance/test_cite_versioning.py`
+- `tests/compliance/test_inline_cites.py`
 - `tests/compliance/test_inventory.py`
 - `tests/fakes/P1FakeRadio.cpp`
 - `tests/fakes/P1FakeRadio.h`
@@ -397,10 +408,12 @@ Total tracked files: **711**
 - `tests/fixtures/discovery/p1_angelia_reply.hex`
 - `tests/fixtures/discovery/p1_hermeslite_reply.hex`
 - `tests/fixtures/discovery/p2_saturn_reply.hex`
+- `tests/tst_about_dialog.cpp`
 - `tests/tst_board_capabilities.cpp`
 - `tests/tst_clarity_controller.cpp`
 - `tests/tst_clarity_defaults.cpp`
 - `tests/tst_connection_panel_saved_radios.cpp`
+- `tests/tst_container_persistence.cpp`
 - `tests/tst_cross_thread_teardown.cpp`
 - `tests/tst_hardware_page_capability_gating.cpp`
 - `tests/tst_hardware_page_persistence.cpp`
@@ -637,7 +650,7 @@ Total tracked files: **711**
 - `third_party/wdsp/CMakeLists.txt`
 - `third_party/wdsp/COPYING`
 - `third_party/wdsp/src/FDnoiseIQ.c`
-- `third_party/wdsp/src/FDnoiseIQ.h`  warning: missing: Copyright (C), General Public License
+- `third_party/wdsp/src/FDnoiseIQ.h`
 - `third_party/wdsp/src/RXA.c`
 - `third_party/wdsp/src/RXA.h`
 - `third_party/wdsp/src/TXA.c`
