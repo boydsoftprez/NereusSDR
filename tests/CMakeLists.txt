@@ -157,3 +157,6 @@ nereus_add_test(tst_app_settings_vax_migration)
 
 # ── Phase 3O Sub-Phase 2: MasterMixer ─────────────────────────────────────
 nereus_add_test(tst_master_mixer)
+
+# ── Phase 3O Sub-Phase 3: PortAudioBus ────────────────────────────────────
+nereus_add_test(tst_port_audio_bus)

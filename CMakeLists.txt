@@ -293,6 +293,7 @@ set(CORE_SOURCES
     src/core/ClarityController.cpp
     src/core/StepAttenuatorController.cpp
     src/core/audio/MasterMixer.cpp
+    src/core/audio/PortAudioBus.cpp
 )
 
 set(MODEL_SOURCES
