@@ -16,16 +16,24 @@ VERSION=$(grep 'project(NereusSDR' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0
 
 echo "=== Building NereusSDR macOS installer v${VERSION} ==="
 
-# 1. Build app
-cmake -B "${BUILD_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build "${BUILD_DIR}" -j$(sysctl -n hw.ncpu)
+# 1. Build app — skip if already built (preserves pre-existing signatures from CI).
+if [ ! -d "${BUILD_DIR}/NereusSDR.app" ]; then
+    cmake -B "${BUILD_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    cmake --build "${BUILD_DIR}" -j$(sysctl -n hw.ncpu)
+else
+    echo "--- Reusing existing ${BUILD_DIR}/NereusSDR.app ---"
+fi
 
-# 1b. Build HAL plugin (separate build because libASPL FetchContent conflicts with main Ninja build)
+# 1b. Build HAL plugin — skip if already built (preserves pre-existing signatures from CI).
 HAL_BUILD="${BUILD_DIR}-hal"
 if [ -f "hal-plugin/CMakeLists.txt" ]; then
-    echo "--- Building HAL plugin ---"
-    cmake -B "${HAL_BUILD}" -S hal-plugin -DCMAKE_BUILD_TYPE=RelWithDebInfo
-    cmake --build "${HAL_BUILD}" -j$(sysctl -n hw.ncpu)
+    if [ ! -d "${HAL_BUILD}/NereusSDRVAX.driver" ]; then
+        echo "--- Building HAL plugin ---"
+        cmake -B "${HAL_BUILD}" -S hal-plugin -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        cmake --build "${HAL_BUILD}" -j$(sysctl -n hw.ncpu)
+    else
+        echo "--- Reusing existing ${HAL_BUILD}/NereusSDRVAX.driver ---"
+    fi
 fi
 
 # 2. Prepare staging

@@ -340,7 +340,7 @@ jobs:
             --sign "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_ID }}" \
             build-hal/NereusSDRVAX.driver
 
-      - name: Build signed .pkg
+      - name: Build .pkg
         run: bash packaging/macos/hal-installer.sh
 
       - name: Notarize
@@ -374,6 +374,17 @@ jobs:
           || true
           ls -la NereusSDR-*.dmg
 
+      # NOTE: The .pkg is uploaded as a workflow artifact only — NOT attached
+      # to the GitHub Release. Release attachment is deferred until the two
+      # cascading items land:
+      #   1. Main app codesign upgraded from ad-hoc to Developer ID (required
+      #      for notarization to accept the .pkg).
+      #   2. hal-installer.sh wired for productbuild --sign via
+      #      Developer ID Installer certificate.
+      # Until both are in place, the .pkg is a build-verification artifact
+      # for local smoke-testing, not a distributable installer. The
+      # sign-and-publish job at the bottom of this workflow intentionally
+      # excludes *.pkg from its find glob.
       - name: Upload .pkg artifact
         uses: actions/upload-artifact@v4
         with:
