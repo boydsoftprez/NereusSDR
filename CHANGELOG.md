@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### License compliance (2026-04-18 binary-distribution sweep)
+
+- **Bundled full licence text with the binary.** Added `GPLv2.txt`,
+  `GPLv3.txt`, and `LGPLv3.txt` (verbatim upstream copies) under
+  `packaging/third-party-licenses/`. Previously the per-dependency
+  notice files (`fftw3.txt`, `qt6.txt`, `wdsp.txt`) pointed at gnu.org
+  URLs; GPLv2 §1 / LGPLv3 §4 require the text to *accompany* the
+  binary, not merely be linked. These three files are installed into
+  every release artifact via the existing CMake install rule.
+- **Upstream-project notice files.** Added `thetis.txt` (Thetis
+  ramdor/Thetis upstream), `mi0bot-thetis.txt` (mi0bot/Thetis-HL2 fork),
+  and `aethersdr.txt` (ten9876/AetherSDR template) — so binary-only
+  recipients see the upstream copyright chain for code compiled into
+  NereusSDR, not just the runtime-linked dependencies. Per-file
+  attribution remains in the source-file headers and
+  `docs/attribution/`.
+- **Written source offer.** Added `SOURCE-OFFER.txt` formalising
+  GPLv3 §6(d) + §6(b): primary corresponding source at the tagged
+  GitHub release, plus a three-year written offer; plus LGPLv3 §4
+  Qt-upstream source pointer.
+- **Refreshed per-dependency notices.** `fftw3.txt`, `qt6.txt`,
+  `wdsp.txt` now point at the bundled full texts instead of URLs, and
+  name the §5(b) upgrade / dynamic-link mechanism explicitly.
+- **Expanded README index.** `packaging/third-party-licenses/README.md`
+  now enumerates every file, the two dependency categories
+  (linked-in vs. ported-from), and where the directory lands in each
+  release artifact.
+
 ### Fixed
 - **Hardware Config → Radio Info sample-rate wiring (#35):** sample-rate combo
   now actually drives the wire rate used on the next connection (previously

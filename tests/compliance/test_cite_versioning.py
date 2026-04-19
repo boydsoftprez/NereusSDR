@@ -58,7 +58,7 @@ def write_tmp(body: str) -> Path:
     return Path(tmp.name)
 
 
-def test_case(cnp, body: str, expect_flag: bool) -> bool:
+def _run_case(cnp, body: str, expect_flag: bool) -> bool:
     tmp = write_tmp(body)
     try:
         rel = str(tmp.relative_to(REPO))
@@ -84,23 +84,31 @@ def main() -> int:
     cnp.FULL_TREE = False  # cite-scan runs only in diff mode
 
     print("Bad: unstamped cite → should flag")
-    bad = test_case(cnp, FIXTURE_BAD, expect_flag=True)
+    bad = _run_case(cnp, FIXTURE_BAD, expect_flag=True)
 
     print("Good: [v2.10.3.13] tag → should pass")
-    g1 = test_case(cnp, FIXTURE_GOOD_TAG, expect_flag=False)
+    g1 = _run_case(cnp, FIXTURE_GOOD_TAG, expect_flag=False)
 
     print("Good: [@abc1234] sha → should pass")
-    g2 = test_case(cnp, FIXTURE_GOOD_SHA, expect_flag=False)
+    g2 = _run_case(cnp, FIXTURE_GOOD_SHA, expect_flag=False)
 
     print("Good: [v2.10.3.13+abc1234] tag+sha → should pass")
-    g3 = test_case(cnp, FIXTURE_GOOD_TAG_PLUS_SHA, expect_flag=False)
+    g3 = _run_case(cnp, FIXTURE_GOOD_TAG_PLUS_SHA, expect_flag=False)
 
     print("Good: multi-file cite with single tag → should pass")
-    g4 = test_case(cnp, FIXTURE_MULTI_FILE, expect_flag=False)
+    g4 = _run_case(cnp, FIXTURE_MULTI_FILE, expect_flag=False)
 
     passed = all([bad, g1, g2, g3, g4])
     print(f"\n{'ALL PASS' if passed else 'FAIL'}")
     return 0 if passed else 1
+
+
+def test_cite_versioning_suite() -> None:
+    # pytest entry point — runs the full standalone suite and asserts
+    # exit 0. Helper cases are named with a leading underscore so pytest
+    # does not auto-collect them as tests (they require positional args,
+    # not fixtures).
+    assert main() == 0
 
 
 if __name__ == "__main__":

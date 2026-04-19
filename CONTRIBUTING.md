@@ -200,6 +200,12 @@ a dated modification note to the NereusSDR file. See
 for templates and [docs/attribution/THETIS-PROVENANCE.md](docs/attribution/THETIS-PROVENANCE.md)
 for the existing provenance inventory.
 
+Pulling a newer Thetis / mi0bot / AetherSDR / WDSP revision into
+NereusSDR? Follow
+[docs/attribution/UPSTREAM-SYNC-PROTOCOL.md](docs/attribution/UPSTREAM-SYNC-PROTOCOL.md)
+— it covers version-stamp refresh, cite re-verification, and how to
+log the sync in `REMEDIATION-LOG.md`.
+
 This is a merge-blocking requirement, not a style preference.
 
 ### Install the attribution pre-commit hook

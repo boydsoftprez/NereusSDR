@@ -64,6 +64,63 @@ jobs:
         run: python3 scripts/check-new-ports.py
 
       # ------------------------------------------------------------------
+      # Phase 2/3 compliance auditors (added 2026-04-18, Plan Task 15)
+      # ------------------------------------------------------------------
+      - name: Verify AetherSDR + WDSP license-header markers
+        # Extends the Thetis-kind header check above to the two other
+        # lineage kinds (AetherSDR Bucket A + WDSP vendored sources).
+        # Fails if a Bucket A file is missing the project-level
+        # AetherSDR attribution, or if a WDSP source lost its upstream
+        # GPL permission block on re-import.
+        if: runner.os == 'Linux'
+        run: python3 scripts/verify-thetis-headers.py --all-kinds
+
+      - name: Verify provenance tables match the source tree
+        # Already enforced in pre-commit Ring 2. Re-run in CI Ring 3
+        # because squashed merges and rebases can introduce drift the
+        # hook never saw.
+        if: runner.os == 'Linux'
+        run: python3 scripts/verify-provenance-sync.py
+
+      - name: Verify inline '// From Thetis' cite version stamps
+        # Regression gate: fails if the count of unstamped cites
+        # exceeds the grandfathered baseline in
+        # tests/compliance/inline-cites-baseline.json (288 as of
+        # 2026-04-18 sweep). --strict will replace this once the
+        # baseline has been remediated to zero.
+        if: runner.os == 'Linux'
+        run: python3 scripts/verify-inline-cites.py
+
+      - name: Compliance inventory — no missing required markers
+        # Walks every git-tracked file, classifies by upstream lineage,
+        # verifies per-kind header markers. Fails on any missing marker.
+        if: runner.os == 'Linux'
+        run: python3 scripts/compliance-inventory.py --fail-on-unclassified
+
+      - name: WDSP header census drift detector
+        # Re-runs the third_party/wdsp/src/ classification and fails if
+        # the counts drift from WDSP-PROVENANCE.md's documented split
+        # (128 gpl2-or-later + 10 utility no-header). Catches a WDSP
+        # re-sync that forgets to update PROVENANCE.
+        if: runner.os == 'Linux'
+        run: python3 scripts/audit-wdsp-headers.py
+
+      - name: Set up Python for pytest
+        if: runner.os == 'Linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        if: runner.os == 'Linux'
+        run: python3 -m pip install --upgrade pip pytest
+
+      - name: pytest — compliance test suite
+        # Runs tests/compliance/ (inventory schema + cite baseline).
+        if: runner.os == 'Linux'
+        run: python3 -m pytest tests/compliance/ -v
+
+      # ------------------------------------------------------------------
       # Linux dependencies
       # ------------------------------------------------------------------
       - name: Install dependencies (Linux)

@@ -10,5 +10,12 @@ links against it.
 Upstream repository:
   https://github.com/TAPR/OpenHPSDR-wdsp
 
-For the full GPLv2 license text, see:
+The full GPLv2 text ships alongside this notice as `GPLv2.txt` and, for
+the vendored source tree, at `third_party/wdsp/COPYING`. The upstream
+canonical text is also at:
   https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+NereusSDR distributes the combined work under GPLv3 via GPLv3 §5(b).
+
+NereusSDR WDSP provenance:  docs/attribution/WDSP-PROVENANCE.md
+Source offer:               SOURCE-OFFER.txt

@@ -1,0 +1,78 @@
+Corresponding Source — written offer (GPLv3 §6(d) / GPLv2 §3)
+
+NereusSDR is distributed under the GNU General Public License, version 3
+(see accompanying `LICENSE` and `GPLv3.txt`), which combines work under:
+
+  - GPL-3.0          NereusSDR itself, AetherSDR-derived code
+  - GPL-2.0-or-later Thetis-derived code, mi0bot/Thetis-HL2-derived
+                     code, WDSP, FFTW3 (combined work conveyed under
+                     GPLv3 via GPLv3 §5(b))
+  - LGPL-3.0         Qt 6 (dynamic linking only, per LGPLv3 §4)
+
+GPLv3 §6 (and GPLv2 §3) requires that any conveyor of the binary make
+the complete corresponding source code available to the recipient. This
+obligation is satisfied as follows:
+
+1. PRIMARY: The corresponding source for this binary is published at the
+   same URL that serves the binary release, on the NereusSDR GitHub
+   Releases page. The source tree is the public git repository, tagged
+   at the version matching this binary:
+
+       https://github.com/boydsoftprez/NereusSDR
+
+   Each release is tagged `vX.Y.Z`; the corresponding source is the
+   tree at that tag. Clone and check out:
+
+       git clone https://github.com/boydsoftprez/NereusSDR.git
+       cd NereusSDR
+       git checkout vX.Y.Z        # version matching this binary
+
+   This directly satisfies GPLv3 §6(a) (conveying source alongside the
+   object code on the same medium/URL).
+
+2. WRITTEN OFFER (fallback, per GPLv3 §6(b)): For at least three years
+   after the date this binary was conveyed to you, the publisher
+   (J.J. Boyd, KG4VCF) offers to provide, on physical media or by
+   network transfer, a complete machine-readable copy of the
+   corresponding source code for this version of NereusSDR — including
+   the NereusSDR sources, the vendored WDSP sources
+   (`third_party/wdsp/`), the vendored FFTW3 binary-plus-header
+   (`third_party/fftw3/`, with pointer to the upstream source tarball
+   at https://fftw.org), and the unmodified licence texts — for a
+   charge no more than the reasonable cost of physically performing
+   source distribution.
+
+   Contact for this offer:
+
+       J.J. Boyd (KG4VCF)
+       <jj@skyrunner.net>
+
+   Include in the request: the NereusSDR binary version (visible in
+   the About dialog) and the delivery method you prefer (link to a
+   mirror, or a mailed USB/DVD at cost).
+
+3. QT 6 (LGPLv3 §4 linking obligation): NereusSDR links Qt 6 dynamically
+   via shared libraries. The recipient may replace any Qt shared
+   library on their system with a modified version and re-run the
+   application. Corresponding source for the specific Qt version
+   bundled with each NereusSDR release is available from:
+
+       https://download.qt.io/official_releases/qt/
+       https://code.qt.io/cgit/qt/qt5.git/  (Qt 6 shares this URL)
+
+   The Qt version shipped with each NereusSDR release is recorded in
+   the release notes on the Releases page.
+
+4. UPSTREAM-ORIGIN SOURCES (informational, not a GPL requirement):
+
+   - Thetis:             https://github.com/ramdor/Thetis
+   - mi0bot/Thetis-HL2:  https://github.com/mi0bot/Thetis-HL2
+   - AetherSDR:          https://github.com/ten9876/AetherSDR
+   - WDSP:               https://github.com/TAPR/OpenHPSDR-wdsp
+   - FFTW3:              https://fftw.org/
+
+   NereusSDR's own copies of the ported translations are part of the
+   corresponding source described in (1) and (2); the above links are
+   provided only so recipients can trace original provenance.
+
+This offer does not limit any rights the GPL already grants you.

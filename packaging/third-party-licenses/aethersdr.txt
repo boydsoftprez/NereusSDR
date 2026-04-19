@@ -1,0 +1,32 @@
+AetherSDR — Qt6 SDR console (architectural template for NereusSDR)
+
+NereusSDR uses AetherSDR (ten9876/AetherSDR) as its Qt6 architectural
+template — class layout, signals/slots shape, floating-applet mechanics,
+GPU-pipeline scaffolding, AppSettings XML skeleton, and worker-thread
+patterns. Approximately 45 NereusSDR source files derive genuinely from
+AetherSDR (Bucket A in `docs/attribution/aethersdr-reconciliation.md`);
+the remainder use Thetis for logic and AetherSDR only as an idiomatic
+reference.
+
+Upstream repository:
+  https://github.com/ten9876/AetherSDR
+
+Upstream licence:
+  GPL-3.0 (project-level; AetherSDR has no per-file copyright headers,
+  so the project-level LICENSE and the live About-dialog contributor
+  list are authoritative)
+
+Copyright holders of AetherSDR-origin code compiled into NereusSDR
+binaries:
+
+  Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+      — per https://github.com/ten9876/AetherSDR (GPLv3; see the
+        upstream LICENSE and About dialog for the live contributor list)
+
+Per-file classification (Buckets A/B/C/D) is in
+`docs/attribution/aethersdr-reconciliation.md`. The full GPLv3 text
+accompanies this distribution as `GPLv3.txt`; it is also NereusSDR's own
+licence (root `LICENSE`).
+
+Corresponding source for this binary is published at the tagged release
+on GitHub; see `SOURCE-OFFER.txt`.

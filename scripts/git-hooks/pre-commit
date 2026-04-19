@@ -56,4 +56,43 @@ if ! CHECK_NEW_PORTS_FULL=1 python3 scripts/check-new-ports.py; then
     exit 1
 fi
 
+# Compliance Plan Task 16: parity with ci.yml compliance job.
+# Added 2026-04-18 alongside the new audit scripts from Tasks 7–11.
+# Runs after the attribution gates above because a pristine header is
+# a prerequisite for meaningful inventory / cite-stamp checks.
+
+echo "[pre-commit] verify-thetis-headers.py --all-kinds (AetherSDR + WDSP)"
+if ! python3 scripts/verify-thetis-headers.py --all-kinds >/dev/null; then
+    # Re-run with output so the user sees the failures
+    python3 scripts/verify-thetis-headers.py --all-kinds || true
+    echo
+    echo "[pre-commit] BLOCKED: AetherSDR or WDSP header markers missing."
+    echo "             Cure by adding the project-level attribution (AetherSDR)"
+    echo "             or preserving the upstream GPL header (WDSP)."
+    exit 1
+fi
+
+echo "[pre-commit] verify-inline-cites.py (baseline regression gate)"
+if ! python3 scripts/verify-inline-cites.py >/dev/null 2>&1; then
+    python3 scripts/verify-inline-cites.py || true
+    echo
+    echo "[pre-commit] BLOCKED: unstamped '// From Thetis ...' cite added."
+    echo "             Append [vX.Y.Z.W] or [@shortsha] per"
+    echo "             docs/attribution/HOW-TO-PORT.md §Inline cite versioning."
+    echo "             If this is a bulk upstream pull, recapture the baseline"
+    echo "             with 'python3 scripts/verify-inline-cites.py --baseline'"
+    echo "             and commit tests/compliance/inline-cites-baseline.json."
+    exit 1
+fi
+
+echo "[pre-commit] compliance-inventory.py --fail-on-unclassified"
+if ! python3 scripts/compliance-inventory.py --fail-on-unclassified >/dev/null; then
+    python3 scripts/compliance-inventory.py --fail-on-unclassified || true
+    echo
+    echo "[pre-commit] BLOCKED: inventory flagged missing markers."
+    echo "             Add the required header markers or register the file"
+    echo "             in the appropriate provenance doc."
+    exit 1
+fi
+
 exit 0

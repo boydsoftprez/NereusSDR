@@ -3,7 +3,9 @@
 # Based on TAPR/OpenHPSDR-wdsp v1.29 by Warren Pratt, NR0V
 # Cross-platform support via linux_port.h/c from g0orx/wdsp (John Melton, G0ORX)
 #
-# WDSP is licensed under GPL-2.0.
+# WDSP is licensed under GPL-2.0-or-later. NereusSDR distributes the
+# combined work under GPLv3 via GPLv3 §5(b) upgrade. See
+# docs/attribution/WDSP-PROVENANCE.md.
 
 cmake_minimum_required(VERSION 3.20)
 project(wdsp C)

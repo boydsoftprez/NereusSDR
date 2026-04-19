@@ -1,0 +1,7 @@
+{
+  "missing_stamp_baseline": 288,
+  "captured_on": "2026-04-18",
+  "captured_by": "scripts/verify-inline-cites.py --baseline",
+  "purpose": "Grandfathered count of `// From Thetis file:line` cites without a version stamp. New cites added after this date must carry `[vX.Y.Z.W]` or `[@shortsha]` per docs/attribution/HOW-TO-PORT.md. This baseline is the upper bound; drops are welcome (recapture with --baseline); growth is a CI failure.",
+  "plan_task": "Compliance Plan Task 8 — 2026-04-18-gpl-compliance-full-audit-plan.md"
+}

@@ -2,15 +2,29 @@ Qt 6 — LGPLv3 (dynamic linking)
 
 Copyright (C) The Qt Company Ltd.
 
-Qt is licensed under multiple licenses including LGPLv3 and commercial
-terms. NereusSDR links Qt6 dynamically under LGPLv3.
+Qt is licensed under multiple licences including LGPL-3.0 and commercial
+terms. NereusSDR links Qt 6 dynamically under LGPL-3.0.
 
-For the full LGPLv3 license text, see:
+The full LGPLv3 text ships alongside this notice as `LGPLv3.txt`. LGPLv3
+is defined by reference to GPLv3 (LGPLv3 §0), so the full GPLv3 text is
+also shipped as `GPLv3.txt`. The upstream canonical texts are at:
   https://www.gnu.org/licenses/lgpl-3.0.txt
+  https://www.gnu.org/licenses/gpl-3.0.txt
 
-Qt source code and additional license information:
+Because NereusSDR links Qt 6 dynamically, the recipient may replace any
+Qt shared library on their system with a modified version and re-run
+the application — this is the "suitable shared library mechanism" Qt's
+LGPLv3 election requires (LGPLv3 §4(d)(0)).
+
+Qt source code (per release):
+  https://download.qt.io/official_releases/qt/
+  https://code.qt.io/cgit/qt/qt5.git/  (Qt 6 shares this URL)
+
+Qt licensing reference:
   https://www.qt.io/licensing/
 
-On installation-time build systems, Qt's own LICENSES/ directory is
-typically installed alongside the Qt runtime and provides all applicable
-license texts.
+On Qt runtimes that install their own `LICENSES/` directory alongside
+the shared libraries, additional per-module licence texts may be
+present there — those supplement, not replace, this notice.
+
+Source offer for this NereusSDR build: `SOURCE-OFFER.txt` §3.

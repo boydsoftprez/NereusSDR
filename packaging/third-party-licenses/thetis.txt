@@ -1,0 +1,77 @@
+Thetis — OpenHPSDR / Apache Labs SDR console (upstream of NereusSDR ports)
+
+NereusSDR is a C++20/Qt6 port of Thetis (ramdor/Thetis), an open-source SDR
+console for OpenHPSDR Protocol 1 and Protocol 2 radios. The NereusSDR
+codebase contains substantial code translated from Thetis C# sources into
+C++. The translation (expression) is NereusSDR's own copyright; the
+underlying logic, algorithms, constants, and protocol handling carry
+Thetis's upstream copyright chain.
+
+Upstream repository:
+  https://github.com/ramdor/Thetis
+
+Upstream licence:
+  GPL-2.0-or-later (see below)
+
+NereusSDR elects the "or later" grant and redistributes the combined work
+under GPL-3.0 via GPLv3 §5(b). The full GPLv2 text accompanies this
+distribution as `GPLv2.txt`.
+
+-------------------------------------------------------------------------
+Copyright holders of Thetis-origin code compiled into NereusSDR binaries
+-------------------------------------------------------------------------
+
+This is a rollup of the per-file Copyright lines preserved in the ported
+source files under `src/`. The authoritative per-file attribution is in
+`docs/attribution/THETIS-PROVENANCE.md` and in the top-of-file headers
+of each ported source file.
+
+  Copyright (C)  FlexRadio Systems (PowerSDR lineage that Thetis forked)
+  Copyright (C)  Doug Wigley, W5WC (Thetis maintainer)
+  Copyright (C)  Warren Pratt, NR0V (WDSP author; Thetis DSP integration)
+  Copyright (C)  Richard Samphire, MW0LGE (Thetis contributions)
+  Copyright (C)  Chris Codella, W2PA (Thetis contributions)
+  Copyright (C)  Phil Harman, VK6APH (HPSDR contributions)
+  Copyright (C)  John Melton, G0ORX/N6LYT (HPSDR contributions;
+                                           WDSP linux_port co-author)
+  Copyright (C)  Laurence Barker, G8NJJ (Thetis contributions)
+  Copyright (C)  Bill Tracey, KD5TFD (HPSDR contributions)
+
+Additional contributors are credited in individual source file headers
+and in the Thetis project at its upstream repository. The About dialog
+inside the running application lists the live contributor chain.
+
+-------------------------------------------------------------------------
+Richard Samphire (MW0LGE) dual-licensing reservation
+-------------------------------------------------------------------------
+
+Richard Samphire (MW0LGE) authored or modified portions of the upstream
+Thetis C# source. For those portions he reserves the right to use,
+license, and distribute that original C# work under different terms,
+including closed-source and proprietary licences, in addition to the GNU
+General Public License. His reservation applies to the original C# work;
+NereusSDR contributors' C++/Qt6 translations of that work carry their own
+copyright and are licensed under GPLv3 from the NereusSDR side. Nothing
+in this notice expands or contracts the scope of his reservation.
+
+Samphire's full statement, reproduced byte-for-byte from the upstream
+Thetis repository, ships alongside the NereusSDR root LICENSE as
+`LICENSE-DUAL-LICENSING`.
+
+Contact: mw0lge@grange-lane.co.uk
+
+-------------------------------------------------------------------------
+Where to find the per-file attribution
+-------------------------------------------------------------------------
+
+  docs/attribution/THETIS-PROVENANCE.md  — every ported file mapped to
+                                           its Thetis source
+  docs/attribution/HOW-TO-PORT.md        — porting protocol and header
+                                           templates
+  LICENSE                                — NereusSDR's own GPLv3
+  LICENSE-DUAL-LICENSING                 — Samphire's reservation
+  GPLv2.txt                              — full GPLv2 text
+  GPLv3.txt                              — full GPLv3 text
+
+Corresponding source for this binary is published at the tagged release
+on GitHub; see `SOURCE-OFFER.txt`.

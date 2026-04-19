@@ -1,0 +1,28 @@
+mi0bot/Thetis-HL2 — Hermes-Lite 2 fork of Thetis (upstream of NereusSDR HL2 ports)
+
+Portions of NereusSDR (notably Hermes-Lite 2 discovery, IpAddressFixedHL2
+handling, EeConfigHL2 fields, and board-id 6 → HermesLite mapping in
+`src/core/RadioDiscovery.cpp` and `src/core/P1RadioConnection.cpp`) are
+ported from the mi0bot/Thetis-HL2 fork of Thetis, which adds HL2-specific
+capability blocks that are not present in the upstream ramdor/Thetis tree.
+
+Upstream repository:
+  https://github.com/mi0bot/Thetis-HL2
+
+Upstream licence:
+  GPL-2.0-or-later (inherited from Thetis)
+
+Copyright holders of mi0bot-origin code compiled into NereusSDR binaries:
+
+  Copyright (C) 2025  Reid Campbell, MI0BOT  <mi0bot@trom.uk>
+
+(In addition to the full Thetis copyright chain carried through the
+fork — see `thetis.txt`.)
+
+Per-file mapping between NereusSDR sources and mi0bot/Thetis-HL2 upstream
+lives in `docs/attribution/THETIS-PROVENANCE.md` under the heading
+"Files derived from mi0bot/Thetis-HL2". The verbatim upstream file header
+from the mi0bot fork is preserved at the top of every ported source file.
+
+Corresponding source for this binary is published at the tagged release
+on GitHub; see `SOURCE-OFFER.txt`.

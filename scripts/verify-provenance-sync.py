@@ -65,24 +65,27 @@ def find_ported_files():
 def parse_provenance_paths():
     """Parse THETIS-PROVENANCE.md and extract all declared file paths.
 
-    Returns tuple of (declared_paths, independent_paths):
+    Returns tuple of (declared_paths, independent_paths, path_linenos):
       - declared_paths: set of paths from derivative tables (column 0)
       - independent_paths: set of paths from "Independently implemented"
         section (column 1, index 1)
+      - path_linenos: dict[path -> lineno in PROVENANCE.md] for orphan
+        reporting
 
     Files in independent_paths are expected to NOT have "Ported from"
     markers, so they should not be flagged as missing from ported_files.
     """
     declared = set()
     independent = set()
+    path_linenos: dict[str, int] = {}
 
     if not PROVENANCE.is_file():
-        return declared, independent
+        return declared, independent, path_linenos
 
     text = PROVENANCE.read_text()
     in_independent_section = False
 
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
 
         # Track when we enter the independent section
@@ -116,13 +119,15 @@ def parse_provenance_paths():
             candidate = cells[1].replace("`", "").strip()
             if candidate:
                 independent.add(candidate)
+                path_linenos.setdefault(candidate, lineno)
         else:
             # For derivative section, extract from column 0 (index 0)
             candidate = first_cell.replace("`", "").strip()
             if candidate:
                 declared.add(candidate)
+                path_linenos.setdefault(candidate, lineno)
 
-    return declared, independent
+    return declared, independent, path_linenos
 
 
 def main():
@@ -130,7 +135,7 @@ def main():
     ported_files = find_ported_files()
 
     # Find all declared files (both derivative and independent sections)
-    declared_files, independent_files = parse_provenance_paths()
+    declared_files, independent_files, path_linenos = parse_provenance_paths()
 
     # Files that are expected to be in PROVENANCE (either derived or independent)
     all_expected = declared_files | independent_files
@@ -145,11 +150,11 @@ def main():
 
     # Check 2: files listed in PROVENANCE that don't exist on disk
     #          (Note: we only check declared_files since independent files may not exist)
-    missing_on_disk = declared_files.copy()
-    missing_on_disk = {p for p in missing_on_disk if not (REPO / p).is_file()}
+    missing_on_disk = {p for p in declared_files if not (REPO / p).is_file()}
     for path in sorted(missing_on_disk):
         failures += 1
-        print(f"FAIL {path} — listed in PROVENANCE.md but file does not exist")
+        lineno = path_linenos.get(path, "?")
+        print(f"FAIL THETIS-PROVENANCE.md:{lineno}  orphan row: {path!r} not on disk")
 
     # Summary
     total = len(ported_files)
