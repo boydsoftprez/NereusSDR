@@ -41,8 +41,9 @@ if [ -d "${HAL_BUILD}/NereusSDRVAX.driver" ]; then
 elif [ -d "${BUILD_DIR}/NereusSDRVAX.driver" ]; then
     cp -R "${BUILD_DIR}/NereusSDRVAX.driver" "${PKG_DIR}/hal/"
 else
-    echo "WARNING: HAL plugin not found"
-    echo "The installer will only contain the app."
+    echo "ERROR: HAL plugin not found at ${HAL_BUILD}/NereusSDRVAX.driver" >&2
+    echo "The HAL plugin must be built before packaging. Check that hal-plugin/ exists and builds cleanly." >&2
+    exit 1
 fi
 
 # 3. Install postinstall script (standalone file; see hal-postinstall.sh)
