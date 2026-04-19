@@ -306,7 +306,7 @@ feat(slice-model): add vaxChannel property for VAX routing
 
 Per-slice VAX channel (0=Off, 1..4=VAX 1–4) with std::atomic storage
 for audio-thread-safe reads, AppSettings persistence under
-slice/<id>/VaxChannel, and vaxChannelChanged signal. Feeds the
+Slice<id>/VaxChannel, and vaxChannelChanged signal. Feeds the
 AudioEngine VAX tap routing in Phase 3O.
 
 Design spec: docs/architecture/2026-04-19-vax-design.md §5.1.

@@ -217,7 +217,7 @@ Per `docs/attribution/HOW-TO-PORT.md` rule 6: AetherSDR has no per-file GPL head
 
 | Path | Change |
 |---|---|
-| `src/models/SliceModel.{h,cpp}` | Add `int vaxChannel()` / `setVaxChannel(int)` with `std::atomic<int>` storage, `vaxChannelChanged(int)` signal, AppSettings key `slice/<id>/VaxChannel`. |
+| `src/models/SliceModel.{h,cpp}` | Add `int vaxChannel()` / `setVaxChannel(int)` with `std::atomic<int>` storage, `vaxChannelChanged(int)` signal, AppSettings key `Slice<id>/VaxChannel`. |
 | `src/models/TransmitModel.{h,cpp}` | Add `VaxSlot txOwnerSlot()` / `setTxOwnerSlot(VaxSlot)`, signal, AppSettings key `tx/OwnerSlot`. |
 | `src/gui/VfoWidget.{h,cpp}` | Embed `VaxChannelSelector` in a new row below the MODE/FILT/AGC tabs. Bidirectional wire to `SliceModel::vaxChannel`. |
 | `src/core/AudioEngine.{h,cpp}` | Replace `QAudioSink`-only output with the `IAudioBus`-based model: master-mix goes to Speakers/Headphones bus; per-slice VAX taps feed the four VAX buses; TX consumes either a VAX bus or the mic bus based on `TransmitModel::txOwnerSlot`. |
@@ -247,7 +247,7 @@ signals:
     void vaxChannelChanged(int ch);
 ```
 
-Persistence: `AppSettings` XML key `slice/<sliceId>/VaxChannel`, stored as string `"0".."4"`. On load, invalid values clamp to 0.
+Persistence: `AppSettings` XML key `Slice<sliceId>/VaxChannel`, stored as string `"0".."4"`. On load, invalid values clamp to 0.
 
 ### 5.2 `TransmitModel`
 
@@ -344,7 +344,7 @@ audio/SendIqToVax                   (bool, default False)
 audio/TxMonitorToVax                (bool, default False)
 audio/MuteVaxDuringTxOnOtherSlice   (bool, default True)
 
-slice/<sliceId>/VaxChannel          (int: 0..4)
+Slice<sliceId>/VaxChannel          (int: 0..4)
 tx/OwnerSlot                        (string: None|MicDirect|Vax1..4)
 
 audio/FirstRunComplete              (bool)
@@ -379,17 +379,17 @@ Columns: **Widget** · **Widget → Model** · **Model → Widget** (echo preven
 
 | Widget | Widget → Model | Model → Widget | Model → Action | AppSettings | Guard |
 |---|---|---|---|---|---|
-| `VaxChannelSelector` button group (OFF/1/2/3/4) | `buttonClicked(int)` → `SliceModel::setVaxChannel(int)` | `vaxChannelChanged(int)` → `VaxChannelSelector::setValue(int)` | `SliceModel::setVaxChannel` persists and (if different) emits `vaxChannelChanged`; `AudioEngine::sliceVaxChanged(sliceId, ch)` slot updates the tap routing | `slice/<sliceId>/VaxChannel` | `QSignalBlocker` on `VaxChannelSelector` during `setValue` |
+| `VaxChannelSelector` button group (OFF/1/2/3/4) | `buttonClicked(int)` → `SliceModel::setVaxChannel(int)` | `vaxChannelChanged(int)` → `VaxChannelSelector::setValue(int)` | `SliceModel::setVaxChannel` persists and (if different) emits `vaxChannelChanged`; `AudioEngine::sliceVaxChanged(sliceId, ch)` slot updates the tap routing | `Slice<sliceId>/VaxChannel` | `QSignalBlocker` on `VaxChannelSelector` during `setValue` |
 
 ### 6.2 VFO flag — per-RX audio block (already existed, extended)
 
 | Widget | Widget → Model | Model → Widget | Model → Action | AppSettings | Guard |
 |---|---|---|---|---|---|
-| Volume slider | `valueChanged(int)` → `SliceModel::setAudioVolume(float)` | `audioVolumeChanged` → `slider.setValue` | `AudioEngine::sliceVolumeChanged` updates `MasterMixer` weight for that slice | `slice/<sliceId>/AudioVolume` | `m_updatingFromModel` |
-| Pan slider | `valueChanged(int)` → `SliceModel::setAudioPan(float)` | `audioPanChanged` → `slider.setValue` | `MasterMixer` per-slice pan coefficient | `slice/<sliceId>/AudioPan` | same |
-| MUTE button | `toggled(bool)` → `SliceModel::setAudioMuted(bool)` | `audioMutedChanged` → `button.setChecked` | Master mix skips slice block when muted; VAX tap still runs (optional per-VAX mute owns that) | `slice/<sliceId>/AudioMuted` | same |
-| BINAURAL toggle | `toggled(bool)` → `SliceModel::setBinauralEnabled(bool)` | `binauralChanged` → button | `RxChannel::setBinaural` calls WDSP `SetRXAPanelBinaural` | `slice/<sliceId>/Binaural` | same |
-| SPEAKERS/HDPHN buttons | exclusive group → `SliceModel::setOutputRoute(Output)` | `outputRouteChanged` → button group | `MasterMixer` routes the slice to speakers OR headphones bus | `slice/<sliceId>/OutputRoute` | same |
+| Volume slider | `valueChanged(int)` → `SliceModel::setAudioVolume(float)` | `audioVolumeChanged` → `slider.setValue` | `AudioEngine::sliceVolumeChanged` updates `MasterMixer` weight for that slice | `Slice<sliceId>/AudioVolume` | `m_updatingFromModel` |
+| Pan slider | `valueChanged(int)` → `SliceModel::setAudioPan(float)` | `audioPanChanged` → `slider.setValue` | `MasterMixer` per-slice pan coefficient | `Slice<sliceId>/AudioPan` | same |
+| MUTE button | `toggled(bool)` → `SliceModel::setAudioMuted(bool)` | `audioMutedChanged` → `button.setChecked` | Master mix skips slice block when muted; VAX tap still runs (optional per-VAX mute owns that) | `Slice<sliceId>/AudioMuted` | same |
+| BINAURAL toggle | `toggled(bool)` → `SliceModel::setBinauralEnabled(bool)` | `binauralChanged` → button | `RxChannel::setBinaural` calls WDSP `SetRXAPanelBinaural` | `Slice<sliceId>/Binaural` | same |
+| SPEAKERS/HDPHN buttons | exclusive group → `SliceModel::setOutputRoute(Output)` | `outputRouteChanged` → button group | `MasterMixer` routes the slice to speakers OR headphones bus | `Slice<sliceId>/OutputRoute` | same |
 | RX level meter (readonly) | n/a | `AudioEngine::sliceMeter(sliceId, float)` → `meter.setLevel(float)` | n/a | none (ephemeral) | n/a |
 
 ### 6.3 Menu-bar `MasterOutputWidget`
