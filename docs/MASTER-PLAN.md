@@ -779,7 +779,7 @@ Scope:
 - **macOS HAL plugin** at `hal-plugin/NereusSDRVAX.cpp` — 4 VAX outputs + 1 TX input as native CoreAudio devices. libASPL-based, POSIX shm IPC. Dev-ID-signed + notarized `.pkg` installer with macOS 14.4+ `killall coreaudiod` fallback.
 - **Linux bridge** — `pactl`-loaded `module-pipe-source` × 4 + `module-pipe-sink` × 1, rebranded to `nereussdr-vax-*`. Works on both Pulse and PipeWire-via-pipewire-pulse. Stale-module cleanup on startup.
 - **Windows BYO path** — `VirtualCableDetector` regex-matches VB-Audio family, VAC, Voicemeeter, Dante, FlexRadio DAX. First-run dialog pre-fills bindings; links to vendor install pages when none detected.
-- **Optional Direct ASIO engine** (Windows) — full Thetis `cmASIO` parity: ASIO driver picker, Control Panel launcher, base in/out channel selection, input mode L/R/Both, lock mode, block size. Gated behind an Engine radio button on the Devices tab — no callsign allowlist, no runtime flag.
+- ~~Optional Direct ASIO engine (Windows) — cmASIO parity~~ **Deferred** per 2026-04-19 GPL-3 compliance review (Steinberg ASIO SDK not GPL-compatible). PortAudio's built-in ASIO host API remains as the ASIO path. See plan's GPL Compliance Review section and spec §8.5 compliance note.
 - **Routing model** — SmartSDR-style: `SliceModel.vaxChannel` (0..4) set via new `VaxChannelSelector` row on `VfoWidget`; speakers always-on unless muted; one VAX owns TX at a time (`TransmitModel.txOwnerSlot`).
 - **`VaxApplet` (docked, ported from AetherSDR `DaxApplet`, renamed DAX→VAX)** — 4 channel strips with meter + gain + mute + device picker + assigned-slice tags; TX row with gain + meter.
 - **Menu-bar `MasterOutputWidget`** — global volume + mute + right-click device picker; scroll-wheel fine-tune.
@@ -792,8 +792,9 @@ Scope:
 
 Attribution (per `docs/attribution/HOW-TO-PORT.md`):
 - AetherSDR-ported files (`VirtualAudioBridge`, `PipeWireAudioBridge`, `hal-plugin/AetherSDRDAX.cpp`, `DaxApplet`, `MeterSlider`) get NereusSDR port-citation + modification-history headers per rule 6 (AetherSDR has no per-file GPL headers; cite at project URL + primary author level).
-- Thetis-ported files (`DirectAsioBus`, `AsioSdkHost` from `ChannelMaster/cmasio.{h,c}` + `Console/clsCMASIOConfig.cs`) get byte-for-byte Thetis headers stacked per rule 4, inline markers preserved, `[v2.10.3.13]` version stamps on all cites.
+- ~~Thetis-ported files (`DirectAsioBus`, `AsioSdkHost` from `ChannelMaster/cmasio.{h,c}` + `Console/clsCMASIOConfig.cs`) get byte-for-byte Thetis headers~~ — deferred with Direct ASIO.
 - PROVENANCE rows added in the same commits that introduce the ports.
+- `COMPLIANCE-INVENTORY.md` updated at end of phase documenting macOS HAL plugin's separate-binary / mere-aggregation status and the 2026-04-19 GPL review outcome.
 
 Dependencies:
 - Phase 3B (AudioEngine skeleton) — ✓
@@ -897,7 +898,8 @@ prerequisite infrastructure exists.
 | Date | Scope | Document |
 |---|---|---|
 | 2026-04-10 | Full plan review: Thetis/AetherSDR deep-dive, feature gap analysis, phase restructuring, container/PureSignal/TX architecture | [2026-04-10-plan-review.md](architecture/reviews/2026-04-10-plan-review.md) |
-| 2026-04-19 | Added Phase 3O (VAX — Audio Routing & Cross-Platform Audio Engine). Design brainstormed against Thetis VAC/cmASIO, AetherSDR DaxApplet/VirtualAudioBridge/PipeWireAudioBridge, and reference UIs (Rogue Amoeba Loopback, Dante Controller, RME TotalMix, qpwgraph). Chose SmartSDR-style routing + VFO-flag VAX selector + docked VaxApplet over patchbay/matrix alternatives. Windows BYO-with-auto-detect chosen over signed-kernel-driver for v1; TCI scoped out to Phase 3J with integration points reserved. Also audited status of 3N (marked complete) and added VAX row to Objective Cross-Check. | [2026-04-19-vax-design.md](architecture/2026-04-19-vax-design.md) |
+| 2026-04-19 | Added Phase 3O (VAX — Audio Routing & Cross-Platform Audio Engine). Design brainstormed against Thetis VAC/cmASIO, AetherSDR DaxApplet/VirtualAudioBridge/PipeWireAudioBridge, and reference UIs (Rogue Amoeba Loopback, Dante Controller, RME TotalMix, qpwgraph). Chose AetherSDR-style routing + VFO-flag VAX selector + docked VaxApplet over patchbay/matrix alternatives. Windows BYO-with-auto-detect chosen over signed-kernel-driver for v1; TCI scoped out to Phase 3J with integration points reserved. Also audited status of 3N (marked complete) and added VAX row to Objective Cross-Check. | [2026-04-19-vax-design.md](architecture/2026-04-19-vax-design.md) |
+| 2026-04-19 | Implementation plan authored for Phase 3O with pre-execution GPL-3 compliance review. **Dropped Direct ASIO engine** from the phase: Steinberg ASIO SDK is not GPL-3 compatible; linking it into distributed NereusSDR binaries would violate both the ASIO SDK terms and GPL-3. PortAudio's built-in ASIO host API remains as the ASIO path. All other components (AetherSDR GPL-3 ports, libASPL MIT, PortAudio MIT, Qt6/FFTW3/WDSP) verified compatible. Compliance inventory update folded into final verification task. | [2026-04-19-phase3o-vax-plan.md](architecture/2026-04-19-phase3o-vax-plan.md) |
 
 ---
 

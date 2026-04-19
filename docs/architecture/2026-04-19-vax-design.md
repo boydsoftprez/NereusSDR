@@ -583,9 +583,15 @@ Currently shown in the mockup on the Audio Setup page's TX Source bar. Wiring:
 
 ### 8.5 ASIO SDK integration (Windows Direct ASIO)
 
+> **Compliance note (2026-04-19):** After a GPL-3 compliance review during plan authoring, **Direct ASIO is deferred from Phase 3O.** The Steinberg ASIO SDK license is not GPL-3 compatible; linking it into distributed NereusSDR binaries would violate both the ASIO SDK terms and GPL-3. Audacity and other GPL audio projects hit the same wall and ship ASIO-disabled. Decision recorded in the implementation plan's GPL Compliance Review section. This spec section is retained as design intent; if community demand justifies revisiting, it lands as a separate compliance proposal (developer-build-only gate or Steinberg commercial licensing), not part of Phase 3O.
+
+For reference, the original design was:
+
 - Third-party: Steinberg ASIO SDK headers — **cannot be bundled** in the repo due to Steinberg license. Developer must download from Steinberg and drop into `third_party/asio-sdk/` locally.
 - Build-time check: if headers present, compile `DirectAsioBus`; otherwise compile a stub that reports "Direct ASIO unavailable — rebuild with ASIO SDK" when user selects it.
 - Runtime fallback: if Direct ASIO can't load a driver, fall back to PortAudio ASIO and log a warning.
+
+**Phase 3O actually ships:** PortAudio's built-in ASIO host API (when enabled via `PA_USE_ASIO`) covers 95%+ of ASIO use cases via the Driver API dropdown. No Engine radio button. No native SDK direct-access engine.
 
 ---
 
@@ -680,7 +686,8 @@ For every ported file in §4.1 above, the PR introducing the port must:
 
 | Date | Reviewer | Outcome |
 |---|---|---|
-| 2026-04-19 | J.J. Boyd (KG4VCF) | Design brainstormed against Thetis VAC/cmASIO + AetherSDR DaxApplet + SmartSDR DAX model + Loopback/Dante/RME reference UIs. User chose SmartSDR-style routing (VFO-flag selector + VaxApplet) over patchbay/matrix after side-by-side mockups. BYO-cable chosen for Windows v1 with native driver deferred. TCI scoped out. |
+| 2026-04-19 | J.J. Boyd (KG4VCF) | Design brainstormed against Thetis VAC/cmASIO + AetherSDR DaxApplet + SmartSDR DAX model + Loopback/Dante/RME reference UIs. User chose AetherSDR-style routing (VFO-flag selector + VaxApplet) over patchbay/matrix after side-by-side mockups. BYO-cable chosen for Windows v1 with native driver deferred. TCI scoped out. |
+| 2026-04-19 | J.J. Boyd (KG4VCF) | Pre-execution GPL-3 compliance audit performed while authoring the implementation plan. **Direct ASIO engine (Sub-Phase 13) dropped** from Phase 3O scope: the Steinberg ASIO SDK license prohibits redistribution of modified SDK code and is not GPL-3 compatible; linking it into distributed NereusSDR binaries would violate both licenses. PortAudio's built-in ASIO host API retained as the ASIO path. All other bundled / linked components (AetherSDR GPL-3 ports, Thetis GPL-2+ ports where applicable, libASPL MIT, PortAudio MIT, Qt6 LGPL-3) verified compatible. PortAudio license verification step added to plan Task 3.1. Full `COMPLIANCE-INVENTORY.md` registration added as plan Task 14.4 including the macOS HAL plugin's separate-binary / mere-aggregation (GPL-3 §5) reasoning. |
 
 ---
 
