@@ -331,6 +331,7 @@ set(CORE_SOURCES
     src/core/StepAttenuatorController.cpp
     src/core/audio/MasterMixer.cpp
     src/core/audio/PortAudioBus.cpp
+    src/core/audio/VirtualCableDetector.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
