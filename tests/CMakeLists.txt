@@ -180,3 +180,6 @@ endif()
 if(UNIX AND NOT APPLE)
     nereus_add_test(tst_linux_pipe_bus)
 endif()
+
+# ── Phase 3O Sub-Phase 7 Task 7.1: VirtualCableDetector ──────────────────────
+nereus_add_test(tst_virtual_cable_detector)
