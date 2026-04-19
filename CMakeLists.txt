@@ -83,6 +83,43 @@ FetchContent_MakeAvailable(portaudio)
 find_package(PkgConfig QUIET)
 if(WIN32)
     set(FFTW3_ROOT "${CMAKE_SOURCE_DIR}/third_party/fftw3")
+
+    # The double-precision FFTW DLL is GPLv2 and gitignored
+    # (third_party/fftw3/.gitignore), so a fresh Windows clone doesn't have
+    # it. Auto-fetch from fftw.org on first configure (same URL release.yml
+    # and ci.yml use). Without this, a clean Windows build fails with a
+    # cryptic "No rule to make target libfftw3-3.dll" link error.
+    if(NOT EXISTS "${FFTW3_ROOT}/bin/libfftw3-3.dll")
+        set(_fftw_url "https://fftw.org/pub/fftw/fftw-3.3.5-dll64.zip")
+        set(_fftw_zip "${CMAKE_BINARY_DIR}/fftw-3.3.5-dll64.zip")
+        set(_fftw_tmp "${CMAKE_BINARY_DIR}/fftw-tmp")
+        message(STATUS "FFTW3: libfftw3-3.dll missing, fetching ${_fftw_url}")
+        file(DOWNLOAD "${_fftw_url}" "${_fftw_zip}"
+             STATUS _fftw_dl_status
+             TLS_VERIFY ON
+             SHOW_PROGRESS)
+        list(GET _fftw_dl_status 0 _fftw_dl_code)
+        if(NOT _fftw_dl_code EQUAL 0)
+            list(GET _fftw_dl_status 1 _fftw_dl_msg)
+            message(FATAL_ERROR
+                "FFTW3 download failed (${_fftw_dl_msg}).\n"
+                "Manually download ${_fftw_url}, then extract:\n"
+                "  fftw3.h            -> ${FFTW3_ROOT}/include/\n"
+                "  libfftw3-3.dll     -> ${FFTW3_ROOT}/bin/\n"
+                "  libfftw3-3.def     -> ${FFTW3_ROOT}/lib/\n"
+                "and rerun CMake.")
+        endif()
+        file(MAKE_DIRECTORY "${_fftw_tmp}")
+        file(ARCHIVE_EXTRACT INPUT "${_fftw_zip}" DESTINATION "${_fftw_tmp}")
+        file(MAKE_DIRECTORY "${FFTW3_ROOT}/include")
+        file(MAKE_DIRECTORY "${FFTW3_ROOT}/bin")
+        file(MAKE_DIRECTORY "${FFTW3_ROOT}/lib")
+        file(COPY "${_fftw_tmp}/fftw3.h"        DESTINATION "${FFTW3_ROOT}/include")
+        file(COPY "${_fftw_tmp}/libfftw3-3.dll" DESTINATION "${FFTW3_ROOT}/bin")
+        file(COPY "${_fftw_tmp}/libfftw3-3.def" DESTINATION "${FFTW3_ROOT}/lib")
+        message(STATUS "FFTW3: fetched libfftw3-3.dll into ${FFTW3_ROOT}/bin/")
+    endif()
+
     if(EXISTS "${FFTW3_ROOT}/include/fftw3.h")
         set(FFTW3_FOUND TRUE)
         set(FFTW3_INCLUDE_DIRS "${FFTW3_ROOT}/include")

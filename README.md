@@ -2,12 +2,11 @@
 
 **A cross-platform SDR console for OpenHPSDR radios**
 
-> ℹ **NereusSDR v0.1.x alpha builds were withdrawn**
+> ℹ **v0.1.x alpha builds are superseded**
 >
-> The v0.1.x alpha binaries were withdrawn from the Releases page while
-> an issue was addressed. **If you installed a v0.1.x build, please
-> uninstall it and upgrade to v0.2.0.** v0.2.0 is the fresh starting
-> point going forward.
+> The v0.1.x alpha binaries are no longer the current line. **If you
+> installed a v0.1.x build, please uninstall it and upgrade to v0.2.x.**
+> v0.2.x is the supported alpha line going forward.
 >
 > — J.J. Boyd ~ KG4VCF
 
@@ -58,101 +57,69 @@ sha256sum -c SHA256SUMS.txt
 
 ## Current Status
 
-**Phase 3I complete — Radio Connector & Radio-Model Port: full ANAN/Hermes P1 family now supported end-to-end.** Every OpenHPSDR Protocol 1 radio in the ANAN/Hermes family (Hermes Lite 2, ANAN-10/10E/100/100B/100D/200D, Metis) now discovers, connects, streams I/Q through the existing WDSP demod chain, and persists per-radio settings — identical behaviour to how ANAN-G2 on Protocol 2 works today. 25 GPG-signed commits in PR #12. Smoke-test checklist at [`docs/debugging/phase3i-smoke-test.md`](docs/debugging/phase3i-smoke-test.md). Design at [`docs/architecture/phase3i-radio-connector-port-design.md`](docs/architecture/phase3i-radio-connector-port-design.md), plan at [`docs/architecture/phase3i-radio-connector-port-plan.md`](docs/architecture/phase3i-radio-connector-port-plan.md).
+**Current release: v0.2.1** (2026-04-19). RX pipeline is feature-complete across the full OpenHPSDR P1 and P2 radio families; next implementation phase is **3M-1: Basic SSB TX**.
 
-Phase 3I shipped:
-- `HPSDRModel` and `HPSDRHW` enums ported 1:1 from mi0bot/Thetis `enums.cs` (integer values preserved including the 7..9 reserved gap)
-- `BoardCapabilities` `constexpr` registry — pure data, one entry per `HPSDRHW`, 20+ test invariants
-- `P1RadioConnection` with full ep2 compose + ep6 parse, loopback integration test via `P1FakeRadio`, 2 s watchdog + bounded reconnection state machine
-- `P2RadioConnection` audited to read `BoardCapabilities`; recognises `SaturnMKII`, `ANAN_G2_1K`, `AnvelinaPro3`
-- `RadioDiscovery` rewritten with 6 tunable timing profiles (mi0bot `clsRadioDiscovery.cs` pattern)
-- `ConnectionPanel` expanded into a full Thetis `ucRadioList.cs` port — 8 sortable columns, saved-radio persistence keyed by MAC, manual-add dialog ported from `frmAddCustomRadio.cs`, auto-reconnect on launch
-- `HardwarePage` with 9 capability-gated nested tabs mirroring Thetis Setup.cs Hardware Config (Radio Info · Antenna/ALEX · OC Outputs · XVTR · PureSignal · Diversity · PA Calibration · HL2 I/O Board · Bandwidth Monitor), with per-MAC settings persistence
-- One docs-era bug fix: the legacy `BoardType::Griffin=2` slot was a mistake; mi0bot's `enums.cs:392` clarifies slot 2 is `HermesII` (ANAN-10E / 100B)
-- `RadioConnectionError` enum replaces string-only `errorOccurred` signal (9 structured codes)
+### What's working end-to-end today
 
-Deferred (see `docs/architecture/phase3i-verification.md` + design §9): TX IQ producer, PureSignal feedback DSP, HL2 `IoBoardHl2` I2C-over-ep2 wire encoding (Phase 3L — lives in closed `ChannelMaster.dll`), full bandwidth-monitor port, TCI, RedPitaya, sidetone generator, firmware flasher.
+- **Radio connection — every OpenHPSDR P1 and P2 board.** ANAN-G2 (Saturn / Protocol 2), ANAN-10/10E/100/100B/100D/200D, Hermes, Hermes Lite 2, Angelia, Orion, Metis, Red Pitaya — all discover, connect, stream I/Q, demodulate through WDSP, and persist per-radio settings keyed by MAC. `BoardCapabilities` registry drives per-board DDC count, ADC count, BPF, Alex filter, and sample-rate support; `HardwareProfile` engine overlays Thetis `clsHardwareSpecific.cs` behaviour for ambiguous discovery bytes (user-selectable radio-model override in ConnectionPanel).
+- **Sample-rate wiring** — P1 48 / 96 / 192 kHz (+ 384 on Red Pitaya); P2 48 / 96 / 192 / 384 / 768 / 1536 kHz. Per-MAC persistence under `hardware/<mac>/radioInfo/`. Inline reconnect banner on RadioInfoTab when the selected rate differs from the active wire rate.
+- **Full Display parity** — `Setup → Display` (Spectrum / Waterfall / Grid & Scales) is wired end-to-end to the renderer on both the QPainter fallback and the QRhi/Metal/Vulkan/D3D12 GPU path. 47-control verification matrix at `docs/architecture/phase3g8-verification/README.md`. Per-band grid state persists across all 14 bands (160m–6m + GEN + WWV + XVTR) via the first-class `Band` enum on `PanadapterModel`.
+- **Clarity adaptive display** — Clarity Blue waterfall palette, `ClarityController` with cadence / EWMA / deadband, `NoiseFloorEstimator` percentile, Reset-to-Smooth-Defaults button, Re-tune button + Clarity status badge in the spectrum overlay panel, per-band Clarity memory. Zoom persistence across restarts.
+- **Full RX DSP parity** — 10 WDSP feature slices wired end-to-end through SliceModel → RadioModel → RxChannel → WDSP: AGC advanced (threshold / hang / slope / attack / decay), EMNR (NR2), SNB, APF (SPCW), 3-variant squelch (SSB / AM / FM), mute / audio pan / binaural, NB2 advanced, RIT / XIT client offset, frequency lock, mode containers (FM OPT / DIG / RTTY). Per-slice-per-band persistence under `Slice<N>/Band<key>/*`.
+- **VfoWidget rewrite** — 4-tab layout (Audio / DSP / Mode / X-RIT), 4×2 DSP toggle grid, AGC 5-button row, S-meter level bar with dBm readout and cyan→green gradient, mode containers, tooltip coverage test. AGC-T ↔ RF Gain bidirectional sync prevents audio-breaking gain runaway.
+- **Auto AGC-T** — `NoiseFloorTracker` feeds the Auto-threshold timer with MOX guard and `agcCalOffset`; AUTO button toggles auto-mode; right-click the AGC-T slider opens Setup directly on the AGC/ALC page.
+- **Step attenuator + ADC overload** — `StepAttenuatorController` with Classic + Adaptive auto-attenuation modes, hysteresis, per-MAC persistence. P1/P2 `adcOverflow` signal from frame parsers, OVL status badge in RxApplet, per-model preamp items from Thetis `SetComboPreampForHPSDR`.
+- **Container / meter system** — GPU-rendered meter engine (QRhi 3-pipeline), 31 `MeterItem` types, 38+ ItemGroup presets (S-Meter, Power/SWR, ALC, ANANMM 7-needle, CrossNeedle, Magic Eye, History, SignalText, TX bar meters), full Thetis-parity Container Settings Dialog (3-column layout, per-item property editors), MMIO external-data subsystem (UDP / TCP-listen / TCP-client / Serial transports; JSON / XML / RAW formats).
+- **App polish** — Help → About NereusSDR (version / Qt / WDSP / GPG fingerprint / heritage credits), 💡 AI-assisted issue reporter in the menu bar corner (structured prompts, submits to the `bug_report.yml` / `feature_request.yml` GitHub templates), radio-model override persistence, P1 full 17-bank C&C round-robin.
+- **Packaging** — `release.yml` prepare → build×3 → sign-and-publish pipeline. GPG-signed alpha artifacts: Linux AppImage (x86_64 + aarch64), macOS Apple Silicon DMG, Windows portable ZIP + NSIS installer.
 
-**Phase 3G-8 complete — RX1 Display parity: Setup → Display pages fully wired to the renderer.** NereusSDR connects to an ANAN-G2 (Orion MkII) via Protocol 2, receives raw I/Q data, demodulates audio through WDSP, renders a live GPU-accelerated spectrum + waterfall with VFO tuning (CTUN mode), has a full UI skeleton with 12 applets, 150+ control widgets, a complete meter system with 31 item types, and — as of 3G-8 — a fully wired Display setup category where every Spectrum Defaults / Waterfall Defaults / Grid & Scales control routes through to the renderer live on both the QPainter fallback path and the QRhi/Metal GPU path. Per-band grid state persists across all 14 bands (160m–6m + GEN + WWV + XVTR).
+### Deferred / not yet implemented
 
-**Phase 3G-6 (one-shot)** shipped 2026-04-12 as PR #2 — 40 GPG-signed commits across 7 execution blocks on `feature/phase3g6-oneshot`:
+- **TX pipeline** (Phase 3M-1 through 3M-4) — TxChannel, mic input, MOX state machine, 18-stage TXA chain, PureSignal feedback DDC.
+- **Multi-panadapter** (Phase 3F) — DDC assignment, FFTRouter, PanadapterStack, RX2 enable.
+- **HL2 `IoBoardHl2`** (Phase 3L) — I2C-over-ep2 wire encoding lives in the closed `ChannelMaster.dll`; bandwidth-monitor full port also gated on this phase.
+- **Skin system** (Phase 3H), **TCI + Spots** (Phase 3J), **CAT/rigctld** (Phase 3K), **WAV/IQ recording** (Phase 3M).
 
-- **Block 1** — rendering plumbing + Thetis filter rule (`MeterManager.cs:31366-31368` ported into `MeterWidget::shouldRender()`)
-- **Block 2** — container surface (lock, hide title, minimises, auto height, hide-when-RX-unused, highlight, duplicate) + `NeedleItem` calibration-driven paint rewrite so the ANANMM gauge face renders
-- **Block 3** — `ContainerSettingsDialog` rewrite to Thetis's 3-column layout (Available / In-use / Properties), snapshot+revert on Cancel, container-switch dropdown, footer Save/Load/MMIO buttons
-- **Block 4** — 31 per-item property editors built in parallel by 4 subagents (zero manual fixups, ~155 fields exposed), `QScrollArea` wrapping
-- **Block 5** — MMIO Multi-Meter I/O subsystem: 4 transport workers (UDP listener, TCP listener, TCP client, Serial), JSON/XML/RAW format parsers, dedicated worker `QThread`, XML persistence under `AppSettings/MmioEndpoints/<guid>/*`, endpoint manager dialog, variable picker popup, `MeterPoller` branch reading bound values at 10 fps. Section 6 of the plan was rewritten mid-block after a Thetis Explore agent confirmed the original draft's per-variable parse-rule taxonomy didn't exist in Thetis (real Thetis is endpoint-centric with format-driven discovery)
-- **Block 6** — `Containers → Edit Container ▸` submenu populated dynamically from `ContainerManager::allContainers()`, alphabetized by notes, click-to-edit per container regardless of dock mode. Reset Default Layout finally functional.
-- **Block 7** — polish + docs: 720 lines of legacy `buildXItemEditor` dead code removed, `lcMmio` registered in `LogManager`, copy/paste item settings clipboard with type-tag gating, container-dropdown auto-commit on switch, `CHANGELOG` + `CLAUDE.md` phase table flipped to Complete, debug-handoff marked Resolved.
-
-**Phase 3G-7 polish** shipped 2026-04-12 on `feature/phase3g7-polish` — 4 GPG-signed commits on top of 3G-6:
-
-- **`25a7819`** `feat(meters)` — Add 42 read-back getters across 5 MeterItem subclasses (TextOverlay, Rotator, FilterDisplay, Clock, VfoDisplay) so each item's property editor populates fully on dialog open. Wires each editor's `setItem()` to the new accessors.
-- **`8774b7c`** `fix(meters)` — Preserve MMIO bindings across all 4 dialog clone paths in `ContainerSettingsDialog.cpp`. Investigation showed the user-visible "binding lost on Apply" bug was a 4-site clone leak in one file, not the 30-subclass serialize sweep the original handoff proposed. Side-channel fix: `populateItemList`, `applyToContainer`, `takeSnapshot`/`revertFromSnapshot`, and the preset clone loop now copy `(mmioGuid, mmioVariable)` directly around the text round-trip via a parallel `QVector<QPair<QUuid, QString>>` snapshot.
-- **`41c7031`** `feat(editor)` — Wrap `NeedleItemEditor`'s 17 needle-specific fields plus the calibration table in 5 `QGroupBox` sections (Needle / Geometry / History / Power / Calibration). Layout-only refactor; member pointers and connect lambdas unchanged.
-- **`33e5ba0`** `docs(3G-7)` — CHANGELOG flipped to complete with per-item narrowings documented; handoff doc gains a 17-item "Outstanding work after 3G-7" section so each deferred item (MMIO disk persistence, smoke test, editor width sweep, ButtonBox sub-editor, 10 phantom feature ports) can be filed as its own GitHub issue.
-
-Items A and B both turned out dramatically smaller than the original handoff scoped — see the handoff doc and CHANGELOG for the per-item narrowings. Items D, E, F and the phantom feature ports are deferred to follow-up work; full list at `docs/architecture/phase3g7-polish-handoff.md` § "Outstanding work after 3G-7".
-
-**Phase 3G-8 — RX1 Display parity** shipped 2026-04-12 on `feature/phase3g8-rx1-display-parity` — 10 GPG-signed code commits + 3 doc-amend prep commits, off `main` (after 3G-7 merge). Brings the `Setup → Display → Spectrum Defaults / Waterfall Defaults / Grid & Scales` pages from "every control disabled with NYI tooltip" to feature parity with Thetis for RX1 only:
-
-- **Commit 1** — `ColorSwatchButton` reusable color picker widget, replaces the dead `makeColorSwatch` placeholder and used by 9 call sites across the phase.
-- **Commit 2** — per-band grid storage on `PanadapterModel`. New `src/models/Band.h` with a first-class 14-band enum (160m–6m + GEN + WWV + XVTR), IARU Region 2 `frequency→band` lookup, and UI-index mapping. `BandButtonItem` expanded 12→14 buttons. 28 per-band persistence keys (Max/Min only — Thetis keeps Step global) seeded with Thetis uniform -40 / -140 defaults.
-- **Commits 3–5** — `SpectrumWidget` + `FFTEngine` renderer additions: averaging modes (None / Weighted / Logarithmic / TimeWindow), peak hold + decay, trace line width, trace fill + alpha, gradient toggle, display cal offset, waterfall AGC, reverse scroll, opacity, update-period rate limiting, waterfall averaging, use-spectrum-min/max, RX filter / zero-line / timestamp overlays, 3 new colour schemes (LinLog / LinRad / Custom, total now 7), configurable grid / grid-fine / h-grid / text / zero-line / band-edge colours, 5-mode frequency label alignment, FPS overlay.
-- **Commits 6–8** — wire each Display setup page to the renderer: Spectrum Defaults (17 controls), Waterfall Defaults (17), Grid & Scales (13). Grid & Scales includes a live "Editing band: N" label that updates on `PanadapterModel::bandChanged` so per-band Max/Min edits always target the currently active band.
-- **Commit 9** — CHANGELOG entry + 47-control verification matrix at `docs/architecture/phase3g8-verification/README.md`.
-- **Commit 10** — GPU path polish: overlay-texture cache invalidation for grid / colour / labels / FPS / zero line / cal offset (11 controls), waterfall chrome factored into `drawWaterfallChrome()` and drawn into the GPU overlay texture (W6 opacity, W8/W9 timestamp, W11/W13 filter/zero line), new `m_fftPeakVbo` for GPU peak hold, and vertex-gen changes so cal offset / gradient toggle / fill toggle / fill colour are live in the GPU render path.
-
-**Architectural additions:** `RadioModel::spectrumWidget()` / `fftEngine()` non-owning view hooks so Setup pages can reach the renderer without depending on `MainWindow`; wired by `MainWindow` right after FFTEngine creation.
-
-**Known deferrals** (tracked in the PR description and `CHANGELOG.md`): S7 Line Width on GPU (needs triangle strip rendering for portable thickness — Metal/Vulkan clamp to 1 px), S16 FFT Decimation (scaffolded only, `FFTEngine` has no decimation setter yet), W12 / W14 TX filter / zero-line overlays (gated on TX state model — post-3I-1), Data Line / Data Fill Color splitting (deferred until UX feedback justifies it), W10 Waterfall Low Color runtime effect (persisted; waits for Custom-scheme `AppSettings` parser).
-
-**Authorised Thetis divergence** (plan §10, one-off): per-band grid slots initialise to Thetis uniform -40 / -140 rather than NereusSDR's existing -20 / -160. Source-first protocol stays as written — this phase is an exception, not a precedent.
+---
 
 ## Key Features
 
 **Working now:**
-- OpenHPSDR Protocol 2 radio discovery and connection
-- Raw I/Q reception from ANAN-G2 (DDC2, 48kHz, 238 samples/packet)
-- WDSP v1.29 DSP engine — USB/LSB/AM/CW demodulation, AGC, NB1/NB2, bandpass filtering
+- OpenHPSDR Protocol 1 and Protocol 2 radio discovery, connection, and per-MAC persistence across the full ANAN / Hermes / Metis / Red Pitaya family
+- Per-MAC hardware sample-rate selection (P1 up to 192 / 384 kHz; P2 up to 1536 kHz)
+- WDSP v1.29 DSP engine — USB/LSB/AM/CW/DIGI/FM demodulation with full RX DSP parity (AGC advanced, EMNR, SNB, APF, 3-variant squelch, NB1/NB2 advanced, RIT/XIT, mute/pan/binaural, frequency lock, mode containers)
+- Per-slice-per-band persistence of DSP state (`Slice<N>/Band<key>/*`)
+- Auto AGC-T with noise-floor tracker + MOX guard
+- Step attenuator (Classic + Adaptive auto-attenuation) and ADC-overload OVL badge
 - Real-time audio output via QAudioSink (48kHz stereo Int16)
-- FFTW wisdom caching with first-run progress dialog
-- Audio device selection and persistence
-- GPU-accelerated spectrum + waterfall (QRhi — Metal, Vulkan, D3D12, OpenGL fallback)
-- Full-spectrum FFTW3 FFT (4096-point, Blackman-Harris window, 30 FPS, FFT-shift + mirror)
-- VFO tuning, mode selection, filter controls (floating VFO flag widget)
-- CTUN panadapter mode — independent pan center and VFO, WDSP shift offsets
-- CTUN zoom — frequency scale bar drag or Ctrl+scroll zooms into FFT bin subsets with hybrid FFT replan
-- Off-screen VFO indicator with double-click to recenter
-- VFO marker, filter passband overlay, cursor frequency readout, filter drag
-- Right-click display settings (color scheme, gain, black level, ref level, CTUN toggle)
-- Mouse interaction (scroll-to-tune, drag ref level, click-to-tune, waterfall pan)
-- Phase word NCO tuning with Alex HPF/LPF/BPF filters (fully enabled)
-- Display settings persistence via AppSettings
-- Dockable/floatable containers with axis-lock, hover-reveal title bar, serialization
-- GPU-rendered meter engine (QRhi 3-pipeline: background texture, vertex geometry, QPainter overlay)
-- Live signal strength bar meter in Container #0 (WDSP polling at 10 FPS)
-- Composable MeterItems: 31 item types (BarItem, NeedleItem, TextItem, ScaleItem, SolidColourItem, ImageItem, SpacerItem, FadeCoverItem, LEDItem, HistoryGraphItem, MagicEyeItem, NeedleScalePwrItem, SignalTextItem, DialItem, TextOverlayItem, WebImageItem, FilterDisplayItem, RotatorItem, ButtonBoxItem, BandButtonItem, ModeButtonItem, FilterButtonItem, AntennaButtonItem, TuneStepButtonItem, OtherButtonItem, VoiceRecordPlayItem, DiscordButtonItem, VfoDisplayItem, ClockItem, ClickBoxItem, DataOutItem)
-- Arc-style S-meter needle, Power/SWR bars, ALC/Mic/Comp presets
-- ANANMM 7-needle multi-meter with exact Thetis calibration (signal, volts, amps, power, SWR, compression, ALC)
-- CrossNeedle dual fwd/rev power meter with mirrored geometry
-- Edge meter display mode (thin-line indicator style)
-- Interactive button grids: band, mode, filter, antenna, tuning step, macro controls — all with hover/click feedback
-- VFO frequency display with per-digit mouse wheel tuning, mode/filter/band labels
-- Dual UTC/Local clock display with 1s auto-refresh
-- 38+ meter presets via ItemGroup factories
-- Full UI skeleton: 12 applets, 9-menu bar, 47-page SetupDialog, SpectrumOverlayPanel, status bar
-- Cross-platform build (Windows, Linux, macOS)
+- FFTW wisdom caching with first-run progress dialog; audio device selection and persistence
+- GPU-accelerated spectrum + waterfall (QRhi — Metal, Vulkan, D3D12, OpenGL fallback); 4096-point FFTW3 FFT, Blackman-Harris window, 30 FPS, FFT-shift + mirror
+- Full `Setup → Display` wiring — 47 Spectrum / Waterfall / Grid controls live on both render paths; 7 colour schemes; per-band grid state across all 14 bands (160m–6m + GEN + WWV + XVTR)
+- Clarity Blue waterfall palette + Clarity adaptive auto-tune, Re-tune button, per-band Clarity memory, zoom persistence
+- VFO flag widget — 4-tab layout (Audio / DSP / Mode / X-RIT), 4×2 DSP grid, AGC 5-button row, integrated S-meter level bar with dBm readout
+- CTUN panadapter — independent pan center and VFO, WDSP shift offsets, bin-subset zoom with hybrid FFT replan, off-screen VFO indicator with double-click recenter
+- Filter passband overlay, cursor frequency readout, click-to-tune, scroll-to-tune, filter drag, waterfall pan
+- Phase word NCO tuning with Alex HPF/LPF/BPF filters, P1 full 17-bank C&C round-robin
+- Dockable / floatable containers with axis-lock, hover-reveal title bar, XML serialization
+- GPU-rendered meter engine (QRhi 3-pipeline), 31 `MeterItem` types, 38+ ItemGroup presets, ANANMM 7-needle with exact Thetis calibration, CrossNeedle dual fwd/rev, Magic Eye, History, Edge mode
+- Full Thetis-parity Container Settings Dialog — 3-column layout, per-item property editors (~155 fields), snapshot+revert, container-level Lock/Notes/Highlight/Minimises/Auto-height, Duplicate, Copy/Paste item settings
+- MMIO (Multi-Meter I/O) external-data subsystem — UDP / TCP-listen / TCP-client / Serial transports, JSON / XML / RAW formats, endpoint manager, variable picker, 10 fps polled bindings
+- Interactive button grids — band (14), mode, filter, antenna, tuning step, macro — with hover/click feedback
+- Full UI skeleton — 12 applets, 9-menu bar, 47-page SetupDialog, SpectrumOverlayPanel with 5 flyout sub-panels, status bar
+- Help → About dialog + 💡 AI-assisted issue reporter wired to the GitHub issue tracker
+- GPG-signed cross-platform alpha builds (Linux AppImage ×2 archs, macOS DMG, Windows portable ZIP + NSIS installer)
 
 **Planned (see Roadmap):**
-- **Phase 3G-6 (one-shot):** Full Thetis-parity Container Settings Dialog — 3-column layout, per-item property editors for all ~30 item types, in-place editing with snapshot/revert, container-level Lock/Notes/Highlight/Minimises/Auto-height, container dropdown, Duplicate action, Containers menu submenu, Copy/Paste item settings, MMIO (Multi-Meter I/O) external-data subsystem with TCP/UDP/serial transports, variable registry, parse rules, and picker UI. See `docs/architecture/phase3g6a-plan.md`.
-- TX pipeline — SSB, CW, full processing chain, PureSignal (Phase 3M, future)
-- Up to 4 independent panadapters in configurable layouts (Phase 3F)
-- Thetis-inspired skin system (Phase 3H)
-- TCI protocol server, DX Cluster/RBN spots (Phase 3J)
-- CAT/rigctld for logging and contest software (Phase 3K)
-- HL2 `IoBoardHl2` I2C-over-ep2 wire encoding (Phase 3L — extraction from closed `ChannelMaster.dll`)
-- **Phase 3G-9 (Display Refactor)** and **Phase 3G-10 (RX DSP Parity + AetherSDR Flag Port)** — twin polish phases running in parallel before 3M-1 (TX). 3G-9 tightens the Display setup surface (audit + Thetis-first tooltips + slider readouts + Clarity Blue palette + Clarity adaptive auto-tune). 3G-10 ports the AetherSDR VfoWidget visual shell and wires every RX-side DSP NYI stub through WDSP with per-slice-per-band bandstack persistence. See `docs/architecture/2026-04-15-display-refactor-design.md` and `docs/architecture/2026-04-15-phase3g10-rx-dsp-flag-design.md`.
+- **Phase 3M-1 Basic SSB TX** — TxChannel, mic input, MOX state machine, I/Q output (next up)
+- **Phase 3M-2 CW TX** — sidetone, firmware keyer, QSK/break-in
+- **Phase 3M-3 TX Processing** — 18-stage TXA chain + TX-side RX DSP additions
+- **Phase 3M-4 PureSignal** — feedback DDC, calcc/IQC engine, PA linearization
+- **Phase 3F Multi-Panadapter** — DDC assignment (including PS states), FFTRouter, PanadapterStack, RX2 enable
+- **Phase 3H Skin System** — Thetis-inspired skin format with 4-pan support and legacy-skin import
+- **Phase 3J TCI + Spots** — TCI v2.0 WebSocket server, DX Cluster / RBN clients, spot overlay
+- **Phase 3K CAT / rigctld** — 4-channel rigctld, TCP CAT server
+- **Phase 3L HL2 `IoBoardHl2`** — I2C-over-ep2 wire encoding (extraction from closed `ChannelMaster.dll`); full bandwidth-monitor port
+- **Phase 3M Recording** — WAV record/playback, I/Q record, scheduled
 
 ---
 
@@ -186,28 +153,32 @@ Items A and B both turned out dramatically smaller than the original handoff sco
 | **3C: macOS Build** | Cross-platform WDSP build + wisdom crash fix | **Complete** |
 | **3D: Spectrum Display** | GPU spectrum + waterfall (QRhi Metal/Vulkan/D3D12) | **Complete** |
 | **3E: VFO + Multi-RX Foundation** | VFO controls + rewire I/Q pipeline for N receivers + CTUN panadapter | **Complete** |
-| **3G-1: Container Infrastructure** | **Dock/float/resize/persist container shells** | **Complete** |
-| **3G-2: MeterWidget GPU Renderer** | **QRhi-based meter rendering engine** | **Complete** |
-| **3G-3: Core Meter Groups** | **S-Meter, Power/SWR, ALC presets** | **Complete** |
-| **3-UI: Full UI Skeleton** | **12 applets, 9-menu bar, SetupDialog, SpectrumOverlayPanel** | **Complete** |
-| **3G-4: Advanced Meter Items** | **12 item types + ANANMM/CrossNeedle presets + Edge mode** | **Complete** |
-| **3G-5: Interactive Meter Items** | **14 interactive items + mouse forwarding + ButtonBoxItem base** | **Complete** |
-| **3G-6: Container Settings Dialog (one-shot)** | **3-column Thetis layout + per-item editors for all ~30 types + in-place editing + MMIO external-data subsystem + container-level parity + menu submenu** | **Complete** |
-| **3G-7: Polish** | **MMIO clone-path bug fix + 5 subclass accessor gap fills + NeedleItemEditor QGroupBox grouping** | **Complete** |
-| **3G-8: RX1 Display Parity** | **47 Spectrum/Waterfall/Grid controls wired, `Band` enum + per-band grid on `PanadapterModel`, `BandButtonItem` 12→14, GPU path polish for live overlay / waterfall chrome / peak hold / fill / gradient / cal offset** | **Complete** |
-| 3G-9: Display Refactor | Source-first audit, Thetis-first tooltip port, slider/spinbox refactor (3G-9a merged as PR #25); smooth defaults + Clarity Blue palette (3G-9b) and Clarity adaptive auto-tune (3G-9c) planned | 3G-9a Complete |
-| **3G-10: RX DSP Parity + AetherSDR Flag Port** | **Stage 1: AetherSDR VfoWidget visual port (flag shell, 4×2 DSP grid, AudioTab AGC 5-button row, mode containers with visibility rules, tooltip coverage test). Stage 2: wire every RX-side DSP NYI through WDSP with per-slice-per-band persistence** | **Stage 1 Complete (PRs #28 + #30)** |
-| 3M-1: Basic SSB TX (was 3I-1) | TxChannel, MOX state machine, RF output | Planned |
-| 3M-2: CW TX (was 3I-2) | Sidetone, firmware keyer, QSK/break-in | Planned |
-| 3M-3: TX Processing (was 3I-3) | 18-stage TXA chain + TX-side RX DSP additions | Planned |
-| 3M-4: PureSignal (was 3I-4) | Feedback DDC, calcc/IQC engine, PA linearization | Planned |
-| 3F: Multi-Panadapter | DDC assignment, FFTRouter, PanadapterStack, enable RX2 | Planned |
-| 3H: Skin System | Thetis-inspired skins with 4-pan support | Planned |
+| **3G-1: Container Infrastructure** | Dock/float/resize/persist container shells | **Complete** |
+| **3G-2: MeterWidget GPU Renderer** | QRhi-based meter rendering engine | **Complete** |
+| **3G-3: Core Meter Groups** | S-Meter, Power/SWR, ALC presets | **Complete** |
+| **3-UI: Full UI Skeleton** | 12 applets, 9-menu bar, SetupDialog, SpectrumOverlayPanel | **Complete** |
+| **3G-4: Advanced Meter Items** | 12 item types + ANANMM/CrossNeedle presets + Edge mode | **Complete** |
+| **3G-5: Interactive Meter Items** | 14 interactive items + mouse forwarding + ButtonBoxItem base | **Complete** |
+| **3G-6: Container Settings Dialog** | 3-column Thetis layout + per-item editors + in-place editing + MMIO external-data subsystem + container-level parity | **Complete** |
+| **3G-7: Polish** | MMIO clone-path fix + 5 subclass accessor gap fills + NeedleItemEditor QGroupBox grouping | **Complete** |
+| **3G-8: RX1 Display Parity** | 47 Spectrum/Waterfall/Grid controls wired, `Band` enum + per-band grid, `BandButtonItem` 12→14, GPU path polish | **Complete** |
+| **3G-9: Display Refactor** | 3G-9a audit + Thetis-first tooltips + slider/spinbox refactor; 3G-9b smooth defaults + Clarity Blue palette; 3G-9c Clarity adaptive auto-tune | **Complete** |
+| **3G-10: RX DSP Parity + AetherSDR Flag Port** | AetherSDR VfoWidget visual port + 10 WDSP feature slices wired through WDSP with per-slice-per-band persistence | **Complete** |
+| **3G-11: P1 Field Fixes** | P1 VFO frequency encoding (raw Hz, not NCO phase word); Red Pitaya / Hermes family C&C bank fixes | **Complete** |
+| **3I: Radio Connector & Radio-Model Port** | Full P1 family (Atlas/Hermes/HermesII/Angelia/Orion/HL2), `BoardCapabilities` registry, ConnectionPanel, HardwarePage 9-tab capability-gated, per-MAC persistence, `RadioConnectionError` taxonomy | **Complete** |
+| **3G-13: Step Attenuator & ADC Overload** | `StepAttenuatorController` (Classic + Adaptive), P1/P2 `adcOverflow` emission, OVL status badge, Setup→General→Options page, RxApplet ATT/S-ATT row, per-model preamp items | **Complete** |
+| **3G-14: About + AI Issue Reporter** | Help → About dialog, 💡 menu-bar issue reporter with structured prompts submitting to `bug_report.yml` / `feature_request.yml` | **Complete** |
+| **3N: Packaging** | Consolidated `release.yml`, `/release` skill, GPG-signed alpha builds: Linux AppImage ×2 archs, macOS Apple Silicon DMG, Windows portable ZIP + NSIS installer | **Complete** |
+| 3M-1: Basic SSB TX | TxChannel, mic input, MOX state machine, I/Q output | **Next** |
+| 3M-2: CW TX | Sidetone, firmware keyer, QSK/break-in | Planned |
+| 3M-3: TX Processing | 18-stage TXA chain + TX-side RX DSP additions | Planned |
+| 3M-4: PureSignal | Feedback DDC, calcc/IQC engine, PA linearization | Planned |
+| 3F: Multi-Panadapter | DDC assignment (incl. PS states), FFTRouter, PanadapterStack, enable RX2 | Planned |
+| 3H: Skin System | Thetis-inspired skins with 4-pan support + legacy import | Planned |
 | 3J: TCI + Spots | TCI v2.0 WebSocket, DX Cluster/RBN clients, spot overlay | Planned |
 | 3K: CAT/rigctld | 4-channel rigctld, TCP CAT server | Planned |
-| 3L: Protocol 1 | P1 support for Hermes Lite 2 / older ANAN | Planned |
+| 3L: HL2 ChannelMaster.dll port | HL2 `IoBoardHl2` I2C-over-ep2 wire encoding, full bandwidth-monitor port | Planned |
 | 3M: Recording | WAV record/playback, I/Q record, scheduled | Planned |
-| **3N: Packaging** | **AppImage ×2 archs, macOS DMG, Windows ZIP + NSIS installer** | **Complete** |
 
 See [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) for the full implementation plan.
 
@@ -232,7 +203,7 @@ brew install qt@6 ninja cmake pkgconf fftw
 
 ### Windows (FFTW3 Setup)
 
-Download the [FFTW3 64-bit DLLs](https://fftw.org/install/windows.html) and place `fftw3.h` in `third_party/fftw3/include/` and `libfftw3-3.dll` in `third_party/fftw3/bin/`.
+No manual setup required. CMake auto-downloads [`fftw-3.3.5-dll64.zip`](https://fftw.org/pub/fftw/fftw-3.3.5-dll64.zip) on first configure and drops `fftw3.h` / `libfftw3-3.dll` / `libfftw3-3.def` into `third_party/fftw3/`. Requires network access on the first `cmake -B build` run; offline builds need to pre-populate those three files by hand.
 
 ### Build & Run
 

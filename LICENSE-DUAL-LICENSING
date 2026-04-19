@@ -1,27 +1,4 @@
 ==========================================================================================
-NereusSDR — note on the GPLv3 election (added 2026-04-17)
-------------------------------------------------------------------------------------------
-The dual-licensing statement reproduced verbatim below was authored by Richard
-Samphire (MW0LGE) for the upstream Thetis project. It is preserved unchanged in
-NereusSDR. Two interpretive points apply when reading it in this repository:
-
-1. The reference to "LICENCE" in the statement should be read as the project's
-   root LICENSE file. NereusSDR's root LICENSE contains GPLv3, not GPLv2:
-   NereusSDR elected GPLv3 under the "or later" grant present in Thetis source-
-   file headers. Samphire's reservation continues to apply to GPL-granted
-   permissions regardless of which version is in effect downstream.
-
-2. Samphire's reservation attaches to code he originally authored or modified
-   in the upstream C# Thetis source. NereusSDR contributors' C++/Qt6 ports of
-   that code carry their own copyright in the translation, and are licensed
-   under GPLv3 from the NereusSDR side; Samphire retains his dual-licensing
-   right over the original C# work. Nothing in this note expands or contracts
-   the scope of his reservation.
-
-The byte-identical upstream text from ramdor/Thetis follows below.
-==========================================================================================
-
-==========================================================================================
 Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE)
 ------------------------------------------------------------------------------------------
 For any code originally written by Richard Samphire MW0LGE, or for any modifications
