@@ -962,7 +962,7 @@ void SliceModel::setVaxChannel(int ch)
     if (prev == ch) { return; }
 
     AppSettings::instance().setValue(
-        QStringLiteral("slice/%1/VaxChannel").arg(m_sliceIndex),
+        slicePrefix(m_sliceIndex) + QStringLiteral("VaxChannel"),
         QString::number(ch));
 
     emit vaxChannelChanged(ch);
@@ -974,10 +974,10 @@ void SliceModel::loadFromSettings()
 
     // ── VAX channel (Phase 3O) ────────────────────────────────────────────────
     int vaxCh = s.value(
-        QStringLiteral("slice/%1/VaxChannel").arg(m_sliceIndex), "0")
+        slicePrefix(m_sliceIndex) + QStringLiteral("VaxChannel"), "0")
         .toString().toInt();
     if (vaxCh < 0 || vaxCh > 4) { vaxCh = 0; }  // spec §5.1: invalid values clamp to 0
-    if (vaxCh != m_vaxChannel.load()) {
+    if (vaxCh != m_vaxChannel.load(std::memory_order_acquire)) {
         m_vaxChannel.store(vaxCh, std::memory_order_release);
         emit vaxChannelChanged(vaxCh);
     }

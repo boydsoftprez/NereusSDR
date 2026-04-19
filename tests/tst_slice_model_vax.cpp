@@ -50,12 +50,12 @@ private slots:
         AppSettings::instance().clear();
         SliceModel s(7);
         s.setVaxChannel(4);
-        QCOMPARE(AppSettings::instance().value("slice/7/VaxChannel").toString(), "4");
+        QCOMPARE(AppSettings::instance().value("Slice7/VaxChannel").toString(), "4");
     }
 
     void restoresFromSettings() {
         AppSettings::instance().clear();
-        AppSettings::instance().setValue("slice/7/VaxChannel", "3");
+        AppSettings::instance().setValue("Slice7/VaxChannel", "3");
         SliceModel s(7);
         s.loadFromSettings();
         QCOMPARE(s.vaxChannel(), 3);
@@ -63,7 +63,7 @@ private slots:
 
     void clampsCorruptValueOnLoad() {
         AppSettings::instance().clear();
-        AppSettings::instance().setValue("slice/7/VaxChannel", "99");
+        AppSettings::instance().setValue("Slice7/VaxChannel", "99");
         SliceModel s(7);
         s.loadFromSettings();
         QCOMPARE(s.vaxChannel(), 0);
