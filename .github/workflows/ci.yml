@@ -111,6 +111,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install pytest
+        if: runner.os == 'Linux'
+        run: python3 -m pip install --upgrade pip pytest
+
       - name: pytest — compliance test suite
         # Runs tests/compliance/ (inventory schema + cite baseline).
         if: runner.os == 'Linux'
