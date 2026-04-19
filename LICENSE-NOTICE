@@ -1,0 +1,92 @@
+==========================================================================================
+NereusSDR — License notice and downstream election rights (added 2026-04-19)
+------------------------------------------------------------------------------------------
+
+NereusSDR is distributed as a whole under the GNU General Public License,
+version 3 (see LICENSE). This notice clarifies the relationship between that
+choice and the license grants carried forward from upstream projects, and
+records the rights retained by recipients of this distribution.
+
+------------------------------------------------------------------------------------------
+1. GPLv3 election rationale
+------------------------------------------------------------------------------------------
+
+NereusSDR is a port of Thetis (https://github.com/ramdor/Thetis). Every
+Thetis source-file header preserved in NereusSDR — from Richard Samphire
+(MW0LGE), Warren Pratt (NR0V, WDSP), Bryan Rambo (W4WMT, ChannelMaster),
+Doug Wigley (W5WC), FlexRadio Systems, John Melton (G0ORX), and other
+upstream contributors — grants recipients the right to use, modify, and
+redistribute that code under:
+
+    "either version 2 of the License, or (at your option) any later version"
+
+NereusSDR elects GPL version 3 under that "or (at your option) any later
+version" grant. The same applies to upstream FFTW, WDSP, Midi2Cat, and the
+Andromeda/ARIES contributions (G8NJJ), which carry compatible v2-or-later
+grants. Permissive dependencies (PortAudio MIT, rnnoise BSD-3-Clause,
+SharpDX MIT, SkiaSharp MIT) and LGPL-2.1-or-later dependencies
+(libspecbleach) are GPLv3-compatible. NereusSDR does not bundle the
+Steinberg ASIO SDK (the "cmASIO" component in Thetis) — its proprietary
+licensing is incompatible with any GPL version.
+
+------------------------------------------------------------------------------------------
+2. Downstream recipients' election rights (GPL propagation)
+------------------------------------------------------------------------------------------
+
+GPLv3 §6 requires that we pass on to recipients the same license terms we
+received. Accordingly:
+
+    For any Thetis-derived content in this distribution — which is every
+    file carrying an upstream "version 2 or (at your option) any later
+    version" header, preserved verbatim per the project's source-first
+    porting protocol — a recipient of NereusSDR retains the right to
+    exercise that grant and may elect to use, modify, or redistribute
+    that upstream-derived content under GPL version 2, GPL version 3, or
+    any later GPL version published by the Free Software Foundation.
+
+    NereusSDR-original contributions (the C++/Qt6 translation layer, Qt
+    widget code, and other code first authored in this repository) are
+    licensed under GPL version 3 as written in LICENSE, without an
+    "or later" clause, and are not separately available under GPLv2.
+
+The practical effect: NereusSDR as distributed is a GPLv3 work, but a
+downstream recipient who wishes to extract upstream-derived modules (for
+example, WDSP wrappers, Thetis-ported DSP logic, ChannelMaster-equivalent
+code) and combine them with other GPLv2 work may do so under the upstream
+authors' v2-or-later grant. The per-file header is the authoritative
+record of which files are eligible.
+
+------------------------------------------------------------------------------------------
+3. Derivative status of NereusSDR contributions
+------------------------------------------------------------------------------------------
+
+NereusSDR contributors may hold copyright only in their own new original
+expression added in C++/Qt6 adaptations. Any translated or adapted portions
+remain derivative of the upstream work and do not limit, replace, or
+supersede any applicable upstream copyright, attribution, license notice,
+or reservation.
+
+------------------------------------------------------------------------------------------
+4. Richard Samphire's dual-licensing statement
+------------------------------------------------------------------------------------------
+
+A separate notice (LICENSE-DUAL-LICENSING) reproduces Richard Samphire's
+reservation of the right to license his own contributions under non-GPL
+terms. That reservation is a right the copyright holder retains for
+himself; it does not restrict any rights granted to recipients under the
+GPL, and it is orthogonal to the v2-or-later election described above.
+Nothing in this notice expands or contracts the scope of that reservation.
+
+------------------------------------------------------------------------------------------
+5. Cross-references
+------------------------------------------------------------------------------------------
+
+- LICENSE                                            — GPLv3 text (the distribution license)
+- LICENSE-DUAL-LICENSING                             — Samphire reservation (verbatim from upstream Thetis)
+- docs/attribution/LICENSE-GPLv2                     — Verbatim GPLv2 for reference
+- docs/attribution/THETIS-PROVENANCE.md              — Per-file upstream attribution
+- docs/attribution/WDSP-PROVENANCE.md                — WDSP per-file attribution
+- docs/attribution/COMPLIANCE-INVENTORY.md           — Third-party dependency inventory
+==========================================================================================
+
+END
