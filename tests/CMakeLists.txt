@@ -155,6 +155,9 @@ nereus_add_test(tst_transmit_model_tx_owner)
 # ── Phase 3O VAX schema migration ─────────────────────────────────────────
 nereus_add_test(tst_app_settings_vax_migration)
 
+# ── Phase 3O Sub-Phase 8: VaxChannelSelector widget ───────────────────────
+nereus_add_test(tst_vax_channel_selector)
+
 # ── Phase 3O Sub-Phase 2: MasterMixer ─────────────────────────────────────
 nereus_add_test(tst_master_mixer)
 
