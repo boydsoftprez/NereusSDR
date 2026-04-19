@@ -14,7 +14,7 @@ the AetherSDR clone at `/Users/j.j.boyd/AetherSDR/`.
 
 | Bucket | Meaning | Count | 25c action |
 |---|---|---:|---|
-| **A** | Genuine AetherSDR derivation — add project-level attribution | 47 | Insert AetherSDR copyright line + specify source file(s) in mod-history |
+| **A** | Genuine AetherSDR derivation — add project-level attribution | 48 | Insert AetherSDR copyright line + specify source file(s) in mod-history |
 | **B** | False citation (boilerplate "Structural template follows AetherSDR" with no real counterpart) — remove line | 126 | Delete the two "Structural template follows AetherSDR (ten9876/AetherSDR) Qt6 conventions." lines from Modification-History |
 | **C** | Mixed lineage — keep both citations, tighten wording | 12 | Keep Thetis block + AetherSDR line, but say what came from where |
 | **D** | Uncertain — human review | 5 | Flag for human judgement; do not auto-edit |
@@ -64,7 +64,7 @@ claim), or when 25a couldn't positively disprove the claim.
 
 ---
 
-## Bucket A — Genuine AetherSDR derivations (47 files)
+## Bucket A — Genuine AetherSDR derivations (48 files)
 
 25c action for every file below:
 1. Add a project-level attribution line to the Copyright block (after
@@ -151,14 +151,27 @@ claim), or when 25a couldn't positively disprove the claim.
 
 ### Phase 3O VAX — CoreAudio HAL bridge
 
-Added 2026-04-19 (Sub-Phase 5 Task 5.3). Both files carry a NereusSDR
-port-citation header (HOW-TO-PORT.md rule 6 form — AetherSDR has no
-per-file GPL header to copy verbatim) naming the upstream source file.
+Added 2026-04-19 (Sub-Phase 5 Tasks 5.1 / 5.3 / 5.4). All three files
+carry a NereusSDR port-citation header (HOW-TO-PORT.md rule 6 form —
+AetherSDR has no per-file GPL header to copy verbatim) naming the
+upstream source file.
 
 | NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |
 |---|---|---|---|
 | `src/core/audio/CoreAudioHalBus.h` | `src/core/VirtualAudioBridge.h` | Port-citation header lines 5-6 name `src/core/VirtualAudioBridge.h`. Modification-history lines 18-27 record the decomposition (monolithic → per-endpoint Role), QObject drop, silence-fill/TX-poll-timer deferral, shm-path rebrand, and 24 kHz → 48 kHz rate bump. | "Ported from AetherSDR `src/core/VirtualAudioBridge.{h,cpp}` with the monolithic 4-RX + 1-TX bridge decomposed into per-endpoint IAudioBus instances (Role enum for Vax1..4 / TxInput). QObject/signals dropped in favour of atomic metering; silence-fill and TX-poll timers deferred to Phase 3M. Shm paths rebranded /aethersdr-dax-\* → /nereussdr-vax-\*; native rate lifted 24 kHz → 48 kHz per spec §8.1." |
 | `src/core/audio/CoreAudioHalBus.cpp` | `src/core/VirtualAudioBridge.cpp` | Same header + TX drain loop (`pull()`) is a line-for-line port of `VirtualAudioBridge::readTxAudio` (acquire loads, writer-lapped skip, MAX/TARGET backlog guards, strided RMS meter). | Same. |
+| `hal-plugin/NereusSDRVAX.cpp` | `hal-plugin/AetherSDRDAX.cpp` | Port-citation header lines 5-6 name `hal-plugin/AetherSDRDAX.cpp`. Modification-history lines 15-22 record the DAX → VAX rebrand: device UIDs `com.aethersdr.dax.*` → `com.nereussdr.vax.*`, shm paths `/aethersdr-dax-*` → `/nereussdr-vax-*`, device names `AetherSDR DAX N` → `NereusSDR VAX N`, factory UUID regenerated. 48 kHz stereo float32 format preserved. Shared-memory layout block (lines 57–) mirrored byte-for-byte against `src/core/audio/CoreAudioHalBus.h`. | "Ported from AetherSDR `hal-plugin/AetherSDRDAX.cpp` — libASPL-based Core Audio HAL Audio Server Plug-In creating 4 virtual RX outputs + 1 virtual TX input. DAX → VAX rebrand across device UIDs, shm paths, device names, and factory UUID; wire format (48 kHz stereo float32) and ring-buffer layout preserved." |
+
+> **Classification note (Task 5.4):** `hal-plugin/NereusSDRVAX.cpp` is
+> registered here for provenance completeness, but
+> `scripts/compliance-inventory.py::_aethersdr_bucket_a_paths` currently
+> filters Bucket-A paths to those starting with `src/` or `tests/` (see
+> script line 87). The hal-plugin path therefore still classifies as
+> `nereussdr-original` in the inventory output. Widening that prefix
+> filter is a one-line script change deferred out of Task 5.4's "CI +
+> docs only" scope. The file carries the full AetherSDR-port header
+> block regardless, so the `--fail-on-unclassified` gate passes
+> cleanly either way.
 
 ### Setup shared-style
 

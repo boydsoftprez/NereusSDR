@@ -307,6 +307,58 @@ jobs:
           codesign --force --deep --sign - build/NereusSDR.app
           codesign --verify --verbose=2 build/NereusSDR.app
 
+      # ── Sub-Phase 5 Task 5.4: HAL plugin build + sign + .pkg + notarize ──
+      # The HAL plugin build and the .pkg build via hal-installer.sh run
+      # unconditionally so alpha / dev release cuts without Apple certs
+      # still produce a working (unsigned) .pkg artifact. The Developer ID
+      # sign, notarize, and staple steps are gated on APPLE_DEVELOPER_ID
+      # being populated.
+      #
+      # Known limitations (tracked for a Sub-Phase 5.5 follow-up):
+      #   * The main app currently gets ad-hoc codesign above, not
+      #     Developer ID. Apple's notarytool requires every component
+      #     inside a submitted .pkg to carry a Developer ID signature,
+      #     so notarization will reject the .pkg until the app's
+      #     codesign step is upgraded to Developer ID when secrets are
+      #     present.
+      #   * The .pkg itself is produced by productbuild without --sign.
+      #     A Developer ID Installer certificate and an extra productsign
+      #     step (or an env-var threading through hal-installer.sh) will
+      #     be needed before notarization can succeed end-to-end.
+      # Until both are addressed, the Notarize step is expected to fail
+      # on real submissions; the Sign HAL plugin / Build signed .pkg
+      # steps do their job standalone and the .pkg upload still lands.
+      - name: Build HAL plugin
+        run: |
+          cmake -B build-hal -S hal-plugin -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build-hal
+
+      - name: Sign HAL plugin
+        if: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+        run: |
+          codesign --force --options runtime --timestamp \
+            --sign "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_ID }}" \
+            build-hal/NereusSDRVAX.driver
+
+      - name: Build signed .pkg
+        run: bash packaging/macos/hal-installer.sh
+
+      - name: Notarize
+        if: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+        run: |
+          xcrun notarytool submit \
+            build/NereusSDR-${{ needs.prepare.outputs.version }}-macOS.pkg \
+            --apple-id "${{ secrets.APPLE_ID }}" \
+            --team-id "${{ secrets.APPLE_TEAM_ID }}" \
+            --password "${{ secrets.APPLE_APP_PASSWORD }}" \
+            --wait
+
+      - name: Staple
+        if: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+        run: |
+          xcrun stapler staple \
+            build/NereusSDR-${{ needs.prepare.outputs.version }}-macOS.pkg
+
       - name: Create DMG
         run: |
           create-dmg \
@@ -321,6 +373,13 @@ jobs:
             "build/NereusSDR.app" \
           || true
           ls -la NereusSDR-*.dmg
+
+      - name: Upload .pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-hal-pkg-${{ matrix.arch }}
+          path: build/NereusSDR-*.pkg
+          retention-days: 7
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

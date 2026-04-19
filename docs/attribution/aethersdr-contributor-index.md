@@ -231,7 +231,10 @@ per-file NereusSDR-side diff).
 | `src/core/ShortcutManager.{h,cpp}` | (none yet) | Keyboard shortcuts. |
 | `src/core/SupportBundle.{h,cpp}` | (none yet — pending 3G-14) | Diagnostic bundle. |
 | `src/core/BandStackSettings.{h,cpp}` | (none direct — NereusSDR has PanadapterModel per-band grid) | |
-| `src/core/PipeWireAudioBridge.{h,cpp}` / `VirtualAudioBridge.{h,cpp}` | (none) | Linux virtual-audio bridging (DAX). |
+| `src/core/PipeWireAudioBridge.{h,cpp}` | (none) | Linux virtual-audio bridging (DAX). |
+| `src/core/VirtualAudioBridge.{h,cpp}` | `src/core/audio/CoreAudioHalBus.{h,cpp}` | macOS CoreAudio HAL bridge. NereusSDR decomposes the monolithic 4-RX + 1-TX bridge into per-endpoint `IAudioBus` instances (Role enum for Vax1..4 / TxInput), drops the QObject/signals layer in favour of atomic metering, defers the silence-fill + TX poll timers to Phase 3M, rebrands shm paths `/aethersdr-dax-*` → `/nereussdr-vax-*`, and lifts the native rate 24 kHz → 48 kHz per spec §8.1. Added Sub-Phase 5 Task 5.3. |
+| `hal-plugin/AetherSDRDAX.cpp` | `hal-plugin/NereusSDRVAX.cpp` | macOS Core Audio HAL Audio Server Plug-In (libASPL-based). NereusSDR rebrands DAX → VAX: device UIDs `com.aethersdr.dax.*` → `com.nereussdr.vax.*`, shm paths `/aethersdr-dax-*` → `/nereussdr-vax-*`, device names `AetherSDR DAX N` → `NereusSDR VAX N`, factory UUID regenerated. Same 48 kHz stereo float32 format. Added Sub-Phase 5 Task 5.1. |
+| `hal-plugin/CMakeLists.txt` / `hal-plugin/Info.plist` | `hal-plugin/CMakeLists.txt` / `hal-plugin/Info.plist` | HAL plugin build + bundle descriptor. Structural templates only — NereusSDR rewrites bundle IDs, display names, and FetchContent pins while keeping the libASPL build shape. |
 | `src/core/PropForecastClient.{h,cpp}` | (none) | hamqsl.com HF forecast. |
 | `src/core/MacMicPermission.{h,mm}` | (none) | macOS TCC mic consent. |
 | `src/core/VersionNumber.h` | (none) | Small version-compare helper. |
