@@ -5327,6 +5327,10 @@ nereus_add_test(tst_rf2ks_connection_reconnect)
 # ── Edit Container refactor: Task 1 — AnanMultiMeterItem ─────────────────
 nereus_add_test(tst_anan_multi_meter_item)
 
+
+# ── Edit Container refactor: Task 2 — CrossNeedleItem ────────────────────
+nereus_add_test(tst_cross_needle_item)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------
