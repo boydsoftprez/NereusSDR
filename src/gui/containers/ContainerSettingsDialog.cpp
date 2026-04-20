@@ -896,12 +896,11 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
         created->setRect(0.0f, 0.05f, 1.0f, 0.61f);
     } else if (dynamic_cast<CrossNeedleItem*>(created)) {
         // Image-backed preset: Cross-Needle face bitmap is
-        // 1104x928 (aspect ~1.19:1) which is *narrower* than a
-        // 4:3 container (aspect 1.333:1). We constrain width and
-        // leave height near-full so the image letterboxes
-        // horizontally with minimal margins. 640*0.89 x 480*1.0 =
-        // ~570 x 480 = ~1.19:1, which matches the image aspect.
-        created->setRect(0.05f, 0.0f, 0.89f, 1.0f);
+        // 1104x928 (aspect ~1.19:1). Cap rect height at 0.7 so a
+        // second preset can stack below without overlap; bgRect
+        // letterboxes the narrower image horizontally within this
+        // top slot (minor side margins at 4:3 container aspect).
+        created->setRect(0.0f, 0.05f, 1.0f, 0.7f);
     } else {
         // Non-image composite presets (SMeter, PowerSwr, MagicEye,
         // Clock, Contest, History, SignalText, VfoDisplay). Previously
