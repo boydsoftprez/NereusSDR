@@ -734,6 +734,8 @@ set(GUI_SOURCES
     src/gui/meters/presets/VfoDisplayPresetItem.cpp
     src/gui/meters/presets/ClockPresetItem.h
     src/gui/meters/presets/ClockPresetItem.cpp
+    src/gui/meters/presets/ContestPresetItem.h
+    src/gui/meters/presets/ContestPresetItem.cpp
     src/gui/meters/MeterPoller.cpp
     src/gui/meters/SpacerItem.cpp
     src/gui/meters/FadeCoverItem.cpp
