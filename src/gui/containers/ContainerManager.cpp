@@ -64,6 +64,8 @@ mw0lge@grange-lane.co.uk
 
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QRegularExpression>
+#include <QSet>
 #include <QSplitter>
 #include <algorithm>
 
@@ -594,6 +596,26 @@ void ContainerManager::forEachMeterItem(std::function<void(MeterItem*)> fn)
 void ContainerManager::setContentFactory(ContainerContentFactory factory)
 {
     m_contentFactory = std::move(factory);
+}
+
+QString ContainerManager::nextMeterAutoName() const
+{
+    // Edit-container refactor Task 17 — shared auto-name helper so
+    // MainWindow's "New Container..." and the settings dialog's
+    // + Add button agree on naming. Picks the smallest unused
+    // positive integer across existing container notes.
+    QSet<int> used;
+    static const QRegularExpression re(QStringLiteral("^Meter (\\d+)$"));
+    for (ContainerWidget* c : m_containers) {
+        if (!c) { continue; }
+        const auto m = re.match(c->notes());
+        if (m.hasMatch()) {
+            used.insert(m.captured(1).toInt());
+        }
+    }
+    int n = 1;
+    while (used.contains(n)) { ++n; }
+    return QStringLiteral("Meter %1").arg(n);
 }
 
 void ContainerManager::saveState()

@@ -137,6 +137,13 @@ public:
     // --- Visibility ---
     void setContainerVisible(const QString& id, bool visible);
 
+    // Edit-container refactor Task 17 — canonical auto-name for new
+    // containers. Picks "Meter N" where N is the smallest unused
+    // positive integer across existing container notes. Used by
+    // MainWindow's "New Container..." action and the settings dialog's
+    // + Add button so both flows agree.
+    QString nextMeterAutoName() const;
+
 signals:
     void containerAdded(const QString& id);
     void containerRemoved(const QString& id);

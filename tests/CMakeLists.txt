@@ -5391,6 +5391,14 @@ nereus_add_test(tst_container_widget_access)
 # ── Edit Container refactor: Task 16 — FloatingContainer forwarding ─────
 nereus_add_test(tst_floating_container_access)
 
+
+# ── Edit Container refactor: Task 17 — container auto-name ──────────────
+# The companion tst_mainwindow_menu_layout was dropped on rebase: it
+# asserted a View > Applets submenu that PR #281's
+# AppletVisibilityController superseded. Main's own coverage lives in
+# tst_applet_visibility_controller + tst_applet_visibility_menu_wiring.
+nereus_add_test(tst_container_manager_autoname)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------

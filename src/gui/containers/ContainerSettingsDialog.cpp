@@ -2831,19 +2831,11 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
 
 QString ContainerSettingsDialog::nextAutoName() const
 {
+    // Task 17 — delegate to the canonical helper on ContainerManager
+    // so MainWindow's "New Container..." flow and this + Add flow
+    // produce identical auto-names.
     if (!m_manager) { return QStringLiteral("Meter 1"); }
-    QSet<int> used;
-    const QRegularExpression re(QStringLiteral("^Meter (\\d+)$"));
-    for (ContainerWidget* c : m_manager->allContainers()) {
-        if (!c) { continue; }
-        const auto m = re.match(c->notes());
-        if (m.hasMatch()) {
-            used.insert(m.captured(1).toInt());
-        }
-    }
-    int n = 1;
-    while (used.contains(n)) { ++n; }
-    return QStringLiteral("Meter %1").arg(n);
+    return m_manager->nextMeterAutoName();
 }
 
 void ContainerSettingsDialog::onAddContainer()
