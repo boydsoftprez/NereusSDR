@@ -267,7 +267,9 @@ warren@wpratt.com
 #include "containers/ContainerSettingsDialog.h"
 #include "meters/MeterWidget.h"
 #include "meters/MeterItem.h"
-#include "meters/ItemGroup.h"
+#include "meters/presets/SMeterPresetItem.h"
+#include "meters/presets/PowerSwrPresetItem.h"
+#include "meters/presets/BarPresetItem.h"
 #include "meters/MeterPoller.h"
 #include "applets/AppletPanelWidget.h"
 #include "applets/RxApplet.h"
@@ -798,19 +800,18 @@ void MainWindow::resetDefaultLayout()
     if (m_meterWidget) {
         m_meterWidget->clearItems();
 
-        ItemGroup* smeter = ItemGroup::createSMeterPreset(
-            MeterBinding::SignalAvg, QStringLiteral("S-Meter"), m_meterWidget);
-        smeter->installInto(m_meterWidget, 0.0f, 0.0f, 1.0f, 0.45f);
-        delete smeter;
+        auto* smeter = new SMeterPresetItem(m_meterWidget);
+        smeter->setRect(0.0f, 0.0f, 1.0f, 0.45f);
+        m_meterWidget->addItem(smeter);
 
-        ItemGroup* pwrSwr = ItemGroup::createPowerSwrPreset(
-            QStringLiteral("Power/SWR"), m_meterWidget);
-        pwrSwr->installInto(m_meterWidget, 0.0f, 0.45f, 1.0f, 0.40f);
-        delete pwrSwr;
+        auto* pwrSwr = new PowerSwrPresetItem(m_meterWidget);
+        pwrSwr->setRect(0.0f, 0.45f, 1.0f, 0.40f);
+        m_meterWidget->addItem(pwrSwr);
 
-        ItemGroup* alc = ItemGroup::createAlcPreset(m_meterWidget);
-        alc->installInto(m_meterWidget, 0.0f, 0.85f, 1.0f, 0.15f);
-        delete alc;
+        auto* alc = new BarPresetItem(m_meterWidget);
+        alc->configureAsAlc();
+        alc->setRect(0.0f, 0.85f, 1.0f, 0.15f);
+        m_meterWidget->addItem(alc);
     }
 
     rebuildEditContainerSubmenu();
@@ -873,21 +874,20 @@ void MainWindow::populateDefaultMeter()
     } else {
         // S-Meter: top 45% — arc needle bound to SignalAvg
         // From Thetis MeterManager.cs: ANAN needle uses AVG_SIGNAL_STRENGTH
-        ItemGroup* smeter = ItemGroup::createSMeterPreset(
-            MeterBinding::SignalAvg, QStringLiteral("S-Meter"), m_meterWidget);
-        smeter->installInto(m_meterWidget, 0.0f, 0.0f, 1.0f, 0.45f);
-        delete smeter;
+        auto* smeter = new SMeterPresetItem(m_meterWidget);
+        smeter->setRect(0.0f, 0.0f, 1.0f, 0.45f);
+        m_meterWidget->addItem(smeter);
 
         // Power/SWR: middle 40% — stacked bars (stub TX bindings)
-        ItemGroup* pwrSwr = ItemGroup::createPowerSwrPreset(
-            QStringLiteral("Power/SWR"), m_meterWidget);
-        pwrSwr->installInto(m_meterWidget, 0.0f, 0.45f, 1.0f, 0.40f);
-        delete pwrSwr;
+        auto* pwrSwr = new PowerSwrPresetItem(m_meterWidget);
+        pwrSwr->setRect(0.0f, 0.45f, 1.0f, 0.40f);
+        m_meterWidget->addItem(pwrSwr);
 
         // ALC: bottom 15% — compact single-line bar (stub TX binding)
-        ItemGroup* alc = ItemGroup::createAlcPreset(m_meterWidget);
-        alc->installInto(m_meterWidget, 0.0f, 0.85f, 1.0f, 0.15f);
-        delete alc;
+        auto* alc = new BarPresetItem(m_meterWidget);
+        alc->configureAsAlc();
+        alc->setRect(0.0f, 0.85f, 1.0f, 0.15f);
+        m_meterWidget->addItem(alc);
     }
 
     // Build an AppletPanelWidget: MeterWidget on top, then all applets below.

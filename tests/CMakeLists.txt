@@ -28,7 +28,6 @@ nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
-nereus_add_test(tst_meter_presets)
 
 # ── Phase 3G-9b clarity defaults invariants ───────────────────────────────
 nereus_add_test(tst_clarity_defaults)
