@@ -143,6 +143,10 @@ public:
     QUuid   rowIdAtIndex(int i) const;
     QString displayNameForRowId(const QUuid& id) const;
 
+    // Task 14 test hooks.
+    void    triggerAddContainerForTest() { onAddContainer(); }
+    QString currentContainerDropdownText() const;
+
 private slots:
     void onItemSelectionChanged();
     void onAddItem();
@@ -261,6 +265,14 @@ private:
     // Container-switch dropdown (block 3 commit 13). Read-only until
     // commit 14 wires auto-commit + snapshot on switch.
     QComboBox* m_containerDropdown{nullptr};
+
+    // Edit-container refactor Task 14 — + Add button next to the
+    // container dropdown. Creates a new floating container, auto-
+    // names it "Meter N" (smallest unused integer), and switches the
+    // dialog focus to it so the user can immediately start editing.
+    QPushButton* m_btnAddContainer{nullptr};
+    void    onAddContainer();
+    QString nextAutoName() const;
 
     QSplitter* m_splitter{nullptr};
 

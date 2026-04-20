@@ -160,6 +160,7 @@ mw0lge@grange-lane.co.uk
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSet>
 
 // Core meter item types (MeterItem.h defines: BarItem, SolidColourItem, ImageItem,
@@ -964,6 +965,36 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
 
     barLayout->addWidget(contLabel);
     barLayout->addWidget(m_containerDropdown);
+
+    // Edit-container refactor Task 14 — + Add button next to the
+    // container dropdown. Creates a new floating container and
+    // switches to it without closing the dialog. Only enabled when a
+    // manager is available (single-container legacy mode has no way
+    // to spawn siblings).
+    m_btnAddContainer = new QPushButton(QStringLiteral("+ Add"), bar);
+    m_btnAddContainer->setToolTip(
+        tr("Create a new container and switch to editing it"));
+    m_btnAddContainer->setAutoDefault(false);
+    m_btnAddContainer->setDefault(false);
+    m_btnAddContainer->setStyleSheet(
+        "QPushButton {"
+        "  background: #0d3f4a;"
+        "  color: #7fffd4;"
+        "  border: 1px solid #00b4d8;"
+        "  border-radius: 3px;"
+        "  padding: 3px 8px;"
+        "  font-weight: 600;"
+        "}"
+        "QPushButton:hover { background: #104a57; }"
+        "QPushButton:disabled {"
+        "  background: #1a2a3a;"
+        "  color: #5a6a7a;"
+        "  border-color: #203040;"
+        "}");
+    m_btnAddContainer->setEnabled(m_manager != nullptr);
+    connect(m_btnAddContainer, &QPushButton::clicked,
+            this, &ContainerSettingsDialog::onAddContainer);
+    barLayout->addWidget(m_btnAddContainer);
 
     // Title
     QLabel* titleLabel = new QLabel(QStringLiteral("Title:"), bar);
@@ -2761,6 +2792,71 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
         ed->setItem(item);
     }
     return ed;
+}
+
+// ---------------------------------------------------------------------------
+// Edit-container refactor Task 14 — + Add container
+// ---------------------------------------------------------------------------
+
+QString ContainerSettingsDialog::nextAutoName() const
+{
+    if (!m_manager) { return QStringLiteral("Meter 1"); }
+    QSet<int> used;
+    const QRegularExpression re(QStringLiteral("^Meter (\\d+)$"));
+    for (ContainerWidget* c : m_manager->allContainers()) {
+        if (!c) { continue; }
+        const auto m = re.match(c->notes());
+        if (m.hasMatch()) {
+            used.insert(m.captured(1).toInt());
+        }
+    }
+    int n = 1;
+    while (used.contains(n)) { ++n; }
+    return QStringLiteral("Meter %1").arg(n);
+}
+
+void ContainerSettingsDialog::onAddContainer()
+{
+    if (!m_manager) { return; }
+
+    // Commit any pending edits to the outgoing container so the user
+    // doesn't lose work just by clicking + Add.
+    applyToContainer();
+
+    ContainerWidget* created = m_manager->createContainer(
+        1, DockMode::Floating);
+    if (!created) { return; }
+
+    created->setNotes(nextAutoName());
+    // Populate with an empty MeterWidget so the user can start adding
+    // items immediately after the switch.
+    created->setContent(new MeterWidget());
+
+    // Update the dropdown: createContainer() emits containerAdded
+    // which some hosts listen to, but the dialog's dropdown is
+    // internal — insert the new entry directly, then switch to it.
+    const QString label = created->notes().isEmpty()
+        ? created->id().left(8)
+        : created->notes();
+    if (m_containerDropdown) {
+        // If a listener already appended the new row (e.g. via
+        // containerAdded), re-use that entry; otherwise add here.
+        int idx = m_containerDropdown->findData(created->id());
+        if (idx < 0) {
+            m_containerDropdown->addItem(label, created->id());
+            idx = m_containerDropdown->count() - 1;
+        }
+        // Re-enable dropdown now that we have >1 container.
+        m_containerDropdown->setEnabled(
+            m_containerDropdown->count() > 1);
+        m_containerDropdown->setCurrentIndex(idx);
+    }
+}
+
+QString ContainerSettingsDialog::currentContainerDropdownText() const
+{
+    if (!m_containerDropdown) { return QString(); }
+    return m_containerDropdown->currentText();
 }
 
 } // namespace NereusSDR
