@@ -45,6 +45,16 @@
 //                 so 3rd-party consumers of VAX aren't silenced by the
 //                 local monitor mute. No alloc, no lock, no logging —
 //                 RT-safety preserved.
+//   2026-04-20 — Sub-Phase 9 Task 9.2a per-channel VAX rx gain + mute + tx
+//                 gain by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code. rxBlockReady grafts the mute/gain path onto
+//                 the VAX tap: muted channels skip push entirely; unity
+//                 gain preserves the raw-samples fast path; non-unity gain
+//                 copy-multiplies into a thread_local scratch distinct from
+//                 the existing master-mix scratch. setVaxRxGain /
+//                 setVaxMuted / setVaxTxGain follow the acq_rel exchange
+//                 pattern from setVolume, and change-signals fire only
+//                 when the stored value differs from the new one.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -483,22 +493,53 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
 
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume — matching Thetis VAC behavior and the spec §3.4
-    // pseudocode (`m_vaxBus[vaxCh-1]->push(samples, …)`, not the mixed
-    // output). Per-channel rx gain for VAX is applied inside the bus
-    // implementation (Sub-Phase 9+). See
-    // docs/architecture/2026-04-19-vax-design.md.
+    // pseudocode. Per-channel mute skips the push; non-unity per-channel
+    // gain copy-multiplies into a thread_local scratch (distinct from
+    // the master-mix `mix` scratch below) so the unity-gain fast path
+    // stays zero-copy. See docs/architecture/2026-04-19-vax-design.md
+    // §3.4 and §6.4.
     const int vaxCh = slice->vaxChannel();
     if (vaxCh >= 1 && vaxCh <= 4) {
-        // Snapshot the bus pointer into a local so the isOpen() check and
-        // the push() below observe the same IAudioBus instance. The
-        // live-reconfig contract (AudioEngine.h) forbids setVaxConfig /
-        // setVaxEnabled mid-block, but the snapshot eliminates any
-        // torn-read window should a caller violate that contract.
-        IAudioBus* vaxBus = m_vaxBus[vaxCh - 1].get();
-        if (vaxBus != nullptr && vaxBus->isOpen()) {
-            vaxBus->push(
-                reinterpret_cast<const char*>(samples),
-                static_cast<qint64>(frames) * 2 * sizeof(float));
+        const int vaxIdx = vaxCh - 1;
+
+        // Mute wins over gain: when muted the tap skips push() entirely —
+        // spec says "tags / level UI still reflect routing, but no
+        // downstream audio" and we don't waste the bus-push bandwidth.
+        const bool muted = m_vaxMuted[vaxIdx].load(std::memory_order_acquire);
+        if (!muted) {
+            // Snapshot the bus pointer into a local so the isOpen() check
+            // and the push() below observe the same IAudioBus instance.
+            // The live-reconfig contract (AudioEngine.h) forbids
+            // setVaxConfig / setVaxEnabled mid-block, but the snapshot
+            // eliminates any torn-read window should a caller violate it.
+            IAudioBus* vaxBus = m_vaxBus[vaxIdx].get();
+            if (vaxBus != nullptr && vaxBus->isOpen()) {
+                const float gain =
+                    m_vaxRxGain[vaxIdx].load(std::memory_order_acquire);
+                const qint64 payloadBytes =
+                    static_cast<qint64>(frames) * 2 * sizeof(float);
+                if (gain == 1.0f) {
+                    // Fast path — raw samples, zero copy.
+                    vaxBus->push(reinterpret_cast<const char*>(samples),
+                                 payloadBytes);
+                } else {
+                    // Distinct from `mix` scratch below — that one is
+                    // reserved for the master-mix accumulate path and
+                    // must not be clobbered by the VAX tee. Grows once
+                    // per thread via resize(), zero-alloc thereafter.
+                    static thread_local std::vector<float> vaxScratch;
+                    const int stereoFloats = frames * 2;
+                    if (static_cast<int>(vaxScratch.size()) < stereoFloats) {
+                        vaxScratch.resize(static_cast<size_t>(stereoFloats));
+                    }
+                    for (int i = 0; i < stereoFloats; ++i) {
+                        vaxScratch[i] = samples[i] * gain;
+                    }
+                    vaxBus->push(
+                        reinterpret_cast<const char*>(vaxScratch.data()),
+                        payloadBytes);
+                }
+            }
         }
     }
 
@@ -561,6 +602,81 @@ void AudioEngine::setMasterMuted(bool muted)
     if (prev != muted) {
         emit masterMutedChanged(muted);
     }
+}
+
+void AudioEngine::setVaxRxGain(int channel, float gain)
+{
+    if (channel < 1 || channel > 4) {
+        return;
+    }
+    gain = std::clamp(gain, 0.0f, 1.0f);
+    const int idx = channel - 1;
+    // Same acq_rel handshake as setVolume — pairs with the DSP-thread
+    // acquire load in rxBlockReady.
+    const float prev =
+        m_vaxRxGain[idx].exchange(gain, std::memory_order_acq_rel);
+    if (prev != gain) {
+        emit vaxRxGainChanged(channel, gain);
+    }
+}
+
+void AudioEngine::setVaxMuted(int channel, bool muted)
+{
+    if (channel < 1 || channel > 4) {
+        return;
+    }
+    const int idx = channel - 1;
+    const bool prev =
+        m_vaxMuted[idx].exchange(muted, std::memory_order_acq_rel);
+    if (prev != muted) {
+        emit vaxMutedChanged(channel, muted);
+    }
+}
+
+void AudioEngine::setVaxTxGain(float gain)
+{
+    gain = std::clamp(gain, 0.0f, 1.0f);
+    const float prev = m_vaxTxGain.exchange(gain, std::memory_order_acq_rel);
+    if (prev != gain) {
+        emit vaxTxGainChanged(gain);
+    }
+}
+
+float AudioEngine::vaxRxGain(int channel) const
+{
+    if (channel < 1 || channel > 4) {
+        return 0.0f;
+    }
+    return m_vaxRxGain[channel - 1].load(std::memory_order_acquire);
+}
+
+bool AudioEngine::vaxMuted(int channel) const
+{
+    if (channel < 1 || channel > 4) {
+        return false;
+    }
+    return m_vaxMuted[channel - 1].load(std::memory_order_acquire);
+}
+
+float AudioEngine::vaxRxLevel(int channel) const
+{
+    if (channel < 1 || channel > 4) {
+        return 0.0f;
+    }
+    const IAudioBus* bus = m_vaxBus[channel - 1].get();
+    if (bus == nullptr || !bus->isOpen()) {
+        return 0.0f;
+    }
+    return bus->rxLevel();
+}
+
+float AudioEngine::vaxTxLevel() const
+{
+    const IAudioBus* bus = m_vaxTxBus.get();
+    if (bus == nullptr || !bus->isOpen()) {
+        return 0.0f;
+    }
+    return bus->txLevel();
 }
 
 } // namespace NereusSDR

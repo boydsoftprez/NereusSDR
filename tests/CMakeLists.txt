@@ -217,3 +217,20 @@ nereus_add_test(tst_master_output_widget)
 # the fixed 32 px height. Live UI verification is the canonical check for
 # the menu-re-parent + in-window render on macOS.
 nereus_add_test(tst_title_bar)
+
+# ── Phase 3O Sub-Phase 9 Task 9.2a: AudioEngine VAX gain/mute/tx-gain ────────
+# Exercises setVaxRxGain / setVaxMuted / setVaxTxGain and their effect on the
+# rxBlockReady tee — unity passthrough, half-gain scaling, muted-skip, signal
+# emission, clamp-to-range, invalid-channel no-op. Same FakeAudioBus harness
+# as tst_audio_engine_vax_tee.
+nereus_add_test(tst_audio_engine_vax_gain)
+
+# ── Phase 3O Sub-Phase 9 Task 9.2b: VaxApplet smoke tests ────────────────────
+# Widget-level construction, signal plumbing, AppSettings round-trip.
+nereus_add_test(tst_vax_applet)
+
+# ── Phase 3O Sub-Phase 9 Task 9.2c: SpectrumOverlayPanel VAX Ch wiring ───────
+# setRadioModel() binds the left-edge overlay's VAX Ch combo to slice 0's
+# vaxChannel() bidirectionally; IQ Ch stays disabled (feature-flagged per
+# design spec §6.7/§11.3).
+nereus_add_test(tst_spectrum_overlay_panel)

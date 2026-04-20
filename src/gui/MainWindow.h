@@ -203,6 +203,7 @@ private:
     class RxApplet* m_rxApplet{nullptr};
     class PhoneCwApplet* m_phoneCwApplet{nullptr};
     class EqApplet* m_eqApplet{nullptr};
+    class VaxApplet* m_vaxApplet{nullptr};
 
     // Applets — Tasks 7-10 (NYI shells, hidden until Task 15 Container wiring)
     class DigitalApplet*    m_digitalApplet{nullptr};

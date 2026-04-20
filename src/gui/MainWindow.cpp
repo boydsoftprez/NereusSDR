@@ -274,6 +274,7 @@ warren@wpratt.com
 #include "applets/TxApplet.h"
 #include "applets/PhoneCwApplet.h"
 #include "applets/EqApplet.h"
+#include "applets/VaxApplet.h"
 #include "applets/DigitalApplet.h"
 #include "applets/PureSignalApplet.h"
 #include "applets/DiversityApplet.h"
@@ -484,6 +485,11 @@ void MainWindow::buildUI()
     m_overlayPanel = new SpectrumOverlayPanel(m_spectrumWidget);
     m_overlayPanel->move(4, 4);
     m_overlayPanel->show();
+
+    // Phase 3O Sub-Phase 9 Task 9.2c — bind the overlay's VAX Ch combo to
+    // the RadioModel. The combo stays disabled until slice 0 exists
+    // (setRadioModel listens to sliceAdded), then flips live.
+    m_overlayPanel->setRadioModel(m_radioModel);
 
     // Zoom slider bar below spectrum
     auto* zoomBar = new QSlider(Qt::Horizontal, spectrumPane);
@@ -954,6 +960,12 @@ void MainWindow::populateDefaultMeter()
     // EqApplet — 10-band EQ, NYI (Phase 3I-3)
     m_eqApplet = new EqApplet(m_radioModel, nullptr);
     panel->addApplet(m_eqApplet);
+
+    // VaxApplet — per-VAX-channel gain + mute + level meters
+    // (Phase 3O Sub-Phase 9 Task 9.2b).
+    m_vaxApplet = new VaxApplet(m_radioModel,
+                                m_radioModel->audioEngine(), nullptr);
+    panel->addApplet(m_vaxApplet);
 
     // Tasks 7-10: NYI applets created but NOT added to the container.
     // Task 15 (final assembly) will wire these via the Containers menu.

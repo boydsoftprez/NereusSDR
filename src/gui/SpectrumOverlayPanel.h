@@ -27,6 +27,14 @@
 //                 via Anthropic Claude Code.
 //                 Ported from AetherSDR `src/gui/SpectrumOverlayMenu.{h,cpp}`
 //                 (left button strip + 5 flyout panels).
+//   2026-04-20 — Phase 3O Sub-Phase 9 Task 9.2c (issue #70 fold-in):
+//                 added setRadioModel() so the previously-disabled VAX Ch
+//                 combo on the left-edge overlay is now wired bidirectionally
+//                 to slice 0's vaxChannel() with echo prevention. IQ Ch
+//                 stays feature-flagged off (design spec §6.7/§11.3 —
+//                 audio/SendIqToVax stored-but-not-active). J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -43,11 +51,20 @@ class QMouseEvent;
 
 namespace NereusSDR {
 
+class RadioModel;
+
 class SpectrumOverlayPanel : public QWidget {
     Q_OBJECT
 
 public:
     explicit SpectrumOverlayPanel(QWidget* parent = nullptr);
+
+    // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo
+    // and wires it bidirectionally to slice 0's vaxChannel(). Safe to
+    // call multiple times — each rebind drops prior SliceModel connections.
+    // The IQ Ch combo remains disabled (feature-flagged per design spec
+    // §6.7/§11.3 — audio/SendIqToVax is stored-but-not-active).
+    void setRadioModel(RadioModel* model);
 
     // Raise panel and all flyouts above siblings.
     void raiseAll();
@@ -180,6 +197,21 @@ private:
     QWidget*   m_vaxFlyout{nullptr};
     QComboBox* m_vaxCmb{nullptr};
     QComboBox* m_vaxIqCmb{nullptr};
+
+    // ── VAX model binding (Phase 3O Sub-Phase 9 Task 9.2c) ───────────────
+    // m_vaxChannelConn stores the SliceModel::vaxChannelChanged → combo
+    // connection so a rebind via setRadioModel() can explicitly drop the
+    // prior subscription. m_updatingFromModel guards the echo path
+    // (model → widget) from re-triggering the widget → model side.
+    RadioModel*              m_radioModel{nullptr};
+    QMetaObject::Connection  m_vaxChannelConn;
+    bool                     m_updatingFromModel{false};
+
+    // Seat (or re-seat) the Model→Widget subscription onto whichever
+    // SliceModel currently occupies index 0. Called from setRadioModel()
+    // at bind time AND from the sliceAdded/sliceRemoved listeners so a
+    // late-arriving or reshuffled slice 0 rebinds cleanly.
+    void bindToSliceZero();
 
     // ── Waterfall zoom buttons (bottom-left of spectrum widget) ──────────
     QWidget*     m_zoomStrip{nullptr};   // container for the 4 zoom buttons

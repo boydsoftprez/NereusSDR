@@ -46,6 +46,15 @@
 //                 apps consuming VAX). Persistence + UI (MasterOutputWidget)
 //                 land in Task 10b. Design spec:
 //                 docs/architecture/2026-04-19-vax-design.md §5.4 and §6.3.
+//   2026-04-20 — Sub-Phase 9 Task 9.2a per-channel VAX rx gain + mute + tx
+//                 gain by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code. Adds std::atomic storage for m_vaxRxGain[1..4],
+//                 m_vaxMuted[1..4], m_vaxTxGain plus setters/getters/change-
+//                 signals. rxBlockReady now skips the push entirely when a
+//                 channel is muted and applies gain via a thread_local scratch
+//                 buffer when gain != 1.0f. TX gain is storage-only pending
+//                 Phase 3M TX pull wiring. Matches VaxApplet control-wiring
+//                 rows in docs/architecture/2026-04-19-vax-design.md §6.4.
 // =================================================================
 
 #include "AudioDeviceConfig.h"
@@ -157,9 +166,32 @@ public:
     void setMasterMuted(bool muted);
     bool masterMuted() const { return m_masterMuted.load(std::memory_order_acquire); }
 
+    // Per-channel VAX controls (Sub-Phase 9 Task 9.2a). Main-thread writes,
+    // audio-thread reads, via std::atomic — matches the setVolume /
+    // m_masterVolume handshake. `channel` is 1..4; out-of-range calls are
+    // silent no-ops. setVaxRxGain clamps to [0.0, 1.0] before comparing
+    // against the prior value; change-signals fire only when the value
+    // actually changes. setVaxTxGain is storage + signal only — applying it
+    // on the TX pull side lives in Phase 3M (see TODO next to m_vaxTxGain).
+    void setVaxRxGain(int channel, float gain);
+    void setVaxMuted(int channel, bool muted);
+    void setVaxTxGain(float gain);
+
+    float vaxRxGain(int channel) const;
+    bool  vaxMuted(int channel) const;
+    float vaxTxGain() const { return m_vaxTxGain.load(std::memory_order_acquire); }
+
+    // Meter readouts for VaxApplet. Safe when the slot is empty / not open:
+    // returns 0.0f so the UI can still bind and show a quiet meter.
+    float vaxRxLevel(int channel) const;
+    float vaxTxLevel() const;
+
 signals:
     void volumeChanged(float volume);
     void masterMutedChanged(bool muted);
+    void vaxRxGainChanged(int channel, float gain);
+    void vaxMutedChanged(int channel, bool muted);
+    void vaxTxGainChanged(float gain);
 
 private:
     // Translate AudioDeviceConfig → AudioFormat + PortAudioConfig and
@@ -210,6 +242,20 @@ private:
     // rxBlockReady() on the DSP thread. Same acq_rel / acquire pairing
     // as m_masterVolume above.
     std::atomic<bool> m_masterMuted{false};
+
+    // Sub-Phase 9 Task 9.2a — per-channel VAX rx gain / mute and master
+    // VAX tx gain. Main-thread writes via set*() setters, DSP-thread
+    // reads inside rxBlockReady for the RX path. One atomic per control
+    // per channel; defaults are unity-gain and not-muted so a fresh
+    // AudioEngine (or one that has never had a setter called) preserves
+    // the pre-Sub-Phase-9 passthrough behavior exactly.
+    std::array<std::atomic<float>, 4> m_vaxRxGain{{1.0f, 1.0f, 1.0f, 1.0f}};
+    std::array<std::atomic<bool>,  4> m_vaxMuted{};
+    // TODO(phase3M): apply m_vaxTxGain in TX pull path. Storage-only in
+    // Sub-Phase 9 — the consumer that pulls from m_vaxTxBus / mic lives
+    // in Phase 3M (TxChannel). Kept here so the VaxApplet tx slider has
+    // a setter to bind to today.
+    std::atomic<float> m_vaxTxGain{1.0f};
 
     // Was Pa_Initialize() actually successful? Guards the matching
     // Pa_Terminate() in the destructor so unit tests that construct
