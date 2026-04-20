@@ -13,9 +13,9 @@
 // by settings-prefix + role enum (Output/Input). 7-row form per
 // addendum §2.1: Driver API / Device / Sample rate / Bit depth /
 // Channels / Buffer size / Options. Negotiated-format pill at the
-// bottom. 200 ms intra-control debounce on buffer-size scrub (handled
-// in AudioEngine::setSpeakersConfig; DeviceCard emits configChanged
-// immediately so the engine's debounce timer is the coalescing point).
+// bottom. 200 ms intra-control debounce on the buffer-size combo only
+// (addendum §2.1: "intra-control only"); all other controls fire
+// configChanged immediately.
 //
 // Design spec: docs/architecture/2026-04-20-phase3o-subphase12-addendum.md
 // §§2.1 + 4.
@@ -90,6 +90,7 @@ protected:
 private:
     void buildLayout();
     void populateDeviceCombo();
+    void updateBufferMsLabel();  // recompute derived ms readout from current combos
 
     QString       m_prefix;
     Role          m_role;
@@ -115,6 +116,11 @@ private:
 
     // Negotiated-format pill
     QLabel*     m_negotiatedPill{nullptr};
+
+    // 200 ms intra-control debounce for the buffer-size combo only (per
+    // addendum §2.1 — debounce is intra-control, not card-wide).  Other
+    // control changes fire onAnyControlChanged immediately.
+    QTimer*     m_bufferSizeDebounceTimer{nullptr};
 };
 
 } // namespace NereusSDR

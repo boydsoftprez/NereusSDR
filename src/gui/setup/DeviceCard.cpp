@@ -334,7 +334,18 @@ void DeviceCard::buildLayout()
     connectCombo(m_sampleRateCombo);
     connectCombo(m_bitDepthCombo);
     connectCombo(m_channelsCombo);
-    connectCombo(m_bufferSizeCombo);
+    // Buffer-size uses a 200 ms intra-control debounce (addendum §2.1).
+    // Other combos fire immediately.
+    if (m_bufferSizeCombo) {
+        m_bufferSizeCombo->installEventFilter(this);
+        m_bufferSizeDebounceTimer = new QTimer(this);
+        m_bufferSizeDebounceTimer->setSingleShot(true);
+        m_bufferSizeDebounceTimer->setInterval(200);
+        connect(m_bufferSizeDebounceTimer, &QTimer::timeout,
+                this, &DeviceCard::onAnyControlChanged);
+        connect(m_bufferSizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int) { m_bufferSizeDebounceTimer->start(); });
+    }
 
     // Device combo fires populateDeviceCombo on driver-API change, then
     // also commits via the device-combo's own currentIndexChanged.
@@ -358,19 +369,11 @@ void DeviceCard::buildLayout()
     if (m_monitorDuringTxChk) { connectCheck(m_monitorDuringTxChk); }
     if (m_toneCheckChk)       { connectCheck(m_toneCheckChk); }
 
-    // Buffer-size change → update derived-ms label.
+    // Buffer-size or sample-rate change → update derived-ms label.
     connect(m_bufferSizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                const int sz = m_bufferSizeCombo->currentData().toInt();
-                const int sr = m_sampleRateCombo->currentData().toInt();
-                m_bufferMsLabel->setText(bufferMs(sz, sr));
-            });
+            this, [this](int) { updateBufferMsLabel(); });
     connect(m_sampleRateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                const int sz = m_bufferSizeCombo->currentData().toInt();
-                const int sr = m_sampleRateCombo->currentData().toInt();
-                m_bufferMsLabel->setText(bufferMs(sz, sr));
-            });
+            this, [this](int) { updateBufferMsLabel(); });
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +424,25 @@ void DeviceCard::populateDeviceCombo()
 }
 
 // ---------------------------------------------------------------------------
+// updateBufferMsLabel — recompute the derived milliseconds readout
+// ---------------------------------------------------------------------------
+void DeviceCard::updateBufferMsLabel()
+{
+    if (!m_bufferMsLabel) {
+        return;
+    }
+    const int sz = m_bufferSizeCombo ? m_bufferSizeCombo->currentData().toInt() : 256;
+    const int sr = m_sampleRateCombo ? m_sampleRateCombo->currentData().toInt() : 48000;
+    m_bufferMsLabel->setText(bufferMs(sz, sr));
+}
+
+// ---------------------------------------------------------------------------
 // currentConfig
+//
+// Note: autoMatchSampleRate, monitorDuringTx, and toneCheck are session-only
+// UI helpers by design — not part of AudioDeviceConfig's 10 persisted fields
+// and not round-tripped through loadFromSettings/saveToSettings.  If future
+// requirements change, extend AudioDeviceConfig.
 // ---------------------------------------------------------------------------
 AudioDeviceConfig DeviceCard::currentConfig() const
 {
@@ -510,14 +531,15 @@ void DeviceCard::loadFromSettings()
         m_deviceCombo->setCurrentIndex(idx >= 0 ? idx : 0);
     }
 
-    // Driver API.
+    // Driver API — look up by display text (api.name is the item text, set in
+    // buildLayout).  Empty driverApi falls through to index 0 ("(PortAudio
+    // default)").  findText returns -1 on no match; guard keeps found == 0.
     if (m_driverApiCombo) {
-        // Try to find the named API.
         int found = 0;
-        for (int i = 0; i < m_driverApiCombo->count(); ++i) {
-            if (m_driverApiCombo->itemText(i) == cfg.driverApi) {
-                found = i;
-                break;
+        if (!cfg.driverApi.isEmpty()) {
+            const int byName = m_driverApiCombo->findText(cfg.driverApi);
+            if (byName >= 0) {
+                found = byName;
             }
         }
         m_driverApiCombo->setCurrentIndex(found);

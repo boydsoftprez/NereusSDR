@@ -164,9 +164,9 @@ private slots:
 
     // ── 5. Multiple rapid speakersConfigChanged don't crash ─────────────────
     //
-    // Crash / stability smoke test.  All 20 emissions must be flushed
-    // without fault; qWait(50) gives the event loop the full addendum §4
-    // budget to process any pending queued events before the assertion.
+    // Crash / stability smoke test.  All 20 emissions are delivered
+    // synchronously (direct connections); qWait(50) lets the event loop
+    // settle before the smoke assertion.
 
     void rapidConfigChangedDoesNotCrash() {
         AudioEngine engine;

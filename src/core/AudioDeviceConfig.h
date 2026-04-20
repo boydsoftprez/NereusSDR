@@ -35,10 +35,11 @@ struct AudioDeviceConfig {
 
     // ── Sub-Phase 12 additional 5 fields ───────────────────────────────────
     // Human-readable host API name (e.g. "Windows WASAPI", "CoreAudio",
-    // "ALSA"). Empty string means "use hostApiIndex / PortAudio default".
-    // The two fields coexist: driverApi is the Settings round-trip form;
-    // hostApiIndex is the PortAudio runtime form. loadFromSettings populates
-    // hostApiIndex by scanning Pa_GetHostApiInfo() by name when available.
+    // "ALSA"). Empty string means "use PortAudio default".
+    // driverApi is the Settings round-trip form; hostApiIndex is the
+    // PortAudio runtime form. loadFromSettings leaves hostApiIndex at -1;
+    // the value is resolved from driverApi at the callsite that opens the
+    // bus (currently DeviceCard::currentConfig via the combo's itemData).
     QString driverApi;             // empty = PortAudio default
     int     bitDepth      = 32;    // bit depth hint for WASAPI/ASIO: 16/24/32
     bool    eventDriven   = false; // WASAPI event-driven mode

@@ -12,8 +12,8 @@
 //   5. updateNegotiatedPill() doesn't crash with a valid config.
 //   6. updateNegotiatedPill() with error string doesn't crash.
 //   7. loadFromSettings with no prior keys populates defaults.
-//   8. configChanged signal emits when a combo is changed programmatically
-//      (via QComboBox::setCurrentIndex).
+//   8. configChanged signal emits when the driver-API combo is changed
+//      programmatically (via QComboBox::setCurrentIndex).
 //   9. AppSettings round-trip: DeviceCard saves on control change;
 //      a second loadFromSettings reads the same values back.
 //  10. Headphones card: enabledChanged fires when checkable toggled.
@@ -138,12 +138,12 @@ private slots:
         QVERIFY(cfg.channels >= 1 && cfg.channels <= 2);
     }
 
-    // ── 8. configChanged emits when buffer-size combo is changed ──────────
+    // ── 8. configChanged emits when driver-API combo is changed ──────────
     //
     // DeviceCard uses QComboBox::currentIndexChanged internally.
-    // We locate the combo by iterating children.
+    // We locate the first combo (driver-API) and change its index.
 
-    void configChangedEmitsOnBufferSizeChange() {
+    void configChangedEmitsOnDriverApiChange() {
         DeviceCard card(QStringLiteral("audio/Speakers"),
                         DeviceCard::Role::Output,
                         nullptr, false);

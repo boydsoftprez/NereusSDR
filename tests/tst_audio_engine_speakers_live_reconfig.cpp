@@ -8,15 +8,16 @@
 // Coverage:
 //   1. setSpeakersConfig while rxBlockReady "simulates DSP traffic"
 //      doesn't crash and doesn't cause a use-after-free.
-//   2. speakersConfigChanged emits after setSpeakersConfig (debounce
-//      disabled for tests via setSpeakersDebounceDisabledForTest).
+//   2. speakersConfigChanged emits after setSpeakersConfig (applied
+//      synchronously — no debounce in AudioEngine; debounce lives in
+//      DeviceCard's buffer-size combo per addendum §2.1).
 //   3. rxBlockReady drops block when m_speakersBusMutex is held.
 //   4. setHeadphonesConfig emits headphonesConfigChanged.
 //   5. setTxInputConfig emits txInputConfigChanged.
 //   6. setVaxConfig emits vaxConfigChanged for each channel.
 //
 // Uses the NEREUS_BUILD_TESTS seam (setSpeakersBusForTest,
-// setSpeakersDebounceDisabledForTest, setHeadphonesBusForTest).
+// setHeadphonesBusForTest).
 //
 // Design spec:
 //   docs/architecture/2026-04-20-phase3o-subphase12-addendum.md §4
@@ -65,7 +66,7 @@ private:
         Harness h;
         h.radio  = std::make_unique<RadioModel>();
         h.engine = h.radio->audioEngine();
-        h.engine->setSpeakersDebounceDisabledForTest(true);
+        // No debounce in AudioEngine — setSpeakersConfig applies synchronously.
 
         auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeSpeakers"));
         AudioFormat fmt;
@@ -114,7 +115,7 @@ private slots:
         cfg.deviceName = QString();
         h.engine->setSpeakersConfig(cfg);
 
-        // Signal fires synchronously (debounce disabled in test).
+        // Signal fires synchronously (setSpeakersConfig applies synchronously).
         QVERIFY(spy.count() >= 1);
     }
 
@@ -150,7 +151,6 @@ private slots:
 
     void setHeadphonesConfigEmitsSignal() {
         AudioEngine engine;
-        engine.setSpeakersDebounceDisabledForTest(true);
 
         QSignalSpy spy(&engine, &AudioEngine::headphonesConfigChanged);
 

@@ -63,7 +63,6 @@
 
 #include <QObject>
 #include <QString>
-#include <QTimer>
 
 #include <array>
 #include <atomic>
@@ -116,8 +115,10 @@ public:
     // rxBlockReady's try_lock can safely detect an in-progress reconfig
     // and drop the block (≤1 ms of silence is inaudible vs. a use-after-
     // free). setSpeakersConfig itself must NOT be called recursively
-    // (not re-entrant); the debounce timer inside the method coalesces
-    // rapid buffer-size scrub calls before the mutex is acquired.
+    // (not re-entrant); it applies synchronously. The 200 ms intra-control
+    // debounce for rapid buffer-size scrub lives in DeviceCard, not here —
+    // see addendum §2.1 "intra-control only" wording.
+    // Handlers may synchronously call setSpeakersConfig (mutex is released before emit).
     void setSpeakersConfig(const AudioDeviceConfig& cfg);
     void setHeadphonesConfig(const AudioDeviceConfig& cfg);
     void setTxInputConfig(const AudioDeviceConfig& cfg);
@@ -149,10 +150,6 @@ public:
 
     // Test seam — inject a fake IAudioBus into the headphones slot.
     void setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus);
-
-    // Test seam — suppress the 200ms debounce so setSpeakersConfig takes
-    // effect synchronously in tests. Must be called before setSpeakersConfig.
-    void setSpeakersDebounceDisabledForTest(bool disabled);
 #endif
 
     // Called by RxDspWorker when a slice produces an RX audio block.
@@ -210,7 +207,7 @@ signals:
     void vaxConfigChanged(int channel, NereusSDR::AudioDeviceConfig cfg);
 
 private:
-    // Sub-Phase 12: actual speakers-bus rebuild (called after 200ms debounce).
+    // Sub-Phase 12: speakers-bus rebuild (called directly from setSpeakersConfig).
     void applySpeakersConfig(const AudioDeviceConfig& cfg);
 
     // Translate AudioDeviceConfig → AudioFormat + PortAudioConfig and
@@ -244,13 +241,6 @@ private:
     // (≤1 ms of silence is inaudible vs. a use-after-free). NOT held in the
     // audio callback path (acquires try_lock only; never blocks).
     std::mutex m_speakersBusMutex;
-
-    // Sub-Phase 12 Task 12.2 — 200 ms debounce timer for setSpeakersConfig.
-    // Coalesces rapid buffer-size scrub calls from the UI before the mutex
-    // is acquired. Single-shot; recreated on each call. Intra-control only.
-    std::unique_ptr<QTimer> m_speakersDebounceTimer;
-    // Pending config from the last setSpeakersConfig call (debounced).
-    AudioDeviceConfig m_pendingSpeakersConfig;
 
     std::unique_ptr<IAudioBus> m_speakersBus;
     std::unique_ptr<IAudioBus> m_headphonesBus;
@@ -297,9 +287,6 @@ private:
     // terminate.
     bool m_paInitialized{false};
     bool m_running{false};
-#ifdef NEREUS_BUILD_TESTS
-    bool m_speakersDebounceDisabled{false};
-#endif
     // Was sliceId 0 registered with MasterMixer? startup-only invariant
     // per design-decision D6 (plan); prevents a main-thread insert/rehash
     // race against the audio thread's lock-free find().

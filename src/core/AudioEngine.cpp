@@ -60,11 +60,13 @@
 //                 signals (speakersConfigChanged / headphonesConfigChanged /
 //                 txInputConfigChanged / vaxConfigChanged), m_speakersBusMutex
 //                 live-reconfig safety (try_lock in rxBlockReady + exclusive
-//                 lock in setSpeakersConfig), 200ms intra-control debounce
-//                 timer in setSpeakersConfig, ensureSpeakersOpen() now reads
+//                 lock in setSpeakersConfig), ensureSpeakersOpen() now reads
 //                 AudioDeviceConfig::loadFromSettings("audio/Speakers"),
 //                 setHeadphonesConfig() added, and MasterOutputWidget wired
 //                 to speakersConfigChanged for live device-label sync.
+//                 Code-review follow-up: 200ms buffer-size debounce moved from
+//                 AudioEngine::setSpeakersConfig to DeviceCard (addendum §2.1);
+//                 setSpeakersConfig now applies synchronously.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -382,28 +384,11 @@ void AudioEngine::ensureSpeakersOpen()
 
 void AudioEngine::setSpeakersConfig(const AudioDeviceConfig& cfg)
 {
-    // Sub-Phase 12 Task 12.2: 200ms intra-control debounce for rapid
-    // buffer-size scrub. Store the pending config; the single-shot timer
-    // fires the actual rebuild after the UI settles.
-    m_pendingSpeakersConfig = cfg;
-
-#ifdef NEREUS_BUILD_TESTS
-    if (m_speakersDebounceDisabled) {
-        // Test path: apply synchronously, skip the timer.
-        applySpeakersConfig(m_pendingSpeakersConfig);
-        return;
-    }
-#endif
-
-    if (!m_speakersDebounceTimer) {
-        m_speakersDebounceTimer = std::make_unique<QTimer>(this);
-        m_speakersDebounceTimer->setSingleShot(true);
-        connect(m_speakersDebounceTimer.get(), &QTimer::timeout, this, [this]() {
-            applySpeakersConfig(m_pendingSpeakersConfig);
-        });
-    }
-    // Restart the timer each call — coalesces rapid scrub changes.
-    m_speakersDebounceTimer->start(200);
+    // Sub-Phase 12 Task 12.2: applies synchronously.  The 200 ms intra-control
+    // debounce for rapid buffer-size scrub lives in DeviceCard (buffer-size
+    // combo only) — not here.  Mutex released before emit so handlers may
+    // call setSpeakersConfig without deadlocking.
+    applySpeakersConfig(cfg);
 }
 
 void AudioEngine::applySpeakersConfig(const AudioDeviceConfig& cfg)
@@ -547,11 +532,6 @@ void AudioEngine::setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus)
 void AudioEngine::setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus)
 {
     m_headphonesBus = std::move(bus);
-}
-
-void AudioEngine::setSpeakersDebounceDisabledForTest(bool disabled)
-{
-    m_speakersDebounceDisabled = disabled;
 }
 #endif
 
