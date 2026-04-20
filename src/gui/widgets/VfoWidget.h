@@ -333,6 +333,14 @@ public:
     explicit VfoWidget(QWidget* parent = nullptr);
     ~VfoWidget() override;
 
+    // Parse a user-entered frequency string and return Hz, or -1.0 on failure.
+    // Accepts MHz decimal ("7.23"), EU decimal ("7,23"), EU thousand-separated
+    // Hz ("7.230.000"), US thousand-separated Hz ("7,230,000"), explicit unit
+    // suffix ("7.23 MHz" / "7230 kHz" / "7230000 Hz" / "7.23M" / "7230k"), or
+    // a plain number (best-fit unit by Red Pitaya range). Separate from the
+    // returnPressed lambda so the logic is unit-testable. See issue #73.
+    static double parseUserFrequency(const QString& raw);
+
     // --- State setters (called from model, guarded against re-emit) ---
 
     void setFrequency(double hz);

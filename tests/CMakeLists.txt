@@ -97,6 +97,9 @@ nereus_add_test(tst_scrollable_label)
 nereus_add_test(tst_vfo_mode_containers)
 nereus_add_test(tst_vfo_tooltip_coverage)
 
+# Regression test for issue #73 — VfoWidget frequency-entry parser
+nereus_add_test(tst_vfo_frequency_parser)
+
 # ── Phase 3G-10 Stage 2: WDSP wiring — AGC advanced ──────────────────────
 nereus_add_test(tst_rxchannel_agc_advanced)
 nereus_add_test(tst_slice_agc_advanced)
