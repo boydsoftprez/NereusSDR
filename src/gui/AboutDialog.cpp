@@ -310,6 +310,7 @@ void AboutDialog::buildUI()
             "<a href=\"https://github.com/mi0bot/OpenHPSDR-Thetis\">mi0bot fork (HL2)</a> &nbsp;·&nbsp; "
             "<a href=\"https://github.com/ten9876/AetherSDR\">AetherSDR</a><br>"
             "<a href=\"https://github.com/TAPR/OpenHPSDR-wdsp\">WDSP (TAPR)</a> &nbsp;·&nbsp; "
+            "<a href=\"https://github.com/g0orx/wdsp\">g0orx/wdsp fork</a> &nbsp;·&nbsp; "
             "<a href=\"https://github.com/TAPR/OpenHPSDR-Protocol1-Programmers\">OpenHPSDR Protocol 1</a> &nbsp;·&nbsp; "
             "<a href=\"https://github.com/TAPR/OpenHPSDR-Protocol2-Programmers\">Protocol 2</a><br>"
             "<a href=\"https://community.apache-labs.com/index.php\">Apache-Labs Community</a> &nbsp;·&nbsp; "
