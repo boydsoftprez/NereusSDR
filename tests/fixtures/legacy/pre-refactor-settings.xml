@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NereusSDR>
+    <ContainerCount>4</ContainerCount>
+    <ContainerData_5d0374d3-7791-4326-a0ab-d4fbdbc4b646>5d0374d3-7791-4326-a0ab-d4fbdbc4b646|1|0|0|640|480|true|0|0|TOPLEFT|false|true|#ff0f0f1a|false|true|Meter|true|false|true|true|false|true|false|FLOATING|true</ContainerData_5d0374d3-7791-4326-a0ab-d4fbdbc4b646>
+    <ContainerData_677c4065-c041-48eb-b81c-8bdcb4a83bc2>677c4065-c041-48eb-b81c-8bdcb4a83bc2|1|0|0|640|480|true|0|0|TOPLEFT|false|true|#ff0f0f1a|false|true|Meter1|true|false|true|true|false|true|false|FLOATING|true</ContainerData_677c4065-c041-48eb-b81c-8bdcb4a83bc2>
+    <ContainerData_aa61120d-7a14-4bfc-91c3-97cee50b6803>aa61120d-7a14-4bfc-91c3-97cee50b6803|1|0|0|640|480|false|0|0|TOPLEFT|false|true|#ff0f0f1a|false|true|Main Panel|true|false|true|true|false|true|false|PANEL|true</ContainerData_aa61120d-7a14-4bfc-91c3-97cee50b6803>
+    <ContainerData_ed1ed15d-965c-4393-bee2-7b5cd393a248>ed1ed15d-965c-4393-bee2-7b5cd393a248|1|0|0|640|480|true|0|0|TOPLEFT|false|true|#ff0f0f1a|false|true|Meter|true|false|true|true|false|true|false|FLOATING|true</ContainerData_ed1ed15d-965c-4393-bee2-7b5cd393a248>
+    <ContainerIdList>5d0374d3-7791-4326-a0ab-d4fbdbc4b646,677c4065-c041-48eb-b81c-8bdcb4a83bc2,aa61120d-7a14-4bfc-91c3-97cee50b6803,ed1ed15d-965c-4393-bee2-7b5cd393a248</ContainerIdList>
+    <ContainerItems_5d0374d3-7791-4326-a0ab-d4fbdbc4b646>NEEDLE|0|0|1|1|0|5|S-Meter|0|0|0|0|#ffffffff|0|0|1|1|1|0|0|100|0.3|0.3</ContainerItems_5d0374d3-7791-4326-a0ab-d4fbdbc4b646>
+    <ContainerItems_677c4065-c041-48eb-b81c-8bdcb4a83bc2>IMAGE|0|0|1|0.441|-1|1|:/meters/ananMM.png
+NEEDLE|0|0|1|0.441|1|10|Signal|1|0|0|16|-127:0.076:0.31|-121:0.131:0.272|-115:0.189:0.254|-109:0.233:0.211|-103:0.284:0.207|-97:0.326:0.177|-91:0.374:0.177|-85:0.414:0.151|-79:0.459:0.168|-73:0.501:0.142|-63:0.564:0.172|-53:0.63:0.164|-43:0.695:0.203|-33:0.769:0.211|-23:0.838:0.272|-13:0.926:0.31|#ffe93332|0.004|0.736|1|0.58|1.65|0|0|100|0.8|0.2
+NEEDLE|0|0|1|0.441|200|10|Volts|0|0|0|3|10:0.559:0.756|12.5:0.605:0.772|15:0.665:0.784|#ff000000|0.004|0.736|1|0.58|0.75|0|0|100|0.2|0.2
+NEEDLE|0|0|1|0.441|201|10|Amps|0|1|4|11|0:0.199:0.576|2:0.27:0.54|4:0.333:0.516|6:0.393:0.504|8:0.448:0.492|10:0.499:0.492|12:0.554:0.488|14:0.608:0.5|16:0.667:0.516|18:0.728:0.54|20:0.799:0.576|#ff000000|0.004|0.736|1|0.58|1.15|0|0|100|0.3|0.3
+NEEDLE|0|0|1|0.441|100|10|Power|0|1|1|10|0:0.099:0.352|5:0.164:0.312|10:0.224:0.28|25:0.335:0.236|30:0.367:0.228|40:0.436:0.22|50:0.499:0.212|60:0.559:0.216|100:0.751:0.272|150:0.899:0.352|#ffe93332|0.004|0.736|1|0.58|1.55|0|1|100|0.2|0.1
+NEEDLESCALEPWR|0|0|1|0.441|-1|11|#ffa0a0a4|#ffff0000|Trebuchet MS|22|1|7|150|0|10|0:0.099:0.352|5:0.164:0.312|10:0.224:0.28|25:0.335:0.236|30:0.367:0.228|40:0.436:0.22|50:0.499:0.212|60:0.559:0.216|100:0.751:0.272|150:0.899:0.352|0|1|1
+NEEDLE|0|0|1|0.441|102|10|SWR|0|1|1|6|1:0.152:0.468|1.5:0.28:0.404|2:0.393:0.372|2.5:0.448:0.36|3:0.499:0.36|10:0.847:0.476|#ff000000|0.004|0.736|1|0.58|1.36|0|0|100|0.3|0.3
+NEEDLE|0|0|1|0.441|109|10|Compression|0|1|2|7|0:0.249:0.68|5:0.342:0.64|10:0.425:0.624|15:0.499:0.62|20:0.571:0.628|25:0.656:0.64|30:0.751:0.688|#ff000000|0.004|0.736|1|0.58|0.96|0|0|100|0.3|0.3
+NEEDLE|0|0|1|0.441|110|10|ALC|0|1|3|3|-30:0.295:0.804|0:0.332:0.784|25:0.499:0.756|#ff000000|0.004|0.736|1|0.58|0.75|0|0|100|0.3|0.3</ContainerItems_677c4065-c041-48eb-b81c-8bdcb4a83bc2>
+    <ContainerItems_aa61120d-7a14-4bfc-91c3-97cee50b6803>NEEDLE|0|0|1|0.45|1|5|S-Meter|0|0|0|0|#ffffffff|0|0|1|1|1|0|0|100|0.3|0.3
+SOLID|0|0.45|1|0.4|-1|0|#ff0f0f1a
+TEXT|0.02|0.85|0.5|0.0833333|-1|10|Power|#ff8090a0|10|0| dBm|1
+TEXT|0.5|0.85|0.48|0.0833333|100|10||#ffc8d8e8|13|1| W|0
+BAR|0.02|0.933333|0.96|0.0833333|100|5|H|0|120|#ff00b4d8|#ffff4444|100|0.8|0.1|Filled|#ff000000|#ffffffff|#ffff0000|#ffffff00|0|0|#ffffff00|0|#80ff0000|4000|0|#ffffff00|#ffff0000|0||
+SCALE|0.02|1.01667|0.96|0.0833333|-1|10|H|0|120|7|3|#ffc8d8e8|#ff8090a0|8|0|#ffff0000|L|#ffc8d8e8|#ffff8040|6|3|-1|60|2|20|-1
+TEXT|0.02|1.1|0.5|0.0833333|-1|10|SWR|#ff8090a0|10|0| dBm|1
+TEXT|0.5|1.1|0.48|0.0833333|102|10||#ffc8d8e8|13|1|:1|1
+BAR|0.02|1.18333|0.96|0.0833333|102|5|H|1|5|#ff00b4d8|#ffff4444|3|0.8|0.1|Filled|#ff000000|#ffffffff|#ffff0000|#ffffff00|0|0|#ffffff00|0|#80ff0000|4000|0|#ffffff00|#ffff0000|0||
+SCALE|0.02|1.26667|0.96|0.0833333|-1|10|H|1|5|5|1|#ffc8d8e8|#ff8090a0|8|0|#ffff0000|L|#ffc8d8e8|#ffff8040|6|3|-1|60|2|20|-1
+SOLID|0|1.35|1|0.0833333|-1|1|#ff202020
+BAR|0.02|1.3875|0.96|0.0416667|105|2|H|-30|12|#ffffffff|#ffff0000|0|0.8|0.1|Line|#ff000000|#ffffffff|#ffff0000|#ffffff00|1|1|#ffffffff|1|#80fffacd|2000|1|#ffffff00|#ffff0000|0.02|-30=0;0=0.665;12=0.99|#ffff0000
+SCALE|0|1.35|1|0.0833333|105|3|H|-30|12|6|4|#ffc8d8e8|#ff8090a0|10|1|#ffff0000|L|#ffc8d8e8|#ffff8040|6|3|-1|60|2|20|-1</ContainerItems_aa61120d-7a14-4bfc-91c3-97cee50b6803>
+    <ContainerItems_ed1ed15d-965c-4393-bee2-7b5cd393a248>SOLID|0|0|1|1|-1|0|#ff0f0f1a
+TEXT|0.02|0|0.5|0.15|-1|10|Power|#ff8090a0|10|0| dBm|1
+TEXT|0.5|0|0.48|0.15|100|10||#ffc8d8e8|13|1| W|0
+BAR|0.02|0.17|0.96|0.22|100|5|H|0|120|#ff00b4d8|#ffff4444|100|0.8|0.1|Filled|#ff000000|#ffffffff|#ffff0000|#ffffff00|0|0|#ffffff00|0|#80ff0000|4000|0|#ffffff00|#ffff0000|0||
+SCALE|0.02|0.4|0.96|0.12|-1|10|H|0|120|7|3|#ffc8d8e8|#ff8090a0|8|0|#ffff0000|L|#ffc8d8e8|#ffff8040|6|3|-1|60|2|20|-1
+TEXT|0.02|0.55|0.5|0.12|-1|10|SWR|#ff8090a0|10|0| dBm|1
+TEXT|0.5|0.55|0.48|0.12|102|10||#ffc8d8e8|13|1|:1|1
+BAR|0.02|0.69|0.96|0.15|102|5|H|1|5|#ff00b4d8|#ffff4444|3|0.8|0.1|Filled|#ff000000|#ffffffff|#ffff0000|#ffffff00|0|0|#ffffff00|0|#80ff0000|4000|0|#ffffff00|#ffff0000|0||
+SCALE|0.02|0.86|0.96|0.12|-1|10|H|1|5|5|1|#ffc8d8e8|#ff8090a0|8|0|#ffff0000|L|#ffc8d8e8|#ffff8040|6|3|-1|60|2|20|-1</ContainerItems_ed1ed15d-965c-4393-bee2-7b5cd393a248>
+    <DisplayAverageAlpha>0.35</DisplayAverageAlpha>
+    <DisplayAverageMode>1</DisplayAverageMode>
+    <DisplayBandEdgeColor>#ffff0000</DisplayBandEdgeColor>
+    <DisplayBandwidth>192000</DisplayBandwidth>
+    <DisplayCalOffset>0</DisplayCalOffset>
+    <DisplayCtunEnabled>True</DisplayCtunEnabled>
+    <DisplayFftFillAlpha>0.7</DisplayFftFillAlpha>
+    <DisplayFreqLabelAlign>1</DisplayFreqLabelAlign>
+    <DisplayGradientEnabled>False</DisplayGradientEnabled>
+    <DisplayGridColor>#28ffffff</DisplayGridColor>
+    <DisplayGridEnabled>True</DisplayGridEnabled>
+    <DisplayGridFineColor>#14ffffff</DisplayGridFineColor>
+    <DisplayGridMax>-40</DisplayGridMax>
+    <DisplayGridMin>-140</DisplayGridMin>
+    <DisplayGridTextColor>#ffffff00</DisplayGridTextColor>
+    <DisplayHGridColor>#28ffffff</DisplayHGridColor>
+    <DisplayLineWidth>1.5</DisplayLineWidth>
+    <DisplayPanFill>True</DisplayPanFill>
+    <DisplayPeakHoldDelayMs>2000</DisplayPeakHoldDelayMs>
+    <DisplayPeakHoldEnabled>False</DisplayPeakHoldEnabled>
+    <DisplayShowFps>False</DisplayShowFps>
+    <DisplayShowRxFilterOnWaterfall>False</DisplayShowRxFilterOnWaterfall>
+    <DisplayShowRxZeroLine>False</DisplayShowRxZeroLine>
+    <DisplayShowTxFilterOnRxWaterfall>False</DisplayShowTxFilterOnRxWaterfall>
+    <DisplayShowTxZeroLine>False</DisplayShowTxZeroLine>
+    <DisplayShowZeroLine>False</DisplayShowZeroLine>
+    <DisplaySpectrumFrac>0.4</DisplaySpectrumFrac>
+    <DisplayWfAgc>False</DisplayWfAgc>
+    <DisplayWfAverageMode>0</DisplayWfAverageMode>
+    <DisplayWfBlackLevel>15</DisplayWfBlackLevel>
+    <DisplayWfColorGain>50</DisplayWfColorGain>
+    <DisplayWfColorScheme>0</DisplayWfColorScheme>
+    <DisplayWfHighLevel>-80</DisplayWfHighLevel>
+    <DisplayWfLowLevel>-130</DisplayWfLowLevel>
+    <DisplayWfOpacity>100</DisplayWfOpacity>
+    <DisplayWfReverseScroll>False</DisplayWfReverseScroll>
+    <DisplayWfTimestampMode>0</DisplayWfTimestampMode>
+    <DisplayWfTimestampPos>0</DisplayWfTimestampPos>
+    <DisplayWfUpdatePeriodMs>50</DisplayWfUpdatePeriodMs>
+    <DisplayWfUseSpectrumMinMax>False</DisplayWfUseSpectrumMinMax>
+    <DisplayZeroLineColor>#ffff0000</DisplayZeroLineColor>
+    <MainSplitterSizes>774,503</MainSplitterSizes>
+    <MeterDisplay_5d0374d3-7791-4326-a0ab-d4fbdbc4b646_Geometry>319,224,640,480</MeterDisplay_5d0374d3-7791-4326-a0ab-d4fbdbc4b646_Geometry>
+    <MeterDisplay_677c4065-c041-48eb-b81c-8bdcb4a83bc2_Geometry>230,255,397,382</MeterDisplay_677c4065-c041-48eb-b81c-8bdcb4a83bc2_Geometry>
+    <MeterDisplay_aa61120d-7a14-4bfc-91c3-97cee50b6803_Geometry>0,0,640,480</MeterDisplay_aa61120d-7a14-4bfc-91c3-97cee50b6803_Geometry>
+    <MeterDisplay_ed1ed15d-965c-4393-bee2-7b5cd393a248_Geometry>319,224,640,480</MeterDisplay_ed1ed15d-965c-4393-bee2-7b5cd393a248_Geometry>
+    <Slice0__s__AfGain>0</Slice0__s__AfGain>
+    <Slice0__s__Band20m__s__AgcAttack>2</Slice0__s__Band20m__s__AgcAttack>
+    <Slice0__s__Band20m__s__AgcAutoEnabled>False</Slice0__s__Band20m__s__AgcAutoEnabled>
+    <Slice0__s__Band20m__s__AgcAutoOffset>20</Slice0__s__Band20m__s__AgcAutoOffset>
+    <Slice0__s__Band20m__s__AgcDecay>250</Slice0__s__Band20m__s__AgcDecay>
+    <Slice0__s__Band20m__s__AgcFixedGain>20</Slice0__s__Band20m__s__AgcFixedGain>
+    <Slice0__s__Band20m__s__AgcHang>250</Slice0__s__Band20m__s__AgcHang>
+    <Slice0__s__Band20m__s__AgcHangThreshold>0</Slice0__s__Band20m__s__AgcHangThreshold>
+    <Slice0__s__Band20m__s__AgcMaxGain>90</Slice0__s__Band20m__s__AgcMaxGain>
+    <Slice0__s__Band20m__s__AgcMode>3</Slice0__s__Band20m__s__AgcMode>
+    <Slice0__s__Band20m__s__AgcSlope>0</Slice0__s__Band20m__s__AgcSlope>
+    <Slice0__s__Band20m__s__AgcThreshold>-20</Slice0__s__Band20m__s__AgcThreshold>
+    <Slice0__s__Band20m__s__DspMode>1</Slice0__s__Band20m__s__DspMode>
+    <Slice0__s__Band20m__s__FilterHigh>3000</Slice0__s__Band20m__s__FilterHigh>
+    <Slice0__s__Band20m__s__FilterLow>100</Slice0__s__Band20m__s__FilterLow>
+    <Slice0__s__Band20m__s__Frequency>14181200</Slice0__s__Band20m__s__Frequency>
+    <Slice0__s__Band20m__s__StepHz>100</Slice0__s__Band20m__s__StepHz>
+    <Slice0__s__Locked>False</Slice0__s__Locked>
+    <Slice0__s__Muted>False</Slice0__s__Muted>
+    <Slice0__s__RfGain>80</Slice0__s__RfGain>
+    <Slice0__s__RitEnabled>False</Slice0__s__RitEnabled>
+    <Slice0__s__RitHz>0</Slice0__s__RitHz>
+    <Slice0__s__RxAntenna>ANT1</Slice0__s__RxAntenna>
+    <Slice0__s__TxAntenna>ANT1</Slice0__s__TxAntenna>
+    <Slice0__s__XitEnabled>False</Slice0__s__XitEnabled>
+    <Slice0__s__XitHz>0</Slice0__s__XitHz>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__autoConnect>True</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__autoConnect>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__boardType>10</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__boardType>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__firmwareVersion>27</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__firmwareVersion>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__ipAddress>192.168.109.45</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__ipAddress>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__lastSeen>2026-04-20T06:01:21Z</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__lastSeen>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__macAddress>2C:CF:67:AB:FC:F4</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__macAddress>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__modelOverride>11</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__modelOverride>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__name>ANAN-G2 (Saturn)</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__name>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__pinToMac>False</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__pinToMac>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__port>1024</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__port>
+    <radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__protocol>2</radios__s__2C__c__CF__c__67__c__AB__c__FC__c__F4__s__protocol>
+    <radios__s__lastConnected>2C:CF:67:AB:FC:F4</radios__s__lastConnected>
+</NereusSDR>
