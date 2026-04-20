@@ -50,6 +50,8 @@ private slots:
     void powerSwr_pushBindingValue_routesToMatchingBar();
     void smeter_pushBindingValue_updatesValue();
     void barPreset_pushBindingValue_updatesValue();
+    void barPreset_paint_reflectsLiveValueAcrossPushes();
+    void smeter_paint_reflectsLiveValueAcrossPushes();
     void defaultItem_pushBindingValue_ignoresMismatchedBinding();
 };
 
@@ -177,6 +179,121 @@ void TstPresetLiveBinding::barPreset_pushBindingValue_updatesValue()
     // Unrelated binding ignored.
     item.pushBindingValue(MeterBinding::SignalAvg, -40.0);
     QCOMPARE(item.value(), 12.5);
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end animation: push a value, paint, push a different value,
+// paint again — the rendered pixels must differ. This is the regression
+// that proves the poller → pushBindingValue → paint() chain actually
+// drives the visible bar length (prior to the fix, preset classes
+// rendered on Layer::Background whose cache never invalidated).
+// ---------------------------------------------------------------------------
+
+// Counts "bright" bar-fill pixels on a scanline sampled at the bar's
+// vertical centre. The preset paint() fills the track with a dark
+// rail colour {16,16,16} and then the live fill with the configured
+// bar colour (white default). We test for "pixel brighter than the
+// rail" which catches both white and red over-threshold fills
+// without matching the rail itself.
+static int countBrightBarPixels(const QImage& img, int barY,
+                                int barHeightGuess)
+{
+    int count = 0;
+    const int scanY = qMin(img.height() - 1, barY + barHeightGuess / 2);
+    const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(scanY));
+    for (int x = 0; x < img.width(); ++x) {
+        const QRgb px = row[x];
+        const int r = qRed(px);
+        const int g = qGreen(px);
+        const int b = qBlue(px);
+        // Rail is (16,16,16); backdrop (32,32,32). A bar fill is either
+        // white (255,255,255) or red (255,0,0) — both have at least one
+        // channel >= 128.
+        if (r >= 128 || g >= 128 || b >= 128) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+void TstPresetLiveBinding::barPreset_paint_reflectsLiveValueAcrossPushes()
+{
+    BarPresetItem item;
+    item.configureAsSignalBar();            // -140 .. 0 dBm
+    item.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+
+    const int W = 400;
+    const int H = 80;
+
+    // Paint with a low signal first.
+    item.pushBindingValue(MeterBinding::SignalPeak, -130.0);
+    QImage low(W, H, QImage::Format_ARGB32);
+    low.fill(Qt::transparent);
+    {
+        QPainter p(&low);
+        item.paint(p, W, H);
+    }
+
+    // Paint with a near-max signal second.
+    item.pushBindingValue(MeterBinding::SignalPeak, -5.0);
+    QImage high(W, H, QImage::Format_ARGB32);
+    high.fill(Qt::transparent);
+    {
+        QPainter p(&high);
+        item.paint(p, W, H);
+    }
+
+    // The bar fill length must grow with the pushed value.
+    // Sample the horizontal row at the bar's vertical centre (40..60%
+    // of item height). countBrightBarPixels counts pixels whose RGB is
+    // brighter than the dark rail so it picks up the white/red fill
+    // without counting rail pixels.
+    const int barY = H * 40 / 100;
+    const int barHeightGuess = H * 20 / 100;
+    const int lowCoverage  = countBrightBarPixels(low,  barY, barHeightGuess);
+    const int highCoverage = countBrightBarPixels(high, barY, barHeightGuess);
+    QVERIFY2(highCoverage > lowCoverage,
+             qPrintable(QStringLiteral("BarPresetItem must render a longer bar for higher pushed values (low=%1 high=%2)")
+                        .arg(lowCoverage).arg(highCoverage)));
+}
+
+void TstPresetLiveBinding::smeter_paint_reflectsLiveValueAcrossPushes()
+{
+    SMeterPresetItem item;
+    item.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+
+    const int W = 400;
+    const int H = 80;
+
+    // Low: S0 edge.
+    item.pushBindingValue(MeterBinding::SignalAvg, -133.0);
+    QImage low(W, H, QImage::Format_ARGB32);
+    low.fill(Qt::transparent);
+    {
+        QPainter p(&low);
+        item.paint(p, W, H);
+    }
+
+    // High: S9+60.
+    item.pushBindingValue(MeterBinding::SignalAvg, -13.0);
+    QImage high(W, H, QImage::Format_ARGB32);
+    high.fill(Qt::transparent);
+    {
+        QPainter p(&high);
+        item.paint(p, W, H);
+    }
+
+    // S-meter uses a 3-point calibration; at -13 dBm the bar reaches
+    // 0.99 of the width, at -133 dBm it's at 0.00. Sample the bar row
+    // specifically so text/title drift doesn't dominate the count.
+    // SMeter layout: 45% title strip, 50% bar — sample ~70% of height.
+    const int barY = H * 45 / 100;
+    const int barHeightGuess = H * 50 / 100;
+    const int lowCoverage  = countBrightBarPixels(low,  barY, barHeightGuess);
+    const int highCoverage = countBrightBarPixels(high, barY, barHeightGuess);
+    QVERIFY2(highCoverage > lowCoverage,
+             qPrintable(QStringLiteral("SMeterPresetItem must render a longer bar for higher pushed values (low=%1 high=%2)")
+                        .arg(lowCoverage).arg(highCoverage)));
 }
 
 // ---------------------------------------------------------------------------

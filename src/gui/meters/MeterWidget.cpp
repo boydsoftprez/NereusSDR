@@ -212,6 +212,21 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
         item->pushBindingValue(bindingId, value);
     }
 #ifdef NEREUS_GPU_SPECTRUM
+    // Edit-container refactor Task 20 follow-up — the first-class
+    // preset classes (SMeterPresetItem, BarPresetItem, AnanMultiMeter,
+    // CrossNeedleItem, PowerSwrPresetItem, etc.) all declare
+    // renderLayer() == Background. The Background pipeline only
+    // repaints when m_bgDirty flips, so without also invalidating
+    // it here the bg texture stays cached from frame 1 and presets
+    // appear frozen even though their internal m_value is updating
+    // correctly. The issue is visible on the ANAN-G2 SignalAvg
+    // S-meter and on every BarPresetItem flavour. Flipping both
+    // dirty bits on every poll tick reduces Background caching for
+    // live-data presets to a no-op, which is the correct behaviour
+    // since preset paint() reads the just-updated value(). Non-
+    // live-data items (SolidColourItem, ImageItem) also repaint but
+    // they're cheap.
+    m_bgDirty = true;
     markDynamicDirty();
 #else
     update();
