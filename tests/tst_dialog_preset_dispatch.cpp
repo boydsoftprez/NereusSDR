@@ -43,6 +43,14 @@ private slots:
     void addSMeter_createsOneSMeterPresetItem();
     void addPowerSwr_createsOnePowerSwrPresetItem();
     void addSignalBar_createsOneBarPresetItem();
+    // Critical-fix coverage — every preset class must route to
+    // PresetItemEditor rather than falling through to the empty page
+    // when the in-use row is selected. The JSON-format serializer
+    // lacks a '|' pipe so the legacy tag-dispatch path missed these.
+    void selectAnanMmRow_propertyEditorNotEmpty();
+    void selectSMeterRow_propertyEditorNotEmpty();
+    void selectAlcGainRow_propertyEditorNotEmpty();
+    void selectVfoDisplayRow_propertyEditorNotEmpty();
 };
 
 namespace {
@@ -123,6 +131,56 @@ void TstDialogPresetDispatch::addSignalBar_createsOneBarPresetItem()
     QVERIFY2(bar != nullptr,
              "Bar-row preset must route to BarPresetItem");
     QCOMPARE(bar->presetKind(), BarPresetItem::Kind::SignalBar);
+}
+
+// ---------------------------------------------------------------------------
+// Critical-fix coverage — property editor is NOT the empty page.
+//
+// Bug: preset classes serialize as JSON ("{"kind":...) with no '|' so
+// the tag-dispatch path in buildTypeSpecificEditor() failed to match
+// and returned nullptr, leaving the property pane on the empty page.
+// Fix routes JSON-prefixed payloads to the shared PresetItemEditor.
+// ---------------------------------------------------------------------------
+
+void TstDialogPresetDispatch::selectAnanMmRow_propertyEditorNotEmpty()
+{
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    dlg.appendPresetRowForTest(QStringLiteral("AnanMM"));
+    dlg.selectInUseRowForTest(0);
+    QVERIFY2(!dlg.propertyStackCurrentIsEmpty(),
+             "AnanMultiMeterItem row must populate PresetItemEditor, "
+             "not fall through to the empty page");
+}
+
+void TstDialogPresetDispatch::selectSMeterRow_propertyEditorNotEmpty()
+{
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    dlg.appendPresetRowForTest(QStringLiteral("SMeter"));
+    dlg.selectInUseRowForTest(0);
+    QVERIFY(!dlg.propertyStackCurrentIsEmpty());
+}
+
+void TstDialogPresetDispatch::selectAlcGainRow_propertyEditorNotEmpty()
+{
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    dlg.appendPresetRowForTest(QStringLiteral("AlcGain"));
+    dlg.selectInUseRowForTest(0);
+    QVERIFY2(!dlg.propertyStackCurrentIsEmpty(),
+             "BarPresetItem (AlcGain flavour) must populate "
+             "PresetItemEditor with kindString readout");
+}
+
+void TstDialogPresetDispatch::selectVfoDisplayRow_propertyEditorNotEmpty()
+{
+    // Generic preset path — no class-specific controls, just X/Y/W/H.
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    dlg.appendPresetRowForTest(QStringLiteral("VfoDisplayPreset"));
+    dlg.selectInUseRowForTest(0);
+    QVERIFY(!dlg.propertyStackCurrentIsEmpty());
 }
 
 QTEST_MAIN(TstDialogPresetDispatch)
