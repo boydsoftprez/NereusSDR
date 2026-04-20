@@ -162,3 +162,6 @@ nereus_add_test(tst_power_swr_preset_item)
 
 # ── Edit Container refactor: Task 5 — MagicEyePresetItem ─────────────────
 nereus_add_test(tst_magic_eye_preset_item)
+
+# ── Edit Container refactor: Task 6 — SignalTextPresetItem ───────────────
+nereus_add_test(tst_signal_text_preset_item)
