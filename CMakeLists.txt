@@ -719,6 +719,8 @@ set(GUI_SOURCES
     src/gui/meters/presets/PresetGeometry.h
     src/gui/meters/presets/AnanMultiMeterItem.h
     src/gui/meters/presets/AnanMultiMeterItem.cpp
+    src/gui/meters/presets/BarPresetItem.h
+    src/gui/meters/presets/BarPresetItem.cpp
     src/gui/meters/presets/CrossNeedleItem.h
     src/gui/meters/presets/CrossNeedleItem.cpp
     src/gui/meters/presets/SMeterPresetItem.h
