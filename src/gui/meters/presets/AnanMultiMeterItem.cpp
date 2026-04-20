@@ -294,18 +294,32 @@ void AnanMultiMeterItem::initialiseNeedles()
     // NeedleOffset (0.004, 0.736) is from MeterManager.cs:22486
     // [@501e3f5]; RadiusRatio (1.0, 0.58) is from :22487 [@501e3f5].
 
-    // Shared main-arc geometry ports (5 needles).
-    constexpr QPointF kMainPivot(0.004, 0.736);
-    constexpr QPointF kMainRadius(1.0, 0.58);
+    // Shared main-arc geometry — NereusSDR-original, derived by
+    // visual + numeric iteration against the new face art.
+    //
+    // Pivot at rect-fraction offset (0.0, 0.390) → pixel (752, 612)
+    // for the 1504×688 face: centre-x, 89% down, on the visible
+    // root-arc line just above the "NEREUS SDR" text band.
+    //
+    // RadiusRatio (0.50, 0.40) combined with per-needle LFs below
+    // (tuned so each needle's midpoint tip lands on its respective
+    // scale on the face) scales the tip ellipse to fit inside the
+    // face instead of Thetis's wider ananMM.png geometry. Verified
+    // numerically: Signal/Amps/Comp midpoints spot-on; Power/SWR
+    // within ~25 px of their calibration midpoints.
+    constexpr QPointF kMainPivot(0.0, 0.390);
+    constexpr QPointF kMainRadius(0.50, 0.40);
 
-    // Signal — Thetis LengthFactor 1.65 (MeterManager.cs:22488 [@501e3f5])
+    // Signal — NereusSDR-original lengthFactor 1.70 (tuned for new face;
+    // Thetis used 1.65 at MeterManager.cs:22488 [@501e3f5] for its
+    // different face geometry).
     m_needles[0].name         = QStringLiteral("Signal");
     m_needles[0].bindingId    = MeterBinding::SignalAvg;
     m_needles[0].calibration  = makeSignalCal();
     m_needles[0].color        = kColorSignal;
     m_needles[0].pivot        = kMainPivot;
     m_needles[0].radiusRatio  = kMainRadius;
-    m_needles[0].lengthFactor = 1.65f;
+    m_needles[0].lengthFactor = 1.70f;
 
     // Volts — NereusSDR-original, bottom-right small arc.
     // Arc centre on the new face art is approximately at pixel
@@ -321,43 +335,47 @@ void AnanMultiMeterItem::initialiseNeedles()
     m_needles[1].color        = kColorVolts;
     m_needles[1].pivot        = QPointF(0.227, 0.299);
     m_needles[1].radiusRatio  = QPointF(1.0, 1.0);
-    m_needles[1].lengthFactor = 0.28f;
+    m_needles[1].lengthFactor = 0.10f;   // Volts — trim tip to sub-arc
 
-    // Amps — Thetis LengthFactor 1.15 (MeterManager.cs:22558 [@501e3f5])
+    // Amps — NereusSDR-original lengthFactor 0.91 (Thetis 1.15 at
+    // MeterManager.cs:22558 [@501e3f5] — retuned for new face geometry).
     m_needles[2].name         = QStringLiteral("Amps");
     m_needles[2].bindingId    = MeterBinding::HwAmps;
     m_needles[2].calibration  = makeAmpsCal();
     m_needles[2].color        = kColorAmps;
     m_needles[2].pivot        = kMainPivot;
     m_needles[2].radiusRatio  = kMainRadius;
-    m_needles[2].lengthFactor = 1.15f;
+    m_needles[2].lengthFactor = 0.91f;
 
-    // Power — Thetis LengthFactor 1.55 (MeterManager.cs:22628 [@501e3f5])
+    // Power — NereusSDR-original lengthFactor 1.67 (Thetis 1.55 at
+    // MeterManager.cs:22628 [@501e3f5]).
     m_needles[3].name         = QStringLiteral("Power");
     m_needles[3].bindingId    = MeterBinding::TxPower;
     m_needles[3].calibration  = makePowerCal();
     m_needles[3].color        = kColorPower;
     m_needles[3].pivot        = kMainPivot;
     m_needles[3].radiusRatio  = kMainRadius;
-    m_needles[3].lengthFactor = 1.55f;
+    m_needles[3].lengthFactor = 1.67f;
 
-    // SWR — Thetis LengthFactor 1.36 (MeterManager.cs:22691 [@501e3f5])
+    // SWR — NereusSDR-original lengthFactor 1.28 (Thetis 1.36 at
+    // MeterManager.cs:22691 [@501e3f5]).
     m_needles[4].name         = QStringLiteral("SWR");
     m_needles[4].bindingId    = MeterBinding::TxSwr;
     m_needles[4].calibration  = makeSwrCal();
     m_needles[4].color        = kColorSwr;
     m_needles[4].pivot        = kMainPivot;
     m_needles[4].radiusRatio  = kMainRadius;
-    m_needles[4].lengthFactor = 1.36f;
+    m_needles[4].lengthFactor = 1.28f;
 
-    // Compression — Thetis LengthFactor 0.96 (MeterManager.cs:22722 [@501e3f5])
+    // Compression — NereusSDR-original lengthFactor 0.61 (Thetis 0.96 at
+    // MeterManager.cs:22722 [@501e3f5]).
     m_needles[5].name         = QStringLiteral("Compression");
     m_needles[5].bindingId    = MeterBinding::TxAlcGain;
     m_needles[5].calibration  = makeCompCal();
     m_needles[5].color        = kColorComp;
     m_needles[5].pivot        = kMainPivot;
     m_needles[5].radiusRatio  = kMainRadius;
-    m_needles[5].lengthFactor = 0.96f;
+    m_needles[5].lengthFactor = 0.61f;
 
     // ALC — NereusSDR-original, bottom-left small arc.
     // Arc centre on the new face art is approximately at pixel
@@ -372,7 +390,7 @@ void AnanMultiMeterItem::initialiseNeedles()
     m_needles[6].color        = kColorAlc;
     m_needles[6].pivot        = QPointF(-0.234, 0.299);
     m_needles[6].radiusRatio  = QPointF(1.0, 1.0);
-    m_needles[6].lengthFactor = 0.24f;
+    m_needles[6].lengthFactor = 0.13f;   // ALC — trim tip to sub-arc
 }
 
 // ---------------------------------------------------------------------------
