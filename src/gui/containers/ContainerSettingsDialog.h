@@ -110,6 +110,14 @@ public:
     // instantiating the dialog.
     static float nextStackYPos(const QVector<MeterItem*>& items);
 
+    // Test-only accessors (Task 11+). Exposing these keeps the
+    // dialog-refactor test suite free of Qt event-loop trickery;
+    // production callers continue to use the private slots.
+    QVector<MeterItem*> workingItems() const { return m_workingItems; }
+    void appendPresetRowForTest(const QString& presetName) {
+        appendPresetRow(presetName);
+    }
+
 private slots:
     void onItemSelectionChanged();
     void onAddItem();
