@@ -44,6 +44,11 @@ private slots:
     // Thetis property-editor parity — Phase 2 History + Peak Hold.
     void history_pushedValuesAccumulate();
     void peakHold_trackMaxPerNeedle();
+
+    // Thetis property-editor parity — Phase 3 Shadow/Segmented/Solid
+    // UI-only (ANAN MM has no bar, so these decorations are stored for
+    // Thetis-parity round-trip but produce no visible effect).
+    void shadowSegmentedSolid_roundTrip();
 };
 
 void TestAnanMultiMeterItem::defaultConstruction_hasSevenNeedles()
@@ -250,6 +255,48 @@ void TestAnanMultiMeterItem::peakHold_trackMaxPerNeedle()
     a.paint(p, 300, 200);
     p.end();
     QVERIFY(!img.isNull());
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Shadow/Segmented/Solid storage + serialization round-trip.
+// These decorations historically targeted the bar portion of a Thetis
+// composite; ANAN MM is pure-needle so the effects are stored for parity
+// but produce no visible paint-time change. Verify storage + round-trip.
+// ---------------------------------------------------------------------------
+void TestAnanMultiMeterItem::shadowSegmentedSolid_roundTrip()
+{
+    AnanMultiMeterItem a;
+
+    // Set non-default values for every decoration flag.
+    a.setShowShadow(true);
+    a.setShadowLow(-140.0);
+    a.setShadowHigh(-40.0);
+    a.setShadowColor(QColor(30, 30, 30, 180));
+
+    a.setShowSegmented(true);
+    a.setSegmentedLow(-100.0);
+    a.setSegmentedHigh(-10.0);
+    a.setSegmentedColor(QColor(80, 80, 80));
+
+    a.setShowSolid(true);
+    a.setSolidColor(QColor(120, 140, 160, 200));
+
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+
+    QCOMPARE(b.showShadow(), true);
+    QCOMPARE(b.shadowLow(),  -140.0);
+    QCOMPARE(b.shadowHigh(), -40.0);
+    QCOMPARE(b.shadowColor(), QColor(30, 30, 30, 180));
+
+    QCOMPARE(b.showSegmented(), true);
+    QCOMPARE(b.segmentedLow(),  -100.0);
+    QCOMPARE(b.segmentedHigh(), -10.0);
+    QCOMPARE(b.segmentedColor(), QColor(80, 80, 80));
+
+    QCOMPARE(b.showSolid(), true);
+    QCOMPARE(b.solidColor(), QColor(120, 140, 160, 200));
 }
 
 QTEST_MAIN(TestAnanMultiMeterItem)

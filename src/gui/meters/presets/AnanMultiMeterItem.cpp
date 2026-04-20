@@ -572,20 +572,29 @@ void AnanMultiMeterItem::paint(QPainter& p, int widgetW, int widgetH)
         p.restore();
     }
 
-    // TODO(render-mode-shadow): implement paint-time effect;
-    // currently storage-only. Thetis Shadow decorates the bar
-    // portion of a composite — ANAN MM is pure needles so this
-    // field is preserved for Thetis-parity round-trip but produces
-    // no visible effect here.
-    // TODO(render-mode-segmented): implement paint-time effect;
-    // currently storage-only. Same reasoning as Shadow.
-    // TODO(render-mode-solid): implement paint-time effect;
-    // currently storage-only. Same reasoning as Shadow.
+    // ------------------------------------------------------------
+    // Storage-only decorations (Phase 3 — UI-only for ANAN MM).
+    //
+    // Thetis's Shadow / Segmented / Solid knobs originally decorated
+    // the BAR portion of a bar-row preset. ANAN MM is a pure-needle
+    // composite (no bar) so these fields are stored for Thetis-parity
+    // round-trip + for future bar-row presets that will reuse the
+    // same serialization schema, but they produce no visible effect
+    // on the ANAN MM face. The stored flags still flow end-to-end
+    // through the property editor + serialize()/deserialize() so
+    // that a user who copies an ANAN MM row to a future bar-row
+    // preset retains their settings.
+    //
+    // TODO(render-mode-shadow): effect applies only if this item is
+    // re-parented into a bar-row preset.
+    // TODO(render-mode-segmented): ditto.
+    // TODO(render-mode-solid): ditto.
     // TODO(render-mode-attack-decay): Attack/Decay ratios stored;
     // needle smoothing applies at setValue() time (future work).
     // TODO(fade-coupling): once RadioModel exposes a global
     // mox()/rx state, hide the needles whose opposite flag is set
     // for the current state.
+    // ------------------------------------------------------------
 
     // Thetis property-editor parity Phase 2 — History trail. Each
     // visible needle's history buffer projects onto its calibration
