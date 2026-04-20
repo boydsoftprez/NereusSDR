@@ -307,8 +307,17 @@ void CrossNeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     const QRect bg = bgRect(widgetW, widgetH);
 
     // z=1 Background image (Thetis line 22973-22980).
+    // Wrap drawImage with save/restore + SmoothPixmapTransform so the
+    // scaled cross-needle.png stays crisp at non-native container
+    // sizes (QPainter defaults to nearest-neighbour which aliases
+    // badly). Antialiasing also covers any sub-pixel seams along the
+    // image edge.
     if (!m_background.isNull()) {
+        p.save();
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.setRenderHint(QPainter::Antialiasing, true);
         p.drawImage(bg, m_background);
+        p.restore();
     }
 
     // z=4 / z=3 Needles (Thetis line 22838 fwd ZOrder=4, 22907 rev
@@ -330,7 +339,11 @@ void CrossNeedleItem::paint(QPainter& p, int widgetW, int widgetH)
         const int overlayH = static_cast<int>(bg.height() * 0.217);
         const int overlayY = bg.y() + bg.height() - overlayH;
         const QRect overlayRect(bg.x(), overlayY, bg.width(), overlayH);
+        p.save();
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.setRenderHint(QPainter::Antialiasing, true);
         p.drawImage(overlayRect, m_bandOverlay);
+        p.restore();
     }
 }
 
@@ -342,13 +355,17 @@ void CrossNeedleItem::paintNeedle(QPainter& p,
         return;
     }
     // Edit-container refactor Task 20 — prefer the live value routed via
-    // pushBindingValue() over the first-calibration-point seed. The seed
-    // is kept as a "no data" fallback for the settings-dialog preview
-    // and for tests that exercise paint() without a poll cycle.
+    // pushBindingValue() over the no-data seed. The seed is kept as a
+    // fallback for the settings-dialog preview and for tests that
+    // exercise paint() without a poll cycle. Use the midpoint of the
+    // calibration range (not the first key) so the pre-push needle sits
+    // aesthetically mid-face rather than clamped to the leftmost arc
+    // endpoint — same treatment as AnanMultiMeterItem::paintNeedle().
     auto first = n.calibration.constBegin();
+    auto last  = std::prev(n.calibration.constEnd());
     float seed;
     if (std::isnan(n.currentValue)) {
-        seed = first.key();
+        seed = 0.5f * (first.key() + last.key());
     } else {
         seed = static_cast<float>(n.currentValue);
     }
@@ -368,6 +385,10 @@ void CrossNeedleItem::paintNeedle(QPainter& p,
                         pivotPx.y() + n.lengthFactor * (calPx.y() - pivotPx.y()));
 
     p.save();
+    // Antialiasing on the needle line — drawLine without it produces
+    // visibly stair-stepped pixels at the non-axis-aligned angles the
+    // needle sweeps through, even at larger container sizes.
+    p.setRenderHint(QPainter::Antialiasing, true);
     QPen pen(n.color);
     // Thetis StrokeWidth = 2.5f (MeterManager.cs:22836 / :22902).
     pen.setWidthF(qMax(1.0, rect.height() * 0.005));

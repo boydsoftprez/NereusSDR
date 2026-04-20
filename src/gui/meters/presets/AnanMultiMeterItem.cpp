@@ -385,9 +385,17 @@ void AnanMultiMeterItem::paint(QPainter& p, int widgetW, int widgetH)
         return;
     }
 
-    // Background image (if present)
+    // Background image (if present).
+    // Wrap drawImage with save/restore + SmoothPixmapTransform so the
+    // scaled ananMM.png stays crisp at non-native container sizes
+    // (QPainter defaults to nearest-neighbour which aliases badly).
+    // Antialiasing also covers sub-pixel seams at the image edge.
     if (!m_background.isNull()) {
+        p.save();
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.setRenderHint(QPainter::Antialiasing, true);
         p.drawImage(bg, m_background);
+        p.restore();
     }
 
     // Needles
@@ -451,6 +459,10 @@ void AnanMultiMeterItem::paintNeedle(QPainter& p,
                         pivotPx.y() + (tipBase.y() - pivotPx.y()) * m_radiusRatio.y());
 
     p.save();
+    // Antialiasing on the needle line — drawLine without it produces
+    // visibly stair-stepped pixels at the non-axis-aligned angles the
+    // needle sweeps through. Negligible cost for a one-pixel line.
+    p.setRenderHint(QPainter::Antialiasing, true);
     QPen pen(n.color);
     pen.setWidthF(qMax(1.0, bg.height() * 0.005));
     pen.setCapStyle(Qt::RoundCap);
