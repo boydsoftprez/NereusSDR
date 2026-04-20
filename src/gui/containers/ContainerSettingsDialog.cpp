@@ -134,6 +134,7 @@ mw0lge@grange-lane.co.uk
 #include "meter_property_editors/OtherButtonItemEditor.h"
 #include "meter_property_editors/VoiceRecordPlayItemEditor.h"
 #include "meter_property_editors/DiscordButtonItemEditor.h"
+#include "meter_property_editors/PresetItemEditor.h"
 #include "ContainerWidget.h"
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
@@ -2733,6 +2734,19 @@ QWidget* ContainerSettingsDialog::buildTypeSpecificEditor(MeterItem* item)
     }
 
     const QString serialized = item->serialize();
+
+    // Edit-container refactor critical fix — the 11 first-class preset
+    // MeterItem subclasses (AnanMM, CrossNeedle, SMeter, PowerSwr,
+    // MagicEye, SignalText, HistoryGraph, VfoDisplay, Clock, Contest,
+    // BarPreset) serialize as compact JSON with no leading "TYPE|" tag.
+    // Route any JSON-prefixed payload to the shared PresetItemEditor
+    // before falling through to the legacy pipe-delimited dispatch.
+    if (serialized.startsWith(QLatin1Char('{'))) {
+        auto* ed = new PresetItemEditor(this);
+        ed->setItem(item);
+        return ed;
+    }
+
     const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
     const QString typeTag = (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
 
@@ -2868,6 +2882,27 @@ bool ContainerSettingsDialog::availableRowIsEnabled(const QString& tag) const
         }
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// Edit-container refactor critical-fix test hooks — see header.
+// ---------------------------------------------------------------------------
+
+void ContainerSettingsDialog::selectInUseRowForTest(int i)
+{
+    if (!m_itemList) { return; }
+    if (i < 0 || i >= m_itemList->count()) { return; }
+    m_itemList->setCurrentRow(i);
+    // setCurrentRow() fires currentRowChanged which is wired to
+    // onItemSelectionChanged, but invoke it directly to be defensive
+    // against Qt signal-blocking side effects in unit-test setup.
+    onItemSelectionChanged();
+}
+
+bool ContainerSettingsDialog::propertyStackCurrentIsEmpty() const
+{
+    if (!m_propertyStack) { return true; }
+    return m_propertyStack->currentWidget() == m_emptyPage;
 }
 
 } // namespace NereusSDR

@@ -341,6 +341,7 @@ set(GUI_SOURCES
     src/gui/containers/meter_property_editors/OtherButtonItemEditor.cpp
     src/gui/containers/meter_property_editors/VoiceRecordPlayItemEditor.cpp
     src/gui/containers/meter_property_editors/DiscordButtonItemEditor.cpp
+    src/gui/containers/meter_property_editors/PresetItemEditor.cpp
     src/gui/meters/MeterWidget.cpp
     src/gui/meters/MeterItem.cpp
     src/gui/meters/presets/PresetGeometry.h

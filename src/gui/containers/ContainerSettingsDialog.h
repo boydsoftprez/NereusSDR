@@ -160,6 +160,14 @@ public slots:
     // disables its available-list entry after being added.
     bool availableRowIsEnabled(const QString& tag) const;
 
+    // Edit-container refactor critical-fix test hooks. Preset classes
+    // serialize as JSON and must route to PresetItemEditor rather than
+    // falling through to the empty page. selectInUseRowForTest() drives
+    // the list selection; propertyStackCurrentIsEmpty() lets the test
+    // assert that the property pane is NOT showing the empty page.
+    void selectInUseRowForTest(int i);
+    bool propertyStackCurrentIsEmpty() const;
+
 private slots:
     void onItemSelectionChanged();
     void onAddItem();

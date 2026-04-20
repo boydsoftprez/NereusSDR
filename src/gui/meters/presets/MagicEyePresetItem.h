@@ -85,7 +85,10 @@ public:
     explicit MagicEyePresetItem(QObject* parent = nullptr);
 
     // --- MeterItem overrides ---
-    Layer renderLayer() const override { return Layer::Geometry; }
+    // OverlayStatic -> MeterWidget calls paintForLayer() -> paint().
+    // Preset classes override paint() only (not emitVertices()), so
+    // Layer::Geometry would route through the empty GPU vertex path.
+    Layer renderLayer() const override { return Layer::OverlayStatic; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
 
     QString serialize() const override;

@@ -113,7 +113,11 @@ public:
     explicit AnanMultiMeterItem(QObject* parent = nullptr);
 
     // --- MeterItem overrides ---
-    Layer renderLayer() const override { return Layer::Geometry; }
+    // OverlayStatic -> MeterWidget calls paintForLayer() -> paint().
+    // The 11 preset classes only override paint() (QPainter), not
+    // emitVertices(); Layer::Geometry would route them through the
+    // empty GPU vertex pipeline and the preset would never draw.
+    Layer renderLayer() const override { return Layer::OverlayStatic; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
 
     QString serialize() const override;
