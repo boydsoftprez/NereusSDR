@@ -103,10 +103,24 @@ public:
     int     barBindingId(int i) const;
     double  barMinVal(int i) const;
     double  barMaxVal(int i) const;
+    double  barRedThreshold(int i) const;
+    QString barSuffix(int i) const;
+    void    setBarRedThreshold(int i, double v);
+    void    setBarSuffix(int i, const QString& s);
 
     // --- Readout toggle ---
     void setShowReadout(bool on) { m_showReadout = on; }
     bool showReadout() const { return m_showReadout; }
+
+    // --- Colour accessors (for Task 11 property editor + serialization) ---
+    QColor backdropColor() const { return m_backdropColor; }
+    QColor barColor()      const { return m_barColor; }
+    QColor barRedColor()   const { return m_barRedColor; }
+    QColor readoutColor()  const { return m_readoutColor; }
+    void setBackdropColor(const QColor& c) { m_backdropColor = c; }
+    void setBarColor(const QColor& c)      { m_barColor = c; }
+    void setBarRedColor(const QColor& c)   { m_barRedColor = c; }
+    void setReadoutColor(const QColor& c)  { m_readoutColor = c; }
 
 private:
     struct Bar {

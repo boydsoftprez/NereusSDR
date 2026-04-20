@@ -54,8 +54,10 @@ mw0lge@grange-lane.co.uk
 //   2026-04-19 — Reimplemented in C++20/Qt6 for NereusSDR by
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Claude Opus 4.7. Colour / default binding /
-//                backdrop are byte-for-byte from Thetis
-//                AddSMeterBarText @501e3f5.
+//                backdrop / font-size default (56pt) are byte-for-byte
+//                from Thetis AddSMeterBarText @501e3f5. The paint-time
+//                fit-to-rect clamp is a runtime safeguard, not a
+//                default-value override.
 // =================================================================
 
 #include "gui/meters/presets/SignalTextPresetItem.h"
@@ -123,8 +125,10 @@ void SignalTextPresetItem::paint(QPainter& p, int widgetW, int widgetH)
 
     QFont f = p.font();
     // Scale font to fit the rect — Thetis ships 56pt in the default
-    // container (MeterManager.cs:21704) but fit-to-rect avoids
-    // overflow in narrow NereusSDR containers.
+    // container (MeterManager.cs:21709 [@501e3f5]) but fit-to-rect
+    // avoids overflow in narrow NereusSDR containers. This is a
+    // runtime clamp on the effective draw size, not an override of
+    // the stored default.
     f.setPointSizeF(qMax(10.0f, qMin(m_fontPoint, rect.height() * 0.6f)));
     f.setBold(true);
     p.setFont(f);
@@ -171,7 +175,11 @@ bool SignalTextPresetItem::deserialize(const QString& data)
     if (!col.isEmpty()) {
         m_textColor = QColor(col);
     }
-    m_fontPoint = static_cast<float>(o.value(QStringLiteral("fontPoint")).toDouble(40.0));
+    // Fallback uses the current member value so the default matches
+    // whatever the ctor sets (now 56pt, Thetis-exact) — consistent
+    // with the pattern used by sibling preset deserialize methods.
+    m_fontPoint = static_cast<float>(
+        o.value(QStringLiteral("fontPoint")).toDouble(static_cast<double>(m_fontPoint)));
     return true;
 }
 

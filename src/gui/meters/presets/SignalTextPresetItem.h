@@ -59,7 +59,11 @@ mw0lge@grange-lane.co.uk
 //                (backdrop + big S-unit + dBm text) into one entity.
 //                Default colour (Yellow), font size (56pt) and
 //                binding (AVG_SIGNAL_STRENGTH) are byte-for-byte
-//                from Thetis AddSMeterBarText.
+//                from Thetis AddSMeterBarText. The paint-time
+//                fit-to-rect clamp on m_fontPoint is a runtime
+//                safeguard against overflow in narrow NereusSDR
+//                containers; it does not override the Thetis-exact
+//                default value.
 // =================================================================
 #pragma once
 
@@ -106,7 +110,10 @@ public:
 private:
     QColor  m_backdropColor{32, 32, 32};  // From Thetis MeterManager.cs:21689 [@501e3f5]
     QColor  m_textColor{Qt::yellow};      // From Thetis MeterManager.cs:21708 [@501e3f5]
-    float   m_fontPoint{40.0f};
+    // Thetis-exact default — FontSize = 56f at MeterManager.cs:21709.
+    // The fit-to-rect clamp in paint() caps the *effective* font size
+    // to container height, but never changes this stored default.
+    float   m_fontPoint{56.0f};  // From Thetis MeterManager.cs:21709 [@501e3f5]
 };
 
 } // namespace NereusSDR

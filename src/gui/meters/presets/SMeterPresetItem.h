@@ -102,6 +102,18 @@ public:
     void setShowReadout(bool on) { m_showReadout = on; }
     bool showReadout() const { return m_showReadout; }
 
+    // --- Colour accessors (for Task 11 property editor + serialization) ---
+    QColor backdropColor() const { return m_backdropColor; }
+    QColor barColor()      const { return m_barColor; }
+    QColor titleColor()    const { return m_titleColor; }
+    QColor readoutColor()  const { return m_readoutColor; }
+    QColor historyColor()  const { return m_historyColor; }
+    void setBackdropColor(const QColor& c) { m_backdropColor = c; }
+    void setBarColor(const QColor& c)      { m_barColor = c; }
+    void setTitleColor(const QColor& c)    { m_titleColor = c; }
+    void setReadoutColor(const QColor& c)  { m_readoutColor = c; }
+    void setHistoryColor(const QColor& c)  { m_historyColor = c; }
+
     // --- Calibration introspection (3-point curve) ---
     int  calibrationSize() const { return m_calibration.size(); }
     bool hasCalibrationPoint(double dbm) const;

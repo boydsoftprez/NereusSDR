@@ -60,6 +60,11 @@ mw0lge@grange-lane.co.uk
 //                entity. Binding IDs map to NereusSDR MeterBinding
 //                (TxPower / TxReversePower) rather than Thetis's
 //                MMIOVariableIndex slot ordinal.
+//   2026-04-19 — Arc-fix: needle pivot/tip anchored to letterboxed
+//                background image rect via bgRect() helper, so the
+//                arc stays glued to the meter face at non-default
+//                container aspect ratios. Shared geometry helper in
+//                PresetGeometry.h.
 // =================================================================
 #pragma once
 
@@ -69,6 +74,7 @@ mw0lge@grange-lane.co.uk
 #include <QImage>
 #include <QMap>
 #include <QPointF>
+#include <QRect>
 #include <QString>
 #include <array>
 
@@ -115,6 +121,14 @@ public:
     bool showBandOverlay() const { return m_showBandOverlay; }
     void setShowBandOverlay(bool v) { m_showBandOverlay = v; }
 
+    // --- Arc-fix: anchor needle geometry to background image rect ---
+    // When true (default), pivot/tip math is computed against the
+    // letterboxed bgRect() rather than the container's stretched item
+    // rect — same fix AnanMultiMeterItem uses to keep the arc glued
+    // to the meter face at non-default aspect ratios.
+    bool anchorToBgRect() const { return m_anchorToBgRect; }
+    void setAnchorToBgRect(bool v) { m_anchorToBgRect = v; }
+
 private:
     struct Needle {
         QString              name;
@@ -131,12 +145,17 @@ private:
     };
 
     void   initialiseNeedles();
+    QRect  bgRect(int widgetW, int widgetH) const;
     QPointF calibratedPosition(const Needle& n, float value) const;
     void   paintNeedle(QPainter& p, const Needle& n, const QRect& rect) const;
 
     QImage                             m_background;
     QImage                             m_bandOverlay;
     bool                               m_showBandOverlay{true};
+    // Arc-fix: when true, needle geometry anchors to the letterboxed
+    // background image rect rather than the raw container rect. Same
+    // default / toggle semantics as AnanMultiMeterItem::m_anchorToBgRect.
+    bool                               m_anchorToBgRect{true};
     std::array<Needle, kNeedleCount>   m_needles;
 };
 

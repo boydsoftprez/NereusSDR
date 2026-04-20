@@ -61,9 +61,15 @@ mw0lge@grange-lane.co.uk
 //                reflected needle's NeedleOffset mirrors the pivot
 //                to the right-hand side via a negative X, matching
 //                Thetis exactly.
+//   2026-04-19 — Arc-fix: pivot/tip geometry now anchors to the
+//                letterboxed background image rect (bgRect()) rather
+//                than the raw container rect, matching the fix
+//                AnanMultiMeterItem already ships. Shared helper in
+//                src/gui/meters/presets/PresetGeometry.h.
 // =================================================================
 
 #include "gui/meters/presets/CrossNeedleItem.h"
+#include "gui/meters/presets/PresetGeometry.h"  // letterboxedBgRect
 #include "gui/meters/MeterPoller.h"  // MeterBinding::*
 
 #include <QJsonArray>
@@ -267,6 +273,23 @@ QPointF CrossNeedleItem::calibratedPosition(const Needle& n, float value) const
 }
 
 // ---------------------------------------------------------------------------
+// bgRect — letterboxed background-image rect (arc-fix)
+// ---------------------------------------------------------------------------
+//
+// Same math as AnanMultiMeterItem::bgRect() — both presets share the
+// helper in PresetGeometry.h. At non-default aspect ratios the
+// container rect is wider or taller than the cross-needle.png image;
+// letterboxing anchors the needles to the painted image so the arcs
+// stay on the meter face.
+
+QRect CrossNeedleItem::bgRect(int widgetW, int widgetH) const
+{
+    return letterboxedBgRect(pixelRect(widgetW, widgetH),
+                             m_background,
+                             m_anchorToBgRect);
+}
+
+// ---------------------------------------------------------------------------
 // paint — orchestrates background + band overlay + needles
 // ---------------------------------------------------------------------------
 
@@ -276,10 +299,14 @@ void CrossNeedleItem::paint(QPainter& p, int widgetW, int widgetH)
     if (rect.width() <= 0 || rect.height() <= 0) {
         return;
     }
+    // Arc-fix: anchor everything that maps to background-image
+    // normalized coordinates (drawImage target, needle pivot/tip,
+    // band overlay strip) to the letterboxed rect.
+    const QRect bg = bgRect(widgetW, widgetH);
 
     // z=1 Background image (Thetis line 22973-22980).
     if (!m_background.isNull()) {
-        p.drawImage(rect, m_background);
+        p.drawImage(bg, m_background);
     }
 
     // z=4 / z=3 Needles (Thetis line 22838 fwd ZOrder=4, 22907 rev
@@ -289,15 +316,18 @@ void CrossNeedleItem::paint(QPainter& p, int widgetW, int widgetH)
         if (!n.visible) {
             continue;
         }
-        paintNeedle(p, n, rect);
+        paintNeedle(p, n, bg);
     }
 
     // z=5 Band overlay (Thetis line 22982-22989). Small band image
     // along the bottom strip; cross-needle-bg.png is 1:0.217 aspect.
+    // Anchor to `bg` (the letterboxed image rect) rather than the
+    // container `rect` so the overlay stays pinned to the bottom of
+    // the meter face at non-default aspect ratios.
     if (m_showBandOverlay && !m_bandOverlay.isNull()) {
-        const int overlayH = static_cast<int>(rect.height() * 0.217);
-        const int overlayY = rect.y() + rect.height() - overlayH;
-        const QRect overlayRect(rect.x(), overlayY, rect.width(), overlayH);
+        const int overlayH = static_cast<int>(bg.height() * 0.217);
+        const int overlayY = bg.y() + bg.height() - overlayH;
+        const QRect overlayRect(bg.x(), overlayY, bg.width(), overlayH);
         p.drawImage(overlayRect, m_bandOverlay);
     }
 }
@@ -345,12 +375,13 @@ void CrossNeedleItem::paintNeedle(QPainter& p,
 QString CrossNeedleItem::serialize() const
 {
     QJsonObject o;
-    o.insert(QStringLiteral("kind"),        QStringLiteral("CrossNeedle"));
-    o.insert(QStringLiteral("x"),           static_cast<double>(m_x));
-    o.insert(QStringLiteral("y"),           static_cast<double>(m_y));
-    o.insert(QStringLiteral("w"),           static_cast<double>(m_w));
-    o.insert(QStringLiteral("h"),           static_cast<double>(m_h));
-    o.insert(QStringLiteral("bandOverlay"), m_showBandOverlay);
+    o.insert(QStringLiteral("kind"),         QStringLiteral("CrossNeedle"));
+    o.insert(QStringLiteral("x"),            static_cast<double>(m_x));
+    o.insert(QStringLiteral("y"),            static_cast<double>(m_y));
+    o.insert(QStringLiteral("w"),            static_cast<double>(m_w));
+    o.insert(QStringLiteral("h"),            static_cast<double>(m_h));
+    o.insert(QStringLiteral("bandOverlay"),  m_showBandOverlay);
+    o.insert(QStringLiteral("anchorToBg"),   m_anchorToBgRect);
 
     QJsonArray vis;
     for (const Needle& n : m_needles) {
@@ -378,6 +409,7 @@ bool CrossNeedleItem::deserialize(const QString& data)
             static_cast<float>(o.value(QStringLiteral("w")).toDouble(m_w)),
             static_cast<float>(o.value(QStringLiteral("h")).toDouble(m_h)));
     m_showBandOverlay = o.value(QStringLiteral("bandOverlay")).toBool(m_showBandOverlay);
+    m_anchorToBgRect  = o.value(QStringLiteral("anchorToBg")).toBool(m_anchorToBgRect);
 
     const QJsonArray vis = o.value(QStringLiteral("needlesVisible")).toArray();
     for (int i = 0; i < kNeedleCount; ++i) {
