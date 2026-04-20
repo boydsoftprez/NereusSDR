@@ -150,3 +150,6 @@ nereus_add_test(tst_about_dialog)
 
 # ── Edit Container refactor: Task 1 — AnanMultiMeterItem ─────────────────
 nereus_add_test(tst_anan_multi_meter_item)
+
+# ── Edit Container refactor: Task 2 — CrossNeedleItem ────────────────────
+nereus_add_test(tst_cross_needle_item)

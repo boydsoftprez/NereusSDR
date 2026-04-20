@@ -346,6 +346,8 @@ set(GUI_SOURCES
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/presets/AnanMultiMeterItem.h
     src/gui/meters/presets/AnanMultiMeterItem.cpp
+    src/gui/meters/presets/CrossNeedleItem.h
+    src/gui/meters/presets/CrossNeedleItem.cpp
     src/gui/meters/MeterPoller.cpp
     src/gui/meters/SpacerItem.cpp
     src/gui/meters/FadeCoverItem.cpp
