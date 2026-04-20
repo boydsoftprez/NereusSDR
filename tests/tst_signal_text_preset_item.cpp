@@ -62,6 +62,7 @@ void TestSignalTextPresetItem::serialize_roundTrip_preservesAllFields()
     a.setRect(0.1f, 0.2f, 0.8f, 0.3f);
     a.setBindingId(0 /* SignalPeak */);
     a.setTextColor(QColor(Qt::cyan));
+    a.setFontPoint(56.0f);
 
     const QString blob = a.serialize();
     QVERIFY(!blob.isEmpty());
@@ -75,6 +76,7 @@ void TestSignalTextPresetItem::serialize_roundTrip_preservesAllFields()
     QCOMPARE(b.itemHeight(),   a.itemHeight());
     QCOMPARE(b.bindingId(),    0);
     QCOMPARE(b.textColor(),    QColor(Qt::cyan));
+    QCOMPARE(b.fontPoint(),    56.0f);
 }
 
 void TestSignalTextPresetItem::paintSmoke_rendersAtAspectRatio()

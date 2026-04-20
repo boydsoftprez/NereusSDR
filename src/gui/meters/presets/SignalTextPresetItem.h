@@ -99,8 +99,12 @@ public:
     QColor textColor() const { return m_textColor; }
     void   setTextColor(const QColor& c) { m_textColor = c; }
 
+    // --- Font size (Thetis-vs-NereusSDR override, driven by Task 11 editor) ---
+    float fontPoint() const { return m_fontPoint; }
+    void  setFontPoint(float pts) { m_fontPoint = pts; }
+
 private:
-    QColor  m_backdropColor{32, 32, 32};  // From Thetis MeterManager.cs:21688 [@501e3f5]
+    QColor  m_backdropColor{32, 32, 32};  // From Thetis MeterManager.cs:21689 [@501e3f5]
     QColor  m_textColor{Qt::yellow};      // From Thetis MeterManager.cs:21708 [@501e3f5]
     float   m_fontPoint{40.0f};
 };

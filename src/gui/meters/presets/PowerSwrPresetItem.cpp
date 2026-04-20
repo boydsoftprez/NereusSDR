@@ -92,13 +92,13 @@ PowerSwrPresetItem::PowerSwrPresetItem(QObject* parent)
     // Range 1..10 (createPowerSwrPreset uses 1..5; we widen to 10 to
     // match the AnanMM SWR calibration endpoint and capture severe
     // mismatches). HighPoint at 3:1 matches Thetis
-    // MeterManager.cs:24017 (ElementAt(3).Value over 1/1.5/2/3/5).
+    // MeterManager.cs:24019 (ElementAt(3).Value over 1/1.5/2/3/5).
     m_bars[1] = {
         QStringLiteral("SWR"),
         MeterBinding::TxSwr,
         1.0,
         10.0,
-        3.0,  // HighPoint at SWR 3:1 — From Thetis MeterManager.cs:24017 [@501e3f5]
+        3.0,  // HighPoint at SWR 3:1 — From Thetis MeterManager.cs:24019 [@501e3f5]
         QStringLiteral(":1")
     };
 }

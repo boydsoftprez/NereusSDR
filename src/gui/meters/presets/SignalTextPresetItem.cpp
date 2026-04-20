@@ -147,6 +147,7 @@ QString SignalTextPresetItem::serialize() const
     o.insert(QStringLiteral("h"),         static_cast<double>(m_h));
     o.insert(QStringLiteral("bindingId"), bindingId());
     o.insert(QStringLiteral("textColor"), m_textColor.name(QColor::HexArgb));
+    o.insert(QStringLiteral("fontPoint"), static_cast<double>(m_fontPoint));
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
@@ -170,6 +171,7 @@ bool SignalTextPresetItem::deserialize(const QString& data)
     if (!col.isEmpty()) {
         m_textColor = QColor(col);
     }
+    m_fontPoint = static_cast<float>(o.value(QStringLiteral("fontPoint")).toDouble(40.0));
     return true;
 }
 
