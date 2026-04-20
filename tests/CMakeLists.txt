@@ -183,3 +183,6 @@ nereus_add_test(tst_bar_preset_item)
 
 # ── Edit Container refactor: Task 11 — dialog preset dispatch ───────────
 nereus_add_test(tst_dialog_preset_dispatch)
+
+# ── Edit Container refactor: Task 12 — hybrid addition rule ─────────────
+nereus_add_test(tst_dialog_hybrid_rule)

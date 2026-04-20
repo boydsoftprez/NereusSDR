@@ -143,6 +143,16 @@ private:
     void populateAvailableList();
     void onAddFromAvailable();   // "Add >" button click
 
+    // Edit-container refactor Task 12 — hybrid addition rule.
+    // Presets (PRESET_* tags) are single-instance per container;
+    // primitives (raw building-block items) are freely re-addable.
+    // refreshAvailableList() walks the available QListWidget and
+    // disables rows whose preset tag is already present in
+    // m_workingItems. presetTagForItem() reverse-maps a live item
+    // back to its available-list PRESET_* tag (empty for primitives).
+    QString presetTagForItem(MeterItem* it) const;
+    void    refreshAvailableList();
+
     static MeterItem* createItemFromSerialized(const QString& data);
     void refreshItemList();
     static QString typeTagDisplayName(const QString& tag);
