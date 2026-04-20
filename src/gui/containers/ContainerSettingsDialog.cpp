@@ -157,6 +157,7 @@ mw0lge@grange-lane.co.uk
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 
 // Core meter item types (MeterItem.h defines: BarItem, SolidColourItem, ImageItem,
 //                                               ScaleItem, TextItem, NeedleItem)
@@ -456,6 +457,12 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
     connect(m_btnMoveDown, &QPushButton::clicked, this, &ContainerSettingsDialog::onMoveItemDown);
 
     populateItemList();
+    // Task 12 — apply the hybrid rule to the just-populated available
+    // list based on whatever presets are already in use on this
+    // container's MeterWidget. buildAvailablePanel() has already run
+    // by this point (buildInUsePanel is called after it inside
+    // buildLayout), so m_availableList is non-null.
+    refreshAvailableList();
 }
 
 void ContainerSettingsDialog::buildPropertiesPanel(QWidget* parent)
@@ -648,6 +655,12 @@ void ContainerSettingsDialog::onAddFromAvailable()
     if (!m_availableList) { return; }
     QListWidgetItem* sel = m_availableList->currentItem();
     if (!sel) { return; }
+    // Edit-container refactor Task 12 — hybrid addition rule. Rows
+    // for presets that are already in use on this container are
+    // rendered disabled by refreshAvailableList(); block the click
+    // defensively too so programmatic paths (keyboard Enter, etc.)
+    // honour the one-instance-per-container invariant.
+    if (!(sel->flags() & Qt::ItemIsEnabled)) { return; }
     const QString tag = sel->data(Qt::UserRole).toString();
     if (tag.isEmpty()) { return; }
     // Phase E — PRESET_* tags map to full Thetis-parity meter row
@@ -660,6 +673,73 @@ void ContainerSettingsDialog::onAddFromAvailable()
         return;
     }
     addNewItem(tag);
+}
+
+// ---------------------------------------------------------------------------
+// Edit-container refactor Task 12 — hybrid addition rule
+// ---------------------------------------------------------------------------
+
+QString ContainerSettingsDialog::presetTagForItem(MeterItem* it) const
+{
+    if (!it) { return QString(); }
+    if (dynamic_cast<AnanMultiMeterItem*>(it))     { return QStringLiteral("PRESET_AnanMM"); }
+    if (dynamic_cast<CrossNeedleItem*>(it))        { return QStringLiteral("PRESET_CrossNeedle"); }
+    if (dynamic_cast<SMeterPresetItem*>(it))       { return QStringLiteral("PRESET_SMeter"); }
+    if (dynamic_cast<PowerSwrPresetItem*>(it))     { return QStringLiteral("PRESET_PowerSwr"); }
+    if (dynamic_cast<MagicEyePresetItem*>(it))     { return QStringLiteral("PRESET_MagicEyePreset"); }
+    if (dynamic_cast<SignalTextPresetItem*>(it))   { return QStringLiteral("PRESET_SignalText"); }
+    if (dynamic_cast<HistoryGraphPresetItem*>(it)) { return QStringLiteral("PRESET_HistoryPreset"); }
+    if (dynamic_cast<VfoDisplayPresetItem*>(it))   { return QStringLiteral("PRESET_VfoDisplayPreset"); }
+    if (dynamic_cast<ClockPresetItem*>(it))        { return QStringLiteral("PRESET_ClockPreset"); }
+    if (dynamic_cast<ContestPresetItem*>(it))      { return QStringLiteral("PRESET_ContestPreset"); }
+    // BarPresetItem tags follow the existing availability-list naming
+    // (PRESET_Alc, PRESET_SignalBar, etc.) — kindString() returns e.g.
+    // "SignalBar", "Alc", "AlcGain" which matches the stored tag
+    // minus the "PRESET_" prefix.
+    if (auto* bar = dynamic_cast<BarPresetItem*>(it)) {
+        return QStringLiteral("PRESET_") + bar->kindString();
+    }
+    return QString();   // primitive
+}
+
+void ContainerSettingsDialog::refreshAvailableList()
+{
+    if (!m_availableList) { return; }
+
+    // Build the set of currently-in-use preset tags.
+    QSet<QString> inUseTags;
+    for (MeterItem* it : m_workingItems) {
+        const QString tag = presetTagForItem(it);
+        if (!tag.isEmpty()) { inUseTags.insert(tag); }
+    }
+
+    constexpr QRgb kNormalFg   = 0xffc8d8e8;   // enabled text (from kListStyle)
+    constexpr QRgb kDisabledFg = 0xff5a6a7a;   // muted "in use" text
+
+    for (int i = 0; i < m_availableList->count(); ++i) {
+        QListWidgetItem* row = m_availableList->item(i);
+        if (!row) { continue; }
+        // Skip the non-selectable section headers — they have
+        // Qt::NoItemFlags and don't carry a UserRole tag.
+        const QString tag = row->data(Qt::UserRole).toString();
+        if (tag.isEmpty()) { continue; }
+
+        if (!tag.startsWith(QLatin1String("PRESET_"))) {
+            // Primitives are always enabled (hybrid rule — rule C).
+            row->setFlags(row->flags() | Qt::ItemIsEnabled);
+            row->setForeground(QColor::fromRgba(kNormalFg));
+            continue;
+        }
+
+        const bool used = inUseTags.contains(tag);
+        if (used) {
+            row->setFlags(row->flags() & ~Qt::ItemIsEnabled);
+            row->setForeground(QColor::fromRgba(kDisabledFg));
+        } else {
+            row->setFlags(row->flags() | Qt::ItemIsEnabled);
+            row->setForeground(QColor::fromRgba(kNormalFg));
+        }
+    }
 }
 
 void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
@@ -775,6 +855,7 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     }
 
     refreshItemList();
+    refreshAvailableList();
     if (!m_workingItems.isEmpty()) {
         m_itemList->setCurrentRow(m_workingItems.size() - 1);
     }
@@ -1246,6 +1327,7 @@ void ContainerSettingsDialog::onRemoveItem()
 
     delete m_workingItems.takeAt(row);
     refreshItemList();
+    refreshAvailableList();
 
     // Select nearest remaining item
     if (!m_workingItems.isEmpty()) {
@@ -1373,6 +1455,7 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
     m_workingItems.insert(insertAt, newItem);
 
     refreshItemList();
+    refreshAvailableList();
     m_itemList->setCurrentRow(insertAt);
     updatePreview();
 }
@@ -1902,6 +1985,11 @@ void ContainerSettingsDialog::onContainerDropdownChanged(int index)
         m_hidesWhenRxNotUsedCheck->setChecked(m_container->containerHidesWhenRxNotUsed());
     }
     if (m_highlightCheck) { m_highlightCheck->setChecked(m_container->isHighlighted()); }
+
+    // Task 12 — hybrid rule is per-container; recompute the
+    // available-list enable state against the newly-bound container's
+    // working items.
+    refreshAvailableList();
 
     // Take a fresh snapshot of the new container so Cancel reverts
     // to its state-on-switch, not the original opening state.
