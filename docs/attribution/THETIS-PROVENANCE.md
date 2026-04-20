@@ -221,6 +221,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/meters/NeedleScalePwrItem.h | Project Files/Source/Console/MeterManager.cs | 14888+; 22817-23002; 31822-31823 | port | thetis-samphire | clsNeedleScalePwrItem, AddCrossNeedle |
 | src/gui/meters/OtherButtonItem.cpp | Project Files/Source/Console/MeterManager.cs | 8225+ | port | thetis-samphire | clsOtherButtons |
 | src/gui/meters/OtherButtonItem.h | Project Files/Source/Console/MeterManager.cs | 8225+ | port | thetis-samphire | clsOtherButtons |
+| src/gui/meters/presets/AnanMultiMeterItem.cpp | Project Files/Source/Console/MeterManager.cs | 22461-22816 | port | thetis-samphire | AddAnanMM 7-needle calibration port + arc-fix anchoring pivot/radius to background image rect |
+| src/gui/meters/presets/AnanMultiMeterItem.h | Project Files/Source/Console/MeterManager.cs | 22461-22816 | port | thetis-samphire | first-class ANAN Multi Meter; pairs with AnanMultiMeterItem.cpp |
 | src/gui/meters/RotatorItem.cpp | Project Files/Source/Console/MeterManager.cs | 15042+; 35170-35569; 15290-15312 | port | thetis-samphire | clsRotatorItem, renderRotator, Update |
 | src/gui/meters/RotatorItem.h | Project Files/Source/Console/MeterManager.cs | 15042+; 15290-15312 | port | thetis-samphire | clsRotatorItem, Update |
 | src/gui/meters/SignalTextItem.cpp | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | 20286-20540; 20420+ | port | multi-source | clsSignalText, Common.UVfromDBM, dBm format helpers |

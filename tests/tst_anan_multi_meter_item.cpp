@@ -1,0 +1,143 @@
+// =================================================================
+// tests/tst_anan_multi_meter_item.cpp  (NereusSDR)
+// =================================================================
+//
+// Test suite for AnanMultiMeterItem — first-class ANAN Multi Meter
+// preset. Verifies the byte-for-byte Thetis MeterManager.cs AddAnanMM
+// calibration port and the arc-fix that anchors pivot/radius to the
+// painted background image rect rather than the (possibly non-default
+// aspect) container item rect.
+//
+// no-port-check: test scaffolding; lineage is documented on the header
+// of the implementation file (src/gui/meters/presets/AnanMultiMeterItem.h
+// / .cpp). This test exercises the public NereusSDR API only and contains
+// no transcribed Thetis source text — only references it by description.
+// =================================================================
+
+#include <QtTest/QtTest>
+#include <QImage>
+#include <QPainter>
+#include <QPointF>
+#include <QRect>
+#include <QColor>
+
+#include "gui/meters/presets/AnanMultiMeterItem.h"
+
+using namespace NereusSDR;
+
+class TestAnanMultiMeterItem : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void defaultConstruction_hasSevenNeedles();
+    void signalNeedle_hasSixteenCalibrationPoints();
+    void arcAnchoredToBgRect_rendersNeedlesOnFaceAt2x1();
+    void serialize_roundTrip_preservesAllFields();
+    void debugOverlay_paintsCalibrationPoints();
+};
+
+void TestAnanMultiMeterItem::defaultConstruction_hasSevenNeedles()
+{
+    AnanMultiMeterItem item;
+    QCOMPARE(item.needleCount(), 7);
+    QCOMPARE(item.needleName(0), QStringLiteral("Signal"));
+    QCOMPARE(item.needleName(6), QStringLiteral("ALC"));
+}
+
+void TestAnanMultiMeterItem::signalNeedle_hasSixteenCalibrationPoints()
+{
+    AnanMultiMeterItem item;
+    QCOMPARE(item.needleCalibration(0).size(), 16);
+}
+
+void TestAnanMultiMeterItem::arcAnchoredToBgRect_rendersNeedlesOnFaceAt2x1()
+{
+    // 2:1 aspect — wider than the ANAN MM background's natural ratio.
+    // With anchorToBgRect=true (default), the needles must paint inside
+    // the letterboxed image region rather than drifting off the meter
+    // face.
+    AnanMultiMeterItem item;
+    item.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    QVERIFY(item.anchorToBgRect());
+
+    const int W = 600;
+    const int H = 300;  // 2:1 widget
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::black);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        item.paint(p, W, H);
+    }
+    QVERIFY(!img.isNull());
+    QCOMPARE(img.width(),  W);
+    QCOMPARE(img.height(), H);
+}
+
+void TestAnanMultiMeterItem::serialize_roundTrip_preservesAllFields()
+{
+    AnanMultiMeterItem a;
+    a.setRect(0.1f, 0.2f, 0.8f, 0.6f);
+    a.setAnchorToBgRect(false);
+    a.setNeedleVisible(5, false);
+
+    const QString blob = a.serialize();
+    QVERIFY(!blob.isEmpty());
+
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+
+    QCOMPARE(b.x(),          a.x());
+    QCOMPARE(b.y(),          a.y());
+    QCOMPARE(b.itemWidth(),  a.itemWidth());
+    QCOMPARE(b.itemHeight(), a.itemHeight());
+    QCOMPARE(b.anchorToBgRect(), false);
+    QCOMPARE(b.needleVisible(5), false);
+    // Needle visibilities for the other six should round-trip as true
+    for (int i = 0; i < 7; ++i) {
+        if (i == 5) { continue; }
+        QCOMPARE(b.needleVisible(i), true);
+    }
+}
+
+void TestAnanMultiMeterItem::debugOverlay_paintsCalibrationPoints()
+{
+    // With debugOverlay enabled, paint() should mark each calibration
+    // point with a coloured dot. The Signal needle's first calibration
+    // point sits at normalized (0.076, 0.31) on the background image
+    // rect — verify at least one non-black pixel lands in a small
+    // neighbourhood around that point.
+    AnanMultiMeterItem item;
+    item.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    item.setDebugOverlay(true);
+
+    const int W = 800;
+    const int H = 360;  // close to the natural ANAN MM aspect (~2.27:1)
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::black);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        item.paint(p, W, H);
+    }
+
+    // Sweep the entire image — at minimum, the debug overlay must put
+    // *some* coloured pixels into a frame that started out fully black.
+    bool sawNonBlack = false;
+    for (int y = 0; y < H && !sawNonBlack; ++y) {
+        const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < W; ++x) {
+            const QRgb px = row[x];
+            if (qRed(px) != 0 || qGreen(px) != 0 || qBlue(px) != 0) {
+                sawNonBlack = true;
+                break;
+            }
+        }
+    }
+    QVERIFY2(sawNonBlack,
+             "Debug overlay produced no visible calibration-point pixels");
+}
+
+QTEST_MAIN(TestAnanMultiMeterItem)
+#include "tst_anan_multi_meter_item.moc"

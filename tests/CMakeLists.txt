@@ -5323,6 +5323,10 @@ target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
 #   successResetsBackoff (testForceBackoffReset resets to 1s).
 nereus_add_test(tst_rf2ks_connection_reconnect)
 
+
+# ── Edit Container refactor: Task 1 — AnanMultiMeterItem ─────────────────
+nereus_add_test(tst_anan_multi_meter_item)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------
