@@ -78,9 +78,7 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QMenu>
 #include <QAction>
-#include <QResizeEvent>
 #include <QStringList>
-#include <QToolButton>
 #include <algorithm>
 
 namespace NereusSDR {
@@ -214,22 +212,6 @@ void ContainerWidget::buildUI()
     m_titleLabel->installEventFilter(this);
     m_resizeGrip->installEventFilter(this);
     m_contentHolder->installEventFilter(this);
-
-    // Task 15 — gear-icon QToolButton pinned to the title-bar strip.
-    // Parented to this (not m_titleBar) so its Z-order survives the
-    // hover-driven show/hide on m_titleBar; positioned via resizeEvent.
-    m_gearBtn = new QToolButton(this);
-    m_gearBtn->setText(QStringLiteral("\u2699"));   // Unicode gear glyph; no SVG resource dependency
-    m_gearBtn->setToolTip(tr("Edit container..."));
-    m_gearBtn->setCursor(Qt::ArrowCursor);
-    m_gearBtn->setAutoRaise(true);
-    m_gearBtn->setFixedSize(kTitleBarHeight - 4, kTitleBarHeight - 4);
-    m_gearBtn->setStyleSheet(QStringLiteral(
-        "QToolButton { color: #8aa8c0; background: transparent; "
-        "  border: none; font-size: 12px; padding: 0px; }"
-        "QToolButton:hover { color: #ffffff; }"));
-    connect(m_gearBtn, &QToolButton::clicked,
-            this, &ContainerWidget::settingsRequested);
 }
 
 void ContainerWidget::setContent(QWidget* widget)
@@ -426,13 +408,6 @@ void ContainerWidget::setTitleBarVisible(bool visible)
     if (m_titleBar) {
         m_titleBar->setVisible(visible);
     }
-    // Task 15 — the pinned gear lives on the title-bar strip and must
-    // follow its visibility. When the user has chosen "no title bar",
-    // the gear disappears alongside the rest of the chrome; it comes
-    // back via right-click + double-click affordances.
-    if (m_gearBtn) {
-        m_gearBtn->setVisible(visible);
-    }
     emit titleBarVisibilityChanged(visible);
     update();
 }
@@ -613,19 +588,6 @@ void ContainerWidget::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
     QWidget::mouseDoubleClickEvent(event);
-}
-
-void ContainerWidget::resizeEvent(QResizeEvent* event)
-{
-    QWidget::resizeEvent(event);
-    // Pin the gear button to the right end of the title-bar strip.
-    // Visibility tracks m_titleBarVisible (toggled in setTitleBarVisible).
-    if (m_gearBtn) {
-        const int margin = 2;
-        m_gearBtn->move(width() - m_gearBtn->width() - margin, margin);
-        m_gearBtn->raise();
-        m_gearBtn->setVisible(m_titleBarVisible);
-    }
 }
 
 // --- Event filter for title bar drag + resize grip ---

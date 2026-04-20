@@ -4,13 +4,12 @@
 //
 // Edit-container refactor Task 15 — on-container edit affordances.
 //
-// Verifies the three discoverable entry points added to
-// ContainerWidget: right-click context menu, header double-click,
-// and the title-bar gear icon. All three route into the pre-
-// existing ContainerWidget::settingsRequested signal (wired to the
-// settings dialog by ContainerManager). The context menu additionally
-// exposes Rename / Duplicate / Delete and a Dock Mode submenu which
-// emit the 4 new signals added in Task 15.
+// Verifies the two discoverable entry points added to
+// ContainerWidget: right-click context menu and header double-click.
+// Both route into the pre-existing ContainerWidget::settingsRequested
+// signal (wired to the settings dialog by ContainerManager). The
+// context menu additionally exposes Rename / Duplicate / Delete and a
+// Dock Mode submenu which emit the 4 new signals added in Task 15.
 //
 // no-port-check: test scaffolding; widget access surface is
 // NereusSDR-original.
@@ -22,7 +21,6 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QSignalSpy>
-#include <QToolButton>
 
 #include "gui/containers/ContainerWidget.h"
 
@@ -41,9 +39,6 @@ private slots:
     void doubleClickHeader_emitsSettings();
     void doubleClickBody_doesNotEmit();
     void doubleClickLocked_doesNotEmit();
-    void gearButton_emitsSettings();
-    void gearButton_hiddenWhenTitleBarHidden();
-    void gearButton_visibleWhenTitleBarVisible();
 };
 
 // -------------------------------------------------------------------
@@ -200,50 +195,6 @@ void TstContainerWidgetAccess::doubleClickLocked_doesNotEmit()
     QCoreApplication::sendEvent(&w, &ev);
 
     QCOMPARE(spy.count(), 0);
-}
-
-// -------------------------------------------------------------------
-// Gear button — always present; click emits settingsRequested, and
-// its visibility tracks setTitleBarVisible().
-// -------------------------------------------------------------------
-
-void TstContainerWidgetAccess::gearButton_emitsSettings()
-{
-    ContainerWidget w;
-    w.resize(300, 200);
-    QToolButton* gear = w.gearButtonForTest();
-    QVERIFY(gear != nullptr);
-
-    QSignalSpy spy(&w, &ContainerWidget::settingsRequested);
-    gear->click();
-    QCOMPARE(spy.count(), 1);
-}
-
-void TstContainerWidgetAccess::gearButton_hiddenWhenTitleBarHidden()
-{
-    ContainerWidget w;
-    w.resize(300, 200);
-    w.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&w));
-
-    w.setTitleBarVisible(false);
-
-    QToolButton* gear = w.gearButtonForTest();
-    QVERIFY(gear != nullptr);
-    QVERIFY(!gear->isVisible());
-}
-
-void TstContainerWidgetAccess::gearButton_visibleWhenTitleBarVisible()
-{
-    ContainerWidget w;
-    w.resize(300, 200);
-    w.setTitleBarVisible(true);
-    w.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&w));
-
-    QToolButton* gear = w.gearButtonForTest();
-    QVERIFY(gear != nullptr);
-    QVERIFY(gear->isVisible());
 }
 
 QTEST_MAIN(TstContainerWidgetAccess)

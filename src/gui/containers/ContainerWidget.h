@@ -151,7 +151,6 @@ mw0lge@grange-lane.co.uk
 class QLabel;
 class QMenu;
 class QPushButton;
-class QToolButton;
 
 namespace NereusSDR {
 
@@ -330,12 +329,8 @@ protected:
     // Edit-container refactor Task 15 — on-container edit affordances
     void contextMenuEvent(QContextMenuEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
 
 public:
-    // Test-only accessor for the floating gear-icon button added in Task 15.
-    QToolButton* gearButtonForTest() const { return m_gearBtn; }
-
     // Populate a menu with the standard on-container edit actions.
     // Exposed for unit testing (see tst_container_widget_access); the
     // public contextMenuEvent calls this internally, so tests can
@@ -417,14 +412,6 @@ private:
     // wireInteractiveItem() after setBoardCapabilities() still inherit
     // the current gating. Defaults to true (no gating) until set.
     bool m_hasAlex{true};
-
-    // Task 15 — gear-icon QToolButton pinned to the top-right of the
-    // title-bar strip. Complementary to m_btnSettings (which lives
-    // inside the auto-hiding title-bar layout); this one rides on
-    // ContainerWidget itself and is positioned in resizeEvent so
-    // container-edge right-click, header double-click, and gear-icon
-    // click are all first-class discoverable entry points.
-    QToolButton* m_gearBtn{nullptr};
 };
 
 } // namespace NereusSDR
