@@ -13,6 +13,8 @@
 //   3. masterOutputAccessible — masterOutput() returns the embedded
 //      MasterOutputWidget.
 //   4. fixedHeight32 — strip height is pinned to 32 px.
+//   5. featureButtonEmitsSignal — clicking the 💡 feature button emits
+//      featureRequestClicked() exactly once (Task 10d).
 //
 // Live UI smoke (hosted-inside-QMainWindow + menu bar re-parenting
 // visuals) is the canonical verify; these tests only guard the
@@ -24,6 +26,8 @@
 #include <QtTest/QtTest>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPushButton>
+#include <QSignalSpy>
 
 #include "core/AudioEngine.h"
 #include "gui/TitleBar.h"
@@ -93,6 +97,24 @@ private slots:
         // windowing system (QTEST_MAIN uses a QApplication so this is safe).
         bar.adjustSize();
         QCOMPARE(bar.height(), 32);
+    }
+
+    // ── 5. Feature button emits featureRequestClicked ──────────────────────
+
+    void featureButtonEmitsSignal() {
+        AudioEngine engine;
+        TitleBar bar(&engine);
+
+        // The 💡 button is a QPushButton with objectName "featureButton",
+        // set in TitleBar's constructor (Task 10d).
+        auto* btn = bar.findChild<QPushButton*>(QStringLiteral("featureButton"));
+        QVERIFY(btn != nullptr);
+
+        QSignalSpy spy(&bar, &TitleBar::featureRequestClicked);
+        QVERIFY(spy.isValid());
+
+        btn->click();
+        QCOMPARE(spy.count(), 1);
     }
 };
 

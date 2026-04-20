@@ -39,12 +39,20 @@
 //                 replaced by "NereusSDR".
 //                 Design spec: docs/architecture/2026-04-19-vax-design.md
 //                 §6.3 + §7.3.
+//   2026-04-20 — Task 10d: consolidated the 💡 feature-request button
+//                 (previously hosted by a separate `featureBar` QToolBar
+//                 in MainWindow) into TitleBar's far-right slot, past the
+//                 MasterOutputWidget. Emits `featureRequestClicked()`;
+//                 MainWindow wires that to its existing
+//                 showFeatureRequestDialog slot. Matches AetherSDR's
+//                 pattern of the feature button as the rightmost element.
 // =================================================================
 
 #include <QWidget>
 
 class QHBoxLayout;
 class QMenuBar;
+class QPushButton;
 
 namespace NereusSDR {
 
@@ -59,6 +67,8 @@ class MasterOutputWidget;
 //   [NereusSDR app-name label]
 //   [stretch]
 //   [MasterOutputWidget — speaker button + master slider + readout]
+//   [6 px spacing]
+//   [💡 feature-request button]
 //
 // macOS caveat: embedding the QMenuBar inside a custom widget prevents Qt
 // from promoting it to the native global menu bar at the top of the
@@ -82,10 +92,16 @@ public:
     // signal into AudioEngine::setSpeakersConfig.
     MasterOutputWidget* masterOutput() const { return m_master; }
 
+signals:
+    // Emitted when the 💡 feature-request button is clicked. MainWindow
+    // connects this to its showFeatureRequestDialog slot.
+    void featureRequestClicked();
+
 private:
     QHBoxLayout*        m_hbox{nullptr};
     QMenuBar*           m_menuBar{nullptr};
     MasterOutputWidget* m_master{nullptr};
+    QPushButton*        m_featureBtn{nullptr};
 };
 
 } // namespace NereusSDR

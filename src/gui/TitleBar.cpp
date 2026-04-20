@@ -33,6 +33,15 @@
 //                 preserved verbatim.
 //                 Design spec: docs/architecture/2026-04-19-vax-design.md
 //                 §6.3 + §7.3.
+//   2026-04-20 — Task 10d: added the 💡 feature-request button as the
+//                 rightmost element (past MasterOutputWidget, 6 px
+//                 spacing). Button construction (lightbulb painter,
+//                 28×28 sizing, #3a2a00/#806020 dark-amber style) moved
+//                 verbatim from the now-deleted featureBar QToolBar in
+//                 MainWindow.cpp. Emits featureRequestClicked(); MainWindow
+//                 wires that to showFeatureRequestDialog. Matches
+//                 AetherSDR's pattern of the feature button being the
+//                 rightmost strip element.
 // =================================================================
 
 #include "TitleBar.h"
@@ -40,8 +49,15 @@
 #include "widgets/MasterOutputWidget.h"
 
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMenuBar>
+#include <QPainter>
+#include <QPen>
+#include <QPixmap>
+#include <QPolygonF>
+#include <QPushButton>
+#include <QSize>
 #include <QSizePolicy>
 
 namespace NereusSDR {
@@ -105,6 +121,72 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // ── MasterOutputWidget — Task 10b composite ────────────────────────────
     m_master = new MasterOutputWidget(audio, this);
     m_hbox->addWidget(m_master);
+
+    // ── 💡 Feature-request button — Task 10d ───────────────────────────────
+    // Construction moved verbatim from the now-deleted featureBar QToolBar
+    // in MainWindow.cpp (Phase 3G-14). The button lives at the far right
+    // of the TitleBar strip, past the MasterOutputWidget — this matches
+    // AetherSDR's pattern where the feature button is the rightmost strip
+    // element.
+    m_hbox->addSpacing(6);
+
+    // Paint a lightbulb icon so it renders cleanly at any DPI.
+    auto makeBulbIcon = [](QColor bulbColor, QColor baseColor) -> QIcon {
+        constexpr int sz = 64;  // paint large, Qt scales down
+        QPixmap pm(sz, sz);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+
+        // Bulb (circle)
+        p.setPen(Qt::NoPen);
+        p.setBrush(bulbColor);
+        p.drawEllipse(QRectF(14, 4, 36, 36));
+
+        // Neck (trapezoid connecting bulb to base)
+        QPolygonF neck;
+        neck << QPointF(22, 36) << QPointF(42, 36)
+             << QPointF(40, 44) << QPointF(24, 44);
+        p.drawPolygon(neck);
+
+        // Base (screw threads — 3 thin lines)
+        p.setPen(QPen(baseColor, 2.5));
+        p.drawLine(QPointF(24, 46), QPointF(40, 46));
+        p.drawLine(QPointF(25, 50), QPointF(39, 50));
+        p.drawLine(QPointF(27, 54), QPointF(37, 54));
+
+        // Tip
+        p.setPen(Qt::NoPen);
+        p.setBrush(baseColor);
+        p.drawEllipse(QRectF(29, 56, 6, 4));
+
+        // Filament lines inside bulb
+        p.setPen(QPen(baseColor, 1.5));
+        p.drawLine(QPointF(28, 34), QPointF(28, 22));
+        p.drawLine(QPointF(28, 22), QPointF(32, 16));
+        p.drawLine(QPointF(32, 16), QPointF(36, 22));
+        p.drawLine(QPointF(36, 22), QPointF(36, 34));
+
+        p.end();
+        return QIcon(pm);
+    };
+
+    QIcon bulbIcon = makeBulbIcon(QColor(0xFF, 0xD0, 0x60), QColor(0x80, 0x60, 0x20));
+
+    m_featureBtn = new QPushButton(this);
+    m_featureBtn->setObjectName(QStringLiteral("featureButton"));
+    m_featureBtn->setIcon(bulbIcon);
+    m_featureBtn->setIconSize(QSize(22, 22));
+    m_featureBtn->setFixedSize(28, 28);
+    m_featureBtn->setToolTip(QStringLiteral("Submit a feature request or bug report"));
+    m_featureBtn->setAccessibleName(QStringLiteral("Feature request"));
+    m_featureBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #3a2a00; border: 1px solid #806020; "
+        "border-radius: 4px; padding: 0; }"
+        "QPushButton:hover { background: #504000; border-color: #a08030; }"));
+    connect(m_featureBtn, &QPushButton::clicked,
+            this, &TitleBar::featureRequestClicked);
+    m_hbox->addWidget(m_featureBtn);
 }
 
 void TitleBar::setMenuBar(QMenuBar* mb)
