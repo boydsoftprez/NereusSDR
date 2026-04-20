@@ -410,9 +410,143 @@ BarPresetItem::Kind BarPresetItem::kindFromString(const QString& s,
 }
 
 // =================================================================
-// paint() — simple bar-row render. Layout mirrors buildBarRow():
-//   top 45% strip — label
-//   bottom 55%    — horizontal bar + red-threshold zone
+// setValue() — stash the raw value and update the rolling peak used
+// by the right-hand peak text + peak-hold marker in paint(). Ported
+// loosely from Thetis clsBarItem.Value setter which tracks MaxHistory
+// via a rolling sample buffer; we use a simple high-water mark with
+// mild decay toward the live value so a sustained signal drop isn't
+// permanently painted at the old peak. Full Thetis-parity history
+// decay lives on the BarItem primitive (m_history ring buffer) which
+// is deliberately out of scope for the preset's paint() enhancement.
+// =================================================================
+void BarPresetItem::setValue(double v)
+{
+    MeterItem::setValue(v);
+    if (m_peakValue <= -1e307) {
+        m_peakValue = v;
+        return;
+    }
+    if (v > m_peakValue) {
+        m_peakValue = v;
+    } else {
+        // 2%/tick decay toward the live value keeps the peak marker
+        // responsive. At 10 Hz poll the peak fully relaxes in ~2s.
+        m_peakValue += (v - m_peakValue) * 0.02;
+    }
+}
+
+// =================================================================
+// formatValue() — per-flavour text format for the ShowValue /
+// ShowPeakValue strings. Ports Thetis renderHBar:36080-36100 switch
+// on clsBarItem.Units but keyed off the NereusSDR flavour enum.
+// =================================================================
+QString BarPresetItem::formatValue(double v) const
+{
+    switch (m_kind) {
+    case Kind::SignalBar:
+    case Kind::AvgSignalBar:
+    case Kind::MaxBinBar:
+    case Kind::AdcBar:
+        // dBm readings — one decimal + "dBm"
+        return QString::number(v, 'f', 1) + QStringLiteral("dBm");
+    case Kind::AdcMaxMag:
+        // ADC counts — integer
+        return QString::number(v, 'f', 0);
+    case Kind::Alc:
+    case Kind::AlcGain:
+    case Kind::AlcGroup:
+    case Kind::Mic:
+    case Kind::Comp:
+    case Kind::Cfc:
+    case Kind::CfcGain:
+    case Kind::Leveler:
+    case Kind::LevelerGain:
+    case Kind::Eq:
+    case Kind::Agc:
+    case Kind::AgcGain:
+        // dB readings — one decimal + "dB"
+        return QString::number(v, 'f', 1) + QStringLiteral("dB");
+    case Kind::Pbsnr:
+        return QString::number(v, 'f', 1) + QStringLiteral("dB");
+    case Kind::Custom:
+    default:
+        return QString::number(v, 'f', 1);
+    }
+}
+
+// =================================================================
+// tickStops() — numeric scale labels under the bar. Derived from the
+// Thetis generalScale() call sites (MeterManager.cs:31897 ADC_MAX_MAG
+// step=5000, and the various AddALC* / AddMic* / AddComp* etc.
+// ScaleCalibration triples). We hard-code the stops because the
+// generalScale tick-math itself lives on the BarItem primitive which
+// is out of scope.
+// =================================================================
+QVector<double> BarPresetItem::tickStops() const
+{
+    switch (m_kind) {
+    case Kind::SignalBar:
+    case Kind::AvgSignalBar:
+    case Kind::MaxBinBar:
+    case Kind::AdcBar:
+        // dBm bars: S0..S9+40 equivalents at 20 dB steps.
+        return {-130.0, -110.0, -90.0, -70.0, -50.0, -30.0, -10.0};
+    case Kind::AdcMaxMag:
+        // Thetis MeterManager.cs:31897 — generalScale step = 5000.
+        return {0.0, 5000.0, 10000.0, 15000.0, 20000.0, 25000.0, 32768.0};
+    case Kind::Alc:
+    case Kind::Mic:
+    case Kind::Comp:
+    case Kind::Cfc:
+    case Kind::Leveler:
+    case Kind::Eq:
+        // From Thetis AddALCBar:23349 and friends — scale calibration
+        // triples -30,0,12. Thetis generalScale draws -30, -20, -10,
+        // 0, 4, 8, 12 (lowInc 10, highInc 4, transition at 0).
+        return {-30.0, -20.0, -10.0, 0.0, 4.0, 8.0, 12.0};
+    case Kind::AlcGain:
+    case Kind::CfcGain:
+    case Kind::LevelerGain:
+        // 0..25 or 0..30 gain scales — 5 dB steps.
+        return {0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0};
+    case Kind::AlcGroup:
+        return {-30.0, -20.0, -10.0, 0.0, 10.0, 20.0, 25.0};
+    case Kind::Agc:
+        return {-125.0, -75.0, -25.0, 25.0, 75.0, 125.0};
+    case Kind::AgcGain:
+        return {-50.0, 0.0, 50.0, 100.0, 125.0};
+    case Kind::Pbsnr:
+        return {0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+    case Kind::Custom:
+    default:
+        // Five evenly-spaced stops across the configured range.
+        {
+            QVector<double> out;
+            for (int i = 0; i <= 4; ++i) {
+                out.append(m_minValue + (m_maxValue - m_minValue) * (i / 4.0));
+            }
+            return out;
+        }
+    }
+}
+
+// =================================================================
+// paint() — Thetis-parity bar-row render.
+//
+// Visual layout (y relative to the item's pixel rect):
+//
+//   0%-35%   text strip — left: current value (yellow), centered:
+//            title (red), right: peak value (red if over threshold,
+//            else yellow)
+//   35%-60%  bar track — backdrop + two-tone fill (white up to red
+//            threshold, red above); thin vertical marker at the
+//            current value; small yellow peak-hold indicator
+//   60%-100% scale ticks + numeric labels
+//
+// The text strip mirrors Thetis MeterManager.cs:31879-31886 (scale
+// title) + :36074-36137 (ShowValue / ShowPeakValue). Thetis anchors
+// these above the bar; the preset collapses them into the row's
+// top strip so multiple rows stack without vertical dead space.
 // =================================================================
 void BarPresetItem::paint(QPainter& p, int widgetW, int widgetH)
 {
@@ -422,51 +556,141 @@ void BarPresetItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect, m_backdropColor);
 
-    // Label in the top 45% strip.
-    const QRect titleRect(rect.x(), rect.y(), rect.width(),
-                          rect.height() * 45 / 100);
-    p.setPen(QColor(Qt::red));  // Thetis meter-title colour (buildBarRow)
-    QFont f = p.font();
-    f.setBold(true);
-    p.setFont(f);
-    p.drawText(titleRect, Qt::AlignCenter, m_label);
-
-    // Bar region in the bottom 55%.
-    const QRect barRect(rect.x() + rect.width() * 2 / 100,
-                        rect.y() + rect.height() * 45 / 100,
-                        rect.width() * 96 / 100,
-                        rect.height() * 50 / 100);
-
-    // Edit-container refactor Task 20 — prefer the live value the
-    // poller pushed via setValue(); fall back to minValue for preview
-    // renders when no data has arrived yet. MeterItem::m_value defaults
-    // to -140.0, so any value in range is taken as "live".
+    // --- Compute value geometry up front ---
     const double span = qMax(m_maxValue - m_minValue, 1e-6);
     const double liveValue = value();
-    const double seed = (liveValue <= m_minValue - 1e-3) ? m_minValue
-                                                         : qBound(m_minValue, liveValue, m_maxValue);
+    // MeterItem::m_value defaults to -140; treat anything at-or-below
+    // m_minValue as "no data yet" to avoid drawing a negative-length
+    // bar for TX flavours whose minValue is above -140.
+    const bool   haveLive = liveValue > m_minValue - 1e-3;
+    const double seed = haveLive ? qBound(m_minValue, liveValue, m_maxValue)
+                                 : m_minValue;
+    const double peakSeed = qBound(m_minValue,
+                                   haveLive ? m_peakValue : m_minValue,
+                                   m_maxValue);
     const float  normX = static_cast<float>((seed - m_minValue) / span);
+    const float  normPeak = static_cast<float>((peakSeed - m_minValue) / span);
+    const bool   haveRedZone = m_redThreshold > m_minValue
+                            && m_redThreshold < m_maxValue;
+    const float  normR = haveRedZone
+        ? static_cast<float>((m_redThreshold - m_minValue) / span)
+        : 1.0f;
 
-    // Draw the bar baseline (line-style, matching BarStyle::Line).
-    const int baseY = barRect.y() + barRect.height() / 2;
-    QPen pen(m_barColor);
-    pen.setWidthF(qMax(1.0, barRect.height() * 0.08));
-    p.setPen(pen);
-    p.drawLine(barRect.x(), baseY,
-               barRect.x() + static_cast<int>(barRect.width() * normX),
-               baseY);
+    // --- Row layout sub-rects ---
+    const QRect textRow(rect.x(), rect.y(),
+                        rect.width(), rect.height() * 35 / 100);
+    const QRect barRect(rect.x() + rect.width() * 2 / 100,
+                        rect.y() + rect.height() * 40 / 100,
+                        rect.width() * 96 / 100,
+                        rect.height() * 20 / 100);
+    const QRect scaleRow(rect.x(), rect.y() + rect.height() * 62 / 100,
+                         rect.width(), rect.height() * 38 / 100);
 
-    // Optional red zone above redThreshold. Matches the Thetis
-    // convention (see BarItem::setRedThreshold in buildBarRow).
-    if (m_redThreshold > m_minValue && m_redThreshold < m_maxValue) {
-        const float normR =
-            static_cast<float>((m_redThreshold - m_minValue) / span);
-        const int rX = barRect.x() + static_cast<int>(barRect.width() * normR);
-        p.setPen(QPen(QColor(Qt::red), pen.widthF()));
-        p.drawLine(rX, barRect.y(), rX, barRect.y() + barRect.height());
+    // --- Text strip ---
+    QFont labelFont = p.font();
+    labelFont.setBold(true);
+    // Scale font size to fit row height; Thetis uses emScaled based on
+    // rect.Width but the row aspect is our primary constraint.
+    const int textPx = qBound(8, textRow.height() * 70 / 100, 20);
+    labelFont.setPixelSize(textPx);
+    p.setFont(labelFont);
+
+    // Current-value text, left-aligned. Yellow per Thetis default
+    // FontColour (clsBarItem ctor) MeterManager.cs:19944.
+    const QString curText = haveLive ? formatValue(liveValue) : QStringLiteral("—");
+    p.setPen(QColor(Qt::yellow));
+    p.drawText(textRow.adjusted(rect.width() * 2 / 100, 0, 0, 0),
+               Qt::AlignLeft | Qt::AlignVCenter, curText);
+
+    // Centered title — red, matches Thetis scaleItem title default
+    // (MeterManager.cs:31886 uses scale.FontColourType which for most
+    // bar rows is Red per the buildBarRow factory defaults).
+    p.setPen(QColor(Qt::red));
+    p.drawText(textRow, Qt::AlignCenter, m_label);
+
+    // Peak-value text, right-aligned. Red when over-threshold;
+    // otherwise yellow to match the current-value text.
+    const bool peakOverThreshold = haveRedZone && peakSeed > m_redThreshold;
+    p.setPen(peakOverThreshold ? QColor(Qt::red) : QColor(Qt::yellow));
+    const QString peakText = haveLive ? formatValue(peakSeed) : QStringLiteral("—");
+    p.drawText(textRow.adjusted(0, 0, -rect.width() * 2 / 100, 0),
+               Qt::AlignRight | Qt::AlignVCenter, peakText);
+
+    // --- Bar track ---
+    // Thin backdrop "rail" so the empty portion of the bar is
+    // visible against the card backdrop (Thetis renders a solid rail
+    // at y+h*0.85).
+    p.fillRect(barRect, QColor(16, 16, 16));
+    // Left portion: white (or m_barColor) fill up to min(normX, normR).
+    const float leftEndNorm = qMin(normX, normR);
+    if (leftEndNorm > 0.0f) {
+        QRect fillLeft(barRect.x(), barRect.y(),
+                       static_cast<int>(barRect.width() * leftEndNorm),
+                       barRect.height());
+        p.fillRect(fillLeft, m_barColor);
     }
+    // Right portion: red fill between normR and normX if the live
+    // value crosses the threshold.
+    if (haveRedZone && normX > normR) {
+        QRect fillRight(barRect.x() + static_cast<int>(barRect.width() * normR),
+                        barRect.y(),
+                        static_cast<int>(barRect.width() * (normX - normR)),
+                        barRect.height());
+        p.fillRect(fillRight, QColor(Qt::red));
+    } else if (!haveRedZone && normX > 0.0f) {
+        // No threshold configured — whole fill is the bar colour.
+        // (leftEndNorm already filled the whole range above.)
+    }
+
+    // Peak-hold marker: thin vertical yellow line at the rolling peak.
+    // Mirrors Thetis renderHBar:36068 peakHoldMarkerColour line.
+    if (haveLive && normPeak > 0.0f) {
+        const int peakX = barRect.x()
+            + static_cast<int>(barRect.width() * normPeak);
+        QPen peakPen(peakOverThreshold ? QColor(Qt::red) : QColor(Qt::yellow));
+        peakPen.setWidth(qMax(1, barRect.height() / 6));
+        p.setPen(peakPen);
+        p.drawLine(peakX, barRect.y() - 1,
+                   peakX, barRect.y() + barRect.height() + 1);
+    }
+
+    // --- Scale ticks + labels ---
+    // Mirrors Thetis generalScale(): tick marks + numeric label at each
+    // stop. We draw short ticks at the top of the scale row and the
+    // label below them.
+    QFont tickFont = labelFont;
+    const int tickPx = qMax(7, qMin(scaleRow.height() * 55 / 100, 11));
+    tickFont.setPixelSize(tickPx);
+    tickFont.setBold(false);
+    p.setFont(tickFont);
+    p.setPen(QColor(0x80, 0x90, 0xa0));  // label colour — matches ScaleItem default
+
+    const QVector<double> stops = tickStops();
+    const int tickTop = scaleRow.y();
+    const int tickLen = qMax(2, scaleRow.height() * 20 / 100);
+    for (double stop : stops) {
+        if (stop < m_minValue - 1e-6 || stop > m_maxValue + 1e-6) {
+            continue;
+        }
+        const float sNorm = static_cast<float>((stop - m_minValue) / span);
+        const int sx = barRect.x()
+            + static_cast<int>(barRect.width() * sNorm);
+        // Short tick.
+        p.drawLine(sx, tickTop, sx, tickTop + tickLen);
+        // Numeric label, centered under the tick.
+        const QString labelStr = (m_kind == Kind::AdcMaxMag)
+            ? QString::number(stop, 'f', 0)
+            : QString::number(stop, 'f', 0);
+        const QRect labelRect(sx - rect.width() / 12,
+                              tickTop + tickLen + 1,
+                              rect.width() / 6,
+                              scaleRow.height() - tickLen - 2);
+        p.drawText(labelRect, Qt::AlignHCenter | Qt::AlignTop, labelStr);
+    }
+
     p.restore();
 }
 
