@@ -4,17 +4,8 @@
 //
 // Exercises AudioEngine's RX → VAX bus tee logic — Phase 3O Sub-Phase 8.5.
 //
-// Coverage:
-//   1. fanIn — multiple slices routed to the same VAX channel get all
-//      their pushes (one push per rxBlockReady call per slice).
-//   2. vaxOffSkipsBus — a slice with vaxChannel == 0 does NOT push to
-//      any bus.
-//   3. vaxDoesNotGateSpeakers — a slice's audio still goes to the
-//      speakers bus regardless of vaxChannel value.
-//   4. nullVaxSlotIsSafeNoOp — when the bus pointer is null (failed
-//      open), the tee is silent and rxBlockReady returns cleanly.
-//   5. closedVaxBusSkipsPush — bus exists but isOpen() == false: tee
-//      respects the isOpen() guard.
+// Coverage: see private-slot test methods below — each verifies one
+// routing-contract scenario.
 //
 // Uses FakeAudioBus injected via the NEREUS_BUILD_TESTS-only
 // AudioEngine::setVaxBusForTest / setSpeakersBusForTest seam, so the

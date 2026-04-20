@@ -408,9 +408,9 @@ void AudioEngine::setVaxEnabled(int channel, bool on)
         return;
     }
     // Already populated (eagerly opened by start() on Mac/Linux, or via a
-    // prior setVaxConfig BYO call): no-op. Re-open semantics fall through
-    // to the platform-native bus (Mac/Linux) or the PortAudio default
-    // fallback (Windows) when the slot is empty.
+    // prior setVaxConfig BYO call): no-op. Empty slot: mint the
+    // platform-native bus (Mac/Linux) or the PortAudio default (Windows
+    // BYO) below.
     if (m_vaxBus[idx]) {
         return;
     }

@@ -18,17 +18,20 @@
 #include <QByteArray>
 #include <QString>
 
-#include <atomic>
 #include <vector>
 
 namespace NereusSDR {
 
+// Single-threaded test fake — not safe for concurrent push from multiple threads.
 class FakeAudioBus : public IAudioBus {
 public:
     explicit FakeAudioBus(QString name = QStringLiteral("Fake"))
         : m_name(std::move(name)) {}
 
     bool open(const AudioFormat& format) override {
+        if (!m_openResult) {
+            return false;
+        }
         m_negotiatedFormat = format;
         m_open = true;
         return true;
@@ -41,8 +44,8 @@ public:
         if (!m_open || data == nullptr || bytes <= 0) {
             return 0;
         }
-        m_pushes.fetch_add(1, std::memory_order_acq_rel);
-        m_lastPushBytes.store(static_cast<int>(bytes), std::memory_order_release);
+        ++m_pushes;
+        m_lastPushBytes = bytes;
         m_buffer.append(data, static_cast<int>(bytes));
         return bytes;
     }
@@ -56,21 +59,26 @@ public:
     AudioFormat negotiatedFormat() const override { return m_negotiatedFormat; }
 
     // Test inspectors
-    int pushCount() const { return m_pushes.load(std::memory_order_acquire); }
-    int lastPushBytes() const { return m_lastPushBytes.load(std::memory_order_acquire); }
+    int pushCount() const { return m_pushes; }
+    qint64 lastPushBytes() const { return m_lastPushBytes; }
     const QByteArray& buffer() const { return m_buffer; }
 
     // Force-toggle isOpen() to false so AudioEngine::rxBlockReady's
     // isOpen() guard skips the push.
     void setForceOpen(bool open) { m_open = open; }
 
+    // Drive the failure-path branch in AudioEngine::start() by making the
+    // next open() call return false (and leave the bus closed).
+    void setOpenResult(bool ok) { m_openResult = ok; }
+
 private:
-    QString          m_name;
-    AudioFormat      m_negotiatedFormat;
-    bool             m_open{false};
-    QByteArray       m_buffer;
-    std::atomic<int> m_pushes{0};
-    std::atomic<int> m_lastPushBytes{0};
+    QString     m_name;
+    AudioFormat m_negotiatedFormat;
+    bool        m_open{false};
+    bool        m_openResult{true};
+    QByteArray  m_buffer;
+    int         m_pushes{0};
+    qint64      m_lastPushBytes{0};
 };
 
 } // namespace NereusSDR
