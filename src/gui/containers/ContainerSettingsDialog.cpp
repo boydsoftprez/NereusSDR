@@ -137,7 +137,6 @@ mw0lge@grange-lane.co.uk
 #include "ContainerWidget.h"
 #include "../meters/MeterWidget.h"
 #include "../meters/MeterItem.h"
-#include "../meters/ItemGroup.h"
 
 // Edit-container refactor Task 11 — first-class preset MeterItem classes.
 // These replace the factory-expansion path that flattened a "preset" into
@@ -790,8 +789,9 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     // expansion path (which flattened e.g. ANAN MM into 8 discrete
     // rows) is retired for this dialog; composite presets now appear
     // as exactly one row in the in-use list. Bar-row presets collapse
-    // to BarPresetItem + configureAs<kind>(). ItemGroup remains in
-    // the tree — Task 19 owns its removal after the migration pass.
+    // to BarPresetItem + configureAs<kind>(). ItemGroup was removed in
+    // Task 19; its provenance lives on in the per-class attribution
+    // blocks that cite each factory's original line range.
     //
     // Layout parity:
     //   - Composite presets carry their Thetis-nominal full-container
@@ -2574,115 +2574,65 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
     for (const ContainerInUseRow& r : m_workingItems) { delete r.item; }
     m_workingItems.clear();
 
-    ItemGroup* group = nullptr;
+    // Edit-container refactor Task 19 — ItemGroup is gone. Whole-meter
+    // preset names map directly to a first-class preset MeterItem
+    // subclass; each preset fills the container with a single row whose
+    // rect is the full (0, 0, 1, 1) area. Bar-row presets were already
+    // delegated to appendPresetRow() above and never reach this branch.
+    // Rotator / FilterDisplay stay as direct single-item constructions
+    // (no ItemGroup provenance — they never had factories).
+    MeterItem* created = nullptr;
 
     if (name == QLatin1String("SMeterOnly")) {
-        group = ItemGroup::createSMeterPreset(0, QStringLiteral("S-Meter"), this);
-    } else if (name == QLatin1String("SignalBar")) {
-        group = ItemGroup::createSignalBarPreset(this);
-    } else if (name == QLatin1String("AvgSignalBar")) {
-        group = ItemGroup::createAvgSignalBarPreset(this);
-    } else if (name == QLatin1String("MaxBinBar")) {
-        group = ItemGroup::createMaxBinBarPreset(this);
+        created = new SMeterPresetItem(this);
     } else if (name == QLatin1String("SignalText")) {
-        group = ItemGroup::createSignalTextPreset(0, this);
+        created = new SignalTextPresetItem(this);
     } else if (name == QLatin1String("AnanMM")) {
-        group = ItemGroup::createAnanMMPreset(this);
+        created = new AnanMultiMeterItem(this);
     } else if (name == QLatin1String("CrossNeedle")) {
-        group = ItemGroup::createCrossNeedlePreset(this);
+        created = new CrossNeedleItem(this);
     } else if (name == QLatin1String("MagicEye")) {
-        group = ItemGroup::createMagicEyePreset(0, this);
+        created = new MagicEyePresetItem(this);
     } else if (name == QLatin1String("History")) {
-        group = ItemGroup::createHistoryPreset(0, this);
+        created = new HistoryGraphPresetItem(this);
     } else if (name == QLatin1String("PowerSwr")) {
-        group = ItemGroup::createPowerSwrPreset(QStringLiteral("Power/SWR"), this);
-    } else if (name == QLatin1String("Alc")) {
-        group = ItemGroup::createAlcPreset(this);
-    } else if (name == QLatin1String("AlcGain")) {
-        group = ItemGroup::createAlcGainBarPreset(this);
-    } else if (name == QLatin1String("AlcGroup")) {
-        group = ItemGroup::createAlcGroupBarPreset(this);
-    } else if (name == QLatin1String("Mic")) {
-        group = ItemGroup::createMicPreset(this);
-    } else if (name == QLatin1String("Comp")) {
-        group = ItemGroup::createCompPreset(this);
-    } else if (name == QLatin1String("Eq")) {
-        group = ItemGroup::createEqBarPreset(this);
-    } else if (name == QLatin1String("Leveler")) {
-        group = ItemGroup::createLevelerBarPreset(this);
-    } else if (name == QLatin1String("LevelerGain")) {
-        group = ItemGroup::createLevelerGainBarPreset(this);
-    } else if (name == QLatin1String("Cfc")) {
-        group = ItemGroup::createCfcBarPreset(this);
-    } else if (name == QLatin1String("CfcGain")) {
-        group = ItemGroup::createCfcGainBarPreset(this);
-    } else if (name == QLatin1String("Adc")) {
-        group = ItemGroup::createAdcBarPreset(this);
-    } else if (name == QLatin1String("AdcMaxMag")) {
-        group = ItemGroup::createAdcMaxMagPreset(this);
-    } else if (name == QLatin1String("Agc")) {
-        group = ItemGroup::createAgcBarPreset(this);
-    } else if (name == QLatin1String("AgcGain")) {
-        group = ItemGroup::createAgcGainBarPreset(this);
-    } else if (name == QLatin1String("Pbsnr")) {
-        group = ItemGroup::createPbsnrBarPreset(this);
+        created = new PowerSwrPresetItem(this);
     } else if (name == QLatin1String("Vfo")) {
-        group = ItemGroup::createVfoDisplayPreset(this);
+        created = new VfoDisplayPresetItem(this);
     } else if (name == QLatin1String("Clock")) {
-        group = ItemGroup::createClockPreset(this);
+        created = new ClockPresetItem(this);
     } else if (name == QLatin1String("Contest")) {
-        group = ItemGroup::createContestPreset(this);
+        created = new ContestPresetItem(this);
     } else if (name == QLatin1String("Spacer")) {
-        group = ItemGroup::createSpacerPreset(this);
+        auto* spacer = new SpacerItem();
+        spacer->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        created = spacer;
     } else if (name == QLatin1String("Rotator")) {
-        auto* item = new RotatorItem();
-        item->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-        item->setBindingId(300);
-        ContainerInUseRow newRow;
-        newRow.item        = item;
-        newRow.displayName = defaultDisplayNameFor(item);
-        newRow.rowId       = QUuid::createUuid();
-        m_workingItems.append(newRow);
+        auto* rotator = new RotatorItem();
+        rotator->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        rotator->setBindingId(300);
+        created = rotator;
     } else if (name == QLatin1String("FilterDisplay")) {
-        auto* item = new FilterDisplayItem();
-        item->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-        ContainerInUseRow newRow;
-        newRow.item        = item;
-        newRow.displayName = defaultDisplayNameFor(item);
-        newRow.rowId       = QUuid::createUuid();
-        m_workingItems.append(newRow);
+        auto* filter = new FilterDisplayItem();
+        filter->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        created = filter;
     }
 
-    if (group) {
-        // Offset every cloned preset item by the current stack
-        // position so the preset doesn't overlap existing narrow
-        // items at the top of the container. Without this offset, a
-        // user who adds a single Bar (lands at y=0) and then loads
-        // the Clock preset (factory items also at y=0) sees the bar
-        // and clocks piled on top of each other. Computed BEFORE the
-        // loop so the offset is constant for all items in the preset.
-        const float yOffset = nextStackYPos(workingItems());
-        for (MeterItem* src : group->items()) {
-            MeterItem* clone = createItemFromSerialized(src->serialize());
-            if (clone) {
-                clone->setRect(clone->x(),
-                               clone->y() + yOffset,
-                               clone->itemWidth(),
-                               clone->itemHeight());
-                // Phase 3G-7: factory presets won't normally have MMIO
-                // bindings, but copy them defensively in case a future
-                // preset wires one.
-                if (src->hasMmioBinding()) {
-                    clone->setMmioBinding(src->mmioGuid(), src->mmioVariable());
-                }
-                ContainerInUseRow newRow;
-                newRow.item        = clone;
-                newRow.displayName = defaultDisplayNameFor(clone);
-                newRow.rowId       = QUuid::createUuid();
-                m_workingItems.append(newRow);
-            }
-        }
-        delete group;
+    if (created) {
+        // Composite presets take the full container rect. Their
+        // constructors already install a sensible default rect (e.g.
+        // ANAN MM defaults to (0, 0, 1, 0.441)); for whole-container
+        // "replace" semantics we expand that to the full (0, 0, 1, 1)
+        // area so the preset fills the container immediately after
+        // load. This matches the pre-refactor ItemGroup::installInto
+        // behavior which mapped factory-local rects to the full target
+        // rect the caller passed in.
+        created->setRect(0.0f, 0.0f, 1.0f, 1.0f);
+        ContainerInUseRow newRow;
+        newRow.item        = created;
+        newRow.displayName = defaultDisplayNameFor(created);
+        newRow.rowId       = QUuid::createUuid();
+        m_workingItems.append(newRow);
     }
 
     refreshItemList();

@@ -228,7 +228,6 @@ nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)
 nereus_add_test(tst_meter_item_scale)
-nereus_add_test(tst_meter_presets)
 
 # ── Phase 3M-1c G.1 / G.2: VfoDisplayItem TX-state badge + Phase L routing ──
 # Verifies the existing 3G-8 widget machinery (setTransmitting / isTransmitting
