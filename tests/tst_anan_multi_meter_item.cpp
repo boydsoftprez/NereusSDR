@@ -49,6 +49,19 @@ private slots:
     // UI-only (ANAN MM has no bar, so these decorations are stored for
     // Thetis-parity round-trip but produce no visible effect).
     void shadowSegmentedSolid_roundTrip();
+
+    // Phase 4 — comprehensive round-trip of every parity knob,
+    // exercised one field at a time to catch any single-field
+    // serialization regression.
+    void allKnobs_individualRoundTrip();
+    void needleColors_roundTrip();
+    void settings_roundTrip();
+    void colors_roundTrip();
+    void title_roundTrip();
+    void peakValue_roundTrip();
+    void peakHold_roundTrip();
+    void history_roundTrip();
+    void miscFlags_roundTrip();
 };
 
 void TestAnanMultiMeterItem::defaultConstruction_hasSevenNeedles()
@@ -297,6 +310,224 @@ void TestAnanMultiMeterItem::shadowSegmentedSolid_roundTrip()
 
     QCOMPARE(b.showSolid(), true);
     QCOMPARE(b.solidColor(), QColor(120, 140, 160, 200));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — per-field serialization round-trip coverage.
+//
+// Each test sets one (or one logical group) of parity knobs to a
+// NON-default value, then serializes → deserializes and confirms the
+// field preserved. Splitting per-field makes regression bisection
+// precise: if a single field breaks, only one test flips red.
+// ---------------------------------------------------------------------------
+
+namespace {
+template<typename T>
+void roundTripCheck(const T& before, T& after, const QString& blob)
+{
+    Q_UNUSED(before);
+    QVERIFY(after.deserialize(blob));
+}
+}
+
+void TestAnanMultiMeterItem::settings_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setUpdateMs(75);
+    a.setAttackRatio(0.123f);
+    a.setDecayRatio(0.456f);
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.updateMs(), 75);
+    QCOMPARE(b.attackRatio(), 0.123f);
+    QCOMPARE(b.decayRatio(),  0.456f);
+}
+
+void TestAnanMultiMeterItem::colors_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setBackgroundColor(QColor(1, 2, 3, 200));
+    a.setLowColor(QColor(4, 5, 6));
+    a.setHighColor(QColor(7, 8, 9));
+    a.setIndicatorColor(QColor(10, 11, 12));
+    a.setSubColor(QColor(13, 14, 15));
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.backgroundColor(), QColor(1, 2, 3, 200));
+    QCOMPARE(b.lowColor(),        QColor(4, 5, 6));
+    QCOMPARE(b.highColor(),       QColor(7, 8, 9));
+    QCOMPARE(b.indicatorColor(),  QColor(10, 11, 12));
+    QCOMPARE(b.subColor(),        QColor(13, 14, 15));
+}
+
+void TestAnanMultiMeterItem::needleColors_roundTrip()
+{
+    AnanMultiMeterItem a;
+    for (int i = 0; i < 7; ++i) {
+        a.setNeedleColor(i, QColor(10 + i, 20 + i, 30 + i));
+    }
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    for (int i = 0; i < 7; ++i) {
+        QCOMPARE(b.needleColor(i), QColor(10 + i, 20 + i, 30 + i));
+    }
+}
+
+void TestAnanMultiMeterItem::title_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setShowMeterTitle(true);
+    a.setMeterTitleColor(QColor(250, 200, 100));
+    a.setMeterTitleText(QStringLiteral("My Meter"));
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.showMeterTitle(),  true);
+    QCOMPARE(b.meterTitleColor(), QColor(250, 200, 100));
+    QCOMPARE(b.meterTitleText(),  QStringLiteral("My Meter"));
+}
+
+void TestAnanMultiMeterItem::peakValue_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setShowPeakValue(true);
+    a.setPeakValueColor(QColor(100, 200, 50, 200));
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.showPeakValue(),  true);
+    QCOMPARE(b.peakValueColor(), QColor(100, 200, 50, 200));
+}
+
+void TestAnanMultiMeterItem::peakHold_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setShowPeakHold(true);
+    a.setPeakHoldColor(QColor(128, 64, 32));
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.showPeakHold(),  true);
+    QCOMPARE(b.peakHoldColor(), QColor(128, 64, 32));
+}
+
+void TestAnanMultiMeterItem::history_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setShowHistory(true);
+    a.setHistoryMs(6500);
+    a.setIgnoreHistoryMs(125);
+    a.setHistoryColor(QColor(200, 100, 50, 96));
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.showHistory(),      true);
+    QCOMPARE(b.historyMs(),        6500);
+    QCOMPARE(b.ignoreHistoryMs(),  125);
+    QCOMPARE(b.historyColor(),     QColor(200, 100, 50, 96));
+}
+
+void TestAnanMultiMeterItem::miscFlags_roundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setFadeOnRx(true);
+    a.setFadeOnTx(true);
+    a.setDarkMode(true);
+    a.setSignalSource(AnanMultiMeterItem::SignalSource::MaxBin);
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.fadeOnRx(), true);
+    QCOMPARE(b.fadeOnTx(), true);
+    QCOMPARE(b.darkMode(), true);
+    QCOMPARE(b.signalSource(), AnanMultiMeterItem::SignalSource::MaxBin);
+}
+
+// A single test flipping EVERY knob at once; ensures we don't have
+// a JSON-key collision between two fields.
+void TestAnanMultiMeterItem::allKnobs_individualRoundTrip()
+{
+    AnanMultiMeterItem a;
+    a.setUpdateMs(42);
+    a.setAttackRatio(0.9f);
+    a.setDecayRatio(0.05f);
+    a.setBackgroundColor(QColor(1, 2, 3, 200));
+    a.setLowColor(QColor(4, 5, 6));
+    a.setHighColor(QColor(7, 8, 9));
+    a.setIndicatorColor(QColor(10, 11, 12));
+    a.setSubColor(QColor(13, 14, 15));
+    for (int i = 0; i < 7; ++i) {
+        a.setNeedleColor(i, QColor(20 + i, 30 + i, 40 + i));
+    }
+    a.setFadeOnRx(true);
+    a.setFadeOnTx(true);
+    a.setDarkMode(true);
+    a.setShowMeterTitle(true);
+    a.setMeterTitleColor(QColor(200, 200, 200));
+    a.setMeterTitleText(QStringLiteral("XYZ"));
+    a.setShowPeakValue(true);
+    a.setPeakValueColor(QColor(250, 250, 0));
+    a.setShowPeakHold(true);
+    a.setPeakHoldColor(QColor(255, 128, 64));
+    a.setShowHistory(true);
+    a.setHistoryMs(7000);
+    a.setIgnoreHistoryMs(300);
+    a.setHistoryColor(QColor(200, 100, 50, 128));
+    a.setShowShadow(true);
+    a.setShadowLow(-90.0);
+    a.setShadowHigh(-30.0);
+    a.setShadowColor(QColor(30, 30, 30, 100));
+    a.setShowSegmented(true);
+    a.setSegmentedLow(-80.0);
+    a.setSegmentedHigh(-20.0);
+    a.setSegmentedColor(QColor(70, 70, 70));
+    a.setShowSolid(true);
+    a.setSolidColor(QColor(100, 100, 100, 255));
+    a.setSignalSource(AnanMultiMeterItem::SignalSource::Peak);
+
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+
+    QCOMPARE(b.updateMs(), 42);
+    QCOMPARE(b.attackRatio(), 0.9f);
+    QCOMPARE(b.decayRatio(),  0.05f);
+    QCOMPARE(b.backgroundColor(), QColor(1, 2, 3, 200));
+    QCOMPARE(b.lowColor(),  QColor(4, 5, 6));
+    QCOMPARE(b.highColor(), QColor(7, 8, 9));
+    QCOMPARE(b.indicatorColor(), QColor(10, 11, 12));
+    QCOMPARE(b.subColor(),       QColor(13, 14, 15));
+    for (int i = 0; i < 7; ++i) {
+        QCOMPARE(b.needleColor(i), QColor(20 + i, 30 + i, 40 + i));
+    }
+    QCOMPARE(b.fadeOnRx(), true);
+    QCOMPARE(b.fadeOnTx(), true);
+    QCOMPARE(b.darkMode(), true);
+    QCOMPARE(b.showMeterTitle(),   true);
+    QCOMPARE(b.meterTitleColor(),  QColor(200, 200, 200));
+    QCOMPARE(b.meterTitleText(),   QStringLiteral("XYZ"));
+    QCOMPARE(b.showPeakValue(),    true);
+    QCOMPARE(b.peakValueColor(),   QColor(250, 250, 0));
+    QCOMPARE(b.showPeakHold(),     true);
+    QCOMPARE(b.peakHoldColor(),    QColor(255, 128, 64));
+    QCOMPARE(b.showHistory(),      true);
+    QCOMPARE(b.historyMs(),        7000);
+    QCOMPARE(b.ignoreHistoryMs(),  300);
+    QCOMPARE(b.historyColor(),     QColor(200, 100, 50, 128));
+    QCOMPARE(b.showShadow(),       true);
+    QCOMPARE(b.shadowLow(),        -90.0);
+    QCOMPARE(b.shadowHigh(),       -30.0);
+    QCOMPARE(b.shadowColor(),      QColor(30, 30, 30, 100));
+    QCOMPARE(b.showSegmented(),    true);
+    QCOMPARE(b.segmentedLow(),     -80.0);
+    QCOMPARE(b.segmentedHigh(),    -20.0);
+    QCOMPARE(b.segmentedColor(),   QColor(70, 70, 70));
+    QCOMPARE(b.showSolid(),        true);
+    QCOMPARE(b.solidColor(),       QColor(100, 100, 100, 255));
+    QCOMPARE(b.signalSource(),     AnanMultiMeterItem::SignalSource::Peak);
 }
 
 QTEST_MAIN(TestAnanMultiMeterItem)
