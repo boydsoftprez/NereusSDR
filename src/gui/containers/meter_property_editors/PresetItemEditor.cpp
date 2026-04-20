@@ -238,6 +238,8 @@ QGroupBox* PresetItemEditor::buildSettingsGroup()
     m_spinUpdateMs->setSingleStep(10);
     m_spinUpdateMs->setSuffix(QStringLiteral(" ms"));
     m_spinUpdateMs->setStyleSheet(kSpinStyle);
+    // From Thetis setup.designer.cs:55564 [@501e3f5]
+    m_spinUpdateMs->setToolTip(tr("Reading update and is related to screen update"));
     connect(m_spinUpdateMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -252,6 +254,8 @@ QGroupBox* PresetItemEditor::buildSettingsGroup()
     m_spinAttack->setSingleStep(0.01);
     m_spinAttack->setDecimals(3);
     m_spinAttack->setStyleSheet(kSpinStyle);
+    // From Thetis setup.designer.cs:55524 [@501e3f5]
+    m_spinAttack->setToolTip(tr("The 'speed of rise' to the new value if above current"));
     connect(m_spinAttack, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
@@ -267,6 +271,8 @@ QGroupBox* PresetItemEditor::buildSettingsGroup()
     m_spinDecay->setSingleStep(0.01);
     m_spinDecay->setDecimals(3);
     m_spinDecay->setStyleSheet(kSpinStyle);
+    // From Thetis setup.designer.cs:55483 [@501e3f5]
+    m_spinDecay->setToolTip(tr("The 'speed of fall' to the new value if below current"));
     connect(m_spinDecay, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (isProgrammaticUpdate()) { return; }
@@ -303,22 +309,32 @@ QGroupBox* PresetItemEditor::buildColorsGroup()
     auto* form = new QFormLayout(m_colorsGroup);
 
     m_btnBgColor = new ColorSwatchButton(QColor(0, 0, 0, 0), m_colorsGroup);
+    // From Thetis setup.designer.cs:55604 [@501e3f5]
+    m_btnBgColor->setToolTip(tr("Background colour"));
     wireColorSwatch(this, m_btnBgColor, &AnanMultiMeterItem::setBackgroundColor);
     form->addRow(QStringLiteral("Background"), m_btnBgColor);
 
     m_btnLowColor = new ColorSwatchButton(Qt::white, m_colorsGroup);
+    // From Thetis setup.designer.cs:54845 [@501e3f5]
+    m_btnLowColor->setToolTip(tr("Low scale colour and value"));
     wireColorSwatch(this, m_btnLowColor, &AnanMultiMeterItem::setLowColor);
     form->addRow(QStringLiteral("Low"), m_btnLowColor);
 
     m_btnHighColor = new ColorSwatchButton(QColor(255, 64, 64), m_colorsGroup);
+    // From Thetis setup.designer.cs:55376 [@501e3f5]
+    m_btnHighColor->setToolTip(tr("High scale colour"));
     wireColorSwatch(this, m_btnHighColor, &AnanMultiMeterItem::setHighColor);
     form->addRow(QStringLiteral("High"), m_btnHighColor);
 
     m_btnIndicatorColor = new ColorSwatchButton(Qt::yellow, m_colorsGroup);
+    // From Thetis setup.designer.cs:55254 [@501e3f5]
+    m_btnIndicatorColor->setToolTip(tr("Indicator colour"));
     wireColorSwatch(this, m_btnIndicatorColor, &AnanMultiMeterItem::setIndicatorColor);
     form->addRow(QStringLiteral("Indicator"), m_btnIndicatorColor);
 
     m_btnSubColor = new ColorSwatchButton(Qt::black, m_colorsGroup);
+    // From Thetis setup.designer.cs:55050 [@501e3f5]
+    m_btnSubColor->setToolTip(tr("Sub Indicator colour for sub needles and avg markers on some horizontal meters"));
     wireColorSwatch(this, m_btnSubColor, &AnanMultiMeterItem::setSubColor);
     form->addRow(QStringLiteral("Sub"), m_btnSubColor);
 
@@ -330,6 +346,10 @@ QGroupBox* PresetItemEditor::buildNeedleColorsGroup()
     m_needleColorGroup = new QGroupBox(QStringLiteral("Per-needle Colors"), this);
     m_needleColorGroup->setStyleSheet(kGroupStyle);
     auto* form = new QFormLayout(m_needleColorGroup);
+
+    // No Thetis tooltip — Thetis sets per-needle colours procedurally
+    // inside AddAnanMM (MeterManager.cs:22461+) rather than exposing a
+    // per-needle colour swatch in Setup → Appearance → Meters/Gadgets.
 
     struct NRow { ColorSwatchButton** member; const char* label; int index; };
     const NRow rows[] = {
@@ -364,6 +384,8 @@ QGroupBox* PresetItemEditor::buildTitleGroup()
 
     m_chkShowTitle = new QCheckBox(m_titleGroup);
     m_chkShowTitle->setStyleSheet(kCheckStyle);
+    // From Thetis setup.designer.cs:55089 [@501e3f5]
+    m_chkShowTitle->setToolTip(tr("Show meter title"));
     connect(m_chkShowTitle, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -374,6 +396,8 @@ QGroupBox* PresetItemEditor::buildTitleGroup()
     form->addRow(QStringLiteral("Show title"), m_chkShowTitle);
 
     m_btnTitleColor = new ColorSwatchButton(Qt::white, m_titleGroup);
+    // From Thetis setup.designer.cs:55239 [@501e3f5]
+    m_btnTitleColor->setToolTip(tr("Meter title colour"));
     wireColorSwatch(this, m_btnTitleColor, &AnanMultiMeterItem::setMeterTitleColor);
     form->addRow(QStringLiteral("Title color"), m_btnTitleColor);
 
@@ -388,6 +412,8 @@ QGroupBox* PresetItemEditor::buildPeakValueGroup()
 
     m_chkShowPeakValue = new QCheckBox(m_peakValueGroup);
     m_chkShowPeakValue->setStyleSheet(kCheckStyle);
+    // From Thetis setup.designer.cs:54988 [@501e3f5]
+    m_chkShowPeakValue->setToolTip(tr("Show peak value"));
     connect(m_chkShowPeakValue, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -398,6 +424,8 @@ QGroupBox* PresetItemEditor::buildPeakValueGroup()
     form->addRow(QStringLiteral("Show peak value"), m_chkShowPeakValue);
 
     m_btnPeakValueColor = new ColorSwatchButton(Qt::yellow, m_peakValueGroup);
+    // From Thetis setup.designer.cs:55140 [@501e3f5]
+    m_btnPeakValueColor->setToolTip(tr("Peak value colour"));
     wireColorSwatch(this, m_btnPeakValueColor, &AnanMultiMeterItem::setPeakValueColor);
     form->addRow(QStringLiteral("Peak value color"), m_btnPeakValueColor);
 
@@ -410,6 +438,9 @@ QGroupBox* PresetItemEditor::buildPeakHoldGroup()
     m_peakHoldGroup->setStyleSheet(kGroupStyle);
     auto* form = new QFormLayout(m_peakHoldGroup);
 
+    // No Thetis tooltip — chkMeterItemPeakHold / clrbtnMeterItemPeakHold
+    // ship in setup.designer.cs [@501e3f5] without a toolTip1.SetToolTip
+    // assignment (unlike Peak Value / Title peers).
     m_chkShowPeakHold = new QCheckBox(m_peakHoldGroup);
     m_chkShowPeakHold->setStyleSheet(kCheckStyle);
     connect(m_chkShowPeakHold, &QCheckBox::toggled, this, [this](bool on) {
@@ -434,6 +465,9 @@ QGroupBox* PresetItemEditor::buildHistoryGroup()
     m_historyGroup->setStyleSheet(kGroupStyle);
     auto* form = new QFormLayout(m_historyGroup);
 
+    // No Thetis tooltip — chkMeterItemHistory has no toolTip1.SetToolTip
+    // in setup.designer.cs [@501e3f5] (the related nudMeterItemHistory
+    // duration/ignore spins do).
     m_chkShowHistory = new QCheckBox(m_historyGroup);
     m_chkShowHistory->setStyleSheet(kCheckStyle);
     connect(m_chkShowHistory, &QCheckBox::toggled, this, [this](bool on) {
@@ -450,6 +484,8 @@ QGroupBox* PresetItemEditor::buildHistoryGroup()
     m_spinHistoryMs->setSingleStep(100);
     m_spinHistoryMs->setSuffix(QStringLiteral(" ms"));
     m_spinHistoryMs->setStyleSheet(kSpinStyle);
+    // From Thetis setup.designer.cs:54890 [@501e3f5]
+    m_spinHistoryMs->setToolTip(tr("History duration for history display and peak hold"));
     connect(m_spinHistoryMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -464,6 +500,8 @@ QGroupBox* PresetItemEditor::buildHistoryGroup()
     m_spinIgnoreHistMs->setSingleStep(10);
     m_spinIgnoreHistMs->setSuffix(QStringLiteral(" ms"));
     m_spinIgnoreHistMs->setStyleSheet(kSpinStyle);
+    // From Thetis setup.designer.cs:55029 [@501e3f5]
+    m_spinIgnoreHistMs->setToolTip(tr("When rx/tx transition or band change let meters settle before gathering history/peak values"));
     connect(m_spinIgnoreHistMs, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -473,6 +511,8 @@ QGroupBox* PresetItemEditor::buildHistoryGroup()
     });
     form->addRow(QStringLiteral("Ignore History/Peak"), m_spinIgnoreHistMs);
 
+    // No Thetis tooltip — history color swatch has no SetToolTip assignment
+    // in setup.designer.cs [@501e3f5].
     m_btnHistoryColor = new ColorSwatchButton(QColor(255, 0, 0, 128), m_historyGroup);
     wireColorSwatch(this, m_btnHistoryColor, &AnanMultiMeterItem::setHistoryColor);
     form->addRow(QStringLiteral("History color"), m_btnHistoryColor);
@@ -488,6 +528,8 @@ QGroupBox* PresetItemEditor::buildShadowGroup()
 
     m_chkShowShadow = new QCheckBox(m_shadowGroup);
     m_chkShowShadow->setStyleSheet(kCheckStyle);
+    // From Thetis setup.designer.cs:55152 [@501e3f5]
+    m_chkShowShadow->setToolTip(tr("Show shadow on needles"));
     connect(m_chkShowShadow, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -497,6 +539,9 @@ QGroupBox* PresetItemEditor::buildShadowGroup()
     });
     form->addRow(QStringLiteral("Enable"), m_chkShowShadow);
 
+    // No Thetis tooltip — lblMMsegSolLow / lblMMsegSolHigh and the underlying
+    // nud* spins ship without toolTip1.SetToolTip in setup.designer.cs
+    // [@501e3f5]; only the low/high colour swatches carry text.
     m_spinShadowLow = new QDoubleSpinBox(m_shadowGroup);
     m_spinShadowLow->setRange(-200.0, 200.0);
     m_spinShadowLow->setSingleStep(1.0);
@@ -527,6 +572,9 @@ QGroupBox* PresetItemEditor::buildShadowGroup()
     });
     form->addRow(QStringLiteral("High"), m_spinShadowHigh);
 
+    // No Thetis tooltip — Thetis has no dedicated shadow colour swatch
+    // (shadow rendering reuses the indicator colour), so there is no
+    // upstream SetToolTip to port.
     m_btnShadowColor = new ColorSwatchButton(QColor(0, 0, 0, 96), m_shadowGroup);
     wireColorSwatch(this, m_btnShadowColor, &AnanMultiMeterItem::setShadowColor);
     form->addRow(QStringLiteral("Color"), m_btnShadowColor);
@@ -542,6 +590,8 @@ QGroupBox* PresetItemEditor::buildSegmentedGroup()
 
     m_chkShowSegmented = new QCheckBox(m_segmentedGroup);
     m_chkShowSegmented->setStyleSheet(kCheckStyle);
+    // From Thetis setup.designer.cs:55165 [@501e3f5]
+    m_chkShowSegmented->setToolTip(tr("Segmented bar"));
     connect(m_chkShowSegmented, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -551,6 +601,9 @@ QGroupBox* PresetItemEditor::buildSegmentedGroup()
     });
     form->addRow(QStringLiteral("Enable"), m_chkShowSegmented);
 
+    // No Thetis tooltip — underlying nud* spins for seg low/high are not
+    // tooltipped in setup.designer.cs [@501e3f5]; Thetis only tooltips
+    // the low/high COLOUR swatches (see color row below).
     m_spinSegmentedLow = new QDoubleSpinBox(m_segmentedGroup);
     m_spinSegmentedLow->setRange(-200.0, 200.0);
     m_spinSegmentedLow->setSingleStep(1.0);
@@ -581,7 +634,13 @@ QGroupBox* PresetItemEditor::buildSegmentedGroup()
     });
     form->addRow(QStringLiteral("High"), m_spinSegmentedHigh);
 
+    // Thetis splits segmented colour into separate low/high swatches
+    // (clrbtnMeterItemSegmentedSolidColour{Low,High}). NereusSDR's
+    // AnanMultiMeterItem stores a single segmented colour today, so we
+    // port the "Low section colour" string as the closest match.
+    // From Thetis setup.designer.cs:55065 [@501e3f5]
     m_btnSegmentedColor = new ColorSwatchButton(Qt::darkGray, m_segmentedGroup);
+    m_btnSegmentedColor->setToolTip(tr("Low section colour"));
     wireColorSwatch(this, m_btnSegmentedColor, &AnanMultiMeterItem::setSegmentedColor);
     form->addRow(QStringLiteral("Color"), m_btnSegmentedColor);
 
@@ -596,6 +655,8 @@ QGroupBox* PresetItemEditor::buildSolidGroup()
 
     m_chkShowSolid = new QCheckBox(m_solidGroup);
     m_chkShowSolid->setStyleSheet(kCheckStyle);
+    // From Thetis setup.designer.cs:55102 [@501e3f5]
+    m_chkShowSolid->setToolTip(tr("Solid bar"));
     connect(m_chkShowSolid, &QCheckBox::toggled, this, [this](bool on) {
         if (isProgrammaticUpdate()) { return; }
         auto* anan = dynamic_cast<AnanMultiMeterItem*>(m_item);
@@ -605,6 +666,9 @@ QGroupBox* PresetItemEditor::buildSolidGroup()
     });
     form->addRow(QStringLiteral("Enable"), m_chkShowSolid);
 
+    // No Thetis tooltip — Thetis shares the segmented low/high swatches
+    // for solid-bar colour rendering; no dedicated solid colour swatch
+    // tooltip exists in setup.designer.cs [@501e3f5].
     m_btnSolidColor = new ColorSwatchButton(Qt::gray, m_solidGroup);
     wireColorSwatch(this, m_btnSolidColor, &AnanMultiMeterItem::setSolidColor);
     form->addRow(QStringLiteral("Color"), m_btnSolidColor);
@@ -618,6 +682,10 @@ QGroupBox* PresetItemEditor::buildMiscGroup()
     m_miscGroup->setStyleSheet(kGroupStyle);
     auto* form = new QFormLayout(m_miscGroup);
 
+    // No Thetis tooltip — chkMeterItemFadeOnRx / chkMeterItemFadeOnTx /
+    // chkMeterItemDarkMode ship without toolTip1.SetToolTip in
+    // setup.designer.cs [@501e3f5]. The control captions are self-
+    // describing in Thetis and are preserved unchanged here.
     m_chkFadeRx = new QCheckBox(m_miscGroup);
     m_chkFadeRx->setStyleSheet(kCheckStyle);
     connect(m_chkFadeRx, &QCheckBox::toggled, this, [this](bool on) {
@@ -652,6 +720,10 @@ QGroupBox* PresetItemEditor::buildMiscGroup()
     form->addRow(QStringLiteral("Dark Mode"), m_chkDarkMode);
 
     // Signal source radio group — only the Signal needle is affected.
+    // No Thetis tooltip — Thetis exposes the Signal source selector via
+    // clsItemGroup.ReadingSource / MaxBin serialization fields rather
+    // than a visible radio cluster in the Meters/Gadgets panel, so
+    // there is no upstream SetToolTip text to port.
     auto* sourceRow = new QWidget(m_miscGroup);
     auto* hl = new QHBoxLayout(sourceRow);
     hl->setContentsMargins(0, 0, 0, 0);

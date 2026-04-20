@@ -349,21 +349,37 @@ private:
 
     // =========================================================
     // Thetis property-editor parity fields (storage for all 20+
-    // knobs; defaults chosen to match Thetis ANAN-MM new preset
-    // defaults). Paint-time behaviour is wired incrementally across
-    // the 4-commit phase series; see the TODO(render-mode-*)
-    // markers in paint() for the ones still UI-only.
+    // knobs). Defaults that correspond to a confirmed Thetis
+    // source value carry an inline cite to the upstream spot;
+    // the remainder are NereusSDR choices flagged as such so a
+    // reviewer can tell cited parity from local taste.
+    //
+    // Paint-time behaviour is wired incrementally across the
+    // 4-commit phase series; see the TODO(render-mode-*) markers
+    // in paint() for the ones still UI-only.
     // =========================================================
     SignalSource m_signalSource{SignalSource::Avg};
-    int          m_updateMs{100};              // Thetis default 100 ms poll
-    float        m_attackRatio{0.8f};           // needle smoothing — UI-only
-    float        m_decayRatio{0.2f};            // needle smoothing — UI-only
+    // From Thetis MeterManager.cs:22479 [@501e3f5] —
+    //   AddAnanMM passes nMSupdate as ni.UpdateInterval; callers
+    //   in MeterManager.cs:21448 pass nDelay=100.
+    int          m_updateMs{100};
+    // From Thetis MeterManager.cs:22477 [@501e3f5] — Signal needle
+    //   AttackRatio = 0.8f.
+    float        m_attackRatio{0.8f};
+    // From Thetis MeterManager.cs:22478 [@501e3f5] — Signal needle
+    //   DecayRatio = 0.2f.
+    float        m_decayRatio{0.2f};
 
-    QColor       m_backgroundColor{0, 0, 0, 0}; // transparent = let face show
+    // Colour defaults below are NereusSDR scheme-level choices
+    // that sit in front of the face image; Thetis does not expose
+    // a single "scheme" palette — low/high/peak-value defaults
+    // vary per clsMeterGroup (MeterManager.cs:14800,14801 etc).
+    QColor       m_backgroundColor{0, 0, 0, 0}; // NereusSDR — transparent, keep face visible
+    // From Thetis MeterManager.cs:14800 [@501e3f5] — _lowColour = White.
     QColor       m_lowColor{Qt::white};
-    QColor       m_highColor{255, 64, 64};      // Thetis "red zone" default
-    QColor       m_indicatorColor{Qt::yellow};
-    QColor       m_subColor{Qt::black};
+    QColor       m_highColor{255, 64, 64};      // NereusSDR — softened "red zone"
+    QColor       m_indicatorColor{Qt::yellow};  // NereusSDR — readable on dark face
+    QColor       m_subColor{Qt::black};         // NereusSDR
 
     bool         m_fadeOnRx{false};
     bool         m_fadeOnTx{false};
@@ -374,28 +390,34 @@ private:
     QString      m_meterTitleText{QStringLiteral("ANAN MM")};
 
     bool         m_showPeakValue{false};
-    QColor       m_peakValueColor{Qt::yellow};
+    QColor       m_peakValueColor{Qt::yellow};  // NereusSDR (Thetis default Red — see MeterManager.cs:19979)
 
     bool         m_showPeakHold{false};
-    QColor       m_peakHoldColor{255, 128, 0};
+    QColor       m_peakHoldColor{255, 128, 0};  // NereusSDR
 
     bool         m_showHistory{false};
-    int          m_historyMs{4000};              // Thetis default
-    int          m_ignoreHistoryMs{250};         // Thetis default
-    QColor       m_historyColor{255, 0, 0, 128}; // Thetis default Red(128)
+    // From Thetis MeterManager.cs:22480 [@501e3f5] — Signal needle
+    //   HistoryDuration = 4000.
+    int          m_historyMs{4000};
+    // NereusSDR — Thetis defaults IgnoreHistoryDuration to 2000ms
+    // (MeterManager.cs:15872,19968,20328 [@501e3f5]); we settle in
+    // under 250ms on the cross-platform poller so a shorter window
+    // feels snappier. Left as a NereusSDR-local choice.
+    int          m_ignoreHistoryMs{250};
+    QColor       m_historyColor{255, 0, 0, 128}; // NereusSDR (Thetis default FromArgb(128,255,255,255) — MeterManager.cs:6737)
 
     bool         m_showShadow{false};
-    double       m_shadowLow{-120.0};
-    double       m_shadowHigh{-20.0};
-    QColor       m_shadowColor{0, 0, 0, 96};
+    double       m_shadowLow{-120.0};           // NereusSDR — dBm scale low
+    double       m_shadowHigh{-20.0};           // NereusSDR — dBm scale high
+    QColor       m_shadowColor{0, 0, 0, 96};    // NereusSDR
 
     bool         m_showSegmented{false};
-    double       m_segmentedLow{-120.0};
-    double       m_segmentedHigh{-20.0};
-    QColor       m_segmentedColor{Qt::darkGray};
+    double       m_segmentedLow{-120.0};        // NereusSDR
+    double       m_segmentedHigh{-20.0};        // NereusSDR
+    QColor       m_segmentedColor{Qt::darkGray}; // NereusSDR
 
     bool         m_showSolid{false};
-    QColor       m_solidColor{Qt::gray};
+    QColor       m_solidColor{Qt::gray};        // NereusSDR
 
     // Peak-hold tracking (runtime only; not serialized): per-needle
     // decaying maximum used to paint the peak marker.
