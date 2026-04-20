@@ -757,14 +757,15 @@ void AnanMultiMeterItem::paintNeedle(QPainter& p,
         return;
     }
     // Edit-container refactor Task 20 — prefer the live value routed
-    // via pushBindingValue() over the calibration midpoint. The midpoint
-    // is kept as a "no data" fallback so the settings-dialog preview and
-    // tests still draw a visible needle before any poll cycle has run.
+    // via pushBindingValue() over the calibration rest position. The
+    // firstKey (minimum calibrated value) is the "no data" rest
+    // position — Volts/Amps/Power/SWR/Comp/ALC all start at their
+    // zero mark on the respective arc when nothing is bound yet.
+    // Signal sits at its -127 dBm floor (noise threshold).
     auto first = n.calibration.constBegin();
-    auto last  = std::prev(n.calibration.constEnd());
     float seed;
     if (std::isnan(n.currentValue)) {
-        seed = 0.5f * (first.key() + last.key());
+        seed = first.key();
     } else {
         seed = static_cast<float>(n.currentValue);
     }
