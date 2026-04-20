@@ -43,12 +43,20 @@ VaxChannelSelector::VaxChannelSelector(QWidget* parent)
     m_group->setExclusive(true);
 
     static const char* kLabels[] = { "Off", "1", "2", "3", "4" };
+    static const char* kTooltips[] = {
+        "Disable VAX (Virtual Audio Cable) routing for this slice",
+        "Route this slice's audio to VAX channel 1",
+        "Route this slice's audio to VAX channel 2",
+        "Route this slice's audio to VAX channel 3",
+        "Route this slice's audio to VAX channel 4",
+    };
 
     for (int i = 0; i < 5; ++i) {
         auto* btn = new QPushButton(QString::fromLatin1(kLabels[i]), this);
         btn->setCheckable(true);
         btn->setStyleSheet(QLatin1String(kVaxBtnStyle));
         btn->setFixedHeight(20);
+        btn->setToolTip(QString::fromLatin1(kTooltips[i]));
         m_buttons[i] = btn;
         m_group->addButton(btn, i);
         layout->addWidget(btn);
