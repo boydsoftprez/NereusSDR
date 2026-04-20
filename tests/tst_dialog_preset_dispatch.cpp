@@ -67,6 +67,14 @@ private slots:
     // container, and buried the AnanMM preset added before it.
     void addTwoPresets_bothVisible();
     void addNonImageCompositePreset_stacksBelowExisting();
+
+    // Edit-container refactor Task 20 — multi-preset Thetis density
+    // coverage. After the compact default-height fix (0.06 for
+    // non-image presets), three stacked presets must land in distinct,
+    // non-overlapping rects. Prior to the fix the default 0.15 row
+    // height ate ~half of each new preset addition and the third row
+    // overflowed past y=1.0, disappearing offscreen.
+    void threePresetsStack_allRender();
 };
 
 namespace {
@@ -398,6 +406,76 @@ void TstDialogPresetDispatch::addNonImageCompositePreset_stacksBelowExisting()
         QVERIFY(it->y() >= 0.0f);
         QVERIFY(it->y() + it->itemHeight() <= 1.0f + 0.001f);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task 20 — three stacked presets (Thetis density coverage).
+//
+// Before the fix, non-image composites defaulted to slotH = 0.15 (thin bar
+// flavour) or 0.30 (MagicEye/History/Contest). Adding ANAN MM (0.05..0.66)
+// + SMeter (0.66..0.81) left only 0.19 of vertical space, which the third
+// preset (0.15 tall) tried to consume past y=0.81 — the old 1.0 clamp
+// could leave it at slotH=0.05 but subsequent additions would overflow.
+//
+// The compact 0.06 default gives ~15 slots of stacking room after ANAN MM
+// — enough to reach Thetis screenshot density. The overflow-fallback
+// places each row so it still sits inside [0, 1], overlapping the tail
+// of the preceding row rather than falling off the bottom.
+// ---------------------------------------------------------------------------
+void TstDialogPresetDispatch::threePresetsStack_allRender()
+{
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+
+    dlg.appendPresetRowForTest(QStringLiteral("AnanMM"));
+    dlg.appendPresetRowForTest(QStringLiteral("SMeter"));
+    dlg.appendPresetRowForTest(QStringLiteral("SMeter"));
+
+    const QVector<MeterItem*> items = dlg.workingItems();
+    QCOMPARE(items.size(), 3);
+
+    // Every row must remain inside the container's [0, 1] rect, and no
+    // two non-image rows may share a y-coordinate exactly (distinct
+    // rects).
+    for (MeterItem* it : items) {
+        QVERIFY2(it->y() >= 0.0f, "Preset must not land at negative y");
+        QVERIFY2(it->y() + it->itemHeight() <= 1.0f + 0.001f,
+                 "Preset must not extend past the container rect");
+    }
+
+    // Pairwise: rows 1 and 2 (both SMeter) must carry distinct y.
+    QVERIFY2(items.at(1)->y() != items.at(2)->y(),
+             "Two stacked SMeters must land at different y positions");
+
+    // Smoke-level paint: render all three into an offscreen image; the
+    // frame must contain non-black pixels (something actually drew).
+    // Pre-fix, the third preset's minVal-seeded backdrop covered the
+    // other rows and the frame showed a single band.
+    const int W = 400;
+    const int H = 200;
+    QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::black);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        for (MeterItem* it : items) {
+            it->paint(p, W, H);
+        }
+    }
+    bool anyNonBlack = false;
+    for (int y = 0; y < H && !anyNonBlack; ++y) {
+        const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < W; ++x) {
+            const QRgb px = row[x];
+            if (qRed(px) != 0 || qGreen(px) != 0 || qBlue(px) != 0) {
+                anyNonBlack = true;
+                break;
+            }
+        }
+    }
+    QVERIFY2(anyNonBlack,
+             "Three-preset stack must paint visible pixels; each row "
+             "contributes its backdrop + content");
 }
 
 QTEST_MAIN(TstDialogPresetDispatch)

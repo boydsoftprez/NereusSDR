@@ -911,27 +911,46 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
         //
         // Stack these under any existing rows using nextStackYPos()
         // (the same helper addNewItem() uses for raw primitives) and
-        // give each a sensible default height so two presets can
-        // co-exist out of the box. Heights roughly mirror Thetis'
-        // _fHeight = 0.15 for thin bar-style presets; wider display
-        // presets (MagicEye / History / Contest) get more vertical
-        // space because their contents aren't useful at 15 %.
+        // give each a compact Thetis-style default height so many
+        // presets (Thetis screenshots show 16+) can stack cleanly
+        // inside the container. Thetis `_fHeight = 0.05f` for the
+        // bar-row thin flavour (MeterManager.cs:21266); we mirror that
+        // at ~0.06 for non-image composites so S-Meter / SignalText /
+        // VfoDisplay / Clock rows pile up compactly instead of each
+        // claiming 15 %.
+        //
+        // MagicEye / History / Contest are visual displays whose
+        // contents are illegible at 6 %; they keep a taller default.
+        // Power / SWR renders two stacked bars internally so it needs
+        // roughly double the bar-row height. Image-backed presets
+        // (ANAN MM / CrossNeedle) keep their aspect-fit sizes above.
+        //
+        // Follow-up (Task 20): Thetis "Auto Height" grows the
+        // container to fit all rows. NereusSDR doesn't yet have that
+        // — if the stacked total exceeds the container, we fall back
+        // to clamping the last row so it stays visible. Real fix is a
+        // scrollable content area or auto-height containers.
         const float yPos = nextStackYPos(workingItems());
-        float slotH = 0.15f;
+        float slotH = 0.06f;
         if (dynamic_cast<MagicEyePresetItem*>(created) ||
             dynamic_cast<HistoryGraphPresetItem*>(created) ||
             dynamic_cast<ContestPresetItem*>(created)) {
             slotH = 0.30f;
         } else if (dynamic_cast<PowerSwrPresetItem*>(created)) {
-            slotH = 0.20f;
+            slotH = 0.10f;
         }
-        // Clamp so the new row fits inside the 0..1 rect; the reflow
-        // path can always stretch it back later, but placing a preset
-        // past y=1 paints offscreen.
-        if (yPos + slotH > 1.0f) {
-            slotH = qMax(0.05f, 1.0f - yPos);
+        // Overflow policy: when yPos + slotH > 1.0 we can't cleanly
+        // stack below — force the new row to sit at (1.0 - slotH) so
+        // it still paints visibly. This overlaps the preceding row's
+        // tail on purpose (the user asked for Thetis-density stacking
+        // and Auto Height isn't wired yet — flagged as Task 20
+        // follow-up). Without this the row would draw past y=1 and
+        // vanish offscreen.
+        float finalY = yPos;
+        if (finalY + slotH > 1.0f) {
+            finalY = qMax(0.0f, 1.0f - slotH);
         }
-        created->setRect(0.0f, yPos, 1.0f, slotH);
+        created->setRect(0.0f, finalY, 1.0f, slotH);
     }
 
     ContainerInUseRow newRow;
