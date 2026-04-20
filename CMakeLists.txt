@@ -730,6 +730,8 @@ set(GUI_SOURCES
     src/gui/meters/presets/SignalTextPresetItem.cpp
     src/gui/meters/presets/HistoryGraphPresetItem.h
     src/gui/meters/presets/HistoryGraphPresetItem.cpp
+    src/gui/meters/presets/VfoDisplayPresetItem.h
+    src/gui/meters/presets/VfoDisplayPresetItem.cpp
     src/gui/meters/MeterPoller.cpp
     src/gui/meters/SpacerItem.cpp
     src/gui/meters/FadeCoverItem.cpp
