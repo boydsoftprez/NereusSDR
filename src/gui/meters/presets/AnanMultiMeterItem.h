@@ -74,6 +74,24 @@ mw0lge@grange-lane.co.uk
 //                slot ordering is preserved only as the array index
 //                inside `m_needles` to keep the assignment order
 //                visually parallel to AddAnanMM.
+//
+//   2026-04-19 — NereusSDR-original face art replaced the Thetis
+//                ananMM.png. Ported Thetis clsNeedleItem renderNeedle
+//                math faithfully (MeterManager.cs:38808 [@501e3f5]):
+//                NeedleOffset is an offset from the rect CENTER
+//                (not topleft), scaled by rect size; radiusX and
+//                radiusY both scale by (w/2) × LengthFactor ×
+//                RadiusRatio; tip is computed via atan2 on the
+//                ellipse-expanded pivot→calibration vector plus a
+//                180° rotation. Hoisted the single shared pivot /
+//                radiusRatio / lengthFactor off the item class onto
+//                a per-Needle struct so the 3 distinct arc centres
+//                on the new face (main center-bottom, bottom-left
+//                ALC, bottom-right Volts) can be represented.
+//                ALC and Volts calibration tables re-derived for
+//                the new small arcs; Signal/Amps/Power/SWR/Comp
+//                keep the Thetis calibration (verified by pixel
+//                overlay to still align with the new main face arcs).
 // =================================================================
 #pragma once
 
@@ -147,12 +165,6 @@ public:
     bool                needleVisible(int i) const;
     void                setNeedleVisible(int i, bool v);
 
-    // --- Geometry ---
-    QPointF pivot() const { return m_pivot; }
-    QPointF radiusRatio() const { return m_radiusRatio; }
-    void    setPivot(const QPointF& p) { m_pivot = p; }
-    void    setRadiusRatio(const QPointF& r) { m_radiusRatio = r; }
-
     // --- Arc-fix: anchor pivot/radius to background image rect ---
     bool anchorToBgRect() const { return m_anchorToBgRect; }
     void setAnchorToBgRect(bool v) { m_anchorToBgRect = v; }
@@ -168,10 +180,31 @@ private:
         QMap<float, QPointF> calibration;
         QColor               color;
         bool                 visible{true};
-        // Per-needle reach scaler — Thetis `clsNeedleItem.LengthFactor`.
-        // Extends the tip past the calibration point by this factor
-        // (1.0 = exact calibration; >1.0 overshoots; <1.0 falls short).
-        // Orthogonal to `m_radiusRatio`, which scales the whole arc.
+        // Per-needle pivot — Thetis `clsNeedleItem.NeedleOffset`
+        // (MeterManager.cs:38825 [@501e3f5]). Offset from the bg
+        // rect's CENTER, measured as a fraction of the rect size
+        // (not the normalized image coord). Thetis: startX = cX +
+        // (w * NeedleOffset.X); startY = cY + (h * NeedleOffset.Y).
+        // The original shared pivot (0.004, 0.736) places the
+        // pivot just right of center and below the rect bottom —
+        // serving the big sweeping main arcs. The new face places
+        // ALC and Volts on small corner arcs with their own
+        // pivots below those arcs.
+        QPointF              pivot{0.004, 0.736};
+        // Per-needle elliptical radius ratio — Thetis
+        // `clsNeedleItem.RadiusRatio` (MeterManager.cs:38830..38831
+        // [@501e3f5]). Final radiusX/Y = (w/2) * LengthFactor *
+        // RadiusRatio.X/Y. The (1.0, 0.58) default comes from
+        // AddAnanMM; both radii scale by (w/2), which — coupled
+        // with the 1504:688 aspect of the face image — lets the
+        // needle tip reach the calibration points correctly.
+        QPointF              radiusRatio{1.0, 0.58};
+        // Per-needle reach scaler — Thetis `clsNeedleItem.LengthFactor`
+        // (MeterManager.cs:38830..38831 [@501e3f5]). Multiplies both
+        // radii; larger values make the needle extend further from
+        // pivot. Each of the 7 AddAnanMM needles has its own value
+        // (Signal 1.65, Volts 0.75, Amps 1.15, Power 1.55, SWR 1.36,
+        // Comp 0.96, ALC 0.75).
         float                lengthFactor{1.0f};
         // Edit-container refactor Task 20 — last value pushed through
         // pushBindingValue() for this needle's bindingId. NaN until the
@@ -188,8 +221,6 @@ private:
     void   paintDebugOverlay(QPainter& p, const QRect& bg) const;
 
     QImage                       m_background;
-    QPointF                      m_pivot{0.004, 0.736};
-    QPointF                      m_radiusRatio{1.0, 0.58};
     bool                         m_anchorToBgRect{true};
     bool                         m_debugOverlay{false};
     std::array<Needle, kNeedleCount> m_needles;

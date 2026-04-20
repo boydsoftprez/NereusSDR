@@ -53,19 +53,27 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-04-19 — Reimplemented in C++20/Qt6 for NereusSDR by
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation
-//                via Claude Opus 4.7. The seven calibration tables
-//                below are byte-for-byte transcriptions of Thetis
-//                MeterManager.cs AddAnanMM @501e3f5; they preserve
-//                the Reading-source assignment order
-//                (Signal=0, Volts=1, Amps=2, Pwr=3, Swr=4,
-//                AlcComp=5, AlcGroup=6) that the Thetis poller and
-//                the NereusSDR MeterPoller / MeterBinding constants
-//                already follow. The arc-anchoring fix
-//                (`bgRect()` + the paintNeedle() pivot/tip mapping)
-//                is a NereusSDR addition: Thetis's needle painter
-//                anchors to the container rect, which produces
-//                visible drift when the container aspect deviates
-//                from the background image's natural ratio.
+//                via Claude Opus 4.7. The Signal/Amps/Power/SWR/Comp
+//                calibration tables are byte-for-byte transcriptions
+//                of Thetis MeterManager.cs AddAnanMM @501e3f5 —
+//                those 5 needles still visually align to the new
+//                NereusSDR-original face art. The ALC and Volts
+//                tables are re-derived for the new small corner
+//                arcs at bottom-left / bottom-right (the original
+//                Thetis art placed ALC + Volts on the main meter).
+//                The arc-anchoring fix (`bgRect()` + the
+//                paintNeedle() pivot/tip mapping) is a NereusSDR
+//                addition: Thetis's needle painter anchors to the
+//                container rect, which produces visible drift when
+//                the container aspect deviates from the background
+//                image's natural ratio.
+//
+//   2026-04-19 — Ported Thetis clsNeedleItem renderNeedle math
+//                faithfully (MeterManager.cs:38808-39000 [@501e3f5]).
+//                Hoisted pivot/radiusRatio/lengthFactor onto the
+//                per-Needle struct so the 3 distinct arc centres
+//                on the new face (main center-bottom, bottom-left
+//                ALC, bottom-right Volts) can be represented.
 // =================================================================
 
 #include "gui/meters/presets/AnanMultiMeterItem.h"
@@ -118,13 +126,23 @@ QMap<float, QPointF> makeSignalCal()
     return c;
 }
 
-// From Thetis MeterManager.cs:22534-22537 [@501e3f5] — Volts (10..15 V, 3 points)
+// NereusSDR-original — Volts calibration re-derived from the new
+// face's bottom-right small arc (labels "0 11 12 13 14 15 V", green
+// zone marks 13..15 V). The original Thetis Volts table pointed at
+// coordinates inside the main meter, which no longer exists on the
+// new face. Tick positions measured by overlaying a 0.01-step
+// coordinate grid on the image; see session notes for methodology.
+// no-port-check: NereusSDR-original calibration.
 QMap<float, QPointF> makeVoltsCal()
 {
     QMap<float, QPointF> c;
-    c.insert(10.0f,  QPointF(0.559, 0.756));
-    c.insert(12.5f,  QPointF(0.605, 0.772));
-    c.insert(15.0f,  QPointF(0.665, 0.784));
+    // Measured on resources/meters/ananMM.png (1504×688).
+    c.insert( 0.0f, QPointF(0.722, 0.795));  // "0" — left endpoint
+    c.insert(11.0f, QPointF(0.755, 0.770));  // "11" — first numeric tick
+    c.insert(12.0f, QPointF(0.790, 0.758));
+    c.insert(13.0f, QPointF(0.820, 0.755));
+    c.insert(14.0f, QPointF(0.855, 0.760));
+    c.insert(15.0f, QPointF(0.890, 0.772));  // "15" — right endpoint
     return c;
 }
 
@@ -190,13 +208,23 @@ QMap<float, QPointF> makeCompCal()
     return c;
 }
 
-// From Thetis MeterManager.cs:22759-22761 [@501e3f5] — ALC (-30..25 dB, 3 points)
+// NereusSDR-original — ALC calibration re-derived from the new
+// face's bottom-left small arc (labels "0 2 4 6 8 10", red zone
+// marks the upper half of the 0..10 dB scale). The original Thetis
+// ALC table pointed at coordinates inside the main meter which no
+// longer exists on the new face; the scale range also changed
+// (Thetis -30..25 dB span → 0..10 dB on the new art).
+// no-port-check: NereusSDR-original calibration.
 QMap<float, QPointF> makeAlcCal()
 {
     QMap<float, QPointF> c;
-    c.insert(-30.0f, QPointF(0.295, 0.804));
-    c.insert(  0.0f, QPointF(0.332, 0.784));
-    c.insert( 25.0f, QPointF(0.499, 0.756));
+    // Measured on resources/meters/ananMM.png (1504×688).
+    c.insert( 0.0f, QPointF(0.080, 0.795));  // "0" — left endpoint
+    c.insert( 2.0f, QPointF(0.130, 0.772));
+    c.insert( 4.0f, QPointF(0.180, 0.758));
+    c.insert( 6.0f, QPointF(0.230, 0.758));
+    c.insert( 8.0f, QPointF(0.280, 0.772));
+    c.insert(10.0f, QPointF(0.335, 0.795));  // "10" — right endpoint
     return c;
 }
 
@@ -245,23 +273,106 @@ void AnanMultiMeterItem::initialiseNeedles()
     // collide for slot 1 (both Volts and SignalAvg are `1`), which
     // is coincidence — keep them mentally separate.
     //
-    // Per-needle `lengthFactor` values are byte-for-byte from
-    // Thetis MeterManager.cs AddAnanMM; see paintNeedle() for how
-    // the factor extends the tip past the calibration point.
-    m_needles[0] = {QStringLiteral("Signal"),      MeterBinding::SignalAvg,    makeSignalCal(), kColorSignal, true,
-                    1.65f /* From Thetis MeterManager.cs:22488 [@501e3f5] */};
-    m_needles[1] = {QStringLiteral("Volts"),       MeterBinding::HwVolts,      makeVoltsCal(),  kColorVolts,  true,
-                    0.75f /* From Thetis MeterManager.cs:22530 [@501e3f5] */};
-    m_needles[2] = {QStringLiteral("Amps"),        MeterBinding::HwAmps,       makeAmpsCal(),   kColorAmps,   true,
-                    1.15f /* From Thetis MeterManager.cs:22558 [@501e3f5] */};
-    m_needles[3] = {QStringLiteral("Power"),       MeterBinding::TxPower,      makePowerCal(),  kColorPower,  true,
-                    1.55f /* From Thetis MeterManager.cs:22628 [@501e3f5] */};
-    m_needles[4] = {QStringLiteral("SWR"),         MeterBinding::TxSwr,        makeSwrCal(),    kColorSwr,    true,
-                    1.36f /* From Thetis MeterManager.cs:22691 [@501e3f5] */};
-    m_needles[5] = {QStringLiteral("Compression"), MeterBinding::TxAlcGain,    makeCompCal(),   kColorComp,   true,
-                    0.96f /* From Thetis MeterManager.cs:22722 [@501e3f5] */};
-    m_needles[6] = {QStringLiteral("ALC"),         MeterBinding::TxAlcGroup,   makeAlcCal(),    kColorAlc,    true,
-                    0.75f /* From Thetis MeterManager.cs:22755 [@501e3f5] */};
+    // Per-needle geometry (pivot/radiusRatio/lengthFactor):
+    //
+    //   Signal/Amps/Power/SWR/Compression — keep the Thetis
+    //   NeedleOffset (0.004, 0.736) + RadiusRatio (1.0, 0.58) +
+    //   per-needle LengthFactor. These 5 needles share the Thetis
+    //   main-meter centre-bottom pivot and still align to the new
+    //   NereusSDR face image (verified by pixel overlay of the
+    //   Thetis calibration tables against the new arc tick marks).
+    //
+    //   Volts — new face places Volts on a small bottom-right
+    //   arc with its own pivot below and right of centre.
+    //   Pivot/radius/length re-derived from the new face.
+    //
+    //   ALC — new face places ALC on a small bottom-left arc
+    //   with its own pivot below and left of centre. Pivot/
+    //   radius/length re-derived from the new face.
+    //
+    // Thetis LengthFactor values cited inline below. The shared
+    // NeedleOffset (0.004, 0.736) is from MeterManager.cs:22486
+    // [@501e3f5]; RadiusRatio (1.0, 0.58) is from :22487 [@501e3f5].
+
+    // Shared main-arc geometry ports (5 needles).
+    constexpr QPointF kMainPivot(0.004, 0.736);
+    constexpr QPointF kMainRadius(1.0, 0.58);
+
+    // Signal — Thetis LengthFactor 1.65 (MeterManager.cs:22488 [@501e3f5])
+    m_needles[0].name         = QStringLiteral("Signal");
+    m_needles[0].bindingId    = MeterBinding::SignalAvg;
+    m_needles[0].calibration  = makeSignalCal();
+    m_needles[0].color        = kColorSignal;
+    m_needles[0].pivot        = kMainPivot;
+    m_needles[0].radiusRatio  = kMainRadius;
+    m_needles[0].lengthFactor = 1.65f;
+
+    // Volts — NereusSDR-original, bottom-right small arc.
+    // Arc centre on the new face art is approximately at pixel
+    // (1094, 550) on the 1504×688 image, offset from rect centre
+    // (752, 344) by (342, 206) — i.e. rect-fraction offset
+    // (0.227, 0.299). Arc radius ≈ 185 px; LengthFactor = 2 * 185
+    // / w = 370 / 1504 ≈ 0.246. RadiusRatio (1, 1) = circular
+    // (the new small arc is a true circular segment); using
+    // lengthFactor 0.28 for a small overshoot past the tick marks.
+    m_needles[1].name         = QStringLiteral("Volts");
+    m_needles[1].bindingId    = MeterBinding::HwVolts;
+    m_needles[1].calibration  = makeVoltsCal();
+    m_needles[1].color        = kColorVolts;
+    m_needles[1].pivot        = QPointF(0.227, 0.299);
+    m_needles[1].radiusRatio  = QPointF(1.0, 1.0);
+    m_needles[1].lengthFactor = 0.28f;
+
+    // Amps — Thetis LengthFactor 1.15 (MeterManager.cs:22558 [@501e3f5])
+    m_needles[2].name         = QStringLiteral("Amps");
+    m_needles[2].bindingId    = MeterBinding::HwAmps;
+    m_needles[2].calibration  = makeAmpsCal();
+    m_needles[2].color        = kColorAmps;
+    m_needles[2].pivot        = kMainPivot;
+    m_needles[2].radiusRatio  = kMainRadius;
+    m_needles[2].lengthFactor = 1.15f;
+
+    // Power — Thetis LengthFactor 1.55 (MeterManager.cs:22628 [@501e3f5])
+    m_needles[3].name         = QStringLiteral("Power");
+    m_needles[3].bindingId    = MeterBinding::TxPower;
+    m_needles[3].calibration  = makePowerCal();
+    m_needles[3].color        = kColorPower;
+    m_needles[3].pivot        = kMainPivot;
+    m_needles[3].radiusRatio  = kMainRadius;
+    m_needles[3].lengthFactor = 1.55f;
+
+    // SWR — Thetis LengthFactor 1.36 (MeterManager.cs:22691 [@501e3f5])
+    m_needles[4].name         = QStringLiteral("SWR");
+    m_needles[4].bindingId    = MeterBinding::TxSwr;
+    m_needles[4].calibration  = makeSwrCal();
+    m_needles[4].color        = kColorSwr;
+    m_needles[4].pivot        = kMainPivot;
+    m_needles[4].radiusRatio  = kMainRadius;
+    m_needles[4].lengthFactor = 1.36f;
+
+    // Compression — Thetis LengthFactor 0.96 (MeterManager.cs:22722 [@501e3f5])
+    m_needles[5].name         = QStringLiteral("Compression");
+    m_needles[5].bindingId    = MeterBinding::TxAlcGain;
+    m_needles[5].calibration  = makeCompCal();
+    m_needles[5].color        = kColorComp;
+    m_needles[5].pivot        = kMainPivot;
+    m_needles[5].radiusRatio  = kMainRadius;
+    m_needles[5].lengthFactor = 0.96f;
+
+    // ALC — NereusSDR-original, bottom-left small arc.
+    // Arc centre on the new face art is approximately at pixel
+    // (400, 550) on the 1504×688 image, offset from rect centre
+    // (752, 344) by (-352, 206) — rect-fraction offset
+    // (-0.234, 0.299). Arc radius ≈ 160 px. Same circular
+    // RadiusRatio (1, 1) as Volts; LengthFactor 0.24 places the
+    // tip on the tick marks.
+    m_needles[6].name         = QStringLiteral("ALC");
+    m_needles[6].bindingId    = MeterBinding::TxAlcGroup;
+    m_needles[6].calibration  = makeAlcCal();
+    m_needles[6].color        = kColorAlc;
+    m_needles[6].pivot        = QPointF(-0.234, 0.299);
+    m_needles[6].radiusRatio  = QPointF(1.0, 1.0);
+    m_needles[6].lengthFactor = 0.24f;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +455,7 @@ QRect AnanMultiMeterItem::bgRect(int widgetW, int widgetH) const
 QPointF AnanMultiMeterItem::calibratedPosition(const Needle& n, float value) const
 {
     if (n.calibration.isEmpty()) {
-        return QPointF(m_pivot.x(), m_pivot.y());
+        return QPointF(0.5, 0.5);
     }
     // Clamp to the calibration range — Thetis's needle paint also
     // clamps via "Value = first key" / "Value = last key" guards.
@@ -412,6 +523,34 @@ void AnanMultiMeterItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 }
 
+// ---------------------------------------------------------------------------
+// paintNeedle — faithful port of Thetis clsNeedleItem renderNeedle math
+// (MeterManager.cs:38808-39000 [@501e3f5]). See the inline `// From
+// Thetis ...` cites in-body for each step.
+//
+// Geometry summary (all in bg-rect pixel space):
+//   cX, cY       = bg rect centre
+//   startX/Y     = pivot = centre + NeedleOffset * bg.size
+//                 (NeedleOffset fractions are relative to bg.size, not
+//                  normalized image coords; this is what let Thetis
+//                  place the pivot OFF the rect, e.g. at y=1.236*h for
+//                  the main arcs.)
+//   radiusX/Y    = (w/2) * LengthFactor * RadiusRatio.X/Y
+//                 (BOTH radii scale by w/2 — not w×h — so wide rects
+//                  can reach the right+left tips while RadiusRatio.Y
+//                  compresses the vertical sweep.)
+//   (eX, eY)     = pixel position of the calibrated point on the face
+//   (dX, dY)     = start - cal, then expanded via /= RadiusRatio
+//                 (undo the ellipse warp so atan2 gives the arc angle
+//                  before the ellipse stretch re-applies it via
+//                  radiusX/radiusY on the output.)
+//   ang          = atan2(dY, dX) — angle from pivot back to the
+//                  calibrated point (i.e. "pointing into the arc from
+//                  pivot"); the +180° rotation flips it to point
+//                  outward (needle sweeps over the face).
+//   endX/Y       = start + cos/sin(ang + 180°) * radiusX/Y
+// ---------------------------------------------------------------------------
+
 void AnanMultiMeterItem::paintNeedle(QPainter& p,
                                      const Needle& n,
                                      const QRect& bg) const
@@ -432,31 +571,59 @@ void AnanMultiMeterItem::paintNeedle(QPainter& p,
         seed = static_cast<float>(n.currentValue);
     }
 
-    // pivot_px = bg.topLeft + m_pivot * bg.size; the calibrated
-    // point sits on the meter face. Two independent geometry knobs
-    // shape the final tip:
-    //   - m_radiusRatio (Thetis `RadiusRatio`, default (1, 0.58)):
-    //     shrinks/stretches the whole pivot→calibration vector.
-    //     One value per preset; wired to the property pane in
-    //     Task 11.
-    //   - n.lengthFactor (Thetis `LengthFactor`, per-needle):
-    //     extends the tip past the calibrated point by the factor
-    //     (1.0 = exact calibration, >1.0 overshoots, <1.0 stops
-    //     short). Set in initialiseNeedles() from byte-for-byte
-    //     Thetis values.
-    // The two are orthogonal — radiusRatio modulates the arc as a
-    // whole; lengthFactor scales each needle's reach individually.
-    const QPointF pivotPx(bg.x() + m_pivot.x() * bg.width(),
-                          bg.y() + m_pivot.y() * bg.height());
+    // Rect metrics — Thetis uses `x, y, w, h` directly; we mirror that
+    // by extracting from the letterboxed bg rect.
+    const float x = static_cast<float>(bg.x());
+    const float y = static_cast<float>(bg.y());
+    const float w = static_cast<float>(bg.width());
+    const float h = static_cast<float>(bg.height());
+
+    // From Thetis MeterManager.cs:38823-38826 [@501e3f5] — needle offset
+    // from centre. startX/Y is the pivot in pixel space.
+    const float cX     = x + (w / 2.0f);
+    const float cY     = y + (h / 2.0f);
+    const float startX = cX + (w * static_cast<float>(n.pivot.x()));
+    const float startY = cY + (h * static_cast<float>(n.pivot.y()));
+
+    // From Thetis MeterManager.cs:38828 [@501e3f5] — rotation is 180°
+    // for Bottom placement (the only placement used by AddAnanMM).
+    constexpr float kRotationDeg = 180.0f;
+    const float rotationRad = kRotationDeg * static_cast<float>(M_PI) / 180.0f;
+
+    // From Thetis MeterManager.cs:38830-38831 [@501e3f5] — both radii
+    // scale by (w/2), multiplied by LengthFactor and the per-needle
+    // RadiusRatio. CRITICAL: both axes use w/2 (not h/2); this is what
+    // lets the main arc sweep across the full width at 1504:688 aspect.
+    const float radiusX = (w / 2.0f) * n.lengthFactor *
+                          static_cast<float>(n.radiusRatio.x());
+    const float radiusY = (w / 2.0f) * n.lengthFactor *
+                          static_cast<float>(n.radiusRatio.y());
+
+    // From Thetis MeterManager.cs:38928 [@501e3f5] — getPerc returns
+    // the fully-interpolated (eX, eY) pixel position of the calibrated
+    // value on the face. We collapse that into a single step: the
+    // calibration table already holds normalized (x_frac, y_frac) of
+    // the face image, so eX/eY is just bg.topleft + cal*bg.size.
     const QPointF calNorm = calibratedPosition(n, seed);
-    const QPointF calPx(bg.x() + calNorm.x() * bg.width(),
-                        bg.y() + calNorm.y() * bg.height());
-    // Apply LengthFactor in the pivot→calibration direction
-    // (Thetis: tip = pivot + LengthFactor * (cal - pivot)).
-    const QPointF tipBase(pivotPx.x() + n.lengthFactor * (calPx.x() - pivotPx.x()),
-                          pivotPx.y() + n.lengthFactor * (calPx.y() - pivotPx.y()));
-    const QPointF tipPx(pivotPx.x() + (tipBase.x() - pivotPx.x()) * m_radiusRatio.x(),
-                        pivotPx.y() + (tipBase.y() - pivotPx.y()) * m_radiusRatio.y());
+    const float eX = x + static_cast<float>(calNorm.x()) * w;
+    const float eY = y + static_cast<float>(calNorm.y()) * h;
+
+    // From Thetis MeterManager.cs:38935-38940 [@501e3f5] — vector from
+    // pivot back to calibrated point, ellipse-expanded so atan2 gives
+    // the undistorted arc angle.
+    float dX = startX - eX;
+    float dY = startY - eY;
+    const float rrx = static_cast<float>(n.radiusRatio.x());
+    const float rry = static_cast<float>(n.radiusRatio.y());
+    if (rrx != 0.0f) { dX /= rrx; }
+    if (rry != 0.0f) { dY /= rry; }
+    const float ang = std::atan2(dY, dX);
+
+    // From Thetis MeterManager.cs:38942-38943 [@501e3f5] — final tip
+    // on the ellipse defined by (radiusX, radiusY), at angle
+    // ang + 180° from pivot.
+    const float endX = startX + std::cos(ang + rotationRad) * radiusX;
+    const float endY = startY + std::sin(ang + rotationRad) * radiusY;
 
     p.save();
     // Antialiasing on the needle line — drawLine without it produces
@@ -464,10 +631,16 @@ void AnanMultiMeterItem::paintNeedle(QPainter& p,
     // needle sweeps through. Negligible cost for a one-pixel line.
     p.setRenderHint(QPainter::Antialiasing, true);
     QPen pen(n.color);
-    pen.setWidthF(qMax(1.0, bg.height() * 0.005));
+    // From Thetis MeterManager.cs:38945-38951 [@501e3f5] — ScaleStrokeWidth
+    // multiplies a 3 px base by sqrt(w^2+h^2)/450. All 7 ANAN needles
+    // have ScaleStrokeWidth=true so we always scale.
+    const float diag = std::sqrt(w * w + h * h);
+    const float fScale = (diag > 0.0f) ? diag / 450.0f : 1.0f;
+    constexpr float kStrokeBase = 3.0f;
+    pen.setWidthF(qMax(1.0, static_cast<double>(kStrokeBase * fScale)));
     pen.setCapStyle(Qt::RoundCap);
     p.setPen(pen);
-    p.drawLine(pivotPx, tipPx);
+    p.drawLine(QPointF(startX, startY), QPointF(endX, endY));
     p.restore();
 }
 
@@ -528,10 +701,6 @@ QString AnanMultiMeterItem::serialize() const
     o.insert(QStringLiteral("y"),        static_cast<double>(m_y));
     o.insert(QStringLiteral("w"),        static_cast<double>(m_w));
     o.insert(QStringLiteral("h"),        static_cast<double>(m_h));
-    o.insert(QStringLiteral("pivotX"),   m_pivot.x());
-    o.insert(QStringLiteral("pivotY"),   m_pivot.y());
-    o.insert(QStringLiteral("radiusX"),  m_radiusRatio.x());
-    o.insert(QStringLiteral("radiusY"),  m_radiusRatio.y());
     o.insert(QStringLiteral("anchorBg"), m_anchorToBgRect);
     o.insert(QStringLiteral("debug"),    m_debugOverlay);
 
@@ -560,10 +729,6 @@ bool AnanMultiMeterItem::deserialize(const QString& data)
             static_cast<float>(o.value(QStringLiteral("y")).toDouble(m_y)),
             static_cast<float>(o.value(QStringLiteral("w")).toDouble(m_w)),
             static_cast<float>(o.value(QStringLiteral("h")).toDouble(m_h)));
-    m_pivot = QPointF(o.value(QStringLiteral("pivotX")).toDouble(m_pivot.x()),
-                      o.value(QStringLiteral("pivotY")).toDouble(m_pivot.y()));
-    m_radiusRatio = QPointF(o.value(QStringLiteral("radiusX")).toDouble(m_radiusRatio.x()),
-                            o.value(QStringLiteral("radiusY")).toDouble(m_radiusRatio.y()));
     m_anchorToBgRect = o.value(QStringLiteral("anchorBg")).toBool(m_anchorToBgRect);
     m_debugOverlay   = o.value(QStringLiteral("debug")).toBool(m_debugOverlay);
 
