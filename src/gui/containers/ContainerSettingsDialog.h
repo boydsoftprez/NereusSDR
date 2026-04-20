@@ -57,6 +57,7 @@ mw0lge@grange-lane.co.uk
 #include <QDialog>
 #include <QPair>
 #include <QPoint>
+#include <QStringList>
 #include <QUuid>
 #include <QVector>
 
@@ -113,6 +114,12 @@ public:
                                      ContainerManager* manager = nullptr);
     ~ContainerSettingsDialog() override;
 
+public slots:
+    // Override so Cancel / Esc / window-close all trigger the Task 14
+    // rollback of any + Add containers the user didn't commit via
+    // Apply/OK. Also drives revertFromSnapshot() for consistency.
+    void reject() override;
+
     // Compute the next y-position for an item being appended to a
     // vertically-stacked layout. Items spanning more than 70% of the
     // container vertically are treated as background / overlay-style
@@ -146,6 +153,12 @@ public:
     // Task 14 test hooks.
     void    triggerAddContainerForTest() { onAddContainer(); }
     QString currentContainerDropdownText() const;
+
+    // Code-review follow-up test hook: probe the enabled/disabled
+    // state of an available-list row by its PRESET_* tag. Used by the
+    // hybrid-rule tests to assert that every bar flavour correctly
+    // disables its available-list entry after being added.
+    bool availableRowIsEnabled(const QString& tag) const;
 
 private slots:
     void onItemSelectionChanged();
@@ -273,6 +286,12 @@ private:
     QPushButton* m_btnAddContainer{nullptr};
     void    onAddContainer();
     QString nextAutoName() const;
+
+    // Task 14 follow-up: containers created via + Add during this
+    // dialog session are tracked so Cancel can destroy them (matching
+    // MainWindow's legacy "New Container..." lifecycle). Apply / OK
+    // clear the list because applied containers are committed.
+    QStringList m_containersAddedThisSession;
 
     QSplitter* m_splitter{nullptr};
 

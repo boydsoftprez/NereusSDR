@@ -16,6 +16,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QPushButton>
 #include <QSplitter>
 #include <QWidget>
 
@@ -33,6 +34,9 @@ class TstDialogAddContainer : public QObject
 private slots:
     void clickAdd_createsNewContainerAndSwitches();
     void autoName_pickSmallestUnusedInteger();
+    void clickAddThenCancel_destroysAddedContainer();
+    void clickAddThenOk_keepsAddedContainer();
+    void clickAddThenApply_keepsAddedContainer();
 };
 
 namespace {
@@ -99,6 +103,82 @@ void TstDialogAddContainer::autoName_pickSmallestUnusedInteger()
     // Smallest unused = 1 (since Meter 2 and Meter 3 remain).
     QCOMPARE(dlg.currentContainerDropdownText(),
              QStringLiteral("Meter 1"));
+}
+
+void TstDialogAddContainer::clickAddThenCancel_destroysAddedContainer()
+{
+    // Fix 2: + Add creates a container immediately for UX, but if the
+    // user clicks Cancel on the dialog, newly-added containers are
+    // destroyed so the session is a no-op overall. This mirrors
+    // MainWindow's legacy "New Container..." Cancel semantics.
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    const int before = h.mgr.allContainers().size();
+
+    dlg.triggerAddContainerForTest();
+    QCOMPARE(h.mgr.allContainers().size(), before + 1);
+
+    // Cancel: added container must be destroyed.
+    dlg.reject();
+    QCOMPARE(h.mgr.allContainers().size(), before);
+}
+
+void TstDialogAddContainer::clickAddThenOk_keepsAddedContainer()
+{
+    // Symmetric with clickAddThenCancel: OK commits the newly-added
+    // container (via the OK click handler's m_containersAddedThisSession
+    // .clear() path) and accept() closes the dialog.
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    const int before = h.mgr.allContainers().size();
+
+    dlg.triggerAddContainerForTest();
+    QCOMPARE(h.mgr.allContainers().size(), before + 1);
+
+    // Simulate OK by finding the OK button and clicking it.
+    const QList<QPushButton*> btns = dlg.findChildren<QPushButton*>();
+    QPushButton* ok = nullptr;
+    for (QPushButton* b : btns) {
+        if (b && b->text() == QStringLiteral("OK")) {
+            ok = b;
+            break;
+        }
+    }
+    QVERIFY(ok != nullptr);
+    ok->click();
+
+    QCOMPARE(h.mgr.allContainers().size(), before + 1);
+}
+
+void TstDialogAddContainer::clickAddThenApply_keepsAddedContainer()
+{
+    // Apply commits in-progress edits too. A subsequent Cancel must
+    // not re-destroy the Apply-committed container.
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    const int before = h.mgr.allContainers().size();
+
+    dlg.triggerAddContainerForTest();
+    QCOMPARE(h.mgr.allContainers().size(), before + 1);
+
+    const QList<QPushButton*> btns = dlg.findChildren<QPushButton*>();
+    QPushButton* apply = nullptr;
+    QPushButton* cancel = nullptr;
+    for (QPushButton* b : btns) {
+        if (b && b->text() == QStringLiteral("Apply")) {
+            apply = b;
+        }
+        if (b && b->text() == QStringLiteral("Cancel")) {
+            cancel = b;
+        }
+    }
+    QVERIFY(apply != nullptr);
+    QVERIFY(cancel != nullptr);
+    apply->click();
+    // Cancel now must NOT destroy the already-committed container.
+    cancel->click();
+
+    QCOMPARE(h.mgr.allContainers().size(), before + 1);
 }
 
 QTEST_MAIN(TstDialogAddContainer)

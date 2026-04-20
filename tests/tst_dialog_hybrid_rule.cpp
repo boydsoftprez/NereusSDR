@@ -38,6 +38,8 @@ private slots:
     void addPresetTwice_secondAddIsNoop();
     void addedPresetDisabledInAvailable();
     void primitiveCanBeAddedTwice();
+    void allBarFlavors_hybridRuleWorks();
+    void loadViaPresetsMenu_refreshesAvailableList();
 };
 
 namespace {
@@ -156,6 +158,75 @@ void TstDialogHybridRule::primitiveCanBeAddedTwice()
     // row enabled regardless of how many BarItems exist.
     QVERIFY2(barRow->flags() & Qt::ItemIsEnabled,
              "BAR primitive row must stay enabled (hybrid rule C)");
+}
+
+void TstDialogHybridRule::allBarFlavors_hybridRuleWorks()
+{
+    // Walks every bar-row flavour the available-list table exposes
+    // and asserts the matching row becomes disabled after the preset
+    // is added. Before the fix to presetTagForItem, the 5 bar kinds
+    // whose kindString() differs from the table-form (Agc, AgcGain,
+    // Pbsnr, Cfc, CfcGain) silently bypassed the hybrid rule because
+    // no row matched the computed tag.
+    //
+    // Each pair maps the available-list table-form tag to the
+    // appendPresetRow name used by the internal dispatch. The table
+    // form is what refreshAvailableList() looks up; the append name
+    // is what the dialog consumes to build the BarPresetItem.
+    struct Flavor {
+        const char* tag;
+        const char* appendName;
+    };
+    static const Flavor kFlavors[] = {
+        {"PRESET_SignalBar",    "SignalBar"},
+        {"PRESET_AvgSignalBar", "AvgSignalBar"},
+        {"PRESET_MaxBinBar",    "MaxBinBar"},
+        {"PRESET_AdcBar",       "AdcBar"},
+        {"PRESET_AdcMaxMag",    "AdcMaxMag"},
+        {"PRESET_AgcBar",       "AgcBar"},
+        {"PRESET_AgcGainBar",   "AgcGainBar"},
+        {"PRESET_PbsnrBar",     "PbsnrBar"},
+        {"PRESET_Alc",          "Alc"},
+        {"PRESET_AlcGain",      "AlcGain"},
+        {"PRESET_AlcGroup",     "AlcGroup"},
+        {"PRESET_CfcBar",       "CfcBar"},
+        {"PRESET_CfcGainBar",   "CfcGainBar"},
+        {"PRESET_Comp",         "Comp"},
+        {"PRESET_Eq",           "Eq"},
+        {"PRESET_Leveler",      "Leveler"},
+        {"PRESET_LevelerGain",  "LevelerGain"},
+        {"PRESET_Mic",          "Mic"},
+    };
+
+    for (const Flavor& f : kFlavors) {
+        Harness h;
+        ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+        const QString tag(QLatin1String(f.tag));
+        QVERIFY2(dlg.availableRowIsEnabled(tag),
+                 qPrintable(QStringLiteral("Tag should start enabled: ") + tag));
+        dlg.appendPresetRowForTest(QLatin1String(f.appendName));
+        QVERIFY2(!dlg.availableRowIsEnabled(tag),
+                 qPrintable(QStringLiteral("Tag still enabled after add: ") + tag));
+    }
+}
+
+void TstDialogHybridRule::loadViaPresetsMenu_refreshesAvailableList()
+{
+    // Fix 4: loadPresetByName / onImport / onLoadFromFile replace
+    // m_workingItems without refreshing the available-list row flags.
+    // After the fix, the tag corresponding to the loaded preset must
+    // be disabled so a follow-up "Add" click on the available list
+    // can't create a second instance.
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+
+    // appendPresetRowForTest is the same code path loadPresetByName
+    // uses internally for bar-row presets (it delegates to
+    // appendPresetRow). For composite presets like AnanMM we exercise
+    // the replacement path directly via the public hook, which now
+    // calls refreshAvailableList() as part of its tail.
+    dlg.appendPresetRowForTest(QStringLiteral("AnanMM"));
+    QVERIFY(!dlg.availableRowIsEnabled(QStringLiteral("PRESET_AnanMM")));
 }
 
 QTEST_MAIN(TstDialogHybridRule)

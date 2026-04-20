@@ -77,8 +77,18 @@ void TstDialogInUseUx::renameItem_persistsInDisplayList()
 void TstDialogInUseUx::duplicatePrimitive_addsSecondEntry()
 {
     Harness h;
+    // Give the seed BarItem a stack slot so we can assert the
+    // duplicate lands in a fresh (bumped) slot. Previously the copy
+    // inherited the original's slot and reflowStackedItems() would
+    // pile them on top of each other — code-review follow-up Fix 3.
+    QVERIFY(!h.meter->items().isEmpty());
+    h.meter->items().first()->setStackSlot(0);
+    h.meter->items().first()->setSlotLocalY(0.0f);
+    h.meter->items().first()->setSlotLocalH(1.0f);
+
     ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
     QCOMPARE(dlg.workingItems().size(), 1);
+    QCOMPARE(dlg.workingItems().first()->stackSlot(), 0);
 
     const QUuid id = dlg.rowIdAtIndex(0);
     dlg.triggerDuplicateForTest(id);
@@ -89,6 +99,14 @@ void TstDialogInUseUx::duplicatePrimitive_addsSecondEntry()
     const QUuid newId = dlg.rowIdAtIndex(1);
     QVERIFY(newId != id);
     QVERIFY(dlg.displayNameForRowId(newId).endsWith(QStringLiteral(" (copy)")));
+
+    // Fix 3: duplicate lands in a fresh stack slot below every
+    // existing item. With the original at slot 0, the copy must be
+    // at slot 1 — not 0 (collision) and not -1 (unstacked).
+    const QVector<MeterItem*> items = dlg.workingItems();
+    QVERIFY(items.size() == 2);
+    QCOMPARE(items[0]->stackSlot(), 0);
+    QCOMPARE(items[1]->stackSlot(), 1);
 }
 
 void TstDialogInUseUx::duplicatePreset_isBlocked()

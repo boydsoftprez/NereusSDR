@@ -720,9 +720,23 @@ QString ContainerSettingsDialog::presetTagForItem(MeterItem* it) const
     // BarPresetItem tags follow the existing availability-list naming
     // (PRESET_Alc, PRESET_SignalBar, etc.) — kindString() returns e.g.
     // "SignalBar", "Alc", "AlcGain" which matches the stored tag
-    // minus the "PRESET_" prefix.
+    // minus the "PRESET_" prefix for most flavours. Five flavours
+    // (Agc / AgcGain / Pbsnr / Cfc / CfcGain) use a "*Bar" suffix in
+    // the available-list table at buildAvailablePanel() but
+    // kindString() returns the bare form — map those back to the
+    // table-form here so refreshAvailableList() can match and disable
+    // the row per the hybrid rule.
     if (auto* bar = dynamic_cast<BarPresetItem*>(it)) {
-        return QStringLiteral("PRESET_") + bar->kindString();
+        const QString kind = bar->kindString();
+        static const QMap<QString, QString> kBarTagOverrides = {
+            {QStringLiteral("Agc"),     QStringLiteral("AgcBar")},
+            {QStringLiteral("AgcGain"), QStringLiteral("AgcGainBar")},
+            {QStringLiteral("Pbsnr"),   QStringLiteral("PbsnrBar")},
+            {QStringLiteral("Cfc"),     QStringLiteral("CfcBar")},
+            {QStringLiteral("CfcGain"), QStringLiteral("CfcGainBar")},
+        };
+        const QString tagSuffix = kBarTagOverrides.value(kind, kind);
+        return QStringLiteral("PRESET_") + tagSuffix;
     }
     return QString();   // primitive
 }
@@ -1204,19 +1218,17 @@ void ContainerSettingsDialog::buildButtonBar()
     connect(m_btnSave,   &QPushButton::clicked, this, &ContainerSettingsDialog::onSaveToFile);
     connect(m_btnLoad,   &QPushButton::clicked, this, &ContainerSettingsDialog::onLoadFromFile);
     connect(m_btnMmio,   &QPushButton::clicked, this, &ContainerSettingsDialog::onOpenMmioDialog);
-    connect(m_btnApply,  &QPushButton::clicked, this, &ContainerSettingsDialog::applyToContainer);
-    connect(m_btnCancel, &QPushButton::clicked, this, [this]() {
-        // Phase 3G-6 block 3 commit 14: Cancel reverts the container
-        // and its meter items to the snapshot captured on dialog
-        // open, then closes. Applied changes from Apply clicks are
-        // NOT reverted — that's intentional: Apply is a "commit"
-        // action and the snapshot is only a safety net for
-        // un-Applied edits.
-        revertFromSnapshot();
-        reject();
+    connect(m_btnApply,  &QPushButton::clicked, this, [this]() {
+        applyToContainer();
+        // + Add containers become committed once Apply is clicked —
+        // Cancel after Apply must not destroy them.
+        m_containersAddedThisSession.clear();
     });
+    connect(m_btnCancel, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_btnOk,     &QPushButton::clicked, this, [this]() {
         applyToContainer();
+        // + Add containers become committed on OK too.
+        m_containersAddedThisSession.clear();
         accept();
     });
 
@@ -1388,6 +1400,10 @@ void ContainerSettingsDialog::onRemoveItem()
     m_workingItems.remove(row);
     refreshItemList();
     refreshAvailableList();
+    // Code-review follow-up: push the change to the live MeterWidget
+    // so the "-" button matches right-click Delete (onItemDelete)
+    // which already calls applyToContainer().
+    applyToContainer();
 
     // Select nearest remaining item
     if (!m_workingItems.isEmpty()) {
@@ -1539,7 +1555,19 @@ void ContainerSettingsDialog::onItemDuplicate(const QUuid& rowId)
         copy->setMmioBinding(orig->mmioGuid(), orig->mmioVariable());
     }
     if (orig->stackSlot() >= 0) {
-        copy->setStackSlot(orig->stackSlot());
+        // Duplicate lands in a fresh slot below every existing
+        // stacked item. Without this bump the copy lands in the same
+        // vertical slot as the original and MeterWidget::reflow-
+        // StackedItems() overlaps them on the next redraw. Mirror
+        // the slot-math used in appendPresetRow above.
+        int nextSlot = 0;
+        for (const ContainerInUseRow& r : m_workingItems) {
+            if (!r.item) { continue; }
+            if (r.item->stackSlot() >= nextSlot) {
+                nextSlot = r.item->stackSlot() + 1;
+            }
+        }
+        copy->setStackSlot(nextSlot);
         copy->setSlotLocalY(orig->slotLocalY());
         copy->setSlotLocalH(orig->slotLocalH());
     }
@@ -2179,6 +2207,7 @@ void ContainerSettingsDialog::onLoadFromFile()
     }
     // Refresh dialog state from the newly-loaded container.
     populateItemList();
+    refreshAvailableList();
     m_container->update();
 }
 
@@ -2657,6 +2686,7 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
     }
 
     refreshItemList();
+    refreshAvailableList();
     if (!m_workingItems.isEmpty()) {
         m_itemList->setCurrentRow(0);
     }
@@ -2733,6 +2763,7 @@ void ContainerSettingsDialog::onImport()
     }
 
     refreshItemList();
+    refreshAvailableList();
     if (!m_workingItems.isEmpty()) {
         m_itemList->setCurrentRow(0);
     }
@@ -2832,6 +2863,11 @@ void ContainerSettingsDialog::onAddContainer()
     // items immediately after the switch.
     created->setContent(new MeterWidget());
 
+    // Track this-session additions so Cancel can roll them back,
+    // matching MainWindow's legacy "New Container..." lifecycle where
+    // Cancel on the settings dialog undoes pending creations.
+    m_containersAddedThisSession.append(created->id());
+
     // Update the dropdown: createContainer() emits containerAdded
     // which some hosts listen to, but the dialog's dropdown is
     // internal — insert the new entry directly, then switch to it.
@@ -2857,6 +2893,39 @@ QString ContainerSettingsDialog::currentContainerDropdownText() const
 {
     if (!m_containerDropdown) { return QString(); }
     return m_containerDropdown->currentText();
+}
+
+void ContainerSettingsDialog::reject()
+{
+    // Phase 3G-6 block 3 commit 14: revert the container and its
+    // meter items to the snapshot captured on dialog open. Applied
+    // changes from Apply clicks are NOT reverted — Apply is a commit
+    // action and the snapshot is only a safety net for un-Applied
+    // edits.
+    revertFromSnapshot();
+    // Task 14 follow-up: destroy any containers the user added via
+    // + Add this session but didn't commit via Apply/OK. This matches
+    // MainWindow's legacy "New Container..." cancel semantics.
+    if (m_manager) {
+        for (const QString& id : m_containersAddedThisSession) {
+            m_manager->destroyContainer(id);
+        }
+    }
+    m_containersAddedThisSession.clear();
+    QDialog::reject();
+}
+
+bool ContainerSettingsDialog::availableRowIsEnabled(const QString& tag) const
+{
+    if (!m_availableList) { return false; }
+    for (int i = 0; i < m_availableList->count(); ++i) {
+        const QListWidgetItem* row = m_availableList->item(i);
+        if (!row) { continue; }
+        if (row->data(Qt::UserRole).toString() == tag) {
+            return (row->flags() & Qt::ItemIsEnabled) != 0;
+        }
+    }
+    return false;
 }
 
 } // namespace NereusSDR
