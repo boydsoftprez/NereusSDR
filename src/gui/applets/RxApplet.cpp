@@ -315,7 +315,8 @@ void RxApplet::buildUi()
     leftCol->setSpacing(2);
 
     // Control 17: Step size row — STEP: [<] [value] [>]
-    // NYI: SliceModel::setStepHz exists, but step cycling not yet wired
+    // Cycles SliceModel::stepHz through kStageOneStepLadder
+    // {1, 10, 100, 500, 1k, 10k}.
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(0);
@@ -340,8 +341,30 @@ void RxApplet::buildUi()
 
         leftCol->addLayout(row);
 
-        NyiOverlay::markNyi(m_stepDown, QStringLiteral("Phase 3I"));
-        NyiOverlay::markNyi(m_stepUp,   QStringLiteral("Phase 3I"));
+        // Step arrows cycle through kStageOneStepLadder
+        // {1, 10, 100, 500, 1k, 10k}. Down = previous, Up = next.
+        // Wraps at both ends. Issue #69.
+        connect(m_stepDown, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            const int current = m_slice->stepHz();
+            int idx = 0;
+            for (int i = 0; i < kStageOneStepLadderSize; ++i) {
+                if (kStageOneStepLadder[i] == current) { idx = i; break; }
+            }
+            const int prev = (idx - 1 + kStageOneStepLadderSize)
+                             % kStageOneStepLadderSize;
+            m_slice->setStepHz(kStageOneStepLadder[prev]);
+        });
+        connect(m_stepUp, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            const int current = m_slice->stepHz();
+            int idx = 0;
+            for (int i = 0; i < kStageOneStepLadderSize; ++i) {
+                if (kStageOneStepLadder[i] == current) { idx = i; break; }
+            }
+            const int next = (idx + 1) % kStageOneStepLadderSize;
+            m_slice->setStepHz(kStageOneStepLadder[next]);
+        });
     }
 
     // Control 7: Filter preset buttons — 10 buttons in 2×5 grid
@@ -940,6 +963,9 @@ void RxApplet::syncFromModel()
             .arg(hz));
     }
 
+    // Step size label (Issue #69)
+    m_stepLabel->setText(QStringLiteral("%1 Hz").arg(m_slice->stepHz()));
+
     m_updatingFromModel = false;
 }
 
@@ -1014,6 +1040,11 @@ void RxApplet::connectSlice(SliceModel* s)
         m_ritLabel->setText(QStringLiteral("%1%2 Hz")
             .arg(hz >= 0 ? QStringLiteral("+") : QString{})
             .arg(hz));
+    });
+
+    // Step size model → label sync (Issue #69)
+    connect(s, &SliceModel::stepHzChanged, this, [this](int hz) {
+        m_stepLabel->setText(QStringLiteral("%1 Hz").arg(hz));
     });
 
     // ATT/S-ATT — wire to StepAttenuatorController if available

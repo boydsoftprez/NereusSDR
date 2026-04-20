@@ -128,9 +128,9 @@
 namespace NereusSDR {
 
 // Stage 1 stub ladder — Stage 2 replaces with Thetis tune_step_list
-// (console.cs tune_step_list has 11 entries; Stage 1 uses this 5-entry
+// (console.cs tune_step_list has 11 entries; Stage 1 uses this 6-entry
 // subset only for the X/RIT STEP cycle button).
-inline constexpr int kStageOneStepLadder[] = {1, 10, 100, 1000, 10000};
+inline constexpr int kStageOneStepLadder[] = {1, 10, 100, 500, 1000, 10000};
 inline constexpr int kStageOneStepLadderSize =
     static_cast<int>(sizeof(kStageOneStepLadder) / sizeof(kStageOneStepLadder[0]));
 
