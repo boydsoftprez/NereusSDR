@@ -250,6 +250,9 @@ public:
     void setBoardForTest(HPSDRHW board) { m_caps = &BoardCapsTable::forBoard(board); applyBoardQuirks(); }
     int currentAttenForTest() const { return m_stepAttn[0]; }
     bool hl2ThrottledForTest() const { return m_hl2Throttled; }
+    // Expose private composeCcForBank for regression-freeze capture (Task 1) and
+    // byte-table assertion tests (Task 16).
+    void composeCcForBankForTest(int bankIdx, quint8 out[5]) const { composeCcForBank(bankIdx, out); }
 #endif
 };
 

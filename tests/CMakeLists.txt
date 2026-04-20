@@ -55,6 +55,12 @@ target_compile_definitions(tst_radio_discovery_parse PRIVATE
 nereus_add_test(tst_p1_wire_format)
 target_compile_definitions(tst_p1_wire_format PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3P-A regression freeze capture (temporary; removed in Task 16) ──
+nereus_add_test(tst_p1_regression_freeze_capture)
+target_compile_definitions(tst_p1_regression_freeze_capture PRIVATE
+    NEREUS_BUILD_TESTS
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
 # P1 loopback integration test — uses P1FakeRadio from tests/fakes/
 nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS)
