@@ -538,8 +538,7 @@ private:
     DigOffsetContainer*    m_digContainer{nullptr};
     RttyMarkShiftContainer* m_rttyContainer{nullptr};
 
-    // --- VAX channel selector row (Phase 3O Sub-Phase 8) ---
-    QWidget*             m_vaxRow{nullptr};
+    // --- VAX channel selector (Phase 3O Sub-Phase 8) — lives inside the VAX tab ---
     VaxChannelSelector*  m_vaxSelector{nullptr};
 
     // --- Slice coupling (for mode container binding only) ---

@@ -374,31 +374,23 @@ void VfoWidget::buildUI()
 
     buildXRitTab();
 
-    // Stub DAX tab
-    auto* daxWidget = new QWidget;
-    auto* daxLayout = new QVBoxLayout(daxWidget);
-    daxLayout->setContentsMargins(4, 4, 4, 4);
-    auto* daxLabel = new QLabel(QStringLiteral("DAX"), daxWidget);
-    daxLabel->setStyleSheet(QStringLiteral("color: #6888a0; font-size: 11px;"));
-    daxLayout->addWidget(daxLabel);
-    m_tabStack->addWidget(daxWidget);
+    // VAX tab — Phase 3O Sub-Phase 8 Task 8.2. Hosts VaxChannelSelector
+    // (visible only when the VAX tab is active, same as every other mode tab).
+    auto* vaxTabWidget = new QWidget;
+    auto* vaxTabLayout = new QHBoxLayout(vaxTabWidget);
+    vaxTabLayout->setContentsMargins(10, 4, 10, 4);
+    vaxTabLayout->setSpacing(3);
+    auto* vaxTabLbl = new QLabel(QStringLiteral("VAX"), vaxTabWidget);
+    vaxTabLbl->setStyleSheet(QStringLiteral("color:#8090a0;font-size:10px;"));
+    vaxTabLayout->addWidget(vaxTabLbl);
+    m_vaxSelector = new VaxChannelSelector(vaxTabWidget);
+    vaxTabLayout->addWidget(m_vaxSelector);
+    vaxTabLayout->addStretch(1);
+    m_tabStack->addWidget(vaxTabWidget);
 
     mainLayout->addWidget(m_tabStack);
     m_tabStack->hide();  // Hidden by default — click tab to expand
     m_activeTab = -1;    // No tab active initially
-
-    // VAX channel selector row — Phase 3O Sub-Phase 8 Task 8.2
-    m_vaxRow = new QWidget(this);
-    auto* vaxLayout = new QHBoxLayout(m_vaxRow);
-    vaxLayout->setContentsMargins(10, 4, 10, 4);
-    vaxLayout->setSpacing(3);
-    auto* vaxLbl = new QLabel(QStringLiteral("VAX"), m_vaxRow);
-    vaxLbl->setStyleSheet(QStringLiteral("color:#8090a0;font-size:10px;"));
-    vaxLayout->addWidget(vaxLbl);
-    m_vaxSelector = new VaxChannelSelector(m_vaxRow);
-    vaxLayout->addWidget(m_vaxSelector);
-    vaxLayout->addStretch(1);
-    mainLayout->addWidget(m_vaxRow);
 
     setLayout(mainLayout);
     adjustSize();
@@ -568,13 +560,13 @@ void VfoWidget::buildTabBar()
     tabLayout->setContentsMargins(0, 0, 0, 0);
 
     // Tab labels — from AetherSDR VfoWidget.cpp:522
-    // [🔊] | DSP | USB | X/RIT | DAX
+    // [🔊] | DSP | USB | X/RIT | VAX
     QStringList tabLabels = {
         QString::fromUtf8("\xF0\x9F\x94\x8A"),  // 🔊 speaker
         QStringLiteral("DSP"),
         SliceModel::modeName(m_currentMode),
         QStringLiteral("X/RIT"),
-        QStringLiteral("DAX")
+        QStringLiteral("VAX")
     };
 
     // NereusSDR native — Thetis has a fixed single-panel layout with all controls
@@ -584,7 +576,7 @@ void VfoWidget::buildTabBar()
         "Show/hide DSP controls (NB, NR, ANF, SNB, APF)",
         "Show/hide mode and filter controls",
         "Show/hide RIT/XIT and frequency-lock controls",
-        "Show/hide DAX audio routing controls"
+        "Show/hide VAX audio routing controls"
     };
 
     for (int i = 0; i < tabLabels.size(); ++i) {
