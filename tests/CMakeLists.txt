@@ -5347,6 +5347,10 @@ nereus_add_test(tst_magic_eye_preset_item)
 # ── Edit Container refactor: Task 6 — SignalTextPresetItem ───────────────
 nereus_add_test(tst_signal_text_preset_item)
 
+
+# ── Edit Container refactor: Task 7 — HistoryGraphPresetItem (local) ─────
+nereus_add_test(tst_history_graph_preset_item)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------
