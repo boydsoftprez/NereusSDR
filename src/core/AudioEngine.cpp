@@ -27,6 +27,14 @@
 //                 synchronous flush on the DSP thread; no QTimer, no
 //                 QAudioSink. (docs/architecture/2026-04-19-phase3o-vax-plan.md
 //                 §Sub-Phase 4 Task 4.1.)
+//   2026-04-19 — Sub-Phase 8.5 platform-bus wiring by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code. start() eagerly
+//                 constructs CoreAudioHalBus (macOS) / LinuxPipeBus (Linux)
+//                 instances for VAX RX 1..4 and a separate VAX TX virtual
+//                 bus (m_vaxTxBus). Failed open() per slot logs and
+//                 degrades to silence on that channel; surviving slots
+//                 stay live. Windows path stays null pending Sub-Phase 9
+//                 BYO wiring.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -35,6 +43,13 @@
 #include "audio/PortAudioBus.h"
 #include "../models/RadioModel.h"
 #include "../models/SliceModel.h"
+
+#ifdef Q_OS_MAC
+#include "audio/CoreAudioHalBus.h"
+#endif
+#ifdef Q_OS_LINUX
+#include "audio/LinuxPipeBus.h"
+#endif
 
 #include <portaudio.h>
 
@@ -110,6 +125,44 @@ void AudioEngine::start()
     }
 
     ensureSpeakersOpen();
+
+    // Sub-Phase 8.5: eagerly construct platform-native VAX RX buses + the
+    // VAX TX virtual bus on macOS / Linux so coreaudiod / pactl publish the
+    // virtual devices the moment audio is running. Each slot opens
+    // independently — a single failure (e.g. HAL plugin not installed,
+    // pactl missing) logs a warning, leaves the slot null, and the
+    // rxBlockReady tee silently skips that channel.
+    //
+    // On Windows m_vaxBus / m_vaxTxBus stay null here.
+    // TODO(sub-phase-9-byo): wire user-picked virtual cables via
+    // setVaxConfig() once the Setup → Audio → VAX BYO UI lands.
+    for (int channel = 1; channel <= 4; ++channel) {
+        const int idx = channel - 1;
+        if (m_vaxBus[idx]) {
+            // Caller wired an explicit device via setVaxConfig() before
+            // start() ran — honour that and don't clobber it with the
+            // platform-native bus.
+            continue;
+        }
+        m_vaxBus[idx] = makeVaxBus(channel);
+        if (m_vaxBus[idx]) {
+            qCInfo(lcAudio) << "VAX" << channel << "bus opened (eager)"
+                            << "[" << m_vaxBus[idx]->backendName() << "]";
+        }
+    }
+
+    if (!m_vaxTxBus) {
+        m_vaxTxBus = makeVaxTxBus();
+        if (m_vaxTxBus) {
+            qCInfo(lcAudio) << "VAX TX bus opened (eager)"
+                            << "[" << m_vaxTxBus->backendName() << "]";
+        }
+        // TODO(phase3M): pull TX audio from m_vaxTxBus when
+        // TransmitModel::txOwnerSlot() != MicDirect. The bus is opened
+        // here so 3rd-party apps see the virtual TX device immediately;
+        // no consumer is wired in this phase.
+    }
+
     m_running = true;
 
     qCInfo(lcAudio) << "AudioEngine started ("
@@ -132,8 +185,21 @@ void AudioEngine::stop()
     // the ordering contract is that the caller (RadioModel teardown)
     // stops the DSP worker thread before calling stop(). That contract
     // is preserved from the pre-refactor code.
+    //
+    // LinuxPipeBus::close() invokes QProcess to drive `pactl unload-module`,
+    // which requires a running event loop on the calling thread; AudioEngine
+    // is parented to the main (GUI) thread by RadioModel so stop() always
+    // runs there. The same contract covers the destructor path (~unique_ptr
+    // → ~LinuxPipeBus → close()). The CoreAudioHalBus / PortAudioBus dtors
+    // have no main-thread requirement.
     m_speakersBus.reset();
     m_txInputBus.reset();
+    // Reset VAX TX before iterating m_vaxBus so the close ordering is
+    // TX-first then RX-1..4 — symmetric with the start() construction
+    // order (RX-1..4 then TX) inverted on teardown, and lets a future
+    // TX-poll consumer release any reference to the TX bus before the
+    // RX taps come down.
+    m_vaxTxBus.reset();
     for (auto& bus : m_vaxBus) {
         bus.reset();
     }
@@ -145,8 +211,9 @@ void AudioEngine::stop()
 std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
                                                 bool capture)
 {
-    // TODO(phase3o-5/6): swap direct PortAudioBus construction for
-    // AudioBusFactory::create() once CoreAudioHalBus / LinuxPipeBus land.
+    // PortAudio path — used for speakers / mic / Windows-BYO VAX devices.
+    // Platform-native VAX RX/TX virtual buses use makeVaxBus() /
+    // makeVaxTxBus() (Sub-Phase 8.5).
     auto bus = std::make_unique<PortAudioBus>();
     PortAudioConfig pcfg;
     pcfg.direction     = capture ? AudioDirection::Input
@@ -163,6 +230,95 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
         return nullptr;
     }
     return bus;
+}
+
+std::unique_ptr<IAudioBus> AudioEngine::makeVaxBus(int channel)
+{
+    // Sub-Phase 8.5: platform-native VAX RX virtual bus. Format is fixed at
+    // 48 kHz stereo float32 — this is the contract both CoreAudioHalBus and
+    // LinuxPipeBus enforce in open(), and it matches the spec §8.1 wire
+    // format the HAL plugin / pactl source expose to consumer apps.
+    if (channel < 1 || channel > 4) {
+        return nullptr;
+    }
+
+    AudioFormat fmt;
+    fmt.sampleRate = 48000;
+    fmt.channels   = 2;
+    fmt.sample     = AudioFormat::Sample::Float32;
+
+#if defined(Q_OS_MAC)
+    CoreAudioHalBus::Role role = CoreAudioHalBus::Role::Vax1;
+    switch (channel) {
+        case 1: role = CoreAudioHalBus::Role::Vax1; break;
+        case 2: role = CoreAudioHalBus::Role::Vax2; break;
+        case 3: role = CoreAudioHalBus::Role::Vax3; break;
+        case 4: role = CoreAudioHalBus::Role::Vax4; break;
+    }
+    auto bus = std::make_unique<CoreAudioHalBus>(role);
+    if (!bus->open(fmt)) {
+        qCWarning(lcAudio) << "CoreAudioHalBus open failed for VAX" << channel
+                           << ":" << bus->errorString();
+        return nullptr;
+    }
+    return bus;
+#elif defined(Q_OS_LINUX)
+    LinuxPipeBus::Role role = LinuxPipeBus::Role::Vax1;
+    switch (channel) {
+        case 1: role = LinuxPipeBus::Role::Vax1; break;
+        case 2: role = LinuxPipeBus::Role::Vax2; break;
+        case 3: role = LinuxPipeBus::Role::Vax3; break;
+        case 4: role = LinuxPipeBus::Role::Vax4; break;
+    }
+    auto bus = std::make_unique<LinuxPipeBus>(role);
+    if (!bus->open(fmt)) {
+        qCWarning(lcAudio) << "LinuxPipeBus open failed for VAX" << channel
+                           << ":" << bus->errorString();
+        return nullptr;
+    }
+    return bus;
+#else
+    // Windows: TODO(sub-phase-9-byo): wire user-picked virtual cables via
+    // setVaxConfig(). Returning nullptr here leaves the slot empty so the
+    // rxBlockReady tee silently skips this channel until BYO config arrives.
+    (void)channel;
+    return nullptr;
+#endif
+}
+
+std::unique_ptr<IAudioBus> AudioEngine::makeVaxTxBus()
+{
+    // Sub-Phase 8.5: platform-native VAX TX virtual bus. Opened so coreaudiod
+    // / pactl publish the virtual TX device for 3rd-party apps that write
+    // outgoing audio (WSJT-X, fldigi, VARA). Consumption (pull() into
+    // TxChannel) is a Phase 3M concern — see m_vaxTxBus comment in
+    // AudioEngine.h and the TODO in start().
+    AudioFormat fmt;
+    fmt.sampleRate = 48000;
+    fmt.channels   = 2;
+    fmt.sample     = AudioFormat::Sample::Float32;
+
+#if defined(Q_OS_MAC)
+    auto bus = std::make_unique<CoreAudioHalBus>(CoreAudioHalBus::Role::TxInput);
+    if (!bus->open(fmt)) {
+        qCWarning(lcAudio) << "CoreAudioHalBus open failed for VAX TX:"
+                           << bus->errorString();
+        return nullptr;
+    }
+    return bus;
+#elif defined(Q_OS_LINUX)
+    auto bus = std::make_unique<LinuxPipeBus>(LinuxPipeBus::Role::TxInput);
+    if (!bus->open(fmt)) {
+        qCWarning(lcAudio) << "LinuxPipeBus open failed for VAX TX:"
+                           << bus->errorString();
+        return nullptr;
+    }
+    return bus;
+#else
+    // Windows: TODO(sub-phase-9-byo): wire user-picked virtual cables via
+    // setVaxConfig() (a future TX-side equivalent setter).
+    return nullptr;
+#endif
 }
 
 void AudioEngine::ensureSpeakersOpen()
@@ -220,6 +376,12 @@ void AudioEngine::setTxInputConfig(const AudioDeviceConfig& cfg)
 
 void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
 {
+    // BYO override path. Replaces whatever bus is currently in the slot
+    // (platform-native eager bus from start(), or a previous BYO PortAudio
+    // bus) with a user-picked PortAudio device. On Mac/Linux this is
+    // intentional — power users may prefer to route VAX through a third-
+    // party virtual cable instead of the bundled HAL plugin / pactl
+    // module. On Windows this is the only VAX path (Sub-Phase 9 BYO).
     if (channel < 1 || channel > 4) {
         return;
     }
@@ -230,7 +392,7 @@ void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
     }
     m_vaxBus[idx] = makeBus(cfg, /*capture=*/false);
     if (m_vaxBus[idx]) {
-        qCInfo(lcAudio) << "VAX" << channel << "bus opened"
+        qCInfo(lcAudio) << "VAX" << channel << "bus reconfigured (BYO)"
                         << "[" << m_vaxBus[idx]->backendName() << "]";
     }
 }
@@ -245,14 +407,49 @@ void AudioEngine::setVaxEnabled(int channel, bool on)
         m_vaxBus[idx].reset();
         return;
     }
-    // Enable with defaults if no explicit setVaxConfig has been wired yet.
-    // Real config lands via the VaxApplet / Setup→Audio→VAX UI in
-    // Sub-Phase 7 / 8.
-    if (!m_vaxBus[idx]) {
-        AudioDeviceConfig defaults;
-        m_vaxBus[idx] = makeBus(defaults, /*capture=*/false);
+    // Already populated (eagerly opened by start() on Mac/Linux, or via a
+    // prior setVaxConfig BYO call): no-op. Empty slot: mint the
+    // platform-native bus (Mac/Linux) or the PortAudio default (Windows
+    // BYO) below.
+    if (m_vaxBus[idx]) {
+        return;
     }
+
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+    // Re-mint the platform-native bus that start() would have used. Lets
+    // a user toggle a VAX channel off and back on without restarting
+    // AudioEngine.
+    m_vaxBus[idx] = makeVaxBus(channel);
+    if (m_vaxBus[idx]) {
+        qCInfo(lcAudio) << "VAX" << channel << "bus re-enabled"
+                        << "[" << m_vaxBus[idx]->backendName() << "]";
+    }
+#else
+    // Windows lazy PortAudio fallback: enable with defaults if no explicit
+    // setVaxConfig has been wired yet. Real config lands via the
+    // VirtualCableDetector / Setup→Audio→VAX BYO UI in Sub-Phase 9.
+    if (!m_paInitialized) {
+        return;
+    }
+    AudioDeviceConfig defaults;
+    m_vaxBus[idx] = makeBus(defaults, /*capture=*/false);
+#endif
 }
+
+#ifdef NEREUS_BUILD_TESTS
+void AudioEngine::setVaxBusForTest(int channel, std::unique_ptr<IAudioBus> bus)
+{
+    if (channel < 1 || channel > 4) {
+        return;
+    }
+    m_vaxBus[channel - 1] = std::move(bus);
+}
+
+void AudioEngine::setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus)
+{
+    m_speakersBus = std::move(bus);
+}
+#endif
 
 void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
 {

@@ -186,3 +186,10 @@ endif()
 
 # ── Phase 3O Sub-Phase 7 Task 7.1: VirtualCableDetector ──────────────────────
 nereus_add_test(tst_virtual_cable_detector)
+
+# ── Phase 3O Sub-Phase 8.5: AudioEngine VAX tee logic ────────────────────────
+# Exercises the rxBlockReady → m_vaxBus[] tee using FakeAudioBus injected
+# via the NEREUS_BUILD_TESTS-only setVaxBusForTest / setSpeakersBusForTest
+# seam on AudioEngine. No real CoreAudioHalBus / LinuxPipeBus / PortAudio
+# backend required — runs on every platform.
+nereus_add_test(tst_audio_engine_vax_tee)
