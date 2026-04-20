@@ -902,11 +902,38 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
         // horizontally with minimal margins. 640*0.89 x 480*1.0 =
         // ~570 x 480 = ~1.19:1, which matches the image aspect.
         created->setRect(0.05f, 0.0f, 0.89f, 1.0f);
+    } else {
+        // Non-image composite presets (SMeter, PowerSwr, MagicEye,
+        // Clock, Contest, History, SignalText, VfoDisplay). Previously
+        // these kept the MeterItem default rect of (0, 0, 1, 1) which
+        // meant every newly-added preset covered the entire container
+        // and painted its opaque backdrop over anything added before it
+        // — adding a second preset made the first one vanish.
+        //
+        // Stack these under any existing rows using nextStackYPos()
+        // (the same helper addNewItem() uses for raw primitives) and
+        // give each a sensible default height so two presets can
+        // co-exist out of the box. Heights roughly mirror Thetis'
+        // _fHeight = 0.15 for thin bar-style presets; wider display
+        // presets (MagicEye / History / Contest) get more vertical
+        // space because their contents aren't useful at 15 %.
+        const float yPos = nextStackYPos(workingItems());
+        float slotH = 0.15f;
+        if (dynamic_cast<MagicEyePresetItem*>(created) ||
+            dynamic_cast<HistoryGraphPresetItem*>(created) ||
+            dynamic_cast<ContestPresetItem*>(created)) {
+            slotH = 0.30f;
+        } else if (dynamic_cast<PowerSwrPresetItem*>(created)) {
+            slotH = 0.20f;
+        }
+        // Clamp so the new row fits inside the 0..1 rect; the reflow
+        // path can always stretch it back later, but placing a preset
+        // past y=1 paints offscreen.
+        if (yPos + slotH > 1.0f) {
+            slotH = qMax(0.05f, 1.0f - yPos);
+        }
+        created->setRect(0.0f, yPos, 1.0f, slotH);
     }
-    // Non-image composite presets (SMeter, PowerSwr, MagicEye,
-    // Clock, Contest, History, SignalText, VfoDisplay) keep whatever
-    // rect their constructor chose — they do not letterbox against
-    // a background image.
 
     ContainerInUseRow newRow;
     newRow.item        = created;

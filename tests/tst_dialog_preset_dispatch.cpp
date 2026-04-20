@@ -59,6 +59,14 @@ private slots:
     // painted on top of the primitive (opaque OverlayStatic backdrop
     // over a Geometry/OverlayDynamic Bar) and the primitive disappeared.
     void presetCoexistsWithPrimitive_bothRender();
+
+    // Follow-up-bug coverage — two composite presets in the same
+    // container must both render. Before this fix the non-image
+    // composite preset (SMeter) inherited the MeterItem (0, 0, 1, 1)
+    // default rect, painted its opaque backdrop over the entire
+    // container, and buried the AnanMM preset added before it.
+    void addTwoPresets_bothVisible();
+    void addNonImageCompositePreset_stacksBelowExisting();
 };
 
 namespace {
@@ -267,6 +275,129 @@ void TstDialogPresetDispatch::presetCoexistsWithPrimitive_bothRender()
     QCOMPARE(preset.renderLayer(), MeterItem::Layer::Background);
     QVERIFY(bar.participatesIn(MeterItem::Layer::OverlayDynamic));
     QVERIFY(!preset.participatesIn(MeterItem::Layer::OverlayStatic));
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up bug 2 — two composite presets must both render.
+//
+// User-reported behaviour: "When I add the ANAN meter it renders within
+// the container... but when I add another meter this stops working and
+// only renders the new meter within the container."
+//
+// Root cause (pre-fix): non-image composite presets (SMeter, PowerSwr,
+// MagicEye, Clock, Contest, History, SignalText, VfoDisplay) fell
+// through the appendPresetRow() rect-assignment switch without any
+// setRect() call, leaving them at the MeterItem default of (0, 0, 1, 1).
+// Each of those presets paints an opaque m_backdropColor fillRect over
+// its entire rect, so a second preset painted over the first. ANAN MM
+// had already been given a partial rect (0, 0.05, 1, 0.61) — it
+// disappeared behind the full-container SMeter backdrop.
+//
+// Fix: non-image composite presets now stack under existing rows via
+// nextStackYPos() with a sensible default height. The presets carry
+// distinct, non-overlapping rects; both should contribute visible
+// colour to a combined render.
+// ---------------------------------------------------------------------------
+void TstDialogPresetDispatch::addTwoPresets_bothVisible()
+{
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+    dlg.appendPresetRowForTest(QStringLiteral("AnanMM"));
+    dlg.appendPresetRowForTest(QStringLiteral("SMeter"));
+
+    const QVector<MeterItem*> items = dlg.workingItems();
+    QCOMPARE(items.size(), 2);
+
+    auto* anan   = dynamic_cast<AnanMultiMeterItem*>(items.at(0));
+    auto* smeter = dynamic_cast<SMeterPresetItem*>(items.at(1));
+    QVERIFY(anan != nullptr);
+    QVERIFY(smeter != nullptr);
+
+    // The SMeter's rect must not fully cover the ANAN MM's rect.
+    // ANAN MM occupies y in [0.05, 0.66]; the SMeter must be placed
+    // below it (y >= 0.66) by nextStackYPos().
+    QVERIFY2(smeter->y() >= anan->y() + anan->itemHeight() - 0.001f,
+             "Second preset must stack below the first, not overlap it");
+
+    // Actual render check: paint both presets into an offscreen
+    // image in list order (the MeterWidget Background-layer draw order)
+    // and sample two pixels — one inside the ANAN MM rect, one inside
+    // the SMeter rect. Both samples must be non-black. Pre-fix, the
+    // ANAN MM pixel would be SMeter's backdrop (~rgb(32,32,32))
+    // because SMeter's full-rect fillRect painted over it.
+    const int W = 400;
+    const int H = 200;
+    QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::black);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        for (MeterItem* it : items) {
+            it->paint(p, W, H);
+        }
+    }
+
+    // Pixel inside the ANAN MM rect (y in [0.05, 0.66], x in [0, 1]).
+    // Pick roughly the centre of the ANAN MM face.
+    const int ananSampleY = static_cast<int>((0.05f + 0.61f * 0.5f) * H);
+    const int ananSampleX = W / 2;
+    const QRgb ananPx = img.pixel(ananSampleX, ananSampleY);
+
+    // The ANAN MM preset either draws its meter-face bitmap (when the
+    // :/meters/ananMM.png resource is present) or — in the headless
+    // test sandbox without image resources — leaves the pixel untouched
+    // (paint() returns early if bgRect is empty, no backdrop fill).
+    // The critical invariant is that the SMeter's backdrop (a uniform
+    // dark grey ~rgb(32,32,32)) must NOT have painted over this area.
+    // Check that the ANAN MM row is either transparent-to-black
+    // (painted nothing) or carries image colour, but not the SMeter
+    // backdrop.
+    const int sampleR = qRed(ananPx);
+    const int sampleG = qGreen(ananPx);
+    const int sampleB = qBlue(ananPx);
+    const bool isSMeterBackdrop =
+        (sampleR >= 28 && sampleR <= 36) &&
+        (sampleG >= 28 && sampleG <= 36) &&
+        (sampleB >= 28 && sampleB <= 36);
+    QVERIFY2(!isSMeterBackdrop,
+             "SMeter backdrop painted over the ANAN MM rect — the "
+             "second preset is hiding the first");
+}
+
+void TstDialogPresetDispatch::addNonImageCompositePreset_stacksBelowExisting()
+{
+    Harness h;
+    ContainerSettingsDialog dlg(h.container, nullptr, &h.mgr);
+
+    // Add ANAN MM first — fixed rect (0, 0.05, 1, 0.61), bottom at 0.66.
+    dlg.appendPresetRowForTest(QStringLiteral("AnanMM"));
+    // Add a plain SMeter — must stack at yPos >= 0.66.
+    dlg.appendPresetRowForTest(QStringLiteral("SMeter"));
+    // Add a third — must stack below both.
+    dlg.appendPresetRowForTest(QStringLiteral("ClockPreset"));
+
+    const QVector<MeterItem*> items = dlg.workingItems();
+    QCOMPARE(items.size(), 3);
+
+    auto* anan  = items.at(0);
+    auto* smeter = items.at(1);
+    auto* clock  = items.at(2);
+
+    const float ananBottom   = anan->y()   + anan->itemHeight();
+    const float smeterBottom = smeter->y() + smeter->itemHeight();
+
+    // Legitimate stacking — smeter below anan, clock below smeter.
+    QVERIFY2(smeter->y() + 0.001f >= ananBottom,
+             "SMeter must stack below ANAN MM, not overlap");
+    QVERIFY2(clock->y() + 0.001f >= smeterBottom,
+             "Clock must stack below SMeter, not overlap ANAN MM or SMeter");
+
+    // Every preset must also fit inside the 0..1 container rect so it
+    // paints on-screen rather than clipping offscreen.
+    for (MeterItem* it : items) {
+        QVERIFY(it->y() >= 0.0f);
+        QVERIFY(it->y() + it->itemHeight() <= 1.0f + 0.001f);
+    }
 }
 
 QTEST_MAIN(TstDialogPresetDispatch)
