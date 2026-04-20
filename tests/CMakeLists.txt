@@ -5335,6 +5335,10 @@ nereus_add_test(tst_cross_needle_item)
 # ── Edit Container refactor: Task 3 — SMeterPresetItem ───────────────────
 nereus_add_test(tst_smeter_preset_item)
 
+
+# ── Edit Container refactor: Task 4 — PowerSwrPresetItem ─────────────────
+nereus_add_test(tst_power_swr_preset_item)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------

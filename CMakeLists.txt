@@ -722,6 +722,8 @@ set(GUI_SOURCES
     src/gui/meters/presets/CrossNeedleItem.cpp
     src/gui/meters/presets/SMeterPresetItem.h
     src/gui/meters/presets/SMeterPresetItem.cpp
+    src/gui/meters/presets/PowerSwrPresetItem.h
+    src/gui/meters/presets/PowerSwrPresetItem.cpp
     src/gui/meters/MeterPoller.cpp
     src/gui/meters/SpacerItem.cpp
     src/gui/meters/FadeCoverItem.cpp
