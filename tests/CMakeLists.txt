@@ -5399,6 +5399,18 @@ nereus_add_test(tst_floating_container_access)
 # tst_applet_visibility_controller + tst_applet_visibility_menu_wiring.
 nereus_add_test(tst_container_manager_autoname)
 
+
+nereus_add_test(tst_mainwindow_menu_layout)
+
+# ── Edit Container refactor: Task 18 — legacy container migration ────────
+# Uses TEST_DATA_DIR compile definition so the fixture loader resolves
+# the fixtures/legacy/pre-refactor-settings.xml path relative to the
+# source tree rather than the build tree (mirrors tst_radio_discovery_parse).
+nereus_add_test(tst_legacy_container_migration)
+target_compile_definitions(tst_legacy_container_migration PRIVATE
+    TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------

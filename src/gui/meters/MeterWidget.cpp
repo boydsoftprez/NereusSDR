@@ -91,6 +91,7 @@ mw0lge@grange-lane.co.uk
 #include "presets/ContestPresetItem.h"
 #include "presets/CrossNeedleItem.h"
 #include "presets/HistoryGraphPresetItem.h"
+#include "presets/LegacyPresetMigrator.h"
 #include "presets/MagicEyePresetItem.h"
 #include "presets/PowerSwrPresetItem.h"
 #include "presets/SignalTextPresetItem.h"
@@ -277,6 +278,14 @@ bool MeterWidget::deserializeItems(const QString& data)
     if (data.isEmpty()) { return false; }
 
     clearItems();
+
+    // Edit-container refactor Task 18 — stage parsed items in a local
+    // vector first, then run the LegacyPresetMigrator across the
+    // whole set so it can detect multi-item preset signatures spanning
+    // adjacent lines (ImageItem + 7 NeedleItems → AnanMultiMeterItem,
+    // etc.). JSON-format (new-class) lines short-circuit the migrator:
+    // the migrator's double-migration guard detects the mix.
+    QVector<MeterItem*> parsed;
     QStringList lines = data.split(QLatin1Char('\n'));
     for (const QString& line : lines) {
         if (line.isEmpty()) { continue; }
@@ -304,7 +313,7 @@ bool MeterWidget::deserializeItems(const QString& data)
                 else if (kind == QLatin1String("BarPreset"))          { item = new BarPresetItem(); }
             }
             if (item && item->deserialize(line)) {
-                addItem(item);
+                parsed.append(item);
                 continue;
             }
             delete item;
@@ -381,10 +390,28 @@ bool MeterWidget::deserializeItems(const QString& data)
         }
 
         if (item && item->deserialize(line)) {
-            addItem(item);
+            parsed.append(item);
         } else {
             delete item;
         }
+    }
+
+    // Edit-container refactor Task 18 — run the tolerant legacy-preset
+    // migrator. It collapses known signature regions (ANAN MM, Cross-
+    // Needle, bar-row flavours, single-item composites) into first-
+    // class MeterItem subclasses. Unrecognised regions pass through as
+    // loose primitives. If any JSON-format new-class items were parsed
+    // above, the migrator's double-migration guard short-circuits and
+    // returns the vector unchanged.
+    LegacyPresetMigrator::Result mig =
+        LegacyPresetMigrator::migrate(std::move(parsed));
+    if (mig.presetsMigrated > 0 || mig.fallbackCases > 0) {
+        qCInfo(lcMeter)
+            << "legacy-preset migration:" << mig.presetsMigrated
+            << "collapsed," << mig.fallbackCases << "kept-as-loose";
+    }
+    for (MeterItem* item : mig.upgradedItems) {
+        addItem(item);
     }
     return !m_items.isEmpty();
 }
