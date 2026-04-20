@@ -24,6 +24,9 @@ endfunction()
 # ── Pre-existing tests from main (smoke + 3G-9 meter suite) ────────────────
 nereus_add_test(tst_setup_helpers)
 nereus_add_test(tst_smoke)
+
+# ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
+nereus_add_test(tst_receiver_manager_reconnect)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)

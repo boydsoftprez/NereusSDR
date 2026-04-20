@@ -1280,6 +1280,15 @@ void RadioModel::teardownConnection()
     QObject::disconnect(m_connection, nullptr, m_receiverManager, nullptr);
     QObject::disconnect(m_receiverManager, nullptr, this, nullptr);
 
+    // Drop all logical receivers so the next connectToRadio() starts from
+    // index 0 with a fresh wdspChannel counter. Without this, issue #75:
+    // receiver 0 leaks into the next session, createReceiver() returns 1,
+    // and on P2 2-ADC boards both receivers claim DDC2 — the collision in
+    // rebuildHardwareMapping routes DDC2 I/Q to logical 1 whose wdspChannel
+    // is 1, but only WDSP channel 0 is created in connectToRadio, so audio
+    // and spectrum silently drop on the second connect.
+    m_receiverManager->reset();
+
     // Tear down the connection on its own worker thread via the shared
     // helper. See src/core/RadioConnectionTeardown.h for why this must
     // run on the worker — short version: the RadioConnection's QTimers

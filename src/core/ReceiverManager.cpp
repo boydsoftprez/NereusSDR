@@ -119,6 +119,29 @@ void ReceiverManager::destroyReceiver(int receiverIndex)
     emit receiverDestroyed(receiverIndex);
 }
 
+void ReceiverManager::reset()
+{
+    const int priorCount = m_receivers.size();
+    const QList<int> indices = m_receivers.keys();
+
+    m_receivers.clear();
+    m_hwToLogical.clear();
+    m_nextWdspChannel = 0;
+    m_firstForwardLogged = false;
+    m_firstDropLogged = false;
+
+    for (int idx : indices) {
+        emit receiverDestroyed(idx);
+    }
+
+    if (priorCount > 0) {
+        emit activeReceiverCountChanged(0);
+        emit hardwareReceiverCountChanged(0);
+    }
+
+    qCDebug(lcReceiver) << "ReceiverManager reset;" << priorCount << "receivers dropped";
+}
+
 void ReceiverManager::activateReceiver(int receiverIndex)
 {
     if (!m_receivers.contains(receiverIndex)) {

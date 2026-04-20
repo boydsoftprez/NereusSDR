@@ -108,6 +108,13 @@ public:
     // Destroy a receiver and release its hardware DDC.
     void destroyReceiver(int receiverIndex);
 
+    // Drop all receivers and reset the manager to a just-constructed state.
+    // Called by RadioModel::teardownConnection so the next connectToRadio
+    // starts with a fresh index counter; without this, a same-session
+    // disconnect/reconnect leaks receiver 0 and the new createReceiver()
+    // returns 1, colliding on DDC2 for P2 2-ADC boards (issue #75).
+    void reset();
+
     // Activate/deactivate a receiver.
     // Activating increments the hardware receiver count sent to the radio.
     void activateReceiver(int receiverIndex);
