@@ -154,8 +154,15 @@ void MagicEyePresetItem::paint(QPainter& p, int widgetW, int widgetH)
               sweepDeg * 16);
 
     // Bullseye bezel image on top (hides the leaf edges).
+    // Smooth transform + antialiasing keeps the circular bezel crisp
+    // at non-native container sizes (nearest-neighbour default produces
+    // visibly jagged circle edges).
     if (!m_background.isNull()) {
+        p.save();
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.setRenderHint(QPainter::Antialiasing, true);
         p.drawImage(eyeRect, m_background);
+        p.restore();
     }
 
     p.restore();
