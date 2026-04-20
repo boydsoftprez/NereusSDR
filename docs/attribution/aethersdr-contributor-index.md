@@ -288,7 +288,7 @@ per-file NereusSDR-side diff).
 | `src/gui/SMeterWidget.{h,cpp}` | (split into `MeterWidget` + S-meter `ItemGroup` preset) | |
 | `src/gui/MeterApplet.{h,cpp}` | `src/gui/meters/MeterWidget.{h,cpp}` + `MeterPoller.{h,cpp}` + `MeterItem.{h,cpp}` + all the item subclasses + `ItemGroup.{h,cpp}` | NereusSDR's meter system is a **major divergence** — it's Thetis-MeterManager-ported (per NereusSDR CLAUDE.md, 3G-2/3G-3/3G-4/3G-5/3G-6), not AetherSDR-derived. Any `// From AetherSDR` comments on `src/gui/meters/*` items should be re-checked against Thetis `MeterManager.cs` — flag for 25b. |
 | `src/gui/DspParamPopup.{h,cpp}` / `AetherDspDialog.{h,cpp}` | (none — NereusSDR uses inline applet controls) | |
-| `src/gui/TitleBar.{h,cpp}` | (none yet — 3G-14 plans 💡 menu corner widget) | AetherSDR's TitleBar has the AI-assisted bug-report lightbulb that 3G-14 plans to port. |
+| `src/gui/TitleBar.{h,cpp}` | `src/gui/TitleBar.{h,cpp}` | **Scoped-down port** (Phase 3O Sub-Phase 10 Task 10c, 2026-04-20). NereusSDR's TitleBar is a thin 32 px host strip hosting the menu bar + MasterOutputWidget only; AetherSDR's heartbeat / multiFLEX / PC-audio / headphone / minimal-mode / feature-request widgets are intentionally omitted (deferred to separate NereusSDR phases — 3G-14 plans the 💡 feature-request widget; headphone devices land in Sub-Phase 12 Setup → Audio → Devices). `setMenuBar()` is a line-for-line port of AetherSDR `TitleBar.cpp:282-295`. |
 | `src/gui/ComboStyle.h` / `HGauge.h` / `SliceColors.h` | `src/gui/StyleConstants.h` and co. | Shared style constants. |
 | `src/generated/WhatsNewData.cpp` | (none — auto-generated) | Change-log entries. |
 

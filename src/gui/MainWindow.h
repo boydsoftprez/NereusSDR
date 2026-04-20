@@ -93,6 +93,7 @@ class ClarityController;
 class ContainerManager;
 class MeterWidget;
 class MeterPoller;
+class TitleBar;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -221,6 +222,10 @@ private:
 
     // Applet panel — scrollable content widget inside Container #0
     class AppletPanelWidget* m_appletPanel{nullptr};
+
+    // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
+    // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
+    TitleBar* m_titleBar{nullptr};
 };
 
 } // namespace NereusSDR

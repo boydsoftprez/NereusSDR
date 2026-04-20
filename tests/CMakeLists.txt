@@ -207,3 +207,10 @@ nereus_add_test(tst_audio_engine_master_mute)
 # re-entry prevention, AppSettings round-trip (audio/Master/Volume,
 # audio/Master/Muted), and construction-time restore of saved values.
 nereus_add_test(tst_master_output_widget)
+
+# ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
+# 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:
+# construction, setMenuBar() re-parenting, masterOutput() accessor, and
+# the fixed 32 px height. Live UI verification is the canonical check for
+# the menu-re-parent + in-window render on macOS.
+nereus_add_test(tst_title_bar)

@@ -283,6 +283,10 @@ warren@wpratt.com
 #include "applets/TunerApplet.h"
 #include "SpectrumOverlayPanel.h"
 #include "SetupDialog.h"
+#include "TitleBar.h"
+#include "widgets/MasterOutputWidget.h"
+#include "core/AudioDeviceConfig.h"
+#include "core/AudioEngine.h"
 
 #include <cmath>
 
@@ -334,6 +338,33 @@ MainWindow::MainWindow(QWidget* parent)
 {
     buildUI();
     buildMenuBar();
+
+    // Phase 3O Sub-Phase 10 Task 10c — host the menu bar + master-output
+    // controls in a custom TitleBar strip. Must run AFTER buildMenuBar()
+    // so the menu is fully populated with actions before we re-parent it.
+    //
+    // setMenuWidget() hands ownership to QMainWindow and installs the
+    // strip at the top of the window. On macOS this also disables Qt's
+    // promotion of the menu bar to the native global bar — menus render
+    // in-window alongside the master-output controls (explicit design
+    // choice, user-approved option D for Sub-Phase 10).
+    m_titleBar = new TitleBar(m_radioModel->audioEngine(), this);
+    m_titleBar->setMenuBar(menuBar());
+    setMenuWidget(m_titleBar);
+
+    // Wire the MasterOutputWidget device picker → AudioEngine so picking
+    // an output device rebuilds the speakers bus. Task 10b exposes only
+    // the deviceName; AudioEngine::makeBus fills in sensible defaults
+    // (sample rate 48 kHz stereo, default buffer) per AudioEngine.h:165.
+    connect(m_titleBar->masterOutput(), &MasterOutputWidget::outputDeviceChanged,
+            this, [this](const QString& name) {
+        AudioDeviceConfig cfg;
+        cfg.deviceName = name;
+        if (auto* engine = m_radioModel->audioEngine()) {
+            engine->setSpeakersConfig(cfg);
+        }
+    });
+
     buildStatusBar();
     applyDarkTheme();
 

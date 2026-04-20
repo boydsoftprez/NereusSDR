@@ -181,6 +181,19 @@ upstream source file.
 |---|---|---|---|
 | `src/gui/SetupPage.cpp` | `src/gui/RadioSetupDialog.{h,cpp}` | Line 8 "Shared style strings — mirror AetherSDR RadioSetupDialog constants". | "Shared setup-page style constants mirror AetherSDR `src/gui/RadioSetupDialog.{h,cpp}`." |
 
+### Phase 3O Sub-Phase 10 Task 10c — TitleBar host strip
+
+Added 2026-04-20 (Sub-Phase 10 Task 10c). Scoped-down port of AetherSDR's
+monolithic TitleBar — keeps the 32 px host-strip + `setMenuBar()` re-
+parent pattern + app-name label, drops everything else. Files carry a
+NereusSDR port-citation header (HOW-TO-PORT.md rule 6 — AetherSDR has no
+per-file GPL header to copy) naming AetherSDR `src/gui/TitleBar.{h,cpp}`.
+
+| NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |
+|---|---|---|---|
+| `src/gui/TitleBar.h` | `src/gui/TitleBar.h` + `TitleBar.cpp:27-34, 94-104, 282-295` | Port-citation header names both AetherSDR files. Structural pattern (fixed 32 px host strip, `[menu][stretch][app-name][stretch][right-cluster]` hbox, `setMenuBar()` re-parent at position 0) comes directly from AetherSDR. Scope intentionally reduced: only the master-output right cluster is included; AetherSDR's heartbeat / multiFLEX / PC-audio / headphone / minimal-mode / feature-request widgets are deferred to separate NereusSDR phases. | "Scoped-down port of AetherSDR `src/gui/TitleBar.{h,cpp}` — master-output strip only; heartbeat / multiFLEX / PC-audio / headphone / minimal-mode / feature-request widgets intentionally omitted (deferred to separate phases — 3G-14 plans the 💡 feature-request widget; headphone devices land in Sub-Phase 12). Hosts `MasterOutputWidget` (Task 10b) on the right; `setMenuBar()` copied from AetherSDR `TitleBar.cpp:282-295`." |
+| `src/gui/TitleBar.cpp` | Same | Same — constructor background (#0a0a14) + bottom border (#203040) + `setFixedHeight(32)` from AetherSDR `TitleBar.cpp:30-31`; app-name label from `TitleBar.cpp:101-104` with "AetherSDR" → "NereusSDR". `setMenuBar()` is a line-for-line port of `TitleBar.cpp:282-295`. | Same as `.h`. |
+
 ---
 
 ## Bucket B — False AetherSDR citations (126 files)
