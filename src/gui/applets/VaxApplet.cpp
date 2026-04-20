@@ -78,7 +78,11 @@ constexpr char kSliceLetters[] = "ABCDEFGH";
 // AppSettings key helpers. Keys are PascalCase per spec §5.4.
 QString kRxGainKey(int ch)    { return QStringLiteral("audio/Vax%1/RxGain").arg(ch); }
 QString kMutedKey(int ch)     { return QStringLiteral("audio/Vax%1/Muted").arg(ch); }
+#ifdef Q_OS_WIN
+// Only consumed inside the Windows device-label fallback; guard to avoid
+// -Wunused-function on macOS/Linux.
 QString kDeviceKey(int ch)    { return QStringLiteral("audio/Vax%1/DeviceName").arg(ch); }
+#endif
 QString kTxGainKey()          { return QStringLiteral("audio/TxGain"); }
 
 } // namespace
@@ -297,6 +301,11 @@ void VaxApplet::connectSliceTagsTracking()
     // Differs from AetherSDR DaxApplet.cpp:150 (which receives the SliceModel*
     // directly) because NereusSDR's RadioModel::sliceAdded(int) surface
     // (confirmed in RadioModel.h) matches the NereusSDR signal convention.
+    //
+    // Lifetime: connections to individual SliceModel instances via
+    // Qt::AutoConnection are auto-severed when the SliceModel is destroyed
+    // (QObject destructor semantics), so no explicit bookkeeping is needed
+    // on slice removal.
     connect(m_model, &RadioModel::sliceAdded, this, [this](int index) {
         SliceModel* s = m_model->sliceAt(index);
         if (!s) {
