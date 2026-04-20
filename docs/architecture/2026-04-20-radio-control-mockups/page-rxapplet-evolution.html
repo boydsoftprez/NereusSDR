@@ -1,0 +1,151 @@
+<h2>Mockup — RxApplet evolution (per-receiver UI strip)</h2>
+<p class="subtitle">Side-by-side: today's RxApplet (showing the reported bugs) vs after phases A–F. Two board scenarios — Hermes Lite 2 (single-ADC, demonstrates the bug fixes) and Orion-MKII (dual-ADC, demonstrates the new per-board surface).</p>
+
+<style>
+  .scenario-head { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; font-size: 13px; }
+  .scenario-head .badge { font-family: ui-monospace, monospace; font-size: 11px; padding: 2px 8px; background: rgba(74,125,255,0.18); color: #d4dbff; border-radius: 10px; }
+  .scenario-head .label { color: rgba(255,255,255,0.85); font-weight: 600; }
+
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
+  .panel { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .panel .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 11px; }
+  .panel .panel-head .title { color: rgba(255,255,255,0.65); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+  .panel .panel-head .tag { font-size: 9px; padding: 2px 7px; border-radius: 9px; font-weight: 700; letter-spacing: 0.3px; }
+  .tag.today { background: rgba(255, 90, 90, 0.18); color: #ff8888; }
+  .tag.after { background: rgba(77, 204, 102, 0.18); color: #88e09e; }
+
+  /* RxApplet wireframe */
+  .rxapplet { background: #0f131c; border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; padding: 10px; }
+  .strip { display: flex; flex-direction: column; gap: 8px; }
+  .smeter { background: #06080d; border: 1px solid rgba(255,255,255,0.08); border-radius: 3px; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 11px; color: #9bd0ff; display: flex; justify-content: space-between; align-items: center; }
+  .smeter .needle { font-size: 14px; color: #4dcc66; font-weight: 700; }
+  .smeter .scale { color: rgba(255,255,255,0.4); font-size: 9px; letter-spacing: 1px; }
+  .ovl-row { display: flex; gap: 6px; align-items: center; padding: 4px 0; }
+  .ovl-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 9px; font-family: ui-monospace, monospace; font-weight: 700; letter-spacing: 0.3px; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.45); border: 1px solid rgba(255,255,255,0.1); }
+  .ovl-badge.lit { background: rgba(255, 90, 90, 0.25); color: #ff6868; border-color: rgba(255, 90, 90, 0.5); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0.4; } }
+  .ovl-label { font-size: 10px; color: rgba(255,255,255,0.55); }
+  .row { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 11px; }
+  .row .lbl { min-width: 56px; color: rgba(255,255,255,0.6); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .ctrl-cmb { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 3px 8px; color: #e7ecff; font-size: 11px; font-family: ui-monospace, monospace; flex: 1; min-width: 0; }
+  .ctrl-cmb.disabled { color: rgba(255,255,255,0.35); }
+  .ctrl-spin { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 3px 8px; color: #e7ecff; font-size: 11px; font-family: ui-monospace, monospace; width: 56px; text-align: right; }
+  .att-row { display: flex; gap: 4px; align-items: center; }
+  .att-range { font-size: 9px; color: rgba(255,255,255,0.4); font-family: ui-monospace, monospace; min-width: 50px; }
+  .ant-btn-row { display: flex; gap: 4px; }
+  .ant-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.65); padding: 4px 10px; border-radius: 3px; font-size: 11px; font-family: ui-monospace, monospace; flex: 1; text-align: center; cursor: default; }
+  .ant-btn.on { background: #4a7dff; color: #fff; border-color: #4a7dff; }
+  .ant-btn.dim { color: rgba(255,255,255,0.3); }
+  .annot-cb { font-size: 10px; color: rgba(255,255,255,0.5); padding: 4px 0 0; font-style: italic; }
+  .red-flag { color: #ff8888; font-weight: 600; }
+  .green-tick { color: #4dcc66; font-weight: 600; }
+
+  .delta-list { background: rgba(77, 204, 102, 0.06); border-left: 2px solid #4dcc66; padding: 8px 10px; margin: 8px 0 0; font-size: 11px; color: rgba(255,255,255,0.8); border-radius: 3px; }
+  .delta-list strong { color: #b5f5c5; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; }
+  .pA { background: #ff4545; color: #fff; }
+  .pB { background: #ff8c1a; color: #fff; }
+  .pC { background: #f0b800; color: #1a1a1a; }
+  .pF { background: #8855cc; color: #fff; }
+</style>
+
+<!-- Scenario 1: HL2 -->
+<div class="scenario-head">
+  <span class="badge">Scenario 1</span>
+  <span class="label">Hermes Lite 2 (single ADC) — bug fix surfaces in userland</span>
+</div>
+
+<div class="compare">
+
+  <div class="panel">
+    <div class="panel-head"><span class="title">RxApplet — today (main)</span><span class="tag today">BUGGY</span></div>
+    <div class="rxapplet">
+      <div class="strip">
+        <div class="smeter"><span class="scale">S 1 ·· 5 ·· 9 +20 +40 +60</span><span class="needle">S6</span></div>
+        <div class="ovl-row"><span class="ovl-label">ADC:</span><span class="ovl-badge lit">OVL</span></div>
+        <div class="row"><span class="lbl">Preamp</span><span class="ctrl-cmb">Off · -10 dB · -20 dB</span></div>
+        <div class="row"><span class="lbl">S-ATT</span><div class="att-row"><input class="ctrl-spin" value="20" readonly><span class="att-range">0–31 dB</span></div></div>
+        <div class="row"><span class="lbl">AGC</span><span class="ctrl-cmb">Slow</span></div>
+        <div class="row"><span class="lbl">Mode</span><span class="ctrl-cmb">USB · 14.100.000 Hz</span></div>
+        <div class="row"><span class="lbl">Antenna</span><div class="ant-btn-row"><span class="ant-btn on">1</span><span class="ant-btn">2</span><span class="ant-btn">3</span></div></div>
+        <div class="annot-cb red-flag">⚠ S-ATT slider moves but bytes never reach radio (wrong encoding) · BPF doesn't change with VFO</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span class="title">RxApplet — after Phase A–F</span><span class="tag after">FIXED + EXPANDED</span></div>
+    <div class="rxapplet">
+      <div class="strip">
+        <div class="smeter"><span class="scale">S 1 ·· 5 ·· 9 +20 +40 +60</span><span class="needle">S4</span></div>
+        <div class="ovl-row"><span class="ovl-label">ADC:</span><span class="ovl-badge">OVL</span><span class="annot-cb" style="margin-left:6px;font-style:normal;color:rgba(255,255,255,0.55)">single ADC, single badge</span></div>
+        <div class="row"><span class="lbl">Preamp</span><span class="ctrl-cmb">Off · -10 dB · -20 dB · -30 dB</span></div>
+        <div class="row"><span class="lbl">S-ATT</span><div class="att-row"><input class="ctrl-spin" value="20" readonly><span class="att-range" style="color:#88e09e">0–63 dB</span></div></div>
+        <div class="row"><span class="lbl">AGC</span><span class="ctrl-cmb">Slow</span></div>
+        <div class="row"><span class="lbl">Mode</span><span class="ctrl-cmb">USB · 14.100.000 Hz</span></div>
+        <div class="row"><span class="lbl">Antenna</span><div class="ant-btn-row"><span class="ant-btn on">1</span><span class="ant-btn dim">2</span><span class="ant-btn dim">3</span></div><span class="annot-cb" style="font-style:normal;color:rgba(255,255,255,0.45)">HL2 has 1 antenna port</span></div>
+        <div class="annot-cb green-tick">✓ S-ATT bytes reach radio (6-bit + 0x40 enable) · BPF auto-recomputes on freq change · 0–63 dB range</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="delta-list">
+  <strong>Phase deltas on HL2:</strong>
+  <span class="phase-tag pA">A</span> S-ATT range widens to 0–63 dB; bytes correct (mask 0x3F | 0x40); BPF auto-recomputes on tune ·
+  <span class="phase-tag pC">C</span> Preamp combo populates per-board (4 items for HL2-derived boards) ·
+  <span class="phase-tag pF">F</span> Antenna buttons reflect HL2's single-port hardware (2/3 dimmed not removed, for board-swap consistency)
+</div>
+
+<!-- Scenario 2: Orion-MKII -->
+<div class="scenario-head">
+  <span class="badge">Scenario 2</span>
+  <span class="label">Orion-MKII / ANAN-7000D (dual ADC, full Alex II + per-band antenna)</span>
+</div>
+
+<div class="compare">
+
+  <div class="panel">
+    <div class="panel-head"><span class="title">RxApplet — today (main)</span><span class="tag today">PARTIAL</span></div>
+    <div class="rxapplet">
+      <div class="strip">
+        <div class="smeter"><span class="scale">S 1 ·· 5 ·· 9 +20 +40 +60</span><span class="needle">S7</span></div>
+        <div class="ovl-row"><span class="ovl-label">ADC:</span><span class="ovl-badge">OVL</span><span class="annot-cb" style="margin-left:6px;font-style:normal;color:#ff8888">single badge — can't tell which ADC</span></div>
+        <div class="row"><span class="lbl">Preamp</span><span class="ctrl-cmb">Off · -10 dB · -20 dB</span></div>
+        <div class="row"><span class="lbl">S-ATT</span><div class="att-row"><input class="ctrl-spin" value="0" readonly><span class="att-range">0–31 dB</span></div></div>
+        <div class="row"><span class="lbl">AGC</span><span class="ctrl-cmb">Med</span></div>
+        <div class="row"><span class="lbl">Mode</span><span class="ctrl-cmb">USB · 14.245.000 Hz</span></div>
+        <div class="row"><span class="lbl">Antenna</span><div class="ant-btn-row"><span class="ant-btn on">1</span><span class="ant-btn">2</span><span class="ant-btn">3</span></div></div>
+        <div class="annot-cb red-flag">⚠ Combo doesn't show full Orion-MKII preamp set · Antenna doesn't follow per-band Alex assignment</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><span class="title">RxApplet — after Phase A–F</span><span class="tag after">FIXED + EXPANDED</span></div>
+    <div class="rxapplet">
+      <div class="strip">
+        <div class="smeter"><span class="scale">S 1 ·· 5 ·· 9 +20 +40 +60</span><span class="needle">S7</span></div>
+        <div class="ovl-row"><span class="ovl-label">ADC:</span><span class="ovl-badge">OVL₀</span><span class="ovl-badge lit">OVL₁</span><span class="annot-cb" style="margin-left:6px;font-style:normal;color:rgba(255,255,255,0.55)">per-ADC, ADC₁ overloading</span></div>
+        <div class="row"><span class="lbl">Preamp</span><span class="ctrl-cmb">Off · On · -10 · -20 · -30 · -40 · -50</span></div>
+        <div class="row"><span class="lbl">S-ATT</span><div class="att-row"><input class="ctrl-spin" value="0" readonly><span class="att-range" style="color:#88e09e">0–31 dB</span></div></div>
+        <div class="row"><span class="lbl">AGC</span><span class="ctrl-cmb">Med</span></div>
+        <div class="row"><span class="lbl">Mode</span><span class="ctrl-cmb">USB · 14.245.000 Hz</span></div>
+        <div class="row"><span class="lbl">Antenna</span><div class="ant-btn-row"><span class="ant-btn">1</span><span class="ant-btn on">2</span><span class="ant-btn">3</span></div><span class="annot-cb" style="font-style:normal;color:rgba(255,255,255,0.45)">band 20m → Ant 2 (per Alex)</span></div>
+        <div class="annot-cb green-tick">✓ Per-ADC OVL · 7-mode preamp combo (Alex preset) · Antenna auto-selects per-band per Alex matrix · ATT range stays 0–31</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="delta-list">
+  <strong>Phase deltas on Orion-MKII:</strong>
+  <span class="phase-tag pA">A</span> S-ATT bytes still encode correctly (5-bit + 0x20 unchanged for non-HL2) ·
+  <span class="phase-tag pB">B</span> ADC OVL badge splits into OVL₀ + OVL₁ from the per-ADC overflow status ·
+  <span class="phase-tag pC">C</span> Preamp combo populates with full 7-mode Alex preset (Off / On / -10 / -20 / -30 / -40 / -50 dB) ·
+  <span class="phase-tag pF">F</span> Antenna buttons reflect per-band Alex assignment (band change → antenna auto-switches)
+</div>
+
+<p class="subtitle" style="margin-top: 18px;">No new Setup pages here — purely RxApplet UI evolution surfacing the per-board capability data from BoardCapabilities + AlexController. Look right? Final candidate: <strong>Diagnostics → Radio Status</strong> (Phase H — PA temp/current/SWR/PTT-source readouts on a dedicated diagnostics page).</p>

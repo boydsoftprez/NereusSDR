@@ -1,0 +1,134 @@
+<h2>Mockup — Hardware → Antenna / ALEX → Antenna Control</h2>
+<p class="subtitle">First of three sub-sub-tabs (Antenna Control / Alex-1 Filters / Alex-2 Filters), modeled on Thetis's <code>grpAlexAntCtrl</code>. Per-band antenna assignment for TX and RX, with safety blocks on Ant 2 / Ant 3 to prevent accidental TX into RX-only antennas.</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 1040px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs.subtab { background: rgba(255,255,255,0.04); }
+  .setup-tabs.subsubtab { background: rgba(255,255,255,0.07); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+  .twocols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .grp .grp-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.55); margin-bottom: 10px; font-weight: 600; }
+  .ant-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .ant-table th { color: rgba(255,255,255,0.55); font-weight: 600; text-align: center; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .ant-table th.bandcol { text-align: left; padding-left: 8px; }
+  .ant-table td { padding: 3px 6px; text-align: center; }
+  .ant-table td.bandcol { text-align: left; padding-left: 8px; color: #d4dbff; font-family: ui-monospace, monospace; font-weight: 600; }
+  .ant-table tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+  .radio { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.35); background: #0c0e16; vertical-align: middle; }
+  .radio.on { background: #4a7dff; border-color: #4a7dff; box-shadow: inset 0 0 0 2px #1d2230; }
+  .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: rgba(255,255,255,0.85); }
+  .chk-box { width: 12px; height: 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; background: #0c0e16; }
+  .chk-box.on { background: #4a7dff; border-color: #4a7dff; }
+  .safety-row { display: flex; gap: 16px; padding: 8px 10px; background: rgba(255, 90, 90, 0.06); border: 1px solid rgba(255, 90, 90, 0.15); border-radius: 4px; margin-bottom: 10px; font-size: 11px; }
+  .helptext { font-size: 10px; color: rgba(255,255,255,0.45); font-style: italic; margin-top: 6px; }
+  .annot { background: rgba(136, 85, 204, 0.1); border-left: 2px solid #8855cc; padding: 8px 10px; margin: 12px 0 0; font-size: 11px; color: rgba(255,255,255,0.75); border-radius: 3px; }
+  .annot strong { color: #c5a8ff; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; }
+  .pF { background: #8855cc; color: #fff; }
+  .pB { background: #ff8c1a; color: #fff; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab active">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab">Radio Info</div>
+    <div class="tab active">Antenna / ALEX</div>
+    <div class="tab">OC Outputs</div>
+    <div class="tab">XVTR</div>
+    <div class="tab">PureSignal</div>
+    <div class="tab">Diversity</div>
+    <div class="tab">Calibration</div>
+    <div class="tab">HL2 I/O</div>
+    <div class="tab">Bandwidth Monitor</div>
+  </div>
+  <div class="setup-tabs subsubtab">
+    <div class="tab active">Antenna Control</div>
+    <div class="tab">Alex-1 Filters</div>
+    <div class="tab">Alex-2 Filters</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Hardware → Antenna / ALEX → Antenna Control <span style="color:rgba(74,125,255,0.7)">(Thetis: General → Alex → Antenna Control)</span></div>
+
+    <div class="safety-row">
+      <span class="chk"><span class="chk-box on"></span><strong>Block TX on Ant 2</strong></span>
+      <span class="chk"><span class="chk-box"></span><strong>Block TX on Ant 3</strong></span>
+      <span style="color:rgba(255,255,255,0.55);font-style:italic;">Safety: prevent transmit into RX-only / receive-loop antennas.</span>
+    </div>
+
+    <div class="twocols">
+
+      <div class="grp">
+        <div class="grp-title">TX Antenna per band</div>
+        <table class="ant-table">
+          <thead><tr><th class="bandcol">Band</th><th>Ant 1</th><th>Ant 2</th><th>Ant 3</th></tr></thead>
+          <tbody>
+            <tr><td class="bandcol">160m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">80m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">60m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">40m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">30m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">20m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">17m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">15m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">12m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">10m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">6m</td><td><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td></tr>
+            <tr><td class="bandcol">GEN</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">WWV</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">XVTR</td><td><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grp">
+        <div class="grp-title">RX1 / RX2 Antenna per band</div>
+        <table class="ant-table">
+          <thead><tr><th class="bandcol">Band</th><th colspan="3" style="border-right:1px solid rgba(255,255,255,0.1)">RX1</th><th colspan="3">RX2 / RX-only</th></tr>
+          <tr><th class="bandcol"></th><th>1</th><th>2</th><th style="border-right:1px solid rgba(255,255,255,0.1)">3</th><th>1</th><th>2</th><th>3</th></tr></thead>
+          <tbody>
+            <tr><td class="bandcol">160m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">80m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">60m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">40m</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">30m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">20m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">17m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">15m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">12m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">10m</td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">6m</td><td><span class="radio"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td></tr>
+            <tr><td class="bandcol">GEN</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">WWV</td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio"></span></td><td><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td></tr>
+            <tr><td class="bandcol">XVTR</td><td><span class="radio"></span></td><td><span class="radio"></span></td><td style="border-right:1px solid rgba(255,255,255,0.1)"><span class="radio on"></span></td><td><span class="radio"></span></td><td><span class="radio"></span></td><td><span class="radio on"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      Per-band TX / RX1 / RX2 antenna grid + Block-TX safety = <span class="phase-tag pF">F</span> (AlexController port from <code>HPSDR/Alex.cs:30-106</code> [ramdor 501e3f5])<br>
+      <strong>Spin from Thetis:</strong> NereusSDR has 14 bands (160m → 6m + GEN + WWV + XVTR) vs Thetis's 12 — extra rows for GEN and WWV are NereusSDR-native; defaults follow Ant 1 (HF) / Ant 3 (VHF) like Thetis.<br>
+      <strong>Persistence:</strong> per-MAC under <code>hardware/&lt;mac&gt;/alex/antenna/&lt;band&gt;/{tx,rx1,rx2}</code>.
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">Look right? Once confirmed, I'll push <strong>Alex-1 Filters</strong> (HPF/LPF bypass + per-band start/end frequency editors) next — that one is the densest of the three.</p>

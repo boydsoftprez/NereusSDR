@@ -1,0 +1,204 @@
+<h2>Mockup — Hardware → HL2 I/O</h2>
+<p class="subtitle">Fills today's empty <code>Hl2IoBoardTab</code> placeholder. Models mi0bot-Thetis's HL2-specific UI from <code>console.cs:25781-25945</code> (UpdateIOBoard state machine) + <code>setup.cs:20234-20238</code> (HERCULES toggle). Page hides on non-HL2 boards.</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 1080px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs.subtab { background: rgba(255,255,255,0.04); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+
+  .status-bar { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; padding: 10px 14px; background: rgba(42, 168, 224, 0.08); border: 1px solid rgba(42, 168, 224, 0.25); border-radius: 4px; margin-bottom: 12px; font-size: 12px; align-items: center; }
+  .status-bar .det { color: #b5e3f5; }
+  .status-bar .led { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #2aa8e0; box-shadow: 0 0 6px rgba(42, 168, 224, 0.6); margin-right: 6px; vertical-align: middle; }
+  .status-bar .meta { color: rgba(255,255,255,0.65); font-family: ui-monospace, monospace; font-size: 11px; }
+  .status-bar .meta strong { color: #e7ecff; }
+
+  .twocols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .grp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .grp .grp-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.55); margin-bottom: 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .row .lbl { color: rgba(255,255,255,0.65); min-width: 130px; }
+  .ctrl { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 3px 8px; color: #e7ecff; font-size: 11px; min-width: 80px; display: inline-block; font-family: ui-monospace, monospace; }
+  .btn { background: rgba(74,125,255,0.18); border: 1px solid rgba(74,125,255,0.4); color: #d4dbff; padding: 3px 12px; border-radius: 3px; font-size: 11px; cursor: default; }
+  .btn-sec { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); color: rgba(255,255,255,0.75); }
+  .btn-warn { background: rgba(255, 90, 90, 0.15); border-color: rgba(255, 90, 90, 0.35); color: #ffb5b5; }
+  .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.85); }
+  .chk-box { width: 12px; height: 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; background: #0c0e16; }
+  .chk-box.on { background: #4a7dff; border-color: #4a7dff; }
+
+  .reg-table { width: 100%; border-collapse: collapse; font-size: 11px; font-family: ui-monospace, monospace; }
+  .reg-table th { color: rgba(255,255,255,0.55); font-weight: 600; text-align: left; padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .reg-table th.cen { text-align: center; }
+  .reg-table td { padding: 3px 8px; color: rgba(255,255,255,0.85); }
+  .reg-table td.cen { text-align: center; }
+  .reg-table td.val { color: #b5e3f5; }
+  .reg-table tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+
+  .step-machine { display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; margin-bottom: 8px; }
+  .step-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 0; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 9px; color: rgba(255,255,255,0.55); }
+  .step-cell.active { background: rgba(74, 125, 255, 0.18); color: #d4dbff; }
+  .step-cell.active .num { background: #4a7dff; color: #fff; }
+  .step-cell .num { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 50%; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55); font-size: 10px; font-weight: 700; }
+  .step-cell .lbl { font-size: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
+
+  .i2c-log { background: #0c0e16; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 10px; color: rgba(255,255,255,0.7); height: 88px; overflow-y: auto; line-height: 1.55; }
+  .i2c-log .ts { color: rgba(255,255,255,0.4); margin-right: 6px; }
+  .i2c-log .op-w { color: #ff8c1a; }
+  .i2c-log .op-r { color: #4dcc66; }
+  .i2c-log .ok { color: rgba(255,255,255,0.55); }
+  .i2c-log .err { color: #ff6868; font-weight: 700; }
+
+  .bw-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 4px; font-size: 11px; }
+  .bw-bar .meter { flex: 1; height: 6px; background: rgba(0,0,0,0.4); border-radius: 3px; overflow: hidden; position: relative; }
+  .bw-bar .meter .fill { height: 100%; background: linear-gradient(90deg, #4dcc66 0%, #f0b800 70%, #ff6868 95%); border-radius: 3px; }
+  .bw-bar .num { font-family: ui-monospace, monospace; color: #e7ecff; min-width: 80px; text-align: right; }
+
+  .annot { background: rgba(42, 168, 224, 0.08); border-left: 2px solid #2aa8e0; padding: 8px 10px; margin: 12px 0 0; font-size: 11px; color: rgba(255,255,255,0.8); border-radius: 3px; }
+  .annot strong { color: #b5e3f5; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; }
+  .pE { background: #2aa8e0; color: #fff; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab active">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab">Radio Info</div>
+    <div class="tab">Antenna / ALEX</div>
+    <div class="tab">OC Outputs</div>
+    <div class="tab">XVTR</div>
+    <div class="tab">PureSignal</div>
+    <div class="tab">Diversity</div>
+    <div class="tab">Calibration</div>
+    <div class="tab active">HL2 I/O</div>
+    <div class="tab">Bandwidth Monitor</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Hardware → HL2 I/O <span style="color:rgba(74,125,255,0.7)">(Thetis-mi0bot: console.cs:25781 + setup.cs:20234)</span></div>
+
+    <!-- Top connection / detection status -->
+    <div class="status-bar">
+      <span class="det"><span class="led"></span><strong>HL2 I/O board: Detected</strong> — N2ADR Filter shield, hardware revision <strong style="color:#e7ecff">v3</strong></span>
+      <span class="meta">I2C addr: <strong>0x20</strong></span>
+      <span class="meta">Last probe: <strong>2.1 s ago</strong></span>
+    </div>
+
+    <div class="twocols">
+
+      <!-- Left: Configuration -->
+      <div class="grp">
+        <div class="grp-title"><span>Configuration</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">writes via I2C TLV</span></div>
+
+        <div style="padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.08);">
+          <span class="chk"><span class="chk-box on"></span><strong>Enable N2ADR Filter board</strong></span>
+          <p style="font-size: 10px; color: rgba(255,255,255,0.55); margin: 4px 0 0 18px; font-style: italic;">Auto-switch LPFs based on TX frequency. Disable for manual OC pin control.</p>
+        </div>
+
+        <div class="row"><span class="lbl">Op mode (REG_OP_MODE):</span><span class="ctrl">RX (DSPMode.SSB)</span></div>
+        <div class="row"><span class="lbl">Antenna (REG_ANTENNA):</span><span class="ctrl">Port 1 (HF)</span></div>
+        <div class="row"><span class="lbl">RX2 input (REG_RF_INPUTS):</span><span class="ctrl">Off</span></div>
+        <div class="row"><span class="lbl">Antenna tuner:</span><span class="ctrl">Bypass</span></div>
+
+        <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.08);">
+          <div class="row"><span class="btn-sec btn">Probe board</span><span class="btn btn-warn">Reset I/O board</span><span style="color:rgba(255,255,255,0.5);font-size:11px;">writes REG_CONTROL=0x00</span></div>
+        </div>
+      </div>
+
+      <!-- Right: Register state -->
+      <div class="grp">
+        <div class="grp-title"><span>Register state</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">polled @ 40 ms</span></div>
+        <table class="reg-table">
+          <thead><tr><th>Register</th><th class="cen">Addr</th><th>Value</th><th>Decoded</th></tr></thead>
+          <tbody>
+            <tr><td>HardwareVersion</td><td class="cen">0x00</td><td class="val">0x03</td><td>v3 (N2ADR shield)</td></tr>
+            <tr><td>REG_CONTROL</td><td class="cen">0x01</td><td class="val">0x01</td><td>operational</td></tr>
+            <tr><td>REG_OP_MODE</td><td class="cen">0x02</td><td class="val">0x01</td><td>RX</td></tr>
+            <tr><td>REG_ANTENNA</td><td class="cen">0x03</td><td class="val">0x00</td><td>Port 1</td></tr>
+            <tr><td>REG_RF_INPUTS</td><td class="cen">0x04</td><td class="val">0x00</td><td>RX2 off</td></tr>
+            <tr><td>REG_INPUT_PINS</td><td class="cen">0x05</td><td class="val">0x00</td><td>no inputs</td></tr>
+            <tr><td>REG_ANTENNA_TUNER</td><td class="cen">0x06</td><td class="val">0x00</td><td>bypass</td></tr>
+            <tr><td>REG_FAULT</td><td class="cen">0x07</td><td class="val" style="color:#4dcc66">0x00</td><td style="color:#4dcc66">no fault</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- 12-step state machine + I2C log -->
+    <div class="grp" style="margin-bottom: 12px;">
+      <div class="grp-title"><span>UpdateIOBoard state machine (12 steps, ~480 ms cycle)</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">current step highlighted</span></div>
+      <div class="step-machine">
+        <div class="step-cell"><span class="num">0</span><span class="lbl">OP MODE</span></div>
+        <div class="step-cell"><span class="num">1</span><span class="lbl">RD INPUTS</span></div>
+        <div class="step-cell"><span class="num">2</span><span class="lbl">FREQ</span></div>
+        <div class="step-cell"><span class="num">3</span><span class="lbl">RF IN</span></div>
+        <div class="step-cell active"><span class="num">4</span><span class="lbl">RD INPUTS</span></div>
+        <div class="step-cell"><span class="num">5</span><span class="lbl">ANT</span></div>
+        <div class="step-cell"><span class="num">6</span><span class="lbl">RF IN</span></div>
+        <div class="step-cell"><span class="num">7</span><span class="lbl">RD INPUTS</span></div>
+        <div class="step-cell"><span class="num">8</span><span class="lbl">FREQ</span></div>
+        <div class="step-cell"><span class="num">9</span><span class="lbl">ANT</span></div>
+        <div class="step-cell"><span class="num">10</span><span class="lbl">RD INPUTS</span></div>
+        <div class="step-cell"><span class="num">11</span><span class="lbl">CYCLE</span></div>
+      </div>
+    </div>
+
+    <div class="twocols">
+      <!-- I2C transaction log -->
+      <div class="grp">
+        <div class="grp-title"><span>I2C transaction log</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">queue depth: 3 / 32</span></div>
+        <div class="i2c-log">
+          <div><span class="ts">+00:00.045</span><span class="op-w">WR</span> 0x20 reg=0x02 val=0x01 <span class="ok">→ ack</span></div>
+          <div><span class="ts">+00:00.085</span><span class="op-r">RD</span> 0x20 reg=0x05 <span class="ok">→ 0x00 (input pins)</span></div>
+          <div><span class="ts">+00:00.125</span><span class="op-w">WR</span> 0x20 reg=0x08 val=0xC4 0xE1 0x00 0x00 (freq write)</div>
+          <div><span class="ts">+00:00.165</span><span class="op-w">WR</span> 0x20 reg=0x04 val=0x00 <span class="ok">→ ack</span></div>
+          <div><span class="ts">+00:00.205</span><span class="op-r">RD</span> 0x20 reg=0x05 <span class="ok">→ 0x00</span></div>
+          <div><span class="ts">+00:00.245</span><span class="op-w">WR</span> 0x20 reg=0x03 val=0x00 <span class="ok">→ ack</span></div>
+          <div><span class="ts">+00:00.285</span><span class="op-w">WR</span> 0x20 reg=0x04 val=0x00 <span class="ok">→ ack</span></div>
+          <div><span class="ts">+00:00.325</span><span class="op-r">RD</span> 0x20 reg=0x05 <span class="ok">→ 0x00 (this cycle)</span></div>
+        </div>
+      </div>
+
+      <!-- Bandwidth monitor mini -->
+      <div class="grp">
+        <div class="grp-title"><span>Bandwidth monitor</span><span style="color:rgba(74,125,255,0.6);font-size:10px;text-transform:none;letter-spacing:0">→ full view in Bandwidth Monitor tab</span></div>
+
+        <div style="padding-bottom: 10px; margin-bottom: 10px;">
+          <div style="font-size: 10px; color: rgba(255,255,255,0.55); margin-bottom: 4px;">EP6 ingress (RX I/Q from radio)</div>
+          <div class="bw-bar"><div class="meter"><div class="fill" style="width: 38%"></div></div><span class="num">3.2 Mbps</span></div>
+        </div>
+        <div style="padding-bottom: 10px; margin-bottom: 10px;">
+          <div style="font-size: 10px; color: rgba(255,255,255,0.55); margin-bottom: 4px;">EP2 egress (audio + C&amp;C to radio)</div>
+          <div class="bw-bar"><div class="meter"><div class="fill" style="width: 22%"></div></div><span class="num">1.8 Mbps</span></div>
+        </div>
+        <div style="padding-bottom: 6px;">
+          <div class="row" style="margin-bottom: 0; gap: 12px;"><span class="lbl" style="min-width:auto;">LAN PHY throttle:</span><span style="color:#4dcc66;">○ not throttled</span></div>
+          <div class="row" style="margin-bottom: 0; gap: 12px;"><span class="lbl" style="min-width:auto;">Dropped frames:</span><span style="color:rgba(255,255,255,0.85);">0 in last 60s</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      Connection status, register table, 12-step state machine, I2C log, N2ADR enable, antenna mux, op-mode/tuner config, bandwidth monitor mini = <span class="phase-tag pE">E</span> (full port from <code>mi0bot console.cs:25781-25945</code> + <code>network.h:113-148</code> I2C TLV + <code>bandwidth_monitor.{c,h}</code>)<br>
+      <strong>Spin from Thetis:</strong> mi0bot doesn't expose register state or I2C log to users — that's NereusSDR-native diagnostic. Helps users troubleshoot HL2 I/O board issues without external Wireshark.<br>
+      <strong>Page visibility:</strong> auto-hides for non-HL2 boards. Today's empty <code>Hl2IoBoardTab</code> placeholder gets fully populated; on HL2 it appears, on Hermes/Orion it's gone from the sub-tab row entirely.<br>
+      <strong>Persistence:</strong> per-MAC under <code>hardware/&lt;mac&gt;/hl2/{n2adrEnabled,antenna,opmode,tuner}</code>.
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">Phase E delivers everything on this page. Look right? That's HL2 I/O. Remaining mockup candidates: <strong>RxApplet evolution</strong> (existing per-receiver UI strip, Phase A/B/C/F changes — ATT range widens, ADC OVL splits per-ADC, preamp combo populates, antenna buttons populate) — <em>or</em> <strong>Diagnostics → Radio Status</strong> page (Phase H, PA temp/current/SWR/PTT-source readout). Which next?</p>

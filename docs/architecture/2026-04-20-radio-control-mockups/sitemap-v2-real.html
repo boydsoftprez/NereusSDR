@@ -1,0 +1,113 @@
+<h2>Reality check: Thetis Setup vs NereusSDR Setup as they exist today</h2>
+<p class="subtitle">My first mockup invented categories that don't exist. Here's the actual Thetis tree (left) and the actual NereusSDR tree (right). Phase A–H additions tagged in-place — most just <strong>fill in existing tabs</strong> rather than add new top-levels.</p>
+
+<style>
+  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .ia-tree { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; line-height: 1.65; background: rgba(255,255,255,0.03); padding: 16px 18px; border-radius: 8px; }
+  .col-head { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.6); margin: 0 0 8px 4px; font-weight: 700; }
+  .ia-tree .root { font-weight: 700; font-size: 13px; margin-top: 8px; color: #d4dbff; }
+  .ia-tree .root:first-child { margin-top: 0; }
+  .ia-tree .node { padding-left: 18px; }
+  .ia-tree .leaf { padding-left: 36px; }
+  .ia-tree .existing { color: rgba(255,255,255,0.85); }
+  .ia-tree .placeholder { color: #ffd966; font-style: italic; }
+  .ia-tree .new { color: #9bd0ff; }
+  .ia-tree .untouched { color: rgba(255,255,255,0.35); }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin-left: 6px; font-weight: 700; letter-spacing: 0.3px; vertical-align: middle; }
+  .pA { background: #ff4545; color: #fff; }
+  .pB { background: #ff8c1a; color: #fff; }
+  .pC { background: #f0b800; color: #1a1a1a; }
+  .pD { background: #4dcc66; color: #1a1a1a; }
+  .pE { background: #2aa8e0; color: #fff; }
+  .pF { background: #8855cc; color: #fff; }
+  .pG { background: #cc4488; color: #fff; }
+  .pH { background: #888; color: #fff; }
+  .legend { margin: 12px 0 16px; font-size: 11px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .legend-item { color: rgba(255,255,255,0.65); margin-right: 12px; font-size: 11px; }
+  .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .findings { background: rgba(43, 168, 224, 0.08); border-left: 3px solid #2aa8e0; padding: 12px 16px; margin: 16px 0; border-radius: 4px; font-size: 13px; line-height: 1.55; }
+  .findings strong { color: #9bd0ff; }
+</style>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-dot" style="background: rgba(255,255,255,0.85)"></span>existing</span>
+  <span class="legend-item"><span class="legend-dot" style="background: #ffd966"></span>placeholder (already a tab, empty/stub)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: #9bd0ff"></span>new content from Phase A–H</span>
+  <span class="legend-item"><span class="legend-dot" style="background: rgba(255,255,255,0.35)"></span>untouched by this spec</span>
+</div>
+
+<div class="columns">
+  <div>
+    <div class="col-head">Thetis (ramdor 501e3f5)</div>
+    <div class="ia-tree">
+<div class="root">📁 General</div>
+  <div class="node existing">├─ H/W Select</div>
+  <div class="node existing">├─ Options (1, 2, 3, StartUp)</div>
+  <div class="node existing">├─ Calibration</div>
+  <div class="node existing">├─ Filters</div>
+  <div class="node existing">├─ RX2</div>
+  <div class="node existing">├─ Navigation</div>
+  <div class="node existing">├─ Penny/Hermes Ctrl (HF, SWL)</div>
+  <div class="node existing">├─ F/W Set</div>
+  <div class="node existing">├─ <strong>Alex (Alex-1, Alex-2 Filters)</strong></div>
+  <div class="node existing">├─ Other H/W (Apollo (Apollo, ATU), Amp)</div>
+  <div class="node existing">└─ ADC</div>
+
+<div class="root untouched">📁 Audio</div>
+<div class="root untouched">📁 Display</div>
+<div class="root untouched">📁 DSP</div>
+<div class="root untouched">📁 Transmit</div>
+<div class="root untouched">📁 PA Settings (PA Gain, Watt Meter)</div>
+<div class="root untouched">📁 Appearance</div>
+<div class="root untouched">📁 Keyboard</div>
+<div class="root untouched">📁 Serial/Network/Midi CAT</div>
+<div class="root untouched">📁 Tests</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="col-head">NereusSDR (existing today)</div>
+    <div class="ia-tree">
+<div class="root">📁 General</div>
+  <div class="node existing">└─ Options <span class="inline-note">(GeneralOptionsPage)</span></div>
+
+<div class="root">📁 Hardware <span style="color:#9bd0ff">← Phase A–H mostly lands HERE</span></div>
+  <div class="node existing">├─ Radio Info</div>
+  <div class="node existing">├─ <strong>Antenna / ALEX</strong> <span class="phase-tag pB">B</span> <span class="phase-tag pF">F</span></div>
+  <div class="node existing">├─ <strong>OC Outputs</strong> <span class="phase-tag pD">D</span></div>
+  <div class="node existing">├─ XVTR</div>
+  <div class="node existing">├─ PureSignal</div>
+  <div class="node existing">├─ Diversity</div>
+  <div class="node existing">├─ <strong>PA Calibration</strong> <span class="phase-tag pG">G</span> <span class="phase-tag pH">H</span></div>
+  <div class="node placeholder">├─ <strong>HL2 I/O</strong> (placeholder) <span class="phase-tag pE">E</span></div>
+  <div class="node existing">└─ <strong>Bandwidth Monitor</strong> <span class="phase-tag pE">E</span></div>
+
+<div class="root untouched">📁 Audio</div>
+<div class="root untouched">📁 Display</div>
+<div class="root untouched">📁 DSP</div>
+<div class="root untouched">📁 Transmit</div>
+<div class="root untouched">📁 Appearance</div>
+<div class="root untouched">📁 Keyboard</div>
+<div class="root untouched">📁 CAT / Network</div>
+<div class="root">📁 Diagnostics</div>
+  <div class="node new">└─ Settings Validation / Status <span class="phase-tag pH">H</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="findings">
+<strong>Findings:</strong>
+<ul style="margin: 8px 0 0; padding-left: 20px; line-height: 1.7;">
+  <li>NereusSDR already <strong>promoted Hardware to top-level</strong> and split off Diagnostics + CAT/Network — that's a NereusSDR-native restructure of Thetis's General mega-tab. Already done.</li>
+  <li><strong>Antenna / ALEX exists as a single Hardware sub-tab</strong> — not separate "Alex Filters" top-level as I drew. My earlier "case for top-level Alex" was wrong; the tab already lives in the right place. Phase B (HPF/LPF bypass) and Phase F (antenna routing) just fill it out.</li>
+  <li><strong>OC Outputs is already a Hardware sub-tab</strong> — Thetis buries it under Penny/Hermes Ctrl. NereusSDR already promoted it. Phase D fills the matrix in.</li>
+  <li><strong>HL2 I/O is a placeholder Hardware sub-tab</strong> — Phase E lands the actual content (N2ADR, IoBoard version, I2C state).</li>
+  <li><strong>PA Calibration exists under Hardware</strong> — Thetis has it under PA Settings. Phase G (level cal) and Phase H (PA temp/current readout) extend it. Frequency calibration could be a new "Calibration" sub-tab here, or stay under General.</li>
+  <li><strong>Bandwidth Monitor already exists</strong> — Phase E (HL2 throttle hooks) plugs into it.</li>
+  <li><strong>Phase C (preamp combo)</strong> isn't a Setup page — it's RxApplet UI. No Setup work.</li>
+</ul>
+</div>
+
+<p class="subtitle" style="margin-top: 20px;">Two real questions now:</p>
+<p style="margin: 6px 0;">1. Where does <strong>frequency calibration</strong> belong? Options: new <em>Hardware → Calibration</em> sub-tab (groups all cal); add to existing <em>PA Calibration</em> tab and rename it <em>Calibration</em>; or keep with Thetis under General → Calibration.</p>
+<p style="margin: 6px 0;">2. The Antenna / ALEX tab is going to get dense (per-band HPF bypass × 14 + per-band LPF bypass × 14 + per-band antenna × 14 + Alex-2 toggles). Should we split it into <strong>Antenna / ALEX → Filters / Antennas / Alex-2</strong> sub-sub-tabs (matching Thetis's Alex-1 / Alex-2 split) or keep it flat with collapsible sections?</p>

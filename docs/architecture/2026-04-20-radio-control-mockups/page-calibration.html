@@ -1,0 +1,101 @@
+<h2>Mockup — Hardware → Calibration page</h2>
+<p class="subtitle">Today's "PA Calibration" tab renamed to <strong>"Calibration"</strong>; five Thetis-shaped group boxes laid out 2×3 grid. PA Settings still gets its own tab if needed; this one is for measurement / cal.</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 920px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs .subtab { background: rgba(255,255,255,0.04); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+  .grpgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .grp .grp-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.55); margin-bottom: 8px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .row .lbl { color: rgba(255,255,255,0.65); min-width: 110px; }
+  .ctrl { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 3px 8px; color: #e7ecff; font-size: 11px; min-width: 80px; display: inline-block; font-family: ui-monospace, monospace; }
+  .btn { background: rgba(74,125,255,0.18); border: 1px solid rgba(74,125,255,0.4); color: #d4dbff; padding: 3px 12px; border-radius: 3px; font-size: 11px; cursor: default; }
+  .btn-sec { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); color: rgba(255,255,255,0.75); }
+  .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.85); }
+  .chk-box { width: 12px; height: 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; background: #0c0e16; }
+  .helptext { font-size: 10px; color: rgba(255,255,255,0.45); font-style: italic; margin-top: 4px; }
+  .annot { background: rgba(243, 184, 0, 0.1); border-left: 2px solid #f0b800; padding: 8px 10px; margin: 8px 0; font-size: 11px; color: rgba(255,255,255,0.75); border-radius: 3px; }
+  .span2 { grid-column: 1 / -1; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab active">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab">Radio Info</div>
+    <div class="tab">Antenna / ALEX</div>
+    <div class="tab">OC Outputs</div>
+    <div class="tab">XVTR</div>
+    <div class="tab">PureSignal</div>
+    <div class="tab">Diversity</div>
+    <div class="tab active">Calibration</div>
+    <div class="tab">HL2 I/O</div>
+    <div class="tab">Bandwidth Monitor</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Hardware → Calibration <span style="color:rgba(74,125,255,0.7)">(was: PA Calibration)</span></div>
+    <div class="grpgrid">
+
+      <div class="grp">
+        <div class="grp-title">Freq Cal</div>
+        <div class="row"><span class="lbl">Frequency:</span><span class="ctrl">10.000.000</span><span style="color:rgba(255,255,255,0.5);font-size:11px">Hz</span></div>
+        <div class="row"><span class="btn">Start</span></div>
+        <div class="helptext">Larger FFT sizes / lower sample rates give increased accuracy.</div>
+      </div>
+
+      <div class="grp">
+        <div class="grp-title">Level Cal</div>
+        <div class="row"><span class="lbl">Frequency:</span><span class="ctrl">14.100.000</span></div>
+        <div class="row"><span class="lbl">Level (dBm):</span><span class="ctrl">-73.0</span></div>
+        <div class="row"><span class="lbl">Rx1 6m LNA:</span><span class="ctrl">0.0</span><span style="color:rgba(255,255,255,0.5);font-size:11px">dB</span></div>
+        <div class="row"><span class="lbl">Rx2 6m LNA:</span><span class="ctrl">0.0</span><span style="color:rgba(255,255,255,0.5);font-size:11px">dB</span></div>
+        <div class="row"><span class="btn">Start</span><span class="btn btn-sec">Reset</span></div>
+      </div>
+
+      <div class="grp">
+        <div class="grp-title">HPSDR Freq Cal Diagnostic</div>
+        <div class="row"><span class="lbl">Correction factor:</span><span class="ctrl">1.000000000</span><span class="btn btn-sec">Reset</span></div>
+        <div class="row"><span class="chk"><span class="chk-box"></span>Using external 10MHz ref</span></div>
+        <div class="row"><span class="lbl">10MHz factor:</span><span class="ctrl">1.000000000</span><span class="btn btn-sec">Reset</span></div>
+      </div>
+
+      <div class="grp">
+        <div class="grp-title">TX Display Cal</div>
+        <div class="row"><span class="lbl">Offset:</span><span class="ctrl">0.0</span><span style="color:rgba(255,255,255,0.5);font-size:11px">dB</span></div>
+      </div>
+
+      <div class="grp span2">
+        <div class="grp-title">PA Current (A) calculation</div>
+        <div class="row"><span class="lbl">Sensitivity:</span><span class="ctrl">0.10</span><span class="lbl" style="margin-left:16px">Offset:</span><span class="ctrl">0.00</span><span class="btn btn-sec">Default</span></div>
+        <div class="row"><span class="chk"><span class="chk-box"></span>Log Volts/Amps to VALog.txt</span></div>
+      </div>
+
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      Freq Cal + 10MHz diagnostic = <span style="background:#cc4488;color:#fff;padding:1px 6px;border-radius:8px;font-size:9px">G</span>
+      · Level Cal + 6m LNA offset = <span style="background:#cc4488;color:#fff;padding:1px 6px;border-radius:8px;font-size:9px">G</span>
+      · TX Display Cal = <span style="background:#cc4488;color:#fff;padding:1px 6px;border-radius:8px;font-size:9px">G</span>
+      · PA Current calc + Log = exists today (extended for OrionMKII PA temp readout in <span style="background:#888;color:#fff;padding:1px 6px;border-radius:8px;font-size:9px">H</span>)
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">Page is dense but matches Thetis 1:1. Looks right, or want me to break the 10MHz diagnostic out into its own group / split into a sub-page? Once you confirm, I'll push the Antenna/ALEX three-sub-tab split next.</p>

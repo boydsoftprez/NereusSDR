@@ -1,0 +1,158 @@
+<h2>Mockup — Hardware → Antenna / ALEX → Alex-2 Filters</h2>
+<p class="subtitle">Third sub-sub-tab. Models Thetis's <code>tpAlex2FilterControl</code> 1:1. Alex-2 is the RX2 board on Orion-MKII / ANAN-7000D / 8000D / AnvelinaPro3 — fewer master toggles than Alex-1 (RX-only path) but adds <strong>live LED indicators</strong> showing which HPF and LPF are currently selected by the radio.</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 1040px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs.subtab { background: rgba(255,255,255,0.04); }
+  .setup-tabs.subsubtab { background: rgba(255,255,255,0.07); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+  .active-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: rgba(77, 204, 102, 0.08); border: 1px solid rgba(77, 204, 102, 0.25); border-radius: 4px; margin-bottom: 12px; font-size: 12px; }
+  .active-bar.detected { color: #b5f5c5; }
+  .led { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: rgba(77, 204, 102, 0.9); box-shadow: 0 0 6px rgba(77, 204, 102, 0.6); margin-right: 6px; vertical-align: middle; }
+  .twocols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .grp .grp-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.55); margin-bottom: 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .led-row { display: flex; gap: 10px; align-items: center; padding: 8px 8px; background: rgba(0,0,0,0.2); border-radius: 4px; margin-bottom: 10px; font-family: ui-monospace, monospace; font-size: 10px; }
+  .led-row .led-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+  .led-row .led-cell .lbl { color: rgba(255,255,255,0.55); font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .led-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
+  .led-dot.active { background: #4dcc66; box-shadow: 0 0 8px rgba(77, 204, 102, 0.7); border-color: #4dcc66; }
+  .filt-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .filt-table th { color: rgba(255,255,255,0.5); font-weight: 600; text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .filt-table th.cen { text-align: center; }
+  .filt-table td { padding: 3px 4px; font-size: 11px; color: rgba(255,255,255,0.85); }
+  .filt-table td.bandcol { color: #d4dbff; font-family: ui-monospace, monospace; font-weight: 600; padding-left: 8px; }
+  .filt-table td.cen { text-align: center; }
+  .filt-table tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+  .ctrl-num { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 2px 6px; color: #e7ecff; font-size: 10px; width: 72px; font-family: ui-monospace, monospace; text-align: right; }
+  .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: rgba(255,255,255,0.85); margin-bottom: 6px; }
+  .chk-box { width: 11px; height: 11px; border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; background: #0c0e16; flex-shrink: 0; }
+  .chk-box.on { background: #4a7dff; border-color: #4a7dff; }
+  .toggles { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.08); }
+  .annot { background: rgba(255, 140, 26, 0.08); border-left: 2px solid #ff8c1a; padding: 8px 10px; margin: 12px 0 0; font-size: 11px; color: rgba(255,255,255,0.8); border-radius: 3px; }
+  .annot strong { color: #ffd6a8; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; }
+  .pB { background: #ff8c1a; color: #fff; }
+  .pH { background: #888; color: #fff; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab active">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab">Radio Info</div>
+    <div class="tab active">Antenna / ALEX</div>
+    <div class="tab">OC Outputs</div>
+    <div class="tab">XVTR</div>
+    <div class="tab">PureSignal</div>
+    <div class="tab">Diversity</div>
+    <div class="tab">Calibration</div>
+    <div class="tab">HL2 I/O</div>
+    <div class="tab">Bandwidth Monitor</div>
+  </div>
+  <div class="setup-tabs subsubtab">
+    <div class="tab">Antenna Control</div>
+    <div class="tab">Alex-1 Filters</div>
+    <div class="tab active">Alex-2 Filters</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Hardware → Antenna / ALEX → Alex-2 Filters <span style="color:rgba(74,125,255,0.7)">(Thetis: General → Alex → Alex-2 Filters)</span></div>
+
+    <div class="active-bar detected">
+      <span><span class="led"></span><strong>Alex-2 board: Active</strong> — detected on connected radio (Orion-MKII)</span>
+      <span style="color: rgba(255,255,255,0.55); font-size: 11px;">Currently selected: HPF <strong style="color:#e7ecff">13 MHz</strong> · LPF <strong style="color:#e7ecff">30/20m</strong></span>
+    </div>
+
+    <div class="twocols">
+
+      <!-- Alex-2 HPF panel -->
+      <div class="grp">
+        <div class="grp-title"><span>Alex-2 HPF Bands</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">RX2 path · live LED row</span></div>
+
+        <div class="led-row">
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">1.5</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">6.5</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">9.5</span></div>
+          <div class="led-cell"><span class="led-dot active"></span><span class="lbl">13</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">20</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">6m</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">BP</span></div>
+        </div>
+
+        <div class="toggles">
+          <span class="chk"><span class="chk-box"></span>ByPass / 55 MHz BPF (master)</span>
+        </div>
+
+        <table class="filt-table">
+          <thead><tr><th>Bypass</th><th>HPF</th><th class="cen">Start (MHz)</th><th class="cen">End</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">1.5 MHz</td><td class="cen"><input class="ctrl-num" value="1.500000" readonly></td><td class="cen"><input class="ctrl-num" value="6.500000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">6.5 MHz</td><td class="cen"><input class="ctrl-num" value="6.500000" readonly></td><td class="cen"><input class="ctrl-num" value="9.500000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">9.5 MHz</td><td class="cen"><input class="ctrl-num" value="9.500000" readonly></td><td class="cen"><input class="ctrl-num" value="13.000000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">13 MHz</td><td class="cen"><input class="ctrl-num" value="13.000000" readonly></td><td class="cen"><input class="ctrl-num" value="20.000000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">20 MHz</td><td class="cen"><input class="ctrl-num" value="20.000000" readonly></td><td class="cen"><input class="ctrl-num" value="50.000000" readonly></td></tr>
+            <tr><td><span class="chk-box on"></span></td><td class="bandcol">6M / BPF</td><td class="cen"><input class="ctrl-num" value="50.000000" readonly></td><td class="cen"><input class="ctrl-num" value="55.000000" readonly></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Alex-2 LPF panel -->
+      <div class="grp">
+        <div class="grp-title"><span>Alex-2 LPF Bands</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">RX2 path · live LED row</span></div>
+
+        <div class="led-row">
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">160</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">80</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">60/40</span></div>
+          <div class="led-cell"><span class="led-dot active"></span><span class="lbl">30/20</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">17/15</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">12/10</span></div>
+          <div class="led-cell"><span class="led-dot"></span><span class="lbl">6m</span></div>
+        </div>
+
+        <div style="height: 23px; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.08); display:flex; align-items:center; color:rgba(255,255,255,0.4); font-size:11px; font-style:italic;">
+          (no master toggles — RX-only path)
+        </div>
+
+        <table class="filt-table">
+          <thead><tr><th>LPF</th><th class="cen">Start (MHz)</th><th class="cen">End</th></tr></thead>
+          <tbody>
+            <tr><td class="bandcol">160m</td><td class="cen"><input class="ctrl-num" value="0.000000" readonly></td><td class="cen"><input class="ctrl-num" value="2.000000" readonly></td></tr>
+            <tr><td class="bandcol">80m</td><td class="cen"><input class="ctrl-num" value="2.000000" readonly></td><td class="cen"><input class="ctrl-num" value="4.000000" readonly></td></tr>
+            <tr><td class="bandcol">60/40m</td><td class="cen"><input class="ctrl-num" value="4.000000" readonly></td><td class="cen"><input class="ctrl-num" value="7.300000" readonly></td></tr>
+            <tr><td class="bandcol">30/20m</td><td class="cen"><input class="ctrl-num" value="7.300000" readonly></td><td class="cen"><input class="ctrl-num" value="14.350000" readonly></td></tr>
+            <tr><td class="bandcol">17/15m</td><td class="cen"><input class="ctrl-num" value="14.350000" readonly></td><td class="cen"><input class="ctrl-num" value="21.450000" readonly></td></tr>
+            <tr><td class="bandcol">12/10m</td><td class="cen"><input class="ctrl-num" value="21.450000" readonly></td><td class="cen"><input class="ctrl-num" value="29.700000" readonly></td></tr>
+            <tr><td class="bandcol">6m</td><td class="cen"><input class="ctrl-num" value="29.700000" readonly></td><td class="cen"><input class="ctrl-num" value="54.000000" readonly></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      Alex-2 HPF + LPF edge editors + master bypass = <span class="phase-tag pB">B</span> ·
+      Live LED active-filter indicators (poll from ep6 status / I/O state) = <span class="phase-tag pH">H</span><br>
+      <strong>Spin from Thetis:</strong> NereusSDR uses CSS-glow LEDs to make active filters scannable at a glance; Thetis uses solid-color LED bitmaps. Same semantics.<br>
+      <strong>Active bar:</strong> shows board-detected status + current HPF/LPF live; auto-hides this whole tab when board model has no Alex-2 (e.g., HL2, Hermes).<br>
+      <strong>Persistence:</strong> per-MAC under <code>hardware/&lt;mac&gt;/alex2/{hpf,lpf}/&lt;band&gt;/{enabled,start,end}</code>.
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">Two columns: HPF (with master bypass + per-band edge editors) · LPF (no master toggles). LED rows above each table indicate the live filter selection. Look right? That completes the three Antenna / ALEX sub-sub-tabs. Next page candidate: <strong>OC Outputs</strong> matrix (Phase D, the densest single page in the whole spec — 14 bands × 7 pins × RX/TX) or <strong>HL2 I/O</strong> (Phase E, fills the placeholder tab). Pick one or I'll do OC Outputs first.</p>

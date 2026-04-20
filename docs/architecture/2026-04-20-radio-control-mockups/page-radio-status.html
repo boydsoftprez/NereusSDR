@@ -1,0 +1,209 @@
+<h2>Mockup — Diagnostics → Radio Status</h2>
+<p class="subtitle">New top-level <strong>Diagnostics</strong> tab in NereusSDR (already exists; Phase H lands its first real page). Live readouts from the radio status packet + settings hygiene actions. Updates @ 100 ms.</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 1140px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs.subtab { background: rgba(255,255,255,0.04); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+
+  .top-bar { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 12px; padding: 10px 14px; background: rgba(77, 204, 102, 0.06); border: 1px solid rgba(77, 204, 102, 0.2); border-radius: 4px; margin-bottom: 14px; font-size: 12px; }
+  .top-bar .item { display: flex; flex-direction: column; gap: 2px; }
+  .top-bar .item .lbl { font-size: 9px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+  .top-bar .item .val { color: #e7ecff; font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; }
+  .top-bar .item .val .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4dcc66; box-shadow: 0 0 5px rgba(77, 204, 102, 0.6); margin-right: 5px; vertical-align: middle; }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .cards.bottom { grid-template-columns: 1.3fr 1fr; }
+  .card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .card .card-head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .card .card-head .title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.6); font-weight: 600; }
+  .card .card-head .extra { font-size: 10px; color: rgba(255,255,255,0.4); font-family: ui-monospace, monospace; }
+
+  .big-num { font-family: ui-monospace, monospace; font-size: 22px; font-weight: 700; color: #e7ecff; line-height: 1.1; }
+  .big-num .unit { font-size: 11px; color: rgba(255,255,255,0.5); margin-left: 4px; font-weight: 400; }
+  .num-row { display: flex; gap: 14px; margin: 10px 0; align-items: baseline; }
+  .stat { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .stat .lbl { font-size: 9px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .stat .v { font-family: ui-monospace, monospace; font-size: 14px; color: #e7ecff; font-weight: 600; }
+  .stat .v.ok { color: #88e09e; }
+  .stat .v.warn { color: #f0b800; }
+  .stat .v.crit { color: #ff6868; }
+
+  .meter { height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; position: relative; margin: 6px 0; }
+  .meter .fill { height: 100%; background: linear-gradient(90deg, #4dcc66 0%, #f0b800 70%, #ff6868 95%); border-radius: 4px; transition: width 0.3s; }
+  .meter .ticks { position: absolute; inset: 0; display: flex; justify-content: space-between; padding: 0 1px; pointer-events: none; }
+  .meter .ticks span { width: 1px; background: rgba(0,0,0,0.4); }
+  .meter-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .meter-row .scale { color: rgba(255,255,255,0.4); font-size: 9px; font-family: ui-monospace, monospace; min-width: 22px; }
+  .meter-label { font-size: 10px; color: rgba(255,255,255,0.55); margin-bottom: 2px; }
+
+  .ptt-source { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .ptt-pill { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-family: ui-monospace, monospace; background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.1); }
+  .ptt-pill.active { background: rgba(255, 90, 90, 0.2); color: #ff8888; border-color: rgba(255, 90, 90, 0.5); }
+
+  .ptt-log { background: #0c0e16; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 10px; color: rgba(255,255,255,0.7); max-height: 90px; overflow-y: auto; line-height: 1.55; }
+  .ptt-log .ts { color: rgba(255,255,255,0.4); margin-right: 6px; }
+  .ptt-log .src { color: #88c8ff; }
+
+  .conn-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .hygiene { display: flex; flex-direction: column; gap: 6px; }
+  .warn-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 3px; font-size: 11px; }
+  .warn-row.warn { background: rgba(243, 184, 0, 0.08); border-left: 2px solid #f0b800; color: rgba(255,255,255,0.85); }
+  .warn-row.info { background: rgba(74, 125, 255, 0.06); border-left: 2px solid #4a7dff; color: rgba(255,255,255,0.85); }
+  .warn-row .ico { font-size: 14px; line-height: 1; }
+  .warn-row .body { flex: 1; }
+  .warn-row .body strong { display: block; color: #fff; font-size: 11px; margin-bottom: 2px; }
+  .warn-row .body small { color: rgba(255,255,255,0.55); font-size: 10px; }
+
+  .actions { display: flex; gap: 8px; padding-top: 10px; margin-top: 10px; border-top: 1px dashed rgba(255,255,255,0.08); }
+  .btn { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); padding: 5px 12px; border-radius: 3px; font-size: 11px; cursor: default; flex: 1; text-align: center; }
+  .btn.primary { background: rgba(74,125,255,0.18); border-color: rgba(74,125,255,0.4); color: #d4dbff; }
+  .btn.warn { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.3); color: #ffb5b5; }
+
+  .annot { background: rgba(136, 136, 136, 0.1); border-left: 2px solid #888; padding: 8px 10px; margin: 12px 0 0; font-size: 11px; color: rgba(255,255,255,0.8); border-radius: 3px; }
+  .annot strong { color: #ccc; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; background: #888; color: #fff; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab active">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab active">Radio Status</div>
+    <div class="tab">Connection Quality</div>
+    <div class="tab">Settings Validation</div>
+    <div class="tab">Export / Import Config</div>
+    <div class="tab">Logs</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Diagnostics → Radio Status <span style="color:rgba(74,125,255,0.7)">(NereusSDR-native — no Thetis equivalent)</span></div>
+
+    <!-- Top status bar -->
+    <div class="top-bar">
+      <div class="item"><span class="lbl">Connected radio</span><span class="val"><span class="led"></span>ANAN-G2 · MAC f0:5e:cd:01:23:45</span></div>
+      <div class="item"><span class="lbl">Uptime</span><span class="val">02:14:33</span></div>
+      <div class="item"><span class="lbl">Firmware</span><span class="val">v2.7</span></div>
+      <div class="item"><span class="lbl">Mode</span><span class="val">RX (idle)</span></div>
+    </div>
+
+    <!-- Top 3 cards: PA / Power / PTT -->
+    <div class="cards">
+
+      <!-- PA Status -->
+      <div class="card">
+        <div class="card-head"><span class="title">PA Status</span><span class="extra">@ 100 ms</span></div>
+        <div class="num-row">
+          <div class="stat"><span class="lbl">Temperature</span><span class="v ok">42.3 °C</span></div>
+          <div class="stat"><span class="lbl">Current</span><span class="v ok">0.18 A</span></div>
+          <div class="stat"><span class="lbl">Voltage</span><span class="v ok">13.8 V</span></div>
+        </div>
+        <div class="meter-label">PA Temp (limit 75 °C)</div>
+        <div class="meter-row"><span class="scale">0</span><div class="meter"><div class="fill" style="width: 56%"></div></div><span class="scale">75</span></div>
+        <div class="meter-label" style="margin-top:8px;">PA Current (limit 25 A)</div>
+        <div class="meter-row"><span class="scale">0</span><div class="meter"><div class="fill" style="width: 0.7%"></div></div><span class="scale">25</span></div>
+      </div>
+
+      <!-- Power / SWR -->
+      <div class="card">
+        <div class="card-head"><span class="title">Forward / Reflected Power</span><span class="extra">on TX only</span></div>
+        <div class="num-row">
+          <div class="stat"><span class="lbl">Forward</span><span class="v">— W</span></div>
+          <div class="stat"><span class="lbl">Reflected</span><span class="v">— W</span></div>
+          <div class="stat"><span class="lbl">SWR</span><span class="v">—</span></div>
+        </div>
+        <div class="meter-label">Forward (last TX peak: 95 W)</div>
+        <div class="meter-row"><span class="scale">0</span><div class="meter"><div class="fill" style="width: 0%"></div></div><span class="scale">200</span></div>
+        <div class="meter-label" style="margin-top:8px;">SWR (last TX peak: 1.3:1)</div>
+        <div class="meter-row"><span class="scale">1</span><div class="meter"><div class="fill" style="width: 0%"></div></div><span class="scale">3:1</span></div>
+        <p style="font-size: 10px; color: rgba(255,255,255,0.45); margin: 8px 0 0; font-style: italic;">Idle — readouts populate during transmit. Last TX values shown in scale labels.</p>
+      </div>
+
+      <!-- PTT Source -->
+      <div class="card">
+        <div class="card-head"><span class="title">PTT Source</span><span class="extra">last 8 events</span></div>
+        <div style="font-size: 11px; color: rgba(255,255,255,0.55); margin-bottom: 6px;">Active: <strong style="color:rgba(255,255,255,0.45);font-family:ui-monospace,monospace;">none</strong></div>
+        <div class="ptt-source">
+          <span class="ptt-pill">MOX</span>
+          <span class="ptt-pill">VOX</span>
+          <span class="ptt-pill">CAT</span>
+          <span class="ptt-pill">Mic PTT</span>
+          <span class="ptt-pill">CW</span>
+          <span class="ptt-pill">Tune</span>
+          <span class="ptt-pill">2-Tone</span>
+        </div>
+        <div class="ptt-log">
+          <div><span class="ts">02:14:18</span><span class="src">CAT</span> stop · 4.2 s</div>
+          <div><span class="ts">02:14:14</span><span class="src">CAT</span> start (rigctld)</div>
+          <div><span class="ts">02:13:51</span><span class="src">MOX</span> stop · 8.7 s</div>
+          <div><span class="ts">02:13:42</span><span class="src">MOX</span> start (button)</div>
+          <div><span class="ts">02:11:08</span><span class="src">CW</span> stop · 1.1 s</div>
+          <div><span class="ts">02:11:07</span><span class="src">CW</span> start (firmware keyer)</div>
+          <div><span class="ts">02:08:55</span><span class="src">Tune</span> stop · 3.0 s</div>
+          <div><span class="ts">02:08:52</span><span class="src">Tune</span> start (Tune button)</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Bottom 2 cards: Connection / Hygiene -->
+    <div class="cards bottom">
+
+      <!-- Connection quality -->
+      <div class="card">
+        <div class="card-head"><span class="title">Connection quality</span><span class="extra">→ full graph in Connection Quality tab</span></div>
+        <div class="conn-stats">
+          <div class="stat"><span class="lbl">Round-trip latency</span><span class="v ok">2.1 ms · σ 0.4</span></div>
+          <div class="stat"><span class="lbl">EP6 sequence gaps</span><span class="v ok">0 in 60 s</span></div>
+          <div class="stat"><span class="lbl">Watchdog resets</span><span class="v ok">0 since connect</span></div>
+          <div class="stat"><span class="lbl">LAN PHY throttle</span><span class="v ok">○ not throttled</span></div>
+          <div class="stat"><span class="lbl">EP6 ingress rate</span><span class="v">3.2 Mbps</span></div>
+          <div class="stat"><span class="lbl">EP2 egress rate</span><span class="v">1.8 Mbps</span></div>
+        </div>
+      </div>
+
+      <!-- Settings validation / hygiene -->
+      <div class="card">
+        <div class="card-head"><span class="title">Settings hygiene</span><span class="extra">2 items</span></div>
+        <div class="hygiene">
+          <div class="warn-row warn">
+            <span class="ico">⚠</span>
+            <div class="body"><strong>S-ATT setting clamped</strong><small>Persisted value 45 dB exceeds this radio's 0–31 dB range — clamped to 31. Last connected board was Hermes Lite 2 (0–63 dB).</small></div>
+          </div>
+          <div class="warn-row info">
+            <span class="ico">ⓘ</span>
+            <div class="body"><strong>Per-band Alex antenna unset</strong><small>10m has no antenna assignment for this MAC. Falling back to Antenna 1. Configure in Hardware → Antenna / ALEX.</small></div>
+          </div>
+        </div>
+        <div class="actions">
+          <span class="btn">Reset settings to defaults for this board</span>
+          <span class="btn warn">Forget this radio</span>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      Top status bar + PA/Power/PTT cards + Connection-quality card + Settings hygiene card with mismatch warnings + Reset/Forget actions = <span class="phase-tag">H</span><br>
+      <strong>Spin from Thetis:</strong> Thetis surfaces these readouts piecemeal — PA temp on Front Console, current in PA Settings, SWR in main meter, PTT source not exposed. NereusSDR consolidates into one diagnostic dashboard. Per-MAC settings hygiene (clamp warnings on board switch) is NereusSDR-native — Thetis is single-radio.<br>
+      <strong>Sub-tabs already laid out:</strong> Radio Status (this page) · Connection Quality (full graph + 60s history) · Settings Validation (full audit list) · Export / Import Config (per-MAC + global) · Logs.
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">Final mockup. The series so far: Sitemap (v2 corrected) · Calibration · Antenna Control · Alex-1 Filters · Alex-2 Filters · OC Outputs · HL2 I/O · RxApplet evolution · Radio Status. Want me to push a final summary mockup ("here's the full set side by side" overview) or go ahead and fold all of this into the spec under Phases G + H?</p>

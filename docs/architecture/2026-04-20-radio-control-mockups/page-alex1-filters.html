@@ -1,0 +1,148 @@
+<h2>Mockup — Hardware → Antenna / ALEX → Alex-1 Filters</h2>
+<p class="subtitle">Densest of the three sub-sub-tabs. Models Thetis's <code>tpAlexFilterControl</code> 1:1 — master HPF toggles, per-HPF bypass + start/end frequency editors, per-band LPF start/end editors, and the Saturn-specific BPF1 panel (gated on ANAN-G2 / G2-1K).</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 1100px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs.subtab { background: rgba(255,255,255,0.04); }
+  .setup-tabs.subsubtab { background: rgba(255,255,255,0.07); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+  .threecols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .twocols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .grp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .grp.gated { background: rgba(243, 184, 0, 0.04); border-color: rgba(243, 184, 0, 0.2); }
+  .grp .grp-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.55); margin-bottom: 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .grp.gated .grp-title { color: #f0b800; }
+  .gated-tag { font-size: 9px; padding: 1px 6px; background: rgba(243, 184, 0, 0.18); color: #f0b800; border-radius: 8px; font-weight: 700; }
+  .filt-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .filt-table th { color: rgba(255,255,255,0.5); font-weight: 600; text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .filt-table th.cen { text-align: center; }
+  .filt-table td { padding: 3px 4px; font-size: 11px; color: rgba(255,255,255,0.85); }
+  .filt-table td.bandcol { color: #d4dbff; font-family: ui-monospace, monospace; font-weight: 600; padding-left: 8px; }
+  .filt-table td.cen { text-align: center; }
+  .filt-table tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+  .ctrl-num { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 2px 6px; color: #e7ecff; font-size: 10px; width: 72px; font-family: ui-monospace, monospace; text-align: right; }
+  .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: rgba(255,255,255,0.85); margin-bottom: 6px; }
+  .chk-box { width: 11px; height: 11px; border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; background: #0c0e16; flex-shrink: 0; }
+  .chk-box.on { background: #4a7dff; border-color: #4a7dff; }
+  .toggles { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.08); }
+  .annot { background: rgba(255, 140, 26, 0.08); border-left: 2px solid #ff8c1a; padding: 8px 10px; margin: 12px 0 0; font-size: 11px; color: rgba(255,255,255,0.8); border-radius: 3px; }
+  .annot strong { color: #ffd6a8; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; }
+  .pB { background: #ff8c1a; color: #fff; }
+  .pF { background: #8855cc; color: #fff; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab active">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab">Radio Info</div>
+    <div class="tab active">Antenna / ALEX</div>
+    <div class="tab">OC Outputs</div>
+    <div class="tab">XVTR</div>
+    <div class="tab">PureSignal</div>
+    <div class="tab">Diversity</div>
+    <div class="tab">Calibration</div>
+    <div class="tab">HL2 I/O</div>
+    <div class="tab">Bandwidth Monitor</div>
+  </div>
+  <div class="setup-tabs subsubtab">
+    <div class="tab">Antenna Control</div>
+    <div class="tab active">Alex-1 Filters</div>
+    <div class="tab">Alex-2 Filters</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Hardware → Antenna / ALEX → Alex-1 Filters <span style="color:rgba(74,125,255,0.7)">(Thetis: General → Alex → Alex-1 Filters)</span></div>
+
+    <div class="threecols">
+
+      <!-- HPF panel -->
+      <div class="grp">
+        <div class="grp-title"><span>Alex HPF Bands</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">edge editable</span></div>
+        <div class="toggles">
+          <span class="chk"><span class="chk-box"></span>HPF Bypass (master)</span>
+          <span class="chk"><span class="chk-box"></span>HPF Bypass on TX</span>
+          <span class="chk"><span class="chk-box"></span>HPF Bypass on PureSignal feedback</span>
+          <span class="chk"><span class="chk-box"></span>Disable 6m LNA on TX</span>
+          <span class="chk"><span class="chk-box"></span>Disable 6m LNA on RX</span>
+        </div>
+        <table class="filt-table">
+          <thead><tr><th>Bypass</th><th>HPF</th><th class="cen">Start (MHz)</th><th class="cen">End</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">1.5 MHz</td><td class="cen"><input class="ctrl-num" value="1.500000" readonly></td><td class="cen"><input class="ctrl-num" value="6.500000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">6.5 MHz</td><td class="cen"><input class="ctrl-num" value="6.500000" readonly></td><td class="cen"><input class="ctrl-num" value="9.500000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">9.5 MHz</td><td class="cen"><input class="ctrl-num" value="9.500000" readonly></td><td class="cen"><input class="ctrl-num" value="13.000000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">13 MHz</td><td class="cen"><input class="ctrl-num" value="13.000000" readonly></td><td class="cen"><input class="ctrl-num" value="20.000000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">20 MHz</td><td class="cen"><input class="ctrl-num" value="20.000000" readonly></td><td class="cen"><input class="ctrl-num" value="50.000000" readonly></td></tr>
+            <tr><td><span class="chk-box on"></span></td><td class="bandcol">6m bypass</td><td class="cen"><input class="ctrl-num" value="50.000000" readonly></td><td class="cen"><input class="ctrl-num" value="54.000000" readonly></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- LPF panel -->
+      <div class="grp">
+        <div class="grp-title"><span>Alex LPF Bands</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">edge editable</span></div>
+        <div style="height: 116px; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.08); display:flex; align-items:center; color:rgba(255,255,255,0.4); font-size:11px; font-style:italic;">
+          (no master toggles — TX-side filters are always engaged when keyed)
+        </div>
+        <table class="filt-table">
+          <thead><tr><th>LPF</th><th class="cen">Start (MHz)</th><th class="cen">End</th></tr></thead>
+          <tbody>
+            <tr><td class="bandcol">160m</td><td class="cen"><input class="ctrl-num" value="0.000000" readonly></td><td class="cen"><input class="ctrl-num" value="2.000000" readonly></td></tr>
+            <tr><td class="bandcol">80m</td><td class="cen"><input class="ctrl-num" value="2.000000" readonly></td><td class="cen"><input class="ctrl-num" value="4.000000" readonly></td></tr>
+            <tr><td class="bandcol">60/40m</td><td class="cen"><input class="ctrl-num" value="4.000000" readonly></td><td class="cen"><input class="ctrl-num" value="7.300000" readonly></td></tr>
+            <tr><td class="bandcol">30/20m</td><td class="cen"><input class="ctrl-num" value="7.300000" readonly></td><td class="cen"><input class="ctrl-num" value="14.350000" readonly></td></tr>
+            <tr><td class="bandcol">17/15m</td><td class="cen"><input class="ctrl-num" value="14.350000" readonly></td><td class="cen"><input class="ctrl-num" value="21.450000" readonly></td></tr>
+            <tr><td class="bandcol">12/10m</td><td class="cen"><input class="ctrl-num" value="21.450000" readonly></td><td class="cen"><input class="ctrl-num" value="29.700000" readonly></td></tr>
+            <tr><td class="bandcol">6m</td><td class="cen"><input class="ctrl-num" value="29.700000" readonly></td><td class="cen"><input class="ctrl-num" value="54.000000" readonly></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- BPF1 panel - Saturn only -->
+      <div class="grp gated">
+        <div class="grp-title"><span>Saturn BPF1 Bands</span><span class="gated-tag">ANAN-G2 / G2-1K only</span></div>
+        <div class="toggles">
+          <span style="color:rgba(255,255,255,0.55); font-size:11px; font-style:italic; padding-bottom:4px;">Separate BPF1 board edges (G8NJJ Saturn) — fall back to Alex defaults if unset</span>
+        </div>
+        <table class="filt-table">
+          <thead><tr><th>Bypass</th><th>BPF1</th><th class="cen">Start (MHz)</th><th class="cen">End</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">1.5 MHz</td><td class="cen"><input class="ctrl-num" value="1.500000" readonly></td><td class="cen"><input class="ctrl-num" value="6.500000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">6.5 MHz</td><td class="cen"><input class="ctrl-num" value="6.500000" readonly></td><td class="cen"><input class="ctrl-num" value="9.500000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">9.5 MHz</td><td class="cen"><input class="ctrl-num" value="9.500000" readonly></td><td class="cen"><input class="ctrl-num" value="13.000000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">13 MHz</td><td class="cen"><input class="ctrl-num" value="13.000000" readonly></td><td class="cen"><input class="ctrl-num" value="20.000000" readonly></td></tr>
+            <tr><td><span class="chk-box"></span></td><td class="bandcol">20 MHz</td><td class="cen"><input class="ctrl-num" value="20.000000" readonly></td><td class="cen"><input class="ctrl-num" value="50.000000" readonly></td></tr>
+            <tr><td><span class="chk-box on"></span></td><td class="bandcol">6m bypass</td><td class="cen"><input class="ctrl-num" value="50.000000" readonly></td><td class="cen"><input class="ctrl-num" value="54.000000" readonly></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      Master HPF toggles + per-HPF bypass + 6m LNA disable + per-band edge editors = <span class="phase-tag pB">B</span><br>
+      Alex LPF per-band edge editors = <span class="phase-tag pB">B</span><br>
+      Saturn BPF1 panel (gated on ANAN-G2 / G2-1K, falls back to Alex edges if unset) = <span class="phase-tag pB">B</span><br>
+      <strong>Spin from Thetis:</strong> Saturn BPF1 panel is dimmed/hidden when board is not Saturn (Thetis shows it always; we gate on <code>BoardCapabilities::p2SaturnBpf1Edges</code>).<br>
+      <strong>Persistence:</strong> per-MAC under <code>hardware/&lt;mac&gt;/alex/hpf/&lt;band&gt;/{enabled,start,end}</code> and <code>.../bpf1/&lt;band&gt;/...</code>.
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">Three columns laid out: Alex HPF (with master toggles + per-band editors) · Alex LPF · Saturn BPF1 (G2-gated, dimmed otherwise). Look right? Once approved, <strong>Alex-2 Filters</strong> next — that's a smaller page (Alex-2 board is RX2-only on Orion-MKII / Anan-7000/8000, fewer controls).</p>

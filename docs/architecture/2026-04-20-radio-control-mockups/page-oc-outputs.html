@@ -1,0 +1,219 @@
+<h2>Mockup — Hardware → OC Outputs</h2>
+<p class="subtitle">Densest single page in the spec. Models Thetis's <code>tpPennyCtrl → HF</code> tab 1:1 — master toggles, RX/TX per-band × per-pin matrix (14 × 7 × 2), TX pin action mapping, USB BCD, external PA control, live pin state, reset. Sub-sub-tabs <strong>HF / SWL</strong> match Thetis's split.</p>
+
+<style>
+  .setup-frame { background: #1d2230; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0; max-width: 1180px; margin: 16px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .setup-tabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 8px 12px 0; font-size: 12px; overflow-x: auto; white-space: nowrap; }
+  .setup-tabs .tab { padding: 6px 12px; color: rgba(255,255,255,0.5); border-bottom: 2px solid transparent; cursor: default; }
+  .setup-tabs .tab.active { color: #e7ecff; border-bottom-color: #4a7dff; background: rgba(74,125,255,0.05); }
+  .setup-tabs.subtab { background: rgba(255,255,255,0.04); }
+  .setup-tabs.subsubtab { background: rgba(255,255,255,0.07); }
+  .setup-body { padding: 16px; }
+  .breadcrumb { color: rgba(255,255,255,0.45); font-size: 11px; margin-bottom: 12px; font-family: ui-monospace, monospace; }
+
+  .top-row { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+  .top-row .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: rgba(255,255,255,0.85); }
+  .chk-box { width: 11px; height: 11px; border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; background: #0c0e16; flex-shrink: 0; vertical-align: middle; }
+  .chk-box.on { background: #4a7dff; border-color: #4a7dff; }
+  .btn { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.75); padding: 3px 12px; border-radius: 3px; font-size: 11px; cursor: default; margin-left: auto; }
+
+  .matrix-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .grp { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; padding: 10px 12px; }
+  .grp .grp-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: rgba(255,255,255,0.55); margin-bottom: 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .grp .grp-title.tx { color: #ff8888; }
+  .grp .grp-title.rx { color: #88c8ff; }
+
+  .ocmatrix { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .ocmatrix th { color: rgba(255,255,255,0.5); font-weight: 600; text-align: center; padding: 4px 4px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 10px; }
+  .ocmatrix th.bandcol { text-align: left; padding-left: 6px; }
+  .ocmatrix td { padding: 2px 4px; text-align: center; }
+  .ocmatrix td.bandcol { text-align: left; padding-left: 6px; color: #d4dbff; font-family: ui-monospace, monospace; font-weight: 600; font-size: 11px; }
+  .ocmatrix td.bandcol.disabled { color: rgba(255,255,255,0.3); }
+  .ocmatrix tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+  .ocmatrix tr.disabled { background: rgba(255,255,255,0.02); }
+  .ocmatrix .small-chk { width: 10px; height: 10px; border: 1px solid rgba(255,255,255,0.25); border-radius: 2px; background: #0c0e16; display: inline-block; }
+  .ocmatrix .small-chk.on { background: #88c8ff; border-color: #88c8ff; }
+  .ocmatrix .small-chk.tx { background: #0c0e16; }
+  .ocmatrix .small-chk.tx.on { background: #ff8888; border-color: #ff8888; }
+
+  .bottom-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+
+  .action-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .action-table th { color: rgba(255,255,255,0.5); font-weight: 600; text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .action-table th.cen { text-align: center; }
+  .action-table td { padding: 3px 6px; font-size: 11px; color: rgba(255,255,255,0.85); }
+  .action-table td.bandcol { color: #d4dbff; font-family: ui-monospace, monospace; font-weight: 600; }
+  .action-table td.cen { text-align: center; }
+  .action-table tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+
+  .live-state { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; }
+  .live-state .pin-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 2px; }
+  .live-state .pin-cell .lbl { color: rgba(255,255,255,0.55); font-size: 10px; font-family: ui-monospace, monospace; }
+  .live-state .led-dot { width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
+  .live-state .led-dot.on { background: #4dcc66; box-shadow: 0 0 8px rgba(77, 204, 102, 0.7); border-color: #4dcc66; }
+
+  .ctrl { background: #0c0e16; border: 1px solid rgba(255,255,255,0.12); border-radius: 3px; padding: 2px 6px; color: #e7ecff; font-size: 11px; min-width: 70px; display: inline-block; font-family: ui-monospace, monospace; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+  .row .lbl { color: rgba(255,255,255,0.65); min-width: 80px; }
+
+  .annot { background: rgba(77, 204, 102, 0.08); border-left: 2px solid #4dcc66; padding: 8px 10px; margin: 12px 0 0; font-size: 11px; color: rgba(255,255,255,0.8); border-radius: 3px; }
+  .annot strong { color: #b5f5c5; }
+  .phase-tag { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 9px; margin: 0 2px; font-weight: 700; letter-spacing: 0.3px; }
+  .pD { background: #4dcc66; color: #1a1a1a; }
+  .pH { background: #888; color: #fff; }
+</style>
+
+<div class="setup-frame">
+  <div class="setup-tabs">
+    <div class="tab">General</div>
+    <div class="tab active">Hardware</div>
+    <div class="tab">Audio</div>
+    <div class="tab">Display</div>
+    <div class="tab">DSP</div>
+    <div class="tab">Transmit</div>
+    <div class="tab">Appearance</div>
+    <div class="tab">Keyboard</div>
+    <div class="tab">CAT/Network</div>
+    <div class="tab">Diagnostics</div>
+  </div>
+  <div class="setup-tabs subtab">
+    <div class="tab">Radio Info</div>
+    <div class="tab">Antenna / ALEX</div>
+    <div class="tab active">OC Outputs</div>
+    <div class="tab">XVTR</div>
+    <div class="tab">PureSignal</div>
+    <div class="tab">Diversity</div>
+    <div class="tab">Calibration</div>
+    <div class="tab">HL2 I/O</div>
+    <div class="tab">Bandwidth Monitor</div>
+  </div>
+  <div class="setup-tabs subsubtab">
+    <div class="tab active">HF</div>
+    <div class="tab">SWL</div>
+  </div>
+  <div class="setup-body">
+    <div class="breadcrumb">Setup → Hardware → OC Outputs → HF <span style="color:rgba(74,125,255,0.7)">(Thetis: General → Penny/Hermes Ctrl → HF)</span></div>
+
+    <!-- Master toggles row -->
+    <div class="top-row">
+      <span class="chk"><span class="chk-box on"></span><strong>Penny Ext Control enabled</strong></span>
+      <span style="color:rgba(255,255,255,0.25)">|</span>
+      <span class="chk"><span class="chk-box"></span>N2ADR Filter (HERCULES)</span>
+      <span style="color:rgba(255,255,255,0.25)">|</span>
+      <span class="chk"><span class="chk-box"></span>Allow hot switching</span>
+      <span class="btn">Reset OC defaults</span>
+    </div>
+
+    <!-- RX / TX matrices side by side -->
+    <div class="matrix-row">
+
+      <!-- RX OC matrix -->
+      <div class="grp">
+        <div class="grp-title rx"><span>RX OC Pins per Band</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">click cell to toggle</span></div>
+        <table class="ocmatrix">
+          <thead><tr><th class="bandcol">Band</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th></tr></thead>
+          <tbody>
+            <tr><td class="bandcol">160m</td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">80m</td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">60m</td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">40m</td><td><span class="small-chk on"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">30m</td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">20m</td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">17m</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">15m</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">12m</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">10m</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">6m</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr class="disabled"><td class="bandcol disabled">GEN</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr class="disabled"><td class="bandcol disabled">WWV</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td></tr>
+            <tr><td class="bandcol">XVTR</td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk"></span></td><td><span class="small-chk on"></span></td><td><span class="small-chk on"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- TX OC matrix -->
+      <div class="grp">
+        <div class="grp-title tx"><span>TX OC Pins per Band</span><span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">click cell to toggle</span></div>
+        <table class="ocmatrix">
+          <thead><tr><th class="bandcol">Band</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th></tr></thead>
+          <tbody>
+            <tr><td class="bandcol">160m</td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">80m</td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">60m</td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">40m</td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">30m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">20m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">17m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">15m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">12m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">10m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">6m</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr class="disabled"><td class="bandcol disabled">GEN</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr class="disabled"><td class="bandcol disabled">WWV</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td></tr>
+            <tr><td class="bandcol">XVTR</td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx"></span></td><td><span class="small-chk tx on"></span></td><td><span class="small-chk tx on"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- Bottom: TX pin actions / USB BCD / Live state -->
+    <div class="bottom-row">
+
+      <!-- TX Pin Actions -->
+      <div class="grp">
+        <div class="grp-title">TX Pin Action mapping <span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">what triggers each pin during TX</span></div>
+        <table class="action-table">
+          <thead><tr><th class="cen">Pin</th><th>MOX</th><th>Tune</th><th>2-Tone</th><th>VOX</th><th>PA-In</th></tr></thead>
+          <tbody>
+            <tr><td class="cen bandcol">1</td><td><span class="chk-box on"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box"></span></td></tr>
+            <tr><td class="cen bandcol">2</td><td><span class="chk-box"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td></tr>
+            <tr><td class="cen bandcol">3</td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td></tr>
+            <tr><td class="cen bandcol">4</td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box on"></span></td></tr>
+            <tr><td class="cen bandcol">5</td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td></tr>
+            <tr><td class="cen bandcol">6</td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box on"></span></td><td><span class="chk-box"></span></td></tr>
+            <tr><td class="cen bandcol">7</td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td><td><span class="chk-box"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- USB BCD + External PA -->
+      <div class="grp">
+        <div class="grp-title">USB BCD output</div>
+        <span class="chk"><span class="chk-box"></span>Enable BCD</span>
+        <div class="row" style="margin-top: 6px;"><span class="lbl">Format:</span><span class="ctrl">4-bit binary</span></div>
+        <div class="row"><span class="lbl">Invert:</span><span class="chk-box"></span></div>
+
+        <div class="grp-title" style="margin-top: 14px;">External PA control</div>
+        <div class="row"><span class="lbl">PA model:</span><span class="ctrl">None</span></div>
+        <div class="row"><span class="lbl">Bias delay:</span><span class="ctrl">5 ms</span></div>
+      </div>
+
+      <!-- Live pin state -->
+      <div class="grp">
+        <div class="grp-title">Live OC pin state <span style="color:rgba(255,255,255,0.4);font-size:10px;text-transform:none;letter-spacing:0">polled @ 100ms</span></div>
+        <div class="live-state">
+          <div class="pin-cell"><span class="led-dot on"></span><span class="lbl">1</span></div>
+          <div class="pin-cell"><span class="led-dot"></span><span class="lbl">2</span></div>
+          <div class="pin-cell"><span class="led-dot"></span><span class="lbl">3</span></div>
+          <div class="pin-cell"><span class="led-dot"></span><span class="lbl">4</span></div>
+          <div class="pin-cell"><span class="led-dot"></span><span class="lbl">5</span></div>
+          <div class="pin-cell"><span class="led-dot on"></span><span class="lbl">6</span></div>
+          <div class="pin-cell"><span class="led-dot"></span><span class="lbl">7</span></div>
+        </div>
+        <p style="font-size: 10px; color: rgba(255,255,255,0.55); margin: 8px 0 0; font-style: italic;">Reflects the last C&amp;C OC byte sent to the radio. Color matches active band's row in matrix above.</p>
+      </div>
+
+    </div>
+
+    <div class="annot">
+      <strong>Phase mapping:</strong>
+      RX/TX matrix + master toggles + TX pin action + USB BCD + ext PA + reset = <span class="phase-tag pD">D</span> (OcMatrix port from <code>HPSDR/Penny.cs:33-150</code> [ramdor 501e3f5] + <code>setup.cs:12638-12760</code>) ·
+      Live OC pin state LED row = <span class="phase-tag pH">H</span><br>
+      <strong>Spin from Thetis:</strong> NereusSDR has 14 bands vs Thetis's 12 — GEN/WWV rows are <em>disabled by default</em> (no OC sense for "all-mode receive" or "WWV"); XVTR enabled. Color-coded matrix (blue=RX, red=TX) makes the two grids scannable; Thetis uses identical-looking checkboxes.<br>
+      <strong>Persistence:</strong> per-MAC under <code>hardware/&lt;mac&gt;/oc/{rx,tx}/&lt;band&gt;/pin&lt;n&gt;</code> + <code>.../actions/pin&lt;n&gt;/{mox,tune,2tone,vox,pain}</code>.
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px;">All four Thetis-shape sub-areas on one tab: master toggles · RX matrix (blue) + TX matrix (red) · TX pin action mapping · USB BCD + ext PA + live state. Heavy but matches Thetis 1:1. <strong>HF / SWL</strong> sub-sub-tabs at top (SWL is for shortwave-listener band plan — same matrix shape, different bands). Look right? Next page candidate: <strong>HL2 I/O</strong> (Phase E, fills the placeholder tab — N2ADR + IoBoard version + I2C state).</p>
