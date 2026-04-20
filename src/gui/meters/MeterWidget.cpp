@@ -198,10 +198,18 @@ void MeterWidget::clearItems()
 
 void MeterWidget::updateMeterValue(int bindingId, double value)
 {
+    // Edit-container refactor Task 20 — composite presets (ANAN MM,
+    // CrossNeedle, PowerSwr) own multiple internal needles / bars each
+    // with its own binding ID. Route via the polymorphic
+    // pushBindingValue() entry point so every item gets a chance to
+    // inspect the binding ID and decide whether (and where) to apply
+    // the value. Primitives and single-binding preset classes fall
+    // through to setValue() when their bindingId() matches; multi-
+    // binding presets override pushBindingValue() to dispatch per
+    // needle / bar.
     for (MeterItem* item : m_items) {
-        if (item->bindingId() == bindingId) {
-            item->setValue(value);
-        }
+        if (!item) { continue; }
+        item->pushBindingValue(bindingId, value);
     }
 #ifdef NEREUS_GPU_SPECTRUM
     markDynamicDirty();

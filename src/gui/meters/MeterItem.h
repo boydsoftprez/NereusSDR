@@ -160,6 +160,25 @@ public:
     double value() const { return m_value; }
     virtual void setValue(double v) { m_value = v; }
 
+    // Edit-container refactor Task 20 — live-data routing for
+    // composite presets. MeterPoller iterates binding IDs (SignalPeak,
+    // SignalAvg, AgcGain, ...) and pushes each value to every item
+    // via `pushBindingValue(bindingId, value)`. Primitives and single-
+    // binding preset classes use the default behaviour here, which
+    // forwards to setValue() when the item's bindingId() matches. Multi-
+    // binding preset classes (AnanMultiMeterItem → 7 needles,
+    // CrossNeedleItem → 2 needles, PowerSwrPresetItem → 2 bars) override
+    // this method to route the value to the matching internal needle /
+    // bar by inspecting the bindingId argument directly. This is the
+    // "option (a)" described in the Bug B implementation plan — a
+    // single polymorphic entry point that both the poller and the
+    // legacy updateMeterValue() path can call.
+    virtual void pushBindingValue(int bindingId, double v) {
+        if (bindingId == m_bindingId) {
+            setValue(v);
+        }
+    }
+
     int zOrder() const { return m_zOrder; }
     void setZOrder(int z) { m_zOrder = z; }
 

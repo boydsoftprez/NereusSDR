@@ -439,11 +439,14 @@ void BarPresetItem::paint(QPainter& p, int widgetW, int widgetH)
                         rect.width() * 96 / 100,
                         rect.height() * 50 / 100);
 
-    // Seed marker position at minValue for a stable smoke-paint path.
-    // Thetis seeds BarItem.Value to the first calibration key (the
-    // minimum); NereusSDR mirrors that seed for the preview render.
+    // Edit-container refactor Task 20 — prefer the live value the
+    // poller pushed via setValue(); fall back to minValue for preview
+    // renders when no data has arrived yet. MeterItem::m_value defaults
+    // to -140.0, so any value in range is taken as "live".
     const double span = qMax(m_maxValue - m_minValue, 1e-6);
-    const double seed = m_minValue;
+    const double liveValue = value();
+    const double seed = (liveValue <= m_minValue - 1e-3) ? m_minValue
+                                                         : qBound(m_minValue, liveValue, m_maxValue);
     const float  normX = static_cast<float>((seed - m_minValue) / span);
 
     // Draw the bar baseline (line-style, matching BarStyle::Line).

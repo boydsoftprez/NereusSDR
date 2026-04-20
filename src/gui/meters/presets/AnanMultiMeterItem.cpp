@@ -79,6 +79,9 @@ mw0lge@grange-lane.co.uk
 #include <QPen>
 #include <QtGlobal>
 
+#include <cmath>
+#include <limits>
+
 namespace NereusSDR {
 
 namespace {
@@ -408,12 +411,18 @@ void AnanMultiMeterItem::paintNeedle(QPainter& p,
     if (n.calibration.isEmpty()) {
         return;
     }
-    // TODO(wdsp-poller): replace midpoint seed with live value from the
-    // MeterPoller once composite-item polling is wired (see design spec
-    // §3.1 binding notes — per-needle m_value map or poller-side dispatch).
+    // Edit-container refactor Task 20 — prefer the live value routed
+    // via pushBindingValue() over the calibration midpoint. The midpoint
+    // is kept as a "no data" fallback so the settings-dialog preview and
+    // tests still draw a visible needle before any poll cycle has run.
     auto first = n.calibration.constBegin();
     auto last  = std::prev(n.calibration.constEnd());
-    const float seed = 0.5f * (first.key() + last.key());
+    float seed;
+    if (std::isnan(n.currentValue)) {
+        seed = 0.5f * (first.key() + last.key());
+    } else {
+        seed = static_cast<float>(n.currentValue);
+    }
 
     // pivot_px = bg.topLeft + m_pivot * bg.size; the calibrated
     // point sits on the meter face. Two independent geometry knobs
@@ -448,6 +457,30 @@ void AnanMultiMeterItem::paintNeedle(QPainter& p,
     p.setPen(pen);
     p.drawLine(pivotPx, tipPx);
     p.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Edit-container refactor Task 20 — live-value routing. MeterPoller calls
+// pushBindingValue(bindingId, value) on every item each tick; walk the 7
+// needles and stash the value on the one whose bindingId matches, so the
+// next paint() call uses the live tip position.
+// ---------------------------------------------------------------------------
+void AnanMultiMeterItem::pushBindingValue(int bindingId, double v)
+{
+    if (bindingId < 0) {
+        return;
+    }
+    for (Needle& n : m_needles) {
+        if (n.bindingId == bindingId) {
+            n.currentValue = v;
+            // Keep MeterItem::m_value roughly tracking whatever binding
+            // most recently arrived, mainly so observers that still read
+            // value() (e.g. the generic property editor's readout) see a
+            // non-stale number. The dispatch above is what actually
+            // drives the needle.
+            MeterItem::setValue(v);
+        }
+    }
 }
 
 void AnanMultiMeterItem::paintDebugOverlay(QPainter& p, const QRect& bg) const

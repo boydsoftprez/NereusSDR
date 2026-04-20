@@ -138,8 +138,11 @@ void MagicEyePresetItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setBrush(QColor(20, 30, 20));
     p.drawEllipse(eyeRect);
 
-    // Paint the leaf pie-slice — mid-seed = -127 (no signal).
-    const double seed = -127.0;
+    // Paint the leaf pie-slice. Edit-container refactor Task 20:
+    // prefer the live value the poller pushed via setValue(); fall
+    // back to -127 dBm (no signal) when no data has arrived yet.
+    const double liveValue = value();
+    const double seed = (liveValue <= -139.9) ? -127.0 : liveValue;
     const float frac = apertureFraction(seed);
     // Thetis draws two leaves, each opening from the top — we render
     // a single pair of opposing fan sectors for the same visual.

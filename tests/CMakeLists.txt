@@ -207,6 +207,9 @@ nereus_add_test(tst_mainwindow_menu_layout)
 # the fixtures/legacy/pre-refactor-settings.xml path relative to the
 # source tree rather than the build tree (mirrors tst_radio_discovery_parse).
 nereus_add_test(tst_legacy_container_migration)
+
+# ── Edit Container refactor: Task 20 — preset live-value routing ────────
+nereus_add_test(tst_preset_live_binding)
 target_compile_definitions(tst_legacy_container_migration PRIVATE
     TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )

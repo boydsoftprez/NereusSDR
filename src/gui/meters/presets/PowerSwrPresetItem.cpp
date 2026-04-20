@@ -69,6 +69,8 @@ mw0lge@grange-lane.co.uk
 #include <QPainter>
 #include <QPen>
 
+#include <cmath>
+
 namespace NereusSDR {
 
 PowerSwrPresetItem::PowerSwrPresetItem(QObject* parent)
@@ -199,12 +201,18 @@ void PowerSwrPresetItem::paint(QPainter& p, int widgetW, int widgetH)
         p.setPen(QColor(0x80, 0x90, 0xa0));
         p.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, b.label);
 
+        // Edit-container refactor Task 20 — prefer the live value routed
+        // via pushBindingValue() over the minVal seed; fall back to the
+        // seed when no data has arrived yet (e.g. settings-dialog
+        // preview, tests).
+        const double seed = std::isnan(b.currentValue) ? b.minVal
+                                                       : b.currentValue;
+
         if (m_showReadout) {
             p.setPen(m_readoutColor);
             QFont rf = p.font();
             rf.setBold(true);
             p.setFont(rf);
-            const double seed = b.minVal;
             p.drawText(readoutRect,
                        Qt::AlignRight | Qt::AlignVCenter,
                        QStringLiteral("%1%2").arg(seed, 0, 'f', 0).arg(b.suffix));
@@ -217,10 +225,8 @@ void PowerSwrPresetItem::paint(QPainter& p, int widgetW, int widgetH)
                             halfRect.height() * 45 / 100);
         p.fillRect(barRect, QColor(16, 16, 24));
 
-        // Bar fill — pinned to the seed (minVal) in paint-smoke
-        // context since there's no live data; real paint with
-        // polled value will scale to range.
-        const double seed = b.minVal;
+        // Bar fill — scales with the live seed value (minVal when no
+        // data has arrived yet).
         const double t = (b.maxVal - b.minVal) > 0
                            ? (seed - b.minVal) / (b.maxVal - b.minVal)
                            : 0.0;
@@ -241,6 +247,25 @@ void PowerSwrPresetItem::paint(QPainter& p, int widgetW, int widgetH)
         }
     }
     p.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Edit-container refactor Task 20 — live-value routing. MeterPoller calls
+// pushBindingValue(bindingId, value) on every item each tick; route the
+// value to whichever of the two internal bars matches the binding ID
+// (Power bar binds TxPower, SWR bar binds TxSwr).
+// ---------------------------------------------------------------------------
+void PowerSwrPresetItem::pushBindingValue(int bindingId, double v)
+{
+    if (bindingId < 0) {
+        return;
+    }
+    for (Bar& b : m_bars) {
+        if (b.bindingId == bindingId) {
+            b.currentValue = v;
+            MeterItem::setValue(v);
+        }
+    }
 }
 
 QString PowerSwrPresetItem::serialize() const
