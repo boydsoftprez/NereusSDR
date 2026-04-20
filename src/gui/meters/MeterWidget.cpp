@@ -82,6 +82,23 @@ mw0lge@grange-lane.co.uk
 #include "ClickBoxItem.h"
 #include "DataOutItem.h"
 
+// Edit-container refactor Task 11 — first-class preset classes.
+// Needed so deserializeItems() can rehydrate JSON-format preset rows
+// saved by file persistence or ContainerManager round-trip.
+#include "presets/AnanMultiMeterItem.h"
+#include "presets/BarPresetItem.h"
+#include "presets/ClockPresetItem.h"
+#include "presets/ContestPresetItem.h"
+#include "presets/CrossNeedleItem.h"
+#include "presets/HistoryGraphPresetItem.h"
+#include "presets/MagicEyePresetItem.h"
+#include "presets/PowerSwrPresetItem.h"
+#include "presets/SignalTextPresetItem.h"
+#include "presets/SMeterPresetItem.h"
+#include "presets/VfoDisplayPresetItem.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
@@ -214,8 +231,38 @@ bool MeterWidget::deserializeItems(const QString& data)
     for (const QString& line : lines) {
         if (line.isEmpty()) { continue; }
 
-        QString type = line.section(QLatin1Char('|'), 0, 0);
         MeterItem* item = nullptr;
+
+        // Edit-container refactor Task 11 — first-class preset rows
+        // serialize as JSON with a "kind" discriminator. Dispatch
+        // those ahead of the pipe-delimited primitive registry.
+        if (line.startsWith(QLatin1Char('{'))) {
+            const QJsonDocument doc = QJsonDocument::fromJson(line.toUtf8());
+            if (doc.isObject()) {
+                const QString kind = doc.object()
+                    .value(QStringLiteral("kind")).toString();
+                if      (kind == QLatin1String("AnanMM"))             { item = new AnanMultiMeterItem(); }
+                else if (kind == QLatin1String("CrossNeedle"))        { item = new CrossNeedleItem(); }
+                else if (kind == QLatin1String("SMeterPreset"))       { item = new SMeterPresetItem(); }
+                else if (kind == QLatin1String("PowerSwrPreset"))     { item = new PowerSwrPresetItem(); }
+                else if (kind == QLatin1String("MagicEyePreset"))     { item = new MagicEyePresetItem(); }
+                else if (kind == QLatin1String("SignalTextPreset"))   { item = new SignalTextPresetItem(); }
+                else if (kind == QLatin1String("HistoryGraphPreset")) { item = new HistoryGraphPresetItem(); }
+                else if (kind == QLatin1String("VfoDisplayPreset"))   { item = new VfoDisplayPresetItem(); }
+                else if (kind == QLatin1String("ClockPreset"))        { item = new ClockPresetItem(); }
+                else if (kind == QLatin1String("ContestPreset"))      { item = new ContestPresetItem(); }
+                else if (kind == QLatin1String("BarPreset"))          { item = new BarPresetItem(); }
+            }
+            if (item && item->deserialize(line)) {
+                addItem(item);
+                continue;
+            }
+            delete item;
+            item = nullptr;
+            continue;
+        }
+
+        QString type = line.section(QLatin1Char('|'), 0, 0);
         // Core types (MeterItem.h)
         if (type == QStringLiteral("BAR")) {
             item = new BarItem();

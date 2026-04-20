@@ -180,3 +180,6 @@ nereus_add_test(tst_contest_preset_item)
 
 # ── Edit Container refactor: Task 10 — BarPresetItem (18 flavours) ──────
 nereus_add_test(tst_bar_preset_item)
+
+# ── Edit Container refactor: Task 11 — dialog preset dispatch ───────────
+nereus_add_test(tst_dialog_preset_dispatch)

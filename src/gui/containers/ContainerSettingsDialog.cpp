@@ -139,6 +139,25 @@ mw0lge@grange-lane.co.uk
 #include "../meters/MeterItem.h"
 #include "../meters/ItemGroup.h"
 
+// Edit-container refactor Task 11 — first-class preset MeterItem classes.
+// These replace the factory-expansion path that flattened a "preset" into
+// N discrete ItemGroup children; each class is now a single MeterItem that
+// renders the whole preset in one row.
+#include "../meters/presets/AnanMultiMeterItem.h"
+#include "../meters/presets/BarPresetItem.h"
+#include "../meters/presets/ClockPresetItem.h"
+#include "../meters/presets/ContestPresetItem.h"
+#include "../meters/presets/CrossNeedleItem.h"
+#include "../meters/presets/HistoryGraphPresetItem.h"
+#include "../meters/presets/MagicEyePresetItem.h"
+#include "../meters/presets/PowerSwrPresetItem.h"
+#include "../meters/presets/SignalTextPresetItem.h"
+#include "../meters/presets/SMeterPresetItem.h"
+#include "../meters/presets/VfoDisplayPresetItem.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
+
 // Core meter item types (MeterItem.h defines: BarItem, SolidColourItem, ImageItem,
 //                                               ScaleItem, TextItem, NeedleItem)
 // Phase 3G-4 passive item types
@@ -516,17 +535,30 @@ void ContainerSettingsDialog::populateAvailableList()
     // in the container — matching how Thetis's "Add Container"
     // right-arrow works in the Appearance dialog.
     static const Entry kMeterRxItems[] = {
-        {"PRESET_SignalBar",    "Signal Strength Peak"},
-        {"PRESET_AvgSignalBar", "Signal Strength Avg"},
-        {"PRESET_MaxBinBar",    "Signal Max FFT Bin"},
-        {"PRESET_SignalText",   "Signal Strength Text"},
-        {"PRESET_AdcBar",       "ADC"},
-        {"PRESET_AdcMaxMag",    "Max ADC Magnitude"},
-        {"PRESET_AgcBar",       "AGC"},
-        {"PRESET_AgcGainBar",   "AGC Gain"},
-        {"PRESET_PbsnrBar",     "Estimated PBSNR"},
+        // Composite presets (first-class MeterItem subclasses, Task 11).
+        // Each adds as one in-use row rather than N flattened children.
+        {"PRESET_SMeter",          "S-Meter"},
+        {"PRESET_MagicEyePreset",  "Magic Eye"},
+        {"PRESET_HistoryPreset",   "History Graph"},
+        // Bar-row presets (BarPresetItem flavours).
+        {"PRESET_SignalBar",       "Signal Strength Peak"},
+        {"PRESET_AvgSignalBar",    "Signal Strength Avg"},
+        {"PRESET_MaxBinBar",       "Signal Max FFT Bin"},
+        // PRESET_SignalText routes to SignalTextPresetItem (Task 11).
+        // Tag is preserved for save-compat with legacy containers.
+        {"PRESET_SignalText",      "Signal Strength Text"},
+        {"PRESET_AdcBar",          "ADC"},
+        {"PRESET_AdcMaxMag",       "Max ADC Magnitude"},
+        {"PRESET_AgcBar",          "AGC"},
+        {"PRESET_AgcGainBar",      "AGC Gain"},
+        {"PRESET_PbsnrBar",        "Estimated PBSNR"},
     };
     static const Entry kMeterTxItems[] = {
+        // Composite presets (first-class MeterItem subclasses, Task 11).
+        {"PRESET_AnanMM",       "ANAN Multi Meter"},
+        {"PRESET_CrossNeedle",  "Cross-Needle"},
+        {"PRESET_PowerSwr",     "Power / SWR"},
+        // Bar-row presets (BarPresetItem flavours).
         {"PRESET_Alc",          "ALC"},
         {"PRESET_AlcGain",      "ALC Compression"},
         {"PRESET_AlcGroup",     "ALC Group"},
@@ -537,8 +569,6 @@ void ContainerSettingsDialog::populateAvailableList()
         {"PRESET_Leveler",      "Leveler"},
         {"PRESET_LevelerGain",  "Leveler Gain"},
         {"PRESET_Mic",          "Mic"},
-        // "Power", "Reverse Power", "SWR" are PowerSwr composite —
-        // deferred until a dedicated createPowerBarRowPreset ships.
     };
     // --- Raw building-block items (low-level MeterItem subclasses) ---
     static const Entry kRxItems[] = {
@@ -553,6 +583,14 @@ void ContainerSettingsDialog::populateAvailableList()
         {"SCALE",          "Scale"},
     };
     static const Entry kSpecialItems[] = {
+        // Composite presets added in Task 11 (first-class MeterItem
+        // subclasses). Raw primitive entries (VFODISPLAY, CLOCK,
+        // HISTORY, MAGICEYE below) remain freely addable per the
+        // hybrid rule in Task 12.
+        {"PRESET_VfoDisplayPreset", "VFO Display (preset)"},
+        {"PRESET_ClockPreset",      "Clock (preset)"},
+        {"PRESET_ContestPreset",    "Contest Layout"},
+        // Raw building-block primitives.
         {"CLICKBOX",       "Click Box"},
         {"CLOCK",          "Clock"},
         {"DATAOUT",        "Data Out"},
@@ -626,92 +664,108 @@ void ContainerSettingsDialog::onAddFromAvailable()
 
 void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
 {
-    // Build the preset ItemGroup via the matching factory, then
-    // rescale its items (which occupy the preset's 0..1 local space)
-    // into a narrow horizontal slot at the current stack bottom. The
-    // result: each click adds one row beneath the previous one, up
-    // to ~10 rows before the stack clamps at y=0.9. Mirrors Thetis's
-    // Setup → Appearance → Meters/Gadgets right-arrow "Add to
-    // Container" flow.
-    ItemGroup* group = nullptr;
-
-    // Accepts both the short loadPresetByName names (Adc, Agc, Pbsnr,
-    // Cfc, CfcGain) AND the longer "*Bar" names used by the left
-    // "Meter Types" list entries (AdcBar, AgcBar, PbsnrBar, CfcBar,
-    // CfcGainBar). Both map to the same factory.
-    if      (presetName == QLatin1String("SignalBar"))    group = ItemGroup::createSignalBarPreset(this);
-    else if (presetName == QLatin1String("AvgSignalBar")) group = ItemGroup::createAvgSignalBarPreset(this);
-    else if (presetName == QLatin1String("MaxBinBar"))    group = ItemGroup::createMaxBinBarPreset(this);
-    else if (presetName == QLatin1String("SignalText"))   group = ItemGroup::createSignalTextPreset(0, this);
-    else if (presetName == QLatin1String("Adc") ||
-             presetName == QLatin1String("AdcBar"))       group = ItemGroup::createAdcBarPreset(this);
-    else if (presetName == QLatin1String("AdcMaxMag"))    group = ItemGroup::createAdcMaxMagPreset(this);
-    else if (presetName == QLatin1String("Agc") ||
-             presetName == QLatin1String("AgcBar"))       group = ItemGroup::createAgcBarPreset(this);
-    else if (presetName == QLatin1String("AgcGain") ||
-             presetName == QLatin1String("AgcGainBar"))   group = ItemGroup::createAgcGainBarPreset(this);
-    else if (presetName == QLatin1String("Pbsnr") ||
-             presetName == QLatin1String("PbsnrBar"))     group = ItemGroup::createPbsnrBarPreset(this);
-    else if (presetName == QLatin1String("Alc"))          group = ItemGroup::createAlcPreset(this);
-    else if (presetName == QLatin1String("AlcGain"))      group = ItemGroup::createAlcGainBarPreset(this);
-    else if (presetName == QLatin1String("AlcGroup"))     group = ItemGroup::createAlcGroupBarPreset(this);
-    else if (presetName == QLatin1String("Cfc") ||
-             presetName == QLatin1String("CfcBar"))       group = ItemGroup::createCfcBarPreset(this);
-    else if (presetName == QLatin1String("CfcGain") ||
-             presetName == QLatin1String("CfcGainBar"))   group = ItemGroup::createCfcGainBarPreset(this);
-    else if (presetName == QLatin1String("Comp"))         group = ItemGroup::createCompPreset(this);
-    else if (presetName == QLatin1String("Eq"))           group = ItemGroup::createEqBarPreset(this);
-    else if (presetName == QLatin1String("Leveler"))      group = ItemGroup::createLevelerBarPreset(this);
-    else if (presetName == QLatin1String("LevelerGain"))  group = ItemGroup::createLevelerGainBarPreset(this);
-    else if (presetName == QLatin1String("Mic"))          group = ItemGroup::createMicPreset(this);
-
-    if (!group) { return; }
-
-    // Thetis-parity stack layout with a NereusSDR pixel floor.
+    // Edit-container refactor Task 11 — first-class preset dispatch.
     //
-    // Composite presets (ANAN MM, CrossNeedle, etc.) are authored
-    // at their Thetis-nominal normalized size directly by the
-    // factory — e.g. ANAN MM occupies y=0..0.441 per Thetis
-    // MeterManager.cs:22472 `Size=(1, 0.441)`. No compress step
-    // runs here; the composite's existing rect is left alone.
+    // Each PRESET_* tag maps directly to a single MeterItem subclass
+    // that owns its internal parts privately. The old ItemGroup
+    // expansion path (which flattened e.g. ANAN MM into 8 discrete
+    // rows) is retired for this dialog; composite presets now appear
+    // as exactly one row in the in-use list. Bar-row presets collapse
+    // to BarPresetItem + configureAs<kind>(). ItemGroup remains in
+    // the tree — Task 19 owns its removal after the migration pass.
     //
-    // Bar-row presets tag themselves with a stack slot index +
-    // within-slot 0..1 local rect snapshot. MeterWidget::
-    // reflowStackedItems() picks up every reflow and computes
-    //
-    //   slotHpx = max(0.05 * widgetH, 24 px)
-    //   bandTop = max(y + itemHeight) over composite items
-    //             (anything with itemHeight() > 0.30)
-    //
-    // then re-lays every stacked item. Thetis `_fHeight=0.05` from
-    // MeterManager.cs:21266 + a NereusSDR pixel floor so rows stay
-    // readable in tight containers. Rows past widgetH clip
-    // naturally at the container bottom — Thetis Default
-    // Multimeter parity.
+    // Layout parity:
+    //   - Composite presets carry their Thetis-nominal full-container
+    //     rect (set inside each class's constructor, e.g. ANAN MM
+    //     defaults to (0, 0, 1, 0.441) from MeterManager.cs:22472).
+    //     We leave that rect alone — they don't participate in the
+    //     stack layout.
+    //   - Bar-row presets (BarPresetItem flavours) tag themselves
+    //     with a stack slot index + within-slot 0..1 local rect
+    //     snapshot so MeterWidget::reflowStackedItems() lays them
+    //     in vertical slots of height max(0.05 * widgetH, 24 px).
+    MeterItem* created = nullptr;
+    bool isBarRow = false;
 
-    // Next slot index = max existing stack slot + 1.
-    int nextSlot = 0;
-    for (const MeterItem* mi : m_workingItems) {
-        if (!mi) { continue; }
-        if (mi->stackSlot() >= nextSlot) {
-            nextSlot = mi->stackSlot() + 1;
+    if      (presetName == QLatin1String("AnanMM"))           { created = new AnanMultiMeterItem(this); }
+    else if (presetName == QLatin1String("CrossNeedle"))      { created = new CrossNeedleItem(this); }
+    else if (presetName == QLatin1String("SMeter"))           { created = new SMeterPresetItem(this); }
+    else if (presetName == QLatin1String("PowerSwr"))         { created = new PowerSwrPresetItem(this); }
+    else if (presetName == QLatin1String("MagicEyePreset"))   { created = new MagicEyePresetItem(this); }
+    // PRESET_SignalText keeps its existing tag form for save-compat
+    // with existing containers but now routes to the first-class
+    // SignalTextPresetItem (previously it flattened to a 2-item
+    // ItemGroup built via createSignalTextPreset). PRESET_Signal-
+    // TextPreset is deliberately NOT registered as a duplicate entry
+    // in kMeterRxItems — the single PRESET_SignalText tag is all
+    // users see in the available list.
+    else if (presetName == QLatin1String("SignalText") ||
+             presetName == QLatin1String("SignalTextPreset")) { created = new SignalTextPresetItem(this); }
+    else if (presetName == QLatin1String("HistoryPreset"))    { created = new HistoryGraphPresetItem(this); }
+    else if (presetName == QLatin1String("VfoDisplayPreset")) { created = new VfoDisplayPresetItem(this); }
+    else if (presetName == QLatin1String("ClockPreset"))      { created = new ClockPresetItem(this); }
+    else if (presetName == QLatin1String("ContestPreset"))    { created = new ContestPresetItem(this); }
+    else {
+        // Bar-row family. Accepts both the short loadPresetByName
+        // names (Adc, Agc, Pbsnr, Cfc, CfcGain) AND the longer "*Bar"
+        // names used by the left "Meter Types" list entries.
+        auto* bar = new BarPresetItem(this);
+        bool matched = true;
+        if      (presetName == QLatin1String("SignalBar"))    { bar->configureAsSignalBar(); }
+        else if (presetName == QLatin1String("AvgSignalBar")) { bar->configureAsAvgSignalBar(); }
+        else if (presetName == QLatin1String("MaxBinBar"))    { bar->configureAsMaxBinBar(); }
+        else if (presetName == QLatin1String("Adc") ||
+                 presetName == QLatin1String("AdcBar"))       { bar->configureAsAdcBar(); }
+        else if (presetName == QLatin1String("AdcMaxMag"))    { bar->configureAsAdcMaxMag(); }
+        else if (presetName == QLatin1String("Agc") ||
+                 presetName == QLatin1String("AgcBar"))       { bar->configureAsAgc(); }
+        else if (presetName == QLatin1String("AgcGain") ||
+                 presetName == QLatin1String("AgcGainBar"))   { bar->configureAsAgcGain(); }
+        else if (presetName == QLatin1String("Pbsnr") ||
+                 presetName == QLatin1String("PbsnrBar"))     { bar->configureAsPbsnr(); }
+        else if (presetName == QLatin1String("Alc"))          { bar->configureAsAlc(); }
+        else if (presetName == QLatin1String("AlcGain"))      { bar->configureAsAlcGain(); }
+        else if (presetName == QLatin1String("AlcGroup"))     { bar->configureAsAlcGroup(); }
+        else if (presetName == QLatin1String("Cfc") ||
+                 presetName == QLatin1String("CfcBar"))       { bar->configureAsCfc(); }
+        else if (presetName == QLatin1String("CfcGain") ||
+                 presetName == QLatin1String("CfcGainBar"))   { bar->configureAsCfcGain(); }
+        else if (presetName == QLatin1String("Comp"))         { bar->configureAsComp(); }
+        else if (presetName == QLatin1String("Eq"))           { bar->configureAsEq(); }
+        else if (presetName == QLatin1String("Leveler"))      { bar->configureAsLeveler(); }
+        else if (presetName == QLatin1String("LevelerGain"))  { bar->configureAsLevelerGain(); }
+        else if (presetName == QLatin1String("Mic"))          { bar->configureAsMic(); }
+        else {
+            matched = false;
+            delete bar;
+        }
+        if (matched) {
+            created = bar;
+            isBarRow = true;
         }
     }
 
-    for (MeterItem* src : group->items()) {
-        MeterItem* clone = createItemFromSerialized(src->serialize());
-        if (!clone) { continue; }
-        // Snapshot the preset factory's canonical within-slot 0..1
-        // layout so reflow can project it back out.
-        clone->setSlotLocalY(clone->y());
-        clone->setSlotLocalH(clone->itemHeight());
-        clone->setStackSlot(nextSlot);
-        if (src->hasMmioBinding()) {
-            clone->setMmioBinding(src->mmioGuid(), src->mmioVariable());
+    if (!created) { return; }
+
+    if (isBarRow) {
+        // Bar-row presets participate in the Thetis-parity stack
+        // layout. Next slot index = max existing stack slot + 1.
+        // Within-slot 0..1 local layout is the full slot.
+        int nextSlot = 0;
+        for (const MeterItem* mi : m_workingItems) {
+            if (!mi) { continue; }
+            if (mi->stackSlot() >= nextSlot) {
+                nextSlot = mi->stackSlot() + 1;
+            }
         }
-        m_workingItems.append(clone);
+        created->setSlotLocalY(0.0f);
+        created->setSlotLocalH(1.0f);
+        created->setStackSlot(nextSlot);
+        created->setRect(0.0f, 0.0f, 1.0f, 0.05f);
     }
-    delete group;
+    // Composite presets keep whatever rect their constructor chose.
+
+    m_workingItems.append(created);
 
     // Reflow immediately so the preview reflects the new stack
     // layout at the current target-widget size. The widget's own
@@ -724,6 +778,7 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     if (!m_workingItems.isEmpty()) {
         m_itemList->setCurrentRow(m_workingItems.size() - 1);
     }
+    applyToContainer();
     updatePreview();
 }
 
@@ -1391,6 +1446,35 @@ MeterItem* ContainerSettingsDialog::createItemFromSerialized(const QString& data
         return nullptr;
     }
 
+    // Edit-container refactor Task 11 — first-class preset classes
+    // serialize as JSON blobs with a "kind" discriminator. Detect
+    // the JSON prefix and dispatch to the matching subclass before
+    // falling through to the pipe-delimited primitive registry.
+    if (data.startsWith(QLatin1Char('{'))) {
+        const QJsonDocument doc = QJsonDocument::fromJson(data.toUtf8());
+        if (doc.isObject()) {
+            const QString kind = doc.object()
+                .value(QStringLiteral("kind")).toString();
+            MeterItem* preset = nullptr;
+            if      (kind == QLatin1String("AnanMM"))             { preset = new AnanMultiMeterItem(); }
+            else if (kind == QLatin1String("CrossNeedle"))        { preset = new CrossNeedleItem(); }
+            else if (kind == QLatin1String("SMeterPreset"))       { preset = new SMeterPresetItem(); }
+            else if (kind == QLatin1String("PowerSwrPreset"))     { preset = new PowerSwrPresetItem(); }
+            else if (kind == QLatin1String("MagicEyePreset"))     { preset = new MagicEyePresetItem(); }
+            else if (kind == QLatin1String("SignalTextPreset"))   { preset = new SignalTextPresetItem(); }
+            else if (kind == QLatin1String("HistoryGraphPreset")) { preset = new HistoryGraphPresetItem(); }
+            else if (kind == QLatin1String("VfoDisplayPreset"))   { preset = new VfoDisplayPresetItem(); }
+            else if (kind == QLatin1String("ClockPreset"))        { preset = new ClockPresetItem(); }
+            else if (kind == QLatin1String("ContestPreset"))      { preset = new ContestPresetItem(); }
+            else if (kind == QLatin1String("BarPreset"))          { preset = new BarPresetItem(); }
+            if (preset) {
+                if (preset->deserialize(data)) { return preset; }
+                delete preset;
+                return nullptr;
+            }
+        }
+    }
+
     const int pipeIdx = data.indexOf(QLatin1Char('|'));
     const QString typeTag = (pipeIdx >= 0) ? data.left(pipeIdx) : data;
 
@@ -1564,6 +1648,21 @@ QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
         { QStringLiteral("CLOCK"),         QStringLiteral("Clock") },
         { QStringLiteral("CLICKBOX"),      QStringLiteral("Click Box") },
         { QStringLiteral("DATAOUT"),       QStringLiteral("Data Out") },
+        // Edit-container refactor Task 11: first-class preset classes
+        // use JSON-format serialize(); their "kind" discriminator
+        // arrives here as the typeTag when refreshItemList feeds it
+        // through the JSON-aware path below.
+        { QStringLiteral("AnanMM"),             QStringLiteral("ANAN Multi Meter") },
+        { QStringLiteral("CrossNeedle"),        QStringLiteral("Cross-Needle") },
+        { QStringLiteral("SMeterPreset"),       QStringLiteral("S-Meter") },
+        { QStringLiteral("PowerSwrPreset"),     QStringLiteral("Power / SWR") },
+        { QStringLiteral("MagicEyePreset"),     QStringLiteral("Magic Eye") },
+        { QStringLiteral("SignalTextPreset"),   QStringLiteral("Signal Text (preset)") },
+        { QStringLiteral("HistoryGraphPreset"), QStringLiteral("History Graph (preset)") },
+        { QStringLiteral("VfoDisplayPreset"),   QStringLiteral("VFO Display (preset)") },
+        { QStringLiteral("ClockPreset"),        QStringLiteral("Clock (preset)") },
+        { QStringLiteral("ContestPreset"),      QStringLiteral("Contest Layout") },
+        { QStringLiteral("BarPreset"),          QStringLiteral("Bar (preset)") },
     };
 
     const auto it = kDisplayNames.constFind(tag);
@@ -1581,10 +1680,22 @@ void ContainerSettingsDialog::refreshItemList()
 {
     m_itemList->clear();
     for (const MeterItem* item : m_workingItems) {
-        // Derive the type tag from serialize() (first pipe-delimited field)
+        // Derive the type tag from serialize(). Primitive items use
+        // a pipe-delimited format with the tag as the first field;
+        // first-class preset items (Task 11) use JSON with a "kind"
+        // discriminator. Handle both.
         const QString serialized = item->serialize();
-        const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
-        const QString typeTag = (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
+        QString typeTag;
+        if (serialized.startsWith(QLatin1Char('{'))) {
+            const QJsonDocument doc = QJsonDocument::fromJson(serialized.toUtf8());
+            if (doc.isObject()) {
+                typeTag = doc.object().value(QStringLiteral("kind")).toString();
+            }
+        }
+        if (typeTag.isEmpty()) {
+            const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
+            typeTag = (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
+        }
 
         const QString displayName = typeTagDisplayName(typeTag);
         const int bindingId = item->bindingId();
