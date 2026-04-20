@@ -158,6 +158,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/meters/presets/SMeterPresetItem.h | Project Files/Source/Console/MeterManager.cs | 21499-21616 | port | thetis-samphire | first-class S-Meter bar/scale composite; pairs with SMeterPresetItem.cpp |
 | src/gui/meters/presets/PowerSwrPresetItem.cpp | Project Files/Source/Console/MeterManager.cs | 23854-24053 | port | thetis-samphire | AddPWRBar + AddSWRBar dual-bar composite; HighPoint thresholds byte-for-byte |
 | src/gui/meters/presets/PowerSwrPresetItem.h | Project Files/Source/Console/MeterManager.cs | 23854-24053 | port | thetis-samphire | first-class Power+SWR composite; pairs with PowerSwrPresetItem.cpp |
+| src/gui/meters/presets/MagicEyePresetItem.cpp | Project Files/Source/Console/MeterManager.cs | 22249-22295 | port | thetis-samphire | AddMagicEye 3-point calibration + Lime leaf colour byte-for-byte |
+| src/gui/meters/presets/MagicEyePresetItem.h | Project Files/Source/Console/MeterManager.cs | 22249-22295 | port | thetis-samphire | first-class Magic Eye preset; pairs with MagicEyePresetItem.cpp |
 | src/gui/meters/RotatorItem.cpp | Project Files/Source/Console/MeterManager.cs | 15042+; 35170-35569; 15290-15312 | port | thetis-samphire | clsRotatorItem, renderRotator, Update |
 | src/gui/meters/RotatorItem.h | Project Files/Source/Console/MeterManager.cs | 15042+; 15290-15312 | port | thetis-samphire | clsRotatorItem, Update |
 | src/gui/meters/SignalTextItem.cpp | Project Files/Source/Console/MeterManager.cs; Project Files/Source/Console/console.cs | 20286-20540; 20420+ | port | multi-source | clsSignalText, Common.UVfromDBM, dBm format helpers |

@@ -159,3 +159,6 @@ nereus_add_test(tst_smeter_preset_item)
 
 # ── Edit Container refactor: Task 4 — PowerSwrPresetItem ─────────────────
 nereus_add_test(tst_power_swr_preset_item)
+
+# ── Edit Container refactor: Task 5 — MagicEyePresetItem ─────────────────
+nereus_add_test(tst_magic_eye_preset_item)
