@@ -2781,11 +2781,46 @@ void MainWindow::checkVaxFirstRun()
                    "bindings dropped" << bindings.size();
             return;
         }
+
+        // Remap dialog-suggested bindings onto the first VAX slots
+        // whose audio/Vax<ch>/DeviceName is unset. VaxFirstRunDialog::
+        // computeSuggestedBindings always numbers its payload starting
+        // at VAX 1 regardless of scenario, with an explicit comment
+        // that MainWindow is responsible for skipping slots the user
+        // has already assigned. Applying the dialog's channel numbers
+        // verbatim — the previous revision — clobbered existing slot-1
+        // ..N mappings under FirstRunScenario::RescanNewCables. We
+        // apply the same rule unconditionally since it is a no-op for
+        // WindowsCablesFound (all four DeviceName keys are empty on a
+        // fresh install, so remap resolves to the same 1..N order).
+        //
+        // DeviceName is still read-only in Sub-Phase 11; the writer
+        // + AudioEngine::start() read-back land in Sub-Phase 12. Until
+        // then the remap is inert in practice but the contract is
+        // honoured. See the release-gate note in the PR body and the
+        // TODO(sub-phase-12-open-setup-audio) marker below.
+        auto& settings = AppSettings::instance();
+        int slot = 1;
         for (const auto& b : bindings) {
+            while (slot <= 4) {
+                const QString key = QStringLiteral("audio/Vax%1/DeviceName")
+                                        .arg(slot);
+                if (settings.value(key, QString()).toString().isEmpty()) {
+                    break;
+                }
+                ++slot;
+            }
+            if (slot > 4) {
+                qCWarning(lcAudio)
+                    << "VAX first-run: no unassigned slots remain;"
+                    << "dropping cable" << b.second;
+                break;
+            }
             AudioDeviceConfig cfg;
             cfg.deviceName = b.second;
-            engine->setVaxConfig(b.first, cfg);
-            engine->setVaxEnabled(b.first, true);
+            engine->setVaxConfig(slot, cfg);
+            engine->setVaxEnabled(slot, true);
+            ++slot;
         }
     });
 
