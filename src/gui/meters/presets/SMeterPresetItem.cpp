@@ -59,6 +59,7 @@ mw0lge@grange-lane.co.uk
 // =================================================================
 
 #include "gui/meters/presets/SMeterPresetItem.h"
+#include "gui/ColorSwatchButton.h"    // colorToHex / colorFromHex
 #include "gui/meters/MeterPoller.h"  // MeterBinding::*
 
 #include <QJsonDocument>
@@ -166,13 +167,21 @@ void SMeterPresetItem::paint(QPainter& p, int widgetW, int widgetH)
 QString SMeterPresetItem::serialize() const
 {
     QJsonObject o;
-    o.insert(QStringLiteral("kind"),        QStringLiteral("SMeterPreset"));
-    o.insert(QStringLiteral("x"),           static_cast<double>(m_x));
-    o.insert(QStringLiteral("y"),           static_cast<double>(m_y));
-    o.insert(QStringLiteral("w"),           static_cast<double>(m_w));
-    o.insert(QStringLiteral("h"),           static_cast<double>(m_h));
-    o.insert(QStringLiteral("bindingId"),   bindingId());
-    o.insert(QStringLiteral("showReadout"), m_showReadout);
+    o.insert(QStringLiteral("kind"),          QStringLiteral("SMeterPreset"));
+    o.insert(QStringLiteral("x"),             static_cast<double>(m_x));
+    o.insert(QStringLiteral("y"),             static_cast<double>(m_y));
+    o.insert(QStringLiteral("w"),             static_cast<double>(m_w));
+    o.insert(QStringLiteral("h"),             static_cast<double>(m_h));
+    o.insert(QStringLiteral("bindingId"),     bindingId());
+    o.insert(QStringLiteral("showReadout"),   m_showReadout);
+    // All five colour fields round-tripped as "#RRGGBBAA" hex, via the
+    // shared ColorSwatchButton helpers that Display setup pages use
+    // for AppSettings colour persistence.
+    o.insert(QStringLiteral("backdropColor"), ColorSwatchButton::colorToHex(m_backdropColor));
+    o.insert(QStringLiteral("barColor"),      ColorSwatchButton::colorToHex(m_barColor));
+    o.insert(QStringLiteral("titleColor"),    ColorSwatchButton::colorToHex(m_titleColor));
+    o.insert(QStringLiteral("readoutColor"),  ColorSwatchButton::colorToHex(m_readoutColor));
+    o.insert(QStringLiteral("historyColor"),  ColorSwatchButton::colorToHex(m_historyColor));
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
@@ -193,6 +202,21 @@ bool SMeterPresetItem::deserialize(const QString& data)
             static_cast<float>(o.value(QStringLiteral("h")).toDouble(m_h)));
     setBindingId(o.value(QStringLiteral("bindingId")).toInt(bindingId()));
     m_showReadout = o.value(QStringLiteral("showReadout")).toBool(m_showReadout);
+
+    // Colour fields — only overwrite when the blob carries a valid
+    // hex string. Missing / malformed entries keep the current
+    // (constructor-default) colour.
+    auto loadColor = [&](const QString& key, QColor& dst) {
+        const QString hex = o.value(key).toString();
+        if (hex.isEmpty()) { return; }
+        const QColor c = ColorSwatchButton::colorFromHex(hex);
+        if (c.isValid()) { dst = c; }
+    };
+    loadColor(QStringLiteral("backdropColor"), m_backdropColor);
+    loadColor(QStringLiteral("barColor"),      m_barColor);
+    loadColor(QStringLiteral("titleColor"),    m_titleColor);
+    loadColor(QStringLiteral("readoutColor"),  m_readoutColor);
+    loadColor(QStringLiteral("historyColor"),  m_historyColor);
     return true;
 }
 

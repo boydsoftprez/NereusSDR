@@ -14,6 +14,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QColor>
 #include <QImage>
 #include <QPainter>
 
@@ -64,6 +65,12 @@ void TestPowerSwrPresetItem::serialize_roundTrip_preservesAllFields()
     PowerSwrPresetItem a;
     a.setRect(0.1f, 0.2f, 0.8f, 0.4f);
     a.setShowReadout(false);
+    // One non-default colour to prove the 4 round-trip.
+    a.setBarColor(QColor(255, 128, 64, 200));
+    // One non-default per-bar threshold + suffix to prove the bars
+    // JSON array round-trips.
+    a.setBarRedThreshold(0, 75.0);        // Power bar — override from 100W
+    a.setBarSuffix(1, QStringLiteral(":1 (!)"));  // SWR bar — override suffix
 
     const QString blob = a.serialize();
     QVERIFY(!blob.isEmpty());
@@ -76,6 +83,12 @@ void TestPowerSwrPresetItem::serialize_roundTrip_preservesAllFields()
     QCOMPARE(b.itemWidth(),  a.itemWidth());
     QCOMPARE(b.itemHeight(), a.itemHeight());
     QCOMPARE(b.showReadout(), false);
+    QCOMPARE(b.barColor(),   a.barColor());
+    QCOMPARE(b.barRedThreshold(0), 75.0);
+    QCOMPARE(b.barSuffix(1), QStringLiteral(":1 (!)"));
+    // Untouched bar slot keeps its ctor default.
+    QCOMPARE(b.barRedThreshold(1), a.barRedThreshold(1));
+    QCOMPARE(b.barSuffix(0),       a.barSuffix(0));
 }
 
 void TestPowerSwrPresetItem::paintSmoke_rendersAtAspectRatio()

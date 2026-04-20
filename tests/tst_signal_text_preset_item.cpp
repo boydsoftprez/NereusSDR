@@ -58,6 +58,14 @@ void TestSignalTextPresetItem::format_includesSUnitAndDbm()
 
 void TestSignalTextPresetItem::serialize_roundTrip_preservesAllFields()
 {
+    // Default-ctor must carry the Thetis-exact 56pt default — this
+    // proves the source-first revert.
+    SignalTextPresetItem def;
+    QCOMPARE(def.fontPoint(), 56.0f);
+
+    // Case 1 — set fontPoint to the Thetis-exact default (56pt) and
+    // round-trip to prove the value survives the blob even when it
+    // equals the member default.
     SignalTextPresetItem a;
     a.setRect(0.1f, 0.2f, 0.8f, 0.3f);
     a.setBindingId(0 /* SignalPeak */);
@@ -77,6 +85,14 @@ void TestSignalTextPresetItem::serialize_roundTrip_preservesAllFields()
     QCOMPARE(b.bindingId(),    0);
     QCOMPARE(b.textColor(),    QColor(Qt::cyan));
     QCOMPARE(b.fontPoint(),    56.0f);
+
+    // Case 2 — a non-default font size (48pt) must also round-trip.
+    SignalTextPresetItem c;
+    c.setFontPoint(48.0f);
+    const QString blob2 = c.serialize();
+    SignalTextPresetItem d;
+    QVERIFY(d.deserialize(blob2));
+    QCOMPARE(d.fontPoint(), 48.0f);
 }
 
 void TestSignalTextPresetItem::paintSmoke_rendersAtAspectRatio()

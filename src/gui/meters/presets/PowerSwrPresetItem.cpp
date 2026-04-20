@@ -60,8 +60,10 @@ mw0lge@grange-lane.co.uk
 // =================================================================
 
 #include "gui/meters/presets/PowerSwrPresetItem.h"
+#include "gui/ColorSwatchButton.h"    // colorToHex / colorFromHex
 #include "gui/meters/MeterPoller.h"  // MeterBinding::*
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPainter>
@@ -133,6 +135,38 @@ double PowerSwrPresetItem::barMaxVal(int i) const
         return 0.0;
     }
     return m_bars[i].maxVal;
+}
+
+double PowerSwrPresetItem::barRedThreshold(int i) const
+{
+    if (i < 0 || i >= kBarCount) {
+        return 0.0;
+    }
+    return m_bars[i].redThreshold;
+}
+
+QString PowerSwrPresetItem::barSuffix(int i) const
+{
+    if (i < 0 || i >= kBarCount) {
+        return QString();
+    }
+    return m_bars[i].suffix;
+}
+
+void PowerSwrPresetItem::setBarRedThreshold(int i, double v)
+{
+    if (i < 0 || i >= kBarCount) {
+        return;
+    }
+    m_bars[i].redThreshold = v;
+}
+
+void PowerSwrPresetItem::setBarSuffix(int i, const QString& s)
+{
+    if (i < 0 || i >= kBarCount) {
+        return;
+    }
+    m_bars[i].suffix = s;
 }
 
 void PowerSwrPresetItem::paint(QPainter& p, int widgetW, int widgetH)
@@ -212,12 +246,28 @@ void PowerSwrPresetItem::paint(QPainter& p, int widgetW, int widgetH)
 QString PowerSwrPresetItem::serialize() const
 {
     QJsonObject o;
-    o.insert(QStringLiteral("kind"),        QStringLiteral("PowerSwrPreset"));
-    o.insert(QStringLiteral("x"),           static_cast<double>(m_x));
-    o.insert(QStringLiteral("y"),           static_cast<double>(m_y));
-    o.insert(QStringLiteral("w"),           static_cast<double>(m_w));
-    o.insert(QStringLiteral("h"),           static_cast<double>(m_h));
-    o.insert(QStringLiteral("showReadout"), m_showReadout);
+    o.insert(QStringLiteral("kind"),          QStringLiteral("PowerSwrPreset"));
+    o.insert(QStringLiteral("x"),             static_cast<double>(m_x));
+    o.insert(QStringLiteral("y"),             static_cast<double>(m_y));
+    o.insert(QStringLiteral("w"),             static_cast<double>(m_w));
+    o.insert(QStringLiteral("h"),             static_cast<double>(m_h));
+    o.insert(QStringLiteral("showReadout"),   m_showReadout);
+    // All four colour fields as "#RRGGBBAA" hex, same mechanism as
+    // SMeterPresetItem / AppSettings colour persistence.
+    o.insert(QStringLiteral("backdropColor"), ColorSwatchButton::colorToHex(m_backdropColor));
+    o.insert(QStringLiteral("barColor"),      ColorSwatchButton::colorToHex(m_barColor));
+    o.insert(QStringLiteral("barRedColor"),   ColorSwatchButton::colorToHex(m_barRedColor));
+    o.insert(QStringLiteral("readoutColor"),  ColorSwatchButton::colorToHex(m_readoutColor));
+    // Per-bar fields (redThreshold, suffix) — stored as an array of
+    // 2 JSON objects, matching the kBarCount array layout.
+    QJsonArray bars;
+    for (const Bar& b : m_bars) {
+        QJsonObject barObj;
+        barObj.insert(QStringLiteral("redThreshold"), b.redThreshold);
+        barObj.insert(QStringLiteral("suffix"),       b.suffix);
+        bars.append(barObj);
+    }
+    o.insert(QStringLiteral("bars"), bars);
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
@@ -237,6 +287,30 @@ bool PowerSwrPresetItem::deserialize(const QString& data)
             static_cast<float>(o.value(QStringLiteral("w")).toDouble(m_w)),
             static_cast<float>(o.value(QStringLiteral("h")).toDouble(m_h)));
     m_showReadout = o.value(QStringLiteral("showReadout")).toBool(m_showReadout);
+
+    // Colour fields — missing / malformed entries keep the current
+    // (constructor-default) colour.
+    auto loadColor = [&](const QString& key, QColor& dst) {
+        const QString hex = o.value(key).toString();
+        if (hex.isEmpty()) { return; }
+        const QColor c = ColorSwatchButton::colorFromHex(hex);
+        if (c.isValid()) { dst = c; }
+    };
+    loadColor(QStringLiteral("backdropColor"), m_backdropColor);
+    loadColor(QStringLiteral("barColor"),      m_barColor);
+    loadColor(QStringLiteral("barRedColor"),   m_barRedColor);
+    loadColor(QStringLiteral("readoutColor"),  m_readoutColor);
+
+    // Per-bar fields — iterate defensively; missing/short arrays
+    // simply leave the ctor defaults in place.
+    const QJsonArray bars = o.value(QStringLiteral("bars")).toArray();
+    for (int i = 0; i < kBarCount && i < bars.size(); ++i) {
+        const QJsonObject barObj = bars.at(i).toObject();
+        m_bars[i].redThreshold = barObj.value(QStringLiteral("redThreshold"))
+                                      .toDouble(m_bars[i].redThreshold);
+        m_bars[i].suffix       = barObj.value(QStringLiteral("suffix"))
+                                      .toString(m_bars[i].suffix);
+    }
     return true;
 }
 

@@ -15,6 +15,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QColor>
 #include <QImage>
 #include <QPainter>
 
@@ -64,6 +65,12 @@ void TestSMeterPresetItem::serialize_roundTrip_preservesAllFields()
     a.setRect(0.1f, 0.2f, 0.8f, 0.4f);
     a.setBindingId(0 /* SignalPeak */);
     a.setShowReadout(false);
+    // Set one non-default colour per field to prove all 5 round-trip.
+    a.setBackdropColor(QColor(  1,   2,   3, 255));
+    a.setBarColor     (QColor( 10,  20,  30, 200));
+    a.setTitleColor   (QColor(100, 110, 120, 180));
+    a.setReadoutColor (QColor(200, 210, 220, 160));
+    a.setHistoryColor (QColor(255, 128,  64, 128));
 
     const QString blob = a.serialize();
     QVERIFY(!blob.isEmpty());
@@ -77,6 +84,11 @@ void TestSMeterPresetItem::serialize_roundTrip_preservesAllFields()
     QCOMPARE(b.itemHeight(), a.itemHeight());
     QCOMPARE(b.bindingId(),  0);
     QCOMPARE(b.showReadout(), false);
+    QCOMPARE(b.backdropColor(), a.backdropColor());
+    QCOMPARE(b.barColor(),      a.barColor());
+    QCOMPARE(b.titleColor(),    a.titleColor());
+    QCOMPARE(b.readoutColor(),  a.readoutColor());
+    QCOMPARE(b.historyColor(),  a.historyColor());
 }
 
 void TestSMeterPresetItem::paintSmoke_rendersAtAspectRatio()

@@ -69,6 +69,7 @@ mw0lge@grange-lane.co.uk
 // =================================================================
 
 #include "gui/meters/presets/AnanMultiMeterItem.h"
+#include "gui/meters/presets/PresetGeometry.h"  // letterboxedBgRect
 #include "gui/meters/MeterPoller.h"  // MeterBinding::*
 
 #include <QJsonArray>
@@ -319,32 +320,13 @@ void AnanMultiMeterItem::setNeedleVisible(int i, bool v)
 
 QRect AnanMultiMeterItem::bgRect(int widgetW, int widgetH) const
 {
-    const QRect itemR = pixelRect(widgetW, widgetH);
-    // Guard against (a) anchor disabled, (b) background image failed
-    // to load, and (c) degenerate image dimensions that would divide
-    // by zero in the aspect-ratio calculation. In any of those cases,
-    // fall back to the item's pixel rect (pre-port behaviour).
-    if (!m_anchorToBgRect || m_background.isNull() || m_background.height() <= 0) {
-        return itemR;
-    }
-    if (itemR.width() <= 0 || itemR.height() <= 0) {
-        return itemR;
-    }
-    const float imgAspect = static_cast<float>(m_background.width())
-                          / static_cast<float>(m_background.height());
-    const float rectAspect = static_cast<float>(itemR.width())
-                           / static_cast<float>(itemR.height());
-
-    if (rectAspect > imgAspect) {
-        // Item wider than the image — letterbox horizontally.
-        const int drawW = static_cast<int>(itemR.height() * imgAspect);
-        const int drawX = itemR.x() + (itemR.width() - drawW) / 2;
-        return QRect(drawX, itemR.y(), drawW, itemR.height());
-    }
-    // Item taller than (or matches) the image — letterbox vertically.
-    const int drawH = static_cast<int>(itemR.width() / imgAspect);
-    const int drawY = itemR.y() + (itemR.height() - drawH) / 2;
-    return QRect(itemR.x(), drawY, itemR.width(), drawH);
+    // Arc-fix: delegate to the shared preset geometry helper so the
+    // letterbox math is identical for every preset that anchors
+    // rendering to the background image rect (AnanMM + CrossNeedle).
+    // See src/gui/meters/presets/PresetGeometry.h.
+    return letterboxedBgRect(pixelRect(widgetW, widgetH),
+                             m_background,
+                             m_anchorToBgRect);
 }
 
 // ---------------------------------------------------------------------------

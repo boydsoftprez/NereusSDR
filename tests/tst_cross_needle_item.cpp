@@ -32,6 +32,7 @@ private slots:
     void reverseNeedle_hasCalibrationPoints();
     void serialize_roundTrip_preservesAllFields();
     void paintSmoke_rendersAtAspectRatio();
+    void arcAnchoredToBgRect_rendersNeedlesOnFaceAt2x1();
 };
 
 void TestCrossNeedleItem::defaultConstruction_hasTwoNeedles()
@@ -64,6 +65,7 @@ void TestCrossNeedleItem::serialize_roundTrip_preservesAllFields()
     a.setRect(0.1f, 0.2f, 0.8f, 0.6f);
     a.setNeedleVisible(1, false);
     a.setShowBandOverlay(false);
+    a.setAnchorToBgRect(false);
 
     const QString blob = a.serialize();
     QVERIFY(!blob.isEmpty());
@@ -78,6 +80,7 @@ void TestCrossNeedleItem::serialize_roundTrip_preservesAllFields()
     QCOMPARE(b.needleVisible(0), true);
     QCOMPARE(b.needleVisible(1), false);
     QCOMPARE(b.showBandOverlay(), false);
+    QCOMPARE(b.anchorToBgRect(),  false);
 }
 
 void TestCrossNeedleItem::paintSmoke_rendersAtAspectRatio()
@@ -87,6 +90,31 @@ void TestCrossNeedleItem::paintSmoke_rendersAtAspectRatio()
 
     const int W = 600;
     const int H = 470;  // approx natural cross-needle.png aspect
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::black);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        item.paint(p, W, H);
+    }
+    QVERIFY(!img.isNull());
+    QCOMPARE(img.width(),  W);
+    QCOMPARE(img.height(), H);
+}
+
+void TestCrossNeedleItem::arcAnchoredToBgRect_rendersNeedlesOnFaceAt2x1()
+{
+    // 2:1 aspect — much wider than the cross-needle.png natural ratio.
+    // With anchorToBgRect=true (default), the background image and
+    // needle geometry must letterbox inside the container rect rather
+    // than stretching. Smoke test only — matches the pattern used in
+    // tst_anan_multi_meter_item.cpp.
+    CrossNeedleItem item;
+    item.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+    QVERIFY(item.anchorToBgRect());
+
+    const int W = 800;
+    const int H = 400;  // 2:1 widget
     QImage img(W, H, QImage::Format_ARGB32);
     img.fill(Qt::black);
     {
