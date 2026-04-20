@@ -78,7 +78,7 @@ class HGauge;
 
 // PhoneCwApplet — QStackedWidget with Phone (0) and CW (1) pages.
 // FM is a separate FmApplet per the reconciled design spec.
-// Phone page: 13 controls — Phase 3I-1 / 3I-3 / 3-DAX
+// Phone page: 13 controls — Phase 3I-1 / 3I-3 / 3-VAX
 // CW page:     9 controls — Phase 3I-2
 class PhoneCwApplet : public AppletWidget {
     Q_OBJECT
@@ -122,8 +122,8 @@ private:
     QPushButton* m_procBtn{nullptr};
     QSlider*     m_procSlider{nullptr};
     QLabel*      m_procLabel{nullptr};
-    // #8  DAX button (blue toggle, 48px)
-    QPushButton* m_daxBtn{nullptr};
+    // #8  VAX button (blue toggle, 48px)
+    QPushButton* m_vaxBtn{nullptr};
     // #9  MON button (green 48px) + slider (0-100) + inset "50"
     QPushButton* m_monBtn{nullptr};
     QSlider*     m_monSlider{nullptr};

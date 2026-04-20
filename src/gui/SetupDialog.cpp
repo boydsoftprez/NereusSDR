@@ -159,7 +159,7 @@ void SetupDialog::buildTree()
     add(audio, "ASIO Config",      new AsioConfigPage(m_model));
     add(audio, "VAC 1",            new Vac1Page(m_model));
     add(audio, "VAC 2",            new Vac2Page(m_model));
-    add(audio, "NereusDAX",        new NereusDaxPage(m_model));
+    add(audio, "NereusVAX",        new NereusVaxPage(m_model));
     add(audio, "Recording",        new RecordingPage(m_model));
 
     // ── DSP ───────────────────────────────────────────────────────────────────

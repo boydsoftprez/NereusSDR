@@ -116,20 +116,20 @@ Vac2Page::Vac2Page(RadioModel* model, QWidget* parent)
 }
 
 // ---------------------------------------------------------------------------
-// NereusDaxPage
+// NereusVaxPage
 // ---------------------------------------------------------------------------
 
-NereusDaxPage::NereusDaxPage(RadioModel* model, QWidget* parent)
-    : SetupPage(QStringLiteral("NereusDAX"), model, parent)
+NereusVaxPage::NereusVaxPage(RadioModel* model, QWidget* parent)
+    : SetupPage(QStringLiteral("NereusVAX"), model, parent)
 {
-    addSection(QStringLiteral("DAX Channels"));
+    addSection(QStringLiteral("VAX Channels"));
 
     // 4 audio channels — each shows channel label, status, and device combo
     const QStringList channelNames = {
-        QStringLiteral("DAX Audio 1"),
-        QStringLiteral("DAX Audio 2"),
-        QStringLiteral("DAX Audio 3"),
-        QStringLiteral("DAX Audio 4"),
+        QStringLiteral("VAX Audio 1"),
+        QStringLiteral("VAX Audio 2"),
+        QStringLiteral("VAX Audio 3"),
+        QStringLiteral("VAX Audio 4"),
     };
 
     for (const QString& ch : channelNames) {

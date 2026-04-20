@@ -90,7 +90,7 @@ static constexpr const char* kButtonBase =
     "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; }"
     "QPushButton:hover { background: #204060; }";
 
-// Blue active style: used for DAX, Iambic, tab buttons
+// Blue active style: used for VAX, Iambic, tab buttons
 static constexpr const char* kBlueActive =
     "QPushButton:checked { background-color: #0070c0; color: #ffffff; "
     "border: 1px solid #0090e0; }";
@@ -122,7 +122,7 @@ static constexpr int kGap      = 4;
 static const QString kNyiPhone  = QStringLiteral("Phase 3I-1");
 static const QString kNyiCw     = QStringLiteral("Phase 3I-2");
 static const QString kNyiProc   = QStringLiteral("Phase 3I-3");
-static const QString kNyiDax    = QStringLiteral("Phase 3-DAX");
+static const QString kNyiVax    = QStringLiteral("Phase 3-VAX");
 static const QString kNyiFm     = QStringLiteral("Phase 3I-1");
 
 // CTCSS tones (standard 38-tone list from Thetis setup.cs)
@@ -308,7 +308,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         vbox->addLayout(row);
     }
 
-    // ── Control 7: PROC + Control 8: PROC slider + Control 9: DAX ───────────
+    // ── Control 7: PROC + Control 8: PROC slider + Control 9: VAX ───────────
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
@@ -356,14 +356,14 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
         row->addWidget(procGroup, 1);
 
-        // Control 9: DAX button (blue, checkable, fixedWidth 48, fixedHeight 22)
-        m_daxBtn = new QPushButton(QStringLiteral("DAX"), page);
-        m_daxBtn->setCheckable(true);
-        m_daxBtn->setFixedWidth(48);
-        m_daxBtn->setFixedHeight(22);
-        m_daxBtn->setStyleSheet(QString(kButtonBase) + kBlueActive);
-        m_daxBtn->setAccessibleName(QStringLiteral("DAX digital audio"));
-        row->addWidget(m_daxBtn);
+        // Control 9: VAX button (blue, checkable, fixedWidth 48, fixedHeight 22)
+        m_vaxBtn = new QPushButton(QStringLiteral("VAX"), page);
+        m_vaxBtn->setCheckable(true);
+        m_vaxBtn->setFixedWidth(48);
+        m_vaxBtn->setFixedHeight(22);
+        m_vaxBtn->setStyleSheet(QString(kButtonBase) + kBlueActive);
+        m_vaxBtn->setAccessibleName(QStringLiteral("VAX digital audio"));
+        row->addWidget(m_vaxBtn);
 
         vbox->addLayout(row);
     }
@@ -553,7 +553,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     NyiOverlay::markNyi(m_accBtn,           kNyiPhone);   // #6
     NyiOverlay::markNyi(m_procBtn,          kNyiProc);    // #7 — Phase 3I-3
     NyiOverlay::markNyi(m_procSlider,       kNyiProc);    // #7 slider
-    NyiOverlay::markNyi(m_daxBtn,           kNyiDax);     // #8 — Phase 3-DAX
+    NyiOverlay::markNyi(m_vaxBtn,           kNyiVax);     // #8 — Phase 3-VAX
     NyiOverlay::markNyi(m_monBtn,           kNyiPhone);   // #9
     NyiOverlay::markNyi(m_monSlider,        kNyiPhone);   // #9 slider
     NyiOverlay::markNyi(m_voxBtn,           kNyiProc);    // #10 — Phase 3I-3

@@ -41,12 +41,12 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// Audio > NereusDAX
+// Audio > NereusVAX
 // ---------------------------------------------------------------------------
-class NereusDaxPage : public SetupPage {
+class NereusVaxPage : public SetupPage {
     Q_OBJECT
 public:
-    explicit NereusDaxPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit NereusVaxPage(RadioModel* model, QWidget* parent = nullptr);
 };
 
 // ---------------------------------------------------------------------------

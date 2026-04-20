@@ -109,14 +109,14 @@ private:
     void buildAntFlyout();
     void buildDspFlyout();
     void buildDisplayFlyout();
-    void buildDaxFlyout();
+    void buildVaxFlyout();
 
     // Flyout toggles
     void toggleBandFlyout();
     void toggleAntFlyout();
     void toggleDspFlyout();
     void toggleDisplayFlyout();
-    void toggleDaxFlyout();
+    void toggleVaxFlyout();
 
     // Auto-close helper
     void hideFlyout();
@@ -176,10 +176,10 @@ private:
     QLabel*      m_clarityBadge{nullptr};
     QPushButton* m_clarityRetuneBtn{nullptr};
 
-    // ── DAX flyout ───────────────────────────────────────────────────────
-    QWidget*   m_daxFlyout{nullptr};
-    QComboBox* m_daxCmb{nullptr};
-    QComboBox* m_daxIqCmb{nullptr};
+    // ── VAX flyout ───────────────────────────────────────────────────────
+    QWidget*   m_vaxFlyout{nullptr};
+    QComboBox* m_vaxCmb{nullptr};
+    QComboBox* m_vaxIqCmb{nullptr};
 
     // ── Waterfall zoom buttons (bottom-left of spectrum widget) ──────────
     QWidget*     m_zoomStrip{nullptr};   // container for the 4 zoom buttons

@@ -1501,7 +1501,7 @@ void MainWindow::buildMenuBar()
         tciAction->setToolTip(QStringLiteral("NYI — Phase 3J"));
     }
     {
-        QAction* daxAction = toolsMenu->addAction(QStringLiteral("&DAX Audio..."));
+        QAction* daxAction = toolsMenu->addAction(QStringLiteral("&VAX Audio..."));
         daxAction->setEnabled(false);
         daxAction->setToolTip(QStringLiteral("NYI — Phase X"));
     }

@@ -33,14 +33,14 @@ class QComboBox;
 namespace NereusSDR {
 
 // CAT / rigctld / TCI control interfaces.
-// NYI — Phase 3K (CAT/rigctld) + 3J (TCI) + 3-DAX (DAX/IQ).
+// NYI — Phase 3K (CAT/rigctld) + 3J (TCI) + 3-VAX (VAX/IQ).
 //
 // Controls:
 //   1. CAT TCP enable + LEDs — QPushButton green "TCP" + 4x QLabel (A/B/C/D)
 //   2. CAT PTY enable + paths — QPushButton green "PTY" + 4x QLabel paths
 //   3. TCI enable + port + LED — QPushButton green "TCI" + QLineEdit port + QLabel LED
-//   4. DAX enable + meters — QPushButton green "DAX" + 4x QLabel channel status
-//   5. DAX IQ enable + rate — QPushButton green "IQ" + QComboBox rate
+//   4. VAX enable + meters — QPushButton green "VAX" + 4x QLabel channel status
+//   5. VAX IQ enable + rate — QPushButton green "IQ" + QComboBox rate
 class CatApplet : public AppletWidget {
     Q_OBJECT
 public:
@@ -66,11 +66,11 @@ private:
     QLineEdit*   m_tciPort       = nullptr;
     QLabel*      m_tciLed        = nullptr;
 
-    // Control 4 — DAX: enable button + 4 channel status labels
-    QPushButton* m_daxBtn        = nullptr;
-    QLabel*      m_daxStatus[4]  = {};
+    // Control 4 — VAX: enable button + 4 channel status labels
+    QPushButton* m_vaxBtn        = nullptr;
+    QLabel*      m_vaxStatus[4]  = {};
 
-    // Control 5 — DAX IQ: enable button + rate combo
+    // Control 5 — VAX IQ: enable button + rate combo
     QPushButton* m_iqBtn         = nullptr;
     QComboBox*   m_iqRateCombo   = nullptr;
 };

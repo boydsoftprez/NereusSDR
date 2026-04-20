@@ -318,9 +318,9 @@ void DigitalApplet::buildUI()
     root->addWidget(body);
 
     // -----------------------------------------------------------------------
-    // Mark all controls NYI — Phase 3-DAX
+    // Mark all controls NYI — Phase 3-VAX
     // -----------------------------------------------------------------------
-    const QString kPhase = QStringLiteral("Phase 3-DAX");
+    const QString kPhase = QStringLiteral("Phase 3-VAX");
     NyiOverlay::markNyi(m_vac1Btn,          kPhase);
     NyiOverlay::markNyi(m_vac1DevCombo,     kPhase);
     NyiOverlay::markNyi(m_vac2Btn,          kPhase);
@@ -335,7 +335,7 @@ void DigitalApplet::buildUI()
 
 void DigitalApplet::syncFromModel()
 {
-    // NYI — no model wiring until Phase 3-DAX
+    // NYI — no model wiring until Phase 3-VAX
 }
 
 } // namespace NereusSDR

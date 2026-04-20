@@ -122,7 +122,7 @@ class QLabel;
 
 namespace NereusSDR {
 
-// VAC/DAX digital audio routing applet — NYI shell (Phase 3-DAX).
+// VAC/VAX digital audio routing applet — NYI shell (Phase 3-VAX).
 //
 // Controls:
 //   1. VAC 1 enable       — QPushButton("VAC 1", green, checkable)

@@ -154,26 +154,26 @@ void CatApplet::buildUI()
 
     vbox->addWidget(divider());
 
-    // --- Control 4: DAX enable + 4 channel status labels ---
+    // --- Control 4: VAX enable + 4 channel status labels ---
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
-        m_daxBtn = greenToggle(QStringLiteral("DAX"));
-        m_daxBtn->setCheckable(true);
-        row->addWidget(m_daxBtn);
+        m_vaxBtn = greenToggle(QStringLiteral("VAX"));
+        m_vaxBtn->setCheckable(true);
+        row->addWidget(m_vaxBtn);
 
         for (int i = 0; i < 4; ++i) {
-            m_daxStatus[i] = makeLed(QStringLiteral("Ch%1").arg(i + 1), this);
-            row->addWidget(m_daxStatus[i]);
+            m_vaxStatus[i] = makeLed(QStringLiteral("Ch%1").arg(i + 1), this);
+            row->addWidget(m_vaxStatus[i]);
         }
         row->addStretch();
 
         vbox->addLayout(row);
-        NyiOverlay::markNyi(m_daxBtn, QStringLiteral("3-DAX"));
+        NyiOverlay::markNyi(m_vaxBtn, QStringLiteral("3-VAX"));
     }
 
-    // --- Control 5: DAX IQ enable + rate combo ---
+    // --- Control 5: VAX IQ enable + rate combo ---
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
@@ -193,8 +193,8 @@ void CatApplet::buildUI()
 
         vbox->addLayout(row);
 
-        NyiOverlay::markNyi(m_iqBtn,       QStringLiteral("3-DAX"));
-        NyiOverlay::markNyi(m_iqRateCombo, QStringLiteral("3-DAX"));
+        NyiOverlay::markNyi(m_iqBtn,       QStringLiteral("3-VAX"));
+        NyiOverlay::markNyi(m_iqRateCombo, QStringLiteral("3-VAX"));
     }
 
     vbox->addStretch();
@@ -203,7 +203,7 @@ void CatApplet::buildUI()
 
 void CatApplet::syncFromModel()
 {
-    // NYI — Phase 3K / 3J / 3-DAX
+    // NYI — Phase 3K / 3J / 3-VAX
 }
 
 } // namespace NereusSDR

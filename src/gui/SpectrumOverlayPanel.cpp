@@ -215,11 +215,11 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         m_menuBtns.append(btn);  // index 5
     }
 
-    // Button 8: DAX — flyout (NYI Phase 3-DAX)
+    // Button 8: VAX — flyout (NYI Phase 3-VAX)
     {
-        auto* btn = makeMenuBtn("DAX", this);
-        btn->setToolTip("Open DAX audio routing (NYI Phase 3-DAX)");
-        connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleDaxFlyout);
+        auto* btn = makeMenuBtn("VAX", this);
+        btn->setToolTip("Open VAX audio routing (NYI Phase 3-VAX)");
+        connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleVaxFlyout);
         m_menuBtns.append(btn);  // index 6
     }
 
@@ -241,7 +241,7 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
     buildAntFlyout();
     buildDspFlyout();
     buildDisplayFlyout();
-    buildDaxFlyout();
+    buildVaxFlyout();
     buildZoomButtons();
 
     // Install event filter for auto-close on outside click and parent resize tracking
@@ -286,7 +286,7 @@ void SpectrumOverlayPanel::raiseAll()
 {
     raise();
     for (QWidget* fw : {m_bandFlyout, m_antFlyout, m_dspFlyout,
-                        m_displayFlyout, m_daxFlyout}) {
+                        m_displayFlyout, m_vaxFlyout}) {
         if (fw) { fw->raise(); }
     }
 }
@@ -993,30 +993,30 @@ void SpectrumOverlayPanel::toggleDisplayFlyout()
     dispBtn->setStyleSheet(kMenuBtnActive);
 }
 
-// ── DAX flyout ────────────────────────────────────────────────────────────────
+// ── VAX flyout ────────────────────────────────────────────────────────────────
 
-void SpectrumOverlayPanel::buildDaxFlyout()
+void SpectrumOverlayPanel::buildVaxFlyout()
 {
-    m_daxFlyout = new QWidget(parentWidget());
-    m_daxFlyout->setStyleSheet(kPanelStyle);
-    m_daxFlyout->hide();
+    m_vaxFlyout = new QWidget(parentWidget());
+    m_vaxFlyout->setStyleSheet(kPanelStyle);
+    m_vaxFlyout->hide();
 
-    auto* vb = new QVBoxLayout(m_daxFlyout);
+    auto* vb = new QVBoxLayout(m_vaxFlyout);
     vb->setContentsMargins(6, 6, 6, 6);
     vb->setSpacing(4);
 
-    // DAX Ch combo (from AetherSDR buildDaxPanel)
+    // VAX Ch combo (from AetherSDR buildDaxPanel)
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
-        auto* lbl = new QLabel("DAX Ch");
+        auto* lbl = new QLabel("VAX Ch");
         lbl->setStyleSheet(kLabelStyle);
         row->addWidget(lbl);
-        m_daxCmb = new QComboBox;
-        m_daxCmb->addItems({"Off", "1", "2", "3", "4"});
-        m_daxCmb->setEnabled(false);
-        m_daxCmb->setToolTip("DAX channel (NYI Phase 3-DAX)");
-        row->addWidget(m_daxCmb, 1);
+        m_vaxCmb = new QComboBox;
+        m_vaxCmb->addItems({"Off", "1", "2", "3", "4"});
+        m_vaxCmb->setEnabled(false);
+        m_vaxCmb->setToolTip("VAX channel (NYI Phase 3-VAX)");
+        row->addWidget(m_vaxCmb, 1);
         vb->addLayout(row);
     }
 
@@ -1027,38 +1027,38 @@ void SpectrumOverlayPanel::buildDaxFlyout()
         auto* lbl = new QLabel("IQ Ch");
         lbl->setStyleSheet(kLabelStyle);
         row->addWidget(lbl);
-        m_daxIqCmb = new QComboBox;
-        m_daxIqCmb->addItems({"None", "1", "2", "3", "4"});
-        m_daxIqCmb->setEnabled(false);
-        m_daxIqCmb->setToolTip("DAX IQ channel (NYI Phase 3-DAX)");
-        row->addWidget(m_daxIqCmb, 1);
+        m_vaxIqCmb = new QComboBox;
+        m_vaxIqCmb->addItems({"None", "1", "2", "3", "4"});
+        m_vaxIqCmb->setEnabled(false);
+        m_vaxIqCmb->setToolTip("VAX IQ channel (NYI Phase 3-VAX)");
+        row->addWidget(m_vaxIqCmb, 1);
         vb->addLayout(row);
     }
 
-    m_daxFlyout->setFixedWidth(140);
-    m_daxFlyout->adjustSize();
+    m_vaxFlyout->setFixedWidth(140);
+    m_vaxFlyout->adjustSize();
 }
 
-void SpectrumOverlayPanel::toggleDaxFlyout()
+void SpectrumOverlayPanel::toggleVaxFlyout()
 {
-    // Button index 6 (DAX)
-    QPushButton* daxBtn = m_menuBtns[6];
+    // Button index 6 (VAX)
+    QPushButton* vaxBtn = m_menuBtns[6];
 
-    if (m_activeFlyout == m_daxFlyout) {
+    if (m_activeFlyout == m_vaxFlyout) {
         hideFlyout();
         return;
     }
     hideFlyout();
 
-    // Center vertically on DAX button (from AetherSDR toggleDaxPanel)
-    int btnCenterY = daxBtn->y() + daxBtn->height() / 2;
-    int panelY = y() + btnCenterY - m_daxFlyout->sizeHint().height() / 2;
-    m_daxFlyout->move(x() + width(), std::max(0, panelY));
-    m_daxFlyout->raise();
-    m_daxFlyout->show();
-    m_activeFlyout = m_daxFlyout;
-    m_activeButton = daxBtn;
-    daxBtn->setStyleSheet(kMenuBtnActive);
+    // Center vertically on VAX button (from AetherSDR toggleDaxPanel)
+    int btnCenterY = vaxBtn->y() + vaxBtn->height() / 2;
+    int panelY = y() + btnCenterY - m_vaxFlyout->sizeHint().height() / 2;
+    m_vaxFlyout->move(x() + width(), std::max(0, panelY));
+    m_vaxFlyout->raise();
+    m_vaxFlyout->show();
+    m_activeFlyout = m_vaxFlyout;
+    m_activeButton = vaxBtn;
+    vaxBtn->setStyleSheet(kMenuBtnActive);
 }
 
 void SpectrumOverlayPanel::wheelEvent(QWheelEvent* event) { event->accept(); }
