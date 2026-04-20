@@ -195,7 +195,32 @@ public:
     QString kindString() const;
     static Kind kindFromString(const QString& s, Kind fallback = Kind::Custom);
 
+    // Route incoming live values through setValue() so we can track a
+    // rolling high-water mark in m_peakValue (consumed by the peak-value
+    // text + peak-hold marker in paint()). Ported from Thetis
+    // clsBarItem.Value setter / MaxHistory tracking @501e3f5.
+    void setValue(double v) override;
+
+    // Test introspection — expose the rolling peak so unit tests can
+    // verify the Thetis-parity peak text path without pixel sampling.
+    double peakValue() const { return m_peakValue; }
+
 private:
+    // --- paint() helpers — Thetis-parity value formatting ---
+    //
+    // formatValue() picks the per-flavour text format used for both
+    // the current-value (left) and peak-value (right) labels. Mirrors
+    // Thetis renderHBar:36080-36100 ShowValue/ShowPeakValue switch on
+    // clsBarItem.Units. We reuse the NereusSDR kind enum because the
+    // flavour-to-unit mapping is 1:1 (Signal/Avg/MaxBin use dBm, Adc
+    // uses integer counts, Swr uses ":1" ratio, etc.).
+    QString formatValue(double v) const;
+    // tickStops() returns the numeric scale labels drawn beneath the
+    // bar. Mirrors Thetis generalScale(low, high, start, end, lowInc,
+    // highInc) but we hard-code flavour-specific stops because
+    // generalScale's tick math lives on the BarItem primitive we
+    // deliberately don't touch.
+    QVector<double> tickStops() const;
     // Central helper: sets every field identified by the flavour.
     // Called from each configureAs* with the flavour-specific values.
     void setCommon(Kind k, int binding, double minV, double maxV,
@@ -209,6 +234,14 @@ private:
     QColor  m_barColor      {255, 255, 255, 255};       // Thetis bar low-colour default = white
     QColor  m_backdropColor {32, 32, 32, 255};           // Thetis backdrop Color.FromArgb(32,32,32)
     double  m_redThreshold  = 0.0;                       // 0 = disabled; bar turns red above this
+
+    // Thetis-parity extras (Phase 3G-6a follow-up): rolling peak text
+    // + peak-hold marker. Peak decays toward the live value on each
+    // setValue() that produces a smaller value (simple one-step decay
+    // at 2% toward the live value; matches the Thetis clsBarItem
+    // MaxHistory behaviour loosely — full history decay lives on the
+    // BarItem primitive which is out of scope here).
+    double  m_peakValue     = -1e308;   // sentinel "no peak yet"
 };
 
 } // namespace NereusSDR
