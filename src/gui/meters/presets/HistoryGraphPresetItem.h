@@ -44,10 +44,15 @@ public:
     explicit HistoryGraphPresetItem(QObject* parent = nullptr);
 
     // --- MeterItem overrides ---
-    // OverlayStatic -> MeterWidget calls paintForLayer() -> paint().
-    // Preset classes override paint() only (not emitVertices()), so
-    // Layer::Geometry would route through the empty GPU vertex path.
-    Layer renderLayer() const override { return Layer::OverlayStatic; }
+    // Background -> MeterWidget calls paintForLayer() -> paint();
+    // primitives (BarItem / NeedleItem / etc.) on Geometry /
+    // OverlayDynamic paint on top. This matches the user's mental
+    // model that a preset is the "background meter" the container
+    // shows, with the in-use list's item order driving z-order
+    // (top of list = behind, bottom = front). Preset classes
+    // override paint() only (not emitVertices()), so Layer::Geometry
+    // would route through the empty GPU vertex path.
+    Layer renderLayer() const override { return Layer::Background; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
 
     QString serialize() const override;

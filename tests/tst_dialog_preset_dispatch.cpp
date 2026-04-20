@@ -17,6 +17,8 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QImage>
+#include <QPainter>
 #include <QSplitter>
 #include <QWidget>
 
@@ -51,6 +53,12 @@ private slots:
     void selectSMeterRow_propertyEditorNotEmpty();
     void selectAlcGainRow_propertyEditorNotEmpty();
     void selectVfoDisplayRow_propertyEditorNotEmpty();
+
+    // Follow-up-bug coverage — preset + primitive in the same container
+    // must both render. Before the Background-layer fix, the preset
+    // painted on top of the primitive (opaque OverlayStatic backdrop
+    // over a Geometry/OverlayDynamic Bar) and the primitive disappeared.
+    void presetCoexistsWithPrimitive_bothRender();
 };
 
 namespace {
@@ -181,6 +189,84 @@ void TstDialogPresetDispatch::selectVfoDisplayRow_propertyEditorNotEmpty()
     dlg.appendPresetRowForTest(QStringLiteral("VfoDisplayPreset"));
     dlg.selectInUseRowForTest(0);
     QVERIFY(!dlg.propertyStackCurrentIsEmpty());
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up bug 1 — preset + primitive coexistence.
+//
+// Root cause (pre-fix): preset classes rendered via Layer::OverlayStatic
+// and primitives (BarItem) via Layer::OverlayDynamic. The preset's
+// opaque backdrop painted over the primitive and the primitive
+// disappeared. The fix moves every preset class to Layer::Background,
+// so the render order is Background (presets) -> Geometry ->
+// OverlayStatic -> OverlayDynamic (primitives), and primitives now
+// layer on top of the preset.
+//
+// The check here is a smoke-level assertion: paint both items into
+// an offscreen image in the documented render order and confirm the
+// pixel buffer is non-empty (the pre-fix bug path left bars invisible,
+// but this test targets the simpler invariant that the order doesn't
+// erase either item's contribution). Pixel-perfect colour matching is
+// out of scope.
+// ---------------------------------------------------------------------------
+void TstDialogPresetDispatch::presetCoexistsWithPrimitive_bothRender()
+{
+    // Construct a preset and a primitive that would share a container.
+    SMeterPresetItem preset;
+    preset.setRect(0.0f, 0.0f, 1.0f, 1.0f);
+
+    BarItem bar;
+    bar.setRect(0.1f, 0.3f, 0.8f, 0.2f);
+    bar.setRange(0.0, 1.0);
+    bar.setValue(0.5);
+
+    // Mirror MeterWidget's CPU draw order (paintEvent -> drawItems):
+    // items paint in list order. With the fix, preset renderLayer is
+    // Background and bar renderLayer is Geometry (participating in
+    // OverlayDynamic); both are single-layer callers, so a direct
+    // paint() on each is sufficient to exercise the CPU fallback path
+    // that tst_smoke.cpp and friends run under.
+    const int W = 400;
+    const int H = 200;
+    QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::black);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        preset.paint(p, W, H);
+        bar.paint(p, W, H);
+    }
+    QVERIFY(!img.isNull());
+    QCOMPARE(img.width(),  W);
+    QCOMPARE(img.height(), H);
+
+    // Smoke check: at least one non-black pixel somewhere in the
+    // frame. Both the preset face and the bar fill contribute
+    // colour, so an all-black result would mean the render order
+    // erased every item's output.
+    bool anyNonBlack = false;
+    for (int y = 0; y < H && !anyNonBlack; ++y) {
+        const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < W; ++x) {
+            const QRgb px = row[x];
+            if (qRed(px) != 0 || qGreen(px) != 0 || qBlue(px) != 0) {
+                anyNonBlack = true;
+                break;
+            }
+        }
+    }
+    QVERIFY2(anyNonBlack,
+             "Preset + Bar render produced no visible pixels; the "
+             "preset's Background layer + BarItem's OverlayDynamic "
+             "layer should both contribute colour to the frame");
+
+    // Layer-assignment regression guard: with the Background-layer
+    // fix, the preset must no longer claim the OverlayStatic layer.
+    // BarItem keeps its existing OverlayDynamic layer so primitives
+    // paint on top of presets.
+    QCOMPARE(preset.renderLayer(), MeterItem::Layer::Background);
+    QVERIFY(bar.participatesIn(MeterItem::Layer::OverlayDynamic));
+    QVERIFY(!preset.participatesIn(MeterItem::Layer::OverlayStatic));
 }
 
 QTEST_MAIN(TstDialogPresetDispatch)

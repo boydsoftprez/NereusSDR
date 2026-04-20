@@ -113,11 +113,16 @@ public:
     explicit AnanMultiMeterItem(QObject* parent = nullptr);
 
     // --- MeterItem overrides ---
-    // OverlayStatic -> MeterWidget calls paintForLayer() -> paint().
-    // The 11 preset classes only override paint() (QPainter), not
-    // emitVertices(); Layer::Geometry would route them through the
-    // empty GPU vertex pipeline and the preset would never draw.
-    Layer renderLayer() const override { return Layer::OverlayStatic; }
+    // Background -> MeterWidget calls paintForLayer() -> paint();
+    // primitives (BarItem / NeedleItem / etc.) on Geometry /
+    // OverlayDynamic paint on top. This matches the user's mental
+    // model that a preset is the "background meter" the container
+    // shows, with the in-use list's item order driving z-order
+    // (top of list = behind, bottom = front). The 11 preset classes
+    // only override paint() (QPainter), not emitVertices();
+    // Layer::Geometry would route them through the empty GPU vertex
+    // pipeline and the preset would never draw.
+    Layer renderLayer() const override { return Layer::Background; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
 
     QString serialize() const override;

@@ -882,8 +882,31 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
         created->setSlotLocalH(1.0f);
         created->setStackSlot(nextSlot);
         created->setRect(0.0f, 0.0f, 1.0f, 0.05f);
+    } else if (dynamic_cast<AnanMultiMeterItem*>(created)) {
+        // Image-backed preset: size the initial rect to match the
+        // background image's natural aspect inside a 4:3 default
+        // container (640x480). The ANAN MM face bitmap is
+        // 1504x688 (aspect ~2.186:1); rect (0, 0.05, 1, 0.61) makes
+        // the container-pixel rect 640 x ~288 (~2.22:1) so the
+        // letterbox helper in PresetGeometry.h produces near-zero
+        // margins at default size. Prior to this, the MeterItem
+        // default of (0, 0, 1, 1) letterboxed the face vertically
+        // and the user saw a "floating meter face" with blank
+        // space above and below.
+        created->setRect(0.0f, 0.05f, 1.0f, 0.61f);
+    } else if (dynamic_cast<CrossNeedleItem*>(created)) {
+        // Image-backed preset: Cross-Needle face bitmap is
+        // 1104x928 (aspect ~1.19:1) which is *narrower* than a
+        // 4:3 container (aspect 1.333:1). We constrain width and
+        // leave height near-full so the image letterboxes
+        // horizontally with minimal margins. 640*0.89 x 480*1.0 =
+        // ~570 x 480 = ~1.19:1, which matches the image aspect.
+        created->setRect(0.05f, 0.0f, 0.89f, 1.0f);
     }
-    // Composite presets keep whatever rect their constructor chose.
+    // Non-image composite presets (SMeter, PowerSwr, MagicEye,
+    // Clock, Contest, History, SignalText, VfoDisplay) keep whatever
+    // rect their constructor chose — they do not letterbox against
+    // a background image.
 
     ContainerInUseRow newRow;
     newRow.item        = created;
