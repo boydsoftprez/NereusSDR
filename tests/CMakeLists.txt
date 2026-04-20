@@ -5355,6 +5355,10 @@ nereus_add_test(tst_history_graph_preset_item)
 # ── Edit Container refactor: Task 8 — VfoDisplayPresetItem (local) ───────
 nereus_add_test(tst_vfo_display_preset_item)
 
+
+# ── Edit Container refactor: Task 9a — ClockPresetItem (local) ───────────
+nereus_add_test(tst_clock_preset_item)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------
