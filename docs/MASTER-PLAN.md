@@ -491,8 +491,8 @@ Shipped as three sequential PRs off `main`. Strict dependency: PR1 helpers feed 
 - New `tst_setup_helpers` 6-slot QtTest smoke locking bidirectional sync + no-feedback-loop
 - Implementation plan: `docs/architecture/2026-04-15-phase3g9a-display-audit-plan.md`
 
-#### Phase 3G-9b: Smooth Defaults + Clarity Blue Palette (PR2) 🚧 IN FLIGHT
-**Opened 2026-04-15** as PR #26 (awaiting merge). 11 GPG-signed commits.
+#### Phase 3G-9b: Smooth Defaults + Clarity Blue Palette (PR2) ✅ COMPLETE
+**Shipped 2026-04-15** as PR #26 (merged). 11 GPG-signed commits.
 
 The PR2 design underwent significant iteration during live-radio tuning. What was originally specced as a narrow-band navy-only palette turned out to be wrong — the reference AetherSDR look is actually a **full-spectrum rainbow** (black → blue → cyan → green → yellow → red → magenta) where the "blue look" comes from AGC + tight thresholds keeping normal signals in the cool region. The final ClarityBlue palette is a 10-stop rainbow with a deep-black floor.
 
@@ -505,16 +505,8 @@ The PR2 design underwent significant iteration during live-radio tuning. What wa
 - New `tst_clarity_defaults` 5-slot QtTest locking palette invariants (enum ordinal, deep-black floor, monotonic stops, rainbow progression with warm upper-half stop, vivid peak)
 - Implementation plan: `docs/architecture/2026-04-15-phase3g9b-smooth-defaults-plan.md`
 
-#### Phase 3G-9c: Clarity Adaptive Display Tuning (PR3)
-- **Research-doc gated** — no code until `docs/architecture/clarity-design.md` is written and signed off
-- Flavor C: continuous adaptive thresholds + one-shot "Re-tune now" button
-- New `NoiseFloorEstimator` (percentile-based, TDD unit tests on synthetic FFT bins)
-- New `ClarityController` (2 Hz polling, EWMA τ ≈ 3s smoothing, ±2 dB deadband, TX-pause, manual-override detection)
-- Per-band Clarity memory in `BandGridSettings` — band-switch snaps to last-known good
-- Clarity status badge ("C") on Spectrum Overlay panel — green active / amber paused
-- W3 "Waterfall AGC" checkbox deprecated in favor of Clarity with migration label
-- Prior-art survey in the research doc: Thetis `WaterfallAGC`, WDSP `nob.c`, GQRX / SDR++ auto-range implementations
-- ~250 LOC algorithm + ~400 LOC tests + ~300 LOC UI/wiring + research doc; Risk: high — algorithmic, mitigated by doc-first gate, TDD, clean off switch, PR2 fallback always present
+#### Phase 3G-9c: Clarity Adaptive Display Tuning (PR3) ✅ COMPLETE
+**Shipped 2026-04-16** as PR #29 + PR #31 (merged). Continuous adaptive thresholds + one-shot "Re-tune now"; `NoiseFloorEstimator` (percentile-based, TDD); `ClarityController` (2 Hz polling, EWMA τ ≈ 3s smoothing, ±2 dB deadband, TX-pause, manual-override detection); per-band Clarity memory in `BandGridSettings`; "C" status badge on Spectrum Overlay panel (green active / amber paused). W3 "Waterfall AGC" checkbox deprecated in favor of Clarity. Prior-art survey in `docs/architecture/clarity-design.md`. PR1+2+3 fallback always present via off-switch. Same PR also unblocked Windows CI linker error on `NoiseFloorEstimator`.
 
 **Non-goals:** RX2/TX display surface, Spectrum Overlay flyout refactors, skin system, Thetis default-value adoption beyond the seven PR2 recipes. Source-first protocol per CLAUDE.md governs everything else; 3G-8's §10 divergence exception is **not** extended.
 
@@ -575,20 +567,8 @@ Deferred (see design §9 + verification doc): TX IQ producer (Phase 3M), PureSig
 **Plan doc:** `docs/architecture/phase3i-radio-connector-port-plan.md` (23 tasks, 2575 lines)
 **Smoke test:** `docs/debugging/phase3i-smoke-test.md`
 
-### Phase 3G-14: 💡 AI-Assisted Issue Reporter
-**Goal:** Port AetherSDR's light-bulb issue reporter — a 💡 button in the menu bar corner widget that guides users through filing feature requests or bug reports with AI assistance.
-
-Ported from AetherSDR `TitleBar::showFeatureRequestDialog()` / `showFeatureRequestDialogImpl()`.
-
-Scope:
-- **💡 corner widget** — amber-styled QPushButton via `QMenuBar::setCornerWidget()`, always visible
-- **Version check gate** — hits `api.github.com/repos/boydsoftprez/NereusSDR/releases/latest`, warns if outdated before filing
-- **AI-assisted issue dialog** — structured prompt copied to clipboard (adapted for NereusSDR: OpenHPSDR radios, Thetis reference, `boydsoftprez/NereusSDR` URLs, NereusSDR label set), provider buttons (Claude, ChatGPT, Gemini, Grok, Perplexity), "Submit Your Idea" → `feature_request.yml`, "Report a Bug" → `bug_report.yml`
-- Existing SupportDialog "File an Issue" flow unchanged
-
-Files touched: `MainWindow.h`, `MainWindow.cpp`. No new source files. Requires Qt6::Network (already linked).
-
-Independent of all other phases — no file overlap with 3G-9, 3G-10, 3G-13, or 3M-*.
+### Phase 3G-14: 💡 AI-Assisted Issue Reporter ✅ COMPLETE
+**Shipped 2026-04-16** as PR #36 (merged). Ported AetherSDR's light-bulb issue reporter — 💡 amber-styled QPushButton via `QMenuBar::setCornerWidget()`, version check gate against `api.github.com/repos/boydsoftprez/NereusSDR/releases/latest`, AI-assisted issue dialog with structured prompt + provider buttons (Claude, ChatGPT, Gemini, Grok, Perplexity), "Submit Your Idea" → `feature_request.yml`, "Report a Bug" → `bug_report.yml`. Existing SupportDialog "File an Issue" flow unchanged. Files touched: `MainWindow.h`, `MainWindow.cpp`. Requires Qt6::Network.
 
 ### Phase 3M-1: Basic SSB TX
 **Goal:** Get RF out the door — prove the TX I/Q output path works.
@@ -769,12 +749,29 @@ Scope:
 
 Shipped: consolidated `release.yml` (prepare → build×3 → sign-and-publish), `/release` skill, GPG-signed alpha builds across Linux AppImage ×2 archs, macOS Apple Silicon DMG, Windows portable ZIP + NSIS installer. v0.1.2 → v0.1.4 → v0.1.7 → v0.2.0 → v0.2.1 all shipped via this pipeline.
 
-### Phase 3O: VAX — Audio Routing & Cross-Platform Audio Engine
-**Goal:** Ship NereusSDR's complete RX audio routing story — per-receiver VAX assignment, Thetis-grade Setup → Audio power-user surface, native VAX drivers on macOS/Linux, auto-detect for user-installed Windows virtual cables, optional Direct ASIO (cmASIO parity) engine.
+### Phase 3O: VAX — Audio Routing & Cross-Platform Audio Engine 🚧 IN FLIGHT
+**Goal:** Ship NereusSDR's complete RX audio routing story — per-receiver VAX assignment, Thetis-grade Setup → Audio power-user surface, native VAX drivers on macOS/Linux, auto-detect for user-installed Windows virtual cables.
 
-**Design spec:** `docs/architecture/2026-04-19-vax-design.md` (brainstormed 2026-04-19, ready for implementation plan)
+**Design spec:** `docs/architecture/2026-04-19-vax-design.md` · **Implementation plan:** `docs/architecture/2026-04-19-phase3o-vax-plan.md`
 
-Scope:
+**Sub-phase status (12 sub-phases total):**
+
+| Sub-phase | Scope | Status |
+|---|---|---|
+| 1–4 | VAX data model + IAudioBus + PortAudioBus + AudioEngine refactor | ✅ PR #62 (2026-04-19) |
+| 5 | macOS CoreAudioHalBus + HAL plugin + .pkg installer + app-side shm bus | ✅ PR #63 (2026-04-19) |
+| 6 | Linux PulseAudio bridge (LinuxPipeBus) | ✅ PR #64 (2026-04-19) |
+| 7 | VirtualCableDetector (Windows BYO helper) | ✅ PR #65 (2026-04-19) |
+| 8 | VaxChannelSelector + VfoWidget integration | ✅ PR #66 (2026-04-20) |
+| 8.5 | AudioEngine platform VAX bus wiring | ✅ PR #71 (2026-04-20) |
+| 9 | VaxApplet port + per-channel RX gain/mute + overlay wiring | ✅ PR #74 (2026-04-20) |
+| 10 | MasterOutputWidget + TitleBar (menu + master output consolidation) | ✅ PR #78 (2026-04-20) |
+| 11 | VAX first-run dialog + rescan diff | 🚧 PR #80 (in flight) |
+| 12 | Setup → Audio → VAX page (gates Sub-Phase 11 release) | Planned |
+
+**Release gate:** Sub-Phase 11 must not ship in a release without Sub-Phase 12 also merged (memory: `project_nereussdr_phase3o_subphase11_release_gate`). Direct ASIO deferred per 2026-04-19 GPL-3 review (Steinberg ASIO SDK not GPL-compatible); PortAudio's built-in ASIO host API remains as the ASIO path.
+
+**Original scope as designed (preserved for reference):**
 - **`IAudioBus` abstraction** with five platform backends: `CoreAudioHalBus` (macOS HAL plugin, port of AetherSDR `VirtualAudioBridge`), `LinuxPipeBus` (PulseAudio module-pipe, port of AetherSDR `PipeWireAudioBridge`), `PortAudioBus` (Windows default + Mac/Linux fallback), `DirectAsioBus` (Windows opt-in, Thetis `cmasio.c` port with Thetis attribution), `CoreAudioBus` (Mac fallback).
 - **macOS HAL plugin** at `hal-plugin/NereusSDRVAX.cpp` — 4 VAX outputs + 1 TX input as native CoreAudio devices. libASPL-based, POSIX shm IPC. Dev-ID-signed + notarized `.pkg` installer with macOS 14.4+ `killall coreaudiod` fallback.
 - **Linux bridge** — `pactl`-loaded `module-pipe-source` × 4 + `module-pipe-sink` × 1, rebranded to `nereussdr-vax-*`. Works on both Pulse and PipeWire-via-pipewire-pulse. Stale-module cleanup on startup.
@@ -820,43 +817,69 @@ Success criteria (subset, see spec §14 for full list):
 
 ---
 
-## Recommended Next Steps: Phase 3G-9 + Phase 3G-10 (parallel polish pair before 3M-1)
+### Phase 3P: All-Board Radio-Control Parity (8 sub-phases A–H)
+**Status:** Spec drafted 2026-04-20; pending maintainer approval before Phase A implementation plan.
 
-Phase 3I shipped the entire ANAN/Hermes P1 family end-to-end. Before putting RF on the air, two polish phases tighten the RX surface in parallel:
+**Goal:** Wire-level parity with Thetis for every HPSDR Protocol 1 + Protocol 2 board type plus the userland surface (Setup pages, RxApplet evolution, Diagnostics dashboard) to operate it. After Phase H merges, NereusSDR's hardware/radio-control surface is **userland-complete** vs Thetis.
 
-- **Phase 3G-9 — Display Refactor.** Source-first audit, verbatim-or-rewritten tooltip port, slider/spinbox refactor, then smooth defaults + Clarity Blue palette, then the Clarity adaptive auto-tune feature. Design spec at `docs/architecture/2026-04-15-display-refactor-design.md`. 3G-9 is three sequential PRs; 3G-9a is mechanical and can start immediately.
-- **Phase 3G-10 — RX DSP Parity + AetherSDR Flag Port.** Two-stage phase: **Stage 1 (complete — PRs #28 + #30)** ported the AetherSDR `VfoWidget` visual shell with faithful color/font/layout fidelity, rewriting all four tab panes (4×2 DSP grid, AudioTab AGC 5-button row, ModeTab quick-mode buttons, X/RIT tab), embedding mode containers with mode-driven visibility, and adding a tooltip coverage test. **Stage 2 (next)** wires every RX-side DSP NYI stub (AGC threshold/hang/slope/attack/decay, squelch SSB/AM/FM, EMNR, SNB, APF, RIT/XIT, mute, pan, binaural, lock, and the FM/DIG/RTTY/CW mode-specific flag containers) through `SliceModel → RxChannel → WDSP`. Introduces per-slice-per-band bandstack persistence for DSP state. Design spec at `docs/architecture/2026-04-15-phase3g10-rx-dsp-flag-design.md`.
+**Originating bug reports (Hermes Lite 2):** bandpass filter doesn't switch on band/VFO change · S-ATT (step attenuator) has no audible / hardware effect. Both bugs root-caused to `P1RadioConnection` lacking the mi0bot `WriteMainLoop_HL2` byte layout (6-bit ATT mask + 0x40 enable + MOX TX/RX branch) and never recomputing Alex HPF/LPF bits on frequency change. Phase A is the minimum fix.
 
-3G-9 touches the Display category; 3G-10 touches the VFO flag and RX DSP wiring. The two phases have no file-level overlap and ship in parallel.
+**Spec:** `docs/architecture/2026-04-20-all-board-radio-control-parity-spec.md` (810 lines, 8 phases, per-bank byte divergence catalog vs ramdor 501e3f5 + mi0bot c26a8a4)
+**Mockups:** `docs/architecture/2026-04-20-radio-control-mockups/` (9 HTML wireframes locking userland IA)
 
-After 3G-9 + 3G-10 the next highest-value phase is TX — taking a working RX-only setup and putting a signal on the air. See Phase 3M-1 below for scope.
+**Sub-phase roadmap:**
 
-Phases 3A–3E, 3G-1 through 3G-8, and 3-UI are all complete. The radio connects,
-demodulates audio, renders live GPU spectrum + waterfall, supports full VFO tuning with
-CTUN panadapter mode, has a complete meter system with 31 item types (18 passive + 13
-interactive) including button grids, VFO display, and clock, has a full Thetis-parity
-Container Settings Dialog with MMIO external-data subsystem, and — as of 3G-8 — a fully
-wired Display setup category where every Spectrum Defaults / Waterfall Defaults / Grid
-& Scales control routes through to the renderer live on both the QPainter fallback and
-the QRhi/Metal GPU path.
+| Sub-phase | Branch | Scope | Fixes reported bug? |
+|---|---|---|---|
+| **A** | `phase3p-a-p1-wire-parity` | `IP1Codec` interface + 4 subclasses (`Standard`, `Hl2`, `AnvelinaPro3`, `RedPitaya`); shared `AlexFilterMap`; setReceiverFrequency / setTxFrequency recompute filter bits; byte-table unit tests | **Yes — both** |
+| **B** | `phase3p-b-p2-wire-parity` | `IP2Codec` + Saturn/OrionMkII subclasses; Saturn BPF1 band edges; per-ADC RX1 preamp; Antenna/ALEX → Alex-1/Alex-2 Filters sub-sub-tabs; ADC OVL splits per-ADC | No |
+| **C** | `phase3p-c-preamp-combo` | Full `SetComboPreampForHPSDR` port; RxApplet preamp combo populates per board; folds in PR #34 tail | No |
+| **D** | `phase3p-d-oc-matrix` | OcMatrix model (14 × 7 × RX/TX); Hardware → OC Outputs page (HF/SWL sub-sub-tabs, RX/TX matrix, TX pin actions, USB BCD, ext PA) | No |
+| **E** | `phase3p-e-hl2-ioboard` | IoBoardHl2 I2C TLV queue; 12-step state machine; HL2 bandwidth monitor; N2ADR filter; Hardware → HL2 I/O page (was placeholder) | Fixes *different* HL2 bug (external N2ADR shield) |
+| **F** | `phase3p-f-accessories` | Apollo / Alex II / PennyLane controllers; Antenna/ALEX → Antenna Control sub-sub-tab (per-band TX/RX1/RX2 grid); RxApplet antenna buttons populate per-band | No |
+| **G** | `phase3p-g-calibration` | Hardware → Calibration page (renamed from PA Calibration); 5 group boxes 1:1 with Thetis (Freq Cal, Level Cal, HPSDR Freq Cal Diagnostic, TX Display Cal, PA Current) | No |
+| **H** | `phase3p-h-status-hygiene` | Diagnostics → Radio Status page (PA temp/current/SWR/PTT/connection); Settings Validation; Connection Quality history; Export/Import Config; live LED indicators wired across earlier-phase pages | No |
 
-The next meaningful steps:
+**Architecture:** Hybrid per-board codec subclasses (mirrors Thetis's literal `WriteMainLoop` vs `WriteMainLoop_HL2` split) + `BoardCapabilities` parameter expansion. Source-priority methodology: case-by-case audit, mi0bot wins for HL2-specific paths, ramdor canonical otherwise, every divergence cited with both `[ramdor 501e3f5]` and `[mi0bot c26a8a4]` stamps.
 
-- **3G-9 (Display Refactor)** — three-PR polish pass on the 3G-8 Display surface: audit + tooltips + slider readouts → smooth defaults + Clarity Blue palette → Clarity adaptive auto-tune. Independent of TX work; can ship in parallel with 3G-10 and 3M-1 prep.
-- **3G-10 (RX DSP Parity + AetherSDR Flag Port)** — two-stage phase: **Complete.** Stage 1 (PRs #28 + #30): VfoWidget visual shell with 4×2 DSP grid, mode containers, tooltip coverage test. Stage 2: 10 WDSP feature slices wired (AGC-adv, EMNR, SNB, APF, squelch, mute/pan/binaural, NB2 polish, RIT/XIT, frequency lock, mode containers), per-slice-per-band persistence, Thetis-first tooltips. CW autotune deferred (no WDSP API).
-- **3G-13 (Step Attenuator & ADC Overload)** — **PR #34 in flight on `feature/step-attenuator`**. StepAttenuatorController with Classic (Thetis 1:1) and Adaptive (NereusSDR attack/hold/decay with per-band memory) auto-att modes. P1/P2 adcOverflow emission, ADC OVL status badge (yellow/red, per-ADC), Setup→General→Options page, RxApplet ATT/S-ATT row with per-model preamp items from Thetis SetComboPreampForHPSDR (console.cs:40755), stepAttMaxDb 31/61 from setup.cs:15765, per-MAC persistence, 9 unit tests. Smoke-tested on ANAN-G2. **Note:** HL2 ATT logic may need cross-checking against mi0bot/Thetis-HL2 fork before HL2 field testing.
-- **3M-1 (Basic SSB TX)** (formerly 3I-1; renumbered after Phase 3I became the radio connector port) — TxChannel WDSP wrapper, mic input, MOX state machine, TX I/Q
-  output. Proves the TX path end-to-end and unblocks 3M-2..4, 3F, 3H.
+**Test strategy:** hand-derived byte-table unit tests, ~500–700 assertions, regression-freeze JSON baseline of current output for every (bank × model × MOX) tuple to guarantee non-HL2 boards ship byte-identical to pre-refactor `main`.
 
-Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-13) → 3M-1..4 → 3F → 3H → 3J+** (3G-9, 3G-10, and 3G-13 run in parallel; all land before 3M-1)
+**Rollback strategy:** Phase A ships behind `NEREUS_USE_LEGACY_P1_CODEC=1` env-var feature flag for one release cycle; flag removed after Phase B merges.
+
+**Coordination with in-flight work:** PR #34 (3G-13 step attenuator) lands first as-is (5-bit encoding correct for Hermes/Orion); Phase A rebases and adds the HL2 6-bit branch on top. Phase A doesn't touch PR #53 (Auto AGC-T) or 3G-10 slice features.
+
+**Attribution:** every new file gets verbatim upstream header(s), PROVENANCE row in same commit, every ported logic block stamped. CI enforces via `verify-thetis-headers.py` + `check-new-ports.py`.
+
+---
+
+## Recommended Next Steps: 3O Sub-Phase 11 → Sub-Phase 12 → Phase 3P → 3M-1
+
+All polish work that was running in parallel before TX (3G-9, 3G-10, 3G-13, 3G-14) has shipped, and Phase 3I covers the full ANAN/Hermes P1 family. Current active line of work is Phase 3O (VAX), with Phase 3P (radio-control parity) just spec'd to address two reported HL2 bugs before TX.
+
+**Active queue (in order):**
+
+1. **3O Sub-Phase 11 (PR #80 in flight)** — VAX first-run dialog + rescan diff. Must not ship in a release without Sub-Phase 12 also merged (release gate per memory).
+2. **3O Sub-Phase 12** — Setup → Audio → VAX page. Closes the 3O release gate; ships v0.2.2 (or whatever version comes next).
+3. **Phase 3P Sub-Phase A — `phase3p-a-p1-wire-parity`** — bug fix for HL2 BPF + S-ATT. Lands behind `NEREUS_USE_LEGACY_P1_CODEC` rollback flag, byte-identical to pre-refactor `main` for non-HL2 boards. PR #34 (3G-13) order-coordinated. Implementation plan to be authored from spec via `superpowers:writing-plans`.
+4. **3M-1 (Basic SSB TX)** — TxChannel WDSP wrapper, mic input, MOX state machine, TX I/Q output. Proves the TX path end-to-end and unblocks 3M-2..4, 3F, 3H.
+5. **Phase 3P Sub-Phases B → H** in order — P2 audit / preamp combo / OC matrix / HL2 IoBoard / accessories / calibration / status-hygiene. Each its own branch + PR. After H ships, NereusSDR's hardware-control surface is userland-complete vs Thetis.
+
+Phases 3A–3E, 3G-1 through 3G-14, 3I (with 3I-RP follow-up PR #41), 3-UI, and 3N are all complete. The radio connects, demodulates audio, renders live GPU spectrum + waterfall, supports full VFO tuning with CTUN, has a complete meter system + Container Settings Dialog with MMIO, has the full Display setup category wired (47 controls), the VFO flag with all 10 WDSP feature slices wired (3G-10 Stage 2), step attenuator + ADC overload protection (3G-13), the 💡 AI-assisted issue reporter (3G-14), Auto AGC-T (PR #53), the radio model selector + P1 C&C completion (3I-RP / PR #41), and the cross-platform release pipeline (3N).
+
+Recent attribution / GPL compliance push (PRs #47, #48, #51, #52, #55, #56) — round-2 attribution audit across 20 applet/core headers, full-tree verifier, inline Thetis-cite version stamping, GPL text bundling + source offer for binaries, audit infrastructure + CI gates. Documented in `docs/attribution/COMPLIANCE-INVENTORY.md`.
 
 ### Phase Dependencies
 
 ```
-3G-4 → 3G-5 → 3G-6    (meter system, sequential)
+3G-4 → 3G-5 → 3G-6    (meter system, sequential — all complete)
 
-3G-8 → 3G-9a → 3G-9b → 3G-9c    (display surface polish, sequential; 3G-9c gated on research doc)
-3G-8 → 3G-10 Stage1 ✓ → 3G-10 Stage2    (RX DSP + AetherSDR flag port; parallel with 3G-9)
+3G-8 → 3G-9a → 3G-9b → 3G-9c    (display surface polish, all complete)
+3G-8 → 3G-10 Stage1 → 3G-10 Stage2    (RX DSP + flag port, all complete)
+
+3O Sub-Phase 11 → 3O Sub-Phase 12    (current active line; 11 must not ship without 12)
+
+Phase 3P A (bug fix, can run in parallel with 3O Sub-Phase 12)
+Phase 3P A → 3P B → 3P C → 3P D → 3P E → 3P F → 3P G → 3P H    (radio-control parity; A unblocks all)
 
 3M-1 → 3M-2 → 3M-3 → 3M-4 → 3F → 3H    (TX then multi-RX)
                                ↑
@@ -865,9 +888,9 @@ Execution order: **(3G-9a..c ∥ 3G-10 ∥ 3G-13) → 3M-1..4 → 3F → 3H → 
                        states (DDC0+DDC1 sync at 192kHz)
 ```
 
-3G-9, 3G-10, 3G-13, and 3G-14 touch disjoint subsystems from each other and from 3M-* — they can all run in parallel if desired. 3G-9 owns the Display setup surface; 3G-10 owns the VFO flag and RX DSP wiring; 3G-13 owns the step attenuator + ADC overload protection (protocol layer + Setup Options + RxApplet ATT row + status bar); 3G-14 owns the 💡 issue reporter (menu bar corner widget + dialog).
+Phase 3P Sub-Phase A and 3O Sub-Phase 12 touch disjoint subsystems and can ship in parallel. Phase 3P Sub-Phases B–H are sequenced after A because they all build on the same per-board codec architecture.
 
-Independent phases (can start anytime): 3G-14 (issue reporter), 3J (TCI — depends on 3O IAudioBus contract), 3K (CAT), 3L (P1), 3M (Recording), **3O (VAX audio routing — depends on 3B, 3G-8, 3G-10 Stage 2; all complete)**.
+Independent phases (can start anytime, no current work): 3J (TCI — uses 3O IAudioBus contract), 3K (CAT), 3L (P1 cosmetics — most P1 work absorbed into Phase 3P), 3M (Recording).
 
 ---
 
@@ -900,6 +923,7 @@ prerequisite infrastructure exists.
 | 2026-04-10 | Full plan review: Thetis/AetherSDR deep-dive, feature gap analysis, phase restructuring, container/PureSignal/TX architecture | [2026-04-10-plan-review.md](architecture/reviews/2026-04-10-plan-review.md) |
 | 2026-04-19 | Added Phase 3O (VAX — Audio Routing & Cross-Platform Audio Engine). Design brainstormed against Thetis VAC/cmASIO, AetherSDR DaxApplet/VirtualAudioBridge/PipeWireAudioBridge, and reference UIs (Rogue Amoeba Loopback, Dante Controller, RME TotalMix, qpwgraph). Chose AetherSDR-style routing + VFO-flag VAX selector + docked VaxApplet over patchbay/matrix alternatives. Windows BYO-with-auto-detect chosen over signed-kernel-driver for v1; TCI scoped out to Phase 3J with integration points reserved. Also audited status of 3N (marked complete) and added VAX row to Objective Cross-Check. | [2026-04-19-vax-design.md](architecture/2026-04-19-vax-design.md) |
 | 2026-04-19 | Implementation plan authored for Phase 3O with pre-execution GPL-3 compliance review. **Dropped Direct ASIO engine** from the phase: Steinberg ASIO SDK is not GPL-3 compatible; linking it into distributed NereusSDR binaries would violate both the ASIO SDK terms and GPL-3. PortAudio's built-in ASIO host API remains as the ASIO path. All other components (AetherSDR GPL-3 ports, libASPL MIT, PortAudio MIT, Qt6/FFTW3/WDSP) verified compatible. Compliance inventory update folded into final verification task. | [2026-04-19-phase3o-vax-plan.md](architecture/2026-04-19-phase3o-vax-plan.md) |
+| 2026-04-20 | **Phase 3P all-board radio-control parity spec** authored in response to user-reported HL2 bugs (BPF doesn't switch on band change; S-ATT non-functional). Root-cause investigation against ramdor 501e3f5 + mi0bot c26a8a4 found `P1RadioConnection::composeCcForBank` uses Hermes/Orion encoding for every board (5-bit ATT mask + 0x20 enable) where HL2 needs 6-bit + 0x40 + MOX TX/RX branch (mi0bot `WriteMainLoop_HL2`); separately, P1 never recomputes Alex HPF/LPF bits on freq change (P2 has the compute, P1 doesn't). Spec scoped to 8 sub-phases (A–H): A is the bug fix; B–F raise rest of wire surface; G–H complete userland (calibration, status feedback, settings hygiene). Architecture chosen: hybrid per-board codec subclasses + `BoardCapabilities` parameter expansion, mirroring Thetis's literal `WriteMainLoop` vs `WriteMainLoop_HL2` split. Source-priority methodology: case-by-case audit, every divergence cited with both upstream stamps. Test strategy: hand-derived byte-table unit tests + regression-freeze JSON baseline guaranteeing non-HL2 boards ship byte-identical. Rollback: `NEREUS_USE_LEGACY_P1_CODEC` env-var feature flag for one release. Mockups directory archives 9 HTML wireframes locking userland IA decisions. Master plan refreshed in same session: 3G-9b/9c/10-Stage2/13/14 status flags flipped to ✅ COMPLETE; Phase 3O sub-phase status table added; Recommended Next Steps rewritten to 3O-11 → 3O-12 → 3P-A → 3M-1. | [2026-04-20-all-board-radio-control-parity-spec.md](architecture/2026-04-20-all-board-radio-control-parity-spec.md) · [mockups](architecture/2026-04-20-radio-control-mockups/) |
 
 ---
 
