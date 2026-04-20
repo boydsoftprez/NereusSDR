@@ -604,17 +604,14 @@ void ContainerManager::restoreState()
         // factory so the panel container gets an AppletPanelWidget;
         // when no factory is set (tests, headless tools) we default to
         // a bare MeterWidget which matches the user-created shape.
+        // NOTE: do NOT call setContent yet. Items are deserialized into
+        // the inner meter here (so they're ready before mount), but
+        // setContent is deferred until after the dock-mode reparent so
+        // meterReadyForPolling fires exactly once — for the final
+        // mounted meter — on the restore path.
         QWidget* content = m_contentFactory
             ? m_contentFactory(container->id(), container->rxSource())
             : new MeterWidget();
-        if (content) {
-            container->setContent(content);
-        }
-
-        // Restore meter items into whichever MeterWidget the content
-        // shape exposes (bare or wrapped). Empty payload → leave the
-        // fresh meter empty so caller-side seeding can decide what to
-        // do (Container #0's default presets, etc.).
         if (auto* meter = innerMeterWidget(content)) {
             const QString itemsPayload =
                 s.value(QStringLiteral("ContainerItems_%1").arg(id)).toString();
@@ -641,10 +638,12 @@ void ContainerManager::restoreState()
             container->setParent(m_splitter);
             m_splitter->addWidget(container);
             m_panelContainerId = container->id();
+            if (content) { container->setContent(content); }
             container->show();
             break;
         case DockMode::OverlayDocked:
             container->setParent(m_dockParent);
+            if (content) { container->setContent(content); }
             container->restoreLocation();
             if (container->isContainerEnabled() && !container->isHiddenByMacro()) {
                 container->show();
@@ -652,11 +651,22 @@ void ContainerManager::restoreState()
             }
             break;
         case DockMode::Floating:
+            // Reparent into the FloatingContainer first (no content yet
+            // avoids the native-window extract/reinstall dance that
+            // setMeterFloating needs for live-float). Then setContent,
+            // which emits meterReadyForPolling exactly once for the
+            // final mounted meter.
             container->resize(floatingForm->size());
-            setMeterFloating(container, floatingForm);
+            floatingForm->takeOwner(container);
+            floatingForm->setContainerFloating(true);
+            container->setDockMode(DockMode::Floating);
+            container->setTopMost();
+            floatingForm->ensureVisiblePosition(m_dockParent);
+            if (content) { container->setContent(content); }
             if (container->isContainerEnabled() && !container->isHiddenByMacro()) {
                 floatingForm->show();
             }
+            qCDebug(lcContainer) << "Floated container:" << container->id();
             break;
         }
 
