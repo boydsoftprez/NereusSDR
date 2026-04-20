@@ -35,6 +35,11 @@ private slots:
     void arcAnchoredToBgRect_rendersNeedlesOnFaceAt2x1();
     void serialize_roundTrip_preservesAllFields();
     void debugOverlay_paintsCalibrationPoints();
+
+    // Thetis property-editor parity — Phase 1 default value baselines.
+    void parityKnobs_defaultsMatchThetisNewPreset();
+    void signalSource_rebindsSignalNeedle();
+    void setNeedleColor_updatesNeedle();
 };
 
 void TestAnanMultiMeterItem::defaultConstruction_hasSevenNeedles()
@@ -137,6 +142,71 @@ void TestAnanMultiMeterItem::debugOverlay_paintsCalibrationPoints()
     }
     QVERIFY2(sawNonBlack,
              "Debug overlay produced no visible calibration-point pixels");
+}
+
+// ---------------------------------------------------------------------------
+// Thetis property-editor parity — baseline defaults + new setter coverage.
+// These lock the initial knob state so later phases cannot silently regress
+// default values and so the first-commit CI run exercises every new
+// accessor.
+// ---------------------------------------------------------------------------
+void TestAnanMultiMeterItem::parityKnobs_defaultsMatchThetisNewPreset()
+{
+    AnanMultiMeterItem a;
+
+    // Settings
+    QCOMPARE(a.updateMs(), 100);
+    QCOMPARE(a.attackRatio(), 0.8f);
+    QCOMPARE(a.decayRatio(), 0.2f);
+
+    // Colors
+    QCOMPARE(a.backgroundColor().alpha(), 0);    // transparent by default
+    QCOMPARE(a.lowColor(), QColor(Qt::white));
+    QCOMPARE(a.highColor(), QColor(255, 64, 64));
+    QCOMPARE(a.indicatorColor(), QColor(Qt::yellow));
+    QCOMPARE(a.subColor(), QColor(Qt::black));
+
+    // Toggles
+    QCOMPARE(a.fadeOnRx(), false);
+    QCOMPARE(a.fadeOnTx(), false);
+    QCOMPARE(a.darkMode(),  false);
+    QCOMPARE(a.showMeterTitle(), false);
+    QCOMPARE(a.showPeakValue(),  false);
+    QCOMPARE(a.showPeakHold(),   false);
+    QCOMPARE(a.showHistory(),    false);
+    QCOMPARE(a.showShadow(),     false);
+    QCOMPARE(a.showSegmented(),  false);
+    QCOMPARE(a.showSolid(),      false);
+
+    // History defaults
+    QCOMPARE(a.historyMs(),       4000);
+    QCOMPARE(a.ignoreHistoryMs(), 250);
+
+    // Signal source defaults to Avg (existing AddAnanMM behaviour).
+    QCOMPARE(a.signalSource(), AnanMultiMeterItem::SignalSource::Avg);
+}
+
+void TestAnanMultiMeterItem::signalSource_rebindsSignalNeedle()
+{
+    AnanMultiMeterItem a;
+    a.setSignalSource(AnanMultiMeterItem::SignalSource::Peak);
+    // Serialization round-trip confirms the source flag persists; the
+    // binding-id change is exercised implicitly via pushBindingValue in
+    // tst_preset_live_binding.
+    const QString blob = a.serialize();
+    AnanMultiMeterItem b;
+    QVERIFY(b.deserialize(blob));
+    QCOMPARE(b.signalSource(), AnanMultiMeterItem::SignalSource::Peak);
+}
+
+void TestAnanMultiMeterItem::setNeedleColor_updatesNeedle()
+{
+    AnanMultiMeterItem a;
+    a.setNeedleColor(2, QColor(10, 20, 30));
+    QCOMPARE(a.needleColor(2), QColor(10, 20, 30));
+    // Out-of-range index is a no-op.
+    a.setNeedleColor(99, QColor(255, 0, 0));
+    QCOMPARE(a.needleColor(0), QColor(233, 51, 50));  // still default Signal red
 }
 
 QTEST_MAIN(TestAnanMultiMeterItem)

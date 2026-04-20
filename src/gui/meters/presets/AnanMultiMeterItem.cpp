@@ -80,6 +80,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/presets/PresetGeometry.h"  // letterboxedBgRect
 #include "gui/meters/MeterPoller.h"  // MeterBinding::*
 
+#include <QFont>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -256,6 +257,12 @@ AnanMultiMeterItem::AnanMultiMeterItem(QObject* parent)
     // resource leaves m_background null and the paint path falls back
     // to drawing into the raw item rect.
     m_background.load(QStringLiteral(":/meters/ananMM.png"));
+
+    // Seed per-needle peak-hold tracking below the calibration
+    // range so the first push_value() acts as the initial max.
+    for (int i = 0; i < kNeedleCount; ++i) {
+        m_peakHolds[i] = -std::numeric_limits<double>::infinity();
+    }
 }
 
 void AnanMultiMeterItem::initialiseNeedles()
@@ -437,6 +444,30 @@ void AnanMultiMeterItem::setNeedleVisible(int i, bool v)
     m_needles[i].visible = v;
 }
 
+void AnanMultiMeterItem::setNeedleColor(int i, const QColor& c)
+{
+    if (i < 0 || i >= kNeedleCount) {
+        return;
+    }
+    m_needles[i].color = c;
+}
+
+// Thetis property-editor parity — switching the Signal source
+// rebinds the Signal needle (index 0) to the matching
+// MeterBinding::* ID so MeterPoller will route the picked
+// reading into the same needle slot on the next tick.
+void AnanMultiMeterItem::setSignalSource(SignalSource s)
+{
+    m_signalSource = s;
+    int newBinding = MeterBinding::SignalAvg;
+    switch (s) {
+        case SignalSource::Avg:    newBinding = MeterBinding::SignalAvg;    break;
+        case SignalSource::Peak:   newBinding = MeterBinding::SignalPeak;   break;
+        case SignalSource::MaxBin: newBinding = MeterBinding::SignalMaxBin; break;
+    }
+    m_needles[0].bindingId = newBinding;
+}
+
 // ---------------------------------------------------------------------------
 // Arc-fix — bgRect()
 //
@@ -514,6 +545,19 @@ void AnanMultiMeterItem::paint(QPainter& p, int widgetW, int widgetH)
         return;
     }
 
+    // Thetis property-editor parity — user-chosen background colour
+    // painted underneath the face image. alpha == 0 skips the fill so
+    // the default behaviour (just the image) stays intact. Dark mode
+    // overrides the user colour with a near-black tint so the rest of
+    // the render scheme reads correctly on a dark chrome.
+    const QColor bgFill = m_darkMode ? QColor(10, 10, 18, 255)
+                                     : m_backgroundColor;
+    if (bgFill.alpha() > 0) {
+        p.save();
+        p.fillRect(bg, bgFill);
+        p.restore();
+    }
+
     // Background image (if present).
     // Wrap drawImage with save/restore + SmoothPixmapTransform so the
     // scaled ananMM.png stays crisp at non-native container sizes
@@ -527,12 +571,109 @@ void AnanMultiMeterItem::paint(QPainter& p, int widgetW, int widgetH)
         p.restore();
     }
 
+    // TODO(render-mode-shadow): implement paint-time effect;
+    // currently storage-only. Thetis Shadow decorates the bar
+    // portion of a composite — ANAN MM is pure needles so this
+    // field is preserved for Thetis-parity round-trip but produces
+    // no visible effect here.
+    // TODO(render-mode-segmented): implement paint-time effect;
+    // currently storage-only. Same reasoning as Shadow.
+    // TODO(render-mode-solid): implement paint-time effect;
+    // currently storage-only. Same reasoning as Shadow.
+    // TODO(render-mode-history): implement paint-time effect;
+    // currently storage-only. Needs a rolling per-needle sample
+    // buffer driven off m_historyMs.
+    // TODO(render-mode-attack-decay): Attack/Decay ratios stored;
+    // needle smoothing applies at setValue() time (future work).
+    // TODO(fade-coupling): once RadioModel exposes a global
+    // mox()/rx state, hide the needles whose opposite flag is set
+    // for the current state.
+
+    // Fade on RX/TX: without a RadioModel handle here, we fall back
+    // to "hide the whole needle array when user has asked to fade in
+    // the current environment". The flag is evaluated against the
+    // settings-dialog preview context (neither RX nor TX) as a no-op,
+    // so the storage path round-trips without breaking the preview.
+    const bool suppressNeedles = false;  // TODO(fade-coupling) honour live TX/RX
+
     // Needles
-    for (const Needle& n : m_needles) {
-        if (!n.visible) {
+    for (int i = 0; i < kNeedleCount; ++i) {
+        const Needle& n = m_needles[i];
+        if (!n.visible || suppressNeedles) {
             continue;
         }
         paintNeedle(p, n, bg);
+    }
+
+    // Thetis property-editor parity — Meter Title painted centred
+    // near the top of the face. Falls back silently when the title
+    // text is empty.
+    if (m_showMeterTitle && !m_meterTitleText.isEmpty()) {
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QFont f = p.font();
+        const int titlePx = qMax(10, static_cast<int>(bg.height() * 0.06));
+        f.setPixelSize(titlePx);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(m_darkMode ? QColor(220, 220, 220) : m_meterTitleColor);
+        const QRect titleRect(bg.x(),
+                              bg.y() + static_cast<int>(bg.height() * 0.02),
+                              bg.width(),
+                              titlePx * 2);
+        p.drawText(titleRect, Qt::AlignHCenter | Qt::AlignTop, m_meterTitleText);
+        p.restore();
+    }
+
+    // Thetis property-editor parity — Peak Value numeric readout.
+    // For ANAN MM we draw each needle's current value near the left
+    // edge of the face, stacked vertically, so the user can read the
+    // live numbers without relying on the needle position.
+    if (m_showPeakValue) {
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QFont f = p.font();
+        const int valPx = qMax(8, static_cast<int>(bg.height() * 0.04));
+        f.setPixelSize(valPx);
+        p.setFont(f);
+        p.setPen(m_darkMode ? QColor(220, 220, 120) : m_peakValueColor);
+        const int x = bg.x() + 4;
+        int y = bg.y() + bg.height() - (valPx + 2) * kNeedleCount - 4;
+        for (const Needle& n : m_needles) {
+            if (!n.visible) { y += valPx + 2; continue; }
+            const double v = std::isnan(n.currentValue) ? 0.0 : n.currentValue;
+            p.drawText(x, y + valPx,
+                       QStringLiteral("%1: %2").arg(n.name).arg(v, 0, 'f', 1));
+            y += valPx + 2;
+        }
+        p.restore();
+    }
+
+    // Thetis property-editor parity — Peak Hold marker. Draws a
+    // small filled triangle at the peak-hold position on each
+    // visible needle's arc.
+    if (m_showPeakHold) {
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_peakHoldColor);
+        const qreal mR = qMax<qreal>(3.0, bg.height() * 0.012);
+        for (int i = 0; i < kNeedleCount; ++i) {
+            const Needle& n = m_needles[i];
+            if (!n.visible) { continue; }
+            if (n.calibration.isEmpty()) { continue; }
+            double peak = m_peakHolds[i];
+            if (std::isinf(peak) || std::isnan(peak)) {
+                auto first = n.calibration.constBegin();
+                auto last  = std::prev(n.calibration.constEnd());
+                peak = 0.5 * (first.key() + last.key());
+            }
+            const QPointF norm = calibratedPosition(n, static_cast<float>(peak));
+            const QPointF px(bg.x() + norm.x() * bg.width(),
+                             bg.y() + norm.y() * bg.height());
+            p.drawEllipse(px, mR, mR);
+        }
+        p.restore();
     }
 
     // Debug overlay (calibration-point dots)
@@ -673,9 +814,17 @@ void AnanMultiMeterItem::pushBindingValue(int bindingId, double v)
     if (bindingId < 0) {
         return;
     }
-    for (Needle& n : m_needles) {
+    for (int i = 0; i < kNeedleCount; ++i) {
+        Needle& n = m_needles[i];
         if (n.bindingId == bindingId) {
             n.currentValue = v;
+            // Thetis property-editor parity — rolling peak-hold for the
+            // Peak Hold marker. Tracks the maximum value per needle; a
+            // future TODO(render-mode-peak-hold-decay) refinement may
+            // apply an Ignore-ms-driven decay curve.
+            if (std::isnan(m_peakHolds[i]) || v > m_peakHolds[i]) {
+                m_peakHolds[i] = v;
+            }
             // Keep MeterItem::m_value roughly tracking whatever binding
             // most recently arrived, mainly so observers that still read
             // value() (e.g. the generic property editor's readout) see a
@@ -711,6 +860,35 @@ void AnanMultiMeterItem::paintDebugOverlay(QPainter& p, const QRect& bg) const
 // Serialization — compact JSON, "AnanMM" kind tag.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Serialization helpers — keep the colour hex format consistent with
+// ColorSwatchButton so the property editor round-trip matches the
+// on-disk form.
+// ---------------------------------------------------------------------------
+namespace {
+QString colorToHex(const QColor& c)
+{
+    return QStringLiteral("#%1%2%3%4")
+        .arg(c.red(),   2, 16, QLatin1Char('0'))
+        .arg(c.green(), 2, 16, QLatin1Char('0'))
+        .arg(c.blue(),  2, 16, QLatin1Char('0'))
+        .arg(c.alpha(), 2, 16, QLatin1Char('0'));
+}
+QColor colorFromHex(const QString& hex, const QColor& fallback)
+{
+    if (hex.size() < 7 || !hex.startsWith(QLatin1Char('#'))) {
+        return fallback;
+    }
+    bool ok = false;
+    const int r = hex.mid(1, 2).toInt(&ok, 16); if (!ok) return fallback;
+    const int g = hex.mid(3, 2).toInt(&ok, 16); if (!ok) return fallback;
+    const int b = hex.mid(5, 2).toInt(&ok, 16); if (!ok) return fallback;
+    int a = 255;
+    if (hex.size() >= 9) { a = hex.mid(7, 2).toInt(&ok, 16); if (!ok) a = 255; }
+    return QColor(r, g, b, a);
+}
+} // namespace
+
 QString AnanMultiMeterItem::serialize() const
 {
     QJsonObject o;
@@ -723,10 +901,59 @@ QString AnanMultiMeterItem::serialize() const
     o.insert(QStringLiteral("debug"),    m_debugOverlay);
 
     QJsonArray vis;
+    QJsonArray cols;
     for (const Needle& n : m_needles) {
         vis.append(n.visible);
+        cols.append(colorToHex(n.color));
     }
     o.insert(QStringLiteral("needlesVisible"), vis);
+    o.insert(QStringLiteral("needleColors"),   cols);
+
+    // Property-editor parity knobs. Every field added to the class is
+    // round-tripped here so the serialization schema stays stable from
+    // the first commit of the parity series onward.
+    o.insert(QStringLiteral("signalSource"), static_cast<int>(m_signalSource));
+    o.insert(QStringLiteral("updateMs"),    m_updateMs);
+    o.insert(QStringLiteral("attack"),      static_cast<double>(m_attackRatio));
+    o.insert(QStringLiteral("decay"),       static_cast<double>(m_decayRatio));
+
+    o.insert(QStringLiteral("bgColor"),      colorToHex(m_backgroundColor));
+    o.insert(QStringLiteral("lowColor"),     colorToHex(m_lowColor));
+    o.insert(QStringLiteral("highColor"),    colorToHex(m_highColor));
+    o.insert(QStringLiteral("indicatorColor"), colorToHex(m_indicatorColor));
+    o.insert(QStringLiteral("subColor"),     colorToHex(m_subColor));
+
+    o.insert(QStringLiteral("fadeRx"),   m_fadeOnRx);
+    o.insert(QStringLiteral("fadeTx"),   m_fadeOnTx);
+    o.insert(QStringLiteral("darkMode"), m_darkMode);
+
+    o.insert(QStringLiteral("showTitle"),  m_showMeterTitle);
+    o.insert(QStringLiteral("titleColor"), colorToHex(m_meterTitleColor));
+    o.insert(QStringLiteral("titleText"),  m_meterTitleText);
+
+    o.insert(QStringLiteral("showPeakValue"),  m_showPeakValue);
+    o.insert(QStringLiteral("peakValueColor"), colorToHex(m_peakValueColor));
+
+    o.insert(QStringLiteral("showPeakHold"),  m_showPeakHold);
+    o.insert(QStringLiteral("peakHoldColor"), colorToHex(m_peakHoldColor));
+
+    o.insert(QStringLiteral("showHistory"),   m_showHistory);
+    o.insert(QStringLiteral("historyMs"),     m_historyMs);
+    o.insert(QStringLiteral("ignoreHistMs"),  m_ignoreHistoryMs);
+    o.insert(QStringLiteral("historyColor"),  colorToHex(m_historyColor));
+
+    o.insert(QStringLiteral("showShadow"),  m_showShadow);
+    o.insert(QStringLiteral("shadowLow"),   m_shadowLow);
+    o.insert(QStringLiteral("shadowHigh"),  m_shadowHigh);
+    o.insert(QStringLiteral("shadowColor"), colorToHex(m_shadowColor));
+
+    o.insert(QStringLiteral("showSegmented"),  m_showSegmented);
+    o.insert(QStringLiteral("segmentedLow"),   m_segmentedLow);
+    o.insert(QStringLiteral("segmentedHigh"),  m_segmentedHigh);
+    o.insert(QStringLiteral("segmentedColor"), colorToHex(m_segmentedColor));
+
+    o.insert(QStringLiteral("showSolid"),  m_showSolid);
+    o.insert(QStringLiteral("solidColor"), colorToHex(m_solidColor));
 
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
@@ -756,6 +983,58 @@ bool AnanMultiMeterItem::deserialize(const QString& data)
             m_needles[i].visible = vis.at(i).toBool(true);
         }
     }
+    const QJsonArray cols = o.value(QStringLiteral("needleColors")).toArray();
+    for (int i = 0; i < kNeedleCount && i < cols.size(); ++i) {
+        m_needles[i].color = colorFromHex(cols.at(i).toString(),
+                                          m_needles[i].color);
+    }
+
+    m_signalSource = static_cast<SignalSource>(
+        o.value(QStringLiteral("signalSource")).toInt(static_cast<int>(m_signalSource)));
+    // Apply via setSignalSource() so the needle binding stays in sync.
+    setSignalSource(m_signalSource);
+    m_updateMs    = o.value(QStringLiteral("updateMs")).toInt(m_updateMs);
+    m_attackRatio = static_cast<float>(o.value(QStringLiteral("attack")).toDouble(m_attackRatio));
+    m_decayRatio  = static_cast<float>(o.value(QStringLiteral("decay")).toDouble(m_decayRatio));
+
+    m_backgroundColor = colorFromHex(o.value(QStringLiteral("bgColor")).toString(),       m_backgroundColor);
+    m_lowColor        = colorFromHex(o.value(QStringLiteral("lowColor")).toString(),      m_lowColor);
+    m_highColor       = colorFromHex(o.value(QStringLiteral("highColor")).toString(),     m_highColor);
+    m_indicatorColor  = colorFromHex(o.value(QStringLiteral("indicatorColor")).toString(),m_indicatorColor);
+    m_subColor        = colorFromHex(o.value(QStringLiteral("subColor")).toString(),      m_subColor);
+
+    m_fadeOnRx = o.value(QStringLiteral("fadeRx")).toBool(m_fadeOnRx);
+    m_fadeOnTx = o.value(QStringLiteral("fadeTx")).toBool(m_fadeOnTx);
+    m_darkMode = o.value(QStringLiteral("darkMode")).toBool(m_darkMode);
+
+    m_showMeterTitle  = o.value(QStringLiteral("showTitle")).toBool(m_showMeterTitle);
+    m_meterTitleColor = colorFromHex(o.value(QStringLiteral("titleColor")).toString(), m_meterTitleColor);
+    m_meterTitleText  = o.value(QStringLiteral("titleText")).toString(m_meterTitleText);
+
+    m_showPeakValue  = o.value(QStringLiteral("showPeakValue")).toBool(m_showPeakValue);
+    m_peakValueColor = colorFromHex(o.value(QStringLiteral("peakValueColor")).toString(), m_peakValueColor);
+
+    m_showPeakHold  = o.value(QStringLiteral("showPeakHold")).toBool(m_showPeakHold);
+    m_peakHoldColor = colorFromHex(o.value(QStringLiteral("peakHoldColor")).toString(), m_peakHoldColor);
+
+    m_showHistory      = o.value(QStringLiteral("showHistory")).toBool(m_showHistory);
+    m_historyMs        = o.value(QStringLiteral("historyMs")).toInt(m_historyMs);
+    m_ignoreHistoryMs  = o.value(QStringLiteral("ignoreHistMs")).toInt(m_ignoreHistoryMs);
+    m_historyColor     = colorFromHex(o.value(QStringLiteral("historyColor")).toString(), m_historyColor);
+
+    m_showShadow  = o.value(QStringLiteral("showShadow")).toBool(m_showShadow);
+    m_shadowLow   = o.value(QStringLiteral("shadowLow")).toDouble(m_shadowLow);
+    m_shadowHigh  = o.value(QStringLiteral("shadowHigh")).toDouble(m_shadowHigh);
+    m_shadowColor = colorFromHex(o.value(QStringLiteral("shadowColor")).toString(), m_shadowColor);
+
+    m_showSegmented  = o.value(QStringLiteral("showSegmented")).toBool(m_showSegmented);
+    m_segmentedLow   = o.value(QStringLiteral("segmentedLow")).toDouble(m_segmentedLow);
+    m_segmentedHigh  = o.value(QStringLiteral("segmentedHigh")).toDouble(m_segmentedHigh);
+    m_segmentedColor = colorFromHex(o.value(QStringLiteral("segmentedColor")).toString(), m_segmentedColor);
+
+    m_showSolid  = o.value(QStringLiteral("showSolid")).toBool(m_showSolid);
+    m_solidColor = colorFromHex(o.value(QStringLiteral("solidColor")).toString(), m_solidColor);
+
     return true;
 }
 

@@ -173,6 +173,120 @@ public:
     bool debugOverlay() const { return m_debugOverlay; }
     void setDebugOverlay(bool v) { m_debugOverlay = v; }
 
+    // =========================================================
+    // Edit-container refactor — Thetis ANAN-MM property-editor
+    // parity (Phase 1..3). Each field below corresponds to one
+    // Setup → Appearance → Meters/Gadgets control on Thetis's
+    // ANAN Multi Meter tab. Storage for the full knob set is
+    // introduced up front so the serialization schema stays
+    // stable across phases; UI + paint-time wiring lands over
+    // the 4-commit series described in
+    // docs/architecture/phase3g-edit-container plan notes.
+    // =========================================================
+
+    // Signal-source selector for the Signal needle. Thetis lets
+    // the user pick between the peak / average / max-bin S-meter
+    // readings for the same needle.
+    enum class SignalSource { Avg, Peak, MaxBin };
+
+    SignalSource signalSource() const { return m_signalSource; }
+    void         setSignalSource(SignalSource s);
+
+    // --- Settings group ---
+    int   updateMs() const { return m_updateMs; }
+    void  setUpdateMs(int ms) { m_updateMs = ms; }
+
+    float attackRatio() const { return m_attackRatio; }
+    void  setAttackRatio(float a) { m_attackRatio = a; }
+
+    float decayRatio() const { return m_decayRatio; }
+    void  setDecayRatio(float d) { m_decayRatio = d; }
+
+    // --- Colors group (scheme swatches) ---
+    QColor backgroundColor() const { return m_backgroundColor; }
+    void   setBackgroundColor(const QColor& c) { m_backgroundColor = c; }
+
+    QColor lowColor() const { return m_lowColor; }
+    void   setLowColor(const QColor& c) { m_lowColor = c; }
+
+    QColor highColor() const { return m_highColor; }
+    void   setHighColor(const QColor& c) { m_highColor = c; }
+
+    QColor indicatorColor() const { return m_indicatorColor; }
+    void   setIndicatorColor(const QColor& c) { m_indicatorColor = c; }
+
+    QColor subColor() const { return m_subColor; }
+    void   setSubColor(const QColor& c) { m_subColor = c; }
+
+    // --- Per-needle colour accessors (writable, unlike needleColor above) ---
+    void   setNeedleColor(int i, const QColor& c);
+
+    // --- Toggles ---
+    bool   fadeOnRx() const { return m_fadeOnRx; }
+    void   setFadeOnRx(bool v) { m_fadeOnRx = v; }
+
+    bool   fadeOnTx() const { return m_fadeOnTx; }
+    void   setFadeOnTx(bool v) { m_fadeOnTx = v; }
+
+    bool   darkMode() const { return m_darkMode; }
+    void   setDarkMode(bool v) { m_darkMode = v; }
+
+    // --- Meter Title ---
+    bool   showMeterTitle() const { return m_showMeterTitle; }
+    void   setShowMeterTitle(bool v) { m_showMeterTitle = v; }
+    QColor meterTitleColor() const { return m_meterTitleColor; }
+    void   setMeterTitleColor(const QColor& c) { m_meterTitleColor = c; }
+    QString meterTitleText() const { return m_meterTitleText; }
+    void   setMeterTitleText(const QString& t) { m_meterTitleText = t; }
+
+    // --- Peak Value (numeric readout near each needle scale) ---
+    bool   showPeakValue() const { return m_showPeakValue; }
+    void   setShowPeakValue(bool v) { m_showPeakValue = v; }
+    QColor peakValueColor() const { return m_peakValueColor; }
+    void   setPeakValueColor(const QColor& c) { m_peakValueColor = c; }
+
+    // --- Peak Hold (marker at decaying max) ---
+    bool   showPeakHold() const { return m_showPeakHold; }
+    void   setShowPeakHold(bool v) { m_showPeakHold = v; }
+    QColor peakHoldColor() const { return m_peakHoldColor; }
+    void   setPeakHoldColor(const QColor& c) { m_peakHoldColor = c; }
+
+    // --- History (rolling trail behind the needle) ---
+    bool   showHistory() const { return m_showHistory; }
+    void   setShowHistory(bool v) { m_showHistory = v; }
+    int    historyMs() const { return m_historyMs; }
+    void   setHistoryMs(int ms) { m_historyMs = ms; }
+    int    ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+    void   setIgnoreHistoryMs(int ms) { m_ignoreHistoryMs = ms; }
+    QColor historyColor() const { return m_historyColor; }
+    void   setHistoryColor(const QColor& c) { m_historyColor = c; }
+
+    // --- Shadow decoration ---
+    bool   showShadow() const { return m_showShadow; }
+    void   setShowShadow(bool v) { m_showShadow = v; }
+    double shadowLow() const { return m_shadowLow; }
+    void   setShadowLow(double v) { m_shadowLow = v; }
+    double shadowHigh() const { return m_shadowHigh; }
+    void   setShadowHigh(double v) { m_shadowHigh = v; }
+    QColor shadowColor() const { return m_shadowColor; }
+    void   setShadowColor(const QColor& c) { m_shadowColor = c; }
+
+    // --- Segmented decoration ---
+    bool   showSegmented() const { return m_showSegmented; }
+    void   setShowSegmented(bool v) { m_showSegmented = v; }
+    double segmentedLow() const { return m_segmentedLow; }
+    void   setSegmentedLow(double v) { m_segmentedLow = v; }
+    double segmentedHigh() const { return m_segmentedHigh; }
+    void   setSegmentedHigh(double v) { m_segmentedHigh = v; }
+    QColor segmentedColor() const { return m_segmentedColor; }
+    void   setSegmentedColor(const QColor& c) { m_segmentedColor = c; }
+
+    // --- Solid decoration ---
+    bool   showSolid() const { return m_showSolid; }
+    void   setShowSolid(bool v) { m_showSolid = v; }
+    QColor solidColor() const { return m_solidColor; }
+    void   setSolidColor(const QColor& c) { m_solidColor = c; }
+
 private:
     struct Needle {
         QString              name;
@@ -224,6 +338,60 @@ private:
     bool                         m_anchorToBgRect{true};
     bool                         m_debugOverlay{false};
     std::array<Needle, kNeedleCount> m_needles;
+
+    // =========================================================
+    // Thetis property-editor parity fields (storage for all 20+
+    // knobs; defaults chosen to match Thetis ANAN-MM new preset
+    // defaults). Paint-time behaviour is wired incrementally across
+    // the 4-commit phase series; see the TODO(render-mode-*)
+    // markers in paint() for the ones still UI-only.
+    // =========================================================
+    SignalSource m_signalSource{SignalSource::Avg};
+    int          m_updateMs{100};              // Thetis default 100 ms poll
+    float        m_attackRatio{0.8f};           // needle smoothing — UI-only
+    float        m_decayRatio{0.2f};            // needle smoothing — UI-only
+
+    QColor       m_backgroundColor{0, 0, 0, 0}; // transparent = let face show
+    QColor       m_lowColor{Qt::white};
+    QColor       m_highColor{255, 64, 64};      // Thetis "red zone" default
+    QColor       m_indicatorColor{Qt::yellow};
+    QColor       m_subColor{Qt::black};
+
+    bool         m_fadeOnRx{false};
+    bool         m_fadeOnTx{false};
+    bool         m_darkMode{false};
+
+    bool         m_showMeterTitle{false};
+    QColor       m_meterTitleColor{Qt::white};
+    QString      m_meterTitleText{QStringLiteral("ANAN MM")};
+
+    bool         m_showPeakValue{false};
+    QColor       m_peakValueColor{Qt::yellow};
+
+    bool         m_showPeakHold{false};
+    QColor       m_peakHoldColor{255, 128, 0};
+
+    bool         m_showHistory{false};
+    int          m_historyMs{4000};              // Thetis default
+    int          m_ignoreHistoryMs{250};         // Thetis default
+    QColor       m_historyColor{255, 0, 0, 128}; // Thetis default Red(128)
+
+    bool         m_showShadow{false};
+    double       m_shadowLow{-120.0};
+    double       m_shadowHigh{-20.0};
+    QColor       m_shadowColor{0, 0, 0, 96};
+
+    bool         m_showSegmented{false};
+    double       m_segmentedLow{-120.0};
+    double       m_segmentedHigh{-20.0};
+    QColor       m_segmentedColor{Qt::darkGray};
+
+    bool         m_showSolid{false};
+    QColor       m_solidColor{Qt::gray};
+
+    // Peak-hold tracking (runtime only; not serialized): per-needle
+    // decaying maximum used to paint the peak marker.
+    std::array<double, kNeedleCount> m_peakHolds{};
 };
 
 } // namespace NereusSDR
