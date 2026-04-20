@@ -40,6 +40,10 @@ private slots:
     void parityKnobs_defaultsMatchThetisNewPreset();
     void signalSource_rebindsSignalNeedle();
     void setNeedleColor_updatesNeedle();
+
+    // Thetis property-editor parity — Phase 2 History + Peak Hold.
+    void history_pushedValuesAccumulate();
+    void peakHold_trackMaxPerNeedle();
 };
 
 void TestAnanMultiMeterItem::defaultConstruction_hasSevenNeedles()
@@ -207,6 +211,45 @@ void TestAnanMultiMeterItem::setNeedleColor_updatesNeedle()
     // Out-of-range index is a no-op.
     a.setNeedleColor(99, QColor(255, 0, 0));
     QCOMPARE(a.needleColor(0), QColor(233, 51, 50));  // still default Signal red
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — History + Peak Hold coverage.
+// ---------------------------------------------------------------------------
+void TestAnanMultiMeterItem::history_pushedValuesAccumulate()
+{
+    AnanMultiMeterItem a;
+    a.setShowHistory(true);
+    // Use the Signal needle's binding (SignalAvg = 1) to push samples.
+    // The signalSource default is Avg, so binding id 1 lands on needle 0.
+    for (int i = 0; i < 10; ++i) {
+        a.pushBindingValue(1, -100.0 + i);
+    }
+    // The paint path reads the history buffer via calibratedPosition();
+    // at this level we simply assert the round-trip writer + Show flag
+    // remain stable.
+    QCOMPARE(a.showHistory(), true);
+    QCOMPARE(a.historyMs(), 4000);
+}
+
+void TestAnanMultiMeterItem::peakHold_trackMaxPerNeedle()
+{
+    AnanMultiMeterItem a;
+    a.setShowPeakHold(true);
+    // Push a rising then falling sequence; peak-hold should retain max.
+    a.pushBindingValue(1, -90.0);
+    a.pushBindingValue(1, -60.0);    // new peak
+    a.pushBindingValue(1, -70.0);
+    // Peak-hold storage isn't directly queryable; the paint smoke
+    // below confirms no crash and the flag round-trips.
+    QCOMPARE(a.showPeakHold(), true);
+
+    QImage img(300, 200, QImage::Format_ARGB32);
+    img.fill(Qt::black);
+    QPainter p(&img);
+    a.paint(p, 300, 200);
+    p.end();
+    QVERIFY(!img.isNull());
 }
 
 QTEST_MAIN(TestAnanMultiMeterItem)

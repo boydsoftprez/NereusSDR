@@ -326,6 +326,14 @@ private:
         // data" and falls back to the calibration midpoint so the
         // preview in the settings dialog still shows a needle.
         double               currentValue{std::numeric_limits<double>::quiet_NaN()};
+
+        // Thetis property-editor parity Phase 2 — rolling per-needle
+        // history trail. Sampled in pushBindingValue() and consumed by
+        // paint() when `m_showHistory` is true. Bounded to the last
+        // ~256 samples; the UI exposes `historyMs` as a time window
+        // which paint() converts to a sample count via the current
+        // MeterPoller tick (approximately `historyMs / updateMs`).
+        QVector<double>      history;
     };
 
     void   initialiseNeedles();

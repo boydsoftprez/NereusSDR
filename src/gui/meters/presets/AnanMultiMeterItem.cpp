@@ -86,6 +86,7 @@ mw0lge@grange-lane.co.uk
 #include <QJsonObject>
 #include <QPainter>
 #include <QPen>
+#include <QPolygonF>
 #include <QtGlobal>
 
 #include <cmath>
@@ -580,14 +581,43 @@ void AnanMultiMeterItem::paint(QPainter& p, int widgetW, int widgetH)
     // currently storage-only. Same reasoning as Shadow.
     // TODO(render-mode-solid): implement paint-time effect;
     // currently storage-only. Same reasoning as Shadow.
-    // TODO(render-mode-history): implement paint-time effect;
-    // currently storage-only. Needs a rolling per-needle sample
-    // buffer driven off m_historyMs.
     // TODO(render-mode-attack-decay): Attack/Decay ratios stored;
     // needle smoothing applies at setValue() time (future work).
     // TODO(fade-coupling): once RadioModel exposes a global
     // mox()/rx state, hide the needles whose opposite flag is set
     // for the current state.
+
+    // Thetis property-editor parity Phase 2 — History trail. Each
+    // visible needle's history buffer projects onto its calibration
+    // arc, drawn as a translucent polyline. The `historyMs` value
+    // is converted into a sample count using the configured
+    // `updateMs` poll cadence (with a 1-sample floor).
+    if (m_showHistory) {
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QPen histPen(m_historyColor);
+        const float diag = std::sqrt(static_cast<float>(bg.width() * bg.width() +
+                                                        bg.height() * bg.height()));
+        histPen.setWidthF(qMax(1.0, static_cast<double>(diag / 900.0f)));
+        histPen.setCapStyle(Qt::RoundCap);
+        p.setPen(histPen);
+        p.setBrush(Qt::NoBrush);
+        const int histSamples = qMax(1, m_historyMs / qMax(1, m_updateMs));
+        for (const Needle& n : m_needles) {
+            if (!n.visible) { continue; }
+            if (n.history.isEmpty()) { continue; }
+            const int count = qMin(n.history.size(), histSamples);
+            QPolygonF poly;
+            for (int k = n.history.size() - count; k < n.history.size(); ++k) {
+                const QPointF norm = calibratedPosition(n,
+                    static_cast<float>(n.history.at(k)));
+                poly << QPointF(bg.x() + norm.x() * bg.width(),
+                                bg.y() + norm.y() * bg.height());
+            }
+            p.drawPolyline(poly);
+        }
+        p.restore();
+    }
 
     // Fade on RX/TX: without a RadioModel handle here, we fall back
     // to "hide the whole needle array when user has asked to fade in
@@ -824,6 +854,15 @@ void AnanMultiMeterItem::pushBindingValue(int bindingId, double v)
             // apply an Ignore-ms-driven decay curve.
             if (std::isnan(m_peakHolds[i]) || v > m_peakHolds[i]) {
                 m_peakHolds[i] = v;
+            }
+            // Thetis property-editor parity Phase 2 — rolling history
+            // sample buffer. Caps at kHistoryCap samples so long-running
+            // sessions don't balloon memory. paint() windows into this
+            // buffer based on `m_historyMs`.
+            constexpr int kHistoryCap = 256;
+            n.history.append(v);
+            if (n.history.size() > kHistoryCap) {
+                n.history.remove(0, n.history.size() - kHistoryCap);
             }
             // Keep MeterItem::m_value roughly tracking whatever binding
             // most recently arrived, mainly so observers that still read
