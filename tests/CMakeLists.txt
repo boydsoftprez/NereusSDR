@@ -192,3 +192,6 @@ nereus_add_test(tst_dialog_inuse_ux)
 
 # ── Edit Container refactor: Task 14 — + Add container button ───────────
 nereus_add_test(tst_dialog_add_container)
+
+# ── Edit Container refactor: Task 15 — on-container edit affordances ────
+nereus_add_test(tst_container_widget_access)

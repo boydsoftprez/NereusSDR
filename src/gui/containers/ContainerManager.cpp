@@ -62,6 +62,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterWidget.h"
 
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QSplitter>
 #include <algorithm>
 
@@ -116,6 +118,47 @@ void ContainerManager::wireContainer(ContainerWidget* container)
     connect(container, &ContainerWidget::notesChanged, this,
             [this, container](const QString& notes) {
         emit containerTitleChanged(container->id(), notes);
+    });
+
+    // Edit-container refactor Task 15 — route the 4 on-container
+    // affordance signals (right-click menu / gear icon / double-click
+    // header) through ContainerManager lifecycle helpers. wireContainer
+    // is the common choke point for both createContainer and
+    // restoreState, so these connections exist for every container the
+    // manager tracks.
+    connect(container, &ContainerWidget::renameRequested, this,
+            [this, container]() {
+        QWidget* anchor = container->window();
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            anchor, tr("Rename Container"), tr("Name:"),
+            QLineEdit::Normal, container->notes(), &ok);
+        if (ok && !name.isEmpty()) {
+            container->setNotes(name);
+        }
+    });
+    connect(container, &ContainerWidget::deleteRequested, this,
+            [this, container]() {
+        destroyContainer(container->id());
+    });
+    connect(container, &ContainerWidget::duplicateRequested, this,
+            [this, container]() {
+        duplicateContainer(container->id());
+    });
+    connect(container, &ContainerWidget::dockModeChangeRequested, this,
+            [this, container](DockMode mode) {
+        if (mode == container->dockMode()) { return; }
+        switch (mode) {
+        case DockMode::PanelDocked:
+            panelDockContainer(container->id());
+            break;
+        case DockMode::OverlayDocked:
+            overlayDockContainer(container->id());
+            break;
+        case DockMode::Floating:
+            floatContainer(container->id());
+            break;
+        }
     });
     // Announce any MeterWidget that becomes a (descendant of) the
     // container's content. Listens for both the create path

@@ -72,8 +72,13 @@ mw0lge@grange-lane.co.uk
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QMap>
+#include <QMenu>
+#include <QAction>
+#include <QResizeEvent>
 #include <QStringList>
+#include <QToolButton>
 #include <algorithm>
 
 namespace NereusSDR {
@@ -207,6 +212,22 @@ void ContainerWidget::buildUI()
     m_titleLabel->installEventFilter(this);
     m_resizeGrip->installEventFilter(this);
     m_contentHolder->installEventFilter(this);
+
+    // Task 15 — gear-icon QToolButton pinned to the title-bar strip.
+    // Parented to this (not m_titleBar) so its Z-order survives the
+    // hover-driven show/hide on m_titleBar; positioned via resizeEvent.
+    m_gearBtn = new QToolButton(this);
+    m_gearBtn->setText(QStringLiteral("\u2699"));   // Unicode gear glyph; no SVG resource dependency
+    m_gearBtn->setToolTip(tr("Edit container..."));
+    m_gearBtn->setCursor(Qt::ArrowCursor);
+    m_gearBtn->setAutoRaise(true);
+    m_gearBtn->setFixedSize(kTitleBarHeight - 4, kTitleBarHeight - 4);
+    m_gearBtn->setStyleSheet(QStringLiteral(
+        "QToolButton { color: #8aa8c0; background: transparent; "
+        "  border: none; font-size: 12px; padding: 0px; }"
+        "QToolButton:hover { color: #ffffff; }"));
+    connect(m_gearBtn, &QToolButton::clicked,
+            this, &ContainerWidget::settingsRequested);
 }
 
 void ContainerWidget::setContent(QWidget* widget)
@@ -403,6 +424,13 @@ void ContainerWidget::setTitleBarVisible(bool visible)
     if (m_titleBar) {
         m_titleBar->setVisible(visible);
     }
+    // Task 15 — the pinned gear lives on the title-bar strip and must
+    // follow its visibility. When the user has chosen "no title bar",
+    // the gear disappears alongside the rest of the chrome; it comes
+    // back via right-click + double-click affordances.
+    if (m_gearBtn) {
+        m_gearBtn->setVisible(visible);
+    }
     emit titleBarVisibilityChanged(visible);
     update();
 }
@@ -514,6 +542,86 @@ void ContainerWidget::leaveEvent(QEvent* event)
         m_resizeGrip->setVisible(false);
     }
     QWidget::leaveEvent(event);
+}
+
+// ---------------------------------------------------------------------------
+// Task 15 — on-container access: context menu, double-click, gear icon
+// ---------------------------------------------------------------------------
+
+void ContainerWidget::buildContextMenu(QMenu* menu)
+{
+    if (!menu) { return; }
+
+    QAction* actEdit   = menu->addAction(tr("Edit..."));
+    QAction* actRename = menu->addAction(tr("Rename..."));
+    QAction* actDup    = menu->addAction(tr("Duplicate"));
+    QAction* actDel    = menu->addAction(tr("Delete"));
+    menu->addSeparator();
+
+    QMenu* dockMenu = menu->addMenu(tr("Dock Mode"));
+    QAction* actPanel    = dockMenu->addAction(tr("Panel"));
+    QAction* actOverlay  = dockMenu->addAction(tr("Overlay"));
+    QAction* actFloating = dockMenu->addAction(tr("Floating"));
+    for (QAction* a : { actPanel, actOverlay, actFloating }) {
+        a->setCheckable(true);
+    }
+    switch (m_dockMode) {
+        case DockMode::PanelDocked:   actPanel->setChecked(true); break;
+        case DockMode::OverlayDocked: actOverlay->setChecked(true); break;
+        case DockMode::Floating:      actFloating->setChecked(true); break;
+    }
+
+    connect(actEdit,     &QAction::triggered, this, &ContainerWidget::settingsRequested);
+    connect(actRename,   &QAction::triggered, this, &ContainerWidget::renameRequested);
+    connect(actDup,      &QAction::triggered, this, &ContainerWidget::duplicateRequested);
+    connect(actDel,      &QAction::triggered, this, &ContainerWidget::deleteRequested);
+    connect(actPanel,    &QAction::triggered, this, [this]() {
+        emit dockModeChangeRequested(DockMode::PanelDocked);
+    });
+    connect(actOverlay,  &QAction::triggered, this, [this]() {
+        emit dockModeChangeRequested(DockMode::OverlayDocked);
+    });
+    connect(actFloating, &QAction::triggered, this, [this]() {
+        emit dockModeChangeRequested(DockMode::Floating);
+    });
+}
+
+void ContainerWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+    buildContextMenu(&menu);
+    menu.exec(event->globalPos());
+    event->accept();
+}
+
+void ContainerWidget::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    // Only fires on the title-bar strip, and only when unlocked.
+    // Body double-clicks fall through to children (e.g. MeterWidget
+    // items wanting their own double-click semantics).
+    if (m_locked) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    if (m_titleBarVisible && event->position().y() < kTitleBarHeight) {
+        emit settingsRequested();
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void ContainerWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    // Pin the gear button to the right end of the title-bar strip.
+    // Visibility tracks m_titleBarVisible (toggled in setTitleBarVisible).
+    if (m_gearBtn) {
+        const int margin = 2;
+        m_gearBtn->move(width() - m_gearBtn->width() - margin, margin);
+        m_gearBtn->raise();
+        m_gearBtn->setVisible(m_titleBarVisible);
+    }
 }
 
 // --- Event filter for title bar drag + resize grip ---

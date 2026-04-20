@@ -149,7 +149,9 @@ mw0lge@grange-lane.co.uk
 #include <cstdint>
 
 class QLabel;
+class QMenu;
 class QPushButton;
+class QToolButton;
 
 namespace NereusSDR {
 
@@ -282,6 +284,14 @@ signals:
     void titleBarVisibilityChanged(bool visible);
     void minimisedChanged(bool minimised);
     void notesChanged(const QString& notes);
+
+    // Edit-container refactor Task 15 — on-container access affordances
+    // (right-click menu + gear icon + double-click header). Routed to
+    // ContainerManager lifecycle helpers via MainWindow.
+    void renameRequested();                        // inline-rename affordance
+    void duplicateRequested();                     // context-menu Duplicate action
+    void deleteRequested();                        // context-menu Delete action
+    void dockModeChangeRequested(DockMode mode);   // Panel / Overlay / Floating
     // Emitted from setContent() after the new content widget is
     // installed. ContainerManager listens so it can scan for an inner
     // MeterWidget and announce it for poller registration.
@@ -309,6 +319,20 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+    // Edit-container refactor Task 15 — on-container edit affordances
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+
+public:
+    // Test-only accessor for the floating gear-icon button added in Task 15.
+    QToolButton* gearButtonForTest() const { return m_gearBtn; }
+
+    // Populate a menu with the standard on-container edit actions.
+    // Exposed for unit testing (see tst_container_widget_access); the
+    // public contextMenuEvent calls this internally, so tests can
+    // verify signal emission without simulating a native popup.
+    void buildContextMenu(QMenu* menu);
 
 private:
     void buildUI();
@@ -380,6 +404,14 @@ private:
     QPushButton* m_btnAxis{nullptr};
     QPushButton* m_btnPin{nullptr};
     QPushButton* m_btnSettings{nullptr};
+
+    // Task 15 — gear-icon QToolButton pinned to the top-right of the
+    // title-bar strip. Complementary to m_btnSettings (which lives
+    // inside the auto-hiding title-bar layout); this one rides on
+    // ContainerWidget itself and is positioned in resizeEvent so
+    // container-edge right-click, header double-click, and gear-icon
+    // click are all first-class discoverable entry points.
+    QToolButton* m_gearBtn{nullptr};
 };
 
 } // namespace NereusSDR
