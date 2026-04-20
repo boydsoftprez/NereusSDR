@@ -56,6 +56,7 @@ mw0lge@grange-lane.co.uk
 
 #include <QDialog>
 #include <QPair>
+#include <QPoint>
 #include <QUuid>
 #include <QVector>
 
@@ -85,6 +86,19 @@ class ScaleItem;
 class SolidColourItem;
 class LEDItem;
 
+// Edit-container refactor Task 13 — in-use row wrapper.
+//
+// Each in-use list entry carries display metadata the raw MeterItem*
+// doesn't own: a user-editable displayName (shown in the QListWidget
+// rather than the tag-derived auto name) and a stable rowId that
+// survives drag-reorder + rename so the UI can track selection
+// independently of vector index.
+struct ContainerInUseRow {
+    MeterItem* item = nullptr;
+    QString    displayName;
+    QUuid      rowId;
+};
+
 class ContainerSettingsDialog : public QDialog {
     Q_OBJECT
 
@@ -113,20 +127,39 @@ public:
     // Test-only accessors (Task 11+). Exposing these keeps the
     // dialog-refactor test suite free of Qt event-loop trickery;
     // production callers continue to use the private slots.
-    QVector<MeterItem*> workingItems() const { return m_workingItems; }
+    QVector<MeterItem*> workingItems() const;
     void appendPresetRowForTest(const QString& presetName) {
         appendPresetRow(presetName);
     }
+
+    // Task 13 test hooks. The right-click context menu path isn't
+    // testable without poking QMenu::exec() timers, so expose the
+    // slot bodies directly. rowIdAtIndex / displayNameForRowId let
+    // tests assert on the wrapper vector without dragging the
+    // QListWidget into the check.
+    void    triggerRenameForTest(const QUuid& rowId, const QString& newName);
+    void    triggerDuplicateForTest(const QUuid& rowId);
+    void    triggerDeleteForTest(const QUuid& rowId);
+    QUuid   rowIdAtIndex(int i) const;
+    QString displayNameForRowId(const QUuid& id) const;
 
 private slots:
     void onItemSelectionChanged();
     void onAddItem();
     void onRemoveItem();
-    void onMoveItemUp();
-    void onMoveItemDown();
     void onLoadPreset();
     void onExport();
     void onImport();
+
+    // Task 13 — in-use list context menu + driver slots.
+    void onInUseContextMenu(const QPoint& pos);
+    void onItemRename(const QUuid& rowId);
+    void onItemDuplicate(const QUuid& rowId);
+    void onItemDelete(const QUuid& rowId);
+    // Reconciles m_workingItems with the QListWidget's visual order
+    // after a drag-reorder. Looks up each list row's rowId from
+    // Qt::UserRole and rebuilds the wrapper vector to match.
+    void syncWorkingItemsFromList();
 
 private:
     void buildLayout();
@@ -152,6 +185,10 @@ private:
     // back to its available-list PRESET_* tag (empty for primitives).
     QString presetTagForItem(MeterItem* it) const;
     void    refreshAvailableList();
+
+    // Edit-container refactor Task 13 — rowId helpers.
+    MeterItem* findItemByRowId(const QUuid& id) const;
+    QString    defaultDisplayNameFor(MeterItem* item) const;
 
     static MeterItem* createItemFromSerialized(const QString& data);
     void refreshItemList();
@@ -182,7 +219,11 @@ private:
 
     ContainerWidget* m_container{nullptr};
     ContainerManager* m_manager{nullptr};
-    QVector<MeterItem*> m_workingItems;
+    // Task 13 — m_workingItems was QVector<MeterItem*>; it is now a
+    // parallel vector of ContainerInUseRow wrappers so each row can
+    // carry a user-editable displayName and a stable rowId across
+    // drag-reorder / rename / duplicate operations.
+    QVector<ContainerInUseRow> m_workingItems;
 
     // Snapshot/revert (commit 14). Captured on dialog open and on
     // every container-switch via dropdown. Cancel restores the
@@ -229,11 +270,11 @@ private:
     QPushButton* m_btnAddFromAvailable{nullptr};
 
     // Center panel: In-use items in the container (the old m_itemList).
+    // Task 13: Up/Down buttons retired — drag-reorder on m_itemList
+    // replaces them. m_btnMoveUp / m_btnMoveDown removed.
     QListWidget* m_itemList{nullptr};
     QPushButton* m_btnAdd{nullptr};       // kept for legacy popup Add path
     QPushButton* m_btnRemove{nullptr};
-    QPushButton* m_btnMoveUp{nullptr};
-    QPushButton* m_btnMoveDown{nullptr};
 
     // Right panel: properties stack
     QStackedWidget* m_propertyStack{nullptr};

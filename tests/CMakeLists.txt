@@ -5375,6 +5375,10 @@ nereus_add_test(tst_dialog_preset_dispatch)
 # ── Edit Container refactor: Task 12 — hybrid addition rule ─────────────
 nereus_add_test(tst_dialog_hybrid_rule)
 
+
+# ── Edit Container refactor: Task 13 — in-use list UX ──────────────────
+nereus_add_test(tst_dialog_inuse_ux)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------

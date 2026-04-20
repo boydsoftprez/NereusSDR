@@ -155,6 +155,9 @@ mw0lge@grange-lane.co.uk
 #include "../meters/presets/SMeterPresetItem.h"
 #include "../meters/presets/VfoDisplayPresetItem.h"
 
+#include <QAbstractItemModel>
+#include <QAbstractItemView>
+#include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
@@ -319,7 +322,19 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
 
 ContainerSettingsDialog::~ContainerSettingsDialog()
 {
-    qDeleteAll(m_workingItems);
+    for (const ContainerInUseRow& row : m_workingItems) {
+        delete row.item;
+    }
+}
+
+QVector<MeterItem*> ContainerSettingsDialog::workingItems() const
+{
+    QVector<MeterItem*> out;
+    out.reserve(m_workingItems.size());
+    for (const ContainerInUseRow& r : m_workingItems) {
+        out.append(r.item);
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -422,39 +437,48 @@ void ContainerSettingsDialog::buildInUsePanel(QWidget* parent)
 
     m_itemList = new QListWidget(parent);
     m_itemList->setStyleSheet(kListStyle);
+    // Task 13 — enable drag-reorder inside the list. InternalMove +
+    // MoveAction drives z-order directly; the rowsMoved signal on the
+    // underlying model triggers syncWorkingItemsFromList() which
+    // reconciles the wrapper vector to the new visual order and
+    // pushes the change to the live MeterWidget via applyToContainer.
+    m_itemList->setDragDropMode(QAbstractItemView::InternalMove);
+    m_itemList->setDragEnabled(true);
+    m_itemList->setAcceptDrops(true);
+    m_itemList->setDefaultDropAction(Qt::MoveAction);
+    m_itemList->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_itemList, 1);
 
     connect(m_itemList, &QListWidget::currentRowChanged,
             this, &ContainerSettingsDialog::onItemSelectionChanged);
+    connect(m_itemList, &QListWidget::customContextMenuRequested,
+            this, &ContainerSettingsDialog::onInUseContextMenu);
+    connect(m_itemList->model(), &QAbstractItemModel::rowsMoved,
+            this, [this]() {
+                syncWorkingItemsFromList();
+                applyToContainer();
+            });
 
-    // Action buttons row — the legacy + (popup) button is kept for
-    // parity with the old flow; it sits alongside the new Remove /
-    // Up / Down controls.
+    // Action buttons row — Task 13 retired Up/Down (drag-reorder
+    // replaces them). The legacy + (popup) button is kept for parity
+    // with the old flow.
     QHBoxLayout* btnRow = new QHBoxLayout;
     btnRow->setSpacing(3);
 
-    m_btnAdd      = makeBtn(QStringLiteral("+"),           parent);
-    m_btnRemove   = makeBtn(QStringLiteral("\u2212"),      parent);
-    m_btnMoveUp   = makeBtn(QStringLiteral("\u25b2"),      parent);
-    m_btnMoveDown = makeBtn(QStringLiteral("\u25bc"),      parent);
+    m_btnAdd    = makeBtn(QStringLiteral("+"),      parent);
+    m_btnRemove = makeBtn(QStringLiteral("\u2212"), parent);
 
     m_btnAdd->setToolTip(QStringLiteral("Add item (popup)"));
     m_btnRemove->setToolTip(QStringLiteral("Remove selected item"));
-    m_btnMoveUp->setToolTip(QStringLiteral("Move item up"));
-    m_btnMoveDown->setToolTip(QStringLiteral("Move item down"));
 
     btnRow->addWidget(m_btnAdd);
     btnRow->addWidget(m_btnRemove);
     btnRow->addStretch();
-    btnRow->addWidget(m_btnMoveUp);
-    btnRow->addWidget(m_btnMoveDown);
 
     layout->addLayout(btnRow);
 
-    connect(m_btnAdd,      &QPushButton::clicked, this, &ContainerSettingsDialog::onAddItem);
-    connect(m_btnRemove,   &QPushButton::clicked, this, &ContainerSettingsDialog::onRemoveItem);
-    connect(m_btnMoveUp,   &QPushButton::clicked, this, &ContainerSettingsDialog::onMoveItemUp);
-    connect(m_btnMoveDown, &QPushButton::clicked, this, &ContainerSettingsDialog::onMoveItemDown);
+    connect(m_btnAdd,    &QPushButton::clicked, this, &ContainerSettingsDialog::onAddItem);
+    connect(m_btnRemove, &QPushButton::clicked, this, &ContainerSettingsDialog::onRemoveItem);
 
     populateItemList();
     // Task 12 — apply the hybrid rule to the just-populated available
@@ -708,8 +732,8 @@ void ContainerSettingsDialog::refreshAvailableList()
 
     // Build the set of currently-in-use preset tags.
     QSet<QString> inUseTags;
-    for (MeterItem* it : m_workingItems) {
-        const QString tag = presetTagForItem(it);
+    for (const ContainerInUseRow& r : m_workingItems) {
+        const QString tag = presetTagForItem(r.item);
         if (!tag.isEmpty()) { inUseTags.insert(tag); }
     }
 
@@ -832,10 +856,10 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
         // layout. Next slot index = max existing stack slot + 1.
         // Within-slot 0..1 local layout is the full slot.
         int nextSlot = 0;
-        for (const MeterItem* mi : m_workingItems) {
-            if (!mi) { continue; }
-            if (mi->stackSlot() >= nextSlot) {
-                nextSlot = mi->stackSlot() + 1;
+        for (const ContainerInUseRow& r : m_workingItems) {
+            if (!r.item) { continue; }
+            if (r.item->stackSlot() >= nextSlot) {
+                nextSlot = r.item->stackSlot() + 1;
             }
         }
         created->setSlotLocalY(0.0f);
@@ -845,7 +869,11 @@ void ContainerSettingsDialog::appendPresetRow(const QString& presetName)
     }
     // Composite presets keep whatever rect their constructor chose.
 
-    m_workingItems.append(created);
+    ContainerInUseRow newRow;
+    newRow.item        = created;
+    newRow.displayName = defaultDisplayNameFor(created);
+    newRow.rowId       = QUuid::createUuid();
+    m_workingItems.append(newRow);
 
     // Reflow immediately so the preview reflects the new stack
     // layout at the current target-widget size. The widget's own
@@ -1194,7 +1222,7 @@ void ContainerSettingsDialog::onItemSelectionChanged()
         m_currentTypeEditor = nullptr;
     }
 
-    QWidget* editor = buildTypeSpecificEditor(m_workingItems[row]);
+    QWidget* editor = buildTypeSpecificEditor(m_workingItems[row].item);
     if (!editor) {
         m_propertyStack->setCurrentWidget(m_emptyPage);
         return;
@@ -1325,7 +1353,8 @@ void ContainerSettingsDialog::onRemoveItem()
         return;
     }
 
-    delete m_workingItems.takeAt(row);
+    delete m_workingItems[row].item;
+    m_workingItems.remove(row);
     refreshItemList();
     refreshAvailableList();
 
@@ -1338,30 +1367,213 @@ void ContainerSettingsDialog::onRemoveItem()
     updatePreview();
 }
 
-void ContainerSettingsDialog::onMoveItemUp()
-{
-    const int row = m_itemList->currentRow();
-    if (row <= 0) {
-        return;
-    }
+// Task 13 — onMoveItemUp / onMoveItemDown retired. The in-use list
+// now supports InternalMove drag-reorder, which drives z-order via
+// the QAbstractItemModel::rowsMoved signal -> syncWorkingItemsFrom-
+// List() -> applyToContainer() chain. See buildInUsePanel().
 
-    m_workingItems.swapItemsAt(row, row - 1);
-    refreshItemList();
-    m_itemList->setCurrentRow(row - 1);
-    updatePreview();
+// ---------------------------------------------------------------------------
+// Task 13 — in-use row helpers + context menu + rename / duplicate / delete
+// ---------------------------------------------------------------------------
+
+MeterItem* ContainerSettingsDialog::findItemByRowId(const QUuid& id) const
+{
+    if (id.isNull()) { return nullptr; }
+    for (const ContainerInUseRow& row : m_workingItems) {
+        if (row.rowId == id) { return row.item; }
+    }
+    return nullptr;
 }
 
-void ContainerSettingsDialog::onMoveItemDown()
+QString ContainerSettingsDialog::defaultDisplayNameFor(MeterItem* item) const
 {
-    const int row = m_itemList->currentRow();
-    if (row < 0 || row >= m_workingItems.size() - 1) {
-        return;
+    if (!item) { return QString(); }
+    // Preset items (JSON-serialized) expose their kind via the "kind"
+    // discriminator; primitives (pipe-serialized) expose their tag as
+    // the first field. Normalize both into the tag form used by
+    // typeTagDisplayName().
+    const QString serialized = item->serialize();
+    QString typeTag;
+    if (serialized.startsWith(QLatin1Char('{'))) {
+        const QJsonDocument doc = QJsonDocument::fromJson(serialized.toUtf8());
+        if (doc.isObject()) {
+            typeTag = doc.object().value(QStringLiteral("kind")).toString();
+        }
+    }
+    if (typeTag.isEmpty()) {
+        const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
+        typeTag = (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
+    }
+    return typeTagDisplayName(typeTag);
+}
+
+void ContainerSettingsDialog::syncWorkingItemsFromList()
+{
+    if (!m_itemList) { return; }
+
+    QVector<ContainerInUseRow> reordered;
+    reordered.reserve(m_itemList->count());
+
+    for (int i = 0; i < m_itemList->count(); ++i) {
+        const QListWidgetItem* lwItem = m_itemList->item(i);
+        if (!lwItem) { continue; }
+        const QUuid id = QUuid::fromString(
+            lwItem->data(Qt::UserRole).toString());
+        for (const ContainerInUseRow& row : m_workingItems) {
+            if (row.rowId == id) {
+                reordered.append(row);
+                break;
+            }
+        }
     }
 
-    m_workingItems.swapItemsAt(row, row + 1);
+    if (reordered.size() == m_workingItems.size()) {
+        m_workingItems = reordered;
+    }
+    // If the reconciliation came up short (shouldn't happen in normal
+    // drag-reorder flows), leave the wrapper vector untouched so no
+    // items are dropped.
+}
+
+void ContainerSettingsDialog::onInUseContextMenu(const QPoint& pos)
+{
+    if (!m_itemList) { return; }
+    QListWidgetItem* lwItem = m_itemList->itemAt(pos);
+    if (!lwItem) { return; }
+
+    const QUuid rowId = QUuid::fromString(
+        lwItem->data(Qt::UserRole).toString());
+    if (rowId.isNull()) { return; }
+
+    QMenu menu(this);
+    menu.setStyleSheet(
+        QStringLiteral("QMenu { background: #1a2a3a; color: #c8d8e8; "
+                       "  border: 1px solid #205070; }"
+                       "QMenu::item:selected { background: #00b4d8; "
+                       "  color: #0f0f1a; }"));
+
+    QAction* actRename = menu.addAction(tr("Rename..."));
+    QAction* actDup    = menu.addAction(tr("Duplicate"));
+    QAction* actDel    = menu.addAction(tr("Delete"));
+
+    // Block Duplicate on presets — the hybrid rule would refuse the
+    // second instance anyway, so fail visibly rather than silently.
+    MeterItem* target = findItemByRowId(rowId);
+    if (target && !presetTagForItem(target).isEmpty()) {
+        actDup->setEnabled(false);
+        actDup->setText(tr("Duplicate (presets are single-instance)"));
+    }
+
+    QAction* chosen = menu.exec(
+        m_itemList->viewport()->mapToGlobal(pos));
+    if      (chosen == actRename) { onItemRename(rowId); }
+    else if (chosen == actDup)    { onItemDuplicate(rowId); }
+    else if (chosen == actDel)    { onItemDelete(rowId); }
+}
+
+void ContainerSettingsDialog::onItemRename(const QUuid& rowId)
+{
+    const QString oldName = displayNameForRowId(rowId);
+    bool ok = false;
+    const QString newName = QInputDialog::getText(
+        this,
+        tr("Rename item"),
+        tr("Display name:"),
+        QLineEdit::Normal,
+        oldName,
+        &ok);
+    if (!ok || newName == oldName) { return; }
+    for (ContainerInUseRow& row : m_workingItems) {
+        if (row.rowId == rowId) {
+            row.displayName = newName;
+            break;
+        }
+    }
     refreshItemList();
-    m_itemList->setCurrentRow(row + 1);
-    updatePreview();
+    applyToContainer();
+}
+
+void ContainerSettingsDialog::onItemDuplicate(const QUuid& rowId)
+{
+    MeterItem* orig = findItemByRowId(rowId);
+    if (!orig) { return; }
+    // Hybrid rule: presets are single-instance per container. The
+    // context-menu path disables Duplicate on presets; this is the
+    // belt-and-braces guard for programmatic callers (tests).
+    if (!presetTagForItem(orig).isEmpty()) { return; }
+
+    MeterItem* copy = createItemFromSerialized(orig->serialize());
+    if (!copy) { return; }
+    if (orig->hasMmioBinding()) {
+        copy->setMmioBinding(orig->mmioGuid(), orig->mmioVariable());
+    }
+    if (orig->stackSlot() >= 0) {
+        copy->setStackSlot(orig->stackSlot());
+        copy->setSlotLocalY(orig->slotLocalY());
+        copy->setSlotLocalH(orig->slotLocalH());
+    }
+
+    ContainerInUseRow newRow;
+    newRow.item        = copy;
+    newRow.displayName = displayNameForRowId(rowId)
+                       + QStringLiteral(" (copy)");
+    newRow.rowId       = QUuid::createUuid();
+    m_workingItems.append(newRow);
+
+    refreshItemList();
+    refreshAvailableList();
+    applyToContainer();
+}
+
+void ContainerSettingsDialog::onItemDelete(const QUuid& rowId)
+{
+    for (int i = 0; i < m_workingItems.size(); ++i) {
+        if (m_workingItems[i].rowId == rowId) {
+            delete m_workingItems[i].item;
+            m_workingItems.remove(i);
+            break;
+        }
+    }
+    refreshItemList();
+    refreshAvailableList();
+    applyToContainer();
+}
+
+void ContainerSettingsDialog::triggerRenameForTest(const QUuid& rowId,
+                                                   const QString& newName)
+{
+    for (ContainerInUseRow& row : m_workingItems) {
+        if (row.rowId == rowId) {
+            row.displayName = newName;
+            break;
+        }
+    }
+    refreshItemList();
+    applyToContainer();
+}
+
+void ContainerSettingsDialog::triggerDuplicateForTest(const QUuid& rowId)
+{
+    onItemDuplicate(rowId);
+}
+
+void ContainerSettingsDialog::triggerDeleteForTest(const QUuid& rowId)
+{
+    onItemDelete(rowId);
+}
+
+QUuid ContainerSettingsDialog::rowIdAtIndex(int i) const
+{
+    if (i < 0 || i >= m_workingItems.size()) { return QUuid(); }
+    return m_workingItems[i].rowId;
+}
+
+QString ContainerSettingsDialog::displayNameForRowId(const QUuid& id) const
+{
+    for (const ContainerInUseRow& row : m_workingItems) {
+        if (row.rowId == id) { return row.displayName; }
+    }
+    return QString();
 }
 
 // ---------------------------------------------------------------------------
@@ -1404,7 +1616,7 @@ float ContainerSettingsDialog::nextStackYPos(const QVector<MeterItem*>& items)
 
 void ContainerSettingsDialog::addNewItem(const QString& typeTag)
 {
-    const float yPos = nextStackYPos(m_workingItems);
+    const float yPos = nextStackYPos(workingItems());
 
     MeterItem* newItem = nullptr;
 
@@ -1452,7 +1664,11 @@ void ContainerSettingsDialog::addNewItem(const QString& typeTag)
     // Insert after current selection, or at end if nothing is selected
     const int currentRow = m_itemList->currentRow();
     const int insertAt = (currentRow >= 0) ? currentRow + 1 : m_workingItems.size();
-    m_workingItems.insert(insertAt, newItem);
+    ContainerInUseRow newRow;
+    newRow.item        = newItem;
+    newRow.displayName = defaultDisplayNameFor(newItem);
+    newRow.rowId       = QUuid::createUuid();
+    m_workingItems.insert(insertAt, newRow);
 
     refreshItemList();
     refreshAvailableList();
@@ -1762,32 +1978,30 @@ QString ContainerSettingsDialog::typeTagDisplayName(const QString& tag)
 void ContainerSettingsDialog::refreshItemList()
 {
     m_itemList->clear();
-    for (const MeterItem* item : m_workingItems) {
-        // Derive the type tag from serialize(). Primitive items use
-        // a pipe-delimited format with the tag as the first field;
-        // first-class preset items (Task 11) use JSON with a "kind"
-        // discriminator. Handle both.
-        const QString serialized = item->serialize();
-        QString typeTag;
-        if (serialized.startsWith(QLatin1Char('{'))) {
-            const QJsonDocument doc = QJsonDocument::fromJson(serialized.toUtf8());
-            if (doc.isObject()) {
-                typeTag = doc.object().value(QStringLiteral("kind")).toString();
-            }
-        }
-        if (typeTag.isEmpty()) {
-            const int pipeIdx = serialized.indexOf(QLatin1Char('|'));
-            typeTag = (pipeIdx >= 0) ? serialized.left(pipeIdx) : serialized;
+    for (const ContainerInUseRow& row : m_workingItems) {
+        MeterItem* item = row.item;
+        if (!item) { continue; }
+
+        // Task 13 — prefer the user-editable displayName on the
+        // wrapper. Fall back to the tag-derived human name when the
+        // wrapper carries nothing yet (e.g. legacy containers loaded
+        // via populateItemList before defaultDisplayNameFor seeded).
+        QString label = row.displayName;
+        if (label.isEmpty()) {
+            label = defaultDisplayNameFor(item);
         }
 
-        const QString displayName = typeTagDisplayName(typeTag);
         const int bindingId = item->bindingId();
-
-        QString label = displayName;
         if (bindingId >= 0) {
             label += QStringLiteral(" [id:%1]").arg(bindingId);
         }
-        m_itemList->addItem(label);
+
+        auto* lwItem = new QListWidgetItem(label, m_itemList);
+        // Store the stable rowId so drag-reorder can reconcile the
+        // wrapper vector from the visual list order, and the context
+        // menu slots can look the row up without caring about index
+        // instability across moves.
+        lwItem->setData(Qt::UserRole, row.rowId.toString());
     }
 }
 
@@ -1818,7 +2032,9 @@ MeterWidget* ContainerSettingsDialog::findMeterWidget() const
 
 void ContainerSettingsDialog::populateItemList()
 {
-    qDeleteAll(m_workingItems);
+    for (const ContainerInUseRow& row : m_workingItems) {
+        delete row.item;
+    }
     m_workingItems.clear();
 
     MeterWidget* meter = findMeterWidget();
@@ -1831,7 +2047,11 @@ void ContainerSettingsDialog::populateItemList()
     for (const QString& line : lines) {
         MeterItem* item = createItemFromSerialized(line);
         if (item) {
-            m_workingItems.append(item);
+            ContainerInUseRow row;
+            row.item        = item;
+            row.displayName = defaultDisplayNameFor(item);
+            row.rowId       = QUuid::createUuid();
+            m_workingItems.append(row);
         }
     }
 
@@ -1846,16 +2066,16 @@ void ContainerSettingsDialog::populateItemList()
     const QVector<MeterItem*> liveItems = meter->items();
     const int n = qMin(liveItems.size(), m_workingItems.size());
     for (int i = 0; i < n; ++i) {
-        if (!liveItems[i] || !m_workingItems[i]) { continue; }
-        if (liveItems[i]->hasMmioBinding()) {
-            m_workingItems[i]->setMmioBinding(
-                liveItems[i]->mmioGuid(),
-                liveItems[i]->mmioVariable());
+        MeterItem* live = liveItems[i];
+        MeterItem* mine = m_workingItems[i].item;
+        if (!live || !mine) { continue; }
+        if (live->hasMmioBinding()) {
+            mine->setMmioBinding(live->mmioGuid(), live->mmioVariable());
         }
-        if (liveItems[i]->stackSlot() >= 0) {
-            m_workingItems[i]->setStackSlot(liveItems[i]->stackSlot());
-            m_workingItems[i]->setSlotLocalY(liveItems[i]->slotLocalY());
-            m_workingItems[i]->setSlotLocalH(liveItems[i]->slotLocalH());
+        if (live->stackSlot() >= 0) {
+            mine->setStackSlot(live->stackSlot());
+            mine->setSlotLocalY(live->slotLocalY());
+            mine->setSlotLocalH(live->slotLocalH());
         }
     }
 
@@ -2004,7 +2224,7 @@ void ContainerSettingsDialog::onCopyItemSettings()
 {
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
-    MeterItem* item = m_workingItems[row];
+    MeterItem* item = m_workingItems[row].item;
     if (!item) { return; }
 
     m_clipboardSerialized = item->serialize();
@@ -2020,7 +2240,7 @@ void ContainerSettingsDialog::onPasteItemSettings()
     if (m_clipboardSerialized.isEmpty()) { return; }
     const int row = m_itemList ? m_itemList->currentRow() : -1;
     if (row < 0 || row >= m_workingItems.size()) { return; }
-    MeterItem* item = m_workingItems[row];
+    MeterItem* item = m_workingItems[row].item;
     if (!item) { return; }
 
     // Type-tag check: only allow paste between items of the same
@@ -2048,8 +2268,9 @@ void ContainerSettingsDialog::updateCopyPasteButtonState()
     }
     if (m_btnPasteSettings) {
         bool typeMatches = false;
-        if (haveSelection && !m_clipboardTypeTag.isEmpty()) {
-            const QString cur = m_workingItems[row]->serialize();
+        if (haveSelection && !m_clipboardTypeTag.isEmpty()
+            && m_workingItems[row].item) {
+            const QString cur = m_workingItems[row].item->serialize();
             const int pipeIdx = cur.indexOf(QLatin1Char('|'));
             const QString curTag = (pipeIdx >= 0) ? cur.left(pipeIdx) : cur;
             typeMatches = (curTag == m_clipboardTypeTag);
@@ -2147,7 +2368,9 @@ void ContainerSettingsDialog::applyToContainer()
     }
 
     target->clearItems();
-    for (const MeterItem* item : m_workingItems) {
+    for (const ContainerInUseRow& row : m_workingItems) {
+        const MeterItem* item = row.item;
+        if (!item) { continue; }
         const QString data = item->serialize();
         MeterItem* clone = createItemFromSerialized(data);
         if (clone) {
@@ -2288,7 +2511,7 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
         }
     }
 
-    qDeleteAll(m_workingItems);
+    for (const ContainerInUseRow& r : m_workingItems) { delete r.item; }
     m_workingItems.clear();
 
     ItemGroup* group = nullptr;
@@ -2355,11 +2578,19 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
         auto* item = new RotatorItem();
         item->setRect(0.0f, 0.0f, 1.0f, 1.0f);
         item->setBindingId(300);
-        m_workingItems.append(item);
+        ContainerInUseRow newRow;
+        newRow.item        = item;
+        newRow.displayName = defaultDisplayNameFor(item);
+        newRow.rowId       = QUuid::createUuid();
+        m_workingItems.append(newRow);
     } else if (name == QLatin1String("FilterDisplay")) {
         auto* item = new FilterDisplayItem();
         item->setRect(0.0f, 0.0f, 1.0f, 1.0f);
-        m_workingItems.append(item);
+        ContainerInUseRow newRow;
+        newRow.item        = item;
+        newRow.displayName = defaultDisplayNameFor(item);
+        newRow.rowId       = QUuid::createUuid();
+        m_workingItems.append(newRow);
     }
 
     if (group) {
@@ -2370,7 +2601,7 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
         // the Clock preset (factory items also at y=0) sees the bar
         // and clocks piled on top of each other. Computed BEFORE the
         // loop so the offset is constant for all items in the preset.
-        const float yOffset = nextStackYPos(m_workingItems);
+        const float yOffset = nextStackYPos(workingItems());
         for (MeterItem* src : group->items()) {
             MeterItem* clone = createItemFromSerialized(src->serialize());
             if (clone) {
@@ -2384,7 +2615,11 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
                 if (src->hasMmioBinding()) {
                     clone->setMmioBinding(src->mmioGuid(), src->mmioVariable());
                 }
-                m_workingItems.append(clone);
+                ContainerInUseRow newRow;
+                newRow.item        = clone;
+                newRow.displayName = defaultDisplayNameFor(clone);
+                newRow.rowId       = QUuid::createUuid();
+                m_workingItems.append(newRow);
             }
         }
         delete group;
@@ -2404,8 +2639,8 @@ void ContainerSettingsDialog::loadPresetByName(const QString& name)
 void ContainerSettingsDialog::onExport()
 {
     QStringList lines;
-    for (const MeterItem* item : m_workingItems) {
-        lines << item->serialize();
+    for (const ContainerInUseRow& row : m_workingItems) {
+        if (row.item) { lines << row.item->serialize(); }
     }
     const QString raw = lines.join(QLatin1Char('\n'));
     const QString encoded = QString::fromLatin1(raw.toUtf8().toBase64());
@@ -2456,9 +2691,15 @@ void ContainerSettingsDialog::onImport()
         return;
     }
 
-    qDeleteAll(m_workingItems);
+    for (const ContainerInUseRow& r : m_workingItems) { delete r.item; }
     m_workingItems.clear();
-    m_workingItems = imported;
+    for (MeterItem* imp : imported) {
+        ContainerInUseRow newRow;
+        newRow.item        = imp;
+        newRow.displayName = defaultDisplayNameFor(imp);
+        newRow.rowId       = QUuid::createUuid();
+        m_workingItems.append(newRow);
+    }
 
     refreshItemList();
     if (!m_workingItems.isEmpty()) {
