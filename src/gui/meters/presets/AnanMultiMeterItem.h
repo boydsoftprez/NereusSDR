@@ -86,6 +86,7 @@ mw0lge@grange-lane.co.uk
 #include <QRect>
 #include <QString>
 #include <array>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -125,6 +126,16 @@ public:
     Layer renderLayer() const override { return Layer::Background; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
 
+    // Edit-container refactor Task 20 — live binding routing.
+    // MeterPoller iterates every binding ID each tick and calls
+    // pushBindingValue on every item. This override dispatches the
+    // value to the matching internal needle (Signal=SignalAvg,
+    // Volts=HwVolts, Amps=HwAmps, Power=TxPower, SWR=TxSwr,
+    // Compression=TxAlcGain, ALC=TxAlcGroup) and stores it in
+    // Needle::currentValue so paint() renders the live tip instead of
+    // the calibration midpoint seed.
+    void pushBindingValue(int bindingId, double v) override;
+
     QString serialize() const override;
     bool    deserialize(const QString& data) override;
 
@@ -162,6 +173,12 @@ private:
         // (1.0 = exact calibration; >1.0 overshoots; <1.0 falls short).
         // Orthogonal to `m_radiusRatio`, which scales the whole arc.
         float                lengthFactor{1.0f};
+        // Edit-container refactor Task 20 — last value pushed through
+        // pushBindingValue() for this needle's bindingId. NaN until the
+        // poller delivers the first value; paint() treats NaN as "no
+        // data" and falls back to the calibration midpoint so the
+        // preview in the settings dialog still shows a needle.
+        double               currentValue{std::numeric_limits<double>::quiet_NaN()};
     };
 
     void   initialiseNeedles();

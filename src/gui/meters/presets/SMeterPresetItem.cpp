@@ -141,8 +141,12 @@ void SMeterPresetItem::paint(QPainter& p, int widgetW, int widgetH)
     p.drawText(titleRect, Qt::AlignCenter, QStringLiteral("S-Meter"));
 
     // Line-style bar (Thetis BarStyle::Line — baseline + marker).
-    const double seed = -133.0;  // From Thetis addSMeterBar seed
-                                  // (MeterManager.cs:21578)
+    // Edit-container refactor Task 20 — prefer the live value the
+    // poller pushed via setValue() over the -133 dBm seed. The seed
+    // is only used when MeterItem::m_value hasn't been touched (the
+    // settings-dialog preview / tests).
+    const double liveValue = value();
+    const double seed = (liveValue <= -139.9) ? -133.0 : liveValue;
     const float normX = valueToNormalizedX(seed);
     const int baseY = barRect.y() + barRect.height() / 2;
     QPen pen(m_barColor);

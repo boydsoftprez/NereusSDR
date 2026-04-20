@@ -72,6 +72,7 @@ mw0lge@grange-lane.co.uk
 #include <QColor>
 #include <QString>
 #include <array>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -101,6 +102,12 @@ public:
     // would route through the empty GPU vertex path.
     Layer renderLayer() const override { return Layer::Background; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
+
+    // Edit-container refactor Task 20 — live binding routing for the
+    // two internal bars (Power bound to TxPower, SWR bound to TxSwr).
+    // Stores the latest value in Bar::currentValue so paint() renders
+    // the live fill length instead of seeding both bars to minVal.
+    void pushBindingValue(int bindingId, double v) override;
 
     QString serialize() const override;
     bool    deserialize(const QString& data) override;
@@ -138,6 +145,11 @@ private:
         double  maxVal{1.0};
         double  redThreshold{1.0};
         QString suffix;
+        // Edit-container refactor Task 20 — last value pushed through
+        // pushBindingValue() for this bar's bindingId. NaN until the
+        // poller delivers a value; paint() treats NaN as "no data" and
+        // falls back to minVal so the preview still renders a bar.
+        double  currentValue{std::numeric_limits<double>::quiet_NaN()};
     };
 
     std::array<Bar, kBarCount> m_bars;

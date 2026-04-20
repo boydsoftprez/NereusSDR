@@ -77,6 +77,7 @@ mw0lge@grange-lane.co.uk
 #include <QRect>
 #include <QString>
 #include <array>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -109,6 +110,13 @@ public:
     // would route through the empty GPU vertex path.
     Layer renderLayer() const override { return Layer::Background; }
     void  paint(QPainter& p, int widgetW, int widgetH) override;
+
+    // Edit-container refactor Task 20 — live binding routing.
+    // MeterPoller pushes each binding ID through pushBindingValue on
+    // every item. This override routes the forward/reflected values
+    // (TxPower → needle[0], TxReversePower → needle[1]) into
+    // Needle::currentValue so paint() draws the live tip position.
+    void pushBindingValue(int bindingId, double v) override;
 
     QString serialize() const override;
     bool    deserialize(const QString& data) override;
@@ -150,6 +158,11 @@ private:
         QPointF              needleOffset{0.0, 0.0};
         // Per-needle reach scaler — Thetis `clsNeedleItem.LengthFactor`.
         float                lengthFactor{1.0f};
+        // Edit-container refactor Task 20 — last value pushed via
+        // pushBindingValue() for this needle's bindingId. NaN until
+        // the poller delivers the first value; paint() treats NaN as
+        // "no data" and falls back to the first-point seed.
+        double               currentValue{std::numeric_limits<double>::quiet_NaN()};
     };
 
     void   initialiseNeedles();

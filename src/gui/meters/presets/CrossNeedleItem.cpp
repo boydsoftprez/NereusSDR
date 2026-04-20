@@ -79,6 +79,8 @@ mw0lge@grange-lane.co.uk
 #include <QPen>
 #include <QtGlobal>
 
+#include <cmath>
+
 namespace NereusSDR {
 
 namespace {
@@ -339,10 +341,17 @@ void CrossNeedleItem::paintNeedle(QPainter& p,
     if (n.calibration.isEmpty()) {
         return;
     }
-    // TODO(wdsp-poller): replace first-key seed with live value from
-    // the MeterPoller once composite-item polling is wired.
+    // Edit-container refactor Task 20 — prefer the live value routed via
+    // pushBindingValue() over the first-calibration-point seed. The seed
+    // is kept as a "no data" fallback for the settings-dialog preview
+    // and for tests that exercise paint() without a poll cycle.
     auto first = n.calibration.constBegin();
-    const float seed = first.key();
+    float seed;
+    if (std::isnan(n.currentValue)) {
+        seed = first.key();
+    } else {
+        seed = static_cast<float>(n.currentValue);
+    }
 
     // pivot_px = rect.topLeft + NeedleOffset * rect.size.
     // NeedleOffset is the Thetis per-needle pivot position in
@@ -366,6 +375,24 @@ void CrossNeedleItem::paintNeedle(QPainter& p,
     p.setPen(pen);
     p.drawLine(pivotPx, tipPx);
     p.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Edit-container refactor Task 20 — live-value routing. MeterPoller calls
+// pushBindingValue(bindingId, value) on every item each tick; walk the 2
+// needles and stash the value on the matching forward / reflected needle.
+// ---------------------------------------------------------------------------
+void CrossNeedleItem::pushBindingValue(int bindingId, double v)
+{
+    if (bindingId < 0) {
+        return;
+    }
+    for (Needle& n : m_needles) {
+        if (n.bindingId == bindingId) {
+            n.currentValue = v;
+            MeterItem::setValue(v);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

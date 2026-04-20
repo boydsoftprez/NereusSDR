@@ -134,9 +134,11 @@ void SignalTextPresetItem::paint(QPainter& p, int widgetW, int widgetH)
     p.setFont(f);
     p.setPen(m_textColor);
 
-    // Idle seed = -140 dBm (below S0) — paint an "S0 -140 dBm" placeholder
-    // until the poller sends a live value.
-    const double seed = -140.0;
+    // Edit-container refactor Task 20 — prefer the live value the
+    // poller pushed via setValue(); fall back to the -140 dBm idle
+    // placeholder when no data has arrived yet.
+    const double liveValue = value();
+    const double seed = (liveValue <= -139.9) ? -140.0 : liveValue;
     p.drawText(rect, Qt::AlignCenter, formatReadout(seed));
     p.restore();
 }
