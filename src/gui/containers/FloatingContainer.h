@@ -150,6 +150,12 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    // Edit-container refactor Task 16 — forward top-level right-click
+    // and double-click events to the embedded ContainerWidget so the
+    // 3 on-container affordances (menu / gear / double-click header)
+    // work identically whether the container is docked or floating.
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private slots:
     // Collapse the top-level window to title-bar height when the owner
@@ -169,6 +175,12 @@ private:
     bool m_floating{false};
     bool m_hiddenByMacro{false};
     int  m_unminimisedHeight{0};   // cached height before minimise collapse
+
+    // Task 16 — non-owning handle to the embedded ContainerWidget set
+    // in takeOwner(). contextMenuEvent and mouseDoubleClickEvent forward
+    // into this so the on-container affordances reach the inner widget's
+    // handlers even when the user clicks the top-level window frame.
+    ContainerWidget* m_embedded{nullptr};
 };
 
 } // namespace NereusSDR

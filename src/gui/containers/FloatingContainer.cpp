@@ -58,7 +58,10 @@ mw0lge@grange-lane.co.uk
 #include "core/LogCategories.h"
 
 #include <QCloseEvent>
+#include <QContextMenuEvent>
+#include <QCoreApplication>
 #include <QGuiApplication>
+#include <QMouseEvent>
 #include <QScreen>
 #include <QVBoxLayout>
 
@@ -107,6 +110,11 @@ void FloatingContainer::takeOwner(ContainerWidget* container)
     layout()->addWidget(container);
     container->show();
     container->raise();
+
+    // Task 16 — remember the embedded child so context-menu /
+    // double-click events landing on the top-level frame can be
+    // forwarded down into ContainerWidget's own handlers.
+    m_embedded = container;
 
     // Phase 3G-6 block 2: listen for the runtime minimised flag on
     // the owner so this top-level window can collapse to the title
@@ -170,6 +178,46 @@ void FloatingContainer::closeEvent(QCloseEvent* event)
     }
     saveGeometry();
     QWidget::closeEvent(event);
+}
+
+// ---------------------------------------------------------------------------
+// Task 16 — forward right-click and double-click to the embedded
+// ContainerWidget so the Task 15 on-container affordances work
+// identically when the container is floating.
+// ---------------------------------------------------------------------------
+
+void FloatingContainer::contextMenuEvent(QContextMenuEvent* event)
+{
+    if (m_embedded) {
+        // Translate the global click point into the embedded child's
+        // local coordinates so ContainerWidget::contextMenuEvent places
+        // the popup menu at the right spot.
+        QContextMenuEvent ev(event->reason(),
+                              m_embedded->mapFromGlobal(event->globalPos()),
+                              event->globalPos(),
+                              event->modifiers());
+        QCoreApplication::sendEvent(m_embedded, &ev);
+        event->accept();
+        return;
+    }
+    QWidget::contextMenuEvent(event);
+}
+
+void FloatingContainer::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    if (m_embedded) {
+        const QPointF globalPos = event->globalPosition();
+        QMouseEvent ev(event->type(),
+                        m_embedded->mapFromGlobal(globalPos.toPoint()),
+                        globalPos,
+                        event->button(),
+                        event->buttons(),
+                        event->modifiers());
+        QCoreApplication::sendEvent(m_embedded, &ev);
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 void FloatingContainer::saveGeometry()
