@@ -721,6 +721,15 @@ CodecContext P2RadioConnection::buildCodecContext() const
 // Legacy compose bodies are preserved as composeCmd*Legacy for one release.
 // ---------------------------------------------------------------------------
 
+// Copy only payload bytes (offset 4+) from the codec's zeroed temporary
+// back into the caller's buffer.  sendCmd* stamps an incrementing P2
+// sequence number into buf[0..3] BEFORE calling composeCmd*, so a full
+// memcpy(buf, tmp, SIZE) would overwrite the sequence with zeros and
+// every P2 command packet would ship with sequence = 0.  The codec
+// implementations only write to offsets ≥ 4 (grep confirmed: no
+// writeBE32(buf, 0, ...) in any P2Codec* compose method), so copying
+// from offset 4 leaves the stamped sequence bytes untouched.
+
 void P2RadioConnection::composeCmdGeneral(char buf[60]) const
 {
     if (m_useLegacyP2Codec || !m_codec) {
@@ -730,7 +739,7 @@ void P2RadioConnection::composeCmdGeneral(char buf[60]) const
     const CodecContext ctx = buildCodecContext();
     quint8 tmp[60] = {};
     m_codec->composeCmdGeneral(ctx, tmp);
-    memcpy(buf, tmp, 60);
+    memcpy(buf + 4, tmp + 4, 60 - 4);
 }
 
 void P2RadioConnection::composeCmdHighPriority(char buf[kBufLen]) const
@@ -742,7 +751,7 @@ void P2RadioConnection::composeCmdHighPriority(char buf[kBufLen]) const
     const CodecContext ctx = buildCodecContext();
     quint8 tmp[kBufLen] = {};
     m_codec->composeCmdHighPriority(ctx, tmp);
-    memcpy(buf, tmp, kBufLen);
+    memcpy(buf + 4, tmp + 4, kBufLen - 4);
 }
 
 void P2RadioConnection::composeCmdRx(char buf[kBufLen]) const
@@ -754,7 +763,7 @@ void P2RadioConnection::composeCmdRx(char buf[kBufLen]) const
     const CodecContext ctx = buildCodecContext();
     quint8 tmp[kBufLen] = {};
     m_codec->composeCmdRx(ctx, tmp);
-    memcpy(buf, tmp, kBufLen);
+    memcpy(buf + 4, tmp + 4, kBufLen - 4);
 }
 
 void P2RadioConnection::composeCmdTx(char buf[60]) const
@@ -766,7 +775,7 @@ void P2RadioConnection::composeCmdTx(char buf[60]) const
     const CodecContext ctx = buildCodecContext();
     quint8 tmp[60] = {};
     m_codec->composeCmdTx(ctx, tmp);
-    memcpy(buf, tmp, 60);
+    memcpy(buf + 4, tmp + 4, 60 - 4);
 }
 
 // ---------------------------------------------------------------------------
