@@ -336,6 +336,7 @@ set(CORE_SOURCES
     src/core/NoiseFloorTracker.cpp
     src/core/ClarityController.cpp
     src/core/StepAttenuatorController.cpp
+    src/core/CalibrationController.cpp
     src/core/OcMatrix.cpp
     src/core/IoBoardHl2.cpp
     src/core/HermesLiteBandwidthMonitor.cpp
@@ -494,7 +495,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/XvtrTab.cpp
     src/gui/setup/hardware/PureSignalTab.cpp
     src/gui/setup/hardware/DiversityTab.cpp
-    src/gui/setup/hardware/PaCalibrationTab.cpp
+    src/gui/setup/hardware/CalibrationTab.cpp
     src/gui/setup/hardware/Hl2IoBoardTab.cpp
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioSetupPages.cpp

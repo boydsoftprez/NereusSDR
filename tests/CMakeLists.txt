@@ -398,3 +398,20 @@ nereus_add_test(tst_apollo_controller)
 # setter signal emission (idempotent no-fire), and per-MAC AppSettings persistence.
 # Ports HPSDR/Penny.cs (full) + console.cs:14899 + setup.cs:12679 [@501e3f5].
 nereus_add_test(tst_penny_lane_controller)
+
+# ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
+# Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission
+# (idempotent no-fire), effectiveFreqCorrectionFactor() toggle between normal
+# and 10 MHz ref factor, and per-MAC AppSettings persistence round-trip.
+# Ports setup.cs:5137-5144; 14036-14050; 22690-22706; 14325; 17243; 18315 +
+# console.cs:9766-9844; 21022-21086 [@501e3f5].
+nereus_add_test(tst_calibration_controller)
+
+# ── Phase 3P-G commit 2: CalibrationTab UI smoke tests ───────────────────────
+# Verifies construction doesn't crash, 5 group boxes present
+# (Freq Cal / Level Cal / HPSDR Freq Cal Diagnostic / TX Display Cal /
+# PA Current), controller->UI sync, and UI->controller write-back.
+nereus_add_test(tst_calibration_tab)
+target_compile_definitions(tst_calibration_tab PRIVATE NEREUS_BUILD_TESTS)
+
+

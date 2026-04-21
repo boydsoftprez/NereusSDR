@@ -78,6 +78,7 @@
 #include "core/accessories/AlexController.h"
 #include "core/accessories/ApolloController.h"
 #include "core/accessories/PennyLaneController.h"
+#include "core/CalibrationController.h"
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
@@ -161,6 +162,12 @@ public:
     // Setup UI deferred (Phase 3P-F Task 5b).
     const PennyLaneController& pennyLaneController()        const { return m_pennyLaneController; }
     PennyLaneController&       pennyLaneControllerMutable()       { return m_pennyLaneController; }
+
+    // Calibration controller — HPSDR NCO correction factor, level offsets, LNA
+    // offsets, TX display cal, PA current sens/offset. Loaded per-MAC at connect.
+    // Backs CalibrationTab UI and P2RadioConnection::hzToPhaseWord(). Phase 3P-G.
+    const CalibrationController& calibrationController()        const { return m_calController; }
+    CalibrationController&       calibrationControllerMutable()       { return m_calController; }
 
     // Sub-models
     MeterModel&       meterModel()       { return m_meterModel; }
@@ -313,6 +320,11 @@ private:
     // PennyLane external-control master toggle. Composes with OcMatrix (Phase 3P-D).
     // MAC and load() are called on connect. Phase 3P-F Task 5b.
     PennyLaneController m_pennyLaneController;
+
+    // Calibration controller — HPSDR NCO correction factor, level offsets, PA current.
+    // MAC and load() are called on connect. Backs CalibrationTab UI and
+    // P2RadioConnection::hzToPhaseWord(). Phase 3P-G.
+    CalibrationController m_calController;
 
     // Slices and panadapters (client-managed)
     QList<SliceModel*> m_slices;

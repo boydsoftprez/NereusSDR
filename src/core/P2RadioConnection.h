@@ -144,7 +144,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "codec/IP2Codec.h"
 #include "codec/CodecContext.h"
 
-namespace NereusSDR { class OcMatrix; }  // forward decl — full header in .cpp
+namespace NereusSDR { class OcMatrix; }              // forward decl — full header in .cpp
+namespace NereusSDR { class CalibrationController; } // forward decl — Phase 3P-G
 
 namespace NereusSDR {
 
@@ -189,6 +190,12 @@ public slots:
     // support lands.  Phase 3P-D Task 3.
     void setOcMatrix(const OcMatrix* matrix);
 
+    // Wire CalibrationController so hzToPhaseWord() can multiply by
+    // effectiveFreqCorrectionFactor(). When null (default 1.0 behaviour),
+    // the phase word is byte-identical to pre-calibration output.
+    // Phase 3P-G.
+    void setCalibrationController(const CalibrationController* cal);
+
 private slots:
     void onReadyRead();
     void onKeepAliveTick();
@@ -227,7 +234,7 @@ private:
 
     // From pcap analysis: phase_word = freq_hz * 2^32 / 122880000
     // General cmd byte 37 bit 3 = 1 means radio expects phase words, not Hz.
-    static quint32 hzToPhaseWord(quint64 freqHz);
+    quint32 hzToPhaseWord(quint64 freqHz) const;  // non-static: reads m_calController
 
     // --- Constants from Thetis network.h ---
     static constexpr int kMaxRxStreams = 12;  // network.h:34 MAX_RX_STREAMS
@@ -247,6 +254,12 @@ private:
     // with P1 so Phase F P2 OC wiring can read it without further changes.
     // Phase 3P-D Task 3.
     const OcMatrix* m_ocMatrix{nullptr};
+
+    // Non-owning pointer to RadioModel's CalibrationController.
+    // When non-null, hzToPhaseWord() multiplies by effectiveFreqCorrectionFactor().
+    // Default null → factor 1.0 → byte-identical to pre-cal output.
+    // Phase 3P-G.
+    const CalibrationController* m_calController{nullptr};
 
     // --- Single socket (Thetis listenSock, network.c:67) ---
     QUdpSocket* m_socket{nullptr};

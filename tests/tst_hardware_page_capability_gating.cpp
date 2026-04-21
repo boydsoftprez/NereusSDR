@@ -33,7 +33,7 @@ private slots:
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Xvtr));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
-        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PaCalibration));
+        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Hl2IoBoard));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::BandwidthMonitor));
     }
@@ -53,7 +53,7 @@ private slots:
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::OcOutputs));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
-        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::PaCalibration));
+        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Hl2IoBoard));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::BandwidthMonitor));
     }
@@ -74,7 +74,7 @@ private slots:
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Xvtr));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
-        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PaCalibration));
+        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
     }
 
     void saturn_shows_nearly_all_tabs()
@@ -91,7 +91,7 @@ private slots:
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::OcOutputs));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
-        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::PaCalibration));
+        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Hl2IoBoard));
     }
 };

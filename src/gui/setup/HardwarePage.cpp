@@ -65,7 +65,7 @@
 #include "hardware/XvtrTab.h"
 #include "hardware/PureSignalTab.h"
 #include "hardware/DiversityTab.h"
-#include "hardware/PaCalibrationTab.h"
+#include "hardware/CalibrationTab.h"
 #include "hardware/Hl2IoBoardTab.h"
 #include "hardware/BandwidthMonitorTab.h"
 
@@ -101,7 +101,7 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_xvtrTab         = new XvtrTab(model, this);
     m_pureSignalTab   = new PureSignalTab(model, this);
     m_diversityTab    = new DiversityTab(model, this);
-    m_paCalTab        = new PaCalibrationTab(model, this);
+    m_paCalTab        = new CalibrationTab(model, this);
     m_hl2IoTab        = new Hl2IoBoardTab(model, this);
     m_bwMonitorTab    = new BandwidthMonitorTab(model, this);
 
@@ -112,7 +112,7 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_xvtrIdx        = m_tabs->addTab(m_xvtrTab,        tr("XVTR"));
     m_pureSignalIdx  = m_tabs->addTab(m_pureSignalTab,  tr("PureSignal"));
     m_diversityIdx   = m_tabs->addTab(m_diversityTab,   tr("Diversity"));
-    m_paCalIdx       = m_tabs->addTab(m_paCalTab,       tr("PA Calibration"));
+    m_paCalIdx       = m_tabs->addTab(m_paCalTab,       tr("Calibration"));
     m_hl2IoIdx       = m_tabs->addTab(m_hl2IoTab,       tr("HL2 I/O"));
     m_bwMonitorIdx   = m_tabs->addTab(m_bwMonitorTab,   tr("Bandwidth Monitor"));
 
@@ -246,7 +246,7 @@ bool HardwarePage::isTabVisibleForTest(Tab t) const
         case Tab::Xvtr:             return m_tabs->isTabVisible(m_xvtrIdx);
         case Tab::PureSignal:       return m_tabs->isTabVisible(m_pureSignalIdx);
         case Tab::Diversity:        return m_tabs->isTabVisible(m_diversityIdx);
-        case Tab::PaCalibration:    return m_tabs->isTabVisible(m_paCalIdx);
+        case Tab::Calibration:      return m_tabs->isTabVisible(m_paCalIdx);
         case Tab::Hl2IoBoard:       return m_tabs->isTabVisible(m_hl2IoIdx);
         case Tab::BandwidthMonitor: return m_tabs->isTabVisible(m_bwMonitorIdx);
     }
