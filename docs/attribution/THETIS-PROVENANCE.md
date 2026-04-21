@@ -88,6 +88,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/setup/hardware/AntennaAlexAntennaControlTab.h | Project Files/Source/Console/setup.designer.cs | 5981-7000 | port | thetis-samphire | header mirrors .cpp |
 | src/core/StepAttenuatorController.cpp | Project Files/Source/Console/console.cs | 21290-21763 | port | thetis-samphire | handleOverload, pollOverloadSyncSeqErr, RX1AttenuatorData, comboPreamp_SelectedIndexChanged |
 | src/core/StepAttenuatorController.h | Project Files/Source/Console/console.cs | 21290-21763 | port | thetis-samphire | PreampMode enum (21574-21586), overload level fields (21212-21224) |
+| src/core/RadioStatus.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/HPSDR/NetworkIOImports.cs | 6642-6659; 261-267 | port | multi-source | SWR formula (console.cs:6642 SWR(adc_fwd,adc_rev) [@501e3f5]); PA forward/reflected/exciter power getter DllImport declarations (NetworkIOImports.cs:261-267 [@501e3f5]); aggregates PA temp/current/SWR/PTT-source; PA voltage dropped (not exposed as separate status field in Thetis) |
+| src/core/RadioStatus.h | Project Files/Source/Console/console.cs; Project Files/Source/Console/HPSDR/NetworkIOImports.cs | 6642-6659; 261-267 | port | multi-source | header mirrors RadioStatus.cpp |
 | src/core/CalibrationController.cpp | Project Files/Source/Console/setup.cs; Project Files/Source/Console/console.cs | 5137-5144; 14036-14050; 22690-22706; 14325-14333; 17243-17248; 18315-18317; 9766-9844; 21022-21086 | port | thetis-samphire | frequency correction factor (normal + 10 MHz ext ref toggle), level offset, Rx1/Rx2 6m LNA offsets, TX display cal offset, PA current sensitivity/offset; per-MAC persistence under hardware/<mac>/cal/; effectiveFreqCorrectionFactor() picks based on using10MHzRef toggle (Phase 3P-G) |
 | src/core/CalibrationController.h | Project Files/Source/Console/setup.cs; Project Files/Source/Console/console.cs | 5137-5144; 14036-14050; 22690-22706; 14325-14333; 17243-17248; 18315-18317; 9766-9844; 21022-21086 | port | thetis-samphire | header mirrors CalibrationController.cpp |
 | src/core/wdsp_api.h | Project Files/Source/Console/dsp.cs; Project Files/Source/Console/radio.cs; Project Files/Source/Console/HPSDR/specHPSDR.cs | full | port | multi-source | verbatim C API declarations |
@@ -264,6 +266,7 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | tests/tst_slice_snb.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/dsp.cs | 36347; 692-693 | port | multi-source | |
 | tests/tst_slice_squelch.cpp | Project Files/Source/Console/radio.cs | 1185-1329; 1164-1178; 1274-1291; 1293-1329 | port | thetis-samphire | |
 | tests/tst_step_attenuator_controller.cpp | Project Files/Source/Console/console.cs | 21359-21382; 21366; 21369; 21373-21375; 21378; 21548-21567 | port | thetis-samphire | |
+| tests/tst_radio_status.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/HPSDR/NetworkIOImports.cs | 6642-6659; 261-267 | port | multi-source | SWR test vectors from console.cs:6642 SWR(adc_fwd,adc_rev) [@501e3f5]; getFwdPower/getRevPower DllImport declarations from NetworkIOImports.cs:264-267 [@501e3f5] |
 
 ## Files derived from mi0bot/Thetis-HL2
 

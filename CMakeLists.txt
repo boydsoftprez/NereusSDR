@@ -338,6 +338,8 @@ set(CORE_SOURCES
     src/core/StepAttenuatorController.cpp
     src/core/CalibrationController.cpp
     src/core/OcMatrix.cpp
+    src/core/RadioStatus.cpp
+    src/core/SettingsHygiene.cpp
     src/core/IoBoardHl2.cpp
     src/core/HermesLiteBandwidthMonitor.cpp
     src/core/accessories/AlexController.cpp

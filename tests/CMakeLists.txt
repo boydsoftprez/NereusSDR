@@ -399,6 +399,11 @@ nereus_add_test(tst_apollo_controller)
 # Ports HPSDR/Penny.cs (full) + console.cs:14899 + setup.cs:12679 [@501e3f5].
 nereus_add_test(tst_penny_lane_controller)
 
+# ── Phase 3P-H Task 1: RadioStatus + SettingsHygiene + PttSource models ──────
+nereus_add_test(tst_ptt_source)
+nereus_add_test(tst_radio_status)
+nereus_add_test(tst_settings_hygiene)
+
 # ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
 # Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission
 # (idempotent no-fire), effectiveFreqCorrectionFactor() toggle between normal
