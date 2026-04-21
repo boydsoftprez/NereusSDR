@@ -1279,7 +1279,14 @@ void P1RadioConnection::sendCommandFrame()
 {
     if (!m_socket) { return; }
 
-    const int maxBank = (m_hardwareProfile.model == HPSDRModel::ANVELINAPRO3) ? 17 : 16;
+    // Phase 3P-D follow-up: drive the bank ceiling from the active codec's
+    // maxBank() so HL2 (18) and AnvelinaPro3 (17) both emit their full bank
+    // range. Standard = 16. The legacy compose path (m_codec == nullptr under
+    // NEREUS_USE_LEGACY_P1_CODEC=1) retains the pre-refactor model-keyed
+    // constant to preserve the regression-freeze byte-identical guarantee.
+    const int maxBank = m_codec
+        ? m_codec->maxBank()
+        : ((m_hardwareProfile.model == HPSDRModel::ANVELINAPRO3) ? 17 : 16);
 
     quint8 frame[1032];
     memset(frame, 0, sizeof(frame));
