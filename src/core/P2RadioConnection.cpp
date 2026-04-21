@@ -283,6 +283,8 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     //   DDCEnable = DDC2 (bit 2), Rate[2] = rx1_rate
     // This means DDC2 is the primary receiver, not DDC0!
     // From Thetis console.cs:8234-8241
+    // Upstream inline attribution preserved verbatim (console.cs:8238):
+    //   if (p1) Rate[0] = rx1_rate; // [2.10.3.13]MW0LGE p1 !
     m_rx[2].enable = 1;
     m_rx[2].frequency = 3865000;   // 80m LSB — overridden by setReceiverFrequency
     // DDC2 samplingRate is set by setSampleRate() which RadioModel queues
@@ -1157,6 +1159,8 @@ void P2RadioConnection::processHighPriorityStatus(const QByteArray& data)
     // are relative to the Thetis ReadBufp pointer; we add 3 to land in raw[].
     //
     // From Thetis network.c:711-748 [@501e3f5]:
+    // Upstream inline attribution preserved verbatim (network.c:708):
+    //   prn->adc[i].adc_overload = prn->adc[i].adc_overload || (((prn->ReadBufp[1] >> i) & 0x1) != 0); // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
     //   //Bytes 2,3      Exciter Power [15:0]     * 12 bits sign extended to 16
     //   //Bytes 10,11    FWD Power [15:0]           ditto
     //   //Bytes 18,19    REV Power [15:0]           ditto

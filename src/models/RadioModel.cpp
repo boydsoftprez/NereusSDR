@@ -273,6 +273,9 @@ namespace {
 //   if (volts < 0) volts = 0;
 //   float watts = Math.Pow(volts, 2) / bridge_volt;
 //
+// Upstream inline attribution preserved verbatim (console.cs:25038):
+//   case HPSDRModel.REDPITAYA: //DH1KLM
+//
 // Bridge constants per HPSDRModel:
 //   ANAN100/100B/100D : bridge=0.095  refV=3.3  cal=6
 //   ANAN200D          : bridge=0.108  refV=5.0  cal=4
@@ -325,6 +328,9 @@ double scaleFwdPowerWatts(quint16 adcRaw, HPSDRModel model)
 //   We omit the 6m branch here because tx_band routing isn't wired
 //   into RadioModel yet — the off-band scaling is conservative
 //   (slightly under-reads on 6m).  TODO when TX-band tracking lands.
+//
+// Upstream inline attribution preserved verbatim (console.cs:24965):
+//   case HPSDRModel.REDPITAYA: //DH1KLM
 double scaleRevPowerWatts(quint16 adcRaw, HPSDRModel model)
 {
     double bridge_volt   = 0.09;
@@ -1424,6 +1430,8 @@ void RadioModel::wireSliceSignals()
 
     // RF gain → WDSP AGC top, with bidirectional sync back to AGC-T.
     // From Thetis console.cs:50350 pattern — GetRXAAGCThresh after SetRXAAGCTop
+    // Upstream inline attribution preserved verbatim (console.cs:50345):
+    //   if (agc_thresh_point < -160.0) agc_thresh_point = -160.0; //[2.10.3.6]MW0LGE changed from -143
     connect(slice, &SliceModel::rfGainChanged, this, [this](int gain) {
         if (m_syncingAgc) { return; }
         RxChannel* rxCh = m_wdspEngine->rxChannel(0);

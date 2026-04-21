@@ -361,6 +361,8 @@ double RxChannel::readBackAgcThresh() const
 #ifdef HAVE_WDSP
     // Read resulting threshold after SetRXAAGCTop modified it.
     // From Thetis console.cs:50350 pattern — GetRXAAGCThresh after SetRXAAGCTop
+    // Upstream inline attribution preserved verbatim (console.cs:50345):
+    //   if (agc_thresh_point < -160.0) agc_thresh_point = -160.0; //[2.10.3.6]MW0LGE changed from -143
     // kDspSize must match the size passed to SetRXAAGCThresh (4096).
     static constexpr double kDspSize = 4096.0;
     double thresh = 0.0;
