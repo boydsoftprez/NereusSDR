@@ -280,7 +280,10 @@ namespace {
 //   the same way). Atlas max receivers = 7 (P1 hardware limit), though
 //   typically 3 in practice. maxSampleRate = 192k for P1 standard.
 // Firmware floor: none. Thetis NetworkIO.cs has no Atlas firmware check.
-constexpr BoardCapabilities kAtlas = {
+// NOTE: Changed from constexpr to const in Phase 3P-B Task 6 because
+// BoardCapabilities now contains QList<SaturnBpf1Edge> (p2SaturnBpf1Edges),
+// which is not constexpr-compatible.  All board entries follow suit.
+const BoardCapabilities kAtlas = {
     .board            = HPSDRHW::Atlas,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
@@ -319,7 +322,7 @@ constexpr BoardCapabilities kAtlas = {
 //   Thetis is HermesII-only (DeviceType == HPSDRHW.HermesII && CodeVersion < 103).
 //   Plain Hermes has no equivalent guard. v15 ("FW v1.5") is a normal
 //   legitimate Hermes firmware that Thetis accepts without complaint.
-constexpr BoardCapabilities kHermes = {
+const BoardCapabilities kHermes = {
     .board            = HPSDRHW::Hermes,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
@@ -355,7 +358,7 @@ constexpr BoardCapabilities kHermes = {
 // Note: Setup.cs:16088-16099 — HermesII is explicitly excluded from the
 //   "Maximum=61" branch; uses standard 0..31 range.
 // TODO(3I-T2): verify maxReceivers=4 vs 7 for HermesII
-constexpr BoardCapabilities kHermesII = {
+const BoardCapabilities kHermesII = {
     .board            = HPSDRHW::HermesII,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
@@ -391,7 +394,7 @@ constexpr BoardCapabilities kHermesII = {
 // Diversity + PureSignal: yes (2 ADCs, console.cs GetDDC P1 Angelia branch:8680)
 // maxReceivers: 7 (P1 dual-ADC limit, console.cs GetDDC Angelia branch)
 // TODO(3I-T2): verify firmware versions
-constexpr BoardCapabilities kAngelia = {
+const BoardCapabilities kAngelia = {
     .board            = HPSDRHW::Angelia,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 2,
@@ -425,7 +428,7 @@ constexpr BoardCapabilities kAngelia = {
 // Preamp: hasBypassAndPreamp=true (50V supply vs 33V for Hermes/Angelia,
 //   clsHardwareSpecific.cs:139 SetADCSupply(0,50))
 // TODO(3I-T2): verify firmware versions
-constexpr BoardCapabilities kOrion = {
+const BoardCapabilities kOrion = {
     .board            = HPSDRHW::Orion,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 2,
@@ -459,7 +462,7 @@ constexpr BoardCapabilities kOrion = {
 // P2 sample rates: 48k/96k/192k/384k/768k/1536k all six (Setup.cs:854).
 // Correction vs plan baseline: maxSampleRate updated to 1536000 (P2 boards)
 // TODO(3I-T2): verify firmware versions for OrionMKII
-constexpr BoardCapabilities kOrionMKII = {
+const BoardCapabilities kOrionMKII = {
     .board            = HPSDRHW::OrionMKII,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
@@ -482,6 +485,10 @@ constexpr BoardCapabilities kOrionMKII = {
     .hasSidetoneGenerator = false,
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
+    // Phase 3P-B Task 6: OrionMKII family has independent per-ADC preamp control
+    // (ANAN-7000DLE / 8000DLE / AnvelinaPro3). p2SaturnBpf1Edges stays empty
+    // (OrionMKII uses standard Alex HPF/LPF; Saturn BPF1 override is G2/G2-1K only).
+    .p2PreampPerAdc   = true,
     .displayName      = "ANAN-7000DLE/8000DLE (OrionMkII)",
     .sourceCitation   = "network.h:453, enums.cs:395, clsHardwareSpecific.cs:143-190",
 };
@@ -502,7 +509,7 @@ constexpr BoardCapabilities kOrionMKII = {
 //   (IoBoardHl2.cs references sidetone register)
 // maxReceivers: 4 for HL2 (console.cs GetDDC HermesLite branch:8734, same as Hermes)
 // Firmware: HL2 v72+ recommended (mi0bot Thetis-HL2 release notes)
-constexpr BoardCapabilities kHermesLite = {
+const BoardCapabilities kHermesLite = {
     .board            = HPSDRHW::HermesLite,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
@@ -540,7 +547,7 @@ constexpr BoardCapabilities kHermesLite = {
 // PSDefaultPeak = 0.6121 for Saturn (clsHardwareSpecific.cs:323-324 P2 switch)
 // Correction vs plan baseline: maxSampleRate updated to 1536000 (P2 board)
 // TODO(3I-T2): verify firmware versions for Saturn/ANAN-G2
-constexpr BoardCapabilities kSaturn = {
+const BoardCapabilities kSaturn = {
     .board            = HPSDRHW::Saturn,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
@@ -573,7 +580,7 @@ constexpr BoardCapabilities kSaturn = {
 // Capabilities identical to Saturn; protocol P2 by derivation from Saturn base.
 // Correction vs plan baseline: maxSampleRate updated to 1536000 (P2 board)
 // TODO(3I-T2): verify SaturnMKII vs Saturn capability differences when hardware ships
-constexpr BoardCapabilities kSaturnMKII = {
+const BoardCapabilities kSaturnMKII = {
     .board            = HPSDRHW::SaturnMKII,
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 2,
@@ -602,7 +609,7 @@ constexpr BoardCapabilities kSaturnMKII = {
 
 // ─── Unknown (fallback) ─────────────────────────────────────────────────────
 // Safe defaults for unrecognised boards. Used as forBoard() fallback.
-constexpr BoardCapabilities kUnknown = {
+const BoardCapabilities kUnknown = {
     .board            = HPSDRHW::Unknown,
     .protocol         = ProtocolVersion::Protocol1,
     .adcCount         = 1,
@@ -629,7 +636,9 @@ constexpr BoardCapabilities kUnknown = {
     .sourceCitation   = "fallback — no Thetis source for HPSDRHW::Unknown",
 };
 
-constexpr std::array kTable = {
+// const (not constexpr) because BoardCapabilities contains QList<SaturnBpf1Edge>
+// which is not constexpr-compatible.  Introduced in Phase 3P-B Task 6.
+const std::array<BoardCapabilities, 10> kTable = {
     kAtlas, kHermes, kHermesII, kAngelia, kOrion,
     kOrionMKII, kHermesLite, kSaturn, kSaturnMKII, kUnknown
 };

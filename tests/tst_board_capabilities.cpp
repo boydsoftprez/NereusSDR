@@ -132,6 +132,24 @@ private slots:
         QVERIFY(caps.hasPureSignal);
         QCOMPARE(caps.adcCount, 2);
     }
+
+    // Phase 3P-B Task 6: P2-specific capability fields
+    void saturn_has_p2_fields_default() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::Saturn);
+        QVERIFY(!caps.p2PreampPerAdc);  // Saturn is single-ADC at the wire layer
+        QVERIFY(caps.p2SaturnBpf1Edges.isEmpty());  // user populates via Setup
+    }
+
+    void orionmkii_has_p2_per_adc_preamp() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::OrionMKII);
+        QVERIFY(caps.p2PreampPerAdc);  // OrionMKII family supports per-ADC preamp
+    }
+
+    void hl2_no_p2_fields() {
+        // HL2 is P1-only — p2PreampPerAdc default false, no Saturn BPF1
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::HermesLite);
+        QVERIFY(!caps.p2PreampPerAdc);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestBoardCapabilities)
