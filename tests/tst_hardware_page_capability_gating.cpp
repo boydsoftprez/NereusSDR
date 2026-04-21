@@ -15,9 +15,20 @@ using namespace NereusSDR;
 class TestHardwarePageGating : public QObject {
     Q_OBJECT
 private slots:
+    // HardwarePage::onCurrentRadioChanged derives capability gating from
+    // m_model->hardwareProfile().caps (Phase 3I-RP). In production
+    // RadioModel::connectToRadio seeds the hardware profile via
+    // profileForModel(info.modelOverride | defaultModelForBoard(info))
+    // before emitting currentRadioChanged, so caps is live by the time
+    // HardwarePage responds. Tests that drive onCurrentRadioChanged
+    // directly must prime the profile via setBoardForTest, or the
+    // dereference at HardwarePage.cpp:198 (*caps) segfaults on the
+    // default-constructed HardwareProfile whose caps pointer is null.
+
     void hl2_hides_alex_pa_diversity()
     {
         RadioModel model;
+        model.setBoardForTest(HPSDRHW::HermesLite);
         HardwarePage page(&model);
 
         RadioInfo info;
@@ -41,6 +52,7 @@ private slots:
     void angelia_shows_alex_pa_diversity()
     {
         RadioModel model;
+        model.setBoardForTest(HPSDRHW::Angelia);
         HardwarePage page(&model);
 
         RadioInfo info;
@@ -61,6 +73,7 @@ private slots:
     void atlas_shows_only_radio_info()
     {
         RadioModel model;
+        model.setBoardForTest(HPSDRHW::Atlas);
         HardwarePage page(&model);
 
         RadioInfo info;
@@ -80,6 +93,7 @@ private slots:
     void saturn_shows_nearly_all_tabs()
     {
         RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
         HardwarePage page(&model);
 
         RadioInfo info;
