@@ -42,6 +42,8 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/core/codec/P1CodecHl2.h | Project Files/Source/ChannelMaster/networkproto1.c | 869-1201 | port | mi0bot | header mirrors .cpp |
 | src/core/codec/P2CodecOrionMkII.cpp | Project Files/Source/ChannelMaster/network.c | 821-1248 | port | thetis-no-samphire | base P2 codec for OrionMKII / 7000D / 8000D / AnvelinaPro3; lifted from P2RadioConnection inline compose helpers |
 | src/core/codec/P2CodecOrionMkII.h | Project Files/Source/ChannelMaster/network.c | 821-1248 | port | thetis-no-samphire | header mirrors .cpp |
+| src/core/codec/P2CodecSaturn.cpp | Project Files/Source/ChannelMaster/network.c; Project Files/Source/Console/console.cs | 821-1248; 6944-7040 | port | multi-source | extends P2CodecOrionMkII with G8NJJ Saturn BPF1 band-edge override (setBPF1ForOrionIISaturn); console.cs has Samphire dual-license stanza |
+| src/core/codec/P2CodecSaturn.h | Project Files/Source/ChannelMaster/network.c; Project Files/Source/Console/console.cs | 821-1248; 6944-7040 | port | multi-source | header mirrors .cpp |
 | src/core/ClarityController.h | Project Files/Source/Console/display.cs | 5866 | port | thetis-samphire | replaces Thetis processNoiseFloor with percentile-based estimator; cites Thetis as lineage |
 | src/core/FFTEngine.cpp | Project Files/Source/Console/display.cs | 2842 | port | thetis-samphire | constant reference only (-200 dBm initial value) |
 | src/core/FFTEngine.h | Project Files/Source/Console/display.cs | 215 | port | thetis-samphire | BUFFER_SIZE = 16384 constant + enum mapping |

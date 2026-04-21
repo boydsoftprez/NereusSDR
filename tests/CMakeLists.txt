@@ -79,6 +79,9 @@ target_compile_definitions(tst_p1_regression_freeze PRIVATE
 # ── Phase 3P-B P2 codec tests ──
 nereus_add_test(tst_p2_codec_orionmkii)
 
+# ── Phase 3P-B Task 5: P2CodecSaturn — Saturn BPF1 band-edge override ──
+nereus_add_test(tst_p2_codec_saturn)
+
 # ── Phase 3P-B regression-freeze capture (temporary; removed in Task 7) ──
 nereus_add_test(tst_p2_regression_freeze_capture)
 target_compile_definitions(tst_p2_regression_freeze_capture PRIVATE
