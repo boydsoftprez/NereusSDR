@@ -436,4 +436,12 @@ nereus_add_test(tst_calibration_controller)
 nereus_add_test(tst_calibration_tab)
 target_compile_definitions(tst_calibration_tab PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
+# Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis
+# console.cs:setAlex2HPF / setAlex2LPF (7060-7299) first-match range logic
+# [@501e3f5], tracks PanadapterModel::centerFrequencyChanged, and
+# surfaces the BP bypass fallback on no-row-match + master toggle.
+nereus_add_test(tst_alex2_live_leds)
+target_compile_definitions(tst_alex2_live_leds PRIVATE NEREUS_BUILD_TESTS)
+
 

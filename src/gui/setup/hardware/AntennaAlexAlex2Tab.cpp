@@ -68,6 +68,7 @@
 
 #include "core/AppSettings.h"
 #include "core/HpsdrModel.h"
+#include "models/PanadapterModel.h"
 #include "models/RadioModel.h"
 
 #include <QCheckBox>
@@ -191,19 +192,21 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     m_statusLabel->setStyleSheet(
         QStringLiteral("QLabel { color: palette(mid); }"));
 
-    // Right-aligned "Currently selected" — STUB for Phase H.
-    auto* selectedLabel = new QLabel(
+    // Right-aligned "Currently selected" label — Phase H Task 5a.
+    // Driven from updateActiveLeds() which mirrors setAlex2HPF/LPF
+    // range-match logic (Thetis console.cs:7060-7299) [@501e3f5].
+    m_selectedLabel = new QLabel(
         tr("Currently selected: HPF \xe2\x80\x94 \xc2\xb7 LPF \xe2\x80\x94"),
         statusFrame);
-    selectedLabel->setStyleSheet(
+    m_selectedLabel->setStyleSheet(
         QStringLiteral("QLabel { color: palette(mid); font-size: 10px; }"));
-    selectedLabel->setToolTip(
-        tr("Live filter selection — wired to ep6 status in Phase H."));
+    m_selectedLabel->setToolTip(
+        tr("Live filter selection — derived from PanadapterModel centre frequency."));
 
     statusLayout->addWidget(m_statusLed);
     statusLayout->addWidget(m_statusLabel);
     statusLayout->addStretch();
-    statusLayout->addWidget(selectedLabel);
+    statusLayout->addWidget(m_selectedLabel);
     contentLayout->addWidget(statusFrame);
 
     // ── Two-column body ───────────────────────────────────────────────────────
@@ -218,15 +221,19 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     hpfVBox->setContentsMargins(8, 8, 8, 8);
     hpfVBox->setSpacing(4);
 
-    // LED indicator row — STUB (Phase H wires active-band highlight).
+    // LED indicator row — Phase H Task 5a.
     // Source: panelAlex2HPFActive radAlex2*HPFled controls [@501e3f5:25630-25660]
-    // All Enabled=false in Thetis — these are runtime status indicators only.
+    // All Enabled=false in Thetis (inputs disabled) — these are runtime status
+    // indicators only; lit by console.cs:setAlex2HPF (7060-7166) [@501e3f5].
+    // Row layout: 6 band LEDs followed by a BP (bypass) LED that lights when
+    // either alex2_hpf_bypass (master) is on or the per-band bypass is set.
     {
         auto* ledRow = new QWidget(hpfGroup);
         auto* ledLayout = new QHBoxLayout(ledRow);
         ledLayout->setContentsMargins(0, 2, 0, 4);
         ledLayout->setSpacing(2);
-        const char* const hpfLedLabels[] = { "1.5", "6.5", "9.5", "13", "20", "6m" };
+        const char* const hpfLedLabels[] = { "1.5", "6.5", "9.5", "13", "20", "6m", "BP" };
+        m_hpfLeds.reserve(7);
         for (const char* lbl : hpfLedLabels) {
             auto* ledContainer = new QWidget(ledRow);
             auto* ledContainerLayout = new QVBoxLayout(ledContainer);
@@ -234,15 +241,15 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
             ledContainerLayout->setSpacing(2);
             auto* led = new QFrame(ledContainer);
             led->setFixedSize(10, 10);
-            led->setStyleSheet(
-                QStringLiteral("QFrame { background: #444444; border-radius: 5px; }"));
-            led->setToolTip(tr("STUB — Phase H wires live ep6 status"));
+            setLedLit(led, false);
+            led->setToolTip(tr("Lit when the RX frequency falls in this HPF band"));
             auto* ledLabel = new QLabel(QString::fromLatin1(lbl), ledContainer);
             ledLabel->setAlignment(Qt::AlignHCenter);
             ledLabel->setStyleSheet(QStringLiteral("QLabel { font-size: 8px; }"));
             ledContainerLayout->addWidget(led, 0, Qt::AlignHCenter);
             ledContainerLayout->addWidget(ledLabel, 0, Qt::AlignHCenter);
             ledLayout->addWidget(ledContainer);
+            m_hpfLeds.push_back(led);
         }
         hpfVBox->addWidget(ledRow);
     }
@@ -307,15 +314,20 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     lpfVBox->setContentsMargins(8, 8, 8, 8);
     lpfVBox->setSpacing(4);
 
-    // LED indicator row — STUB (Phase H wires active-band highlight).
+    // LED indicator row — Phase H Task 5a.
     // Source: panelAlex2LPFActive radAlex2*LPFled (setup.designer.cs:25660-25745) [@501e3f5]
-    // All Enabled=false in Thetis — these are runtime status indicators only.
+    // All Enabled=false in Thetis — these are runtime status indicators only;
+    // lit by console.cs:setAlex2LPF (7236-7299) [@501e3f5].
+    //
+    // Label ordering mirrors lpfBands() exactly so the LED index and the
+    // row index line up in updateActiveLeds().
     {
         auto* ledRow = new QWidget(lpfGroup);
         auto* ledLayout = new QHBoxLayout(ledRow);
         ledLayout->setContentsMargins(0, 2, 0, 4);
         ledLayout->setSpacing(2);
         const char* const lpfLedLabels[] = { "160", "80", "60-40", "30-20", "17-15", "12-10", "6m" };
+        m_lpfLeds.reserve(7);
         for (const char* lbl : lpfLedLabels) {
             auto* ledContainer = new QWidget(ledRow);
             auto* ledContainerLayout = new QVBoxLayout(ledContainer);
@@ -323,15 +335,15 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
             ledContainerLayout->setSpacing(2);
             auto* led = new QFrame(ledContainer);
             led->setFixedSize(10, 10);
-            led->setStyleSheet(
-                QStringLiteral("QFrame { background: #444444; border-radius: 5px; }"));
-            led->setToolTip(tr("STUB — Phase H wires live ep6 status"));
+            setLedLit(led, false);
+            led->setToolTip(tr("Lit when the RX frequency falls in this LPF band"));
             auto* ledLabel = new QLabel(QString::fromLatin1(lbl), ledContainer);
             ledLabel->setAlignment(Qt::AlignHCenter);
             ledLabel->setStyleSheet(QStringLiteral("QLabel { font-size: 8px; }"));
             ledContainerLayout->addWidget(led, 0, Qt::AlignHCenter);
             ledContainerLayout->addWidget(ledLabel, 0, Qt::AlignHCenter);
             ledLayout->addWidget(ledContainer);
+            m_lpfLeds.push_back(led);
         }
         lpfVBox->addWidget(ledRow);
     }
@@ -384,6 +396,46 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
 
     contentLayout->addLayout(colLayout);
     contentLayout->addStretch();
+
+    // ── Live LED driver (Phase 3P-H Task 5a) ─────────────────────────────────
+    // PanadapterModel is the single source of truth for the current RX
+    // frequency (see PanadapterModel::setCenterFrequency).  The first
+    // panadapter's centerFrequencyChanged drives LED selection.
+    // Source: Thetis console.cs:setAlex2HPF / setAlex2LPF dispatch from
+    // Console.UpdateAlexRX/TX on frequency change [@501e3f5].
+    if (m_model) {
+        const auto pans = m_model->panadapters();
+        if (!pans.isEmpty()) {
+            PanadapterModel* pan = pans.first();
+            m_currentFreqHz = pan->centerFrequency();
+            connect(pan, &PanadapterModel::centerFrequencyChanged,
+                    this, &AntennaAlexAlex2Tab::setCurrentFrequencyHz);
+        }
+    }
+
+    // Master bypass toggle changes flip every HPF row to the bypass LED.
+    connect(m_hpfBypass55, &QCheckBox::toggled, this,
+            [this](bool) { updateActiveLeds(); });
+
+    // Recompute on every spinbox mutation so editing a range live-updates
+    // the LED (without waiting for the next frequency change).
+    for (HpfRowWidgets& row : m_hpfRows) {
+        connect(row.start, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { updateActiveLeds(); });
+        connect(row.end, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { updateActiveLeds(); });
+        connect(row.bypass, &QCheckBox::toggled, this,
+                [this](bool) { updateActiveLeds(); });
+    }
+    for (LpfRowWidgets& row : m_lpfRows) {
+        connect(row.start, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { updateActiveLeds(); });
+        connect(row.end, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { updateActiveLeds(); });
+    }
+
+    // Initial paint.
+    updateActiveLeds();
 }
 
 // ── updateBoardCapabilities ───────────────────────────────────────────────────
@@ -527,6 +579,128 @@ void AntennaAlexAlex2Tab::onMasterCheckChanged(bool checked, const QString& sett
 bool AntennaAlexAlex2Tab::isAlex2Active() const
 {
     return m_hasAlex2;
+}
+
+// ── Live LED driver (Phase 3P-H Task 5a) ─────────────────────────────────────
+
+// Simple LED repaint. Lit = green dot, unlit = dark grey.
+void AntennaAlexAlex2Tab::setLedLit(QFrame* led, bool lit)
+{
+    if (!led) { return; }
+    if (lit) {
+        led->setStyleSheet(
+            QStringLiteral("QFrame { background: #00cc44; border-radius: 5px; }"));
+    } else {
+        led->setStyleSheet(
+            QStringLiteral("QFrame { background: #444444; border-radius: 5px; }"));
+    }
+}
+
+void AntennaAlexAlex2Tab::setCurrentFrequencyHz(double freqHz)
+{
+    m_currentFreqHz = freqHz;
+    updateActiveLeds();
+}
+
+// Walks the HPF and LPF tables for m_currentFreqHz, mirroring Thetis
+// console.cs:setAlex2HPF (7060-7166) and setAlex2LPF (7236-7299) [@501e3f5].
+//
+// HPF selection (first-match, strict [start..end] inclusive, with
+// master bypass + per-band bypass fallbacks pointing at the BP LED):
+//   1. If the 55 MHz master bypass is checked → BP LED.
+//   2. Walk the 6 HPF rows in table order; on first range match, the
+//      row's per-band bypass checkbox promotes the match to BP; else
+//      the row's own LED lights.
+//   3. If no row matches → BP (Thetis's else-branch fallback at 7162-7164).
+//
+// LPF selection (first-match, strict inclusive):
+//   1. Walk the 7 LPF rows in table order; first range match wins.
+//   2. If no row matches → no LED lit (Thetis's setAlex2LPF has no
+//      fallback like setAlex2HPF's bypass; see console.cs:7236-7299).
+void AntennaAlexAlex2Tab::updateActiveLeds()
+{
+    if (m_hpfLeds.empty() || m_lpfLeds.empty()) { return; }
+
+    // Clear all.
+    for (QFrame* led : m_hpfLeds) { setLedLit(led, false); }
+    for (QFrame* led : m_lpfLeds) { setLedLit(led, false); }
+
+    const double freqMhz = m_currentFreqHz / 1.0e6;
+
+    // ── HPF selection ───────────────────────────────────────────────────────
+    int hpfIdx = -1;
+    const bool masterBypass =
+        (m_hpfBypass55 && m_hpfBypass55->isChecked());
+
+    if (masterBypass) {
+        hpfIdx = kBypassLedIndex;  // BP LED
+    } else {
+        for (std::size_t i = 0; i < m_hpfRows.size(); ++i) {
+            const double startMhz = m_hpfRows[i].start
+                ? m_hpfRows[i].start->value() : 0.0;
+            const double endMhz = m_hpfRows[i].end
+                ? m_hpfRows[i].end->value() : 0.0;
+            if (freqMhz >= startMhz && freqMhz <= endMhz) {
+                // Per-band bypass promotes this to the BP LED.
+                // Source: Thetis console.cs:7074-7082 etc. [@501e3f5]
+                if (m_hpfRows[i].bypass && m_hpfRows[i].bypass->isChecked()) {
+                    hpfIdx = kBypassLedIndex;
+                } else {
+                    hpfIdx = static_cast<int>(i);
+                }
+                break;
+            }
+        }
+        if (hpfIdx == -1) {
+            // Thetis fallback: console.cs:7162-7164 — bypass HPF [@501e3f5]
+            hpfIdx = kBypassLedIndex;
+        }
+    }
+
+    // ── LPF selection ───────────────────────────────────────────────────────
+    int lpfIdx = -1;
+    for (std::size_t i = 0; i < m_lpfRows.size(); ++i) {
+        const double startMhz = m_lpfRows[i].start
+            ? m_lpfRows[i].start->value() : 0.0;
+        const double endMhz = m_lpfRows[i].end
+            ? m_lpfRows[i].end->value() : 0.0;
+        if (freqMhz >= startMhz && freqMhz <= endMhz) {
+            lpfIdx = static_cast<int>(i);
+            break;
+        }
+    }
+
+    // ── Commit LED highlight ────────────────────────────────────────────────
+    // HPF layout: indices 0-5 are the 6 band LEDs; index 6 is the BP LED.
+    const int bpLedPos = static_cast<int>(m_hpfLeds.size()) - 1;
+    if (hpfIdx == kBypassLedIndex && bpLedPos >= 0) {
+        setLedLit(m_hpfLeds[bpLedPos], true);
+    } else if (hpfIdx >= 0 && static_cast<std::size_t>(hpfIdx) < m_hpfLeds.size()) {
+        setLedLit(m_hpfLeds[hpfIdx], true);
+    }
+
+    if (lpfIdx >= 0 && static_cast<std::size_t>(lpfIdx) < m_lpfLeds.size()) {
+        setLedLit(m_lpfLeds[lpfIdx], true);
+    }
+
+    m_activeHpfIndex = hpfIdx;
+    m_activeLpfIndex = lpfIdx;
+
+    // Update the selected-filter summary label.
+    if (m_selectedLabel) {
+        QString hpfText = tr("\xe2\x80\x94");  // em-dash
+        if (hpfIdx == kBypassLedIndex) {
+            hpfText = tr("BP");
+        } else if (hpfIdx >= 0 && static_cast<std::size_t>(hpfIdx) < hpfBands().size()) {
+            hpfText = tr(hpfBands()[hpfIdx].label);
+        }
+        QString lpfText = tr("\xe2\x80\x94");
+        if (lpfIdx >= 0 && static_cast<std::size_t>(lpfIdx) < lpfBands().size()) {
+            lpfText = tr(lpfBands()[lpfIdx].label);
+        }
+        m_selectedLabel->setText(
+            tr("Currently selected: HPF %1 \xc2\xb7 LPF %2").arg(hpfText, lpfText));
+    }
 }
 
 } // namespace NereusSDR

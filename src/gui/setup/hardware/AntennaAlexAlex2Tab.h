@@ -15,6 +15,11 @@
 //                Auto-hides on boards without Alex-2 (HL2, Hermes,
 //                Angelia). Live LED indicators are stubs; Phase H wires
 //                them to ep6 status feed.
+//   2026-04-21 — Phase 3P-H Task 5a: HPF and LPF LED rows now reflect
+//                the currently-selected filter row for the active
+//                PanadapterModel frequency.  Port of Thetis
+//                console.cs:setAlex2HPF / setAlex2LPF selection logic
+//                (range match on spinbox [start..end]).
 // =================================================================
 
 //=================================================================
@@ -87,6 +92,7 @@
 
 class QCheckBox;
 class QDoubleSpinBox;
+class QFrame;
 class QGroupBox;
 class QLabel;
 
@@ -128,6 +134,20 @@ public:
     // Test seam — returns whether the "Active" status is showing (hasAlex2=true).
     // Always compiled (NEREUS_BUILD_TESTS is set on NereusSDRObjs globally).
     bool isAlex2Active() const;
+
+    // Phase 3P-H Task 5a — LED test seams.
+    // Returns the index of the currently-highlighted HPF LED row, or
+    // kBypassLedIndex when the 55 MHz bypass master is engaged / no row
+    // matches. For LPF: index of the highlighted row, or -1 when no row
+    // matches the current frequency.
+    static constexpr int kBypassLedIndex = -2;
+    int  activeHpfLedForTest() const { return m_activeHpfIndex; }
+    int  activeLpfLedForTest() const { return m_activeLpfIndex; }
+
+    // Drives the LED selection from a frequency (Hz). Exposed for unit tests
+    // and called internally on PanadapterModel::centerFrequencyChanged.
+    // Source: Thetis console.cs:setAlex2HPF / setAlex2LPF range match [@501e3f5]
+    void setCurrentFrequencyHz(double freqHz);
 
 signals:
     void settingChanged(const QString& key, const QVariant& value);
@@ -191,6 +211,34 @@ private:
 
     // Column 2 — Alex-2 LPF rows (7 rows)
     std::vector<LpfRowWidgets> m_lpfRows;
+
+    // LED pointers, one per HPF/LPF row (same ordering as hpfBands()/lpfBands()).
+    // Phase 3P-H Task 5a.
+    std::vector<QFrame*> m_hpfLeds;
+    std::vector<QFrame*> m_lpfLeds;
+
+    // Bottom-bar "Currently selected: HPF — · LPF —" label.
+    // Updated alongside LED highlight in updateActiveLeds().
+    QLabel* m_selectedLabel{nullptr};
+
+    // Latest-known RX frequency (Hz). Used by updateActiveLeds() and also when
+    // a spinbox mutates (so range-edits re-highlight without waiting for the
+    // next centerFrequencyChanged).
+    double m_currentFreqHz{0.0};
+
+    // Cached indices of currently-highlighted rows — kBypassLedIndex for the
+    // bypass LED (HPF only), -1 for "nothing highlighted" (initial state /
+    // LPF miss).
+    int m_activeHpfIndex{-1};
+    int m_activeLpfIndex{-1};
+
+    // Recompute LED highlight from m_currentFreqHz and current spinbox values.
+    // Source: Thetis console.cs:setAlex2HPF (7060-7166) and setAlex2LPF
+    // (7236-7299) — strict first-match range loop with bypass fallback [@501e3f5]
+    void updateActiveLeds();
+
+    // Helper: restyle a LED frame to the lit / unlit colour.
+    static void setLedLit(QFrame* led, bool lit);
 
     // Static band tables
     static const std::vector<HpfBandEntry>& hpfBands();

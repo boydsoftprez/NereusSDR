@@ -1,3 +1,5 @@
+// no-port-check: test harness citing Thetis networkproto1.c offsets as the
+// behavioural spec it asserts against; contains no ported logic of its own.
 // =================================================================
 // tests/tst_p1_status_telemetry.cpp  (NereusSDR)
 // =================================================================
