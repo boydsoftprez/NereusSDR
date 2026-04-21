@@ -13,6 +13,8 @@
 //   2026-04-20 — Refactored into parent QTabWidget hosting three sub-sub-tabs:
 //                 Antenna Control (existing table content), Alex-1 Filters (Task 8),
 //                 Alex-2 Filters (placeholder for Task 9). J.J. Boyd (KG4VCF).
+//   2026-04-20 — Replaced Alex-2 Filters placeholder with real AntennaAlexAlex2Tab
+//                 (Task 9). J.J. Boyd (KG4VCF).
 // =================================================================
 
 //=================================================================
@@ -62,6 +64,7 @@
 
 #include "AntennaAlexTab.h"
 #include "AntennaAlexAlex1Tab.h"
+#include "AntennaAlexAlex2Tab.h"
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -204,14 +207,17 @@ AntennaAlexTab::AntennaAlexTab(RadioModel* model, QWidget* parent)
                 emit settingChanged(QStringLiteral("alex1/") + key, value);
             });
 
-    // ── Tab 2: Alex-2 Filters (Task 9 placeholder) ────────────────────────────
-    m_alex2PlaceholderTab = new QWidget(m_subTabs);
-    auto* alex2Layout = new QVBoxLayout(m_alex2PlaceholderTab);
-    alex2Layout->addWidget(new QLabel(
-        tr("Alex-2 Filters — coming in Phase 3P-B Task 9"),
-        m_alex2PlaceholderTab));
-    alex2Layout->addStretch();
-    m_subTabs->addTab(m_alex2PlaceholderTab, tr("Alex-2 Filters"));
+    // ── Tab 2: Alex-2 Filters ─────────────────────────────────────────────────
+    // Source: Thetis tpAlex2FilterControl (setup.designer.cs:25539-26857) [@501e3f5]
+    m_alex2FiltersTab = new AntennaAlexAlex2Tab(model, m_subTabs);
+    m_subTabs->addTab(m_alex2FiltersTab, tr("Alex-2 Filters"));
+
+    // Forward Alex-2 settingChanged under the "alex2/" prefix so HardwarePage
+    // routes it to the correct AppSettings namespace.
+    connect(m_alex2FiltersTab, &AntennaAlexAlex2Tab::settingChanged,
+            this, [this](const QString& key, const QVariant& value) {
+                emit settingChanged(QStringLiteral("alex2/") + key, value);
+            });
 
     // ── Wire Antenna Control signals ──────────────────────────────────────────
     connect(m_rxAntTable, &QTableWidget::itemChanged,
@@ -271,9 +277,19 @@ void AntennaAlexTab::populate(const RadioInfo& info, const BoardCapabilities& ca
     const bool isSaturn = (caps.board == HPSDRHW::Saturn || caps.board == HPSDRHW::SaturnMKII);
     m_alex1Tab->updateBoardCapabilities(isSaturn);
 
-    // Restore Alex-1 filter settings from per-MAC AppSettings.
+    // Gate Alex-2 board status on board model.
+    // OrionMKII / Saturn / SaturnMKII boards have Alex-2 RX2 board capability.
+    // TODO: add hasAlex2 field to BoardCapabilities; gate on that field then.
+    // From Thetis: lblAlex2Active visible only for boards supporting Alex-2.
+    const bool hasAlex2 = (caps.board == HPSDRHW::OrionMKII
+                           || caps.board == HPSDRHW::Saturn
+                           || caps.board == HPSDRHW::SaturnMKII);
+    m_alex2FiltersTab->updateBoardCapabilities(hasAlex2);
+
+    // Restore Alex-1 and Alex-2 filter settings from per-MAC AppSettings.
     m_lastMac = info.macAddress;
     m_alex1Tab->restoreSettings(info.macAddress);
+    m_alex2FiltersTab->restoreSettings(info.macAddress);
 }
 
 // ── private slots ─────────────────────────────────────────────────────────────

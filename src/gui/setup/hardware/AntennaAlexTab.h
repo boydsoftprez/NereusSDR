@@ -16,6 +16,8 @@
 //   2026-04-20 — Refactored into parent QTabWidget hosting three sub-sub-tabs:
 //                 Antenna Control (existing content), Alex-1 Filters (Task 8),
 //                 Alex-2 Filters (placeholder for Task 9). J.J. Boyd (KG4VCF).
+//   2026-04-20 — Replaced Alex-2 Filters placeholder with real AntennaAlexAlex2Tab
+//                 (Task 9). J.J. Boyd (KG4VCF).
 // =================================================================
 
 //=================================================================
@@ -81,6 +83,7 @@ class RadioModel;
 struct RadioInfo;
 struct BoardCapabilities;
 class AntennaAlexAlex1Tab;
+class AntennaAlexAlex2Tab;
 
 // AntennaAlexTab — parent "Antenna / ALEX" tab in Hardware Config.
 //
@@ -88,7 +91,7 @@ class AntennaAlexAlex1Tab;
 //   0. Antenna Control — per-band RX/TX antenna selection + relay options
 //      (Thetis tpAlexAntCtrl; Phase F will add proper antenna routing here)
 //   1. Alex-1 Filters  — HPF + LPF + Saturn BPF1 band-edge editors (Task 8)
-//   2. Alex-2 Filters  — placeholder for Task 9
+//   2. Alex-2 Filters  — RX2 board HPF + LPF panels with LED status stubs (Task 9)
 //
 // Source: Thetis tcAlexControl (setup.designer.cs:23385-23395) [@501e3f5]
 class AntennaAlexTab : public QWidget {
@@ -140,8 +143,9 @@ private:
     // Source: Thetis tpAlexFilterControl (setup.designer.cs:23399-25538) [@501e3f5]
     AntennaAlexAlex1Tab* m_alex1Tab{nullptr};
 
-    // Tab 2: Alex-2 Filters (placeholder — Task 9)
-    QWidget*             m_alex2PlaceholderTab{nullptr};
+    // Tab 2: Alex-2 Filters
+    // Source: Thetis tpAlex2FilterControl (setup.designer.cs:25539-26857) [@501e3f5]
+    AntennaAlexAlex2Tab* m_alex2FiltersTab{nullptr};
 
     bool m_updating{false};
 

@@ -481,6 +481,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/RadioInfoTab.cpp
     src/gui/setup/hardware/AntennaAlexTab.cpp
     src/gui/setup/hardware/AntennaAlexAlex1Tab.cpp
+    src/gui/setup/hardware/AntennaAlexAlex2Tab.cpp
     src/gui/setup/hardware/OcOutputsTab.cpp
     src/gui/setup/hardware/XvtrTab.cpp
     src/gui/setup/hardware/PureSignalTab.cpp
