@@ -57,27 +57,38 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
 
         // Bank 1 — TX VFO
         // Source: networkproto1.c:477-481 [@501e3f5]
-        case 1:
-            out[0] = C0base | 0x02;
-            out[1] = quint8((ctx.txFreqHz >> 24) & 0xFF);
-            out[2] = quint8((ctx.txFreqHz >> 16) & 0xFF);
-            out[3] = quint8((ctx.txFreqHz >>  8) & 0xFF);
-            out[4] = quint8( ctx.txFreqHz        & 0xFF);
+        //
+        // Bug-parity note: legacy composeCcBankTxFreq hardcodes out[0] = 0x02
+        // with NO MOX bit, matching networkproto1.c:477 "C0 |= 2" (not
+        // C0 = XmitBit | 2).  Frequency banks do not carry the MOX bit.
+        case 1: {
+            const quint32 hz = quint32(ctx.txFreqHz);
+            out[0] = 0x02;  // no MOX bit — frequency banks only carry address
+            out[1] = quint8((hz >> 24) & 0xFF);
+            out[2] = quint8((hz >> 16) & 0xFF);
+            out[3] = quint8((hz >>  8) & 0xFF);
+            out[4] = quint8( hz        & 0xFF);
             return;
+        }
 
         // Banks 2-3 — RX1/RX2 VFOs (DDC0/DDC1)
         // Source: networkproto1.c:485-511 [@501e3f5]
+        //
+        // Bug-parity note: composeCcBankRxFreq hardcodes out[0] = addrBits with
+        // NO MOX bit.  Frequency banks do not carry the MOX bit.
         case 2: case 3: {
-            // bank 2 → rxIdx 0 (C0 |= 0x04), bank 3 → rxIdx 1 (C0 |= 0x06)
+            // bank 2 → rxIdx 0 (C0 = 0x04), bank 3 → rxIdx 1 (C0 = 0x06)
+            static const quint8 kRx01C0[] = { 0x04, 0x06 };
             const int rxIdx = bank - 2;
-            out[0] = C0base | quint8(0x04 + rxIdx * 2);
+            out[0] = kRx01C0[rxIdx];  // no MOX bit — frequency banks only carry address
             const quint64 freq = (rxIdx < ctx.activeRxCount)
                                   ? ctx.rxFreqHz[rxIdx]
                                   : ctx.txFreqHz;  // unused DDCs default to TX freq
-            out[1] = quint8((freq >> 24) & 0xFF);
-            out[2] = quint8((freq >> 16) & 0xFF);
-            out[3] = quint8((freq >>  8) & 0xFF);
-            out[4] = quint8( freq        & 0xFF);
+            const quint32 hz = quint32(freq);
+            out[1] = quint8((hz >> 24) & 0xFF);
+            out[2] = quint8((hz >> 16) & 0xFF);
+            out[3] = quint8((hz >>  8) & 0xFF);
+            out[4] = quint8( hz        & 0xFF);
             return;
         }
 
@@ -94,19 +105,23 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
         // Banks 5-9 — RX3-RX7 VFOs (DDC2-DDC6)
         // Source: networkproto1.c:525-576 [@501e3f5]
         // Unused DDCs get TX freq as a safe default.
+        //
+        // Bug-parity note: composeCcBankRxFreq hardcodes out[0] = addrBits with
+        // NO MOX bit.  Frequency banks do not carry the MOX bit.
         case 5: case 6: case 7: case 8: case 9: {
-            // bank 5 → rxIdx 2 (C0 |= 0x08), ..., bank 9 → rxIdx 6 (C0 |= 0x10)
+            // bank 5 → rxIdx 2 (C0 = 0x08), ..., bank 9 → rxIdx 6 (C0 = 0x10)
             // Address table: rxIdx 2=0x08, 3=0x0A, 4=0x0C, 5=0x0E, 6=0x10
             static const quint8 kRxC0Addr[] = { 0x08, 0x0A, 0x0C, 0x0E, 0x10 };
             const int rxIdx = bank - 3;  // bank 5 → rxIdx 2, bank 9 → rxIdx 6
-            out[0] = C0base | kRxC0Addr[bank - 5];
+            out[0] = kRxC0Addr[bank - 5];  // no MOX bit — frequency banks only carry address
             const quint64 freq = (rxIdx < ctx.activeRxCount)
                                   ? ctx.rxFreqHz[rxIdx]
                                   : ctx.txFreqHz;
-            out[1] = quint8((freq >> 24) & 0xFF);
-            out[2] = quint8((freq >> 16) & 0xFF);
-            out[3] = quint8((freq >>  8) & 0xFF);
-            out[4] = quint8( freq        & 0xFF);
+            const quint32 hz = quint32(freq);
+            out[1] = quint8((hz >> 24) & 0xFF);
+            out[2] = quint8((hz >> 16) & 0xFF);
+            out[3] = quint8((hz >>  8) & 0xFF);
+            out[4] = quint8( hz        & 0xFF);
             return;
         }
 
@@ -126,10 +141,16 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
         // Source: networkproto1.c:658-665 [@501e3f5]
         case 16: out[0] = C0base | 0x24; return;
 
+        // Bank 17 — AnvelinaPro3 extra OC pins
+        // Source: networkproto1.c:668-669 [@501e3f5] — "HPSDRModel_ANVELINAPRO3 only"
+        //
+        // Bug-parity note: the pre-refactor legacy composeCcForBankLegacy sent
+        // C0base | 0x26 here for ALL boards, not just AnvelinaPro3.  The baseline
+        // JSON (Task 1) captures that behavior, so the codec must replicate it
+        // for byte-identical output.  Phase B can reclaim this to AP3-only.
+        case 17: out[0] = C0base | 0x26; return;
+
         default:
-            // Standard codec only emits banks 0-16; subclasses (AP3, HL2)
-            // extend the range and override composeCcForBank to handle
-            // banks 17/18 before delegating here.
             out[0] = C0base;
             return;
     }

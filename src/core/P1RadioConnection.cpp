@@ -1415,9 +1415,9 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
 //   - NEREUS_USE_LEGACY_P1_CODEC=1 env var is set, or
 //   - m_codec is null (pre-connect).
 //
-// Dual-call diagnostic (removed in Task 16): both legacy + codec run;
-// divergence on non-HL2 boards is logged as qCWarning. HL2 divergence
-// is expected and intentional — silent.
+// Regression-freeze gate (Task 16) proved codec and legacy agree byte-for-byte
+// on all non-HL2 boards. Dual-call diagnostic dropped. Legacy path still
+// reachable via NEREUS_USE_LEGACY_P1_CODEC=1 env var until Phase B merges.
 // ---------------------------------------------------------------------------
 void P1RadioConnection::composeCcForBank(int bankIdx, quint8 out[5]) const
 {
@@ -1425,32 +1425,8 @@ void P1RadioConnection::composeCcForBank(int bankIdx, quint8 out[5]) const
         composeCcForBankLegacy(bankIdx, out);
         return;
     }
-
-    // Dual-call diagnostic during transition (removed in Task 16):
-    //   1. Run legacy compose into out[].
-    //   2. Run codec compose into codecOut[].
-    //   3. If they diverge AND the board is non-HL2 (where divergence
-    //      is the bug fix), log a warning. HL2 divergence is expected
-    //      and intentional — silent.
-    //   4. Always use codec output (it's authoritative).
-    composeCcForBankLegacy(bankIdx, out);
-    quint8 codecOut[5] = {};
     const CodecContext ctx = buildCodecContext();
-    m_codec->composeCcForBank(bankIdx, ctx, codecOut);
-
-    const bool isHl2 = (m_caps && m_hardwareProfile.model == HPSDRModel::HERMESLITE);
-    if (!isHl2) {
-        for (int i = 0; i < 5; ++i) {
-            if (codecOut[i] != out[i]) {
-                qCWarning(lcConnection)
-                    << "P1 codec divergence (non-HL2) bank=" << bankIdx
-                    << "byte=" << i
-                    << "legacy=0x" << QString::number(out[i], 16)
-                    << "codec=0x"  << QString::number(codecOut[i], 16);
-            }
-        }
-    }
-    for (int i = 0; i < 5; ++i) { out[i] = codecOut[i]; }
+    m_codec->composeCcForBank(bankIdx, ctx, out);
 }
 
 // ---------------------------------------------------------------------------
