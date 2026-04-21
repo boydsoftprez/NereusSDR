@@ -55,10 +55,23 @@
 //                 setVaxMuted / setVaxTxGain follow the acq_rel exchange
 //                 pattern from setVolume, and change-signals fire only
 //                 when the stored value differs from the new one.
+//   2026-04-20 — Sub-Phase 12 Task 12.2 by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code. Adds per-endpoint config-changed
+//                 signals (speakersConfigChanged / headphonesConfigChanged /
+//                 txInputConfigChanged / vaxConfigChanged), m_speakersBusMutex
+//                 live-reconfig safety (try_lock in rxBlockReady + exclusive
+//                 lock in setSpeakersConfig), ensureSpeakersOpen() now reads
+//                 AudioDeviceConfig::loadFromSettings("audio/Speakers"),
+//                 setHeadphonesConfig() added, and MasterOutputWidget wired
+//                 to speakersConfigChanged for live device-label sync.
+//                 Code-review follow-up: 200ms buffer-size debounce moved from
+//                 AudioEngine::setSpeakersConfig to DeviceCard (addendum §2.1);
+//                 setSpeakersConfig now applies synchronously.
 // =================================================================
 
 #include "AudioEngine.h"
 
+#include "AppSettings.h"
 #include "LogCategories.h"
 #include "audio/PortAudioBus.h"
 #include "../models/RadioModel.h"
@@ -213,6 +226,7 @@ void AudioEngine::stop()
     // → ~LinuxPipeBus → close()). The CoreAudioHalBus / PortAudioBus dtors
     // have no main-thread requirement.
     m_speakersBus.reset();
+    m_headphonesBus.reset();
     m_txInputBus.reset();
     // Reset VAX TX before iterating m_vaxBus so the close ordering is
     // TX-first then RX-1..4 — symmetric with the start() construction
@@ -350,32 +364,76 @@ void AudioEngine::ensureSpeakersOpen()
         return;
     }
 
-    AudioDeviceConfig defaults;
-    // defaults: empty deviceName (platform default), 48 kHz, stereo,
-    // 256-frame buffer — matches what the DSP path produces.
-    m_speakersBus = makeBus(defaults, /*capture=*/false);
+    // Sub-Phase 12 Task 12.2: read persisted config instead of hardcoded
+    // defaults. On a fresh install with no audio/Speakers/* keys,
+    // loadFromSettings returns a default-constructed AudioDeviceConfig
+    // (empty deviceName) → makeBus treats it as "platform default" —
+    // same behavior as the pre-Sub-Phase-12 code.
+    const AudioDeviceConfig cfg =
+        AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/Speakers"));
+
+    m_speakersBus = makeBus(cfg, /*capture=*/false);
     if (m_speakersBus) {
         m_speakersFormat = m_speakersBus->negotiatedFormat();
         qCInfo(lcAudio) << "Speakers bus opened @"
                         << m_speakersFormat.sampleRate << "Hz /"
                         << m_speakersFormat.channels << "ch"
                         << "[" << m_speakersBus->backendName() << "]";
+        emit speakersConfigChanged(cfg);
     }
 }
 
 void AudioEngine::setSpeakersConfig(const AudioDeviceConfig& cfg)
 {
-    m_speakersBus.reset();
+    // Sub-Phase 12 Task 12.2: applies synchronously.  The 200 ms intra-control
+    // debounce for rapid buffer-size scrub lives in DeviceCard (buffer-size
+    // combo only) — not here.  Mutex released before emit so handlers may
+    // call setSpeakersConfig without deadlocking.
+    applySpeakersConfig(cfg);
+}
+
+void AudioEngine::applySpeakersConfig(const AudioDeviceConfig& cfg)
+{
     if (!m_paInitialized) {
         return;
     }
+
+    // Hold the mutex during tear-down + rebuild. rxBlockReady uses
+    // try_lock and drops the block if it can't acquire (≤1 ms of silence
+    // is inaudible vs. a use-after-free on the old bus pointer).
+    std::unique_lock<std::mutex> lk(m_speakersBusMutex);
+
+    m_speakersBus.reset();
     m_speakersBus = makeBus(cfg, /*capture=*/false);
+
+    AudioDeviceConfig negotiated = cfg;  // carry non-bus fields through
     if (m_speakersBus) {
         m_speakersFormat = m_speakersBus->negotiatedFormat();
         qCInfo(lcAudio) << "Speakers bus reconfigured @"
                         << m_speakersFormat.sampleRate << "Hz /"
                         << m_speakersFormat.channels << "ch";
+    } else {
+        qCWarning(lcAudio) << "setSpeakersConfig: bus open failed for device"
+                           << cfg.deviceName << "— audio silenced on speakers";
     }
+
+    lk.unlock();  // release before emitting so signal handlers can call
+                  // setSpeakersConfig without deadlocking
+    emit speakersConfigChanged(negotiated);
+}
+
+void AudioEngine::setHeadphonesConfig(const AudioDeviceConfig& cfg)
+{
+    m_headphonesBus.reset();
+    if (!m_paInitialized) {
+        return;
+    }
+    m_headphonesBus = makeBus(cfg, /*capture=*/false);
+    if (m_headphonesBus) {
+        qCInfo(lcAudio) << "Headphones bus opened"
+                        << "[" << m_headphonesBus->backendName() << "]";
+    }
+    emit headphonesConfigChanged(cfg);
 }
 
 void AudioEngine::setTxInputConfig(const AudioDeviceConfig& cfg)
@@ -392,6 +450,7 @@ void AudioEngine::setTxInputConfig(const AudioDeviceConfig& cfg)
         qCInfo(lcAudio) << "TX input bus opened"
                         << "[" << m_txInputBus->backendName() << "]";
     }
+    emit txInputConfigChanged(cfg);
 }
 
 void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
@@ -407,6 +466,26 @@ void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
     }
     const int idx = channel - 1;
     m_vaxBus[idx].reset();
+
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+    // Empty deviceName = user has not picked a BYO override. Fall back to
+    // the platform-native HAL bus (shmem bridge) rather than PortAudio's
+    // platform default — the latter resolves to the speakers device on a
+    // machine with no virtual cable installed and causes raw VAX audio to
+    // bleed through the speakers (pre-master-volume tee, uncontrollable).
+    // Matches the addendum §2.2 default-on-Mac/Linux contract.
+    if (cfg.deviceName.isEmpty()) {
+        m_vaxBus[idx] = makeVaxBus(channel);
+        if (m_vaxBus[idx]) {
+            qCInfo(lcAudio) << "VAX" << channel
+                            << "bus restored (native HAL fallback)"
+                            << "[" << m_vaxBus[idx]->backendName() << "]";
+        }
+        emit vaxConfigChanged(channel, cfg);
+        return;
+    }
+#endif
+
     if (!m_paInitialized) {
         return;
     }
@@ -415,6 +494,7 @@ void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
         qCInfo(lcAudio) << "VAX" << channel << "bus reconfigured (BYO)"
                         << "[" << m_vaxBus[idx]->backendName() << "]";
     }
+    emit vaxConfigChanged(channel, cfg);
 }
 
 void AudioEngine::setVaxEnabled(int channel, bool on)
@@ -468,6 +548,11 @@ void AudioEngine::setVaxBusForTest(int channel, std::unique_ptr<IAudioBus> bus)
 void AudioEngine::setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus)
 {
     m_speakersBus = std::move(bus);
+}
+
+void AudioEngine::setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus)
+{
+    m_headphonesBus = std::move(bus);
 }
 #endif
 
@@ -569,13 +654,26 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // accumulate() above and the VAX tap earlier in this method run
     // unconditionally, so 3rd-party apps consuming a VAX channel keep
     // receiving audio while the local monitor is muted. No alloc, no
-    // lock, no logging — RT-safety preserved.
+    // logging — RT-safety preserved.
+    //
+    // Sub-Phase 12 live-reconfig: try_lock the speakers bus mutex only
+    // around the push itself.  Previously this was held for the entire
+    // rxBlockReady (including master-mix accumulate + VAX tap + volume
+    // multiply), which meant a contending setSpeakersConfig on the GUI
+    // thread dropped the whole block (~1.3 ms of audio) — audible pops.
+    // Scoping down to just the push means a contending reconfig drops
+    // at most the speakers-push step; the VAX tap and master-mix
+    // accumulate keep running uninterrupted.
     if (!m_masterMuted.load(std::memory_order_acquire)) {
-        IAudioBus* speakersBus = m_speakersBus.get();
-        if (speakersBus != nullptr && speakersBus->isOpen()) {
-            speakersBus->push(
-                reinterpret_cast<const char*>(mix.data()),
-                static_cast<qint64>(stereoFloats) * sizeof(float));
+        std::unique_lock<std::mutex> speakersLk(m_speakersBusMutex,
+                                                std::try_to_lock);
+        if (speakersLk.owns_lock()) {
+            IAudioBus* speakersBus = m_speakersBus.get();
+            if (speakersBus != nullptr && speakersBus->isOpen()) {
+                speakersBus->push(
+                    reinterpret_cast<const char*>(mix.data()),
+                    static_cast<qint64>(stereoFloats) * sizeof(float));
+            }
         }
     }
 }
@@ -677,6 +775,116 @@ float AudioEngine::vaxTxLevel() const
         return 0.0f;
     }
     return bus->txLevel();
+}
+
+// Sub-Phase 12 Task 12.4 — DSP sample-rate / block-size persistence.
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setDspSampleRate(int rate)
+{
+    AppSettings::instance().setValue(QStringLiteral("audio/DspRate"),
+                                     QString::number(rate));
+    // TODO(sub-phase-12-dsp-live-apply): delegate to WdspEngine once
+    // channel teardown/rebuild infrastructure is available.
+    qCInfo(lcAudio) << "DspRate change queued — applied on next channel rebuild"
+                    << "(requested:" << rate << "Hz)";
+    emit dspSampleRateChanged(rate);
+}
+
+void AudioEngine::setDspBlockSize(int blockSize)
+{
+    AppSettings::instance().setValue(QStringLiteral("audio/DspBlockSize"),
+                                     QString::number(blockSize));
+    // TODO(sub-phase-12-dsp-live-apply): delegate to WdspEngine once
+    // channel teardown/rebuild infrastructure is available.
+    qCInfo(lcAudio) << "DspBlockSize change queued — applied on next channel rebuild"
+                    << "(requested:" << blockSize << ")";
+    emit dspBlockSizeChanged(blockSize);
+}
+
+// Sub-Phase 12 Task 12.4 — VAC feedback-loop tuning persistence.
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setVacFeedbackParams(int channel, const VacFeedbackParams& params)
+{
+    if (channel < 1 || channel > 4) {
+        qCWarning(lcAudio) << "setVacFeedbackParams: channel" << channel
+                           << "out of range (1..4) — ignored";
+        return;
+    }
+    const QString prefix =
+        QStringLiteral("audio/VacFeedback/%1").arg(channel);
+    auto& s = AppSettings::instance();
+    s.setValue(prefix + QStringLiteral("/Gain"),
+               QString::number(static_cast<double>(params.gain), 'f', 4));
+    s.setValue(prefix + QStringLiteral("/SlewTimeMs"),
+               QString::number(params.slewTimeMs));
+    s.setValue(prefix + QStringLiteral("/PropRing"),
+               QString::number(params.propRing));
+    s.setValue(prefix + QStringLiteral("/FfRing"),
+               QString::number(params.ffRing));
+    // TODO(sub-phase-12-vac-feedback-live-apply): wire into IVAC engine once
+    // Phase 3M IVAC port lands.
+    qCInfo(lcAudio) << "VacFeedback params persisted; live-apply deferred to Phase 3M IVAC port"
+                    << "(channel:" << channel
+                    << "gain:" << params.gain
+                    << "slewTimeMs:" << params.slewTimeMs
+                    << "propRing:" << params.propRing
+                    << "ffRing:" << params.ffRing << ")";
+}
+
+// Sub-Phase 12 Task 12.4 — resetAudioSettings (addendum §2.5).
+// ---------------------------------------------------------------------------
+
+void AudioEngine::resetAudioSettings()
+{
+    auto& s = AppSettings::instance();
+    const QStringList keys = s.allKeys();
+
+    // Delete all audio/* keys (addendum §2.5).
+    // slice/<N>/VaxChannel and tx/OwnerSlot are implicitly preserved because
+    // they live under the "slice/" and "tx/" namespaces — no key can start
+    // with both "audio/" and "slice/" simultaneously, so no explicit exclusion
+    // guard is needed here.
+    for (const QString& key : keys) {
+        if (key.startsWith(QStringLiteral("audio/"))) {
+            s.remove(key);
+        }
+    }
+
+    // Force a speakers-bus rebuild from defaults.  ensureSpeakersOpen()
+    // early-exits when the bus is already open, so the previous call here
+    // left the pre-reset device/config live at runtime until the next app
+    // restart.  setSpeakersConfig(empty) goes through applySpeakersConfig
+    // which tears down and rebuilds under m_speakersBusMutex, and emits
+    // speakersConfigChanged so MasterOutputWidget + AudioDevicesPage
+    // refresh.  Empty deviceName → makeBus opens PortAudio's platform
+    // default, matching addendum §2.5 "rebuild buses from seeded defaults".
+    setSpeakersConfig(AudioDeviceConfig{});
+
+    // Rebuild each VAX bus as well — previously we only emitted the config-
+    // changed signal, but rxBlockReady kept pushing audio to whatever bus
+    // was live pre-reset (stale BYO PortAudio bus, or the prior native HAL
+    // bus tied to the wiped settings).  Mirror the setVaxConfig native-HAL
+    // fallback contract: on Mac/Linux re-mint the platform HAL bus; on
+    // Windows leave the slot null until the user picks a device.
+    for (int ch = 1; ch <= 4; ++ch) {
+        const int idx = ch - 1;
+        m_vaxBus[idx].reset();
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+        m_vaxBus[idx] = makeVaxBus(ch);
+        if (m_vaxBus[idx]) {
+            qCInfo(lcAudio) << "VAX" << ch
+                            << "bus restored to native HAL (reset)"
+                            << "[" << m_vaxBus[idx]->backendName() << "]";
+        }
+#endif
+        emit vaxConfigChanged(ch, AudioDeviceConfig{});
+    }
+
+    emit audioSettingsReset();
+
+    qCInfo(lcAudio) << "Audio settings reset to defaults (all audio/* keys cleared)";
 }
 
 } // namespace NereusSDR

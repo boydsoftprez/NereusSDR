@@ -54,6 +54,24 @@ VirtualCableProduct VirtualCableDetector::matchProduct(const QString& n) {
     return VirtualCableProduct::None;
 }
 
+QString VirtualCableDetector::vendorDisplayName(VirtualCableProduct p) {
+    switch (p) {
+        case VirtualCableProduct::VbCable:
+        case VirtualCableProduct::VbCableA:
+        case VirtualCableProduct::VbCableB:
+        case VirtualCableProduct::VbCableC:
+        case VirtualCableProduct::VbCableD:
+        case VirtualCableProduct::VbHiFiCable:   return QStringLiteral("VB-Audio");
+        case VirtualCableProduct::MuzychenkoVac:  return QStringLiteral("Muzychenko");
+        case VirtualCableProduct::Voicemeeter:    return QStringLiteral("Voicemeeter");
+        case VirtualCableProduct::Dante:          return QStringLiteral("Dante");
+        case VirtualCableProduct::FlexRadioDax:   return QStringLiteral("FlexRadio DAX");
+        case VirtualCableProduct::NereusSdrVax:   return QStringLiteral("NereusSDR");
+        case VirtualCableProduct::None:           return QString();
+    }
+    return QString();
+}
+
 QString VirtualCableDetector::installUrl(VirtualCableProduct p) {
     switch (p) {
         case VirtualCableProduct::VbCable:
@@ -110,6 +128,17 @@ QVector<DetectedCable> VirtualCableDetector::scanThirdPartyOnly()
 {
     return filterThirdParty(scan());
 }
+
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+// Stub: returns 1 (consumer assumed present) so the amber "override — no
+// consumer" badge in AudioVaxPage never falsely fires in this release.
+// TODO(sub-phase-12-consumer-count-real): replace with real CoreAudio /
+// PipeWire client enumeration. See VirtualCableDetector.h for rationale.
+int VirtualCableDetector::consumerCount(const QString& /*deviceName*/)
+{
+    return 1;
+}
+#endif
 
 QString VirtualCableDetector::fingerprintCsv(const QVector<DetectedCable>& cables)
 {

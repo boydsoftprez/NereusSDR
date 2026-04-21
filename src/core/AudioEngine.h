@@ -67,6 +67,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 namespace NereusSDR {
 
@@ -109,17 +110,17 @@ public:
 
     // Phase 3O: per-endpoint IAudioBus ownership.
     //
-    // Live-reconfig contract: each of these setters destroys and
-    // reconstructs the underlying IAudioBus. That is NOT safe while the
-    // DSP thread is inside rxBlockReady(). Caller must ensure one of:
-    //   - AudioEngine::isRunning() == false (before start() or after
-    //     stop()), or
-    //   - the DSP thread feeding rxBlockReady() is quiesced for the
-    //     duration of the call.
-    // Live device switching while audio is streaming is the
-    // responsibility of a higher layer (Phase 3O Sub-Phase 8, Setup →
-    // Audio → Devices) and is not provided by this class.
+    // Live-reconfig contract (Sub-Phase 12 Task 12.2): setSpeakersConfig
+    // acquires m_speakersBusMutex during tear-down + rebuild so that
+    // rxBlockReady's try_lock can safely detect an in-progress reconfig
+    // and drop the block (≤1 ms of silence is inaudible vs. a use-after-
+    // free). setSpeakersConfig itself must NOT be called recursively
+    // (not re-entrant); it applies synchronously. The 200 ms intra-control
+    // debounce for rapid buffer-size scrub lives in DeviceCard, not here —
+    // see addendum §2.1 "intra-control only" wording.
+    // Handlers may synchronously call setSpeakersConfig (mutex is released before emit).
     void setSpeakersConfig(const AudioDeviceConfig& cfg);
+    void setHeadphonesConfig(const AudioDeviceConfig& cfg);
     void setTxInputConfig(const AudioDeviceConfig& cfg);
 
     // Per-VAX device configuration. On Mac/Linux the VAX slots are populated
@@ -146,6 +147,9 @@ public:
     // Test seam — inject a fake IAudioBus into the speakers slot so unit
     // tests can verify speakers tee without opening a PortAudio device.
     void setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus);
+
+    // Test seam — inject a fake IAudioBus into the headphones slot.
+    void setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus);
 #endif
 
     // Called by RxDspWorker when a slice produces an RX audio block.
@@ -177,6 +181,35 @@ public:
     void setVaxMuted(int channel, bool muted);
     void setVaxTxGain(float gain);
 
+    // Sub-Phase 12 Task 12.4 — DSP rate / block-size persistence.
+    // Persists audio/DspRate and audio/DspBlockSize. Live-apply to the
+    // WDSP channel pipeline is deferred until the channel-rebuild
+    // infrastructure lands; the setter logs and marks a deferred apply.
+    // TODO(sub-phase-12-dsp-live-apply): delegate to WdspEngine once
+    // channel teardown/rebuild infrastructure is available.
+    void setDspSampleRate(int rate);
+    void setDspBlockSize(int blockSize);
+
+    // Sub-Phase 12 Task 12.4 — VAC feedback-loop tuning (per addendum §2.4).
+    // The four fields map to Thetis IVAC feedback tuning knobs. Persists to
+    // audio/VacFeedback/<channel>/{Gain,SlewTimeMs,PropRing,FfRing}.
+    // Live-apply is deferred to Phase 3M IVAC port.
+    // TODO(sub-phase-12-vac-feedback-live-apply): wire into IVAC engine.
+    struct VacFeedbackParams {
+        float gain      = 1.0f;
+        int   slewTimeMs = 5;
+        int   propRing   = 2;
+        int   ffRing     = 2;
+    };
+    void setVacFeedbackParams(int channel, const VacFeedbackParams& params);
+
+    // Sub-Phase 12 Task 12.4 — Reset all audio settings (addendum §2.5).
+    // Clears all audio/* keys from AppSettings, preserving
+    // slice/<N>/VaxChannel and tx/OwnerSlot. Then rebuilds buses from
+    // seeded defaults and emits the config-changed signal cascade so
+    // subscribed UIs refresh.
+    void resetAudioSettings();
+
     float vaxRxGain(int channel) const;
     bool  vaxMuted(int channel) const;
     float vaxTxGain() const { return m_vaxTxGain.load(std::memory_order_acquire); }
@@ -193,7 +226,24 @@ signals:
     void vaxMutedChanged(int channel, bool muted);
     void vaxTxGainChanged(float gain);
 
+    // Sub-Phase 12 Task 12.4 — DSP parameter and audio-reset signals.
+    void dspSampleRateChanged(int rate);
+    void dspBlockSizeChanged(int blockSize);
+    void audioSettingsReset();
+
+    // Sub-Phase 12 Task 12.2 — per-endpoint config-changed signals.
+    // Each carries the AudioDeviceConfig the engine actually negotiated
+    // after opening the bus (or the last-good config if the open failed).
+    // DeviceCard's "Negotiated" pill subscribes to these.
+    void speakersConfigChanged(NereusSDR::AudioDeviceConfig cfg);
+    void headphonesConfigChanged(NereusSDR::AudioDeviceConfig cfg);
+    void txInputConfigChanged(NereusSDR::AudioDeviceConfig cfg);
+    void vaxConfigChanged(int channel, NereusSDR::AudioDeviceConfig cfg);
+
 private:
+    // Sub-Phase 12: speakers-bus rebuild (called directly from setSpeakersConfig).
+    void applySpeakersConfig(const AudioDeviceConfig& cfg);
+
     // Translate AudioDeviceConfig → AudioFormat + PortAudioConfig and
     // open the given bus slot. Used for the speakers / TX-mic / Windows-BYO
     // VAX paths; the platform-native VAX RX/TX virtual buses are minted via
@@ -219,7 +269,15 @@ private:
 
     RadioModel* m_radio{nullptr};
 
+    // Sub-Phase 12 Task 12.2 — live-reconfig safety mutex for the speakers
+    // bus. setSpeakersConfig() acquires this during tear-down + rebuild.
+    // rxBlockReady() uses try_lock and drops the block if it can't acquire
+    // (≤1 ms of silence is inaudible vs. a use-after-free). NOT held in the
+    // audio callback path (acquires try_lock only; never blocks).
+    std::mutex m_speakersBusMutex;
+
     std::unique_ptr<IAudioBus> m_speakersBus;
+    std::unique_ptr<IAudioBus> m_headphonesBus;
     std::unique_ptr<IAudioBus> m_txInputBus;
     // Sub-Phase 8.5: platform-native VAX TX virtual bus. Distinct from
     // m_txInputBus, which is the OS mic-capture device owned by MicDirect.

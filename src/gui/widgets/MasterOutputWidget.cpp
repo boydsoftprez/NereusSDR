@@ -18,6 +18,7 @@
 #include "MasterOutputWidget.h"
 
 #include "core/AppSettings.h"
+#include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/PortAudioBus.h"
 
@@ -186,6 +187,12 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
                 this, &MasterOutputWidget::onAudioEngineVolumeChanged);
         connect(m_audio, &AudioEngine::masterMutedChanged,
                 this, &MasterOutputWidget::onAudioEngineMasterMutedChanged);
+        // Sub-Phase 12 Task 12.2: live-sync device-name with Setup →
+        // Audio → Devices edits. When the Devices page rebuilds the
+        // speakers bus, the negotiated config arrives here and updates
+        // the picker anchor so the right-click checkmark stays correct.
+        connect(m_audio, &AudioEngine::speakersConfigChanged,
+                this, &MasterOutputWidget::onSpeakersConfigChanged);
     }
 
     setLayout(layout);
@@ -271,6 +278,15 @@ void MasterOutputWidget::onAudioEngineMasterMutedChanged(bool m)
         m_speakerBtn->setText(QString::fromUtf8(m ? kSpeakerOff : kSpeakerOn));
     }
     m_updatingFromModel = false;
+}
+
+void MasterOutputWidget::onSpeakersConfigChanged(const AudioDeviceConfig& cfg)
+{
+    // Sub-Phase 12 Task 12.2: keep the right-click picker anchor in sync
+    // with whatever device the engine is actually using. This is a
+    // sync-from-engine path — do NOT emit outputDeviceChanged (that signal
+    // is user-action only per the widget contract in the header comment).
+    m_currentDeviceName = cfg.deviceName;
 }
 
 } // namespace NereusSDR

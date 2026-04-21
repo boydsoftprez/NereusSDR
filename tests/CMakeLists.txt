@@ -267,3 +267,49 @@ nereus_add_test(tst_spectrum_overlay_panel)
 # BoardCapabilities::attenuator.maxDb at construction time, not hardcoded.
 nereus_add_test(tst_rxapplet_att_range)
 target_compile_definitions(tst_rxapplet_att_range PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: AudioDeviceConfig round-trip ──────
+# Verifies loadFromSettings / saveToSettings preserve all 10 fields, including
+# edge cases: empty driverApi, manualLatencyMs=0, bitDepth=16/24/32, boolean
+# combinations, and prefix independence (Speakers vs Headphones).
+nereus_add_test(tst_audio_device_config_roundtrip)
+
+# ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: AudioEngine speakers live-reconfig ─
+# Verifies speakersConfigChanged / headphonesConfigChanged / txInputConfigChanged
+# / vaxConfigChanged signals, mutex safety in rxBlockReady (try_lock), and
+# setSpeakersConfig no-crash while audio is simulated. Uses NEREUS_BUILD_TESTS
+# seam for debounce bypass and fake bus injection.
+nereus_add_test(tst_audio_engine_speakers_live_reconfig)
+target_compile_definitions(tst_audio_engine_speakers_live_reconfig PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3O Sub-Phase 12 Task 12.2 Step 0: MasterOutputWidget signal refresh ──
+# Verifies that speakersConfigChanged → onSpeakersConfigChanged syncs the widget's
+# device-name anchor without emitting outputDeviceChanged (sync-from-engine path,
+# not a user action). 5 test cases; runs on all platforms.
+nereus_add_test(tst_master_output_widget_signal_refresh)
+
+# ── Phase 3O Sub-Phase 12 Task 12.2: DeviceCard widget ─────────────────────────
+# Verifies construction (Output, Input, enableCheckbox), currentConfig(),
+# updateNegotiatedPill(), AppSettings round-trip, configChanged emission,
+# and enabledChanged emission. 10 test cases.
+nereus_add_test(tst_device_card)
+
+# ── Phase 3O Sub-Phase 12 Task 12.3: AudioVaxPage + VaxChannelCard ─────────────
+# Verifies VaxChannelCard construction (1–4), loadFromSettings, pill update,
+# Auto-detect QMenu cases (no cables / free cable bind / input filtering),
+# button visibility, and AudioVaxPage four-card layout. 10 test cases.
+# Uses NEREUS_BUILD_TESTS seam setDetectedCablesForTest() to inject cable
+# vectors without invoking PortAudio.
+nereus_add_test(tst_audio_vax_page_auto_detect)
+target_compile_definitions(tst_audio_vax_page_auto_detect PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3O Sub-Phase 12 Task 12.4: AudioEngine::resetAudioSettings ───────────
+# Verifies the clear-vs-preserve boundary from addendum §2.5:
+#   Cleared: audio/Speakers/*, Headphones/*, TxInput/*, Vax<1..4>/*,
+#            DspRate, DspBlockSize, VacFeedback/<ch>/*, feature flags,
+#            FirstRunComplete, LastDetectedCables.
+#   Preserved: slice/<N>/VaxChannel, tx/OwnerSlot.
+# Also verifies signal cascade: speakersConfigChanged, vaxConfigChanged(1..4),
+# audioSettingsReset. 12 test cases.
+nereus_add_test(tst_audio_engine_reset_audio_settings)
+target_compile_definitions(tst_audio_engine_reset_audio_settings PRIVATE NEREUS_BUILD_TESTS)

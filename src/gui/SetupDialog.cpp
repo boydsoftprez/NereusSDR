@@ -7,7 +7,10 @@
 // Hardware
 #include "setup/HardwarePage.h"
 // Audio
-#include "setup/AudioSetupPages.h"
+#include "setup/AudioDevicesPage.h"
+#include "setup/AudioVaxPage.h"
+#include "setup/AudioTciPage.h"
+#include "setup/AudioAdvancedPage.h"
 // DSP
 #include "setup/DspSetupPages.h"
 // Display
@@ -155,12 +158,10 @@ void SetupDialog::buildTree()
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     QTreeWidgetItem* audio = addCategory("Audio");
-    add(audio, "Device Selection", new DeviceSelectionPage(m_model));
-    add(audio, "ASIO Config",      new AsioConfigPage(m_model));
-    add(audio, "VAC 1",            new Vac1Page(m_model));
-    add(audio, "VAC 2",            new Vac2Page(m_model));
-    add(audio, "NereusVAX",        new NereusVaxPage(m_model));
-    add(audio, "Recording",        new RecordingPage(m_model));
+    add(audio, "Devices",  new AudioDevicesPage(m_model));
+    add(audio, "VAX",      new AudioVaxPage(m_model));
+    add(audio, "TCI",      new AudioTciPage(m_model));
+    add(audio, "Advanced", new AudioAdvancedPage(m_model));
 
     // ── DSP ───────────────────────────────────────────────────────────────────
     QTreeWidgetItem* dsp = addCategory("DSP");

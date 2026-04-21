@@ -523,12 +523,18 @@ Currently shown in the mockup on the Audio Setup page's TX Source bar. Wiring:
 - Dismissable via `Escape`; but only counts as first-run-complete if user clicked **Apply suggested**, **Skip**, or **Got it** (Mac/Linux).
 - Rescan mode (scenario E) pops unobtrusively only when a new cable is detected on app startup.
 
-### 7.5 `SetupAudioPage` (new page in SetupDialog)
+### 7.5 Setup → Audio pages (flat left-nav children)
 
-- Extends existing `SetupPage` base.
-- Four sub-tabs: **Devices**, **VAX**, **TCI** (disabled/placeholder "Coming in Phase 3J"), **Advanced**.
-- Each tab is a `QScrollArea` containing groupboxes.
-- Styled per STYLEGUIDE.md; groupbox conventions from `src/gui/SetupPage.cpp`.
+**Superseded by addendum [2026-04-20-phase3o-subphase12-addendum.md](2026-04-20-phase3o-subphase12-addendum.md) §3 (2026-04-20).**
+
+The original spec described a single `SetupAudioPage` with four inner `QTabWidget` sub-tabs. Preflight for Sub-Phase 12 discovered this would conflict with six existing stub pages under the Audio category (from Phase 3-UI) and deviate from the flat-nav convention used by DSP / Display / Transmit / Appearance / CAT. The revised structure replaces the six stubs with four flat pages:
+
+- `AudioDevicesPage` — wires per §6.5 (Devices tab content, now a page).
+- `AudioVaxPage` — wires per §6.6 (VAX tab content, now a page).
+- `AudioTciPage` — placeholder "Coming in Phase 3J (see §11.1)".
+- `AudioAdvancedPage` — wires per §6.7 (Advanced tab content, now a page).
+
+Each extends `SetupPage`, is registered directly under the "Audio" category in `SetupDialog::buildTree()`, and is styled per STYLEGUIDE.md with groupbox conventions from `src/gui/SetupPage.cpp`. No `QTabWidget` is used. `VaxFirstRunDialog::openSetupAudioTab(QString)` is renamed to `openSetupAudioPage(QString pageLabel)` and wires to `SetupDialog::selectPage(pageLabel)` directly.
 
 ---
 

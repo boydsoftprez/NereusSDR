@@ -937,12 +937,8 @@ QWidget* VaxFirstRunDialog::buildFooter()
             whyBtn->setObjectName(QString::fromUtf8(kBtnWhyNeeded));
             whyBtn->setStyleSheet(linkButtonStyle());
             connect(whyBtn, &QPushButton::clicked, this, [this]() {
-                // TODO(sub-phase-12): Setup → Audio → VAX tab will host
-                // the full "Why do I need virtual audio cables?"
-                // explanation. Sub-Phase 11 MainWindow hook logs-and-
-                // ignores this signal uniformly with the "Customize…"
-                // link; the dialog emits and closes either way.
-                emit openSetupAudioTab();
+                // Emit → MainWindow → SetupDialog::selectPage("VAX").
+                emit openSetupAudioPage(QStringLiteral("VAX"));
                 // reject() (not accept()) — the user hasn't completed
                 // first-run; they're going to Setup for more info, same
                 // semantics as Customize…
@@ -1028,10 +1024,7 @@ void VaxFirstRunDialog::onSkip()
 
 void VaxFirstRunDialog::onCustomize()
 {
-    // TODO(sub-phase-12-open-setup-audio): Setup → Audio → VAX tab not
-    // yet implemented. Sub-Phase 12 will wire this signal to
-    // SetupDialog::showPage(kSetupAudioVaxPage) or equivalent.
-    emit openSetupAudioTab();
+    emit openSetupAudioPage(QStringLiteral("VAX"));
     // Customize is "dismissed without completing first-run here" —
     // SetupDialog will persist audio/FirstRunComplete on its own path.
     reject();

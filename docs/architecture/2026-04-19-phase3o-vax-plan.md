@@ -2224,93 +2224,85 @@ Trigger by clearing `audio/FirstRunComplete=True` from AppSettings and restartin
 
 ---
 
-## Sub-Phase 12: Setup → Audio Page 🟡
+## Sub-Phase 12: Setup → Audio Pages 🟡
 
-### Task 12.1: `SetupAudioPage` shell with sub-tabs
+> **📌 Sub-Phase 12 is governed by the addendum [2026-04-20-phase3o-subphase12-addendum.md](2026-04-20-phase3o-subphase12-addendum.md).**
+> It supersedes the original single-page-with-inner-tabs design (Spec §7.5) and locks the Q1–Q5 UX decisions resolved during the 2026-04-20 brainstorming interview. Read the addendum before starting any Sub-Phase 12 task — the task-by-task scope below is the addendum's authoritative restatement.
+
+### Task 12.1: Audio nav refactor + flat page scaffolding
 
 **Files:**
-- Create: `src/gui/SetupAudioPage.h`, `.cpp`
+- Delete: `src/gui/setup/AudioSetupPages.h`, `AudioSetupPages.cpp` (all 6 stub classes: `DeviceSelectionPage`, `AsioConfigPage`, `Vac1Page`, `Vac2Page`, `NereusVaxPage`, `RecordingPage`).
+- Create: `src/gui/setup/AudioDevicesPage.h/cpp`, `AudioVaxPage.h/cpp`, `AudioTciPage.h/cpp`, `AudioAdvancedPage.h/cpp` (each extends `SetupPage`, returns a placeholder `QLabel` until its follow-up task fills it in).
+- Modify: `SetupDialog.cpp` `buildTree()` — remove the 6 `add(audio, …)` stub calls, add 4 new ones for the flat pages.
 
-- [ ] **Step 1: Extend existing `SetupPage` base** (`src/gui/SetupPage.h`)
+- [ ] **Step 1:** Delete `AudioSetupPages.h/cpp` and remove the 6 stub `add(audio, …)` calls under the Audio category in `SetupDialog::buildTree()`.
+- [ ] **Step 2:** Create the 4 new flat page classes as placeholder shells.
+- [ ] **Step 3:** Register them in `SetupDialog::buildTree()` under the Audio category: `add(audio, "Devices", new AudioDevicesPage(m_model))` and three more.
+- [ ] **Step 4:** Commit (GPG-signed).
 
-```cpp
-class SetupAudioPage : public SetupPage {
-    Q_OBJECT
-public:
-    SetupAudioPage(RadioModel* model, QWidget* parent = nullptr);
+### Task 12.2: AudioDevicesPage (Speakers / Headphones / TX Input)
 
-private:
-    QTabWidget* m_subTabs{nullptr};
-    QWidget* buildDevicesTab();
-    QWidget* buildVaxTab();
-    QWidget* buildTciTab();      // placeholder: "Coming in Phase 3J"
-    QWidget* buildAdvancedTab();
-};
-```
+**Implements addendum §2.1 (live-edit UX) + §4 (Step 0 scaffolding).**
 
-Layout: `QTabWidget` with four tabs.
+- [ ] **Step 0: Engine-side live-reconfig safety scaffolding** (addendum §4)
+    - Add `AudioEngine::speakersConfigChanged(AudioDeviceConfig)` signal; emit at end of `setSpeakersConfig` + `ensureSpeakersOpen`. Parallel signals for headphones, TX input, VAX 1–4.
+    - Add `AudioDeviceConfig::loadFromSettings(QString prefix)` and `saveToSettings(QString prefix)` helpers.
+    - Add `m_speakersBusMutex` (`std::mutex`); `setSpeakersConfig` holds it; `rxBlockReady` uses `try_lock` and drops the block if busy.
+    - Replace hardcoded defaults in `ensureSpeakersOpen()` with `AudioDeviceConfig::loadFromSettings("audio/Speakers")`.
+    - Wire `MasterOutputWidget` to `speakersConfigChanged` for live sync with SetupAudioPage edits; remove its timer-polled AppSettings read.
+    - Tests: `AudioDeviceConfigRoundtripTest`, `AudioEngineSpeakersLiveReconfigTest`, `MasterOutputWidgetSignalRefreshTest`.
+- [ ] **Step 1:** Build reusable `DeviceCard` class (`src/gui/setup/DeviceCard.h/cpp`) — `QGroupBox` subclass parameterized by settings-prefix + role enum (Output / Input). 7-row form per addendum §2.1: Driver API / Device / Sample rate (+ Auto-match) / Bit depth / Channels / Buffer size (+ derived-ms) / Options. Includes "Negotiated format" pill at the bottom.
+- [ ] **Step 2:** `AudioDevicesPage` instantiates three `DeviceCard`s: Speakers (`audio/Speakers`, Output), Headphones (`audio/Headphones`, Output, with title-bar enable checkbox), TX Input (`audio/TxInput`, Input, extra Monitor-during-TX + Tone-check controls).
+- [ ] **Step 3:** `QSignalBlocker` guard on each card's `<role>ConfigChanged` receipt to avoid echo loops. Driver rejection → red pill + error message; bus falls back to last-good config.
+- [ ] **Step 4:** Tests: `DeviceCardTest` (control-change → `configChanged` signal emits expected `AudioDeviceConfig`).
+- [ ] **Step 5:** Commit (GPG-signed).
 
-- [ ] **Step 2: Register in `SetupDialog`**
+**Deferred:** Direct ASIO engine + cmASIO parity controls (per 2026-04-19 GPL compliance review — ASIO routes through PortAudio's built-in host API).
 
-In `SetupDialog.cpp`, add the page under the Audio category.
+### Task 12.3: AudioVaxPage (per-channel cards + Auto-detect picker)
 
-- [ ] **Step 3: Commit**
+**Implements addendum §2.2 (full picker + native-override) + §2.3 (QMenu Auto-detect).**
 
-### Task 12.2: Devices tab (Speakers / Headphones / TX Input cards)
+- [ ] **Step 1:** Four channel cards (1–4) + TX row. Full 7-row form on **all platforms** per addendum §2.2. Default binding on Mac/Linux = platform-native HAL plugin; user can override.
+- [ ] **Step 2:** Amber "override — no consumer" warning badge on Mac/Linux cards when bound to a non-native device with zero detected consumers (addendum §2.2 closes the "silent override footgun"). Badge has a tooltip explaining the situation.
+- [ ] **Step 3:** Unassigned-slot "Auto-detect…" button → inline `QMenu` popup at button position (addendum §2.3). Menu items per §2.3: free cables clickable, assigned cables show "→ VAX N" and open reassign-confirm modal, no-cables case shows disabled row + "Install virtual cables…" entry.
+- [ ] **Step 4:** Wire `VaxFirstRunDialog::openSetupAudioPage("VAX")` signal to `SetupDialog::selectPage("VAX")`. Remove the `TODO(sub-phase-12-release-blocker)` marker in `MainWindow.cpp` and both `TODO(sub-phase-12-open-setup-audio)` markers in `VaxFirstRunDialog.cpp`.
+- [ ] **Step 5:** Tests: `AudioVaxPageAutoDetectTest` (mock `VirtualCableDetector::scan()` → verify menu population + bind on click).
+- [ ] **Step 6:** Commit (GPG-signed).
 
-- [ ] **Step 1: Build three device cards using QGroupBox + form layout**
+### Task 12.4: AudioAdvancedPage (DSP + IVAC parity + flags + reset)
 
-Each card has: Driver API combo (MME/DirectSound/WDM-KS/WASAPI/ASIO-via-PortAudio on Windows; CoreAudio on Mac; ALSA/Pulse/PipeWire/JACK on Linux), Device combo, Sample rate, Bit depth, Channels, Buffer size, Manual latency, per-API options (WASAPI exclusive / event-driven / bypass-mixer), negotiated-format preview label.
+**Implements addendum §2.4 (feature flags) + §2.5 (reset scope).**
 
-**Note:** Direct ASIO engine and cmASIO parity controls (base channel, input mode L/R/Both, lock mode, Control Panel launcher) are **deferred** per the GPL compliance review above. ASIO users route through PortAudio's built-in ASIO host API — no Engine radio button in this phase.
+- [ ] **Step 1:** DSP sample-rate combo + DSP block-size combo wired to `AudioEngine::setDspSampleRate` / `setDspBlockSize`.
+- [ ] **Step 2:** VAC feedback-loop tuning group — target-VAX combo + per-target gain / slew-time / prop-ring / FF-ring editors wired to `AudioEngine::setVacFeedbackParams(ch, params)`.
+- [ ] **Step 3:** Three feature-flag checkboxes per addendum §2.4:
+    - `SendIqToVax` — enabled; on toggle-on emits `qCWarning(lcAudio) << "SendIqToVax reserved for Phase 3M — no routing yet"`; note-inline `(reserved for Phase 3M — no routing yet)`.
+    - `TxMonitorToVax` — same pattern.
+    - `MuteVaxDuringTxOnOtherSlice` — active now; no note-inline.
+- [ ] **Step 4:** Detected-cables readonly row + Rescan button. Rescan → `VirtualCableDetector::scan()` updates the row; if new cables appear, opens `VaxFirstRunDialog::rescanMode()`.
+- [ ] **Step 5:** "Reset all audio to defaults" amber button → confirm modal per addendum §2.5 verbatim copy → `AudioEngine::resetAudioSettings()` clears the key list in §2.5, preserves per-slice `VaxChannel` and `tx/OwnerSlot`.
+- [ ] **Step 6:** Tests: `AudioEngineResetAudioSettingsTest` (verify clear-vs-preserve boundary per §2.5).
+- [ ] **Step 7:** Commit (GPG-signed).
 
-- [ ] **Step 2: Wire every control per Spec §6.5** (see control wiring table in the design spec — skip rows marked Direct-ASIO-only)
+### Task 12.5: AudioTciPage placeholder
 
-Each combo: `currentTextChanged` → `AudioEngine::setXxxDriverApi()` → reopens bus; reverse via `XxxFormatNegotiated(AudioFormat)` signal.
-
-- [ ] **Step 3: Commit**
-
-### Task 12.3: VAX tab (per-channel cards)
-
-- [ ] **Step 1: Build four channel cards (1–4) + TX row**
-
-Native VAX channels (Mac/Linux) show compact cards with "native driver" badge + fixed 48kHz/24-bit format, no device-picker. Windows BYO cards show full Driver API / Device combos.
-
-- [ ] **Step 2: Wire controls per Spec §6.6**
-
-- [ ] **Step 3: "Auto-detect…" button on unassigned slots calls `VirtualCableDetector::scan()` and opens a mini-picker**
-
-- [ ] **Step 4: Commit**
-
-### Task 12.4: Advanced tab (DSP + IVAC parity + extras)
-
-- [ ] **Step 1: Build Advanced tab per Spec §6.7**
-
-DSP sample rate combo, DSP block size combo, VAC feedback per-target tuning (gain/slew/rings), SendIqToVax / TxMonitorToVax / MuteVaxDuringTxOnOtherSlice checkboxes, detected-cables readonly row + Rescan button, "Reset all audio to defaults" (amber confirm-modal).
-
-- [ ] **Step 2: Wire feature-flagged controls**
-
-`SendIqToVax` and `TxMonitorToVax` persist but their wiring logs a `qCWarning(lcAudio) << "IQ to VAX reserved for future phase"` when toggled on.
-
-- [ ] **Step 3: Commit**
-
-### Task 12.5: TCI tab placeholder
-
-- [ ] **Step 1: Disabled tab labeled "Coming in Phase 3J" with a stub**
+- [ ] **Step 1:** Single centered `QLabel` "TCI server — coming in Phase 3J (see design spec §11.1)". No other content.
 
 ```cpp
-QWidget* SetupAudioPage::buildTciTab() {
-    auto* w = new QWidget;
-    auto* lay = new QVBoxLayout(w);
+AudioTciPage::AudioTciPage(RadioModel* model, QWidget* parent)
+    : SetupPage(model, parent)
+{
+    auto* lay = new QVBoxLayout(this);
     auto* lbl = new QLabel("TCI server — coming in Phase 3J (see design spec §11.1)");
     lbl->setStyleSheet("color:#8090a0;font-size:12px;padding:40px;");
     lbl->setAlignment(Qt::AlignCenter);
     lay->addWidget(lbl);
-    return w;
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2:** Commit (GPG-signed).
 
 ---
 

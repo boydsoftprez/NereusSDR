@@ -29,6 +29,8 @@
 //                docs/architecture/2026-04-19-vax-design.md §5.4.
 // =================================================================
 
+#include "core/AudioDeviceConfig.h"
+
 #include <QString>
 #include <QWidget>
 
@@ -94,6 +96,12 @@ private slots:
     // widget→engine path.
     void onAudioEngineVolumeChanged(float v);
     void onAudioEngineMasterMutedChanged(bool m);
+
+    // Sub-Phase 12 Task 12.2: live sync with Setup → Audio → Devices edits.
+    // Receives the negotiated AudioDeviceConfig from the engine after any
+    // speakers bus reconfig and updates m_currentDeviceName so the right-
+    // click picker's checkmark stays consistent.
+    void onSpeakersConfigChanged(const NereusSDR::AudioDeviceConfig& cfg);
 
 private:
     AudioEngine* m_audio{nullptr};

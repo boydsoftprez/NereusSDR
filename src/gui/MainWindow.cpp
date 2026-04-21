@@ -461,12 +461,10 @@ MainWindow::MainWindow(QWidget* parent)
     // before any signal/slot activity (e.g. discovery radioDiscovered).
     QTimer::singleShot(0, this, &MainWindow::tryAutoReconnect);
 
-    // Phase 3O Sub-Phase 11 Task 11b — VAX first-run / startup rescan.
-    // TODO(sub-phase-12-release-blocker): this hook is incomplete without
-    // Sub-Phase 12. Users who click "Skip" on the first-run dialog set
-    // audio/FirstRunComplete=True and have no in-app way back to cable
-    // binding until the Setup → Audio → VAX tab lands. See the release-
-    // gate callout in docs/architecture/2026-04-19-phase3o-vax-plan.md.
+    // Phase 3O Sub-Phase 11/12 — VAX first-run / startup rescan.
+    // The Setup → Audio → VAX page (AudioVaxPage) is now live; users
+    // who skip the first-run dialog can reach cable binding via
+    // Setup → Audio → VAX at any time.
     // Deferred via singleShot(0, ...) so the UI is fully built first.
     QTimer::singleShot(0, this, &MainWindow::checkVaxFirstRun);
 
@@ -2794,11 +2792,6 @@ void MainWindow::checkVaxFirstRun()
         // WindowsCablesFound (all four DeviceName keys are empty on a
         // fresh install, so remap resolves to the same 1..N order).
         //
-        // DeviceName is still read-only in Sub-Phase 11; the writer
-        // + AudioEngine::start() read-back land in Sub-Phase 12. Until
-        // then the remap is inert in practice but the contract is
-        // honoured. See the release-gate note in the PR body and the
-        // TODO(sub-phase-12-open-setup-audio) marker below.
         auto& settings = AppSettings::instance();
         int slot = 1;
         for (const auto& b : bindings) {
@@ -2824,13 +2817,14 @@ void MainWindow::checkVaxFirstRun()
         }
     });
 
-    // TODO(sub-phase-12-open-setup-audio): wire to Setup → Audio → VAX tab.
-    // Until Sub-Phase 12 lands, log-and-ignore so the dialog's
-    // "Customize…" / "Why do I need this?" affordance is at least visible
-    // in the logs when clicked.
-    connect(dlg, &VaxFirstRunDialog::openSetupAudioTab, this, []() {
-        qCInfo(lcAudio) << "VAX first-run: Customize clicked; "
-                           "Setup -> Audio -> VAX tab lands in Sub-Phase 12";
+    // Sub-Phase 12: wire "Customize…" / "Why do I need this?" → Setup → VAX.
+    // Opens (or raises) the Setup dialog and navigates to Audio → VAX.
+    connect(dlg, &VaxFirstRunDialog::openSetupAudioPage, this,
+            [this](const QString& pageLabel) {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->selectPage(pageLabel);
+        dialog->show();
     });
 
     connect(dlg, &VaxFirstRunDialog::openInstallUrl, this,

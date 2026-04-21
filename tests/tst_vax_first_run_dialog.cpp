@@ -10,7 +10,7 @@
 //   1. Construction in all 5 scenarios.
 //   2. Scenario A Apply-suggested emits payload + Accepted.
 //   3. Scenario A/B Skip / Continue-without-VAX — no payload, Accepted.
-//   4. Scenario A Customize — openSetupAudioTab emitted, Rejected.
+//   4. Scenario A Customize — openSetupAudioPage("VAX") emitted, Rejected.
 //   5. Scenario B Install-URL — openInstallUrl carries the vendor URL.
 //   6. Escape key — Rejected, no signals.
 //   7. Scenario C/D Got-it — no payload, Accepted.
@@ -113,7 +113,7 @@ private slots:
         QSignalSpy applySpy(&dlg,
                             &VaxFirstRunDialog::applySuggested);
         QSignalSpy openSetupSpy(&dlg,
-                                &VaxFirstRunDialog::openSetupAudioTab);
+                                &VaxFirstRunDialog::openSetupAudioPage);
 
         auto* applyBtn = dlg.findChild<QPushButton*>(
             QStringLiteral("btnApplySuggested"));
@@ -149,7 +149,7 @@ private slots:
 
         QSignalSpy applySpy(&dlg, &VaxFirstRunDialog::applySuggested);
         QSignalSpy openSetupSpy(&dlg,
-                                &VaxFirstRunDialog::openSetupAudioTab);
+                                &VaxFirstRunDialog::openSetupAudioPage);
 
         auto* skipBtn = dlg.findChild<QPushButton*>(
             QStringLiteral("btnSkip"));
@@ -177,7 +177,7 @@ private slots:
         QCOMPARE(dlg.result(), static_cast<int>(QDialog::Accepted));
     }
 
-    // ── 4. Customize (Scenario A) — openSetupAudioTab + Rejected ────────
+    // ── 4. Customize (Scenario A) — openSetupAudioPage("VAX") + Rejected ──
     void customizeEmitsOpenSetupAndRejects()
     {
         VaxFirstRunDialog dlg(FirstRunScenario::WindowsCablesFound,
@@ -185,7 +185,7 @@ private slots:
 
         QSignalSpy applySpy(&dlg, &VaxFirstRunDialog::applySuggested);
         QSignalSpy openSetupSpy(&dlg,
-                                &VaxFirstRunDialog::openSetupAudioTab);
+                                &VaxFirstRunDialog::openSetupAudioPage);
 
         auto* customizeBtn = dlg.findChild<QPushButton*>(
             QStringLiteral("btnCustomize"));
@@ -193,6 +193,7 @@ private slots:
         QTest::mouseClick(customizeBtn, Qt::LeftButton);
 
         QCOMPARE(openSetupSpy.count(), 1);
+        QCOMPARE(openSetupSpy.at(0).at(0).toString(), QStringLiteral("VAX"));
         QCOMPARE(applySpy.count(), 0);
         QCOMPARE(dlg.result(), static_cast<int>(QDialog::Rejected));
     }
@@ -229,7 +230,7 @@ private slots:
 
         QSignalSpy applySpy(&dlg, &VaxFirstRunDialog::applySuggested);
         QSignalSpy openSetupSpy(&dlg,
-                                &VaxFirstRunDialog::openSetupAudioTab);
+                                &VaxFirstRunDialog::openSetupAudioPage);
         QSignalSpy urlSpy(&dlg, &VaxFirstRunDialog::openInstallUrl);
 
         QTest::keyClick(&dlg, Qt::Key_Escape);
