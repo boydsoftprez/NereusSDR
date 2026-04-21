@@ -508,10 +508,23 @@ void RxApplet::buildUi()
         m_attStack = new QStackedWidget(this);
         m_attStack->setFixedHeight(20);
 
-        // Page 0: Preamp combo (ATT mode — step att disabled)
+        // Page 0: Preamp combo (ATT mode — step att disabled).
+        // Phase 3P-C Step 3: populate from BoardCapabilities::preampItemsForBoard()
+        // at construction, not hardcoded. Matches Thetis SetComboPreampForHPSDR
+        // console.cs:40755-40825 [@501e3f5] — per board at init time.
         m_preampCombo = new QComboBox(this);
-        m_preampCombo->addItems({QStringLiteral("0dB"), QStringLiteral("-10dB"),
-                                 QStringLiteral("-20dB"), QStringLiteral("-30dB")});
+        {
+            const HPSDRHW initBoard = m_model
+                ? m_model->hardwareProfile().effectiveBoard
+                : HPSDRHW::Hermes;
+            const bool initAlex = m_model
+                ? m_model->boardCapabilities().hasAlexFilters
+                : false;
+            const auto initItems = BoardCapsTable::preampItemsForBoard(initBoard, initAlex);
+            for (const auto& item : initItems) {
+                m_preampCombo->addItem(QString::fromLatin1(item.label), item.modeInt);
+            }
+        }
         m_preampCombo->setFixedWidth(70);
         m_preampCombo->setFixedHeight(20);
         applyComboStyle(m_preampCombo);
@@ -1290,6 +1303,11 @@ int RxApplet::visibleOvlBadgeCountForTest() const
         if (m_ovlBadges[i]) { ++count; }
     }
     return count;
+}
+
+int RxApplet::preampComboItemCountForTest() const
+{
+    return m_preampCombo ? m_preampCombo->count() : -1;
 }
 #endif
 

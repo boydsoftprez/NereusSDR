@@ -695,10 +695,11 @@ static constexpr PreampItem kOnOffPlusAlex[] = {
     {"-50db", 6},  // PreampMode::Minus50 (ALEX)
 };
 
-// Hermes Lite 2: preamp on only, no bypass/attenuation options.
-static constexpr PreampItem kHl2[] = {
-    {"0dB", 1},  // PreampMode::On
-};
+// Hermes Lite 2: uses anan100d 4-step set (Off / -10 / -20 / -30 dB).
+// HL2 is not in Thetis SetComboPreampForHPSDR (it postdates that switch),
+// but its LNA supports the same 4-level control as the anan100d set.
+// Per spec §8 and mi0bot HL2 LNA design [@c26a8a4].
+// Phase 3P-C Step 2 correction: was 1-item "On only" — updated to anan100d.
 
 // Helper to produce dynamic-extent spans from static arrays.
 template<std::size_t N>
@@ -744,8 +745,10 @@ std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) no
         return items(kAnan100d);
 
     case HPSDRHW::HermesLite:
-        // HL2: preamp on only, no variable attenuation.
-        return items(kHl2);
+        // HL2: anan100d 4-step set (Off / -10 / -20 / -30 dB). Not in Thetis
+        // SetComboPreampForHPSDR switch (HL2 postdates it); uses anan100d set
+        // per spec §8 and mi0bot HL2 LNA design [@c26a8a4]. Phase 3P-C Step 2.
+        return items(kAnan100d);
 
     default:
         return items(kAnan100d);

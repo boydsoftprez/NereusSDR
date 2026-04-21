@@ -290,3 +290,14 @@ target_compile_definitions(tst_rxapplet_att_range PRIVATE NEREUS_BUILD_TESTS)
 # Default state (rx1Preamp=false) leaves bit 1 clear → regression-freeze safe.
 nereus_add_test(tst_rxapplet_adc_ovl)
 target_compile_definitions(tst_rxapplet_adc_ovl PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-C Step 2+3: preamp combo per-board contents contract ─────────────
+# Locks BoardCapabilities::preampItemsForBoard() output 1:1 with Thetis
+# SetComboPreampForHPSDR console.cs:40755-40825 [@501e3f5]:
+#   Atlas no-Alex → 2 items (on_off); Atlas with Alex → 7 items (on_off+alex)
+#   Hermes no-Alex → 4 items (anan100d); Hermes with Alex → 7 items
+#   OrionMKII/Saturn → 4 items always; HL2 → 4 items (anan100d, Phase 3P-C fix)
+# Also verifies RxApplet.preampComboItemCountForTest() reflects board caps at
+# construction (Phase 3P-C Step 3: no more hardcoded "0dB/-10dB/-20dB/-30dB").
+nereus_add_test(tst_preamp_combo)
+target_compile_definitions(tst_preamp_combo PRIVATE NEREUS_BUILD_TESTS)

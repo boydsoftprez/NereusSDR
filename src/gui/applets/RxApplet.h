@@ -193,6 +193,10 @@ public:
     // Test-only: returns the number of visible ADC OVL badges.
     // Phase 3P-B Task 10: 1 for single-ADC boards, 2 for dual-ADC boards.
     int visibleOvlBadgeCountForTest() const;
+
+    // Test-only: returns the item count in the preamp combo at construction.
+    // Phase 3P-C Step 3: verifies per-board populate from BoardCapabilities.
+    int preampComboItemCountForTest() const;
 private:
 #endif
 
