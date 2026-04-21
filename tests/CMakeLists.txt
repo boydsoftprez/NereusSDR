@@ -193,6 +193,9 @@ nereus_add_test(tst_step_attenuator_controller)
 # ── About dialog ─────────────────────────────────────────────────────────
 nereus_add_test(tst_about_dialog)
 
+# ── Phase 3O Sub-Phase 11 Task 11a: VaxFirstRunDialog ────────────────────
+nereus_add_test(tst_vax_first_run_dialog)
+
 # ── Phase 3O VAX routing ──────────────────────────────────────────────────
 nereus_add_test(tst_slice_model_vax)
 nereus_add_test(tst_transmit_model_tx_owner)
@@ -301,3 +304,63 @@ target_compile_definitions(tst_rxapplet_adc_ovl PRIVATE NEREUS_BUILD_TESTS)
 # construction (Phase 3P-C Step 3: no more hardcoded "0dB/-10dB/-20dB/-30dB").
 nereus_add_test(tst_preamp_combo)
 target_compile_definitions(tst_preamp_combo PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-D Task 1: OcMatrix model + per-MAC persistence ──────────────────
+# Verifies per-band × per-pin × {RX,TX} bit assignments, TXPinAction mapping
+# (Thetis enums.cs:443 TXPinActions [@501e3f5]), and AppSettings round-trip
+# under hardware/<mac>/oc/{rx,tx}/<band>/pin<n> and .../actions/pin<n>/action.
+nereus_add_test(tst_oc_matrix)
+
+# ── Phase 3P-D Task 2: OC Outputs HF sub-sub-tab UI + matrix wiring ──────────
+# Smoke-tests construction, RX/TX pin sync (matrix→UI via changed()), reset
+# flow, GEN band row disabled state, and default TXPinAction (MoxTuneTwoTone).
+nereus_add_test(tst_oc_outputs_hf_tab)
+target_compile_definitions(tst_oc_outputs_hf_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-D Task 3: P1RadioConnection ↔ OcMatrix codec wiring ─────────────
+# Verifies:
+#   - Without OcMatrix wired: bank 0 C2 = 0 (legacy m_ocOutput fallback).
+#   - Matrix with pin 0 set for 20m RX: C2 = 0x02 ((mask=0x01) << 1).
+#   - MOX selects TX matrix path: pin 1 for 40m TX → C2 = 0x04.
+#   - Detaching matrix (setOcMatrix(nullptr)) reverts to legacy 0.
+nereus_add_test(tst_p1_oc_matrix_wiring)
+target_compile_definitions(tst_p1_oc_matrix_wiring PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-E Task 1: IoBoardHl2 model ──────────────────────────────────────
+# Verifies the 32-slot circular I2C FIFO (enqueue/dequeue/depth/clear/overflow),
+# 12-step UpdateIOBoard state machine cycle (advance wraps 11→0, all step
+# descriptor strings match mi0bot console.cs:25844-25928 [@c26a8a4]), register
+# mirror (256-byte array, HardwareVersion stored separately), and
+# detection bool (idempotent setter, signal on change).
+nereus_add_test(tst_io_board_hl2)
+
+# ── Phase 3P-E Task 2: HL2 I2C intercept + ep6 read parsing ─────────────────
+# Verifies that P1CodecHl2::tryComposeI2cFrame() encodes the I2C TLV frame
+# (bus, address, control, write_data) into the 5 C&C bytes per
+# mi0bot networkproto1.c:895-943 [@c26a8a4], that the queue is dequeued after
+# compose, that non-HL2 boards noop, and that the ep6 I2C response test seam
+# compiles and runs without crash.
+nereus_add_test(tst_p1_hl2_i2c_wiring)
+target_compile_definitions(tst_p1_hl2_i2c_wiring PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-E Task 3: HermesLiteBandwidthMonitor ────────────────────────────
+# Verifies the port of mi0bot bandwidth_monitor.{c,h} (MW0LGE [@c26a8a4]):
+#   - initial state (zero rates, not throttled, zero event count)
+#   - first-tick zero return (prev_ms == 0 branch in compute_bps)
+#   - bytes <= 0 are silently ignored (upstream if (bytes > 0) guard)
+#   - positive ingress rate after two real-clock ticks (delta path)
+#   - throttle requires ep2 to be active (not just ep6 silence)
+#   - throttle asserted after kThrottleTickThreshold consecutive silent ticks
+#   - throttle clears when ep6 resumes
+#   - throttle event count increments per throttle assertion
+#   - liveStatsUpdated emitted on every tick()
+#   - reset() clears all state (upstream bandwidth_monitor_reset() parity)
+#   - reset() emits throttledChanged(false) when previously throttled
+nereus_add_test(tst_hermes_lite_bandwidth_monitor)
+
+# ── Phase 3P-E Task 4: Hardware → HL2 I/O Setup page UI ──────────────────────
+# Smoke-tests construction for HL2 and non-HL2 boards, signal-driven UI
+# updates (register change, step advance, detection, throttle, I2C queue)
+# without crashes. Auto-hide for non-HL2 boards verified via construction.
+nereus_add_test(tst_hl2_io_board_tab)
+target_compile_definitions(tst_hl2_io_board_tab PRIVATE NEREUS_BUILD_TESTS)

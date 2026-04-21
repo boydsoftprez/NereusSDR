@@ -5,17 +5,20 @@
 // =================================================================
 //
 // Ported from Thetis source:
-//   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.designer.cs:tpOCHFControl,
+//   tpOCSWLControl (tcOCOutputs container tab pages)
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
-//                 (KG4VCF), with AI-assisted transformation via Anthropic
-//                 Claude Code.
+//   2026-04-17 — Initial placeholder stub. J.J. Boyd (KG4VCF).
+//   2026-04-20 — Refactored into parent QTabWidget hosting two sub-sub-tabs:
+//                HF (OcOutputsHfTab — full RX/TX matrix + actions + USB BCD
+//                + Ext PA + live OC state) and SWL (placeholder for a
+//                follow-up commit). Phase 3P-D Task 2. J.J. Boyd (KG4VCF).
 // =================================================================
 
 //=================================================================
-// setup.cs
+// setup.designer.cs
 //=================================================================
 // Thetis is a C# implementation of a Software Defined Radio.
 // Copyright (C) 2004-2009  FlexRadio Systems
@@ -35,13 +38,6 @@
 // along with this program; if not, write to the Free Software
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
-// You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to: 
-//    FlexRadio Systems
-//    8900 Marybank Dr.
-//    Austin, TX 78750
-//    USA
-//
 //=================================================================
 // Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
 //=================================================================
@@ -50,7 +46,7 @@
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
 // ------------------------------------------------------------------------------------------ //
 // For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
-// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves his       //
 // right to use, license, and distribute such code under different terms, including           //
 // closed-source and proprietary licences, in addition to the GNU General Public License      //
 // granted above. Nothing in this statement restricts any rights granted to recipients under  //
@@ -62,40 +58,55 @@
 #include <QVariant>
 #include <QWidget>
 
-class QLabel;
-class QSpinBox;
-class QTableWidget;
-class QTableWidgetItem;
+class QTabWidget;
 
 namespace NereusSDR {
 
 class RadioModel;
+class OcMatrix;
+class OcOutputsHfTab;
 struct RadioInfo;
 struct BoardCapabilities;
 
+// OcOutputsTab — parent "OC Outputs" tab in Hardware Config.
+//
+// Hosts two sub-sub-tabs that mirror Thetis tcOCOutputs:
+//   0. HF  — OcOutputsHfTab (full RX/TX matrix + pin actions + USB BCD
+//             + Ext PA + live OC pin state) — Phase 3P-D Task 2
+//   1. SWL — placeholder; same matrix shape with SWL band plan — follow-up
+//
+// State is backed by an OcMatrix instance (Phase 3P-D Task 1) which handles
+// per-MAC AppSettings persistence under hardware/<mac>/oc/...
+//
+// Source: Thetis tcOCOutputs (setup.designer.cs tpOCHFControl + tpOCSWLControl)
+// [@501e3f5]
 class OcOutputsTab : public QWidget {
     Q_OBJECT
 public:
     explicit OcOutputsTab(RadioModel* model, QWidget* parent = nullptr);
+
+    // Called by HardwarePage when a radio connects. Extracts the MAC address
+    // and triggers OcMatrix::load() to hydrate per-MAC state.
     void populate(const RadioInfo& info, const BoardCapabilities& caps);
+
+    // Called by HardwarePage on app restore. State is owned by OcMatrix
+    // (AppSettings under hardware/<mac>/oc/...) — this is a no-op stub so
+    // the HardwarePage API contract is met without extra coupling.
     void restoreSettings(const QMap<QString, QVariant>& settings);
 
 signals:
+    // Present for HardwarePage API compatibility. OcOutputsTab routes all
+    // state through OcMatrix (AppSettings), so this signal is never emitted
+    // from this tab — the write-through path used by other tabs does not
+    // apply here. HardwarePage connects to it but will never receive a firing.
     void settingChanged(const QString& key, const QVariant& value);
 
-private slots:
-    void onRxMaskChanged(QTableWidgetItem* item);
-    void onTxMaskChanged(QTableWidgetItem* item);
-
 private:
-    static QTableWidget* makeGrid(QWidget* parent);
-
-    RadioModel*   m_model{nullptr};
-
-    QTableWidget* m_rxGrid{nullptr};
-    QTableWidget* m_txGrid{nullptr};
-    QSpinBox*     m_settleDelaySpin{nullptr};
-    QLabel*       m_noOcLabel{nullptr};
+    RadioModel*      m_model{nullptr};
+    OcMatrix*        m_ocMatrix{nullptr};   // non-owning — owned by RadioModel (Phase 3P-D Task 3)
+    QTabWidget*      m_subTabs{nullptr};
+    OcOutputsHfTab*  m_hfTab{nullptr};
+    QWidget*         m_swlTab{nullptr};     // placeholder for follow-up commit
 };
 
 } // namespace NereusSDR

@@ -38,6 +38,7 @@
 // =================================================================
 
 #include "P1CodecHl2.h"
+#include "core/IoBoardHl2.h"
 
 namespace NereusSDR {
 
@@ -173,6 +174,68 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
             out[0] = C0base;
             return;
     }
+}
+
+// ---------------------------------------------------------------------------
+// tryComposeI2cFrame
+//
+// Overrides the normal C&C compose path when the IoBoardHl2 queue has pending
+// I2C transactions. Pops the next txn from the front of the queue and encodes
+// it into the 5-byte C&C frame per mi0bot WriteMainLoop_HL2.
+//
+// Wire layout (ported from mi0bot networkproto1.c:895-943 [@c26a8a4]):
+//   C0 = XmitBit | (I2C chip addr << 1) | (ctrl_request << 7)
+//        I2C chip addr: 0x3c for bus 0 (I2C1), 0x3d for bus 1 (I2C2)
+//        ctrl_request: bit 2 (0x04) of txn.control
+//   C1 = 0x07 (read) or 0x06 (write)   — ctrl_read: bit 0 (0x01) of txn.control
+//   C2 = 0x80 | address                — device 7-bit address with stop bit
+//        If address > 0x7F, right-shift by 1 to strip the r/w bit.
+//   C3 = txn.control                   — I2C control byte (verbatim)
+//   C4 = txn.writeData                 — write data byte
+//
+// Returns true if a frame was composed and the txn dequeued; false if queue
+// was empty or m_io is null.
+// ---------------------------------------------------------------------------
+bool P1CodecHl2::tryComposeI2cFrame(quint8 out[5], bool mox) const
+{
+    if (!m_io || m_io->i2cQueueIsEmpty()) { return false; }
+    IoBoardHl2::I2cTxn txn;
+    if (!m_io->dequeueI2c(txn)) { return false; }
+
+    for (int i = 0; i < 5; ++i) { out[i] = 0; }
+
+    // C0: XmitBit in bit 0, I2C chip select in bits 1-7, ctrl_request in bit 7.
+    // Source: mi0bot networkproto1.c:912-919 [@c26a8a4]
+    const quint8 xmitBit   = mox ? quint8(0x01) : quint8(0x00);
+    // ctrl_request is bit 2 of txn.control (IoBoardHl2::CtrlRequest = 0x04)
+    const quint8 ctrlReq   = (txn.control & IoBoardHl2::CtrlRequest) ? quint8(0x01) : quint8(0x00);
+    if (txn.bus == 0) {
+        out[0] = xmitBit | quint8(0x3c << 1) | quint8(ctrlReq << 7);  // I2C1 0x3c
+    } else {
+        out[0] = xmitBit | quint8(0x3d << 1) | quint8(ctrlReq << 7);  // I2C2 0x3d
+    }
+
+    // C1: 0x07 = read, 0x06 = write.
+    // Source: mi0bot networkproto1.c:930-935 [@c26a8a4]
+    // ctrl_read is bit 0 of txn.control (IoBoardHl2::CtrlRead = 0x01)
+    const bool ctrlRead = (txn.control & IoBoardHl2::CtrlRead) != 0;
+    out[1] = ctrlRead ? quint8(0x07) : quint8(0x06);
+
+    // C2: 0x80 | device address (stop bit). Address > 0x7F → shift right to strip r/w bit.
+    // Source: mi0bot networkproto1.c:921-928 [@c26a8a4]
+    quint8 address = txn.address;
+    if (address > 0x7F) { address = address >> 1; }
+    out[2] = quint8(0x80) | address;  // Stop request
+
+    // C3: I2C register / control byte verbatim.
+    // Source: mi0bot networkproto1.c:939 [@c26a8a4]
+    out[3] = txn.control;
+
+    // C4: write data byte.
+    // Source: mi0bot networkproto1.c:940 [@c26a8a4]
+    out[4] = txn.writeData;
+
+    return true;
 }
 
 } // namespace NereusSDR

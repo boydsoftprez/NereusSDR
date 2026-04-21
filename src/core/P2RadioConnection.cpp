@@ -131,9 +131,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "P2RadioConnection.h"
 #include "LogCategories.h"
+#include "OcMatrix.h"
 #include "codec/AlexFilterMap.h"
 #include "codec/P2CodecOrionMkII.h"
 #include "codec/P2CodecSaturn.h"
+#include "models/Band.h"
 
 #include <QNetworkDatagram>
 #include <QVariant>
@@ -619,6 +621,20 @@ void P2RadioConnection::selectCodec()
 }
 
 // ---------------------------------------------------------------------------
+// setOcMatrix — Phase 3P-D Task 3
+//
+// Symmetric companion to P1RadioConnection::setOcMatrix.  Wires the
+// RadioModel's OcMatrix so buildCodecContext() fills ctx.ocByte from
+// maskFor(currentBand, mox).  No P2 codec reads ocByte yet; the field is
+// populated here so Phase F P2 OC wiring can consume it without further
+// changes to this class.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setOcMatrix(const OcMatrix* matrix)
+{
+    m_ocMatrix = matrix;
+}
+
+// ---------------------------------------------------------------------------
 // buildCodecContext — Phase 3P-B Task 7
 //
 // Snapshots all live P2RadioConnection state into a CodecContext so the
@@ -709,6 +725,18 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // configures them via user-entered band-edge table.
     ctx.p2SaturnBpfHpfBits = 0;
     ctx.p2SaturnBpfLpfBits = 0;
+
+    // OC output byte — sourced from OcMatrix when wired; legacy 0 otherwise.
+    // No P2 codec reads ctx.ocByte yet; populated here symmetrically with P1
+    // so Phase F P2 OC wiring can consume it without further changes.
+    // Phase 3P-D Task 3 — From Thetis HPSDR/Penny.cs:117-132 [@501e3f5]
+    if (m_ocMatrix) {
+        const quint64 rx0Hz = static_cast<quint64>(m_rx[0].frequency);
+        const Band currentBand = bandFromFrequency(static_cast<double>(rx0Hz));
+        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_tx[0].pttOut != 0);
+    } else {
+        ctx.ocByte = 0;
+    }
 
     return ctx;
 }

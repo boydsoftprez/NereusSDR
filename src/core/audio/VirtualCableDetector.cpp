@@ -2,10 +2,30 @@
 // Implements VirtualCableDetector: regex product matching + PortAudio scan.
 // NereusSDR-original; no Thetis/AetherSDR port.
 #include "VirtualCableDetector.h"
+#include <QCryptographicHash>
+#include <QLatin1Char>
 #include <QRegularExpression>
+#include <QSet>
+#include <QStringList>
 #include "PortAudioBus.h"
 
 using namespace NereusSDR;
+
+namespace {
+
+// Shared SHA-256(deviceName) → 8-hex-char truncation used by both
+// fingerprintCsv() and diffNewCables(). Centralised so the two helpers
+// can't drift (e.g. one switching to MD5 and leaving the other stable
+// would silently break rescan detection).
+QString hashDeviceName(const QString& name)
+{
+    const QByteArray full = QCryptographicHash::hash(name.toUtf8(),
+                                                     QCryptographicHash::Sha256);
+    // First 4 bytes → 8 hex chars. Deterministic across processes.
+    return QString::fromLatin1(full.left(4).toHex());
+}
+
+} // namespace
 
 VirtualCableProduct VirtualCableDetector::matchProduct(const QString& n) {
     // Rule order is load-bearing:
@@ -71,4 +91,51 @@ QVector<DetectedCable> VirtualCableDetector::scan() {
         }
     }
     return out;
+}
+
+QVector<DetectedCable> VirtualCableDetector::filterThirdParty(
+    const QVector<DetectedCable>& all)
+{
+    QVector<DetectedCable> out;
+    out.reserve(all.size());
+    for (const auto& c : all) {
+        if (c.product != VirtualCableProduct::NereusSdrVax) {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+QVector<DetectedCable> VirtualCableDetector::scanThirdPartyOnly()
+{
+    return filterThirdParty(scan());
+}
+
+QString VirtualCableDetector::fingerprintCsv(const QVector<DetectedCable>& cables)
+{
+    QStringList hashes;
+    hashes.reserve(cables.size());
+    for (const auto& c : cables) {
+        hashes.append(hashDeviceName(c.deviceName));
+    }
+    return hashes.join(QLatin1Char(','));
+}
+
+QVector<DetectedCable> VirtualCableDetector::diffNewCables(
+    const QVector<DetectedCable>& current, const QString& lastCsv)
+{
+    QSet<QString> known;
+    const auto prev = lastCsv.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const auto& h : prev) {
+        known.insert(h);
+    }
+
+    QVector<DetectedCable> fresh;
+    for (const auto& c : current) {
+        const QString h = hashDeviceName(c.deviceName);
+        if (!known.contains(h)) {
+            fresh.push_back(c);
+        }
+    }
+    return fresh;
 }

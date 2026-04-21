@@ -45,6 +45,10 @@
 #include "codec/IP1Codec.h"
 #include "codec/CodecContext.h"
 
+namespace NereusSDR { class OcMatrix; }                  // forward decl — full header in .cpp
+namespace NereusSDR { class IoBoardHl2; }                // forward decl — full header in .cpp
+namespace NereusSDR { class HermesLiteBandwidthMonitor; }// forward decl — full header in .cpp
+
 #include <memory>
 #include <QUdpSocket>
 #include <QTimer>
@@ -88,6 +92,24 @@ public:
     static bool parseEp6Frame(const quint8 frame[1032],
                               int numRx,
                               std::vector<std::vector<float>>& perRx) noexcept;
+
+    // Wire RadioModel's OcMatrix so buildCodecContext() can source the OC
+    // byte from maskFor(currentBand, mox) at C&C compose time.
+    // Phase 3P-D Task 3 — called by RadioModel::connectToRadio().
+    void setOcMatrix(const OcMatrix* matrix);
+
+    // Phase 3P-E Task 2: wire IoBoardHl2 for I2C intercept (HL2 only).
+    // On HL2, pushes the pointer into P1CodecHl2 and stores it locally for
+    // the ep6 response parser.  On non-HL2 boards this is a noop.
+    // Called by RadioModel::connectToRadio() after selectCodec().
+    void setIoBoard(IoBoardHl2* io);
+
+    // Phase 3P-E Task 3: wire HermesLiteBandwidthMonitor (HL2 only).
+    // Called by RadioModel::connectToRadio() when hasBandwidthMonitor is true.
+    // The monitor is owned by RadioModel; P1RadioConnection holds a non-owning
+    // pointer and records ep6/ep2 bytes + calls tick() from the watchdog.
+    // Null-safe — all call sites guard with if (m_bwMonitor).
+    void setBandwidthMonitor(HermesLiteBandwidthMonitor* monitor);
 
 public slots:
     void init() override;
@@ -161,14 +183,20 @@ private:
     //     NetworkIO start path already handles HL2 ep2 init.
     void hl2SendIoBoardInit();
 
-    // hl2CheckBandwidthMonitor — detects HL2 LAN PHY throttling via ep6
-    //   sequence-gap heuristic; called from onWatchdogTick when hasBandwidthMonitor.
-    //   Source: mi0bot bandwidth_monitor.{c,h} (MW0LGE) — original is a byte-rate
-    //     meter (GetInboundBps/GetOutboundBps) using Windows InterlockedAdd64 and
-    //     GetTickCount64; NereusSDR uses an ep6 sequence-gap approach instead
-    //     (the byte-rate variant requires platform-specific atomics — TODO(3I-T12)).
+    // hl2CheckBandwidthMonitor — drives the HermesLiteBandwidthMonitor tick.
+    //   When m_bwMonitor is wired, delegates to m_bwMonitor->tick() which runs
+    //   the upstream compute_bps() algorithm and the NereusSDR throttle-detection
+    //   layer.  When m_bwMonitor is null (non-HL2 or test seam without RadioModel),
+    //   falls back to the legacy sequence-gap heuristic.
+    //   Source: mi0bot bandwidth_monitor.{c,h} (MW0LGE) [@c26a8a4]
     void hl2CheckBandwidthMonitor();
     bool hl2IsThrottled() const { return m_hl2Throttled; }
+
+    // Phase 3P-E Task 2: ep6 I2C response parsing.
+    // Called from the instance parseEp6Frame() when C0 bit 7 is set.
+    // Routes read data (C1-C4) back into the IoBoardHl2 register mirror.
+    // Source: mi0bot networkproto1.c:478-493 [@c26a8a4]
+    void parseI2cResponse(quint8 c0, quint8 c1, quint8 c2, quint8 c3, quint8 c4);
 
     void checkFirmwareMinimum(int fw);
 
@@ -257,8 +285,31 @@ private:
 
     const BoardCapabilities* m_caps{nullptr};
 
-    // --- HL2 bandwidth monitor state (Task 12) ---
-    // Source: mi0bot bandwidth_monitor.{c,h} — adapted to ep6 sequence-gap heuristic.
+    // Non-owning pointer to RadioModel's OcMatrix.  When non-null,
+    // buildCodecContext() derives ctx.ocByte from
+    // m_ocMatrix->maskFor(bandFromFrequency(rx0Hz), m_mox) instead of
+    // the legacy m_ocOutput field.  Null in test seams that don't wire
+    // RadioModel (falls back to m_ocOutput == 0).  Phase 3P-D Task 3.
+    const OcMatrix* m_ocMatrix{nullptr};
+
+    // Non-owning pointer to RadioModel's IoBoardHl2.  Set via setIoBoard()
+    // at connect time; null on non-HL2 boards and in tests that don't wire
+    // RadioModel.  Used by the ep6 read path to route I2C response bytes
+    // back into the register mirror.  Phase 3P-E Task 2.
+    IoBoardHl2* m_ioBoard{nullptr};
+
+    // Non-owning pointer to RadioModel's HermesLiteBandwidthMonitor.
+    // Set via setBandwidthMonitor() at connect time; null on non-HL2 boards
+    // and in tests that don't wire RadioModel.  Used by:
+    //   - onReadyRead(): recordEp6Bytes(pkt.size()) on each good ep6 frame
+    //   - sendCommandFrame(): recordEp2Bytes(1032) on each ep2 send
+    //   - onWatchdogTick(): tick() once per watchdog fire (via hl2CheckBandwidthMonitor)
+    // Phase 3P-E Task 3.
+    HermesLiteBandwidthMonitor* m_bwMonitor{nullptr};
+
+    // --- HL2 bandwidth monitor legacy state (replaced by HermesLiteBandwidthMonitor) ---
+    // Retained so hl2IsThrottled() still compiles and existing callers are unbroken
+    // until they migrate to m_bwMonitor->isThrottled().  Phase 3P-E Task 3.
     bool      m_hl2Throttled{false};
     int       m_hl2ThrottleCount{0};
     QDateTime m_hl2LastThrottleTick;
@@ -285,6 +336,10 @@ public:
     // Expose private composeCcForBank for regression-freeze capture (Task 1) and
     // byte-table assertion tests (Task 16).
     void composeCcForBankForTest(int bankIdx, quint8 out[5]) const { composeCcForBank(bankIdx, out); }
+    // Expose parseI2cResponse for ep6 read path unit tests (Phase 3P-E Task 2).
+    void parseI2cResponseForTest(quint8 c0, quint8 c1, quint8 c2, quint8 c3, quint8 c4) {
+        parseI2cResponse(c0, c1, c2, c3, c4);
+    }
 #endif
 };
 

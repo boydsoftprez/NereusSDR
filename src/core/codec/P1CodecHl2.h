@@ -41,6 +41,8 @@
 
 #include "IP1Codec.h"
 
+namespace NereusSDR { class IoBoardHl2; }  // forward decl — full header in .cpp
+
 namespace NereusSDR {
 
 // mi0bot WriteMainLoop_HL2 port. Banks 0-18.
@@ -70,6 +72,21 @@ public:
     void composeCcForBank(int bank, const CodecContext& ctx, quint8 out[5]) const override;
     int  maxBank() const override { return 18; }
     bool usesI2cIntercept() const override { return true; }
+
+    // Phase 3P-E Task 2: wire to IoBoardHl2 for I2C intercept.
+    // Called by P1RadioConnection::setIoBoard() at connect time.
+    void setIoBoard(IoBoardHl2* io) { m_io = io; }
+
+    // Compose the next I2C TLV frame (5 bytes) for the oldest pending
+    // I2C transaction in the IoBoardHl2 queue.  Returns true if a frame
+    // was emitted (txn dequeued); false if queue is empty / no IoBoard wired.
+    // mox: current MOX state (written into C0 bit 0, matching XmitBit).
+    //
+    // Source: mi0bot networkproto1.c:898-943 [@c26a8a4]
+    bool tryComposeI2cFrame(quint8 out[5], bool mox) const;
+
+private:
+    IoBoardHl2* m_io{nullptr};
 };
 
 } // namespace NereusSDR

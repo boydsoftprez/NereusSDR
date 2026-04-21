@@ -336,6 +336,9 @@ set(CORE_SOURCES
     src/core/NoiseFloorTracker.cpp
     src/core/ClarityController.cpp
     src/core/StepAttenuatorController.cpp
+    src/core/OcMatrix.cpp
+    src/core/IoBoardHl2.cpp
+    src/core/HermesLiteBandwidthMonitor.cpp
     src/core/audio/MasterMixer.cpp
     src/core/audio/PortAudioBus.cpp
     src/core/audio/VirtualCableDetector.cpp
@@ -375,6 +378,7 @@ set(GUI_SOURCES
     src/gui/AddCustomRadioDialog.cpp
     src/gui/SupportDialog.cpp
     src/gui/AboutDialog.cpp
+    src/gui/VaxFirstRunDialog.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/widgets/CenterMarkSlider.h
@@ -482,6 +486,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/AntennaAlexAlex1Tab.cpp
     src/gui/setup/hardware/AntennaAlexAlex2Tab.cpp
     src/gui/setup/hardware/OcOutputsTab.cpp
+    src/gui/setup/hardware/OcOutputsHfTab.cpp
     src/gui/setup/hardware/XvtrTab.cpp
     src/gui/setup/hardware/PureSignalTab.cpp
     src/gui/setup/hardware/DiversityTab.cpp

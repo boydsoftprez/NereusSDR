@@ -801,11 +801,15 @@ void RxApplet::buildUi()
             // Phase 3P-B Task 10: RX1 preamp wires to P2RadioConnection::setRx1Preamp
             // which routes to CodecContext.p2Rx1Preamp → byte 1403 bit 1.
             connect(m_rx1PreampToggle, &QCheckBox::toggled, this, [this](bool on) {
-                if (m_model) {
-                    auto* conn = qobject_cast<class P2RadioConnection*>(
-                        m_model->connection());
-                    if (conn) { conn->setRx1Preamp(on); }
-                }
+                if (!m_model) { return; }
+                auto* conn = qobject_cast<class P2RadioConnection*>(m_model->connection());
+                if (!conn) { return; }
+                // P2RadioConnection lives on m_connThread.  Dispatch onto its
+                // event loop so the m_rx[1].preamp mutation and the resulting
+                // sendCmdHighPriority() run on the connection thread, not the
+                // GUI thread.  (Codex PR #94 review.)
+                QMetaObject::invokeMethod(conn, [conn, on] { conn->setRx1Preamp(on); },
+                                          Qt::QueuedConnection);
             });
             m_ovlRow->addWidget(m_rx1PreampToggle);
         }

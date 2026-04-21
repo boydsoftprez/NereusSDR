@@ -93,6 +93,7 @@ class ContainerManager;
 class MeterWidget;
 class MeterPoller;
 class TitleBar;
+class VaxFirstRunDialog;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -120,6 +121,14 @@ private:
     void applyDarkTheme();
     void tryAutoReconnect();
     void wireSliceToSpectrum();
+
+    // Phase 3O Sub-Phase 11 Task 11b — first-launch / startup rescan
+    // hook. Scheduled via QTimer::singleShot(0, ...) from the
+    // constructor so it runs after the event loop starts and the UI
+    // is fully built. Diffs detected cables against the persisted
+    // audio/LastDetectedCables fingerprint and pops the
+    // VaxFirstRunDialog in the appropriate scenario.
+    void checkVaxFirstRun();
 
     RadioModel* m_radioModel{nullptr};
     ConnectionPanel* m_connectionPanel{nullptr};

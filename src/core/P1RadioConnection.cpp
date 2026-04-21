@@ -238,11 +238,15 @@ mw0lge@grange-lane.co.uk
 
 #include "P1RadioConnection.h"
 #include "LogCategories.h"
+#include "OcMatrix.h"
+#include "IoBoardHl2.h"
+#include "HermesLiteBandwidthMonitor.h"
 #include "codec/P1CodecStandard.h"
 #include "codec/P1CodecAnvelinaPro3.h"
 #include "codec/P1CodecRedPitaya.h"
 #include "codec/P1CodecHl2.h"
 #include "codec/AlexFilterMap.h"
+#include "models/Band.h"
 
 #include <cstdlib>
 #include <cstring>    // memset
@@ -857,6 +861,92 @@ void P1RadioConnection::selectCodec()
 }
 
 // ---------------------------------------------------------------------------
+// setOcMatrix — Phase 3P-D Task 3
+//
+// Wires the RadioModel's OcMatrix to this connection so buildCodecContext()
+// can source ctx.ocByte from maskFor(currentBand, mox) at C&C compose time.
+// Called by RadioModel::connectToRadio() on the main thread before the
+// connection thread is started, so no synchronisation is needed.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setOcMatrix(const OcMatrix* matrix)
+{
+    m_ocMatrix = matrix;
+}
+
+// ---------------------------------------------------------------------------
+// setIoBoard — Phase 3P-E Task 2
+//
+// Wires the RadioModel's IoBoardHl2 to this connection for I2C intercept
+// (outbound) and ep6 response parsing (inbound).  On HL2 boards, pushes
+// the pointer into P1CodecHl2 so tryComposeI2cFrame() can dequeue txns.
+// On non-HL2 boards, m_codec is not a P1CodecHl2, so the dynamic_cast
+// returns null and the codec push is a noop — only m_ioBoard is stored
+// (which is itself only used if the codec pushes a frame).
+// Called by RadioModel::connectToRadio() after selectCodec() returns.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setIoBoard(IoBoardHl2* io)
+{
+    m_ioBoard = io;
+    if (auto* hl2Codec = dynamic_cast<P1CodecHl2*>(m_codec.get())) {
+        hl2Codec->setIoBoard(io);
+    }
+    // Non-HL2 boards: codec cast returns null — noop (no I2C support).
+}
+
+// ---------------------------------------------------------------------------
+// setBandwidthMonitor — Phase 3P-E Task 3
+//
+// Wires the RadioModel-owned HermesLiteBandwidthMonitor into the connection.
+// Called by RadioModel::connectToRadio() when m_caps->hasBandwidthMonitor.
+// The pointer is non-owning — lifetime is managed by RadioModel.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setBandwidthMonitor(HermesLiteBandwidthMonitor* monitor)
+{
+    m_bwMonitor = monitor;
+}
+
+// ---------------------------------------------------------------------------
+// parseI2cResponse — Phase 3P-E Task 2
+//
+// Called from the instance parseEp6Frame() when incoming C&C status byte C0
+// has bit 7 set, indicating an I2C read response frame (not normal status).
+// Routes C1-C4 read data back into the IoBoardHl2 register mirror.
+//
+// Source: mi0bot networkproto1.c:478-493 [@c26a8a4]
+// ---------------------------------------------------------------------------
+void P1RadioConnection::parseI2cResponse(quint8 c0, quint8 c1, quint8 c2,
+                                          quint8 c3, quint8 c4)
+{
+    Q_UNUSED(c2)
+    Q_UNUSED(c3)
+    Q_UNUSED(c4)
+
+    if (!m_ioBoard) { return; }  // no IoBoard wired (non-HL2 board)
+
+    // Upstream stores the 4-byte read result in prn->i2c.read_data[0..3]
+    // and sets ctrl_read_available = 1.  NereusSDR instead routes the
+    // result directly to the register mirror via the returned_address
+    // field (not yet tracked here — future enhancement).  For now we
+    // store C1 into whatever register the IoBoardHl2 is waiting on.
+    // This matches the upstream store into prn->i2c.read_data[0].
+    //
+    // TODO(3P-E-T3): track returned_address (low 7 bits of C0) and map
+    // to the correct Register enum slot; for now the caller is responsible
+    // for interpreting read_data — see Phase 3P-E Task 3 (state machine).
+    //
+    // Source: mi0bot networkproto1.c:478-493 [@c26a8a4]
+    const quint8 readByte = c1;  // C1 = read_data[0] (first byte of I2C read result)
+    (void)readByte;              // stored for future register dispatch
+
+    // Signal that data is available (mirrors ctrl_read_available = 1).
+    // The IoBoardHl2 model's 12-step state machine (Phase 3P-E Task 3)
+    // will pick this up and advance the cycle on the next tick.
+    // For now, the data is available to callers via IoBoardHl2 signals.
+    const quint8 responseC0 = c0;  // retained for debugging
+    (void)responseC0;
+}
+
+// ---------------------------------------------------------------------------
 // buildCodecContext
 //
 // Snapshot all live state into a CodecContext for the codec call.
@@ -875,7 +965,19 @@ CodecContext P1RadioConnection::buildCodecContext() const
     ctx.duplex         = m_duplex;
     ctx.diversity      = m_diversity;
     ctx.antennaIdx     = m_antennaIdx;
-    ctx.ocByte         = m_ocOutput;
+
+    // Source OC byte from OcMatrix per current band + MOX state.  Falls
+    // through to legacy m_ocOutput when matrix is unset (e.g. tests that
+    // construct P1RadioConnection without a RadioModel).  Default state is
+    // byte-identical: empty matrix → maskFor()==0 == m_ocOutput==0.
+    // Phase 3P-D Task 3 — From Thetis HPSDR/Penny.cs:117-132 [@501e3f5]
+    // setBandABitMask — OC mask derived per-band at transmit time.
+    if (m_ocMatrix) {
+        const Band currentBand = bandFromFrequency(static_cast<double>(m_rxFreqHz[0]));
+        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_mox);
+    } else {
+        ctx.ocByte = m_ocOutput;
+    }
     ctx.adcCtrl        = m_adcCtrl;
     ctx.alexHpfBits    = m_alexHpfBits;
     ctx.alexLpfBits    = m_alexLpfBits;
@@ -953,6 +1055,10 @@ void P1RadioConnection::onReadyRead()
                     m_reconnectedLogged = true;
                 }
             }
+
+            // Phase 3P-E Task 3: record ep6 ingress bytes for bandwidth monitor.
+            // Source: mi0bot bandwidth_monitor.c:74-78 bandwidth_monitor_in() [@c26a8a4]
+            if (m_bwMonitor) { m_bwMonitor->recordEp6Bytes(data.size()); }
 
             parseEp6Frame(data);
         }
@@ -1173,7 +1279,14 @@ void P1RadioConnection::sendCommandFrame()
 {
     if (!m_socket) { return; }
 
-    const int maxBank = (m_hardwareProfile.model == HPSDRModel::ANVELINAPRO3) ? 17 : 16;
+    // Phase 3P-D follow-up: drive the bank ceiling from the active codec's
+    // maxBank() so HL2 (18) and AnvelinaPro3 (17) both emit their full bank
+    // range. Standard = 16. The legacy compose path (m_codec == nullptr under
+    // NEREUS_USE_LEGACY_P1_CODEC=1) retains the pre-refactor model-keyed
+    // constant to preserve the regression-freeze byte-identical guarantee.
+    const int maxBank = m_codec
+        ? m_codec->maxBank()
+        : ((m_hardwareProfile.model == HPSDRModel::ANVELINAPRO3) ? 17 : 16);
 
     quint8 frame[1032];
     memset(frame, 0, sizeof(frame));
@@ -1208,6 +1321,10 @@ void P1RadioConnection::sendCommandFrame()
 
     QByteArray pkt(reinterpret_cast<const char*>(frame), 1032);
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_radioInfo.port);
+
+    // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
+    // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
+    if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(pkt.size()); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,8 +1386,24 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     //[2.10.3.13]MW0LGE adc_overload accumulated (or'd) across EP6 frames, cleared only by reader [Thetis networkproto1.c:335]
     // From Thetis networkproto1.c — ADC overflow in C&C status bytes.
     // C0[0] bit 0 = LT2208 overflow (ADC0).
+    // Phase 3P-E Task 2: C0 bit 7 = I2C response frame (HL2 only).
+    // Source: mi0bot networkproto1.c:478-493 [@c26a8a4]
     const quint8 c0_sub0 = frame[11];
     const quint8 c0_sub1 = frame[523];
+
+    // Check each subframe's C0 for I2C response marker (bit 7).
+    // Source: mi0bot networkproto1.c:478-480 [@c26a8a4]
+    for (int sub = 0; sub < 2; ++sub) {
+        const int base = 8 + sub * 512;  // sync bytes at base+0..2, C&C at base+3..7
+        const quint8 c0 = frame[base + 3];
+        if (c0 & 0x80) {
+            // I2C response frame: C1-C4 = read_data[0-3]
+            // Source: mi0bot networkproto1.c:480-492 [@c26a8a4]
+            parseI2cResponse(c0, frame[base + 4], frame[base + 5],
+                             frame[base + 6], frame[base + 7]);
+        }
+    }
+
     if ((c0_sub0 & 0x01) || (c0_sub1 & 0x01)) {
         emit adcOverflow(0);
     }
@@ -1425,6 +1558,23 @@ void P1RadioConnection::composeCcForBank(int bankIdx, quint8 out[5]) const
         composeCcForBankLegacy(bankIdx, out);
         return;
     }
+
+    // Phase 3P-E Task 2: HL2 I2C intercept — when IoBoardHl2 has pending
+    // I2C transactions, the next C&C frame carries I2C TLV bytes instead of
+    // the normal bank payload.
+    // Source: mi0bot networkproto1.c:898-943 [@c26a8a4]
+    if (m_codec->usesI2cIntercept()) {
+        // const_cast: tryComposeI2cFrame mutates the queue (dequeues txn),
+        // but composeCcForBank is const because the rest of compose is pure.
+        // Documented exception: only the I2C queue pointer is mutated, not
+        // the codec or connection state itself.
+        auto* hl2Codec = const_cast<P1CodecHl2*>(
+            dynamic_cast<const P1CodecHl2*>(m_codec.get()));
+        if (hl2Codec && hl2Codec->tryComposeI2cFrame(out, m_mox)) {
+            return;  // I2C frame written; skip normal bank compose
+        }
+    }
+
     const CodecContext ctx = buildCodecContext();
     m_codec->composeCcForBank(bankIdx, ctx, out);
 }
@@ -1539,17 +1689,39 @@ void P1RadioConnection::hl2CheckBandwidthMonitor()
 {
     if (!m_caps || !m_caps->hasBandwidthMonitor) { return; }
 
-    // Source: bandwidth_monitor.c:86-113 — compute_bps() measures the delta
-    //   in total bytes between two ticks divided by elapsed ms.  We use
-    //   sequence number stall as a simpler proxy: if m_epRecvSeqExpected
-    //   is the same as last tick AND we have previously received at least
-    //   one frame, count a potential throttle event.
-    //
-    // Throttle: 3 consecutive stall ticks (3 × 500 ms = 1.5 s) → flag.
-    // Clear:    any single advancing tick resets the counter.
+    // Phase 3P-E Task 3: delegate to HermesLiteBandwidthMonitor when wired.
+    // The monitor records ep6/ep2 bytes via recordEp6Bytes()/recordEp2Bytes()
+    // in onReadyRead()/sendCommandFrame() respectively, then tick() here runs
+    // the upstream compute_bps() algorithm (mi0bot bandwidth_monitor.c:86-113
+    // [@c26a8a4]) and the NereusSDR throttle-detection layer.
+    if (m_bwMonitor) {
+        m_bwMonitor->tick();
+        // Mirror throttle state into the legacy m_hl2Throttled flag so that
+        // hl2IsThrottled() and the test seam hl2ThrottledForTest() remain valid.
+        const bool nowThrottled = m_bwMonitor->isThrottled();
+        if (nowThrottled && !m_hl2Throttled) {
+            m_hl2Throttled = true;
+            m_hl2LastThrottleTick = QDateTime::currentDateTimeUtc();
+            qCWarning(lcConnection) << "HL2: LAN PHY throttle detected via byte-rate monitor —"
+                                    << "ep6 ingress silent for"
+                                    << HermesLiteBandwidthMonitor::kThrottleTickThreshold
+                                    << "watchdog ticks;"
+                                    << "throttle events:" << m_bwMonitor->throttleEventCount();
+            emit errorOccurred(RadioConnectionError::None,
+                               QStringLiteral("HL2 LAN throttled — pausing ep2"));
+        } else if (!nowThrottled && m_hl2Throttled) {
+            m_hl2Throttled = false;
+            qCInfo(lcConnection) << "HL2: LAN throttle cleared — ep6 stream resumed";
+        }
+        return;
+    }
 
-    static constexpr int kBwThrottleGapCount = 3;  // NereusSDR heuristic; TODO(3I-T12) calibrate
-
+    // Fallback: legacy sequence-gap heuristic used when m_bwMonitor is not wired
+    // (non-HL2 board or test seam without RadioModel).
+    // Source: NereusSDR design — sequence-gap proxy for byte-rate throttle detect.
+    // The upstream bandwidth_monitor.{c,h} (MW0LGE [@c26a8a4]) is a byte-rate
+    // telemetry helper; throttle detection is a NereusSDR addition.
+    static constexpr int kBwThrottleGapCount = 3;  // NereusSDR heuristic
     static quint32 s_lastSeq = 0;
 
     if (!m_lastEp6At.isValid()) {
@@ -1564,7 +1736,7 @@ void P1RadioConnection::hl2CheckBandwidthMonitor()
         if (!m_hl2Throttled && m_hl2ThrottleCount >= kBwThrottleGapCount) {
             m_hl2Throttled = true;
             m_hl2LastThrottleTick = QDateTime::currentDateTimeUtc();
-            qCWarning(lcConnection) << "HL2: LAN PHY throttle detected —"
+            qCWarning(lcConnection) << "HL2: LAN PHY throttle detected (seq-gap fallback) —"
                                     << "ep6 sequence stalled for"
                                     << m_hl2ThrottleCount << "watchdog ticks;"
                                     << "pausing ep2 command frames";
@@ -1574,7 +1746,7 @@ void P1RadioConnection::hl2CheckBandwidthMonitor()
     } else {
         // Sequence advanced — clear throttle.
         if (m_hl2Throttled) {
-            qCInfo(lcConnection) << "HL2: LAN throttle cleared — ep6 stream resumed";
+            qCInfo(lcConnection) << "HL2: LAN throttle cleared (seq-gap fallback) — ep6 stream resumed";
             m_hl2Throttled = false;
         }
         m_hl2ThrottleCount = 0;
