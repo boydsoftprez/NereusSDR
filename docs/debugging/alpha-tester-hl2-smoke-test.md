@@ -5,11 +5,12 @@
 **What this build is:**
 - A ground-up C++/Qt6 port of [Thetis](https://github.com/ramdor/Thetis) (the Apache Labs / OpenHPSDR console), architecturally modelled on [AetherSDR](https://github.com/ten9876/AetherSDR).
 - Supports the **full OpenHPSDR family** over **both Protocol 1 (P1)** and **Protocol 2 (P2)**. That includes the Apache Labs ANAN line (100/100B/100D/10/10E/200D/7000/8000/G2-Saturn), Hermes / Hermes Lite 2, Metis, Angelia, Orion, Orion MkII, and any other board that speaks the OpenHPSDR discovery + frame protocols.
-- The **goal of your test** is simple: can NereusSDR discover your radio, connect, and let you listen to a live SSB signal with a working spectrum and waterfall?
+- As of **Phase 3P (Apr 2026), the radio-control surface is userland-complete vs Thetis** — every Setup page a Thetis user reaches for has a NereusSDR equivalent, every status readout a Thetis user expects is exposed.
+- The **goal of your test** is: confirm discovery → connect → listen to a live SSB QSO on your board, plus exercise the Phase 3P additions (Calibration, OC Outputs, Antenna Control, Alex filter live-LED, Radio Status dashboard, ADC Overload status-bar indicator).
 
 **What this build is NOT:**
-- Ready for transmit. **Do not key up.** The TX pipeline is intentionally cold — commands go on the wire but there is no SSB modulator yet.
-- Feature-complete. Dozens of controls you see in the UI are placeholder — more on that below.
+- Ready for transmit. **Do not key up.** The TX pipeline (Phase 3M) is intentionally cold — commands go on the wire but there is no SSB modulator yet.
+- Feature-complete. Some controls you see in the UI are placeholder — more on that below in "What is NOT wired up".
 - Signed on macOS or Windows. First launch on macOS needs right-click → Open. First launch on Windows triggers a SmartScreen warning you'll need to click through.
 
 ---
@@ -39,24 +40,34 @@ Before you dive in, here's the honest state of the overall application so you ha
 | 3C | macOS build + crash fixes | Working |
 | 3D | GPU-accelerated spectrum + waterfall via Qt's QRhi abstraction (Metal on macOS, D3D12 on Windows, OpenGL on Linux) | Working |
 | 3E | VFO tuning, mode selection, filter controls, multi-receiver foundation | Working (RX1 only in the UI) |
-| 3-UI | Full UI skeleton: 12 applets, 9 menus, 47-page SetupDialog, spectrum overlay panel, status bar | Skeleton + partial wiring |
+| 3-UI | Full UI skeleton: 12 applets, 9 menus, 47-page SetupDialog, spectrum overlay panel, status bar | Working |
 | 3F | Up to 4 independent panadapters in configurable layouts | **Not started** |
 | 3G-1..7 | Dockable/floatable container system, GPU-rendered meter engine with 31 item types, container settings dialog, MMIO external-data subsystem | Working |
 | 3G-8 | RX1 Display parity — every control on the Setup → Display pages wired to the renderer (47 controls) | Working |
-| 3G-9 | Display refactor — Clarity Blue waterfall palette, ClarityController adaptive auto-tune (EWMA + deadband + noise floor estimator), per-band Clarity memory, zoom persistence, Thetis-cited tooltips on 47 setup controls | Working |
-| 3G-10 | RX DSP parity — 10 WDSP feature slices wired (AGC advanced, EMNR/NR2, SNB, APF, squelch, mute/pan/binaural, NB2 advanced, RIT/XIT, frequency lock, mode containers FM/DIG/RTTY), per-slice-per-band persistence, VfoWidget 4-tab rewrite with S-meter | Working |
+| 3G-9 | Display refactor — Clarity Blue waterfall palette, ClarityController adaptive auto-tune, per-band Clarity memory, zoom persistence, Thetis-cited tooltips | Working |
+| 3G-10 | RX DSP parity — 10 WDSP feature slices wired, per-slice-per-band persistence, VfoWidget 4-tab rewrite with S-meter | Working |
 | 3G-11 | P1 field fixes — VFO frequency encoding as raw Hz | Working |
-| 3G-13 | Step attenuator — Classic + Adaptive auto-attenuation, ADC overflow detection, OVL status badge, per-model preamp items | Working |
+| 3G-13 | Step attenuator (Classic + Adaptive auto-att), ADC overflow detection, per-model preamp items | Working |
 | 3G-14 | About dialog + built-in AI-assisted issue reporter (💡 menu bar widget) | Working |
 | 3H | Thetis-inspired skin system | **Not started** |
-| 3I | **Protocol 1 support** for the full ANAN/Hermes family including HL2 (discovery, connection, capability gating, Hardware page, saved radios, auto-reconnect) | Working |
+| 3I | Protocol 1 support for the full ANAN/Hermes family incl. HL2 (discovery, connection, capability gating, saved radios, auto-reconnect) | Working |
 | 3J | TCI protocol server (for N1MM+, Log4OM etc.) | Not started |
 | 3K | CAT / rigctld bridge | Not started |
-| 3L | HL2-specific I2C-over-ep2 encoding (currently inside a closed DLL) | Not started |
+| ~~3L~~ | ~~HL2-specific I2C-over-ep2 encoding~~ | **Delivered via Phase 3P-E** — HL2 IoBoard I2C TLV queue + 12-step state machine + bandwidth monitor all working |
 | 3M | TX pipeline — SSB, CW, full processing chain, PureSignal PA linearization | **Not started** |
-| 3N | **Release pipeline + /release skill + GPG-signed alpha binaries** | Working — this is how you got the build |
+| 3N | Release pipeline + /release skill + GPG-signed alpha binaries | Working — this is how you got the build |
+| **3O** | **VAX audio routing** — `IAudioBus` abstraction with 5 platform backends (CoreAudio HAL plugin on macOS, PulseAudio pipes on Linux, PortAudio on Windows, plus fallbacks), **first-run VAX dialog** that auto-detects Windows virtual-cable families (VB-Audio / VAC / Voicemeeter / Dante / FlexRadio DAX), **MasterOutputWidget** in the menu bar (right-click → device picker, scroll-wheel fine-tune), **Setup → Audio** sub-tabs (Devices / VAX / TCI / Advanced), VfoWidget VAX channel selector, per-slice VAX channel persistence | Working |
+| **3P-A** | **HL2 BPF filter switching now works on band/VFO change** (was: stuck at bank 10 C3=0 / C4=0 permanently). **HL2 step attenuator now actually attenuates** (was: ramdor's 5-bit mask misapplied; needed mi0bot's 6-bit mask + 0x40 enable + MOX TX/RX branch). Per-board codec subclasses. S-ATT slider widens to 0–63 dB on HL2. | Working |
+| **3P-B** | **P2 wire-bytes parity** (OrionMKII family + Saturn with G8NJJ BPF1 override). New **Hardware → Antenna/ALEX → Alex-1 Filters + Alex-2 Filters** sub-sub-tabs with live LED column that lights the active HPF/LPF row for the current VFO. **ADC OVL split** into OVL₀ + OVL₁ on dual-ADC boards. **RX1 preamp toggle** on OrionMKII family. | Working |
+| **3P-C** | **Preamp combo now populates per-board** from `BoardCapabilities::preampItemsForBoard()`. HL2 preamp corrected from 1-item to 4-item (0 / −10 / −20 / −30 dB). | Working |
+| **3P-D** | New **Hardware → OC Outputs** Setup page — 7-pin per-band RX matrix (14×7), TX matrix (14×7), TX pin action grid, USB BCD, external PA control. Live pin-state LED row reflects the last OC byte sent. | Working |
+| **3P-E** | New **Hardware → HL2 I/O** page (replaces the Phase 3I placeholder). Register state table polls `IoBoardHl2` at 40 ms. I2C transaction log. Live bandwidth monitor (EP6 ingress + EP2 egress + LAN-PHY throttle detect). Closes long-deferred Phase 3I-T12 work. | Working |
+| **3P-F** | New **Hardware → Antenna/ALEX → Antenna Control** sub-sub-tab — 14 bands × TX/RX1/RX-only antenna grid + Block-TX safety toggles. `AlexController` / `ApolloController` / `PennyLaneController` accessory models. **RxApplet antenna buttons** auto-populate per-band from AlexController. | Working |
+| **3P-G** | **Hardware → Calibration** page (renamed from PA Calibration). 5 Thetis-1:1 group boxes: Freq Cal, Level Cal (with Rx1/Rx2 6m LNA offsets), HPSDR Freq Cal Diagnostic (9-decimal correction factor + 10 MHz external-ref toggle), TX Display Cal, existing PA Current (A) group. Freq correction factor wires into P2 phase-word so per-radio reference-oscillator drift is compensable. | Working |
+| **3P-H** | New **Diagnostics → Radio Status dashboard** (5 cards: PA Status, Forward/Reflected/SWR, PTT Source, Connection Quality, Settings Hygiene) + 4 sibling sub-tabs (Connection Quality / Settings Validation / Export-Import Config / Logs). **PA telemetry parsed from both P1 and P2** status packets with Thetis per-board scaling formulas. **ADC Overload status-bar label** left of STATION (yellow/red per hysteresis level, 2 s auto-hide, Thetis `ucInfoBar` parity). **Live LED wire-up** across Alex-1/2 Filters, OC Outputs pin-state, HL2 I/O register table. **Settings Hygiene** validates per-MAC AppSettings against BoardCapabilities on connect. Dark-theme checkbox + radio-button fix. Plus a discovery-driven **attribution enforcement pipeline** (corpus + preservation check + drift gate) that closed 74 historical dropped contributor tags. | Working |
+| **CLI: `--profile <name>`** | Run multiple concurrent NereusSDR instances with separate AppSettings / audio / container state. Each instance has its own profile-scoped config. | Working |
 
-The short version: **single-receiver RX works end-to-end on any supported OpenHPSDR radio, P1 or P2. Everything beyond that is either scaffolded, cold-wired, or not started.**
+**The short version:** after Phase 3P, **NereusSDR's hardware and radio-control surface is userland-complete vs Thetis.** Every Setup page a Thetis user reaches for has a NereusSDR equivalent; every status readout a Thetis user expects is exposed. Single-receiver RX works end-to-end; all Setup / status surfaces are live. **TX pipeline (Phase 3M) is still cold**; multi-panadapter (3F), TCI (3J), CAT (3K), skins (3H), recording (3M) remain not-started.
 
 ### Touring the app
 
@@ -98,32 +109,61 @@ When you launch NereusSDR, you'll see a main window **modelled after [AetherSDR]
 
 ### What actually works across the whole app right now
 
-Not just the Phase 3I connector — this is the **total** functional surface area as of today, on any supported radio:
+This is the **total** functional surface area as of today, on any supported radio:
 
+**RX audio chain**
 1. **Discover + connect + disconnect** any P1 or P2 OpenHPSDR radio on your LAN
-2. **Tune RX1** anywhere in the HF range (P1 radios go up to 61.44 MHz; P2 boards like Saturn have broader range)
-3. **Hear live audio** demodulated through WDSP in USB, LSB, AM, CW, or FM with adjustable AGC (basic + advanced: threshold/hang/slope/attack/decay), noise blanker (NB1 or NB2 with advanced params), EMNR (NR2), SNB, APF, squelch (SSB/AM/FM 3-variant), bandpass filter, notch, mute, audio pan, binaural, and volume
-4. **See real-time spectrum** (GPU-accelerated, ~30 FPS, configurable averaging, peak hold, colours, grids, labels, FPS overlay)
-5. **See real-time waterfall** (GPU-accelerated, Clarity Blue palette with adaptive auto-tune, configurable colour scheme, AGC, opacity, reverse scroll, timestamps, overlays)
-6. **Click-to-tune** on the spectrum and waterfall, scroll-to-zoom, drag-to-adjust-reference-level, drag-filter-passband
-7. **CTUN mode** — independent panadapter center and VFO, WDSP frequency shift
-8. **Band switching** via the band button grid (14 bands: 160/80/60/40/30/20/17/15/12/10/6 m + GEN + WWV + XVTR), with per-band display settings and **per-band Clarity memory**
-9. **Mode switching** via the mode button grid — USB/LSB/AM/SAM/FM/CW/CWL/CWU/DIGL/DIGU/DRM/SPEC, with mode containers (FM OPT/DIG/RTTY)
-10. **Filter presets** via the filter button grid
-11. **VFO display** with per-digit mouse-wheel tuning, **RIT/XIT client offset**, and **frequency lock**
-12. **Signal S-meter** (arc needle + VfoWidget level bar with dBm readout, cyan→green gradient at S9, live from WDSP)
-13. **Step attenuator** with Classic + Adaptive auto-attenuation modes, hysteresis, and per-MAC persistence. **ADC overflow detection** with OVL status badge. **Preamp** controls capability-gated per board (HL2 has its own 0–60 dB range; ANAN boards use stock 0–31 dB / 0–61 dB ranges with per-model preamp items from Thetis)
-14. **Per-slice-per-band DSP persistence** — all DSP settings saved per band, restored automatically on band change
-15. **Saved radio profiles** keyed by MAC — discover once, re-use next launch with auto-reconnect
-16. **Manually-added radios** outside the local subnet via the Add Manually dialog
-17. **Full container system** with drag-to-dock, layout persistence, per-container settings
-18. **31 meter item types** styled and placed, with 38+ presets in the library
-19. **47-page Setup dialog** — Display section fully wired (47 controls), Hardware Config section with capability-gated tabs, General → Options for step ATT config, other pages stubbed
-20. **About dialog** (Help → About NereusSDR) — version, build info, Qt/WDSP versions, heritage credits, license, GPG fingerprint
-21. **Built-in issue reporter** — click the 💡 in the menu bar to file bug reports or feature requests directly to GitHub with structured templates
-22. **Zoom persistence** — visible bandwidth saved/restored across restarts
+2. **Tune RX1** anywhere in the HF range (P1 radios to 61.44 MHz; P2 boards like Saturn have broader range)
+3. **Hear live audio** demodulated through WDSP in USB / LSB / AM / SAM / FM / CW with adjustable AGC (basic + advanced: threshold/hang/slope/attack/decay), noise blanker (NB1 or NB2 with advanced params), EMNR (NR2), SNB, APF, squelch (SSB/AM/FM 3-variant), bandpass filter, notch, mute, audio pan, binaural, and volume
+4. **Per-slice-per-band DSP persistence** — all DSP settings saved per band, restored automatically on band change
 
-**Single-radio, single-receiver, receive-only.** Everything else listed in the "Planned" column of the phase table above is either not started or scaffolded but inert.
+**Display**
+5. **Real-time spectrum** (GPU-accelerated, ~30 FPS, configurable averaging, peak hold, colours, grids, labels, FPS overlay)
+6. **Real-time waterfall** (GPU-accelerated, Clarity Blue palette with adaptive auto-tune, configurable colour scheme, AGC, opacity, reverse scroll, timestamps, overlays)
+7. **Click-to-tune** on the spectrum and waterfall, scroll-to-zoom, drag-to-adjust-reference-level, drag-filter-passband
+8. **CTUN mode** — independent panadapter center and VFO, WDSP frequency shift. Zoom + centre persisted across restarts.
+
+**Controls**
+9. **Band switching** via the band button grid (14 bands: 160 / 80 / 60 / 40 / 30 / 20 / 17 / 15 / 12 / 10 / 6 m + GEN + WWV + XVTR), with per-band display settings and per-band Clarity memory
+10. **Mode switching** via the mode button grid (USB/LSB/AM/SAM/FM/CW/CWL/CWU/DIGL/DIGU/DRM/SPEC) with mode containers (FM OPT / DIG / RTTY)
+11. **Filter presets** via the filter button grid
+12. **VFO display** with per-digit mouse-wheel tuning, **RIT/XIT client offset**, and **frequency lock**
+13. **Signal S-meter** (arc needle + VfoWidget level bar with dBm readout, cyan→green gradient at S9, live from WDSP)
+14. **Step attenuator** with Classic + Adaptive auto-attenuation, hysteresis, per-MAC persistence. **ADC overflow detection** — now surfaced as a flashing **ADC Overload** label in the status bar left of STATION (yellow/red per hysteresis level, 2 s Thetis-parity auto-hide). **Preamp** controls capability-gated per board (HL2: 4-item 0/−10/−20/−30 dB set; ANAN boards: stock ranges with per-model preamp items from Thetis).
+
+**New in Phase 3P — all Setup pages a Thetis user reaches for**
+15. **Hardware → Antenna / ALEX** with three sub-sub-tabs: **Antenna Control** (14-band × TX/RX1/RX-only antenna grid + Block-TX safety), **Alex-1 Filters** (HPF + LPF edges, Saturn BPF1 panel on G2/G2-1K, live LED column that tracks the active filter for the current VFO), **Alex-2 Filters** (same with live LED). Alex-1 actually drives the relays on the rig — tune across an HPF boundary and you'll hear the click; Alex-2 is UI-only today (codec-layer wire-up deferred).
+16. **Hardware → OC Outputs** — master toggles (Penny ExtCtrl, N2ADR Filter, hot-switching, Reset), per-band RX matrix (14 × 7), per-band TX matrix (14 × 7), TX pin-action grid, USB BCD, external PA control, **live pin-state LED row** that reflects the last OC byte sent and flips on MOX.
+17. **Hardware → Calibration** — Freq Cal, Level Cal (with Rx1/Rx2 6m LNA offsets), **HPSDR Freq Cal Diagnostic** (9-decimal correction factor that's wired into the P2 phase-word so per-radio reference-oscillator drift is now compensable), TX Display Cal, existing PA Current (A) group.
+18. **Hardware → HL2 I/O** (HL2-only) — register state table polled at 40 ms, I2C transaction log, live bandwidth monitor (EP6 ingress + EP2 egress + LAN-PHY throttle detect). On HL2, N2ADR Filter enable, 12-step UpdateIOBoard state machine visualizer.
+19. **RxApplet antenna buttons** populate per-band from `AlexController` and auto-switch on band change.
+
+**New in Phase 3P-H — Diagnostics dashboard**
+20. **Diagnostics → Radio Status** — single consolidated dashboard with 5 cards: PA Status (temp/current/voltage bar meters), Forward/Reflected/SWR (bar meters + last-TX peaks), PTT Source (pill row for MOX/VOX/CAT/Mic/CW/Tune/2-Tone + 8-event PTT history), Connection Quality summary, Settings Hygiene actions.
+21. **Diagnostics → Connection Quality** — live EP6/EP2 byte rates, sequence gaps, LAN-PHY throttle counter.
+22. **Diagnostics → Settings Validation** — per-MAC AppSettings validated against BoardCapabilities on every connect; full audit list with Reset / Forget / Re-validate actions. Auto-refreshes on change.
+23. **Diagnostics → Export / Import** — round-trips the full AppSettings XML via Export / Import Config buttons.
+24. **Diagnostics → Logs** — placeholder pending qCWarning capture wire-up.
+
+**Phase 3O — VAX audio routing**
+25. **First-run VAX dialog** — platform-specific auto-detect. On Windows, scans for VB-Audio / VAC / Voicemeeter / Dante / FlexRadio DAX cable families and pre-fills channel bindings. On macOS, the CoreAudio HAL plugin adds 4 native VAX output devices + 1 TX input. On Linux, loads `module-pipe-source × 4` + `module-pipe-sink × 1` under a `nereussdr-vax-*` namespace.
+26. **MasterOutputWidget in the menu bar** — global volume, mute, scroll-wheel fine-tune, right-click device picker. One source of truth for output routing.
+27. **Setup → Audio** sub-tabs — Devices (per-device driver API / buffer / format), VAX (4 channel strips with meter + gain + mute + device picker + auto-detect), TCI (placeholder for Phase 3J), Advanced (reset all audio settings, IVAC feedback parity controls).
+28. **VFO flag VAX channel selector** — per-slice VAX assignment persisted.
+
+**Storage + multi-instance**
+29. **Saved radio profiles** keyed by MAC — discover once, re-use next launch with auto-reconnect
+30. **Manually-added radios** outside the local subnet via the Add Manually dialog
+31. **`--profile <name>` command-line flag** — run multiple concurrent NereusSDR instances, each with its own AppSettings / audio / container state (useful for testing against two radios in parallel, or keeping a pristine profile alongside your everyday config).
+
+**Layout + meters**
+32. **Full container system** with drag-to-dock, float, pin-on-top, axis-lock, layout persistence, per-container settings
+33. **31 meter item types** styled and placed, 38+ meter presets in the library
+34. **SetupDialog** — Display section fully wired (47 controls), Hardware section all sub-tabs wired, General → Options wired, Audio section wired, Diagnostics section wired, Calibration wired. Other sections (CAT/Network, DSP advanced, Transmit, Appearance, Keyboard) mostly stubbed pending later phases.
+35. **About dialog** (Help → About NereusSDR) — version, Qt/WDSP versions, heritage credits, license, GPG fingerprint
+36. **Built-in issue reporter** — click the 💡 in the menu bar to file bugs / feature requests directly to GitHub with structured templates
+
+**Single-radio, single-receiver, receive-only.** TX pipeline (Phase 3M) is still cold; multi-panadapter (3F), TCI (3J), CAT (3K), skins (3H), recording (3M-rec) remain not-started.
 
 ### Where this build is especially rough
 
@@ -308,62 +348,121 @@ While listening to a live signal:
 
 ### 6. Hardware Config tabs
 
-Open **Setup → Hardware Config**. You should see a tab strip at the top with **up to 9 tabs**, but **which tabs are visible depends on your radio's capabilities.** This is capability gating — NereusSDR inspects your board's feature bits and hides tabs that don't apply.
+Open **Setup → Hardware Config**. You should see a top-level tab strip with **up to 9 tabs**, gated on your board's capabilities — NereusSDR inspects the board's feature bits and hides tabs that don't apply.
 
 Reference table:
 
 | Tab | Radios that show it |
 |---|---|
 | **Radio Info** | All radios |
-| **HL2 I/O Board** | Hermes Lite 2 only |
-| **Bandwidth Monitor** | Hermes Lite 2 only |
-| **Antenna / ALEX** | All boards with ALEX hardware (Hermes / ANAN / Orion / Saturn) |
+| **HL2 I/O** | Hermes Lite 2 only |
+| **Antenna / ALEX** | All boards with ALEX hardware (Hermes / ANAN / Orion / Saturn). Contains three sub-sub-tabs: **Antenna Control**, **Alex-1 Filters**, **Alex-2 Filters**. The Saturn BPF1 panel inside Alex-1 Filters is visible only on ANAN-G2 / G2-1K. |
 | **OC Outputs** | Boards with Open Collector outputs |
 | **XVTR** | Boards supporting transverter offsets |
 | **PureSignal** | 2-ADC boards with feedback path (ANAN-100D / 200D / 7000 / 8000 / G2 / Orion MkII) |
 | **Diversity** | 2-ADC boards supporting diversity reception |
-| **PA Calibration** | Boards with PA power-sensing hardware |
+| **Calibration** | Boards with PA power-sensing hardware (renamed from "PA Calibration" in Phase 3P-G) |
 
 For example:
-- An **HL2** sees Radio Info + HL2 I/O Board + Bandwidth Monitor (most others hidden).
-- An **ANAN-100** sees Radio Info + Antenna/ALEX + OC Outputs + XVTR + PA Calibration (no PureSignal, no Diversity, no HL2 tabs).
-- An **ANAN-G2 / 7000 / 8000** sees all 9 minus the HL2-specific pair.
+- An **HL2** sees Radio Info + HL2 I/O + Antenna/ALEX (Alex-1 tab is mostly irrelevant on HL2 — board has no Alex hardware; the tab still renders).
+- An **ANAN-100** sees Radio Info + Antenna/ALEX + OC Outputs + XVTR + Calibration (no PureSignal, no Diversity).
+- An **ANAN-G2 / 7000 / 8000** sees all the ANAN tabs, including the Saturn BPF1 panel on G2 / G2-1K.
 
-**✅ Success bar for step 6:** Radio Info populates with your actual board info (correct board name, ADC count, max RX, firmware, MAC, IP). The tabs you do see match the capability table above for your board. The tabs you don't see are hidden because your board doesn't have that hardware.
+**✅ Success bar for step 6:** Radio Info populates with your actual board info (correct board name, ADC count, max RX, firmware, MAC, IP). The tabs you see match the capability table above for your board. The sub-sub-tabs inside Antenna/ALEX render (Antenna Control / Alex-1 Filters / Alex-2 Filters), and on G2/G2-1K the Saturn BPF1 panel is visible inside Alex-1 Filters.
 
-### 7. Quit cleanly
+### 7. Alex filter LEDs (new in Phase 3P-B + 3P-H)
+
+Only if your board has Alex hardware:
+1. Tune your VFO from 20 m (14 MHz) up through 22 MHz while watching **Setup → Hardware → Antenna/ALEX → Alex-1 Filters**.
+2. Cross the HPF boundaries: **6.5 / 9.5 / 13 / 22 / 50 / 55 MHz.**
+3. At each boundary: the **green LED column** on the left of the HPF table should jump to the matched row, AND you should hear a **relay click** on the rig.
+4. Same for the LPF column: crossing each band's LPF boundary should light the correct LPF row.
+
+**✅ Success bar for step 7:** Alex-1 LED flips track the VFO, relay clicks occur at the same boundaries. Alex-2 LEDs flip visually too, but no relay click (Alex-2 codec wire-up is a deferred follow-up — the LED is a preview of what we *would* send).
+
+### 8. OC Outputs live pin state (new in Phase 3P-D + 3P-H)
+
+Only if your board has Open Collector outputs:
+1. Open **Setup → Hardware → OC Outputs → HF**.
+2. Enable a pin on the TX row for 20 m.
+3. Close Settings. Key MOX (or Tune) briefly. The **pin-state LED row** in the OC Outputs page should flip on key-down and flip back on unkey.
+4. Change band on the main VFO — the LED row should reflect the new band's matrix row.
+
+### 9. Calibration freq correction factor (new in Phase 3P-G)
+
+Only if your board is G2 or similar with a tunable reference:
+1. Tune to **10.000 MHz WWV**. Listen to the carrier zero-beat.
+2. Open **Setup → Hardware → Calibration → HPSDR Freq Cal Diagnostic**.
+3. Change the **Freq Correction Factor** from `1.000000000` to `1.000000500`. The on-air frequency should shift by ~5 Hz (roughly half a cycle on a WWV carrier).
+4. **Reset the factor to 1.0 before moving on.** Otherwise your radio will run slightly off frequency on all subsequent sessions.
+
+### 10. Radio Status dashboard (new in Phase 3P-H)
+
+1. Open **Setup → Diagnostics → Radio Status**.
+2. On idle (no TX): PA Temperature and PA Current should show 0, Forward/Reflected/SWR all at zero. Status bar (top strip) should show your radio name + uptime + firmware.
+3. Open **Setup → Diagnostics → Settings Validation**. First connect should show `✓ No issues — all settings within board capability ranges.`
+4. Open **Setup → Diagnostics → Connection Quality**. EP6 and EP2 byte rates should be non-zero with a live RX feed. Throttle = `ok`. Sequence gaps = 0 on a clean network.
+
+### 11. ADC Overload status-bar indicator (new in Phase 3P-H)
+
+1. Set 0 dB attenuation. Tune to a busy band.
+2. Connect a strong antenna, or inject a hot signal from an RF generator. Overdrive until the ADC clips.
+3. The **ADC Overload** label left of STATION should flash yellow, then red if sustained. Text reads "ADC0 Overload" (single-ADC boards) or "ADC0 Overload   ADC1 Overload" (dual-ADC, if both trip).
+4. Remove the strong signal. The label should auto-hide ~2 seconds after the last clip event.
+
+### 12. Quit cleanly
 
 Close the app (red close button, or File → Quit, or ⌘Q on macOS, Alt+F4 on Windows).
 
-**✅ Success bar for step 7:** the app closes without a crash dialog and without leaving a new crash report in your system's diagnostic reports folder (see "Reporting bugs" below for where to find it on each OS).
+**✅ Success bar for step 12:** the app closes without a crash dialog and without leaving a new crash report in your system's diagnostic reports folder (see "Reporting bugs" below for where to find it on each OS).
 
-### 8. Relaunch
+### 13. Relaunch + persistence
 
 Open the app again. If you had your radio connected when you quit, it should **silently auto-reconnect** within a few seconds without you needing to open ConnectionPanel.
 
-**✅ Success bar for step 8:** auto-reconnect works, or at worst it silently gives up without popping an error.
+Then check that your persisted settings came back:
+- Your last-tuned frequency and mode on each band
+- Alex-1 edge customizations (if you changed any)
+- OC Outputs matrix pins
+- Antenna Control per-band antenna mappings
+- Window splitter + dock layout + container contents
+
+**✅ Success bar for step 13:** auto-reconnect works (or silently gives up without popping an error), and all persisted settings restore correctly.
+
+### 14. Multi-instance via `--profile` (optional, Phase 3O)
+
+If you have two radios on your network and want to run them concurrently:
+```bash
+# First instance, default profile
+./NereusSDR &
+
+# Second instance, separate profile
+./NereusSDR --profile testrig &
+```
+Each instance gets its own AppSettings file, audio routing, and container layout. `--profile` accepts any simple name (`testrig`, `bench`, `portable`). Logs go to a profile-scoped path (see "Reporting bugs" below).
 
 ---
 
 ## What is NOT wired up (don't file bugs for these)
 
-This is the list of things you will see in the UI that look like they should work but are intentionally stubbed for this phase. Please **do not file bugs** against these — they're tracked in the Phase 3I / 3L / 3M design docs. Later phases will light them up.
+This is the list of things you will see in the UI that look like they should work but are intentionally stubbed for this phase. Please **do not file bugs** against these — they're tracked in the roadmap. Later phases will light them up.
 
 ### Transmit, period
 
 - **No TX audio.** The SSB modulator doesn't exist yet. Keying up (MOX button, PTT input, Tune button) will put command bytes on the wire asking the radio to transmit, but there is no I/Q audio being generated to transmit with. **Don't test this. Alpha = RX only.**
 - **No CW transmit.** Same reason.
 - **No PureSignal linearization.** Scaffold only; no DSP behind the switch.
-- **No external PTT input routing** — the HL2 I/O Board tab and the ANAN OC Outputs tab have combos for PTT pin, CW key pin, and aux outputs, but they just persist the setting. They don't drive real GPIO yet. Phase 3L / Phase 3M.
+- **No external PTT input routing** — the ANAN OC Outputs tab has combos for PTT pin, CW key pin, and aux outputs; they persist the mapping but don't drive real GPIO until the TX pipeline lands (Phase 3M).
 
 ### Controls that look live but are cold
 
 - **PureSignal enable** (visible on 2-ADC boards) — state persists, no DSP runs.
 - **Diversity enable** (visible on 2-ADC boards) — state persists, no second-RX fusion runs.
-- **PA Calibration** tables — state persists, no real calibration.
-- **Bandwidth Monitor** live PHY rate (HL2) — label shows `— Mbps` because no real feed is wired yet. The app does watch for HL2 LAN throttling internally via a sequence-gap heuristic, but the rate display itself is a Phase 3L item.
-- **XVTR transverter editor** — table works, but nothing downstream acts on the entries yet.
-- **OC Outputs mask grid** — persists, doesn't drive relays.
+- **Alex-2 Filters relay click** — the LED column on Alex-2 Filters tracks the VFO correctly, but the codec wire-up to actually send the RX2 filter selection to the radio is deferred. You'll see the LED flip; you won't hear a relay click. Alex-1 filters DO drive the rig relays.
+- **Saturn BPF1 codec path** — the Saturn BPF1 Bands panel on Alex-1 Filters persists your edge edits, but the codec currently ignores them and uses the standard Alex HPF bits. Deferred codec hookup per Phase 3P-H PR body.
+- **Some Calibration group boxes** — Freq Cal and Level Cal don't yet run a live calibration routine (TX is needed for Level Cal; Freq Cal is receive-only but not yet wired to the panadapter-aware routine). HPSDR Freq Cal Diagnostic's correction factor IS live and does shift the radio.
+- **Radio Status → PA Voltage** — parsed from status packet but intentionally not surfaced as a separate display field (Thetis doesn't surface it either; voltage is folded into forward-power scaling). Shows as blank.
+- **Diagnostics → Logs** — placeholder panel; real qCWarning/qCDebug capture is a Phase 3P-H follow-up.
 
 ### UI features not yet in this build
 
@@ -373,15 +472,15 @@ This is the list of things you will see in the UI that look like they should wor
 - **Second receiver (RX2)** — hardware support exists on 2-ADC boards (ANAN-7000/8000/G2/Orion MkII) but there's no UI for it yet.
 - **Skin import from Thetis** — Phase 3H.
 - **Firmware flashing from within the app** — not planned for this phase.
-- **Multi-radio simultaneous connection** — not planned at all; one radio at a time.
+- **Multi-radio simultaneous connection** within a single process — not planned. Use `--profile` (Phase 3O) to run two app instances against two different radios in parallel.
 
 ### Things that might look weird but aren't bugs
 
-- **The atoms / meter items that aren't wired up.** You'll see meter widgets in the UI that don't update or have placeholder values. The meter engine supports ~31 item types (bars, needles, dials, text overlays, rotators, clocks, magic-eye displays, data out, etc.), and many of them are fully styled but not yet bound to real data streams. The ones that DO work on any supported radio: signal S-meter, spectrum/waterfall, the clock widgets. The ones that don't: most TX meters (power, ALC, compression, SWR), most PA-related meters, magic eye, data out. If a meter isn't moving, assume it's not wired up rather than broken.
-- **Some setup-dialog pages still say "NYI" (Not Yet Implemented)** on their tooltips. Those are the pages that haven't been ported from Thetis yet.
+- **Meter items that aren't wired up.** Many meter widgets render their background + zero-valued needle but don't update. Live on any supported radio: signal S-meter, spectrum/waterfall, clocks, PA telemetry in the Radio Status dashboard during TX (note: TX is cold, so this only shows live if a future TX pipeline lands). Most TX-side meters (ALC, compression, SWR), most PA-related meters in older containers, magic eye, data out — none of these update yet.
+- **NYI tooltips** on some setup-dialog pages. Those pages haven't been ported from Thetis yet.
 - **Right-click context menus** are minimal in some places.
 - **Keyboard shortcuts** are partial.
-- **The continuous radio re-discovery** behavior you might expect from some other SDR apps is not present — discovery is one-shot, user-triggered. This was a deliberate fix because the original implementation was blocking the GUI for 15+ seconds every 5 seconds.
+- **Discovery is one-shot, user-triggered**, not continuous background rescanning.
 
 ---
 
@@ -436,6 +535,11 @@ NereusSDR writes every log line to a file. Find it:
 - **Linux:** `~/.config/NereusSDR/nereussdr.log`
 - **Windows:** `%LOCALAPPDATA%\NereusSDR\nereussdr.log`
 
+If you launched with `--profile <name>` (Phase 3O multi-instance), the log lives under a profile-scoped path:
+- **macOS:** `~/Library/Application Support/NereusSDR/<name>/nereussdr.log`
+- **Linux:** `~/.config/NereusSDR/<name>/nereussdr.log`
+- **Windows:** `%LOCALAPPDATA%\NereusSDR\<name>\nereussdr.log`
+
 The file is rewritten on each launch, so grab it *before* you relaunch the app after a crash.
 
 ### 5. Any crash report
@@ -475,12 +579,19 @@ If at the end of this test you:
 4. Heard a live SSB QSO with a working spectrum and waterfall
 5. Toggled a few DSP features (NR, AGC, attenuator) and heard them work
 6. Switched bands and had your settings come back
-7. Quit cleanly
+7. **HL2 owners:** confirmed BPF relay clicks on band change + S-ATT slider 0–63 dB range
+8. **ALEX owners:** confirmed Alex-1 filter LED + relay click sync on VFO boundary crossings
+9. Opened the new Phase 3P Setup pages (Calibration / OC Outputs / Antenna Control) without a crash
+10. Opened the new Phase 3P-H Diagnostics tabs (Radio Status / Connection Quality / Settings Validation)
+11. Quit cleanly
 
-…then we've hit our **alpha-test success criterion**. Everything beyond that is a bonus.
+…then we've hit the **alpha-test success criterion for NereusSDR's userland-complete milestone.** Everything beyond that is a bonus — and we especially want to hear about:
 
-**Thank you for testing.** We're trying to build a modern, open, cross-platform replacement for Thetis, and we can't do it without people running the code on real hardware and telling us what breaks. If you send us one usable bug report with logs attached, you've already contributed more than most people ever will to an open-source radio project.
+- Capability-gating misses (tabs that shouldn't be there on your board; tabs that should be there but are hidden)
+- Settings that don't persist across a `Quit → Relaunch → Connect` cycle
+- ADC overload trigger behavior that feels off (flashes red instantly, never flashes even with hot signal, stays stuck lit, etc.)
+- Anything unusual about the `--profile` multi-instance mode if you try it
 
-JJ Boyd ~KG4VCF
+**Thank you for testing.** We're building a modern, open, cross-platform replacement for Thetis, and we can't do it without people running the code on real hardware and telling us what breaks. If you send us one usable bug report with logs attached, you've already contributed more than most people ever will to an open-source radio project.
 
-🤖 Co-Authored with [Claude Code](https://claude.com/claude-code)
+J.J. Boyd ~ KG4VCF
