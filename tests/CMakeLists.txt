@@ -293,3 +293,12 @@ nereus_add_test(tst_master_output_widget_signal_refresh)
 # updateNegotiatedPill(), AppSettings round-trip, configChanged emission,
 # and enabledChanged emission. 10 test cases.
 nereus_add_test(tst_device_card)
+
+# ── Phase 3O Sub-Phase 12 Task 12.3: AudioVaxPage + VaxChannelCard ─────────────
+# Verifies VaxChannelCard construction (1–4), loadFromSettings, pill update,
+# Auto-detect QMenu cases (no cables / free cable bind / input filtering),
+# button visibility, and AudioVaxPage four-card layout. 10 test cases.
+# Uses NEREUS_BUILD_TESTS seam setDetectedCablesForTest() to inject cable
+# vectors without invoking PortAudio.
+nereus_add_test(tst_audio_vax_page_auto_detect)
+target_compile_definitions(tst_audio_vax_page_auto_detect PRIVATE NEREUS_BUILD_TESTS)

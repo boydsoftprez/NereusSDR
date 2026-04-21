@@ -111,6 +111,17 @@ QVector<DetectedCable> VirtualCableDetector::scanThirdPartyOnly()
     return filterThirdParty(scan());
 }
 
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+// Stub: returns 1 (consumer assumed present) so the amber "override — no
+// consumer" badge in AudioVaxPage never falsely fires in this release.
+// TODO(sub-phase-12-consumer-count-real): replace with real CoreAudio /
+// PipeWire client enumeration. See VirtualCableDetector.h for rationale.
+int VirtualCableDetector::consumerCount(const QString& /*deviceName*/)
+{
+    return 1;
+}
+#endif
+
 QString VirtualCableDetector::fingerprintCsv(const QVector<DetectedCable>& cables)
 {
     QStringList hashes;

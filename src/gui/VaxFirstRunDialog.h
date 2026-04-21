@@ -69,9 +69,10 @@ signals:
     // Payload is {channel 1..4, deviceName} pairs.
     void applySuggested(const QVector<QPair<int, QString>>& bindings);
 
-    // Scenario A, B: user clicked "Customize…" link (Setup→Audio→VAX tab).
-    // In Sub-Phase 11 MainWindow logs-and-ignores; Sub-Phase 12 wires the tab.
-    void openSetupAudioTab();
+    // Scenario A, B: user clicked "Customize…" / "Why do I need this?" link.
+    // Sub-Phase 12 wires this to SetupDialog::selectPage(pageLabel).
+    // pageLabel is "VAX" — the Audio → VAX left-nav item label.
+    void openSetupAudioPage(const QString& pageLabel);
 
     // Scenario B: user clicked "Open download page" for a vendor product.
     void openInstallUrl(const QString& url);

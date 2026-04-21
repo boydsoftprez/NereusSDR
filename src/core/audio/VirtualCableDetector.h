@@ -53,6 +53,29 @@ public:
     // Vendor install URL for a given product (for the first-run helper).
     static QString installUrl(VirtualCableProduct p);
 
+    // Returns the number of OS-level audio clients currently reading from
+    // (consuming) the named render/output device. Used on Mac/Linux by
+    // AudioVaxPage to light the "override — no consumer" amber badge when
+    // the user has bound a VAX channel to a non-native device but nothing
+    // is reading from it.
+    //
+    // TODO(sub-phase-12-consumer-count-real): The stub below returns 1 on
+    // macOS and Linux, meaning the amber badge will never fire in this
+    // release. A real implementation requires CoreAudio
+    // AudioObjectGetPropertyData(kAudioDevicePropertyHogMode /
+    // kAudioDevicePropertyClients) on macOS, or iterating pw-link /
+    // pactl list sink-inputs on Linux/PipeWire. Both are non-trivial and
+    // are deferred until Phase 3O Sub-Phase 14. Stub returning 1 is
+    // correct-failing-closed: the badge is suppressed, not falsely shown.
+    //
+    // On Windows the override concept does not apply (all virtual cables
+    // are third-party, no native HAL fallback); this method should not be
+    // called on Windows. The caller in AudioVaxPage is wrapped in an
+    // #if defined(Q_OS_MAC) || defined(Q_OS_LINUX) guard.
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+    static int consumerCount(const QString& deviceName);
+#endif
+
     // Startup rescan-diff helpers.
     //
     // fingerprintCsv() hashes the device-name string of each detected cable

@@ -1,19 +1,130 @@
 #pragma once
 
+// =================================================================
+// src/gui/setup/AudioVaxPage.h  (NereusSDR)
+// =================================================================
+//
+// NereusSDR-original Setup → Audio → VAX page.
+// No Thetis port, no attribution headers required (per memory:
+// feedback_source_first_ui_vs_dsp — Qt widgets in Setup pages are
+// NereusSDR-native).
+//
+// Sub-Phase 12 Task 12.3 (2026-04-20): Four VAX channel cards (1–4)
+// + TX row + Auto-detect QMenu picker. Full 7-row DeviceCard form on
+// all platforms (addendum §2.2). Mac/Linux amber "override — no
+// consumer" badge when bound to non-native with consumerCount == 0.
+// Auto-detect QMenu (addendum §2.3): free/assigned/no-cables/scroll.
+//
+// Design spec: docs/architecture/2026-04-20-phase3o-subphase12-addendum.md
+// §§2.2 + 2.3.
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-04-20 — Written by J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Anthropic Claude Code.
+// =================================================================
+
+#include "core/audio/VirtualCableDetector.h"
 #include "gui/SetupPage.h"
+#include "gui/setup/DeviceCard.h"
+
+#include <QLabel>
+#include <QPushButton>
+#include <QVector>
 
 namespace NereusSDR {
 
-// ---------------------------------------------------------------------------
-// Audio > VAX
+class AudioEngine;
+
+// VaxChannelCard — one VAX channel slot (QGroupBox with enable checkbox,
+// 7-row DeviceCard form, Auto-detect button, amber badge).
 //
-// Hosts the four VAX channel cards + TX row + Auto-detect picker. Scaffolding
-// shell in Sub-Phase 12 Task 12.1; populated in Task 12.3.
+// Built on top of DeviceCard for the 7-row form. Adds channel identity,
+// Auto-detect button (unassigned slots only), and the Mac/Linux amber
+// "override — no consumer" badge.
+class VaxChannelCard : public QGroupBox {
+    Q_OBJECT
+public:
+    // channel — 1..4. prefix — e.g. "audio/Vax1".
+    // engine — non-owning; passed through to the inner DeviceCard.
+    explicit VaxChannelCard(int channel,
+                            AudioEngine* engine,
+                            QWidget* parent = nullptr);
+
+    // Load saved settings without emitting configChanged.
+    void loadFromSettings();
+
+    // Receive the engine-reported negotiated format for this slot.
+    void updateNegotiatedPill(const AudioDeviceConfig& negotiated,
+                              const QString& errorString = QString());
+
+    // Returns current device name from the inner card.
+    QString currentDeviceName() const;
+
+    // Returns true if the enable checkbox is checked.
+    bool isEnabled() const;
+
+#ifdef NEREUS_BUILD_TESTS
+    // Test seam — override the cable vector used by onAutoDetectClicked()
+    // so unit tests can exercise menu population without PortAudio.
+    // Passing an empty optional clears the override (back to real scan).
+    void setDetectedCablesForTest(const QVector<DetectedCable>& cables)
+    {
+        m_testCables = cables;
+        m_useTestCables = true;
+    }
+    void clearDetectedCablesForTest() { m_useTestCables = false; }
+
+    // Simulate the user binding a device via the Auto-detect menu, without
+    // going through QMenu::exec(). Emits configChanged(channel, cfg) with
+    // the provided deviceName. Used by tests that verify the signal path
+    // without relying on modal menu interaction.
+    void bindDeviceNameForTest(const QString& deviceName)
+    {
+        AudioDeviceConfig cfg;
+        cfg.deviceName = deviceName;
+        emit configChanged(m_channel, cfg);
+    }
+#endif
+
+    int channelIndex() const { return m_channel; }
+
+signals:
+    void configChanged(int channel, NereusSDR::AudioDeviceConfig cfg);
+    void enabledChanged(int channel, bool on);
+
+private slots:
+    void onAutoDetectClicked();
+    void onInnerConfigChanged(NereusSDR::AudioDeviceConfig cfg);
+    void onInnerEnabledChanged(bool on);
+    void updateBadge();
+
+private:
+    int          m_channel;
+    QString      m_prefix;
+    DeviceCard*  m_deviceCard{nullptr};
+    QPushButton* m_autoDetectBtn{nullptr};
+    QLabel*      m_badgeLabel{nullptr};
+
+#ifdef NEREUS_BUILD_TESTS
+    bool                    m_useTestCables{false};
+    QVector<DetectedCable>  m_testCables;
+#endif
+};
+
+// ---------------------------------------------------------------------------
+// AudioVaxPage
 // ---------------------------------------------------------------------------
 class AudioVaxPage : public SetupPage {
     Q_OBJECT
 public:
     explicit AudioVaxPage(RadioModel* model, QWidget* parent = nullptr);
+
+private:
+    void buildPage();
+    void wirePillFeedback();
+
+    AudioEngine*                m_engine{nullptr};
+    QVector<VaxChannelCard*>    m_channelCards;  // index 0 = channel 1
 };
 
 } // namespace NereusSDR
