@@ -61,6 +61,12 @@ nereus_add_test(tst_alex_filter_map)
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
 
+# ── Phase 3P-A P1CodecAnvelinaPro3 bank 17 extra OC (Task 7) ──
+nereus_add_test(tst_p1_codec_anvelina_pro3)
+
+# ── Phase 3P-A P1CodecRedPitaya bank 12 ADC1 MOX carve-out (Task 8) ──
+nereus_add_test(tst_p1_codec_redpitaya)
+
 # ── Phase 3P-A regression freeze capture (temporary; removed in Task 16) ──
 nereus_add_test(tst_p1_regression_freeze_capture)
 target_compile_definitions(tst_p1_regression_freeze_capture PRIVATE

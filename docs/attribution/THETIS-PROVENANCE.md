@@ -34,6 +34,10 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/core/codec/AlexFilterMap.h | Project Files/Source/Console/console.cs | 6830-6942; 7168-7234 | port | thetis-samphire | header mirrors .cpp |
 | src/core/codec/P1CodecStandard.cpp | Project Files/Source/ChannelMaster/networkproto1.c | 419-698 | port | thetis-no-samphire | ramdor WriteMainLoop port; lifted from P1RadioConnection::composeCcForBank |
 | src/core/codec/P1CodecStandard.h | Project Files/Source/ChannelMaster/networkproto1.c | 419-698 | port | thetis-no-samphire | header mirrors .cpp |
+| src/core/codec/P1CodecAnvelinaPro3.cpp | Project Files/Source/ChannelMaster/networkproto1.c | 668-674; 682 | port | thetis-no-samphire | extends P1CodecStandard with bank 17 extra OC; AnvelinaPro3-only |
+| src/core/codec/P1CodecAnvelinaPro3.h | Project Files/Source/ChannelMaster/networkproto1.c | 668-674 | port | thetis-no-samphire | header mirrors .cpp |
+| src/core/codec/P1CodecRedPitaya.cpp | Project Files/Source/ChannelMaster/networkproto1.c | 606-616 | port | thetis-no-samphire | extends P1CodecStandard with bank 12 ADC1 MOX carve-out (DH1KLM contribution) |
+| src/core/codec/P1CodecRedPitaya.h | Project Files/Source/ChannelMaster/networkproto1.c | 606-616 | port | thetis-no-samphire | header mirrors .cpp |
 | src/core/ClarityController.h | Project Files/Source/Console/display.cs | 5866 | port | thetis-samphire | replaces Thetis processNoiseFloor with percentile-based estimator; cites Thetis as lineage |
 | src/core/FFTEngine.cpp | Project Files/Source/Console/display.cs | 2842 | port | thetis-samphire | constant reference only (-200 dBm initial value) |
 | src/core/FFTEngine.h | Project Files/Source/Console/display.cs | 215 | port | thetis-samphire | BUFFER_SIZE = 16384 constant + enum mapping |
