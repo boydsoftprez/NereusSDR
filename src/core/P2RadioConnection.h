@@ -139,6 +139,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QVector>
 
 #include <array>
+#include <memory>
+
+#include "codec/IP2Codec.h"
+#include "codec/CodecContext.h"
 
 namespace NereusSDR {
 
@@ -177,6 +181,19 @@ private slots:
     void onReconnectTimeout();
 
 private:
+    // --- Phase 3P-B: per-board codec chosen at connectToRadio() time ---
+    std::unique_ptr<IP2Codec> m_codec;
+    bool m_useLegacyP2Codec{false};
+
+    void selectCodec();
+    CodecContext buildCodecContext() const;
+
+    // Legacy compose paths — preserved for the NEREUS_USE_LEGACY_P2_CODEC rollback flag.
+    void composeCmdGeneralLegacy     (char buf[60])   const;
+    void composeCmdHighPriorityLegacy(char buf[1444]) const;
+    void composeCmdRxLegacy          (char buf[1444]) const;
+    void composeCmdTxLegacy          (char buf[60])   const;
+
     // --- Command composers (extract buffer-fill logic; sendCmd* calls these then UDP-sends) ---
     void composeCmdGeneral(char buf[60]) const;               // network.c:821
     void composeCmdHighPriority(char buf[1444]) const;        // network.c:913  (1444 == kBufLen)
@@ -347,6 +364,8 @@ public:
             case HPSDRHW::SaturnMKII: m_hardwareProfile.model = HPSDRModel::ANAN_G2;   break;
             default:                  m_hardwareProfile.model = HPSDRModel::ORIONMKII; break;
         }
+        m_hardwareProfile.effectiveBoard = board;
+        selectCodec();
     }
     // Expose compose methods for regression-freeze capture (Task 1) and gate test (Task 7).
     void composeCmdGeneralForTest(quint8 buf[60]) const {
