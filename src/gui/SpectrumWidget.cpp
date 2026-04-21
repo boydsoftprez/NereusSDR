@@ -346,22 +346,21 @@ void SpectrumWidget::loadSettings()
         return ok ? v : def;
     };
 
-    m_refLevel       = readFloat(QStringLiteral("DisplayGridMax"), -40.0f);
-    m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -40.0f)
-                     - readFloat(QStringLiteral("DisplayGridMin"), -140.0f);
+    m_refLevel       = readFloat(QStringLiteral("DisplayGridMax"), -36.0f);
+    m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -36.0f)
+                     - readFloat(QStringLiteral("DisplayGridMin"), -104.0f);
     m_spectrumFrac   = readFloat(QStringLiteral("DisplaySpectrumFrac"), 0.40f);
 
     // Phase 3G-12: persist the spectrum zoom level (visible bandwidth)
     // across app restarts. Center frequency is persisted indirectly via
     // SliceModel (slice frequency), so only bandwidth needs its own key.
-    // Default 200000 Hz = 200 kHz matches the pre-3G-12 hardcoded default
-    // in PanadapterModel / SpectrumWidget construction.
+    // Default 192000 Hz = 192 kHz matches the P1 base sample rate.
     m_bandwidthHz    = static_cast<double>(
-                          readFloat(QStringLiteral("DisplayBandwidth"), 200000.0f));
-    m_wfColorGain    = readInt(QStringLiteral("DisplayWfColorGain"), 50);
-    m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 15);
-    m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -80.0f);
-    m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -130.0f);
+                          readFloat(QStringLiteral("DisplayBandwidth"), 192000.0f));
+    m_wfColorGain    = readInt(QStringLiteral("DisplayWfColorGain"), 45);
+    m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 98);
+    m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -50.0f);
+    m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -110.0f);
     m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
     m_panFill        = s.value(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
                                QStringLiteral("True")).toString() == QStringLiteral("True");
@@ -375,10 +374,10 @@ void SpectrumWidget::loadSettings()
 
     // Phase 3G-8 commit 3: spectrum renderer state.
     const int avgRaw = readInt(QStringLiteral("DisplayAverageMode"),
-                               static_cast<int>(AverageMode::Weighted));
+                               static_cast<int>(AverageMode::Logarithmic));
     m_averageMode = static_cast<AverageMode>(qBound(0, avgRaw,
                           static_cast<int>(AverageMode::Count) - 1));
-    m_averageAlpha     = readFloat(QStringLiteral("DisplayAverageAlpha"), kSmoothAlpha);
+    m_averageAlpha     = readFloat(QStringLiteral("DisplayAverageAlpha"), 0.05f);
     m_peakHoldDelayMs  = readInt(QStringLiteral("DisplayPeakHoldDelayMs"), 2000);
     m_lineWidth        = readFloat(QStringLiteral("DisplayLineWidth"), 1.5f);
     m_dbmCalOffset     = readFloat(QStringLiteral("DisplayCalOffset"), 0.0f);
@@ -394,11 +393,11 @@ void SpectrumWidget::loadSettings()
 
     // Phase 3G-8 commit 4: waterfall renderer state.
     m_wfAgcEnabled = s.value(settingsKey(QStringLiteral("DisplayWfAgc"), m_panIndex),
-                             QStringLiteral("False")).toString() == QStringLiteral("True");
+                             QStringLiteral("True")).toString() == QStringLiteral("True");
     m_wfReverseScroll = s.value(settingsKey(QStringLiteral("DisplayWfReverseScroll"), m_panIndex),
                                 QStringLiteral("False")).toString() == QStringLiteral("True");
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
-    m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 50);
+    m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
     m_wfUseSpectrumMinMax = s.value(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
                                     QStringLiteral("False")).toString() == QStringLiteral("True");
     const int wfAvgRaw = readInt(QStringLiteral("DisplayWfAverageMode"),
