@@ -14,7 +14,44 @@
 #include <QStandardPaths>
 #include <QRegularExpression>
 
+#include <cstdlib>
+#include <exception>
+
 static QFile* s_logFile = nullptr;
+
+// Issue #83 diagnostic: capture any C++ exception that escapes into
+// std::terminate() (noexcept destructors, unhandled throws during
+// shutdown) so the crash log shows *what* threw. Without this, Qt's
+// shutdown path on Windows lands in RaiseFailFastException with no
+// message, leaving us with a symbolless minidump. Handler must not
+// itself throw; wrap everything and fall through to std::abort at
+// the end to preserve the FAST_FAIL signature the minidump expects.
+static void issue83TerminateHandler() noexcept
+{
+    try {
+        if (auto ep = std::current_exception()) {
+            try {
+                std::rethrow_exception(ep);
+            } catch (const std::exception& e) {
+                qCritical("issue-83: std::terminate — std::exception: %s "
+                          "(type=%s)", e.what(), typeid(e).name());
+            } catch (...) {
+                qCritical("issue-83: std::terminate — non-std::exception "
+                          "(no what() available)");
+            }
+        } else {
+            qCritical("issue-83: std::terminate — no active exception "
+                      "(raw std::terminate call)");
+        }
+    } catch (...) {
+        // Handler itself threw; nothing useful to do here.
+    }
+
+    if (s_logFile && s_logFile->isOpen()) {
+        s_logFile->flush();
+    }
+    std::abort();
+}
 
 // Redact PII from log messages before writing to file.
 // Patterns: IP addresses, MAC addresses.
@@ -127,6 +164,10 @@ int main(int argc, char* argv[])
         s_logFile = nullptr;
     }
 
+    // Issue #83 diagnostic: install terminate handler after the file
+    // log handler, so the log captures whatever escaped.
+    std::set_terminate(issue83TerminateHandler);
+
     // Fusion style as a clean cross-platform base
     app.setStyle(QStyleFactory::create("Fusion"));
 
@@ -139,7 +180,8 @@ int main(int argc, char* argv[])
     // Restore logging category toggles from settings
     NereusSDR::LogManager::instance().loadSettings();
 
-    qDebug() << "Starting NereusSDR" << app.applicationVersion();
+    qDebug() << "Starting NereusSDR" << app.applicationVersion()
+             << "[debug/issue-83-shutdown-diagnostic]";
 
     // Phase 3G-6 block 5: bring up the MMIO subsystem so persisted
     // endpoints (under AppSettings MmioEndpoints/<guid>/*) start

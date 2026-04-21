@@ -713,15 +713,23 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
 // ---------------------------------------------------------------------------
 void P1RadioConnection::disconnect()
 {
+    qCInfo(lcConnection) << "issue-83: P1::disconnect — begin"
+                         << "thread=" << QThread::currentThread()
+                         << "m_running=" << m_running
+                         << "m_hl2Throttled=" << m_hl2Throttled;
+
     m_intentionalDisconnect = true;
 
     if (m_watchdogTimer) {
+        qCInfo(lcConnection) << "issue-83: P1::disconnect — stop watchdogTimer";
         m_watchdogTimer->stop();
     }
     if (m_ep2PacerTimer) {
+        qCInfo(lcConnection) << "issue-83: P1::disconnect — stop ep2PacerTimer";
         m_ep2PacerTimer->stop();
     }
     if (m_reconnectTimer) {
+        qCInfo(lcConnection) << "issue-83: P1::disconnect — stop reconnectTimer";
         m_reconnectTimer->stop();
     }
 
@@ -733,6 +741,7 @@ void P1RadioConnection::disconnect()
 
     if (m_running && m_socket && !m_radioInfo.address.isNull()) {
         m_running = false;
+        qCInfo(lcConnection) << "issue-83: P1::disconnect — sending metis-stop";
         sendMetisStop();
         qCDebug(lcConnection) << "P1: metis-stop sent";
     }
@@ -744,6 +753,7 @@ void P1RadioConnection::disconnect()
 
     setState(ConnectionState::Disconnected);
     qCDebug(lcConnection) << "P1: Disconnected";
+    qCInfo(lcConnection) << "issue-83: P1::disconnect — end";
 }
 
 void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequencyHz)

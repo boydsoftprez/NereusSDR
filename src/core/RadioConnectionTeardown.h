@@ -28,6 +28,7 @@
 
 #include "core/RadioConnection.h"
 
+#include <QDebug>
 #include <QMetaObject>
 #include <QThread>
 
@@ -37,6 +38,7 @@ inline void teardownWorkerThreadedConnection(RadioConnection*& conn,
                                              QThread*& thread)
 {
     if (!conn || !thread) {
+        qInfo() << "issue-83: teardownWorker — null conn/thread, fast path";
         conn = nullptr;
         if (thread) {
             delete thread;
@@ -47,14 +49,24 @@ inline void teardownWorkerThreadedConnection(RadioConnection*& conn,
 
     if (thread->isRunning()) {
         RadioConnection* c = conn;
+        qInfo() << "issue-83: teardownWorker — posting disconnect+deleteLater lambda to worker";
         QMetaObject::invokeMethod(c, [c]() {
+            qInfo() << "issue-83: teardownWorker lambda — entered (worker thread)"
+                    << "thread=" << QThread::currentThread();
             c->disconnect();
+            qInfo() << "issue-83: teardownWorker lambda — disconnect() returned; scheduling deleteLater";
             c->deleteLater();
+            qInfo() << "issue-83: teardownWorker lambda — deleteLater posted; exiting lambda";
         });
+        qInfo() << "issue-83: teardownWorker — calling thread->quit()";
         thread->quit();
+        qInfo() << "issue-83: teardownWorker — waiting for thread to finish (3s timeout)";
         if (!thread->wait(3000)) {
+            qWarning() << "issue-83: teardownWorker — wait timed out; calling terminate()";
             thread->terminate();
             thread->wait(1000);
+        } else {
+            qInfo() << "issue-83: teardownWorker — thread finished cleanly";
         }
     }
 
@@ -63,8 +75,10 @@ inline void teardownWorkerThreadedConnection(RadioConnection*& conn,
     // pointer.
     conn = nullptr;
 
+    qInfo() << "issue-83: teardownWorker — deleting QThread container";
     delete thread;
     thread = nullptr;
+    qInfo() << "issue-83: teardownWorker — complete";
 }
 
 } // namespace NereusSDR

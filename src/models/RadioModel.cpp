@@ -1242,8 +1242,11 @@ void RadioModel::saveSliceState(SliceModel* slice)
 void RadioModel::teardownConnection()
 {
     if (!m_connection) {
+        qCInfo(lcConnection) << "issue-83: teardownConnection — no connection, skipping";
         return;
     }
+
+    qCInfo(lcConnection) << "issue-83: teardownConnection — begin";
 
     // Disconnect signals into the DSP worker first so no new I/Q
     // batches can be posted onto the worker thread, then quit and
@@ -1252,33 +1255,44 @@ void RadioModel::teardownConnection()
     // so the m_dspWorker pointer may dangle after wait() returns —
     // null it out to avoid a use-after-free in any later teardown.
     if (m_dspWorker != nullptr) {
+        qCInfo(lcConnection) << "issue-83: step 1a — disconnect receiverManager→dspWorker";
         QObject::disconnect(m_receiverManager, nullptr, m_dspWorker, nullptr);
     }
     if (m_dspThread != nullptr) {
+        qCInfo(lcConnection) << "issue-83: step 1b — quit+wait DSP thread";
         m_dspThread->quit();
         m_dspThread->wait();
         delete m_dspThread;
         m_dspThread = nullptr;
         m_dspWorker = nullptr;
+        qCInfo(lcConnection) << "issue-83: step 1b — DSP thread joined";
     }
 
     // Stop audio output
+    qCInfo(lcConnection) << "issue-83: step 2 — audioEngine->stop()";
     m_audioEngine->stop();
+    qCInfo(lcConnection) << "issue-83: step 2 — audioEngine stopped";
 
     // Shutdown WDSP (destroys all channels, saves cache)
+    qCInfo(lcConnection) << "issue-83: step 3 — wdspEngine->shutdown()";
     m_wdspEngine->shutdown();
+    qCInfo(lcConnection) << "issue-83: step 3 — wdspEngine shut down";
 
     // Disconnect remaining signals (prevents new work being queued)
+    qCInfo(lcConnection) << "issue-83: step 4 — disconnect connection/receiverManager signals";
     QObject::disconnect(m_connection, nullptr, this, nullptr);
     QObject::disconnect(m_connection, nullptr, m_receiverManager, nullptr);
     QObject::disconnect(m_receiverManager, nullptr, this, nullptr);
+    qCInfo(lcConnection) << "issue-83: step 4 — signals disconnected";
 
     // Tear down the connection on its own worker thread via the shared
     // helper. See src/core/RadioConnectionTeardown.h for why this must
     // run on the worker — short version: the RadioConnection's QTimers
     // are thread-affined to the worker and destroying them on any other
     // thread emits cross-thread warnings and can crash on Windows.
+    qCInfo(lcConnection) << "issue-83: step 5 — teardownWorkerThreadedConnection";
     teardownWorkerThreadedConnection(m_connection, m_connThread);
+    qCInfo(lcConnection) << "issue-83: teardownConnection — complete";
 }
 
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
