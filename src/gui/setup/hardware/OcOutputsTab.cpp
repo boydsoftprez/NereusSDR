@@ -70,8 +70,10 @@ namespace NereusSDR {
 OcOutputsTab::OcOutputsTab(RadioModel* model, QWidget* parent)
     : QWidget(parent)
     , m_model(model)
-    , m_ocMatrix(new OcMatrix(this))
+    , m_ocMatrix(model ? &model->ocMatrixMutable() : nullptr)
 {
+    // OcMatrix is now owned by RadioModel so the codec layer (P1/P2
+    // buildCodecContext) and the UI share one instance. Phase 3P-D Task 3.
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);

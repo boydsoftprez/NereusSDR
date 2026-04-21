@@ -144,6 +144,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "codec/IP2Codec.h"
 #include "codec/CodecContext.h"
 
+namespace NereusSDR { class OcMatrix; }  // forward decl — full header in .cpp
+
 namespace NereusSDR {
 
 // Protocol 2 connection for Orion MkII / Saturn (ANAN-G2) radios.
@@ -180,6 +182,12 @@ public slots:
     // P2CodecOrionMkII::composeCmdHighPriority byte 1403 bit 1.
     // ADC0 preamp uses the existing setPreamp(bool) (byte 1403 bit 0).
     void setRx1Preamp(bool enabled);
+
+    // Wire RadioModel's OcMatrix so buildCodecContext() can set ctx.ocByte
+    // from maskFor(currentBand, mox).  No P2 codec reads ocByte yet — this
+    // is a symmetric companion to P1 so the field is ready when P2 OC
+    // support lands.  Phase 3P-D Task 3.
+    void setOcMatrix(const OcMatrix* matrix);
 
 private slots:
     void onReadyRead();
@@ -231,6 +239,14 @@ private:
 
     // --- Board capabilities (set in connectToRadio, used for clamp/dispatch) ---
     const BoardCapabilities* m_caps{nullptr};
+
+    // Non-owning pointer to RadioModel's OcMatrix.  When non-null,
+    // buildCodecContext() fills ctx.ocByte via
+    // m_ocMatrix->maskFor(bandFromFrequency(rx0Hz), m_mox).
+    // No P2 codec reads ocByte yet; the field is populated for symmetry
+    // with P1 so Phase F P2 OC wiring can read it without further changes.
+    // Phase 3P-D Task 3.
+    const OcMatrix* m_ocMatrix{nullptr};
 
     // --- Single socket (Thetis listenSock, network.c:67) ---
     QUdpSocket* m_socket{nullptr};

@@ -316,3 +316,12 @@ nereus_add_test(tst_oc_matrix)
 # flow, GEN band row disabled state, and default TXPinAction (MoxTuneTwoTone).
 nereus_add_test(tst_oc_outputs_hf_tab)
 target_compile_definitions(tst_oc_outputs_hf_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-D Task 3: P1RadioConnection ↔ OcMatrix codec wiring ─────────────
+# Verifies:
+#   - Without OcMatrix wired: bank 0 C2 = 0 (legacy m_ocOutput fallback).
+#   - Matrix with pin 0 set for 20m RX: C2 = 0x02 ((mask=0x01) << 1).
+#   - MOX selects TX matrix path: pin 1 for 40m TX → C2 = 0x04.
+#   - Detaching matrix (setOcMatrix(nullptr)) reverts to legacy 0.
+nereus_add_test(tst_p1_oc_matrix_wiring)
+target_compile_definitions(tst_p1_oc_matrix_wiring PRIVATE NEREUS_BUILD_TESTS)

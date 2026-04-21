@@ -229,6 +229,8 @@ warren@wpratt.com
 #include "RxDspWorker.h"
 #include "core/RadioConnection.h"
 #include "core/RadioConnectionTeardown.h"
+#include "core/P1RadioConnection.h"
+#include "core/P2RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/BoardCapabilities.h"
 #include "core/HardwareProfile.h"
@@ -399,6 +401,14 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                           << "effectiveBoard=" << static_cast<int>(m_hardwareProfile.effectiveBoard)
                           << "adcCount=" << m_hardwareProfile.adcCount;
 
+    // Load per-MAC OC matrix state so the codec layer (P1/P2 buildCodecContext)
+    // reads the correct per-band OC byte from the first C&C frame onwards.
+    // Phase 3P-D Task 3.
+    if (!info.macAddress.isEmpty()) {
+        m_ocMatrix.setMacAddress(info.macAddress);
+        m_ocMatrix.load();
+    }
+
     m_name = info.displayName();
     m_model = QString::fromLatin1(m_hardwareProfile.caps->displayName);
     m_version = QString::number(info.firmwareVersion);
@@ -537,6 +547,15 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     }
     m_connection = conn.release();
     m_connection->setHardwareProfile(m_hardwareProfile);
+
+    // Wire the OcMatrix so P1/P2 buildCodecContext() can source ctx.ocByte
+    // from maskFor(currentBand, mox) at C&C compose time.  Must be called
+    // before the connection thread starts.  Phase 3P-D Task 3.
+    if (auto* p1 = qobject_cast<class P1RadioConnection*>(m_connection)) {
+        p1->setOcMatrix(&m_ocMatrix);
+    } else if (auto* p2 = qobject_cast<class P2RadioConnection*>(m_connection)) {
+        p2->setOcMatrix(&m_ocMatrix);
+    }
 
     // Create worker thread
     m_connThread = new QThread(this);

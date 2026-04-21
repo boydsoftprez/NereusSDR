@@ -103,7 +103,7 @@ signals:
 
 private:
     RadioModel*      m_model{nullptr};
-    OcMatrix*        m_ocMatrix{nullptr};   // owned by this tab
+    OcMatrix*        m_ocMatrix{nullptr};   // non-owning — owned by RadioModel (Phase 3P-D Task 3)
     QTabWidget*      m_subTabs{nullptr};
     OcOutputsHfTab*  m_hfTab{nullptr};
     QWidget*         m_swlTab{nullptr};     // placeholder for follow-up commit

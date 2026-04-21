@@ -72,6 +72,7 @@
 #include "PanadapterModel.h"
 #include "MeterModel.h"
 #include "TransmitModel.h"
+#include "core/OcMatrix.h"
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
@@ -120,6 +121,12 @@ public:
     ReceiverManager*  receiverManager()  { return m_receiverManager; }
     AudioEngine*      audioEngine()      { return m_audioEngine; }
     WdspEngine*       wdspEngine()       { return m_wdspEngine; }
+
+    // OC matrix — single instance shared between the OC Outputs UI and the
+    // codec layer (P1/P2 buildCodecContext). Loaded per-MAC at connect time.
+    // Phase 3P-D Task 3.
+    const OcMatrix& ocMatrix()        const { return m_ocMatrix; }
+    OcMatrix&       ocMatrixMutable()       { return m_ocMatrix; }
 
     // Sub-models
     MeterModel&       meterModel()       { return m_meterModel; }
@@ -243,6 +250,12 @@ private:
     // Sub-models
     MeterModel    m_meterModel;
     TransmitModel m_transmitModel;
+
+    // OC matrix — per-band × per-pin × {RX,TX} bit assignments.
+    // Owned here so both OcOutputsTab UI and P1/P2 codec layer read
+    // the same instance. MAC and load() are called on connect.
+    // Phase 3P-D Task 3.
+    OcMatrix      m_ocMatrix;
 
     // Slices and panadapters (client-managed)
     QList<SliceModel*> m_slices;

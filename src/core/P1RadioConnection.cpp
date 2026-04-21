@@ -238,11 +238,13 @@ mw0lge@grange-lane.co.uk
 
 #include "P1RadioConnection.h"
 #include "LogCategories.h"
+#include "OcMatrix.h"
 #include "codec/P1CodecStandard.h"
 #include "codec/P1CodecAnvelinaPro3.h"
 #include "codec/P1CodecRedPitaya.h"
 #include "codec/P1CodecHl2.h"
 #include "codec/AlexFilterMap.h"
+#include "models/Band.h"
 
 #include <cstdlib>
 #include <cstring>    // memset
@@ -857,6 +859,19 @@ void P1RadioConnection::selectCodec()
 }
 
 // ---------------------------------------------------------------------------
+// setOcMatrix — Phase 3P-D Task 3
+//
+// Wires the RadioModel's OcMatrix to this connection so buildCodecContext()
+// can source ctx.ocByte from maskFor(currentBand, mox) at C&C compose time.
+// Called by RadioModel::connectToRadio() on the main thread before the
+// connection thread is started, so no synchronisation is needed.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setOcMatrix(const OcMatrix* matrix)
+{
+    m_ocMatrix = matrix;
+}
+
+// ---------------------------------------------------------------------------
 // buildCodecContext
 //
 // Snapshot all live state into a CodecContext for the codec call.
@@ -875,7 +890,19 @@ CodecContext P1RadioConnection::buildCodecContext() const
     ctx.duplex         = m_duplex;
     ctx.diversity      = m_diversity;
     ctx.antennaIdx     = m_antennaIdx;
-    ctx.ocByte         = m_ocOutput;
+
+    // Source OC byte from OcMatrix per current band + MOX state.  Falls
+    // through to legacy m_ocOutput when matrix is unset (e.g. tests that
+    // construct P1RadioConnection without a RadioModel).  Default state is
+    // byte-identical: empty matrix → maskFor()==0 == m_ocOutput==0.
+    // Phase 3P-D Task 3 — From Thetis HPSDR/Penny.cs:117-132 [@501e3f5]
+    // setBandABitMask — OC mask derived per-band at transmit time.
+    if (m_ocMatrix) {
+        const Band currentBand = bandFromFrequency(static_cast<double>(m_rxFreqHz[0]));
+        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_mox);
+    } else {
+        ctx.ocByte = m_ocOutput;
+    }
     ctx.adcCtrl        = m_adcCtrl;
     ctx.alexHpfBits    = m_alexHpfBits;
     ctx.alexLpfBits    = m_alexLpfBits;

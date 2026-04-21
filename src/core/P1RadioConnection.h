@@ -45,6 +45,8 @@
 #include "codec/IP1Codec.h"
 #include "codec/CodecContext.h"
 
+namespace NereusSDR { class OcMatrix; }  // forward decl — full header in .cpp
+
 #include <memory>
 #include <QUdpSocket>
 #include <QTimer>
@@ -88,6 +90,11 @@ public:
     static bool parseEp6Frame(const quint8 frame[1032],
                               int numRx,
                               std::vector<std::vector<float>>& perRx) noexcept;
+
+    // Wire RadioModel's OcMatrix so buildCodecContext() can source the OC
+    // byte from maskFor(currentBand, mox) at C&C compose time.
+    // Phase 3P-D Task 3 — called by RadioModel::connectToRadio().
+    void setOcMatrix(const OcMatrix* matrix);
 
 public slots:
     void init() override;
@@ -256,6 +263,13 @@ private:
     bool    m_reconnectedLogged{false};
 
     const BoardCapabilities* m_caps{nullptr};
+
+    // Non-owning pointer to RadioModel's OcMatrix.  When non-null,
+    // buildCodecContext() derives ctx.ocByte from
+    // m_ocMatrix->maskFor(bandFromFrequency(rx0Hz), m_mox) instead of
+    // the legacy m_ocOutput field.  Null in test seams that don't wire
+    // RadioModel (falls back to m_ocOutput == 0).  Phase 3P-D Task 3.
+    const OcMatrix* m_ocMatrix{nullptr};
 
     // --- HL2 bandwidth monitor state (Task 12) ---
     // Source: mi0bot bandwidth_monitor.{c,h} — adapted to ep6 sequence-gap heuristic.
