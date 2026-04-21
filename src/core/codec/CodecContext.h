@@ -37,6 +37,28 @@ struct CodecContext {
     bool    dither[3]{true, true, true};
     bool    random[3]{true, true, true};
 
+    // ── P2-specific fields ──────────────────────────────────────────────
+    //
+    // Saturn BPF1 band-edge override bits — populated by
+    // P2RadioConnection::setReceiverFrequency when the connected board
+    // is ANAN-G2 / G2-1K AND user has configured Saturn BPF1 edges
+    // distinct from Alex defaults (see Phase 3P-B spec §7.1, Phase F
+    // mockup page-alex1-filters.html). When 0, P2CodecSaturn falls back
+    // to Alex bits computed by AlexFilterMap.
+    quint8  p2SaturnBpfHpfBits{0};
+    quint8  p2SaturnBpfLpfBits{0};
+
+    // Per-receiver antenna routing (RX1/RX2/RX3). Phase F antenna
+    // assignment populates these from the per-band Alex matrix; Phase B
+    // codecs read them but the Antenna Control sub-sub-tab UI lands in
+    // Phase F.
+    int     p2RxAnt[3]{0, 0, 0};
+
+    // Per-ADC RX1 preamp toggle (OrionMKII-family + Saturn-family
+    // dual-ADC boards). Phase B Task 10 wires the RxApplet UI for this;
+    // P2CodecOrionMkII reads it for byte 1403 bit 1 in CmdHighPriority.
+    bool    p2Rx1Preamp{false};
+
     // Alex HPF / LPF bits — recomputed by P1RadioConnection on freq change
     // via AlexFilterMap. Codec only emits them.
     quint8  alexHpfBits{0};
