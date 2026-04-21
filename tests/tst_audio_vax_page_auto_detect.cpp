@@ -165,6 +165,27 @@ private slots:
         QVERIFY(menuOpened);
     }
 
+    // ── 4b. Free-cable menu entry contains vendor name (addendum §2.3) ──
+    // Verifies the "► deviceName · vendor" label format using the
+    // menuLabelForCableForTest() seam, which exercises the same code path as
+    // onAutoDetectClicked() without opening a modal QMenu (modal tests are
+    // macOS-fragile when run sequentially in a test binary).
+    void autoDetectMenu_freeCableEntryContainsVendor()
+    {
+        const QString cableName =
+            QStringLiteral("CABLE-A Output (VB-Audio Virtual Cable)");
+        const DetectedCable cable{VirtualCableProduct::VbCableA, cableName, false, 0};
+
+        const QString label = VaxChannelCard::menuLabelForCableForTest(cable);
+
+        QVERIFY2(label.contains(QStringLiteral("VB-Audio")),
+                 qPrintable(QStringLiteral(
+                     "Expected label to contain 'VB-Audio' (addendum §2.3 vendor subtitle); got: %1")
+                     .arg(label)));
+        QVERIFY2(label.contains(cableName),
+                 "Expected label to contain the device name");
+    }
+
     // ── 5. configChanged carries correct channel + device name ────────────
     // Uses the NEREUS_BUILD_TESTS seam bindDeviceNameForTest() to bypass
     // QMenu::exec() and directly verify the signal payload. The menu-open

@@ -64,6 +64,26 @@ private slots:
         QVERIFY(p != VirtualCableProduct::VbCableA);
     }
 
+    // ── vendorDisplayName() — product enum → display string ────────────
+    void vendorDisplayNameVbCable() {
+        QCOMPARE(VirtualCableDetector::vendorDisplayName(VirtualCableProduct::VbCable),
+                 QStringLiteral("VB-Audio"));
+    }
+    void vendorDisplayNameVbCableVariants() {
+        // All VB-Audio variants map to the same vendor string.
+        QCOMPARE(VirtualCableDetector::vendorDisplayName(VirtualCableProduct::VbCableA),
+                 QStringLiteral("VB-Audio"));
+        QCOMPARE(VirtualCableDetector::vendorDisplayName(VirtualCableProduct::VbHiFiCable),
+                 QStringLiteral("VB-Audio"));
+    }
+    void vendorDisplayNameFlexDax() {
+        QCOMPARE(VirtualCableDetector::vendorDisplayName(VirtualCableProduct::FlexRadioDax),
+                 QStringLiteral("FlexRadio DAX"));
+    }
+    void vendorDisplayNameNoneIsEmpty() {
+        QVERIFY(VirtualCableDetector::vendorDisplayName(VirtualCableProduct::None).isEmpty());
+    }
+
     // ── filterThirdParty() — drops NereusSdrVax entries ────────────────
     void filterThirdPartyKeepsVendors() {
         QVector<DetectedCable> all;

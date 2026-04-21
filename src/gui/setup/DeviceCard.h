@@ -73,6 +73,14 @@ public:
     // Called once after construction; does NOT emit configChanged.
     void loadFromSettings();
 
+    // Returns the live checked state of the enable checkbox (Headphones /
+    // VaxChannelCard only). Returns true if there is no enable checkbox
+    // (always-on cards are considered always enabled).
+    bool isCheckboxEnabled() const
+    {
+        return m_enableChk ? m_enableChk->isChecked() : true;
+    }
+
 signals:
     // Emitted on any control edit (excluding loadFromSettings).
     // Carries the card's current AudioDeviceConfig.

@@ -84,6 +84,20 @@ public:
         cfg.deviceName = deviceName;
         emit configChanged(m_channel, cfg);
     }
+
+    // Returns the menu label text that would be generated for a free (unassigned)
+    // cable entry per addendum §2.3 ("► deviceName · vendor"). Used by tests to
+    // verify the label format without opening a modal QMenu.
+    static QString menuLabelForCableForTest(const DetectedCable& cable)
+    {
+        const QString vendor =
+            VirtualCableDetector::vendorDisplayName(cable.product);
+        QString label = QStringLiteral("\u25ba  ") + cable.deviceName;
+        if (!vendor.isEmpty()) {
+            label += QStringLiteral(" \u00b7 ") + vendor;
+        }
+        return label;
+    }
 #endif
 
     int channelIndex() const { return m_channel; }

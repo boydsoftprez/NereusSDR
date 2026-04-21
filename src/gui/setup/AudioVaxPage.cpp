@@ -138,11 +138,12 @@ QString VaxChannelCard::currentDeviceName() const
 
 bool VaxChannelCard::isEnabled() const
 {
-    // enabledChanged fires from the DeviceCard's checkbox; the checked state
-    // is reflected in loadFromSettings → AppSettings read. Read directly.
-    const QString key = m_prefix + QStringLiteral("/Enabled");
-    return AppSettings::instance().value(key, QStringLiteral("False")).toString()
-        == QStringLiteral("True");
+    // Delegate to the DeviceCard's checkbox live state so mid-edit callers
+    // see the current toggle value rather than the last-flushed AppSettings
+    // value. DeviceCard::isCheckboxEnabled() returns true for always-on cards
+    // (no checkbox), which is the correct semantic here since VaxChannelCards
+    // always have an enable checkbox (enableCheckbox=true in the ctor).
+    return m_deviceCard->isCheckboxEnabled();
 }
 
 void VaxChannelCard::onInnerConfigChanged(AudioDeviceConfig cfg)
@@ -240,7 +241,16 @@ void VaxChannelCard::onAutoDetectClicked()
             const bool alreadyAssigned = (alreadyAssignedToChannel > 0)
                 && (alreadyAssignedToChannel != m_channel);
 
+            // Addendum §2.3: format is "► deviceName · vendor".
+            // Spec §2.3 also calls for a sample-rate subtitle; deferred until
+            // DetectedCable carries sampleRate (tracked by
+            // TODO(sub-phase-12-menu-sample-rate)).
+            const QString vendor =
+                VirtualCableDetector::vendorDisplayName(cable.product);
             QString label = QStringLiteral("\u25ba  ") + cable.deviceName;
+            if (!vendor.isEmpty()) {
+                label += QStringLiteral(" \u00b7 ") + vendor;
+            }
             if (alreadyAssigned) {
                 label += QStringLiteral("  \u2192 VAX %1")
                              .arg(alreadyAssignedToChannel);
@@ -341,6 +351,16 @@ void AudioVaxPage::buildPage()
     vLayout->addWidget(headerLabel);
 
     // Four VAX channel cards (1–4).
+    //
+    // Addendum §2.2 calls for default-on-Mac/Linux to bind to the native HAL
+    // plugin entry named "NereusSDR VAX N (native)". That plugin does not yet
+    // exist; VirtualCableProduct::NereusSdrVax is reserved for it. Until the
+    // plugin lands, Mac/Linux cards with an unset audio/Vax<N>/DeviceName fall
+    // through to PortAudio's platform default. The "override — no consumer"
+    // badge correctly stays quiescent in this state (consumerCount stub returns
+    // 1, and without the named native entry there is no non-native to override
+    // from).
+    // Tracked by TODO(sub-phase-12-native-hal-default).
     m_channelCards.reserve(4);
     for (int ch = 1; ch <= 4; ++ch) {
         auto* card = new VaxChannelCard(ch, m_engine, container);

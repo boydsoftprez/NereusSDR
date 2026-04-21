@@ -53,6 +53,11 @@ public:
     // Vendor install URL for a given product (for the first-run helper).
     static QString installUrl(VirtualCableProduct p);
 
+    // Human-readable vendor display name for a given product.
+    // Used by AudioVaxPage to build "► deviceName · vendor" menu entries
+    // per addendum §2.3. Returns an empty string for None.
+    static QString vendorDisplayName(VirtualCableProduct p);
+
     // Returns the number of OS-level audio clients currently reading from
     // (consuming) the named render/output device. Used on Mac/Linux by
     // AudioVaxPage to light the "override — no consumer" amber badge when
