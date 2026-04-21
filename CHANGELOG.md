@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- New `--profile <name>` / `-p <name>` CLI flag for running multiple NereusSDR instances against different radios concurrently. Each profile gets its own isolated `NereusSDR.settings` + log directory under `profiles/<name>/`; profile names are validated against `[A-Za-z0-9_-]+` to prevent path traversal. FFTW wisdom stays machine-scoped (shared across profiles). Main window title gains a `[<profile>]` suffix. `SupportDialog` / `SupportBundle` now read the same profile-scoped log directory `main.cpp` writes to. Without `--profile`, behavior is byte-for-byte unchanged. Closes #100.
+
 ### Fixed
 - **Hermes Lite 2 bandpass filter now switches on band/VFO change.** P1RadioConnection was emitting `m_alexHpfBits=0`/`m_alexLpfBits=0` permanently because the filter bits were never recomputed from frequency. P2 had the right code; lifted into shared `src/core/codec/AlexFilterMap` and called from P1's `setReceiverFrequency`/`setTxFrequency`. (Phase 3P-A)
 - **Hermes Lite 2 step attenuator now actually attenuates.** P1's bank 11 C4 was using ramdor's 5-bit mask + 0x20 enable for every board; HL2 needs mi0bot's 6-bit mask + 0x40 enable + MOX TX/RX branch. Fixed via per-board codec subclasses (`P1CodecStandard` for Hermes/Orion, `P1CodecHl2` for HL2). RxApplet S-ATT slider range now widens to 0-63 dB on HL2 from `BoardCapabilities::attenuator.maxDb`. (Phase 3P-A)

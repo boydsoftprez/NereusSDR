@@ -118,8 +118,11 @@ void LogManager::applyFilterRules()
 
 QString LogManager::logDirPath() const
 {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
-           + QStringLiteral("/NereusSDR");
+    // Issue #100 / PR #103: honor the --profile override so SupportDialog
+    // and SupportBundle read from the same directory main.cpp writes logs
+    // to. AppSettings::resolveConfigDir returns the legacy path when no
+    // profile is set and .../NereusSDR/profiles/<name>/ when one is.
+    return AppSettings::resolveConfigDir(AppSettings::profileOverride());
 }
 
 QString LogManager::logFilePath() const
