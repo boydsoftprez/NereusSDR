@@ -404,6 +404,23 @@ nereus_add_test(tst_ptt_source)
 nereus_add_test(tst_radio_status)
 nereus_add_test(tst_settings_hygiene)
 
+# ── Phase 3P-H Task 4: status-packet parsing + RadioModel ownership ──────────
+# tst_p1_status_telemetry: feeds a hand-crafted 1032-byte ep6 datagram
+#   into P1RadioConnection::parseEp6FrameForTest and asserts the new
+#   paTelemetryUpdated() signal carries the C0=0x08/0x10/0x18 raw values
+#   per Thetis networkproto1.c:332-356 [@501e3f5].
+# tst_p2_status_telemetry: same for P2's 60-byte High-Priority status
+#   packet at byte offsets 2-3, 10-11, 18-19, 45-46, 51-52, 53-54
+#   per Thetis network.c:711-748 [@501e3f5].
+# tst_radio_model_status_wiring: verifies RadioModel owns RadioStatus +
+#   SettingsHygiene as single instances, that the public radioStatus()
+#   accessor surfaces signals to the embedded sub-model, and that
+#   settingsHygiene().validate() (called from onConnectionStateChanged
+#   on Connected) populates issues for an out-of-range persisted S-ATT.
+nereus_add_test(tst_p1_status_telemetry)
+nereus_add_test(tst_p2_status_telemetry)
+nereus_add_test(tst_radio_model_status_wiring)
+
 # ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
 # Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission
 # (idempotent no-fire), effectiveFreqCorrectionFactor() toggle between normal

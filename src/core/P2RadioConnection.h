@@ -427,6 +427,12 @@ public:
         composeCmdTx(tmp);
         memcpy(buf, tmp, 60);
     }
+    // Expose the High-Priority status packet parser so PA-telemetry tests can
+    // feed a hand-crafted 60-byte packet and assert paTelemetryUpdated() emits
+    // the expected raw values.  Phase 3P-H Task 4.
+    void processHighPriorityStatusForTest(const QByteArray& data) {
+        processHighPriorityStatus(data);
+    }
 #endif
 };
 

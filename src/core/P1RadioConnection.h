@@ -352,6 +352,10 @@ public:
     void parseI2cResponseForTest(quint8 c0, quint8 c1, quint8 c2, quint8 c3, quint8 c4) {
         parseI2cResponse(c0, c1, c2, c3, c4);
     }
+    // Expose the instance parseEp6Frame so PA-telemetry tests can feed a
+    // hand-crafted 1032-byte ep6 datagram and assert paTelemetryUpdated()
+    // emits the expected raw values.  Phase 3P-H Task 4.
+    void parseEp6FrameForTest(const QByteArray& pkt) { parseEp6Frame(pkt); }
 #endif
 };
 
