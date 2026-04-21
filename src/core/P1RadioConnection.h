@@ -307,6 +307,18 @@ private:
     // Phase 3P-E Task 3.
     HermesLiteBandwidthMonitor* m_bwMonitor{nullptr};
 
+    // Phase 3P-H Task 4: PA telemetry latches.
+    // C0 cases 0x08/0x10/0x18 each carry only two of the six fields, so we
+    // hold the most recent value of each between subframes and emit one
+    // paTelemetryUpdated() per parsed frame.
+    // Source: networkproto1.c:332-356 [@501e3f5]
+    quint16 m_paFwdRaw{0};
+    quint16 m_paRevRaw{0};
+    quint16 m_paExciterRaw{0};
+    quint16 m_paUserAdc0Raw{0};   // AIN3 — MKII PA Volts
+    quint16 m_paUserAdc1Raw{0};   // AIN4 — MKII PA Amps
+    quint16 m_paSupplyRaw{0};     // AIN6 — Hermes supply Volts
+
     // --- HL2 bandwidth monitor legacy state (replaced by HermesLiteBandwidthMonitor) ---
     // Retained so hl2IsThrottled() still compiles and existing callers are unbroken
     // until they migrate to m_bwMonitor->isThrottled().  Phase 3P-E Task 3.

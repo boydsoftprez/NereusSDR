@@ -1401,6 +1401,79 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
         emit adcOverflow(0);
     }
 
+    // Phase 3P-H Task 4: PA telemetry — extract raw 16-bit ADC counts from
+    // each subframe's C&C status bytes.  Per-board scaling lives in RadioModel
+    // (console.cs computeAlexFwdPower / computeRefPower / convertToVolts /
+    // convertToAmps), because bridge_volt / refvoltage / adc_cal_offset
+    // depend on HardwareSpecific.Model.
+    //
+    // From Thetis networkproto1.c:332-356 [@501e3f5]
+    //   case 0x08: // C0 0000 1xxx
+    //       prn->tx[0].exciter_power = ((C1 << 8) & 0xff00) | (C2 & 0xff);  // (AIN5) drive power
+    //       prn->tx[0].fwd_power     = ((C3 << 8) & 0xff00) | (C4 & 0xff);  // (AIN1) PA coupler
+    //   case 0x10: // C0 0001 0xxx
+    //       prn->tx[0].rev_power     = ((C1 << 8) & 0xff00) | (C2 & 0xff);  // (AIN2) PA reverse power
+    //       prn->user_adc0           = ((C3 << 8) & 0xff00) | (C4 & 0xff);  // AIN3 MKII PA Volts
+    //   case 0x18: // C0 0001 1xxx
+    //       prn->user_adc1           = ((C1 << 8) & 0xff00) | (C2 & 0xff);  // AIN4 MKII PA Amps
+    //       prn->supply_volts        = ((C3 << 8) & 0xff00) | (C4 & 0xff);  // AIN6 Hermes Volts
+    //
+    // We accumulate the latest value of each field across this frame's two
+    // subframes and emit one paTelemetryUpdated() with the latched values.
+    // Last-writer-wins matches Thetis (which mutates prn->* in place each subframe).
+    bool telemetryDirty = false;
+    for (int sub = 0; sub < 2; ++sub) {
+        const int base   = 8 + sub * 512;
+        const quint8 c0  = frame[base + 3];
+        const quint8 c1  = frame[base + 4];
+        const quint8 c2  = frame[base + 5];
+        const quint8 c3  = frame[base + 6];
+        const quint8 c4  = frame[base + 7];
+        if (c0 & 0x80) {
+            // I2C response — already handled above; not a telemetry frame.
+            continue;
+        }
+        // Source: networkproto1.c:332 — switch (ControlBytesIn[0] & 0xf8)
+        switch (c0 & 0xF8) {
+        case 0x08: {
+            // From Thetis networkproto1.c:339 [@501e3f5] — exciter_power AIN5
+            const quint16 exciter = static_cast<quint16>((c1 << 8) | c2);
+            // From Thetis networkproto1.c:340 [@501e3f5] — fwd_power AIN1
+            const quint16 fwd     = static_cast<quint16>((c3 << 8) | c4);
+            m_paExciterRaw = exciter;
+            m_paFwdRaw     = fwd;
+            telemetryDirty = true;
+            break;
+        }
+        case 0x10: {
+            // From Thetis networkproto1.c:344 [@501e3f5] — rev_power AIN2
+            const quint16 rev      = static_cast<quint16>((c1 << 8) | c2);
+            // From Thetis networkproto1.c:346 [@501e3f5] — user_adc0 AIN3 MKII PA Volts
+            const quint16 userAdc0 = static_cast<quint16>((c3 << 8) | c4);
+            m_paRevRaw      = rev;
+            m_paUserAdc0Raw = userAdc0;
+            telemetryDirty  = true;
+            break;
+        }
+        case 0x18: {
+            // From Thetis networkproto1.c:349 [@501e3f5] — user_adc1 AIN4 MKII PA Amps
+            const quint16 userAdc1 = static_cast<quint16>((c1 << 8) | c2);
+            // From Thetis networkproto1.c:350 [@501e3f5] — supply_volts AIN6 Hermes Volts
+            const quint16 supply   = static_cast<quint16>((c3 << 8) | c4);
+            m_paUserAdc1Raw = userAdc1;
+            m_paSupplyRaw   = supply;
+            telemetryDirty  = true;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    if (telemetryDirty) {
+        emit paTelemetryUpdated(m_paFwdRaw, m_paRevRaw, m_paExciterRaw,
+                                m_paUserAdc0Raw, m_paUserAdc1Raw, m_paSupplyRaw);
+    }
+
     // Emit iqDataReceived for each receiver
     // Contract: hwReceiverIndex (0-based), interleaved float I/Q pairs, [-1, 1]
     // Source: RadioConnection.h:82 iqDataReceived signal

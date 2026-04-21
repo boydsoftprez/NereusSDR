@@ -1,5 +1,11 @@
 #pragma once
 
+// no-port-check: NereusSDR-original abstract base class. Inline doc comments
+// reference Thetis source filenames (console.cs / networkproto1.c / network.c)
+// only as pointers to where ported logic lives in the concrete subclasses
+// (P1RadioConnection.cpp, P2RadioConnection.cpp); no upstream code is
+// reproduced in this header.
+
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
 
@@ -101,6 +107,28 @@ signals:
     // --- Meters ---
     void meterDataReceived(float forwardPower, float reversePower,
                            float supplyVoltage, float paCurrent);
+
+    // --- PA telemetry (Phase 3P-H Task 4) ---
+    // Raw 16-bit ADC counts read from C&C status bytes (P1) or the
+    // High-Priority status packet (P2). Per-board scaling to watts /
+    // volts / amps lives in RadioModel (console.cs computeAlexFwdPower /
+    // computeRefPower / convertToVolts / convertToAmps), because the
+    // bridge constants vary per HPSDRModel.
+    //
+    // Sources:
+    //   P1: networkproto1.c:332-356 [@501e3f5] — C0 cases 0x08/0x10/0x18
+    //   P2: network.c:711-748        [@501e3f5] — High-Priority byte offsets 2-3, 10-11, 18-19, 45-46, 51-52, 53-54
+    //
+    // Fields (all uint16, raw ADC counts):
+    //   fwdRaw      — fwd_power      (P1 AIN1, P2 bytes 10-11)
+    //   revRaw      — rev_power      (P1 AIN2, P2 bytes 18-19)
+    //   exciterRaw  — exciter_power  (P1 AIN5, P2 bytes 2-3)
+    //   userAdc0Raw — user_adc0      (P1 AIN3 MKII PA volts, P2 bytes 53-54)
+    //   userAdc1Raw — user_adc1      (P1 AIN4 MKII PA amps,  P2 bytes 51-52)
+    //   supplyRaw   — supply_volts   (P1 AIN6 Hermes volts,  P2 bytes 45-46)
+    void paTelemetryUpdated(quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
+                            quint16 userAdc0Raw, quint16 userAdc1Raw,
+                            quint16 supplyRaw);
 
     // ADC overflow detected.
     void adcOverflow(int adc);
