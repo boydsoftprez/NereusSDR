@@ -319,14 +319,6 @@ private:
     };
     AlexState m_alex;
 
-    // Compute Alex HPF bits based on frequency.
-    // Ported from Thetis console.cs:6830-6942 setAlexHPF
-    static int computeAlexHpf(double freqMhz);
-
-    // Compute Alex LPF bits based on frequency.
-    // Ported from Thetis console.cs:7168-7234 setAlexLPF
-    static int computeAlexLpf(double freqMhz);
-
     // Build Alex0 and Alex1 32-bit register values from current state.
     quint32 buildAlex0() const;
     quint32 buildAlex1() const;

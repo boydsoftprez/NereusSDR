@@ -1,3 +1,6 @@
+// no-port-check: test-only — Thetis file names (networkproto1.c) appear only
+// in source-cite comments that document which upstream line each assertion
+// verifies. No Thetis logic is ported here; this file is NereusSDR-original.
 #include <QtTest/QtTest>
 #include "core/P1RadioConnection.h"
 #include "core/HpsdrModel.h"

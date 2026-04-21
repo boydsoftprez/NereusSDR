@@ -131,6 +131,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "P2RadioConnection.h"
 #include "LogCategories.h"
+#include "codec/AlexFilterMap.h"
 
 #include <QNetworkDatagram>
 #include <QVariant>
@@ -358,10 +359,10 @@ void P2RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     m_rx[receiverIndex].frequency = static_cast<int>(frequencyHz);
 
     // Update Alex HPF/LPF based on new frequency
-    // From Thetis console.cs:6830-7234 — auto-select band filters
+    // From Thetis console.cs:6830-7234 [@501e3f5] — auto-select band filters
     double freqMhz = frequencyHz / 1e6;
-    m_alex.hpfBits = computeAlexHpf(freqMhz);
-    m_alex.lpfBits = computeAlexLpf(freqMhz);
+    m_alex.hpfBits = NereusSDR::codec::alex::computeHpf(freqMhz);
+    m_alex.lpfBits = NereusSDR::codec::alex::computeLpf(freqMhz);
 
     if (m_running) {
         sendCmdHighPriority();
@@ -904,67 +905,6 @@ quint32 P2RadioConnection::hzToPhaseWord(quint64 freqHz)
 {
     // Use 64-bit math to avoid overflow: freq * 2^32 / 122880000
     return static_cast<quint32>((freqHz * 4294967296ULL) / 122880000ULL);
-}
-
-// ============================================================================
-// Alex Filter/Antenna Register Computation
-// ============================================================================
-
-// Porting from Thetis console.cs:6830-6942 — setAlexHPF
-// Selects the appropriate high-pass filter based on RX frequency.
-// Returns HPF bits for the Alex bpfilter register.
-int P2RadioConnection::computeAlexHpf(double freqMhz)
-{
-    // From Thetis console.cs:6836-6939 — frequency breakpoints with default ranges
-    // Each HPF has a start/end range; these are the Thetis defaults.
-    if (freqMhz < 1.5) {
-        return 0x20;   // Bypass HPF (below 1.5 MHz)
-    }
-    if (freqMhz < 6.5) {
-        return 0x10;   // 1.5 MHz HPF
-    }
-    if (freqMhz < 9.5) {
-        return 0x08;   // 6.5 MHz HPF
-    }
-    if (freqMhz < 13.0) {
-        return 0x04;   // 9.5 MHz HPF
-    }
-    if (freqMhz < 20.0) {
-        return 0x01;   // 13 MHz HPF
-    }
-    if (freqMhz < 50.0) {
-        return 0x02;   // 20 MHz HPF
-    }
-    // 6m band: use 6M BPF/preamp
-    return 0x40;       // 6M preamp/BPF
-}
-
-// Porting from Thetis console.cs:7168-7234 — setAlexLPF
-// Selects the appropriate low-pass filter based on TX frequency.
-// Returns LPF bits for the Alex bpfilter register.
-int P2RadioConnection::computeAlexLpf(double freqMhz)
-{
-    // From Thetis console.cs:7172-7230 — frequency breakpoints with default ranges
-    if (freqMhz < 2.0) {
-        return 0x08;   // 160m LPF
-    }
-    if (freqMhz < 4.0) {
-        return 0x04;   // 80m LPF
-    }
-    if (freqMhz < 7.3) {
-        return 0x02;   // 60/40m LPF
-    }
-    if (freqMhz < 14.35) {
-        return 0x01;   // 30/20m LPF
-    }
-    if (freqMhz < 21.45) {
-        return 0x40;   // 17/15m LPF
-    }
-    if (freqMhz < 29.7) {
-        return 0x20;   // 12/10m LPF
-    }
-    // 6m and above
-    return 0x10;       // 6m LPF
 }
 
 // Build Alex0 32-bit register (bytes 1432-1435 in CmdHighPriority).
