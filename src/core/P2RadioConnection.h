@@ -175,6 +175,12 @@ public slots:
     void setMox(bool enabled) override;
     void setAntenna(int antennaIndex) override;
 
+    // Phase 3P-B Task 10: per-ADC RX1 preamp control for OrionMKII family.
+    // Routes to m_rx[1].preamp → CodecContext.p2Rx1Preamp →
+    // P2CodecOrionMkII::composeCmdHighPriority byte 1403 bit 1.
+    // ADC0 preamp uses the existing setPreamp(bool) (byte 1403 bit 0).
+    void setRx1Preamp(bool enabled);
+
 private slots:
     void onReadyRead();
     void onKeepAliveTick();

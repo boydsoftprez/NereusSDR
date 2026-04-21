@@ -119,6 +119,7 @@
 #include "RxApplet.h"
 #include "NyiOverlay.h"
 #include "core/BoardCapabilities.h"
+#include "core/P2RadioConnection.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "gui/ComboStyle.h"
@@ -130,6 +131,7 @@
 #include <algorithm>
 
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -741,6 +743,63 @@ void RxApplet::buildUi()
     columns->addLayout(rightCol, 3);
     root->addLayout(columns);
 
+    // Phase 3P-B Task 10: ADC OVL badge row + RX1 preamp toggle.
+    //
+    // Number of badges depends on BoardCapabilities::adcCount.  We gate on
+    // p2PreampPerAdc (added Task 6) as the "dual-ADC board" proxy — it's
+    // true for OrionMKII family (ANAN-7000DLE / 8000DLE / AnvelinaPro3) and
+    // false for Saturn (single-ADC at the wire layer) and all P1 boards.
+    {
+        const bool dualAdc = m_model
+            && m_model->boardCapabilities().p2PreampPerAdc;
+        const int  adcCount = dualAdc ? 2 : 1;
+
+        // OVL badge row ────────────────────────────────────────────────────
+        m_ovlRow = new QHBoxLayout;
+        m_ovlRow->setSpacing(4);
+        m_ovlRow->setContentsMargins(0, 2, 0, 0);
+
+        static const char* kOvlStyleNormal =
+            "QLabel { background: rgba(255,255,255,0.06);"
+            " color: rgba(255,255,255,0.45);"
+            " border: 1px solid rgba(255,255,255,0.12);"
+            " border-radius: 3px; font-size: 9px; font-weight: bold;"
+            " padding: 1px 4px; }";
+
+        for (int i = 0; i < adcCount; ++i) {
+            QString label = (adcCount == 1)
+                ? QStringLiteral("OVL")
+                : QStringLiteral("OVL") + QString(i == 0 ? "\u2080" : "\u2081");  // OVL₀ / OVL₁
+
+            m_ovlBadges[i] = new QLabel(label, this);
+            m_ovlBadges[i]->setStyleSheet(QString::fromLatin1(kOvlStyleNormal));
+            m_ovlBadges[i]->setAlignment(Qt::AlignCenter);
+            m_ovlRow->addWidget(m_ovlBadges[i]);
+        }
+
+        m_ovlRow->addStretch(1);
+
+        // RX1 preamp toggle (dual-ADC boards only) ────────────────────────
+        if (dualAdc) {
+            m_rx1PreampToggle = new QCheckBox(QStringLiteral("RX1 preamp"), this);
+            m_rx1PreampToggle->setStyleSheet(QStringLiteral(
+                "QCheckBox { color: #8aa8c0; font-size: 10px; }"
+                "QCheckBox::indicator { width: 12px; height: 12px; }"));
+            // Phase 3P-B Task 10: RX1 preamp wires to P2RadioConnection::setRx1Preamp
+            // which routes to CodecContext.p2Rx1Preamp → byte 1403 bit 1.
+            connect(m_rx1PreampToggle, &QCheckBox::toggled, this, [this](bool on) {
+                if (m_model) {
+                    auto* conn = qobject_cast<class P2RadioConnection*>(
+                        m_model->connection());
+                    if (conn) { conn->setRx1Preamp(on); }
+                }
+            });
+            m_ovlRow->addWidget(m_rx1PreampToggle);
+        }
+
+        root->addLayout(m_ovlRow);
+    }
+
     // ── Tooltips ──────────────────────────────────────────────────────────
     // NereusSDR native — no Thetis per-slice badge equivalent
     m_sliceBadge->setToolTip(QStringLiteral("Slice identifier"));
@@ -1136,6 +1195,38 @@ void RxApplet::connectSlice(SliceModel* s)
                 }
             }
         }
+
+        // Phase 3P-B Task 10: wire per-ADC OVL badges to overloadStatusChanged.
+        // The signal is already per-ADC (index 0..2); we drive each badge
+        // independently so dual-ADC boards show two discrete indicators.
+        connect(attCtrl, &StepAttenuatorController::overloadStatusChanged,
+                this, [this](int adcIndex, OverloadLevel level) {
+            if (adcIndex < 0 || adcIndex >= 3) { return; }
+            QLabel* badge = m_ovlBadges[adcIndex];
+            if (!badge) { return; }  // not populated on single-ADC boards
+            if (level == OverloadLevel::None) {
+                badge->setStyleSheet(QStringLiteral(
+                    "QLabel { background: rgba(255,255,255,0.06);"
+                    " color: rgba(255,255,255,0.45);"
+                    " border: 1px solid rgba(255,255,255,0.12);"
+                    " border-radius: 3px; font-size: 9px; font-weight: bold;"
+                    " padding: 1px 4px; }"));
+            } else if (level == OverloadLevel::Yellow) {
+                badge->setStyleSheet(QStringLiteral(
+                    "QLabel { background: rgba(255,200,0,0.20);"
+                    " color: #FFD700;"
+                    " border: 1px solid rgba(255,200,0,0.40);"
+                    " border-radius: 3px; font-size: 9px; font-weight: bold;"
+                    " padding: 1px 4px; }"));
+            } else {  // Red
+                badge->setStyleSheet(QStringLiteral(
+                    "QLabel { background: rgba(255,90,90,0.25);"
+                    " color: #FF6868;"
+                    " border: 1px solid rgba(255,90,90,0.50);"
+                    " border-radius: 3px; font-size: 9px; font-weight: bold;"
+                    " padding: 1px 4px; }"));
+            }
+        });
     }
 }
 
@@ -1190,6 +1281,15 @@ void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double off
 int RxApplet::stepAttMaxForTest() const
 {
     return m_stepAttSpin ? m_stepAttSpin->maximum() : -1;
+}
+
+int RxApplet::visibleOvlBadgeCountForTest() const
+{
+    int count = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (m_ovlBadges[i]) { ++count; }
+    }
+    return count;
 }
 #endif
 

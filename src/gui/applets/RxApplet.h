@@ -127,6 +127,7 @@
 #include <QStringList>
 #include <QVector>
 
+class QCheckBox;
 class QComboBox;
 class QPaintEvent;
 class QGridLayout;
@@ -188,6 +189,10 @@ public:
     // Test-only: returns current step-att spinbox maximum (for range assertions).
     // Phase 3P-A Task 15.
     int stepAttMaxForTest() const;
+
+    // Test-only: returns the number of visible ADC OVL badges.
+    // Phase 3P-B Task 10: 1 for single-ADC boards, 2 for dual-ADC boards.
+    int visibleOvlBadgeCountForTest() const;
 private:
 #endif
 
@@ -280,6 +285,18 @@ private:
     QPushButton* m_xitZero     = nullptr;
     TriBtn*      m_xitMinus    = nullptr;
     TriBtn*      m_xitPlus     = nullptr;
+
+    // Phase 3P-B Task 10: per-ADC ADC OVL badges.
+    // Index 0 = ADC0 ("OVL" on single-ADC boards, "OVL₀" on dual-ADC).
+    // Index 1 = ADC1 ("OVL₁" on dual-ADC boards only; nullptr on single-ADC).
+    // Gate: BoardCapabilities::p2PreampPerAdc — true for OrionMKII family.
+    // (p2PreampPerAdc is the proxy for "dual-ADC board" added in Task 6.)
+    QLabel*      m_ovlBadges[3]{nullptr, nullptr, nullptr};
+    QHBoxLayout* m_ovlRow{nullptr};
+
+    // Phase 3P-B Task 10: RX1 preamp toggle for dual-ADC boards only.
+    // Visible only when BoardCapabilities::p2PreampPerAdc=true.
+    QCheckBox*   m_rx1PreampToggle{nullptr};
 };
 
 } // namespace NereusSDR

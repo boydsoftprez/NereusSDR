@@ -285,3 +285,11 @@ nereus_add_test(tst_spectrum_overlay_panel)
 # BoardCapabilities::attenuator.maxDb at construction time, not hardcoded.
 nereus_add_test(tst_rxapplet_att_range)
 target_compile_definitions(tst_rxapplet_att_range PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-B Task 10: per-ADC OVL split + RX1 preamp byte 1403 bit 1 ─────
+# Single-ADC boards (HL2/Hermes): 1 OVL badge.
+# Dual-ADC boards (OrionMKII, p2PreampPerAdc=true): 2 OVL badges.
+# P2RadioConnection::setRx1Preamp(bool) routes to byte 1403 bit 1 via codec.
+# Default state (rx1Preamp=false) leaves bit 1 clear → regression-freeze safe.
+nereus_add_test(tst_rxapplet_adc_ovl)
+target_compile_definitions(tst_rxapplet_adc_ovl PRIVATE NEREUS_BUILD_TESTS)

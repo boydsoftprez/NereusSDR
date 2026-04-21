@@ -433,6 +433,19 @@ void P2RadioConnection::setPreamp(bool enabled)
     }
 }
 
+void P2RadioConnection::setRx1Preamp(bool enabled)
+{
+    // Phase 3P-B Task 10: per-ADC RX1 preamp for OrionMKII family.
+    // Routes to byte 1403 bit 1 in CmdHighPriority via buildCodecContext():
+    //   ctx.p2Rx1Preamp = (m_rx[1].preamp != 0)
+    // P2CodecOrionMkII::composeCmdHighPriority:
+    //   buf[1403] = p2Rx1Preamp << 1 | rxPreamp[0]
+    m_rx[1].preamp = enabled ? 1 : 0;
+    if (m_running) {
+        sendCmdHighPriority();
+    }
+}
+
 void P2RadioConnection::setTxDrive(int level)
 {
     // From Thetis: prn->tx[0].drive_level
