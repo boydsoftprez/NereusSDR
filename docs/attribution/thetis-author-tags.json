@@ -1,0 +1,279 @@
+{
+  "generated_utc": "2026-04-21T12:11:11+00:00",
+  "thetis_sha": "501e3f5",
+  "mi0bot_sha": "c26a8a4",
+  "callsign_tags": {
+    "MW0LGE": {
+      "count": 3070,
+      "first_seen": "version.cpp:13",
+      "files": [
+        "Alex.cs",
+        "AmpView.cs",
+        "Andromeda.cs",
+        "CATCommands.cs",
+        "CATParser.cs",
+        "CATTester.cs",
+        "CatCmdDb.cs",
+        "ColorButton.cs",
+        "DiversityForm.cs",
+        "FilterForm.cs",
+        "GlobalMouseHandler.cs",
+        "MemoryForm.cs",
+        "MeterManager.cs",
+        "Midi2CatCommands.cs",
+        "MidiDevice.cs",
+        "MidiDeviceSetup.cs",
+        "N1MM.cs",
+        "NetworkIO.cs",
+        "PSForm.cs",
+        "Penny.cs",
+        "PrettyTrackBar.cs",
+        "RAForm.cs",
+        "RXA.c",
+        "RawInput.cs",
+        "SDRSerialPortII.cs",
+        "SIOListenerII.cs",
+        "Skin.cs",
+        "SliderSettingsForm.cs",
+        "TCIServer.cs",
+        "TCPIPcatServer.cs",
+        "aamix.c",
+        "analyzer.c",
+        "analyzer.h",
+        "audio.cs",
+        "clsBandStackManager.cs",
+        "clsDBMan.cs",
+        "cmUtilities.c",
+        "cmasio.c",
+        "cmasio.h",
+        "cmaster.cs",
+        "cmbuffs.c",
+        "common.cs",
+        "console.cs",
+        "cwx.cs",
+        "database.cs",
+        "display.cs",
+        "dsp.cs",
+        "enums.cs",
+        "eqform.cs",
+        "frmMeterDisplay.cs",
+        "frmNotchPopup.cs",
+        "hostsample.cpp",
+        "ivac.c",
+        "ivac.h",
+        "netInterface.c",
+        "network.c",
+        "network.h",
+        "networkproto1.c",
+        "numericupdownts.cs",
+        "pa_asio.cpp",
+        "pa_converters.c",
+        "pa_converters.h",
+        "pa_front.c",
+        "pa_win_wasapi.c",
+        "pipe.c",
+        "portaudio.h",
+        "radio.cs",
+        "setup.cs",
+        "specHPSDR.cs",
+        "splash.cs",
+        "titlebar.cs",
+        "ucInfoBar.cs",
+        "ucMeter.cs",
+        "version.c",
+        "version.cpp",
+        "wideband.cs"
+      ]
+    },
+    "W2PA": {
+      "count": 460,
+      "first_seen": "MidiMessageManager.cs:24",
+      "files": [
+        "CATCommands.cs",
+        "CatCmdDb.cs",
+        "ControllerMapping.cs",
+        "Database.cs",
+        "Midi2CatCommands.cs",
+        "MidiDevice.cs",
+        "MidiDeviceSetup.cs",
+        "MidiMessageManager.cs",
+        "PSForm.cs",
+        "console.cs",
+        "cwx.cs",
+        "database.cs",
+        "setup.cs"
+      ]
+    },
+    "DH1KLM": {
+      "count": 267,
+      "first_seen": "CatCmdDb.cs:434",
+      "files": [
+        "CATCommands.cs",
+        "CatCmdDb.cs",
+        "Midi2CatCommands.cs",
+        "clsHardwareSpecific.cs",
+        "cmaster.cs",
+        "console.cs",
+        "enums.cs",
+        "networkproto1.c",
+        "setup.cs"
+      ]
+    },
+    "MI0BOT": {
+      "count": 222,
+      "first_seen": "network.h:422",
+      "files": [
+        "Alex.cs",
+        "Andromeda.cs",
+        "CATCommands.cs",
+        "CATParser.cs",
+        "CatCmdDb.cs",
+        "Midi2CatCommands.cs",
+        "NetworkIOImports.cs",
+        "PSForm.cs",
+        "Penny.cs",
+        "clsRadioDiscovery.cs",
+        "cmaster.cs",
+        "console.cs",
+        "enums.cs",
+        "netInterface.c",
+        "network.c",
+        "network.h",
+        "networkproto1.c",
+        "setup.cs",
+        "xvtr.cs"
+      ]
+    },
+    "G8NJJ": {
+      "count": 132,
+      "first_seen": "console.cs:141",
+      "files": [
+        "Alex.cs",
+        "Andromeda.cs",
+        "clsHardwareSpecific.cs",
+        "console.Designer.cs",
+        "console.cs",
+        "displaysettingsform.cs",
+        "enums.cs",
+        "setup.cs"
+      ]
+    },
+    "W4TME": {
+      "count": 18,
+      "first_seen": "database.cs:5005",
+      "files": [
+        "FilterForm.cs",
+        "MemoryForm.cs",
+        "console.cs",
+        "database.cs"
+      ]
+    },
+    "W4WMT": {
+      "count": 16,
+      "first_seen": "hostsample.cpp:506",
+      "files": [
+        "cmasio.c",
+        "cmasio.h",
+        "hostsample.cpp",
+        "ring.c",
+        "ring.h",
+        "setup.cs"
+      ]
+    },
+    "MI0BIT": {
+      "count": 8,
+      "first_seen": "NetworkIOImports.cs:384",
+      "files": [
+        "NetworkIOImports.cs"
+      ]
+    },
+    "G7KLJ": {
+      "count": 6,
+      "first_seen": "console.cs:1221",
+      "files": [
+        "console.cs",
+        "setup.cs"
+      ]
+    },
+    "VK6APH": {
+      "count": 6,
+      "first_seen": "display.cs:30",
+      "files": [
+        "PanDisplay.cs",
+        "display.cs",
+        "wbDisplay.cs"
+      ]
+    },
+    "W5WC": {
+      "count": 6,
+      "first_seen": "display.cs:6",
+      "files": [
+        "PanDisplay.cs",
+        "display.cs",
+        "wbDisplay.cs"
+      ]
+    },
+    "WU2O": {
+      "count": 6,
+      "first_seen": "ssql.c:342",
+      "files": [
+        "ssql.c"
+      ]
+    },
+    "IK4JPN": {
+      "count": 4,
+      "first_seen": "console.cs:26345",
+      "files": [
+        "console.cs"
+      ]
+    },
+    "MW0GLE": {
+      "count": 4,
+      "first_seen": "setup.cs:2740",
+      "files": [
+        "setup.cs"
+      ]
+    },
+    "DK1HLM": {
+      "count": 2,
+      "first_seen": "console.cs:6821",
+      "files": [
+        "console.cs"
+      ]
+    },
+    "K2UE": {
+      "count": 2,
+      "first_seen": "console.cs:26064",
+      "files": [
+        "console.cs"
+      ]
+    },
+    "KE9NS": {
+      "count": 2,
+      "first_seen": "MemoryForm.cs:662",
+      "files": [
+        "MemoryForm.cs"
+      ]
+    },
+    "MW0GE": {
+      "count": 2,
+      "first_seen": "Midi2CatCommands.cs:264",
+      "files": [
+        "Midi2CatCommands.cs"
+      ]
+    },
+    "W1CEG": {
+      "count": 2,
+      "first_seen": "console.cs:42364",
+      "files": [
+        "console.cs"
+      ]
+    }
+  },
+  "named_tags": {
+    "Thomas Ascher": {
+      "count": 2,
+      "first_seen": "ColorButton.cs:32"
+    }
+  }
+}
