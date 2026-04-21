@@ -74,6 +74,9 @@ private slots:
 
     void ssqlEnabledDefaultIsFalse() {
         // From Thetis radio.cs:1185 — _bSSqlOn default = false
+        // Upstream inline attribution preserved verbatim (radio.cs:1183):
+        //   // MW0LGE [2.9.0.8]
+        //   // Voice Squeltch - SSQL from 1.21 WDSP
         RxChannel ch(kTestChannel, kTestBufSize, kTestRate);
         QCOMPARE(ch.ssqlEnabled(), false);
     }

@@ -156,6 +156,9 @@ private slots:
     // Phase 3P-F Task 2: accessory board capability gating
     // Source: setup.cs:19834-20310 RadioModelChanged() per-model if-ladder [@501e3f5]
     //         setup.cs:6338 AddHPSDRPages() for tpPennyCtrl / tpAlexControl visibility
+    // Upstream inline attribution preserved verbatim (setup.cs:20202, :20253):
+    //   case HPSDRModel.ANAN_G2:                 // added G8NJJ
+    //   case HPSDRModel.ANAN_G2_1K:              // added G8NJJ
     // -----------------------------------------------------------------------
 
     // Only HPSDRModel.HERMES enables chkApolloPresent; all ANAN family boards

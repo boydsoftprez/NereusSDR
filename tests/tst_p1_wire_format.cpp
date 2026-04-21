@@ -36,6 +36,8 @@ private slots:
         quint8 frame[1032] = {};
         P1RadioConnection::composeEp2Frame(frame, 0, 0, 48000, false);
         // Source: networkproto1.c:600-602, 881-883 — WriteMainLoop() sync bytes
+        // Upstream inline attribution preserved verbatim (networkproto1.c:612, within same WriteMainLoop):
+        //   if (HPSDRModel == HPSDRModel_REDPITAYA) //[2.10.3.9]DH1KLM  //model needed as board type (prn->discovery.BoardType) is an OrionII
         QCOMPARE(frame[8],  quint8(0x7F));
         QCOMPARE(frame[9],  quint8(0x7F));
         QCOMPARE(frame[10], quint8(0x7F));
@@ -77,6 +79,8 @@ private slots:
         quint8 out[5] = {};
         P1RadioConnection::composeCcBank0(out, 48000, /*mox=*/true);
         // Source: networkproto1.c:615-616 — C0 = (unsigned char)XmitBit; MOX is bit 0 of C0
+        // Upstream inline attribution preserved verbatim (networkproto1.c:612, in the adjacent RedPitaya ATT branch):
+        //   if (HPSDRModel == HPSDRModel_REDPITAYA) //[2.10.3.9]DH1KLM  //model needed as board type (prn->discovery.BoardType) is an OrionII
         QCOMPARE(int(out[0] & 0x01), 1);
     }
 
@@ -226,6 +230,16 @@ private slots:
 
     // --- ep6 frame parse (1 RX) ---
     // Source: networkproto1.c:319-415 MetisReadThreadMainLoop
+    // Upstream inline attribution preserved verbatim (networkproto1.c:335, :353-355, all in
+    // MetisReadThreadMainLoop's ControlBytesIn[0] switch — ADC-overload latching):
+    //   prn->adc[0].adc_overload = prn->adc[0].adc_overload || ControlBytesIn[1] & 0x01;
+    //     // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+    //   prn->adc[0].adc_overload = prn->adc[0].adc_overload || ControlBytesIn[1] & 1;
+    //     // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+    //   prn->adc[1].adc_overload = prn->adc[1].adc_overload || (ControlBytesIn[2] & 1) << 1;
+    //     // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+    //   prn->adc[2].adc_overload = prn->adc[2].adc_overload || (ControlBytesIn[3] & 1) << 2;
+    //     // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
 
     void parseEp6Frame1RxEmitsCorrectSampleCount() {
         quint8 frame[1032] = {};

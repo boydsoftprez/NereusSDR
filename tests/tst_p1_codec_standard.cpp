@@ -65,6 +65,8 @@ private slots:
 
         // Bank 12 — ADC1 ATT during RX (no MOX), value 7
         // Source: networkproto1.c:606-616 [@501e3f5]
+        // Upstream inline attribution preserved verbatim (networkproto1.c:612):
+        //   if (HPSDRModel == HPSDRModel_REDPITAYA) //[2.10.3.9]DH1KLM  //model needed as board type (prn->discovery.BoardType) is an OrionII
         QTest::newRow("bank12_rx_adc1_att_7dB")
             << 12 << false
             << 0x16 << ((7 & 0xFF) | 0x20) << ((0 & 0x1F) | 0x20) << 0x00 << 0x00
@@ -72,6 +74,8 @@ private slots:
 
         // Bank 12 — ADC1 forced to 31 dB during MOX (Standard codec — non-RedPitaya)
         // Source: networkproto1.c:609 [@501e3f5]
+        // Upstream inline attribution preserved verbatim (networkproto1.c:612, the RedPitaya branch this test excludes):
+        //   if (HPSDRModel == HPSDRModel_REDPITAYA) //[2.10.3.9]DH1KLM  //model needed as board type (prn->discovery.BoardType) is an OrionII
         QTest::newRow("bank12_mox_adc1_forced_31dB")
             << 12 << true
             << 0x17 << (0x1F | 0x20) << (0x00 | 0x20) << 0x00 << 0x00

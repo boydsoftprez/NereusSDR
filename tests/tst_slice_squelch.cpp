@@ -68,6 +68,9 @@ private slots:
 
     void ssqlEnabledDefaultIsFalse() {
         // From Thetis radio.cs:1185 — _bSSqlOn default = false
+        // Upstream inline attribution preserved verbatim (radio.cs:1183):
+        //   // MW0LGE [2.9.0.8]
+        //   // Voice Squeltch - SSQL from 1.21 WDSP
         SliceModel s;
         QCOMPARE(s.ssqlEnabled(), false);
     }
@@ -106,6 +109,9 @@ private slots:
     void ssqlThreshDefaultValue() {
         // From Thetis radio.cs:1187 — _fSSqlThreshold = 0.16f (0..1 linear)
         // Model stores slider units 0–100; 16 maps to 0.16 at WDSP boundary.
+        // Upstream inline attribution preserved verbatim (radio.cs:1183):
+        //   // MW0LGE [2.9.0.8]
+        //   // Voice Squeltch - SSQL from 1.21 WDSP
         SliceModel s;
         QCOMPARE(s.ssqlThresh(), 16.0);
     }
