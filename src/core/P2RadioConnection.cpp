@@ -132,6 +132,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "P2RadioConnection.h"
 #include "LogCategories.h"
 #include "OcMatrix.h"
+#include "CalibrationController.h"
 #include "codec/AlexFilterMap.h"
 #include "codec/P2CodecOrionMkII.h"
 #include "codec/P2CodecSaturn.h"
@@ -632,6 +633,23 @@ void P2RadioConnection::selectCodec()
 void P2RadioConnection::setOcMatrix(const OcMatrix* matrix)
 {
     m_ocMatrix = matrix;
+}
+
+// ---------------------------------------------------------------------------
+// setCalibrationController — Phase 3P-G
+//
+// Wires RadioModel's CalibrationController so hzToPhaseWord() multiplies
+// by effectiveFreqCorrectionFactor(). When null, factor defaults to 1.0
+// and output is byte-identical to pre-calibration.
+//
+// Source: HPSDR/NetworkIO.cs:227-249 FreqCorrectionFactor property,
+//   Freq2PhaseWord(): long pw = (long)Math.Pow(2, 32) * freq / 122880000
+//   (correction factor applied before Freq2PhaseWord in Thetis via the
+//   VFOfreq → SetVFOfreq → Freq2PhaseWord chain) [@501e3f5]
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setCalibrationController(const CalibrationController* cal)
+{
+    m_calController = cal;
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,10 +1171,30 @@ void P2RadioConnection::writeBE32(char* buf, int offset, quint32 value)
 // From pcap analysis: phase_word = freq_hz * 2^32 / 122880000
 // The ANAN-G2 clock is 122.88 MHz. Phase word mode (General byte 37 bit 3)
 // tells the radio to interpret frequency fields as NCO phase increments.
-quint32 P2RadioConnection::hzToPhaseWord(quint64 freqHz)
+//
+// Phase 3P-G: multiplied by CalibrationController::effectiveFreqCorrectionFactor()
+// when a controller is wired.  Default factor 1.0 → byte-identical to pre-cal.
+//
+// Source: HPSDR/NetworkIO.cs:251-254 Freq2PhaseWord():
+//   long pw = (long)Math.Pow(2, 32) * freq / 122880000;
+//   (Thetis applies FreqCorrectionFactor to the freq argument via VFOfreq()
+//   before calling Freq2PhaseWord — we fold the factor into this helper.)
+//   [@501e3f5]
+quint32 P2RadioConnection::hzToPhaseWord(quint64 freqHz) const
 {
+    // Apply frequency correction factor if a CalibrationController is wired.
+    // Source: setup.cs:14036-14050 udHPSDRFreqCorrectFactor_ValueChanged:
+    //   NetworkIO.FreqCorrectionFactor = (double)udHPSDRFreqCorrectFactor.Value;
+    //   (factor sent from setup to NetworkIO; NereusSDR folds it here instead)
+    //   [@501e3f5]
+    const double factor = m_calController
+                          ? m_calController->effectiveFreqCorrectionFactor()
+                          : 1.0;
+    // Use floating-point for the correction, then convert to quint32.
+    // When factor == 1.0, the result is byte-identical to the pre-cal formula.
     // Use 64-bit math to avoid overflow: freq * 2^32 / 122880000
-    return static_cast<quint32>((freqHz * 4294967296ULL) / 122880000ULL);
+    const double correctedHz = static_cast<double>(freqHz) * factor;
+    return static_cast<quint32>((correctedHz * 4294967296.0) / 122880000.0);
 }
 
 // Build Alex0 32-bit register (bytes 1432-1435 in CmdHighPriority).

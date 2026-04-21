@@ -578,6 +578,13 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         p2->setOcMatrix(&m_ocMatrix);
     }
 
+    // Wire CalibrationController to P2RadioConnection so hzToPhaseWord()
+    // applies effectiveFreqCorrectionFactor(). P1 uses raw Hz (not phase words),
+    // so P1 doesn't need this. Phase 3P-G.
+    if (auto* p2 = qobject_cast<class P2RadioConnection*>(m_connection)) {
+        p2->setCalibrationController(&m_calController);
+    }
+
     // Wire IoBoardHl2 so P1CodecHl2 can dequeue I2C transactions into C&C
     // frames and the ep6 read path can route responses back to the register
     // mirror.  On non-HL2 boards, setIoBoard() is a noop (selectCodec()
