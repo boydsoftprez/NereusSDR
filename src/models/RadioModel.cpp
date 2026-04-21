@@ -255,6 +255,191 @@ warren@wpratt.com
 
 namespace NereusSDR {
 
+// ─── Phase 3P-H Task 4: per-board PA telemetry scaling ─────────────────────
+//
+// The C&C / High-Priority status parsers (P1RadioConnection,
+// P2RadioConnection) emit raw 16-bit ADC counts.  Per-board conversion
+// to physical units (watts, volts, amps) is encoded in console.cs and
+// depends on HardwareSpecific.Model — translation belongs here, not in
+// the wire-protocol parsers.
+//
+// All formulas verbatim from Thetis console.cs [@501e3f5].  Constants
+// (bridge_volt, refvoltage, adc_cal_offset, volt_div, amp_voff, amp_sens)
+// preserved exactly per CLAUDE.md "Constants and Magic Numbers" rule.
+namespace {
+
+// From Thetis console.cs:25008-25072 [@501e3f5] computeAlexFwdPower():
+//   float volts = (adc - adc_cal_offset) / 4095.0f * refvoltage;
+//   if (volts < 0) volts = 0;
+//   float watts = Math.Pow(volts, 2) / bridge_volt;
+//
+// Bridge constants per HPSDRModel:
+//   ANAN100/100B/100D : bridge=0.095  refV=3.3  cal=6
+//   ANAN200D          : bridge=0.108  refV=5.0  cal=4
+//   ANAN7000D/G2/RP   : bridge=0.12   refV=5.0  cal=32
+//   ORIONMKII/8000D   : bridge=0.08   refV=5.0  cal=18
+//   default           : bridge=0.09   refV=3.3  cal=6
+double scaleFwdPowerWatts(quint16 adcRaw, HPSDRModel model)
+{
+    double bridge_volt   = 0.09;
+    double refvoltage    = 3.3;
+    int    adc_cal_offset = 6;
+
+    switch (model) {
+    case HPSDRModel::ANAN100:
+    case HPSDRModel::ANAN100B:
+    case HPSDRModel::ANAN100D:
+        bridge_volt = 0.095; refvoltage = 3.3; adc_cal_offset = 6;
+        break;
+    case HPSDRModel::ANAN200D:
+        bridge_volt = 0.108; refvoltage = 5.0; adc_cal_offset = 4;
+        break;
+    case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::ANAN_G2:
+    case HPSDRModel::ANAN_G2_1K:
+    case HPSDRModel::REDPITAYA:
+        bridge_volt = 0.12;  refvoltage = 5.0; adc_cal_offset = 32;
+        break;
+    case HPSDRModel::ORIONMKII:
+    case HPSDRModel::ANAN8000D:
+        bridge_volt = 0.08;  refvoltage = 5.0; adc_cal_offset = 18;
+        break;
+    default:
+        // From Thetis console.cs:25049-25053 [@501e3f5] — default case
+        bridge_volt = 0.09; refvoltage = 3.3; adc_cal_offset = 6;
+        break;
+    }
+
+    double adc = static_cast<double>(adcRaw);
+    if (adc < 0) { adc = 0; }
+    double volts = (adc - adc_cal_offset) / 4095.0 * refvoltage;
+    if (volts < 0) { volts = 0; }
+    double watts = (volts * volts) / bridge_volt;
+    if (watts < 0) { watts = 0; }
+    return watts;
+}
+
+// From Thetis console.cs:24928-24996 [@501e3f5] computeRefPower():
+//   identical formula shape; bridge constants differ + 6m carve-out.
+//   We omit the 6m branch here because tx_band routing isn't wired
+//   into RadioModel yet — the off-band scaling is conservative
+//   (slightly under-reads on 6m).  TODO when TX-band tracking lands.
+double scaleRevPowerWatts(quint16 adcRaw, HPSDRModel model)
+{
+    double bridge_volt   = 0.09;
+    double refvoltage    = 3.3;
+    int    adc_cal_offset = 3;
+
+    switch (model) {
+    case HPSDRModel::ANAN100:
+    case HPSDRModel::ANAN100B:
+    case HPSDRModel::ANAN100D:
+        bridge_volt = 0.095; refvoltage = 3.3; adc_cal_offset = 3;
+        break;
+    case HPSDRModel::ANAN200D:
+        bridge_volt = 0.108; refvoltage = 5.0; adc_cal_offset = 2;
+        break;
+    case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::ANAN_G2:
+    case HPSDRModel::ANAN_G2_1K:
+    case HPSDRModel::REDPITAYA:
+        bridge_volt = 0.15;  refvoltage = 5.0; adc_cal_offset = 28;
+        break;
+    case HPSDRModel::ORIONMKII:
+    case HPSDRModel::ANAN8000D:
+        bridge_volt = 0.08;  refvoltage = 5.0; adc_cal_offset = 16;
+        break;
+    default:
+        bridge_volt = 0.09; refvoltage = 3.3; adc_cal_offset = 3;
+        break;
+    }
+
+    double adc = static_cast<double>(adcRaw);
+    if (adc < 0) { adc = 0; }
+    double volts = (adc - adc_cal_offset) / 4095.0 * refvoltage;
+    if (volts < 0) { volts = 0; }
+    double watts = (volts * volts) / bridge_volt;
+    if (watts < 0) { watts = 0; }
+    return watts;
+}
+
+// From Thetis console.cs:24886-24892 [@501e3f5] convertToVolts():
+//   float volt_div = (22.0f + 1.0f) / 1.1f;          // R1+R2 / R2
+//   float volts    = (IOreading / 4095.0f) * 5.0f;
+//   volts = volts * volt_div;
+//
+// Applies to ORIONMKII/ANAN8000D PA volts (user_adc0 / AIN3).
+// Other boards either use computeHermesDCVoltage (supply_volts AIN6)
+// or don't expose PA volts at all; we return 0 for those models.
+double scalePaVolts(quint16 adcRaw, HPSDRModel model)
+{
+    switch (model) {
+    case HPSDRModel::ORIONMKII:
+    case HPSDRModel::ANAN8000D:
+    case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN_G2:
+    case HPSDRModel::ANAN_G2_1K:
+    case HPSDRModel::ANVELINAPRO3: {
+        const double volt_div = (22.0 + 1.0) / 1.1;  // 20.9091
+        double volts = (static_cast<double>(adcRaw) / 4095.0) * 5.0;
+        volts *= volt_div;
+        return volts;
+    }
+    default:
+        return 0.0;
+    }
+}
+
+// From Thetis console.cs:24916-24926 [@501e3f5] convertToAmps():
+//   float voff     = _amp_voff;        // default 360.0f
+//   float sens     = _amp_sens;        // default 120.0f
+//   float fwdvolts = (IOreading * 5000.0f) / 4095.0f;
+//   if (fwdvolts < 0) fwdvolts = 0;
+//   float amps = (fwdvolts - voff) / sens;
+//   if (amps < 0) amps = 0;
+//
+// _amp_voff and _amp_sens are user-tunable in Thetis Setup → PA Calibration;
+// NereusSDR will surface them through CalibrationController in a follow-up
+// (Phase 3P-G already lays the groundwork).  Defaults match Thetis 360/120.
+double scalePaAmps(quint16 adcRaw, HPSDRModel model)
+{
+    switch (model) {
+    case HPSDRModel::ORIONMKII:
+    case HPSDRModel::ANAN8000D:
+    case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN_G2:
+    case HPSDRModel::ANAN_G2_1K:
+    case HPSDRModel::ANVELINAPRO3: {
+        constexpr double kAmpVoff = 360.0;   // From Thetis console.cs:24893 [@501e3f5]
+        constexpr double kAmpSens = 120.0;   // From Thetis console.cs:24894 [@501e3f5]
+        double fwdvolts = (static_cast<double>(adcRaw) * 5000.0) / 4095.0;
+        if (fwdvolts < 0) { fwdvolts = 0; }
+        double amps = (fwdvolts - kAmpVoff) / kAmpSens;
+        if (amps < 0) { amps = 0; }
+        return amps;
+    }
+    default:
+        return 0.0;
+    }
+}
+
+// PA temperature: Thetis does not currently surface a per-board PA temp
+// scale in console.cs (no convertToTemp helper exists in v2.10.3.13).
+// HL2 reports temp via I2C (Phase 3P-E IoBoardHl2 mirror); ANAN family
+// PA temperature reaches Thetis only through external CAT/AmpView.
+// Returning 0.0 here is honest — RadioStatusPage will show a dash for
+// boards without a real source.  TODO (deferred): wire HL2 I2C temp
+// register into setPaTemperature() in Phase H Task 5.
+double scalePaTemperatureCelsius(quint16 /*adcRaw*/, HPSDRModel /*model*/)
+{
+    // no-port-check: NereusSDR-original placeholder — see comment above.
+    return 0.0;
+}
+
+} // anonymous namespace
+
 RadioModel::RadioModel(QObject* parent)
     : QObject(parent)
     , m_discovery(new RadioDiscovery(this))
@@ -743,6 +928,37 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         Q_UNUSED(current);
         Q_UNUSED(fwd);
         Q_UNUSED(rev);
+    });
+
+    // Phase 3P-H Task 4: PA telemetry → RadioStatus.
+    // Apply per-board scaling (console.cs computeAlexFwdPower / computeRefPower
+    // / convertToVolts / convertToAmps [@501e3f5]) and push the physical
+    // values into the RadioStatus model owned by RadioModel. Any UI bound to
+    // RadioStatus signals (Diagnostics → Radio Status page, S-meter PA tile)
+    // refreshes automatically.
+    connect(m_connection, &RadioConnection::paTelemetryUpdated,
+            this, [this](quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
+                         quint16 userAdc0Raw, quint16 userAdc1Raw,
+                         quint16 supplyRaw) {
+        const HPSDRModel model = m_hardwareProfile.model;
+        const double fwdW   = scaleFwdPowerWatts(fwdRaw, model);
+        const double revW   = scaleRevPowerWatts(revRaw, model);
+        const double paV    = scalePaVolts(userAdc0Raw, model);
+        const double paA    = scalePaAmps(userAdc1Raw, model);
+        const double paTemp = scalePaTemperatureCelsius(0, model);
+        Q_UNUSED(paV);       // RadioStatus does not expose PA volts directly (per its design header)
+        Q_UNUSED(supplyRaw); // supply_volts surfaced via computeHermesDCVoltage in a later step
+
+        m_radioStatus.setForwardPower(fwdW);
+        m_radioStatus.setReflectedPower(revW);
+        m_radioStatus.setExciterPowerMw(static_cast<int>(exciterRaw));
+        m_radioStatus.setPaCurrent(paA);
+        // Only push temp when we have a real source (non-zero); leaves the
+        // last-known value alone otherwise so a stale 0 doesn't overwrite a
+        // good HL2 reading from another path.
+        if (paTemp > 0.0) {
+            m_radioStatus.setPaTemperature(paTemp);
+        }
     });
 
     // Error handling
@@ -1419,6 +1635,14 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
             // Exempt this MAC from discovery stale-removal — once the
             // radio is streaming it stops replying to broadcasts.
             m_discovery->setConnectedMac(m_lastRadioInfo.macAddress);
+        }
+        // Phase 3P-H Task 4: validate persisted per-MAC settings against the
+        // connected board's BoardCapabilities. Any clamp warnings, mismatch
+        // alerts, or accessory mis-configurations populate
+        // SettingsHygiene::issues() and surface on the Diagnostics →
+        // Settings Validation sub-tab (built in Phase H Task 3).
+        if (!m_lastRadioInfo.macAddress.isEmpty()) {
+            m_settingsHygiene.validate(m_lastRadioInfo.macAddress, boardCapabilities());
         }
         // Phase 3I — fan out to HardwarePage so its sub-tabs populate with
         // the connected radio's fields (Radio Info labels, sample rate,
