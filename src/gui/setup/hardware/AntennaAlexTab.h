@@ -6,12 +6,16 @@
 //
 // Ported from Thetis source:
 //   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.designer.cs, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-20 — Refactored into parent QTabWidget hosting three sub-sub-tabs:
+//                 Antenna Control (existing content), Alex-1 Filters (Task 8),
+//                 Alex-2 Filters (placeholder for Task 9). J.J. Boyd (KG4VCF).
 // =================================================================
 
 //=================================================================
@@ -36,7 +40,7 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 // You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to: 
+// Paper mail may be sent to:
 //    FlexRadio Systems
 //    8900 Marybank Dr.
 //    Austin, TX 78750
@@ -67,6 +71,7 @@ class QComboBox;
 class QGroupBox;
 class QLabel;
 class QScrollArea;
+class QTabWidget;
 class QTableWidget;
 class QTableWidgetItem;
 
@@ -75,7 +80,17 @@ namespace NereusSDR {
 class RadioModel;
 struct RadioInfo;
 struct BoardCapabilities;
+class AntennaAlexAlex1Tab;
 
+// AntennaAlexTab — parent "Antenna / ALEX" tab in Hardware Config.
+//
+// Hosts three sub-sub-tabs that mirror Thetis tcAlexControl:
+//   0. Antenna Control — per-band RX/TX antenna selection + relay options
+//      (Thetis tpAlexAntCtrl; Phase F will add proper antenna routing here)
+//   1. Alex-1 Filters  — HPF + LPF + Saturn BPF1 band-edge editors (Task 8)
+//   2. Alex-2 Filters  — placeholder for Task 9
+//
+// Source: Thetis tcAlexControl (setup.designer.cs:23385-23395) [@501e3f5]
 class AntennaAlexTab : public QWidget {
     Q_OBJECT
 public:
@@ -97,6 +112,13 @@ private:
 
     RadioModel*   m_model{nullptr};
 
+    // Sub-sub-tab host
+    // Source: Thetis tcAlexControl (setup.designer.cs:23385-23395) [@501e3f5]
+    QTabWidget*          m_subTabs{nullptr};
+
+    // Tab 0: Antenna Control
+    QWidget*             m_antennaControlTab{nullptr};
+
     // Per-band RX antenna: 14 rows × 3 columns (ANT1 / ANT2 / ANT3)
     // Each cell is a radio-button-like exclusive selection stored via
     // Qt::CheckStateRole. We use QTableWidget + exclusive logic in itemChanged.
@@ -114,7 +136,17 @@ private:
     QCheckBox*    m_bpf2Gnd{nullptr};
     QCheckBox*    m_enableXvtrHf{nullptr};
 
+    // Tab 1: Alex-1 Filters
+    // Source: Thetis tpAlexFilterControl (setup.designer.cs:23399-25538) [@501e3f5]
+    AntennaAlexAlex1Tab* m_alex1Tab{nullptr};
+
+    // Tab 2: Alex-2 Filters (placeholder — Task 9)
+    QWidget*             m_alex2PlaceholderTab{nullptr};
+
     bool m_updating{false};
+
+    // Last seen capabilities — needed to route populate() to sub-tabs
+    QString m_lastMac;
 };
 
 } // namespace NereusSDR

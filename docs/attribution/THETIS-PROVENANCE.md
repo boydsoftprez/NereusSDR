@@ -186,10 +186,12 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/setup/DspSetupPages.h | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | DSP setup page declarations; pairs with DspSetupPages.cpp |
 | src/gui/setup/GeneralOptionsPage.cpp | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | grpHermesStepAttenuator, groupBoxTS47, chkAutoATTRx1/2 |
 | src/gui/setup/GeneralOptionsPage.h | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | grpHermesStepAttenuator, groupBoxTS47 |
-| src/gui/setup/hardware/AntennaAlexTab.cpp | Project Files/Source/Console/setup.cs | 13393-13478; 6185-6246; 2892-2898; 18639 | port | thetis-samphire | InitAlexAntTables(), radAlexR/T enable, chkRxOutOnTx, chkEnableXVTRHF |
+| src/gui/setup/hardware/AntennaAlexTab.cpp | Project Files/Source/Console/setup.cs; Project Files/Source/Console/setup.designer.cs | 13393-13478; 6185-6246; 2892-2898; 18639; 23385-23395 | port | thetis-samphire | InitAlexAntTables(), radAlexR/T enable, chkRxOutOnTx, chkEnableXVTRHF; refactored into tcAlexControl parent QTabWidget |
+| src/gui/setup/hardware/AntennaAlexAlex1Tab.cpp | Project Files/Source/Console/setup.designer.cs | 23385-25538 | port | thetis-samphire | Alex-1 Filters sub-sub-tab — HPF + LPF + Saturn BPF1 panels |
+| src/gui/setup/hardware/AntennaAlexAlex1Tab.h | Project Files/Source/Console/setup.designer.cs | 23385-25538 | port | thetis-samphire | header mirrors .cpp |
 | src/gui/setup/hardware/BandwidthMonitorTab.cpp | Project Files/Source/ChannelMaster/bandwidth_monitor.h | full | port | thetis-samphire | Qt sub-tab around Samphire's C byte-accounting API; wires static controls only — live feed deferred to Phase 3L |
 | src/gui/setup/hardware/BandwidthMonitorTab.h | Project Files/Source/ChannelMaster/bandwidth_monitor.h | full | port | thetis-samphire | sub-tab declaration; pairs with BandwidthMonitorTab.cpp |
-| src/gui/setup/hardware/AntennaAlexTab.h | Project Files/Source/Console/setup.cs | 13393; 2892-2898 | port | thetis-samphire | InitAlexAntTables() + per-band row structure |
+| src/gui/setup/hardware/AntennaAlexTab.h | Project Files/Source/Console/setup.cs; Project Files/Source/Console/setup.designer.cs | 13393; 2892-2898; 23385-23395 | port | thetis-samphire | InitAlexAntTables() + per-band row structure; refactored as tcAlexControl parent |
 | src/gui/setup/hardware/DiversityTab.cpp | Project Files/Source/Console/DiversityForm.cs | full | port | thetis-samphire | |
 | src/gui/setup/hardware/DiversityTab.h | Project Files/Source/Console/DiversityForm.cs | 1216; 1228 | port | thetis-samphire | chkLockAngle, chkLockR |
 | src/gui/setup/hardware/OcOutputsTab.cpp | Project Files/Source/Console/setup.cs | 12877-12934 | port | thetis-samphire | UpdateOCBits, chkPenOCrcv/xmit pattern |

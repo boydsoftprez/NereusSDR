@@ -428,6 +428,7 @@ Total tracked files: **724**
 - `tests/tst_setup_helpers.cpp`
 - `tests/tst_slice_frequency_lock.cpp`
 - `tests/tst_slice_persistence_per_band.cpp`
+- `tests/tst_alex1_filters_tab.cpp`
 - `tests/tst_smoke.cpp`
 - `tests/tst_vfo_level_bar.cpp`
 - `tests/tst_vfo_mode_containers.cpp`
@@ -589,6 +590,8 @@ Total tracked files: **724**
 - `src/gui/setup/TransmitSetupPages.h`
 - `src/gui/setup/hardware/AntennaAlexTab.cpp`
 - `src/gui/setup/hardware/AntennaAlexTab.h`
+- `src/gui/setup/hardware/AntennaAlexAlex1Tab.cpp`
+- `src/gui/setup/hardware/AntennaAlexAlex1Tab.h`
 - `src/gui/setup/hardware/BandwidthMonitorTab.cpp`
 - `src/gui/setup/hardware/BandwidthMonitorTab.h`
 - `src/gui/setup/hardware/DiversityTab.cpp`
