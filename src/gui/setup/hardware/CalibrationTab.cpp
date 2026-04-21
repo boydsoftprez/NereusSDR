@@ -360,6 +360,8 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     paCurrentForm->addRow(paBtnRow);
 
     // Source: console.cs:27457-27463 chkLogVoltsAmps -> console.LogVA [@501e3f5]
+    // Upstream inline attribution preserved verbatim (console.cs:27453):
+    //   chkVFOBLock.Enabled = false; //[2.10.3.7]MW0LGE
     m_logVoltsAmpsCheck = new QCheckBox(tr("Log Volts/Amps to VALog.txt"), paCurrentGroup);
     paCurrentForm->addRow(m_logVoltsAmpsCheck);
 

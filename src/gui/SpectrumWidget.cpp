@@ -2847,6 +2847,8 @@ void SpectrumWidget::setVfoFrequency(double hz)
     if (!m_ctunEnabled) {
         // Traditional mode: auto-scroll pan center to keep VFO visible
         // From Thetis console.cs:31371-31385
+        // Upstream inline attribution preserved verbatim (console.cs:31381):
+        //   //-W2PA If we tune beyond the display limits, re-center or scroll display, and keep going.  Original code above just stops tuning at edges.
         double leftEdge = m_centerHz - m_bandwidthHz / 2.0;
         double rightEdge = m_centerHz + m_bandwidthHz / 2.0;
         double margin = m_bandwidthHz * 0.10;

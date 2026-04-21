@@ -250,6 +250,8 @@ ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
 void ContainerManager::destroyContainer(const QString& id)
 {
     // From Thetis MeterManager.cs:6533-6579
+    // Upstream inline attribution preserved verbatim (MeterManager.cs:6563):
+    //   f.Dispose();//[2.10.3.7]MW0LGE // we have to dispose it because close() prevent this being freed up
     if (!m_containers.contains(id)) {
         qCWarning(lcContainer) << "destroyContainer: unknown id:" << id;
         return;
@@ -523,6 +525,8 @@ void ContainerManager::setContentFactory(ContainerContentFactory factory)
 void ContainerManager::saveState()
 {
     // From Thetis MeterManager.cs:6391-6447
+    // Upstream inline attribution preserved verbatim (MeterManager.cs:6433):
+    //   //a.Add("meterIGSettings_" + ig.Value.ID, igs.ToString()); //[2.10.3.6]MW0LGE not used
     auto& s = AppSettings::instance();
 
     // Clear old data

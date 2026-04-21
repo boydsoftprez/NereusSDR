@@ -472,6 +472,8 @@ int ContainerWidget::roundToNearestTen(int value)
 void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 {
     // From Thetis ucMeter.cs:1198-1229
+    // Upstream inline attribution preserved verbatim (ucMeter.cs:1200):
+    //   bool no_controls = _no_controls && !Common.ShiftKeyDown; //[2.10.3.6]MW0LGE no title or resize grabber, override by holding shift
     bool noControls = m_noControls && !(QApplication::keyboardModifiers() & Qt::ShiftModifier);
 
     if (!m_dragging && !noControls) {
