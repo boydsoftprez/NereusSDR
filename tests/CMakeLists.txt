@@ -302,3 +302,14 @@ nereus_add_test(tst_device_card)
 # vectors without invoking PortAudio.
 nereus_add_test(tst_audio_vax_page_auto_detect)
 target_compile_definitions(tst_audio_vax_page_auto_detect PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3O Sub-Phase 12 Task 12.4: AudioEngine::resetAudioSettings ───────────
+# Verifies the clear-vs-preserve boundary from addendum §2.5:
+#   Cleared: audio/Speakers/*, Headphones/*, TxInput/*, Vax<1..4>/*,
+#            DspRate, DspBlockSize, VacFeedback/<ch>/*, feature flags,
+#            FirstRunComplete, LastDetectedCables.
+#   Preserved: slice/<N>/VaxChannel, tx/OwnerSlot.
+# Also verifies signal cascade: speakersConfigChanged, vaxConfigChanged(1..4),
+# audioSettingsReset. 13 test cases.
+nereus_add_test(tst_audio_engine_reset_audio_settings)
+target_compile_definitions(tst_audio_engine_reset_audio_settings PRIVATE NEREUS_BUILD_TESTS)

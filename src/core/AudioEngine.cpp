@@ -71,6 +71,7 @@
 
 #include "AudioEngine.h"
 
+#include "AppSettings.h"
 #include "LogCategories.h"
 #include "audio/PortAudioBus.h"
 #include "../models/RadioModel.h"
@@ -754,6 +755,107 @@ float AudioEngine::vaxTxLevel() const
         return 0.0f;
     }
     return bus->txLevel();
+}
+
+// Sub-Phase 12 Task 12.4 — DSP sample-rate / block-size persistence.
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setDspSampleRate(int rate)
+{
+    AppSettings::instance().setValue(QStringLiteral("audio/DspRate"),
+                                     QString::number(rate));
+    // TODO(sub-phase-12-dsp-live-apply): delegate to WdspEngine once
+    // channel teardown/rebuild infrastructure is available.
+    qCInfo(lcAudio) << "DspRate change queued — applied on next channel rebuild"
+                    << "(requested:" << rate << "Hz)";
+    emit dspSampleRateChanged(rate);
+}
+
+void AudioEngine::setDspBlockSize(int blockSize)
+{
+    AppSettings::instance().setValue(QStringLiteral("audio/DspBlockSize"),
+                                     QString::number(blockSize));
+    // TODO(sub-phase-12-dsp-live-apply): delegate to WdspEngine once
+    // channel teardown/rebuild infrastructure is available.
+    qCInfo(lcAudio) << "DspBlockSize change queued — applied on next channel rebuild"
+                    << "(requested:" << blockSize << ")";
+    emit dspBlockSizeChanged(blockSize);
+}
+
+// Sub-Phase 12 Task 12.4 — VAC feedback-loop tuning persistence.
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setVacFeedbackParams(int channel, const VacFeedbackParams& params)
+{
+    if (channel < 1 || channel > 4) {
+        qCWarning(lcAudio) << "setVacFeedbackParams: channel" << channel
+                           << "out of range (1..4) — ignored";
+        return;
+    }
+    const QString prefix =
+        QStringLiteral("audio/VacFeedback/%1").arg(channel);
+    auto& s = AppSettings::instance();
+    s.setValue(prefix + QStringLiteral("/Gain"),
+               QString::number(static_cast<double>(params.gain), 'f', 4));
+    s.setValue(prefix + QStringLiteral("/SlewTimeMs"),
+               QString::number(params.slewTimeMs));
+    s.setValue(prefix + QStringLiteral("/PropRing"),
+               QString::number(params.propRing));
+    s.setValue(prefix + QStringLiteral("/FfRing"),
+               QString::number(params.ffRing));
+    // TODO(sub-phase-12-vac-feedback-live-apply): wire into IVAC engine once
+    // Phase 3M IVAC port lands.
+    qCInfo(lcAudio) << "VacFeedback params persisted; live-apply deferred to Phase 3M IVAC port"
+                    << "(channel:" << channel
+                    << "gain:" << params.gain
+                    << "slewTimeMs:" << params.slewTimeMs
+                    << "propRing:" << params.propRing
+                    << "ffRing:" << params.ffRing << ")";
+}
+
+// Sub-Phase 12 Task 12.4 — resetAudioSettings (addendum §2.5).
+// ---------------------------------------------------------------------------
+
+void AudioEngine::resetAudioSettings()
+{
+    auto& s = AppSettings::instance();
+    const QStringList keys = s.allKeys();
+
+    // Keys to PRESERVE (per addendum §2.5): slice/<N>/VaxChannel and
+    // tx/OwnerSlot. All other audio/* keys are cleared.
+    static const QStringList kPreservePrefixes = {
+        QStringLiteral("slice/"),
+        QStringLiteral("tx/OwnerSlot"),
+    };
+
+    auto shouldPreserve = [&](const QString& key) -> bool {
+        for (const QString& prefix : kPreservePrefixes) {
+            if (key.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const QString& key : keys) {
+        if (key.startsWith(QStringLiteral("audio/")) && !shouldPreserve(key)) {
+            s.remove(key);
+        }
+    }
+
+    // Rebuild buses from seeded defaults (calls ensureSpeakersOpen which
+    // emits speakersConfigChanged after opening the default bus).
+    ensureSpeakersOpen();
+
+    // Emit per-VAX config-changed signals so VAX-page cards refresh.
+    for (int ch = 1; ch <= 4; ++ch) {
+        emit vaxConfigChanged(ch, AudioDeviceConfig{});
+    }
+
+    emit audioSettingsReset();
+
+    qCInfo(lcAudio) << "Audio settings reset to defaults (audio/* cleared;"
+                    << "slice/*/VaxChannel + tx/OwnerSlot preserved)";
 }
 
 } // namespace NereusSDR

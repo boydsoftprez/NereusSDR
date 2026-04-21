@@ -181,6 +181,35 @@ public:
     void setVaxMuted(int channel, bool muted);
     void setVaxTxGain(float gain);
 
+    // Sub-Phase 12 Task 12.4 — DSP rate / block-size persistence.
+    // Persists audio/DspRate and audio/DspBlockSize. Live-apply to the
+    // WDSP channel pipeline is deferred until the channel-rebuild
+    // infrastructure lands; the setter logs and marks a deferred apply.
+    // TODO(sub-phase-12-dsp-live-apply): delegate to WdspEngine once
+    // channel teardown/rebuild infrastructure is available.
+    void setDspSampleRate(int rate);
+    void setDspBlockSize(int blockSize);
+
+    // Sub-Phase 12 Task 12.4 — VAC feedback-loop tuning (per addendum §2.4).
+    // The four fields map to Thetis IVAC feedback tuning knobs. Persists to
+    // audio/VacFeedback/<channel>/{Gain,SlewTimeMs,PropRing,FfRing}.
+    // Live-apply is deferred to Phase 3M IVAC port.
+    // TODO(sub-phase-12-vac-feedback-live-apply): wire into IVAC engine.
+    struct VacFeedbackParams {
+        float gain      = 1.0f;
+        int   slewTimeMs = 5;
+        int   propRing   = 2;
+        int   ffRing     = 2;
+    };
+    void setVacFeedbackParams(int channel, const VacFeedbackParams& params);
+
+    // Sub-Phase 12 Task 12.4 — Reset all audio settings (addendum §2.5).
+    // Clears all audio/* keys from AppSettings, preserving
+    // slice/<N>/VaxChannel and tx/OwnerSlot. Then rebuilds buses from
+    // seeded defaults and emits the config-changed signal cascade so
+    // subscribed UIs refresh.
+    void resetAudioSettings();
+
     float vaxRxGain(int channel) const;
     bool  vaxMuted(int channel) const;
     float vaxTxGain() const { return m_vaxTxGain.load(std::memory_order_acquire); }
@@ -196,6 +225,11 @@ signals:
     void vaxRxGainChanged(int channel, float gain);
     void vaxMutedChanged(int channel, bool muted);
     void vaxTxGainChanged(float gain);
+
+    // Sub-Phase 12 Task 12.4 — DSP parameter and audio-reset signals.
+    void dspSampleRateChanged(int rate);
+    void dspBlockSizeChanged(int blockSize);
+    void audioSettingsReset();
 
     // Sub-Phase 12 Task 12.2 — per-endpoint config-changed signals.
     // Each carries the AudioDeviceConfig the engine actually negotiated
