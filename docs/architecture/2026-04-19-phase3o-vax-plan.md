@@ -2145,6 +2145,16 @@ In `MainWindow::MainWindow`:
 
 ## Sub-Phase 11: VaxFirstRunDialog 🟡
 
+> ⚠️ **Release gate:** Sub-Phase 11 must not ship in a release tag without
+> Sub-Phase 12 (Setup → Audio → VAX page) also merged. A user who clicks
+> "Skip" or "Continue without VAX" on the first-run dialog sets
+> `audio/FirstRunComplete = "True"` and has no in-app way to re-open the
+> dialog or bind cables until Sub-Phase 12 provides the Setup page. The
+> dialog itself is complete and safe to merge to `main`; the gate applies
+> only to the `/release` skill cut. (Decision recorded 2026-04-20 by JJ
+> Boyd; see the `TODO(sub-phase-12-release-blocker)` marker in
+> `src/gui/MainWindow.cpp`.)
+
 ### Task 11.1: Dialog with five scenario modes
 
 **Files:**

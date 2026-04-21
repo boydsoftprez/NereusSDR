@@ -486,14 +486,14 @@ private:
 
     // ---- Frequency range ----
     double m_centerHz{14225000.0};    // 14.225 MHz default
-    double m_bandwidthHz{200000.0};   // 200 kHz default
+    double m_bandwidthHz{192000.0};   // 192 kHz default (P1 base sample rate)
     double m_ddcCenterHz{14225000.0};   // DDC hardware center frequency
     double m_sampleRateHz{768000.0};    // DDC sample rate
 
     // ---- Display range ----
     // From Thetis display.cs:1743-1754
-    float  m_refLevel{-40.0f};        // top of display (dBm)
-    float  m_dynamicRange{100.0f};    // range in dB (bottom = refLevel - dynamicRange)
+    float  m_refLevel{-36.0f};        // top of display (dBm)
+    float  m_dynamicRange{68.0f};     // range in dB (bottom = refLevel - dynamicRange)
 
     // ---- Waterfall ----
     QImage m_waterfall;               // ring buffer (Format_RGB32)
@@ -502,13 +502,12 @@ private:
     // ---- Waterfall display controls ----
     // From AetherSDR SpectrumWidget defaults + Thetis display.cs:2522-2536
     WfColorScheme m_wfColorScheme{WfColorScheme::Default};
-    int    m_wfColorGain{50};         // 0-100
-    int    m_wfBlackLevel{15};        // 0-125
-    // Waterfall uses its own dBm range (narrower than spectrum for better contrast)
-    // From Thetis display.cs:2522 waterfall_high_threshold = -80.0F
-    // From Thetis display.cs:2536 waterfall_low_threshold = -130.0F
-    float  m_wfHighThreshold{-80.0f};
-    float  m_wfLowThreshold{-130.0f};
+    int    m_wfColorGain{45};         // 0-100
+    int    m_wfBlackLevel{98};        // 0-125
+    // Waterfall uses its own dBm range (narrower than spectrum for better contrast).
+    // Seed values; WfAgc (default on) continuously recomputes these at runtime.
+    float  m_wfHighThreshold{-50.0f};
+    float  m_wfLowThreshold{-110.0f};
 
     // ---- Smoothing constant ----
     // From AetherSDR SpectrumWidget.h:417 — SMOOTH_ALPHA = 0.35f
@@ -529,8 +528,8 @@ private:
 
     // ---- Phase 3G-8 commit 3: spectrum renderer state ----
 
-    AverageMode m_averageMode{AverageMode::Weighted};
-    float       m_averageAlpha{kSmoothAlpha};  // 0..1 exp-smoothing factor
+    AverageMode m_averageMode{AverageMode::Logarithmic};
+    float       m_averageAlpha{0.05f};  // 0..1 exp-smoothing factor
 
     bool        m_peakHoldEnabled{false};
     int         m_peakHoldDelayMs{2000};
@@ -545,11 +544,11 @@ private:
 
     // ---- Phase 3G-8 commit 4: waterfall renderer state ----
 
-    bool  m_wfAgcEnabled{false};
+    bool  m_wfAgcEnabled{true};
     bool  m_clarityActive{false};     // Phase 3G-9c: suppresses legacy AGC when Clarity drives thresholds
     bool  m_wfReverseScroll{false};
     int   m_wfOpacity{100};           // 0..100
-    int   m_wfUpdatePeriodMs{50};     // NereusSDR default per §10 divergence
+    int   m_wfUpdatePeriodMs{30};     // NereusSDR default per §10 divergence
     bool  m_wfUseSpectrumMinMax{false};
     AverageMode m_wfAverageMode{AverageMode::None};
     QVector<float> m_wfSmoothedBins;  // for wf averaging mode

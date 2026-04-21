@@ -175,6 +175,9 @@ nereus_add_test(tst_step_attenuator_controller)
 # ── About dialog ─────────────────────────────────────────────────────────
 nereus_add_test(tst_about_dialog)
 
+# ── Phase 3O Sub-Phase 11 Task 11a: VaxFirstRunDialog ────────────────────
+nereus_add_test(tst_vax_first_run_dialog)
+
 # ── Phase 3O VAX routing ──────────────────────────────────────────────────
 nereus_add_test(tst_slice_model_vax)
 nereus_add_test(tst_transmit_model_tx_owner)
