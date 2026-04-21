@@ -386,3 +386,15 @@ target_compile_definitions(tst_antenna_control_tab PRIVATE NEREUS_BUILD_TESTS)
 # AlexController::antennaChanged fires for the current band.
 nereus_add_test(tst_rxapplet_antenna_buttons)
 target_compile_definitions(tst_rxapplet_antenna_buttons PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
+# Smoke test: defaults all-off (present/filter/tuner = false), individual setter
+# signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.
+# Ports setup.cs:15566-15590 + console.cs:19060-19105 [@501e3f5].
+nereus_add_test(tst_apollo_controller)
+
+# ── Phase 3P-F Task 5b: PennyLaneController model ────────────────────────────
+# Smoke test: default extCtrlEnabled = true (matches Thetis penny_ext_ctrl_enabled=true),
+# setter signal emission (idempotent no-fire), and per-MAC AppSettings persistence.
+# Ports HPSDR/Penny.cs (full) + console.cs:14899 + setup.cs:12679 [@501e3f5].
+nereus_add_test(tst_penny_lane_controller)

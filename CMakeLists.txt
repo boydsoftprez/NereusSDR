@@ -340,6 +340,8 @@ set(CORE_SOURCES
     src/core/IoBoardHl2.cpp
     src/core/HermesLiteBandwidthMonitor.cpp
     src/core/accessories/AlexController.cpp
+    src/core/accessories/ApolloController.cpp
+    src/core/accessories/PennyLaneController.cpp
     src/core/audio/MasterMixer.cpp
     src/core/audio/PortAudioBus.cpp
     src/core/audio/VirtualCableDetector.cpp
