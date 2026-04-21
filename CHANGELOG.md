@@ -6,10 +6,18 @@
 - **Hermes Lite 2 bandpass filter now switches on band/VFO change.** P1RadioConnection was emitting `m_alexHpfBits=0`/`m_alexLpfBits=0` permanently because the filter bits were never recomputed from frequency. P2 had the right code; lifted into shared `src/core/codec/AlexFilterMap` and called from P1's `setReceiverFrequency`/`setTxFrequency`. (Phase 3P-A)
 - **Hermes Lite 2 step attenuator now actually attenuates.** P1's bank 11 C4 was using ramdor's 5-bit mask + 0x20 enable for every board; HL2 needs mi0bot's 6-bit mask + 0x40 enable + MOX TX/RX branch. Fixed via per-board codec subclasses (`P1CodecStandard` for Hermes/Orion, `P1CodecHl2` for HL2). RxApplet S-ATT slider range now widens to 0-63 dB on HL2 from `BoardCapabilities::attenuator.maxDb`. (Phase 3P-A)
 
+### Added
+- Hardware → Antenna / ALEX page split into three sub-sub-tabs — Antenna Control (placeholder for Phase F), **Alex-1 Filters**, and **Alex-2 Filters** — matching Thetis's General → Alex IA. Alex-1 page exposes per-band HPF/LPF bypass + edge editors and the **Saturn BPF1 panel** (gated on ANAN-G2 / G2-1K). Alex-2 page exposes per-band HPF/LPF for the RX2 board with live-LED indicator stubs (Phase H wires them). Per-MAC persistence under `hardware/<mac>/alex/...` and `.../alex2/...`. (Phase 3P-B)
+- ADC OVL badge in RxApplet now splits into OVL₀ + OVL₁ for dual-ADC boards (Orion-MKII family — boards with `BoardCapabilities::p2PreampPerAdc=true`). Single-ADC boards (HL2, Hermes, Angelia) keep a single badge. (Phase 3P-B)
+- Per-ADC RX1 preamp toggle exposed in RxApplet for OrionMKII-family boards; routes to byte 1403 bit 1 in P2 CmdHighPriority via the new `P2RadioConnection::setRx1Preamp(bool)`. (Phase 3P-B)
+- ANAN-G2 / G2-1K can now use user-configured Saturn BPF1 band edges instead of Alex defaults via the new Hardware → Antenna/ALEX → Alex-1 Filters page; codec layer (`P2CodecSaturn`) reads the configured edges from `CodecContext.p2SaturnBpfHpfBits`. (Phase 3P-B)
+
 ### Changed
 - `P1RadioConnection`'s C&C compose layer refactored into per-board codec subclasses (`P1CodecStandard`, `P1CodecHl2`, `P1CodecAnvelinaPro3`, `P1CodecRedPitaya`) behind a stable `IP1Codec` interface. Behavior byte-identical for every non-HL2 board (regression-frozen via `tst_p1_regression_freeze` against a pre-refactor JSON baseline). Set `NEREUS_USE_LEGACY_P1_CODEC=1` to revert to the pre-refactor compose path for one release cycle as a rollback hatch.
 - `P2RadioConnection` now calls the shared `AlexFilterMap::computeHpf/Lpf` helpers instead of its own inline copies; byte output unchanged.
 - `BoardCapabilities::Attenuator` extended with `mask`, `enableBit`, and `moxBranchesAtt` fields capturing per-board ATT byte encoding parameters.
+- `P2RadioConnection`'s C&C compose layer refactored into per-board codec subclasses (`P2CodecOrionMkII` for the OrionMKII / 7000D / 8000D / AnvelinaPro3 family, `P2CodecSaturn` extending it for ANAN-G2 / G2-1K with the G8NJJ BPF1 override) behind the new `IP2Codec` interface. Behavior byte-identical to pre-refactor for all captured tuples (`tst_p2_regression_freeze` with 36 tuples). `NEREUS_USE_LEGACY_P2_CODEC=1` env var reverts to the pre-refactor compose path for one release cycle as a rollback hatch. (Phase 3P-B)
+- `BoardCapabilities` extended with `p2SaturnBpf1Edges` (per-band start/end MHz, empty default) and `p2PreampPerAdc` (true for OrionMKII family). `AlexFilterMap` shared between P1 and P2 codecs (was Phase A; Phase B is the first P2 consumer). (Phase 3P-B)
 
 ## [0.2.1] - 2026-04-19
 
