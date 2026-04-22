@@ -340,18 +340,15 @@ VfoWidget::VfoWidget(QWidget* parent)
     buildUI();
 }
 
-VfoWidget::~VfoWidget()
-{
-    // Floating buttons are parented to parentWidget() (SpectrumWidget),
-    // not to this widget, so Qt's parent chain won't auto-delete them.
-    // AetherSDR VfoWidget.cpp:223-233 pattern: explicit delete on destruction.
-    // All four pointers are initialized to nullptr in the header, so deletes
-    // are safe even if buildFloatingButtons() was never called.
-    delete m_closeBtn;
-    delete m_lockBtn;
-    delete m_recBtn;
-    delete m_playBtn;
-}
+// Floating buttons (m_closeBtn/m_lockBtn/m_recBtn/m_playBtn) are parented to
+// parentWidget() (SpectrumWidget), i.e. they are SIBLINGS of VfoWidget in
+// SpectrumWidget's children list. Qt's parent chain already owns them — do
+// NOT explicitly delete here. Explicit deletes caused issue #113: Qt's
+// QObjectPrivate::deleteChildren() walks SpectrumWidget's children in an
+// order that freed a floating button before ~VfoWidget ran, leaving the
+// button pointer dangling and SIGSEGV'ing the delete. Same fix as fd03d51;
+// regressed by ff94942.
+VfoWidget::~VfoWidget() = default;
 
 void VfoWidget::buildUI()
 {
