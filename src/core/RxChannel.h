@@ -196,12 +196,14 @@ warren@wpratt.com
 
 */
 
+#include "NbFamily.h"
 #include "WdspTypes.h"
 
 #include <QObject>
 
 #include <atomic>
 #include <cstring>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -291,28 +293,20 @@ public:
 
     // --- Noise blanker ---
 
-    bool nb1Enabled() const { return m_nb1Enabled.load(); }
-    void setNb1Enabled(bool enabled);
+    // From design doc phase3g-rx-experience-epic-design.md §sub-epic B —
+    // NB/NB2 are mutually exclusive via a single NbMode atomic. SNB is
+    // independent and runs alongside whichever NbMode is active.
+    void setNbMode(NereusSDR::NbMode mode);
+    NereusSDR::NbMode nbMode() const;
 
-    bool nb2Enabled() const { return m_nb2Enabled.load(); }
-    void setNb2Enabled(bool enabled);
+    void setNbTuning(const NereusSDR::NbTuning& tuning);
+    const NereusSDR::NbTuning& nbTuning() const;
 
-    // NB2 advanced sub-parameters — set-and-forget on init from Thetis defaults.
-    // Declared in Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:922-937
-    // WDSP: third_party/wdsp/src/nobII.c:658,686,697,707
-    //
-    // mode: 0=zero, 1=sample-hold, 2=mean-hold, 3=hold-sample, 4=interpolate
-    // Thetis cmaster.c default: mode=0 (zero — blank to zero on impulse)
-    void setNb2Mode(int mode);
-    // tau: slew time constant in seconds (advslewtime + hangslewtime)
-    // Thetis cmaster.c default: 0.0001 s
-    void setNb2Tau(double tau);
-    // leadTime (advtime): advance time in seconds before detected impulse
-    // Thetis cmaster.c default: 0.0001 s
-    void setNb2LeadTime(double time);
-    // hangTime: hang time in seconds after blanked impulse
-    // Thetis cmaster.c default: 0.0001 s
-    void setNb2HangTime(double time);
+    // Per-knob convenience setters for RxApplet sliders.
+    void setNbThreshold(double threshold);
+    void setNbLagMs(double hangMs);
+    void setNbLeadMs(double advMs);
+    void setNbTransitionMs(double tauMs);
 
     // --- Noise reduction ---
 
@@ -330,7 +324,7 @@ public:
 
     // SNB — Spectral Noise Blanker
     // From Thetis Project Files/Source/Console/radio.cs (SetRXASNBARun call site)
-    bool snbEnabled() const { return m_snbEnabled.load(); }
+    bool snbEnabled() const { return m_nb ? m_nb->snbEnabled() : false; }
     void setSnbEnabled(bool enabled);
 
     // APF — Audio Peak Filter (CW narrow-peak filter via WDSP SPCW module)
@@ -436,14 +430,11 @@ private:
     // Atomic flags for lock-free audio thread reads
     std::atomic<int> m_mode{static_cast<int>(DSPMode::LSB)};  // Must match WdspEngine::createRxChannel init
     std::atomic<int> m_agcMode{static_cast<int>(AGCMode::Med)};
-    std::atomic<bool> m_nb1Enabled{false};
-    std::atomic<bool> m_nb2Enabled{false};
+    std::unique_ptr<NereusSDR::NbFamily> m_nb;
     std::atomic<bool> m_nrEnabled{false};
     std::atomic<bool> m_anfEnabled{false};
     // emnr: From Thetis radio.cs:2216 — rx_nr2_run default = 0
     std::atomic<bool> m_emnrEnabled{false};
-    // snb: Spectral Noise Blanker — off by default
-    std::atomic<bool> m_snbEnabled{false};
     // apf: Audio Peak Filter — off by default
     // From Thetis radio.cs:1910 — rx_apf_run default = false
     std::atomic<bool> m_apfEnabled{false};

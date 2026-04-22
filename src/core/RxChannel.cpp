@@ -247,6 +247,7 @@ warren@wpratt.com
 
 #include "RxChannel.h"
 #include "LogCategories.h"
+#include "NbFamily.h"
 #include "wdsp_api.h"
 
 #include <cmath>
@@ -260,6 +261,13 @@ RxChannel::RxChannel(int channelId, int bufferSize, int sampleRate,
     , m_bufferSize(bufferSize)
     , m_sampleRate(sampleRate)
 {
+#ifdef HAVE_WDSP
+    // From design doc §sub-epic B — one NbFamily per WDSP channel.
+    m_nb = std::make_unique<NereusSDR::NbFamily>(
+        m_channelId,
+        /*sampleRate=*/ m_sampleRate,
+        /*bufferSize=*/ m_bufferSize);
+#endif
 }
 
 RxChannel::~RxChannel() = default;
@@ -524,74 +532,34 @@ void RxChannel::setAgcMaxGain(int dB)
 }
 
 // ---------------------------------------------------------------------------
-// Noise blanker
+// Noise blanker family (NB / NB2 / SNB) — see NbFamily.h
 // ---------------------------------------------------------------------------
 
-void RxChannel::setNb1Enabled(bool enabled)
+void RxChannel::setNbMode(NereusSDR::NbMode mode)
 {
-    m_nb1Enabled.store(enabled);
-    // NB1 is applied in processIq() — no WDSP call needed here,
-    // the xanbEXTF call is gated by the atomic flag.
+    if (m_nb) m_nb->setMode(mode);
 }
 
-void RxChannel::setNb2Enabled(bool enabled)
+NereusSDR::NbMode RxChannel::nbMode() const
 {
-    m_nb2Enabled.store(enabled);
-    // NB2 is applied in processIq() — same pattern as NB1.
+    return m_nb ? m_nb->mode() : NereusSDR::NbMode::Off;
 }
 
-void RxChannel::setNb2Mode(int mode)
+void RxChannel::setNbTuning(const NereusSDR::NbTuning& tuning)
 {
-#ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:937
-    //   SetEXTNOBMode(int id, int mode)
-    //   mode: 0=zero, 1=sample-hold, 2=mean-hold, 3=hold-sample, 4=interpolate
-    // Thetis cmaster.c default: mode=0 (zero)
-    // WDSP: third_party/wdsp/src/nobII.c:658
-    SetEXTNOBMode(m_channelId, mode);
-#else
-    Q_UNUSED(mode);
-#endif
+    if (m_nb) m_nb->setTuning(tuning);
 }
 
-void RxChannel::setNb2Tau(double tau)
+const NereusSDR::NbTuning& RxChannel::nbTuning() const
 {
-#ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:922
-    //   SetEXTNOBTau(int id, double tau) — sets advslewtime + hangslewtime
-    // Thetis cmaster.c default: slewtime=0.0001 s
-    // WDSP: third_party/wdsp/src/nobII.c:686
-    SetEXTNOBTau(m_channelId, tau);
-#else
-    Q_UNUSED(tau);
-#endif
+    static const NereusSDR::NbTuning kEmpty{};
+    return m_nb ? m_nb->tuning() : kEmpty;
 }
 
-void RxChannel::setNb2LeadTime(double time)
-{
-#ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:928
-    //   SetEXTNOBAdvtime(int id, double time) — advance/lead time
-    // Thetis cmaster.c default: advtime=0.0001 s
-    // WDSP: third_party/wdsp/src/nobII.c:707
-    SetEXTNOBAdvtime(m_channelId, time);
-#else
-    Q_UNUSED(time);
-#endif
-}
-
-void RxChannel::setNb2HangTime(double time)
-{
-#ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/HPSDR/specHPSDR.cs:925
-    //   SetEXTNOBHangtime(int id, double time) — hang time
-    // Thetis cmaster.c default: hangtime=0.0001 s
-    // WDSP: third_party/wdsp/src/nobII.c:697
-    SetEXTNOBHangtime(m_channelId, time);
-#else
-    Q_UNUSED(time);
-#endif
-}
+void RxChannel::setNbThreshold(double threshold)    { if (m_nb) m_nb->setNbThreshold(threshold); }
+void RxChannel::setNbLagMs(double hangMs)           { if (m_nb) m_nb->setNbLagMs(hangMs); }
+void RxChannel::setNbLeadMs(double advMs)           { if (m_nb) m_nb->setNbLeadMs(advMs); }
+void RxChannel::setNbTransitionMs(double tauMs)     { if (m_nb) m_nb->setNbTauMs(tauMs); }
 
 // ---------------------------------------------------------------------------
 // Noise reduction
@@ -692,21 +660,7 @@ void RxChannel::setEmnrPosition(int position)
 
 void RxChannel::setSnbEnabled(bool enabled)
 {
-    if (enabled == m_snbEnabled.load()) {
-        return;
-    }
-
-    m_snbEnabled.store(enabled);
-
-#ifdef HAVE_WDSP
-    // From Thetis Project Files/Source/Console/console.cs:36347
-    //   WDSP.SetRXASNBARun(WDSP.id(0, 0), chkDSPNB2.Checked)
-    // Thetis dsp.cs:692-693 — P/Invoke declaration
-    // WDSP third_party/wdsp/src/snb.c:579
-    SetRXASNBARun(m_channelId, enabled ? 1 : 0);
-#else
-    Q_UNUSED(enabled);
-#endif
+    if (m_nb) m_nb->setSnbEnabled(enabled);
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,11 +970,11 @@ void RxChannel::processIq(float* inI, float* inQ,
     // NB1 and NB2 process raw I/Q BEFORE the main WDSP channel.
     // They operate in-place on separate I and Q buffers.
     // From Thetis wdsp-integration.md section 4.3
-    if (m_nb1Enabled.load()) {
-        xanbEXTF(m_channelId, inI, inQ);
-    }
-    if (m_nb2Enabled.load()) {
-        xnobEXTF(m_channelId, inI, inQ);
+    // From design doc §sub-epic B — mutually exclusive NB/NB2 via one atomic.
+    switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
+        case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
+        case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
+        case NereusSDR::NbMode::Off: /* no-op */                      break;
     }
 
     // Main WDSP processing: demod, AGC, NR, ANF, filter, EQ, audio panel.

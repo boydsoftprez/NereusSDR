@@ -1316,7 +1316,7 @@ void MainWindow::buildMenuBar()
     m_nbAction->setCheckable(true);
     connect(m_nbAction, &QAction::toggled, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNb1Enabled(on); }
+        if (rxCh) { rxCh->setNbMode(on ? NereusSDR::NbMode::NB : NereusSDR::NbMode::Off); }
     });
 
     QAction* nb2Action = dspMenu->addAction(QStringLiteral("NB&2"));
@@ -2318,7 +2318,7 @@ void MainWindow::wireSliceToSpectrum()
     // NB/NR/ANF → RxChannel directly (not SliceModel properties)
     connect(vfo, &VfoWidget::nb1Changed, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNb1Enabled(on); }
+        if (rxCh) { rxCh->setNbMode(on ? NereusSDR::NbMode::NB : NereusSDR::NbMode::Off); }
     });
     connect(vfo, &VfoWidget::nrChanged, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
