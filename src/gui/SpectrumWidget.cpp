@@ -2272,6 +2272,26 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
 
 void SpectrumWidget::wheelEvent(QWheelEvent* event)
 {
+    // Wheel over dBm strip: adjust dynamic range in ±5 dB steps.
+    // From AetherSDR SpectrumWidget.cpp:2630-2636 [@0cd4559]
+    const int mx = static_cast<int>(event->position().x());
+    const int my = static_cast<int>(event->position().y());
+    const int specH = static_cast<int>(height() * m_spectrumFrac);
+    const int stripX = width() - kDbmStripW;
+    if (mx >= stripX && my < specH) {
+        const int notches = event->angleDelta().y() / 120;
+        if (notches != 0) {
+            const float bottom = m_refLevel - m_dynamicRange;
+            m_dynamicRange = qBound(10.0f, m_dynamicRange - notches * 5.0f, 200.0f);
+            m_refLevel = bottom + m_dynamicRange;
+            emit dbmRangeChangeRequested(bottom, m_refLevel);
+            update();
+            scheduleSettingsSave();
+        }
+        event->accept();
+        return;
+    }
+
     // Plain scroll: tune VFO by step size (matches Thetis panadapter behavior)
     // Ctrl+scroll: adjust ref level
     // Ctrl+Shift+scroll: zoom bandwidth
