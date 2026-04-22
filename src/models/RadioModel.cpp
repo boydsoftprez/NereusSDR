@@ -1454,19 +1454,19 @@ void RadioModel::wireSliceSignals()
     // Antenna changes → Alex register via RadioConnection
     connect(slice, &SliceModel::rxAntennaChanged, this, [this](const QString& ant) {
         if (m_connection) {
-            // Map antenna name to index: ANT1=0, ANT2=1, ANT3=2
-            int idx = 0;
-            if (ant == QLatin1String("ANT2")) { idx = 1; }
-            else if (ant == QLatin1String("ANT3")) { idx = 2; }
-            QMetaObject::invokeMethod(m_connection, [conn = m_connection, idx]() {
-                conn->setAntenna(idx);
+            // Map antenna name to 1-based port: ANT1=1, ANT2=2, ANT3=3
+            int trxAnt = 1;
+            if (ant == QLatin1String("ANT2")) { trxAnt = 2; }
+            else if (ant == QLatin1String("ANT3")) { trxAnt = 3; }
+            QMetaObject::invokeMethod(m_connection, [conn = m_connection, trxAnt]() {
+                conn->setAntennaRouting({0, trxAnt, trxAnt, false, false});
             });
         }
         scheduleSettingsSave();
     });
     connect(slice, &SliceModel::txAntennaChanged, this, [this](const QString&) {
-        // TX antenna is set in the same setAntenna call for now
-        // Full TX-specific antenna routing deferred to TX implementation
+        // TX antenna routed via setAntennaRouting; full TX-specific routing
+        // deferred to TX implementation (3M-1).
         scheduleSettingsSave();
     });
 

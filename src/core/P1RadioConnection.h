@@ -124,7 +124,7 @@ public slots:
     void setPreamp(bool enabled) override;
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
-    void setAntenna(int antennaIndex) override;
+    void setAntennaRouting(AntennaRouting routing) override;
 
 private slots:
     void onReadyRead();

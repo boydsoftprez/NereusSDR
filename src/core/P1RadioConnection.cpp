@@ -811,7 +811,28 @@ void P1RadioConnection::setAttenuator(int dB)
 void P1RadioConnection::setPreamp(bool enabled)              { m_rxPreamp[0] = enabled; }
 void P1RadioConnection::setTxDrive(int /*level*/)            { /* stub — Task 7 */ }
 void P1RadioConnection::setMox(bool enabled)                 { m_mox = enabled; }
-void P1RadioConnection::setAntenna(int antennaIndex)         { m_antennaIdx = antennaIndex; }
+// ---------------------------------------------------------------------------
+// setAntennaRouting — Phase 3P-I-a
+//
+// Stores trxAnt into m_antennaIdx; the next round-robin pass through
+// bank 0 composes it into C4 bits 0-1 via P1CodecStandard::bank0 (or
+// P1CodecHl2::bank0 on HL2 — identical encoding at the antenna bit level).
+//
+// From Thetis ChannelMaster/networkproto1.c:463-468 [v2.10.3.13 @501e3f5] —
+//   if (prbpfilter->_ANT_3 == 1)       C4 = 0b10;
+//   else if (prbpfilter->_ANT_2 == 1)  C4 = 0b01;
+//   else                                C4 = 0b0;
+//
+// 3P-I-a scope: rxOnlyAnt / rxOut are ignored. Bank 0 C3 keeps the
+// hardcoded 0x20 (RX_1_In) until 3P-I-b wires RX-only routing.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setAntennaRouting(AntennaRouting r)
+{
+    const int clamped = (r.trxAnt < 1 || r.trxAnt > 3) ? 0 : (r.trxAnt - 1);
+    m_antennaIdx = clamped;  // 0..2 (or 0 for "no selection")
+    // P1 has no high-priority packet; the next EP2 frame picks up the
+    // new antennaIdx via buildCodecContext() → P1Codec::bank0.
+}
 
 // ---------------------------------------------------------------------------
 // applyBoardQuirks

@@ -176,7 +176,7 @@ public slots:
     void setPreamp(bool enabled) override;
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
-    void setAntenna(int antennaIndex) override;
+    void setAntennaRouting(AntennaRouting routing) override;
 
     // Phase 3P-B Task 10: per-ADC RX1 preamp control for OrionMKII family.
     // Routes to m_rx[1].preamp → CodecContext.p2Rx1Preamp →

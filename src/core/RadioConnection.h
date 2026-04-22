@@ -39,6 +39,21 @@ enum class ConnectionState {
     Error
 };
 
+// Antenna routing parameters — Phase 3P-I-a.
+// Ports Thetis Alex.cs:310-413 UpdateAlexAntSelection output
+// (HPSDR/Alex.cs [v2.10.3.13 @501e3f5]). Composed by
+// RadioModel::applyAlexAntennaForBand and pushed to RadioConnection.
+//
+// 3P-I-a scope: trxAnt + txAnt are independent ANT1..ANT3 ports.
+//     rxOnlyAnt, rxOut, tx remain zero until 3P-I-b/3M-1.
+struct AntennaRouting {
+    int  rxOnlyAnt {0};    // 0=none, 1=RX1, 2=RX2, 3=XVTR  (3P-I-b)
+    int  trxAnt    {1};    // 1..3 — shared RX/TX port on Alex
+    int  txAnt     {1};    // 1..3 — independent TX port (P2 Alex1)
+    bool rxOut     {false}; // RX bypass relay active        (3P-I-b)
+    bool tx        {false}; // current MOX state             (3M-1)
+};
+
 // Abstract base class for radio connections.
 // Subclasses implement protocol-specific behavior (P1 or P2).
 // Instances live on the Connection worker thread.
@@ -85,7 +100,16 @@ public slots:
     virtual void setPreamp(bool enabled) = 0;
     virtual void setTxDrive(int level) = 0;
     virtual void setMox(bool enabled) = 0;
-    virtual void setAntenna(int antennaIndex) = 0;
+    virtual void setAntennaRouting(AntennaRouting routing) = 0;
+
+    // DEPRECATED — call setAntennaRouting directly. Kept for one release
+    // cycle as a rollback hatch per docs/architecture/antenna-routing-design.md §7.7.
+    // Removed in the release following 3P-I-b.
+    Q_DECL_DEPRECATED_X("Use setAntennaRouting")
+    void setAntenna(int antennaIndex) {
+        const int ant = (antennaIndex >= 0 && antennaIndex <= 2) ? antennaIndex + 1 : 1;
+        setAntennaRouting({0, ant, ant, false, false});
+    }
 
     // --- ADC Mapping ---
     virtual int getAdcForDdc(int /*ddc*/) const { return 0; }
