@@ -13,12 +13,25 @@
 // another thread" and on Windows the process can terminate abnormally
 // during cleanup.
 //
-// The correct pattern, captured here: queue a lambda on the worker
-// that runs the protocol disconnect() and then schedules self-
-// deletion via deleteLater(). When quit() fires, the worker's event
-// loop processes the pending DeferredDelete as part of its shutdown
-// sequence, so the destructor runs on the worker thread — where the
-// timers live — and no cross-thread warnings fire.
+// The correct pattern, captured here: run the protocol disconnect()
+// on the worker thread via a BlockingQueuedConnection so main waits
+// until the worker has actually executed it. THEN post deleteLater()
+// on the worker, call quit(), and wait. The deleteLater is already in
+// the worker's queue, so Qt's event-loop shutdown processes the
+// DeferredDelete event on the worker thread — where the timers live
+// — and no cross-thread warnings fire.
+//
+// Issue #83: an earlier version of this helper used a plain
+// QueuedConnection invokeMethod for both disconnect() AND
+// deleteLater(), relying on "Qt will drain the posted events during
+// quit()". On Windows the event dispatcher's interrupt path races the
+// queued MetaCall: quit() exited the loop before the disconnect
+// lambda was dispatched. On HL2 close that left the UDP socket open,
+// metis-stop unsent, three timers alive, and the RadioConnection
+// object orphaned with its thread gone — the process then crashed
+// during later static-dtor cleanup and left the Winsock endpoint in a
+// state that prevented Thetis from binding port 51188 on the next
+// session until a reboot / `netsh winsock reset`.
 //
 // Both pointer references are set to nullptr on return; the QThread
 // container itself is main-thread-owned and safe to delete from the
@@ -47,10 +60,14 @@ inline void teardownWorkerThreadedConnection(RadioConnection*& conn,
 
     if (thread->isRunning()) {
         RadioConnection* c = conn;
+        // Blocking: main waits here until disconnect() has actually
+        // executed on the worker. After this returns the timers are
+        // stopped, metis-stop has been sent, and the socket is closed
+        // (see P1/P2 RadioConnection::disconnect). Issue #83.
         QMetaObject::invokeMethod(c, [c]() {
             c->disconnect();
             c->deleteLater();
-        });
+        }, Qt::BlockingQueuedConnection);
         thread->quit();
         if (!thread->wait(3000)) {
             thread->terminate();

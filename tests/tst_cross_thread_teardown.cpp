@@ -16,6 +16,18 @@
 // thread. A Qt message handler counts any warning that contains the
 // cross-thread timer string; the test passes only when zero such
 // warnings are emitted.
+//
+// Issue #83 extension: the original helper posted disconnect()+
+// deleteLater() via a plain queued invokeMethod, then immediately
+// called thread->quit(). On Windows the event dispatcher's
+// quit-processing races the queued MetaCall event, so the lambda was
+// observed to never run before the loop exited. That left the socket
+// open, metis-stop unsent, and the RadioConnection orphaned on a dead
+// thread — crashing during later static-dtor cleanup and corrupting
+// Winsock state badly enough that Thetis could not bind 51188 on the
+// next session. The secondary assertion below verifies the fake
+// received metis-stop, which only happens if disconnect() actually
+// executed on the worker.
 
 #include <QtTest/QtTest>
 #include <QThread>
@@ -102,6 +114,9 @@ private slots:
             conn->state() == ConnectionState::Connected, 3000);
         QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
 
+        // Sanity: the fake sees us streaming before we tear down.
+        QVERIFY(fake.isRunning());
+
         // Teardown via the shared helper that production code uses.
         // This is deliberate — the test exercises the same code path
         // that RadioModel::teardownConnection does, so any regression
@@ -112,10 +127,25 @@ private slots:
         QVERIFY(connBase == nullptr);
         QVERIFY(workerP == nullptr);
 
+        // Issue #83 assertion: teardown must have actually run
+        // disconnect() on the worker thread, which sends metis-stop
+        // (EF FE 04 00). The fake clears m_running when it receives
+        // that command. If the queued lambda gets skipped by quit()
+        // (the pre-fix behavior), m_running stays true, metis-stop
+        // never reaches the radio, and the socket + timers are
+        // orphaned on a dead thread — which is the actual shutdown
+        // crash the report describes.
+        //
+        // Poll rather than an immediate check: the fake runs on the
+        // test thread so its onReadyRead slot only fires when the
+        // local event loop spins. QTRY_COMPARE drives that loop.
+        QTRY_COMPARE_WITH_TIMEOUT(fake.isRunning(), false, 3000);
+
         fake.stop();
 
-        // The assertion that drives the fix: no cross-thread timer
-        // warnings may be emitted at any point during the sequence.
+        // The assertion that drives the original (pre-#83) fix: no
+        // cross-thread timer warnings may be emitted at any point
+        // during the sequence.
         QCOMPARE(g_crossThreadTimerWarnings.load(), 0);
     }
 };

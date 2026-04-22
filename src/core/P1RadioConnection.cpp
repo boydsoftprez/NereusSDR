@@ -753,8 +753,20 @@ void P1RadioConnection::disconnect()
 
     m_running = false;
 
-    // Don't close the socket — leave it open for re-use in Task 10.
-    // P2 pattern: socket stays bound across reconnect cycles.
+    // Close the UDP socket so the OS releases the bound port and any
+    // pending I/O is drained on this (worker) thread. P2 already does
+    // this; P1 previously kept the socket open "for re-use in Task 10"
+    // but that never materialized and no caller reuses the socket.
+    //
+    // Issue #83: on Windows, handing the socket to Qt's parent-chain
+    // destructor during process teardown (rather than closing it
+    // explicitly while the worker's event loop is still servicing it)
+    // left the HL2 UDP endpoint in a state that cascaded into a
+    // Winsock stack that could not accept new binds until reboot —
+    // Thetis failed to bind port 51188 the next time it was launched.
+    if (m_socket) {
+        m_socket->close();
+    }
 
     setState(ConnectionState::Disconnected);
     qCDebug(lcConnection) << "P1: Disconnected";
