@@ -471,6 +471,11 @@ RadioModel::RadioModel(QObject* parent)
             [this](Band b) {
         if (b != m_lastBand) { return; }
         applyAlexAntennaForBand(b);
+        // T13 — keep the slice's cached ANT labels in sync so UI
+        // surfaces reading slice->rxAntenna() see the current-band value.
+        if (m_activeSlice) {
+            m_activeSlice->refreshAntennasFromAlex(m_alexController, b);
+        }
     });
 
     // Connection starts null — created by connectToRadio() via factory.

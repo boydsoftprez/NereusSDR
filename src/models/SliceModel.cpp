@@ -114,6 +114,7 @@
 
 #include "Band.h"
 #include "core/AppSettings.h"
+#include "core/accessories/AlexController.h"
 
 #include <algorithm>
 
@@ -264,6 +265,34 @@ void SliceModel::setTxAntenna(const QString& ant)
         m_txAntenna = ant;
         emit txAntennaChanged(ant);
     }
+}
+
+// Phase 3P-I-a T13 — reverse sync: AlexController write → slice cache refresh.
+// Reads the current per-band RX and TX antenna values from AlexController
+// and refreshes the slice's cached m_rxAntenna / m_txAntenna via the public
+// setters so rxAntennaChanged / txAntennaChanged signals fire to VFO Flag
+// and RxApplet. The write-back to AlexController via T12's RadioModel handler
+// is idempotent — AlexController::setRxAnt/setTxAnt returns early (without
+// emitting antennaChanged) when the stored value equals the new value
+// (AlexController.cpp:95,107), so no signal loop occurs.
+void SliceModel::refreshAntennasFromAlex(const AlexController& alex, Band band)
+{
+    const int rx = alex.rxAnt(band);   // 1..3
+    const int tx = alex.txAnt(band);
+    auto name = [](int n) {
+        switch (n) {
+            case 2:  return QStringLiteral("ANT2");
+            case 3:  return QStringLiteral("ANT3");
+            default: return QStringLiteral("ANT1");
+        }
+    };
+    // Use the public setters so rxAntennaChanged / txAntennaChanged
+    // signals fire — VFO Flag and RxApplet listen. The loop back to
+    // AlexController via T12's handler is idempotent: AlexController's
+    // setRxAnt/setTxAnt returns early on equal value, so no signal is
+    // emitted.
+    setRxAntenna(name(rx));
+    setTxAntenna(name(tx));
 }
 
 // ---------------------------------------------------------------------------

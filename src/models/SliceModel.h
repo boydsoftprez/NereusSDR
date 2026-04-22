@@ -127,6 +127,10 @@
 
 namespace NereusSDR {
 
+// Forward declaration — full type used only in refreshAntennasFromAlex()
+// which takes a const-ref. The full header is included in SliceModel.cpp.
+class AlexController;
+
 // Stage 1 stub ladder — Stage 2 replaces with Thetis tune_step_list
 // (console.cs tune_step_list has 11 entries; Stage 1 uses this 6-entry
 // subset only for the X/RIT STEP cycle button).
@@ -454,6 +458,17 @@ public:
     // VAX routing (Phase 3O) — 0=Off, 1..4=VAX channel.
     int vaxChannel() const { return m_vaxChannel.load(std::memory_order_acquire); }
     void setVaxChannel(int ch);
+
+public slots:
+    // Phase 3P-I-a T13 — refresh cached antenna values from AlexController
+    // for the given band. Called by RadioModel on
+    // AlexController::antennaChanged for the current band so VFO Flag /
+    // RxApplet button labels stay in sync when the user edits the per-band
+    // grid in Setup. Relies on AlexController::setRxAnt/setTxAnt being
+    // idempotent (no signal on equal value) to avoid a feedback loop
+    // with the T12 slice→AlexController write path.
+    void refreshAntennasFromAlex(const NereusSDR::AlexController& alex,
+                                 NereusSDR::Band band);
 
 signals:
     void frequencyChanged(double freq);
