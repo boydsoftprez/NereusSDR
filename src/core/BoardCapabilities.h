@@ -255,10 +255,15 @@ struct BoardCapabilities {
     // Antenna extensions (Phase 3P-I-a)
     // hasAlex2:           P2 second BPF bank (OrionMKII + Saturn family).
     //                     Gates Setup → Antenna → Alex-2 Filters sub-tab.
-    //                     Source: setup.cs:6230, tpAlex2FilterControl.Text = "BPF2" [v2.10.3.13 @501e3f5]
+    //                     Source: setup.cs:6228 [v2.10.3.13 @501e3f5]
+    //                     Upstream inline attribution preserved verbatim:
+    //                       setup.cs:6223  HardwareSpecific.Model == HPSDRModel.REDPITAYA)//DH1KLM
+    //                       setup.cs:6228  HardwareSpecific.Model == HPSDRModel.REDPITAYA))//DH1KLM
     // hasRxBypassRelay:   Physical RxOut relay present on the Alex board.
-    //                     Source: HPSDR/Alex.cs:299-413 UpdateAlexAntSelection,
+    //                     Source: HPSDR/Alex.cs:377 UpdateAlexAntSelection,
     //                     "rx_out" param. False on HL2/Atlas (no Alex).
+    //                     Upstream inline attribution preserved verbatim:
+    //                       HPSDR/Alex.cs:377  // G8NJJ support for external Aries ATU on antenna port 1
     // rxOnlyAntennaCount: Number of RX-only inputs (RX1/RX2/XVTR). 0 on
     //                     HL2/Atlas; 3 on Alex boards.
     //                     Source: HPSDR/Alex.cs:59 RxOnlyAnt[12] enum (1=rx1,2=rx2,3=xv).
