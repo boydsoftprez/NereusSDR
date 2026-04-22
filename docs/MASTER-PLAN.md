@@ -198,7 +198,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 | Configurable containers (Thetis multi-meter) | Unified container system (float/dock/axis-lock) | Design done |
 | PureSignal PA linearization | Feedback RX channel + pscc() loop designed (2E), DDC sync (2F) | Design done |
 | TCI protocol | Planned as Phase 3J | Not started (integration points reserved in 3O) |
-| Cross-platform packaging | CI workflows in place (AppImage, Windows, macOS) | **3N complete** — `release.yml` + `/release` skill; v0.2.1 shipped GPG-signed across all three platforms |
+| Cross-platform packaging | CI workflows in place (AppImage, Windows, macOS) | **3N complete** — `release.yml` + `/release` skill; v0.2.2 shipped GPG-signed across all three platforms |
 | AetherSDR architecture patterns | RadioModel hub, signal/slot, worker threads, AppSettings | Adopted |
 | Radio-authoritative state | Designed per AetherSDR pattern | Adopted |
 | Multi-receiver ADC/DDC mapping | Full signal chain analyzed (2F), UpdateDDCs() porting needed | Design done |
@@ -791,7 +791,7 @@ Scope:
 ### Phase 3N: Cross-Platform Packaging ✅ COMPLETE
 **Goal:** Release builds for Linux, Windows, macOS.
 
-Shipped: consolidated `release.yml` (prepare → build×3 → sign-and-publish), `/release` skill, GPG-signed alpha builds across Linux AppImage ×2 archs, macOS Apple Silicon DMG, Windows portable ZIP + NSIS installer. v0.1.2 → v0.1.4 → v0.1.7 → v0.2.0 → v0.2.1 all shipped via this pipeline.
+Shipped: consolidated `release.yml` (prepare → build×3 → sign-and-publish), `/release` skill, GPG-signed alpha builds across Linux AppImage ×2 archs, macOS Apple Silicon DMG, Windows portable ZIP + NSIS installer. v0.1.2 → v0.1.4 → v0.1.7 → v0.2.0 → v0.2.1 → v0.2.2 all shipped via this pipeline.
 
 ### Phase 3O: VAX — Audio Routing & Cross-Platform Audio Engine
 **Goal:** Ship NereusSDR's complete RX audio routing story — per-receiver VAX assignment, Thetis-grade Setup → Audio power-user surface, native VAX drivers on macOS/Linux, auto-detect for user-installed Windows virtual cables, optional Direct ASIO (cmASIO parity) engine.

@@ -58,7 +58,7 @@ sha256sum -c SHA256SUMS.txt
 
 ## Current Status
 
-**Current release: v0.2.2** (2026-04-21). RX pipeline is feature-complete across the full OpenHPSDR P1 and P2 radio families; v0.2.2 folds in the Phase 3P-A…H radio-control parity work (HL2 BPF + S-ATT fixes, per-board P1/P2 codecs, Alex-1/2 Filters live-LED, OC Outputs, Calibration with live freq-correction, Antenna Control, HL2 I/O, Accessories, Diagnostics → Radio Status) plus the post-v0.2.1 maintenance fixes (VFO parser #73, STEP arrows #69, receiver-leak #75, HL2 Winsock shutdown #83, HL2 I2C persistence, P2 `FreqCorrectionFactor` reaching the phase word, OcMatrix cross-thread lock, RX1-preamp queue, P1 bank-ceiling from codec). Next implementation phase is **3M-1: Basic SSB TX**.
+**Current release: v0.2.2** (2026-04-22). RX pipeline is feature-complete across the full OpenHPSDR P1 and P2 radio families; v0.2.2 folds in the **Phase 3O VAX audio routing** (multi-platform virtual-cable stack with macOS CoreAudio HAL plugin, `LinuxPipeBus`, `PortAudioBus`, first-run VAX dialog, MasterOutputWidget in the TitleBar, per-slice VAX channel routing, 4 Setup → Audio sub-tabs) alongside the **Phase 3P-A…H** radio-control parity work (HL2 BPF + S-ATT fixes, per-board P1/P2 codecs, Alex-1/2 Filters live-LED, OC Outputs, Calibration with live freq-correction, Antenna Control, HL2 I/O, Accessories, Diagnostics → Radio Status) plus the post-v0.2.1 maintenance fixes (VFO parser #73, STEP arrows #69, receiver-leak #75, HL2 Winsock shutdown #83, HL2 I2C persistence, P2 `FreqCorrectionFactor` reaching the phase word, OcMatrix cross-thread lock, RX1-preamp queue, P1 bank-ceiling from codec). Next implementation phase is **3M-1: Basic SSB TX**.
 
 ### What's working end-to-end today
 
