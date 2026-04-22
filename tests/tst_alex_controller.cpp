@@ -84,6 +84,47 @@ private slots:
         QCOMPARE(spy.count(), 1);
     }
 
+    // Phase 3P-I-a T20 — signal / idempotency / rejection coverage.
+
+    void antennaChanged_fires_with_correct_band() {
+        AlexController a;
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+        a.setRxAnt(Band::Band20m, 2);
+        QCOMPARE(spy.count(), 1);
+        const Band fired = spy.takeFirst().at(0).value<Band>();
+        QCOMPARE(fired, Band::Band20m);
+    }
+
+    void identical_write_emits_no_signal() {
+        AlexController a;
+        a.setRxAnt(Band::Band20m, 2);  // first write (default was 1)
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+        a.setRxAnt(Band::Band20m, 2);  // duplicate
+        QCOMPARE(spy.count(), 0);
+    }
+
+    void blockTxAnt_rejection_is_silent() {
+        AlexController a;
+        a.setBlockTxAnt2(true);
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+        a.setTxAnt(Band::Band20m, 2);  // rejected
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(a.txAnt(Band::Band20m), 1);  // unchanged (default)
+    }
+
+    void setAntennasTo1_fires_for_all_bands() {
+        AlexController a;
+        a.setTxAnt(Band::Band20m, 3);
+        a.setRxAnt(Band::Band40m, 2);
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+        a.setAntennasTo1(true);
+        // setAntennasTo1 unconditionally emits for each band in the
+        // 14-band range (Band160m..XVTR) regardless of prior value,
+        // matching the "applies to all in-memory values" documented
+        // behavior in AlexController.cpp.
+        QCOMPARE(spy.count(), 14);
+    }
+
     // Per-MAC persistence round-trip
     void persistence_roundtrip() {
         const QString mac = QStringLiteral("aa:bb:cc:dd:ee:ff");
