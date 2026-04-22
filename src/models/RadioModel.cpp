@@ -1467,22 +1467,25 @@ void RadioModel::wireSliceSignals()
         scheduleSettingsSave();
     });
 
-    // Antenna changes → Alex register via RadioConnection
+    // Phase 3P-I-a T12 — route slice antenna writes through AlexController.
+    // VFO Flag clicks land here; AlexController::setRxAnt/setTxAnt emit
+    // antennaChanged(band), and T9's constructor-level connection reapplies
+    // to the wire via applyAlexAntennaForBand. This makes per-band
+    // persistence uniform across all UI surfaces
+    // (see docs/architecture/antenna-routing-design.md §5.1).
     connect(slice, &SliceModel::rxAntennaChanged, this, [this](const QString& ant) {
-        if (m_connection) {
-            // Map antenna name to 1-based port: ANT1=1, ANT2=2, ANT3=3
-            int trxAnt = 1;
-            if (ant == QLatin1String("ANT2")) { trxAnt = 2; }
-            else if (ant == QLatin1String("ANT3")) { trxAnt = 3; }
-            QMetaObject::invokeMethod(m_connection, [conn = m_connection, trxAnt]() {
-                conn->setAntennaRouting({0, trxAnt, trxAnt, false, false});
-            });
-        }
+        int antNum = 1;
+        if (ant == QLatin1String("ANT2")) { antNum = 2; }
+        else if (ant == QLatin1String("ANT3")) { antNum = 3; }
+        m_alexController.setRxAnt(m_lastBand, antNum);
         scheduleSettingsSave();
     });
-    connect(slice, &SliceModel::txAntennaChanged, this, [this](const QString&) {
-        // TX antenna routed via setAntennaRouting; full TX-specific routing
-        // deferred to TX implementation (3M-1).
+    connect(slice, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
+        int antNum = 1;
+        if (ant == QLatin1String("ANT2")) { antNum = 2; }
+        else if (ant == QLatin1String("ANT3")) { antNum = 3; }
+        // Note: setTxAnt respects blockTxAnt2/3 safety guards; reject is silent.
+        m_alexController.setTxAnt(m_lastBand, antNum);
         scheduleSettingsSave();
     });
 
