@@ -283,6 +283,12 @@ nereus_add_test(tst_vax_applet)
 # design spec §6.7/§11.3).
 nereus_add_test(tst_spectrum_overlay_panel)
 
+# ── Phase 3Q Task 2: Unit tests for dBm-strip geometry and adaptive step ──────
+# Covers stripRect (right-edge placement), arrowRowRect (top-of-strip),
+# arrowHit (left=0, right=1, outside=-1), and adaptiveStepDb across
+# the 20/10/5/2 dB boundaries. Uses QTEST_APPLESS_MAIN (no QApplication).
+nereus_add_test(tst_spectrum_dbm_strip)
+
 # ── Phase 3P-A Task 15: RxApplet S-ATT slider range from BoardCapabilities ───
 # HL2 → 0-63 dB; Hermes → 0-31 dB. Verifies the spinbox max is sourced from
 # BoardCapabilities::attenuator.maxDb at construction time, not hardcoded.

@@ -368,6 +368,11 @@ public:
     void setGridEnabled(bool on);
     bool gridEnabled() const { return m_gridEnabled; }
 
+    // Right-edge dBm scale strip visibility. When false, the strip is
+    // hidden and the spectrum fills the full widget width.
+    void setDbmScaleVisible(bool on);
+    bool dbmScaleVisible() const { return m_dbmScaleVisible; }
+
     void setShowZeroLine(bool on);
     bool showZeroLine() const { return m_showZeroLine; }
 
@@ -433,6 +438,13 @@ signals:
     void centerChanged(double centerHz);
     // Emitted when user scrolls to change bandwidth
     void bandwidthChangeRequested(double newBandwidthHz);
+
+    // Emitted when user-visible dBm range changes via the scale strip
+    // (arrow click, drag-pan on strip body, wheel zoom). Args are the
+    // new floor (min) and ceiling (max) in dBm.
+    // From AetherSDR SpectrumWidget.cpp:1734 [@0cd4559]
+    void dbmRangeChangeRequested(float minDbm, float maxDbm);
+
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
 
@@ -470,6 +482,11 @@ private:
     int    hzToX(double hz, const QRect& r) const;
     double xToHz(int x, const QRect& r) const;
     int    dbmToY(float dbm, const QRect& r) const;
+
+    // Returns kDbmStripW when the dBm scale strip is visible, 0 otherwise.
+    // Used everywhere a rect excludes the right-edge strip so that hiding
+    // the strip automatically gives the spectrum full widget width.
+    int    effectiveStripW() const;
 
     // Returns the first and last FFT bin indices visible in the current
     // display window (m_centerHz ± m_bandwidthHz/2), mapped against
@@ -519,6 +536,9 @@ private:
     static constexpr int kFreqScaleH = 28;  // Taller for easier grab target
     static constexpr int kDividerH = 4;
     static constexpr int kDbmStripW = 36;
+    // Height of each arrow button at the top of the dBm strip.
+    // From AetherSDR SpectrumWidget.h:539 [@0cd4559]
+    static constexpr int kDbmArrowH = 14;
 
     // ---- Spectrum fill ----
     // From AetherSDR defaults
@@ -578,6 +598,7 @@ private:
     bool  m_gridEnabled{true};
     bool  m_showZeroLine{false};
     bool  m_showFps{false};
+    bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
 
     QColor m_gridColor{255, 255, 255, 40};       // vertical freq grid

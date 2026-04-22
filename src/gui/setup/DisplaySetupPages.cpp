@@ -905,8 +905,10 @@ void GridScalesPage::loadFromRenderer()
     QSignalBlocker b3(m_freqLabelAlignCombo);
     QSignalBlocker b4(m_zeroLineToggle);
     QSignalBlocker b5(m_showFpsToggle);
+    QSignalBlocker b6(m_dbmScaleVisibleToggle);
 
     m_gridToggle->setChecked(sw->gridEnabled());
+    m_dbmScaleVisibleToggle->setChecked(sw->dbmScaleVisible());
     m_dbStepSpin->setValue(pan->gridStep());
     m_freqLabelAlignCombo->setCurrentIndex(static_cast<int>(sw->freqLabelAlign()));
     m_zeroLineToggle->setChecked(sw->showZeroLine());
@@ -941,6 +943,17 @@ void GridScalesPage::buildUI()
         }
     });
     gridForm->addRow(QString(), m_gridToggle);
+
+    m_dbmScaleVisibleToggle = new QCheckBox(QStringLiteral("Show dBm scale strip (right edge)"), gridGroup);
+    m_dbmScaleVisibleToggle->setChecked(true);
+    m_dbmScaleVisibleToggle->setToolTip(QStringLiteral("Show the reference-level scale on the right edge of the spectrum. "
+                                                        "Disable to give the spectrum trace the full widget width."));
+    connect(m_dbmScaleVisibleToggle, &QCheckBox::toggled, this, [this](bool on) {
+        if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
+            w->setDbmScaleVisible(on);
+        }
+    });
+    gridForm->addRow(QString(), m_dbmScaleVisibleToggle);
 
     m_editingBandLabel = new QLabel(QStringLiteral("Editing band: —"), gridGroup);
     m_editingBandLabel->setStyleSheet(QStringLiteral("QLabel { color: #00b4d8; font-weight: bold; }"));

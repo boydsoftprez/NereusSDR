@@ -387,6 +387,7 @@ set(GUI_SOURCES
     src/gui/AboutDialog.cpp
     src/gui/VaxFirstRunDialog.cpp
     src/gui/SpectrumWidget.cpp
+    src/gui/dbm_strip_math.cpp
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/widgets/CenterMarkSlider.h
     src/gui/widgets/FilterPassbandWidget.cpp
