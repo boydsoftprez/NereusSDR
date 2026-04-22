@@ -2486,6 +2486,16 @@ void MainWindow::wireSliceToSpectrum()
         }
     });
 
+    // --- dBm range strip → PanadapterModel (per-band grid storage + AppSettings) ---
+    connect(m_spectrumWidget, &SpectrumWidget::dbmRangeChangeRequested,
+            this, [this](float minDbm, float maxDbm) {
+        if (m_radioModel && !m_radioModel->panadapters().isEmpty()) {
+            PanadapterModel* pan = m_radioModel->panadapters().first();
+            pan->setdBmFloor(static_cast<int>(minDbm));
+            pan->setdBmCeiling(static_cast<int>(maxDbm));
+        }
+    });
+
     // Set initial lock state
     m_radioModel->receiverManager()->setDdcFrequencyLocked(
         m_spectrumWidget->ctunEnabled());
