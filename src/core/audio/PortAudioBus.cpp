@@ -14,6 +14,128 @@
 
 namespace NereusSDR {
 
+namespace {
+
+// Resolve a PortAudio device index from a PortAudioConfig, with a robust
+// fallback chain. Returns paNoDevice if no suitable device exists on the
+// system. Fixes issue #112: the 0.2.2 IAudioBus refactor hard-coded
+// Pa_GetDefaultOutputDevice(), which returns paNoDevice on Linux hosts
+// that lack an ALSA default (e.g. Ubuntu/PipeWire without pipewire-alsa).
+// It also ignored cfg.deviceName and cfg.hostApiIndex so users couldn't
+// work around it by picking a specific device in Setup → Audio → Devices.
+//
+// Resolution order:
+//   1. If deviceName non-empty: match against all devices of the right
+//      direction (preferring cfg.hostApiIndex if specified). Matching is
+//      case-insensitive and prefers exact match, falling back to
+//      substring match — PortAudio device names vary subtly by host API
+//      and Qt settings may round-trip a slightly different string.
+//   2. Default device for cfg.hostApiIndex (if >= 0 and valid).
+//   3. PortAudio default output / input device.
+//   4. First enumerated device with the correct direction (channels > 0).
+//      This is the critical fallback for the #112 scenario — even when
+//      there is no ALSA default, PortAudio typically still enumerates
+//      "hw:0,0" etc., which at least lets audio reach the user.
+PaDeviceIndex resolveDevice(const PortAudioConfig& cfg,
+                            bool wantOutput,
+                            int requestedChannels)
+{
+    const int deviceCount = Pa_GetDeviceCount();
+    if (deviceCount <= 0) {
+        return paNoDevice;
+    }
+
+    auto directionOk = [wantOutput](const PaDeviceInfo* di) {
+        if (!di) { return false; }
+        return wantOutput ? di->maxOutputChannels > 0
+                          : di->maxInputChannels  > 0;
+    };
+
+    // Step 4 capacity check: prefer devices that actually support the
+    // requested channel count. Without this, the first enumerated output
+    // on a mono-first system (e.g. a USB webcam enumerated ahead of the
+    // onboard stereo card) causes Pa_OpenStream to fail with
+    // paInvalidChannelCount even though a later device would succeed.
+    auto capacityOk = [wantOutput, requestedChannels](const PaDeviceInfo* di) {
+        if (!di) { return false; }
+        const int avail = wantOutput ? di->maxOutputChannels
+                                     : di->maxInputChannels;
+        return avail >= requestedChannels;
+    };
+
+    // 1. Named-device match.
+    if (!cfg.deviceName.isEmpty()) {
+        const QString wanted = cfg.deviceName.trimmed();
+        PaDeviceIndex exactMatch     = paNoDevice;
+        PaDeviceIndex substringMatch = paNoDevice;
+        PaDeviceIndex crossApiExact  = paNoDevice;
+        PaDeviceIndex crossApiSub    = paNoDevice;
+
+        for (int i = 0; i < deviceCount; ++i) {
+            const PaDeviceInfo* di = Pa_GetDeviceInfo(i);
+            if (!directionOk(di)) { continue; }
+            const QString name = QString::fromUtf8(di->name);
+            const bool sameApi = (cfg.hostApiIndex < 0)
+                                 || (di->hostApi == cfg.hostApiIndex);
+            const bool exact = (name.compare(wanted, Qt::CaseInsensitive) == 0);
+            const bool sub   = name.contains(wanted, Qt::CaseInsensitive);
+
+            if (sameApi && exact && exactMatch == paNoDevice) {
+                exactMatch = i;
+            } else if (sameApi && sub && substringMatch == paNoDevice) {
+                substringMatch = i;
+            } else if (!sameApi && exact && crossApiExact == paNoDevice) {
+                crossApiExact = i;
+            } else if (!sameApi && sub && crossApiSub == paNoDevice) {
+                crossApiSub = i;
+            }
+        }
+        if (exactMatch     != paNoDevice) { return exactMatch; }
+        if (substringMatch != paNoDevice) { return substringMatch; }
+        if (crossApiExact  != paNoDevice) { return crossApiExact; }
+        if (crossApiSub    != paNoDevice) { return crossApiSub; }
+        // Named device not found: fall through to defaults rather than
+        // erroring out — better silent fallback than no audio at all.
+    }
+
+    // 2. Host-API default.
+    if (cfg.hostApiIndex >= 0) {
+        const PaHostApiInfo* hai = Pa_GetHostApiInfo(cfg.hostApiIndex);
+        if (hai) {
+            const PaDeviceIndex d = wantOutput
+                ? hai->defaultOutputDevice
+                : hai->defaultInputDevice;
+            if (d != paNoDevice && directionOk(Pa_GetDeviceInfo(d))) {
+                return d;
+            }
+        }
+    }
+
+    // 3. Global default.
+    const PaDeviceIndex def = wantOutput
+        ? Pa_GetDefaultOutputDevice()
+        : Pa_GetDefaultInputDevice();
+    if (def != paNoDevice && directionOk(Pa_GetDeviceInfo(def))) {
+        return def;
+    }
+
+    // 4. First enumerated device with matching direction — prefer one
+    //    that satisfies the requested channel count, fall back to any
+    //    direction-valid device if none does (Pa_OpenStream will then
+    //    surface a clear paInvalidChannelCount error, better than
+    //    silently picking step 3's default which may not even exist).
+    PaDeviceIndex anyDirection = paNoDevice;
+    for (int i = 0; i < deviceCount; ++i) {
+        const PaDeviceInfo* di = Pa_GetDeviceInfo(i);
+        if (!directionOk(di)) { continue; }
+        if (capacityOk(di))   { return i; }
+        if (anyDirection == paNoDevice) { anyDirection = i; }
+    }
+    return anyDirection;
+}
+
+} // namespace
+
 PortAudioBus::PortAudioBus() {
     // 1 second stereo float ring at the nominal default rate. The push
     // path wraps modulo ring size, so a longer stream than 1 s simply
@@ -35,51 +157,36 @@ bool PortAudioBus::open(const AudioFormat& format) {
         close();
     }
 
+    const bool wantOutput = (m_cfg.direction == AudioDirection::Output);
+
     PaStreamParameters params;
     PaError err = paNoError;
     const PaDeviceInfo* di = nullptr;
 
-    if (m_cfg.direction == AudioDirection::Output) {
-        params.device = Pa_GetDefaultOutputDevice();
-        if (params.device == paNoDevice) {
-            m_err = QStringLiteral("No default output device");
-            return false;
-        }
-        di = Pa_GetDeviceInfo(params.device);
-        if (di == nullptr) {
-            m_err = QStringLiteral("Pa_GetDeviceInfo returned null for default device");
-            return false;
-        }
-        params.channelCount              = format.channels;
-        params.sampleFormat              = paFloat32;
-        params.suggestedLatency          = di->defaultLowOutputLatency;
-        params.hostApiSpecificStreamInfo = nullptr;
-
-        err = Pa_OpenStream(
-            &m_stream, nullptr, &params,
-            format.sampleRate, m_cfg.bufferSamples,
-            paClipOff, &PortAudioBus::paCallback, this);
-    } else {
-        params.device = Pa_GetDefaultInputDevice();
-        if (params.device == paNoDevice) {
-            m_err = QStringLiteral("No default input device");
-            return false;
-        }
-        di = Pa_GetDeviceInfo(params.device);
-        if (di == nullptr) {
-            m_err = QStringLiteral("Pa_GetDeviceInfo returned null for default device");
-            return false;
-        }
-        params.channelCount              = format.channels;
-        params.sampleFormat              = paFloat32;
-        params.suggestedLatency          = di->defaultLowInputLatency;
-        params.hostApiSpecificStreamInfo = nullptr;
-
-        err = Pa_OpenStream(
-            &m_stream, &params, nullptr,
-            format.sampleRate, m_cfg.bufferSamples,
-            paClipOff, &PortAudioBus::paCallback, this);
+    params.device = resolveDevice(m_cfg, wantOutput, format.channels);
+    if (params.device == paNoDevice) {
+        m_err = wantOutput
+            ? QStringLiteral("No output device found")
+            : QStringLiteral("No input device found");
+        return false;
     }
+    di = Pa_GetDeviceInfo(params.device);
+    if (di == nullptr) {
+        m_err = QStringLiteral("Pa_GetDeviceInfo returned null for resolved device");
+        return false;
+    }
+    params.channelCount              = format.channels;
+    params.sampleFormat              = paFloat32;
+    params.suggestedLatency          = wantOutput ? di->defaultLowOutputLatency
+                                                  : di->defaultLowInputLatency;
+    params.hostApiSpecificStreamInfo = nullptr;
+
+    err = Pa_OpenStream(
+        &m_stream,
+        wantOutput ? nullptr : &params,
+        wantOutput ? &params : nullptr,
+        format.sampleRate, m_cfg.bufferSamples,
+        paClipOff, &PortAudioBus::paCallback, this);
 
     if (err != paNoError) {
         m_err = QString::fromUtf8(Pa_GetErrorText(err));
