@@ -169,6 +169,7 @@ private:
 
     // Section: Grid
     QCheckBox*      m_gridToggle{nullptr};
+    QCheckBox*      m_dbmScaleVisibleToggle{nullptr};
     QLabel*         m_editingBandLabel{nullptr};
     QSpinBox*       m_dbMaxSpin{nullptr};
     QSpinBox*       m_dbMinSpin{nullptr};

@@ -368,6 +368,11 @@ public:
     void setGridEnabled(bool on);
     bool gridEnabled() const { return m_gridEnabled; }
 
+    // Right-edge dBm scale strip visibility. When false, the strip is
+    // hidden and the spectrum fills the full widget width.
+    void setDbmScaleVisible(bool on);
+    bool dbmScaleVisible() const { return m_dbmScaleVisible; }
+
     void setShowZeroLine(bool on);
     bool showZeroLine() const { return m_showZeroLine; }
 
@@ -477,6 +482,11 @@ private:
     int    hzToX(double hz, const QRect& r) const;
     double xToHz(int x, const QRect& r) const;
     int    dbmToY(float dbm, const QRect& r) const;
+
+    // Returns kDbmStripW when the dBm scale strip is visible, 0 otherwise.
+    // Used everywhere a rect excludes the right-edge strip so that hiding
+    // the strip automatically gives the spectrum full widget width.
+    int    effectiveStripW() const;
 
     // Returns the first and last FFT bin indices visible in the current
     // display window (m_centerHz ± m_bandwidthHz/2), mapped against
@@ -588,6 +598,7 @@ private:
     bool  m_gridEnabled{true};
     bool  m_showZeroLine{false};
     bool  m_showFps{false};
+    bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
 
     QColor m_gridColor{255, 255, 255, 40};       // vertical freq grid
