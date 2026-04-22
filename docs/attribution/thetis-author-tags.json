@@ -1,10 +1,10 @@
 {
-  "generated_utc": "2026-04-22T00:21:22+00:00",
+  "generated_utc": "2026-04-22T00:27:43+00:00",
   "thetis_sha": "93d50464",
-  "mi0bot_sha": "93d50464",
+  "mi0bot_sha": "2829f76",
   "callsign_tags": {
     "MW0LGE": {
-      "count": 3070,
+      "count": 3071,
       "first_seen": "aamix.c:432",
       "files": [
         "Alex.cs",
@@ -109,7 +109,7 @@
       "role": "Behringer MIDI, QSK for Protocol-2, DB import"
     },
     "DH1KLM": {
-      "count": 266,
+      "count": 267,
       "first_seen": "networkproto1.c:612",
       "files": [
         "CATCommands.cs",
@@ -124,6 +124,33 @@
       ],
       "name": "Sigi",
       "role": "MIDI, skins & UI improvements; RedPitaya enum slot contribution"
+    },
+    "MI0BOT": {
+      "count": 222,
+      "first_seen": "network.h:422",
+      "files": [
+        "Alex.cs",
+        "Andromeda.cs",
+        "CATCommands.cs",
+        "CATParser.cs",
+        "CatCmdDb.cs",
+        "Midi2CatCommands.cs",
+        "NetworkIOImports.cs",
+        "PSForm.cs",
+        "Penny.cs",
+        "clsRadioDiscovery.cs",
+        "cmaster.cs",
+        "console.cs",
+        "enums.cs",
+        "netInterface.c",
+        "network.c",
+        "network.h",
+        "networkproto1.c",
+        "setup.cs",
+        "xvtr.cs"
+      ],
+      "name": "Reid Campbell",
+      "role": "Hermes Lite 2 fork maintainer; HL2 I/O, bandwidth monitor, I2C TLV"
     },
     "G8NJJ": {
       "count": 132,
@@ -142,7 +169,7 @@
       "role": "G2, Andromeda, protocols; ANAN_G2_1K PA wiring"
     },
     "N1GP": {
-      "count": 88,
+      "count": 44,
       "first_seen": "clsHardwareSpecific.cs:129",
       "files": [
         "clsHardwareSpecific.cs",
@@ -180,6 +207,15 @@
       "name": "Bryan Rambo",
       "role": "Resampler, VAC & cmASIO"
     },
+    "MI0BIT": {
+      "count": 8,
+      "first_seen": "NetworkIOImports.cs:384",
+      "files": [
+        "NetworkIOImports.cs"
+      ],
+      "name": "Unknown",
+      "role": "mi0bot fork HL2 contributions (TX latency, PTT hang, I2C, channel swap); identity unconfirmed — possible alt callsign for MI0BOT"
+    },
     "G7KLJ": {
       "count": 6,
       "first_seen": "console.cs:1228",
@@ -189,16 +225,6 @@
       ],
       "name": "Unknown",
       "role": "console.cs PA init thread + setup-instance singleton pattern; identity to be researched"
-    },
-    "MI0BOT": {
-      "count": 6,
-      "first_seen": "network.h:422",
-      "files": [
-        "enums.cs",
-        "network.h"
-      ],
-      "name": "Reid Campbell",
-      "role": "Hermes Lite 2 fork maintainer; HL2 I/O, bandwidth monitor, I2C TLV"
     },
     "VK6APH": {
       "count": 6,
