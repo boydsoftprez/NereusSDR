@@ -1,5 +1,6 @@
 // no-port-check: test fixture cites Thetis source for expected values, not a port itself
 #include <QtTest/QtTest>
+#include <array>
 #include "core/codec/P1CodecHl2.h"
 
 using namespace NereusSDR;
@@ -116,6 +117,37 @@ private slots:
         quint8 out[5] = {};
         codec.composeCcForBank(18, ctx, out);
         QCOMPARE(int(out[4]), 0x00);
+    }
+
+    // HL2 inherits bank0 from Standard — verify RX-only + rxOut encoding
+    // matches Standard's byte-lock across all 8 {rxOnlyAnt × rxOut} combinations.
+    // Source: Thetis networkproto1.c:453-468 + netInterface.c:479-481
+    // [v2.10.3.13 @501e3f5]
+    void bank0_c3_rxOnly_and_rxOut_byteLock_hl2_parity() {
+        struct Case { int rxOnly; bool rxOut; quint8 expectedMask; };
+        const std::array<Case, 8> cases = {{
+            {0, false, 0b0000'0000},  // no RX-only path, no bypass
+            {1, false, 0b0010'0000},  // _Rx_1_In (bit5)
+            {2, false, 0b0100'0000},  // _Rx_2_In (bit6)
+            {3, false, 0b0110'0000},  // _XVTR_Rx_In (bits5+6)
+            {0, true,  0b1000'0000},  // bypass only (bit7)
+            {1, true,  0b1010'0000},  // RX1_In + bypass
+            {2, true,  0b1100'0000},  // RX2_In + bypass
+            {3, true,  0b1110'0000},  // XVTR + bypass
+        }};
+
+        for (const auto& tc : cases) {
+            CodecContext ctx{};
+            ctx.rxOnlyAnt = tc.rxOnly;
+            ctx.rxOut     = tc.rxOut;
+            quint8 out[5] = {};
+            P1CodecHl2 codec;
+            codec.composeCcForBank(0, ctx, out);
+
+            // Mask off bits 0-4 so preamp/dither/random defaults don't contaminate.
+            const quint8 rxOnlyMask = out[3] & 0b1110'0000;
+            QCOMPARE(int(rxOnlyMask), int(tc.expectedMask));
+        }
     }
 
     // Banks 0-10 unchanged from Standard — spot-check bank 10 (Alex filters)

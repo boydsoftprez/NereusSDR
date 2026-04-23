@@ -170,6 +170,16 @@ struct CodecContext {
     // Antenna selection (bank 0 C4 low 2 bits).
     int     antennaIdx{0};
 
+    // RX-only input mux (bank 0 C3 bits 5-6).
+    // 0=none, 1=RX1_In (bit5), 2=RX2_In (bit6), 3=XVTR_Rx_In (bits5+6).
+    // Source: Thetis netInterface.c:479-481, networkproto1.c:456-461
+    // [v2.10.3.13 @501e3f5]
+    int     rxOnlyAnt{0};
+
+    // _Rx_1_Out relay (RX-Bypass-Out). Bank 0 C3 bit 7.
+    // Source: Thetis networkproto1.c:455 [v2.10.3.13 @501e3f5]
+    bool    rxOut{false};
+
     // Duplex / diversity (bank 0 C4 bits 2 + 7).
     bool    duplex{true};
     bool    diversity{false};

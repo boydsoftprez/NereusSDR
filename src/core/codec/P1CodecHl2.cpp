@@ -53,20 +53,31 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
     switch (bank) {
         // Bank 0 — General settings
         // Source: mi0bot networkproto1.c:938-978 [@c26a8a4 / matches @501e3f5]
-        case 0:
+        // C3 bits 5-6: RX-only mux — From Thetis netInterface.c:479-481 [v2.10.3.13 @501e3f5]
+        // C3 bit 7: _Rx_1_Out relay — networkproto1.c:455 [v2.10.3.13 @501e3f5]
+        case 0: {
             out[0] = C0base | 0x00;
             out[1] = quint8(ctx.sampleRateCode & 0x03);
             out[2] = quint8((ctx.ocByte << 1) & 0xFE);
-            // C3: rxPreamp[0] + dither + random + RX_1_In select (default 0x20)
-            out[3] = quint8((ctx.rxPreamp[0] ? 0x04 : 0)
-                          | (ctx.dither[0]   ? 0x08 : 0)
-                          | (ctx.random[0]   ? 0x10 : 0)
-                          | 0x20);
+            // C3: rxPreamp[0] + dither + random + RX-only mux + RX-bypass-out.
+            // Source: networkproto1.c:453-468 [v2.10.3.13 @501e3f5]
+            quint8 c3 = quint8((ctx.rxPreamp[0] ? 0x04 : 0)
+                             | (ctx.dither[0]   ? 0x08 : 0)
+                             | (ctx.random[0]   ? 0x10 : 0));
+            switch (ctx.rxOnlyAnt) {
+                case 1: c3 |= 0b0010'0000; break;  // _Rx_1_In
+                case 2: c3 |= 0b0100'0000; break;  // _Rx_2_In
+                case 3: c3 |= 0b0110'0000; break;  // _XVTR_Rx_In
+                default: break;                     // 0 = no RX-only path selected
+            }
+            if (ctx.rxOut) { c3 |= 0b1000'0000; }  // _Rx_1_Out relay
+            out[3] = c3;
             out[4] = quint8((ctx.antennaIdx & 0x03)
                           | (ctx.duplex ? 0x04 : 0)
                           | (((ctx.activeRxCount - 1) & 0x0F) << 3)
                           | (ctx.diversity ? 0x80 : 0));
             return;
+        }
 
         // Bank 1 — TX VFO
         // Source: mi0bot networkproto1.c:980-984 [@c26a8a4 / matches @501e3f5]

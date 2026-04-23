@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <array>
 #include "core/codec/P1CodecStandard.h"
 
 using namespace NereusSDR;
@@ -35,18 +36,19 @@ private slots:
         QTest::addColumn<int>("c4_expected");
         QTest::addColumn<QByteArray>("ctx_overrides_json");
 
-        // Bank 0 — sample rate 48k, no MOX, NDDC=1, antenna 0
-        // dither[0]=random[0]=true (default), so C3 = 0x08|0x10|0x20 = 0x38
-        // Source: networkproto1.c:446-471 [@501e3f5]
+        // Bank 0 — sample rate 48k, no MOX, NDDC=1, antenna 0, rxOnlyAnt=0
+        // dither[0]=random[0]=true (default), rxOnlyAnt=0 (no RX-only path)
+        // C3 = 0x08|0x10 = 0x18  (bits 5-7 = 0 since rxOnlyAnt=0 and rxOut=false)
+        // Source: networkproto1.c:446-471, netInterface.c:479-481 [v2.10.3.13 @501e3f5]
         QTest::newRow("bank0_rx_48k_ant0")
             << 0 << false
-            << 0x00 << 0x00 << 0x00 << 0x38 << 0x04
+            << 0x00 << 0x00 << 0x00 << 0x18 << 0x04
             << QByteArray(R"({"sampleRateCode":0,"activeRxCount":1,"antennaIdx":0})");
 
-        // Bank 0 with dither + random both off → C3 just has the 0x20 RX-in-mux
+        // Bank 0 with dither + random both off, rxOnlyAnt=0 → C3 = 0x00 (no bits set)
         QTest::newRow("bank0_dither_random_off")
             << 0 << false
-            << 0x00 << 0x00 << 0x00 << 0x20 << 0x04
+            << 0x00 << 0x00 << 0x00 << 0x00 << 0x04
             << QByteArray(R"({"sampleRateCode":0,"activeRxCount":1,"antennaIdx":0,"dither":[false,false,false],"random":[false,false,false]})");
 
         // Bank 11 — RX ATT 20 dB, no MOX (5-bit mask + 0x20 enable)
@@ -141,6 +143,36 @@ private slots:
         ctx.antennaIdx = 2;  // ANT3
         codec.composeCcForBank(0, ctx, out);
         QCOMPARE(int(out[4] & 0x03), 0b10);
+    }
+
+    // Byte-locked against Thetis networkproto1.c:453-468 + netInterface.c:479-481
+    // [v2.10.3.13 @501e3f5]. All 8 combinations of {rxOnlyAnt × rxOut}.
+    // Mask off bits 0-4 so preamp/dither/random defaults don't contaminate.
+    void bank0_c3_rxOnly_and_rxOut_byteLock() {
+        struct Case { int rxOnly; bool rxOut; quint8 expectedMask; };
+        const std::array<Case, 8> cases = {{
+            {0, false, 0b0000'0000},  // no RX-only path, no bypass
+            {1, false, 0b0010'0000},  // _Rx_1_In (bit5)
+            {2, false, 0b0100'0000},  // _Rx_2_In (bit6)
+            {3, false, 0b0110'0000},  // _XVTR_Rx_In (bits5+6)
+            {0, true,  0b1000'0000},  // bypass only (bit7)
+            {1, true,  0b1010'0000},  // RX1_In + bypass
+            {2, true,  0b1100'0000},  // RX2_In + bypass
+            {3, true,  0b1110'0000},  // XVTR + bypass
+        }};
+
+        for (const auto& tc : cases) {
+            CodecContext ctx{};
+            ctx.rxOnlyAnt = tc.rxOnly;
+            ctx.rxOut     = tc.rxOut;
+            quint8 out[5] = {};
+            P1CodecStandard codec;
+            codec.composeCcForBank(0, ctx, out);
+
+            // Mask off bits 0-4 so preamp/dither/random defaults don't contaminate.
+            const quint8 rxOnlyMask = out[3] & 0b1110'0000;
+            QCOMPARE(int(rxOnlyMask), int(tc.expectedMask));
+        }
     }
 
 private:

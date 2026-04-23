@@ -164,12 +164,26 @@ void P1CodecStandard::bank0(const CodecContext& ctx, quint8 out[5]) const
     out[0] = (ctx.mox ? 0x01 : 0x00) | 0x00;
     out[1] = quint8(ctx.sampleRateCode & 0x03);
     out[2] = quint8((ctx.ocByte << 1) & 0xFE);
-    // C3: rxPreamp + dither + random + RX input select.
-    // Source: networkproto1.c:453-461 + 458 (RX input select default 0x20)
-    out[3] = quint8((ctx.rxPreamp[0] ? 0x04 : 0)
-                  | (ctx.dither[0]   ? 0x08 : 0)
-                  | (ctx.random[0]   ? 0x10 : 0)
-                  | 0x20);  // RX_1_In select default
+    // C3: rxPreamp + dither + random + RX-only mux + RX-bypass-out.
+    // Source: networkproto1.c:453-468 [v2.10.3.13 @501e3f5]
+    // Bits 5-6: RX-only mux — From Thetis netInterface.c:479-481 [v2.10.3.13 @501e3f5]
+    //   prbpfilter->_Rx_1_In    = (rx_only_ant & (0x01 | 0x02)) == 0x01;  // 1 → bit5
+    //   prbpfilter->_Rx_2_In    = (rx_only_ant & (0x01 | 0x02)) == 0x02;  // 2 → bit6
+    //   prbpfilter->_XVTR_Rx_In = (rx_only_ant & (0x01 | 0x02)) == (0x01 | 0x02); // 3 → bits5+6
+    // Bit 7: _Rx_1_Out (RX-Bypass-Out relay) — networkproto1.c:455 [v2.10.3.13 @501e3f5]
+    quint8 c3 = quint8((ctx.rxPreamp[0] ? 0x04 : 0)
+                     | (ctx.dither[0]   ? 0x08 : 0)
+                     | (ctx.random[0]   ? 0x10 : 0));
+    switch (ctx.rxOnlyAnt) {
+        case 1: c3 |= 0b0010'0000; break;  // _Rx_1_In
+        case 2: c3 |= 0b0100'0000; break;  // _Rx_2_In
+        case 3: c3 |= 0b0110'0000; break;  // _XVTR_Rx_In
+        default: break;                     // 0 = no RX-only path selected
+    }
+    if (ctx.rxOut) {
+        c3 |= 0b1000'0000;  // _Rx_1_Out relay
+    }
+    out[3] = c3;
     // C4: antenna, duplex, NDDC-1, diversity (networkproto1.c:463-471)
     out[4] = quint8((ctx.antennaIdx & 0x03)
                   | (ctx.duplex ? 0x04 : 0)

@@ -830,8 +830,11 @@ void P1RadioConnection::setAntennaRouting(AntennaRouting r)
 {
     const int clamped = (r.trxAnt < 1 || r.trxAnt > 3) ? 0 : (r.trxAnt - 1);
     m_antennaIdx = clamped;  // 0..2 (or 0 for "no selection")
-    // P1 has no high-priority packet; the next EP2 frame picks up the
-    // new antennaIdx via buildCodecContext() → P1Codec::bank0.
+    // RX-only input mux: clamp to 0..3 per netInterface.c:479-481 [v2.10.3.13 @501e3f5]
+    m_rxOnlyAnt = (r.rxOnlyAnt < 0) ? 0 : (r.rxOnlyAnt > 3 ? 3 : r.rxOnlyAnt);
+    m_rxOut     = r.rxOut;
+    // P1 has no high-priority packet; the next EP2 frame picks up all
+    // antenna fields via buildCodecContext() → P1Codec::bank0.
 }
 
 // ---------------------------------------------------------------------------
@@ -991,6 +994,8 @@ CodecContext P1RadioConnection::buildCodecContext() const
     ctx.duplex         = m_duplex;
     ctx.diversity      = m_diversity;
     ctx.antennaIdx     = m_antennaIdx;
+    ctx.rxOnlyAnt      = m_rxOnlyAnt;
+    ctx.rxOut          = m_rxOut;
 
     // Source OC byte from OcMatrix per current band + MOX state.  Falls
     // through to legacy m_ocOutput when matrix is unset (e.g. tests that

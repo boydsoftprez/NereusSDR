@@ -260,6 +260,8 @@ private:
     quint64 m_txFreqHz{0};
     bool    m_mox{false};
     int     m_antennaIdx{0};
+    int     m_rxOnlyAnt{0};   // RX-only input mux (0..3). Bank 0 C3 bits 5-6.
+    bool    m_rxOut{false};   // _Rx_1_Out relay. Bank 0 C3 bit 7.
 
     // Per-ADC state — initialized from HardwareProfile at connect time
     bool    m_dither[3]{true, true, true};
