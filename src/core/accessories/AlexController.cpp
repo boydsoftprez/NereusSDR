@@ -125,17 +125,43 @@ void AlexController::setRxOnlyAnt(Band band, int ant)
 bool AlexController::blockTxAnt2() const { return m_blockTxAnt2; }
 bool AlexController::blockTxAnt3() const { return m_blockTxAnt3; }
 
+// Source: Thetis setup.cs:18745-18766 chkBlockTxAnt2_CheckedChanged +
+// setup.cs:13237 radAlexR_160_CheckedChanged branch [v2.10.3.13 @501e3f5].
+// When Block-TX-ANT2 flips ON, Thetis walks every band and clamps any
+// radAlexT2_*.Checked band back to radAlexT1_*. Without the retroactive
+// sweep the flag is a write-time guard only — existing per-band
+// txAnt=2 values keep firing on transmit until the user re-picks.
+// Flagged by Codex review on PR #116 (NereusSDR bench pass 2026-04-22).
 void AlexController::setBlockTxAnt2(bool on)
 {
     if (m_blockTxAnt2 == on) { return; }
     m_blockTxAnt2 = on;
+    if (on) {
+        for (int b = 0; b < kBandCount; ++b) {
+            if (m_txAnt[b] == 2) {
+                m_txAnt[b] = 1;
+                emit antennaChanged(Band(b));
+            }
+        }
+    }
     emit blockTxChanged();
 }
 
+// Same rationale as setBlockTxAnt2 — Thetis sets radAlexT1_* checked
+// when radAlexT3_* was checked and the block toggles on
+// (setup.cs:13248). Mirror the retroactive clamp for ANT3.
 void AlexController::setBlockTxAnt3(bool on)
 {
     if (m_blockTxAnt3 == on) { return; }
     m_blockTxAnt3 = on;
+    if (on) {
+        for (int b = 0; b < kBandCount; ++b) {
+            if (m_txAnt[b] == 3) {
+                m_txAnt[b] = 1;
+                emit antennaChanged(Band(b));
+            }
+        }
+    }
     emit blockTxChanged();
 }
 

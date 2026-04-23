@@ -125,12 +125,71 @@ private slots:
         QCOMPARE(spy.count(), 14);
     }
 
+    // Phase 3P-I-a bench fix — Block-TX toggle retroactively clamps
+    // any band currently on the blocked TX antenna down to ANT1, and
+    // emits antennaChanged for each affected band so the per-band
+    // pump reapplies to the wire. Without this the block is a
+    // write-time guard only — pre-existing txAnt=2 values would keep
+    // firing on transmit. Mirrors Thetis setup.cs:13237-13248
+    // radAlexR_*_CheckedChanged branches. Flagged by Codex review on
+    // PR #116.
+    void enabling_blockTxAnt2_clamps_existing_txAnt2_bands() {
+        AlexController a;
+        a.setTxAnt(Band::Band20m, 2);
+        a.setTxAnt(Band::Band40m, 3);
+        a.setTxAnt(Band::Band15m, 2);
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+
+        a.setBlockTxAnt2(true);
+
+        QCOMPARE(a.txAnt(Band::Band20m), 1);  // was 2, clamped
+        QCOMPARE(a.txAnt(Band::Band40m), 3);  // was 3, untouched
+        QCOMPARE(a.txAnt(Band::Band15m), 1);  // was 2, clamped
+        // Expect two antennaChanged emits — Band20m and Band15m.
+        QCOMPARE(spy.count(), 2);
+    }
+
+    void enabling_blockTxAnt3_clamps_existing_txAnt3_bands() {
+        AlexController a;
+        a.setTxAnt(Band::Band20m, 3);
+        a.setTxAnt(Band::Band40m, 2);
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+
+        a.setBlockTxAnt3(true);
+
+        QCOMPARE(a.txAnt(Band::Band20m), 1);  // was 3, clamped
+        QCOMPARE(a.txAnt(Band::Band40m), 2);  // was 2, untouched
+        QCOMPARE(spy.count(), 1);
+    }
+
+    // Disabling the block must NOT retroactively change anything —
+    // user can now pick ANT2 again, but existing values stay put.
+    void disabling_blockTxAnt2_does_not_touch_txAnt() {
+        AlexController a;
+        a.setBlockTxAnt2(true);
+        a.setTxAnt(Band::Band20m, 2);         // rejected → still 1
+        QCOMPARE(a.txAnt(Band::Band20m), 1);
+        QSignalSpy spy(&a, &AlexController::antennaChanged);
+
+        a.setBlockTxAnt2(false);              // toggle off
+
+        QCOMPARE(spy.count(), 0);              // no antennaChanged on disable
+        a.setTxAnt(Band::Band20m, 2);         // now succeeds
+        QCOMPARE(a.txAnt(Band::Band20m), 2);
+    }
+
     // Per-MAC persistence round-trip
     void persistence_roundtrip() {
         const QString mac = QStringLiteral("aa:bb:cc:dd:ee:ff");
         AlexController a1;
         a1.setMacAddress(mac);
-        a1.setTxAnt(Band::Band20m, 2);
+        // Use ANT3 here, not ANT2 — enabling blockTxAnt2 below would
+        // retroactively clamp any existing ANT2 assignment down to
+        // ANT1 per Thetis setup.cs:13237. (Pre-Codex-review versions
+        // of this test relied on the old "flag-only" semantics where
+        // blockTxAnt2 was a write-time guard with no retroactive
+        // effect.)
+        a1.setTxAnt(Band::Band20m, 3);
         a1.setRxOnlyAnt(Band::Band40m, 3);
         a1.setBlockTxAnt2(true);
         a1.save();
@@ -138,7 +197,7 @@ private slots:
         AlexController a2;
         a2.setMacAddress(mac);
         a2.load();
-        QCOMPARE(a2.txAnt(Band::Band20m), 2);
+        QCOMPARE(a2.txAnt(Band::Band20m), 3);
         QCOMPARE(a2.rxOnlyAnt(Band::Band40m), 3);
         QVERIFY(a2.blockTxAnt2());
     }
