@@ -142,9 +142,10 @@ void AntennaAlexTab::populate(const RadioInfo& info, const BoardCapabilities& ca
     m_alex1Tab->updateBoardCapabilities(isSaturn);
 
     // Gate Alex-2 board status on caps.hasAlex2 (Phase 3P-I-b T8).
-    // From Thetis setup.cs:6228-6264: tpAlex2FilterControl is visible only
-    // for BPF2-capable boards (ANAN7000D family + OrionMKII + Saturn).
-    // [v2.10.3.13 @501e3f5]
+    // From Thetis setup.cs:6228-6264 [v2.10.3.13]: tpAlex2FilterControl
+    // is visible only for BPF2-capable boards (ANAN7000D family +
+    // OrionMKII + Saturn).
+    //DH1KLM  [REDPITAYA-class SKU attribution in setup.cs:6256/6261]
     m_alex2FiltersTab->updateBoardCapabilities(caps.hasAlex2);
     const int alex2Idx = m_subTabs->indexOf(m_alex2FiltersTab);
     if (alex2Idx >= 0) {

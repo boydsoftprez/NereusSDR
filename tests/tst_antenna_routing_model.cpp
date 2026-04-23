@@ -296,6 +296,7 @@ private slots:
 
     // rxOutOverride=true + rxOnlyAnt=1 (rxOut=true) → trxAnt forced to 4, rxOut=false.
     // From Thetis Alex.cs:368-374 [@501e3f5].
+    //G8NJJ  [Aries adjacency — Thetis Alex.cs:376 "G8NJJ support for external Aries ATU"]
     void rxOutOverride_forces_trxAnt_4_on_rx() {
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);

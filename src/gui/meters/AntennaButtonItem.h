@@ -82,6 +82,10 @@ public:
     // Phase 3P-I-b T10 — retarget RX-only button labels (indices 3/4/5) per
     // SKU. Hermes: RX1/RX2/XVTR; ANAN100: EXT2/EXT1/XVTR; G2: BYPS/EXT1/XVTR.
     // From Thetis setup.cs:19846-20375 [v2.10.3.13].
+    //MW0LGE  [setup.cs:19855 HERMES branch attribution]
+    //N1GP    [setup.cs:19904 ANAN_G1 branch attribution]
+    //G8NJJ   [setup.cs:20287/20338 ANAN_G2 / ANAN_G2_1K branch attribution]
+    //DH1KLM  [setup.cs:20355 REDPITAYA branch attribution]
     void setHpsdrSku(HPSDRModel sku);
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }

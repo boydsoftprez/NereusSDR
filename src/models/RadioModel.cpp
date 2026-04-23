@@ -1674,6 +1674,7 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
     }
 
     // From Thetis Alex.cs:368-375 rx_out_override [@501e3f5].
+    //G8NJJ  [Aries block adjacency — Thetis Alex.cs:376 "G8NJJ support for external Aries ATU"]
     if (m_alexController.rxOutOverride() && rxOut) {
         if (!isTx) {
             trxAnt = 4;  // Special RX-override — trx_ant=4 signals the wire layer to bypass.
@@ -1690,6 +1691,7 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
     // MOX-coupled reapply + Aries clamp — deferred to Phase 3M-1.
     // From Thetis Alex.cs:381-382 [@501e3f5] (reference):
     //   if ((trx_ant != 4) && (LimitTXRXAntenna == true)) trx_ant = 1;
+    //G8NJJ
     //
     // MW0LGE_21k9d only set bits if different — Alex.cs:394-413
     // (deduplication guard) also deferred: NereusSDR connection layer
