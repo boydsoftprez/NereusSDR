@@ -772,6 +772,12 @@ QString boolStr(bool v) { return v ? QStringLiteral("True") : QStringLiteral("Fa
 
 } // namespace
 
+bool SliceModel::hasSettingsFor(Band band) const
+{
+    auto& s = AppSettings::instance();
+    return s.contains(bandPrefix(m_sliceIndex, band) + QStringLiteral("DspMode"));
+}
+
 void SliceModel::saveToSettings(Band band)
 {
     auto& s = AppSettings::instance();
