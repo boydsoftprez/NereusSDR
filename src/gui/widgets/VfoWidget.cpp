@@ -940,13 +940,10 @@ void VfoWidget::buildAudioTab()
 void VfoWidget::buildDspTab()
 {
     auto* dspWidget = new QWidget;
-    // Matches AetherSDR VfoWidget.cpp:933 DSP tab pattern — default sizing,
-    // grid's Expanding buttons fill the flag width.
-    dspWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    // Default sizing — mirrors AetherSDR VfoWidget.cpp:933 exactly.
     auto* dspLayout = new QVBoxLayout(dspWidget);
-    dspLayout->setContentsMargins(0, 0, 0, 0);
-    dspLayout->setSpacing(2);
-    dspLayout->setSizeConstraint(QLayout::SetFixedSize);
+    dspLayout->setContentsMargins(2, 2, 2, 2);
+    dspLayout->setSpacing(3);
 
     // Sub-epic C-1 USER-APPROVED layout: 3×4 DSP button grid.
     // NB first (preserves cycling), then NR mutual-exclusion group (NR1-4/DFNR/MNR),
@@ -966,14 +963,12 @@ void VfoWidget::buildDspTab()
         return btn;
     };
 
-    // Sub-grid widget that holds the entire 3×4 button matrix.
-    // Cells stretch equally so buttons span the full flag width — removes
-    // awkward empty space right of the last column.
-    auto* dspSubgrid = new QWidget(dspWidget);
-    dspSubgrid->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    auto* dspGrid = new QGridLayout(dspSubgrid);
-    dspGrid->setContentsMargins(0, 0, 0, 0);
-    dspGrid->setSpacing(3);  // matches AetherSDR VfoWidget.cpp:939
+    // QGridLayout added directly to dspLayout — matches AetherSDR
+    // VfoWidget.cpp:938 (no subgrid widget wrapper). Grid fills the outer
+    // VBoxLayout width, QPushButton default Expanding policy stretches
+    // buttons to fill each cell.
+    auto* dspGrid = new QGridLayout;
+    dspGrid->setSpacing(3);
 
     // NB cycling button (row 0, col 0) — tri-state Off → NB → NB2 → Off.
     // Mirrors Thetis chkNB — label switches "NB"/"NB2"; checked = active.
@@ -1075,7 +1070,7 @@ void VfoWidget::buildDspTab()
         }
     }
 
-    dspLayout->addWidget(dspSubgrid);
+    dspLayout->addLayout(dspGrid);
 
     // APF toggle + tune slider row — below the 3×4 grid.
     // The toggle acts as the enable button; slider + Hz label are only visible
