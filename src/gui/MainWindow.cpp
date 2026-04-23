@@ -591,10 +591,24 @@ void MainWindow::buildUI()
     };
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             pushCapsToAllContainers);
+
+    // Issue #118 — helper: wire a container's bandClicked signal through
+    // the RadioModel handler. Used by both the containerAdded callback
+    // (for runtime-added containers) and the post-restoreState sweep
+    // (for containers materialized by restoreState / createDefaultContainers
+    // before the signal was connected).
+    auto wireContainerBandClick = [this](ContainerWidget* c) {
+        if (!c) { return; }
+        connect(c, &ContainerWidget::bandClicked, this, [this](int idx) {
+            m_radioModel->onBandButtonClicked(bandFromUiIndex(idx));
+        });
+    };
+
     connect(m_containerManager, &ContainerManager::containerAdded, this,
-            [this](const QString& id) {
+            [this, wireContainerBandClick](const QString& id) {
         if (auto* c = m_containerManager->container(id)) {
             c->setBoardCapabilities(m_radioModel->boardCapabilities());
+            wireContainerBandClick(c);
         }
     });
 
@@ -639,6 +653,13 @@ void MainWindow::buildUI()
     // content factory. Do a one-shot sweep here so the final items
     // pick up the startup board capabilities.
     pushCapsToAllContainers();
+
+    // Issue #118 — retrofit bandClicked on containers created during
+    // restoreState() / createDefaultContainers(). containerAdded covers
+    // future adds; this sweep covers the initial set.
+    for (ContainerWidget* c : m_containerManager->allContainers()) {
+        wireContainerBandClick(c);
+    }
 
     // Default splitter sizes on first run: ~80% spectrum, ~20% panel
     if (!AppSettings::instance().contains(QStringLiteral("MainSplitterSizes"))) {
