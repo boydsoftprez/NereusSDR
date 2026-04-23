@@ -16,4 +16,9 @@ QStringList antennaLabels(const BoardCapabilities& caps)
     return out;
 }
 
+std::array<QString, 3> rxOnlyLabels(const SkuUiProfile& sku)
+{
+    return sku.rxOnlyLabels;
+}
+
 } // namespace NereusSDR

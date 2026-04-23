@@ -561,4 +561,11 @@ target_compile_definitions(tst_popup_style_coverage PRIVATE
 # anan8000d, anan_g2, anan_g2_1k, hermeslite.
 nereus_add_test(tst_sku_ui_profile)
 
+# ── Phase 3P-I-b T2: AntennaLabels facade — antennaLabels() + rxOnlyLabels() ─
+# Exercises the delegator surface: antennaLabels(caps) empty-on-no-alex,
+# three-port ANT1/2/3 list, and rxOnlyLabels(sku) for hermes / anan_g2 /
+# anan100 families. 5 cases. Values come indirectly from SkuUiProfile which
+# cites Thetis setup.cs:19846-20375 [v2.10.3.13 @501e3f5].
+nereus_add_test(tst_antenna_labels)
+
 
