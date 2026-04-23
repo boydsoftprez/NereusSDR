@@ -18,6 +18,7 @@
 
 #include <QWidget>
 #include <QVector>
+#include <climits>
 #include <functional>
 
 class QVBoxLayout;
@@ -43,7 +44,9 @@ public:
     void addRadioGroup(const QString& label, const QStringList& options,
                        int defaultIdx, std::function<void(int)> onChange);
     void addSlider(const QString& label, int min, int max, int defaultVal,
-                   std::function<QString(int)> format, std::function<void(int)> onChange);
+                   std::function<QString(int)> format, std::function<void(int)> onChange,
+                   const QString& tooltip = QString(),
+                   int factoryDefault = INT_MIN);  // INT_MIN → use defaultVal
     void addCheckbox(const QString& label, bool defaultVal,
                      std::function<void(bool)> onChange);
 

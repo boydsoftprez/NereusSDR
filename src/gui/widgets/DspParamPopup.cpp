@@ -90,23 +90,28 @@ void DspParamPopup::addRadioGroup(const QString& label, const QStringList& optio
 
 void DspParamPopup::addSlider(const QString& label, int min, int max, int defaultVal,
                                std::function<QString(int)> format,
-                               std::function<void(int)> onChange)
+                               std::function<void(int)> onChange,
+                               const QString& tooltip,
+                               int factoryDefault)
 {
     auto* row = new QHBoxLayout;
 
     auto* lbl = new QLabel(label);
     lbl->setFixedWidth(90);
+    if (!tooltip.isEmpty()) lbl->setToolTip(tooltip);
     row->addWidget(lbl);
 
     auto* slider = new GuardedSlider(Qt::Horizontal);
     slider->setRange(min, max);
     slider->setValue(defaultVal);
     slider->setStyleSheet(kSliderStyle);
+    if (!tooltip.isEmpty()) slider->setToolTip(tooltip);
     row->addWidget(slider);
 
     auto* val = new QLabel(format ? format(defaultVal) : QString::number(defaultVal));
     val->setStyleSheet("QLabel { color: #c8d8e8; min-width: 36px; }");
     val->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    if (!tooltip.isEmpty()) val->setToolTip(tooltip);
     row->addWidget(val);
 
     m_layout->addLayout(row);
@@ -116,8 +121,12 @@ void DspParamPopup::addSlider(const QString& label, int min, int max, int defaul
         if (onChange) onChange(v);
     });
 
-    m_resetters.append([slider, defaultVal]() {
-        slider->setValue(defaultVal);
+    // Reset-to-factory uses factoryDefault if supplied, else falls back to
+    // the value we were constructed with (which typically reflects current
+    // state, not a sensible factory default).
+    const int resetVal = (factoryDefault == INT_MIN) ? defaultVal : factoryDefault;
+    m_resetters.append([slider, resetVal]() {
+        slider->setValue(resetVal);
     });
 }
 
