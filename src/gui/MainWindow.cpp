@@ -2427,6 +2427,18 @@ void MainWindow::wireSliceToSpectrum()
         dialog->show();
     });
 
+    // --- VfoWidget → Setup → DSP → NR/ANF page (Task 18, Sub-epic C-1).
+    // Emitted from DspParamPopup "More Settings…" on any NR bank button.
+    // Mirrors Thetis chkNR_MouseDown (console.cs [v2.10.3.13]) which calls
+    // ShowSetupTab(NR_Tab). Sub-tab selection per NrSlot is deferred to Task 17.
+    connect(vfo, &VfoWidget::openNrSetupRequested, this,
+            [this](NereusSDR::NrSlot /*slot*/) {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->selectPage(QStringLiteral("NR/ANF"));
+        dialog->show();
+    });
+
     // --- VfoWidget AUTO button → SliceModel auto-AGC toggle ---
     connect(vfo, &VfoWidget::autoAgcToggled,
             slice, &SliceModel::setAutoAgcEnabled);

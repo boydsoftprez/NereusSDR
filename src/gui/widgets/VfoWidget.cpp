@@ -920,8 +920,8 @@ void VfoWidget::buildDspTab()
 {
     auto* dspWidget = new QWidget;
     auto* dspLayout = new QVBoxLayout(dspWidget);
-    dspLayout->setContentsMargins(4, 4, 4, 4);
-    dspLayout->setSpacing(4);
+    dspLayout->setContentsMargins(2, 2, 2, 2);
+    dspLayout->setSpacing(2);
 
     // Sub-epic C-1 USER-APPROVED layout: 3×4 DSP button grid.
     // NB first (preserves cycling), then NR mutual-exclusion group (NR1-4/DFNR/MNR),
@@ -945,8 +945,8 @@ void VfoWidget::buildDspTab()
     auto* dspSubgrid = new QWidget(dspWidget);
     auto* dspGrid = new QGridLayout(dspSubgrid);
     dspGrid->setContentsMargins(0, 0, 0, 0);
-    dspGrid->setHorizontalSpacing(2);
-    dspGrid->setVerticalSpacing(2);
+    dspGrid->setHorizontalSpacing(0);
+    dspGrid->setVerticalSpacing(0);
     for (int col = 0; col < 4; ++col) {
         dspGrid->setColumnStretch(col, 1);
     }
@@ -1033,11 +1033,14 @@ void VfoWidget::buildDspTab()
     dspGrid->addWidget(m_snbToggle, 2, 1);
 
     // Uniform Expanding policy so all buttons fill their grid cell width equally.
+    // Fixed height of 22px keeps the grid compact (conserves vertical space on
+    // lower resolutions). Borders abut cleanly with 0-spacing.
     for (auto* btn : {m_nbButton, m_nr1Btn, m_nr2Btn, m_nr3Btn,
                       m_nr4Btn, m_dfnrBtn, m_mnrBtn,
                       m_anfToggle, m_snbToggle}) {
         if (btn) {
             btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            btn->setFixedHeight(22);
         }
     }
 
@@ -1052,7 +1055,7 @@ void VfoWidget::buildDspTab()
 
     {
         auto* apfRow = new QHBoxLayout;
-        apfRow->setSpacing(4);
+        apfRow->setSpacing(2);
 
         apfRow->addWidget(m_apfToggle);
 
