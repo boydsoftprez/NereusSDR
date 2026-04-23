@@ -914,12 +914,18 @@ void VfoWidget::buildDspTab()
         return btn;
     };
 
-    // Row 0: NB | NB2 | NR | NR2
-    m_nb1Toggle = makeToggle(QStringLiteral("NB"));
-    // From Thetis console.resx:4017 — chkNB.ToolTip
-    m_nb1Toggle->setToolTip(QStringLiteral("Noise Blanker"));
-    m_nb2Toggle = makeToggle(QStringLiteral("NB2"));
-    m_nb2Toggle->setToolTip(QStringLiteral("NB2: Impulse Noise Blanker (xnobEXTF — pre-WDSP chain)\nFrom Thetis specHPSDR.cs:937 — WDSP nobII.c:649"));
+    // Row 0: NB (cycling) | NR | NR2
+    // Single tri-state cycling button: Off → NB → NB2 → Off.
+    // Mirrors Thetis chkNB — label switches "NB"/"NB2"; checked = active.
+    // From Thetis console.cs:43513-43560 [v2.10.3.13].
+    m_nbButton = makeToggle(QStringLiteral("NB"));
+    m_nbButton->setToolTip(tr(
+        "Noise blanker — click to cycle Off \u2192 NB \u2192 NB2 \u2192 Off.\n"
+        "NB  (nob.c, Whitney): time-domain impulse blanker, suited to\n"
+        "      sporadic crashes (powerline / ignition).\n"
+        "NB2 (nobII.c): second-generation with hold/interpolate modes,\n"
+        "      suited to denser impulse noise.\n"
+        "Tuning: Setup \u2192 DSP \u2192 NB/SNB."));
     m_nrToggle  = makeToggle(QStringLiteral("NR"));
     // From Thetis console.resx:3879 — chkNR.ToolTip
     m_nrToggle->setToolTip(QStringLiteral("Noise Reduction"));
@@ -928,8 +934,7 @@ void VfoWidget::buildDspTab()
     // a context menu on chkNR which relabels that same checkbox to "NR2".
     // NereusSDR exposes NR2 as a separate dedicated toggle.
     m_nr2Toggle->setToolTip(QStringLiteral("Enhanced Multiband Noise Reduction (EMNR/NR2) — activates SetRXAEMNRRun"));
-    grid->addWidget(m_nb1Toggle, 0, 0);
-    grid->addWidget(m_nb2Toggle, 0, 1);
+    grid->addWidget(m_nbButton,  0, 0);
     grid->addWidget(m_nrToggle,  0, 2);
     grid->addWidget(m_nr2Toggle, 0, 3);
 
@@ -996,12 +1001,12 @@ void VfoWidget::buildDspTab()
         m_rttyContainer->setSlice(m_slice.data());
     }
 
-    // Signal wiring for the 7 toggles
-    connect(m_nb1Toggle, &QPushButton::toggled, this, [this](bool on) {
-        if (!m_updatingFromModel) { emit nb1Changed(on); }
-    });
-    connect(m_nb2Toggle, &QPushButton::toggled, this, [this](bool on) {
-        if (!m_updatingFromModel) { emit nb2Changed(on); }
+    // Signal wiring for the 6 toggles
+    // NB button emits nbModeCycled() on click; MainWindow calls cycleNbMode()
+    // and pushes the new mode back via setNbMode(). clicked() not toggled()
+    // so we don't double-fire on programmatic setChecked() calls.
+    connect(m_nbButton, &QPushButton::clicked, this, [this] {
+        if (!m_updatingFromModel) { emit nbModeCycled(); }
     });
     connect(m_nrToggle, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) { emit nrChanged(on); }
@@ -1545,13 +1550,29 @@ void VfoWidget::setXitHz(int hz)
 
 // ---- DSP tab state setters (S1.8b) ----
 
-void VfoWidget::setNb2Enabled(bool v)
+// Label + styling mirror Thetis console.cs:43518-43546 [v2.10.3.13]:
+//   Off → label "NB", dim background, unchecked
+//   NB  → label "NB", active background, checked
+//   NB2 → label "NB2", active background, indeterminate (shown as checked)
+void VfoWidget::setNbMode(NereusSDR::NbMode m)
 {
-    if (m_nb2Toggle && m_nb2Toggle->isChecked() != v) {
-        m_updatingFromModel = true;
-        m_nb2Toggle->setChecked(v);
-        m_updatingFromModel = false;
+    if (!m_nbButton) { return; }
+    m_updatingFromModel = true;
+    switch (m) {
+        case NereusSDR::NbMode::Off:
+            m_nbButton->setText(QStringLiteral("NB"));
+            m_nbButton->setChecked(false);
+            break;
+        case NereusSDR::NbMode::NB:
+            m_nbButton->setText(QStringLiteral("NB"));
+            m_nbButton->setChecked(true);
+            break;
+        case NereusSDR::NbMode::NB2:
+            m_nbButton->setText(QStringLiteral("NB2"));
+            m_nbButton->setChecked(true);
+            break;
     }
+    m_updatingFromModel = false;
 }
 
 void VfoWidget::setNr2Enabled(bool v)

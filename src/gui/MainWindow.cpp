@@ -254,6 +254,7 @@ warren@wpratt.com
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
+#include "core/NbFamily.h"
 #include "core/ClarityController.h"
 #include "core/StepAttenuatorController.h"
 #include "core/NoiseFloorTracker.h"
@@ -2260,13 +2261,9 @@ void MainWindow::wireSliceToSpectrum()
         vfo->setXitHz(hz);
     });
 
-    // --- SliceModel → VfoWidget: DSP tab inbound (S1.8b stubs) ---
-    // nb2EnabledChanged replaced by nbModeChanged in Task 6. VfoWidget's
-    // setNb2Enabled(bool) shim retained as-is until Task 8 rewrites the
-    // NB button wholesale with tri-state cycling.
-    connect(slice, &SliceModel::nbModeChanged, this, [vfo](NereusSDR::NbMode m) {
-        vfo->setNb2Enabled(m == NereusSDR::NbMode::NB2);
-    });
+    // --- SliceModel → VfoWidget: DSP tab inbound (S1.8b) ---
+    connect(slice, &SliceModel::nbModeChanged, vfo, &VfoWidget::setNbMode);
+    vfo->setNbMode(slice->nbMode());   // initial sync
 
     connect(slice, &SliceModel::emnrEnabledChanged, this, [vfo](bool v) {
         vfo->setNr2Enabled(v);
@@ -2318,11 +2315,15 @@ void MainWindow::wireSliceToSpectrum()
         slice->setTxAntenna(ant);
     });
 
-    // NB/NR/ANF → RxChannel directly (not SliceModel properties)
-    connect(vfo, &VfoWidget::nb1Changed, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNbMode(on ? NereusSDR::NbMode::NB : NereusSDR::NbMode::Off); }
+    // NB cycling — nbModeCycled fires on user click; cycle the mode through
+    // Off → NB → NB2 → Off via SliceModel. SliceModel's nbModeChanged feeds
+    // back to setNbMode() (wired in the inbound block above).
+    // From Thetis console.cs:43513 [v2.10.3.13].
+    connect(vfo, &VfoWidget::nbModeCycled, this, [slice] {
+        slice->setNbMode(NereusSDR::cycleNbMode(slice->nbMode()));
     });
+
+    // NR/ANF → RxChannel directly (not SliceModel properties)
     connect(vfo, &VfoWidget::nrChanged, this, [this](bool on) {
         RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
         if (rxCh) { rxCh->setNrEnabled(on); }
@@ -2332,12 +2333,7 @@ void MainWindow::wireSliceToSpectrum()
         if (rxCh) { rxCh->setAnfEnabled(on); }
     });
 
-    // --- VfoWidget → SliceModel: DSP tab outbound (S1.8b stubs) ---
-    // nb2Changed is a bool toggle from VfoWidget; map to NbMode::NB2 or Off.
-    // Task 8 will replace this with a full tri-state nb2Changed → nbMode cycle.
-    connect(vfo, &VfoWidget::nb2Changed, this, [slice](bool on) {
-        slice->setNbMode(on ? NereusSDR::NbMode::NB2 : NereusSDR::NbMode::Off);
-    });
+    // --- VfoWidget → SliceModel: DSP tab outbound (S1.8b) ---
     connect(vfo, &VfoWidget::nr2Changed, this, [slice](bool on) {
         // NR2 = EMNR in Thetis naming
         slice->setEmnrEnabled(on);
