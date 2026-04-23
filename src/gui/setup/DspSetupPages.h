@@ -79,6 +79,7 @@
 //   CfcSetupPage      — CFC / Profile
 //   MnfSetupPage      — Manual Notch Filter
 
+#include "core/WdspTypes.h"   // NrSlot
 #include "gui/SetupPage.h"
 
 #include <QCheckBox>
@@ -116,6 +117,13 @@ class NrAnfSetupPage : public SetupPage {
     Q_OBJECT
 public:
     explicit NrAnfSetupPage(RadioModel* model, QWidget* parent = nullptr);
+
+    // Programmatically select a sub-tab by NrSlot. Used by MainWindow to
+    // route "More Settings…" popup clicks to the correct filter's sub-tab.
+    void selectSubtab(NereusSDR::NrSlot slot);
+
+private:
+    QTabWidget* m_tabs{nullptr};  // owned by content layout
 };
 
 // ── NB / SNB ──────────────────────────────────────────────────────────────────

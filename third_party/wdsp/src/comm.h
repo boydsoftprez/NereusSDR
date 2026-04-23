@@ -1,3 +1,4 @@
+// no-port-check: vendored upstream TAPR WDSP v1.29 — not a NereusSDR port of Thetis
 /*  comm.h
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -59,6 +60,8 @@ warren@wpratt.com
 #include "doublepole.h"
 #include "eer.h"
 #include "emnr.h"
+#include "rnnr.h" // NR3 + NR4 support
+#include "sbnr.h" // NR3 + NR4 support
 #include "emph.h"
 #include "eq.h"
 #include "fcurve.h"

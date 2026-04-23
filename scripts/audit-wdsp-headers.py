@@ -4,7 +4,7 @@
 Compliance Plan Task 11. ``verify-thetis-headers.py --kind=wdsp`` (Task 7)
 enforces the GPLv2-or-later markers with an explicit exemption set;
 this script is the independent census that re-verifies the
-WDSP-PROVENANCE.md claim (128 full-header files + 10 exempt utilities).
+WDSP-PROVENANCE.md claim (132 full-header files + 10 exempt utilities).
 
 Use this whenever the WDSP vendored tree is re-synced from upstream to
 catch drift before the verifier's exemption set goes stale.
@@ -24,10 +24,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 WDSP_SRC = REPO / "third_party" / "wdsp" / "src"
 
-# Expected classification totals per WDSP-PROVENANCE.md (2026-04-17).
+# Expected classification totals per WDSP-PROVENANCE.md.
+# Updated 2026-04-23: Sub-epic C-1 added rnnr.c/.h + sbnr.c/.h (4 new GPLv2-or-later files).
 # Used to flag drift when the census shifts without a docs update.
 EXPECTED = {
-    "gpl2-or-later": 128,
+    "gpl2-or-later": 132,
     "copyright-no-permission-block": 0,
     "no-header": 10,
 }

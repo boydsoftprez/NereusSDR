@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+### Added (Phase 3G RX Epic Sub-epic C-1 — PR #TBD)
+
+- Full noise-reduction stack on the VFO flag DSP grid: NR1 (ANR, WDSP),
+  NR2 (EMNR including post2 cascade), NR3 (RNNR/rnnoise with
+  user-loadable .bin models), NR4 (SBNR/libspecbleach), DFNR
+  (DeepFilterNet3 — cross-platform), MNR (Apple Accelerate —
+  macOS-only), and ANF. BNR (NVIDIA Broadcast) is intentionally
+  deferred (gRPC/NIM transport out of scope; tracked for follow-up).
+- Setup → DSP → NR/ANF page with sub-tabs for NR1, NR2, NR3, NR4,
+  DFNR, MNR, and ANF. NR1-NR4 sub-tabs mirror the Thetis
+  `setup.designer.cs` layout byte-for-byte. MNR sub-tab gains all
+  6 tuning knobs (Strength / Aggressiveness / Floor / Alpha / Bias /
+  Gsmooth) with factory-default Reset buttons. DFNR sub-tab uses
+  AetherSDR-verbatim defaults (AttenLimit 100 dB, PostFilterBeta 0).
+- Right-click on any NR button on the VFO flag opens a `DspParamPopup`
+  with 3-6 quick-control sliders + tooltips + a "More Settings…"
+  entry point that deep-links into the matching Setup sub-tab.
+- Per-slice NR independence via `SliceModel::setActiveNr` mutual
+  exclusion (only one of NR1/NR2/NR3/NR4/DFNR/MNR active per slice
+  at a time; ANF is independent and can stack).
+- Session-level persistence via AppSettings (per-slice; not
+  per-band). NR3 model path persists globally across launches.
+- Vendored rnnoise (BSD) and libspecbleach (LGPL-2.1) into the WDSP
+  build tree. Ported Thetis `rnnr.c` + `sbnr.c` (GPLv2+ + MW0LGE
+  dual-license) into `third_party/wdsp/src/`.
+- Bundled `Default_large.bin` (3.4 MB) and `Default_small.bin`
+  (1.5 MB) rnnoise models plus `DeepFilterNet3_onnx.tar.gz` (7.6 MB)
+  into every release artifact (Linux AppImage × 2 archs / macOS DMG
+  / Windows ZIP + NSIS).
+- New `ModelPaths` helper (`src/core/ModelPaths.{h,cpp}`) resolves
+  rnnoise + DFNR model paths per platform install layout
+  (Resources/ on macOS, share/NereusSDR/ on Linux, adjacent on
+  Windows, plus dev-build fallbacks).
+- New `setup-deepfilter.{sh,ps1}` scripts at the repo root build
+  the DeepFilterNet3 Rust libdf for local development. CI workflows
+  install Rust + invoke the appropriate script before `cmake -B
+  build` so release artifacts always carry the runtime library.
+- Bug fix (worth flagging upstream to AetherSDR): MNR's MMSE
+  prior-SNR computation had a dimensional bug in the post-filter
+  application. Fixed in `src/core/MnrFilter.cpp`. AetherSDR
+  maintainers may want to backport.
+
+### Build (Phase 3G RX Epic Sub-epic C-1)
+
+- Rust + cargo are now required for DFNR builds. CI installs
+  `dtolnay/rust-toolchain@stable`. Local devs run
+  `./setup-deepfilter.sh` (or `./setup-deepfilter.ps1` on Windows)
+  before `cmake -B build`. ENABLE_DFNR auto-OFF if the libdf is
+  absent at configure time, so the build still succeeds without
+  Rust — just without DFNR.
+- Release artifacts grow ~12 MB per platform (DFNet3 model +
+  rnnoise large/small models bundled).
+
 ### Added (Phase 3P-I-b — PR #117)
 - New `SkuUiProfile` (`src/core/SkuUiProfile.{h,cpp}`) — per-`HPSDRModel`
   UI overlay describing RX-only labels + checkbox visibility. 14-case

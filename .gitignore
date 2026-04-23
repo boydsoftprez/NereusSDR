@@ -11,3 +11,7 @@ CMakeFiles/
 .DS_Store
 **/.DS_Store
 .obsidian/
+
+# DeepFilterNet3 pre-built libs (built by setup-deepfilter.sh, not checked in)
+third_party/deepfilter/lib/
+third_party/deepfilter/models/*.tar.gz

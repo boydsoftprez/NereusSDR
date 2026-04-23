@@ -243,6 +243,8 @@ warren@wpratt.com
 #include "core/SampleRateCatalog.h"
 #include "core/LogCategories.h"
 #include "core/NoiseFloorTracker.h"
+#include "core/ModelPaths.h"
+#include "core/wdsp_api.h"
 #include "gui/SpectrumWidget.h"
 
 #include <algorithm>
@@ -839,13 +841,94 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 // live-pushed from Setup → DSP → NB/SNB). Per-slice NB
                 // tuning pass-through removed 2026-04-22.
                 rxCh->setNbMode(m_activeSlice->nbMode());
-                // EMNR sub-parameter defaults — From Thetis radio.cs:2062,2081,2101,2235
-                // These are set-and-forget on channel creation; run flag follows slice.
-                rxCh->setEmnrGainMethod(2);   // radio.cs:2062 rx_nr2_gain_method = 2
-                rxCh->setEmnrNpeMethod(0);    // radio.cs:2081 rx_nr2_npe_method = 0
-                rxCh->setEmnrAeRun(true);     // radio.cs:2101 rx_nr2_ae_run = 1
-                rxCh->setEmnrPosition(1);     // radio.cs:2235 rx_nr2_position = 1 (post-AGC)
-                rxCh->setEmnrEnabled(m_activeSlice->emnrEnabled());
+
+                // Sub-epic C-1 Task 19: push full NR config to the active slice's
+                // RxChannel on radio connect.
+                // Thetis console.cs:43297 SelectNR pattern [v2.10.3.13] — push
+                // tuning structs first, then the active slot last so WDSP has
+                // valid parameters before the run-flag is set.
+                {
+                    RxChannel::Nr1Tuning n1;
+                    n1.taps     = m_activeSlice->nr1Taps();
+                    n1.delay    = m_activeSlice->nr1Delay();
+                    n1.gain     = m_activeSlice->nr1Gain();
+                    n1.leakage  = m_activeSlice->nr1Leakage();
+                    n1.position = m_activeSlice->nr1Position();
+                    rxCh->setAnrTuning(n1);
+
+                    RxChannel::Nr2Tuning n2;
+                    n2.gainMethod  = m_activeSlice->nr2GainMethod();
+                    n2.npeMethod   = m_activeSlice->nr2NpeMethod();
+                    // trainT1/trainT2 are not in Nr2Tuning struct — applied via
+                    // per-knob setters below (they call SetRXAEMNRtrainZetaThresh/
+                    // SetRXAEMNRtrainT2 which have no struct-level path).
+                    n2.aeFilter    = m_activeSlice->nr2AeFilter();
+                    n2.position    = m_activeSlice->nr2Position();
+                    n2.post2Run    = m_activeSlice->nr2Post2Run();
+                    n2.post2Level  = m_activeSlice->nr2Post2Level();
+                    n2.post2Factor = m_activeSlice->nr2Post2Factor();
+                    n2.post2Rate   = m_activeSlice->nr2Post2Rate();
+                    n2.post2Taper  = m_activeSlice->nr2Post2Taper();
+                    rxCh->setEmnrTuning(n2);
+                    // Push trainT1/trainT2 separately (not in Nr2Tuning struct)
+                    rxCh->setEmnrTrainT1(m_activeSlice->nr2TrainT1());
+                    rxCh->setEmnrTrainT2(m_activeSlice->nr2TrainT2());
+
+                    RxChannel::Nr3Tuning n3;
+                    n3.position       = m_activeSlice->nr3Position();
+                    n3.useDefaultGain = m_activeSlice->nr3UseDefaultGain();
+                    rxCh->setRnnrTuning(n3);
+
+                    RxChannel::Nr4Tuning n4;
+                    n4.reductionAmount     = m_activeSlice->nr4Reduction();
+                    n4.smoothingFactor     = m_activeSlice->nr4Smoothing();
+                    n4.whiteningFactor     = m_activeSlice->nr4Whitening();
+                    n4.noiseRescale        = m_activeSlice->nr4Rescale();
+                    n4.postFilterThreshold = m_activeSlice->nr4PostThresh();
+                    n4.algo                = m_activeSlice->nr4Algo();
+                    rxCh->setSbnrTuning(n4);
+
+#ifdef HAVE_DFNR
+                    rxCh->setDfnrAttenLimit(static_cast<float>(m_activeSlice->dfnrAttenLimit()));
+                    rxCh->setDfnrPostFilterBeta(static_cast<float>(m_activeSlice->dfnrPostFilterBeta()));
+#endif
+#ifdef HAVE_MNR
+                    // SliceModel already stores mnrStrength as 0.0–1.0
+                    // (matches MacNRFilter::setStrength expected range).
+                    // The Setup/popup slider does the ×100 / ÷100 UI↔model
+                    // conversion; the model→filter path is 1:1.
+                    rxCh->setMnrStrength(static_cast<float>(m_activeSlice->mnrStrength()));
+                    rxCh->setMnrOversub(static_cast<float>(m_activeSlice->mnrOversub()));
+                    rxCh->setMnrFloor(static_cast<float>(m_activeSlice->mnrFloor()));
+                    rxCh->setMnrAlpha(static_cast<float>(m_activeSlice->mnrAlpha()));
+                    rxCh->setMnrBias(static_cast<float>(m_activeSlice->mnrBias()));
+                    rxCh->setMnrGsmooth(static_cast<float>(m_activeSlice->mnrGsmooth()));
+#endif
+
+                    // NR3 model — global (RNNRloadModel), not per-channel.
+                    // Prefer AppSettings override; fall back to the bundled dev-path.
+                    // From Thetis wdsp/rnnr.c:161-176 [v2.10.3.13]
+                    {
+                        const QString defaultModelPath = NereusSDR::ModelPaths::rnnoiseDefaultLargeBin();
+                        const QString model = AppSettings::instance().value(
+                            QStringLiteral("Nr3ModelPath"), defaultModelPath).toString();
+                        if (!model.isEmpty()) {
+                            qCInfo(lcDsp) << "NR3: loading rnnoise model from" << model;
+#ifdef HAVE_WDSP
+                            RNNRloadModel(model.toStdString().c_str());
+#endif
+                        } else {
+                            qCWarning(lcDsp) << "NR3 model not found at expected paths;"
+                                             << "NR3 will be disabled until a model is loaded.";
+                        }
+                    }
+
+                    // Push the active NR slot last — parameters must be set before
+                    // run-flag so WDSP gets valid defaults on first enable.
+                    // From Thetis console.cs:43297 SelectNR pattern [v2.10.3.13]
+                    rxCh->setActiveNr(m_activeSlice->activeNr());
+                }
+
                 rxCh->setSnbEnabled(m_activeSlice->snbEnabled());
                 // APF sub-parameter defaults — From Thetis radio.cs:1986,1948,1967,1929
                 // These are set-and-forget on channel creation; run flag follows slice.
@@ -1370,13 +1453,207 @@ void RadioModel::wireSliceSignals()
     });
     m_autoAgcTimer->start();
 
-    // EMNR (NR2) → WDSP
-    // From Thetis Project Files/Source/Console/radio.cs:2216-2232
-    // WDSP: third_party/wdsp/src/emnr.c:1283
-    connect(slice, &SliceModel::emnrEnabledChanged, this, [this](bool on) {
+    // ─── Sub-epic C-1 Task 19: full SliceModel → RxChannel NR tuning bridge ──
+    //
+    // Each tuning-knob signal is forwarded to the corresponding RxChannel
+    // setter so live slider adjustments in Setup → DSP → NR and the VFO
+    // popup audibly change the WDSP filter chain in real time.
+    //
+    // Thetis pattern: console.cs:43297 SelectNR [v2.10.3.13] — push
+    // parameters before the active-slot run-flag.
+
+    // NR1 (ANR) — 5 knobs
+    // From Thetis setup.cs:8539-8566 [v2.10.3.13]
+    connect(slice, &SliceModel::nr1TapsChanged, this, [this](int v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setAnrTaps(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr1DelayChanged, this, [this](int v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setAnrDelay(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr1GainChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setAnrGain(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr1LeakageChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setAnrLeakage(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr1PositionChanged, this, [this](NereusSDR::NrPosition p) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setAnrPosition(p); }
+        scheduleSettingsSave();
+    });
+
+    // NR2 (EMNR) — gain-method + npe-method + AE filter + position + Post2 cascade
+    // From Thetis setup.cs NR2 group [v2.10.3.13]
+    connect(slice, &SliceModel::nr2GainMethodChanged, this, [this](NereusSDR::EmnrGainMethod v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrGainMethod(static_cast<int>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2NpeMethodChanged, this, [this](NereusSDR::EmnrNpeMethod v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrNpeMethod(static_cast<int>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2TrainT1Changed, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrTrainT1(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2TrainT2Changed, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrTrainT2(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2AeFilterChanged, this, [this](bool v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrAeRun(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2PositionChanged, this, [this](NereusSDR::NrPosition p) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrPosition(static_cast<int>(p)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2Post2RunChanged, this, [this](bool v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrPost2Run(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2Post2LevelChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrPost2Level(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2Post2FactorChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrPost2Factor(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2Post2RateChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrPost2Rate(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr2Post2TaperChanged, this, [this](int v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setEmnrPost2Taper(v); }
+        scheduleSettingsSave();
+    });
+
+    // NR3 (RNNR) — position + useDefaultGain
+    // From Thetis setup.cs:35460-35462 [v2.10.3.13]
+    connect(slice, &SliceModel::nr3PositionChanged, this, [this](NereusSDR::NrPosition p) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setRnnrPosition(p); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr3UseDefaultGainChanged, this, [this](bool v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setRnnrUseDefaultGain(v); }
+        scheduleSettingsSave();
+    });
+
+    // NR4 (SBNR) — 5 spinboxes + algo
+    // From Thetis setup.cs:34511-34527 [v2.10.3.13]
+    connect(slice, &SliceModel::nr4ReductionChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setSbnrReductionAmount(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr4SmoothingChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setSbnrSmoothingFactor(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr4WhiteningChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setSbnrWhiteningFactor(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr4RescaleChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setSbnrNoiseRescale(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr4PostThreshChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setSbnrPostFilterThreshold(v); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::nr4AlgoChanged, this, [this](NereusSDR::SbnrAlgo a) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setSbnrAlgo(a); }
+        scheduleSettingsSave();
+    });
+
+#ifdef HAVE_DFNR
+    // DFNR — AttenLimit + PostFilterBeta
+    // double→float cast at the boundary (SliceModel stores double for QSpinBox compat)
+    connect(slice, &SliceModel::dfnrAttenLimitChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setDfnrAttenLimit(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::dfnrPostFilterBetaChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setDfnrPostFilterBeta(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+#endif
+
+#ifdef HAVE_MNR
+    // MNR — SliceModel mnrStrength already in 0.0–1.0 (the Setup/popup
+    // slider applies the ×100 / ÷100 UI↔model conversion on both sides).
+    connect(slice, &SliceModel::mnrStrengthChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setMnrStrength(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::mnrOversubChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setMnrOversub(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::mnrFloorChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setMnrFloor(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::mnrAlphaChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setMnrAlpha(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::mnrBiasChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setMnrBias(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+    connect(slice, &SliceModel::mnrGsmoothChanged, this, [this](double v) {
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (rxCh) { rxCh->setMnrGsmooth(static_cast<float>(v)); }
+        scheduleSettingsSave();
+    });
+#endif
+
+    // NR slot → WDSP active-run dispatch.
+    // Push tuning params before the run-flag; all per-knob connects above fire
+    // in real time, so the active-slot connect here just needs to switch the
+    // WDSP run flags. Kept as a dedicated connect so it also fires on the
+    // VFO-popup NR toggle without needing a full struct rebuild.
+    // From Thetis console.cs:43297 SelectNR [v2.10.3.13]
+    connect(slice, &SliceModel::activeNrChanged, this, [this](NereusSDR::NrSlot slot) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(0);
         if (rxCh) {
-            rxCh->setEmnrEnabled(on);
+            rxCh->setActiveNr(slot);
         }
         scheduleSettingsSave();
     });

@@ -144,6 +144,12 @@ jobs:
           echo "PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64/bin:$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up DeepFilterNet3 library
+        run: bash setup-deepfilter.sh
+
       - name: Restore ccache
         uses: actions/cache@v4
         with:
@@ -186,6 +192,24 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${{ matrix.arch }}.AppImage
           chmod +x linuxdeploy-${{ matrix.arch }}.AppImage linuxdeploy-plugin-qt-${{ matrix.arch }}.AppImage
+
+      - name: Bundle models and license files into AppDir
+        run: |
+          # rnnoise models
+          mkdir -p AppDir/usr/share/NereusSDR/models/rnnoise
+          cp third_party/rnnoise/models/Default_large.bin  AppDir/usr/share/NereusSDR/models/rnnoise/
+          cp third_party/rnnoise/models/Default_small.bin  AppDir/usr/share/NereusSDR/models/rnnoise/
+          # DeepFilterNet3 ONNX tarball
+          mkdir -p AppDir/usr/share/NereusSDR/models/dfnet3
+          cp third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz AppDir/usr/share/NereusSDR/models/dfnet3/
+          # License files — DFNR (Apache-2.0 + MIT) and rnnoise (BSD)
+          mkdir -p AppDir/usr/share/doc/NereusSDR/deepfilter
+          cp third_party/deepfilter/LICENSE       AppDir/usr/share/doc/NereusSDR/deepfilter/
+          cp third_party/deepfilter/LICENSE-APACHE AppDir/usr/share/doc/NereusSDR/deepfilter/
+          cp third_party/deepfilter/LICENSE-MIT   AppDir/usr/share/doc/NereusSDR/deepfilter/
+          cp third_party/deepfilter/COMMIT        AppDir/usr/share/doc/NereusSDR/deepfilter/
+          mkdir -p AppDir/usr/share/doc/NereusSDR/rnnoise
+          cp third_party/rnnoise/LICENSE          AppDir/usr/share/doc/NereusSDR/rnnoise/
 
       - name: Build AppImage
         env:
@@ -272,6 +296,12 @@ jobs:
       - name: Install dependencies
         run: brew install qt@6 ninja create-dmg fftw ccache
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up DeepFilterNet3 library
+        run: bash setup-deepfilter.sh
+
       - name: Restore ccache
         uses: actions/cache@v4
         with:
@@ -308,6 +338,24 @@ jobs:
           mkdir -p build/NereusSDR.app/Contents/Resources/licenses
           cp -r packaging/third-party-licenses/. build/NereusSDR.app/Contents/Resources/licenses/
           cp LICENSE LICENSE-DUAL-LICENSING build/NereusSDR.app/Contents/Resources/licenses/
+          # DFNR (Apache-2.0 + MIT) and rnnoise (BSD) license files
+          mkdir -p build/NereusSDR.app/Contents/Resources/licenses/deepfilter
+          cp third_party/deepfilter/LICENSE       build/NereusSDR.app/Contents/Resources/licenses/deepfilter/
+          cp third_party/deepfilter/LICENSE-APACHE build/NereusSDR.app/Contents/Resources/licenses/deepfilter/
+          cp third_party/deepfilter/LICENSE-MIT   build/NereusSDR.app/Contents/Resources/licenses/deepfilter/
+          cp third_party/deepfilter/COMMIT        build/NereusSDR.app/Contents/Resources/licenses/deepfilter/
+          mkdir -p build/NereusSDR.app/Contents/Resources/licenses/rnnoise
+          cp third_party/rnnoise/LICENSE          build/NereusSDR.app/Contents/Resources/licenses/rnnoise/
+
+      - name: Bundle models into app bundle
+        run: |
+          # rnnoise models
+          mkdir -p build/NereusSDR.app/Contents/Resources/models/rnnoise
+          cp third_party/rnnoise/models/Default_large.bin  build/NereusSDR.app/Contents/Resources/models/rnnoise/
+          cp third_party/rnnoise/models/Default_small.bin  build/NereusSDR.app/Contents/Resources/models/rnnoise/
+          # DeepFilterNet3 ONNX tarball
+          mkdir -p build/NereusSDR.app/Contents/Resources/models/dfnet3
+          cp third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz build/NereusSDR.app/Contents/Resources/models/dfnet3/
 
       - name: Ad-hoc codesign
         run: |
@@ -432,6 +480,15 @@ jobs:
           choco install ninja -y
           choco install nsis -y
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up DeepFilterNet3 library
+        shell: pwsh
+        run: pwsh -File setup-deepfilter.ps1
+
       # sccache intentionally not used on Windows — see ci.yml for the
       # explanation. Qt is already cached via install-qt-action.
 
@@ -490,12 +547,37 @@ jobs:
             Write-Error "libfftw3f-3.dll missing from third_party\fftw3\bin\ — Windows artifact would ship broken"
             exit 1
           }
+          # deepfilter.dll — Rust DFNR runtime (windeployqt only handles Qt DLLs;
+          # this non-Qt dependency must be staged by hand or the .exe fails to
+          # start with "deepfilter.dll was not found").
+          $dfnrDll = "third_party\deepfilter\lib\windows-x86_64\deepfilter.dll"
+          if (Test-Path $dfnrDll) {
+            Copy-Item $dfnrDll deploy\
+          } else {
+            Write-Error "deepfilter.dll missing from third_party\deepfilter\lib\windows-x86_64\ — Windows artifact would ship broken (DFNR will crash at load)"
+            exit 1
+          }
           # Copy third-party license notices + both root license files
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.
           Copy-Item -Recurse packaging\third-party-licenses deploy\licenses
           Copy-Item LICENSE deploy\licenses\
           Copy-Item LICENSE-DUAL-LICENSING deploy\licenses\
+          # DFNR (Apache-2.0 + MIT) and rnnoise (BSD) license files
+          New-Item -ItemType Directory -Force -Path deploy\licenses\deepfilter | Out-Null
+          Copy-Item third_party\deepfilter\LICENSE        deploy\licenses\deepfilter\
+          Copy-Item third_party\deepfilter\LICENSE-APACHE deploy\licenses\deepfilter\
+          Copy-Item third_party\deepfilter\LICENSE-MIT    deploy\licenses\deepfilter\
+          Copy-Item third_party\deepfilter\COMMIT         deploy\licenses\deepfilter\
+          New-Item -ItemType Directory -Force -Path deploy\licenses\rnnoise | Out-Null
+          Copy-Item third_party\rnnoise\LICENSE           deploy\licenses\rnnoise\
+          # rnnoise models
+          New-Item -ItemType Directory -Force -Path deploy\models\rnnoise | Out-Null
+          Copy-Item third_party\rnnoise\models\Default_large.bin deploy\models\rnnoise\
+          Copy-Item third_party\rnnoise\models\Default_small.bin deploy\models\rnnoise\
+          # DeepFilterNet3 ONNX tarball
+          New-Item -ItemType Directory -Force -Path deploy\models\dfnet3 | Out-Null
+          Copy-Item third_party\deepfilter\models\DeepFilterNet3_onnx.tar.gz deploy\models\dfnet3\
 
       - name: Create portable ZIP
         shell: pwsh

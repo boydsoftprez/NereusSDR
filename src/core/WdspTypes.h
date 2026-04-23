@@ -232,6 +232,52 @@ enum class NrMode      : int { Off = 0, ANR = 1, EMNR = 2 };
 //   CheckState.Indeterminate→ NB2 (2)  ≡ nobII.c (second-gen blanker)
 enum class NbMode : int { Off = 0, NB = 1, NB2 = 2 };
 
+// From Thetis console.cs:43297-43450 [v2.10.3.13] — SelectNR() enforces
+// at-most-one-NR-per-channel by setting all 4 RXANR*Run flags atomically.
+// NereusSDR extends the set with 3 post-WDSP external filters (DFNR/BNR/MNR)
+// that don't exist in Thetis.
+enum class NrSlot : int {
+    Off  = 0,
+    NR1  = 1,   // WDSP anr.c     (Warren Pratt, NR0V)
+    NR2  = 2,   // WDSP emnr.c    (Warren Pratt, NR0V)
+    NR3  = 3,   // WDSP rnnr.c    (Samphire MW0LGE, rnnoise backend)
+    NR4  = 4,   // WDSP sbnr.c    (Samphire MW0LGE, libspecbleach backend)
+    DFNR = 5,   // AetherSDR DeepFilterFilter (DeepFilterNet3, post-WDSP)
+    BNR  = 6,   // AetherSDR NvidiaBnrFilter (NVIDIA Broadcast, Windows+NVIDIA, post-WDSP)
+    MNR  = 7    // AetherSDR MacNRFilter (Apple Accelerate, macOS, post-WDSP)
+};
+
+// From Thetis wdsp/anr.h:102 [v2.10.3.13] — SetRXAANRPosition(int channel, int position)
+// Applies to NR1, NR2, NR3 equally (all three are WDSP stages with Position).
+// NR4/DFNR/BNR/MNR have no Position control.
+enum class NrPosition : int {
+    PreAgc  = 0,
+    PostAgc = 1
+};
+
+// From Thetis setup.cs:17354-17468 [v2.10.3.13] — EMNR Gain Method radio group.
+enum class EmnrGainMethod : int {
+    Linear  = 0,
+    Log     = 1,
+    Gamma   = 2,   // default per Thetis EMNR_DEFAULT_GAIN_METHOD
+    Trained = 3
+};
+
+// From Thetis setup.cs:17374-17404 [v2.10.3.13] — EMNR NPE Method radio group.
+enum class EmnrNpeMethod : int {
+    Osms  = 0,   // default
+    Mmse  = 1,
+    Nstat = 2
+};
+
+// From Thetis setup.cs:34511-34527 [v2.10.3.13] — SBNR Algo 1/2/3 radio group.
+// Calls SetRXASBNRnoiseScalingType(channel, 0/1/2).
+enum class SbnrAlgo : int {
+    Algo1 = 0,
+    Algo2 = 1,   // default per Thetis screenshot (selected in shipped config)
+    Algo3 = 2
+};
+
 // Squelch type active on a slice.
 enum class SquelchMode : int { Off, Voice, AM, FM };
 
@@ -244,3 +290,16 @@ enum class AgcHangMode : int { Off, Fast, Med, Slow };
 enum class FmTxMode : int { High = 0, Simplex = 1, Low = 2 };  // High = TX above RX (+), Simplex = no repeater offset (S), Low = TX below RX (-)
 
 } // namespace NereusSDR
+
+// Qt metatype registration for enum Q_PROPERTYs.
+// Required so NrSlot / NrPosition / EmnrGainMethod / EmnrNpeMethod / SbnrAlgo
+// can be used as Q_PROPERTY types without triggering "unable to find metatype"
+// warnings at runtime. Mirror the pattern used by NbMode below.
+#include <QMetaType>
+Q_DECLARE_METATYPE(NereusSDR::NrMode)
+Q_DECLARE_METATYPE(NereusSDR::NbMode)
+Q_DECLARE_METATYPE(NereusSDR::NrSlot)
+Q_DECLARE_METATYPE(NereusSDR::NrPosition)
+Q_DECLARE_METATYPE(NereusSDR::EmnrGainMethod)
+Q_DECLARE_METATYPE(NereusSDR::EmnrNpeMethod)
+Q_DECLARE_METATYPE(NereusSDR::SbnrAlgo)

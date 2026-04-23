@@ -520,12 +520,224 @@ void SliceModel::setNbMode(NereusSDR::NbMode v)
 // not a Thetis concept. All NB tuning is global per DSPRX and lives inside
 // NbFamily, seeded from Setup → DSP → NB/SNB. See SliceModel.h.
 
-void SliceModel::setEmnrEnabled(bool v)
+// --- NR setters (Sub-epic C-1) ---
+// See Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13].
+
+void SliceModel::setActiveNr(NereusSDR::NrSlot slot)
 {
-    if (m_emnrEnabled != v) {
-        m_emnrEnabled = v;
-        emit emnrEnabledChanged(v);
-    }
+    if (m_activeNr == slot) { return; }
+    m_activeNr = slot;
+    emit activeNrChanged(slot);
+}
+
+// NR1
+void SliceModel::setNr1Taps(int v)
+{
+    if (m_nr1Taps == v) { return; }
+    m_nr1Taps = v;
+    emit nr1TapsChanged(v);
+}
+void SliceModel::setNr1Delay(int v)
+{
+    if (m_nr1Delay == v) { return; }
+    m_nr1Delay = v;
+    emit nr1DelayChanged(v);
+}
+void SliceModel::setNr1Gain(double v)
+{
+    if (qFuzzyCompare(m_nr1Gain, v)) { return; }
+    m_nr1Gain = v;
+    emit nr1GainChanged(v);
+}
+void SliceModel::setNr1Leakage(double v)
+{
+    if (qFuzzyCompare(m_nr1Leakage, v)) { return; }
+    m_nr1Leakage = v;
+    emit nr1LeakageChanged(v);
+}
+void SliceModel::setNr1Position(NereusSDR::NrPosition p)
+{
+    if (m_nr1Position == p) { return; }
+    m_nr1Position = p;
+    emit nr1PositionChanged(p);
+}
+
+// NR2
+void SliceModel::setNr2GainMethod(NereusSDR::EmnrGainMethod v)
+{
+    if (m_nr2GainMethod == v) { return; }
+    m_nr2GainMethod = v;
+    emit nr2GainMethodChanged(v);
+}
+void SliceModel::setNr2NpeMethod(NereusSDR::EmnrNpeMethod v)
+{
+    if (m_nr2NpeMethod == v) { return; }
+    m_nr2NpeMethod = v;
+    emit nr2NpeMethodChanged(v);
+}
+void SliceModel::setNr2TrainT1(double v)
+{
+    if (qFuzzyCompare(m_nr2TrainT1, v)) { return; }
+    m_nr2TrainT1 = v;
+    emit nr2TrainT1Changed(v);
+}
+void SliceModel::setNr2TrainT2(double v)
+{
+    if (qFuzzyCompare(m_nr2TrainT2, v)) { return; }
+    m_nr2TrainT2 = v;
+    emit nr2TrainT2Changed(v);
+}
+void SliceModel::setNr2AeFilter(bool v)
+{
+    if (m_nr2AeFilter == v) { return; }
+    m_nr2AeFilter = v;
+    emit nr2AeFilterChanged(v);
+}
+void SliceModel::setNr2Position(NereusSDR::NrPosition p)
+{
+    if (m_nr2Position == p) { return; }
+    m_nr2Position = p;
+    emit nr2PositionChanged(p);
+}
+void SliceModel::setNr2Post2Run(bool v)
+{
+    if (m_nr2Post2Run == v) { return; }
+    m_nr2Post2Run = v;
+    emit nr2Post2RunChanged(v);
+}
+void SliceModel::setNr2Post2Level(double v)
+{
+    if (qFuzzyCompare(m_nr2Post2Level, v)) { return; }
+    m_nr2Post2Level = v;
+    emit nr2Post2LevelChanged(v);
+}
+void SliceModel::setNr2Post2Factor(double v)
+{
+    if (qFuzzyCompare(m_nr2Post2Factor, v)) { return; }
+    m_nr2Post2Factor = v;
+    emit nr2Post2FactorChanged(v);
+}
+void SliceModel::setNr2Post2Rate(double v)
+{
+    if (qFuzzyCompare(m_nr2Post2Rate, v)) { return; }
+    m_nr2Post2Rate = v;
+    emit nr2Post2RateChanged(v);
+}
+void SliceModel::setNr2Post2Taper(int v)
+{
+    if (m_nr2Post2Taper == v) { return; }
+    m_nr2Post2Taper = v;
+    emit nr2Post2TaperChanged(v);
+}
+
+// NR3
+void SliceModel::setNr3Position(NereusSDR::NrPosition p)
+{
+    if (m_nr3Position == p) { return; }
+    m_nr3Position = p;
+    emit nr3PositionChanged(p);
+}
+void SliceModel::setNr3UseDefaultGain(bool v)
+{
+    if (m_nr3UseDefaultGain == v) { return; }
+    m_nr3UseDefaultGain = v;
+    emit nr3UseDefaultGainChanged(v);
+}
+
+// NR4
+void SliceModel::setNr4Reduction(double v)
+{
+    if (qFuzzyCompare(m_nr4Reduction, v)) { return; }
+    m_nr4Reduction = v;
+    emit nr4ReductionChanged(v);
+}
+void SliceModel::setNr4Smoothing(double v)
+{
+    if (qFuzzyCompare(m_nr4Smoothing, v)) { return; }
+    m_nr4Smoothing = v;
+    emit nr4SmoothingChanged(v);
+}
+void SliceModel::setNr4Whitening(double v)
+{
+    if (qFuzzyCompare(m_nr4Whitening, v)) { return; }
+    m_nr4Whitening = v;
+    emit nr4WhiteningChanged(v);
+}
+void SliceModel::setNr4Rescale(double v)
+{
+    if (qFuzzyCompare(m_nr4Rescale, v)) { return; }
+    m_nr4Rescale = v;
+    emit nr4RescaleChanged(v);
+}
+void SliceModel::setNr4PostThresh(double v)
+{
+    if (qFuzzyCompare(m_nr4PostThresh, v)) { return; }
+    m_nr4PostThresh = v;
+    emit nr4PostThreshChanged(v);
+}
+void SliceModel::setNr4Algo(NereusSDR::SbnrAlgo v)
+{
+    if (m_nr4Algo == v) { return; }
+    m_nr4Algo = v;
+    emit nr4AlgoChanged(v);
+}
+
+// DFNR
+void SliceModel::setDfnrAttenLimit(double v)
+{
+    if (qFuzzyCompare(m_dfnrAttenLimit, v)) { return; }
+    m_dfnrAttenLimit = v;
+    emit dfnrAttenLimitChanged(v);
+}
+void SliceModel::setDfnrPostFilterBeta(double v)
+{
+    if (qFuzzyCompare(m_dfnrPostFilterBeta, v)) { return; }
+    m_dfnrPostFilterBeta = v;
+    emit dfnrPostFilterBetaChanged(v);
+}
+
+// BNR + MNR
+void SliceModel::setBnrStrength(double v)
+{
+    if (qFuzzyCompare(m_bnrStrength, v)) { return; }
+    m_bnrStrength = v;
+    emit bnrStrengthChanged(v);
+}
+void SliceModel::setMnrStrength(double v)
+{
+    if (qFuzzyCompare(m_mnrStrength, v)) { return; }
+    m_mnrStrength = v;
+    emit mnrStrengthChanged(v);
+}
+void SliceModel::setMnrOversub(double v)
+{
+    if (qFuzzyCompare(m_mnrOversub, v)) { return; }
+    m_mnrOversub = v;
+    emit mnrOversubChanged(v);
+}
+void SliceModel::setMnrFloor(double v)
+{
+    if (qFuzzyCompare(m_mnrFloor, v)) { return; }
+    m_mnrFloor = v;
+    emit mnrFloorChanged(v);
+}
+void SliceModel::setMnrAlpha(double v)
+{
+    if (qFuzzyCompare(m_mnrAlpha, v)) { return; }
+    m_mnrAlpha = v;
+    emit mnrAlphaChanged(v);
+}
+void SliceModel::setMnrBias(double v)
+{
+    if (qFuzzyCompare(m_mnrBias, v)) { return; }
+    m_mnrBias = v;
+    emit mnrBiasChanged(v);
+}
+void SliceModel::setMnrGsmooth(double v)
+{
+    if (qFuzzyCompare(m_mnrGsmooth, v)) { return; }
+    m_mnrGsmooth = v;
+    emit mnrGsmoothChanged(v);
 }
 
 void SliceModel::setSnbEnabled(bool v)
@@ -816,6 +1028,49 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode));
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────
+    // NR active slot + tuning — session-level only, no per-band suffix.
+    // Per user directive Q10: no band suffix on NR keys.
+    s.setValue(sp + QStringLiteral("NrActive"),        static_cast<int>(m_activeNr));
+    // NR1
+    s.setValue(sp + QStringLiteral("Nr1Taps"),         m_nr1Taps);
+    s.setValue(sp + QStringLiteral("Nr1Delay"),        m_nr1Delay);
+    s.setValue(sp + QStringLiteral("Nr1Gain"),         m_nr1Gain);
+    s.setValue(sp + QStringLiteral("Nr1Leakage"),      m_nr1Leakage);
+    s.setValue(sp + QStringLiteral("Nr1Position"),     static_cast<int>(m_nr1Position));
+    // NR2
+    s.setValue(sp + QStringLiteral("Nr2GainMethod"),   static_cast<int>(m_nr2GainMethod));
+    s.setValue(sp + QStringLiteral("Nr2NpeMethod"),    static_cast<int>(m_nr2NpeMethod));
+    s.setValue(sp + QStringLiteral("Nr2TrainT1"),      m_nr2TrainT1);
+    s.setValue(sp + QStringLiteral("Nr2TrainT2"),      m_nr2TrainT2);
+    s.setValue(sp + QStringLiteral("Nr2AeFilter"),     boolStr(m_nr2AeFilter));
+    s.setValue(sp + QStringLiteral("Nr2Position"),     static_cast<int>(m_nr2Position));
+    s.setValue(sp + QStringLiteral("Nr2Post2Run"),     boolStr(m_nr2Post2Run));
+    s.setValue(sp + QStringLiteral("Nr2Post2Level"),   m_nr2Post2Level);
+    s.setValue(sp + QStringLiteral("Nr2Post2Factor"),  m_nr2Post2Factor);
+    s.setValue(sp + QStringLiteral("Nr2Post2Rate"),    m_nr2Post2Rate);
+    s.setValue(sp + QStringLiteral("Nr2Post2Taper"),   m_nr2Post2Taper);
+    // NR3
+    s.setValue(sp + QStringLiteral("Nr3Position"),     static_cast<int>(m_nr3Position));
+    s.setValue(sp + QStringLiteral("Nr3UseDefaultGain"), boolStr(m_nr3UseDefaultGain));
+    // NR4
+    s.setValue(sp + QStringLiteral("Nr4Reduction"),    m_nr4Reduction);
+    s.setValue(sp + QStringLiteral("Nr4Smoothing"),    m_nr4Smoothing);
+    s.setValue(sp + QStringLiteral("Nr4Whitening"),    m_nr4Whitening);
+    s.setValue(sp + QStringLiteral("Nr4Rescale"),      m_nr4Rescale);
+    s.setValue(sp + QStringLiteral("Nr4PostThresh"),   m_nr4PostThresh);
+    s.setValue(sp + QStringLiteral("Nr4Algo"),         static_cast<int>(m_nr4Algo));
+    // DFNR
+    s.setValue(sp + QStringLiteral("DfnrAttenLimit"),     m_dfnrAttenLimit);
+    s.setValue(sp + QStringLiteral("DfnrPostFilterBeta"), m_dfnrPostFilterBeta);
+    // BNR + MNR
+    s.setValue(sp + QStringLiteral("BnrStrength"),     m_bnrStrength);
+    s.setValue(sp + QStringLiteral("MnrStrength"),     m_mnrStrength);
+    s.setValue(sp + QStringLiteral("MnrOversub"),      m_mnrOversub);
+    s.setValue(sp + QStringLiteral("MnrFloor"),        m_mnrFloor);
+    s.setValue(sp + QStringLiteral("MnrAlpha"),        m_mnrAlpha);
+    s.setValue(sp + QStringLiteral("MnrBias"),         m_mnrBias);
+    s.setValue(sp + QStringLiteral("MnrGsmooth"),      m_mnrGsmooth);
+
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
     s.setValue(sp + QStringLiteral("Locked"),     boolStr(m_locked));
     s.setValue(sp + QStringLiteral("Muted"),      boolStr(m_muted));
@@ -907,6 +1162,115 @@ void SliceModel::restoreFromSettings(Band band)
     }
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────
+    // NR active slot + tuning (no per-band suffix, per user directive Q10).
+    if (s.contains(sp + QStringLiteral("NrActive"))) {
+        setActiveNr(static_cast<NereusSDR::NrSlot>(s.value(sp + QStringLiteral("NrActive")).toInt()));
+    }
+    // NR1
+    if (s.contains(sp + QStringLiteral("Nr1Taps"))) {
+        setNr1Taps(s.value(sp + QStringLiteral("Nr1Taps")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("Nr1Delay"))) {
+        setNr1Delay(s.value(sp + QStringLiteral("Nr1Delay")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("Nr1Gain"))) {
+        setNr1Gain(s.value(sp + QStringLiteral("Nr1Gain")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr1Leakage"))) {
+        setNr1Leakage(s.value(sp + QStringLiteral("Nr1Leakage")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr1Position"))) {
+        setNr1Position(static_cast<NereusSDR::NrPosition>(s.value(sp + QStringLiteral("Nr1Position")).toInt()));
+    }
+    // NR2
+    if (s.contains(sp + QStringLiteral("Nr2GainMethod"))) {
+        setNr2GainMethod(static_cast<NereusSDR::EmnrGainMethod>(s.value(sp + QStringLiteral("Nr2GainMethod")).toInt()));
+    }
+    if (s.contains(sp + QStringLiteral("Nr2NpeMethod"))) {
+        setNr2NpeMethod(static_cast<NereusSDR::EmnrNpeMethod>(s.value(sp + QStringLiteral("Nr2NpeMethod")).toInt()));
+    }
+    if (s.contains(sp + QStringLiteral("Nr2TrainT1"))) {
+        setNr2TrainT1(s.value(sp + QStringLiteral("Nr2TrainT1")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr2TrainT2"))) {
+        setNr2TrainT2(s.value(sp + QStringLiteral("Nr2TrainT2")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr2AeFilter"))) {
+        setNr2AeFilter(s.value(sp + QStringLiteral("Nr2AeFilter")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("Nr2Position"))) {
+        setNr2Position(static_cast<NereusSDR::NrPosition>(s.value(sp + QStringLiteral("Nr2Position")).toInt()));
+    }
+    if (s.contains(sp + QStringLiteral("Nr2Post2Run"))) {
+        setNr2Post2Run(s.value(sp + QStringLiteral("Nr2Post2Run")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("Nr2Post2Level"))) {
+        setNr2Post2Level(s.value(sp + QStringLiteral("Nr2Post2Level")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr2Post2Factor"))) {
+        setNr2Post2Factor(s.value(sp + QStringLiteral("Nr2Post2Factor")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr2Post2Rate"))) {
+        setNr2Post2Rate(s.value(sp + QStringLiteral("Nr2Post2Rate")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr2Post2Taper"))) {
+        setNr2Post2Taper(s.value(sp + QStringLiteral("Nr2Post2Taper")).toInt());
+    }
+    // NR3
+    if (s.contains(sp + QStringLiteral("Nr3Position"))) {
+        setNr3Position(static_cast<NereusSDR::NrPosition>(s.value(sp + QStringLiteral("Nr3Position")).toInt()));
+    }
+    if (s.contains(sp + QStringLiteral("Nr3UseDefaultGain"))) {
+        setNr3UseDefaultGain(s.value(sp + QStringLiteral("Nr3UseDefaultGain")).toString() == QLatin1String("True"));
+    }
+    // NR4
+    if (s.contains(sp + QStringLiteral("Nr4Reduction"))) {
+        setNr4Reduction(s.value(sp + QStringLiteral("Nr4Reduction")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr4Smoothing"))) {
+        setNr4Smoothing(s.value(sp + QStringLiteral("Nr4Smoothing")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr4Whitening"))) {
+        setNr4Whitening(s.value(sp + QStringLiteral("Nr4Whitening")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr4Rescale"))) {
+        setNr4Rescale(s.value(sp + QStringLiteral("Nr4Rescale")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr4PostThresh"))) {
+        setNr4PostThresh(s.value(sp + QStringLiteral("Nr4PostThresh")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("Nr4Algo"))) {
+        setNr4Algo(static_cast<NereusSDR::SbnrAlgo>(s.value(sp + QStringLiteral("Nr4Algo")).toInt()));
+    }
+    // DFNR
+    if (s.contains(sp + QStringLiteral("DfnrAttenLimit"))) {
+        setDfnrAttenLimit(s.value(sp + QStringLiteral("DfnrAttenLimit")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("DfnrPostFilterBeta"))) {
+        setDfnrPostFilterBeta(s.value(sp + QStringLiteral("DfnrPostFilterBeta")).toDouble());
+    }
+    // BNR + MNR
+    if (s.contains(sp + QStringLiteral("BnrStrength"))) {
+        setBnrStrength(s.value(sp + QStringLiteral("BnrStrength")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("MnrStrength"))) {
+        setMnrStrength(s.value(sp + QStringLiteral("MnrStrength")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("MnrOversub"))) {
+        setMnrOversub(s.value(sp + QStringLiteral("MnrOversub")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("MnrFloor"))) {
+        setMnrFloor(s.value(sp + QStringLiteral("MnrFloor")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("MnrAlpha"))) {
+        setMnrAlpha(s.value(sp + QStringLiteral("MnrAlpha")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("MnrBias"))) {
+        setMnrBias(s.value(sp + QStringLiteral("MnrBias")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("MnrGsmooth"))) {
+        setMnrGsmooth(s.value(sp + QStringLiteral("MnrGsmooth")).toDouble());
+    }
 
     if (s.contains(sp + QStringLiteral("SnbEnabled"))) {
         setSnbEnabled(s.value(sp + QStringLiteral("SnbEnabled")).toString() == QLatin1String("True"));

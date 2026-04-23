@@ -250,6 +250,14 @@ warren@wpratt.com
 #include "NbFamily.h"
 #include "wdsp_api.h"
 
+#ifdef HAVE_DFNR
+#include "DeepFilterFilter.h"
+#endif
+
+#ifdef HAVE_MNR
+#include "MacNRFilter.h"
+#endif
+
 #include <cmath>
 
 namespace NereusSDR {
@@ -267,6 +275,31 @@ RxChannel::RxChannel(int channelId, int bufferSize, int sampleRate,
         m_channelId,
         /*sampleRate=*/ m_sampleRate,
         /*bufferSize=*/ m_bufferSize);
+#endif
+
+#ifdef HAVE_DFNR
+    // Sub-epic C-1 Task 9 — DeepFilterNet3 post-WDSP noise reduction.
+    // Instantiate unconditionally; the filter self-disables if the model
+    // tarball is not found (isValid() returns false).
+    m_dfnr = std::make_unique<NereusSDR::DeepFilterFilter>();
+    if (!m_dfnr->isValid()) {
+        qCWarning(lcDsp) << "DFNR not available on channel" << m_channelId
+                         << "(model not found or df_create failed)";
+        m_dfnr.reset();
+    }
+#endif
+
+#ifdef HAVE_MNR
+    // Sub-epic C-1 Task 11 — Apple Accelerate MMSE-Wiener post-WDSP NR.
+    // Accelerate is a system framework — always available on macOS.
+    // isValid() returns false only if vDSP_create_fftsetup failed (never
+    // in practice), so no warning-and-reset needed; log if it ever fires.
+    m_mnr = std::make_unique<NereusSDR::MacNRFilter>();
+    if (!m_mnr->isValid()) {
+        qCWarning(lcDsp) << "MNR (Apple Accelerate) FFT setup failed on channel"
+                         << m_channelId;
+        m_mnr.reset();
+    }
 #endif
 }
 
@@ -644,6 +677,344 @@ void RxChannel::setEmnrPosition(int position)
 }
 
 // ---------------------------------------------------------------------------
+// NR1 — ANR tuning (Sub-epic C-1)
+// Porting from Thetis setup.cs:8539-8566, radio.cs:673-699 [v2.10.3.13]
+// Original C# logic:
+//   private void udLMSNR_ValueChanged(...)
+//   {
+//       console.radio.GetDSPRX(0, 0).SetNRVals(
+//           (int)udLMSNRtaps.Value,
+//           (int)udLMSNRdelay.Value,
+//           1e-6 * (double)udLMSNRgain.Value,    // ← UI int scaled ×1e-6
+//           1e-3 * (double)udLMSNRLeak.Value);   // ← UI int scaled ×1e-3
+//   }
+// Q-c verify: UI spinboxes use 1e-6/1e-3 factors respectively.  The Nr1Tuning
+// struct and these per-knob setters store and accept raw WDSP-domain doubles.
+// The UI layer must apply the ×1e-6 / ×1e-3 conversions before calling here.
+// ---------------------------------------------------------------------------
+
+void RxChannel::setAnrTuning(const Nr1Tuning& t)
+{
+    m_nr1Tuning = t;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:681-698 [v2.10.3.13] — SetNRVals() calls
+    // WDSP.SetRXAANRVals(id, taps, delay, gain, leak) with already-scaled values.
+    SetRXAANRVals(m_channelId, t.taps, t.delay, t.gain, t.leakage);
+    SetRXAANRPosition(m_channelId, static_cast<int>(t.position));
+#endif
+}
+
+void RxChannel::setAnrTaps(int taps)
+{
+    m_nr1Tuning.taps = taps;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:681-698 [v2.10.3.13]
+    SetRXAANRTaps(m_channelId, taps);
+#endif
+}
+
+void RxChannel::setAnrDelay(int delay)
+{
+    m_nr1Tuning.delay = delay;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:681-698 [v2.10.3.13]
+    SetRXAANRDelay(m_channelId, delay);
+#endif
+}
+
+void RxChannel::setAnrGain(double gain)
+{
+    m_nr1Tuning.gain = gain;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:8545 [v2.10.3.13] — caller has already applied ×1e-6.
+    // Passes raw WDSP-domain value directly to SetRXAANRGain.
+    SetRXAANRGain(m_channelId, gain);
+#endif
+}
+
+void RxChannel::setAnrLeakage(double leakage)
+{
+    m_nr1Tuning.leakage = leakage;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:8550 [v2.10.3.13] — caller has already applied ×1e-3.
+    // Passes raw WDSP-domain value directly to SetRXAANRLeakage.
+    SetRXAANRLeakage(m_channelId, leakage);
+#endif
+}
+
+void RxChannel::setAnrPosition(NrPosition p)
+{
+    m_nr1Tuning.position = p;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:8723 [v2.10.3.13]
+    SetRXAANRPosition(m_channelId, static_cast<int>(p));
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// NR2 — EMNR tuning (Sub-epic C-1)
+// Porting from Thetis setup.cs:34711-34748, radio.cs:2062-2213 [v2.10.3.13]
+// All post2 values are raw passthrough to WDSP (verified: radio.cs properties
+// set and forward the value unchanged — no ÷100 at the boundary).
+// ---------------------------------------------------------------------------
+
+void RxChannel::setEmnrTuning(const Nr2Tuning& t)
+{
+    m_nr2Tuning = t;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2062-2213 [v2.10.3.13]
+    SetRXAEMNRgainMethod(m_channelId, static_cast<int>(t.gainMethod));
+    SetRXAEMNRnpeMethod (m_channelId, static_cast<int>(t.npeMethod));
+    SetRXAEMNRaeRun     (m_channelId, t.aeFilter ? 1 : 0);
+    SetRXAEMNRPosition  (m_channelId, static_cast<int>(t.position));
+    SetRXAEMNRpost2Run  (m_channelId, t.post2Run ? 1 : 0);
+    SetRXAEMNRpost2Nlevel(m_channelId, t.post2Level);
+    SetRXAEMNRpost2Factor(m_channelId, t.post2Factor);
+    SetRXAEMNRpost2Rate  (m_channelId, t.post2Rate);
+    SetRXAEMNRpost2Taper (m_channelId, t.post2Taper);
+#endif
+}
+
+void RxChannel::setEmnrTrainT1(double t1)
+{
+#ifdef HAVE_WDSP
+    // From Thetis dsp.cs:315 [v2.10.3.13] — SetRXAEMNRtrainZetaThresh
+    // "T1" in the UI maps to zetathresh in emnr.c:1352
+    SetRXAEMNRtrainZetaThresh(m_channelId, t1);
+#else
+    Q_UNUSED(t1);
+#endif
+}
+
+void RxChannel::setEmnrTrainT2(double t2)
+{
+#ifdef HAVE_WDSP
+    // From Thetis dsp.cs:318 [v2.10.3.13] — SetRXAEMNRtrainT2
+    SetRXAEMNRtrainT2(m_channelId, t2);
+#else
+    Q_UNUSED(t2);
+#endif
+}
+
+void RxChannel::setEmnrAeZetaThresh(double v)
+{
+#ifdef HAVE_WDSP
+    // From Thetis dsp.cs:287 [v2.10.3.13] — SetRXAEMNRaeZetaThresh
+    SetRXAEMNRaeZetaThresh(m_channelId, v);
+#else
+    Q_UNUSED(v);
+#endif
+}
+
+void RxChannel::setEmnrAePsi(double v)
+{
+#ifdef HAVE_WDSP
+    // From Thetis dsp.cs:289 [v2.10.3.13] — SetRXAEMNRaePsi
+    SetRXAEMNRaePsi(m_channelId, v);
+#else
+    Q_UNUSED(v);
+#endif
+}
+
+void RxChannel::setEmnrPost2Run(bool on)
+{
+    m_nr2Tuning.post2Run = on;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:34719-34720, radio.cs:2122 [v2.10.3.13]
+    SetRXAEMNRpost2Run(m_channelId, on ? 1 : 0);
+#endif
+}
+
+void RxChannel::setEmnrPost2Level(double level)
+{
+    m_nr2Tuning.post2Level = level;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:34711, radio.cs:2141-2155 [v2.10.3.13]
+    // Q-c verified: radio.cs passes the raw double value; no ÷100 applied.
+    SetRXAEMNRpost2Nlevel(m_channelId, level);
+#endif
+}
+
+void RxChannel::setEmnrPost2Factor(double factor)
+{
+    m_nr2Tuning.post2Factor = factor;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:34712, radio.cs:2160-2174 [v2.10.3.13]
+    // Q-c verified: radio.cs passes the raw double value; no ÷100 applied.
+    SetRXAEMNRpost2Factor(m_channelId, factor);
+#endif
+}
+
+void RxChannel::setEmnrPost2Rate(double rate)
+{
+    m_nr2Tuning.post2Rate = rate;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:34713, radio.cs:2179-2193 [v2.10.3.13]
+    // Q-c verified: radio.cs passes the raw double value; no scaling.
+    SetRXAEMNRpost2Rate(m_channelId, rate);
+#endif
+}
+
+void RxChannel::setEmnrPost2Taper(int taper)
+{
+    m_nr2Tuning.post2Taper = taper;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:34714, radio.cs:2198-2212 [v2.10.3.13]
+    // Q-c verified: radio.cs passes the raw int value; no scaling.
+    SetRXAEMNRpost2Taper(m_channelId, taper);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// NR3 — RNNR tuning (Sub-epic C-1)
+// Porting from Thetis radio.cs:2257-2311, setup.cs:35460-35462 [v2.10.3.13]
+// ---------------------------------------------------------------------------
+
+void RxChannel::setRnnrTuning(const Nr3Tuning& t)
+{
+    m_nr3Tuning = t;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2275-2295 [v2.10.3.13]
+    SetRXARNNRPosition       (m_channelId, static_cast<int>(t.position));
+    SetRXARNNRUseDefaultGain (m_channelId, t.useDefaultGain ? 1 : 0);
+#endif
+}
+
+void RxChannel::setRnnrPosition(NrPosition p)
+{
+    m_nr3Tuning.position = p;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2275 [v2.10.3.13]
+    SetRXARNNRPosition(m_channelId, static_cast<int>(p));
+#endif
+}
+
+void RxChannel::setRnnrUseDefaultGain(bool on)
+{
+    m_nr3Tuning.useDefaultGain = on;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:35460-35462, radio.cs:2293-2311 [v2.10.3.13]
+    // "Use fixed gain for input samples" checkbox maps to SetRXARNNRUseDefaultGain.
+    SetRXARNNRUseDefaultGain(m_channelId, on ? 1 : 0);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// NR4 — SBNR tuning (Sub-epic C-1)
+// Porting from Thetis radio.cs:2312-2355, setup.cs:34511-34527 [v2.10.3.13]
+// All values are float-cast at the WDSP boundary (WDSP sbnr.c uses float).
+// ---------------------------------------------------------------------------
+
+void RxChannel::setSbnrTuning(const Nr4Tuning& t)
+{
+    m_nr4Tuning = t;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2312-2355 [v2.10.3.13]
+    SetRXASBNRreductionAmount    (m_channelId, static_cast<float>(t.reductionAmount));
+    SetRXASBNRsmoothingFactor    (m_channelId, static_cast<float>(t.smoothingFactor));
+    SetRXASBNRwhiteningFactor    (m_channelId, static_cast<float>(t.whiteningFactor));
+    SetRXASBNRnoiseRescale       (m_channelId, static_cast<float>(t.noiseRescale));
+    SetRXASBNRpostFilterThreshold(m_channelId, static_cast<float>(t.postFilterThreshold));
+    SetRXASBNRnoiseScalingType   (m_channelId, static_cast<int>(t.algo));
+#endif
+}
+
+void RxChannel::setSbnrReductionAmount(double dB)
+{
+    m_nr4Tuning.reductionAmount = dB;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2331 [v2.10.3.13]
+    SetRXASBNRreductionAmount(m_channelId, static_cast<float>(dB));
+#endif
+}
+
+void RxChannel::setSbnrSmoothingFactor(double pct)
+{
+    m_nr4Tuning.smoothingFactor = pct;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2338 [v2.10.3.13]
+    SetRXASBNRsmoothingFactor(m_channelId, static_cast<float>(pct));
+#endif
+}
+
+void RxChannel::setSbnrWhiteningFactor(double pct)
+{
+    m_nr4Tuning.whiteningFactor = pct;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2345 [v2.10.3.13]
+    SetRXASBNRwhiteningFactor(m_channelId, static_cast<float>(pct));
+#endif
+}
+
+void RxChannel::setSbnrNoiseRescale(double dB)
+{
+    m_nr4Tuning.noiseRescale = dB;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2349 [v2.10.3.13]
+    SetRXASBNRnoiseRescale(m_channelId, static_cast<float>(dB));
+#endif
+}
+
+void RxChannel::setSbnrPostFilterThreshold(double dB)
+{
+    m_nr4Tuning.postFilterThreshold = dB;
+#ifdef HAVE_WDSP
+    // From Thetis radio.cs:2353 [v2.10.3.13]
+    SetRXASBNRpostFilterThreshold(m_channelId, static_cast<float>(dB));
+#endif
+}
+
+void RxChannel::setSbnrAlgo(SbnrAlgo a)
+{
+    m_nr4Tuning.algo = a;
+#ifdef HAVE_WDSP
+    // From Thetis setup.cs:34511-34527 [v2.10.3.13] — Algo 1/2/3 maps to
+    // noiseScalingType 0/1/2 (SbnrAlgo enum values are 0/1/2 accordingly).
+    SetRXASBNRnoiseScalingType(m_channelId, static_cast<int>(a));
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setActiveNr — central mode dispatch (Sub-epic C-1)
+// Porting from Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13]
+// Original C# logic (condensed — NR1 case shown):
+//   case RadioButtonNR1:
+//       rad.RXANR4Run = 0;
+//       rad.RXANR3Run = 0;
+//       rad.RXANR2Run = 0;
+//       rad.RXANR1Run = 1;
+// All four Run flags are written on every call so exactly 0 or 1 is active.
+// ---------------------------------------------------------------------------
+
+void RxChannel::setActiveNr(NrSlot slot)
+{
+    m_activeNr.store(slot, std::memory_order_release);
+
+#ifdef HAVE_WDSP
+    // From Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13] —
+    // flip all four WDSP NR Run flags so exactly zero or one is active.
+    SetRXAANRRun (m_channelId, (slot == NrSlot::NR1) ? 1 : 0);
+    SetRXAEMNRRun(m_channelId, (slot == NrSlot::NR2) ? 1 : 0);
+    SetRXARNNRRun(m_channelId, (slot == NrSlot::NR3) ? 1 : 0);
+    SetRXASBNRRun(m_channelId, (slot == NrSlot::NR4) ? 1 : 0);
+#endif
+
+    // Post-WDSP filter flags.  Filter instances added in Tasks 9-11; for now
+    // these atomics just record intent so flag-flipping can be tested before
+    // the filter objects exist.
+    m_dfnrActive.store(slot == NrSlot::DFNR, std::memory_order_release);
+    m_bnrActive .store(slot == NrSlot::BNR,  std::memory_order_release);
+    m_mnrActive .store(slot == NrSlot::MNR,  std::memory_order_release);
+
+    // Keep legacy stub atomics in sync with the new single source of truth
+    // until Task 12 retires setEmnrEnabled / setNrEnabled.  Not strictly
+    // required for correctness, but avoids surprising readers of the old API.
+    m_nrEnabled  .store(slot == NrSlot::NR1 || slot == NrSlot::NR2 ||
+                        slot == NrSlot::NR3 || slot == NrSlot::NR4);
+    m_emnrEnabled.store(slot == NrSlot::NR2);
+}
+
+// ---------------------------------------------------------------------------
 // SNB (Spectral Noise Blanker)
 // ---------------------------------------------------------------------------
 
@@ -946,8 +1317,14 @@ void RxChannel::setActive(bool active)
 
 void RxChannel::processIq(float* inI, float* inQ,
                           float* outI, float* outQ,
-                          int sampleCount)
+                          int sampleCount, int outSampleCount)
 {
+    // fexchange2 writes outSampleCount samples (WDSP's decimated output
+    // rate) which may be smaller than sampleCount (input rate). Post-WDSP
+    // processors must use the SMALLER count or they'll process zero-padded
+    // tails and produce garbage. Default -1 preserves old contract.
+    [[maybe_unused]] const int postCount = (outSampleCount > 0) ? outSampleCount : sampleCount;
+
     if (!m_active.load()) {
         // Channel inactive — output silence
         std::memset(outI, 0, sampleCount * sizeof(float));
@@ -974,6 +1351,27 @@ void RxChannel::processIq(float* inI, float* inQ,
         qCWarning(lcDsp) << "fexchange2 error on channel"
                          << m_channelId << ":" << error;
     }
+
+#ifdef HAVE_DFNR
+    // Sub-epic C-1 Task 9 — post-fexchange2 DeepFilterNet3 noise reduction.
+    // Runs only when m_dfnrActive is set via setActiveNr(NrSlot::DFNR).
+    // outI/outQ are 48 kHz stereo float at this point — DFNR's native rate.
+    if (m_dfnr && m_dfnrActive.load(std::memory_order_acquire)) {
+        m_dfnr->process(outI, outQ, postCount);
+    }
+#endif
+
+#ifdef HAVE_MNR
+    // Sub-epic C-1 Task 11 — post-fexchange2 Apple Accelerate MMSE-Wiener NR.
+    // Runs only when m_mnrActive is set via setActiveNr(NrSlot::MNR).
+    // outI/outQ are 48 kHz stereo float at this point.
+    // Ported from AetherSDR src/core/MacNRFilter.{h,cpp} [@0cd4559]; retuned
+    // for 48 kHz (LOG2N 9→10, FFT 512→1024, hop 256→512).
+    if (m_mnr && m_mnrActive.load(std::memory_order_acquire)) {
+        m_mnr->process(outI, outQ, postCount);
+    }
+#endif
+
 #else
     // WDSP not available — output silence
     std::memset(outI, 0, sampleCount * sizeof(float));
@@ -1003,5 +1401,63 @@ double RxChannel::getMeter(RxMeterType type) const
     return -140.0;
 #endif
 }
+
+// ---------------------------------------------------------------------------
+// DFNR tuning setters (Sub-epic C-1, Task 9)
+// ---------------------------------------------------------------------------
+
+#ifdef HAVE_DFNR
+void RxChannel::setDfnrAttenLimit(float dB)
+{
+    if (m_dfnr) {
+        m_dfnr->setAttenLimit(dB);
+    }
+}
+
+void RxChannel::setDfnrPostFilterBeta(float beta)
+{
+    if (m_dfnr) {
+        m_dfnr->setPostFilterBeta(beta);
+    }
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// MNR tuning setter (Sub-epic C-1, Task 11)
+// ---------------------------------------------------------------------------
+
+#ifdef HAVE_MNR
+void RxChannel::setMnrStrength(float strength)
+{
+    if (m_mnr) { m_mnr->setStrength(strength); }
+}
+void RxChannel::setMnrOversub(float oversub)
+{
+    if (m_mnr) { m_mnr->setOversub(oversub); }
+}
+void RxChannel::setMnrFloor(float floor)
+{
+    if (m_mnr) { m_mnr->setFloor(floor); }
+}
+void RxChannel::setMnrAlpha(float alpha)
+{
+    if (m_mnr) { m_mnr->setAlpha(alpha); }
+}
+void RxChannel::setMnrBias(float bias)
+{
+    if (m_mnr) { m_mnr->setBias(bias); }
+}
+void RxChannel::setMnrGsmooth(float gsmooth)
+{
+    if (m_mnr) { m_mnr->setGsmooth(gsmooth); }
+}
+#else
+void RxChannel::setMnrStrength(float) {}
+void RxChannel::setMnrOversub(float) {}
+void RxChannel::setMnrFloor(float) {}
+void RxChannel::setMnrAlpha(float) {}
+void RxChannel::setMnrBias(float) {}
+void RxChannel::setMnrGsmooth(float) {}
+#endif
 
 } // namespace NereusSDR

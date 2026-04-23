@@ -12,11 +12,12 @@ WDSP (Warren Pratt NR0V's DSP library) is vendored in `third_party/wdsp/`.
 
 ### Survey of Vendored Sources
 
-All 138 source files in `third_party/wdsp/src/` were examined:
+All 142 source files in `third_party/wdsp/src/` were examined:
 
-- **128 files** carry the full GPLv2-or-later permission block:
+- **132 files** carry the full GPLv2-or-later permission block:
   - `"either version 2 of the License, or (at your option) any later version"`
-  - All signal processing core: `channel.c`, `RXA.c`, `TXA.c`, `bandpass.c`, `amd.c`, `anf.c`, `anr.c`, and 121 others
+  - All signal processing core: `channel.c`, `RXA.c`, `TXA.c`, `bandpass.c`, `amd.c`, `anf.c`, `anr.c`, and 125 others
+  - `rnnr.c` + `rnnr.h` + `sbnr.c` + `sbnr.h` ported in Sub-epic C-1 (NR3/NR4 backends), carry verbatim Thetis GPLv2-or-later + MW0LGE dual-license headers.
   - All authored by Warren Pratt, NR0V, Copyright 2012–2025
   - **Conclusion: GPLv2-or-later**
 

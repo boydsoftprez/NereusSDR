@@ -130,7 +130,7 @@ void RxDspWorker::processIqBatch(int receiverIndex,
             QVector<float> outI(inSize);
             QVector<float> outQ(inSize);
             rxCh->processIq(m_iqAccumI.data(), m_iqAccumQ.data(),
-                            outI.data(), outQ.data(), inSize);
+                            outI.data(), outQ.data(), inSize, outSize);
 
             // WDSP outputs out_size samples per fexchange2 call.
             // outI == outQ because SetRXAPanelBinaural(channel, 0) puts

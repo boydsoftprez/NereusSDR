@@ -285,6 +285,7 @@ warren@wpratt.com
 #include "applets/TunerApplet.h"
 #include "SpectrumOverlayPanel.h"
 #include "SetupDialog.h"
+#include "setup/DspSetupPages.h"   // NrAnfSetupPage::selectSubtab
 #include "TitleBar.h"
 #include "VaxFirstRunDialog.h"
 #include "widgets/MasterOutputWidget.h"
@@ -1333,7 +1334,9 @@ void MainWindow::buildMenuBar()
     nr2Action->setToolTip(QStringLiteral("Toggle enhanced multiband noise reduction (NR2/EMNR)"));
     connect(nr2Action, &QAction::toggled, this, [this](bool on) {
         SliceModel* slice = m_radioModel->activeSlice();
-        if (slice) { slice->setEmnrEnabled(on); }
+        if (slice) {
+            slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
+        }
     });
 
     m_nbAction = dspMenu->addAction(QStringLiteral("N&B"));
@@ -2299,9 +2302,10 @@ void MainWindow::wireSliceToSpectrum()
     connect(slice, &SliceModel::nbModeChanged, vfo, &VfoWidget::setNbMode);
     vfo->setNbMode(slice->nbMode());   // initial sync
 
-    connect(slice, &SliceModel::emnrEnabledChanged, this, [vfo](bool v) {
-        vfo->setNr2Enabled(v);
-    });
+    // Sub-epic C-1: NR bank sync — VfoWidget::setSlice also connects activeNrChanged
+    // via onActiveNrChanged for the full 7-button bank; this redundant connection is
+    // removed to avoid double-firing. setSlice handles both initial sync and updates.
+    // (Legacy setNr2Enabled call removed here — onActiveNrChanged covers NR2.)
 
     connect(slice, &SliceModel::snbEnabledChanged, this, [vfo](bool v) {
         vfo->setSnbEnabled(v);
@@ -2369,8 +2373,8 @@ void MainWindow::wireSliceToSpectrum()
 
     // --- VfoWidget → SliceModel: DSP tab outbound (S1.8b) ---
     connect(vfo, &VfoWidget::nr2Changed, this, [slice](bool on) {
-        // NR2 = EMNR in Thetis naming
-        slice->setEmnrEnabled(on);
+        // NR2 = EMNR in Thetis naming. Toggle: NR2→active clears any other slot.
+        slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
     });
     connect(vfo, &VfoWidget::snbChanged, this, [slice](bool on) {
         slice->setSnbEnabled(on);
@@ -2444,6 +2448,23 @@ void MainWindow::wireSliceToSpectrum()
         auto* dialog = new SetupDialog(m_radioModel, this);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->selectPage(QStringLiteral("NB/SNB"));
+        dialog->show();
+    });
+
+    // --- VfoWidget → Setup → DSP → NR/ANF page (Task 18, Sub-epic C-1).
+    // Emitted from DspParamPopup "More Settings…" on any NR bank button.
+    // Mirrors Thetis chkNR_MouseDown (console.cs [v2.10.3.13]) which calls
+    // ShowSetupTab(NR_Tab). Sub-tab selection per NrSlot is deferred to Task 17.
+    connect(vfo, &VfoWidget::openNrSetupRequested, this,
+            [this](NereusSDR::NrSlot slot) {
+        auto* dialog = new SetupDialog(m_radioModel, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->selectPage(QStringLiteral("NR/ANF"));
+        // Deep-link to the sub-tab matching the NR slot the user clicked
+        // (Task 18 polish 2026-04-23 — previously always opened NR1).
+        if (auto* nrPage = dialog->findChild<NrAnfSetupPage*>()) {
+            nrPage->selectSubtab(slot);
+        }
         dialog->show();
     });
 

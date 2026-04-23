@@ -282,9 +282,10 @@ QHBoxLayout* SetupPage::addLabeledToggle(QLayout* parent, const QString& label, 
 
 QHBoxLayout* SetupPage::addLabeledSpinner(QLayout* parent, const QString& label, QSpinBox* spinner)
 {
-    spinner->setStyleSheet(
-        "QSpinBox { background: #1a2a3a; border: 1px solid #304050; "
-        "border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }");
+    // No setStyleSheet — matches the AudioAdvancedPage pattern (native
+    // QSpinBox styling on macOS has proper up/down buttons). Per user
+    // directive 2026-04-23: Audio → Advanced is the canonical style for
+    // spinbox-type fields across the Setup dialog.
     return makeLabeledRow(parent, label, spinner);
 }
 

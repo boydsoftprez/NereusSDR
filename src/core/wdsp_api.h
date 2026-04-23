@@ -243,24 +243,101 @@ void SetRXAAGCHangLevel(int channel, double hangLevel);
 
 void SetRXAAGCHangThreshold(int channel, int hangthreshold);
 
-// ---------------------------------------------------------------------------
-// Noise reduction (anr.h, anf.h, emnr.c)
-// ---------------------------------------------------------------------------
+// =====================================================================
+// NR1 — Adaptive Noise Reduction (WDSP anr.c, Warren Pratt NR0V)
+// From Thetis wdsp/anr.h:47-52 [v2.10.3.13]. Channel = WDSP channel id.
+// =====================================================================
 
 void SetRXAANRRun(int channel, int setit);
 
 void SetRXAANRVals(int channel, int taps, int delay, double gain, double leakage);
 
+void SetRXAANRTaps(int channel, int taps);
+
+void SetRXAANRDelay(int channel, int delay);
+
+void SetRXAANRGain(int channel, double gain);
+
+void SetRXAANRLeakage(int channel, double leakage);
+
+void SetRXAANRPosition(int channel, int position);  // 0=pre-AGC, 1=post-AGC
+
+// =====================================================================
+// ANF — Automatic Notch Filter (WDSP anf.c)
+// From Thetis wdsp/anf.h [v2.10.3.13].
+// =====================================================================
+
 void SetRXAANFRun(int channel, int setit);
+
+// =====================================================================
+// NR2 — EMNR (WDSP emnr.c, Warren Pratt NR0V).
+// From Thetis wdsp/emnr.h + setup.cs [v2.10.3.13].
+// =====================================================================
 
 void SetRXAEMNRRun(int channel, int run);
 
-// EMNR sub-parameters — From Thetis dsp.cs:243-297 P/Invoke declarations
-// WDSP: third_party/wdsp/src/emnr.c:1298,1306,1314,1322
-void SetRXAEMNRgainMethod(int channel, int method);
-void SetRXAEMNRnpeMethod(int channel, int method);
-void SetRXAEMNRaeRun(int channel, int run);
 void SetRXAEMNRPosition(int channel, int position);
+
+void SetRXAEMNRgainMethod(int channel, int method);
+
+void SetRXAEMNRnpeMethod(int channel, int method);
+
+void SetRXAEMNRaeRun(int channel, int run);
+
+void SetRXAEMNRaeZetaThresh(int channel, double zetathresh);
+
+void SetRXAEMNRaePsi(int channel, double psi);
+
+void SetRXAEMNRtrainZetaThresh(int channel, double thresh);
+
+void SetRXAEMNRtrainT2(int channel, double t2);
+
+// Post-processing cascade — the "Noise post proc" group in Thetis screenshot.
+// From Thetis wdsp/emnr.c:951-995 [v2.10.3.13]. Internal scaling: Thetis
+// setup.cs divides the UI int value by 100 before passing (e.g. UI 15 → 0.15).
+void SetRXAEMNRpost2Run(int channel, int run);
+
+void SetRXAEMNRpost2Nlevel(int channel, double nlevel);
+
+void SetRXAEMNRpost2Factor(int channel, double factor);
+
+void SetRXAEMNRpost2Rate(int channel, double tc);
+
+void SetRXAEMNRpost2Taper(int channel, int taper);
+
+// =====================================================================
+// NR3 — RNNR (WDSP rnnr.c, Samphire MW0LGE, rnnoise backend).
+// From Thetis wdsp/rnnr.c:161-176, 348-401 [v2.10.3.13].
+// =====================================================================
+
+void SetRXARNNRRun(int channel, int run);
+
+void SetRXARNNRPosition(int channel, int position);
+
+void SetRXARNNRUseDefaultGain(int channel, int use_default_gain);
+
+// Global (not per-channel): loads an rnnoise .bin model. Empty path ("")
+// reverts to the baked-in default model.
+void RNNRloadModel(const char* file_path);
+
+// =====================================================================
+// NR4 — SBNR (WDSP sbnr.c, Samphire MW0LGE, libspecbleach backend).
+// From Thetis wdsp/sbnr.c:144-241 [v2.10.3.13].
+// =====================================================================
+
+void SetRXASBNRRun(int channel, int run);
+
+void SetRXASBNRreductionAmount(int channel, float amount);
+
+void SetRXASBNRsmoothingFactor(int channel, float factor);
+
+void SetRXASBNRwhiteningFactor(int channel, float factor);
+
+void SetRXASBNRnoiseRescale(int channel, float factor);
+
+void SetRXASBNRpostFilterThreshold(int channel, float threshold);
+
+void SetRXASBNRnoiseScalingType(int channel, int noise_scaling_type);
 
 // ---------------------------------------------------------------------------
 // Spectral noise blanker (snb.h) — From Thetis dsp.cs P/Invoke declarations

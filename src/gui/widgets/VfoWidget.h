@@ -469,6 +469,9 @@ signals:
     void recordToggled(bool recording);
     void playToggled(bool playing);
 
+    // --- NR setup dialog request (right-click on any NR bank button → Task 18) ---
+    void openNrSetupRequested(NereusSDR::NrSlot slot);
+
     // --- Setup dialog request (e.g. AGC-T right-click → open settings) ---
     void openSetupRequested();
 
@@ -490,6 +493,16 @@ private:
     void rebuildFilterButtons(DSPMode mode);
     void updateFreqLabel();
     QString formatFilterWidth(int low, int high) const;
+
+    // --- NR bank helpers (Sub-epic C-1, Tasks 14-15) ---
+    void onActiveNrChanged(NereusSDR::NrSlot slot);
+    void showNr1Popup(const QPoint& globalPos);
+    void showNr2Popup(const QPoint& globalPos);
+    void showNr3Popup(const QPoint& globalPos);
+    void showNr4Popup(const QPoint& globalPos);
+    void showDfnrPopup(const QPoint& globalPos);
+    void showBnrPopup(const QPoint& globalPos);
+    void showMnrPopup(const QPoint& globalPos);
 
     // Guard to prevent signal re-emission during model updates
     bool m_updatingFromModel{false};
@@ -562,8 +575,14 @@ private:
 
     // --- DSP tab ---
     QPushButton*        m_nbButton{nullptr};   // tri-state NB/NB2/Off cycling button
-    QPushButton*        m_nrToggle{nullptr};
-    QPushButton*        m_nr2Toggle{nullptr};
+    // NR bank — Sub-epic C-1: 7 mutually-exclusive slot buttons.
+    QPushButton* m_nr1Btn  = nullptr;
+    QPushButton* m_nr2Btn  = nullptr;
+    QPushButton* m_nr3Btn  = nullptr;
+    QPushButton* m_nr4Btn  = nullptr;
+    QPushButton* m_dfnrBtn = nullptr;
+    QPushButton* m_bnrBtn  = nullptr;
+    QPushButton* m_mnrBtn  = nullptr;
     QPushButton*        m_anfToggle{nullptr};
     QPushButton*        m_snbToggle{nullptr};
     QPushButton*        m_apfToggle{nullptr};

@@ -264,6 +264,7 @@ warren@wpratt.com
 */
 
 #include "VfoWidget.h"
+#include "DspParamPopup.h"
 #include "VaxChannelSelector.h"
 #include "gui/applets/NyiOverlay.h"
 #include "core/BoardCapabilities.h"
@@ -336,6 +337,9 @@ static const char* kModeBtn =
 VfoWidget::VfoWidget(QWidget* parent)
     : QWidget(parent)
 {
+    // Width fixed at kWidgetW per original AetherSDR pattern. Height grows
+    // to fit content (no fixed height). DSP tab's 4-col grid uses ~60 px
+    // buttons so 4×60=240 + margins fit within the 252 px flag width.
     setFixedWidth(kWidgetW);
     setAttribute(Qt::WA_TranslucentBackground);
     setAutoFillBackground(false);
@@ -392,6 +396,16 @@ void VfoWidget::buildUI()
     mainLayout->addWidget(m_tabStack);
     m_tabStack->hide();  // Hidden by default — click tab to expand
     m_activeTab = -1;    // No tab active initially
+
+    // Per user directive 2026-04-23: flag height should shrink to fit the
+    // ACTIVE tab only (not the tallest tab). QStackedWidget defaults to
+    // sizing by the tallest child; we override by marking hidden pages as
+    // QSizePolicy::Ignored so the stack reports the size of the active page.
+    // The tab-switcher in buildTabBar calls adjustStackSize() to re-apply.
+    for (int i = 0; i < m_tabStack->count(); ++i) {
+        m_tabStack->widget(i)->setSizePolicy(
+            QSizePolicy::Ignored, QSizePolicy::Ignored);
+    }
 
     setLayout(mainLayout);
     adjustSize();
@@ -626,6 +640,14 @@ void VfoWidget::buildTabBar()
                 for (auto* b : m_tabButtons) { b->setChecked(false); }
             } else {
                 m_activeTab = i;
+                // Mark all pages Ignored except the active one, so the
+                // QStackedWidget sizes to the ACTIVE page only (not to
+                // the tallest page). Per user directive 2026-04-23.
+                for (int j = 0; j < m_tabStack->count(); ++j) {
+                    m_tabStack->widget(j)->setSizePolicy(
+                        j == i ? QSizePolicy::Preferred : QSizePolicy::Ignored,
+                        j == i ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+                }
                 m_tabStack->setCurrentIndex(i);
                 m_tabStack->show();
                 for (int j = 0; j < m_tabButtons.size(); ++j) {
@@ -918,17 +940,21 @@ void VfoWidget::buildAudioTab()
 void VfoWidget::buildDspTab()
 {
     auto* dspWidget = new QWidget;
+    // Default sizing — mirrors AetherSDR VfoWidget.cpp:933 exactly.
     auto* dspLayout = new QVBoxLayout(dspWidget);
-    dspLayout->setContentsMargins(4, 4, 4, 4);
-    dspLayout->setSpacing(4);
+    dspLayout->setContentsMargins(2, 2, 2, 2);
+    dspLayout->setSpacing(3);
 
-    // 4×2 grid of DSP toggles — equal column stretch so row 1 (3 items) matches row 0 (4 items)
-    auto* grid = new QGridLayout;
-    grid->setContentsMargins(0, 0, 0, 0);
-    grid->setSpacing(2);
-    for (int col = 0; col < 4; ++col) {
-        grid->setColumnStretch(col, 1);
-    }
+    // Sub-epic C-1 USER-APPROVED layout: 3×4 DSP button grid.
+    // NB first (preserves cycling), then NR mutual-exclusion group (NR1-4/DFNR/MNR),
+    // then ANF + SNB as independent toggles on row 2. APF toggle moves to its
+    // own slider row below the grid (consistent with its CW-only visibility gate).
+    //
+    //   Row 0: NB  | NR1  | NR2 | NR3
+    //   Row 1: NR4 | DFNR | MNR | (empty)
+    //   Row 2: ANF | SNB  |     |
+    //
+    // Overrides earlier horizontal-bank design per user directive 2026-04-23.
 
     auto makeToggle = [dspWidget](const QString& label) -> QPushButton* {
         auto* btn = new QPushButton(label, dspWidget);
@@ -937,8 +963,14 @@ void VfoWidget::buildDspTab()
         return btn;
     };
 
-    // Row 0: NB (cycling) | NR | NR2
-    // Single tri-state cycling button: Off → NB → NB2 → Off.
+    // QGridLayout added directly to dspLayout — matches AetherSDR
+    // VfoWidget.cpp:938 (no subgrid widget wrapper). Grid fills the outer
+    // VBoxLayout width, QPushButton default Expanding policy stretches
+    // buttons to fill each cell.
+    auto* dspGrid = new QGridLayout;
+    dspGrid->setSpacing(3);
+
+    // NB cycling button (row 0, col 0) — tri-state Off → NB → NB2 → Off.
     // Mirrors Thetis chkNB — label switches "NB"/"NB2"; checked = active.
     // From Thetis console.cs:43513-43560 [v2.10.3.13].
     m_nbButton = makeToggle(QStringLiteral("NB"));
@@ -954,19 +986,57 @@ void VfoWidget::buildDspTab()
     m_nbButton->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_nbButton, &QWidget::customContextMenuRequested,
             this, [this](const QPoint&) { emit openNbSetupRequested(); });
-    m_nrToggle  = makeToggle(QStringLiteral("NR"));
-    // From Thetis console.resx:3879 — chkNR.ToolTip
-    m_nrToggle->setToolTip(QStringLiteral("Noise Reduction"));
-    m_nr2Toggle = makeToggle(QStringLiteral("NR2"));
-    // NereusSDR native — Thetis has no separate NR2 button; NR2 is selected via
-    // a context menu on chkNR which relabels that same checkbox to "NR2".
-    // NereusSDR exposes NR2 as a separate dedicated toggle.
-    m_nr2Toggle->setToolTip(QStringLiteral("Enhanced Multiband Noise Reduction (EMNR/NR2) — activates SetRXAEMNRRun"));
-    grid->addWidget(m_nbButton,  0, 0);
-    grid->addWidget(m_nrToggle,  0, 2);
-    grid->addWidget(m_nr2Toggle, 0, 3);
+    dspGrid->addWidget(m_nbButton, 0, 0);
 
-    // Row 1: ANF | SNB | APF | (spacer — col 3 intentionally empty per plan §S1.8.4)
+    // Row 0: NB (col 0) | NR1 | NR2 | NR3
+    // All NR mutex group buttons share the same kDspToggle style as NB/ANF/SNB
+    // so the entire 3×4 grid is visually uniform (Option A, user feedback 2026-04-23).
+    m_nr1Btn = makeToggle(QStringLiteral("NR1"));
+    m_nr2Btn = makeToggle(QStringLiteral("NR2"));
+    m_nr3Btn = makeToggle(QStringLiteral("NR3"));
+    m_nr1Btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_nr2Btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_nr3Btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    // Tooltips — Sub-epic C-1.
+    // From Thetis console.resx:3879 — chkNR.ToolTip (closest analogue for NR1)
+    m_nr1Btn->setToolTip(QStringLiteral("NR1: Adaptive LMS noise reduction — left-click activates, right-click adjusts knobs"));
+    m_nr2Btn->setToolTip(QStringLiteral("NR2: EMNR (Enhanced Multiband Noise Reduction) — left-click activates, right-click adjusts knobs"));
+    m_nr3Btn->setToolTip(QStringLiteral("NR3: RNNR (Recurrent Neural Net noise reduction) — left-click activates, right-click adjusts knobs"));
+    // 4×2 layout (option B) — four cols consistently filled.
+    //   Row 0: NB  | NR1  | NR2 | NR3
+    //   Row 1: NR4 | DFNR | MNR | ANF
+    //   Row 2: SNB (alone)
+    dspGrid->addWidget(m_nr1Btn, 0, 1);
+    dspGrid->addWidget(m_nr2Btn, 0, 2);
+    dspGrid->addWidget(m_nr3Btn, 0, 3);
+
+    // Row 1: NR4 | DFNR | MNR | (col 3 empty)
+    m_nr4Btn  = makeToggle(QStringLiteral("NR4"));
+    m_dfnrBtn = makeToggle(QStringLiteral("DFNR"));  // Full label — was "DFN" (truncated at 28px); now fits at uniform width
+    m_bnrBtn  = makeToggle(QStringLiteral("BNR"));   // Hidden permanently (NVIDIA deferred)
+    m_mnrBtn  = makeToggle(QStringLiteral("MNR"));
+    m_nr4Btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_dfnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_bnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_mnrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_nr4Btn->setToolTip(QStringLiteral("NR4: SBNR (Spectral Baseline NR) — left-click activates, right-click adjusts knobs"));
+    m_dfnrBtn->setToolTip(QStringLiteral("DFNR: DeepFilter noise reduction — left-click activates, right-click adjusts knobs"));
+    m_bnrBtn->setToolTip(QStringLiteral("BNR: NVIDIA noise reduction — left-click activates, right-click adjusts knobs"));
+    m_mnrBtn->setToolTip(QStringLiteral("MNR: macOS noise reduction — left-click activates, right-click adjusts knobs"));
+    dspGrid->addWidget(m_nr4Btn,  1, 0);
+    dspGrid->addWidget(m_dfnrBtn, 1, 1);
+    dspGrid->addWidget(m_mnrBtn,  1, 2);
+    // col (1,3) intentionally empty
+
+#ifndef HAVE_BNR
+    m_bnrBtn->hide();  // Hidden permanently: NVIDIA BNR integration deferred.
+    // BNR not added to grid — hidden and parented to dspWidget for lifecycle.
+#endif
+#ifndef HAVE_MNR
+    m_mnrBtn->hide();  // Hidden on non-macOS platforms.
+#endif
+
+    // Row 2: ANF | SNB | (cols 2-3 empty)
     m_anfToggle = makeToggle(QStringLiteral("ANF"));
     // From Thetis console.resx:4062 — chkANF.ToolTip
     m_anfToggle->setToolTip(QStringLiteral("Automatic Notch Filter"));
@@ -982,24 +1052,42 @@ void VfoWidget::buildDspTab()
     m_snbToggle->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_snbToggle, &QWidget::customContextMenuRequested,
             this, [this](const QPoint&) { emit openNbSetupRequested(); });
+    dspGrid->addWidget(m_anfToggle, 1, 3);  // fills row 1 col 4
+    dspGrid->addWidget(m_snbToggle, 2, 0);  // alone on row 2
+
+    // Uniform size for all 9 grid buttons: 64×26 px.
+    // User directive: natural button size (not cramped), zero gaps between
+    // buttons so their 1px borders abut forming a continuous "board" around
+    // the grid. SizePolicy::Fixed prevents cells from widening beyond button
+    // size so the sub-grid hugs its content instead of stretching to the
+    // flag width.
+    for (auto* btn : {m_nbButton, m_nr1Btn, m_nr2Btn, m_nr3Btn,
+                      m_nr4Btn, m_dfnrBtn, m_mnrBtn,
+                      m_anfToggle, m_snbToggle}) {
+        if (btn) {
+            btn->setFixedHeight(26);
+            btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        }
+    }
+
+    dspLayout->addLayout(dspGrid);
+
+    // APF toggle + tune slider row — below the 3×4 grid.
+    // The toggle acts as the enable button; slider + Hz label are only visible
+    // when APF is enabled AND mode is CW (gated by applyModeVisibility).
     m_apfToggle = makeToggle(QStringLiteral("APF"));
+    m_apfToggle->setFixedSize(63, 26);
+    m_apfToggle->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     // From Thetis console.resx:348 — chkCWAPFEnabled.ToolTip
     m_apfToggle->setToolTip(QStringLiteral("Enables APF"));
-    grid->addWidget(m_anfToggle, 1, 0);
-    grid->addWidget(m_snbToggle, 1, 1);
-    grid->addWidget(m_apfToggle, 1, 2);
 
-    dspLayout->addLayout(grid);
-
-    // APF tune slider row — below the grid
     {
         auto* apfRow = new QHBoxLayout;
-        apfRow->setSpacing(4);
+        apfRow->setSpacing(2);
 
-        m_apfLabel = new QLabel(QStringLiteral("APF"), dspWidget);
-        m_apfLabel->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
-        m_apfLabel->setFixedWidth(24);
-        apfRow->addWidget(m_apfLabel);
+        apfRow->addWidget(m_apfToggle);
+
+        m_apfLabel = nullptr;  // No longer needed — toggle replaces label widget.
 
         m_apfTuneSlider = new QSlider(Qt::Horizontal, dspWidget);
         m_apfTuneSlider->setRange(-500, 500);
@@ -1045,12 +1133,38 @@ void VfoWidget::buildDspTab()
     connect(m_nbButton, &QPushButton::clicked, this, [this] {
         if (!m_updatingFromModel) { emit nbModeCycled(); }
     });
-    connect(m_nrToggle, &QPushButton::toggled, this, [this](bool on) {
-        if (!m_updatingFromModel) { emit nrChanged(on); }
-    });
-    connect(m_nr2Toggle, &QPushButton::toggled, this, [this](bool on) {
-        if (!m_updatingFromModel) { emit nr2Changed(on); }
-    });
+    // Sub-epic C-1: NR bank left-click = setActiveNr(slot) mutual exclusion.
+    auto wireNrBtnToggle = [this](QPushButton* btn, NereusSDR::NrSlot slot) {
+        connect(btn, &QPushButton::toggled, this, [this, slot](bool on) {
+            if (m_updatingFromModel || !m_slice) {
+                return;
+            }
+            m_slice->setActiveNr(on ? slot : NereusSDR::NrSlot::Off);
+        });
+    };
+    wireNrBtnToggle(m_nr1Btn,  NereusSDR::NrSlot::NR1);
+    wireNrBtnToggle(m_nr2Btn,  NereusSDR::NrSlot::NR2);
+    wireNrBtnToggle(m_nr3Btn,  NereusSDR::NrSlot::NR3);
+    wireNrBtnToggle(m_nr4Btn,  NereusSDR::NrSlot::NR4);
+    wireNrBtnToggle(m_dfnrBtn, NereusSDR::NrSlot::DFNR);
+    wireNrBtnToggle(m_bnrBtn,  NereusSDR::NrSlot::BNR);
+    wireNrBtnToggle(m_mnrBtn,  NereusSDR::NrSlot::MNR);
+
+    // Sub-epic C-1: NR bank right-click = DspParamPopup quick controls.
+    connect(m_nr1Btn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showNr1Popup(m_nr1Btn->mapToGlobal(pos)); });
+    connect(m_nr2Btn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showNr2Popup(m_nr2Btn->mapToGlobal(pos)); });
+    connect(m_nr3Btn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showNr3Popup(m_nr3Btn->mapToGlobal(pos)); });
+    connect(m_nr4Btn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showNr4Popup(m_nr4Btn->mapToGlobal(pos)); });
+    connect(m_dfnrBtn, &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showDfnrPopup(m_dfnrBtn->mapToGlobal(pos)); });
+    connect(m_bnrBtn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showBnrPopup(m_bnrBtn->mapToGlobal(pos)); });
+    connect(m_mnrBtn,  &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) { showMnrPopup(m_mnrBtn->mapToGlobal(pos)); });
     connect(m_anfToggle, &QPushButton::toggled, this, [this](bool on) {
         if (!m_updatingFromModel) { emit anfChanged(on); }
     });
@@ -1614,11 +1728,24 @@ void VfoWidget::setNbMode(NereusSDR::NbMode m)
 
 void VfoWidget::setNr2Enabled(bool v)
 {
-    if (m_nr2Toggle && m_nr2Toggle->isChecked() != v) {
-        m_updatingFromModel = true;
-        m_nr2Toggle->setChecked(v);
-        m_updatingFromModel = false;
-    }
+    // Legacy adapter called by MainWindow — forward to the NR2 slot button.
+    // Kept for API compatibility during the transition; Task 18 will rewire
+    // MainWindow to call onActiveNrChanged directly via the signal.
+    onActiveNrChanged(v ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
+}
+
+void VfoWidget::onActiveNrChanged(NereusSDR::NrSlot slot)
+{
+    if (!m_nr1Btn) { return; }  // not yet built
+    QSignalBlocker b1(m_nr1Btn),  b2(m_nr2Btn),  b3(m_nr3Btn), b4(m_nr4Btn);
+    QSignalBlocker b5(m_dfnrBtn), b6(m_bnrBtn),  b7(m_mnrBtn);
+    m_nr1Btn->setChecked(slot  == NereusSDR::NrSlot::NR1);
+    m_nr2Btn->setChecked(slot  == NereusSDR::NrSlot::NR2);
+    m_nr3Btn->setChecked(slot  == NereusSDR::NrSlot::NR3);
+    m_nr4Btn->setChecked(slot  == NereusSDR::NrSlot::NR4);
+    m_dfnrBtn->setChecked(slot == NereusSDR::NrSlot::DFNR);
+    m_bnrBtn->setChecked(slot  == NereusSDR::NrSlot::BNR);
+    m_mnrBtn->setChecked(slot  == NereusSDR::NrSlot::MNR);
 }
 
 void VfoWidget::setSnbEnabled(bool v)
@@ -1665,12 +1792,11 @@ void VfoWidget::applyModeVisibility(DSPMode mode)
         m_rttyContainer->setVisible(mode == DSPMode::DIGL);
     }
 
-    // APF tune slider + row label — visible only when APF is enabled AND mode is CW
+    // APF tune slider — visible only when APF is enabled AND mode is CW.
+    // m_apfToggle (the enable button) is always visible; only the slider + Hz
+    // label are gated. m_apfLabel was removed in the Sub-epic C-1 3×4 redesign.
     bool apfVisible = (m_apfToggle && m_apfToggle->isChecked())
                       && (mode == DSPMode::CWL || mode == DSPMode::CWU);
-    if (m_apfLabel) {
-        m_apfLabel->setVisible(apfVisible);
-    }
     if (m_apfTuneSlider) {
         m_apfTuneSlider->setVisible(apfVisible);
     }
@@ -1818,6 +1944,13 @@ void VfoWidget::setSlice(SliceModel* slice)
     }
     if (m_rttyContainer) {
         m_rttyContainer->setSlice(slice);
+    }
+
+    // Sub-epic C-1: NR bank — sync from slice activeNr and initial state.
+    if (slice) {
+        connect(slice, &SliceModel::activeNrChanged,
+                this, &VfoWidget::onActiveNrChanged);
+        onActiveNrChanged(slice->activeNr());
     }
 
     // VAX selector — bidirectional wiring (Phase 3O Sub-Phase 8 Task 8.2)
@@ -2302,6 +2435,288 @@ void VfoWidget::setRxBypassActive(bool on)
     m_updatingFromModel = true;
     m_rxBypassBtn->setChecked(on);
     m_updatingFromModel = prev;
+}
+
+// ---- Sub-epic C-1: NR bank DspParamPopup builders (Task 15) ----
+// Each popup shows the 3-5 most-adjusted knobs for the given NR slot.
+// "More Settings…" fires openNrSetupRequested(slot) routed by MainWindow in Task 18.
+// Ranges and defaults from Thetis setup.cs [v2.10.3.13] + AetherSDR MainWindow.cpp
+// [@0cd4559] lines 7980-8324.
+
+void VfoWidget::showNr1Popup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // NR1 (ANR — Adaptive LMS).
+    // From Thetis setup.cs udDSPNR1Taps/udDSPNR1Delay/udDSPNR1Gain/udDSPNR1Leak ranges
+    // [v2.10.3.13].  Gain/Leakage stored as WDSP-domain values; sliders use UI units.
+    p->addSlider(QStringLiteral("Taps"), 16, 128, m_slice->nr1Taps(),
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) m_slice->setNr1Taps(v); });
+    p->addSlider(QStringLiteral("Delay"), 1, 256, m_slice->nr1Delay(),
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) m_slice->setNr1Delay(v); });
+    // Gain: UI units = WDSP value / 1e-6. Slider range 0-999 = 0.0-0.000999 WDSP.
+    const int uiGain = static_cast<int>(m_slice->nr1Gain() / 1e-6);
+    p->addSlider(QStringLiteral("Gain"), 0, 999, uiGain,
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) m_slice->setNr1Gain(v * 1e-6); });
+    // Leakage: UI units = WDSP value / 1e-3. Slider range 0-999 = 0.0-0.999e-3 WDSP.
+    const int uiLeak = static_cast<int>(m_slice->nr1Leakage() / 1e-3);
+    p->addSlider(QStringLiteral("Leak"), 0, 999, uiLeak,
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) m_slice->setNr1Leakage(v * 1e-3); });
+    p->addRadioGroup(QStringLiteral("Position"),
+                     {QStringLiteral("Pre-AGC"), QStringLiteral("Post-AGC")},
+                     static_cast<int>(m_slice->nr1Position()),
+                     [this](int v) {
+                         if (m_slice) m_slice->setNr1Position(static_cast<NereusSDR::NrPosition>(v));
+                     });
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR1); }, nullptr);
+    p->showAt(globalPos);
+}
+
+void VfoWidget::showNr2Popup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // NR2 (EMNR — Enhanced Multiband Noise Reduction).
+    // From Thetis setup.designer.cs grpDSPGainMethod / grpDSPNR2NPEMethod /
+    // chkDSPNR2AE / chkNR2PostProc_enable_rx1 labels [v2.10.3.13].
+    p->addRadioGroup(QStringLiteral("Gain Method"),
+                     {QStringLiteral("Linear"), QStringLiteral("Log"),
+                      QStringLiteral("Gamma"), QStringLiteral("Trained")},
+                     static_cast<int>(m_slice->nr2GainMethod()),
+                     [this](int v) {
+                         if (m_slice) m_slice->setNr2GainMethod(static_cast<NereusSDR::EmnrGainMethod>(v));
+                     });
+    // From Thetis setup.designer.cs grpDSPNR2NPEMethod / radDSPNR2OSMS/MMSE/NSTAT [v2.10.3.13].
+    p->addRadioGroup(QStringLiteral("NPE Method"),
+                     {QStringLiteral("OSMS"), QStringLiteral("MMSE"), QStringLiteral("NSTAT")},
+                     static_cast<int>(m_slice->nr2NpeMethod()),
+                     [this](int v) {
+                         if (m_slice) m_slice->setNr2NpeMethod(static_cast<NereusSDR::EmnrNpeMethod>(v));
+                     });
+    // From Thetis setup.designer.cs chkDSPNR2AE.Text = "AE Filter" [v2.10.3.13].
+    p->addCheckbox(QStringLiteral("AE Filter"), m_slice->nr2AeFilter(),
+                   [this](bool v) { if (m_slice) m_slice->setNr2AeFilter(v); });
+    // From Thetis setup.designer.cs chkNR2PostProc_enable_rx1.Text = "Noise post proc" [v2.10.3.13].
+    p->addCheckbox(QStringLiteral("Noise post proc"), m_slice->nr2Post2Run(),
+                   [this](bool v) { if (m_slice) m_slice->setNr2Post2Run(v); });
+    // From Thetis setup.designer.cs labelTS476.Text = "Factor:" / labelTS475.Text = "Rate:" [v2.10.3.13].
+    const int post2Factor = static_cast<int>(m_slice->nr2Post2Factor());
+    p->addSlider(QStringLiteral("Factor"), 0, 30, post2Factor,
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) m_slice->setNr2Post2Factor(static_cast<double>(v)); });
+    const int post2Rate = static_cast<int>(m_slice->nr2Post2Rate());
+    p->addSlider(QStringLiteral("Rate"), 0, 30, post2Rate,
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) m_slice->setNr2Post2Rate(static_cast<double>(v)); });
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR2); }, nullptr);
+    p->showAt(globalPos);
+}
+
+void VfoWidget::showNr3Popup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // NR3 (RNNR — Recurrent Neural Net NR).
+    // From Thetis setup.cs udRNNR position + RXANR3FixedGain [v2.10.3.13]
+    // and AetherSDR MainWindow.cpp:8200-8260 [@0cd4559].
+    p->addRadioGroup(QStringLiteral("Position"),
+                     {QStringLiteral("Pre-AGC"), QStringLiteral("Post-AGC")},
+                     static_cast<int>(m_slice->nr3Position()),
+                     [this](int v) {
+                         if (m_slice) m_slice->setNr3Position(static_cast<NereusSDR::NrPosition>(v));
+                     });
+    // From Thetis setup.designer.cs chkNR3_RNNoiseFixedGain.Text =
+    // "Use fixed gain for input samples" [v2.10.3.13].
+    p->addCheckbox(QStringLiteral("Use fixed gain for input samples"), m_slice->nr3UseDefaultGain(),
+                   [this](bool v) { if (m_slice) m_slice->setNr3UseDefaultGain(v); });
+    // "Load Model…" opens Setup NR3 page where file dialog lives (Task 17).
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR3); }, nullptr);
+    p->showAt(globalPos);
+}
+
+void VfoWidget::showNr4Popup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // NR4 (SBNR — Spectral Baseline NR).
+    // From Thetis setup.designer.cs labelTS446/473 "Reduction", labelTS449/471 "Smoothing",
+    // labelTS451/468 "Whitening", labelTS453/466 "Rescale", labelTS455/459 "SNRthresh",
+    // radNR4_algo1/2/3 "Algo 1/2/3" [v2.10.3.13].
+    const int reduction = static_cast<int>(m_slice->nr4Reduction());
+    p->addSlider(QStringLiteral("Reduction"), 0, 20, reduction,
+                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
+                 [this](int v) { if (m_slice) m_slice->setNr4Reduction(static_cast<double>(v)); });
+    const int smoothing = static_cast<int>(m_slice->nr4Smoothing());
+    p->addSlider(QStringLiteral("Smoothing"), 0, 100, smoothing,
+                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
+                 [this](int v) { if (m_slice) m_slice->setNr4Smoothing(static_cast<double>(v)); });
+    const int whitening = static_cast<int>(m_slice->nr4Whitening());
+    p->addSlider(QStringLiteral("Whitening"), 0, 100, whitening,
+                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
+                 [this](int v) { if (m_slice) m_slice->setNr4Whitening(static_cast<double>(v)); });
+    const int rescale = static_cast<int>(m_slice->nr4Rescale());
+    p->addSlider(QStringLiteral("Rescale"), 0, 20, rescale,
+                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
+                 [this](int v) { if (m_slice) m_slice->setNr4Rescale(static_cast<double>(v)); });
+    const int snrThresh = static_cast<int>(m_slice->nr4PostThresh());
+    p->addSlider(QStringLiteral("SNRthresh"), -30, 0, snrThresh,
+                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
+                 [this](int v) { if (m_slice) m_slice->setNr4PostThresh(static_cast<double>(v)); });
+    p->addRadioGroup(QStringLiteral("Algo"),
+                     {QStringLiteral("Algo 1"), QStringLiteral("Algo 2"), QStringLiteral("Algo 3")},
+                     static_cast<int>(m_slice->nr4Algo()),
+                     [this](int v) {
+                         if (m_slice) m_slice->setNr4Algo(static_cast<NereusSDR::SbnrAlgo>(v));
+                     });
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::NR4); }, nullptr);
+    p->showAt(globalPos);
+}
+
+void VfoWidget::showDfnrPopup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // DFNR (DeepFilterNet3) — AetherSDR post-WDSP filter, not in Thetis.
+    // Factory defaults per user directive 2026-04-23: AttenLimit 100 dB,
+    // Post-Filter Beta 0.05 (UI 5).
+    const int attenLimit = static_cast<int>(m_slice->dfnrAttenLimit());
+    p->addSlider(QStringLiteral("Attenuation Limit"), 0, 100, attenLimit,
+                 [](int v) { return QString::number(v) + QStringLiteral(" dB"); },
+                 [this](int v) { if (m_slice) m_slice->setDfnrAttenLimit(static_cast<double>(v)); },
+                 tr("Maximum noise attenuation in dB (0 = bypass, 100 = maximum). "
+                    "Default 100. Higher values suppress more noise but may clip speech peaks."),
+                 /*factory=*/100);
+
+    const int beta = static_cast<int>(m_slice->dfnrPostFilterBeta() * 100.0);
+    p->addSlider(QStringLiteral("Post-Filter Beta"), 0, 100, beta,
+                 [](int v) { return QString::number(v / 100.0, 'f', 2); },
+                 [this](int v) { if (m_slice) m_slice->setDfnrPostFilterBeta(v / 100.0); },
+                 tr("Post-filter aggressiveness (0 = disabled, 0.30+ = aggressive). "
+                    "Default 0 (off) — matches AetherSDR. Higher values reduce "
+                    "residual musical-noise artifacts but may over-attenuate "
+                    "consonants. Typical tuning: start at 0.05-0.10 and nudge up."),
+                 /*factory=*/0);
+
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::DFNR); },
+                /*onReset=*/[]() { /* per-slider resetters push via valueChanged */ });
+    p->showAt(globalPos);
+}
+
+void VfoWidget::showBnrPopup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // BNR (NVIDIA Noise Removal) — button hidden unless HAVE_BNR; popup
+    // included for completeness in case BNR is enabled in a future build.
+    // AetherSDR MainWindow.cpp:8080-8100 [@0cd4559].
+    const int strength = static_cast<int>(m_slice->bnrStrength() * 100.0);
+    p->addSlider(QStringLiteral("Strength"), 0, 100, strength,
+                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
+                 [this](int v) { if (m_slice) m_slice->setBnrStrength(v / 100.0); });
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::BNR); }, nullptr);
+    p->showAt(globalPos);
+}
+
+void VfoWidget::showMnrPopup(const QPoint& globalPos)
+{
+    if (!m_slice) { return; }
+    auto* p = new DspParamPopup(this);
+
+    // MNR (macOS Accelerate MMSE-Wiener NR). 6 runtime-tunable knobs with
+    // factory defaults tuned for balanced noticeable-but-not-underwater NR.
+    // Right-click → Reset button restores these defaults.
+    const int strength = static_cast<int>(m_slice->mnrStrength() * 100.0);
+    p->addSlider(QStringLiteral("Strength"), 0, 200, strength,
+                 [](int v) { return QString::number(v) + QStringLiteral("%"); },
+                 [this](int v) { if (m_slice) { m_slice->setMnrStrength(v / 100.0); } },
+                 tr("Dry/wet blend.\n"
+                    "  0%   = bypass (filter runs but output = input)\n"
+                    "  100% = full NR (output = filter result)\n"
+                    "  200% = over-drive (phase-flip, destructive)\n"
+                    "Default 100."),
+                 /*factory=*/100);
+
+    const int oversubUi = static_cast<int>(m_slice->mnrOversub());
+    p->addSlider(QStringLiteral("Aggressiveness"), 1, 1000, oversubUi,
+                 [](int v) { return QString::number(v); },
+                 [this](int v) { if (m_slice) { m_slice->setMnrOversub(static_cast<double>(v)); } },
+                 tr("MMSE-Wiener oversubtraction factor. Higher values attenuate "
+                    "low-SNR bins more aggressively while leaving high-SNR (voice) "
+                    "bins closer to unity.\n"
+                    "  1    = very gentle\n"
+                    "  6    = noticeable NR (default)\n"
+                    "  20+  = underwater/robotic\n"
+                    "  200+ = diminishing returns"),
+                 /*factory=*/6);
+
+    const int floorUi = static_cast<int>(m_slice->mnrFloor() * 1000.0);
+    p->addSlider(QStringLiteral("Floor"), 0, 2000, floorUi,
+                 [](int v) { return QString::number(v) + QStringLiteral("m"); },
+                 [this](int v) { if (m_slice) { m_slice->setMnrFloor(v * 0.001); } },
+                 tr("Minimum Wiener gain per bin (×0.001).\n"
+                    "  0    = total silence (filter can zero a bin)\n"
+                    "  50   = -26 dB max attenuation (default)\n"
+                    "  1000 = 0 dB (bin never attenuated)\n"
+                    "  2000 = amplify (destructive)\n"
+                    "Lower floor = more aggressive noise subtraction but more "
+                    "musical-noise artifacts."),
+                 /*factory=*/50);
+
+    const int alphaUi = static_cast<int>(m_slice->mnrAlpha() * 100.0);
+    p->addSlider(QStringLiteral("Alpha"), 0, 100, alphaUi,
+                 [](int v) { return QString::number(v / 100.0, 'f', 2); },
+                 [this](int v) { if (m_slice) { m_slice->setMnrAlpha(v * 0.01); } },
+                 tr("Decision-directed smoothing coefficient.\n"
+                    "  0.00 = no smoothing (fast/chattery tracking)\n"
+                    "  0.92 = Ephraim-Malah classic (default)\n"
+                    "  1.00 = frozen (prior SNR never updates)\n"
+                    "Balances NR speed vs. musical-noise artifacts."),
+                 /*factory=*/92);
+
+    const int biasUi = static_cast<int>(m_slice->mnrBias() * 10.0);
+    p->addSlider(QStringLiteral("Bias"), 0, 100, biasUi,
+                 [](int v) { return QString::number(v / 10.0, 'f', 1); },
+                 [this](int v) { if (m_slice) { m_slice->setMnrBias(v * 0.1); } },
+                 tr("Min-statistics noise-floor bias correction.\n"
+                    "  <1.0 = underestimate noise floor (less NR, more signal)\n"
+                    "  1.5  = balanced (default)\n"
+                    "  >3.0 = overestimate noise floor (more NR, may erode signal)\n"
+                    "If NR is too weak, nudge Bias up. If it's eating speech, nudge down."),
+                 /*factory=*/15);
+
+    const int gsmoothUi = static_cast<int>(m_slice->mnrGsmooth() * 100.0);
+    p->addSlider(QStringLiteral("Gsmooth"), 0, 100, gsmoothUi,
+                 [](int v) { return QString::number(v / 100.0, 'f', 2); },
+                 [this](int v) { if (m_slice) { m_slice->setMnrGsmooth(v * 0.01); } },
+                 tr("Temporal (per-bin) gain smoothing.\n"
+                    "  0.00 = instant (more musical noise, fast transients)\n"
+                    "  0.70 = balanced (default)\n"
+                    "  1.00 = frozen (gain never updates — filter stuck)\n"
+                    "Higher = smoother but slower to react to changing noise."),
+                 /*factory=*/70);
+
+    // Wire Reset button (finalize's second callback) to restore the
+    // factory defaults on every slider. DspParamPopup::finalize runs the
+    // per-slider resetters registered by addSlider's /*factory=*/ arg.
+    p->finalize([this]() { emit openNrSetupRequested(NereusSDR::NrSlot::MNR); },
+                /*onReset=*/[]() {
+                    // Per-slider resetters registered via addSlider's
+                    // factoryDefault arg already push slider → onChange →
+                    // SliceModel. This empty callback exists only so the
+                    // Reset button renders in the popup footer (finalize
+                    // hides it when onReset is null).
+                });
+    p->showAt(globalPos);
 }
 
 } // namespace NereusSDR

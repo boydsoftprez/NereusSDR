@@ -191,7 +191,62 @@ class SliceModel : public QObject {
     Q_PROPERTY(int    xitHz           READ xitHz           WRITE setXitHz           NOTIFY xitHzChanged)
     // From phase3g-rx-experience-epic-design.md §sub-epic B — tri-state cycle.
     Q_PROPERTY(NereusSDR::NbMode nbMode READ nbMode WRITE setNbMode NOTIFY nbModeChanged)
-    Q_PROPERTY(bool   emnrEnabled     READ emnrEnabled     WRITE setEmnrEnabled     NOTIFY emnrEnabledChanged)
+    // --- Noise reduction (Sub-epic C-1) ---
+    // Single source of truth for active NR slot. Mutual exclusion enforced
+    // in setActiveNr. See Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13].
+    Q_PROPERTY(NereusSDR::NrSlot activeNr READ activeNr WRITE setActiveNr NOTIFY activeNrChanged)
+
+    // NR1 (ANR) tuning — 5 knobs.
+    // Gain/Leakage stored in WDSP-domain values (not UI-units — UI applies
+    // 1e-6/1e-3 scaling before calling). See RxChannel::Nr1Tuning notes.
+    Q_PROPERTY(int    nr1Taps     READ nr1Taps     WRITE setNr1Taps     NOTIFY nr1TapsChanged)
+    Q_PROPERTY(int    nr1Delay    READ nr1Delay    WRITE setNr1Delay    NOTIFY nr1DelayChanged)
+    Q_PROPERTY(double nr1Gain     READ nr1Gain     WRITE setNr1Gain     NOTIFY nr1GainChanged)
+    Q_PROPERTY(double nr1Leakage  READ nr1Leakage  WRITE setNr1Leakage  NOTIFY nr1LeakageChanged)
+    Q_PROPERTY(NereusSDR::NrPosition nr1Position READ nr1Position WRITE setNr1Position NOTIFY nr1PositionChanged)
+
+    // NR2 (EMNR) tuning — gain-method + npe-method + AE + Position +
+    // trainT1/T2 + post2 cascade.
+    Q_PROPERTY(NereusSDR::EmnrGainMethod nr2GainMethod READ nr2GainMethod WRITE setNr2GainMethod NOTIFY nr2GainMethodChanged)
+    Q_PROPERTY(NereusSDR::EmnrNpeMethod  nr2NpeMethod  READ nr2NpeMethod  WRITE setNr2NpeMethod  NOTIFY nr2NpeMethodChanged)
+    Q_PROPERTY(double nr2TrainT1     READ nr2TrainT1     WRITE setNr2TrainT1     NOTIFY nr2TrainT1Changed)
+    Q_PROPERTY(double nr2TrainT2     READ nr2TrainT2     WRITE setNr2TrainT2     NOTIFY nr2TrainT2Changed)
+    Q_PROPERTY(bool   nr2AeFilter    READ nr2AeFilter    WRITE setNr2AeFilter    NOTIFY nr2AeFilterChanged)
+    Q_PROPERTY(NereusSDR::NrPosition nr2Position READ nr2Position WRITE setNr2Position NOTIFY nr2PositionChanged)
+    Q_PROPERTY(bool   nr2Post2Run    READ nr2Post2Run    WRITE setNr2Post2Run    NOTIFY nr2Post2RunChanged)
+    Q_PROPERTY(double nr2Post2Level  READ nr2Post2Level  WRITE setNr2Post2Level  NOTIFY nr2Post2LevelChanged)
+    Q_PROPERTY(double nr2Post2Factor READ nr2Post2Factor WRITE setNr2Post2Factor NOTIFY nr2Post2FactorChanged)
+    Q_PROPERTY(double nr2Post2Rate   READ nr2Post2Rate   WRITE setNr2Post2Rate   NOTIFY nr2Post2RateChanged)
+    Q_PROPERTY(int    nr2Post2Taper  READ nr2Post2Taper  WRITE setNr2Post2Taper  NOTIFY nr2Post2TaperChanged)
+
+    // NR3 (RNNR) — Position + UseDefaultGain (model path is GLOBAL, not per-slice).
+    Q_PROPERTY(NereusSDR::NrPosition nr3Position       READ nr3Position       WRITE setNr3Position       NOTIFY nr3PositionChanged)
+    Q_PROPERTY(bool nr3UseDefaultGain READ nr3UseDefaultGain WRITE setNr3UseDefaultGain NOTIFY nr3UseDefaultGainChanged)
+
+    // NR4 (SBNR) — 5 spinboxes + algo radio.
+    Q_PROPERTY(double nr4Reduction  READ nr4Reduction  WRITE setNr4Reduction  NOTIFY nr4ReductionChanged)
+    Q_PROPERTY(double nr4Smoothing  READ nr4Smoothing  WRITE setNr4Smoothing  NOTIFY nr4SmoothingChanged)
+    Q_PROPERTY(double nr4Whitening  READ nr4Whitening  WRITE setNr4Whitening  NOTIFY nr4WhiteningChanged)
+    Q_PROPERTY(double nr4Rescale    READ nr4Rescale    WRITE setNr4Rescale    NOTIFY nr4RescaleChanged)
+    Q_PROPERTY(double nr4PostThresh READ nr4PostThresh WRITE setNr4PostThresh NOTIFY nr4PostThreshChanged)
+    Q_PROPERTY(NereusSDR::SbnrAlgo nr4Algo READ nr4Algo WRITE setNr4Algo NOTIFY nr4AlgoChanged)
+
+    // DFNR — AttenLimit + PostFilterBeta.
+    Q_PROPERTY(double dfnrAttenLimit     READ dfnrAttenLimit     WRITE setDfnrAttenLimit     NOTIFY dfnrAttenLimitChanged)
+    Q_PROPERTY(double dfnrPostFilterBeta READ dfnrPostFilterBeta WRITE setDfnrPostFilterBeta NOTIFY dfnrPostFilterBetaChanged)
+
+    // BNR — Strength (single knob; filter class deferred to follow-up PR).
+    Q_PROPERTY(double bnrStrength READ bnrStrength WRITE setBnrStrength NOTIFY bnrStrengthChanged)
+
+    // MNR — Strength, Oversub (aggressiveness), Floor (min Wiener gain),
+    //        Alpha (decision-directed smoothing), Bias (noise-floor bias),
+    //        Gsmooth (temporal gain smoothing).
+    Q_PROPERTY(double mnrStrength  READ mnrStrength  WRITE setMnrStrength  NOTIFY mnrStrengthChanged)
+    Q_PROPERTY(double mnrOversub   READ mnrOversub   WRITE setMnrOversub   NOTIFY mnrOversubChanged)
+    Q_PROPERTY(double mnrFloor     READ mnrFloor     WRITE setMnrFloor     NOTIFY mnrFloorChanged)
+    Q_PROPERTY(double mnrAlpha     READ mnrAlpha     WRITE setMnrAlpha     NOTIFY mnrAlphaChanged)
+    Q_PROPERTY(double mnrBias      READ mnrBias      WRITE setMnrBias      NOTIFY mnrBiasChanged)
+    Q_PROPERTY(double mnrGsmooth   READ mnrGsmooth   WRITE setMnrGsmooth   NOTIFY mnrGsmoothChanged)
     Q_PROPERTY(bool   snbEnabled      READ snbEnabled      WRITE setSnbEnabled      NOTIFY snbEnabledChanged)
     Q_PROPERTY(bool   apfEnabled      READ apfEnabled      WRITE setApfEnabled      NOTIFY apfEnabledChanged)
     Q_PROPERTY(int    apfTuneHz       READ apfTuneHz       WRITE setApfTuneHz       NOTIFY apfTuneHzChanged)
@@ -371,8 +426,87 @@ public:
     // now lives globally inside NbFamily (seeded from AppSettings at
     // channel create + live-pushed from the Setup page).
 
-    bool   emnrEnabled()     const { return m_emnrEnabled; }
-    void   setEmnrEnabled(bool v);
+    // --- NR accessors (Sub-epic C-1) ---
+    NereusSDR::NrSlot activeNr() const { return m_activeNr; }
+    void              setActiveNr(NereusSDR::NrSlot slot);
+
+    // NR1
+    int    nr1Taps()    const { return m_nr1Taps; }
+    void   setNr1Taps(int v);
+    int    nr1Delay()   const { return m_nr1Delay; }
+    void   setNr1Delay(int v);
+    double nr1Gain()    const { return m_nr1Gain; }
+    void   setNr1Gain(double v);
+    double nr1Leakage() const { return m_nr1Leakage; }
+    void   setNr1Leakage(double v);
+    NereusSDR::NrPosition nr1Position() const { return m_nr1Position; }
+    void                  setNr1Position(NereusSDR::NrPosition p);
+
+    // NR2
+    NereusSDR::EmnrGainMethod nr2GainMethod() const { return m_nr2GainMethod; }
+    void                      setNr2GainMethod(NereusSDR::EmnrGainMethod v);
+    NereusSDR::EmnrNpeMethod  nr2NpeMethod()  const { return m_nr2NpeMethod; }
+    void                      setNr2NpeMethod(NereusSDR::EmnrNpeMethod v);
+    double nr2TrainT1()     const { return m_nr2TrainT1; }
+    void   setNr2TrainT1(double v);
+    double nr2TrainT2()     const { return m_nr2TrainT2; }
+    void   setNr2TrainT2(double v);
+    bool   nr2AeFilter()    const { return m_nr2AeFilter; }
+    void   setNr2AeFilter(bool v);
+    NereusSDR::NrPosition nr2Position() const { return m_nr2Position; }
+    void                  setNr2Position(NereusSDR::NrPosition p);
+    bool   nr2Post2Run()    const { return m_nr2Post2Run; }
+    void   setNr2Post2Run(bool v);
+    double nr2Post2Level()  const { return m_nr2Post2Level; }
+    void   setNr2Post2Level(double v);
+    double nr2Post2Factor() const { return m_nr2Post2Factor; }
+    void   setNr2Post2Factor(double v);
+    double nr2Post2Rate()   const { return m_nr2Post2Rate; }
+    void   setNr2Post2Rate(double v);
+    int    nr2Post2Taper()  const { return m_nr2Post2Taper; }
+    void   setNr2Post2Taper(int v);
+
+    // NR3
+    NereusSDR::NrPosition nr3Position() const { return m_nr3Position; }
+    void                  setNr3Position(NereusSDR::NrPosition p);
+    bool   nr3UseDefaultGain() const { return m_nr3UseDefaultGain; }
+    void   setNr3UseDefaultGain(bool v);
+
+    // NR4
+    double nr4Reduction()  const { return m_nr4Reduction; }
+    void   setNr4Reduction(double v);
+    double nr4Smoothing()  const { return m_nr4Smoothing; }
+    void   setNr4Smoothing(double v);
+    double nr4Whitening()  const { return m_nr4Whitening; }
+    void   setNr4Whitening(double v);
+    double nr4Rescale()    const { return m_nr4Rescale; }
+    void   setNr4Rescale(double v);
+    double nr4PostThresh() const { return m_nr4PostThresh; }
+    void   setNr4PostThresh(double v);
+    NereusSDR::SbnrAlgo nr4Algo() const { return m_nr4Algo; }
+    void                setNr4Algo(NereusSDR::SbnrAlgo v);
+
+    // DFNR
+    double dfnrAttenLimit()     const { return m_dfnrAttenLimit; }
+    void   setDfnrAttenLimit(double v);
+    double dfnrPostFilterBeta() const { return m_dfnrPostFilterBeta; }
+    void   setDfnrPostFilterBeta(double v);
+
+    // BNR + MNR
+    double bnrStrength() const { return m_bnrStrength; }
+    void   setBnrStrength(double v);
+    double mnrStrength() const { return m_mnrStrength; }
+    void   setMnrStrength(double v);
+    double mnrOversub()  const { return m_mnrOversub; }
+    void   setMnrOversub(double v);
+    double mnrFloor()    const { return m_mnrFloor; }
+    void   setMnrFloor(double v);
+    double mnrAlpha()    const { return m_mnrAlpha; }
+    void   setMnrAlpha(double v);
+    double mnrBias()     const { return m_mnrBias; }
+    void   setMnrBias(double v);
+    double mnrGsmooth()  const { return m_mnrGsmooth; }
+    void   setMnrGsmooth(double v);
 
     bool   snbEnabled()      const { return m_snbEnabled; }
     void   setSnbEnabled(bool v);
@@ -523,7 +657,41 @@ signals:
     void xitEnabledChanged(bool v);
     void xitHzChanged(int hz);
     void nbModeChanged(NereusSDR::NbMode v);
-    void emnrEnabledChanged(bool v);
+    // NR signals (Sub-epic C-1)
+    void activeNrChanged(NereusSDR::NrSlot slot);
+    void nr1TapsChanged(int v);
+    void nr1DelayChanged(int v);
+    void nr1GainChanged(double v);
+    void nr1LeakageChanged(double v);
+    void nr1PositionChanged(NereusSDR::NrPosition v);
+    void nr2GainMethodChanged(NereusSDR::EmnrGainMethod v);
+    void nr2NpeMethodChanged(NereusSDR::EmnrNpeMethod v);
+    void nr2TrainT1Changed(double v);
+    void nr2TrainT2Changed(double v);
+    void nr2AeFilterChanged(bool v);
+    void nr2PositionChanged(NereusSDR::NrPosition v);
+    void nr2Post2RunChanged(bool v);
+    void nr2Post2LevelChanged(double v);
+    void nr2Post2FactorChanged(double v);
+    void nr2Post2RateChanged(double v);
+    void nr2Post2TaperChanged(int v);
+    void nr3PositionChanged(NereusSDR::NrPosition v);
+    void nr3UseDefaultGainChanged(bool v);
+    void nr4ReductionChanged(double v);
+    void nr4SmoothingChanged(double v);
+    void nr4WhiteningChanged(double v);
+    void nr4RescaleChanged(double v);
+    void nr4PostThreshChanged(double v);
+    void nr4AlgoChanged(NereusSDR::SbnrAlgo v);
+    void dfnrAttenLimitChanged(double v);
+    void dfnrPostFilterBetaChanged(double v);
+    void bnrStrengthChanged(double v);
+    void mnrStrengthChanged(double v);
+    void mnrOversubChanged(double v);
+    void mnrFloorChanged(double v);
+    void mnrAlphaChanged(double v);
+    void mnrBiasChanged(double v);
+    void mnrGsmoothChanged(double v);
     void snbEnabledChanged(bool v);
     void apfEnabledChanged(bool v);
     void apfTuneHzChanged(int hz);
@@ -584,7 +752,61 @@ private:
     bool   m_xitEnabled{false};       // Neutral default — no Thetis citation needed
     int    m_xitHz{0};                // Neutral default — zero offset
     NereusSDR::NbMode   m_nbMode{NereusSDR::NbMode::Off};  // Tri-state: Off/NB/NB2
-    bool   m_emnrEnabled{false};      // Neutral default — feature off at start
+
+    // --- NR state (Sub-epic C-1) ---
+    // See Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13].
+    NereusSDR::NrSlot m_activeNr{NereusSDR::NrSlot::Off};
+
+    // NR1 — from RxChannel::Nr1Tuning defaults (Task 8 commit 8747ae4),
+    // which in turn match Thetis radio.cs:673-699 [v2.10.3.13].
+    int    m_nr1Taps    = 64;           // radio.cs:674   nr_taps = 64
+    int    m_nr1Delay   = 16;           // radio.cs:675   nr_delay = 16
+    double m_nr1Gain    = 16e-4;        // radio.cs:677   nr_gain = 16e-4 (WDSP-domain)
+    double m_nr1Leakage = 10e-7;        // radio.cs:679   nr_leak = 10e-7 (WDSP-domain)
+    NereusSDR::NrPosition m_nr1Position = NereusSDR::NrPosition::PostAgc;  // setup.cs:8723
+
+    // NR2 — from RxChannel::Nr2Tuning defaults (Task 8 commit 8747ae4),
+    // matching Thetis radio.cs:2062-2213, setup.cs:34711-34748 [v2.10.3.13].
+    NereusSDR::EmnrGainMethod m_nr2GainMethod = NereusSDR::EmnrGainMethod::Gamma;  // setup.cs:17359-17468
+    NereusSDR::EmnrNpeMethod  m_nr2NpeMethod  = NereusSDR::EmnrNpeMethod::Osms;    // setup.cs:17374-17404
+    double m_nr2TrainT1 = -0.5;         // EMNR zetaThresh default (unsigned domain)
+    double m_nr2TrainT2 = 0.20;         // EMNR t2 default
+    bool   m_nr2AeFilter = true;        // radio.cs:2103  rx_nr2_ae_run = 1
+    NereusSDR::NrPosition m_nr2Position = NereusSDR::NrPosition::PostAgc;    // radio.cs:2237
+    bool   m_nr2Post2Run    = false;    // radio.cs:2122  default off
+    double m_nr2Post2Level  = 15.0;    // radio.cs:2139  rx_nr2_ae_post2_nlevel = 15.0
+    double m_nr2Post2Factor = 15.0;    // radio.cs:2158  rx_nr2_ae_post2_factor = 15.0
+    double m_nr2Post2Rate   = 5.0;     // radio.cs:2177  rx_nr2_ae_post2_rate = 5.0
+    int    m_nr2Post2Taper  = 12;      // radio.cs:2196  rx_nr2_ae_post2_taper = 12
+
+    // NR3 — from RxChannel::Nr3Tuning defaults (Task 8 commit 8747ae4),
+    // matching Thetis radio.cs:2257-2311, setup.cs:35460-35462 [v2.10.3.13].
+    NereusSDR::NrPosition m_nr3Position = NereusSDR::NrPosition::PostAgc;  // radio.cs:2275
+    bool   m_nr3UseDefaultGain = true;  // setup.cs:35460  RXANR3FixedGain default
+
+    // NR4 — from RxChannel::Nr4Tuning defaults (Task 8 commit 8747ae4),
+    // matching Thetis radio.cs:2312-2355, setup.cs:34511-34527 [v2.10.3.13].
+    double m_nr4Reduction  = 10.0;     // setup.cs default
+    double m_nr4Smoothing  = 65.0;     // setup.cs default
+    double m_nr4Whitening  = 2.0;      // setup.cs default
+    double m_nr4Rescale    = 2.0;      // setup.cs default
+    double m_nr4PostThresh = -10.0;    // setup.cs default
+    NereusSDR::SbnrAlgo m_nr4Algo = NereusSDR::SbnrAlgo::Algo2;  // setup.cs:34511-34527
+
+    // DFNR — AetherSDR DeepFilterFilter defaults [@0cd4559] (post-WDSP, not
+    // in Thetis). m_attenLimit{100.0f}, m_postFilterBeta{0.0f} verbatim.
+    double m_dfnrAttenLimit     = 100.0;
+    double m_dfnrPostFilterBeta = 0.0;
+
+    // BNR + MNR — AetherSDR filter defaults (post-WDSP, not in Thetis).
+    double m_bnrStrength = 1.0;
+    double m_mnrStrength = 1.0;
+    double m_mnrOversub  = 4.0;    // MacNRFilter::DEF_OVER;   range 0.01-1000 at filter
+    double m_mnrFloor    = 0.05;   // MacNRFilter::DEF_FLOOR;  range 0.0-2.0 at filter
+    double m_mnrAlpha    = 0.92;   // MacNRFilter::DEF_ALPHA;  range 0.0-1.0
+    double m_mnrBias     = 1.2;    // MacNRFilter::DEF_BIAS;   range 0.0-10.0
+    double m_mnrGsmooth  = 0.70;   // MacNRFilter::DEF_GSMOOTH; range 0.0-1.0
+
     bool   m_snbEnabled{false};       // Neutral default — feature off at start
     bool   m_apfEnabled{false};       // Neutral default — feature off at start
     int    m_apfTuneHz{0};            // Neutral default — zero tune offset

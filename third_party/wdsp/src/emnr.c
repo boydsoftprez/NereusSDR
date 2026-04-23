@@ -1,3 +1,4 @@
+// no-port-check: vendored upstream TAPR WDSP v1.29 — not a NereusSDR port of Thetis
 /*  emnr.c
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -1285,8 +1286,9 @@ void SetRXAEMNRRun (int channel, int run)
 	EMNR a = rxa[channel].emnr.p;
 	if (a->run != run)
 	{
-		RXAbp1Check (channel, rxa[channel].amd.p->run, rxa[channel].snba.p->run, 
-			run, rxa[channel].anf.p->run, rxa[channel].anr.p->run);
+        RXAbp1Check (channel, rxa[channel].amd.p->run, rxa[channel].snba.p->run,
+                        run, rxa[channel].anf.p->run, rxa[channel].anr.p->run,
+                        rxa[channel].rnnr.p->run, rxa[channel].sbnr.p->run); // NR3 + NR4 support
 		EnterCriticalSection (&ch[channel].csDSP);
 		a->run = run;
 		RXAbp1Set (channel);

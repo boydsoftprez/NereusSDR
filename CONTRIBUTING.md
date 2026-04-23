@@ -130,6 +130,16 @@ Features gated behind compile-time flags:
 | `HAVE_FFTW3` | libfftw3 | Client-side FFT for spectrum/waterfall |
 | `HAVE_SERIALPORT` | `Qt6::SerialPort` | Serial PTT/CW keying |
 | `HAVE_WEBSOCKETS` | `Qt6::WebSockets` | TCI server |
+| `HAVE_DFNR` | Rust toolchain + DeepFilterNet3 (libdf via `setup-deepfilter.{sh,ps1}`) | DFNR DeepFilterNet3 noise reduction (Sub-epic C-1) |
+
+**DFNR — DeepFilterNet3:** building the DFNR runtime requires Rust.
+Install via `https://rustup.rs` (or your platform package manager),
+then run `./setup-deepfilter.sh` (POSIX) or
+`./setup-deepfilter.ps1` (Windows) from the repo root before
+`cmake -B build`. The script downloads a pre-built libdf if
+available, or builds from source via `cargo cbuild` if not. If you
+skip this step, `ENABLE_DFNR` auto-falls-back to OFF and the build
+proceeds without DFNR.
 
 Use `#ifdef HAVE_*` guards. Features must degrade gracefully when unavailable.
 

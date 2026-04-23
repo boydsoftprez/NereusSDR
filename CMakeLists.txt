@@ -351,6 +351,7 @@ set(CORE_SOURCES
     src/core/SettingsHygiene.cpp
     src/core/IoBoardHl2.cpp
     src/core/HermesLiteBandwidthMonitor.cpp
+    src/core/ModelPaths.cpp
     src/core/accessories/AlexController.cpp
     src/core/accessories/ApolloController.cpp
     src/core/accessories/PennyLaneController.cpp
@@ -399,6 +400,7 @@ set(GUI_SOURCES
     src/gui/dbm_strip_math.cpp
     src/gui/SpectrumOverlayMenu.cpp
     src/gui/widgets/CenterMarkSlider.h
+    src/gui/widgets/DspParamPopup.cpp
     src/gui/widgets/FilterPassbandWidget.cpp
     src/gui/widgets/GuardedComboBox.h
     src/gui/widgets/GuardedSlider.h
@@ -629,9 +631,133 @@ if(FFTW3_FOUND)
 endif()
 
 if(WDSP_FOUND)
+    # Sub-epic C-1 NR backends: rnnoise (NR3/rnnr.c) and libspecbleach (NR4/sbnr.c).
+    # Must be add_subdirectory'd before wdsp so the targets exist when
+    # third_party/wdsp/CMakeLists.txt pulls them in as PUBLIC link deps.
+    add_subdirectory(third_party/rnnoise)
+    add_subdirectory(third_party/libspecbleach)
     add_subdirectory(third_party/wdsp)
     target_link_libraries(NereusSDRObjs PUBLIC wdsp_static)
     target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WDSP)
+endif()
+
+# --------------------------------------------------------------------------
+# DeepFilterNet3 DFNR — pre-built neural noise reduction library (MIT/Apache-2.0)
+# Sub-epic C-1. Library is built by ./setup-deepfilter.sh (external to CMake
+# because the Rust build is slow + needs rustc). If the lib is absent at
+# configure time, ENABLE_DFNR falls back to OFF.
+# Ported from AetherSDR CMakeLists.txt:323-363 [@0cd4559].
+# --------------------------------------------------------------------------
+option(ENABLE_DFNR "Enable DFNR DeepFilterNet3 noise reduction" ON)
+if(ENABLE_DFNR)
+    set(DEEPFILTER_DIR ${CMAKE_SOURCE_DIR}/third_party/deepfilter)
+    if(WIN32)
+        set(DFNR_LIB_DIR "${DEEPFILTER_DIR}/lib/windows-x86_64")
+        if(MINGW)
+            set(DFNR_LIB "${DFNR_LIB_DIR}/libdeepfilter.dll.a")
+            set(DFNR_DLL "${DFNR_LIB_DIR}/deepfilter.dll")
+        else()
+            # MSVC: prefer .dll.lib import library, fall back to .lib
+            if(EXISTS "${DFNR_LIB_DIR}/deepfilter.dll.lib")
+                set(DFNR_LIB "${DFNR_LIB_DIR}/deepfilter.dll.lib")
+            else()
+                set(DFNR_LIB "${DFNR_LIB_DIR}/deepfilter.lib")
+            endif()
+            set(DFNR_DLL "${DFNR_LIB_DIR}/deepfilter.dll")
+        endif()
+    elseif(APPLE)
+        if(CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+            set(DFNR_LIB_DIR "${DEEPFILTER_DIR}/lib/darwin-arm64")
+        else()
+            set(DFNR_LIB_DIR "${DEEPFILTER_DIR}/lib/darwin-x86_64")
+        endif()
+        set(DFNR_LIB "${DFNR_LIB_DIR}/libdeepfilter.a")
+    else()
+        if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+            set(DFNR_LIB_DIR "${DEEPFILTER_DIR}/lib/linux-aarch64")
+        else()
+            set(DFNR_LIB_DIR "${DEEPFILTER_DIR}/lib/linux-x86_64")
+        endif()
+        set(DFNR_LIB "${DFNR_LIB_DIR}/libdeepfilter.a")
+    endif()
+    if(EXISTS ${DFNR_LIB})
+        message(STATUS "DFNR (DeepFilterNet3) enabled — ${DFNR_LIB}")
+    else()
+        set(ENABLE_DFNR OFF)
+        message(STATUS "DFNR (DeepFilterNet3) disabled — library not found at ${DFNR_LIB} "
+                       "(run ./setup-deepfilter.sh before cmake to enable)")
+    endif()
+endif()
+
+if(ENABLE_DFNR)
+    target_sources(NereusSDRObjs PRIVATE src/core/DeepFilterFilter.cpp)
+    target_include_directories(NereusSDRObjs PRIVATE ${DEEPFILTER_DIR}/include)
+    target_link_libraries(NereusSDRObjs PRIVATE ${DFNR_LIB})
+    target_compile_definitions(NereusSDRObjs PRIVATE HAVE_DFNR)
+    if(WIN32)
+        target_link_libraries(NereusSDR PRIVATE ws2_32 bcrypt userenv ntdll)
+        if(DFNR_DLL AND EXISTS ${DFNR_DLL})
+            add_custom_command(TARGET NereusSDR POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DFNR_DLL}" "$<TARGET_FILE_DIR:NereusSDR>"
+                COMMENT "Copying deepfilter.dll to build directory")
+        endif()
+    elseif(APPLE)
+        # Rust runtime deps on macOS
+        target_link_libraries(NereusSDR PRIVATE "-framework Security" "-framework CoreFoundation")
+    else()
+        # Rust runtime deps on Linux
+        target_link_libraries(NereusSDR PRIVATE pthread dl m)
+    endif()
+    # Copy the model tarball to build dir + app bundle Resources so
+    # findModelPath() in DeepFilterFilter.cpp can locate it at runtime.
+    set(DFNR_MODEL "${DEEPFILTER_DIR}/models/DeepFilterNet3_onnx.tar.gz")
+    if(EXISTS ${DFNR_MODEL})
+        if(APPLE)
+            # macOS: place in Resources/models/dfnet3/ so notarization doesn't
+            # reject a non-Mach-O file inside Contents/MacOS/, and so
+            # ModelPaths::probeModel() probe #2 finds it at
+            # <exeDir>/../Resources/models/dfnet3/<file>.
+            add_custom_command(TARGET NereusSDR POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_BUNDLE_DIR:NereusSDR>/Contents/Resources/models/dfnet3"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DFNR_MODEL}" "$<TARGET_BUNDLE_DIR:NereusSDR>/Contents/Resources/models/dfnet3/"
+                COMMENT "Copying DeepFilterNet3 model to app bundle Resources/models/dfnet3")
+        else()
+            # Non-macOS: place adjacent to exe in models/dfnet3/ subfolder so
+            # ModelPaths::probeModel() probe #1 finds it at
+            # <exeDir>/models/dfnet3/<file>.
+            add_custom_command(TARGET NereusSDR POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:NereusSDR>/models/dfnet3"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DFNR_MODEL}" "$<TARGET_FILE_DIR:NereusSDR>/models/dfnet3/"
+                COMMENT "Copying DeepFilterNet3 model to build directory models/dfnet3")
+        endif()
+        # Install the model alongside the binary for cmake --install.
+        # ModelPaths probe #3 expects <exeDir>/../share/NereusSDR/models/dfnet3/<file>.
+        if(NOT APPLE)
+            install(FILES "${DFNR_MODEL}"
+                DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/NereusSDR/models/dfnet3"
+                OPTIONAL)
+        endif()
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
+# MNR — macOS Accelerate (vDSP) spectral noise reduction (Sub-epic C-1, Task 11).
+# Native Apple framework — no external build script or dependencies.
+# --------------------------------------------------------------------------
+option(ENABLE_MNR "Enable MNR Apple Accelerate noise reduction (macOS only)" ON)
+if(ENABLE_MNR AND APPLE)
+    target_sources(NereusSDRObjs PRIVATE src/core/MacNRFilter.cpp)
+    target_link_libraries(NereusSDRObjs PUBLIC "-framework Accelerate")
+    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_MNR)
+    message(STATUS "MNR (Apple Accelerate) enabled")
+elseif(ENABLE_MNR)
+    set(ENABLE_MNR OFF)
+    message(STATUS "MNR (Apple Accelerate) disabled — macOS only")
 endif()
 
 # PortAudio (Phase 3O VAX) — always linked; PortAudioBus is the cross-platform
