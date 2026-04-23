@@ -292,6 +292,8 @@ Discovery-reply hex fixtures are covered by `tests/fixtures/discovery/README.md`
 | src/core/HermesLiteBandwidthMonitor.h | ChannelMaster/bandwidth_monitor.h; ChannelMaster/bandwidth_monitor.c | full | port | mi0bot | header mirrors HermesLiteBandwidthMonitor.cpp |
 | third_party/wdsp/src/rnnr.c | Project Files/Source/wdsp/rnnr.c | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. No algorithmic changes. Provides NR3 (RNNR) WDSP stage. Links against vendored Xiph rnnoise (BSD-3) in third_party/rnnoise/ (landed in Task 5). Samphire dual-license clause preserved verbatim. |
 | third_party/wdsp/src/rnnr.h | Project Files/Source/wdsp/rnnr.h | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. Public API for RNNR stage. Samphire dual-license clause preserved verbatim. |
+| third_party/wdsp/src/sbnr.c | Project Files/Source/wdsp/sbnr.c | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. No algorithmic changes. Provides NR4 (SBNR) WDSP stage. Links against vendored libspecbleach (LGPL-2.1) in third_party/libspecbleach/ (landed in Task 6). |
+| third_party/wdsp/src/sbnr.h | Project Files/Source/wdsp/sbnr.h | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. Public API for SBNR stage. |
 
 ## Files derived from TAPR WDSP
 
