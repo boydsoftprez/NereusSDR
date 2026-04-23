@@ -596,7 +596,11 @@ void RxApplet::buildUi()
         row->addWidget(m_nbLagLabel);
 
         m_nbLag = new QSlider(Qt::Horizontal, this);
-        m_nbLag->setRange(0, 500);
+        // From Thetis setup.designer.cs udDSPNBLag.Maximum [v2.10.3.13]:
+        //   Maximum = {20, 0, 0, 65536}  →  0.20 s = 20 ms
+        // Plan Task 9 initially specified 0-500 ms; tightened post-review
+        // for Thetis parity.
+        m_nbLag->setRange(0, 20);
         m_nbLag->setFixedHeight(18);
         m_nbLag->setStyleSheet(Style::sliderHStyle());
         // From Thetis setup.designer.cs udDSPNBLag.ToolTip [v2.10.3.13]
