@@ -6,6 +6,12 @@
 //
 // Companion: tst_rxchannel_nb2_polish covers the RxChannel-facing API.
 //            tst_slice_nb_persistence covers per-slice-per-band save/restore.
+//
+// no-port-check: Not a port of Thetis code. This file cites
+// cmaster.c:43-68 line numbers only to anchor default-value assertions
+// against the authoritative upstream constants — the values themselves
+// are already ported (with full attribution) in src/core/NbFamily.h.
+// This file tests that the port's defaults didn't drift.
 
 #include <QtTest/QtTest>
 
