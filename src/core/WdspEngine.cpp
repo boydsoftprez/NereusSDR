@@ -300,6 +300,18 @@ RxChannel* WdspEngine::createRxChannel(int channelId,
     auto channel = std::make_unique<RxChannel>(channelId, inputBufferSize,
                                                inputSampleRate, this);
     RxChannel* ptr = channel.get();
+
+#ifdef HAVE_WDSP
+    // Push persisted SNB Setup defaults to the RXA channel now that both
+    // OpenChannel (above) and RxChannel ctor (just above — which created
+    // NbFamily + ran create_anbEXT/create_nobEXT) have run. SNB lives
+    // inside rxa[channelId].snba and requires OpenChannel first; we gate
+    // the seed here rather than inside NbFamily so unit tests that use
+    // fabricated channel ids (never Opened) don't null-deref SetRXASNBA*.
+    // (Codex review PR #120, P2 — 2026-04-23.)
+    if (auto* nb = ptr->nb()) { nb->seedSnbFromSettings(); }
+#endif
+
     m_rxChannels.emplace(channelId, std::move(channel));
     return ptr;
 }

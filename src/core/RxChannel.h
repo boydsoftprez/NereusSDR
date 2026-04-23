@@ -303,6 +303,12 @@ public:
     // 2026-04-22 for strict Thetis parity. NB tuning is global per-channel
     // now; Setup → DSP → NB/SNB calls SetEXTANB* directly on channel 0.
 
+    // Non-owning handle to the NbFamily facade. Used by WdspEngine to
+    // call seedSnbFromSettings() after OpenChannel succeeds — see
+    // WdspEngine::createRxChannel. Returns nullptr if built without
+    // HAVE_WDSP.
+    NereusSDR::NbFamily* nb() { return m_nb.get(); }
+
     // --- Noise reduction ---
 
     void setNrEnabled(bool enabled);

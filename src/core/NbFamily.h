@@ -221,6 +221,12 @@ public:
     void setSnbEnabled(bool enabled);
     bool snbEnabled() const { return m_snbEnabled.load(std::memory_order_acquire); }
 
+    // Push persisted SNB Setup defaults (K1 / K2 / OutputBW) to WDSP.
+    // MUST be called AFTER OpenChannel has initialised rxa[channelId].snba
+    // — invoked from WdspEngine::createRxChannel once the channel is up.
+    // Safe to omit in test paths that fabricate an unopened channel id.
+    void seedSnbFromSettings();
+
     // Tuning setter — pushes every field through to WDSP. Also stores
     // the struct locally so subsequent partial setters (e.g. setNbThreshold
     // from a slider) can mutate in place.

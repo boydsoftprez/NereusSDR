@@ -102,8 +102,18 @@ jobs:
       # ------------------------------------------------------------------
       - name: Clone Thetis + mi0bot-Thetis upstream for tag check
         if: runner.os == 'Linux'
+        # Thetis (ramdor) is pinned to the archive commit 501e3f5 (tag
+        # v2.10.3.13, "Archive project and end active development") so
+        # the tag-preservation hook compares against the exact upstream
+        # state our [v2.10.3.13] inline cite stamps were verified
+        # against. Without this pin, HEAD drift (post-archive forks
+        # pushing to the mirror branch) shifts line numbers out from
+        # under our cites and the hook flags phantom missing tags that
+        # live at the NEW line of an unrelated edit.
+        # See PR #120 CI failure 2026-04-23 for the original incident.
         run: |
-          git clone --depth=1 https://github.com/ramdor/Thetis.git ../Thetis
+          git clone https://github.com/ramdor/Thetis.git ../Thetis
+          git -C ../Thetis checkout 501e3f513f73f07742d7e1b85a0e9528bd14977d
           git clone --depth=1 https://github.com/mi0bot/OpenHPSDR-Thetis.git ../mi0bot-Thetis
 
       - name: Corpus drift — upstream author tags match committed corpus

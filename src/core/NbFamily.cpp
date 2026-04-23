@@ -212,8 +212,6 @@ NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
         m_tuning.nb2Mode     =         s.value(QStringLiteral("Nb2DefaultMode"),      0).toInt();
         // nb2Threshold / nb2*Ms stay at NbTuning's struct defaults — Thetis
         // has no NB2 tuning UI, so there's no upstream override to apply.
-        // SNB K1/K2/OutputBW are pushed live by DspSetupPages handlers via
-        // SetRXASNBAk1/k2/OutputBandwidth after channel create.
     }
 
     // From Thetis cmaster.c:43-53 [v2.10.3.13] — NB (anb) create call.
@@ -260,6 +258,34 @@ NbFamily::NbFamily(int channelId, int sampleRate, int bufferSize)
         m_tuning.nb2AdvMs      * kMsToSec,       // advtime
         m_tuning.nb2Backtau,
         m_tuning.nb2Threshold);
+    // NOTE: SNB (channels[id].rxa.snba) seeding deliberately NOT done here
+    // — it requires OpenChannel to have initialised the RXA channel first,
+    // and NbFamily is constructed in contexts where that may not be true
+    // (e.g. the tst_rxchannel_nb2_polish test uses a fabricated channel id
+    // that never saw OpenChannel). The SNB seed lives in
+    // WdspEngine::createRxChannel (called only from the production path,
+    // after OpenChannel succeeds). See seedSnbFromSettings() below.
+#endif
+}
+
+void NbFamily::seedSnbFromSettings()
+{
+#ifdef HAVE_WDSP
+    // Push persisted SNB Setup defaults to the RXA channel. Callable only
+    // after OpenChannel has initialised rxa[m_channelId].snba — otherwise
+    // WDSP SetRXASNBA* setters null-deref. See the note in NbFamily() ctor.
+    // (Codex review PR #120, P2 — 2026-04-23.)
+    //
+    // SNB raw pass-through per Thetis setup.cs:17609,17617 [v2.10.3.13];
+    // output-BW symmetric around DC (matches our DspSetupPages wiring).
+    auto& s = AppSettings::instance();
+    const double snbK1 = s.value(QStringLiteral("SnbDefaultK1"),  8.0).toDouble();
+    const double snbK2 = s.value(QStringLiteral("SnbDefaultK2"), 20.0).toDouble();
+    const int    snbBw = s.value(QStringLiteral("SnbDefaultOutputBW"), 6000).toInt();
+    SetRXASNBAk1(m_channelId, snbK1);
+    SetRXASNBAk2(m_channelId, snbK2);
+    const double half = static_cast<double>(snbBw) / 2.0;
+    SetRXASNBAOutputBandwidth(m_channelId, -half, half);
 #endif
 }
 

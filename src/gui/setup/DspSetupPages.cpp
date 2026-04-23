@@ -62,6 +62,7 @@
 #include "core/AppSettings.h"
 #include "core/wdsp_api.h"
 #include "models/RadioModel.h"
+#include "core/WdspEngine.h"
 #include "models/SliceModel.h"
 
 #include <QCheckBox>
@@ -376,6 +377,20 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
     // Ranges / defaults mirror Thetis NumericUpDown widgets byte-for-byte.
     auto& s = AppSettings::instance();
 
+    // Gate: the WDSP SetEXT* / SetRXASNBA* setters dereference
+    // panb[0]/pnob[0]/channels[0] — if no RX channel has been created
+    // (user opened Setup dialog before connecting to a radio), calling
+    // them will null-deref inside WDSP. The slider value is still
+    // persisted via AppSettings and seeded into NbFamily at channel
+    // create time, so "Setup → change before connect" still takes effect
+    // on next connect. This just stops the crash.
+    // (Codex review #120, P1 — 2026-04-23.)
+    auto channelReady = [this]() -> bool {
+        auto* rm = this->model();
+        if (!rm || !rm->wdspEngine()) { return false; }
+        return rm->wdspEngine()->rxChannel(0) != nullptr;
+    };
+
     // Helper: integer slider, live value label showing "value / max" with unit.
     // Returns the slider so caller can wire valueChanged.
     auto addIntSlider = [this](QVBoxLayout* parent, const QString& label,
@@ -442,9 +457,9 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Controls the detection threshold for impulse noise.\n"
            "Lower = more aggressive (blanks weaker impulses too).\n"
            "Higher = more conservative (only strong clicks get blanked)."));
-    connect(nb1Thresh, &QSlider::valueChanged, [](int v) {
+    connect(nb1Thresh, &QSlider::valueChanged, [channelReady](int v) {
         AppSettings::instance().setValue(QStringLiteral("NbDefaultThresholdSlider"), v);
-        SetEXTANBThreshold(0, 0.165 * static_cast<double>(v));
+        if (channelReady()) { SetEXTANBThreshold(0, 0.165 * static_cast<double>(v)); }
     });
 
     // Transition — udDSPNBTransition: 0.01-2.00 ms, step 0.01, default 0.01.
@@ -456,10 +471,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Time to decrease/increase to/from zero amplitude around an\n"
            "impulse. Controls how gradually the blanker fades in and out\n"
            "— very short = crisp click; longer = gentler but audible."));
-    connect(nb1Trans, &QSlider::valueChanged, [](int v) {
+    connect(nb1Trans, &QSlider::valueChanged, [channelReady](int v) {
         AppSettings::instance().setValue(QStringLiteral("NbDefaultTransition"), v);
         // v/100 ms → × 0.001 s = v * 1e-5 s.
-        SetEXTANBTau(0, static_cast<double>(v) * 1e-5);
+        if (channelReady()) { SetEXTANBTau(0, static_cast<double>(v) * 1e-5); }
     });
 
     // Lead — udDSPNBLead: 0.01-2.00 ms, default 0.01.
@@ -470,9 +485,9 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Time at zero amplitude BEFORE the detected impulse. Blanks\n"
            "the leading edge of the click that the detector would\n"
            "otherwise miss. Raise slightly if clicks still get through."));
-    connect(nb1Lead, &QSlider::valueChanged, [](int v) {
+    connect(nb1Lead, &QSlider::valueChanged, [channelReady](int v) {
         AppSettings::instance().setValue(QStringLiteral("NbDefaultLead"), v);
-        SetEXTANBAdvtime(0, static_cast<double>(v) * 1e-5);
+        if (channelReady()) { SetEXTANBAdvtime(0, static_cast<double>(v) * 1e-5); }
     });
 
     // Lag — udDSPNBLag: 0.01-2.00 ms, default 0.01.
@@ -483,9 +498,9 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Time to remain at zero amplitude AFTER the impulse. Blanks\n"
            "the decay tail of the click. Raise this if pops still have\n"
            "an audible ringing after the initial transient."));
-    connect(nb1Lag, &QSlider::valueChanged, [](int v) {
+    connect(nb1Lag, &QSlider::valueChanged, [channelReady](int v) {
         AppSettings::instance().setValue(QStringLiteral("NbDefaultLag"), v);
-        SetEXTANBHangtime(0, static_cast<double>(v) * 1e-5);
+        if (channelReady()) { SetEXTANBHangtime(0, static_cast<double>(v) * 1e-5); }
     });
 
     // NB2 Mode — Thetis comboDSPNOBmode.
@@ -500,9 +515,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         "a replacement waveform from surrounding samples to reduce\n"
         "audible artifacts on voice peaks."));
     addLabeledCombo(nb1Lay, "NB2 Mode", nb1Mode);
-    connect(nb1Mode, QOverload<int>::of(&QComboBox::currentIndexChanged), [](int v) {
+    connect(nb1Mode, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            [channelReady](int v) {
         AppSettings::instance().setValue(QStringLiteral("Nb2DefaultMode"), v);
-        SetEXTNOBMode(0, v);
+        if (channelReady()) { SetEXTNOBMode(0, v); }
     });
 
     // ── NB2 Threshold — intentionally absent (Thetis parity) ─────────────────
@@ -523,10 +539,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
         tr("Multiple of the running noise power at which a sample is\n"
            "flagged as a candidate outlier. Lower = more aggressive\n"
            "first-pass detection; higher = miss weaker noise."));
-    connect(snbK1, &QSlider::valueChanged, [](int v) {
+    connect(snbK1, &QSlider::valueChanged, [channelReady](int v) {
         const double real = static_cast<double>(v) / 10.0;
         AppSettings::instance().setValue(QStringLiteral("SnbDefaultK1"), real);
-        SetRXASNBAk1(0, real);
+        if (channelReady()) { SetRXASNBAk1(0, real); }
     });
 
     // Threshold 2 — udDSPSNBThresh2: 4.0-60.0, step 0.1, default 20.0.
@@ -539,10 +555,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
            "candidates from Threshold 1 as real noise outliers. Lower =\n"
            "more aggressive overall blanking; higher = fewer false triggers\n"
            "on genuine voice peaks."));
-    connect(snbK2, &QSlider::valueChanged, [](int v) {
+    connect(snbK2, &QSlider::valueChanged, [channelReady](int v) {
         const double real = static_cast<double>(v) / 10.0;
         AppSettings::instance().setValue(QStringLiteral("SnbDefaultK2"), real);
-        SetRXASNBAk2(0, real);
+        if (channelReady()) { SetRXASNBAk2(0, real); }
     });
 
     // SNB Output Bandwidth — NOT in Thetis Setup page. Thetis sets it
@@ -556,10 +572,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent)
            "Smaller = focuses the blanker on the active passband;\n"
            "larger = covers wider modes (FM, DRM). Default 6000 Hz\n"
            "covers SSB + AM comfortably."));
-    connect(snbOutBw, &QSlider::valueChanged, [](int v) {
+    connect(snbOutBw, &QSlider::valueChanged, [channelReady](int v) {
         AppSettings::instance().setValue(QStringLiteral("SnbDefaultOutputBW"), v);
         const double half = static_cast<double>(v) / 2.0;
-        SetRXASNBAOutputBandwidth(0, -half, half);
+        if (channelReady()) { SetRXASNBAOutputBandwidth(0, -half, half); }
     });
 }
 
