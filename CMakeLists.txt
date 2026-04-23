@@ -351,6 +351,7 @@ set(CORE_SOURCES
     src/core/SettingsHygiene.cpp
     src/core/IoBoardHl2.cpp
     src/core/HermesLiteBandwidthMonitor.cpp
+    src/core/ModelPaths.cpp
     src/core/accessories/AlexController.cpp
     src/core/accessories/ApolloController.cpp
     src/core/accessories/PennyLaneController.cpp
