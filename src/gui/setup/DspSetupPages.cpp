@@ -414,10 +414,10 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
     // addSliderRow — horizontal QSlider + live value readout label on the right.
     // For integer-valued controls.
     // Returns {slider, valueLabel}.
-    auto addSliderRow = [this](QVBoxLayout* parent, const QString& labelText,
-                               int minimum, int maximum, int defaultValue,
-                               const QString& tooltip = QString(),
-                               const QString& suffix = QString())
+    auto addSliderRow = [](QVBoxLayout* parent, const QString& labelText,
+                           int minimum, int maximum, int defaultValue,
+                           const QString& tooltip = QString(),
+                           const QString& suffix = QString())
         -> std::pair<QSlider*, QLabel*>
     {
         auto* row = new QHBoxLayout;
@@ -454,10 +454,10 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
     // addDoubleSliderRow — QSlider + label for double-valued controls.
     // Uses an integer-backed QSlider with a scale factor (1/step) to represent
     // fractional values. Returns {slider, valueLabel, scale}.
-    auto addDoubleSliderRow = [this](QVBoxLayout* parent, const QString& labelText,
-                                     double minimum, double maximum, double defaultValue,
-                                     double step, int decimals,
-                                     const QString& tooltip = QString(),
+    auto addDoubleSliderRow = [](QVBoxLayout* parent, const QString& labelText,
+                                 double minimum, double maximum, double defaultValue,
+                                 double step, int decimals,
+                                 const QString& tooltip = QString(),
                                      const QString& suffix = QString())
         -> std::tuple<QSlider*, QLabel*, double>
     {
@@ -1078,50 +1078,24 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         grpLay->parentWidget()->setEnabled(false);
 #endif
 
-        // Attenuation Limit slider (0-100, default 100)
-        auto* attenRow = new QHBoxLayout;
-        auto* attenLbl = new QLabel("Attenuation Limit");
-        attenLbl->setStyleSheet(kLbl);
-        attenLbl->setFixedWidth(150);
-        attenRow->addWidget(attenLbl);
-        auto* attenSl = new QSlider(Qt::Horizontal);
-        attenSl->setStyleSheet(kSlider);
-        attenSl->setRange(0, 100);
-        attenSl->setValue(slice ? static_cast<int>(slice->dfnrAttenLimit()) : 100);
-        attenSl->setToolTip(tr("Maximum noise attenuation in dB (0 = bypass, 100 = maximum). "
-                               "Default 100. Higher values suppress more noise but may clip speech peaks."));
-        attenRow->addWidget(attenSl, 1);
-        auto* attenVal = new QLabel(QString::number(attenSl->value()));
-        attenVal->setStyleSheet("QLabel { color: #00c8ff; font-size: 12px; min-width: 28px; }");
-        attenVal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        attenRow->addWidget(attenVal);
-        grpLay->addLayout(attenRow);
-        connect(attenSl, &QSlider::valueChanged, attenVal, [attenVal](int v) {
-            attenVal->setText(QString::number(v));
-        });
+        // Attenuation Limit (0-100 dB) — use the shared addSliderRow helper
+        // so the style matches NR1/NR2/NR4 (label | slider | value label).
+        auto [attenSl, attenVal] = addSliderRow(
+            grpLay, "Attenuation Limit", 0, 100,
+            slice ? static_cast<int>(slice->dfnrAttenLimit()) : 100,
+            tr("Maximum noise attenuation in dB (0 = bypass, 100 = maximum). "
+               "Default 100. Higher values suppress more noise but may clip speech peaks."),
+            " dB");
 
-        // Post-Filter Beta slider (0-30 displayed as /100 → 0.00–0.30)
-        auto* betaRow = new QHBoxLayout;
-        auto* betaLbl = new QLabel("Post-Filter Beta");
-        betaLbl->setStyleSheet(kLbl);
-        betaLbl->setFixedWidth(150);
-        betaRow->addWidget(betaLbl);
-        auto* betaSl = new QSlider(Qt::Horizontal);
-        betaSl->setStyleSheet(kSlider);
-        betaSl->setRange(0, 30);
-        betaSl->setValue(slice ? static_cast<int>(slice->dfnrPostFilterBeta() * 100.0) : 0);
-        betaSl->setToolTip(tr("Post-filter aggressiveness (0 = disabled, 0.30 = maximum). Default 0. "
-                              "Higher values reduce residual musical-noise artifacts but may "
-                              "over-attenuate consonants."));
-        betaRow->addWidget(betaSl, 1);
-        auto* betaVal = new QLabel(QStringLiteral("0.%1").arg(betaSl->value(), 2, 10, QChar('0')));
-        betaVal->setStyleSheet("QLabel { color: #00c8ff; font-size: 12px; min-width: 40px; }");
-        betaVal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        betaRow->addWidget(betaVal);
-        grpLay->addLayout(betaRow);
-        connect(betaSl, &QSlider::valueChanged, betaVal, [betaVal](int v) {
-            betaVal->setText(QStringLiteral("%1").arg(v / 100.0, 0, 'f', 2));
-        });
+        // Post-Filter Beta (0.00-0.30 step 0.01) — use the double helper.
+        auto [betaSl, betaVal, betaScale] = addDoubleSliderRow(
+            grpLay, "Post-Filter Beta", 0.0, 0.30,
+            slice ? slice->dfnrPostFilterBeta() : 0.0, 0.01, 2,
+            tr("Post-filter aggressiveness (0 = disabled, 0.30 = maximum). Default 0. "
+               "Higher values reduce residual musical-noise artifacts but may "
+               "over-attenuate consonants."),
+            QString());
+        Q_UNUSED(attenVal); Q_UNUSED(betaVal);
 
         tabLay->addStretch(1);
 
@@ -1130,16 +1104,16 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
             connect(attenSl, &QSlider::valueChanged, slice, [slice](int v) {
                 slice->setDfnrAttenLimit(static_cast<double>(v));
             });
-            connect(betaSl, &QSlider::valueChanged, slice, [slice](int v) {
-                slice->setDfnrPostFilterBeta(static_cast<double>(v) / 100.0);
+            connect(betaSl, &QSlider::valueChanged, slice, [slice, betaScale](int v) {
+                slice->setDfnrPostFilterBeta(static_cast<double>(v) / betaScale);
             });
 
             // ── Model → UI ────────────────────────────────────────────────
             connect(slice, &SliceModel::dfnrAttenLimitChanged, attenSl, [attenSl](double v) {
                 QSignalBlocker b(attenSl); attenSl->setValue(static_cast<int>(v));
             });
-            connect(slice, &SliceModel::dfnrPostFilterBetaChanged, betaSl, [betaSl](double v) {
-                QSignalBlocker b(betaSl); betaSl->setValue(static_cast<int>(v * 100.0));
+            connect(slice, &SliceModel::dfnrPostFilterBetaChanged, betaSl, [betaSl, betaScale](double v) {
+                QSignalBlocker b(betaSl); betaSl->setValue(static_cast<int>(v * betaScale));
             });
         }
     }
@@ -1163,29 +1137,16 @@ NrAnfSetupPage::NrAnfSetupPage(RadioModel* model, QWidget* parent)
         grpLay->addWidget(note);
 #endif
 
-        // Strength slider (0-100, stored as 0.0-1.0 in SliceModel)
-        auto* strRow = new QHBoxLayout;
-        auto* strLbl = new QLabel("Strength");
-        strLbl->setStyleSheet(kLbl);
-        strLbl->setFixedWidth(150);
-        strRow->addWidget(strLbl);
-        auto* strSl = new QSlider(Qt::Horizontal);
-        strSl->setStyleSheet(kSlider);
-        strSl->setRange(0, 100);
-        // SliceModel stores 0.0-1.0; scale to 0-100 for the slider
-        strSl->setValue(slice ? static_cast<int>(slice->mnrStrength() * 100.0) : 100);
-        strSl->setToolTip(tr("Noise reduction strength 0-100. Default 100 = full NR; lower values "
-                             "blend the processed and clean signal. "
-                             "MMSE-Wiener spectral filter using Apple Accelerate vDSP."));
-        strRow->addWidget(strSl, 1);
-        auto* strVal = new QLabel(QString::number(strSl->value()));
-        strVal->setStyleSheet("QLabel { color: #00c8ff; font-size: 12px; min-width: 28px; }");
-        strVal->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        strRow->addWidget(strVal);
-        grpLay->addLayout(strRow);
-        connect(strSl, &QSlider::valueChanged, strVal, [strVal](int v) {
-            strVal->setText(QString::number(v));
-        });
+        // Strength (0-100 — SliceModel stores 0.0-1.0, scale at setter boundary).
+        // Uses the shared addSliderRow helper for style consistency.
+        auto [strSl, strVal] = addSliderRow(
+            grpLay, "Strength", 0, 100,
+            slice ? static_cast<int>(slice->mnrStrength() * 100.0) : 100,
+            tr("Noise reduction strength 0-100. Default 100 = full NR; lower values "
+               "blend the processed and clean signal. "
+               "MMSE-Wiener spectral filter using Apple Accelerate vDSP."),
+            QString());
+        Q_UNUSED(strVal);
 
 #ifndef Q_OS_APPLE
         strSl->setEnabled(false);
