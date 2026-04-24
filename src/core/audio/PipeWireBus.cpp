@@ -50,75 +50,75 @@ StreamConfig PipeWireBus::configFor(Role role,
 
     switch (role) {
         case Role::Vax1:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-vax1") : nodeName;
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.vax-1") : nodeName;
             cfg.nodeDescription = QStringLiteral("NereusSDR VAX 1");
             cfg.direction       = StreamConfig::Output;
-            cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
+            cfg.mediaClass      = QStringLiteral("Audio/Source");
             cfg.mediaRole       = QStringLiteral("Music");
             cfg.quantum         = 512;
             break;
         case Role::Vax2:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-vax2") : nodeName;
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.vax-2") : nodeName;
             cfg.nodeDescription = QStringLiteral("NereusSDR VAX 2");
             cfg.direction       = StreamConfig::Output;
-            cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
+            cfg.mediaClass      = QStringLiteral("Audio/Source");
             cfg.mediaRole       = QStringLiteral("Music");
             cfg.quantum         = 512;
             break;
         case Role::Vax3:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-vax3") : nodeName;
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.vax-3") : nodeName;
             cfg.nodeDescription = QStringLiteral("NereusSDR VAX 3");
             cfg.direction       = StreamConfig::Output;
-            cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
+            cfg.mediaClass      = QStringLiteral("Audio/Source");
             cfg.mediaRole       = QStringLiteral("Music");
             cfg.quantum         = 512;
             break;
         case Role::Vax4:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-vax4") : nodeName;
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.vax-4") : nodeName;
             cfg.nodeDescription = QStringLiteral("NereusSDR VAX 4");
             cfg.direction       = StreamConfig::Output;
-            cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
+            cfg.mediaClass      = QStringLiteral("Audio/Source");
             cfg.mediaRole       = QStringLiteral("Music");
             cfg.quantum         = 512;
             break;
         case Role::TxInput:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-tx-input") : nodeName;
-            cfg.nodeDescription = QStringLiteral("NereusSDR TX Input");
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.tx-input") : nodeName;
+            cfg.nodeDescription = QStringLiteral("NereusSDR TX input");
             cfg.direction       = StreamConfig::Input;
             cfg.mediaClass      = QStringLiteral("Stream/Input/Audio");
-            cfg.mediaRole       = QStringLiteral("Communication");
+            cfg.mediaRole       = QStringLiteral("Phone");
             cfg.quantum         = 256;
             break;
         case Role::Primary:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-primary") : nodeName;
-            cfg.nodeDescription = QStringLiteral("NereusSDR Primary");
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.rx-primary") : nodeName;
+            cfg.nodeDescription = QStringLiteral("NereusSDR Primary Output");
             cfg.direction       = StreamConfig::Output;
             cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
             cfg.mediaRole       = QStringLiteral("Music");
             cfg.quantum         = 512;
             break;
         case Role::Sidetone:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-sidetone") : nodeName;
-            cfg.nodeDescription = QStringLiteral("NereusSDR Sidetone");
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.cw-sidetone") : nodeName;
+            cfg.nodeDescription = QStringLiteral("NereusSDR CW Sidetone");
             cfg.direction       = StreamConfig::Output;
             cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
-            cfg.mediaRole       = QStringLiteral("Phone");
+            cfg.mediaRole       = QStringLiteral("Communication");
             cfg.quantum         = 128;
             break;
         case Role::Monitor:
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-monitor") : nodeName;
-            cfg.nodeDescription = QStringLiteral("NereusSDR Monitor");
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.tx-monitor") : nodeName;
+            cfg.nodeDescription = QStringLiteral("NereusSDR TX Monitor");
             cfg.direction       = StreamConfig::Output;
             cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
-            cfg.mediaRole       = QStringLiteral("Music");
+            cfg.mediaRole       = QStringLiteral("Communication");
             cfg.quantum         = 256;
             break;
         case Role::PerSlice:
             // PerSlice is a target-keyed alias for Primary. The caller supplies
             // targetOverride to pin routing to a specific sink. nodeNameOverride
             // distinguishes multiple per-slice instances (e.g. "nereus-slice-1").
-            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereus-primary") : nodeName;
-            cfg.nodeDescription = QStringLiteral("NereusSDR Primary");
+            cfg.nodeName        = nodeName.isEmpty() ? QStringLiteral("nereussdr.rx-primary") : nodeName;
+            cfg.nodeDescription = QStringLiteral("NereusSDR Primary Output");
             cfg.direction       = StreamConfig::Output;
             cfg.mediaClass      = QStringLiteral("Stream/Output/Audio");
             cfg.mediaRole       = QStringLiteral("Music");
