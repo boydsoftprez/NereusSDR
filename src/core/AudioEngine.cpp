@@ -256,17 +256,13 @@ void AudioEngine::start()
 
 void AudioEngine::stop()
 {
-    if (!m_running) {
-        return;
-    }
-
-    // Close every owned bus. unique_ptr::reset() invokes the bus dtor
-    // which calls Pa_CloseStream where applicable. Safe on the main
-    // thread because rxBlockReady() cannot run after m_running = false
-    // — but note that rxBlockReady itself reads m_speakersBus directly;
-    // the ordering contract is that the caller (RadioModel teardown)
-    // stops the DSP worker thread before calling stop(). That contract
-    // is preserved from the pre-refactor code.
+    // Close every owned bus unconditionally — setVaxConfig / setHeadphonesConfig
+    // etc. may populate bus slots even when start() was never called (test
+    // paths, SetupDialog preview on a freshly constructed engine). If we only
+    // reset buses when m_running is true the implicit member-destructor order
+    // tears down m_pwLoop AFTER the bus dtors try to call m_loop->lock(),
+    // causing a SEGFAULT on Linux/PipeWire.  unique_ptr::reset() on a null
+    // pointer is a no-op, so resetting unpopulated slots is always safe.
     //
     // LinuxPipeBus::close() invokes QProcess to drive `pactl unload-module`,
     // which requires a running event loop on the calling thread; AudioEngine
@@ -287,6 +283,9 @@ void AudioEngine::stop()
         bus.reset();
     }
 
+    if (!m_running) {
+        return;
+    }
     m_running = false;
     qCInfo(lcAudio) << "AudioEngine stopped";
 }
