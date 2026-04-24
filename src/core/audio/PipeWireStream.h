@@ -84,6 +84,7 @@ private:
 
     void onProcessOutput();
     void onProcessInput();
+    void probeSchedOnce();
     void maybeEmitTelemetry();
 
     PipeWireThreadLoop* m_loop;

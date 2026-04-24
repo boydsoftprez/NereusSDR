@@ -236,6 +236,29 @@ void PipeWireStream::onProcessCb(void* userData)
 }
 
 // ---------------------------------------------------------------------------
+// probeSchedOnce() — one-shot RT-scheduling probe on the pw data thread.
+// This is the actual thread where rtkit's RT grant lands (not Qt main).
+// See the forward contract from f35cc7b which removed the probe from
+// PipeWireThreadLoop::connect(). Called from both onProcessOutput and
+// onProcessInput so INPUT-only streams (e.g. the TX input path) also get
+// probed.
+// ---------------------------------------------------------------------------
+void PipeWireStream::probeSchedOnce()
+{
+    if (m_schedProbed.load(std::memory_order_relaxed)) { return; }
+    int policy = SCHED_OTHER;
+    sched_param param{};
+    if (pthread_getschedparam(pthread_self(), &policy, &param) == 0) {
+        m_schedPolicy.store(policy, std::memory_order_relaxed);
+        m_schedPriority.store(param.sched_priority, std::memory_order_relaxed);
+        qCInfo(lcPw) << "pw data thread sched policy:" << policy
+                     << "priority:" << param.sched_priority
+                     << "for stream:" << m_cfg.nodeName;
+    }
+    m_schedProbed.store(true, std::memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------------------
 // onProcessOutput() — Step 4
 // Called on the PipeWire RT data thread (PW_STREAM_FLAG_RT_PROCESS).
 // No allocations, no locks, no blocking calls.
@@ -245,21 +268,7 @@ void PipeWireStream::onProcessOutput()
     timespec t0{}, t1{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
 
-    // One-shot RT-scheduling probe on the pw data thread — this is the actual
-    // thread where rtkit's RT grant lands (not Qt main). See forward contract
-    // from f35cc7b which removed the probe from PipeWireThreadLoop::connect().
-    if (!m_schedProbed.load(std::memory_order_relaxed)) {
-        int policy = SCHED_OTHER;
-        sched_param param{};
-        if (pthread_getschedparam(pthread_self(), &policy, &param) == 0) {
-            m_schedPolicy.store(policy, std::memory_order_relaxed);
-            m_schedPriority.store(param.sched_priority, std::memory_order_relaxed);
-            qCInfo(lcPw) << "pw data thread sched policy:" << policy
-                         << "priority:" << param.sched_priority
-                         << "for stream:" << m_cfg.nodeName;
-        }
-        m_schedProbed.store(true, std::memory_order_relaxed);
-    }
+    probeSchedOnce();
 
     pw_buffer* b = pw_stream_dequeue_buffer(m_stream);
     if (!b) { m_xruns.fetch_add(1, std::memory_order_relaxed); return; }
@@ -293,18 +302,7 @@ void PipeWireStream::onProcessInput()
     timespec t0{}, t1{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
 
-    if (!m_schedProbed.load(std::memory_order_relaxed)) {
-        int policy = SCHED_OTHER;
-        sched_param param{};
-        if (pthread_getschedparam(pthread_self(), &policy, &param) == 0) {
-            m_schedPolicy.store(policy, std::memory_order_relaxed);
-            m_schedPriority.store(param.sched_priority, std::memory_order_relaxed);
-            qCInfo(lcPw) << "pw data thread sched policy:" << policy
-                         << "priority:" << param.sched_priority
-                         << "for stream:" << m_cfg.nodeName;
-        }
-        m_schedProbed.store(true, std::memory_order_relaxed);
-    }
+    probeSchedOnce();
 
     pw_buffer* b = pw_stream_dequeue_buffer(m_stream);
     if (!b) { m_xruns.fetch_add(1, std::memory_order_relaxed); return; }
