@@ -1086,18 +1086,14 @@ bool PipeWireThreadLoop::connect()
     // version — good enough for the strip.
     m_serverVersion = QString::fromUtf8(pw_get_library_version());
 
-    // RT scheduling is best-effort from libpipewire; probe by attempting
-    // pw_thread_loop_get_loop()'s associated thread priority.
-    // Simplified: check whether we're SCHED_FIFO.
-    int policy = SCHED_OTHER;
-    sched_param param{};
-    if (pthread_getschedparam(pthread_self(), &policy, &param) == 0) {
-        m_rtGranted = (policy == SCHED_FIFO || policy == SCHED_RR);
-    }
+    // RT-probe lives in PipeWireStream::probeSchedOnce (Task 10/11)
+    // because it must run on the actual pw data thread, not Qt main —
+    // see commit f35cc7b for the discovery and removal of the wrong-
+    // thread probe that originally lived here.
 
     unlock();
     qCInfo(lcPw) << "PipeWire thread loop connected — server version"
-                 << m_serverVersion << "RT granted:" << m_rtGranted;
+                 << m_serverVersion;
     return true;
 }
 
@@ -1112,11 +1108,17 @@ Extend the PipeWire-gated block to add the `.cpp`:
 
 ```cmake
 if(PIPEWIRE_FOUND)
-    target_sources(NereusSDR PRIVATE
+    target_sources(NereusSDRObjs PRIVATE
         src/core/audio/PipeWireThreadLoop.cpp
     )
 endif()
 ```
+
+Note: the actual NereusSDR target is `NereusSDRObjs` (an OBJECT
+library that backs both the main exe and the test executables).
+Earlier drafts of this plan used `NereusSDR` here — that's wrong.
+Tasks 8 and 12 also reuse this CMake block, so the same correction
+applies there.
 
 - [ ] **Step 4: Build**
 
