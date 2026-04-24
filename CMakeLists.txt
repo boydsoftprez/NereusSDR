@@ -69,6 +69,17 @@ set(PA_BUILD_SHARED OFF CACHE BOOL "PortAudio static" FORCE)
 set(PA_BUILD_STATIC ON  CACHE BOOL "PortAudio static" FORCE)
 set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API — forced OFF for GPL compliance (Steinberg SDK incompatible)" FORCE)
 
+# Linux audio backends — force ON so the static PortAudio actually contains
+# the host-API modules. PortAudio's CMake nominally auto-detects ALSA/JACK
+# via find_package, but the FetchContent path in 19.7.0 silently gives them
+# empty defaults if the option() calls fire before the auto-detect block.
+# Without these forces the resulting libportaudio.a has zero host APIs and
+# Pa_GetHostApiCount() returns 0 → all device dropdowns empty → no audio.
+if(UNIX AND NOT APPLE)
+    set(PA_USE_ALSA ON CACHE BOOL "PortAudio ALSA host API" FORCE)
+    set(PA_USE_JACK ON CACHE BOOL "PortAudio JACK host API" FORCE)
+endif()
+
 # PortAudio v19.7.0 uses `cmake_minimum_required(VERSION 2.8)`, which CMake
 # 4.x rejects because compatibility with CMake < 3.5 has been removed. Pin
 # the minimum policy version for the nested project so FetchContent can
