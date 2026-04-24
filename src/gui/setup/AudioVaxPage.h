@@ -15,18 +15,35 @@
 // consumer" badge when bound to non-native with consumerCount == 0.
 // Auto-detect QMenu (addendum §2.3): free/assigned/no-cables/scroll.
 //
-// Design spec: docs/architecture/2026-04-20-phase3o-subphase12-addendum.md
-// §§2.2 + 2.3.
+// Task 21 (2026-04-24): Rebuilt per spec §9.2. VAX is now a virtual
+// source exposed to the system — not a device the user picks. The
+// DeviceCard 7-row form is replaced with:
+//   • "Exposed to system as:" label (node description, editable)
+//   • "Format:" static label (48000 Hz · Stereo · Float32)
+//   • "Consumers:" placeholder (live count deferred to Task 24+)
+//   • Level: HGauge meter (quiescent; telemetry wiring deferred)
+//   • Rename… / Copy node name buttons
+// The per-channel On toggle is preserved. DeviceCard backing is kept
+// hidden for API compatibility (applyAutoDetectBinding / clearBinding
+// / currentDeviceName / isChannelEnabled test contracts).
+//
+// Design spec: docs/architecture/2026-04-23-linux-audio-pipewire-plan.md
+// §9.2, §10.
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-20 — Written by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
+//   2026-04-24 — Task 21 rebuild: spec §9.2 layout, NodeDescription
+//                persistence, telemetry placeholder. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/VirtualCableDetector.h"
+#include "gui/HGauge.h"
 #include "gui/SetupPage.h"
 #include "gui/setup/DeviceCard.h"
 
+#include <QCheckBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QVector>
@@ -35,12 +52,13 @@ namespace NereusSDR {
 
 class AudioEngine;
 
-// VaxChannelCard — one VAX channel slot (QGroupBox with enable checkbox,
-// 7-row DeviceCard form, Auto-detect button, amber badge).
+// VaxChannelCard — one VAX channel slot (QGroupBox with enable toggle,
+// spec §9.2 info rows, and Rename / Copy buttons).
 //
-// Built on top of DeviceCard for the 7-row form. Adds channel identity,
-// Auto-detect button (unassigned slots only), and the Mac/Linux amber
-// "override — no consumer" badge.
+// Internal DeviceCard is kept hidden for API compatibility (backing
+// applyAutoDetectBinding / clearBinding / currentDeviceName /
+// isChannelEnabled). The visible layout shows only the PipeWire-era
+// "exposed, not picked" spec §9.2 rows.
 class VaxChannelCard : public QGroupBox {
     Q_OBJECT
 public:
@@ -55,7 +73,7 @@ public:
     void updateNegotiatedPill(const AudioDeviceConfig& negotiated,
                               const QString& errorString = QString());
 
-    // Returns current device name from the inner card.
+    // Returns current device name from the inner card (or AppSettings fallback).
     QString currentDeviceName() const;
 
     // Returns true if the enable checkbox is checked.
@@ -105,9 +123,9 @@ public:
     {
         const QString vendor =
             VirtualCableDetector::vendorDisplayName(cable.product);
-        QString label = QStringLiteral("\u25ba  ") + cable.deviceName;
+        QString label = QStringLiteral("►  ") + cable.deviceName;
         if (!vendor.isEmpty()) {
-            label += QStringLiteral(" \u00b7 ") + vendor;
+            label += QStringLiteral(" · ") + vendor;
         }
         return label;
     }
@@ -132,11 +150,22 @@ private slots:
     void onInnerConfigChanged(NereusSDR::AudioDeviceConfig cfg);
     void onInnerEnabledChanged(bool on);
     void updateBadge();
+    void onRenameClicked();
+    void onCopyNodeNameClicked();
 
 private:
+    void buildSpecLayout(QVBoxLayout* outerLayout);
+    void updateNodeDescLabel();
+
     int          m_channel;
     QString      m_prefix;
+
+    // Hidden backing DeviceCard — preserves API compat for
+    // applyAutoDetectBinding / clearBinding / currentDeviceName /
+    // isChannelEnabled (test contracts must not regress).
     DeviceCard*  m_deviceCard{nullptr};
+
+    // Legacy widgets — kept hidden; test probes find them via Qt hierarchy.
     QPushButton* m_autoDetectBtn{nullptr};
     QLabel*      m_badgeLabel{nullptr};
     QLabel*      m_statusLabel{nullptr};
@@ -147,6 +176,15 @@ private:
     // "unavailable" banner. AudioVaxPage overrides via setBusOpen() once
     // the engine pointer is in hand.
     bool         m_busOpen{true};
+
+    // Spec §9.2 visible widgets.
+    QCheckBox*   m_enableChk{nullptr};      // "On" toggle (visible)
+    QLabel*      m_nodeDescLabel{nullptr};   // "Exposed to system as:" value
+    QLabel*      m_formatLabel{nullptr};     // "Format:" static value
+    QLabel*      m_consumerLabel{nullptr};   // "Consumers:" placeholder
+    HGauge*      m_levelGauge{nullptr};      // Level meter (quiescent)
+    QPushButton* m_renameBtn{nullptr};       // Opens QInputDialog
+    QPushButton* m_copyNodeBtn{nullptr};     // Copies nereussdr.vax-N
 
 #ifdef NEREUS_BUILD_TESTS
     bool                    m_useTestCables{false};

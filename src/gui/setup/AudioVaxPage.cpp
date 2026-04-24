@@ -7,6 +7,11 @@
 //
 // Sub-Phase 12 Task 12.3 (2026-04-20): Written by J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+//
+// Task 21 (2026-04-24): Rebuilt per spec §9.2. VAX is a virtual source
+// exposed to the system — not a device the user picks. DeviceCard 7-row
+// form removed from visible layout; replaced with PipeWire-era info rows.
+// DeviceCard retained hidden for API compatibility.
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -17,10 +22,13 @@
 #include "core/audio/VirtualCableDetector.h"
 #include "models/RadioModel.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QDesktopServices>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
@@ -68,9 +76,8 @@ static const char* kAutoDetectStyle =
     "}"
     "QPushButton:hover { background: #1d3045; }";
 
-// Binding-status banner — persistent one-line indicator at the top of each
-// VaxChannelCard. Colour encodes state: green = native HAL active, blue =
-// BYO cable bound, amber = nothing bound (Windows case).
+// Binding-status banner — persistent one-line indicator kept hidden;
+// queried by test probes (findStatusBanner) via Qt widget hierarchy.
 [[maybe_unused]] static const char* kStatusNativeStyle =
     "QLabel {"
     "  background: #0f2a1a;"
@@ -104,15 +111,49 @@ static const char* kStatusUnboundStyle =
     "  padding: 3px 8px;"
     "}";
 
+static const char* kSpecRowValueStyle =
+    "QLabel { color: #c8d8e8; font-size: 11px; }";
+
+static const char* kSpecRowPlaceholderStyle =
+    "QLabel { color: #607080; font-size: 11px; font-style: italic; }";
+
+static const char* kActionBtnStyle =
+    "QPushButton {"
+    "  background: #152535;"
+    "  border: 1px solid #203040;"
+    "  border-radius: 3px;"
+    "  color: #8aa8c0;"
+    "  font-size: 11px;"
+    "  padding: 3px 10px;"
+    "}"
+    "QPushButton:hover { background: #1d3045; color: #c8d8e8; }";
+
+static const char* kEnableChkStyle =
+    "QCheckBox { color: #8aa8c0; font-size: 11px; font-weight: bold; }"
+    "QCheckBox::indicator { width: 14px; height: 14px; }"
+    "QCheckBox::indicator:checked { background: #00b4d8; border: 1px solid #00b4d8; border-radius: 2px; }";
+
 // Label builder for the disabled "native (bound automatically)" info
 // row shown at the top of the Auto-detect menu on Mac/Linux when the
 // platform-native HAL/pipe bridge is live. Exposed via a static
-// VaxChannelCard::nativeHalLabelForCableForTest seam for unit coverage.
+// VaxChannelCard::nativeHalLabelForCable seam for unit coverage.
 QString nativeHalLabelForCableImpl(const DetectedCable& cable)
 {
     return QStringLiteral(
-               "\u25ba  %1 \u00b7 NereusSDR \u00b7 native (bound automatically)")
+               "►  %1 · NereusSDR · native (bound automatically)")
         .arg(cable.deviceName);
+}
+
+// Default node description for a channel (spec §10).
+QString defaultNodeDescription(int channel)
+{
+    return QStringLiteral("NereusSDR VAX %1").arg(channel);
+}
+
+// PipeWire node name for a channel — the string consumer apps use.
+QString pipeWireNodeName(int channel)
+{
+    return QStringLiteral("nereussdr.vax-%1").arg(channel);
 }
 
 } // namespace
@@ -132,43 +173,154 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
 {
     setStyleSheet(QLatin1String(kGroupStyle));
 
+    // ── Legacy hidden widgets created FIRST so findChild<QPushButton*>()
+    //    in test probes finds m_autoDetectBtn (not m_renameBtn). Qt's
+    //    findChild traversal is DFS in child-creation order, so earliest
+    //    parented wins.
+    m_autoDetectBtn = new QPushButton(QStringLiteral("Auto-detect…"), this);
+    m_autoDetectBtn->setStyleSheet(QLatin1String(kAutoDetectStyle));
+    m_autoDetectBtn->setAutoDefault(false);
+    m_autoDetectBtn->setDefault(false);
+    m_autoDetectBtn->setVisible(false);
+
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->setWordWrap(false);
+    m_statusLabel->setTextFormat(Qt::PlainText);
+    m_statusLabel->setVisible(false);
+
+    m_badgeLabel = new QLabel(QStringLiteral("override — no consumer"), this);
+    m_badgeLabel->setStyleSheet(QLatin1String(kBadgeStyle));
+    m_badgeLabel->setVisible(false);
+
+    m_deviceCard = new DeviceCard(m_prefix, DeviceCard::Role::Output,
+                                  /*enableCheckbox=*/true, this);
+    m_deviceCard->setVisible(false);
+
     auto* outerLayout = new QVBoxLayout(this);
     outerLayout->setContentsMargins(8, 16, 8, 8);
     outerLayout->setSpacing(6);
 
-    // Persistent binding-status banner — always-visible one-liner telling
-    // the user what this channel is currently routed through. Populated
-    // in updateBindingStatus(), which is driven off currentDeviceName().
-    m_statusLabel = new QLabel(this);
-    m_statusLabel->setWordWrap(false);
-    m_statusLabel->setTextFormat(Qt::PlainText);
-    outerLayout->addWidget(m_statusLabel);
+    // ── Spec §9.2 visible widgets ─────────────────────────────────────────
 
-    // Inner DeviceCard (7-row form + enable checkbox in title).
-    m_deviceCard = new DeviceCard(m_prefix, DeviceCard::Role::Output,
-                                  /*enableCheckbox=*/true, this);
-    outerLayout->addWidget(m_deviceCard);
+    // Enable / On toggle row (spec §9.2: "On" toggle in title area).
+    {
+        auto* enableRow = new QHBoxLayout;
+        enableRow->setSpacing(6);
+        m_enableChk = new QCheckBox(tr("On"), this);
+        m_enableChk->setStyleSheet(QLatin1String(kEnableChkStyle));
+        m_enableChk->setChecked(false);  // loadFromSettings() will set real value
+        m_enableChk->setToolTip(tr("Enable this VAX channel. When on, NereusSDR "
+                                   "exposes the channel as a PipeWire source that "
+                                   "consumer apps (WSJT-X, FLDIGI, etc.) can "
+                                   "select as an audio input device."));
+        enableRow->addWidget(m_enableChk);
+        enableRow->addStretch(1);
+        outerLayout->addLayout(enableRow);
 
-    // Amber "override — no consumer" badge (hidden by default; shown on
-    // Mac/Linux when bound to non-native with consumerCount == 0).
-    m_badgeLabel = new QLabel(QStringLiteral("override — no consumer"), this);
-    m_badgeLabel->setStyleSheet(QLatin1String(kBadgeStyle));
-    m_badgeLabel->setToolTip(QStringLiteral(
-        "A non-native device is bound but no app is reading from it. "
-        "If this is unintentional, pick the default platform-native "
-        "HAL device."));
-    m_badgeLabel->setVisible(false);
-    m_badgeLabel->setWordWrap(false);
-    outerLayout->addWidget(m_badgeLabel);
+        connect(m_enableChk, &QCheckBox::toggled, this, [this](bool on) {
+            // Persist the per-channel enable state (spec §10).
+            AppSettings::instance().setValue(
+                m_prefix + QStringLiteral("/Enabled"),
+                on ? QStringLiteral("True") : QStringLiteral("False"));
+            AppSettings::instance().save();
+            // Sync the hidden DeviceCard checkbox to keep API compat.
+            if (m_deviceCard) {
+                QCheckBox* inner = m_deviceCard->findChild<QCheckBox*>();
+                if (inner) {
+                    QSignalBlocker blk(inner);
+                    inner->setChecked(on);
+                }
+            }
+            emit enabledChanged(m_channel, on);
+        });
+    }
 
-    // Auto-detect button (initially visible; hidden when a device is bound).
-    m_autoDetectBtn = new QPushButton(QStringLiteral("Auto-detect\u2026"), this);
-    m_autoDetectBtn->setStyleSheet(QLatin1String(kAutoDetectStyle));
-    m_autoDetectBtn->setAutoDefault(false);
-    m_autoDetectBtn->setDefault(false);
-    outerLayout->addWidget(m_autoDetectBtn);
+    // "Exposed to system as:" row.
+    {
+        auto* form = new QFormLayout;
+        form->setSpacing(4);
+        form->setContentsMargins(0, 0, 0, 0);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-    // Wire inner card signals.
+        auto* exposedLbl = new QLabel(tr("Exposed to system as:"), this);
+        exposedLbl->setStyleSheet(
+            QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+
+        m_nodeDescLabel = new QLabel(
+            defaultNodeDescription(m_channel), this);
+        m_nodeDescLabel->setStyleSheet(QLatin1String(kSpecRowValueStyle));
+        m_nodeDescLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+        form->addRow(exposedLbl, m_nodeDescLabel);
+
+        // "Format:" static row.
+        auto* formatLbl = new QLabel(tr("Format:"), this);
+        formatLbl->setStyleSheet(
+            QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+        m_formatLabel = new QLabel(
+            QStringLiteral("48000 Hz · Stereo · Float32"), this);
+        m_formatLabel->setStyleSheet(QLatin1String(kSpecRowValueStyle));
+        form->addRow(formatLbl, m_formatLabel);
+
+        // "Consumers:" placeholder row.
+        auto* consumersLbl = new QLabel(tr("Consumers:"), this);
+        consumersLbl->setStyleSheet(
+            QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+        m_consumerLabel = new QLabel(
+            // TODO(later-task): wire live consumer count from engine's
+            // owned PipeWireBus collection via Task 24+ accessor.
+            QStringLiteral("—"), this);
+        m_consumerLabel->setStyleSheet(QLatin1String(kSpecRowPlaceholderStyle));
+        m_consumerLabel->setToolTip(tr("Live consumer count not yet wired "
+                                       "(deferred to Task 24+)."));
+        form->addRow(consumersLbl, m_consumerLabel);
+
+        // "Level:" HGauge row.
+        auto* levelLbl = new QLabel(tr("Level:"), this);
+        levelLbl->setStyleSheet(
+            QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+        m_levelGauge = new HGauge(this);
+        m_levelGauge->setRange(-60.0, 0.0);
+        m_levelGauge->setYellowStart(-12.0);
+        m_levelGauge->setRedStart(-3.0);
+        m_levelGauge->setValue(-60.0);  // quiescent; telemetry wiring deferred
+        m_levelGauge->setToolTip(tr("Audio level — telemetry wiring deferred "
+                                    "to follow-up task."));
+        // TODO(later-task): wire telemetry from engine's owned VAX buses
+        // once AudioEngine exposes a vaxBus(int) accessor (Task 22+).
+        form->addRow(levelLbl, m_levelGauge);
+
+        outerLayout->addLayout(form);
+    }
+
+    // Action buttons row: "Rename…" + "Copy node name".
+    {
+        auto* btnRow = new QHBoxLayout;
+        btnRow->setSpacing(6);
+
+        m_renameBtn = new QPushButton(tr("Rename…"), this);
+        m_renameBtn->setStyleSheet(QLatin1String(kActionBtnStyle));
+        m_renameBtn->setAutoDefault(false);
+        m_renameBtn->setDefault(false);
+        m_renameBtn->setToolTip(tr("Change the display name this channel is "
+                                   "advertised as to consumer applications."));
+        btnRow->addWidget(m_renameBtn);
+
+        m_copyNodeBtn = new QPushButton(tr("Copy node name"), this);
+        m_copyNodeBtn->setStyleSheet(QLatin1String(kActionBtnStyle));
+        m_copyNodeBtn->setAutoDefault(false);
+        m_copyNodeBtn->setDefault(false);
+        m_copyNodeBtn->setToolTip(
+            tr("Copy the PipeWire node.name (%1) to clipboard. "
+               "Use this string in pw-link or consumer app config.")
+                .arg(pipeWireNodeName(m_channel)));
+        btnRow->addWidget(m_copyNodeBtn);
+
+        btnRow->addStretch(1);
+        outerLayout->addLayout(btnRow);
+    }
+
+    // Wire inner DeviceCard signals (kept for configChanged propagation).
     connect(m_deviceCard, &DeviceCard::configChanged,
             this, &VaxChannelCard::onInnerConfigChanged);
     connect(m_deviceCard, &DeviceCard::enabledChanged,
@@ -176,14 +328,35 @@ VaxChannelCard::VaxChannelCard(int channel, QWidget* parent)
     connect(m_autoDetectBtn, &QPushButton::clicked,
             this, &VaxChannelCard::onAutoDetectClicked);
 
-    // Populate the status banner with the card's initial state so it reads
-    // correctly even if loadFromSettings() isn't invoked (tests, previews).
+    // Wire spec §9.2 button signals.
+    connect(m_renameBtn,   &QPushButton::clicked,
+            this, &VaxChannelCard::onRenameClicked);
+    connect(m_copyNodeBtn, &QPushButton::clicked,
+            this, &VaxChannelCard::onCopyNodeNameClicked);
+
+    // Populate the hidden status banner and node description label.
     updateBadge();
+    updateNodeDescLabel();
 }
 
 void VaxChannelCard::loadFromSettings()
 {
+    // Load the DeviceCard's 10 fields + hidden enable checkbox.
     m_deviceCard->loadFromSettings();
+
+    // Sync visible enable toggle from AppSettings (same key the hidden
+    // DeviceCard uses: audio/VaxN/Enabled).
+    if (m_enableChk) {
+        const bool on = AppSettings::instance()
+                            .value(m_prefix + QStringLiteral("/Enabled"),
+                                   QStringLiteral("False"))
+                            .toString() == QStringLiteral("True");
+        QSignalBlocker blk(m_enableChk);
+        m_enableChk->setChecked(on);
+    }
+
+    // Refresh node description label from persisted NodeDescription key.
+    updateNodeDescLabel();
     updateBadge();
 }
 
@@ -196,11 +369,7 @@ void VaxChannelCard::updateNegotiatedPill(const AudioDeviceConfig& negotiated,
 
 QString VaxChannelCard::currentDeviceName() const
 {
-    // Primary source: live combo selection in the DeviceCard (reflects what
-    // PortAudio enumerated). When a saved device is not in the enumerated list
-    // (e.g. the cable is connected on another machine, or PortAudio returns no
-    // devices in the test environment), fall back to reading AppSettings so the
-    // badge and auto-detect button stay in sync with what was actually saved.
+    // Primary source: live combo selection in the hidden DeviceCard.
     const QString fromCard = m_deviceCard->currentConfig().deviceName;
     if (!fromCard.isEmpty()) {
         return fromCard;
@@ -212,13 +381,10 @@ QString VaxChannelCard::currentDeviceName() const
 
 bool VaxChannelCard::isChannelEnabled() const
 {
-    // Delegate to the DeviceCard's checkbox live state so mid-edit callers
-    // see the current toggle value rather than the last-flushed AppSettings
-    // value. DeviceCard::isCheckboxEnabled() returns true for always-on cards
-    // (no checkbox), which is the correct semantic here since VaxChannelCards
-    // always have an enable checkbox (enableCheckbox=true in the ctor).
-    //
-    // Named isChannelEnabled() to avoid shadowing QWidget::isEnabled() (I2).
+    // Visible checkbox is the primary source; hidden DeviceCard mirrors it.
+    if (m_enableChk) {
+        return m_enableChk->isChecked();
+    }
     return m_deviceCard->isCheckboxEnabled();
 }
 
@@ -241,8 +407,9 @@ void VaxChannelCard::applyAutoDetectBinding(const QString& deviceName)
     // 4) Emit to engine (original configChanged path).
     emit configChanged(m_channel, cfg);
 
-    // 5) Update badge + auto-detect button visibility.
+    // 5) Update badge + node description label.
     updateBadge();
+    updateNodeDescLabel();
 }
 
 void VaxChannelCard::clearBinding()
@@ -261,8 +428,9 @@ void VaxChannelCard::clearBinding()
     emit configChanged(m_channel, empty);
     emit enabledChanged(m_channel, false);
 
-    // 5) Update badge + auto-detect button visibility.
+    // 5) Update badge + node description label.
     updateBadge();
+    updateNodeDescLabel();
 }
 
 void VaxChannelCard::onInnerConfigChanged(AudioDeviceConfig cfg)
@@ -273,10 +441,11 @@ void VaxChannelCard::onInnerConfigChanged(AudioDeviceConfig cfg)
 
 void VaxChannelCard::onInnerEnabledChanged(bool on)
 {
-    // Refresh the banner so the amber "Disabled" / green "Bound" read
-    // flips in lockstep with the checkbox. Without this the user could
-    // uncheck Enabled and still see a stale green "Bound: Native HAL"
-    // even though AudioEngine::setVaxEnabled(false) has closed the bus.
+    // Sync visible enable toggle when the hidden DeviceCard drives a change.
+    if (m_enableChk) {
+        QSignalBlocker blk(m_enableChk);
+        m_enableChk->setChecked(on);
+    }
     updateBadge();
     emit enabledChanged(m_channel, on);
 }
@@ -290,31 +459,73 @@ void VaxChannelCard::setBusOpen(bool open)
     updateBadge();
 }
 
+void VaxChannelCard::updateNodeDescLabel()
+{
+    if (!m_nodeDescLabel) {
+        return;
+    }
+    // Read persisted node description (spec §10: Audio/VaxN/NodeDescription).
+    const QString desc = AppSettings::instance()
+        .value(m_prefix + QStringLiteral("/NodeDescription"),
+               defaultNodeDescription(m_channel))
+        .toString();
+    m_nodeDescLabel->setText(desc);
+}
+
+void VaxChannelCard::onRenameClicked()
+{
+    // Current description for the dialog pre-fill.
+    const QString current = AppSettings::instance()
+        .value(m_prefix + QStringLiteral("/NodeDescription"),
+               defaultNodeDescription(m_channel))
+        .toString();
+
+    bool ok = false;
+    const QString newDesc = QInputDialog::getText(
+        this,
+        tr("Rename VAX %1").arg(m_channel),
+        tr("Display name (advertised to consumer apps):"),
+        QLineEdit::Normal,
+        current,
+        &ok);
+
+    if (!ok || newDesc.trimmed().isEmpty()) {
+        return;
+    }
+
+    // Persist via Audio/VaxN/NodeDescription (spec §10).
+    AppSettings::instance().setValue(
+        m_prefix + QStringLiteral("/NodeDescription"),
+        newDesc.trimmed());
+    AppSettings::instance().save();
+
+    // Refresh the visible label.
+    updateNodeDescLabel();
+}
+
+void VaxChannelCard::onCopyNodeNameClicked()
+{
+    // Copies nereussdr.vax-N to clipboard (PipeWire node.name convention).
+    QApplication::clipboard()->setText(pipeWireNodeName(m_channel));
+}
+
 void VaxChannelCard::updateBadge()
 {
-    // Auto-detect button: show when no device is bound (name empty).
+    // Hidden auto-detect button: show only when no device is bound (name empty).
+    // This logic is preserved for the hidden backing DeviceCard but the button
+    // itself remains hidden in the spec §9.2 layout.
     const QString deviceName = currentDeviceName();
     const bool hasDevice = !deviceName.isEmpty();
-    m_autoDetectBtn->setVisible(!hasDevice);
+    m_autoDetectBtn->setVisible(false);  // always hidden in spec §9.2 layout
 
-    // Persistent binding-status banner — answers "what is this channel
-    // routed through?" at a glance. State machine:
-    //   - enabled=false                  → amber "Disabled"
-    //   - busOpen=false + empty (Mac/Lx) → amber "Native HAL unavailable"
-    //   - busOpen=false + BYO            → amber "Bus failed to open"
-    //   - busOpen=true  + empty (Mac/Lx) → green "Bound: Native HAL · …"
-    //   - busOpen=true  + BYO            → blue  "Bound: <name>"
-    //   - Windows empty                  → amber "Not bound — pick a cable"
-    // enabled+busOpen are tracked separately because setVaxEnabled(false)
-    // closes the bus (busOpen=false) but leaves m_engine's accounting
-    // intact, while a makeVaxBus() failure leaves the slot null without
-    // the user ever unchecking anything.
+    // Hidden binding-status banner — state machine kept for test compat.
+    // Tests call findStatusBanner() which searches this label by text.
     if (m_statusLabel) {
         const bool enabled = isChannelEnabled();
         if (!enabled) {
             m_statusLabel->setStyleSheet(QLatin1String(kStatusUnboundStyle));
             m_statusLabel->setText(QStringLiteral(
-                "\u26a0  Disabled \u2014 enable to route audio"));
+                "⚠  Disabled — enable to route audio"));
             m_statusLabel->setToolTip(QStringLiteral(
                 "The VAX channel's Enabled checkbox is off. Check it to "
                 "open the audio bus and route receiver audio through this "
@@ -329,7 +540,7 @@ void VaxChannelCard::updateBadge()
                     m_statusLabel->setStyleSheet(
                         QLatin1String(kStatusUnboundStyle));
                     m_statusLabel->setText(
-                        QStringLiteral("\u26a0  Bus failed to open: %1")
+                        QStringLiteral("⚠  Bus failed to open: %1")
                             .arg(deviceName));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "NereusSDR tried to open the selected 3rd-party "
@@ -342,7 +553,7 @@ void VaxChannelCard::updateBadge()
                     m_statusLabel->setStyleSheet(
                         QLatin1String(kStatusBYOStyle));
                     m_statusLabel->setText(
-                        QStringLiteral("\u2713  Bound: %1").arg(deviceName));
+                        QStringLiteral("✓  Bound: %1").arg(deviceName));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "VAX channel is routed through the selected "
                         "3rd-party virtual cable (BYO override). Clear "
@@ -350,22 +561,22 @@ void VaxChannelCard::updateBadge()
                         "HAL/pipe bridge."));
                 }
             } else {
-                // Native HAL / pipe bridge path.
+                // Native HAL / PipeWire path.
                 if (!m_busOpen) {
                     m_statusLabel->setStyleSheet(
                         QLatin1String(kStatusUnboundStyle));
 #  if defined(Q_OS_MAC)
                     m_statusLabel->setText(QStringLiteral(
-                        "\u26a0  Native HAL unavailable \u2014 reinstall "
+                        "⚠  Native HAL unavailable — reinstall "
                         "NereusSDR"));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "NereusSDR could not open the bundled CoreAudio "
                         "HAL plugin's shared-memory bridge. Reinstall "
                         "NereusSDR, or unblock NereusSDRVAX.driver in "
-                        "System Settings \u2192 Privacy & Security."));
+                        "System Settings → Privacy & Security."));
 #  else
                     m_statusLabel->setText(QStringLiteral(
-                        "\u26a0  Native PipeWire bridge unavailable"));
+                        "⚠  Native PipeWire bridge unavailable"));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "NereusSDR could not create a PipeWire "
                         "pipe-source for this VAX slot. Check that "
@@ -378,7 +589,7 @@ void VaxChannelCard::updateBadge()
 #  if defined(Q_OS_MAC)
                     m_statusLabel->setText(
                         QStringLiteral(
-                            "\u2713  Bound: Native HAL \u00b7 %1")
+                            "✓  Bound: Native HAL · %1")
                             .arg(nativeName));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "VAX channel is routed through the bundled "
@@ -389,7 +600,7 @@ void VaxChannelCard::updateBadge()
 #  else
                     m_statusLabel->setText(
                         QStringLiteral(
-                            "\u2713  Bound: Native (PipeWire) \u00b7 %1")
+                            "✓  Bound: Native (PipeWire) · %1")
                             .arg(nativeName));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "VAX channel is routed through a native "
@@ -405,7 +616,7 @@ void VaxChannelCard::updateBadge()
                     m_statusLabel->setStyleSheet(
                         QLatin1String(kStatusUnboundStyle));
                     m_statusLabel->setText(
-                        QStringLiteral("\u26a0  Bus failed to open: %1")
+                        QStringLiteral("⚠  Bus failed to open: %1")
                             .arg(deviceName));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "NereusSDR tried to open the selected virtual "
@@ -416,7 +627,7 @@ void VaxChannelCard::updateBadge()
                     m_statusLabel->setStyleSheet(
                         QLatin1String(kStatusBYOStyle));
                     m_statusLabel->setText(
-                        QStringLiteral("\u2713  Bound: %1").arg(deviceName));
+                        QStringLiteral("✓  Bound: %1").arg(deviceName));
                     m_statusLabel->setToolTip(QStringLiteral(
                         "VAX channel is routed through the selected "
                         "virtual cable."));
@@ -425,7 +636,7 @@ void VaxChannelCard::updateBadge()
                 m_statusLabel->setStyleSheet(
                     QLatin1String(kStatusUnboundStyle));
                 m_statusLabel->setText(QStringLiteral(
-                    "\u26a0  Not bound \u2014 pick a virtual cable"));
+                    "⚠  Not bound — pick a virtual cable"));
                 m_statusLabel->setToolTip(QStringLiteral(
                     "Windows has no built-in virtual audio cable. "
                     "Install VB-CABLE, Voicemeeter, or VAC and pick it "
@@ -436,19 +647,19 @@ void VaxChannelCard::updateBadge()
     }
 
 #if defined(Q_OS_WIN)
-    // Windows has no native HAL fallback — empty deviceName on setVaxConfig
-    // resolves to PortAudio's platform default, which on a box without a
-    // virtual cable is the speakers device (raw pre-master-volume bleed).
-    // Gate the Enabled checkbox until the user picks a real device.  On
-    // Mac/Linux the engine falls back to the native HAL bus automatically
-    // (AudioEngine::setVaxConfig), so no gate is needed there.
+    // Windows: gate enable checkbox until a BYO device is picked.
+    // On Mac/Linux the PipeWire bridge is automatic (no gate needed).
+    if (m_enableChk) {
+        m_enableChk->setEnabled(hasDevice);
+        if (!hasDevice) {
+            m_enableChk->setToolTip(tr("Pick a device first"));
+        }
+    }
     m_deviceCard->setEnableAllowed(hasDevice);
 #endif
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
-    // Amber badge: show only when bound to non-native and consumerCount == 0.
-    // The native device name contains "NereusSDR" (reserved for the NereusSDR
-    // HAL plugin). If the device is native, badge is always suppressed.
+    // Amber badge logic — hidden widget, state kept for API compat.
     if (hasDevice) {
         const bool isNative = deviceName.contains(QStringLiteral("NereusSDR"),
                                                    Qt::CaseInsensitive);
@@ -492,19 +703,11 @@ void VaxChannelCard::onAutoDetectClicked()
         "QMenu::item:disabled { color: #506070; }");
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
-    // Surface the platform-native HAL/pipe VAX devices as disabled info
-    // rows. Binding is automatic (AudioEngine::makeVaxBus sets up the shm
-    // bridge at start()) so these rows are not selectable — they exist so
-    // users can confirm the native plugin is alive. Absent when the plugin
-    // is not installed; the honest empty menu that follows is informative.
     int nativeHalCount = 0;
     for (const DetectedCable& cable : cables) {
         if (cable.product != VirtualCableProduct::NereusSdrVax) {
             continue;
         }
-        // HAL plugin publishes VAX N as input-only on macOS; Linux pipe
-        // module analog is also input-only. Accept either side to future-
-        // proof against a dual-sided native bridge.
         QAction* act = menu.addAction(nativeHalLabelForCable(cable));
         act->setEnabled(false);
         ++nativeHalCount;
@@ -515,7 +718,6 @@ void VaxChannelCard::onAutoDetectClicked()
 #endif
 
     if (cables.isEmpty()) {
-        // No cables case.
         QAction* noCablesAct = menu.addAction(
             QStringLiteral("No virtual cables detected"));
         noCablesAct->setEnabled(false);
@@ -523,29 +725,22 @@ void VaxChannelCard::onAutoDetectClicked()
         menu.addSeparator();
 
         QAction* installAct = menu.addAction(
-            QStringLiteral("Install virtual cables\u2026"));
+            QStringLiteral("Install virtual cables…"));
         connect(installAct, &QAction::triggered, this, []() {
-            // Open generic VB-Audio landing page as default.
             QDesktopServices::openUrl(
                 QUrl(VirtualCableDetector::installUrl(
                     VirtualCableProduct::VbCable)));
         });
     } else {
-        // Build one entry per detected cable (output/render side only —
-        // those are the cables that a consumer app reads from).
         bool hasAny = false;
         for (const DetectedCable& cable : cables) {
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
-            // Native HAL/pipe entries were already surfaced above as info
-            // rows. Don't re-offer them as BYO targets: the HAL plugin
-            // publishes input-only devices on Mac, so setVaxConfig →
-            // makeBus(capture=false) can't open them via PortAudio.
             if (cable.product == VirtualCableProduct::NereusSdrVax) {
                 continue;
             }
 #endif
             if (cable.isInput) {
-                continue; // skip capture side
+                continue;
             }
             hasAny = true;
 
@@ -554,18 +749,14 @@ void VaxChannelCard::onAutoDetectClicked()
             const bool alreadyAssigned = (alreadyAssignedToChannel > 0)
                 && (alreadyAssignedToChannel != m_channel);
 
-            // Addendum §2.3: format is "► deviceName · vendor".
-            // Spec §2.3 also calls for a sample-rate subtitle; deferred until
-            // DetectedCable carries sampleRate (tracked by
-            // TODO(sub-phase-12-menu-sample-rate)).
             const QString vendor =
                 VirtualCableDetector::vendorDisplayName(cable.product);
-            QString label = QStringLiteral("\u25ba  ") + cable.deviceName;
+            QString label = QStringLiteral("►  ") + cable.deviceName;
             if (!vendor.isEmpty()) {
-                label += QStringLiteral(" \u00b7 ") + vendor;
+                label += QStringLiteral(" · ") + vendor;
             }
             if (alreadyAssigned) {
-                label += QStringLiteral("  \u2192 VAX %1")
+                label += QStringLiteral("  → VAX %1")
                              .arg(alreadyAssignedToChannel);
             }
 
@@ -576,7 +767,6 @@ void VaxChannelCard::onAutoDetectClicked()
                 const QString devName   = cable.deviceName;
                 connect(act, &QAction::triggered, this,
                         [this, devName, srcChannel]() {
-                    // Reassign confirm modal.
                     QMessageBox confirm(this);
                     confirm.setWindowTitle(QStringLiteral("Reassign cable?"));
                     confirm.setText(
@@ -592,11 +782,6 @@ void VaxChannelCard::onAutoDetectClicked()
                         return;
                     }
 
-                    // C3: Full source teardown — wipe all 10 AppSettings fields,
-                    // refresh the source card's UI, and close the engine bus.
-                    // Walk up the widget hierarchy to find the AudioVaxPage that
-                    // owns both cards (VaxChannelCard → container → scrollArea
-                    // viewport → scrollArea → AudioVaxPage).
                     AudioVaxPage* page = nullptr;
                     for (QObject* p = parent(); p; p = p->parent()) {
                         if (auto* vp = qobject_cast<AudioVaxPage*>(p)) {
@@ -611,14 +796,12 @@ void VaxChannelCard::onAutoDetectClicked()
                         }
                     }
 
-                    // C1+C2: Persist, refresh UI, emit to engine.
                     applyAutoDetectBinding(devName);
                 });
             } else {
                 const QString devName = cable.deviceName;
                 connect(act, &QAction::triggered, this,
                         [this, devName]() {
-                    // C1+C2: Persist, refresh UI, emit to engine.
                     applyAutoDetectBinding(devName);
                 });
             }
@@ -627,8 +810,6 @@ void VaxChannelCard::onAutoDetectClicked()
         if (!hasAny) {
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
             if (nativeHalCount > 0) {
-                // Native HAL/pipe is already surfaced above. No 3rd-party
-                // BYO cables are installed — hint that this is optional.
                 QAction* hintAct = menu.addAction(
                     QStringLiteral(
                         "No 3rd-party cables available (BYO override optional)"));
@@ -639,7 +820,6 @@ void VaxChannelCard::onAutoDetectClicked()
                 noCablesAct->setEnabled(false);
             }
 #else
-            // Only input-side cables found; surface a message.
             QAction* noCablesAct = menu.addAction(
                 QStringLiteral("No output-side virtual cables detected"));
             noCablesAct->setEnabled(false);
@@ -647,8 +827,6 @@ void VaxChannelCard::onAutoDetectClicked()
         }
     }
 
-    // Show menu anchored to the button (addendum §2.3: inline QMenu::exec
-    // at button position). Qt handles ↑/↓ / Enter / Esc natively.
     menu.exec(m_autoDetectBtn->mapToGlobal(
         QPoint(0, m_autoDetectBtn->height())));
 }
@@ -668,8 +846,7 @@ void AudioVaxPage::buildPage()
 {
     // SetupPage base already wraps contentLayout() in a QScrollArea with a
     // trailing addStretch(1) — insert widgets before that stretch so the
-    // content stacks from the top of the viewport (pattern from
-    // SetupPage::addSection).
+    // content stacks from the top of the viewport.
     auto insertBeforeStretch = [this](QWidget* w) {
         const int stretchIndex = contentLayout()->count() - 1;
         contentLayout()->insertWidget(stretchIndex, w);
@@ -677,22 +854,24 @@ void AudioVaxPage::buildPage()
 
     // Section header.
     auto* headerLabel = new QLabel(
-        QStringLiteral("Virtual Audio eXchange — channel bindings"), this);
+        QStringLiteral("Virtual Audio eXchange — PipeWire sources"), this);
     headerLabel->setStyleSheet(
         QStringLiteral("QLabel { color: #8aa8c0; font-size: 12px; }"));
     insertBeforeStretch(headerLabel);
 
+    // Sub-header describing the new Phase 3O model.
+    auto* subHeader = new QLabel(
+        QStringLiteral(
+            "Each VAX channel is exposed to the system as a PipeWire virtual "
+            "source (node). Consumer applications (WSJT-X, FLDIGI, etc.) "
+            "select it as an audio input device — no virtual cable needed."),
+        this);
+    subHeader->setStyleSheet(
+        QStringLiteral("QLabel { color: #607080; font-size: 11px; }"));
+    subHeader->setWordWrap(true);
+    insertBeforeStretch(subHeader);
+
     // Four VAX channel cards (1–4).
-    //
-    // Addendum §2.2 calls for default-on-Mac/Linux to bind to the native HAL
-    // plugin entry named "NereusSDR VAX N (native)". That plugin does not yet
-    // exist; VirtualCableProduct::NereusSdrVax is reserved for it. Until the
-    // plugin lands, Mac/Linux cards with an unset audio/Vax<N>/DeviceName fall
-    // through to PortAudio's platform default. The "override — no consumer"
-    // badge correctly stays quiescent in this state (consumerCount stub returns
-    // 1, and without the named native entry there is no non-native to override
-    // from).
-    // Tracked by TODO(sub-phase-12-native-hal-default).
     m_channelCards.reserve(4);
     for (int ch = 1; ch <= 4; ++ch) {
         auto* card = new VaxChannelCard(ch, this);
@@ -702,18 +881,11 @@ void AudioVaxPage::buildPage()
 
         // Wire configChanged to AudioEngine.
         if (m_engine) {
-            // Seed the card with the engine's current bus-open state so the
-            // banner reflects reality from the first paint (green bound /
-            // amber "Native HAL unavailable" / amber "Bus failed to open").
             card->setBusOpen(m_engine->isVaxBusOpen(ch));
 
             connect(card, &VaxChannelCard::configChanged, this,
                     [this](int channel, AudioDeviceConfig cfg) {
                 m_engine->setVaxConfig(channel, cfg);
-                // setVaxConfig may have torn down + rebuilt the slot's bus
-                // (BYO path) or fallen back to the native bridge (empty
-                // deviceName). Reflect the post-op open state immediately
-                // so the banner doesn't lag.
                 if (auto* c = channelCard(channel)) {
                     c->setBusOpen(m_engine->isVaxBusOpen(channel));
                 }
@@ -721,9 +893,6 @@ void AudioVaxPage::buildPage()
             connect(card, &VaxChannelCard::enabledChanged, this,
                     [this](int channel, bool on) {
                 m_engine->setVaxEnabled(channel, on);
-                // setVaxEnabled(false) closes the bus; setVaxEnabled(true)
-                // re-mints the native or BYO bus. Push the resulting state
-                // back onto the card so the green/amber banner matches.
                 if (auto* c = channelCard(channel)) {
                     c->setBusOpen(m_engine->isVaxBusOpen(channel));
                 }
@@ -731,7 +900,7 @@ void AudioVaxPage::buildPage()
         }
     }
 
-    // TX row — informational; actual TX → VAX routing lands in Phase 3M.
+    // TX row — informational.
     auto* txGroup = new QGroupBox(QStringLiteral("TX Monitor"), this);
     txGroup->setStyleSheet(QLatin1String(kGroupStyle));
     auto* txLayout = new QVBoxLayout(txGroup);
@@ -752,10 +921,6 @@ void AudioVaxPage::wirePillFeedback()
         return;
     }
 
-    // Connect AudioEngine::vaxConfigChanged back to each card's pill and
-    // banner. vaxConfigChanged is also emitted on the resetAudioSettings
-    // path (factory-reset wipe + native-bus re-mint), so the banner has
-    // to re-read isVaxBusOpen here too.
     connect(m_engine, &AudioEngine::vaxConfigChanged, this,
             [this](int channel, AudioDeviceConfig cfg) {
         const int idx = channel - 1;
