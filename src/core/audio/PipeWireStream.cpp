@@ -76,6 +76,10 @@ bool PipeWireStream::open()
         .trigger_done  = nullptr,
     };
 
+    if (m_stream) {
+        qCWarning(lcPw) << "open() called on already-open stream:" << m_cfg.nodeName;
+        return false;
+    }
     if (!m_loop || !m_loop->core()) {
         qCWarning(lcPw) << "open() with no thread loop or core";
         return false;
@@ -187,6 +191,7 @@ void PipeWireStream::onStateChangedCb(void* userData,
         default:                          name = QStringLiteral("unknown");     break;
     }
     self->m_stateName = name;
+    // FIXME(task 14): self may dangle if ~PipeWireStream runs before queued emit drains.
     QMetaObject::invokeMethod(self, [self, name]() {
         emit self->streamStateChanged(name);
     }, Qt::QueuedConnection);
