@@ -235,14 +235,23 @@ void PipeWireStream::onProcessCb(void* userData)
     }
 }
 
-// ---------------------------------------------------------------------------
-// probeSchedOnce() — one-shot RT-scheduling probe on the pw data thread.
-// This is the actual thread where rtkit's RT grant lands (not Qt main).
-// See the forward contract from f35cc7b which removed the probe from
-// PipeWireThreadLoop::connect(). Called from both onProcessOutput and
-// onProcessInput so INPUT-only streams (e.g. the TX input path) also get
-// probed.
-// ---------------------------------------------------------------------------
+// One-shot RT-scheduling probe on the pw data thread — this is the
+// actual thread where rtkit's RT grant lands (not Qt main). See the
+// forward contract from f35cc7b which removed the probe from
+// PipeWireThreadLoop::connect(). Called from both onProcessOutput
+// and onProcessInput so INPUT-only streams (e.g. the TX input path)
+// also get probed.
+//
+// IMPORTANT: do NOT log from this function. Qt's logger is not
+// RT-safe — it allocates QStrings, locks the global logger mutex,
+// and walks the message handler chain. On the pw data thread, the
+// resulting brief stall against the main thread (Qt log mutex) is
+// long enough for Mutter's xdg_wm_base.ping watchdog to flag the
+// client as unresponsive and SIGKILL the process. The schedPolicy /
+// schedPriority values are stored in atomics and exposed via the
+// Telemetry struct — the Setup → Audio Backend Strip / Output page
+// reads them from the GUI thread at its own cadence, where Qt
+// logging is safe if needed.
 void PipeWireStream::probeSchedOnce()
 {
     if (m_schedProbed.load(std::memory_order_relaxed)) { return; }
@@ -251,9 +260,6 @@ void PipeWireStream::probeSchedOnce()
     if (pthread_getschedparam(pthread_self(), &policy, &param) == 0) {
         m_schedPolicy.store(policy, std::memory_order_relaxed);
         m_schedPriority.store(param.sched_priority, std::memory_order_relaxed);
-        qCInfo(lcPw) << "pw data thread sched policy:" << policy
-                     << "priority:" << param.sched_priority
-                     << "for stream:" << m_cfg.nodeName;
     }
     m_schedProbed.store(true, std::memory_order_relaxed);
 }
