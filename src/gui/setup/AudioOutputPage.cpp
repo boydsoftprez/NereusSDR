@@ -128,8 +128,8 @@ OutputCard::OutputCard(const QString& title,
     , m_role(role)
     , m_settingsPrefix(settingsPrefix)
 {
-    setStyleSheet(QLatin1String(kGroupStyle));
     buildLayout();
+    setStyleSheet(QLatin1String(kGroupStyle));
     loadFromSettings();
 }
 
@@ -165,8 +165,8 @@ void OutputCard::buildLayout()
     // ── Node info (read-only) ─────────────────────────────────────────────
     {
         QGroupBox* infoBox = new QGroupBox(tr("Node info"), this);
-        infoBox->setStyleSheet(QLatin1String(kGroupStyle));
         QFormLayout* form = new QFormLayout(infoBox);
+        infoBox->setStyleSheet(QLatin1String(kGroupStyle));
         form->setSpacing(3);
         form->setContentsMargins(8, 12, 8, 8);
 
@@ -243,8 +243,8 @@ void OutputCard::buildLayout()
     // Task 22's SetupDialog wiring reveals the right surface.
     {
         QGroupBox* telemBox = new QGroupBox(tr("Live telemetry  (1 Hz)"), this);
-        telemBox->setStyleSheet(QLatin1String(kGroupStyle));
         QFormLayout* form = new QFormLayout(telemBox);
+        telemBox->setStyleSheet(QLatin1String(kGroupStyle));
         form->setSpacing(3);
         form->setContentsMargins(8, 12, 8, 8);
 
@@ -591,12 +591,12 @@ void AudioOutputPage::buildPage()
 void AudioOutputPage::buildPerSliceSection()
 {
     QGroupBox* box = new QGroupBox(tr("Per-slice output routing"), this);
-    box->setStyleSheet(QLatin1String(kGroupStyle));
     box->setToolTip(tr(
         "Override the output sink on a per-slice basis.\n"
         "\"follow default\" inherits the primary-card sink."));
 
     QVBoxLayout* boxLayout = new QVBoxLayout(box);
+    box->setStyleSheet(QLatin1String(kGroupStyle));
     boxLayout->setSpacing(6);
     boxLayout->setContentsMargins(10, 14, 10, 10);
 
