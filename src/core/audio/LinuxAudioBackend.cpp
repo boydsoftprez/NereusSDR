@@ -15,6 +15,46 @@
 // =================================================================
 #include "core/audio/LinuxAudioBackend.h"
 
+#include <QFile>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QtCore/qglobal.h>
+#include "core/AppSettings.h"
+
+namespace {
+
+bool pipewireSocketReachableImpl(int /*timeoutMs*/)
+{
+    const QByteArray xdg = qgetenv("XDG_RUNTIME_DIR");
+    if (xdg.isEmpty()) { return false; }
+    return QFile::exists(QString::fromUtf8(xdg)
+                         + QStringLiteral("/pipewire-0"));
+}
+
+bool pactlBinaryRunnableImpl(int timeoutMs)
+{
+    const QString path = QStandardPaths::findExecutable(
+                           QStringLiteral("pactl"));
+    if (path.isEmpty()) { return false; }
+    QProcess p;
+    p.start(path, {QStringLiteral("--version")});
+    if (!p.waitForFinished(timeoutMs)) {
+        p.kill();
+        return false;
+    }
+    return p.exitCode() == 0;
+}
+
+QString forcedOverrideImpl()
+{
+    return NereusSDR::AppSettings::instance()
+        .value(QStringLiteral("Audio/LinuxBackendPreferred"),
+               QStringLiteral(""))
+        .toString();
+}
+
+}  // anonymous
+
 namespace NereusSDR {
 
 LinuxAudioBackend detectLinuxBackend(const LinuxAudioBackendProbes& probes)
@@ -51,14 +91,14 @@ QString toString(LinuxAudioBackend b)
     return QStringLiteral("None");
 }
 
-// defaultProbes() — stub implementation returns always-false callbacks.
-// Task 4 replaces this body with real QFile/QProcess/AppSettings probes.
+// defaultProbes() — real probes used by production code.
+// Tests use their own LinuxAudioBackendProbes built with mocked callbacks.
 LinuxAudioBackendProbes defaultProbes()
 {
     LinuxAudioBackendProbes p;
-    p.pipewireSocketReachable = [](int) { return false; };
-    p.pactlBinaryRunnable     = [](int) { return false; };
-    p.forcedBackendOverride   = []() { return QString(); };
+    p.pipewireSocketReachable = &pipewireSocketReachableImpl;
+    p.pactlBinaryRunnable     = &pactlBinaryRunnableImpl;
+    p.forcedBackendOverride   = &forcedOverrideImpl;
     return p;
 }
 
