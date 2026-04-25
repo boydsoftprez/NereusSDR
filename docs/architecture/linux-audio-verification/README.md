@@ -1,19 +1,34 @@
 # Phase 3O — Linux PipeWire Audio Bridge Verification Matrix
 
-> **Status (as of Task 27 shakedown, 2026-04-24):** Row A partially
-> filled. **Merge gate not yet met** — Ubuntu 25.10 shakedown
-> identified that VAX `Audio/Source` streams open from the app's
-> perspective (`pw_stream_connect` returns ≥ 0) but never appear
-> in WirePlumber's session graph (`pw-dump` shows zero
-> NereusSDR-related nodes). Likely a session-policy / pw_properties
-> issue with the `Audio/Source` media class. The TX-input stream
-> (`Stream/Input/Audio`) and the integration-test stream
-> (`Stream/Output/Audio`) both work end-to-end, so the underlying
-> PipeWire stack is functional — only the virtual-source path is
-> regressed. **Follow-up task before merge:** experiment with extra
-> `pw_properties` on Audio/Source nodes (`node.virtual=true`,
-> `node.always-process=true`, or a node-link hint) until WirePlumber
-> publishes the VAX nodes consistently.
+> **Status (as of 2026-04-24):** ✅ **End-to-end verified on Ubuntu
+> 25.10 / PipeWire 1.4.7.** App stable, speakers playing via ALSA
+> (PipeWire-routed), VAX RMS meter modulates, all 4 VAX sources
+> visible to PulseAudio clients (`wpctl status`, libpulse
+> enumeration), WSJT-X discovers them in Settings → Audio → Input
+> after the consumer-side gotcha below is satisfied. Branch ready to
+> merge.
+
+## Consumer-app gotcha — required for VAX visibility in Qt5 apps
+
+WSJT-X (and any other Qt5Multimedia-based ham app) needs the
+**`libqt5multimedia5-plugins`** package installed on the consumer
+host. Qt5 ships its multimedia *interface* in `libQt5Multimedia.so`
+but the actual *backend plugins* (the `qtmedia_audioengine`
+ALSA/Pulse implementations that enumerate devices) are in the
+separate `-plugins` package. Without it, Qt5 audio apps silently
+see zero devices regardless of what PipeWire / PulseAudio
+publishes — the symptom is "Settings → Audio → Input dropdown is
+empty / shows only `default`".
+
+```
+sudo apt install libqt5multimedia5-plugins   # Debian/Ubuntu
+sudo dnf install qt5-qtmultimedia              # Fedora (already
+                                               # bundles plugins)
+```
+
+This is **not** a NereusSDR runtime dependency — NereusSDR uses Qt6
+and its own audio path. It only matters on the consumer side
+(WSJT-X, fldigi, VARA, gqrx, etc.) when those apps are Qt5-based.
 
 ## How to use
 
