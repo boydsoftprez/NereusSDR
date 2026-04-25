@@ -30,6 +30,7 @@ find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
     Multimedia
+    Svg
 )
 
 # Optional Qt components
@@ -649,6 +650,7 @@ target_link_libraries(NereusSDRObjs PUBLIC
     Qt6::Widgets
     Qt6::Network
     Qt6::Multimedia
+    Qt6::Svg
 )
 
 if(WIN32)
