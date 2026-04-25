@@ -28,9 +28,8 @@ NyiOverlay* NyiOverlay::markNyi(QWidget* target, const QString& phaseHint)
 {
     if (!target) { return nullptr; }
     target->setEnabled(false);
-    auto* badge = new NyiOverlay(phaseHint, target->parentWidget());
-    badge->attachTo(target);
-    return badge;
+    target->setToolTip(QStringLiteral("Not Yet Implemented — Available in %1").arg(phaseHint));
+    return nullptr;
 }
 
 } // namespace NereusSDR
