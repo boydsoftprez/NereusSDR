@@ -732,6 +732,9 @@ void MainWindow::buildUI()
     m_radioModel->setSpectrumWidget(m_spectrumWidget);
     m_radioModel->setFftEngine(m_fftEngine);
 
+    // Wire BandPlanManager → SpectrumWidget so the bandplan strip renders on launch.
+    m_spectrumWidget->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
+
     // Phase 3G-9b: no first-launch auto-apply of smooth defaults. Per
     // user decision 2026-04-15, the out-of-box waterfall stays on
     // WfColorScheme::Default; ClarityBlue is reachable only via the
