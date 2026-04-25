@@ -115,7 +115,6 @@ mw0lge@grange-lane.co.uk
 
 #include "core/safety/BandPlanGuard.h"
 #include <array>
-#include <span>
 
 namespace NereusSDR::safety {
 
@@ -276,20 +275,6 @@ constexpr std::array<BandRange, 11> kSpainBandRanges{{
     { Band::Band6m,  50'000'000, 52'000'000 },
 }};
 
-// All remaining 19 region tables (India, Italy, Israel, Norway, Denmark,
-// Sweden, Latvia, Slovakia, Bulgaria, Greece, Hungary, Netherlands,
-// France, Russia, Region1, Region3, Germany, plus the implicit Extended
-// bypass) follow the same constexpr-array shape with values transcribed
-// verbatim from clsBandStackManager.cs:1287-1497 [v2.10.3.13]. Each
-// region needs its own constexpr std::array<BandRange, N> and a
-// corresponding switch arm in bandRangesFor() below.
-//
-// These 19 tables are explicitly deferred per Phase 3M-0 Task 2 scope
-// (estimated ~10 hours of transcription work; BandPlanGuard is inert
-// until 3M-1a fires the first MOX byte). The switch falls through to
-// kUsBandRanges as a safe default — no TX is possible until 3M-1a wires
-// the guard into the MOX path.
-
 // ---------------------------------------------------------------------------
 // Helper: return 60m channels for region (empty span → no channelization)
 // ---------------------------------------------------------------------------
@@ -311,13 +296,14 @@ static ChannelSpan channels60mFor(Region region) noexcept
     case Region::Japan:
         return { kJapanChannels60m.data(), kJapanChannels60m.size() };
     case Region::UnitedStates:
-    default:
         return { kUsChannels60m.data(), kUsChannels60m.size() };
+    // TODO(3M follow-up): Add per-region 60m channel arms for regions with
+    // discrete channelization (Italy, Slovakia, etc. — see Thetis source).
+    // Regions with NO channelization MUST NOT fall through to US channels —
+    // they must return { nullptr, 0 } so the band-range check governs.
+    default:
+        return { nullptr, 0 };
     }
-    // Remaining 19 regions: most have no 60m channelization (empty span
-    // → the B60M band range row, if any, is skipped in the range loop).
-    // Each region with discrete 60m channels gets its own arm here when
-    // the table is transcribed in the follow-up work.
 }
 
 // ---------------------------------------------------------------------------
@@ -343,14 +329,20 @@ static RangeSpan bandRangesFor(Region region) noexcept
         return { kAustraliaBandRanges.data(), kAustraliaBandRanges.size() };
     case Region::Spain:
         return { kSpainBandRanges.data(), kSpainBandRanges.size() };
+    // TODO(3M follow-up): Add per-region band-range arms for the 18
+    // remaining regions (India, Italy, Israel, Norway, Denmark, Sweden,
+    // Latvia, Slovakia, Bulgaria, Greece, Hungary, Netherlands, France,
+    // Russia, Region3, Germany — Region1 already maps to Europe, Region2
+    // to UnitedStates). Each region needs ~12 lines of constexpr array
+    // transcribed verbatim from clsBandStackManager.cs:1287-1497
+    // [v2.10.3.13] plus 2 test cases.
+    //
+    // 3M-0 ships with US-fallback default — BandPlanGuard is inert
+    // until 3M-1a wires it into the MOX path. Safe to defer.
     case Region::UnitedStates:
     case Region::Region2:
     default:
         return { kUsBandRanges.data(), kUsBandRanges.size() };
-    // Remaining 19 region tables (India, Italy, Israel, Norway, Denmark,
-    // Sweden, Latvia, Slovakia, Bulgaria, Greece, Hungary, Netherlands,
-    // France, Russia, Region3, Germany) are deferred to follow-up work.
-    // Each will add a constexpr array + switch arm here.
     }
 }
 
@@ -395,9 +387,16 @@ bool BandPlanGuard::isValidTxFreq(Region region, std::int64_t freqHz,
         return true;
     }
 
-    // 60m: regional channelization (console.cs:2643-2669 [v2.10.3.13])
-    // takes precedence over the broad B60M range entry.
-    // US 60m additionally restricts mode (console.cs:29416-29432 [v2.10.3.13]).
+    // NereusSDR safety enhancement: gates US 60m TX on the 5 discrete channel
+    // centers (±BW/2). This is more restrictive than Thetis's IsOKToTX
+    // (clsBandStackManager.cs:1063-1083 [v2.10.3.13]), which allows TX
+    // anywhere in the broad B60M range. Thetis uses the channels_60m table
+    // (console.cs:2643-2669 [v2.10.3.13]) only for VFO snap and band-stack
+    // display, NOT for TX gating. The channelized gate is intentional here per
+    // FCC Part 97.303(h), which permits US 60m operation on these 5 channels
+    // only.
+    //
+    // US 60m mode restriction (USB/CWL/CWU/DIGU only) per console.cs:29423.
     const ChannelSpan ch60m = channels60mFor(region);
     for (std::size_t i = 0; i < ch60m.size; ++i) {
         if (isInChannel(freqHz, ch60m.data[i])) {
@@ -409,10 +408,14 @@ bool BandPlanGuard::isValidTxFreq(Region region, std::int64_t freqHz,
     }
 
     // All other bands: check per-region band edges.
-    // Skip B60M rows — 60m is channelized and was already handled above.
+    // Skip B60M rows only when the region has discrete channels — for those
+    // regions, channelization was the authoritative check above and the broad
+    // B60M range entry is a placeholder. For regions with NO channelization
+    // (e.g. Australia's wide 5.0-7.0 MHz allocation), the B60M range row
+    // is the authoritative source and must NOT be skipped.
     const RangeSpan ranges = bandRangesFor(region);
     for (std::size_t i = 0; i < ranges.size; ++i) {
-        if (ranges.data[i].band == Band::Band60m) {
+        if (ranges.data[i].band == Band::Band60m && ch60m.size > 0) {
             // B60M range placeholder — channelization was the authoritative
             // check above. Skip to avoid false positives on the broad edge.
             continue;

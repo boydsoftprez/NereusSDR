@@ -1,7 +1,6 @@
 // no-port-check: test fixture asserting BandPlanGuard predicates against Thetis source rules
 #include <QtTest>
 #include "core/safety/BandPlanGuard.h"
-#include "core/HpsdrModel.h"
 #include "core/WdspTypes.h"
 #include "models/Band.h"
 
@@ -15,7 +14,7 @@ private slots:
     void us60m_validChannelCenter_returnsTrue();
     void us60m_offChannel_returnsFalse();
     void us60m_LSBmode_returnsFalse();
-    void us60m_USBmode_returnsTrue();
+    void us60m_permittedModes_returnTrue();
     void uk60m_channel1_3kHz_returnsTrue();
     void uk60m_channel8_12_5kHz_returnsTrue();
     void japan60m_4_63MHz_returnsTrue();
@@ -24,6 +23,12 @@ private slots:
     void differentBandGuard_blocksMismatch_returnsFalse();
     void band20m_USB_validRange_returnsTrue();
     void band20m_USB_outOfBand_returnsFalse();
+    void europe40m_inBand_returnsTrue();
+    void europe40m_outOfBand_returnsFalse();
+    void australia60m_wideRange_returnsTrue();
+    void australia6m_outOfBand_returnsFalse();
+    void spain20m_inBand_returnsTrue();
+    void spain6m_outOfBand_returnsFalse();
 };
 
 void TestBandPlanGuard::us60m_validChannelCenter_returnsTrue()
@@ -54,7 +59,7 @@ void TestBandPlanGuard::us60m_LSBmode_returnsFalse()
     QVERIFY(!result);
 }
 
-void TestBandPlanGuard::us60m_USBmode_returnsTrue()
+void TestBandPlanGuard::us60m_permittedModes_returnTrue()
 {
     // All four US 60m permitted modes pass on a valid channel center
     // (console.cs:29420-29423 [v2.10.3.13])
@@ -124,6 +129,56 @@ void TestBandPlanGuard::band20m_USB_outOfBand_returnsFalse()
     // 14.500 MHz is above the US 20m band edge of 14.350 MHz
     BandPlanGuard guard;
     QVERIFY(!guard.isValidTxFreq(Region::UnitedStates, 14'500'000, DSPMode::USB, false));
+}
+
+void TestBandPlanGuard::europe40m_inBand_returnsTrue()
+{
+    // 7.100 MHz is squarely in the Europe 40m band (7.000-7.200 MHz)
+    // (clsBandStackManager.cs:1109 [v2.10.3.13])
+    BandPlanGuard guard;
+    QVERIFY(guard.isValidTxFreq(Region::Europe, 7'100'000, DSPMode::USB, false));
+}
+
+void TestBandPlanGuard::europe40m_outOfBand_returnsFalse()
+{
+    // 7.250 MHz is above the Europe 40m band edge of 7.200 MHz
+    // (clsBandStackManager.cs:1109 [v2.10.3.13])
+    BandPlanGuard guard;
+    QVERIFY(!guard.isValidTxFreq(Region::Europe, 7'250'000, DSPMode::USB, false));
+}
+
+void TestBandPlanGuard::australia60m_wideRange_returnsTrue()
+{
+    // Australia has a wide 60m allocation 5.000-7.000 MHz with no channelization
+    // (clsBandStackManager.cs:1485 [v2.10.3.13]). With C1 fixed, Region::Australia
+    // returns an empty channels span, so 5.500 MHz falls through to the band-range
+    // check where the B60M row (not skipped for unchannelized regions) matches.
+    BandPlanGuard guard;
+    QVERIFY(guard.isValidTxFreq(Region::Australia, 5'500'000, DSPMode::USB, false));
+}
+
+void TestBandPlanGuard::australia6m_outOfBand_returnsFalse()
+{
+    // 54.500 MHz is above Australia's 6m band edge of 54.000 MHz
+    // (clsBandStackManager.cs:1499 [v2.10.3.13])
+    BandPlanGuard guard;
+    QVERIFY(!guard.isValidTxFreq(Region::Australia, 54'500'000, DSPMode::USB, false));
+}
+
+void TestBandPlanGuard::spain20m_inBand_returnsTrue()
+{
+    // 14.200 MHz is in the Spain 20m band (14.000-14.350 MHz)
+    // (clsBandStackManager.cs:1455 [v2.10.3.13])
+    BandPlanGuard guard;
+    QVERIFY(guard.isValidTxFreq(Region::Spain, 14'200'000, DSPMode::USB, false));
+}
+
+void TestBandPlanGuard::spain6m_outOfBand_returnsFalse()
+{
+    // 52.500 MHz is above Spain's 6m band edge of 52.000 MHz
+    // (clsBandStackManager.cs:1464 [v2.10.3.13])
+    BandPlanGuard guard;
+    QVERIFY(!guard.isValidTxFreq(Region::Spain, 52'500'000, DSPMode::USB, false));
 }
 
 QTEST_GUILESS_MAIN(TestBandPlanGuard)
