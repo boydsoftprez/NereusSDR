@@ -281,7 +281,7 @@ struct BoardCapabilities {
 
     // canDriveGanymede: True iff this SKU is the Andromeda-console family that
     //   connects to a Ganymede 500W PA (Andromeda.cs:914-920 [v2.10.3.13]).
-    bool canDriveGanymede{false};
+    bool canDriveGanymede {false};
 
     bool hasPureSignal;
     bool hasDiversityReceiver;

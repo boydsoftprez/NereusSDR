@@ -128,6 +128,7 @@ enum class HPSDRHW : int {
     // NereusSDR-original SKU slots — NOT on the Thetis wire; integers chosen
     // above the Thetis-defined range (0-11) and below Unknown(999).
     HermesLiteRxOnly = 12, // HL2 RX-only kit (no TX driver). Phase 3M-0.
+    // 13..19 available for future NereusSDR-original SKU slots.
     Andromeda        = 20, // Andromeda console (Ganymede PA trip). Phase 3M-0.
     Unknown    = 999
 };

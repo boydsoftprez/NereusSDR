@@ -17,9 +17,11 @@ private slots:
         QTest::newRow("Angelia")    << int(HPSDRHW::Angelia);
         QTest::newRow("Orion")      << int(HPSDRHW::Orion);
         QTest::newRow("OrionMKII")  << int(HPSDRHW::OrionMKII);
-        QTest::newRow("HermesLite") << int(HPSDRHW::HermesLite);
-        QTest::newRow("Saturn")     << int(HPSDRHW::Saturn);
-        QTest::newRow("SaturnMKII") << int(HPSDRHW::SaturnMKII);
+        QTest::newRow("HermesLite")       << int(HPSDRHW::HermesLite);
+        QTest::newRow("HermesLiteRxOnly") << int(HPSDRHW::HermesLiteRxOnly);
+        QTest::newRow("Saturn")           << int(HPSDRHW::Saturn);
+        QTest::newRow("SaturnMKII")       << int(HPSDRHW::SaturnMKII);
+        QTest::newRow("Andromeda")        << int(HPSDRHW::Andromeda);
     }
     void forBoardReturnsMatchingEntry() {
         QFETCH(int, hw);
