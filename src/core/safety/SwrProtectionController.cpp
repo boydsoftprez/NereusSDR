@@ -144,7 +144,7 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
     }
 
     // ── Open-antenna heuristic ────────────────────────────────────────────
-    // console.cs:25989-26009 [2.10.3.6]MW0LGE
+    // console.cs:25989-26009 [v2.10.3.6]MW0LGE
     // in following 'if', K2UE recommends not checking open antenna for the 8000 model
     // if (swrprotection && alex_fwd > 10.0f && (alex_fwd - alex_rev) < 1.0f)
     //-W2PA Changed to allow 35w - some amplifier tuners need about 30w to reliably start working

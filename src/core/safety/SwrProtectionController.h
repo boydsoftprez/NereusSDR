@@ -86,7 +86,7 @@ namespace NereusSDR::safety {
 ///
 /// Open-antenna heuristic: fwd > 10W and (fwd-rev) < 1W → swr=50, factor=0.01,
 ///   highSwr=true, openAntennaDetected=true.
-///   Cite: console.cs:25989-26009 [2.10.3.6]MW0LGE.
+///   Cite: console.cs:25989-26009 [v2.10.3.6]MW0LGE.
 ///
 /// Tune-time bypass: disableOnTune=true + tuneActive=true + fwd in [1, tunePowerSwrIgnore]
 ///   → factor=1.0, highSwr cleared.
