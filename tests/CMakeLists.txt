@@ -654,4 +654,11 @@ nereus_add_test(tst_swr_protection_controller)
 # Ports Thetis console.cs:25801-25839 [v2.10.3.13] (PollTXInhibit loop).
 nereus_add_test(tst_tx_inhibit_monitor)
 
+# ── Phase 3M-0 Task 5: setWatchdogEnabled(bool) stub on RadioConnection ──────
+# 8 tests assert boolean state-tracking only — NO wire-format assertions.
+# Bit position is unknown (inside Thetis closed-source ChannelMaster.dll);
+# wire emit deferred to 3M-1a. API mirrors NetworkIOImports.cs:197-198
+# [v2.10.3.13] (DllImport SetWatchdogTimer entry point).
+nereus_add_test(tst_radio_connection_watchdog)
+
 

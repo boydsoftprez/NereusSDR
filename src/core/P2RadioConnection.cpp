@@ -539,6 +539,38 @@ void P2RadioConnection::setAntennaRouting(AntennaRouting r)
     }
 }
 
+// ---------------------------------------------------------------------------
+// setWatchdogEnabled — Phase 3M-0 Task 5
+//
+// Records the requested watchdog enable state in the base-class
+// m_watchdogEnabled field (shared with P1).
+//
+// From Thetis NetworkIOImports.cs:197-198 [v2.10.3.13]:
+//   [DllImport("ChannelMaster.dll", CallingConvention = CallingConvention.Cdecl)]
+//   public static extern void SetWatchdogTimer(int bits);
+//
+// The callsite (setup.cs:17986 [v2.10.3.13]):
+//   NetworkIO.SetWatchdogTimer(Convert.ToInt32(chkNetworkWDT.Checked));
+//
+// NOTE: P2RadioConnection already carries m_wdt (int, maps to prn->wdt) which
+// is set to 1 unconditionally in connectToRadio() because the radio requires
+// the watchdog for streaming. m_watchdogEnabled records the *user* toggle from
+// Setup → Network WDT checkbox; the relationship to m_wdt is deferred to 3M-1a.
+//
+// TODO [3M-1a]: reconcile m_watchdogEnabled with m_wdt / prn->wdt and emit
+// the wire bit update via sendCmdGeneral(). Bit position is currently unknown —
+// Thetis dispatches via ChannelMaster.dll (closed source). Identify via wire
+// capture or HL2-firmware reading; until then this is a state-tracking stub.
+// Cite: NetworkIOImports.cs:197-198 [v2.10.3.13] (DllImport entry).
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setWatchdogEnabled(bool enabled)
+{
+    if (m_watchdogEnabled == enabled) {
+        return;
+    }
+    m_watchdogEnabled = enabled;
+}
+
 // --- UDP Reception ---
 // Porting from Thetis ReadUDPFrame() network.c:481
 // Single socket, dispatch by source port: inport = ntohs(fromaddr.sin_port)

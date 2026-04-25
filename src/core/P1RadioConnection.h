@@ -125,6 +125,7 @@ public slots:
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
+    void setWatchdogEnabled(bool enabled) override;
 
 private slots:
     void onReadyRead();
