@@ -30,7 +30,7 @@ brainstorm and govern all subsequent implementation.
 | **Q3** | **`TxChannel` ownership:** `WdspEngine` owns both RX and TX channels in a single shared channel-ID namespace. Mirrors Thetis cmaster.c structure. PureSignal cross-channel wiring works naturally because both sides addressable through one engine. | WDSP itself uses `struct _ch ch[MAX_CHANNELS]` shared array (`channel.c:29`); same `OpenChannel` API for RX (type=0) and TX (type=1). PureSignal indexes by raw channel ID across the shared namespace (`sync.c:70-76`) |
 | **Q4** | **MOX delays** scheduled via `QTimer::singleShot` chain on main thread (NOT `Thread.Sleep`, NOT a worker thread). Defers PTT-down request until in-flight PTT-up sequence completes, matching Thetis's uninterruptible-sleep behavior. | Thetis uses inline `Thread.Sleep` (5 calls in `chkMOX_CheckedChanged2`); we cannot block Qt main thread. `QTimer::singleShot` accuracy ±1-3ms matches Thetis's scheduler accuracy |
 | **Q5** | **PA telemetry** flows from `RadioStatus` (3P-H) → `MeterPoller` cache via Qt signal/slot push. `MeterBinding::TxPower/TxReversePower/TxSwr` (100/101/102) cache fills automatically on signal; meter widgets repaint at 10 Hz. | `RadioStatus::paFwdChanged`/`paRevChanged`/`paSwrChanged` signals already exist from 3P-H Diagnostics work |
-| **Q6** | **`BandPlanGuard`** uses compiled C++ `constexpr` tables for IARU Region 1/2/3 + per-band frequency edges + per-band mode/BW restrictions (60m channelized rules). MARS/CAP toggle in `Setup → General → Options` bypasses guards (with warning text + license-acknowledgment label). | Thetis hard-codes equivalent at `console.cs:29401-29481`. Compiled tables are type-safe at compile time, can't be silently broken by a malformed JSON resource at runtime |
+| **Q6** | **`BandPlanGuard`** uses compiled C++ `constexpr` tables for 24 regions + per-band frequency edges + per-band mode/BW restrictions (full 60m channel table per region: UK 11-channel w/ per-channel BW, US 5×2.8 kHz, JA 4.63 MHz). **`Extended` toggle** (Thetis-faithful name) in `Setup → General → Hardware Configuration` bypasses guards. | Thetis hard-codes equivalent at `clsBandStackManager.cs:1063-1083` + `console.cs:6770-6816, 29401-29481`. Pre-code review (2026-04-25) confirmed Thetis canonical name is `Extended` not `MARS/CAP`; corrected. Compiled tables are type-safe at compile time, can't be silently broken by a malformed JSON resource at runtime |
 | **Q7** | **3M-0 packaging:** ships its own PR (likely v0.2.4) before any TX code lands. Safety net is in main BEFORE 3M-1a writes the first MOX byte. | Matches established pattern: 3G-13, 3G-14, 3P-I-a, 3P-I-b each shipped own PR. Reduces 3M-1a risk; surfaces user-visible value (PA meters live during RX) earlier |
 
 ### 2.2 Meta rules
@@ -124,67 +124,171 @@ wires the first MOX, the safety layer activates automatically.
 
 ### 4.1 Components
 
-1. **`SwrProtectionController`** — Thetis port of `console.cs:6642, 19022,
-   19013, 19032, 19740`. Inputs: forward power (W), reverse power (W),
-   tune-active flag. Computes `swr = (1+ρ)/(1−ρ)` where `ρ=√(rev/fwd)`.
-   Outputs: `swrProtectFactor` (1.0 = no foldback, scales drive),
-   `highSwr` flag. Configurable threshold (default SWR 3.0), windback
-   rate (default 0.5/sec), disable-on-tune toggle. Plumbed but not yet
-   routed to `RadioConnection::setOutputPower()` — that wiring is 3M-1a.
+1. **`SwrProtectionController`** — Thetis port of the `PollPAPWR` async loop
+   (`console.cs:25933-26120 [v2.10.3.13]`). Inputs: forward power (W),
+   reverse power (W), tune-active flag. Computes
+   `ρ = √(alex_rev / alex_fwd); swr = (1+ρ)/(1−ρ)` (verbatim
+   `console.cs:25972-25976`); clamps to 1.0 when both values ≤ 2.0.
+   Outputs: `swrProtectFactor` (1.0 = no foldback, multiplies drive in
+   `SetOutputPower`) + `highSwr` flag. Two-stage foldback math:
+   (a) per-sample foldback when `swr ≥ _swrProtectionLimit`:
+   `swrProtectFactor = limit / (swr + 1.0f)`;
+   (b) latched windback after 4 consecutive trip samples:
+   `swrProtectFactor = 0.01f` until MOX-off (`UIMOXChangedFalse`).
+   Defaults from Thetis: `_swrProtectionLimit = 2.0f`,
+   `_tunePowerSwrIgnore = 35.0f`, `alex_fwd_limit = 5.0f` (8000D uses
+   `2.0 × ptbPWR.Value` per K2UE recommendation). Open-antenna detection:
+   `(alex_fwd > 10 && (fwd-rev) < 1)` → `swr = 50.0f`,
+   `swrProtectFactor = 0.01f`, drop MOX (8000D excluded). Poll cadence:
+   1 ms during MOX, 10 ms during RX. EMA alpha for forward-power
+   smoothing: 0.90. Plumbed but not yet routed to
+   `RadioConnection::setOutputPower()` — that wiring is 3M-1a.
 
-2. **`TxInhibitMonitor`** — Polls `getUserI01_p2()` at 50ms cadence;
+2. **`TxInhibitMonitor`** — Polls user-IO input pin at 100 ms cadence
+   (Thetis `PollTXInhibit` `console.cs:25801-25839 [v2.10.3.13]`);
    emits `txInhibited(bool, source)` where source ∈ {`UserIo01`,
-   `Rx2OnlyRadio`, `OutOfBand`, `BlockTxAntenna`}. Status-bar label
-   re-targeted from 3P-H Diagnostics work.
+   `Rx2OnlyRadio`, `OutOfBand`, `BlockTxAntenna`}. Per-board pin map:
+   ANAN7000D / 8000D / RedPitaya use `getUserI02()` (P1) /
+   `getUserI05_p2()` (P2); other boards use `getUserI01()` (P1) /
+   `getUserI04_p2()` (P2). Active-low at GPIO; `_reverseTxInhibit`
+   inverts further. The aggregated `source` enum is NereusSDR-original;
+   each source's predicate cites a different Thetis line:
+   `UserIo01` → `console.cs:25801-25839`;
+   `Rx2OnlyRadio` → `console.cs:15283-15307` (`RXOnly`);
+   `OutOfBand` → `console.cs:6770-6806` (`CheckValidTXFreq`) +
+   `console.cs:29435-29481` (MOX-entry rejection);
+   `BlockTxAntenna` → `Andromeda/Andromeda.cs:285-306`. Status-bar
+   label `toolStripStatusLabel_TXInhibit` re-targeted from 3P-H.
 
-3. **Watchdog** — `RadioConnection::setWatchdogTimer(ms)` wraps
-   `SetWatchdogTimer` import (default 1000ms). Renewed on every
-   command-out flush.
+3. **Watchdog** — `RadioConnection::setWatchdogEnabled(bool)` wraps
+   `SetWatchdogTimer(int bits)` (`NetworkIOImports.cs:197-198`). Boolean
+   only, not parameterized in milliseconds — radio firmware owns the
+   timeout. Set once on Setup toggle (`chkNetworkWDT`, default ON), no
+   host-side renewal cadence. (Earlier draft proposed `setWatchdogTimer(ms)`;
+   pre-code review confirmed Thetis API is bool-only — corrected.)
 
-4. **`BandPlanGuard`** — Compiled C++ `constexpr` tables: IARU Region 1/2/3
-   × 14 bands × mode/BW restrictions. 60m channelized rules (US: USB/CWL/CWU/DIGU
-   only, ≤2.8 kHz, five 2.8 kHz channels). `_preventTXonDifferentBandToRXband`
-   guard. MARS/CAP override toggle.
+4. **`BandPlanGuard`** — Compiled C++ `constexpr` tables, ported from
+   Thetis `clsBandStackManager.cs:1063-1083` (`IsOKToTX`),
+   `console.cs:6770-6816` (`CheckValidTXFreq` + `checkValidTXFreq_local`).
+   24 region entries (Australia / Europe / India / Italy / Israel /
+   Japan / Spain / United Kingdom / United States / Norway / Denmark /
+   Sweden / Latvia / Slovakia / Bulgaria / Greece / Hungary /
+   Netherlands / France / Russia / Region1 / Region2 / Region3 /
+   Germany — `setup.designer.cs:8084-8108`). Per-band frequency edges
+   from `clsBandStackManager.cs:1334-1497`. **Full Thetis 60m channel
+   table** (`Init60mChannels()`, `console.cs:2643-2669`):
+   - UK: 11 channels with per-channel BW from 3.0 to 12.5 kHz
+     (`5.26125 / 5.500 kHz BW`, `5.2800 / 8.0`, `5.29025 / 3.5`,
+     `5.3025 / 9.0`, `5.3180 / 10.0`, `5.3355 / 5.0`, `5.3560 / 4.0`,
+     `5.36825 / 12.5`, `5.3800 / 4.0`, `5.39825 / 6.5`, `5.4050 / 3.0`)
+   - US: 5 channels @ 2.8 kHz (`5.3320`, `5.3480`, `5.3585`, `5.3730`,
+     `5.4050` MHz)
+   - Default (other regions): same as US
+   - Japan: discrete `4.629995-4.630005 MHz` allocation (different from
+     IARU 60m)
+   60m mode-restriction (US-only): mode ∈ {USB, CWL, CWU, DIGU}
+   (`console.cs:29416-29433`). Different-band guard
+   `_preventTXonDifferentBandToRXband` (`console.cs:29401-29414`).
+   **Override toggle: `Extended`** (matches Thetis `chkExtended`,
+   `setup.designer.cs:8065-8077`) — bypasses `IsOKToTX` and
+   `CheckValidTXFreq` entirely. Tooltip: `"Enable extended TX (out of band)"`.
+   Companion red warning label: `"Changing this setting will reset your
+   band stack entries"`. (Earlier draft used name "MARS/CAP" — pre-code
+   review confirmed Thetis canonical name is `Extended`; corrected.)
+   The "US Technician 10m phone restriction" mentioned in earlier scope
+   sketches is **not in Thetis** and is dropped — license-class is not
+   modelled in Thetis's region tables.
 
 5. **PA telemetry → `MeterPoller`** — `RadioStatus::paFwdChanged`/
    `paRevChanged`/`paSwrChanged` signals connect to `MeterPoller`'s cache
    updater. Bindings 100 (TxPower), 101 (TxReversePower), 102 (TxSwr) start
    delivering live values. **First user-visible deliverable** — PA meters
-   paint values during RX (typically 0/0/1.0 baseline).
+   paint values during RX (typically 0/0/1.0 baseline). Per-board scaling
+   formulas ported verbatim from Thetis `computeAlexFwdPower`
+   (`console.cs:25008-25072`) — each board has its own
+   `bridge_volt`/`refvoltage`/`adc_cal_offset` triplet:
+   - ANAN100/100B: `0.095, 3.3, 6`
+   - ANAN100D: `0.095, 3.3, 6`
+   - ANAN200D: `0.108, 5.0, 4`
+   - ANAN7000D / AnvelinaPro3 / G2 / G2-1K / RedPitaya: `0.12, 5.0, 32`
+     (RedPitaya tag `//DH1KLM` preserved per attribution rules)
+   - ORIONMKII / ANAN8000D: `0.08, 5.0, 18`
+   - Default: `0.09, 3.3, 6`
+   ADC→volts: `volts = (adc - adc_cal_offset) / 4095.0f * refvoltage`;
+   `watts = volts² / bridge_volt`. Low-power-board exciter formula is a
+   piecewise-linear breakpoint table (`console.cs:25074-25140`); ported
+   verbatim. `CalibratedPAPower()` integration with 3P-G calibration
+   table is preserved.
 
-6. **`HighSwr` flash overlay** — `SpectrumWidget` flash overlay tied to
-   `SwrProtectionController::highSwrChanged`. 2 Hz blink at 50% opacity
-   when high SWR flag set; auto-clear 2s after recovery.
+6. **`HighSwr` overlay** — Thetis-parity static red overlay on
+   `SpectrumWidget` tied to `SwrProtectionController::highSwrChanged`.
+   When set, paint `"HIGH SWR"` text + 6 px red border around the spectrum
+   area (verbatim from `display.cs:4183-4201 [v2.10.3.13]`). When power
+   foldback latches, append `"\n\nPOWER FOLD BACK"`. (Earlier draft
+   proposed 2 Hz blink + 2s recovery hold — pre-code review confirmed
+   Thetis is static; reverting to Thetis-parity. Blink/hold UX filed as
+   post-3M epic enhancement issue.)
 
 7. **Block-TX safety** — `MoxController` (in 3M-1a) refuses to enter
    `RxToTxPending` if `AlexController::m_blockTxAnt2`/`3` matches the
    selected TX antenna. Surface 3M-0 prepares; activation is 3M-1a.
 
-8. **`BoardCapabilities` flags** — Add `boardIsRxOnly()`,
-   `boardHasGanymedePaIssue()`. Hard-block at MoxController level.
+8. **RX-only and PA-trip predicates** — split into capability vs live
+   state per pre-code review findings:
+   - `BoardCapabilities::isRxOnlySku()` — hard-coded SKU list (e.g.,
+     HL2-receive-only kits) AND `appSettings.RxOnly` user-toggle
+     (`chkGeneralRXOnly` mirror, `console.cs:15283-15307`). Combined
+     predicate `caps.isRxOnlySku() || appSettings.RxOnly` hard-blocks
+     MOX entry. (Thetis treats this purely as a user toggle; we add the
+     SKU bit because some HL2 variants ship without TX hardware.)
+   - `RadioModel::paTripped()` — **live state**, not a capability. Set
+     by Ganymede CAT trip messages (`Andromeda/Andromeda.cs:914-920`),
+     cleared by `GanymedeResetPressed` or by `GanymedePresent = false`.
+     Hard-blocks MOX entry while set. (Earlier draft mis-named this as
+     `boardHasGanymedePaIssue()` on `BoardCapabilities` — corrected.)
+   - `BoardCapabilities::canDriveGanymede()` — real capability flag for
+     boards that connect to a Ganymede 500W PA (Andromeda console
+     family). Stays on `BoardCapabilities`.
 
 ### 4.2 UI surfaces (deep-wired)
 
 | Surface | Controls | Depth |
 |---|---|---|
-| **Setup → Transmit → Power & PA** | Max power slider, per-band tune-power table, SWR thresholds + windback rate + disable-on-tune, watchdog ms, fan toggles, PA telemetry readouts with threshold lines | Full |
-| **Setup → General → Options** | MARS/CAP toggle (with warning text and license-acknowledgment label), RX-only / Ganymede-PA-issue read-only badges | Full |
-| **SpectrumWidget overlays** | HighSWR red-flash, TX-attenuator dBm offset, basic Display.MOX paint | Active during RX (no MOX yet); Display.MOX paint dormant |
-| **Status bar** (3P-H integration) | TX Inhibit label re-targeted, PA Status badge | Live |
+| **Setup → Transmit → SWR Protection** *(group box `grpSWRProtectionControl`)* | `chkSWRProtection` (toggle, default off, tooltip `"Show a visual SWR warning in the spectral area"`), `udSwrProtectionLimit` (1.0-5.0, default 2.0, suffix `:1`), `chkSWRTuneProtection` (toggle, tooltip `"Disables SWR Protection during Tune."`), `udTunePowerSwrIgnore` (5-50, default 35, suffix `W`), `chkWindBackPowerSWR` (toggle, tooltip `"Winds back the power if high swr protection kicks in"`) | Full Thetis parity (`setup.designer.cs:5793-5924`) |
+| **Setup → Transmit → External TX Inhibit** *(group box `grpExtTXInhibit`)* | `chkTXInhibit` (toggle, default off, tooltip `"Thetis will update on TX inhibit state change"`), `chkTXInhibitReverse` (toggle, tooltip `"Reverse the input state logic"`) | Full Thetis parity (`setup.designer.cs:46626-46657`) |
+| **Setup → Transmit → "Disable HF PA"** | `chkHFTRRelay` (`hf_tr_relay`, toggle, tooltip `"Disables HF PA."`) | Full (`setup.designer.cs:5780-5791`) |
+| **Setup → Transmit → Block-TX antennas** *(panel `panelAlexRXAntControl`)* | `chkBlockTxAnt2` + `chkBlockTxAnt3` — Thetis ships these as unlabelled column-header checkboxes (15×14 px, no Text); we add accessibility labels: `"Block TX on Ant 2"` / `"Block TX on Ant 3"` (NereusSDR-original copy, comment with `setup.designer.cs:6704-6724` cite) | NereusSDR-original labels |
+| **Setup → General → Hardware Configuration** | `comboFRSRegion` (24 entries, default `"United States"`, tooltip `"Select Region for your location"`), `chkExtended` (toggle, tooltip `"Enable extended TX (out of band)"`, with red warning label `"Changing this setting will reset your band stack entries"`), `chkGeneralRXOnly` (toggle, tooltip `"Check to disable transmit functionality."`, default hidden — visibility per board model), `chkNetworkWDT` (toggle, default ON, tooltip `"Resets software/firmware if network becomes inactive."`) | Full Thetis parity |
+| **Setup → General → Options** *(group `grpGeneralOptions`)* | `chkPreventTXonDifferentBandToRX` (toggle, default off, tooltip `"Prevent TX'ing on a different band to the RX band"`) | Full |
+| **SpectrumWidget overlays** | `HIGH SWR` text + 6 px red border (Thetis-parity static, `display.cs:4183-4201`) — appends `\n\nPOWER FOLD BACK` when latched windback active. TX-attenuator dBm offset, basic Display.MOX paint | Active during RX (no MOX yet); Display.MOX paint dormant |
+| **Status bar** (3P-H integration) | `toolStripStatusLabel_TXInhibit` re-targeted (image `Properties.Resources.stop`, tooltip `"Hardware TX Inhibit"`); `toolStripStatusLabel_PAstatus` (live, click = reset Ganymede when resettable, right-click = jump to PA setup) | Live |
 
 ### 4.3 Verification
 
 - **Synthetic SWR=4.0:** unit test feeds high-SWR values into
-  `SwrProtectionController`, verify `swrProtectFactor` drops smoothly,
-  `highSwr` flag rises after threshold-cross hold, falls 2s after recovery.
-- **`BandPlanGuard` table-driven tests:** Region 1/2/3 × all bands × all
-  modes × 60m corner cases verified against Thetis `console.cs:29401-29481`
-  byte-for-byte logic.
+  `SwrProtectionController`. Verify per-sample foldback factor
+  `swrProtectFactor = limit/(swr+1.0)`. Verify trip latch only after
+  ≥4 consecutive trip samples (Thetis `console.cs:26070`). Verify
+  windback latches at `0.01f` until MOX-off.
+- **`BandPlanGuard` table-driven tests:** All 24 regions × 14 bands ×
+  all modes × 60m corner cases (UK 11 channels, US 5 channels, JA
+  4.63 MHz allocation) verified against Thetis
+  `clsBandStackManager.cs:1063-1083` and `console.cs:29401-29481`.
+  Verify `Extended` toggle bypasses both predicates as in Thetis
+  (`console.cs:6772, 6810`).
+- **Per-board PA scaling:** unit test each board's
+  `bridge_volt`/`refvoltage`/`adc_cal_offset` triplet against
+  Thetis `computeAlexFwdPower` reference values for known ADC inputs.
 - **Hardware:** ANAN-G2 with intentional 3:1 antenna-mismatch jig.
-  HighSWR flash overlay fires on RX; PA meters paint values.
-- **Two-phase Thetis review:** Pre-code agent enumerates Setup → Transmit →
-  Power & PA page + Setup → General → Options page + status-bar items.
-  Post-code agent verifies coverage.
+  Static `"HIGH SWR"` overlay paints on RX; PA meters paint values.
+  Open-antenna case (`fwd > 10W && (fwd-rev) < 1W`): SWR jumps to 50,
+  windback latches.
+- **Two-phase Thetis review:** Pre-code review complete (output
+  consumed into this design). Post-code agent verifies coverage of
+  Setup → Transmit → SWR Protection / External TX Inhibit / Disable
+  HF PA / Block-TX antennas / Setup → General → Hardware Configuration /
+  Options + status-bar items + per-board PA scaling tables + 60m
+  channel tables. ❌ items block merge.
 
 ### 4.4 Files
 
@@ -194,13 +298,23 @@ wires the first MOX, the safety layer activates automatically.
 - `src/core/safety/BandPlanGuard.{h,cpp}`
 
 **Modified:**
-- `src/core/RadioConnection.{h,cpp}` — watchdog method
-- `src/core/RadioModel.cpp` — own the safety controllers
-- `src/gui/SpectrumWidget.{h,cpp}` — HighSWR flash overlay
-- `src/gui/setup/TransmitSetupPages.cpp` — Power & PA wiring
-- `src/gui/setup/GeneralOptionsPage.cpp` — MARS/CAP toggle
-- `src/models/BoardCapabilities.{h,cpp}` — rxOnly + ganymedePaIssue
+- `src/core/RadioConnection.{h,cpp}` — `setWatchdogEnabled(bool)`
+- `src/core/RadioModel.{h,cpp}` — own the safety controllers; add
+  `paTripped()` live state property
+- `src/gui/SpectrumWidget.{h,cpp}` — Thetis-parity static `"HIGH SWR"`
+  text + 6 px red border overlay
+- `src/gui/setup/TransmitSetupPages.cpp` — SWR Protection group, External
+  TX Inhibit group, Block-TX antennas, Disable HF PA toggle
+- `src/gui/setup/GeneralOptionsPage.cpp` — `Extended` toggle (renamed
+  from MARS/CAP), `chkPreventTXonDifferentBandToRX`, `chkNetworkWDT`,
+  region combo, RX-only toggle (visibility per board)
+- `src/models/BoardCapabilities.{h,cpp}` — `isRxOnlySku()`,
+  `canDriveGanymede()` (NOT `boardHasGanymedePaIssue()` — that's live
+  state on `RadioModel`)
 - `src/gui/meters/MeterPoller.{h,cpp}` — telemetry routing
+- `src/core/RadioStatus.{h,cpp}` — verify per-board PA scaling matches
+  Thetis `computeAlexFwdPower` (already present from 3P-H; add
+  cross-check tests)
 
 ### 4.5 Risk
 
