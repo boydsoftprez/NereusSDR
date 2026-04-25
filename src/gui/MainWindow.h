@@ -190,10 +190,14 @@ private:
     MeterPoller* m_meterPoller{nullptr};
     void populateDefaultMeter();
 
-    // Menu DSP actions (for overlay sync — Phase 3-UI)
-    QAction* m_nrAction  = nullptr;
-    QAction* m_nbAction  = nullptr;
-    QAction* m_anfAction = nullptr;
+    // Menu DSP actions
+    // NR / NB submenus use exclusive QActionGroups; SNB / APF / BIN are
+    // single toggle actions that mirror SliceModel state.
+    QActionGroup* m_nrGroup   = nullptr;
+    QActionGroup* m_nbGroup   = nullptr;
+    QAction*      m_snbAction = nullptr;
+    QAction*      m_apfAction = nullptr;
+    QAction*      m_binAction = nullptr;
 
     // Mode menu actions (12 modes, mutual exclusion via QActionGroup)
     QAction*      m_modeActions[12]  = {};
