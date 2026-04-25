@@ -230,8 +230,7 @@ constexpr auto kLineEditStyle =
 
 constexpr auto kSpinBoxStyle =
     "QSpinBox { background: #1a2a3a; border: 1px solid #304050;"
-    " border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }"
-    "QSpinBox::up-button, QSpinBox::down-button { background: #203040; border: none; }";
+    " border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }";
 
 constexpr auto kSliderStyle =
     "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
