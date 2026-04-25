@@ -117,6 +117,7 @@
 #include "widgets/VfoWidget.h"
 #include "core/AppSettings.h"
 #include "dbm_strip_math.h"
+#include "models/BandPlanManager.h"
 
 #include <QHoverEvent>
 
@@ -431,6 +432,8 @@ void SpectrumWidget::loadSettings()
                         QStringLiteral("False")).toString() == QStringLiteral("True");
     m_dbmScaleVisible = s.value(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
                                 QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
+                                 QStringLiteral("6")).toInt();
     const int alignRaw = readInt(QStringLiteral("DisplayFreqLabelAlign"),
                                  static_cast<int>(FreqLabelAlign::Center));
     m_freqLabelAlign = static_cast<FreqLabelAlign>(qBound(0, alignRaw,
@@ -517,6 +520,8 @@ void SpectrumWidget::saveSettings()
               m_showFps ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
               m_dbmScaleVisible ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(QStringLiteral("BandPlanFontSize"),
+               QString::number(m_bandPlanFontSize));
     writeInt(QStringLiteral("DisplayFreqLabelAlign"), static_cast<int>(m_freqLabelAlign));
 
     auto writeColor = [&](const QString& key, const QColor& c) {
@@ -914,6 +919,34 @@ void SpectrumWidget::setDbmScaleVisible(bool on)
     m_dbmScaleVisible = on;
     scheduleSettingsSave();
     markOverlayDirty();
+}
+
+// From AetherSDR SpectrumWidget.cpp:364-368 [@0cd4559]
+void SpectrumWidget::setBandPlanManager(NereusSDR::BandPlanManager* mgr)
+{
+    if (m_bandPlanMgr == mgr) { return; }
+    if (m_bandPlanMgr) {
+        disconnect(m_bandPlanMgr, nullptr, this, nullptr);
+    }
+    m_bandPlanMgr = mgr;
+    if (mgr) {
+        connect(mgr, &NereusSDR::BandPlanManager::planChanged,
+                this, [this]() {
+                    markOverlayDirty();
+                    update();
+                });
+    }
+    markOverlayDirty();
+    update();
+}
+
+void SpectrumWidget::setBandPlanFontSize(int pt)
+{
+    pt = std::clamp(pt, 0, 16);
+    if (m_bandPlanFontSize == pt) { return; }
+    m_bandPlanFontSize = pt;
+    markOverlayDirty();
+    update();
 }
 
 int SpectrumWidget::effectiveStripW() const

@@ -173,6 +173,7 @@ using SpectrumBaseClass = QWidget;
 
 namespace NereusSDR {
 
+class BandPlanManager;
 class SpectrumOverlayMenu;
 class VfoWidget;
 
@@ -373,6 +374,12 @@ public:
     void setDbmScaleVisible(bool on);
     bool dbmScaleVisible() const { return m_dbmScaleVisible; }
 
+    // Bandplan overlay (Phase 3G RX Epic sub-epic D)
+    void setBandPlanManager(NereusSDR::BandPlanManager* mgr);
+    void setBandPlanFontSize(int pt);             // 0 = off
+    int  bandPlanFontSize() const { return m_bandPlanFontSize; }
+    bool bandPlanVisible() const { return m_bandPlanFontSize > 0; }
+
     void setShowZeroLine(bool on);
     bool showZeroLine() const { return m_showZeroLine; }
 
@@ -475,6 +482,7 @@ private:
     void drawWaterfallChrome(QPainter& p, const QRect& wfRect);
     void drawFreqScale(QPainter& p, const QRect& r);
     void drawDbmScale(QPainter& p, const QRect& specRect);
+    void drawBandPlan(QPainter& p, const QRect& specRect);
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
     void drawCursorInfo(QPainter& p, const QRect& specRect);
 
@@ -600,6 +608,9 @@ private:
     bool  m_showFps{false};
     bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
+
+    NereusSDR::BandPlanManager* m_bandPlanMgr{nullptr};   // non-owning
+    int                          m_bandPlanFontSize{6};   // 0 = off; AetherSDR default
 
     QColor m_gridColor{255, 255, 255, 40};       // vertical freq grid
     QColor m_gridFineColor{255, 255, 255, 20};   // 1/5 step fine grid
