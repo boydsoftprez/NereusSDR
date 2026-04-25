@@ -69,6 +69,17 @@ set(PA_BUILD_SHARED OFF CACHE BOOL "PortAudio static" FORCE)
 set(PA_BUILD_STATIC ON  CACHE BOOL "PortAudio static" FORCE)
 set(PA_USE_ASIO    OFF CACHE BOOL "PortAudio ASIO host API — forced OFF for GPL compliance (Steinberg SDK incompatible)" FORCE)
 
+# Linux audio backends — force ON so the static PortAudio actually contains
+# the host-API modules. PortAudio's CMake nominally auto-detects ALSA/JACK
+# via find_package, but the FetchContent path in 19.7.0 silently gives them
+# empty defaults if the option() calls fire before the auto-detect block.
+# Without these forces the resulting libportaudio.a has zero host APIs and
+# Pa_GetHostApiCount() returns 0 → all device dropdowns empty → no audio.
+if(UNIX AND NOT APPLE)
+    set(PA_USE_ALSA ON CACHE BOOL "PortAudio ALSA host API" FORCE)
+    set(PA_USE_JACK ON CACHE BOOL "PortAudio JACK host API" FORCE)
+endif()
+
 # PortAudio v19.7.0 uses `cmake_minimum_required(VERSION 2.8)`, which CMake
 # 4.x rejects because compatibility with CMake < 3.5 has been removed. Pin
 # the minimum policy version for the nested project so FetchContent can
@@ -175,6 +186,21 @@ if(FFTW3_FOUND)
     endif()
 else()
     message(STATUS "FFTW3 not found — client-side FFT disabled")
+endif()
+
+# --------------------------------------------------------------------------
+# libpipewire-0.3 — optional native Linux audio bridge (Phase 3O PipeWire).
+# Detection-only here; actual PipeWire sources land behind NEREUS_HAVE_PIPEWIRE
+# in follow-up tasks. If the dev package is absent the Linux audio path stays
+# on the existing pactl / LinuxPipeBus FIFO route.
+# --------------------------------------------------------------------------
+if(UNIX AND NOT APPLE)
+    pkg_check_modules(PIPEWIRE libpipewire-0.3>=0.3.50)
+    if(PIPEWIRE_FOUND)
+        message(STATUS "PipeWire ${PIPEWIRE_VERSION} — native Linux audio bridge enabled")
+    else()
+        message(STATUS "libpipewire-0.3 >= 0.3.50 not found — Linux audio limited to pactl path")
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
@@ -357,6 +383,7 @@ set(CORE_SOURCES
     src/core/accessories/PennyLaneController.cpp
     src/core/audio/MasterMixer.cpp
     src/core/audio/PortAudioBus.cpp
+    src/core/audio/QAudioSinkAdapter.cpp
     src/core/audio/VirtualCableDetector.cpp
 )
 
@@ -373,8 +400,14 @@ endif()
 # module-pipe-sink. The header compiles on all platforms (falls through to
 # error stubs off Linux) but the .cpp uses mkfifo / QProcess(pactl), so only
 # compile it on Linux targets. Phase 3O Sub-Phase 6 Task 6.1.
+#
+# LinuxAudioBackend — pure detection logic for the PipeWire-native bridge.
+# Uses only Qt + std (no PipeWire symbols) so it is NOT gated on
+# PIPEWIRE_FOUND. Linux-only because the whole decision tree is dead code
+# on macOS / Windows (which have their own IAudioBus impls).
 if(UNIX AND NOT APPLE)
     list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp)
+    list(APPEND CORE_SOURCES src/core/audio/LinuxAudioBackend.cpp)
 endif()
 
 set(MODEL_SOURCES
@@ -396,6 +429,7 @@ set(GUI_SOURCES
     src/gui/SupportDialog.cpp
     src/gui/AboutDialog.cpp
     src/gui/VaxFirstRunDialog.cpp
+    src/gui/VaxLinuxFirstRunDialog.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/dbm_strip_math.cpp
     src/gui/SpectrumOverlayMenu.cpp
@@ -514,6 +548,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/Hl2IoBoardTab.cpp
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
+    src/gui/setup/AudioBackendStrip.cpp
     src/gui/setup/AudioDevicesPage.cpp
     src/gui/setup/AudioTciPage.cpp
     src/gui/setup/AudioVaxPage.cpp
@@ -628,6 +663,21 @@ if(FFTW3_FOUND)
     target_include_directories(NereusSDRObjs PUBLIC ${FFTW3_INCLUDE_DIRS})
     target_link_libraries(NereusSDRObjs PUBLIC ${FFTW3_LIBRARIES})
     target_compile_definitions(NereusSDRObjs PUBLIC HAVE_FFTW3)
+endif()
+
+# libpipewire-0.3 — gated by the pkg_check_modules block above. Only links on
+# Linux when the dev package is present; NEREUS_HAVE_PIPEWIRE lets follow-up
+# PipeWire sources compile conditionally.
+if(PIPEWIRE_FOUND)
+    target_link_libraries(NereusSDRObjs PUBLIC ${PIPEWIRE_LIBRARIES})
+    target_include_directories(NereusSDRObjs PUBLIC ${PIPEWIRE_INCLUDE_DIRS})
+    target_compile_options(NereusSDRObjs PUBLIC ${PIPEWIRE_CFLAGS_OTHER})
+    target_compile_definitions(NereusSDRObjs PUBLIC NEREUS_HAVE_PIPEWIRE)
+    target_sources(NereusSDRObjs PRIVATE
+        src/core/audio/PipeWireThreadLoop.cpp
+        src/core/audio/PipeWireStream.cpp
+        src/core/audio/PipeWireBus.cpp
+    )
 endif()
 
 if(WDSP_FOUND)

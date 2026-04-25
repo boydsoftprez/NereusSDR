@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added (Phase 3O — Linux PipeWire native audio bridge — PR #TBD)
+
+- Linux: native PipeWire audio bridge with live latency telemetry,
+  separate sidetone / MON sinks, per-slice output routing. Falls
+  back to pactl / PulseAudio where PipeWire isn't present.
+- New `Setup → Audio → Output` page (Primary, Sidetone, Monitor
+  cards + per-slice routing section). Real PipeWire terminology
+  throughout: `quantum`, `node.name`, `media.role`, `xruns`,
+  `process-cb CPU`, `stream state` (no cosmetic relabeling).
+- Setup → Audio → VAX page rebuilt: VAX is now a virtual source
+  the system sees, not a device the user picks. Per-channel
+  Rename + Copy node-name buttons.
+- AudioBackendStrip header on every Setup → Audio sub-page —
+  shows detected backend (PipeWire / Pactl / None) and Rescan +
+  Open-logs buttons.
+- `Help → Diagnose audio backend…` menu item opens the same
+  detection-state dialog used at first launch when no audio
+  backend is detected.
+- New optional build dependency on Linux: `libpipewire-0.3-dev`
+  ≥ 0.3.50 (auto-detected via `pkg-config`).
+- Manual verification matrix: `docs/architecture/linux-audio-verification/README.md`.
+
 ### Added (Phase 3G RX Epic Sub-epic C-1 — PR #TBD)
 
 - Full noise-reduction stack on the VFO flag DSP grid: NR1 (ANR, WDSP),

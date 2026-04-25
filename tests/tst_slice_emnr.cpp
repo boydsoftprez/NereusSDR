@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-23 — Ported to NrSlot activeNr API (Sub-epic C-1 replaced the
+//                 emnrEnabled stub with NrSlot; EMNR == NrSlot::NR2).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -56,6 +59,7 @@
 //============================================================================================//
 
 #include <QtTest/QtTest>
+#include "core/WdspTypes.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
@@ -64,41 +68,43 @@ class TestSliceEmnr : public QObject {
     Q_OBJECT
 
 private slots:
-    // ── emnrEnabled ──────────────────────────────────────────────────────────
+    // ── activeNr (EMNR == NrSlot::NR2) ────────────────────────────────────
+    // From Thetis console.cs:43297-43450 [v2.10.3.13] SelectNR() — enum
+    // enforces at-most-one-NR-per-channel. EMNR is WDSP emnr.c, slot NR2.
 
-    void emnrEnabledDefaultIsFalse() {
+    void activeNrDefaultIsOff() {
         // From Thetis radio.cs:2216 — rx_nr2_run default = 0
         SliceModel s;
-        QCOMPARE(s.emnrEnabled(), false);
+        QCOMPARE(s.activeNr(), NrSlot::Off);
     }
 
-    void setEmnrEnabledStoresValue() {
+    void setActiveNrEmnrStoresValue() {
         SliceModel s;
-        s.setEmnrEnabled(true);
-        QCOMPARE(s.emnrEnabled(), true);
+        s.setActiveNr(NrSlot::NR2);
+        QCOMPARE(s.activeNr(), NrSlot::NR2);
     }
 
-    void setEmnrEnabledEmitsSignal() {
+    void setActiveNrEmitsSignal() {
         SliceModel s;
-        QSignalSpy spy(&s, &SliceModel::emnrEnabledChanged);
-        s.setEmnrEnabled(true);
+        QSignalSpy spy(&s, &SliceModel::activeNrChanged);
+        s.setActiveNr(NrSlot::NR2);
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.at(0).at(0).toBool(), true);
+        QCOMPARE(spy.at(0).at(0).value<NrSlot>(), NrSlot::NR2);
     }
 
-    void setEmnrEnabledNoSignalOnSameValue() {
+    void setActiveNrNoSignalOnSameValue() {
         SliceModel s;
-        s.setEmnrEnabled(true);
-        QSignalSpy spy(&s, &SliceModel::emnrEnabledChanged);
-        s.setEmnrEnabled(true);  // same value — no signal
+        s.setActiveNr(NrSlot::NR2);
+        QSignalSpy spy(&s, &SliceModel::activeNrChanged);
+        s.setActiveNr(NrSlot::NR2);  // same value — no signal
         QCOMPARE(spy.count(), 0);
     }
 
-    void setEmnrEnabledToggleRoundTrip() {
+    void setActiveNrToggleRoundTrip() {
         SliceModel s;
-        s.setEmnrEnabled(true);
-        s.setEmnrEnabled(false);
-        QCOMPARE(s.emnrEnabled(), false);
+        s.setActiveNr(NrSlot::NR2);
+        s.setActiveNr(NrSlot::Off);
+        QCOMPARE(s.activeNr(), NrSlot::Off);
     }
 };
 

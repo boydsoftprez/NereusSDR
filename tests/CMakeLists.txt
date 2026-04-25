@@ -213,6 +213,7 @@ nereus_add_test(tst_vax_first_run_dialog)
 
 # ── Phase 3O VAX routing ──────────────────────────────────────────────────
 nereus_add_test(tst_slice_model_vax)
+
 nereus_add_test(tst_transmit_model_tx_owner)
 
 # ── Phase 3O VAX schema migration ─────────────────────────────────────────
@@ -248,6 +249,44 @@ endif()
 # and metering coverage).
 if(UNIX AND NOT APPLE)
     nereus_add_test(tst_linux_pipe_bus)
+endif()
+
+# ── Linux audio backend detection (PipeWire-native bridge, Task 3) ───────────
+# Pure unit test: injects stub probe callbacks into detectLinuxBackend() to
+# cover all 8 (pipewire × pactl × forced-override) combinations plus the
+# forced-unknown fall-through and toString mapping. No real daemon required.
+# The .cpp providing detectLinuxBackend/toString/defaultProbes is in the
+# Linux-only CORE_SOURCES branch, so the test binary is Linux-only to match.
+if(UNIX AND NOT APPLE)
+    nereus_add_test(tst_linux_backend_detection)
+endif()
+
+# ── Linux audio infrastructure — AudioRingSpsc (Task 6) ──────────────────────
+# Lock-free single-producer single-consumer byte ring used by the PipeWire
+# bridge (Task 8+) to shuttle audio between the DSP thread and the
+# pw_thread_loop. Pure header-only template — compiles cleanly on every
+# platform, so no Linux-only gate. Covers: push/pop round-trip, empty-pop,
+# partial-pop honouring dst capacity, overflow-drops-oldest on a 70 kB write
+# into a 64 kiB ring, wrap-around across the buffer boundary, and a
+# 1 M-byte concurrent producer/consumer race for memory ordering.
+nereus_add_test(tst_audio_ring_spsc)
+
+# ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
+# Pure unit test: exercises configToProperties() for Output (virtual source),
+# Input (consumer), and targetNodeName routing. No running daemon required.
+# Gated by NEREUS_HAVE_PIPEWIRE — on hosts without libpipewire the test
+# main() returns 0 and ctest reports PASS.
+if(UNIX AND NOT APPLE)
+    nereus_add_test(tst_pipewire_stream_config)
+endif()
+
+# ── Phase 3O Task 24: env-gated PipeWire stream integration test ─────────────
+# Real round-trip: PipeWireThreadLoop.connect() → PipeWireStream(Audio/Source)
+# → open() → wait for "streaming" signal → push 500 ms silence → close().
+# QSKIPs when XDG_RUNTIME_DIR is unset (no PipeWire session on host).
+# Compiles to int main(){return 0;} on platforms without libpipewire (#else).
+if(UNIX AND NOT APPLE)
+    nereus_add_test(tst_pipewire_stream_integration)
 endif()
 
 # ── Phase 3O Sub-Phase 7 Task 7.1: VirtualCableDetector ──────────────────────

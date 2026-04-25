@@ -288,6 +288,7 @@ warren@wpratt.com
 #include "setup/DspSetupPages.h"   // NrAnfSetupPage::selectSubtab
 #include "TitleBar.h"
 #include "VaxFirstRunDialog.h"
+#include "VaxLinuxFirstRunDialog.h"
 #include "widgets/MasterOutputWidget.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
@@ -479,6 +480,20 @@ MainWindow::MainWindow(QWidget* parent)
     // Setup → Audio → VAX at any time.
     // Deferred via singleShot(0, ...) so the UI is fully built first.
     QTimer::singleShot(0, this, &MainWindow::checkVaxFirstRun);
+
+    // Task 23 — auto-open the Linux audio first-run dialog when no backend
+    // is detected on this host. The check is deferred via singleShot(0, ...)
+    // so the event loop is spinning before the modal dialog is posted.
+    // The dialog's Dismiss button (Task 18) sets Audio/LinuxFirstRunSeen=True,
+    // so this trigger fires at most once per user installation.
+#if defined(Q_OS_LINUX)
+    if (m_radioModel->audioEngine()->linuxBackend() == LinuxAudioBackend::None
+        && AppSettings::instance().value(QStringLiteral("Audio/LinuxFirstRunSeen"),
+                                          QStringLiteral("False")).toString()
+               != QStringLiteral("True")) {
+        QTimer::singleShot(0, this, &MainWindow::showAudioDiagnoseDialog);
+    }
+#endif
 
     // Defensive save on aboutToQuit. closeEvent is fine for ⌘Q but
     // does NOT run when the process is signaled (SIGTERM from pkill,
@@ -1718,6 +1733,11 @@ void MainWindow::buildMenuBar()
 
     helpMenu->addSeparator();
 
+    helpMenu->addAction(QStringLiteral("&Diagnose audio backend…"),
+                        this, &MainWindow::showAudioDiagnoseDialog);
+
+    helpMenu->addSeparator();
+
     helpMenu->addAction(QStringLiteral("&About NereusSDR"), this, [this]() {
         AboutDialog dlg(this);
         dlg.exec();
@@ -2767,6 +2787,17 @@ void MainWindow::showSupportDialog()
     m_supportDialog->show();
     m_supportDialog->raise();
     m_supportDialog->activateWindow();
+}
+
+void MainWindow::showAudioDiagnoseDialog()
+{
+    AudioEngine* eng = m_radioModel->audioEngine();
+    if (!eng) {
+        return;
+    }
+    auto* dlg = new VaxLinuxFirstRunDialog(eng, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->exec();
 }
 
 void MainWindow::onConnectionStateChanged()

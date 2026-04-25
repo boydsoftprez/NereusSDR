@@ -31,7 +31,9 @@ jobs:
             cmake ninja-build pkg-config g++ \
             qt6-base-dev qt6-base-private-dev qt6-multimedia-dev \
             qt6-shadertools-dev \
-            libgl1-mesa-dev libfftw3-dev
+            libgl1-mesa-dev libfftw3-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libpipewire-0.3-dev
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3

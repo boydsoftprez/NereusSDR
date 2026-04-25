@@ -124,7 +124,9 @@ jobs:
             gstreamer1.0-pulseaudio gstreamer1.0-gl \
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
             libfuse2 file desktop-file-utils \
-            libfftw3-dev imagemagick
+            libfftw3-dev imagemagick \
+            libasound2-dev libjack-jackd2-dev \
+            libpipewire-0.3-dev
 
       - name: Install system Qt (ARM only)
         if: matrix.use_aqt == false

@@ -1,5 +1,6 @@
 #include "SetupDialog.h"
 #include "SetupPage.h"
+#include "models/RadioModel.h"
 
 // General
 #include "setup/GeneralSetupPages.h"
@@ -7,6 +8,7 @@
 // Hardware
 #include "setup/HardwarePage.h"
 // Audio
+#include "setup/AudioBackendStrip.h"
 #include "setup/AudioDevicesPage.h"
 #include "setup/AudioVaxPage.h"
 #include "setup/AudioTciPage.h"
@@ -147,6 +149,30 @@ void SetupDialog::buildTree()
         return item;
     };
 
+    // ── Helper: wrap a SetupPage with an AudioBackendStrip header ─────────────
+    // Returns a margin-less container QWidget that owns both the strip and the
+    // page. Qt parent-ownership keeps memory clean — the container is reparented
+    // into the QStackedWidget by addWrapped below.
+    auto wrapWithAudioBackendStrip = [this](SetupPage* page) -> QWidget* {
+        auto* container = new QWidget;
+        auto* lay = new QVBoxLayout(container);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(0);
+        lay->addWidget(new AudioBackendStrip(m_model->audioEngine(), container));
+        lay->addWidget(page);
+        return container;
+    };
+
+    // ── Helper: add a wrapped (plain QWidget) page to the tree ────────────────
+    auto addWrapped = [this](QTreeWidgetItem* parent, const QString& label,
+                             QWidget* container) -> QTreeWidgetItem* {
+        auto* item = new QTreeWidgetItem(parent, QStringList{label});
+        const int idx = m_stack->count();
+        item->setData(0, Qt::UserRole, idx);
+        m_stack->addWidget(container);
+        return item;
+    };
+
     // ── General ──────────────────────────────────────────────────────────────
     QTreeWidgetItem* general = addCategory("General");
     add(general, "Startup & Preferences", new StartupPrefsPage(m_model));
@@ -160,10 +186,10 @@ void SetupDialog::buildTree()
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     QTreeWidgetItem* audio = addCategory("Audio");
-    add(audio, "Devices",  new AudioDevicesPage(m_model));
-    add(audio, "VAX",      new AudioVaxPage(m_model));
-    add(audio, "TCI",      new AudioTciPage(m_model));
-    add(audio, "Advanced", new AudioAdvancedPage(m_model));
+    addWrapped(audio, "Devices",  wrapWithAudioBackendStrip(new AudioDevicesPage(m_model)));
+    addWrapped(audio, "VAX",      wrapWithAudioBackendStrip(new AudioVaxPage(m_model)));
+    addWrapped(audio, "TCI",      wrapWithAudioBackendStrip(new AudioTciPage(m_model)));
+    addWrapped(audio, "Advanced", wrapWithAudioBackendStrip(new AudioAdvancedPage(m_model)));
 
     // ── DSP ───────────────────────────────────────────────────────────────────
     QTreeWidgetItem* dsp = addCategory("DSP");

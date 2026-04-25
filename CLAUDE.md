@@ -291,6 +291,10 @@ cmake --build build -j$(nproc)
 ```
 
 Dependencies: `qt6-base qt6-multimedia cmake ninja pkgconf fftw`
+Optional (Linux only): `libpipewire-0.3-dev` ≥ 0.3.50 — enables the
+PipeWire-native audio bridge (Phase 3O). Without it the build still
+works and the Linux audio path falls back to the existing pactl /
+LinuxPipeBus FIFO route.
 
 WDSP source is in `third_party/wdsp/` (TAPR v1.29 + linux_port.h for cross-platform).
 FFTW3: system package on Linux/macOS, pre-built DLL on Windows (`third_party/fftw3/`).

@@ -111,6 +111,7 @@ private slots:
     void onConnectionStateChanged();
     void showConnectionPanel();
     void showSupportDialog();
+    void showAudioDiagnoseDialog();
     void showFeatureRequestDialog();
     void showFeatureRequestDialogImpl();
 

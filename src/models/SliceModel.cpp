@@ -1082,6 +1082,7 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("RfGain"),     m_rfGain);
     s.setValue(sp + QStringLiteral("RxAntenna"),  m_rxAntenna);
     s.setValue(sp + QStringLiteral("TxAntenna"),  m_txAntenna);
+
 }
 
 void SliceModel::restoreFromSettings(Band band)
@@ -1413,6 +1414,7 @@ void SliceModel::loadFromSettings()
         m_vaxChannel.store(vaxCh, std::memory_order_release);
         emit vaxChannelChanged(vaxCh);
     }
+
 }
 
 } // namespace NereusSDR
