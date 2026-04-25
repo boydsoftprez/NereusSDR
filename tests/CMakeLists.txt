@@ -639,4 +639,12 @@ nereus_add_test(tst_bandplan_manager)
 # different-band guard, and 20m in/out-of-band cases.
 nereus_add_test(tst_band_plan_guard)
 
+# ── Phase 3M-0 Task 3: SwrProtectionController PollPAPWR state machine ─────
+# 8 tests cover the two-stage foldback (per-sample + 4-trip windback latch),
+# open-antenna heuristic (swr=50 / factor=0.01), low-power floor clamp,
+# tune-time bypass, moxOff() latch clear, and latch persistence without moxOff.
+# Ports Thetis console.cs:25933-26120 [v2.10.3.13] (PollPAPWR) and
+# console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse).
+nereus_add_test(tst_swr_protection_controller)
+
 
