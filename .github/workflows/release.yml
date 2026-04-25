@@ -132,14 +132,14 @@ jobs:
         if: matrix.use_aqt == false
         run: |
           sudo apt-get install -y qt6-base-dev qt6-multimedia-dev \
-            qt6-base-private-dev qt6-shadertools-dev
+            qt6-base-private-dev qt6-shadertools-dev qt6-svg-dev
 
       - name: Install Qt 6.7 via aqtinstall (x86_64)
         if: matrix.use_aqt == true
         run: |
           pip3 install aqtinstall
           aqt install-qt linux desktop 6.7.3 linux_gcc_64 \
-            -m qtmultimedia qtshadertools \
+            -m qtmultimedia qtshadertools qtsvg \
             --outputdir ${{ github.workspace }}/Qt
           echo "Qt6_DIR=${{ github.workspace }}/Qt/6.7.3/gcc_64/lib/cmake/Qt6" >> $GITHUB_ENV
           echo "CMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.7.3/gcc_64" >> $GITHUB_ENV
@@ -474,7 +474,7 @@ jobs:
           host: 'windows'
           target: 'desktop'
           arch: 'win64_msvc2019_64'
-          modules: 'qtmultimedia qtserialport qtwebsockets qtshadertools'
+          modules: 'qtmultimedia qtserialport qtwebsockets qtshadertools qtsvg'
           cache: true
 
       - name: Install Ninja and NSIS
