@@ -733,6 +733,18 @@ void MainWindow::buildUI()
     m_radioModel->setSpectrumWidget(m_spectrumWidget);
     m_radioModel->setFftEngine(m_fftEngine);
 
+    // Sub-epic E: flush the rewind ring buffer when the radio disconnects so
+    // a new session starts with a clean history. AetherSDR's clearDisplay()
+    // did this implicitly; NereusSDR has no equivalent single-call reset, so
+    // we plumb the connection-state signal through here. See
+    // docs/architecture/phase3g-rx-epic-e-waterfall-scrollback-plan.md task 4.
+    connect(m_radioModel, &RadioModel::connectionStateChanged, m_spectrumWidget,
+            [this]() {
+        if (!m_radioModel->isConnected() && m_spectrumWidget) {
+            m_spectrumWidget->clearWaterfallHistory();
+        }
+    });
+
     // Wire BandPlanManager → SpectrumWidget so the bandplan strip renders on launch.
     m_spectrumWidget->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
 

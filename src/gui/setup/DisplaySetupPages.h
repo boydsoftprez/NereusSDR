@@ -128,6 +128,7 @@ public:
 private:
     void buildUI();
     void loadFromRenderer();
+    void updateEffectiveDepthLabel();
 
     // Section: Levels
     QSlider*           m_highThresholdSlider{nullptr};
@@ -152,6 +153,10 @@ private:
     // Section: Time
     QComboBox* m_timestampPosCombo{nullptr};  // None/Left/Right
     QComboBox* m_timestampModeCombo{nullptr}; // UTC/Local
+
+    // Section: Rewind history (Sub-epic E task 11)
+    QComboBox* m_historyDepthCombo{nullptr};
+    QLabel*    m_effectiveDepthLabel{nullptr};
 };
 
 // ---------------------------------------------------------------------------

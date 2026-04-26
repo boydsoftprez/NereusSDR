@@ -84,6 +84,8 @@
 #include <QPushButton>
 #include <QMessageBox>
 
+#include <algorithm>
+
 namespace NereusSDR {
 
 // ---------------------------------------------------------------------------
@@ -621,6 +623,44 @@ void WaterfallDefaultsPage::loadFromRenderer()
     m_timestampModeCombo->setCurrentIndex(static_cast<int>(sw->wfTimestampMode()));
 
     if (m_lowColorBtn) { m_lowColorBtn->setColor(QColor(Qt::black)); }
+
+    // Sub-epic E task 11: sync history-depth dropdown to current value.
+    if (m_historyDepthCombo) {
+        QSignalBlocker bd(m_historyDepthCombo);
+        const qint64 ms = sw->waterfallHistoryMs();
+        int idx = 3;  // default: 20 minutes
+        for (int i = 0; i < m_historyDepthCombo->count(); ++i) {
+            if (m_historyDepthCombo->itemData(i).toLongLong() == ms) {
+                idx = i;
+                break;
+            }
+        }
+        m_historyDepthCombo->setCurrentIndex(idx);
+    }
+    updateEffectiveDepthLabel();
+}
+
+void WaterfallDefaultsPage::updateEffectiveDepthLabel()
+{
+    auto* sw = model() ? model()->spectrumWidget() : nullptr;
+    if (!sw || !m_effectiveDepthLabel) { return; }
+    const qint64 depthMs  = sw->waterfallHistoryMs();
+    const int    periodMs = std::max(1, sw->wfUpdatePeriodMs());
+    const int    capRows  = SpectrumWidget::kMaxWaterfallHistoryRows;
+    const int    rows     = std::min(
+        static_cast<int>((depthMs + periodMs - 1) / periodMs), capRows);
+    const int    effectiveMs = rows * periodMs;
+    const int    minutes = effectiveMs / 60000;
+    const int    seconds = (effectiveMs / 1000) % 60;
+
+    m_effectiveDepthLabel->setText(
+        QStringLiteral("Effective rewind: %1 ms × %2 rows = %3:%4 (%5)")
+            .arg(periodMs)
+            .arg(rows)
+            .arg(minutes)
+            .arg(seconds, 2, 10, QLatin1Char('0'))
+            .arg(rows == capRows ? QStringLiteral("cap reached")
+                                 : QStringLiteral("uncapped")));
 }
 
 void WaterfallDefaultsPage::buildUI()
@@ -709,6 +749,7 @@ void WaterfallDefaultsPage::buildUI()
             if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
                 w->setWfUpdatePeriodMs(v);
             }
+            updateEffectiveDepthLabel();
         });
         dispForm->addRow(QStringLiteral("Update Period:"), row.container);
     }
@@ -826,6 +867,38 @@ void WaterfallDefaultsPage::buildUI()
     ovForm->addRow(QString(), m_showTxZeroLineToggle);
 
     contentLayout()->addWidget(ovGroup);
+
+    // ── Sub-epic E: rewind / history depth ────────────────────────────────
+    auto* histGroup = new QGroupBox(QStringLiteral("Rewind history"), this);
+    auto* histForm  = new QFormLayout(histGroup);
+    histForm->setSpacing(6);
+
+    m_historyDepthCombo = new QComboBox(histGroup);
+    m_historyDepthCombo->addItem(QStringLiteral("60 seconds"),      60LL * 1000);
+    m_historyDepthCombo->addItem(QStringLiteral("5 minutes"),  5LL * 60 * 1000);
+    m_historyDepthCombo->addItem(QStringLiteral("15 minutes"), 15LL * 60 * 1000);
+    m_historyDepthCombo->addItem(QStringLiteral("20 minutes"), 20LL * 60 * 1000);
+    m_historyDepthCombo->setToolTip(
+        QStringLiteral("Maximum amount of waterfall history kept for rewind. "
+                       "Effective rewind is capped at %1 rows — slow the "
+                       "update period to extend depth at fast refresh rates.")
+            .arg(SpectrumWidget::kMaxWaterfallHistoryRows));
+    histForm->addRow(QStringLiteral("Depth:"), m_historyDepthCombo);
+
+    m_effectiveDepthLabel = new QLabel(histGroup);
+    m_effectiveDepthLabel->setStyleSheet(QStringLiteral("color: #80a0b0;"));
+    histForm->addRow(QStringLiteral(""), m_effectiveDepthLabel);
+
+    contentLayout()->addWidget(histGroup);
+
+    connect(m_historyDepthCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        auto* sw = model() ? model()->spectrumWidget() : nullptr;
+        if (!sw) { return; }
+        const qint64 ms = m_historyDepthCombo->itemData(idx).toLongLong();
+        sw->setWaterfallHistoryMs(ms);
+        updateEffectiveDepthLabel();
+    });
 
     // --- Section: Time ---
     auto* timeGroup = new QGroupBox(QStringLiteral("Time"), this);

@@ -122,6 +122,7 @@
 #include <QHoverEvent>
 
 #include <QDateTime>
+#include <QTimeZone>
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
@@ -135,6 +136,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace NereusSDR {
@@ -315,6 +317,19 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // overlays or mouse tracking without button press. Zoom control is handled via
     // the frequency scale bar inside the QRhiWidget's own mouse press/drag events
     // (which DO work when a button is pressed).
+
+    // Sub-epic E: debounce timer for waterfall history re-allocation
+    // From AetherSDR SpectrumWidget.cpp:158-168 [@2bb3b5c]
+    // (debounce timer added by unmerged AetherSDR PR #1478 — see plan §authoring-time #2)
+    m_historyResizeTimer = new QTimer(this);
+    m_historyResizeTimer->setSingleShot(true);
+    m_historyResizeTimer->setInterval(250);
+    connect(m_historyResizeTimer, &QTimer::timeout, this, [this]() {
+        ensureWaterfallHistory();
+        if (m_wfHistoryRowCount > 0) {
+            rebuildWaterfallViewport();
+        }
+    });
 }
 
 SpectrumWidget::~SpectrumWidget() = default;
@@ -400,6 +415,12 @@ void SpectrumWidget::loadSettings()
                                 QStringLiteral("False")).toString() == QStringLiteral("True");
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
+
+    // Sub-epic E: scrollback depth (default 20 min, range 60s..20min).
+    m_waterfallHistoryMs = s.value(
+        settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
+        QString::number(static_cast<qint64>(kDefaultWaterfallHistoryMs))
+    ).toLongLong();
     m_wfUseSpectrumMinMax = s.value(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
                                     QStringLiteral("False")).toString() == QStringLiteral("True");
     const int wfAvgRaw = readInt(QStringLiteral("DisplayWfAverageMode"),
@@ -497,6 +518,8 @@ void SpectrumWidget::saveSettings()
               m_wfReverseScroll ? QStringLiteral("True") : QStringLiteral("False"));
     writeInt(QStringLiteral("DisplayWfOpacity"), m_wfOpacity);
     writeInt(QStringLiteral("DisplayWfUpdatePeriodMs"), m_wfUpdatePeriodMs);
+    s.setValue(settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
+               QString::number(m_waterfallHistoryMs));
     s.setValue(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
               m_wfUseSpectrumMinMax ? QStringLiteral("True") : QStringLiteral("False"));
     writeInt(QStringLiteral("DisplayWfAverageMode"), static_cast<int>(m_wfAverageMode));
@@ -551,6 +574,34 @@ void SpectrumWidget::scheduleSettingsSave()
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 {
     const bool bwChanged = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
+
+    // ── Sub-epic E: detect large shifts (band jumps) for history-clear ─
+    // From AetherSDR SpectrumWidget.cpp:1042-1062 [@0cd4559]
+    //   adapter: NereusSDR uses Hz throughout; threshold expressed as a
+    //   fraction of the new half-bandwidth, same as upstream.
+    const double oldCenterHz    = m_centerHz;
+    const double oldBandwidthHz = m_bandwidthHz;
+    const double newCenterHz    = centerHz;
+    const double newBandwidthHz = bandwidthHz;
+    const double halfBwHz       = newBandwidthHz / 2.0;
+    const bool   largeShift     = bwChanged
+        || (halfBwHz > 0.0 && std::abs(newCenterHz - oldCenterHz) > halfBwHz * 0.25);
+
+    if (largeShift && oldBandwidthHz > 0.0 && newBandwidthHz > 0.0) {
+        // Reproject the still-live image; the history will be cleared next.
+        // From AetherSDR SpectrumWidget.cpp:1051 [@0cd4559]
+        reprojectWaterfall(oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
+
+        // ── NereusSDR divergence: clear history on largeShift to keep the
+        //    rewind window coherent with the current band. See plan
+        //    §authoring-time #3.
+        clearWaterfallHistory();
+    } else if (oldBandwidthHz > 0.0 && newBandwidthHz > 0.0) {
+        // Small pan/zoom: reproject only — history survives.
+        // From AetherSDR SpectrumWidget.cpp:1093 [@0cd4559]
+        reprojectWaterfall(oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
+    }
+
     m_centerHz = centerHz;
     m_bandwidthHz = bandwidthHz;
     updateVfoPositions();
@@ -573,13 +624,10 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 void SpectrumWidget::setCenterFrequency(double centerHz)
 {
     if (!qFuzzyCompare(m_centerHz, centerHz)) {
-        m_centerHz = centerHz;
-        updateVfoPositions();
-#ifdef NEREUS_GPU_SPECTRUM
-        markOverlayDirty();
-#else
-        update();
-#endif
+        // Route through setFrequencyRange so the Sub-epic E reproject +
+        // largeShift-clear path runs on center-only band jumps too
+        // (e.g. MainWindow band-jump path at MainWindow.cpp:2261).
+        setFrequencyRange(centerHz, m_bandwidthHz);
     }
 }
 
@@ -811,6 +859,31 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     if (m_wfUpdatePeriodMs == ms) { return; }
     m_wfUpdatePeriodMs = ms;
     scheduleSettingsSave();
+
+    // Sub-epic E: capacity may have changed — debounce history rebuild
+    // so slider drag doesn't trash history mid-drag.
+    if (m_historyResizeTimer) {
+        m_historyResizeTimer->start();
+    }
+}
+
+// Sub-epic E: depth setter, called from Setup → Display dropdown.
+void SpectrumWidget::setWaterfallHistoryMs(qint64 ms)
+{
+    ms = qBound(static_cast<qint64>(60 * 1000),     // 60 s minimum
+                ms,
+                static_cast<qint64>(20 * 60 * 1000)); // 20 min maximum
+    if (m_waterfallHistoryMs == ms) { return; }
+    m_waterfallHistoryMs = ms;
+
+    auto& s = AppSettings::instance();
+    s.setValue(settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
+               QString::number(m_waterfallHistoryMs));
+    s.save();
+
+    if (m_historyResizeTimer) {
+        m_historyResizeTimer->start();
+    }
 }
 
 void SpectrumWidget::setWfUseSpectrumMinMax(bool on)
@@ -955,8 +1028,17 @@ void SpectrumWidget::setBandPlanFontSize(int pt)
     update();
 }
 
+// Width of the right-edge column reserved for the dBm scale strip in the
+// SPECTRUM row. The waterfall row's time-scale strip widens to 72px when
+// paused but does NOT narrow the spectrum — it overlays the right edge of
+// the waterfall image instead. Keeping the spectrum reservation at
+// kDbmStripW means the spectrum trace doesn't shift when the user pauses.
 int SpectrumWidget::effectiveStripW() const
 {
+    // dBm strip + paused-mode timescale-strip extension.
+    // The strip is always present in the *waterfall* row (where the
+    // time scale is painted); the dBm strip is in the *spectrum* row.
+    // They occupy the same right-edge column.
     return m_dbmScaleVisible ? kDbmStripW : 0;
 }
 
@@ -1110,6 +1192,13 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         m_wfTexFullUpload = true;
         markOverlayDirty();
 #endif
+        // Sub-epic E: schedule history-image rebuild so the ring buffer's
+        // QImage tracks m_waterfall's new dimensions. Debounced 250 ms so
+        // rapid resize events don't thrash. Matches the intent of unmerged
+        // AetherSDR PR #1478 [@2bb3b5c] — see plan §authoring-time #2.
+        if (m_historyResizeTimer) {
+            m_historyResizeTimer->start();
+        }
     }
 
     // Reposition VFO flags after resize
@@ -1159,6 +1248,12 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
         drawDbmScale(p, QRect(0, 0, w, specH));
     }
     drawBandPlan(p, specRect);
+    // Sub-epic E: time-scale + LIVE button on the right edge of the
+    // waterfall area (always painted; widens automatically when paused).
+    // Use a full-width wfRect (not the clipped `wfRect` at line 1141) so the
+    // strip lands in the same right-edge column as the dBm scale strip.
+    const QRect wfRectFull(0, wfRect.top(), width(), wfRect.height());
+    drawTimeScale(p, wfRectFull);
     drawCursorInfo(p, specRect);
 
     // FPS overlay (Phase 3G-8 commit 5 / G8 ShowFPS). Cheap rolling counter
@@ -1668,6 +1763,83 @@ void SpectrumWidget::drawBandPlan(QPainter& p, const QRect& specRect)
     p.setRenderHint(QPainter::Antialiasing, false);
 }
 
+// ─── Time scale + LIVE button (sub-epic E) ─────────────────────────────
+// From AetherSDR SpectrumWidget.cpp:4929-4994 [@0cd4559]
+//   adapter: NereusSDR computes msPerRow directly from m_wfUpdatePeriodMs
+//   instead of AetherSDR's calibrated m_wfMsPerRow (we have no radio
+//   tile clock to calibrate against).
+
+void SpectrumWidget::drawTimeScale(QPainter& p, const QRect& wfRect)
+{
+    const QRect strip = waterfallTimeScaleRect(wfRect);
+    const int stripX = strip.x();
+
+    // Semi-opaque background so spectrum content underneath dims.
+    p.fillRect(strip, QColor(0x0a, 0x0a, 0x18, 220));
+
+    // Left border line — separates the strip from waterfall content.
+    p.setPen(QColor(0x30, 0x40, 0x50));
+    p.drawLine(stripX, wfRect.top(), stripX, wfRect.bottom());
+
+    // LIVE button — grey when live, bright red when paused.
+    const QRect liveRect = waterfallLiveButtonRect(wfRect);
+    p.setPen(QColor(0x40, 0x50, 0x60));
+    p.setBrush(m_wfLive ? QColor(0x45, 0x45, 0x45)
+                        : QColor(0xc0, 0x20, 0x20));  // bright red when paused
+    p.drawRoundedRect(liveRect, 3, 3);
+
+    QFont liveFont = p.font();
+    liveFont.setPointSize(7);
+    liveFont.setBold(true);
+    p.setFont(liveFont);
+    p.setPen(m_wfLive ? QColor(0xb0, 0xb0, 0xb0) : Qt::white);
+    p.drawText(liveRect, Qt::AlignCenter, QStringLiteral("LIVE"));
+
+    // Tick labels along the strip.
+    const float msPerRow = std::max(1, m_wfUpdatePeriodMs);
+    const QRect labelRect = strip.adjusted(0, 4, 0, 0);
+    const float totalSec = labelRect.height() * msPerRow / 1000.0f;
+    if (totalSec <= 0) {
+        return;
+    }
+
+    QFont f = p.font();
+    f.setPointSize(7);
+    f.setBold(false);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+
+    constexpr float kStepSec = 5.0f;
+    for (float sec = 0; sec <= totalSec; sec += kStepSec) {
+        const float frac = sec / totalSec;
+        const int yy = labelRect.top()
+                     + static_cast<int>(frac * labelRect.height());
+        if (yy > wfRect.bottom() - 5) {
+            continue;
+        }
+
+        // Tick mark
+        p.setPen(QColor(0x50, 0x70, 0x80));
+        p.drawLine(stripX, yy, stripX + 4, yy);
+
+        // Label: elapsed seconds when live, absolute UTC when paused.
+        const QString label = m_wfLive
+            ? QStringLiteral("%1s").arg(static_cast<int>(sec))
+            : pausedTimeLabelForAge(
+                m_wfHistoryOffsetRows
+                + static_cast<int>(std::round(sec * 1000.0f / msPerRow)));
+
+        p.setPen(QColor(0x80, 0xa0, 0xb0));
+        if (m_wfLive) {
+            p.drawText(stripX + 6, yy + fm.ascent() / 2, label);
+        } else {
+            const QRect textRect(stripX + 6, yy - fm.height() / 2,
+                                 strip.width() - 10, fm.height());
+            p.drawText(textRect, Qt::AlignRight | Qt::AlignVCenter, label);
+        }
+    }
+}
+
 // ---- Coordinate helpers ----
 
 int SpectrumWidget::hzToX(double hz, const QRect& r) const
@@ -1717,6 +1889,295 @@ int SpectrumWidget::dbmToY(float dbm, const QRect& r) const
     float frac = (calibrated - bottom) / m_dynamicRange;
     frac = qBound(0.0f, frac, 1.0f);
     return r.bottom() - static_cast<int>(frac * r.height());
+}
+
+// ─── Waterfall scrollback math helpers (sub-epic E) ───────────────────
+// From AetherSDR SpectrumWidget.cpp:559-590 [@0cd4559]
+//   plus 4096-row cap from [@2bb3b5c] (unmerged AetherSDR PR #1478)
+
+int SpectrumWidget::waterfallHistoryCapacityRows() const
+{
+    const int msPerRow = std::max(1, m_wfUpdatePeriodMs);
+    const int rows = static_cast<int>(
+        (m_waterfallHistoryMs + msPerRow - 1) / msPerRow);
+    return std::min(rows, kMaxWaterfallHistoryRows);
+}
+
+int SpectrumWidget::maxWaterfallHistoryOffsetRows() const
+{
+    return std::max(0, m_wfHistoryRowCount - m_waterfall.height());
+}
+
+int SpectrumWidget::historyRowIndexForAge(int ageRows) const
+{
+    if (m_waterfallHistory.isNull() || ageRows < 0
+        || ageRows >= m_wfHistoryRowCount) {
+        return -1;
+    }
+    return (m_wfHistoryWriteRow + ageRows) % m_waterfallHistory.height();
+}
+
+QString SpectrumWidget::pausedTimeLabelForAge(int ageRows) const
+{
+    const int rowIndex = historyRowIndexForAge(ageRows);
+    if (rowIndex < 0 || rowIndex >= m_wfHistoryTimestamps.size()) {
+        return QString();
+    }
+    const qint64 timestampMs = m_wfHistoryTimestamps[rowIndex];
+    if (timestampMs <= 0) {
+        return QString();
+    }
+    const QDateTime utc = QDateTime::fromMSecsSinceEpoch(
+        timestampMs, QTimeZone::utc());
+    return QStringLiteral("-") + utc.toString(QStringLiteral("HH:mm:ssZ"));
+}
+
+// From AetherSDR SpectrumWidget.cpp:594-632 [@0cd4559]
+void SpectrumWidget::ensureWaterfallHistory()
+{
+    if (m_waterfall.isNull()) {
+        return;
+    }
+
+    const QSize desiredSize(m_waterfall.width(), waterfallHistoryCapacityRows());
+    if (desiredSize.width() <= 0 || desiredSize.height() <= 0) {
+        return;
+    }
+
+    if (m_waterfallHistory.size() == desiredSize) {
+        return;
+    }
+
+    // Preserve rows across width changes (e.g. divider drag, manual window
+    // resize) by horizontally scaling the existing history image. Height
+    // capacity is fixed via waterfallHistoryCapacityRows() so row indices
+    // and timestamps remain valid.
+    QImage newHistory;
+    if (!m_waterfallHistory.isNull() && m_wfHistoryRowCount > 0
+        && m_waterfallHistory.height() == desiredSize.height()) {
+        newHistory = m_waterfallHistory.scaled(
+            desiredSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    }
+    if (newHistory.isNull() || newHistory.size() != desiredSize) {
+        newHistory = QImage(desiredSize, QImage::Format_RGB32);
+        newHistory.fill(Qt::black);
+        m_wfHistoryTimestamps = QVector<qint64>(desiredSize.height(), 0);
+        m_wfHistoryWriteRow = 0;
+        m_wfHistoryRowCount = 0;
+        m_wfHistoryOffsetRows = 0;
+        m_wfLive = true;
+    }
+    m_waterfallHistory = newHistory;
+}
+
+// From AetherSDR SpectrumWidget.cpp:647-668 [@0cd4559]
+void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
+{
+    ensureWaterfallHistory();
+    if (m_waterfallHistory.isNull() || rowData == nullptr) {
+        return;
+    }
+
+    const int h = m_waterfallHistory.height();
+    m_wfHistoryWriteRow = (m_wfHistoryWriteRow - 1 + h) % h;
+    auto* row = reinterpret_cast<QRgb*>(
+        m_waterfallHistory.bits()
+        + m_wfHistoryWriteRow * m_waterfallHistory.bytesPerLine());
+    std::memcpy(row, rowData, m_waterfallHistory.width() * sizeof(QRgb));
+    if (m_wfHistoryWriteRow >= 0
+        && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
+        m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;
+    }
+    if (m_wfHistoryRowCount < h) {
+        ++m_wfHistoryRowCount;
+    }
+    if (!m_wfLive) {
+        // Auto-bump while paused so the displayed row stays visually fixed
+        // as new live rows arrive underneath.
+        m_wfHistoryOffsetRows = std::min(
+            m_wfHistoryOffsetRows + 1, maxWaterfallHistoryOffsetRows());
+    }
+}
+
+// From AetherSDR SpectrumWidget.cpp:670-705 [@0cd4559]
+void SpectrumWidget::rebuildWaterfallViewport()
+{
+    if (m_waterfall.isNull()) {
+        return;
+    }
+
+    m_wfHistoryOffsetRows = std::clamp(
+        m_wfHistoryOffsetRows, 0, maxWaterfallHistoryOffsetRows());
+    m_waterfall.fill(Qt::black);
+    m_wfWriteRow = 0;
+
+    if (m_waterfallHistory.isNull()) {
+        update();
+        return;
+    }
+
+    const int rowWidthBytes = m_waterfall.width() * static_cast<int>(sizeof(QRgb));
+    for (int y = 0; y < m_waterfall.height(); ++y) {
+        const int rowIndex = historyRowIndexForAge(m_wfHistoryOffsetRows + y);
+        if (rowIndex < 0) {
+            break;
+        }
+        const QRgb* src = reinterpret_cast<const QRgb*>(
+            m_waterfallHistory.constScanLine(rowIndex));
+        auto* dst = reinterpret_cast<QRgb*>(m_waterfall.scanLine(y));
+        std::memcpy(dst, src, rowWidthBytes);
+    }
+
+    // Force GPU full re-upload — the per-row delta path can't follow a
+    // viewport rebuild because m_wfWriteRow no longer indexes the most
+    // recent live row. Two sentinels needed: m_wfTexFullUpload routes
+    // the next frame through the full-upload branch (matching upstream
+    // AetherSDR's `#ifdef AETHER_GPU_SPECTRUM` path which sets
+    // `m_wfTexFullUpload = true`); m_wfLastUploadedRow alone leaves the
+    // bottom scanline stale because the incremental loop exits before
+    // uploading row texH-1.
+#ifdef NEREUS_GPU_SPECTRUM
+    m_wfTexFullUpload = true;
+    m_wfLastUploadedRow = -1;
+#endif
+    update();
+}
+
+// From AetherSDR SpectrumWidget.cpp:705-718 [@0cd4559]
+void SpectrumWidget::setWaterfallLive(bool live)
+{
+    if (m_wfLive == live) {
+        return;
+    }
+    if (live) {
+        m_wfHistoryOffsetRows = 0;
+    }
+    m_wfLive = live;
+    rebuildWaterfallViewport();
+    markOverlayDirty();
+}
+
+int SpectrumWidget::waterfallStripWidth() const
+{
+    // Live: width matches the dBm strip column for visual continuity.
+    // Paused: widens to fit absolute UTC labels ("-HH:mm:ssZ").
+    // From AetherSDR SpectrumWidget.cpp:716-719 [@0cd4559]
+    constexpr int kPausedStripW = 72;
+    return m_wfLive ? kDbmStripW : kPausedStripW;
+}
+
+// From AetherSDR SpectrumWidget.cpp:720-725 [@0cd4559]
+QRect SpectrumWidget::waterfallTimeScaleRect(const QRect& wfRect) const
+{
+    const int stripWidth = waterfallStripWidth();
+    const int stripX = wfRect.right() - stripWidth + 1;
+    return QRect(stripX, wfRect.top(), stripWidth, wfRect.height());
+}
+
+// From AetherSDR SpectrumWidget.cpp:728-735 [@0cd4559]
+//   adapter: NereusSDR uses kFreqScaleH = 28 (vs AetherSDR's 20),
+//   button Y inset adjusted accordingly.
+QRect SpectrumWidget::waterfallLiveButtonRect(const QRect& wfRect) const
+{
+    const QRect strip = waterfallTimeScaleRect(wfRect);
+    // Button width tracks the strip column so it fits without clipping:
+    // 32x16 in live mode (strip is 36 px wide, matches upstream), 40x20
+    // when paused (strip widens to 72 px and the user is actively trying
+    // to click it to resume — bigger target is friendlier).
+    const int buttonW = m_wfLive ? 32 : 40;
+    const int buttonH = m_wfLive ? 16 : 20;
+    const int padding = m_wfLive ? 2 : 4;
+    const int buttonX = strip.right() - buttonW - 2;
+    const int buttonY = wfRect.top() - kFreqScaleH + padding;
+    return QRect(buttonX, buttonY, buttonW, buttonH);
+}
+
+// Sub-epic E — flush ring buffer + force live. Called from clearDisplay()
+// and from setFrequencyRange's largeShift branch (NereusSDR divergence;
+// see plan §authoring-time #3).
+void SpectrumWidget::clearWaterfallHistory()
+{
+    if (!m_waterfallHistory.isNull()) {
+        m_waterfallHistory.fill(Qt::black);
+    }
+    // Codex P2 (PR #140): also clear the live viewport + reset its write
+    // head so a disconnect-flush actually shows a clean waterfall on
+    // reconnect, instead of stale rows from the previous session rolling
+    // off one frame at a time. The largeShift path's reprojectWaterfall
+    // already reallocates m_waterfall, so this is a no-op there; the
+    // disconnect path (MainWindow → connectionStateChanged) had no
+    // preceding reset.
+    if (!m_waterfall.isNull()) {
+        m_waterfall.fill(Qt::black);
+    }
+    m_wfWriteRow = 0;
+    std::fill(m_wfHistoryTimestamps.begin(), m_wfHistoryTimestamps.end(), 0);
+    m_wfHistoryWriteRow = 0;
+    m_wfHistoryRowCount = 0;
+    m_wfHistoryOffsetRows = 0;
+    m_wfLive = true;
+    markOverlayDirty();
+}
+
+// From AetherSDR SpectrumWidget.cpp:951-1000 [@0cd4559]
+//   adapter: NereusSDR uses Hz throughout (upstream uses MHz). Both the
+//   live waterfall ring buffer and the long-history ring buffer are
+//   reprojected so a small pan/zoom preserves the visible content.
+void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthHz,
+                                        double newCenterHz, double newBandwidthHz)
+{
+    if (oldBandwidthHz <= 0.0 || newBandwidthHz <= 0.0) {
+        return;
+    }
+
+    const double oldStartHz = oldCenterHz - oldBandwidthHz / 2.0;
+    const double oldEndHz   = oldCenterHz + oldBandwidthHz / 2.0;
+    const double newStartHz = newCenterHz - newBandwidthHz / 2.0;
+    const double newEndHz   = newCenterHz + newBandwidthHz / 2.0;
+    const double overlapStartHz = std::max(oldStartHz, newStartHz);
+    const double overlapEndHz   = std::min(oldEndHz, newEndHz);
+
+    auto reprojectImage = [&](QImage& image) {
+        if (image.isNull()) {
+            return;
+        }
+        const int imageWidth = image.width();
+        const int imageHeight = image.height();
+        if (imageWidth <= 0 || imageHeight <= 0) {
+            return;
+        }
+
+        QImage reprojected(imageWidth, imageHeight, QImage::Format_RGB32);
+        reprojected.fill(Qt::black);
+
+        if (overlapEndHz > overlapStartHz) {
+            const double srcLeft  = (overlapStartHz - oldStartHz) / oldBandwidthHz * imageWidth;
+            const double srcRight = (overlapEndHz   - oldStartHz) / oldBandwidthHz * imageWidth;
+            const double dstLeft  = (overlapStartHz - newStartHz) / newBandwidthHz * imageWidth;
+            const double dstRight = (overlapEndHz   - newStartHz) / newBandwidthHz * imageWidth;
+
+            if (srcRight > srcLeft && dstRight > dstLeft) {
+                QPainter painter(&reprojected);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+                painter.drawImage(QRectF(dstLeft, 0.0, dstRight - dstLeft, imageHeight),
+                                  image,
+                                  QRectF(srcLeft, 0.0, srcRight - srcLeft, imageHeight));
+            }
+        }
+        image = std::move(reprojected);
+    };
+
+    reprojectImage(m_waterfall);
+    reprojectImage(m_waterfallHistory);
+
+    // Two-sentinel pattern matches rebuildWaterfallViewport (see Task 3
+    // review): m_wfTexFullUpload routes the GPU upload through the full
+    // path, m_wfLastUploadedRow = -1 forces every scanline to be re-sent.
+    // Skipping either leaves the bottom row stale on the next frame.
+#ifdef NEREUS_GPU_SPECTRUM
+    m_wfLastUploadedRow = -1;
+    m_wfTexFullUpload   = true;
+#endif
 }
 
 // ---- Waterfall row push ----
@@ -1814,6 +2275,21 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& bins)
         int srcBin = firstBin + static_cast<int>(static_cast<float>(x) * binScale);
         srcBin = qBound(firstBin, srcBin, lastBin);
         scanline[x] = dbmToRgb((*src)[srcBin]);
+    }
+
+    // ── Sub-epic E: mirror the just-written row into the history ring ───
+    // From AetherSDR SpectrumWidget.cpp:2808-2812 [@0cd4559]
+    //   adapter: NereusSDR has a single FFT-derived path (no native tile
+    //   path), so we always use QDateTime::currentMSecsSinceEpoch().
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        appendHistoryRow(scanline, nowMs);
+        if (!m_wfLive) {
+            // Paused: don't show the new row — auto-bump in appendHistoryRow
+            // already shifted offset, just rebuild the viewport.
+            rebuildWaterfallViewport();
+            markOverlayDirty();
+        }
     }
 }
 
@@ -2132,11 +2608,33 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 // Hit-test priority from AetherSDR SpectrumWidget.cpp:824-1128
 // Filter edge drag, passband slide-to-tune, divider drag, dBm drag, click-to-tune
 
+// Mouse handlers must mirror the active render path's specH formula so the
+// hover/click hit-tests align with where the spectrum/divider/freq-scale/
+// waterfall rows are actually painted. The two render paths use DIFFERENT
+// layouts:
+//   - GPU path (renderGpuFrame:3313)  → contentH = h - chromeH; specH =
+//     contentH * spectrumFrac; freq bar between spectrum and waterfall.
+//   - QPainter path (paintEvent:1222) → specH = h * spectrumFrac;
+//     freq bar at h - kFreqScaleH (BOTTOM of widget).
+// Codex P1 (PR #140) fix — option B (conditional). Long-term plan is to
+// unify the two render paths around the GPU layout; tracked separately so
+// a non-GPU build can be verified before flipping.
+static int specHFromHeight(int widgetH, float spectrumFrac, int chromeH)
+{
+#ifdef NEREUS_GPU_SPECTRUM
+    const int contentH = widgetH - chromeH;
+    return static_cast<int>(contentH * spectrumFrac);
+#else
+    Q_UNUSED(chromeH);
+    return static_cast<int>(widgetH * spectrumFrac);
+#endif
+}
+
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
     int w = width();
     int h = height();
-    int specH = static_cast<int>(h * m_spectrumFrac);
+    int specH = specHFromHeight(h, m_spectrumFrac, kFreqScaleH + kDividerH);
     int dividerY = specH;
     QRect specRect(0, 0, w - effectiveStripW(), specH);
     int mx = static_cast<int>(event->position().x());
@@ -2190,7 +2688,11 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 
     // 1. dBm scale strip — right edge. Arrow row adjusts ref level,
     // body is drag-pan. From AetherSDR SpectrumWidget.cpp:1712-1745 [@0cd4559]
-    const int stripX = width() - effectiveStripW();
+    // Sub-epic E: hit-test against the actual dBm-strip width, not the
+    // effectiveStripW() layout reservation (which widens to 72px when paused
+    // to make room for the time-scale strip's UTC labels — but the dBm strip
+    // itself stays at kDbmStripW = 36px wide).
+    const int stripX = width() - kDbmStripW;
     if (mx >= stripX && effectiveStripW() > 0 && my < specH) {
         // Use FULL-WIDTH rect so stripRect() lands in the reserved zone.
         // Matches the rect passed to drawDbmScale in paintEvent.
@@ -2239,6 +2741,18 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     // 3. Frequency scale bar (wider gray bar below divider) — zoom bandwidth left/right
     int freqBarY = dividerY + kDividerH;
     if (my >= freqBarY && my < freqBarY + kFreqScaleH) {
+        // Sub-epic E: the LIVE button sits in the freq-scale row, so its
+        // hit-test MUST run before the bandwidth-drag below grabs the click.
+        // From AetherSDR SpectrumWidget.cpp:1655-1660 [@0cd4559]
+        const int wfY = freqBarY + kFreqScaleH;
+        const QRect wfRect(0, wfY, w, h - wfY);
+        if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())
+            && event->button() == Qt::LeftButton) {
+            setWaterfallLive(true);
+            event->accept();
+            return;
+        }
+
         m_draggingBandwidth = true;
         m_bwDragStartX = mx;
         m_bwDragStartBw = m_bandwidthHz;
@@ -2282,6 +2796,33 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    // Sub-epic E: time-scale strip + LIVE button
+    // From AetherSDR SpectrumWidget.cpp:1655-1693 [@0cd4559]
+    const int wfY = freqBarY + kFreqScaleH;
+    const QRect wfRect(0, wfY, w, h - wfY);
+
+    // LIVE button click (sits in the freq-scale row above the waterfall)
+    if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())
+        && event->button() == Qt::LeftButton) {
+        setWaterfallLive(true);
+        event->accept();
+        return;
+    }
+
+    // Time-scale strip drag start (right edge of waterfall)
+    if (my >= wfY && event->button() == Qt::LeftButton) {
+        const QRect timeScaleRect = waterfallTimeScaleRect(wfRect);
+        const QPoint pos = event->position().toPoint();
+        if (timeScaleRect.contains(pos)) {
+            m_draggingTimeScale = true;
+            m_timeScaleDragStartY = my;
+            m_timeScaleDragStartOffsetRows = m_wfHistoryOffsetRows;
+            setCursor(Qt::SizeVerCursor);
+            event->accept();
+            return;
+        }
+    }
+
     // 5. Pan drag — click in spectrum/waterfall area and drag to pan the view
     // From AetherSDR SpectrumWidget.cpp:879-887
     m_draggingPan = true;
@@ -2301,10 +2842,40 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     int my = static_cast<int>(event->position().y());
     int w = width();
     int h = height();
-    int specH = static_cast<int>(h * m_spectrumFrac);
+    int specH = specHFromHeight(h, m_spectrumFrac, kFreqScaleH + kDividerH);
     QRect specRect(0, 0, w - effectiveStripW(), specH);
 
     // --- Active drag modes ---
+
+    // Sub-epic E: time-scale drag = scrub through history
+    // From AetherSDR SpectrumWidget.cpp:2122-2145 [@0cd4559]
+    if (m_draggingTimeScale) {
+        const int wfY = specH + kDividerH + kFreqScaleH;
+        const QRect wfRect(0, wfY, w, h - wfY);
+        const QRect timeScaleRect = waterfallTimeScaleRect(wfRect);
+        const int dragHeight = std::max(1, timeScaleRect.height());
+        const int maxOffset = maxWaterfallHistoryOffsetRows();
+        const int dy = m_timeScaleDragStartY - my;  // pull up = scroll back
+        const int deltaRows = (maxOffset > 0)
+            ? static_cast<int>(std::round(
+                (static_cast<double>(dy) / dragHeight) * maxOffset))
+            : 0;
+        const int newOffset = std::clamp(
+            m_timeScaleDragStartOffsetRows + deltaRows, 0, maxOffset);
+
+        if (newOffset != m_wfHistoryOffsetRows) {
+            m_wfHistoryOffsetRows = newOffset;
+            if (newOffset > 0) {
+                m_wfLive = false;  // entering paused state
+            }
+            rebuildWaterfallViewport();
+            markOverlayDirty();
+        }
+
+        setCursor(Qt::SizeVerCursor);
+        event->accept();
+        return;
+    }
 
     if (m_draggingDbm) {
         int dy = my - m_dragStartY;
@@ -2403,7 +2974,35 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     // From AetherSDR SpectrumWidget.cpp:1242-1344
 
     int freqBarY = specH + kDividerH;
-    if (mx >= w - effectiveStripW() && effectiveStripW() > 0 && my < specH) {
+
+    // Sub-epic E: hover cursors for LIVE button + time scale
+    // From AetherSDR SpectrumWidget.cpp:2200-2225 [@0cd4559]
+    {
+        const int wfY = specH + kDividerH + kFreqScaleH;
+        if (my >= specH + kDividerH && my < wfY) {
+            // In the freq-scale row — LIVE button overlaps here.
+            const QRect wfRect(0, wfY, w, h - wfY);
+            if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())) {
+                setCursor(Qt::PointingHandCursor);
+                return;
+            }
+        }
+        if (my >= wfY) {
+            const QRect wfRect(0, wfY, w, h - wfY);
+            const QRect timeScaleRect = waterfallTimeScaleRect(wfRect);
+            if (timeScaleRect.contains(event->position().toPoint())) {
+                setCursor(Qt::SizeVerCursor);
+                return;
+            }
+            // fall through to existing crosshair assignment
+        }
+    }
+
+    // Sub-epic E: hit-test against the actual dBm-strip width, not the
+    // effectiveStripW() layout reservation (which widens to 72px when paused
+    // to make room for the time-scale strip's UTC labels — but the dBm strip
+    // itself stays at kDbmStripW = 36px wide).
+    if (mx >= w - kDbmStripW && effectiveStripW() > 0 && my < specH) {
         // Hover over dBm strip → change cursor.
         // From AetherSDR SpectrumWidget.cpp:2241-2248 [@0cd4559]
         // Strip's arrow row is the top kDbmArrowH pixels of the strip.
@@ -2447,6 +3046,19 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
 
 void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
 {
+    // Sub-epic E: time-scale drag end
+    // From AetherSDR SpectrumWidget.cpp:2382-2387 [@0cd4559]
+    //   note: drag release does NOT auto-resume to live — m_wfLive is only
+    //   flipped true by the LIVE button. Drag-to-zero would auto-bump back
+    //   on the next row otherwise. This is deliberate; see plan
+    //   §authoring-time decisions discussion.
+    if (m_draggingTimeScale) {
+        m_draggingTimeScale = false;
+        setCursor(Qt::CrossCursor);
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton) {
         // If pan drag was short (click, not real drag), treat as click-to-tune
         // From AetherSDR SpectrumWidget.cpp:1427-1457 — 4px Manhattan threshold
@@ -2495,7 +3107,11 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
     const int mx = static_cast<int>(event->position().x());
     const int my = static_cast<int>(event->position().y());
     const int specH = static_cast<int>(height() * m_spectrumFrac);
-    const int stripX = width() - effectiveStripW();
+    // Sub-epic E: hit-test against the actual dBm-strip width, not the
+    // effectiveStripW() layout reservation (which widens to 72px when paused
+    // to make room for the time-scale strip's UTC labels — but the dBm strip
+    // itself stays at kDbmStripW = 36px wide).
+    const int stripX = width() - kDbmStripW;
     if (mx >= stripX && effectiveStripW() > 0 && my < specH) {
         const int notches = event->angleDelta().y() / 120;
         if (notches != 0) {
@@ -2889,8 +3505,20 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 drawDbmScale(p, QRect(0, 0, w, specH));
             }
             drawBandPlan(p, specRect);
+            // Sub-epic E: time-scale + LIVE button on the right edge of the
+            // waterfall area. Same FULL-WIDTH wfRect contract as the QPainter
+            // path — the clipped `wfRect` local at line 3079 cannot be reused
+            // because the time-scale helpers expect a wfRect spanning the full
+            // widget width (the strip lives in the dBm-strip column).
+            //
+            // drawTimeScale must paint AFTER drawFreqScale so the LIVE
+            // button (in the freq-scale row) is on top of the freq labels —
+            // when paused the 40px button extends slightly past the
+            // dBm-strip column's left edge into freq-scale territory.
+            const QRect wfRectFull(0, wfRect.top(), w, wfRect.height());
             p.fillRect(0, specH, w, kDividerH, QColor(0x30, 0x40, 0x50));
             drawFreqScale(p, QRect(0, specH + kDividerH, w - effectiveStripW(), kFreqScaleH));
+            drawTimeScale(p, wfRectFull);
             drawVfoMarker(p, specRect, wfRect);
             drawOffScreenIndicator(p, specRect, wfRect);
 

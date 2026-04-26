@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Added (Phase 3G RX Epic Sub-epic E — Waterfall rewind / scrollback)
+
+- **Waterfall rewind / scrollback.** Drag up on the right-edge time-scale
+  strip to pause the waterfall and scroll backward through up to ~8 minutes
+  of history at default refresh, or 20+ minutes at any period ≥ 73 ms. A
+  bright-red "LIVE" button appears when paused; one click returns to
+  real-time. Tick labels switch from elapsed seconds (live) to absolute
+  UTC timestamps (paused). Configurable depth via Setup → Display →
+  Waterfall (60 s / 5 min / 15 min / 20 min, default 20 min, persisted as
+  `DisplayWaterfallHistoryMs`).
+
+  Ported from AetherSDR `main@0cd4559` for the live machinery and the
+  unmerged PR `aetherclaude/issue-1478@2bb3b5c` (#1478) for the row cap
+  and 250 ms resize debounce. NereusSDR raises the cap from upstream's
+  4 096 rows to 16 384 rows (~128 MB at 2 000 px wide) so the default
+  30 ms refresh delivers ~8 minutes of effective rewind instead of ~2.
+  A disk-spool tier (to extend beyond the in-memory cap at the fastest
+  refresh rates) is deferred to Phase 3M (Recording).
+
+  Diverges from upstream by clearing history on band/zoom largeShift,
+  keeping the rewind window coherent with the current band — see
+  [`docs/architecture/phase3g-rx-epic-e-waterfall-scrollback-plan.md`](docs/architecture/phase3g-rx-epic-e-waterfall-scrollback-plan.md)
+  §authoring-time #3.
+
+  Closes the last item in the Phase 3G RX Experience Epic.
+
 ## [0.2.3] - 2026-04-24
 
 This release rounds out the **Phase 3G RX experience epic** (AetherSDR-style
