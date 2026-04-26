@@ -810,7 +810,39 @@ void P1RadioConnection::setAttenuator(int dB)
 }
 void P1RadioConnection::setPreamp(bool enabled)              { m_rxPreamp[0] = enabled; }
 void P1RadioConnection::setTxDrive(int /*level*/)            { /* stub — Task 7 */ }
-void P1RadioConnection::setMox(bool enabled)                 { m_mox = enabled; }
+// ---------------------------------------------------------------------------
+// setMox — 3M-1a Task E.3
+//
+// Wire-byte emission: the MOX bit is C0 byte 3 bit 0 (0x01) in the P1 C&C
+// bank-0 frame.  composeCcBank0Full() writes:
+//   out[0] = m_mox ? 0x01 : 0x00;
+// Source: deskhpsdr/src/old_protocol.c:3597 [@120188f]
+//   output_buffer[C0] |= 0x01;  // Always set MOX if non-CW transmitting
+// HL2 firmware cross-check: dsopenhpsdr1.v:297
+//   ds_cmd_ptt_next = eth_data[0]  // bit 0 of the C0 byte = PTT/MOX
+//
+// Codex P2 — safety-effect-first idempotent-guard pattern:
+//   1. Force a bank-0 frame on the NEXT sendCommandFrame() call so the MOX
+//      bit lands on the wire within ≤1 frame regardless of round-robin phase.
+//      This is the safety effect; it fires even on repeated calls with the
+//      same value (ensures the bit is actually emitted).
+//   2. Guard: if the requested value equals the stored value, update the
+//      flush flag and return — no further state change.
+//
+// CW gating (txmode == modeCWU/L branch from deskhpsdr:3596-3598) is 3M-2.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setMox(bool enabled)
+{
+    // Codex P2 safety effect: force bank 0 on next frame so the MOX bit
+    // is emitted within ≤1 frame of this call.
+    // Source: deskhpsdr/src/old_protocol.c:3595-3599 [@120188f]
+    m_forceBank0Next = true;
+
+    if (m_mox == enabled) {
+        return;  // idempotent — state unchanged, flush flag already set above
+    }
+    m_mox = enabled;
+}
 // ---------------------------------------------------------------------------
 // setAntennaRouting — Phase 3P-I-a
 //
@@ -1539,6 +1571,15 @@ void P1RadioConnection::sendCommandFrame()
     frame[5] = static_cast<quint8>((seq >> 16) & 0xFF);
     frame[6] = static_cast<quint8>((seq >>  8) & 0xFF);
     frame[7] = static_cast<quint8>( seq        & 0xFF);
+
+    // 3M-1a E.3: if setMox() requested a bank-0 flush, reset the round-robin
+    // to 0 so this frame carries the MOX bit within ≤1 frame of the call.
+    // Source: deskhpsdr/src/old_protocol.c:3595-3599 [@120188f] — the reference
+    // implementation does not defer MOX; it sets the bit on the very next frame.
+    if (m_forceBank0Next) {
+        m_ccRoundRobinIdx = 0;
+        m_forceBank0Next  = false;
+    }
 
     // Subframe 0: current bank
     frame[8] = 0x7F; frame[9] = 0x7F; frame[10] = 0x7F;

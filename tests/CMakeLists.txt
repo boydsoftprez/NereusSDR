@@ -689,6 +689,24 @@ nereus_add_test(tst_radio_connection_tx_iface)
 nereus_add_test(tst_p1_tx_iq_wire)
 target_compile_definitions(tst_p1_tx_iq_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── 3M-1a Task E.3: P1 MOX wire-byte emission ────────────────────────────────
+# 13 tests covering:
+#   1. Default state: C0 bit 0 clear before any setMox call.
+#   2. setMox(true) → C0 bit 0 = 1 (bank-0 compose path).
+#   3. setMox(false) → C0 bit 0 = 0.
+#   4. Bank-0 address bits (7..1) remain 0 after setMox(true).
+#   5. setMox() sets m_forceBank0Next so the next frame sends bank-0 ASAP.
+#   6. Repeated setMox with same value still sets the flush flag (Codex P2).
+#   7. Idempotent setMox(true) twice doesn't crash.
+#   8. Round-trip true→false produces correct bytes.
+#   9. Sub-frame 0 byte 11 (C0) carries the MOX bit.
+#   10. Sub-frame 1 bank-1 C0 is not bit-0-only (address field differs).
+#   11. HL2 firmware cross-check: bit 0 of eth_data[0] = PTT (dsopenhpsdr1.v:297).
+#   12-13. Static composeCcBank0 helper agrees on bit position.
+# Source: deskhpsdr/src/old_protocol.c:3595-3599 [@120188f].
+nereus_add_test(tst_p1_mox_wire)
+target_compile_definitions(tst_p1_mox_wire PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 6: RadioModel::paTripped() live state + Ganymede handler ─
 # 5 tests cover initial state (clear), trip latch (non-zero tripState → true),
 # latch reset (resetGanymedePa()), absent-PA clear (setGanymedePresent(false)),

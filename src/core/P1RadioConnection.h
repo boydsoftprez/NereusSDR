@@ -253,6 +253,12 @@ private:
     quint32 m_epRecvSeqExpected{0};
     int     m_ccRoundRobinIdx{0};
 
+    // 3M-1a E.3: force the next sendCommandFrame() to start with bank 0 so
+    // the MOX bit lands on the wire within ≤1 frame of setMox().
+    // Set by setMox() on every call (Codex P2: safety effect before guard).
+    // Cleared by sendCommandFrame() after it emits bank 0.
+    bool    m_forceBank0Next{false};
+
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
     // NEREUS_USE_LEGACY_P1_CODEC=1 forces legacy compose path.
@@ -407,6 +413,25 @@ public:
     // hand-crafted 1032-byte ep6 datagram and assert paTelemetryUpdated()
     // emits the expected raw values.  Phase 3P-H Task 4.
     void parseEp6FrameForTest(const QByteArray& pkt) { parseEp6Frame(pkt); }
+
+    // ── 3M-1a E.3 MOX wire test seams ────────────────────────────────────────
+    // captureBank0ForTest — compose 5 bank-0 C&C bytes from current state
+    // and return them.  Used by tst_p1_mox_wire to verify the MOX bit (C0
+    // bit 0) is correct without needing a live socket.
+    // Source for bit position: deskhpsdr/src/old_protocol.c:3597 [@120188f]
+    //   output_buffer[C0] |= 0x01;  // MOX = byte 3 (C0), bit 0
+    // HL2 firmware cross-check: dsopenhpsdr1.v:297 — ds_cmd_ptt_next = eth_data[0]
+    QByteArray captureBank0ForTest() const {
+        quint8 out[5] = {};
+        composeCcForBankForTest(0, out);
+        return QByteArray(reinterpret_cast<const char*>(out), 5);
+    }
+
+    // roundRobinIdxForTest — returns the current m_ccRoundRobinIdx value.
+    int roundRobinIdxForTest() const { return m_ccRoundRobinIdx; }
+
+    // forceBank0NextForTest — returns m_forceBank0Next (the flush flag state).
+    bool forceBank0NextForTest() const { return m_forceBank0Next; }
 
     // ── 3M-1a E.2 TX I/Q test seams ─────────────────────────────────────────
     // sendTxIqAndCapture — feeds n interleaved float I/Q samples through the
