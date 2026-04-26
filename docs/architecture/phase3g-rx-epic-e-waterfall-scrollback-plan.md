@@ -1353,20 +1353,21 @@ connect(m_historyResizeTimer, &QTimer::timeout, this, [this]() {
 });
 ```
 
-- [ ] **Step 2: Replace direct `ensureWaterfallHistory()` calls in `resizeEvent` with the debounced timer**
+- [ ] **Step 2: Add `m_historyResizeTimer->start()` to `resizeEvent`'s m_waterfall-reallocation branch**
 
-`rg -n 'ensureWaterfallHistory\(\)' src/gui/SpectrumWidget.cpp`. Find the call in `resizeEvent`. Replace:
+`rg -n 'm_waterfall\s*=\s*QImage' src/gui/SpectrumWidget.cpp` — find the m_waterfall reallocation in `resizeEvent` (around line 1188). Add immediately after the `m_waterfall = QImage(...)` line + `m_wfTexFullUpload = true` + `markOverlayDirty()` cluster, inside the same `if (wfW > 0 && ...)` branch:
 
 ```cpp
-// Before:
-ensureWaterfallHistory();
-if (m_wfHistoryRowCount > 0) {
-    rebuildWaterfallViewport();
+// Sub-epic E: schedule history-image rebuild so the ring buffer's QImage
+// tracks m_waterfall's new dimensions. Debounced 250 ms so rapid resize
+// events don't thrash. Matches the intent of unmerged AetherSDR PR #1478
+// [@2bb3b5c] — see plan §authoring-time #2.
+if (m_historyResizeTimer) {
+    m_historyResizeTimer->start();
 }
-
-// After (per AetherSDR [@2bb3b5c], unmerged PR #1478 — see plan §authoring-time #2):
-m_historyResizeTimer->start();
 ```
+
+Note: NereusSDR's divider-drag block doesn't currently reallocate `m_waterfall` — that's a pre-existing divergence from upstream. The timer wiring there is deferred to a follow-up.
 
 - [ ] **Step 3: Replace direct call in divider-drag mouseMove**
 

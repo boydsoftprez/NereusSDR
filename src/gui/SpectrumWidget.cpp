@@ -1189,6 +1189,13 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         m_wfTexFullUpload = true;
         markOverlayDirty();
 #endif
+        // Sub-epic E: schedule history-image rebuild so the ring buffer's
+        // QImage tracks m_waterfall's new dimensions. Debounced 250 ms so
+        // rapid resize events don't thrash. Matches the intent of unmerged
+        // AetherSDR PR #1478 [@2bb3b5c] — see plan §authoring-time #2.
+        if (m_historyResizeTimer) {
+            m_historyResizeTimer->start();
+        }
     }
 
     // Reposition VFO flags after resize
