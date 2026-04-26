@@ -42,6 +42,7 @@ public:
     void setAntennaRouting(AntennaRouting r) override {
         calls.append(r);
     }
+    void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
 };
 
 class TestAntennaRoutingModel : public QObject {

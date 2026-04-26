@@ -56,6 +56,7 @@ mw0lge@grange-lane.co.uk
 #include "MeterWidget.h"
 #include "MeterItem.h"
 #include "core/RxChannel.h"
+#include "core/RadioStatus.h"
 #include "core/LogCategories.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/mmio/MmioEndpoint.h"
@@ -166,6 +167,34 @@ void MeterPoller::poll()
     // Push S-meter value to VfoWidget level bar.
     // smeterUpdated connects to VfoWidget::setSmeter in MainWindow.
     emit smeterUpdated(smeterDbm);
+}
+
+void MeterPoller::setRadioStatus(RadioStatus* status)
+{
+    // Disconnect any previous connection before re-wiring.
+    if (m_powerConn) {
+        QObject::disconnect(m_powerConn);
+        m_powerConn = QMetaObject::Connection{};
+    }
+    m_radioStatus = status;
+    if (m_radioStatus) {
+        // From Thetis console.cs PollPAPWR loop [v2.10.3.13]:
+        // RadioStatus::powerChanged aggregates forward/reflected/swr from
+        // PollPAPWR's alex_fwd / alex_rev / swr locals and emits them
+        // together. Fan values out to all registered MeterWidget targets
+        // via updateMeterValue() — same pattern as the RX poll() loop.
+        m_powerConn = connect(
+            m_radioStatus, &RadioStatus::powerChanged,
+            this, [this](double fwd, double rev, double swr) {
+                for (auto& guarded : m_targets) {
+                    MeterWidget* target = guarded.data();
+                    if (!target) { continue; }
+                    target->updateMeterValue(MeterBinding::TxPower,        fwd);
+                    target->updateMeterValue(MeterBinding::TxReversePower, rev);
+                    target->updateMeterValue(MeterBinding::TxSwr,          swr);
+                }
+            });
+    }
 }
 
 } // namespace NereusSDR

@@ -891,6 +891,30 @@ void MainWindow::buildUI()
             }
         });
     });
+
+    // ── Phase 3M-0 Task 17: safety controller → status-bar wiring ────────────
+    //
+    // Wire PA Fwd/Rev/SWR telemetry into MeterPoller's cache so PA power
+    // meter items (MeterPoller::setRadioStatus) receive live data as
+    // RadioStatus::powerChanged fires. Called here (after poller creation)
+    // so the connection outlives the poller's lifetime.
+    m_meterPoller->setRadioStatus(&m_radioModel->radioStatus());
+
+    // Ganymede PA-trip badge: RadioModel::paTrippedChanged → setPaTripped.
+    // setPaTripped() was added in Task 14 and updates m_paStatusBadge text
+    // and colour atomically.
+    connect(m_radioModel, &RadioModel::paTrippedChanged,
+            this, &MainWindow::setPaTripped);
+
+    // TX Inhibit pill: TxInhibitMonitor::txInhibitedChanged → setTxInhibited.
+    // setTxInhibited() was added in Task 14 and toggles m_txInhibitLabel
+    // visibility. The Source parameter is ignored by the UI slot (the pill
+    // is binary: visible or hidden).
+    connect(&m_radioModel->txInhibit(),
+            &safety::TxInhibitMonitor::txInhibitedChanged,
+            this, [this](bool inhibited, safety::TxInhibitMonitor::Source /*source*/) {
+        setTxInhibited(inhibited);
+    });
 }
 
 void MainWindow::rebuildEditContainerSubmenu()
@@ -2207,6 +2231,31 @@ void MainWindow::buildStatusBar()
     }
     hbox->addWidget(makeSep());
 
+    // ── Phase 3M-0 Task 14: TX Inhibit indicator ─────────────────────────
+    // Red "TX INHIBIT" pill — hidden by default; shown when
+    // TxInhibitMonitor::inhibited() asserts. Signal wiring to the monitor
+    // lands in Task 17 (final integration pass).
+    m_txInhibitLabel = new QLabel(QStringLiteral("TX INHIBIT"), barWidget);
+    m_txInhibitLabel->setObjectName(QStringLiteral("txInhibitLabel"));
+    m_txInhibitLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
+        "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"));
+    m_txInhibitLabel->setToolTip(tr("External TX Inhibit asserted — TX is blocked"));
+    m_txInhibitLabel->setVisible(false);  // hidden until inhibit asserts
+    hbox->addWidget(m_txInhibitLabel);
+
+    // ── Phase 3M-0 Task 14: PA Status badge ─────────────────────────────
+    // "PA OK" (green) / "PA FAULT" (red) badge driven by
+    // RadioModel::paTripped(). Default state is OK; setPaTripped() flips
+    // the text, colour, and tooltip. Signal wiring lands in Task 17.
+    m_paStatusBadge = new QLabel(QStringLiteral("PA OK"), barWidget);
+    m_paStatusBadge->setObjectName(QStringLiteral("paStatusBadge"));
+    m_paStatusBadge->setStyleSheet(QStringLiteral(
+        "QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+    m_paStatusBadge->setToolTip(tr("PA Status — OK"));
+    hbox->addWidget(m_paStatusBadge);
+    hbox->addWidget(makeSep());
+
     // TX indicator — dim red when not transmitting; bright red when TX active (NYI)
     auto* txLabel = new QLabel(QStringLiteral("TX"), barWidget);
     txLabel->setStyleSheet(QStringLiteral(
@@ -2297,6 +2346,35 @@ void MainWindow::buildStatusBar()
 
     // Add the full-width bar widget to the status bar
     sb->addWidget(barWidget, 1);
+}
+
+// ── Phase 3M-0 Task 14: PA trip badge update ─────────────────────────────────
+// Called by Task 17 wiring when RadioModel::paTrippedChanged fires.
+// Updates badge text, colour, and tooltip atomically so there is never
+// a state where text and colour are out of sync.
+void MainWindow::setPaTripped(bool tripped)
+{
+    if (!m_paStatusBadge) { return; }
+    if (tripped) {
+        m_paStatusBadge->setText(QStringLiteral("PA FAULT"));
+        m_paStatusBadge->setStyleSheet(QStringLiteral(
+            "QLabel { color: #ff6060; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+        m_paStatusBadge->setToolTip(tr("PA Status — FAULT (PA tripped, MOX dropped)"));
+    } else {
+        m_paStatusBadge->setText(QStringLiteral("PA OK"));
+        m_paStatusBadge->setStyleSheet(QStringLiteral(
+            "QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+        m_paStatusBadge->setToolTip(tr("PA Status — OK"));
+    }
+}
+
+// ── Phase 3M-0 Task 14: TX Inhibit label visibility ─────────────────────────
+// Called by Task 17 wiring when TxInhibitMonitor::txInhibitedChanged fires.
+// Shows or hides the red "TX INHIBIT" pill in the status bar.
+void MainWindow::setTxInhibited(bool inhibited)
+{
+    if (!m_txInhibitLabel) { return; }
+    m_txInhibitLabel->setVisible(inhibited);
 }
 
 void MainWindow::wireSliceToSpectrum()

@@ -102,6 +102,27 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
+    // ── Phase 3M-0 Task 14 test accessors ────────────────────────────────
+    // Returns the TX Inhibit status-bar label. Visible iff
+    // TxInhibitMonitor::inhibited() is true. Wiring to the monitor lands
+    // in Task 17 (final integration). Non-null after construction.
+    QLabel* txInhibitLabel() const noexcept { return m_txInhibitLabel; }
+
+    // Returns the PA status badge label. Text is "PA OK" (green) or
+    // "PA FAULT" (red) per RadioModel::paTripped(). Wiring to RadioModel
+    // lands in Task 17. Non-null after construction.
+    QLabel* paStatusBadge() const noexcept { return m_paStatusBadge; }
+
+public slots:
+    // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
+    // Update PA status badge state. Wired by Task 17 to
+    // RadioModel::paTrippedChanged.
+    void setPaTripped(bool tripped);
+
+    // Update TX Inhibit label visibility. Wired by Task 17 to
+    // TxInhibitMonitor::txInhibitedChanged.
+    void setTxInhibited(bool inhibited);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -214,6 +235,14 @@ private:
     QLabel*  m_cpuBotLabel{nullptr};   // "Mem: —"
     QTimer*  m_cpuTimer{nullptr};
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
+
+    // Status bar safety indicators (Phase 3M-0 Task 14)
+    // m_txInhibitLabel — red "TX INHIBIT" pill, hidden by default,
+    //   shown when TxInhibitMonitor::inhibited() asserts (wired Task 17).
+    // m_paStatusBadge  — "PA OK" (green) / "PA FAULT" (red) badge driven
+    //   by RadioModel::paTripped() (wired Task 17).
+    QLabel* m_txInhibitLabel{nullptr};
+    QLabel* m_paStatusBadge{nullptr};
 
     // VFO flag widget (Phase 3E)
     class VfoWidget* m_vfoWidget{nullptr};

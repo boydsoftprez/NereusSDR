@@ -84,6 +84,10 @@ public:
 
 private:
     void buildUI();
+    void buildSwrProtectionGroup();
+    void buildExternalTxInhibitGroup();
+    void buildBlockTxAntennaGroup();
+    void buildHfPaGroup();
 
     // Section: Power
     QSlider* m_maxPowerSlider{nullptr};        // 0–100 W
@@ -92,6 +96,29 @@ private:
     // Section: PA
     QLabel*    m_perBandGainLabel{nullptr};    // placeholder: future table
     QComboBox* m_fanControlCombo{nullptr};     // Off/Low/Med/High/Auto
+
+    // Section: SWR Protection (Task 9)
+    // grpSWRProtectionControl per setup.designer.cs:5793-5924 [v2.10.3.13]
+    QCheckBox*      m_chkSWRProtection{nullptr};
+    QDoubleSpinBox* m_udSwrProtectionLimit{nullptr};
+    QCheckBox*      m_chkSWRTuneProtection{nullptr};
+    QSpinBox*       m_udTunePowerSwrIgnore{nullptr};
+    QCheckBox*      m_chkWindBackPowerSWR{nullptr};
+
+    // Section: External TX Inhibit (Task 10)
+    // grpExtTXInhibit per setup.designer.cs:46626-46657 [v2.10.3.13]
+    QCheckBox* m_chkTXInhibit{nullptr};
+    QCheckBox* m_chkTXInhibitReverse{nullptr};
+
+    // Section: Block TX on RX antennas (Task 11)
+    // chkBlockTxAnt2/3 per setup.designer.cs:6704-6724 [v2.10.3.13]
+    // (NereusSDR-original labels — Thetis ships unlabelled column-header checkboxes)
+    QCheckBox* m_chkBlockTxAnt2{nullptr};
+    QCheckBox* m_chkBlockTxAnt3{nullptr};
+
+    // Section: PA Control (Task 11)
+    // chkHFTRRelay per setup.designer.cs:5780-5791 [v2.10.3.13]
+    QCheckBox* m_chkHFTRRelay{nullptr};
 };
 
 // ---------------------------------------------------------------------------

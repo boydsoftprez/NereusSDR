@@ -624,6 +624,49 @@ const BoardCapabilities kHermesLite = {
     .sourceCitation   = "network.h:454, IoBoardHl2.cs, Setup.cs:1082-1093,:16083-16086",
 };
 
+// ─── HermesLiteRxOnly ───────────────────────────────────────────────────────
+// NereusSDR-original SKU slot — Phase 3M-0 Task 1.
+// HL2 RX-only kits ship without a TX driver board.  All capabilities match
+// standard HermesLite (kHermesLite) except isRxOnlySku=true.
+// Thetis treats RX-only purely as a user toggle (chkGeneralRXOnly,
+// console.cs:15283-15307 [v2.10.3.13]); NereusSDR adds this SKU-level flag
+// so HL2 RX-only kits are hard-blocked from TX regardless of user settings.
+// Not a Thetis wire-format value — integer 12, above the 0-11 Thetis range.
+const BoardCapabilities kHermesLiteRxOnly = {
+    .board            = HPSDRHW::HermesLiteRxOnly,
+    .protocol         = ProtocolVersion::Protocol1,
+    .adcCount         = 1,
+    .maxReceivers     = 4,
+    .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
+    .maxSampleRate    = 384000,
+    .attenuator       = {0, 63, 1, true, 0x3F, 0x40, true},
+    .preamp           = {false, false},
+    .ocOutputCount    = 0,
+    .hasAlexFilters   = false,
+    .hasAlexTxRouting = false,
+    .xvtrJackCount    = 0,
+    .antennaInputCount = 1,
+    .hasAlex2         = false,
+    .hasRxBypassRelay = false,
+    .rxOnlyAntennaCount = 0,
+    .isRxOnlySku      = true,   // HL2 RX-only kit — no TX driver board
+    .canDriveGanymede = false,
+    .hasPureSignal    = false,
+    .hasDiversityReceiver = false,
+    .hasStepAttenuatorCal = false,
+    .hasPaProfile     = false,
+    .hasBandwidthMonitor = true,
+    .hasIoBoardHl2    = true,
+    .hasSidetoneGenerator = true,
+    .hasApollo        = false,
+    .hasAlex          = false,
+    .hasPennyLane     = false,
+    .minFirmwareVersion = 0,
+    .knownGoodFirmware  = 0,
+    .displayName      = "Hermes Lite 2 (RX-only)",
+    .sourceCitation   = "NereusSDR-original Phase 3M-0; based on kHermesLite",
+};
+
 // ─── Saturn (ANAN-G2) ───────────────────────────────────────────────────────
 // Source: network.h:455 (Saturn=10), enums.cs:397, clsHardwareSpecific.cs:164-176
 // ADC: SetRxADC(2) — dual ADC. Protocol 2.
@@ -715,6 +758,50 @@ const BoardCapabilities kSaturnMKII = {
     .sourceCitation   = "network.h:456, enums.cs:398 \"ANAN-G2: MKII board?\"",
 };
 
+// ─── Andromeda (Andromeda console family — Ganymede 500W PA) ────────────────
+// NereusSDR-original SKU slot — Phase 3M-0 Task 1.
+// The Andromeda console family connects to a Ganymede 500W PA.
+// canDriveGanymede captures the PA-trip capability flag per
+// Andromeda.cs:914-920 [v2.10.3.13].
+// Capabilities derived from kSaturn (the closest P2 full-featured board in the
+// table) with canDriveGanymede=true.  Full hardware details TBD when Andromeda
+// board specs are confirmed (3M-1 epic).
+// Not a Thetis wire-format value — integer 20, above the 0-11 Thetis range.
+const BoardCapabilities kAndromeda = {
+    .board            = HPSDRHW::Andromeda,
+    .protocol         = ProtocolVersion::Protocol2,
+    .adcCount         = 2,
+    .maxReceivers     = 7,
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
+    .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
+    .preamp           = {true, true},
+    .ocOutputCount    = 7,
+    .hasAlexFilters   = true,
+    .hasAlexTxRouting = true,
+    .xvtrJackCount    = 1,
+    .antennaInputCount = 3,
+    .hasAlex2         = true,
+    .hasRxBypassRelay = true,
+    .rxOnlyAntennaCount = 3,
+    .isRxOnlySku      = false,
+    .canDriveGanymede = true,   // Andromeda console drives Ganymede 500W PA (Andromeda.cs:914-920 [v2.10.3.13])
+    .hasPureSignal    = true,
+    .hasDiversityReceiver = true,
+    .hasStepAttenuatorCal = true,
+    .hasPaProfile     = true,
+    .hasBandwidthMonitor = false,
+    .hasIoBoardHl2    = false,
+    .hasSidetoneGenerator = false,
+    .hasApollo        = false,
+    .hasAlex          = true,
+    .hasPennyLane     = true,
+    .minFirmwareVersion = 0,
+    .knownGoodFirmware  = 0,
+    .displayName      = "Andromeda (Ganymede PA)",
+    .sourceCitation   = "NereusSDR-original Phase 3M-0; based on kSaturn; Andromeda.cs:914-920 [v2.10.3.13]",
+};
+
 // ─── Unknown (fallback) ─────────────────────────────────────────────────────
 // Safe defaults for unrecognised boards. Used as forBoard() fallback.
 const BoardCapabilities kUnknown = {
@@ -752,9 +839,12 @@ const BoardCapabilities kUnknown = {
 
 // const (not constexpr) because BoardCapabilities contains QList<SaturnBpf1Edge>
 // which is not constexpr-compatible.  Introduced in Phase 3P-B Task 6.
-const std::array<BoardCapabilities, 10> kTable = {
+// Size bumped from 10 → 12 in Phase 3M-0 Task 1 (added kHermesLiteRxOnly,
+// kAndromeda). kUnknown remains last as the forBoard() fallback.
+const std::array<BoardCapabilities, 12> kTable = {
     kAtlas, kHermes, kHermesII, kAngelia, kOrion,
-    kOrionMKII, kHermesLite, kSaturn, kSaturnMKII, kUnknown
+    kOrionMKII, kHermesLite, kHermesLiteRxOnly,
+    kSaturn, kSaturnMKII, kAndromeda, kUnknown
 };
 
 } // anonymous namespace

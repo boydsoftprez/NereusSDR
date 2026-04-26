@@ -125,6 +125,11 @@ enum class HPSDRHW : int {
     // 7..9 reserved — DO NOT REUSE (Thetis wire format compares these ints)
     Saturn     =  10,  // ANAN-G2: added G8NJJ [Thetis network.h:423 / enums.cs:397]
     SaturnMKII =  11,  // ANAN-G2 MkII board revision
+    // NereusSDR-original SKU slots — NOT on the Thetis wire; integers chosen
+    // above the Thetis-defined range (0-11) and below Unknown(999).
+    HermesLiteRxOnly = 12, // HL2 RX-only kit (no TX driver). Phase 3M-0.
+    // 13..19 available for future NereusSDR-original SKU slots.
+    Andromeda        = 20, // Andromeda console (Ganymede PA trip). Phase 3M-0.
     Unknown    = 999
 };
 

@@ -1185,6 +1185,10 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
         p.drawText(specRect.right() - tw - 8, specRect.top() + 14, fpsText);
     }
 
+    // HIGH SWR / PA safety overlay — painted last so it sits on top of all
+    // other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
+    paintHighSwrOverlay(p);
+
     // Reposition VFO flag widgets every frame — ensures flag tracks marker
     // exactly with no frame delay. From AetherSDR: updatePosition called
     // from within the paint/render cycle.
@@ -2021,6 +2025,66 @@ void SpectrumWidget::drawCursorInfo(QPainter& p, const QRect& specRect)
     p.fillRect(labelX, labelY, textW, textH, QColor(0x10, 0x15, 0x20, 200));
     p.setPen(QColor(0xc8, 0xd8, 0xe8));
     p.drawText(labelX + 6, labelY + fm.ascent() + 3, label);
+}
+
+// ---- HIGH SWR / PA safety overlay ----
+// Porting from display.cs:4183-4201 [v2.10.3.13] — original C# logic:
+//
+//   if (high_swr || _power_folded_back)
+//   {
+//       if (_power_folded_back)
+//           drawStringDX2D("HIGH SWR\n\nPOWER FOLD BACK", fontDX2d_font14, m_bDX2_Red, 245, 20);
+//       else
+//           drawStringDX2D("HIGH SWR", fontDX2d_font14, m_bDX2_Red, 245, 20);
+//   }
+//   _d2dRenderTarget.DrawRectangle(new RectangleF(3, 3, displayTargetWidth-6, displayTargetHeight-6),
+//                                  m_bDX2_Red, 6f);
+//
+// //MW0LGE_21k8  [original inline comment from display.cs:4213]
+
+void SpectrumWidget::setHighSwrOverlay(bool active, bool foldback) noexcept
+{
+    if (m_highSwrActive == active && m_highSwrFoldback == foldback) {
+        return;
+    }
+    m_highSwrActive   = active;
+    m_highSwrFoldback = foldback;
+    markOverlayDirty();
+}
+
+// Paint "HIGH SWR" (and optionally "POWER FOLD BACK") text centred on the
+// widget, plus a 6 px red border inset by ~3 px.
+// From Thetis display.cs:4183-4201 [v2.10.3.13]
+void SpectrumWidget::paintHighSwrOverlay(QPainter& p)
+{
+    if (!m_highSwrActive) {
+        return;
+    }
+
+    // 6 px red border inset 3 px from widget edges.
+    // display.cs:4200 — DrawRectangle(RectangleF(3, 3, W-6, H-6), red, 6f)
+    // From Thetis display.cs:4200 [v2.10.3.13]
+    const QColor kRed(255, 0, 0);  // m_bDX2_Red from display.cs
+    p.save();
+    p.setPen(QPen(kRed, 6));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(rect().adjusted(3, 3, -3, -3));
+
+    // Centred "HIGH SWR" text — large bold red.
+    // display.cs:4189/4193 — drawStringDX2D("HIGH SWR[\n\nPOWER FOLD BACK]", fontDX2d_font14, m_bDX2_Red, 245, 20)
+    // From Thetis display.cs:4187-4194 [v2.10.3.13]
+    const QString text = m_highSwrFoldback
+        ? QStringLiteral("HIGH SWR\n\nPOWER FOLD BACK")
+        : QStringLiteral("HIGH SWR");
+
+    QFont f = p.font();
+    f.setPointSize(48);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(kRed);
+    p.drawText(rect(), Qt::AlignCenter, text);
+
+    p.restore();
 }
 
 // ---- Mouse event handlers ----
@@ -2867,6 +2931,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             if (m_mouseInWidget) {
                 drawCursorInfo(p, specRect);
             }
+
+            // HIGH SWR / PA safety overlay — painted last so it sits on top
+            // of all other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
+            paintHighSwrOverlay(p);
 
             m_overlayStaticDirty = false;
             m_overlayNeedsUpload = true;
