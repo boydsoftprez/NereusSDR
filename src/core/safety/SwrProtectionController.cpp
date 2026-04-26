@@ -231,10 +231,10 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
     // console.cs:26067-26091 [v2.10.3.13]
 
     // alex_fwd_limit floor: suppresses false trips during TX ramp-up.
-    // console.cs:26067 [v2.10.3.13]:
+    // console.cs:26064-26067 [v2.10.3.13]:
     //   float alex_fwd_limit = 5.0f;
-    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)
-    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;
+    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)        // K2UE idea:  try to determine if Hi-Z or Lo-Z load
+    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;        //    by comparing alex_fwd with power setting
     //   if (swr > _swrProtectionLimit && alex_fwd > alex_fwd_limit && swrprotection && !swr_pass)
     if (swr > m_limit && fwdW > m_alexFwdLimit && !swrPass) {
         m_tripCount++;
