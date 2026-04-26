@@ -959,7 +959,13 @@ void SpectrumWidget::setBandPlanFontSize(int pt)
 
 int SpectrumWidget::effectiveStripW() const
 {
-    return m_dbmScaleVisible ? kDbmStripW : 0;
+    // dBm strip + paused-mode timescale-strip extension.
+    // The strip is always present in the *waterfall* row (where the
+    // time scale is painted); the dBm strip is in the *spectrum* row.
+    // They occupy the same right-edge column.
+    const int spectrumStripW = m_dbmScaleVisible ? kDbmStripW : 0;
+    const int waterfallStripW = waterfallStripWidth();
+    return std::max(spectrumStripW, waterfallStripW);
 }
 
 void SpectrumWidget::setFreqLabelAlign(FreqLabelAlign a)
@@ -1865,6 +1871,29 @@ void SpectrumWidget::rebuildWaterfallViewport()
     m_wfTexFullUpload = true;
     m_wfLastUploadedRow = -1;
     update();
+}
+
+// From AetherSDR SpectrumWidget.cpp:705-718 [@0cd4559]
+void SpectrumWidget::setWaterfallLive(bool live)
+{
+    if (m_wfLive == live) {
+        return;
+    }
+    if (live) {
+        m_wfHistoryOffsetRows = 0;
+    }
+    m_wfLive = live;
+    rebuildWaterfallViewport();
+    update();
+}
+
+int SpectrumWidget::waterfallStripWidth() const
+{
+    // Live: width matches the dBm strip column for visual continuity.
+    // Paused: widens to fit absolute UTC labels ("-HH:mm:ssZ").
+    // From AetherSDR SpectrumWidget.cpp:716-719 [@0cd4559]
+    constexpr int kPausedStripW = 72;
+    return m_wfLive ? kDbmStripW : kPausedStripW;
 }
 
 // Sub-epic E — flush ring buffer + force live. Called from clearDisplay()
