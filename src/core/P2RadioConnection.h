@@ -291,6 +291,41 @@ private:
     quint32 m_seqHighPri{0};
     quint32 m_ccSeqNo{0};            // prn->cc_seq_no
 
+    // ── TX I/Q ring buffer (3M-1a E.6) ────────────────────────────────────────
+    // Pre-allocated interleaved [I0,Q0,I1,Q1,...] float samples.
+    //
+    // P2 wire format: 240 samples per UDP frame (1444 bytes total):
+    //   4-byte BE sequence number + 1440-byte payload (240 × 6 bytes).
+    //   Each sample: 3-byte BE signed int24 I + 3-byte BE signed int24 Q.
+    //   Float→int24 gain: 8388607.0 (0x7FFFFF).
+    //
+    // Layout ported from deskhpsdr/src/new_protocol.c:2795-2837 [@120188f]
+    // (new_protocol_iq_samples / TXIQRINGBUFLEN).
+    //
+    // kTxIqRingCapacityFloats: sized for ≥4 frames of headroom at 192 kHz.
+    //   4 × 240 samples × 2 floats (I+Q) = 1920 floats.
+    //   Rounded up to the nearest power-of-two for simpler modular arithmetic: 2048.
+    //   Provides ~5 msec of audio-thread headroom before the ring fills.
+    //   Source: deskhpsdr/src/new_protocol.c:186 [@120188f]
+    //     TXIQRINGBUFLEN 97920  (85 msec; NereusSDR uses a leaner in-memory float ring)
+    //
+    // SPSC ring buffer — audio thread (sendTxIq) writes, connection thread
+    // (m_txIqTimer lambda) reads.  Same atomic-ordering discipline as P1:
+    //   - m_txIqRingWrite: single audio-thread writer; relaxed store;
+    //     the release on m_txIqRingCount publishes the float writes.
+    //   - m_txIqRingRead: single connection-thread writer; relaxed store;
+    //     the acquire on m_txIqRingCount makes audio writes visible.
+    //   - m_txIqRingCount: cross-thread fetch_add (audio, release) /
+    //     fetch_sub (conn, relaxed).  The release/acquire pair provides
+    //     the memory ordering fence for the float data.
+    //
+    // CLAUDE.md mandates atomics for cross-thread DSP parameters.
+    static constexpr int kTxIqRingCapacityFloats = 2048;  // ≥4 frames; power-of-two
+    std::array<float, kTxIqRingCapacityFloats> m_txIqRing{};
+    std::atomic<int> m_txIqRingWrite{0};  // audio thread writes; relaxed store
+    std::atomic<int> m_txIqRingRead{0};   // connection thread writes; relaxed store
+    std::atomic<int> m_txIqRingCount{0};  // both threads: fetch_add (audio, release) / fetch_sub (conn)
+
     // --- RX state (from Thetis _radionet._rx, network.h:191-213) ---
     struct RxState {
         int id{0};
@@ -447,6 +482,80 @@ public:
     void processHighPriorityStatusForTest(const QByteArray& data) {
         processHighPriorityStatus(data);
     }
+
+    // txIqFrameForTest — 3M-1a Task E.6 test seam
+    //
+    // Feeds n interleaved float I/Q samples through sendTxIq() (audio-thread
+    // producer side), then composes ONE 1444-byte TX I/Q frame from the ring
+    // without sending a UDP datagram, and returns the frame as a QByteArray.
+    //
+    // IMPORTANT: this function must keep in sync with the production composition
+    // path in the m_txIqTimer lambda (P2RadioConnection.cpp, E.6 consumer).
+    // Any change to the 24-bit BE packing or sequence-number write in the
+    // production path must be reflected here identically.
+    //
+    // Cite: deskhpsdr/src/new_protocol.c:1945-1956 [@120188f]
+    //   (production send path structure: 4-byte seq + 1440-byte payload)
+    QByteArray txIqFrameForTest(const float* iq, int n) {
+        if (n > 0 && iq != nullptr) {
+            sendTxIq(iq, n);
+        }
+
+        // 1444 bytes: 4-byte BE sequence number + 1440-byte payload.
+        static constexpr int kTxPktLen = 4 + 240 * 6;
+        QByteArray frame(kTxPktLen, '\0');
+        auto* buf = reinterpret_cast<quint8*>(frame.data());
+
+        // Sequence number (4-byte BE) — mirrors the production consumer.
+        buf[0] = static_cast<quint8>((m_seqTxIq >> 24) & 0xFF);
+        buf[1] = static_cast<quint8>((m_seqTxIq >> 16) & 0xFF);
+        buf[2] = static_cast<quint8>((m_seqTxIq >>  8) & 0xFF);
+        buf[3] = static_cast<quint8>( m_seqTxIq        & 0xFF);
+        ++m_seqTxIq;
+
+        // Drain up to 240 samples from ring into payload — mirrors production consumer.
+        // Cite: deskhpsdr/src/new_protocol.c:2811-2816 [@120188f]
+        for (int s = 0; s < 240; ++s) {
+            int i24 = 0;
+            int q24 = 0;
+            if (m_txIqRingCount.load(std::memory_order_acquire) >= 2) {
+                int rp = m_txIqRingRead.load(std::memory_order_relaxed);
+                const float fI = m_txIqRing[rp];
+                rp = (rp + 1) % kTxIqRingCapacityFloats;
+                const float fQ = m_txIqRing[rp];
+                rp = (rp + 1) % kTxIqRingCapacityFloats;
+                m_txIqRingRead.store(rp, std::memory_order_relaxed);
+                m_txIqRingCount.fetch_sub(2, std::memory_order_relaxed);
+
+                // Float → int24; clamp to ±8388607.
+                // Cite: deskhpsdr/src/new_protocol.c:2795 [@120188f] (isample/qsample args are int)
+                auto toInt24 = [](float v) -> int {
+                    const float scaled = v * 8388607.0f;
+                    if (scaled >= 8388607.0f)  { return  8388607; }
+                    if (scaled <= -8388607.0f) { return -8388607; }
+                    return static_cast<int>(scaled);
+                };
+                i24 = toInt24(fI);
+                q24 = toInt24(fQ);
+            }
+            // Pack 3-byte BE I then 3-byte BE Q into payload.
+            // Cite: deskhpsdr/src/new_protocol.c:2811-2816 [@120188f]
+            const int offset = 4 + s * 6;
+            const quint32 ui = static_cast<quint32>(i24);
+            const quint32 uq = static_cast<quint32>(q24);
+            buf[offset + 0] = static_cast<quint8>((ui >> 16) & 0xFF);
+            buf[offset + 1] = static_cast<quint8>((ui >>  8) & 0xFF);
+            buf[offset + 2] = static_cast<quint8>( ui        & 0xFF);
+            buf[offset + 3] = static_cast<quint8>((uq >> 16) & 0xFF);
+            buf[offset + 4] = static_cast<quint8>((uq >>  8) & 0xFF);
+            buf[offset + 5] = static_cast<quint8>( uq        & 0xFF);
+        }
+
+        return frame;
+    }
+
+    // Return number of floats currently buffered in the TX I/Q ring.
+    int txIqRingCountForTest() const { return m_txIqRingCount.load(std::memory_order_acquire); }
 #endif
 };
 

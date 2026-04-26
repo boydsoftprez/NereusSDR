@@ -220,19 +220,86 @@ void P2RadioConnection::init()
     m_reconnectTimer->setSingleShot(true);
     connect(m_reconnectTimer, &QTimer::timeout, this, &P2RadioConnection::onReconnectTimeout);
 
-    // TX I/Q silence stream — radio expects continuous TX data on port 1029
-    // even in RX-only mode. From pcap: ~800 packets/sec at 192 kHz / 240 spp.
+    // TX I/Q stream — radio expects continuous TX data on port 1029 even in
+    // RX-only mode.  When the TX I/Q ring (m_txIqRing) has samples, they are
+    // drained into the frame; when empty, zeros (silence) are sent.
+    //
+    // From pcap: ~800 packets/sec at 192 kHz / 240 spp.
+    // Cite: deskhpsdr/src/new_protocol.c:1929-1935 [@120188f]
+    //   "Ideally, a TX IQ buffer with 240 sample is sent every 1250 usecs."
+    //
+    // Timer at 5 ms ≈ 200 packets/sec (close enough; radio buffers internally).
     m_txIqTimer = new QTimer(this);
-    m_txIqTimer->setInterval(5);  // ~200 packets/sec (close enough, radio buffers)
+    m_txIqTimer->setInterval(5);
     connect(m_txIqTimer, &QTimer::timeout, this, [this]() {
         if (!m_running || !m_socket) {
             return;
         }
-        // 4-byte seq + 240 I/Q pairs × 6 bytes (24-bit I + 24-bit Q) = 1444 bytes
+
+        // 4-byte BE sequence number + 240 samples × 6 bytes = 1444 bytes.
+        // Cite: deskhpsdr/src/new_protocol.h:37 [@120188f]
+        //   #define TX_IQ_FROM_HOST_PORT 1029
+        // Cite: deskhpsdr/src/new_protocol.c:1945-1948 [@120188f]
+        //   iqbuffer[0..3] = tx_iq_sequence BE bytes; tx_iq_sequence++;
         static constexpr int kTxPktLen = 4 + 240 * 6;
         char buf[kTxPktLen];
         memset(buf, 0, sizeof(buf));
         writeBE32(buf, 0, m_seqTxIq++);
+
+        // Drain up to 240 samples from the ring into the payload, or send
+        // zeros if the ring is empty (silence — matches deskhpsdr underrun).
+        // Cite: deskhpsdr/src/new_protocol.c:1950-1956, 2811-2816 [@120188f]
+        //   memcpy(&iqbuffer[4], &TXIQRINGBUF[txiq_outptr], 1440);
+        //   TXIQRINGBUF[iptr++] = (isample >> 16) & 0xFF;
+        //   TXIQRINGBUF[iptr++] = (isample >>  8) & 0xFF;
+        //   TXIQRINGBUF[iptr++] = (isample      ) & 0xFF;
+        //   TXIQRINGBUF[iptr++] = (qsample >> 16) & 0xFF; …
+        for (int s = 0; s < 240; ++s) {
+            int i24 = 0;
+            int q24 = 0;
+            // acquire: makes audio-thread byte writes (published via release
+            // fetch_add on m_txIqRingCount) visible before we read m_txIqRing.
+            if (m_txIqRingCount.load(std::memory_order_acquire) >= 2) {
+                int rp = m_txIqRingRead.load(std::memory_order_relaxed);
+                const float fI = m_txIqRing[rp];
+                rp = (rp + 1) % kTxIqRingCapacityFloats;
+                const float fQ = m_txIqRing[rp];
+                rp = (rp + 1) % kTxIqRingCapacityFloats;
+                // relaxed: single writer on this side; acquire on m_txIqRingCount
+                // above already provides the required ordering fence.
+                m_txIqRingRead.store(rp, std::memory_order_relaxed);
+                // relaxed: audio thread observes this via acquire on m_txIqRingCount.
+                m_txIqRingCount.fetch_sub(2, std::memory_order_relaxed);
+
+                // Float → int24 with ±8388607 clamp (no rounding — deskhpsdr
+                // passes integer isample/qsample already rounded by WDSP).
+                // Cite: deskhpsdr/src/new_protocol.c:2795 [@120188f]
+                //   void new_protocol_iq_samples(int isample, int qsample)
+                auto toInt24 = [](float v) -> int {
+                    const float scaled = v * 8388607.0f;
+                    if (scaled >= 8388607.0f)  { return  8388607; }
+                    if (scaled <= -8388607.0f) { return -8388607; }
+                    return static_cast<int>(scaled);
+                };
+                i24 = toInt24(fI);
+                q24 = toInt24(fQ);
+            }
+            // Pack 3-byte BE I, then 3-byte BE Q.
+            // Cast via quint32 to guarantee arithmetic right-shift semantics
+            // on the high bytes; the sign bit is already represented in two's
+            // complement by the int → quint32 reinterpretation.
+            // Cite: deskhpsdr/src/new_protocol.c:2811-2816 [@120188f]
+            const int offset = 4 + s * 6;
+            const quint32 ui = static_cast<quint32>(i24);
+            const quint32 uq = static_cast<quint32>(q24);
+            buf[offset + 0] = static_cast<char>((ui >> 16) & 0xFF);
+            buf[offset + 1] = static_cast<char>((ui >>  8) & 0xFF);
+            buf[offset + 2] = static_cast<char>( ui        & 0xFF);
+            buf[offset + 3] = static_cast<char>((uq >> 16) & 0xFF);
+            buf[offset + 4] = static_cast<char>((uq >>  8) & 0xFF);
+            buf[offset + 5] = static_cast<char>( uq        & 0xFF);
+        }
+
         QByteArray pkt(buf, sizeof(buf));
         m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 4);
     });
@@ -572,21 +639,67 @@ void P2RadioConnection::setWatchdogEnabled(bool enabled)
 }
 
 // ---------------------------------------------------------------------------
-// sendTxIq — 3M-1a Task E.1 (stub; filled in by Task E.6)
-//
-// P2 wire format: TX I/Q samples are sent as 1444-byte UDP datagrams
-// to port 1029, per the OpenHPSDR Protocol 2 TX I/Q packet layout.
-//
-// TODO [3M-1a E.6]: implement the P2 TX I/Q UDP send path.
-// Cite: pre-code review §7.6; Thetis ChannelMaster/network.c TX I/Q path.
 // ---------------------------------------------------------------------------
-void P2RadioConnection::sendTxIq(const float* /*iq*/, int /*n*/)
+// sendTxIq — 3M-1a Task E.6
+//
+// Porting from deskhpsdr/src/new_protocol.c:2795-2837 [@120188f]
+// (new_protocol_iq_samples) — original C logic:
+//
+//   void new_protocol_iq_samples(int isample, int qsample) {
+//     int iptr = txiq_inptr + 6 * txiq_count;
+//     TXIQRINGBUF[iptr++] = (isample >> 16) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (isample >>  8) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (isample      ) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (qsample >> 16) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (qsample >>  8) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (qsample      ) & 0xFF;
+//     txiq_count++;
+//     if (txiq_count >= 240) { /* signal send thread */ }
+//   }
+//
+//   P2 frame: 4-byte BE sequence + 240 samples × 6 bytes = 1444 bytes.
+//   Float→int24 gain: 8388607.0 (0x7FFFFF).
+//   Cite: deskhpsdr/src/new_protocol.h:37 [@120188f]
+//     #define TX_IQ_FROM_HOST_PORT 1029
+//   Cite: deskhpsdr/src/new_protocol.c:1476 [@120188f]
+//     transmit_specific_buffer[16] = 0; // should be 24: TX IQ sample width 24 bits
+//   Cite: deskhpsdr/src/new_protocol.c:1596 [@120188f]
+//     // there are 24 bits per sample
+//
+// Accepts n interleaved float32 I/Q pairs [I0,Q0, I1,Q1, ...] from the WDSP
+// TX channel output.  Pushes each float into the SPSC ring m_txIqRing.
+// If the ring is full, excess samples are dropped (matches deskhpsdr overflow).
+//
+// The m_txIqTimer lambda (connection thread) drains pairs per frame.
+//
+// No HL2 CWX LSB-clear workaround needed for P2: the workaround applies to
+// P1 old_protocol only (deskhpsdr/src/old_protocol.c:2441-2453 [@120188f]).
+// deskhpsdr new_protocol.c has no analogous &=~1 pattern near this path.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::sendTxIq(const float* iq, int n)
 {
-    // TODO [3M-1a E.6]: write TX I/Q samples into a P2 TX I/Q UDP frame
-    //   and dispatch to port 1029. Guard n <= 0 (and iq == nullptr) before
-    //   dereferencing — the zero-samples regression test in
-    //   tst_radio_connection_tx_iface relies on this safety.
-    qCDebug(lcConnection) << "P2: sendTxIq called before E.6 wired — samples dropped";
+    if (n <= 0 || iq == nullptr) { return; }
+
+    for (int k = 0; k < n * 2; k += 2) {
+        // acquire: see the latest fetch_sub from the connection thread so we
+        // don't overfill after a drain.  Pair count: each sample = 2 floats.
+        if (m_txIqRingCount.load(std::memory_order_acquire) >= kTxIqRingCapacityFloats - 1) {
+            qCDebug(lcConnection) << "P2 TX I/Q ring buffer overflow — dropping samples";
+            break;
+        }
+
+        int wp = m_txIqRingWrite.load(std::memory_order_relaxed);
+        m_txIqRing[wp] = iq[k];         // I
+        wp = (wp + 1) % kTxIqRingCapacityFloats;
+        m_txIqRing[wp] = iq[k + 1];     // Q
+        wp = (wp + 1) % kTxIqRingCapacityFloats;
+        // relaxed: single writer; the release on m_txIqRingCount below
+        // provides the visibility fence for the float writes.
+        m_txIqRingWrite.store(wp, std::memory_order_relaxed);
+        // release: publishes the float writes above before the count increment
+        // is observed by the connection thread's acquire load.
+        m_txIqRingCount.fetch_add(2, std::memory_order_release);
+    }
 }
 
 // ---------------------------------------------------------------------------

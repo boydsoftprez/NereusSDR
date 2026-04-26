@@ -742,6 +742,26 @@ target_compile_definitions(tst_p1_trx_relay_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_watchdog_wire)
 target_compile_definitions(tst_p1_watchdog_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1a Task E.6: P2 sendTxIq wire-byte snapshot ─────────────────────
+# 14 tests verify the 1444-byte UDP TX I/Q frame layout for P2RadioConnection:
+#   1. Frame size = 1444 bytes (4-byte seq + 1440-byte payload).
+#   2. Payload = 240×6 = 1440 bytes.
+#   3. Sequence number starts at 0 and increments per frame.
+#   4. Positive full-scale I (+1.0) → bytes 0x7F 0xFF 0xFF.
+#   5. Negative full-scale Q (-1.0) → bytes 0x80 0x00 0x01.
+#   6. Zero sample → all payload bytes zero.
+#   7. Over-range positive (+2.0) clips to 0x7FFFFF.
+#   8. Over-range negative (-2.0) clips to 0x800001.
+#   9. Underrun (empty ring) → silence (all payload zeros).
+#  10. Partial fill (60 of 240 samples) → remaining slots zero-padded.
+#  11. Ring saturation: excess beyond capacity dropped, count ≤ capacity.
+#  12. Sequence number does not reset across multiple calls.
+#  13. Last sample (index 239) at correct offset (byte 1438).
+#  14. No HL2 CWX LSB-clear in P2 — LSB=1 preserved.
+# Porting from deskhpsdr/src/new_protocol.c:2795-2837 [@120188f].
+nereus_add_test(tst_p2_tx_iq_wire)
+target_compile_definitions(tst_p2_tx_iq_wire PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 6: RadioModel::paTripped() live state + Ganymede handler ─
 # 5 tests cover initial state (clear), trip latch (non-zero tripState → true),
 # latch reset (resetGanymedePa()), absent-PA clear (setGanymedePresent(false)),
