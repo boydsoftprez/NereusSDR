@@ -553,6 +553,34 @@ void SpectrumWidget::scheduleSettingsSave()
 void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 {
     const bool bwChanged = !qFuzzyCompare(m_bandwidthHz, bandwidthHz);
+
+    // ── Sub-epic E: detect large shifts (band jumps) for history-clear ─
+    // From AetherSDR SpectrumWidget.cpp:1042-1062 [@0cd4559]
+    //   adapter: NereusSDR uses Hz throughout; threshold expressed as a
+    //   fraction of the new half-bandwidth, same as upstream.
+    const double oldCenterHz    = m_centerHz;
+    const double oldBandwidthHz = m_bandwidthHz;
+    const double newCenterHz    = centerHz;
+    const double newBandwidthHz = bandwidthHz;
+    const double halfBwHz       = newBandwidthHz / 2.0;
+    const bool   largeShift     = bwChanged
+        || (halfBwHz > 0.0 && std::abs(newCenterHz - oldCenterHz) > halfBwHz * 0.25);
+
+    if (largeShift && oldBandwidthHz > 0.0 && newBandwidthHz > 0.0) {
+        // Reproject the still-live image; the history will be cleared next.
+        // From AetherSDR SpectrumWidget.cpp:1051 [@0cd4559]
+        reprojectWaterfall(oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
+
+        // ── NereusSDR divergence: clear history on largeShift to keep the
+        //    rewind window coherent with the current band. See plan
+        //    §authoring-time #3.
+        clearWaterfallHistory();
+    } else if (oldBandwidthHz > 0.0 && newBandwidthHz > 0.0) {
+        // Small pan/zoom: reproject only — history survives.
+        // From AetherSDR SpectrumWidget.cpp:1093 [@0cd4559]
+        reprojectWaterfall(oldCenterHz, oldBandwidthHz, newCenterHz, newBandwidthHz);
+    }
+
     m_centerHz = centerHz;
     m_bandwidthHz = bandwidthHz;
     updateVfoPositions();
@@ -575,13 +603,10 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
 void SpectrumWidget::setCenterFrequency(double centerHz)
 {
     if (!qFuzzyCompare(m_centerHz, centerHz)) {
-        m_centerHz = centerHz;
-        updateVfoPositions();
-#ifdef NEREUS_GPU_SPECTRUM
-        markOverlayDirty();
-#else
-        update();
-#endif
+        // Route through setFrequencyRange so the Sub-epic E reproject +
+        // largeShift-clear path runs on center-only band jumps too
+        // (e.g. MainWindow band-jump path at MainWindow.cpp:2261).
+        setFrequencyRange(centerHz, m_bandwidthHz);
     }
 }
 
@@ -2014,6 +2039,65 @@ void SpectrumWidget::clearWaterfallHistory()
     m_wfHistoryOffsetRows = 0;
     m_wfLive = true;
     markOverlayDirty();
+}
+
+// From AetherSDR SpectrumWidget.cpp:951-1000 [@0cd4559]
+//   adapter: NereusSDR uses Hz throughout (upstream uses MHz). Both the
+//   live waterfall ring buffer and the long-history ring buffer are
+//   reprojected so a small pan/zoom preserves the visible content.
+void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthHz,
+                                        double newCenterHz, double newBandwidthHz)
+{
+    if (oldBandwidthHz <= 0.0 || newBandwidthHz <= 0.0) {
+        return;
+    }
+
+    const double oldStartHz = oldCenterHz - oldBandwidthHz / 2.0;
+    const double oldEndHz   = oldCenterHz + oldBandwidthHz / 2.0;
+    const double newStartHz = newCenterHz - newBandwidthHz / 2.0;
+    const double newEndHz   = newCenterHz + newBandwidthHz / 2.0;
+    const double overlapStartHz = std::max(oldStartHz, newStartHz);
+    const double overlapEndHz   = std::min(oldEndHz, newEndHz);
+
+    auto reprojectImage = [&](QImage& image) {
+        if (image.isNull()) {
+            return;
+        }
+        const int imageWidth = image.width();
+        const int imageHeight = image.height();
+        if (imageWidth <= 0 || imageHeight <= 0) {
+            return;
+        }
+
+        QImage reprojected(imageWidth, imageHeight, QImage::Format_RGB32);
+        reprojected.fill(Qt::black);
+
+        if (overlapEndHz > overlapStartHz) {
+            const double srcLeft  = (overlapStartHz - oldStartHz) / oldBandwidthHz * imageWidth;
+            const double srcRight = (overlapEndHz   - oldStartHz) / oldBandwidthHz * imageWidth;
+            const double dstLeft  = (overlapStartHz - newStartHz) / newBandwidthHz * imageWidth;
+            const double dstRight = (overlapEndHz   - newStartHz) / newBandwidthHz * imageWidth;
+
+            if (srcRight > srcLeft && dstRight > dstLeft) {
+                QPainter painter(&reprojected);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+                painter.drawImage(QRectF(dstLeft, 0.0, dstRight - dstLeft, imageHeight),
+                                  image,
+                                  QRectF(srcLeft, 0.0, srcRight - srcLeft, imageHeight));
+            }
+        }
+        image = std::move(reprojected);
+    };
+
+    reprojectImage(m_waterfall);
+    reprojectImage(m_waterfallHistory);
+
+    // Two-sentinel pattern matches rebuildWaterfallViewport (see Task 3
+    // review): m_wfTexFullUpload routes the GPU upload through the full
+    // path, m_wfLastUploadedRow = -1 forces every scanline to be re-sent.
+    // Skipping either leaves the bottom row stale on the next frame.
+    m_wfLastUploadedRow = -1;
+    m_wfTexFullUpload   = true;
 }
 
 // ---- Waterfall row push ----
