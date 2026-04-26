@@ -709,4 +709,10 @@ nereus_add_test(tst_transmit_setup_block_tx)
 # label, chkGeneralRXOnly hidden by default, chkNetworkWDT default ON.
 nereus_add_test(tst_general_setup_hardware_config)
 
+# ── Phase 3M-0 Task 13: Options group box on Setup → General ─────────────────
+# Verifies grpGeneralOptions has chkPreventTXonDifferentBandToRX per
+# Thetis setup.designer.cs:9050-9059 [v2.10.3.13]. Tooltip NereusSDR-original
+# (Thetis has no tooltip on this control). Default unchecked.
+nereus_add_test(tst_general_setup_options)
+
 
