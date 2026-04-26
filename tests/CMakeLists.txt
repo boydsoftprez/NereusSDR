@@ -695,4 +695,11 @@ nereus_add_test(tst_transmit_setup_swr_protection)
 # that toggling chkTXInhibit persists to AppSettings.
 nereus_add_test(tst_transmit_setup_tx_inhibit)
 
+# ── Phase 3M-0 Task 11: Block-TX antennas + Disable HF PA ────────────────────
+# Verifies chkBlockTxAnt2/3 carry NereusSDR-original labels and tooltips
+# (Thetis ships unlabelled column-header checkboxes per
+# setup.designer.cs:6704-6724 [v2.10.3.13]), and chkHFTRRelay tooltip
+# "Disables HF PA." verbatim from setup.designer.cs:5786 [v2.10.3.13].
+nereus_add_test(tst_transmit_setup_block_tx)
+
 
