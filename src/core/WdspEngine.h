@@ -160,9 +160,9 @@ public:
     static constexpr int kTxChannelType    = 1;
     // From cmaster.c:190  — block until output available (bfo = 1 for TX).
     static constexpr int kTxBlockOnOutput  = 1;
-    // From cmaster.c:186  — tslewup  = 0.010 s (10 ms channel-level state envelope).
+    // From cmaster.c:187  — tslewup  = 0.010 s (10 ms channel-level state envelope).
     static constexpr double kTxTSlewUpSecs   = 0.010;
-    // From cmaster.c:188  — tslewdown = 0.010 s (10 ms channel-level state envelope).
+    // From cmaster.c:189  — tslewdown = 0.010 s (10 ms channel-level state envelope).
     static constexpr double kTxTSlewDownSecs = 0.010;
     // From cmaster.c:182  — DSP sample rate for TX channel = 96000 Hz.
     static constexpr int kTxDspSampleRate  = 96000;
