@@ -872,3 +872,11 @@ nereus_add_test(tst_tx_channel_tune_tone)
 #   Ports Thetis wdsp/channel.c:259-294 and wdsp/cfir.c:233-238 [v2.10.3.13].
 nereus_add_test(tst_tx_channel_running)
 
+# ── Phase 3M-1a Task D.1: TxMicRouter interface + NullMicSource stub ─────────
+# Pure unit test: header-only interface + NullMicSource concrete stub.
+# Covers typical buffer sizes (64/128/256/1024), defensive edge cases
+# (nullptr dst, zero size, negative size, single sample), full-buffer
+# zero fill verification, repeated-call consistency, and virtual dispatch
+# via TxMicRouter base pointer.
+nereus_add_test(tst_tx_mic_router)
+
