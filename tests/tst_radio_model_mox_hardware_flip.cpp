@@ -25,8 +25,6 @@
 
 #include "core/AppSettings.h"
 #include "core/RadioConnection.h"
-#include "core/accessories/AlexController.h"
-#include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -230,8 +228,11 @@ private slots:
 
     // ── 6. No connection set — graceful no-op, no crash ───────────────────────
     // When m_connection is nullptr (no radio connected), the slot must
-    // silently return without crashing. applyAlexAntennaForBand guards
-    // this; setMox/setTrxRelay are never reached.
+    // silently return without crashing.  The implementation guards with
+    // "if (!m_connection) return;" BEFORE calling QMetaObject::invokeMethod,
+    // because invokeMethod(nullptr, ...) asserts and would crash.
+    // applyAlexAntennaForBand also has its own null guard; steps 2+3 are
+    // never reached if the connection is null.
     void noConnection_doesNotCrash() {
         RadioModel model;
         model.setCapsForTest(/*hasAlex=*/true);

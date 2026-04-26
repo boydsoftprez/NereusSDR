@@ -2424,20 +2424,24 @@ void RadioModel::onMoxHardwareFlipped(bool isTx)
 
     // Steps 2 + 3 — wire bits.  Guard against null connection (no radio
     // connected, or mid-teardown).  applyAlexAntennaForBand already guards
-    // the same way; mirror for symmetry.
+    // the same way; mirror for symmetry.  IMPORTANT: invokeMethod(nullptr, ...)
+    // asserts, so this guard MUST come before the invokeMethod call below.
     if (!m_connection) {
         return;
     }
 
-    // Step 2 — MOX wire bit.  P1 queues a bank-0 flush on the next
-    // sendCommandFrame() call (≤1 frame latency).  P2 emits an immediate
-    // high-priority packet.
-    // Pre-code review §2.3 / §1.4 step 12 [v2.10.3.13].
-    m_connection->setMox(isTx);
-
-    // Step 3 — T/R relay.  P1 queues a bank-10 flush; P2 not yet wired.
-    // Pre-code review §2.3 step 10 [v2.10.3.13].
-    m_connection->setTrxRelay(isTx);
+    // Steps 2 + 3 — MOX wire bit + T/R relay.
+    // Both setters mutate connection-thread-owned state (m_mox /
+    // m_forceBank0Next / m_trxRelay / m_forceBank10Next) and must be invoked
+    // on the connection thread.  Established pattern: applyAlexAntennaForBand
+    // also marshals its setAntennaRouting() call via invokeMethod (line ~2067).
+    // Pre-code review §2.3 / §1.4 step 12 [v2.10.3.13] (setMox),
+    // Pre-code review §2.3 step 10 [v2.10.3.13] (setTrxRelay).
+    auto* conn = m_connection;
+    QMetaObject::invokeMethod(conn, [conn, isTx]() {
+        conn->setMox(isTx);      // Step 2 — P1 queues bank-0 flush; P2 sends immediate high-priority packet.
+        conn->setTrxRelay(isTx); // Step 3 — P1 queues bank-10 flush; P2 not yet wired.
+    });
 }
 
 } // namespace NereusSDR

@@ -346,6 +346,7 @@ public:
     /// From Thetis Andromeda/Andromeda.cs:855-866 [v2.10.3.13] (GanymedePresent setter). //G8NJJ
     void setGanymedePresent(bool present);
 
+public slots:
     // ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ───────────
     // Slot connected to MoxController::hardwareFlipped(bool isTx).
     // Fans out hardware-flip side-effects to AlexController + RadioConnection
@@ -354,12 +355,11 @@ public:
     //   2. m_connection->setMox(isTx)                  — §2.3 / §1.4 step 12
     //   3. m_connection->setTrxRelay(isTx)             — §2.3 step 10
     //
-    // IMPORTANT (G.1 note): the connect() call that wires
-    // MoxController::hardwareFlipped → this slot MUST use
-    // Qt::QueuedConnection (or equivalent async dispatch) because
-    // m_mox / m_forceBank*Next in P1/P2RadioConnection are plain bools
-    // written exclusively from the connection thread. A direct-connection
-    // emit from the main thread would race with connection-thread reads.
+    // Must be under public slots: so Qt's auto-connection queues this correctly
+    // when the emitting object (MoxController) lives on a different thread.
+    // G.1's connect() call uses Qt::QueuedConnection so the slot body runs on
+    // RadioModel's thread; steps 2+3 then marshal to the connection thread via
+    // QMetaObject::invokeMethod (see implementation).
     void onMoxHardwareFlipped(bool isTx);
 
 signals:
