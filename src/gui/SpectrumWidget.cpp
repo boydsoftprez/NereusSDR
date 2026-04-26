@@ -2098,6 +2098,17 @@ void SpectrumWidget::clearWaterfallHistory()
     if (!m_waterfallHistory.isNull()) {
         m_waterfallHistory.fill(Qt::black);
     }
+    // Codex P2 (PR #140): also clear the live viewport + reset its write
+    // head so a disconnect-flush actually shows a clean waterfall on
+    // reconnect, instead of stale rows from the previous session rolling
+    // off one frame at a time. The largeShift path's reprojectWaterfall
+    // already reallocates m_waterfall, so this is a no-op there; the
+    // disconnect path (MainWindow → connectionStateChanged) had no
+    // preceding reset.
+    if (!m_waterfall.isNull()) {
+        m_waterfall.fill(Qt::black);
+    }
+    m_wfWriteRow = 0;
     std::fill(m_wfHistoryTimestamps.begin(), m_wfHistoryTimestamps.end(), 0);
     m_wfHistoryWriteRow = 0;
     m_wfHistoryRowCount = 0;
@@ -2593,15 +2604,26 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 // Hit-test priority from AetherSDR SpectrumWidget.cpp:824-1128
 // Filter edge drag, passband slide-to-tune, divider drag, dBm drag, click-to-tune
 
-// GPU renderer's specH formula. Mouse handlers must mirror it exactly so
-// the hover/click hit-tests align with where the GPU path actually paints
-// the spectrum/divider/freq-scale/waterfall rows. Old `h * m_spectrumFrac`
-// assumed the chrome (divider + freq-scale) lived elsewhere; the GPU path
-// reserves chromeH from contentH explicitly.
+// Mouse handlers must mirror the active render path's specH formula so the
+// hover/click hit-tests align with where the spectrum/divider/freq-scale/
+// waterfall rows are actually painted. The two render paths use DIFFERENT
+// layouts:
+//   - GPU path (renderGpuFrame:3313)  → contentH = h - chromeH; specH =
+//     contentH * spectrumFrac; freq bar between spectrum and waterfall.
+//   - QPainter path (paintEvent:1222) → specH = h * spectrumFrac;
+//     freq bar at h - kFreqScaleH (BOTTOM of widget).
+// Codex P1 (PR #140) fix — option B (conditional). Long-term plan is to
+// unify the two render paths around the GPU layout; tracked separately so
+// a non-GPU build can be verified before flipping.
 static int specHFromHeight(int widgetH, float spectrumFrac, int chromeH)
 {
+#ifdef NEREUS_GPU_SPECTRUM
     const int contentH = widgetH - chromeH;
     return static_cast<int>(contentH * spectrumFrac);
+#else
+    Q_UNUSED(chromeH);
+    return static_cast<int>(widgetH * spectrumFrac);
+#endif
 }
 
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
