@@ -33,6 +33,12 @@
 //                 and console.cs:18494-18502 [v2.10.3.13].
 //                 State-machine walk through transient states replaces
 //                 the B.2 direct-to-terminal jump in setMox().
+//   2026-04-25 — Phase 3M-1a Task B.4 — 6 phase signals added.
+//                 Codex P1: subscribers attach to named phase boundary
+//                 signals, not to individual low-level setters.
+//                 hardwareFlipped(bool isTx) chosen (Option B) so a
+//                 single subscriber slot handles both RX→TX and TX→RX
+//                 hardware routing transitions.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -153,7 +159,48 @@ public slots:
     void setMox(bool on);
 
 signals:
-    // ── Boundary signals ─────────────────────────────────────────────────────
+    // ── Phase signals (Codex P1) ──────────────────────────────────────────────
+    //
+    // Subscribers attach HERE, not to individual low-level setters.
+    // F.1 wires Alex routing, ATT-on-TX, and MOX wire bits to these signals.
+    // moxStateChanged / stateChanged are retained as diagnostic signals only;
+    // production subscribers must use the phase signals below.
+    //
+    // Phase signals derived from chkMOX_CheckedChanged2 RX→TX/TX→RX ordering
+    // (console.cs:29311-29678 [v2.10.3.13]).
+    // See pre-code review §1.4 for emit point rationale.
+
+    // RX→TX phase signals (in order):
+    //   txAboutToBegin  — entry to RX→TX walk; display overlay, ATT prep.
+    //   hardwareFlipped — hardware routing committed; fired BEFORE rfDelay
+    //                     so Alex routing + ATT-on-TX assertions precede
+    //                     the 30 ms TX settle (matches Thetis HdwMOXChanged
+    //                     at console.cs:29569-29588 [v2.10.3.13], which occurs
+    //                     BEFORE Thread.Sleep(rf_delay)).
+    //   txReady         — TX walk complete; TX I/Q stream + audio MOX on.
+    //
+    // TX→RX phase signals (in order):
+    //   txAboutToEnd    — entry to TX→RX walk; teardown begins.
+    //   hardwareFlipped — hardware routing released (isTx=false); fired right
+    //                     after txAboutToEnd so routing clears before in-flight
+    //                     sample flush (symmetric with RX→TX position).
+    //   txaFlushed      — after mox_delay / key_up_delay (in-flight samples
+    //                     cleared); TX channel may now be torn down.
+    //   rxReady         — TX→RX walk complete; RX channels active.
+    //
+    // hardwareFlipped(bool isTx):
+    //   true  — RX→TX: assert Alex routing, ATT-on-TX, MOX wire bit.
+    //   false — TX→RX: release Alex routing, ATT-on-TX, clear MOX wire bit.
+    //   One subscriber slot handles both directions via the bool payload.
+
+    void txAboutToBegin();          // RX→TX: step 3 — safety-relevant prep
+    void hardwareFlipped(bool isTx);// RX→TX step 5 / TX→RX step 4 — hardware routing committed or released
+    void txReady();                 // RX→TX: step 9 — TX channel runs from this point
+    void txAboutToEnd();            // TX→RX: step 3 — teardown begins
+    void txaFlushed();              // TX→RX: step 7 — in-flight samples cleared, TX channel may stop
+    void rxReady();                 // TX→RX: step 12 — RX channel runs from this point
+
+    // ── Boundary signals (diagnostic / integration — keep these) ─────────────
     // moxStateChanged: emitted exactly once per real transition, at the END
     // of the timer walk (TX fully engaged or fully released).
     void moxStateChanged(bool on);
@@ -162,7 +209,7 @@ signals:
     void pttModeChanged(PttMode mode);
 
     // stateChanged: fires on every m_state transition; useful for tests
-    // and debugging. B.4 adds the 6 named phase signals.
+    // and debugging.
     void stateChanged(MoxState newState);
 
 protected:

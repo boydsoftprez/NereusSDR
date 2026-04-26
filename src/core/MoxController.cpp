@@ -33,6 +33,13 @@
 //                 timer-driven walk through transient states.
 //                 moxStateChanged now fires at end of walk (fully
 //                 engaged / fully released) rather than at setMox entry.
+//   2026-04-25 — Phase 3M-1a Task B.4 — 6 phase signals wired.
+//                 txAboutToBegin / hardwareFlipped(true) / txReady emitted
+//                 in setMox(true) and onRfDelayElapsed.
+//                 txAboutToEnd / hardwareFlipped(false) / txaFlushed /
+//                 rxReady emitted in setMox(false), onKeyUpDelayElapsed,
+//                 and onPttOutElapsed.
+//                 Codex P1: subscribers attach to phase signals.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -164,8 +171,16 @@ void MoxController::setMox(bool on)
         // Note: console.cs:29603 (5 lines past cite end) carries
         //   Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE
         //
-        // Walk: Rx → RxToTxRfDelay → (timer fires) → Tx
-        // moxStateChanged(true) fires when onRfDelayElapsed() reaches Tx.
+        // Phase signal ordering (Codex P1 — pre-code review §1.4):
+        //   Step 3 — emit txAboutToBegin()
+        //   Step 5 — emit hardwareFlipped(true) BEFORE rf_delay starts
+        //             (matches HdwMOXChanged at console.cs:29569-29588
+        //              [v2.10.3.13] which fires before Thread.Sleep(rf_delay))
+        //   Walk: Rx → RxToTxRfDelay → (timer fires) → Tx
+        //   Step 9 — emit txReady() in onRfDelayElapsed()
+        //   Step 10 — emit moxStateChanged(true) after txReady()
+        emit txAboutToBegin();                          // step 3
+        emit hardwareFlipped(true);                     // step 5 — before rfDelay
         advanceState(MoxState::RxToTxRfDelay);
         m_rfDelayTimer.start();
     } else {
@@ -178,11 +193,20 @@ void MoxController::setMox(bool on)
         //   if (ptt_out_delay > 0) Thread.Sleep(ptt_out_delay);      // 20ms
         //   ... WDSP RX on ...
         //
+        // Phase signal ordering (Codex P1 — pre-code review §1.4):
+        //   Step 3 — emit txAboutToEnd()
+        //   Step 4 — emit hardwareFlipped(false) — symmetric with RX→TX:
+        //             routing clears before in-flight sample flush.
+        //   Walk: Tx → TxToRxInFlight (keyUpDelayTimer, 10ms) →
+        //              TxToRxFlush   (pttOutDelayTimer, 20ms) → Rx
+        //   Step 7 — emit txaFlushed() in onKeyUpDelayElapsed()
+        //   Step 12 — emit rxReady() in onPttOutElapsed()
+        //   Step 13 — emit moxStateChanged(false) after rxReady()
+        //
         // spaceDelay is skipped when kSpaceDelayMs == 0 (matches the
         // Thetis `if (space_mox_delay > 0)` guard).
-        // Walk: Tx → TxToRxInFlight (keyUpDelayTimer, 10ms) →
-        //            TxToRxFlush   (pttOutDelayTimer, 20ms) → Rx
-        // moxStateChanged(false) fires when onPttOutElapsed() reaches Rx.
+        emit txAboutToEnd();                            // step 3
+        emit hardwareFlipped(false);                    // step 4 — before flush
         advanceState(MoxState::TxToRxInFlight);
         m_keyUpDelayTimer.start();
     }
@@ -267,12 +291,16 @@ void MoxController::runMoxSafetyEffects(bool /*newMox*/)
 // Note: console.cs:29603 (5 lines past cite end) carries
 //   Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE
 //
-// Advances to terminal Tx state and emits moxStateChanged(true).
+// Phase signals (Codex P1, pre-code review §1.4):
+//   Step 8  — advance to terminal Tx state
+//   Step 9  — emit txReady() — TX I/Q stream + audio MOX from this point
+//   Step 10 — emit moxStateChanged(true) (diagnostic / integration signal)
 void MoxController::onRfDelayElapsed()
 {
     // TODO [3M-1a F.1]: AudioMOXChanged(true) + WDSP TX channel on here.
     advanceState(MoxState::Tx);
-    emit moxStateChanged(true);
+    emit txReady();                                     // step 9
+    emit moxStateChanged(true);                         // step 10
 }
 
 // onMoxDelayElapsed — fires when m_moxDelayTimer elapses.
@@ -304,11 +332,15 @@ void MoxController::onSpaceDelayElapsed()
 //
 // (3M-2 will also branch here for CW key_up_delay, also 10ms by default.)
 //
-// Advances to TxToRxFlush and starts the ptt_out_delay timer.
+// Phase signals (Codex P1, pre-code review §1.4):
+//   Step 7  — emit txaFlushed() — in-flight samples cleared; TX channel may stop
+//   Step 8  — advance to TxToRxFlush state
+//   Step 9  — start ptt_out_delay timer
 void MoxController::onKeyUpDelayElapsed()
 {
     // TODO [3M-1a F.1]: UpdateDDCs + UpdateAAudioMixerStates + AudioMOXChanged(false)
     //                   + HdwMOXChanged(false) here.
+    emit txaFlushed();                                  // step 7
     advanceState(MoxState::TxToRxFlush);
     m_pttOutDelayTimer.start();
 }
@@ -319,12 +351,16 @@ void MoxController::onKeyUpDelayElapsed()
 //   if (ptt_out_delay > 0)
 //       Thread.Sleep(ptt_out_delay);  //wcp:  added 2018-12-24, time for HW to switch
 //
-// Advances to terminal Rx state and emits moxStateChanged(false).
+// Phase signals (Codex P1, pre-code review §1.4):
+//   Step 11 — advance to terminal Rx state
+//   Step 12 — emit rxReady() — RX channel active from this point
+//   Step 13 — emit moxStateChanged(false) (diagnostic / integration signal)
 void MoxController::onPttOutElapsed()
 {
     // TODO [3M-1a F.1]: WDSP.SetChannelState(WDSP.id(0, 0), 1, 0) (RX1 on) here.
     advanceState(MoxState::Rx);
-    emit moxStateChanged(false);
+    emit rxReady();                                     // step 12
+    emit moxStateChanged(false);                        // step 13
 }
 
 // onBreakInDelayElapsed — fires when m_breakInDelayTimer elapses.

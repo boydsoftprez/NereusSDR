@@ -774,3 +774,15 @@ nereus_add_test(tst_mox_controller_basic)
 # rapid toggle (setMox false during RX→TX walk) cancels in-flight timers.
 nereus_add_test(tst_mox_controller_timers)
 
+# ── Phase 3M-1a Task B.4: MoxController 6 phase signals (Codex P1) ───────────
+# Verifies: each phase signal fires exactly once per real RX→TX/TX→RX walk;
+# Order (RX→TX): txAboutToBegin → hardwareFlipped(true) → txReady → moxStateChanged(true);
+# Order (TX→RX): txAboutToEnd → hardwareFlipped(false) → txaFlushed → rxReady → moxStateChanged(false);
+# hardwareFlipped fires synchronously in setMox() (before rfDelay / keyUpDelay timers);
+# Idempotent guard: repeated setMox(true/false) does NOT re-fire phase signals;
+# Rapid toggle: cancelled rfDelay walk emits txAboutToBegin + hardwareFlipped(true)
+#   but NOT txReady (slot never ran — cancelled timer);
+# Codex P1: txAboutToBegin fires once per transition even when stateChanged fires 2×;
+# Phase signals derived from chkMOX_CheckedChanged2 (console.cs:29311-29678 [v2.10.3.13]).
+nereus_add_test(tst_mox_controller_phase_signals)
+
