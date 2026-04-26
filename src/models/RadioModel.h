@@ -85,6 +85,9 @@
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
+#include "core/safety/SwrProtectionController.h"
+#include "core/safety/TxInhibitMonitor.h"
+#include "core/safety/BandPlanGuard.h"
 
 #include <QObject>
 #include <QString>
@@ -190,6 +193,16 @@ public:
     // Backs CalibrationTab UI and P2RadioConnection::hzToPhaseWord(). Phase 3P-G.
     const CalibrationController& calibrationController()        const { return m_calController; }
     CalibrationController&       calibrationControllerMutable()       { return m_calController; }
+
+    // Phase 3M-0 Task 17: safety controller accessors.
+    // SwrProtectionController and TxInhibitMonitor are QObject-owned by RadioModel.
+    // BandPlanGuard is a plain value class (no Qt parent).
+    safety::SwrProtectionController& swrProt() noexcept { return m_swrProt; }
+    const safety::SwrProtectionController& swrProt() const noexcept { return m_swrProt; }
+    safety::TxInhibitMonitor& txInhibit() noexcept { return m_txInhibit; }
+    const safety::TxInhibitMonitor& txInhibit() const noexcept { return m_txInhibit; }
+    safety::BandPlanGuard& bandPlan() noexcept { return m_bandPlan; }
+    const safety::BandPlanGuard& bandPlan() const noexcept { return m_bandPlan; }
 
     // Sub-models
     MeterModel&       meterModel()       { return m_meterModel; }
@@ -310,6 +323,29 @@ public:
     void connectToRadio(const RadioInfo& info);
     void disconnectFromRadio();
 
+    // ── Phase 3M-0 Task 6: Ganymede PA-trip live state ───────────────────────
+    // G8NJJ: handlers for Ganymede 500W PA protection
+    // From Thetis Andromeda/Andromeda.cs:914-948 [v2.10.3.13]
+    // (CATHandleAmplifierTripMessage + GanymedeResetPressed).
+
+    /// True iff a Ganymede PA trip is currently latched.
+    /// From Thetis Andromeda/Andromeda.cs:914-920 [v2.10.3.13] (CATHandleAmplifierTripMessage).
+    bool paTripped() const noexcept { return m_paTripped; }
+
+    /// Apply a Ganymede CAT trip message. tripState != 0 latches the trip,
+    /// 0 clears. As a safety side-effect, latching also drops MOX
+    /// (Andromeda.cs:920 [v2.10.3.13]: `if (_ganymede_pa_issue && MOX) MOX = false`).
+    void handleGanymedeTrip(int tripState);
+
+    /// Clear the trip latch. Mirrors GanymedeResetPressed().
+    /// Cite: Andromeda/Andromeda.cs (GanymedeResetPressed function) [v2.10.3.13].
+    void resetGanymedePa();
+
+    /// Setter for GanymedePresent capability. When set to false while a
+    /// trip is latched, clears the trip (the radio no longer reports a PA).
+    /// From Thetis Andromeda/Andromeda.cs:855-866 [v2.10.3.13] (GanymedePresent setter). //G8NJJ
+    void setGanymedePresent(bool present);
+
 signals:
     void infoChanged();
     void connectionStateChanged();
@@ -336,6 +372,12 @@ signals:
     // silent failure. `reason` is a one-line human-readable message.
     // Issue #118.
     void bandClickIgnored(NereusSDR::Band band, QString reason);
+
+    // Phase 3M-0 Task 6: Ganymede PA-trip live state.
+    // Emitted whenever the trip latch changes (true = tripped, false = clear).
+    // From Thetis Andromeda/Andromeda.cs:914-920 [v2.10.3.13]
+    // (CATHandleAmplifierTripMessage). G8NJJ: handlers for Ganymede 500W PA protection.
+    void paTrippedChanged(bool tripped);
 
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
@@ -376,6 +418,15 @@ private:
     // Sub-models
     MeterModel    m_meterModel;
     TransmitModel m_transmitModel;
+
+    // Phase 3M-0 Task 17: PA safety controllers.
+    // Declared AFTER m_transmitModel so the ingest lambda can read
+    // m_transmitModel.isTune() safely at any point post-construction.
+    // SwrProtectionController and TxInhibitMonitor are QObject children
+    // (parent=this); BandPlanGuard is a plain value class.
+    safety::SwrProtectionController m_swrProt{this};
+    safety::TxInhibitMonitor        m_txInhibit{this};
+    safety::BandPlanGuard           m_bandPlan;
 
     // OC matrix — per-band × per-pin × {RX,TX} bit assignments.
     // Owned here so both OcOutputsTab UI and P1/P2 codec layer read
@@ -469,6 +520,13 @@ private:
     bool m_testCapsOverride{false};
     bool m_testCapsHasAlex{false};
 #endif
+
+    // Phase 3M-0 Task 6: Ganymede PA-trip live state.
+    // From Thetis Andromeda/Andromeda.cs:914 [v2.10.3.13] (_ganymede_pa_issue volatile bool).
+    // G8NJJ: handlers for Ganymede 500W PA protection
+    bool m_paTripped{false};
+    // From Thetis Andromeda/Andromeda.cs:854-866 [v2.10.3.13] (_ganymedePresent / GanymedePresent setter).
+    bool m_ganymedePresent{false};
 
     // AGC bidirectional sync guard — prevents infinite feedback loop between
     // agcThresholdChanged and rfGainChanged handlers.

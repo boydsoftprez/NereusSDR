@@ -530,6 +530,63 @@ RadioModel::RadioModel(QObject* parent)
     // singleton available before RadioModel is constructed, so this is safe
     // here. Phase 3G RX Epic sub-epic D.
     m_bandPlanManager.loadPlans();
+
+    // ── Phase 3M-0 Task 17: safety controller wiring ─────────────────────────
+    //
+    // 1. Load persisted enable / limit states so user preferences from
+    //    Tasks 9-13's setup pages take effect on the first launch, not
+    //    only after re-toggling each control.
+    {
+        auto& s = AppSettings::instance();
+        m_swrProt.setEnabled(
+            s.value(QStringLiteral("SwrProtectionEnabled"), QStringLiteral("False"))
+             .toString() == QStringLiteral("True"));
+        m_swrProt.setLimit(
+            s.value(QStringLiteral("SwrProtectionLimit"), QStringLiteral("2.0"))
+             .toString().toFloat());
+        m_swrProt.setWindBackEnabled(
+            s.value(QStringLiteral("WindBackPowerSwr"), QStringLiteral("False"))
+             .toString() == QStringLiteral("True"));
+        m_swrProt.setDisableOnTune(
+            s.value(QStringLiteral("SwrTuneProtectionEnabled"), QStringLiteral("False"))
+             .toString() == QStringLiteral("True"));
+        m_swrProt.setTunePowerSwrIgnore(
+            s.value(QStringLiteral("TunePowerSwrIgnore"), QStringLiteral("35"))
+             .toString().toFloat());
+
+        m_txInhibit.setEnabled(
+            s.value(QStringLiteral("TxInhibitMonitorEnabled"), QStringLiteral("False"))
+             .toString() == QStringLiteral("True"));
+        m_txInhibit.setReverseLogic(
+            s.value(QStringLiteral("TxInhibitMonitorReversed"), QStringLiteral("False"))
+             .toString() == QStringLiteral("True"));
+    }
+
+    // 2. PA telemetry → SwrProtectionController::ingest is wired from the
+    //    per-sample paTelemetryUpdated handler (search this file for
+    //    "paTelemetryUpdated"), NOT from RadioStatus::powerChanged.
+    //    RadioStatus emits powerChanged twice per hardware sample — once
+    //    after setForwardPower and once after setReflectedPower — which
+    //    would double-count trips and the first call would mix new fwd
+    //    with stale rev. (Codex P1 follow-up to PR #139.) Routing from
+    //    paTelemetryUpdated guarantees one ingest per sample with
+    //    consistent fwd/rev values.
+
+    // 3. SwrProtectionController::highSwrChanged → SpectrumWidget overlay.
+    //    m_spectrumWidget may be null at construction time (set later by
+    //    MainWindow::setSpectrumWidget). Guard every access.
+    connect(&m_swrProt, &safety::SwrProtectionController::highSwrChanged,
+            this, [this](bool isHigh) {
+        if (m_spectrumWidget) {
+            m_spectrumWidget->setHighSwrOverlay(isHigh, m_swrProt.windBackLatched());
+        }
+    });
+    connect(&m_swrProt, &safety::SwrProtectionController::windBackLatchedChanged,
+            this, [this](bool latched) {
+        if (m_spectrumWidget && m_swrProt.highSwr()) {
+            m_spectrumWidget->setHighSwrOverlay(true, latched);
+        }
+    });
 }
 
 RadioModel::~RadioModel()
@@ -1185,6 +1242,13 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         if (paTemp > 0.0) {
             m_radioStatus.setPaTemperature(paTemp);
         }
+
+        // Phase 3M-0 Task 17 + Codex P1 follow-up: feed SwrProtectionController
+        // here (one call per hardware sample with consistent fwd/rev), not
+        // from RadioStatus::powerChanged (which emits twice per sample).
+        m_swrProt.ingest(static_cast<float>(fwdW),
+                         static_cast<float>(revW),
+                         m_transmitModel.isTune());
     });
 
     // Error handling
@@ -2261,6 +2325,78 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         qCWarning(lcConnection) << "Connection error for" << m_name;
         m_discovery->clearConnectedMac();
         break;
+    }
+}
+
+// ── Phase 3M-0 Task 6: Ganymede PA-trip live state ──────────────────────────
+// Porting from Thetis Andromeda/Andromeda.cs:914-948 [v2.10.3.13]
+// (CATHandleAmplifierTripMessage + GanymedeResetPressed).
+// G8NJJ: handlers for Ganymede 500W PA protection
+
+// From Thetis Andromeda/Andromeda.cs:915-920 [v2.10.3.13]:
+//   public void CATHandleAmplifierTripMessage(int TripState)
+//   {
+//       GanymedePresent = true;
+//       _ganymede_pa_issue = TripState != 0; // this will also prevent MOX being re-enabled
+//       if (_ganymede_pa_issue && MOX) MOX = false; //if there is a fault, undo mox if active
+//   ...
+// G8NJJ: handlers for Ganymede 500W PA protection
+void RadioModel::handleGanymedeTrip(int tripState)
+{
+    // From Thetis Andromeda/Andromeda.cs:917 [v2.10.3.13]: GanymedePresent = true;
+    m_ganymedePresent = true;
+
+    // From Thetis Andromeda/Andromeda.cs:919 [v2.10.3.13]:
+    //   _ganymede_pa_issue = TripState != 0; // this will also prevent MOX being re-enabled
+    const bool newTripped = (tripState != 0);
+
+    // From Thetis Andromeda/Andromeda.cs:920 [v2.10.3.13]:
+    //   if (_ganymede_pa_issue && MOX) MOX = false; //if there is a fault, undo mox if active
+    // G8NJJ: handlers for Ganymede 500W PA protection
+    //
+    // Codex P2 follow-up to PR #139: drop MOX on every asserted trip, even
+    // when m_paTripped is already true. Otherwise a user manually re-keying
+    // mid-fault would stay on TX after the next CAT trip message, because
+    // the idempotent return below would skip the setMox(false) call.
+    if (newTripped && m_transmitModel.isMox()) {
+        m_transmitModel.setMox(false);
+    }
+
+    if (newTripped == m_paTripped) {
+        return; // already in this trip state — no transition signal
+    }
+
+    m_paTripped = newTripped;
+    emit paTrippedChanged(newTripped);
+}
+
+// From Thetis Andromeda/Andromeda.cs:950-968 [v2.10.3.13] (GanymedeResetPressed).
+// G8NJJ: handlers for Ganymede 500W PA protection
+void RadioModel::resetGanymedePa()
+{
+    if (!m_paTripped) {
+        return; // already clear — idempotent
+    }
+    m_paTripped = false;
+    emit paTrippedChanged(false);
+}
+
+// From Thetis Andromeda/Andromeda.cs:855-866 [v2.10.3.13] (GanymedePresent property setter):
+//   if (!_ganymedePresent)
+//   {
+//       _ganymede_pa_issue = false;
+//       PAStatusIndicator = PAstatusIndicatorState.NotUsed;
+//   }
+// G8NJJ: handlers for Ganymede 500W PA protection
+void RadioModel::setGanymedePresent(bool present)
+{
+    m_ganymedePresent = present;
+
+    // From Thetis Andromeda/Andromeda.cs:861-863 [v2.10.3.13]:
+    //   if (!_ganymedePresent) { _ganymede_pa_issue = false; ... }
+    if (!present && m_paTripped) {
+        m_paTripped = false;
+        emit paTrippedChanged(false);
     }
 }
 

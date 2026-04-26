@@ -60,9 +60,11 @@
 #include "GeneralOptionsPage.h"
 #include "models/RadioModel.h"
 #include "core/StepAttenuatorController.h"
+#include "core/AppSettings.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QCheckBox>
@@ -146,6 +148,8 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
     applyDarkStyle(this);
     m_ctrl = model ? model->stepAttController() : nullptr;
 
+    buildHardwareConfigGroup();
+    buildOptionsGroup();
     buildStepAttGroup();
     buildAutoAttGroup();
 
@@ -156,6 +160,157 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
         m_spnRx2StepAttValue->setRange(0, maxDb);
         connectController();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Hardware Configuration group
+// From Thetis setup.designer.cs:8045-8396 [v2.10.3.13] (tpGeneralHardware)
+// Controls: comboFRSRegion, chkExtended, lblWarningRegionExtended,
+//           chkGeneralRXOnly (hidden), chkNetworkWDT (default ON).
+// ---------------------------------------------------------------------------
+
+void GeneralOptionsPage::buildHardwareConfigGroup()
+{
+    auto* group = new QGroupBox(tr("Hardware Configuration"), this);
+    group->setObjectName(QStringLiteral("grpHardwareConfig"));
+    auto* vbox = new QVBoxLayout(group);
+    vbox->setSpacing(6);
+
+    // --- Region combo ---
+    // From Thetis setup.designer.cs:8080-8114 [v2.10.3.13]
+    auto* regionRow = new QHBoxLayout;
+    auto* regionLabel = new QLabel(tr("Region:"), group);
+    m_comboFRSRegion = new QComboBox(group);
+    m_comboFRSRegion->setObjectName(QStringLiteral("comboFRSRegion"));
+    // From Thetis setup.designer.cs:8084-8108 [v2.10.3.13] — 24 entries
+    m_comboFRSRegion->addItems({
+        QStringLiteral("Australia"),
+        QStringLiteral("Europe"),
+        QStringLiteral("India"),
+        QStringLiteral("Italy"),
+        QStringLiteral("Israel"),
+        QStringLiteral("Japan"),
+        QStringLiteral("Spain"),
+        QStringLiteral("United Kingdom"),
+        QStringLiteral("United States"),
+        QStringLiteral("Norway"),
+        QStringLiteral("Denmark"),
+        QStringLiteral("Sweden"),
+        QStringLiteral("Latvia"),
+        QStringLiteral("Slovakia"),
+        QStringLiteral("Bulgaria"),
+        QStringLiteral("Greece"),
+        QStringLiteral("Hungary"),
+        QStringLiteral("Netherlands"),
+        QStringLiteral("France"),
+        QStringLiteral("Russia"),
+        QStringLiteral("Region1"),
+        QStringLiteral("Region2"),
+        QStringLiteral("Region3"),
+        QStringLiteral("Germany"),
+    });
+    // From Thetis setup.designer.cs:8113 [v2.10.3.13]
+    m_comboFRSRegion->setToolTip(QStringLiteral("Select Region for your location"));
+
+    // Restore persisted value; default "United States"
+    auto& s = AppSettings::instance();
+    const QString savedRegion = s.value(QStringLiteral("Region"),
+                                        QStringLiteral("United States")).toString();
+    const int regionIdx = m_comboFRSRegion->findText(savedRegion);
+    m_comboFRSRegion->setCurrentIndex(regionIdx >= 0 ? regionIdx : m_comboFRSRegion->findText(QStringLiteral("United States")));
+
+    connect(m_comboFRSRegion, &QComboBox::currentTextChanged, this, [](const QString& text) {
+        AppSettings::instance().setValue(QStringLiteral("Region"), text);
+    });
+
+    regionRow->addWidget(regionLabel);
+    regionRow->addWidget(m_comboFRSRegion);
+    regionRow->addStretch();
+    vbox->addLayout(regionRow);
+
+    // --- Extended checkbox ---
+    // From Thetis setup.designer.cs:8065-8074 [v2.10.3.13]
+    m_chkExtended = new QCheckBox(tr("Extended"), group);
+    m_chkExtended->setObjectName(QStringLiteral("chkExtended"));
+    m_chkExtended->setToolTip(QStringLiteral("Enable extended TX (out of band)"));
+    m_chkExtended->setChecked(
+        s.value(QStringLiteral("ExtendedTxAllowed"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkExtended, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("ExtendedTxAllowed"),
+                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    vbox->addWidget(m_chkExtended);
+
+    // --- Warning label ---
+    // From Thetis setup.designer.cs:8045-8054 [v2.10.3.13]
+    m_lblWarningRegionExtended = new QLabel(
+        tr("Changing this setting will reset your band stack entries"), group);
+    m_lblWarningRegionExtended->setObjectName(QStringLiteral("lblWarningRegionExtended"));
+    m_lblWarningRegionExtended->setStyleSheet(QStringLiteral("color: red; font-weight: bold;"));
+    m_lblWarningRegionExtended->setWordWrap(true);
+    vbox->addWidget(m_lblWarningRegionExtended);
+
+    // --- Receive Only checkbox (hidden by default) ---
+    // From Thetis setup.designer.cs:8535-8544 [v2.10.3.13] — Visible=false
+    m_chkGeneralRXOnly = new QCheckBox(tr("Receive Only"), group);
+    m_chkGeneralRXOnly->setObjectName(QStringLiteral("chkGeneralRXOnly"));
+    m_chkGeneralRXOnly->setToolTip(QStringLiteral("Check to disable transmit functionality."));
+    m_chkGeneralRXOnly->setChecked(
+        s.value(QStringLiteral("RxOnly"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    m_chkGeneralRXOnly->setVisible(false);  // per-board visibility wired by RadioModel (Task 17)
+    connect(m_chkGeneralRXOnly, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("RxOnly"),
+                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    vbox->addWidget(m_chkGeneralRXOnly);
+
+    // --- Network Watchdog checkbox (default ON) ---
+    // From Thetis setup.designer.cs:8385-8395 [v2.10.3.13] — Checked=true
+    m_chkNetworkWDT = new QCheckBox(tr("Network Watchdog"), group);
+    m_chkNetworkWDT->setObjectName(QStringLiteral("chkNetworkWDT"));
+    m_chkNetworkWDT->setToolTip(QStringLiteral("Resets software/firmware if network becomes inactive."));
+    // Default ON — first-launch loads "True"
+    m_chkNetworkWDT->setChecked(
+        s.value(QStringLiteral("NetworkWatchdogEnabled"), QStringLiteral("True")).toString() == QStringLiteral("True"));
+    connect(m_chkNetworkWDT, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("NetworkWatchdogEnabled"),
+                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    vbox->addWidget(m_chkNetworkWDT);
+
+    contentLayout()->addWidget(group);
+}
+
+// ---------------------------------------------------------------------------
+// Options group
+// From Thetis setup.designer.cs:9050-9059 [v2.10.3.13] (grpGeneralOptions)
+// Controls: chkPreventTXonDifferentBandToRX
+// ---------------------------------------------------------------------------
+
+void GeneralOptionsPage::buildOptionsGroup()
+{
+    auto* group = new QGroupBox(tr("Options"), this);
+    group->setObjectName(QStringLiteral("grpGeneralOptions"));
+    auto* vbox = new QVBoxLayout(group);
+    vbox->setSpacing(6);
+
+    // From Thetis setup.designer.cs:9050-9059 [v2.10.3.13]
+    // Note: tooltip is NereusSDR-original — Thetis has no tooltip on this control.
+    m_chkPreventTXonDifferentBandToRX = new QCheckBox(
+        tr("Prevent TX'ing on a different band to the RX band"), group);
+    m_chkPreventTXonDifferentBandToRX->setObjectName(QStringLiteral("chkPreventTXonDifferentBandToRX"));
+    m_chkPreventTXonDifferentBandToRX->setToolTip(
+        QStringLiteral("When checked, MOX is rejected if the TX VFO is on a different band than the RX VFO"));
+    m_chkPreventTXonDifferentBandToRX->setChecked(
+        AppSettings::instance().value(QStringLiteral("PreventTxOnDifferentBandToRx"),
+                                       QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkPreventTXonDifferentBandToRX, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("PreventTxOnDifferentBandToRx"),
+                                          on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    vbox->addWidget(m_chkPreventTXonDifferentBandToRX);
+
+    contentLayout()->addWidget(group);
 }
 
 // ---------------------------------------------------------------------------

@@ -114,6 +114,19 @@ public slots:
     // --- ADC Mapping ---
     virtual int getAdcForDdc(int /*ddc*/) const { return 0; }
 
+    // --- Watchdog ---
+    // Enable / disable the radio-side network watchdog. When enabled,
+    // the radio firmware drops TX if it stops seeing C&C traffic.
+    // Mirrors SetWatchdogTimer(int bits) in NetworkIOImports.cs:197-198
+    // [v2.10.3.13]. Boolean only — no host-side timeout parameter.
+    //
+    // 3M-0 status: stub. Stores the boolean state; the actual wire
+    // bit emit is deferred to 3M-1a pending wire-format identification
+    // (the bit position lives inside Thetis's closed ChannelMaster.dll).
+    virtual void setWatchdogEnabled(bool enabled) = 0;
+
+    bool isWatchdogEnabled() const noexcept { return m_watchdogEnabled; }
+
 signals:
     // --- State ---
     void connectionStateChanged(NereusSDR::ConnectionState state);
@@ -166,6 +179,11 @@ protected:
     std::atomic<ConnectionState> m_state{ConnectionState::Disconnected};
     RadioInfo m_radioInfo;
     HardwareProfile m_hardwareProfile;
+
+    // Shared boolean state for setWatchdogEnabled / isWatchdogEnabled.
+    // Both P1 and P2 overrides read/write this field.
+    // 3M-0: state-tracking only; wire emit deferred to 3M-1a.
+    bool m_watchdogEnabled{false};
 };
 
 } // namespace NereusSDR

@@ -102,19 +102,30 @@ jobs:
       # ------------------------------------------------------------------
       - name: Clone Thetis + mi0bot-Thetis upstream for tag check
         if: runner.os == 'Linux'
-        # Thetis (ramdor) is pinned to the archive commit 501e3f5 (tag
-        # v2.10.3.13, "Archive project and end active development") so
-        # the tag-preservation hook compares against the exact upstream
-        # state our [v2.10.3.13] inline cite stamps were verified
-        # against. Without this pin, HEAD drift (post-archive forks
-        # pushing to the mirror branch) shifts line numbers out from
-        # under our cites and the hook flags phantom missing tags that
-        # live at the NEW line of an unrelated edit.
+        # Both upstreams are pinned to the exact commit our inline cites
+        # were verified against. Without these pins, HEAD drift shifts
+        # line numbers out from under our cites and the hook flags
+        # phantom missing tags that live at the NEW line of an unrelated
+        # edit.
+        #
+        # ramdor/Thetis pinned to 501e3f5 (tag v2.10.3.13, "Archive
+        # project and end active development") to match every
+        # `[v2.10.3.13]` inline cite stamp.
         # See PR #120 CI failure 2026-04-23 for the original incident.
+        #
+        # mi0bot/OpenHPSDR-Thetis pinned to c26a8a4 ("Updated for
+        # release", 2026-04-01) to match every `[@c26a8a4]` inline cite
+        # stamp in the HL2 IO board epic.
+        # See main CI failure 2026-04-25 (post PR #137) for the
+        # incident that motivated this pin: mi0bot HEAD inserted a new
+        # ANAN_G1 case at setup.cs:20238 carrying a `//N1GP` tag,
+        # making the verifier flag four phantom missing tags on the
+        # untouched HermesLite cite block we ported from c26a8a4.
         run: |
           git clone https://github.com/ramdor/Thetis.git ../Thetis
           git -C ../Thetis checkout 501e3f513f73f07742d7e1b85a0e9528bd14977d
-          git clone --depth=1 https://github.com/mi0bot/OpenHPSDR-Thetis.git ../mi0bot-Thetis
+          git clone https://github.com/mi0bot/OpenHPSDR-Thetis.git ../mi0bot-Thetis
+          git -C ../mi0bot-Thetis checkout c26a8a4c7592605039be5f4b5973b33e04e91e54
 
       - name: Corpus drift — upstream author tags match committed corpus
         # Fails if upstream Thetis (ramdor or mi0bot fork) contains

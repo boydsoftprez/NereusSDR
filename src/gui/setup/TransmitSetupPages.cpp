@@ -59,6 +59,7 @@
 
 #include "TransmitSetupPages.h"
 #include "gui/StyleConstants.h"
+#include "core/AppSettings.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -170,7 +171,198 @@ void PowerPaPage::buildUI()
     paForm->addRow(QStringLiteral("Fan Control:"), m_fanControlCombo);
 
     contentLayout()->addWidget(paGroup);
+
+    buildSwrProtectionGroup();
+    buildExternalTxInhibitGroup();
+    buildBlockTxAntennaGroup();
+    buildHfPaGroup();
+
     contentLayout()->addStretch();
+}
+
+// ---------------------------------------------------------------------------
+// PowerPaPage helpers (Tasks 9-11)
+// ---------------------------------------------------------------------------
+
+// Task 9 — SWR Protection
+// From Thetis setup.designer.cs:5793-5924 [v2.10.3.13]
+void PowerPaPage::buildSwrProtectionGroup()
+{
+    auto& s = AppSettings::instance();
+
+    auto* group = new QGroupBox(tr("SWR Protection"), this);
+    group->setObjectName(QStringLiteral("grpSWRProtectionControl"));
+    auto* layout = new QFormLayout(group);
+    layout->setSpacing(6);
+
+    // chkSWRProtection — From Thetis setup.designer.cs:5913-5924 [v2.10.3.13]
+    m_chkSWRProtection = new QCheckBox(tr("Enable Protection SWR >"), group);
+    m_chkSWRProtection->setObjectName(QStringLiteral("chkSWRProtection"));
+    // From Thetis setup.designer.cs:5922 [v2.10.3.13]
+    m_chkSWRProtection->setToolTip(tr("Show a visual SWR warning in the spectral area"));
+    m_chkSWRProtection->setChecked(
+        s.value(QStringLiteral("SwrProtectionEnabled"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkSWRProtection, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("SwrProtectionEnabled"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addRow(QString(), m_chkSWRProtection);
+
+    // udSwrProtectionLimit — From Thetis setup.designer.cs:5832-5860 [v2.10.3.13]
+    // Min=1.0, Max=5.0, Increment=0.1, DecimalPlaces=1, Default=2.0 (Value=20, 65536→one decimal)
+    m_udSwrProtectionLimit = new QDoubleSpinBox(group);
+    m_udSwrProtectionLimit->setObjectName(QStringLiteral("udSwrProtectionLimit"));
+    m_udSwrProtectionLimit->setRange(1.0, 5.0);
+    m_udSwrProtectionLimit->setSingleStep(0.1);
+    m_udSwrProtectionLimit->setDecimals(1);
+    m_udSwrProtectionLimit->setValue(
+        s.value(QStringLiteral("SwrProtectionLimit"), QStringLiteral("2.0")).toDouble());
+    connect(m_udSwrProtectionLimit, &QDoubleSpinBox::valueChanged, this, [](double v) {
+        AppSettings::instance().setValue(QStringLiteral("SwrProtectionLimit"), QString::number(v, 'f', 1));
+    });
+    layout->addRow(tr("SWR Limit:"), m_udSwrProtectionLimit);
+
+    // chkSWRTuneProtection — From Thetis setup.designer.cs:5901-5911 [v2.10.3.13]
+    m_chkSWRTuneProtection = new QCheckBox(tr("Ignore when Tune Pwr <"), group);
+    m_chkSWRTuneProtection->setObjectName(QStringLiteral("chkSWRTuneProtection"));
+    // From Thetis setup.designer.cs:5909 [v2.10.3.13]
+    m_chkSWRTuneProtection->setToolTip(tr("Disables SWR Protection during Tune."));
+    m_chkSWRTuneProtection->setChecked(
+        s.value(QStringLiteral("SwrTuneProtectionEnabled"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkSWRTuneProtection, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("SwrTuneProtectionEnabled"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addRow(QString(), m_chkSWRTuneProtection);
+
+    // udTunePowerSwrIgnore — From Thetis setup.designer.cs:5872-5899 [v2.10.3.13]
+    // Min=5, Max=50, Increment=1, Default=35
+    m_udTunePowerSwrIgnore = new QSpinBox(group);
+    m_udTunePowerSwrIgnore->setObjectName(QStringLiteral("udTunePowerSwrIgnore"));
+    m_udTunePowerSwrIgnore->setRange(5, 50);
+    m_udTunePowerSwrIgnore->setSingleStep(1);
+    m_udTunePowerSwrIgnore->setValue(
+        s.value(QStringLiteral("TunePowerSwrIgnore"), QStringLiteral("35")).toInt());
+    connect(m_udTunePowerSwrIgnore, &QSpinBox::valueChanged, this, [](int v) {
+        AppSettings::instance().setValue(QStringLiteral("TunePowerSwrIgnore"), QString::number(v));
+    });
+    layout->addRow(tr("Tune Pwr (W):"), m_udTunePowerSwrIgnore);
+
+    // chkWindBackPowerSWR — From Thetis setup.designer.cs:5809-5820 [v2.10.3.13]
+    m_chkWindBackPowerSWR = new QCheckBox(tr("Reduce Pwr if protected"), group);
+    m_chkWindBackPowerSWR->setObjectName(QStringLiteral("chkWindBackPowerSWR"));
+    // From Thetis setup.designer.cs:5818 [v2.10.3.13]
+    m_chkWindBackPowerSWR->setToolTip(tr("Winds back the power if high swr protection kicks in"));
+    m_chkWindBackPowerSWR->setChecked(
+        s.value(QStringLiteral("WindBackPowerSwr"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkWindBackPowerSWR, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("WindBackPowerSwr"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addRow(QString(), m_chkWindBackPowerSWR);
+
+    contentLayout()->addWidget(group);
+}
+
+// Task 10 — External TX Inhibit
+// From Thetis setup.designer.cs:46626-46657 [v2.10.3.13]
+void PowerPaPage::buildExternalTxInhibitGroup()
+{
+    auto& s = AppSettings::instance();
+
+    auto* group = new QGroupBox(tr("External TX Inhibit"), this);
+    group->setObjectName(QStringLiteral("grpExtTXInhibit"));
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(6);
+
+    // chkTXInhibit — From Thetis setup.designer.cs:46637-46646 [v2.10.3.13]
+    m_chkTXInhibit = new QCheckBox(tr("Update with TX Inhibit state"), group);
+    m_chkTXInhibit->setObjectName(QStringLiteral("chkTXInhibit"));
+    // From Thetis setup.designer.cs:46645 [v2.10.3.13]
+    m_chkTXInhibit->setToolTip(tr("Thetis will update on TX inhibit state change"));
+    m_chkTXInhibit->setChecked(
+        s.value(QStringLiteral("TxInhibitMonitorEnabled"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkTXInhibit, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("TxInhibitMonitorEnabled"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addWidget(m_chkTXInhibit);
+
+    // chkTXInhibitReverse — From Thetis setup.designer.cs:46648-46657 [v2.10.3.13]
+    m_chkTXInhibitReverse = new QCheckBox(tr("Reversed logic"), group);
+    m_chkTXInhibitReverse->setObjectName(QStringLiteral("chkTXInhibitReverse"));
+    // From Thetis setup.designer.cs:46656 [v2.10.3.13]
+    m_chkTXInhibitReverse->setToolTip(tr("Reverse the input state logic"));
+    m_chkTXInhibitReverse->setChecked(
+        s.value(QStringLiteral("TxInhibitMonitorReversed"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkTXInhibitReverse, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("TxInhibitMonitorReversed"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addWidget(m_chkTXInhibitReverse);
+
+    contentLayout()->addWidget(group);
+}
+
+// Task 11a — Block TX on RX antennas
+// NereusSDR-original label and tooltip — Thetis ships these as unlabelled
+// column-header checkboxes per setup.designer.cs:6704-6724 [v2.10.3.13];
+// we add accessible copy. AppSettings keys mirror AlexController (Task 3P-F).
+void PowerPaPage::buildBlockTxAntennaGroup()
+{
+    auto& s = AppSettings::instance();
+
+    auto* group = new QGroupBox(tr("Block TX on RX antennas"), this);
+    group->setObjectName(QStringLiteral("grpBlockTxAntennas"));
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(6);
+
+    // chkBlockTxAnt2 — From Thetis setup.designer.cs:6715-6724 [v2.10.3.13]
+    // NereusSDR-original label/tooltip (Thetis has no text on these checkboxes)
+    m_chkBlockTxAnt2 = new QCheckBox(tr("Block TX on Ant 2"), group);
+    m_chkBlockTxAnt2->setObjectName(QStringLiteral("chkBlockTxAnt2"));
+    m_chkBlockTxAnt2->setToolTip(tr("When checked, the radio cannot transmit on Antenna 2"));
+    m_chkBlockTxAnt2->setChecked(
+        s.value(QStringLiteral("AlexAnt2RxOnly"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkBlockTxAnt2, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("AlexAnt2RxOnly"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addWidget(m_chkBlockTxAnt2);
+
+    // chkBlockTxAnt3 — From Thetis setup.designer.cs:6704-6713 [v2.10.3.13]
+    // NereusSDR-original label/tooltip (Thetis has no text on these checkboxes)
+    m_chkBlockTxAnt3 = new QCheckBox(tr("Block TX on Ant 3"), group);
+    m_chkBlockTxAnt3->setObjectName(QStringLiteral("chkBlockTxAnt3"));
+    m_chkBlockTxAnt3->setToolTip(tr("When checked, the radio cannot transmit on Antenna 3"));
+    m_chkBlockTxAnt3->setChecked(
+        s.value(QStringLiteral("AlexAnt3RxOnly"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkBlockTxAnt3, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("AlexAnt3RxOnly"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addWidget(m_chkBlockTxAnt3);
+
+    contentLayout()->addWidget(group);
+}
+
+// Task 11b — PA Control (Disable HF PA)
+// From Thetis setup.designer.cs:5780-5791 [v2.10.3.13]
+void PowerPaPage::buildHfPaGroup()
+{
+    auto& s = AppSettings::instance();
+
+    auto* group = new QGroupBox(tr("PA Control"), this);
+    group->setObjectName(QStringLiteral("grpHfPaControl"));
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(6);
+
+    // chkHFTRRelay — From Thetis setup.designer.cs:5780-5791 [v2.10.3.13]
+    m_chkHFTRRelay = new QCheckBox(tr("Disable HF PA"), group);
+    m_chkHFTRRelay->setObjectName(QStringLiteral("chkHFTRRelay"));
+    // From Thetis setup.designer.cs:5789 [v2.10.3.13]
+    m_chkHFTRRelay->setToolTip(tr("Disables HF PA."));
+    m_chkHFTRRelay->setChecked(
+        s.value(QStringLiteral("DisableHfPa"), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    connect(m_chkHFTRRelay, &QCheckBox::toggled, this, [](bool on) {
+        AppSettings::instance().setValue(QStringLiteral("DisableHfPa"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    });
+    layout->addWidget(m_chkHFTRRelay);
+
+    contentLayout()->addWidget(group);
 }
 
 // ---------------------------------------------------------------------------

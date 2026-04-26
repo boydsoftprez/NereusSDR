@@ -81,12 +81,6 @@ signals:
     // Band flyout
     void bandSelected(const QString& bandName, double freqHz, const QString& mode);
 
-    // DSP flyout toggles
-    void nrToggled(bool on);
-    void nbToggled(bool on);
-    void anfToggled(bool on);
-    void snbToggled(bool on);
-
     // Display flyout
     void wfColorGainChanged(int gain);
     void wfBlackLevelChanged(int level);
@@ -132,14 +126,12 @@ private:
     // Flyout builders
     void buildBandFlyout();
     void buildAntFlyout();
-    void buildDspFlyout();
     void buildDisplayFlyout();
     void buildVaxFlyout();
 
     // Flyout toggles
     void toggleBandFlyout();
     void toggleAntFlyout();
-    void toggleDspFlyout();
     void toggleDisplayFlyout();
     void toggleVaxFlyout();
 
@@ -173,19 +165,6 @@ private:
     QSlider*     m_rfGainSlider{nullptr};
     QLabel*      m_rfGainLabel{nullptr};
     QPushButton* m_wnbBtn{nullptr};
-
-    // ── DSP flyout ───────────────────────────────────────────────────────
-    QWidget*     m_dspFlyout{nullptr};
-    QPushButton* m_nrBtn{nullptr};
-    QPushButton* m_nbBtn{nullptr};
-    QPushButton* m_snbBtn{nullptr};
-    QPushButton* m_anfBtn{nullptr};
-    QPushButton* m_binBtn{nullptr};
-    QPushButton* m_mnfDspBtn{nullptr};
-    QSlider*     m_nrSlider{nullptr};
-    QLabel*      m_nrLabel{nullptr};
-    QSlider*     m_nbSlider{nullptr};
-    QLabel*      m_nbLabel{nullptr};
 
     // ── Display flyout ───────────────────────────────────────────────────
     QWidget*     m_displayFlyout{nullptr};

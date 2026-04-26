@@ -65,6 +65,7 @@ namespace NereusSDR {
 
 class RxChannel;
 class MeterWidget;
+class RadioStatus;
 
 // Binding IDs map to WDSP meter types (RxMeterType enum values)
 namespace MeterBinding {
@@ -127,6 +128,15 @@ public:
     void start();
     void stop();
 
+    /// Wire PA telemetry signals from RadioStatus into the meter targets
+    /// for MeterBinding::TxPower / TxReversePower / TxSwr.
+    /// Call once during integration; call with nullptr to detach cleanly.
+    /// Safe to call again with a new pointer — the previous connection is
+    /// disconnected automatically before re-connecting.
+    /// Cite: Thetis console.cs PollPAPWR loop [v2.10.3.13] (RadioStatus
+    /// aggregates forward/reflected/swr from that loop via powerChanged).
+    void setRadioStatus(RadioStatus* status);
+
 signals:
     // Emitted on each poll tick with the current S-meter (SignalAvg) dBm value.
     // Connect to VfoWidget::setSmeter to drive the VFO level bar.
@@ -142,6 +152,13 @@ private:
     // ContainerManager's float/dock swap replaces MeterWidgets mid-session;
     // without QPointer, poll() would dereference the deleted old widgets.
     QVector<QPointer<MeterWidget>> m_targets;
+
+    // PA telemetry wiring (Part B — Phase 3M-0 Task 7).
+    // m_radioStatus is a non-owning raw pointer (RadioModel owns the object).
+    // m_powerConn holds the single connection to RadioStatus::powerChanged;
+    // disconnected on re-set or when status is nullptr.
+    RadioStatus*            m_radioStatus{nullptr};
+    QMetaObject::Connection m_powerConn;
 };
 
 } // namespace NereusSDR

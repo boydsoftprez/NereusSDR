@@ -212,47 +212,41 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         m_menuBtns.append(btn);  // index 3
     }
 
-    // Button 6: DSP — flyout
-    {
-        auto* btn = makeMenuBtn("DSP", this);
-        btn->setToolTip("Open DSP noise reduction controls");
-        connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleDspFlyout);
-        m_menuBtns.append(btn);  // index 4
-    }
+    // DSP flyout removed — controls duplicated the VFO flag's DSP grid.
+    // Use the top menu bar's DSP menu (full parity) or the VFO flag.
 
-    // Button 7: Display — flyout
+    // Button 6: Display — flyout
     {
         auto* btn = makeMenuBtn("Display", this);
         btn->setToolTip("Open display settings");
         connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleDisplayFlyout);
-        m_menuBtns.append(btn);  // index 5
+        m_menuBtns.append(btn);  // index 4
     }
 
-    // Button 8: VAX — flyout (NYI Phase 3-VAX)
+    // Button 7: VAX — flyout (NYI Phase 3-VAX)
     {
         auto* btn = makeMenuBtn("VAX", this);
         btn->setToolTip("Open VAX audio routing (NYI Phase 3-VAX)");
         connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggleVaxFlyout);
-        m_menuBtns.append(btn);  // index 6
+        m_menuBtns.append(btn);  // index 5
     }
 
-    // Button 9: ATT (NYI)
+    // Button 8: ATT (NYI)
     {
         auto* btn = makeDisabledBtn("ATT", this);
         btn->setToolTip("Attenuator control (NYI)");
-        m_menuBtns.append(btn);  // index 7
+        m_menuBtns.append(btn);  // index 6
     }
 
-    // Button 10: MNF (NYI)
+    // Button 9: MNF (NYI)
     {
         auto* btn = makeDisabledBtn("MNF", this);
         btn->setToolTip("Manual notch filter (NYI)");
-        m_menuBtns.append(btn);  // index 8
+        m_menuBtns.append(btn);  // index 7
     }
 
     buildBandFlyout();
     buildAntFlyout();
-    buildDspFlyout();
     buildDisplayFlyout();
     buildVaxFlyout();
     buildZoomButtons();
@@ -298,7 +292,7 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
 void SpectrumOverlayPanel::raiseAll()
 {
     raise();
-    for (QWidget* fw : {m_bandFlyout, m_antFlyout, m_dspFlyout,
+    for (QWidget* fw : {m_bandFlyout, m_antFlyout,
                         m_displayFlyout, m_vaxFlyout}) {
         if (fw) { fw->raise(); }
     }
@@ -582,131 +576,6 @@ void SpectrumOverlayPanel::toggleAntFlyout()
     m_activeFlyout = m_antFlyout;
     m_activeButton = antBtn;
     antBtn->setStyleSheet(kMenuBtnActive);
-}
-
-// ── DSP flyout ────────────────────────────────────────────────────────────────
-
-void SpectrumOverlayPanel::buildDspFlyout()
-{
-    m_dspFlyout = new QWidget(parentWidget());
-    m_dspFlyout->setStyleSheet(kPanelStyle);
-    m_dspFlyout->hide();
-
-    auto* vbox = new QVBoxLayout(m_dspFlyout);
-    vbox->setContentsMargins(6, 6, 6, 6);
-    vbox->setSpacing(3);
-
-    // Row 1: compact toggle buttons (NR, NB, SNB, ANF, BIN, MNF)
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        auto makeToggle = [&](const QString& text, QPushButton*& ptr) {
-            ptr = new QPushButton(text);
-            ptr->setCheckable(true);
-            ptr->setFixedSize(40, 20);
-            ptr->setStyleSheet(kDspBtnStyle);
-            row->addWidget(ptr, 1);
-        };
-
-        makeToggle("NR",  m_nrBtn);
-        makeToggle("NB",  m_nbBtn);
-        makeToggle("SNB", m_snbBtn);
-        makeToggle("ANF", m_anfBtn);
-        makeToggle("BIN", m_binBtn);
-        makeToggle("MNF", m_mnfDspBtn);
-
-        vbox->addLayout(row);
-
-        // Wire signals
-        connect(m_nrBtn,  &QPushButton::toggled, this, &SpectrumOverlayPanel::nrToggled);
-        connect(m_nbBtn,  &QPushButton::toggled, this, &SpectrumOverlayPanel::nbToggled);
-        connect(m_snbBtn, &QPushButton::toggled, this, &SpectrumOverlayPanel::snbToggled);
-        connect(m_anfBtn, &QPushButton::toggled, this, &SpectrumOverlayPanel::anfToggled);
-
-        // BIN and MNF: NYI, disable for now
-        m_binBtn->setEnabled(false);
-        m_binBtn->setToolTip("Binaural processing (NYI)");
-        m_mnfDspBtn->setEnabled(false);
-        m_mnfDspBtn->setToolTip("Manual notch filter (NYI)");
-    }
-
-    // Row 2: NR level slider
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-        auto* lbl = new QLabel("NR Lvl:");
-        lbl->setStyleSheet(kLabelStyle);
-        lbl->setFixedWidth(46);
-        row->addWidget(lbl);
-
-        m_nrSlider = new QSlider(Qt::Horizontal);
-        m_nrSlider->setRange(0, 100);
-        m_nrSlider->setValue(50);
-        m_nrSlider->setStyleSheet(kSliderStyle);
-        row->addWidget(m_nrSlider, 1);
-
-        m_nrLabel = new QLabel("50");
-        m_nrLabel->setStyleSheet(kLabelStyle);
-        m_nrLabel->setFixedWidth(22);
-        m_nrLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(m_nrLabel);
-        vbox->addLayout(row);
-
-        connect(m_nrSlider, &QSlider::valueChanged, this, [this](int v) {
-            m_nrLabel->setText(QString::number(v));
-        });
-    }
-
-    // Row 3: NB threshold slider
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-        auto* lbl = new QLabel("NB Thr:");
-        lbl->setStyleSheet(kLabelStyle);
-        lbl->setFixedWidth(46);
-        row->addWidget(lbl);
-
-        m_nbSlider = new QSlider(Qt::Horizontal);
-        m_nbSlider->setRange(0, 100);
-        m_nbSlider->setValue(50);
-        m_nbSlider->setStyleSheet(kSliderStyle);
-        row->addWidget(m_nbSlider, 1);
-
-        m_nbLabel = new QLabel("50");
-        m_nbLabel->setStyleSheet(kLabelStyle);
-        m_nbLabel->setFixedWidth(22);
-        m_nbLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(m_nbLabel);
-        vbox->addLayout(row);
-
-        connect(m_nbSlider, &QSlider::valueChanged, this, [this](int v) {
-            m_nbLabel->setText(QString::number(v));
-        });
-    }
-
-    m_dspFlyout->setFixedWidth(200);
-    m_dspFlyout->adjustSize();
-}
-
-void SpectrumOverlayPanel::toggleDspFlyout()
-{
-    // Button index 4 (DSP)
-    QPushButton* dspBtn = m_menuBtns[4];
-
-    if (m_activeFlyout == m_dspFlyout) {
-        hideFlyout();
-        return;
-    }
-    hideFlyout();
-
-    // Top-aligned with panel (from AetherSDR toggleDspPanel)
-    m_dspFlyout->move(x() + width(), y());
-    m_dspFlyout->raise();
-    m_dspFlyout->show();
-    m_activeFlyout = m_dspFlyout;
-    m_activeButton = dspBtn;
-    dspBtn->setStyleSheet(kMenuBtnActive);
 }
 
 // ── Display flyout ────────────────────────────────────────────────────────────
@@ -1024,8 +893,8 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
 
 void SpectrumOverlayPanel::toggleDisplayFlyout()
 {
-    // Button index 5 (Display)
-    QPushButton* dispBtn = m_menuBtns[5];
+    // Button index 4 (Display)
+    QPushButton* dispBtn = m_menuBtns[4];
 
     if (m_activeFlyout == m_displayFlyout) {
         hideFlyout();
@@ -1291,8 +1160,8 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
 
 void SpectrumOverlayPanel::toggleVaxFlyout()
 {
-    // Button index 6 (VAX)
-    QPushButton* vaxBtn = m_menuBtns[6];
+    // Button index 5 (VAX)
+    QPushButton* vaxBtn = m_menuBtns[5];
 
     if (m_activeFlyout == m_vaxFlyout) {
         hideFlyout();

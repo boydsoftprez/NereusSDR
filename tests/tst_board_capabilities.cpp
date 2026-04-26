@@ -17,9 +17,11 @@ private slots:
         QTest::newRow("Angelia")    << int(HPSDRHW::Angelia);
         QTest::newRow("Orion")      << int(HPSDRHW::Orion);
         QTest::newRow("OrionMKII")  << int(HPSDRHW::OrionMKII);
-        QTest::newRow("HermesLite") << int(HPSDRHW::HermesLite);
-        QTest::newRow("Saturn")     << int(HPSDRHW::Saturn);
-        QTest::newRow("SaturnMKII") << int(HPSDRHW::SaturnMKII);
+        QTest::newRow("HermesLite")       << int(HPSDRHW::HermesLite);
+        QTest::newRow("HermesLiteRxOnly") << int(HPSDRHW::HermesLiteRxOnly);
+        QTest::newRow("Saturn")           << int(HPSDRHW::Saturn);
+        QTest::newRow("SaturnMKII")       << int(HPSDRHW::SaturnMKII);
+        QTest::newRow("Andromeda")        << int(HPSDRHW::Andromeda);
     }
     void forBoardReturnsMatchingEntry() {
         QFETCH(int, hw);
@@ -196,6 +198,48 @@ private slots:
         QVERIFY(!caps.hasApollo);
         QVERIFY(caps.hasAlex);
         QVERIFY(caps.hasPennyLane);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3M-0 Task 1: isRxOnlySku + canDriveGanymede SKU capability flags
+    //
+    // isRxOnlySku: NereusSDR-original flag — Thetis treats RX-only purely as
+    //   a user toggle (chkGeneralRXOnly, console.cs:15283-15307 [v2.10.3.13]);
+    //   we add this so SKUs without TX drivers are hard-blocked regardless of
+    //   user settings.
+    // canDriveGanymede: Andromeda console family flag — captures the PA-trip
+    //   capability per Andromeda.cs:914-920 [v2.10.3.13].
+    // -----------------------------------------------------------------------
+
+    // Hermes Lite 2 RX-only kits ship without a TX driver — isRxOnlySku must
+    // be true for HermesLiteRxOnly.
+    void rxOnlySku_HermesLiteRxOnlyVariants_returnsTrue() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::HermesLiteRxOnly);
+        QVERIFY(caps.isRxOnlySku);
+    }
+
+    // Standard HL2 (TX-capable) must NOT be flagged as RX-only.
+    void rxOnlySku_StandardHl2_returnsFalse() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::HermesLite);
+        QVERIFY(!caps.isRxOnlySku);
+    }
+
+    // ANAN-G2 (Saturn) is a full TX-capable board — not RX-only.
+    void rxOnlySku_AnanG2_returnsFalse() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::Saturn);
+        QVERIFY(!caps.isRxOnlySku);
+    }
+
+    // Andromeda console family can drive the Ganymede 500W PA.
+    void canDriveGanymede_AndromedaConsoleFamily_returnsTrue() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::Andromeda);
+        QVERIFY(caps.canDriveGanymede);
+    }
+
+    // Standard ANAN-G2 (Saturn) does not drive the Ganymede PA.
+    void canDriveGanymede_StandardAnan_returnsFalse() {
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::Saturn);
+        QVERIFY(!caps.canDriveGanymede);
     }
 };
 

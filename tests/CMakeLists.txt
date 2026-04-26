@@ -641,4 +641,102 @@ nereus_add_test(tst_bandplan_manager)
 # drift in the cap is caught by the build.
 nereus_add_test(tst_waterfall_scrollback)
 
+# ── Phase 3M-0 Task 2: BandPlanGuard region tables + 60m channels ─────────
+# Pure data + pure predicates; no Qt parent, no signals.
+# 12 table-driven tests cover US/UK/Japan 60m channelization, extended bypass,
+# different-band guard, and 20m in/out-of-band cases.
+nereus_add_test(tst_band_plan_guard)
+
+# ── Phase 3M-0 Task 3: SwrProtectionController PollPAPWR state machine ─────
+# 8 tests cover the two-stage foldback (per-sample + 4-trip windback latch),
+# open-antenna heuristic (swr=50 / factor=0.01), low-power floor clamp,
+# tune-time bypass, moxOff() latch clear, and latch persistence without moxOff.
+# Ports Thetis console.cs:25933-26120 [v2.10.3.13] (PollPAPWR) and
+# console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse).
+nereus_add_test(tst_swr_protection_controller)
+
+# ── Phase 3M-0 Task 4: TxInhibitMonitor GPIO poll + 4-source aggregation ─────
+# 8 tests cover: startup no-inhibit, UserIo01 active-low, reverse-logic inversion,
+# immediate Rx2OnlyRadio / OutOfBand / BlockTxAntenna notification paths,
+# multi-source priority ordering + all-clear, and poll-cadence duplicate suppression.
+# Ports Thetis console.cs:25801-25839 [v2.10.3.13] (PollTXInhibit loop).
+nereus_add_test(tst_tx_inhibit_monitor)
+
+# ── Phase 3M-0 Task 5: setWatchdogEnabled(bool) stub on RadioConnection ──────
+# 8 tests assert boolean state-tracking only — NO wire-format assertions.
+# Bit position is unknown (inside Thetis closed-source ChannelMaster.dll);
+# wire emit deferred to 3M-1a. API mirrors NetworkIOImports.cs:197-198
+# [v2.10.3.13] (DllImport SetWatchdogTimer entry point).
+nereus_add_test(tst_radio_connection_watchdog)
+
+# ── Phase 3M-0 Task 6: RadioModel::paTripped() live state + Ganymede handler ─
+# 5 tests cover initial state (clear), trip latch (non-zero tripState → true),
+# latch reset (resetGanymedePa()), absent-PA clear (setGanymedePresent(false)),
+# and the MOX-drop safety side effect on trip latch.
+# Ports Thetis Andromeda/Andromeda.cs:914-948 [v2.10.3.13]
+# (CATHandleAmplifierTripMessage + GanymedeResetPressed).
+nereus_add_test(tst_radio_model_pa_tripped)
+
+# ── Phase 3M-0 Task 7A: per-board PA scaling table ────────────────────────────
+# 5 tests pin per-board forward-power watts for ANAN100, ANAN_G2, ORIONMKII,
+# REDPITAYA, and the default fallback (HERMES). Values computed from the ported
+# formula: volts=(adc-offset)/4095*refVoltage; watts=volts^2/bridgeVolt.
+# Ports Thetis console.cs:25008-25072 [v2.10.3.13] (computeAlexFwdPower).
+nereus_add_test(tst_pa_scaling)
+
+# ── Phase 3M-0 Task 8: SpectrumWidget "HIGH SWR" overlay state ───────────────
+# Verifies setHighSwrOverlay(active, foldback) stores state, foldback flag
+# toggles independently, and repeated calls with same args are idempotent.
+# No pixel-diff — visual verification deferred to 3M-1a.
+# Mirrors Thetis display.cs:4183-4201 [v2.10.3.13].
+nereus_add_test(tst_spectrum_widget_highswr_overlay)
+
+# ── Phase 3M-0 Task 9: SWR Protection group box on Setup → Transmit ──────────
+# Verifies grpSWRProtectionControl has 5 controls with correct objectNames,
+# defaults, and verbatim tooltip text per
+# Thetis setup.designer.cs:5793-5924 [v2.10.3.13].
+nereus_add_test(tst_transmit_setup_swr_protection)
+
+# ── Phase 3M-0 Task 10: External TX Inhibit group box on Setup → Transmit ────
+# Verifies grpExtTXInhibit has 2 checkboxes with correct objectNames, defaults,
+# verbatim tooltip text per setup.designer.cs:46626-46657 [v2.10.3.13], and
+# that toggling chkTXInhibit persists to AppSettings.
+nereus_add_test(tst_transmit_setup_tx_inhibit)
+
+# ── Phase 3M-0 Task 11: Block-TX antennas + Disable HF PA ────────────────────
+# Verifies chkBlockTxAnt2/3 carry NereusSDR-original labels and tooltips
+# (Thetis ships unlabelled column-header checkboxes per
+# setup.designer.cs:6704-6724 [v2.10.3.13]), and chkHFTRRelay tooltip
+# "Disables HF PA." verbatim from setup.designer.cs:5786 [v2.10.3.13].
+nereus_add_test(tst_transmit_setup_block_tx)
+
+# ── Phase 3M-0 Task 12: Hardware Configuration group box on Setup → General ──
+# Verifies grpHardwareConfig has 4 controls + 1 warning label per
+# Thetis tpGeneralHardware (setup.designer.cs:8045-8396 [v2.10.3.13]):
+# 24-entry Region combo (default United States), Extended checkbox, red warning
+# label, chkGeneralRXOnly hidden by default, chkNetworkWDT default ON.
+nereus_add_test(tst_general_setup_hardware_config)
+
+# ── Phase 3M-0 Task 13: Options group box on Setup → General ─────────────────
+# Verifies grpGeneralOptions has chkPreventTXonDifferentBandToRX per
+# Thetis setup.designer.cs:9050-9059 [v2.10.3.13]. Tooltip NereusSDR-original
+# (Thetis has no tooltip on this control). Default unchecked.
+nereus_add_test(tst_general_setup_options)
+
+# ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
+# Tests the label-state logic for the two safety indicator widgets added to
+# the MainWindow status bar:
+#   m_txInhibitLabel — hidden by default, shown when inhibit asserts (Task 17)
+#   m_paStatusBadge  — "PA OK" (green) / "PA FAULT" (red) per paTripped()
+# MainWindow itself is too heavyweight to construct in a unit test (requires
+# full RadioModel + WDSP + audio stack). Tests exercise the helper logic via
+# standalone QLabel instances; Task 17 integration provides the live wiring.
+nereus_add_test(tst_mainwindow_status_bar_safety)
+
+# ── Phase 3M-0 Task 15: AppSettings round-trip audit for all 15 keys ─────────
+# Verifies all 15 AppSettings keys introduced by Tasks 9-13 survive a
+# save()+load() cycle: SwrProtection* (5), TxInhibitMonitor* (2),
+# AlexAnt[23]RxOnly + DisableHfPa (3), Region/Extended/RxOnly/NetworkWDT (4),
+# PreventTxOnDifferentBandToRx (1). Uses QTemporaryDir for full isolation.
+nereus_add_test(tst_phase3m0_persistence_audit)
 

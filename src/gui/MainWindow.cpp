@@ -307,6 +307,7 @@ warren@wpratt.com
 #include <QMenuBar>
 #include <QMenu>
 #include <QAction>
+#include <QSignalBlocker>
 #include <QActionGroup>
 #include <QStatusBar>
 #include <QLabel>
@@ -902,6 +903,30 @@ void MainWindow::buildUI()
             }
         });
     });
+
+    // ── Phase 3M-0 Task 17: safety controller → status-bar wiring ────────────
+    //
+    // Wire PA Fwd/Rev/SWR telemetry into MeterPoller's cache so PA power
+    // meter items (MeterPoller::setRadioStatus) receive live data as
+    // RadioStatus::powerChanged fires. Called here (after poller creation)
+    // so the connection outlives the poller's lifetime.
+    m_meterPoller->setRadioStatus(&m_radioModel->radioStatus());
+
+    // Ganymede PA-trip badge: RadioModel::paTrippedChanged → setPaTripped.
+    // setPaTripped() was added in Task 14 and updates m_paStatusBadge text
+    // and colour atomically.
+    connect(m_radioModel, &RadioModel::paTrippedChanged,
+            this, &MainWindow::setPaTripped);
+
+    // TX Inhibit pill: TxInhibitMonitor::txInhibitedChanged → setTxInhibited.
+    // setTxInhibited() was added in Task 14 and toggles m_txInhibitLabel
+    // visibility. The Source parameter is ignored by the UI slot (the pill
+    // is binary: visible or hidden).
+    connect(&m_radioModel->txInhibit(),
+            &safety::TxInhibitMonitor::txInhibitedChanged,
+            this, [this](bool inhibited, safety::TxInhibitMonitor::Source /*source*/) {
+        setTxInhibited(inhibited);
+    });
 }
 
 void MainWindow::rebuildEditContainerSubmenu()
@@ -1370,52 +1395,121 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* dspMenu = menuBar()->addMenu(QStringLiteral("&DSP"));
 
-    // Checkable DSP toggles — stored as members so the overlay panel can sync
-    m_nrAction = dspMenu->addAction(QStringLiteral("&NR"));
-    m_nrAction->setCheckable(true);
-    connect(m_nrAction, &QAction::toggled, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNrEnabled(on); }
-    });
+    // ── NR submenu — full slot bank, mutual exclusion via QActionGroup ─────
+    // Mirrors VfoWidget's 7-button NR bank. Off/NR1/NR2/NR3/NR4/DFNR are
+    // always present; MNR is gated by HAVE_MNR (macOS only) and BNR by
+    // HAVE_BNR (NVIDIA build, currently never defined). Hidden actions
+    // remain in the group so the activeNrChanged sync handler can find
+    // them by index.
+    {
+        QMenu* nrMenu = dspMenu->addMenu(QStringLiteral("&NR"));
+        m_nrGroup = new QActionGroup(this);
+        m_nrGroup->setExclusive(true);
 
-    QAction* nr2Action = dspMenu->addAction(QStringLiteral("NR&2"));
-    nr2Action->setCheckable(true);
-    nr2Action->setToolTip(QStringLiteral("Toggle enhanced multiband noise reduction (NR2/EMNR)"));
-    connect(nr2Action, &QAction::toggled, this, [this](bool on) {
-        SliceModel* slice = m_radioModel->activeSlice();
-        if (slice) {
-            slice->setActiveNr(on ? NereusSDR::NrSlot::NR2 : NereusSDR::NrSlot::Off);
+        using Slot = NereusSDR::NrSlot;
+        struct Entry { const char* label; Slot slot; bool hidden; };
+        const Entry nrSlots[] = {
+            { "&Off",   Slot::Off,  false },
+            { "NR&1",   Slot::NR1,  false },
+            { "NR&2",   Slot::NR2,  false },
+            { "NR&3",   Slot::NR3,  false },
+            { "NR&4",   Slot::NR4,  false },
+            { "&DFNR",  Slot::DFNR, false },
+            { "&MNR",   Slot::MNR,
+#ifdef HAVE_MNR
+                false
+#else
+                true
+#endif
+            },
+            { "&BNR",   Slot::BNR,
+#ifdef HAVE_BNR
+                false
+#else
+                true
+#endif
+            },
+        };
+        for (const auto& nr : nrSlots) {
+            Slot slot = nr.slot;
+            QAction* a = nrMenu->addAction(QString::fromUtf8(nr.label),
+                this, [this, slot]() {
+                    SliceModel* slice = m_radioModel->activeSlice();
+                    if (slice) { slice->setActiveNr(slot); }
+                });
+            a->setCheckable(true);
+            if (nr.hidden) { a->setVisible(false); }
+            m_nrGroup->addAction(a);
         }
+    }
+
+    // ── NB submenu — Off/NB/NB2 mutual exclusion ───────────────────────────
+    // Maps to SliceModel::setNbMode(NbMode). Mirrors VfoWidget's cycling
+    // NB button (Off → NB → NB2 → Off) but as discrete menu items.
+    {
+        QMenu* nbMenu = dspMenu->addMenu(QStringLiteral("N&B"));
+        m_nbGroup = new QActionGroup(this);
+        m_nbGroup->setExclusive(true);
+
+        using Mode = NereusSDR::NbMode;
+        const struct { const char* label; Mode mode; } nbModes[] = {
+            { "&Off",  Mode::Off },
+            { "&NB",   Mode::NB  },
+            { "NB&2",  Mode::NB2 },
+        };
+        for (const auto& nb : nbModes) {
+            Mode mode = nb.mode;
+            QAction* a = nbMenu->addAction(QString::fromUtf8(nb.label),
+                this, [this, mode]() {
+                    SliceModel* slice = m_radioModel->activeSlice();
+                    if (slice) { slice->setNbMode(mode); }
+                });
+            a->setCheckable(true);
+            m_nbGroup->addAction(a);
+        }
+    }
+
+    // ── Single-toggle DSP actions ──────────────────────────────────────────
+    // ANF writes through RxChannel directly (SliceModel::anfEnabled is a
+    // Task 17 follow-up). Cross-surface sync is therefore not yet possible
+    // for ANF; the action emits its own toggled() but isn't checked from
+    // model state. SNB / APF / BIN go through SliceModel and are synced.
+    {
+        QAction* anfAction = dspMenu->addAction(QStringLiteral("&ANF"));
+        anfAction->setCheckable(true);
+        connect(anfAction, &QAction::toggled, this, [this](bool on) {
+            RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
+            if (rxCh) { rxCh->setAnfEnabled(on); }
+        });
+    }
+
+    m_snbAction = dspMenu->addAction(QStringLiteral("&SNB"));
+    m_snbAction->setCheckable(true);
+    connect(m_snbAction, &QAction::toggled, this, [this](bool on) {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (slice) { slice->setSnbEnabled(on); }
     });
 
-    m_nbAction = dspMenu->addAction(QStringLiteral("N&B"));
-    m_nbAction->setCheckable(true);
-    connect(m_nbAction, &QAction::toggled, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setNbMode(on ? NereusSDR::NbMode::NB : NereusSDR::NbMode::Off); }
+    m_apfAction = dspMenu->addAction(QStringLiteral("AP&F"));
+    m_apfAction->setCheckable(true);
+    connect(m_apfAction, &QAction::toggled, this, [this](bool on) {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (slice) { slice->setApfEnabled(on); }
     });
 
-    QAction* nb2Action = dspMenu->addAction(QStringLiteral("NB&2"));
-    nb2Action->setCheckable(true);
-    nb2Action->setEnabled(false);
-    nb2Action->setToolTip(QStringLiteral("NYI — Phase X"));
-
-    m_anfAction = dspMenu->addAction(QStringLiteral("&ANF"));
-    m_anfAction->setCheckable(true);
-    connect(m_anfAction, &QAction::toggled, this, [this](bool on) {
-        RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
-        if (rxCh) { rxCh->setAnfEnabled(on); }
+    m_binAction = dspMenu->addAction(QStringLiteral("B&IN"));
+    m_binAction->setCheckable(true);
+    connect(m_binAction, &QAction::toggled, this, [this](bool on) {
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (slice) { slice->setBinauralEnabled(on); }
     });
 
-    QAction* tnfAction = dspMenu->addAction(QStringLiteral("&TNF"));
-    tnfAction->setCheckable(true);
-    tnfAction->setEnabled(false);
-    tnfAction->setToolTip(QStringLiteral("NYI — Phase X"));
-
-    QAction* binAction = dspMenu->addAction(QStringLiteral("&BIN"));
-    binAction->setCheckable(true);
-    binAction->setEnabled(false);
-    binAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    {
+        QAction* tnfAction = dspMenu->addAction(QStringLiteral("&TNF"));
+        tnfAction->setCheckable(true);
+        tnfAction->setEnabled(false);
+        tnfAction->setToolTip(QStringLiteral("NYI — Phase X"));
+    }
 
     dspMenu->addSeparator();
 
@@ -1463,6 +1557,67 @@ void MainWindow::buildMenuBar()
             });
         });
     }
+
+    // ── Sync NR / NB / SNB / APF / BIN checked state from slice 0 ──────────
+    // Mirrors the AGC sync pattern above. Wired via sliceAdded so the
+    // connection survives slice teardown/re-create. ANF intentionally
+    // omitted — its state lives on RxChannel without a notify signal
+    // (SliceModel::anfEnabled is a Task 17 follow-up).
+    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
+        if (index != 0) { return; }
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (!slice) { return; }
+
+        // NR submenu sync — actions appended to m_nrGroup in this fixed order.
+        const NereusSDR::NrSlot nrOrder[] = {
+            NereusSDR::NrSlot::Off,  NereusSDR::NrSlot::NR1,
+            NereusSDR::NrSlot::NR2,  NereusSDR::NrSlot::NR3,
+            NereusSDR::NrSlot::NR4,  NereusSDR::NrSlot::DFNR,
+            NereusSDR::NrSlot::MNR,  NereusSDR::NrSlot::BNR,
+        };
+        auto syncNr = [this, nrOrder](NereusSDR::NrSlot slot) {
+            QList<QAction*> acts = m_nrGroup->actions();
+            const int n = static_cast<int>(std::size(nrOrder));
+            for (int i = 0; i < acts.size() && i < n; ++i) {
+                QSignalBlocker b(acts[i]);
+                acts[i]->setChecked(nrOrder[i] == slot);
+            }
+        };
+        syncNr(slice->activeNr());
+        connect(slice, &SliceModel::activeNrChanged, this, syncNr);
+
+        // NB submenu sync — three actions in m_nbGroup: Off, NB, NB2.
+        const NereusSDR::NbMode nbOrder[] = {
+            NereusSDR::NbMode::Off, NereusSDR::NbMode::NB, NereusSDR::NbMode::NB2,
+        };
+        auto syncNb = [this, nbOrder](NereusSDR::NbMode mode) {
+            QList<QAction*> acts = m_nbGroup->actions();
+            for (int i = 0; i < acts.size() && i < 3; ++i) {
+                QSignalBlocker b(acts[i]);
+                acts[i]->setChecked(nbOrder[i] == mode);
+            }
+        };
+        syncNb(slice->nbMode());
+        connect(slice, &SliceModel::nbModeChanged, this, syncNb);
+
+        // Single-toggle initial sync.
+        { QSignalBlocker b(m_snbAction); m_snbAction->setChecked(slice->snbEnabled()); }
+        { QSignalBlocker b(m_apfAction); m_apfAction->setChecked(slice->apfEnabled()); }
+        { QSignalBlocker b(m_binAction); m_binAction->setChecked(slice->binauralEnabled()); }
+
+        connect(slice, &SliceModel::snbEnabledChanged, this, [this](bool v) {
+            QSignalBlocker b(m_snbAction);
+            m_snbAction->setChecked(v);
+        });
+        connect(slice, &SliceModel::apfEnabledChanged, this, [this](bool v) {
+            QSignalBlocker b(m_apfAction);
+            m_apfAction->setChecked(v);
+        });
+        connect(slice, &SliceModel::binauralEnabledChanged, this, [this](bool v) {
+            QSignalBlocker b(m_binAction);
+            m_binAction->setChecked(v);
+        });
+    });
 
     dspMenu->addSeparator();
 
@@ -2088,6 +2243,31 @@ void MainWindow::buildStatusBar()
     }
     hbox->addWidget(makeSep());
 
+    // ── Phase 3M-0 Task 14: TX Inhibit indicator ─────────────────────────
+    // Red "TX INHIBIT" pill — hidden by default; shown when
+    // TxInhibitMonitor::inhibited() asserts. Signal wiring to the monitor
+    // lands in Task 17 (final integration pass).
+    m_txInhibitLabel = new QLabel(QStringLiteral("TX INHIBIT"), barWidget);
+    m_txInhibitLabel->setObjectName(QStringLiteral("txInhibitLabel"));
+    m_txInhibitLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #ff6060; font-weight: bold; font-size: 11px;"
+        "         padding: 2px 6px; border: 1px solid #ff6060; border-radius: 3px; }"));
+    m_txInhibitLabel->setToolTip(tr("External TX Inhibit asserted — TX is blocked"));
+    m_txInhibitLabel->setVisible(false);  // hidden until inhibit asserts
+    hbox->addWidget(m_txInhibitLabel);
+
+    // ── Phase 3M-0 Task 14: PA Status badge ─────────────────────────────
+    // "PA OK" (green) / "PA FAULT" (red) badge driven by
+    // RadioModel::paTripped(). Default state is OK; setPaTripped() flips
+    // the text, colour, and tooltip. Signal wiring lands in Task 17.
+    m_paStatusBadge = new QLabel(QStringLiteral("PA OK"), barWidget);
+    m_paStatusBadge->setObjectName(QStringLiteral("paStatusBadge"));
+    m_paStatusBadge->setStyleSheet(QStringLiteral(
+        "QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+    m_paStatusBadge->setToolTip(tr("PA Status — OK"));
+    hbox->addWidget(m_paStatusBadge);
+    hbox->addWidget(makeSep());
+
     // TX indicator — dim red when not transmitting; bright red when TX active (NYI)
     auto* txLabel = new QLabel(QStringLiteral("TX"), barWidget);
     txLabel->setStyleSheet(QStringLiteral(
@@ -2178,6 +2358,35 @@ void MainWindow::buildStatusBar()
 
     // Add the full-width bar widget to the status bar
     sb->addWidget(barWidget, 1);
+}
+
+// ── Phase 3M-0 Task 14: PA trip badge update ─────────────────────────────────
+// Called by Task 17 wiring when RadioModel::paTrippedChanged fires.
+// Updates badge text, colour, and tooltip atomically so there is never
+// a state where text and colour are out of sync.
+void MainWindow::setPaTripped(bool tripped)
+{
+    if (!m_paStatusBadge) { return; }
+    if (tripped) {
+        m_paStatusBadge->setText(QStringLiteral("PA FAULT"));
+        m_paStatusBadge->setStyleSheet(QStringLiteral(
+            "QLabel { color: #ff6060; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+        m_paStatusBadge->setToolTip(tr("PA Status — FAULT (PA tripped, MOX dropped)"));
+    } else {
+        m_paStatusBadge->setText(QStringLiteral("PA OK"));
+        m_paStatusBadge->setStyleSheet(QStringLiteral(
+            "QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+        m_paStatusBadge->setToolTip(tr("PA Status — OK"));
+    }
+}
+
+// ── Phase 3M-0 Task 14: TX Inhibit label visibility ─────────────────────────
+// Called by Task 17 wiring when TxInhibitMonitor::txInhibitedChanged fires.
+// Shows or hides the red "TX INHIBIT" pill in the status bar.
+void MainWindow::setTxInhibited(bool inhibited)
+{
+    if (!m_txInhibitLabel) { return; }
+    m_txInhibitLabel->setVisible(inhibited);
 }
 
 void MainWindow::wireSliceToSpectrum()

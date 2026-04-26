@@ -421,6 +421,16 @@ public:
     void setBandEdgeColor(const QColor& c);
     QColor bandEdgeColor() const { return m_bandEdgeColor; }
 
+    // ---- HIGH SWR / PA safety overlay ----
+    // Ported from Thetis display.cs:4183-4201 [v2.10.3.13]
+    // Mirrors the DX2D "HIGH SWR" warning block: red centred text +
+    // 6 px red border around the spectrum area. When `foldback` is true,
+    // "\n\nPOWER FOLD BACK" is appended to the text per display.cs:4187-4194.
+    // //MW0LGE_21k8  [original inline comment from display.cs:4213]
+    void setHighSwrOverlay(bool active, bool foldback) noexcept;
+    bool isHighSwrOverlayActive() const noexcept { return m_highSwrActive; }
+    bool isHighSwrFoldback()      const noexcept { return m_highSwrFoldback; }
+
     // ---- Per-pan settings persistence ----
     void setPanIndex(int idx) { m_panIndex = idx; }
     int  panIndex() const { return m_panIndex; }
@@ -498,6 +508,8 @@ private:
     void drawGrid(QPainter& p, const QRect& specRect);
     void drawSpectrum(QPainter& p, const QRect& specRect);
     void drawWaterfall(QPainter& p, const QRect& wfRect);
+    // HIGH SWR / PA safety overlay — ported from display.cs:4183-4201 [v2.10.3.13]
+    void paintHighSwrOverlay(QPainter& p);
     // Phase 3G-8 commit 10: overlay-only waterfall chrome (filter bands,
     // zero lines, timestamp, opacity dim) split out so the GPU overlay
     // texture can render the same chrome without blitting the waterfall
@@ -754,6 +766,11 @@ private:
 
     // Filter edge grab zone — from AetherSDR line 1087: GRAB = 5
     static constexpr int kFilterGrab = 5;
+
+    // ---- HIGH SWR / PA safety overlay state ----
+    // Ported from Thetis display.cs:4183-4201 [v2.10.3.13]
+    bool m_highSwrActive{false};
+    bool m_highSwrFoldback{false};
 
 #ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};

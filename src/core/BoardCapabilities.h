@@ -271,6 +271,18 @@ struct BoardCapabilities {
     bool hasRxBypassRelay    {false};
     int  rxOnlyAntennaCount  {0};
 
+    // Phase 3M-0 Task 1: SKU-level safety flags (NereusSDR-original).
+    //
+    // isRxOnlySku: True iff this SKU ships without TX hardware (Hermes Lite 2
+    //   RX-only kits, etc.). Thetis treats RX-only purely as a user toggle
+    //   (chkGeneralRXOnly, console.cs:15283-15307 [v2.10.3.13]); we add this
+    //   so SKUs without TX drivers are hard-blocked regardless of user settings.
+    bool isRxOnlySku     {false};
+
+    // canDriveGanymede: True iff this SKU is the Andromeda-console family that
+    //   connects to a Ganymede 500W PA (Andromeda.cs:914-920 [v2.10.3.13]).
+    bool canDriveGanymede {false};
+
     bool hasPureSignal;
     bool hasDiversityReceiver;
     bool hasStepAttenuatorCal;

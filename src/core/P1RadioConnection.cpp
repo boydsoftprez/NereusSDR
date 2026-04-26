@@ -839,6 +839,33 @@ void P1RadioConnection::setAntennaRouting(AntennaRouting r)
 }
 
 // ---------------------------------------------------------------------------
+// setWatchdogEnabled — Phase 3M-0 Task 5
+//
+// Records the requested watchdog enable state in the base-class
+// m_watchdogEnabled field (shared with P2).
+//
+// From Thetis NetworkIOImports.cs:197-198 [v2.10.3.13]:
+//   [DllImport("ChannelMaster.dll", CallingConvention = CallingConvention.Cdecl)]
+//   public static extern void SetWatchdogTimer(int bits);
+//
+// The callsite (setup.cs:17986 [v2.10.3.13]):
+//   NetworkIO.SetWatchdogTimer(Convert.ToInt32(chkNetworkWDT.Checked));
+//
+// TODO [3M-1a]: emit the watchdog wire bit on the next outbound C&C
+// frame. Bit position is currently unknown — Thetis dispatches via
+// ChannelMaster.dll (closed source). Identify via wire capture or
+// HL2-firmware reading; until then this is a state-tracking stub.
+// Cite: NetworkIOImports.cs:197-198 [v2.10.3.13] (DllImport entry).
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setWatchdogEnabled(bool enabled)
+{
+    if (m_watchdogEnabled == enabled) {
+        return;
+    }
+    m_watchdogEnabled = enabled;
+}
+
+// ---------------------------------------------------------------------------
 // applyBoardQuirks
 //
 // Reads BoardCapabilities (m_caps) and enforces runtime constraints.
