@@ -109,6 +109,18 @@ void SwrProtectionController::setDisableOnTune(bool on) noexcept
     m_disableOnTune = on;
 }
 
+void SwrProtectionController::setAlexFwdLimit(float watts) noexcept
+{
+    // console.cs:26067 [v2.10.3.13]: alex_fwd_limit = 5.0f (or 2×ptbPWR.Value for ANAN-8000D)
+    m_alexFwdLimit = watts;
+}
+
+void SwrProtectionController::setTunePowerSliderValue(int value) noexcept
+{
+    // console.cs:26020-26057 [v2.10.3.13]: tunePowerSliderValue — bypass only fires when <= 70
+    m_tunePowerSliderValue = value;
+}
+
 void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) noexcept
 {
     // From Thetis console.cs:25933-26120 [v2.10.3.13] (PollPAPWR loop)
@@ -208,8 +220,9 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
     // console.cs:26020-26057 [v2.10.3.13]
     bool swrPass = false;
     if (tuneActive && m_disableOnTune) {
-        // alex_fwd >= 1.0f && alex_fwd <= _tunePowerSwrIgnore
-        if (fwdW >= 1.0f && fwdW <= m_tunePowerSwrIgnore) {
+        // alex_fwd >= 1.0f && alex_fwd <= _tunePowerSwrIgnore && tunePowerSliderValue <= 70
+        // console.cs:26047-26053 [v2.10.3.13]
+        if (fwdW >= 1.0f && fwdW <= m_tunePowerSwrIgnore && m_tunePowerSliderValue <= 70) {
             swrPass = true;
         }
     }
@@ -217,16 +230,13 @@ void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) no
     // ── Trip detection + foldback / windback ──────────────────────────────
     // console.cs:26067-26091 [v2.10.3.13]
 
-    // TODO [3M-1a]: add `alex_fwd > alex_fwd_limit` floor (5W default,
-    //   2× power-slider for ANAN-8000D) to suppress false trips during TX
-    //   ramp-up. Mirrors console.cs:26067 [v2.10.3.13].
-    // TODO [3M-1a]: add the `tunePowerSliderValue <= 70` override to the
-    //   tune-bypass block when the power slider value is exposed by the
-    //   integration in Task 17. Mirrors console.cs:26020-26057 [v2.10.3.13].
-    //
-    // Both conditions are intentionally deferred — SwrProtectionController
-    // is inert until 3M-1a wires it into the MOX path.
-    if (swr > m_limit && !swrPass) {
+    // alex_fwd_limit floor: suppresses false trips during TX ramp-up.
+    // console.cs:26067 [v2.10.3.13]:
+    //   float alex_fwd_limit = 5.0f;
+    //   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)
+    //       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;
+    //   if (swr > _swrProtectionLimit && alex_fwd > alex_fwd_limit && swrprotection && !swr_pass)
+    if (swr > m_limit && fwdW > m_alexFwdLimit && !swrPass) {
         m_tripCount++;
         if (m_tripCount >= kTripDebounceCount) {
             // console.cs:26070-26075 [v2.10.3.13]

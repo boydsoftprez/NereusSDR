@@ -89,8 +89,12 @@ namespace NereusSDR::safety {
 ///   Cite: console.cs:25989-26009 [v2.10.3.6]MW0LGE.
 ///
 /// Tune-time bypass: disableOnTune=true + tuneActive=true + fwd in [1, tunePowerSwrIgnore]
-///   → factor=1.0, highSwr cleared.
+///   + tunePowerSliderValue ≤ 70 → factor=1.0, highSwr cleared.
 ///   Cite: console.cs:26020-26057 [v2.10.3.13].
+///
+/// alex_fwd_limit floor: fwd must exceed alexFwdLimit (default 5W; 2× power-slider for
+///   ANAN-8000D) for a trip to fire. Suppresses false trips during TX ramp-up.
+///   Cite: console.cs:26067 [v2.10.3.13].
 ///
 /// onMoxOff() resets all latches and emits changes.
 ///   Cite: console.cs:29191-29195 [v2.10.3.13] (UIMOXChangedFalse).
@@ -123,6 +127,17 @@ public:
     /// if fwd power is within the tune-power range.
     /// Cite: console.cs:26020-26057 [v2.10.3.13] (disable_swr_on_tune).
     void setDisableOnTune(bool on) noexcept;
+
+    /// Minimum forward power (watts) that can trigger a trip.
+    /// Suppresses false trips during TX ramp-up. Default 5.0W.
+    /// For ANAN-8000D set to 2.0 × ptbPWR.Value before each ingest call.
+    /// Cite: console.cs:26067 [v2.10.3.13] (alex_fwd_limit).
+    void setAlexFwdLimit(float watts) noexcept;
+
+    /// Current value of the active tune-power slider (0–100).
+    /// Tune-bypass only fires when this value is ≤ 70.
+    /// Cite: console.cs:26020-26057 [v2.10.3.13] (tunePowerSliderValue).
+    void setTunePowerSliderValue(int value) noexcept;
 
     /// Feed a new forward/reflected power pair.
     /// @param fwdW   forward power in watts (alex_fwd in Thetis)
@@ -187,6 +202,10 @@ private:
     bool  m_windBackEnabled     = false; // _swr_wind_back_power
     float m_tunePowerSwrIgnore  = 0.0f;  // _tunePowerSwrIgnore
     bool  m_disableOnTune       = false; // disable_swr_on_tune
+    // console.cs:26067 [v2.10.3.13]: alex_fwd_limit (default 5W; 2×slider for ANAN-8000D)
+    float m_alexFwdLimit        = 5.0f;
+    // console.cs:26020-26057 [v2.10.3.13]: tunePowerSliderValue (bypass only when ≤ 70)
+    int   m_tunePowerSliderValue = 0;
 
     float m_protectFactor       = 1.0f;  // NetworkIO.SWRProtect
     bool  m_highSwr             = false; // HighSWR

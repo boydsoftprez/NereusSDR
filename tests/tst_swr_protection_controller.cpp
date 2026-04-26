@@ -26,6 +26,13 @@ private slots:
 
     // Codex P2 follow-up to PR #139:
     void setEnabled_false_clearsLatchedState();
+
+    // F.3 TODO ports — console.cs:26067 + 26020-26057 [v2.10.3.13]:
+    void alexFwdLimit_default5W_belowFloor_noTrip();
+    void alexFwdLimit_default5W_aboveFloor_trips();
+    void alexFwdLimit_anan8000d_2xSlider_belowFloor_noTrip();
+    void tuneBypass_sliderAt70_bypasses();
+    void tuneBypass_sliderAt71_doesNotBypass();
 };
 
 void TestSwrProtectionController::init()
@@ -239,6 +246,88 @@ void TestSwrProtectionController::setEnabled_false_clearsLatchedState()
     QVERIFY(!m_ctrl->windBackLatched());
     QVERIFY(!m_ctrl->openAntennaDetected());
     QVERIFY(!m_ctrl->highSwr());
+}
+
+// ── F.3 ports — console.cs:26067 + 26020-26057 [v2.10.3.13] ─────────────────
+
+// alex_fwd_limit floor (default 5W): fwd <= 5W must NOT trip even if SWR > limit.
+// console.cs:26067 [v2.10.3.13]:
+//   if (swr > _swrProtectionLimit && alex_fwd > alex_fwd_limit && ...)
+void TestSwrProtectionController::alexFwdLimit_default5W_belowFloor_noTrip()
+{
+    // Default m_alexFwdLimit = 5.0f; do not set it — verify the default.
+    // fwd=4.9W, rev=3.5W → rho=sqrt(3.5/4.9)≈0.845 → swr≈(1.845/0.155)≈11.9 > limit(2.0)
+    // But fwd(4.9) <= alexFwdLimit(5.0) → must NOT trip.
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(4.9f, 3.5f, false);
+    }
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
+    QVERIFY(!m_ctrl->highSwr());
+}
+
+// alex_fwd_limit floor (default 5W): fwd > 5W with high SWR DOES trip.
+// console.cs:26067 [v2.10.3.13]
+void TestSwrProtectionController::alexFwdLimit_default5W_aboveFloor_trips()
+{
+    // fwd=10W, rev=5.56W → swr≈6.86 > limit(2.0); fwd(10) > alexFwdLimit(5.0) → trips.
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(10.0f, 5.56f, false);
+    }
+    QVERIFY(m_ctrl->highSwr());
+    QVERIFY(m_ctrl->windBackLatched());
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
+}
+
+// ANAN-8000D variant: setAlexFwdLimit(2.0 * 50) = 100W floor.
+// At fwd=99W with high SWR, no trip should fire.
+// console.cs:26067 [v2.10.3.13]:
+//   if (HardwareSpecific.Model == HPSDRModel.ANAN8000D)
+//       alex_fwd_limit = 2.0f * (float)ptbPWR.Value;
+void TestSwrProtectionController::alexFwdLimit_anan8000d_2xSlider_belowFloor_noTrip()
+{
+    // Simulate ANAN-8000D with power slider at 50 → floor = 100W.
+    m_ctrl->setAlexFwdLimit(2.0f * 50.0f); // 100W floor
+    // fwd=99W, rev=60W → swr≈7+ > limit(2.0), but fwd(99) <= floor(100) → no trip.
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(99.0f, 60.0f, false);
+    }
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
+    QVERIFY(!m_ctrl->highSwr());
+}
+
+// Tune-bypass with slider <= 70: bypass fires (swrPass=true).
+// console.cs:26020-26057 [v2.10.3.13]:
+//   if (alex_fwd >= 1.0f && alex_fwd <= _tunePowerSwrIgnore && tunePowerSliderValue <= 70)
+//       swr_pass = true;
+void TestSwrProtectionController::tuneBypass_sliderAt70_bypasses()
+{
+    m_ctrl->setDisableOnTune(true);
+    m_ctrl->setTunePowerSwrIgnore(30.0f);
+    m_ctrl->setTunePowerSliderValue(70); // exactly at the boundary — must bypass
+
+    // fwd=10W (in [1, 30]), rev=5.56W → swr≈6.86 > limit; but tune bypass fires.
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(10.0f, 5.56f, /*tuneActive=*/true);
+    }
+    QCOMPARE(m_ctrl->protectFactor(), 1.0f);
+    QVERIFY(!m_ctrl->highSwr());
+}
+
+// Tune-bypass with slider > 70: bypass does NOT fire — normal SWR protection applies.
+// console.cs:26020-26057 [v2.10.3.13]
+void TestSwrProtectionController::tuneBypass_sliderAt71_doesNotBypass()
+{
+    m_ctrl->setDisableOnTune(true);
+    m_ctrl->setTunePowerSwrIgnore(30.0f);
+    m_ctrl->setTunePowerSliderValue(71); // one above boundary — must NOT bypass
+
+    // fwd=10W > m_alexFwdLimit(5.0), rev=5.56W → swr≈6.86 > limit → trips.
+    for (int i = 0; i < 4; ++i) {
+        m_ctrl->ingest(10.0f, 5.56f, /*tuneActive=*/true);
+    }
+    QVERIFY(m_ctrl->highSwr());
+    QVERIFY(m_ctrl->windBackLatched());
+    QCOMPARE(m_ctrl->protectFactor(), 0.01f);
 }
 
 QTEST_GUILESS_MAIN(TestSwrProtectionController)
