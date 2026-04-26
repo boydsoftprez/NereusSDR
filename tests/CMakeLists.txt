@@ -725,3 +725,10 @@ nereus_add_test(tst_general_setup_options)
 # standalone QLabel instances; Task 17 integration provides the live wiring.
 nereus_add_test(tst_mainwindow_status_bar_safety)
 
+# ── Phase 3M-0 Task 15: AppSettings round-trip audit for all 15 keys ─────────
+# Verifies all 15 AppSettings keys introduced by Tasks 9-13 survive a
+# save()+load() cycle: SwrProtection* (5), TxInhibitMonitor* (2),
+# AlexAnt[23]RxOnly + DisableHfPa (3), Region/Extended/RxOnly/NetworkWDT (4),
+# PreventTxOnDifferentBandToRx (1). Uses QTemporaryDir for full isolation.
+nereus_add_test(tst_phase3m0_persistence_audit)
+
