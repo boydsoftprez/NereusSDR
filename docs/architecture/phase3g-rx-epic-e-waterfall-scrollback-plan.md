@@ -671,21 +671,32 @@ Find the line `QRgb* scanline = reinterpret_cast<QRgb*>(m_waterfall.scanLine(m_w
 
 **Why the live branch isn't here:** the existing code already writes the live row to `m_waterfall.scanLine(m_wfWriteRow)` *before* this insertion point. That IS the live append. We don't need a separate `appendVisibleRow` like upstream — our live-write loop is inline and writes directly to the QImage. The history mirror is a copy of that same scanline.
 
-- [ ] **Step 3: Locate `clearDisplay` (or equivalent)**
+- [ ] **Step 3: Wire `clearWaterfallHistory()` to RadioModel disconnection**
 
-`rg -n 'void SpectrumWidget::clearDisplay|m_waterfall\.fill' src/gui/SpectrumWidget.cpp`. NereusSDR's name may differ — check for `disconnectAll`, `resetSpectrum`, or `flushSpectrum`. The function is the one called when the radio disconnects; it currently fills `m_waterfall` with the dark background.
+NereusSDR has no `SpectrumWidget::clearDisplay()` equivalent — there is no single reset function called on disconnect. The disconnect signal lives on `RadioModel::connectionStateChanged()` + `RadioModel::isConnected()` and is wired through to widgets in `MainWindow`. Sub-epic E adds a clean handler there.
 
-If `clearDisplay()` does not exist as a named function in NereusSDR, this step instead applies to whichever function performs the equivalent reset on disconnect. Use `rg -n 'm_waterfall\.fill|m_wfWriteRow\s*=\s*0' src/gui/SpectrumWidget.cpp` — the cluster of resets is the right place.
+First, ensure `clearWaterfallHistory()` is callable from `MainWindow`. The Task 1 declaration placed it in the private-method block; move it to the **public slots** section of `SpectrumWidget.h` (alongside other public actions). The function has zero parameters, no return — natural fit for a Qt slot signature, and it lets `MainWindow` invoke it via the standard `connect(... &SpectrumWidget::clearWaterfallHistory)` pattern.
 
-- [ ] **Step 4: Add `clearWaterfallHistory()` to the disconnect-reset cluster**
+In `src/gui/SpectrumWidget.h`, find the `private:` block where Task 1 placed `void clearWaterfallHistory();`. Move it into the existing `public slots:` section (or create one if none exists alongside other public methods). Keep the cite/comment context.
 
-Add immediately after the existing `m_waterfall.fill(...)` line:
+- [ ] **Step 4: Connect RadioModel disconnect signal to clearWaterfallHistory**
+
+In `src/gui/MainWindow.cpp`, find where `m_spectrumWidget` is wired to `m_radioModel` (around line 732 at `m_radioModel->setSpectrumWidget(m_spectrumWidget);`). Add immediately after that block:
 
 ```cpp
-// Sub-epic E: also flush the rewind history on disconnect.
-// From AetherSDR SpectrumWidget.cpp:740-756 [@0cd4559]
-clearWaterfallHistory();
+// Sub-epic E: flush the rewind ring buffer when the radio disconnects so
+// a new session starts with a clean history. AetherSDR's clearDisplay()
+// did this implicitly; NereusSDR has no equivalent single-call reset, so
+// we plumb the connection-state signal through here. See plan §authoring-time.
+connect(m_radioModel, &RadioModel::connectionStateChanged, m_spectrumWidget,
+        [this]() {
+    if (!m_radioModel->isConnected() && m_spectrumWidget) {
+        m_spectrumWidget->clearWaterfallHistory();
+    }
+});
 ```
+
+The lambda checks `isConnected()` rather than a state-comparison because `connectionStateChanged()` fires for both Connected→Disconnected AND Connecting→Disconnected (failed-connect) AND Connected→Error. All three should flush history. Only Disconnected→Connecting should NOT flush — but that transition happens BEFORE any rows would have arrived, so the ring is already empty.
 
 - [ ] **Step 5: Build and smoke-test**
 

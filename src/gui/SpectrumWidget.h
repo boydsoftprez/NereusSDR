@@ -447,6 +447,15 @@ public slots:
     // Called from the main thread after FFTEngine delivers the frame.
     void updateSpectrum(int receiverId, const QVector<float>& binsDbm);
 
+    // ── Waterfall scrollback (sub-epic E) ─────────────────────────────────
+    // Reset the rewind ring buffer back to empty + live state. Public so
+    // MainWindow can wire it to RadioModel::connectionStateChanged when
+    // the radio disconnects (see plan §Task 4 Step 3-4 — NereusSDR has no
+    // SpectrumWidget::clearDisplay() equivalent, so the flush is plumbed
+    // through MainWindow rather than embedded in resizeEvent).
+    // From AetherSDR SpectrumWidget.cpp:740-756 [@0cd4559]
+    void clearWaterfallHistory();
+
 signals:
     // Emitted when user clicks on spectrum/waterfall to tune
     void frequencyClicked(double hz);
@@ -511,7 +520,7 @@ private:
     QString pausedTimeLabelForAge(int ageRows) const;
     void  reprojectWaterfall(double oldCenterHz, double oldBandwidthHz,
                              double newCenterHz, double newBandwidthHz);
-    void  clearWaterfallHistory();
+    // (clearWaterfallHistory moved to public slots: in sub-epic E task 4 review.)
 
     void drawVfoMarker(QPainter& p, const QRect& specRect, const QRect& wfRect);
     void drawCursorInfo(QPainter& p, const QRect& specRect);

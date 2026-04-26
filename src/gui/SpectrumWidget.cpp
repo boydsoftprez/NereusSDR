@@ -1107,9 +1107,6 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         m_waterfall.width() != wfW || m_waterfall.height() != wfH)) {
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
         m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
-        // Sub-epic E: also flush the rewind history on disconnect.
-        // From AetherSDR SpectrumWidget.cpp:740-756 [@0cd4559]
-        clearWaterfallHistory();
         m_wfWriteRow = 0;
 #ifdef NEREUS_GPU_SPECTRUM
         m_wfTexFullUpload = true;
