@@ -760,6 +760,23 @@ void P2RadioConnection::setTrxRelay(bool enabled)
     // TODO [3M-3]: emit Saturn register write for T/R relay.
 }
 
+// ---------------------------------------------------------------------------
+// setTxStepAttenuation — 3M-1a Task F.2
+//
+// Mirrors Thetis ChannelMaster/netInterface.c:1006 SetTxAttenData(int bits)
+// [v2.10.3.13]: broadcasts the TX step attenuator value to all ADCs.
+// P2 frame layout: bytes 57-59 carry per-ADC TX step ATT
+// (P2CodecOrionMkII.cpp lines 252-254).
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setTxStepAttenuation(int dB)
+{
+    if (dB < 0)  { dB = 0; }
+    if (dB > 31) { dB = 31; }
+    for (auto& adc : m_adc) {
+        adc.txStepAttn = dB;
+    }
+}
+
 // --- UDP Reception ---
 // Porting from Thetis ReadUDPFrame() network.c:481
 // Single socket, dispatch by source port: inport = ntohs(fromaddr.sin_port)

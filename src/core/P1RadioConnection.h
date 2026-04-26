@@ -130,6 +130,7 @@ public slots:
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
+    void setTxStepAttenuation(int dB) override;
 
 private slots:
     void onReadyRead();

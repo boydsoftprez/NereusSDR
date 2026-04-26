@@ -66,6 +66,7 @@
 #pragma once
 
 #include "models/Band.h"
+#include "core/WdspTypes.h"
 
 #include <QObject>
 #include <QPointer>
@@ -165,6 +166,50 @@ public:
     int maxAttenuation() const { return m_maxAttDb; }
     void setMaxAttenuation(int dB);
 
+    // --- TX-path configuration (F.2) ---
+    //
+    // ATT-on-TX master enable (Thetis _m_bATTonTX, console.cs:19041 [v2.10.3.13]).
+    // When false, TX ATT is cleared to 0 dB on MOX-on.
+    void setAttOnTxEnabled(bool on) { m_attOnTxEnabled = on; }
+    bool attOnTxEnabled() const noexcept { return m_attOnTxEnabled; }
+
+    // Force-31-dB when PS-A is off (Thetis _forceATTwhenPSAoff,
+    // console.cs:29285 [v2.10.3.13] //MW0LGE [2.9.0.7] added).
+    void setForceAttWhenPsOff(bool on) { m_forceAttWhenPsOff = on; }
+    bool forceAttWhenPsOff() const noexcept { return m_forceAttWhenPsOff; }
+
+    // PS-A active state: true when PureSignal auto-cal is ON.
+    // Set by RadioModel when the PS state changes.
+    // shouldForce31Db uses !m_psActive as the "PS off" input
+    // (equivalent to !chkFWCATUBypass.Checked in Thetis).
+    void setPsActive(bool on) { m_psActive = on; }
+    bool psActive() const noexcept { return m_psActive; }
+
+    // Current TX DSP mode (set by RadioModel from SliceModel::dspMode).
+    // Used by shouldForce31Db to detect CWL/CWU.
+    void setCurrentDspMode(DSPMode mode) { m_currentDspMode = mode; }
+    DSPMode currentDspMode() const noexcept { return m_currentDspMode; }
+
+    // HPSDR-board flag: true ⟺ connected radio is HPSDRModel::HPSDR
+    // (Atlas/Metis kit), which uses the preamp save/restore path instead
+    // of per-band TX ATT (Thetis console.cs:29548-29558 [v2.10.3.13]).
+    void setIsHpsdrBoard(bool on) { m_isHpsdrBoard = on; }
+    bool isHpsdrBoard() const noexcept { return m_isHpsdrBoard; }
+
+    // Per-band TX ATT storage (Thetis tx_step_attenuator_by_band,
+    // console.cs:205/48012-48022 [v2.10.3.13]).
+    // Default 0 dB for all bands.
+    void setTxAttenuationForBand(Band band, int dB);
+    int txAttenuationForBand(Band band) const;
+
+    // shouldForce31Db predicate.
+    //
+    // Returns true ⟺ the TX attenuator must be forced to 31 dB.
+    // From Thetis console.cs:29563-29566 [v2.10.3.13] //MW0LGE [2.9.0.7] added:
+    //   txAtt = 31 ⟺ (!chkFWCATUBypass.Checked && _forceATTwhenPSAoff)
+    //                 || (CurrentDSPMode == CWL || CurrentDSPMode == CWU)
+    bool shouldForce31Db(DSPMode dspMode, bool isPsOff) const;
+
     // Wire to a RadioConnection for adcOverflow signals.
     void setRadioConnection(RadioConnection* conn);
 
@@ -190,6 +235,29 @@ public slots:
     // Receives adcOverflow(int adc) from RadioConnection.
     // Marks the ADC as overloaded for the current tick cycle.
     void onAdcOverflow(int adc);
+
+    // TX-path activation slot — F.2.
+    //
+    // Porting from Thetis console.cs:29546-29576 [v2.10.3.13] §6.2-§6.4.
+    // Called when MoxController::hardwareFlipped(bool isTx) fires.
+    //
+    // isTx=true (RX→TX):
+    //   HPSDR board: save current preamp mode, then force PreampMode::Off
+    //     (≡ Thetis PreampMode.HPSDR_OFF, −20 dB attenuation).
+    //   Standard board: look up per-band TX ATT; apply force-31-dB override
+    //     if shouldForce31Db() is true; call setTxStepAttenuation() on the
+    //     RadioConnection.
+    //   If m_attOnTxEnabled is false: push 0 dB TX ATT (no attenuation on TX).
+    //
+    // isTx=false (TX→RX):
+    //   HPSDR board: restore the saved preamp mode.
+    //   Standard board: re-apply the current band's RX ATT via setBand()
+    //     (existing path restores the per-band RX state).
+    //
+    // NOTE: the connect() call wiring this slot to MoxController::hardwareFlipped
+    // is deferred to Task G.1 (same pattern as F.1 / AlexController). F.2 only
+    // adds the slot logic and supporting helpers.
+    void onMoxHardwareFlipped(bool isTx);
 
 signals:
     // Emitted when any ADC's overload level transitions between
@@ -261,13 +329,48 @@ private:
     qint64 m_adaptiveLastDecayMs = 0;
     int m_adaptiveFloorDb = 0;
 
-    // Per-band storage.
+    // Per-band RX ATT/preamp storage.
     Band m_currentBand = Band::GEN;
     struct BandAttState {
         int attDb = 0;
         PreampMode preamp = PreampMode::Off;
     };
     std::unordered_map<int, BandAttState> m_bandState;
+
+    // --- TX-path state (F.2) ---
+
+    // ATT-on-TX master enable. From Thetis console.cs:19041 [v2.10.3.13]
+    //   private bool m_bATTonTX = true;
+    bool m_attOnTxEnabled{true};
+
+    // Force-31-dB when PS-A off. From Thetis console.cs:29285 [v2.10.3.13]
+    //   private bool _forceATTwhenPSAoff = true; //MW0LGE [2.9.0.7] added
+    bool m_forceAttWhenPsOff{true};
+
+    // PureSignal-A active state (true = PS-A on = chkFWCATUBypass.Checked).
+    // Set by RadioModel. shouldForce31Db uses !m_psActive as "PS off" input.
+    bool m_psActive{false};
+
+    // Current TX DSP mode for shouldForce31Db CW detection.
+    DSPMode m_currentDspMode{DSPMode::LSB};
+
+    // HPSDR-board (Atlas/Metis) flag.
+    // From Thetis console.cs:29548 [v2.10.3.13]:
+    //   if (HardwareSpecific.Model == HPSDRModel.HPSDR) { ... preamp save/restore ... }
+    bool m_isHpsdrBoard{false};
+
+    // Per-band TX step attenuator (0-31 dB, default 0).
+    // From Thetis console.cs:205 [v2.10.3.13]:
+    //   private int[] tx_step_attenuator_by_band;
+    // Thetis default: 31 dB per band (console.cs:1810 [v2.10.3.13]):
+    //   setTXstepAttenuatorForBand((Band)i, 31);
+    // NereusSDR default: 0 (no TX ATT until user configures it).
+    std::array<int, static_cast<size_t>(Band::Count)> m_txAttByBand{};
+
+    // HPSDR-only preamp save/restore (F.2).
+    // Distinct from m_classicSavedPreamp (which is for the auto-att
+    // Classic mode undo path and serves a different purpose).
+    PreampMode m_savedPreampMode{PreampMode::Off};
 
     // Internal tick timer.
     QTimer m_tickTimer;
@@ -290,8 +393,34 @@ private:
     OverloadLevel levelToSeverity(int level) const;
     void checkAdcLinked();
 
+    // TX-path helpers (F.2).
+
+    // Look up the per-band TX ATT value. Returns m_txAttByBand[band] or 0
+    // if band is out of range.
+    // From Thetis console.cs:48012-48017 [v2.10.3.13] getTXstepAttenuatorForBand.
+    int applyTxAttenuationForBand(Band band) const;
+
+    // HPSDR-only: cache the current preamp mode before TX.
+    // From Thetis console.cs:29550 [v2.10.3.13]: temp_mode = RX1PreampMode.
+    void saveRxPreampMode();
+
+    // HPSDR-only: restore the cached preamp mode after TX.
+    // From Thetis console.cs:29550 [v2.10.3.13]: RX1PreampMode = temp_mode.
+    void restoreRxPreampMode();
+
 private slots:
     void onDdcMappingChanged();
+
+#ifdef NEREUS_BUILD_TESTS
+public:
+    // Test seams — expose internal TX-path state for white-box unit tests.
+    PreampMode savedPreampModeForTest() const noexcept { return m_savedPreampMode; }
+    int txAttByBandForTest(Band band) const { return applyTxAttenuationForBand(band); }
+    // Expose the last TX ATT value pushed to hardware (via m_lastTxStepAttDb).
+    int lastTxStepAttForTest() const noexcept { return m_lastTxStepAttDb; }
+private:
+    int m_lastTxStepAttDb{-1};  // set by onMoxHardwareFlipped; -1 = never called
+#endif
 };
 
 }  // namespace NereusSDR

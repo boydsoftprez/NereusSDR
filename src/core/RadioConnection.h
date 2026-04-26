@@ -102,6 +102,17 @@ public slots:
     virtual void setMox(bool enabled) = 0;
     virtual void setAntennaRouting(AntennaRouting routing) = 0;
 
+    // Push TX-side step attenuator value to hardware.
+    //
+    // From Thetis ChannelMaster/netInterface.c:1006 [v2.10.3.13]
+    // SetTxAttenData(int bits): broadcasts bits to all ADC tx_step_attn
+    // fields and triggers CmdTx() to emit the updated frame.
+    // Called by StepAttenuatorController::onMoxHardwareFlipped (F.2).
+    //
+    // Default no-op: subclasses that don't yet implement TX ATT (e.g. a
+    // stub test connection) skip silently. P1/P2 override this method.
+    virtual void setTxStepAttenuation(int /*dB*/) {}
+
     // ── TX path (3M-1a) ────────────────────────────────────────────────
 
     /// Push TX I/Q samples to the radio.

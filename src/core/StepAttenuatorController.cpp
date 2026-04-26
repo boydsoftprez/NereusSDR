@@ -67,6 +67,7 @@
 #include "AppSettings.h"
 #include "RadioConnection.h"
 #include "ReceiverManager.h"
+#include "WdspTypes.h"
 
 #include <QDateTime>
 
@@ -223,6 +224,172 @@ void StepAttenuatorController::setPreampMode(PreampMode mode)
 void StepAttenuatorController::setMaxAttenuation(int dB)
 {
     m_maxAttDb = dB;
+}
+
+// --- Per-band TX ATT storage (F.2) ---
+// From Thetis console.cs:48012-48022 [v2.10.3.13]
+//   getTXstepAttenuatorForBand / setTXstepAttenuatorForBand
+
+void StepAttenuatorController::setTxAttenuationForBand(Band band, int dB)
+{
+    // From Thetis console.cs:48018-48022 [v2.10.3.13]:
+    //   private void setTXstepAttenuatorForBand(Band b, int att)
+    //   { if (b <= Band.FIRST || b >= Band.LAST) return;
+    //     tx_step_attenuator_by_band[(int)b] = att; }
+    int idx = static_cast<int>(band);
+    if (idx < 0 || idx >= static_cast<int>(Band::Count)) { return; }
+    if (dB < 0)            { dB = 0; }
+    if (dB > m_maxAttDb)   { dB = m_maxAttDb; }
+    m_txAttByBand[static_cast<size_t>(idx)] = dB;
+}
+
+int StepAttenuatorController::txAttenuationForBand(Band band) const
+{
+    return applyTxAttenuationForBand(band);
+}
+
+// Private helper — used by onMoxHardwareFlipped and the test seam.
+int StepAttenuatorController::applyTxAttenuationForBand(Band band) const
+{
+    // From Thetis console.cs:48012-48017 [v2.10.3.13]:
+    //   private int getTXstepAttenuatorForBand(Band b)
+    //   { if (b <= Band.FIRST || b >= Band.LAST) return 31;
+    //     return tx_step_attenuator_by_band[(int)b]; }
+    // NereusSDR: Band::GEN is index 0 (not FIRST sentinel); no sentinels in
+    // our enum, so range-check by Count.
+    int idx = static_cast<int>(band);
+    if (idx < 0 || idx >= static_cast<int>(Band::Count)) { return 0; }
+    return m_txAttByBand[static_cast<size_t>(idx)];
+}
+
+// --- HPSDR preamp save/restore (F.2) ---
+// From Thetis console.cs:29550-29561 [v2.10.3.13]
+//   temp_mode = RX1PreampMode;
+//   SetupForm.RX1EnableAtt = false;
+//   RX1PreampMode = PreampMode.HPSDR_OFF;   // set to -20dB
+//
+// The else-branch for non-HPSDR boards follows at console.cs:29561 [v2.10.3.13]:
+//MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+
+void StepAttenuatorController::saveRxPreampMode()
+{
+    // Cache current preamp mode before TX.
+    // From Thetis console.cs:29550 [v2.10.3.13]: temp_mode = RX1PreampMode
+    m_savedPreampMode = m_preampMode;
+}
+
+void StepAttenuatorController::restoreRxPreampMode()
+{
+    // Restore preamp mode after TX.
+    // Symmetric with saveRxPreampMode.
+    setPreampMode(m_savedPreampMode);
+}
+
+// --- shouldForce31Db predicate (F.2) ---
+// From Thetis console.cs:29563-29566 [v2.10.3.13] //MW0LGE [2.9.0.7] added:
+//   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) ||
+//          (radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWL ||
+//           radio.GetDSPTX(0).CurrentDSPMode == DSPMode.CWU)) txAtt = 31;
+//
+// NereusSDR mapping:
+//   !chkFWCATUBypass.Checked  ≡  !m_psActive  (PS-A not active)
+//   _forceATTwhenPSAoff        ≡  m_forceAttWhenPsOff
+//   isPsOff                    ≡  !m_psActive  (passed by caller)
+
+bool StepAttenuatorController::shouldForce31Db(DSPMode dspMode, bool isPsOff) const
+{
+    // From Thetis console.cs:29561 [v2.10.3.13]:
+    //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+    if (!m_attOnTxEnabled) {
+        // ATT-on-TX is disabled — never force.
+        return false;
+    }
+    if (m_forceAttWhenPsOff && isPsOff) {
+        // PS-A is off AND the "force 31 when PS off" setting is enabled.
+        return true;  //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+    }
+    // CW modes always force 31 dB (prevent PA damage via TX ATT).
+    // From Thetis console.cs:29565-29566 [v2.10.3.13]: CWL || CWU → txAtt = 31
+    return (dspMode == DSPMode::CWL || dspMode == DSPMode::CWU);
+}
+
+// --- onMoxHardwareFlipped slot (F.2) ---
+// From Thetis console.cs:29546-29576 [v2.10.3.13] (§6.2-§6.4)
+
+void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
+{
+    if (isTx) {
+        // RX→TX transition.
+        if (!m_attOnTxEnabled) {
+            // ATT-on-TX disabled: clear TX ATT (NetworkIO.SetTxAttenData(0)).
+            // From Thetis console.cs:29575-29576 [v2.10.3.13]:
+            //   NetworkIO.SetTxAttenData(0);
+            //   Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes
+            if (m_connection) {
+                m_connection->setTxStepAttenuation(0); //[2.10.3.6]MW0LGE att_fixes
+            }
+#ifdef NEREUS_BUILD_TESTS
+            m_lastTxStepAttDb = 0;
+#endif
+            return;
+        }
+
+        if (m_isHpsdrBoard) {
+            // HPSDR variant: save preamp mode, then force PreampMode::Off
+            // (≡ Thetis PreampMode.HPSDR_OFF, −20 dB).
+            // From Thetis console.cs:29550-29556 [v2.10.3.13]:
+            //   temp_mode = RX1PreampMode;
+            //   SetupForm.RX1EnableAtt = false;
+            //   RX1PreampMode = PreampMode.HPSDR_OFF;  // set to -20dB
+            saveRxPreampMode();
+            setPreampMode(PreampMode::Minus20);  // -20 dB ≡ HPSDR_OFF
+        } else {
+            // Non-HPSDR standard board: TX ATT lookup + force-31 override.
+            // From Thetis console.cs:29562-29568 [v2.10.3.13]:
+            //   int txAtt = getTXstepAttenuatorForBand(_tx_band);
+            //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+            //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) ||
+            //       (CWL || CWU)) txAtt = 31; // reset when PS is OFF or in CW mode
+            //   SetupForm.ATTOnRX1 = getRX1stepAttenuatorForBand(rx1_band); //[2.10.3.6]MW0LGE att_fixes
+            //   SetupForm.ATTOnTX = txAtt; //[2.10.3.6]MW0LGE att_fixes NOTE: this will eventually call Display.TXAttenuatorOffset with the value
+            int txAtt = applyTxAttenuationForBand(m_currentBand);
+            const bool psOff = !m_psActive;
+            if (shouldForce31Db(m_currentDspMode, psOff)) {
+                txAtt = 31; // reset when PS is OFF or in CW mode
+            }
+            if (m_connection) {
+                m_connection->setTxStepAttenuation(txAtt); //[2.10.3.6]MW0LGE att_fixes
+            }
+#ifdef NEREUS_BUILD_TESTS
+            m_lastTxStepAttDb = txAtt;
+#endif
+        }
+    } else {
+        // TX→RX transition: restore RX state.
+        if (m_isHpsdrBoard) {
+            // HPSDR: restore the preamp mode saved at TX start.
+            restoreRxPreampMode();
+        } else {
+            // Standard board: re-apply the current band's RX ATT.
+            // setBand() with the same band is a no-op (idempotent guard),
+            // so we call a direct restore of m_bandState.
+            // Clear TX ATT back to 0.
+            // From Thetis console.cs:29575 [v2.10.3.13]:
+            //   NetworkIO.SetTxAttenData(0);
+            //   Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes
+            if (m_connection) {
+                m_connection->setTxStepAttenuation(0); //[2.10.3.6]MW0LGE att_fixes
+            }
+#ifdef NEREUS_BUILD_TESTS
+            m_lastTxStepAttDb = 0;
+#endif
+            // Restore RX ATT: re-apply stored per-band value.
+            auto it = m_bandState.find(static_cast<int>(m_currentBand));
+            if (it != m_bandState.end() && it->second.attDb != m_attDb) {
+                setAttenuation(it->second.attDb, 0);
+            }
+        }
+    }
 }
 
 // --- Tick ---
@@ -576,6 +743,21 @@ void StepAttenuatorController::saveSettings(const QString& mac)
     s.setHardwareValue(mac, QStringLiteral("options/autoAtt/rx1AdaptiveFloor"),
                        QString::number(m_adaptiveFloorDb));
 
+    // --- TX-path settings (F.2) ---
+    s.setHardwareValue(mac, QStringLiteral("options/stepAtt/attOnTxEnabled"),
+                       m_attOnTxEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setHardwareValue(mac, QStringLiteral("options/stepAtt/forceAttWhenPsOff"),
+                       m_forceAttWhenPsOff ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // Per-band TX ATT values.
+    for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+        Band band = static_cast<Band>(b);
+        QString key = bandKeyName(band);
+        s.setHardwareValue(mac,
+            QStringLiteral("options/stepAtt/txBand/") + key,
+            QString::number(m_txAttByBand[static_cast<size_t>(b)]));
+    }
+
     s.save();
 }
 
@@ -634,6 +816,23 @@ void StepAttenuatorController::loadSettings(const QString& mac)
     // Adaptive floor.
     m_adaptiveFloorDb = s.hardwareValue(mac, QStringLiteral("options/autoAtt/rx1AdaptiveFloor"),
                                         0).toInt();
+
+    // --- TX-path settings (F.2) ---
+    m_attOnTxEnabled = s.hardwareValue(mac, QStringLiteral("options/stepAtt/attOnTxEnabled"),
+                                       QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_forceAttWhenPsOff = s.hardwareValue(mac, QStringLiteral("options/stepAtt/forceAttWhenPsOff"),
+                                          QStringLiteral("True")).toString() == QStringLiteral("True");
+
+    // Per-band TX ATT values.
+    for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+        Band band = static_cast<Band>(b);
+        QString key = bandKeyName(band);
+        QVariant txAttVal = s.hardwareValue(mac,
+            QStringLiteral("options/stepAtt/txBand/") + key);
+        if (txAttVal.isValid()) {
+            m_txAttByBand[static_cast<size_t>(b)] = txAttVal.toInt();
+        }
+    }
 
     // Notify UI of restored values.
     emit attenuationChanged(m_attDb);

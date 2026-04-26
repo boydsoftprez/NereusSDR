@@ -810,6 +810,27 @@ void P1RadioConnection::setAttenuator(int dB)
 }
 void P1RadioConnection::setPreamp(bool enabled)              { m_rxPreamp[0] = enabled; }
 void P1RadioConnection::setTxDrive(int /*level*/)            { /* stub — Task 7 */ }
+
+// ---------------------------------------------------------------------------
+// setTxStepAttenuation — 3M-1a Task F.2
+//
+// Mirrors Thetis ChannelMaster/netInterface.c:1006 SetTxAttenData(int bits)
+// [v2.10.3.13]: broadcasts the TX step attenuator value to all ADCs.
+// The P1 codec reads m_txStepAttn in composeCcBank0 / composeCcBank1 and
+// writes it to the appropriate C&C byte.
+//
+// From Thetis ChannelMaster/netInterface.c:1006-1016 [v2.10.3.13]:
+//   void SetTxAttenData(int bits) {
+//     for (i = 0; i < MAX_ADC; i++) prn->adc[i].tx_step_attn = bits;
+//     if (listenSock != INVALID_SOCKET) CmdTx();
+//   }
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setTxStepAttenuation(int dB)
+{
+    if (dB < 0)  { dB = 0; }
+    if (dB > 63) { dB = 63; }  // HL2 has 6-bit field; standard boards 5-bit
+    m_txStepAttn = dB;
+}
 // ---------------------------------------------------------------------------
 // setMox — 3M-1a Task E.3
 //

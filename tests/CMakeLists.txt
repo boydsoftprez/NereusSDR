@@ -1009,3 +1009,24 @@ nereus_add_test(tst_tx_mic_router)
 nereus_add_test(tst_radio_model_mox_hardware_flip)
 target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1a Task F.2: StepAttenuatorController TX-path activation ─────────
+# Verifies onMoxHardwareFlipped(bool isTx) slot and its four helpers:
+#   applyTxAttenuationForBand, shouldForce31Db, saveRxPreampMode,
+#   restoreRxPreampMode.
+# Ported from Thetis console.cs:29546-29576 [v2.10.3.13] pre-code review §6.2-§6.4.
+# Test cases (12):
+#   1. ATT-on-TX disabled → pushes 0 dB (no attenuation on TX)
+#   2. ATT-on-TX enabled, PS on, USB → applies stored TX ATT
+#   3. PS off + forceFlag → force 31 dB
+#   4. CWL mode → force 31 dB
+#   5. CWU mode → force 31 dB
+#   6. USB mode + PS on → applies stored TX ATT (no force)
+#   7. isTx=false → clears TX ATT to 0 dB (TX→RX restore)
+#   8. HPSDR board, isTx=true → saves preamp, forces Minus20 (HPSDR_OFF)
+#   9. HPSDR board, isTx=false → restores saved preamp
+#  10. shouldForce31Db predicate table-driven (12 cases)
+#  11. TX ATT per-band storage round-trip (14 bands)
+#  12. No RadioConnection — graceful no-op (no crash)
+nereus_add_test(tst_step_att_tx_path)
+target_compile_definitions(tst_step_att_tx_path PRIVATE NEREUS_BUILD_TESTS)
+

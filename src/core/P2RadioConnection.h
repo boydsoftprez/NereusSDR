@@ -180,6 +180,7 @@ public slots:
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
+    void setTxStepAttenuation(int dB) override;
 
     // Phase 3P-B Task 10: per-ADC RX1 preamp control for OrionMKII family.
     // Routes to m_rx[1].preamp → CodecContext.p2Rx1Preamp →
