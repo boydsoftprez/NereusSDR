@@ -998,3 +998,14 @@ nereus_add_test(tst_tx_channel_running)
 # via TxMicRouter base pointer.
 nereus_add_test(tst_tx_mic_router)
 
+# ── Phase 3M-1a Task F.1: RadioModel::onMoxHardwareFlipped slot ──────────────
+# Verifies the three-step fan-out in Thetis HdwMOXChanged order (§2.3):
+#   1. Alex antenna routing (applyAlexAntennaForBand → setAntennaRouting)
+#   2. MOX wire bit (m_connection->setMox)
+#   3. T/R relay (m_connection->setTrxRelay)
+# Test cases: isTx=true order, isTx=false order, each arg forwarded correctly,
+# band read from active slice, no-connection graceful no-op, hasAlex=false
+# all-steps-fire, slot connectable via QObject::connect.
+nereus_add_test(tst_radio_model_mox_hardware_flip)
+target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUILD_TESTS)
+

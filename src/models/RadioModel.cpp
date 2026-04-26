@@ -2400,4 +2400,44 @@ void RadioModel::setGanymedePresent(bool present)
     }
 }
 
+// ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ────────────
+// Fans out hardware-flip side-effects in Thetis HdwMOXChanged step order.
+// Pre-code review §2.3 (3M-1a-relevant subset):
+//   Step 8  — Alex antenna routing (Thetis console.cs HdwMOXChanged step 8 [v2.10.3.13])
+//   Step 12 — MOX wire bit  (P1: C0 byte 3 bit 0; P2: high-priority byte 4 bit 1)
+//   Step 10 — T/R relay wire bit (P1: bank-10 C3 bit 7, active-low INVERTED)
+//
+// Note: pre-code review §2.5 maps HdwMOXChanged body to this slot.
+// The connect() of MoxController::hardwareFlipped → this slot is G.1's job.
+// G.1 MUST use Qt::QueuedConnection — see declaration in RadioModel.h.
+void RadioModel::onMoxHardwareFlipped(bool isTx)
+{
+    // Step 1 — Alex antenna routing.  Resolves which TX/RX antenna ports
+    // engage for the current band and tx/rx state.  AlexController state
+    // is read inside applyAlexAntennaForBand; result is pushed to
+    // m_connection->setAntennaRouting() internally.
+    // Pre-code review §2.3 step 8 [v2.10.3.13].
+    const Band band = m_activeSlice
+                        ? bandFromFrequency(m_activeSlice->frequency())
+                        : m_lastBand;
+    applyAlexAntennaForBand(band, isTx);
+
+    // Steps 2 + 3 — wire bits.  Guard against null connection (no radio
+    // connected, or mid-teardown).  applyAlexAntennaForBand already guards
+    // the same way; mirror for symmetry.
+    if (!m_connection) {
+        return;
+    }
+
+    // Step 2 — MOX wire bit.  P1 queues a bank-0 flush on the next
+    // sendCommandFrame() call (≤1 frame latency).  P2 emits an immediate
+    // high-priority packet.
+    // Pre-code review §2.3 / §1.4 step 12 [v2.10.3.13].
+    m_connection->setMox(isTx);
+
+    // Step 3 — T/R relay.  P1 queues a bank-10 flush; P2 not yet wired.
+    // Pre-code review §2.3 step 10 [v2.10.3.13].
+    m_connection->setTrxRelay(isTx);
+}
+
 } // namespace NereusSDR
