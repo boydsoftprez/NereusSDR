@@ -689,4 +689,10 @@ nereus_add_test(tst_spectrum_widget_highswr_overlay)
 # Thetis setup.designer.cs:5793-5924 [v2.10.3.13].
 nereus_add_test(tst_transmit_setup_swr_protection)
 
+# ── Phase 3M-0 Task 10: External TX Inhibit group box on Setup → Transmit ────
+# Verifies grpExtTXInhibit has 2 checkboxes with correct objectNames, defaults,
+# verbatim tooltip text per setup.designer.cs:46626-46657 [v2.10.3.13], and
+# that toggling chkTXInhibit persists to AppSettings.
+nereus_add_test(tst_transmit_setup_tx_inhibit)
+
 
