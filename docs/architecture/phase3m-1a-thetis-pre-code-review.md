@@ -283,7 +283,7 @@ if (bOldMox != tx) MoxChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, bOld
 |---|---|
 | `chkMOX_CheckedChanged2` (event handler) | `MoxController::setMox(bool)` slot |
 | `_mox` field | `MoxController::m_mox` |
-| `_current_ptt_mode` field | `MoxController::m_pttSource` (`PttSource` enum) |
+| `_current_ptt_mode` field | `MoxController::m_pttMode` (new `PttMode` enum at `src/core/PttMode.h`; distinct from existing NereusSDR-native `PttSource` enum used by Diagnostics) |
 | `_manual_mox` field | `MoxController::m_manualMox` |
 | `MoxPreChangeHandlers`/`MoxChangeHandlers` | Phase signals (`txAboutToBegin` / `rxReady`) |
 | `Thread.Sleep(...)` blocking calls | 6 `QTimer` chains driven by `MoxState` enum |
@@ -1514,7 +1514,7 @@ relevant pre-code review section is the source-of-truth for behaviour:
 |---|---|
 | MoxController state machine + 6 timer chains | §1, §1.3 (constants), §1.5 (side-effects) |
 | MoxController phase signals + idempotent-guard ordering | §1.4 (transition order — the "safety effect first, idempotent guard second" Codex P2 rule applies to step 12 of RX→TX where `HdwMOXChanged` runs before `_mox` is finalized) |
-| PttSource enum (9 values) | §1.5 |
+| PttMode enum (9 values, Thetis-verbatim, separate from existing PttSource) | §1.5 |
 | TxChannel 25-stage pipeline + 10 active | §8 |
 | TxChannel TUNE tone (gen1) + uslew | §3.5, §8.2-8.3 |
 | TxChannel uslew 5 ms ramp (no audible click) | §8.2 |
