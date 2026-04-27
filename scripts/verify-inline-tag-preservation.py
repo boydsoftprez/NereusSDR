@@ -52,8 +52,11 @@ THETIS_DIR = Path(os.environ.get(
 MI0BOT_DIR = Path(os.environ.get(
     "NEREUS_MI0BOT_DIR",
     REPO.parent.parent.parent / "mi0bot-Thetis")).expanduser()
+DESKHPSDR_DIR = Path(os.environ.get(
+    "NEREUS_DESKHPSDR_DIR",
+    "/Users/j.j.boyd/deskhpsdr")).expanduser()
 
-# Cite detectors. We scan for the Thetis filename + line token; the
+# Cite detectors. We scan for the upstream filename + line token; the
 # stamp presence is verified by the sibling verify-inline-cites.py
 # hook, so we tolerate either stamp grammar here.
 RE_CITE_RAMDOR = re.compile(
@@ -64,6 +67,24 @@ RE_CITE_RAMDOR = re.compile(
 RE_CITE_MI0BOT = re.compile(
     r"//\s*(?:From\s+mi0bot|Source:\s*mi0bot)\s+"
     r"(?P<file>[\w./-]+\.(?:cs|c|h|cpp))"
+    r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
+)
+# Note: RE_CITE_DESKHPSDR is checked BEFORE RE_CITE_RAMDOR in the scan
+# loop. The ramdor regex uses a bare "Source:" prefix which would
+# otherwise also match "Source: deskhpsdr/src/..." cite lines (since
+# deskhpsdr paths begin with "deskhpsdr/src/" which matches the ramdor
+# [\w./-]+ file pattern). Ordering ensures deskhpsdr cites are routed to
+# the right upstream before the ramdor catch-all fires.
+#
+# Two cite forms supported:
+#   "Source: deskhpsdr/src/new_protocol.c:1480"  — file starts with deskhpsdr/
+#   "From deskhpsdr src/new_protocol.c:1480"     — keyword then bare src/ path
+RE_CITE_DESKHPSDR = re.compile(
+    r"//\s*(?:"
+    r"Source:\s+(?=deskhpsdr/)"    # "Source: " followed by deskhpsdr/ path
+    r"|From\s+deskhpsdr\s+"        # "From deskhpsdr " followed by any path
+    r")"
+    r"(?P<file>(?:deskhpsdr/)?[\w./-]+\.(?:c|h))"
     r":(?P<lines>\d+(?:[,\s-]+\d+)*)"
 )
 
@@ -77,16 +98,39 @@ RE_CITE_MI0BOT = re.compile(
 # upstream-added authors.
 
 def load_corpus() -> tuple[list[str], list[str]]:
-    corpus_path = REPO / "docs" / "attribution" / "thetis-author-tags.json"
-    if not corpus_path.is_file():
-        print(f"FATAL: corpus {corpus_path} not found. Run "
+    """Load Thetis + deskhpsdr corpora and merge into a single tag list."""
+    import json as _json
+
+    # Thetis corpus (required)
+    thetis_path = REPO / "docs" / "attribution" / "thetis-author-tags.json"
+    if not thetis_path.is_file():
+        print(f"FATAL: Thetis corpus {thetis_path} not found. Run "
               f"scripts/discover-thetis-author-tags.py first.",
               file=sys.stderr)
         sys.exit(2)
-    import json as _json
-    data = _json.loads(corpus_path.read_text())
-    return (list(data.get("callsign_tags", {}).keys()),
-            list(data.get("named_tags", {}).keys()))
+    thetis_data = _json.loads(thetis_path.read_text())
+    callsigns = set(thetis_data.get("callsign_tags", {}).keys())
+    named = set(thetis_data.get("named_tags", {}).keys())
+
+    # deskhpsdr corpus (optional — warn if missing, don't hard-fail;
+    # the corpus file is only present after running
+    # discover-deskhpsdr-author-tags.py and is committed to the repo
+    # from that first run onward).
+    deskhpsdr_path = REPO / "docs" / "attribution" / "deskhpsdr-author-tags.json"
+    if deskhpsdr_path.is_file():
+        try:
+            dh_data = _json.loads(deskhpsdr_path.read_text())
+            callsigns.update(dh_data.get("callsign_tags", {}).keys())
+            named.update(dh_data.get("named_tags", {}).keys())
+        except Exception as exc:
+            print(f"WARN: failed to load deskhpsdr corpus: {exc}",
+                  file=sys.stderr)
+    else:
+        print(f"WARN: deskhpsdr corpus {deskhpsdr_path} not found. "
+              f"Run scripts/discover-deskhpsdr-author-tags.py to populate it.",
+              file=sys.stderr)
+
+    return (sorted(callsigns), sorted(named))
 
 
 KNOWN_CALLSIGNS, KNOWN_NAMED = load_corpus()
@@ -129,7 +173,24 @@ def parse_lines_token(tok: str):
 
 
 def resolve_upstream(cite_file: str, which: str) -> Path | None:
-    """Find the cited file under ramdor Thetis or mi0bot Thetis."""
+    """Find the cited file under ramdor Thetis, mi0bot Thetis, or deskhpsdr."""
+    if which == "deskhpsdr":
+        # deskhpsdr cite paths are relative to repo root (e.g. "src/new_protocol.c")
+        # or just a bare filename. Try both direct and src/ prefix.
+        for base in _deskhpsdr_search_bases():
+            candidate = base / cite_file
+            if candidate.is_file():
+                return candidate
+            basename = Path(cite_file).name
+            for sub in ("src", ""):
+                root = base / sub
+                if not root.is_dir():
+                    continue
+                for found in root.rglob(basename):
+                    if found.is_file():
+                        return found
+        return None
+
     bases = [THETIS_DIR] if which == "ramdor" else [MI0BOT_DIR, THETIS_DIR]
     for base in bases:
         # Direct path
@@ -146,6 +207,16 @@ def resolve_upstream(cite_file: str, which: str) -> Path | None:
                 if found.is_file():
                     return found
     return None
+
+
+def _deskhpsdr_search_bases() -> list[Path]:
+    """Return candidate deskhpsdr base directories, preferring env override."""
+    candidates = [DESKHPSDR_DIR]
+    for rel in ("../deskhpsdr", "../../deskhpsdr", "../../../deskhpsdr"):
+        p = (REPO / rel).resolve()
+        if p not in candidates:
+            candidates.append(p)
+    return [p for p in candidates if p.is_dir()]
 
 
 def find_header_end(text: list[str]) -> int:
@@ -231,6 +302,15 @@ def main() -> int:
         print("Set NEREUS_THETIS_DIR or clone to ../Thetis", file=sys.stderr)
         return 2
 
+    # deskhpsdr is optional for now — warn if absent so local runs without
+    # the clone still pass, but CI that has it cloned will do full checks.
+    if not _deskhpsdr_search_bases():
+        print(f"WARN: deskhpsdr not found (searched {DESKHPSDR_DIR} and "
+              f"relative ../../../deskhpsdr). deskhpsdr cite checks will "
+              f"emit upstream-not-found warnings rather than hard-failing. "
+              f"Set NEREUS_DESKHPSDR_DIR or clone to a sibling directory.",
+              file=sys.stderr)
+
     findings = []
     cite_count = 0
 
@@ -241,7 +321,13 @@ def main() -> int:
         except Exception:
             continue
         for ln_idx, line in enumerate(lines):
+            # IMPORTANT: check most-specific upstreams first.
+            # RE_CITE_DESKHPSDR must precede RE_CITE_RAMDOR because the
+            # ramdor regex has a bare "Source:" prefix that also matches
+            # "Source: deskhpsdr/src/..." cite lines. First match wins
+            # (break at end of loop body).
             for rx, which in ((RE_CITE_MI0BOT, "mi0bot"),
+                              (RE_CITE_DESKHPSDR, "deskhpsdr"),
                               (RE_CITE_RAMDOR, "ramdor")):
                 m = rx.search(line)
                 if not m:

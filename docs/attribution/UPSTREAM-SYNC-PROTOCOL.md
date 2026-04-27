@@ -42,6 +42,7 @@ pulled in 2026-04. This protocol keeps the rot bounded.
 git -C ../Thetis fetch --tags
 git -C ../mi0bot-Thetis fetch --tags   # if you have the fork clone
 git -C ../AetherSDR fetch              # AetherSDR doesn't tag; use main
+git -C ../deskhpsdr fetch              # deskhpsdr doesn't tag; use main
 # WDSP is vendored — update via the WDSP import procedure below, not git fetch
 ```
 
@@ -54,6 +55,7 @@ git -C ../Thetis describe --tags          # e.g. "v2.10.4.1"
 git -C ../Thetis rev-parse --short HEAD   # e.g. "a1b2c3d"
 git -C ../mi0bot-Thetis rev-parse --short HEAD
 git -C ../AetherSDR rev-parse --short HEAD
+git -C ../deskhpsdr rev-parse --short HEAD  # e.g. "120188f"
 ```
 
 These are the stamps to use in new `// From Thetis ...` cites for the
@@ -61,7 +63,26 @@ rest of the session / PR — either the tag (`[v2.10.4.1]`) or the
 short SHA (`[@a1b2c3d]`) per the grammar in
 [`HOW-TO-PORT.md`](HOW-TO-PORT.md) §Inline cite versioning.
 
-### 3 — Surface stale cites
+### 3 — Regenerate author-tag corpora
+
+After each upstream pull, regenerate the author-tag corpus so
+`verify-inline-tag-preservation.py` knows about any new contributors
+introduced in the upstream commits:
+
+```bash
+# Thetis + mi0bot corpus
+python3 scripts/discover-thetis-author-tags.py
+
+# deskhpsdr corpus (only if deskhpsdr is cloned locally)
+python3 scripts/discover-deskhpsdr-author-tags.py
+```
+
+Commit the resulting JSON files if they changed. If new callsign entries
+appear (script output says "N new callsign tags"), populate the `name`
+and `role` fields in the JSON before committing — `--drift` mode in CI
+will fail the PR until all callsigns have non-null names.
+
+### 4 — Surface stale cites  <!-- was step 3 before deskhpsdr corpus step added -->
 
 ```bash
 python3 scripts/verify-inline-cites.py --format=json > /tmp/cites.json
@@ -75,7 +96,7 @@ stamps older than N major releases should probably be refreshed; a
 stamp that matches a tag the upstream has since retired should be
 re-verified against current HEAD.
 
-### 4 — Re-verify ports against new upstream
+### 5 — Re-verify ports against new upstream
 
 Pick the PROVENANCE rows whose cites are >1 minor version old OR whose
 upstream lines could plausibly have moved (i.e. rows that cite
@@ -93,7 +114,7 @@ maintenance). For each:
    decide: port the change, document the intentional divergence in
    the source file's Modification-history block, or both.
 
-### 5 — Refresh WDSP (separate cadence)
+### 6 — Refresh WDSP (separate cadence)
 
 WDSP is vendored, not fetched live:
 
@@ -109,12 +130,12 @@ WDSP is vendored, not fetched live:
    - Run `scripts/verify-thetis-headers.py --kind=wdsp` to confirm
      the exemption set is still accurate.
 
-### 6 — Log the sync
+### 7 — Log the sync
 
 Append a new dated entry to
 [`REMEDIATION-LOG.md`](REMEDIATION-LOG.md) covering:
 
-- Which upstreams were synced (Thetis / mi0bot / AetherSDR / WDSP).
+- Which upstreams were synced (Thetis / mi0bot / AetherSDR / deskhpsdr / WDSP).
 - Old and new stamps.
 - How many cites were refreshed, how many files re-verified.
 - Any drift documented as intentional divergence.
@@ -161,6 +182,9 @@ Implemented:
 - `scripts/verify-thetis-headers.py --all-kinds` (per-kind header markers)
 - `scripts/audit-wdsp-headers.py` (WDSP census)
 - `scripts/verify-provenance-sync.py` (PROVENANCE-vs-tree orphan check)
+- `scripts/discover-thetis-author-tags.py` (Thetis + mi0bot corpus regen)
+- `scripts/discover-deskhpsdr-author-tags.py` (deskhpsdr corpus regen; added 3M-1b)
+- `scripts/verify-inline-tag-preservation.py` (tag preservation check; deskhpsdr branch added 3M-1b)
 
 Not yet implemented (future work):
 
