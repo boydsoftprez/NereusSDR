@@ -654,6 +654,32 @@ RadioModel::RadioModel(QObject* parent)
     // TUNE-only TX. Replaced with PcMicSource / RadioMicSource in 3M-1b.
     // Master design §5.2 (3M-1a NullMicSource stub).
     m_txMicRouter = std::make_unique<NullMicSource>();
+
+    // 3M-1a (Codex review on PR #144): wire RF-Power-slider movements to
+    // the radio's drive byte.  Without this, the slider updates UI/model
+    // state but `CmdHighPriority` byte 345 stays stale — users move the
+    // slider expecting TX power to change, the wire-byte doesn't, and
+    // the radio keeps transmitting at the prior drive level.
+    //
+    // Gated on `!isTune()`: while TUN is engaged, the drive byte is owned
+    // by `setTune()` (which pushes `tunePowerForBand(currentBand)` and
+    // restores `m_savedPowerPct` on release — Thetis console.cs:30129-30132
+    // [v2.10.3.13] PreviousPWR pattern).  Mid-TUN slider movements are
+    // accepted into the model but not pushed to the wire, matching
+    // Thetis behaviour.
+    //
+    // Has no observable effect on 3M-1a's TUNE-only path (the slider has
+    // no role in TUN), but keeps the UI/wire in sync for any non-TUN TX
+    // path.  3M-1b voice TX will exercise this connection in earnest.
+    connect(&m_transmitModel, &TransmitModel::powerChanged, this,
+            [this](int power) {
+        if (m_transmitModel.isTune()) { return; }
+        if (!m_connection)            { return; }
+        auto* conn = m_connection;
+        QMetaObject::invokeMethod(conn, [conn, power]() {
+            conn->setTxDrive(power);
+        });
+    });
 }
 
 RadioModel::~RadioModel()
