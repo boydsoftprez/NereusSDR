@@ -65,6 +65,8 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QMetaType>
 
+#include <chrono>
+
 namespace NereusSDR {
 
 // Protocol version supported by the radio.
@@ -192,12 +194,26 @@ public:
     static bool parseP1Reply(const QByteArray& bytes, const QHostAddress& source, RadioInfo& out);
     static bool parseP2Reply(const QByteArray& bytes, const QHostAddress& source, RadioInfo& out);
 
+    // Send a unicast P1+P2 probe in parallel to the given address.
+    // On reply: emits radioDiscovered() with parsed RadioInfo.
+    // On timeout: emits probeFailed() with the address that was probed.
+    //
+    // Used by the Add Radio dialog and saved-row Connect path to validate
+    // reachability before opening a full connection. Times out fast (1.5 s
+    // default) so users get a clear error instead of a UDP-ghost long wait.
+    //
+    // From Phase 3Q design §7.2.
+    void probeAddress(const QHostAddress& addr,
+                      quint16 port = 1024,
+                      std::chrono::milliseconds timeout = std::chrono::milliseconds(1500));
+
 signals:
     void discoveryStarted();
     void discoveryFinished();
     void radioDiscovered(const NereusSDR::RadioInfo& info);
     void radioUpdated(const NereusSDR::RadioInfo& info);
     void radioLost(const QString& macAddress);
+    void probeFailed(const QHostAddress& addr, quint16 port);
 
 private slots:
     void onStaleCheck();

@@ -745,3 +745,9 @@ nereus_add_test(tst_phase3m0_persistence_audit)
 # redundant transition. NereusSDR-original (no upstream port).
 nereus_add_test(tst_connection_state)
 
+# ── Phase 3Q Task 2: RadioDiscovery::probeAddress() unicast probe ─────────────
+# 2 tests: success path fills RadioInfo from P1 reply (FakeP1Probe loopback),
+# timeout emits probeFailed(addr, port). Backbone for manual-IP + VPN paths.
+nereus_add_test(tst_radio_discovery_probe)
+target_link_libraries(tst_radio_discovery_probe PRIVATE Qt6::Network)
+

@@ -505,4 +505,57 @@ void RadioDiscovery::onStaleCheck()
     }
 }
 
+// probeAddress — unicast P1+P2 probe for a single IP:port.
+// From Phase 3Q design §7.2.
+// Reuses parseP1Reply / parseP2Reply exactly as the broadcast scan path does.
+void RadioDiscovery::probeAddress(const QHostAddress& addr,
+                                  quint16 port,
+                                  std::chrono::milliseconds timeout)
+{
+    auto* sock = new QUdpSocket(this);
+    sock->bind(QHostAddress::AnyIPv4, 0);
+
+    auto* timer = new QTimer(this);
+    timer->setSingleShot(true);
+
+    auto cleanup = [sock, timer]() {
+        timer->stop();
+        timer->deleteLater();
+        sock->close();
+        sock->deleteLater();
+    };
+
+    // Reply handler — try P1 first, then P2.
+    connect(sock, &QUdpSocket::readyRead, this, [this, sock, addr, port, cleanup]() {
+        while (sock->hasPendingDatagrams()) {
+            QByteArray buf;
+            buf.resize(int(sock->pendingDatagramSize()));
+            QHostAddress src;
+            quint16 srcPort = 0;
+            sock->readDatagram(buf.data(), buf.size(), &src, &srcPort);
+
+            RadioInfo info;
+            if (parseP1Reply(buf, src, info) || parseP2Reply(buf, src, info)) {
+                m_radios.insert(info.macAddress, info);
+                m_lastSeen.insert(info.macAddress, QDateTime::currentMSecsSinceEpoch());
+                emit radioDiscovered(info);
+                cleanup();
+                return;
+            }
+        }
+    });
+
+    // Timeout → emit failure and clean up.
+    connect(timer, &QTimer::timeout, this, [this, addr, port, cleanup]() {
+        emit probeFailed(addr, port);
+        cleanup();
+    });
+
+    // Send P1 + P2 probes in parallel.
+    sock->writeDatagram(QByteArray::fromHex("EFFE02"), addr, port);
+    sock->writeDatagram(QByteArray::fromHex("0000000002"), addr, port);
+
+    timer->start(int(timeout.count()));
+}
+
 } // namespace NereusSDR
