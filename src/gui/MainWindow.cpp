@@ -2087,6 +2087,30 @@ void MainWindow::buildStatusBar()
 
     hbox->addWidget(radioInfoWidget);
 
+    // ── Phase 3Q-7: verbose connection-info strip ─────────────────────────────
+    // Monospace detail label: sample rate · protocol · firmware · MAC when
+    // connected; "No radio connected" + last-connected breadcrumb when not.
+    // Visible at all times; content is updated by onConnectionStateChanged().
+    hbox->addWidget(makeSep());
+    m_statusConnInfo = new QLabel(barWidget);
+    m_statusConnInfo->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8090a8; font-family: 'SF Mono', Menlo, monospace;"
+        " font-size: 11px; }"));
+    m_statusConnInfo->setToolTip(QStringLiteral(
+        "Connection details — sample rate, protocol, firmware, MAC"));
+    // Initialise with disconnected state; onConnectionStateChanged() will
+    // overwrite this as soon as the model emits its first state signal.
+    m_statusConnInfo->setText(QStringLiteral("\xf0\x9f\x94\xb4  No radio connected"));
+    hbox->addWidget(m_statusConnInfo);
+
+    // Green "● live" indicator — visible only while connected.
+    m_statusLiveDot = new QLabel(QStringLiteral("\xe2\x97\x8f live"), barWidget);
+    m_statusLiveDot->setStyleSheet(QStringLiteral(
+        "QLabel { color: #5fff8a; font-size: 11px; }"));
+    m_statusLiveDot->setToolTip(QStringLiteral("Radio is connected and streaming"));
+    m_statusLiveDot->setVisible(false);
+    hbox->addWidget(m_statusLiveDot);
+
     // ── Stretch ───────────────────────────────────────────────────────────────
     hbox->addStretch(1);
 
@@ -3090,6 +3114,25 @@ void MainWindow::onConnectionStateChanged()
                 m_radioModel->name(), conn->radioInfo().address);
         }
 
+        // Phase 3Q-7: update the verbose status-bar connection-info strip.
+        // Fields: maxSampleRate (Hz → kHz), protocol (P1/P2),
+        // firmwareVersion (int), macAddress (QString).
+        if (m_statusConnInfo && m_statusLiveDot) {
+            if (auto* conn = m_radioModel->connection()) {
+                const RadioInfo& info = conn->radioInfo();
+                const QString proto =
+                    info.protocol == ProtocolVersion::Protocol2
+                        ? QStringLiteral("P2") : QStringLiteral("P1");
+                m_statusConnInfo->setText(QStringLiteral(
+                    "Sample rate %1 kHz \xc2\xb7 %2 \xc2\xb7 fw %3 \xc2\xb7 MAC %4")
+                    .arg(info.maxSampleRate / 1000)
+                    .arg(proto)
+                    .arg(info.firmwareVersion)
+                    .arg(info.macAddress));
+            }
+            m_statusLiveDot->setVisible(true);
+        }
+
         // Wire step attenuator controller to the live radio connection
         // and set max attenuation from board capabilities.
         // From Thetis console.cs ucInfoBar Warning() + SetupForm attenuator init.
@@ -3124,6 +3167,29 @@ void MainWindow::onConnectionStateChanged()
 
         // Disconnect step attenuator from radio
         m_stepAttController->setRadioConnection(nullptr);
+
+        // Phase 3Q-7: update verbose status-bar strip to disconnected state.
+        // Show a "last connected X" breadcrumb using the typed AppSettings API
+        // so the user can see which radio was last active without opening the
+        // connection panel.
+        if (m_statusConnInfo && m_statusLiveDot) {
+            AppSettings& s = AppSettings::instance();
+            const QString lastMac = s.lastConnected();
+            QString breadcrumb;
+            if (!lastMac.isEmpty()) {
+                const auto saved = s.savedRadio(lastMac);
+                if (saved.has_value() && !saved->info.name.isEmpty()) {
+                    breadcrumb = QStringLiteral("   last connected %1")
+                        .arg(saved->info.name);
+                }
+            }
+            m_statusConnInfo->setText(
+                QStringLiteral("\xf0\x9f\x94\xb4  No radio connected"
+                               " \xe2\x80\x94 click the connection indicator"
+                               " or the Connect menu item%1")
+                .arg(breadcrumb));
+            m_statusLiveDot->setVisible(false);
+        }
 
         // Phase 3Q Task 5 — auto-open: on disconnect (after having been connected),
         // open the ConnectionPanel so the user can reconnect.

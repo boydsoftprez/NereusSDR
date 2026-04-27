@@ -244,6 +244,15 @@ private:
     QLabel* m_txInhibitLabel{nullptr};
     QLabel* m_paStatusBadge{nullptr};
 
+    // Phase 3Q-7: verbose connection-info strip in the status bar.
+    // m_statusConnInfo — monospace detail line: sample rate, protocol,
+    //   firmware, MAC when connected; "No radio connected" breadcrumb
+    //   when disconnected. Updated by onConnectionStateChanged().
+    // m_statusLiveDot  — green "● live" indicator, visible only while
+    //   connected; hidden on disconnect.
+    QLabel* m_statusConnInfo{nullptr};
+    QLabel* m_statusLiveDot{nullptr};
+
     // VFO flag widget (Phase 3E)
     class VfoWidget* m_vfoWidget{nullptr};
 
