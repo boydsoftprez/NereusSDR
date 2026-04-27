@@ -516,9 +516,6 @@ void TxApplet::wireControls()
     // G8NJJ tell ARIES that tune is active  [original inline comment from console.cs:30153]
     // MW0LGE_22b setupTuneDriveSlider  [original inline comment from console.cs:30155]
     connect(m_tuneBtn, &QPushButton::toggled, this, [this](bool on) {
-        qInfo() << "BENCH-DIAG TxApplet TUNE button toggled =" << on
-                << "updatingFromModel=" << m_updatingFromModel
-                << "model=" << (m_model != nullptr);
         if (m_updatingFromModel) { return; }
         if (!m_model) { return; }
         m_model->setTune(on);

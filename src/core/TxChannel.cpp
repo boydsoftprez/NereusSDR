@@ -101,11 +101,6 @@ warren@wpratt.com
 #ifdef HAVE_WDSP
 extern "C" {
 #include "../../third_party/wdsp/src/TXA.h"
-// BENCH-DIAG (3M-1a): need ch[] (channel.h) and IOB struct (iobuffs.h) so we
-// can peek midbuff / outbuff peaks + r2 ring state right before fexchange2.
-// To be reverted along with the rest of the bench-diag block before merge.
-#include "../../third_party/wdsp/src/channel.h"
-#include "../../third_party/wdsp/src/iobuffs.h"
 }
 #endif
 
@@ -737,31 +732,13 @@ void TxChannel::setMicRouter(TxMicRouter* router)
 // ---------------------------------------------------------------------------
 void TxChannel::driveOneTxBlock()
 {
-    // BENCH-DIAG: rate-limited tick log so we can verify the timer is firing
-    // and the guards aren't bailing out unexpectedly.  Logs every 50th call
-    // (5 ms × 50 = 250 ms cadence) so a 2-second TUN press shows ~8 lines.
-    static int s_diagCallCount = 0;
-    ++s_diagCallCount;
-    const bool diagThisCall = (s_diagCallCount % 50) == 1;
-
     if (!m_running || !m_connection) {
-        if (diagThisCall) {
-            qCInfo(lcDsp) << "BENCH-DIAG TxChannel::driveOneTxBlock #"
-                          << s_diagCallCount << "early-return"
-                          << "running=" << m_running
-                          << "conn=" << (m_connection != nullptr);
-        }
         return;
     }
 
     const int inN  = m_inputBufferSize;
     const int outN = m_outputBufferSize;
     if (inN == 0 || m_inI.empty()) {
-        if (diagThisCall) {
-            qCInfo(lcDsp) << "BENCH-DIAG TxChannel::driveOneTxBlock #"
-                          << s_diagCallCount << "no buffers"
-                          << "inN=" << inN << "bufSize=" << m_inI.size();
-        }
         return;
     }
 
@@ -796,65 +773,6 @@ void TxChannel::driveOneTxBlock()
     //   void fexchange2(int id, double* Iin, double* Qin,
     //                   double* Iout, double* Qout, int* error)
     // NereusSDR uses the float variant declared in wdsp_api.h (INREAL=float).
-    // BENCH-DIAG: dump gen1 runtime state right before fexchange2 to verify
-    // SetTXAPostGen* calls actually took effect.
-    // Null-guard the entire BENCH-DIAG block for unit-test builds: txa[] /
-    // ch[] are zero-initialized at load time; gen1.p, midbuff, outbuff,
-    // and iob.pe are all null until WdspEngine::initialize() + OpenChannel()
-    // run.  Match the same sentinel pattern setRunning() uses (rsmpin.p).
-    // (fexchange2 itself is null-safe — it no-ops when ch[].exchange is 0.)
-    const bool wdspReady = (txa[m_channelId].gen1.p != nullptr);
-    if (diagThisCall && wdspReady) {
-        const auto* g1 = txa[m_channelId].gen1.p;
-        qCInfo(lcDsp) << "BENCH-DIAG gen1 state: run=" << g1->run
-                      << "mode=" << g1->mode
-                      << "tone.mag=" << g1->tone.mag
-                      << "tone.freq=" << g1->tone.freq
-                      << "tone.delta=" << g1->tone.delta
-                      << "size=" << g1->size
-                      << "rate=" << g1->rate;
-
-        // BENCH-DIAG (3M-1a, 2026-04-27): pinpoint where the tone is lost in
-        // the TXA pipeline. Three buffers are interesting:
-        //   midbuff  — gen1 writes the sine here (size 2*dsp_size complex
-        //              = 4*dsp_size doubles)
-        //   outbuff  — rsmpout writes resampled output here; dexchange copies
-        //              this into the r2 ring (size 1*dsp_outsize complex
-        //              = 2*dsp_outsize doubles)
-        //   r2 ring  — fexchange2 reads from here into Iout/Qout
-        // Plus the IOB state so we can see if exchange flag is actually 1
-        // and the ring is filling.
-        const double* mid  = txa[m_channelId].midbuff;
-        const double* outb = txa[m_channelId].outbuff;
-        double midPeak = 0.0;
-        double outPeak = 0.0;
-        if (mid != nullptr) {
-            const int midDoubles = 4 * g1->size;   // 2 * dsp_size complex
-            for (int i = 0; i < midDoubles; ++i) {
-                const double v = std::abs(mid[i]);
-                if (v > midPeak) midPeak = v;
-            }
-        }
-        if (outb != nullptr) {
-            const int outDoubles = 2 * outN;   // 1 * dsp_outsize complex (outN already in samples)
-            for (int i = 0; i < outDoubles; ++i) {
-                const double v = std::abs(outb[i]);
-                if (v > outPeak) outPeak = v;
-            }
-        }
-        const auto& chState = ch[m_channelId];
-        const auto* iobE = chState.iob.pe;
-        qCInfo(lcDsp) << "BENCH-DIAG buffers/iob:"
-                      << "midbuff_peak=" << midPeak
-                      << "outbuff_peak=" << outPeak
-                      << "exchange=" << (chState.exchange & 1)
-                      << "state=" << chState.state
-                      << "bfo=" << (iobE ? iobE->bfo : -1)
-                      << "r2_havesamps=" << (iobE ? iobE->r2_havesamps : -1)
-                      << "r2_outidx=" << (iobE ? iobE->r2_outidx : -1)
-                      << "out_size=" << (iobE ? iobE->out_size : -1);
-    }
-
     int error = 0;
     fexchange2(m_channelId,
                m_inI.data(), m_inQ.data(),   // inN samples each
@@ -864,24 +782,6 @@ void TxChannel::driveOneTxBlock()
         qCWarning(lcDsp) << "TxChannel" << m_channelId
                          << "fexchange2 error" << error;
         return;
-    }
-
-    // BENCH-DIAG: scan output magnitude so we can tell if WDSP is producing
-    // tone samples or zeros.  Cheap: only computes peak when we already log.
-    if (diagThisCall) {
-        float peakI = 0.0f;
-        float peakQ = 0.0f;
-        for (int i = 0; i < outN; ++i) {
-            const float ai = std::abs(m_outI[i]);
-            const float aq = std::abs(m_outQ[i]);
-            if (ai > peakI) peakI = ai;
-            if (aq > peakQ) peakQ = aq;
-        }
-        qCInfo(lcDsp) << "BENCH-DIAG TxChannel::driveOneTxBlock #"
-                      << s_diagCallCount
-                      << "fexchange2 OK  inN=" << inN << "outN=" << outN
-                      << "peakI=" << peakI << "peakQ=" << peakQ
-                      << "(>0 = WDSP producing tone; ~0 = silent)";
     }
 #endif // HAVE_WDSP
 

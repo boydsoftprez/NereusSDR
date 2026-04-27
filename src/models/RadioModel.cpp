@@ -2718,15 +2718,6 @@ void RadioModel::setTune(bool on)
                                     ? bandFromFrequency(m_activeSlice->frequency())
                                     : m_lastBand;
         const int tunePower = m_transmitModel.tunePowerForBand(currentBand);
-        // BENCH-DIAG: log the values we're about to push to the radio so we
-        // can see if drive level / channel state are right when TUN engages.
-        qCInfo(lcDsp) << "BENCH-DIAG RadioModel::setTune(true)"
-                      << "band=" << static_cast<int>(currentBand)
-                      << "tunePower=" << tunePower
-                      << "savedDspMode=" << static_cast<int>(m_savedTxDspMode)
-                      << "signedFreq=" << signedFreq
-                      << "txChannel=" << (m_txChannel != nullptr)
-                      << "connection=" << (m_connection != nullptr);
         if (m_connection) {
             auto* conn = m_connection;
             QMetaObject::invokeMethod(conn, [conn, tunePower]() {
