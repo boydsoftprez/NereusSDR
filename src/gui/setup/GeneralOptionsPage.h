@@ -69,6 +69,7 @@ class QLabel;
 namespace NereusSDR {
 
 class StepAttenuatorController;
+struct RadioInfo;
 
 class GeneralOptionsPage : public SetupPage {
     Q_OBJECT
@@ -76,6 +77,20 @@ public:
     explicit GeneralOptionsPage(RadioModel* model, QWidget* parent = nullptr);
 
     void syncFromModel() override;
+
+    /// Show or hide the Receive Only checkbox.  Hidden by default per
+    /// Thetis setup.designer.cs:8535-8544 [v2.10.3.13] (Visible=false).
+    /// Called by the constructor on initial connect and by currentRadioChanged
+    /// so reconnects to a different radio (e.g. full-TX board after an HL2-RX)
+    /// update visibility correctly.  BoardCapabilities::isRxOnlySku
+    /// (NereusSDR-original) is the authoritative source.
+    void setReceiveOnlyVisible(bool visible);
+
+private slots:
+    // 3M-1a G.2 fixup: named slot mirrors HardwarePage::onCurrentRadioChanged.
+    // Eliminates the capture-by-pointer shutdown race of the original lambda
+    // and brings the two setup pages into stylistic parity.
+    void onCurrentRadioChanged(const NereusSDR::RadioInfo& info);
 
 private:
     void buildHardwareConfigGroup();

@@ -43,6 +43,8 @@ public:
         calls.append(r);
     }
     void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
+    void sendTxIq(const float*, int) override {}
+    void setTrxRelay(bool) override {}
 };
 
 class TestAntennaRoutingModel : public QObject {

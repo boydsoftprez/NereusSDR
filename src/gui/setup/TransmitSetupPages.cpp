@@ -10,6 +10,11 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-26 — Phase 3M-1a H.4: Power & PA page activation: Max Power
+//                 slider wired to TransmitModel::setPower; per-band tune-
+//                 power spinboxes wired to TransmitModel::setTunePowerForBand;
+//                 ATTOnTX checkbox wired to StepAttenuatorController::setAttOnTxEnabled;
+//                 ForceATTwhenPSAoff wired to StepAttenuatorController::setForceAttWhenPsOff.
 // =================================================================
 
 //=================================================================
@@ -60,10 +65,15 @@
 #include "TransmitSetupPages.h"
 #include "gui/StyleConstants.h"
 #include "core/AppSettings.h"
+#include "models/RadioModel.h"
+#include "models/TransmitModel.h"
+#include "models/Band.h"
+#include "core/StepAttenuatorController.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QSlider>
@@ -73,6 +83,7 @@
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 
 namespace NereusSDR {
 
@@ -129,26 +140,8 @@ void PowerPaPage::buildUI()
 {
     applyDarkStyle(this);
 
-    // --- Section: Power ---
-    auto* pwrGroup = new QGroupBox(QStringLiteral("Power"), this);
-    auto* pwrForm  = new QFormLayout(pwrGroup);
-    pwrForm->setSpacing(6);
-
-    m_maxPowerSlider = new QSlider(Qt::Horizontal, pwrGroup);
-    m_maxPowerSlider->setRange(0, 100);
-    m_maxPowerSlider->setValue(100);
-    m_maxPowerSlider->setEnabled(false);  // NYI
-    m_maxPowerSlider->setToolTip(QStringLiteral("Maximum TX power (0–100 W) — not yet implemented"));
-    pwrForm->addRow(QStringLiteral("Max Power (W):"), m_maxPowerSlider);
-
-    m_swrProtectionSlider = new QSlider(Qt::Horizontal, pwrGroup);
-    m_swrProtectionSlider->setRange(10, 50);  // SWR * 10 for integer slider
-    m_swrProtectionSlider->setValue(30);      // 3.0:1
-    m_swrProtectionSlider->setEnabled(false); // NYI
-    m_swrProtectionSlider->setToolTip(QStringLiteral("SWR protection threshold — not yet implemented"));
-    pwrForm->addRow(QStringLiteral("SWR Protection:"), m_swrProtectionSlider);
-
-    contentLayout()->addWidget(pwrGroup);
+    buildPowerGroup();
+    buildTunePowerGroup();
 
     // --- Section: PA ---
     auto* paGroup = new QGroupBox(QStringLiteral("PA"), this);
@@ -178,6 +171,165 @@ void PowerPaPage::buildUI()
     buildHfPaGroup();
 
     contentLayout()->addStretch();
+}
+
+// ---------------------------------------------------------------------------
+// PowerPaPage::buildPowerGroup — H.4
+// ---------------------------------------------------------------------------
+//
+// Wires:
+//  1. Max Power slider → TransmitModel::setPower(int)
+//     From Thetis console.cs:4822 [v2.10.3.13] TXF power setter.
+//  2. chkATTOnTX → StepAttenuatorController::setAttOnTxEnabled(bool)
+//     From Thetis setup.designer.cs:5926-5939 [v2.10.3.13] + setup.cs:15452-15455.
+//     NereusSDR places this in Power & PA (tpAlexAntCtrl in Thetis).
+//  3. chkForceATTwhenPSAoff → StepAttenuatorController::setForceAttWhenPsOff(bool)
+//     From Thetis setup.designer.cs:5660-5671 [v2.10.3.13] + setup.cs:24264-24268.
+//     //MW0LGE [2.9.0.7] added  [original inline comment from console.cs:29285]
+void PowerPaPage::buildPowerGroup()
+{
+    auto* pwrGroup = new QGroupBox(QStringLiteral("Power"), this);
+    auto* pwrForm  = new QFormLayout(pwrGroup);
+    pwrForm->setSpacing(6);
+
+    // Max Power slider — wired to TransmitModel::setPower (H.4).
+    // From Thetis console.cs:4822 [v2.10.3.13]:
+    //   public int PWR { set { ... } }  — overall TX drive/power level.
+    m_maxPowerSlider = new QSlider(Qt::Horizontal, pwrGroup);
+    m_maxPowerSlider->setRange(0, 100);
+    m_maxPowerSlider->setValue(100);
+    m_maxPowerSlider->setEnabled(true);   // Phase 3M-1a H.4: wired
+    m_maxPowerSlider->setObjectName(QStringLiteral("maxPowerSlider"));
+    m_maxPowerSlider->setToolTip(QStringLiteral("RF output power (0–100 W)"));
+
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+
+        // Initialise from model
+        {
+            QSignalBlocker b(m_maxPowerSlider);
+            m_maxPowerSlider->setValue(tx.power());
+        }
+
+        // Slider → model
+        connect(m_maxPowerSlider, &QSlider::valueChanged,
+                &tx, &TransmitModel::setPower);
+
+        // Model → slider (reverse)
+        connect(&tx, &TransmitModel::powerChanged, m_maxPowerSlider,
+                [this](int val) {
+                    QSignalBlocker b(m_maxPowerSlider);
+                    m_maxPowerSlider->setValue(val);
+                });
+    }
+    pwrForm->addRow(QStringLiteral("Max Power (W):"), m_maxPowerSlider);
+
+    // SWR protection threshold — future use.
+    m_swrProtectionSlider = new QSlider(Qt::Horizontal, pwrGroup);
+    m_swrProtectionSlider->setRange(10, 50);   // SWR * 10 for integer slider
+    m_swrProtectionSlider->setValue(30);        // 3.0:1
+    m_swrProtectionSlider->setEnabled(false);   // NYI
+    m_swrProtectionSlider->setToolTip(QStringLiteral("SWR protection threshold — not yet implemented"));
+    pwrForm->addRow(QStringLiteral("SWR Protection:"), m_swrProtectionSlider);
+
+    // chkATTOnTX — "Enables Attenuator on Mercury during Transmit."
+    // From Thetis setup.designer.cs:5935 [v2.10.3.13]:
+    //   toolTip1.SetToolTip(chkATTOnTX, "Enables Attenuator on Mercury during Transmit.")
+    m_chkAttOnTx = new QCheckBox(QStringLiteral("ATT on TX"), pwrGroup);
+    m_chkAttOnTx->setObjectName(QStringLiteral("chkATTOnTX"));
+    m_chkAttOnTx->setToolTip(QStringLiteral("Enables Attenuator on Mercury during Transmit."));
+
+    if (model()) {
+        if (StepAttenuatorController* att = model()->stepAttController()) {
+            m_chkAttOnTx->setChecked(att->attOnTxEnabled());
+            connect(m_chkAttOnTx, &QCheckBox::toggled,
+                    att, &StepAttenuatorController::setAttOnTxEnabled);
+        }
+    }
+    pwrForm->addRow(QString(), m_chkAttOnTx);
+
+    // chkForceATTwhenPSAoff — "Force ATT on Tx to 31 when PS-A is off"
+    // From Thetis setup.designer.cs:5668 [v2.10.3.13]:
+    //   chkForceATTwhenPSAoff.Text = "Force ATT on Tx to 31 when PS-A is off"
+    //   toolTip1.SetToolTip(chkForceATTwhenPSAoff, "Forces ATT on Tx to 31 when PS-A is off. CW will do this anyway")
+    // //MW0LGE [2.9.0.7] added  [original inline comment from console.cs:29285]
+    m_chkForceAttWhenPsOff = new QCheckBox(
+        QStringLiteral("Force ATT on Tx to 31 when PS-A is off"), pwrGroup);
+    m_chkForceAttWhenPsOff->setObjectName(QStringLiteral("chkForceATTwhenPSAoff"));
+    m_chkForceAttWhenPsOff->setToolTip(
+        QStringLiteral("Forces ATT on Tx to 31 when PS-A is off. CW will do this anyway"));
+
+    if (model()) {
+        if (StepAttenuatorController* att = model()->stepAttController()) {
+            m_chkForceAttWhenPsOff->setChecked(att->forceAttWhenPsOff());
+            connect(m_chkForceAttWhenPsOff, &QCheckBox::toggled,
+                    att, &StepAttenuatorController::setForceAttWhenPsOff);
+        }
+    }
+    pwrForm->addRow(QString(), m_chkForceAttWhenPsOff);
+
+    contentLayout()->addWidget(pwrGroup);
+}
+
+// ---------------------------------------------------------------------------
+// PowerPaPage::buildTunePowerGroup — H.4
+// ---------------------------------------------------------------------------
+//
+// Per-band tune-power spinboxes.
+// NereusSDR extension: exposes tunePower_by_band[14] (console.cs:12094 [v2.10.3.13])
+// directly in the setup dialog so the operator can set per-band tune power without
+// having to visit each band from the main VFO.  Thetis uses a single udTXTunePower
+// (setup.cs:5262 [v2.10.3.13]) that updates one slot on band change.
+void PowerPaPage::buildTunePowerGroup()
+{
+    auto* group  = new QGroupBox(QStringLiteral("Tune Power (per band)"), this);
+    auto* grid   = new QGridLayout(group);
+    grid->setSpacing(4);
+
+    // Column headers
+    grid->addWidget(new QLabel(QStringLiteral("Band"), group), 0, 0);
+    grid->addWidget(new QLabel(QStringLiteral("Watts"), group), 0, 1);
+
+    for (int i = 0; i < kBandCount; ++i) {
+        const Band band = static_cast<Band>(i);
+        const QString label = bandLabel(band);
+
+        auto* lbl  = new QLabel(label, group);
+        auto* spin = new QSpinBox(group);
+        spin->setRange(0, 100);
+        spin->setSuffix(QStringLiteral(" W"));
+        spin->setObjectName(QStringLiteral("spinTunePwr_") + label);
+        spin->setToolTip(QStringLiteral("Tune carrier power for %1 (0–100 W)").arg(label));
+        m_tunePwrSpins[i] = spin;
+
+        grid->addWidget(lbl,  i + 1, 0);
+        grid->addWidget(spin, i + 1, 1);
+
+        if (model()) {
+            TransmitModel& tx = model()->transmitModel();
+
+            // Initialise from model
+            {
+                QSignalBlocker b(spin);
+                spin->setValue(tx.tunePowerForBand(band));
+            }
+
+            // Spinbox → model
+            connect(spin, &QSpinBox::valueChanged, this, [this, band](int val) {
+                model()->transmitModel().setTunePowerForBand(band, val);
+            });
+
+            // Model → spinbox (reverse — needed when TxApplet slider changes the value)
+            connect(&tx, &TransmitModel::tunePowerByBandChanged,
+                    spin, [band, spin](Band changedBand, int watts) {
+                if (changedBand != band) { return; }
+                QSignalBlocker b(spin);
+                spin->setValue(watts);
+            });
+        }
+    }
+
+    contentLayout()->addWidget(group);
 }
 
 // ---------------------------------------------------------------------------

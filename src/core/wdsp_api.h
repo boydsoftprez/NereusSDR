@@ -6,12 +6,25 @@
 //   Project Files/Source/Console/dsp.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/HPSDR/specHPSDR.cs, original licence from Thetis source is included below
+//   Project Files/Source/wdsp/gen.c, original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-26 — SetTXAPostGen* declarations (4 functions: Mode, ToneMag,
+//                 ToneFreq, Run) added by J.J. Boyd (KG4VCF) during 3M-1a
+//                 Task C.3 — TxChannel::setTuneTone WDSP wiring. Signatures
+//                 match wdsp/gen.c:784-813 [v2.10.3.13]. AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-04-26 — SetTXACFIRRun + per-stage TXA Run setters (SetTXAPreGenRun,
+//                 SetTXAPanelRun, SetTXAPHROTRun, SetTXAAMSQRun, SetTXAEQRun,
+//                 SetTXACompressorRun, SetTXAosctrlRun, SetTXACFCOMPRun)
+//                 added by J.J. Boyd (KG4VCF) during 3M-1a Task C.4 —
+//                 TxChannel::setRunning / setStageRunning WDSP wiring.
+//                 Signatures match wdsp/ source files [v2.10.3.13].
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -539,6 +552,127 @@ void use_impulse_cache(int use);
 // ---------------------------------------------------------------------------
 
 int GetWDSPVersion(void);
+
+// ---------------------------------------------------------------------------
+// TX PostGen (gen1) — TUNE-tone carrier (gen.c)
+//
+// gen1 is the last DSP stage before up-slew ramp and output metering.
+// Mode 0 = sine tone (used for TUNE carrier).
+// Mode 1 = two-tone (used for 2-TONE IMD test — 3M-3a scope).
+//
+// From Thetis wdsp/gen.c:783-813 [v2.10.3.13].
+// Call-site: console.cs:30031-30040 [v2.10.3.13] — chkTUN_CheckedChanged.
+// Ported by NereusSDR Task C.3 (3M-1a).
+// ---------------------------------------------------------------------------
+
+// From Thetis wdsp/gen.c:784-789 [v2.10.3.13] — txa[ch].gen1.p->run
+void SetTXAPostGenRun(int channel, int run);
+
+// From Thetis wdsp/gen.c:792-797 [v2.10.3.13] — txa[ch].gen1.p->mode
+// mode: 0=sine tone, 1=two-tone, 2=noise, 3=sweep, 4=sawtooth, 5=triangle, 6=pulse
+void SetTXAPostGenMode(int channel, int mode);
+
+// From Thetis wdsp/gen.c:800-805 [v2.10.3.13] — txa[ch].gen1.p->tone.mag
+void SetTXAPostGenToneMag(int channel, double mag);
+
+// From Thetis wdsp/gen.c:808-813 [v2.10.3.13] — txa[ch].gen1.p->tone.freq + calc_tone()
+// Signed Hz; caller provides sign per DSP mode (LSB/CWL/DIGL → negative).
+void SetTXAPostGenToneFreq(int channel, double freq);
+
+// ---------------------------------------------------------------------------
+// TX stage Run setters — TxChannel::setRunning() + setStageRunning()
+//
+// These are called from TxChannel::setRunning() (cfir only) and from
+// TxChannel::setStageRunning() to enable/disable individual TXA pipeline
+// stages.  Each corresponds to a PORT-exported WDSP function.
+//
+// NOTE: rsmpin and rsmpout have NO exported Set*Run API. Their run flags are
+// managed internally by WDSP's TXAResCheck() (wdsp/TXA.c:809-817
+// [v2.10.3.13]), which sets run=1 iff the relevant rates differ.  They are
+// therefore absent from this list.
+//
+// Ported by NereusSDR Task C.4 (3M-1a).
+// ---------------------------------------------------------------------------
+
+// cfir (stage 28): custom CIC FIR filter, used for Protocol 2 output path.
+// Thetis cmaster.cs:522-527 [v2.10.3.13]: false for P1 (USB), true for P2.
+// From Thetis wdsp/cfir.c:233-238 [v2.10.3.13] and wdsp/cfir.h:71.
+void SetTXACFIRRun(int channel, int run);
+
+// gen0 (stage 1): TX PreGen, mode=2 noise. Used for 2-TONE (3M-3a).
+// From Thetis wdsp/gen.c:636-641 [v2.10.3.13].
+void SetTXAPreGenRun(int channel, int run);
+
+// panel (stage 2): audio panel / mic gain.
+// From Thetis wdsp/patchpanel.c:201-206 [v2.10.3.13] and patchpanel.h:74.
+void SetTXAPanelRun(int channel, int run);
+
+// phrot (stage 3): phase rotator for SSB carrier-phase correction.
+// From Thetis wdsp/iir.c:665-670 [v2.10.3.13].
+void SetTXAPHROTRun(int channel, int run);
+
+// amsq (stage 5): TX AM squelch / downward expander.
+// From Thetis wdsp/amsq.c:246-252 [v2.10.3.13] and amsq.h:83.
+void SetTXAAMSQRun(int channel, int run);
+
+// eqp (stage 6): TX parametric EQ.
+// From Thetis wdsp/eq.c:742-747 [v2.10.3.13].
+void SetTXAEQRun(int channel, int run);
+
+// compressor (stage 14): TX speech compressor (COMP).
+// Also adjusts bp1/bp2 bandpass routing via TXASetupBPFilters().
+// From Thetis wdsp/compress.c:99-109 [v2.10.3.13] and compress.h:60.
+void SetTXACompressorRun(int channel, int run);
+
+// osctrl (stage 16): CESSB overshoot control.
+// From Thetis wdsp/osctrl.c:142-147 [v2.10.3.13].
+void SetTXAosctrlRun(int channel, int run);
+
+// cfcomp (stage 11): continuous frequency compander.
+// From Thetis wdsp/cfcomp.c:632-637 [v2.10.3.13].
+void SetTXACFCOMPRun(int channel, int run);
+
+// ── TX channel default config — from deskhpsdr/src/transmitter.c:1459-1473 [@120188f]
+// These calls are invoked AFTER OpenChannel(... type=1 ...) to put the WDSP TX
+// channel into a sane state.  Without them ALC's max gain integrator runs to
+// infinity on silent input (NullMicSource) and produces inf samples on output.
+//
+// alc (stage 14, wcpAGC): TX ALC.
+// From Thetis wdsp/wcpAGC.c:570-610 [v2.10.3.13].
+void SetTXAALCSt(int channel, int state);          // wcpAGC.c:570 — ALC on/off (1 = on)
+void SetTXAALCAttack(int channel, int attack);     // wcpAGC.c:578 — attack ms (1 = 1 ms)
+void SetTXAALCDecay(int channel, int decay);       // wcpAGC.c:586 — decay ms (10 = 10 ms)
+void SetTXAALCMaxGain(int channel, double maxgain); // wcpAGC.c:604 — max gain dB (0 = unity, no amplification)
+
+// bp0 (stage 8): mandatory TX bandpass filter.
+// From Thetis wdsp/bandpass.c — SetTXABandpass{Window,Run}.
+void SetTXABandpassWindow(int channel, int window); // 1 = 7-term Blackman-Harris
+void SetTXABandpassRun(int channel, int run);
+
+// SetTXAMode: configure TXA pipeline for an operating mode (LSB/USB/AM/FM/...).
+// Activates ammod/fmmod/preemph stages per mode and triggers TXASetupBPFilters.
+// Mode integer matches NereusSDR DSPMode enum (LSB=0, USB=1, ..., DRM=11).
+// From Thetis wdsp/TXA.c:753-789 [v2.10.3.13].
+void SetTXAMode(int channel, int mode);
+
+// SetTXABandpassFreqs: configure bp0 / bp1 / bp2 bandpass cutoffs in IQ space.
+// LSB: low=-high_audio, high=-low_audio (e.g. -2850, -150).
+// USB: low=+low_audio, high=+high_audio (e.g. +150, +2850).
+// AM/DSB/SAM: symmetric (-high, +high).
+// From Thetis wdsp/TXA.c:792-799 [v2.10.3.13].
+// Cite: deskhpsdr/src/transmitter.c:2091-2191 [@120188f] — tx_set_filter
+//   per-mode mapping from audio bandpass to IQ-space bandpass.
+void SetTXABandpassFreqs(int channel, double f_low, double f_high);
+
+// gen0 (stage 1): PreGen — pure tone generator (used for 2-TONE; off in 3M-1a).
+// From Thetis wdsp/gen.c.
+void SetTXAPreGenMode(int channel, int mode);       // 0 = sine
+void SetTXAPreGenToneMag(int channel, double mag);
+void SetTXAPreGenToneFreq(int channel, double freq);
+
+// panel (stage 2): audio patch panel — selects which input source feeds the chain.
+// From Thetis wdsp/patchpanel.c.
+void SetTXAPanelSelect(int channel, int select);    // 2 = use Mic I sample (mono mic)
 
 } // extern "C"
 

@@ -163,18 +163,32 @@ P2RadioConnection::P2RadioConnection(QObject* parent)
         m_rx[i].rxInSeqErr = 0;
     }
 
-    // From Thetis create_rnet() netInterface.c:1504-1514
+    // From Thetis create_rnet() netInterface.c:1504-1514 [v2.10.3.13]
     for (int i = 0; i < kMaxTxStreams; ++i) {
         m_tx[i].id = i;
         m_tx[i].frequency = 0;
-        m_tx[i].samplingRate = 48;
+        // 3M-1a bench fix: P2 TX is ALWAYS 192 kHz (Thetis netInterface.c:1513
+        // [v2.10.3.13]).  This was incorrectly initialised to 48 (a copy-paste
+        // from the RX block above where 48 kHz IS correct), causing
+        // txSampleRate() to return 48000 → createTxChannel opened the WDSP TX
+        // channel with outputSampleRate=48000 → WDSP rsmpout produced samples
+        // at the wrong rate → G2 saw silence/aliased noise instead of carrier.
+        m_tx[i].samplingRate = 192;
         m_tx[i].cwx = 0;
         m_tx[i].dash = 0;
         m_tx[i].dot = 0;
         m_tx[i].pttOut = 0;
         m_tx[i].driveLevel = 0;
         m_tx[i].phaseShift = 0;
-        m_tx[i].pa = 1;
+        // 3M-1a (2026-04-27): Thetis's `prn->tx[0].pa` is the *DisablePA* flag,
+        // not "PA enabled".  CmdGeneral byte 58 is written as `(!pa) & 0x01`
+        // (Thetis network.c:904 [v2.10.3.13]), so pa=0 ⇒ wire byte 58 = 1
+        // ⇒ radio enables its PA.  Previously initialised to 1 (DisablePA on),
+        // which silently kept the radio's PA off during MOX — exact symptom
+        // of "MOX engages, TX I/Q on the wire, no carrier on the SO-239".
+        // deskhpsdr's equivalent default is `pa_enabled = 1` (new_protocol.c
+        // [@120188f]) — same effective wire byte (1).
+        m_tx[i].pa = 0;   // PA enabled (NOT inverted: this is the DisablePA bit)
         m_tx[i].epwmMax = 0;
         m_tx[i].epwmMin = 0;
     }
@@ -220,21 +234,155 @@ void P2RadioConnection::init()
     m_reconnectTimer->setSingleShot(true);
     connect(m_reconnectTimer, &QTimer::timeout, this, &P2RadioConnection::onReconnectTimeout);
 
-    // TX I/Q silence stream — radio expects continuous TX data on port 1029
-    // even in RX-only mode. From pcap: ~800 packets/sec at 192 kHz / 240 spp.
+    // TX I/Q stream — radio expects continuous TX data on port 1029 even in
+    // RX-only mode.  When the TX I/Q ring (m_txIqRing) has samples, they are
+    // drained into the frame; when empty, zeros (silence) are sent.
+    //
+    // At 192 kHz TX rate: each 240-sample frame represents 240/192000 = 1.25 ms.
+    // With a 5 ms timer tick, we need to send 4 frames per tick to match the
+    // producer rate (238 samples/5 ms ≈ 190 kHz ≈ 4 × 240 samples drained).
+    //
+    // Bench fix round 3 (Issue C): previous code sent only 1 frame per 5 ms tick
+    // (= 240 samples / 5 ms = 48 kHz drain rate), so the ring would saturate
+    // immediately when the producer pushes 952 samples per 5 ms at 192 kHz.
+    // Fix: drain kTxFramesPerTick frames per tick.
+    //
+    // From pcap: ~800 packets/sec at 192 kHz / 240 spp.
+    // Cite: deskhpsdr/src/new_protocol.c:1929-1935 [@120188f]
+    //   "Ideally, a TX IQ buffer with 240 sample is sent every 1250 usecs."
+    //
+    // From Thetis netInterface.c:1513 [v2.10.3.13] — tx sampling_rate = 192.
+    // kTxFramesPerTick = 192000 Hz × 0.005 s / 240 spp = 4 frames per 5 ms tick.
+    static constexpr int kTxSamplesPerSec = 192000;
+    static constexpr int kTxSamplesPerFrame = 240;
+    static constexpr int kTxTimerIntervalMs = 5;
+    static constexpr int kTxFramesPerTick =
+        (kTxSamplesPerSec * kTxTimerIntervalMs / 1000 + kTxSamplesPerFrame - 1)
+        / kTxSamplesPerFrame;   // = ceil(960 / 240) = 4
     m_txIqTimer = new QTimer(this);
-    m_txIqTimer->setInterval(5);  // ~200 packets/sec (close enough, radio buffers)
+    m_txIqTimer->setInterval(kTxTimerIntervalMs);
     connect(m_txIqTimer, &QTimer::timeout, this, [this]() {
         if (!m_running || !m_socket) {
             return;
         }
-        // 4-byte seq + 240 I/Q pairs × 6 bytes (24-bit I + 24-bit Q) = 1444 bytes
+
+        // Drain kTxFramesPerTick (4) frames per 5 ms tick at 192 kHz.
+        // Each frame: 4-byte BE sequence number + 240 samples × 6 bytes = 1444 bytes.
+        // Cite: deskhpsdr/src/new_protocol.h:37 [@120188f]
+        //   #define TX_IQ_FROM_HOST_PORT 1029
+        // Cite: deskhpsdr/src/new_protocol.c:1945-1948 [@120188f]
+        //   iqbuffer[0..3] = tx_iq_sequence BE bytes; tx_iq_sequence++;
+        //
+        // IMPORTANT: keep the inner drain loop in sync with txIqFrameForTest() in
+        // P2RadioConnection.h.  The test seam mirrors this byte-packing path
+        // exactly so wire-byte snapshot tests stay authoritative.  If you
+        // change the encoding here (gain, clip bounds, byte order, layout),
+        // update the helper to match — there is no shared composer function
+        // (E.5 fixup convention).
         static constexpr int kTxPktLen = 4 + 240 * 6;
-        char buf[kTxPktLen];
-        memset(buf, 0, sizeof(buf));
-        writeBE32(buf, 0, m_seqTxIq++);
-        QByteArray pkt(buf, sizeof(buf));
-        m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 4);
+
+        // Float → int24 converter.  Shared across all frames in this tick.
+        // Cite: deskhpsdr/src/new_protocol.c:2795 [@120188f]
+        //   void new_protocol_iq_samples(int isample, int qsample)
+        auto toInt24 = [](float v) -> int {
+            const float scaled = v * 8388607.0f;
+            if (scaled >= 8388607.0f)  { return  8388607; }
+            if (scaled <= -8388607.0f) { return -8388607; }
+            return static_cast<int>(scaled);
+        };
+
+        for (int frame = 0; frame < kTxFramesPerTick; ++frame) {
+            char buf[kTxPktLen];
+            memset(buf, 0, sizeof(buf));
+            writeBE32(buf, 0, m_seqTxIq++);
+
+            // Drain up to 240 samples from the ring into the payload, or send
+            // zeros if the ring is empty (silence — matches deskhpsdr underrun).
+            // Cite: deskhpsdr/src/new_protocol.c:1950-1956, 2811-2816 [@120188f]
+            //   memcpy(&iqbuffer[4], &TXIQRINGBUF[txiq_outptr], 1440);
+            for (int s = 0; s < 240; ++s) {
+                int i24 = 0;
+                int q24 = 0;
+                // acquire: makes audio-thread byte writes (published via release
+                // fetch_add on m_txIqRingCount) visible before we read m_txIqRing.
+                if (m_txIqRingCount.load(std::memory_order_acquire) >= 2) {
+                    int rp = m_txIqRingRead.load(std::memory_order_relaxed);
+                    const float fI = m_txIqRing[rp];
+                    rp = (rp + 1) % kTxIqRingCapacityFloats;
+                    const float fQ = m_txIqRing[rp];
+                    rp = (rp + 1) % kTxIqRingCapacityFloats;
+                    // relaxed: single writer on this side; acquire on m_txIqRingCount
+                    // above already provides the required ordering fence.
+                    m_txIqRingRead.store(rp, std::memory_order_relaxed);
+                    // relaxed: audio thread observes this via acquire on m_txIqRingCount.
+                    m_txIqRingCount.fetch_sub(2, std::memory_order_relaxed);
+
+                    i24 = toInt24(fI);
+                    q24 = toInt24(fQ);
+                }
+                // Pack 3-byte BE I, then 3-byte BE Q.
+                // Cast via quint32 to guarantee arithmetic right-shift semantics
+                // on the high bytes; the sign bit is already represented in two's
+                // complement by the int → quint32 reinterpretation.
+                // Cite: deskhpsdr/src/new_protocol.c:2811-2816 [@120188f]
+                const int offset = 4 + s * 6;
+                const quint32 ui = static_cast<quint32>(i24);
+                const quint32 uq = static_cast<quint32>(q24);
+                buf[offset + 0] = static_cast<char>((ui >> 16) & 0xFF);
+                buf[offset + 1] = static_cast<char>((ui >>  8) & 0xFF);
+                buf[offset + 2] = static_cast<char>( ui        & 0xFF);
+                buf[offset + 3] = static_cast<char>((uq >> 16) & 0xFF);
+                buf[offset + 4] = static_cast<char>((uq >>  8) & 0xFF);
+                buf[offset + 5] = static_cast<char>( uq        & 0xFF);
+            }
+
+            QByteArray pkt(buf, sizeof(buf));
+            // 3M-1a (2026-04-27): TX I/Q port is base + 5 (= 1029), NOT
+            // base + 4 (= 1028; that's the RX-audio port).  Verified by
+            // pcap: NereusSDR was sending all 240-sample TX I/Q packets
+            // to port 1028 the whole time, which the radio routes to its
+            // RX-audio sink and discards — exciter saw zero TX samples,
+            // PA stayed silent, no carrier on the SO-239.
+            // Source: Thetis network.c:1388 [v2.10.3.13]:
+            //   sendPacket(..., prn->base_outbound_port + 5);// 1029);
+            // Source: deskhpsdr/src/new_protocol.h:37 [@120188f]:
+            //   #define TX_IQ_FROM_HOST_PORT 1029
+            m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 5);
+        }
+    });
+
+    // 3M-1a (2026-04-27): periodic protocol heartbeat at 100 ms.  The radio
+    // expects high-priority packets at this cadence to keep TX state fresh
+    // (MOX, drive, freq, antenna) — without it the radio treats TX state as
+    // stale and never engages the PA, so even though our TX I/Q is on the
+    // wire there is no carrier coming out the SO-239.
+    //
+    // Cadence per deskhpsdr/src/new_protocol.c:2870-2898 [@120188f]:
+    //   every 100 ms       — high-pri
+    //   every 200 ms (alt) — RX-spec / TX-spec
+    //   every 800 ms       — General
+    //
+    // Dispatch table over an 8-cycle wheel (0..7) — matches deskhpsdr's
+    // `switch (cycling)` cases 1..8 (we're 0-indexed).
+    m_p2HeartbeatTimer = new QTimer(this);
+    m_p2HeartbeatTimer->setInterval(100);
+    m_p2HeartbeatTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_p2HeartbeatTimer, &QTimer::timeout, this, [this]() {
+        if (!m_running) { return; }
+        sendCmdHighPriority();                // every 100 ms (every cycle)
+        switch (m_p2HeartbeatCycle) {
+            case 0: case 2: case 4: case 6:   // odd-numbered cycles → TX-spec
+                sendCmdTx();                  // every 200 ms
+                break;
+            case 1: case 3: case 5:           // even-numbered cycles → RX-spec
+                sendCmdRx();                  // every 200 ms
+                break;
+            case 7:
+                sendCmdRx();                  // every 200 ms
+                sendCmdGeneral();             // every 800 ms (once per wheel)
+                break;
+        }
+        m_p2HeartbeatCycle = (m_p2HeartbeatCycle + 1) % 8;
     });
 
     qCDebug(lcConnection) << "P2: init() socket port:" << m_socket->localPort();
@@ -270,10 +418,12 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     m_seqHighPri = 0;
     m_ccSeqNo = 0;
 
-    // From Thetis create_rnet defaults + Thetis pcap analysis
-    // Use m_caps->adcCount instead of info.adcCount for capability-metadata consistency.
-    // Both carry the same value (info.adcCount is populated from adcCountForBoard() which
-    // reads the same BoardCapsTable). m_caps is authoritative.
+    // 3M-1a (2026-04-27 v4): num_adc = hardware ADC count.  Earlier guess
+    // (numAdc=1) was wrong — drove from a freeze-fixture test scenario, not
+    // runtime.  Authoritative reference: captures/thetis-3865-lsb-pcap-analysis.md
+    // line 34 — Thetis sends "Num ADC | 2 | ANAN-G2 has 2 ADCs" for the same
+    // ANAN-G2 in non-diversity RX-only mode.  The freeze fixture's byte 4 = 1
+    // captures a default-init state before SetADCCount(2) is applied.
     m_numAdc = m_hardwareProfile.caps ? m_hardwareProfile.adcCount : m_caps->adcCount;
     m_numDac = 1;
     m_wdt = 1;  // Watchdog timer MUST be enabled — radio requires it for streaming
@@ -342,7 +492,15 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     // From Thetis StartAudioNative netInterface.c:83
     // prn->hKeepAliveThread = _beginthreadex(NULL, 0, KeepAliveMain, 0, 0, NULL);
     m_keepAliveTimer->start();
-    // m_txIqTimer->start();  // DISABLED: testing if TX silence stream causes weak signals
+    // 3M-1a bench fix: re-enabled — the producer side (TxChannel::driveOneTxBlock,
+    // commit e6e48bd) now feeds the SPSC ring with real TX I/Q during TUN.  Earlier
+    // "weak signals" concern was an artifact of the unwired producer (silence stream
+    // made the carrier appear low-energy on the radio).  Confirmed correct after
+    // E.6 + E.7 + e6e48bd landed.
+    m_txIqTimer->start();
+    // 3M-1a (2026-04-27): protocol heartbeat — high-pri every 100 ms, etc.
+    m_p2HeartbeatCycle = 0;
+    m_p2HeartbeatTimer->start();
 
     setState(ConnectionState::Connected);
 }
@@ -359,6 +517,9 @@ void P2RadioConnection::disconnect()
     }
     if (m_txIqTimer) {
         m_txIqTimer->stop();
+    }
+    if (m_p2HeartbeatTimer) {
+        m_p2HeartbeatTimer->stop();
     }
     if (m_reconnectTimer) {
         m_reconnectTimer->stop();
@@ -486,10 +647,26 @@ void P2RadioConnection::setTxDrive(int level)
 
 void P2RadioConnection::setMox(bool enabled)
 {
-    // From Thetis: prn->tx[0].ptt_out
-    m_tx[0].pttOut = enabled ? 1 : 0;
+    // Guard idempotent transitions: the 100 ms high-priority periodic cadence
+    // already re-emits the current m_mox state on every tick, so there is no
+    // need to force an extra packet when the value is unchanged.  This matches
+    // P1 setMox (which uses m_forceBank0Next for its safety effect and early-
+    // returns on idempotent) and deskhpsdr's model where new_protocol_high_
+    // priority() fires only when the transmit state actually transitions.
+    //
+    // From deskhpsdr/src/new_protocol.c:739-762 [@120188f]:
+    //   high_priority_buffer_to_radio[4] = P2running;   // bit 0 = run
+    //   if (xmit) { high_priority_buffer_to_radio[4] |= 0x02; }  // bit 1 = MOX
+    //
+    // m_mox drives bit 1 (0x02) of byte 4 in composeCmdHighPriority.
+    // m_tx[0].pttOut remains for the rear-panel PTT-out relay (TX-confirmation
+    // output, deferred to 3M-3 per the plan); it is NOT the MOX source here.
+    if (m_mox == enabled) {
+        return;  // idempotent — periodic cadence covers any state drift
+    }
+    m_mox = enabled;
     if (m_running) {
-        sendCmdHighPriority();
+        sendCmdHighPriority();  // immediate emit on state change for low latency
     }
 }
 
@@ -555,13 +732,29 @@ void P2RadioConnection::setAntennaRouting(AntennaRouting r)
 // NOTE: P2RadioConnection already carries m_wdt (int, maps to prn->wdt) which
 // is set to 1 unconditionally in connectToRadio() because the radio requires
 // the watchdog for streaming. m_watchdogEnabled records the *user* toggle from
-// Setup → Network WDT checkbox; the relationship to m_wdt is deferred to 3M-1a.
+// Setup → Network WDT checkbox; the relationship to m_wdt is unresolved.
 //
-// TODO [3M-1a]: reconcile m_watchdogEnabled with m_wdt / prn->wdt and emit
-// the wire bit update via sendCmdGeneral(). Bit position is currently unknown —
-// Thetis dispatches via ChannelMaster.dll (closed source). Identify via wire
-// capture or HL2-firmware reading; until then this is a state-tracking stub.
-// Cite: NetworkIOImports.cs:197-198 [v2.10.3.13] (DllImport entry).
+// 3M-1a Task E.8 — DEFERRED with documented blocker
+// (pre-code review §7.8, "P2 BPF2Gnd / Alex T/R / Network watchdog —
+//  DEFERRED to research"):
+//
+//   "deskhpsdr does not currently emit a P2 watchdog command.  Likely a
+//    Saturn-specific register; documented blocker."
+//   "P2 watchdog wire bit stays a state-tracking stub.  Update the TODO
+//    comment to reference this pre-code review §7.8 and file a tracking
+//    issue."
+//
+// State-only stub: setWatchdogEnabled stores the requested value in the
+// base-class m_watchdogEnabled field (default true, set by E.5).  No P2
+// wire emission.  P1 wire bit was resolved in E.5 (RUNSTOP pkt[3] bit 7).
+//
+// Tracking: see GitHub issue (filed post-merge — link to be added when
+// the issue number is known).  Re-port path: when Saturn register layout
+// is identified (likely via deskhpsdr saturndrivers.c / saturnregisters.c
+// once they document the watchdog control register), restore the wire-bit
+// emission via sendCmdGeneral() and remove the deferral note.
+// Cite: NetworkIOImports.cs:197-198 [v2.10.3.13] (DllImport entry that
+// indirects through ChannelMaster.dll's closed-source watchdog handler).
 // ---------------------------------------------------------------------------
 void P2RadioConnection::setWatchdogEnabled(bool enabled)
 {
@@ -569,6 +762,116 @@ void P2RadioConnection::setWatchdogEnabled(bool enabled)
         return;
     }
     m_watchdogEnabled = enabled;
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// sendTxIq — 3M-1a Task E.6
+//
+// Porting from deskhpsdr/src/new_protocol.c:2795-2837 [@120188f]
+// (new_protocol_iq_samples) — original C logic:
+//
+//   void new_protocol_iq_samples(int isample, int qsample) {
+//     int iptr = txiq_inptr + 6 * txiq_count;
+//     TXIQRINGBUF[iptr++] = (isample >> 16) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (isample >>  8) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (isample      ) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (qsample >> 16) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (qsample >>  8) & 0xFF;
+//     TXIQRINGBUF[iptr++] = (qsample      ) & 0xFF;
+//     txiq_count++;
+//     if (txiq_count >= 240) { /* signal send thread */ }
+//   }
+//
+//   P2 frame: 4-byte BE sequence + 240 samples × 6 bytes = 1444 bytes.
+//   Float→int24 gain: 8388607.0 (0x7FFFFF).
+//   Cite: deskhpsdr/src/new_protocol.h:37 [@120188f]
+//     #define TX_IQ_FROM_HOST_PORT 1029
+//   Cite: deskhpsdr/src/new_protocol.c:1476 [@120188f]
+//     transmit_specific_buffer[16] = 0; // should be 24: TX IQ sample width 24 bits
+//   Cite: deskhpsdr/src/new_protocol.c:1596 [@120188f]
+//     // there are 24 bits per sample
+//
+// Accepts n interleaved float32 I/Q pairs [I0,Q0, I1,Q1, ...] from the WDSP
+// TX channel output.  Pushes each float into the SPSC ring m_txIqRing.
+// If the ring is full, excess samples are dropped (matches deskhpsdr overflow).
+//
+// The m_txIqTimer lambda (connection thread) drains pairs per frame.
+//
+// No HL2 CWX LSB-clear workaround needed for P2: the workaround applies to
+// P1 old_protocol only (deskhpsdr/src/old_protocol.c:2441-2453 [@120188f]).
+// deskhpsdr new_protocol.c has no analogous &=~1 pattern near this path.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::sendTxIq(const float* iq, int n)
+{
+    if (n <= 0 || iq == nullptr) { return; }
+
+    for (int k = 0; k < n * 2; k += 2) {
+        // acquire: see the latest fetch_sub from the connection thread so we
+        // don't overfill after a drain.  Pair count: each sample = 2 floats.
+        if (m_txIqRingCount.load(std::memory_order_acquire) >= kTxIqRingCapacityFloats - 1) {
+            qCDebug(lcConnection) << "P2 TX I/Q ring buffer overflow — dropping samples";
+            break;
+        }
+
+        int wp = m_txIqRingWrite.load(std::memory_order_relaxed);
+        m_txIqRing[wp] = iq[k];         // I
+        wp = (wp + 1) % kTxIqRingCapacityFloats;
+        m_txIqRing[wp] = iq[k + 1];     // Q
+        wp = (wp + 1) % kTxIqRingCapacityFloats;
+        // relaxed: single writer; the release on m_txIqRingCount below
+        // provides the visibility fence for the float writes.
+        m_txIqRingWrite.store(wp, std::memory_order_relaxed);
+        // release: publishes the float writes above before the count increment
+        // is observed by the connection thread's acquire load.
+        m_txIqRingCount.fetch_add(2, std::memory_order_release);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setTrxRelay — 3M-1a Task E.1 (stub; deferred to 3M-3)
+//
+// P2 T/R relay is routed via Saturn register C0=0x24 indirect writes.
+// State is stored in base-class m_trxRelay so isTrxRelayEngaged() is
+// available before the full P2 relay control lands in 3M-3.
+//
+// TODO [3M-3]: implement P2 T/R relay via Saturn register writes.
+// Cite: pre-code review §7.2 (note: P2 path deferred to 3M-3).
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setTrxRelay(bool enabled)
+{
+    if (m_trxRelay == enabled) {
+        return;
+    }
+    m_trxRelay = enabled;
+    // 3M-1a (2026-04-27): m_trxRelay state is encoded into Alex0 bits 27/18
+    // (see buildAlex0) and goes to the radio in CmdHighPriority.  Push the
+    // state immediately so the antenna switches to the TX path before the
+    // first TX I/Q packet (rather than waiting up to 100 ms for the next
+    // heartbeat tick).  setMox() does the same thing on the MOX bit.
+    if (m_running && m_socket) {
+        sendCmdHighPriority();
+    }
+    // TODO [3M-3]: emit Saturn register write for T/R relay (in addition
+    // to the Alex0 bit, deskhpsdr does a Saturn register write for some
+    // hardware variants — defer until we hit a radio that requires it).
+}
+
+// ---------------------------------------------------------------------------
+// setTxStepAttenuation — 3M-1a Task F.2
+//
+// Mirrors Thetis ChannelMaster/netInterface.c:1006 SetTxAttenData(int bits)
+// [v2.10.3.13]: broadcasts the TX step attenuator value to all ADCs.
+// P2 frame layout: bytes 57-59 carry per-ADC TX step ATT
+// (P2CodecOrionMkII.cpp lines 252-254).
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setTxStepAttenuation(int dB)
+{
+    if (dB < 0)  { dB = 0; }
+    if (dB > 31) { dB = 31; }
+    for (auto& adc : m_adc) {
+        adc.txStepAttn = dB;
+    }
 }
 
 // --- UDP Reception ---
@@ -757,11 +1060,27 @@ CodecContext P2RadioConnection::buildCodecContext() const
     CodecContext ctx;
 
     // Run/PTT state
+    // ctx.p2PttOut drives byte 4 bit 1 (0x02) of CmdHighPriority = MOX.
+    // Source: deskhpsdr/src/new_protocol.c:739-762 [@120188f]:
+    //   high_priority_buffer_to_radio[4] = P2running;    // bit 0 = run
+    //   if (xmit) { high_priority_buffer_to_radio[4] |= 0x02; }  // bit 1 = MOX
+    // m_tx[0].pttOut is the rear-panel PTT-out relay (deferred to 3M-3) — NOT
+    // the MOX source.  m_mox (3M-1a E.7) is the correct source for byte 4 bit 1.
     ctx.p2Running  = m_running;
-    ctx.p2PttOut   = m_tx[0].pttOut;
+    ctx.p2PttOut   = m_mox ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
     ctx.p2Cwx      = m_tx[0].cwx;
     ctx.p2Dot      = m_tx[0].dot;
     ctx.p2Dash     = m_tx[0].dash;
+    // 3M-1a (2026-04-27): mox + trxRelay drive the Alex bits 27 (_TR_Relay)
+    // and 18 (_trx_status) in the codec's buildAlex0/buildAlex1.  Without
+    // these the radio's antenna stays connected to the RX path during MOX
+    // and no carrier reaches the SO-239.
+    // Source: Thetis network.h:290,300,339,349 [v2.10.3.13];
+    //         deskhpsdr/src/alex.h:91-96 + new_protocol.c:996-1004 [@120188f].
+    // Note: P1 already wires these (P1RadioConnection.cpp:1268-1275); P2
+    // had a gap that this commit closes.
+    ctx.mox        = m_mox;
+    ctx.trxRelay   = m_trxRelay;
 
     // ADC / DAC counts
     ctx.p2NumAdc   = m_numAdc;
@@ -796,7 +1115,33 @@ CodecContext P2RadioConnection::buildCodecContext() const
 
     // TX frequency + drive + PA + sampling rate + phase shift
     ctx.txFreqHz         = static_cast<quint64>(m_tx[0].frequency);
-    ctx.p2DriveLevel     = m_tx[0].driveLevel;
+
+    // Out-of-band TX drive level gate.
+    // From deskhpsdr/src/new_protocol.c:864-876 [@120188f]:
+    //   int power = 0;
+    //   if ((txfreq >= txband->frequencyMin && txfreq <= txband->frequencyMax)
+    //       || tx_out_of_band_allowed) {
+    //     power = transmitter->drive_level;
+    //   }
+    //   high_priority_buffer_to_radio[345] = power & 0xFF;
+    //
+    // NereusSDR uses bandFromFrequency() as a fast band-range check.
+    // GEN and WWV map to out-of-ham-band TX frequencies.  BandPlanGuard is
+    // a predicate — it does not zero driveLevel upstream — so the gate is
+    // applied here at compose time, matching deskhpsdr behaviour.
+    // tx_out_of_band_allowed is not yet wired in NereusSDR; when it is,
+    // this gate should pass through driveLevel unconditionally.
+    //
+    // XVTR note: bandFromFrequency() never returns Band::XVTR — it falls
+    // through to Band::GEN for any unmapped frequency.  Transverter operation
+    // works because the IF frequency (radio-side) is in a ham band; the LO
+    // offset is applied by the transverter hardware.  If a future task
+    // explicitly handles XVTR with a known LO offset, revisit this gate.
+    {
+        const Band txBand = bandFromFrequency(static_cast<double>(m_tx[0].frequency));
+        const bool txInBand = (txBand != Band::GEN && txBand != Band::WWV);
+        ctx.p2DriveLevel = txInBand ? m_tx[0].driveLevel : 0;
+    }
     ctx.p2TxPa           = m_tx[0].pa;
     ctx.p2TxSamplingRate = m_tx[0].samplingRate;
     ctx.p2TxPhaseShift   = m_tx[0].phaseShift;
@@ -858,7 +1203,7 @@ CodecContext P2RadioConnection::buildCodecContext() const
     if (m_ocMatrix) {
         const quint64 rx0Hz = static_cast<quint64>(m_rx[0].frequency);
         const Band currentBand = bandFromFrequency(static_cast<double>(rx0Hz));
-        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_tx[0].pttOut != 0);
+        ctx.ocByte = m_ocMatrix->maskFor(currentBand, m_mox);  // 3M-1a E.7: was m_tx[0].pttOut != 0
     } else {
         ctx.ocByte = 0;
     }
@@ -991,9 +1336,15 @@ void P2RadioConnection::composeCmdGeneralLegacy(char buf[60]) const
 // Porting from Thetis CmdHighPriority() network.c:913-1063
 void P2RadioConnection::composeCmdHighPriorityLegacy(char buf[kBufLen]) const
 {
-    // From Thetis network.c:924-925
-    // packetbuf[4] = (prn->tx[0].ptt_out << 1 | prn->run) & 0xff;
-    buf[4] = (m_tx[0].pttOut << 1 | (m_running ? 1 : 0)) & 0xff;
+    // From deskhpsdr/src/new_protocol.c:739-762 [@120188f]:
+    //   high_priority_buffer_to_radio[4] = P2running;   // bit 0 = run
+    //   if (xmit) { high_priority_buffer_to_radio[4] |= 0x02; }  // bit 1 = MOX
+    //
+    // 3M-1a E.7: prior code used m_tx[0].pttOut (rear-panel PTT-out relay) for
+    // bit 1, which is wrong — pttOut is a TX-confirmation output, not the MOX
+    // initiator.  m_mox is the correct source.  m_tx[0].pttOut is retained for
+    // future 3M-3 rear-panel-PTT-out wiring but must NOT drive the MOX wire bit.
+    buf[4] = static_cast<char>((m_mox ? 0x02 : 0x00) | (m_running ? 0x01 : 0x00));
 
     // From Thetis network.c:931-933
     buf[5] = (m_tx[0].dash << 2 | m_tx[0].dot << 1 | m_tx[0].cwx) & 0x7;
@@ -1014,8 +1365,27 @@ void P2RadioConnection::composeCmdHighPriorityLegacy(char buf[kBufLen]) const
     // From Thetis network.c:1008-1011 — TX0 frequency (also phase word)
     writeBE32(buf, 329, hzToPhaseWord(m_tx[0].frequency));
 
-    // From Thetis network.c:1014
-    buf[345] = m_tx[0].driveLevel;
+    // From deskhpsdr/src/new_protocol.c:864-876 [@120188f]:
+    //   int power = 0;
+    //   if ((txfreq >= txband->frequencyMin && txfreq <= txband->frequencyMax)
+    //       || tx_out_of_band_allowed) { power = transmitter->drive_level; }
+    //   high_priority_buffer_to_radio[345] = power & 0xFF;
+    //
+    // Out-of-band TX drive level gate: zero byte 345 when TX frequency is
+    // outside a recognised ham band.  BandPlanGuard does not zero driveLevel
+    // upstream; gate applied at compose time.  tx_out_of_band_allowed not yet
+    // wired in NereusSDR.
+    //
+    // XVTR note: bandFromFrequency() never returns Band::XVTR — it falls
+    // through to Band::GEN for any unmapped frequency.  Transverter operation
+    // works because the IF frequency (radio-side) is in a ham band; the LO
+    // offset is applied by the transverter hardware.  If a future task
+    // explicitly handles XVTR with a known LO offset, revisit this gate.
+    {
+        const Band txBand = bandFromFrequency(static_cast<double>(m_tx[0].frequency));
+        const bool txInBand = (txBand != Band::GEN && txBand != Band::WWV);
+        buf[345] = static_cast<char>(txInBand ? m_tx[0].driveLevel : 0);
+    }
 
     // From Thetis network.c:1037-1038 — Mercury Attenuator
     buf[1403] = m_rx[1].preamp << 1 | m_rx[0].preamp;

@@ -191,14 +191,18 @@ void P1CodecStandard::bank0(const CodecContext& ctx, quint8 out[5]) const
                   | (ctx.diversity ? 0x80 : 0));
 }
 
-// Bank 10 — TX drive, mic, Alex HPF/LPF, PA enable
+// Bank 10 — TX drive, mic, Alex HPF/LPF, T/R relay
 // Source: networkproto1.c:579-590 [@501e3f5]
+// T/R relay bit (C3 bit 7) is INVERTED: 0 = relay engaged, 1 = relay disabled.
+// Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f]
+//   if (txband->disablePA || !pa_enabled)
+//       output_buffer[C3] |= 0x80; // disable Alex T/R relay
 void P1CodecStandard::bank10(const CodecContext& ctx, quint8 out[5]) const
 {
     out[0] = (ctx.mox ? 0x01 : 0x00) | 0x12;
     out[1] = quint8(ctx.txDrive & 0xFF);
     out[2] = 0x40;  // line_in=0, mic_boost=0 defaults; bit 6 set per upstream
-    out[3] = quint8(ctx.alexHpfBits | (ctx.paEnabled ? 0x80 : 0));
+    out[3] = quint8(ctx.alexHpfBits | (ctx.trxRelay ? 0x00 : 0x80));  // T/R relay engaged (INVERTED: 1 = disabled)
     out[4] = quint8(ctx.alexLpfBits);
 }
 

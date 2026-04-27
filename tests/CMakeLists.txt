@@ -216,6 +216,9 @@ nereus_add_test(tst_slice_model_vax)
 
 nereus_add_test(tst_transmit_model_tx_owner)
 
+# ── Phase 3M-1a G.3: TransmitModel tunePowerByBand[14] per-MAC persistence ──
+nereus_add_test(tst_transmit_model_tune_power)
+
 # ── Phase 3O VAX schema migration ─────────────────────────────────────────
 nereus_add_test(tst_app_settings_vax_migration)
 
@@ -662,12 +665,130 @@ nereus_add_test(tst_swr_protection_controller)
 # Ports Thetis console.cs:25801-25839 [v2.10.3.13] (PollTXInhibit loop).
 nereus_add_test(tst_tx_inhibit_monitor)
 
-# ── Phase 3M-0 Task 5: setWatchdogEnabled(bool) stub on RadioConnection ──────
-# 8 tests assert boolean state-tracking only — NO wire-format assertions.
-# Bit position is unknown (inside Thetis closed-source ChannelMaster.dll);
-# wire emit deferred to 3M-1a. API mirrors NetworkIOImports.cs:197-198
-# [v2.10.3.13] (DllImport SetWatchdogTimer entry point).
+# ── Phase 3M-0 Task 5 (updated 3M-1a E.5): setWatchdogEnabled(bool) ──────────
+# 8 tests assert boolean state-tracking on RadioConnection (P1 + P2).
+# Default changed from false to true in 3M-1a E.5 (see RadioConnection.h).
+# Wire-format assertions (RUNSTOP pkt[3] bit 7) are in tst_p1_watchdog_wire.
+# API mirrors NetworkIOImports.cs:197-198 [v2.10.3.13] (DllImport SetWatchdogTimer).
+# HL2 cite: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400.
 nereus_add_test(tst_radio_connection_watchdog)
+
+# ── Phase 3M-1a Task E.1: TX virtual interface on RadioConnection ──────────
+# 16 tests assert:
+#   - sendTxIq() is callable on P1 + P2 without crash (stub bodies; wire
+#     format filled by Tasks E.2 / E.6 — no byte assertions here).
+#   - setTrxRelay() stores state in base-class m_trxRelay, readable via
+#     isTrxRelayEngaged(); round-trip and idempotency covered.
+#   - setMox / setWatchdogEnabled / setTxDrive unchanged (regression guards).
+# Cite: 3M-1a plan Task E.1; Master design §5.1.4.
+nereus_add_test(tst_radio_connection_tx_iface)
+
+# ── Phase 3M-1a Task E.2: P1 sendTxIq wire-byte snapshot ─────────────────
+# 9 tests verify the EP2 TX I/Q zone byte layout for P1RadioConnection:
+#   - Unit pulse (I=1.0 → 0x7FFF), subframe 1 zone offset, partial fill,
+#     multi-frame sequence increment, sign/clamp, over-range clamp,
+#     underrun silence, mic bytes zero (NullMicSource), zone-0 last sample.
+# Porting from deskhpsdr/src/old_protocol.c:2421-2458, transmitter.c:1541
+# [@120188f].
+nereus_add_test(tst_p1_tx_iq_wire)
+target_compile_definitions(tst_p1_tx_iq_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── 3M-1a Task E.3: P1 MOX wire-byte emission ────────────────────────────────
+# 13 tests covering:
+#   1. Default state: C0 bit 0 clear before any setMox call.
+#   2. setMox(true) → C0 bit 0 = 1 (bank-0 compose path).
+#   3. setMox(false) → C0 bit 0 = 0.
+#   4. Bank-0 address bits (7..1) remain 0 after setMox(true).
+#   5. setMox() sets m_forceBank0Next so the next frame sends bank-0 ASAP.
+#   6. Repeated setMox with same value still sets the flush flag (Codex P2).
+#   7. Idempotent setMox(true) twice doesn't crash.
+#   8. Round-trip true→false produces correct bytes.
+#   9. Sub-frame 0 byte 11 (C0) carries the MOX bit.
+#   10. Sub-frame 1 bank-1 C0 is not bit-0-only (address field differs).
+#   11. HL2 firmware cross-check: bit 0 of eth_data[0] = PTT (dsopenhpsdr1.v:297).
+#   12-13. Static composeCcBank0 helper agrees on bit position.
+# Source: deskhpsdr/src/old_protocol.c:3595-3599 [@120188f].
+nereus_add_test(tst_p1_mox_wire)
+target_compile_definitions(tst_p1_mox_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task E.4: P1 T/R relay wire-byte snapshot ────────────────────
+# 11 tests pin the Alex T/R relay bit (C3 bit 7 of bank 10, C0=0x12):
+#   1. Default state: relay disengaged → bit 7 = 1.
+#   2. setTrxRelay(true) → bit 7 = 0 (relay engaged, normal TX).
+#   3. setTrxRelay(false) → bit 7 = 1 (relay disengaged, PA bypass).
+#   4. Bank 10 C0 address stays 0x12 regardless of relay state.
+#   5. setTrxRelay() sets m_forceBank10Next (Codex P2 flush pattern).
+#   6. Repeated same-value call still sets the flush flag.
+#   7. setTrxRelay(true) twice doesn't crash.
+#   8. Round-trip: true → false → true produces correct bit values.
+#   9. Alex HPF bits (C3 bits 6..0) are preserved across relay state changes.
+#  10. HL2 firmware cross-check: bank 10 C0 maps to cmd_addr 6'h09 (informational).
+#  11. Flush flag is set even when state doesn't change (false→false no-op).
+# Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f].
+# Latent bug fixed: prior code wrote (m_paEnabled ? 0x80 : 0) — INVERTED.
+nereus_add_test(tst_p1_trx_relay_wire)
+target_compile_definitions(tst_p1_trx_relay_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task E.5: P1 RUNSTOP watchdog wire-byte snapshot ─────────────
+# 12 tests assert that pkt[3] bit 7 of the RUNSTOP packet correctly encodes
+# m_watchdogEnabled (inverted: 0=enabled, 1=disabled) per HL2 firmware.
+#
+# Wire cite: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
+#   watchdog_disable <= eth_data[7]; // Bit 7 can be used to disable watchdog
+#
+# deskhpsdr reference: deskhpsdr/src/old_protocol.c:3811 [@120188f]
+#   buffer[3] = command; // no bit-7 OR -- watchdog always enabled implicitly
+#
+# Default changed: m_watchdogEnabled{false} -> {true} in RadioConnection.h
+# so the first sendMetisStart() writes bit 7 = 0 (watchdog active), matching
+# deskhpsdr implicit behavior.
+nereus_add_test(tst_p1_watchdog_wire)
+target_compile_definitions(tst_p1_watchdog_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task E.6: P2 sendTxIq wire-byte snapshot ─────────────────────
+# 14 tests verify the 1444-byte UDP TX I/Q frame layout for P2RadioConnection:
+#   1. Frame size = 1444 bytes (4-byte seq + 1440-byte payload).
+#   2. Payload = 240×6 = 1440 bytes.
+#   3. Sequence number starts at 0 and increments per frame.
+#   4. Positive full-scale I (+1.0) → bytes 0x7F 0xFF 0xFF.
+#   5. Negative full-scale Q (-1.0) → bytes 0x80 0x00 0x01.
+#   6. Zero sample → all payload bytes zero.
+#   7. Over-range positive (+2.0) clips to 0x7FFFFF.
+#   8. Over-range negative (-2.0) clips to 0x800001.
+#   9. Underrun (empty ring) → silence (all payload zeros).
+#  10. Partial fill (60 of 240 samples) → remaining slots zero-padded.
+#  11. Ring saturation: excess beyond capacity dropped, count ≤ capacity.
+#  12. Sequence number does not reset across multiple calls.
+#  13. Last sample (index 239) at correct offset (byte 1438).
+#  14. No HL2 CWX LSB-clear in P2 — LSB=1 preserved.
+# Porting from deskhpsdr/src/new_protocol.c:2795-2837 [@120188f].
+nereus_add_test(tst_p2_tx_iq_wire)
+target_compile_definitions(tst_p2_tx_iq_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task E.7: P2 MOX wire byte (byte 4 bit 1 = 0x02) ─────────────
+# 10 tests verify:
+#   1-5. Legacy path (no codec): default=0, setMox(true)→1, setMox(false)→0,
+#        round-trip, run-bit unaffected, bits-2-7 zero.
+#   6-8. Codec path (setBoardForTest): OrionMKII + Saturn both land MOX at bit 1.
+#   9.   Idempotency.
+#  10.   CW byte (byte 5) unaffected.
+# Fixes latent bug: prior code wrote m_tx[0].pttOut to byte 4 bit 1;
+# setMox() now writes m_mox (the correct source).
+# Source: deskhpsdr/src/new_protocol.c:739-762 [@120188f].
+nereus_add_test(tst_p2_mox_wire)
+target_compile_definitions(tst_p2_mox_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task E.7: P2 TX drive level wire (byte 345) ──────────────────
+# 10 tests verify:
+#   1.   Default state: byte 345 = 0.
+#   2-5. setTxDrive(50/255/300/-10): value/clamp-high/clamp-low.
+#   6-7. Codec path (OrionMKII + Saturn): matches legacy.
+#   8-9. Out-of-band gate: in-band → drive passes; GEN-band → byte 345 = 0.
+#  10.   Round-trip: two successive setTxDrive calls.
+# Out-of-band gate ported from deskhpsdr/src/new_protocol.c:864-876 [@120188f].
+# BandPlanGuard does not zero driveLevel upstream; gate is at compose time.
+nereus_add_test(tst_p2_drive_level_wire)
+target_compile_definitions(tst_p2_drive_level_wire PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-0 Task 6: RadioModel::paTripped() live state + Ganymede handler ─
 # 5 tests cover initial state (clear), trip latch (non-zero tripState → true),
@@ -690,6 +811,36 @@ nereus_add_test(tst_pa_scaling)
 # No pixel-diff — visual verification deferred to 3M-1a.
 # Mirrors Thetis display.cs:4183-4201 [v2.10.3.13].
 nereus_add_test(tst_spectrum_widget_highswr_overlay)
+
+# ── Phase 3M-1a H.1: SpectrumWidget MOX overlay state ────────────────────────
+# Verifies setMoxOverlay(bool) stores state, setTxAttenuatorOffsetDb stores
+# value, setTxFilterVisible stores state.  Idempotency checked for all three.
+# No pixel-diff — visual: red border appears on TX.
+# Derives from Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter.
+nereus_add_test(tst_spectrum_widget_mox_overlay)
+
+# ── Phase 3M-1a H.2: MeterPoller TX bindings on MOX engage ───────────────────
+# Verifies setInTx(bool) switches poll set, idempotency, null guards in
+# pollTxMeters() and poll().  No live WDSP reads — headless state tests only.
+# Derives from Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
+nereus_add_test(tst_meter_poller_tx_bindings)
+
+# ── Phase 3M-1a H.3: TxApplet wiring model-layer contracts ───────────────────
+# Verifies TransmitModel::setPower/tunePowerForBand round-trips, powerChanged
+# and tunePowerByBandChanged signals, MoxController default states,
+# moxStateChanged end-of-walk firing, manualMoxChanged on setTune().
+# Headless (QCoreApplication only) — TxApplet widget not constructed here
+# since QWidget requires a display server.
+# Derives from Thetis console.cs:4822 + 12094 + 29978-30157 [v2.10.3.13].
+nereus_add_test(tst_tx_applet_tune_wiring)
+
+# ── Phase 3M-1a H.4: PowerPaPage wiring — Max Power, per-band Tune Power, ATT-on-TX ──
+# Verifies Max Power slider ↔ TransmitModel::power(), per-band tune-power spinboxes
+# ↔ TransmitModel::tunePowerForBand(), chkATTOnTX and chkForceATTwhenPSAoff widget
+# existence + null-controller guards.
+# Derives from Thetis console.cs:4822 + 12094 [v2.10.3.13] + setup.designer.cs:5926-5939
+# + setup.designer.cs:5660-5671 [v2.10.3.13].
+nereus_add_test(tst_transmit_setup_power_pa_page)
 
 # ── Phase 3M-0 Task 9: SWR Protection group box on Setup → Transmit ──────────
 # Verifies grpSWRProtectionControl has 5 controls with correct objectNames,
@@ -717,6 +868,15 @@ nereus_add_test(tst_transmit_setup_block_tx)
 # label, chkGeneralRXOnly hidden by default, chkNetworkWDT default ON.
 nereus_add_test(tst_general_setup_hardware_config)
 
+# ── Phase 3M-1a G.2: Receive Only checkbox visibility wired from caps.isRxOnlySku ──
+# Verifies setReceiveOnlyVisible(bool) works correctly and that the constructor
+# reads initial caps (hidden for standard boards, visible for RX-only SKUs like
+# HermesLiteRxOnly).  Cite: Thetis setup.designer.cs:8535-8544 [v2.10.3.13]
+# (Visible=false default); BoardCapabilities::isRxOnlySku (NereusSDR-original).
+# NEREUS_BUILD_TESTS required for RadioModel::setBoardForTest.
+nereus_add_test(tst_general_options_page_rx_only)
+target_compile_definitions(tst_general_options_page_rx_only PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 13: Options group box on Setup → General ─────────────────
 # Verifies grpGeneralOptions has chkPreventTXonDifferentBandToRX per
 # Thetis setup.designer.cs:9050-9059 [v2.10.3.13]. Tooltip NereusSDR-original
@@ -739,4 +899,231 @@ nereus_add_test(tst_mainwindow_status_bar_safety)
 # AlexAnt[23]RxOnly + DisableHfPa (3), Region/Extended/RxOnly/NetworkWDT (4),
 # PreventTxOnDifferentBandToRx (1). Uses QTemporaryDir for full isolation.
 nereus_add_test(tst_phase3m0_persistence_audit)
+
+# ── Phase 3M-1a Task B.1: PttMode enum (Thetis PTTMode port) ─────────────────
+# Verifies all 9 values (None/Manual/Mic/Cw/X2/Cat/Vox/Space/Tci) have
+# distinct non-empty labels, integer assignments match Thetis
+# enums.cs:346-359 [v2.10.3.13] (First=-1..Last=9), and pttModeFromString
+# round-trips both Thetis-source names and user-visible labels case-insensitively.
+nereus_add_test(tst_ptt_mode)
+
+# ── Phase 3M-1a Task B.2: MoxController skeleton ──────────────────────────────
+# Verifies: default state (isMox=false, state=Rx, pttMode=None);
+# setMox(true) emits moxStateChanged(true) exactly once, state→Tx;
+# setMox(false) emits moxStateChanged(false) exactly once, state→Rx;
+# idempotent guard: repeated setMox(true) emits only on first call;
+# Codex P2 ordering lock: runMoxSafetyEffects fires on EVERY setMox call
+#   (including idempotent ones) and fires BEFORE m_mox is committed;
+# setPttMode idempotent guard + pttModeChanged signal;
+# all 7 MoxState enumerators exist and are distinct;
+# kXxxMs constants have correct Thetis-cited defaults.
+# Updated in B.3: setTimerIntervals(0,...) makes walk synchronous for
+# signal-cadence tests; Codex P2 tests unchanged.
+nereus_add_test(tst_mox_controller_basic)
+
+# ── Phase 3M-1a Task B.3: MoxController 6 QTimer chains ──────────────────────
+# Verifies: default kXxxMs constants match Thetis [v2.10.3.13];
+# RX→TX walk: Rx → RxToTxRfDelay (rfDelay) → Tx;
+# TX→RX walk: Tx → TxToRxInFlight (keyUpDelay) → TxToRxFlush (pttOutDelay) → Rx;
+# moxStateChanged(true) fires at end of RX→TX walk (not at setMox entry);
+# moxStateChanged(false) fires at end of TX→RX walk;
+# stateChanged signals fire in expected order;
+# 0ms timer intervals drive full walk via processEvents() alone;
+# breakInDelayTimer never started in 3M-1a;
+# spaceDelayTimer never started when kSpaceDelayMs == 0;
+# rapid toggle (setMox false during RX→TX walk) cancels in-flight timers.
+nereus_add_test(tst_mox_controller_timers)
+
+# ── Phase 3M-1a Task B.4: MoxController 6 phase signals (Codex P1) ───────────
+# Verifies: each phase signal fires exactly once per real RX→TX/TX→RX walk;
+# Order (RX→TX): txAboutToBegin → hardwareFlipped(true) → txReady → moxStateChanged(true);
+# Order (TX→RX): txAboutToEnd → hardwareFlipped(false) → txaFlushed → rxReady → moxStateChanged(false);
+# hardwareFlipped fires synchronously in setMox() (before rfDelay / keyUpDelay timers);
+# Idempotent guard: repeated setMox(true/false) does NOT re-fire phase signals;
+# Rapid toggle: cancelled rfDelay walk emits txAboutToBegin + hardwareFlipped(true)
+#   but NOT txReady (slot never ran — cancelled timer);
+# Codex P1: txAboutToBegin fires once per transition even when stateChanged fires 2×;
+# Phase signals derived from chkMOX_CheckedChanged2 (console.cs:29311-29678 [v2.10.3.13]).
+nereus_add_test(tst_mox_controller_phase_signals)
+
+# ── Phase 3M-1a Task B.5: MoxController setTune(bool) slot ───────────────────
+# Verifies: setTune(true) engages MOX, sets isManualMox=true, pttMode=Manual,
+#   emits manualMoxChanged(true) and pttModeChanged(Manual) each exactly once;
+# setTune(false) releases MOX, clears isManualMox (but NOT pttMode — F.1 resets it),
+#   emits manualMoxChanged(false) exactly once;
+# NereusSDR ordering: flags set BEFORE setMox(true) so phase-signal subscribers
+#   see m_manualMox=true at txAboutToBegin time; flag cleared AFTER setMox(false)
+#   so m_manualMox stays true during TX→RX phase signals (txAboutToEnd etc.);
+# Idempotent guard: setTune(true) twice → manualMoxChanged fires only once;
+# TUN→RAW-MOX combinations: direct setMox(true) then setTune(true) flips manualMox;
+#   setTune(true) + setMox(false) leaves manualMox true; setTune(false) then clears;
+# Codex P2 invariant: runMoxSafetyEffects fires on every setTune call (via setMox);
+# Ports chkTUN_CheckedChanged (console.cs:29978-30157 [v2.10.3.13]) flag block.
+nereus_add_test(tst_mox_controller_tune)
+
+# ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
+# Verifies:
+#   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:
+#     kTxChannelType=1, kTxBlockOnOutput=1, kTxTSlewUpSecs/DownSecs=0.010,
+#     kTxDspSampleRate=96000, kTxDspBufferSize=4096;
+#   createTxChannel returns nullptr before WDSP initialized (Approach A);
+#   createTxChannel returns nullptr after WDSP open (C++ wrapper null until C.2);
+#   destroyTxChannel is idempotent (double-call, never-created channel, post-destroy);
+#   txChannel(id) lookup returns nullptr when not created and after destroy;
+#   RX channel 0 and TX channel 1 co-exist without aliasing.
+#   Channel ID: WDSP.id(1, 0) = CMsubrcvr * CMrcvr = 1 with single-RX layout.
+nereus_add_test(tst_wdsp_engine_tx_channel)
+
+# ── Phase 3M-1a Task C.2: TxChannel 31-stage TXA pipeline skeleton ────────────
+# Verifies:
+#   Stage::kStageCount == 31 (authoritative from wdsp/TXA.c:31-479 [v2.10.3.13]);
+#   createTxChannel returns a non-null TxChannel* (C++ wrapper now constructed);
+#   txChannel(1)->channelId() == 1;
+#   Default Run states match create_txa() first-argument for each of 31 stages:
+#     ON : Panel, MicMeter, EqMeter, LvlrMeter, CfcMeter, Bp0, CompMeter, Alc,
+#          AlcMeter, Sip1, Calcc, OutMeter;
+#     OFF: RsmpIn, Gen0, PhRot, AmSq, Eqp, PreEmph, Leveler, CfComp, Compressor,
+#          Bp1, OsCtrl, Bp2, AmMod, FmMod, Gen1, UsLew (no run param), Iqc, Cfir,
+#          RsmpOut;
+#   destroyTxChannel → txChannel(1) returns nullptr;
+#   RX channel 0 + TX channel 1 co-exist without aliasing.
+#   Stage count correction: pre-code review §8.1 said 25; actual source has 31
+#   (PreEmph, Leveler, LvlrMeter, CfComp, CfcMeter between EqMeter and Bp0).
+#   Tests run against stub path (no HAVE_WDSP in unit-test builds); stub returns
+#   compile-time defaults matching create_txa() run arguments.
+nereus_add_test(tst_tx_channel_pipeline)
+
+# ── Phase 3M-1a Task C.3: TxChannel::setTuneTone() PostGen (gen1) wiring ──────
+# Verifies:
+#   kMaxToneMag == 0.99999 (from Thetis console.cs:29954 [v2.10.3.13]:
+#     MAX_TONE_MAG = 0.99999f; // why not 1?  clipping? — comment preserved verbatim);
+#   kMaxToneMag < 1.0 (deliberate: avoids clipping);
+#   kMaxToneMag > 0.0 (positive magnitude);
+#   setTuneTone(true)  with default args doesn't crash (stub path, no WDSP);
+#   setTuneTone(false) with default args doesn't crash;
+#   setTuneTone(true, +600.0) — positive freq, USB/CWU/DIGU convention;
+#   setTuneTone(true, -600.0) — negative freq, LSB/CWL/DIGL convention;
+#   setTuneTone(true, +600.0, 0.5) — custom magnitude override;
+#   on→off and off→on toggle sequences don't crash;
+#   repeated calls (10 cycles) don't crash;
+#   zero freq is accepted;
+#   Sign contract: no abs() / clamp / negate inside setTuneTone (sign is caller-authoritative).
+#   Ports Thetis console.cs:29954, 30031-30040 [v2.10.3.13] and gen.c:783-813 [v2.10.3.13].
+nereus_add_test(tst_tx_channel_tune_tone)
+
+# ── Phase 3M-1a Task C.4: TxChannel::setRunning() + 3M-1a active stages ────
+# Verifies:
+#   isRunning() initial state is false (channel starts stopped);
+#   setRunning(true) doesn't crash (stub path, no WDSP);
+#   setRunning(false) doesn't crash;
+#   isRunning() returns true after setRunning(true);
+#   isRunning() returns false after setRunning(false);
+#   toggle sequences (on→off, off→on, on→off→on) don't crash;
+#   idempotent calls (setRunning(true) twice, setRunning(false) twice) are safe;
+#   isRunning() remains correct after idempotent calls;
+#   repeated toggle (10 cycles) doesn't crash;
+#   setStageRunning(Stage::Gen0/Gen1/Panel/PhRot/AmSq/Eqp/Compressor/OsCtrl/Cfir/CfComp, true/false)
+#     doesn't crash for all supported stages;
+#   setStageRunning(RsmpIn/RsmpOut/UsLew, true) is a warning + no-op (not crash);
+#   HAVE_WDSP-gated: setRunning(true) channel state ON, cfir ON;
+#   HAVE_WDSP-gated: setRunning(false) channel state OFF, cfir OFF.
+#   (HAVE_WDSP tests use QSKIP — integration harness pending; no segfault.)
+#   Ports Thetis console.cs:29595, 29607 and cmaster.cs:522-527 [v2.10.3.13].
+#   Ports Thetis wdsp/channel.c:259-294 and wdsp/cfir.c:233-238 [v2.10.3.13].
+nereus_add_test(tst_tx_channel_running)
+
+# ── Phase 3M-1a Task G.1 (production loop bench fix): TxChannel TX I/Q pump ──
+# Verifies the fexchange2 → sendTxIq production loop wired in 3M-1a Task G.1.
+# Test cases:
+#   - setConnection(nullptr) / setMicRouter(nullptr): null-safety (no crash)
+#   - setConnection(non-null) then null: detach — no crash
+#   - driveOneTxBlock with no connection: null-guard path — no crash
+#   - driveOneTxBlock with no mic router: silence-fill path — no crash
+#   - setRunning(true) + connection attached: no crash
+#   - Repeated toggle cycles (5×) with connection: no crash
+#   - Timer fires → sendTxIq reaches MockConnection (≥1 call in 30 ms)
+#   - lastN == kTxDspBufferSize (4096) — correct sample count per call
+#   - Multiple timer ticks → callCount ≥ 2
+#   - After setRunning(false) timer stops — no further calls (±1 tolerance)
+#   - Detach connection while running: null-guard in driveOneTxBlock — no crash
+#   - CountingMicSource::pullSamples() is called by driveOneTxBlock (≥1)
+#   - Null mic router still calls sendTxIq (silence path, not skipped)
+#   - setRunning(false) with no prior on: no crash
+#   - Teardown order (setConnection(nullptr) before connection destructs): safe
+nereus_add_test(tst_tx_channel_production_loop)
+
+# ── Phase 3M-1a Task D.1: TxMicRouter interface + NullMicSource stub ─────────
+# Pure unit test: header-only interface + NullMicSource concrete stub.
+# Covers typical buffer sizes (64/128/256/1024), defensive edge cases
+# (nullptr dst, zero size, negative size, single sample), full-buffer
+# zero fill verification, repeated-call consistency, and virtual dispatch
+# via TxMicRouter base pointer.
+nereus_add_test(tst_tx_mic_router)
+
+# ── Phase 3M-1a Task G.1: RadioModel ownership + wiring integration ──────────
+# Verifies:
+#   - moxController() is non-null after construction (owns MoxController on main thread)
+#   - moxController() parent is RadioModel (Qt parent → auto-cleanup)
+#   - txChannel() is null before WDSP initializes (non-owning view guarded)
+#   - hardwareFlipped → onMoxHardwareFlipped is connected (F.1 wiring confirmed)
+#   - txReady and txaFlushed lambdas guard null m_txChannel (no crash)
+#   - moxController() pointer is stable across repeated calls
+#   - RadioModel destruction with MoxController in-flight does not crash
+#   - F.2 connect signal/slot shape is valid (QSignalSpy confirm)
+# Master design §5.1.1; pre-code review §1.6 + §2.5.
+nereus_add_test(tst_radio_model_g1_wiring)
+target_compile_definitions(tst_radio_model_g1_wiring PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task F.1: RadioModel::onMoxHardwareFlipped slot ──────────────
+# Verifies the three-step fan-out in Thetis HdwMOXChanged order (§2.3):
+#   1. Alex antenna routing (applyAlexAntennaForBand → setAntennaRouting)
+#   2. MOX wire bit (m_connection->setMox)
+#   3. T/R relay (m_connection->setTrxRelay)
+# Test cases: isTx=true order, isTx=false order, each arg forwarded correctly,
+# band read from active slice, no-connection graceful no-op, hasAlex=false
+# all-steps-fire, slot connectable via QObject::connect.
+nereus_add_test(tst_radio_model_mox_hardware_flip)
+target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task F.2: StepAttenuatorController TX-path activation ─────────
+# Verifies onMoxHardwareFlipped(bool isTx) slot and its four helpers:
+#   applyTxAttenuationForBand, shouldForce31Db, saveRxPreampMode,
+#   restoreRxPreampMode.
+# Ported from Thetis console.cs:29546-29576 [v2.10.3.13] pre-code review §6.2-§6.4.
+# Test cases (12):
+#   1. ATT-on-TX disabled → pushes 0 dB (no attenuation on TX)
+#   2. ATT-on-TX enabled, PS on, USB → applies stored TX ATT
+#   3. PS off + forceFlag → force 31 dB
+#   4. CWL mode → force 31 dB
+#   5. CWU mode → force 31 dB
+#   6. USB mode + PS on → applies stored TX ATT (no force)
+#   7. isTx=false → clears TX ATT to 0 dB (TX→RX restore)
+#   8. HPSDR board, isTx=true → saves preamp, forces Minus20 (HPSDR_OFF)
+#   9. HPSDR board, isTx=false → restores saved preamp
+#  10. shouldForce31Db predicate table-driven (12 cases)
+#  11. TX ATT per-band storage round-trip (14 bands)
+#  12. No RadioConnection — graceful no-op (no crash)
+nereus_add_test(tst_step_att_tx_path)
+target_compile_definitions(tst_step_att_tx_path PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1a Task G.4: RadioModel::setTune orchestrator ───────────────────
+# Verifies all TUNE side-effects outside MoxController:
+#   1. tuneRefused emitted when not connected
+#   2. USB mode: no DSP swap, no mode-change signal
+#   3. LSB mode: no DSP swap
+#   4. CWL → swap to LSB on TUN-on
+#   5. CWU → swap to USB on TUN-on
+#   6. CWL TUN-on → TUN-off restores CWL
+#   7. CWU TUN-on → TUN-off restores CWU
+#   8. USB mode unchanged after TUN-on/off cycle
+#   9. TUN-on pushes tunePowerForBand to connection (txDriveLog)
+#  10. TUN-off restores saved power (txDriveLog.last())
+#  11. MoxController::manualMoxChanged(true) fires on TUN-on
+#  12. MoxController::manualMoxChanged(false) fires on TUN-off
+#  13. Null m_txChannel on TUN-on: no crash (null guard)
+#  14. Null m_txChannel on TUN-off: no crash (null guard)
+#  15. setTune(false) without prior TUN-on: no crash, manualMoxChanged silent
+# Cite: Thetis console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged.
+nereus_add_test(tst_radio_model_set_tune)
+target_compile_definitions(tst_radio_model_set_tune PRIVATE NEREUS_BUILD_TESTS)
 

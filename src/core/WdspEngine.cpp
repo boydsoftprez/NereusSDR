@@ -40,6 +40,7 @@ warren@wpratt.com
 
 #include "WdspEngine.h"
 #include "RxChannel.h"
+#include "TxChannel.h"
 #include "LogCategories.h"
 #include "wdsp_api.h"
 
@@ -210,13 +211,31 @@ void WdspEngine::shutdown()
 
     qCInfo(lcDsp) << "Shutting down WDSP...";
 
-    // Destroy all RX channels (collect IDs first to avoid iterator invalidation)
-    std::vector<int> channelIds;
-    for (const auto& [id, ch] : m_rxChannels) {
-        channelIds.push_back(id);
+    // TX channels destroyed BEFORE RX: the TXA pipeline (post-uslew →
+    // rsmpout → outmeter) feeds samples into shared output buffers; tearing
+    // RX down first can leave the TXA chain reading freed channel state
+    // during teardown. WDSP teardown ordering: TX → RX always.
+    //
+    // Destroy all TX channels (collect IDs first to avoid iterator invalidation)
+    {
+        std::vector<int> txIds;
+        for (const auto& [id, ch] : m_txChannels) {
+            txIds.push_back(id);
+        }
+        for (int id : txIds) {
+            destroyTxChannel(id);
+        }
     }
-    for (int id : channelIds) {
-        destroyRxChannel(id);
+
+    // Destroy all RX channels (collect IDs first to avoid iterator invalidation)
+    {
+        std::vector<int> channelIds;
+        for (const auto& [id, ch] : m_rxChannels) {
+            channelIds.push_back(id);
+        }
+        for (int id : channelIds) {
+            destroyRxChannel(id);
+        }
     }
 
 #ifdef HAVE_WDSP
@@ -342,6 +361,139 @@ RxChannel* WdspEngine::rxChannel(int channelId) const
 {
     auto it = m_rxChannels.find(channelId);
     if (it != m_rxChannels.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// TX Channel management
+// ---------------------------------------------------------------------------
+
+TxChannel* WdspEngine::createTxChannel(int channelId,
+                                       int inputBufferSize,
+                                       int dspBufferSize,
+                                       int inputSampleRate,
+                                       int dspSampleRate,
+                                       int outputSampleRate)
+{
+    if (!m_initialized) {
+        qCWarning(lcDsp) << "Cannot create TX channel: WDSP not initialized";
+        return nullptr;
+    }
+
+    if (m_txChannels.count(channelId)) {
+        qCWarning(lcDsp) << "TX channel" << channelId << "already exists";
+        return m_txChannels.at(channelId).get();   // already exists — return existing wrapper
+    }
+
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.c:177-190 (create_xmtr OpenChannel call) [v2.10.3.13]
+    // Differences vs. RX: type=1 (TX), bfo=1 (block-on-output), dsp_rate=96000,
+    // tdelayup=0, tslewup=0.010, tdelaydown=0, tslewdown=0.010.
+    OpenChannel(
+        channelId,
+        inputBufferSize,        // in_size — from cmaster.c:179 pcm->xcm_insize[in_id]
+        dspBufferSize,          // dsp_size — from cmaster.c:180 hardcoded 4096
+        inputSampleRate,        // input sample rate — from cmaster.c:181 pcm->xcm_inrate[in_id]
+        dspSampleRate,          // dsp sample rate — from cmaster.c:182 96000
+        outputSampleRate,       // output sample rate — from cmaster.c:183 pcm->xmtr[i].ch_outrate
+        kTxChannelType,         // type=1 (TX) — from cmaster.c:184 [v2.10.3.13]
+        0,                      // initial state: off — from cmaster.c:185
+        0.000,                  // tdelayup  — from cmaster.c:186
+        kTxTSlewUpSecs,         // tslewup 0.010 s — from cmaster.c:187 [v2.10.3.13]
+        0.000,                  // tdelaydown — from cmaster.c:188
+        kTxTSlewDownSecs,       // tslewdown 0.010 s — from cmaster.c:189 [v2.10.3.13]
+        kTxBlockOnOutput);      // bfo=1 (block on output) — from cmaster.c:190 [v2.10.3.13]
+
+    qCInfo(lcDsp) << "Opened TX WDSP channel" << channelId
+                  << "bufSize=" << inputBufferSize
+                  << "inRate=" << inputSampleRate
+                  << "dspRate=" << dspSampleRate;
+
+    // 3M-1a bench fix: TX channel default configuration.
+    // Without this block the WDSP TX channel is in an undefined-default state
+    // and ALC's gain integrator runs unbounded on silent input — output
+    // diverges to inf within ~1 second of TUN.
+    //
+    // This is the standard set of init calls deskhpsdr issues right after
+    // OpenChannel(type=1).  Cite: deskhpsdr/src/transmitter.c:1459-1473 [@120188f]:
+    //   SetTXABandpassWindow(tx->id, 1);   // 7-term Blackman-Harris
+    //   SetTXABandpassRun(tx->id, 1);
+    //   SetTXAAMSQRun(tx->id, 0);          // disable mic noise gate
+    //   SetTXAALCAttack(tx->id, 1);        // 1 ms attack
+    //   SetTXAALCDecay(tx->id, 10);        // 10 ms decay
+    //   SetTXAALCMaxGain(tx->id, 0);       // 0 dB max — KEY: caps ALC at 1.0×
+    //   SetTXAALCSt(tx->id, 1);            // ALC on (never switch it off!)
+    //   SetTXAPreGenMode/ToneMag/ToneFreq/Run — PreGen off (silence)
+    //   SetTXAPanelRun(tx->id, 1);         // activate patch panel
+    //   SetTXAPanelSelect(tx->id, 2);      // route Mic I sample
+    //   SetTXAPostGenRun(tx->id, 0);       // PostGen off until setTuneTone
+    SetTXABandpassWindow(channelId, 1);
+    SetTXABandpassRun(channelId, 1);
+    SetTXAAMSQRun(channelId, 0);
+    SetTXAALCAttack(channelId, 1);
+    SetTXAALCDecay(channelId, 10);
+    SetTXAALCMaxGain(channelId, 0.0);
+    SetTXAALCSt(channelId, 1);
+    SetTXAPreGenMode(channelId, 0);
+    SetTXAPreGenToneMag(channelId, 0.0);
+    SetTXAPreGenToneFreq(channelId, 0.0);
+    SetTXAPreGenRun(channelId, 0);
+    SetTXAPanelRun(channelId, 1);
+    SetTXAPanelSelect(channelId, 2);
+    SetTXAPostGenRun(channelId, 0);
+    qCInfo(lcDsp) << "TX channel" << channelId
+                  << "init: ALC max-gain capped at 0 dB (per deskhpsdr [@120188f])";
+#endif
+
+    // C.2 [3M-1a]: Construct the TxChannel C++ wrapper around the WDSP TXA
+    // pipeline that OpenChannel(type=1) already built in WDSP-managed memory.
+    // The 31 TXA stages (create_txa()) are live; TxChannel provides the typed
+    // C++ facade.  unique_ptr destructor handles cleanup automatically on erase().
+    //
+    // Bench fix round 3 (Issue A): pass inputBufferSize and outputBufferSize so
+    // TxChannel sizes its fexchange2 buffers correctly.
+    //   outputBufferSize = inputBufferSize × outputSampleRate / inputSampleRate
+    // At 48 kHz in / 48 kHz out (P1/HL2): 256 × 1 = 256.
+    // At 48 kHz in / 192 kHz out (P2 Saturn): 256 × 4 = 1024.
+    //
+    // Integer multiply-then-divide is safe here: inputBufferSize (256) × outputSampleRate
+    // (192000 max) = 49,152,000 — well within int32 range.
+    // From Thetis wdsp/cmaster.c:179-183 [v2.10.3.13] — in_size / ch_outrate.
+    const int outputBufferSize = inputBufferSize * outputSampleRate / inputSampleRate;
+    auto wrapper = std::make_unique<TxChannel>(channelId, inputBufferSize, outputBufferSize, this);
+    TxChannel* raw = wrapper.get();
+    m_txChannels.emplace(channelId, std::move(wrapper));
+
+    qCInfo(lcDsp) << "Created TX channel" << channelId;
+    return raw;
+}
+
+void WdspEngine::destroyTxChannel(int channelId)
+{
+    auto it = m_txChannels.find(channelId);
+    if (it == m_txChannels.end()) {
+        return;   // idempotent — not found, nothing to do
+    }
+
+#ifdef HAVE_WDSP
+    // Deactivate with drain before closing.
+    // dmode=1: drain-mode close (mirrors destroyRxChannel pattern).
+    SetChannelState(channelId, 0, 1);
+
+    // Close the WDSP TX channel.
+    CloseChannel(channelId);
+#endif
+
+    m_txChannels.erase(it);
+    qCInfo(lcDsp) << "Destroyed TX channel" << channelId;
+}
+
+TxChannel* WdspEngine::txChannel(int channelId) const
+{
+    auto it = m_txChannels.find(channelId);
+    if (it != m_txChannels.end()) {
         return it->second.get();
     }
     return nullptr;

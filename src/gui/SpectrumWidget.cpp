@@ -1284,6 +1284,11 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     // other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
     paintHighSwrOverlay(p);
 
+    // MOX / TX overlay — 3 px red border drawn when transmitting.
+    // From Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter.
+    // Phase 3M-1a H.1.
+    paintMoxOverlay(p);
+
     // Reposition VFO flag widgets every frame — ensures flag tracks marker
     // exactly with no frame delay. From AetherSDR: updatePosition called
     // from within the paint/render cycle.
@@ -2528,6 +2533,61 @@ void SpectrumWidget::setHighSwrOverlay(bool active, bool foldback) noexcept
     markOverlayDirty();
 }
 
+// ---- MOX / TX overlay slots (H.1, Phase 3M-1a) ----------------------------
+//
+// Porting from Thetis display.cs:1569-1593 [v2.10.3.13] — Display.MOX setter.
+// Original C# logic:
+//   public static bool MOX {
+//     get { return _mox; }
+//     set {
+//       lock(_objDX2Lock) {
+//         if (value != _old_mox) { PurgeBuffers(); _old_mox = value; }
+//         _mox = value;
+//       }
+//     }
+//   }
+// NereusSDR translation: track state flag, markOverlayDirty() to trigger
+// the border repaint on the next paint pass.
+
+void SpectrumWidget::setMoxOverlay(bool isTx)
+{
+    if (m_moxOverlay == isTx) {
+        return;  // idempotent
+    }
+    m_moxOverlay = isTx;
+    markOverlayDirty();
+}
+
+// From Thetis display.cs:4840 [v2.10.3.13]:
+//   if (!local_mox) fOffset += rx1_preamp_offset;
+// The RX cal offset is only added in RX mode; during TX, the TX path uses
+// its own calibration. NereusSDR models this by storing the TX ATT offset
+// and applying it as an additional shift in paintEvent when m_moxOverlay.
+void SpectrumWidget::setTxAttenuatorOffsetDb(float offsetDb)
+{
+    if (m_txAttOffsetDb == offsetDb) {
+        return;
+    }
+    m_txAttOffsetDb = offsetDb;
+    if (m_moxOverlay) {
+        markOverlayDirty();  // only repaints while TX is active
+    }
+}
+
+// From Thetis display.cs:2481 [v2.10.3.13]:
+//   public static bool DrawTXFilter { ... }
+// Enables the TX passband overlay on the spectrum during TX.
+// 3G-8 already wired setShowTxFilterOnRxWaterfall for the waterfall side;
+// this slot controls the spectrum-panel TX filter shadow.
+void SpectrumWidget::setTxFilterVisible(bool on)
+{
+    if (m_txFilterVisible == on) {
+        return;
+    }
+    m_txFilterVisible = on;
+    markOverlayDirty();
+}
+
 // Paint "HIGH SWR" (and optionally "POWER FOLD BACK") text centred on the
 // widget, plus a 6 px red border inset by ~3 px.
 // From Thetis display.cs:4183-4201 [v2.10.3.13]
@@ -2560,6 +2620,34 @@ void SpectrumWidget::paintHighSwrOverlay(QPainter& p)
     p.setPen(kRed);
     p.drawText(rect(), Qt::AlignCenter, text);
 
+    p.restore();
+}
+
+// Paint a 3 px red border around the full spectrum widget when MOX is active.
+//
+// Porting from Thetis display.cs:1569-1593 [v2.10.3.13] — Display.MOX setter.
+// Original C# sets _mox=true and (in the drawing path) switches grid pens from
+// the RX colours to the TX red variants (tx_vgrid_pen [display.cs:2086],
+// tx_band_edge_pen [display.cs:1955], tx_grid_zero_pen [display.cs:2053]).
+// tx_band_edge_color = Color.Red  [display.cs:1955 v2.10.3.13]
+//
+// NereusSDR 3M-1a draws a border tint only.  Full grid re-colouring
+// (switching grid pens to TX reds) is deferred to Phase 3M-3.
+// Phase 3M-1a H.1.
+void SpectrumWidget::paintMoxOverlay(QPainter& p)
+{
+    if (!m_moxOverlay) {
+        return;
+    }
+
+    // 3 px red border inset 2 px from widget edges.
+    // Derives from tx_band_edge_color = Color.Red [display.cs:1955 v2.10.3.13]
+    // and the 6 px HIGH SWR border (display.cs:4200); TX overlay uses 3 px
+    // (half-width) so it is visually distinct from the SWR alert.
+    p.save();
+    p.setPen(QPen(QColor(255, 0, 0, 200), 3));  // semi-transparent red
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(rect().adjusted(2, 2, -2, -2));
     p.restore();
 }
 

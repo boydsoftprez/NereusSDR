@@ -102,6 +102,64 @@ public slots:
     virtual void setMox(bool enabled) = 0;
     virtual void setAntennaRouting(AntennaRouting routing) = 0;
 
+    // Push TX-side step attenuator value to hardware.
+    //
+    // From Thetis ChannelMaster/netInterface.c:1006 [v2.10.3.13]
+    // SetTxAttenData(int bits): broadcasts bits to all ADC tx_step_attn
+    // fields and triggers CmdTx() to emit the updated frame.
+    // Called by StepAttenuatorController::onMoxHardwareFlipped (F.2).
+    //
+    // Default no-op: subclasses that don't yet implement TX ATT (e.g. a
+    // stub test connection) skip silently. P1/P2 override this method.
+    virtual void setTxStepAttenuation(int /*dB*/) {}
+
+    // ── TX path (3M-1a) ────────────────────────────────────────────────
+
+    /// Push TX I/Q samples to the radio.
+    ///
+    /// `iq` points to interleaved I/Q float32 samples; `n` is the
+    /// number of complex samples (so the buffer has 2*n floats).
+    /// Implementations:
+    ///   - P1: write to EP2 zones in the 1032-byte Metis frame
+    ///     (interleaved with status bytes per the Metis spec).
+    ///   - P2: write to UDP port 1029 with the per-frame layout
+    ///     specified by OpenHPSDR Protocol 2.
+    ///
+    /// Audio-thread context: callers run this in the WDSP audio thread.
+    /// The implementation must not block; it queues to the connection
+    /// thread for actual UDP send.
+    ///
+    /// Cite: pre-code review §7.1 (P1 EP2 TX I/Q layout),
+    ///        §7.6 (P2 port 1029 TX I/Q layout).
+    virtual void sendTxIq(const float* iq, int n) = 0;
+
+    /// Set the Alex T/R relay wire bit.
+    ///
+    /// Distinct from `setMox(bool)`:
+    ///   - `setMox(true)` asserts the MOX bit on the next outbound
+    ///     frame (P1 byte 3 bit 0 / P2 high-pri byte 4 bit 1).
+    ///   - `setTrxRelay(true)` engages the Alex T/R relay path so
+    ///     the PA can drive the antenna. P1 wire bit is C3 byte 6
+    ///     bit 7 with INVERTED semantic — `1` = disabled (bypass),
+    ///     `0` = enabled (normal TX). When `enabled` is true the
+    ///     implementation writes `0` to bit 7 (engaged); when false
+    ///     (PA disabled), writes `1` (bypass).
+    ///   - P2: routed via Saturn register C0=0x24 indirect writes;
+    ///     stub for 3M-1a (deferred to 3M-3).
+    ///
+    /// `enabled` follows caller-friendly convention (true = TX path
+    /// engaged); the implementation handles the bit inversion on the
+    /// wire. State is stored in base-class `m_trxRelay`.
+    ///
+    /// 3M-1a wires this from `MoxController::hardwareFlipped` via
+    /// `RadioModel::onMoxHardwareFlipped` (Task F.1).
+    ///
+    /// Cite: pre-code review §7.2 + deskhpsdr/src/old_protocol.c:2909-2910
+    ///       (T/R relay bit C3[6] bit 7, inverted sense).
+    virtual void setTrxRelay(bool enabled) = 0;
+
+    bool isTrxRelayEngaged() const noexcept { return m_trxRelay; }
+
     // DEPRECATED — call setAntennaRouting directly. Kept for one release
     // cycle as a rollback hatch per docs/architecture/antenna-routing-design.md §7.7.
     // Removed in the release following 3P-I-b.
@@ -114,15 +172,37 @@ public slots:
     // --- ADC Mapping ---
     virtual int getAdcForDdc(int /*ddc*/) const { return 0; }
 
+    // --- TX output sample rate (bench fix round 3 — Issue B) ---
+    //
+    // Returns the radio's negotiated TX I/Q output sample rate in Hz.
+    // This is the rate passed to OpenChannel() as outputSampleRate, and
+    // therefore the rate at which WDSP's TXA rsmpout resampler delivers
+    // samples to fexchange2's Iout/Qout buffers.
+    //
+    // P1 (HL2/Atlas/Hermes/Angelia/Orion): TX I/Q flows into EP2 zones at
+    //   the radio's sample rate.  For single-RX operation this is always
+    //   48000 Hz (single-rate mode).  P1RadioConnection returns 48000.
+    //
+    // P2 (Saturn/ANAN-G2): TX I/Q flows to UDP port 1029 at 192000 Hz.
+    //   P2RadioConnection returns 192000 — derived from m_tx[0].samplingRate
+    //   (always 192 kHz per Thetis netInterface.c:1513 [v2.10.3.13]).
+    //
+    // Default implementation returns 48000 (correct for P1 and stubs).
+    // P2RadioConnection overrides to return 192000.
+    //
+    // From Thetis wdsp/cmaster.c:183 [v2.10.3.13] — ch_outrate parameter.
+    // From Thetis netInterface.c:1513 [v2.10.3.13] — P2 tx always 192 kHz.
+    virtual int txSampleRate() const { return 48000; }
+
     // --- Watchdog ---
     // Enable / disable the radio-side network watchdog. When enabled,
     // the radio firmware drops TX if it stops seeing C&C traffic.
     // Mirrors SetWatchdogTimer(int bits) in NetworkIOImports.cs:197-198
     // [v2.10.3.13]. Boolean only — no host-side timeout parameter.
     //
-    // 3M-0 status: stub. Stores the boolean state; the actual wire
-    // bit emit is deferred to 3M-1a pending wire-format identification
-    // (the bit position lives inside Thetis's closed ChannelMaster.dll).
+    // Wire bit emission: P1 implemented in P1RadioConnection::sendMetisStart
+    // (RUNSTOP pkt[3] bit 7 per dsopenhpsdr1.v:399-400 [@7472bd1]).
+    // P2 wire bit deferred to E.8 — see tracking comment in P2RadioConnection.cpp.
     virtual void setWatchdogEnabled(bool enabled) = 0;
 
     bool isWatchdogEnabled() const noexcept { return m_watchdogEnabled; }
@@ -182,8 +262,23 @@ protected:
 
     // Shared boolean state for setWatchdogEnabled / isWatchdogEnabled.
     // Both P1 and P2 overrides read/write this field.
-    // 3M-0: state-tracking only; wire emit deferred to 3M-1a.
-    bool m_watchdogEnabled{false};
+    //
+    // Default TRUE: HL2 firmware (dsopenhpsdr1.v:399-400) interprets RUNSTOP
+    // byte bit 7 as watchdog_disable (1 = disabled, 0 = enabled). When this
+    // field is true, sendMetisStart/sendMetisStop write bit 7 = 0 (watchdog
+    // enabled), matching deskhpsdr's implicit behavior (buffer[3] = command
+    // with no bit-7 OR → bit 7 = 0 → watchdog active by default).
+    //
+    // 3M-0 used false here (bug): first sendMetisStart would have written
+    // bit 7 = 1 → watchdog disabled on connect. Fixed in 3M-1a Task E.5.
+    // From deskhpsdr/src/old_protocol.c:3811 [@120188f]:
+    //   buffer[3] = command;  // 0x01 start / 0x00 stop — bit 7 never set
+    bool m_watchdogEnabled{true};
+
+    // Shared state for setTrxRelay / isTrxRelayEngaged (3M-1a Task E.1).
+    // true = TX path engaged (bit 7 of P1 C3 bank 6 written as 0 — inverted
+    // sense). P2 stub; wire emit deferred to 3M-3.
+    bool m_trxRelay{false};
 };
 
 } // namespace NereusSDR

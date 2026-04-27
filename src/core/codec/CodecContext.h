@@ -140,8 +140,20 @@ struct CodecContext {
     // TX drive level (0-255).
     int     txDrive{0};
 
-    // PA enable (bank 10 C3 bit 7).
+    // PA enable — still used for HPF/LPF routing and meter scaling logic.
+    // NOTE: paEnabled no longer controls bank-10 C3 bit 7 on the wire;
+    // that bit is now driven by trxRelay (see below).  Retain paEnabled
+    // for any caller that needs the PA-profile flag independently.
     bool    paEnabled{false};
+
+    // Alex T/R relay engage state (bank 10 C3 bit 7, INVERTED on the wire).
+    // true  = relay engaged (normal TX path) → bit 7 = 0
+    // false = relay disabled (PA bypass / RX protect) → bit 7 = 1
+    // Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f]
+    //   if (txband->disablePA || !pa_enabled)
+    //       output_buffer[C3] |= 0x80; // disable Alex T/R relay
+    // Populated by buildCodecContext() from P1RadioConnection::m_trxRelay.
+    bool    trxRelay{false};
 
     // RX VFO frequency words (Hz, raw, no phase-word conversion on P1).
     quint64 rxFreqHz[7]{};
