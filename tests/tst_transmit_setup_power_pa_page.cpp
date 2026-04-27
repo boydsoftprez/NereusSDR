@@ -54,9 +54,15 @@ private slots:
 
     void chkAttOnTx_initFromController();
     void chkAttOnTx_togglesController();
+    // Wired-controller variants: verify actual call-through when controller present.
+    void chkAttOnTx_wiredController_initFromController();
+    void chkAttOnTx_wiredController_togglesController();
 
     void chkForceAttWhenPsOff_initFromController();
     void chkForceAttWhenPsOff_togglesController();
+    // Wired-controller variants: verify actual call-through when controller present.
+    void chkForceAttWhenPsOff_wiredController_initFromController();
+    void chkForceAttWhenPsOff_wiredController_togglesController();
 };
 
 void TestPowerPaPageH4::initTestCase()
@@ -235,6 +241,99 @@ void TestPowerPaPageH4::chkForceAttWhenPsOff_togglesController()
 
     const bool before = chk->isChecked();
     chk->setChecked(!before);   // toggle — must not crash
+}
+
+// ---------------------------------------------------------------------------
+// 11. chkATTOnTX initialises from controller when controller is wired
+// ---------------------------------------------------------------------------
+void TestPowerPaPageH4::chkAttOnTx_wiredController_initFromController()
+{
+    RadioModel model;
+    // Wire a real StepAttenuatorController so the checkbox reads from it.
+    // Thetis default is attOnTxEnabled = true (console.cs:19042 [v2.10.3.13]).
+    auto* att = new StepAttenuatorController(&model);
+    att->setAttOnTxEnabled(false);          // set to non-default so the init is observable
+    model.setStepAttController(att);
+
+    PowerPaPage page(&model);
+    page.show();
+
+    auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkATTOnTX"));
+    QVERIFY(chk);
+    QCOMPARE(chk->isChecked(), false);      // must mirror the controller value
+
+    att->setAttOnTxEnabled(true);
+    // No toggle signal path from controller → page; the initial state is all we verify here.
+    // The bidirectional path is: checkbox → controller (tested below).
+}
+
+// ---------------------------------------------------------------------------
+// 12. chkATTOnTX toggle actually calls StepAttenuatorController::setAttOnTxEnabled()
+// ---------------------------------------------------------------------------
+void TestPowerPaPageH4::chkAttOnTx_wiredController_togglesController()
+{
+    RadioModel model;
+    auto* att = new StepAttenuatorController(&model);
+    att->setAttOnTxEnabled(true);           // start checked
+    model.setStepAttController(att);
+
+    PowerPaPage page(&model);
+    page.show();
+
+    auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkATTOnTX"));
+    QVERIFY(chk);
+    QVERIFY(chk->isChecked());              // sanity: initialised from controller
+
+    // Toggle the checkbox — must propagate to the controller.
+    chk->setChecked(false);
+    QCOMPARE(att->attOnTxEnabled(), false);
+
+    chk->setChecked(true);
+    QCOMPARE(att->attOnTxEnabled(), true);
+}
+
+// ---------------------------------------------------------------------------
+// 13. chkForceATTwhenPSAoff initialises from controller when controller is wired
+// ---------------------------------------------------------------------------
+void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_initFromController()
+{
+    RadioModel model;
+    auto* att = new StepAttenuatorController(&model);
+    // Thetis default is forceAttWhenPsOff = true (setup.cs:24264 [v2.10.3.13]).
+    att->setForceAttWhenPsOff(false);       // non-default so init is observable
+    model.setStepAttController(att);
+
+    PowerPaPage page(&model);
+    page.show();
+
+    auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkForceATTwhenPSAoff"));
+    QVERIFY(chk);
+    QCOMPARE(chk->isChecked(), false);
+}
+
+// ---------------------------------------------------------------------------
+// 14. chkForceATTwhenPSAoff toggle actually calls StepAttenuatorController::setForceAttWhenPsOff()
+// ---------------------------------------------------------------------------
+void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_togglesController()
+{
+    RadioModel model;
+    auto* att = new StepAttenuatorController(&model);
+    att->setForceAttWhenPsOff(true);        // start checked
+    model.setStepAttController(att);
+
+    PowerPaPage page(&model);
+    page.show();
+
+    auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkForceATTwhenPSAoff"));
+    QVERIFY(chk);
+    QVERIFY(chk->isChecked());              // sanity: initialised from controller
+
+    // Toggle the checkbox — must propagate to the controller.
+    chk->setChecked(false);
+    QCOMPARE(att->forceAttWhenPsOff(), false);
+
+    chk->setChecked(true);
+    QCOMPARE(att->forceAttWhenPsOff(), true);
 }
 
 QTEST_MAIN(TestPowerPaPageH4)

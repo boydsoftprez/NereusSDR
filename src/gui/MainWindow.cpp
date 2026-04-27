@@ -1178,6 +1178,17 @@ void MainWindow::populateDefaultMeter()
     auto* txApplet = new TxApplet(m_radioModel, nullptr);
     panel->addApplet(txApplet);
 
+    // 3M-1a H.1-H.4 fixup: wire panadapter band changes to TxApplet so
+    // the per-band Tune Power slider tracks the active band.
+    // Without this, m_currentBand stays at Band::Band20m permanently.
+    if (!m_radioModel->panadapters().isEmpty()) {
+        PanadapterModel* pan0 = m_radioModel->panadapters().first();
+        connect(pan0, &PanadapterModel::bandChanged,
+                txApplet, &TxApplet::setCurrentBand);
+        // Push the initial band immediately so the slider shows the right value.
+        txApplet->setCurrentBand(pan0->band());
+    }
+
     // PhoneCwApplet — Phone + CW pages, NYI
     m_phoneCwApplet = new PhoneCwApplet(m_radioModel, nullptr);
     panel->addApplet(m_phoneCwApplet);

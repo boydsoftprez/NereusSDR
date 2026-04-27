@@ -188,7 +188,10 @@ private:
     QPointer<RxChannel> m_rxChannel;
     // Non-owning TX channel pointer (H.2).  Valid only while WdspEngine has
     // opened the TX channel (after createTxChannel()).  Guarded in poll().
-    TxChannel* m_txChannel{nullptr};
+    // QPointer auto-clears when TxChannel is destroyed — matches m_rxChannel
+    // pattern (3M-1a review fixup: prevents dangling-pointer dereference if
+    // WdspEngine destroys the channel without calling setTxChannel(nullptr)).
+    QPointer<TxChannel> m_txChannel;
     // m_inTx: true while MOX is active; flipped by setInTx(bool).
     // From Thetis dsp.cs:995-1050 [v2.10.3.13] TX/RX meter dispatch.
     bool m_inTx{false};
