@@ -777,6 +777,21 @@ void MainWindow::buildUI()
         connect(mox, &MoxController::hardwareFlipped,
                 m_stepAttController, &StepAttenuatorController::onMoxHardwareFlipped,
                 Qt::QueuedConnection);
+
+        // H.1 (Phase 3M-1a): SpectrumWidget MOX overlay.
+        // Wire MoxController::moxStateChanged → SpectrumWidget::setMoxOverlay.
+        // From Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter:
+        // the flag drives grid pen selection (tx_vgrid_pen red vs rx grey).
+        // In 3M-1a we render a 3 px red border tint; full grid recolouring
+        // is deferred to 3M-3.
+        // Qt::QueuedConnection: MoxController and SpectrumWidget both live on
+        // the main thread but a queued connection is used to match the deferred
+        // pattern established for the hardwareFlipped connect above.
+        if (m_spectrumWidget) {
+            connect(mox, &MoxController::moxStateChanged,
+                    m_spectrumWidget, &SpectrumWidget::setMoxOverlay,
+                    Qt::QueuedConnection);
+        }
     }
 
     // --- Phase 3G-9c: Clarity adaptive display tuning ---
