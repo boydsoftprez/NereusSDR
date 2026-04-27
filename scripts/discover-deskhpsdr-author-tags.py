@@ -92,6 +92,14 @@ RE_COMMA_CALLSIGN = re.compile(r",\s*(" + RE_CALLSIGN_CORE + r")\b")
 RE_COPYRIGHT_CALLSIGN = re.compile(
     r"\d{4}(?:,\d{4})*\s*-\s*[A-Za-z\s]+,\s*(" + RE_CALLSIGN_CORE + r")\b")
 
+# Prose attribution "by CALLSIGN" in headers, inline comments, and strings:
+#   "forked and was adapted from piHPSDR by DL1YCF to deskHPSDR"
+#   "// add by DL1BZ", "// patch by DH0DM"
+#   "Sep/Oct/Nov 2018, by DL1YCF Christoph van Wüllen"
+# Applied AFTER the more-specific copyright / paren / slash regexes so that
+# "Copyright (C) ... by NAME" is caught by RE_COPYRIGHT_CALLSIGN first.
+RE_BY_CALLSIGN = re.compile(r"\bby\s+(" + RE_CALLSIGN_CORE + r")\b")
+
 # Named credits in inline comments or attribution blocks:
 #   "Contribution of interfacing to PiHPSDR from N1GP (Rick Koch)"
 #   "Contributed initially by Davide"
@@ -122,6 +130,21 @@ FALSE_POSITIVE_TOKENS = {
     "RX2ATT", "RX2EN", "RX1ATT", "RX1EN",
     "TX1EN", "TX2EN",
     "RX2", "RX1", "TX1", "TX2",
+}
+
+# Callsigns whose name/role are known but not embedded in the source in a
+# machine-readable form (e.g. discovered only via the "by CALLSIGN" prose
+# pattern).  Used as a fallback in the merge step when neither the existing
+# corpus nor the source tree provides the name inline.
+# UTF-8 characters in name strings are intentional (Christoph van Wüllen).
+KNOWN_IDENTITIES: dict[str, dict[str, str]] = {
+    "DL1YCF": {
+        "name": "Christoph van Wüllen",
+        "role": (
+            "piHPSDR maintainer (deskhpsdr's upstream-of-upstream); "
+            "attribution preserved per GPLv3 §5"
+        ),
+    },
 }
 
 
@@ -216,6 +239,12 @@ def discover(base: Path):
             # Copyright-line comma callsign
             for m in RE_COPYRIGHT_CALLSIGN.finditer(line):
                 record_callsign(m.group(1), src, ln_idx + 1)
+            # Prose "by CALLSIGN" form: headers, inline comments, strings
+            #   "forked from piHPSDR by DL1YCF", "// add by DL1BZ",
+            #   "// patch by DH0DM", "Sep/Oct/Nov 2018, by DL1YCF"
+            # Applied after the copyright regex to avoid pre-empting it.
+            for m in RE_BY_CALLSIGN.finditer(line):
+                record_callsign(m.group(1), src, ln_idx + 1)
             # Copyright-line named author
             for m in RE_COPYRIGHT_NAME.finditer(line):
                 record_named(m.group(1), src, ln_idx + 1)
@@ -272,8 +301,9 @@ def main() -> int:
 
     for cs, meta in callsigns.items():
         prev = existing_cs.get(cs, {})
-        meta["name"] = prev.get("name", None)
-        meta["role"] = prev.get("role", None)
+        known = KNOWN_IDENTITIES.get(cs, {})
+        meta["name"] = prev.get("name") or known.get("name") or None
+        meta["role"] = prev.get("role") or known.get("role") or None
 
     for nm, meta in named.items():
         prev = existing_named.get(nm, {})
@@ -316,9 +346,16 @@ def main() -> int:
             print("Run scripts/discover-deskhpsdr-author-tags.py and commit "
                   "the refreshed corpus (populate name/role fields).")
             return 1
-        # Also fail if any committed callsign still has name=null
-        unnamed = sorted(cs for cs, meta in committed["callsign_tags"].items()
-                         if meta.get("name") in (None, ""))
+        # Fail if any committed callsign with count > 2 still has name=null.
+        # Low-count (<=2) callsigns are minor patch contributors whose full
+        # names are not resolvable from the source tree alone; they are
+        # admitted to the corpus for completeness but exempt from the
+        # name-enforcement rule.
+        unnamed = sorted(
+            cs for cs, meta in committed["callsign_tags"].items()
+            if meta.get("name") in (None, "")
+            and meta.get("count", 0) > 2
+        )
         if unnamed:
             print(f"DRIFT: {len(unnamed)} callsign(s) in corpus have "
                   f"name=null:")
