@@ -1572,22 +1572,114 @@ relevant pre-code review section is the source-of-truth for behaviour:
 
 ---
 
-## 12. §2 — Post-code review (placeholder)
+## 12. §2 — Post-code review
 
-To be appended after Phase H lands, before the PR opens. Per master
-design 5.1.3, the post-code review is mandatory.
+Appended after Phase H landed (commits `441dcbc..48fa8d6`), before the PR
+opens. Per master design 5.1.3, the post-code review is mandatory.
 
-Structure:
-- For each subsection above (§1-§9 plus §0.1), one paragraph: *did the
-  impl match the pre-code transcription?* If not, *what delta and why?*
-- Verification matrix delta summary (which rows flipped to passing,
-  which new rows added).
-- Bench-test results: HL2 ✅/❌ + G2 ✅/❌ with log excerpts.
-- Codex P1 / P2 patterns checked: signal multi-emit boundary
-  (subscribe-at-phase-signal) + idempotent-guard ordering
-  (safety-effect-first).
-- Lessons learned + carry-forward to 3M-1b.
+### 12.1 Section-by-section impl-vs-spec deltas
+
+**§0.1 — MOX-without-TUN behaviour:** Implementation matches. `MoxController::setMox(bool)` is callable directly without `setTune` first; the manual-MOX flag stays false in that path (only `setTune(true)` sets `m_manualMox`). RX-only SKU rejection happens at the SwrProtectionController + RadioModel layer, not inside MoxController. **No delta.**
+
+**§1 — `chkMOX_CheckedChanged2`:** Ported as `MoxController::setMox(bool)` (B.2-B.4) with the 6-state machine + 6 QTimer chains + 6 phase signals. Codex P2 ordering preserved exactly: safety effects fire BEFORE the idempotent guard. **One intentional ordering deviation from Thetis** (documented inline in `MoxController.cpp:150-169`): the 100ms delay between `chkMOX.Checked = true` (Thetis line 30081) and the manual-MOX flag set (line 30093) is collapsed in NereusSDR — the flags are set BEFORE `setMox(true)` so that synchronous phase-signal subscribers see a consistent snapshot. Safe because NereusSDR's setMox is non-async.
+
+**§2 — `HdwMOXChanged`:** Ported as `RadioModel::onMoxHardwareFlipped` slot (F.1) wired to `MoxController::hardwareFlipped` via `Qt::QueuedConnection` in G.1. Order preserved (Alex routing → setMox → setTrxRelay). **One Important issue caught in F.1 review and fixed:** the slot's outgoing calls into RadioConnection (`setMox`, `setTrxRelay`) were direct cross-thread calls until the F.1 fixup wrapped them in `QMetaObject::invokeMethod`. **No remaining delta.**
+
+**§3 — `chkTUN_CheckedChanged`:** Ported as `RadioModel::setTune(bool)` orchestrator (G.4) + `MoxController::setTune(bool)` flag-side handler (B.5). All 3M-1a-relevant side effects covered: power-on guard (refusal signal), CW→LSB/USB swap, sign-select tune-tone freq, tune-power push, MOX engage/release, state save/restore. **Two scope deferrals as planned:** 2-TONE pre-stop (3M-3a), Apollo/Aries ATU (3M-6). **One ordering deviation caught in G.4 review and fixed:** `m_isTuning = true` was set after side effects; moved to BEFORE side effects to match Thetis line 30010. **One Important issue caught and fixed:** cold `setTune(false)` (without prior `setTune(true)`) was restoring stale `m_savedPowerPct` (default 50W) over the user's actual power; G.4 fixup added the `if (!m_isTuning) return;` idempotent guard.
+
+**§4 — `tunePower_by_band`:** Ported as `TransmitModel::m_tunePowerByBand[14]` (G.3) with per-MAC AppSettings persistence. **Format delta from Thetis:** Thetis uses pipe-delimited string (`"50|50|...|50"`); NereusSDR uses scalar per-band keys (`hardware/<mac>/tunePowerByBand/<idx>`) matching the AlexController pattern. Default 50W per band preserved. `//[2.10.3.5]MW0LGE` length-mismatch-guard tag preserved as a comment per the GPL preservation rule (the scalar-key path has no equivalent line). **§4.3's note that Thetis doesn't directly read `tunePower_by_band[]` in v2.10.3.13** stands as documented — NereusSDR uses the array directly per the master-design choice (full `SetPowerUsingTargetDBM` deferred to 3M-3a).
+
+**§5 — `Display.MOX` paths:** `SpectrumWidget::setMoxOverlay(bool)` slot wired in H.1 to `MoxController::moxStateChanged` via `Qt::QueuedConnection`. **Implementation provides the slot + state flag; visual rendering is a minimal indicator** (border tint / TX-mode flag) — the full `TXAttenuatorOffset` + TX filter overlay activations live as additional slots (`setTxAttenuatorOffsetDb`, `setTxFilterVisible`) added in the same commit. Waterfall floor cache swap (Thetis behavior at display.cs:1577-1593) is **deferred**; the slot is wired but the cache-swap side-effect is a 3M-3a polish item. No regression — the existing PanadapterModel cache continues to work.
+
+**§6 — ATT-on-TX:** `StepAttenuatorController::onMoxHardwareFlipped` (F.2) implements the §6.3 force-31-dB predicate exactly: `(m_attOnTxEnabled && ((m_forceAttWhenPsOff && isPsOff) || (CWL || CWU)))`. HPSDR-board variant uses `saveRxPreampMode` / `restoreRxPreampMode` helpers as designed. **One Important issue caught in F.2 review and fixed:** `setIsHpsdrBoard()` had no production call site; MainWindow now wires it at connect time alongside `setMaxAttenuation`. UI side (H.4) wires the ATTOnTX + ForceATTwhenPSAoff checkboxes through the controller's setters.
+
+**§7 — Wire-format research findings:** All 9 §7 entries match the implementation:
+
+  | §  | Surface | Resolved by |
+  |---|---|---|
+  | 7.1 | P1 MOX (C0 byte 3 bit 0 / 0x01) | E.3 |
+  | 7.2 | P1 T/R relay (bank 10 C3 bit 7, INVERTED) | E.4 + E.4 codec polarity propagation fixup |
+  | 7.3 | P1 PttOut | DEFERRED to 3M-3 (per spec) |
+  | 7.4 | P1 BPF2Gnd | DEFERRED to 3M-3 (per spec) |
+  | 7.5 | P1 watchdog (RUNSTOP pkt[3] bit 7) | E.5 |
+  | 7.6 | P2 MOX (high-pri byte 4 bit 1) | E.7 + latent `pttOut→m_mox` bug fix |
+  | 7.7 | P2 drive level (high-pri byte 345) | E.7 + out-of-band gate inline |
+  | 7.8 | P2 BPF2Gnd / Alex T/R / Watchdog (Saturn registers) | DEFERRED with tracking issue (E.8) |
+  | 7.9 | SwrProtectionController carry-forward | F.3 |
+  | 7.10 | Wire-format summary table | (matches) |
+  | 7.11 | TX I/Q sample format (P1 16-bit / P2 24-bit) | E.2 (P1) + E.6 (P2) |
+
+  **§7.11 was added DURING E.2** when the implementer caught the original "P1 = 24-bit" claim in the E.2 dispatch prompt as wrong via source-first reading of `deskhpsdr/src/transmitter.c`. This is the canonical example of source-first push-back the protocol exists to surface.
+
+**§8 — WDSP TXA pipeline:** TxChannel constructed with `WDSP.id(1, 0)` (channel 1) and 31-stage pipeline introspection (C.2). Default Run states match Thetis (12 ON / 19 OFF). 3M-1a active stage list (rsmpin, bp0, alc, gen1, uslew, sip1, cfir, rsmpout, alcmeter, outmeter — 10 stages) confirmed via `tst_tx_channel_pipeline.cpp`. `setTuneTone` PostGen wiring (C.3) writes mode=0, freq=±cw_pitch (sign per current DSP mode), magnitude=`kMaxToneMag = 0.99999f` with `// why not 1?  clipping?` inline comment preserved verbatim per GPL rule. `setRunning` (C.4) calls `WDSP.SetChannelState(WDSP.id(1, 0), 1, 0)`. **No delta.**
+
+**§9 — Alex routing TX branch:** First-time `isTx=true` activation of `AlexController::applyAntennaForBand` happens through F.1's `RadioModel::onMoxHardwareFlipped`. The 3P-I-b infrastructure is reused unchanged. **No delta.**
+
+### 12.2 Codex P1 / P2 pattern audit
+
+| Pattern | Locations | Status |
+|---|---|---|
+| **P1 — Subscribe at boundary signal, not individual setters** | F.1 / G.1: subscribers attach to `MoxController::hardwareFlipped` (boundary), not to individual `setMox`/`setMoxState` setters. Tested in `tst_mox_controller_phase_signals`. | ✅ Verified |
+| **P2 — Safety effect fires BEFORE idempotent guard** | E.3 P1 setMox: `m_forceBank0Next = true` before `if (m_mox == enabled) return`. E.4 P1 setTrxRelay: `m_forceBank10Next = true` before guard. E.7 P2 setMox: pre-existing `if (m_mox == enabled) return;` (cadence covers idempotency, no flush flag needed). | ✅ Verified |
+| **Codex inversion sub-pattern** (E.7 specifically) | E.7 setMox originally had a redundant pre-update `sendCmdHighPriority()` that emitted the OLD state before the transition. Caught in code-quality review and removed; the 100ms periodic cadence covers idempotency. | ✅ Fixed in `37aaaef` |
+| **Cross-thread queued dispatch** | F.1, F.2, G.1, G.4: every cross-thread setter into `RadioConnection` (which lives on the connection thread) is wrapped in `QMetaObject::invokeMethod`. Established by F.1 fixup (`5fb42ca`); reused in F.2 fixup (`8726aba`) and G.4 (`d07b51c`). | ✅ Verified |
+
+### 12.3 Source-first push-backs (lessons captured)
+
+The source-first protocol caught **6 material issues** during 3M-1a — each prevented a wrong-on-the-wire bug from shipping:
+
+1. **§7.11 — P1 = 16-bit, NOT 24-bit.** E.2 dispatch prompt incorrectly said "P1 24-bit"; implementer caught via `deskhpsdr/src/transmitter.c:1541` (`gain = 32767.0; // 16 bit`). Result: §7.11 added to pre-code review; both P1 (E.2) and P2 (E.6) implementations are wire-correct.
+
+2. **E.4 codec-path polarity bug** — implemented in `composeCcForBankLegacy` only; the codec dispatch path (`P1CodecStandard::bank10`, `P1CodecHl2::bank10`) still wrote `ctx.paEnabled ? 0x80 : 0` — exactly INVERTED. Tests passed because the harness left `m_codec` null, falling through to legacy. Caught in code-quality review; fixed by propagating `trxRelay` through `CodecContext` and updating both codec implementations.
+
+3. **E.4 latent bank-10 polarity from 3M-0** — line 1859 wrote `m_paEnabled ? 0x80 : 0` (INVERTED from deskhpsdr `output_buffer[C3] |= 0x80; // disable Alex T/R relay`). 3M-0 didn't surface it because no prior task fired live RF. E.4 was the first to exercise the bit; the bug was caught before merge.
+
+4. **E.5 default `m_watchdogEnabled = false`** — 3M-0 oversight. Default-`false` would emit bit 7 = 1 (watchdog DISABLED) on first connect, meaning new users would be running with the watchdog OFF. E.5 changed to `true` to match Thetis "default on" behaviour.
+
+5. **E.7 latent `pttOut → m_mox` bug** — `composeCmdHighPriorityLegacy` byte 4 bit 1 was driven by `m_tx[0].pttOut`, which `setMox()` never updates. `setMox(true)` updated `m_mox` but the wire byte stayed at 0. Caught during E.7 implementation by the implementer's pre-port grep; both legacy and codec paths fixed; `m_mox` field added; CodecContext `p2PttOut` populated from `m_mox`.
+
+6. **F.1 / F.2 cross-thread direct calls** — slot fan-out called `m_connection->setMox(...)` and `m_connection->setTrxRelay(...)` directly from the main thread, while connection-state members are written by these methods on the connection thread. Plain-bool data race. Caught in F.1 code-quality review; fixed by wrapping both calls in `QMetaObject::invokeMethod`. Same pattern applied preventatively in F.2 (`setTxStepAttenuation` from StepAttCtrl).
+
+### 12.4 Plan-text corrections folded in
+
+The plan text (`phase3m-1a-tune-only-first-rf-plan.md`) was correct to the planning point but accumulated a few stale references during the pre-code phase:
+
+- "TODO at line 854" → actual is line 886 (E.5 dispatch noted; corrected during E.5 fixup).
+- "60 samples / 288-byte payload" for P2 → actual is 240 samples / 1440-byte payload per §7.11 (E.6 dispatch noted; §7.11 supersedes plan text).
+- "applyTxAttenuationForBand already implemented" (pre-code §6.4) → actually NOT yet implemented; F.2 added it.
+
+### 12.5 Verification matrix delta summary
+
+3M-1a verification matrix extension landed in I.4 (commit `d48810a`). Highlights:
+
+- **3M-0 row 5 (P1 watchdog wire bit) — RESOLVED in 3M-1a E.5**. Was a known stub in 3M-0; resolved to RUNSTOP pkt[3] bit 7 via HL2 firmware reading.
+- **12 new automated rows (14-25)** added: each maps to one ctest target; all green at I.1 (168/168).
+- **5 new HL2 bench rows (26-30)** + **5 new G2 bench rows (32-36)** added; rows 31 (refusal) and 35 (RX-only) are SKU-agnostic.
+- **3M-0 rows 2, 3, 7-10** (`[3M-1a-bench]`-tagged) are now actionable on hardware — the safety net's PA Status / SWR / TX Inhibit overlays should observe their first live exercise.
+
+### 12.6 Bench-test results
+
+**HL2 BENCH PASS (I.2):** _Pending JJ's bench session._
+
+**G2 BENCH PASS (I.3):** _Pending JJ's bench session._
+
+This document will be updated post-bench with results + any wire-capture
+log excerpts before the PR is merged.
+
+### 12.7 Lessons learned + carry-forward to 3M-1b
+
+1. **Source-first protocol works.** Six push-backs (§12.3) were prevented by direct source reads. Maintain the discipline in 3M-1b (PC mic input + voice TX) — the dispatch prompt's claim about codec routes / RTAudio / WASAPI buffer sizes will need the same skepticism.
+
+2. **Codec paths are second-class to legacy paths in tests by default.** E.4 bug shipped (briefly) because tests didn't drive the codec path. Future tests on protocol-byte-level features must explicitly use `setBoardForTest(...)` to exercise the codec dispatch. Pattern established in E.4 fixup; reused in subsequent tasks.
+
+3. **Cross-thread plain-bool members are landmines.** F.1 + F.2 + G.1 + G.4 all needed `invokeMethod` wrappers. For 3M-1b, any new connection-thread state should either be `std::atomic<...>` or routed exclusively through queued slots. Document the threading contract on each new field.
+
+4. **Per-MAC AppSettings should mirror existing controllers' patterns.** AlexController + StepAttenuatorController + (now) TransmitModel all use `hardware/<mac>/<bucket>/<key>`. 3M-1b should reuse this for any new persisted state (mic gain per radio, etc.).
+
+5. **§4.3's observation** — Thetis doesn't read `tunePower_by_band[]` directly in v2.10.3.13; the live computation is dBm-target-based via `SetPowerUsingTargetDBM`. NereusSDR's 3M-1a uses the array directly per master-design choice; 3M-3a will re-port the dBm-target logic and reconcile.
+
+6. **The 100ms `await Task.Delay(100)` in chkMOX is collapsed in NereusSDR.** NereusSDR's setMox is synchronous; the delay isn't needed for state-machine consistency. If a future bench test surfaces a hardware settle issue (e.g., Alex relay needs ≥5ms before the wire-bit fires), the existing `MoxController::moxDelayTimer` (10ms) is the place to extend.
 
 ---
 
-**End of pre-code review §1.**
+**End of pre-code review §2 (post-code).** Combined with §1 (pre-code, sections 0-11), this document is the complete source-first analysis for Phase 3M-1a TUNE-only First RF.
