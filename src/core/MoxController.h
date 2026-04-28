@@ -13,6 +13,11 @@
 //     slot; only the _manual_mox + _current_ptt_mode flag assignments
 //     at lines 30093-30094 and the _manual_mox clear at line 30142
 //     are ported here; the remainder is split across Tasks C.3 / G.3 / G.4)
+//   cmaster.cs:1054-1059 [v2.10.3.13] — CMSetTXAVoxThresh: mic-boost-aware
+//     scaling applied to VOX attack threshold before SetDEXPAttackThreshold.
+//   setup.cs:18908-18912 [v2.10.3.13] — udDEXPThreshold_ValueChanged:
+//     dB-to-linear conversion (Math.Pow(10.0, dB / 20.0)) before calling
+//     CMSetTXAVoxThresh; confirms thresh parameter is linear amplitude.
 //
 // Upstream file has no per-member inline attribution tags in this
 // state-machine region except where noted with inline cites below.
@@ -58,6 +63,14 @@
 //                 gated value (voxEnabled && isVoiceMode(currentMode)).
 //                 Ports CMSetTXAVoxRun logic from
 //                 cmaster.cs:1039-1052 [v2.10.3.13].
+//   2026-04-28 — Phase 3M-1b Task H.2 — setVoxThreshold(int dB),
+//                 onMicBoostChanged(bool), setVoxGainScalar(float) slots
+//                 added. voxThresholdRequested(double) phase signal added.
+//                 Internal computeScaledThreshold() / recomputeVoxThreshold()
+//                 helpers port the Thetis mic-boost-aware scaling from
+//                 CMSetTXAVoxThresh (cmaster.cs:1054-1059 [v2.10.3.13])
+//                 with the dB→linear conversion from
+//                 udDEXPThreshold_ValueChanged (setup.cs:18911 [v2.10.3.13]).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -67,6 +80,8 @@
 
 #include <QObject>
 #include <QTimer>
+#include <cmath>
+#include <limits>
 #include "core/PttMode.h"
 #include "core/WdspTypes.h"
 
@@ -248,6 +263,57 @@ public slots:
     //   SliceModel::dspModeChanged → MoxController::onModeChanged
     void onModeChanged(DSPMode mode);
 
+    // ── H.2: VOX threshold with mic-boost-aware scaling ──────────────────────
+
+    // setVoxThreshold: set the VOX attack threshold in dB and recompute.
+    //
+    // Ports Thetis CMSetTXAVoxThresh (cmaster.cs:1054-1059 [v2.10.3.13]):
+    //   if (Audio.console.MicBoost) thresh *= (double)Audio.VOXGain;
+    //   cmaster.SetDEXPAttackThreshold(id, thresh);
+    //
+    // The caller (setup.cs:18911 [v2.10.3.13]) converts dB to linear
+    // amplitude first:
+    //   Math.Pow(10.0, (double)udDEXPThreshold.Value / 20.0)
+    // then passes to CMSetTXAVoxThresh.  This slot performs both the
+    // dB→linear conversion AND the mic-boost scaling so the RadioModel
+    // wiring is a single direct connection.
+    //
+    // Wired by RadioModel H.2:
+    //   TransmitModel::voxThresholdDbChanged → MoxController::setVoxThreshold
+    void setVoxThreshold(int dB);
+
+    // onMicBoostChanged: re-evaluate the scaled threshold when the
+    // mic-boost flag changes.
+    //
+    // From Thetis CMSetTXAVoxThresh (cmaster.cs:1057 [v2.10.3.13]):
+    //   if (Audio.console.MicBoost) thresh *= (double)Audio.VOXGain;
+    //
+    // When MicBoost toggles, the effective threshold changes even if the
+    // raw dB value has not.  This slot updates m_micBoost and calls
+    // recomputeVoxThreshold().
+    //
+    // Re-evaluation trigger is also noted in setup.cs:7684-7687 [v2.10.3.13]:
+    //   chk20dbMicBoost_CheckedChanged re-runs udVOXGain_ValueChanged
+    //   (which calls CMSetTXAVoxThresh) whenever mic-boost changes.
+    //
+    // Wired by RadioModel H.2:
+    //   TransmitModel::micBoostChanged → MoxController::onMicBoostChanged
+    void onMicBoostChanged(bool boost);
+
+    // setVoxGainScalar: update the mic-boost gain scalar and recompute.
+    //
+    // From Thetis audio.cs:194-202 [v2.10.3.13]:
+    //   private static float vox_gain = 1.0f;  // default 1.0
+    //   // Used in CMSetTXAVoxThresh when MicBoost is on
+    //
+    // NereusSDR exposes this as TransmitModel::voxGainScalar.  Changing
+    // it re-evaluates the scaled threshold even if dB and micBoost are
+    // unchanged.
+    //
+    // Wired by RadioModel H.2:
+    //   TransmitModel::voxGainScalarChanged → MoxController::setVoxGainScalar
+    void setVoxGainScalar(float scalar);
+
     // setMox: Codex P2-ordered slot.
     //
     // Order (must not be reordered):
@@ -321,6 +387,23 @@ signals:
     //   cmaster.SetDEXPRunVox(id, run);  // 'run' is the gated bool
     void voxRunRequested(bool run);
 
+    // voxThresholdRequested: emitted when the computed WDSP attack threshold
+    // changes.
+    //
+    // Carries the mic-boost-aware linear amplitude ready for
+    // TxChannel::setVoxAttackThreshold(double).  Emitted at most once per
+    // computed-value transition (idempotent on the EMITTED double).  The NAN
+    // sentinel in m_lastVoxThresholdEmitted guarantees one emit on the first
+    // call so WDSP is always primed at startup.
+    //
+    // Subscribers: RadioModel H.2 connects this (via lambda) to
+    //   TxChannel::setVoxAttackThreshold(double).
+    //
+    // From Thetis CMSetTXAVoxThresh (cmaster.cs:1054-1059 [v2.10.3.13]):
+    //   cmaster.SetDEXPAttackThreshold(id, thresh);
+    //   // thresh is linear amplitude (dB→linear done by setup.cs:18911)
+    void voxThresholdRequested(double thresh);
+
     // ── TUN state signal (diagnostic) ────────────────────────────────────────
     // manualMoxChanged is NOT a Codex P1 phase signal. F.1 subscribers should
     // continue to wire to the 6 phase signals above; manualMoxChanged is a
@@ -390,6 +473,28 @@ private:
     // do not trigger spurious WDSP calls.
     void recomputeVoxRun();
 
+    // computeScaledThreshold: compute the WDSP-side linear amplitude
+    // from m_voxThresholdDb and the mic-boost gain.
+    //
+    // Ports the two-step Thetis formula verbatim:
+    //   Step 1 (setup.cs:18911 [v2.10.3.13]):
+    //     thresh = Math.Pow(10.0, (double)udDEXPThreshold.Value / 20.0)
+    //   Step 2 (cmaster.cs:1057 [v2.10.3.13]):
+    //     if (Audio.console.MicBoost) thresh *= (double)Audio.VOXGain;
+    //
+    // No additional clamping — Thetis applies none.
+    double computeScaledThreshold() const noexcept;
+
+    // recomputeVoxThreshold: emit voxThresholdRequested(double) if the
+    // computed value differs from the last emitted value.
+    //
+    // Idempotent on the EMITTED double (not on any individual input).
+    // Uses std::isnan(m_lastVoxThresholdEmitted) as a first-call sentinel
+    // so the initial call always primes WDSP regardless of the default value.
+    // Subsequent calls compare with qFuzzyCompare to suppress spurious emits
+    // from floating-point noise.
+    void recomputeVoxThreshold();
+
     // advanceState: sets m_state and emits stateChanged.
     void advanceState(MoxState newState);
 
@@ -408,6 +513,26 @@ private:
     // Tracks the last emitted gated value for idempotency.
     // Initial false matches (m_voxEnabled=false && ...) so no spurious emit at startup.
     bool     m_lastVoxRunGated{false};
+
+    // ── VOX threshold state (H.2) ─────────────────────────────────────────────
+    // From Thetis cmaster.cs:1054-1059 [v2.10.3.13] — CMSetTXAVoxThresh.
+    // From Thetis setup.cs:18911 [v2.10.3.13] — dB→linear conversion.
+    //
+    // m_voxThresholdDb: raw dB from the TransmitModel slider.
+    //   Default -40 matches TransmitModel::m_voxThresholdDb = -40.
+    int      m_voxThresholdDb{-40};
+    //
+    // m_micBoost: mirrors TransmitModel::micBoost().
+    //   Default true matches console.cs:13237 [v2.10.3.13]: mic_boost = true.
+    bool     m_micBoost{true};
+    //
+    // m_voxGainScalar: mirrors TransmitModel::voxGainScalar().
+    //   Default 1.0 matches audio.cs:194 [v2.10.3.13]: vox_gain = 1.0f.
+    float    m_voxGainScalar{1.0f};
+    //
+    // m_lastVoxThresholdEmitted: NAN sentinel forces first-call emit so
+    // WDSP is always primed with the correct threshold at startup.
+    double   m_lastVoxThresholdEmitted{std::numeric_limits<double>::quiet_NaN()};
 
     // ── MOX core state ────────────────────────────────────────────────────────
     bool     m_mox{false};               // single source of truth for MOX

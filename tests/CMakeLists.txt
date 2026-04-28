@@ -1028,6 +1028,25 @@ nereus_add_test(tst_mox_controller_tune)
 # Source: Thetis cmaster.cs:1039-1052 [v2.10.3.13] — CMSetTXAVoxRun.
 nereus_add_test(tst_mox_controller_vox_enabled)
 
+# ── Phase 3M-1b Task H.2: MoxController::setVoxThreshold mic-boost-aware scaling ─
+# Verifies: setVoxThreshold(int dB) + onMicBoostChanged(bool) + setVoxGainScalar(float)
+#           + voxThresholdRequested(double);
+# NAN sentinel: first call always emits (primes WDSP regardless of default value);
+# Boost OFF: threshold = pow(10, dB/20) only (no gain scaling);
+# Boost ON, scalar 1.0: same result as boost-off (identity multiplication);
+# Boost ON, scalar 0.5: threshold halved vs. boost-off;
+# Gain scalar change (0.5→1.0) re-emits with new computed value;
+# Mic-boost toggle (on→off→on) re-emits on each transition;
+# Idempotent on emitted double: repeat setVoxThreshold(-40) → no second emit;
+# Thetis cross-check Combo A: dB=-60, boost=off → 0.001 (exact);
+# Thetis cross-check Combo B: dB=-20, boost=on, gain=0.5 → 0.05 (exact);
+# Thetis cross-check Combo C: dB=0,   boost=on, gain=2.0 → 2.0 (exact);
+# Boundary -80 dB: result > 0, not NaN/Inf, ≈ 1e-4;
+# Boundary 0 dB: result ≈ 1.0, not NaN/Inf;
+# Boost round-trip: off→on re-emits with the original scaled value.
+# Source: Thetis cmaster.cs:1054-1059 + setup.cs:18908-18912 [v2.10.3.13].
+nereus_add_test(tst_mox_controller_vox_threshold)
+
 # ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
 # Verifies:
 #   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:

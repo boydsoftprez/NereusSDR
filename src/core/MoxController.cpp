@@ -58,6 +58,16 @@
 //                 recomputeVoxRun() emits voxRunRequested idempotently on
 //                 the gated value (not the raw inputs).
 //                 Ports CMSetTXAVoxRun (cmaster.cs:1039-1052 [v2.10.3.13]).
+//   2026-04-28 — Phase 3M-1b Task H.2 — computeScaledThreshold(),
+//                 recomputeVoxThreshold(), setVoxThreshold(int),
+//                 onMicBoostChanged(bool), setVoxGainScalar(float) implemented.
+//                 Ports the two-step Thetis formula:
+//                   1. dB→linear (setup.cs:18911 [v2.10.3.13]):
+//                        thresh = Math.Pow(10.0, dB / 20.0)
+//                   2. mic-boost scaling (cmaster.cs:1057 [v2.10.3.13]):
+//                        if (MicBoost) thresh *= VOXGain
+//                 recomputeVoxThreshold() emits voxThresholdRequested
+//                 idempotently (NAN sentinel primes WDSP on first call).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -569,6 +579,118 @@ void MoxController::onPttOutElapsed()
 void MoxController::onBreakInDelayElapsed()
 {
     // Not started in 3M-1a. Placeholder for 3M-2 CW QSK break-in.
+}
+
+// ===========================================================================
+// H.2 — VOX threshold with mic-boost-aware scaling
+//
+// Porting from Thetis Project Files/Source/Console/cmaster.cs:1054-1059
+// [v2.10.3.13] — CMSetTXAVoxThresh — original C# logic:
+//
+//   public static void CMSetTXAVoxThresh(int id, double thresh)
+//   {
+//       //double thresh = (double)Audio.VOXThreshold;
+//       if (Audio.console.MicBoost) thresh *= (double)Audio.VOXGain;
+//       cmaster.SetDEXPAttackThreshold(id, thresh);
+//   }
+//
+// The caller (setup.cs:18908-18912 [v2.10.3.13]) converts dB to linear
+// amplitude before calling CMSetTXAVoxThresh:
+//
+//   private void udDEXPThreshold_ValueChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.CMSetTXAVoxThresh(0, Math.Pow(10.0, (double)udDEXPThreshold.Value / 20.0));
+//       console.VOXSens = (int)udDEXPThreshold.Value;
+//   }
+//
+// NereusSDR folds both steps into MoxController so the RadioModel wiring
+// is a single TransmitModel::voxThresholdDbChanged → setVoxThreshold(int).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// computeScaledThreshold — compute linear WDSP attack threshold.
+//
+// Two-step Thetis formula (no clamping; Thetis applies none):
+//   1. dB → linear (setup.cs:18911 [v2.10.3.13]):
+//        thresh = pow(10.0, dB / 20.0)
+//   2. Mic-boost scaling (cmaster.cs:1057 [v2.10.3.13]):
+//        if (MicBoost) thresh *= VOXGain
+// ---------------------------------------------------------------------------
+double MoxController::computeScaledThreshold() const noexcept
+{
+    // From Thetis Project Files/Source/Console/setup.cs:18911 [v2.10.3.13]
+    // Math.Pow(10.0, (double)udDEXPThreshold.Value / 20.0)
+    double thresh = std::pow(10.0, static_cast<double>(m_voxThresholdDb) / 20.0);
+
+    // From Thetis Project Files/Source/Console/cmaster.cs:1057 [v2.10.3.13]
+    // if (Audio.console.MicBoost) thresh *= (double)Audio.VOXGain;
+    if (m_micBoost) {
+        thresh *= static_cast<double>(m_voxGainScalar);
+    }
+
+    return thresh;
+}
+
+// ---------------------------------------------------------------------------
+// recomputeVoxThreshold — emit voxThresholdRequested if computed value changed.
+//
+// Idempotent on the EMITTED double: qFuzzyCompare prevents spurious re-emits
+// from floating-point noise after equivalent input changes.  std::isnan on
+// m_lastVoxThresholdEmitted forces the very first call to always emit so
+// WDSP is primed at startup.
+// ---------------------------------------------------------------------------
+void MoxController::recomputeVoxThreshold()
+{
+    const double thresh = computeScaledThreshold();
+
+    // NAN sentinel: first call always emits (primes WDSP regardless of value).
+    if (!std::isnan(m_lastVoxThresholdEmitted)
+        && qFuzzyCompare(thresh, m_lastVoxThresholdEmitted)) {
+        return;  // idempotent on emitted double; no spurious emit
+    }
+
+    m_lastVoxThresholdEmitted = thresh;
+    emit voxThresholdRequested(thresh);
+}
+
+// ---------------------------------------------------------------------------
+// setVoxThreshold — set dB and recompute the scaled threshold.
+//
+// From Thetis TransmitModel::voxThresholdDb (ptbVOX slider value).
+// Wired by RadioModel H.2: voxThresholdDbChanged → setVoxThreshold.
+// ---------------------------------------------------------------------------
+void MoxController::setVoxThreshold(int dB)
+{
+    m_voxThresholdDb = dB;
+    recomputeVoxThreshold();
+}
+
+// ---------------------------------------------------------------------------
+// onMicBoostChanged — update mic-boost flag and recompute threshold.
+//
+// From Thetis chk20dbMicBoost_CheckedChanged (setup.cs:7684-7687 [v2.10.3.13]):
+//   re-runs udVOXGain_ValueChanged whenever mic-boost changes, which calls
+//   CMSetTXAVoxThresh with the current threshold value.
+// Wired by RadioModel H.2: TransmitModel::micBoostChanged → onMicBoostChanged.
+// ---------------------------------------------------------------------------
+void MoxController::onMicBoostChanged(bool boost)
+{
+    m_micBoost = boost;
+    recomputeVoxThreshold();
+}
+
+// ---------------------------------------------------------------------------
+// setVoxGainScalar — update the mic-boost gain scalar and recompute threshold.
+//
+// From Thetis audio.cs:194-202 [v2.10.3.13]:
+//   private static float vox_gain = 1.0f;
+// Wired by RadioModel H.2: TransmitModel::voxGainScalarChanged → setVoxGainScalar.
+// ---------------------------------------------------------------------------
+void MoxController::setVoxGainScalar(float scalar)
+{
+    m_voxGainScalar = scalar;
+    recomputeVoxThreshold();
 }
 
 } // namespace NereusSDR

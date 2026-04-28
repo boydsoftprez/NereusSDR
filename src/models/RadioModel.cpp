@@ -677,17 +677,50 @@ RadioModel::RadioModel(QObject* parent)
     if (!m_slices.isEmpty()) {
         connect(m_slices.first(), &SliceModel::dspModeChanged,
                 m_moxController,  &MoxController::onModeChanged);
+    } else {
+        // H.1/H.2 carry-forward nit: if no slice exists at construction the
+        // VOX mode-gate (H.1) and threshold-recompute (H.2) remain unwired.
+        // In 3M-1b this branch is unreachable; flagged here so that a future
+        // 3F multi-pan slice-creation-order change doesn't silently break VOX.
+        qCWarning(lcDsp) << "H.1/H.2: no slice available at construction; "
+                            "VOX mode-gate + threshold-recompute are unwired. "
+                            "Revisit in 3F multi-pan reset.";
     }
-    // If no slice exists yet (early construction), the mode defaults to USB
-    // (voice family) in MoxController, which is safe. The slice connection
-    // must be re-evaluated in onConnected() if slices are created later.
-    // For 3M-1b this is fine: slices are created before the constructor
-    // returns in all tested code paths.
 
     connect(m_moxController, &MoxController::voxRunRequested,
             this, [this](bool run) {
         if (m_txChannel) {
             m_txChannel->setVoxRun(run);
+        }
+    }, Qt::QueuedConnection);
+
+    // ── H.2: VOX threshold with mic-boost-aware scaling ───────────────────────
+    // Ports CMSetTXAVoxThresh (cmaster.cs:1054-1059 [v2.10.3.13]):
+    //   if (Audio.console.MicBoost) thresh *= (double)Audio.VOXGain;
+    //   cmaster.SetDEXPAttackThreshold(id, thresh);
+    // and the dB→linear conversion from setup.cs:18911 [v2.10.3.13]:
+    //   Math.Pow(10.0, (double)udDEXPThreshold.Value / 20.0)
+    //
+    // Signal chain:
+    //   TransmitModel::voxThresholdDbChanged → MoxController::setVoxThreshold
+    //   TransmitModel::micBoostChanged       → MoxController::onMicBoostChanged
+    //   TransmitModel::voxGainScalarChanged  → MoxController::setVoxGainScalar
+    //   MoxController::voxThresholdRequested → TxChannel::setVoxAttackThreshold
+    //
+    // MoxController applies both the dB→linear conversion and the mic-boost
+    // scaling in computeScaledThreshold(); TxChannel::setVoxAttackThreshold
+    // is a thin WDSP wrapper (D.3, TxChannel.h:473).
+    connect(&m_transmitModel, &TransmitModel::voxThresholdDbChanged,
+            m_moxController,  &MoxController::setVoxThreshold);
+    connect(&m_transmitModel, &TransmitModel::micBoostChanged,
+            m_moxController,  &MoxController::onMicBoostChanged);
+    connect(&m_transmitModel, &TransmitModel::voxGainScalarChanged,
+            m_moxController,  &MoxController::setVoxGainScalar);
+
+    connect(m_moxController, &MoxController::voxThresholdRequested,
+            this, [this](double thresh) {
+        if (m_txChannel) {
+            m_txChannel->setVoxAttackThreshold(thresh);
         }
     }, Qt::QueuedConnection);
 
