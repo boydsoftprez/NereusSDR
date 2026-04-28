@@ -37,7 +37,6 @@
 #include <QtTest/QtTest>
 #include <QCoreApplication>
 #include <QSignalSpy>
-#include <cmath>
 
 #include "models/TransmitModel.h"
 #include "core/audio/CompositeTxMicRouter.h"
