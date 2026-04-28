@@ -70,6 +70,8 @@ mw0lge@grange-lane.co.uk
 #include "core/HpsdrModel.h"
 #include "core/LogCategories.h"
 
+#include <QDateTime>
+#include <QTimer>
 #include <QFormLayout>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -468,13 +470,18 @@ void AddCustomRadioDialog::onProbeClicked()
 
     showProbingOverlay();  // disables buttons, shows "Probing…" text
 
+    // Track probe start so we can enforce a minimum visible time below — fast
+    // LAN probes can return in <100 ms which makes the dialog appear to vanish
+    // without any feedback. We hold the success state for at least kMinFlashMs
+    // total so the user sees "Probing…" → "Connecting…" → close as a clear beat.
+    const qint64 probeStartedMs = QDateTime::currentMSecsSinceEpoch();
+
     // Heap-allocate with 'this' parent so it is auto-destroyed if the dialog
     // closes mid-probe (e.g. Cancel or window close).
     auto* disc = new RadioDiscovery(this);
 
     connect(disc, &RadioDiscovery::radioDiscovered, this,
-            [this, disc](const RadioInfo& info) {
-                hideProbingOverlay();
+            [this, disc, probeStartedMs](const RadioInfo& info) {
                 m_probedInfo = info;
 
                 // User-picked model overrides the probe-detected silicon family default.
@@ -486,7 +493,22 @@ void AddCustomRadioDialog::onProbeClicked()
                 }
 
                 disc->deleteLater();
-                QDialog::accept();  // dialog closes; caller saves + connects
+
+                // Show "Connecting…" beat so the user sees something happen,
+                // then accept() once the minimum flash time has elapsed.
+                const QString name = m_probedInfo.name.isEmpty()
+                    ? m_probedInfo.address.toString()
+                    : m_probedInfo.name;
+                showInlineInfo(QStringLiteral("Connecting to %1…").arg(name));
+
+                constexpr qint64 kMinFlashMs = 700;
+                const qint64 elapsedMs = QDateTime::currentMSecsSinceEpoch() - probeStartedMs;
+                const int remainingMs = static_cast<int>(std::max<qint64>(
+                    0, kMinFlashMs - elapsedMs));
+                QTimer::singleShot(remainingMs, this, [this]() {
+                    hideProbingOverlay();
+                    QDialog::accept();  // caller saves + connects
+                });
             });
 
     connect(disc, &RadioDiscovery::probeFailed, this,
