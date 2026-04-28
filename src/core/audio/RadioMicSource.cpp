@@ -11,7 +11,6 @@
 #include "core/RadioConnection.h"
 
 #include <algorithm>  // std::min
-#include <cstdint>    // uint32_t implicit via atomic
 
 namespace NereusSDR {
 

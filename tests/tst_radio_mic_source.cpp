@@ -35,7 +35,6 @@
 #include "core/RadioConnection.h"
 
 #include <array>
-#include <numeric>   // std::iota
 
 using namespace NereusSDR;
 
