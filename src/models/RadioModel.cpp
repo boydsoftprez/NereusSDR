@@ -724,6 +724,60 @@ RadioModel::RadioModel(QObject* parent)
         }
     }, Qt::QueuedConnection);
 
+    // ── H.3: VOX hang-time + anti-VOX gain + anti-VOX source path ────────────
+    // Ports:
+    //   ms→seconds for SetDEXPHoldTime (setup.cs:18899 [v2.10.3.13]):
+    //     cmaster.SetDEXPHoldTime(0, Value / 1000.0)
+    //   dB→linear for SetAntiVOXGain (setup.cs:18989 [v2.10.3.13]):
+    //     cmaster.SetAntiVOXGain(0, Math.Pow(10.0, dB / 20.0))
+    //   CMSetAntiVoxSourceWhat useVAC=false (cmaster.cs:937-942 [v2.10.3.13]):
+    //     all RX slots (RX1, RX1S, RX2) get source=1.
+    //
+    // Signal chain:
+    //   TransmitModel::voxHangTimeMsChanged    → MoxController::setVoxHangTime
+    //   TransmitModel::antiVoxGainDbChanged    → MoxController::setAntiVoxGain
+    //   TransmitModel::antiVoxSourceVaxChanged → MoxController::setAntiVoxSourceVax
+    //   MoxController::voxHangTimeRequested    → TxChannel::setVoxHangTime
+    //   MoxController::antiVoxGainRequested    → TxChannel::setAntiVoxGain
+    //   MoxController::antiVoxSourceWhatRequested → TxChannel::setAntiVoxRun
+    //
+    // MoxController handles ms→seconds and dB→linear conversions; TxChannel
+    // wrappers (D.3) are thin WDSP delegates.
+    connect(&m_transmitModel, &TransmitModel::voxHangTimeMsChanged,
+            m_moxController,  &MoxController::setVoxHangTime);
+    connect(&m_transmitModel, &TransmitModel::antiVoxGainDbChanged,
+            m_moxController,  &MoxController::setAntiVoxGain);
+    connect(&m_transmitModel, &TransmitModel::antiVoxSourceVaxChanged,
+            m_moxController,  &MoxController::setAntiVoxSourceVax);
+
+    connect(m_moxController, &MoxController::voxHangTimeRequested,
+            this, [this](double seconds) {
+        if (m_txChannel) {
+            m_txChannel->setVoxHangTime(seconds);
+        }
+    }, Qt::QueuedConnection);
+
+    connect(m_moxController, &MoxController::antiVoxGainRequested,
+            this, [this](double gain) {
+        if (m_txChannel) {
+            m_txChannel->setAntiVoxGain(gain);
+        }
+    }, Qt::QueuedConnection);
+
+    connect(m_moxController, &MoxController::antiVoxSourceWhatRequested,
+            this, [this](bool useVax) {
+        if (!m_txChannel) {
+            return;
+        }
+        // useVax==false: per cmaster.cs:937-942 [v2.10.3.13], all RX slots
+        // (RX1, RX1S, RX2) get source=1 (local-RX audio for antivox reference).
+        // 3M-1b has one TxChannel paired with the active slice; the three-slot
+        // iteration collapses to setAntiVoxRun(!useVax) for the single-TX layout.
+        // Full per-WDSP-channel SetAntiVOXSourceWhat iteration is a 3F
+        // multi-pan concern (when multiple DDC RX channels are active).
+        m_txChannel->setAntiVoxRun(!useVax);
+    }, Qt::QueuedConnection);
+
     // TxMicRouter: NullMicSource for 3M-1a (zero-padded silence stream).
     // The TUNE path (gen1 PostGen) overwrites the WDSP input buffer at TXA
     // stage 22, so silence from NullMicSource is functionally inert during

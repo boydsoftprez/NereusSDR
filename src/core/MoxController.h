@@ -18,6 +18,14 @@
 //   setup.cs:18908-18912 [v2.10.3.13] — udDEXPThreshold_ValueChanged:
 //     dB-to-linear conversion (Math.Pow(10.0, dB / 20.0)) before calling
 //     CMSetTXAVoxThresh; confirms thresh parameter is linear amplitude.
+//   setup.cs:18896-18900 [v2.10.3.13] — udDEXPHold_ValueChanged:
+//     ms→seconds conversion (Value / 1000.0) before SetDEXPHoldTime.
+//   setup.cs:18986-18990 [v2.10.3.13] — udAntiVoxGain_ValueChanged:
+//     dB-to-linear conversion (Math.Pow(10.0, dB / 20.0)) before calling
+//     SetAntiVOXGain; confirms voltage-amplitude scaling (/20.0).
+//   cmaster.cs:912-943 [v2.10.3.13] — CMSetAntiVoxSourceWhat:
+//     when useVAC==false (lines 937-942), all RX slots (RX1, RX1S, RX2)
+//     get source=1 (local-RX audio for antivox reference).
 //
 // Upstream file has no per-member inline attribution tags in this
 // state-machine region except where noted with inline cites below.
@@ -71,6 +79,17 @@
 //                 CMSetTXAVoxThresh (cmaster.cs:1054-1059 [v2.10.3.13])
 //                 with the dB→linear conversion from
 //                 udDEXPThreshold_ValueChanged (setup.cs:18911 [v2.10.3.13]).
+//   2026-04-28 — Phase 3M-1b Task H.3 — setVoxHangTime(int ms),
+//                 setAntiVoxGain(int dB), setAntiVoxSourceVax(bool useVax)
+//                 slots added. voxHangTimeRequested(double seconds),
+//                 antiVoxGainRequested(double gain),
+//                 antiVoxSourceWhatRequested(bool useVax) signals added.
+//                 Ports ms→seconds conversion for SetDEXPHoldTime
+//                 (setup.cs:18899 [v2.10.3.13]), dB→linear gain conversion
+//                 for SetAntiVOXGain (setup.cs:18989 [v2.10.3.13], /20.0
+//                 voltage scaling), and CMSetAntiVoxSourceWhat useVAC=false
+//                 path (cmaster.cs:937-942 [v2.10.3.13]). The useVax=true
+//                 path is rejected (deferred to 3M-3a) per plan §3 H.3.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -313,6 +332,71 @@ public slots:
     //   TransmitModel::voxGainScalarChanged → MoxController::setVoxGainScalar
     void setVoxGainScalar(float scalar);
 
+    // ── H.3: VOX hang-time + anti-VOX gain + anti-VOX source path ────────────
+
+    // setVoxHangTime: set the DEXP (downward expander / VOX) hold time in ms.
+    //
+    // Converts ms → seconds before emitting voxHangTimeRequested(double).
+    // TxChannel::setVoxHangTime (D.3) wraps WDSP SetDEXPHoldTime which takes
+    // seconds.
+    //
+    // From Thetis Project Files/Source/Console/setup.cs:18896-18900 [v2.10.3.13]:
+    //   private void udDEXPHold_ValueChanged(object sender, EventArgs e)
+    //   {
+    //       if (initializing) return;
+    //       cmaster.SetDEXPHoldTime(0, (double)udDEXPHold.Value / 1000.0);
+    //   }
+    //
+    // Wired by RadioModel H.3:
+    //   TransmitModel::voxHangTimeMsChanged → MoxController::setVoxHangTime
+    void setVoxHangTime(int ms);
+
+    // setAntiVoxGain: set the anti-VOX gain in dB.
+    //
+    // Converts dB → linear amplitude (voltage scaling: /20.0) before emitting
+    // antiVoxGainRequested(double). TxChannel::setAntiVoxGain (D.3) wraps WDSP
+    // SetAntiVOXGain which takes a linear double.
+    //
+    // From Thetis Project Files/Source/Console/setup.cs:18986-18990 [v2.10.3.13]:
+    //   private void udAntiVoxGain_ValueChanged(object sender, EventArgs e)
+    //   {
+    //       if (initializing) return;
+    //       cmaster.SetAntiVOXGain(0, Math.Pow(10.0, (double)udAntiVoxGain.Value / 20.0));
+    //   }
+    //
+    // NaN sentinel m_lastAntiVoxGainEmitted forces first-call emit so WDSP is
+    // primed at startup regardless of the default value.
+    //
+    // Wired by RadioModel H.3:
+    //   TransmitModel::antiVoxGainDbChanged → MoxController::setAntiVoxGain
+    void setAntiVoxGain(int dB);
+
+    // setAntiVoxSourceVax: choose the anti-VOX reference audio source.
+    //
+    // Ports the path-agnostic logic from Thetis CMSetAntiVoxSourceWhat
+    // (cmaster.cs:912-943 [v2.10.3.13]).  In Thetis that function reads
+    // Audio.AntiVOXSourceVAC and routes per-channel WDSP anti-VOX source.
+    //
+    // When useVax == false (default, per audio.cs:447 [v2.10.3.13]
+    //   antivox_source_VAC property default = false):
+    //   From Thetis cmaster.cs:937-942 [v2.10.3.13] — else branch
+    //   (use audio going to hardware minus MON):
+    //     cmaster.SetAntiVOXSourceWhat(0, RX1,  1);
+    //     cmaster.SetAntiVOXSourceWhat(0, RX1S, 1);
+    //     cmaster.SetAntiVOXSourceWhat(0, RX2,  1);
+    //   Emits antiVoxSourceWhatRequested(false).  RadioModel lambda collapses
+    //   to TxChannel::setAntiVoxRun(true) for the single-TX 3M-1b layout;
+    //   the full per-WDSP-channel iteration is a 3F multi-pan TODO.
+    //
+    // When useVax == true (VAC/VAX audio path, deferred):
+    //   NereusSDR style guide (CLAUDE.md) prohibits C++ exceptions.
+    //   Logs qCWarning(lcDsp) and returns WITHOUT updating m_antiVoxSourceVax
+    //   or emitting the signal.  Deferred to 3M-3a per plan §3 H.3.
+    //
+    // Wired by RadioModel H.3:
+    //   TransmitModel::antiVoxSourceVaxChanged → MoxController::setAntiVoxSourceVax
+    void setAntiVoxSourceVax(bool useVax);
+
     // setMox: Codex P2-ordered slot.
     //
     // Order (must not be reordered):
@@ -402,6 +486,45 @@ signals:
     //   cmaster.SetDEXPAttackThreshold(id, thresh);
     //   // thresh is linear amplitude (dB→linear done by setup.cs:18911)
     void voxThresholdRequested(double thresh);
+
+    // ── H.3 phase signals ────────────────────────────────────────────────────
+
+    // voxHangTimeRequested: emitted when the DEXP hold time changes.
+    //
+    // Carries the converted value in seconds.  Idempotent on the EMITTED
+    // double (NAN sentinel forces first-call emit to prime WDSP).
+    //
+    // Subscribers: RadioModel H.3 connects this (via lambda) to
+    //   TxChannel::setVoxHangTime(double seconds).
+    //
+    // From Thetis setup.cs:18899 [v2.10.3.13]:
+    //   cmaster.SetDEXPHoldTime(0, (double)udDEXPHold.Value / 1000.0);
+    void voxHangTimeRequested(double seconds);
+
+    // antiVoxGainRequested: emitted when the anti-VOX gain changes.
+    //
+    // Carries the linear amplitude value (dB→linear via /20.0, voltage
+    // scaling).  Idempotent on the EMITTED double (NAN sentinel).
+    //
+    // Subscribers: RadioModel H.3 connects this (via lambda) to
+    //   TxChannel::setAntiVoxGain(double gain).
+    //
+    // From Thetis setup.cs:18989 [v2.10.3.13]:
+    //   cmaster.SetAntiVOXGain(0, Math.Pow(10.0, (double)udAntiVoxGain.Value / 20.0));
+    void antiVoxGainRequested(double gain);
+
+    // antiVoxSourceWhatRequested: emitted when the anti-VOX source path is
+    // accepted and applied.
+    //
+    // Carries the new useVax value.  Only emitted with false in 3M-1b
+    // (true is rejected with qCWarning; deferred to 3M-3a).
+    //
+    // Subscribers: RadioModel H.3 lambda collapses the Thetis
+    //   CMSetAntiVoxSourceWhat RX-slot iteration
+    //   (cmaster.cs:937-942 [v2.10.3.13]) to TxChannel::setAntiVoxRun(true)
+    //   for the single-TX 3M-1b layout.  Full per-WDSP-channel iteration
+    //   is a 3F multi-pan concern.
+    void antiVoxSourceWhatRequested(bool useVax);
 
     // ── TUN state signal (diagnostic) ────────────────────────────────────────
     // manualMoxChanged is NOT a Codex P1 phase signal. F.1 subscribers should
@@ -494,6 +617,19 @@ private:
     // from floating-point noise.
     void recomputeVoxThreshold();
 
+    // recomputeVoxHangTime: emit voxHangTimeRequested(double) if the converted
+    // hang time (in seconds) differs from the last emitted value.
+    //
+    // NAN sentinel forces first-call emit.  Subsequent calls use qFuzzyCompare.
+    void recomputeVoxHangTime();
+
+    // recomputeAntiVoxGain: emit antiVoxGainRequested(double) if the dB→linear
+    // converted gain differs from the last emitted value.
+    //
+    // From Thetis setup.cs:18989 [v2.10.3.13]: Math.Pow(10.0, dB / 20.0).
+    // NAN sentinel forces first-call emit.
+    void recomputeAntiVoxGain();
+
     // advanceState: sets m_state and emits stateChanged.
     void advanceState(MoxState newState);
 
@@ -532,6 +668,35 @@ private:
     // m_lastVoxThresholdEmitted: NAN sentinel forces first-call emit so
     // WDSP is always primed with the correct threshold at startup.
     double   m_lastVoxThresholdEmitted{std::numeric_limits<double>::quiet_NaN()};
+
+    // ── VOX hang-time + anti-VOX state (H.3) ─────────────────────────────────
+    // From Thetis setup.cs:18896-18900 [v2.10.3.13] — SetDEXPHoldTime.
+    // From Thetis setup.cs:18986-18990 [v2.10.3.13] — SetAntiVOXGain.
+    // From Thetis cmaster.cs:912-943 [v2.10.3.13] — CMSetAntiVoxSourceWhat.
+    //
+    // m_voxHangTimeMs: raw ms from TransmitModel::voxHangTimeMs().
+    //   Default 500 matches TransmitModel default (udDEXPHold designer default).
+    int      m_voxHangTimeMs{500};
+    //
+    // m_lastVoxHangTimeEmitted: NAN sentinel forces first-call emit to prime WDSP.
+    double   m_lastVoxHangTimeEmitted{std::numeric_limits<double>::quiet_NaN()};
+    //
+    // m_antiVoxGainDb: raw dB from TransmitModel::antiVoxGainDb().
+    //   Default 0 matches TransmitModel default.
+    int      m_antiVoxGainDb{0};
+    //
+    // m_lastAntiVoxGainEmitted: NAN sentinel forces first-call emit.
+    double   m_lastAntiVoxGainEmitted{std::numeric_limits<double>::quiet_NaN()};
+    //
+    // m_antiVoxSourceVax: mirrors TransmitModel::antiVoxSourceVax().
+    //   Default false matches audio.cs:447 [v2.10.3.13]:
+    //     antivox_source_VAC property — default behavior returns false.
+    bool     m_antiVoxSourceVax{false};
+    //
+    // m_antiVoxSourceVaxInitialized: false until the first accepted call to
+    // setAntiVoxSourceVax().  Forces first-call emit even when useVax==false
+    // matches the default m_antiVoxSourceVax value, so WDSP is primed.
+    bool     m_antiVoxSourceVaxInitialized{false};
 
     // ── MOX core state ────────────────────────────────────────────────────────
     bool     m_mox{false};               // single source of truth for MOX

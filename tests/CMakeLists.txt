@@ -1047,6 +1047,20 @@ nereus_add_test(tst_mox_controller_vox_enabled)
 # Source: Thetis cmaster.cs:1054-1059 + setup.cs:18908-18912 [v2.10.3.13].
 nereus_add_test(tst_mox_controller_vox_threshold)
 
+# ── Phase 3M-1b Task H.3: MoxController VOX hang-time + anti-VOX gain/source ──
+# Verifies:
+#   setVoxHangTime: NaN sentinel first-call emit; ms→seconds conversion (/ 1000.0);
+#     idempotent on emitted double; boundary 1 ms → 0.001 s, 10000 ms → 10.0 s.
+#   setAntiVoxGain: NaN sentinel; dB→linear /20.0 voltage scaling (0 dB → 1.0,
+#     -20 dB → 0.1, -60 dB → 0.001); idempotent on emitted double; boundary check.
+#   setAntiVoxSourceVax: useVax=false emits antiVoxSourceWhatRequested(false);
+#     useVax=true is rejected (no signal, no state update, qCWarning only);
+#     toggle false→true→false: second false idempotent after rejected true;
+#     first-call-always-emits via m_antiVoxSourceVaxInitialized flag.
+# Source: Thetis setup.cs:18896-18900 + 18986-18990 [v2.10.3.13] +
+#   cmaster.cs:912-943 [v2.10.3.13]. Plan §3 H.3 + pre-code §3.4.
+nereus_add_test(tst_mox_controller_anti_vox)
+
 # ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
 # Verifies:
 #   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:
