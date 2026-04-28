@@ -1273,3 +1273,22 @@ nereus_add_test(tst_tx_channel_stage_running_expansion)
 nereus_add_test(tst_tx_channel_sip1_signal)
 target_compile_definitions(tst_tx_channel_sip1_signal PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1b Task D.6: TxChannel::setMicPreamp + recomputeTxAPanelGain1 ───
+#
+# Exercises (NEREUS_BUILD_TESTS required for lastMicPreampForTest accessor):
+#   setMicPreamp(double)          → SetTXAPanelGain1 [dsp.cs:411-412 v2.10.3.13]
+#   recomputeTxAPanelGain1()      → SetTXAPanelGain1 force-refresh
+#
+# Mic-mute semantic (Thetis console.cs:28805-28817 [v2.10.3.13]):
+#   chkMicMute.Checked == true  → mic active → MicPreamp = pow(10, gain_db/20)
+#   chkMicMute.Checked == false → mic MUTED  → MicPreamp = 0.0
+#   setMicPreamp(0.0) maps to the mute=true (Checked==false) path.
+#
+# Test cases (8):
+#   setMicPreamp: initial-NaN, non-zero-value, zero-value (mute case),
+#                 round-trip-mute, round-trip-unmute, idempotent
+#   recomputeTxAPanelGain1: does-not-crash, after-setMicPreamp-pushes-latest
+# Pre-code review: §2.1 (MicMute counter-intuitive naming).
+nereus_add_test(tst_tx_channel_mic_mute)
+target_compile_definitions(tst_tx_channel_mic_mute PRIVATE NEREUS_BUILD_TESTS)
+

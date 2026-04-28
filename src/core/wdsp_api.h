@@ -30,6 +30,10 @@
 //                 during 3M-1b Task D.3 — TxChannel VOX/anti-VOX WDSP wrappers.
 //                 Signatures match wdsp/dexp.c [v2.10.3.13]. AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-04-27 — SetTXAPanelGain1 added by J.J. Boyd (KG4VCF) during 3M-1b
+//                 Task D.6 — TxChannel mic-mute path via setMicPreamp.
+//                 Signature matches wdsp/patchpanel.c:209 [v2.10.3.13].
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -678,6 +682,21 @@ void SetTXAPreGenToneFreq(int channel, double freq);
 // panel (stage 2): audio patch panel — selects which input source feeds the chain.
 // From Thetis wdsp/patchpanel.c.
 void SetTXAPanelSelect(int channel, int select);    // 2 = use Mic I sample (mono mic)
+
+// panel (stage 2): mic gain scalar (linear, not dB).
+//
+// Sets txa[channel].panel.p->gain1 directly (patchpanel.c:209-216 [v2.10.3.13]).
+// This is the WDSP-side knob for Audio.MicPreamp in Thetis.
+//
+// Called with 0.0 to silence the mic (mute=true path in setAudioMicGain).
+// Called with Math.Pow(10.0, gain_db / 20.0) to restore gain (mute=false).
+//
+// From Thetis dsp.cs:411-412 [v2.10.3.13] — DLL import:
+//   [DllImport("wdsp.dll", EntryPoint = "SetTXAPanelGain1", ...)]
+//   public static extern void SetTXAPanelGain1(int channel, double gain);
+// From Thetis wdsp/patchpanel.c:209-216 [v2.10.3.13] — implementation:
+//   void SetTXAPanelGain1(int channel, double gain) { txa[ch].panel.p->gain1 = gain; }
+void SetTXAPanelGain1(int channel, double gain);
 
 // DEXP (downward expander / VOX) — wires SetDEXPRunVox, SetDEXPAttackThreshold,
 // SetDEXPHoldTime (= VOX hang/hold time).

@@ -102,6 +102,12 @@ warren@wpratt.com
 //                 DirectConnection-only contract documented in signal
 //                 doc-comment. AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-27 — setMicPreamp(double) / recomputeTxAPanelGain1() added by
+//                 J.J. Boyd (KG4VCF) during 3M-1b Task D.6 (mic-mute path).
+//                 NaN-aware idempotent guard. When TransmitModel::micPreampChanged
+//                 fires 0.0 (MicMute toggled off / Thetis mute=true path),
+//                 SetTXAPanelGain1 is called with 0, silencing the mic in WDSP.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -487,6 +493,38 @@ public:
     /// From Thetis cmaster.cs:211-212 [v2.10.3.13] — SetAntiVOXGain DLL import.
     void setAntiVoxGain(double gain);
 
+    // ── Mic preamp / mic-mute path (3M-1b D.6) ──────────────────────────────
+
+    /// Set the mic preamp linear scalar pushed to WDSP via SetTXAPanelGain1.
+    ///
+    /// Called by TransmitModel::micPreampChanged subscriber (wired in
+    /// Phase L). When MicMute toggles off (chkMicMute.Checked == false in
+    /// Thetis terms — note counter-intuitive naming: Checked == mic in use),
+    /// TransmitModel sets micPreamp to 0.0, which lands here and silences
+    /// the mic via SetTXAPanelGain1(channelId, 0).
+    ///
+    /// Idempotent: skips WDSP call if value unchanged. Uses NaN-aware
+    /// guard matching D.3's pattern: m_micPreampLast initialises to
+    /// quiet_NaN so the first call (any value) always passes.
+    ///
+    /// From Thetis console.cs:28805-28817 [v2.10.3.13] — setAudioMicGain():
+    ///   Audio.MicPreamp = Math.Pow(10.0, gain_db / 20.0);  // mute=false (mic active)
+    ///   Audio.MicPreamp = 0.0;                              // mute=true  (mic silent)
+    /// Audio.MicPreamp setter calls CMSetTXAPanelGain1 → SetTXAPanelGain1.
+    void setMicPreamp(double linearGain);
+
+    /// Re-push the current m_micPreampLast value to WDSP.
+    ///
+    /// Called internally by setMicPreamp. Also exposed publicly for callers
+    /// that need to force a refresh after channel state changes (e.g., after
+    /// setRunning(true) re-initialises the channel).
+    ///
+    /// Idempotent only at the WDSP level — re-pushing the same value
+    /// triggers a redundant WDSP call. Callers that care about idempotency
+    /// should track state externally; this method always issues the WDSP
+    /// call when invoked (subject to HAVE_WDSP + null-guard).
+    void recomputeTxAPanelGain1();
+
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //
     // Activate or deactivate a single TXA pipeline stage by name.
@@ -555,6 +593,14 @@ public:
     double lastVoxHangTimeForTest()           const noexcept { return m_voxHangTimeLast; }
     bool   lastAntiVoxRunForTest()            const noexcept { return m_antiVoxRunLast; }
     double lastAntiVoxGainForTest()           const noexcept { return m_antiVoxGainLast; }
+
+    // ── Test seam (Phase 3M-1b D.6) — mic preamp last-value read-back ────────
+    //
+    // Allow tests to verify:
+    //   (a) First call with any value passes the NaN guard and stores the value.
+    //   (b) Zero-value (mute case) stores 0.0 correctly.
+    //   (c) Idempotent guard fires on duplicate calls (value unchanged).
+    double lastMicPreampForTest()             const noexcept { return m_micPreampLast; }
 #endif // NEREUS_BUILD_TESTS
 
 signals:
@@ -659,6 +705,18 @@ private:
     double m_voxHangTimeLast        = std::numeric_limits<double>::quiet_NaN();
     bool   m_antiVoxRunLast         = false;
     double m_antiVoxGainLast        = std::numeric_limits<double>::quiet_NaN();
+
+    // ── Mic preamp last-set value (D.6) ──────────────────────────────────────
+    //
+    // Initialised to quiet_NaN so the first setMicPreamp() call (any value,
+    // including 0.0) always passes the idempotent guard.  NaN != NaN is
+    // guaranteed by IEEE 754; the `std::isnan` pre-check in setMicPreamp()
+    // makes this explicit.
+    //
+    // From Thetis console.cs:28805-28817 [v2.10.3.13] — setAudioMicGain:
+    //   Audio.MicPreamp = 0.0  (mute=true)
+    //   Audio.MicPreamp = Math.Pow(10.0, gain_db / 20.0)  (mute=false)
+    double m_micPreampLast = std::numeric_limits<double>::quiet_NaN();
 };
 
 } // namespace NereusSDR

@@ -104,6 +104,11 @@ warren@wpratt.com
 //                 J.J. Boyd (KG4VCF) during 3M-1b Task D.5. DirectConnection-
 //                 only contract; full Sip1-stage tap deferred to 3M-3.
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-27 — setMicPreamp(double) / recomputeTxAPanelGain1() implemented
+//                 by J.J. Boyd (KG4VCF) during 3M-1b Task D.6 (mic-mute path).
+//                 NaN-aware idempotent guard; HAVE_WDSP + null-guard consistent
+//                 with D.3. SetTXAPanelGain1 called with 0.0 when mute=true.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -1184,6 +1189,78 @@ void TxChannel::driveOneTxBlock()
     //
     // Plan: 3M-1b D.5. Pre-code review §4.3.
     emit sip1OutputReady(m_outI.data(), m_outputBufferSize);
+}
+
+// ---------------------------------------------------------------------------
+// setMicPreamp()
+//
+// Set the mic preamp linear scalar, then push it to WDSP via
+// recomputeTxAPanelGain1().  This is the NereusSDR translation of
+// Audio.MicPreamp in Thetis (audio.cs:216-243 [v2.10.3.13]), which calls
+// CMSetTXAPanelGain1 → SetTXAPanelGain1 every time the property is set.
+//
+// Porting from Thetis console.cs:28805-28817 [v2.10.3.13] — setAudioMicGain():
+//   private void setAudioMicGain(double gain_db)
+//   {
+//       if (chkMicMute.Checked) // although it is called chkMicMute, Checked = mic in use
+//       {
+//           Audio.MicPreamp = Math.Pow(10.0, gain_db / 20.0); // convert to scalar
+//           _mic_muted = false;
+//       }
+//       else
+//       {
+//           Audio.MicPreamp = 0.0;
+//           _mic_muted = true;
+//       }
+//   }
+// Note: chkMicMute.Checked == true means mic IS active (counter-intuitive naming).
+// When chkMicMute.Checked == false, Audio.MicPreamp is set to 0.0 (mic silent).
+//
+// The dB→linear conversion (Math.Pow(10.0, gain_db / 20.0)) happens in
+// TransmitModel::setMicGainDb (C.1), not here.  This method receives the
+// already-scaled linear value — or 0.0 for the mute case.
+//
+// Idempotent guard: NaN-aware (same pattern as setVoxAttackThreshold / D.3).
+// m_micPreampLast initialises to quiet_NaN so the first call (any value,
+// including 0.0) always passes.
+//
+// From Thetis console.cs:28805-28817 [v2.10.3.13] — setAudioMicGain.
+// From Thetis audio.cs:216-243 [v2.10.3.13] — MicPreamp property setter.
+// From Thetis wdsp/patchpanel.c:209-216 [v2.10.3.13] — SetTXAPanelGain1 impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setMicPreamp(double linearGain)
+{
+    // NaN-aware idempotent guard (matching D.3 pattern for double setters).
+    if (!std::isnan(m_micPreampLast) && linearGain == m_micPreampLast) return;
+    m_micPreampLast = linearGain;
+    recomputeTxAPanelGain1();
+}
+
+// ---------------------------------------------------------------------------
+// recomputeTxAPanelGain1()
+//
+// Push the current m_micPreampLast to WDSP SetTXAPanelGain1.
+//
+// Called internally by setMicPreamp after the idempotent guard passes.
+// Also exposed publicly so callers can force-refresh the WDSP state after
+// channel rebuild (e.g., after setRunning(true) re-initialises the channel).
+//
+// This method ALWAYS issues the WDSP call when invoked (subject to
+// HAVE_WDSP + null-guard).  It does NOT apply the NaN-aware idempotent
+// guard — that is setMicPreamp's responsibility.  If m_micPreampLast is
+// still NaN (never set via setMicPreamp), the WDSP call is a no-op due to
+// the null-guard or the channel not being open.
+//
+// From Thetis console.cs:28805-28817 [v2.10.3.13] — setAudioMicGain.
+// From Thetis wdsp/patchpanel.c:209-216 [v2.10.3.13] — SetTXAPanelGain1.
+// ---------------------------------------------------------------------------
+void TxChannel::recomputeTxAPanelGain1()
+{
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/patchpanel.c:209-216 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPanelGain1(m_channelId, m_micPreampLast);
+#endif
 }
 
 } // namespace NereusSDR
