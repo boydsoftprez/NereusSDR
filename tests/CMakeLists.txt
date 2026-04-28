@@ -1223,3 +1223,23 @@ target_compile_definitions(tst_tx_channel_real_mic_router PRIVATE NEREUS_BUILD_T
 # Pre-code review: §7 (per-mode TXA config trace).
 nereus_add_test(tst_tx_channel_per_mode_config)
 
+# D.3 Phase 3M-1b — VOX/anti-VOX WDSP wrappers
+#
+# Exercises (NEREUS_BUILD_TESTS required for test-seam accessors):
+#   setVoxRun(bool)              → SetDEXPRunVox    [cmaster.cs:199-200 v2.10.3.13]
+#   setVoxAttackThreshold(double)→ SetDEXPAttackThreshold [cmaster.cs:187-188]
+#   setVoxHangTime(double)       → SetDEXPHoldTime  [cmaster.cs:178-179]
+#                                  (WDSP uses HoldTime for VOX hang; no SetDEXPHangTime)
+#   setAntiVoxRun(bool)          → SetAntiVOXRun    [cmaster.cs:208-209]
+#   setAntiVoxGain(double)       → SetAntiVOXGain   [cmaster.cs:211-212]
+#
+# Test cases (17):
+#   setVoxRun:             first-call-true, first-call-false, round-trip, idempotent
+#   setVoxAttackThreshold: first-call, round-trip, idempotent, zero-value
+#   setVoxHangTime:        first-call, round-trip, idempotent, zero-value
+#   setAntiVoxRun:         first-call-true, round-trip, idempotent
+#   setAntiVoxGain:        first-call, round-trip, idempotent
+# Pre-code review: §3.5 (VOX/anti-VOX WDSP DLL imports).
+nereus_add_test(tst_tx_channel_vox_anti_vox)
+target_compile_definitions(tst_tx_channel_vox_anti_vox PRIVATE NEREUS_BUILD_TESTS)
+

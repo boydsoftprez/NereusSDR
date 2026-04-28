@@ -93,6 +93,8 @@ warren@wpratt.com
 #include <QObject>
 #include <QTimer>
 
+#include <cmath>    // std::isnan — NaN sentinel for double idempotent guards (D.3)
+#include <limits>   // std::numeric_limits — quiet_NaN() initialiser (D.3)
 #include <vector>
 
 #include "WdspTypes.h"
@@ -421,6 +423,55 @@ public:
     /// (sub_am_mode 0=double-sided AM, 1=AM_LSB, 2=AM_USB).
     [[noreturn]] void setSubAmMode(int sub);
 
+    // ── VOX / anti-VOX WDSP wrappers (3M-1b D.3) ────────────────────────────
+
+    /// VOX run gate — wires WDSP SetDEXPRunVox.
+    ///
+    /// VOX is mode-gated at the MoxController layer (Phase H.1) — this is
+    /// just the WDSP-side wrapper.  Idempotent: skips the WDSP call if the
+    /// value is unchanged from the last call.
+    ///
+    /// From Thetis cmaster.cs:199-200 [v2.10.3.13] — SetDEXPRunVox DLL import.
+    void setVoxRun(bool run);
+
+    /// VOX attack threshold — wires WDSP SetDEXPAttackThreshold.
+    ///
+    /// Mic-boost-aware scaling (CMSetTXAVoxThresh in Thetis cmaster.cs:1057)
+    /// is applied at the MoxController layer (Phase H.2); this method is a
+    /// thin wrapper.  Idempotent: skips WDSP if value unchanged.
+    ///
+    /// From Thetis cmaster.cs:187-188 [v2.10.3.13] — SetDEXPAttackThreshold.
+    void setVoxAttackThreshold(double thresh);
+
+    /// VOX hang time in seconds — wires WDSP SetDEXPHoldTime.
+    ///
+    /// WDSP names this parameter "HoldTime" (wdsp/dexp.c:SetDEXPHoldTime);
+    /// Thetis exposes it as VOXHangTime (console.cs:14706).  There is no
+    /// SetDEXPHangTime in the WDSP source.  The mapping is:
+    ///   NereusSDR setVoxHangTime(seconds) → WDSP SetDEXPHoldTime(id, seconds)
+    /// Thetis passes milliseconds/1000.0 (setup.cs:18899):
+    ///   cmaster.SetDEXPHoldTime(0, (double)udDEXPHold.Value / 1000.0)
+    /// Callers are responsible for the ms→s conversion.
+    ///
+    /// Idempotent: skips WDSP if value unchanged.
+    ///
+    /// From Thetis cmaster.cs:178-179 [v2.10.3.13] — SetDEXPHoldTime DLL import.
+    void setVoxHangTime(double seconds);
+
+    /// Anti-VOX run gate — wires WDSP SetAntiVOXRun.
+    ///
+    /// Idempotent: skips WDSP if value unchanged.
+    ///
+    /// From Thetis cmaster.cs:208-209 [v2.10.3.13] — SetAntiVOXRun DLL import.
+    void setAntiVoxRun(bool run);
+
+    /// Anti-VOX gain — wires WDSP SetAntiVOXGain.
+    ///
+    /// Idempotent: skips WDSP if value unchanged.
+    ///
+    /// From Thetis cmaster.cs:211-212 [v2.10.3.13] — SetAntiVOXGain DLL import.
+    void setAntiVoxGain(double gain);
+
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //
     // Activate or deactivate a single TXA pipeline stage by name.
@@ -472,6 +523,18 @@ public:
     // output, and (b) m_inQ is zero-filled (real mic input has no Q component).
     const std::vector<float>& inIForTest() const { return m_inI; }
     const std::vector<float>& inQForTest() const { return m_inQ; }
+
+    // ── Test seams (Phase 3M-1b D.3) — VOX / anti-VOX last-value read-back ──
+    //
+    // Allow tests to verify:
+    //   (a) The first call propagates (NaN sentinel fires → value stored).
+    //   (b) Round-trip updates (set A → set B → last returns B).
+    //   (c) Idempotent guard fires on duplicate calls (value unchanged).
+    bool   lastVoxRunForTest()                const noexcept { return m_voxRunLast; }
+    double lastVoxAttackThresholdForTest()    const noexcept { return m_voxAttackThresholdLast; }
+    double lastVoxHangTimeForTest()           const noexcept { return m_voxHangTimeLast; }
+    bool   lastAntiVoxRunForTest()            const noexcept { return m_antiVoxRunLast; }
+    double lastAntiVoxGainForTest()           const noexcept { return m_antiVoxGainLast; }
 #endif // NEREUS_BUILD_TESTS
 
 private:
@@ -526,6 +589,26 @@ private:
 
     const int m_channelId;
     bool m_running{false};
+
+    // ── VOX / anti-VOX last-set values (D.3) ─────────────────────────────────
+    //
+    // Each setter stores the last value dispatched to WDSP and skips the WDSP
+    // call if the incoming value matches (idempotent guard).
+    //
+    // Bool setters initialise to false (matches WDSP DEXP/AntiVOX defaults).
+    // First call with false is therefore a no-op — intentional: the MoxController
+    // (Phase H.1) calls these at TX-on/TX-off; initialising to false avoids a
+    // redundant WDSP call on the first TX-off cycle.
+    //
+    // Double setters initialise to quiet_NaN so the first call (whatever value)
+    // always passes the guard.  NaN != NaN is guaranteed by IEEE 754, so the
+    // plain `thresh == m_voxAttackThresholdLast` expression fires when NaN is
+    // the stored value; the `std::isnan` pre-check is added for clarity.
+    bool   m_voxRunLast             = false;
+    double m_voxAttackThresholdLast = std::numeric_limits<double>::quiet_NaN();
+    double m_voxHangTimeLast        = std::numeric_limits<double>::quiet_NaN();
+    bool   m_antiVoxRunLast         = false;
+    double m_antiVoxGainLast        = std::numeric_limits<double>::quiet_NaN();
 };
 
 } // namespace NereusSDR

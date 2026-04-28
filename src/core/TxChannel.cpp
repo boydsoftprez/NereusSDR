@@ -87,6 +87,11 @@ warren@wpratt.com
 //                 setSubAmMode(int) implemented by J.J. Boyd (KG4VCF) during
 //                 3M-1b Task D.2 (per-mode TXA config setters). AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-04-27 — setVoxRun(bool) / setVoxAttackThreshold(double) /
+//                 setVoxHangTime(double) / setAntiVoxRun(bool) /
+//                 setAntiVoxGain(double) implemented by J.J. Boyd (KG4VCF)
+//                 during 3M-1b Task D.3 (VOX/anti-VOX WDSP wrappers).
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -787,6 +792,160 @@ void TxChannel::setTxBandpass(int lowHz, int highHz)
         "AM/SAM TX is not enabled in 3M-1b. "
         "Full SubAMMode dispatch (radio.cs:2699-2728 [v2.10.3.13]) "
         "will be ported in Phase 3M-3b.");
+}
+
+// ---------------------------------------------------------------------------
+// setVoxRun()
+//
+// Enable or disable VOX gating inside the WDSP DEXP expander.
+//
+// Porting from Thetis cmaster.cs:199-200 [v2.10.3.13] — SetDEXPRunVox DLL import:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPRunVox", ...)]
+//   public static extern void SetDEXPRunVox(int id, bool run);
+//
+// Idempotent: skips the WDSP call if `run` equals the last value stored in
+// m_voxRunLast.  Bool guard is a plain `==` comparison (no NaN issue).
+//
+// WDSP signature takes `int` for the bool parameter (0=false, 1=true);
+// the cast is explicit.
+//
+// From Thetis wdsp/dexp.c:616 [v2.10.3.13] — SetDEXPRunVox implementation.
+// ---------------------------------------------------------------------------
+void TxChannel::setVoxRun(bool run)
+{
+    if (run == m_voxRunLast) return;  // idempotent guard
+    m_voxRunLast = run;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:199-200 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetDEXPRunVox(m_channelId, run ? 1 : 0);
+#else
+    Q_UNUSED(run);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setVoxAttackThreshold()
+//
+// Set the VOX trigger threshold (linear amplitude).
+//
+// Porting from Thetis cmaster.cs:187-188 [v2.10.3.13] — SetDEXPAttackThreshold:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPAttackThreshold", ...)]
+//   public static extern void SetDEXPAttackThreshold(int id, double thresh);
+//
+// Caller (MoxController, Phase H.2) is responsible for mic-boost-aware scaling.
+// This wrapper calls WDSP unconditionally for the given threshold value.
+//
+// Idempotent guard: uses NaN-aware first-call sentinel.  m_voxAttackThresholdLast
+// is initialised to quiet_NaN so the first call (whatever value) always passes.
+// Subsequent calls with the same value skip WDSP.  Exact IEEE 754 `==` is used
+// for double comparison — callers round-trip the same value they stored; partial
+// floating-point drift is not expected here (this is a direct user-set parameter).
+//
+// From Thetis wdsp/dexp.c:544 [v2.10.3.13] — SetDEXPAttackThreshold impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setVoxAttackThreshold(double thresh)
+{
+    if (!std::isnan(m_voxAttackThresholdLast) && thresh == m_voxAttackThresholdLast) return;
+    m_voxAttackThresholdLast = thresh;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:187-188 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetDEXPAttackThreshold(m_channelId, thresh);
+#else
+    Q_UNUSED(thresh);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setVoxHangTime()
+//
+// Set the VOX hold/hang time (seconds).
+//
+// Porting from Thetis cmaster.cs:178-179 [v2.10.3.13] — SetDEXPHoldTime:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPHoldTime", ...)]
+//   public static extern void SetDEXPHoldTime(int id, double time);
+//
+// WDSP terminology note: the DEXP parameter is "HoldTime" (wdsp/dexp.c:505);
+// Thetis exposes this as "VOXHangTime" (console.cs:14706).  There is no
+// SetDEXPHangTime function in the WDSP source.  NereusSDR names the public
+// method setVoxHangTime() to match Thetis semantics but calls SetDEXPHoldTime
+// internally.
+//
+// Callers pass seconds.  Thetis converts ms → s at the callsite:
+//   cmaster.SetDEXPHoldTime(0, (double)udDEXPHold.Value / 1000.0)
+//   — Thetis setup.cs:18899 [v2.10.3.13]
+// NereusSDR callers are responsible for the same conversion.
+//
+// Idempotent guard: NaN-aware first-call sentinel (same pattern as
+// setVoxAttackThreshold above).
+//
+// From Thetis wdsp/dexp.c:505 [v2.10.3.13] — SetDEXPHoldTime impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setVoxHangTime(double seconds)
+{
+    if (!std::isnan(m_voxHangTimeLast) && seconds == m_voxHangTimeLast) return;
+    m_voxHangTimeLast = seconds;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:178-179 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetDEXPHoldTime(m_channelId, seconds);
+#else
+    Q_UNUSED(seconds);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setAntiVoxRun()
+//
+// Enable or disable anti-VOX side-chain cancellation.
+//
+// Porting from Thetis cmaster.cs:208-209 [v2.10.3.13] — SetAntiVOXRun DLL import:
+//   [DllImport("wdsp.dll", EntryPoint = "SetAntiVOXRun", ...)]
+//   public static extern void SetAntiVOXRun(int id, bool run);
+//
+// Idempotent guard: plain bool `==` comparison.
+//
+// From Thetis wdsp/dexp.c:657 [v2.10.3.13] — SetAntiVOXRun impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setAntiVoxRun(bool run)
+{
+    if (run == m_antiVoxRunLast) return;  // idempotent guard
+    m_antiVoxRunLast = run;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:208-209 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetAntiVOXRun(m_channelId, run ? 1 : 0);
+#else
+    Q_UNUSED(run);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setAntiVoxGain()
+//
+// Set the anti-VOX side-chain coupling gain.
+//
+// Porting from Thetis cmaster.cs:211-212 [v2.10.3.13] — SetAntiVOXGain DLL import:
+//   [DllImport("wdsp.dll", EntryPoint = "SetAntiVOXGain", ...)]
+//   public static extern void SetAntiVOXGain(int id, double gain);
+//
+// Idempotent guard: NaN-aware first-call sentinel (same pattern as
+// setVoxAttackThreshold).
+//
+// From Thetis wdsp/dexp.c:688 [v2.10.3.13] — SetAntiVOXGain impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setAntiVoxGain(double gain)
+{
+    if (!std::isnan(m_antiVoxGainLast) && gain == m_antiVoxGainLast) return;
+    m_antiVoxGainLast = gain;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:211-212 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetAntiVOXGain(m_channelId, gain);
+#else
+    Q_UNUSED(gain);
+#endif
 }
 
 // ---------------------------------------------------------------------------

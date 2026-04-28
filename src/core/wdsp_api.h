@@ -674,6 +674,32 @@ void SetTXAPreGenToneFreq(int channel, double freq);
 // From Thetis wdsp/patchpanel.c.
 void SetTXAPanelSelect(int channel, int select);    // 2 = use Mic I sample (mono mic)
 
+// DEXP (downward expander / VOX) — wires SetDEXPRunVox, SetDEXPAttackThreshold,
+// SetDEXPHoldTime (= VOX hang/hold time).
+// WDSP takes int for bool parameters (0=false, 1=true).
+// From Thetis wdsp/dexp.c [v2.10.3.13]:
+//   SetDEXPRunVox:          dexp.c:616  — enable/disable VOX gating inside DEXP
+//   SetDEXPAttackThreshold: dexp.c:544  — VOX trigger threshold (linear amplitude)
+//   SetDEXPHoldTime:        dexp.c:505  — hold/hang time after audio drops (seconds)
+// Cited from Thetis cmaster.cs [v2.10.3.13]:
+//   SetDEXPRunVox:          cmaster.cs:199-200
+//   SetDEXPAttackThreshold: cmaster.cs:187-188
+//   SetDEXPHoldTime:        cmaster.cs:178-179
+void SetDEXPRunVox(int id, int run);
+void SetDEXPAttackThreshold(int id, double thresh);
+void SetDEXPHoldTime(int id, double time);
+
+// Anti-VOX — wires SetAntiVOXRun and SetAntiVOXGain.
+// WDSP takes int for bool parameters (0=false, 1=true).
+// From Thetis wdsp/dexp.c [v2.10.3.13]:
+//   SetAntiVOXRun:  dexp.c:657  — enable/disable anti-VOX side-chain cancellation
+//   SetAntiVOXGain: dexp.c:688  — anti-VOX side-chain coupling gain
+// Cited from Thetis cmaster.cs [v2.10.3.13]:
+//   SetAntiVOXRun:  cmaster.cs:208-209
+//   SetAntiVOXGain: cmaster.cs:211-212
+void SetAntiVOXRun(int id, int run);
+void SetAntiVOXGain(int id, double gain);
+
 } // extern "C"
 
 #endif // HAVE_WDSP
