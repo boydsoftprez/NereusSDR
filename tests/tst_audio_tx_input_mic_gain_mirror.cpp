@@ -30,7 +30,6 @@
 #include <QSlider>
 
 #include "core/AppSettings.h"
-#include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
 #include "gui/setup/AudioTxInputPage.h"
 #include "models/RadioModel.h"

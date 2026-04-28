@@ -830,11 +830,6 @@ const BoardCapabilities kUnknown = {
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
     .hasSidetoneGenerator = false,
-    .hasApollo        = false,  // unknown board — all accessories disabled
-    .hasAlex          = false,
-    .hasPennyLane     = false,
-    .minFirmwareVersion = 0,
-    .knownGoodFirmware  = 0,
     // Phase 3M-1b Task I.4: Unknown board uses the global TransmitModel
     // fallback range (-50/+70) rather than the Thetis runtime defaults
     // (-40/+10), so a user with an unidentified board still has the widest
@@ -843,6 +838,11 @@ const BoardCapabilities kUnknown = {
     // TransmitModel::kMicGainDbMin/Max = -50/+70 is NereusSDR's outer bound.
     .micGainMinDb     = -50,
     .micGainMaxDb     = +70,
+    .hasApollo        = false,  // unknown board — all accessories disabled
+    .hasAlex          = false,
+    .hasPennyLane     = false,
+    .minFirmwareVersion = 0,
+    .knownGoodFirmware  = 0,
     .displayName      = "Unknown board",
     .sourceCitation   = "fallback — no Thetis source for HPSDRHW::Unknown",
 };
