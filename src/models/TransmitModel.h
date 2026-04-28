@@ -301,6 +301,63 @@ public:
     static constexpr double kLineInBoostMin = -34.5;
     static constexpr double kLineInBoostMax =  12.0;
 
+    // ── Anti-VOX properties (3M-1b C.4) ──────────────────────────────────────
+    //
+    // Porting from Thetis audio.cs:446-454 [v2.10.3.13]:
+    //   private static bool antivox_source_VAC = false;
+    //   public static bool AntiVOXSourceVAC {
+    //     get { return antivox_source_VAC; }
+    //     set { antivox_source_VAC = value; cmaster.CMSetAntiVoxSourceWhat(); }
+    //   }
+    //
+    // Porting from Thetis setup.designer.cs:44699-44728 [v2.10.3.13]:
+    //   udAntiVoxGain.Minimum = decimal{60,0,0,-2147483648} = -60
+    //   udAntiVoxGain.Maximum = decimal{60,0,0,0}           = +60
+    //   (DecimalPlaces=1; display unit is x0.1 dB; NereusSDR stores as int dB.)
+    //
+    // Porting from Thetis setup.cs:18986-18989 [v2.10.3.13]:
+    //   cmaster.SetAntiVOXGain(0, Math.Pow(10.0, (double)udAntiVoxGain.Value / 20.0));
+    //   (WDSP wiring arrives in Phase H.3; model just stores + signals.)
+    //
+    // "VAC->VAX" rename: Thetis calls this antivox_source_VAC (Virtual Audio
+    // Cable, i.e. the IVAC-mediated digital-mode TX path).  NereusSDR's
+    // equivalent is VAX (Virtual Audio Crossbar -- different design, but same
+    // conceptual role).  The rename keeps naming consistent with the rest of
+    // the project.  The default (false = use local-RX) is identical to Thetis.
+    //
+    // AppSettings persistence arrives in Phase L.2.
+    // WDSP wiring (SetAntiVOXGain + CMSetAntiVoxSourceWhat) arrives in Phase H.3.
+    // Full VAX-source state machine (RX2 / dual-VAX source composition)
+    // is deferred to 3M-3a.
+
+    /// Anti-VOX gain in dB.  Clamped to [kAntiVoxGainDbMin, kAntiVoxGainDbMax].
+    /// Default 0 dB -- NereusSDR-original safe starting point.
+    /// (Thetis udAntiVoxGain designer default is 1.0 dB per
+    ///  setup.designer.cs:44723-44727 [v2.10.3.13]: Value = decimal{10,0,0,0}
+    ///  with DecimalPlaces=1.)
+    ///
+    /// Range from Thetis setup.designer.cs:44708-44717 [v2.10.3.13]:
+    ///   udAntiVoxGain.Minimum = -60, udAntiVoxGain.Maximum = 60.
+    int antiVoxGainDb() const noexcept { return m_antiVoxGainDb; }
+
+    /// Anti-VOX source selector.
+    /// false = use local-RX (default; matches Thetis
+    ///         audio.cs:446 [v2.10.3.13]: antivox_source_VAC = false).
+    /// true  = use VAX audio (NereusSDR-renamed; was VAC in Thetis).
+    ///
+    /// Path-agnostic anti-VOX (default false = local-RX) is implemented in
+    /// Phase H.3 via CMSetAntiVoxSourceWhat port.  The full VAX-source state
+    /// machine is deferred to 3M-3a.
+    bool antiVoxSourceVax() const noexcept { return m_antiVoxSourceVax; }
+
+    // Anti-VOX gain range constants.
+    // From Thetis setup.designer.cs:44708-44717 [v2.10.3.13]:
+    //   udAntiVoxGain.Minimum = decimal{60,0,0,-2147483648} = -60
+    //   udAntiVoxGain.Maximum = decimal{60,0,0,0}           = +60
+    //   (DecimalPlaces=1; display unit is x0.1 dB; NereusSDR stores as int dB.)
+    static constexpr int kAntiVoxGainDbMin = -60;
+    static constexpr int kAntiVoxGainDbMax =  60;
+
     // ── VOX properties (3M-1b C.3) ────────────────────────────────────────
     //
     // Porting from Thetis audio.cs:167-202 [v2.10.3.13]:
@@ -401,6 +458,10 @@ public slots:
     void setMicBias(bool on);
     void setMicPttDisabled(bool disabled);
 
+    // ── Anti-VOX setters (3M-1b C.4) ─────────────────────────────────────────
+    void setAntiVoxGainDb(int dB);
+    void setAntiVoxSourceVax(bool useVax);
+
     // ── VOX setters (3M-1b C.3) ────────────────────────────────────────────
     void setVoxEnabled(bool on);
     void setVoxThresholdDb(int dB);
@@ -433,6 +494,10 @@ signals:
     void micTipRingChanged(bool tipIsMic);
     void micBiasChanged(bool on);
     void micPttDisabledChanged(bool disabled);
+
+    // ── Anti-VOX signals (3M-1b C.4) ─────────────────────────────────────────
+    void antiVoxGainDbChanged(int dB);
+    void antiVoxSourceVaxChanged(bool useVax);
 
     // ── VOX signals (3M-1b C.3) ────────────────────────────────────────────
     void voxEnabledChanged(bool on);
@@ -477,6 +542,12 @@ private:
     bool   m_micTipRing     = true;   // setup.designer.cs:8683: radOrionMicTip.Checked=true
     bool   m_micBias        = false;  // setup.designer.cs:8779: radOrionBiasOff.Checked=true
     bool   m_micPttDisabled = false;  // console.cs:19757: mic_ptt_disabled = false
+
+    // ── Anti-VOX properties (3M-1b C.4) ──────────────────────────────────
+    // From Thetis audio.cs:446-454 [v2.10.3.13] (antivox_source_VAC) and
+    // setup.designer.cs:44699-44728 [v2.10.3.13] (udAntiVoxGain range -60..60).
+    int  m_antiVoxGainDb    = 0;      // NereusSDR-original default; range [-60,60]
+    bool m_antiVoxSourceVax = false;  // audio.cs:446: antivox_source_VAC = false
 
     // ── VOX properties (3M-1b C.3) ──────────────────────────────────────
     // From Thetis audio.cs:167-202 [v2.10.3.13].

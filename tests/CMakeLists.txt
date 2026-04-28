@@ -252,6 +252,15 @@ nereus_add_test(tst_transmit_model_mic_jack_flags)
 #         setup.designer.cs:45005-45024 [v2.10.3.13] (udDEXPHold range 1..2000).
 nereus_add_test(tst_transmit_model_vox_properties)
 
+# ── Phase 3M-1b C.4: TransmitModel anti-VOX properties (2x) ─────────────────
+# Verifies defaults (antiVoxGainDb=0 NereusSDR-original / antiVoxSourceVax=false
+# matches Thetis audio.cs:446 [v2.10.3.13]), round-trip setters, signal emission,
+# idempotent guard, and range clamping for antiVoxGainDb [−60,60].
+# Source: setup.designer.cs:44699-44728 [v2.10.3.13] (udAntiVoxGain -60..60);
+#         audio.cs:446-454 [v2.10.3.13] (antivox_source_VAC = false);
+#         setup.cs:18986-18989 [v2.10.3.13] (SetAntiVOXGain dB→linear formula).
+nereus_add_test(tst_transmit_model_anti_vox)
+
 # ── Phase 3O VAX schema migration ─────────────────────────────────────────
 nereus_add_test(tst_app_settings_vax_migration)
 

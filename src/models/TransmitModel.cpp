@@ -20,6 +20,9 @@
 //   2026-04-27 — VOX properties: voxEnabled / voxThresholdDb / voxGainScalar /
 //                 voxHangTimeMs (C.3, Phase 3M-1b) ported by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-27 — Anti-VOX properties: antiVoxGainDb / antiVoxSourceVax
+//                 (C.4, Phase 3M-1b) ported by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -385,6 +388,48 @@ void TransmitModel::save()
         s.setValue(prefix + QString::number(i),
                    QString::number(m_tunePowerByBand[static_cast<std::size_t>(i)]));
     }
+}
+
+// ── Anti-VOX properties (3M-1b C.4) ─────────────────────────────────────────
+//
+// Porting from Thetis audio.cs:446-454 [v2.10.3.13] (AntiVOXSourceVAC property):
+//   private static bool antivox_source_VAC = false;
+//   public static bool AntiVOXSourceVAC {
+//     get { return antivox_source_VAC; }
+//     set { antivox_source_VAC = value; cmaster.CMSetAntiVoxSourceWhat(); }
+//   }
+// Porting from Thetis setup.designer.cs:44699-44728 [v2.10.3.13] (udAntiVoxGain):
+//   Minimum = decimal{60,0,0,-2147483648} = -60; Maximum = decimal{60,0,0,0} = 60.
+// Porting from Thetis setup.cs:18986-18989 [v2.10.3.13] (udAntiVoxGain_ValueChanged):
+//   cmaster.SetAntiVOXGain(0, Math.Pow(10.0, (double)udAntiVoxGain.Value / 20.0));
+//
+// WDSP wiring (SetAntiVOXGain + CMSetAntiVoxSourceWhat) deferred to Phase H.3.
+// AppSettings persistence deferred to Phase L.2.
+
+void TransmitModel::setAntiVoxGainDb(int dB)
+{
+    // Clamp to Thetis udAntiVoxGain range per
+    // setup.designer.cs:44708-44717 [v2.10.3.13]:
+    //   Minimum = decimal{60,0,0,-2147483648} = -60
+    //   Maximum = decimal{60,0,0,0}           = +60
+    const int clamped = std::clamp(dB, kAntiVoxGainDbMin, kAntiVoxGainDbMax);
+    if (clamped == m_antiVoxGainDb) { return; }  // idempotent guard
+    // Porting from Thetis setup.cs:18986-18989 [v2.10.3.13]:
+    //   cmaster.SetAntiVOXGain(0, Math.Pow(10.0, (double)udAntiVoxGain.Value / 20.0));
+    // WDSP SetAntiVOXGain call deferred to Phase H.3.
+    m_antiVoxGainDb = clamped;
+    emit antiVoxGainDbChanged(clamped);
+}
+
+void TransmitModel::setAntiVoxSourceVax(bool useVax)
+{
+    if (useVax == m_antiVoxSourceVax) { return; }  // idempotent guard
+    // Porting from Thetis audio.cs:446-454 [v2.10.3.13]:
+    //   antivox_source_VAC = value; cmaster.CMSetAntiVoxSourceWhat();
+    // VAC->VAX rename: same conceptual role, NereusSDR-native design.
+    // CMSetAntiVoxSourceWhat port (path-agnostic version) deferred to Phase H.3.
+    m_antiVoxSourceVax = useVax;
+    emit antiVoxSourceVaxChanged(useVax);
 }
 
 // ── VOX properties (3M-1b C.3) ───────────────────────────────────────────────
