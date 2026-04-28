@@ -516,6 +516,43 @@ public:
     /// Default MicSource::Pc. Radio is gated by BoardCapabilities::hasMicJack.
     MicSource micSource() const noexcept { return m_micSource; }
 
+    // ── PC Mic session state (3M-1b I.2) ─────────────────────────────────────
+    //
+    // NereusSDR-native transient session state for the PC Mic configuration
+    // group (Setup → Audio → TX Input → PC Mic group box).
+    //
+    // These three properties survive Setup dialog close/reopen within the
+    // same session but are NOT persisted across app restarts — AppSettings
+    // persistence is deferred to Phase L.2.
+    //
+    // pcMicHostApiIndex: PortAudio host API index (-1 = PA default; on
+    //   macOS this will be the CoreAudio index, on Linux PipeWire/Pulse,
+    //   on Windows WASAPI).  Default -1 means "let AudioEngine pick the
+    //   OS default" — the Setup page UI resolves -1 to the current OS
+    //   default at display time.
+    //
+    // pcMicDeviceName: display name of the chosen capture device within
+    //   the selected host API.  Empty = use the PA default device for
+    //   that host API.
+    //
+    // pcMicBufferSamples: capture buffer size in samples per channel.
+    //   Default 512 samples (~10.7 ms @ 48 kHz).  The UI exposes a
+    //   power-of-2 list (64/128/256/512/1024/2048/4096/8192).
+
+    /// PortAudio host API index for PC Mic capture.  -1 = OS default.
+    /// Session-transient; AppSettings persistence deferred to Phase L.2.
+    int pcMicHostApiIndex() const noexcept { return m_pcMicHostApiIndex; }
+
+    /// Device name for PC Mic capture within the selected host API.
+    /// Empty = use the PA default device for that host API.
+    /// Session-transient; AppSettings persistence deferred to Phase L.2.
+    QString pcMicDeviceName() const noexcept { return m_pcMicDeviceName; }
+
+    /// Capture buffer size in samples per channel for PC Mic.
+    /// Default 512 samples (~10.7 ms @ 48 kHz reference rate).
+    /// Session-transient; AppSettings persistence deferred to Phase L.2.
+    int pcMicBufferSamples() const noexcept { return m_pcMicBufferSamples; }
+
 public slots:
     void setMicGainDb(int dB);
 
@@ -523,6 +560,22 @@ public slots:
     /// Select the active mic source (Pc or Radio).  Idempotent: no signal
     /// when the value is unchanged.  AppSettings persistence deferred to L.2.
     void setMicSource(MicSource source);
+
+    // ── PC Mic session-state setters (3M-1b I.2) ─────────────────────────────
+    /// Set the PortAudio host API index for PC Mic capture.  Idempotent.
+    /// -1 = let AudioEngine resolve the OS default.
+    /// AppSettings persistence deferred to Phase L.2.
+    void setPcMicHostApiIndex(int index);
+
+    /// Set the device name for PC Mic capture within the selected host API.
+    /// Empty string = use the PA default device for that host API.
+    /// Idempotent; AppSettings persistence deferred to Phase L.2.
+    void setPcMicDeviceName(const QString& name);
+
+    /// Set the capture buffer size in samples per channel for PC Mic.
+    /// No clamping — caller is responsible for valid power-of-2 values.
+    /// Idempotent; AppSettings persistence deferred to Phase L.2.
+    void setPcMicBufferSamples(int samples);
 
     // ── Mic-jack flag setters (3M-1b C.2) ─────────────────────────────────
     void setMicMute(bool on);
@@ -593,6 +646,14 @@ signals:
     /// Emitted when micSource changes. Not emitted on idempotent calls.
     void micSourceChanged(MicSource source);
 
+    // ── PC Mic session-state signals (3M-1b I.2) ─────────────────────────────
+    /// Emitted when pcMicHostApiIndex changes. Not emitted on idempotent calls.
+    void pcMicHostApiIndexChanged(int index);
+    /// Emitted when pcMicDeviceName changes. Not emitted on idempotent calls.
+    void pcMicDeviceNameChanged(const QString& name);
+    /// Emitted when pcMicBufferSamples changes. Not emitted on idempotent calls.
+    void pcMicBufferSamplesChanged(int samples);
+
 private:
     bool m_mox{false};
     bool m_tune{false};
@@ -657,6 +718,13 @@ private:
     // NereusSDR-native. Default Pc (always available; Radio is opt-in).
     // AppSettings persistence deferred to Phase L.2.
     MicSource m_micSource{MicSource::Pc};
+
+    // ── PC Mic session state (3M-1b I.2) ─────────────────────────────────
+    // NereusSDR-native transient session state. AppSettings persistence
+    // deferred to Phase L.2. Survives Setup dialog close/reopen in session.
+    int     m_pcMicHostApiIndex  = -1;      // -1 = OS default (PA resolves)
+    QString m_pcMicDeviceName;              // empty = default device for host API
+    int     m_pcMicBufferSamples = 512;     // ~10.7 ms @ 48 kHz reference rate
 };
 
 } // namespace NereusSDR

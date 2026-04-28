@@ -349,6 +349,12 @@ public:
     float vaxRxLevel(int channel) const;
     float vaxTxLevel() const;
 
+    // Peak input level (0.0–1.0 normalized) from the PC Mic capture bus
+    // (m_txInputBus). Used by AudioTxInputPage's Test Mic VU bar (I.2).
+    // Returns 0.0f when m_txInputBus is null or not open. Safe to call
+    // from the main thread — reads std::atomic<float> in IAudioBus.
+    float pcMicInputLevel() const;
+
     // True when the VAX slot's IAudioBus has been minted AND its open() call
     // succeeded. False when the slot is empty (pre-start, user-disabled via
     // setVaxEnabled(false)) OR when makeVaxBus() / makeBus() failed to open

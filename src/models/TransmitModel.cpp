@@ -29,6 +29,10 @@
 //   2026-04-28 — micSource (MicSource) property (I.1, Phase 3M-1b)
 //                 NereusSDR-native Setup UI property, J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-28 — PC Mic session state: pcMicHostApiIndex / pcMicDeviceName /
+//                 pcMicBufferSamples transient properties (I.2, Phase 3M-1b)
+//                 NereusSDR-native, J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -560,6 +564,37 @@ void TransmitModel::setMicSource(MicSource source)
     if (source == m_micSource) { return; }  // idempotent guard
     m_micSource = source;
     emit micSourceChanged(source);
+}
+
+// ── PC Mic session state (3M-1b I.2) ─────────────────────────────────────────
+//
+// NereusSDR-native transient session-state properties for the PC Mic
+// configuration group (Setup → Audio → TX Input → PC Mic group box).
+//
+// All three setters are idempotent (no signal emitted on unchanged value).
+// None of these persist across app restarts — AppSettings persistence is
+// deferred to Phase L.2.  The properties survive Setup dialog close/reopen
+// within the same session, stored on TransmitModel (Option B from plan §2.5).
+
+void TransmitModel::setPcMicHostApiIndex(int index)
+{
+    if (index == m_pcMicHostApiIndex) { return; }  // idempotent guard
+    m_pcMicHostApiIndex = index;
+    emit pcMicHostApiIndexChanged(index);
+}
+
+void TransmitModel::setPcMicDeviceName(const QString& name)
+{
+    if (name == m_pcMicDeviceName) { return; }  // idempotent guard
+    m_pcMicDeviceName = name;
+    emit pcMicDeviceNameChanged(name);
+}
+
+void TransmitModel::setPcMicBufferSamples(int samples)
+{
+    if (samples == m_pcMicBufferSamples) { return; }  // idempotent guard
+    m_pcMicBufferSamples = samples;
+    emit pcMicBufferSamplesChanged(samples);
 }
 
 } // namespace NereusSDR

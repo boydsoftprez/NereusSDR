@@ -1803,3 +1803,18 @@ target_compile_definitions(tst_p2_mic_xlr_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_audio_tx_input_page_skeleton)
 target_compile_definitions(tst_audio_tx_input_page_skeleton PRIVATE NEREUS_BUILD_TESTS)
 
+# =============================================================================
+# Phase 3M-1b Task I.2 — PC Mic settings group on AudioTxInputPage
+# =============================================================================
+# Covers:
+#   1-3.  Backend combo UI↔model round-trips; device list repopulation.
+#   4-6.  Buffer slider: label update, UI↔model round-trips.
+#   7-8.  Mic Gain slider UI↔model round-trips.
+#   9.    No-feedback-loop: model→UI→model emission count.
+#  10.    Test Mic button state machine (checked + timer running / stopped).
+#  11-13. TransmitModel idempotency for 3 new PC Mic properties.
+#  14-15. PC Mic group box visibility gated by mic-source selection.
+# NEREUS_BUILD_TESTS required for RadioModel::setCapsHasMicJackForTest.
+nereus_add_test(tst_audio_tx_input_pc_mic_group)
+target_compile_definitions(tst_audio_tx_input_pc_mic_group PRIVATE NEREUS_BUILD_TESTS)
+

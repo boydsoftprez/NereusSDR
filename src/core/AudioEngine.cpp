@@ -1197,6 +1197,28 @@ float AudioEngine::vaxTxLevel() const
     return bus->txLevel();
 }
 
+// ── PC Mic input level (3M-1b I.2) ───────────────────────────────────────────
+//
+// Provides a peak-amplitude readout from the TX-input bus (the PC's capture
+// device, owned by m_txInputBus).  The PortAudioBus audio callback updates
+// m_txLevel (std::atomic<float>) each callback cycle; this accessor reads
+// it lock-free from the main thread.
+//
+// Returns 0.0f when m_txInputBus is null (mic not configured) or the bus is
+// not open (stream not started yet, or startup failed).
+//
+// Used by AudioTxInputPage's Test Mic VU bar (I.2) to show live mic level
+// without opening a separate capture stream.
+
+float AudioEngine::pcMicInputLevel() const
+{
+    const IAudioBus* bus = m_txInputBus.get();
+    if (bus == nullptr || !bus->isOpen()) {
+        return 0.0f;
+    }
+    return bus->txLevel();
+}
+
 // Sub-Phase 12 Task 12.4 — DSP sample-rate / block-size persistence.
 // ---------------------------------------------------------------------------
 
