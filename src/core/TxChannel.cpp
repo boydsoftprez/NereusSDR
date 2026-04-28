@@ -1131,17 +1131,42 @@ void TxChannel::driveOneTxBlock()
     // In 3M-1a: NullMicSource writes inN zeros to m_inI (functionally inert
     // during TUNE because gen1 PostGen overwrites the rsmpin stage input).
     // m_inQ stays zero throughout (real mono mic input; Q=0 for real signals).
+    //
+    // Producer/consumer rate mismatch: this timer fires every 5 ms but
+    // 256 samples at 48 kHz needs 5.333 ms. The consumer outruns the
+    // producer by ~6%, which means pullSamples will frequently return
+    // fewer than inN samples. Without explicit handling, the partial
+    // fill leaves stale data from the previous tick in m_inI[got..inN),
+    // which fexchange2 re-processes — audible as "overdriven + jittery"
+    // because the same speech segment gets folded back into the modulator
+    // every tick that underruns. Zero-fill the gap and skip the fexchange2
+    // call entirely on a complete underrun (no point modulating silence
+    // when the radio is already in TX mode and nothing changes).
+    bool haveSamples = false;
     if (m_micRouter) {
-        // pullSamples fills the I buffer with mono mic samples.
-        // Q channel for real mic input is zero (WDSP handles SSB modulation).
-        m_micRouter->pullSamples(m_inI.data(), inN);
+        const int got = m_micRouter->pullSamples(m_inI.data(), inN);
+        if (got > 0 && got < inN) {
+            // Partial read — zero-fill the gap so we don't reprocess stale
+            // samples on the right edge.
+            std::fill(m_inI.begin() + got, m_inI.end(), 0.0f);
+        }
+        if (got == 0) {
+            // No new samples this tick — nothing changed since last fexchange2.
+            // Skip the modulator call to avoid double-processing m_inI's
+            // existing contents.
+            return;
+        }
         std::fill(m_inQ.begin(), m_inQ.end(), 0.0f);
+        haveSamples = true;
     } else {
         // No mic router — send pure silence to WDSP input.
-        // gen1 PostGen will still inject the TUNE carrier downstream.
+        // gen1 PostGen will still inject the TUNE carrier downstream so
+        // we still need to call fexchange2 for the carrier path.
         std::fill(m_inI.begin(), m_inI.end(), 0.0f);
         std::fill(m_inQ.begin(), m_inQ.end(), 0.0f);
+        haveSamples = true;  // PostGen / TUNE path needs fexchange2 to fire
     }
+    (void)haveSamples;
 
 #ifdef HAVE_WDSP
     // fexchange2 — drives the WDSP TX channel.
