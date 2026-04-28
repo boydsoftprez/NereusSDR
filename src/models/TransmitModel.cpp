@@ -13,6 +13,10 @@
 //   2026-04-27 — micGainDb (int) + derived micPreampLinear (double) (C.1, Phase 3M-1b)
 //                 ported by J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-04-27 — 8 mic-jack flag properties: micMute / micBoost / micXlr /
+//                 lineIn / lineInBoost / micTipRing / micBias / micPttDisabled
+//                 (C.2, Phase 3M-1b) ported by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -199,6 +203,102 @@ void TransmitModel::setMicGainDb(int dB)
 
     emit micGainDbChanged(m_micGainDb);
     emit micPreampChanged(m_micPreampLinear);
+}
+
+// ── Mic-jack flag properties (3M-1b C.2) ─────────────────────────────────────
+//
+// Porting from Thetis console.cs:13213-13260 [v2.10.3.13]:
+//   LineIn / LineInBoost / MicBoost / MicXlr property block.
+// Porting from Thetis console.cs:28752 [v2.10.3.13] (MicMute: counter-intuitive
+//   naming preserved — see header comment in TransmitModel.h).
+// Porting from Thetis console.cs:19757-19766 [v2.10.3.13] (MicPTTDisabled).
+// MicTipRing default from setup.designer.cs:8683 [v2.10.3.13]:
+//   radOrionMicTip.Checked = true.
+// MicBias default from setup.designer.cs:8779 [v2.10.3.13]:
+//   radOrionBiasOff.Checked = true.
+// LineInBoost range from setup.designer.cs:46898-46907 [v2.10.3.13]:
+//   udLineInBoost.Minimum=-34.5, Maximum=12.0 (decoded from C# decimal int[4]).
+
+void TransmitModel::setMicMute(bool on)
+{
+    if (on == m_micMute) { return; }  // idempotent guard
+    m_micMute = on;
+    emit micMuteChanged(on);
+}
+
+void TransmitModel::setMicBoost(bool on)
+{
+    if (on == m_micBoost) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:13237-13246 [v2.10.3.13]:
+    //   mic_boost = value; ptbMic_Scroll(); SetMicGain();
+    // Phase D wires the WDSP side; model just stores + signals.
+    m_micBoost = on;
+    emit micBoostChanged(on);
+}
+
+void TransmitModel::setMicXlr(bool on)
+{
+    if (on == m_micXlr) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:13249-13258 [v2.10.3.13]:
+    //   mic_xlr = value; ptbMic_Scroll(); SetMicXlr();
+    // Phase G wires the SetMicXlr() bit; model just stores + signals.
+    m_micXlr = on;
+    emit micXlrChanged(on);
+}
+
+void TransmitModel::setLineIn(bool on)
+{
+    if (on == m_lineIn) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:13213-13222 [v2.10.3.13]:
+    //   line_in = value; ptbMic_Scroll(); SetMicGain();
+    m_lineIn = on;
+    emit lineInChanged(on);
+}
+
+void TransmitModel::setLineInBoost(double dB)
+{
+    // Clamp to Thetis range per setup.designer.cs:46898-46907 [v2.10.3.13]:
+    //   udLineInBoost.Minimum = -34.5, udLineInBoost.Maximum = 12.0
+    const double clamped = std::clamp(dB, kLineInBoostMin, kLineInBoostMax);
+    if (clamped == m_lineInBoost) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:13225-13234 [v2.10.3.13]:
+    //   line_in_boost = value; ptbMic_Scroll(); SetMicGain();
+    m_lineInBoost = clamped;
+    emit lineInBoostChanged(clamped);
+}
+
+void TransmitModel::setMicTipRing(bool tipIsMic)
+{
+    if (tipIsMic == m_micTipRing) { return; }  // idempotent guard
+    // NereusSDR model stores intuitive polarity (true = Tip is mic).
+    // Wire-bit polarity inversion at RadioConnection::setMicTipRing (Phase G).
+    // Thetis setup.cs:16463-16468 [v2.10.3.13]:
+    //   if (radOrionMicTip.Checked) NetworkIO.SetMicTipRing(0);
+    //   else NetworkIO.SetMicTipRing(1);
+    m_micTipRing = tipIsMic;
+    emit micTipRingChanged(tipIsMic);
+}
+
+void TransmitModel::setMicBias(bool on)
+{
+    if (on == m_micBias) { return; }  // idempotent guard
+    // Porting from Thetis setup.cs:16471-16476 [v2.10.3.13]:
+    //   if (radOrionBiasOn.Checked) NetworkIO.SetMicBias(1);
+    //   else NetworkIO.SetMicBias(0);
+    // Phase G wires the SetMicBias() bit; model just stores + signals.
+    m_micBias = on;
+    emit micBiasChanged(on);
+}
+
+void TransmitModel::setMicPttDisabled(bool disabled)
+{
+    if (disabled == m_micPttDisabled) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:19757-19764 [v2.10.3.13]:
+    //   mic_ptt_disabled = value;
+    //   NetworkIO.SetMicPTT(Convert.ToInt32(value));
+    // Phase G wires the NetworkIO.SetMicPTT() call; model just stores + signals.
+    m_micPttDisabled = disabled;
+    emit micPttDisabledChanged(disabled);
 }
 
 // ── Per-band tune power (G.3) ─────────────────────────────────────────────

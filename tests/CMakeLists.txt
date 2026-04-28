@@ -232,6 +232,16 @@ nereus_add_test(tst_transmit_model_tune_power)
 # Source: console.cs:28805-28817 [v2.10.3.13] (setAudioMicGain dB→scalar).
 nereus_add_test(tst_transmit_model_mic_gain)
 
+# ── Phase 3M-1b C.2: TransmitModel mic-jack flag properties (8x) ─────────────
+# Verifies defaults, round-trip setters, signal emission, idempotent guard,
+# and lineInBoost range clamping for: micMute / micBoost / micXlr / lineIn /
+# lineInBoost / micTipRing / micBias / micPttDisabled.
+# Source: console.cs:13213-13260 [v2.10.3.13]; console.cs:28752 [v2.10.3.13]
+# (MicMute counter-intuitive naming); console.cs:19757-19766 [v2.10.3.13]
+# (MicPTTDisabled); setup.designer.cs:46898-46907 [v2.10.3.13]
+# (udLineInBoost range -34.5..12.0).
+nereus_add_test(tst_transmit_model_mic_jack_flags)
+
 # ── Phase 3O VAX schema migration ─────────────────────────────────────────
 nereus_add_test(tst_app_settings_vax_migration)
 

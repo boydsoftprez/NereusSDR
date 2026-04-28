@@ -218,8 +218,98 @@ public:
     static constexpr int kMicGainDbMin = -50;
     static constexpr int kMicGainDbMax =  70;
 
+    // ── Mic-jack flag properties (3M-1b C.2) ──────────────────────────────
+    //
+    // Porting from Thetis console.cs:13213-13260 [v2.10.3.13]:
+    //   LineIn / LineInBoost / MicBoost / MicXlr property block;
+    //   console.cs:28752 [v2.10.3.13]: MicMute "NOTE: although called
+    //   MicMute, true = mic in use";
+    //   console.cs:19757-19766 [v2.10.3.13]: MicPTTDisabled;
+    //   setup.designer.cs:8683 [v2.10.3.13]: radOrionMicTip.Checked = true;
+    //   setup.designer.cs:8779 [v2.10.3.13]: radOrionBiasOff.Checked = true.
+    //
+    // Wire-bit setters (RadioConnection::setMic*) arrive in Phase G.
+    // Persistence per-MAC arrives in L.2.
+
+    /// Mic mute toggle.  Counter-intuitive naming preserved from Thetis.
+    ///
+    /// **NOTE: although called MicMute, true = mic in use**
+    /// (Thetis console.cs:28752 [v2.10.3.13] verbatim comment.)
+    ///
+    /// FALSE means the mic is muted (chkMicMute unchecked); TRUE means the
+    /// mic is in use (chkMicMute checked).  The mute action is implemented
+    /// via SetTXAPanelGain1(0) — see Phase D Task D.6 for the WDSP wiring.
+    ///
+    /// Default TRUE: from console.designer.cs:2029-2030 [v2.10.3.13]:
+    ///   "Checked = true; CheckState = Checked"
+    bool micMute() const noexcept { return m_micMute; }
+
+    /// 20 dB hardware microphone preamp enable.
+    /// From Thetis console.cs:13237 [v2.10.3.13]: private bool mic_boost = true;
+    /// Default TRUE: 20 dB preamp on by default in Thetis.
+    bool micBoost() const noexcept { return m_micBoost; }
+
+    /// XLR jack select (Saturn G2 only; FALSE = 3.5mm TRS jack).
+    /// From Thetis console.cs:13249 [v2.10.3.13]: private bool mic_xlr = true;
+    /// Default TRUE: XLR selected on boards that have the XLR jack.
+    /// HL2 / Hermes / Atlas have no XLR hardware; the UI gates this on
+    /// BoardCapabilities::hasXlrMic (Phase I wiring).
+    bool micXlr() const noexcept { return m_micXlr; }
+
+    /// Line-in input select.  TRUE = use line-in instead of mic input.
+    /// From Thetis console.cs:13213 [v2.10.3.13]: private bool line_in = false;
+    /// Default FALSE: microphone input active by default.
+    bool lineIn() const noexcept { return m_lineIn; }
+
+    /// Line-in boost in dB.  Clamped to [kLineInBoostMin, kLineInBoostMax].
+    /// From Thetis console.cs:13225 [v2.10.3.13]: private double line_in_boost = 0.0;
+    /// Range from setup.designer.cs:46898-46907 [v2.10.3.13]:
+    ///   udLineInBoost.Minimum = -34.5, udLineInBoost.Maximum = 12.0
+    ///   (decoded from C# decimal int[4] format).
+    double lineInBoost() const noexcept { return m_lineInBoost; }
+
+    /// Mic jack tip/ring polarity.  TRUE = Tip is mic (NereusSDR intuitive).
+    /// NereusSDR-original semantic; wire-bit polarity inversion happens at
+    /// RadioConnection::setMicTipRing (Phase G).
+    /// Thetis default: radOrionMicTip.Checked = true (setup.designer.cs:8683
+    /// [v2.10.3.13]) → Tip selected by default.
+    bool micTipRing() const noexcept { return m_micTipRing; }
+
+    /// Mic jack bias voltage enable.
+    /// NereusSDR-original: FALSE = bias off by default (safe default for
+    /// dynamic microphones that don't need phantom power).
+    /// Thetis default: radOrionBiasOff.Checked = true (setup.designer.cs:8779
+    /// [v2.10.3.13]) → bias off by default.
+    bool micBias() const noexcept { return m_micBias; }
+
+    /// Mic jack PTT disable flag.  TRUE = mic PTT disabled, FALSE = enabled.
+    /// Also counter-intuitive (Thetis-consistent): the flag name is "Disabled"
+    /// but FALSE is the active/enabled state.
+    /// From Thetis console.cs:19757 [v2.10.3.13]:
+    ///   private bool mic_ptt_disabled = false;
+    ///   ... NetworkIO.SetMicPTT(Convert.ToInt32(value));
+    /// Default FALSE: PTT enabled by default (sensible safety default).
+    bool micPttDisabled() const noexcept { return m_micPttDisabled; }
+
+    // Line-in boost range constants.
+    // From Thetis setup.designer.cs:46898-46907 [v2.10.3.13]:
+    //   udLineInBoost.Minimum decoded from decimal{345,0,0,-2147418112} = -34.5
+    //   udLineInBoost.Maximum decoded from decimal{12,0,0,0} = 12.0
+    static constexpr double kLineInBoostMin = -34.5;
+    static constexpr double kLineInBoostMax =  12.0;
+
 public slots:
     void setMicGainDb(int dB);
+
+    // ── Mic-jack flag setters (3M-1b C.2) ─────────────────────────────────
+    void setMicMute(bool on);
+    void setMicBoost(bool on);
+    void setMicXlr(bool on);
+    void setLineIn(bool on);
+    void setLineInBoost(double dB);
+    void setMicTipRing(bool tipIsMic);
+    void setMicBias(bool on);
+    void setMicPttDisabled(bool disabled);
 
 signals:
     void moxChanged(bool mox);
@@ -237,6 +327,16 @@ signals:
     void micGainDbChanged(int dB);
     /// Emitted when micPreampLinear changes (carries the new linear scalar).
     void micPreampChanged(double linear);
+
+    // ── Mic-jack flag signals (3M-1b C.2) ─────────────────────────────────
+    void micMuteChanged(bool on);
+    void micBoostChanged(bool on);
+    void micXlrChanged(bool on);
+    void lineInChanged(bool on);
+    void lineInBoostChanged(double dB);
+    void micTipRingChanged(bool tipIsMic);
+    void micBiasChanged(bool on);
+    void micPttDisabledChanged(bool disabled);
 
 private:
     bool m_mox{false};
@@ -262,6 +362,19 @@ private:
     int    m_micGainDb       = -6;
     // pow(10, -6/20) ≈ 0.501187233627272
     double m_micPreampLinear = std::pow(10.0, -6.0 / 20.0);
+
+    // ── Mic-jack flag properties (3M-1b C.2) ──────────────────────────────
+    // From Thetis console.cs:13213-13260 [v2.10.3.13] and related sources.
+    // NOTE: m_micMute = true means the mic IS in use (Thetis counter-intuitive
+    // naming preserved — see MicMute getter doc-comment above).
+    bool   m_micMute        = true;   // console.designer.cs:2029-2030: Checked=true
+    bool   m_micBoost       = true;   // console.cs:13237: mic_boost = true
+    bool   m_micXlr         = true;   // console.cs:13249: mic_xlr = true
+    bool   m_lineIn         = false;  // console.cs:13213: line_in = false
+    double m_lineInBoost    = 0.0;    // console.cs:13225: line_in_boost = 0.0
+    bool   m_micTipRing     = true;   // setup.designer.cs:8683: radOrionMicTip.Checked=true
+    bool   m_micBias        = false;  // setup.designer.cs:8779: radOrionBiasOff.Checked=true
+    bool   m_micPttDisabled = false;  // console.cs:19757: mic_ptt_disabled = false
 };
 
 } // namespace NereusSDR
