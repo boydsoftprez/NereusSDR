@@ -169,6 +169,17 @@ struct CodecContext {
     // Populated by buildCodecContext() from RadioConnection::m_lineIn.
     bool    p1LineIn{false};
 
+    // P1 mic-jack Tip/Ring polarity — bank 11 (C0=0x14) C1 bit 4 (0x10), INVERTED.
+    // NereusSDR convention: true = Tip is mic (intuitive).
+    // POLARITY INVERSION: wire bit is written as !p1MicTipRing.
+    //   p1MicTipRing = true  → Tip is mic  → wire bit 4 = 0
+    //   p1MicTipRing = false → Tip is BIAS → wire bit 4 = 1
+    // Source: Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+    //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ...
+    //   mic_trs: 1 = Tip is BIAS/PTT (ring is mic), 0 = Tip is mic (normal).
+    // Populated by buildCodecContext() from RadioConnection::m_micTipRing.
+    bool    p1MicTipRing{true};
+
     // RX VFO frequency words (Hz, raw, no phase-word conversion on P1).
     quint64 rxFreqHz[7]{};
     quint64 txFreqHz{0};

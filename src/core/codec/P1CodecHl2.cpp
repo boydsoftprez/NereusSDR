@@ -130,10 +130,16 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
         // Source: mi0bot networkproto1.c:1091-1104 [@c26a8a4]
         case 11: {
             out[0] = C0base | 0x14;
+            // C1: preamp bits 0-3 (bit 3 = rx0 again, Thetis quirk) + mic_trs bit 4.
+            // HL2 has no mic jack but the bit is written for correctness (FW ignores).
+            // mic_trs polarity inversion: wire bit set when tip is BIAS/PTT (!tipHot).
+            // From Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+            //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ... — 3M-1b G.3
             out[1] = quint8((ctx.rxPreamp[0] ? 0x01 : 0)
                           | (ctx.rxPreamp[1] ? 0x02 : 0)
                           | (ctx.rxPreamp[2] ? 0x04 : 0)
-                          | (ctx.rxPreamp[0] ? 0x08 : 0));
+                          | (ctx.rxPreamp[0] ? 0x08 : 0)         // bit3 = rx0 again (Thetis quirk)
+                          | (!ctx.p1MicTipRing ? 0x10 : 0x00));  // mic_trs (inverted) — 3M-1b G.3
             out[2] = 0;
             out[3] = 0;
             // MI0BOT: Different read loop for HL2 — Larger range for the HL2 attenuator

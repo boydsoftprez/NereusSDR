@@ -133,6 +133,7 @@ public slots:
     void setTxStepAttenuation(int dB) override;
     void setMicBoost(bool on) override;
     void setLineIn(bool on) override;
+    void setMicTipRing(bool tipHot) override;
 
 private slots:
     void onReadyRead();
@@ -268,6 +269,13 @@ private:
     // Set by setTrxRelay() on every call (Codex P2: safety effect before guard).
     // Cleared by sendCommandFrame() after it emits bank 10.
     bool    m_forceBank10Next{false};
+
+    // 3M-1b G.3: force the next sendCommandFrame() to jump to bank 11 so
+    // the mic_trs bit (C1 bit 4) lands on the wire within ≤1 frame of
+    // setMicTipRing().  Mirrors the m_forceBank10Next pattern exactly.
+    // Set by setMicTipRing() on every call (Codex P2: safety effect before guard).
+    // Cleared by sendCommandFrame() after it emits bank 11.
+    bool    m_forceBank11Next{false};
 
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
@@ -460,6 +468,23 @@ public:
     // forceBank10NextForTest — returns m_forceBank10Next (the bank-10 flush
     // flag state).  Used by tst_p1_trx_relay_wire to verify Codex P2 pattern.
     bool forceBank10NextForTest() const { return m_forceBank10Next; }
+
+    // ── 3M-1b G.3 mic_trs wire test seams ───────────────────────────────────
+    // captureBank11ForTest — compose 5 bank-11 C&C bytes from current state
+    // and return them.  Used by tst_p1_mic_tip_ring_wire to verify the mic_trs
+    // bit (C1 bit 4 = 0x10, INVERTED: 0 = Tip-is-mic, 1 = Tip-is-BIAS/PTT)
+    // without needing a live socket.
+    // Source: Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+    //   ((prn->mic.mic_trs & 1) << 4) — mic_trs 1 = tip is BIAS/PTT
+    QByteArray captureBank11ForTest() const {
+        quint8 out[5] = {};
+        composeCcForBankForTest(11, out);
+        return QByteArray(reinterpret_cast<const char*>(out), 5);
+    }
+
+    // forceBank11NextForTest — returns m_forceBank11Next (the bank-11 flush
+    // flag state).  Used by tst_p1_mic_tip_ring_wire to verify Codex P2 pattern.
+    bool forceBank11NextForTest() const { return m_forceBank11Next; }
 
     // ── 3M-1a E.2 TX I/Q test seams ─────────────────────────────────────────
     // sendTxIqAndCapture — feeds n interleaved float I/Q samples through the

@@ -10,12 +10,16 @@
 //   Project Files/Source/ChannelMaster/netInterface.c, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //
-// --- From deskhpsdr/src/new_protocol.c (first deskhpsdr port, 3M-1b G.1; G.2) ---
+// --- From deskhpsdr/src/new_protocol.c (first deskhpsdr port, 3M-1b G.1; G.2; G.3) ---
 //
 // setMicBoost P2 wire-byte (transmit_specific_buffer[50] bit 1, 0x02) ported
 // from deskhpsdr/src/new_protocol.c:1484-1486 [@120188f].
 // setLineIn P2 wire-byte (transmit_specific_buffer[50] bit 0, 0x01) ported
 // from deskhpsdr/src/new_protocol.c:1480-1482 [@120188f].
+// setMicTipRing P2 wire-byte (transmit_specific_buffer[50] bit 3, 0x08, INVERTED) ported
+// from deskhpsdr/src/new_protocol.c:1492-1494 [@120188f].
+// NOTE: polarity inversion at NereusSDR API layer — setMicTipRing(tipHot) writes
+// !tipHot to the wire bit (upstream field = "1 = Tip is BIAS/PTT", not mic).
 //
 /* Copyright (C)
 * 2015 - John Melton, G0ORX/N6LYT
@@ -48,6 +52,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setLineIn: 2nd deskhpsdr port. Byte 50 bit 0 (0x01) from
 //                 deskhpsdr new_protocol.c:1480-1482 [@120188f].
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-04-28 — setMicTipRing: 3rd deskhpsdr port. Byte 50 bit 3 (0x08, INVERTED)
+//                 from deskhpsdr new_protocol.c:1492-1494 [@120188f].
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -217,6 +224,7 @@ public slots:
     void setTxStepAttenuation(int dB) override;
     void setMicBoost(bool on) override;
     void setLineIn(bool on) override;
+    void setMicTipRing(bool tipHot) override;
 
     // Bench fix round 3 (Issue B): P2 TX I/Q output is always at 192 kHz.
     // This rate is used by WdspEngine::createTxChannel() to open the WDSP

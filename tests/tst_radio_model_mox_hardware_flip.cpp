@@ -102,6 +102,7 @@ public:
     }
     void setMicBoost(bool) override {}
     void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
 };
 
 // ── Test class ───────────────────────────────────────────────────────────────

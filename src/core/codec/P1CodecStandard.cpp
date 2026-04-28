@@ -214,10 +214,15 @@ void P1CodecStandard::bank10(const CodecContext& ctx, quint8 out[5]) const
 void P1CodecStandard::bank11(const CodecContext& ctx, quint8 out[5]) const
 {
     out[0] = (ctx.mox ? 0x01 : 0x00) | 0x14;
+    // C1: preamp bits 0-3 (bit 3 = rx0 again, Thetis quirk) + mic_trs bit 4.
+    // mic_trs polarity inversion: wire bit set when tip is BIAS/PTT (!tipHot).
+    // From Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+    //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ...  — 3M-1b G.3
     out[1] = quint8((ctx.rxPreamp[0] ? 0x01 : 0)
                   | (ctx.rxPreamp[1] ? 0x02 : 0)
                   | (ctx.rxPreamp[2] ? 0x04 : 0)
-                  | (ctx.rxPreamp[0] ? 0x08 : 0));  // bit3 = rx0 again (Thetis quirk)
+                  | (ctx.rxPreamp[0] ? 0x08 : 0)         // bit3 = rx0 again (Thetis quirk)
+                  | (!ctx.p1MicTipRing ? 0x10 : 0x00));  // mic_trs (inverted) — 3M-1b G.3
     out[2] = 0;
     out[3] = 0;
     // canonical 5-bit ramdor encoding

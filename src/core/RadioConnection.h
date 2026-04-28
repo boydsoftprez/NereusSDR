@@ -192,6 +192,29 @@ public slots:
     /// (firmware ignores it).
     virtual void setLineIn(bool on) = 0;
 
+    /// Hardware mic-jack Tip/Ring polarity selection.
+    ///
+    /// NereusSDR parameter convention: `tipHot = true` means Tip carries the
+    /// mic signal (the intuitive "tip is mic" meaning).
+    ///
+    /// POLARITY INVERSION AT THE WIRE LAYER — both upstream sources define
+    /// the field as "1 = Tip is BIAS/PTT" (i.e. Tip is NOT the mic):
+    ///   Thetis field name: mic_trs  ("TRS" = Tip-Ring-Sleeve; 1 = tip is ring)
+    ///   deskhpsdr field: mic_ptt_tip_bias_ring (1 = tip carries BIAS/PTT, not mic)
+    /// Therefore both P1 and P2 write `!tipHot` to the wire bit.
+    ///
+    /// P1 source: Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+    ///   case 11 (C0=0x14) C1 byte: ((prn->mic.mic_trs & 1) << 4) → bit 4 (0x10)
+    ///   (first touch of case 11 / bank 11)
+    ///
+    /// P2 source: deskhpsdr src/new_protocol.c:1492-1494 [@120188f]
+    ///   if (mic_ptt_tip_bias_ring) { transmit_specific_buffer[50] |= 0x08; }
+    ///   (bit 3, mask 0x08 — different bit position from P1)
+    ///
+    /// HL2 has no mic jack; the P1 implementation still writes the bit
+    /// (firmware ignores it).
+    virtual void setMicTipRing(bool tipHot) = 0;
+
     // DEPRECATED — call setAntennaRouting directly. Kept for one release
     // cycle as a rollback hatch per docs/architecture/antenna-routing-design.md §7.7.
     // Removed in the release following 3P-I-b.
@@ -345,6 +368,14 @@ protected:
     // P2: emitted to transmit_specific_buffer[50] bit 0 (0x01).
     // From Thetis networkproto1.c:581 [v2.10.3.13]; deskhpsdr new_protocol.c:1480-1482 [@120188f].
     bool m_lineIn{false};
+
+    // Shared state for setMicTipRing (3M-1b G.3).
+    // Parameter convention: true = Tip is mic (intuitive).
+    // POLARITY INVERSION: both P1 and P2 write !m_micTipRing to the wire bit.
+    // P1: emitted to case 11 (C0=0x14) C1 bit 4 (0x10) inverted.
+    // P2: emitted to transmit_specific_buffer[50] bit 3 (0x08) inverted.
+    // From Thetis networkproto1.c:597 [v2.10.3.13]; deskhpsdr new_protocol.c:1492-1494 [@120188f].
+    bool m_micTipRing{true};
 };
 
 } // namespace NereusSDR

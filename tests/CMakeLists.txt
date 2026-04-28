@@ -1533,3 +1533,44 @@ target_compile_definitions(tst_p1_line_in_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p2_line_in_wire)
 target_compile_definitions(tst_p2_line_in_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1b Task G.3: P1 mic_trs wire-byte snapshot ──────────────────────
+# 14 tests pin the mic_trs bit (C1 bit 4 = 0x10, INVERTED) of bank 11 (C0=0x14)
+# in P1RadioConnection::setMicTipRing().
+# POLARITY INVERSION: tipHot=true (Tip-is-mic) → wire bit 0;
+#                     tipHot=false (Tip-is-BIAS) → wire bit 1.
+#   1.  Default state: C1 bit 4 = 0 (default tipHot=true).
+#   2.  setMicTipRing(true)  → C1 bit 4 = 0 (tip-is-mic, wire inverted).
+#   3.  setMicTipRing(false) → C1 bit 4 = 1 (tip-is-BIAS, wire inverted).
+#   4.  Round-trip: false → true → bit clears.
+#   5.  Bank 11 C0 address stays 0x14.
+#   6.  setMicTipRing(false) does NOT clobber C1 bits 0-3 (preamp).
+#   7.  setMicTipRing(true) leaves C1 all-zero in default state.
+#   8.  setMicTipRing sets m_forceBank11Next (Codex P2 flush pattern).
+#   9.  Repeated same-value call still sets the flush flag.
+#  10.  Idempotency: setMicTipRing(false) twice → bit stays 1.
+#  11.  Codec path (Standard): setMicTipRing(false) → C1 bit 4 set.
+#  12.  Codec path (Standard): setMicTipRing(true) → C1 bit 4 clear.
+#  13.  Codec path (HL2): setMicTipRing(false) → C1 bit 4 set (FW ignores).
+#  14.  setMicTipRing(false) does NOT touch C1 bits 0-3 — cross-bit guard.
+# Source: Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13].
+nereus_add_test(tst_p1_mic_tip_ring_wire)
+target_compile_definitions(tst_p1_mic_tip_ring_wire PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-1b Task G.3: P2 mic_tip_ring wire-byte snapshot ─────────────────
+# 10 tests pin the mic_ptt_tip_bias_ring bit (CmdTx byte 50 bit 3 = 0x08,
+# INVERTED) in P2RadioConnection::setMicTipRing().
+# POLARITY INVERSION: tipHot=true → byte-50 bit 3 = 0; tipHot=false → 1.
+#   1.  Default state: byte 50 bit 3 = 0 (default tipHot=true).
+#   2.  setMicTipRing(false) → byte 50 bit 3 = 1 (tip-is-BIAS, inverted).
+#   3.  setMicTipRing(true)  → byte 50 bit 3 = 0 (tip-is-mic, inverted).
+#   4.  Round-trip false → true → false.
+#   5.  Bits 0 (line_in) and 1 (mic_boost) unaffected — cross-bit guard.
+#   6.  Bits 4-7 of byte 50 unaffected.
+#   7.  Idempotency: setMicTipRing(false) twice → bit remains 1.
+#   8.  Codec path (OrionMKII): mic_trs at byte 50 bit 3 (inverted).
+#   9.  Codec path (Saturn/ANAN-G2): same inverted behaviour.
+#  10.  Byte 51 (line_in gain) unaffected by setMicTipRing.
+# Source: deskhpsdr/src/new_protocol.c:1492-1494 [@120188f].
+nereus_add_test(tst_p2_mic_tip_ring_wire)
+target_compile_definitions(tst_p2_mic_tip_ring_wire PRIVATE NEREUS_BUILD_TESTS)
+

@@ -125,6 +125,7 @@ public:
     void setTrxRelay(bool) override {}
     void setMicBoost(bool) override {}
     void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
     void sendTxIq(const float*, int) override {}  // consume silently
 };
 

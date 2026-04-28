@@ -14,6 +14,10 @@
 // from deskhpsdr/src/new_protocol.c:1484-1486 [@120188f].
 // setLineIn P2 wire-byte (transmit_specific_buffer[50] bit 0, 0x01) ported
 // from deskhpsdr/src/new_protocol.c:1480-1482 [@120188f].
+// setMicTipRing P2 wire-byte (transmit_specific_buffer[50] bit 3, 0x08, INVERTED) ported
+// from deskhpsdr/src/new_protocol.c:1492-1494 [@120188f].
+// NOTE: polarity inversion at NereusSDR API layer — setMicTipRing(tipHot) writes
+// !tipHot to the wire bit (upstream field = "1 = Tip is BIAS/PTT", not mic).
 //
 /* Copyright (C)
 * 2015 - John Melton, G0ORX/N6LYT
@@ -46,6 +50,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setLineIn: 2nd deskhpsdr port. Byte 50 bit 0 (0x01) from
 //                 deskhpsdr new_protocol.c:1480-1482 [@120188f].
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-04-28 — setMicTipRing: 3rd deskhpsdr port. Byte 50 bit 3 (0x08, INVERTED)
+//                 from deskhpsdr new_protocol.c:1492-1494 [@120188f].
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -955,6 +962,51 @@ void P2RadioConnection::setLineIn(bool on)
         m_mic.micControl |= 0x01;
     } else {
         m_mic.micControl &= ~quint8(0x01);
+    }
+    if (m_running && m_socket) {
+        sendCmdTx();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setMicTipRing (3M-1b G.3)
+//
+// Selects mic-jack Tip/Ring polarity.
+// NereusSDR parameter convention: tipHot = true → Tip carries the mic signal.
+//
+// POLARITY INVERSION AT THE WIRE LAYER:
+// deskhpsdr field mic_ptt_tip_bias_ring means "1 = Tip is BIAS/PTT" (i.e.
+// NOT the mic).  Thetis field mic_trs carries identical semantics.
+// Therefore: tipHot = true → Tip is mic → wire bit CLEAR (0)
+//            tipHot = false → Tip is BIAS → wire bit SET (1)
+//
+// Wire byte: transmit_specific_buffer[50] bit 3 (mask 0x08), INVERTED.
+//
+// Porting from deskhpsdr/src/new_protocol.c:1492-1494 [@120188f]:
+//   if (mic_ptt_tip_bias_ring) {
+//     transmit_specific_buffer[50] |= 0x08;
+//   }
+//
+// Note: P2 bit position (bit 3 = 0x08) differs from P1 bit position
+// (bit 4 = 0x10 in C1 of bank 11). Both carry the same inverted semantics.
+// The bit field is written via m_mic.micControl which is used in
+// composeCmdTxLegacy() at buf[50] and in P2CodecOrionMkII at byte 50.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setMicTipRing(bool tipHot)
+{
+    if (m_micTipRing == tipHot) {
+        return;  // idempotent — 100 ms heartbeat covers any state drift
+    }
+    m_micTipRing = tipHot;
+    // POLARITY INVERSION: mic_ptt_tip_bias_ring = 1 means Tip is BIAS/PTT.
+    // setMicTipRing(true) = Tip-is-mic → wire bit 3 CLEAR.
+    // setMicTipRing(false) = Tip-is-BIAS → wire bit 3 SET.
+    // From deskhpsdr/src/new_protocol.c:1492-1494 [@120188f]:
+    //   if (mic_ptt_tip_bias_ring) { transmit_specific_buffer[50] |= 0x08; }
+    if (!tipHot) {
+        m_mic.micControl |= 0x08;
+    } else {
+        m_mic.micControl &= ~quint8(0x08);
     }
     if (m_running && m_socket) {
         sendCmdTx();

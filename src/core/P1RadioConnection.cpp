@@ -1169,6 +1169,44 @@ void P1RadioConnection::setLineIn(bool on)
 }
 
 // ---------------------------------------------------------------------------
+// setMicTipRing (3M-1b G.3)
+//
+// Selects mic-jack Tip/Ring polarity.
+// NereusSDR parameter convention: tipHot = true → Tip carries the mic signal.
+//
+// POLARITY INVERSION AT THE WIRE LAYER:
+// Thetis field mic_trs and deskhpsdr field mic_ptt_tip_bias_ring both mean
+// "1 = Tip is BIAS/PTT" (i.e. NOT the mic).  So:
+//   tipHot = true  → Tip is mic    → wire bit CLEAR (0)
+//   tipHot = false → Tip is BIAS   → wire bit SET   (1)
+// The implementation writes (!m_micTipRing) to bit 4 of bank-11 C1.
+//
+// Wire bit: bank 11 (C0=0x14) C1 byte bit 4 (mask 0x10), INVERTED.
+//
+// Porting from Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+//   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ...
+//   mic_trs: 1 = tip is BIAS/PTT (ring is mic), 0 = tip is mic (normal).
+//
+// First touch of case 11 / bank 11: adds m_forceBank11Next flush flag +
+// round-robin chooser extension + captureBank11ForTest/forceBank11NextForTest
+// test seams.  Bits 0-3 of C1 carry per-ADC preamp flags (Thetis quirk:
+// bit 3 = rx0 again) and are untouched by this setter (OR into C1, never AND).
+//
+// Flush pattern mirrors setLineIn (Codex P2): m_forceBank11Next is set
+// before the idempotent guard so the bit lands on the wire within ≤1 frame.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setMicTipRing(bool tipHot)
+{
+    // Codex P2: set flush flag BEFORE idempotent guard.
+    m_forceBank11Next = true;
+
+    if (m_micTipRing == tipHot) {
+        return;  // idempotent — flush flag already set above
+    }
+    m_micTipRing = tipHot;
+}
+
+// ---------------------------------------------------------------------------
 // applyBoardQuirks
 //
 // Reads BoardCapabilities (m_caps) and enforces runtime constraints.
@@ -1325,6 +1363,7 @@ CodecContext P1RadioConnection::buildCodecContext() const
     ctx.trxRelay       = m_trxRelay;
     ctx.p1MicBoost     = m_micBoost;
     ctx.p1LineIn       = m_lineIn;
+    ctx.p1MicTipRing   = m_micTipRing;
     ctx.duplex         = m_duplex;
     ctx.diversity      = m_diversity;
     ctx.antennaIdx     = m_antennaIdx;
@@ -1718,16 +1757,21 @@ void P1RadioConnection::sendCommandFrame()
     // implementation does not defer MOX; it sets the bit on the very next frame.
     // 3M-1a E.4: if setTrxRelay() requested a bank-10 flush, jump to bank 10
     // so the T/R relay bit (C3 bit 7) lands within ≤1 frame of the call.
-    // Bank-0 flush takes priority if both flags are set simultaneously (rare).
-    // If both flags are set simultaneously, bank 0 wins this frame;
-    // m_forceBank10Next is preserved (not cleared) and fires on the following frame.
+    // 3M-1b G.3: if setMicTipRing() requested a bank-11 flush, jump to bank 11
+    // so the mic_trs bit (C1 bit 4) lands within ≤1 frame of the call.
+    // Priority: bank 0 > bank 10 > bank 11.  Losing flags are preserved and
+    // fire on the following frame (same pattern as bank 0 vs bank 10).
     // Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f].
+    // Source: Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13].
     if (m_forceBank0Next) {
         m_ccRoundRobinIdx = 0;
         m_forceBank0Next  = false;
     } else if (m_forceBank10Next) {
         m_ccRoundRobinIdx = 10;
         m_forceBank10Next = false;
+    } else if (m_forceBank11Next) {
+        m_ccRoundRobinIdx = 11;
+        m_forceBank11Next = false;
     }
 
     // Subframe 0: current bank
@@ -2024,11 +2068,16 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
 
     case 11: // Preamp control (networkproto1.c:593-601)
         out[0] = C0base | 0x14;
+        // C1: preamp bits 0-3 (bit 3 = rx0 again, Thetis quirk) + mic_trs bit 4.
+        // mic_trs polarity inversion: 1 = tip is BIAS/PTT → write !m_micTipRing.
+        // From Thetis ChannelMaster/networkproto1.c:597 [v2.10.3.13]
+        //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ...
         out[1] = static_cast<quint8>(
                    (m_rxPreamp[0] ? 0x01 : 0)
                  | (m_rxPreamp[1] ? 0x02 : 0)
                  | (m_rxPreamp[2] ? 0x04 : 0)
-                 | (m_rxPreamp[0] ? 0x08 : 0)); // bit3 = rx0 again (Thetis quirk)
+                 | (m_rxPreamp[0] ? 0x08 : 0)  // bit3 = rx0 again (Thetis quirk)
+                 | (!m_micTipRing ? 0x10 : 0x00)); // 3M-1b G.3 — mic_trs (inverted)
         out[2] = 0; // line_in_gain + puresignal
         out[3] = 0; // user digital outputs
         out[4] = static_cast<quint8>((m_stepAttn[0] & 0x1F) | 0x20); // ADC0 step ATT + enable
