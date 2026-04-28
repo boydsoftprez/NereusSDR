@@ -438,4 +438,64 @@ bool BandPlanGuard::isValidTxBand(Band rxBand, Band txBand,
     return rxBand == txBand;
 }
 
+// ---------------------------------------------------------------------------
+// 3M-1b SSB-mode allow-list (NereusSDR-native)
+// ---------------------------------------------------------------------------
+
+bool BandPlanGuard::isModeAllowedForTx(DSPMode mode) const noexcept
+{
+    // 3M-1b ships SSB voice only. CW is 3M-2; AM/SAM/FM/DSB/DRM are 3M-3.
+    // SPEC is never a TX mode.
+    switch (mode) {
+        case DSPMode::LSB:
+        case DSPMode::USB:
+        case DSPMode::DIGL:
+        case DSPMode::DIGU:
+            return true;
+        default:
+            return false;
+    }
+}
+
+BandPlanGuard::MoxCheckResult
+BandPlanGuard::checkMoxAllowed(Region region, std::int64_t freqHz,
+                                DSPMode mode, Band rxBand, Band txBand,
+                                bool preventDifferentBand,
+                                bool extended) const noexcept
+{
+    // Mode check first — cheaper and more directly user-facing.
+    if (!isModeAllowedForTx(mode)) {
+        QString reason;
+        switch (mode) {
+            case DSPMode::CWL:
+            case DSPMode::CWU:
+                reason = QStringLiteral("CW TX coming in Phase 3M-2");
+                break;
+            case DSPMode::AM:
+            case DSPMode::SAM:
+            case DSPMode::DSB:
+            case DSPMode::FM:
+            case DSPMode::DRM:
+                reason = QStringLiteral("AM/FM TX coming in Phase 3M-3 (audio modes)");
+                break;
+            default:
+                reason = QStringLiteral("Mode not supported for TX");
+                break;
+        }
+        return {false, reason};
+    }
+
+    // Frequency / band-edge check.
+    if (!isValidTxFreq(region, freqHz, mode, extended)) {
+        return {false, QStringLiteral("Frequency outside TX-allowed range")};
+    }
+
+    // Band-mismatch check.
+    if (!isValidTxBand(rxBand, txBand, preventDifferentBand)) {
+        return {false, QStringLiteral("RX/TX band mismatch — cross-band TX disabled")};
+    }
+
+    return {true, QString()};
+}
+
 } // namespace NereusSDR::safety

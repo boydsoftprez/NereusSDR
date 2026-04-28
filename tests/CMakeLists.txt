@@ -702,6 +702,13 @@ nereus_add_test(tst_waterfall_scrollback)
 # different-band guard, and 20m in/out-of-band cases.
 nereus_add_test(tst_band_plan_guard)
 
+# ── Phase 3M-1b Task K.1: BandPlanGuard SSB-mode allow-list for TX ─────────
+# isModeAllowedForTx: 4 allowed (LSB/USB/DIGL/DIGU) + 8 rejected
+# (CWL/CWU/AM/SAM/DSB/FM/DRM/SPEC). checkMoxAllowed: reason strings for each
+# rejection class + ok path (LSB/USB on valid freq) + freq/band reject on
+# an otherwise-allowed mode. ~20 test cases.
+nereus_add_test(tst_band_plan_guard_mode_allow_list)
+
 # ── Phase 3M-0 Task 3: SwrProtectionController PollPAPWR state machine ─────
 # 8 tests cover the two-stage foldback (per-sample + 4-trip windback latch),
 # open-antenna heuristic (swr=50 / factor=0.01), low-power floor clamp,

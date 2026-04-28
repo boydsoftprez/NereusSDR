@@ -116,6 +116,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 
 #include <cstdint>
+#include <QString>
 #include "models/Band.h"
 #include "core/WdspTypes.h"
 
@@ -176,6 +177,30 @@ public:
     /// console.cs:29401-29414 [2.9.0.7]MW0LGE.
     bool isValidTxBand(Band rxBand, Band txBand,
                        bool preventDifferentBand) const noexcept;
+
+    // -----------------------------------------------------------------------
+    // 3M-1b SSB-mode allow-list (NereusSDR-native, no Thetis port cite needed)
+    // -----------------------------------------------------------------------
+
+    /// Returns true if \p mode is allowed to TX in the current 3M-1b scope.
+    /// Allowed:  LSB, USB, DIGL, DIGU (SSB voice family).
+    /// Rejected: CWL, CWU (→ Phase 3M-2), AM/SAM/DSB/FM/DRM (→ Phase 3M-3),
+    ///           SPEC (never a TX mode).
+    bool isModeAllowedForTx(DSPMode mode) const noexcept;
+
+    /// Composite MOX-allowed check: mode check (above) + existing
+    /// isValidTxFreq + isValidTxBand checks.
+    /// Returns a {ok, reason} struct suitable for tooltip / status-bar display.
+    /// Mode check runs first (cheaper and more user-facing).
+    struct MoxCheckResult {
+        bool    ok;
+        QString reason; ///< empty when ok==true
+    };
+
+    MoxCheckResult checkMoxAllowed(Region region, std::int64_t freqHz,
+                                   DSPMode mode, Band rxBand, Band txBand,
+                                   bool preventDifferentBand,
+                                   bool extended) const noexcept;
 };
 
 } // namespace NereusSDR::safety
