@@ -90,6 +90,22 @@
 //                 voltage scaling), and CMSetAntiVoxSourceWhat useVAC=false
 //                 path (cmaster.cs:937-942 [v2.10.3.13]). The useVax=true
 //                 path is rejected (deferred to 3M-3a) per plan §3 H.3.
+//   2026-04-28 — Phase 3M-1b Task H.4 — 7 PTT-source dispatch slots added:
+//                 Accepted (5): onMicPttFromRadio, onCatPtt, onVoxActive,
+//                   onSpacePtt, onX2Ptt.  Each sets the corresponding
+//                   PttMode (Mic/Cat/Vox/Space/X2) before driving
+//                   setMox(pressed).  PttMode is NOT cleared on
+//                   setMox(false) — cleared by F.1 hardwareFlipped(false)
+//                   subscribers per the F.1 contract (symmetric with
+//                   setTune(false) behaviour). Ordering follows the
+//                   PollPTT dispatch in console.cs:25463-25507 [v2.10.3.13].
+//                 Rejected (2): onCwPtt, onTciPtt.  Log qCWarning to
+//                   lcDsp and return without state mutation.  CW deferred
+//                   to 3M-2; TCI deferred to 3J.  Rejection follows the
+//                   setAntiVoxSourceVax(true) pattern from H.3.
+//                 RadioModel: H.4 adds the MoxController API only;
+//                   upstream signal sources land in later phases (H.5
+//                   mic_ptt extraction, 3K CAT, 3M-3a SPACE/VOX/X2).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -396,6 +412,134 @@ public slots:
     // Wired by RadioModel H.3:
     //   TransmitModel::antiVoxSourceVaxChanged → MoxController::setAntiVoxSourceVax
     void setAntiVoxSourceVax(bool useVax);
+
+    // ── H.4: PTT-source dispatch slots ───────────────────────────────────────
+    //
+    // Each slot routes an external PTT event through the MoxController state
+    // machine by setting the corresponding PttMode BEFORE driving setMox().
+    //
+    // Dispatch pattern (all 5 accepted slots):
+    //   if (pressed) { setPttMode(PttMode::Xxx); }   ← PttMode set FIRST
+    //   setMox(pressed);
+    //
+    // ORDERING NOTE: PttMode is set before setMox(true) so that phase-signal
+    // subscribers (F.1 hardwareFlipped, txAboutToBegin) see a consistent
+    // m_pttMode == Xxx snapshot when their slots fire.  This mirrors the
+    // setTune() ordering precedent and matches the Thetis PollPTT dispatch
+    // in console.cs:25463-25507 [v2.10.3.13] where _current_ptt_mode is
+    // assigned immediately before chkMOX.Checked = true.
+    //
+    // F.1 CONTRACT: setMox(false) does NOT clear m_pttMode.  That is the
+    // responsibility of the RadioModel hardwareFlipped(false) subscriber per
+    // the F.1 contract (same as setTune(false) at MoxController.cpp:329).
+    // The 5 dispatch slots are fully symmetric with setTune() in this respect.
+    //
+    // CROSS-SOURCE SWITCHING: the dispatch slots do not refcount or arbitrate.
+    // The semantic is "last setter wins" — if onCatPtt(true) fires while Mic
+    // is active, PttMode transitions to Cat.  The upstream PollPTT handles
+    // arbitration before calling into these slots.
+    //
+    // Rejected slots (CW, TCI): log qCWarning(lcDsp) and return WITHOUT
+    // calling setMox() or updating m_pttMode.  Matches the setAntiVoxSourceVax
+    // (true) rejection pattern from H.3.
+
+    // onMicPttFromRadio: MIC PTT button on the radio hardware.
+    //
+    // Triggered when the radio's physical PTT switch / mic button is pressed
+    // or released. In Thetis this maps to:
+    //   PollPTT: bool mic_ptt = (dotdashptt & 0x01) != 0; // PTT from radio
+    //   _current_ptt_mode = PTTMode.MIC;                   [v2.10.3.13]
+    //   From Thetis console.cs:25492 [v2.10.3.13]
+    //
+    // In NereusSDR, H.5 will extract mic_ptt from the P1/P2 status frame and
+    // call this slot.  Wiring deferred to H.5; this slot establishes the API.
+    //
+    // Note: the slot name is "FromRadio" to distinguish hardware PTT from a
+    // future software-only "mic mute" control.
+    void onMicPttFromRadio(bool pressed);
+
+    // onCatPtt: CAT (computer-aided transceiver) PTT command.
+    //
+    // Triggered when a CAT command (serial or network) asserts or de-asserts
+    // PTT.  In Thetis this maps to:
+    //   PollPTT: bool cat_ptt = (_ptt_bit_bang_enabled && ...) | _cat_ptt;
+    //   _current_ptt_mode = PTTMode.CAT;                    [v2.10.3.13]
+    //   From Thetis console.cs:25469 [v2.10.3.13]
+    //
+    // Full CAT integration is Phase 3K.  Wiring deferred to 3K; this slot
+    // establishes the API.
+    void onCatPtt(bool pressed);
+
+    // onVoxActive: WDSP VOX activity crossing the DEXP gate.
+    //
+    // Triggered when WDSP's downward expander (DEXP/VOX) determines that the
+    // microphone signal has exceeded the VOX threshold.  In Thetis this maps to:
+    //   PollPTT: bool vox_ptt = vox_ok && Audio.VOXActive;
+    //   _current_ptt_mode = PTTMode.VOX;                    [v2.10.3.13]
+    //   From Thetis console.cs:25507 [v2.10.3.13]
+    //
+    // In NereusSDR, the VOX active event will be driven by WDSP DEXP detection
+    // polling (TxChannel TX-meter readback, related to D.7).  Wiring deferred
+    // to 3M-3a or via TxChannel TX-meter polling.
+    void onVoxActive(bool active);
+
+    // onSpacePtt: spacebar PTT from the keyboard handler.
+    //
+    // Triggered when the user presses / releases the space bar with
+    // spacebar_ptt enabled in console settings.  In Thetis this maps to:
+    //   Console_KeyDown case Keys.Space:
+    //   _current_ptt_mode = PTTMode.SPACE;                  [v2.10.3.13]
+    //   chkMOX.Checked = !chkMOX.Checked;
+    //   From Thetis console.cs:26680 [v2.10.3.13]
+    //
+    // Wired in 3M-3a or later (UI keyboard handler).  This slot establishes
+    // the API.
+    void onSpacePtt(bool pressed);
+
+    // onX2Ptt: X2 jack external PTT trigger.
+    //
+    // Triggered when the radio's X2 input jack asserts or de-asserts.
+    // PTTMode::X2 is defined in Thetis enums.cs:353 [v2.10.3.13] but the
+    // X2 PTT dispatch path in Thetis is not currently extracted to PollPTT.
+    // NereusSDR pre-wires the slot here for parity completeness; wiring
+    // deferred to 3M-3a or later when X2 status-frame parsing lands.
+    void onX2Ptt(bool pressed);
+
+    // ── H.4: Rejected PTT-source dispatch slots (CW, TCI) ────────────────────
+    //
+    // These slots EXIST but REJECT all calls with qCWarning(lcDsp) + return.
+    // CW is deferred to 3M-2; TCI is deferred to 3J.
+    //
+    // The slots are declared (rather than omitted) so that:
+    //   (a) tests can verify rejection behaviour via QSignalSpy;
+    //   (b) future callers can wire to a stable name without waiting for the
+    //       deferred implementation;
+    //   (c) the rejection point is explicit in the public API.
+    //
+    // Rejection pattern matches setAntiVoxSourceVax(true) from H.3:
+    //   qCWarning(lcDsp) << "... rejected — deferred to 3M-2/3J";
+    //   return;   // no setMox(), no setPttMode() update
+
+    // onCwPtt: CW keyer PTT — REJECTED (deferred to 3M-2).
+    //
+    // In Thetis this maps to:
+    //   PollPTT: bool cw_ptt = CWInput.KeyerPTT && ...;
+    //   _current_ptt_mode = PTTMode.CW;                     [v2.10.3.13]
+    //   From Thetis console.cs:25475 [v2.10.3.13]
+    //
+    // 3M-2 will implement the CW keyer, sidetone, and QSK/break-in state
+    // machine.  This slot logs and returns without driving MOX.
+    void onCwPtt(bool pressed);
+
+    // onTciPtt: TCI (transceiver control interface) PTT — REJECTED (deferred to 3J).
+    //
+    // In Thetis this maps to:
+    //   PollPTT: if (_tci_ptt) _current_ptt_mode = PTTMode.TCI;
+    //   From Thetis console.cs:25463 [v2.10.3.13]
+    //
+    // 3J will implement the TCI server.  This slot logs and returns without
+    // driving MOX.
+    void onTciPtt(bool pressed);
 
     // setMox: Codex P2-ordered slot.
     //

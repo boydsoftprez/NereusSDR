@@ -1061,6 +1061,22 @@ nereus_add_test(tst_mox_controller_vox_threshold)
 #   cmaster.cs:912-943 [v2.10.3.13]. Plan §3 H.3 + pre-code §3.4.
 nereus_add_test(tst_mox_controller_anti_vox)
 
+# ── Phase 3M-1b Task H.4: MoxController PTT-source dispatch ──────────────────
+# Verifies:
+#   Accepted slots (5): onMicPttFromRadio, onCatPtt, onVoxActive, onSpacePtt,
+#     onX2Ptt — each press emits pttModeChanged(Xxx) then moxStateChanged(true);
+#     each release emits moxStateChanged(false); PttMode NOT cleared on release
+#     (F.1 contract: hardwareFlipped(false) subscriber in RadioModel clears it).
+#   Rejected slots (2): onCwPtt (deferred to 3M-2), onTciPtt (deferred to 3J) —
+#     both press and release emit no signals and leave m_pttMode unchanged.
+#   Cross-source switching (§G): last-setter-wins semantic.
+#   Idempotency (§H): repeated press does not double-emit.
+#   PttMode integer values (§I): spot-check vs enums.cs:346-359 [v2.10.3.13].
+# Source: Thetis console.cs:25463-25507 [v2.10.3.13] (PollPTT dispatch);
+#   console.cs:26680 [v2.10.3.13] (SPACE); enums.cs:346-359 [v2.10.3.13].
+#   Pre-code review §0.3 + master design §5.2.1.
+nereus_add_test(tst_mox_controller_ptt_source_dispatch)
+
 # ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
 # Verifies:
 #   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:

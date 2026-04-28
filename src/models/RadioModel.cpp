@@ -778,6 +778,21 @@ RadioModel::RadioModel(QObject* parent)
         m_txChannel->setAntiVoxRun(!useVax);
     }, Qt::QueuedConnection);
 
+    // ── H.4: PTT-source dispatch slots (present on MoxController; upstream wiring deferred)
+    //
+    // MoxController now exposes 7 PTT-source dispatch slots:
+    //   Accepted: onMicPttFromRadio, onCatPtt, onVoxActive, onSpacePtt, onX2Ptt
+    //   Rejected: onCwPtt (3M-2), onTciPtt (3J)
+    //
+    // The upstream signal sources land in later phases; no connect() calls here.
+    //   onMicPttFromRadio: H.5 — P1/P2 status-frame mic_ptt bit extraction
+    //     (dotdashptt & 0x01 per console.cs:25421 [v2.10.3.13])
+    //   onCatPtt: 3K — full CAT integration (rigctld / serial / network)
+    //   onVoxActive: 3M-3a or via TxChannel TX-meter polling (WDSP DEXP output)
+    //   onSpacePtt: 3M-3a — UI keyboard handler (MainWindow keyPressEvent)
+    //   onX2Ptt: 3M-3a or later — X2 status-frame parsing in RadioConnection
+    // H.4 adds the MoxController API only; downstream wiring follows per phase.
+
     // TxMicRouter: NullMicSource for 3M-1a (zero-padded silence stream).
     // The TUNE path (gen1 PostGen) overwrites the WDSP input buffer at TXA
     // stage 22, so silence from NullMicSource is functionally inert during
