@@ -984,14 +984,26 @@ void MoxController::setAntiVoxSourceVax(bool useVax)
 // ---------------------------------------------------------------------------
 void MoxController::onMicPttFromRadio(bool pressed)
 {
-    // From Thetis console.cs:25492 [v2.10.3.13]: _current_ptt_mode = PTTMode.MIC;
-    // PttMode set BEFORE setMox(true) per the dispatch pattern.
     if (pressed) {
+        // Mic PTT pressed: claim MOX, set PttMode::Mic.
+        // From Thetis console.cs:25492-25494 [v2.10.3.13]:
+        //   _current_ptt_mode = PTTMode.MIC; chkMOX.Checked = true;
+        // PttMode set BEFORE setMox(true) per the dispatch pattern.
         setPttMode(PttMode::Mic);
+        setMox(true);
+    } else {
+        // Mic PTT released: only drop MOX if THIS source engaged it.
+        // RadioConnection::micPttFromRadio fires unconditionally on every
+        // P1/P2 status frame (~50–100 Hz); without this source-arbitration
+        // guard the constant mic_ptt=0 stream from a radio whose mic
+        // isn't pressed would un-key MOX whenever the user clicked the
+        // MOX button (PttMode::Manual) or TUN, or any other PTT source
+        // had engaged transmit. Only the source that owns the current
+        // MOX may release it.
+        if (m_pttMode == PttMode::Mic) {
+            setMox(false);
+        }
     }
-    // From Thetis console.cs:25494 [v2.10.3.13]: chkMOX.Checked = true;
-    // setMox(false) does NOT clear m_pttMode — F.1 contract (hardwareFlipped(false)).
-    setMox(pressed);
 }
 
 // ---------------------------------------------------------------------------
