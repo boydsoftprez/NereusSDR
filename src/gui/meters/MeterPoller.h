@@ -12,6 +12,11 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-26 — Phase 3M-1a H.2: TX meter bindings on MOX engage/release.
+//                 setTxChannel() + setInTx(bool) slot added.  TX poll
+//                 reads TXA_OUT_PK / TXA_ALC_PK / TXA_ALC_AV / TXA_ALC_GAIN
+//                 via GetTXAMeter() when in TX mode.
+//                 Cite: Thetis dsp.cs:999-1050 [v2.10.3.13] CalculateTXMeter.
 // =================================================================
 
 /*  MeterManager.cs
@@ -64,6 +69,7 @@ mw0lge@grange-lane.co.uk
 namespace NereusSDR {
 
 class RxChannel;
+class TxChannel;
 class MeterWidget;
 class RadioStatus;
 
@@ -119,6 +125,24 @@ public:
     ~MeterPoller() override;
 
     void setRxChannel(RxChannel* channel);
+
+    // ── TX meter bindings (H.2, Phase 3M-1a) ─────────────────────────────
+    //
+    // setTxChannel: register the TX channel for TX-meter polling.
+    // Call with nullptr to detach (e.g. on radio disconnect).
+    // Non-owning; RadioModel/WdspEngine own the object.
+    //
+    // setInTx: switch the poll set between RX and TX meters.
+    // Ported from Thetis dsp.cs:999-1050 [v2.10.3.13] CalculateTXMeter:
+    //   case MeterType.TXA_OUT_PK:   val = GetTXAMeter(channel, TXA_OUT_PK);
+    //   case MeterType.TXA_ALC_PK:   val = GetTXAMeter(channel, TXA_ALC_PK);
+    //   case MeterType.TXA_ALC_AV:   val = GetTXAMeter(channel, TXA_ALC_AV);
+    //   case MeterType.TXA_ALC_GAIN: val = GetTXAMeter(channel, TXA_ALC_GAIN);
+    // When isTx=true the poll() path skips the RX meter loop and calls
+    // GetTXAMeter for the four TX binding IDs (TxAlc, TxAlcGain, TxPower stub).
+    // When isTx=false the poll() path resumes normal RX meter polling.
+    void setTxChannel(TxChannel* channel);
+
     void addTarget(MeterWidget* widget);
     void removeTarget(MeterWidget* widget);
 
@@ -137,6 +161,14 @@ public:
     /// aggregates forward/reflected/swr from that loop via powerChanged).
     void setRadioStatus(RadioStatus* status);
 
+public slots:
+    // Switch between RX and TX meter polling.
+    // Connected to MoxController::moxStateChanged(bool) by MainWindow (H.2).
+    // From Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter (TX branch)
+    // vs CalculateRXMeter (RX branch). Switches happen at MOX engage/release,
+    // not mid-poll, matching Thetis's integer-tick dispatch via UpdateTimer.
+    void setInTx(bool isTx);
+
 signals:
     // Emitted on each poll tick with the current S-meter (SignalAvg) dBm value.
     // Connect to VfoWidget::setSmeter to drive the VFO level bar.
@@ -146,8 +178,23 @@ private slots:
     void poll();
 
 private:
+    // ── TX poll helper ────────────────────────────────────────────────────────
+    // Reads the 4 WDSP TX meters gated for 3M-1a and pushes them to all
+    // registered MeterWidget targets.
+    // Porting from Thetis dsp.cs:999-1050 [v2.10.3.13] CalculateTXMeter.
+    void pollTxMeters();
+
     QTimer m_timer;
     QPointer<RxChannel> m_rxChannel;
+    // Non-owning TX channel pointer (H.2).  Valid only while WdspEngine has
+    // opened the TX channel (after createTxChannel()).  Guarded in poll().
+    // QPointer auto-clears when TxChannel is destroyed — matches m_rxChannel
+    // pattern (3M-1a review fixup: prevents dangling-pointer dereference if
+    // WdspEngine destroys the channel without calling setTxChannel(nullptr)).
+    QPointer<TxChannel> m_txChannel;
+    // m_inTx: true while MOX is active; flipped by setInTx(bool).
+    // From Thetis dsp.cs:995-1050 [v2.10.3.13] TX/RX meter dispatch.
+    bool m_inTx{false};
     // QPointer auto-clears to nullptr when the MeterWidget is destroyed.
     // ContainerManager's float/dock swap replaces MeterWidgets mid-session;
     // without QPointer, poll() would dereference the deleted old widgets.

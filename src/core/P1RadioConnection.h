@@ -49,7 +49,9 @@ namespace NereusSDR { class OcMatrix; }                  // forward decl — ful
 namespace NereusSDR { class IoBoardHl2; }                // forward decl — full header in .cpp
 namespace NereusSDR { class HermesLiteBandwidthMonitor; }// forward decl — full header in .cpp
 
+#include <atomic>
 #include <memory>
+#include <array>
 #include <QUdpSocket>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -126,6 +128,9 @@ public slots:
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
     void setWatchdogEnabled(bool enabled) override;
+    void sendTxIq(const float* iq, int n) override;
+    void setTrxRelay(bool enabled) override;
+    void setTxStepAttenuation(int dB) override;
 
 private slots:
     void onReadyRead();
@@ -249,6 +254,19 @@ private:
     quint32 m_epRecvSeqExpected{0};
     int     m_ccRoundRobinIdx{0};
 
+    // 3M-1a E.3: force the next sendCommandFrame() to start with bank 0 so
+    // the MOX bit lands on the wire within ≤1 frame of setMox().
+    // Set by setMox() on every call (Codex P2: safety effect before guard).
+    // Cleared by sendCommandFrame() after it emits bank 0.
+    bool    m_forceBank0Next{false};
+
+    // 3M-1a E.4: force the next sendCommandFrame() to jump to bank 10 so
+    // the T/R relay bit (C3 bit 7) lands on the wire within ≤1 frame of
+    // setTrxRelay().  Mirrored from E.3's forceBank0Next pattern.
+    // Set by setTrxRelay() on every call (Codex P2: safety effect before guard).
+    // Cleared by sendCommandFrame() after it emits bank 10.
+    bool    m_forceBank10Next{false};
+
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
     // NEREUS_USE_LEGACY_P1_CODEC=1 forces legacy compose path.
@@ -274,6 +292,46 @@ private:
     // Alex filter state — computed from frequency
     quint8  m_alexHpfBits{0};     // Bank 10 C3: HPF select bits
     quint8  m_alexLpfBits{0};     // Bank 10 C4: LPF select bits
+
+    // ── TX I/Q ring buffer (3M-1a E.2) ───────────────────────────────────────
+    // Pre-allocated to hold kTxIqBufSamples×8 bytes.  Each slot is one
+    // P1 wire sample: [mic_L hi][mic_L lo][mic_R hi][mic_R lo]
+    //                 [I hi][I lo][Q hi][Q lo]  — big-endian int16.
+    //
+    // Layout ported from deskhpsdr/src/old_protocol.c:2421-2458
+    // [@120188f] (old_protocol_iq_samples / TXRING_AUDIO_SAMPLE_BYTES).
+    //
+    // One EP2 frame carries 2×63 = 126 samples.  kTxIqBufSamples is sized
+    // to match deskhpsdr's TXRING_MAX_BLOCKS×126 (32 blocks) giving ~21 msec
+    // of headroom at 48 kHz before the producer stalls.
+    // Source: deskhpsdr/src/old_protocol.c:460-461 [@120188f]
+    //   TXRING_AUDIO_FRAMES_PER_BLOCK 126
+    //   TXRING_MAX_BLOCKS             32
+    //
+    // SPSC ring buffer — audio thread writes, connection thread reads.
+    // Memory ordering:
+    //   - m_txIqWritePos: single audio-thread writer; relaxed store /
+    //     acquire load from connection thread (mirrors classic Lamport SPSC).
+    //   - m_txIqReadPos: single connection-thread writer; relaxed store /
+    //     acquire load from audio thread.
+    //   - m_txIqCount: cross-thread fetch_add (audio) / fetch_sub (conn);
+    //     release on writes that publish new bytes, acquire on reads that
+    //     consume bytes. The release/acquire pair pins the byte-write
+    //     order before the count update.
+    //
+    // CLAUDE.md mandates atomics for cross-thread DSP; deskhpsdr's
+    // old_protocol.c:466-469 [@120188f] uses the same atomic_int pattern.
+    static constexpr int kTxIqBufSamples = 126 * 32;  // 4032 samples, 32256 bytes
+    static constexpr int kTxIqBytesPerSample = 8;
+    // Pre-allocated — no heap in the hot path.
+    std::array<quint8, kTxIqBufSamples * kTxIqBytesPerSample> m_txIqBuf{};
+    std::atomic<int> m_txIqWritePos{0};  // audio thread writes; relaxed store
+    std::atomic<int> m_txIqReadPos{0};   // connection thread writes; relaxed store
+    std::atomic<int> m_txIqCount{0};     // both threads: fetch_add (audio, release) / fetch_sub (conn)
+
+    // Float→int16 + EP2 zone fill helper.
+    // Returns true if 63 samples were available and written, false if underrun.
+    bool fillTxZone(quint8* zone63) noexcept;
 
     // Hardware config from profile
     int     m_txDrive{0};
@@ -363,6 +421,114 @@ public:
     // hand-crafted 1032-byte ep6 datagram and assert paTelemetryUpdated()
     // emits the expected raw values.  Phase 3P-H Task 4.
     void parseEp6FrameForTest(const QByteArray& pkt) { parseEp6Frame(pkt); }
+
+    // ── 3M-1a E.3 MOX wire test seams ────────────────────────────────────────
+    // captureBank0ForTest — compose 5 bank-0 C&C bytes from current state
+    // and return them.  Used by tst_p1_mox_wire to verify the MOX bit (C0
+    // bit 0) is correct without needing a live socket.
+    // Source for bit position: deskhpsdr/src/old_protocol.c:3597 [@120188f]
+    //   output_buffer[C0] |= 0x01;  // MOX = byte 3 (C0), bit 0
+    // HL2 firmware cross-check: dsopenhpsdr1.v:297 — ds_cmd_ptt_next = eth_data[0]
+    QByteArray captureBank0ForTest() const {
+        quint8 out[5] = {};
+        composeCcForBankForTest(0, out);
+        return QByteArray(reinterpret_cast<const char*>(out), 5);
+    }
+
+    // roundRobinIdxForTest — returns the current m_ccRoundRobinIdx value.
+    int roundRobinIdxForTest() const { return m_ccRoundRobinIdx; }
+
+    // forceBank0NextForTest — returns m_forceBank0Next (the flush flag state).
+    bool forceBank0NextForTest() const { return m_forceBank0Next; }
+
+    // ── 3M-1a E.4 TRX relay wire test seams ──────────────────────────────────
+    // captureBank10ForTest — compose 5 bank-10 C&C bytes from current state
+    // and return them.  Used by tst_p1_trx_relay_wire to verify the T/R relay
+    // bit (C3 bit 7, INVERTED: 0 = engaged, 1 = disabled) without needing a
+    // live socket.
+    // Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f]
+    //   if (txband->disablePA || !pa_enabled)
+    //       output_buffer[C3] |= 0x80; // disable Alex T/R relay
+    QByteArray captureBank10ForTest() const {
+        quint8 out[5] = {};
+        composeCcForBankForTest(10, out);
+        return QByteArray(reinterpret_cast<const char*>(out), 5);
+    }
+
+    // forceBank10NextForTest — returns m_forceBank10Next (the bank-10 flush
+    // flag state).  Used by tst_p1_trx_relay_wire to verify Codex P2 pattern.
+    bool forceBank10NextForTest() const { return m_forceBank10Next; }
+
+    // ── 3M-1a E.2 TX I/Q test seams ─────────────────────────────────────────
+    // sendTxIqAndCapture — feeds n interleaved float I/Q samples through the
+    // ring buffer, drains one EP2 frame's worth (126 samples), and returns the
+    // 1032-byte Metis frame as a QByteArray for wire-byte assertions.
+    // The socket send is skipped (m_socket is null in tests), but frame
+    // composition still happens normally so byte layout can be asserted.
+    QByteArray sendTxIqAndCapture(const float* iq, int n) {
+        sendTxIq(iq, n);
+        // Build a full EP2 frame and fill both TX zones from the ring buffer.
+        quint8 frame[1032];
+        memset(frame, 0, sizeof(frame));
+        frame[0] = 0xEF; frame[1] = 0xFE; frame[2] = 0x01; frame[3] = 0x02;
+        const quint32 seq = m_epSendSeq++;
+        frame[4] = quint8((seq >> 24) & 0xFF);
+        frame[5] = quint8((seq >> 16) & 0xFF);
+        frame[6] = quint8((seq >>  8) & 0xFF);
+        frame[7] = quint8( seq        & 0xFF);
+        frame[8] = 0x7F; frame[9] = 0x7F; frame[10] = 0x7F;
+        // C&C bytes: zeros in test context (no codec wired)
+        fillTxZone(frame + 16);
+        frame[520] = 0x7F; frame[521] = 0x7F; frame[522] = 0x7F;
+        fillTxZone(frame + 528);
+        return QByteArray(reinterpret_cast<const char*>(frame), 1032);
+    }
+
+    // Access buffer count for buffer-state tests.
+    int txIqBufferedSamplesForTest() const { return m_txIqCount.load(std::memory_order_acquire); }
+
+    // ── 3M-1a E.5 RUNSTOP watchdog wire test seams ───────────────────────────
+    // metisStartPacketForTest — compose the 64-byte RUNSTOP start packet that
+    // sendMetisStart() would send (without a live socket), so unit tests can
+    // assert the watchdog bit (pkt[3] bit 7) without needing a real UDP socket.
+    //
+    // IMPORTANT: keep in sync with sendMetisStart() / sendMetisStop() in P1RadioConnection.cpp.
+    //
+    // Wire format: pkt[3] = run_bits | watchdog_disable_bit
+    //   run_bits:     0x01 (IQ only) or 0x02 (IQ + mic)
+    //   watchdog_bit: 0x00 if m_watchdogEnabled == true, 0x80 if false
+    //
+    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:200-203, 399-400
+    //   eth_data[0] = run; eth_data[7] = watchdog_disable (1=disabled, 0=enabled)
+    QByteArray metisStartPacketForTest(bool iqAndMic) const {
+        QByteArray pkt(64, '\0');
+        pkt[0] = static_cast<char>(0xEF);
+        pkt[1] = static_cast<char>(0xFE);
+        pkt[2] = static_cast<char>(0x04);
+        const quint8 runBits     = iqAndMic ? quint8(0x02) : quint8(0x01);
+        const quint8 watchdogBit = m_watchdogEnabled ? quint8(0x00) : quint8(0x80);
+        pkt[3] = static_cast<char>(runBits | watchdogBit);
+        return pkt;
+    }
+
+    // metisStopPacketForTest — compose the 64-byte RUNSTOP stop packet (run = 0).
+    //
+    // IMPORTANT: keep in sync with sendMetisStart() / sendMetisStop() in P1RadioConnection.cpp.
+    //
+    // Wire format: pkt[3] = watchdog_disable_bit (run bits = 0)
+    //   0x00 if m_watchdogEnabled == true, 0x80 if false
+    //
+    // Source: Hermes-Lite2/gateware/rtl/dsopenhpsdr1.v:399-400
+    //   watchdog_disable <= eth_data[7]; // Bit 7 can be used to disable watchdog
+    QByteArray metisStopPacketForTest() const {
+        QByteArray pkt(64, '\0');
+        pkt[0] = static_cast<char>(0xEF);
+        pkt[1] = static_cast<char>(0xFE);
+        pkt[2] = static_cast<char>(0x04);
+        const quint8 watchdogBit = m_watchdogEnabled ? quint8(0x00) : quint8(0x80);
+        pkt[3] = static_cast<char>(watchdogBit);
+        return pkt;
+    }
 #endif
 };
 

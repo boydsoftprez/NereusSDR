@@ -431,6 +431,45 @@ public:
     bool isHighSwrOverlayActive() const noexcept { return m_highSwrActive; }
     bool isHighSwrFoldback()      const noexcept { return m_highSwrFoldback; }
 
+    // ---- MOX / TX mode overlay (H.1, Phase 3M-1a) ----
+    //
+    // Ported from Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter.
+    // When MOX is active, a red 3 px border is drawn around the spectrum
+    // panel indicating TX-mode. Matches Thetis's use of tx_vgrid_pen /
+    // tx_band_edge_pen (display.cs:2086, 1955 [v2.10.3.13]) which colour the
+    // grid red during TX. NereusSDR renders a simpler border tint — full
+    // grid colour recolouring is deferred to 3M-3.
+    //
+    // setTxAttenuatorOffsetDb: when ATT-on-TX is active (F.2 path) the
+    // dBm scale shifts by the attenuator value so the displayed noise floor
+    // stays calibrated.  Matches Thetis display.cs:4840 [v2.10.3.13]:
+    //   if (!local_mox) fOffset += rx1_preamp_offset;
+    // (offsets applied only in RX; TX path uses its own cal offset).
+    //
+    // setTxFilterVisible: stub activated from the DisplayPage
+    // DrawTXFilter flag (display.cs:2481 [v2.10.3.13]).  The waterfall
+    // filter overlay is already implemented (setShowTxFilterOnRxWaterfall);
+    // this slot drives the spectrum-panel TX filter shadow.
+
+    bool isMoxOverlayActive() const noexcept { return m_moxOverlay; }
+    float txAttenuatorOffsetDb() const noexcept { return m_txAttOffsetDb; }
+    bool txFilterVisible() const noexcept { return m_txFilterVisible; }
+
+public slots:
+    // Slot wired from MoxController::moxStateChanged (MainWindow::setupModel).
+    // Draws a 3 px red border around the spectrum area when isTx=true.
+    // From Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter.
+    void setMoxOverlay(bool isTx);
+
+    // Slot fed from StepAttenuatorController::txAttenuatorOffsetDbChanged.
+    // Shifts the dBm calibration display during TX-active ATT-on-TX.
+    // From Thetis display.cs:4840 [v2.10.3.13].
+    void setTxAttenuatorOffsetDb(float offsetDb);
+
+    // Slot driven from DisplayPage DrawTXFilter checkbox.
+    // From Thetis display.cs:2481 [v2.10.3.13].
+    void setTxFilterVisible(bool on);
+
     // ---- Per-pan settings persistence ----
     void setPanIndex(int idx) { m_panIndex = idx; }
     int  panIndex() const { return m_panIndex; }
@@ -456,7 +495,6 @@ public:
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
 
-public slots:
     // Feed a new FFT frame. binsDbm are dBm values, one per frequency bin.
     // Called from the main thread after FFTEngine delivers the frame.
     void updateSpectrum(int receiverId, const QVector<float>& binsDbm);
@@ -510,6 +548,9 @@ private:
     void drawWaterfall(QPainter& p, const QRect& wfRect);
     // HIGH SWR / PA safety overlay — ported from display.cs:4183-4201 [v2.10.3.13]
     void paintHighSwrOverlay(QPainter& p);
+    // MOX / TX border overlay — ported from display.cs:1569-1593 [v2.10.3.13]
+    // Phase 3M-1a H.1.
+    void paintMoxOverlay(QPainter& p);
     // Phase 3G-8 commit 10: overlay-only waterfall chrome (filter bands,
     // zero lines, timestamp, opacity dim) split out so the GPU overlay
     // texture can render the same chrome without blitting the waterfall
@@ -771,6 +812,16 @@ private:
     // Ported from Thetis display.cs:4183-4201 [v2.10.3.13]
     bool m_highSwrActive{false};
     bool m_highSwrFoldback{false};
+
+    // ---- MOX / TX overlay state (H.1, Phase 3M-1a) ----
+    // From Thetis display.cs:1568 [v2.10.3.13]: static bool _mox = false;
+    bool  m_moxOverlay{false};
+    // TX attenuator cal offset — applied as an additional dBm shift during TX.
+    // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
+    float m_txAttOffsetDb{0.0f};
+    // TX filter visibility in spectrum panel.
+    // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter flag.
+    bool  m_txFilterVisible{false};
 
 #ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};

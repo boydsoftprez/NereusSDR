@@ -249,6 +249,7 @@ warren@wpratt.com
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
 #include "core/RxChannel.h"
+#include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
 #include "core/AppSettings.h"
 #include "core/RadioDiscovery.h"
@@ -257,6 +258,7 @@ warren@wpratt.com
 #include "core/NbFamily.h"
 #include "core/ClarityController.h"
 #include "core/StepAttenuatorController.h"
+#include "core/MoxController.h"  // 3M-1a G.1: F.2 connect (hardwareFlipped → onMoxHardwareFlipped)
 #include "core/NoiseFloorTracker.h"
 #include "core/BoardCapabilities.h"
 #include "models/PanadapterModel.h"
@@ -758,6 +760,41 @@ void MainWindow::buildUI()
     m_stepAttController = new StepAttenuatorController(this);
     m_radioModel->setStepAttController(m_stepAttController);
 
+    // 3M-1a G.1 / F.2: MoxController::hardwareFlipped → StepAttenuatorController.
+    // Both objects are now live; RadioModel owns MoxController, MainWindow owns
+    // StepAttenuatorController. Wire here where both sides are accessible.
+    // Qt::QueuedConnection documents cross-component intent (both main-thread)
+    // and ensures the slot body runs after the emit call stack unwinds.
+    // F.2 connect note: this is the connect deferred from StepAttenuatorController.h
+    // line 257 ("The connect() call wiring this slot to MoxController::hardwareFlipped
+    // is deferred to Task G.1").
+    // From Thetis console.cs:29546-29576 [v2.10.3.13] — ATT-on-TX in HdwMOXChanged.
+    // Inline attribution tags preserved verbatim from the cited range:
+    //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps  [console.cs:29561]
+    //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29567]
+    //[2.10.3.6]MW0LGE att_fixes NOTE: this will eventually call Display.TXAttenuatorOffset with the value  [console.cs:29568]
+    // Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29576]
+    if (MoxController* mox = m_radioModel->moxController()) {
+        connect(mox, &MoxController::hardwareFlipped,
+                m_stepAttController, &StepAttenuatorController::onMoxHardwareFlipped,
+                Qt::QueuedConnection);
+
+        // H.1 (Phase 3M-1a): SpectrumWidget MOX overlay.
+        // Wire MoxController::moxStateChanged → SpectrumWidget::setMoxOverlay.
+        // From Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter:
+        // the flag drives grid pen selection (tx_vgrid_pen red vs rx grey).
+        // In 3M-1a we render a 3 px red border tint; full grid recolouring
+        // is deferred to 3M-3.
+        // Qt::QueuedConnection: MoxController and SpectrumWidget both live on
+        // the main thread but a queued connection is used to match the deferred
+        // pattern established for the hardwareFlipped connect above.
+        if (m_spectrumWidget) {
+            connect(mox, &MoxController::moxStateChanged,
+                    m_spectrumWidget, &SpectrumWidget::setMoxOverlay,
+                    Qt::QueuedConnection);
+        }
+    }
+
     // --- Phase 3G-9c: Clarity adaptive display tuning ---
     m_clarityController = new ClarityController(this);
     m_radioModel->setClarityController(m_clarityController);
@@ -901,8 +938,28 @@ void MainWindow::buildUI()
             } else {
                 qCWarning(lcMeter) << "MeterPoller: RxChannel 0 still null after WDSP init";
             }
+
+            // H.2 (Phase 3M-1a): wire TxChannel to MeterPoller for TX meters.
+            // TxChannel is valid after WDSP initialization via createTxChannel().
+            // Guard: txChannel() is null before initialization; null guard in
+            // pollTxMeters() handles the case where it isn't set yet.
+            if (TxChannel* txCh = m_radioModel->txChannel()) {
+                m_meterPoller->setTxChannel(txCh);
+                qCDebug(lcMeter) << "MeterPoller: TxChannel wired for TX meters";
+            }
         });
     });
+
+    // H.2 (Phase 3M-1a): wire MoxController::moxStateChanged → MeterPoller::setInTx.
+    // Switches the poll set between RX meters (TX off) and TX meters (TX on).
+    // From Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
+    // Qt::QueuedConnection: ensures the flip happens at the start of the next
+    // event loop tick rather than mid-poll, matching Thetis's timer dispatch.
+    if (MoxController* mox = m_radioModel->moxController()) {
+        connect(mox, &MoxController::moxStateChanged,
+                m_meterPoller, &MeterPoller::setInTx,
+                Qt::QueuedConnection);
+    }
 
     // ── Phase 3M-0 Task 17: safety controller → status-bar wiring ────────────
     //
@@ -1120,6 +1177,55 @@ void MainWindow::populateDefaultMeter()
     // TxApplet — NYI shell (Phase 3I-1)
     auto* txApplet = new TxApplet(m_radioModel, nullptr);
     panel->addApplet(txApplet);
+
+    // 3M-1a H.1-H.4 fixup: wire panadapter band changes to TxApplet so
+    // the per-band Tune Power slider tracks the active band.
+    // Without this, m_currentBand stays at Band::Band20m permanently.
+    if (!m_radioModel->panadapters().isEmpty()) {
+        PanadapterModel* pan0 = m_radioModel->panadapters().first();
+        connect(pan0, &PanadapterModel::bandChanged,
+                txApplet, &TxApplet::setCurrentBand);
+        // Push the initial band immediately so the slider shows the right value.
+        txApplet->setCurrentBand(pan0->band());
+    }
+
+    // 3M-1a (2026-04-27): also track every SLICE'S frequency.  The
+    // panadapter band only changes when its center crosses a band
+    // boundary, but the user's slice can sit on a different band entirely
+    // (e.g. the slice loaded at 7.241 MHz while the panadapter center is
+    // still on 14 MHz from a prior session). Without this wire,
+    // TxApplet's m_currentBand lags the slice → the TUN-power slider
+    // writes to the wrong band's stored value (or no-ops on the
+    // m_currentBand-default band — bench-confirmed 2026-04-27 with the
+    // slider only working on 20m even after retuning to 40m).
+    //
+    // Pattern matches AntennaAlexAlex2Tab.cpp:408-425 — subscribe to
+    // every current slice AND every future-added slice (slices are
+    // created by addSlice() AFTER MainWindow construction, so a single-
+    // shot activeSlice() check at construction returns null and never
+    // wires up).
+    {
+        auto subscribeToSlice = [txApplet](SliceModel* slice) {
+            if (!slice) { return; }
+            connect(slice, &SliceModel::frequencyChanged,
+                    txApplet, [txApplet](double freq) {
+                        txApplet->setCurrentBand(bandFromFrequency(freq));
+                    });
+            // Push the slice's current band immediately — overrides the
+            // panadapter initial when the slice is on a different band.
+            txApplet->setCurrentBand(bandFromFrequency(slice->frequency()));
+        };
+        for (SliceModel* slice : m_radioModel->slices()) {
+            subscribeToSlice(slice);
+        }
+        connect(m_radioModel, &RadioModel::sliceAdded, txApplet,
+                [this, subscribeToSlice](int index) {
+                    const auto slices = m_radioModel->slices();
+                    if (index >= 0 && index < slices.size()) {
+                        subscribeToSlice(slices[index]);
+                    }
+                });
+    }
 
     // PhoneCwApplet — Phone + CW pages, NYI
     m_phoneCwApplet = new PhoneCwApplet(m_radioModel, nullptr);
@@ -3065,6 +3171,11 @@ void MainWindow::onConnectionStateChanged()
         const auto& caps = BoardCapsTable::forBoard(
             m_radioModel->connection()->radioInfo().boardType);
         m_stepAttController->setMaxAttenuation(caps.attenuator.maxDb);
+        // Wire HPSDR-board flag — Atlas/Metis kit uses preamp save/restore on
+        // MOX rather than per-band TX ATT (Thetis console.cs:29548 [v2.10.3.13]:
+        //   if (HardwareSpecific.Model == HPSDRModel.HPSDR) { ... }).
+        m_stepAttController->setIsHpsdrBoard(
+            m_radioModel->connection()->radioInfo().boardType == HPSDRHW::Atlas);
         m_stepAttController->loadSettings(m_radioModel->connection()->radioInfo().macAddress);
     } else {
         m_radioModelLabel->setText(QStringLiteral("—"));

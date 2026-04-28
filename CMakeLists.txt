@@ -365,8 +365,10 @@ set(CORE_SOURCES
     src/core/AudioEngine.cpp
     src/core/WdspEngine.cpp
     src/core/RxChannel.cpp
+    src/core/TxChannel.cpp
     src/core/NbFamily.cpp
     src/core/NbFamily.h
+    src/core/MoxController.cpp
     src/core/FFTEngine.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp

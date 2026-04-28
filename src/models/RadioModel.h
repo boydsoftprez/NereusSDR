@@ -94,6 +94,11 @@
 #include <QList>
 #include <QThread>
 
+// 3M-1a G.1: TxMicRouter is a plain (non-QObject) strategy interface.
+// Include required directly so unique_ptr destructor is available here.
+#include "core/TxMicRouter.h"
+#include <memory>  // std::unique_ptr
+
 namespace NereusSDR {
 
 class ReceiverManager;
@@ -101,6 +106,9 @@ class AudioEngine;
 class WdspEngine;
 class RxDspWorker;
 class NoiseFloorTracker;
+// 3M-1a G.1: forward declarations for TX-side components.
+class MoxController;
+class TxChannel;
 
 // RadioModel is the central data model for a connected radio.
 // It owns the RadioConnection (on a worker thread), ReceiverManager,
@@ -253,6 +261,22 @@ public:
     void setNoiseFloorTracker(NoiseFloorTracker* t) { m_noiseFloorTracker = t; }
     QTimer* autoAgcTimer() const { return m_autoAgcTimer; }
 
+    // 3M-1a G.1: expose MoxController so MainWindow can wire
+    // StepAttenuatorController::onMoxHardwareFlipped (F.2 connect) after
+    // both objects exist.  Non-owning; lifetime is RadioModel's lifetime.
+    // Master design §5.1.1; pre-code review §1.6.
+    MoxController* moxController() const { return m_moxController; }
+
+    // 3M-1a G.1: expose TxChannel view so TxApplet and G.4 TUNE function
+    // can call setTuneTone / setRunning without depending on WdspEngine.
+    // Non-owning; WdspEngine owns the channel. Null until WDSP initializes.
+    // Master design §5.1.1; pre-code review §2.5.
+    // TxChannel::setConnection() + setMicRouter() inject the production loop
+    // pointers in the WDSP-init lambda (see connectToRadio). The 5 ms QTimer
+    // in TxChannel drives fexchange2 → sendTxIq (SPSC ring) while running.
+    // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
+    TxChannel* txChannel() const { return m_txChannel; }
+
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
     // on first launch (gated by AppSettings key "DisplayProfileApplied").
@@ -313,8 +337,24 @@ public:
         applyAlexAntennaForBand(band, isTx);
     }
     void setCapsForTest(bool hasAlex) {
-        m_testCapsOverride = true;
-        m_testCapsHasAlex = hasAlex;
+        m_testCapsOverride  = true;
+        m_testCapsHasAlex   = hasAlex;
+        m_testCapsIsRxOnly  = false;  // reset sibling so combined state is unambiguous
+    }
+    // 3M-1a G.2: inject isRxOnlySku without a live HermesLiteRxOnly board.
+    // (HermesLiteRxOnly has no HPSDRModel entry so setBoardForTest cannot
+    // reach its caps via the normal profileForModel path.)
+    // Resets m_testCapsHasAlex so chaining setCapsForTest + setCapsRxOnlyForTest
+    // in the same fixture does not silently combine both flags.
+    void setCapsRxOnlyForTest(bool isRxOnly) {
+        m_testCapsOverride  = true;
+        m_testCapsHasAlex   = false;  // reset sibling so combined state is unambiguous
+        m_testCapsIsRxOnly  = isRxOnly;
+    }
+    // Emit currentRadioChanged with a default-constructed RadioInfo for test use.
+    // Use this to simulate a reconnect when testing signal-driven visibility updates.
+    void emitCurrentRadioChangedForTest() {
+        emit currentRadioChanged(NereusSDR::RadioInfo{});
     }
     NereusSDR::Band lastBand() const { return m_lastBand; }
 #endif
@@ -345,6 +385,60 @@ public:
     /// trip is latched, clears the trip (the radio no longer reports a PA).
     /// From Thetis Andromeda/Andromeda.cs:855-866 [v2.10.3.13] (GanymedePresent setter). //G8NJJ
     void setGanymedePresent(bool present);
+
+public slots:
+    // ── Phase 3M-1a Task F.1: MoxController::hardwareFlipped fan-out ───────────
+    // Slot connected to MoxController::hardwareFlipped(bool isTx).
+    // Fans out hardware-flip side-effects to AlexController + RadioConnection
+    // in Thetis HdwMOXChanged step order (pre-code review §2.3):
+    //   1. applyAlexAntennaForBand(currentBand, isTx)  — §2.3 step 8
+    //   2. m_connection->setMox(isTx)                  — §2.3 / §1.4 step 12
+    //   3. m_connection->setTrxRelay(isTx)             — §2.3 step 10
+    //
+    // Must be under public slots: so Qt's auto-connection queues this correctly
+    // when the emitting object (MoxController) lives on a different thread.
+    // G.1's connect() call uses Qt::QueuedConnection so the slot body runs on
+    // RadioModel's thread; steps 2+3 then marshal to the connection thread via
+    // QMetaObject::invokeMethod (see implementation).
+    void onMoxHardwareFlipped(bool isTx);
+
+    // ── Phase 3M-1a Task G.4: TUN function orchestrator ─────────────────────
+    // Activate / release the TUNE function.
+    //
+    // Orchestrates all TUN side-effects across the model:
+    //   TUN-on:  save DSP mode + power; swap CW→LSB/USB if needed;
+    //            set tune tone; push tune power; drive MoxController.
+    //   TUN-off: drive MoxController; release tone; restore DSP mode,
+    //            power, and meter mode.
+    //
+    // Coordinates with:
+    //   - MoxController::setTune(bool) for MOX state machine + flags.
+    //   - TxChannel::setTuneTone(bool, freqHz, mag) for WDSP gen1 PostGen.
+    //   - SliceModel::setDspMode() for CW→LSB/USB swap and restore.
+    //   - TransmitModel::tunePowerForBand() + m_connection->setTxDrive()
+    //     for per-band tune power push and restore.
+    //
+    // Power-on guard: emits tuneRefused(reason) and returns without any
+    // state change if the radio is not connected (matching Thetis
+    // console.cs:29983-29991 [v2.10.3.13] MessageBox "Power must be on").
+    //
+    // Meter mode save/restore: Thetis saves current_meter_tx_mode and
+    // restores it on TUN-off (console.cs:30011-30015 [v2.10.3.13]).
+    // NereusSDR's MeterModel does not yet expose a TX-mode selector (that
+    // is H.3 territory); this method saves and restores m_transmitModel.power()
+    // as the "slider power" position instead.  The full meter-mode lock
+    // (switch to FORWARD_POWER display) is deferred to H.3 or 3M-1b when
+    // MeterModel gains a setTxDisplayMode() setter.
+    //
+    // Inline attribution preserved from Thetis:
+    //   //MW0LGE_21k9d  [original inline comment from console.cs:29980]
+    //   //MW0LGE_21a    [original inline comment from console.cs:29997]
+    //   //MW0LGE_22b    [original inline comment from console.cs:30033]
+    //   //MW0LGE_21k8   [original inline comment from console.cs:30086]
+    //   //MW0LGE_21j    [original inline comment from console.cs:30136]
+    //
+    // Cite: Thetis console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged.
+    void setTune(bool on);
 
 signals:
     void infoChanged();
@@ -378,6 +472,14 @@ signals:
     // From Thetis Andromeda/Andromeda.cs:914-920 [v2.10.3.13]
     // (CATHandleAmplifierTripMessage). G8NJJ: handlers for Ganymede 500W PA protection.
     void paTrippedChanged(bool tripped);
+
+    // ── Phase 3M-1a Task G.4: TUNE refused ──────────────────────────────────
+    // Emitted when setTune(true) is called but the power-on guard fires
+    // (radio not connected / audio engine not active).
+    // Cite: Thetis console.cs:29983-29991 [v2.10.3.13] — MessageBox "Power must be on".
+    // NereusSDR equivalent: emit signal; UI reacts with a toast or status bar message.
+    // Subscribers should uncheck the TUN button and display `reason` to the user.
+    void tuneRefused(const QString& reason);
 
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
@@ -519,6 +621,7 @@ private:
 #ifdef NEREUS_BUILD_TESTS
     bool m_testCapsOverride{false};
     bool m_testCapsHasAlex{false};
+    bool m_testCapsIsRxOnly{false};  // 3M-1a G.2: injected via setCapsRxOnlyForTest
 #endif
 
     // Phase 3M-0 Task 6: Ganymede PA-trip live state.
@@ -536,6 +639,74 @@ private:
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
+
+    // ── 3M-1a G.4: TUN state save/restore ───────────────────────────────────
+    // Fields that preserve pre-TUN state across the setTune(true)/setTune(false)
+    // pair so TUN-off can restore exactly what TUN-on changed.
+    //
+    // m_savedTxDspMode: DSP mode before the CW→LSB/USB swap.
+    //   Cite: Thetis console.cs:30042 [v2.10.3.13] — old_dsp_mode = ...CurrentDSPMode.
+    //   Default USB (matches SliceModel default). Used only when old_dsp_mode
+    //   was CWL or CWU; restored unconditionally on TUN-off.
+    DSPMode m_savedTxDspMode{DSPMode::USB};
+    //
+    // m_savedPowerPct: power slider value (0-100) before the tune-power push.
+    //   Cite: Thetis console.cs:30033 [v2.10.3.13] — PreviousPWR = ptbPWR.Value.
+    //   //MW0LGE_22b  [original inline comment from console.cs:30033]
+    //   Restored to the connection on TUN-off so the slider snaps back.
+    // Default 100 matches TransmitModel::m_power default (TransmitModel.h).
+    // G.4 fixup: changed from 50 (initial value mismatch with TransmitModel);
+    // harmless after the cold-off guard in setTune(false) but kept for hygiene.
+    int m_savedPowerPct{100};
+    //
+    // m_isTuning: True while TUN is engaged (between setTune(true) and
+    //   setTune(false)).  Used as the idempotent guard at the top of
+    //   setTune(false) — prevents a cold-off (no prior setTune(true)) from
+    //   restoring stale saved state over the user's actual settings.  Also
+    //   exported for H.3 UI polling.
+    //   Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true.
+    bool m_isTuning{false};
+
+    // ── 3M-1a G.1: TX-side integration ──────────────────────────────────────
+    // Master design §5.1.1; pre-code review §1.6 + §2.5.
+
+    // MOX state machine — lives on the main thread (QTimers must be on
+    // the event loop of the thread they fire on; RadioModel is main-thread).
+    // Owned by RadioModel (Qt parent = this, set in constructor).
+    // Wired: hardwareFlipped(bool) → onMoxHardwareFlipped(bool)
+    //                              → StepAttenuatorController::onMoxHardwareFlipped
+    //        txReady()             → m_txChannel->setRunning(true)
+    //        txaFlushed()          → m_txChannel->setRunning(false)
+    // From Thetis console.cs:29311-29678 [v2.10.3.13] — chkMOX_CheckedChanged2.
+    //
+    // Inline attribution tags preserved verbatim from the cited range:
+    //[2.10.1.0]MW0LGE changed  [original inline comment from console.cs:29355]
+    //MW0LGE [2.9.0.7]  [original inline comment from console.cs:29400]
+    //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29561-29576]
+    // Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE  [console.cs:29603]
+    //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29647-29659]
+    MoxController* m_moxController{nullptr};
+
+    // Non-owning view of the WDSP TX channel (channel ID = 1 = WDSP.id(1, 0)).
+    // WdspEngine owns the channel via m_txChannels. This pointer is valid only
+    // after m_wdspEngine->initializedChanged fires and createTxChannel(1) is
+    // called inside the initializedChanged lambda. null before that.
+    // Callers must guard: if (m_txChannel) { ... }.
+    // Thread safety: read only from the main thread. WDSP TX processing happens
+    // on the DSP thread (m_dspThread), but the run-flag mutations called here
+    // (setRunning / setTuneTone) are non-realtime control-path calls that are
+    // safe to call from the main thread per the WDSP API contract.
+    // From Thetis dsp.cs:926-944 [v2.10.3.13] — WDSP.id(1, 0) = channel 1.
+    TxChannel* m_txChannel{nullptr};
+
+    // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).
+    // Owned by RadioModel via unique_ptr. NullMicSource for 3M-1a; replaced with
+    // PcMicSource / RadioMicSource in 3M-1b per user preference and board caps.
+    // Not a QObject — no thread affinity. pullSamples() is called from whatever
+    // thread drives the TX I/Q production loop; for 3M-1a (TUNE carrier via WDSP
+    // gen1 PostGen) it is never actually invoked, since gen1 overwrites the input.
+    // Master design §5.2 (3M-1a NullMicSource; 3M-1b concrete sources).
+    std::unique_ptr<TxMicRouter> m_txMicRouter;
 };
 
 } // namespace NereusSDR

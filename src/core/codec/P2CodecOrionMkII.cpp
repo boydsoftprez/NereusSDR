@@ -282,7 +282,26 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
     //   (rxOnlyAnt & 0x03) == 0x02 → _Rx_2_In  (bit 9,  EXT1)
     //   (rxOnlyAnt & 0x03) == 0x03 → _XVTR_Rx_In (bit 8)
     //   rxOut → _Rx_1_Out (bit 11, K36 RL17 RX-Bypass-Out relay)
-    // NOTE: bit 27 is _TR_Relay — NOT an RX-only bit; not touched here.
+    //
+    // 3M-1a (2026-04-27): bit 27 _TR_Relay + bit 18 _trx_status — both
+    // asserted in the Alex0 word during MOX so the radio physically
+    // routes the antenna to the TX path.  Without them MOX engages but
+    // the antenna stays on RX and no carrier reaches the SO-239.
+    // From Thetis network.h:290,300 [v2.10.3.13] (`_trx_status : 1, // bit 18`,
+    //   `_TR_Relay : 1, // bit 27`).
+    // From deskhpsdr/src/alex.h:91-96 [@120188f]:
+    //   #define ALEX_TX_RELAY 0x08000000   // bit 27
+    //   #define ALEX_PS_BIT   0x00040000   // bit 18
+    // From deskhpsdr/src/new_protocol.c:996-1004 [@120188f] (Alex0 conditional
+    //   on `xmit`, Alex1 unconditional — see buildAlex1 below).
+    // We follow `ctx.mox` (≡ deskhpsdr `xmit`) rather than `ctx.trxRelay`
+    // because the MOX bit is the unambiguous transmit-keying signal — the
+    // host-side relay state may lag (hardware-flip ack) but the radio's
+    // antenna routing should track MOX directly.
+    if (ctx.mox) {
+        reg |= (1u << 27);  // _TR_Relay   (ALEX_TX_RELAY)
+        reg |= (1u << 18);  // _trx_status (ALEX_PS_BIT)
+    }
     {
         const int rxOnlyBits = ctx.rxOnlyAnt & 0x03;
         if (rxOnlyBits == 0x01) {
@@ -326,6 +345,17 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
 quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
 {
     quint32 reg = 0;
+
+    // 3M-1a (2026-04-27): bit 27 _TR_Relay + bit 18 _trx_status are
+    // unconditionally set in the Alex1 (TX-side) word.  deskhpsdr asserts
+    // both bits on every CmdHighPriority regardless of MOX state — Alex1
+    // is the TX antenna control register and these bits indicate the TX
+    // signal-chain readiness, not the per-cycle keying state.
+    // From deskhpsdr/src/new_protocol.c:998,1004 [@120188f]:
+    //   alex1 |= ALEX_TX_RELAY;
+    //   alex1 |= ALEX_PS_BIT;
+    reg |= (1u << 27);  // _TR_Relay   (ALEX_TX_RELAY = 0x08000000)
+    reg |= (1u << 18);  // _trx_status (ALEX_PS_BIT   = 0x00040000)
 
     // TX antenna selection — same encoding as RX but in Alex1 [@501e3f5]
     int antBits = ctx.p2AlexTxAnt & 0x03;

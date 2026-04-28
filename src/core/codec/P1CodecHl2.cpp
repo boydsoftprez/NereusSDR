@@ -104,13 +104,19 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
             return;
         }
 
-        // Bank 10 — TX drive, mic boost, Alex HPF/LPF, PA
+        // Bank 10 — TX drive, mic boost, Alex HPF/LPF, T/R relay
         // Source: mi0bot networkproto1.c:1060-1090 [@c26a8a4 / matches @501e3f5]
+        // HL2 note: deskhpsdr clears C2/C3/C4 entirely for HL2 PA-enable
+        // (old_protocol.c:2964-2966 [@120188f]) — HL2 firmware (control.v:211-214)
+        // does NOT decode C3 bit 7 (Alex T/R relay).  We still write trxRelay
+        // here for correctness; HL2 FW ignores the bit.
+        // T/R relay bit (C3 bit 7) is INVERTED: 0 = engaged, 1 = disabled.
+        // Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f]
         case 10:
             out[0] = C0base | 0x12;
             out[1] = quint8(ctx.txDrive & 0xFF);
             out[2] = 0x40;
-            out[3] = quint8(ctx.alexHpfBits | (ctx.paEnabled ? 0x80 : 0));
+            out[3] = quint8(ctx.alexHpfBits | (ctx.trxRelay ? 0x00 : 0x80));  // T/R relay engaged (INVERTED: 1 = disabled)
             out[4] = quint8(ctx.alexLpfBits);
             return;
 

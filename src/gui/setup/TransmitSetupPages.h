@@ -60,6 +60,9 @@
 //============================================================================================//
 
 #include "gui/SetupPage.h"
+#include "models/Band.h"
+
+#include <array>
 
 class QSlider;
 class QComboBox;
@@ -75,7 +78,8 @@ namespace NereusSDR {
 // ---------------------------------------------------------------------------
 // Transmit > Power & PA
 // Corresponds to Thetis setup.cs PA / Power tab.
-// All controls NYI (disabled).
+// Phase 3M-1a H.4: Max Power, per-band Tune Power, ATT-on-TX, and
+// ForceATTwhenPSAoff are wired. Other sections deferred to later phases.
 // ---------------------------------------------------------------------------
 class PowerPaPage : public SetupPage {
     Q_OBJECT
@@ -84,14 +88,33 @@ public:
 
 private:
     void buildUI();
+    void buildPowerGroup();         // H.4: Max Power slider + ATT-on-TX + Force-ATT
+    void buildTunePowerGroup();     // H.4: Per-band tune-power spinboxes
     void buildSwrProtectionGroup();
     void buildExternalTxInhibitGroup();
     void buildBlockTxAntennaGroup();
     void buildHfPaGroup();
 
-    // Section: Power
-    QSlider* m_maxPowerSlider{nullptr};        // 0–100 W
-    QSlider* m_swrProtectionSlider{nullptr};   // SWR threshold
+    // Section: Power (H.4 — wired)
+    QSlider*   m_maxPowerSlider{nullptr};        // 0–100 W — wired to TransmitModel::setPower
+    QSlider*   m_swrProtectionSlider{nullptr};   // SWR threshold (future)
+
+    // Section: ATT-on-TX (H.4 — wired)
+    // chkATTOnTX — Thetis setup.designer.cs:5926-5939 [v2.10.3.13] (tpAlexAntCtrl).
+    // NereusSDR places it in Power & PA (better thematic grouping).
+    QCheckBox* m_chkAttOnTx{nullptr};
+
+    // ForceATTwhenPSAoff — Thetis setup.designer.cs:5660-5671 [v2.10.3.13].
+    // //MW0LGE [2.9.0.7] added  [original inline comment from console.cs:29285]
+    QCheckBox* m_chkForceAttWhenPsOff{nullptr};
+
+    // Section: Per-band tune power (H.4 — wired)
+    // NereusSDR extension: exposes tunePower_by_band[] (console.cs:12094 [v2.10.3.13])
+    // per-band in the setup dialog. Thetis uses a single udTXTunePower (setup.cs:5262
+    // [v2.10.3.13]) that updates one slot on band change; NereusSDR lets the user
+    // view and edit all 14 slots simultaneously.
+    static constexpr int kBandCount = static_cast<int>(Band::Count);  // 14
+    std::array<QSpinBox*, kBandCount> m_tunePwrSpins{};
 
     // Section: PA
     QLabel*    m_perBandGainLabel{nullptr};    // placeholder: future table

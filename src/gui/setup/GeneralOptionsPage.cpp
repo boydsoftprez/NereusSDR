@@ -59,6 +59,7 @@
 
 #include "GeneralOptionsPage.h"
 #include "models/RadioModel.h"
+#include "core/BoardCapabilities.h"
 #include "core/StepAttenuatorController.h"
 #include "core/AppSettings.h"
 
@@ -153,12 +154,57 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
     buildStepAttGroup();
     buildAutoAttGroup();
 
+    // 3M-1a G.2: wire Receive Only checkbox visibility from caps.isRxOnlySku.
+    // Hidden by default (see buildHardwareConfigGroup); shown only for RX-only
+    // SKUs (HL2-RX, etc.).  Named slot mirrors HardwarePage::onCurrentRadioChanged.
+    // Cite: Thetis setup.designer.cs:8535-8544 [v2.10.3.13] (Visible=false default);
+    //       BoardCapabilities::isRxOnlySku (NereusSDR-original).
+    if (model) {
+        // Initial state: apply caps of the already-connected radio (if any).
+        setReceiveOnlyVisible(model->boardCapabilities().isRxOnlySku);
+
+        // Live updates: reconnects to a different radio (e.g. HL2-RX → ANAN-G2)
+        // must flip visibility without reopening Setup.
+        connect(model, &RadioModel::currentRadioChanged,
+                this, &GeneralOptionsPage::onCurrentRadioChanged);
+    }
+
     if (m_ctrl) {
         // Re-range setup spinboxes from board capabilities (may be 61 dB).
         int maxDb = m_ctrl->maxAttenuation();
         m_spnRx1StepAttValue->setRange(0, maxDb);
         m_spnRx2StepAttValue->setRange(0, maxDb);
         connectController();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setReceiveOnlyVisible
+// ---------------------------------------------------------------------------
+// 3M-1a G.2: public setter so RadioModel (via currentRadioChanged) and the
+// constructor can show/hide the RX-only checkbox without direct access to
+// the private m_chkGeneralRXOnly member.
+// Cite: Thetis setup.designer.cs:8535-8544 [v2.10.3.13] (Visible=false default);
+//       BoardCapabilities::isRxOnlySku (NereusSDR-original).
+
+void GeneralOptionsPage::setReceiveOnlyVisible(bool visible)
+{
+    if (m_chkGeneralRXOnly) {
+        m_chkGeneralRXOnly->setVisible(visible);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// onCurrentRadioChanged — named slot, mirrors HardwarePage::onCurrentRadioChanged
+// ---------------------------------------------------------------------------
+// 3M-1a G.2 fixup: replaces the lambda that captured 'model' by pointer.
+// The named slot form is auto-disconnected when 'this' dies (Qt::AutoConnection),
+// with no shutdown-race on pointer capture.  m_model is the SetupPage base member.
+
+void GeneralOptionsPage::onCurrentRadioChanged(const NereusSDR::RadioInfo& /*info*/)
+{
+    if (model()) {
+        setReceiveOnlyVisible(model()->boardCapabilities().isRxOnlySku);
     }
 }
 
@@ -257,7 +303,7 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
     m_chkGeneralRXOnly->setToolTip(QStringLiteral("Check to disable transmit functionality."));
     m_chkGeneralRXOnly->setChecked(
         s.value(QStringLiteral("RxOnly"), QStringLiteral("False")).toString() == QStringLiteral("True"));
-    m_chkGeneralRXOnly->setVisible(false);  // per-board visibility wired by RadioModel (Task 17)
+    m_chkGeneralRXOnly->setVisible(false);  // per-board visibility set via setReceiveOnlyVisible() — 3M-1a G.2
     connect(m_chkGeneralRXOnly, &QCheckBox::toggled, this, [](bool on) {
         AppSettings::instance().setValue(QStringLiteral("RxOnly"),
                                           on ? QStringLiteral("True") : QStringLiteral("False"));
