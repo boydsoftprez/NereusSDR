@@ -1402,6 +1402,13 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // thread-safe (atomic write per TxChannel.h E.2 notes).
             connect(&m_transmitModel, &TransmitModel::micPreampChanged,
                     m_txChannel, &TxChannel::setMicPreamp);
+            // Initial-state sync: signal connections don't fire for the
+            // current value. Without this push, TxChannel::m_micPreampLast
+            // stays at its quiet_NaN sentinel and SetTXAPanelGain1(NaN)
+            // produces silent SSB on the air. TUN uses gen-tone (different
+            // gain stage) so it works without this. The mic-driven
+            // fexchange2 path needs the initial preamp value to land.
+            m_txChannel->setMicPreamp(m_transmitModel.micPreampLinear());
 
             // L.1 connection 4: TX monitor enable from TransmitModel.
             // setTxMonitorEnabled is atomic (E.3 design); auto connection.
