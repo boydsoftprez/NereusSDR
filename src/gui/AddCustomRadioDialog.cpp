@@ -257,7 +257,7 @@ void AddCustomRadioDialog::buildUi()
     // Phase 3Q Task 4: "Probe and connect now" (primary, default) +
     // "Save offline" (secondary) + "Cancel" (secondary, right-aligned).
     // Design §4.4: probe button is the dialog's default action.
-    m_probeButton = new QPushButton(QStringLiteral("Probe and connect now"), this);
+    m_probeButton = new QPushButton(QStringLiteral("Probe and save"), this);
     m_probeButton->setObjectName(QStringLiteral("probeButton"));
     m_probeButton->setStyleSheet(kPrimaryButtonStyle);
     m_probeButton->setDefault(true);
@@ -473,7 +473,7 @@ void AddCustomRadioDialog::onProbeClicked()
     // Track probe start so we can enforce a minimum visible time below — fast
     // LAN probes can return in <100 ms which makes the dialog appear to vanish
     // without any feedback. We hold the success state for at least kMinFlashMs
-    // total so the user sees "Probing…" → "Connecting…" → close as a clear beat.
+    // total so the user sees "Probing…" → "Verified ✓ Saving…" as a clear beat.
     const qint64 probeStartedMs = QDateTime::currentMSecsSinceEpoch();
 
     // Heap-allocate with 'this' parent so it is auto-destroyed if the dialog
@@ -494,12 +494,14 @@ void AddCustomRadioDialog::onProbeClicked()
 
                 disc->deleteLater();
 
-                // Show "Connecting…" beat so the user sees something happen,
-                // then accept() once the minimum flash time has elapsed.
+                // Probe verified the radio responds — save the entry to the
+                // saved-radio list. The user then connects via the panel's
+                // existing Connect button on the row (mirrors the standard
+                // saved-radio flow exactly). No auto-connect from this path.
                 const QString name = m_probedInfo.name.isEmpty()
                     ? m_probedInfo.address.toString()
                     : m_probedInfo.name;
-                showInlineInfo(QStringLiteral("Connecting to %1…").arg(name));
+                showInlineInfo(QStringLiteral("Verified %1 — saving…").arg(name));
 
                 constexpr qint64 kMinFlashMs = 700;
                 const qint64 elapsedMs = QDateTime::currentMSecsSinceEpoch() - probeStartedMs;
@@ -507,7 +509,7 @@ void AddCustomRadioDialog::onProbeClicked()
                     0, kMinFlashMs - elapsedMs));
                 QTimer::singleShot(remainingMs, this, [this]() {
                     hideProbingOverlay();
-                    QDialog::accept();  // caller saves + connects
+                    QDialog::accept();  // caller saves + adds row; user clicks Connect on row
                 });
             });
 

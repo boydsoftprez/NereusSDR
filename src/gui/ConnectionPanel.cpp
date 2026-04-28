@@ -1072,19 +1072,22 @@ void ConnectionPanel::onAddManuallyClicked()
     // Add the row to the table immediately so the user sees their entry.
     // onRadioDiscovered handles de-duplication via rowForMac.
     upsertRowForInfo(info, /*online=*/false);
-    setStatusText(QStringLiteral("Added: %1").arg(info.name));
+
+    // Auto-select the newly-added row so the user can hit Connect without
+    // hunting for it. Probe-verified entries land alongside save-offline
+    // entries — both paths now save first; user connects from the row.
+    const int newRow = rowForMac(info.macAddress);
+    if (newRow >= 0) {
+        m_radioTable->setCurrentCell(newRow, ColName);
+    }
+
+    const QString action = dlg.savedOffline()
+        ? QStringLiteral("Saved offline: %1")
+        : QStringLiteral("Verified and saved: %1");
+    setStatusText(action.arg(info.name));
 
     qCDebug(lcDiscovery) << "ConnectionPanel: manually added radio"
                          << info.name << info.address.toString();
-
-    // Phase 3Q-4 design §6.3 — "Probe and connect now" path: dialog accept()
-    // means the probe succeeded and the user wants to connect immediately.
-    // Save-offline path leaves savedOffline()=true; in that case we just save
-    // the entry (above) and stop, per design §6.4 / §6.5.
-    if (!dlg.savedOffline()) {
-        m_radioModel->connectToRadio(info);
-        setStatusText(QStringLiteral("Connecting to %1…").arg(info.displayName()));
-    }
 }
 
 // Phase 3I Task 15 — Forget wired.
