@@ -1243,3 +1243,13 @@ nereus_add_test(tst_tx_channel_per_mode_config)
 nereus_add_test(tst_tx_channel_vox_anti_vox)
 target_compile_definitions(tst_tx_channel_vox_anti_vox PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1b Task D.4: TxChannel::setStageRunning expansion ───────────────
+# Verifies Panel (existing), MicMeter, AlcMeter, AmMod, FmMod dispatch.
+# MicMeter/AlcMeter: always-on meter stages — no public WDSP Run setter (meter.c);
+#   documented no-op with qCDebug log (wdsp/TXA.c:80-93, 379-392 [v2.10.3.13]).
+# AmMod/FmMod: run controlled only via SetTXAMode() — no standalone Run setter
+#   (wdsp/ammod.c, fmmod.c, TXA.c:753-789 [v2.10.3.13]);
+#   documented no-op with qCWarning log.
+# Panel: verified as already dispatched (SetTXAPanelRun, patchpanel.c:201-206).
+nereus_add_test(tst_tx_channel_stage_running_expansion)
+

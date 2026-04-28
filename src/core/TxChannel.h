@@ -86,6 +86,14 @@ warren@wpratt.com
 //                 setSubAmMode(int) added by J.J. Boyd (KG4VCF) during
 //                 3M-1b Task D.2 (per-mode TXA config setters). AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-04-27 — setStageRunning() expanded with explicit cases for
+//                 MicMeter, AlcMeter, AmMod, FmMod (+ Panel verified) by
+//                 J.J. Boyd (KG4VCF) during 3M-1b Task D.4. All 4 new
+//                 stages are documented no-ops: MicMeter/AlcMeter have no
+//                 public WDSP Run setter (meter.c:36-57 [v2.10.3.13]);
+//                 AmMod/FmMod run-controlled only via SetTXAMode()
+//                 (TXA.c:753-789 [v2.10.3.13]). AI-assisted transformation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -496,10 +504,15 @@ public:
     // Unsupported stages (no public WDSP Run API, or managed internally):
     //   RsmpIn / RsmpOut: run managed by TXAResCheck() — not externally settable.
     //   UsLew:            no run flag; channel-upslew driven.
-    //   MicMeter / EqMeter / LvlrMeter / CfcMeter / AlcMeter / CompMeter /
-    //   OutMeter / Sip1 / Calcc / Iqc / Alc / Bp0 / Bp1 / Bp2 / AmMod / FmMod:
-    //     use SetTXA*Run variants added in later tasks (3M-1b, 3M-3a, 3M-4)
-    //     or remain always-on for the lifetime of the 3M-1a session.
+    //   MicMeter / AlcMeter: always-on (run=1); no public Run setter in WDSP
+    //     meter.c:36-57 [v2.10.3.13]. Documented no-op + qCDebug log (D.4).
+    //   AmMod / FmMod:   run controlled exclusively by SetTXAMode() (TXA.c:753-789
+    //     [v2.10.3.13]). No standalone Set*Run API. Documented no-op + qCWarning
+    //     log (D.4). Use setTxMode() to activate these stages.
+    //   EqMeter / LvlrMeter / CfcMeter / CompMeter /
+    //   OutMeter / Sip1 / Calcc / Iqc / Alc / Bp0 / Bp1 / Bp2:
+    //     use SetTXA*Run variants added in later tasks (3M-3a, 3M-4)
+    //     or remain always-on for the lifetime of the 3M-1a/1b session.
     //
     // For unsupported stages this method logs a warning and is a no-op.
     //

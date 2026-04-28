@@ -92,6 +92,13 @@ warren@wpratt.com
 //                 setAntiVoxGain(double) implemented by J.J. Boyd (KG4VCF)
 //                 during 3M-1b Task D.3 (VOX/anti-VOX WDSP wrappers).
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-27 — setStageRunning() expanded with explicit cases for
+//                 MicMeter, AlcMeter, AmMod, FmMod by J.J. Boyd (KG4VCF)
+//                 during 3M-1b Task D.4. All 4 new cases are documented
+//                 no-ops: MicMeter/AlcMeter have no public WDSP Run setter
+//                 (meter.c:36-57 [v2.10.3.13]); AmMod/FmMod run controlled
+//                 only by SetTXAMode() (TXA.c:753-789 [v2.10.3.13]).
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -538,8 +545,10 @@ void TxChannel::setRunning(bool on)
 //
 // Each supported stage maps to the corresponding WDSP Set*Run function.
 // Unsupported stages (rsmpin/rsmpout — managed by TXAResCheck; uslew — no
-// run flag; meters/Iqc/Calcc/Alc/Bp*/AmMod/FmMod — added in later tasks)
-// log a warning and return without calling WDSP.
+// run flag; MicMeter/AlcMeter — always-on with no public Run setter;
+// AmMod/FmMod — run managed by SetTXAMode only; remaining
+// meters/Iqc/Calcc/Alc/Bp* — added in later tasks)
+// log a warning or debug note and return without calling WDSP.
 //
 // From Thetis wdsp/ source files [v2.10.3.13] — individual Set*Run APIs.
 // ---------------------------------------------------------------------------
@@ -637,6 +646,81 @@ void TxChannel::setStageRunning(Stage s, bool run)
 #endif
         return;
 
+    // ── D.4: MicMeter and AlcMeter — always-on meter stages ─────────────────
+    //
+    // WDSP analysis (v2.10.3.13): create_meter() (wdsp/meter.c:36-57) takes
+    // a `run` arg (1 for micmeter, 1 for alcmeter) and a `prun` pointer.
+    // xmeter() gates on `a->run && srun`; `srun` is *(prun) if prun != 0.
+    // For micmeter, prun = &txa[ch].panel.p->run (TXA.c:80-93): the meter's
+    // secondary gate is panel.run, not a separately settable extern function.
+    // No PORT-exported SetTXAMicMeterRun / SetTXAAlcMeterRun function exists
+    // in wdsp/meter.c — the file exports only GetRXAMeter and GetTXAMeter.
+    // These stages are always-on (run=1 in create_txa) and have no public
+    // Run setter — documented no-op.
+    //
+    // From Thetis wdsp/TXA.c:80-93   [v2.10.3.13] — micmeter created with run=1.
+    // From Thetis wdsp/TXA.c:379-392 [v2.10.3.13] — alcmeter created with run=1.
+    // From Thetis wdsp/meter.c:36-57  [v2.10.3.13] — no public Run setter.
+
+    case Stage::MicMeter:
+        // No public WDSP Run setter. micmeter.run = 1 always (create_txa TXA.c:80-93).
+        // The meter's srun secondary gate is controlled by panel.run (*(prun)).
+        // Call SetTXAPanelRun to gate the mic path via panel, not directly here.
+        qCDebug(lcDsp) << "TxChannel" << m_channelId
+                       << "setStageRunning(MicMeter," << run
+                       << "): no public WDSP Run setter (meter.c:36-57"
+                          " [v2.10.3.13]); micmeter.run=1 always-on, gated"
+                          " by panel.run — use Stage::Panel to gate the mic path.";
+        return;
+
+    case Stage::AlcMeter:
+        // No public WDSP Run setter. alcmeter.run = 1 always (create_txa TXA.c:379-392).
+        qCDebug(lcDsp) << "TxChannel" << m_channelId
+                       << "setStageRunning(AlcMeter," << run
+                       << "): no public WDSP Run setter (meter.c:36-57"
+                          " [v2.10.3.13]); alcmeter.run=1 always-on — no-op.";
+        return;
+
+    // ── D.4: AmMod and FmMod — run controlled via SetTXAMode() only ─────────
+    //
+    // WDSP analysis (v2.10.3.13): ammod.run and fmmod.run are set ONLY inside
+    // SetTXAMode() (wdsp/TXA.c:753-789). SetTXAMode resets both to 0, then sets
+    // ammod.run=1 for TXA_AM/SAM/DSB/AM_LSB/AM_USB, or fmmod.run=1 for TXA_FM
+    // (TXA.c:759-785). This also calls TXASetupBPFilters() to update bp0/bp1/bp2
+    // atomically. No standalone SetTXAamModRun or SetTXAfmModRun PORT function
+    // exists in wdsp/ammod.c or wdsp/fmmod.c — the files export only parameter
+    // setters (SetTXAAMCarrierLevel, SetTXAFMDeviation, SetTXACTCSSRun, etc.).
+    //
+    // Correct call sequence for AM/FM modes: setTxMode(DSPMode::AM/FM) via
+    // TxChannel::setTxMode(), which calls SetTXAMode() and handles the full
+    // pipeline reconfiguration atomically.
+    //
+    // From Thetis wdsp/TXA.c:753-789 [v2.10.3.13] — SetTXAMode sets ammod/fmmod.run.
+    // From Thetis wdsp/ammod.c:29-41  [v2.10.3.13] — no public Run setter.
+    // From Thetis wdsp/fmmod.c:42-65  [v2.10.3.13] — no public Run setter.
+
+    case Stage::AmMod:
+        // ammod.run is managed exclusively by SetTXAMode() — no standalone Run setter.
+        // Use setTxMode(DSPMode::AM) / setTxMode(DSPMode::DSB) etc. instead.
+        qCWarning(lcDsp) << "TxChannel" << m_channelId
+                         << "setStageRunning(AmMod," << run
+                         << "): ammod.run is controlled only by SetTXAMode()"
+                            " (TXA.c:753-789 [v2.10.3.13]). No standalone"
+                            " SetTXAamModRun function exists in WDSP."
+                            " Use setTxMode(DSPMode::AM/DSB/...) instead — no-op.";
+        return;
+
+    case Stage::FmMod:
+        // fmmod.run is managed exclusively by SetTXAMode() — no standalone Run setter.
+        // Use setTxMode(DSPMode::FM) instead.
+        qCWarning(lcDsp) << "TxChannel" << m_channelId
+                         << "setStageRunning(FmMod," << run
+                         << "): fmmod.run is controlled only by SetTXAMode()"
+                            " (TXA.c:753-789 [v2.10.3.13]). No standalone"
+                            " SetTXAfmModRun function exists in WDSP."
+                            " Use setTxMode(DSPMode::FM) instead — no-op.";
+        return;
+
     // Permanently uncontrollable stages — explicit case arms so the default:
     // below only catches genuinely deferred stages.
 
@@ -667,15 +751,19 @@ void TxChannel::setStageRunning(Stage s, bool run)
                          << "setStageRunning(kStageCount): sentinel value, ignoring";
         return;
 
-    // Deferred stages — Set*Run API exists in WDSP but is not yet declared
-    // in wdsp_api.h. Each will get its own explicit case arm when wired in
-    // 3M-1b / 3M-3a / 3M-4.
+    // Remaining deferred stages — Set*Run API exists in WDSP but is not yet
+    // declared in wdsp_api.h. Each will get its own explicit case arm when
+    // wired in 3M-3a / 3M-4. Stages that hit this branch:
+    //   EqMeter / LvlrMeter / CfcMeter / CompMeter / OutMeter / Sip1 /
+    //   Calcc / Iqc / Alc / Bp0 / Bp1 / Bp2 / PreEmph / Leveler.
+    // AmMod / FmMod / MicMeter / AlcMeter all have explicit case arms above
+    // (D.4); none of them should reach this default:.
     default:
         qCWarning(lcDsp) << "TxChannel" << m_channelId
                          << "setStageRunning(" << static_cast<int>(s) << ","
                          << run << "): WDSP Set*Run API for this stage is "
                          << "not yet declared in wdsp_api.h — deferred to "
-                         << "3M-1b/3M-3a. No-op in 3M-1a.";
+                         << "3M-3a/3M-4. No-op.";
         return;
     }
 }
