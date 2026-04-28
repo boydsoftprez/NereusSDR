@@ -1120,8 +1120,13 @@ void PhoneCwApplet::wireControls()
 
     // ── #1 Mic level gauge ────────────────────────────────────────────────────
     // 50 ms timer (20 fps) — same polling cadence as VAX/HGauge meter precedent.
-    // Reads AudioEngine::pcMicInputLevel() (linear 0..1, thread-safe atomic).
-    // Returns 0.0f when m_txInputBus is null (mic not configured / RX mode).
+    // Reads AudioEngine::pcMicInputLevel() (linear 0..1, thread-safe atomic) +
+    // applies the TransmitModel mic-gain (dB) so the gauge reflects the
+    // post-gain level the TX path will see. This gives users immediate
+    // visual feedback when adjusting the Mic Gain slider — keep peaks
+    // around -3 dBFS (yellow zone) for clean SSB.
+    //
+    // Returns 0.0f raw when m_txInputBus is null (mic not configured / RX mode).
     m_micLevelTimer = new QTimer(this);
     m_micLevelTimer->setInterval(50);
     connect(m_micLevelTimer, &QTimer::timeout, this, [this]() {
@@ -1130,12 +1135,17 @@ void PhoneCwApplet::wireControls()
         AudioEngine* ae = m_model->audioEngine();
         if (!ae) { return; }
 
-        const float linear = ae->pcMicInputLevel();
+        const float rawLinear = ae->pcMicInputLevel();
+
+        // Apply mic-gain dB → linear scaling so the gauge tracks the slider.
+        const int gainDb = m_model->transmitModel().micGainDb();
+        const double gainLinear = std::pow(10.0, static_cast<double>(gainDb) / 20.0);
+        const double scaled = static_cast<double>(rawLinear) * gainLinear;
 
         // Guard: NaN/Inf and very small values (≤1e-6) → floor at -60 dBFS.
         double dB = -60.0;
-        if (std::isfinite(linear) && linear > 1e-6f) {
-            dB = 20.0 * std::log10(static_cast<double>(linear));
+        if (std::isfinite(scaled) && scaled > 1e-6) {
+            dB = 20.0 * std::log10(scaled);
         }
 
         // Clamp to gauge range [-40, +10].
