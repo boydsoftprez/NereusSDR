@@ -73,7 +73,6 @@ warren@wpratt.com
 #include "core/TxChannel.h"
 #include "core/TxMicRouter.h"
 #include "core/RadioConnection.h"
-#include "core/RadioDiscovery.h"
 
 using namespace NereusSDR;
 

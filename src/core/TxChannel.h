@@ -406,7 +406,6 @@ public:
     void setStageRunning(Stage s, bool run);
 
 #ifdef NEREUS_BUILD_TESTS
-public:
     // ── Test seam (Phase 3M-1b D.1) ─────────────────────────────────────────
     //
     // Synchronously drive one fexchange2 cycle. Bypasses the 5 ms QTimer so
