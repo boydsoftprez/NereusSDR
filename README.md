@@ -203,16 +203,27 @@ See [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) for the full implementation plan.
 ```bash
 # Ubuntu 24.04+ / Debian
 sudo apt install qt6-base-dev qt6-base-private-dev \
-  qt6-multimedia-dev qt6-shadertools-dev \
+  qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev \
   cmake ninja-build pkg-config \
-  libfftw3-dev libgl1-mesa-dev
+  libfftw3-dev libgl1-mesa-dev \
+  libasound2-dev libjack-jackd2-dev \
+  libpipewire-0.3-dev
 
 # Arch / CachyOS / Manjaro
-sudo pacman -S qt6-base qt6-multimedia cmake ninja pkgconf fftw
+sudo pacman -S qt6-base qt6-multimedia qt6-svg \
+  cmake ninja pkgconf fftw \
+  alsa-lib jack2 pipewire
 
 # macOS (Homebrew)
 brew install qt@6 ninja cmake pkgconf fftw
 ```
+
+The bundled PortAudio is built with `PA_USE_ALSA=ON` and `PA_USE_JACK=ON` on Linux,
+so the ALSA and JACK development headers are required at compile time even if you
+don't use those audio backends at runtime. `libpipewire-0.3-dev` (≥ 0.3.50) is
+strongly recommended on PipeWire-default distributions (Ubuntu 24.04+, Fedora 39+,
+Arch) — without it the Linux audio path falls back from the native libpipewire-0.3
+bridge to the older pactl route.
 
 ### Windows (FFTW3 Setup)
 
