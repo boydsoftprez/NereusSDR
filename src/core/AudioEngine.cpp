@@ -243,6 +243,7 @@ void AudioEngine::start()
     }
 
     ensureSpeakersOpen();
+    ensureTxInputOpen();
 
     // Sub-Phase 8.5: eagerly construct platform-native VAX RX buses + the
     // VAX TX virtual bus on macOS / Linux so coreaudiod / pactl publish the
@@ -621,6 +622,36 @@ void AudioEngine::ensureSpeakersOpen()
                         << m_speakersFormat.channels << "ch"
                         << "[" << m_speakersBus->backendName() << "]";
         emit speakersConfigChanged(cfg);
+    }
+}
+
+void AudioEngine::ensureTxInputOpen()
+{
+    if (m_txInputBus && m_txInputBus->isOpen()) {
+        return;
+    }
+    if (!m_paInitialized) {
+        return;
+    }
+
+    // Phase 3M-1b: open the platform-default mic on start() so the
+    // PhoneCwApplet mic-level meter (and PcMicSource on TX) has signal
+    // without requiring the user to visit Setup → Audio → Devices.
+    // Persisted choice (audio/TxInput keys) takes priority on subsequent
+    // launches; first run with no keys returns a default-constructed
+    // AudioDeviceConfig (empty deviceName → platform-default mic).
+    const AudioDeviceConfig cfg =
+        AudioDeviceConfig::loadFromSettings(QStringLiteral("audio/TxInput"));
+
+    m_txInputBus = makeBus(cfg, /*capture=*/true);
+    if (m_txInputBus) {
+        qCInfo(lcAudio) << "TX input bus opened (eager) @"
+                        << m_txInputBus->negotiatedFormat().sampleRate << "Hz /"
+                        << m_txInputBus->negotiatedFormat().channels << "ch"
+                        << "[" << m_txInputBus->backendName() << "]";
+        emit txInputConfigChanged(cfg);
+    } else {
+        qCWarning(lcAudio) << "TX input bus open failed — mic level meter inert";
     }
 }
 

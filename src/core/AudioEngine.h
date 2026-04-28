@@ -446,6 +446,15 @@ private:
     // audible without a Setup→Audio→Devices UI in Sub-Phase 4.
     void ensureSpeakersOpen();
 
+    // Open m_txInputBus with the persisted device or platform-default mic
+    // capture so PhoneCwApplet's mic-level meter has signal without
+    // requiring Setup configuration. Users can override later via
+    // Setup → Audio → Devices (or → TX Input). Loaded from
+    // audio/TxInput AppSettings keys (loadFromSettings returns a
+    // default-constructed config on first run → empty deviceName →
+    // platform default mic).
+    void ensureTxInputOpen();
+
     RadioModel* m_radio{nullptr};
 
     // Sub-Phase 12 Task 12.2 — live-reconfig safety mutex for the speakers
