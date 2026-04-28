@@ -26,6 +26,9 @@
 //   2026-04-27 — MON properties: monEnabled / monitorVolume
 //                 (C.5, Phase 3M-1b) ported by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-28 — micSource (MicSource) property (I.1, Phase 3M-1b)
+//                 NereusSDR-native Setup UI property, J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -541,6 +544,22 @@ void TransmitModel::setVoxHangTimeMs(int ms)
     // WDSP SetDEXPHoldTime call deferred to Phase D / Phase H.
     m_voxHangTimeMs = clamped;
     emit voxHangTimeMsChanged(clamped);
+}
+
+// ── Mic source (3M-1b I.1) ────────────────────────────────────────────────────
+//
+// NereusSDR-native property: Thetis bakes mic-source selection into audio.cs
+// directly rather than a strategy enum.  This property drives
+// AudioTxInputPage (Setup → Audio → TX Input) and will be consumed by
+// CompositeTxMicRouter::setActiveSource() in Phase F.3.
+//
+// AppSettings persistence (per-MAC) deferred to Phase L.2.
+
+void TransmitModel::setMicSource(MicSource source)
+{
+    if (source == m_micSource) { return; }  // idempotent guard
+    m_micSource = source;
+    emit micSourceChanged(source);
 }
 
 } // namespace NereusSDR

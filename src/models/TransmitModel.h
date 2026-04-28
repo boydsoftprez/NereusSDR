@@ -19,6 +19,9 @@
 //   2026-04-27 — MON properties: monEnabled / monitorVolume (C.5, Phase 3M-1b)
 //                 ported by J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-04-28 — micSource (MicSource::Pc/Radio) property (I.1, Phase 3M-1b)
+//                 NereusSDR-native Setup UI property, J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -75,6 +78,7 @@
 #pragma once
 
 #include "Band.h"
+#include "core/audio/CompositeTxMicRouter.h"
 
 #include <QObject>
 #include <QString>
@@ -495,8 +499,30 @@ public:
     static constexpr int kVoxHangTimeMsMin =    1;
     static constexpr int kVoxHangTimeMsMax = 2000;
 
+    // ── Mic source (3M-1b I.1) ────────────────────────────────────────────────
+    //
+    // NereusSDR-native property — Thetis bakes mic-source selection directly
+    // into audio.cs rather than using the strategy pattern.  This property
+    // drives AudioTxInputPage (Setup → Audio → TX Input) and is consumed by
+    // CompositeTxMicRouter::setActiveSource() once that wiring lands in F.3.
+    //
+    // Default MicSource::Pc — PC microphone is always safe and available.
+    // Radio is opt-in (unavailable on HL2: hasMicJack == false).
+    //
+    // AppSettings persistence (per-MAC) is deferred to Phase L.2.
+    // CompositeTxMicRouter wiring arrives in Phase F.3.
+
+    /// Active mic source: Pc (PC host-audio) or Radio (radio mic-jack).
+    /// Default MicSource::Pc. Radio is gated by BoardCapabilities::hasMicJack.
+    MicSource micSource() const noexcept { return m_micSource; }
+
 public slots:
     void setMicGainDb(int dB);
+
+    // ── Mic source setter (3M-1b I.1) ─────────────────────────────────────────
+    /// Select the active mic source (Pc or Radio).  Idempotent: no signal
+    /// when the value is unchanged.  AppSettings persistence deferred to L.2.
+    void setMicSource(MicSource source);
 
     // ── Mic-jack flag setters (3M-1b C.2) ─────────────────────────────────
     void setMicMute(bool on);
@@ -563,6 +589,10 @@ signals:
     void voxGainScalarChanged(float scalar);
     void voxHangTimeMsChanged(int ms);
 
+    // ── Mic source signals (3M-1b I.1) ────────────────────────────────────────
+    /// Emitted when micSource changes. Not emitted on idempotent calls.
+    void micSourceChanged(MicSource source);
+
 private:
     bool m_mox{false};
     bool m_tune{false};
@@ -622,6 +652,11 @@ private:
     int   m_voxThresholdDb = -40;    // NereusSDR-original default; ptbVOX range [-80,0]
     float m_voxGainScalar  = 1.0f;   // audio.cs:194: vox_gain = 1.0f
     int   m_voxHangTimeMs  = 500;    // udDEXPHold.Value=500 (setup.designer.cs:45020-45024)
+
+    // ── Mic source (3M-1b I.1) ──────────────────────────────────────────
+    // NereusSDR-native. Default Pc (always available; Radio is opt-in).
+    // AppSettings persistence deferred to Phase L.2.
+    MicSource m_micSource{MicSource::Pc};
 };
 
 } // namespace NereusSDR

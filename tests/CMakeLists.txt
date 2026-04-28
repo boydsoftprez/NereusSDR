@@ -1788,3 +1788,18 @@ target_compile_definitions(tst_p1_mic_xlr_storage PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p2_mic_xlr_wire)
 target_compile_definitions(tst_p2_mic_xlr_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1b Task I.1: AudioTxInputPage skeleton + TransmitModel::micSource ─
+# 12 tests covering:
+#   1-2.  HL2 (hasMicJack=false): PC Mic enabled, Radio Mic disabled.
+#   2.    HL2: disabled-tooltip exact text "Radio mic jack not present on Hermes Lite 2".
+#   3-4.  G2 (hasMicJack=true): both PC Mic and Radio Mic enabled, no tooltip.
+#   5.    Default state: PC Mic checked, Radio Mic unchecked.
+#   6-7.  UI → Model round-trip: button click drives TransmitModel::micSource.
+#   8-9.  Model → UI round-trip: setMicSource() drives radio-button check state.
+#  10.    HL2 forced state: Radio Mic button disabled even when model holds Radio.
+#  11.    TransmitModel signal emission: setMicSource emits micSourceChanged.
+#  12.    TransmitModel idempotency: same-value call emits no signal.
+# NEREUS_BUILD_TESTS required for RadioModel::setCapsHasMicJackForTest.
+nereus_add_test(tst_audio_tx_input_page_skeleton)
+target_compile_definitions(tst_audio_tx_input_page_skeleton PRIVATE NEREUS_BUILD_TESTS)
+

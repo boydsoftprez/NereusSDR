@@ -820,6 +820,7 @@ const BoardCapabilities& RadioModel::boardCapabilities() const
         static BoardCapabilities overrideCaps{};
         overrideCaps.hasAlex     = m_testCapsHasAlex;
         overrideCaps.isRxOnlySku = m_testCapsIsRxOnly;  // 3M-1a G.2
+        overrideCaps.hasMicJack  = m_testCapsHasMicJack; // 3M-1b I.1
         return overrideCaps;
     }
 #endif

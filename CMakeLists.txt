@@ -560,6 +560,7 @@ set(GUI_SOURCES
     src/gui/setup/AudioAdvancedPage.cpp
     src/gui/setup/AudioBackendStrip.cpp
     src/gui/setup/AudioDevicesPage.cpp
+    src/gui/setup/AudioTxInputPage.cpp
     src/gui/setup/AudioTciPage.cpp
     src/gui/setup/AudioVaxPage.cpp
     src/gui/setup/DeviceCard.cpp

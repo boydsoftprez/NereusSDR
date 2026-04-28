@@ -351,6 +351,14 @@ public:
         m_testCapsHasAlex   = false;  // reset sibling so combined state is unambiguous
         m_testCapsIsRxOnly  = isRxOnly;
     }
+    // 3M-1b I.1: inject hasMicJack without a live radio board.
+    // HL2 sets hasMicJack=false; all other boards set true (default).
+    // Does not reset other test-cap flags — compose with setCapsRxOnlyForTest
+    // if a combined cap override is needed (each flag is independent).
+    void setCapsHasMicJackForTest(bool hasMicJack) {
+        m_testCapsOverride     = true;
+        m_testCapsHasMicJack   = hasMicJack;
+    }
     // Emit currentRadioChanged with a default-constructed RadioInfo for test use.
     // Use this to simulate a reconnect when testing signal-driven visibility updates.
     void emitCurrentRadioChangedForTest() {
@@ -621,7 +629,8 @@ private:
 #ifdef NEREUS_BUILD_TESTS
     bool m_testCapsOverride{false};
     bool m_testCapsHasAlex{false};
-    bool m_testCapsIsRxOnly{false};  // 3M-1a G.2: injected via setCapsRxOnlyForTest
+    bool m_testCapsIsRxOnly{false};   // 3M-1a G.2: injected via setCapsRxOnlyForTest
+    bool m_testCapsHasMicJack{true};  // 3M-1b I.1: injected via setCapsHasMicJackForTest
 #endif
 
     // Phase 3M-0 Task 6: Ganymede PA-trip live state.
