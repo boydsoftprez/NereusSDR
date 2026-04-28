@@ -163,6 +163,10 @@ mw0lge@grange-lane.co.uk
 
 #include "core/ConnectionState.h"
 
+QT_BEGIN_NAMESPACE
+class QLabel;
+QT_END_NAMESPACE
+
 // GPU spectrum: QRhiWidget base class for Metal/Vulkan/D3D12 rendering.
 // CPU fallback: QWidget with QPainter.
 // Note: NEREUS_GPU_SPECTRUM is set in CMakeLists.txt via target_compile_definitions.
@@ -519,16 +523,16 @@ protected:
 
 private:
     // ---- Phase 3Q-8: disconnect overlay state ----
+    // The CPU paintEvent path can paint a QPainter overlay, but the GPU
+    // (QRhi) path early-returns and refuses QPainter. To work in both modes
+    // we use a child QLabel — Qt composites it on top of the QRhi surface.
     NereusSDR::ConnectionState m_connState{NereusSDR::ConnectionState::Disconnected};
     float m_disconnectFade{1.0f};  // animated; 1.0 connected, 0.4 disconnected
     QPropertyAnimation* m_fadeAnim{nullptr};
+    QLabel* m_disconnectLabel{nullptr};
 
     float disconnectFade() const { return m_disconnectFade; }
     void  setDisconnectFade(float f) { m_disconnectFade = f; update(); }
-
-    // Renders the dim tint + DISCONNECTED label. Called from paintEvent
-    // tail when m_connState != Connected.
-    void paintDisconnectOverlay(QPainter& p);
 
     // ---- Drawing helpers ----
     void drawGrid(QPainter& p, const QRect& specRect);

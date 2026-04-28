@@ -561,8 +561,19 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
     });
 
     // Send P1 + P2 probes in parallel.
-    sock->writeDatagram(QByteArray::fromHex("EFFE02"), addr, port);
-    sock->writeDatagram(QByteArray::fromHex("0000000002"), addr, port);
+    // Both must be padded to the full discovery-frame size — real OpenHPSDR
+    // firmware ignores short probes (only the broadcast scan path was sending
+    // padded frames before; this matches scanAllNics's p1Packet/p2Packet shape).
+    QByteArray p1Packet(63, 0);
+    p1Packet[0] = static_cast<char>(0xEF);
+    p1Packet[1] = static_cast<char>(0xFE);
+    p1Packet[2] = static_cast<char>(0x02);
+
+    QByteArray p2Packet(60, 0);
+    p2Packet[4] = static_cast<char>(0x02);
+
+    sock->writeDatagram(p1Packet, addr, port);
+    sock->writeDatagram(p2Packet, addr, port);
 
     timer->start(int(timeout.count()));
 }

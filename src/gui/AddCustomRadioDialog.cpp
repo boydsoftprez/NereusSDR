@@ -387,11 +387,11 @@ void AddCustomRadioDialog::populateModelCombo()
     addSku(HPSDRModel::ANAN100D);        // "ANAN-100D"
 
     // --- Orion (2 ADC · 50 V) ---
-    addFamilyHeader(QStringLiteral("Orion (2 ADC \xc2\xb7 50 V)"));
+    addFamilyHeader(QStringLiteral("Orion (2 ADC · 50 V)"));
     addSku(HPSDRModel::ANAN200D);        // "ANAN-200D"
 
     // --- Orion MkII (2 ADC · MKII BPF) ---
-    addFamilyHeader(QStringLiteral("Orion MkII (2 ADC \xc2\xb7 MKII BPF)"));
+    addFamilyHeader(QStringLiteral("Orion MkII (2 ADC · MKII BPF)"));
     addSku(HPSDRModel::ORIONMKII);       // "Orion MkII"
     addSku(HPSDRModel::ANAN7000D);       // "ANAN-7000DLE"
     addSku(HPSDRModel::ANAN8000D);       // "ANAN-8000DLE"

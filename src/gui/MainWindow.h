@@ -230,10 +230,10 @@ private:
     // Dark theme checkable action (Task 12)
     QAction* m_darkThemeAction = nullptr;
 
-    // Radio menu state-aware actions (3Q-9)
+    // Radio menu state-aware actions (3Q-9; trimmed in 3Q polish — Discover Now
+    // dropped because Manage Radios already exposes a ↻ Scan button).
     QAction* m_actConnect      = nullptr;
     QAction* m_actDisconnect   = nullptr;
-    QAction* m_actDiscoverNow  = nullptr;
     QAction* m_actManageRadios = nullptr;
     QAction* m_actProtocolInfo = nullptr;
 

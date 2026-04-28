@@ -1076,6 +1076,15 @@ void ConnectionPanel::onAddManuallyClicked()
 
     qCDebug(lcDiscovery) << "ConnectionPanel: manually added radio"
                          << info.name << info.address.toString();
+
+    // Phase 3Q-4 design §6.3 — "Probe and connect now" path: dialog accept()
+    // means the probe succeeded and the user wants to connect immediately.
+    // Save-offline path leaves savedOffline()=true; in that case we just save
+    // the entry (above) and stop, per design §6.4 / §6.5.
+    if (!dlg.savedOffline()) {
+        m_radioModel->connectToRadio(info);
+        setStatusText(QStringLiteral("Connecting to %1…").arg(info.displayName()));
+    }
 }
 
 // Phase 3I Task 15 — Forget wired.

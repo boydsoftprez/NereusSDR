@@ -120,6 +120,7 @@
 #include "models/BandPlanManager.h"
 
 #include <QHoverEvent>
+#include <QLabel>
 #include <QPropertyAnimation>
 
 #include <QDateTime>
@@ -331,6 +332,18 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             rebuildWaterfallViewport();
         }
     });
+
+    // Phase 3Q-8: child label for the disconnect overlay. Composites in both
+    // CPU and GPU paint paths (QRhi early-returns from paintEvent so a QPainter
+    // overlay there would crash; a child QWidget gets stacked by Qt instead).
+    m_disconnectLabel = new QLabel(QStringLiteral("DISCONNECTED"), this);
+    m_disconnectLabel->setAlignment(Qt::AlignCenter);
+    m_disconnectLabel->setStyleSheet(QStringLiteral(
+        "QLabel { background-color: rgba(10, 12, 20, 200);"
+        " color: #c14848; font-size: 36pt; font-weight: bold;"
+        " letter-spacing: 8px; }"));
+    m_disconnectLabel->hide();
+    m_disconnectLabel->installEventFilter(this);
 }
 
 SpectrumWidget::~SpectrumWidget() = default;
@@ -1174,6 +1187,15 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         m_mouseOverlay->raise();
     }
 
+    // Keep disconnect label sized to the widget; raise so QRhi surface
+    // doesn't paint over it on the next frame.
+    if (m_disconnectLabel) {
+        m_disconnectLabel->setGeometry(0, 0, width(), height());
+        if (m_disconnectLabel->isVisible()) {
+            m_disconnectLabel->raise();
+        }
+    }
+
     // Recreate waterfall image at new size
     int w = width();
     int h = height();
@@ -1285,11 +1307,9 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     // other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
     paintHighSwrOverlay(p);
 
-    // Phase 3Q-8: disconnect overlay (dim tint + DISCONNECTED label).
-    // Drawn after all spectrum chrome so it sits above everything.
-    if (m_connState != ConnectionState::Connected) {
-        paintDisconnectOverlay(p);
-    }
+    // Phase 3Q-8: disconnect overlay is now a child QLabel (m_disconnectLabel)
+    // so it composites in both CPU and GPU paint paths. Show/hide handled in
+    // setConnectionState; geometry tracked in resizeEvent.
 
     // Reposition VFO flag widgets every frame — ensures flag tracks marker
     // exactly with no frame delay. From AetherSDR: updatePosition called
@@ -2579,6 +2599,18 @@ void SpectrumWidget::paintHighSwrOverlay(QPainter& p)
 // This eventFilter forwards them to our mouseMoveEvent/mousePressEvent/etc.
 bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // Phase 3Q-8: clicks on the disconnect-overlay label open the connection panel.
+    if (obj == m_disconnectLabel) {
+        if (ev->type() == QEvent::MouseButtonPress) {
+            auto* me = static_cast<QMouseEvent*>(ev);
+            if (me->button() == Qt::LeftButton) {
+                emit disconnectedClickRequest();
+                return true;
+            }
+        }
+        return false;
+    }
+
     if (obj == m_mouseOverlay) {
         switch (ev->type()) {
         case QEvent::MouseMove: {
@@ -3984,26 +4016,16 @@ void SpectrumWidget::setConnectionState(ConnectionState s)
         }
         m_disconnectFade = 1.0f;
     }
-    update();
-}
 
-void SpectrumWidget::paintDisconnectOverlay(QPainter& p)
-{
-    // Dim tint over the whole widget — dim factor goes 0 (no tint) → 0.6 (60% dim)
-    // as m_disconnectFade animates from 1.0 → 0.4.
-    const float tint = std::clamp(1.0f - m_disconnectFade, 0.0f, 0.6f);
-    if (tint > 0.001f) {
-        p.fillRect(rect(), QColor(10, 12, 20, int(tint * 235)));
+    // Show/hide the child overlay label and keep it sized + on top.
+    if (m_disconnectLabel) {
+        m_disconnectLabel->setGeometry(0, 0, width(), height());
+        m_disconnectLabel->setVisible(!isConnected);
+        if (!isConnected) {
+            m_disconnectLabel->raise();
+        }
     }
-
-    // Centred "DISCONNECTED" label.
-    QFont f = p.font();
-    f.setPointSize(22);
-    f.setBold(true);
-    f.setLetterSpacing(QFont::PercentageSpacing, 122);
-    p.setFont(f);
-    p.setPen(QColor("#c14848"));
-    p.drawText(rect(), Qt::AlignCenter, QStringLiteral("DISCONNECTED"));
+    update();
 }
 
 } // namespace NereusSDR

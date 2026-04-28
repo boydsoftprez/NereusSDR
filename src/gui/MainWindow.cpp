@@ -1264,9 +1264,11 @@ void MainWindow::buildMenuBar()
     // ── Radio menu — 3Q-9: role-based items with state-aware enablement ──────
     QMenu* radioMenu = menuBar()->addMenu(QStringLiteral("&Radio"));
 
-    // Connect (⌘K) — disabled while connected.
-    // If a last-connected radio has autoConnect set, connects directly;
-    // otherwise opens the Connection Panel so the user can choose a radio.
+    // Connect (⌘K) — reconnects to the last-used radio. Greyed out when there
+    // is no actionable target (currently connected, or no lastConnected MAC,
+    // or the lastConnected MAC isn't in saved radios). Manage Radios is the
+    // ONLY menu item whose job is to open the Connection Panel; Connect is
+    // strictly a one-click reconnect.
     m_actConnect = radioMenu->addAction(QStringLiteral("&Connect"),
         QKeySequence(Qt::CTRL | Qt::Key_K),
         this, [this]() {
@@ -1275,40 +1277,35 @@ void MainWindow::buildMenuBar()
             }
             AppSettings& s = AppSettings::instance();
             const QString lastMac = s.lastConnected();
-            if (!lastMac.isEmpty()) {
-                const auto saved = s.savedRadio(lastMac);
-                if (saved.has_value() && saved->autoConnect) {
-                    // Trigger a Fast-profile discovery and connect when the
-                    // saved MAC responds — same flow as the auto-reconnect path.
-                    RadioDiscovery* disc = m_radioModel->discovery();
-                    disc->setProfile(DiscoveryProfile::Fast);
-                    QMetaObject::Connection* connPtr = new QMetaObject::Connection;
-                    *connPtr = connect(disc, &RadioDiscovery::radioDiscovered,
-                        this, [this, lastMac, connPtr](const RadioInfo& found) {
-                            if (found.macAddress != lastMac) {
-                                return;
-                            }
-                            if (m_radioModel->isConnected()) {
-                                return;
-                            }
-                            QObject::disconnect(*connPtr);
-                            delete connPtr;
-                            RadioInfo ri = found;
-                            HPSDRModel mo = AppSettings::instance().modelOverride(ri.macAddress);
-                            if (mo != HPSDRModel::FIRST) {
-                                ri.modelOverride = mo;
-                            }
-                            m_radioModel->connectToRadio(ri);
-                        });
-                    disc->startDiscovery();
-                    return;
-                }
+            if (lastMac.isEmpty() || !s.savedRadio(lastMac).has_value()) {
+                return;  // enablement should have prevented this
             }
-            showConnectionPanel();
+            // Fast-profile rediscovery + connect when the saved MAC responds
+            // (same flow as tryAutoReconnect / the failure-path retry).
+            RadioDiscovery* disc = m_radioModel->discovery();
+            disc->setProfile(DiscoveryProfile::Fast);
+            QMetaObject::Connection* connPtr = new QMetaObject::Connection;
+            *connPtr = connect(disc, &RadioDiscovery::radioDiscovered,
+                this, [this, lastMac, connPtr](const RadioInfo& found) {
+                    if (found.macAddress != lastMac) {
+                        return;
+                    }
+                    if (m_radioModel->isConnected()) {
+                        return;
+                    }
+                    QObject::disconnect(*connPtr);
+                    delete connPtr;
+                    RadioInfo ri = found;
+                    HPSDRModel mo = AppSettings::instance().modelOverride(ri.macAddress);
+                    if (mo != HPSDRModel::FIRST) {
+                        ri.modelOverride = mo;
+                    }
+                    m_radioModel->connectToRadio(ri);
+                });
+            disc->startDiscovery();
         });
     m_actConnect->setToolTip(QStringLiteral(
-        "Connect to the last radio (auto-connects if AutoConnect is set, "
-        "otherwise opens the Connection Panel)"));
+        "Reconnect to the last-used radio (greyed out when there's nothing to reconnect to)"));
 
     // Disconnect (⌘⇧K) — disabled while disconnected.
     m_actDisconnect = radioMenu->addAction(QStringLiteral("&Disconnect"),
@@ -1318,22 +1315,12 @@ void MainWindow::buildMenuBar()
 
     radioMenu->addSeparator();
 
-    // Discover Now — always enabled; runs broadcast scan and opens the panel
-    // so the user can see results as they arrive.
-    m_actDiscoverNow = radioMenu->addAction(QStringLiteral("Discover &Now"),
-        this, [this]() {
-            m_radioModel->discovery()->startDiscovery();
-            if (!m_connectionPanel || !m_connectionPanel->isVisible()) {
-                showConnectionPanel();
-            }
-        });
-    m_actDiscoverNow->setToolTip(QStringLiteral(
-        "Broadcast a discovery packet and open the Connection Panel"));
-
-    // Manage Radios — always enabled; sole purpose is to open the panel.
+    // Manage Radios — always enabled; sole purpose is to open the panel
+    // (which has its own ↻ Scan button for fresh broadcast discovery).
     m_actManageRadios = radioMenu->addAction(QStringLiteral("&Manage Radios…"),
         this, &MainWindow::showConnectionPanel);
-    m_actManageRadios->setToolTip(QStringLiteral("Open the Connection Panel"));
+    m_actManageRadios->setToolTip(QStringLiteral(
+        "Open the Connection Panel (radio list + ↻ Scan)"));
 
     radioMenu->addSeparator();
 
@@ -1372,8 +1359,16 @@ void MainWindow::buildMenuBar()
     m_actProtocolInfo->setToolTip(QStringLiteral(
         "Show connected radio protocol, firmware, and address details"));
 
-    // Initial enablement (before any connectionStateChanged fires).
-    m_actConnect->setEnabled(true);
+    // Initial enablement (before any connectionStateChanged fires). Connect
+    // is enabled only when there's a last-used radio in saved entries — i.e.
+    // when "reconnect" actually has a target.
+    {
+        AppSettings& s = AppSettings::instance();
+        const QString lastMac = s.lastConnected();
+        const bool hasReconnectTarget =
+            !lastMac.isEmpty() && s.savedRadio(lastMac).has_value();
+        m_actConnect->setEnabled(hasReconnectTarget);
+    }
     m_actDisconnect->setEnabled(false);
     m_actProtocolInfo->setEnabled(false);
 
@@ -2205,11 +2200,11 @@ void MainWindow::buildStatusBar()
         "Connection details — sample rate, protocol, firmware, MAC"));
     // Initialise with disconnected state; onConnectionStateChanged() will
     // overwrite this as soon as the model emits its first state signal.
-    m_statusConnInfo->setText(QStringLiteral("\xf0\x9f\x94\xb4  No radio connected"));
+    m_statusConnInfo->setText(QStringLiteral("🔴  No radio connected"));
     hbox->addWidget(m_statusConnInfo);
 
     // Green "● live" indicator — visible only while connected.
-    m_statusLiveDot = new QLabel(QStringLiteral("\xe2\x97\x8f live"), barWidget);
+    m_statusLiveDot = new QLabel(QStringLiteral("● live"), barWidget);
     m_statusLiveDot->setStyleSheet(QStringLiteral(
         "QLabel { color: #5fff8a; font-size: 11px; }"));
     m_statusLiveDot->setToolTip(QStringLiteral("Radio is connected and streaming"));
@@ -3234,7 +3229,7 @@ void MainWindow::onConnectionStateChanged()
                     info.protocol == ProtocolVersion::Protocol2
                         ? QStringLiteral("P2") : QStringLiteral("P1");
                 m_statusConnInfo->setText(QStringLiteral(
-                    "Sample rate %1 kHz \xc2\xb7 %2 \xc2\xb7 fw %3 \xc2\xb7 MAC %4")
+                    "Sample rate %1 kHz · %2 · fw %3 · MAC %4")
                     .arg(info.maxSampleRate / 1000)
                     .arg(proto)
                     .arg(info.firmwareVersion)
@@ -3294,8 +3289,8 @@ void MainWindow::onConnectionStateChanged()
                 }
             }
             m_statusConnInfo->setText(
-                QStringLiteral("\xf0\x9f\x94\xb4  No radio connected"
-                               " \xe2\x80\x94 click the connection indicator"
+                QStringLiteral("🔴  No radio connected"
+                               " — click the connection indicator"
                                " or the Connect menu item%1")
                 .arg(breadcrumb));
             m_statusLiveDot->setVisible(false);
@@ -3317,11 +3312,19 @@ void MainWindow::onConnectionStateChanged()
         }
     }
 
-    // 3Q-9: Radio menu state-aware enablement — Connect/Disconnect are
-    // mutually exclusive; Protocol Info requires an active connection.
+    // 3Q-9 (post-feedback simplification): Connect is "reconnect to last".
+    // Greyed out when (a) we're already connected, OR (b) there's no
+    // last-used radio in saved entries to reconnect to. Manage Radios is
+    // the only way to pick a different radio.
     if (m_actConnect && m_actDisconnect && m_actProtocolInfo) {
         const bool connected = m_radioModel->isConnected();
-        m_actConnect->setEnabled(!connected);
+        AppSettings& s = AppSettings::instance();
+        const QString lastMac = s.lastConnected();
+        const bool hasReconnectTarget =
+            !connected
+            && !lastMac.isEmpty()
+            && s.savedRadio(lastMac).has_value();
+        m_actConnect->setEnabled(hasReconnectTarget);
         m_actDisconnect->setEnabled(connected);
         m_actProtocolInfo->setEnabled(connected);
     }
