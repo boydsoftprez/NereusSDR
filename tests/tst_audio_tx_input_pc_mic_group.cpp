@@ -41,7 +41,6 @@
 #include <QTimer>
 
 #include "core/AppSettings.h"
-#include "core/audio/CompositeTxMicRouter.h"
 #include "gui/HGauge.h"
 #include "gui/setup/AudioTxInputPage.h"
 #include "models/RadioModel.h"
