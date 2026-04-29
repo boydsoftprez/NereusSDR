@@ -167,6 +167,19 @@ warren@wpratt.com
 #ifdef HAVE_WDSP
 extern "C" {
 #include "../../third_party/wdsp/src/TXA.h"
+
+// Phase 3M-1c TX pump v3: VOX defensive guards.  Need to read pdexp[id]
+// to detect whether create_dexp has been called for the channel.
+// dexp.h is not include-clean (its struct depends on Windows-isms that
+// linux_port.h shims for the WDSP build but aren't visible here), so
+// we forward-declare just the bits we need.  pdexp is a `DEXP[]` of
+// pointer-to-struct; we only test whether the entry is non-null.
+// From Thetis wdsp/dexp.h:104 [v2.10.3.13]:
+//   extern DEXP pdexp[];
+// (DEXP is `typedef struct _dexp *DEXP;` at dexp.h:102.)
+struct _dexp;
+typedef struct _dexp *DEXP;
+extern DEXP pdexp[];
 }
 #endif
 
@@ -939,6 +952,15 @@ void TxChannel::setVoxRun(bool run)
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:199-200 [v2.10.3.13]
     if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard.
+    // Thetis create_xmtr (cmaster.c:130-157 [v2.10.3.13]) calls
+    // create_dexp BEFORE OpenChannel, so pdexp[i] is non-null whenever
+    // rsmpin.p is non-null.  NereusSDR ports OpenChannel but NOT
+    // create_dexp (deferred follow-up), so the txa.rsmpin.p check
+    // alone does not imply pdexp[ch] is allocated.  Without this
+    // guard SetDEXPRunVox(id, ...) dereferences pdexp[id] (dexp.c:619)
+    // and crashes.
+    if (pdexp[m_channelId] == nullptr) return;
     SetDEXPRunVox(m_channelId, run ? 1 : 0);
 #else
     Q_UNUSED(run);
@@ -972,6 +994,8 @@ void TxChannel::setVoxAttackThreshold(double thresh)
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:187-188 [v2.10.3.13]
     if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for the full rationale.
+    if (pdexp[m_channelId] == nullptr) return;
     SetDEXPAttackThreshold(m_channelId, thresh);
 #else
     Q_UNUSED(thresh);
@@ -1010,6 +1034,8 @@ void TxChannel::setVoxHangTime(double seconds)
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:178-179 [v2.10.3.13]
     if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
     SetDEXPHoldTime(m_channelId, seconds);
 #else
     Q_UNUSED(seconds);
@@ -1036,6 +1062,11 @@ void TxChannel::setAntiVoxRun(bool run)
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:208-209 [v2.10.3.13]
     if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    // Anti-VOX setters live inside the same DEXP struct as VOX setters
+    // (dexp.c:657 SetAntiVOXRun dereferences pdexp[id]), so the same guard
+    // applies here.
+    if (pdexp[m_channelId] == nullptr) return;
     SetAntiVOXRun(m_channelId, run ? 1 : 0);
 #else
     Q_UNUSED(run);
@@ -1063,6 +1094,8 @@ void TxChannel::setAntiVoxGain(double gain)
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:211-212 [v2.10.3.13]
     if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
     SetAntiVOXGain(m_channelId, gain);
 #else
     Q_UNUSED(gain);
