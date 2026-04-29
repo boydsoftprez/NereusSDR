@@ -1394,6 +1394,13 @@ nereus_add_test(tst_tx_mic_router)
 nereus_add_test(tst_radio_model_g1_wiring)
 target_compile_definitions(tst_radio_model_g1_wiring PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-i Batch 2 Task 1: TransmitModel→TxChannel routing ────────────
+# Verifies the 13 connect() pairings for TX EQ + Leveler + ALC signals.
+# m_txChannel stays null in unit-test builds (no WDSP); the test confirms
+# the model-side fan-out (signal-on-setter, idempotent guard, signal-payload
+# correctness) that the RadioModel-installed lambdas consume.
+nereus_add_test(tst_radio_model_eq_lev_alc_wiring)
+
 # ── Phase 3M-1a Task F.1: RadioModel::onMoxHardwareFlipped slot ──────────────
 # Verifies the three-step fan-out in Thetis HdwMOXChanged order (§2.3):
 #   1. Alex antenna routing (applyAlexAntennaForBand → setAntennaRouting)

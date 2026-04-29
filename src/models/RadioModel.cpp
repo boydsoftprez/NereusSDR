@@ -1734,6 +1734,132 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setAntiVoxRun(!useVax);
             });
 
+            // ── 3M-3a-i Batch 2 — TransmitModel → TxChannel TX EQ + Leveler + ALC ──
+            //
+            // 13 connects route TransmitModel setter signals (added in 3M-3a-i
+            // Batch 1 Task C) into the TxChannel WDSP wrappers (added in
+            // Batch 1 Task B).  Receiver = m_txChannel so AutoConnection
+            // resolves to QueuedConnection once the channel is moved onto
+            // TxWorkerThread (a few lines below) — same pattern as the F.1 /
+            // H.1-H.3 / L.2 connects above.
+            //
+            // ── ALC default reconciliation (path b — passive on initial state) ──
+            //
+            // TransmitModel default Lev_MaxGain=15 dB / ALC_MaximumGain=3 dB
+            // (Thetis database.cs:4592 [v2.10.3.13]) intentionally diverges
+            // from WdspEngine.cpp:437 boot SetTXAALCMaxGain(0.0).  We do NOT
+            // push the model's initial values to TxChannel on connect — the
+            // WDSP boot defaults stick until the user moves a slider.  This
+            // mirrors Thetis's UI policy where TXProfile values DISPLAY in
+            // Setup but only push to WDSP on profile activation or "Update"
+            // click; it also avoids an on-connect ALC bump from the deskhpsdr-
+            // safe 0 dB boot up to 3 dB before the user has consented.
+            //
+            // ── TX EQ unified path: always SetTXAEQProfile ──
+            //
+            // The WDSP EQ has two write paths.  SetTXAGrphEQ10 takes 11 ints
+            // (preamp + 10 band gains) and resets band centers to the fixed
+            // 32/63/.../16k Hz.  SetTXAEQProfile takes a custom F[] vector
+            // alongside G[] and is the only path that respects user-tuned
+            // band frequencies.  NereusSDR exposes BOTH band gains AND band
+            // freqs as user-tunable, so we go through the Profile path on
+            // every EQ change — the Graph10 wrapper stays available for a
+            // future "reset to default freqs" UX.
+
+            auto pushEqProfile = [this]() {
+                if (!m_txChannel) { return; }
+                std::vector<double> freqs10(10, 0.0);
+                std::vector<double> gains11(11, 0.0);
+                gains11[0] = static_cast<double>(m_transmitModel.txEqPreamp());
+                for (int i = 0; i < 10; ++i) {
+                    freqs10[static_cast<std::size_t>(i)] =
+                        static_cast<double>(m_transmitModel.txEqFreq(i));
+                    gains11[static_cast<std::size_t>(i + 1)] =
+                        static_cast<double>(m_transmitModel.txEqBand(i));
+                }
+                m_txChannel->setTxEqProfile(freqs10, gains11);
+            };
+
+            // 1. txEqEnabledChanged → setTxEqRunning.
+            connect(&m_transmitModel, &TransmitModel::txEqEnabledChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setTxEqRunning(on);
+            });
+
+            // 2. txEqPreampChanged → rebuild full Profile (preamp lives in
+            //    G[0] of the SetTXAEQProfile vector).
+            connect(&m_transmitModel, &TransmitModel::txEqPreampChanged,
+                    m_txChannel, [pushEqProfile](int /*dB*/) {
+                pushEqProfile();
+            });
+
+            // 3. txEqBandChanged → rebuild full Profile (any single band
+            //    edit pushes the whole 10-band shape).
+            connect(&m_transmitModel, &TransmitModel::txEqBandChanged,
+                    m_txChannel, [pushEqProfile](int /*idx*/, int /*dB*/) {
+                pushEqProfile();
+            });
+
+            // 4. txEqFreqChanged → rebuild full Profile (custom-freq path).
+            connect(&m_transmitModel, &TransmitModel::txEqFreqChanged,
+                    m_txChannel, [pushEqProfile](int /*idx*/, int /*Hz*/) {
+                pushEqProfile();
+            });
+
+            // 5. txEqNcChanged → setTxEqNc.
+            connect(&m_transmitModel, &TransmitModel::txEqNcChanged,
+                    m_txChannel, [this](int nc) {
+                m_txChannel->setTxEqNc(nc);
+            });
+
+            // 6. txEqMpChanged → setTxEqMp.
+            connect(&m_transmitModel, &TransmitModel::txEqMpChanged,
+                    m_txChannel, [this](bool mp) {
+                m_txChannel->setTxEqMp(mp);
+            });
+
+            // 7. txEqCtfmodeChanged → setTxEqCtfmode.
+            connect(&m_transmitModel, &TransmitModel::txEqCtfmodeChanged,
+                    m_txChannel, [this](int mode) {
+                m_txChannel->setTxEqCtfmode(mode);
+            });
+
+            // 8. txEqWintypeChanged → setTxEqWintype.
+            connect(&m_transmitModel, &TransmitModel::txEqWintypeChanged,
+                    m_txChannel, [this](int wintype) {
+                m_txChannel->setTxEqWintype(wintype);
+            });
+
+            // 9. txLevelerOnChanged → setTxLevelerOn.
+            connect(&m_transmitModel, &TransmitModel::txLevelerOnChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setTxLevelerOn(on);
+            });
+
+            // 10. txLevelerMaxGainChanged → setTxLevelerTopDb.
+            connect(&m_transmitModel, &TransmitModel::txLevelerMaxGainChanged,
+                    m_txChannel, [this](int dB) {
+                m_txChannel->setTxLevelerTopDb(static_cast<double>(dB));
+            });
+
+            // 11. txLevelerDecayChanged → setTxLevelerDecayMs.
+            connect(&m_transmitModel, &TransmitModel::txLevelerDecayChanged,
+                    m_txChannel, [this](int ms) {
+                m_txChannel->setTxLevelerDecayMs(ms);
+            });
+
+            // 12. txAlcMaxGainChanged → setTxAlcMaxGainDb.
+            connect(&m_transmitModel, &TransmitModel::txAlcMaxGainChanged,
+                    m_txChannel, [this](int dB) {
+                m_txChannel->setTxAlcMaxGainDb(static_cast<double>(dB));
+            });
+
+            // 13. txAlcDecayChanged → setTxAlcDecayMs.
+            connect(&m_transmitModel, &TransmitModel::txAlcDecayChanged,
+                    m_txChannel, [this](int ms) {
+                m_txChannel->setTxAlcDecayMs(ms);
+            });
+
             // ── 3M-1c TX pump architecture redesign: TxWorkerThread setup ──────
             //
             // Replaces the deleted L.4 MicReBlocker + D.1 AudioEngine
