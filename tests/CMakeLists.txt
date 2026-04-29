@@ -1589,6 +1589,45 @@ target_compile_definitions(tst_tx_channel_push_driven PRIVATE NEREUS_BUILD_TESTS
 nereus_add_test(tst_tx_channel_no_zero_fill)
 target_compile_definitions(tst_tx_channel_no_zero_fill PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1c E.2-E.6: TXA PostGen wrapper setters ────────────────────
+#
+# Twelve thin C++ wrappers over the WDSP `SetTXAPostGen*` family that drive
+# the gen1 (TXA stage 22) two-tone IMD test source.
+#
+# Setters under test:
+#   E.2: setTxPostGenMode(int)                      → SetTXAPostGenMode
+#                                                     [setup.cs:11084/11096 v2.10.3.13]
+#   E.3: setTxPostGenTTFreq1(double)                → SetTXAPostGenTTFreq
+#        setTxPostGenTTFreq2(double)                  [setup.cs:11099-11100 v2.10.3.13]
+#        setTxPostGenTTMag1(double)                 → SetTXAPostGenTTMag
+#        setTxPostGenTTMag2(double)                   [setup.cs:11102-11103 v2.10.3.13]
+#   E.4: setTxPostGenTTPulseToneFreq1(double)       → SetTXAPostGenTTPulseToneFreq
+#        setTxPostGenTTPulseToneFreq2(double)         [setup.cs:11087-11088 v2.10.3.13]
+#        setTxPostGenTTPulseMag1(double)            → SetTXAPostGenTTPulseMag
+#        setTxPostGenTTPulseMag2(double)              [setup.cs:11090-11091 v2.10.3.13]
+#   E.5: setTxPostGenTTPulseFreq(int)               → SetTXAPostGenTTPulseFreq
+#        setTxPostGenTTPulseDutyCycle(double)       → SetTXAPostGenTTPulseDutyCycle
+#        setTxPostGenTTPulseTransition(double)      → SetTXAPostGenTTPulseTransition
+#                                                     [setup.cs:34415-34417 v2.10.3.13]
+#   E.6: setTxPostGenRun(bool)                      → SetTXAPostGenRun
+#                                                     [setup.cs:11107/11166 v2.10.3.13]
+#
+# Test strategy: pure smoke / does-not-crash, matching the convention
+# established by tst_tx_channel_tune_tone.cpp.  The Freq1/Freq2 / Mag1/Mag2
+# split-property cache is exercised via the mixedCallSequence regression
+# tests (continuous + pulsed) plus a zero-values stress test.
+#
+# Test cases (15):
+#   E.2 mode: off, continuous (mode=1), pulsed (mode=7) — 3 cases
+#   E.3 continuous TT: setTxPostGenTTFreq1/Freq2/Mag1/Mag2 typical — 4 cases
+#   E.4 pulsed TT:     setTxPostGenTTPulseToneFreq1/Freq2/Mag1/Mag2 — 4 cases
+#   E.5 pulse profile: setTxPostGenTTPulseFreq/DutyCycle/Transition — 3 cases
+#   E.6 run:          setTxPostGenRun on/off — 2 cases
+#   Cache integrity: continuousTT_mixedCallSequence + pulsedTT_mixedCallSequence
+#   Edge: setters_zeroValues_doNotCrash
+# (15 individual private-slot test methods total.)
+nereus_add_test(tst_tx_channel_tx_post_gen_setters)
+
 # Plan: 3M-1b E.2. Exercises AudioEngine TX monitor enable + volume state
 # (setTxMonitorEnabled / setTxMonitorVolume / signals / clamping / idempotency).
 # Pre-code review §4.4.

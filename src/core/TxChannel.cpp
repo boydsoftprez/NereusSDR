@@ -125,6 +125,25 @@ warren@wpratt.com
 //                 source path (the PC-mic path no longer pulls from it).
 //                 J.J. Boyd (KG4VCF), AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-04-29 — Phase 3M-1c E.2-E.6 — TXA PostGen wrapper setters (12 methods)
+//                 implemented by J.J. Boyd (KG4VCF):
+//                   E.2: setTxPostGenMode(int)
+//                   E.3: setTxPostGenTT{Freq1,Freq2,Mag1,Mag2}(double)
+//                   E.4: setTxPostGenTTPulseToneFreq{1,2}(double),
+//                        setTxPostGenTTPulseMag{1,2}(double)
+//                   E.5: setTxPostGenTTPulse{Freq(int),DutyCycle(double),
+//                        Transition(double)}
+//                   E.6: setTxPostGenRun(bool)
+//                 Each is a thin pass-through wrapper to the underlying
+//                 SetTXAPostGen* WDSP function.  Split-property setters
+//                 (Freq1/Freq2 / Mag1/Mag2) cache the partner value in
+//                 m_postGen* cache fields so the combined WDSP call uses
+//                 both — matching Thetis radio.cs:3697-4032 [v2.10.3.13]
+//                 `tx_postgen_tt_*_dsp` cache pattern.  The same null-guard
+//                 sentinel (txa[ch].rsmpin.p == nullptr) used throughout
+//                 this class protects unit-test builds that link WDSP but
+//                 don't call OpenChannel.  AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -1367,5 +1386,250 @@ float TxChannel::getEqMeter()   const { return 0.0f; }  // deferred 3M-3a
 float TxChannel::getLvlrMeter() const { return 0.0f; }  // deferred 3M-3a
 float TxChannel::getCfcMeter()  const { return 0.0f; }  // deferred 3M-3a
 float TxChannel::getCompMeter() const { return 0.0f; }  // deferred 3M-3a
+
+// ---------------------------------------------------------------------------
+// TXA PostGen wrapper setters (3M-1c E.2-E.6)
+//
+// Twelve thin C++ wrappers over the WDSP `SetTXAPostGen*` family that drives
+// the gen1 (TXA stage 22) two-tone / pulsed-IMD test source.
+//
+// The C# Thetis property surface exposes Freq1/Freq2 / Mag1/Mag2 as separate
+// setters, but the underlying WDSP C API combines both into single calls.
+// NereusSDR caches the partner value internally (m_postGen*Cache fields)
+// so each individual setX1 / setX2 wrapper can invoke the combined WDSP
+// call with both fields — matching Thetis radio.cs:3697-4032 [v2.10.3.13]
+// `tx_postgen_tt_freq1_dsp` / `_freq2_dsp` / etc. cache fields.
+//
+// Pass-through semantics: no idempotency guard, no validation.  WDSP's
+// gen.c:817-962 [v2.10.3.13] handles internal validation; Phase I's handler
+// is responsible for choosing legal values.  The same `txa[ch].rsmpin.p ==
+// nullptr` null-guard used throughout this class protects unit-test builds
+// that link WDSP but don't call OpenChannel.
+// ---------------------------------------------------------------------------
+
+// ── E.2: setTxPostGenMode ────────────────────────────────────────────────────
+//
+// From Thetis setup.cs:11084 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenMode = 7;   // pulsed
+// From Thetis setup.cs:11096 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenMode = 1;   // continuous
+// Mode values: 0 = off, 1 = continuous two-tone, 7 = pulsed two-tone.
+// Other modes 2/3/4/5/6 (noise/sweep/sawtooth/triangle/pulse) exist in
+// gen.c but are out of 3M-1c scope.
+void TxChannel::setTxPostGenMode(int mode)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenMode(m_channelId, mode);   // gen.c:792-797 [v2.10.3.13]
+#else
+    Q_UNUSED(mode);
+#endif
+}
+
+// ── E.3: setTxPostGenTTFreq1 ─────────────────────────────────────────────────
+//
+// From Thetis setup.cs:11099 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTFreq1 = ttfreq1;
+// From Thetis radio.cs:3735-3751 [v2.10.3.13] — TXPostGenTTFreq1 setter:
+//   tx_postgen_tt_freq1_dsp = value;
+//   WDSP.SetTXAPostGenTTFreq(WDSP.id(thread, 0),
+//                            tx_postgen_tt_freq1_dsp,
+//                            tx_postgen_tt_freq2_dsp);
+// Cache freq2 partner in m_postGenTTFreq2Cache so the combined call uses both.
+void TxChannel::setTxPostGenTTFreq1(double hz)
+{
+    m_postGenTTFreq1Cache = hz;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTFreq(m_channelId,
+                        m_postGenTTFreq1Cache,
+                        m_postGenTTFreq2Cache);   // gen.c:826-833 [v2.10.3.13]
+#endif
+}
+
+// ── E.3: setTxPostGenTTFreq2 ─────────────────────────────────────────────────
+//
+// From Thetis setup.cs:11100 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTFreq2 = ttfreq2;
+// From Thetis radio.cs:3755-3771 [v2.10.3.13] — TXPostGenTTFreq2 setter
+// (mirror of Freq1 — cache-and-call pattern, same WDSP function).
+void TxChannel::setTxPostGenTTFreq2(double hz)
+{
+    m_postGenTTFreq2Cache = hz;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTFreq(m_channelId,
+                        m_postGenTTFreq1Cache,
+                        m_postGenTTFreq2Cache);   // gen.c:826-833 [v2.10.3.13]
+#endif
+}
+
+// ── E.3: setTxPostGenTTMag1 ──────────────────────────────────────────────────
+//
+// From Thetis setup.cs:11102 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTMag1 = ttmag1;
+// From Thetis radio.cs:3697-3712 [v2.10.3.13] — TXPostGenTTMag1 setter
+// (cache-and-call pattern; combined WDSP call uses mag1+mag2_dsp).
+void TxChannel::setTxPostGenTTMag1(double linear)
+{
+    m_postGenTTMag1Cache = linear;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTMag(m_channelId,
+                       m_postGenTTMag1Cache,
+                       m_postGenTTMag2Cache);     // gen.c:817-823 [v2.10.3.13]
+#endif
+}
+
+// ── E.3: setTxPostGenTTMag2 ──────────────────────────────────────────────────
+//
+// From Thetis setup.cs:11103 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTMag2 = ttmag2;
+// From Thetis radio.cs:3716-3731 [v2.10.3.13] — TXPostGenTTMag2 setter.
+void TxChannel::setTxPostGenTTMag2(double linear)
+{
+    m_postGenTTMag2Cache = linear;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTMag(m_channelId,
+                       m_postGenTTMag1Cache,
+                       m_postGenTTMag2Cache);     // gen.c:817-823 [v2.10.3.13]
+#endif
+}
+
+// ── E.4: setTxPostGenTTPulseToneFreq1 ────────────────────────────────────────
+//
+// From Thetis setup.cs:11087 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseToneFreq1 = ttfreq1;
+// From Thetis radio.cs:4000-4015 [v2.10.3.13] — TXPostGenTTPulseToneFreq1
+// setter (cache-and-call; combined WDSP call uses freq1+freq2_dsp).
+void TxChannel::setTxPostGenTTPulseToneFreq1(double hz)
+{
+    m_postGenTTPulseToneFreq1Cache = hz;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTPulseToneFreq(m_channelId,
+                                 m_postGenTTPulseToneFreq1Cache,
+                                 m_postGenTTPulseToneFreq2Cache);   // gen.c:944-952 [v2.10.3.13]
+#endif
+}
+
+// ── E.4: setTxPostGenTTPulseToneFreq2 ────────────────────────────────────────
+//
+// From Thetis setup.cs:11088 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseToneFreq2 = ttfreq2;
+// From Thetis radio.cs:4018-4033 [v2.10.3.13] — TXPostGenTTPulseToneFreq2.
+void TxChannel::setTxPostGenTTPulseToneFreq2(double hz)
+{
+    m_postGenTTPulseToneFreq2Cache = hz;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTPulseToneFreq(m_channelId,
+                                 m_postGenTTPulseToneFreq1Cache,
+                                 m_postGenTTPulseToneFreq2Cache);   // gen.c:944-952 [v2.10.3.13]
+#endif
+}
+
+// ── E.4: setTxPostGenTTPulseMag1 ─────────────────────────────────────────────
+//
+// From Thetis setup.cs:11090 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseMag1 = ttmag1;
+// From Thetis radio.cs:3964-3979 [v2.10.3.13] — TXPostGenTTPulseMag1 setter.
+void TxChannel::setTxPostGenTTPulseMag1(double linear)
+{
+    m_postGenTTPulseMag1Cache = linear;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTPulseMag(m_channelId,
+                            m_postGenTTPulseMag1Cache,
+                            m_postGenTTPulseMag2Cache);             // gen.c:915-923 [v2.10.3.13]
+#endif
+}
+
+// ── E.4: setTxPostGenTTPulseMag2 ─────────────────────────────────────────────
+//
+// From Thetis setup.cs:11091 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseMag2 = ttmag2;
+// From Thetis radio.cs:3982-3997 [v2.10.3.13] — TXPostGenTTPulseMag2 setter.
+void TxChannel::setTxPostGenTTPulseMag2(double linear)
+{
+    m_postGenTTPulseMag2Cache = linear;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTPulseMag(m_channelId,
+                            m_postGenTTPulseMag1Cache,
+                            m_postGenTTPulseMag2Cache);             // gen.c:915-923 [v2.10.3.13]
+#endif
+}
+
+// ── E.5: setTxPostGenTTPulseFreq ─────────────────────────────────────────────
+//
+// From Thetis setup.cs:34415 [v2.10.3.13] — setupTwoTonePulse:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseFreq =
+//       (int)nudPulsed_TwoTone_window.Value;
+// Single-parameter (window pulse rate in Hz) — distinct from PulseToneFreq
+// above which takes a (freq1, freq2) pair.
+void TxChannel::setTxPostGenTTPulseFreq(int hz)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // WDSP signature takes double; widen from int (Thetis stores as int and
+    // crosses the C# double boundary on the property setter — same widening
+    // semantics here).
+    SetTXAPostGenTTPulseFreq(m_channelId, static_cast<double>(hz));   // gen.c:926-933 [v2.10.3.13]
+#else
+    Q_UNUSED(hz);
+#endif
+}
+
+// ── E.5: setTxPostGenTTPulseDutyCycle ────────────────────────────────────────
+//
+// From Thetis setup.cs:34416 [v2.10.3.13] — setupTwoTonePulse:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseDutyCycle =
+//       (float)(nudPulsed_TwoTone_percent.Value) / 100f;
+// Caller is responsible for the percent → fraction (÷100) conversion;
+// the wrapper passes through to WDSP unchanged.
+void TxChannel::setTxPostGenTTPulseDutyCycle(double pct)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTPulseDutyCycle(m_channelId, pct);   // gen.c:935-942 [v2.10.3.13]
+#else
+    Q_UNUSED(pct);
+#endif
+}
+
+// ── E.5: setTxPostGenTTPulseTransition ───────────────────────────────────────
+//
+// From Thetis setup.cs:34417 [v2.10.3.13] — setupTwoTonePulse:
+//   console.radio.GetDSPTX(0).TXPostGenTTPulseTransition =
+//       (float)(nudPulsed_TwoTone_ramp.Value) / 1000f;
+// Caller is responsible for the ms → s (÷1000) conversion; the wrapper
+// passes through to WDSP unchanged.
+void TxChannel::setTxPostGenTTPulseTransition(double sec)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenTTPulseTransition(m_channelId, sec);  // gen.c:955-962 [v2.10.3.13]
+#else
+    Q_UNUSED(sec);
+#endif
+}
+
+// ── E.6: setTxPostGenRun ─────────────────────────────────────────────────────
+//
+// From Thetis setup.cs:11107 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenRun = 1;   // on
+// From Thetis setup.cs:11166 [v2.10.3.13]:
+//   console.radio.GetDSPTX(0).TXPostGenRun = 0;   // off
+void TxChannel::setTxPostGenRun(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenRun(m_channelId, on ? 1 : 0);   // gen.c:784-789 [v2.10.3.13]
+#else
+    Q_UNUSED(on);
+#endif
+}
 
 } // namespace NereusSDR

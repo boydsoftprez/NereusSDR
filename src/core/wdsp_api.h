@@ -40,6 +40,15 @@
 //                 readouts. Values sourced from Thetis wdsp/TXA.h:49-69
 //                 [v2.10.3.13] txaMeterType enum. AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-04-29 — SetTXAPostGenTTMag, SetTXAPostGenTTFreq,
+//                 SetTXAPostGenTTPulseMag, SetTXAPostGenTTPulseFreq,
+//                 SetTXAPostGenTTPulseDutyCycle,
+//                 SetTXAPostGenTTPulseToneFreq,
+//                 SetTXAPostGenTTPulseTransition declarations added by
+//                 J.J. Boyd (KG4VCF) during 3M-1c Tasks E.2-E.6 — TXA
+//                 PostGen two-tone IMD test wrapper setters. Signatures
+//                 match wdsp/gen.c:817-962 [v2.10.3.13]. AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -593,6 +602,49 @@ void SetTXAPostGenToneMag(int channel, double mag);
 // From Thetis wdsp/gen.c:808-813 [v2.10.3.13] — txa[ch].gen1.p->tone.freq + calc_tone()
 // Signed Hz; caller provides sign per DSP mode (LSB/CWL/DIGL → negative).
 void SetTXAPostGenToneFreq(int channel, double freq);
+
+// ---------------------------------------------------------------------------
+// TX PostGen (gen1) — Two-tone IMD test (gen.c)
+//
+// gen1 mode 1 = continuous two-tone, mode 7 = pulsed two-tone.
+// These setters drive the SetupForm TXA PostGen test source, ported by
+// Phase 3M-1c E.2-E.6.
+//
+// From Thetis wdsp/gen.c:817-962 [v2.10.3.13].
+// Call-sites: setup.cs:11084-11107 (continuous + pulsed common config),
+//             setup.cs:34409-34418 (setupTwoTonePulse — pulse-profile knobs),
+//             setup.cs:11166 (TX-off run=0).
+// Ported by NereusSDR Tasks E.2-E.6 (3M-1c).
+// ---------------------------------------------------------------------------
+
+// Continuous-mode two-tone amplitudes (linear).
+// From Thetis wdsp/gen.c:817-823 [v2.10.3.13] — txa[ch].gen1.p->tt.mag1/mag2
+void SetTXAPostGenTTMag(int channel, double mag1, double mag2);
+
+// Continuous-mode two-tone frequencies (Hz).
+// From Thetis wdsp/gen.c:826-833 [v2.10.3.13] — txa[ch].gen1.p->tt.f1/f2
+void SetTXAPostGenTTFreq(int channel, double freq1, double freq2);
+
+// Pulsed-mode two-tone amplitudes (linear).
+// From Thetis wdsp/gen.c:915-923 [v2.10.3.13] — txa[ch].gen1.p->ttpulse.mag1/mag2
+void SetTXAPostGenTTPulseMag(int channel, double mag1, double mag2);
+
+// Pulsed-mode window pulse rate (Hz, single-parameter — distinct from
+// PulseToneFreq below which takes a pair).
+// From Thetis wdsp/gen.c:926-933 [v2.10.3.13] — txa[ch].gen1.p->ttpulse.pulse_freq
+void SetTXAPostGenTTPulseFreq(int channel, double freq);
+
+// Pulsed-mode duty cycle (fraction 0..1).
+// From Thetis wdsp/gen.c:935-942 [v2.10.3.13] — txa[ch].gen1.p->ttpulse.duty_cycle
+void SetTXAPostGenTTPulseDutyCycle(int channel, double dc);
+
+// Pulsed-mode tone frequencies (Hz).
+// From Thetis wdsp/gen.c:944-952 [v2.10.3.13] — txa[ch].gen1.p->ttpulse.f1/f2
+void SetTXAPostGenTTPulseToneFreq(int channel, double freq1, double freq2);
+
+// Pulsed-mode ramp transition time (seconds).
+// From Thetis wdsp/gen.c:955-962 [v2.10.3.13] — txa[ch].gen1.p->ttpulse.transtime
+void SetTXAPostGenTTPulseTransition(int channel, double transtime);
 
 // ---------------------------------------------------------------------------
 // TX stage Run setters — TxChannel::setRunning() + setStageRunning()
