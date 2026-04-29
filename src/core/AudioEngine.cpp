@@ -1058,7 +1058,7 @@ void AudioEngine::setMoxState(bool active)
     // would not synchronize the read-side observation order on weak
     // memory models (ARM / Apple Silicon).
     //
-    // Wired by RadioModel (Phase L) to MoxController::moxChanged.
+    // Wired by RadioModel (Phase L) to MoxController::moxStateChanged.
     // No change-signal emitted — MOX state is authoritative in MoxController;
     // this is a cross-thread mirror only.
     m_moxActive.store(active, std::memory_order_release);

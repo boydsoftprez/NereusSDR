@@ -72,7 +72,7 @@
 //                 cosmetic regression where RX audio leaked during TUN/MOX.
 //                 Non-active slices (e.g. RX2) keep playing. Matches Thetis
 //                 IVAC mox state-machine in audio.cs:349-384 [v2.10.3.13].
-//                 Phase L (RadioModel integration) wires MoxController::moxChanged
+//                 Phase L (RadioModel integration) wires MoxController::moxStateChanged
 //                 → setMoxState via signal/slot. Plan: 3M-1b E.4.
 //                 Pre-code review §10.3 + §10.4.
 // =================================================================
@@ -264,7 +264,7 @@ public:
     bool masterMuted() const { return m_masterMuted.load(std::memory_order_acquire); }
 
     /// Update the cross-thread MOX-state mirror used by rxBlockReady.
-    /// Wired by RadioModel (Phase L) to MoxController::moxChanged via
+    /// Wired by RadioModel (Phase L) to MoxController::moxStateChanged via
     /// signal/slot (Qt::DirectConnection, audio thread).
     ///
     /// Audio-thread reads via std::atomic<bool> with acquire ordering;
@@ -491,7 +491,7 @@ private:
 
     // Plan: 3M-1b E.4. Pre-code review §10.3 + §10.4.
     // Cross-thread MOX-state mirror. Written by main-thread setMoxState()
-    // (wired by RadioModel in Phase L from MoxController::moxChanged).
+    // (wired by RadioModel in Phase L from MoxController::moxStateChanged).
     // Read by audio-thread rxBlockReady via acquire load; written via
     // release store (same acq/rel pairing as m_masterMuted above).
     // Defaults false (MOX off at startup).
