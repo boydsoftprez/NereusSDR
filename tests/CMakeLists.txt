@@ -1628,6 +1628,13 @@ target_compile_definitions(tst_tx_mic_source PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_mic_extraction)
 target_compile_definitions(tst_p1_mic_extraction PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-1c TX pump v3 — P2 port-1026 mic frame decoder ─────────────
+# Verifies the static decodeMicFrame132 helper used by the port-1026
+# dispatch path.  Hand-crafted 132-byte frames; covers the normal data
+# path, zero data, and wrong-size rejection.
+nereus_add_test(tst_p2_mic_frame)
+target_compile_definitions(tst_p2_mic_frame PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1c E.1: TxChannel push-driven refactor ─────────────────────
 # Verifies the QTimer-driven pull model is gone and the (samples, frames)
 # push slot is the single fexchange2 entry point.  Test cases (7):

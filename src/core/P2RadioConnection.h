@@ -173,6 +173,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "RadioConnection.h"
 #include "BoardCapabilities.h"
 
+#include <QDateTime>
 #include <QUdpSocket>
 #include <QTimer>
 #include <QVector>
@@ -254,6 +255,22 @@ public slots:
     // the phase word is byte-identical to pre-calibration output.
     // Phase 3P-G.
     void setCalibrationController(const CalibrationController* cal);
+
+    // Phase 3M-1c TX pump v3: wire the radio-mic cadence source.
+    // Mic frames arrive on UDP port 1026 (132 bytes each carrying 64
+    // samples).  Each frame is decoded and pushed into
+    // TxMicSource::inbound() so the network thread is the cadence source
+    // for TxWorkerThread.  Mirrors Thetis network.c:761-772 [v2.10.3.13].
+    // Owned by RadioModel; this class keeps a non-owning pointer.
+    void setTxMicSource(class TxMicSource* src);
+
+    // Static decoder for a 132-byte P2 mic frame (port 1026).  Used by
+    // onReadyRead() and exposed for unit tests.  Output is exactly 64
+    // mono float samples (mic.spp=64 from netInterface.c:1458 [v2.10.3.13]).
+    // Returns false if data.size() != 132.
+    static bool decodeMicFrame132(const QByteArray& data,
+                                  std::array<float, 64>& outSamples,
+                                  quint32* outSeq = nullptr) noexcept;
 
 private slots:
     void onReadyRead();
@@ -337,6 +354,14 @@ private:
     // --- Port configuration (from Thetis _radionet, network.h:55-56) ---
     int m_p2CustomPortBase{1025};    // prn->p2_custom_port_base
     int m_baseOutboundPort{1024};    // prn->base_outbound_port
+
+    // Phase 3M-1c TX pump v3: non-owning TxMicSource pointer.  Set via
+    // setTxMicSource() at connect time; null in tests that don't wire
+    // RadioModel.  onReadyRead() port-1026 case decodes 132-byte mic
+    // frames and pushes via inbound(); LOS injection on watchdog tick.
+    class TxMicSource* m_txMicSource{nullptr};
+    QDateTime m_lastMicAt;
+    static constexpr int kMicLosTimeoutMs = 3000;  // network.c:656 [v2.10.3.13]
 
     // --- Run state (from Thetis _radionet, network.h:65-66) ---
     bool m_running{false};           // prn->run

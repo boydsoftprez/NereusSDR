@@ -172,6 +172,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "LogCategories.h"
 #include "OcMatrix.h"
 #include "CalibrationController.h"
+#include "audio/TxMicSource.h"
 #include "codec/AlexFilterMap.h"
 #include "codec/P2CodecOrionMkII.h"
 #include "codec/P2CodecSaturn.h"
@@ -1200,8 +1201,30 @@ void P2RadioConnection::onReadyRead()
             }
             break;
 
-        case 1:  // 1026: 132 bytes - Mic samples
-            // From Thetis ReadUDPFrame:534-548 (not used yet)
+        case 1:  // 1026: 132 bytes — 16-bit BE mic samples (48 ksps)
+            // From Thetis network.c:761-772 [v2.10.3.13]:
+            //   case 1://1026: // 1440 bytes 16-bit mic samples
+            //       for (i = 0, k = 0; i < prn->mic.spp; i++, k += 2)
+            //           prn->TxReadBufp[2 * i] = const_1_div_2147483648_ *
+            //               (double)(prn->ReadBufp[k + 0] << 24 |
+            //                        prn->ReadBufp[k + 1] << 16);
+            //           prn->TxReadBufp[2 * i + 1] = 0.0;
+            //       Inbound(inid(1, 0), prn->mic.spp, prn->TxReadBufp);
+            //
+            // P2 mic.spp = 64 (netInterface.c:1458 [v2.10.3.13]).  Frame is
+            // 4 bytes seq + 64 * 2 bytes samples = 132 bytes total.
+            //
+            // Thetis's `(b0<<24 | b1<<16) / 2^31` is equivalent to
+            // `(int16)(b0<<8 | b1) / 32768` because the upper 16 bits hold
+            // a sign-extended int16 — both yield the same float in [-1, 1].
+            // We use the int16/32768 form to make the byte order explicit.
+            if (m_txMicSource != nullptr) {
+                std::array<float, 64> samples{};
+                if (decodeMicFrame132(data, samples)) {
+                    m_txMicSource->inbound(samples.data(), 64);
+                    m_lastMicAt = QDateTime::currentDateTimeUtc();
+                }
+            }
             break;
 
         case 2:  // 1027: wideband ADC data
@@ -1253,6 +1276,19 @@ void P2RadioConnection::onKeepAliveTick()
     // but keepalive still runs per Thetis behavior)
     if (m_running && !m_radioInfo.address.isNull()) {
         sendCmdGeneral();
+    }
+
+    // Phase 3M-1c TX pump v3: mic-frame LOS injection.
+    // Mirrors Thetis network.c:655-666 [v2.10.3.13] — when no mic
+    // datagram has arrived for kMicLosTimeoutMs, push a zero block into
+    // the TX inbound ring so the worker keeps ticking through silence.
+    if (m_txMicSource != nullptr && m_lastMicAt.isValid()) {
+        const qint64 sinceMicMs = m_lastMicAt.msecsTo(QDateTime::currentDateTimeUtc());
+        if (sinceMicMs > kMicLosTimeoutMs) {
+            std::array<float, TxMicSource::kBlockFrames> zeros{};
+            m_txMicSource->inbound(zeros.data(), TxMicSource::kBlockFrames);
+            m_lastMicAt = QDateTime::currentDateTimeUtc();
+        }
     }
 }
 
@@ -1331,6 +1367,51 @@ void P2RadioConnection::setOcMatrix(const OcMatrix* matrix)
 //   (correction factor applied before Freq2PhaseWord in Thetis via the
 //   VFOfreq → SetVFOfreq → Freq2PhaseWord chain) [@501e3f5]
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// decodeMicFrame132 — Phase 3M-1c TX pump v3
+//
+// Pure decoder for one 132-byte P2 mic frame from UDP port 1026:
+//   bytes 0..3:   big-endian 32-bit sequence number
+//   bytes 4..131: 64 * 16-bit big-endian signed mic samples
+//
+// Output is 64 float samples in [-1, 1].  Mirrors Thetis network.c:761-772
+// [v2.10.3.13]; we use the int16/32768 form rather than the (b0<<24|b1<<16)/2^31
+// form because the upper-16-bits-as-int16 + sign extension is identical.
+// ---------------------------------------------------------------------------
+bool P2RadioConnection::decodeMicFrame132(const QByteArray& data,
+                                          std::array<float, 64>& outSamples,
+                                          quint32* outSeq) noexcept
+{
+    if (data.size() != 132) {
+        return false;
+    }
+    const auto* buf = reinterpret_cast<const uint8_t*>(data.constData());
+    if (outSeq != nullptr) {
+        *outSeq = (static_cast<quint32>(buf[0]) << 24) |
+                  (static_cast<quint32>(buf[1]) << 16) |
+                  (static_cast<quint32>(buf[2]) << 8) |
+                  static_cast<quint32>(buf[3]);
+    }
+    for (int s = 0; s < 64; ++s) {
+        const int16_t v = static_cast<int16_t>(
+            (static_cast<uint16_t>(buf[4 + s * 2]) << 8) |
+            static_cast<uint16_t>(buf[4 + s * 2 + 1]));
+        outSamples[static_cast<size_t>(s)] = static_cast<float>(v) / 32768.0f;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// setTxMicSource — Phase 3M-1c TX pump v3
+//
+// Wires the RadioModel-owned TxMicSource into the connection.  Called by
+// RadioModel::connectToRadio() unconditionally.  The pointer is non-owning.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setTxMicSource(TxMicSource* src)
+{
+    m_txMicSource = src;
+}
+
 void P2RadioConnection::setCalibrationController(const CalibrationController* cal)
 {
     m_calController = cal;
