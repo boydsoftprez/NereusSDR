@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 
 Q_LOGGING_CATEGORY(lcTxWorker, "nereus.tx.worker")
 
@@ -116,7 +117,15 @@ void TxWorkerThread::run()
     // architecture plan §7 risks table — coarse-timer drift could
     // skew the pump cadence enough to surface SPSC overflow under
     // load.
-    m_pumpTimer = new QTimer();
+    //
+    // Stack-local std::unique_ptr complies with the no-raw-new
+    // CLAUDE.md style guide: timer is destroyed deterministically
+    // when run() unwinds (after exec() returns).  Mirror via raw
+    // m_pumpTimer for the brief lifetime of run() so onPumpTick
+    // null-guards stay symmetric with stopPump's idempotency
+    // checks.
+    auto timer = std::make_unique<QTimer>();
+    m_pumpTimer = timer.get();
     m_pumpTimer->setInterval(kPumpIntervalMs);
     m_pumpTimer->setTimerType(Qt::PreciseTimer);
     QObject::connect(m_pumpTimer, &QTimer::timeout,
@@ -129,12 +138,13 @@ void TxWorkerThread::run()
     // stopPump).
     const int rc = QThread::exec();
 
-    // Tear down the timer before the thread exits.  Without this,
-    // the timer outlives this stack frame and leaks (or is reaped
-    // by Qt on app shutdown but emits a "still running" warning).
+    // Tear down the timer before the thread exits.  std::unique_ptr
+    // does the actual delete on scope exit; null the raw mirror
+    // first so any in-flight signal sees nullptr rather than a
+    // dangling pointer.
     m_pumpTimer->stop();
-    delete m_pumpTimer;
     m_pumpTimer = nullptr;
+    timer.reset();
 
     qCInfo(lcTxWorker) << "run: worker thread event loop exited rc=" << rc;
 }
