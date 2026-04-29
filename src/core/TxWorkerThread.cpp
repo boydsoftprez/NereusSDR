@@ -14,6 +14,12 @@
 //                 loop replaces v2's QTimer-driven polling.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-04-29 — Stage-2 review fix C1 — added
+//                 QCoreApplication::processEvents inside run() so
+//                 cross-thread queued slot calls (TransmitModel /
+//                 MoxController → TxChannel setters) actually
+//                 deliver after m_txChannel->moveToThread(this).  Same
+//                 author / same AI tooling.
 // =================================================================
 
 // no-port-check: NereusSDR-original file.  The Thetis cmbuffs.c /
@@ -27,6 +33,8 @@
 #include "TxChannel.h"
 #include "audio/TxMicSource.h"
 
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QLoggingCategory>
 
 #include <algorithm>
@@ -127,6 +135,41 @@ void TxWorkerThread::run()
     // Note: Thetis's `a->run` flag is NereusSDR's m_micSource->isRunning().
     // The poison release in TxMicSource::stop() wakes us out of
     // waitForBlock; we then re-check isRunning and exit cleanly.
+    //
+    // ── Why processEvents() inside the loop ──────────────────────────────
+    //
+    // RadioModel::connectToRadio() calls m_txChannel->moveToThread(this)
+    // AFTER establishing the cross-thread connect()s at RadioModel.cpp:
+    //   - 1463-1464  TransmitModel::micPreampChanged → setMicPreamp
+    //   - 1673-1676  MoxController::txaFlushed       → setRunning(false)
+    //   - 1680-1683  voxRunRequested                  → setVoxRun
+    //   - 1687-1690  voxThresholdRequested            → setVoxAttackThreshold
+    //   - 1695-1698  voxHangTimeRequested             → setVoxHangTime
+    //   - 1703-1706  antiVoxGainRequested             → setAntiVoxGain
+    //   - 1715-1718  antiVoxSourceWhatRequested       → setAntiVoxRun
+    //
+    // Once moveToThread runs, AutoConnection auto-resolves to
+    // QueuedConnection because the receiver lives on this thread but the
+    // sender (TransmitModel / MoxController) lives on the main thread.
+    // Each emission posts a QMetaCallEvent into THIS thread's event
+    // queue.  Without a pumper, those events sit in the queue forever
+    // and the lambda / setter NEVER fires — UI changes during active TX
+    // silently fail to reach WDSP.
+    //
+    // QThread::exec() would dispatch them, but our top-level loop is a
+    // semaphore-wake (waitForBlock(-1)) sourced from radio mic frames —
+    // we cannot replace it with exec() without restructuring the cadence
+    // source.  The minimal correct fix is to call processEvents() once
+    // per iteration: drain any queued slot calls between waking from
+    // waitForBlock and dispatching the next fexchange0 cycle so updates
+    // apply to the upcoming block.
+    //
+    // Thetis itself doesn't need this — its cm_main is a native pthread
+    // (cmbuffs.c:151-168 [v2.10.3.13], no Qt event loop), and its
+    // setters drop straight into WDSP via P/Invoke regardless of which
+    // managed thread is calling.  NereusSDR's setters are Qt slots
+    // dispatched via signals, so we have to give the worker an event
+    // pump.
     while (m_micSource && m_micSource->isRunning()) {
         // INFINITE wait — mirrors `WaitForSingleObject(..., INFINITE)`.
         // Returns false when stop() releases the poison semaphore AND
@@ -141,6 +184,16 @@ void TxWorkerThread::run()
         // Drain one block of kBlockFrames pairs (== 2*kBlockFrames doubles)
         // into m_in.  Equivalent to Thetis cmdata (cmbuffs.c:123-149).
         m_micSource->drainBlock(m_in.data());
+
+        // Drain any queued cross-thread slot calls (setMicPreamp,
+        // setVoxRun, setVoxAttackThreshold, setVoxHangTime,
+        // setAntiVoxGain, setAntiVoxRun, txaFlushed→setRunning(false))
+        // BEFORE dispatching the DSP cycle so the updated WDSP state
+        // applies to the upcoming block.  This is the Qt-Posted-Event
+        // analogue of the implicit event-pump that Thetis's Win32
+        // cm_main loop never needed (cmbuffs.c:151-168 [v2.10.3.13] —
+        // pthread/native, no Qt event loop in the picture).
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
 
         dispatchOneBlock();
     }
