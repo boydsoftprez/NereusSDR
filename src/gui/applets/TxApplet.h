@@ -41,6 +41,12 @@
 //   2026-04-28 — Phase 3M-1b (relocation): Mic Gain slider row (J.1) removed.
 //                 Relocated to PhoneCwApplet (#5 slot) per JJ feedback.
 //                 PhoneCwApplet now owns micGainDb wiring and mic level gauge.
+//   2026-04-29 — Phase 3M-1c J.1+J.2: TX Profile combo wired to MicProfileManager
+//                 (left-click selects, right-click → Setup → TX Profile via
+//                 txProfileMenuRequested signal); 2-TONE button wired to
+//                 TwoToneController (mirrors Thetis chk2TONE_CheckedChanged at
+//                 console.cs:44728-44760 [v2.10.3.13]).  Both bind via raw-
+//                 pointer setters that Phase L's MainWindow wiring populates.
 // =================================================================
 
 //=================================================================
@@ -118,6 +124,8 @@ class QLabel;
 namespace NereusSDR {
 
 class HGauge;
+class MicProfileManager;
+class TwoToneController;
 
 // TxApplet — transmit controls panel.
 //
@@ -172,6 +180,38 @@ public:
     // (CW → 3M-2, AM/FM/SAM/DSB/DRM → 3M-3) or the normal tooltip otherwise.
     static QString tooltipForMode(DSPMode mode);
 
+    // ── Phase 3M-1c J.1: TX Profile combo wiring ────────────────────────────
+    // MainWindow (Phase L) injects MicProfileManager via this setter so the
+    // combo populates from manager.profileNames() and round-trips selection
+    // via setActiveProfile.  Pass nullptr to clear (e.g. on radio
+    // disconnect).  TxApplet does NOT take ownership.
+    void setMicProfileManager(MicProfileManager* mgr);
+
+    // ── Phase 3M-1c J.2: 2-TONE button wiring ───────────────────────────────
+    // MainWindow (Phase L) injects TwoToneController via this setter.  The
+    // button's clicked-state drives controller.setActive(checked); the
+    // controller's twoToneActiveChanged signal mirrors back into the button.
+    void setTwoToneController(TwoToneController* controller);
+
+    // ── Test accessors ──────────────────────────────────────────────────────
+    // Always-on (no NEREUS_BUILD_TESTS guard) — same convention as
+    // TestTwoTonePage (matches AudioTxInputPage / RxApplet patterns).
+    QComboBox*   profileCombo()  const { return m_profileCombo; }
+    QPushButton* twoToneButton() const { return m_twoToneBtn; }
+
+signals:
+    // ── Phase 3M-1c J.1: right-click on TX Profile combo ────────────────────
+    // Mirrors Thetis comboTXProfile_MouseDown (console.cs:44519-44522
+    // [v2.10.3.13]):
+    //     if (e.Button == MouseButtons.Right) {
+    //         SetupForm.Show();
+    //         SetupForm.ActivateTXProfileTab();
+    //     }
+    //
+    // MainWindow (Phase L) connects this to a slot opening SetupDialog at
+    // the "TX Profile" page.  The signal carries no payload.
+    void txProfileMenuRequested();
+
 private:
     void buildUI();
     void wireControls();  // called after buildUI() — attaches signals/slots
@@ -180,6 +220,17 @@ private:
     // K.2: slot called when SliceModel::dspModeChanged fires (via RadioModel).
     // Updates m_moxBtn->setToolTip(tooltipForMode(mode)).
     void onMoxModeChanged(DSPMode mode);
+
+    // ── J.1: combo refresh helpers ──────────────────────────────────────────
+    // Rebuild combo entries from m_micProfileMgr->profileNames(), preserving
+    // the currently-active profile selection where possible.  Does nothing
+    // when the manager is null.  Uses QSignalBlocker to suppress the
+    // currentTextChanged echo that would otherwise call back into the model.
+    void rebuildProfileCombo();
+
+    // ── J.1/J.2: non-owning controller pointers ─────────────────────────────
+    MicProfileManager* m_micProfileMgr{nullptr};
+    TwoToneController* m_twoToneCtrl{nullptr};
 
     // 0. Mic-source badge (J.3 Phase 3M-1b) — read-only label above the gauges.
     QLabel*  m_micSourceBadge = nullptr;

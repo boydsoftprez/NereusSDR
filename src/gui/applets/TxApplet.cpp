@@ -138,13 +138,17 @@
 #include "gui/ComboStyle.h"
 #include "gui/widgets/VoxSettingsPopup.h"
 #include "core/audio/CompositeTxMicRouter.h"
+#include "core/MicProfileManager.h"
+#include "core/MoxController.h"
+#include "core/RadioStatus.h"
+#include "core/TwoToneController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
-#include "core/MoxController.h"
-#include "core/RadioStatus.h"
 
 #include <QComboBox>
+#include <QContextMenuEvent>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -460,13 +464,22 @@ void TxApplet::buildUI()
         auto* row = new QHBoxLayout;
         row->setSpacing(2);
 
+        // ── Phase 3M-1c J.1 ─ TX Profile combo ─────────────────────────────────
+        // Populated from MicProfileManager via setMicProfileManager().
+        // Right-click → emit txProfileMenuRequested (mirrors Thetis
+        // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
         m_profileCombo = new QComboBox(this);
         m_profileCombo->addItem(QStringLiteral("Default"));
         m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_profileCombo->setFixedHeight(22);
         applyComboStyle(m_profileCombo);
         m_profileCombo->setAccessibleName(QStringLiteral("TX profile"));
-        NyiOverlay::markNyi(m_profileCombo, QStringLiteral("Phase 3I-1"));
+        m_profileCombo->setToolTip(QStringLiteral(
+            "TX Profile — left-click to switch.  Right-click to edit "
+            "(Setup → Audio → TX Profile)."));
+        // Custom context-menu policy so right-click emits
+        // customContextMenuRequested instead of the default popup.
+        m_profileCombo->setContextMenuPolicy(Qt::CustomContextMenu);
         row->addWidget(m_profileCombo, 1);
 
         m_tuneModeCombo = new QComboBox(this);
@@ -490,14 +503,21 @@ void TxApplet::buildUI()
         auto* row = new QHBoxLayout;
         row->setSpacing(2);
 
+        // ── Phase 3M-1c J.2 ─ 2-TONE button ────────────────────────────────────
+        // Mirrors Thetis chk2TONE_CheckedChanged (console.cs:44728-44760
+        // [v2.10.3.13]).  Wired to TwoToneController via
+        // setTwoToneController().  The TUN-stop pre-step + 300 ms settle
+        // delay live inside TwoToneController::setActive (Phase I.3) so the
+        // button itself just dispatches setActive(checked).
         m_twoToneBtn = new QPushButton(QStringLiteral("2-Tone"), this);
         m_twoToneBtn->setCheckable(true);
         m_twoToneBtn->setFixedHeight(22);
         m_twoToneBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_twoToneBtn->setStyleSheet(Style::buttonBaseStyle() + Style::redCheckedStyle());
         m_twoToneBtn->setAccessibleName(QStringLiteral("2-tone test"));
-        m_twoToneBtn->setToolTip(QStringLiteral("2-tone test — not yet implemented (Phase 3M-3)"));
-        m_twoToneBtn->setVisible(false);  // TODO [3M-3]: visible when feature lands
-        NyiOverlay::markNyi(m_twoToneBtn, QStringLiteral("Phase 3M-3"));
+        m_twoToneBtn->setToolTip(QStringLiteral(
+            "Continuous or pulsed two-tone IMD test "
+            "(configure in Setup → Test → Two-Tone)."));
         row->addWidget(m_twoToneBtn, 1);
 
         // PS-A: green when checked — #006030 bg matches AetherSDR APD button
@@ -810,6 +830,35 @@ void TxApplet::wireControls()
                 : QStringLiteral("PC mic"));
     });
 
+    // ── Phase 3M-1c J.1 ─ TX Profile combo wiring ────────────────────────────
+    // User-driven currentTextChanged → MicProfileManager::setActiveProfile.
+    // Guarded with m_updatingFromModel so the rebuildProfileCombo() echo
+    // doesn't bounce back into setActiveProfile.
+    connect(m_profileCombo, &QComboBox::currentTextChanged,
+            this, [this](const QString& name) {
+        if (m_updatingFromModel) { return; }
+        if (!m_micProfileMgr) { return; }
+        if (name.isEmpty()) { return; }
+        if (m_model) {
+            m_micProfileMgr->setActiveProfile(name, &m_model->transmitModel());
+        }
+    });
+
+    // Right-click on combo → emit txProfileMenuRequested (Thetis cite at the
+    // signal declaration).
+    connect(m_profileCombo, &QComboBox::customContextMenuRequested,
+            this, [this](const QPoint& /*pos*/) {
+        emit txProfileMenuRequested();
+    });
+
+    // ── Phase 3M-1c J.2 ─ 2-TONE button wiring ───────────────────────────────
+    // toggled → TwoToneController::setActive.  Echo-guarded.
+    connect(m_twoToneBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (m_updatingFromModel) { return; }
+        if (!m_twoToneCtrl) { return; }
+        m_twoToneCtrl->setActive(on);
+    });
+
     // ── Initial sync from model ──────────────────────────────────────────────
     syncFromModel();
 }
@@ -991,6 +1040,113 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
     if (m_moxBtn) {
         m_moxBtn->setToolTip(tooltipForMode(mode));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3M-1c J.1 — setMicProfileManager
+//
+// Inject the per-MAC MicProfileManager.  Wires:
+//   - manager.profileListChanged → rebuildProfileCombo (set membership change)
+//   - manager.activeProfileChanged → combo selection update (programmatic)
+// ---------------------------------------------------------------------------
+void TxApplet::setMicProfileManager(MicProfileManager* mgr)
+{
+    if (m_micProfileMgr == mgr) { return; }
+
+    if (m_micProfileMgr) {
+        disconnect(m_micProfileMgr, nullptr, this, nullptr);
+    }
+
+    m_micProfileMgr = mgr;
+
+    if (m_micProfileMgr) {
+        // List changes → rebuild combo entries.
+        connect(m_micProfileMgr, &MicProfileManager::profileListChanged,
+                this, &TxApplet::rebuildProfileCombo);
+        // Active changes → select the named entry without triggering a
+        // setActiveProfile callback (m_updatingFromModel guards that).
+        connect(m_micProfileMgr, &MicProfileManager::activeProfileChanged,
+                this, [this](const QString& name) {
+            if (!m_profileCombo) { return; }
+            QSignalBlocker blk(m_profileCombo);
+            m_updatingFromModel = true;
+            const int idx = m_profileCombo->findText(name);
+            if (idx >= 0) {
+                m_profileCombo->setCurrentIndex(idx);
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    rebuildProfileCombo();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3M-1c J.2 — setTwoToneController
+//
+// Inject the TwoToneController.  Wires the controller's
+// twoToneActiveChanged signal so the button visually mirrors the
+// authoritative state (covers the BandPlanGuard rejection clean-up
+// from Phase I.5).
+// ---------------------------------------------------------------------------
+void TxApplet::setTwoToneController(TwoToneController* controller)
+{
+    if (m_twoToneCtrl == controller) { return; }
+
+    if (m_twoToneCtrl) {
+        disconnect(m_twoToneCtrl, nullptr, this, nullptr);
+    }
+
+    m_twoToneCtrl = controller;
+
+    if (m_twoToneCtrl) {
+        connect(m_twoToneCtrl, &TwoToneController::twoToneActiveChanged,
+                this, [this](bool active) {
+            if (!m_twoToneBtn) { return; }
+            QSignalBlocker blk(m_twoToneBtn);
+            m_updatingFromModel = true;
+            m_twoToneBtn->setChecked(active);
+            m_updatingFromModel = false;
+        });
+
+        // Sync initial state.
+        QSignalBlocker blk(m_twoToneBtn);
+        m_updatingFromModel = true;
+        m_twoToneBtn->setChecked(m_twoToneCtrl->isActive());
+        m_updatingFromModel = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3M-1c J.1 — rebuildProfileCombo
+//
+// Rebuild combo entries from m_micProfileMgr->profileNames().  Preserves
+// the active-profile selection where possible; otherwise the manager's
+// activeProfileName() is selected.  No-op when manager is null.
+// ---------------------------------------------------------------------------
+void TxApplet::rebuildProfileCombo()
+{
+    if (!m_profileCombo) { return; }
+    if (!m_micProfileMgr) {
+        // No manager → leave the placeholder "Default" item alone.
+        return;
+    }
+
+    QSignalBlocker blk(m_profileCombo);
+    m_updatingFromModel = true;
+
+    const QStringList names = m_micProfileMgr->profileNames();
+    const QString active = m_micProfileMgr->activeProfileName();
+
+    m_profileCombo->clear();
+    m_profileCombo->addItems(names);
+
+    const int idx = m_profileCombo->findText(active);
+    if (idx >= 0) {
+        m_profileCombo->setCurrentIndex(idx);
+    }
+
+    m_updatingFromModel = false;
 }
 
 } // namespace NereusSDR

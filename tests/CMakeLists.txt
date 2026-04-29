@@ -2179,3 +2179,42 @@ target_compile_definitions(tst_radio_model_mic_source_hl2_force PRIVATE NEREUS_B
 #         click sets enum; UI→model: Fixed click sets enum).
 nereus_add_test(tst_test_two_tone_page)
 
+# =============================================================================
+# Phase 3M-1c Task J — TxApplet TX-Profile combo + 2-TONE button (J.1+J.2)
+# =============================================================================
+# Covers (TxApplet wiring tests):
+#   - Combo accessor present after construction.
+#   - Combo populated from MicProfileManager on injection.
+#   - User-driven combo change calls setActiveProfile.
+#   - profileListChanged refreshes combo entries.
+#   - activeProfileChanged updates combo selection programmatically without
+#     echo back into setActiveProfile.
+#   - Right-click on combo emits TxApplet::txProfileMenuRequested signal
+#     (mirrors Thetis comboTXProfile_MouseDown — console.cs:44519-44522
+#     [v2.10.3.13]).
+#   - 2-TONE button accessor present, checkable, visible.
+#   - 2-TONE button tooltip mentions "two-tone" + "Setup".
+#   - Click dispatches TwoToneController::setActive(true/false).
+#   - twoToneActiveChanged signal mirrors back into the button checked state.
+#   - setTwoToneController(nullptr) doesn't crash on click.
+nereus_add_test(tst_tx_applet_profile_combo)
+
+# =============================================================================
+# Phase 3M-1c Task J — Setup → Audio → TX Profile editor (J.3+J.4)
+# =============================================================================
+# Covers (TxProfileSetupPage):
+#   - Constructor doesn't crash with default RadioModel + injected pointers.
+#   - Combo populated from MicProfileManager.
+#   - Save button: new name calls saveProfile.
+#   - Save button: empty / whitespace name is no-op.
+#   - Save button: existing name + overwrite=Yes overwrites.
+#   - Save button: existing name + overwrite=No is a no-op.
+#   - Delete button: calls deleteProfile and combo shrinks.
+#   - Delete button: last-remaining shows verbatim Thetis string and refuses.
+#   - J.4: programmatic combo change does NOT trigger unsaved-prompt.
+#   - J.4: simulated user combo change DOES trigger prompt when dirty.
+#   - J.4: prompt Yes saves before switching.
+#   - J.4: prompt No discards before switching.
+#   - J.4: prompt Cancel reverts the combo to the original selection.
+nereus_add_test(tst_tx_profile_setup_page)
+

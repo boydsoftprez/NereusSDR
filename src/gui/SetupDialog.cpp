@@ -32,6 +32,8 @@
 #include "diagnostics/DiagnosticsPhaseHPages.h"
 // Test (Phase 3M-1c H.1: Two-Tone IMD page)
 #include "setup/TestTwoTonePage.h"
+// TX Profile editor (Phase 3M-1c J.3 — under Audio)
+#include "setup/TxProfileSetupPage.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -194,6 +196,14 @@ void SetupDialog::buildTree()
     addWrapped(audio, "VAX",      wrapWithAudioBackendStrip(new AudioVaxPage(m_model)));
     addWrapped(audio, "TCI",      wrapWithAudioBackendStrip(new AudioTciPage(m_model)));
     addWrapped(audio, "Advanced", wrapWithAudioBackendStrip(new AudioAdvancedPage(m_model)));
+    // Phase 3M-1c J.3: TX Profile editor.  Phase L will inject the per-MAC
+    // MicProfileManager + TransmitModel via RadioModel hookups; until then
+    // the page renders with null pointers (every action is a no-op).
+    add(audio, "TX Profile",
+        new TxProfileSetupPage(
+            m_model,
+            /*profileMgr=*/nullptr,   // Phase L wires MicProfileManager
+            m_model ? &m_model->transmitModel() : nullptr));
 
     // ── DSP ───────────────────────────────────────────────────────────────────
     QTreeWidgetItem* dsp = addCategory("DSP");
