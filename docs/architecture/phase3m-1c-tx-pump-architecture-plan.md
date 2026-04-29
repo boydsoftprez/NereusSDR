@@ -1,6 +1,6 @@
 # Phase 3M-1c — TX Pump Architecture Redesign Plan
 
-**Status:** ready for execution.
+**Status:** v3 SHIPPED 2026-04-29 (supersedes v2 below).
 **Date:** 2026-04-29.
 **Branch:** `feature/phase3m-1c-polish-persistence`.
 **Worktree:** `/Users/j.j.boyd/NereusSDR/.claude/worktrees/adoring-pare-b0402e`.
@@ -9,6 +9,91 @@ worked after a band-aid fix; SSB voice at low mic gain was "distorted
 and gravelly". Investigation found the root cause is architectural,
 not a tuning issue — the entire TX pump model adopted in this session
 (D.1 / E.1 / L.4) is built on a misread of Thetis upstream.
+
+---
+
+## v3 supersession (2026-04-29)
+
+**v2** (the plan body that follows below) shipped a QTimer-driven 5 ms
+polling worker pulling 256-sample blocks from PortAudio mic via
+`AudioEngine::pullTxMic`.  Block size 256 was chosen to satisfy the WDSP
+r2-ring divisibility constraint (`2048 % 256 == 0`); fexchange2 (separate
+float Iin/Qin/Iout/Qout) was kept from the v1 implementation.  At the
+bench this still produced periodic stutter — the 5 ms × 256 = 51.2 kHz
+pull rate is 6.67 % faster than the 48 kHz mic delivery rate, leading to
+recurring zero-fill ticks every ~75 ticks.
+
+**v3** (the implementation that landed in commits a344921..b5da0af)
+replaces the polling layer with a Thetis-faithful `cm_main` semaphore
+loop:
+
+1. **Cadence source = radio mic frames.**  P1 EP6 mic16 byte zone +
+   P2 UDP port 1026 are decoded on the network thread and pushed
+   into a new `TxMicSource` ring (Thetis `Inbound()` port).
+2. **Worker = pure semaphore wait** (`waitForBlock` → `drainBlock` →
+   `fexchange0`).  No QTimer.  Mirrors Thetis cmbuffs.c:151-168
+   one-to-one.
+3. **PC mic = override path** (mirrors Thetis cmaster.c:379 `asioIN`).
+   When `MicSource::Pc` AND `m_txInputBus` is open, the worker
+   overlays PC mic samples on top of the radio mic samples in `m_in`
+   before fexchange0.  HL2 `setMicSourceLocked(true)` keeps the
+   override on regardless of UI state (HL2 has no mic jack).
+4. **Block size = 64** (Thetis getbuffsize(48000) exact).
+5. **WDSP API = fexchange0** (interleaved double I/Q, mirrors
+   cmaster.c:389 callsite exactly).
+6. **LOS = 3000 ms** (Thetis network.c:656 exact) — onWatchdogTick /
+   onKeepAliveTick inject one zero block of `kBlockFrames=64` per
+   `kMicLosTimeoutMs` window when no mic frame has arrived.
+7. **VOX defensive guards on all 5 DEXP-touching setters** —
+   `pdexp[ch]==nullptr` null-check in `setVoxRun`,
+   `setVoxAttackThreshold`, `setVoxHangTime`, `setAntiVoxRun`,
+   `setAntiVoxGain`.  Required because NereusSDR ports OpenChannel
+   but not (yet) `create_dexp`, so the existing `txa.rsmpin.p` guard
+   alone does not imply pdexp is allocated.  Functional VOX waits
+   for the create_dexp port (separate follow-up).
+
+### v3 commit chain
+
+| # | SHA | Subject |
+|---|-----|---------|
+| 1 | a344921 | feat(3m-1c): TxMicSource — Thetis Inbound/cm_main port |
+| 2 | a20f2b9 | feat(3m-1c): P1 EP6 mic16 extraction → TxMicSource |
+| 3 | 287f673 | feat(3m-1c): P2 port 1026 mic frame parsing → TxMicSource |
+| 4 | e4d3dc8 | refactor(3m-1c): TxChannel fexchange2→fexchange0 + interleaved double + 64-block |
+| 5 | 33de2a3 | refactor(3m-1c): TxWorkerThread semaphore-wake (no QTimer) |
+| 6 | 07e2508 | feat(3m-1c): VOX defensive guards on all 5 DEXP-touching setters |
+| 7 | b5da0af | feat(3m-1c): RadioModel TxMicSource lifecycle + AudioEngine PC override gate |
+
+### v3 test surface (added)
+
+* `tst_tx_mic_source` — 8 cases: ring lifecycle, semaphore wake,
+  partial-block accumulation, wrap-aware writes, stop-while-waiting,
+  concurrent SPSC.
+* `tst_p1_mic_extraction` — 3 cases: parseEp6Frame mic-aware overload
+  (normal samples, HL2-style zeros, backward-compat with 3-arg).
+* `tst_p2_mic_frame` — 3 cases: decodeMicFrame132 (normal, all-zero,
+  wrong-size).
+* `tst_tx_worker_thread` — rewritten 9 cases: lifecycle + semaphore
+  drive + PC mic override path + cross-thread setter races.
+* `tst_radio_model_3m1b_ownership` — +1 case
+  (`txMicSourceNullBeforeConnect`).
+
+Full ctest run: 238/238 passing (235 baseline + 3 net new — the QTimer
+cadence test from v2 was dropped).
+
+### v3 deferred follow-ups
+
+* `create_dexp` port (full DEXP/VOX functional path).  Without it
+  VOX is null-guarded but functionally inert.
+* Full `xcmaster` pipeline beyond `xdexp`/`fexchange0`: `xpipe`,
+  `xMixAudio`, `xtxgain`, `xeer`, `xilv`, `xsidetone`.
+* PortAudio frames-per-buffer wiring for the dead
+  `pcMicBufferSamples` slider.
+* Radio-mic seq# error reporting UI (P1/P2 mic_in_seq_err).
+
+---
+
+## Original v2 plan body (historical context)
 
 This plan documents:
 
