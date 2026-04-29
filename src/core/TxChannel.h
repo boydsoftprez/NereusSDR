@@ -165,6 +165,14 @@ warren@wpratt.com
 //                 individual setter calls the combined WDSP function with
 //                 both values).  AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-29 — Stage-2 review fix I1 — refreshed v2-era doc comments
+//                 (fexchange2 / 256-block / 5 ms cadence / kPumpIntervalMs /
+//                 onPumpTick / QTimer) on driveOneTxBlock + class
+//                 thread-safety block to reflect v3 (fexchange0 / 64-block /
+//                 semaphore-wake / TxMicSource-driven cadence).  No
+//                 behavioural change; documentation refresh only.  J.J. Boyd
+//                 (KG4VCF), with AI-assisted transformation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -189,11 +197,22 @@ class TxMicRouter;
 // The 31 pipeline stages are already in WDSP-managed memory when this
 // constructor runs; this class provides a typed C++ facade over them.
 //
-// Thread safety (Phase 3M-1c TX pump architecture redesign):
+// Thread safety (Phase 3M-1c TX pump architecture redesign v3):
 //   The TxChannel object is moved to TxWorkerThread by RadioModel after
-//   construction + initial wiring.  The worker thread's pump
-//   (TxWorkerThread::onPumpTick) calls driveOneTxBlock() at ~5 ms cadence,
-//   which runs fexchange2 + sendTxIq.
+//   construction + initial wiring.  The worker thread runs a
+//   semaphore-wake loop (`TxWorkerThread::run` — mirrors Thetis
+//   cm_main at cmbuffs.c:151-168 [v2.10.3.13]) sourced from radio mic
+//   frames via TxMicSource.  Cadence is the radio's natural mic-frame
+//   stream — at 48 kHz mic rate with 64-frame blocks, that's ~1.33 ms
+//   per block on both P1 EP6 (with HL2 pipelined frames at 126 mic
+//   samples/frame, two frames per packet) and P2 port-1026 (mic-only
+//   datagrams at 64 samples per packet).  Each tick invokes
+//   driveOneTxBlockFromInterleaved → fexchange0 + sendTxIq.
+//
+//   The previous v2 design (QTimer-driven 5 ms polling, fexchange2,
+//   256-block kPumpIntervalMs) was scrapped on 2026-04-29 in favour of
+//   the semaphore-wake/64-block design that matches Thetis's
+//   getbuffsize(48000) buffer plumbing exactly.
 //
 //   - Construct + destroy: main thread.  Destruction MUST happen on the
 //     thread the TxChannel currently lives on; RadioModel teardown moves
@@ -221,8 +240,11 @@ class TxMicRouter;
 //     isRunning() reads from any thread (e.g., main-thread UI queries
 //     while the channel lives on TxWorkerThread, test code, future
 //     cross-thread instrumentation).
-//   - driveOneTxBlock: called from TxWorkerThread (the worker).  Runs
-//     fexchange2 → sendTxIq synchronously on that thread.
+//   - driveOneTxBlockFromInterleaved: called from TxWorkerThread (the
+//     worker) once per drained mic block.  Runs fexchange0 → sendTxIq
+//     synchronously on that thread.  driveOneTxBlock(const float*, int)
+//     is retained as a legacy / test-only seam (see public-slots
+//     section below).
 //   - stageRunning / isRunning / get*Meter: read-only introspection,
 //     safe from any thread (atomics + WDSP-internal locking).
 //
@@ -973,40 +995,49 @@ public:
 #endif // NEREUS_BUILD_TESTS
 
 public slots:
-    // ── TX pump slot (Phase 3M-1c TX pump architecture redesign) ─────────────
+    // ── TX pump slot (Phase 3M-1c TX pump architecture redesign v3) ──────────
     //
-    /// Drive one fexchange2 cycle from a TX-mic block.  Called by
-    /// TxWorkerThread::onPumpTick at ~5 ms cadence with frames ==
-    /// kBlockFrames (256).  Runs synchronously on the worker thread.
+    /// LEGACY / TEST-ONLY: drive one fexchange0 cycle from a mono float
+    /// TX-mic block.  Retained as a test seam (TxWorkerThread::tickForTest
+    /// pre-v3 paths and unit tests that pre-date the v3 redesign still
+    /// invoke this overload).  Production callsite is
+    /// driveOneTxBlockFromInterleaved (below) — TxWorkerThread::run
+    /// drains an interleaved I/Q double buffer from TxMicSource and hands
+    /// it directly to that overload, bypassing the float→double
+    /// conversion path.
     ///
-    /// Contract:
+    /// Contract (unchanged from 3M-1c E.1):
     ///   - `samples == nullptr && frames == 0`  →  silence path: zero-fill
-    ///     m_inI/m_inQ and dispatch fexchange2 (TUNE-tone PostGen output
-    ///     still reaches sendTxIq).  Used only by tests today; production
-    ///     callers always pass a kBlockFrames-sized buffer (zero-filled
-    ///     by TxWorkerThread when the bus has no data).
+    ///     m_in and dispatch fexchange0 (TUNE-tone PostGen output still
+    ///     reaches sendTxIq).  Used by tests; production v3 callers route
+    ///     through driveOneTxBlockFromInterleaved instead.
     ///   - `samples != nullptr && frames == m_inputBufferSize`  →  copy
-    ///     samples into m_inI, zero-fill m_inQ, dispatch fexchange2.
+    ///     samples into m_in's I channel, zero-fill Q, dispatch fexchange0.
     ///   - `samples != nullptr && frames != m_inputBufferSize`  →  contract
     ///     violation: log a qCWarning and return without dispatching.
     ///     The block-size invariant matches Thetis cmaster.c:460-487
     ///     [v2.10.3.13] — `r1_outsize == xcm_insize == in_size` end-to-end
-    ///     (NereusSDR uses 256, dictated by WDSP r2-ring divisibility).
+    ///     (NereusSDR uses 64 in v3, dictated by Thetis getbuffsize(48000)
+    ///     parity at cmsetup.c:106-110 [v2.10.3.13]).
     ///
     /// **Thread affinity:** runs on the TxChannel's current thread.
-    /// TxWorkerThread invokes this directly (same-thread dispatch — no
-    /// Qt connection involved), so the call is synchronous on the worker.
     /// !m_running and !m_connection short-circuit the slot to a no-op.
     void driveOneTxBlock(const float* samples, int frames);
 
     /// Drive one fexchange0 cycle from a pre-populated interleaved I/Q
-    /// double buffer.  Phase 3M-1c TX pump v3 callsite: TxWorkerThread
-    /// hands this method the buffer it just drained from TxMicSource.
+    /// double buffer.  Phase 3M-1c TX pump v3 production callsite:
+    /// TxWorkerThread::dispatchOneBlock hands this method the buffer it
+    /// just drained from TxMicSource (one block of m_inputBufferSize
+    /// pairs == 2*m_inputBufferSize doubles).
     ///
     /// `interleavedIn` MUST point to 2 * m_inputBufferSize doubles
     /// (interleaved I0,Q0,I1,Q1,…) — passing a smaller buffer is UB.
     /// nullptr is treated as the silence path: m_in is zero-filled and
     /// fexchange0 is dispatched (TUN PostGen still produces clean carrier).
+    ///
+    /// Mirrors Thetis cmaster.c:389 [v2.10.3.13]:
+    ///   fexchange0 (chid (stream, 0), pcm->in[stream],
+    ///               pcm->xmtr[tx].out[0], &error);
     void driveOneTxBlockFromInterleaved(const double* interleavedIn);
 
 signals:

@@ -473,14 +473,17 @@ TxChannel* WdspEngine::createTxChannel(int channelId,
     // C++ facade.  unique_ptr destructor handles cleanup automatically on erase().
     //
     // Bench fix round 3 (Issue A): pass inputBufferSize and outputBufferSize so
-    // TxChannel sizes its fexchange2 buffers correctly.
+    // TxChannel sizes its fexchange0 buffers correctly.  (3M-1c TX pump v3
+    // changed the production callsite from fexchange2 → fexchange0; the
+    // sizing math is identical, only the buffer layout differs.)
     //   outputBufferSize = inputBufferSize × outputSampleRate / inputSampleRate
-    // At 48 kHz in / 48 kHz out (P1/HL2): 256 × 1 = 256.
-    // At 48 kHz in / 192 kHz out (P2 Saturn): 256 × 4 = 1024.
+    // At 48 kHz in / 48 kHz out (P1/HL2): 64 × 1 = 64.
+    // At 48 kHz in / 192 kHz out (P2 Saturn): 64 × 4 = 256.
     //
-    // Integer multiply-then-divide is safe here: inputBufferSize (256) × outputSampleRate
-    // (192000 max) = 49,152,000 — well within int32 range.
+    // Integer multiply-then-divide is safe here: inputBufferSize (64) × outputSampleRate
+    // (192000 max) = 12,288,000 — well within int32 range.
     // From Thetis wdsp/cmaster.c:179-183 [v2.10.3.13] — in_size / ch_outrate.
+    // From Thetis wdsp/cmsetup.c:106-110 [v2.10.3.13] — getbuffsize(48000)==64.
     const int outputBufferSize = inputBufferSize * outputSampleRate / inputSampleRate;
     auto wrapper = std::make_unique<TxChannel>(channelId, inputBufferSize, outputBufferSize, this);
     TxChannel* raw = wrapper.get();

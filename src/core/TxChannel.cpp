@@ -144,6 +144,13 @@ warren@wpratt.com
 //                 this class protects unit-test builds that link WDSP but
 //                 don't call OpenChannel.  AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-04-29 — Stage-2 review fix I1 — refreshed v2-era doc comments
+//                 (fexchange2 / 256-block / 5 ms cadence / kPumpIntervalMs /
+//                 onPumpTick / QTimer references) to reflect the v3
+//                 redesign (fexchange0 / 64-block / semaphore-wake /
+//                 TxMicSource-driven cadence).  No behavioural change;
+//                 documentation refresh only.  J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -156,8 +163,11 @@ warren@wpratt.com
 #include <cstring>
 #include <stdexcept>
 
-// WDSP API declarations (SetTXAPostGen*, fexchange2, etc.) — guarded by
-// HAVE_WDSP internally.  Include unconditionally; the header guards itself.
+// WDSP API declarations (SetTXAPostGen*, fexchange0, fexchange2, etc.) —
+// guarded by HAVE_WDSP internally.  Include unconditionally; the header
+// guards itself.  v3 callsites use fexchange0; v2 used fexchange2.  Both
+// are still in scope because the legacy driveOneTxBlock(float*, int)
+// overload + tests retain coverage.
 #include "wdsp_api.h"
 
 // Direct WDSP struct access for stage-Run introspection.
@@ -192,16 +202,21 @@ namespace NereusSDR {
 // by OpenChannel(... type=1 ...) in WdspEngine::createTxChannel() before
 // this constructor runs.
 //
-// inputBufferSize:  fexchange2 Iin/Qin size == OpenChannel in_size (default 256).
-// outputBufferSize: fexchange2 Iout/Qout size == in_size × out_rate / in_rate.
-//   At 48 kHz out: 256.  At 192 kHz out (P2 Saturn): 256 × 4 = 1024.
+// inputBufferSize:  fexchange0 in/out pairs == OpenChannel in_size (default 64
+//                   in v3; was 256 in v2 prior to 2026-04-29).
+// outputBufferSize: fexchange0 output pairs == in_size × out_rate / in_rate.
+//   At 48 kHz out: 64.  At 192 kHz out (P2 Saturn): 64 × 4 = 256.
 //
-// CRITICAL: fexchange2 requires Iin/Qin to be exactly in_size samples and
-// Iout/Qout to be exactly out_size samples.  Calling it with wrong-sized
-// buffers (e.g. kTxDspBufferSize = 2048) produces no output (silent error).
+// CRITICAL: fexchange0 requires the in/out buffers to be exactly
+// (in_size × 2) and (out_size × 2) doubles respectively.  Calling it with
+// wrong-sized buffers produces no output (silent error).
+//
+// v3 size of 64 mirrors Thetis getbuffsize(48000) at cmsetup.c:106-110
+// [v2.10.3.13] exactly.
 //
 // From Thetis wdsp/TXA.c:31-479 [v2.10.3.13] — create_txa() signal flow.
 // From Thetis wdsp/cmaster.c:177-190 [v2.10.3.13] — OpenChannel in_size / ch_outrate.
+// From Thetis wdsp/iobuffs.c:464-516 [v2.10.3.13] — fexchange0 prototype.
 // ---------------------------------------------------------------------------
 TxChannel::TxChannel(int channelId,
                      int inputBufferSize,
@@ -229,16 +244,25 @@ TxChannel::TxChannel(int channelId,
     m_outInterleavedFloat.assign(static_cast<size_t>(m_outputBufferSize) * 2, 0.0f);
     m_outIFloatScratch.assign(static_cast<size_t>(m_outputBufferSize), 0.0f);
 
-    // Phase 3M-1c TX pump architecture redesign (2026-04-29): no QTimer.
-    // TxWorkerThread::onPumpTick calls driveOneTxBlock at ~5 ms cadence
-    // (kPumpIntervalMs) with kBlockFrames=256-sample buffers.  When
-    // AudioEngine::pullTxMic returns < 256 samples the worker zero-fills
-    // the gap, so silence "falls out for free" (TUN PostGen output still
-    // produces clean carrier; SSB with no mic produces silent).  Replaces
-    // the deleted D.1 720-sample accumulator + E.1 push slot + L.4
-    // MicReBlocker + bench-fix-A AudioEngine pump + bench-fix-B
-    // TxChannel silence timer.  Plan:
-    //   docs/architecture/phase3m-1c-tx-pump-architecture-plan.md
+    // Phase 3M-1c TX pump v3 (2026-04-29): semaphore-wake.  No QTimer.
+    // TxWorkerThread::run blocks on TxMicSource::waitForBlock; the
+    // radio's mic-frame stream IS the cadence source — at 48 kHz mic
+    // rate with 64-frame blocks the loop wakes every ~1.33 ms and runs
+    // fexchange0 once per drained block.  Block size is 64 frames
+    // end-to-end (Thetis getbuffsize(48000) parity at cmsetup.c:106-110
+    // [v2.10.3.13]).  PC mic override splices PC samples on top of the
+    // radio mic per Thetis cmaster.c:379 [v2.10.3.13]
+    // (asioIN(pcm->in[stream]) pattern).
+    //
+    // Replaces the deleted D.1 720-sample accumulator + E.1 push slot +
+    // L.4 MicReBlocker + bench-fix-A AudioEngine pump + bench-fix-B
+    // TxChannel silence timer (all part of the v2 design that was
+    // scrapped 2026-04-29 in favour of the Thetis-faithful semaphore-
+    // wake architecture).  v2-history: the previous attempt drove
+    // driveOneTxBlock at a 5 ms QTimer cadence with 256-sample blocks
+    // and zero-fill on partial pull — superseded.
+    //
+    // Plan: docs/architecture/phase3m-1c-tx-pump-architecture-plan.md
 
     qCInfo(lcDsp) << "TxChannel" << m_channelId
                   << "wrapper constructed; WDSP TXA pipeline (31 stages)"
@@ -531,14 +555,16 @@ void TxChannel::setTuneTone(bool on, double freqHz, double magnitude)
 // ---------------------------------------------------------------------------
 void TxChannel::setRunning(bool on)
 {
-    // Update the run-state atomic.  Phase 3M-1c TX pump architecture
-    // redesign: TxWorkerThread::onPumpTick calls driveOneTxBlock
-    // unconditionally at ~5 ms; driveOneTxBlock early-returns on
-    // !m_running, so toggling this flag is sufficient to gate
-    // fexchange2.  No timer to start/stop here — the worker thread's
-    // pump runs as long as the worker is running, and the
-    // !m_running guard handles RX↔TX transitions.  release ordering
-    // pairs with driveOneTxBlock's acquire load.
+    // Update the run-state atomic.  Phase 3M-1c TX pump v3:
+    // TxWorkerThread::run drains a block from TxMicSource at the radio's
+    // natural mic-frame cadence (~1.33 ms per 64-frame block at 48 kHz)
+    // and calls driveOneTxBlockFromInterleaved unconditionally;
+    // driveOneTxBlockFromInterleaved early-returns on !m_running, so
+    // toggling this flag is sufficient to gate fexchange0.  No timer to
+    // start/stop here — the worker runs as long as TxMicSource is
+    // running, and the !m_running guard handles RX↔TX transitions.
+    // release ordering pairs with driveOneTxBlockFromInterleaved's
+    // acquire load.
     m_running.store(on, std::memory_order_release);
 
     qCDebug(lcDsp) << "TxChannel" << m_channelId
