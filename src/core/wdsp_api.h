@@ -701,6 +701,29 @@ void SetTXAAMSQRun(int channel, int run);
 // From Thetis wdsp/eq.c:742-747 [v2.10.3.13].
 void SetTXAEQRun(int channel, int run);
 
+// TX EQ DSP-tier setters — Phase 3M-3a-i Task B-1.
+// These reallocate the EQ impulse response and (eq.c:750-828 [v2.10.3.13])
+// are NOT csDSP-protected; call only from the main thread.  See TxChannel.h
+// wrapper docs for the threading rationale.
+//
+// From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC (filter coefficients).
+void SetTXAEQNC(int channel, int nc);
+// From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP (minimum-phase flag).
+void SetTXAEQMP(int channel, int mp);
+// From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile.
+//   F[0..nfreqs] freqs Hz (F[0] unused / preamp pad)
+//   G[0..nfreqs] gains dB (G[0] = preamp)
+//   Q == NULL for graphic EQ (Thetis 10-band path).
+void SetTXAEQProfile(int channel, int nfreqs, double* F, double* G, double* Q);
+// From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode.
+void SetTXAEQCtfmode(int channel, int mode);
+// From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype.
+void SetTXAEQWintype(int channel, int wintype);
+// From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10
+//   (10-band graphic EQ; txeq[0]=preamp dB, txeq[1..10]=band gains dB
+//    at fixed centers 32/63/125/250/500/1k/2k/4k/8k/16k Hz).
+void SetTXAGrphEQ10(int channel, int* txeq);
+
 // compressor (stage 14): TX speech compressor (COMP).
 // Also adjusts bp1/bp2 bandpass routing via TXASetupBPFilters().
 // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] and compress.h:60.

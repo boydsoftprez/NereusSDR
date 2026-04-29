@@ -1713,6 +1713,20 @@ target_compile_definitions(tst_tx_channel_no_zero_fill PRIVATE NEREUS_BUILD_TEST
 # (15 individual private-slot test methods total.)
 nereus_add_test(tst_tx_channel_tx_post_gen_setters)
 
+# ── Phase 3M-3a-i Task B-1: TxChannel TX EQ wrappers ───────────────────────
+# Plan: 3M-3a-i Batch 1 Task B-1 — 7 TX EQ wrapper setters (Run / Graph10 /
+# Profile / Nc / Mp / Ctfmode / Wintype) on top of WDSP eq.c [v2.10.3.13].
+# Test strategy: pure smoke / does-not-crash, matching tst_tx_channel_tx_post_gen_setters
+# convention.  Default-constructed TxChannel falls through the rsmpin.p==nullptr
+# null-guard for WDSP-linked builds; HAVE_WDSP-undefined builds exercise the stub.
+nereus_add_test(tst_tx_channel_eq_setters)
+
+# ── Phase 3M-3a-i Task B-2: TxChannel Leveler/ALC wrappers ─────────────────
+# Plan: 3M-3a-i Batch 1 Task B-2 — 5 wrappers (Leveler Run/Top/Decay,
+# ALC MaxGain/Decay) over wcpAGC.c [v2.10.3.13] + Stage::Leveler / Stage::Alc
+# cases added to setStageRunning.  Same does-not-crash strategy as B-1.
+nereus_add_test(tst_tx_channel_leveler_alc_setters)
+
 # Plan: 3M-1b E.2. Exercises AudioEngine TX monitor enable + volume state
 # (setTxMonitorEnabled / setTxMonitorVolume / signals / clamping / idempotency).
 # Pre-code review §4.4.

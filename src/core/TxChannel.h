@@ -179,6 +179,7 @@ warren@wpratt.com
 
 #include <QObject>
 
+#include <array>    // std::array — TX EQ 10-band graphic vector (3M-3a-i B-1)
 #include <atomic>   // std::atomic<bool> — m_running cross-thread mirror (3M-1c TxWorkerThread)
 #include <limits>   // std::numeric_limits — quiet_NaN() initialiser (D.3)
 #include <vector>
@@ -890,6 +891,201 @@ public:
     /// 'virtual' for the I.1 TwoToneController test seam.
     virtual void setTxPostGenRun(bool on);
 
+    // ── TX EQ wrappers (3M-3a-i Task B-1) ───────────────────────────────────
+    //
+    // Seven thin wrappers over the WDSP `SetTXAEQ*` family that drives the
+    // eqp (TXA stage 6) parametric / graphic equalizer.  Phase 3M-3a-i UI
+    // batches will wire these into the Setup → DSP → EQ page; this batch
+    // ships the DSP plumbing only.
+    //
+    // Threading: the Run wrapper (setTxEqRunning → SetTXAEQRun) is csDSP-
+    // protected (eq.c:742-747 [v2.10.3.13]) and therefore audio-safe to
+    // call from the main thread at any time.  All other wrappers
+    // (Graph10 / Profile / Nc / Mp / Ctfmode / Wintype) reallocate the EQ
+    // impulse-response and are NOT csDSP-protected; per Thetis precedent
+    // (setup.cs handlers run on the form's UI thread) they are safe only
+    // from the main thread.  The audio thread sees a momentary tear if
+    // the call lands mid-block — Thetis lives with this; NereusSDR
+    // mirrors the policy.
+    //
+    // 3M-3a-i Batch 1 ships the DSP wrappers only.  Phase 3M-3a-i Batch 2+
+    // wires TransmitModel signals into these via RadioModel.
+
+    /// TX EQ run gate.
+    ///
+    /// Wraps SetTXAEQRun(channel, on ? 1 : 0).  Equivalent to
+    /// setStageRunning(Stage::Eqp, on) — provided as a convenience and for
+    /// the 3M-3a-i UI batch which calls into a per-feature setter API.
+    ///
+    /// From Thetis wdsp/eq.c:742-747 [v2.10.3.13] — SetTXAEQRun impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis radio.cs TXEQRun setter (txa[].eqp.run gate via WDSP).
+    void setTxEqRunning(bool on);
+
+    /// TX EQ — 10-band graphic EQ shape.
+    ///
+    /// Wraps SetTXAGrphEQ10(channel, txeq[]).  preampPlus10Bands[0] is the
+    /// preamp gain (dB); preampPlus10Bands[1..10] are the 10 band gains
+    /// (dB) at the WDSP-fixed band centers
+    /// 32 / 63 / 125 / 250 / 500 / 1k / 2k / 4k / 8k / 16k Hz.
+    ///
+    /// SetTXAGrphEQ10 reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10 impl.
+    /// From Thetis wdsp/TXA.c:112-113 [v2.10.3.13] — default_F / default_G
+    ///   define the band centers and Thetis's factory G-shape.
+    void setTxEqGraph10(const std::array<int, 11>& preampPlus10Bands);
+
+    /// TX EQ — full custom-frequency profile path.
+    ///
+    /// Wraps SetTXAEQProfile(channel, 10, F[11], G[11], NULL).  Used when
+    /// the user moves the per-band frequency sliders so the bands no
+    /// longer sit at the WDSP-fixed centers used by setTxEqGraph10.
+    ///
+    /// freqs10 must contain exactly 10 band-center frequencies (Hz).
+    /// gains11 must contain exactly 11 entries (gains11[0] = preamp dB,
+    /// gains11[1..10] = band gains dB).  Both vectors are validated;
+    /// size mismatches log a qCWarning and the call early-returns.
+    ///
+    /// Internally builds F[11] = {0.0, freqs10[0..9]} (F[0] is the
+    /// WDSP-padding slot — Thetis SetTXAEQProfile expects a 1-indexed
+    /// vector with [0] unused) and G[11] = {gains11[0..10]}.  Q is NULL
+    /// for graphic-EQ-style usage (Thetis never passes a Q vector through
+    /// the 10-band UI).
+    ///
+    /// SetTXAEQProfile reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile impl.
+    /// From Thetis wdsp/TXA.c:112-127 [v2.10.3.13] — create_eqp call shape
+    ///   showing F[0..nfreqs] / G[0..nfreqs] / Q=NULL convention.
+    void setTxEqProfile(const std::vector<double>& freqs10,
+                        const std::vector<double>& gains11);
+
+    /// TX EQ — filter coefficient count.
+    ///
+    /// Wraps SetTXAEQNC(channel, nc).  Default 2048 per WDSP create_eqp
+    /// call (TXA.c:118 [v2.10.3.13]: max(2048, ch[].dsp_size)).
+    ///
+    /// SetTXAEQNC reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC impl
+    ///   (csDSP-protected, but allocates impulse — main-thread only).
+    void setTxEqNc(int nc);
+
+    /// TX EQ — minimum-phase flag.
+    ///
+    /// Wraps SetTXAEQMP(channel, mp ? 1 : 0).
+    ///
+    /// SetTXAEQMP reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP impl
+    ///   (no csDSP — main-thread only).
+    void setTxEqMp(bool mp);
+
+    /// TX EQ — cutoff/transition mode.
+    ///
+    /// Wraps SetTXAEQCtfmode(channel, mode).
+    ///
+    /// SetTXAEQCtfmode reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode impl
+    ///   (no csDSP — main-thread only).
+    void setTxEqCtfmode(int mode);
+
+    /// TX EQ — window type.
+    ///
+    /// Wraps SetTXAEQWintype(channel, wintype).
+    ///
+    /// SetTXAEQWintype reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype impl
+    ///   (no csDSP — main-thread only).
+    void setTxEqWintype(int wintype);
+
+    // ── TX Leveler / ALC wrappers (3M-3a-i Task B-2) ────────────────────────
+    //
+    // Six thin wrappers over the WDSP `SetTXALeveler*` and `SetTXAALC*`
+    // families.  Leveler is TXA stage 9 (slow speech-leveling AGC,
+    // wcpAGC mode=5) and ALC is TXA stage 19 (final clip protection,
+    // wcpAGC mode=5 — always-on per Thetis schema, no Run setter exposed
+    // to the user).
+    //
+    // All six setters are csDSP-protected by WDSP (wcpAGC.c:570-650
+    // [v2.10.3.13]) and therefore audio-safe to call from the main thread
+    // at any time.  No shadow atomics needed.
+    //
+    // ALC Run is locked-on in Thetis (no chkALCEnabled checkbox in the
+    // Setup UI; WdspEngine boot sets SetTXAALCSt(1) at WdspEngine.cpp:438).
+    // We deliberately do NOT expose a setTxAlcOn wrapper.
+
+    /// TX Leveler run gate.
+    ///
+    /// Wraps SetTXALevelerSt(channel, on ? 1 : 0).
+    ///
+    /// From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13] — SetTXALevelerSt impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9108-9123 [v2.10.3.13] — chkDSPLevelerEnabled_CheckedChanged
+    ///   handler that wires through to TXLevelerOn → SetTXALevelerSt.
+    void setTxLevelerOn(bool on);
+
+    /// TX Leveler max-gain (Top) in dB.
+    ///
+    /// Wraps SetTXALevelerTop(channel, dB).  WDSP converts to linear
+    /// internally via pow(10, dB/20.0); we pass dB straight per the Thetis
+    /// radio.cs TXLevelerMaxGain setter pattern.
+    ///
+    /// Thetis Designer range: 0..20 dB (setup.Designer.cs:38718-38738
+    ///   [v2.10.3.13] — udDSPLevelerThreshold).  Default 15 dB.
+    ///
+    /// From Thetis wdsp/wcpAGC.c:647-650 [v2.10.3.13] — SetTXALevelerTop impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9095-9099 [v2.10.3.13] — udDSPLevelerThreshold_ValueChanged
+    ///   handler routes through TXLevelerMaxGain → SetTXALevelerTop.
+    void setTxLevelerTopDb(double dB);
+
+    /// TX Leveler decay time-constant in milliseconds.
+    ///
+    /// Wraps SetTXALevelerDecay(channel, ms).  Thetis stores the value as
+    /// ms / 1000.0 sec inside WDSP; the setter takes the raw int ms.
+    ///
+    /// Thetis Designer range: 1..5000 ms (setup.Designer.cs:38744-38772
+    ///   [v2.10.3.13] — udDSPLevelerDecay).  Default 100 ms.
+    ///
+    /// From Thetis wdsp/wcpAGC.c:629-635 [v2.10.3.13] — SetTXALevelerDecay impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9101-9105 [v2.10.3.13] — udDSPLevelerDecay_ValueChanged
+    ///   handler routes through TXLevelerDecay → SetTXALevelerDecay.
+    void setTxLevelerDecayMs(int ms);
+
+    /// TX ALC max-gain in dB.
+    ///
+    /// Wraps SetTXAALCMaxGain(channel, dB).  WDSP converts to linear
+    /// internally via pow(10, dB/20.0); we pass dB straight per the Thetis
+    /// setup.cs handler pattern (setup.cs:9132).
+    ///
+    /// Thetis Designer range: 0..120 dB (setup.Designer.cs:38814-38833
+    ///   [v2.10.3.13] — udDSPALCMaximumGain).  Default 3 dB
+    ///   (database.cs:4592 [v2.10.3.13] — TXProfile ALC_MaximumGain).
+    ///
+    /// From Thetis wdsp/wcpAGC.c:603-610 [v2.10.3.13] — SetTXAALCMaxGain impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9129-9134 [v2.10.3.13] — udDSPALCMaximumGain_ValueChanged
+    ///   handler calls SetTXAALCMaxGain directly (no radio.cs property hop).
+    void setTxAlcMaxGainDb(double dB);
+
+    /// TX ALC decay time-constant in milliseconds.
+    ///
+    /// Wraps SetTXAALCDecay(channel, ms).
+    ///
+    /// Thetis Designer range: 1..50 ms (setup.Designer.cs:38845-38866
+    ///   [v2.10.3.13] — udDSPALCDecay).  Default 10 ms.
+    ///
+    /// From Thetis wdsp/wcpAGC.c:585-592 [v2.10.3.13] — SetTXAALCDecay impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged
+    ///   handler routes through TXALCDecay → SetTXAALCDecay.
+    void setTxAlcDecayMs(int ms);
+
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //
     // Activate or deactivate a single TXA pipeline stage by name.
@@ -911,6 +1107,8 @@ public:
     //   OsCtrl      → SetTXAosctrlRun        (osctrl.c:142-147)
     //   Cfir        → SetTXACFIRRun          (cfir.c:233-238)
     //   CfComp      → SetTXACFCOMPRun        (cfcomp.c:632-637)
+    //   Leveler     → SetTXALevelerSt        (wcpAGC.c:613-618) [3M-3a-i B-2]
+    //   Alc         → SetTXAALCSt            (wcpAGC.c:570-575) [3M-3a-i B-2]
     //
     // Unsupported stages (no public WDSP Run API, or managed internally):
     //   RsmpIn / RsmpOut: run managed by TXAResCheck() — not externally settable.
