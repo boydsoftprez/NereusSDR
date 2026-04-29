@@ -301,14 +301,6 @@ public:
     /// Thetis cmaster.c:379 [v2.10.3.13].
     bool isPcMicOverrideActive() const noexcept;
 
-public slots:
-    /// Phase 3M-1c TX pump v3 — slot wired by RadioModel to
-    /// TransmitModel::micSourceChanged.  Updates m_micSourceWantsPc.
-    /// `selectedSourceIsPc == true` means the user picked PC mic.
-    void onMicSourceChanged(bool selectedSourceIsPc);
-
-public:
-
     // Master volume (0.0–1.0). Read on the DSP thread, written on the
     // main thread. Preserves the existing AF-gain wiring in
     // RadioModel::wireSliceSignals.
@@ -433,6 +425,12 @@ public:
     // that if they want a live-switch.
     void rescanLinuxBackend();
 #endif
+
+public slots:
+    /// Phase 3M-1c TX pump v3 — slot wired by RadioModel to
+    /// TransmitModel::micSourceChanged.  Updates m_micSourceWantsPc.
+    /// `selectedSourceIsPc == true` means the user picked PC mic.
+    void onMicSourceChanged(bool selectedSourceIsPc);
 
 signals:
     void volumeChanged(float volume);
