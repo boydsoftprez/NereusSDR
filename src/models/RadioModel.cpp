@@ -3058,11 +3058,40 @@ void RadioModel::teardownConnection()
     // Phase 3M-1c TX pump v3: drop the connection's view of the mic
     // source BEFORE destroying it.  Otherwise the next inbound mic
     // frame would dereference a freed TxMicSource.
+    //
+    // Codex P1 fix (PR #152): `setTxMicSource` is a connection-thread
+    // operation (per the I3 caller-contract comment in P1/P2
+    // RadioConnection::setTxMicSource — race-free with the connection-
+    // thread reads in onReadyRead / onWatchdogTick / decodeMicFrame132
+    // ONLY when invoked on the connection's affinity thread).  At
+    // teardown, the connection has long since been moveToThread'd to
+    // m_connThread (RadioModel.cpp:1842), so we must marshal the call
+    // there.  BlockingQueuedConnection ensures the detach completes
+    // before we proceed to `m_txMicSource->stop() + reset()` below —
+    // without blocking, a queued lambda would still hold a TxMicSource*
+    // when we destroy the source object.
     if (m_connection != nullptr) {
-        if (auto* p1 = qobject_cast<P1RadioConnection*>(m_connection)) {
-            p1->setTxMicSource(nullptr);
-        } else if (auto* p2 = qobject_cast<P2RadioConnection*>(m_connection)) {
-            p2->setTxMicSource(nullptr);
+        auto* const conn = m_connection;
+        auto detachMicSource = [conn]() {
+            if (auto* p1 = qobject_cast<P1RadioConnection*>(conn)) {
+                p1->setTxMicSource(nullptr);
+            } else if (auto* p2 = qobject_cast<P2RadioConnection*>(conn)) {
+                p2->setTxMicSource(nullptr);
+            }
+        };
+        if (conn->thread() == QThread::currentThread()) {
+            // Same-thread fast path — direct call.  This branch fires
+            // when teardownConnection is itself running on the connection
+            // thread (no production callsite today, but the guard is
+            // cheap and keeps the contract explicit).
+            detachMicSource();
+        } else {
+            // Cross-thread — block until the lambda runs on the connection
+            // thread, then return.  Qt requires sender ≠ receiver thread
+            // for BlockingQueuedConnection (asserts otherwise); the
+            // currentThread check above guarantees this precondition.
+            QMetaObject::invokeMethod(conn, detachMicSource,
+                                      Qt::BlockingQueuedConnection);
         }
     }
     if (m_txMicSource) {
