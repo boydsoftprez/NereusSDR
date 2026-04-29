@@ -1727,6 +1727,18 @@ nereus_add_test(tst_tx_channel_eq_setters)
 # cases added to setStageRunning.  Same does-not-crash strategy as B-1.
 nereus_add_test(tst_tx_channel_leveler_alc_setters)
 
+# ── Phase 3M-3a-i Task C: TransmitModel TX EQ + Leveler + ALC properties ──
+# Plan: 3M-3a-i Batch 1 Task C — 28 new properties on TransmitModel:
+#   - 23 TXProfile keys: TXEQEnabled / TXEQNumBands / TXEQPreamp / TXEQ1..10 /
+#     TxEqFreq1..10 / Lev_On / Lev_MaxGain / Lev_Decay / ALC_MaximumGain /
+#     ALC_Decay
+#   - 4 globals (NOT in TXProfile): eq/nc / eq/mp / eq/ctfmode / eq/wintype
+# Tests cover defaults (matching Thetis database.cs:4552-4594 + WDSP TXA.c
+# create_eqp G[]/F[]), signal emission idempotency, range clamping
+# (Designer ranges from setup.Designer.cs), per-MAC AppSettings round-trip,
+# and multi-MAC isolation.
+nereus_add_test(tst_transmit_model_eq_lev_alc)
+
 # Plan: 3M-1b E.2. Exercises AudioEngine TX monitor enable + volume state
 # (setTxMonitorEnabled / setTxMonitorVolume / signals / clamping / idempotency).
 # Pre-code review §4.4.
