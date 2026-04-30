@@ -1498,11 +1498,14 @@ void ParametricEqWidget::drawBarChartData(const QVector<double>& data) {
 
 - [ ] **Step 8: Wire the timer slot in the ctor**
 
-Update the ctor `m_barChartPeakTimer` setup section:
+Task 1 already constructed `m_barChartPeakTimer` with `setInterval(33)`. **Important: Task 1 left `m_barChartPeakLastUpdateMs = 0`** — that's a default-init that was correct for Batch 1 (the field is unread until paint code lands), but if you don't reset it before the first decay pass, the first tick computes a ~58-year time delta. Fix two ways:
+
+- In the ctor (additive): set `m_barChartPeakLastUpdateMs = QDateTime::currentMSecsSinceEpoch();` immediately after the timer construction. Mirrors `ucParametricEq.cs:420` (`_bar_chart_peak_last_update_utc = DateTime.UtcNow`).
+- AND in `drawBarChartData()` first-data path: re-init when `resetPeaks` is true (already in the port at Step 7 — verify).
+
+Then connect the slot:
 
 ```cpp
-    m_barChartPeakTimer = new QTimer(this);
-    m_barChartPeakTimer->setInterval(33);
     connect(m_barChartPeakTimer, &QTimer::timeout, this, [this]() {
         // From Thetis ucParametricEq.cs:2751-2767 [v2.10.3.13] — barChartPeakTimer_Tick.
         if (m_barChartData.isEmpty()) {
@@ -1914,6 +1917,8 @@ Each setter follows the pattern: validate → early-return if no change → assi
 
 - [ ] **Step 3: Implement JSON marshal helpers using QJsonDocument**
 
+**Critical serialization contract** (carried across Tasks 1 + 5): `EqJsonState::points` is typed `QVector<EqPoint>` for in-memory simplicity, but `EqPoint` carries `bandId` and `bandColor` fields that **MUST NOT serialize to JSON**. Thetis's `EqJsonPoint` (cs:242-252) only carries `frequency_hz` / `gain_db` / `q`. Mirror this exactly: when writing JSON, pull only `frequencyHz` / `gainDb` / `q` per point. When reading, ignore any extra fields. The serializer below already does this; do not "helpfully" add `bandId`/`bandColor` to the JSON output — that breaks Thetis round-trip compatibility (Q5 of the brainstorm decided this).
+
 Snake_case mapping. Round-trip pinned via tests against captured-from-Thetis fixture strings.
 
 ```cpp
@@ -1927,6 +1932,8 @@ QString ParametricEqWidget::saveToJson() const {
     root["frequency_max_hz"] = qRound(m_frequencyMaxHz * 1000.0) / 1000.0;
     QJsonArray pts;
     for (const auto& p : m_points) {
+        // ONLY frequency_hz / gain_db / q — skip bandId/bandColor per Thetis EqJsonPoint
+        // (ucParametricEq.cs:242-252 [v2.10.3.13]).
         QJsonObject jp;
         jp["frequency_hz"] = qRound(p.frequencyHz * 1000.0) / 1000.0;
         jp["gain_db"]      = qRound(p.gainDb * 10.0) / 10.0;
