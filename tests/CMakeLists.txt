@@ -1022,6 +1022,13 @@ nereus_add_test(tst_phone_applet_mic_level_gauge)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_vox_toggle)
 
+# ── Phase 3M-3a-i Batch 2 Task F: TxApplet LEV / EQ / PROC quick toggles ────
+# Verifies the row of 3 checkable buttons inserted between MON volume and
+# TUNE/MOX: LEV/EQ are bidirectional with TransmitModel.txLevelerOn /
+# .txEqEnabled (objectNames: TxLevButton, TxEqButton); PROC is a disabled
+# placeholder for 3M-3a-ii (objectName: TxProcButton).
+nereus_add_test(tst_tx_applet_lev_eq_proc)
+
 # ── Phase 3M-1b J.3: TxApplet MON toggle + monitor volume slider + mic-source badge ──
 # Verifies the model-layer contracts that TxApplet's MON button, monitor volume
 # slider, and mic-source badge depend on:

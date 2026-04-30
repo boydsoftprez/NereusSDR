@@ -257,6 +257,14 @@ private:
     //     Default 50 (matches model default 0.5f from Thetis audio.cs:417).
     QSlider*     m_monitorVolumeSlider = nullptr;
     QLabel*      m_monitorVolumeValue  = nullptr;
+    // 4e. TX-processing quick toggles (3M-3a-i Batch 2 Task F) — row of 3
+    //     LEV: bidirectional ↔ TransmitModel.txLevelerOn (green-checked style)
+    //     EQ:  bidirectional ↔ TransmitModel.txEqEnabled (green-checked style)
+    //          right-click reserved for TxEqDialog (lands in 3M-3a-i Batch 3)
+    //     PROC: disabled placeholder per master design §7.1 (3M-3a-ii)
+    QPushButton* m_levBtn     = nullptr;
+    QPushButton* m_eqBtn      = nullptr;
+    QPushButton* m_procBtn    = nullptr;
     // 5. MOX
     QPushButton* m_moxBtn     = nullptr;
     // 6. TUNE
