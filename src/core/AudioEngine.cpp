@@ -1405,4 +1405,41 @@ void AudioEngine::resetAudioSettings()
     qCInfo(lcAudio) << "Audio settings reset to defaults (all audio/* keys cleared)";
 }
 
+// ---------------------------------------------------------------------------
+// Flow-state FSM (sub-PR-2 B.4)
+//
+// Tracks the audio pipeline health for the ConnectionSegment ♪ pip.
+// Production wiring of QAudioSink::stateChanged → setFlowState lands with
+// the segment integration in sub-PR-4 / D.2.
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setFlowState(FlowState s)
+{
+    if (m_flowState == s) { return; }
+    m_flowState = s;
+    emit flowStateChanged(s);
+}
+
+void AudioEngine::simulateSuccessfulFeed()
+{
+    m_successiveUnderruns = 0;
+    setFlowState(FlowState::Healthy);
+}
+
+void AudioEngine::simulateUnderrun()
+{
+    m_successiveUnderruns++;
+    if (m_successiveUnderruns >= 3) {
+        setFlowState(FlowState::Stalled);
+    } else {
+        setFlowState(FlowState::Underrun);
+    }
+}
+
+void AudioEngine::simulatePersistentUnderrun()
+{
+    m_successiveUnderruns = 3;
+    setFlowState(FlowState::Stalled);
+}
+
 } // namespace NereusSDR

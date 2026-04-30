@@ -155,6 +155,31 @@ public:
     explicit AudioEngine(QObject* parent = nullptr);
     ~AudioEngine() override;
 
+    // Audio pipeline health state — driven by the flow-state FSM.
+    // Healthy  = recent successful feed (DSP audio is flowing).
+    // Underrun = single-cycle audio dip (< 3 successive underruns).
+    // Stalled  = ≥ 3 successive underruns (needs attention).
+    // Dead     = sink not initialised (no audio device opened).
+    // Drives the ConnectionSegment ♪ pip status indicator (sub-PR-2 B.4).
+    enum class FlowState {
+        Healthy,
+        Underrun,
+        Stalled,
+        Dead,
+    };
+    Q_ENUM(FlowState)
+
+    FlowState flowState() const noexcept { return m_flowState; }
+
+    // Test hooks — drive the flow-state FSM without a real QAudioSink.
+    // Production code calls the equivalent private state-machine methods
+    // (or will be wired in sub-PR-4 when the segment integration lands).
+    // TODO(sub-pr-4): wire QAudioSink::stateChanged → setFlowState for
+    //   production path when the segment integration in sub-PR-4 / D.2 lands.
+    void simulateSuccessfulFeed();
+    void simulateUnderrun();
+    void simulatePersistentUnderrun();
+
     // Non-owning back-pointer so rxBlockReady can look up the active
     // SliceModel to read mute / VAX-channel state. Null is safe (unit
     // tests that construct AudioEngine without a RadioModel): rxBlockReady
@@ -433,6 +458,12 @@ public slots:
     void onMicSourceChanged(bool selectedSourceIsPc);
 
 signals:
+    // Emitted when the audio pipeline health state changes.
+    // Drives the ConnectionSegment ♪ pip status indicator (sub-PR-2 B.4).
+    // Production wiring of QAudioSink::stateChanged → setFlowState
+    // lands with the segment integration in sub-PR-4 / D.2.
+    void flowStateChanged(NereusSDR::AudioEngine::FlowState state);
+
     void volumeChanged(float volume);
     void masterMutedChanged(bool muted);
     // Plan: 3M-1b E.2. Pre-code review §4.4.
@@ -606,6 +637,11 @@ private:
     // in Phase 3M (TxChannel). Kept here so the VaxApplet tx slider has
     // a setter to bind to today.
     std::atomic<float> m_vaxTxGain{1.0f};
+
+    // Flow-state FSM (sub-PR-2 B.4).
+    void setFlowState(FlowState s);
+    FlowState m_flowState{FlowState::Dead};
+    int       m_successiveUnderruns{0};
 
     // Was Pa_Initialize() actually successful? Guards the matching
     // Pa_Terminate() in the destructor so unit tests that construct

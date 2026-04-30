@@ -2397,3 +2397,8 @@ nereus_add_test(tst_radio_connection_ping_rtt)
 # ── Shell-Chrome Redesign sub-PR-2: voltage signals ───────────────────────
 # 3 tests: PSU Hermes-DC formula, MKII PA formula, identical-raw suppression.
 nereus_add_test(tst_radio_connection_supply_volts)
+
+# ── Shell-Chrome Redesign sub-PR-2: AudioEngine flow state ────────────────
+# 5 tests: initial Dead, Healthy on feed, Underrun on single, Stalled on
+# persistent, identical-state suppression.
+nereus_add_test(tst_audio_engine_flow_state)
