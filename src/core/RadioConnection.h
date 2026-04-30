@@ -10,6 +10,8 @@
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
 
+#include <QDateTime>
+#include <QList>
 #include <QObject>
 #include <QVector>
 
@@ -79,6 +81,16 @@ public:
 
     void setHardwareProfile(const HardwareProfile& profile) { m_hardwareProfile = profile; }
     const HardwareProfile& hardwareProfile() const { return m_hardwareProfile; }
+
+    // Rolling-window byte-rate accessors. Returns Mbps over the last
+    // windowMs milliseconds. Used by ConnectionSegment ▲▼ readouts.
+    double txByteRate(int windowMs) const;
+    double rxByteRate(int windowMs) const;
+
+    // Hooks the protocol implementations call on each successful packet.
+    // Public so subclasses (P1/P2) and tests can drive the counter.
+    void recordBytesSent(qint64 n);
+    void recordBytesReceived(qint64 n);
 
 public slots:
     // Must be called on the worker thread after moveToThread().
@@ -437,6 +449,14 @@ signals:
 
     // Radio firmware info received during handshake.
     void firmwareInfoReceived(int version, const QString& details);
+
+private:
+    struct ByteSample { qint64 ms; qint64 bytes; };
+    mutable QList<ByteSample> m_txSamples;
+    mutable QList<ByteSample> m_rxSamples;
+
+    static double rateFromSamples(const QList<ByteSample>& samples, int windowMs);
+    static void   pruneSamples(QList<ByteSample>& samples, qint64 nowMs, int windowMs);
 
 protected:
     void setState(ConnectionState newState);

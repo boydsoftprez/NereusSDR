@@ -1667,6 +1667,9 @@ void P1RadioConnection::onReadyRead()
             // Source: mi0bot bandwidth_monitor.c:74-78 bandwidth_monitor_in() [@c26a8a4]
             if (m_bwMonitor) { m_bwMonitor->recordEp6Bytes(data.size()); }
 
+            // Shell-chrome sub-PR-2 B.1: record ingress bytes for ▼ Mbps readout.
+            recordBytesReceived(static_cast<qint64>(data.size()));
+
             parseEp6Frame(data);
         }
     }
@@ -2053,6 +2056,9 @@ void P1RadioConnection::sendCommandFrame()
     // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
     // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
     if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(pkt.size()); }
+
+    // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
+    recordBytesSent(static_cast<qint64>(pkt.size()));
 }
 
 // ---------------------------------------------------------------------------

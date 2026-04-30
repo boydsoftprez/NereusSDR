@@ -2384,3 +2384,8 @@ nereus_add_test(tst_status_badge)
 # 5 tests: default/setRadioName/empty-name appearance switching, click +
 # right-click signal emission gated on appearance.
 nereus_add_test(tst_station_block)
+
+# ── Shell-Chrome Redesign sub-PR-2: byte-rate counters ────────────────────
+# 4 tests: zero-init, in-window accumulation, out-of-window aging, tx/rx
+# independence. QTEST_APPLESS_MAIN — no QApplication needed.
+nereus_add_test(tst_radio_connection_byte_rates)

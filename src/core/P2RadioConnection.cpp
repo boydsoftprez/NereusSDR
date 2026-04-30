@@ -1268,6 +1268,8 @@ void P2RadioConnection::onReadyRead()
             if (data.size() != 1444) {
                 break;  // check for malformed packet
             }
+            // Shell-chrome sub-PR-2 B.1: record IQ ingress bytes for ▼ Mbps readout.
+            recordBytesReceived(static_cast<qint64>(data.size()));
             int ddc = portIdx - 10;
             processIqPacket(data, ddc);
             break;
@@ -1908,6 +1910,8 @@ void P2RadioConnection::sendCmdHighPriority()
     // sendPacket(listenSock, packetbuf, BUFLEN, prn->base_outbound_port + 3);
     QByteArray pkt(buf, sizeof(buf));
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 3);
+    // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
+    recordBytesSent(static_cast<qint64>(pkt.size()));
 }
 
 void P2RadioConnection::sendCmdRx()
