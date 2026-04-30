@@ -299,6 +299,8 @@ warren@wpratt.com
 #endif
 #include "widgets/MasterOutputWidget.h"
 #include "widgets/StationBlock.h"
+#include "widgets/MetricLabel.h"
+#include "widgets/StatusBadge.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/VirtualCableDetector.h"
@@ -2647,27 +2649,55 @@ void MainWindow::buildStatusBar()
         return w;
     };
 
-    // CAT Serial
+    // CAT Serial — NYI until Phase 3K; kept as static indicator, no live signal
     hbox->addWidget(makeIndicator(QStringLiteral("CAT"), QStringLiteral("Off")));
     hbox->addWidget(makeSep());
 
-    // TCI
+    // TCI — NYI until Phase 3J; kept as static indicator, no live signal
     hbox->addWidget(makeIndicator(QStringLiteral("TCI"), QStringLiteral("Off")));
     hbox->addWidget(makeSep());
 
-    // PA Voltage
-    hbox->addWidget(makeIndicator(QStringLiteral("PA"), QStringLiteral("— V")));
+    // ── sub-PR-8: PSU + PA voltage MetricLabels ───────────────────────────
+    // PSU fires on all radios via RadioConnection::supplyVoltsChanged.
+    // PA (user_adc0) fires only on ORIONMKII / 8000D / 7000DLE via
+    // RadioConnection::userAdc0Changed; hidden by default, shown on first signal.
+    m_psuVoltLabel = new MetricLabel(QStringLiteral("PSU"),
+                                     QStringLiteral("—"), barWidget);
+    hbox->addWidget(m_psuVoltLabel);
+
+    m_paVoltLabel = new MetricLabel(QStringLiteral("PA"),
+                                    QStringLiteral("—"), barWidget);
+    m_paVoltLabel->setVisible(false);   // shown only on radios that report user_adc0
+    hbox->addWidget(m_paVoltLabel);
     hbox->addWidget(makeSep());
 
-    // CPU usage — stacked "CPU: X.X%" / "Mem: —"
-    // Wired to 1.5s QTimer using getrusage (macOS / POSIX).
-    {
-        QWidget* cpuWidget = makeIndicator(
-            QStringLiteral("CPU: —"), QStringLiteral("Mem: —"),
-            &m_cpuTopLabel, &m_cpuBotLabel);
-        cpuWidget->setMinimumWidth(72);
-        hbox->addWidget(cpuWidget);
-    }
+    // Wire voltage signals: re-bind on every new connection, reset on disconnect.
+    connect(m_radioModel, &RadioModel::connectionStateChanged, this,
+            [this](ConnectionState s) {
+        if (s != ConnectionState::Connected) {
+            m_psuVoltLabel->setValue(QStringLiteral("—"));
+            m_paVoltLabel->setVisible(false);
+        }
+        if (auto* conn = m_radioModel->connection()) {
+            // conn is a new object on each reconnect — no deduplication needed.
+            // Qt::UniqueConnection is not supported for lambda connects anyway.
+            connect(conn, &RadioConnection::supplyVoltsChanged, this,
+                    [this](float v) {
+                m_psuVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+            });
+            connect(conn, &RadioConnection::userAdc0Changed, this,
+                    [this](float v) {
+                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+                m_paVoltLabel->setVisible(true);
+            });
+        }
+    });
+
+    // ── sub-PR-8: CPU MetricLabel ─────────────────────────────────────────
+    // Replaces the old stacked "CPU: —" / "Mem: —" makeIndicator pair.
+    m_cpuMetric = new MetricLabel(QStringLiteral("CPU"),
+                                  QStringLiteral("—"), barWidget);
+    hbox->addWidget(m_cpuMetric);
     hbox->addWidget(makeSep());
 
     // ── Phase 3M-0 Task 14: TX Inhibit indicator ─────────────────────────
@@ -2683,25 +2713,43 @@ void MainWindow::buildStatusBar()
     m_txInhibitLabel->setVisible(false);  // hidden until inhibit asserts
     hbox->addWidget(m_txInhibitLabel);
 
-    // ── Phase 3M-0 Task 14: PA Status badge ─────────────────────────────
-    // "PA OK" (green) / "PA FAULT" (red) badge driven by
-    // RadioModel::paTripped(). Default state is OK; setPaTripped() flips
-    // the text, colour, and tooltip. Signal wiring lands in Task 17.
-    m_paStatusBadge = new QLabel(QStringLiteral("PA OK"), barWidget);
+    // ── sub-PR-8: PA Status StatusBadge ──────────────────────────────────
+    // Variant::On (green ✓ PA OK) / Variant::Tx (red ✓ PA FAULT).
+    // Driven by RadioModel::paTripped(); setPaTripped() flips the variant.
+    // Signal wiring lands in Task 17 (same as the original QLabel).
+    m_paStatusBadge = new StatusBadge(barWidget);
     m_paStatusBadge->setObjectName(QStringLiteral("paStatusBadge"));
-    m_paStatusBadge->setStyleSheet(QStringLiteral(
-        "QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+    m_paStatusBadge->setIcon(QStringLiteral("✓"));
+    m_paStatusBadge->setLabel(QStringLiteral("PA"));
+    m_paStatusBadge->setVariant(StatusBadge::Variant::On);
     m_paStatusBadge->setToolTip(tr("PA Status — OK"));
     hbox->addWidget(m_paStatusBadge);
     hbox->addWidget(makeSep());
 
-    // TX indicator — dim red when not transmitting; bright red when TX active (NYI)
-    auto* txLabel = new QLabel(QStringLiteral("TX"), barWidget);
-    txLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: rgba(180,40,40,120); font-weight: bold; font-size: 14px; }"));
-    txLabel->setToolTip(QStringLiteral("Transmit (NYI)"));
-    hbox->addWidget(txLabel);
+    // ── sub-PR-8: Canonical TX StatusBadge ───────────────────────────────
+    // Solid red (Variant::Tx) when MoxController emits moxStateChanged(true).
+    // Dim (Variant::Off) at rest. No flash per design spec.
+    m_txStatusBadge = new StatusBadge(barWidget);
+    m_txStatusBadge->setObjectName(QStringLiteral("txStatusBadge"));
+    m_txStatusBadge->setIcon(QStringLiteral("●"));
+    m_txStatusBadge->setLabel(QStringLiteral("TX"));
+    m_txStatusBadge->setVariant(StatusBadge::Variant::Off);
+    m_txStatusBadge->setToolTip(tr("Receive (MOX off)"));
+    hbox->addWidget(m_txStatusBadge);
     hbox->addWidget(makeSep());
+
+    // Wire TX badge to MoxController. MoxController lives on m_radioModel;
+    // both are created before buildStatusBar() runs.
+    if (MoxController* mox = m_radioModel->moxController()) {
+        // Qt::UniqueConnection is not supported for lambda connects — this
+        // connect runs once at construction so no deduplication is needed.
+        connect(mox, &MoxController::moxStateChanged, this, [this](bool tx) {
+            m_txStatusBadge->setVariant(tx ? StatusBadge::Variant::Tx
+                                           : StatusBadge::Variant::Off);
+            m_txStatusBadge->setToolTip(tx ? tr("Transmitting (MOX engaged)")
+                                           : tr("Receive (MOX off)"));
+        });
+    }
 
     // Time display: stacked UTC + date / local
     // Top row: UTC time (hh:mm:ss UTC)
@@ -2775,9 +2823,9 @@ void MainWindow::buildStatusBar()
         prevSys     = ru.ru_stime;
         prevWallUs  = nowUs;
 
-        if (m_cpuTopLabel) {
-            m_cpuTopLabel->setText(
-                QStringLiteral("CPU: %1%").arg(cpuPct, 0, 'f', 1));
+        if (m_cpuMetric) {
+            m_cpuMetric->setValue(
+                QString::asprintf("%.1f%%", cpuPct));
         }
     });
     m_cpuTimer->start(1500);
@@ -2787,22 +2835,18 @@ void MainWindow::buildStatusBar()
     sb->addWidget(barWidget, 1);
 }
 
-// ── Phase 3M-0 Task 14: PA trip badge update ─────────────────────────────────
+// ── Phase 3M-0 Task 14 / sub-PR-8: PA trip badge update ──────────────────────
 // Called by Task 17 wiring when RadioModel::paTrippedChanged fires.
-// Updates badge text, colour, and tooltip atomically so there is never
-// a state where text and colour are out of sync.
+// Flips the StatusBadge variant (On = green ✓ PA OK; Tx = red ✓ PA FAULT)
+// and updates the tooltip atomically.
 void MainWindow::setPaTripped(bool tripped)
 {
     if (!m_paStatusBadge) { return; }
     if (tripped) {
-        m_paStatusBadge->setText(QStringLiteral("PA FAULT"));
-        m_paStatusBadge->setStyleSheet(QStringLiteral(
-            "QLabel { color: #ff6060; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+        m_paStatusBadge->setVariant(StatusBadge::Variant::Tx);
         m_paStatusBadge->setToolTip(tr("PA Status — FAULT (PA tripped, MOX dropped)"));
     } else {
-        m_paStatusBadge->setText(QStringLiteral("PA OK"));
-        m_paStatusBadge->setStyleSheet(QStringLiteral(
-            "QLabel { color: #60ff60; font-weight: bold; font-size: 11px; padding: 2px 6px; }"));
+        m_paStatusBadge->setVariant(StatusBadge::Variant::On);
         m_paStatusBadge->setToolTip(tr("PA Status — OK"));
     }
 }

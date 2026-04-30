@@ -96,6 +96,8 @@ class TitleBar;
 class VaxFirstRunDialog;
 class RxDashboard;
 class StationBlock;
+class MetricLabel;
+class StatusBadge;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -110,10 +112,10 @@ public:
     // in Task 17 (final integration). Non-null after construction.
     QLabel* txInhibitLabel() const noexcept { return m_txInhibitLabel; }
 
-    // Returns the PA status badge label. Text is "PA OK" (green) or
-    // "PA FAULT" (red) per RadioModel::paTripped(). Wiring to RadioModel
-    // lands in Task 17. Non-null after construction.
-    QLabel* paStatusBadge() const noexcept { return m_paStatusBadge; }
+    // Returns the PA status badge. Variant is On (green) or Tx (red) per
+    // RadioModel::paTripped(). Wiring to RadioModel lands in Task 17.
+    // Non-null after construction.
+    StatusBadge* paStatusBadge() const noexcept { return m_paStatusBadge; }
 
 public slots:
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
@@ -246,19 +248,21 @@ private:
     QAction* m_actManageRadios = nullptr;
     QAction* m_actProtocolInfo = nullptr;
 
-    // Status bar members (Task 13)
-    QLabel*  m_cpuTopLabel{nullptr};   // "CPU: X.X%"
-    QLabel*  m_cpuBotLabel{nullptr};   // "Mem: —"
-    QTimer*  m_cpuTimer{nullptr};
+    // Status bar members (Task 13 / sub-PR-8 restyle)
+    MetricLabel* m_psuVoltLabel{nullptr};   // "PSU  13.8V" — all radios
+    MetricLabel* m_paVoltLabel{nullptr};    // "PA  13.8V"  — ORIONMKII/8000D/7000DLE only
+    MetricLabel* m_cpuMetric{nullptr};      // "CPU  19.1%"
+    QTimer*      m_cpuTimer{nullptr};
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
 
-    // Status bar safety indicators (Phase 3M-0 Task 14)
+    // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle)
     // m_txInhibitLabel — red "TX INHIBIT" pill, hidden by default,
     //   shown when TxInhibitMonitor::inhibited() asserts (wired Task 17).
-    // m_paStatusBadge  — "PA OK" (green) / "PA FAULT" (red) badge driven
-    //   by RadioModel::paTripped() (wired Task 17).
-    QLabel* m_txInhibitLabel{nullptr};
-    QLabel* m_paStatusBadge{nullptr};
+    // m_paStatusBadge  — PA OK (green ✓) / PA FAULT (red ✓) StatusBadge.
+    // m_txStatusBadge  — TX indicator, solid red when MOX engaged.
+    QLabel*      m_txInhibitLabel{nullptr};
+    StatusBadge* m_paStatusBadge{nullptr};
+    StatusBadge* m_txStatusBadge{nullptr};
 
     // Phase 3Q Sub-PR-6 (F.1): RxDashboard — always-visible RX1 glance surface.
     // Replaces the Phase 3Q-7 m_statusConnInfo / m_statusLiveDot strip (those
