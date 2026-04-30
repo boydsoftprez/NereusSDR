@@ -444,12 +444,16 @@ private slots:
         ctrl.setTickTimerEnabled(false);
 
         // Write a distinct value per band.
-        for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+        // Per-band TX ATT is HF amateur + GEN/WWV/XVTR; SWL bands
+        // (Phase 3L Band enum extension) inherit ham values.
+        for (int b = 0; b < static_cast<int>(Band::SwlFirst); ++b) {
             ctrl.setTxAttenuationForBand(static_cast<Band>(b), b);
         }
 
         // Read back and verify.
-        for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+        // Per-band TX ATT is HF amateur + GEN/WWV/XVTR; SWL bands
+        // (Phase 3L Band enum extension) inherit ham values.
+        for (int b = 0; b < static_cast<int>(Band::SwlFirst); ++b) {
             int expected = b;
             int got = ctrl.txAttenuationForBand(static_cast<Band>(b));
             QCOMPARE(got, expected);

@@ -37,7 +37,9 @@ private slots:
 
     void defaultAllBands50W() {
         TransmitModel t;
-        for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+        // Per-band TX power covers HF amateur + GEN/WWV/XVTR (HL2 SWL
+        // bands inherit ham values, so iterate to Band::SwlFirst only).
+        for (int i = 0; i < static_cast<int>(Band::SwlFirst); ++i) {
             QCOMPARE(t.tunePowerForBand(static_cast<Band>(i)), 50);
         }
     }
@@ -54,7 +56,9 @@ private slots:
         TransmitModel t;
         t.setTunePowerForBand(Band::Band20m, 75);
         // Every other band should still be 50W.
-        for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+        // Per-band TX power covers HF amateur + GEN/WWV/XVTR (HL2 SWL
+        // bands inherit ham values, so iterate to Band::SwlFirst only).
+        for (int i = 0; i < static_cast<int>(Band::SwlFirst); ++i) {
             const Band b = static_cast<Band>(i);
             if (b != Band::Band20m) {
                 QCOMPARE(t.tunePowerForBand(b), 50);
@@ -160,7 +164,9 @@ private slots:
         {
             TransmitModel t;
             t.setMacAddress(mac);
-            for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+            // Per-band TX power covers HF amateur + GEN/WWV/XVTR (HL2 SWL
+        // bands inherit ham values, so iterate to Band::SwlFirst only).
+        for (int i = 0; i < static_cast<int>(Band::SwlFirst); ++i) {
                 t.setTunePowerForBand(static_cast<Band>(i), i * 5 % 101);
             }
             t.save();
@@ -169,7 +175,9 @@ private slots:
         TransmitModel t2;
         t2.setMacAddress(mac);
         t2.load();
-        for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+        // Per-band TX power covers HF amateur + GEN/WWV/XVTR (HL2 SWL
+        // bands inherit ham values, so iterate to Band::SwlFirst only).
+        for (int i = 0; i < static_cast<int>(Band::SwlFirst); ++i) {
             QCOMPARE(t2.tunePowerForBand(static_cast<Band>(i)),
                      i * 5 % 101);
         }

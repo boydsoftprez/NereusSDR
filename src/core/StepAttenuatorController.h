@@ -372,7 +372,11 @@ private:
     // Thetis default: 31 dB per band (console.cs:1810 [v2.10.3.13]):
     //   setTXstepAttenuatorForBand((Band)i, 31);
     // NereusSDR default: 0 (no TX ATT until user configures it).
-    std::array<int, static_cast<size_t>(Band::Count)> m_txAttByBand{};
+    // Per-band TX ATT spans HF amateur + GEN/WWV/XVTR only.  SWL bands
+    // (Band::SwlFirst..SwlLast, Phase 3L extension) inherit ham-band
+    // values — the HL2 ATT chip is a single hardware register regardless
+    // of the SWL slice you tune to.  Sized at Band::SwlFirst (=14).
+    std::array<int, static_cast<size_t>(Band::SwlFirst)> m_txAttByBand{};
 
     // HPSDR-only preamp save/restore (F.2).
     // Distinct from m_classicSavedPreamp (which is for the auto-att

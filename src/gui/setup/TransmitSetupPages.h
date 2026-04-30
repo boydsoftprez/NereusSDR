@@ -113,7 +113,9 @@ private:
     // per-band in the setup dialog. Thetis uses a single udTXTunePower (setup.cs:5262
     // [v2.10.3.13]) that updates one slot on band change; NereusSDR lets the user
     // view and edit all 14 slots simultaneously.
-    static constexpr int kBandCount = static_cast<int>(Band::Count);  // 14
+    // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  SWL bands
+    // (Phase 3L extension) have no TX power slot — TX is HF-only on HL2.
+    static constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
     std::array<QSpinBox*, kBandCount> m_tunePwrSpins{};
 
     // Section: PA

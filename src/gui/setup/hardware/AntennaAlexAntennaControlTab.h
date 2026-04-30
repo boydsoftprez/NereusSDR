@@ -152,8 +152,9 @@ private:
     QCheckBox* m_blockTxAnt3{nullptr};
 
     // Per-band TX antenna: one QButtonGroup of 3 QRadioButton per row.
-    // Indexed by band int (0..13).
-    static constexpr int kBandCount = static_cast<int>(Band::Count);  // 14
+    // Indexed by band int (0..13).  HF amateur + GEN/WWV/XVTR only;
+    // SWL bands (Phase 3L extension) inherit ham antenna routing.
+    static constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
 
     std::array<QButtonGroup*, kBandCount> m_txGroups{};
     // [band][ant-1] where ant-1 in [0,2]

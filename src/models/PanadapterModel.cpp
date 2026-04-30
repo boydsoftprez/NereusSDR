@@ -95,7 +95,10 @@ PanadapterModel::PanadapterModel(QObject* parent)
     // persisted overrides. This matches Q4 resolution (plan §5.3): existing
     // users will see the grid shift from NereusSDR's -20/-160 to Thetis's
     // -40/-140 on first launch after upgrade.
-    for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+    // Per-band display grid: HF amateur + GEN/WWV/XVTR only.  SWL bands
+    // (Phase 3L Band enum extension, indices >= Band::SwlFirst) have no
+    // panadapter buttons and inherit the GEN grid slot when tuned.
+    for (int i = 0; i < static_cast<int>(Band::SwlFirst); ++i) {
         const Band b = static_cast<Band>(i);
         m_perBandGrid.insert(b, BandGridSettings{ kThetisDefaultDbMax, kThetisDefaultDbMin });
     }
@@ -240,7 +243,10 @@ void PanadapterModel::applyBandGrid(Band b)
 void PanadapterModel::loadPerBandGridFromSettings()
 {
     auto& s = AppSettings::instance();
-    for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+    // Per-band display grid: HF amateur + GEN/WWV/XVTR only.  SWL bands
+    // (Phase 3L Band enum extension, indices >= Band::SwlFirst) have no
+    // panadapter buttons and inherit the GEN grid slot when tuned.
+    for (int i = 0; i < static_cast<int>(Band::SwlFirst); ++i) {
         const Band b = static_cast<Band>(i);
         const QVariant maxV = s.value(gridMaxKey(b));
         const QVariant minV = s.value(gridMinKey(b));

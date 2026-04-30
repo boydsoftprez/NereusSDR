@@ -243,7 +243,7 @@ void StepAttenuatorController::setTxAttenuationForBand(Band band, int dB)
     //   { if (b <= Band.FIRST || b >= Band.LAST) return;
     //     tx_step_attenuator_by_band[(int)b] = att; }
     int idx = static_cast<int>(band);
-    if (idx < 0 || idx >= static_cast<int>(Band::Count)) { return; }
+    if (idx < 0 || idx >= static_cast<int>(Band::SwlFirst)) { return; }
     if (dB < 0)            { dB = 0; }
     if (dB > m_maxAttDb)   { dB = m_maxAttDb; }
     m_txAttByBand[static_cast<size_t>(idx)] = dB;
@@ -264,7 +264,7 @@ int StepAttenuatorController::applyTxAttenuationForBand(Band band) const
     // NereusSDR: Band::GEN is index 0 (not FIRST sentinel); no sentinels in
     // our enum, so range-check by Count.
     int idx = static_cast<int>(band);
-    if (idx < 0 || idx >= static_cast<int>(Band::Count)) { return 0; }
+    if (idx < 0 || idx >= static_cast<int>(Band::SwlFirst)) { return 0; }
     return m_txAttByBand[static_cast<size_t>(idx)];
 }
 
@@ -732,7 +732,7 @@ void StepAttenuatorController::saveSettings(const QString& mac)
                        QString::number(m_autoUndoDelaySec));
 
     // Per-band ATT values and preamp modes.
-    for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+    for (int b = 0; b < static_cast<int>(Band::SwlFirst); ++b) {
         Band band = static_cast<Band>(b);
         QString key = bandKeyName(band);
         auto it = m_bandState.find(b);
@@ -772,7 +772,7 @@ void StepAttenuatorController::saveSettings(const QString& mac)
     // Per-band TX ATT values.
     // Key casing ("txBand/") follows the existing RX convention used above
     // ("rx1Band/") — camelCase sub-path is the established per-controller style.
-    for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+    for (int b = 0; b < static_cast<int>(Band::SwlFirst); ++b) {
         Band band = static_cast<Band>(b);
         QString key = bandKeyName(band);
         s.setHardwareValue(mac,
@@ -808,7 +808,7 @@ void StepAttenuatorController::loadSettings(const QString& mac)
                                          5).toInt();
 
     // Per-band ATT values and preamp modes.
-    for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+    for (int b = 0; b < static_cast<int>(Band::SwlFirst); ++b) {
         Band band = static_cast<Band>(b);
         QString key = bandKeyName(band);
 
@@ -846,7 +846,7 @@ void StepAttenuatorController::loadSettings(const QString& mac)
                                           QStringLiteral("True")).toString() == QStringLiteral("True");
 
     // Per-band TX ATT values.
-    for (int b = 0; b < static_cast<int>(Band::Count); ++b) {
+    for (int b = 0; b < static_cast<int>(Band::SwlFirst); ++b) {
         Band band = static_cast<Band>(b);
         QString key = bandKeyName(band);
         QVariant txAttVal = s.hardwareValue(mac,

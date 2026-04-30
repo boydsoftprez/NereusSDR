@@ -1170,7 +1170,9 @@ private:
     // From Thetis console.cs:12094 [v2.10.3.13]: private int[] tunePower_by_band;
     // Initialised to 50W per band in the constructor
     // (console.cs:1819-1820 [v2.10.3.13]).
-    std::array<int, static_cast<std::size_t>(Band::Count)> m_tunePowerByBand{};
+    // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  Phase 3L
+    // SWL bands inherit ham-band values — no separate per-SWL TX power.
+    std::array<int, static_cast<std::size_t>(Band::SwlFirst)> m_tunePowerByBand{};
 
     // Per-MAC AppSettings scope (mirrors AlexController pattern).
     QString m_mac;

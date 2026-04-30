@@ -143,8 +143,17 @@ signals:
 
 private:
     // From Thetis HPSDR/Alex.cs:56-58 [@501e3f5] — Thetis uses 12 bands
-    // (B160M..B6M); NereusSDR uses Band::Count=14 (adds GEN/WWV/XVTR).
-    static constexpr int kBandCount = int(Band::Count);  // 14
+    // (B160M..B6M); NereusSDR uses 14 (adds GEN/WWV/XVTR).
+    //
+    // Alex antenna routing applies to HF amateur + GEN/WWV/XVTR only.
+    // The Phase 3L Band enum extension (Band::SwlFirst..SwlLast =
+    // 13 SWL bands for HL2 N2ADR Filter visibility) does NOT participate
+    // in Alex routing: SWL bands inherit ham-band antenna assignments
+    // because the HL2 RJ45 antenna jack is the same regardless of which
+    // SWL slice you tune to.  Iteration stops at the SWL boundary
+    // (Band::SwlFirst == 14) to preserve existing per-band-array
+    // semantics + signal emission counts.
+    static constexpr int kBandCount = int(Band::SwlFirst);  // 14
 
     std::array<int, kBandCount> m_txAnt{};      // TxAnt[12] in Thetis
     std::array<int, kBandCount> m_rxAnt{};      // RxAnt[12] in Thetis

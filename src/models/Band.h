@@ -70,16 +70,33 @@
 
 namespace NereusSDR {
 
-/// Ham band identity used by the per-band display grid (Phase 3G-8) and
-/// future per-band state (Alex filter selection, band stacks, etc.).
+/// Ham + SWL band identity used by the per-band display grid (Phase 3G-8),
+/// per-band state (Alex filter selection, band stacks, etc.) and N2ADR
+/// Filter pin assignments on HL2 (Phase 3L).
 ///
-/// Enum order matches Thetis Band enum convention and the `BandButtonItem`
-/// UI button order: 11 HF bands + 6m + GEN + WWV + XVTR. WWV and XVTR
-/// were added to NereusSDR in Phase 3G-8 to match Thetis's 14-band set.
+/// Enum order: 11 HF bands + 6m + GEN + WWV + XVTR + 13 SWL bands.  HF
+/// + GEN + WWV + XVTR (values 0-13) match the original Phase 3G-8
+/// `BandButtonItem` UI button order; SWL bands (values 14-26) were
+/// appended for Phase 3L HL2 N2ADR Filter visibility — the mi0bot
+/// chkHERCULES handler writes pin-7 entries for all 13 SWL bands when
+/// N2ADR is enabled (mi0bot setup.cs:14355-14367 [v2.10.3.13-beta2]).
+///
+/// SWL band names mirror mi0bot enums.cs:310-322 [v2.10.3.13-beta2]
+/// (B120M, B90M, B61M, B49M, B41M, B31M, B25M, B22M, B19M, B16M, B14M,
+/// B13M, B11M).  Order within the SWL block matches mi0bot exactly so
+/// per-band iteration produces results consistent with upstream.
+///
+/// NereusSDR-specific deviation: SWL bands are appended after XVTR
+/// rather than placed in mi0bot's BLMF-then-SWL slot (which would
+/// require renumbering values 14+ and breaking persisted AppSettings
+/// keys + StepAttenuator per-band arrays).  Existing values 0-13
+/// preserved verbatim.
 ///
 /// XVTR is never returned by `bandFromFrequency` — it represents
 /// transverter mode and is set explicitly by UI when a transverter is
-/// active. GEN is the fallback for any frequency outside the ham bands.
+/// active.  SWL bands are likewise never auto-detected from frequency
+/// (HL2 N2ADR pin selection is OcMatrix-driven, not freq-driven).  GEN
+/// is the fallback for any frequency outside the ham bands.
 enum class Band : int {
     Band160m = 0,
     Band80m,
@@ -95,8 +112,31 @@ enum class Band : int {
     GEN,
     WWV,
     XVTR,
-    Count = 14
+    // SWL bands — mi0bot enums.cs:310-322 [v2.10.3.13-beta2]
+    Band120m,
+    Band90m,
+    Band61m,
+    Band49m,
+    Band41m,
+    Band31m,
+    Band25m,
+    Band22m,
+    Band19m,
+    Band16m,
+    Band14m,
+    Band13m,
+    Band11m,
+    Count = 27,
+
+    // Iteration aliases for SWL-only loops (e.g. OcOutputsSwlTab matrix
+    // build, HERCULES SWL pin-7 auto-fill).
+    SwlFirst = Band120m,
+    SwlLast  = Band11m,
 };
+
+/// Number of SWL bands (13).  Convenience for SWL-only iteration.
+constexpr int kSwlBandCount =
+    static_cast<int>(Band::SwlLast) - static_cast<int>(Band::SwlFirst) + 1;
 
 /// Human-readable label used in UI (e.g. "160m", "WWV").
 QString bandLabel(Band b);

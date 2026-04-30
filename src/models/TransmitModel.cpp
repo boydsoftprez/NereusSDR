@@ -113,10 +113,15 @@
 namespace NereusSDR {
 
 namespace {
-// Number of bands in the per-band array — matches Band::Count (14).
+// Number of bands in the per-band TX array — HF amateur + GEN/WWV/XVTR (14).
 // From Thetis console.cs:12094 [v2.10.3.13]: int[] tunePower_by_band sized
 // to (int)Band.LAST, which equals 14 for the Thetis Band enum.
-constexpr int kBandCount = static_cast<int>(Band::Count);
+//
+// Phase 3L Note: NereusSDR's Band enum was extended to include 13 SWL bands
+// (Band::SwlFirst..SwlLast) for HL2 N2ADR Filter pin assignments — but TX
+// tune power is HF amateur only.  SWL bands inherit the closest ham-band
+// value implicitly (no separate per-SWL persistence).
+constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
 } // namespace
 
 QString vaxSlotToString(VaxSlot s)

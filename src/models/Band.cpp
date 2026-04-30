@@ -124,6 +124,20 @@ QString bandLabel(Band b)
         case Band::GEN:      return QStringLiteral("GEN");
         case Band::WWV:      return QStringLiteral("WWV");
         case Band::XVTR:     return QStringLiteral("XVTR");
+        // SWL bands — labels mirror mi0bot enums.cs:310-322 [v2.10.3.13-beta2]
+        case Band::Band120m: return QStringLiteral("120m");
+        case Band::Band90m:  return QStringLiteral("90m");
+        case Band::Band61m:  return QStringLiteral("61m");
+        case Band::Band49m:  return QStringLiteral("49m");
+        case Band::Band41m:  return QStringLiteral("41m");
+        case Band::Band31m:  return QStringLiteral("31m");
+        case Band::Band25m:  return QStringLiteral("25m");
+        case Band::Band22m:  return QStringLiteral("22m");
+        case Band::Band19m:  return QStringLiteral("19m");
+        case Band::Band16m:  return QStringLiteral("16m");
+        case Band::Band14m:  return QStringLiteral("14m");
+        case Band::Band13m:  return QStringLiteral("13m");
+        case Band::Band11m:  return QStringLiteral("11m");
         case Band::Count:    break;
     }
     return QStringLiteral("GEN");
@@ -153,7 +167,10 @@ Band bandFromFrequency(double hz)
 
 Band bandFromUiIndex(int idx)
 {
-    if (idx < 0 || idx >= static_cast<int>(Band::Count)) {
+    // UI band buttons are HF amateur + GEN/WWV/XVTR only (14).  SWL bands
+    // (Phase 3L extension, indices >= Band::SwlFirst) have no buttons —
+    // they're set programmatically via the OcMatrix path on HL2.
+    if (idx < 0 || idx >= static_cast<int>(Band::SwlFirst)) {
         return Band::GEN;
     }
     return static_cast<Band>(idx);

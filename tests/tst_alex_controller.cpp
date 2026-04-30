@@ -123,9 +123,11 @@ private slots:
         QSignalSpy spy(&a, &AlexController::antennaChanged);
         a.setAntennasTo1(true);
         // setAntennasTo1 unconditionally emits for each band in the
-        // 14-band range (Band160m..XVTR) regardless of prior value,
+        // 14-band ham range (Band160m..XVTR) regardless of prior value,
         // matching the "applies to all in-memory values" documented
-        // behavior in AlexController.cpp.
+        // behavior in AlexController.cpp.  SWL bands (Band::SwlFirst..
+        // SwlLast, Phase 3L Band enum extension) inherit ham antenna
+        // routing — they are NOT iterated by setAntennasTo1.
         QCOMPARE(spy.count(), 14);
     }
 
