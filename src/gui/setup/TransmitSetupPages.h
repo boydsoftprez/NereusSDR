@@ -162,10 +162,12 @@ private:
     QPushButton* m_deleteBtn{nullptr};
     QPushButton* m_copyBtn{nullptr};
 
-    // Section: Compression
-    QCheckBox* m_compressorToggle{nullptr};
-    QSlider*   m_gainSlider{nullptr};
-    QCheckBox* m_cessbToggle{nullptr};
+    // ── Phase 3M-3a-ii Batch 5: Compression section removed.
+    // CPDR + CESSB controls now live on Setup → DSP → CFC (CESSB group)
+    // and on the dashboard / TxApplet [PROC] toggle.  The orphan
+    // m_compressorToggle / m_gainSlider / m_cessbToggle disabled stubs
+    // violated master-design meta rule §2.2.1 (no half-shipped
+    // placeholders) and have been removed.
 };
 
 // ---------------------------------------------------------------------------

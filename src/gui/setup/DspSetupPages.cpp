@@ -1819,36 +1819,249 @@ VoxDexpSetupPage::VoxDexpSetupPage(RadioModel* model, QWidget* parent)
 // CfcSetupPage
 // ══════════════════════════════════════════════════════════════════════════════
 //
-// From Thetis setup.cs — tabDSP / tabPageCFC controls:
-//   chkCFCEnable, comboCFCPosition, chkCFCPreCompEQ, lblCFCProfile (display)
+// Phase 3M-3a-ii Batch 5 (Task E): replaces the prior 30-line placeholder with
+// a fully-wired three-group page that mirrors Thetis tpDSPCFC tab layout 1:1.
+// Bidirectional binding to TransmitModel via QSignalBlocker guards prevents
+// feedback loops; ranges / defaults / tooltip text all match the Thetis
+// designer file.
+//
+// Source-first cites:
+//   Phase Rotator group  — setup.Designer.cs:46162-46280 [v2.10.3.13]
+//   CFC ranges           — TransmitModel kCfc* constants (Batch 2 schema)
+//   CESSB→CPDR gate note — wdsp/TXA.c:843-851 [v2.10.3.13] (bp2 ladder)
 //
 CfcSetupPage::CfcSetupPage(RadioModel* model, QWidget* parent)
     : SetupPage("CFC", model, parent)
 {
-    // ── CFC ───────────────────────────────────────────────────────────────────
+    if (!model) {
+        // No model — show disabled placeholder (consistent with AgcAlcSetupPage).
+        QGroupBox* grp = addSection("Phase Rotator");
+        disableGroup(grp);
+        return;
+    }
+
+    TransmitModel& tx = model->transmitModel();
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Group 1: Phase Rotator ────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // From Thetis setup.Designer.cs:46162-46280 [v2.10.3.13] — grpPhRot.
+    // Four controls: chkPHROTEnable / udPhRotFreq / udPHROTStages /
+    // chkPHROTReverse.  Tooltip strings copied verbatim from designer file.
+    //
+    QGroupBox* phRotGrp = addSection("Phase Rotator");
+    QVBoxLayout* phRotLay = qobject_cast<QVBoxLayout*>(phRotGrp->layout());
+
+    m_phRotEnableChk = new QCheckBox("Enable");
+    m_phRotEnableChk->setObjectName(QStringLiteral("chkPHROTEnable"));
+    m_phRotEnableChk->setChecked(tx.phaseRotatorEnabled());
+    // From Thetis setup.Designer.cs:46281 [v2.10.3.13] — chkPHROTEnable tooltip.
+    m_phRotEnableChk->setToolTip(QStringLiteral("Turn the phase rotator on or off"));
+    phRotLay->addWidget(m_phRotEnableChk);
+
+    m_phRotFreqSpin = new QSpinBox;
+    m_phRotFreqSpin->setObjectName(QStringLiteral("udPhRotFreq"));
+    m_phRotFreqSpin->setRange(TransmitModel::kPhaseRotatorFreqHzMin,
+                              TransmitModel::kPhaseRotatorFreqHzMax);
+    m_phRotFreqSpin->setSuffix(" Hz");
+    m_phRotFreqSpin->setValue(tx.phaseRotatorFreqHz());
+    // From Thetis setup.Designer.cs:46264 [v2.10.3.13] — udPhRotFreq tooltip.
+    m_phRotFreqSpin->setToolTip(
+        QStringLiteral("Set rotation frequency in Hz. (default 338)"));
+    addLabeledSpinner(phRotLay, "FREQ", m_phRotFreqSpin);
+
+    m_phRotStagesSpin = new QSpinBox;
+    m_phRotStagesSpin->setObjectName(QStringLiteral("udPHROTStages"));
+    m_phRotStagesSpin->setRange(TransmitModel::kPhaseRotatorStagesMin,
+                                TransmitModel::kPhaseRotatorStagesMax);
+    m_phRotStagesSpin->setValue(tx.phaseRotatorStages());
+    // From Thetis setup.Designer.cs:46223 [v2.10.3.13] — udPHROTStages tooltip.
+    m_phRotStagesSpin->setToolTip(
+        QStringLiteral("Choose the number of rotation stages. Larger values = "
+                       "smoother (default 8)"));
+    addLabeledSpinner(phRotLay, "STAGES", m_phRotStagesSpin);
+
+    m_phRotReverseChk = new QCheckBox("Reverse Phase");
+    m_phRotReverseChk->setObjectName(QStringLiteral("chkPHROTReverse"));
+    m_phRotReverseChk->setChecked(tx.phaseReverseEnabled());
+    // From Thetis setup.Designer.cs:46186 [v2.10.3.13] — chkPHROTReverse tooltip.
+    m_phRotReverseChk->setToolTip(QStringLiteral("Reverses the phase"));
+    phRotLay->addWidget(m_phRotReverseChk);
+
+    // ── Wiring: PhRot widgets ↔ TransmitModel ────────────────────────────────
+    connect(m_phRotEnableChk, &QCheckBox::toggled,
+            &tx, &TransmitModel::setPhaseRotatorEnabled);
+    connect(&tx, &TransmitModel::phaseRotatorEnabledChanged,
+            m_phRotEnableChk, [this](bool on) {
+        QSignalBlocker b(m_phRotEnableChk);
+        m_phRotEnableChk->setChecked(on);
+    });
+
+    connect(m_phRotFreqSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setPhaseRotatorFreqHz);
+    connect(&tx, &TransmitModel::phaseRotatorFreqHzChanged,
+            m_phRotFreqSpin, [this](int hz) {
+        QSignalBlocker b(m_phRotFreqSpin);
+        m_phRotFreqSpin->setValue(hz);
+    });
+
+    connect(m_phRotStagesSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setPhaseRotatorStages);
+    connect(&tx, &TransmitModel::phaseRotatorStagesChanged,
+            m_phRotStagesSpin, [this](int n) {
+        QSignalBlocker b(m_phRotStagesSpin);
+        m_phRotStagesSpin->setValue(n);
+    });
+
+    connect(m_phRotReverseChk, &QCheckBox::toggled,
+            &tx, &TransmitModel::setPhaseReverseEnabled);
+    connect(&tx, &TransmitModel::phaseReverseEnabledChanged,
+            m_phRotReverseChk, [this](bool on) {
+        QSignalBlocker b(m_phRotReverseChk);
+        m_phRotReverseChk->setChecked(on);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Group 2: CFC (Continuous Frequency Compressor) ────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // Global CFC controls: Enable / Post-EQ Enable / PreComp dB / PostEqGain dB.
+    // Per-band CFC editing (10-band ParaEQ + compression sliders) lives in
+    // TxCfcDialog (Batch 6) — the [Configure CFC bands…] button below emits
+    // openCfcDialogRequested for the parent SetupDialog to route.
+    //
     QGroupBox* cfcGrp = addSection("CFC");
     QVBoxLayout* cfcLay = qobject_cast<QVBoxLayout*>(cfcGrp->layout());
 
-    auto* cfcEnable = new QPushButton("Enable");
-    addLabeledToggle(cfcLay, "Enable", cfcEnable);
+    m_cfcEnableChk = new QCheckBox("Enable");
+    m_cfcEnableChk->setObjectName(QStringLiteral("chkCFCEnable"));
+    m_cfcEnableChk->setChecked(tx.cfcEnabled());
+    m_cfcEnableChk->setToolTip(QStringLiteral(
+        "Enable the Continuous Frequency Compressor (10-band)"));
+    cfcLay->addWidget(m_cfcEnableChk);
 
-    auto* cfcPos = new QComboBox;
-    cfcPos->addItems({"Pre", "Post"});
-    addLabeledCombo(cfcLay, "Position", cfcPos);
+    m_cfcPostEqEnableChk = new QCheckBox("Post-EQ Enable");
+    m_cfcPostEqEnableChk->setObjectName(QStringLiteral("chkCFCPeqEnable"));
+    m_cfcPostEqEnableChk->setChecked(tx.cfcPostEqEnabled());
+    m_cfcPostEqEnableChk->setToolTip(QStringLiteral(
+        "Enable the Post-EQ stage applied after CFC compression"));
+    cfcLay->addWidget(m_cfcPostEqEnableChk);
 
-    auto* cfcPreComp = new QPushButton("Enable");
-    addLabeledToggle(cfcLay, "Pre-Comp EQ", cfcPreComp);
+    m_cfcPrecompSpin = new QSpinBox;
+    m_cfcPrecompSpin->setObjectName(QStringLiteral("udCFCPreComp"));
+    m_cfcPrecompSpin->setRange(TransmitModel::kCfcPrecompDbMin,
+                               TransmitModel::kCfcPrecompDbMax);
+    m_cfcPrecompSpin->setSuffix(" dB");
+    m_cfcPrecompSpin->setValue(tx.cfcPrecompDb());
+    m_cfcPrecompSpin->setToolTip(QStringLiteral(
+        "Global pre-compression gain (0–16 dB) applied before per-band "
+        "compression"));
+    addLabeledSpinner(cfcLay, "Pre-Comp", m_cfcPrecompSpin);
 
-    disableGroup(cfcGrp);
+    m_cfcPostEqGainSpin = new QSpinBox;
+    m_cfcPostEqGainSpin->setObjectName(QStringLiteral("udCFCPostEqGain"));
+    m_cfcPostEqGainSpin->setRange(TransmitModel::kCfcPostEqGainDbMin,
+                                  TransmitModel::kCfcPostEqGainDbMax);
+    m_cfcPostEqGainSpin->setSuffix(" dB");
+    m_cfcPostEqGainSpin->setValue(tx.cfcPostEqGainDb());
+    m_cfcPostEqGainSpin->setToolTip(QStringLiteral(
+        "Global Post-EQ make-up gain (-24 .. +24 dB)"));
+    addLabeledSpinner(cfcLay, "Post-EQ Gain", m_cfcPostEqGainSpin);
 
-    // ── Profile ───────────────────────────────────────────────────────────────
-    QGroupBox* profGrp = addSection("Profile");
-    QVBoxLayout* profLay = qobject_cast<QVBoxLayout*>(profGrp->layout());
+    m_cfcBandsBtn = new QPushButton("Configure CFC bands…");
+    m_cfcBandsBtn->setObjectName(QStringLiteral("btnCFCBandsConfigure"));
+    m_cfcBandsBtn->setAutoDefault(false);
+    m_cfcBandsBtn->setToolTip(QStringLiteral(
+        "Open the per-band CFC editor (10-band ParaEQ + compression sliders)"));
+    cfcLay->addWidget(m_cfcBandsBtn);
 
-    auto* profileLabel = new QLabel("(no profile loaded)");
-    addLabeledLabel(profLay, "Profile", profileLabel);
+    // ── Wiring: CFC widgets ↔ TransmitModel ──────────────────────────────────
+    connect(m_cfcEnableChk, &QCheckBox::toggled,
+            &tx, &TransmitModel::setCfcEnabled);
+    connect(&tx, &TransmitModel::cfcEnabledChanged,
+            m_cfcEnableChk, [this](bool on) {
+        QSignalBlocker b(m_cfcEnableChk);
+        m_cfcEnableChk->setChecked(on);
+    });
 
-    disableGroup(profGrp);
+    connect(m_cfcPostEqEnableChk, &QCheckBox::toggled,
+            &tx, &TransmitModel::setCfcPostEqEnabled);
+    connect(&tx, &TransmitModel::cfcPostEqEnabledChanged,
+            m_cfcPostEqEnableChk, [this](bool on) {
+        QSignalBlocker b(m_cfcPostEqEnableChk);
+        m_cfcPostEqEnableChk->setChecked(on);
+    });
+
+    connect(m_cfcPrecompSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setCfcPrecompDb);
+    connect(&tx, &TransmitModel::cfcPrecompDbChanged,
+            m_cfcPrecompSpin, [this](int dB) {
+        QSignalBlocker b(m_cfcPrecompSpin);
+        m_cfcPrecompSpin->setValue(dB);
+    });
+
+    connect(m_cfcPostEqGainSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setCfcPostEqGainDb);
+    connect(&tx, &TransmitModel::cfcPostEqGainDbChanged,
+            m_cfcPostEqGainSpin, [this](int dB) {
+        QSignalBlocker b(m_cfcPostEqGainSpin);
+        m_cfcPostEqGainSpin->setValue(dB);
+    });
+
+    // [Configure CFC bands…] — Batch 6 wires the parent SetupDialog to route
+    // this signal to the modeless TxCfcDialog.
+    connect(m_cfcBandsBtn, &QPushButton::clicked,
+            this, &CfcSetupPage::openCfcDialogRequested);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Group 3: CESSB (Controlled-Envelope SSB) ──────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // CESSB only takes effect when the speech compressor (CPDR) is enabled —
+    // see wdsp/TXA.c:843-851 [v2.10.3.13]:
+    //
+    //     if (txa[channel].compressor.p->run)
+    //     {
+    //         CalcBandpassFilter (txa[channel].bp1.p, ...);
+    //         txa[channel].bp1.p->run = 1;
+    //         if (txa[channel].osctrl.p->run)
+    //         {
+    //             CalcBandpassFilter (txa[channel].bp2.p, ...);
+    //             txa[channel].bp2.p->run = 1;
+    //         }
+    //     }
+    //
+    // i.e. CESSB's bp2 stage only activates when both compressor AND osctrl
+    // (CESSB) run-flags are set; flipping CESSB without CPDR is a no-op.
+    //
+    QGroupBox* cessbGrp = addSection("CESSB");
+    QVBoxLayout* cessbLay = qobject_cast<QVBoxLayout*>(cessbGrp->layout());
+
+    m_cessbEnableChk = new QCheckBox("Enable");
+    m_cessbEnableChk->setObjectName(QStringLiteral("chkCESSBEnable"));
+    m_cessbEnableChk->setChecked(tx.cessbOn());
+    m_cessbEnableChk->setToolTip(QStringLiteral(
+        "Enable Controlled-Envelope SSB (acts only when CPDR is enabled)"));
+    cessbLay->addWidget(m_cessbEnableChk);
+
+    auto* cessbNote = new QLabel(QStringLiteral(
+        "CESSB only acts when CPDR is enabled (engages bp2 in TXA "
+        "bandpass chain)."));
+    cessbNote->setObjectName(QStringLiteral("lblCESSBNote"));
+    cessbNote->setWordWrap(true);
+    cessbNote->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8aa8c0; font-size: 11px; font-style: italic; }"));
+    cessbLay->addWidget(cessbNote);
+
+    // ── Wiring: CESSB widget ↔ TransmitModel ─────────────────────────────────
+    connect(m_cessbEnableChk, &QCheckBox::toggled,
+            &tx, &TransmitModel::setCessbOn);
+    connect(&tx, &TransmitModel::cessbOnChanged,
+            m_cessbEnableChk, [this](bool on) {
+        QSignalBlocker b(m_cessbEnableChk);
+        m_cessbEnableChk->setChecked(on);
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

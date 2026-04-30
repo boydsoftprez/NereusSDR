@@ -28,7 +28,6 @@
 
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
-#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 

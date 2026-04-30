@@ -29,6 +29,17 @@
 //                 emit openSetupRequested(category, page) which MainWindow
 //                 routes via SetupDialog::selectPage() (see
 //                 MainWindow.cpp:openSetupRequested handler).
+//   2026-04-30 — Phase 3M-3a-ii Batch 5: SpeechProcessorPage Phrot / CFC /
+//                 CESSB status rows promoted from "future phase"
+//                 placeholders to live bindings on the new TransmitModel
+//                 signals (phaseRotatorEnabledChanged, phaseRotatorFreqHzChanged,
+//                 phaseRotatorStagesChanged, cfcEnabledChanged, cessbOnChanged,
+//                 cpdrOnChanged).  Cross-link buttons re-pointed to "Open
+//                 Phase Rotator…", "Open CFC…", "Open CESSB…" — all three
+//                 land on the co-located CFC Setup page (matches Thetis
+//                 tpDSPCFC tab IA).  TxProfilesPage::Compression section
+//                 removed (orphan placeholder, master-design meta rule
+//                 §2.2.1 violation).
 // =================================================================
 
 //=================================================================
@@ -594,29 +605,12 @@ void TxProfilesPage::buildUI()
 
     contentLayout()->addWidget(profGroup);
 
-    // --- Section: Compression ---
-    auto* compGroup = new QGroupBox(QStringLiteral("Compression"), this);
-    auto* compForm  = new QFormLayout(compGroup);
-    compForm->setSpacing(6);
+    // ── Phase 3M-3a-ii Batch 5: Compression section removed.
+    // CPDR enable + gain + CESSB live on Setup → DSP → CFC (Batch 5) and
+    // on the TxApplet [PROC] quick-toggle / dashboard.  The previous
+    // disabled-stub trio violated master-design meta rule §2.2.1 (no
+    // half-shipped placeholders).
 
-    m_compressorToggle = new QCheckBox(QStringLiteral("Enable compressor"), compGroup);
-    m_compressorToggle->setEnabled(false);  // NYI
-    m_compressorToggle->setToolTip(QStringLiteral("TX speech compressor — not yet implemented"));
-    compForm->addRow(QString(), m_compressorToggle);
-
-    m_gainSlider = new QSlider(Qt::Horizontal, compGroup);
-    m_gainSlider->setRange(0, 20);
-    m_gainSlider->setValue(0);
-    m_gainSlider->setEnabled(false);  // NYI
-    m_gainSlider->setToolTip(QStringLiteral("Compressor gain (dB) — not yet implemented"));
-    compForm->addRow(QStringLiteral("Gain (dB):"), m_gainSlider);
-
-    m_cessbToggle = new QCheckBox(QStringLiteral("CESSB"), compGroup);
-    m_cessbToggle->setEnabled(false);  // NYI
-    m_cessbToggle->setToolTip(QStringLiteral("Controlled Envelope SSB — not yet implemented"));
-    compForm->addRow(QString(), m_cessbToggle);
-
-    contentLayout()->addWidget(compGroup);
     contentLayout()->addStretch();
 }
 
@@ -818,12 +812,52 @@ QLabel* SpeechProcessorPage::addStageRow(QGridLayout* grid, int row,
 // ---------------------------------------------------------------------------
 // SpeechProcessorPage::buildStageStatusSection
 //
-// Grid of TXA stage rows.  TX EQ + Leveler are wired to live model signals;
-// ALC is hard-labelled "always-on" (no toggle in Thetis schema either —
-// `txa[ch].alc` is always created with run=1 in `TXA.c:create_txa`
-// [v2.10.3.13]).  Phrot / CFC / CESSB / AM-SQ-DEXP land in 3M-3a-ii and
-// 3M-3a-iii — placeholder rows show "off" and tag the future phase.
+// Grid of TXA stage rows.  TX EQ + Leveler + Phrot + CFC + CESSB are wired
+// to live model signals; ALC is hard-labelled "always-on" (no toggle in
+// Thetis schema either — `txa[ch].alc` is always created with run=1 in
+// `TXA.c:create_txa` [v2.10.3.13]).  AM-SQ/DEXP lands in 3M-3a-iii — that
+// row remains a placeholder showing "off".
+//
+// 3M-3a-ii Batch 5 (Task E):
+//   * Phrot label format: "ON · <freq> Hz · <stages> stages" / "OFF"
+//     wired to phaseRotatorEnabledChanged + phaseRotatorFreqHzChanged +
+//     phaseRotatorStagesChanged.
+//   * CFC label format: "ON · 10 bands" / "OFF" wired to cfcEnabledChanged.
+//   * CESSB label format: "ON" / "OFF (gated on CPDR)" — derived from
+//     (cessbOn, cpdrOn) so the off-text reflects whether CPDR is the
+//     blocker (per WDSP TXA.c:843-851 [v2.10.3.13]) or just a clean off.
 // ---------------------------------------------------------------------------
+
+namespace {
+
+// Compose Phase Rotator label text — "ON · 338 Hz · 8 stages" / "OFF".
+QString phRotLabelText(bool on, int freqHz, int stages)
+{
+    if (!on) {
+        return QStringLiteral("OFF");
+    }
+    return QStringLiteral("ON · %1 Hz · %2 stages").arg(freqHz).arg(stages);
+}
+
+// Compose CFC label text — "ON · 10 bands" / "OFF".  10-band CFC is a
+// fixed Thetis schema constant (cfcomp.c CFC_NFREQS [v2.10.3.13]).
+QString cfcLabelText(bool on)
+{
+    return on ? QStringLiteral("ON · 10 bands") : QStringLiteral("OFF");
+}
+
+// Compose CESSB label text — "ON" / "OFF" / "OFF (gated on CPDR)".
+// Per WDSP TXA.c:843-851 [v2.10.3.13], CESSB's bp2 stage only activates
+// when CPDR (compressor) run-flag is set.  Surfacing the gating in the
+// off-text helps users see why flipping CESSB without CPDR is a no-op.
+QString cessbLabelText(bool cessbOn, bool cpdrOn)
+{
+    if (cessbOn) { return QStringLiteral("ON"); }
+    return cpdrOn ? QStringLiteral("OFF") : QStringLiteral("OFF (gated on CPDR)");
+}
+
+}  // namespace
+
 void SpeechProcessorPage::buildStageStatusSection()
 {
     auto* group = addSection(QStringLiteral("Stage Status"));
@@ -833,8 +867,15 @@ void SpeechProcessorPage::buildStageStatusSection()
     grid->setHorizontalSpacing(12);
     grid->setVerticalSpacing(4);
 
-    const bool txEqOn   = (model() != nullptr) && model()->transmitModel().txEqEnabled();
-    const bool levelOn  = (model() != nullptr) && model()->transmitModel().txLevelerOn();
+    const bool txEqOn  = (model() != nullptr) && model()->transmitModel().txEqEnabled();
+    const bool levelOn = (model() != nullptr) && model()->transmitModel().txLevelerOn();
+    const bool phRotOn = (model() != nullptr) && model()->transmitModel().phaseRotatorEnabled();
+    const bool cfcOn   = (model() != nullptr) && model()->transmitModel().cfcEnabled();
+    const bool cessbOn = (model() != nullptr) && model()->transmitModel().cessbOn();
+    const bool cpdrOn  = (model() != nullptr) && model()->transmitModel().cpdrOn();
+
+    const int phRotFreq   = (model() != nullptr) ? model()->transmitModel().phaseRotatorFreqHz() : 338;
+    const int phRotStages = (model() != nullptr) ? model()->transmitModel().phaseRotatorStages() : 8;
 
     int row = 0;
 
@@ -894,36 +935,36 @@ void SpeechProcessorPage::buildStageStatusSection()
             "QLabel { color: #00b4d8; font-size: 14px; font-weight: bold; }"));
     }
 
-    // Phase Rotator — placeholder (3M-3a-ii target; cross-links to CFC page
-    // since that's where Phrot lands per the IA decision).
+    // Phase Rotator — wired live (3M-3a-ii Batch 5).  Cross-links to CFC
+    // page (PhRot lives there per the IA decision).
     m_phrotStatusLabel = addStageRow(grid, row++,
         QStringLiteral("Phase Rot."),
-        QStringLiteral("off"),
-        false,
-        QStringLiteral("Open CFC Setup"),
-        QStringLiteral("Open Setup → DSP → CFC (Phase Rotator + CFC live there)"),
+        phRotLabelText(phRotOn, phRotFreq, phRotStages),
+        phRotOn,
+        QStringLiteral("Open Phase Rotator..."),
+        QStringLiteral("Open Setup → DSP → CFC (Phase Rotator group is at the top)"),
         QStringLiteral("CFC"),
-        QStringLiteral("3M-3a-ii"));
+        QString());
 
-    // CFC — placeholder.
+    // CFC — wired live (3M-3a-ii Batch 5).
     m_cfcStatusLabel = addStageRow(grid, row++,
         QStringLiteral("CFC"),
-        QStringLiteral("off"),
-        false,
-        QStringLiteral("Open CFC Setup"),
+        cfcLabelText(cfcOn),
+        cfcOn,
+        QStringLiteral("Open CFC..."),
         QStringLiteral("Open Setup → DSP → CFC (Continuous Frequency Compressor)"),
         QStringLiteral("CFC"),
-        QStringLiteral("3M-3a-ii"));
+        QString());
 
-    // CESSB — placeholder.
+    // CESSB — wired live (3M-3a-ii Batch 5).
     m_cessbStatusLabel = addStageRow(grid, row++,
         QStringLiteral("CESSB"),
-        QStringLiteral("off"),
-        false,
-        QStringLiteral("Open CFC Setup"),
-        QStringLiteral("Open Setup → DSP → CFC (Controlled Envelope SSB lives here)"),
+        cessbLabelText(cessbOn, cpdrOn),
+        cessbOn,
+        QStringLiteral("Open CESSB..."),
+        QStringLiteral("Open Setup → DSP → CFC (CESSB group is at the bottom)"),
         QStringLiteral("CFC"),
-        QStringLiteral("3M-3a-ii"));
+        QString());
 
     // AM-SQ / DEXP — placeholder (3M-3a-iii target; cross-links to VOX/DEXP).
     m_amSqDexpStatusLabel = addStageRow(grid, row++,
@@ -968,6 +1009,50 @@ void SpeechProcessorPage::buildStageStatusSection()
                 dot->setStyleSheet(dotStyleFor(on));
             }
         });
+
+        // ── Phase Rotator: re-render on enable / freq / stages change ───────
+        auto refreshPhRot = [this]() {
+            if (!m_phrotStatusLabel || model() == nullptr) { return; }
+            const auto& tx = model()->transmitModel();
+            const bool on = tx.phaseRotatorEnabled();
+            m_phrotStatusLabel->setText(phRotLabelText(
+                on, tx.phaseRotatorFreqHz(), tx.phaseRotatorStages()));
+            if (auto* dot = qobject_cast<QLabel*>(
+                    m_phrotStatusLabel->property("dotSibling").value<QObject*>())) {
+                dot->setText(on ? QString(kFilledCircle) : QString(kHollowCircle));
+                dot->setStyleSheet(dotStyleFor(on));
+            }
+        };
+        connect(&tx, &TransmitModel::phaseRotatorEnabledChanged, this, refreshPhRot);
+        connect(&tx, &TransmitModel::phaseRotatorFreqHzChanged,  this, refreshPhRot);
+        connect(&tx, &TransmitModel::phaseRotatorStagesChanged,  this, refreshPhRot);
+
+        // ── CFC: re-render on enable change ─────────────────────────────────
+        connect(&tx, &TransmitModel::cfcEnabledChanged,
+                this, [this](bool on) {
+            if (!m_cfcStatusLabel) { return; }
+            m_cfcStatusLabel->setText(cfcLabelText(on));
+            if (auto* dot = qobject_cast<QLabel*>(
+                    m_cfcStatusLabel->property("dotSibling").value<QObject*>())) {
+                dot->setText(on ? QString(kFilledCircle) : QString(kHollowCircle));
+                dot->setStyleSheet(dotStyleFor(on));
+            }
+        });
+
+        // ── CESSB: re-render on cessbOn / cpdrOn change ─────────────────────
+        auto refreshCessb = [this]() {
+            if (!m_cessbStatusLabel || model() == nullptr) { return; }
+            const auto& tx = model()->transmitModel();
+            const bool on = tx.cessbOn();
+            m_cessbStatusLabel->setText(cessbLabelText(on, tx.cpdrOn()));
+            if (auto* dot = qobject_cast<QLabel*>(
+                    m_cessbStatusLabel->property("dotSibling").value<QObject*>())) {
+                dot->setText(on ? QString(kFilledCircle) : QString(kHollowCircle));
+                dot->setStyleSheet(dotStyleFor(on));
+            }
+        };
+        connect(&tx, &TransmitModel::cessbOnChanged, this, refreshCessb);
+        connect(&tx, &TransmitModel::cpdrOnChanged,  this, refreshCessb);
     }
 }
 

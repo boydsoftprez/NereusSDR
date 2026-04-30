@@ -176,11 +176,49 @@ public:
 };
 
 // ── CFC ──────────────────────────────────────────────────────────────────────
+//
+// Phase 3M-3a-ii Batch 5: full implementation of the Setup → DSP → CFC page.
+// Mirrors Thetis tpDSPCFC tab layout 1:1 (setup.Designer.cs grpPhRot at
+// 46162-46280 [v2.10.3.13]).  Hosts three group boxes:
+//   1. Phase Rotator   — chkPHROTEnable / chkPHROTReverse / udPhRotFreq /
+//                        udPHROTStages, bidirectional with TransmitModel
+//                        phase-rotator-* properties.
+//   2. CFC             — Enable / Post-EQ Enable / PreComp / PostEqGain
+//                        global controls + a [Configure CFC bands…] button
+//                        that emits openCfcDialogRequested (Batch 6 wires
+//                        the per-band TxCfcDialog).
+//   3. CESSB           — Enable toggle + explanatory label per WDSP
+//                        TXA.c:846-855 [v2.10.3.13] (CESSB gated on CPDR
+//                        via the bp2 ladder).
 
 class CfcSetupPage : public SetupPage {
     Q_OBJECT
 public:
     explicit CfcSetupPage(RadioModel* model, QWidget* parent = nullptr);
+
+signals:
+    /// Emitted when the [Configure CFC bands…] button is clicked.  Batch 6
+    /// will wire the parent SetupDialog to route this to the modeless
+    /// TxCfcDialog (10-band CFC editor).  For Batch 5 the signal lands but
+    /// no dialog launches.
+    void openCfcDialogRequested();
+
+private:
+    // ── Phase Rotator group ──────────────────────────────────────────────────
+    QCheckBox* m_phRotEnableChk{nullptr};
+    QCheckBox* m_phRotReverseChk{nullptr};
+    QSpinBox*  m_phRotFreqSpin{nullptr};
+    QSpinBox*  m_phRotStagesSpin{nullptr};
+
+    // ── CFC group ────────────────────────────────────────────────────────────
+    QCheckBox* m_cfcEnableChk{nullptr};
+    QCheckBox* m_cfcPostEqEnableChk{nullptr};
+    QSpinBox*  m_cfcPrecompSpin{nullptr};
+    QSpinBox*  m_cfcPostEqGainSpin{nullptr};
+    class QPushButton* m_cfcBandsBtn{nullptr};
+
+    // ── CESSB group ──────────────────────────────────────────────────────────
+    QCheckBox* m_cessbEnableChk{nullptr};
 };
 
 // ── MNF ──────────────────────────────────────────────────────────────────────

@@ -1094,7 +1094,17 @@ nereus_add_test(tst_transmit_setup_block_tx)
 # the active-profile label tracks MicProfileManager::activeProfileChanged, the
 # ALC row is statically labelled "always-on", and the cross-link buttons emit
 # openSetupRequested(category, page) with the correct setup-page leaf labels.
+# Phase 3M-3a-ii Batch 5: extended with Phrot / CFC / CESSB live-binding cases.
 nereus_add_test(tst_speech_processor_page)
+
+# ── Phase 3M-3a-ii Batch 5 Task E: CfcSetupPage full implementation ──────────
+# Verifies the three group boxes (Phase Rotator / CFC / CESSB) construct,
+# initial values reflect TransmitModel defaults, bidirectional binding works
+# both directions, spinbox range clamping holds, and the [Configure CFC bands…]
+# button emits openCfcDialogRequested (Batch 6 wires the dialog).  Layout
+# mirrors Thetis tpDSPCFC tab 1:1 (setup.Designer.cs:46162-46280 [v2.10.3.13]
+# for grpPhRot).
+nereus_add_test(tst_cfc_setup_page)
 
 # ── Phase 3M-0 Task 12: Hardware Configuration group box on Setup → General ──
 # Verifies grpHardwareConfig has 4 controls + 1 warning label per
