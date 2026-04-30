@@ -2402,3 +2402,8 @@ nereus_add_test(tst_radio_connection_supply_volts)
 # 5 tests: initial Dead, Healthy on feed, Underrun on single, Stalled on
 # persistent, identical-state suppression.
 nereus_add_test(tst_audio_engine_flow_state)
+
+# ── Shell-Chrome Redesign sub-PR-3: NetworkDiagnosticsDialog ──────────────
+# 4 tests: null-safe construction, refresh on disconnected model, reset
+# clears counters, signal-wire safety. QTEST_MAIN — needs QApplication.
+nereus_add_test(tst_network_diagnostics_dialog)
