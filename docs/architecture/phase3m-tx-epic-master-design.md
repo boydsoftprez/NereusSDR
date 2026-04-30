@@ -100,16 +100,23 @@ govern the source-side cite format.
 
 ## 3. Phase index
 
-| # | Phase | Sub-PRs | Goal | Cumulative |
-|---|---|---|---|---|
-| 1 | 3M-0 | PA Safety Foundation | SWR protect, TX-inhibit, watchdog, BandPlanGuard, telemetry routing, HighSWR overlay. No MOX yet. | 1 |
-| 2-4 | 3M-1 | a / b / c | First RF (TUNE-only) → Mic + SSB voice (with MON pulled in) → Polish + persistence | 4 |
-| 5-6 | 3M-2 | a / b | Sidetone + keyer + QSK → CWX + paddle USB | 6 |
-| 7-11 | 3M-3 | a-i / a-ii / a-iii / b / c | Speech chain (top → dynamics → gating) → mode-specific TX → audio routing | 11 |
-| 12-13 | 3M-4 | a / b | PureSignal core (PSForm + calcc + iqc) → AmpView | 13 |
-| 14 | 3M-5 | (single) | EER (Ganymede / E-class PA) | 14 |
-| 15 | 3M-6 | (single) | TX polish (TXA siphon spectrum source, CAT TX, AndromedaIndicator generalization, TUNE pulse, Aries ATU full integration) | 15 |
-| 16 | 3M-7 | (single) | cmASIO-equivalent host audio codec replacement | 16 |
+> **Schedule swap (2026-04-29):** rows 5-6 (3M-2) and 7-11 (3M-3) swapped
+> in execution order — 3M-3 now runs immediately after 3M-1, with 3M-2
+> deferred until 3M-3 ships AND the HL2 ATT/filter safety audit closes.
+> See §6 (3M-2) and §7 (3M-3) for rationale.  Numeric IDs (`3M-2` / `3M-3`)
+> stay as-is (mode-gate strings, BandPlanGuard toasts, and downstream
+> doc cites are stable); only the run order changes.
+
+| # | Phase | Sub-PRs | Goal | Cumulative | Status |
+|---|---|---|---|---|---|
+| 1 | 3M-0 | PA Safety Foundation | SWR protect, TX-inhibit, watchdog, BandPlanGuard, telemetry routing, HighSWR overlay. No MOX yet. | 1 | ✅ Complete |
+| 2-4 | 3M-1 | a / b / c | First RF (TUNE-only) → Mic + SSB voice (with MON pulled in) → Polish + persistence | 4 | ✅ Complete (PRs #144 / #149 / #152) |
+| 5-9 | 3M-3 | a-i / a-ii / a-iii / b / c | Speech chain (top → dynamics → gating) → mode-specific TX → audio routing | 9 | ▶ Next (pulled forward) |
+| 10-11 | 3M-2 | a / b | Sidetone + keyer + QSK → CWX + paddle USB | 11 | ⏸ Deferred (after 3M-3 + HL2 audit) |
+| 12-13 | 3M-4 | a / b | PureSignal core (PSForm + calcc + iqc) → AmpView | 13 | Planned |
+| 14 | 3M-5 | (single) | EER (Ganymede / E-class PA) | 14 | Planned |
+| 15 | 3M-6 | (single) | TX polish (TXA siphon spectrum source, CAT TX, AndromedaIndicator generalization, TUNE pulse, Aries ATU full integration) | 15 | Planned |
+| 16 | 3M-7 | (single) | cmASIO-equivalent host audio codec replacement | 16 | Planned |
 
 **16 PRs total.** Comparable to the 3P all-board parity epic (9 PRs); rough
 wall-clock estimate 3-4 months serial, less with parallel branches after
@@ -537,7 +544,19 @@ full TxApplet for currently-active scope, persistence audit.
 
 **Low.** Mostly UI + persistence work, no new RF behavior.
 
-## 6. Phase 3M-2 — CW TX
+## 6. Phase 3M-2 — CW TX  *(Deferred — runs after §7 3M-3 + HL2 ATT/filter audit)*
+
+> **Schedule swap (2026-04-29):** 3M-2 originally scheduled to run before
+> 3M-3.  After 3M-1c shipped (PR #152), JJ flagged HL2 ATT/filter code
+> paths that could damage the radio if TX is engaged → HL2 hardware bench
+> was deferred for that audit.  3M-3 (§7) doesn't need the HL2 bench (DSP
+> stages introspectable on ANAN-G2), so it was pulled forward.  3M-2 CW
+> TX waits until 3M-3 ships AND the HL2 ATT/filter audit closes (so an
+> HL2 can be CW-bench'd safely).
+>
+> 3M-2 also absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-
+> 1252 [@c26a8a4]` — desk-review B3, "HL2 firmware uses bit 3 of I-low
+> byte for CWX PTT").
 
 CW splits cleanly into two sub-phases. Different MOX semantics (TXA NOT
 enabled in CW per Thetis special case at `console.cs:29589-29598`),
@@ -586,7 +605,12 @@ External Paddle for device + DTR/RTS pin mapping.
 
 **Risk:** Low. Well-defined Thetis ports.
 
-## 7. Phase 3M-3 — TXA Speech Processing + Mode-Specific + Audio Routing
+## 7. Phase 3M-3 — TXA Speech Processing + Mode-Specific + Audio Routing  *(Next — pulled forward 2026-04-29)*
+
+> **Schedule swap (2026-04-29):** Was originally scheduled after 3M-2.
+> Pulled forward — see §6 for rationale.  Branched at
+> `feature/phase3m-3-tx-processing` worktree on 2026-04-29 from
+> `origin/main` `1d40670` (post-PR-#152 merge).
 
 The largest sub-phase by surface area. Five sub-PRs total: 3M-3a-i / -ii /
 -iii (the speech chain), then 3M-3b (mode-specific), then 3M-3c (TX audio

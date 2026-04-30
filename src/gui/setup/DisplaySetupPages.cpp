@@ -153,11 +153,15 @@ SpectrumDefaultsPage::SpectrumDefaultsPage(RadioModel* model, QWidget* parent)
     loadFromRenderer();
 }
 
-// Maps SpectrumDefaultsPage FPS slider (10-60) to FFTEngine output FPS.
+// Maps SpectrumDefaultsPage FPS slider (10-60) to FFTEngine output FPS
+// and the SpectrumWidget display timer so both stay in sync.
 void SpectrumDefaultsPage::pushFps(int fps)
 {
     if (!model() || !model()->fftEngine()) { return; }
     model()->fftEngine()->setOutputFps(fps);
+    if (auto* sw = model()->spectrumWidget()) {
+        sw->setDisplayFps(fps);
+    }
 }
 
 void SpectrumDefaultsPage::loadFromRenderer()

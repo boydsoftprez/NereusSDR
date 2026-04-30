@@ -262,7 +262,16 @@ private slots:
         MicProfileManager mgr;
         mgr.setMacAddress(kMacA);
         mgr.load();
-        // Only "Default" exists.
+        // After 3M-3a-i Batch 4 (A.2): first launch seeds Default + 20
+        // factory profiles.  Delete every non-Default profile so the
+        // delete-Default click hits the F.3 last-remaining guard.
+        for (const QString& name : mgr.profileNames()) {
+            if (name == QStringLiteral("Default")) {
+                continue;
+            }
+            QVERIFY(mgr.deleteProfile(name));
+        }
+        QCOMPARE(mgr.profileNames().count(), 1);
 
         RadioModel rm;
         TxProfileSetupPage page(&rm, &mgr, &tx);

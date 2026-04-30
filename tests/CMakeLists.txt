@@ -1029,6 +1029,21 @@ nereus_add_test(tst_phone_applet_mic_level_gauge)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_vox_toggle)
 
+# ── Phase 3M-3a-i Batch 2 Task F: TxApplet LEV / EQ / PROC quick toggles ────
+# Verifies the row of 3 checkable buttons inserted between MON volume and
+# TUNE/MOX: LEV/EQ are bidirectional with TransmitModel.txLevelerOn /
+# .txEqEnabled (objectNames: TxLevButton, TxEqButton); PROC is a disabled
+# placeholder for 3M-3a-ii (objectName: TxProcButton).
+nereus_add_test(tst_tx_applet_lev_eq_proc)
+
+# ── Phase 3M-3a-i Batch 3 Task A.1: TxEqDialog scaffold ───────────────────
+# Verifies the modeless 10-band TX EQ dialog launched from the [EQ]
+# right-click and Tools → TX Equalizer menu.  Confirms construction,
+# default values from TransmitModel, bidirectional binding (UI → model
+# and model → UI), the m_updatingFromModel echo guard, and the
+# instance() singleton pattern.
+nereus_add_test(tst_tx_eq_dialog)
+
 # ── Phase 3M-1b J.3: TxApplet MON toggle + monitor volume slider + mic-source badge ──
 # Verifies the model-layer contracts that TxApplet's MON button, monitor volume
 # slider, and mic-source badge depend on:
@@ -1068,6 +1083,14 @@ nereus_add_test(tst_transmit_setup_tx_inhibit)
 # setup.designer.cs:6704-6724 [v2.10.3.13]), and chkHFTRRelay tooltip
 # "Disables HF PA." verbatim from setup.designer.cs:5786 [v2.10.3.13].
 nereus_add_test(tst_transmit_setup_block_tx)
+
+# ── Phase 3M-3a-i Batch 5 Task E: SpeechProcessorPage TX dashboard ───────────
+# Verifies the NereusSDR-spin Speech Processor page builds without crashing,
+# the TX EQ + Leveler status labels read from + react to TransmitModel signals,
+# the active-profile label tracks MicProfileManager::activeProfileChanged, the
+# ALC row is statically labelled "always-on", and the cross-link buttons emit
+# openSetupRequested(category, page) with the correct setup-page leaf labels.
+nereus_add_test(tst_speech_processor_page)
 
 # ── Phase 3M-0 Task 12: Hardware Configuration group box on Setup → General ──
 # Verifies grpHardwareConfig has 4 controls + 1 warning label per
@@ -1430,6 +1453,13 @@ nereus_add_test(tst_tx_mic_router)
 nereus_add_test(tst_radio_model_g1_wiring)
 target_compile_definitions(tst_radio_model_g1_wiring PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-i Batch 2 Task 1: TransmitModel→TxChannel routing ────────────
+# Verifies the 13 connect() pairings for TX EQ + Leveler + ALC signals.
+# m_txChannel stays null in unit-test builds (no WDSP); the test confirms
+# the model-side fan-out (signal-on-setter, idempotent guard, signal-payload
+# correctness) that the RadioModel-installed lambdas consume.
+nereus_add_test(tst_radio_model_eq_lev_alc_wiring)
+
 # ── Phase 3M-1a Task F.1: RadioModel::onMoxHardwareFlipped slot ──────────────
 # Verifies the three-step fan-out in Thetis HdwMOXChanged order (§2.3):
 #   1. Alex antenna routing (applyAlexAntennaForBand → setAntennaRouting)
@@ -1748,6 +1778,41 @@ target_compile_definitions(tst_tx_channel_no_zero_fill PRIVATE NEREUS_BUILD_TEST
 #   Edge: setters_zeroValues_doNotCrash
 # (15 individual private-slot test methods total.)
 nereus_add_test(tst_tx_channel_tx_post_gen_setters)
+
+# ── Phase 3M-3a-i Task B-1: TxChannel TX EQ wrappers ───────────────────────
+# Plan: 3M-3a-i Batch 1 Task B-1 — 7 TX EQ wrapper setters (Run / Graph10 /
+# Profile / Nc / Mp / Ctfmode / Wintype) on top of WDSP eq.c [v2.10.3.13].
+# Test strategy: pure smoke / does-not-crash, matching tst_tx_channel_tx_post_gen_setters
+# convention.  Default-constructed TxChannel falls through the rsmpin.p==nullptr
+# null-guard for WDSP-linked builds; HAVE_WDSP-undefined builds exercise the stub.
+nereus_add_test(tst_tx_channel_eq_setters)
+
+# ── Phase 3M-3a-i Task B-2: TxChannel Leveler/ALC wrappers ─────────────────
+# Plan: 3M-3a-i Batch 1 Task B-2 — 5 wrappers (Leveler Run/Top/Decay,
+# ALC MaxGain/Decay) over wcpAGC.c [v2.10.3.13] + Stage::Leveler / Stage::Alc
+# cases added to setStageRunning.  Same does-not-crash strategy as B-1.
+nereus_add_test(tst_tx_channel_leveler_alc_setters)
+
+# ── Phase 3M-3a-ii Task B-3: TxChannel CFC + CPDR + CESSB wrappers ─────────
+# Plan: 3M-3a-ii Batch 1 Task B-3 — 9 wrappers over the WDSP TXA dynamics
+# section: CFC (cfcomp.c:632-737), CPDR (compress.c:99-117), CESSB
+# (osctrl.c:142-150) [all v2.10.3.13].  Includes profile-array validation
+# coverage (empty / mismatched-length early-return) plus regression coverage
+# for the existing Stage::CfComp / Stage::Compressor / Stage::OsCtrl arms in
+# setStageRunning.  Same does-not-crash strategy as B-1 / B-2.
+nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
+
+# ── Phase 3M-3a-i Task C: TransmitModel TX EQ + Leveler + ALC properties ──
+# Plan: 3M-3a-i Batch 1 Task C — 28 new properties on TransmitModel:
+#   - 23 TXProfile keys: TXEQEnabled / TXEQNumBands / TXEQPreamp / TXEQ1..10 /
+#     TxEqFreq1..10 / Lev_On / Lev_MaxGain / Lev_Decay / ALC_MaximumGain /
+#     ALC_Decay
+#   - 4 globals (NOT in TXProfile): eq/nc / eq/mp / eq/ctfmode / eq/wintype
+# Tests cover defaults (matching Thetis database.cs:4552-4594 + WDSP TXA.c
+# create_eqp G[]/F[]), signal emission idempotency, range clamping
+# (Designer ranges from setup.Designer.cs), per-MAC AppSettings round-trip,
+# and multi-MAC isolation.
+nereus_add_test(tst_transmit_model_eq_lev_alc)
 
 # Plan: 3M-1b E.2. Exercises AudioEngine TX monitor enable + volume state
 # (setTxMonitorEnabled / setTxMonitorVolume / signals / clamping / idempotency).

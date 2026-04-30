@@ -9,10 +9,12 @@
 //   setup.cs:9615-9656 [v2.10.3.13] — btnTXProfileDelete_Click
 //
 // NereusSDR collapses the Thetis many-table TXProfile schema (~206 columns
-// in DB.ds.Tables["TXProfile"]) to the live-fields-only subset (~24 keys =
-// 15 mic/VOX/MON + 7 two-tone + 1 drive-power-source enum).  19 of Thetis's
-// 21 factory profiles are deferred to 3M-3a sub-PRs (where the EQ / CFC /
-// DEXP backends ship); 3M-1c chunk F seeds only the "Default" profile.
+// in DB.ds.Tables["TXProfile"]) to the live-fields-only subset (50 keys =
+// 15 mic/VOX/MON + 7 two-tone + 1 drive-power-source enum + 22 EQ + 3
+// Leveler + 2 ALC).  19 of Thetis's 21 factory profiles are deferred to
+// 3M-3a sub-PRs that ship CFC / DEXP backends; 3M-3a-i G adds the EQ +
+// Leveler + ALC bundle on top of the 3M-1c chunk-F base (which seeded
+// only the "Default" profile).
 //
 // Per-MAC AppSettings layout (parallel to hardware/<mac>/tx/<key> from
 // TransmitModel L.2):
@@ -20,7 +22,7 @@
 //   hardware/<mac>/tx/profile/active                      = "Default"
 //   hardware/<mac>/tx/profile/<name>/MicGain              = "-6"
 //   hardware/<mac>/tx/profile/<name>/Mic_Input_Boost      = "True"
-//   ... (23 live keys per profile; same key names as
+//   ... (50 live keys per profile; same key names as
 //        TransmitModel::persistOne uses under hardware/<mac>/tx/<key>)
 //
 // AppSettings does not natively enumerate keys by prefix.  We keep a
@@ -169,7 +171,7 @@ private:
     void removeProfileKeys(const QString& name);
 
     /// Capture current TransmitModel state into a live-field key→value hash.
-    /// 23 keys; matches defaultProfileValues() in shape.
+    /// 50 keys; matches defaultProfileValues() in shape.
     static QHash<QString, QVariant> captureLiveValues(const TransmitModel* tx);
 
     /// Apply a profile's key→value hash back to a TransmitModel via the

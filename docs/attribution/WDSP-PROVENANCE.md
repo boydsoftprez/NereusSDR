@@ -6,7 +6,32 @@ WDSP (Warren Pratt NR0V's DSP library) is vendored in `third_party/wdsp/`.
 
 - **Author:** Warren Pratt (NR0V, W5WJ)
 - **Canonical repository:** https://github.com/TAPR/OpenHPSDR-wdsp
-- **Version in NereusSDR:** v1.29 (as of 2025-02-XX)
+- **Version in NereusSDR:** v1.29 (as of 2025-02-XX), with **partial Thetis
+  v2.10.3.13 sync** for `cfcomp.c` + `cfcomp.h` (see "Partial sync record"
+  below).
+
+## Partial sync record
+
+| File | Status | Source | Date |
+| --- | --- | --- | --- |
+| `third_party/wdsp/src/cfcomp.c` | Partial sync to Thetis v2.10.3.13 (commit `501e3f5`) | `../Thetis/Project Files/Source/wdsp/cfcomp.c` | 2026-04-30 |
+| `third_party/wdsp/src/cfcomp.h` | Partial sync to Thetis v2.10.3.13 (commit `501e3f5`) | `../Thetis/Project Files/Source/wdsp/cfcomp.h` | 2026-04-30 |
+
+**Reason:** Phase 3M-3a-ii needs per-band Qg (gain skirt Q) and Qe (ceiling
+skirt Q) on the SetTXACFCOMPprofile setter so the CFC dialog can ship with
+full Thetis userland parity (nudCFC_q + nudCFC_cq per-band Q controls).
+TAPR v1.29's 5-arg signature has no Qg/Qe.
+
+**License delta:** Thetis v2.10.3.13 cfcomp headers carry a Richard Samphire
+(MW0LGE) dual-licensing block — Copyright (c) 2026 — which lands verbatim in
+the bundled `cfcomp.{c,h}` headers as part of this sync.  This is upstream's
+own dual-license (GPLv2-or-later WDSP carries on as the floor — Samphire
+reserves additional rights only over his own contributions).  The license
+delta does NOT restrict any rights granted to NereusSDR under the GPL.
+
+All other 140 WDSP source files remain at TAPR v1.29.  Full WDSP upstream
+re-sync is out of scope for 3M-3a-ii — see `UPSTREAM-SYNC-PROTOCOL.md` §6
+for the full-sync procedure.
 
 ## License Analysis
 

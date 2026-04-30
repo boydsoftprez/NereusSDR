@@ -15,6 +15,20 @@
 //                 power spinboxes wired to TransmitModel::setTunePowerForBand;
 //                 ATTOnTX checkbox wired to StepAttenuatorController::setAttOnTxEnabled;
 //                 ForceATTwhenPSAoff wired to StepAttenuatorController::setForceAttWhenPsOff.
+//   2026-04-29 — Phase 3M-3a-i Batch 5 (Task E): SpeechProcessorPage rewrite
+//                 as a NereusSDR-spin TX dashboard — strips the Compressor /
+//                 Phase Rotator / CFC NYI stubs (those controls live on
+//                 Setup → DSP → CFC and Setup → DSP → AGC/ALC per the
+//                 IA decision) and replaces them with an Active Profile
+//                 row (read-only label + Manage… button), a Stage Status
+//                 grid (one row per WDSP TXA stage with a coloured dot
+//                 + state caption + cross-link button) and a Quick Notes
+//                 block.  TX EQ + Leveler labels update live from
+//                 TransmitModel signals; the active-profile label tracks
+//                 MicProfileManager::activeProfileChanged.  Cross-links
+//                 emit openSetupRequested(category, page) which MainWindow
+//                 routes via SetupDialog::selectPage() (see
+//                 MainWindow.cpp:openSetupRequested handler).
 // =================================================================
 
 //=================================================================
@@ -63,12 +77,13 @@
 //============================================================================================//
 
 #include "TransmitSetupPages.h"
-#include "gui/StyleConstants.h"
 #include "core/AppSettings.h"
+#include "core/MicProfileManager.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 #include "models/Band.h"
 #include "core/StepAttenuatorController.h"
+#include "gui/applets/TxEqDialog.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -606,8 +621,31 @@ void TxProfilesPage::buildUI()
 }
 
 // ---------------------------------------------------------------------------
-// SpeechProcessorPage
+// SpeechProcessorPage — TX dashboard (NereusSDR-spin)
+//
+// No direct Thetis equivalent.  This page summarises every WDSP TXA speech-
+// chain stage (txa[ch] members in `wdsp/TXA.c:create_txa` [v2.10.3.13]:
+// eqp / leveler / cfcomp+cfir / compressor / phrot / amsq / alc) and offers
+// fast jumps to the per-stage Setup pages where each is configured.
 // ---------------------------------------------------------------------------
+
+namespace {
+
+// Filled / hollow circle Unicode characters used for the stage status dot.
+constexpr QChar kFilledCircle = QChar(0x25CF);  // ●
+constexpr QChar kHollowCircle = QChar(0x25CB);  // ○
+
+// Coloured stylesheet applied to the dot QLabel based on its state.
+//   on   → bright green (#20e070)
+//   off  → muted grey  (#607080)
+//   alc  → cyan         (#00b4d8)  for the "always-on" callout
+QString dotStyleFor(bool on)
+{
+    const QString colour = on ? QStringLiteral("#20e070") : QStringLiteral("#607080");
+    return QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }").arg(colour);
+}
+
+}  // namespace
 
 SpeechProcessorPage::SpeechProcessorPage(RadioModel* model, QWidget* parent)
     : SetupPage(QStringLiteral("Speech Processor"), model, parent)
@@ -619,64 +657,346 @@ void SpeechProcessorPage::buildUI()
 {
     applyDarkStyle(this);
 
-    // --- Section: Compressor ---
-    auto* compGroup = new QGroupBox(QStringLiteral("Compressor"), this);
-    auto* compForm  = new QFormLayout(compGroup);
-    compForm->setSpacing(6);
+    buildActiveProfileSection();
+    buildStageStatusSection();
+    buildQuickNotesSection();
+}
 
-    m_gainSlider = new QSlider(Qt::Horizontal, compGroup);
-    m_gainSlider->setRange(0, 20);
-    m_gainSlider->setValue(0);
-    m_gainSlider->setEnabled(false);  // NYI
-    m_gainSlider->setToolTip(QStringLiteral("Speech compressor gain (dB) — not yet implemented"));
-    compForm->addRow(QStringLiteral("Gain (dB):"), m_gainSlider);
+// ---------------------------------------------------------------------------
+// SpeechProcessorPage::buildActiveProfileSection
+//
+// Single read-only label showing MicProfileManager::activeProfileName(), with
+// a "Manage…" button that opens TxEqDialog (which hosts the profile combo +
+// Save / Save As / Delete buttons added in 3M-3a-i Batch 4).  Without a
+// connected radio MicProfileManager is unscoped and returns "Default" — the
+// label still reads meaningfully.
+// ---------------------------------------------------------------------------
+void SpeechProcessorPage::buildActiveProfileSection()
+{
+    auto* group = addSection(QStringLiteral("Active Profile"));
+    group->setObjectName(QStringLiteral("grpSpeechActiveProfile"));
 
-    m_cessbToggle = new QCheckBox(QStringLiteral("CESSB enable"), compGroup);
-    m_cessbToggle->setEnabled(false);  // NYI
-    m_cessbToggle->setToolTip(QStringLiteral("Controlled Envelope SSB — not yet implemented"));
-    compForm->addRow(QString(), m_cessbToggle);
+    auto* row = new QHBoxLayout;
+    row->setSpacing(8);
 
-    contentLayout()->addWidget(compGroup);
+    auto* nameLabel = new QLabel(QStringLiteral("Profile:"));
+    nameLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #c8d8e8; font-size: 12px; }"));
+    nameLabel->setFixedWidth(150);
 
-    // --- Section: Phase Rotator ---
-    auto* prGroup = new QGroupBox(QStringLiteral("Phase Rotator"), this);
-    auto* prForm  = new QFormLayout(prGroup);
-    prForm->setSpacing(6);
+    m_activeProfileLabel = new QLabel(QStringLiteral("Default"));
+    m_activeProfileLabel->setObjectName(QStringLiteral("lblActiveProfile"));
+    m_activeProfileLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #00c8ff; font-size: 12px; font-weight: bold; }"));
 
-    m_stagesSpin = new QSpinBox(prGroup);
-    m_stagesSpin->setRange(0, 8);
-    m_stagesSpin->setValue(0);
-    m_stagesSpin->setEnabled(false);  // NYI
-    m_stagesSpin->setToolTip(QStringLiteral("Phase rotator stages — not yet implemented"));
-    prForm->addRow(QStringLiteral("Stages:"), m_stagesSpin);
+    m_manageProfileBtn = new QPushButton(QStringLiteral("Manage..."));
+    m_manageProfileBtn->setObjectName(QStringLiteral("btnManageProfile"));
+    m_manageProfileBtn->setAutoDefault(false);
+    m_manageProfileBtn->setToolTip(QStringLiteral(
+        "Open the TX EQ editor (Tools → TX Equalizer) — the profile combo "
+        "and Save / Save As / Delete buttons live there."));
+    m_manageProfileBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #1a2a3a; border: 1px solid #304050;"
+        "  border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 3px 10px; }"
+        "QPushButton:hover { background: #203040; }"
+        "QPushButton:pressed { background: #00b4d8; color: #0f0f1a; }"));
 
-    m_cornerFreqSlider = new QSlider(Qt::Horizontal, prGroup);
-    m_cornerFreqSlider->setRange(50, 3000);
-    m_cornerFreqSlider->setValue(300);
-    m_cornerFreqSlider->setEnabled(false);  // NYI
-    m_cornerFreqSlider->setToolTip(QStringLiteral("Phase rotator corner frequency (Hz) — not yet implemented"));
-    prForm->addRow(QStringLiteral("Corner Freq (Hz):"), m_cornerFreqSlider);
+    row->addWidget(nameLabel);
+    row->addWidget(m_activeProfileLabel, 1);
+    row->addWidget(m_manageProfileBtn);
 
-    contentLayout()->addWidget(prGroup);
+    auto* groupLayout = qobject_cast<QVBoxLayout*>(group->layout());
+    if (groupLayout) {
+        groupLayout->addLayout(row);
+    }
 
-    // --- Section: CFC ---
-    auto* cfcGroup = new QGroupBox(QStringLiteral("CFC"), this);
-    auto* cfcForm  = new QFormLayout(cfcGroup);
-    cfcForm->setSpacing(6);
+    // ── Initial state from MicProfileManager ────────────────────────────────
+    if (model() != nullptr) {
+        if (auto* mgr = model()->micProfileManager()) {
+            m_activeProfileLabel->setText(mgr->activeProfileName());
 
-    m_cfcToggle = new QCheckBox(QStringLiteral("Enable CFC"), cfcGroup);
-    m_cfcToggle->setEnabled(false);  // NYI
-    m_cfcToggle->setToolTip(QStringLiteral("Continuous Frequency Compression — not yet implemented"));
-    cfcForm->addRow(QString(), m_cfcToggle);
+            // Live-update on profile change.
+            connect(mgr, &MicProfileManager::activeProfileChanged,
+                    this, [this](const QString& name) {
+                if (m_activeProfileLabel) {
+                    m_activeProfileLabel->setText(name);
+                }
+            });
+        }
+    }
 
-    m_cfcProfileLabel = new QLabel(QStringLiteral("(CFC profile — not yet implemented)"), cfcGroup);
-    m_cfcProfileLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #607080; font-style: italic; }"));
-    m_cfcProfileLabel->setEnabled(false);
-    cfcForm->addRow(QStringLiteral("Profile:"), m_cfcProfileLabel);
+    // ── Manage… → TxEqDialog (modeless singleton) ───────────────────────────
+    // Same launch pattern as TxApplet::onEqRightClick (TxApplet.cpp:920) and
+    // the Tools → TX Equalizer menu hook (MainWindow.cpp:2043).
+    connect(m_manageProfileBtn, &QPushButton::clicked, this, [this]() {
+        if (model() == nullptr) { return; }
+        TxEqDialog* dlg = TxEqDialog::instance(model(), this);
+        if (dlg != nullptr) {
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        }
+    });
+}
 
-    contentLayout()->addWidget(cfcGroup);
-    contentLayout()->addStretch();
+// ---------------------------------------------------------------------------
+// SpeechProcessorPage::addStageRow
+//
+// Builds one "Stage  ●  state    [button]   (future-phase tag)" row inside
+// the Stage Status grid.  Returns the state QLabel so callers can wire it
+// to a TransmitModel signal for live updates.
+//
+// linkPage:  empty → button is a visible-but-disabled placeholder
+//            non-empty → button click emits openSetupRequested("DSP", linkPage)
+// futurePhaseTag: empty → no suffix label appended
+// ---------------------------------------------------------------------------
+QLabel* SpeechProcessorPage::addStageRow(QGridLayout* grid, int row,
+                                          const QString& stageName,
+                                          const QString& initialState,
+                                          bool initiallyOn,
+                                          const QString& buttonText,
+                                          const QString& buttonTooltip,
+                                          const QString& linkPage,
+                                          const QString& futurePhaseTag)
+{
+    auto* nameLbl = new QLabel(stageName);
+    nameLbl->setStyleSheet(QStringLiteral(
+        "QLabel { color: #c8d8e8; font-size: 12px; font-weight: bold; }"));
+    nameLbl->setMinimumWidth(110);
+
+    auto* dotLbl = new QLabel(initiallyOn ? QString(kFilledCircle)
+                                          : QString(kHollowCircle));
+    dotLbl->setObjectName(QStringLiteral("dot_") + stageName);
+    dotLbl->setStyleSheet(dotStyleFor(initiallyOn));
+    dotLbl->setFixedWidth(20);
+    dotLbl->setAlignment(Qt::AlignCenter);
+
+    auto* stateLbl = new QLabel(initialState);
+    stateLbl->setObjectName(QStringLiteral("state_") + stageName);
+    stateLbl->setStyleSheet(QStringLiteral(
+        "QLabel { color: #00c8ff; font-size: 12px; }"));
+    stateLbl->setMinimumWidth(90);
+    // Stash the dot sibling on the state label so live-update lambdas can
+    // reach it without having to re-find it from the page root.
+    stateLbl->setProperty("dotSibling", QVariant::fromValue<QObject*>(dotLbl));
+
+    auto* btn = new QPushButton(buttonText);
+    btn->setObjectName(QStringLiteral("btn_") + stageName);
+    btn->setAutoDefault(false);
+    btn->setToolTip(buttonTooltip);
+    btn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #1a2a3a; border: 1px solid #304050;"
+        "  border-radius: 3px; color: #c8d8e8; font-size: 11px; padding: 2px 8px; }"
+        "QPushButton:hover:enabled { background: #203040; }"
+        "QPushButton:pressed:enabled { background: #00b4d8; color: #0f0f1a; }"
+        "QPushButton:disabled { color: #607080; border: 1px solid #203040; }"));
+
+    if (linkPage.isEmpty()) {
+        // Future-phase placeholder — visible-but-disabled.
+        btn->setEnabled(false);
+    } else {
+        connect(btn, &QPushButton::clicked, this, [this, linkPage]() {
+            emit openSetupRequested(QStringLiteral("DSP"), linkPage);
+        });
+    }
+
+    grid->addWidget(nameLbl, row, 0);
+    grid->addWidget(dotLbl,  row, 1);
+    grid->addWidget(stateLbl, row, 2);
+    grid->addWidget(btn,     row, 3);
+
+    if (!futurePhaseTag.isEmpty()) {
+        auto* tagLbl = new QLabel(QStringLiteral("(") + futurePhaseTag + QStringLiteral(")"));
+        tagLbl->setStyleSheet(QStringLiteral(
+            "QLabel { color: #607080; font-size: 10px; font-style: italic; }"));
+        grid->addWidget(tagLbl, row, 4);
+    }
+
+    return stateLbl;
+}
+
+// ---------------------------------------------------------------------------
+// SpeechProcessorPage::buildStageStatusSection
+//
+// Grid of TXA stage rows.  TX EQ + Leveler are wired to live model signals;
+// ALC is hard-labelled "always-on" (no toggle in Thetis schema either —
+// `txa[ch].alc` is always created with run=1 in `TXA.c:create_txa`
+// [v2.10.3.13]).  Phrot / CFC / CESSB / AM-SQ-DEXP land in 3M-3a-ii and
+// 3M-3a-iii — placeholder rows show "off" and tag the future phase.
+// ---------------------------------------------------------------------------
+void SpeechProcessorPage::buildStageStatusSection()
+{
+    auto* group = addSection(QStringLiteral("Stage Status"));
+    group->setObjectName(QStringLiteral("grpSpeechStageStatus"));
+
+    auto* grid = new QGridLayout;
+    grid->setHorizontalSpacing(12);
+    grid->setVerticalSpacing(4);
+
+    const bool txEqOn   = (model() != nullptr) && model()->transmitModel().txEqEnabled();
+    const bool levelOn  = (model() != nullptr) && model()->transmitModel().txLevelerOn();
+
+    int row = 0;
+
+    // TX EQ — wired to TransmitModel::txEqEnabledChanged.
+    m_txEqStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("TX EQ"),
+        txEqOn ? QStringLiteral("enabled") : QStringLiteral("off"),
+        txEqOn,
+        QStringLiteral("Open TX EQ Editor..."),
+        QStringLiteral("Open the modeless TX Equalizer dialog (10-band sliders)"),
+        QString(),                                         // not a setup-page jump
+        QString());
+
+    // The TX EQ row's button doesn't cross-link to a setup page — it opens
+    // the modeless TxEqDialog directly (same launch pattern as
+    // TxApplet::onEqRightClick / Tools → TX Equalizer).  addStageRow()
+    // initially leaves the button disabled because we passed an empty
+    // linkPage; here we re-enable it and wire the dialog launch.
+    if (auto* btn = group->findChild<QPushButton*>(QStringLiteral("btn_TX EQ"))) {
+        m_openTxEqBtn = btn;
+        m_openTxEqBtn->setEnabled(true);
+        connect(m_openTxEqBtn, &QPushButton::clicked, this, [this]() {
+            if (model() == nullptr) { return; }
+            TxEqDialog* dlg = TxEqDialog::instance(model(), this);
+            if (dlg != nullptr) {
+                dlg->show();
+                dlg->raise();
+                dlg->activateWindow();
+            }
+        });
+    }
+
+    // Leveler — wired to TransmitModel::txLevelerOnChanged.  Cross-links to
+    // Setup → DSP → AGC/ALC.
+    m_levelerStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("Leveler"),
+        levelOn ? QStringLiteral("enabled") : QStringLiteral("off"),
+        levelOn,
+        QStringLiteral("Open AGC/ALC Setup"),
+        QStringLiteral("Open Setup → DSP → AGC/ALC (Leveler controls live there)"),
+        QStringLiteral("AGC/ALC"),
+        QString());
+
+    // ALC — always-on; static row.  Dot is cyan (always-on callout).
+    m_alcStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("ALC"),
+        QStringLiteral("always-on"),
+        true,
+        QStringLiteral("Open AGC/ALC Setup"),
+        QStringLiteral("Open Setup → DSP → AGC/ALC (ALC max-gain + decay live there)"),
+        QStringLiteral("AGC/ALC"),
+        QString());
+    // Override the dot colour to the cyan callout (rather than the default
+    // green-for-on) so users can tell at a glance that ALC isn't a toggle.
+    if (auto* dot = group->findChild<QLabel*>(QStringLiteral("dot_ALC"))) {
+        dot->setStyleSheet(QStringLiteral(
+            "QLabel { color: #00b4d8; font-size: 14px; font-weight: bold; }"));
+    }
+
+    // Phase Rotator — placeholder (3M-3a-ii target; cross-links to CFC page
+    // since that's where Phrot lands per the IA decision).
+    m_phrotStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("Phase Rot."),
+        QStringLiteral("off"),
+        false,
+        QStringLiteral("Open CFC Setup"),
+        QStringLiteral("Open Setup → DSP → CFC (Phase Rotator + CFC live there)"),
+        QStringLiteral("CFC"),
+        QStringLiteral("3M-3a-ii"));
+
+    // CFC — placeholder.
+    m_cfcStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("CFC"),
+        QStringLiteral("off"),
+        false,
+        QStringLiteral("Open CFC Setup"),
+        QStringLiteral("Open Setup → DSP → CFC (Continuous Frequency Compressor)"),
+        QStringLiteral("CFC"),
+        QStringLiteral("3M-3a-ii"));
+
+    // CESSB — placeholder.
+    m_cessbStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("CESSB"),
+        QStringLiteral("off"),
+        false,
+        QStringLiteral("Open CFC Setup"),
+        QStringLiteral("Open Setup → DSP → CFC (Controlled Envelope SSB lives here)"),
+        QStringLiteral("CFC"),
+        QStringLiteral("3M-3a-ii"));
+
+    // AM-SQ / DEXP — placeholder (3M-3a-iii target; cross-links to VOX/DEXP).
+    m_amSqDexpStatusLabel = addStageRow(grid, row++,
+        QStringLiteral("AM-SQ / DEXP"),
+        QStringLiteral("off"),
+        false,
+        QStringLiteral("Open VOX/DEXP Setup"),
+        QStringLiteral("Open Setup → DSP → VOX/DEXP (AM-Squelch + Downward Expander)"),
+        QStringLiteral("VOX/DEXP"),
+        QStringLiteral("3M-3a-iii"));
+
+    auto* groupLayout = qobject_cast<QVBoxLayout*>(group->layout());
+    if (groupLayout) {
+        groupLayout->addLayout(grid);
+    }
+
+    // ── Live wiring: TransmitModel → status labels ──────────────────────────
+    if (model() != nullptr) {
+        auto& tx = model()->transmitModel();
+
+        connect(&tx, &TransmitModel::txEqEnabledChanged,
+                this, [this](bool on) {
+            if (!m_txEqStatusLabel) { return; }
+            m_txEqStatusLabel->setText(on ? QStringLiteral("enabled")
+                                          : QStringLiteral("off"));
+            // Update sibling dot (looked up via the property we stashed).
+            if (auto* dot = qobject_cast<QLabel*>(
+                    m_txEqStatusLabel->property("dotSibling").value<QObject*>())) {
+                dot->setText(on ? QString(kFilledCircle) : QString(kHollowCircle));
+                dot->setStyleSheet(dotStyleFor(on));
+            }
+        });
+
+        connect(&tx, &TransmitModel::txLevelerOnChanged,
+                this, [this](bool on) {
+            if (!m_levelerStatusLabel) { return; }
+            m_levelerStatusLabel->setText(on ? QStringLiteral("enabled")
+                                              : QStringLiteral("off"));
+            if (auto* dot = qobject_cast<QLabel*>(
+                    m_levelerStatusLabel->property("dotSibling").value<QObject*>())) {
+                dot->setText(on ? QString(kFilledCircle) : QString(kHollowCircle));
+                dot->setStyleSheet(dotStyleFor(on));
+            }
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SpeechProcessorPage::buildQuickNotesSection
+//
+// Static informational block.  Documents the WDSP TXA speech-chain order
+// (matches `wdsp/TXA.c:create_txa` execution order [v2.10.3.13]: eqp →
+// leveler → cfcomp/cfir → compressor → phrot → amsq → alc → output) and
+// reminds users where each stage is configured.
+// ---------------------------------------------------------------------------
+void SpeechProcessorPage::buildQuickNotesSection()
+{
+    auto* group = addSection(QStringLiteral("Quick Notes"));
+    group->setObjectName(QStringLiteral("grpSpeechQuickNotes"));
+
+    auto* note = new QLabel(QStringLiteral(
+        "Speech chain order: EQ → Leveler → CFC → CPDR → CESSB → AM-SQ → ALC → Output\n"
+        "Configure each stage on its dedicated DSP setup tab.\n"
+        "TX EQ has its own modeless editor (Tools → TX Equalizer)."));
+    note->setObjectName(QStringLiteral("lblQuickNotes"));
+    note->setWordWrap(true);
+    note->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8aa8c0; font-size: 11px; }"));
+
+    auto* groupLayout = qobject_cast<QVBoxLayout*>(group->layout());
+    if (groupLayout) {
+        groupLayout->addWidget(note);
+    }
 }
 
 // ---------------------------------------------------------------------------

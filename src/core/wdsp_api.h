@@ -49,6 +49,34 @@
 //                 PostGen two-tone IMD test wrapper setters. Signatures
 //                 match wdsp/gen.c:817-962 [v2.10.3.13]. AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-04-30 — SetTXACompressorGain, SetTXACFCOMPPosition,
+//                 SetTXACFCOMPprofile, SetTXACFCOMPPrecomp,
+//                 SetTXACFCOMPPeqRun, SetTXACFCOMPPrePeq declarations
+//                 added by J.J. Boyd (KG4VCF) during 3M-3a-ii Batch 1 —
+//                 TxChannel CFC + CPDR + CESSB wrappers.  Signatures
+//                 match wdsp/cfcomp.c:632-737 and wdsp/compress.c:99-117
+//                 [v2.10.3.13], with cfcomp profile arity reduced to the
+//                 5-arg variant exported by the bundled third_party/wdsp
+//                 (TAPR v1.29) — the 7-arg variant (Qg/Qe) becomes
+//                 available when third_party/wdsp is upgraded.
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-30 — SetTXACFCOMPprofile widened from 5-arg to 7-arg
+//                 (per-band Qg / Qe pointers added) by J.J. Boyd (KG4VCF)
+//                 during 3M-3a-ii Batch 1.5 — partial WDSP upstream-sync
+//                 of cfcomp.{c,h} from TAPR v1.29 to Thetis v2.10.3.13
+//                 (bundled at third_party/wdsp/src/cfcomp.{c,h}).  The
+//                 NereusSDR C++ wrapper now forwards Qg/Qe (or nullptr per
+//                 the cfcomp.c:669-682 NULL-skirt semantics) instead of
+//                 dropping them at the linker.  AI-assisted transformation
+//                 via Anthropic Claude Code.
+//   2026-04-30 — SetTXAPHROTCorner, SetTXAPHROTNstages, SetTXAPHROTReverse
+//                 declarations added by J.J. Boyd (KG4VCF) during
+//                 3M-3a-ii Batch 1.6 — TxChannel TXA phase-rotator parameter
+//                 setters that 3M-3a-i deferred (the Run flag was wired via
+//                 Stage::PhRot in 3M-1; the parameter setters belong with
+//                 the CFC tab schema work in 3M-3a-ii).  Signatures match
+//                 wdsp/iir.c:675-703 [v2.10.3.13].  AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -693,6 +721,23 @@ void SetTXAPanelRun(int channel, int run);
 // From Thetis wdsp/iir.c:665-670 [v2.10.3.13].
 void SetTXAPHROTRun(int channel, int run);
 
+// phrot corner frequency in Hz.  WDSP rebuilds the all-pass coefficients on
+// every set (decalc_phrot + calc_phrot) — non-trivial cost; avoid spamming.
+// csDSP-protected (cs_update).
+// From Thetis wdsp/iir.c:675-683 [v2.10.3.13].
+void SetTXAPHROTCorner(int channel, double corner);
+
+// phrot number of all-pass stages.  WDSP rebuilds the coefficient bank on
+// every set (decalc_phrot + calc_phrot) — non-trivial cost; avoid spamming.
+// csDSP-protected (cs_update).
+// From Thetis wdsp/iir.c:686-694 [v2.10.3.13].
+void SetTXAPHROTNstages(int channel, int nstages);
+
+// phrot reverse-rotation flag (cheap — just flips the sign).
+// csDSP-protected (cs_update).
+// From Thetis wdsp/iir.c:697-703 [v2.10.3.13].
+void SetTXAPHROTReverse(int channel, int reverse);
+
 // amsq (stage 5): TX AM squelch / downward expander.
 // From Thetis wdsp/amsq.c:246-252 [v2.10.3.13] and amsq.h:83.
 void SetTXAAMSQRun(int channel, int run);
@@ -701,18 +746,90 @@ void SetTXAAMSQRun(int channel, int run);
 // From Thetis wdsp/eq.c:742-747 [v2.10.3.13].
 void SetTXAEQRun(int channel, int run);
 
+// TX EQ DSP-tier setters — Phase 3M-3a-i Task B-1.
+// These reallocate the EQ impulse response and (eq.c:750-828 [v2.10.3.13])
+// are NOT csDSP-protected; call only from the main thread.  See TxChannel.h
+// wrapper docs for the threading rationale.
+//
+// From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC (filter coefficients).
+void SetTXAEQNC(int channel, int nc);
+// From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP (minimum-phase flag).
+void SetTXAEQMP(int channel, int mp);
+// From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile.
+//   F[0..nfreqs] freqs Hz (F[0] unused / preamp pad)
+//   G[0..nfreqs] gains dB (G[0] = preamp)
+// (Graphic-EQ form — no Q vector. The parametric variant
+//  SetTXAGrphEQ10 / SetTXAGrphEQProfile takes Q separately.)
+void SetTXAEQProfile(int channel, int nfreqs, double* F, double* G);
+// From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode.
+void SetTXAEQCtfmode(int channel, int mode);
+// From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype.
+void SetTXAEQWintype(int channel, int wintype);
+// From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10
+//   (10-band graphic EQ; txeq[0]=preamp dB, txeq[1..10]=band gains dB
+//    at fixed centers 32/63/125/250/500/1k/2k/4k/8k/16k Hz).
+void SetTXAGrphEQ10(int channel, int* txeq);
+
 // compressor (stage 14): TX speech compressor (COMP).
 // Also adjusts bp1/bp2 bandpass routing via TXASetupBPFilters().
 // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] and compress.h:60.
 void SetTXACompressorRun(int channel, int run);
+
+// CPDR gain (dB).  Internally WDSP stores pow(10, gain/20.0).
+// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
+void SetTXACompressorGain(int channel, double gain);
 
 // osctrl (stage 16): CESSB overshoot control.
 // From Thetis wdsp/osctrl.c:142-147 [v2.10.3.13].
 void SetTXAosctrlRun(int channel, int run);
 
 // cfcomp (stage 11): continuous frequency compander.
-// From Thetis wdsp/cfcomp.c:632-637 [v2.10.3.13].
+// From Thetis wdsp/cfcomp.c:632-737 [v2.10.3.13].
 void SetTXACFCOMPRun(int channel, int run);
+
+// CFC pre/post position. 0 = pre-EQ, 1 = post-EQ (Thetis usage).
+// From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13].
+void SetTXACFCOMPPosition(int channel, int pos);
+
+// CFC profile arrays.  Five required vectors plus two optional Q skirts:
+//   F  - centre frequencies (Hz)               [length nfreqs]
+//   G  - gain at each F (dB)                   [length nfreqs]
+//   E  - max-gain ceiling at each F (dB)       [length nfreqs]
+//   Qg - Q for the gain skirt    (length nfreqs, or NULL to disable)
+//   Qe - Q for the ceiling skirt (length nfreqs, or NULL to disable)
+//
+// NULL-Qg / NULL-Qe semantics — from cfcomp.c:669-682 [v2.10.3.13]: when
+// either pointer is NULL, WDSP does not allocate the corresponding `a->Qg`
+// or `a->Qe` array and `calc_comp` falls back to the linear interpolation
+// path for that skirt (cfcomp.c:171-183).  When both are non-NULL, WDSP
+// runs the Gaussian-tail Q-shaped interpolation (cfcomp.c:184-296).
+// Either Qg or Qe may be NULL independently — they don't have to agree.
+//
+// As of Phase 3M-3a-ii Batch 1.5 (2026-04-30) the bundled
+// `third_party/wdsp/src/cfcomp.{c,h}` is the Thetis v2.10.3.13 version, so
+// this declaration matches the bundled symbol exactly — TxChannel::
+// setTxCfcProfile forwards Qg/Qe through to WDSP without the linker drop
+// that the TAPR v1.29 vintage required.
+//
+// From Thetis wdsp/cfcomp.c:656 [v2.10.3.13] — 7-arg with per-band Qg
+// (gain skirt Q) and Qe (ceiling skirt Q).  Either Qg or Qe may be NULL
+// to opt out per-skirt.
+void SetTXACFCOMPprofile(int channel, int nfreqs, double* F, double* G, double* E,
+                         double* Qg, double* Qe);
+
+// CFC pre-compression in dB.  WDSP stores pow(10, 0.05 * dB) internally and
+// pre-applies the linear gain to cfc_gain[].
+// From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13].
+void SetTXACFCOMPPrecomp(int channel, double precomp);
+
+// CFC post-EQ run gate.  Independent from the main CFC run flag — when on,
+// WDSP applies the peq filter after the comp curve.
+// From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13].
+void SetTXACFCOMPPeqRun(int channel, int run);
+
+// CFC pre-PEQ gain (dB).  WDSP stores pow(10, 0.05 * dB) as prepeqlin.
+// From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13].
+void SetTXACFCOMPPrePeq(int channel, double prepeq);
 
 // ── TX channel default config — from deskhpsdr/src/transmitter.c:1459-1473 [@120188f]
 // These calls are invoked AFTER OpenChannel(... type=1 ...) to put the WDSP TX

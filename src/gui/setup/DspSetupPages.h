@@ -109,6 +109,15 @@ private:
     QSlider*    m_agcHangThresh{nullptr};
     QCheckBox*  m_autoAgcChk{nullptr};
     QSpinBox*   m_autoAgcOffset{nullptr};
+
+    // ── Phase 3M-3a-i Batch 2 Task 2 (D): TX Leveler + TX ALC controls ──
+    // Wired bidirectionally to RadioModel::transmitModel() — see
+    // DspSetupPages.cpp for the connect() block.
+    QCheckBox*  m_txLevelerOnChk{nullptr};
+    QSpinBox*   m_txLevelerTopSpin{nullptr};
+    QSpinBox*   m_txLevelerDecaySpin{nullptr};
+    QSpinBox*   m_txAlcMaxGainSpin{nullptr};
+    QSpinBox*   m_txAlcDecaySpin{nullptr};
 };
 
 // ── NR / ANF ──────────────────────────────────────────────────────────────────

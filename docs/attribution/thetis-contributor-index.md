@@ -1,7 +1,7 @@
 # Thetis Contributor Index
 
-**Generated mechanically** by `scripts/generate-contributor-indexes.py` on `2026-04-23T12:10:53+00:00`
-from corpus `docs/attribution/thetis-author-tags.json` (thetis@`93d50464`, mi0bot@`2829f76`).
+**Generated mechanically** by `scripts/generate-contributor-indexes.py` on `2026-04-30T12:51:05+00:00`
+from corpus `docs/attribution/thetis-author-tags.json` (thetis@`501e3f51`, mi0bot@`c26a8a4`).
 
 **Do NOT hand-edit this file.** To add or correct a contributor, edit `docs/attribution/thetis-author-tags.json` and re-run the generator.
 
@@ -16,7 +16,6 @@ Historical Pass 5/6a snapshot preserved at `thetis-contributor-index-v020-snapsh
 | `DH1KLM` | Sigi | MIDI, skins & UI improvements; RedPitaya enum slot contribution |
 | `MI0BOT` | Reid Campbell | Hermes Lite 2 fork maintainer; HL2 I/O, bandwidth monitor, I2C TLV |
 | `G8NJJ` | Laurence Barker | G2, Andromeda, protocols; ANAN_G2_1K PA wiring |
-| `N1GP` | Rick N1GP | ApacheLabs ANAN-G1 and Anvelina-Pro3 model support |
 | `W4TME` | Ke Chen | FlexRadio Systems contributor; database/memory form tweaks |
 | `W4WMT` | Bryan Rambo | Resampler, VAC & cmASIO |
 | `MI0BIT` | Unknown | mi0bot fork HL2 contributions (TX latency, PTT hang, I2C, channel swap); identity unconfirmed — possible alt callsign for MI0BOT |

@@ -619,7 +619,17 @@ Open decisions (deferred per design §10): HL2 variant SKUs (HL Plus, RX-only, e
 
 No file-level overlap with 3M-1 — runs in parallel with the TX epic. Expected to land before 3M-1 completes (it's the smaller piece and Miguel's pain blocks more users than no-TX-yet does).
 
-### Phase 3M-1: Basic SSB TX
+### Phase 3M-1: Basic SSB TX  **[Complete — 2026-04-29]**
+**Status:** Shipped via three sub-phases — 3M-1a TUNE-only first RF (PR #144),
+3M-1b SSB voice + mic-jack family (PR #149), 3M-1c polish + persistence +
+Thetis-faithful semaphore-wake TX pump v3 + HL2 P1 setTxDrive triage + Codex
+P1/P2 fixes (PR #152).
+
+**HL2 hardware bench (rows 58-60 in `phase3m-0-verification/README.md`)** is
+deferred pending the HL2 ATT/filter safety audit (JJ flagged code paths in
+the attenuator and filter-bank wiring that could damage the radio if TX is
+engaged).  Audit runs in parallel with 3M-3.
+
 **Goal:** Get RF out the door — prove the TX I/Q output path works.
 
 Scope:
@@ -638,7 +648,23 @@ Thetis source: `console.cs:29311-29650`, `cmaster.cs:491-540`, `network.c:1250-1
 
 Verification: Key MOX, see RF output on ANAN-G2, hear SSB on another receiver.
 
-### Phase 3M-2: CW TX
+### Phase 3M-2: CW TX  **[Deferred — runs after 3M-3 + HL2 ATT/filter audit]**
+**Status:** Originally scheduled before 3M-3.  Schedule swapped 2026-04-29
+because (a) 3M-3 doesn't need the HL2 hardware bench (DSP stages are
+introspectable on ANAN-G2), letting the HL2 ATT/filter safety audit run in
+parallel without blocking forward TX progress; (b) 3M-3 makes the voice TX
+that 3M-1 just shipped genuinely good (broadcast-grade preprocessing) before
+adding a new state-machine layer; (c) CW bench-verification needs a
+safe-to-TX HL2, which the audit is gating.
+
+**Absorbs:** the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252
+[@c26a8a4]` — desk-review B3, "HL2 firmware uses bit 3 of I-low byte for
+CWX PTT, non-HL2 boards don't").
+
+**BandPlanGuard mode-gate** — until 3M-2 ships, CWL/CWU continue to be
+rejected with the verbatim toast "CW TX coming in Phase 3M-2"
+(`tst_band_plan_guard_mode_allow_list`).
+
 **Goal:** Full CW transmit with keyer and sidetone.
 
 Scope:
@@ -654,7 +680,11 @@ Thetis source: `sidetone.c`, `cwkeyer.cs`, `console.cs:29590`
 
 Verification: Send CW via paddle/keyboard, hear sidetone, clean CW on air.
 
-### Phase 3M-3: TX Processing Chain + RX DSP Additions
+### Phase 3M-3: TX Processing Chain + RX DSP Additions  **[Next — pulled forward from after-3M-2]**
+**Status:** Pulled forward 2026-04-29 from its original "after 3M-2 CW TX"
+slot.  Rationale in §3M-2 above.  Branched at `feature/phase3m-3-tx-processing`
+worktree on 2026-04-29 from `origin/main` `1d40670` (post-PR-#152 merge).
+
 **Goal:** Full TX audio processing feature parity with Thetis TXA chain (18 stages).
 
 TX DSP (all need WDSP call wiring + UI controls):

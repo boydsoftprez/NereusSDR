@@ -15,6 +15,13 @@
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
 //                 Phase 3M-1c chunk F (F.1-F.6) — see header comment.
+//   2026-04-29 — Phase 3M-3a-i Batch 4 (Task A.2): factory-profile
+//                 seed extension by J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude
+//                 Code.  load() now seeds Default + 21 Thetis
+//                 factory profiles on first launch (port of
+//                 database.cs AddTXProfileTable bIndcludeExtraProfiles
+//                 block, lines 4545-9354 [v2.10.3.13]).
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -33,8 +40,6 @@
 namespace NereusSDR {
 
 namespace {
-
-constexpr const char* kProfileSubpath = "/tx/profile/";
 
 QString profilePathPrefix(const QString& mac)
 {
@@ -57,8 +62,9 @@ QString activeKey(const QString& mac)
 }
 
 // ---------------------------------------------------------------------------
-// 23 live-field keys captured per profile.  Order matches the table in the
-// chunk-F task spec (tools/script-friendly: stays sorted by group).
+// 50 live-field keys captured per profile.  Order matches the table in the
+// chunk-F + 3M-3a-i G task specs (tools/script-friendly: sorted by group).
+// 23 mic/VOX/MON/two-tone (3M-1c F) + 27 EQ/Lev/ALC (3M-3a-i G).
 // ---------------------------------------------------------------------------
 const QStringList& liveKeyList()
 {
@@ -91,8 +97,403 @@ const QStringList& liveKeyList()
         QStringLiteral("TwoToneInvert"),
         QStringLiteral("TwoTonePulsed"),
         QStringLiteral("TwoToneDrivePowerOrigin"),
+        // ── 3M-3a-i G — TX EQ + Leveler + ALC (27 keys) ───────────────────
+        // EQ enable + preamp + 10 band gains + 10 band frequencies (22 keys).
+        // Defaults from Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile
+        // schema) + WDSP TXA.c:111-128 (create_eqp G[]/F[] vectors).
+        // EQ globals (eq/nc, eq/mp, eq/ctfmode, eq/wintype) are intentionally
+        // NOT bundled — they are radio-wide DSP settings, not per-profile.
+        QStringLiteral("TXEQEnabled"),
+        QStringLiteral("TXEQPreamp"),
+        QStringLiteral("TXEQ1"),
+        QStringLiteral("TXEQ2"),
+        QStringLiteral("TXEQ3"),
+        QStringLiteral("TXEQ4"),
+        QStringLiteral("TXEQ5"),
+        QStringLiteral("TXEQ6"),
+        QStringLiteral("TXEQ7"),
+        QStringLiteral("TXEQ8"),
+        QStringLiteral("TXEQ9"),
+        QStringLiteral("TXEQ10"),
+        QStringLiteral("TxEqFreq1"),
+        QStringLiteral("TxEqFreq2"),
+        QStringLiteral("TxEqFreq3"),
+        QStringLiteral("TxEqFreq4"),
+        QStringLiteral("TxEqFreq5"),
+        QStringLiteral("TxEqFreq6"),
+        QStringLiteral("TxEqFreq7"),
+        QStringLiteral("TxEqFreq8"),
+        QStringLiteral("TxEqFreq9"),
+        QStringLiteral("TxEqFreq10"),
+        // Leveler (3 keys) — database.cs:4584-4588 [v2.10.3.13].
+        QStringLiteral("Lev_On"),
+        QStringLiteral("Lev_MaxGain"),
+        QStringLiteral("Lev_Decay"),
+        // ALC (2 keys) — database.cs:4592-4594 [v2.10.3.13].
+        QStringLiteral("ALC_MaximumGain"),
+        QStringLiteral("ALC_Decay"),
     };
     return kKeys;
+}
+
+// ---------------------------------------------------------------------------
+// 3M-3a-i Batch 4 (Task A.2) — factory profile bank.
+//
+// Ports the 21 Thetis factory TX profiles VERBATIM from
+// database.cs:AddTXProfileTable [v2.10.3.13]:
+//   * Default          (database.cs:4545-4770)   — always seeded
+//   * Default DX       (database.cs:4777-5000)   — always seeded
+//   * Digi 1K@1500     (database.cs:5009-5231)   — bIndcludeExtraProfiles
+//   * Digi 1K@2210     (database.cs:5239-5461)
+//   * AM               (database.cs:5468-5690)
+//   * Conventional     (database.cs:5697-5919)
+//   * D-104            (database.cs:5926-6148)
+//   * D-104+CPDR       (database.cs:6155-6377)
+//   * D-104+EQ         (database.cs:6384-6606)
+//   * DX / Contest     (database.cs:6613-6835)
+//   * ESSB             (database.cs:6842-7064)
+//   * HC4-5            (database.cs:7071-7293)
+//   * HC4-5+CPDR       (database.cs:7300-7522)
+//   * PR40+W2IHY       (database.cs:7529-7751)
+//   * PR40+W2IHY+CPDR  (database.cs:7758-7980)
+//   * PR781+EQ         (database.cs:7987-8209)
+//   * PR781+EQ+CPDR    (database.cs:8216-8438)
+//   * SSB 2.8k CFC     (database.cs:8445-8667)
+//   * SSB 3.0k CFC     (database.cs:8674-8896)
+//   * SSB 3.3k CFC     (database.cs:8903-9125)
+//   * AM 10k CFC       (database.cs:9132-9354)
+//
+// In Thetis the "extra profiles" group (Digi 1K@1500 onward) is gated
+// by the bIndcludeExtraProfiles flag, which is true for the seed
+// table "TXProfileDef" at database.cs:241 [v2.10.3.13] (this is the
+// pristine factory set users restore from).  NereusSDR ships ALL
+// factory profiles on every fresh install so users have the same
+// bank Thetis users would see after a "restore defaults" — keeping
+// the userland parity invariant from
+// `feedback_thetis_userland_parity` and `feedback_thetis_parity_over_local_optimization`.
+//
+// Per-profile only the keys that DEVIATE from defaultProfileValues()
+// are stored as overrides — the seed pipeline merges them into a
+// full default hash before writing to AppSettings.  This keeps the
+// override tables compact and matches the bit-for-bit layout of the
+// Thetis source rows (columns absent from the override hash inherit
+// defaultProfileValues, which already carries the database.cs row
+// values for the live-fields-only subset).
+//
+// All TXEQ band/freq numeric values, MicGain, Lev_*, and ALC_*
+// values come byte-for-byte from the cited source lines.  Do NOT
+// "improve" or round any value — see CLAUDE.md "Constants and
+// Magic Numbers" rule.
+// ---------------------------------------------------------------------------
+
+struct FactoryProfile {
+    QString name;
+    QHash<QString, QVariant> overrides;  // keys that deviate from defaultProfileValues()
+};
+
+// Helper: build the full 22-key EQ portion for a factory profile.  All 21
+// Thetis factory profiles set TXEQ1..10 + TxEqFreq1..10 explicitly in
+// database.cs, so we must encode every value byte-for-byte (NereusSDR's
+// defaultProfileValues() uses WDSP defaults like {-12,-12,-12,-1,1,4,9,
+// 12,-10,-10} which DIVERGE from the Thetis row defaults).
+//
+// Two convenience makers cover the EQ shapes seen in the Thetis source:
+//   eqAllZeros()  — TXEQ1..10 = 0, freq grid 32/63/.../16000 (the
+//                   default EQ-off row used by Default DX, AM, ESSB,
+//                   Digi, HC4-5, PR40+W2IHY, DX/Contest, Conventional)
+//   eqD104()      — TXEQ1=7, TXEQ2=3, TXEQ3=4, TXEQ4..10=0, default freq grid
+//   eqPr781Eq()   — TXEQ1=-6, TXEQ2=2, TXEQ3=8, TXEQ4..10=0, default freq grid
+//   eqPr781EqCpdr() — TXEQ1=-8, TXEQ2=3, TXEQ3=7, TXEQ4..10=0, default freq grid
+//   eqSsbCfc()    — TXEQ1..10 from the CFC bell-curve row, custom freq grid
+//                   (30/70/300/500/1k/2k/3k/4k/5k/6k Hz).
+//
+// All maker functions take their cite line numbers as parameters so the
+// inline-tag preservation script can verify the cited Thetis source rows.
+QHash<QString, QVariant> eqAllZeros()
+{
+    QHash<QString, QVariant> out;
+    for (int i = 1; i <= 10; ++i) {
+        out.insert(QStringLiteral("TXEQ%1").arg(i),       QStringLiteral("0"));
+    }
+    static const int kF[10] = {32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    for (int i = 0; i < 10; ++i) {
+        out.insert(QStringLiteral("TxEqFreq%1").arg(i + 1),
+                   QString::number(kF[i]));
+    }
+    return out;
+}
+
+// D-104 / D-104+CPDR / D-104+EQ all share the same EQ shape; only
+// TXEQEnabled and MicGain vary.
+// EQ shape from Thetis database.cs:5935-5945 [v2.10.3.13] for D-104.
+QHash<QString, QVariant> eqD104()
+{
+    QHash<QString, QVariant> out = eqAllZeros();
+    out.insert(QStringLiteral("TXEQ1"), QStringLiteral("7"));   // database.cs:5936
+    out.insert(QStringLiteral("TXEQ2"), QStringLiteral("3"));   // database.cs:5937
+    out.insert(QStringLiteral("TXEQ3"), QStringLiteral("4"));   // database.cs:5938
+    return out;
+}
+
+// EQ shape from Thetis database.cs:7997-8006 [v2.10.3.13] for PR781+EQ.
+QHash<QString, QVariant> eqPr781Eq()
+{
+    QHash<QString, QVariant> out = eqAllZeros();
+    out.insert(QStringLiteral("TXEQ1"), QStringLiteral("-6"));  // database.cs:7997
+    out.insert(QStringLiteral("TXEQ2"), QStringLiteral("2"));   // database.cs:7998
+    out.insert(QStringLiteral("TXEQ3"), QStringLiteral("8"));   // database.cs:7999
+    return out;
+}
+
+// EQ shape from Thetis database.cs:8226-8235 [v2.10.3.13] for PR781+EQ+CPDR.
+QHash<QString, QVariant> eqPr781EqCpdr()
+{
+    QHash<QString, QVariant> out = eqAllZeros();
+    out.insert(QStringLiteral("TXEQ1"), QStringLiteral("-8"));  // database.cs:8226
+    out.insert(QStringLiteral("TXEQ2"), QStringLiteral("3"));   // database.cs:8227
+    out.insert(QStringLiteral("TXEQ3"), QStringLiteral("7"));   // database.cs:8228
+    return out;
+}
+
+// EQ shape from Thetis database.cs:8455-8474 [v2.10.3.13] for SSB 2.8k CFC.
+// SSB 3.0k / 3.3k / AM 10k CFC share this shape (only FilterLow/High differ
+// in source, which we don't bundle).
+QHash<QString, QVariant> eqSsbCfc()
+{
+    QHash<QString, QVariant> out;
+    static const int kG[10] = {-9, -6, -4, -3, -2, -1, -1, -1, -2, -2};
+    static const int kF[10] = {30, 70, 300, 500, 1000, 2000, 3000, 4000, 5000, 6000};
+    for (int i = 0; i < 10; ++i) {
+        out.insert(QStringLiteral("TXEQ%1").arg(i + 1),     QString::number(kG[i]));
+        out.insert(QStringLiteral("TxEqFreq%1").arg(i + 1), QString::number(kF[i]));
+    }
+    return out;
+}
+
+// Merge two override hashes (b takes priority over a).
+QHash<QString, QVariant> mergeOverrides(QHash<QString, QVariant> a,
+                                         const QHash<QString, QVariant>& b)
+{
+    for (auto it = b.constBegin(); it != b.constEnd(); ++it) {
+        a.insert(it.key(), it.value());
+    }
+    return a;
+}
+
+const std::vector<FactoryProfile>& factoryProfiles()
+{
+    // ── Default DX (database.cs:4777-5000) ────────────────────────────
+    // EQ off, all band gains 0, default freq grid, MicGain=5.
+    // From Thetis database.cs:4785-4811 [v2.10.3.13] (TXEQEnabled..MicGain rows).
+    static const QHash<QString, QVariant> kDefaultDxOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("5")},  // database.cs:4811
+        });
+
+    // ── Digi 1K@1500 (database.cs:5005-5231 // W4TME) ─────────────────
+    // EQ off, narrow data filter, MicGain=5, Lev_On=false.
+    // From Thetis database.cs:5017-5046 [v2.10.3.13].
+    static const QHash<QString, QVariant> kDigi1500Overrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("5")},      // database.cs:5043
+            {QStringLiteral("Lev_On"),      QStringLiteral("False")},  // database.cs:5046
+        });
+    // ── Digi 1K@2210 (database.cs:5235-5461 // W4TME) ─────────────────
+    // From Thetis database.cs:5247-5276 [v2.10.3.13].
+    static const QHash<QString, QVariant> kDigi2210Overrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("5")},      // database.cs:5273
+            {QStringLiteral("Lev_On"),      QStringLiteral("False")},  // database.cs:5276
+        });
+
+    // ── AM (database.cs:5468-5690) ────────────────────────────────────
+    // EQ off, default freq grid, MicGain=10.  Same EQ shape as Default DX.
+    // From Thetis database.cs:5476-5502 [v2.10.3.13].
+    static const QHash<QString, QVariant> kAmOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:5502
+        });
+    // ── Conventional (database.cs:5697-5919) ──────────────────────────
+    // From Thetis database.cs:5705-5731 [v2.10.3.13].
+    static const QHash<QString, QVariant> kConventionalOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:5731
+        });
+
+    // ── D-104 (database.cs:5926-6148) ─────────────────────────────────
+    // Astatic D-104 carbon mic — preamp -6 dB, B1/B2/B3 boost.  MicGain=25.
+    // From Thetis database.cs:5934-5960 [v2.10.3.13] (EQ shape via eqD104()).
+    static const QHash<QString, QVariant> kD104Overrides = mergeOverrides(
+        eqD104(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},  // database.cs:5934
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("-6")},     // database.cs:5935
+            {QStringLiteral("MicGain"),     QStringLiteral("25")},     // database.cs:5960
+        });
+    // ── D-104+CPDR (database.cs:6155-6377) ────────────────────────────
+    // Same EQ shape as D-104, MicGain=20, expects external Compander on.
+    // From Thetis database.cs:6163-6189 [v2.10.3.13].
+    static const QHash<QString, QVariant> kD104CpdrOverrides = mergeOverrides(
+        eqD104(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},  // database.cs:6163
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("-6")},     // database.cs:6164
+            {QStringLiteral("MicGain"),     QStringLiteral("20")},     // database.cs:6189
+        });
+    // ── D-104+EQ (database.cs:6384-6606) ──────────────────────────────
+    // EQ ON, same shape as D-104, MicGain=20.
+    // From Thetis database.cs:6392-6418 [v2.10.3.13].
+    static const QHash<QString, QVariant> kD104EqOverrides = mergeOverrides(
+        eqD104(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("True")},   // database.cs:6392
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("-6")},     // database.cs:6393
+            {QStringLiteral("MicGain"),     QStringLiteral("20")},     // database.cs:6418
+        });
+
+    // ── DX / Contest (database.cs:6613-6835) ──────────────────────────
+    // EQ off, default freq grid, MicGain=10.
+    // From Thetis database.cs:6621-6647 [v2.10.3.13].
+    static const QHash<QString, QVariant> kDxContestOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:6647
+        });
+    // ── ESSB (database.cs:6842-7064) ──────────────────────────────────
+    // EQ off, Leveler off (extended-SSB users typically run external comp).
+    // From Thetis database.cs:6850-6879 [v2.10.3.13].
+    static const QHash<QString, QVariant> kEssbOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},     // database.cs:6876
+            {QStringLiteral("Lev_On"),      QStringLiteral("False")},  // database.cs:6879
+        });
+    // ── HC4-5 (database.cs:7071-7293) ─────────────────────────────────
+    // From Thetis database.cs:7079-7105 [v2.10.3.13].
+    static const QHash<QString, QVariant> kHc45Overrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:7105
+        });
+    // ── HC4-5+CPDR (database.cs:7300-7522) ────────────────────────────
+    // From Thetis database.cs:7308-7334 [v2.10.3.13].
+    static const QHash<QString, QVariant> kHc45CpdrOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:7334
+        });
+    // ── PR40+W2IHY (database.cs:7529-7751) ────────────────────────────
+    // From Thetis database.cs:7537-7563 [v2.10.3.13].
+    static const QHash<QString, QVariant> kPr40W2ihyOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:7563
+        });
+    // ── PR40+W2IHY+CPDR (database.cs:7758-7980) ───────────────────────
+    // From Thetis database.cs:7766-7792 [v2.10.3.13].
+    static const QHash<QString, QVariant> kPr40W2ihyCpdrOverrides = mergeOverrides(
+        eqAllZeros(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},  // database.cs:7792
+        });
+
+    // ── PR781+EQ (database.cs:7987-8209) ──────────────────────────────
+    // Heil PR-781 dynamic mic — EQ on, preamp -11 dB, B1=-6, B2=+2, B3=+8
+    // (broadcast-style bass-cut + presence-peak).  MicGain=12.
+    // From Thetis database.cs:7995-8021 [v2.10.3.13] (EQ shape via eqPr781Eq()).
+    static const QHash<QString, QVariant> kPr781EqOverrides = mergeOverrides(
+        eqPr781Eq(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("True")},   // database.cs:7995
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("-11")},    // database.cs:7996
+            {QStringLiteral("MicGain"),     QStringLiteral("12")},     // database.cs:8021
+        });
+    // ── PR781+EQ+CPDR (database.cs:8216-8438) ─────────────────────────
+    // PR-781 EQ tuned for use with external Compander.
+    // From Thetis database.cs:8224-8250 [v2.10.3.13].
+    static const QHash<QString, QVariant> kPr781EqCpdrOverrides = mergeOverrides(
+        eqPr781EqCpdr(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("True")},   // database.cs:8224
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("-9")},     // database.cs:8225
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},     // database.cs:8250
+        });
+
+    // ── SSB 2.8k CFC (database.cs:8445-8667) ──────────────────────────
+    // CFC-tuned EQ — preamp +4 dB, gentle bell shape across upper bands,
+    // custom freq grid (30/70/300/500/1k/2k/3k/4k/5k/6k Hz).  EQ shape
+    // delivered via eqSsbCfc(), which encodes the full 10-band shape +
+    // the custom freq grid byte-for-byte from database.cs:8455-8474.
+    static const QHash<QString, QVariant> kSsb28CfcOverrides = mergeOverrides(
+        eqSsbCfc(),
+        {
+            {QStringLiteral("TXEQEnabled"), QStringLiteral("True")},  // database.cs:8453
+            {QStringLiteral("TXEQPreamp"),  QStringLiteral("4")},     // database.cs:8454
+            {QStringLiteral("MicGain"),     QStringLiteral("10")},    // database.cs:8479
+        });
+    // ── SSB 3.0k CFC (database.cs:8674-8896) ──────────────────────────
+    // Identical EQ shape to SSB 2.8k CFC.
+    static const QHash<QString, QVariant> kSsb30CfcOverrides = kSsb28CfcOverrides;
+    // ── SSB 3.3k CFC (database.cs:8903-9125) ──────────────────────────
+    // Identical EQ shape to SSB 2.8k CFC.
+    static const QHash<QString, QVariant> kSsb33CfcOverrides = kSsb28CfcOverrides;
+    // ── AM 10k CFC (database.cs:9132-9354) ────────────────────────────
+    // Same EQ shape as SSB CFC profiles, used for AM with CFC.
+    static const QHash<QString, QVariant> kAm10kCfcOverrides = kSsb28CfcOverrides;
+
+    static const std::vector<FactoryProfile> kProfiles = {
+        // Default DX always ships (Thetis seeds it unconditionally —
+        // database.cs:241 calls AddTXProfileTable("TXProfileDef", true)
+        // which writes both Default + Default DX into the active table).
+        {QStringLiteral("Default DX"),        kDefaultDxOverrides},
+        {QStringLiteral("Digi 1K@1500"),      kDigi1500Overrides},
+        {QStringLiteral("Digi 1K@2210"),      kDigi2210Overrides},
+        {QStringLiteral("AM"),                kAmOverrides},
+        {QStringLiteral("Conventional"),      kConventionalOverrides},
+        {QStringLiteral("D-104"),             kD104Overrides},
+        {QStringLiteral("D-104+CPDR"),        kD104CpdrOverrides},
+        {QStringLiteral("D-104+EQ"),          kD104EqOverrides},
+        {QStringLiteral("DX / Contest"),      kDxContestOverrides},
+        {QStringLiteral("ESSB"),              kEssbOverrides},
+        {QStringLiteral("HC4-5"),             kHc45Overrides},
+        {QStringLiteral("HC4-5+CPDR"),        kHc45CpdrOverrides},
+        {QStringLiteral("PR40+W2IHY"),        kPr40W2ihyOverrides},
+        {QStringLiteral("PR40+W2IHY+CPDR"),   kPr40W2ihyCpdrOverrides},
+        {QStringLiteral("PR781+EQ"),          kPr781EqOverrides},
+        {QStringLiteral("PR781+EQ+CPDR"),     kPr781EqCpdrOverrides},
+        {QStringLiteral("SSB 2.8k CFC"),      kSsb28CfcOverrides},
+        {QStringLiteral("SSB 3.0k CFC"),      kSsb30CfcOverrides},
+        {QStringLiteral("SSB 3.3k CFC"),      kSsb33CfcOverrides},
+        {QStringLiteral("AM 10k CFC"),        kAm10kCfcOverrides},
+    };
+    return kProfiles;
 }
 
 } // anonymous namespace
@@ -160,12 +561,32 @@ void MicProfileManager::load()
 
     QStringList names = readManifest();
     if (names.isEmpty()) {
-        // F.5: first-launch seed.  Insert "Default" with documented values.
+        // F.5 + 3M-3a-i Batch 4 (Task A.2): first-launch seed.
+        // Write "Default" (with the live-field defaults from
+        // defaultProfileValues()) PLUS the 21 Thetis factory profiles
+        // ported from database.cs:AddTXProfileTable [v2.10.3.13].
+        // Each factory profile is built by overlaying its per-profile
+        // overrides on top of the base defaults — this mirrors the
+        // way Thetis itself ships the "TXProfileDef" table at
+        // database.cs:241 (bIndcludeExtraProfiles=true).
         const QHash<QString, QVariant> defaults = defaultProfileValues();
         writeProfileKeys(QStringLiteral("Default"), defaults);
         names = QStringList{QStringLiteral("Default")};
+
+        for (const FactoryProfile& fp : factoryProfiles()) {
+            QHash<QString, QVariant> merged = defaults;
+            for (auto it = fp.overrides.constBegin();
+                 it != fp.overrides.constEnd(); ++it) {
+                merged.insert(it.key(), it.value());
+            }
+            writeProfileKeys(fp.name, merged);
+            names.append(fp.name);
+        }
+
         writeManifest(names);
-        // Active defaults to "Default" on first launch.
+        // Active defaults to "Default" on first launch — factory
+        // profiles are present but not selected, so existing-user
+        // first-run behaviour is unchanged.
         writeActiveKey(QStringLiteral("Default"));
         emit profileListChanged();
     }
@@ -350,6 +771,40 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     out.insert(QStringLiteral("TwoTonePulsed"),        QStringLiteral("False"));         // setup.Designer.cs:61643-61653 [v2.10.3.13]
     out.insert(QStringLiteral("TwoToneDrivePowerOrigin"),
                QStringLiteral("DriveSlider"));                                            // console.cs:46553 [v2.10.3.13]
+
+    // ── 3M-3a-i G — TX EQ + Leveler + ALC defaults (27 keys) ─────────────
+    // From Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile schema).
+    // EQ band/freq defaults from WDSP TXA.c:112-113 [v2.10.3.13]:
+    //   default_F[1..10] = {32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    //   default_G[1..10] = {-12, -12, -12, -1, +1, +4, +9, +12, -10, -10};
+    //   //double default_G[11] =   {0.0,   0.0,   0.0,   0.0,   0.0,   0.0,    0.0,    0.0,    0.0,    0.0,     0.0};
+    out.insert(QStringLiteral("TXEQEnabled"),    QStringLiteral("False"));   // database.cs:4553
+    out.insert(QStringLiteral("TXEQPreamp"),     QStringLiteral("0"));       // database.cs:4554
+    out.insert(QStringLiteral("TXEQ1"),          QStringLiteral("-12"));     // WDSP TXA.c:113 default_G[1]
+    out.insert(QStringLiteral("TXEQ2"),          QStringLiteral("-12"));     // WDSP TXA.c:113 default_G[2]
+    out.insert(QStringLiteral("TXEQ3"),          QStringLiteral("-12"));     // WDSP TXA.c:113 default_G[3]
+    out.insert(QStringLiteral("TXEQ4"),          QStringLiteral("-1"));      // WDSP TXA.c:113 default_G[4]
+    out.insert(QStringLiteral("TXEQ5"),          QStringLiteral("1"));       // WDSP TXA.c:113 default_G[5]
+    out.insert(QStringLiteral("TXEQ6"),          QStringLiteral("4"));       // WDSP TXA.c:113 default_G[6]
+    out.insert(QStringLiteral("TXEQ7"),          QStringLiteral("9"));       // WDSP TXA.c:113 default_G[7]
+    out.insert(QStringLiteral("TXEQ8"),          QStringLiteral("12"));      // WDSP TXA.c:113 default_G[8]
+    out.insert(QStringLiteral("TXEQ9"),          QStringLiteral("-10"));     // WDSP TXA.c:113 default_G[9]
+    out.insert(QStringLiteral("TXEQ10"),         QStringLiteral("-10"));     // WDSP TXA.c:113 default_G[10]
+    out.insert(QStringLiteral("TxEqFreq1"),      QStringLiteral("32"));      // WDSP TXA.c:112 default_F[1]
+    out.insert(QStringLiteral("TxEqFreq2"),      QStringLiteral("63"));      // WDSP TXA.c:112 default_F[2]
+    out.insert(QStringLiteral("TxEqFreq3"),      QStringLiteral("125"));     // WDSP TXA.c:112 default_F[3]
+    out.insert(QStringLiteral("TxEqFreq4"),      QStringLiteral("250"));     // WDSP TXA.c:112 default_F[4]
+    out.insert(QStringLiteral("TxEqFreq5"),      QStringLiteral("500"));     // WDSP TXA.c:112 default_F[5]
+    out.insert(QStringLiteral("TxEqFreq6"),      QStringLiteral("1000"));    // WDSP TXA.c:112 default_F[6]
+    out.insert(QStringLiteral("TxEqFreq7"),      QStringLiteral("2000"));    // WDSP TXA.c:112 default_F[7]
+    out.insert(QStringLiteral("TxEqFreq8"),      QStringLiteral("4000"));    // WDSP TXA.c:112 default_F[8]
+    out.insert(QStringLiteral("TxEqFreq9"),      QStringLiteral("8000"));    // WDSP TXA.c:112 default_F[9]
+    out.insert(QStringLiteral("TxEqFreq10"),     QStringLiteral("16000"));   // WDSP TXA.c:112 default_F[10]
+    out.insert(QStringLiteral("Lev_On"),         QStringLiteral("True"));    // database.cs:4584
+    out.insert(QStringLiteral("Lev_MaxGain"),    QStringLiteral("15"));      // database.cs:4586
+    out.insert(QStringLiteral("Lev_Decay"),      QStringLiteral("100"));     // database.cs:4588
+    out.insert(QStringLiteral("ALC_MaximumGain"), QStringLiteral("3"));      // database.cs:4592
+    out.insert(QStringLiteral("ALC_Decay"),      QStringLiteral("10"));      // database.cs:4594
     return out;
 }
 
@@ -388,6 +843,23 @@ QHash<QString, QVariant> MicProfileManager::captureLiveValues(const TransmitMode
     out.insert(QStringLiteral("TwoTonePulsed"),        tx->twoTonePulsed() ? QStringLiteral("True") : QStringLiteral("False"));
     out.insert(QStringLiteral("TwoToneDrivePowerOrigin"),
                drivePowerSourceToString(tx->twoToneDrivePowerSource()));
+
+    // ── 3M-3a-i G — TX EQ + Leveler + ALC live capture (27 keys) ─────────
+    out.insert(QStringLiteral("TXEQEnabled"),
+               tx->txEqEnabled() ? QStringLiteral("True") : QStringLiteral("False"));
+    out.insert(QStringLiteral("TXEQPreamp"), QString::number(tx->txEqPreamp()));
+    for (int i = 0; i < 10; ++i) {
+        out.insert(QStringLiteral("TXEQ%1").arg(i + 1),
+                   QString::number(tx->txEqBand(i)));
+        out.insert(QStringLiteral("TxEqFreq%1").arg(i + 1),
+                   QString::number(tx->txEqFreq(i)));
+    }
+    out.insert(QStringLiteral("Lev_On"),
+               tx->txLevelerOn() ? QStringLiteral("True") : QStringLiteral("False"));
+    out.insert(QStringLiteral("Lev_MaxGain"), QString::number(tx->txLevelerMaxGain()));
+    out.insert(QStringLiteral("Lev_Decay"),   QString::number(tx->txLevelerDecay()));
+    out.insert(QStringLiteral("ALC_MaximumGain"), QString::number(tx->txAlcMaxGain()));
+    out.insert(QStringLiteral("ALC_Decay"),       QString::number(tx->txAlcDecay()));
     return out;
 }
 
@@ -435,6 +907,26 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     tx->setTwoTonePulsed(take(QStringLiteral("TwoTonePulsed"), QStringLiteral("False")) == QLatin1String("True"));
     tx->setTwoToneDrivePowerSource(drivePowerSourceFromString(
         take(QStringLiteral("TwoToneDrivePowerOrigin"), QStringLiteral("DriveSlider"))));
+
+    // ── 3M-3a-i G — TX EQ + Leveler + ALC apply-to-model (27 keys) ───────
+    // Defaults match the EQ/Lev/ALC defaults in defaultProfileValues() above.
+    tx->setTxEqEnabled(take(QStringLiteral("TXEQEnabled"), QStringLiteral("False"))
+                            == QLatin1String("True"));
+    tx->setTxEqPreamp(take(QStringLiteral("TXEQPreamp"), QStringLiteral("0")).toInt());
+    static constexpr int kDefaultG[10] = {-12, -12, -12, -1, 1, 4, 9, 12, -10, -10};
+    static constexpr int kDefaultF[10] = {32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    for (int i = 0; i < 10; ++i) {
+        tx->setTxEqBand(i, take(QStringLiteral("TXEQ%1").arg(i + 1),
+                                 QString::number(kDefaultG[i])).toInt());
+        tx->setTxEqFreq(i, take(QStringLiteral("TxEqFreq%1").arg(i + 1),
+                                 QString::number(kDefaultF[i])).toInt());
+    }
+    tx->setTxLevelerOn(take(QStringLiteral("Lev_On"), QStringLiteral("True"))
+                            == QLatin1String("True"));
+    tx->setTxLevelerMaxGain(take(QStringLiteral("Lev_MaxGain"), QStringLiteral("15")).toInt());
+    tx->setTxLevelerDecay(take(QStringLiteral("Lev_Decay"), QStringLiteral("100")).toInt());
+    tx->setTxAlcMaxGain(take(QStringLiteral("ALC_MaximumGain"), QStringLiteral("3")).toInt());
+    tx->setTxAlcDecay(take(QStringLiteral("ALC_Decay"), QStringLiteral("10")).toInt());
 }
 
 } // namespace NereusSDR

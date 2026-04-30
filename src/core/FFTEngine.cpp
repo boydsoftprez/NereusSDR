@@ -271,14 +271,11 @@ void FFTEngine::processFrame()
         return;
     }
 
-    // Rate limiting — skip if we're ahead of target FPS
-    int targetFps = m_targetFps.load();
-    if (targetFps > 0 && m_frameTimerStarted) {
-        qint64 minIntervalMs = 1000 / targetFps;
-        qint64 elapsed = m_frameTimer.elapsed();
-        if (elapsed < minIntervalMs) {
-            return;
-        }
+    // Safety cap: never emit faster than 60 fps to avoid flooding the main thread
+    // at very small FFT sizes or very high sample rates. Display-side timer in
+    // SpectrumWidget controls the actual repaint rate independently.
+    if (m_frameTimerStarted && m_frameTimer.elapsed() < 16) {
+        return;
     }
 
     // Execute FFT (window already applied during accumulation in feedIQ)

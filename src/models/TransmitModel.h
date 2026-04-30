@@ -708,6 +708,133 @@ public:
     static constexpr int    kTwoToneFreq2DelayMsMin =      0;  // setup.Designer.cs:61933-61937
     static constexpr int    kTwoToneFreq2DelayMsMax =   1000;  // setup.Designer.cs:61928-61932
 
+    // ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ───────────────
+    //
+    // 28 new properties (23 TXProfile + 5 stand-alone + 4 globals):
+    //   TX EQ (TXProfile, 23 keys):
+    //     txEqEnabled (bool)         — TXEQEnabled
+    //     txEqNumBands (int RO=10)   — TXEQNumBands
+    //     txEqPreamp (int dB)        — TXEQPreamp
+    //     txEqBand[i] (10 int dB)    — TXEQ1..TXEQ10
+    //     txEqFreq[i] (10 int Hz)    — TxEqFreq1..TxEqFreq10
+    //
+    //   TX Leveler (TXProfile, 3 keys):
+    //     txLevelerOn (bool)        — Lev_On
+    //     txLevelerMaxGain (int dB) — Lev_MaxGain
+    //     txLevelerDecay (int ms)   — Lev_Decay
+    //
+    //   TX ALC (TXProfile, 2 keys):
+    //     txAlcMaxGain (int dB)     — ALC_MaximumGain
+    //     txAlcDecay (int ms)       — ALC_Decay
+    //
+    //   TX EQ globals (NOT in TXProfile, 4 keys under hardware/<mac>/tx/):
+    //     txEqNc (int)              — eq/nc       default 2048
+    //     txEqMp (bool)             — eq/mp       default false
+    //     txEqCtfmode (int)         — eq/ctfmode  default 0
+    //     txEqWintype (int)         — eq/wintype  default 0
+    //
+    // ALC Run is locked-on per Thetis schema — no txAlcOn property is exposed.
+    // Phase Rotator is intentionally out of scope (deferred to 3M-3a-ii because
+    // its CFC* persistence keys belong with the CFC tab).
+    //
+    // Defaults from Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile schema)
+    // and WDSP TXA.c:111-128 [v2.10.3.13] (create_eqp G[]/F[] vectors).
+    //
+    // Range clamps from Thetis Designer (setup.Designer.cs:38710-38866 [v2.10.3.13]).
+    // 3M-3a-i Batch 2+ wires TransmitModel signals into TxChannel via RadioModel.
+
+    // ── Number of EQ bands.  Read-only constant per Thetis 10-band UI. ──
+    int  txEqNumBands() const noexcept { return 10; }
+
+    // ── TX EQ enable + preamp ──
+    bool txEqEnabled() const noexcept { return m_txEqEnabled; }
+    int  txEqPreamp() const noexcept  { return m_txEqPreamp; }
+
+    /// Per-band gain (dB) at index 0..9.  Returns 0 for out-of-range index.
+    int txEqBand(int index) const noexcept;
+    /// Per-band frequency (Hz) at index 0..9.  Returns 0 for out-of-range index.
+    int txEqFreq(int index) const noexcept;
+
+    // ── TX Leveler ──
+    bool txLevelerOn() const noexcept       { return m_txLevelerOn; }
+    int  txLevelerMaxGain() const noexcept  { return m_txLevelerMaxGain; }
+    int  txLevelerDecay() const noexcept    { return m_txLevelerDecay; }
+
+    // ── TX ALC (Run is locked-on; no getter exposed) ──
+    int  txAlcMaxGain() const noexcept      { return m_txAlcMaxGain; }
+    int  txAlcDecay() const noexcept        { return m_txAlcDecay; }
+
+    // ── TX EQ globals (radio-wide DSP settings) ──
+    int  txEqNc() const noexcept            { return m_txEqNc; }
+    bool txEqMp() const noexcept            { return m_txEqMp; }
+    int  txEqCtfmode() const noexcept       { return m_txEqCtfmode; }
+    int  txEqWintype() const noexcept       { return m_txEqWintype; }
+
+    // ── Range constants (Thetis Designer setup.Designer.cs [v2.10.3.13]) ──
+    //
+    // Leveler MaxGain: 0..20 dB (udDSPLevelerThreshold:38718-38738).
+    static constexpr int kTxLevelerMaxGainDbMin  =    0;
+    static constexpr int kTxLevelerMaxGainDbMax  =   20;
+    // Leveler Decay: 1..5000 ms (udDSPLevelerDecay:38744-38772).
+    static constexpr int kTxLevelerDecayMsMin    =    1;
+    static constexpr int kTxLevelerDecayMsMax    = 5000;
+    // ALC MaxGain: 0..120 dB (udDSPALCMaximumGain:38814-38833).
+    static constexpr int kTxAlcMaxGainDbMin      =    0;
+    static constexpr int kTxAlcMaxGainDbMax      =  120;
+    // ALC Decay: 1..50 ms (udDSPALCDecay:38845-38866).
+    static constexpr int kTxAlcDecayMsMin        =    1;
+    static constexpr int kTxAlcDecayMsMax        =   50;
+    // EQ preamp: NereusSDR clamp [-12, 15] dB (matches Thetis EQ preamp slider
+    // precedent — eqx.cs:btnReset preset clears preamp to 0; spinbox accepts
+    // ±dB but no formal Designer Min/Max is exposed for the integer column).
+    static constexpr int kTxEqPreampDbMin        =  -12;
+    static constexpr int kTxEqPreampDbMax        =   15;
+    // EQ band gain: same clamp as preamp (the per-band slider uses the same
+    // ±dB range as the preamp slider).
+    static constexpr int kTxEqBandDbMin          =  -12;
+    static constexpr int kTxEqBandDbMax          =   15;
+    // EQ band frequency: WDSP eq_impulse accepts up to Nyquist (24 kHz at
+    // 48 kHz dsp_rate); 22 kHz UI cap is conservative.  Min 10 Hz protects
+    // FFT-bin boundary math; Thetis itself sets defaults from 32 Hz.
+    static constexpr int kTxEqFreqHzMin          =   10;
+    static constexpr int kTxEqFreqHzMax          = 22000;
+
+public slots:
+    void setTxEqEnabled(bool on);
+    void setTxEqPreamp(int dB);
+    /// Set per-band gain (dB) at index 0..9.  No-op if index out of range.
+    void setTxEqBand(int index, int dB);
+    /// Set per-band frequency (Hz) at index 0..9.  No-op if index out of range.
+    void setTxEqFreq(int index, int hz);
+    void setTxLevelerOn(bool on);
+    void setTxLevelerMaxGain(int dB);
+    void setTxLevelerDecay(int ms);
+    void setTxAlcMaxGain(int dB);
+    void setTxAlcDecay(int ms);
+    void setTxEqNc(int nc);
+    void setTxEqMp(bool mp);
+    void setTxEqCtfmode(int mode);
+    void setTxEqWintype(int wintype);
+
+signals:
+    void txEqEnabledChanged(bool on);
+    void txEqPreampChanged(int dB);
+    /// Emitted when any individual band gain changes; carries index + new value.
+    void txEqBandChanged(int index, int dB);
+    /// Emitted when any individual band frequency changes; carries index + new value.
+    void txEqFreqChanged(int index, int hz);
+    void txLevelerOnChanged(bool on);
+    void txLevelerMaxGainChanged(int dB);
+    void txLevelerDecayChanged(int ms);
+    void txAlcMaxGainChanged(int dB);
+    void txAlcDecayChanged(int ms);
+    void txEqNcChanged(int nc);
+    void txEqMpChanged(bool mp);
+    void txEqCtfmodeChanged(int mode);
+    void txEqWintypeChanged(int wintype);
+
+public:
+
 public slots:
     void setMicGainDb(int dB);
 
@@ -960,6 +1087,38 @@ private:
     // Default DriveSlider per Thetis console.cs:46553 [v2.10.3.13]:
     //   private DrivePowerSource _2ToneDrivePowerSource = DRIVE_SLIDER;
     DrivePowerSource m_twoToneDrivePowerSource{DrivePowerSource::DriveSlider};
+
+    // ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ────────────────
+    //
+    // Defaults sourced from Thetis database.cs:4552-4594 [v2.10.3.13]
+    // (TXProfile schema) and WDSP TXA.c:111-128 [v2.10.3.13] (create_eqp).
+
+    // EQ enable + preamp.  database.cs:4553-4554 [v2.10.3.13].
+    bool m_txEqEnabled  = false;   // dr["TXEQEnabled"] = false;
+    int  m_txEqPreamp   = 0;       // dr["TXEQPreamp"]  = 0;
+
+    // Per-band gains and frequencies.  Defaults from WDSP TXA.c:112-113
+    // [v2.10.3.13] — default_F[1..10] and default_G[1..10].
+    //   default_F[11] = {0.0, 32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    //   default_G[11] = {0.0, -12, -12, -12, -1, +1, +4, +9, +12, -10, -10};
+    //   //double default_G[11] =   {0.0,   0.0,   0.0,   0.0,   0.0,   0.0,    0.0,    0.0,    0.0,    0.0,     0.0};
+    std::array<int, 10> m_txEqBand = {-12, -12, -12, -1, 1, 4, 9, 12, -10, -10};
+    std::array<int, 10> m_txEqFreq = {32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+
+    // Leveler.  database.cs:4584-4588 [v2.10.3.13].
+    bool m_txLevelerOn      = true;  // dr["Lev_On"]      = true;
+    int  m_txLevelerMaxGain = 15;    // dr["Lev_MaxGain"] = 15;
+    int  m_txLevelerDecay   = 100;   // dr["Lev_Decay"]   = 100;
+
+    // ALC.  database.cs:4592-4594 [v2.10.3.13].
+    int  m_txAlcMaxGain = 3;     // dr["ALC_MaximumGain"] = 3;
+    int  m_txAlcDecay   = 10;    // dr["ALC_Decay"]       = 10;
+
+    // EQ globals (radio-wide DSP).  Defaults from WDSP TXA.c:118-127 [v2.10.3.13].
+    int  m_txEqNc      = 2048;  // max(2048, ch[].dsp_size)
+    bool m_txEqMp      = false; // minimum-phase flag = 0
+    int  m_txEqCtfmode = 0;     // cutoff mode = 0
+    int  m_txEqWintype = 0;     // window type = 0
 };
 
 } // namespace NereusSDR

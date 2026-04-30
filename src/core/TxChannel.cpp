@@ -151,6 +151,19 @@ warren@wpratt.com
 //                 TxMicSource-driven cadence).  No behavioural change;
 //                 documentation refresh only.  J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-30 — Phase 3M-3a-ii Batch 1.6 — 3 TX phase-rotator parameter
+//                 wrappers implemented by J.J. Boyd (KG4VCF):
+//                   setTxPhrotCornerHz(double) → SetTXAPHROTCorner
+//                   setTxPhrotNstages(int)     → SetTXAPHROTNstages
+//                   setTxPhrotReverse(bool)    → SetTXAPHROTReverse
+//                 Thin pass-through wrappers over wdsp/iir.c:675-703
+//                 [v2.10.3.13] on top of the WDSP boot defaults shipped
+//                 in 3M-1c.  3M-3a-i shipped Stage::PhRot + the
+//                 setStageRunning(Stage::PhRot,...) arm calling
+//                 SetTXAPHROTRun; the parameter setters were deferred to
+//                 this batch because their persistence keys live in the
+//                 Thetis tpDSPCFC tab alongside the CFC controls.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -685,7 +698,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
 #endif
         return;
 
-    // compressor (stage 14): TX speech compressor. Also adjusts bp1/bp2.
+    // compressor (stage 14): TX speech compressor (CPDR). Side effect:
+    // SetTXACompressorRun calls TXASetupBPFilters at compress.c:106, which
+    // rebuilds bp1 + gated bp2 (TXA.c:843-868 [v2.10.3.13]).  Activated by
+    // 3M-3a-ii Batch 1.  Mirrors setTxCpdrOn (which is the preferred
+    // public-API surface; this case arm is available for callers that
+    // already speak the Stage::* idiom).
     // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] and compress.h:60.
     case Stage::Compressor:
 #ifdef HAVE_WDSP
@@ -693,8 +711,12 @@ void TxChannel::setStageRunning(Stage s, bool run)
 #endif
         return;
 
-    // osctrl (stage 16): CESSB overshoot control. Activated by 3M-3a.
-    // From Thetis wdsp/osctrl.c:142-147 [v2.10.3.13].
+    // osctrl (stage 16): CESSB overshoot control.  Side effect:
+    // SetTXAosctrlRun calls TXASetupBPFilters at osctrl.c:148, which
+    // rebuilds bp2.  bp2.run is only set when both compressor.run AND
+    // osctrl.run are 1 (TXA.c:843-868 [v2.10.3.13]).  Activated by 3M-3a-ii
+    // Batch 1.  Mirrors setTxCessbOn.
+    // From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13].
     case Stage::OsCtrl:
 #ifdef HAVE_WDSP
         SetTXAosctrlRun(m_channelId, r);   // osctrl.c:142 [v2.10.3.13]
@@ -709,11 +731,33 @@ void TxChannel::setStageRunning(Stage s, bool run)
 #endif
         return;
 
-    // cfcomp (stage 11): continuous frequency compander. Activated by 3M-3a.
-    // From Thetis wdsp/cfcomp.c:632-637 [v2.10.3.13].
+    // cfcomp (stage 11): continuous frequency compander (CFC).  Activated
+    // by 3M-3a-ii Batch 1.  Mirrors setTxCfcRunning.
+    // From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13].
     case Stage::CfComp:
 #ifdef HAVE_WDSP
         SetTXACFCOMPRun(m_channelId, r);   // cfcomp.c:632 [v2.10.3.13]
+#endif
+        return;
+
+    // leveler (stage 9): slow speech-leveling AGC. Activated by 3M-3a-i.
+    // From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13].
+    case Stage::Leveler:
+#ifdef HAVE_WDSP
+        SetTXALevelerSt(m_channelId, r);   // wcpAGC.c:613 [v2.10.3.13]
+#endif
+        return;
+
+    // alc (stage 19): final clip protection (always-on per Thetis schema —
+    // there is no chkALCEnabled checkbox in the Thetis UI; WdspEngine boot
+    // sets SetTXAALCSt(1) at WdspEngine.cpp:438).  Exposed as a Run case
+    // here because WDSP itself does have a Run setter (SetTXAALCSt) and
+    // some test paths or future Setup → Audio extras might want to flip
+    // it.  Documented as "intentionally settable but Thetis never flips it".
+    // From Thetis wdsp/wcpAGC.c:570-575 [v2.10.3.13].
+    case Stage::Alc:
+#ifdef HAVE_WDSP
+        SetTXAALCSt(m_channelId, r);       // wcpAGC.c:570 [v2.10.3.13]
 #endif
         return;
 
@@ -824,11 +868,11 @@ void TxChannel::setStageRunning(Stage s, bool run)
 
     // Remaining deferred stages — Set*Run API exists in WDSP but is not yet
     // declared in wdsp_api.h. Each will get its own explicit case arm when
-    // wired in 3M-3a / 3M-4. Stages that hit this branch:
+    // wired in 3M-3a-ii / 3M-4. Stages that hit this branch:
     //   EqMeter / LvlrMeter / CfcMeter / CompMeter / OutMeter / Sip1 /
-    //   Calcc / Iqc / Alc / Bp0 / Bp1 / Bp2 / PreEmph / Leveler.
+    //   Calcc / Iqc / Bp0 / Bp1 / Bp2 / PreEmph.
     // AmMod / FmMod / MicMeter / AlcMeter all have explicit case arms above
-    // (D.4); none of them should reach this default:.
+    // (D.4); Leveler / Alc added by 3M-3a-i Batch 1; none should reach default:.
     default:
         qCWarning(lcDsp) << "TxChannel" << m_channelId
                          << "setStageRunning(" << static_cast<int>(s) << ","
@@ -1738,6 +1782,441 @@ void TxChannel::setTxPostGenRun(bool on)
     SetTXAPostGenRun(m_channelId, on ? 1 : 0);   // gen.c:784-789 [v2.10.3.13]
 #else
     Q_UNUSED(on);
+#endif
+}
+
+// ── B-1: TX EQ wrappers (Phase 3M-3a-i Batch 1) ─────────────────────────────
+//
+// Each wrapper is a thin pass-through over the WDSP `SetTXAEQ*` family.  Run
+// is csDSP-protected and audio-safe; all other setters reallocate the EQ
+// impulse and are main-thread-only (per Thetis precedent — UI handlers run
+// on the SetupForm thread).  See TxChannel.h doc-comments for the full
+// threading rationale.
+
+void TxChannel::setTxEqRunning(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:742-747 [v2.10.3.13] — SetTXAEQRun(channel, run).
+    // csDSP-protected; safe from main thread while audio thread runs.
+    SetTXAEQRun(m_channelId, on ? 1 : 0);
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+void TxChannel::setTxEqGraph10(const std::array<int, 11>& preampPlus10Bands)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10(channel, txeq).
+    //   txeq[0]      = preamp dB
+    //   txeq[1..10]  = 10-band gains dB at fixed centers per WDSP eq.c:870-879.
+    // SetTXAGrphEQ10 reallocates the impulse — main-thread only.
+    int txeq[11];
+    for (int i = 0; i < 11; ++i) {
+        txeq[i] = preampPlus10Bands[static_cast<std::size_t>(i)];
+    }
+    SetTXAGrphEQ10(m_channelId, txeq);
+#else
+    Q_UNUSED(preampPlus10Bands);
+#endif
+}
+
+void TxChannel::setTxEqProfile(const std::vector<double>& freqs10,
+                               const std::vector<double>& gains11)
+{
+    // Validate inputs before touching WDSP — early-return on size mismatch.
+    if (freqs10.size() != 10) {
+        qCWarning(lcDsp) << "TxChannel::setTxEqProfile: freqs10 must have 10 entries, got"
+                         << freqs10.size() << "— ignoring call";
+        return;
+    }
+    if (gains11.size() != 11) {
+        qCWarning(lcDsp) << "TxChannel::setTxEqProfile: gains11 must have 11 entries, got"
+                         << gains11.size() << "— ignoring call";
+        return;
+    }
+
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile(channel, nfreqs, F[], G[]).
+    // F is 1-indexed inside WDSP (F[0] is the unused pad slot), G is 0-indexed
+    // (G[0] = preamp).  Both buffers must be at least nfreqs+1 entries; we
+    // build them fresh on the stack.  (Q vector is exclusive to the parametric
+    // SetTXAGrphEQProfile variant — graphic EQ doesn't take a Q.)
+    //
+    // Mirrors the create_eqp call at wdsp/TXA.c:111-127 [v2.10.3.13]:
+    //   double default_F[11] = {0.0,  32.0, ...};  // F[0] = 0.0 pad
+    //   double default_G[11] = {0.0, -12.0, ...};  // G[0] = preamp (0 by default)
+    //   //double default_G[11] =   {0.0,   0.0,   0.0,   0.0,   0.0,   0.0,    0.0,    0.0,    0.0,    0.0,     0.0};
+    //   create_eqp(..., 10, default_F, default_G, ...);
+    constexpr int kNfreqs = 10;
+    double F[kNfreqs + 1];
+    double G[kNfreqs + 1];
+    F[0] = 0.0;  // WDSP F[0] pad slot
+    for (int i = 0; i < kNfreqs; ++i) {
+        F[i + 1] = freqs10[static_cast<std::size_t>(i)];
+    }
+    for (int i = 0; i < kNfreqs + 1; ++i) {
+        G[i] = gains11[static_cast<std::size_t>(i)];
+    }
+    SetTXAEQProfile(m_channelId, kNfreqs, F, G);
+#endif
+}
+
+void TxChannel::setTxEqNc(int nc)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC(channel, nc).
+    // Allocates eq_impulse — main-thread only.
+    SetTXAEQNC(m_channelId, nc);
+#else
+    Q_UNUSED(nc);
+#endif
+}
+
+void TxChannel::setTxEqMp(bool mp)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP(channel, mp).
+    // Allocates min-phase impulse via setMp_fircore — main-thread only.
+    SetTXAEQMP(m_channelId, mp ? 1 : 0);
+#else
+    Q_UNUSED(mp);
+#endif
+}
+
+void TxChannel::setTxEqCtfmode(int mode)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode(channel, mode).
+    // Allocates eq_impulse — main-thread only.
+    SetTXAEQCtfmode(m_channelId, mode);
+#else
+    Q_UNUSED(mode);
+#endif
+}
+
+void TxChannel::setTxEqWintype(int wintype)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype(channel, wintype).
+    // Allocates eq_impulse — main-thread only.
+    SetTXAEQWintype(m_channelId, wintype);
+#else
+    Q_UNUSED(wintype);
+#endif
+}
+
+// ── B-2: TX Leveler / ALC wrappers (Phase 3M-3a-i Batch 1) ─────────────────
+//
+// Six wrappers over the wcpAGC.c Leveler+ALC API.  All are csDSP-protected
+// in WDSP (wcpAGC.c:570-650 [v2.10.3.13]) and therefore audio-safe to call
+// from the main thread.  ALC Run is locked-on per Thetis schema — no
+// setTxAlcOn wrapper is exposed.
+
+void TxChannel::setTxLevelerOn(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13] — SetTXALevelerSt(channel, state).
+    // csDSP-protected.
+    // Cited handler: setup.cs:9108-9123 [v2.10.3.13] — chkDSPLevelerEnabled_CheckedChanged
+    //   routes through radio.cs DSPTX::TXLevelerOn setter which calls SetTXALevelerSt.
+    SetTXALevelerSt(m_channelId, on ? 1 : 0);
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+void TxChannel::setTxLevelerTopDb(double dB)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/wcpAGC.c:647-650 [v2.10.3.13] — SetTXALevelerTop(channel, maxgain).
+    // Thetis converts dB → linear via pow(10, dB/20.0) inside wcpAGC; we pass dB
+    // straight, matching the radio.cs TXLevelerMaxGain setter pattern.
+    // Cited handler: setup.cs:9095-9099 [v2.10.3.13] — udDSPLevelerThreshold_ValueChanged.
+    SetTXALevelerTop(m_channelId, dB);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+void TxChannel::setTxLevelerDecayMs(int ms)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/wcpAGC.c:629-635 [v2.10.3.13] — SetTXALevelerDecay(channel, decay).
+    // csDSP-protected.  WDSP stores decay/1000.0 sec internally.
+    // Cited handler: setup.cs:9101-9105 [v2.10.3.13] — udDSPLevelerDecay_ValueChanged.
+    SetTXALevelerDecay(m_channelId, ms);
+#else
+    Q_UNUSED(ms);
+#endif
+}
+
+void TxChannel::setTxAlcMaxGainDb(double dB)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/wcpAGC.c:603-610 [v2.10.3.13] — SetTXAALCMaxGain(channel, maxgain).
+    // Thetis converts dB → linear via pow(10, dB/20.0) inside wcpAGC.
+    // Cited handler: setup.cs:9129-9134 [v2.10.3.13] — udDSPALCMaximumGain_ValueChanged
+    //   calls SetTXAALCMaxGain directly + updates WDSP.ALCGain readout cache.
+    SetTXAALCMaxGain(m_channelId, dB);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+void TxChannel::setTxAlcDecayMs(int ms)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/wcpAGC.c:585-592 [v2.10.3.13] — SetTXAALCDecay(channel, decay).
+    // csDSP-protected.  WDSP stores decay/1000.0 sec internally.
+    // Cited handler: setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged.
+    SetTXAALCDecay(m_channelId, ms);
+#else
+    Q_UNUSED(ms);
+#endif
+}
+
+// ── B-3: TX CFC + CPDR + CESSB wrappers (Phase 3M-3a-ii Batch 1) ────────────
+//
+// Nine wrappers over the WDSP TXA dynamics section:
+//   - CFC   (cfcomp.c:632-737)  Continuous Frequency Compander (stage 11)
+//   - CPDR  (compress.c:99-117) speech compressor (stage 14)
+//   - CESSB (osctrl.c:142-150)  controlled-envelope SSB (stage 16)
+//
+// All nine are csDSP-protected inside WDSP and audio-safe to call from the
+// main thread.  See the per-method comments in TxChannel.h for the side-
+// effect surface (TXASetupBPFilters re-entry on CPDR / CESSB toggle, bp2.run
+// gating, etc).
+
+void TxChannel::setTxCfcRunning(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13] — SetTXACFCOMPRun(channel, run).
+    // csDSP-protected.
+    SetTXACFCOMPRun(m_channelId, on ? 1 : 0);
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+void TxChannel::setTxCfcPosition(int pos)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13] — SetTXACFCOMPPosition(channel, pos).
+    // csDSP-protected.
+    SetTXACFCOMPPosition(m_channelId, pos);
+#else
+    Q_UNUSED(pos);
+#endif
+}
+
+void TxChannel::setTxCfcProfile(const std::vector<double>& F,
+                                const std::vector<double>& G,
+                                const std::vector<double>& E,
+                                const std::vector<double>& Qg,
+                                const std::vector<double>& Qe)
+{
+    // Validate arity before touching WDSP — early-return on size mismatch.
+    // F / G / E must all have the same length (nfreqs).  Qg / Qe are optional
+    // in Thetis v2.10.3.13 — empty vectors signal "not provided" (the wrapper
+    // forwards nullptr to WDSP for the empty case, matching cfcomp.c:669-682
+    // [v2.10.3.13] semantics).
+    const std::size_t nfreqs = F.size();
+    if (nfreqs == 0) {
+        qCWarning(lcDsp) << "TxChannel::setTxCfcProfile: F is empty — nothing"
+                            " to apply, ignoring call";
+        return;
+    }
+    if (G.size() != nfreqs) {
+        qCWarning(lcDsp) << "TxChannel::setTxCfcProfile: G size" << G.size()
+                         << "does not match F size" << nfreqs
+                         << "— ignoring call";
+        return;
+    }
+    if (E.size() != nfreqs) {
+        qCWarning(lcDsp) << "TxChannel::setTxCfcProfile: E size" << E.size()
+                         << "does not match F size" << nfreqs
+                         << "— ignoring call";
+        return;
+    }
+    if (!Qg.empty() && Qg.size() != nfreqs) {
+        qCWarning(lcDsp) << "TxChannel::setTxCfcProfile: Qg size" << Qg.size()
+                         << "must be empty or match F size" << nfreqs
+                         << "— ignoring call";
+        return;
+    }
+    if (!Qe.empty() && Qe.size() != nfreqs) {
+        qCWarning(lcDsp) << "TxChannel::setTxCfcProfile: Qe size" << Qe.size()
+                         << "must be empty or match F size" << nfreqs
+                         << "— ignoring call";
+        return;
+    }
+
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/cfcomp.c:656-698 [v2.10.3.13] — SetTXACFCOMPprofile.
+    //
+    // As of Phase 3M-3a-ii Batch 1.5 the bundled third_party/wdsp/src/cfcomp.c
+    // is the Thetis v2.10.3.13 version, so the 7-arg signature is exported
+    // and Qg/Qe forward through.  Empty vectors map to nullptr per the
+    // WDSP NULL-skirt semantics (cfcomp.c:669-682 [v2.10.3.13]: WDSP keeps
+    // a->Qg / a->Qe unallocated and calc_comp falls back to the linear
+    // interpolation path for that skirt).
+    double* qg = Qg.empty() ? nullptr : const_cast<double*>(Qg.data());
+    double* qe = Qe.empty() ? nullptr : const_cast<double*>(Qe.data());
+    SetTXACFCOMPprofile(m_channelId, static_cast<int>(nfreqs),
+                        const_cast<double*>(F.data()),
+                        const_cast<double*>(G.data()),
+                        const_cast<double*>(E.data()), qg, qe);
+#else
+    Q_UNUSED(Qg);
+    Q_UNUSED(Qe);
+#endif
+}
+
+void TxChannel::setTxCfcPrecompDb(double dB)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13] — SetTXACFCOMPPrecomp(channel, precomp).
+    // csDSP-protected.  WDSP stores precomplin = pow(10, 0.05 * dB) and
+    // re-multiplies cfc_gain[].
+    SetTXACFCOMPPrecomp(m_channelId, dB);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+void TxChannel::setTxCfcPostEqRunning(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13] — SetTXACFCOMPPeqRun(channel, run).
+    // csDSP-protected.
+    SetTXACFCOMPPeqRun(m_channelId, on ? 1 : 0);
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+void TxChannel::setTxCfcPrePeqDb(double dB)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13] — SetTXACFCOMPPrePeq(channel, prepeq).
+    // csDSP-protected.  WDSP stores prepeqlin = pow(10, 0.05 * dB).
+    SetTXACFCOMPPrePeq(m_channelId, dB);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+void TxChannel::setTxCpdrOn(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] — SetTXACompressorRun(channel, run).
+    // csDSP-protected.  Side effect: calls TXASetupBPFilters(channel) at
+    // compress.c:106, which rebuilds bp1 + the gated bp2 to track the
+    // compression-and-clip routing.  See header doc for the rationale.
+    SetTXACompressorRun(m_channelId, on ? 1 : 0);
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+void TxChannel::setTxCpdrGainDb(double dB)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/compress.c:111-117 [v2.10.3.13] — SetTXACompressorGain(channel, gain).
+    // csDSP-protected.  WDSP stores pow(10, dB / 20.0) internally.
+    SetTXACompressorGain(m_channelId, dB);
+#else
+    Q_UNUSED(dB);
+#endif
+}
+
+void TxChannel::setTxCessbOn(bool on)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13] — SetTXAosctrlRun(channel, run).
+    // csDSP-protected.  Side effect: calls TXASetupBPFilters(channel) at
+    // osctrl.c:148, which rebuilds bp2.
+    //
+    // bp2.run gating semantic: the CESSB-side bandpass only runs when *both*
+    // compressor.run AND osctrl.run are 1 (TXA.c:843-868 [v2.10.3.13],
+    // parallel switch arms).  Calling setTxCessbOn(true) without first
+    // turning CPDR on is therefore effectively a no-op at the audio level.
+    // This wrapper does NOT enforce that coupling — Thetis lets WDSP own it,
+    // and we match.
+    SetTXAosctrlRun(m_channelId, on ? 1 : 0);
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+// ── B-3.1: TX Phase Rotator parameter wrappers (Phase 3M-3a-ii Batch 1.6) ────
+//
+// Three thin pass-through wrappers over the TXA phrot parameter setters in
+// wdsp/iir.c:675-703 [v2.10.3.13].  3M-3a-i Stage::PhRot already wired the
+// Run flag via SetTXAPHROTRun (in setStageRunning).  These three pick up the
+// remaining tunables that the Thetis tpDSPCFC tab exposes alongside the CFC
+// controls.  All three are csDSP-protected (cs_update) inside WDSP and
+// audio-safe to call from the main thread.  See TxChannel.h wrapper docs for
+// the cost/threading rationale (Corner / Nstages call decalc_phrot +
+// calc_phrot internally; Reverse just flips the sign).
+
+void TxChannel::setTxPhrotCornerHz(double hz)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/iir.c:675-683 [v2.10.3.13] — SetTXAPHROTCorner(channel, corner).
+    // csDSP-protected.  WDSP rebuilds the all-pass bank on every set
+    // (decalc_phrot + a->fc = corner + calc_phrot) — non-trivial cost.
+    SetTXAPHROTCorner(m_channelId, hz);
+#else
+    Q_UNUSED(hz);
+#endif
+}
+
+void TxChannel::setTxPhrotNstages(int nstages)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/iir.c:686-694 [v2.10.3.13] — SetTXAPHROTNstages(channel, nstages).
+    // csDSP-protected.  WDSP rebuilds the coefficient bank on every set
+    // (decalc_phrot + a->nstages = nstages + calc_phrot) — non-trivial cost.
+    SetTXAPHROTNstages(m_channelId, nstages);
+#else
+    Q_UNUSED(nstages);
+#endif
+}
+
+void TxChannel::setTxPhrotReverse(bool reverse)
+{
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // From Thetis wdsp/iir.c:697-703 [v2.10.3.13] — SetTXAPHROTReverse(channel, reverse).
+    // csDSP-protected.  Cheap — just flips a->reverse; no coefficient rebuild.
+    SetTXAPHROTReverse(m_channelId, reverse ? 1 : 0);
+#else
+    Q_UNUSED(reverse);
 #endif
 }
 

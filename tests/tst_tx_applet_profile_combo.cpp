@@ -164,15 +164,17 @@ private slots:
         applet.setMicProfileManager(&mgr);
         QApplication::processEvents();
 
-        // Initially one entry.
-        QCOMPARE(applet.profileCombo()->count(), 1);
+        // After 3M-3a-i Batch 4 (A.2): first launch seeds Default + 20
+        // factory profiles = 21 combo entries.
+        const int initialCount = applet.profileCombo()->count();
+        QCOMPARE(initialCount, 21);
 
         // Add a profile externally.
         mgr.saveProfile("Brand New", &tx);
         QApplication::processEvents();
 
-        // Combo should now have at least 2 entries.
-        QVERIFY(applet.profileCombo()->count() >= 2);
+        // Combo should now have one more entry than before.
+        QCOMPARE(applet.profileCombo()->count(), initialCount + 1);
         bool sawNew = false;
         for (int i = 0; i < applet.profileCombo()->count(); ++i) {
             if (applet.profileCombo()->itemText(i) == "Brand New") { sawNew = true; }

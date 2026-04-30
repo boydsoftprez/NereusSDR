@@ -1115,4 +1115,57 @@ headers, and tree-wide inventory — and these surfaced the gaps above.
 
 ---
 
+## 2026-04-30 — Partial WDSP upstream-sync: cfcomp.{c,h} → Thetis v2.10.3.13
+
+**Discovered by:** J.J. Boyd (KG4VCF) — Phase 3M-3a-ii planning
+**Reported via:** Self-initiated, ahead of CFC dialog work (Batch 2)
+**Affected files:**
+- `third_party/wdsp/src/cfcomp.c` (TAPR v1.29 → Thetis v2.10.3.13)
+- `third_party/wdsp/src/cfcomp.h` (TAPR v1.29 → Thetis v2.10.3.13)
+- `docs/attribution/WDSP-PROVENANCE.md` (partial-sync record added)
+- `src/core/wdsp_api.h` + `src/core/TxChannel.{h,cpp}` (Qg/Qe forwarding)
+- `tests/tst_tx_channel_cfc_cpdr_cessb_setters.cpp` (live pass-through smoke)
+
+**Action:** Surgical upstream-sync of two files only.  TAPR v1.29's
+`SetTXACFCOMPprofile` is 5-arg (F/G/E only); Thetis v2.10.3.13's variant
+is 7-arg (adds per-band Qg gain-skirt-Q + Qe ceiling-skirt-Q with NULL
+opt-out per skirt).  Phase 3M-3a-ii Batch 1 (commit `30e2c41`) wired the
+NereusSDR C++ wrapper to the Thetis 7-arg surface with Qg/Qe validated
+and dropped at the linker boundary; this entry replaces the bundled
+cfcomp source with the Thetis v2.10.3.13 versions and flips the wrapper
+to forward Qg/Qe through to WDSP.  All other 140 WDSP sources remain at
+TAPR v1.29.
+
+**Reason:** The 3M-3a-ii CFC dialog ports Thetis's `nudCFC_q` (per-band
+gain Q) and `nudCFC_cq` (per-band ceiling Q) controls.  Without per-band
+Q the userland-parity claim for the dialog wouldn't hold.  Option B
+(partial WDSP sync) was chosen over option A (ship without per-band Q)
+because the user-visible behaviour of the CFC dialog depends on the
+WDSP-side support — there's no way to fake it at the wrapper layer.
+
+**License delta:** Thetis v2.10.3.13's `cfcomp.{c,h}` carry a Richard
+Samphire (MW0LGE) dual-licensing block (Copyright (c) 2026), absent from
+TAPR v1.29.  The block is reproduced verbatim in the bundled headers per
+the byte-for-byte attribution rule.  The dual license is upstream's own
+prerogative — pure GPLv2-or-later remains the floor (Samphire reserves
+additional rights only over his own contributions, never restricting
+rights granted under the GPL).  No effect on NereusSDR's downstream
+GPLv3 distribution.
+
+**Verification:**
+- `md5sum` confirms `third_party/wdsp/src/cfcomp.{c,h}` byte-identical
+  with `../Thetis/Project Files/Source/wdsp/cfcomp.{c,h}` at commit
+  `501e3f5`.
+- `scripts/discover-thetis-author-tags.py` re-run; MW0LGE already in
+  corpus, no new contributors surfaced.
+- Build clean + 247/247 ctest green on macOS.
+
+**Process improvement:** This is the first "partial sync" the project
+has done — prior pulls were all-or-nothing.  `WDSP-PROVENANCE.md` now
+includes a "Partial sync record" table so any reader can see at a glance
+which files diverge from the v1.29 baseline.  Future partial syncs
+should add rows to that table.
+
+---
+
 *(Subsequent entries will be appended as omissions are discovered and cured.)*

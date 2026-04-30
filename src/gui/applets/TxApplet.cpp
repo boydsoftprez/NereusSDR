@@ -132,6 +132,7 @@
 // 15.  SWR protection LED — QLabel indicator (NYI — 3M-3)
 
 #include "TxApplet.h"
+#include "TxEqDialog.h"
 #include "NyiOverlay.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
@@ -403,6 +404,67 @@ void TxApplet::buildUI()
         volRow->addWidget(m_monitorVolumeValue);
 
         vbox->addLayout(volRow);
+    }
+
+    // ── 4e. TX-processing quick toggles: [LEV] [EQ] [PROC] ─────────────────
+    // Phase 3M-3a-i Batch 2 (Task F): single row of 3 checkable buttons sitting
+    // between MON volume slider and the TUNE/MOX row.  Mirrors the
+    // VOX/MON button styling family (compact 22-px-tall, expanding width,
+    // green-checked LED look).
+    //
+    //   LEV  — checkable, bidirectional with TransmitModel::txLevelerOn.
+    //   EQ   — checkable, bidirectional with TransmitModel::txEqEnabled.
+    //          Left-click toggles.  Right-click is reserved for the
+    //          TxEqDialog launch (lands in 3M-3a-i Batch 3); for now a
+    //          customContextMenuRequested handler logs a placeholder.
+    //   PROC — DISABLED placeholder for Speech Processor (3M-3a-ii).
+    //
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(2);
+
+        const QString btnStyle = Style::buttonBaseStyle()
+            + Style::greenCheckedStyle();
+
+        m_levBtn = new QPushButton(QStringLiteral("LEV"), this);
+        m_levBtn->setCheckable(true);
+        m_levBtn->setFixedHeight(22);
+        m_levBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_levBtn->setStyleSheet(btnStyle);
+        m_levBtn->setAccessibleName(QStringLiteral("TX Leveler enable"));
+        m_levBtn->setObjectName(QStringLiteral("TxLevButton"));
+        m_levBtn->setToolTip(QStringLiteral(
+            "TX Leveler — slow speech-leveling AGC. Improves intelligibility on weak speech."));
+        row->addWidget(m_levBtn, 1);
+
+        m_eqBtn = new QPushButton(QStringLiteral("EQ"), this);
+        m_eqBtn->setCheckable(true);
+        m_eqBtn->setFixedHeight(22);
+        m_eqBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_eqBtn->setStyleSheet(btnStyle);
+        m_eqBtn->setAccessibleName(QStringLiteral("TX EQ enable"));
+        m_eqBtn->setObjectName(QStringLiteral("TxEqButton"));
+        m_eqBtn->setToolTip(QStringLiteral(
+            "TX 10-band graphic EQ.  Left-click to toggle.\n"
+            "Right-click to open the EQ dialog."));
+        // Custom context-menu policy so right-click hits a slot (not the
+        // default menu).
+        m_eqBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+        row->addWidget(m_eqBtn, 1);
+
+        m_procBtn = new QPushButton(QStringLiteral("PROC"), this);
+        m_procBtn->setCheckable(true);
+        m_procBtn->setFixedHeight(22);
+        m_procBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_procBtn->setStyleSheet(btnStyle);
+        m_procBtn->setAccessibleName(QStringLiteral("Speech compressor"));
+        m_procBtn->setObjectName(QStringLiteral("TxProcButton"));
+        m_procBtn->setToolTip(QStringLiteral(
+            "Speech compressor — coming in 3M-3a-ii"));
+        m_procBtn->setEnabled(false);  // 3M-3a-ii placeholder
+        row->addWidget(m_procBtn, 1);
+
+        vbox->addLayout(row);
     }
 
     // ── Button row: TUNE + MOX + ATU + MEM (25% each) ─────────────────────
@@ -819,6 +881,54 @@ void TxApplet::wireControls()
         m_updatingFromModel = false;
     });
 
+    // ── Phase 3M-3a-i Batch 2 (Task F): LEV / EQ / PROC quick toggles ───────
+    //
+    // LEV button ↔ TransmitModel::txLevelerOn (bidirectional, echo-guarded).
+    if (m_levBtn) {
+        connect(m_levBtn, &QPushButton::toggled,
+                this, [this, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setTxLevelerOn(on);
+        });
+        connect(&tx, &TransmitModel::txLevelerOnChanged,
+                this, [this](bool on) {
+            QSignalBlocker b(m_levBtn);
+            m_updatingFromModel = true;
+            m_levBtn->setChecked(on);
+            m_updatingFromModel = false;
+        });
+    }
+
+    // EQ button ↔ TransmitModel::txEqEnabled (bidirectional, echo-guarded).
+    // Right-click: placeholder slot for the TxEqDialog launch (Batch 3).
+    if (m_eqBtn) {
+        connect(m_eqBtn, &QPushButton::toggled,
+                this, [this, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setTxEqEnabled(on);
+        });
+        connect(&tx, &TransmitModel::txEqEnabledChanged,
+                this, [this](bool on) {
+            QSignalBlocker b(m_eqBtn);
+            m_updatingFromModel = true;
+            m_eqBtn->setChecked(on);
+            m_updatingFromModel = false;
+        });
+        // Right-click → open TxEqDialog (Phase 3M-3a-i Batch 3 A.1).
+        // Modeless singleton; show + raise + activateWindow so a
+        // hidden-but-alive instance is brought forward.
+        connect(m_eqBtn, &QPushButton::customContextMenuRequested,
+                this, [this](const QPoint& /*pos*/) {
+            if (!m_model) { return; }
+            TxEqDialog* dlg = TxEqDialog::instance(m_model, this);
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
+    }
+
+    // PROC button is permanently disabled (3M-3a-ii placeholder); no wiring.
+
     // ── Mic-source badge ← TransmitModel::micSourceChanged ───────────────────
     // Phase 3M-1b J.3. Read-only: updates badge text on signal, no user interaction.
     // "PC mic" for MicSource::Pc, "Radio mic" for MicSource::Radio.
@@ -910,6 +1020,17 @@ void TxApplet::syncFromModel()
         const int uiVal = qRound(tx.monitorVolume() * 100.0f);
         m_monitorVolumeSlider->setValue(uiVal);
         m_monitorVolumeValue->setText(QString::number(uiVal));
+    }
+
+    // LEV / EQ button state (3M-3a-i Batch 2 Task F)
+    // PROC stays disabled — no model state to sync.
+    if (m_levBtn) {
+        QSignalBlocker b(m_levBtn);
+        m_levBtn->setChecked(tx.txLevelerOn());
+    }
+    if (m_eqBtn) {
+        QSignalBlocker b(m_eqBtn);
+        m_eqBtn->setChecked(tx.txEqEnabled());
     }
 
     // Mic-source badge (J.3 Phase 3M-1b)

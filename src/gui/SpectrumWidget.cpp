@@ -320,6 +320,18 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // the frequency scale bar inside the QRhiWidget's own mouse press/drag events
     // (which DO work when a button is pressed).
 
+    // Timer-driven display repaint — decouples repaint rate from FFT data arrival
+    // so updates are evenly spaced regardless of IQ buffer fill timing.
+    m_displayTimer.setInterval(33); // 30 fps default
+    m_displayTimer.setSingleShot(false);
+    connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
+        if (m_hasNewSpectrum) {
+            m_hasNewSpectrum = false;
+            update();
+        }
+    });
+    m_displayTimer.start();
+
     // Sub-epic E: debounce timer for waterfall history re-allocation
     // From AetherSDR SpectrumWidget.cpp:158-168 [@2bb3b5c]
     // (debounce timer added by unmerged AetherSDR PR #1478 — see plan §authoring-time #2)
@@ -1174,7 +1186,7 @@ void SpectrumWidget::updateSpectrum(int receiverId, const QVector<float>& binsDb
     // Push unsmoothed data to waterfall (sharper signal edges)
     // From gpu-waterfall.md:908
     pushWaterfallRow(binsDbm);
-    update();
+    m_hasNewSpectrum = true;
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
@@ -1402,7 +1414,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     QVector<QPointF> points(count);
     for (int j = 0; j < count; ++j) {
         float x = specRect.left() + static_cast<float>(j) * xStep;
-        float y = static_cast<float>(dbmToY(m_smoothed[firstBin + j], specRect));
+        float y = dbmToYf(m_smoothed[firstBin + j], specRect);
         points[j] = QPointF(x, y);
     }
 
@@ -1441,7 +1453,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         QVector<QPointF> peakPoints(count);
         for (int j = 0; j < count; ++j) {
             float x = specRect.left() + static_cast<float>(j) * xStep;
-            float y = static_cast<float>(dbmToY(m_peakHoldBins[firstBin + j], specRect));
+            float y = dbmToYf(m_peakHoldBins[firstBin + j], specRect);
             peakPoints[j] = QPointF(x, y);
         }
         QColor peakCol = m_fillColor;
@@ -1921,6 +1933,15 @@ int SpectrumWidget::dbmToY(float dbm, const QRect& r) const
     float frac = (calibrated - bottom) / m_dynamicRange;
     frac = qBound(0.0f, frac, 1.0f);
     return r.bottom() - static_cast<int>(frac * r.height());
+}
+
+float SpectrumWidget::dbmToYf(float dbm, const QRect& r) const
+{
+    const float calibrated = dbm + m_dbmCalOffset;
+    float bottom = m_refLevel - m_dynamicRange;
+    float frac = (calibrated - bottom) / m_dynamicRange;
+    frac = qBound(0.0f, frac, 1.0f);
+    return static_cast<float>(r.bottom()) - frac * static_cast<float>(r.height());
 }
 
 // ─── Waterfall scrollback math helpers (sub-epic E) ───────────────────
@@ -2575,6 +2596,12 @@ void SpectrumWidget::setHighSwrOverlay(bool active, bool foldback) noexcept
 //   }
 // NereusSDR translation: track state flag, markOverlayDirty() to trigger
 // the border repaint on the next paint pass.
+
+void SpectrumWidget::setDisplayFps(int fps)
+{
+    const int clamped = qBound(1, fps, 60);
+    m_displayTimer.setInterval(1000 / clamped);
+}
 
 void SpectrumWidget::setMoxOverlay(bool isTx)
 {

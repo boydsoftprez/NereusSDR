@@ -173,12 +173,58 @@ warren@wpratt.com
 //                 behavioural change; documentation refresh only.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-30 — Phase 3M-3a-ii Batch 1 — 9 TX dynamics-section wrappers
+//                 added by J.J. Boyd (KG4VCF):
+//                   CFC (6):   setTxCfcRunning(bool)
+//                              setTxCfcPosition(int)
+//                              setTxCfcProfile(F, G, E, Qg, Qe)
+//                              setTxCfcPrecompDb(double)
+//                              setTxCfcPostEqRunning(bool)
+//                              setTxCfcPrePeqDb(double)
+//                   CPDR (2):  setTxCpdrOn(bool)
+//                              setTxCpdrGainDb(double)
+//                   CESSB (1): setTxCessbOn(bool)
+//                 Thin pass-through wrappers over wdsp/cfcomp.c, compress.c
+//                 and osctrl.c [v2.10.3.13] on top of the WDSP boot defaults
+//                 shipped in 3M-1c.  setTxCfcProfile accepts the Thetis
+//                 7-arg surface (F/G/E/Qg/Qe) but the bundled WDSP only
+//                 ports the 5-arg variant — Qg/Qe are validated and
+//                 dropped today, ready for live forwarding when WDSP is
+//                 upgraded to v2.10.3.13.  Stage::CfComp / Stage::Compressor
+//                 / Stage::OsCtrl already had explicit case arms in
+//                 setStageRunning since 3M-1a Task C.4 — verified to mirror
+//                 the 3M-3a-i style (direct WDSP call, version-stamped
+//                 cite).  AI-assisted transformation via Anthropic Claude
+//                 Code.
+//   2026-04-30 — Phase 3M-3a-ii Batch 1.5 — bundled cfcomp.{c,h} upgraded
+//                 from TAPR v1.29 to Thetis v2.10.3.13 (partial WDSP
+//                 upstream-sync).  setTxCfcProfile now forwards Qg/Qe
+//                 (or nullptr for empty vectors per cfcomp.c:669-682
+//                 NULL-skirt semantics) instead of dropping them at the
+//                 linker.  J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-04-30 — Phase 3M-3a-ii Batch 1.6 — 3 TX phase-rotator parameter
+//                 wrappers added by J.J. Boyd (KG4VCF):
+//                   setTxPhrotCornerHz(double)  → SetTXAPHROTCorner
+//                   setTxPhrotNstages(int)      → SetTXAPHROTNstages
+//                   setTxPhrotReverse(bool)     → SetTXAPHROTReverse
+//                 Thin pass-through wrappers over wdsp/iir.c:675-703
+//                 [v2.10.3.13] on top of the WDSP boot defaults shipped
+//                 in 3M-1c.  3M-3a-i shipped Stage::PhRot + the
+//                 setStageRunning(Stage::PhRot,...) arm calling
+//                 SetTXAPHROTRun; the parameter setters were deferred to
+//                 this batch because their persistence keys
+//                 (CFCPhaseRotatorFreq / CFCPhaseRotatorStages /
+//                 CFCPhaseReverseEnabled) live in the Thetis tpDSPCFC tab
+//                 alongside the CFC controls.  AI-assisted transformation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include <QObject>
 
+#include <array>    // std::array — TX EQ 10-band graphic vector (3M-3a-i B-1)
 #include <atomic>   // std::atomic<bool> — m_running cross-thread mirror (3M-1c TxWorkerThread)
 #include <limits>   // std::numeric_limits — quiet_NaN() initialiser (D.3)
 #include <vector>
@@ -890,6 +936,350 @@ public:
     /// 'virtual' for the I.1 TwoToneController test seam.
     virtual void setTxPostGenRun(bool on);
 
+    // ── TX EQ wrappers (3M-3a-i Task B-1) ───────────────────────────────────
+    //
+    // Seven thin wrappers over the WDSP `SetTXAEQ*` family that drives the
+    // eqp (TXA stage 6) parametric / graphic equalizer.  Phase 3M-3a-i UI
+    // batches will wire these into the Setup → DSP → EQ page; this batch
+    // ships the DSP plumbing only.
+    //
+    // Threading: the Run wrapper (setTxEqRunning → SetTXAEQRun) is csDSP-
+    // protected (eq.c:742-747 [v2.10.3.13]) and therefore audio-safe to
+    // call from the main thread at any time.  All other wrappers
+    // (Graph10 / Profile / Nc / Mp / Ctfmode / Wintype) reallocate the EQ
+    // impulse-response and are NOT csDSP-protected; per Thetis precedent
+    // (setup.cs handlers run on the form's UI thread) they are safe only
+    // from the main thread.  The audio thread sees a momentary tear if
+    // the call lands mid-block — Thetis lives with this; NereusSDR
+    // mirrors the policy.
+    //
+    // 3M-3a-i Batch 1 ships the DSP wrappers only.  Phase 3M-3a-i Batch 2+
+    // wires TransmitModel signals into these via RadioModel.
+
+    /// TX EQ run gate.
+    ///
+    /// Wraps SetTXAEQRun(channel, on ? 1 : 0).  Equivalent to
+    /// setStageRunning(Stage::Eqp, on) — provided as a convenience and for
+    /// the 3M-3a-i UI batch which calls into a per-feature setter API.
+    ///
+    /// From Thetis wdsp/eq.c:742-747 [v2.10.3.13] — SetTXAEQRun impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis radio.cs TXEQRun setter (txa[].eqp.run gate via WDSP).
+    void setTxEqRunning(bool on);
+
+    /// TX EQ — 10-band graphic EQ shape.
+    ///
+    /// Wraps SetTXAGrphEQ10(channel, txeq[]).  preampPlus10Bands[0] is the
+    /// preamp gain (dB); preampPlus10Bands[1..10] are the 10 band gains
+    /// (dB) at the WDSP-fixed band centers
+    /// 32 / 63 / 125 / 250 / 500 / 1k / 2k / 4k / 8k / 16k Hz.
+    ///
+    /// SetTXAGrphEQ10 reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:859-883 [v2.10.3.13] — SetTXAGrphEQ10 impl.
+    /// From Thetis wdsp/TXA.c:112-113 [v2.10.3.13] — default_F / default_G
+    ///   define the band centers and Thetis's factory G-shape.
+    void setTxEqGraph10(const std::array<int, 11>& preampPlus10Bands);
+
+    /// TX EQ — full custom-frequency profile path.
+    ///
+    /// Wraps SetTXAEQProfile(channel, 10, F[11], G[11]).  Used when
+    /// the user moves the per-band frequency sliders so the bands no
+    /// longer sit at the WDSP-fixed centers used by setTxEqGraph10.
+    ///
+    /// freqs10 must contain exactly 10 band-center frequencies (Hz).
+    /// gains11 must contain exactly 11 entries (gains11[0] = preamp dB,
+    /// gains11[1..10] = band gains dB).  Both vectors are validated;
+    /// size mismatches log a qCWarning and the call early-returns.
+    ///
+    /// Internally builds F[11] = {0.0, freqs10[0..9]} (F[0] is the
+    /// WDSP-padding slot — Thetis SetTXAEQProfile expects a 1-indexed
+    /// vector with [0] unused) and G[11] = {gains11[0..10]}.  Q is NULL
+    /// for graphic-EQ-style usage (Thetis never passes a Q vector through
+    /// the 10-band UI).
+    ///
+    /// SetTXAEQProfile reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:779-804 [v2.10.3.13] — SetTXAEQProfile impl.
+    /// From Thetis wdsp/TXA.c:112-127 [v2.10.3.13] — create_eqp call shape
+    ///   showing F[0..nfreqs] / G[0..nfreqs] / Q=NULL convention.
+    void setTxEqProfile(const std::vector<double>& freqs10,
+                        const std::vector<double>& gains11);
+
+    /// TX EQ — filter coefficient count.
+    ///
+    /// Wraps SetTXAEQNC(channel, nc).  Default 2048 per WDSP create_eqp
+    /// call (TXA.c:118 [v2.10.3.13]: max(2048, ch[].dsp_size)).
+    ///
+    /// SetTXAEQNC reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:750-764 [v2.10.3.13] — SetTXAEQNC impl
+    ///   (csDSP-protected, but allocates impulse — main-thread only).
+    void setTxEqNc(int nc);
+
+    /// TX EQ — minimum-phase flag.
+    ///
+    /// Wraps SetTXAEQMP(channel, mp ? 1 : 0).
+    ///
+    /// SetTXAEQMP reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:767-776 [v2.10.3.13] — SetTXAEQMP impl
+    ///   (no csDSP — main-thread only).
+    void setTxEqMp(bool mp);
+
+    /// TX EQ — cutoff/transition mode.
+    ///
+    /// Wraps SetTXAEQCtfmode(channel, mode).
+    ///
+    /// SetTXAEQCtfmode reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:807-816 [v2.10.3.13] — SetTXAEQCtfmode impl
+    ///   (no csDSP — main-thread only).
+    void setTxEqCtfmode(int mode);
+
+    /// TX EQ — window type.
+    ///
+    /// Wraps SetTXAEQWintype(channel, wintype).
+    ///
+    /// SetTXAEQWintype reallocates the impulse response — main-thread only.
+    ///
+    /// From Thetis wdsp/eq.c:819-828 [v2.10.3.13] — SetTXAEQWintype impl
+    ///   (no csDSP — main-thread only).
+    void setTxEqWintype(int wintype);
+
+    // ── TX Leveler / ALC wrappers (3M-3a-i Task B-2) ────────────────────────
+    //
+    // Six thin wrappers over the WDSP `SetTXALeveler*` and `SetTXAALC*`
+    // families.  Leveler is TXA stage 9 (slow speech-leveling AGC,
+    // wcpAGC mode=5) and ALC is TXA stage 19 (final clip protection,
+    // wcpAGC mode=5 — always-on per Thetis schema, no Run setter exposed
+    // to the user).
+    //
+    // All six setters are csDSP-protected by WDSP (wcpAGC.c:570-650
+    // [v2.10.3.13]) and therefore audio-safe to call from the main thread
+    // at any time.  No shadow atomics needed.
+    //
+    // ALC Run is locked-on in Thetis (no chkALCEnabled checkbox in the
+    // Setup UI; WdspEngine boot sets SetTXAALCSt(1) at WdspEngine.cpp:438).
+    // We deliberately do NOT expose a setTxAlcOn wrapper.
+
+    /// TX Leveler run gate.
+    ///
+    /// Wraps SetTXALevelerSt(channel, on ? 1 : 0).
+    ///
+    /// From Thetis wdsp/wcpAGC.c:613-618 [v2.10.3.13] — SetTXALevelerSt impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9108-9123 [v2.10.3.13] — chkDSPLevelerEnabled_CheckedChanged
+    ///   handler that wires through to TXLevelerOn → SetTXALevelerSt.
+    void setTxLevelerOn(bool on);
+
+    /// TX Leveler max-gain (Top) in dB.
+    ///
+    /// Wraps SetTXALevelerTop(channel, dB).  WDSP converts to linear
+    /// internally via pow(10, dB/20.0); we pass dB straight per the Thetis
+    /// radio.cs TXLevelerMaxGain setter pattern.
+    ///
+    /// Thetis Designer range: 0..20 dB (setup.Designer.cs:38718-38738
+    ///   [v2.10.3.13] — udDSPLevelerThreshold).  Default 15 dB.
+    ///
+    /// From Thetis wdsp/wcpAGC.c:647-650 [v2.10.3.13] — SetTXALevelerTop impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9095-9099 [v2.10.3.13] — udDSPLevelerThreshold_ValueChanged
+    ///   handler routes through TXLevelerMaxGain → SetTXALevelerTop.
+    void setTxLevelerTopDb(double dB);
+
+    /// TX Leveler decay time-constant in milliseconds.
+    ///
+    /// Wraps SetTXALevelerDecay(channel, ms).  Thetis stores the value as
+    /// ms / 1000.0 sec inside WDSP; the setter takes the raw int ms.
+    ///
+    /// Thetis Designer range: 1..5000 ms (setup.Designer.cs:38744-38772
+    ///   [v2.10.3.13] — udDSPLevelerDecay).  Default 100 ms.
+    ///
+    /// From Thetis wdsp/wcpAGC.c:629-635 [v2.10.3.13] — SetTXALevelerDecay impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9101-9105 [v2.10.3.13] — udDSPLevelerDecay_ValueChanged
+    ///   handler routes through TXLevelerDecay → SetTXALevelerDecay.
+    void setTxLevelerDecayMs(int ms);
+
+    /// TX ALC max-gain in dB.
+    ///
+    /// Wraps SetTXAALCMaxGain(channel, dB).  WDSP converts to linear
+    /// internally via pow(10, dB/20.0); we pass dB straight per the Thetis
+    /// setup.cs handler pattern (setup.cs:9132).
+    ///
+    /// Thetis Designer range: 0..120 dB (setup.Designer.cs:38814-38833
+    ///   [v2.10.3.13] — udDSPALCMaximumGain).  Default 3 dB
+    ///   (database.cs:4592 [v2.10.3.13] — TXProfile ALC_MaximumGain).
+    ///
+    /// From Thetis wdsp/wcpAGC.c:603-610 [v2.10.3.13] — SetTXAALCMaxGain impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9129-9134 [v2.10.3.13] — udDSPALCMaximumGain_ValueChanged
+    ///   handler calls SetTXAALCMaxGain directly (no radio.cs property hop).
+    void setTxAlcMaxGainDb(double dB);
+
+    /// TX ALC decay time-constant in milliseconds.
+    ///
+    /// Wraps SetTXAALCDecay(channel, ms).
+    ///
+    /// Thetis Designer range: 1..50 ms (setup.Designer.cs:38845-38866
+    ///   [v2.10.3.13] — udDSPALCDecay).  Default 10 ms.
+    ///
+    /// From Thetis wdsp/wcpAGC.c:585-592 [v2.10.3.13] — SetTXAALCDecay impl
+    ///   (csDSP-protected; audio-safe).
+    /// From Thetis setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged
+    ///   handler routes through TXALCDecay → SetTXAALCDecay.
+    void setTxAlcDecayMs(int ms);
+
+    // ── B-3: TX CFC + CPDR + CESSB wrappers (Phase 3M-3a-ii Batch 1) ─────────
+    //
+    // Nine thin C++ wrappers over the TXA dynamics section:
+    //   - CFC   (cfcomp.c:632-737)  Continuous Frequency Compander (stage 11)
+    //   - CPDR  (compress.c:99-117) speech compressor (stage 14)
+    //   - CESSB (osctrl.c:142-150)  controlled-envelope SSB (stage 16)
+    //
+    // All nine wrappers route to TX channel kTxChannelId = 1 and inherit the
+    // standard rsmpin.p == nullptr null-guard pattern.  All are csDSP-protected
+    // inside WDSP, so they are safe to call from the main thread while audio
+    // thread runs.  All sit on top of the WDSP boot defaults shipped in 3M-1c
+    // (no defaults invented here).
+
+    /// CFC run gate.  Wraps SetTXACFCOMPRun(channel, on ? 1 : 0).
+    ///
+    /// From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13].
+    void setTxCfcRunning(bool on);
+
+    /// CFC pre/post-EQ position.  Wraps SetTXACFCOMPPosition(channel, pos).
+    ///
+    /// Thetis usage (radio.cs / setup.cs): 0 = pre-EQ, 1 = post-EQ.  The exact
+    /// meaning is determined by where WDSP places cfcomp in the TXA chain at
+    /// run time (TXA.c:198-222 [v2.10.3.13]).
+    ///
+    /// From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13].
+    void setTxCfcPosition(int pos);
+
+    /// CFC compression profile arrays.  Wraps SetTXACFCOMPprofile.
+    ///
+    /// F / G / E must all have the same length, `nfreqs`.  Qg and Qe are
+    /// optional per-band Q parameters:
+    ///   - Qg controls the Q (sharpness) of the gain skirt around each F[i].
+    ///   - Qe controls the Q (sharpness) of the ceiling skirt around each F[i].
+    /// Pass an empty vector for either Qg or Qe to opt out of per-band Q on
+    /// that skirt — the wrapper forwards `nullptr` for the empty case, which
+    /// matches the Thetis WDSP NULL-skirt semantics (cfcomp.c:669-682
+    /// [v2.10.3.13]: when Qg/Qe is NULL, calc_comp falls back to linear
+    /// interpolation between bands instead of the Gaussian-tail Q-shaped
+    /// path).  Either Qg or Qe may be empty independently.
+    ///
+    /// The wrapper validates length consistency on F/G/E (and on any
+    /// non-empty Qg/Qe vector) and emits a qCWarning + early-return on
+    /// mismatch — no partial application.
+    ///
+    /// As of Phase 3M-3a-ii Batch 1.5 (2026-04-30) the bundled
+    /// `third_party/wdsp/src/cfcomp.c` is the Thetis v2.10.3.13 version, so
+    /// Qg/Qe forward straight through to WDSP — no linker-boundary drop.
+    ///
+    /// From Thetis wdsp/cfcomp.c:656 [v2.10.3.13] — 7-arg with per-band Qg
+    /// (gain skirt Q) and Qe (ceiling skirt Q).  Either Qg or Qe may be
+    /// NULL to opt out per-skirt.
+    void setTxCfcProfile(const std::vector<double>& F,
+                         const std::vector<double>& G,
+                         const std::vector<double>& E,
+                         const std::vector<double>& Qg,
+                         const std::vector<double>& Qe);
+
+    /// CFC pre-compression in dB.  Wraps SetTXACFCOMPPrecomp(channel, dB).
+    /// WDSP stores pow(10, 0.05 * dB) as `precomplin` and re-multiplies the
+    /// linear gain through cfc_gain[].
+    ///
+    /// From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13].
+    void setTxCfcPrecompDb(double dB);
+
+    /// CFC post-EQ run gate.  Wraps SetTXACFCOMPPeqRun(channel, on ? 1 : 0).
+    /// Independent from setTxCfcRunning — when on, WDSP applies the peq
+    /// filter after the comp curve.
+    ///
+    /// From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13].
+    void setTxCfcPostEqRunning(bool on);
+
+    /// CFC pre-PEQ gain in dB.  Wraps SetTXACFCOMPPrePeq(channel, dB).  WDSP
+    /// stores pow(10, 0.05 * dB) as `prepeqlin`.
+    ///
+    /// From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13].
+    void setTxCfcPrePeqDb(double dB);
+
+    /// CPDR (compressor) run gate.  Wraps SetTXACompressorRun(channel,
+    /// on ? 1 : 0).
+    ///
+    /// SIDE EFFECT: SetTXACompressorRun calls TXASetupBPFilters(channel)
+    /// internally (compress.c:106 [v2.10.3.13]) — toggling CPDR rebuilds bp1
+    /// and the gated bp2 to track the compression-and-clip routing in the
+    /// TXA pipeline.  Callers don't need to do anything special; just be
+    /// aware that this is more than a single-flag toggle.
+    ///
+    /// From Thetis wdsp/compress.c:99-109 [v2.10.3.13].
+    void setTxCpdrOn(bool on);
+
+    /// CPDR (compressor) gain in dB.  Wraps SetTXACompressorGain(channel, dB).
+    /// WDSP converts to linear via pow(10, dB / 20.0) internally.
+    ///
+    /// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
+    void setTxCpdrGainDb(double dB);
+
+    /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
+    ///
+    /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
+    /// internally (osctrl.c:148 [v2.10.3.13]) — toggling CESSB rebuilds bp2.
+    ///
+    /// SIDE EFFECT 2 / IMPORTANT SEMANTIC: bp2.run (the CESSB-side bandpass)
+    /// is only set when *both* `compressor.run` AND `osctrl.run` are 1
+    /// (TXA.c:843-852, parallel switch arms in TXASetupBPFilters
+    /// [v2.10.3.13]).  Calling setTxCessbOn(true) without first turning CPDR
+    /// on is therefore effectively a no-op at the audio level — osctrl.run
+    /// is set, but the BP filter that feeds it stays off.  This wrapper does
+    /// NOT enforce that coupling; it matches Thetis behaviour exactly and
+    /// lets WDSP own the dependency.
+    ///
+    /// From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13].
+    /// From Thetis wdsp/TXA.c:843-868 [v2.10.3.13] — bp2.run gating.
+    void setTxCessbOn(bool on);
+
+    // ── B-3.1: TX Phase Rotator parameter wrappers (Phase 3M-3a-ii Batch 1.6) ─
+    //
+    // Three thin C++ wrappers over the TXA phrot parameter section
+    // (iir.c:675-703).  3M-3a-i Stage::PhRot already wired the Run flag via
+    // SetTXAPHROTRun (setStageRunning case arm).  These three pick up the
+    // remaining tunables that the Thetis tpDSPCFC tab exposes alongside the
+    // CFC controls.  All wrappers route to TX channel kTxChannelId = 1 and
+    // inherit the standard rsmpin.p == nullptr null-guard pattern.  All are
+    // csDSP-protected (cs_update) inside WDSP, so they are safe to call from
+    // the main thread while the audio thread runs.
+
+    /// Phase-rotator corner frequency in Hz.  Wraps SetTXAPHROTCorner.
+    ///
+    /// WDSP rebuilds the all-pass coefficient bank on every set
+    /// (decalc_phrot + calc_phrot internally) — non-trivial cost; do not
+    /// spam this from a slider's continuous-change signal without rate-
+    /// limiting.
+    ///
+    /// From Thetis wdsp/iir.c:675-683 [v2.10.3.13].
+    void setTxPhrotCornerHz(double hz);
+
+    /// Phase-rotator number of all-pass stages.  Wraps SetTXAPHROTNstages.
+    ///
+    /// WDSP rebuilds the coefficient bank on every set (decalc_phrot +
+    /// calc_phrot internally) — non-trivial cost; do not spam.
+    ///
+    /// From Thetis wdsp/iir.c:686-694 [v2.10.3.13].
+    void setTxPhrotNstages(int nstages);
+
+    /// Phase-rotator reverse-rotation flag.  Wraps SetTXAPHROTReverse.
+    ///
+    /// Cheap — WDSP just flips the sign; no coefficient rebuild.
+    ///
+    /// From Thetis wdsp/iir.c:697-703 [v2.10.3.13].
+    void setTxPhrotReverse(bool reverse);
+
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //
     // Activate or deactivate a single TXA pipeline stage by name.
@@ -911,6 +1301,8 @@ public:
     //   OsCtrl      → SetTXAosctrlRun        (osctrl.c:142-147)
     //   Cfir        → SetTXACFIRRun          (cfir.c:233-238)
     //   CfComp      → SetTXACFCOMPRun        (cfcomp.c:632-637)
+    //   Leveler     → SetTXALevelerSt        (wcpAGC.c:613-618) [3M-3a-i B-2]
+    //   Alc         → SetTXAALCSt            (wcpAGC.c:570-575) [3M-3a-i B-2]
     //
     // Unsupported stages (no public WDSP Run API, or managed internally):
     //   RsmpIn / RsmpOut: run managed by TXAResCheck() — not externally settable.

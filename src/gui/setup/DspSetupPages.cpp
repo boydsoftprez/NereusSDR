@@ -64,6 +64,7 @@
 #include "models/RadioModel.h"
 #include "core/WdspEngine.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -239,40 +240,126 @@ AgcAlcSetupPage::AgcAlcSetupPage(RadioModel* model, QWidget* parent)
     // From Thetis v2.10.3.13 setup.cs:5046-5076 — CustomRXAGCEnabled
     updateCustomGating(slice->agcMode());
 
-    // ── ALC ──────────────────────────────────────────────────────────────────
-    QGroupBox* alcGrp = addSection("ALC");
-    QVBoxLayout* alcLay = qobject_cast<QVBoxLayout*>(alcGrp->layout());
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── TX Leveler ────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // Phase 3M-3a-i Batch 2 (Task D): replaces the prior disabled "Leveler"
+    // NYI stub.  Wires Setup → DSP → AGC/ALC → TX Leveler controls
+    // bidirectionally to TransmitModel TX Leveler properties (added in
+    // Batch 1 Task C).  Range / default / tooltip text all mirror Thetis
+    // grpDSPLeveler at setup.Designer.cs:38683-38791 [v2.10.3.13].
+    //
+    TransmitModel& tx = model->transmitModel();
 
-    auto* alcDecay = new QSpinBox;
-    alcDecay->setRange(1, 5000);
-    alcDecay->setSuffix(" ms");
-    addLabeledSpinner(alcLay, "Decay", alcDecay);
+    QGroupBox* txLevGrp = addSection("TX Leveler");
+    QVBoxLayout* txLevLay = qobject_cast<QVBoxLayout*>(txLevGrp->layout());
 
-    auto* alcMaxGain = new QSpinBox;
-    alcMaxGain->setRange(0, 120);
-    alcMaxGain->setSuffix(" dB");
-    addLabeledSpinner(alcLay, "Max Gain", alcMaxGain);
+    m_txLevelerOnChk = new QCheckBox("Enable");
+    m_txLevelerOnChk->setChecked(tx.txLevelerOn());
+    // From Thetis setup.Designer.cs:38707 [v2.10.3.13] — chkDSPLevelerEnabled tooltip.
+    m_txLevelerOnChk->setToolTip(
+        QStringLiteral("Adjust gain if transmit audio increases/decreases"));
+    txLevLay->addWidget(m_txLevelerOnChk);
 
-    disableGroup(alcGrp);
+    m_txLevelerTopSpin = new QSpinBox;
+    m_txLevelerTopSpin->setRange(TransmitModel::kTxLevelerMaxGainDbMin,
+                                 TransmitModel::kTxLevelerMaxGainDbMax);
+    m_txLevelerTopSpin->setSuffix(" dB");
+    m_txLevelerTopSpin->setValue(tx.txLevelerMaxGain());
+    // From Thetis setup.Designer.cs:38732-38733 [v2.10.3.13] — udDSPLevelerThreshold tooltip.
+    m_txLevelerTopSpin->setToolTip(
+        QStringLiteral("This provides for a 'threshold' ALC. Irrespective of how weak "
+                       "the input is, no gain over this max is applied."));
+    addLabeledSpinner(txLevLay, "Max Gain", m_txLevelerTopSpin);
 
-    // ── Leveler ───────────────────────────────────────────────────────────────
-    QGroupBox* levGrp = addSection("Leveler");
-    QVBoxLayout* levLay = qobject_cast<QVBoxLayout*>(levGrp->layout());
+    m_txLevelerDecaySpin = new QSpinBox;
+    m_txLevelerDecaySpin->setRange(TransmitModel::kTxLevelerDecayMsMin,
+                                   TransmitModel::kTxLevelerDecayMsMax);
+    m_txLevelerDecaySpin->setSuffix(" ms");
+    m_txLevelerDecaySpin->setValue(tx.txLevelerDecay());
+    // From Thetis setup.Designer.cs:38764-38765 [v2.10.3.13] — udDSPLevelerDecay tooltip.
+    m_txLevelerDecaySpin->setToolTip(
+        QStringLiteral("Decay time-constant in ms.  Note that this is a time-constant "
+                       "for an exponential curve, not an absolute time."));
+    addLabeledSpinner(txLevLay, "Decay", m_txLevelerDecaySpin);
 
-    auto* levEnable = new QPushButton("Enable");
-    addLabeledToggle(levLay, "Enable", levEnable);
+    // Wire TX Leveler controls bidirectionally to TransmitModel.
+    connect(m_txLevelerOnChk, &QCheckBox::toggled,
+            &tx, &TransmitModel::setTxLevelerOn);
+    connect(&tx, &TransmitModel::txLevelerOnChanged,
+            m_txLevelerOnChk, [this](bool on) {
+        QSignalBlocker b(m_txLevelerOnChk);
+        m_txLevelerOnChk->setChecked(on);
+    });
 
-    auto* levThresh = new QSpinBox;
-    levThresh->setRange(-20, 20);
-    levThresh->setSuffix(" dB");
-    addLabeledSpinner(levLay, "Threshold", levThresh);
+    connect(m_txLevelerTopSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setTxLevelerMaxGain);
+    connect(&tx, &TransmitModel::txLevelerMaxGainChanged,
+            m_txLevelerTopSpin, [this](int dB) {
+        QSignalBlocker b(m_txLevelerTopSpin);
+        m_txLevelerTopSpin->setValue(dB);
+    });
 
-    auto* levDecay = new QSpinBox;
-    levDecay->setRange(1, 5000);
-    levDecay->setSuffix(" ms");
-    addLabeledSpinner(levLay, "Decay", levDecay);
+    connect(m_txLevelerDecaySpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setTxLevelerDecay);
+    connect(&tx, &TransmitModel::txLevelerDecayChanged,
+            m_txLevelerDecaySpin, [this](int ms) {
+        QSignalBlocker b(m_txLevelerDecaySpin);
+        m_txLevelerDecaySpin->setValue(ms);
+    });
 
-    disableGroup(levGrp);
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── TX ALC ────────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // Phase 3M-3a-i Batch 2 (Task D): replaces the prior disabled "ALC" NYI
+    // stub.  No "Enable" checkbox — ALC Run is locked-on per Thetis schema
+    // (chkALCEnabled is absent from setup.Designer.cs grpDSPALC; WdspEngine
+    // boot calls SetTXAALCSt(1) at WdspEngine.cpp:438).  Range / default /
+    // tooltip text all mirror Thetis grpDSPALC at setup.Designer.cs:
+    // 38793-38866 [v2.10.3.13].
+    //
+    QGroupBox* txAlcGrp = addSection("TX ALC");
+    QVBoxLayout* txAlcLay = qobject_cast<QVBoxLayout*>(txAlcGrp->layout());
+
+    m_txAlcMaxGainSpin = new QSpinBox;
+    m_txAlcMaxGainSpin->setRange(TransmitModel::kTxAlcMaxGainDbMin,
+                                 TransmitModel::kTxAlcMaxGainDbMax);
+    m_txAlcMaxGainSpin->setSuffix(" dB");
+    m_txAlcMaxGainSpin->setValue(tx.txAlcMaxGain());
+    // From Thetis setup.Designer.cs:38828 [v2.10.3.13] — udDSPALCMaximumGain tooltip.
+    m_txAlcMaxGainSpin->setToolTip(
+        QStringLiteral("Maximum gain to apply before ALC limiting"));
+    addLabeledSpinner(txAlcLay, "Max Gain", m_txAlcMaxGainSpin);
+
+    m_txAlcDecaySpin = new QSpinBox;
+    m_txAlcDecaySpin->setRange(TransmitModel::kTxAlcDecayMsMin,
+                               TransmitModel::kTxAlcDecayMsMax);
+    m_txAlcDecaySpin->setSuffix(" ms");
+    m_txAlcDecaySpin->setValue(tx.txAlcDecay());
+    // From Thetis setup.Designer.cs:38858-38859 [v2.10.3.13] — udDSPALCDecay tooltip.
+    m_txAlcDecaySpin->setToolTip(
+        QStringLiteral("Decay time-constant in ms.  Note that this is a time-constant "
+                       "for an exponential curve, not an absolute time."));
+    addLabeledSpinner(txAlcLay, "Decay", m_txAlcDecaySpin);
+
+    // Wire TX ALC controls bidirectionally to TransmitModel.
+    connect(m_txAlcMaxGainSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setTxAlcMaxGain);
+    connect(&tx, &TransmitModel::txAlcMaxGainChanged,
+            m_txAlcMaxGainSpin, [this](int dB) {
+        QSignalBlocker b(m_txAlcMaxGainSpin);
+        m_txAlcMaxGainSpin->setValue(dB);
+    });
+
+    connect(m_txAlcDecaySpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setTxAlcDecay);
+    connect(&tx, &TransmitModel::txAlcDecayChanged,
+            m_txAlcDecaySpin, [this](int ms) {
+        QSignalBlocker b(m_txAlcDecaySpin);
+        m_txAlcDecaySpin->setValue(ms);
+    });
 }
 
 // From Thetis v2.10.3.13 setup.cs:5046-5076 — CustomRXAGCEnabled

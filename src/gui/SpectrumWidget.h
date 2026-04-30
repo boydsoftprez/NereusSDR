@@ -467,6 +467,8 @@ public:
     bool txFilterVisible() const noexcept { return m_txFilterVisible; }
 
 public slots:
+    void setDisplayFps(int fps);
+
     // Slot wired from MoxController::moxStateChanged (MainWindow::setupModel).
     // Draws a 3 px red border around the spectrum area when isTx=true.
     // From Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter.
@@ -617,6 +619,7 @@ private:
     int    hzToX(double hz, const QRect& r) const;
     double xToHz(int x, const QRect& r) const;
     int    dbmToY(float dbm, const QRect& r) const;
+    float  dbmToYf(float dbm, const QRect& r) const; // sub-pixel variant for antialiased trace
 
     // Returns kDbmStripW when the dBm scale strip is visible, 0 otherwise.
     // Used everywhere a rect excludes the right-edge strip so that hiding
@@ -679,6 +682,8 @@ private:
     // From AetherSDR SpectrumWidget.h:559 [@2bb3b5c]
     // (debounce timer added by unmerged AetherSDR PR #1478 — see plan §authoring-time #2)
     QTimer*         m_historyResizeTimer{nullptr};
+    QTimer          m_displayTimer;
+    bool            m_hasNewSpectrum{false};
 
     // ---- Waterfall display controls ----
     // From AetherSDR SpectrumWidget defaults + Thetis display.cs:2522-2536

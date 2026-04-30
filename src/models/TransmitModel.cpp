@@ -587,6 +587,46 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const QString drivePowerSourceStr = s.value(pfx + QLatin1String("TwoToneDrivePowerOrigin"),
                                                  QStringLiteral("DriveSlider")).toString();
     setTwoToneDrivePowerSource(drivePowerSourceFromString(drivePowerSourceStr));
+
+    // ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ────────────────
+    // Defaults match Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile schema)
+    // and WDSP TXA.c:111-128 [v2.10.3.13] (create_eqp G[]/F[] vectors).
+    setTxEqEnabled(s.value(pfx + QLatin1String("TXEQEnabled"),
+                            QStringLiteral("False")).toString() == QLatin1String("True"));
+    setTxEqPreamp(s.value(pfx + QLatin1String("TXEQPreamp"), QStringLiteral("0")).toInt());
+    // WDSP TXA.c:113 default_G[1..10] = {-12, -12, -12, -1, +1, +4, +9, +12, -10, -10}.
+    static constexpr int kDefaultG[10] = {-12, -12, -12, -1, 1, 4, 9, 12, -10, -10};
+    // WDSP TXA.c:112 default_F[1..10] = {32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000}.
+    static constexpr int kDefaultF[10] = {32, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    for (int i = 0; i < 10; ++i) {
+        const QString gKey = QStringLiteral("TXEQ%1").arg(i + 1);
+        const int g = s.value(pfx + gKey, QString::number(kDefaultG[i])).toInt();
+        setTxEqBand(i, g);
+        const QString fKey = QStringLiteral("TxEqFreq%1").arg(i + 1);
+        const int f = s.value(pfx + fKey, QString::number(kDefaultF[i])).toInt();
+        setTxEqFreq(i, f);
+    }
+
+    // Leveler — defaults from database.cs:4584-4588 [v2.10.3.13].
+    setTxLevelerOn(s.value(pfx + QLatin1String("Lev_On"),
+                            QStringLiteral("True")).toString() == QLatin1String("True"));
+    setTxLevelerMaxGain(s.value(pfx + QLatin1String("Lev_MaxGain"),
+                                 QStringLiteral("15")).toInt());
+    setTxLevelerDecay(s.value(pfx + QLatin1String("Lev_Decay"),
+                               QStringLiteral("100")).toInt());
+
+    // ALC — defaults from database.cs:4592-4594 [v2.10.3.13].
+    setTxAlcMaxGain(s.value(pfx + QLatin1String("ALC_MaximumGain"),
+                             QStringLiteral("3")).toInt());
+    setTxAlcDecay(s.value(pfx + QLatin1String("ALC_Decay"),
+                           QStringLiteral("10")).toInt());
+
+    // EQ globals — defaults from WDSP TXA.c:118-127 [v2.10.3.13].
+    setTxEqNc(s.value(pfx + QLatin1String("eq/nc"), QStringLiteral("2048")).toInt());
+    setTxEqMp(s.value(pfx + QLatin1String("eq/mp"),
+                       QStringLiteral("False")).toString() == QLatin1String("True"));
+    setTxEqCtfmode(s.value(pfx + QLatin1String("eq/ctfmode"), QStringLiteral("0")).toInt());
+    setTxEqWintype(s.value(pfx + QLatin1String("eq/wintype"), QStringLiteral("0")).toInt());
 }
 
 void TransmitModel::persistToSettings(const QString& mac) const
@@ -634,6 +674,28 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── Two-tone drive-power source (3M-1c B.3) ─────────────────────────
     s.setValue(pfx + QLatin1String("TwoToneDrivePowerOrigin"),
                drivePowerSourceToString(m_twoToneDrivePowerSource));
+
+    // ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ────────────────
+    s.setValue(pfx + QLatin1String("TXEQEnabled"),
+               m_txEqEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("TXEQPreamp"), QString::number(m_txEqPreamp));
+    for (int i = 0; i < 10; ++i) {
+        s.setValue(pfx + QStringLiteral("TXEQ%1").arg(i + 1),
+                   QString::number(m_txEqBand[static_cast<std::size_t>(i)]));
+        s.setValue(pfx + QStringLiteral("TxEqFreq%1").arg(i + 1),
+                   QString::number(m_txEqFreq[static_cast<std::size_t>(i)]));
+    }
+    s.setValue(pfx + QLatin1String("Lev_On"),
+               m_txLevelerOn ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("Lev_MaxGain"), QString::number(m_txLevelerMaxGain));
+    s.setValue(pfx + QLatin1String("Lev_Decay"),   QString::number(m_txLevelerDecay));
+    s.setValue(pfx + QLatin1String("ALC_MaximumGain"), QString::number(m_txAlcMaxGain));
+    s.setValue(pfx + QLatin1String("ALC_Decay"),       QString::number(m_txAlcDecay));
+    s.setValue(pfx + QLatin1String("eq/nc"),       QString::number(m_txEqNc));
+    s.setValue(pfx + QLatin1String("eq/mp"),
+               m_txEqMp ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("eq/ctfmode"),  QString::number(m_txEqCtfmode));
+    s.setValue(pfx + QLatin1String("eq/wintype"),  QString::number(m_txEqWintype));
 }
 
 // ── Anti-VOX properties (3M-1b C.4) ─────────────────────────────────────────
@@ -964,6 +1026,174 @@ void TransmitModel::setPcMicBufferSamples(int samples)
     if (samples == m_pcMicBufferSamples) { return; }  // idempotent guard
     m_pcMicBufferSamples = samples;
     emit pcMicBufferSamplesChanged(samples);
+}
+
+// ── TX EQ + Leveler + ALC properties (3M-3a-i Task C) ─────────────────────
+//
+// Defaults sourced from Thetis database.cs:4552-4594 [v2.10.3.13] (TXProfile
+// schema) and WDSP TXA.c:111-128 [v2.10.3.13] (create_eqp G[]/F[] vectors).
+//
+// All setters are idempotent (skip emit + persist when value unchanged) and
+// clamp to the appropriate Thetis Designer range.  Per-MAC AppSettings keys
+// match Thetis TXProfile column names exactly:
+//   TXEQEnabled / TXEQPreamp / TXEQ1..10 / TxEqFreq1..10 /
+//   Lev_On / Lev_MaxGain / Lev_Decay / ALC_MaximumGain / ALC_Decay
+// EQ globals (eq/nc, eq/mp, eq/ctfmode, eq/wintype) sit alongside the
+// profile keys under hardware/<mac>/tx/, NOT under the profile namespace —
+// they are radio-wide DSP settings, not part of the bundled profile.
+
+int TransmitModel::txEqBand(int index) const noexcept
+{
+    if (index < 0 || index >= 10) { return 0; }
+    return m_txEqBand[static_cast<std::size_t>(index)];
+}
+
+int TransmitModel::txEqFreq(int index) const noexcept
+{
+    if (index < 0 || index >= 10) { return 0; }
+    return m_txEqFreq[static_cast<std::size_t>(index)];
+}
+
+void TransmitModel::setTxEqEnabled(bool on)
+{
+    if (on == m_txEqEnabled) { return; }
+    // From Thetis database.cs:4553 [v2.10.3.13]: dr["TXEQEnabled"] = false;
+    m_txEqEnabled = on;
+    persistOne(QStringLiteral("TXEQEnabled"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit txEqEnabledChanged(on);
+}
+
+void TransmitModel::setTxEqPreamp(int dB)
+{
+    // NereusSDR clamp [-12, 15] dB (Thetis EQ preamp slider precedent).
+    const int clamped = std::clamp(dB, kTxEqPreampDbMin, kTxEqPreampDbMax);
+    if (clamped == m_txEqPreamp) { return; }
+    m_txEqPreamp = clamped;
+    persistOne(QStringLiteral("TXEQPreamp"), QString::number(m_txEqPreamp));
+    emit txEqPreampChanged(clamped);
+}
+
+void TransmitModel::setTxEqBand(int index, int dB)
+{
+    if (index < 0 || index >= 10) { return; }
+    const int clamped = std::clamp(dB, kTxEqBandDbMin, kTxEqBandDbMax);
+    if (clamped == m_txEqBand[static_cast<std::size_t>(index)]) { return; }
+    m_txEqBand[static_cast<std::size_t>(index)] = clamped;
+    // Thetis TXProfile keys: TXEQ1..TXEQ10 (1-indexed, per database.cs:4316-4325 [v2.10.3.13]).
+    persistOne(QStringLiteral("TXEQ%1").arg(index + 1), QString::number(clamped));
+    emit txEqBandChanged(index, clamped);
+}
+
+void TransmitModel::setTxEqFreq(int index, int hz)
+{
+    if (index < 0 || index >= 10) { return; }
+    const int clamped = std::clamp(hz, kTxEqFreqHzMin, kTxEqFreqHzMax);
+    if (clamped == m_txEqFreq[static_cast<std::size_t>(index)]) { return; }
+    m_txEqFreq[static_cast<std::size_t>(index)] = clamped;
+    // Thetis TXProfile keys: TxEqFreq1..TxEqFreq10 (mixed-case per database.cs:4326-4335 [v2.10.3.13]).
+    persistOne(QStringLiteral("TxEqFreq%1").arg(index + 1), QString::number(clamped));
+    emit txEqFreqChanged(index, clamped);
+}
+
+void TransmitModel::setTxLevelerOn(bool on)
+{
+    if (on == m_txLevelerOn) { return; }
+    // From Thetis setup.cs:9108-9123 [v2.10.3.13] — chkDSPLevelerEnabled_CheckedChanged
+    // routes through DSPTX::TXLevelerOn → SetTXALevelerSt.  TxChannel side is
+    // wired in 3M-3a-i Batch 2 (RadioModel signal/slot glue).
+    m_txLevelerOn = on;
+    persistOne(QStringLiteral("Lev_On"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit txLevelerOnChanged(on);
+}
+
+void TransmitModel::setTxLevelerMaxGain(int dB)
+{
+    // Clamp to Thetis Designer range per setup.Designer.cs:38718-38738 [v2.10.3.13]:
+    //   udDSPLevelerThreshold.Maximum = 20, .Minimum = 0.
+    const int clamped = std::clamp(dB, kTxLevelerMaxGainDbMin, kTxLevelerMaxGainDbMax);
+    if (clamped == m_txLevelerMaxGain) { return; }
+    // From Thetis setup.cs:9095-9099 [v2.10.3.13] — udDSPLevelerThreshold_ValueChanged
+    // routes through DSPTX::TXLevelerMaxGain → SetTXALevelerTop.
+    m_txLevelerMaxGain = clamped;
+    persistOne(QStringLiteral("Lev_MaxGain"), QString::number(m_txLevelerMaxGain));
+    emit txLevelerMaxGainChanged(clamped);
+}
+
+void TransmitModel::setTxLevelerDecay(int ms)
+{
+    // Clamp to Thetis Designer range per setup.Designer.cs:38744-38772 [v2.10.3.13]:
+    //   udDSPLevelerDecay.Maximum = 5000, .Minimum = 1.
+    const int clamped = std::clamp(ms, kTxLevelerDecayMsMin, kTxLevelerDecayMsMax);
+    if (clamped == m_txLevelerDecay) { return; }
+    // From Thetis setup.cs:9101-9105 [v2.10.3.13] — udDSPLevelerDecay_ValueChanged
+    // routes through DSPTX::TXLevelerDecay → SetTXALevelerDecay.
+    m_txLevelerDecay = clamped;
+    persistOne(QStringLiteral("Lev_Decay"), QString::number(m_txLevelerDecay));
+    emit txLevelerDecayChanged(clamped);
+}
+
+void TransmitModel::setTxAlcMaxGain(int dB)
+{
+    // Clamp to Thetis Designer range per setup.Designer.cs:38814-38833 [v2.10.3.13]:
+    //   udDSPALCMaximumGain.Maximum = 120, .Minimum = 0.
+    const int clamped = std::clamp(dB, kTxAlcMaxGainDbMin, kTxAlcMaxGainDbMax);
+    if (clamped == m_txAlcMaxGain) { return; }
+    // From Thetis setup.cs:9129-9134 [v2.10.3.13] — udDSPALCMaximumGain_ValueChanged
+    // calls SetTXAALCMaxGain directly + caches WDSP.ALCGain readout.
+    m_txAlcMaxGain = clamped;
+    persistOne(QStringLiteral("ALC_MaximumGain"), QString::number(m_txAlcMaxGain));
+    emit txAlcMaxGainChanged(clamped);
+}
+
+void TransmitModel::setTxAlcDecay(int ms)
+{
+    // Clamp to Thetis Designer range per setup.Designer.cs:38845-38866 [v2.10.3.13]:
+    //   udDSPALCDecay.Maximum = 50, .Minimum = 1.
+    const int clamped = std::clamp(ms, kTxAlcDecayMsMin, kTxAlcDecayMsMax);
+    if (clamped == m_txAlcDecay) { return; }
+    // From Thetis setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged
+    // routes through DSPTX::TXALCDecay → SetTXAALCDecay.
+    m_txAlcDecay = clamped;
+    persistOne(QStringLiteral("ALC_Decay"), QString::number(m_txAlcDecay));
+    emit txAlcDecayChanged(clamped);
+}
+
+void TransmitModel::setTxEqNc(int nc)
+{
+    if (nc == m_txEqNc) { return; }
+    // From WDSP wdsp/TXA.c:118 [v2.10.3.13] — create_eqp coefficient count
+    //   max(2048, ch[].dsp_size).  Defensive non-negative guard only.
+    if (nc < 1) { nc = 1; }
+    m_txEqNc = nc;
+    persistOne(QStringLiteral("eq/nc"), QString::number(m_txEqNc));
+    emit txEqNcChanged(m_txEqNc);
+}
+
+void TransmitModel::setTxEqMp(bool mp)
+{
+    if (mp == m_txEqMp) { return; }
+    m_txEqMp = mp;
+    persistOne(QStringLiteral("eq/mp"),
+               mp ? QStringLiteral("True") : QStringLiteral("False"));
+    emit txEqMpChanged(mp);
+}
+
+void TransmitModel::setTxEqCtfmode(int mode)
+{
+    if (mode == m_txEqCtfmode) { return; }
+    m_txEqCtfmode = mode;
+    persistOne(QStringLiteral("eq/ctfmode"), QString::number(m_txEqCtfmode));
+    emit txEqCtfmodeChanged(mode);
+}
+
+void TransmitModel::setTxEqWintype(int wintype)
+{
+    if (wintype == m_txEqWintype) { return; }
+    m_txEqWintype = wintype;
+    persistOne(QStringLiteral("eq/wintype"), QString::number(m_txEqWintype));
+    emit txEqWintypeChanged(wintype);
 }
 
 } // namespace NereusSDR

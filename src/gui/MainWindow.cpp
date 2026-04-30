@@ -276,6 +276,7 @@ warren@wpratt.com
 #include "applets/AppletPanelWidget.h"
 #include "applets/RxApplet.h"
 #include "applets/TxApplet.h"
+#include "applets/TxEqDialog.h"
 #include "applets/PhoneCwApplet.h"
 #include "applets/EqApplet.h"
 #include "applets/VaxApplet.h"
@@ -298,8 +299,6 @@ warren@wpratt.com
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/VirtualCableDetector.h"
-
-#include <cmath>
 
 #include <QApplication>
 #include <QSlider>
@@ -2155,6 +2154,22 @@ void MainWindow::buildMenuBar()
     // TOOLS
     // =========================================================================
     QMenu* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
+
+    // TX Equalizer — modeless singleton dialog (Phase 3M-3a-i Batch 3 A.1).
+    {
+        QAction* txEqAction = toolsMenu->addAction(QStringLiteral("TX &Equalizer..."));
+        txEqAction->setToolTip(QStringLiteral(
+            "Open the 10-band TX EQ dialog (preamp + 10 band gains + center frequencies)."));
+        connect(txEqAction, &QAction::triggered, this, [this]() {
+            if (!m_radioModel) { return; }
+            TxEqDialog* dlg = TxEqDialog::instance(m_radioModel, this);
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
+    }
+
+    toolsMenu->addSeparator();
 
     {
         QAction* cwxAction = toolsMenu->addAction(QStringLiteral("C&WX..."));

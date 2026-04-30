@@ -235,7 +235,18 @@ void SetupDialog::buildTree()
     QTreeWidgetItem* transmit = addCategory("Transmit");
     add(transmit, "Power & PA",         new PowerPaPage(m_model));
     add(transmit, "TX Profiles",        new TxProfilesPage(m_model));
-    add(transmit, "Speech Processor",   new SpeechProcessorPage(m_model));
+
+    // SpeechProcessorPage is the TX dashboard (3M-3a-i Batch 5).  Its
+    // openSetupRequested(category, page) signal feeds straight back into
+    // selectPage() so the cross-link buttons jump within the same dialog
+    // instance — no MainWindow round-trip required.
+    auto* speechPage = new SpeechProcessorPage(m_model);
+    add(transmit, "Speech Processor",   speechPage);
+    connect(speechPage, &SpeechProcessorPage::openSetupRequested,
+            this, [this](const QString& /*category*/, const QString& page) {
+        selectPage(page);
+    });
+
     add(transmit, "PureSignal",         new PureSignalPage(m_model));
 
     // ── Appearance ────────────────────────────────────────────────────────────

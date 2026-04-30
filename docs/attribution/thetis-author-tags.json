@@ -1,11 +1,11 @@
 {
-  "generated_utc": "2026-04-22T00:27:43+00:00",
-  "thetis_sha": "93d50464",
-  "mi0bot_sha": "2829f76",
+  "generated_utc": "2026-04-30T12:14:39+00:00",
+  "thetis_sha": "501e3f51",
+  "mi0bot_sha": "c26a8a4",
   "callsign_tags": {
     "MW0LGE": {
-      "count": 3071,
-      "first_seen": "aamix.c:432",
+      "count": 3070,
+      "first_seen": "version.cpp:13",
       "files": [
         "Alex.cs",
         "AmpView.cs",
@@ -89,7 +89,7 @@
     },
     "W2PA": {
       "count": 460,
-      "first_seen": "console.cs:32",
+      "first_seen": "MidiMessageManager.cs:24",
       "files": [
         "CATCommands.cs",
         "CatCmdDb.cs",
@@ -110,7 +110,7 @@
     },
     "DH1KLM": {
       "count": 267,
-      "first_seen": "networkproto1.c:612",
+      "first_seen": "CatCmdDb.cs:434",
       "files": [
         "CATCommands.cs",
         "CatCmdDb.cs",
@@ -154,7 +154,7 @@
     },
     "G8NJJ": {
       "count": 132,
-      "first_seen": "clsHardwareSpecific.cs:171",
+      "first_seen": "console.cs:141",
       "files": [
         "Alex.cs",
         "Andromeda.cs",
@@ -168,22 +168,9 @@
       "name": "Laurence Barker",
       "role": "G2, Andromeda, protocols; ANAN_G2_1K PA wiring"
     },
-    "N1GP": {
-      "count": 44,
-      "first_seen": "clsHardwareSpecific.cs:129",
-      "files": [
-        "clsHardwareSpecific.cs",
-        "cmaster.cs",
-        "console.cs",
-        "enums.cs",
-        "setup.cs"
-      ],
-      "name": "Rick N1GP",
-      "role": "ApacheLabs ANAN-G1 and Anvelina-Pro3 model support"
-    },
     "W4TME": {
       "count": 18,
-      "first_seen": "console.cs:15747",
+      "first_seen": "database.cs:5005",
       "files": [
         "FilterForm.cs",
         "MemoryForm.cs",
@@ -195,7 +182,7 @@
     },
     "W4WMT": {
       "count": 16,
-      "first_seen": "cmasio.c:141",
+      "first_seen": "hostsample.cpp:506",
       "files": [
         "cmasio.c",
         "cmasio.h",
@@ -214,11 +201,11 @@
         "NetworkIOImports.cs"
       ],
       "name": "Unknown",
-      "role": "mi0bot fork HL2 contributions (TX latency, PTT hang, I2C, channel swap); identity unconfirmed — possible alt callsign for MI0BOT"
+      "role": "mi0bot fork HL2 contributions (TX latency, PTT hang, I2C, channel swap); identity unconfirmed \u2014 possible alt callsign for MI0BOT"
     },
     "G7KLJ": {
       "count": 6,
-      "first_seen": "console.cs:1228",
+      "first_seen": "console.cs:1221",
       "files": [
         "console.cs",
         "setup.cs"
@@ -259,7 +246,7 @@
     },
     "IK4JPN": {
       "count": 4,
-      "first_seen": "console.cs:26394",
+      "first_seen": "console.cs:26345",
       "files": [
         "console.cs"
       ],
@@ -268,7 +255,7 @@
     },
     "MW0GLE": {
       "count": 4,
-      "first_seen": "setup.cs:2741",
+      "first_seen": "setup.cs:2740",
       "files": [
         "setup.cs"
       ],
@@ -277,7 +264,7 @@
     },
     "DK1HLM": {
       "count": 2,
-      "first_seen": "console.cs:6830",
+      "first_seen": "console.cs:6821",
       "files": [
         "console.cs"
       ],
@@ -286,7 +273,7 @@
     },
     "K2UE": {
       "count": 2,
-      "first_seen": "console.cs:26113",
+      "first_seen": "console.cs:26064",
       "files": [
         "console.cs"
       ],
@@ -313,7 +300,7 @@
     },
     "W1CEG": {
       "count": 2,
-      "first_seen": "console.cs:42437",
+      "first_seen": "console.cs:42364",
       "files": [
         "console.cs"
       ],

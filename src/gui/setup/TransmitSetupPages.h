@@ -169,27 +169,69 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Transmit > Speech Processor
+// Transmit > Speech Processor — TX dashboard (NereusSDR-spin)
+//
+// No direct Thetis equivalent.  The Thetis "Speech Proc" tile lives on the
+// main console as a single CPDR enable+gain pair (console.cs CPDR controls
+// [v2.10.3.13]), and the per-stage controls (Phrot / CFC / CESSB / Leveler
+// / ALC) live across multiple Setup → DSP tabs.  NereusSDR repurposes this
+// page as a one-stop overview that shows the live state of every TXA
+// speech-chain stage and cross-links to where each stage is configured.
+//
+// Stage names cited from WDSP TXA pipeline (txa[ch] members in
+// `wdsp/TXA.c:create_txa` [v2.10.3.13]):
+//   eqp (TX EQ) / leveler / cfcomp+cfir (CFC) / compressor (CPDR) /
+//   phrot (Phase Rotator) / amsq (AM Squelch / DEXP) / alc.
+//
+// 3M-3a-i Batch 5 surface; the per-stage Setup pages it cross-links into
+// land in 3M-3a-ii (CFC / Phrot / CESSB) and 3M-3a-iii (VOX / DEXP).
 // ---------------------------------------------------------------------------
 class SpeechProcessorPage : public SetupPage {
     Q_OBJECT
 public:
     explicit SpeechProcessorPage(RadioModel* model, QWidget* parent = nullptr);
 
+signals:
+    /// Emitted when a cross-link button is clicked.  MainWindow listens and
+    /// re-targets the active SetupDialog page via SetupDialog::selectPage().
+    /// `category` is informational (always "DSP" for current cross-links);
+    /// `page` is the SetupDialog leaf-item label (e.g. "AGC/ALC", "CFC",
+    /// "VOX/DEXP").
+    void openSetupRequested(const QString& category, const QString& page);
+
 private:
     void buildUI();
+    void buildActiveProfileSection();
+    void buildStageStatusSection();
+    void buildQuickNotesSection();
 
-    // Section: Compressor
-    QSlider*   m_gainSlider{nullptr};
-    QCheckBox* m_cessbToggle{nullptr};
+    // Helper: build one "Stage  ●  state    [Open ... ]" row inside the
+    // Stage Status section's grid layout.  Returns the status QLabel so the
+    // caller can wire it to a model signal for live updates.
+    QLabel* addStageRow(class QGridLayout* grid, int row,
+                         const QString& stageName,
+                         const QString& initialState,
+                         bool initiallyOn,
+                         const QString& buttonText,
+                         const QString& buttonTooltip,
+                         const QString& linkPage,           // empty → button is a placeholder
+                         const QString& futurePhaseTag);    // empty → no "(3M-3a-X)" suffix
 
-    // Section: Phase Rotator
-    QSpinBox* m_stagesSpin{nullptr};
-    QSlider*  m_cornerFreqSlider{nullptr};
+    // Section: Active Profile
+    QLabel*      m_activeProfileLabel{nullptr};
+    QPushButton* m_manageProfileBtn{nullptr};
 
-    // Section: CFC
-    QCheckBox* m_cfcToggle{nullptr};
-    QLabel*    m_cfcProfileLabel{nullptr};  // placeholder
+    // Section: Stage Status — one status QLabel per stage, kept for live updates.
+    QLabel* m_txEqStatusLabel{nullptr};
+    QLabel* m_levelerStatusLabel{nullptr};
+    QLabel* m_alcStatusLabel{nullptr};       // static "always-on" (no signal)
+    QLabel* m_phrotStatusLabel{nullptr};     // future phase
+    QLabel* m_cfcStatusLabel{nullptr};       // future phase
+    QLabel* m_cessbStatusLabel{nullptr};     // future phase
+    QLabel* m_amSqDexpStatusLabel{nullptr};  // future phase
+
+    // Cross-link buttons (Open TX EQ Editor / Open AGC-ALC / Open CFC / Open VOX-DEXP)
+    QPushButton* m_openTxEqBtn{nullptr};
 };
 
 // ---------------------------------------------------------------------------

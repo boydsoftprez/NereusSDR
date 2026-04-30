@@ -325,3 +325,83 @@ When bench rows complete, edit the Result column to `✅` with the commit SHA wh
 | HL2 bench triage — P1 setTxDrive | `78f74a3` | 2026-04-29 — root cause of HL2 "no TUN, no TX" bench failure: `P1RadioConnection::setTxDrive(int)` was a no-op stub (`/* stub — Task 7 */`).  `m_txDrive` stayed at 0 forever; bank 10 C1 byte always wrote 0; HL2 / Atlas / Hermes / HermesII / Angelia / Orion all silently shipped with zero TX drive level → no RF on TUN or SSB voice TX.  Latent because PR #149 (3M-1b SSB voice) bench-tested only on ANAN-G2 (P2), whose own `setTxDrive` works.  Fix: store `qBound(0, level, 255)`, force bank 10 onto the wire on next frame.  12 new sub-tests in `tst_p1_drive_level_wire` (Standard + HL2 codec paths + clamp + force-flush flag).  Closes row 55; verified by row 58 / 59 / 60 bench tests. |
 | Codex P1 — teardown setTxMicSource race | `1b5a166` | 2026-04-29 — Codex P1 review on PR #152.  `RadioModel::teardownConnection` was calling `setTxMicSource(nullptr)` directly on RadioModel's main thread while `m_connection` lived on its own thread (cross-thread race vs `onReadyRead`/watchdog reads).  Fix: marshal via `QMetaObject::invokeMethod(conn, lambda, Qt::BlockingQueuedConnection)` so detach completes before `m_txMicSource->stop() + reset()` runs.  Closes row 56. |
 | Codex P2 — two-tone dB→linear | `db6c93b` | 2026-04-29 — Codex P2 review on PR #152.  `twoToneLevelChanged` lambda + initial-state pushes forwarded raw user-facing dB into `setTxPostGenTTMag*`, which expects linear amplitude in [0, 0.49999] (TwoToneController applies the conversion correctly at activation; lambda did not).  Symptom: muted / wrong-magnitude two-tone output mid-test.  Fix: apply verbatim `0.49999 * pow(10, db/20.0)` per `setup.cs:11056 [v2.10.3.13]` to both lambda and initial pushes.  Closes row 57; verified by row 60 spectrum-analyser bench. |
+
+---
+
+# Phase 3M-3a-i TX EQ + Leveler + ALC — Verification Matrix Extension
+
+Added 2026-04-29 as part of Batch 6 (docs + cleanups).  3M-3a-i lights up
+the first three stages of the 18-stage TXA processing chain — graphic 10-band
+TX equalizer (with frequency edits + Nc / Mp / Ctfmode / Wintype DSP
+parameters + per-band preamp), Leveler (slow-pump pre-ALC gain rider), and
+ALC (fast-attack/slow-decay limiter).  Adds a 20-profile factory bank ported
+verbatim from Thetis' `database.cs` mic-profile presets (Heil PR-40 SSB,
+Yaeso M1, Heil HM-i, etc.) plus a modeless `TxEqDialog` editor and a
+SpeechProcessorPage TX-dashboard page that cross-links to the relevant DSP
+setup pages.
+
+Manual rows tagged `[3M-3a-i-bench]` need an **ANAN-G2 + dummy load +
+spectrum analyser** (none of these stages are HL2-meaningful in their own
+right — HL2 doesn't run a PA chain — so HL2 bench coverage is optional).
+Unit-test rows are auto-checked by ctest and pass on commit `db57ec8`
+(246/246).
+
+## New rows
+
+| # | Test | Hardware | Procedure | Expected | Result |
+|---|---|---|---|---|---|
+| 61 | TxChannel TX EQ setters (Batch 1 B) | none | `ctest -R '^tst_tx_channel_eq_setters$' -V` | All cases pass: `setTxEqProfile` round-trips 10 bands × dB; `setTxEqEnabled` toggles the WDSP eq stage; `setTxEqFreqs` accepts 11-element float vector (DC + 10 band edges) and forwards to WDSP `SetTXAEQF`; Nc / Mp / Ctfmode / Wintype setters cache values and call the matching WDSP setter. | ✅ |
+| 62 | TxChannel Leveler + ALC setters (Batch 1 B) | none | `ctest -R '^tst_tx_channel_leveler_alc_setters$' -V` | All cases pass: `setLevelerOn`, `setLevelerMaxGain`, `setLevelerAttack`, `setLevelerDecay`, `setLevelerHang` cover the 5 Leveler wrappers; `setAlcOn`, `setAlcMaxGain`, `setAlcAttack`, `setAlcDecay`, `setAlcHang`, `setAlcSlope`, `setAlcMaximumGain` cover the 7 ALC wrappers; defaults match Thetis `radio.cs:3960-4030 [v2.10.3.13]` (Lev MaxGain 5.0 dB / 2 ms / 500 ms / 500 ms; ALC MaxGain 3.0 dB / 2 ms / 10 ms / 500 ms / 0.0 / 4.0). | ✅ |
+| 63 | TransmitModel TX EQ + Leveler + ALC properties (Batch 1 C) | none | `ctest -R '^tst_transmit_model_eq_lev_alc$' -V` | All cases pass: 10 EQ band properties (`txEqBand0..9`) round-trip; `txEqEnabled` / `txEqPreamp` / `txEqFreqs` / `txEqNc` / `txEqMp` / `txEqCtfmode` / `txEqWintype` round-trip; 5 Leveler properties + 7 ALC properties round-trip with the Thetis-derived defaults; per-MAC AppSettings keys persist; programmatic setter changes emit `*Changed` signals exactly once. | ✅ |
+| 64 | MicProfileManager bundles 27 EQ/Lev/ALC keys (Batch 1 G) | none | `ctest -R '^tst_mic_profile_manager$' -V` | All cases pass — extended from 18 to N cases: profile `keyCount()` reports 50 (was 23); save/load/delete/setActive round-trip the new keys; verbatim Thetis "It is not possible to delete the last remaining TX profile" warning preserved on last-profile-delete; per-MAC isolation; first-launch "Default" seed includes all 50 documented values. | ✅ |
+| 65 | RadioModel TX EQ + Lev + ALC routing (Batch 2) | none | `ctest -R '^tst_radio_model_eq_lev_alc_wiring$' -V` | All cases pass: TransmitModel property changes fan out to TxChannel via the connect-time wiring lambdas (12 EQ signals + 5 Lev signals + 7 ALC signals); initial-state push runs at connect after `m_txChannel` becomes non-null (mirrors the K.1/K.2 pattern from 3M-1c); QSignalBlocker prevents echo loops on programmatic property writes from MicProfileManager loads. | ✅ |
+| 66 | TxApplet [LEV] [EQ] [PROC] toggle row (Batch 2) | none | `ctest -R '^tst_tx_applet_lev_eq_proc$' -V` | All cases pass: 3 quick-toggle buttons construct under the existing `TxApplet` row; LEV mirrors `TransmitModel::levelerOn`; EQ mirrors `txEqEnabled`; PROC mirrors `cfcOn` (placeholder until 3M-3a-ii lights up CFC); QSignalBlocker on model→UI sync; right-click on EQ launches `TxEqDialog`; tooltip text matches the Thetis Setup-IA wording verbatim. | ✅ |
+| 67 | TxEqDialog scaffold + profile combo (Batch 3 + Batch 4) | none | `ctest -R '^tst_tx_eq_dialog$' -V` | All cases pass: dialog constructs with 10 vertical sliders + 10 frequency QSpinBoxes + preamp slider + Nc / Mp / Ctfmode / Wintype combos; bidirectional binding to `TransmitModel`; QSignalBlocker prevents echo; profile combo (Batch 4) populated from MicProfileManager; Save / Save-As / Delete buttons wired with verbatim Thetis last-profile-guard message; Tools menu launch + EQ-button right-click both open the dialog modeless (one instance, raised on subsequent launches). | ✅ |
+| 68 | SpeechProcessorPage TX dashboard (Batch 5) | none | `ctest -R '^tst_speech_processor_page$' -V` | All cases pass: page constructs in Setup → Audio → Speech Processor slot; renders 3 status rows (TX EQ enable, Leveler enable, ALC max-gain) bound to `TransmitModel` properties; status indicator dot flips filled↔hollow on enable toggle; 3 cross-link buttons (DSP→AGC/ALC, DSP→CFC, DSP→VOX/DEXP) emit the documented `requestSetupPage(QString)` signal that SetupDialog routes to the matching page. | ✅ |
+| 69 | TX EQ slider end-to-end audio `[3M-3a-i-bench]` | ANAN-G2 + dummy load + USB mic + spectrum analyser | Tune to 14.200 MHz USB.  Open TxApplet → right-click [EQ] → TxEqDialog opens.  Set band 5 (≈1 kHz) to +12 dB; leave others at 0.  Engage [EQ] toggle on TxApplet (or Enable checkbox in dialog).  PTT and speak a steady "ahh" tone (use a tone generator into the mic if cleaner).  Read spectrum analyser. | TX spectrum shows clear +12 dB boost centred at 1 kHz audio offset (i.e. at 14.201 MHz on the spectrum analyser).  Other bands within ±3 dB of flat.  Disable [EQ] — boost disappears, spectrum returns to flat speech envelope. | |
+| 70 | TX EQ frequency edit `[3M-3a-i-bench]` | ANAN-G2 + dummy load + tone generator + spectrum analyser | Same setup as row 69.  In TxEqDialog, change band 5 frequency QSpinBox from 1000 Hz → 1500 Hz.  Keep band 5 at +12 dB.  PTT a continuous 1 kHz tone first, then 1.5 kHz tone. | At 1 kHz tone: no boost (band 5 has moved away).  At 1.5 kHz tone: +12 dB boost.  Confirms the freq-edit propagated through `setTxEqFreqs` to WDSP `SetTXAEQF`. | |
+| 71 | Leveler Top sweep `[3M-3a-i-bench]` | ANAN-G2 + dummy load + USB mic + TX I/Q monitor (or spectrum analyser) | TxApplet [LEV] toggle on.  Setup → DSP → AGC/ALC → TX Leveler section → MaxGain slider.  Sweep MaxGain 0 → 5 → 10 → 15 dB while PTT-keying a steady speech sample. | TX I/Q monitor amplitude rises smoothly at each step (Leveler is a slow-pump gain rider; it should NOT pump on speech transients).  At 15 dB, peak speech levels reach saturation but the PA does NOT flutter / pump audibly.  No clicks or thumps. | |
+| 72 | ALC MaxGain sweep `[3M-3a-i-bench]` | ANAN-G2 + dummy load + USB mic + ALC meter on screen | Setup → DSP → AGC/ALC → TX ALC section → MaxGain slider.  Sweep MaxGain 0 → 5 → 10 → 15 dB while PTT-keying speech with peaks.  Watch the ALC meter on the TxApplet. | At 0 dB: ALC barely deflects (very limited extra headroom).  At 15 dB: ALC meter shows 15 dB of gain reduction at speech peaks (matching the slider value).  No PA overdrive, no audible distortion at the speech peaks. | |
+| 73 | Profile load round-trip `[3M-3a-i-bench]` | ANAN-G2 + dummy load + USB mic + Heil PR-40 (or any boom mic with characteristic shape) + spectrum analyser | Open TxApplet → right-click [EQ] → profile combo → select "Heil PR-40 SSB".  Verify 10 EQ slider positions match the values from Thetis `database.cs` factory profile (boost shape: low-cut at 100 Hz, peak around 2-3 kHz, gentle high roll).  PTT and speak. | Slider positions match the database.cs values byte-for-byte.  Spectrum analyser shows the characteristic Heil PR-40 EQ shape on TX (spoken voice amplified in the 2-3 kHz presence region). | |
+| 74 | Profile save → restart-app round-trip `[3M-3a-i-bench]` | ANAN-G2 | TxEqDialog → load "Default" → modify 3 EQ bands + change Lev MaxGain to 8 dB + change ALC Slope to 1.5 → click Save.  Quit the app.  Relaunch.  Reopen TxEqDialog → verify "Default" still selected → confirm the modified values persisted. | All 50 keys round-trip cleanly via MicProfileManager + AppSettings per-MAC.  No values revert to defaults.  TX path uses the saved values (PTT + spectrum analyser confirms). | |
+| 75 | Last-profile-delete guard `[3M-3a-i-bench]` | any radio (no TX needed) | TxEqDialog → Delete every profile down to one (Default).  Click Delete on the last remaining profile. | Verbatim Thetis warning surfaces in a modal: "It is not possible to delete the last remaining TX profile".  Profile is NOT deleted.  Combo still shows the one profile.  No silent failure. | |
+| 76 | Cross-link buttons on SpeechProcessorPage `[3M-3a-i-bench]` | none (UI only) | Setup → Audio → Speech Processor.  Click "Open AGC/ALC settings" button → expect navigation to Setup → DSP → AGC/ALC.  Back to Speech Processor.  Click "Open CFC settings" → expect navigation to Setup → DSP → CFC (placeholder until 3M-3a-ii).  Click "Open VOX/DEXP settings" → expect navigation to Setup → DSP → VOX/DEXP. | Each click changes the active SetupDialog page to the documented destination.  No crashes if the destination page is a placeholder.  Back-button on SetupDialog returns to Speech Processor. | |
+| 77 | Speech Processor live status mirror `[3M-3a-i-bench]` | none (UI only) | Open SpeechProcessorPage in Setup.  In a separate window or in the dock, open TxApplet.  Click TxApplet [EQ] toggle.  Watch the SpeechProcessorPage TX EQ status row. | Status indicator dot on SpeechProcessorPage flips filled (when [EQ] on) ↔ hollow (when [EQ] off) in real time, with no Setup-page reopen needed.  Same behaviour for Leveler enable mirror. | |
+
+## Carry-forward flips from 3M-1c
+
+| Row | Change |
+|---|---|
+| 3M-1c row 24 (PC mic SSB out) | Carries forward — 3M-3a-i now also exercises the Leveler + ALC path on the bench.  JJ's PC mic test from 3M-1c was conducted with default Leveler + ALC values (Lev MaxGain 5 dB; ALC MaxGain 3 dB), so the existing pass result still holds; 3M-3a-i now lets him *tune* those values via Setup → DSP → AGC/ALC → TX Leveler / TX ALC sections. |
+| 3M-1c row 50 (Profile save / load / restart-app round-trip) | Extended — profiles now also include EQ + Lev + ALC keys (was 23 keys → now 50 keys).  Existing 23-key bench pass result still holds; row 74 above adds the new 27-key coverage on top. |
+
+## Result tracking
+
+Rows 61-68 (unit tests, 8 rows): ✅ all green on commit `db57ec8` (246/246
+under `-j8`).
+Rows 69-77 (bench tests, 9 rows): pending JJ + ANAN-G2 + dummy load +
+USB mic + spectrum analyser.  Row 75 (last-profile-delete guard) and
+row 76 (cross-link buttons) are pure-UI and can be verified without
+hardware.
+
+When bench rows complete, edit the Result column to `✅` with the commit SHA where the row was confirmed.
+
+## Phase 3M-3a-i commit summary (added 2026-04-29 by Batch 6)
+
+| Phase | Commits | Summary |
+|---|---|---|
+| Batch 1 B | `0165276` | TxChannel EQ + Leveler/ALC wrappers (10 EQ band + 5 Lev + 7 ALC setters; cache-and-recall partner-value pattern preserved per Thetis `radio.cs:3960-4030 [v2.10.3.13]`) |
+| Batch 1 C | `e69b7f2` | TransmitModel TX EQ + Leveler + ALC properties (10 + 5 + 7 properties + per-MAC AppSettings keys) |
+| Batch 1 G | `5650b80` | MicProfileManager bundles 27 new EQ/Lev/ALC keys (was 23 → now 50 keys) |
+| Batch 1 cleanup | `45a2cc8` | drop unused `kProfileSubpath` const |
+| Batch 2 | `88707e1` | RadioModel → TxChannel TX EQ + Lev + ALC routing (12 + 5 + 7 connect-time signal wires + initial-state push) |
+| Batch 2 D | `bc16b85` | AgcAlcSetupPage adds TX Leveler + TX ALC sections |
+| Batch 2 F | `45b9f3c` | TxApplet quick-toggle row [LEV] [EQ] [PROC] |
+| Batch 3 A.1 | `e8b823f` | TxEqDialog scaffold — 10-band sliders + freq spinboxes + preamp + Nc / Mp / Ctfmode / Wintype |
+| Batch 3 A.1 | `f8d81d6` | wire EQ right-click + Tools menu to TxEqDialog launch |
+| Batch 4 A.2 | `4095b8f` | port 20 Thetis factory TX profiles verbatim from `database.cs` |
+| Batch 4 A.2 | `c3639a4` | TxEqDialog adds profile combo + Save / Save-As / Delete |
+| Batch 5 E | `a4d9d03` | SpeechProcessorPage rewrite as TX dashboard (3 status rows + 3 cross-link buttons) |
+| Batch 6 cleanup | `db57ec8` | drop 3 unused includes (TxApplet `LogCategories.h` + MainWindow `<cmath>` + TransmitSetupPages `StyleConstants.h`) |
+| Batch 6 docs (this) | (TBD) | verification matrix extension + commit summary (3M-3a-i I) |
+| Batch 6 docs | (TBD) | CLAUDE.md mark 3M-3a-i Complete (pending bench), 3M-3a-ii next |
