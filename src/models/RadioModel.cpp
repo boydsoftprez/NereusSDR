@@ -1111,6 +1111,11 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         m_pennyLaneController.setMacAddress(info.macAddress);
         m_pennyLaneController.load();
 
+        // Load per-MAC HL2 Options (9 mi0bot tpHL2Options knobs).
+        // Phase 3L commit #9.  Wire-format emission deferred to follow-up PR.
+        m_hl2Options.setMacAddress(info.macAddress);
+        m_hl2Options.load();
+
         // Load per-MAC calibration state (freq correction factor, level offsets, etc.).
         // Phase 3P-G. Pushed to P2RadioConnection via setCalibrationController() below.
         m_calController.setMacAddress(info.macAddress);

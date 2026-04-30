@@ -73,6 +73,7 @@
 #include "PanadapterModel.h"
 #include "MeterModel.h"
 #include "TransmitModel.h"
+#include "core/Hl2OptionsModel.h"
 #include "core/OcMatrix.h"
 #include "core/IoBoardHl2.h"
 #include "core/HermesLiteBandwidthMonitor.h"
@@ -167,6 +168,12 @@ public:
     // codec layer can dequeue I2C transactions.  Phase 3P-E Task 2.
     const IoBoardHl2& ioBoard()        const { return m_ioBoard; }
     IoBoardHl2&       ioBoardMutable()       { return m_ioBoard; }
+
+    // HL2 Options model — 9 HL2-specific behavior knobs (mi0bot tpHL2Options).
+    // Loaded per-MAC at connect time, mirrors OcMatrix ownership pattern.
+    // Phase 3L commit #9.  Wire-format emission deferred to a follow-up PR.
+    const Hl2OptionsModel& hl2Options()        const { return m_hl2Options; }
+    Hl2OptionsModel&       hl2OptionsMutable()       { return m_hl2Options; }
 
     // HL2 bandwidth monitor — single instance; pushed into P1RadioConnection
     // via setBandwidthMonitor() at connect time when hasBandwidthMonitor.
@@ -615,6 +622,12 @@ private:
     // the same instance. MAC and load() are called on connect.
     // Phase 3P-D Task 3.
     OcMatrix      m_ocMatrix;
+
+    // HL2 Options model — 9 HL2-specific behavior knobs.  Owned here
+    // so the Hl2OptionsTab and (eventually) the P1 codec wire-format
+    // layer share one instance.  MAC and load() are called on connect.
+    // Phase 3L commit #9.
+    Hl2OptionsModel m_hl2Options;
 
     // HL2 I/O board model — owns I2C queue and register mirror.
     // Shared with P1RadioConnection::setIoBoard() at connect time.

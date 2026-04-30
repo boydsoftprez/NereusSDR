@@ -82,6 +82,7 @@ class PureSignalTab;
 class DiversityTab;
 class CalibrationTab;
 class Hl2IoBoardTab;
+class Hl2OptionsTab;
 class BandwidthMonitorTab;
 
 // HardwarePage — top-level "Hardware Config" entry in SetupDialog.
@@ -99,7 +100,7 @@ public:
 #ifdef NEREUS_BUILD_TESTS
     enum class Tab {
         RadioInfo, AntennaAlex, OcOutputs, Xvtr, PureSignal,
-        Diversity, Calibration, Hl2IoBoard, BandwidthMonitor
+        Diversity, Calibration, Hl2Options, Hl2IoBoard, BandwidthMonitor
     };
     bool isTabVisibleForTest(Tab t) const;
     QString tabTextForTest(Tab t) const;
@@ -135,6 +136,7 @@ private:
     PureSignalTab*       m_pureSignalTab{nullptr};
     DiversityTab*        m_diversityTab{nullptr};
     CalibrationTab*      m_paCalTab{nullptr};
+    Hl2OptionsTab*       m_hl2OptionsTab{nullptr};
     Hl2IoBoardTab*       m_hl2IoTab{nullptr};
     BandwidthMonitorTab* m_bwMonitorTab{nullptr};
 
@@ -145,6 +147,7 @@ private:
     int m_pureSignalIdx{-1};
     int m_diversityIdx{-1};
     int m_paCalIdx{-1};
+    int m_hl2OptionsIdx{-1};
     int m_hl2IoIdx{-1};
     int m_bwMonitorIdx{-1};
 };

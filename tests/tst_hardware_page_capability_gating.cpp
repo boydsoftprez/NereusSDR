@@ -55,6 +55,9 @@ private slots:
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Hl2IoBoard));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::BandwidthMonitor));
+        // HL2 Options tab is a new Phase 3L surface — also gated on
+        // caps.hasIoBoardHl2 like the existing HL2 I/O Board tab.
+        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Hl2Options));
     }
 
     // Hermes Lite Control relabel — mi0bot setup.cs:20232 [v2.10.3.13-beta2]
@@ -111,6 +114,8 @@ private slots:
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Hl2IoBoard));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::BandwidthMonitor));
+        // Non-HL2 boards must NOT see the HL2 Options tab.
+        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Hl2Options));
     }
 
     void atlas_shows_only_radio_info()
@@ -131,6 +136,7 @@ private slots:
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
+        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Hl2Options));
     }
 
     void saturn_shows_nearly_all_tabs()

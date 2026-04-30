@@ -381,6 +381,7 @@ set(CORE_SOURCES
     src/core/OcMatrix.cpp
     src/core/RadioStatus.cpp
     src/core/SettingsHygiene.cpp
+    src/core/Hl2OptionsModel.cpp
     src/core/IoBoardHl2.cpp
     src/core/HermesLiteBandwidthMonitor.cpp
     src/core/ModelPaths.cpp
@@ -456,6 +457,7 @@ set(GUI_SOURCES
     src/gui/widgets/GuardedSlider.h
     src/gui/widgets/MeterSlider.h
     src/gui/widgets/MeterSlider.cpp
+    src/gui/widgets/OcLedStripWidget.cpp
     src/gui/widgets/ResetSlider.h
     src/gui/widgets/ScrollableLabel.cpp
     src/gui/widgets/TriBtn.h
@@ -563,6 +565,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/DiversityTab.cpp
     src/gui/setup/hardware/CalibrationTab.cpp
     src/gui/setup/hardware/Hl2IoBoardTab.cpp
+    src/gui/setup/hardware/Hl2OptionsTab.cpp
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
     src/gui/setup/AudioBackendStrip.cpp

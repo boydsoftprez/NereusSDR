@@ -579,6 +579,15 @@ target_compile_definitions(tst_oc_outputs_swl_tab PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_n2adr_preset)
 target_compile_definitions(tst_n2adr_preset PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3L: HL2 Options tab + model ────────────────────────────────────────
+# Hl2OptionsModel: 9-knob defaults match mi0bot designer values verbatim,
+# range-clamping per mi0bot setup.designer.cs, idempotent setters, per-MAC
+# AppSettings round-trip.
+# Hl2OptionsTab: construction smoke, model→UI sync, output LED strip
+# reflects IoBoardHl2::currentOcByteChanged, I2C Write button gating.
+nereus_add_test(tst_hl2_options_tab)
+target_compile_definitions(tst_hl2_options_tab PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-D Task 3: P1RadioConnection ↔ OcMatrix codec wiring ─────────────
 # Verifies:
 #   - Without OcMatrix wired: bank 0 C2 = 0 (legacy m_ocOutput fallback).
