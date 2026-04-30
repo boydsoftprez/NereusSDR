@@ -3407,6 +3407,13 @@ void RadioModel::teardownConnection()
     // are thread-affined to the worker and destroying them on any other
     // thread emits cross-thread warnings and can crash on Windows.
     teardownWorkerThreadedConnection(m_connection, m_connThread);
+
+    // Phase 3Q polish: above disconnect() severed connectionStateChanged
+    // before the RadioConnection's own setState(Disconnected) ran, so the
+    // model's state machine never sees the transition and sticks at
+    // Connected. Force it here so the panel strip + TitleBar + bottom
+    // status bar all flip to Disconnected after a Radio→Disconnect.
+    setConnectionState(ConnectionState::Disconnected);
 }
 
 // Phase 3G-9b — 7 smooth-default recipe values. See docs/architecture/waterfall-tuning.md.
