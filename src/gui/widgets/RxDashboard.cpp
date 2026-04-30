@@ -26,10 +26,11 @@ namespace NereusSDR {
 RxDashboard::RxDashboard(QWidget* parent) : QWidget(parent)
 {
     buildUi();
-    // Dashboard claims enough horizontal space for the always-shown widgets
-    // (RX1+freq stack 120px + 3 always-on badges + spacing/margins ≈ 270 px).
-    // Without this the parent QHBoxLayout under pressure drops AGC via the
-    // resize drop-priority rules even though the spec says AGC always shows.
+    // Dashboard min: freq stack 120 + USB ~36 + 3.0k ~46 + S ~24 + 3 spacings
+    // 18 + margins 20 ≈ 264 px. Bumped back to 280 (was briefly 220 when
+    // working around ADC overload's fixed-width 180 px reservation —
+    // that's now hidden-when-idle so the dashboard can claim its full
+    // sizeHint without pushing other widgets around).
     setMinimumWidth(280);
     setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
 }

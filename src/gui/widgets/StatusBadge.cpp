@@ -54,12 +54,16 @@ void StatusBadge::setLabel(const QString& label)
     if (m_label == label) { return; }
     m_label = label;
     m_textLabel->setText(label);
-    // Explicitly lock the badge's minimum width to its content width.
-    // QSizePolicy::Minimum alone isn't enough because Qt computes
-    // minimumSize from sizeHint AT CONSTRUCTION TIME (when text was
-    // empty), and never re-evaluates when text changes. Without this
-    // line, parent QHBoxLayouts under pressure clip "USB" → "U".
-    setMinimumWidth(sizeHint().width());
+    // Compute minimum width from font metrics rather than sizeHint().
+    // sizeHint() can lazy-evaluate and return stale values; fontMetrics
+    // gives the true pixel width for the new text immediately.
+    // Padding budget: 6 left + 6 right margin + 3 spacing if an icon is
+    // also present + the icon's own width.
+    const QFontMetrics fm(m_textLabel->font());
+    const int textWidth  = fm.horizontalAdvance(label);
+    const int iconWidth  = m_iconLabel->text().isEmpty() ? 0
+                         : (fm.horizontalAdvance(m_iconLabel->text()) + 3);
+    setMinimumWidth(textWidth + iconWidth + 14);   // 14 = layout margins+slack
     m_textLabel->updateGeometry();
     updateGeometry();
 }

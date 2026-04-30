@@ -2538,14 +2538,14 @@ void MainWindow::buildStatusBar()
     m_adcOvlLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #FFD700; font-size: 12px; font-weight: bold;"
         " border: none; background: transparent; padding: 0 4px; }"));
-    // Reserve fixed width so the label appearing/disappearing does NOT
-    // shove STATION left/right when an overload fires. Width fits the
-    // common "ADCx Overload" case; multi-ADC strings elide with "…".
-    m_adcOvlLabel->setFixedWidth(180);
+    // 2026-04-30 layout-overflow fix: dropped the previous fixed-width 180 px
+    // reservation because on the 1280-px window it left the layout 112 px
+    // overbudget, causing ADC0 Overload yellow text to render on top of
+    // STATION + dashboard badges. Now: alignment-only, hidden when idle.
+    // STATION will shift slightly when overload fires, accepted trade-off.
     m_adcOvlLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_adcOvlLabel->setText(QString());  // empty when idle; no hide/show churn
-    // Explicit gap between the overload label and the STATION block so
-    // flashing text never visually touches the STATION border.
+    m_adcOvlLabel->setText(QString());
+    m_adcOvlLabel->setVisible(false);   // start hidden; setText handler shows it
     hbox->addWidget(m_adcOvlLabel);
     hbox->addSpacing(12);
 
@@ -2559,9 +2559,12 @@ void MainWindow::buildStatusBar()
     m_adcOvlHideTimer->setInterval(2000);
     connect(m_adcOvlHideTimer, &QTimer::timeout, this, [this]() {
         // Clear text only — label widget stays in the layout at its
-        // reserved width so STATION doesn't re-flow. Matches Thetis's
-        // ucInfoBar pattern where the lbl control keeps its position.
-        if (m_adcOvlLabel) { m_adcOvlLabel->setText(QString()); }
+        // 2026-04-30 layout fix: hide the label entirely when idle so it
+        // claims 0 px and doesn't crowd STATION on narrow windows.
+        if (m_adcOvlLabel) {
+            m_adcOvlLabel->setText(QString());
+            m_adcOvlLabel->setVisible(false);
+        }
     });
 
     connect(m_stepAttController, &StepAttenuatorController::overloadStatusChanged,
@@ -2603,6 +2606,7 @@ void MainWindow::buildStatusBar()
                            " border: none; background: transparent;"
                            " padding: 0 4px; }").arg(color));
         m_adcOvlLabel->setText(text);
+        m_adcOvlLabel->setVisible(true);   // show when overload fires
 
         // Restart auto-hide — matches Thetis: _warningTimer.Stop(); .Start();
         // (ucInfoBar.cs:927+932 [@501e3f5]).
