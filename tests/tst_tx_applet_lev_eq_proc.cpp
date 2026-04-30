@@ -5,22 +5,34 @@
 // =================================================================
 //
 // Phase 3M-3a-i Batch 2 (Task F) — TxApplet LEV / EQ / PROC quick toggles.
+// Phase 3M-3a-ii Batch 6 (Task F + A) — PROC enabled + CFC button added.
 //
-// TxApplet inserts a row of three checkable buttons between the MON volume
+// TxApplet now hosts a row of FOUR checkable buttons between the MON volume
 // slider and the TUNE/MOX row:
 //   LEV  — bidirectional ↔ TransmitModel::txLevelerOn (green-checked style).
 //   EQ   — bidirectional ↔ TransmitModel::txEqEnabled (green-checked style).
-//          Right-click reserved for TxEqDialog launch (3M-3a-i Batch 3).
-//   PROC — disabled placeholder per master design §7.1 (3M-3a-ii).
+//          Right-click → TxEqDialog (3M-3a-i Batch 3).
+//   PROC — bidirectional ↔ TransmitModel::cpdrOn (3M-3a-ii Batch 6 Task F).
+//          Drives WDSP TXA compressor.run via SetTXACompressorRun.
+//   CFC  — bidirectional ↔ TransmitModel::cfcEnabled (3M-3a-ii Batch 6 Task A).
+//          Right-click → modeless TxCfcDialog.
+//
+// File name retained for git history continuity even though it now also
+// covers PROC + CFC (extended in Batch 6).
 //
 // Tests:
-//   1. All three buttons exist (located by objectName).
-//   2. PROC is disabled.
+//   1. All four buttons exist (located by objectName).
+//   2. PROC button is enabled (was disabled placeholder pre-Batch 6).
 //   3. LEV.click() flips TransmitModel::txLevelerOn.
 //   4. EQ.click() flips TransmitModel::txEqEnabled.
 //   5. Model→UI: setTxLevelerOn(false) un-checks LEV button.
 //   6. Model→UI: setTxEqEnabled(true) checks EQ button.
-//   7. PROC has the documented "coming in 3M-3a-ii" tooltip.
+//   7. PROC tooltip mentions WDSP/CPDR (no more "coming in 3M-3a-ii").
+//   8. PROC.click() flips TransmitModel::cpdrOn.
+//   9. Model→UI: setCpdrOn(true) checks PROC button.
+//   10. CFC.click() flips TransmitModel::cfcEnabled.
+//   11. Model→UI: setCfcEnabled(true) checks CFC button.
+//   12. CFC right-click triggers requestOpenCfcDialog (single instance).
 //
 // =================================================================
 
@@ -30,6 +42,7 @@
 
 #include "core/AppSettings.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/TxCfcDialog.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
@@ -54,8 +67,8 @@ private slots:
         AppSettings::instance().clear();
     }
 
-    // ── 1. All three buttons exist (located by objectName) ──────────────────
-    void allThreeButtons_existByObjectName()
+    // ── 1. All four buttons exist (located by objectName) ──────────────────
+    void allFourButtons_existByObjectName()
     {
         RadioModel rm;
         TxApplet applet(&rm);
@@ -63,21 +76,24 @@ private slots:
         auto* lev  = applet.findChild<QPushButton*>(QStringLiteral("TxLevButton"));
         auto* eq   = applet.findChild<QPushButton*>(QStringLiteral("TxEqButton"));
         auto* proc = applet.findChild<QPushButton*>(QStringLiteral("TxProcButton"));
+        auto* cfc  = applet.findChild<QPushButton*>(QStringLiteral("TxCfcButton"));
 
         QVERIFY(lev  != nullptr);
         QVERIFY(eq   != nullptr);
         QVERIFY(proc != nullptr);
+        QVERIFY(cfc  != nullptr);
     }
 
-    // ── 2. PROC button is disabled (3M-3a-ii placeholder) ───────────────────
-    void procButton_isDisabled()
+    // ── 2. PROC button is enabled (3M-3a-ii Batch 6 — was disabled) ────────
+    void procButton_isEnabled()
     {
         RadioModel rm;
         TxApplet applet(&rm);
 
         auto* proc = applet.findChild<QPushButton*>(QStringLiteral("TxProcButton"));
         QVERIFY(proc != nullptr);
-        QVERIFY(!proc->isEnabled());
+        QVERIFY(proc->isEnabled());
+        QVERIFY(proc->isCheckable());
     }
 
     // ── 3. LEV.click() flips TransmitModel::txLevelerOn ─────────────────────
@@ -160,15 +176,138 @@ private slots:
         QCOMPARE(eq->isChecked(), false);
     }
 
-    // ── 7. PROC has the documented "coming in 3M-3a-ii" tooltip ─────────────
-    void procButton_hasComingTooltip()
+    // ── 7. PROC tooltip mentions CPDR / WDSP (no more "coming in 3M-3a-ii") ─
+    void procButton_tooltipMentionsCpdr()
     {
         RadioModel rm;
         TxApplet applet(&rm);
 
         auto* proc = applet.findChild<QPushButton*>(QStringLiteral("TxProcButton"));
         QVERIFY(proc != nullptr);
-        QVERIFY(proc->toolTip().contains(QStringLiteral("3M-3a-ii")));
+        QVERIFY(proc->toolTip().contains(QStringLiteral("CPDR")));
+        QVERIFY(!proc->toolTip().contains(QStringLiteral("coming in")));
+    }
+
+    // ── 8. PROC.click() flips TransmitModel::cpdrOn ─────────────────────────
+    void procButton_clickFlipsCpdrOn()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+
+        auto* proc = applet.findChild<QPushButton*>(QStringLiteral("TxProcButton"));
+        QVERIFY(proc != nullptr);
+
+        // Default cpdrOn is false (TransmitModel.h:1328).
+        QCOMPARE(rm.transmitModel().cpdrOn(), false);
+
+        proc->click();
+        QCOMPARE(rm.transmitModel().cpdrOn(), true);
+
+        proc->click();
+        QCOMPARE(rm.transmitModel().cpdrOn(), false);
+    }
+
+    // ── 9. Model→UI: setCpdrOn(true) checks PROC button ─────────────────────
+    void setCpdrOn_updatesProcButton()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+
+        auto* proc = applet.findChild<QPushButton*>(QStringLiteral("TxProcButton"));
+        QVERIFY(proc != nullptr);
+
+        // Sync from the default (false).
+        applet.syncFromModel();
+        QCOMPARE(proc->isChecked(), false);
+
+        rm.transmitModel().setCpdrOn(true);
+        QCOMPARE(proc->isChecked(), true);
+
+        rm.transmitModel().setCpdrOn(false);
+        QCOMPARE(proc->isChecked(), false);
+    }
+
+    // ── 10. CFC.click() flips TransmitModel::cfcEnabled ─────────────────────
+    void cfcButton_clickFlipsCfcEnabled()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+
+        auto* cfc = applet.findChild<QPushButton*>(QStringLiteral("TxCfcButton"));
+        QVERIFY(cfc != nullptr);
+        QVERIFY(cfc->isCheckable());
+        QVERIFY(cfc->isEnabled());
+
+        // Default cfcEnabled is false (TransmitModel.h:1303).
+        QCOMPARE(rm.transmitModel().cfcEnabled(), false);
+
+        cfc->click();
+        QCOMPARE(rm.transmitModel().cfcEnabled(), true);
+
+        cfc->click();
+        QCOMPARE(rm.transmitModel().cfcEnabled(), false);
+    }
+
+    // ── 11. Model→UI: setCfcEnabled(true) checks CFC button ─────────────────
+    void setCfcEnabled_updatesCfcButton()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+
+        auto* cfc = applet.findChild<QPushButton*>(QStringLiteral("TxCfcButton"));
+        QVERIFY(cfc != nullptr);
+
+        applet.syncFromModel();
+        QCOMPARE(cfc->isChecked(), false);
+
+        rm.transmitModel().setCfcEnabled(true);
+        QCOMPARE(cfc->isChecked(), true);
+
+        rm.transmitModel().setCfcEnabled(false);
+        QCOMPARE(cfc->isChecked(), false);
+    }
+
+    // ── 12. requestOpenCfcDialog creates dialog (lazy) and reuses single
+    //       instance on subsequent calls.  Dialog is modeless and parented
+    //       to the applet's window.
+    void requestOpenCfcDialog_lazyCreatesSingleInstance()
+    {
+        RadioModel rm;
+        TxApplet applet(&rm);
+
+        // No dialog before first call.
+        QPointer<TxCfcDialog> initial = applet.findChild<TxCfcDialog*>();
+        QVERIFY(initial.isNull());
+
+        applet.requestOpenCfcDialog();
+        QApplication::processEvents();
+
+        // Dialog now exists.  Could be a child of applet OR a top-level
+        // window — search via the application widget list to be parent-agnostic.
+        TxCfcDialog* first = nullptr;
+        for (QWidget* w : QApplication::allWidgets()) {
+            if (auto* dlg = qobject_cast<TxCfcDialog*>(w)) {
+                first = dlg;
+                break;
+            }
+        }
+        QVERIFY(first != nullptr);
+        QVERIFY(!first->isModal());
+        QVERIFY(first->isVisible());
+
+        // Second call returns the same instance — single-instance lazy
+        // singleton.  Compare by counting TxCfcDialog widgets in the
+        // application: still exactly one.
+        applet.requestOpenCfcDialog();
+        QApplication::processEvents();
+
+        int dialogCount = 0;
+        for (QWidget* w : QApplication::allWidgets()) {
+            if (qobject_cast<TxCfcDialog*>(w)) {
+                ++dialogCount;
+            }
+        }
+        QCOMPARE(dialogCount, 1);
     }
 };
 

@@ -47,6 +47,15 @@
 //                 TwoToneController (mirrors Thetis chk2TONE_CheckedChanged at
 //                 console.cs:44728-44760 [v2.10.3.13]).  Both bind via raw-
 //                 pointer setters that Phase L's MainWindow wiring populates.
+//   2026-04-30 — Phase 3M-3a-ii Batch 6 (Task F + A): PROC button enabled and
+//                 bidirectionally wired to TransmitModel::cpdrOn (mirrors WDSP
+//                 SetTXACompressorRun via TxChannel; see Thetis frmCFCConfig
+//                 dynamics + console.cs:36430 cpdrOn global state).  CFC button
+//                 added next to PROC: bidirectional with TransmitModel::cfcEnabled,
+//                 right-click opens TxCfcDialog (modeless, mirrors TxEqDialog
+//                 launch pattern).  requestOpenCfcDialog() public slot exposed so
+//                 CfcSetupPage's [Configure CFC bands…] button can route through
+//                 the same dialog instance.
 // =================================================================
 
 //=================================================================
@@ -126,6 +135,7 @@ namespace NereusSDR {
 class HGauge;
 class MicProfileManager;
 class TwoToneController;
+class TxCfcDialog;
 
 // TxApplet — transmit controls panel.
 //
@@ -193,6 +203,16 @@ public:
     // controller's twoToneActiveChanged signal mirrors back into the button.
     void setTwoToneController(TwoToneController* controller);
 
+    // ── Phase 3M-3a-ii Batch 6 (Task A): TxCfcDialog launch ─────────────────
+    // Public slot so external surfaces (CfcSetupPage's [Configure CFC bands…]
+    // button, Tools menu, etc.) can route to the same modeless dialog
+    // instance owned by this applet.  Lazy-creates m_cfcDialog on first call,
+    // then show()+raise()+activateWindow().  Safe to call when m_model is
+    // null (no-op).
+public slots:
+    void requestOpenCfcDialog();
+public:
+
     // ── Test accessors ──────────────────────────────────────────────────────
     // Always-on (no NEREUS_BUILD_TESTS guard) — same convention as
     // TestTwoTonePage (matches AudioTxInputPage / RxApplet patterns).
@@ -257,14 +277,22 @@ private:
     //     Default 50 (matches model default 0.5f from Thetis audio.cs:417).
     QSlider*     m_monitorVolumeSlider = nullptr;
     QLabel*      m_monitorVolumeValue  = nullptr;
-    // 4e. TX-processing quick toggles (3M-3a-i Batch 2 Task F) — row of 3
+    // 4e. TX-processing quick toggles — row of 4 (3M-3a-ii Batch 6 promotes
+    //     the row from 3 to 4 buttons; previous PROC placeholder is now wired):
     //     LEV: bidirectional ↔ TransmitModel.txLevelerOn (green-checked style)
     //     EQ:  bidirectional ↔ TransmitModel.txEqEnabled (green-checked style)
-    //          right-click reserved for TxEqDialog (lands in 3M-3a-i Batch 3)
-    //     PROC: disabled placeholder per master design §7.1 (3M-3a-ii)
+    //          right-click → TxEqDialog (3M-3a-i Batch 3)
+    //     PROC: bidirectional ↔ TransmitModel.cpdrOn (3M-3a-ii Batch 6 Task F)
+    //     CFC: bidirectional ↔ TransmitModel.cfcEnabled (3M-3a-ii Batch 6 Task A)
+    //          right-click → TxCfcDialog (modeless, mirrors EQ launch pattern)
     QPushButton* m_levBtn     = nullptr;
     QPushButton* m_eqBtn      = nullptr;
     QPushButton* m_procBtn    = nullptr;
+    QPushButton* m_cfcBtn     = nullptr;
+    // ── 3M-3a-ii Batch 6 (Task A): modeless CFC dialog instance ─────────────
+    // Lazy-created on first right-click of [CFC] or first call to
+    // requestOpenCfcDialog().  Lives until applet (parent window) is destroyed.
+    TxCfcDialog* m_cfcDialog  = nullptr;
     // 5. MOX
     QPushButton* m_moxBtn     = nullptr;
     // 6. TUNE

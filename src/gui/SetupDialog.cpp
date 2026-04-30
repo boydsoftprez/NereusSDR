@@ -220,7 +220,17 @@ void SetupDialog::buildTree()
     add(dsp, "AM/SAM",   new AmSamSetupPage(m_model));
     add(dsp, "FM",       new FmSetupPage(m_model));
     add(dsp, "VOX/DEXP", new VoxDexpSetupPage(m_model));
-    add(dsp, "CFC",      new CfcSetupPage(m_model));
+
+    // Phase 3M-3a-ii Batch 6 (Task 3): CfcSetupPage's [Configure CFC bands…]
+    // button emits openCfcDialogRequested.  Forward up to SetupDialog's
+    // cfcDialogRequested signal so MainWindow can route it to the
+    // TxApplet::requestOpenCfcDialog() slot (the same modeless dialog
+    // instance is shared with the [CFC] right-click on the TxApplet).
+    auto* cfcPage = new CfcSetupPage(m_model);
+    add(dsp, "CFC", cfcPage);
+    connect(cfcPage, &CfcSetupPage::openCfcDialogRequested,
+            this,    &SetupDialog::cfcDialogRequested);
+
     add(dsp, "MNF",      new MnfSetupPage(m_model));
 
     // ── Display ───────────────────────────────────────────────────────────────

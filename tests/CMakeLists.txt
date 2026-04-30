@@ -1048,6 +1048,17 @@ nereus_add_test(tst_tx_applet_lev_eq_proc)
 # instance() singleton pattern.
 nereus_add_test(tst_tx_eq_dialog)
 
+# ── Phase 3M-3a-ii Batch 6 Task A: TxCfcDialog (10-band CFC editor) ──────
+# Verifies the modeless 10-band CFC editor launched from the [CFC]
+# right-click on the TxApplet and from CfcSetupPage's [Configure CFC
+# bands…] button.  Confirms construction, default values from
+# TransmitModel, bidirectional binding (UI → model and model → UI) for
+# all 32 controls (profile combo + 5 buttons + 2 globals + 30 band spins),
+# echo guard, profile-bank Save/Reset path.  Layout mirrors Thetis
+# frmCFCConfig.{cs,Designer.cs} [v2.10.3.13] with NereusSDR-spin 10-row
+# grid replacing the selected-band + edit-pane.
+nereus_add_test(tst_tx_cfc_dialog)
+
 # ── Phase 3M-1b J.3: TxApplet MON toggle + monitor volume slider + mic-source badge ──
 # Verifies the model-layer contracts that TxApplet's MON button, monitor volume
 # slider, and mic-source badge depend on:

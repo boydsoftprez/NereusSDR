@@ -405,3 +405,60 @@ When bench rows complete, edit the Result column to `✅` with the commit SHA wh
 | Batch 6 cleanup | `db57ec8` | drop 3 unused includes (TxApplet `LogCategories.h` + MainWindow `<cmath>` + TransmitSetupPages `StyleConstants.h`) |
 | Batch 6 docs (this) | (TBD) | verification matrix extension + commit summary (3M-3a-i I) |
 | Batch 6 docs | (TBD) | CLAUDE.md mark 3M-3a-i Complete (pending bench), 3M-3a-ii next |
+
+---
+
+# Phase 3M-3a-ii CFC + CESSB + Pre-emphasis — Verification Matrix Extension
+
+Added 2026-04-30 as part of Batch 6 (final batch) of 3M-3a-ii.  3M-3a-ii lights
+up the next four stages of the 18-stage TXA chain on top of 3M-3a-i: the
+Continuous Frequency Compressor (CFC), the CESSB controlled-envelope SSB
+shaper, the Phase Rotator (PhRot), and the CPDR speech compressor.  Settings
+surfaces include a full Setup → DSP → CFC page (Phrot / CFC / CESSB group
+boxes) and a modeless `TxCfcDialog` per-band editor, plus PROC/CFC quick
+toggles on the TxApplet.  Pre-emphasis (FM-mode) is deferred to a follow-up
+sub-PR — the AM/FM TX path lands in 3M-3 final assembly.
+
+Manual rows tagged `[3M-3a-ii-bench]` need an **ANAN-G2 + dummy load +
+spectrum analyser** (HL2 doesn't run a PA chain so HL2 bench coverage is
+optional).  Unit-test rows are auto-checked by ctest and pass on the Batch-6
+final commit (251/251 tests green).
+
+## New rows
+
+| # | Test | Hardware | Procedure | Expected | Result |
+|---|---|---|---|---|---|
+| 78 | TxChannel CFC + CPDR + CESSB + PhRot setters | none | `ctest -R '^tst_tx_channel_cfc_cpdr_cessb_setters$' -V` | All cases pass: WDSP wrappers (`SetTXACFCRun`, `SetTXACFCPreComp`, `SetTXACFCPreCompProfile`, `SetTXACFCPostEqRun`, `SetTXACFCPostEqGain`, `SetTXACFCPostEqProfile`, `SetTXACompressorRun`, `SetTXACompressorGain`, `SetTXACESSBRun`) round-trip the cached partner-value pattern from Thetis `radio.cs` [v2.10.3.13]; phrot Corner / NStages / Reverse setters added in B.2. | ✅ |
+| 79 | TransmitModel CFC + CPDR + CESSB + PhRot schema | none | `ctest -R '^tst_transmit_model_cfc_cpdr_cessb_phrot$' -V` | All cases pass: 4 PhRot + 4 CFC scalar + 30 CFC array + 1 blob + 2 CPDR + 1 CESSB property = 42 properties round-trip; `*Changed` signals fire exactly once on programmatic mutation; per-MAC AppSettings keys persist. | ✅ |
+| 80 | RadioModel TM → TxChannel routing for CFC/CPDR/CESSB/PhRot | none | `ctest -R '^tst_radio_model_eq_lev_alc_wiring$' -V` | All cases pass — extended from EQ/Lev/ALC to also cover CFC/CPDR/CESSB/PhRot fan-out (TransmitModel signals → TxChannel WDSP setters); initial-state push runs at connect. | ✅ |
+| 81 | MicProfileManager bundles 41 CFC/CPDR/CESSB/PhRot keys | none | `ctest -R '^tst_mic_profile_manager_cfc_round_trip$' -V` | All cases pass: profile `keyCount()` reports 91 (was 50); save/load round-trip the new keys for all 21 factory profiles; `CFCParaEQData` blob round-trip; boolean serialization (5 new boolean keys). | ✅ |
+| 82 | CfcSetupPage (Setup → DSP → CFC) | none | `ctest -R '^tst_cfc_setup_page$' -V` | All cases pass: 3 group boxes (Phase Rotator / CFC / CESSB) construct; initial values reflect TM defaults; bidirectional binding works both directions; spinbox range clamping holds; `[Configure CFC bands…]` button emits `openCfcDialogRequested` (Batch 6 wires the dialog). | ✅ |
+| 83 | TxCfcDialog (10-band CFC editor) | none | `ctest -R '^tst_tx_cfc_dialog$' -V` | All cases pass: dialog constructs with the 32-control surface (profile combo + 5 buttons + 2 globals + 30 band spins); initial values match TM CFC defaults (database.cs:4724-4768 [v2.10.3.13]); UI → TM bidirectional for all 5 setter families (precomp / post-EQ gain / freq[i] / comp[i] / post-EQ band gain[i]); Reset-to-defaults round-trips through `setActiveProfile("Default")`; echo guard prevents re-emit storms. | ✅ |
+| 84 | TxApplet [LEV] [EQ] [PROC] [CFC] toggle row | none | `ctest -R '^tst_tx_applet_lev_eq_proc$' -V` | All cases pass — extended from 3 buttons to 4: PROC enabled (was disabled placeholder) + CFC button added; PROC bidirectional with `cpdrOn`; CFC bidirectional with `cfcEnabled`; CFC right-click triggers `requestOpenCfcDialog` and creates a single modeless `TxCfcDialog` instance. | ✅ |
+| 85 | SpeechProcessorPage Phrot / CFC / CESSB live status | none | `ctest -R '^tst_speech_processor_page$' -V` | All cases pass — extended in 3M-3a-ii Batch 5 with Phrot / CFC / CESSB live-binding cases (rows 10-15 in tst file).  Status labels reflect TM defaults and update live on `phaseRotatorEnabledChanged` / `cfcEnabledChanged` / `cessbOnChanged` + `cpdrOnChanged`. | ✅ |
+| 86 | CFC PROC + CFC quick toggles `[3M-3a-ii-bench]` | ANAN-G2 + dummy load + USB mic + spectrum analyser | TxApplet → click [PROC]; PTT and speak.  Disable [PROC]; PTT same speech volume.  Click [CFC]; PTT and speak. | With [PROC] on: speech peaks compressed (CPDR is a soft-knee dynamics stage; visible loudness lift on the spectrum's RMS without obvious distortion).  With [CFC] on: per-band compression — speech spectrum looks more "even" across the band columns (10-band CFC trims peaks per slice). | |
+| 87 | TxCfcDialog per-band edits hit RF `[3M-3a-ii-bench]` | ANAN-G2 + dummy load + tone generator + spectrum analyser | TxApplet → right-click [CFC] → TxCfcDialog opens.  Set band 5 freq=1000 Hz, comp=12 dB; leave others at default.  PTT a 1 kHz tone, then a 500 Hz tone. | At 1 kHz: visible compression / peak limiting (band 5 covers 1 kHz with comp=12).  At 500 Hz: less compression (band 5 has moved away).  Confirms the spinbox edits propagate through `setCfcEqFreq` / `setCfcCompression` to WDSP `SetTXACFCPreCompProfile`. | |
+| 88 | CFC dialog reuse across Setup / TxApplet `[3M-3a-ii-bench]` | none (UI only) | Setup → DSP → CFC → click [Configure CFC bands…].  Verify `TxCfcDialog` opens.  Close it.  TxApplet → right-click [CFC].  Verify the SAME instance is raised (state preserved). | The dialog's spinboxes still show whatever values were last edited.  No stale duplicate dialog.  No flicker / re-init artifact. | |
+| 89 | Reset-to-factory-defaults round-trip `[3M-3a-ii-bench]` | none (UI only) | TxCfcDialog → mutate 3 per-band spinboxes (freq + comp + post-EQ) + globals.  Click [Reset to factory defaults].  Confirm the modal. | All CFC values revert to the database.cs:4724-4768 [v2.10.3.13] defaults (precomp=0, post-eq-gain=0, freq[0..9]=stock array, comp[0..9]=5, post-eq-band[0..9]=0).  Active profile selector returns to "Default". | |
+
+## Carry-forward flips from 3M-3a-i
+
+| Row | Change |
+|---|---|
+| 3M-3a-i row 66 | Was: "[LEV] [EQ] [PROC] toggle row".  Now superseded by row 84 — PROC enable + CFC addition flips PROC from disabled to bidirectionally wired and adds a 4th button. |
+
+## Result tracking
+
+Rows 78-85 (unit tests, 8 rows): ✅ all green at Batch-6 final commit (251/251 tests pass).
+Rows 86-89 (bench tests, 4 rows): pending JJ + ANAN-G2 + dummy load + USB mic + spectrum analyser.  Rows 88-89 are pure-UI and can be verified without hardware.
+
+## Phase 3M-3a-ii commit summary (added 2026-04-30 by Batch 6)
+
+| Phase | Commits | Summary |
+|---|---|---|
+| Batch 1 B | `11fa72a` + earlier B.1 | TxChannel CFC / CPDR / CESSB / PhRot wrappers (cache-and-recall pattern preserved per Thetis `radio.cs` [v2.10.3.13]) |
+| Batch 1 C | `12c1b01` | TransmitModel CFC + CPDR + CESSB + PhRot properties (42 properties, per-MAC AppSettings keys) |
+| Batch 2 D | `0b587b3` | RadioModel TM → TxChannel routing (connect-time signal wires + initial-state push) for the new families |
+| Batch 4 G | `2b3219e` | MicProfileManager bundles 41 new CFC/CPDR/CESSB/PhRot keys (was 50 → now 91 keys) |
+| Batch 5 E | `f309661` | CfcSetupPage (Setup → DSP → CFC) — 3 group boxes (Phase Rotator / CFC / CESSB) + dashboard live status mirrors |
+| Batch 6 (this) | (TBD) | TxApplet PROC enable + CFC button + TxCfcDialog modeless 10-band editor + CfcSetupPage `[Configure CFC bands…]` wiring through SetupDialog → MainWindow → TxApplet::requestOpenCfcDialog |

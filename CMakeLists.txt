@@ -587,6 +587,7 @@ set(GUI_SOURCES
     src/gui/applets/RxApplet.cpp
     src/gui/applets/TxApplet.cpp
     src/gui/applets/TxEqDialog.cpp
+    src/gui/applets/TxCfcDialog.cpp
     src/gui/applets/PhoneCwApplet.cpp
     src/gui/applets/EqApplet.cpp
     src/gui/applets/VaxApplet.cpp
