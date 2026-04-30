@@ -2514,3 +2514,7 @@ nereus_add_test(tst_audio_engine_flow_state)
 # 4 tests: null-safe construction, refresh on disconnected model, reset
 # clears counters, signal-wire safety. QTEST_MAIN — needs QApplication.
 nereus_add_test(tst_network_diagnostics_dialog)
+
+# -- Phase 3M-3a-ii follow-up Batch 1: ParametricEqWidget skeleton --
+nereus_add_test(tst_parametric_eq_widget_skeleton)
+
