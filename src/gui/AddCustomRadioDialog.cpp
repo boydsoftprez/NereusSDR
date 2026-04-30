@@ -135,6 +135,56 @@ AddCustomRadioDialog::AddCustomRadioDialog(QWidget* parent)
 
 AddCustomRadioDialog::~AddCustomRadioDialog() = default;
 
+void AddCustomRadioDialog::setEditTarget(const RadioInfo& info,
+                                         bool pinToMac,
+                                         bool autoConnect)
+{
+    setWindowTitle(QStringLiteral("Edit Radio — %1").arg(info.name.isEmpty()
+        ? info.address.toString() : info.name));
+
+    // Pre-populate form fields from the saved entry.
+    m_nameEdit->setText(info.name);
+    m_ipEdit->setText(info.address.toString());
+    m_portSpin->setValue(info.port);
+    // Synthetic MANUAL:IP:PORT keys: don't expose to user — leave MAC blank
+    // so re-save through the synthetic path is consistent. Real MACs round-trip.
+    if (!info.macAddress.startsWith(QStringLiteral("MANUAL:"))) {
+        m_macEdit->setText(info.macAddress);
+    }
+
+    // Select the matching SKU model in the combo (best-effort).
+    if (info.modelOverride != HPSDRModel::FIRST) {
+        for (int i = 0; i < m_modelCombo->count(); ++i) {
+            const HPSDRModel m = static_cast<HPSDRModel>(m_modelCombo->itemData(i).toInt());
+            if (m == info.modelOverride) {
+                m_modelCombo->setCurrentIndex(i);
+                break;
+            }
+        }
+    }
+
+    // Select the protocol in the combo.
+    for (int i = 0; i < m_protocolCombo->count(); ++i) {
+        const int v = m_protocolCombo->itemData(i).toInt();
+        if (v == static_cast<int>(info.protocol)) {
+            m_protocolCombo->setCurrentIndex(i);
+            break;
+        }
+    }
+
+    m_pinToMacCheck->setChecked(pinToMac);
+    m_autoConnectCheck->setChecked(autoConnect);
+
+    // Seed m_probedInfo with the existing entry so result() returns the
+    // same MAC on save — otherwise an edit of a probe-verified entry
+    // would synthesise a new MANUAL: key and split into a duplicate row.
+    if (!info.macAddress.startsWith(QStringLiteral("MANUAL:"))) {
+        m_probedInfo = info;
+    }
+
+    validateFields();  // re-evaluate Save button enablement
+}
+
 // ---------------------------------------------------------------------------
 // UI construction
 // ---------------------------------------------------------------------------

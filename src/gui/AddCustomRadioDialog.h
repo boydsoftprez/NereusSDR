@@ -98,6 +98,12 @@ public:
     // When false the dialog accepted via a successful probe.
     bool savedOffline() const { return m_savedOffline; }
 
+    // Pre-populate the form for editing an existing saved radio.
+    // Call before exec(). Switches the title to "Edit Radio" and seeds
+    // m_probedInfo so result() returns the same MAC on save (otherwise
+    // the synthetic-MAC path would create a duplicate row).
+    void setEditTarget(const RadioInfo& info, bool pinToMac, bool autoConnect);
+
 private slots:
     void onProbeClicked();
     void onSaveOfflineClicked();

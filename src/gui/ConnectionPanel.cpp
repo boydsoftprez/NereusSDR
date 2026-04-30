@@ -500,6 +500,14 @@ void ConnectionPanel::buildUI()
     connect(m_addManuallyBtn, &QPushButton::clicked, this, &ConnectionPanel::onAddManuallyClicked);
     btnLayout->addWidget(m_addManuallyBtn);
 
+    // Edit — opens AddCustomRadioDialog pre-populated with the selected row's
+    // fields. Save overwrites the existing entry under the same MAC key.
+    m_editBtn = makeBtn(QStringLiteral("Edit..."), kSecondaryStyle);
+    m_editBtn->setEnabled(false);
+    m_editBtn->setToolTip(QStringLiteral("Edit the selected saved radio (name, IP, model, protocol)"));
+    connect(m_editBtn, &QPushButton::clicked, this, &ConnectionPanel::onEditClicked);
+    btnLayout->addWidget(m_editBtn);
+
     // Forget — Phase 3I Task 15
     m_forgetBtn = makeBtn(QStringLiteral("Forget"), kDestructiveStyle);
     m_forgetBtn->setEnabled(false);
@@ -1152,6 +1160,61 @@ void ConnectionPanel::onAddManuallyClicked()
                          << info.name << info.address.toString();
 }
 
+// Edit the selected saved entry. Opens AddCustomRadioDialog pre-populated
+// with the current row's fields. On Save, the dialog returns a RadioInfo
+// that round-trips through saveRadio under the same MAC key — so the
+// existing entry is overwritten in place (no duplicate row).
+void ConnectionPanel::onEditClicked()
+{
+    const RadioInfo current = selectedRadio();
+    if (current.macAddress.isEmpty()) {
+        return;
+    }
+
+    AppSettings& s = AppSettings::instance();
+    const auto saved = s.savedRadio(current.macAddress);
+    const bool wasPinned = saved.has_value() ? saved->pinToMac    : false;
+    const bool wasAuto   = saved.has_value() ? saved->autoConnect : false;
+
+    AddCustomRadioDialog dlg(this);
+    dlg.setEditTarget(current, wasPinned, wasAuto);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const RadioInfo updated = dlg.result();
+    if (updated.macAddress.isEmpty() || !updated.address.toString().size()) {
+        setStatusText(QStringLiteral("Edit failed: missing MAC or IP"));
+        return;
+    }
+
+    // If the edit changed the MAC (e.g., user edited an entry that had the
+    // synthetic MANUAL: key and probe filled in a real one this round),
+    // forget the old entry first so we don't leave an orphan.
+    if (updated.macAddress != current.macAddress) {
+        s.forgetRadio(current.macAddress);
+        const int oldRow = rowForMac(current.macAddress);
+        if (oldRow >= 0) {
+            m_radioTable->removeRow(oldRow);
+        }
+        m_discoveredRadios.remove(current.macAddress);
+    }
+
+    s.saveRadio(updated, dlg.pinToMac(), dlg.autoConnect());
+    s.save();
+
+    if (!updated.macAddress.isEmpty()) {
+        m_radioModel->discovery()->addSavedMac(updated.macAddress);
+    }
+
+    upsertRowForInfo(updated, /*online=*/false);
+    const int newRow = rowForMac(updated.macAddress);
+    if (newRow >= 0) {
+        m_radioTable->setCurrentCell(newRow, ColName);
+    }
+    setStatusText(QStringLiteral("Updated: %1").arg(updated.name));
+}
+
 // Phase 3I Task 15 — Forget wired.
 // Removes the radio from the persistent saved-radio list and from the table.
 void ConnectionPanel::onForgetClicked()
@@ -1284,8 +1347,12 @@ void ConnectionPanel::updateButtonStates()
     m_connectBtn->setEnabled(canConnect && !connected);
     // Phase 3Q Task 5: m_disconnectBtn removed from bottom strip.
     // Disconnect lives in the status strip (m_stripDisconnectBtn).
-    // Forget: enabled when a row with a MAC is selected (saved or discovered)
-    m_forgetBtn->setEnabled(hasSelection && !selectedRadio().macAddress.isEmpty());
+    // Forget + Edit: enabled when a row with a MAC is selected.
+    const bool rowHasMac = hasSelection && !selectedRadio().macAddress.isEmpty();
+    m_forgetBtn->setEnabled(rowHasMac);
+    if (m_editBtn) {
+        m_editBtn->setEnabled(rowHasMac);
+    }
 }
 
 // ---------------------------------------------------------------------------

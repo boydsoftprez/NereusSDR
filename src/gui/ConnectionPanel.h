@@ -149,6 +149,7 @@ private slots:
     void onDisconnectClicked();
     void onForgetClicked();         // Phase 3I Task 15 — removes radio from saved list
     void onAddManuallyClicked();    // Phase 3I Task 16 — AddCustomRadioDialog
+    void onEditClicked();           // Edit selected saved entry (3Q polish)
     void onScanClicked();           // Phase 3Q Task 5 — single ↻ Scan button
     void onRadioSelectionChanged();
     void onTableDoubleClicked(int row, int column);
@@ -192,6 +193,7 @@ private:
     QPushButton*   m_scanBtn{nullptr};          // Phase 3Q Task 5 — replaces Start/Stop
     QPushButton*   m_connectBtn{nullptr};
     QPushButton*   m_addManuallyBtn{nullptr};
+    QPushButton*   m_editBtn{nullptr};
     QPushButton*   m_forgetBtn{nullptr};
     QPushButton*   m_closeBtn{nullptr};
     QLabel*        m_statusLabel{nullptr};
