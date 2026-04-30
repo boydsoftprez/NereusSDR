@@ -77,7 +77,6 @@
 //============================================================================================//
 
 #include "TransmitSetupPages.h"
-#include "gui/StyleConstants.h"
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
 #include "models/RadioModel.h"

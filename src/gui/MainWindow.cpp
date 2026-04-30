@@ -300,8 +300,6 @@ warren@wpratt.com
 #include "core/AudioEngine.h"
 #include "core/audio/VirtualCableDetector.h"
 
-#include <cmath>
-
 #include <QApplication>
 #include <QSlider>
 #include <QCloseEvent>

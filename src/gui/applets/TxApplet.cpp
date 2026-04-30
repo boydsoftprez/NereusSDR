@@ -139,7 +139,6 @@
 #include "gui/ComboStyle.h"
 #include "gui/widgets/VoxSettingsPopup.h"
 #include "core/audio/CompositeTxMicRouter.h"
-#include "core/LogCategories.h"
 #include "core/MicProfileManager.h"
 #include "core/MoxController.h"
 #include "core/RadioStatus.h"
