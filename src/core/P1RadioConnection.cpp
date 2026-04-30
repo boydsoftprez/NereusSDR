@@ -2234,6 +2234,21 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             m_paRevRaw      = rev;
             m_paUserAdc0Raw = userAdc0;
             telemetryDirty  = true;
+            // Shell-chrome sub-PR-2 B.3: emit userAdc0Changed for MKII-class boards.
+            // Matches gate in RadioModel scalePaVolts() [RadioModel.cpp:402-417].
+            // From Thetis networkproto1.c:346 [@501e3f5] — user_adc0 AIN3 MKII PA Volts
+            switch (m_hardwareProfile.model) {
+            case HPSDRModel::ORIONMKII:
+            case HPSDRModel::ANAN8000D:
+            case HPSDRModel::ANAN7000D:
+            case HPSDRModel::ANAN_G2:
+            case HPSDRModel::ANAN_G2_1K:
+            case HPSDRModel::ANVELINAPRO3:
+                handleUserAdc0Raw(userAdc0);
+                break;
+            default:
+                break;
+            }
             break;
         }
         case 0x18: {
@@ -2246,6 +2261,9 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             m_paUserAdc1Raw = userAdc1;
             m_paSupplyRaw   = supply;
             telemetryDirty  = true;
+            // Shell-chrome sub-PR-2 B.3: emit supplyVoltsChanged for all radios.
+            // From Thetis networkproto1.c:350 [@501e3f5] — supply_volts AIN6 Hermes Volts //[2.10.3.13]MW0LGE
+            handleSupplyRaw(supply);
             break;
         }
         default:

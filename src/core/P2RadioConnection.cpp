@@ -2142,6 +2142,26 @@ void P2RadioConnection::processHighPriorityStatus(const QByteArray& data)
 
         emit paTelemetryUpdated(fwdRaw, revRaw, exciterRaw,
                                 userAdc0Raw, userAdc1Raw, supplyRaw);
+
+        // Shell-chrome sub-PR-2 B.3: emit voltage signals.
+        // handleSupplyRaw applies for all radios (supply_volts AIN6).
+        // From Thetis network.c:738 [@501e3f5] — supply_volts
+        handleSupplyRaw(supplyRaw);
+        // handleUserAdc0Raw gated on MKII-class boards (PA drain sense AIN3).
+        // Matches gate in RadioModel scalePaVolts() [RadioModel.cpp:402-417].
+        // From Thetis network.c:747 [@501e3f5] — user_adc0 AIN3 PA Volts
+        switch (m_hardwareProfile.model) {
+        case HPSDRModel::ORIONMKII:
+        case HPSDRModel::ANAN8000D:
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2_1K:
+        case HPSDRModel::ANVELINAPRO3:
+            handleUserAdc0Raw(userAdc0Raw);
+            break;
+        default:
+            break;
+        }
     }
 
     // Shell-chrome sub-PR-2 B.2: complete the ping RTT measurement.

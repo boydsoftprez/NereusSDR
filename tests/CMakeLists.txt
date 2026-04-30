@@ -2393,3 +2393,7 @@ nereus_add_test(tst_radio_connection_byte_rates)
 # ── Shell-Chrome Redesign sub-PR-2: ping RTT signal ───────────────────────
 # 3 tests: emit-on-rtt, duplicate-receive-suppression, receive-without-send.
 nereus_add_test(tst_radio_connection_ping_rtt)
+
+# ── Shell-Chrome Redesign sub-PR-2: voltage signals ───────────────────────
+# 3 tests: PSU Hermes-DC formula, MKII PA formula, identical-raw suppression.
+nereus_add_test(tst_radio_connection_supply_volts)

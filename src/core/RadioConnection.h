@@ -102,6 +102,22 @@ public:
     void notePingSent();
     void notePingReceived();
 
+    // Voltage signal handlers — called by P1/P2 after extracting raw ADC counts.
+    // Apply per-board scaling and emit supplyVoltsChanged / userAdc0Changed
+    // when the value changes by more than 50 mV (identical-raw suppression).
+    //
+    // handleSupplyRaw: Hermes DC-volts formula from Thetis
+    //   console.cs computeHermesDCVoltage() [v2.10.3.13].
+    //   Applies to all radios (supply_volts / AIN6 / P1 case 0x18 / P2 bytes 45-46).
+    //
+    // handleUserAdc0Raw: MKII PA-volts formula from Thetis
+    //   console.cs computeMKIIPaVoltage() [v2.10.3.13].
+    //   Applies to ORIONMKII / ANAN8000D / ANAN7000D / ANAN-G2 family only
+    //   (user_adc0 / AIN3 / P1 case 0x10 / P2 bytes 53-54). Callers
+    //   are responsible for gating by board type before calling.
+    void handleSupplyRaw(quint16 raw);
+    void handleUserAdc0Raw(quint16 raw);
+
 public slots:
     // Must be called on the worker thread after moveToThread().
     // Creates sockets, timers, and other thread-local resources.
@@ -363,6 +379,18 @@ signals:
     // Drives the ConnectionSegment "X ms" latency readout (sub-PR-2).
     void pingRttMeasured(int rttMs);
 
+    // PSU supply voltage (V) from supply_volts (P1 AIN6 / P2 bytes 45-46).
+    // Converted via Hermes DC-volts formula (console.cs computeHermesDCVoltage()
+    // [v2.10.3.13]). Emitted at most once per 50 mV change.
+    // Drives the redesigned right-side strip "PSU X.XV" metric (sub-PR-2).
+    void supplyVoltsChanged(float volts);
+
+    // PA drain voltage (V) from user_adc0 (P1 AIN3 / P2 bytes 53-54).
+    // ORIONMKII / ANAN-8000D / ANAN-7000DLE / ANAN-G2 family only.
+    // Converted via MKII PA-volts formula (console.cs computeMKIIPaVoltage()
+    // [v2.10.3.13]). Emitted at most once per 50 mV change.
+    void userAdc0Changed(float volts);
+
     // --- State ---
     void connectionStateChanged(NereusSDR::ConnectionState state);
     void errorOccurred(NereusSDR::RadioConnectionError code, const QString& message);
@@ -476,6 +504,15 @@ private:
 
     // Ping RTT state. Zero means no outstanding ping.
     qint64 m_pingSentMs{0};
+
+    // Voltage conversion helpers.
+    static float convertSupplyVolts(quint16 raw);
+    static float convertMkiiPaVolts(quint16 raw);
+
+    // Last-emitted voltage values for identical-raw suppression (50 mV epsilon).
+    // Initialised to -1 so the first call always emits.
+    float m_lastSupplyVolts{-1.0f};
+    float m_lastUserAdc0Volts{-1.0f};
 
 protected:
     void setState(ConnectionState newState);

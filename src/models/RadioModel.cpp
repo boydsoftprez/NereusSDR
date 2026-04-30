@@ -2209,7 +2209,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         const double paA    = scalePaAmps(userAdc1Raw, model);
         const double paTemp = scalePaTemperatureCelsius(0, model);
         Q_UNUSED(paV);       // RadioStatus does not expose PA volts directly (per its design header)
-        Q_UNUSED(supplyRaw); // supply_volts surfaced via computeHermesDCVoltage in a later step
+        Q_UNUSED(supplyRaw); // supply_volts surfaced via RadioConnection::supplyVoltsChanged signal (sub-PR-2 B.3)
 
         m_radioStatus.setForwardPower(fwdW);
         m_radioStatus.setReflectedPower(revW);
