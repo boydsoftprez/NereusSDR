@@ -468,6 +468,8 @@ set(GUI_SOURCES
     src/gui/widgets/VfoWidget.cpp
     src/gui/widgets/StatusBadge.cpp
     src/gui/widgets/StatusBadge.h
+    src/gui/widgets/RxDashboard.cpp
+    src/gui/widgets/RxDashboard.h
     src/gui/widgets/StationBlock.cpp
     src/gui/widgets/StationBlock.h
     src/gui/NetworkDiagnosticsDialog.cpp
