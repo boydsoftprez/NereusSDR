@@ -1,8 +1,22 @@
+// =================================================================
+// third_party/wdsp/src/cfcomp.h  (NereusSDR)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/wdsp/cfcomp.h @ v2.10.3.13 (commit 501e3f5)
+//   Partial sync alongside cfcomp.c for the 3M-3a-ii CFC port
+//   (Qg/Qe parametric-EQ tail-mix updates). Original license header
+//   (GPLv2+) preserved verbatim below. cfcomp.h has no Samphire
+//   contributions and therefore no dual-licensing block. See
+//   docs/attribution/WDSP-PROVENANCE.md "Partial sync record" for
+//   the line-level sync scope.
+// =================================================================
+
 /*  cfcomp.h
 
 This file is part of a program that implements a Software-Defined Radio.
 
-Copyright (C) 2017, 2021 Warren Pratt, NR0V 
+Copyright (C) 2017, 2021 Warren Pratt, NR0V
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -23,6 +37,18 @@ The author can be reached by email at
 warren@wpratt.com
 
 */
+
+//
+// =============================================================================
+// Modification history (NereusSDR):
+//   2026-04-30 — Partial sync from Thetis v2.10.3.13 @ 501e3f5 alongside
+//                cfcomp.c for the Qg/Qe parametric-EQ tail-mix updates
+//                required by the 3M-3a-ii CFC port. No NereusSDR-original
+//                changes. Authored by J.J. Boyd (KG4VCF), ported with
+//                AI-assisted review via Anthropic Claude Code. GPLv2+
+//                upstream upgraded to GPLv3 combined work under
+//                NereusSDR's GPLv3 umbrella.
+// =============================================================================
 
 #ifndef _cfcomp_h
 #define _cfcomp_h

@@ -314,6 +314,8 @@ Discovery-reply hex fixtures are covered by `tests/fixtures/discovery/README.md`
 | third_party/wdsp/src/rnnr.h | Project Files/Source/wdsp/rnnr.h | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. Public API for RNNR stage. Samphire dual-license clause preserved verbatim. |
 | third_party/wdsp/src/sbnr.c | Project Files/Source/wdsp/sbnr.c | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. No algorithmic changes. Provides NR4 (SBNR) WDSP stage. Links against vendored libspecbleach (LGPL-2.1) in third_party/libspecbleach/ (landed in Task 6). |
 | third_party/wdsp/src/sbnr.h | Project Files/Source/wdsp/sbnr.h | full | port | thetis-samphire | Byte-for-byte import at v2.10.3.13 @ 501e3f51. Public API for SBNR stage. |
+| third_party/wdsp/src/cfcomp.c | Project Files/Source/wdsp/cfcomp.c | full | port | thetis-no-samphire | Partial sync to Thetis v2.10.3.13 @ 501e3f5 for Qg/Qe parametric-EQ tail-mix updates required by 3M-3a-ii CFC port. NR0V (Warren Pratt) + MW0LGE inline tags preserved; no Samphire algorithmic contributions but Samphire dual-licensing block carried verbatim from upstream. Detailed line-level sync record in WDSP-PROVENANCE.md "Partial sync record" section. |
+| third_party/wdsp/src/cfcomp.h | Project Files/Source/wdsp/cfcomp.h | full | port | thetis-no-samphire | Partial sync to Thetis v2.10.3.13 @ 501e3f5 for Qg/Qe alongside cfcomp.c. Header mirrors cfcomp.c. NR0V only — no Samphire contributions and no dual-licensing block in upstream cfcomp.h. |
 
 ## Files derived from TAPR WDSP
 

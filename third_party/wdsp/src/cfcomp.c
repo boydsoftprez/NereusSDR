@@ -1,3 +1,16 @@
+// =================================================================
+// third_party/wdsp/src/cfcomp.c  (NereusSDR)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/wdsp/cfcomp.c @ v2.10.3.13 (commit 501e3f5)
+//   Partial sync to capture Qg/Qe parametric-EQ tail-mix updates
+//   for the 3M-3a-ii CFC port. Original license header (GPLv2+ +
+//   Samphire dual-licensing statement) preserved verbatim below.
+//   See docs/attribution/WDSP-PROVENANCE.md "Partial sync record"
+//   for the line-level scope of this sync.
+// =================================================================
+
 /*  cfcomp.c
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -37,6 +50,20 @@ mw0lge@grange-lane.co.uk - Richard Samphire (c) 2026
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+
+//
+// =============================================================================
+// Modification history (NereusSDR):
+//   2026-04-30 — Partial sync from Thetis v2.10.3.13 @ 501e3f5 for the
+//                Qg/Qe parametric-EQ tail-mix updates required by the
+//                3M-3a-ii CFC port. No NereusSDR-original algorithmic
+//                changes; sync scope and line ranges recorded in
+//                docs/attribution/WDSP-PROVENANCE.md.
+//                Authored by J.J. Boyd (KG4VCF), ported with AI-assisted
+//                review via Anthropic Claude Code. GPLv2+ upstream upgraded
+//                to GPLv3 combined work under NereusSDR's GPLv3 umbrella
+//                (per-file dual-license clause by MW0LGE unaffected).
+// =============================================================================
 
 #include "comm.h"
 
