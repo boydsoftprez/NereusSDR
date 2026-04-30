@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QSet>
 #include <QWidget>
 
 class QHBoxLayout;
@@ -37,6 +38,9 @@ public:
     void bindSlice(SliceModel* slice);
     SliceModel* slice() const noexcept { return m_slice; }
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private slots:
     void onFrequencyChanged(double hz);
     void onModeChanged(int mode);
@@ -49,6 +53,9 @@ private slots:
 
 private:
     void buildUi();
+    void reapplyDropPriority();
+
+    QSet<StatusBadge*> m_droppedBadges;   // badges hidden by resize, not by feature-off
 
     SliceModel*  m_slice{nullptr};
 

@@ -18,6 +18,7 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QResizeEvent>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -94,6 +95,41 @@ void RxDashboard::buildUi()
     m_filterBadge->setVariant(StatusBadge::Variant::On);
     m_agcBadge->setLabel(QStringLiteral("—"));
     m_agcBadge->setVariant(StatusBadge::Variant::Info);
+}
+
+void RxDashboard::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    reapplyDropPriority();
+}
+
+void RxDashboard::reapplyDropPriority()
+{
+    // First: try to restore any badges we previously force-dropped, IF
+    // their feature is still active (i.e., the host hasn't hidden them
+    // for a feature-off reason — those should stay hidden).
+    for (auto* b : m_droppedBadges) {
+        if (b) { b->setVisible(true); }
+    }
+    m_droppedBadges.clear();
+
+    // If we're now over budget, drop badges in priority order until we fit.
+    const int budget       = width();
+    int       contentWidth = sizeHint().width();
+    if (contentWidth <= budget) { return; }
+
+    // Drop priority: SQL → APF(ANF) → NB → NR → AGC. Filter width never drops.
+    StatusBadge* dropOrder[] = {
+        m_sqlBadge, m_apfBadge, m_nbBadge, m_nrBadge, m_agcBadge
+    };
+    for (auto* b : dropOrder) {
+        if (contentWidth <= budget) { break; }
+        if (b && b->isVisible()) {
+            contentWidth -= (b->sizeHint().width() + 6);   // +6 for layout spacing
+            b->setVisible(false);
+            m_droppedBadges.insert(b);
+        }
+    }
 }
 
 void RxDashboard::bindSlice(SliceModel* slice)
@@ -194,6 +230,7 @@ void RxDashboard::onNrChanged(int nrSlot)
 {
     // NrSlot: Off=0, NR1=1, NR2=2, NR3=3, NR4=4, DFNR=5, BNR=6, MNR=7
     if (nrSlot <= 0) {
+        m_droppedBadges.remove(m_nrBadge);   // feature turned off — clear drop status
         m_nrBadge->setVisible(false);
         return;
     }
@@ -207,13 +244,16 @@ void RxDashboard::onNrChanged(int nrSlot)
         : QStringLiteral("NR");
     m_nrBadge->setLabel(name);
     m_nrBadge->setVariant(StatusBadge::Variant::On);
+    m_droppedBadges.remove(m_nrBadge);   // feature explicitly turned on — clear drop
     m_nrBadge->setVisible(true);
+    reapplyDropPriority();   // budget may still be tight; drop something else if needed
 }
 
 void RxDashboard::onNbChanged(int nbMode)
 {
     // NbMode: Off=0, NB=1, NB2=2
     if (nbMode <= 0) {
+        m_droppedBadges.remove(m_nbBadge);   // feature turned off — clear drop status
         m_nbBadge->setVisible(false);
         return;
     }
@@ -222,25 +262,37 @@ void RxDashboard::onNbChanged(int nbMode)
         : QStringLiteral("NB");
     m_nbBadge->setLabel(label);
     m_nbBadge->setVariant(StatusBadge::Variant::On);
+    m_droppedBadges.remove(m_nbBadge);   // feature explicitly turned on — clear drop
     m_nbBadge->setVisible(true);
+    reapplyDropPriority();   // budget may still be tight; drop something else if needed
 }
 
 void RxDashboard::onApfChanged(bool active)
 {
-    m_apfBadge->setVisible(active);
-    if (active) {
-        m_apfBadge->setLabel(QStringLiteral("APF"));
-        m_apfBadge->setVariant(StatusBadge::Variant::On);
+    if (!active) {
+        m_droppedBadges.remove(m_apfBadge);   // feature turned off — clear drop status
+        m_apfBadge->setVisible(false);
+        return;
     }
+    m_apfBadge->setLabel(QStringLiteral("APF"));
+    m_apfBadge->setVariant(StatusBadge::Variant::On);
+    m_droppedBadges.remove(m_apfBadge);   // feature explicitly turned on — clear drop
+    m_apfBadge->setVisible(true);
+    reapplyDropPriority();   // budget may still be tight; drop something else if needed
 }
 
 void RxDashboard::onSsqlChanged(bool active)
 {
-    m_sqlBadge->setVisible(active);
-    if (active) {
-        m_sqlBadge->setLabel(QStringLiteral("SQL"));
-        m_sqlBadge->setVariant(StatusBadge::Variant::On);
+    if (!active) {
+        m_droppedBadges.remove(m_sqlBadge);   // feature turned off — clear drop status
+        m_sqlBadge->setVisible(false);
+        return;
     }
+    m_sqlBadge->setLabel(QStringLiteral("SQL"));
+    m_sqlBadge->setVariant(StatusBadge::Variant::On);
+    m_droppedBadges.remove(m_sqlBadge);   // feature explicitly turned on — clear drop
+    m_sqlBadge->setVisible(true);
+    reapplyDropPriority();   // budget may still be tight; drop something else if needed
 }
 
 } // namespace NereusSDR
