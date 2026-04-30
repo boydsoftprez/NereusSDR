@@ -875,6 +875,13 @@ void ConnectionPanel::upsertRowForInfo(const RadioInfo& info, bool online)
     }
     populateRow(row, info);
 
+    // Also keep m_discoveredRadios in sync so selectedRadio() / Connect /
+    // Forget can resolve the row's MAC back to a RadioInfo. Without this,
+    // seeded saved-radio rows (cold-launch path) silently no-op on click
+    // because m_discoveredRadios.value(mac) returns a default RadioInfo
+    // with an empty MAC.
+    m_discoveredRadios.insert(info.macAddress, info);
+
     if (!online) {
         // Paint the row offline-grey — manually added radios haven't been seen yet
         for (int col = 0; col < ColCount; ++col) {
