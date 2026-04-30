@@ -403,28 +403,23 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_titleBar, &TitleBar::featureRequestClicked,
             this, &MainWindow::showFeatureRequestDialog);
 
-    // ── Phase 3Q-6: ConnectionSegment wiring ────────────────────────────
+    // ── Phase 3Q Sub-PR-4 D.2: ConnectionSegment wiring ────────────────────
+    // Full wiring (state/RTT/rate/audio pip/click affordances) added in D.2.
+    // Minimal seed for D.1: state dot + frameTick activity pulse.
     {
         auto* seg = m_titleBar->connectionSegment();
 
-        // State dot and text: driven by RadioModel's parametrized signal.
+        // State dot: driven by RadioModel's parametrized signal.
         connect(m_radioModel, &RadioModel::connectionStateChanged,
                 seg, &ConnectionSegment::setState);
 
-        // Click → open the ConnectionPanel.
-        connect(seg, &ConnectionSegment::clicked,
-                this, &MainWindow::showConnectionPanel);
-
-        // Activity LED: forwarded frameReceived from RadioModel so we
-        // never need to re-wire when m_connection is recreated.
+        // frameTick: forwarded from RadioModel so we never need to
+        // re-wire when m_connection is recreated.
         connect(m_radioModel, &RadioModel::frameReceived,
                 seg, &ConnectionSegment::frameTick);
 
-        // Seed the segment with the current state (Disconnected at launch)
-        // and the radio name/IP if a previous connection info is available.
+        // Seed with current state (Disconnected at launch).
         seg->setState(m_radioModel->connectionState());
-        // Rates start at 0; they will be updated when a rate-calc path is
-        // added in a follow-up. The display formatting is in place.
     }
 
     buildStatusBar();
@@ -3433,13 +3428,10 @@ void MainWindow::onConnectionStateChanged()
         m_radioFwLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: #8aa8c0; font-size: 12px; }"));
 
-        // Phase 3Q-6: feed radio name + IP into the ConnectionSegment so the
-        // connected label shows the correct identity. Connection must be
-        // non-null here because isConnected() returned true.
-        if (auto* conn = m_radioModel->connection()) {
-            m_titleBar->connectionSegment()->setRadio(
-                m_radioModel->name(), conn->radioInfo().address);
-        }
+        // Phase 3Q-6/D.1: setRadio() removed — radio identity moves to the
+        // STATION block (sub-PR-7). Segment state is already driven by
+        // connectionStateChanged → ConnectionSegment::setState (see D.2 wiring
+        // block in the constructor).
 
         // Phase 3Q-7: update the verbose status-bar connection-info strip.
         // Fields: maxSampleRate (Hz → kHz), protocol (P1/P2),

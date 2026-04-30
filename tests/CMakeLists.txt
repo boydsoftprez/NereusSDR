@@ -434,6 +434,12 @@ nereus_add_test(tst_master_output_widget)
 # the menu-re-parent + in-window render on macOS.
 nereus_add_test(tst_title_bar)
 
+# ── Shell-Chrome Redesign sub-PR-4 D.1: ConnectionSegment v2 ─────────────────
+# 5 tests: state queries, rates+RTT round-trip, RTT-region left-click emits
+# rttClicked(), right-click emits contextMenuRequested(), audio flow-state
+# setter round-trip across all four FlowState values.
+nereus_add_test(tst_connection_segment_v2)
+
 # ── Phase 3O Sub-Phase 9 Task 9.2a: AudioEngine VAX gain/mute/tx-gain ────────
 # Exercises setVaxRxGain / setVaxMuted / setVaxTxGain and their effect on the
 # rxBlockReady tee — unity passthrough, half-gain scaling, muted-skip, signal

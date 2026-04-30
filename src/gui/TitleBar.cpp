@@ -46,6 +46,9 @@
 //                 radio name/IP text, ▲▼ Mbps readout, and 10 Hz
 //                 throttled activity LED. Inserted at position 1 in the
 //                 hbox (just after the menu bar). Design §4.1.
+//   2026-04-30 — Phase 3Q Sub-PR-4 D.1: replaced ConnectionSegment body
+//                 per shell-chrome redesign spec §4.1. See TitleBar.h for
+//                 the full change description.
 // =================================================================
 
 #include "TitleBar.h"
@@ -67,6 +70,7 @@
 #include <QTimer>
 
 namespace NereusSDR {
+
 
 namespace {
 
@@ -99,62 +103,129 @@ constexpr int kStripHeight = 32;
 } // namespace
 
 // =========================================================================
-// ConnectionSegment implementation
+// ConnectionSegment implementation  (Phase 3Q Sub-PR-4 D.1)
 // =========================================================================
 
 ConnectionSegment::ConnectionSegment(QWidget* parent)
     : QWidget(parent)
 {
-    setFixedHeight(32);
-    setMinimumWidth(280);
+    setFixedHeight(30);
+    setMinimumWidth(200);
+    setCursor(Qt::PointingHandCursor);
+    setMouseTracking(true);
+    setAttribute(Qt::WA_StyledBackground, true);
 
-    // LED throttle: one-shot 100 ms timer that turns the LED off after a
-    // pulse. frameTick() drops calls that arrive while the timer is active,
-    // giving ≤10 Hz visible refresh on high-rate frame streams.
-    m_ledThrottle.setSingleShot(true);
-    m_ledThrottle.setInterval(100);  // 10 Hz max
-    connect(&m_ledThrottle, &QTimer::timeout, this, [this]() {
-        m_ledOn = false;
+    // Pulse timer — drives the state-dot animation. 750 ms half-period gives
+    // a 1.5 s full cycle: visible and calm for streaming (not frantic).
+    m_pulseTimer.setInterval(750);
+    connect(&m_pulseTimer, &QTimer::timeout, this, [this]() {
+        m_pulseOn = !m_pulseOn;
         update();
     });
+    m_pulseTimer.start();
 }
 
 void ConnectionSegment::setState(ConnectionState s)
 {
+    if (m_state == s) {
+        return;
+    }
     m_state = s;
-    update();
-}
 
-void ConnectionSegment::setRadio(const QString& name, const QHostAddress& ip)
-{
-    m_name = name;
-    m_ip   = ip;
+    // Pulse while there is interesting transient state to show.
+    if (s == ConnectionState::Connected   ||
+        s == ConnectionState::Probing     ||
+        s == ConnectionState::Connecting  ||
+        s == ConnectionState::LinkLost) {
+        m_pulseTimer.start();
+    } else {
+        m_pulseTimer.stop();
+        m_pulseOn = false;
+    }
     update();
 }
 
 void ConnectionSegment::setRates(double rxMbps, double txMbps)
 {
+    if (qFuzzyCompare(m_rxMbps + 1.0, rxMbps + 1.0) &&
+        qFuzzyCompare(m_txMbps + 1.0, txMbps + 1.0)) {
+        return;
+    }
     m_rxMbps = rxMbps;
     m_txMbps = txMbps;
     update();
 }
 
-void ConnectionSegment::frameTick()
+void ConnectionSegment::setRttMs(int ms)
 {
-    if (!m_ledThrottle.isActive()) {
-        m_ledOn = true;
-        m_ledThrottle.start();
-        update();
+    if (m_rttMs == ms) {
+        return;
     }
-    // Otherwise drop — we already pulsed within the last 100 ms.
+    m_rttMs = ms;
+    update();
 }
 
-void ConnectionSegment::mousePressEvent(QMouseEvent* event)
+void ConnectionSegment::setAudioFlowState(AudioEngine::FlowState s)
 {
-    if (event->button() == Qt::LeftButton) {
-        emit clicked();
+    if (m_audioFlow == s) {
+        return;
     }
-    QWidget::mousePressEvent(event);
+    m_audioFlow = s;
+    update();
+}
+
+void ConnectionSegment::frameTick()
+{
+    // Throttled activity tick — for now just nudges a repaint so the
+    // pulse looks "live". The pulse timer above already drives the
+    // animation; this slot exists for future per-frame visual cues.
+    update();
+}
+
+QColor ConnectionSegment::stateDotColor() const
+{
+    switch (m_state) {
+        case ConnectionState::Connected:
+            // m_pulseOn alternates → slow green pulse encoding streaming activity
+            return m_pulseOn ? QColor("#5fff8a") : QColor("#3fcf6a");
+        case ConnectionState::Probing:
+        case ConnectionState::Connecting:
+            return m_pulseOn ? QColor("#5fa8ff") : QColor("#3f78cf");
+        case ConnectionState::LinkLost:
+            return m_pulseOn ? QColor("#ff8c00") : QColor("#cf6c00");
+        case ConnectionState::Disconnected:
+            return QColor("#ff4040");
+    }
+    return QColor("#607080");
+}
+
+QColor ConnectionSegment::rttColor(int rttMs) const
+{
+    if (rttMs < 0)    { return QColor("#607080"); }
+    if (rttMs < 50)   { return QColor("#5fff8a"); }
+    if (rttMs < 150)  { return QColor("#ffd700"); }
+    return QColor("#ff6060");
+}
+
+QColor ConnectionSegment::audioPipColor(AudioEngine::FlowState s) const
+{
+    switch (s) {
+        case AudioEngine::FlowState::Healthy:  return QColor("#5fa8ff");
+        case AudioEngine::FlowState::Underrun: return QColor("#ffd700");
+        case AudioEngine::FlowState::Stalled:  return QColor("#ff6060");
+        case AudioEngine::FlowState::Dead:     return QColor("#404858");
+    }
+    return QColor("#404858");
+}
+
+QRect ConnectionSegment::rttRect() const
+{
+    return QRect(m_lastRttX1, 0, m_lastRttX2 - m_lastRttX1, height());
+}
+
+QRect ConnectionSegment::audioPipRect() const
+{
+    return QRect(m_lastPipX1, 0, m_lastPipX2 - m_lastPipX1, height());
 }
 
 void ConnectionSegment::paintEvent(QPaintEvent*)
@@ -162,68 +233,88 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    // ── State dot (left edge) ─────────────────────────────────────────────
-    const QRect dotRect(8, height() / 2 - 5, 9, 9);
-    QColor dotColor;
-    switch (m_state) {
-        case ConnectionState::Disconnected: dotColor = QColor("#445566"); break;
-        case ConnectionState::Probing:
-        case ConnectionState::Connecting:   dotColor = QColor("#d39c2a"); break;
-        case ConnectionState::Connected:    dotColor = QColor("#39c167"); break;
-        case ConnectionState::LinkLost:     dotColor = QColor("#c14848"); break;
-    }
-    p.setBrush(dotColor);
+    // Background
     p.setPen(Qt::NoPen);
+    p.setBrush(QColor("#0f1420"));
+    p.drawRoundedRect(rect(), 3, 3);
+
+    p.setFont(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
+
+    // ── 1. State-encoding dot ──────────────────────────────────────────────
+    const QRect dotRect(8, height() / 2 - 5, 10, 10);
+    p.setBrush(stateDotColor());
     p.drawEllipse(dotRect);
 
-    // ── Text (depends on state) ───────────────────────────────────────────
     int x = dotRect.right() + 8;
-    p.setPen(QColor("#a0b0c0"));
+    const int textY = height() / 2 + 4;
 
     if (m_state == ConnectionState::Disconnected) {
-        p.drawText(QRect(x, 0, width() - x, height()),
-                   Qt::AlignVCenter | Qt::AlignLeft,
-                   QStringLiteral("Disconnected — click to connect"));
-        return;
-    }
-    if (m_state == ConnectionState::Probing || m_state == ConnectionState::Connecting) {
-        p.drawText(QRect(x, 0, width() - x, height()),
-                   Qt::AlignVCenter | Qt::AlignLeft,
-                   QStringLiteral("%1 %2…").arg(connectionStateName(m_state), m_name));
+        p.setPen(QColor("#607080"));
+        p.drawText(x, textY, tr("Disconnected — click to connect"));
+        m_lastRttX1 = m_lastRttX2 = 0;
+        m_lastPipX1 = m_lastPipX2 = 0;
         return;
     }
 
-    // ── Connected: name (bold) · IP · ▲ rx ▼ tx · activity LED ──────────
-    QFont nameFont = p.font();
-    nameFont.setBold(true);
-    p.setFont(nameFont);
-    p.setPen(QColor("#e0eef8"));
-    p.drawText(QRect(x, 0, width() - x, height()),
-               Qt::AlignVCenter | Qt::AlignLeft, m_name);
-    QFontMetrics fm(nameFont);
-    x += fm.horizontalAdvance(m_name) + 10;
+    // ── 2. ▲ Mbps (tx uplink) ─────────────────────────────────────────────
+    p.setPen(QColor("#a0d8a0"));
+    const QString tx = QString::asprintf("\xe2\x96\xb2 %.1f", m_txMbps);   // ▲
+    p.drawText(x, textY, tx);
+    x += p.fontMetrics().horizontalAdvance(tx) + 10;
 
-    nameFont.setBold(false);
-    p.setFont(nameFont);
-    p.setPen(QColor("#7088a0"));
-    const QString ipStr = m_ip.toString();
-    p.drawText(QRect(x, 0, width() - x, height()),
-               Qt::AlignVCenter | Qt::AlignLeft, ipStr);
-    x += fm.horizontalAdvance(ipStr) + 12;
+    // ── 3. RTT readout — clickable region ─────────────────────────────────
+    p.setPen(rttColor(m_rttMs));
+    const QString rttText = (m_rttMs < 0)
+        ? QStringLiteral("\xe2\x80\x94 ms")               // — ms
+        : QString::asprintf("%d ms", m_rttMs);
+    p.drawText(x, textY, rttText);
+    m_lastRttX1 = x;
+    m_lastRttX2 = x + p.fontMetrics().horizontalAdvance(rttText);
+    x = m_lastRttX2 + 10;
 
-    p.setPen(QColor("#90a0b0"));
-    const QString rates = QStringLiteral("▲ %1 Mb/s   ▼ %2 kb/s")
-        .arg(m_rxMbps, 0, 'f', 1).arg(int(m_txMbps * 1000));
-    p.drawText(QRect(x, 0, width() - x, height()),
-               Qt::AlignVCenter | Qt::AlignLeft, rates);
-    x += fm.horizontalAdvance(rates) + 8;
+    // ── 4. ▼ Mbps (rx downlink) ───────────────────────────────────────────
+    p.setPen(QColor("#a0d8a0"));
+    const QString rx = QString::asprintf("\xe2\x96\xbc %.1f", m_rxMbps);   // ▼
+    p.drawText(x, textY, rx);
+    x += p.fontMetrics().horizontalAdvance(rx) + 10;
 
-    // ── Activity LED ──────────────────────────────────────────────────────
-    if (m_ledOn) {
-        p.setBrush(QColor("#5fff8a"));
-        p.setPen(Qt::NoPen);
-        p.drawEllipse(QRect(x, height() / 2 - 3, 6, 6));
+    // ── 5. Vertical separator ─────────────────────────────────────────────
+    p.setPen(QColor("#304050"));
+    p.drawText(x, textY, QStringLiteral("|"));
+    x += p.fontMetrics().horizontalAdvance("|") + 6;
+
+    // ── 6. ♪ audio pip ────────────────────────────────────────────────────
+    p.setPen(audioPipColor(m_audioFlow));
+    // ♪ U+266A encoded inline as UTF-8 bytes to avoid MSVC narrow-string issues
+    const QString pip = QStringLiteral("\xe2\x99\xaa");
+    p.drawText(x, textY, pip);
+    m_lastPipX1 = x;
+    m_lastPipX2 = x + p.fontMetrics().horizontalAdvance(pip);
+}
+
+void ConnectionSegment::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::RightButton) {
+        emit contextMenuRequested(event->globalPosition().toPoint());
+        return;
     }
+    if (event->button() == Qt::LeftButton) {
+        if (rttRect().contains(event->pos())) {
+            emit rttClicked();
+            return;
+        }
+        if (audioPipRect().contains(event->pos())) {
+            emit audioPipClicked();
+            return;
+        }
+        // Disconnected-state: anywhere-click routes to rttClicked so the
+        // host can wire both to the Connect / Diagnostics dialog.
+        if (m_state == ConnectionState::Disconnected) {
+            emit rttClicked();
+            return;
+        }
+    }
+    QWidget::mousePressEvent(event);
 }
 
 // =========================================================================

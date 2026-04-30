@@ -50,11 +50,19 @@
 //                 connection state widget (dot + radio name/IP + Mbps +
 //                 activity LED). Inserted between menu bar and the
 //                 centre stretch. Design §4.1.
+//   2026-04-30 — Phase 3Q Sub-PR-4 D.1: rewrote ConnectionSegment per
+//                 shell-chrome redesign spec §4.1. New form: state-encoding
+//                 dot (color=state, pulse=activity), ▲ Mbps, RTT readout
+//                 (clickable, color-thresholded), ▼ Mbps, ♪ audio pip.
+//                 Removed setRadio()/name+IP API (STATION block carries
+//                 radio identity, sub-PR-7). Removed activity LED (state dot
+//                 encodes activity via pulse). Added signals: rttClicked(),
+//                 audioPipClicked(), contextMenuRequested(QPoint).
 // =================================================================
 
+#include "core/AudioEngine.h"
 #include "core/ConnectionState.h"
 
-#include <QHostAddress>
 #include <QTimer>
 #include <QWidget>
 
@@ -64,25 +72,27 @@ class QPushButton;
 
 namespace NereusSDR {
 
-class AudioEngine;
 class MasterOutputWidget;
 
 // ConnectionSegment — always-visible connection-state indicator living
 // in the TitleBar, between the menu bar and the centre "NereusSDR" label.
 //
 // Visual layout (left → right within the segment):
-//   [9 px state dot]  [radio name (bold, white) · IP · ▲▼ Mbps · LED]
-//   — or when not connected:
-//   [9 px state dot]  ["Disconnected — click to connect"]
-//   — or when probing/connecting:
-//   [9 px state dot]  ["Probing 192.168.x.x…" / "Connecting to ANAN-G2…"]
+//   [state dot]  [▲ Mbps]  [RTT ms (color-coded, clickable)]  [▼ Mbps]  [|]  [♪ pip]
+//   — or when Disconnected:
+//   [state dot]  ["Disconnected — click to connect"]
 //
-// Click anywhere on the segment emits clicked() → MainWindow wires that
-// to showConnectionPanel().
+// State dot color encodes connection state; pulse animation encodes
+// radio/streaming activity. No separate activity LED.
 //
-// LED: pulses green on each frameReceived() tick, throttled to 10 Hz
-// max visible refresh so high-rate EP6/DDC streams pulse cleanly
-// instead of seizing.
+// RTT readout: color-coded green/yellow/red (<50/<150/≥150 ms). Left-click
+// opens NetworkDiagnosticsDialog. Disconnected-state click anywhere does
+// the same.
+//
+// ♪ pip: audio pipeline health. Color: blue=Healthy, yellow=Underrun,
+// red=Stalled, dim=Dead.
+//
+// Phase 3Q Sub-PR-4 D.1.
 class ConnectionSegment : public QWidget {
     Q_OBJECT
 
@@ -90,29 +100,54 @@ public:
     explicit ConnectionSegment(QWidget* parent = nullptr);
 
     void setState(ConnectionState s);
-    void setRadio(const QString& name, const QHostAddress& ip);
     void setRates(double rxMbps, double txMbps);
+    void setRttMs(int ms);
+    void setAudioFlowState(AudioEngine::FlowState s);
+
+    ConnectionState          state() const noexcept { return m_state; }
+    int                      rttMs() const noexcept { return m_rttMs; }
+    AudioEngine::FlowState   audioFlowState() const noexcept { return m_audioFlow; }
+
+    // Hit-test rect accessors — populated after the first paintEvent.
+    // Exposed publicly so callers can verify click regions (e.g. in tests).
+    QRect rttRect() const;
+    QRect audioPipRect() const;
 
 public slots:
-    // Pulse the activity LED. Throttled to 10 Hz — calls that arrive
-    // within the 100 ms window after a pulse are silently dropped.
+    // Throttled activity tick — nudges a repaint so the pulse looks "live".
+    // The pulse timer in the ctor already drives the animation; this slot
+    // exists for future per-frame visual cues.
     void frameTick();
 
 signals:
-    void clicked();
+    void rttClicked();
+    void audioPipClicked();
+    void contextMenuRequested(const QPoint& globalPos);
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    ConnectionState m_state{ConnectionState::Disconnected};
-    QString         m_name;
-    QHostAddress    m_ip;
-    double          m_rxMbps{0.0};
-    double          m_txMbps{0.0};
-    bool            m_ledOn{false};
-    QTimer          m_ledThrottle;
+    QColor stateDotColor() const;
+    QColor rttColor(int rttMs) const;
+    QColor audioPipColor(AudioEngine::FlowState s) const;
+
+    ConnectionState         m_state{ConnectionState::Disconnected};
+    double                  m_rxMbps{0.0};
+    double                  m_txMbps{0.0};
+    int                     m_rttMs{-1};
+    AudioEngine::FlowState  m_audioFlow{AudioEngine::FlowState::Dead};
+    QTimer                  m_pulseTimer;
+    bool                    m_pulseOn{false};
+
+    // Stored during paintEvent so mousePressEvent can hit-test without
+    // re-computing geometry. Mutable because they are written inside const-
+    // eligible paint logic; paintEvent itself is not const in Qt.
+    mutable int m_lastRttX1{0};
+    mutable int m_lastRttX2{0};
+    mutable int m_lastPipX1{0};
+    mutable int m_lastPipX2{0};
 };
 
 // TitleBar — thin 32 px host strip at the top of the main window.
