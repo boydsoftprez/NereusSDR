@@ -212,6 +212,12 @@ private:
     double m_lastSampleRate{0.0};
     int    m_lastTargetFps{0};
 
+    // Last window-function ordinal observed by the worker thread. When the
+    // main thread flips m_windowFunc via setWindowFunction(), feedIQ() picks
+    // up the change at the top of the next chunk and recomputes m_window.
+    // Without this, the dropdown was a silent no-op between fft-size changes.
+    int m_lastWindowFunc{-1};
+
     // dBm calibration offset (accounts for window gain + FFT normalization)
     float m_dbmOffset{0.0f};
 

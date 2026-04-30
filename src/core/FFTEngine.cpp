@@ -170,6 +170,15 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
     // Refresh stride if sampleRate or targetFps changed since last call.
     recomputeStride();
 
+    // Refresh window coefficients if the user picked a new window function
+    // since last call. m_window is only ever read on this worker thread, so
+    // recomputing it here is safe and avoids cross-thread fft state surgery.
+    const int wfNow = m_windowFunc.load();
+    if (wfNow != m_lastWindowFunc) {
+        m_lastWindowFunc = wfNow;
+        computeWindow();
+    }
+
     const int N = m_currentFftSize;
     const int numPairs = interleavedIQ.size() / 2;
     for (int i = 0; i < numPairs; ++i) {
@@ -256,9 +265,11 @@ void FFTEngine::replanFft()
     computeWindow();
 
     // Force stride recompute on next feedIQ — fftSize change can affect the
-    // floor case where m_incrSamples > N.
+    // floor case where m_incrSamples > N. computeWindow() ran inline, so
+    // sync m_lastWindowFunc with the atomic to avoid a redundant recompute.
     m_lastSampleRate = 0.0;
     m_lastTargetFps  = 0;
+    m_lastWindowFunc = m_windowFunc.load();
 
     qCInfo(lcDsp) << "FFTEngine: plan created, window computed";
 #endif

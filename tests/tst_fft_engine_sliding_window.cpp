@@ -96,6 +96,48 @@ private slots:
                  qPrintable(QString("p2 big-fft emits=%1 expected≈%2").arg(big).arg(fps)));
     }
 
+    // Window-function dropdown must take effect on the next chunk, not
+    // silently wait for an FFT-size replan. Pre-fix this was a no-op
+    // outside replanFft(), masked by the very-low emit rate at deep zoom.
+    void windowChangeTakesEffectImmediately()
+    {
+        FFTEngine engine(0);
+        engine.setSampleRate(192000.0);
+        engine.setOutputFps(30);
+        engine.setFftSize(4096);
+        engine.setWindowFunction(WindowFunction::BlackmanHarris4);
+
+        // Prime the engine so it's emitting frames against the BH4 window.
+        QVector<float> binsBh;
+        QObject::connect(&engine, &FFTEngine::fftReady, &engine,
+            [&binsBh](int, const QVector<float>& bins) { binsBh = bins; });
+        engine.feedIQ(generateIqChunk(192000, 192000.0, 1000.0));
+        QVERIFY(!binsBh.isEmpty());
+
+        // Disconnect, swap window, prime again. Without the fix the second
+        // capture would be byte-identical to BH4 (window never recomputed).
+        QObject::disconnect(&engine, nullptr, nullptr, nullptr);
+        QVector<float> binsHann;
+        QObject::connect(&engine, &FFTEngine::fftReady, &engine,
+            [&binsHann](int, const QVector<float>& bins) { binsHann = bins; });
+        engine.setWindowFunction(WindowFunction::Hanning);
+        engine.feedIQ(generateIqChunk(192000, 192000.0, 1000.0));
+        QVERIFY(!binsHann.isEmpty());
+
+        // The DC-bin neighborhood differs between Blackman-Harris-4 and Hann
+        // even on a clean tone — different sidelobe profiles. Just demand
+        // that *something* in the spectrum moved.
+        QCOMPARE(binsBh.size(), binsHann.size());
+        bool anyDifference = false;
+        for (int i = 0; i < binsBh.size(); ++i) {
+            if (std::abs(binsBh[i] - binsHann[i]) > 0.001f) {
+                anyDifference = true;
+                break;
+            }
+        }
+        QVERIFY2(anyDifference, "BH4 and Hann produced byte-identical spectra — window change is a no-op");
+    }
+
     // Changing target FPS mid-stream must take effect on the next chunk.
     void respondsToFpsChange()
     {
