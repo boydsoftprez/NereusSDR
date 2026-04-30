@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+### Added (Phase 3M-3a-ii — TX Dynamics: CFC + CPDR + CESSB + Phase Rotator)
+
+- **CFC (Continuous Frequency Compressor) — 10-band freq compander.** New
+  `TxChannel` wrappers expose the WDSP CFC stage (`SetTXACFCOMPRun`,
+  `Position`, `profile`, `Precomp`, `PeqRun`, `PrePeq`). The
+  `cfcomp.c` source under `third_party/wdsp/` was surgically re-synced to
+  Thetis v2.10.3.13 to pick up the 7-arg `SetTXACFCOMPprofile`
+  (Qg/Qe gain-skirt and ceiling-Q arrays) added by MW0LGE/Samphire upstream;
+  the original TAPR v1.29 5-arg signature was forward-compatible but lossy.
+  GPL Samphire dual-license block + MW0LGE inline tags preserved verbatim;
+  full attribution chain logged in `docs/attribution/WDSP-PROVENANCE.md` and
+  `docs/attribution/REMEDIATION-LOG.md`.
+
+- **CPDR (Compressor) — global enable + level dB.** TxChannel wrappers for
+  `SetTXACompressorRun` / `SetTXACompressorGain`; level slider on
+  PhoneCwApplet now maps `0..2` step → `0..20 dB` linear and drives the same
+  `cpdrLevelDb` model property used by the new dialog and Setup page.
+
+- **CESSB (Controlled-Envelope SSB) — overshoot envelope shaping.** TxChannel
+  wrapper for `SetTXAosctrlRun`. Gating preserved: CESSB requires CPDR
+  (`TXASetupBPFilters: bp2.run = compressor.run && osctrl.run`).
+
+- **Phase Rotator (`phrot`).** Folded in from 3M-3a-i deferral — TxChannel
+  wrappers for `SetTXAPhaseRotCorner` / `Nstages` / `Reverse`, fully
+  controllable from the new CFC setup page.
+
+- **TransmitModel — 15 new properties.** `phaseRotatorEnabled/Reverse/FreqHz/Stages`,
+  `cfcEnabled/PostEqEnabled/PrecompDb/PostEqGainDb`, `cfcEqFreq[10]` /
+  `cfcCompression[10]` / `cfcPostEqBandGain[10]`, opaque `cfcParaEqData` blob
+  (for the future ParametricEq widget round-trip), global `cpdrOn`,
+  `cpdrLevelDb`, `cessbOn`. All wired through `RadioModel::connectToRadio`
+  with `pushTxProcessingChain` resync on connect / profile activation.
+
+- **MicProfileManager — bundles +41 keys (was 50 → 91).** 19 of 21 factory
+  profiles ported byte-for-byte from `database.cs:9282-9418 [v2.10.3.13]`
+  with **155 verbatim overrides** (incl. AM 10k's unique `PhRotStages=9`
+  override at `database.cs:9314`). Live capture/apply paths handle the new
+  keys so [Save] in `TxCfcDialog` round-trips.
+
+- **CfcSetupPage rewrite.** Setup → Transmit → CFC now exposes Phase Rotator
+  group (Enable / Reverse / Corner / Stages), CFC group (Enable / Post-EQ /
+  Precomp / Post-EQ Gain / Open Dialog button), and CESSB group
+  (Enable / status text). The "Open Dialog" button raises `TxCfcDialog`
+  modeless via the cross-thread `cfcDialogRequested` signal routed through
+  `MainWindow::wireSetupDialog()`.
+
+- **TxCfcDialog (modeless).** Profile combo + Save / SaveAs / Delete / Reset
+  + Precomp / PostEQ-Gain global spinboxes + 10×3 per-band F / COMP / POST-EQ
+  spinbox grid. Landed scalar-complete but visually spartan — full
+  Thetis-faithful `ucParametricEq` widget port (3396-line C# WinForms
+  UserControl, used by both CFC and EQ dialogs in Thetis) is queued as a
+  separate sub-PR. Design hand-off doc:
+  [`docs/architecture/phase3m-3a-ii-cfc-eq-parametriceq-handoff.md`](docs/architecture/phase3m-3a-ii-cfc-eq-parametriceq-handoff.md).
+
+- **PhoneCwApplet PROC integration.** PROC button/slider now drives `cpdrOn`
+  and `cpdrLevelDb`; numeric "X dB" label replaces the old NOR/DX/DX+ tick
+  marks; NyiOverlay dropped. Duplicate `[PROC]` button on TxApplet (added
+  during Batch 6 prep) was removed after JJ caught the redundancy — surfaced
+  the feedback memory `feedback_survey_before_adding_controls.md` to keep
+  future GUI batches from blindly adding controls without surveying.
+
+- **SpeechProcessorPage live-status bindings.** Dashboard rows reflect
+  CFC / CPDR / CESSB on/off + level + position in real time.
+
+- **17 GPG-signed commits** stacked on 3M-3a-i; 7 new test executables
+  (TxChannel CFC/CPDR/CESSB/PhRot setters; TM properties; profile round-trip;
+  profile live-path; CfcSetupPage; TxCfcDialog; PhoneCwApplet PROC); 253/253
+  ctest green. Verification matrix updated at
+  `docs/architecture/phase3m-0-verification/README.md`.
+
+- **Pre-emphasis** was de-scoped from this sub-PR to 3M-3b (FM-mode work) per
+  master design §7.2 ("run as written").
+
 ### Added (Phase 3G RX Epic Sub-epic E — Waterfall rewind / scrollback)
 
 - **Waterfall rewind / scrollback.** Drag up on the right-edge time-scale

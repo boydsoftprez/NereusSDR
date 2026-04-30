@@ -644,26 +644,57 @@ Defaults wrong = blown PA. Source-first verification critical.
 
 ### 7.2 Phase 3M-3a-ii — Dynamics: CFC + CPDR + CESSB
 
+**Status:** **Complete (pending bench)** — `feature/phase3m-3-tx-processing`,
+2026-04-30, 17 GPG-signed commits stacked on 3M-3a-i, 253/253 ctest green,
+PR #TBD. Awaiting JJ bench on ANAN-G2.
+
+**Scope adjustment carried during implementation:** Phase Rotator (`phrot`)
+was deferred from 3M-3a-i with a code comment in `TransmitModel.h:737`;
+folded into 3M-3a-ii at JJ's direction during prep so all
+top-of-chain DSP guards land together. Pre-emphasis was de-scoped from this
+sub-PR to 3M-3b (FM-mode work).
+
 **Goal:** Activate dynamics/overshoot section. CFC gets a dedicated config
 dialog (Thetis pattern).
 
-**TXA stages activated:** `cfcomp` (CFC, 5-band freq compander) →
-`compressor` (CPDR) → `osctrl` (CESSB).
+**TXA stages activated:** `phrot` (Phase Rotator, 0-stage to N-stage all-pass
+chain) → `cfcomp` (CFC, 5-band freq compander; 10-band F/COMP/POST-EQ + Qg/Qe
+ceiling-Q skirts after surgical WDSP cfcomp.c sync to Thetis v2.10.3.13) →
+`compressor` (CPDR) → `osctrl` (CESSB; gated on CPDR via
+`TXASetupBPFilters: bp2.run = compressor.run && osctrl.run`).
 
-**WDSP setters:**
-- CFC: `SetTXACFCOMPRun/Position/profile/Precomp/PeqRun/PrePeq`
-- CPDR: `SetTXACompressorRun/Gain`
-- CESSB: `SetTXAosctrlRun`
+**WDSP setters (delivered):**
+- CFC (6): `SetTXACFCOMPRun/Position/profile/Precomp/PeqRun/PrePeq`
+- CPDR (2): `SetTXACompressorRun/Gain`
+- CESSB (1): `SetTXAosctrlRun`
+- PhRot (3): `SetTXAPhaseRotCorner/Nstages/Reverse` (folded from 3M-3a-i)
 
-**CFC profile bank:** Save/load/delete/rename, factory presets.
+**CFC profile bank:** delivered — Save/load/delete/rename via
+MicProfileManager schema (+41 keys → bundle now 91 keys); 19 of 21 factory
+profiles ported verbatim from `database.cs:9282-9418 [v2.10.3.13]` (155
+overrides) including AM 10k's unique `PhRotStages=9`.
 
-**UI surfaces:** TxApplet `[CFC]` and `[PROC]` (compressor) quick toggles
-real now. **CFC dedicated dialog** (modeless window) with 5-band freq
-compander setup, plot, profile bank. Setup → Transmit → Speech Processor
-for CPDR and CESSB Run toggles.
+**UI surfaces (delivered):**
+- **CfcSetupPage** (Setup → Transmit → CFC) rewrite: Phase Rotator group
+  (Enable + Reverse + Corner + Stages), CFC group (Enable + Post-EQ + Precomp +
+  Post-EQ Gain + Open Dialog button), CESSB group (Enable + status text)
+- **TxCfcDialog** (modeless): profile combo + Save/SaveAs/Delete/Reset +
+  Precomp/PostEQ-Gain spinboxes + 10×3 per-band F/COMP/POST-EQ grid.
+  **Landed scalar-complete but spartan** — full Thetis `ucParametricEq` widget
+  port (3396-line `ucParametricEq.cs`, drives both `frmCFCConfig` and
+  `frmEQConfig`; freq/gain/Q drag handles + per-band Q sliders + freq sliders
+  + live curve overlay) is queued as a separate sub-PR. Design hand-off:
+  `docs/architecture/phase3m-3a-ii-cfc-eq-parametriceq-handoff.md`.
+- **PhoneCwApplet** PROC button/slider wired to `cpdrOn`/`cpdrLevelDb` (0..2
+  step → 0..20 dB linear); replaces NOR/DX/DX+ tick labels with numeric
+  "X dB". TxApplet `[PROC]` button removed (duplicate caught by JJ; surfaced
+  feedback memory `feedback_survey_before_adding_controls.md`).
+- **SpeechProcessorPage** dashboard live-status bindings (CFC/CPDR/CESSB on/off
+  + level + position).
 
-**Risk:** Medium-high. CFC dialog is intricate UI work. CPDR + CESSB
-interaction can produce splatter if defaults wrong.
+**Risk:** Medium-high → realized as predicted: CFC dialog is intricate UI
+work, hence the scalar-complete landing + ParametricEq follow-up. CPDR +
+CESSB defaults sourced byte-for-byte from Thetis factory profiles.
 
 ### 7.3 Phase 3M-3a-iii — Gating: DEXP/VOX (full parameters) + AMSQ
 
