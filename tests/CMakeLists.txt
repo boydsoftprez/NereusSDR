@@ -25,6 +25,11 @@ endfunction()
 nereus_add_test(tst_setup_helpers)
 nereus_add_test(tst_smoke)
 
+# ── FFTEngine sliding-window contract: emit rate decoupled from fftSize ──
+# Locks the Thetis PanDisplay.cs:4699-4700 stride formula port; pre-fix
+# behaviour collapsed deep-zoom (FFT=65536) to ~3 fps on a P1 wire rate.
+nereus_add_test(tst_fft_engine_sliding_window)
+
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
 nereus_add_test(tst_receiver_manager_reconnect)
 nereus_add_test(tst_container_persistence)

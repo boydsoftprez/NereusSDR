@@ -4,14 +4,20 @@
 // src/core/FFTEngine.h  (NereusSDR)
 // =================================================================
 //
-// Ported from Thetis source:
-//   Project Files/Source/Console/display.cs, original licence from Thetis source is included below
+// Ported from Thetis source [v2.10.3.13 @ 501e3f51]:
+//   Project Files/Source/Console/display.cs        — windows, dBm offset, BUFFER_SIZE
+//   Project Files/Source/Console/PanDisplay.cs     — sliding-window stride formula
+//   (original licences from Thetis sources are included below)
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-29 — Sliding-window FFT (constant-rate output regardless of
+//                 fftSize) ported from PanDisplay.cs:4699-4700, by
+//                 J.J. Boyd (KG4VCF) with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -60,9 +66,41 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// --- From PanDisplay.cs ---
+//=================================================================
+// pandisplay.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2014 Doug Wigley (W5WC)
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to:
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//=================================================================
+//
+// Waterfall AGC Modifications Copyright (C) 2013 Phil Harman (VK6APH)
+//
+
 #include <QObject>
 #include <QVector>
-#include <QElapsedTimer>
 
 #include <atomic>
 
@@ -133,6 +171,7 @@ private:
     void replanFft();
     void computeWindow();
     void processFrame();
+    void recomputeStride();  // refresh m_incrSamples from sampleRate + targetFps
 
     int m_receiverId;
 
@@ -155,13 +194,23 @@ private:
     // Window function coefficients (precomputed for current fftSize)
     QVector<float> m_window;
 
-    // I/Q accumulation buffer (interleaved pairs)
-    QVector<float> m_iqBuffer;
-    int m_iqWritePos{0};  // write position in sample pairs
+    // Sliding-window I/Q ring buffer (interleaved I/Q pairs).
+    // Size is 2*m_currentFftSize floats; m_ringWritePos is the next-write
+    // slot, modulo m_currentFftSize. The oldest sample lives at
+    // m_ringWritePos once the ring has filled; reads start there and
+    // wrap forward to reconstruct the most recent fftSize samples in
+    // chronological order.
+    QVector<float> m_iqRing;
+    int            m_ringWritePos{0};
+    qint64         m_warmupCount{0};         // counts up to fftSize before first emit
+    qint64         m_samplesSinceLastFft{0}; // resets each FFT trigger
 
-    // Output rate limiting
-    QElapsedTimer m_frameTimer;
-    bool m_frameTimerStarted{false};
+    // Stride between consecutive FFTs, in sample pairs (one "pair" = one I/Q
+    // complex sample). Recomputed on the worker thread when sampleRate or
+    // targetFps changes; see PanDisplay.cs:4699-4700 for the upstream formula.
+    qint64 m_incrSamples{0};
+    double m_lastSampleRate{0.0};
+    int    m_lastTargetFps{0};
 
     // dBm calibration offset (accounts for window gain + FFT normalization)
     float m_dbmOffset{0.0f};

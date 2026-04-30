@@ -2,14 +2,20 @@
 // src/core/FFTEngine.cpp  (NereusSDR)
 // =================================================================
 //
-// Ported from Thetis source:
-//   Project Files/Source/Console/display.cs, original licence from Thetis source is included below
+// Ported from Thetis source [v2.10.3.13 @ 501e3f51]:
+//   Project Files/Source/Console/display.cs        — windows, dBm offset, BUFFER_SIZE
+//   Project Files/Source/Console/PanDisplay.cs     — sliding-window stride formula
+//   (original licences from Thetis sources are included below)
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-29 — Sliding-window FFT (constant-rate output regardless of
+//                 fftSize) ported from PanDisplay.cs:4699-4700, by
+//                 J.J. Boyd (KG4VCF) with AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -57,6 +63,39 @@
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+
+// --- From PanDisplay.cs ---
+//=================================================================
+// pandisplay.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2014 Doug Wigley (W5WC)
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to:
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//=================================================================
+//
+// Waterfall AGC Modifications Copyright (C) 2013 Phil Harman (VK6APH)
+//
 
 #include "FFTEngine.h"
 #include "LogCategories.h"
@@ -124,23 +163,56 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
         replanFft();
     }
 
-    // Append interleaved I/Q to accumulation buffer
-    int numPairs = interleavedIQ.size() / 2;
+    if (m_currentFftSize <= 0 || m_iqRing.size() != 2 * m_currentFftSize) {
+        return;
+    }
+
+    // Refresh stride if sampleRate or targetFps changed since last call.
+    recomputeStride();
+
+    const int N = m_currentFftSize;
+    const int numPairs = interleavedIQ.size() / 2;
     for (int i = 0; i < numPairs; ++i) {
-        if (m_iqWritePos >= m_currentFftSize) {
-            // Buffer full — process and reset
-            processFrame();
-            m_iqWritePos = 0;
-        }
         // Swap I↔Q for spectrum display — matches Thetis analyzer.c:1757-1758
         // Audio path (WDSP fexchange2) uses normal I/Q order; display is inverted.
-        m_fftIn[m_iqWritePos][0] = interleavedIQ[i * 2 + 1] * m_window[m_iqWritePos];  // Q→I
-        m_fftIn[m_iqWritePos][1] = interleavedIQ[i * 2]     * m_window[m_iqWritePos];  // I→Q
-        m_iqWritePos++;
+        m_iqRing[m_ringWritePos * 2]     = interleavedIQ[i * 2 + 1];  // Q→I
+        m_iqRing[m_ringWritePos * 2 + 1] = interleavedIQ[i * 2];      // I→Q
+
+        m_ringWritePos = (m_ringWritePos + 1) % N;
+        if (m_warmupCount < N) {
+            ++m_warmupCount;
+        }
+        ++m_samplesSinceLastFft;
+
+        // Stride-based trigger — Thetis PanDisplay.cs:4699-4700 [@501e3f51]:
+        //   overlap = max(0, ceil(fft_size - sample_rate / frame_rate))
+        //   incr    = fft_size - overlap
+        // We collapse incr to max(1, sampleRate/targetFps) so the FFT output
+        // rate is targetFps regardless of fft_size (high zoom no longer
+        // chokes the waterfall scroll rate).
+        if (m_warmupCount >= N && m_samplesSinceLastFft >= m_incrSamples) {
+            m_samplesSinceLastFft -= m_incrSamples;
+            processFrame();
+        }
     }
 #else
     Q_UNUSED(interleavedIQ);
 #endif
+}
+
+void FFTEngine::recomputeStride()
+{
+    const double sr  = m_sampleRate.load();
+    const int    fps = m_targetFps.load();
+    if (sr == m_lastSampleRate && fps == m_lastTargetFps && m_incrSamples > 0) {
+        return;
+    }
+    m_lastSampleRate = sr;
+    m_lastTargetFps  = fps;
+    const int safeFps = (fps > 0) ? fps : 30;
+    const double safeSr = (sr > 0.0) ? sr : 48000.0;
+    m_incrSamples = std::max<qint64>(
+        1, static_cast<qint64>(safeSr / safeFps));
 }
 
 void FFTEngine::replanFft()
@@ -172,10 +244,21 @@ void FFTEngine::replanFft()
     m_plan = fftwf_plan_dft_1d(size, m_fftIn, m_fftOut, FFTW_FORWARD, FFTW_ESTIMATE);
 
     m_currentFftSize = size;
-    m_iqWritePos = 0;
+
+    // Resize the sliding-window ring buffer and clear the warmup counter so
+    // the next emit waits for a full fftSize of samples.
+    m_iqRing.assign(2 * size, 0.0f);
+    m_ringWritePos        = 0;
+    m_warmupCount         = 0;
+    m_samplesSinceLastFft = 0;
 
     // Recompute window coefficients
     computeWindow();
+
+    // Force stride recompute on next feedIQ — fftSize change can affect the
+    // floor case where m_incrSamples > N.
+    m_lastSampleRate = 0.0;
+    m_lastTargetFps  = 0;
 
     qCInfo(lcDsp) << "FFTEngine: plan created, window computed";
 #endif
@@ -267,28 +350,30 @@ void FFTEngine::computeWindow()
 void FFTEngine::processFrame()
 {
 #ifdef HAVE_FFTW3
-    if (!m_plan || m_iqWritePos < m_currentFftSize) {
+    if (!m_plan || m_currentFftSize <= 0 || m_warmupCount < m_currentFftSize) {
         return;
     }
 
-    // Rate limiting — skip if we're ahead of target FPS
-    int targetFps = m_targetFps.load();
-    if (targetFps > 0 && m_frameTimerStarted) {
-        qint64 minIntervalMs = 1000 / targetFps;
-        qint64 elapsed = m_frameTimer.elapsed();
-        if (elapsed < minIntervalMs) {
-            return;
-        }
+    // Reconstruct the most recent N samples in chronological order (oldest →
+    // newest) from the ring buffer and apply the window into m_fftIn. After
+    // the warmup, m_ringWritePos sits on the next-write slot which is also
+    // the oldest sample once the ring is full.
+    const int N = m_currentFftSize;
+    int src = m_ringWritePos;
+    for (int i = 0; i < N; ++i) {
+        const float w = m_window[i];
+        m_fftIn[i][0] = m_iqRing[src * 2]     * w;
+        m_fftIn[i][1] = m_iqRing[src * 2 + 1] * w;
+        src = (src + 1) % N;
     }
 
-    // Execute FFT (window already applied during accumulation in feedIQ)
+    // Execute FFT
     fftwf_execute(m_plan);
 
     // Convert to dBm: 10 * log10(I² + Q²) + normalization
     // Complex I/Q FFT: output all N bins with FFT-shift.
     // Raw FFT order: [DC..+fs/2, -fs/2..DC)
     // Shifted order:  [-fs/2..DC..+fs/2) — matches spectrum display left-to-right
-    int N = m_currentFftSize;
     int half = N / 2;
     QVector<float> binsDbm(N);
 
@@ -311,10 +396,6 @@ void FFTEngine::processFrame()
             binsDbm[i] = 10.0f * std::log10(powerSq) + m_dbmOffset;
         }
     }
-
-    // Restart frame timer
-    m_frameTimer.restart();
-    m_frameTimerStarted = true;
 
     emit fftReady(m_receiverId, binsDbm);
 #endif
