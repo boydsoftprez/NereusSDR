@@ -173,6 +173,29 @@ warren@wpratt.com
 //                 behavioural change; documentation refresh only.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-04-30 — Phase 3M-3a-ii Batch 1 — 9 TX dynamics-section wrappers
+//                 added by J.J. Boyd (KG4VCF):
+//                   CFC (6):   setTxCfcRunning(bool)
+//                              setTxCfcPosition(int)
+//                              setTxCfcProfile(F, G, E, Qg, Qe)
+//                              setTxCfcPrecompDb(double)
+//                              setTxCfcPostEqRunning(bool)
+//                              setTxCfcPrePeqDb(double)
+//                   CPDR (2):  setTxCpdrOn(bool)
+//                              setTxCpdrGainDb(double)
+//                   CESSB (1): setTxCessbOn(bool)
+//                 Thin pass-through wrappers over wdsp/cfcomp.c, compress.c
+//                 and osctrl.c [v2.10.3.13] on top of the WDSP boot defaults
+//                 shipped in 3M-1c.  setTxCfcProfile accepts the Thetis
+//                 7-arg surface (F/G/E/Qg/Qe) but the bundled WDSP only
+//                 ports the 5-arg variant — Qg/Qe are validated and
+//                 dropped today, ready for live forwarding when WDSP is
+//                 upgraded to v2.10.3.13.  Stage::CfComp / Stage::Compressor
+//                 / Stage::OsCtrl already had explicit case arms in
+//                 setStageRunning since 3M-1a Task C.4 — verified to mirror
+//                 the 3M-3a-i style (direct WDSP call, version-stamped
+//                 cite).  AI-assisted transformation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #pragma once
@@ -1085,6 +1108,115 @@ public:
     /// From Thetis setup.cs:9136-9140 [v2.10.3.13] — udDSPALCDecay_ValueChanged
     ///   handler routes through TXALCDecay → SetTXAALCDecay.
     void setTxAlcDecayMs(int ms);
+
+    // ── B-3: TX CFC + CPDR + CESSB wrappers (Phase 3M-3a-ii Batch 1) ─────────
+    //
+    // Nine thin C++ wrappers over the TXA dynamics section:
+    //   - CFC   (cfcomp.c:632-737)  Continuous Frequency Compander (stage 11)
+    //   - CPDR  (compress.c:99-117) speech compressor (stage 14)
+    //   - CESSB (osctrl.c:142-150)  controlled-envelope SSB (stage 16)
+    //
+    // All nine wrappers route to TX channel kTxChannelId = 1 and inherit the
+    // standard rsmpin.p == nullptr null-guard pattern.  All are csDSP-protected
+    // inside WDSP, so they are safe to call from the main thread while audio
+    // thread runs.  All sit on top of the WDSP boot defaults shipped in 3M-1c
+    // (no defaults invented here).
+
+    /// CFC run gate.  Wraps SetTXACFCOMPRun(channel, on ? 1 : 0).
+    ///
+    /// From Thetis wdsp/cfcomp.c:632-641 [v2.10.3.13].
+    void setTxCfcRunning(bool on);
+
+    /// CFC pre/post-EQ position.  Wraps SetTXACFCOMPPosition(channel, pos).
+    ///
+    /// Thetis usage (radio.cs / setup.cs): 0 = pre-EQ, 1 = post-EQ.  The exact
+    /// meaning is determined by where WDSP places cfcomp in the TXA chain at
+    /// run time (TXA.c:198-222 [v2.10.3.13]).
+    ///
+    /// From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13].
+    void setTxCfcPosition(int pos);
+
+    /// CFC compression profile arrays.  Wraps SetTXACFCOMPprofile.
+    ///
+    /// All vectors must have the same length, `nfreqs`.  The wrapper validates
+    /// length consistency and emits a qCWarning + early-return on mismatch.
+    /// Qg / Qe are optional in Thetis v2.10.3.13 — pass empty vectors to
+    /// signal "not provided".  Empty Qg/Qe forward as nullptr to WDSP, which
+    /// matches cfcomp.c:670-682 [v2.10.3.13] semantics.
+    ///
+    /// IMPORTANT — bundled WDSP arity divergence:
+    ///   The third_party/wdsp shipped with NereusSDR (TAPR v1.29) only exports
+    ///   the 5-arg variant `void SetTXACFCOMPprofile(int, int, double*,
+    ///   double*, double*)` (cfcomp.c:438 — no Qg/Qe).  This wrapper accepts
+    ///   the Thetis v2.10.3.13 7-arg surface (so callers and tests target the
+    ///   forward-compatible API), but at the linker boundary today only F, G
+    ///   and E are forwarded.  Qg / Qe are validated for length, then dropped.
+    ///   When third_party/wdsp is upgraded to v2.10.3.13 the wrapper will
+    ///   forward all five vectors.
+    ///
+    /// From Thetis wdsp/cfcomp.c:655-698 [v2.10.3.13] — full 7-arg signature.
+    /// From third_party/wdsp/src/cfcomp.c:437-460 (TAPR v1.29) — bundled 5-arg signature.
+    void setTxCfcProfile(const std::vector<double>& F,
+                         const std::vector<double>& G,
+                         const std::vector<double>& E,
+                         const std::vector<double>& Qg,
+                         const std::vector<double>& Qe);
+
+    /// CFC pre-compression in dB.  Wraps SetTXACFCOMPPrecomp(channel, dB).
+    /// WDSP stores pow(10, 0.05 * dB) as `precomplin` and re-multiplies the
+    /// linear gain through cfc_gain[].
+    ///
+    /// From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13].
+    void setTxCfcPrecompDb(double dB);
+
+    /// CFC post-EQ run gate.  Wraps SetTXACFCOMPPeqRun(channel, on ? 1 : 0).
+    /// Independent from setTxCfcRunning — when on, WDSP applies the peq
+    /// filter after the comp curve.
+    ///
+    /// From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13].
+    void setTxCfcPostEqRunning(bool on);
+
+    /// CFC pre-PEQ gain in dB.  Wraps SetTXACFCOMPPrePeq(channel, dB).  WDSP
+    /// stores pow(10, 0.05 * dB) as `prepeqlin`.
+    ///
+    /// From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13].
+    void setTxCfcPrePeqDb(double dB);
+
+    /// CPDR (compressor) run gate.  Wraps SetTXACompressorRun(channel,
+    /// on ? 1 : 0).
+    ///
+    /// SIDE EFFECT: SetTXACompressorRun calls TXASetupBPFilters(channel)
+    /// internally (compress.c:106 [v2.10.3.13]) — toggling CPDR rebuilds bp1
+    /// and the gated bp2 to track the compression-and-clip routing in the
+    /// TXA pipeline.  Callers don't need to do anything special; just be
+    /// aware that this is more than a single-flag toggle.
+    ///
+    /// From Thetis wdsp/compress.c:99-109 [v2.10.3.13].
+    void setTxCpdrOn(bool on);
+
+    /// CPDR (compressor) gain in dB.  Wraps SetTXACompressorGain(channel, dB).
+    /// WDSP converts to linear via pow(10, dB / 20.0) internally.
+    ///
+    /// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
+    void setTxCpdrGainDb(double dB);
+
+    /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
+    ///
+    /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
+    /// internally (osctrl.c:148 [v2.10.3.13]) — toggling CESSB rebuilds bp2.
+    ///
+    /// SIDE EFFECT 2 / IMPORTANT SEMANTIC: bp2.run (the CESSB-side bandpass)
+    /// is only set when *both* `compressor.run` AND `osctrl.run` are 1
+    /// (TXA.c:843-852, parallel switch arms in TXASetupBPFilters
+    /// [v2.10.3.13]).  Calling setTxCessbOn(true) without first turning CPDR
+    /// on is therefore effectively a no-op at the audio level — osctrl.run
+    /// is set, but the BP filter that feeds it stays off.  This wrapper does
+    /// NOT enforce that coupling; it matches Thetis behaviour exactly and
+    /// lets WDSP own the dependency.
+    ///
+    /// From Thetis wdsp/osctrl.c:142-150 [v2.10.3.13].
+    /// From Thetis wdsp/TXA.c:843-868 [v2.10.3.13] — bp2.run gating.
+    void setTxCessbOn(bool on);
 
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //

@@ -49,6 +49,17 @@
 //                 PostGen two-tone IMD test wrapper setters. Signatures
 //                 match wdsp/gen.c:817-962 [v2.10.3.13]. AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-04-30 — SetTXACompressorGain, SetTXACFCOMPPosition,
+//                 SetTXACFCOMPprofile, SetTXACFCOMPPrecomp,
+//                 SetTXACFCOMPPeqRun, SetTXACFCOMPPrePeq declarations
+//                 added by J.J. Boyd (KG4VCF) during 3M-3a-ii Batch 1 —
+//                 TxChannel CFC + CPDR + CESSB wrappers.  Signatures
+//                 match wdsp/cfcomp.c:632-737 and wdsp/compress.c:99-117
+//                 [v2.10.3.13], with cfcomp profile arity reduced to the
+//                 5-arg variant exported by the bundled third_party/wdsp
+//                 (TAPR v1.29) — the 7-arg variant (Qg/Qe) becomes
+//                 available when third_party/wdsp is upgraded.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -729,13 +740,52 @@ void SetTXAGrphEQ10(int channel, int* txeq);
 // From Thetis wdsp/compress.c:99-109 [v2.10.3.13] and compress.h:60.
 void SetTXACompressorRun(int channel, int run);
 
+// CPDR gain (dB).  Internally WDSP stores pow(10, gain/20.0).
+// From Thetis wdsp/compress.c:111-117 [v2.10.3.13].
+void SetTXACompressorGain(int channel, double gain);
+
 // osctrl (stage 16): CESSB overshoot control.
 // From Thetis wdsp/osctrl.c:142-147 [v2.10.3.13].
 void SetTXAosctrlRun(int channel, int run);
 
 // cfcomp (stage 11): continuous frequency compander.
-// From Thetis wdsp/cfcomp.c:632-637 [v2.10.3.13].
+// From Thetis wdsp/cfcomp.c:632-737 [v2.10.3.13].
 void SetTXACFCOMPRun(int channel, int run);
+
+// CFC pre/post position. 0 = pre-EQ, 1 = post-EQ (Thetis usage).
+// From Thetis wdsp/cfcomp.c:643-653 [v2.10.3.13].
+void SetTXACFCOMPPosition(int channel, int pos);
+
+// CFC profile arrays.  All five vectors must have nfreqs entries:
+//   F  - centre frequencies (Hz)
+//   G  - gain at each F (dB)
+//   E  - max-gain ceiling at each F (dB)
+//   Qg - Q for the gain skirt (NULL allowed)  [Thetis v2.10.3.13 only]
+//   Qe - Q for the ceiling skirt (NULL allowed) [Thetis v2.10.3.13 only]
+// Note: the third_party/wdsp/src bundled with NereusSDR (TAPR v1.29) ships an
+// older 5-arg signature — `void SetTXACFCOMPprofile(int, int, double*, double*,
+// double*)` (cfcomp.c:438 — no Qg/Qe).  TxChannel::setTxCfcProfile accepts the
+// Thetis v2.10.3.13 superset surface but only forwards F/G/E to the linker
+// today; Qg/Qe are validated and dropped.  When third_party/wdsp is upgraded
+// to v2.10.3.13 the wrapper passes through.
+//
+// From Thetis wdsp/cfcomp.c:655-698 [v2.10.3.13] — full 7-arg signature.
+// From third_party/wdsp/src/cfcomp.c:437-460 (TAPR v1.29) — bundled 5-arg signature.
+void SetTXACFCOMPprofile(int channel, int nfreqs, double* F, double* G, double* E);
+
+// CFC pre-compression in dB.  WDSP stores pow(10, 0.05 * dB) internally and
+// pre-applies the linear gain to cfc_gain[].
+// From Thetis wdsp/cfcomp.c:700-715 [v2.10.3.13].
+void SetTXACFCOMPPrecomp(int channel, double precomp);
+
+// CFC post-EQ run gate.  Independent from the main CFC run flag — when on,
+// WDSP applies the peq filter after the comp curve.
+// From Thetis wdsp/cfcomp.c:717-727 [v2.10.3.13].
+void SetTXACFCOMPPeqRun(int channel, int run);
+
+// CFC pre-PEQ gain (dB).  WDSP stores pow(10, 0.05 * dB) as prepeqlin.
+// From Thetis wdsp/cfcomp.c:729-737 [v2.10.3.13].
+void SetTXACFCOMPPrePeq(int channel, double prepeq);
 
 // ── TX channel default config — from deskhpsdr/src/transmitter.c:1459-1473 [@120188f]
 // These calls are invoked AFTER OpenChannel(... type=1 ...) to put the WDSP TX

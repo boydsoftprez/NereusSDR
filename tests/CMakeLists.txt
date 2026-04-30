@@ -1757,6 +1757,15 @@ nereus_add_test(tst_tx_channel_eq_setters)
 # cases added to setStageRunning.  Same does-not-crash strategy as B-1.
 nereus_add_test(tst_tx_channel_leveler_alc_setters)
 
+# ── Phase 3M-3a-ii Task B-3: TxChannel CFC + CPDR + CESSB wrappers ─────────
+# Plan: 3M-3a-ii Batch 1 Task B-3 — 9 wrappers over the WDSP TXA dynamics
+# section: CFC (cfcomp.c:632-737), CPDR (compress.c:99-117), CESSB
+# (osctrl.c:142-150) [all v2.10.3.13].  Includes profile-array validation
+# coverage (empty / mismatched-length early-return) plus regression coverage
+# for the existing Stage::CfComp / Stage::Compressor / Stage::OsCtrl arms in
+# setStageRunning.  Same does-not-crash strategy as B-1 / B-2.
+nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
+
 # ── Phase 3M-3a-i Task C: TransmitModel TX EQ + Leveler + ALC properties ──
 # Plan: 3M-3a-i Batch 1 Task C — 28 new properties on TransmitModel:
 #   - 23 TXProfile keys: TXEQEnabled / TXEQNumBands / TXEQPreamp / TXEQ1..10 /
