@@ -140,7 +140,6 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <cmath>
 
 namespace NereusSDR {
