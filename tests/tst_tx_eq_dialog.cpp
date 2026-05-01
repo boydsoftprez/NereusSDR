@@ -479,16 +479,30 @@ private slots:
     }
 
     // ── 16b. Parametric edit stores Thetis gzip/base64url envelope ────
-    void parametricEditStoresThetisEnvelopeAndUpdatesLegacyPath()
+    //         AND leaves legacy scalar fields untouched.
+    void parametricEditEncodesEnvelopeAndPreservesLegacyScalars()
     {
         RadioModel rm;
-        TxEqDialog dlg(&rm);
         TransmitModel& tx = rm.transmitModel();
+
+        // Capture legacy field defaults BEFORE the dialog constructs,
+        // since TransmitModel's defaults aren't necessarily zero
+        // (txEqBand defaults to -12 at the slider min, for example).
+        const int defaultPreamp = tx.txEqPreamp();
+        std::array<int, 10> defaultBands;
+        for (int i = 0; i < 10; ++i) {
+            defaultBands[i] = tx.txEqBand(i);
+        }
+
+        TxEqDialog dlg(&rm);
         ParametricEqWidget* w = dlg.parametricWidget();
         QVERIFY(w);
 
         w->setGlobalGainDb(3.0);
 
+        // 1. Blob is encoded (gzip+base64url envelope, not raw JSON) and
+        //    decodes back to JSON containing the new global gain --
+        //    Codex P1 #1 envelope-encoding fix from f5b24ef.
         const QString blob = tx.txEqParaEqData();
         QVERIFY(!blob.isEmpty());
         QVERIFY(!blob.trimmed().startsWith(QLatin1Char('{')));
@@ -497,9 +511,19 @@ private slots:
         QVERIFY(decoded.has_value());
         QVERIFY(decoded->contains(QStringLiteral("\"global_gain_db\": 3")));
 
-        // Regression guard for PR #159 review thread: parametric edits also
-        // push through the legacy scalar path that RadioModel maps to WDSP.
-        QCOMPARE(tx.txEqPreamp(), 3);
+        // 2. Legacy scalar fields stay at their pre-edit values --
+        //    parametric edits push the curve directly to WDSP via
+        //    TxChannel::setTxEqProfile (see 9e6de26 commit message), NOT
+        //    via the legacy txEqPreamp/txEqBand setter chain.  Mutating
+        //    legacy scalars here would corrupt the user's legacy-mode
+        //    settings on toggle-back to chkLegacyEQ.  The earlier
+        //    dd03b70 approach DID push to legacy scalars and lost
+        //    parametric precision (4.6 dB rounded to 5) plus discarded
+        //    parametric band centers (sampled at the legacy ISO grid).
+        QCOMPARE(tx.txEqPreamp(), defaultPreamp);
+        for (int i = 0; i < 10; ++i) {
+            QCOMPARE(tx.txEqBand(i), defaultBands[i]);
+        }
     }
 
     // ── 16c. Encoded model blob hydrates the parametric widget ─────────
