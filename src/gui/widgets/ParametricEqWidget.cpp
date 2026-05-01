@@ -64,6 +64,11 @@ mw0lge@grange-lane.co.uk
 #include <QCursor>
 #include <QDateTime>
 #include <QFontMetrics>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QJsonValue>
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPaintEvent>
@@ -1975,6 +1980,683 @@ void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
         }
         update();
     }
+}
+
+// =================================================================
+// Section: public Q-style property setters (Batch 5)
+//
+// Each setter mirrors a [Category] property at ucParametricEq.cs:449-1005
+// [v2.10.3.13].  The early-return + clamp + side-effect ordering is verbatim
+// from the C# setter.  Public getters are inline in the header.
+// =================================================================
+
+// From Thetis ucParametricEq.cs:577-603 [v2.10.3.13] -- BandCount.
+void ParametricEqWidget::setBandCount(int count) {
+    int v = count;
+    if (v < 2) v = 2;
+    if (v > 256) v = 256;
+    if (v == m_bandCount) return;
+
+    m_bandCount = v;
+
+    bool hadSelection = (m_selectedIndex != -1);
+    resetPointsDefault();
+
+    if (hadSelection) {
+        m_selectedIndex = -1;
+        raiseSelectedIndexChanged(false);
+    }
+
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:605-624 [v2.10.3.13] -- FrequencyMinHz.
+void ParametricEqWidget::setFrequencyMinHz(double hz) {
+    double newMin = hz;
+    if (std::isnan(newMin) || std::isinf(newMin)) return;
+    if (newMin >= m_frequencyMaxHz) return;
+
+    double oldMin = m_frequencyMinHz;
+    double oldMax = m_frequencyMaxHz;
+
+    m_frequencyMinHz = newMin;
+    rescaleFrequencies(oldMin, oldMax, m_frequencyMinHz, m_frequencyMaxHz);
+    enforceOrdering(true);
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:626-645 [v2.10.3.13] -- FrequencyMaxHz.
+void ParametricEqWidget::setFrequencyMaxHz(double hz) {
+    double newMax = hz;
+    if (std::isnan(newMax) || std::isinf(newMax)) return;
+    if (newMax <= m_frequencyMinHz) return;
+
+    double oldMin = m_frequencyMinHz;
+    double oldMax = m_frequencyMaxHz;
+
+    m_frequencyMaxHz = newMax;
+    rescaleFrequencies(oldMin, oldMax, m_frequencyMinHz, m_frequencyMaxHz);
+    enforceOrdering(true);
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:647-660 [v2.10.3.13] -- LogScale.
+void ParametricEqWidget::setLogScale(bool on) {
+    if (on == m_logScale) return;
+    m_logScale = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:662-681 [v2.10.3.13] -- DbMin.
+void ParametricEqWidget::setDbMin(double db) {
+    double v = db;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v >= m_dbMax) return;
+    m_dbMin = v;
+    clampAllGains();
+    if (!m_barChartData.isEmpty()) {
+        syncBarChartPeaksToData();
+    }
+    raisePointsChanged(false);
+    raiseGlobalGainChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:683-702 [v2.10.3.13] -- DbMax.
+void ParametricEqWidget::setDbMax(double db) {
+    double v = db;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v <= m_dbMin) return;
+    m_dbMax = v;
+    clampAllGains();
+    if (!m_barChartData.isEmpty()) {
+        syncBarChartPeaksToData();
+    }
+    raisePointsChanged(false);
+    raiseGlobalGainChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:722-735 [v2.10.3.13] -- GlobalGainIsHorizLine.
+void ParametricEqWidget::setGlobalGainIsHorizLine(bool on) {
+    if (on == m_globalGainIsHorizLine) return;
+    m_globalGainIsHorizLine = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:737-746 [v2.10.3.13] -- ShowReadout.
+// Note: C# unconditionally writes the field then Invalidate() (no early-
+// return on equality). Match that behavior verbatim.
+void ParametricEqWidget::setShowReadout(bool on) {
+    m_showReadout = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:748-761 [v2.10.3.13] -- ShowDotReadings.
+void ParametricEqWidget::setShowDotReadings(bool on) {
+    if (on == m_showDotReadings) return;
+    m_showDotReadings = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:763-776 [v2.10.3.13] -- ShowDotReadingsAsComp.
+void ParametricEqWidget::setShowDotReadingsAsComp(bool on) {
+    if (on == m_showDotReadingsAsComp) return;
+    m_showDotReadingsAsComp = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:778-792 [v2.10.3.13] -- MinPointSpacingHz.
+void ParametricEqWidget::setMinPointSpacingHz(double hz) {
+    double v = hz;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v < 0.0) v = 0.0;
+    m_minPointSpacingHz = v;
+    enforceOrdering(true);
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:794-807 [v2.10.3.13] -- AllowPointReorder.
+void ParametricEqWidget::setAllowPointReorder(bool on) {
+    if (on == m_allowPointReorder) return;
+    m_allowPointReorder = on;
+    enforceOrdering(true);
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:809-820 [v2.10.3.13] -- ParametricEQ.
+void ParametricEqWidget::setParametricEq(bool on) {
+    if (on == m_parametricEq) return;
+    m_parametricEq = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:822-837 [v2.10.3.13] -- QMin.
+void ParametricEqWidget::setQMin(double q) {
+    double v = q;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v <= 0.0) return;
+    m_qMin = v;
+    if (m_qMax < m_qMin) m_qMax = m_qMin;
+    clampAllQ();
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:839-854 [v2.10.3.13] -- QMax.
+void ParametricEqWidget::setQMax(double q) {
+    double v = q;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v <= 0.0) return;
+    m_qMax = v;
+    if (m_qMin > m_qMax) m_qMin = m_qMax;
+    clampAllQ();
+    raisePointsChanged(false);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:856-865 [v2.10.3.13] -- ShowBandShading.
+// Note: C# unconditionally writes + Invalidate (no equality early-return).
+void ParametricEqWidget::setShowBandShading(bool on) {
+    m_showBandShading = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:867-876 [v2.10.3.13] -- UsePerBandColours.
+// Note: C# unconditionally writes + Invalidate (no equality early-return).
+void ParametricEqWidget::setUsePerBandColours(bool on) {
+    m_usePerBandColours = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:878-887 [v2.10.3.13] -- BandShadeColor.
+void ParametricEqWidget::setBandShadeColor(const QColor& c) {
+    m_bandShadeColor = c;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:889-901 [v2.10.3.13] -- BandShadeAlpha.
+void ParametricEqWidget::setBandShadeAlpha(int alpha) {
+    int v = alpha;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    m_bandShadeAlpha = v;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:903-915 [v2.10.3.13] -- BandShadeWeightCutoff.
+void ParametricEqWidget::setBandShadeWeightCutoff(double cutoff) {
+    double v = cutoff;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v < 0.0) v = 0.0;
+    m_bandShadeWeightCutoff = v;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:917-926 [v2.10.3.13] -- ShowAxisScales.
+// Note: C# unconditionally writes + Invalidate.
+void ParametricEqWidget::setShowAxisScales(bool on) {
+    m_showAxisScales = on;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:928-940 [v2.10.3.13] -- AxisTickLength.
+void ParametricEqWidget::setAxisTickLength(int len) {
+    int v = len;
+    if (v < 2) v = 2;
+    if (v > 20) v = 20;
+    m_axisTickLength = v;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:942-951 [v2.10.3.13] -- AxisTextColor.
+void ParametricEqWidget::setAxisTextColor(const QColor& c) {
+    m_axisTextColor = c;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:953-962 [v2.10.3.13] -- AxisTickColor.
+void ParametricEqWidget::setAxisTickColor(const QColor& c) {
+    m_axisTickColor = c;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:559-575 [v2.10.3.13] -- YAxisStepDb.
+void ParametricEqWidget::setYAxisStepDb(double step) {
+    double v = step;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v < 0.0) v = 0.0;
+    if (v > 0.0 && v < 0.1) v = 0.1;
+    if (qAbs(v - m_yAxisStepDb) < 0.000001) return;
+
+    m_yAxisStepDb = v;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:449-470 [v2.10.3.13] -- BarChartPeakHoldEnabled.
+void ParametricEqWidget::setBarChartPeakHoldEnabled(bool on) {
+    if (on == m_barChartPeakHoldEnabled) return;
+
+    m_barChartPeakHoldEnabled        = on;
+    m_barChartPeakLastUpdateMs       = QDateTime::currentMSecsSinceEpoch();
+
+    if (!m_barChartPeakHoldEnabled && !m_barChartData.isEmpty()) {
+        syncBarChartPeaksToData();
+    }
+
+    updateBarChartPeakTimerState();
+    update();
+}
+
+// From Thetis ucParametricEq.cs:472-485 [v2.10.3.13] -- BarChartPeakHoldMs.
+void ParametricEqWidget::setBarChartPeakHoldMs(int ms) {
+    int v = ms;
+    if (v < 0) v = 0;
+    if (v == m_barChartPeakHoldMs) return;
+    m_barChartPeakHoldMs = v;
+}
+
+// From Thetis ucParametricEq.cs:487-501 [v2.10.3.13] -- BarChartPeakDecayDbPerSecond.
+void ParametricEqWidget::setBarChartPeakDecayDbPerSecond(double dbPerSec) {
+    double v = dbPerSec;
+    if (std::isnan(v) || std::isinf(v)) return;
+    if (v < 0.0) v = 0.0;
+    if (qAbs(v - m_barChartPeakDecayDbPerSecond) < 0.000001) return;
+    m_barChartPeakDecayDbPerSecond = v;
+}
+
+// From Thetis ucParametricEq.cs:503-512 [v2.10.3.13] -- BarChartFillColor.
+void ParametricEqWidget::setBarChartFillColor(const QColor& c) {
+    m_barChartFillColor = c;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:514-529 [v2.10.3.13] -- BarChartFillAlpha.
+void ParametricEqWidget::setBarChartFillAlpha(int alpha) {
+    int v = alpha;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    if (v == m_barChartFillAlpha) return;
+    m_barChartFillAlpha = v;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:531-540 [v2.10.3.13] -- BarChartPeakColor.
+void ParametricEqWidget::setBarChartPeakColor(const QColor& c) {
+    m_barChartPeakColor = c;
+    update();
+}
+
+// From Thetis ucParametricEq.cs:542-557 [v2.10.3.13] -- BarChartPeakAlpha.
+void ParametricEqWidget::setBarChartPeakAlpha(int alpha) {
+    int v = alpha;
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    if (v == m_barChartPeakAlpha) return;
+    m_barChartPeakAlpha = v;
+    update();
+}
+
+// =================================================================
+// Section: point-edit public API (Batch 5)
+//
+// Mirrors ucParametricEq.cs:1134-1351 [v2.10.3.13].
+// =================================================================
+
+// From Thetis ucParametricEq.cs:1134-1140 [v2.10.3.13] -- SetPointHz.
+bool ParametricEqWidget::setPointHz(int bandId, double frequencyHz, bool isDragging) {
+    int idx = indexFromBandId(bandId);
+    if (idx < 0) return false;
+
+    return setPointHzInternal(idx, frequencyHz, isDragging);
+}
+
+// From Thetis ucParametricEq.cs:1162-1244 [v2.10.3.13] -- setPointHzInternal.
+// C# keys on EqPoint reference identity; we resolve by index up-front
+// because EqPoint is a value type in C++ and re-resolving by bandId after
+// each enforceOrdering() call (which can reorder) is the safe equivalent.
+bool ParametricEqWidget::setPointHzInternal(int index, double frequencyHz, bool isDragging) {
+    if (index < 0 || index >= m_points.size()) return false;
+
+    EqPoint& p = m_points[index];
+
+    double oldF = p.frequencyHz;
+    double oldG = p.gainDb;
+    double oldQ = p.q;
+
+    double freq;
+
+    if (isFrequencyLockedIndex(index)) {
+        freq = getLockedFrequencyForIndex(index);
+    } else {
+        freq = clamp(frequencyHz, m_frequencyMinHz, m_frequencyMaxHz);
+
+        if (!m_allowPointReorder) {
+            double minF;
+            double maxF;
+
+            if (index == 0) {
+                minF = m_frequencyMinHz;
+                maxF = m_points[1].frequencyHz - m_minPointSpacingHz;
+            } else if (index == m_points.size() - 1) {
+                minF = m_points[m_points.size() - 2].frequencyHz + m_minPointSpacingHz;
+                maxF = m_frequencyMaxHz;
+            } else {
+                minF = m_points[index - 1].frequencyHz + m_minPointSpacingHz;
+                maxF = m_points[index + 1].frequencyHz - m_minPointSpacingHz;
+            }
+
+            if (maxF < minF) maxF = minF;
+            freq = clamp(freq, minF, maxF);
+        }
+    }
+
+    if (qAbs(p.frequencyHz - freq) <= 0.000001) return true;
+
+    // Capture bandId BEFORE writing -- enforceOrdering may reshuffle, so we
+    // re-resolve the slot below and then re-bind p to the new location.
+    int writeBandId = p.bandId;
+    p.frequencyHz = freq;
+
+    if (m_allowPointReorder && !isFrequencyLockedIndex(index)) {
+        enforceOrdering(false);
+
+        index = indexFromBandId(writeBandId);
+        if (index < 0) return false;
+        EqPoint& pAfter = m_points[index];
+
+        double minF = m_frequencyMinHz;
+        double maxF = m_frequencyMaxHz;
+
+        if (m_points.size() > 1) {
+            if (index > 0) minF = m_points[index - 1].frequencyHz + m_minPointSpacingHz;
+            if (index < m_points.size() - 1) maxF = m_points[index + 1].frequencyHz - m_minPointSpacingHz;
+            if (maxF < minF) maxF = minF;
+        }
+
+        double clampedFreq = clamp(pAfter.frequencyHz, minF, maxF);
+        if (qAbs(clampedFreq - pAfter.frequencyHz) > 0.000001) pAfter.frequencyHz = clampedFreq;
+
+        enforceOrdering(false);
+    }
+
+    raisePointsChanged(isDragging);
+
+    // Re-resolve once more after the second enforceOrdering above; the band
+    // may have shifted slot during the in-band clamp pass.
+    int finalIdx = indexFromBandId(writeBandId);
+    if (finalIdx >= 0 && finalIdx < m_points.size()) {
+        const EqPoint& pFinal = m_points.at(finalIdx);
+        if (qAbs(pFinal.frequencyHz - oldF) > 0.000001
+            || qAbs(pFinal.gainDb - oldG) > 0.000001
+            || qAbs(pFinal.q - oldQ) > 0.000001) {
+            raisePointDataChanged(finalIdx, pFinal, isDragging);
+        }
+    }
+
+    update();
+    return true;
+}
+
+// From Thetis ucParametricEq.cs:1246-1258 [v2.10.3.13] -- GetPointData.
+// Decimal precision: freq=3, gain=1, q=2 (Math.Round in C#).
+void ParametricEqWidget::getPointData(int index, double& frequencyHz, double& gainDb, double& q) const {
+    frequencyHz = 0.0;
+    gainDb      = 0.0;
+    q           = 0.0;
+
+    if (index < 0 || index >= m_points.size()) return;
+
+    const EqPoint& p = m_points.at(index);
+    frequencyHz = qRound(p.frequencyHz * 1000.0) / 1000.0;
+    gainDb      = qRound(p.gainDb * 10.0) / 10.0;
+    q           = m_parametricEq ? (qRound(p.q * 100.0) / 100.0) : 0.0;
+}
+
+// From Thetis ucParametricEq.cs:1260-1288 [v2.10.3.13] -- SetPointData.
+bool ParametricEqWidget::setPointData(int index, double frequencyHz, double gainDb, double q) {
+    if (index < 0 || index >= m_points.size()) return false;
+
+    EqPoint& p = m_points[index];
+
+    double oldF = p.frequencyHz;
+    double oldG = p.gainDb;
+    double oldQ = p.q;
+    int    bandId = p.bandId;
+
+    if (isFrequencyLockedIndex(index)) {
+        p.frequencyHz = getLockedFrequencyForIndex(index);
+    } else {
+        p.frequencyHz = clamp(frequencyHz, m_frequencyMinHz, m_frequencyMaxHz);
+    }
+
+    p.gainDb = clamp(gainDb, m_dbMin, m_dbMax);
+    p.q      = clamp(q,      m_qMin, m_qMax);
+
+    enforceOrdering(true);
+
+    // After enforceOrdering, the slot may have shifted; re-resolve for
+    // accurate change detection + signal payload.
+    int newIdx = indexFromBandId(bandId);
+    if (newIdx < 0) return true;
+
+    const EqPoint& pAfter = m_points.at(newIdx);
+    if (qAbs(pAfter.frequencyHz - oldF) > 0.000001
+        || qAbs(pAfter.gainDb - oldG) > 0.000001
+        || qAbs(pAfter.q - oldQ) > 0.000001) {
+        raisePointsChanged(false);
+        raisePointDataChanged(newIdx, pAfter, false);
+        update();
+    }
+
+    return true;
+}
+
+// From Thetis ucParametricEq.cs:1290-1309 [v2.10.3.13] -- GetPointsData.
+// 3 parallel arrays, NOT a single struct array, to match the Thetis signature
+// (downstream MicProfileManager / TransmitModel call pattern).
+void ParametricEqWidget::getPointsData(QVector<double>& frequencyHz,
+                                       QVector<double>& gainDb,
+                                       QVector<double>& q) const {
+    int n = m_points.size();
+
+    QVector<double> f(n);
+    QVector<double> g(n);
+    QVector<double> qq(n);
+
+    for (int i = 0; i < n; ++i) {
+        const EqPoint& p = m_points.at(i);
+        f[i]  = p.frequencyHz;
+        g[i]  = p.gainDb;
+        qq[i] = p.q;
+    }
+
+    frequencyHz = f;
+    gainDb      = g;
+    q           = qq;
+}
+
+// From Thetis ucParametricEq.cs:1311-1351 [v2.10.3.13] -- SetPointsData.
+// Bulk path: writes all 3 arrays atomically, fires ONE pointsChanged(false)
+// at the end if anything moved (does NOT fire per-point pointDataChanged --
+// callers wanting per-point notifications should use setPointData in a loop).
+bool ParametricEqWidget::setPointsData(const QVector<double>& frequencyHz,
+                                       const QVector<double>& gainDb,
+                                       const QVector<double>& q) {
+    if (frequencyHz.size() != m_points.size()) return false;
+    if (gainDb.size()      != m_points.size()) return false;
+    if (q.size()           != m_points.size()) return false;
+
+    bool anyChanged = false;
+
+    for (int i = 0; i < m_points.size(); ++i) {
+        EqPoint& p = m_points[i];
+
+        double oldF = p.frequencyHz;
+        double oldG = p.gainDb;
+        double oldQ = p.q;
+
+        if (isFrequencyLockedIndex(i)) {
+            p.frequencyHz = getLockedFrequencyForIndex(i);
+        } else {
+            p.frequencyHz = clamp(frequencyHz.at(i), m_frequencyMinHz, m_frequencyMaxHz);
+        }
+
+        p.gainDb = clamp(gainDb.at(i), m_dbMin, m_dbMax);
+        p.q      = clamp(q.at(i),      m_qMin, m_qMax);
+
+        if (qAbs(p.frequencyHz - oldF) > 0.000001
+            || qAbs(p.gainDb - oldG) > 0.000001
+            || qAbs(p.q - oldQ) > 0.000001) {
+            anyChanged = true;
+        }
+    }
+
+    enforceOrdering(true);
+
+    if (anyChanged) {
+        raisePointsChanged(false);
+        update();
+    }
+
+    return true;
+}
+
+// =================================================================
+// Section: JSON marshal (Batch 5)
+//
+// Mirrors Thetis Newtonsoft snake_case schema at ucParametricEq.cs:220-252,
+// 1460-1573 [v2.10.3.13].  EqJsonPoint deliberately carries ONLY freq/gain/q
+// -- bandId and bandColor are widget-local concerns and must NOT be
+// serialized (round-trip compatibility with the Thetis-generated JSON
+// blobs that ride in MicProfileManager and TransmitModel).
+// Decimal precision verbatim: freq=3, gain=1, q=2.
+// =================================================================
+
+// From Thetis ucParametricEq.cs:1460-1486 [v2.10.3.13] -- SaveToJson.
+QString ParametricEqWidget::saveToJson() const {
+    QJsonObject root;
+    root.insert(QStringLiteral("band_count"),       m_points.size());
+    root.insert(QStringLiteral("parametric_eq"),    m_parametricEq);
+    root.insert(QStringLiteral("global_gain_db"),   qRound(m_globalGainDb * 10.0) / 10.0);
+    root.insert(QStringLiteral("frequency_min_hz"), qRound(m_frequencyMinHz * 1000.0) / 1000.0);
+    root.insert(QStringLiteral("frequency_max_hz"), qRound(m_frequencyMaxHz * 1000.0) / 1000.0);
+
+    QJsonArray pts;
+    for (const EqPoint& p : m_points) {
+        QJsonObject jp;
+        jp.insert(QStringLiteral("frequency_hz"), qRound(p.frequencyHz * 1000.0) / 1000.0);
+        jp.insert(QStringLiteral("gain_db"),      qRound(p.gainDb * 10.0) / 10.0);
+        jp.insert(QStringLiteral("q"),            qRound(p.q * 100.0) / 100.0);
+        pts.append(jp);
+    }
+    root.insert(QStringLiteral("points"), pts);
+
+    return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
+}
+
+// From Thetis ucParametricEq.cs:1488-1573 [v2.10.3.13] -- LoadFromJson.
+// Drag-safety: Thetis source does NOT bail on an active drag; it reuses the
+// existing enforceOrdering(true) path which normalizes ordering even mid-
+// drag.  We match that behavior verbatim -- callers wanting drag-safe loads
+// must gate at the call site.
+bool ParametricEqWidget::loadFromJson(const QString& json) {
+    if (json.trimmed().isEmpty()) return false;
+
+    QJsonParseError perr;
+    QJsonDocument   doc = QJsonDocument::fromJson(json.toUtf8(), &perr);
+    if (perr.error != QJsonParseError::NoError) return false;
+    if (!doc.isObject()) return false;
+
+    QJsonObject root = doc.object();
+    if (!root.contains(QStringLiteral("points"))) return false;
+    QJsonValue ptsVal = root.value(QStringLiteral("points"));
+    if (!ptsVal.isArray()) return false;
+    QJsonArray pts = ptsVal.toArray();
+    if (pts.size() < 2) return false;
+
+    int    bandCount = root.value(QStringLiteral("band_count")).toInt(0);
+    if (bandCount < 2) bandCount = pts.size();
+
+    if (bandCount < 2)         return false;
+    if (bandCount > 256)       return false;
+    if (bandCount != pts.size()) return false;
+
+    double newFreqMin = root.value(QStringLiteral("frequency_min_hz")).toDouble(
+                         std::numeric_limits<double>::quiet_NaN());
+    double newFreqMax = root.value(QStringLiteral("frequency_max_hz")).toDouble(
+                         std::numeric_limits<double>::quiet_NaN());
+    if (std::isnan(newFreqMin) || std::isinf(newFreqMin)) return false;
+    if (std::isnan(newFreqMax) || std::isinf(newFreqMax)) return false;
+    if (newFreqMax <= newFreqMin) return false;
+
+    bool anyChanged = false;
+
+    if (bandCount != m_points.size()) {
+        anyChanged = true;
+        m_bandCount = bandCount;
+        resetPointsDefault();
+    }
+
+    bool   oldParam = m_parametricEq;
+    double oldGlobal = m_globalGainDb;
+    double oldFreqMin = m_frequencyMinHz;
+    double oldFreqMax = m_frequencyMaxHz;
+
+    m_parametricEq    = root.value(QStringLiteral("parametric_eq")).toBool(false);
+    m_globalGainDb    = clamp(root.value(QStringLiteral("global_gain_db")).toDouble(0.0),
+                              m_dbMin, m_dbMax);
+    m_frequencyMinHz  = newFreqMin;
+    m_frequencyMaxHz  = newFreqMax;
+
+    if (oldParam != m_parametricEq)                         anyChanged = true;
+    if (qAbs(oldGlobal - m_globalGainDb) > 0.000001)        anyChanged = true;
+    if (qAbs(oldFreqMin - m_frequencyMinHz) > 0.000001)     anyChanged = true;
+    if (qAbs(oldFreqMax - m_frequencyMaxHz) > 0.000001)     anyChanged = true;
+
+    for (int i = 0; i < m_points.size(); ++i) {
+        EqPoint& p = m_points[i];
+        if (i >= pts.size()) break;
+        if (!pts.at(i).isObject()) continue;
+        QJsonObject jp = pts.at(i).toObject();
+
+        double oldF = p.frequencyHz;
+        double oldG = p.gainDb;
+        double oldQ = p.q;
+
+        double jpFreq = jp.value(QStringLiteral("frequency_hz")).toDouble(p.frequencyHz);
+        double jpGain = jp.value(QStringLiteral("gain_db")).toDouble(p.gainDb);
+        double jpQ    = jp.value(QStringLiteral("q")).toDouble(p.q);
+
+        if (isFrequencyLockedIndex(i)) {
+            p.frequencyHz = getLockedFrequencyForIndex(i);
+        } else {
+            p.frequencyHz = clamp(jpFreq, m_frequencyMinHz, m_frequencyMaxHz);
+        }
+        p.gainDb = clamp(jpGain, m_dbMin, m_dbMax);
+        p.q      = clamp(jpQ,    m_qMin, m_qMax);
+
+        if (qAbs(p.frequencyHz - oldF) > 0.000001
+            || qAbs(p.gainDb - oldG) > 0.000001
+            || qAbs(p.q - oldQ) > 0.000001) {
+            anyChanged = true;
+        }
+    }
+
+    enforceOrdering(true);
+
+    if (anyChanged) {
+        raisePointsChanged(false);
+        raiseGlobalGainChanged(false);
+        update();
+    }
+
+    return true;
 }
 
 } // namespace NereusSDR

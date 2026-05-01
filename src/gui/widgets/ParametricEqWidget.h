@@ -128,12 +128,147 @@ public:
     static int    defaultBandPaletteSize();
     static QColor defaultBandPaletteAt(int index);
 
-    // -- Public setters (mirror C# property setters at ucParametricEq.cs:704-720
-    //    GlobalGainDb and cs:970-1005 SelectedIndex). --
-    // From Thetis ucParametricEq.cs:704-720 [v2.10.3.13].
-    void setGlobalGainDb(double db);
-    // From Thetis ucParametricEq.cs:970-1005 [v2.10.3.13].
-    void setSelectedIndex(int index);
+    // -- Public Q-style getters/setters mirroring [Category] properties at
+    //    ucParametricEq.cs:449-1005 [v2.10.3.13].  Each setter follows the
+    //    Thetis early-return + clamp + side-effect pattern verbatim.
+
+    // EQ category -- ucParametricEq.cs:577-1005 [v2.10.3.13].
+    int    bandCount()                       const { return m_bandCount; }
+    void   setBandCount(int count);                                       // cs:577-603
+
+    double frequencyMinHz()                  const { return m_frequencyMinHz; }
+    void   setFrequencyMinHz(double hz);                                  // cs:605-624
+
+    double frequencyMaxHz()                  const { return m_frequencyMaxHz; }
+    void   setFrequencyMaxHz(double hz);                                  // cs:626-645
+
+    bool   logScale()                        const { return m_logScale; }
+    void   setLogScale(bool on);                                          // cs:647-660
+
+    double dbMin()                           const { return m_dbMin; }
+    void   setDbMin(double db);                                           // cs:662-681
+
+    double dbMax()                           const { return m_dbMax; }
+    void   setDbMax(double db);                                           // cs:683-702
+
+    double globalGainDb()                    const { return m_globalGainDb; }
+    void   setGlobalGainDb(double db);                                    // cs:704-720
+
+    bool   globalGainIsHorizLine()           const { return m_globalGainIsHorizLine; }
+    void   setGlobalGainIsHorizLine(bool on);                             // cs:722-735
+
+    bool   showReadout()                     const { return m_showReadout; }
+    void   setShowReadout(bool on);                                       // cs:737-746
+
+    bool   showDotReadings()                 const { return m_showDotReadings; }
+    void   setShowDotReadings(bool on);                                   // cs:748-761
+
+    bool   showDotReadingsAsComp()           const { return m_showDotReadingsAsComp; }
+    void   setShowDotReadingsAsComp(bool on);                             // cs:763-776
+
+    double minPointSpacingHz()               const { return m_minPointSpacingHz; }
+    void   setMinPointSpacingHz(double hz);                               // cs:778-792
+
+    bool   allowPointReorder()               const { return m_allowPointReorder; }
+    void   setAllowPointReorder(bool on);                                 // cs:794-807
+
+    bool   parametricEq()                    const { return m_parametricEq; }
+    void   setParametricEq(bool on);                                      // cs:809-820
+
+    double qMin()                            const { return m_qMin; }
+    void   setQMin(double q);                                             // cs:822-837
+
+    double qMax()                            const { return m_qMax; }
+    void   setQMax(double q);                                             // cs:839-854
+
+    bool   showBandShading()                 const { return m_showBandShading; }
+    void   setShowBandShading(bool on);                                   // cs:856-865
+
+    bool   usePerBandColours()               const { return m_usePerBandColours; }
+    void   setUsePerBandColours(bool on);                                 // cs:867-876
+
+    QColor bandShadeColor()                  const { return m_bandShadeColor; }
+    void   setBandShadeColor(const QColor& c);                            // cs:878-887
+
+    int    bandShadeAlpha()                  const { return m_bandShadeAlpha; }
+    void   setBandShadeAlpha(int alpha);                                  // cs:889-901
+
+    double bandShadeWeightCutoff()           const { return m_bandShadeWeightCutoff; }
+    void   setBandShadeWeightCutoff(double cutoff);                       // cs:903-915
+
+    bool   showAxisScales()                  const { return m_showAxisScales; }
+    void   setShowAxisScales(bool on);                                    // cs:917-926
+
+    int    axisTickLength()                  const { return m_axisTickLength; }
+    void   setAxisTickLength(int len);                                    // cs:928-940
+
+    QColor axisTextColor()                   const { return m_axisTextColor; }
+    void   setAxisTextColor(const QColor& c);                             // cs:942-951
+
+    QColor axisTickColor()                   const { return m_axisTickColor; }
+    void   setAxisTickColor(const QColor& c);                             // cs:953-962
+
+    double yAxisStepDb()                     const { return m_yAxisStepDb; }
+    void   setYAxisStepDb(double step);                                   // cs:559-575
+
+    int    selectedIndex()                   const { return m_selectedIndex; }
+    void   setSelectedIndex(int index);                                   // cs:970-1005
+
+    // From Thetis ucParametricEq.cs:964-968 [v2.10.3.13] -- IReadOnlyList<EqPoint>
+    // accessor.  Read-only by API contract; mutators must go through
+    // setPointHz / setPointData / setPointsData.
+    const QVector<EqPoint>& points()         const { return m_points; }
+
+    // Bar Chart category -- ucParametricEq.cs:449-557 [v2.10.3.13].
+    bool   barChartPeakHoldEnabled()         const { return m_barChartPeakHoldEnabled; }
+    void   setBarChartPeakHoldEnabled(bool on);                           // cs:449-470
+
+    int    barChartPeakHoldMs()              const { return m_barChartPeakHoldMs; }
+    void   setBarChartPeakHoldMs(int ms);                                 // cs:472-485
+
+    double barChartPeakDecayDbPerSecond()    const { return m_barChartPeakDecayDbPerSecond; }
+    void   setBarChartPeakDecayDbPerSecond(double dbPerSec);              // cs:487-501
+
+    QColor barChartFillColor()               const { return m_barChartFillColor; }
+    void   setBarChartFillColor(const QColor& c);                         // cs:503-512
+
+    int    barChartFillAlpha()               const { return m_barChartFillAlpha; }
+    void   setBarChartFillAlpha(int alpha);                               // cs:514-529
+
+    QColor barChartPeakColor()               const { return m_barChartPeakColor; }
+    void   setBarChartPeakColor(const QColor& c);                         // cs:531-540
+
+    int    barChartPeakAlpha()               const { return m_barChartPeakAlpha; }
+    void   setBarChartPeakAlpha(int alpha);                               // cs:542-557
+
+    // -- Point-edit public API (mirror cs:1134-1351 [v2.10.3.13]). --
+    // From Thetis ucParametricEq.cs:1134-1140 [v2.10.3.13] -- SetPointHz.
+    bool   setPointHz(int bandId, double frequencyHz, bool isDragging = false);
+
+    // From Thetis ucParametricEq.cs:1142-1150 [v2.10.3.13] -- GetIndexFromBandId.
+    int    getIndexFromBandId(int bandId)        const { return indexFromBandId(bandId); }
+
+    // From Thetis ucParametricEq.cs:1246-1258 [v2.10.3.13] -- GetPointData.
+    void   getPointData(int index, double& frequencyHz, double& gainDb, double& q) const;
+
+    // From Thetis ucParametricEq.cs:1260-1288 [v2.10.3.13] -- SetPointData.
+    bool   setPointData(int index, double frequencyHz, double gainDb, double q);
+
+    // From Thetis ucParametricEq.cs:1290-1309 [v2.10.3.13] -- GetPointsData.
+    void   getPointsData(QVector<double>& frequencyHz, QVector<double>& gainDb,
+                         QVector<double>& q) const;
+
+    // From Thetis ucParametricEq.cs:1311-1351 [v2.10.3.13] -- SetPointsData.
+    bool   setPointsData(const QVector<double>& frequencyHz,
+                         const QVector<double>& gainDb,
+                         const QVector<double>& q);
+
+    // -- JSON marshal (mirror cs:1460-1573 [v2.10.3.13]). --
+    // From Thetis ucParametricEq.cs:1460-1486 [v2.10.3.13] -- SaveToJson.
+    QString saveToJson() const;
+
+    // From Thetis ucParametricEq.cs:1488-1573 [v2.10.3.13] -- LoadFromJson.
+    bool    loadFromJson(const QString& json);
 
 public slots:
     // From Thetis ucParametricEq.cs:1048-1105 [v2.10.3.13] -- public DrawBarChart slot.
@@ -243,6 +378,11 @@ private:
 
     // Helper -- From Thetis ucParametricEq.cs:1142-1150 [v2.10.3.13] -- band lookup.
     int      indexFromBandId(int bandId)                       const;
+
+    // From Thetis ucParametricEq.cs:1162-1244 [v2.10.3.13] -- private helper used
+    // by both setPointHz and (future) drag commit; not exposed publicly because
+    // callers should use the bandId-keyed setPointHz overload.
+    bool     setPointHzInternal(int index, double frequencyHz, bool isDragging);
 
     // From Thetis ucParametricEq.cs:1997-2000 [v2.10.3.13].
     bool     isDraggingNow()                                   const;
