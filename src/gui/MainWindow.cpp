@@ -991,7 +991,10 @@ void MainWindow::buildUI()
     // flag on SpectrumWidget so legacy AGC knows to stand down.
     {
         auto& s = AppSettings::instance();
-        bool clarityOn = s.value(QStringLiteral("ClarityEnabled"), QStringLiteral("False"))
+        // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
+        // the noise floor is the better first-launch experience than asking
+        // the user to find and toggle the setting themselves.
+        bool clarityOn = s.value(QStringLiteral("ClarityEnabled"), QStringLiteral("True"))
                             .toString() == QStringLiteral("True");
         m_clarityController->setEnabled(clarityOn);
         m_spectrumWidget->setClarityActive(clarityOn);

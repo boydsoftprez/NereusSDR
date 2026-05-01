@@ -389,9 +389,17 @@ void SpectrumWidget::loadSettings()
         return ok ? v : def;
     };
 
-    m_refLevel       = readFloat(QStringLiteral("DisplayGridMax"), -36.0f);
-    m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -36.0f)
-                     - readFloat(QStringLiteral("DisplayGridMin"), -104.0f);
+    // Ship defaults — calibrated 2026-04-30 against a live ANAN-G2 with
+    // a typical residential noise floor (-115 to -120 dBm in the
+    // amateur HF bands). Earlier defaults ran 12 dB hotter (Grid -36 /
+    // -104, Wf -50 / -110, Wf black 98) and gave a noisy first-launch
+    // experience — band noise jammed the bottom of the panadapter and
+    // lit up the waterfall floor. Shifting the entire reference plane
+    // down 12 dB gives a clean "noise sits low" first impression.
+    // Dynamic range (68 dB grid, 60 dB waterfall) is unchanged.
+    m_refLevel       = readFloat(QStringLiteral("DisplayGridMax"), -48.0f);
+    m_dynamicRange   = readFloat(QStringLiteral("DisplayGridMax"), -48.0f)
+                     - readFloat(QStringLiteral("DisplayGridMin"), -116.0f);
     m_spectrumFrac   = readFloat(QStringLiteral("DisplaySpectrumFrac"), 0.40f);
 
     // Phase 3G-12: persist the spectrum zoom level (visible bandwidth)
@@ -401,9 +409,9 @@ void SpectrumWidget::loadSettings()
     m_bandwidthHz    = static_cast<double>(
                           readFloat(QStringLiteral("DisplayBandwidth"), 192000.0f));
     m_wfColorGain    = readInt(QStringLiteral("DisplayWfColorGain"), 45);
-    m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 98);
-    m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -50.0f);
-    m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -110.0f);
+    m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 104);
+    m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -62.0f);
+    m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -122.0f);
     m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
     m_panFill        = s.value(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
                                QStringLiteral("True")).toString() == QStringLiteral("True");

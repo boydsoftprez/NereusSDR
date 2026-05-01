@@ -182,11 +182,35 @@ int ConnectionSegment::smoothedRttMs() const noexcept
     if (m_rttSamples.isEmpty()) {
         return m_rttMs;   // -1 when there's been no real sample yet
     }
-    qint64 sum = 0;
-    for (int sample : m_rttSamples) {
-        sum += sample;
+
+    // Min-filtered RTT — 2nd-smallest of the rolling window.
+    //
+    // The radio sends status packets on its own periodic cadence
+    // (P1: 380.95 pps → 2.6 ms; P2: 100 ms HighPriority status)
+    // independent of our outbound commands. Each measured sample is
+    // therefore  true_RTT + uniform(0, cadence)  — the additive term
+    // is bracket noise from how long the radio waited before its next
+    // status emit. A rolling MEAN preserves that noise and produces
+    // two pathological readings:
+    //   - LAN with sub-ms RTT reads ~half the cadence (P1 floor ~1.3 ms)
+    //   - WAN with cadence-sized RTT becomes random noise — a few
+    //     "lucky" samples where status arrived right after our cmd
+    //     can pull the mean way below true_RTT.
+    //
+    // The MINIMUM across a window approaches true_RTT (the lucky
+    // sample where the radio's cadence noise was ~0). Same technique
+    // TCP BBR uses for its RTT estimator. We use the 2nd-smallest
+    // (rather than the absolute minimum) to winsorize a single
+    // anomalously-low outlier — protects against a transient
+    // sub-millisecond glitch pulling the display below the true RTT.
+    if (m_rttSamples.size() == 1) {
+        return m_rttSamples.first();
     }
-    return static_cast<int>(sum / m_rttSamples.size());
+    QList<int> sorted;
+    sorted.reserve(m_rttSamples.size());
+    for (int s : m_rttSamples) { sorted.append(s); }
+    std::sort(sorted.begin(), sorted.end());
+    return sorted.at(1);
 }
 
 void ConnectionSegment::setAudioFlowState(AudioEngine::FlowState s)

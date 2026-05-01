@@ -177,7 +177,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 **RxApplet Tier 1 wired:** mode, AGC, AF gain, and filter presets fully wired to SliceModel
 
 ### Up Next (parallel pair after v0.2.3)
-- **Phase 3Q — Connection Workflow Refactor** (design complete 2026-04-26; ready to plan). Triggered by user report of WireGuard-tunneled HL2 not connecting via manual entry. Spec: [docs/architecture/2026-04-26-connection-workflow-refactor-design.md](architecture/2026-04-26-connection-workflow-refactor-design.md). Expected to land before 3M-1 completes.
+- **Phase 3Q — Connection Workflow Refactor** (in progress on `feature/phase3q-connection-workflow-refactor`; chrome layer landing first). Triggered by user report of WireGuard-tunneled HL2 not connecting via manual entry. Spec: [docs/architecture/2026-04-26-connection-workflow-refactor-design.md](architecture/2026-04-26-connection-workflow-refactor-design.md). The shell-chrome / status-bar / dashboard / SVG-icon work + ship-default calibration (commit c656fad + follow-ups) is the first PR; the unicast-probe + ConnectionPanel + AddRadioDialog rebuild + spectrum disconnect overlay land in subsequent PRs on the same branch.
 - **Phase 3M-1 — Basic SSB TX** (next major epic). TxChannel WDSP wrapper, MOX state machine, TX I/Q output. No file overlap with 3Q.
 
 ### CI Status: GREEN

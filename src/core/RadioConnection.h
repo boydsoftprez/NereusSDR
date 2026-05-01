@@ -82,8 +82,12 @@ public:
     void setHardwareProfile(const HardwareProfile& profile) { m_hardwareProfile = profile; }
     const HardwareProfile& hardwareProfile() const { return m_hardwareProfile; }
 
-    // Rolling-window byte-rate accessors. Returns Mbps over the last
-    // windowMs milliseconds. Used by ConnectionSegment ▲▼ readouts.
+    // Rolling-window throughput accessors. **Returns Mbps** (not bytes/sec
+    // — the "ByteRate" name predates the implementation, kept for ABI
+    // stability). Used by ConnectionSegment ▲▼ readouts and the network
+    // diagnostics dialog. Bugs land easy here: 2026-04-30 the dialog
+    // applied a second `* 8 / 1e6` conversion and TX/RX always read 0.
+    // If you're computing throughput, use these values directly as Mbps.
     double txByteRate(int windowMs) const;
     double rxByteRate(int windowMs) const;
 

@@ -50,8 +50,9 @@ class AudioEngine;
 //
 // Wired up to the sub-PR-2 signals:
 //   RadioConnection::pingRttMeasured(int)
-//   RadioConnection::supplyVoltsChanged(float)
-//   RadioConnection::userAdc0Changed(float)
+//   RadioConnection::userAdc0Changed(float)   — PA volt; PSU/supplyVolts
+//                                               wiring dropped 2026-04-30
+//                                               (Thetis never displays AIN6).
 //   AudioEngine::flowStateChanged(FlowState)
 //
 // Wire-up to ConnectionSegment left-click happens in sub-PR-4 / D.2.
@@ -100,8 +101,9 @@ private:
     QLabel* m_audioBufferLabel{nullptr};
     QLabel* m_underrunLabel{nullptr};
     QLabel* m_packetGapLabel{nullptr};
-    // Radio telemetry section labels
-    QLabel* m_psuVoltLabel{nullptr};
+    // Radio telemetry section labels (PSU dropped — see .cpp ctor note;
+    // Thetis source-first audit 2026-04-30 confirmed supply_volts is
+    // dead data Thetis itself never displays).
     QLabel* m_paVoltLabel{nullptr};
     QLabel* m_adcOvlLabel{nullptr};
 
@@ -111,7 +113,6 @@ private:
 
     // Live values updated by signal lambdas
     int   m_lastRttMs{-1};
-    float m_lastSupplyVolts{-1.0f};
     float m_lastUserAdc0Volts{-1.0f};
 };
 

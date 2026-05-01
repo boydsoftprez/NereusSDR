@@ -646,8 +646,13 @@ private:
     double m_sampleRateHz{768000.0};    // DDC sample rate
 
     // ---- Display range ----
-    // From Thetis display.cs:1743-1754
-    float  m_refLevel{-36.0f};        // top of display (dBm)
+    // From Thetis display.cs:1743-1754. Init values must match the
+    // ship defaults in loadSettings() (SpectrumWidget.cpp ~line 392) —
+    // any divergence shows up if a code path reads these before
+    // loadSettings runs, and the slider in SetupDialog briefly shows
+    // the stale value. Calibrated 2026-04-30 against a residential
+    // HF noise floor; see loadSettings comment for rationale.
+    float  m_refLevel{-48.0f};        // top of display (dBm)
     float  m_dynamicRange{68.0f};     // range in dB (bottom = refLevel - dynamicRange)
 
     // ---- Waterfall ----
@@ -689,11 +694,12 @@ private:
     // From AetherSDR SpectrumWidget defaults + Thetis display.cs:2522-2536
     WfColorScheme m_wfColorScheme{WfColorScheme::Default};
     int    m_wfColorGain{45};         // 0-100
-    int    m_wfBlackLevel{98};        // 0-125
+    int    m_wfBlackLevel{104};       // 0-125 — keep in sync with loadSettings ship default
     // Waterfall uses its own dBm range (narrower than spectrum for better contrast).
     // Seed values; WfAgc (default on) continuously recomputes these at runtime.
-    float  m_wfHighThreshold{-50.0f};
-    float  m_wfLowThreshold{-110.0f};
+    // Ship defaults — keep in sync with loadSettings (SpectrumWidget.cpp)
+    float  m_wfHighThreshold{-62.0f};
+    float  m_wfLowThreshold{-122.0f};
 
     // ---- Smoothing constant ----
     // From AetherSDR SpectrumWidget.h:417 — SMOOTH_ALPHA = 0.35f

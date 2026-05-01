@@ -158,7 +158,11 @@ void NetworkDiagnosticsDialog::buildTelemetrySection(QGridLayout* grid, int& row
         ++row;
     };
 
-    addRow(tr("PSU voltage"), m_psuVoltLabel);
+    // PSU row removed (Thetis source-first audit 2026-04-30): the
+    // supply_volts (AIN6) channel is dead data — Thetis never displays
+    // it (computeHermesDCVoltage has zero callers; the only voltage
+    // status indicator reads user_adc0 / convertToVolts). The PA volt
+    // row below is now the sole supply indicator on MkII-class boards.
     addRow(tr("PA voltage"),  m_paVoltLabel);
     addRow(tr("ADC overload"), m_adcOvlLabel);
 
@@ -269,14 +273,7 @@ NetworkDiagnosticsDialog::NetworkDiagnosticsDialog(RadioModel* model,
                     }
                 });
 
-        connect(conn, &RadioConnection::supplyVoltsChanged,
-                this, [this](float volts) {
-                    m_lastSupplyVolts = volts;
-                    if (m_psuVoltLabel) {
-                        m_psuVoltLabel->setText(
-                            QString::asprintf("%.2f V", static_cast<double>(volts)));
-                    }
-                });
+        // (PSU / supplyVoltsChanged wiring removed — see addRow note above.)
 
         connect(conn, &RadioConnection::userAdc0Changed,
                 this, [this](float volts) {
@@ -367,18 +364,31 @@ void NetworkDiagnosticsDialog::refresh()
                 : QStringLiteral("— ms"));
     }
 
+    // Jitter, packet loss, and packet gap are NYI: no production source
+    // yet. Earlier revisions hardcoded "0 ms" / "0.0%" which read as
+    // "perfect network" rather than "not measured" — replaced with
+    // em-dash so the dialog tells the truth. Wiring these requires
+    // protocol-level instrumentation (RTT-sample variance for jitter,
+    // sequence-number gap detection for loss, max inter-arrival time
+    // for gap) — tracked as a follow-up item.
     if (m_jitterLabel) {
-        m_jitterLabel->setText(QStringLiteral("0 ms")); // no production source yet
+        m_jitterLabel->setText(QChar(0x2014));   // em-dash
+        m_jitterLabel->setToolTip(tr("Not yet measured"));
     }
 
     if (m_lossLabel) {
-        m_lossLabel->setText(QStringLiteral("0.0%")); // no production source yet
+        m_lossLabel->setText(QChar(0x2014));     // em-dash
+        m_lossLabel->setToolTip(tr("Not yet measured"));
     }
 
+    // RadioConnection::txByteRate / rxByteRate already return Mbps despite
+    // the misleading "ByteRate" name (see RadioConnection.h declaration).
+    // Earlier revisions of this dialog applied an extra " * 8 / 1e6 " here
+    // and divided the real value by 125 000 — TX/RX rates always read 0.
+    // Bug caught 2026-04-30 against a live ANAN-G2.
     if (m_txRateLabel) {
         if (m_model && m_model->connection() && m_model->isConnected()) {
-            const double mbps = m_model->connection()->txByteRate(1000)
-                                * 8.0 / 1'000'000.0;
+            const double mbps = m_model->connection()->txByteRate(1000);
             m_txRateLabel->setText(QString::asprintf("%.2f Mbps", mbps));
         } else {
             m_txRateLabel->setText(QStringLiteral("—"));
@@ -387,8 +397,7 @@ void NetworkDiagnosticsDialog::refresh()
 
     if (m_rxRateLabel) {
         if (m_model && m_model->connection() && m_model->isConnected()) {
-            const double mbps = m_model->connection()->rxByteRate(1000)
-                                * 8.0 / 1'000'000.0;
+            const double mbps = m_model->connection()->rxByteRate(1000);
             m_rxRateLabel->setText(QString::asprintf("%.2f Mbps", mbps));
         } else {
             m_rxRateLabel->setText(QStringLiteral("—"));
@@ -431,18 +440,14 @@ void NetworkDiagnosticsDialog::refresh()
     }
 
     if (m_packetGapLabel) {
-        m_packetGapLabel->setText(QStringLiteral("—")); // no production source yet
+        m_packetGapLabel->setText(QChar(0x2014)); // em-dash, NYI — see above note
+        m_packetGapLabel->setToolTip(tr("Not yet measured"));
     }
 
     // ── Radio Telemetry section ───────────────────────────────────────────────
-    // PSU and PA voltages are updated live by signal lambdas in the ctor;
-    // they only need a disconnected-state reset here.
-    if (m_psuVoltLabel && (!m_model || !m_model->isConnected())) {
-        if (m_lastSupplyVolts < 0.0f) {
-            m_psuVoltLabel->setText(QStringLiteral("—"));
-        }
-    }
-
+    // PA voltage is updated live by signal lambda in the ctor; only
+    // needs a disconnected-state reset here. (PSU row dropped per
+    // Thetis source-first audit — see ctor.)
     if (m_paVoltLabel && (!m_model || !m_model->isConnected())) {
         if (m_lastUserAdc0Volts < 0.0f) {
             m_paVoltLabel->setText(tr("— (not reported)"));

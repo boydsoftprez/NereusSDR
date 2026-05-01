@@ -109,9 +109,10 @@ public:
     int                      rttMs() const noexcept { return m_rttMs; }
     AudioEngine::FlowState   audioFlowState() const noexcept { return m_audioFlow; }
 
-    // Smoothed RTT — mean of the last N samples in m_rttSamples (capped
-    // at kRttSmoothingWindow). Returns the latest sample if only one
-    // sample has been seen, or -1 if no samples at all.
+    // Smoothed RTT — 2nd-smallest of the rolling N-sample window
+    // (min-filter approximation of true network round-trip time). See
+    // smoothedRttMs() impl for the rationale. Returns the latest sample
+    // if only one sample has been seen, or -1 if no samples at all.
     int                      smoothedRttMs() const noexcept;
 
     // Hit-test rect accessors — populated after the first paintEvent.
@@ -148,10 +149,13 @@ private:
     bool                    m_pulseOn{false};
 
     // RTT smoothing — rolling window of the last N samples. setRttMs()
-    // pushes; the painter and color-threshold both consume the mean
-    // from smoothedRttMs(). Window size of 10 is a "wee bit" calmer
-    // than per-sample painting (one sample arrives ~1/sec) — adjust
-    // kRttSmoothingWindow if the readout becomes lethargic.
+    // pushes; the painter and color-threshold both consume a min-filter
+    // of the window via smoothedRttMs() (2nd-smallest). The min-filter
+    // approximates true round-trip time despite the radio's periodic
+    // status-packet cadence adding bracket noise to each raw sample;
+    // a window of 10 gives us ~10 s of history at the 1 Hz sample rate,
+    // long enough to capture a "lucky" sample where the cadence noise
+    // happened to be near zero.
     static constexpr int kRttSmoothingWindow = 10;
     QQueue<int>           m_rttSamples;
 
