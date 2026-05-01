@@ -72,6 +72,8 @@ mw0lge@grange-lane.co.uk
 
 class QPaintEvent;
 class QPainter;
+class QMouseEvent;
+class QWheelEvent;
 
 // Forward declarations for tester classes that need access to private
 // axis/ordering helpers via `friend`. Each tester lives in its own
@@ -126,13 +128,44 @@ public:
     static int    defaultBandPaletteSize();
     static QColor defaultBandPaletteAt(int index);
 
+    // -- Public setters (mirror C# property setters at ucParametricEq.cs:704-720
+    //    GlobalGainDb and cs:970-1005 SelectedIndex). --
+    // From Thetis ucParametricEq.cs:704-720 [v2.10.3.13].
+    void setGlobalGainDb(double db);
+    // From Thetis ucParametricEq.cs:970-1005 [v2.10.3.13].
+    void setSelectedIndex(int index);
+
 public slots:
     // From Thetis ucParametricEq.cs:1048-1105 [v2.10.3.13] -- public DrawBarChart slot.
     void drawBarChartData(const QVector<double>& data);
 
+signals:
+    // From Thetis ucParametricEq.cs:353-358 [v2.10.3.13] -- public events.
+    // PointsChanged / GlobalGainChanged / SelectedIndexChanged carry an
+    // is_dragging bool so downstream consumers can throttle expensive
+    // reactions (e.g. a CFC re-dispatch) until the user releases the mouse.
+    // PointDataChanged carries the resolved point payload.  PointSelected /
+    // PointUnselected fire when the highlight moves between bands.
+    void pointsChanged          (bool isDragging);
+    void globalGainChanged      (bool isDragging);
+    void selectedIndexChanged   (bool isDragging);
+    void pointDataChanged       (int index, int bandId,
+                                 double frequencyHz, double gainDb, double q,
+                                 bool isDragging);
+    void pointSelected          (int index, int bandId,
+                                 double frequencyHz, double gainDb, double q);
+    void pointUnselected        (int index, int bandId,
+                                 double frequencyHz, double gainDb, double q);
+
 protected:
     // Paint orchestration -- From Thetis ucParametricEq.cs:1575-1609 [v2.10.3.13].
     void paintEvent(QPaintEvent* event) override;
+
+    // Interaction handlers -- From Thetis ucParametricEq.cs:1625-1995 [v2.10.3.13].
+    void mousePressEvent  (QMouseEvent* event) override;
+    void mouseMoveEvent   (QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent       (QWheelEvent* event) override;
 
 private:
     // Draw helpers -- From Thetis ucParametricEq.cs:1575-2748 [v2.10.3.13].
@@ -210,6 +243,22 @@ private:
 
     // Helper -- From Thetis ucParametricEq.cs:1142-1150 [v2.10.3.13] -- band lookup.
     int      indexFromBandId(int bandId)                       const;
+
+    // From Thetis ucParametricEq.cs:1997-2000 [v2.10.3.13].
+    bool     isDraggingNow()                                   const;
+
+    // From Thetis ucParametricEq.cs:1025-1039, 3334-3363 [v2.10.3.13] -- raise*
+    // helpers.  These are private signal forwarders so the call sites stay
+    // 1:1 with the C# source.  The `raisePointDataChanged` overload takes
+    // the index explicitly (rather than calling QVector::indexOf and
+    // requiring EqPoint::operator==): EqPoint is a value type without a
+    // natural equality, so the caller threads the resolved index through.
+    void     raisePointsChanged       (bool isDragging);
+    void     raiseGlobalGainChanged   (bool isDragging);
+    void     raiseSelectedIndexChanged(bool isDragging);
+    void     raisePointSelected       (int index, const EqPoint& p);
+    void     raisePointUnselected     (int index, const EqPoint& p);
+    void     raisePointDataChanged    (int index, const EqPoint& p, bool isDragging);
 
     static double clamp(double v, double lo, double hi);
 

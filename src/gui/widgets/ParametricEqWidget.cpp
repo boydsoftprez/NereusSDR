@@ -61,15 +61,18 @@ mw0lge@grange-lane.co.uk
 #include "ParametricEqWidget.h"
 
 #include <QBrush>
+#include <QCursor>
 #include <QDateTime>
 #include <QFontMetrics>
 #include <QLinearGradient>
+#include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QPolygonF>
 #include <QRectF>
+#include <QWheelEvent>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -473,11 +476,18 @@ void ParametricEqWidget::enforceOrdering(bool enforceSpacingAll) {
     }
 
     // Re-resolve indices by bandId after sort.
-    m_selectedIndex = (selectedBandId >= 0) ? indexFromBandId(selectedBandId) : -1;
-    // TODO(Batch 4): emit selectedIndexChanged(isDragging()) when m_selectedIndex
-    // actually changes -- Thetis raises this at ucParametricEq.cs:3249 and 3257.
-    // Signal not declared until Batch 4 (mouse + wheel + signals).
+    int newSelectedIndex = (selectedBandId >= 0) ? indexFromBandId(selectedBandId) : -1;
+    bool selectedChanged = (newSelectedIndex != m_selectedIndex);
+    m_selectedIndex = newSelectedIndex;
     m_dragIndex     = (dragBandId >= 0)     ? indexFromBandId(dragBandId)     : -1;
+
+    // From Thetis ucParametricEq.cs:3249, 3257 [v2.10.3.13] -- emit when post-sort
+    // selected index differs from the pre-sort value (the C# splits this into two
+    // branches, one for "have selection" + one for "lost selection"; the boolean
+    // collapse here is observationally identical because both branches always emit
+    // when the index actually changes, and the combined predicate simply OR-s the
+    // two sufficient conditions).
+    if (selectedChanged) raiseSelectedIndexChanged(isDraggingNow());
 
     for (auto& p : m_points) {
         p.frequencyHz = clamp(p.frequencyHz, m_frequencyMinHz, m_frequencyMaxHz);
@@ -1499,6 +1509,473 @@ void ParametricEqWidget::updateBarChartPeakTimerState() {
         if (m_barChartPeakTimer->isActive()) {
             m_barChartPeakTimer->stop();
         }
+    }
+}
+
+// =================================================================
+// Mouse + wheel interaction + raise* helpers + setters
+// (Phase 3M-3a-ii follow-up Batch 4).  Each function is a line-faithful
+// translation of ucParametricEq.cs [v2.10.3.13] -- cite is immediately
+// above the definition.  WinForms -> Qt mapping notes:
+//   - MouseEventArgs.Button == MouseButtons.Left -> event->button() == Qt::LeftButton
+//   - Capture (Control.Capture flag) -> Qt grabs the mouse implicitly
+//     when a press is accepted; mouseMove + mouseRelease arrive at the
+//     pressed widget without further work.  We drop the explicit Capture
+//     toggles -- they're a no-op in Qt.
+//   - ModifierKeys & Keys.Control / Keys.Shift -> event->modifiers().testFlag(...)
+//   - MouseEventArgs.Delta (-/+ 120 per click) -> event->angleDelta().y()
+//     (Qt is in 1/8 degree units; standard wheel is 120 per detent.)
+//   - MouseEventArgs.Location  -> event->pos()       (mouse) or
+//                                  event->position().toPoint()  (wheel,
+//                                  which uses QPointF in Qt6).
+//   - Cursors.Hand / Cursors.Default -> setCursor(Qt::PointingHandCursor)
+//                                       / unsetCursor()
+// =================================================================
+
+// From Thetis ucParametricEq.cs:1997-2000 [v2.10.3.13].
+bool ParametricEqWidget::isDraggingNow() const {
+    return m_draggingGlobalGain || m_draggingPoint;
+}
+
+// From Thetis ucParametricEq.cs:3334-3338 [v2.10.3.13].
+void ParametricEqWidget::raisePointsChanged(bool isDragging) {
+    emit pointsChanged(isDragging);
+}
+
+// From Thetis ucParametricEq.cs:3340-3344 [v2.10.3.13].
+void ParametricEqWidget::raiseGlobalGainChanged(bool isDragging) {
+    emit globalGainChanged(isDragging);
+}
+
+// From Thetis ucParametricEq.cs:3346-3352 [v2.10.3.13].
+void ParametricEqWidget::raiseSelectedIndexChanged(bool isDragging) {
+    if (isDragging) m_dragDirtySelectedIndex = true;
+    emit selectedIndexChanged(isDragging);
+}
+
+// From Thetis ucParametricEq.cs:1025-1031 [v2.10.3.13].
+void ParametricEqWidget::raisePointSelected(int index, const EqPoint& p) {
+    emit pointSelected(index, p.bandId, p.frequencyHz, p.gainDb, p.q);
+}
+
+// From Thetis ucParametricEq.cs:1033-1039 [v2.10.3.13].
+void ParametricEqWidget::raisePointUnselected(int index, const EqPoint& p) {
+    emit pointUnselected(index, p.bandId, p.frequencyHz, p.gainDb, p.q);
+}
+
+// From Thetis ucParametricEq.cs:3354-3363 [v2.10.3.13].
+// C# uses _points.IndexOf(p) to resolve the band index; we pass it
+// through the call chain because EqPoint is a value type without an
+// equality operator (and we don't want to add one).
+void ParametricEqWidget::raisePointDataChanged(int index, const EqPoint& p, bool isDragging) {
+    if (index < 0 || index >= m_points.size()) return;
+    emit pointDataChanged(index, p.bandId, p.frequencyHz, p.gainDb, p.q, isDragging);
+}
+
+// From Thetis ucParametricEq.cs:704-720 [v2.10.3.13].
+void ParametricEqWidget::setGlobalGainDb(double db) {
+    double v = clamp(db, m_dbMin, m_dbMax);
+    if (qAbs(v - m_globalGainDb) < 0.000001) return;
+
+    m_globalGainDb = v;
+
+    if (m_draggingGlobalGain) m_dragDirtyGlobalGain = true;
+
+    raiseGlobalGainChanged(isDraggingNow());
+    update();
+}
+
+// From Thetis ucParametricEq.cs:970-1005 [v2.10.3.13].
+void ParametricEqWidget::setSelectedIndex(int index) {
+    int v = index;
+    if (v < -1) v = -1;
+    if (v >= m_points.size()) v = m_points.size() - 1;
+    if (v == m_selectedIndex) return;
+
+    int oldIndex = m_selectedIndex;
+    bool hadOld = (oldIndex >= 0 && oldIndex < m_points.size());
+    EqPoint oldPoint;
+    if (hadOld) oldPoint = m_points.at(oldIndex);
+
+    m_selectedIndex = v;
+
+    if (hadOld) {
+        raisePointUnselected(oldIndex, oldPoint);
+    }
+
+    if (m_selectedIndex >= 0 && m_selectedIndex < m_points.size()) {
+        raisePointSelected(m_selectedIndex, m_points.at(m_selectedIndex));
+    }
+
+    raiseSelectedIndexChanged(isDraggingNow());
+    update();
+}
+
+// From Thetis ucParametricEq.cs:1625-1675 [v2.10.3.13].
+void ParametricEqWidget::mousePressEvent(QMouseEvent* event) {
+    setFocus();
+    QRect plot = computePlotRect();
+
+    if (event->button() != Qt::LeftButton) return;
+
+    if (hitTestGlobalGainHandle(plot, event->pos())) {
+        m_draggingGlobalGain = true;
+        m_draggingPoint      = false;
+        m_dragIndex          = -1;
+        m_dragPointRef       = nullptr;
+        m_dragDirtyPoint         = false;
+        m_dragDirtyGlobalGain    = false;
+        m_dragDirtySelectedIndex = false;
+        update();
+        return;
+    }
+
+    if (plot.contains(event->pos())) {
+        int idx = hitTestPoint(plot, event->pos());
+        if (idx >= 0) {
+            setSelectedIndex(idx);
+            m_draggingPoint      = true;
+            m_draggingGlobalGain = false;
+            m_dragIndex          = idx;
+            m_dragPointRef       = &m_points[idx];
+            m_dragDirtyPoint         = false;
+            m_dragDirtyGlobalGain    = false;
+            m_dragDirtySelectedIndex = false;
+            update();
+            return;
+        }
+    }
+
+    setSelectedIndex(-1);
+    update();
+}
+
+// From Thetis ucParametricEq.cs:1677-1801 [v2.10.3.13].
+// The OnMouseMove body branches on:
+//   1. dragging the global gain handle      -> dbFromY -> GlobalGainDb setter
+//   2. dragging a point                     -> compute (freq, gain), enforce
+//                                              ordering / clamping, emit
+//                                              pointsChanged(true) +
+//                                              pointDataChanged(true)
+//   3. neither                              -> hover: hand cursor on
+//                                              hit-test, default otherwise
+// `Capture` short-circuits in C# (return if capture lost) are no-ops in Qt
+// because Qt does not deliver moves from a foreign press; we drop them.
+void ParametricEqWidget::mouseMoveEvent(QMouseEvent* event) {
+    QRect plot = computePlotRect();
+    QPoint pt = event->pos();
+
+    if (m_draggingGlobalGain) {
+        double db = dbFromY(plot, pt.y());
+        setGlobalGainDb(db);
+        return;
+    }
+
+    if (m_draggingPoint) {
+        if (m_dragIndex < 0 || m_dragIndex >= m_points.size()) return;
+
+        EqPoint& p = m_points[m_dragIndex];
+
+        double oldF = p.frequencyHz;
+        double oldG = p.gainDb;
+        double oldQ = p.q;
+
+        double freq = p.frequencyHz;
+        double gain = dbFromY(plot, pt.y());
+
+        gain = clamp(gain, m_dbMin, m_dbMax);
+
+        if (!isFrequencyLockedIndex(m_dragIndex)) {
+            freq = freqFromX(plot, pt.x());
+            freq = clamp(freq, m_frequencyMinHz, m_frequencyMaxHz);
+
+            if (!m_allowPointReorder) {
+                double minF;
+                double maxF;
+
+                if (m_dragIndex == 0) {
+                    minF = m_frequencyMinHz;
+                    maxF = m_points[1].frequencyHz - m_minPointSpacingHz;
+                } else if (m_dragIndex == m_points.size() - 1) {
+                    minF = m_points[m_points.size() - 2].frequencyHz + m_minPointSpacingHz;
+                    maxF = m_frequencyMaxHz;
+                } else {
+                    minF = m_points[m_dragIndex - 1].frequencyHz + m_minPointSpacingHz;
+                    maxF = m_points[m_dragIndex + 1].frequencyHz - m_minPointSpacingHz;
+                }
+
+                if (maxF < minF) maxF = minF;
+                freq = clamp(freq, minF, maxF);
+            }
+        }
+
+        bool changed = false;
+
+        if (qAbs(p.frequencyHz - freq) > 0.000001) {
+            p.frequencyHz = freq;
+            changed = true;
+        }
+
+        if (qAbs(p.gainDb - gain) > 0.000001) {
+            p.gainDb = gain;
+            changed = true;
+        }
+
+        if (changed) {
+            if (m_allowPointReorder && !isFrequencyLockedIndex(m_dragIndex)) {
+                enforceOrdering(false);
+
+                int idx = m_dragIndex;
+                double minF = m_frequencyMinHz;
+                double maxF = m_frequencyMaxHz;
+
+                if (m_points.size() > 1) {
+                    if (idx > 0) minF = m_points[idx - 1].frequencyHz + m_minPointSpacingHz;
+                    if (idx < m_points.size() - 1) maxF = m_points[idx + 1].frequencyHz - m_minPointSpacingHz;
+                    if (maxF < minF) maxF = minF;
+                }
+
+                if (idx >= 0 && idx < m_points.size()) {
+                    double clampedFreq = clamp(m_points[idx].frequencyHz, minF, maxF);
+                    if (qAbs(clampedFreq - m_points[idx].frequencyHz) > 0.000001) {
+                        m_points[idx].frequencyHz = clampedFreq;
+                    }
+                }
+
+                enforceOrdering(false);
+            }
+
+            m_dragDirtyPoint = true;
+
+            // After enforceOrdering, m_dragIndex and m_dragPointRef may have
+            // been re-resolved; recapture both before raising the data signal.
+            int curIdx = m_dragIndex;
+            if (curIdx >= 0 && curIdx < m_points.size()) {
+                m_dragPointRef = &m_points[curIdx];
+
+                raisePointsChanged(true);
+                const EqPoint& curP = m_points.at(curIdx);
+                if (qAbs(curP.frequencyHz - oldF) > 0.000001
+                    || qAbs(curP.gainDb - oldG) > 0.000001
+                    || qAbs(curP.q - oldQ) > 0.000001) {
+                    raisePointDataChanged(curIdx, curP, true);
+                }
+            } else {
+                raisePointsChanged(true);
+            }
+            update();
+        }
+
+        return;
+    }
+
+    bool wantHand = false;
+
+    if (hitTestGlobalGainHandle(plot, pt)) {
+        wantHand = true;
+    } else if (plot.contains(pt)) {
+        int idx = hitTestPoint(plot, pt);
+        if (idx >= 0) wantHand = true;
+    }
+
+    if (wantHand) {
+        setCursor(Qt::PointingHandCursor);
+    } else {
+        unsetCursor();
+    }
+}
+
+// From Thetis ucParametricEq.cs:1803-1844 [v2.10.3.13].
+void ParametricEqWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
+    bool wasDraggingPoint    = m_draggingPoint;
+    bool wasDraggingGlobal   = m_draggingGlobalGain;
+    EqPoint* dragRef         = m_dragPointRef;
+    int dragIdx              = m_dragIndex;
+    bool pointDirty          = m_dragDirtyPoint;
+    bool globalDirty         = m_dragDirtyGlobalGain;
+    bool selectedDirty       = m_dragDirtySelectedIndex;
+
+    m_draggingGlobalGain     = false;
+    m_draggingPoint          = false;
+    m_dragIndex              = -1;
+    m_dragPointRef           = nullptr;
+    m_dragDirtyPoint         = false;
+    m_dragDirtyGlobalGain    = false;
+    m_dragDirtySelectedIndex = false;
+
+    if (wasDraggingPoint && pointDirty) {
+        raisePointsChanged(false);
+        if (dragRef && dragIdx >= 0 && dragIdx < m_points.size()) {
+            raisePointDataChanged(dragIdx, *dragRef, false);
+        }
+    }
+
+    if (wasDraggingGlobal && globalDirty) {
+        raiseGlobalGainChanged(false);
+    }
+
+    if (selectedDirty) {
+        raiseSelectedIndexChanged(false);
+    }
+
+    update();
+}
+
+// From Thetis ucParametricEq.cs:1846-1995 [v2.10.3.13].
+// The wheel handler has four behaviors, in order:
+//   A. No selection -> wheel over the global handle adjusts global gain
+//      by (steps * 0.5) dB.
+//   B. Selected + Ctrl -> shift selected band frequency by
+//      chooseFrequencyStep(span)/5 (min 1 Hz) per step.
+//   C. Selected + (Shift OR !parametric) -> adjust selected band gain by
+//      (steps * 0.5) dB.
+//   D. Selected + (no modifier) + parametric -> multiply Q by 1.12^steps.
+// Every branch raises pointsChanged(false-or-dragging) plus
+// pointDataChanged when (f,g,q) actually moved.  Constants 1.12, 0.5,
+// 120.0, 1.0 are verbatim from C#.
+void ParametricEqWidget::wheelEvent(QWheelEvent* event) {
+    bool dragging = isDraggingNow();
+
+    QRect plot = computePlotRect();
+    QPoint pt  = event->position().toPoint();
+
+    double steps = double(event->angleDelta().y()) / 120.0;
+    if (steps == 0.0) return;
+
+    if (m_selectedIndex < 0 || m_selectedIndex >= m_points.size()) {
+        if (hitTestGlobalGainHandle(plot, pt)) {
+            setGlobalGainDb(clamp(m_globalGainDb + (steps * 0.5), m_dbMin, m_dbMax));
+        }
+        return;
+    }
+
+    if (!plot.contains(pt)) return;
+
+    EqPoint& p = m_points[m_selectedIndex];
+
+    double oldF = p.frequencyHz;
+    double oldG = p.gainDb;
+    double oldQ = p.q;
+
+    bool ctrl  = event->modifiers().testFlag(Qt::ControlModifier);
+    bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
+
+    if (ctrl) {
+        if (isFrequencyLockedIndex(m_selectedIndex)) return;
+
+        double stepHz = chooseFrequencyStep(m_frequencyMaxHz - m_frequencyMinHz) / 5.0;
+        if (stepHz < 1.0) stepHz = 1.0;
+
+        double freq = p.frequencyHz + (steps * stepHz);
+        freq = clamp(freq, m_frequencyMinHz, m_frequencyMaxHz);
+
+        if (!m_allowPointReorder) {
+            double minF;
+            double maxF;
+
+            if (m_selectedIndex == 0) {
+                minF = m_frequencyMinHz;
+                maxF = m_points[1].frequencyHz - m_minPointSpacingHz;
+            } else if (m_selectedIndex == m_points.size() - 1) {
+                minF = m_points[m_points.size() - 2].frequencyHz + m_minPointSpacingHz;
+                maxF = m_frequencyMaxHz;
+            } else {
+                minF = m_points[m_selectedIndex - 1].frequencyHz + m_minPointSpacingHz;
+                maxF = m_points[m_selectedIndex + 1].frequencyHz - m_minPointSpacingHz;
+            }
+
+            if (maxF < minF) maxF = minF;
+            freq = clamp(freq, minF, maxF);
+        }
+
+        if (qAbs(freq - p.frequencyHz) > 0.000001) {
+            p.frequencyHz = freq;
+
+            if (m_allowPointReorder) {
+                enforceOrdering(false);
+
+                int idx = m_selectedIndex;
+                double minF = m_frequencyMinHz;
+                double maxF = m_frequencyMaxHz;
+
+                if (m_points.size() > 1) {
+                    if (idx > 0) minF = m_points[idx - 1].frequencyHz + m_minPointSpacingHz;
+                    if (idx < m_points.size() - 1) maxF = m_points[idx + 1].frequencyHz - m_minPointSpacingHz;
+                    if (maxF < minF) maxF = minF;
+                }
+
+                if (idx >= 0 && idx < m_points.size()) {
+                    double clampedFreq = clamp(m_points[idx].frequencyHz, minF, maxF);
+                    if (qAbs(clampedFreq - m_points[idx].frequencyHz) > 0.000001) {
+                        m_points[idx].frequencyHz = clampedFreq;
+                    }
+                }
+
+                enforceOrdering(false);
+            }
+
+            // Re-resolve current point via m_selectedIndex (enforceOrdering
+            // pinned selection by bandId, so this is the post-sort slot).
+            int curIdx = m_selectedIndex;
+            if (curIdx >= 0 && curIdx < m_points.size()) {
+                const EqPoint& curP = m_points.at(curIdx);
+                raisePointsChanged(false);
+                if (qAbs(curP.frequencyHz - oldF) > 0.000001
+                    || qAbs(curP.gainDb - oldG) > 0.000001
+                    || qAbs(curP.q - oldQ) > 0.000001) {
+                    raisePointDataChanged(curIdx, curP, dragging);
+                }
+            } else {
+                raisePointsChanged(false);
+            }
+            update();
+        }
+
+        return;
+    }
+
+    if (!m_parametricEq) {
+        double gain = clamp(p.gainDb + (steps * 0.5), m_dbMin, m_dbMax);
+        if (qAbs(gain - p.gainDb) > 0.000001) {
+            p.gainDb = gain;
+            raisePointsChanged(false);
+            if (qAbs(p.frequencyHz - oldF) > 0.000001
+                || qAbs(p.gainDb - oldG) > 0.000001
+                || qAbs(p.q - oldQ) > 0.000001) {
+                raisePointDataChanged(m_selectedIndex, p, dragging);
+            }
+            update();
+        }
+        return;
+    }
+
+    if (shift) {
+        double gain = clamp(p.gainDb + (steps * 0.5), m_dbMin, m_dbMax);
+        if (qAbs(gain - p.gainDb) > 0.000001) {
+            p.gainDb = gain;
+            raisePointsChanged(false);
+            if (qAbs(p.frequencyHz - oldF) > 0.000001
+                || qAbs(p.gainDb - oldG) > 0.000001
+                || qAbs(p.q - oldQ) > 0.000001) {
+                raisePointDataChanged(m_selectedIndex, p, dragging);
+            }
+            update();
+        }
+        return;
+    }
+
+    double factor = std::pow(1.12, steps);
+    double qv = clamp(p.q * factor, m_qMin, m_qMax);
+
+    if (qAbs(qv - p.q) > 0.000001) {
+        p.q = qv;
+        raisePointsChanged(dragging);
+        if (qAbs(p.frequencyHz - oldF) > 0.000001
+            || qAbs(p.gainDb - oldG) > 0.000001
+            || qAbs(p.q - oldQ) > 0.000001) {
+            raisePointDataChanged(m_selectedIndex, p, dragging);
+        }
+        update();
     }
 }
 

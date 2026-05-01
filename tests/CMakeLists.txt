@@ -2524,3 +2524,6 @@ nereus_add_test(tst_parametric_eq_widget_axis)
 # -- Phase 3M-3a-ii follow-up Batch 3: ParametricEqWidget paintEvent + draw helpers --
 nereus_add_test(tst_parametric_eq_widget_paint)
 
+# -- Phase 3M-3a-ii follow-up Batch 4: ParametricEqWidget mouse + wheel + signals --
+nereus_add_test(tst_parametric_eq_widget_interaction)
+
