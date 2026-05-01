@@ -200,6 +200,35 @@ private slots:
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // Codex P2 (PR #160 review): when the key is absent, the CHECKBOX must
+    // also be reset to false.  The Hl2IoBoardTab instance is reused across
+    // currentRadioChanged emissions; without the reset, switching from a
+    // radio with N2ADR=True to one with no persisted key would leave the
+    // checkbox checked while the new radio's matrix was reconciled to
+    // False at connect-time — UI/hardware mismatch.
+    // ─────────────────────────────────────────────────────────────────────
+    void restoreSettings_with_missing_key_resets_checkbox_to_false()
+    {
+        RadioModel model;
+#ifdef NEREUS_BUILD_TESTS
+        model.setBoardForTest(HPSDRHW::HermesLite);
+#endif
+        Hl2IoBoardTab tab(&model);
+
+        // Simulate a previously-selected HL2 having left the box checked.
+        tab.setN2adrCheckboxStateForTest(true);
+        QVERIFY(tab.n2adrCheckboxStateForTest());
+
+        // Switch to an HL2 with no persisted N2ADR key.
+        QMap<QString, QVariant> emptySettings;
+        tab.restoreSettings(emptySettings);
+
+        QVERIFY2(!tab.n2adrCheckboxStateForTest(),
+                 "Codex P2: restoreSettings with missing key did not reset "
+                 "the checkbox — stale UI from previously selected radio");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // restoreSettings does NOT echo settingChanged back to HardwarePage —
     // that would create a redundant write through onTabSettingChanged
     // immediately after a read. The signal is for user-driven toggles

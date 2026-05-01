@@ -159,6 +159,11 @@ public:
     // settingChanged emission + applyN2adrMatrix in one call.
     void triggerN2adrToggleForTest(bool checked) { onN2adrToggled(checked); }
 
+    // PR #160 Codex P2 test seam: read the checkbox state to verify
+    // restoreSettings resets it correctly when the key is absent.
+    bool n2adrCheckboxStateForTest() const;
+    void setN2adrCheckboxStateForTest(bool checked);
+
 signals:
     void settingChanged(const QString& key, const QVariant& value);
 

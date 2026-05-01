@@ -1019,21 +1019,32 @@ void Hl2IoBoardTab::restoreSettings(const QMap<QString, QVariant>& settings)
     // smallio companion is then driven on every band change and the user
     // hears relay clicks they can't disable.
     //
-    // hermes-filter-debug Bug 2: only reconcile when the persisted key is
-    // ACTUALLY present.  A missing key means "this radio has never had
-    // N2ADR explicitly set" — leave the matrix and checkbox alone rather
+    // hermes-filter-debug Bug 2: only reconcile the OcMatrix when the
+    // persisted key is ACTUALLY present.  A missing key means "this radio
+    // has never had N2ADR explicitly set" — leave the matrix alone rather
     // than wiping back to False (which previously turned every Setup-tab
     // open on a fresh launch into a destructive reset).  Apply via
     // applyN2adrMatrix (matrix-only) so we don't echo settingChanged back
     // through HardwarePage::onTabSettingChanged immediately after reading.
+    //
+    // Codex P2 (PR #160 review): always reset the CHECKBOX state too —
+    // this Hl2IoBoardTab instance is reused across currentRadioChanged
+    // events, so leaving m_n2adrFilter at its previous value would show
+    // stale state from the previously selected radio (e.g. checked from
+    // HL2-A while connected to HL2-B that never had N2ADR set).  We
+    // touch only the checkbox here, not the matrix — connect-time
+    // (RadioModel::connectToRadio) has already reconciled the matrix to
+    // the per-MAC value (defaulting to False) before this hook runs.
     const auto it = settings.constFind(QStringLiteral("n2adrFilter"));
-    if (it == settings.constEnd()) {
-        return;
-    }
-    const bool checked = it.value().toString() == QStringLiteral("True");
+    const bool keyPresent = (it != settings.constEnd());
+    const bool checked = keyPresent
+                       && it.value().toString() == QStringLiteral("True");
     {
         QSignalBlocker blocker(m_n2adrFilter);
         m_n2adrFilter->setChecked(checked);
+    }
+    if (!keyPresent) {
+        return;  // matrix already reconciled at connect-time; do not wipe.
     }
     applyN2adrMatrix(checked);
 }
@@ -1085,6 +1096,22 @@ QString Hl2IoBoardTab::throttleEventTextForTest() const
 void Hl2IoBoardTab::pollBandwidthNowForTest()
 {
     updateBwDisplay();
+}
+
+// PR #160 Codex P2 test seams (hermes-filter-debug): expose checkbox state
+// so tests can verify restoreSettings resets the box when the key is absent.
+
+bool Hl2IoBoardTab::n2adrCheckboxStateForTest() const
+{
+    return m_n2adrFilter && m_n2adrFilter->isChecked();
+}
+
+void Hl2IoBoardTab::setN2adrCheckboxStateForTest(bool checked)
+{
+    if (m_n2adrFilter) {
+        QSignalBlocker blocker(m_n2adrFilter);
+        m_n2adrFilter->setChecked(checked);
+    }
 }
 
 } // namespace NereusSDR

@@ -253,6 +253,79 @@ private slots:
                  QStringLiteral("True"));
         QVERIFY(!s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Codex P1 (PR #160 review): preserve the legacy global key when there
+    // are NO HL2 saved radios yet.  Without this, a user who enabled N2ADR
+    // via the legacy code path but hasn't saved any HL2 (or only has a
+    // manual-IP entry whose boardType is still Unknown until first probe)
+    // would lose the value at migration — N2ADR comes back disabled after
+    // upgrade.  Future migration runs (after they probe an HL2) should
+    // still pick it up.
+    // ─────────────────────────────────────────────────────────────────────
+    void migrationPreservesGlobalWhenNoHl2Saved()
+    {
+        QTemporaryDir tmp;
+        AppSettings s(tmp.filePath(QStringLiteral("NereusSDR.settings")));
+        // No saved HL2 — only a non-HL2 radio (counts as "not seen" for
+        // migration purposes since boardType filter excludes it).
+        saveTestRadio(s, QStringLiteral("dd:ee:ff:44:55:66"), HPSDRHW::Orion);
+        s.setValue(QStringLiteral("hl2IoBoard/n2adrFilter"),
+                   QStringLiteral("True"));
+
+        AppSettings::migrateLegacyN2adrFilter(s);
+
+        // Global key STILL present — preserved for a future migration run.
+        QVERIFY2(s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")),
+                 "Codex P1: legacy global N2ADR key was deleted with no "
+                 "HL2 saved — value would be lost on upgrade");
+        QCOMPARE(s.value(QStringLiteral("hl2IoBoard/n2adrFilter")).toString(),
+                 QStringLiteral("True"));
+    }
+
+    // Migration with an Unknown-board manual entry (the manual-IP-before-probe
+    // case): also preserves the global because boardType isn't yet HermesLite.
+    void migrationPreservesGlobalForUnknownBoardManualEntry()
+    {
+        QTemporaryDir tmp;
+        AppSettings s(tmp.filePath(QStringLiteral("NereusSDR.settings")));
+        saveTestRadio(s, QStringLiteral("manual-192.168.1.10-1024"),
+                      HPSDRHW::Unknown);
+        s.setValue(QStringLiteral("hl2IoBoard/n2adrFilter"),
+                   QStringLiteral("False"));
+
+        AppSettings::migrateLegacyN2adrFilter(s);
+
+        QVERIFY(s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
+        QCOMPARE(s.value(QStringLiteral("hl2IoBoard/n2adrFilter")).toString(),
+                 QStringLiteral("False"));
+    }
+
+    // After an HL2 is later added, a subsequent migration run picks up the
+    // preserved global and clears it.  This is the "next launch" recovery
+    // path the P1 fix enables.
+    void migrationOnNextLaunchPicksUpPreservedGlobal()
+    {
+        QTemporaryDir tmp;
+        AppSettings s(tmp.filePath(QStringLiteral("NereusSDR.settings")));
+        s.setValue(QStringLiteral("hl2IoBoard/n2adrFilter"),
+                   QStringLiteral("True"));
+
+        // First run: no HL2 — global preserved.
+        AppSettings::migrateLegacyN2adrFilter(s);
+        QVERIFY(s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
+
+        // User adds an HL2 (e.g. probe completes and boardType is now known).
+        const QString mac = QStringLiteral("aa:bb:cc:11:22:33");
+        saveTestRadio(s, mac, HPSDRHW::HermesLite);
+
+        // Second run: HL2 present — migration completes and global is gone.
+        AppSettings::migrateLegacyN2adrFilter(s);
+        QCOMPARE(s.hardwareValue(mac, QStringLiteral("hl2IoBoard/n2adrFilter"),
+                                 QStringLiteral("X")).toString(),
+                 QStringLiteral("True"));
+        QVERIFY(!s.contains(QStringLiteral("hl2IoBoard/n2adrFilter")));
+    }
 };
 
 QTEST_APPLESS_MAIN(TstHl2N2adrPersistence)

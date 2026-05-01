@@ -832,11 +832,13 @@ void AppSettings::migrateLegacyN2adrFilter(AppSettings& s)
     // Copy to per-MAC for every saved HL2.  Multiple HL2s inherit the same
     // global value as a starting point; the user can flip individual radios
     // afterwards and the per-MAC store keeps them independent.
+    int hl2Count      = 0;
     int migratedCount = 0;
     for (const SavedRadio& r : s.savedRadios()) {
         if (r.info.boardType != HPSDRHW::HermesLite) {
             continue;
         }
+        ++hl2Count;
         // Don't overwrite an explicitly-set per-MAC value (defensive — a user
         // who has already flipped this on the new schema should win).
         if (s.hardwareValue(r.info.macAddress, QString(kLegacyKey)).isValid()) {
@@ -846,9 +848,21 @@ void AppSettings::migrateLegacyN2adrFilter(AppSettings& s)
         ++migratedCount;
     }
 
-    s.remove(QString(kLegacyKey));
-    qDebug() << "Migrated legacy N2ADR filter setting (" << legacyValue
-             << ") to" << migratedCount << "HL2 saved radio(s)";
+    // Codex P1 (PR #160 review): only clear the legacy global once at least
+    // one HL2 saved radio has been seen.  If no HL2 is registered yet (e.g.
+    // user enabled N2ADR via the legacy code path but hasn't saved an HL2,
+    // or only has a manual-IP entry whose boardType is still Unknown until
+    // first probe), preserve the global so a future migration run on the
+    // next launch can still pick it up.  Without this guard the legacy
+    // value would be silently lost and N2ADR would come back disabled.
+    if (hl2Count > 0) {
+        s.remove(QString(kLegacyKey));
+        qDebug() << "Migrated legacy N2ADR filter setting (" << legacyValue
+                 << ") to" << migratedCount << "HL2 saved radio(s); legacy global removed";
+    } else {
+        qDebug() << "Migrated legacy N2ADR filter setting (" << legacyValue
+                 << "): no HL2 saved radios yet; legacy global preserved for next launch";
+    }
     s.save();
 }
 
