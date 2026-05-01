@@ -1038,15 +1038,27 @@ void TxEqDialog::onParametricSelectedChanged(bool /*isDragging*/)
 void TxEqDialog::onParametricResetClicked()
 {
     if (!m_parametricWidget) { return; }
-    // Re-seeding the band count via setBandCount() resets points to a
-    // flat default curve (mirrors btnParaEQReset_Click at eqform.cs:
-    // 731-740 which calls ucParametricEq1.SetDefaults).
+    // Mirrors btnParaEQReset_Click at eqform.cs:731-740 (calls
+    // ucParametricEq1.SetDefaults).  NereusSDR's ParametricEqWidget keeps
+    // resetPointsDefault() private (Task 5 review), so we synthesize the
+    // flat-default arrays inline and call setPointsData -- same pattern as
+    // TxCfcDialog::onResetCompClicked / onResetEqClicked.  setBandCount()
+    // can't be reused as the reset hook because it early-returns when the
+    // requested count equals the current count.
+    const int bands = m_parametricWidget->bandCount();
+    QVector<double> f(bands), g(bands, 0.0), q(bands, 4.0);
+    const double minHz = m_parametricWidget->frequencyMinHz();
+    const double maxHz = m_parametricWidget->frequencyMaxHz();
+    const double span = (maxHz > minHz) ? (maxHz - minHz) : 1.0;
+    for (int i = 0; i < bands; ++i) {
+        const double t = (bands > 1) ? double(i) / double(bands - 1) : 0.0;
+        f[i] = minHz + t * span;
+    }
     {
         QSignalBlocker b(m_parametricWidget);
-        const int currentCount = m_parametricWidget->bandCount();
-        m_parametricWidget->setBandCount(currentCount);
-        m_parametricWidget->setGlobalGainDb(0.0);
         m_parametricWidget->setSelectedIndex(-1);
+        m_parametricWidget->setGlobalGainDb(0.0);
+        m_parametricWidget->setPointsData(f, g, q);
     }
     updateEditRowFromSelection();
     pushParametricToModel();
