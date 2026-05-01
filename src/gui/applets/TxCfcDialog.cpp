@@ -26,6 +26,16 @@
 //   2026-04-30 — Phase 3M-3a-ii follow-up sub-PR Batch 8: full
 //                 Thetis-verbatim rewrite by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-04-30 — Phase 3M-3a-ii follow-up sub-PR style fix: added a
+//                 dialog-level QSS block in the constructor so default
+//                 Qt6 widgets (spinboxes, combos, radios, checkboxes,
+//                 group-boxes, labels, push-buttons) pick up the
+//                 project's dark theme.  Without this, every control on
+//                 this dialog rendered with the system default look, which
+//                 read as dark-on-dark against the project's #0f0f1a
+//                 dialog background and made the controls effectively
+//                 invisible during bench test.  J.J. Boyd (KG4VCF), with
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -72,6 +82,7 @@
 #include "TxCfcDialog.h"
 
 #include "core/TxChannel.h"
+#include "gui/StyleConstants.h"
 #include "gui/widgets/ParametricEqWidget.h"
 #include "models/TransmitModel.h"
 
@@ -159,6 +170,25 @@ TxCfcDialog::TxCfcDialog(TransmitModel* tm,
     setObjectName(QStringLiteral("TxCfcDialog"));
     setModal(false);
     setAttribute(Qt::WA_DeleteOnClose, false);
+
+    // Dialog-level QSS — without this, default Qt6 widgets (spinboxes,
+    // combos, radios, checkboxes, group-boxes, labels) render with the
+    // system default theme inside an otherwise-dark dialog, producing the
+    // dark-on-dark "invisible boxes" reported during the 3M-3a-ii
+    // follow-up bench test.  The block layers on the project's
+    // StyleConstants helpers via QSS selectors; per-widget setStyleSheet
+    // calls (OG Guide hyperlink button below) keep their own specificity.
+    setStyleSheet(QString::fromLatin1(NereusSDR::Style::kPageStyle)
+                  + QString::fromLatin1(NereusSDR::Style::kGroupBoxStyle)
+                  + QString::fromLatin1(NereusSDR::Style::kSpinBoxStyle)
+                  + QStringLiteral(
+                        "QDoubleSpinBox { background: #1a2a3a;"
+                        " border: 1px solid #304050; border-radius: 3px;"
+                        " color: #c8d8e8; font-size: 12px; padding: 2px 4px; }")
+                  + QString::fromLatin1(NereusSDR::Style::kComboStyle)
+                  + QString::fromLatin1(NereusSDR::Style::kCheckBoxStyle)
+                  + QString::fromLatin1(NereusSDR::Style::kRadioButtonStyle)
+                  + QString::fromLatin1(NereusSDR::Style::kButtonStyle));
 
     buildUi();
     wireSignals();
