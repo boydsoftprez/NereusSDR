@@ -4,10 +4,11 @@
 //
 // Ported from Thetis source:
 //   Project Files/Source/Console/eqform.cs (legacy 10-band TX EQ —
-//   grpTXEQ, lines 1021-1561 [v2.10.3.13]).  Original licence from
-//   Thetis source is included below.
+//   grpTXEQ, lines 1021-1561 [v2.10.3.13]; parametric panel —
+//   lines 235-2911 [v2.10.3.13]).  Original licence from Thetis
+//   source is included below.
 //
-// Layout faithfully mirrors Thetis grpTXEQ:
+// Layout faithfully mirrors Thetis grpTXEQ for the legacy panel:
 //   - 1 Enable checkbox  (chkTXEQEnabled — eqform.cs:74)
 //   - 1 preamp slider    (tbTXEQPre, range -12..+15 dB, eqform.cs:1549-1561)
 //   - 10 band gain sliders (tbTXEQ0..9, range -12..+15 dB, eqform.cs:1496-1546)
@@ -19,12 +20,28 @@
 // lightweight gain-spinbox mirror under each gain slider so users
 // can type exact dB values (NereusSDR-spin, common Qt6 idiom).
 //
-// Out-of-scope for Batch 3 (deferred to Batch 4 / A.2):
-//   - Profile load/save/delete + factory presets dropdown
-//   - Profile import/export
+// Parametric panel (3M-3a-ii follow-up Batch 9):
+//   - chkLegacyEQ checkbox at top toggles between legacy / parametric
+//     (eqform.cs:969-981 + 2862-2911 [v2.10.3.13])
+//   - Single ParametricEqWidget (replaces Thetis ucParametricEq1)
+//     with edit row above + right column of controls
+//   - Edit row: # / f / Gain / Q / Preamp + Reset (mirrors
+//     nudParaEQ_selected_band / nudParaEQ_f / nudParaEQ_gain /
+//     nudParaEQ_q / nudParaEQ_preamp / btnParaEQReset at
+//     eqform.cs:235-273 + 731-926 [v2.10.3.13])
+//   - Right column: Log scale / Use Q Factors / Live Update + warning
+//     icon / Low / High freq spinboxes / 5/10/18 band radios
+//     (mirrors chkLogScale / chkUseQFactors / chkPanaEQ_live /
+//     pbParaEQ_live_warning / udParaEQ_low / udParaEQ_high /
+//     radParaEQ_5/10/18 at eqform.cs:241-275 + 402-600 [v2.10.3.13])
 //
 // Out-of-scope permanently (handled elsewhere):
 //   - RX EQ controls — Thetis EQForm hosts both; NereusSDR splits them.
+//     The RX EQ widget lives in EqApplet.
+//   - Profile management — Thetis hosts the same profile bank on EQForm;
+//     NereusSDR exposes it on the TxApplet's TX-Profile combo and the
+//     Console / Setup → Audio → TX Profile editor.  Re-introducing a
+//     redundant copy on this dialog would only confuse users.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -33,14 +50,26 @@
 //                 via Anthropic Claude Code.
 //   2026-04-29 — Phase 3M-3a-i Batch 4 (Task A.2): TX profile combo
 //                 + Save / Save As / Delete buttons added, wired to
-//                 RadioModel::micProfileManager().  Mirrors the Thetis
+//                 RadioModel::micProfileManager().  Mirrored the Thetis
 //                 setup.cs:9505-9656 [v2.10.3.13] handler set
 //                 (comboTXProfileName_SelectedIndexChanged,
 //                  btnTXProfileSave_Click, btnTXProfileDelete_Click).
-//                 Save uses overwrite-with-current-name semantics;
-//                 Save As prompts for a new name.  Delete falls back
-//                 to the next remaining profile via the F.3
-//                 last-remaining guard in MicProfileManager.
+//   2026-04-30 — Phase 3M-3a-ii follow-up Batch 9: legacy /
+//                 parametric panel toggle added by J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude
+//                 Code.  Profile combo + Save / Save As / Delete
+//                 dropped (TxApplet hosts them).  chkLegacyEQ (default
+//                 checked) swaps a QStackedWidget between the original
+//                 legacy slider panel and a new parametric panel
+//                 (single ParametricEqWidget + edit row + right column).
+//                 The chkLegacyEQ state persists in AppSettings under
+//                 "TxEqDialog/UsingLegacyEQ" to preserve user choice
+//                 across launches (mirrors Thetis's
+//                 _state.UsingLegacyEQ Common.RestoreForm round-trip).
+//                 Legacy band-column sliders / spinboxes / headers now
+//                 pick up Style::sliderVStyle() + kSpinBoxStyle +
+//                 kTextPrimary — fixes a styling regression where they
+//                 rendered with the system default look-and-feel.
 // =================================================================
 
 //=================================================================
@@ -86,25 +115,33 @@
 
 #include "TxEqDialog.h"
 
-#include "core/MicProfileManager.h"
+#include "core/AppSettings.h"
+#include "gui/StyleConstants.h"
+#include "gui/widgets/ParametricEqWidget.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
-#include <QLineEdit>
-#include <QMessageBox>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
+#include <QStyle>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -115,59 +152,49 @@ namespace {
 // band fired.
 constexpr const char* kBandIndexProp = "txEqBandIndex";
 
-// Build a vertical column for one band (or the preamp).  Returns the
-// outer column widget; populates *outSlider / *outDbSpin / *outFreqSpin
-// (any may be null — the preamp column has no freq spin).
-QWidget* buildBandColumn(const QString& headerLabel,
-                         int bandIndex,            // -1 for preamp
-                         QSlider** outSlider,
-                         QSpinBox** outDbSpin,
-                         QSpinBox** outFreqSpin,
-                         QWidget* parent)
-{
-    QWidget* col = new QWidget(parent);
-    QVBoxLayout* v = new QVBoxLayout(col);
-    v->setContentsMargins(2, 2, 2, 2);
-    v->setSpacing(3);
+// AppSettings key for the legacy-vs-parametric toggle state.
+// Mirrors Thetis _state.UsingLegacyEQ (eqform.cs:2866) round-tripped
+// through Common.RestoreForm.
+constexpr const char* kLegacyToggleSettingsKey = "TxEqDialog/UsingLegacyEQ";
 
-    QLabel* hdr = new QLabel(headerLabel, col);
-    hdr->setAlignment(Qt::AlignHCenter);
-    QFont f = hdr->font();
-    f.setBold(true);
-    hdr->setFont(f);
-    v->addWidget(hdr);
+// Parametric panel widget defaults — sourced byte-for-byte from
+// eqform.cs:928-967 [v2.10.3.13] (ucParametricEq1 widget property
+// block in the InitializeComponent generated code).
+constexpr double kParaDefaultDbMin       = -24.0;          // cs:944
+constexpr double kParaDefaultDbMax       =  24.0;          // cs:943
+constexpr double kParaDefaultMinHz       =   0.0;          // cs:947
+constexpr double kParaDefaultMaxHz       = 2700.0;         // cs:946
+constexpr double kParaDefaultQMin        =   0.2;          // cs:954
+constexpr double kParaDefaultQMax        =  20.0;          // cs:953
+constexpr double kParaDefaultGlobalGainDb=   0.0;          // cs:948
+constexpr double kParaDefaultMinPointSpacingHz = 5.0;      // cs:950
+constexpr int    kParaDefaultBandShadeAlpha = 70;          // cs:938
+constexpr int    kParaDefaultAxisTickLength = 6;           // cs:936
 
-    QSlider* s = new QSlider(Qt::Vertical, col);
-    s->setRange(TransmitModel::kTxEqBandDbMin, TransmitModel::kTxEqBandDbMax);
-    s->setTickPosition(QSlider::TicksBothSides);
-    s->setTickInterval(3);          // matches Thetis tbTXEQ0.TickFrequency = 3
-    s->setPageStep(3);              // matches LargeChange = 3
-    s->setMinimumHeight(140);
-    s->setProperty(kBandIndexProp, bandIndex);
-    v->addWidget(s, 1, Qt::AlignHCenter);
-    *outSlider = s;
+// Right-column controls — sourced byte-for-byte from
+// eqform.cs:540-600 [v2.10.3.13] (udParaEQ_low / udParaEQ_high) and
+// cs:493-526 (radParaEQ_5/10/18 default 10).
+constexpr int    kParaLowMinHz           =      0;         // cs:559
+constexpr int    kParaLowMaxHz           =  20000;         // cs:551
+constexpr int    kParaLowDefaultHz       =      0;         // cs:565
+constexpr int    kParaHighMinHz          =      0;         // cs:589
+constexpr int    kParaHighMaxHz          =  20000;         // cs:581
+constexpr int    kParaHighDefaultHz      =  16000;         // cs:595
 
-    QSpinBox* db = new QSpinBox(col);
-    db->setRange(TransmitModel::kTxEqBandDbMin, TransmitModel::kTxEqBandDbMax);
-    db->setSuffix(QStringLiteral(" dB"));
-    db->setProperty(kBandIndexProp, bandIndex);
-    v->addWidget(db);
-    *outDbSpin = db;
+// 1 kHz minimum spread between Low and High — mirrors
+// frmCFCConfig.cs:122-138 [v2.10.3.13] guard (eqform doesn't expose
+// the same constant explicitly but enforces the same invariant via
+// nudParaEQ_low / nudParaEQ_high handlers; we copy CFC's threshold).
+constexpr int    kMinFreqSpreadHz        = 1000;
 
-    if (outFreqSpin) {
-        QSpinBox* hz = new QSpinBox(col);
-        hz->setRange(TransmitModel::kTxEqFreqHzMin,
-                     TransmitModel::kTxEqFreqHzMax);
-        hz->setSuffix(QStringLiteral(" Hz"));
-        hz->setProperty(kBandIndexProp, bandIndex);
-        // Allow 4-digit + suffix room.
-        hz->setMinimumWidth(80);
-        v->addWidget(hz);
-        *outFreqSpin = hz;
-    }
+// Edit-row preamp (nudParaEQ_preamp) — eqform.cs:671-699 [v2.10.3.13].
+constexpr double kParaPreampMinDb        = -24.0;          // cs:685-689
+constexpr double kParaPreampMaxDb        =  24.0;          // cs:680-684
 
-    return col;
-}
+// Selected-band spinbox (nudParaEQ_selected_band) —
+// eqform.cs:920-925 [v2.10.3.13] default 10 (one-based).
+constexpr int    kParaSelectedBandMin    =      1;
+constexpr int    kParaSelectedBandDefault = 10;
 
 } // namespace
 
@@ -214,55 +241,22 @@ void TxEqDialog::buildUi()
     outer->setContentsMargins(8, 8, 8, 8);
     outer->setSpacing(6);
 
-    // ── A.2 Profile-bank row: combo + Save / Save As / Delete ───────
-    // Mirrors Thetis setup.cs:9505-9656 [v2.10.3.13]
-    // (comboTXProfileName + btnTXProfileSave + btnTXProfileDelete).
-    // NereusSDR adds a separate Save As button (clearer UX than
-    // Thetis's overload-Save semantics) per the Batch 4 spec.
-    QHBoxLayout* profileRow = new QHBoxLayout;
-    profileRow->setSpacing(6);
+    // ── chkLegacyEQ at top — eqform.cs:969-981 [v2.10.3.13].
+    // Default checked (cs:972-973 chkLegacyEQ.Checked = true).  We
+    // override the default with the persisted user choice if present.
+    m_legacyToggle = new QCheckBox(tr("Legacy EQ"), this);
+    m_legacyToggle->setObjectName(QStringLiteral("TxEqLegacyToggle"));
+    m_legacyToggle->setToolTip(tr(
+        "When checked, show the original 10-band slider EQ.  When unchecked, "
+        "show the parametric EQ — drag points on the curve to set frequency, "
+        "gain, and Q per band."));
     {
-        QLabel* lbl = new QLabel(tr("Profile:"), this);
-        profileRow->addWidget(lbl);
-
-        m_profileCombo = new QComboBox(this);
-        m_profileCombo->setObjectName(QStringLiteral("TxEqProfileCombo"));
-        m_profileCombo->setEditable(false);
-        m_profileCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_profileCombo->setToolTip(tr(
-            "Active TX profile.  Switching loads the profile's saved EQ "
-            "shape (and silently updates mic gain, VOX threshold, Leveler, "
-            "and ALC settings — the same profile bank used by the TX "
-            "applet's TX-Profile combo and the Setup → Audio → TX Profile "
-            "editor)."));
-        profileRow->addWidget(m_profileCombo, 1);
-
-        m_saveBtn = new QPushButton(tr("Save"), this);
-        m_saveBtn->setObjectName(QStringLiteral("TxEqProfileSaveBtn"));
-        m_saveBtn->setToolTip(tr(
-            "Overwrite the active profile with the current TX EQ + mic + "
-            "VOX + Leveler + ALC state.  Confirms before overwriting."));
-        profileRow->addWidget(m_saveBtn);
-
-        m_saveAsBtn = new QPushButton(tr("Save As..."), this);
-        m_saveAsBtn->setObjectName(QStringLiteral("TxEqProfileSaveAsBtn"));
-        m_saveAsBtn->setToolTip(tr(
-            "Save the current state under a new profile name."));
-        profileRow->addWidget(m_saveAsBtn);
-
-        m_deleteBtn = new QPushButton(tr("Delete"), this);
-        m_deleteBtn->setObjectName(QStringLiteral("TxEqProfileDeleteBtn"));
-        m_deleteBtn->setToolTip(tr(
-            "Delete the active profile.  The last remaining profile "
-            "cannot be deleted."));
-        profileRow->addWidget(m_deleteBtn);
+        const QString persisted = AppSettings::instance().value(
+            QLatin1String(kLegacyToggleSettingsKey),
+            QStringLiteral("True")).toString();
+        m_legacyToggle->setChecked(persisted == QStringLiteral("True"));
     }
-    outer->addLayout(profileRow);
-
-    QFrame* sepProfile = new QFrame(this);
-    sepProfile->setFrameShape(QFrame::HLine);
-    sepProfile->setFrameShadow(QFrame::Sunken);
-    outer->addWidget(sepProfile);
+    outer->addWidget(m_legacyToggle);
 
     // ── Top strip: Enable + WDSP filter combos ──────────────────────
     QHBoxLayout* topRow = new QHBoxLayout;
@@ -271,8 +265,8 @@ void TxEqDialog::buildUi()
     m_enableChk = new QCheckBox(tr("Enable TX EQ"), this);
     m_enableChk->setObjectName(QStringLiteral("TxEqEnableChk"));
     m_enableChk->setToolTip(
-        tr("Master enable for the 10-band TX equalizer.  When off the "
-           "EQ stage is bypassed in the TX DSP chain."));
+        tr("Master enable for the TX equalizer.  When off the EQ stage "
+           "is bypassed in the TX DSP chain."));
     topRow->addWidget(m_enableChk);
 
     topRow->addSpacing(20);
@@ -343,8 +337,112 @@ void TxEqDialog::buildUi()
     sep->setFrameShadow(QFrame::Sunken);
     outer->addWidget(sep);
 
+    // ── Stacked legacy + parametric panels.  The chkLegacyEQ checkbox
+    // toggles which one is visible.
+    m_panelStack = new QStackedWidget(this);
+    m_panelStack->setObjectName(QStringLiteral("TxEqPanelStack"));
+    m_legacyPanel = buildLegacyPanel();
+    m_parametricPanel = buildParametricPanel();
+    m_panelStack->addWidget(m_legacyPanel);       // index 0
+    m_panelStack->addWidget(m_parametricPanel);   // index 1
+    m_panelStack->setCurrentIndex(m_legacyToggle->isChecked() ? 0 : 1);
+    outer->addWidget(m_panelStack, 1);
+
+    setMinimumWidth(720);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Legacy panel build — From Thetis grpTXEQ at eqform.cs:1021-1561 [v2.10.3.13].
+// Preserved verbatim from the Phase 3M-3a-i Batch 3 implementation; the
+// only change in Batch 9 is the per-column slider/spinbox style fix
+// applied below.
+// ─────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// Build a vertical column for one band (or the preamp).  Returns the
+// outer column widget; populates *outSlider / *outDbSpin / *outFreqSpin
+// (any may be null — the preamp column has no freq spin).
+//
+// Batch 9 styling fix — applies Style::sliderVStyle() to the slider,
+// Style::kSpinBoxStyle to both spinboxes, and a kTextPrimary colour
+// override to the header label.  Without this, the band columns
+// rendered with the system default theme inside an otherwise-dark
+// dialog (the header was hard-to-read system grey, the slider used
+// the system handle, and the spinboxes lacked the project bevel).
+QWidget* buildBandColumn(const QString& headerLabel,
+                         int bandIndex,            // -1 for preamp
+                         QSlider** outSlider,
+                         QSpinBox** outDbSpin,
+                         QSpinBox** outFreqSpin,
+                         QWidget* parent)
+{
+    QWidget* col = new QWidget(parent);
+    QVBoxLayout* v = new QVBoxLayout(col);
+    v->setContentsMargins(2, 2, 2, 2);
+    v->setSpacing(3);
+
+    QLabel* hdr = new QLabel(headerLabel, col);
+    hdr->setAlignment(Qt::AlignHCenter);
+    QFont f = hdr->font();
+    f.setBold(true);
+    hdr->setFont(f);
+    // Batch 9 — apply project text colour so the band header reads
+    // against the dark dialog background.
+    hdr->setStyleSheet(QStringLiteral("color: %1;")
+                          .arg(NereusSDR::Style::kTextPrimary));
+    v->addWidget(hdr);
+
+    QSlider* s = new QSlider(Qt::Vertical, col);
+    s->setRange(TransmitModel::kTxEqBandDbMin, TransmitModel::kTxEqBandDbMax);
+    s->setTickPosition(QSlider::TicksBothSides);
+    s->setTickInterval(3);          // matches Thetis tbTXEQ0.TickFrequency = 3
+    s->setPageStep(3);              // matches LargeChange = 3
+    s->setMinimumHeight(140);
+    s->setProperty(kBandIndexProp, bandIndex);
+    // Batch 9 — apply the project vertical slider style.
+    s->setStyleSheet(NereusSDR::Style::sliderVStyle());
+    v->addWidget(s, 1, Qt::AlignHCenter);
+    *outSlider = s;
+
+    QSpinBox* db = new QSpinBox(col);
+    db->setRange(TransmitModel::kTxEqBandDbMin, TransmitModel::kTxEqBandDbMax);
+    db->setSuffix(QStringLiteral(" dB"));
+    db->setProperty(kBandIndexProp, bandIndex);
+    // Batch 9 — apply the project spinbox style.
+    db->setStyleSheet(NereusSDR::Style::kSpinBoxStyle);
+    v->addWidget(db);
+    *outDbSpin = db;
+
+    if (outFreqSpin) {
+        QSpinBox* hz = new QSpinBox(col);
+        hz->setRange(TransmitModel::kTxEqFreqHzMin,
+                     TransmitModel::kTxEqFreqHzMax);
+        hz->setSuffix(QStringLiteral(" Hz"));
+        hz->setProperty(kBandIndexProp, bandIndex);
+        // Allow 4-digit + suffix room.
+        hz->setMinimumWidth(80);
+        // Batch 9 — apply the project spinbox style.
+        hz->setStyleSheet(NereusSDR::Style::kSpinBoxStyle);
+        v->addWidget(hz);
+        *outFreqSpin = hz;
+    }
+
+    return col;
+}
+
+} // anonymous namespace
+
+QWidget* TxEqDialog::buildLegacyPanel()
+{
+    QWidget* panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("TxEqLegacyPanel"));
+    QVBoxLayout* legacy = new QVBoxLayout(panel);
+    legacy->setContentsMargins(0, 0, 0, 0);
+    legacy->setSpacing(6);
+
     // ── Band columns row (preamp + 10 bands + dB scale label) ───────
-    QGroupBox* bandGroup = new QGroupBox(tr("TX EQ Bands"), this);
+    QGroupBox* bandGroup = new QGroupBox(tr("TX EQ Bands"), panel);
     QHBoxLayout* bandRow = new QHBoxLayout(bandGroup);
     bandRow->setContentsMargins(8, 14, 8, 8);
     bandRow->setSpacing(2);
@@ -405,6 +503,13 @@ void TxEqDialog::buildUi()
         top->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         mid->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         bot->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
+        // Batch 9 — match the band-column header styling so all dB
+        // labels read against the dark dialog background.
+        const QString scaleStyle = QStringLiteral("color: %1;")
+                                       .arg(NereusSDR::Style::kTextPrimary);
+        top->setStyleSheet(scaleStyle);
+        mid->setStyleSheet(scaleStyle);
+        bot->setStyleSheet(scaleStyle);
         v->addWidget(top);
         v->addStretch(1);
         v->addWidget(mid);
@@ -413,9 +518,270 @@ void TxEqDialog::buildUi()
         bandRow->addWidget(scaleCol);
     }
 
-    outer->addWidget(bandGroup, 1);
+    legacy->addWidget(bandGroup, 1);
+    return panel;
+}
 
-    setMinimumWidth(720);
+// ─────────────────────────────────────────────────────────────────────
+// Parametric panel build — From Thetis pnlParaEQ + pnlParaEQ2 +
+// ucParametricEq1 at eqform.cs:235-967 [v2.10.3.13].
+//
+// We map Thetis's two side-by-side panels (left: edit row + widget;
+// right: 5/10/18 + Low/High + Use Q + Live + Log) into a single
+// parametric panel with the widget centered and the right-column
+// controls flanking it on the right.  Edit row sits above the widget
+// per Thetis.
+// ─────────────────────────────────────────────────────────────────────
+
+QWidget* TxEqDialog::buildParametricPanel()
+{
+    QWidget* panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("TxEqParametricPanel"));
+    QVBoxLayout* col = new QVBoxLayout(panel);
+    col->setContentsMargins(0, 0, 0, 0);
+    col->setSpacing(6);
+
+    // ── Edit row — eqform.cs:235-273 + 651-740 [v2.10.3.13].
+    // Designer order: # / f / dB (gain) / Q / Preamp / Reset.
+    {
+        QHBoxLayout* row = new QHBoxLayout;
+        row->setSpacing(6);
+
+        // # — nudParaEQ_selected_band (cs:920-925; default 10 one-based).
+        row->addWidget(new QLabel(tr("#"), panel));
+        m_paraSelectedBandSpin = new QSpinBox(panel);
+        m_paraSelectedBandSpin->setObjectName(
+            QStringLiteral("TxEqParaSelectedBandSpin"));
+        m_paraSelectedBandSpin->setRange(kParaSelectedBandMin,
+                                          kParaSelectedBandDefault);
+        m_paraSelectedBandSpin->setValue(kParaSelectedBandDefault);
+        m_paraSelectedBandSpin->setToolTip(tr(
+            "Selected band index (1-based).  Editing the f / Gain / Q "
+            "spinboxes updates this band's point on the curve."));
+        row->addWidget(m_paraSelectedBandSpin);
+
+        // f — nudParaEQ_f (cs:267, max 20000 Hz).
+        row->addSpacing(6);
+        row->addWidget(new QLabel(tr("f"), panel));
+        m_paraFreqSpin = new QSpinBox(panel);
+        m_paraFreqSpin->setObjectName(QStringLiteral("TxEqParaFreqSpin"));
+        m_paraFreqSpin->setRange(0, 20000);
+        m_paraFreqSpin->setSuffix(QStringLiteral(" Hz"));
+        m_paraFreqSpin->setMinimumWidth(80);
+        m_paraFreqSpin->setToolTip(tr(
+            "Center frequency of the selected band in Hz."));
+        row->addWidget(m_paraFreqSpin);
+
+        // Gain — nudParaEQ_gain (cs:271, ±24 dB).
+        row->addSpacing(6);
+        row->addWidget(new QLabel(tr("Gain"), panel));
+        m_paraGainSpin = new QDoubleSpinBox(panel);
+        m_paraGainSpin->setObjectName(QStringLiteral("TxEqParaGainSpin"));
+        m_paraGainSpin->setRange(kParaDefaultDbMin, kParaDefaultDbMax);
+        m_paraGainSpin->setSuffix(QStringLiteral(" dB"));
+        m_paraGainSpin->setDecimals(1);
+        m_paraGainSpin->setSingleStep(0.5);
+        m_paraGainSpin->setToolTip(tr(
+            "Gain of the selected band in dB.  Range -24 to +24 dB."));
+        row->addWidget(m_paraGainSpin);
+
+        // Q — nudParaEQ_q (cs:269, range 0.2..20).
+        row->addSpacing(6);
+        row->addWidget(new QLabel(tr("Q"), panel));
+        m_paraQSpin = new QDoubleSpinBox(panel);
+        m_paraQSpin->setObjectName(QStringLiteral("TxEqParaQSpin"));
+        m_paraQSpin->setRange(kParaDefaultQMin, kParaDefaultQMax);
+        m_paraQSpin->setDecimals(2);
+        m_paraQSpin->setSingleStep(0.1);
+        m_paraQSpin->setToolTip(tr(
+            "Quality factor (bandwidth) of the selected band.  "
+            "Range 0.2 (very wide) to 20 (very narrow)."));
+        row->addWidget(m_paraQSpin);
+
+        // Preamp — nudParaEQ_preamp (cs:671-699, ±24 dB).
+        row->addSpacing(6);
+        row->addWidget(new QLabel(tr("Preamp"), panel));
+        m_paraPreampSpin = new QDoubleSpinBox(panel);
+        m_paraPreampSpin->setObjectName(QStringLiteral("TxEqParaPreampSpin"));
+        m_paraPreampSpin->setRange(kParaPreampMinDb, kParaPreampMaxDb);
+        m_paraPreampSpin->setSuffix(QStringLiteral(" dB"));
+        m_paraPreampSpin->setDecimals(1);
+        m_paraPreampSpin->setSingleStep(0.5);
+        m_paraPreampSpin->setToolTip(tr(
+            "Global preamp applied across all bands.  Range -24 to +24 dB."));
+        row->addWidget(m_paraPreampSpin);
+
+        row->addStretch(1);
+
+        // Reset — btnParaEQReset (cs:731-740).
+        m_paraResetBtn = new QPushButton(tr("Reset"), panel);
+        m_paraResetBtn->setObjectName(QStringLiteral("TxEqParaResetBtn"));
+        m_paraResetBtn->setToolTip(tr(
+            "Reset all parametric bands to a flat curve."));
+        row->addWidget(m_paraResetBtn);
+
+        col->addLayout(row);
+    }
+
+    // ── Widget + right column ──────────────────────────────────────
+    QHBoxLayout* mainRow = new QHBoxLayout;
+    mainRow->setSpacing(8);
+
+    // ParametricEqWidget centered (replaces ucParametricEq1).
+    m_parametricWidget = new ParametricEqWidget(panel);
+    m_parametricWidget->setObjectName(QStringLiteral("TxEqParametricWidget"));
+    // Apply Thetis defaults — ucParametricEq1 widget property block at
+    // eqform.cs:928-967 [v2.10.3.13].
+    m_parametricWidget->setDbMin(kParaDefaultDbMin);
+    m_parametricWidget->setDbMax(kParaDefaultDbMax);
+    m_parametricWidget->setFrequencyMinHz(kParaDefaultMinHz);
+    m_parametricWidget->setFrequencyMaxHz(kParaDefaultMaxHz);
+    m_parametricWidget->setQMin(kParaDefaultQMin);
+    m_parametricWidget->setQMax(kParaDefaultQMax);
+    m_parametricWidget->setGlobalGainDb(kParaDefaultGlobalGainDb);
+    m_parametricWidget->setMinPointSpacingHz(kParaDefaultMinPointSpacingHz);
+    m_parametricWidget->setBandShadeAlpha(kParaDefaultBandShadeAlpha);
+    m_parametricWidget->setAxisTickLength(kParaDefaultAxisTickLength);
+    m_parametricWidget->setShowAxisScales(true);            // cs:956
+    m_parametricWidget->setShowBandShading(true);           // cs:957
+    m_parametricWidget->setShowDotReadings(true);           // cs:958
+    m_parametricWidget->setShowReadout(false);              // cs:959
+    m_parametricWidget->setUsePerBandColours(true);         // cs:962
+    m_parametricWidget->setAllowPointReorder(true);         // cs:930
+    m_parametricWidget->setParametricEq(true);              // cs:952
+    m_parametricWidget->setBandCount(10);                   // default 10-band
+    m_parametricWidget->setMinimumSize(400, 300);
+    mainRow->addWidget(m_parametricWidget, 1);
+
+    // Right column — eqform.cs:241-275 + 402-600 [v2.10.3.13]:
+    //   Log scale + Use Q Factors + Live Update + warning icon
+    //   + Low / High freq spinboxes
+    //   + 5/10/18 band radios
+    QVBoxLayout* rightCol = new QVBoxLayout;
+    rightCol->setSpacing(6);
+
+    // chkLogScale — eqform.cs:468-478 (default unchecked).
+    m_paraLogScaleChk = new QCheckBox(tr("Log scale"), panel);
+    m_paraLogScaleChk->setObjectName(QStringLiteral("TxEqParaLogScaleChk"));
+    m_paraLogScaleChk->setToolTip(tr(
+        "Render the parametric curve on a log frequency axis."));
+    rightCol->addWidget(m_paraLogScaleChk);
+
+    // chkUseQFactors — eqform.cs:528-540 (default checked).
+    m_paraUseQFactorsChk = new QCheckBox(tr("Use Q Factors"), panel);
+    m_paraUseQFactorsChk->setObjectName(QStringLiteral("TxEqParaUseQFactorsChk"));
+    m_paraUseQFactorsChk->setChecked(true);
+    m_paraUseQFactorsChk->setToolTip(tr(
+        "Use Q factors per band when computing the EQ profile.  When off, "
+        "the Q columns are ignored and the curve degenerates to flat-band."));
+    rightCol->addWidget(m_paraUseQFactorsChk);
+
+    // chkPanaEQ_live + warning icon — eqform.cs:402-414 + 388-400.
+    {
+        QHBoxLayout* liveRow = new QHBoxLayout;
+        liveRow->setSpacing(4);
+        liveRow->setContentsMargins(0, 0, 0, 0);
+
+        m_paraLiveUpdateChk = new QCheckBox(tr("Live Update"), panel);
+        m_paraLiveUpdateChk->setObjectName(
+            QStringLiteral("TxEqParaLiveUpdateChk"));
+        m_paraLiveUpdateChk->setToolTip(tr(
+            "Push EQ values to the radio while dragging points.  "
+            "When off, the WDSP profile is updated only on mouse-release."));
+        liveRow->addWidget(m_paraLiveUpdateChk);
+
+        // Warning icon — eqform.cs:388-400 (pbParaEQ_live_warning.Visible
+        // = false until live mode is engaged).  Use the system warning
+        // icon as a stand-in for Thetis's bundled bitmap.
+        QLabel* warnIcon = new QLabel(panel);
+        warnIcon->setObjectName(QStringLiteral("TxEqParaLiveWarning"));
+        const QIcon icon = style()->standardIcon(QStyle::SP_MessageBoxWarning);
+        warnIcon->setPixmap(icon.pixmap(16, 16));
+        warnIcon->setToolTip(tr(
+            "Live updates may take a while due to large DSP buffer sizes.  "
+            "UI interactions may stutter while the profile is rebuilt."));
+        warnIcon->setVisible(false);  // matches Thetis cs:400 default
+        liveRow->addWidget(warnIcon);
+        liveRow->addStretch(1);
+        rightCol->addLayout(liveRow);
+    }
+
+    rightCol->addSpacing(6);
+
+    // Low / High freq spinboxes — eqform.cs:540-622 [v2.10.3.13].
+    {
+        QGridLayout* g = new QGridLayout;
+        g->setHorizontalSpacing(6);
+        g->setVerticalSpacing(4);
+
+        g->addWidget(new QLabel(tr("Low"),  panel), 0, 0);
+        m_paraLowSpin = new QSpinBox(panel);
+        m_paraLowSpin->setObjectName(QStringLiteral("TxEqParaLowSpin"));
+        m_paraLowSpin->setRange(kParaLowMinHz, kParaLowMaxHz);
+        m_paraLowSpin->setValue(kParaLowDefaultHz);
+        m_paraLowSpin->setSuffix(QStringLiteral(" Hz"));
+        m_paraLowSpin->setToolTip(tr(
+            "Lower edge of the visible parametric freq range (Hz).  "
+            "Must be at least 1000 Hz below High."));
+        g->addWidget(m_paraLowSpin, 0, 1);
+
+        g->addWidget(new QLabel(tr("High"), panel), 1, 0);
+        m_paraHighSpin = new QSpinBox(panel);
+        m_paraHighSpin->setObjectName(QStringLiteral("TxEqParaHighSpin"));
+        m_paraHighSpin->setRange(kParaHighMinHz, kParaHighMaxHz);
+        m_paraHighSpin->setValue(kParaHighDefaultHz);
+        m_paraHighSpin->setSuffix(QStringLiteral(" Hz"));
+        m_paraHighSpin->setToolTip(tr(
+            "Upper edge of the visible parametric freq range (Hz).  "
+            "Must be at least 1000 Hz above Low."));
+        g->addWidget(m_paraHighSpin, 1, 1);
+
+        rightCol->addLayout(g);
+    }
+
+    rightCol->addSpacing(6);
+
+    // 5 / 10 / 18 band radios — eqform.cs:493-526 [v2.10.3.13]
+    // (panelTS1 wraps the three radios; default 10-band).
+    {
+        QGroupBox* grp = new QGroupBox(tr("Bands"), panel);
+        QVBoxLayout* gv = new QVBoxLayout(grp);
+        gv->setContentsMargins(8, 14, 8, 8);
+        gv->setSpacing(2);
+
+        m_paraBands5Radio = new QRadioButton(tr("5-band"), grp);
+        m_paraBands5Radio->setObjectName(QStringLiteral("TxEqParaBands5Radio"));
+        m_paraBands5Radio->setToolTip(tr(
+            "Switch parametric layout to 5 bands.  Resets per-band points."));
+
+        m_paraBands10Radio = new QRadioButton(tr("10-band"), grp);
+        m_paraBands10Radio->setObjectName(QStringLiteral("TxEqParaBands10Radio"));
+        m_paraBands10Radio->setChecked(true);
+        m_paraBands10Radio->setToolTip(tr(
+            "Switch parametric layout to 10 bands (default).  "
+            "Resets per-band points."));
+
+        m_paraBands18Radio = new QRadioButton(tr("18-band"), grp);
+        m_paraBands18Radio->setObjectName(QStringLiteral("TxEqParaBands18Radio"));
+        m_paraBands18Radio->setToolTip(tr(
+            "Switch parametric layout to 18 bands.  Resets per-band points."));
+
+        m_bandCountGroup = new QButtonGroup(grp);
+        m_bandCountGroup->addButton(m_paraBands5Radio,  5);
+        m_bandCountGroup->addButton(m_paraBands10Radio, 10);
+        m_bandCountGroup->addButton(m_paraBands18Radio, 18);
+
+        gv->addWidget(m_paraBands5Radio);
+        gv->addWidget(m_paraBands10Radio);
+        gv->addWidget(m_paraBands18Radio);
+        rightCol->addWidget(grp);
+    }
+
+    rightCol->addStretch(1);
+    mainRow->addLayout(rightCol, 0);
+
+    col->addLayout(mainRow, 1);
+    return panel;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -424,7 +790,11 @@ void TxEqDialog::buildUi()
 
 void TxEqDialog::wireSignals()
 {
-    // ── UI → model ────────────────────────────────────────────────
+    // ── chkLegacyEQ toggle — From eqform.cs:981 + 2862-2911 [v2.10.3.13].
+    connect(m_legacyToggle, &QCheckBox::toggled,
+            this, &TxEqDialog::onLegacyToggled);
+
+    // ── Legacy panel: UI → model ────────────────────────────────────
     connect(m_enableChk, &QCheckBox::toggled,
             this, &TxEqDialog::onEnableToggled);
 
@@ -452,12 +822,41 @@ void TxEqDialog::wireSignals()
     connect(m_wintypeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &TxEqDialog::onWintypeChanged);
 
-    // ── A.2 profile-bank wiring ────────────────────────────────────
-    connect(m_profileCombo, &QComboBox::currentTextChanged,
-            this, &TxEqDialog::onProfileComboChanged);
-    connect(m_saveBtn,   &QPushButton::clicked, this, &TxEqDialog::onSaveClicked);
-    connect(m_saveAsBtn, &QPushButton::clicked, this, &TxEqDialog::onSaveAsClicked);
-    connect(m_deleteBtn, &QPushButton::clicked, this, &TxEqDialog::onDeleteClicked);
+    // ── Parametric panel wiring ─────────────────────────────────────
+    if (m_parametricWidget) {
+        connect(m_parametricWidget, &ParametricEqWidget::pointsChanged,
+                this, &TxEqDialog::onParametricPointsChanged);
+        connect(m_parametricWidget, &ParametricEqWidget::globalGainChanged,
+                this, &TxEqDialog::onParametricGlobalGainChanged);
+        connect(m_parametricWidget, &ParametricEqWidget::selectedIndexChanged,
+                this, &TxEqDialog::onParametricSelectedChanged);
+    }
+    connect(m_paraResetBtn, &QPushButton::clicked,
+            this, &TxEqDialog::onParametricResetClicked);
+    connect(m_bandCountGroup, &QButtonGroup::idToggled,
+            this, [this](int /*id*/, bool checked) {
+        if (checked) onParametricBandCountChanged();
+    });
+    connect(m_paraLowSpin, qOverload<int>(&QSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricLowFreqChanged);
+    connect(m_paraHighSpin, qOverload<int>(&QSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricHighFreqChanged);
+    connect(m_paraLogScaleChk, &QCheckBox::toggled,
+            this, &TxEqDialog::onParametricLogScaleToggled);
+    connect(m_paraUseQFactorsChk, &QCheckBox::toggled,
+            this, &TxEqDialog::onParametricUseQFactorsToggled);
+    connect(m_paraLiveUpdateChk, &QCheckBox::toggled,
+            this, &TxEqDialog::onParametricLiveUpdateToggled);
+    connect(m_paraSelectedBandSpin, qOverload<int>(&QSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricSelectedBandChanged);
+    connect(m_paraFreqSpin, qOverload<int>(&QSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricFreqSpinChanged);
+    connect(m_paraGainSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricGainSpinChanged);
+    connect(m_paraQSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricQSpinChanged);
+    connect(m_paraPreampSpin, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, &TxEqDialog::onParametricPreampSpinChanged);
 
     // ── Model → UI ────────────────────────────────────────────────
     if (!m_radio) {
@@ -481,20 +880,10 @@ void TxEqDialog::wireSignals()
             this, &TxEqDialog::syncFromModel);
     connect(&tx, &TransmitModel::txEqWintypeChanged,
             this, &TxEqDialog::syncFromModel);
-
-    // ── A.2 MicProfileManager → combo refresh + active selection ───
-    if (auto* mgr = m_radio->micProfileManager()) {
-        connect(mgr, &MicProfileManager::profileListChanged,
-                this, &TxEqDialog::refreshProfileCombo);
-        connect(mgr, &MicProfileManager::activeProfileChanged,
-                this, &TxEqDialog::onActiveProfileChanged);
-        // Initial population.
-        refreshProfileCombo();
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// User-driven slots
+// User-driven slots — Legacy panel
 // ─────────────────────────────────────────────────────────────────────
 
 void TxEqDialog::onEnableToggled(bool on)
@@ -566,6 +955,271 @@ void TxEqDialog::onWintypeChanged(int wintype)
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Legacy <-> Parametric panel toggle.
+// From Thetis chkLegacyEQ_CheckedChanged at eqform.cs:2862-2911 [v2.10.3.13].
+// We don't need to swap WDSP DSPRX paths (Thetis cs:2869-2871) — that
+// belongs to the DSP layer, not to this TX-only dialog.  We only flip
+// the visible panel and persist the user choice for the next launch.
+// ─────────────────────────────────────────────────────────────────────
+
+void TxEqDialog::onLegacyToggled(bool legacy)
+{
+    if (!m_panelStack) { return; }
+    m_panelStack->setCurrentIndex(legacy ? 0 : 1);
+    AppSettings::instance().setValue(
+        QLatin1String(kLegacyToggleSettingsKey),
+        legacy ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Parametric panel slots
+// ─────────────────────────────────────────────────────────────────────
+
+void TxEqDialog::onParametricPointsChanged(bool isDragging)
+{
+    if (m_ignoreUpdates) { return; }
+    updateEditRowFromSelection();
+    // Mirrors eqform.cs:206-216 + Thetis live-update gating — defer the
+    // round-trip to TransmitModel until the user releases the mouse,
+    // unless Live Update is on.
+    if (!isDragging || (m_paraLiveUpdateChk && m_paraLiveUpdateChk->isChecked())) {
+        pushParametricToModel();
+    }
+}
+
+void TxEqDialog::onParametricGlobalGainChanged(bool isDragging)
+{
+    if (m_ignoreUpdates) { return; }
+    if (!m_parametricWidget || !m_paraPreampSpin) { return; }
+    {
+        QSignalBlocker b(m_paraPreampSpin);
+        m_paraPreampSpin->setValue(m_parametricWidget->globalGainDb());
+    }
+    if (!isDragging || (m_paraLiveUpdateChk && m_paraLiveUpdateChk->isChecked())) {
+        pushParametricToModel();
+    }
+}
+
+void TxEqDialog::onParametricSelectedChanged(bool /*isDragging*/)
+{
+    if (m_ignoreUpdates) { return; }
+    updateEditRowFromSelection();
+}
+
+void TxEqDialog::onParametricResetClicked()
+{
+    if (!m_parametricWidget) { return; }
+    // Re-seeding the band count via setBandCount() resets points to a
+    // flat default curve (mirrors btnParaEQReset_Click at eqform.cs:
+    // 731-740 which calls ucParametricEq1.SetDefaults).
+    {
+        QSignalBlocker b(m_parametricWidget);
+        const int currentCount = m_parametricWidget->bandCount();
+        m_parametricWidget->setBandCount(currentCount);
+        m_parametricWidget->setGlobalGainDb(0.0);
+        m_parametricWidget->setSelectedIndex(-1);
+    }
+    updateEditRowFromSelection();
+    pushParametricToModel();
+}
+
+void TxEqDialog::onParametricBandCountChanged()
+{
+    if (!m_parametricWidget || !m_bandCountGroup) { return; }
+    const int count = m_bandCountGroup->checkedId();
+    if (count <= 0) { return; }
+    {
+        QSignalBlocker b(m_parametricWidget);
+        m_parametricWidget->setBandCount(count);
+        m_parametricWidget->setSelectedIndex(-1);
+    }
+    // Keep the # spinbox upper-bound in lockstep with the band count.
+    if (m_paraSelectedBandSpin) {
+        QSignalBlocker b(m_paraSelectedBandSpin);
+        m_paraSelectedBandSpin->setRange(kParaSelectedBandMin, count);
+        m_paraSelectedBandSpin->setValue(count);
+    }
+    updateEditRowFromSelection();
+    pushParametricToModel();
+}
+
+void TxEqDialog::onParametricLowFreqChanged(int hz)
+{
+    if (!m_parametricWidget || !m_paraHighSpin) { return; }
+    // Enforce the 1 kHz spread guard — clamp Low so it stays at least
+    // kMinFreqSpreadHz below High.
+    const int hi = m_paraHighSpin->value();
+    if (hz + kMinFreqSpreadHz > hi) {
+        QSignalBlocker b(m_paraLowSpin);
+        m_paraLowSpin->setValue(hi - kMinFreqSpreadHz);
+        return;  // valueChanged will re-fire with the clamped value
+    }
+    QSignalBlocker b(m_parametricWidget);
+    m_parametricWidget->setFrequencyMinHz(static_cast<double>(hz));
+}
+
+void TxEqDialog::onParametricHighFreqChanged(int hz)
+{
+    if (!m_parametricWidget || !m_paraLowSpin) { return; }
+    const int lo = m_paraLowSpin->value();
+    if (hz < lo + kMinFreqSpreadHz) {
+        QSignalBlocker b(m_paraHighSpin);
+        m_paraHighSpin->setValue(lo + kMinFreqSpreadHz);
+        return;
+    }
+    QSignalBlocker b(m_parametricWidget);
+    m_parametricWidget->setFrequencyMaxHz(static_cast<double>(hz));
+}
+
+void TxEqDialog::onParametricLogScaleToggled(bool on)
+{
+    if (!m_parametricWidget) { return; }
+    QSignalBlocker b(m_parametricWidget);
+    m_parametricWidget->setLogScale(on);
+}
+
+void TxEqDialog::onParametricUseQFactorsToggled(bool on)
+{
+    if (!m_parametricWidget) { return; }
+    QSignalBlocker b(m_parametricWidget);
+    m_parametricWidget->setParametricEq(on);
+    pushParametricToModel();
+}
+
+void TxEqDialog::onParametricLiveUpdateToggled(bool /*on*/)
+{
+    // No immediate side effect — the gating is read each time
+    // onParametricPointsChanged fires.  We could surface a warning
+    // icon visibility flip here if desired (Thetis only shows it
+    // when live mode is on AND the buffer size is large).  Defer.
+}
+
+void TxEqDialog::onParametricSelectedBandChanged(int oneBased)
+{
+    if (m_ignoreUpdates || !m_parametricWidget) { return; }
+    m_ignoreUpdates = true;
+    {
+        QSignalBlocker b(m_parametricWidget);
+        m_parametricWidget->setSelectedIndex(oneBased - 1);
+    }
+    m_ignoreUpdates = false;
+    updateEditRowFromSelection();
+}
+
+void TxEqDialog::onParametricFreqSpinChanged(int hz)
+{
+    if (m_ignoreUpdates || !m_parametricWidget) { return; }
+    const int idx = m_parametricWidget->selectedIndex();
+    if (idx < 0) { return; }
+    double f = 0.0, g = 0.0, q = 0.0;
+    m_parametricWidget->getPointData(idx, f, g, q);
+    f = static_cast<double>(hz);
+    {
+        QSignalBlocker b(m_parametricWidget);
+        m_parametricWidget->setPointData(idx, f, g, q);
+    }
+    pushParametricToModel();
+}
+
+void TxEqDialog::onParametricGainSpinChanged(double db)
+{
+    if (m_ignoreUpdates || !m_parametricWidget) { return; }
+    const int idx = m_parametricWidget->selectedIndex();
+    if (idx < 0) { return; }
+    double f = 0.0, g = 0.0, q = 0.0;
+    m_parametricWidget->getPointData(idx, f, g, q);
+    g = db;
+    {
+        QSignalBlocker b(m_parametricWidget);
+        m_parametricWidget->setPointData(idx, f, g, q);
+    }
+    pushParametricToModel();
+}
+
+void TxEqDialog::onParametricQSpinChanged(double q)
+{
+    if (m_ignoreUpdates || !m_parametricWidget) { return; }
+    const int idx = m_parametricWidget->selectedIndex();
+    if (idx < 0) { return; }
+    double f = 0.0, g = 0.0, qOld = 0.0;
+    m_parametricWidget->getPointData(idx, f, g, qOld);
+    {
+        QSignalBlocker b(m_parametricWidget);
+        m_parametricWidget->setPointData(idx, f, g, q);
+    }
+    pushParametricToModel();
+}
+
+void TxEqDialog::onParametricPreampSpinChanged(double db)
+{
+    if (m_ignoreUpdates || !m_parametricWidget) { return; }
+    {
+        QSignalBlocker b(m_parametricWidget);
+        m_parametricWidget->setGlobalGainDb(db);
+    }
+    pushParametricToModel();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Edit-row sync helpers
+// ─────────────────────────────────────────────────────────────────────
+
+void TxEqDialog::updateEditRowFromSelection()
+{
+    if (!m_parametricWidget) { return; }
+    const int idx = m_parametricWidget->selectedIndex();
+    const bool haveSelection = (idx >= 0);
+
+    // Edit-row spinboxes are enabled only when a band is selected,
+    // matching Thetis frmCFCConfig.cs's selected-row-enable pattern
+    // (we have no Thetis equivalent in eqform; Thetis leaves the
+    // boxes unconditionally editable).  NereusSDR-spin: gate them
+    // so users don't type into spinboxes that have no effect.
+    if (m_paraFreqSpin)   m_paraFreqSpin->setEnabled(haveSelection);
+    if (m_paraGainSpin)   m_paraGainSpin->setEnabled(haveSelection);
+    if (m_paraQSpin)      m_paraQSpin->setEnabled(haveSelection);
+
+    if (!haveSelection) {
+        return;
+    }
+
+    double f = 0.0, g = 0.0, q = 0.0;
+    m_parametricWidget->getPointData(idx, f, g, q);
+
+    m_ignoreUpdates = true;
+    if (m_paraSelectedBandSpin) {
+        QSignalBlocker b(m_paraSelectedBandSpin);
+        m_paraSelectedBandSpin->setValue(idx + 1);
+    }
+    if (m_paraFreqSpin) {
+        QSignalBlocker b(m_paraFreqSpin);
+        m_paraFreqSpin->setValue(static_cast<int>(std::round(f)));
+    }
+    if (m_paraGainSpin) {
+        QSignalBlocker b(m_paraGainSpin);
+        m_paraGainSpin->setValue(g);
+    }
+    if (m_paraQSpin) {
+        QSignalBlocker b(m_paraQSpin);
+        m_paraQSpin->setValue(q);
+    }
+    if (m_paraPreampSpin) {
+        QSignalBlocker b(m_paraPreampSpin);
+        m_paraPreampSpin->setValue(m_parametricWidget->globalGainDb());
+    }
+    m_ignoreUpdates = false;
+}
+
+void TxEqDialog::pushParametricToModel()
+{
+    if (!m_radio || !m_parametricWidget || m_updatingFromModel) { return; }
+    m_updatingFromModel = true;
+    m_radio->transmitModel().setTxEqParaEqData(
+        m_parametricWidget->saveToJson());
+    m_updatingFromModel = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Model → UI sync (echo-guarded)
 // ─────────────────────────────────────────────────────────────────────
 
@@ -619,219 +1273,14 @@ void TxEqDialog::syncFromModel()
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// A.2 Profile-bank handlers
+// Hide-on-close — From Thetis frmCFCConfig.cs:477-482 [v2.10.3.13]
+// pattern.  TxApplet keeps the singleton alive for fast re-show.
 // ─────────────────────────────────────────────────────────────────────
 
-void TxEqDialog::refreshProfileCombo()
+void TxEqDialog::closeEvent(QCloseEvent* event)
 {
-    if (!m_profileCombo || !m_radio) { return; }
-    auto* mgr = m_radio->micProfileManager();
-    if (!mgr) { return; }
-
-    // Programmatic update — block currentTextChanged signal so it
-    // doesn't fire setActiveProfile during repopulation.
-    QSignalBlocker blk(m_profileCombo);
-    const QString prevSelection = m_profileCombo->currentText();
-    m_profileCombo->clear();
-    const QStringList names = mgr->profileNames();
-    m_profileCombo->addItems(names);
-
-    // Restore selection: prefer the manager's active profile;  fall back
-    // to the previously-shown text if it still exists.
-    const QString active = mgr->activeProfileName();
-    int idx = m_profileCombo->findText(active);
-    if (idx < 0) {
-        idx = m_profileCombo->findText(prevSelection);
-    }
-    if (idx >= 0) {
-        m_profileCombo->setCurrentIndex(idx);
-    } else if (!names.isEmpty()) {
-        m_profileCombo->setCurrentIndex(0);
-    }
-}
-
-void TxEqDialog::onActiveProfileChanged(const QString& name)
-{
-    if (!m_profileCombo) { return; }
-    QSignalBlocker blk(m_profileCombo);
-    const int idx = m_profileCombo->findText(name);
-    if (idx >= 0) {
-        m_profileCombo->setCurrentIndex(idx);
-    }
-}
-
-void TxEqDialog::onProfileComboChanged(const QString& name)
-{
-    if (!m_radio || name.isEmpty()) { return; }
-    auto* mgr = m_radio->micProfileManager();
-    if (!mgr) { return; }
-    // setActiveProfile pushes the saved values into TransmitModel; the
-    // model's *Changed signals fan out to syncFromModel which redraws
-    // the visible EQ controls.  Mic gain / VOX threshold / Leveler /
-    // ALC values update silently in the model.
-    mgr->setActiveProfile(name, &m_radio->transmitModel());
-}
-
-bool TxEqDialog::persistProfile(const QString& name, bool setActiveAfter)
-{
-    if (!m_radio || name.isEmpty()) { return false; }
-    auto* mgr = m_radio->micProfileManager();
-    if (!mgr) { return false; }
-    const bool ok = mgr->saveProfile(name, &m_radio->transmitModel());
-    if (ok && setActiveAfter) {
-        mgr->setActiveProfile(name, &m_radio->transmitModel());
-    }
-    return ok;
-}
-
-void TxEqDialog::onSaveClicked()
-{
-    if (!m_radio) { return; }
-    auto* mgr = m_radio->micProfileManager();
-    if (!mgr) { return; }
-
-    const QString active = mgr->activeProfileName();
-    if (active.isEmpty()) {
-        // No active profile — fall through to Save As.
-        onSaveAsClicked();
-        return;
-    }
-
-    // Confirm overwrite.  Mirrors Thetis setup.cs:9545-9612 [v2.10.3.13]
-    // btnTXProfileSave_Click — the save flow always overwrites, but
-    // NereusSDR adds the explicit confirmation prompt for safety
-    // (Thetis omits it because the field is editable and the user
-    // typed the name themselves).
-    bool overwrite = false;
-    if (m_overwriteHook) {
-        overwrite = m_overwriteHook(active);
-    } else {
-        const auto answer = QMessageBox::question(
-            this, tr("Overwrite TX Profile"),
-            tr("Overwrite profile \"%1\" with the current settings?")
-                .arg(active),
-            QMessageBox::Yes | QMessageBox::No);
-        overwrite = (answer == QMessageBox::Yes);
-    }
-    if (!overwrite) { return; }
-
-    persistProfile(active, /*setActiveAfter=*/false);
-}
-
-void TxEqDialog::onSaveAsClicked()
-{
-    if (!m_radio) { return; }
-    auto* mgr = m_radio->micProfileManager();
-    if (!mgr) { return; }
-
-    const QString seed = mgr->activeProfileName();
-
-    // Prompt for new name.
-    QString rawName;
-    bool accepted = false;
-    if (m_saveAsHook) {
-        const auto result = m_saveAsHook(seed);
-        accepted = result.first;
-        rawName = result.second;
-    } else {
-        bool ok = false;
-        rawName = QInputDialog::getText(
-            this, tr("Save TX Profile As"),
-            tr("Enter new TX profile name:"),
-            QLineEdit::Normal, seed, &ok);
-        accepted = ok;
-    }
-    if (!accepted) { return; }
-
-    // Strip commas (Thetis precedent: setup.cs:9550-9552 [v2.10.3.13]
-    // — TCI safety, so the manager's invariant is honoured at the UI
-    // layer too).
-    QString name = rawName;
-    name.replace(QLatin1Char(','), QLatin1Char('_'));
-    name = name.trimmed();
-    if (name.isEmpty()) { return; }
-
-    // If the name already exists, ask for overwrite confirmation.
-    const QStringList existing = mgr->profileNames();
-    if (existing.contains(name)) {
-        bool overwrite = false;
-        if (m_overwriteHook) {
-            overwrite = m_overwriteHook(name);
-        } else {
-            const auto answer = QMessageBox::question(
-                this, tr("Overwrite TX Profile"),
-                tr("A profile named \"%1\" already exists.  Overwrite?")
-                    .arg(name),
-                QMessageBox::Yes | QMessageBox::No);
-            overwrite = (answer == QMessageBox::Yes);
-        }
-        if (!overwrite) { return; }
-    }
-
-    persistProfile(name, /*setActiveAfter=*/true);
-}
-
-void TxEqDialog::onDeleteClicked()
-{
-    if (!m_radio) { return; }
-    auto* mgr = m_radio->micProfileManager();
-    if (!mgr) { return; }
-
-    const QString target = mgr->activeProfileName();
-    if (target.isEmpty()) { return; }
-
-    bool confirmed = false;
-    if (m_deleteHook) {
-        confirmed = m_deleteHook(target);
-    } else {
-        const auto answer = QMessageBox::question(
-            this, tr("Delete TX Profile"),
-            tr("Delete profile \"%1\"?").arg(target),
-            QMessageBox::Yes | QMessageBox::No);
-        confirmed = (answer == QMessageBox::Yes);
-    }
-    if (!confirmed) { return; }
-
-    const bool ok = mgr->deleteProfile(target);
-    if (!ok) {
-        // F.3 last-remaining guard fired.  Surface the verbatim Thetis
-        // string per setup.cs:9617-9624 [v2.10.3.13].
-        const QString msg = QStringLiteral(
-            "It is not possible to delete the last remaining TX profile");
-        if (m_rejectionHook) {
-            m_rejectionHook(msg);
-        } else {
-            QMessageBox::information(this,
-                                      tr("Cannot Delete Profile"), msg);
-        }
-    }
-    // On success the manager auto-emits activeProfileChanged → our
-    // onActiveProfileChanged updates the combo selection; profileList-
-    // Changed → refreshProfileCombo repopulates entries.
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// A.2 Test hook setters
-// ─────────────────────────────────────────────────────────────────────
-
-void TxEqDialog::setSaveAsPromptHook(SaveAsPromptHook hook)
-{
-    m_saveAsHook = std::move(hook);
-}
-
-void TxEqDialog::setOverwriteConfirmHook(OverwriteConfirmHook hook)
-{
-    m_overwriteHook = std::move(hook);
-}
-
-void TxEqDialog::setDeleteConfirmHook(DeleteConfirmHook hook)
-{
-    m_deleteHook = std::move(hook);
-}
-
-void TxEqDialog::setRejectionMessageHook(RejectionMessageHook hook)
-{
-    m_rejectionHook = std::move(hook);
+    event->ignore();
+    hide();
 }
 
 } // namespace NereusSDR

@@ -6,11 +6,15 @@
 // =================================================================
 //
 // Phase 3M-3a-i Batch 3 (Task A.1) — TxEqDialog scaffold smoke tests.
+// Phase 3M-3a-ii follow-up Batch 9 — chkLegacyEQ + parametric panel
+// + slider styling fix.
 //
-// TxEqDialog is the modeless 10-band TX EQ dialog launched from the
+// TxEqDialog is the modeless TX EQ dialog launched from the
 // TxApplet's [EQ] right-click and the Tools → TX Equalizer menu.
-// Controls bidirectionally bind to RadioModel::transmitModel() with
-// an m_updatingFromModel echo guard.
+// The legacy panel is bidirectionally bound to RadioModel::transmit-
+// Model() with an m_updatingFromModel echo guard.  The parametric
+// panel embeds a ParametricEqWidget (Tasks 1-5) and round-trips its
+// points through TransmitModel.txEqParaEqData (Task 6 JSON blob).
 //
 // Tests:
 //   1. Dialog constructs without crash (RadioModel default ctor).
@@ -29,26 +33,42 @@
 //   9. Singleton: TxEqDialog::instance(...) returns the same pointer
 //      on repeated calls.
 //
+// Batch 9 contracts:
+//  10. Dialog contains chkLegacyEQ checkbox at top.
+//  11. Toggling chkLegacyEQ flips the visible panel between legacy
+//      sliders and the parametric panel via QStackedWidget.
+//  12. Parametric panel embeds a ParametricEqWidget instance.
+//  13. Parametric panel exposes 5/10/18 band-count radios.
+//  14. Dialog does NOT contain a profile combo (profile mgmt lives
+//      on TxApplet).
+//  15. Dialog does NOT contain Save / Save As / Delete buttons.
+//  16. Legacy band-column sliders carry the Style::sliderVStyle()
+//      stylesheet (regression guard).
+//  17. closeEvent hides the dialog instead of destroying it
+//      (keeps the singleton alive for fast re-show).
+//
 // =================================================================
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSignalSpy>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
 
 #include "core/AppSettings.h"
-#include "core/MicProfileManager.h"
 #include "gui/applets/TxEqDialog.h"
+#include "gui/widgets/ParametricEqWidget.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
-
-static const QString kMac = QStringLiteral("aa:bb:cc:dd:ee:ff");
 
 class TestTxEqDialog : public QObject {
     Q_OBJECT
@@ -263,277 +283,215 @@ private slots:
     }
 
     // =====================================================================
-    // Phase 3M-3a-i Batch 4 (A.2) — TX profile combo + Save/Save-As/Delete
+    // Phase 3M-3a-ii follow-up Batch 9 — chkLegacyEQ + parametric panel
     // =====================================================================
 
-    // Helper: prime a RadioModel's MicProfileManager with the per-MAC scope
-    // and seed Default + 20 factory profiles.  Mirrors the wiring done in
-    // RadioModel::setupConnection (cpp:1108-1117).
-    static void primeProfileManager(RadioModel* rm) {
-        auto* mgr = rm->micProfileManager();
-        QVERIFY(mgr);
-        mgr->setMacAddress(kMac);
-        mgr->load();
-    }
-
-    // ── A.2.1 ─ Profile combo populates from MicProfileManager ──────
-    void profileCombo_populatesFromMicProfileManager()
+    // ── 10. Dialog contains chkLegacyEQ checkbox ───────────────────
+    void dialogContainsLegacyToggle()
     {
         RadioModel rm;
-        primeProfileManager(&rm);
         TxEqDialog dlg(&rm);
 
-        auto* combo = dlg.profileCombo();
-        QVERIFY(combo);
-        // Default + 20 factory profiles = 21 entries.
-        QCOMPARE(combo->count(), 21);
-        // Active profile "Default" should be the current selection.
-        QCOMPARE(combo->currentText(), QStringLiteral("Default"));
-        // Factory profiles must be present.
-        QVERIFY(combo->findText(QStringLiteral("D-104+EQ"))     >= 0);
-        QVERIFY(combo->findText(QStringLiteral("PR781+EQ"))     >= 0);
-        QVERIFY(combo->findText(QStringLiteral("SSB 2.8k CFC")) >= 0);
+        auto* tog = dlg.findChild<QCheckBox*>(QStringLiteral("TxEqLegacyToggle"));
+        QVERIFY(tog);
+        QCOMPARE(tog, dlg.legacyToggle());
+        // Default checked (per Thetis eqform.cs:972-973 [v2.10.3.13]).
+        QCOMPARE(tog->isChecked(), true);
     }
 
-    // ── A.2.2 ─ Selecting a profile calls setActiveProfile ──────────
-    void profileCombo_selectionCallsSetActiveProfile()
+    // ── 11. Toggling chkLegacyEQ flips the visible panel ────────────
+    void legacyTogglesBetweenLegacyAndParametricPanels()
     {
         RadioModel rm;
-        primeProfileManager(&rm);
         TxEqDialog dlg(&rm);
 
-        auto* combo = dlg.profileCombo();
-        QVERIFY(combo);
-        QSignalSpy spy(rm.micProfileManager(),
-                       &MicProfileManager::activeProfileChanged);
+        auto* stack = dlg.panelStack();
+        QVERIFY(stack);
+        QVERIFY(dlg.legacyPanel());
+        QVERIFY(dlg.parametricPanel());
 
-        combo->setCurrentText(QStringLiteral("D-104+EQ"));
-        QApplication::processEvents();
+        // Default: legacy shown (index 0).
+        QCOMPARE(dlg.legacyToggle()->isChecked(), true);
+        QCOMPARE(stack->currentWidget(), dlg.legacyPanel());
 
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.takeFirst().at(0).toString(),
-                 QStringLiteral("D-104+EQ"));
-        QCOMPARE(rm.micProfileManager()->activeProfileName(),
-                 QStringLiteral("D-104+EQ"));
+        // Uncheck — parametric panel shown.
+        dlg.legacyToggle()->setChecked(false);
+        QCOMPARE(stack->currentWidget(), dlg.parametricPanel());
+
+        // Re-check — legacy panel shown.
+        dlg.legacyToggle()->setChecked(true);
+        QCOMPARE(stack->currentWidget(), dlg.legacyPanel());
     }
 
-    // ── A.2.3 ─ Selecting a factory profile updates the EQ controls ─
-    void profileCombo_selectingFactoryProfileUpdatesEqControls()
+    // ── 11b. chkLegacyEQ state persists in AppSettings ──────────────
+    void legacyToggleStatePersistsInAppSettings()
     {
         RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-        TransmitModel& tx = rm.transmitModel();
-
-        auto* combo  = dlg.profileCombo();
-        auto* enable = dlg.findChild<QCheckBox*>(QStringLiteral("TxEqEnableChk"));
-        auto* preamp = dlg.findChild<QSlider*>(QStringLiteral("TxEqPreampSlider"));
-        auto* b0     = dlg.findChild<QSlider*>(QStringLiteral("TxEqBandSlider0"));
-        QVERIFY(combo && enable && preamp && b0);
-
-        // Switch to D-104+EQ — TXEQEnabled=true, TXEQPreamp=-6, TXEQ1=7.
-        combo->setCurrentText(QStringLiteral("D-104+EQ"));
-        QApplication::processEvents();
-
-        QCOMPARE(tx.txEqEnabled(), true);
-        QCOMPARE(tx.txEqPreamp(), -6);
-        QCOMPARE(tx.txEqBand(0), 7);
-        QCOMPARE(enable->isChecked(), true);
-        QCOMPARE(preamp->value(), -6);
-        QCOMPARE(b0->value(), 7);
-    }
-
-    // ── A.2.4 ─ Save button triggers overwrite confirmation ─────────
-    void saveButton_overwritesActiveProfileAfterConfirm()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-        TransmitModel& tx = rm.transmitModel();
-
-        // Capture overwrite confirmation prompt; accept.
-        QString overwriteName;
-        dlg.setOverwriteConfirmHook([&overwriteName](const QString& n) {
-            overwriteName = n;
-            return true;
-        });
-
-        // Mutate model and click Save.
-        tx.setTxEqPreamp(11);
-        dlg.saveBtn()->click();
-        QApplication::processEvents();
-
-        QCOMPARE(overwriteName, QStringLiteral("Default"));
-        // Verify the saved value.
-        QCOMPARE(AppSettings::instance().value(
-                     QStringLiteral("hardware/%1/tx/profile/Default/TXEQPreamp")
-                         .arg(kMac)).toString(),
-                 QStringLiteral("11"));
-    }
-
-    // ── A.2.5 ─ Save button: declining overwrite is a no-op ─────────
-    void saveButton_declinedOverwriteIsNoop()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-        TransmitModel& tx = rm.transmitModel();
-
-        // Decline overwrite.
-        dlg.setOverwriteConfirmHook([](const QString&) { return false; });
-
-        tx.setTxEqPreamp(7);
-        dlg.saveBtn()->click();
-        QApplication::processEvents();
-
-        // Default's TXEQPreamp must remain at the seeded value (0).
-        QCOMPARE(AppSettings::instance().value(
-                     QStringLiteral("hardware/%1/tx/profile/Default/TXEQPreamp")
-                         .arg(kMac)).toString(),
-                 QStringLiteral("0"));
-    }
-
-    // ── A.2.6 ─ Save As button creates new profile + sets active ────
-    void saveAsButton_createsNewProfileAndActivates()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-        TransmitModel& tx = rm.transmitModel();
-
-        const int initialCount = dlg.profileCombo()->count();
-
-        // Hook the Save As prompt.
-        dlg.setSaveAsPromptHook([](const QString& /*seed*/) {
-            return std::make_pair(true, QStringLiteral("My Custom EQ"));
-        });
-
-        tx.setTxEqPreamp(8);
-        tx.setTxEqEnabled(true);
-        dlg.saveAsBtn()->click();
-        QApplication::processEvents();
-
-        // New profile present.
-        QCOMPARE(dlg.profileCombo()->count(), initialCount + 1);
-        QVERIFY(dlg.profileCombo()->findText(QStringLiteral("My Custom EQ")) >= 0);
-        // Becomes active.
-        QCOMPARE(rm.micProfileManager()->activeProfileName(),
-                 QStringLiteral("My Custom EQ"));
-        QCOMPARE(dlg.profileCombo()->currentText(),
-                 QStringLiteral("My Custom EQ"));
-        // Saved values present.
-        QCOMPARE(AppSettings::instance().value(
-                     QStringLiteral("hardware/%1/tx/profile/My Custom EQ/TXEQPreamp")
-                         .arg(kMac)).toString(),
-                 QStringLiteral("8"));
-    }
-
-    // ── A.2.7 ─ Save As: comma in name is sanitized ─────────────────
-    void saveAsButton_stripsCommas()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-
-        dlg.setSaveAsPromptHook([](const QString&) {
-            return std::make_pair(true, QStringLiteral("Bad,Name,Profile"));
-        });
-
-        dlg.saveAsBtn()->click();
-        QApplication::processEvents();
-
-        QVERIFY(dlg.profileCombo()->findText(QStringLiteral("Bad_Name_Profile")) >= 0);
-        QVERIFY(dlg.profileCombo()->findText(QStringLiteral("Bad,Name,Profile")) < 0);
-    }
-
-    // ── A.2.8 ─ Delete button removes active profile ────────────────
-    void deleteButton_removesActiveProfile()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-
-        // Switch to D-104+EQ then delete.
-        dlg.profileCombo()->setCurrentText(QStringLiteral("D-104+EQ"));
-        QApplication::processEvents();
-        const int countBefore = dlg.profileCombo()->count();
-
-        dlg.setDeleteConfirmHook([](const QString&) { return true; });
-        dlg.deleteBtn()->click();
-        QApplication::processEvents();
-
-        QCOMPARE(dlg.profileCombo()->count(), countBefore - 1);
-        QVERIFY(dlg.profileCombo()->findText(QStringLiteral("D-104+EQ")) < 0);
-        // Active falls back to the next remaining (sorted lexicographically).
-        QVERIFY(rm.micProfileManager()->activeProfileName()
-                != QStringLiteral("D-104+EQ"));
-    }
-
-    // ── A.2.9 ─ Delete: declined confirmation is a no-op ────────────
-    void deleteButton_declinedIsNoop()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        TxEqDialog dlg(&rm);
-
-        const int countBefore = dlg.profileCombo()->count();
-
-        dlg.setDeleteConfirmHook([](const QString&) { return false; });
-        dlg.deleteBtn()->click();
-        QApplication::processEvents();
-
-        QCOMPARE(dlg.profileCombo()->count(), countBefore);
-    }
-
-    // ── A.2.10 ─ Delete: last-remaining surfaces verbatim Thetis msg ─
-    void deleteButton_lastRemainingShowsVerbatimThetisString()
-    {
-        RadioModel rm;
-        primeProfileManager(&rm);
-        // Reduce to last remaining.
-        for (const QString& n : rm.micProfileManager()->profileNames()) {
-            if (n == QStringLiteral("Default")) { continue; }
-            rm.micProfileManager()->deleteProfile(n);
+        {
+            TxEqDialog dlg(&rm);
+            QCOMPARE(dlg.legacyToggle()->isChecked(), true);
+            dlg.legacyToggle()->setChecked(false);
+            // Persistence is synchronous via setValue.
         }
-        QCOMPARE(rm.micProfileManager()->profileNames().size(), 1);
 
-        TxEqDialog dlg(&rm);
-
-        QString rejectionMsg;
-        dlg.setRejectionMessageHook([&rejectionMsg](const QString& msg) {
-            rejectionMsg = msg;
-        });
-        dlg.setDeleteConfirmHook([](const QString&) { return true; });
-
-        dlg.deleteBtn()->click();
-        QApplication::processEvents();
-
-        QVERIFY2(rejectionMsg.contains(
-                     QStringLiteral("It is not possible to delete the last remaining TX profile")),
-                 qPrintable(QStringLiteral("captured rejection message: ") + rejectionMsg));
+        // Reconstruct — the new dialog should pick up the persisted False.
+        {
+            TxEqDialog dlg2(&rm);
+            QCOMPARE(dlg2.legacyToggle()->isChecked(), false);
+            QCOMPARE(dlg2.panelStack()->currentWidget(), dlg2.parametricPanel());
+        }
     }
 
-    // ── A.2.11 ─ External activeProfileChanged updates combo (no echo) ─
-    void activeProfileChanged_updatesComboNoEcho()
+    // ── 12. Parametric panel embeds ParametricEqWidget ──────────────
+    void parametricPanelContainsParametricEqWidget()
     {
         RadioModel rm;
-        primeProfileManager(&rm);
         TxEqDialog dlg(&rm);
 
-        QSignalSpy spy(rm.micProfileManager(),
-                       &MicProfileManager::activeProfileChanged);
+        auto* w = dlg.parametricWidget();
+        QVERIFY(w);
+        QVERIFY(dlg.findChild<ParametricEqWidget*>(
+                   QStringLiteral("TxEqParametricWidget")));
+        // Defaults match Thetis ucParametricEq1 widget property block
+        // at eqform.cs:928-967 [v2.10.3.13].
+        QCOMPARE(w->dbMin(),         -24.0);
+        QCOMPARE(w->dbMax(),          24.0);
+        QCOMPARE(w->frequencyMinHz(),  0.0);
+        QCOMPARE(w->frequencyMaxHz(), 2700.0);
+        QCOMPARE(w->qMin(),            0.2);
+        QCOMPARE(w->qMax(),           20.0);
+        QCOMPARE(w->bandCount(),      10);
+        QCOMPARE(w->parametricEq(),   true);
+    }
 
-        // External setActiveProfile → manager emits activeProfileChanged
-        // → dialog's onActiveProfileChanged updates combo.  Because the
-        // combo update uses a QSignalBlocker, the combo's currentText-
-        // Changed slot does NOT re-fire setActiveProfile (no echo).
-        rm.micProfileManager()->setActiveProfile(
-            QStringLiteral("AM"), &rm.transmitModel());
-        QApplication::processEvents();
+    // ── 13. Parametric panel exposes 5/10/18 band-count radios ──────
+    void parametricPanelContainsBandCountRadios_5_10_18()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
 
-        // Single emission — echo guard works.
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(dlg.profileCombo()->currentText(), QStringLiteral("AM"));
+        auto* r5  = dlg.findChild<QRadioButton*>(
+                       QStringLiteral("TxEqParaBands5Radio"));
+        auto* r10 = dlg.findChild<QRadioButton*>(
+                       QStringLiteral("TxEqParaBands10Radio"));
+        auto* r18 = dlg.findChild<QRadioButton*>(
+                       QStringLiteral("TxEqParaBands18Radio"));
+        QVERIFY(r5);
+        QVERIFY(r10);
+        QVERIFY(r18);
+        // Default 10-band (per Thetis eqform.cs:507 radParaEQ_10.Checked = true).
+        QCOMPARE(r10->isChecked(), true);
+        QCOMPARE(r5->isChecked(),  false);
+        QCOMPARE(r18->isChecked(), false);
+
+        // Group exposes the band counts as button IDs.
+        auto* grp = dlg.bandCountGroup();
+        QVERIFY(grp);
+        QCOMPARE(grp->id(r5),  5);
+        QCOMPARE(grp->id(r10), 10);
+        QCOMPARE(grp->id(r18), 18);
+    }
+
+    // ── 14. Dialog does NOT contain a profile combo ─────────────────
+    void dialogDoesNotContainProfileCombo()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+
+        // No combo with the old TxEqProfileCombo object name.
+        QVERIFY(!dlg.findChild<QComboBox*>(QStringLiteral("TxEqProfileCombo")));
+
+        // The only QComboBoxes in the dialog should be the WDSP filter
+        // controls (Cutoff, Window) — exactly two, no more.
+        const auto combos = dlg.findChildren<QComboBox*>();
+        QCOMPARE(combos.size(), 2);
+        QStringList names;
+        for (auto* c : combos) { names << c->objectName(); }
+        QVERIFY2(names.contains(QStringLiteral("TxEqCtfmodeCombo")),
+                 qPrintable(names.join(QStringLiteral(", "))));
+        QVERIFY2(names.contains(QStringLiteral("TxEqWintypeCombo")),
+                 qPrintable(names.join(QStringLiteral(", "))));
+    }
+
+    // ── 15. Dialog does NOT contain Save / Save As / Delete buttons ─
+    void dialogDoesNotContainSaveSaveAsDelete()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+
+        QVERIFY(!dlg.findChild<QPushButton*>(QStringLiteral("TxEqProfileSaveBtn")));
+        QVERIFY(!dlg.findChild<QPushButton*>(QStringLiteral("TxEqProfileSaveAsBtn")));
+        QVERIFY(!dlg.findChild<QPushButton*>(QStringLiteral("TxEqProfileDeleteBtn")));
+
+        // Sanity: no QPushButton in the dialog has the strings "Save" /
+        // "Save As" / "Delete" as its caption.
+        const auto btns = dlg.findChildren<QPushButton*>();
+        for (auto* b : btns) {
+            const QString t = b->text();
+            QVERIFY2(t != QStringLiteral("Save"),
+                     qPrintable(QStringLiteral("rogue Save button: ") + b->objectName()));
+            QVERIFY2(t != QStringLiteral("Save As..."),
+                     qPrintable(QStringLiteral("rogue Save As... button: ") + b->objectName()));
+            QVERIFY2(t != QStringLiteral("Delete"),
+                     qPrintable(QStringLiteral("rogue Delete button: ") + b->objectName()));
+        }
+    }
+
+    // ── 16. Legacy band-column slider style includes "QSlider" ──────
+    // Regression guard for Batch 9's slider/spinbox styling fix —
+    // confirms the per-column sliders pick up the project's vertical
+    // slider stylesheet.  Style::sliderVStyle() always emits a
+    // QSlider::groove:vertical / QSlider::handle:vertical block, so
+    // any non-default project styling will contain "QSlider" in the
+    // applied stylesheet.
+    void legacyBandColumnSlidersUseSliderVStyle()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+
+        // Pick a representative band slider.
+        auto* b0 = dlg.findChild<QSlider*>(QStringLiteral("TxEqBandSlider0"));
+        QVERIFY(b0);
+        const QString css = b0->styleSheet();
+        QVERIFY2(css.contains(QStringLiteral("QSlider")),
+                 qPrintable(QStringLiteral("band slider stylesheet missing: ") + css));
+        QVERIFY2(css.contains(QStringLiteral("vertical")),
+                 qPrintable(QStringLiteral("band slider stylesheet missing 'vertical': ") + css));
+
+        // Spinboxes too (kSpinBoxStyle has "QSpinBox" in the rule head).
+        auto* b0s = dlg.findChild<QSpinBox*>(QStringLiteral("TxEqBandSpin0"));
+        QVERIFY(b0s);
+        const QString spinCss = b0s->styleSheet();
+        QVERIFY2(spinCss.contains(QStringLiteral("QSpinBox")),
+                 qPrintable(QStringLiteral("band db spinbox stylesheet missing: ") + spinCss));
+
+        auto* f0 = dlg.findChild<QSpinBox*>(QStringLiteral("TxEqFreqSpin0"));
+        QVERIFY(f0);
+        QVERIFY2(f0->styleSheet().contains(QStringLiteral("QSpinBox")),
+                 qPrintable(QStringLiteral("band freq spinbox stylesheet missing")));
+
+        // Preamp column too (special case: bandIndex=-1).
+        auto* pre = dlg.findChild<QSlider*>(QStringLiteral("TxEqPreampSlider"));
+        QVERIFY(pre);
+        QVERIFY(pre->styleSheet().contains(QStringLiteral("QSlider")));
+    }
+
+    // ── 17. closeEvent hides instead of destroying ──────────────────
+    void closeEventHidesInsteadOfDestroying()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+        dlg.show();
+        QCOMPARE(dlg.isVisible(), true);
+
+        QCloseEvent ev;
+        ev.setAccepted(true);   // default; closeEvent should override
+        QApplication::sendEvent(&dlg, &ev);
+
+        QCOMPARE(ev.isAccepted(), false);   // event ignored
+        QCOMPARE(dlg.isVisible(), false);   // dialog hidden
+        // Pointer still valid — singleton lifecycle preserved.
+        QVERIFY(dlg.legacyToggle());
     }
 };
 
