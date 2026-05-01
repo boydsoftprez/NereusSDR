@@ -14,7 +14,8 @@
 // The legacy panel is bidirectionally bound to RadioModel::transmit-
 // Model() with an m_updatingFromModel echo guard.  The parametric
 // panel embeds a ParametricEqWidget (Tasks 1-5) and round-trips its
-// points through TransmitModel.txEqParaEqData (Task 6 JSON blob).
+// points through TransmitModel.txEqParaEqData (Task 6 Thetis gzip+
+// base64url envelope).
 //
 // Tests:
 //   1. Dialog constructs without crash (RadioModel default ctor).
@@ -63,6 +64,7 @@
 #include <QStackedWidget>
 
 #include "core/AppSettings.h"
+#include "core/ParaEqEnvelope.h"
 #include "gui/applets/TxEqDialog.h"
 #include "gui/widgets/ParametricEqWidget.h"
 #include "models/RadioModel.h"
@@ -474,6 +476,49 @@ private slots:
         auto* pre = dlg.findChild<QSlider*>(QStringLiteral("TxEqPreampSlider"));
         QVERIFY(pre);
         QVERIFY(pre->styleSheet().contains(QStringLiteral("QSlider")));
+    }
+
+    // ── 16b. Parametric edit stores Thetis gzip/base64url envelope ────
+    void parametricEditStoresThetisEnvelopeAndUpdatesLegacyPath()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+        TransmitModel& tx = rm.transmitModel();
+        ParametricEqWidget* w = dlg.parametricWidget();
+        QVERIFY(w);
+
+        w->setGlobalGainDb(3.0);
+
+        const QString blob = tx.txEqParaEqData();
+        QVERIFY(!blob.isEmpty());
+        QVERIFY(!blob.trimmed().startsWith(QLatin1Char('{')));
+
+        const std::optional<QString> decoded = ParaEqEnvelope::decode(blob);
+        QVERIFY(decoded.has_value());
+        QVERIFY(decoded->contains(QStringLiteral("\"global_gain_db\": 3")));
+
+        // Regression guard for PR #159 review thread: parametric edits also
+        // push through the legacy scalar path that RadioModel maps to WDSP.
+        QCOMPARE(tx.txEqPreamp(), 3);
+    }
+
+    // ── 16c. Encoded model blob hydrates the parametric widget ─────────
+    void encodedTxParaEqDataHydratesParametricWidget()
+    {
+        RadioModel rm;
+        TxEqDialog dlg(&rm);
+        TransmitModel& tx = rm.transmitModel();
+        ParametricEqWidget* w = dlg.parametricWidget();
+        QVERIFY(w);
+        QCOMPARE(w->globalGainDb(), 0.0);
+
+        ParametricEqWidget saved;
+        saved.setGlobalGainDb(7.0);
+        const QString blob = ParaEqEnvelope::encode(saved.saveToJson());
+        QVERIFY(!blob.isEmpty());
+
+        tx.setTxEqParaEqData(blob);
+        QCOMPARE(w->globalGainDb(), 7.0);
     }
 
     // ── 17. closeEvent hides instead of destroying ──────────────────

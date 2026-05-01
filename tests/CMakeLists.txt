@@ -2558,4 +2558,3 @@ nereus_add_test(tst_parametric_eq_widget_interaction)
 
 # -- Phase 3M-3a-ii follow-up Batch 5: ParametricEqWidget JSON marshal + public API --
 nereus_add_test(tst_parametric_eq_widget_json)
-

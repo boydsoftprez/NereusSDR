@@ -126,6 +126,7 @@
 #include "TxEqDialog.h"
 
 #include "core/AppSettings.h"
+#include "core/ParaEqEnvelope.h"
 #include "gui/StyleConstants.h"
 #include "gui/widgets/ParametricEqWidget.h"
 #include "models/RadioModel.h"
@@ -1266,7 +1267,10 @@ void TxEqDialog::pushParametricToModel()
 
     // 1. Persist the parametric blob (consumed by profile save / load
     //    and by syncParametricFromModel on the next active-profile flip).
-    tx.setTxEqParaEqData(m_parametricWidget->saveToJson());
+    // From Thetis eqform.cs:3254-3256 + Common.cs:1745-1762
+    // [v2.10.3.13] — SaveToJsonFromPoints(...) then Compress_gzip(json).
+    tx.setTxEqParaEqData(
+        ParaEqEnvelope::encode(m_parametricWidget->saveToJson()));
 
     // 2. Drive WDSP via the existing legacy scalar path (Codex P1 #1 on
     //    PR #159).  Without this step, dragging a parametric band would
@@ -1299,14 +1303,32 @@ void TxEqDialog::pushParametricToModel()
 void TxEqDialog::syncParametricFromModel()
 {
     if (!m_radio || !m_parametricWidget || m_updatingFromModel) { return; }
-    const QString json = m_radio->transmitModel().txEqParaEqData();
-    if (json.isEmpty()) { return; }
+    const QString blob = m_radio->transmitModel().txEqParaEqData();
+    if (blob.isEmpty()) { return; }
+
+    // From Thetis eqform.cs:3269-3271 + Common.cs:1764-1790
+    // [v2.10.3.13] — Decompress_gzip(value) before loading points.
+    QString json;
+    const std::optional<QString> decoded = ParaEqEnvelope::decode(blob);
+    if (decoded.has_value()) {
+        json = *decoded;
+    } else if (blob.trimmed().startsWith(QLatin1Char('{'))) {
+        // Compatibility for profiles saved by pre-fix PR #159 builds that
+        // briefly stored raw JSON before the Thetis envelope was wired here.
+        json = blob;
+    } else {
+        return;
+    }
+
     m_updatingFromModel = true;
+    bool loaded = false;
     {
         QSignalBlocker b(m_parametricWidget);
-        m_parametricWidget->loadFromJson(json);
+        loaded = m_parametricWidget->loadFromJson(json);
     }
-    updateEditRowFromSelection();
+    if (loaded) {
+        updateEditRowFromSelection();
+    }
     m_updatingFromModel = false;
 }
 
