@@ -2220,4 +2220,40 @@ void TxChannel::setTxPhrotReverse(bool reverse)
 #endif
 }
 
+// ── B-3.2: TX CFC live-display readback (Phase 3M-3a-ii follow-up) ──────────
+//
+// Main-thread readback of WDSP's CFC compression-display snapshot for the
+// parametric-EQ widget bar chart.  WDSP populates `cfc_gain_copy[]` and
+// `delta_copy[]` snapshots inside the audio thread (cfcomp.c:558-566
+// [v2.10.3.13] — sets mask_ready=1 once per FFT mask update).  The wrapper
+// is csDSP-protected inside WDSP via EnterCriticalSection (cfcomp.c:744)
+// so it is safe to call from the main thread while the audio thread runs.
+//
+// Forward-declare the WDSP entry point — neither cfcomp.h nor TXA.h export it
+// in TAPR v1.29 (it's PORT-tagged in cfcomp.c only).  C# Thetis declares it
+// via P/Invoke at dsp.cs:798-800 [v2.10.3.13]:
+//   [DllImport("wdsp.dll", EntryPoint="GetTXACFCOMPDisplayCompression", ...)]
+//   public static extern void GetTXACFCOMPDisplayCompression(int, double*, int*);
+
+#ifdef HAVE_WDSP
+extern "C" {
+    void GetTXACFCOMPDisplayCompression(int channel, double* compValues, int* ready);
+}
+#endif
+
+// From Thetis cfcomp.c:740-757 [v2.10.3.13].
+bool TxChannel::getCfcDisplayCompression(double* compValues, int bufferSize) noexcept
+{
+    if (compValues == nullptr) return false;
+    if (bufferSize < kCfcDisplayBinCount) return false;
+#ifdef HAVE_WDSP
+    int ready = 0;
+    GetTXACFCOMPDisplayCompression(m_channelId, compValues, &ready);
+    return ready != 0;
+#else
+    Q_UNUSED(bufferSize);
+    return false;
+#endif
+}
+
 } // namespace NereusSDR

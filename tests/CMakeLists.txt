@@ -1906,6 +1906,16 @@ nereus_add_test(tst_tx_channel_leveler_alc_setters)
 # setStageRunning.  Same does-not-crash strategy as B-1 / B-2.
 nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
 
+# ── Phase 3M-3a-ii follow-up Batch 7: TxChannel CFC live-display readback ──
+# Plan: 3M-3a-ii follow-up Batch 7 — TxChannel::getCfcDisplayCompression
+# wraps WDSP::GetTXACFCOMPDisplayCompression (cfcomp.c:740-757 [v2.10.3.13]).
+# Pure pass-through with null + size validation; live-data correctness is
+# integration-tested via the parametric-EQ widget bar chart in Tasks 8 + 9.
+# This test pins the validation arms (null buffer, too-small buffer) and the
+# two public constants (kCfcDisplayBinCount = 1025, kCfcDisplaySampleRateHz
+# = 48000.0) against Thetis source ranges.
+nereus_add_test(tst_tx_channel_cfc_display)
+
 # ── Phase 3M-3a-i Task C: TransmitModel TX EQ + Leveler + ALC properties ──
 # Plan: 3M-3a-i Batch 1 Task C — 28 new properties on TransmitModel:
 #   - 23 TXProfile keys: TXEQEnabled / TXEQNumBands / TXEQPreamp / TXEQ1..10 /

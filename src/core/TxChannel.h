@@ -218,6 +218,16 @@ warren@wpratt.com
 //                 CFCPhaseReverseEnabled) live in the Thetis tpDSPCFC tab
 //                 alongside the CFC controls.  AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-04-30 — Phase 3M-3a-ii follow-up Batch 7 — getCfcDisplayCompression
+//                 main-thread readback added by J.J. Boyd (KG4VCF) to feed
+//                 the parametric-EQ widget bar chart at 50 ms cadence.  Wraps
+//                 WDSP::GetTXACFCOMPDisplayCompression (cfcomp.c:740-757
+//                 [v2.10.3.13]); pure pass-through with null + size validation.
+//                 Two new public constants pin the WDSP geometry
+//                 (kCfcDisplayBinCount = 1025 = fsize/2+1; kCfcDisplaySampleRateHz
+//                 = 48000.0 = TX dsp_rate / 2) so consumers don't reinvent
+//                 them.  AI-assisted transformation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #pragma once
@@ -1279,6 +1289,41 @@ public:
     ///
     /// From Thetis wdsp/iir.c:697-703 [v2.10.3.13].
     void setTxPhrotReverse(bool reverse);
+
+    // ── B-3.2: TX CFC live-display readback (Phase 3M-3a-ii follow-up) ──────
+    //
+    // Live CFC compression-display readback for the parametric-EQ widget bar
+    // chart.  WDSP populates `cfc_gain_copy[]` and `delta_copy[]` snapshots
+    // inside the audio thread (cfcomp.c:558-566 [v2.10.3.13] — sets
+    // mask_ready=1 once per FFT mask update); this wrapper is the main-thread
+    // pull side that calls GetTXACFCOMPDisplayCompression to drain those
+    // snapshots into a caller-owned buffer.  csDSP-protected inside WDSP.
+
+    /// Number of bins delivered by GetTXACFCOMPDisplayCompression.
+    ///
+    /// From Thetis cfcomp.c:379 [v2.10.3.13] — msize = fsize/2+1 with
+    /// fsize=2048 (TXA.c:209).
+    static constexpr int    kCfcDisplayBinCount      = 1025;
+
+    /// Sample rate the bins are spaced against (so callers can map bin index
+    /// to Hz: `hz = i * kCfcDisplaySampleRateHz / (kCfcDisplayBinCount - 1)`).
+    ///
+    /// From Thetis frmCFCConfig.cs:411 [v2.10.3.13] — TX dsp_rate=96000,
+    /// Nyquist=48 kHz.
+    static constexpr double kCfcDisplaySampleRateHz  = 48000.0;
+
+    /// Pull the latest CFC compression-display snapshot from WDSP.
+    ///
+    /// Wraps WDSP::GetTXACFCOMPDisplayCompression — From Thetis
+    /// cfcomp.c:740-757 [v2.10.3.13].  Returns true iff WDSP had new data
+    /// since the previous call (i.e. mask_ready was 1 inside WDSP); on true,
+    /// fills `compValues[0..kCfcDisplayBinCount-1]` with per-bin compression
+    /// in dB.  On false, `compValues` is untouched.  Thread-safe (WDSP-
+    /// internal csDSP lock).
+    ///
+    /// `bufferSize` must be ≥ kCfcDisplayBinCount or the wrapper returns
+    /// false without touching WDSP.
+    bool getCfcDisplayCompression(double* compValues, int bufferSize) noexcept;
 
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //
