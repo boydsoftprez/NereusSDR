@@ -69,7 +69,6 @@
 #include "PhoneCwApplet.h"
 #include "gui/HGauge.h"
 #include "gui/ComboStyle.h"
-#include "gui/widgets/TriBtn.h"
 #include "NyiOverlay.h"
 #include "core/BoardCapabilities.h"
 #include "core/AudioEngine.h"
