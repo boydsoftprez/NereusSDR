@@ -60,6 +60,8 @@
 //                 removed from TxApplet (was a duplicate — PhoneCwApplet had an
 //                 un-wired PROC button + slider since 3I-3 NyiOverlay-marked).
 //                 PROC wiring moved to PhoneCwApplet; row drops to [LEV][EQ][CFC].
+//   2026-05-02 — Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox
+//                 row + status label added.  See TxApplet.cpp for details.
 // =================================================================
 
 //=================================================================
@@ -133,6 +135,7 @@ class QPushButton;
 class QSlider;
 class QComboBox;
 class QLabel;
+class QSpinBox;
 
 namespace NereusSDR {
 
@@ -306,6 +309,17 @@ private:
     QPushButton* m_twoToneBtn = nullptr;
     // 9. PS-A (hidden until 3M-4 PureSignal)
     QPushButton* m_psaBtn     = nullptr;
+    // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ─────────
+    // Low/High cutoff spinboxes (Hz) — bidirectional with TransmitModel::filterLow
+    // and filterHigh via the filterChanged(int,int) signal.
+    QSpinBox*    m_txFilterLowSpin{nullptr};
+    QSpinBox*    m_txFilterHighSpin{nullptr};
+    // Status label below the spinbox row — shows "100-2900 Hz · 2.8k BW" or
+    // "±2900 Hz · 5.8k BW" depending on whether the active slice mode is
+    // symmetric.  Orange tint (#ffaa70) matches the future Style::kTxFilterOverlayLabel
+    // constant (Cluster E will add it to StyleConstants.h).
+    QLabel*      m_txFilterStatusLabel{nullptr};
+
     // 10. SWR protection LED (wired to SwrProtectionController::highSwrChanged)
     QLabel*      m_swrProtLed = nullptr;
     // Removed NYI members (re-add when their phases ship):

@@ -43,6 +43,12 @@
 //                 requestOpenCfcDialog() public slot exposed so CfcSetupPage's
 //                 [Configure CFC bands…] button routes to the same dialog
 //                 instance via a MainWindow-side signal connection.
+//   2026-05-02 — Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox
+//                 row added below Profile combo — Lo/Hi QSpinBox pair
+//                 bidirectional with TransmitModel::filterLow/filterHigh;
+//                 orange status label shows filter description text.
+//                 Wired via filterChanged(int,int) + dspModeChanged refresh.
+//                 syncFromModel() extended to seed spinboxes + status label.
 // =================================================================
 
 //=================================================================
@@ -164,6 +170,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -547,6 +554,73 @@ void TxApplet::buildUI()
         row->addWidget(m_profileCombo, 1);
 
         vbox->addLayout(row);
+    }
+
+    // ── Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox row ──────
+    // Low/High cutoff spinboxes for the TX bandpass filter.  Bidirectional with
+    // TransmitModel::filterLow / filterHigh (wired in wireControls).  Defaults
+    // 100 / 2900 Hz from the model (m_filterLow{100} / m_filterHigh{2900}).
+    {
+        auto* bwRow = new QHBoxLayout;
+        bwRow->setSpacing(4);
+
+        // "TX BW" section label — 56 px wide, bold, kTitleText colour, 10 px.
+        auto* bwLbl = new QLabel(QStringLiteral("TX BW"), this);
+        bwLbl->setFixedWidth(56);
+        bwLbl->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 10px; font-weight: bold; }"
+        ).arg(Style::kTitleText));
+        bwRow->addWidget(bwLbl);
+
+        // "Lo" sub-label
+        auto* loLbl = new QLabel(QStringLiteral("Lo"), this);
+        loLbl->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 9.5px; }"
+        ).arg(Style::kTextSecondary));
+        bwRow->addWidget(loLbl);
+
+        // Low-cutoff spinbox — range [0, 5000] Hz
+        m_txFilterLowSpin = new QSpinBox(this);
+        m_txFilterLowSpin->setRange(0, 5000);
+        m_txFilterLowSpin->setSuffix(QStringLiteral(" Hz"));
+        m_txFilterLowSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        m_txFilterLowSpin->setMinimumWidth(72);
+        m_txFilterLowSpin->setAccessibleName(QStringLiteral("TX filter low cutoff"));
+        m_txFilterLowSpin->setToolTip(QStringLiteral(
+            "TX bandpass filter lower cutoff (Hz).  0 Hz for voice SSB modes."));
+        bwRow->addWidget(m_txFilterLowSpin);
+
+        // "Hi" sub-label
+        auto* hiLbl = new QLabel(QStringLiteral("Hi"), this);
+        hiLbl->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 9.5px; }"
+        ).arg(Style::kTextSecondary));
+        bwRow->addWidget(hiLbl);
+
+        // High-cutoff spinbox — range [200, 10000] Hz
+        m_txFilterHighSpin = new QSpinBox(this);
+        m_txFilterHighSpin->setRange(200, 10000);
+        m_txFilterHighSpin->setSuffix(QStringLiteral(" Hz"));
+        m_txFilterHighSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        m_txFilterHighSpin->setMinimumWidth(72);
+        m_txFilterHighSpin->setAccessibleName(QStringLiteral("TX filter high cutoff"));
+        m_txFilterHighSpin->setToolTip(QStringLiteral(
+            "TX bandpass filter upper cutoff (Hz).  2900 Hz for typical SSB voice."));
+        bwRow->addWidget(m_txFilterHighSpin);
+
+        vbox->addLayout(bwRow);
+
+        // D9 status label — orange tint, right-aligned, 9 px bold.
+        // Displays e.g. "100-2900 Hz · 2.8k BW" (asymmetric) or "±2900 Hz · 5.8k BW"
+        // (symmetric modes).  Refreshed by filterChanged + dspModeChanged.
+        // matches future Style::kTxFilterOverlayLabel — Cluster E
+        m_txFilterStatusLabel = new QLabel(this);
+        m_txFilterStatusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        m_txFilterStatusLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: #ffaa70; font-size: 9px; font-weight: bold; }"
+        ));
+        m_txFilterStatusLabel->setAccessibleName(QStringLiteral("TX filter status"));
+        vbox->addWidget(m_txFilterStatusLabel);
     }
 
     // ── Button row 3: 2-Tone + PS-A + DUP ───────────────────────────────────
@@ -982,6 +1056,63 @@ void TxApplet::wireControls()
         emit txProfileMenuRequested();
     });
 
+    // ── Plan 4 Cluster C (Task 4 / D2+D3): TX BW spinbox wiring ─────────────
+    //
+    // UI → Model: spinbox valueChanged → setFilterLow / setFilterHigh.
+    //             m_updatingFromModel guard prevents echo loops.
+    // Model → UI: TransmitModel::filterChanged(int,int) → QSignalBlocker on
+    //             both spinboxes, then setValue + refresh status label.
+    // Status label refresh helper (shared by filterChanged and dspModeChanged).
+    auto refreshFilterStatus = [this]() {
+        if (!m_txFilterStatusLabel || !m_model) { return; }
+        SliceModel* slice = m_model->activeSlice();
+        const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
+        m_txFilterStatusLabel->setText(
+            m_model->transmitModel().filterDisplayText(mode));
+    };
+
+    if (m_txFilterLowSpin) {
+        connect(m_txFilterLowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int v) {
+            if (m_updatingFromModel) { return; }
+            m_model->transmitModel().setFilterLow(v);
+        });
+    }
+    if (m_txFilterHighSpin) {
+        connect(m_txFilterHighSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int v) {
+            if (m_updatingFromModel) { return; }
+            m_model->transmitModel().setFilterHigh(v);
+        });
+    }
+
+    // Model → spinboxes + status label on filterChanged.
+    connect(&tx, &TransmitModel::filterChanged,
+            this, [this, refreshFilterStatus](int low, int high) {
+        m_updatingFromModel = true;
+        if (m_txFilterLowSpin) {
+            QSignalBlocker bLo(m_txFilterLowSpin);
+            m_txFilterLowSpin->setValue(low);
+        }
+        if (m_txFilterHighSpin) {
+            QSignalBlocker bHi(m_txFilterHighSpin);
+            m_txFilterHighSpin->setValue(high);
+        }
+        m_updatingFromModel = false;
+        refreshFilterStatus();
+    });
+
+    // Status label refresh on DSP mode change (symmetric ↔ asymmetric format).
+    // Piggybacks on the same active-slice connect block used by K.2 above.
+    if (SliceModel* slice = m_model->activeSlice()) {
+        connect(slice, &SliceModel::dspModeChanged,
+                this, [refreshFilterStatus](DSPMode) {
+            refreshFilterStatus();
+        });
+        // Set initial status label text.
+        refreshFilterStatus();
+    }
+
     // ── Phase 3M-1c J.2 ─ 2-TONE button wiring ───────────────────────────────
     // toggled → TwoToneController::setActive.  Echo-guarded.
     connect(m_twoToneBtn, &QPushButton::toggled, this, [this](bool on) {
@@ -1057,6 +1188,21 @@ void TxApplet::syncFromModel()
     if (m_cfcBtn) {
         QSignalBlocker b(m_cfcBtn);
         m_cfcBtn->setChecked(tx.cfcEnabled());
+    }
+
+    // TX BW spinboxes + status label (Plan 4 Cluster C Task 4 / D2+D3+D9)
+    if (m_txFilterLowSpin) {
+        QSignalBlocker bLo(m_txFilterLowSpin);
+        m_txFilterLowSpin->setValue(tx.filterLow());
+    }
+    if (m_txFilterHighSpin) {
+        QSignalBlocker bHi(m_txFilterHighSpin);
+        m_txFilterHighSpin->setValue(tx.filterHigh());
+    }
+    if (m_txFilterStatusLabel) {
+        SliceModel* slice = m_model->activeSlice();
+        const DSPMode mode = slice ? slice->dspMode() : DSPMode::USB;
+        m_txFilterStatusLabel->setText(tx.filterDisplayText(mode));
     }
 
     // Mic-source badge (J.3 Phase 3M-1b)
