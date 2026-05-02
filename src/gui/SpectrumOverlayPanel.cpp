@@ -38,7 +38,7 @@
 
 #include "SpectrumOverlayPanel.h"
 
-#include "gui/StyleConstants.h"
+#include "StyleConstants.h"
 #include "core/AntennaLabels.h"
 #include "core/BoardCapabilities.h"
 #include "models/RadioModel.h"
@@ -121,7 +121,7 @@ namespace OverlayColors {
 // These are deliberate — the overlay slider uses a low-contrast white handle
 // that is legible against the translucent panel rather than the main spectrum
 // accent colour.
-static QString overlaySliderStyle()
+static inline QString overlaySliderStyle()
 {
     return QStringLiteral(
         "QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
@@ -133,7 +133,7 @@ static QString overlaySliderStyle()
 //   - padding: 2px 6px vs buttonBaseStyle()'s 2px 4px (wider pill shape for display toggles)
 // All other tokens match: bg kButtonBg, border kBorder, color kTextPrimary, 10px bold,
 // border-radius 3px, hover kButtonAltHover, checked bg/text/border kGreen*.
-static QString overlayDisplayToggleStyle()
+static inline QString overlayDisplayToggleStyle()
 {
     return Style::buttonBaseStyle().replace("padding: 2px 4px", "padding: 2px 6px")
          + Style::greenCheckedStyle();
