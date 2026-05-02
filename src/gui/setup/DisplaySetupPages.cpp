@@ -94,39 +94,6 @@ namespace NereusSDR {
 
 namespace {
 
-// Apply the project-wide dark-theme stylesheet to a widget.
-void applyDarkStyle(QWidget* w)
-{
-    w->setStyleSheet(QStringLiteral(
-        "QGroupBox { color: #8090a0; font-size: 11px;"
-        "  border: 1px solid #203040; border-radius: 4px;"
-        "  margin-top: 8px; padding-top: 4px; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
-        "QLabel { color: #c8d8e8; }"
-        "QComboBox { background: #1a2a3a; color: #c8d8e8; border: 1px solid #203040;"
-        "  border-radius: 3px; padding: 2px 6px; }"
-        "QComboBox::drop-down { border: none; }"
-        "QComboBox QAbstractItemView { background: #1a2a3a; color: #c8d8e8;"
-        "  selection-background-color: #00b4d8; }"
-        "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -4px 0;"
-        "  border-radius: 6px; }"
-        "QSlider::sub-page:horizontal { background: #00b4d8; border-radius: 2px; }"
-        "QSpinBox, QDoubleSpinBox { background: #1a2a3a; color: #c8d8e8;"
-        "  border: 1px solid #203040; border-radius: 3px; padding: 1px 4px; }"
-        // Up/down buttons left to Fusion native rendering: the moment
-        // we style the subcontrol, Qt drops the native arrow image
-        // and we'd need to provide our own. With the app-level dark
-        // palette installed in main.cpp, Fusion paints the native
-        // arrows in the right color against the surrounding QSpinBox
-        // background.
-        "QCheckBox { color: #c8d8e8; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; background: #1a2a3a;"
-        "  border: 1px solid #203040; border-radius: 2px; }"
-        "QCheckBox::indicator:checked { background: #00b4d8; border-color: #00b4d8; }"
-    ));
-}
-
 // Build a color swatch placeholder label (NYI — no color picker yet).
 QLabel* makeColorSwatch(const QString& label, const QString& hexColor, QWidget* parent)
 {
@@ -218,7 +185,7 @@ void SpectrumDefaultsPage::loadFromRenderer()
 
 void SpectrumDefaultsPage::buildUI()
 {
-    applyDarkStyle(this);
+    NereusSDR::Style::applyDarkPageStyle(this);
 
     // Phase 3G-9b: Reset to Smooth Defaults button. Destructive — shows
     // a confirmation dialog before overwriting because it resets the
@@ -669,7 +636,7 @@ void WaterfallDefaultsPage::updateEffectiveDepthLabel()
 
 void WaterfallDefaultsPage::buildUI()
 {
-    applyDarkStyle(this);
+    NereusSDR::Style::applyDarkPageStyle(this);
 
     // --- Section: Levels ---
     auto* levGroup = new QGroupBox(QStringLiteral("Levels"), this);
@@ -1006,7 +973,7 @@ void GridScalesPage::loadFromRenderer()
 
 void GridScalesPage::buildUI()
 {
-    applyDarkStyle(this);
+    NereusSDR::Style::applyDarkPageStyle(this);
 
     // --- Section: Grid ---
     auto* gridGroup = new QGroupBox(QStringLiteral("Grid"), this);
@@ -1209,7 +1176,7 @@ Rx2DisplayPage::Rx2DisplayPage(RadioModel* model, QWidget* parent)
 
 void Rx2DisplayPage::buildUI()
 {
-    applyDarkStyle(this);
+    NereusSDR::Style::applyDarkPageStyle(this);
 
     // --- Section: RX2 Spectrum ---
     auto* specGroup = new QGroupBox(QStringLiteral("RX2 Spectrum"), this);
@@ -1276,7 +1243,7 @@ TxDisplayPage::TxDisplayPage(RadioModel* model, QWidget* parent)
 
 void TxDisplayPage::buildUI()
 {
-    applyDarkStyle(this);
+    NereusSDR::Style::applyDarkPageStyle(this);
 
     // --- Section: TX Spectrum ---
     auto* specGroup = new QGroupBox(QStringLiteral("TX Spectrum"), this);
