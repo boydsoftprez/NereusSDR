@@ -502,12 +502,14 @@ void TitleBar::setMenuBar(QMenuBar* mb)
         "QMenuBar { background: transparent; color: %1; font-size: 12px; }"
         "QMenuBar::item { padding: 4px 8px; }"
         "QMenuBar::item:selected { background: %2; color: #ffffff; }"
-        "QMenu { background: %3; color: #c8d8e8; border: 1px solid %4; }"
-        "QMenu::item:selected { background: #0070c0; }")
+        "QMenu { background: %3; color: %5; border: 1px solid %4; }"
+        "QMenu::item:selected { background: %6; }")
         .arg(QLatin1String(Style::kTitleText),
              QLatin1String(Style::kBorderSubtle),
              QLatin1String(Style::kAppBg),
-             QLatin1String(Style::kOverlayBorder)));
+             QLatin1String(Style::kOverlayBorder),
+             QLatin1String(Style::kTextPrimary),
+             QLatin1String(Style::kBlueBg)));
     mb->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).
