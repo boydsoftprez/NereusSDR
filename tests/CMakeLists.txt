@@ -82,6 +82,12 @@ nereus_add_test(tst_p1_codec_standard)
 # on ANAN-10E/HermesII; same fix as HL2 commit ca8cd73).
 nereus_add_test(tst_p1_codec_standard_bank11_polarity)
 
+# ── P1 full-parity Task 1.4: P1CodecStandard XmitBit on frequency banks ──
+# Closes the gap PR #161 left for non-HL2 boards: Thetis networkproto1.c:447
+# sets C0 = XmitBit before the case switch, so every bank's C0 carries XmitBit
+# on the wire — including frequency banks (1, 2, 3, 5-9).
+nereus_add_test(tst_p1_codec_standard_freq_bank_xmitbit)
+
 # ── Phase 3P-A P1CodecAnvelinaPro3 bank 17 extra OC (Task 7) ──
 nereus_add_test(tst_p1_codec_anvelina_pro3)
 
