@@ -229,6 +229,16 @@ struct CodecContext {
     // up the actual feedback DDC routing.
     bool    p1PuresignalRun{false};
 
+    // User digital outputs — prn->user_dig_out, low 4 bits (0-15).
+    // Source: Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    //   C3 = prn->user_dig_out & 0b00001111;
+    // P1 wire: bank 11 C3 low 4 bits.
+    // Drives the 4 user-controllable digital pins on the radio's accessory
+    // header (Penny / Hermes Ctrl board). UI added in Task 4.3 (Setup →
+    // Hardware → OC Outputs → "User Dig Out 1..4"), gated on
+    // BoardCapabilities.hasPennyLane.
+    quint8  p1UserDigOut{0};
+
     // RX VFO frequency words (Hz, raw, no phase-word conversion on P1).
     quint64 rxFreqHz[7]{};
     quint64 txFreqHz{0};

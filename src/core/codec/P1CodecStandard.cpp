@@ -245,7 +245,10 @@ void P1CodecStandard::bank11(const CodecContext& ctx, quint8 out[5]) const
     //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
     out[2] = quint8((ctx.p1LineInGain & 0x1F)
                   | (ctx.p1PuresignalRun ? 0x40 : 0x00));
-    out[3] = 0;
+    // C3: user digital outputs, low 4 bits.
+    // From Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13]
+    //   C3 = prn->user_dig_out & 0b00001111;
+    out[3] = quint8(ctx.p1UserDigOut & 0x0F);
     // canonical 5-bit ramdor encoding
     out[4] = quint8((ctx.rxStepAttn[0] & 0x1F) | 0x20);
 }

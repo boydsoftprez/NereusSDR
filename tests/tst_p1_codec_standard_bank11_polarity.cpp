@@ -124,6 +124,45 @@ private slots:
         codec.composeCcForBank(11, ctx, out);
         QCOMPARE(int(out[2]), 0x4F);
     }
+
+    // ── 8. C3 user_dig_out — 4-bit value lands in low 4 bits ────────────────
+    // Source: Thetis networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    //   C3 = prn->user_dig_out & 0b00001111;
+    // P1 full-parity Task 1.3.
+    void c3_user_dig_out_low_4_bits() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.p1UserDigOut = 0x0A;
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[3] & 0x0F), 0x0A);
+    }
+
+    // ── 9. C3 user_dig_out — high bits get masked off ───────────────────────
+    // Source: Thetis networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    //   C3 = prn->user_dig_out & 0b00001111;
+    // P1 full-parity Task 1.3.
+    void c3_user_dig_out_masked_to_4_bits() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.p1UserDigOut = 0xFF;
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[3] & 0x0F), 0x0F);
+    }
+
+    // ── 10. C3 user_dig_out default zero → C3 low nibble clear ──────────────
+    // Source: Thetis networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    // P1 full-parity Task 1.3 — confirms default p1UserDigOut=0 produces C3=0,
+    // matching the prior wire bytes (regression-freeze baseline unchanged).
+    void c3_user_dig_out_default_zero() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        // p1UserDigOut default = 0
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[3] & 0x0F), 0x00);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestP1CodecStandardBank11Polarity)
