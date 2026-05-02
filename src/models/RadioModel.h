@@ -104,6 +104,7 @@
 //  unique_ptr<MicReBlocker> destructor.  The TX pump architecture
 //  redesign (2026-04-29) deleted MicReBlocker; replaced with
 //  TxWorkerThread which drives TxChannel directly.)
+#include <algorithm>  // std::clamp (used by computeWireDriveForTest)
 #include <memory>  // std::unique_ptr
 
 namespace NereusSDR {
@@ -448,6 +449,23 @@ public:
                                   quint16 userAdc1Raw, quint16 supplyRaw) {
         handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
                           userAdc0Raw, userAdc1Raw, supplyRaw);
+    }
+
+    // P1 full-parity §3.5 test seam — pure-function counterpart of the
+    // percent-to-wire-byte SWR-foldback formula inlined at every
+    // setTxDrive call site (voice powerChanged lambda, TUNE-engage,
+    // TUNE-restore).  Tests assert against this helper to verify the
+    // formula in isolation; production callsites use the same three-line
+    // expression (see RadioModel.cpp).  A regression in the helper is a
+    // regression in the inlined production code by construction.
+    //
+    // Source: mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+    //   int i = (int)(255 * f * _swr_protect);   // f normalised 0..1,
+    //                                            // _swr_protect ≤ 1.0
+    static int computeWireDriveForTest(int powerPct, float swrProtectFactor) {
+        const float f          = std::clamp(powerPct / 100.0f, 0.0f, 1.0f);
+        const float swrProtect = std::clamp(swrProtectFactor, 0.0f, 1.0f);
+        return std::clamp(int(255.0f * f * swrProtect), 0, 255);
     }
 
     // 3M-1b L.1 test seams: expose raw pointers into the mic-source strategy

@@ -894,6 +894,18 @@ nereus_add_test(tst_calibration_controller_pa_cal)
 # Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
 nereus_add_test(tst_radio_model_pa_cal_routing)
 
+# ── P1 full-parity §3.5: SWR-foldback drive scaling ─────────────────────────
+# Verifies the TransmitModel::swrProtectFactor property (clamp + signal
+# de-dup) and the percent→wire-byte formula
+#   wire = clamp(int(255 * f * swrProtect), 0, 255)
+# applied at every RadioModel setTxDrive site.  At default factor=1.0 the
+# formula is identity to the prior `(power * 255) / 100` — bench behaviour
+# for live radios is unchanged until SwrProtectionController is wired in
+# a follow-up task.
+# Source: mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1].
+nereus_add_test(tst_pa_cal_swr_foldback)
+target_compile_definitions(tst_pa_cal_swr_foldback PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-G commit 2: CalibrationTab UI smoke tests ───────────────────────
 # Verifies construction doesn't crash, 6 group boxes present
 # (Freq Cal / Level Cal / HPSDR Freq Cal Diagnostic / TX Display Cal /

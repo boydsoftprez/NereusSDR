@@ -220,6 +220,19 @@ void TransmitModel::setPureSigEnabled(bool enabled)
     }
 }
 
+void TransmitModel::setSwrProtectFactor(float f)
+{
+    // Clamp to [0.0, 1.0]; mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+    // applies _swr_protect ≤ 1.0 inside the wire-byte multiply, so any
+    // value > 1.0 would over-amplify drive — clamp defensively.
+    const float clamped = std::clamp(f, 0.0f, 1.0f);
+    if (qFuzzyCompare(m_swrProtectFactor, clamped)) {
+        return;
+    }
+    m_swrProtectFactor = clamped;
+    emit swrProtectFactorChanged(clamped);
+}
+
 void TransmitModel::setTxOwnerSlot(VaxSlot s)
 {
     const VaxSlot prev = m_txOwnerSlot.exchange(s, std::memory_order_acq_rel);

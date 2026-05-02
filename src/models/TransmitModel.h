@@ -187,6 +187,28 @@ public:
     bool pureSigEnabled() const { return m_pureSigEnabled; }
     void setPureSigEnabled(bool enabled);
 
+    /// SWR-protection foldback multiplier applied to TX drive scaling.
+    /// 1.0 = no foldback (default).  Reduced by SwrProtectionController
+    /// when reflected power is high; protects the PA from running at
+    /// full drive into a high-SWR load.
+    ///
+    /// Source: mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+    ///   int i = (int)(255 * f * _swr_protect);   // f normalised 0..1,
+    ///                                            // _swr_protect ≤ 1.0
+    ///   NetworkIO.SetOutputPowerFactor(i);
+    ///
+    /// Runtime-only: not persisted.  SwrProtectionController will drive
+    /// this value on each TX cycle in a follow-up task; for now the
+    /// factor is fixed at 1.0 and observable wire bytes are identical
+    /// to the prior `(power * 255) / 100` formula.
+    float swrProtectFactor() const { return m_swrProtectFactor; }
+
+    /// Set the foldback multiplier.  Clamps to [0.0, 1.0].  Silently
+    /// no-ops if the clamped value matches the current value (avoids
+    /// redundant signal emissions during SwrProtectionController's
+    /// per-sample rate).
+    void setSwrProtectFactor(float f);
+
     VaxSlot txOwnerSlot() const { return m_txOwnerSlot.load(std::memory_order_acquire); }
     void setTxOwnerSlot(VaxSlot s);
 
@@ -1156,6 +1178,10 @@ signals:
     void powerChanged(int power);
     void micGainChanged(float gain);
     void pureSigChanged(bool enabled);
+    /// Emitted when swrProtectFactor changes.  Source: mi0bot
+    /// NetworkIO.cs:209-211 [v2.10.3.14-beta1].  Runtime-only — not
+    /// persisted; SwrProtectionController drives the value (follow-up).
+    void swrProtectFactorChanged(float factor);
     void txOwnerSlotChanged(VaxSlot s);
 
     /// Emitted when a per-band tune-power value changes.
@@ -1225,6 +1251,10 @@ private:
     int m_power{100};
     float m_micGain{0.0f};
     bool m_pureSigEnabled{false};
+    // SWR-foldback multiplier; default 1.0 = no foldback.  Clamped 0..1
+    // by setSwrProtectFactor().  Runtime-only (not persisted).
+    // Source: mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1].
+    float m_swrProtectFactor{1.0f};
     std::atomic<VaxSlot> m_txOwnerSlot{VaxSlot::MicDirect};  // Atomic for lock-free reads from the audio thread.
 
     // Per-band tune power storage.

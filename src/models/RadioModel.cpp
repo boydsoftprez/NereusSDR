@@ -824,15 +824,21 @@ RadioModel::RadioModel(QObject* parent)
             [this](int power) {
         if (m_transmitModel.isTune()) { return; }
         if (!m_connection)            { return; }
-        // Scale percent (0-100) → wire byte (0-255).  Mirrors mi0bot
-        // NetworkIO.cs:209-211 [v2.10.3.14-beta1]:
-        //   int i = (int)(255 * f * _swr_protect);  // f normalised 0..1
+        // Scale percent (0-100) → wire byte (0-255), with SWR-protection
+        // foldback applied per mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]:
+        //   int i = (int)(255 * f * _swr_protect);   // f normalised 0..1,
+        //                                            // _swr_protect ≤ 1.0
         //   SetOutputPowerFactor(i);
         // setTxDrive's contract is the wire byte (0-255); m_transmitModel
         // power is 0-100 percent.  Without this scaling, 50% power was
         // reaching the wire as drive_level=50 (~20 % of max) and bench
-        // RF output measured 0 W.
-        const int wireDrive = qBound(0, (power * 255) / 100, 255);
+        // RF output measured 0 W.  Default swrProtectFactor=1.0 → identity
+        // to the prior `(power * 255) / 100` formula; foldback wires up
+        // when SwrProtectionController drives the factor (follow-up).
+        const float f          = std::clamp(power / 100.0f, 0.0f, 1.0f);
+        const float swrProtect =
+            std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+        const int wireDrive = std::clamp(int(255.0f * f * swrProtect), 0, 255);
         auto* conn = m_connection;
         QMetaObject::invokeMethod(conn, [conn, wireDrive]() {
             conn->setTxDrive(wireDrive);
@@ -4144,9 +4150,15 @@ void RadioModel::setTune(bool on)
                                     ? bandFromFrequency(m_activeSlice->frequency())
                                     : m_lastBand;
         const int tunePower = m_transmitModel.tunePowerForBand(currentBand);
-        // Scale percent (0-100) → wire byte (0-255). See setTxDrive scaling
-        // comment in connection-power lambda above for the mi0bot citation.
-        const int wireTuneDrive = qBound(0, (tunePower * 255) / 100, 255);
+        // Scale percent (0-100) → wire byte (0-255) with SWR-protection
+        // foldback. See setTxDrive scaling comment in connection-power
+        // lambda above for the mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+        // citation. Default factor=1.0 → identity to prior formula.
+        const float fTune          = std::clamp(tunePower / 100.0f, 0.0f, 1.0f);
+        const float swrProtectTune =
+            std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+        const int wireTuneDrive =
+            std::clamp(int(255.0f * fTune * swrProtectTune), 0, 255);
         if (m_connection) {
             auto* conn = m_connection;
             QMetaObject::invokeMethod(conn, [conn, wireTuneDrive]() {
@@ -4262,9 +4274,15 @@ void RadioModel::setTune(bool on)
         //   //MW0LGE_22b  [original inline comment from console.cs:30033]
         if (m_connection) {
             auto* conn = m_connection;
-            // Scale percent (0-100) → wire byte (0-255). See setTxDrive scaling
-            // comment in connection-power lambda for the mi0bot citation.
-            const int savedWireDrive = qBound(0, (m_savedPowerPct * 255) / 100, 255);
+            // Scale percent (0-100) → wire byte (0-255) with SWR-protection
+            // foldback. See setTxDrive scaling comment in connection-power
+            // lambda for the mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+            // citation. Default factor=1.0 → identity to prior formula.
+            const float fSaved          = std::clamp(m_savedPowerPct / 100.0f, 0.0f, 1.0f);
+            const float swrProtectSaved =
+                std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+            const int savedWireDrive =
+                std::clamp(int(255.0f * fSaved * swrProtectSaved), 0, 255);
             QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
                 conn->setTxDrive(savedWireDrive);
             });
