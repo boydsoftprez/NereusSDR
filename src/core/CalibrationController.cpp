@@ -275,6 +275,47 @@ void CalibrationController::setPaCurrentOffset(double offset)
     emit changed();
 }
 
+// ── PA forward-power calibration profile ──────────────────────────────────────
+
+// Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+//   wholesale replacement of the per-board cal table (boardClass + 11 watts
+//   entries). De-dup on equality so callers can blind-restore a persisted
+//   profile without re-firing every `paCalProfileChanged` consumer.
+void CalibrationController::setPaCalProfile(const PaCalProfile& p)
+{
+    if (m_paCalProfile.boardClass == p.boardClass
+        && m_paCalProfile.watts    == p.watts) {
+        return;
+    }
+    m_paCalProfile = p;
+    emit paCalProfileChanged();
+    emit changed();
+}
+
+// Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+//   per-spinbox cal-point edit (e.g. setup.cs:5404-5594 ud{N}PA{W}W
+//   ValueChanged → CalibratedPAPower table[idx]). Idx 0 is hard-coded
+//   0.0 in PaCalProfile so it's never user-editable; out-of-range
+//   indices silent no-op rather than asserting (production-safe).
+void CalibrationController::setPaCalPoint(int idx, float watts)
+{
+    if (idx < 1 || idx > 10) { return; }
+    if (m_paCalProfile.watts[static_cast<std::size_t>(idx)] == watts) { return; }
+    m_paCalProfile.watts[static_cast<std::size_t>(idx)] = watts;
+    emit paCalPointChanged(idx, watts);
+    emit changed();
+}
+
+// Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+//   PowerKernel interpolation forwarder. Implementation lives in
+//   PaCalProfile::interpolate (already cited there); this controller owns
+//   the table lifecycle + persistence and exposes the read for
+//   RadioModel's alex_fwd routing (P1 full-parity plan §3.5).
+float CalibrationController::calibratedFwdPowerWatts(float rawAdcWatts) const noexcept
+{
+    return m_paCalProfile.interpolate(rawAdcWatts);
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 void CalibrationController::setMacAddress(const QString& mac)
@@ -298,6 +339,31 @@ void CalibrationController::load()
     m_txDisplayOffsetDb      = s.value(base + QStringLiteral("txDisplayOffset"), QStringLiteral("0.0")).toDouble();
     m_paCurrentSensitivity   = s.value(base + QStringLiteral("paSens"),        QStringLiteral("1.0")).toDouble();
     m_paCurrentOffset        = s.value(base + QStringLiteral("paOffset"),      QStringLiteral("0.0")).toDouble();
+
+    // PA forward-power cal profile under hardware/<mac>/paCalibration/.
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+    //   `boardClass` selects the cal-table family; `calPoint{1..10}` are the
+    //   user-editable spinbox values. Index 0 is hard-coded to 0.0 in
+    //   PaCalProfile (`PaCalProfile.h` "Index 0 is always 0 W"), so we
+    //   skip persisting it.  Absent / `None`-class keys leave the profile
+    //   default-constructed so `RadioModel::connectToRadio` can substitute
+    //   `PaCalProfile::defaults(paCalBoardClassFor(model))` on first connect.
+    const QString paBase = QStringLiteral("hardware/%1/paCalibration/").arg(m_mac);
+    const int storedClassInt = s.value(paBase + QStringLiteral("boardClass"),
+                                       QStringLiteral("0")).toInt();
+    const auto storedClass = static_cast<PaCalBoardClass>(storedClassInt);
+    if (storedClass == PaCalBoardClass::None) {
+        m_paCalProfile = PaCalProfile{};
+    } else {
+        m_paCalProfile = PaCalProfile::defaults(storedClass);
+        for (int i = 1; i <= 10; ++i) {
+            const QString key = paBase + QStringLiteral("calPoint%1").arg(i);
+            const QString fallback = QString::number(m_paCalProfile.watts[
+                                          static_cast<std::size_t>(i)]);
+            m_paCalProfile.watts[static_cast<std::size_t>(i)] =
+                s.value(key, fallback).toFloat();
+        }
+    }
 }
 
 void CalibrationController::save()
@@ -316,6 +382,17 @@ void CalibrationController::save()
     s.setValue(base + QStringLiteral("txDisplayOffset"), QString::number(m_txDisplayOffsetDb));
     s.setValue(base + QStringLiteral("paSens"),          QString::number(m_paCurrentSensitivity));
     s.setValue(base + QStringLiteral("paOffset"),        QString::number(m_paCurrentOffset));
+
+    // PA forward-power cal profile — see load() for schema.
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]
+    const QString paBase = QStringLiteral("hardware/%1/paCalibration/").arg(m_mac);
+    s.setValue(paBase + QStringLiteral("boardClass"),
+               QString::number(static_cast<int>(m_paCalProfile.boardClass)));
+    for (int i = 1; i <= 10; ++i) {
+        s.setValue(paBase + QStringLiteral("calPoint%1").arg(i),
+                   QString::number(m_paCalProfile.watts[
+                       static_cast<std::size_t>(i)]));
+    }
 }
 
 } // namespace NereusSDR

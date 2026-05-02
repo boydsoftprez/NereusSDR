@@ -1153,6 +1153,18 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         m_calController.setMacAddress(info.macAddress);
         m_calController.load();
 
+        // P1 full-parity §3.2: seed PA forward-power cal profile from the
+        // hardware model on first connect to this MAC. `load()` above leaves
+        // `paCalProfile().boardClass == None` if no `paCalibration/boardClass`
+        // key was persisted; in that case we install the factory `defaults()`
+        // for the current board class. Reconnects with persisted state leave
+        // the user-edited table intact.
+        // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]
+        if (m_calController.paCalProfile().boardClass == PaCalBoardClass::None) {
+            m_calController.setPaCalProfile(
+                PaCalProfile::defaults(paCalBoardClassFor(m_hardwareProfile.model)));
+        }
+
         // Load per-MAC per-band tune power (50W default per band on first init).
         // Phase 3M-1a G.3. Source: Thetis console.cs:1819-1820 / :4904-4910 [v2.10.3.13].
         m_transmitModel.setMacAddress(info.macAddress);
@@ -3676,6 +3688,14 @@ void RadioModel::teardownConnection()
     if (m_micProfileMgr) {
         m_micProfileMgr->setMacAddress(QString());
     }
+
+    // P1 full-parity §3.2: reset PA forward-power cal profile to None so a
+    // subsequent connect to a different SKU (under the same MAC, or a fresh
+    // MAC) gets the right `PaCalProfile::defaults(class)` applied. Without
+    // this, an Anan100 profile loaded for a previous radio would survive
+    // into a connect to e.g. Anan10 hardware before the next load().
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]
+    m_calController.setPaCalProfile(PaCalProfile{});
 
     // 3M-1a G.1: detach the production loop pointers before clearing m_txChannel.
     // setConnection(nullptr) stops driveOneTxBlock() from calling sendTxIq on

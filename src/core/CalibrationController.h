@@ -122,6 +122,8 @@
 
 #pragma once
 
+#include "core/PaCalProfile.h"
+
 #include <QObject>
 #include <QString>
 
@@ -206,6 +208,33 @@ public:
     double paCurrentOffset() const;
     void   setPaCurrentOffset(double offset);
 
+    // ── PA forward-power calibration profile ──────────────────────────────────
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+    //   per-board cal table + PowerKernel piecewise-linear interpolation.
+    //   The table itself (boardClass + 11 watts entries) lives in
+    //   `PaCalProfile`; this controller owns its lifecycle and persistence.
+    //   `RadioModel::connectToRadio` seeds the profile from
+    //   `paCalBoardClassFor(m_hardwareProfile.model)` on first connect to
+    //   each MAC (when no persisted state exists); thereafter the persisted
+    //   profile is restored on every connect.
+    PaCalProfile paCalProfile() const { return m_paCalProfile; }
+    void setPaCalProfile(const PaCalProfile& p);
+
+    // Set a single user-editable cal point. `idx` is in [1..10]; idx 0 is
+    // hard-coded to 0.0 in PaCalProfile (see PaCalProfile.h §"Index 0 is
+    // always 0 W") so it's not exposed for editing here. Out-of-range
+    // indices are silent no-ops (production-safe — UI bugs cannot crash the
+    // calibration tab). Emits `paCalPointChanged(idx, watts)` then
+    // `changed()` on a successful update.
+    void setPaCalPoint(int idx, float watts);
+
+    // Forwarder to `m_paCalProfile.interpolate(rawAdcWatts)`.
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+    //   `RadioModel`'s `alex_fwd` reading is routed through this method
+    //   (Task 3.5 of the P1 full-parity plan) so live FWD power follows the
+    //   user-calibrated table.
+    float calibratedFwdPowerWatts(float rawAdcWatts) const noexcept;
+
     // ── Persistence ───────────────────────────────────────────────────────────
     void setMacAddress(const QString& mac);
     void load();   // hydrate from AppSettings under hardware/<mac>/cal/...
@@ -215,6 +244,17 @@ signals:
     // Emitted after any setter changes state. P2RadioConnection listens so
     // it can reapply effectiveFreqCorrectionFactor() on the next frequency command.
     void changed();
+
+    // Emitted when a single PA cal-point watts slot changes via
+    // `setPaCalPoint`. The general-purpose `changed()` signal also fires
+    // (so existing consumers re-react), but this carries the index +
+    // watts payload for the per-spinbox GUI.
+    void paCalPointChanged(int idx, float watts);
+
+    // Emitted when the entire PA cal profile is replaced via
+    // `setPaCalProfile` (board class change or wholesale table swap).
+    // `changed()` also fires.
+    void paCalProfileChanged();
 
 private:
     // Source: setup.cs:5137 udHPSDRFreqCorrectFactor default 1.0 [@501e3f5]
@@ -239,6 +279,13 @@ private:
     //   values from PA current sensing circuit constants [@501e3f5]
     double m_paCurrentSensitivity{1.0};
     double m_paCurrentOffset{0.0};
+
+    // Source: console.cs:6691-6724 CalibratedPAPower — per-board cal table
+    //   driving the FWD-power UI meter. Default-constructed `PaCalProfile`
+    //   has `boardClass == None` and value-initialized watts (all zeros);
+    //   `RadioModel::connectToRadio` swaps in `PaCalProfile::defaults(class)`
+    //   on first connect to each MAC. [v2.10.3.13]
+    PaCalProfile m_paCalProfile;
 
     QString m_mac;
 };

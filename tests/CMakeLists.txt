@@ -879,6 +879,13 @@ nereus_add_test(tst_radio_model_status_wiring)
 # console.cs:9766-9844; 21022-21086 [@501e3f5].
 nereus_add_test(tst_calibration_controller)
 
+# ── P1 full-parity §3.2: CalibrationController PA-cal storage + persistence ─
+# Verifies setPaCalProfile / setPaCalPoint signals + de-dup, idx-zero +
+# out-of-range guards, calibratedFwdPowerWatts forwarding, and per-MAC
+# AppSettings round-trip for boardClass + 10 cal-point watts entries.
+# Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
+nereus_add_test(tst_calibration_controller_pa_cal)
+
 # ── Phase 3P-G commit 2: CalibrationTab UI smoke tests ───────────────────────
 # Verifies construction doesn't crash, 5 group boxes present
 # (Freq Cal / Level Cal / HPSDR Freq Cal Diagnostic / TX Display Cal /
