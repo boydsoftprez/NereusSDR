@@ -921,9 +921,6 @@ void VfoWidget::buildAudioTab()
         m_agcTSlider->setRange(-160, 0);
         m_agcTSlider->setSingleStep(1);
         m_agcTSlider->setValue(-20);
-        // Thetis: slider right = more gain. WDSP threshold is inverse
-        // (lower threshold = more gain), so invert the visual direction.
-        m_agcTSlider->setInvertedAppearance(true);
         m_agcTSlider->setStyleSheet(
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
                             "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
