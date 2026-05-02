@@ -376,6 +376,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kDefaultDxOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),   QStringLiteral("200")},   // From Thetis database.cs:4778 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),  QStringLiteral("3100")},  // From Thetis database.cs:4779 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"), QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),  QStringLiteral("0")},
             {QStringLiteral("MicGain"),     QStringLiteral("5")},  // database.cs:4811
@@ -389,6 +391,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kDigi1500Overrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("1000")},   // From Thetis database.cs:5010 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("2000")},   // From Thetis database.cs:5011 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("5")},      // database.cs:5043
@@ -401,6 +405,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kDigi2210Overrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("1710")},   // From Thetis database.cs:5240 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("2710")},   // From Thetis database.cs:5241 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("5")},      // database.cs:5273
@@ -415,6 +421,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kAmOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("0")},     // From Thetis database.cs:5469 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("4000")},  // From Thetis database.cs:5470 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:5502
@@ -426,6 +434,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kConventionalOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:5698 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3100")},  // From Thetis database.cs:5699 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:5731
@@ -439,6 +449,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kD104Overrides = mergeOverrides(
         eqD104(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:5927 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3500")},  // From Thetis database.cs:5928 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},  // database.cs:5934
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("-6")},     // database.cs:5935
             {QStringLiteral("MicGain"),        QStringLiteral("25")},     // database.cs:5960
@@ -451,6 +463,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kD104CpdrOverrides = mergeOverrides(
         eqD104(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:6156 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3500")},  // From Thetis database.cs:6157 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},  // database.cs:6163
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("-6")},     // database.cs:6164
             {QStringLiteral("MicGain"),        QStringLiteral("20")},     // database.cs:6189
@@ -463,6 +477,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kD104EqOverrides = mergeOverrides(
         eqD104(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:6385 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3500")},  // From Thetis database.cs:6386 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("True")},   // database.cs:6392
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("-6")},     // database.cs:6393
             {QStringLiteral("MicGain"),        QStringLiteral("20")},     // database.cs:6418
@@ -476,6 +492,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kDxContestOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("250")},   // From Thetis database.cs:6614 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3250")},  // From Thetis database.cs:6615 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:6647
@@ -488,6 +506,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kEssbOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("50")},    // From Thetis database.cs:6843 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3650")},  // From Thetis database.cs:6844 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},     // database.cs:6876
@@ -500,6 +520,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kHc45Overrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:7072 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3100")},  // From Thetis database.cs:7073 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:7105
@@ -511,6 +533,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kHc45CpdrOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:7301 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3100")},  // From Thetis database.cs:7302 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:7334
@@ -522,6 +546,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kPr40W2ihyOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("50")},    // From Thetis database.cs:7530 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3650")},  // From Thetis database.cs:7531 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:7563
@@ -533,6 +559,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kPr40W2ihyCpdrOverrides = mergeOverrides(
         eqAllZeros(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("50")},    // From Thetis database.cs:7759 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3650")},  // From Thetis database.cs:7760 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("False")},
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("0")},
             {QStringLiteral("MicGain"),        QStringLiteral("10")},  // database.cs:7792
@@ -547,6 +575,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kPr781EqOverrides = mergeOverrides(
         eqPr781Eq(),
         {
+            {QStringLiteral("FilterLow"),      QStringLiteral("100")},   // From Thetis database.cs:7988 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),     QStringLiteral("3200")},  // From Thetis database.cs:7989 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),    QStringLiteral("True")},   // database.cs:7995
             {QStringLiteral("TXEQPreamp"),     QStringLiteral("-11")},    // database.cs:7996
             {QStringLiteral("MicGain"),        QStringLiteral("12")},     // database.cs:8021
@@ -560,6 +590,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
     static const QHash<QString, QVariant> kPr781EqCpdrOverrides = mergeOverrides(
         eqPr781EqCpdr(),
         {
+            {QStringLiteral("FilterLow"),   QStringLiteral("100")},   // From Thetis database.cs:8217 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),  QStringLiteral("3200")},  // From Thetis database.cs:8218 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"), QStringLiteral("True")},   // database.cs:8224
             {QStringLiteral("TXEQPreamp"),  QStringLiteral("-9")},     // database.cs:8225
             {QStringLiteral("MicGain"),     QStringLiteral("10")},     // database.cs:8250
@@ -580,6 +612,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
         mergeOverrides(eqSsbCfc(),
                        cfcArrays(kSsb28PreComp, kSsb28PostEq, kSsb28EqFreq)),
         {
+            {QStringLiteral("FilterLow"),         QStringLiteral("100")},   // From Thetis database.cs:8446 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),        QStringLiteral("2900")},  // From Thetis database.cs:8447 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),       QStringLiteral("True")},  // database.cs:8453
             {QStringLiteral("TXEQPreamp"),        QStringLiteral("4")},     // database.cs:8454
             {QStringLiteral("MicGain"),           QStringLiteral("10")},    // database.cs:8479
@@ -599,6 +633,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
         mergeOverrides(eqSsbCfc(),
                        cfcArrays(kSsb30PreComp, kSsb30PostEq, kSsb30EqFreq)),
         {
+            {QStringLiteral("FilterLow"),         QStringLiteral("100")},   // From Thetis database.cs:8675 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),        QStringLiteral("3100")},  // From Thetis database.cs:8676 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),       QStringLiteral("True")},  // database.cs:8682 (mirror of 28k)
             {QStringLiteral("TXEQPreamp"),        QStringLiteral("4")},     // database.cs:8683
             {QStringLiteral("MicGain"),           QStringLiteral("10")},    // database.cs:8708
@@ -617,6 +653,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
         mergeOverrides(eqSsbCfc(),
                        cfcArrays(kSsb33PreComp, kSsb33PostEq, kSsb33EqFreq)),
         {
+            {QStringLiteral("FilterLow"),         QStringLiteral("50")},    // From Thetis database.cs:8904 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),        QStringLiteral("3350")},  // From Thetis database.cs:8905 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),       QStringLiteral("True")},  // database.cs:8911
             {QStringLiteral("TXEQPreamp"),        QStringLiteral("4")},     // database.cs:8912
             {QStringLiteral("MicGain"),           QStringLiteral("10")},    // database.cs:8937
@@ -637,6 +675,8 @@ const std::vector<FactoryProfile>& factoryProfiles()
         mergeOverrides(eqSsbCfc(),
                        cfcArrays(kAm10kPreComp, kAm10kPostEq, kAm10kEqFreq)),
         {
+            {QStringLiteral("FilterLow"),           QStringLiteral("0")},     // From Thetis database.cs:9133 [v2.10.3.13]
+            {QStringLiteral("FilterHigh"),          QStringLiteral("5000")},  // From Thetis database.cs:9134 [v2.10.3.13]
             {QStringLiteral("TXEQEnabled"),         QStringLiteral("True")},  // database.cs:9140
             {QStringLiteral("TXEQPreamp"),          QStringLiteral("4")},     // database.cs:9141
             {QStringLiteral("MicGain"),             QStringLiteral("10")},    // database.cs:9166
