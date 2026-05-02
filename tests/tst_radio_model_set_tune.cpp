@@ -385,9 +385,12 @@ private slots:
         model.setTune(true);
         pump();
 
-        // At least one setTxDrive call must have arrived with the tune power.
+        // At least one setTxDrive call must have arrived with the tune power
+        // scaled to the wire byte: percent (0-100) -> wire (0-255).  Mirrors
+        // mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1] and matches the
+        // scaling lambda at RadioModel.cpp:836 / RadioModel.cpp:4120.
         QVERIFY(!conn->txDriveLog.isEmpty());
-        QCOMPARE(conn->txDriveLog.first(), expectedTunePower);
+        QCOMPARE(conn->txDriveLog.first(), (expectedTunePower * 255) / 100);
 
         model.setTune(false);
         pump();
@@ -424,8 +427,10 @@ private slots:
 
         // TUN-off must have pushed at least one more setTxDrive call.
         QVERIFY(conn->txDriveLog.size() > logSizeAfterOn);
-        // The most recent call (TUN-off restore) must equal the saved power (80).
-        QCOMPARE(conn->txDriveLog.last(), 80);
+        // The most recent call (TUN-off restore) must equal the saved power
+        // (80 percent) scaled to the wire byte: (80 * 255) / 100 = 204.
+        // See scaling cite at RadioModel.cpp:836 / RadioModel.cpp:4240.
+        QCOMPARE(conn->txDriveLog.last(), (80 * 255) / 100);
 
         model.injectConnectionForTest(nullptr);
     }

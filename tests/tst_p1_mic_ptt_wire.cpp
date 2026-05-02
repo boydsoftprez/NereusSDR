@@ -199,17 +199,24 @@ private slots:
         QCOMPARE(int(quint8(bank11[1]) & 0x40), 0x40);
     }
 
-    // ── 13. Codec path (HL2): setMicPTT(true) → C1 bit 6 clear ─────────────
+    // ── 13. Codec path (HL2): setMicPTT(true) → C1 bit 6 SET (direct polarity)
     // HL2 firmware does not have a mic PTT — but P1CodecHl2::bank11 still
     // writes ctx.p1MicPTT for correctness; the HL2 FW ignores the bit.
-    void setMicPTTTrue_hl2CodecPath_c1Bit6Clear() {
+    //
+    // Polarity is DIRECT on HL2 (matches mi0bot networkproto1.c:1101
+    // [v2.10.3.14-beta1]) — fixed by main commit ca8cd73 to stop T/R relay
+    // flutter caused by the previous inverted emission making HL2 read
+    // mic_ptt=1 by default.  The standard (non-HL2) codec keeps Thetis's
+    // inverted polarity per networkproto1.c:597-598 [v2.10.3.13] — verified
+    // by setMicPTTFalse_codecPath_c1Bit6Set() above.
+    void setMicPTTTrue_hl2CodecPath_c1Bit6Set() {
         P1RadioConnection conn;
         conn.setBoardForTest(HPSDRHW::HermesLite);  // → P1CodecHl2
         conn.setMicPTT(true);
 
         const QByteArray bank11 = conn.captureBank11ForTest();
         QCOMPARE(bank11.size(), 5);
-        QCOMPARE(int(quint8(bank11[1]) & 0x40), 0);
+        QCOMPARE(int(quint8(bank11[1]) & 0x40), 0x40);
     }
 
     // ── 14. setMicPTT(true) does NOT touch C1 bits 0-3 — cross-bit guard ─────
