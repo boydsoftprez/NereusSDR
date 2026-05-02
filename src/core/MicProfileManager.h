@@ -9,14 +9,15 @@
 //   setup.cs:9615-9656 [v2.10.3.13] — btnTXProfileDelete_Click
 //
 // NereusSDR collapses the Thetis many-table TXProfile schema (~206 columns
-// in DB.ds.Tables["TXProfile"]) to the live-fields-only subset (51 keys =
+// in DB.ds.Tables["TXProfile"]) to the live-fields-only subset (93 keys =
 // 15 mic/VOX/MON + 7 two-tone + 1 drive-power-source enum + 22 EQ + 1
-// TX EQ blob + 3 Leveler + 2 ALC).  19 of Thetis's 21 factory profiles
-// are deferred to 3M-3a sub-PRs that ship CFC / DEXP backends; 3M-3a-i G
-// adds the EQ + Leveler + ALC bundle on top of the 3M-1c chunk-F base
-// (which seeded only the "Default" profile).  The TX EQ parametric blob
-// (TXParaEQData) is the 51st live key; landed in Phase 3M-3a-ii follow-up
-// Batch 6 alongside the ParametricEqWidget JSON port.
+// TX EQ blob + 3 Leveler + 2 ALC + 41 CFC/CPDR/CESSB/PhRot + 2 FilterLow/High).
+// 19 of Thetis's 21 factory profiles are deferred to 3M-3a sub-PRs that ship
+// CFC / DEXP backends; 3M-3a-i G adds the EQ + Leveler + ALC bundle on top of
+// the 3M-1c chunk-F base (which seeded only the "Default" profile).  The TX EQ
+// parametric blob (TXParaEQData) is the 51st live key; landed in Phase
+// 3M-3a-ii follow-up Batch 6.  FilterLow/FilterHigh (keys 92-93) added in
+// Plan 4 Cluster A.
 //
 // Per-MAC AppSettings layout (parallel to hardware/<mac>/tx/<key> from
 // TransmitModel L.2):
@@ -24,7 +25,7 @@
 //   hardware/<mac>/tx/profile/active                      = "Default"
 //   hardware/<mac>/tx/profile/<name>/MicGain              = "-6"
 //   hardware/<mac>/tx/profile/<name>/Mic_Input_Boost      = "True"
-//   ... (50 live keys per profile; same key names as
+//   ... (93 live keys per profile; same key names as
 //        TransmitModel::persistOne uses under hardware/<mac>/tx/<key>)
 //
 // AppSettings does not natively enumerate keys by prefix.  We keep a
@@ -46,6 +47,12 @@
 //                  btnTXProfileDelete_Click).  UI surface (TxApplet combo,
 //                 Setup → TX Profile page) lands in Phases J.1 / J.3;
 //                 RadioModel ownership wires up in Phase L.
+//   2026-05-02 — saveActiveProfile + isActiveProfileModified +
+//                 profileModifiedChanged (Plan 4 Cluster A, Task 2/D1).
+//                 FilterLow/FilterHigh added to liveKeyList, defaultProfileValues,
+//                 captureLiveValues, and applyValuesToModel (93 keys total).
+//                 NereusSDR-original additions.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived handler logic
@@ -138,7 +145,31 @@ public:
     /// for any future "reset to defaults" UI button.
     static QHash<QString, QVariant> defaultProfileValues();
 
+    /// Convenience wrapper: saves the current TransmitModel state under the
+    /// active profile name.  Equivalent to saveProfile(activeProfileName(), tx).
+    /// Emits profileModifiedChanged(false) when the save succeeds (the live
+    /// state now matches the stored profile).
+    /// Returns false if no active profile is set or the save fails.
+    bool saveActiveProfile(TransmitModel* tx);
+
+    /// Returns true if the active profile's stored FilterLow or FilterHigh
+    /// values differ from the live TransmitModel state.  Returns false if
+    /// no active profile has been set yet (profile hasn't been activated),
+    /// or if the active profile doesn't exist in AppSettings.
+    ///
+    /// Plan 4 scope: checks FilterLow + FilterHigh only.  Plan 5 will
+    /// expand this to all 93 profile fields.
+    bool isActiveProfileModified(const TransmitModel* tx) const;
+
 signals:
+    /// Emitted when the dirty/clean state of the active profile changes.
+    /// true = active profile has unsaved changes; false = in sync with stored.
+    ///
+    /// For Plan 4 minimum scope: emitted from setActiveProfile
+    /// (profileModifiedChanged(false) — freshly loaded profile is clean) and
+    /// from saveActiveProfile (profileModifiedChanged(false) after save).
+    /// Plan 5 will also emit true whenever a field changes away from stored.
+    void profileModifiedChanged(bool modified);
     /// Emitted when the profile list has changed (a profile was added or
     /// deleted).  Plain overwrites do NOT emit this — only set membership
     /// changes do.
@@ -173,8 +204,9 @@ private:
     void removeProfileKeys(const QString& name);
 
     /// Capture current TransmitModel state into a live-field key→value hash.
-    /// 92 keys (51 mic/VOX/MON/two-tone/EQ/Lev/ALC/TXParaEQData + 41
-    /// CFC/CPDR/CESSB/PhRot); matches defaultProfileValues() in shape.
+    /// 93 keys (51 mic/VOX/MON/two-tone/EQ/Lev/ALC/TXParaEQData + 41
+    /// CFC/CPDR/CESSB/PhRot + 2 FilterLow/FilterHigh); matches
+    /// defaultProfileValues() in shape.
     static QHash<QString, QVariant> captureLiveValues(const TransmitModel* tx);
 
     /// Apply a profile's key→value hash back to a TransmitModel via the

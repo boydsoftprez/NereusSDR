@@ -192,6 +192,10 @@ const QStringList& liveKeyList()
         QStringLiteral("CompanderLevel"),
         // CESSB (1) — database.cs:4689 [v2.10.3.13].
         QStringLiteral("CESSB_On"),
+        // ── Plan 4 D1 — TX filter bandwidth (2 keys) ───────────────────────
+        // NereusSDR-original. Defaults 100/2900 (USB voice typical SSB).
+        QStringLiteral("FilterLow"),
+        QStringLiteral("FilterHigh"),
     };
     return kKeys;
 }
@@ -910,7 +914,46 @@ bool MicProfileManager::setActiveProfile(const QString& name, TransmitModel* tx)
 
     writeActiveKey(name);
     emit activeProfileChanged(name);
+    // Freshly activated profile is by definition in sync with the stored state.
+    emit profileModifiedChanged(false);
     return true;
+}
+
+bool MicProfileManager::saveActiveProfile(TransmitModel* tx)
+{
+    if (m_mac.isEmpty() || tx == nullptr) {
+        return false;
+    }
+    const bool ok = saveProfile(activeProfileName(), tx);
+    if (ok) {
+        emit profileModifiedChanged(false);
+    }
+    return ok;
+}
+
+bool MicProfileManager::isActiveProfileModified(const TransmitModel* tx) const
+{
+    if (m_mac.isEmpty() || tx == nullptr) {
+        return false;
+    }
+    const QString name = readActiveKey();
+    if (name.isEmpty()) {
+        // No active profile has been set yet — nothing to compare against.
+        return false;
+    }
+    const QHash<QString, QVariant> stored = readProfileKeys(name);
+    if (stored.isEmpty()) {
+        // Profile key doesn't exist in AppSettings.
+        return false;
+    }
+
+    // Plan 4 scope: compare FilterLow and FilterHigh only.
+    // Plan 5 will expand this to all 93 profile fields.
+    const int storedLow  = stored.value(QStringLiteral("FilterLow"),
+                                         QStringLiteral("100")).toString().toInt();
+    const int storedHigh = stored.value(QStringLiteral("FilterHigh"),
+                                         QStringLiteral("2900")).toString().toInt();
+    return (tx->filterLow() != storedLow || tx->filterHigh() != storedHigh);
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,6 +1066,12 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     out.insert(QStringLiteral("CompanderLevel"), QStringLiteral("2"));               // database.cs:4580
     // CESSB (1)
     out.insert(QStringLiteral("CESSB_On"), QStringLiteral("False"));                 // database.cs:4689
+
+    // ── Plan 4 D1 — TX filter bandwidth (2 keys) ─────────────────────────
+    // NereusSDR-original defaults: 100/2900 Hz (USB voice typical SSB).
+    // Per Plan 4 spec §Task 2 (docs/superpowers/plans/2026-05-01-tx-bandwidth.md).
+    out.insert(QStringLiteral("FilterLow"),  QStringLiteral("100"));   // Plan 4 D1 — USB voice SSB default
+    out.insert(QStringLiteral("FilterHigh"), QStringLiteral("2900"));  // Plan 4 D1 — USB voice SSB default
     return out;
 }
 
@@ -1120,6 +1169,10 @@ QHash<QString, QVariant> MicProfileManager::captureLiveValues(const TransmitMode
     // CESSB (1)
     out.insert(QStringLiteral("CESSB_On"),
                tx->cessbOn() ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── Plan 4 D1 — TX filter bandwidth (2 keys) ─────────────────────────
+    out.insert(QStringLiteral("FilterLow"),  QString::number(tx->filterLow()));
+    out.insert(QStringLiteral("FilterHigh"), QString::number(tx->filterHigh()));
     return out;
 }
 
@@ -1234,6 +1287,11 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     // CESSB (1)
     tx->setCessbOn(take(QStringLiteral("CESSB_On"), QStringLiteral("False"))
                         == QLatin1String("True"));
+
+    // ── Plan 4 D1 — TX filter bandwidth (2 keys) ─────────────────────────
+    // Defaults 100/2900 (USB voice typical SSB) per Plan 4 spec §Task 2.
+    tx->setFilterLow( take(QStringLiteral("FilterLow"),  QStringLiteral("100")).toInt());
+    tx->setFilterHigh(take(QStringLiteral("FilterHigh"), QStringLiteral("2900")).toInt());
 }
 
 } // namespace NereusSDR
