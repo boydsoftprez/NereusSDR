@@ -203,6 +203,9 @@ public:
 
     int getAdcForDdc(int ddc) const override;
 
+    // Protocol identifier — 2 for OpenHPSDR P2.  See RadioConnection::protocolVersion.
+    int protocolVersion() const override { return 2; }
+
 public slots:
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;

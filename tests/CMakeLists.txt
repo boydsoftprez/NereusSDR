@@ -1836,6 +1836,14 @@ target_compile_definitions(tst_tx_mic_source PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_mic_extraction)
 target_compile_definitions(tst_p1_mic_extraction PRIVATE NEREUS_BUILD_TESTS)
 
+# ── HL2 fix — P1 mic decimation (radio-rate → 48 kHz) ───────────────────
+# Verifies the static decimateMicSamples helper and setSampleRate's
+# update of the per-rate decimation factor (1/2/4/8 for 48/96/192/384 kHz)
+# matching Thetis ChannelMaster/networkproto1.c:391-410 +
+# netInterface.c:1287-1310 [v2.10.3.14].
+nereus_add_test(tst_p1_mic_decimation)
+target_compile_definitions(tst_p1_mic_decimation PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1c TX pump v3 — P2 port-1026 mic frame decoder ─────────────
 # Verifies the static decodeMicFrame132 helper used by the port-1026
 # dispatch path.  Hand-crafted 132-byte frames; covers the normal data

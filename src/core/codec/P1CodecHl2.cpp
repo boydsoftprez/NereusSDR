@@ -89,14 +89,73 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
             out[4] = quint8( ctx.txFreqHz        & 0xFF);
             return;
 
-        // Banks 2-9 — RX VFOs
-        // Source: mi0bot networkproto1.c:985-1058 [@c26a8a4 / matches @501e3f5]
-        case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: {
-            out[0] = C0base | quint8(0x04 + (bank - 2) * 2);
-            const int rxIdx = bank - 2;
-            const quint64 freq = (rxIdx < ctx.activeRxCount)
-                                  ? ctx.rxFreqHz[rxIdx]
-                                  : ctx.txFreqHz;
+        // Banks 2-9 — slot ordering MUST match mi0bot WriteMainLoop_HL2 exactly.
+        // Source: mi0bot ChannelMaster/networkproto1.c:987-1079 [v2.10.3.14-beta1]
+        //
+        // Critical bug fix (2026-05-01): the prior emission collapsed cases 2-9
+        // into a single RX-VFO formula `C0|0x04 + (bank-2)*2`, which produced:
+        //   slot 4 → C0|0x08  (wrong — should be ADC-assign C0|0x1C)
+        //   slot 5 → C0|0x0A  (wrong — should be DDC2 C0|0x08)
+        //   slot 9 → C0|0x12  (wrong — collides with drive/Alex bank C0|0x12 in
+        //                       slot 10!)
+        // Result: the radio saw two consecutive drive-level frames per round-robin,
+        // one with C1=0 (zero drive) and one with C1=50 (tune drive).  HL2 firmware
+        // oscillated PA on/off ⇒ rapid T/R relay clicking on TUNE.
+        //
+        // Slot 2 = DDC0/RX1 freq        (C0|0x04)
+        case 2: {
+            out[0] = C0base | 0x04;
+            const quint64 freq = (0 < ctx.activeRxCount) ? ctx.rxFreqHz[0]
+                                                          : ctx.txFreqHz;
+            out[1] = quint8((freq >> 24) & 0xFF);
+            out[2] = quint8((freq >> 16) & 0xFF);
+            out[3] = quint8((freq >>  8) & 0xFF);
+            out[4] = quint8( freq        & 0xFF);
+            return;
+        }
+
+        // Slot 3 = DDC1/RX2 freq        (C0|0x06)
+        case 3: {
+            out[0] = C0base | 0x06;
+            const quint64 freq = (1 < ctx.activeRxCount) ? ctx.rxFreqHz[1]
+                                                          : ctx.txFreqHz;
+            out[1] = quint8((freq >> 24) & 0xFF);
+            out[2] = quint8((freq >> 16) & 0xFF);
+            out[3] = quint8((freq >>  8) & 0xFF);
+            out[4] = quint8( freq        & 0xFF);
+            return;
+        }
+
+        // Slot 4 = ADC assignments + TX step ATT  (C0|0x1C)
+        // From mi0bot networkproto1.c:1020-1026 [v2.10.3.14-beta1]:
+        //   C0 |= 0x1c;
+        //   C1 = P1_adc_cntrl & 0xFF;
+        //   C2 = (P1_adc_cntrl >> 8) & 0x3FF;
+        //   C3 = adc[0].tx_step_attn & 0x1F;
+        //   C4 = 0;
+        case 4:
+            out[0] = C0base | 0x1C;
+            out[1] = quint8(ctx.adcCtrl & 0xFF);
+            out[2] = quint8((ctx.adcCtrl >> 8) & 0x3F);
+            out[3] = quint8(ctx.txStepAttn[0] & 0x1F);
+            out[4] = 0;
+            return;
+
+        // Slots 5-9 = DDC2..DDC6 freqs.  For HL2 (nddc=4 always per
+        // mi0bot console.cs:8421-8427 [v2.10.3.14-beta1]):
+        //   DDC2 (slot 5) ⇒ tx[0].frequency  (PureSignal feedback when active)
+        //   DDC3 (slot 6) ⇒ tx[0].frequency  (always tracks TX)
+        //   DDC4 (slot 7) ⇒ tx[0].frequency  (always tracks TX)
+        //   DDC5 (slot 8) ⇒ rx[0].frequency  (unused, defaults to RX1)
+        //   DDC6 (slot 9) ⇒ rx[0].frequency  (unused, defaults to RX1)
+        // Source: mi0bot networkproto1.c:1028-1078 [v2.10.3.14-beta1]
+        case 5: case 6: case 7: case 8: case 9: {
+            // C0 address: bank 5 → 0x08, 6 → 0x0A, 7 → 0x0C, 8 → 0x0E, 9 → 0x10
+            static const quint8 kRxC0Addr[] = { 0x08, 0x0A, 0x0C, 0x0E, 0x10 };
+            out[0] = C0base | kRxC0Addr[bank - 5];
+            // DDC2/3/4 → TX freq; DDC5/6 → RX1 freq.
+            const bool tracksTx = (bank >= 5 && bank <= 7);
+            const quint64 freq = tracksTx ? ctx.txFreqHz : ctx.rxFreqHz[0];
             out[1] = quint8((freq >> 24) & 0xFF);
             out[2] = quint8((freq >> 16) & 0xFF);
             out[3] = quint8((freq >>  8) & 0xFF);
@@ -105,20 +164,41 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
         }
 
         // Bank 10 — TX drive, mic boost, Alex HPF/LPF, T/R relay
-        // Source: mi0bot networkproto1.c:1060-1090 [@c26a8a4 / matches @501e3f5]
+        // Source: mi0bot networkproto1.c:1081-1094 [v2.10.3.14-beta1]
         // HL2 note: deskhpsdr clears C2/C3/C4 entirely for HL2 PA-enable
         // (old_protocol.c:2964-2966 [@120188f]) — HL2 firmware (control.v:211-214)
         // does NOT decode C3 bit 7 (Alex T/R relay).  We still write trxRelay
         // here for correctness; HL2 FW ignores the bit.
         // T/R relay bit (C3 bit 7) is INVERTED: 0 = engaged, 1 = disabled.
         // Source: deskhpsdr/src/old_protocol.c:2909-2910 [@120188f]
+        //
+        // C2 bit 3 = HL2 PA-enable (repurposed `ApolloTuner` slot per mi0bot).
+        // mi0bot routes DisablePA() on HL2 through EnableApolloTuner(!bit), so
+        // the bit follows tx[0].pa polarity inverted: PA enabled ⇒ bit set,
+        // PA disabled ⇒ bit cleared.  We emit bit set always — NereusSDR has
+        // no user-facing "Disable PA" wiring for HL2 yet, and PA-enabled is
+        // the only state in which TUNE / MOX produce RF.  Without this bit,
+        // the HL2 FPGA sees MOX asserted with PA-not-enabled and the T/R
+        // relay flutters because it cannot reconcile.  This was the root
+        // cause of the "rapid relay clicking on TUNE" bench symptom.
+        // From mi0bot ChannelMaster/networkproto1.c:1084-1085 [v2.10.3.14-beta1]:
+        //   C2 = ((mic_boost & 1) | ((line_in & 1) << 1) | ApolloFilt |
+        //         ApolloTuner | ApolloATU | ApolloFiltSelect | 0b01000000) & 0x7f;
+        // From mi0bot ChannelMaster/netInterface.c:582-588 [v2.10.3.14-beta1]:
+        //   EnableApolloTuner(bits): bits != 0 ⇒ ApolloTuner = 0x8 else 0
+        // From mi0bot ChannelMaster/netInterface.c:629-635 [v2.10.3.14-beta1]:
+        //   DisablePA on HL2 routes through EnableApolloTuner(!bit)
+        // MI0BOT: This call used on HL2 to enable/disable PA  [original inline comment from netInterface.c:629]
         case 10:
             out[0] = C0base | 0x12;
             out[1] = quint8(ctx.txDrive & 0xFF);
-            // C2: mic_boost → bit 0 (0x01); line_in → bit 1 (0x02); bit 6 always set per upstream default.
-            // From Thetis ChannelMaster/networkproto1.c:581 [v2.10.3.13]
-            //   C2 = ((prn->mic.mic_boost & 1) | ((prn->mic.line_in & 1) << 1) | ... | 0b01000000) & 0x7f;
-            out[2] = quint8((ctx.p1MicBoost ? 0x01 : 0x00) | (ctx.p1LineIn ? 0x02 : 0x00) | 0x40);
+            // C2: mic_boost (bit 0) | line_in (bit 1) | HL2 PA enable (bit 3)
+            //     | always-on default (bit 6).
+            out[2] = quint8(
+                (ctx.p1MicBoost ? 0x01 : 0x00) |
+                (ctx.p1LineIn   ? 0x02 : 0x00) |
+                /*HL2 PA enable*/ 0x08 |
+                /*always-on*/     0x40);
             out[3] = quint8(ctx.alexHpfBits | (ctx.trxRelay ? 0x00 : 0x80));  // T/R relay engaged (INVERTED: 1 = disabled)
             out[4] = quint8(ctx.alexLpfBits);
             return;
@@ -140,38 +220,48 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
             //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ((prn->mic.mic_bias & 1) << 5)
             //           | ((prn->mic.mic_ptt & 1) << 6);
             //   3M-1b G.3 (mic_trs) + G.4 (mic_bias) + G.5 (mic_ptt)
+            // Direct (non-inverted) polarity for mic_ptt to match mi0bot
+            // ChannelMaster/networkproto1.c:1101 [v2.10.3.14-beta1]:
+            //   C1 = ... | ((mic.mic_ptt & 1) << 6);
+            // The previous "INVERTED" emission caused HL2 to see mic_ptt=1 by
+            // default (no mic jack) and watch the floating mic-jack PTT line,
+            // which contributed to T/R relay flutter on TX.  Verified against
+            // a Thetis HL2 capture: bit 6 = 0 in steady state (host_to_radio
+            // bank 11 C1 byte was 0x00 throughout TUNE).
             out[1] = quint8((ctx.rxPreamp[0] ? 0x01 : 0)
                           | (ctx.rxPreamp[1] ? 0x02 : 0)
                           | (ctx.rxPreamp[2] ? 0x04 : 0)
                           | (ctx.rxPreamp[0] ? 0x08 : 0)         // bit3 = rx0 again (Thetis quirk)
                           | (!ctx.p1MicTipRing ? 0x10 : 0x00)    // mic_trs (inverted) — 3M-1b G.3
                           | (ctx.p1MicBias    ? 0x20 : 0x00)     // mic_bias (no inversion) — 3M-1b G.4
-                          | (!ctx.p1MicPTT    ? 0x40 : 0x00));   // mic_ptt (INVERTED) — 3M-1b G.5
+                          | (ctx.p1MicPTT     ? 0x40 : 0x00));   // mic_ptt (DIRECT — matches mi0bot networkproto1.c:1101)
             out[2] = 0;
             out[3] = 0;
             // MI0BOT: Different read loop for HL2 — Larger range for the HL2 attenuator
             // [original inline comment from networkproto1.c:1100,1102]
             if (ctx.mox) {
-                // HL2 TX path: wire byte is (31 - userDb) — HL2 firmware
-                // treats higher values as MORE attenuation, opposite of the
-                // user-facing dB.  Critical for force-31-dB safety pathway:
-                //   userDb=31 → wire=0  → HL2 max attenuation (-31 dB)
-                //   userDb=0  → wire=31 → HL2 zero attenuation
-                // Without this inversion, force-31 sends wire=31 to HL2,
-                // which is interpreted as ZERO attenuation = full PA drive
-                // at the moment we are trying to PROTECT the PA.
-                // Discovered during 3M-1c chunk 0 desk-review against mi0bot.
-                // From mi0bot-Thetis console.cs:10657-10658, 19164-19165, 27814-27815 [@c26a8a4]
-                // MI0BOT: Greater range for HL2
+                // HL2 TX path: wire byte = 0 by default (no TX attenuation,
+                // full PA drive).  Mirrors Thetis console.cs:10685-10688
+                // [v2.10.3.14-beta1]:
+                //   else  // m_bATTonTX == false (the default)
+                //     NetworkIO.SetTxAttenData(0);
+                // i.e. when the "Apply RX ATT during TX" toggle is OFF —
+                // which is the Thetis-out-of-the-box default — TX ATT is
+                // forced to 0 regardless of the user's RX ATT slider value.
                 //
-                // Signed user-facing range: −28..+32 dB (mi0bot
-                // setup.cs:16085-16086 [v2.10.3.13-beta2]
-                // udHermesStepAttenuatorData.{Maximum=32, Minimum=-28}).
-                // Wire byte then derives via `wire = 31 - userDb`; the 6-bit
-                // mask folds the signed corners (−28 → 0x7B, 0 → 0x5F,
-                // +32 → 0x7F) into valid wire values.
-                const int userDb = qBound(-28, static_cast<int>(ctx.txStepAttn[0]), 32);
-                out[4] = quint8(((31 - userDb) & 0b00111111) | 0b01000000);
+                // Thetis HL2 capture (2026-05-01) confirmed wire byte is
+                // 0x40 (= 0 | 0x40 enable bit) throughout TUNE.  The prior
+                // emission `(31 - txStepAttn[0]) & 0x3F | 0x40` produced
+                // 0x5F = 15.5 dB ATT during TUNE when txStepAttn defaults
+                // to 0, severely cutting PA drive (combined with the
+                // un-scaled drive_level=50 wire byte, this resulted in 0 W
+                // measured output on bench).
+                //
+                // Future enhancement: wire up the `m_bATTonTX` flag (Thetis
+                // console.cs:10670) so the user can opt-in to applying RX
+                // ATT during TX.  When that flag is true, restore the
+                // `31 - userDb` formula gated on it.
+                out[4] = quint8(0x40);  // wire = 0 + enable bit
             } else {
                 // HL2 RX path: same (31 - userDb) inversion as TX. mi0bot applies
                 // the inversion at three console.cs callsites (RX1 ADC0

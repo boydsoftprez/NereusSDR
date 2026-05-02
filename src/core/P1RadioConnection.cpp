@@ -4,6 +4,7 @@
 //
 // Ported from Thetis sources:
 //   Project Files/Source/ChannelMaster/networkproto1.c, original licence from Thetis source is included below
+//   Project Files/Source/ChannelMaster/netInterface.c, original licence from Thetis source is included below
 //   Project Files/Source/Console/HPSDR/NetworkIO.cs (upstream has no top-of-file header — project-level LICENSE applies)
 //   Project Files/Source/Console/cmaster.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
@@ -21,6 +22,28 @@
 /*
  * networkprot1.c
  * Copyright (C) 2020 Doug Wigley (W5WC)
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ */
+
+// --- From netInterface.c ---
+/*
+ * netinterface.c
+ * Copyright (C) 2006,2007  Bill Tracey (bill@ejwt.com) (KD5TFD)
+ * Copyright (C) 2010-2020 Doug Wigley (W5WC)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -800,7 +823,18 @@ void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     // Source: console.cs:6830-6942 [@501e3f5]
     // Upstream inline attribution preserved verbatim:
     //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
-    if (receiverIndex == 0 && m_caps && m_caps->hasAlexFilters) {
+    //
+    // HL2 carve-out: HL2 has hasAlexFilters=false (no Alex card slot) but
+    // mi0bot's WriteMainLoop_HL2 still emits these bits at bank 10 C3/C4
+    // (networkproto1.c:1086-1093 [v2.10.3.14-beta1]) — the HL2 firmware
+    // and the optional N2ADR I/O board read them to engage the band-correct
+    // LPF/HPF.  Without them the HL2 PA can't safely engage on TX and the
+    // T/R relay flutters.  Compute the bits for HL2 too, gated on the
+    // hardware profile so other "no Alex" boards (Atlas, basic Hermes)
+    // remain byte-identical to pre-fix behavior.
+    if (receiverIndex == 0
+        && (   (m_caps && m_caps->hasAlexFilters)
+            || m_hardwareProfile.model == HPSDRModel::HERMESLITE)) {
         m_alexHpfBits = codec::alex::computeHpf(double(frequencyHz) / 1e6);
     }
 }
@@ -810,12 +844,84 @@ void P1RadioConnection::setTxFrequency(quint64 frequencyHz)
     m_txFreqHz = frequencyHz;
     // TX freq drives Alex LPF — recompute on every change.
     // Source: console.cs:7168-7234 [@501e3f5]
-    if (m_caps && m_caps->hasAlexFilters) {
+    //
+    // HL2 carve-out: see setReceiverFrequency above.  mi0bot
+    // networkproto1.c:1090-1093 [v2.10.3.14-beta1] emits these bits on HL2
+    // even though it has no Alex card.
+    if (   (m_caps && m_caps->hasAlexFilters)
+        || m_hardwareProfile.model == HPSDRModel::HERMESLITE) {
         m_alexLpfBits = codec::alex::computeLpf(double(frequencyHz) / 1e6);
     }
 }
 void P1RadioConnection::setActiveReceiverCount(int count)    { m_activeRxCount = count; }
-void P1RadioConnection::setSampleRate(int sampleRate)        { m_sampleRate = sampleRate; }
+void P1RadioConnection::setSampleRate(int sampleRate)
+{
+    m_sampleRate = sampleRate;
+    // From Thetis ChannelMaster/netInterface.c:1287-1310 [v2.10.3.14]:
+    // mic_decimation_factor is set from sample rate; counter is reset.
+    const int newFactor = micDecimationFactorFor(sampleRate);
+    if (newFactor != m_micDecimationFactor) {
+        m_micDecimationFactor = newFactor;
+        m_micDecimationCount  = 0;  // matches netInterface.c:1310
+    }
+}
+
+// ---------------------------------------------------------------------------
+// micDecimationFactorFor — sample-rate → factor lookup.
+// Source: Thetis ChannelMaster/netInterface.c:1287-1310 [v2.10.3.14]
+//   case 48000:  mic_decimation_factor = 1; break;
+//   case 96000:  mic_decimation_factor = 2; break;
+//   case 192000: mic_decimation_factor = 4; break;
+//   case 384000: mic_decimation_factor = 8; break;
+//   default:     mic_decimation_factor = 4; break;
+// ---------------------------------------------------------------------------
+int P1RadioConnection::micDecimationFactorFor(int sampleRate) noexcept
+{
+    switch (sampleRate) {
+        case 48000:  return 1;
+        case 96000:  return 2;
+        case 192000: return 4;
+        case 384000: return 8;
+        default:     return 4;  // matches netInterface.c:1306-1307 default branch
+    }
+}
+
+// ---------------------------------------------------------------------------
+// decimateMicSamples — downsample radio-rate mic to 48 kHz.
+//
+// Source: Thetis ChannelMaster/networkproto1.c:391-410 [v2.10.3.14] —
+//   for each input sample:
+//     mic_decimation_count++;
+//     if (mic_decimation_count == mic_decimation_factor) {
+//         mic_decimation_count = 0;
+//         <emit sample>;
+//     }
+//
+// `counter` is the persistent state — caller owns it (matches the global
+// static mic_decimation_count in Thetis, reset once at thread init per
+// networkproto1.c:275 [v2.10.3.14]).
+//
+// factor==1 fast path: copy through unchanged (matches Thetis behavior at
+// 48 kHz where the equality check fires every sample).
+// ---------------------------------------------------------------------------
+void P1RadioConnection::decimateMicSamples(const float* in, int n, int factor,
+                                            int& counter,
+                                            std::vector<float>& out) noexcept
+{
+    if (n <= 0 || in == nullptr) { return; }
+    if (factor <= 1) {
+        out.insert(out.end(), in, in + n);
+        return;
+    }
+    out.reserve(out.size() + static_cast<size_t>(n / factor) + 1);
+    for (int i = 0; i < n; ++i) {
+        ++counter;
+        if (counter == factor) {
+            counter = 0;
+            out.push_back(in[i]);
+        }
+    }
+}
 void P1RadioConnection::setAttenuator(int dB)
 {
     // Source: specHPSDR.cs per-HPSDRHW branches + BoardCapabilities registry.
@@ -1600,7 +1706,16 @@ CodecContext P1RadioConnection::buildCodecContext() const
     for (int i = 0; i < 3; ++i) { ctx.rxPreamp[i]   = m_rxPreamp[i]; }
     for (int i = 0; i < 3; ++i) { ctx.dither[i]     = m_dither[i]; }
     for (int i = 0; i < 3; ++i) { ctx.random[i]     = m_random[i]; }
-    // HL2-only fields default to 0 / false; populated by Phase E.
+    // HL2-only fields.  ptt_hang and tx_latency MUST be the mi0bot HL2
+    // defaults (12 and 20) — without them the HL2 firmware drops the PTT
+    // immediately on any TX-buffer underrun and the T/R relay flutters.
+    // Source: mi0bot ChannelMaster/netInterface.c:1713-1714 [v2.10.3.14-beta1]
+    //   prn->tx[i].tx_latency = 20;  // MI0BOT: HL2
+    //   prn->tx[i].ptt_hang   = 12;  // MI0BOT: HL2
+    if (m_hardwareProfile.model == HPSDRModel::HERMESLITE) {
+        ctx.hl2PttHang   = 12;   // 5-bit field (bank 17 C3): 12 frames hang
+        ctx.hl2TxLatency = 20;   // 7-bit field (bank 17 C4): 20 sample latency
+    }
     return ctx;
 }
 
@@ -2315,12 +2430,28 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     }
 
     // Phase 3M-1c TX pump v3: dispatch the extracted mic16 samples to
-    // TxMicSource as the cadence source for TxWorkerThread.  Mirrors
-    // Thetis networkproto1.c:410 [v2.10.3.13]:
-    //   Inbound(inid(1, 0), mic_sample_count, prn->TxReadBufp);
+    // TxMicSource as the cadence source for TxWorkerThread.
+    //
+    // The radio embeds one mic sample per I/Q sample group in EP6 frames,
+    // so mic arrives at the operating sample rate (192 kHz at sampleRate=
+    // 192000).  TxMicSource and TxChannel WDSP both expect 48 kHz mic, so
+    // we decimate by mic_decimation_factor before dispatch.
+    //
+    // Mirrors Thetis networkproto1.c:391-410 [v2.10.3.14] (the loop body
+    // that gates each Inbound() call by mic_decimation_count).  Without
+    // this, at 192 kHz the worker semaphore-wakes 4× per block (3000/sec
+    // instead of 750/sec), CPU thrashes, the SPSC TX I/Q ring overflows
+    // ~3000/sec during MOX-on, and the EP2 pacer is starved into bursty
+    // delivery — observed as rapid HL2 T/R relay clicking on bench.
     if (m_txMicSource != nullptr && !micSamples.empty()) {
-        m_txMicSource->inbound(micSamples.data(), static_cast<int>(micSamples.size()));
-        m_lastMicAt = QDateTime::currentDateTimeUtc();
+        std::vector<float> decimated;
+        decimateMicSamples(micSamples.data(), static_cast<int>(micSamples.size()),
+                           m_micDecimationFactor, m_micDecimationCount, decimated);
+        if (!decimated.empty()) {
+            m_txMicSource->inbound(decimated.data(),
+                                   static_cast<int>(decimated.size()));
+            m_lastMicAt = QDateTime::currentDateTimeUtc();
+        }
     }
 }
 
@@ -2938,10 +3069,13 @@ bool P1RadioConnection::parseEp6Frame(const quint8 frame[1032],
             }
             // Mic16 bytes at offset sampleStart + s*slotBytes + numRx*6.
             // From Thetis networkproto1.c:401-404 [v2.10.3.13] — extracts a
-            // 16-bit big-endian mic sample from the slot's last two bytes
-            // (Thetis decimates by mic_decimation_factor; at 48 ksps that's
-            // factor=1 and every sample is kept).  We always run at 48 ksps
-            // mic feed, so no decimation here.
+            // 16-bit big-endian mic sample from the slot's last two bytes.
+            // We extract every mic sample at the operating sample rate
+            // (one per I/Q sample group) — decimation to 48 kHz happens in
+            // the caller via P1RadioConnection::decimateMicSamples (see
+            // dispatch site above).  Thetis applies mic_decimation_factor
+            // inline at networkproto1.c:391-410 [v2.10.3.14]; we split the
+            // concerns so the static parser stays pure.
             //   prn->TxReadBufp[2 * mic_sample_count + 0] = const_1_div_2147483648_ *
             //       (double)(bptr[k + 0] << 24 |
             //                bptr[k + 1] << 16);

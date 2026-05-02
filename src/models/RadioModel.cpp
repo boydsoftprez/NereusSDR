@@ -823,9 +823,18 @@ RadioModel::RadioModel(QObject* parent)
             [this](int power) {
         if (m_transmitModel.isTune()) { return; }
         if (!m_connection)            { return; }
+        // Scale percent (0-100) → wire byte (0-255).  Mirrors mi0bot
+        // NetworkIO.cs:209-211 [v2.10.3.14-beta1]:
+        //   int i = (int)(255 * f * _swr_protect);  // f normalised 0..1
+        //   SetOutputPowerFactor(i);
+        // setTxDrive's contract is the wire byte (0-255); m_transmitModel
+        // power is 0-100 percent.  Without this scaling, 50% power was
+        // reaching the wire as drive_level=50 (~20 % of max) and bench
+        // RF output measured 0 W.
+        const int wireDrive = qBound(0, (power * 255) / 100, 255);
         auto* conn = m_connection;
-        QMetaObject::invokeMethod(conn, [conn, power]() {
-            conn->setTxDrive(power);
+        QMetaObject::invokeMethod(conn, [conn, wireDrive]() {
+            conn->setTxDrive(wireDrive);
         });
     });
 }
@@ -3975,10 +3984,45 @@ void RadioModel::setTune(bool on)
                                     ? bandFromFrequency(m_activeSlice->frequency())
                                     : m_lastBand;
         const int tunePower = m_transmitModel.tunePowerForBand(currentBand);
+        // Scale percent (0-100) → wire byte (0-255). See setTxDrive scaling
+        // comment in connection-power lambda above for the mi0bot citation.
+        const int wireTuneDrive = qBound(0, (tunePower * 255) / 100, 255);
         if (m_connection) {
             auto* conn = m_connection;
-            QMetaObject::invokeMethod(conn, [conn, tunePower]() {
-                conn->setTxDrive(tunePower);
+            QMetaObject::invokeMethod(conn, [conn, wireTuneDrive]() {
+                conn->setTxDrive(wireTuneDrive);
+            });
+        }
+
+        // ── PUSH TUNE-ADJUSTED TX VFO (carrier-on-dial) ────────────────────────
+        // Thetis offsets the TX VFO by ±cw_pitch when TUNE is on so the
+        // resulting carrier (TX_VFO + audio_tone_freq) lands exactly on dial
+        // freq, not at dial±cw_pitch.
+        //
+        // From Thetis ChannelMaster/console.cs:31788-31810 [v2.10.3.13]:
+        //   case DSPMode.USB / DIGU / DSB:
+        //     if (chkTUN.Checked) tx_freq -= cw_pitch * 1e-6;
+        //   case DSPMode.LSB / DIGL:
+        //     if (chkTUN.Checked) tx_freq += cw_pitch * 1e-6;
+        //   case DSPMode.AM / SAM / FM:
+        //     if (chkTUN.Checked) tx_freq -= cw_pitch * 1e-6;
+        //
+        // Equivalent formula: TX_VFO = dial − signedFreq, where signedFreq is
+        // the audio-rate tune tone frequency we passed to setTuneTone above:
+        //   USB/DIGU/CWU/AM/SAM/FM/DSB → signedFreq = +cw_pitch → TX_VFO = dial − cw_pitch
+        //   LSB/DIGL/CWL              → signedFreq = −cw_pitch → TX_VFO = dial + cw_pitch
+        // After the radio's TX DDC mixes audio tone onto TX_VFO, the carrier
+        // at RF = TX_VFO + signedFreq = dial.
+        if (m_activeSlice && m_connection) {
+            const quint64 dialHz =
+                static_cast<quint64>(m_activeSlice->frequency());
+            const qint64 adjustedTxHz =
+                static_cast<qint64>(dialHz) - static_cast<qint64>(signedFreq);
+            const quint64 wireHz =
+                (adjustedTxHz < 0) ? 0 : static_cast<quint64>(adjustedTxHz);
+            auto* conn = m_connection;
+            QMetaObject::invokeMethod(conn, [conn, wireHz]() {
+                conn->setTxFrequency(wireHz);
             });
         }
 
@@ -4058,9 +4102,25 @@ void RadioModel::setTune(bool on)
         //   //MW0LGE_22b  [original inline comment from console.cs:30033]
         if (m_connection) {
             auto* conn = m_connection;
-            const int savedPwr = m_savedPowerPct;
-            QMetaObject::invokeMethod(conn, [conn, savedPwr]() {
-                conn->setTxDrive(savedPwr);
+            // Scale percent (0-100) → wire byte (0-255). See setTxDrive scaling
+            // comment in connection-power lambda for the mi0bot citation.
+            const int savedWireDrive = qBound(0, (m_savedPowerPct * 255) / 100, 255);
+            QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
+                conn->setTxDrive(savedWireDrive);
+            });
+        }
+
+        // ── RESTORE TX VFO (un-offset from cw_pitch) ───────────────────────────
+        // Mirrors Thetis console.cs:31788-31810 [v2.10.3.13] which only
+        // applies the ±cw_pitch tx_freq offset while chkTUN.Checked == true.
+        // Once TUNE drops, txtVFOAFreq_LostFocus recomputes tx_freq without
+        // the offset so the carrier returns to dial freq.
+        if (m_activeSlice && m_connection) {
+            const quint64 dialHz =
+                static_cast<quint64>(m_activeSlice->frequency());
+            auto* conn = m_connection;
+            QMetaObject::invokeMethod(conn, [conn, dialHz]() {
+                conn->setTxFrequency(dialHz);
             });
         }
 

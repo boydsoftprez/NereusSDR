@@ -82,6 +82,19 @@ public:
     void setHardwareProfile(const HardwareProfile& profile) { m_hardwareProfile = profile; }
     const HardwareProfile& hardwareProfile() const { return m_hardwareProfile; }
 
+    // Wire-protocol identifier — 1 = OpenHPSDR Protocol 1 (Metis-framed UDP
+    // on port 1024), 2 = OpenHPSDR Protocol 2 (multi-port UDP, higher rates).
+    //
+    // Mirrors Thetis NetworkIO.CurrentRadioProtocol and exists primarily so
+    // protocol-conditional WDSP TXA stages (e.g. CFIR per
+    // ChannelMaster/cmaster.cs:525-533 [v2.10.3.14]) can be gated without
+    // dragging the concrete subclass header into the call site.
+    //
+    // Non-pure with a P1 default so test mocks compile unchanged; P2 must
+    // override.  Override in P1RadioConnection (returns 1) is provided for
+    // explicit symmetry with P2RadioConnection (returns 2).
+    virtual int protocolVersion() const { return 1; }
+
     // Rolling-window throughput accessors. **Returns Mbps** (not bytes/sec
     // — the "ByteRate" name predates the implementation, kept for ABI
     // stability). Used by ConnectionSegment ▲▼ readouts and the network

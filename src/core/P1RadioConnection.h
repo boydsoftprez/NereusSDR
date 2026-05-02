@@ -69,6 +69,9 @@ public:
 
     int getAdcForDdc(int ddc) const override;
 
+    // Protocol identifier — 1 for OpenHPSDR P1.  See RadioConnection::protocolVersion.
+    int protocolVersion() const override { return 1; }
+
     // Wire-format compose helpers — static, testable in isolation.
     // Each implementation cites its Thetis source line.
     static void composeEp2Frame(quint8 out[1032], quint32 seq, int ccAddress,
@@ -102,12 +105,42 @@ public:
     // network order — subframe 0 first, then subframe 1).  Sample count
     // == 2 * samplesPerSubframe at the operating sample rate.
     //
+    // NOTE: parseEp6Frame extracts mic samples at the radio's full sample
+    // rate (e.g. 192 kHz at sampleRate=192000).  The caller is responsible
+    // for decimating to 48 kHz before feeding TxMicSource — see
+    // decimateMicSamples below.
+    //
     // Backed by the same parser body as the 3-arg overload; the mic
     // extraction is gated on a non-null micOut.
     static bool parseEp6Frame(const quint8 frame[1032],
                               int numRx,
                               std::vector<std::vector<float>>& perRx,
                               std::vector<float>* micOut) noexcept;
+
+    // Decimate radio-rate mic samples to 48 kHz before feeding TxMicSource.
+    // The caller passes a persistent counter (state across calls); this
+    // mirrors Thetis's global mic_decimation_count which is reset once at
+    // MetisReadThreadMainLoop init and incremented through every Inbound()
+    // call thereafter.
+    //
+    // Behaviour: counter++; if (counter == factor) { counter = 0; keep; }
+    // For factor==1, every sample is kept (counter is unused).
+    //
+    // Source: Thetis ChannelMaster/networkproto1.c:391-410 [v2.10.3.14]
+    //         Thetis ChannelMaster/netInterface.c:1287-1310 [v2.10.3.14]
+    static void decimateMicSamples(const float* in, int n, int factor,
+                                    int& counter,
+                                    std::vector<float>& out) noexcept;
+
+    // Sample-rate → mic-decimation factor lookup.  Mirrors the Thetis
+    // switch in netInterface.c:1287-1310 [v2.10.3.14] (1/2/4/8 for
+    // 48/96/192/384 kHz; default factor=4 for any other rate).  Pure
+    // function; safe to call from any thread.
+    static int micDecimationFactorFor(int sampleRate) noexcept;
+
+    // Read the current mic decimation factor (set by setSampleRate).
+    // Test seam — production code reads m_micDecimationFactor directly.
+    int micDecimationFactor() const noexcept { return m_micDecimationFactor; }
 
     // Wire RadioModel's OcMatrix so buildCodecContext() can source the OC
     // byte from maskFor(currentBand, mox) at C&C compose time.
@@ -362,6 +395,18 @@ private:
 
     int     m_sampleRate{48000};
     int     m_activeRxCount{1};
+
+    // HL2 mic decimation state.  At sample rates above 48 kHz the radio
+    // embeds one mic sample per I/Q sample group in EP6 frames (so mic
+    // arrives at 192 kHz when sampleRate=192000); we decimate to 48 kHz
+    // before feeding TxMicSource.  Updated by setSampleRate() per the
+    // table in Thetis netInterface.c:1287-1310 [v2.10.3.14]:
+    //   48k → 1, 96k → 2, 192k → 4, 384k → 8 (default 4).
+    // m_micDecimationCount persists across EP6 frames; reset to 0 when
+    // the factor changes (matches netInterface.c:1310).
+    int     m_micDecimationFactor{1};
+    int     m_micDecimationCount{0};
+
     quint64 m_rxFreqHz[7]{};
     quint64 m_txFreqHz{0};
     bool    m_mox{false};

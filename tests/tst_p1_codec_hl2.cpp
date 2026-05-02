@@ -35,62 +35,25 @@ private slots:
         QCOMPARE(int(out[4]), ((31 - 20) & 0x3F) | 0x40);
     }
 
-    // Bank 11 C4 — TX path: uses txStepAttn[0] not rxStepAttn[0]
-    // HL2 TX wire byte is INVERTED: wire = (31 - userDb).
-    // Source: mi0bot networkproto1.c:1099-1100 + console.cs:10657-10658 [@c26a8a4]
-    void bank11_tx_att_uses_tx_value() {
+    // Bank 11 C4 — TX path: HL2 emits wire byte = 0 (no TX attenuation, full
+    // PA drive) regardless of txStepAttn[0].  Mirrors Thetis console.cs:
+    // 10685-10688 [v2.10.3.14-beta1] which sends SetTxAttenData(0) when the
+    // (default-OFF) `m_bATTonTX` flag is false.  Verified against a Thetis
+    // HL2 capture (2026-05-01) that emitted 0x40 (= 0 | 0x40 enable bit)
+    // throughout TUNE.
+    void bank11_tx_att_zero_during_mox_default_attontx_off() {
         P1CodecHl2 codec;
         CodecContext ctx;
         ctx.mox = true;
-        ctx.rxStepAttn[0] = 0;     // RX-side value ignored
-        ctx.txStepAttn[0] = 20;
-        quint8 out[5] = {};
-        codec.composeCcForBank(11, ctx, out);
-        QCOMPARE(int(out[0]), 0x15);  // C0=0x14 | mox
-        // userDb=20 → wire = (31-20) | 0x40 = 11 | 0x40 = 0x4B
-        QCOMPARE(int(out[4]), ((31 - 20) & 0x3F) | 0x40);
-    }
-
-    // Bank 11 C4 — TX path: HL2 firmware treats higher value as MORE
-    // attenuation, so user-facing dB is inverted to (31 - dB) on wire.
-    // Critical for force-31-dB safety pathway:
-    //   userDb = 31 (max protection) → wire = 0 (HL2 max attenuation = -31 dB)
-    //   userDb = 0  (no protection)  → wire = 31 (HL2 zero attenuation)
-    // Without this inversion, force-31-dB would send wire=31 to HL2 firmware,
-    // which interprets that as ZERO attenuation → full PA drive at the moment
-    // we are trying to PROTECT the PA.
-    // Discovered during 3M-1c chunk 0 desk-review against mi0bot-Thetis.
-    // From mi0bot-Thetis console.cs:10657-10658, 19164-19165, 27814-27815 [@c26a8a4]
-    // MI0BOT: Greater range for HL2
-    void bank11_tx_att_31_minus_n_inversion_for_hl2() {
-        P1CodecHl2 codec;
-        CodecContext ctx;
-        ctx.mox = true;
-
-        // Force-31-dB safety: userDb=31 → wire byte = 0x40 (= 0 | 0x40)
-        ctx.txStepAttn[0] = 31;
-        quint8 out_max[5] = {};
-        codec.composeCcForBank(11, ctx, out_max);
-        QCOMPARE(int(out_max[4]), 0x40);
-
-        // Zero protection: userDb=0 → wire byte = 0x5F (= 31 | 0x40)
-        ctx.txStepAttn[0] = 0;
-        quint8 out_zero[5] = {};
-        codec.composeCcForBank(11, ctx, out_zero);
-        QCOMPARE(int(out_zero[4]), 0x5F);
-
-        // Mid-range: userDb=15 → wire byte = 0x50 (= 16 | 0x40)
-        ctx.txStepAttn[0] = 15;
-        quint8 out_mid[5] = {};
-        codec.composeCcForBank(11, ctx, out_mid);
-        QCOMPARE(int(out_mid[4]), 0x50);
-
-        // Out-of-range high input is clamped to +32 (signed max).
-        // userDb=63 → clamped to +32 → wire = (31-32) & 0x3F | 0x40 = 0x7F.
-        ctx.txStepAttn[0] = 63;
-        quint8 out_clamp[5] = {};
-        codec.composeCcForBank(11, ctx, out_clamp);
-        QCOMPARE(int(out_clamp[4]), 0x7F);
+        // txStepAttn[0] should NOT affect TX wire byte under default config —
+        // m_bATTonTX defaults false, so TX always emits wire=0.
+        for (int v : { 0, 15, 20, 31, 63 }) {
+            ctx.txStepAttn[0] = v;
+            quint8 out[5] = {};
+            codec.composeCcForBank(11, ctx, out);
+            QCOMPARE(int(out[0]), 0x15);  // C0 = 0x14 | mox
+            QCOMPARE(int(out[4]), 0x40);  // wire = 0 + enable bit
+        }
     }
 
     // Bank 11 C4 — RX path range. HL2 user-facing slider is signed
@@ -255,6 +218,51 @@ private slots:
         QCOMPARE(int(out[0]), 0x12);
         QCOMPARE(int(out[3]) & 0x7F, 0x01);
         QCOMPARE(int(out[4]), 0x01);
+    }
+
+    // Bank 10 C2 must include bit 3 (0x08) on HL2 — mi0bot repurposes the
+    // ApolloTuner bit as the HL2 PA-enable signal.  Without this bit set,
+    // the HL2 firmware treats MOX assertions as "want to TX but PA not
+    // enabled" and oscillates the T/R relay.
+    //
+    // Source:
+    //   mi0bot ChannelMaster/networkproto1.c:1084-1085 [v2.10.3.14-beta1]
+    //     C2 = ((mic_boost & 1) | ((line_in & 1) << 1) | ApolloFilt |
+    //           ApolloTuner | ApolloATU | ApolloFiltSelect | 0b01000000) & 0x7f;
+    //   mi0bot ChannelMaster/netInterface.c:582-588 [v2.10.3.14-beta1]
+    //     EnableApolloTuner(int bits): bits != 0 → ApolloTuner = 0x8 else 0
+    //   mi0bot ChannelMaster/netInterface.c:629-635 [v2.10.3.14-beta1]
+    //     DisablePA on HL2 routes through EnableApolloTuner(!bit).
+    void bank10_c2_pa_enable_bit_set_for_hl2() {
+        P1CodecHl2 codec;
+        CodecContext ctx;
+        // Default ctx — no mic boost, no line in, no caller PA toggle.
+        // mi0bot's tx[0].pa defaults to 0 (PA enabled), so EnableApolloTuner(1)
+        // sets ApolloTuner = 0x8 by default — bit 3 of bank 10 C2 is set.
+        quint8 out[5] = {};
+        codec.composeCcForBank(10, ctx, out);
+        QVERIFY2((out[2] & 0x08) != 0,
+                 "bank 10 C2 bit 3 (HL2 PA enable / mi0bot ApolloTuner) must be set");
+        // Bit 6 (always-on default mask 0x40) must remain set.
+        QVERIFY2((out[2] & 0x40) != 0,
+                 "bank 10 C2 bit 6 (always-on default mask) must remain set");
+    }
+
+    // Confirm the bit is also present when other bank-10 C2 flags are on
+    // (mic_boost, line_in) — bit 3 must persist regardless of those toggles.
+    void bank10_c2_pa_enable_bit_set_with_micBoost_and_lineIn() {
+        P1CodecHl2 codec;
+        CodecContext ctx;
+        ctx.p1MicBoost = true;
+        ctx.p1LineIn   = true;
+        quint8 out[5] = {};
+        codec.composeCcForBank(10, ctx, out);
+        QCOMPARE(int(out[2] & 0x01), 0x01);  // mic_boost preserved
+        QCOMPARE(int(out[2] & 0x02), 0x02);  // line_in preserved
+        QVERIFY2((out[2] & 0x08) != 0,
+                 "bank 10 C2 bit 3 (HL2 PA enable) must coexist with mic_boost / line_in");
+        QVERIFY2((out[2] & 0x40) != 0,
+                 "bank 10 C2 bit 6 (always-on) must remain set");
     }
 };
 
