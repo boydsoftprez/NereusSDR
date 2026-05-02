@@ -129,8 +129,11 @@
 
 #include "CalibrationTab.h"
 
+#include "PaCalibrationGroup.h"
 #include "core/BoardCapabilities.h"
 #include "core/CalibrationController.h"
+#include "core/HardwareProfile.h"
+#include "core/PaCalProfile.h"
 #include "core/RadioDiscovery.h"
 #include "models/RadioModel.h"
 
@@ -368,6 +371,17 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     mainLayout->addWidget(paCurrentGroup);
 
     // =========================================================================
+    // Group 6: PA Forward Power Calibration (per-board cal-point spinboxes)
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower + setup.cs:5404-5594
+    //         ud{10|100|200}PA{N}W spinboxes [v2.10.3.13]. Spinbox set is built
+    //         in PaCalibrationGroup::populate() once the controller's profile
+    //         board class is known (initial seed in CalibrationTab::populate()
+    //         below; live-rebuild on paCalProfileChanged).
+    // =========================================================================
+    m_paCalGroup = new PaCalibrationGroup(scrollWidget);
+    mainLayout->addWidget(m_paCalGroup);
+
+    // =========================================================================
     // Connections: UI -> CalibrationController
     // =========================================================================
 
@@ -487,6 +501,20 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     if (m_calCtrl) {
         syncFromController();
     }
+
+    // Wire PA Forward Power Calibration group to the controller. The group
+    // is rebuilt whenever the controller's profile board-class changes
+    // (radio swap or first connect). Initial population uses the controller's
+    // current profile (None on a fresh model -- group will hide).
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]
+    //   -- per-board cal-table family selection.
+    if (m_calCtrl) {
+        connect(m_calCtrl, &CalibrationController::paCalProfileChanged,
+                this, [this]() {
+            m_paCalGroup->populate(m_calCtrl, m_calCtrl->paCalProfile().boardClass);
+        });
+        m_paCalGroup->populate(m_calCtrl, m_calCtrl->paCalProfile().boardClass);
+    }
 }
 
 // -- onControllerChanged -------------------------------------------------------
@@ -553,6 +581,16 @@ void CalibrationTab::populate(const RadioInfo& /*info*/, const BoardCapabilities
     // Load per-radio calibration settings from controller (set by RadioModel at connect).
     if (m_calCtrl) {
         syncFromController();
+        // Re-populate Group 6 in case the controller's board class changed
+        // since construction (radio reconnect / model swap). RadioModel seeds
+        // m_paCalProfile via paCalBoardClassFor(m_hardwareProfile.model) on
+        // connectToRadio, then emits paCalProfileChanged -- the wired-up
+        // lambda above handles that path. This call covers the edge case
+        // where populate() runs after the connect signal already fired.
+        // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13].
+        if (m_paCalGroup) {
+            m_paCalGroup->populate(m_calCtrl, m_calCtrl->paCalProfile().boardClass);
+        }
     }
 }
 

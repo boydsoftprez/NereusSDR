@@ -1,30 +1,24 @@
 // =================================================================
-// src/gui/setup/hardware/CalibrationTab.h  (NereusSDR)
+// src/gui/setup/hardware/PaCalibrationGroup.h  (NereusSDR)
 // =================================================================
 //
 // Ported from Thetis sources:
 //   Project Files/Source/Console/setup.cs
-//     (tpGeneralCalibration group: udHPSDRFreqCorrectFactor, chkUsing10MHzRef,
-//      udHPSDRFreqCorrectFactor10MHz, btnHPSDRFreqCalReset10MHz,
-//      udGeneralCalFreq1, btnGeneralCalFreqStart, udGeneralCalFreq2,
-//      udGeneralCalLevel, btnGeneralCalLevelStart, btnResetLevelCal,
-//      ud6mLNAGainOffset, ud6mRx2LNAGainOffset, udTXDisplayCalOffset
-//      -- lines 5137-5144; 6470-6525; 13966-13967; 14036-14050; 14325-14333;
-//         17243-17248; 18315-18317; 22690-22706),
+//     (ud10PA1W..ud10PA10W, ud100PA10W..ud100PA100W, ud200PA20W..ud200PA200W
+//      spinbox blocks driving CalibratedPAPower lookup -- lines 5404-5594),
 //      original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs
-//     (CalibrateFreq, CalibrateLevel, RXCalibrationOffset, CalibratedPAPower
-//      -- lines 9764-9844; 9844-10215; 21022-21086; 6691-6724),
+//     (CalibratedPAPower + PowerKernel -- per-board PA forward-power
+//      calibration -- lines 6691-6768),
 //      original licence from Thetis source is included below
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-04-17 -- Original PaCalibrationTab implementation.
-//   2026-04-20 -- Renamed PaCalibrationTab -> CalibrationTab; expanded to 5
-//                  group boxes matching Thetis General -> Calibration 1:1;
-//                  backed by CalibrationController model (Phase 3P-G).
-//                  J.J. Boyd (KG4VCF), with AI-assisted transformation via
-//                  Anthropic Claude Code.
+//   2026-05-02 -- Original implementation. Per-board PA forward-power
+//                  cal-point spinbox group; populates ud{10|100|200}PA{N}W
+//                  equivalent based on PaCalBoardClass. Section 3.3 of
+//                  P1 full-parity epic. J.J. Boyd (KG4VCF), with
+//                  AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -129,105 +123,69 @@
 
 #pragma once
 
-#include <QVariant>
-#include <QWidget>
+#include "core/PaCalProfile.h"
 
-class QCheckBox;
+#include <QGroupBox>
+#include <QMetaObject>
+#include <QString>
+#include <array>
+
 class QDoubleSpinBox;
-class QGroupBox;
-class QPushButton;
+class QLabel;
 
 namespace NereusSDR {
 
-class RadioModel;
 class CalibrationController;
-class PaCalibrationGroup;
-struct RadioInfo;
-struct BoardCapabilities;
 
-// CalibrationTab -- Hardware -> Calibration Setup page.
+// PaCalibrationGroup -- per-board-class PA forward-power calibration UI.
 //
-// Hosts 6 group boxes matching Thetis General -> Calibration 1:1:
-//   1. Freq Cal -- frequency calibration trigger + helptext
-//   2. Level Cal -- reference freq/level + per-RX 6m LNA offsets
-//   3. HPSDR Freq Cal Diagnostic -- correction factor + 10 MHz ext ref toggle
-//   4. TX Display Cal -- TX display dB offset
-//   5. PA Current (A) calculation -- sensitivity/offset (preserved from PaCalibrationTab)
-//   6. PA Forward Power Calibration -- per-board cal-point spinbox group
-//        (added 2026-05-02 in Section 3.3 of the P1 full-parity epic; ports
-//        Thetis ud{10|100|200}PA{N}W spinbox blocks setup.cs:5404-5594
-//        [v2.10.3.13])
+// Hosts 10 spinboxes (cal points 1..10) labelled per class:
+//   Anan10     "1 W"   .. "10 W"   range 0.0..15.0  step 0.1
+//   Anan100    "10 W"  .. "100 W"  range 0.0..150.0 step 1.0
+//   Anan8000   "20 W"  .. "200 W"  range 0.0..300.0 step 1.0
+//   HermesLite "0.5 W" .. "5 W"    range 0.0..7.5   step 0.05
+//                  (placeholder; revisited in 3M-2)
+//   None       group is hidden, no spinboxes
 //
-// Backed by CalibrationController (Phase 3P-G). Per-MAC persistence via
-// AppSettings under hardware/<mac>/cal/ + hardware/<mac>/paCalibration/.
+// Spinbox edits route through CalibrationController::setPaCalPoint, which
+// owns per-MAC persistence (Section 3.2 of the P1 full-parity epic).
 //
-// Renamed from PaCalibrationTab (Phase 3P-G commit 2).
-class CalibrationTab : public QWidget {
+// Source: Thetis setup.cs:5404-5594 ud{10|100|200}PA{N}W spinbox blocks
+// [v2.10.3.13]; CalibratedPAPower / PowerKernel console.cs:6691-6768
+// [v2.10.3.13].
+class PaCalibrationGroup : public QGroupBox {
     Q_OBJECT
 public:
-    explicit CalibrationTab(RadioModel* model, QWidget* parent = nullptr);
-    void populate(const RadioInfo& info, const BoardCapabilities& caps);
-    void restoreSettings(const QMap<QString, QVariant>& settings);
+    explicit PaCalibrationGroup(QWidget* parent = nullptr);
+
+    // Bind to the controller and (re)build the spinbox set for boardClass.
+    // Safe to call repeatedly when board class changes (radio swap or first
+    // connect). Hides the whole group when boardClass == PaCalBoardClass::None.
+    void populate(CalibrationController* controller, PaCalBoardClass boardClass);
 
 #ifdef NEREUS_BUILD_TESTS
-    // Test seam: counts QGroupBox children of the main layout.
-    int groupBoxCountForTest() const;
+    // Test seams.
+    int     spinBoxCountForTest() const;            // 0 (None) / 10 (any other)
+    QString labelTextForTest(int idx) const;        // idx 1..10 -- e.g. "10 W"
+    double  spinValueForTest(int idx) const;        // idx 1..10
+    void    setSpinValueForTest(int idx, double v); // idx 1..10
 #endif
 
-signals:
-    void settingChanged(const QString& key, const QVariant& value);
-
-private slots:
-    void onControllerChanged();
-
 private:
-    void syncFromController();
+    void rebuildLayout(PaCalBoardClass cls);   // tear down + recreate spinboxes
+    void onSpinChanged(int idx, double v);     // -> m_controller->setPaCalPoint
+    void syncFromProfile();                    // controller -> spinboxes (echo-guarded)
 
-    RadioModel*            m_model{nullptr};
-    CalibrationController* m_calCtrl{nullptr};  // non-owning -- owned by RadioModel
+    CalibrationController*          m_controller{nullptr};
+    PaCalBoardClass                 m_boardClass{PaCalBoardClass::None};
+    std::array<QDoubleSpinBox*, 11> m_spins{};   // index 0 unused -- kept for 1:1 parity with PaCalProfile.watts
+    std::array<QLabel*, 11>         m_labels{};
+    bool                            m_updatingFromController{false};
 
-    // -- Group 1: Freq Cal -----------------------------------------------------
-    // Source: setup.cs:6470-6511 btnGeneralCalFreqStart + udGeneralCalFreq1 [@501e3f5]
-    QDoubleSpinBox* m_freqCalFreqSpin{nullptr};  // udGeneralCalFreq1
-    QPushButton*    m_freqCalStartBtn{nullptr};  // btnGeneralCalFreqStart
-
-    // -- Group 2: Level Cal ----------------------------------------------------
-    // Source: setup.cs:6482-6525 btnGeneralCalLevelStart + udGeneralCalFreq2
-    //         + udGeneralCalLevel + btnResetLevelCal [@501e3f5]
-    QDoubleSpinBox* m_levelCalFreqSpin{nullptr};   // udGeneralCalFreq2
-    QDoubleSpinBox* m_levelCalLevelSpin{nullptr};  // udGeneralCalLevel
-    QDoubleSpinBox* m_rx1LnaSpin{nullptr};         // ud6mLNAGainOffset
-    QDoubleSpinBox* m_rx2LnaSpin{nullptr};         // ud6mRx2LNAGainOffset
-    QPushButton*    m_levelCalStartBtn{nullptr};   // btnGeneralCalLevelStart
-    QPushButton*    m_levelCalResetBtn{nullptr};   // btnResetLevelCal
-
-    // -- Group 3: HPSDR Freq Cal Diagnostic ------------------------------------
-    // Source: setup.cs:5137-5144; 14036-14050; 22690-22706 [@501e3f5]
-    QDoubleSpinBox* m_freqFactorSpin{nullptr};        // udHPSDRFreqCorrectFactor
-    QPushButton*    m_freqFactorResetBtn{nullptr};    // reset to 1.0
-    QCheckBox*      m_use10MhzCheck{nullptr};         // chkUsing10MHzRef
-    QDoubleSpinBox* m_freqFactor10MSpin{nullptr};     // udHPSDRFreqCorrectFactor10MHz
-    QPushButton*    m_freqFactor10MResetBtn{nullptr}; // btnHPSDRFreqCalReset10MHz
-
-    // -- Group 4: TX Display Cal -----------------------------------------------
-    // Source: setup.cs:14325-14333 udTXDisplayCalOffset [@501e3f5]
-    QDoubleSpinBox* m_txDisplayOffsetSpin{nullptr}; // udTXDisplayCalOffset
-
-    // -- Group 5: PA Current (A) calculation (preserved from PaCalibrationTab) --
-    // Source: console.cs:6691-6724 CalibratedPAPower [@501e3f5]
-    QDoubleSpinBox* m_paSensSpin{nullptr};
-    QDoubleSpinBox* m_paOffsetSpin{nullptr};
-    QPushButton*    m_paDefaultBtn{nullptr};
-    QCheckBox*      m_logVoltsAmpsCheck{nullptr};  // chkLogVoltsAmps -- console.cs:27457 [@501e3f5]
-
-    // -- Group 6: Per-board PA forward-power calibration ----------------------
-    // Source: Thetis console.cs:6691-6724 CalibratedPAPower + setup.cs:5404-5594
-    //         ud{10|100|200}PA{N}W spinboxes [v2.10.3.13]. Added 2026-05-02
-    //         in Section 3.3 of the P1 full-parity epic.
-    PaCalibrationGroup* m_paCalGroup{nullptr};
-
-    // Echo-loop guard: prevents model->UI update from triggering UI->model write
-    bool m_updatingFromModel{false};
+    // Connections to the bound controller -- disconnected on rebind so we
+    // don't double-fire on radio swaps.
+    QMetaObject::Connection m_pointConn;
+    QMetaObject::Connection m_profileConn;
 };
 
-} // namespace NereusSDR
+}  // namespace NereusSDR

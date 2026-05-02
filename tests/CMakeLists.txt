@@ -887,11 +887,24 @@ nereus_add_test(tst_calibration_controller)
 nereus_add_test(tst_calibration_controller_pa_cal)
 
 # ── Phase 3P-G commit 2: CalibrationTab UI smoke tests ───────────────────────
-# Verifies construction doesn't crash, 5 group boxes present
+# Verifies construction doesn't crash, 6 group boxes present
 # (Freq Cal / Level Cal / HPSDR Freq Cal Diagnostic / TX Display Cal /
-# PA Current), controller->UI sync, and UI->controller write-back.
+# PA Current / PA Forward Power Calibration), controller->UI sync, and
+# UI->controller write-back. Group 6 added 2026-05-02 (P1 full-parity §3.3).
 nereus_add_test(tst_calibration_tab)
 target_compile_definitions(tst_calibration_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# ── P1 full-parity §3.3: PaCalibrationGroup widget ───────────────────────────
+# Verifies the per-board-class PA forward-power cal-point spinbox group:
+# default construction has zero spinboxes; populate() builds 10 spinboxes
+# with class-specific labels (1W..10W / 10W..100W / 20W..200W / 0.5W..5W);
+# None hides the group; spinbox→controller writes via setPaCalPoint;
+# controller→spinbox sync via paCalPointChanged; repopulate rebuilds; echo-
+# loop guard prevents recursion.
+# Source: Thetis setup.cs:5404-5594 ud{10|100|200}PA{N}W spinbox blocks
+# [v2.10.3.13 @501e3f51].
+nereus_add_test(tst_pa_calibration_group)
+target_compile_definitions(tst_pa_calibration_group PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
 # Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis

@@ -1,12 +1,13 @@
 // tests/tst_calibration_tab.cpp  (NereusSDR)
 //
-// Smoke tests for CalibrationTab UI (Phase 3P-G commit 2).
+// Smoke tests for CalibrationTab UI (Phase 3P-G commit 2; Group 6 added
+// 2026-05-02 in P1 full-parity §3.3).
 // no-port-check: test file — no Thetis attribution required.
 //
 // Covers:
 //  - Construction with a dummy RadioModel doesn't crash
-//  - groupBoxCountForTest() returns 5 (Freq Cal, Level Cal, HPSDR Diag,
-//    TX Display Cal, PA Current)
+//  - groupBoxCountForTest() returns 6 (Freq Cal, Level Cal, HPSDR Diag,
+//    TX Display Cal, PA Current, PA Forward Power Calibration)
 //  - Setting a controller value updates the UI (controller -> UI sync)
 //  - Changing a UI spinbox updates the controller (UI -> controller write)
 
@@ -24,7 +25,7 @@ class TstCalibrationTab : public QObject {
 
 private slots:
     void construction_doesNotCrash();
-    void groupBoxCount_isFive();
+    void groupBoxCount_isSix();
     void controllerToUi_freqFactor();
     void uiToController_rx1LnaOffset();
 };
@@ -37,13 +38,14 @@ void TstCalibrationTab::construction_doesNotCrash()
     QVERIFY(tab.isWidgetType());
 }
 
-void TstCalibrationTab::groupBoxCount_isFive()
+void TstCalibrationTab::groupBoxCount_isSix()
 {
     NereusSDR::RadioModel model;
     NereusSDR::CalibrationTab tab(&model);
-    // 5 group boxes: Freq Cal, Level Cal, HPSDR Freq Cal Diagnostic,
-    // TX Display Cal, PA Current (A) calculation
-    QCOMPARE(tab.groupBoxCountForTest(), 5);
+    // 6 group boxes: Freq Cal, Level Cal, HPSDR Freq Cal Diagnostic,
+    // TX Display Cal, PA Current (A) calculation, PA Forward Power Calibration.
+    // Group 6 added 2026-05-02 (P1 full-parity §3.3).
+    QCOMPARE(tab.groupBoxCountForTest(), 6);
 }
 
 void TstCalibrationTab::controllerToUi_freqFactor()
