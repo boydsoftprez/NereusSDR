@@ -124,6 +124,7 @@
 #include <QString>
 
 #include <atomic>
+#include <optional>
 #include <utility>
 
 namespace NereusSDR {
@@ -616,6 +617,15 @@ public:
     void saveToSettings(NereusSDR::Band band);
     void restoreFromSettings(NereusSDR::Band band);
     static void migrateLegacyKeys();
+
+    // Reads the persisted "last band" marker for this slice index from
+    // AppSettings (Slice<N>/LastBand). saveToSettings(band) writes this
+    // every time it runs, so on next startup the caller can restore the
+    // user's actual last-used band rather than falling back to the
+    // panadapter's default. Returns std::nullopt when the key is absent
+    // (fresh install, or pre-LastBand settings file). Static so RadioModel
+    // can read it before any SliceModel exists.
+    static std::optional<NereusSDR::Band> loadLastBandFromSettings(int sliceIndex);
 
     // Load band-agnostic slice settings (e.g. VAX channel) from AppSettings.
     // Called on startup when no specific band context is needed. Does NOT

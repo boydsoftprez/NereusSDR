@@ -287,6 +287,14 @@ private:
     // interfering with a subsequent user-initiated Start Discovery.
     bool m_autoReconnectInProgress{false};
 
+    // Set true at the top of closeEvent (and aboutToQuit). Gates the
+    // "auto-open ConnectionPanel on Disconnect" slot — without this,
+    // closeEvent's disconnectFromRadio fires connectionStateChanged →
+    // ConnectionPanel ctor → startDiscovery, which clears the discovery
+    // stop flag and runs a fresh ~5 s NIC walk on the main thread mid-
+    // close. Symptom: ⌘Q beach-balls for the full SafeDefault scan time.
+    bool m_shuttingDown{false};
+
     // Container infrastructure (Phase 3G-1)
     ContainerManager* m_containerManager{nullptr};
     QSplitter* m_mainSplitter{nullptr};

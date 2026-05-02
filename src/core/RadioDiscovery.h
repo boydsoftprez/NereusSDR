@@ -67,6 +67,7 @@ mw0lge@grange-lane.co.uk
 #include <QSet>
 #include <QStringList>
 
+#include <atomic>
 #include <chrono>
 
 namespace NereusSDR {
@@ -262,6 +263,16 @@ private:
     QMap<QString, qint64> m_lastSeen;    // MAC -> timestamp
     QString m_connectedMac;              // MAC currently in use by a RadioConnection; exempt from stale-removal
     QSet<QString>  m_savedMacs;          // Design §7.4: MACs that are saved in AppSettings; exempt from stale-removal
+
+    // Cooperative cancel for scanAllNics(). The synchronous NIC walk does
+    // attemptsPerNic × quietPollsBeforeResend × pollTimeoutMs of blocking
+    // waitForReadyRead per NIC — up to ~4.5 s for the SafeDefault profile
+    // on a 2-NIC machine. stopDiscovery() flips this flag so an in-flight
+    // (or queued-by-timer) scan exits within one pollTimeoutMs window
+    // instead of blocking shutdown for several seconds. Atomic because
+    // stopDiscovery may run from any thread context (main, in practice,
+    // but cheap defense-in-depth).
+    std::atomic<bool> m_stopRequested{false};
 };
 
 } // namespace NereusSDR

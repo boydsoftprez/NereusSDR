@@ -1083,6 +1083,12 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("RxAntenna"),  m_rxAntenna);
     s.setValue(sp + QStringLiteral("TxAntenna"),  m_txAntenna);
 
+    // Track the most recently saved band so RadioModel::loadSliceState() on
+    // the next launch can land on the user's actual last-used frequency,
+    // not the panadapter's 14.225 MHz default. Per-band Frequency keys
+    // already store the per-band freq; this just records "which band was
+    // active last." Read via SliceModel::loadLastBandFromSettings().
+    s.setValue(sp + QStringLiteral("LastBand"), bandKeyName(band));
 }
 
 void SliceModel::restoreFromSettings(Band band)
@@ -1380,6 +1386,31 @@ void SliceModel::migrateLegacyKeys()
     s.remove(QStringLiteral("VfoRfGain"));
     s.remove(QStringLiteral("VfoRxAntenna"));
     s.remove(QStringLiteral("VfoTxAntenna"));
+}
+
+// Reads Slice<N>/LastBand and parses it back to a Band. Returns
+// std::nullopt on missing key (fresh install / pre-LastBand settings)
+// or unparseable values. Static so RadioModel can call this before
+// constructing any slice.
+std::optional<Band> SliceModel::loadLastBandFromSettings(int sliceIndex)
+{
+    auto& s = AppSettings::instance();
+    const QString key = slicePrefix(sliceIndex) + QStringLiteral("LastBand");
+    if (!s.contains(key)) {
+        return std::nullopt;
+    }
+    const QString name = s.value(key).toString();
+    if (name.isEmpty()) {
+        return std::nullopt;
+    }
+    // bandFromName handles both label form ("20m") and short form ("20"),
+    // plus GEN/WWV/XVTR. Falls back to Band::GEN on unknown input — guard
+    // against that so a corrupted key doesn't silently land on GEN.
+    const Band parsed = bandFromName(name);
+    if (parsed == Band::GEN && name != QLatin1String("GEN")) {
+        return std::nullopt;
+    }
+    return parsed;
 }
 
 // ---------------------------------------------------------------------------

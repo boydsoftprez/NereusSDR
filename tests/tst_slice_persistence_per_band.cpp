@@ -64,15 +64,25 @@ private:
     // Remove all Slice0/* and legacy Vfo* keys from the singleton.
     static void resetSingleton() {
         auto& s = AppSettings::instance();
-        // Per-band keys for bands we use in tests (20m, 40m).
-        for (const QString& band : {QStringLiteral("20m"), QStringLiteral("40m")}) {
+        // Per-band keys for every band any test touches. lastBandRoundTrips*
+        // walks the full HF set + GEN/WWV/XVTR, so we have to clean those
+        // too or ctest run-order leaks pollute later tests.
+        const QString bands[] = {
+            QStringLiteral("160m"), QStringLiteral("80m"),  QStringLiteral("60m"),
+            QStringLiteral("40m"),  QStringLiteral("30m"),  QStringLiteral("20m"),
+            QStringLiteral("17m"),  QStringLiteral("15m"),  QStringLiteral("12m"),
+            QStringLiteral("10m"),  QStringLiteral("6m"),
+            QStringLiteral("GEN"),  QStringLiteral("WWV"),  QStringLiteral("XVTR"),
+        };
+        for (const QString& band : bands) {
             const QString bp = QStringLiteral("Slice0/Band") + band + QStringLiteral("/");
             for (const QString& field : {
                      QStringLiteral("AgcThreshold"), QStringLiteral("AgcHang"),
                      QStringLiteral("AgcSlope"),     QStringLiteral("AgcAttack"),
                      QStringLiteral("AgcDecay"),     QStringLiteral("FilterLow"),
                      QStringLiteral("FilterHigh"),   QStringLiteral("DspMode"),
-                     QStringLiteral("AgcMode"),      QStringLiteral("StepHz") }) {
+                     QStringLiteral("AgcMode"),      QStringLiteral("StepHz"),
+                     QStringLiteral("Frequency"),   QStringLiteral("NbMode") }) {
                 s.remove(bp + field);
             }
         }
@@ -83,7 +93,8 @@ private:
                  QStringLiteral("RitEnabled"), QStringLiteral("RitHz"),
                  QStringLiteral("XitEnabled"), QStringLiteral("XitHz"),
                  QStringLiteral("AfGain"),     QStringLiteral("RfGain"),
-                 QStringLiteral("RxAntenna"),  QStringLiteral("TxAntenna") }) {
+                 QStringLiteral("RxAntenna"),  QStringLiteral("TxAntenna"),
+                 QStringLiteral("LastBand") }) {
             s.remove(sp + field);
         }
         // Legacy keys.
@@ -298,6 +309,90 @@ private slots:
         // No keys exist for 40m — restore must be a no-op.
         slice.restoreFromSettings(Band::Band40m);
         QCOMPARE(slice.agcThreshold(), defaultThreshold);
+    }
+
+    // ── LastBand: persist + reload last-used band marker ──────────────────────
+
+    void lastBandIsPersistedOnSave() {
+        // saveToSettings(band) must write Slice<N>/LastBand = bandKeyName(band)
+        // every call. This is what RadioModel::loadSliceState reads on the
+        // next launch to land on the user's last-used band, instead of
+        // falling back to the panadapter's 14.225 MHz default → always 20m.
+        SliceModel slice;
+        slice.setSliceIndex(0);
+
+        // No marker before any save — fresh install / pre-LastBand settings.
+        QCOMPARE(SliceModel::loadLastBandFromSettings(0), std::nullopt);
+
+        slice.saveToSettings(Band::Band40m);
+        auto after40 = SliceModel::loadLastBandFromSettings(0);
+        QVERIFY(after40.has_value());
+        QCOMPARE(*after40, Band::Band40m);
+
+        // Subsequent save on a different band must overwrite, not stack.
+        slice.saveToSettings(Band::Band20m);
+        auto after20 = SliceModel::loadLastBandFromSettings(0);
+        QVERIFY(after20.has_value());
+        QCOMPARE(*after20, Band::Band20m);
+    }
+
+    void lastBandRoundTripsAcrossEveryHfBand() {
+        // Sanity check that bandKeyName/bandFromName round-trip through
+        // AppSettings cleanly for the full HF band set the user can land on.
+        // Prevents a future label rename from silently breaking persistence
+        // for one specific band while leaving others working.
+        const Band bands[] = {
+            Band::Band160m, Band::Band80m,  Band::Band60m, Band::Band40m,
+            Band::Band30m,  Band::Band20m,  Band::Band17m, Band::Band15m,
+            Band::Band12m,  Band::Band10m,  Band::Band6m,
+            Band::GEN,      Band::WWV,      Band::XVTR,
+        };
+        SliceModel slice;
+        slice.setSliceIndex(0);
+
+        for (Band b : bands) {
+            slice.saveToSettings(b);
+            auto loaded = SliceModel::loadLastBandFromSettings(0);
+            QVERIFY2(loaded.has_value(),
+                     qPrintable(QStringLiteral("LastBand missing after saving %1")
+                                .arg(bandKeyName(b))));
+            QCOMPARE(*loaded, b);
+        }
+    }
+
+    void lastBandReturnsNulloptOnUnparseableValue() {
+        // Belt-and-suspenders: if a corrupted settings file holds a non-band
+        // string under Slice0/LastBand, the loader must NOT silently land on
+        // Band::GEN — it should return nullopt so RadioModel falls back to
+        // the panadapter / default-frequency path.
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("Slice0/LastBand"), QStringLiteral("not-a-band"));
+        QCOMPARE(SliceModel::loadLastBandFromSettings(0), std::nullopt);
+
+        // GEN itself, however, is a valid persisted value.
+        s.setValue(QStringLiteral("Slice0/LastBand"), QStringLiteral("GEN"));
+        auto loaded = SliceModel::loadLastBandFromSettings(0);
+        QVERIFY(loaded.has_value());
+        QCOMPARE(*loaded, Band::GEN);
+    }
+
+    // ── Step persists across save/restore (gap-fill regression test) ─────────
+
+    void stepHzPersistsAcrossSaveRestore() {
+        // tst_slice_persistence_per_band already covers stepHz round-trip
+        // alongside the other DSP keys, but call it out explicitly here as
+        // a regression guard for the close-race fix: with the wire from
+        // stepHzChanged → scheduleSettingsSave in place, the per-band
+        // StepHz key must survive a save+restore on a single band.
+        SliceModel writer;
+        writer.setSliceIndex(0);
+        writer.setStepHz(2500);  // non-default value
+        writer.saveToSettings(Band::Band20m);
+
+        SliceModel reader;
+        reader.setSliceIndex(0);
+        reader.restoreFromSettings(Band::Band20m);
+        QCOMPARE(reader.stepHz(), 2500);
     }
 };
 

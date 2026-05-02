@@ -3187,6 +3187,22 @@ void RadioModel::wireSliceSignals()
     connect(slice, &SliceModel::rttyMarkHzChanged,  this, updateRttyFilter);
     connect(slice, &SliceModel::rttyShiftHzChanged, this, updateRttyFilter);
 
+    // Persistence-only wires — slice properties whose only side-effect is
+    // "save the new value." Without these, changes are stored on the in-
+    // memory slice but never written to AppSettings until something else
+    // (a band crossing, an antenna change, etc.) happens to trigger
+    // scheduleSettingsSave(). User-visible bug: tweak step (or lock, or
+    // RIT, or XIT) and close the app — value reverts on next launch.
+    // The dspModeChanged / filterChanged / agcModeChanged etc. handlers
+    // above already call scheduleSettingsSave() as part of their main
+    // job; this block covers the gaps.
+    connect(slice, &SliceModel::stepHzChanged,    this, [this](int) { scheduleSettingsSave(); });
+    connect(slice, &SliceModel::lockedChanged,    this, [this](bool) { scheduleSettingsSave(); });
+    connect(slice, &SliceModel::ritEnabledChanged, this, [this](bool) { scheduleSettingsSave(); });
+    connect(slice, &SliceModel::ritHzChanged,     this, [this](int) { scheduleSettingsSave(); });
+    connect(slice, &SliceModel::xitEnabledChanged, this, [this](bool) { scheduleSettingsSave(); });
+    connect(slice, &SliceModel::xitHzChanged,     this, [this](int) { scheduleSettingsSave(); });
+
     // XIT stored for 3M-1 (TX phase) to consume on keydown. No RX effect in 3G-10.
 
     // AF gain → AudioEngine volume
@@ -3256,8 +3272,8 @@ void RadioModel::wireSliceSignals()
 
 // Load persisted VFO state from AppSettings into a slice.
 // Migrates legacy flat keys first, then restores per-band state for the
-// current band (derived from the panadapter center frequency or the slice
-// default frequency).
+// last-used band (or, when no LastBand marker exists, falls back to the
+// panadapter's center frequency band, then to the slice's default freq).
 void RadioModel::loadSliceState(SliceModel* slice)
 {
     if (!slice) {
@@ -3267,10 +3283,18 @@ void RadioModel::loadSliceState(SliceModel* slice)
     // One-shot migration of legacy Vfo* flat keys. No-op if already migrated.
     SliceModel::migrateLegacyKeys();
 
-    // Derive current band. Use the first panadapter's band if available;
-    // otherwise fall back to bandFromFrequency on the slice's default freq.
+    // Pick the band to restore. Priority order:
+    //   1. Slice<N>/LastBand — written by saveToSettings on every save, so
+    //      this lands on the user's actual last-used band/frequency.
+    //   2. Panadapter band — only useful if the panadapter's center freq
+    //      is itself restored from somewhere; today it defaults to
+    //      14.225 MHz so this branch reduces to "always 20m" without (1).
+    //   3. bandFromFrequency on the slice's default freq — startup fallback
+    //      when neither (1) nor (2) is available (fresh install).
     Band currentBand = Band::Band20m;
-    if (!m_panadapters.isEmpty()) {
+    if (auto lastBand = SliceModel::loadLastBandFromSettings(slice->sliceIndex())) {
+        currentBand = *lastBand;
+    } else if (!m_panadapters.isEmpty()) {
         currentBand = m_panadapters.first()->band();
     } else {
         currentBand = bandFromFrequency(slice->frequency());
@@ -3278,6 +3302,15 @@ void RadioModel::loadSliceState(SliceModel* slice)
     m_lastBand = currentBand;
 
     slice->restoreFromSettings(currentBand);
+
+    // Push restored frequency to the panadapter so the spectrum display
+    // lands on the same band as the slice. Without this the panadapter
+    // stays parked at its 14.225 MHz default and the user sees the slice
+    // jump to (say) 7.236 MHz on a panadapter still rendering 20m.
+    // SpectrumWidget center freq follows from the panadapter on startup.
+    if (!m_panadapters.isEmpty()) {
+        m_panadapters.first()->setCenterFrequency(slice->frequency());
+    }
 
     qCInfo(lcDsp) << "Loaded slice state for band:"
                   << bandKeyName(currentBand)
@@ -3422,6 +3455,22 @@ void RadioModel::scheduleSettingsSave()
     });
 }
 
+// Force-run any pending coalesced slice save synchronously. Without this,
+// the 500 ms QTimer in scheduleSettingsSave() can't fire while the main
+// thread is inside MainWindow::closeEvent → teardownConnection (synchronous,
+// blocks on QThread::wait calls), so the user's last AF / step / freq /
+// lock / RIT change before close gets dropped on the floor. The pending
+// QTimer is left in place; if it fires after this it will redundantly
+// re-save the same state, which is harmless.
+void RadioModel::flushPendingSettingsSave()
+{
+    if (!m_settingsSaveScheduled) {
+        return;
+    }
+    m_settingsSaveScheduled = false;
+    saveSliceState(m_activeSlice);
+}
+
 // Persist current slice state to AppSettings (per-band + session state).
 // Also flushes AlexController persistence if the dirty flag was set —
 // see the antennaChanged / blockTxChanged handlers in wireSliceSignals.
@@ -3452,6 +3501,14 @@ void RadioModel::teardownConnection()
     if (!m_connection) {
         return;
     }
+
+    // Flush any pending coalesced slice save FIRST so the user's last
+    // AF / step / freq / lock / RIT tweak isn't lost to the 500 ms
+    // debounce in scheduleSettingsSave(). The QTimer there can't fire
+    // while teardown is running on the main thread, so without this an
+    // immediate close-after-tweak silently drops the change. Cheap and
+    // idempotent — no-op when nothing's pending.
+    flushPendingSettingsSave();
 
     // 3M-1a G.1 fixup: drop any prior WdspEngine::initializedChanged subscribers
     // we registered in connectToRadio(). Without this, each reconnect cycle

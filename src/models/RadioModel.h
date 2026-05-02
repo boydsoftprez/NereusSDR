@@ -667,6 +667,16 @@ private:
     void saveSliceState(SliceModel* slice);
     void scheduleSettingsSave();
 
+public:
+    // Force-run any pending coalesced slice save synchronously. Call this
+    // from app-quit paths (MainWindow::closeEvent, aboutToQuit) and at the
+    // top of teardownConnection() so the 500 ms debounce in
+    // scheduleSettingsSave() can't swallow the user's last AF / step / freq
+    // tweak when they immediately close the app. No-op when nothing's
+    // pending. Idempotent — calling repeatedly is safe.
+    void flushPendingSettingsSave();
+
+private:
     // Sub-components (owned, main thread)
     RadioDiscovery*  m_discovery{nullptr};
     ReceiverManager* m_receiverManager{nullptr};
