@@ -227,12 +227,7 @@ QHBoxLayout* SetupPage::makeLabeledRow(QLayout* parent, const QString& labelText
 
 QHBoxLayout* SetupPage::addLabeledCombo(QLayout* parent, const QString& label, QComboBox* combo)
 {
-    combo->setStyleSheet(
-        "QComboBox { background: #1a2a3a; border: 1px solid #304050; "
-        "border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }"
-        "QComboBox::drop-down { border: none; }"
-        "QComboBox QAbstractItemView { background: #1a2a3a; color: #c8d8e8; "
-        "selection-background-color: #00b4d8; }");
+    combo->setStyleSheet(Style::kComboStyle);
     return makeLabeledRow(parent, label, combo);
 }
 
