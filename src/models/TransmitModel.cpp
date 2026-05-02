@@ -104,6 +104,15 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+// =================================================================
+// Modification history (NereusSDR) — continued:
+//   2026-05-02 — filterLow / filterHigh properties + filterChanged signal
+//                 + filterDisplayText + per-MAC persistence under
+//                 hardware/<mac>/tx/FilterLow and FilterHigh.
+//                 NereusSDR-original (Plan 4 Cluster A, Task 2/D1).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// =================================================================
+
 #include "TransmitModel.h"
 #include "core/AppSettings.h"
 
@@ -699,6 +708,14 @@ void TransmitModel::loadFromSettings(const QString& mac)
     // Default from Thetis database.cs:4689 [v2.10.3.13]: dr["CESSB_On"] = false.
     setCessbOn(s.value(pfx + QLatin1String("CESSB_On"),
                         QStringLiteral("False")).toString() == QLatin1String("True"));
+
+    // ── TX filter bandwidth (Plan 4 D1) ───────────────────────────────────
+    // Defaults 100/2900 — USB voice typical SSB (NereusSDR-original, Plan 4
+    // spec §Task 2).
+    setFilterLow(s.value(pfx + QLatin1String("FilterLow"),
+                          QStringLiteral("100")).toInt());
+    setFilterHigh(s.value(pfx + QLatin1String("FilterHigh"),
+                           QStringLiteral("2900")).toInt());
 }
 
 void TransmitModel::persistToSettings(const QString& mac) const
@@ -805,6 +822,10 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // CESSB.
     s.setValue(pfx + QLatin1String("CESSB_On"),
                m_cessbOn ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── TX filter bandwidth (Plan 4 D1) ───────────────────────────────────
+    s.setValue(pfx + QLatin1String("FilterLow"),  QString::number(m_filterLow));
+    s.setValue(pfx + QLatin1String("FilterHigh"), QString::number(m_filterHigh));
 }
 
 // ── Anti-VOX properties (3M-1b C.4) ─────────────────────────────────────────
@@ -1527,6 +1548,74 @@ void TransmitModel::setCessbOn(bool on)
     persistOne(QStringLiteral("CESSB_On"),
                on ? QStringLiteral("True") : QStringLiteral("False"));
     emit cessbOnChanged(on);
+}
+
+// ── TX filter bandwidth (Plan 4 D1) ─────────────────────────────────────────
+//
+// NereusSDR-original properties.  FilterLow/FilterHigh are the DSP bandpass
+// filter edges (Hz) that will be fed to WDSP SetTXABandpassFreqs in Plan 4
+// D8.  Defaults 100/2900 match the USB voice typical SSB range — the same
+// values Thetis ships for the "Default" USB profile row in database.cs
+// (Plan 4 spec §Task 2).
+//
+// Swap-on-commit: prevents an inverted range from reaching WDSP.  When
+// setFilterLow(hz) is called with hz > m_filterHigh, the stored high value
+// is swapped into the low slot and hz is stored in the high slot.  The
+// converse applies to setFilterHigh.  This keeps low ≤ high at all times.
+//
+// Per-MAC persistence: hardware/<mac>/tx/FilterLow and FilterHigh,
+// consistent with the L.2 namespace used by all other persisted TX props.
+
+void TransmitModel::setFilterLow(int hz)
+{
+    // Swap-on-commit: if the new low would exceed the current high, flip them.
+    if (hz > m_filterHigh) {
+        std::swap(hz, m_filterHigh);
+        persistOne(QStringLiteral("FilterHigh"), QString::number(m_filterHigh));
+    }
+    if (m_filterLow == hz) { return; }
+    m_filterLow = hz;
+    persistOne(QStringLiteral("FilterLow"), QString::number(m_filterLow));
+    emit filterChanged(m_filterLow, m_filterHigh);
+}
+
+void TransmitModel::setFilterHigh(int hz)
+{
+    // Swap-on-commit: if the new high would be less than the current low, flip.
+    if (hz < m_filterLow) {
+        std::swap(hz, m_filterLow);
+        persistOne(QStringLiteral("FilterLow"), QString::number(m_filterLow));
+    }
+    if (m_filterHigh == hz) { return; }
+    m_filterHigh = hz;
+    persistOne(QStringLiteral("FilterHigh"), QString::number(m_filterHigh));
+    emit filterChanged(m_filterLow, m_filterHigh);
+}
+
+QString TransmitModel::filterDisplayText(DSPMode mode) const
+{
+    // Symmetric modes (AM/SAM/DSB/FM): display as ±half-bandwidth.
+    // Asymmetric modes (USB/LSB/CWU/CWL/DIGU/DIGL/SPEC/DRM): display as low–high.
+    const bool isSymmetric = (mode == DSPMode::AM  ||
+                              mode == DSPMode::SAM  ||
+                              mode == DSPMode::DSB  ||
+                              mode == DSPMode::FM);
+
+    const int bw = m_filterHigh - m_filterLow;
+    const double bwKhz = bw / 1000.0;
+
+    if (isSymmetric) {
+        // Represent as ±half-bandwidth from carrier.
+        const int halfBw = bw / 2;
+        return QStringLiteral("±%1 Hz · %2k BW")
+            .arg(halfBw)
+            .arg(bwKhz, 0, 'f', 1);
+    }
+
+    return QStringLiteral("%1–%2 Hz · %3k BW")
+        .arg(m_filterLow)
+        .arg(m_filterHigh)
+        .arg(bwKhz, 0, 'f', 1);
 }
 
 } // namespace NereusSDR

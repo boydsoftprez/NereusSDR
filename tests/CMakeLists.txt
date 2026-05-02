@@ -2608,3 +2608,10 @@ target_compile_definitions(tst_xit_offset_application PRIVATE NEREUS_BUILD_TESTS
 # the lambda wiring pattern MainWindow uses.
 # Per docs/superpowers/plans/2026-05-01-ui-polish-cross-surface.md §B8.
 nereus_add_test(tst_b8_overlay_signals)
+
+# ── Plan 4 Task 2 (D1): FilterLow/FilterHigh schema + MicProfile persistence ─
+# 3 tests: filter values persist across profile save/switch/activate cycle,
+# activating a profile pushes filter values into TransmitModel (filterChanged),
+# isActiveProfileModified detects drift and clears after saveActiveProfile.
+# Per docs/superpowers/plans/2026-05-01-tx-bandwidth.md §Task 2.
+nereus_add_test(tst_tx_bandwidth_persistence)

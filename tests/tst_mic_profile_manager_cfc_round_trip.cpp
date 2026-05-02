@@ -96,8 +96,9 @@ private slots:
         QVERIFY(defs.contains(QStringLiteral("CESSB_On")));
 
         // Total bundle = 50 (existing) + 1 TXParaEQData (3M-3a-ii follow-up
-        // Batch 6) + 41 (new) = 92 keys.
-        QCOMPARE(defs.size(), 92);
+        // Batch 6) + 41 (new CFC/PhRot) + 2 FilterLow/FilterHigh (Plan 4 D1)
+        // = 94 keys.
+        QCOMPARE(defs.size(), 94);
     }
 
     // =========================================================================

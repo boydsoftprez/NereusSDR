@@ -50,6 +50,10 @@
 //                 through ParaEqEnvelope (gzip+base64url) before storing
 //                 under the bundle key TXParaEQData.  Empty default.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-02 — filterLow / filterHigh + filterChanged signal +
+//                 filterDisplayText helper + per-MAC persistence.
+//                 NereusSDR-original (Plan 4 Cluster A, Task 2/D1).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -106,6 +110,7 @@
 #pragma once
 
 #include "Band.h"
+#include "core/WdspTypes.h"
 #include "core/audio/CompositeTxMicRouter.h"
 
 #include <QObject>
@@ -165,6 +170,8 @@ class TransmitModel : public QObject {
     Q_PROPERTY(int    power     READ power       WRITE setPower     NOTIFY powerChanged)
     Q_PROPERTY(float  micGain   READ micGain     WRITE setMicGain   NOTIFY micGainChanged)
     Q_PROPERTY(bool   pureSig   READ pureSigEnabled WRITE setPureSigEnabled NOTIFY pureSigChanged)
+    Q_PROPERTY(int filterLow  READ filterLow  WRITE setFilterLow  NOTIFY filterChanged)
+    Q_PROPERTY(int filterHigh READ filterHigh WRITE setFilterHigh NOTIFY filterChanged)
 
 public:
     explicit TransmitModel(QObject* parent = nullptr);
@@ -978,7 +985,41 @@ public slots:
     // ── CESSB setters (3M-3a-ii Batch 2) ──────────────────────────────────
     void setCessbOn(bool on);
 
+    // ── TX filter bandwidth (Plan 4 D1) ────────────────────────────────────
+    //
+    // NereusSDR-native properties. FilterLow/FilterHigh represent the
+    // DSP bandpass filter edges (Hz) fed to WDSP SetTXABandpassFreqs (Plan 4
+    // D8). Values are per-profile — MicProfileManager bundles them under
+    // "FilterLow" / "FilterHigh" keys added in Plan 4 Cluster A.
+    //
+    // Defaults 100/2900 — USB voice typical SSB (NereusSDR-original; see Plan
+    // 4 spec §Task 2). Per-profile activation overrides via MicProfileManager.
+    //
+    // Swap-on-commit invariant: if setFilterLow(hz) is called with hz >
+    // m_filterHigh, the two values are swapped before assignment (and vice
+    // versa for setFilterHigh). This prevents an inverted filter range from
+    // reaching WDSP.
+    //
+    // Per-MAC persistence: hardware/<mac>/tx/FilterLow and FilterHigh, same
+    // namespace as the other 15 mic/VOX/MON keys (L.2 pattern).
+
+    int filterLow()  const noexcept { return m_filterLow; }
+    int filterHigh() const noexcept { return m_filterHigh; }
+
+    void setFilterLow(int hz);
+    void setFilterHigh(int hz);
+
+    /// Returns a human-readable filter bandwidth description.
+    /// Symmetric modes (AM/SAM/DSB/FM): "±NNNN Hz · X.Xk BW"
+    /// Asymmetric modes (USB/LSB/DIGU/DIGL/etc.): "NN-NNNN Hz · X.Xk BW"
+    QString filterDisplayText(DSPMode mode) const;
+
 signals:
+    // ── TX filter bandwidth (Plan 4 D1) ────────────────────────────────────
+    /// Emitted when filterLow or filterHigh changes.  Carries both values
+    /// so subscribers don't need a second getter call.
+    void filterChanged(int low, int high);
+
     void txEqEnabledChanged(bool on);
     void txEqPreampChanged(int dB);
     /// Emitted when any individual band gain changes; carries index + new value.
@@ -1184,6 +1225,12 @@ private:
     bool m_mox{false};
     bool m_tune{false};
     int m_power{100};
+
+    // ── TX filter bandwidth (Plan 4 D1) ────────────────────────────────────
+    // Defaults 100/2900 — USB voice typical SSB (NereusSDR-original, Plan 4
+    // spec §Task 2). Persisted under hardware/<mac>/tx/FilterLow and FilterHigh.
+    int m_filterLow{100};
+    int m_filterHigh{2900};
     float m_micGain{0.0f};
     bool m_pureSigEnabled{false};
     std::atomic<VaxSlot> m_txOwnerSlot{VaxSlot::MicDirect};  // Atomic for lock-free reads from the audio thread.
