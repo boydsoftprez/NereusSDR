@@ -517,7 +517,7 @@ jobs:
           version: '6.8.*'
           host: 'windows'
           target: 'desktop'
-          arch: 'win64_msvc2019_64'
+          arch: 'win64_msvc2022_64'
           # Qt 6.8+ folds qtsvg into qtbase; not listable as a separate module.
           modules: 'qtmultimedia qtserialport qtwebsockets qtshadertools'
           cache: true
