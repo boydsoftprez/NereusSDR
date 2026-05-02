@@ -149,6 +149,26 @@ target_compile_definitions(tst_p1_user_dig_out_setter PRIVATE NEREUS_BUILD_TESTS
 nereus_add_test(tst_p1_puresignal_run_setter)
 target_compile_definitions(tst_p1_puresignal_run_setter PRIVATE NEREUS_BUILD_TESTS)
 
+# ── P1 full-parity Task 2.5: TransmitModel::pureSig → setPuresignalRun wiring ─
+# 8 tests pin the model-to-connection wiring installed in
+# RadioModel::wireConnectionSignals + the initial-push pattern in
+# RadioModel::connectToRadio.  Wire-byte side (bank 11 C2 bit 6) is
+# already covered by tst_p1_puresignal_run_setter; these tests cover the
+# higher-level model-layer wiring contract:
+#   1.  Initial push: default model state → bank 11 C2 bit 6 clear.
+#   2.  Initial push: persisted true → bank 11 C2 bit 6 = 0x40.
+#   3.  Toggle on: model setter → wiring → connection setter → bit set.
+#   4.  Toggle off: model false → wiring clears bit 6.
+#   5.  Round-trip: false → true → false bit-tracks across the wiring.
+#   6.  Idempotent setter: same value twice → wiring fires only on change.
+#   7.  Cross-bit guard: pureSig wiring does not perturb C2 line_in_gain.
+#   8.  loadFromSettings reads the pureSignal/enabled key.
+#   8b. loadFromSettings defaults to false when key absent.
+# Source: Thetis ChannelMaster/networkproto1.c:599-600 + PSForm.cs:240
+#         [v2.10.3.13].
+nereus_add_test(tst_radio_model_puresignal_run_wiring)
+target_compile_definitions(tst_radio_model_puresignal_run_wiring PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-A P1CodecAnvelinaPro3 bank 17 extra OC (Task 7) ──
 nereus_add_test(tst_p1_codec_anvelina_pro3)
 

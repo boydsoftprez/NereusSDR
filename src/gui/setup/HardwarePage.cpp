@@ -75,6 +75,7 @@
 #include "core/HardwareProfile.h"
 #include "core/RadioDiscovery.h"
 #include "models/RadioModel.h"
+#include "models/TransmitModel.h"
 
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -190,6 +191,22 @@ void HardwarePage::onTabSettingChanged(const QString& tabKey,
 
     AppSettings::instance().setHardwareValue(m_currentMac, fullKey, value);
     AppSettings::instance().save();
+
+    // ── Task 2.5 of P1 full-parity epic: PureSignal "Enable" → TransmitModel ─
+    // When the user toggles the Setup → Hardware → PureSignal "Enable"
+    // checkbox, also drive the TransmitModel::pureSig property so the
+    // model→connection wiring (RadioModel::wireConnectionSignals) emits
+    // setPuresignalRun on the wire bit.  TransmitModel::loadFromSettings
+    // reads the same hardware/<mac>/pureSignal/enabled key on connect, so
+    // persistence stays single-sourced from this writer.
+    //
+    // Source: Thetis PSForm.cs:240 [v2.10.3.13] — _psenabled = value
+    // is the user-facing PS-enable toggle that drives prn->puresignal_run
+    // via NetworkIO.SetPureSignal.
+    if (m_model && tabKey == QLatin1String("pureSignal")
+                && bareKey == QLatin1String("enabled")) {
+        m_model->transmitModel().setPureSigEnabled(value.toBool());
+    }
 }
 
 // ── onCurrentRadioChanged ─────────────────────────────────────────────────────

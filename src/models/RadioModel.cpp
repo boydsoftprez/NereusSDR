@@ -2352,6 +2352,23 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         conn->setUserDigOut(quint8(d & 0x0F));
     });
 
+    // ── Task 2.5 of P1 full-parity epic: initial push of pureSig state ──────
+    // Push the PureSignal user-enable toggle onto the connection BEFORE the
+    // first connectToRadio dispatch so the very first C&C frame carries the
+    // persisted state.  Mirrors the lineInGain/userDigOut FIFO ordering above.
+    //
+    // Source: Thetis ChannelMaster/networkproto1.c:599-600 [v2.10.3.13]:
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    // Until 3M-4 lights up the actual feedback DDC routing, the user's
+    // PureSignal-enable toggle (PureSignalTab "Enable") is the proxy for
+    // the wire bit — same semantic as Thetis PSForm.cs:240 [v2.10.3.13]
+    // calling NetworkIO.SetPureSignal(1) when the user enables PS.
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                              ps = m_transmitModel.pureSigEnabled()]() {
+        conn->setPuresignalRun(ps);
+    });
+
     // Now dispatch connectToRadio -- it will find the correct m_rxFreqHz[0]
     // and m_sampleRate when sendCommandFrame runs inside it.
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, info]() {
@@ -2571,6 +2588,31 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
             conn->setUserDigOut(quint8(d & 0x0F));
         });
     });
+
+    // ── Task 2.5 of P1 full-parity epic: pureSig → setPuresignalRun ─────────
+    // Wire the user PureSignal-enable toggle to the wire-bit setter added in
+    // Task 2.3.  Direct signal→slot bind (bool→bool, no adapter needed).
+    //
+    // Source: Thetis PSForm.cs:240 [v2.10.3.13]
+    //   _psenabled = value;
+    //   if (_psenabled) {
+    //     ...
+    //     NetworkIO.SetPureSignal(1);   // → prn->puresignal_run = 1
+    //     ...
+    //   }
+    // Source: Thetis ChannelMaster/networkproto1.c:599-600 [v2.10.3.13]:
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    //
+    // Until 3M-4 lights up the actual feedback DDC routing, the user's
+    // PureSignal-enable toggle (PureSignalTab "Enable" checkbox) is the proxy
+    // for the wire bit — same semantic as Thetis's PSEnabled property setter
+    // calling NetworkIO.SetPureSignal(1).  The P2 override (Task 2.3) stores
+    // the flag for symmetric API only and emits nothing on the wire until
+    // 3M-4 wires up the feedback DDC routing.
+    QObject::connect(&m_transmitModel, &TransmitModel::pureSigChanged,
+                     m_connection, &RadioConnection::setPuresignalRun,
+                     Qt::QueuedConnection);
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.
