@@ -46,8 +46,16 @@
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
+#include "core/BoardCapabilities.h"
+#include "core/RadioDiscovery.h"
 #include "core/StepAttenuatorController.h"
 #include "gui/setup/DspSetupPages.h"
+#include "gui/setup/hardware/OcOutputsTab.h"
+#include "models/RadioModel.h"
+#include "models/TransmitModel.h"
+
+#include <QApplication>
+#include <QSignalSpy>
 
 using namespace NereusSDR;
 
@@ -64,7 +72,14 @@ private:
     void clearAppSettings() { AppSettings::instance().clear(); }
 
 private slots:
-    void initTestCase() { clearAppSettings(); }
+    void initTestCase()
+    {
+        clearAppSettings();
+        if (!qApp) {
+            static int argc = 0;
+            new QApplication(argc, nullptr);
+        }
+    }
     void init()          { clearAppSettings(); }
     void cleanup()       { clearAppSettings(); }
 
@@ -229,13 +244,158 @@ private slots:
     }
 
     // ── Task 4.3 — hasPennyLane ──────────────────────────────────────────────
-    // (Reserved — to be filled in by Task 4.3 implementer per plan §4.3.)
     //
-    // Expected cases:
-    //   - pennylane_tab_hidden_when_flag_false (HardwarePage)
-    //   - pennylane_tab_shown_when_flag_true
-    //   - user_dig_out_persists_per_mac
-    //   - user_dig_out_byte_reflects_in_p1_bank11_c3
+    // Penny / Penny-Lane is the OC-output companion board. Its outputs include
+    // user_dig_out (4 user-controllable digital pins, networkproto1.c:601 →
+    // bank 11 C3 low 4 bits). OcOutputsTab now hosts a "User Dig Out" group
+    // with 4 bit-toggle checkboxes wired to TransmitModel::setUserDigOut.
+    // Group visibility gates on caps.hasPennyLane (true on every HPSDR-class
+    // board, false on HL2 + RX-only kits).
+    //
+    // Thetis upstream comparison: Thetis tpPennyCtrl (setup.cs:6364
+    // [v2.10.3.13 @501e3f51]) is the OC Control / Hermes Ctrl tab — hosts the
+    // OC matrix itself, not separate user_dig_out pin checkboxes. user_dig_out
+    // is set in firmware via networkproto1.c bank 11 C3, but Thetis does NOT
+    // expose UI checkboxes for those 4 bits. This is a NereusSDR-specific
+    // audit-gap closure UI, not a port of an upstream control.
+    //
+    // Persistence: TransmitModel::persistOne already scopes per-MAC under
+    // hardware/<mac>/tx/UserDigOut (TransmitModel.cpp:510-517) — single
+    // nibble, no need for plan §4.3.3's "userDigOut/{1..4}" subkey form.
+    //
+    // Wire-byte assertion is covered by tst_p1_codec_standard_bank11_polarity
+    // (Task 1.3); persistence round-trip is covered by TransmitModel's
+    // existing persistence tests. We don't re-test those here.
+
+    // Case 1: When the flag is false (HL2 / RX-only), the User Dig Out group
+    // is hidden — users on boards without Penny don't see a control whose
+    // wire bits go to a non-existent companion board.
+    void user_dig_out_group_hidden_when_hasPennyLane_false()
+    {
+        RadioModel model;
+        OcOutputsTab tab(&model);
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("aa:bb:cc:dd:ee:01");
+        BoardCapabilities caps;
+        caps.hasPennyLane = false;
+
+        tab.populate(info, caps);
+
+        QCOMPARE(tab.userDigOutGroupVisibleForTest(), false);
+    }
+
+    // Case 2: When the flag is true (HPSDR-class board), the group is visible.
+    void user_dig_out_group_visible_when_hasPennyLane_true()
+    {
+        RadioModel model;
+        OcOutputsTab tab(&model);
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("aa:bb:cc:dd:ee:02");
+        BoardCapabilities caps;
+        caps.hasPennyLane = true;
+
+        tab.populate(info, caps);
+
+        QCOMPARE(tab.userDigOutGroupVisibleForTest(), true);
+    }
+
+    // Case 3: Toggling Pin 1 checkbox sets bit 0 of TransmitModel::userDigOut.
+    // Untoggling clears it.
+    void checkbox_1_toggle_sets_bit_0_in_userDigOut()
+    {
+        RadioModel model;
+        OcOutputsTab tab(&model);
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("aa:bb:cc:dd:ee:03");
+        BoardCapabilities caps;
+        caps.hasPennyLane = true;
+        tab.populate(info, caps);
+
+        // Pin 1 → bit 0
+        tab.toggleUserDigOutCheckboxForTest(/*bit=*/0, /*checked=*/true);
+        QCOMPARE(model.transmitModel().userDigOut() & 0x01, 0x01);
+
+        tab.toggleUserDigOutCheckboxForTest(/*bit=*/0, /*checked=*/false);
+        QCOMPARE(model.transmitModel().userDigOut() & 0x01, 0x00);
+    }
+
+    // Case 4: Toggling Pin 4 checkbox sets bit 3 of TransmitModel::userDigOut.
+    void checkbox_4_toggle_sets_bit_3_in_userDigOut()
+    {
+        RadioModel model;
+        OcOutputsTab tab(&model);
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("aa:bb:cc:dd:ee:04");
+        BoardCapabilities caps;
+        caps.hasPennyLane = true;
+        tab.populate(info, caps);
+
+        // Pin 4 → bit 3
+        tab.toggleUserDigOutCheckboxForTest(/*bit=*/3, /*checked=*/true);
+        QCOMPARE(model.transmitModel().userDigOut() & 0x08, 0x08);
+
+        tab.toggleUserDigOutCheckboxForTest(/*bit=*/3, /*checked=*/false);
+        QCOMPARE(model.transmitModel().userDigOut() & 0x08, 0x00);
+    }
+
+    // Case 5: Setting TransmitModel::userDigOut directly updates all four
+    // checkboxes via the userDigOutChanged signal — the model is the source
+    // of truth and the UI mirrors it.
+    void userDigOut_signal_updates_all_checkboxes()
+    {
+        RadioModel model;
+        OcOutputsTab tab(&model);
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("aa:bb:cc:dd:ee:05");
+        BoardCapabilities caps;
+        caps.hasPennyLane = true;
+        tab.populate(info, caps);
+
+        // Set userDigOut to 0b1010 = bit 1 + bit 3 set (Pin 2 + Pin 4)
+        model.transmitModel().setUserDigOut(0x0A);
+
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(/*bit=*/0), false);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(/*bit=*/1), true);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(/*bit=*/2), false);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(/*bit=*/3), true);
+    }
+
+    // Case 6: The echo-loop guard prevents recursion. Setting the model from
+    // outside while the tab is connected fires userDigOutChanged exactly
+    // once — the checkbox sync does NOT re-emit by writing back to the
+    // model. End state is consistent with the externally-set value.
+    void echo_loop_guard_prevents_recursion()
+    {
+        RadioModel model;
+        OcOutputsTab tab(&model);
+
+        RadioInfo info;
+        info.macAddress = QStringLiteral("aa:bb:cc:dd:ee:06");
+        BoardCapabilities caps;
+        caps.hasPennyLane = true;
+        tab.populate(info, caps);
+
+        QSignalSpy spy(&model.transmitModel(), &TransmitModel::userDigOutChanged);
+
+        // Externally set userDigOut to 0b0101 = bits 0 + 2 (Pin 1 + Pin 3)
+        model.transmitModel().setUserDigOut(0x05);
+
+        // Exactly one fire — no recursion through the checkbox toggled() path.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toInt(), 0x05);
+
+        // End state consistent with the externally-set value.
+        QCOMPARE(model.transmitModel().userDigOut(), 0x05);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(0), true);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(1), false);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(2), true);
+        QCOMPARE(tab.userDigOutCheckboxCheckedForTest(3), false);
+    }
 };
 
 QTEST_MAIN(TestBoardCapabilityFlagWiring)

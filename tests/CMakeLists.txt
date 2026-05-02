@@ -332,8 +332,9 @@ nereus_add_test(tst_step_attenuator_controller)
 # affect runtime behaviour:
 #   §4.1 hasStepAttenuatorCal — gates AutoAttMode::Adaptive selection
 #                                (silent-coerce to Classic when false)
-#   §4.2 hasSidetoneGenerator  — reserved
-#   §4.3 hasPennyLane          — reserved
+#   §4.2 hasSidetoneGenerator  — gates CwSetupPage Sidetone Volume row
+#   §4.3 hasPennyLane          — gates OcOutputsTab "User Dig Out" group
+#                                (4 bit-toggle checkboxes → TransmitModel)
 nereus_add_test(tst_board_capability_flag_wiring)
 
 # ── Issue #118: band-button auto-mode ────────────────────────────────────
