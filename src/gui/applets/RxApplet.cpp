@@ -432,7 +432,7 @@ void RxApplet::buildUi()
         m_filterGrid = new QGridLayout(m_filterContainer);
         m_filterGrid->setContentsMargins(0, 0, 0, 0);
         m_filterGrid->setSpacing(2);
-        rebuildFilterButtons();
+        rebuildFilterButtons(DSPMode::USB);
         leftCol->addWidget(m_filterContainer);
     }
 
@@ -925,7 +925,7 @@ void RxApplet::buildUi()
     m_xitOnBtn->setToolTip(QStringLiteral("Transmit Incremental Tuning - offset TX frequency by the value below in Hz."));
 }
 
-void RxApplet::rebuildFilterButtons()
+void RxApplet::rebuildFilterButtons(DSPMode mode)
 {
     // Remove all existing buttons from grid
     for (QPushButton* btn : m_filterBtns) {
@@ -934,14 +934,17 @@ void RxApplet::rebuildFilterButtons()
     }
     m_filterBtns.clear();
 
-    // 10 filter presets in 3-column grid (matching AetherSDR layout)
-    // Blue active state when this filter is selected
-    // Tier 1 wired → SliceModel::setFilter()
+    // Canonical preset list from SliceModel — source of truth is InitFilterPresets
+    // (Thetis console.cs:5180-5575 [v2.10.3.13]). Up to 10 presets in 3-column grid.
+    // Tier 1 wired → SliceModel::setFilter() via applyFilterPreset(low, high).
+    m_filterPresets = SliceModel::presetsForMode(mode);
+
     static constexpr int kCols = 3;
-    const int count = qMin(m_filterWidths.size(), 10);
+    const int count = qMin(m_filterPresets.size(), 10);
 
     for (int i = 0; i < count; ++i) {
-        const int widthHz = m_filterWidths.value(i, 2700);
+        const auto [low, high] = m_filterPresets[i];
+        const int widthHz = qAbs(high - low);
         QString label;
         if (widthHz >= 1000) {
             label = QStringLiteral("%1K").arg(widthHz / 1000.0, 0, 'g', 2);
@@ -957,8 +960,8 @@ void RxApplet::rebuildFilterButtons()
         btn->setStyleSheet(btn->styleSheet() + QStringLiteral(
             "QPushButton { padding: 1px 2px; }"));
 
-        connect(btn, &QPushButton::clicked, this, [this, widthHz] {
-            applyFilterPreset(widthHz);
+        connect(btn, &QPushButton::clicked, this, [this, low, high] {
+            applyFilterPreset(low, high);
         });
 
         m_filterBtns.append(btn);
@@ -966,46 +969,10 @@ void RxApplet::rebuildFilterButtons()
     }
 }
 
-void RxApplet::applyFilterPreset(int widthHz)
+void RxApplet::applyFilterPreset(int low, int high)
 {
     if (!m_slice) { return; }
-
-    // Determine low/high from width + current mode
-    // For USB/CWU: low = 100, high = low + width
-    // For LSB/CWL: high = -100, low = high - width
-    // For AM/SAM/DSB: symmetric ±half
-    // This mirrors AetherSDR RxApplet::applyFilterPreset() logic.
-    const DSPMode mode = m_slice->dspMode();
-    int low  = 0;
-    int high = 0;
-
-    switch (mode) {
-    case DSPMode::USB:
-    case DSPMode::CWU:
-    case DSPMode::DIGU:
-        low  = 100;
-        high = low + widthHz;
-        break;
-    case DSPMode::LSB:
-    case DSPMode::CWL:
-    case DSPMode::DIGL:
-        high = -100;
-        low  = high - widthHz;
-        break;
-    case DSPMode::AM:
-    case DSPMode::SAM:
-    case DSPMode::DSB:
-    case DSPMode::FM:
-    case DSPMode::DRM:
-        low  = -(widthHz / 2);
-        high =  (widthHz / 2);
-        break;
-    default:
-        low  = 100;
-        high = low + widthHz;
-        break;
-    }
-
+    // low/high come directly from SliceModel::presetsForMode() — no mode-switching needed.
     m_slice->setFilter(low, high);
 }
 
@@ -1013,15 +980,19 @@ void RxApplet::updateFilterButtons()
 {
     if (!m_slice) { return; }
 
-    const int lo = m_slice->filterLow();
-    const int hi = m_slice->filterHigh();
-    const int width = hi - lo;
+    const int curLow  = m_slice->filterLow();
+    const int curHigh = m_slice->filterHigh();
 
-    // Highlight the button matching current filter width (±50 Hz tolerance)
+    // Highlight the button matching current (low, high) within ±50 Hz tolerance per edge.
     for (int i = 0; i < m_filterBtns.size(); ++i) {
         QPushButton* btn = m_filterBtns[i];
-        const int bw = m_filterWidths.value(i, 0);
-        const bool match = qAbs(width - bw) <= 50;
+        if (i >= m_filterPresets.size()) {
+            QSignalBlocker blocker(btn);
+            btn->setChecked(false);
+            continue;
+        }
+        const auto [pLow, pHigh] = m_filterPresets[i];
+        const bool match = (qAbs(curLow - pLow) <= 50) && (qAbs(curHigh - pHigh) <= 50);
         // Suppress toggled signal to avoid echo loop
         QSignalBlocker blocker(btn);
         btn->setChecked(match);
@@ -1166,13 +1137,15 @@ void RxApplet::connectSlice(SliceModel* s)
 {
     if (!s) { return; }
 
-    // Mode change → update combo + passband widget
+    // Mode change → update combo + filter grid + passband widget
     connect(s, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
         m_updatingFromModel = true;
         const QString name = SliceModel::modeName(mode);
         const int idx = m_modeCombo->findText(name);
         if (idx >= 0) { m_modeCombo->setCurrentIndex(idx); }
         m_updatingFromModel = false;
+        // Rebuild filter buttons for the new mode (canonical preset list from SliceModel)
+        rebuildFilterButtons(mode);
         updateFilterLabel();
         updateFilterButtons();
         m_filterPassband->setMode(name);

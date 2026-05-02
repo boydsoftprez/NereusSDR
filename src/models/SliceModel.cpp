@@ -914,6 +914,90 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
 }
 
 // ---------------------------------------------------------------------------
+// Full per-mode filter preset table
+// ---------------------------------------------------------------------------
+
+// From Thetis console.cs:5180-5575 [v2.10.3.13] — InitFilterPresets (F1-F10 per mode).
+// Returns (low_hz, high_hz) pairs in Thetis F1→F10 order. The full list drives
+// RxApplet's 10-button filter grid; VfoWidget uses commonPresetsForMode() (a subset).
+QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
+{
+    // From Thetis display.cs:1023 [v2.10.3.13]
+    static constexpr int kCwPitch    = 600;
+    // From Thetis console.cs:14636 [v2.10.3.13]
+    static constexpr int kDiguOffset = 1500;
+    // From Thetis console.cs:14671 [v2.10.3.13]
+    static constexpr int kDiglOffset = 2210;
+
+    switch (mode) {
+    case DSPMode::LSB:
+        // From Thetis console.cs:5191-5231 [v2.10.3.13] — LSB F1-F10
+        return { {-5100,-100}, {-4500,-100}, {-3900,-100}, {-3300,-100},
+                 {-3000,-100}, {-2700,-100}, {-2400,-100}, {-1800,-100},
+                 {-1200,-100}, {-600,-100} };
+    case DSPMode::USB:
+        // From Thetis console.cs:5233-5273 [v2.10.3.13] — USB F1-F10
+        return { {100,5100}, {100,4500}, {100,3900}, {100,3300},
+                 {100,3000}, {100,2700}, {100,2400}, {100,1800},
+                 {100,1200}, {100,600} };
+    case DSPMode::DSB:
+        // From Thetis console.cs:5527-5575 [v2.10.3.13] — DSB F1-F10, symmetric
+        return { {-5100,5100}, {-4500,4500}, {-3900,3900}, {-3300,3300},
+                 {-3000,3000}, {-2700,2700}, {-2400,2400}, {-1800,1800},
+                 {-1200,1200}, {-600,600} };
+    case DSPMode::CWL:
+        // From Thetis console.cs:5359-5399 [v2.10.3.13] — CWL F1-F10 (lower sideband CW)
+        return { {-(kCwPitch+750), -(kCwPitch-750)}, {-(kCwPitch+500), -(kCwPitch-500)},
+                 {-(kCwPitch+400), -(kCwPitch-400)}, {-(kCwPitch+300), -(kCwPitch-300)},
+                 {-(kCwPitch+200), -(kCwPitch-200)}, {-(kCwPitch+125), -(kCwPitch-125)},
+                 {-(kCwPitch+50),  -(kCwPitch-50)},  {-(kCwPitch+25),  -(kCwPitch-25)},
+                 {-(kCwPitch+12),  -(kCwPitch-12)},  {-(kCwPitch+6),   -(kCwPitch-6)} };
+    case DSPMode::CWU:
+        // From Thetis console.cs:5401-5441 [v2.10.3.13] — CWU F1-F10 (upper sideband CW)
+        return { {kCwPitch-750, kCwPitch+750}, {kCwPitch-500, kCwPitch+500},
+                 {kCwPitch-400, kCwPitch+400}, {kCwPitch-300, kCwPitch+300},
+                 {kCwPitch-200, kCwPitch+200}, {kCwPitch-125, kCwPitch+125},
+                 {kCwPitch-50,  kCwPitch+50},  {kCwPitch-25,  kCwPitch+25},
+                 {kCwPitch-12,  kCwPitch+12},  {kCwPitch-6,   kCwPitch+6} };
+    case DSPMode::FM:
+        // From Thetis console.cs:5527 region [v2.10.3.13] — FM uses wide symmetric filters
+        return { {-8000,8000}, {-6000,6000}, {-4000,4000} };
+    case DSPMode::AM:
+        // From Thetis console.cs:5443-5483 [v2.10.3.13] — AM F1-F10, symmetric
+        return { {-10000,10000}, {-6000,6000}, {-5000,5000},
+                 {-4000,4000},   {-3000,3000}, {-2500,2500},
+                 {-2000,2000},   {-1500,1500}, {-1000,1000}, {-500,500} };
+    case DSPMode::DIGU:
+        // From Thetis console.cs:5317-5357 [v2.10.3.13] — DIGU F1-F10
+        return { {kDiguOffset-3000, kDiguOffset+3000}, {kDiguOffset-2000, kDiguOffset+2000},
+                 {kDiguOffset-1500, kDiguOffset+1500}, {kDiguOffset-1000, kDiguOffset+1000},
+                 {kDiguOffset-500,  kDiguOffset+500},  {kDiguOffset-300,  kDiguOffset+300},
+                 {kDiguOffset-150,  kDiguOffset+150},  {kDiguOffset-100,  kDiguOffset+100},
+                 {kDiguOffset-50,   kDiguOffset+50},   {kDiguOffset-25,   kDiguOffset+25} };
+    case DSPMode::SPEC:
+        // Passthrough wideband
+        return { {-5000,5000} };
+    case DSPMode::DIGL:
+        // From Thetis console.cs:5275-5315 [v2.10.3.13] — DIGL F1-F10
+        return { {-(kDiglOffset+3000), -(kDiglOffset-3000)}, {-(kDiglOffset+2000), -(kDiglOffset-2000)},
+                 {-(kDiglOffset+1500), -(kDiglOffset-1500)}, {-(kDiglOffset+1000), -(kDiglOffset-1000)},
+                 {-(kDiglOffset+500),  -(kDiglOffset-500)},  {-(kDiglOffset+300),  -(kDiglOffset-300)},
+                 {-(kDiglOffset+150),  -(kDiglOffset-150)},  {-(kDiglOffset+100),  -(kDiglOffset-100)},
+                 {-(kDiglOffset+50),   -(kDiglOffset-50)},   {-(kDiglOffset+25),   -(kDiglOffset-25)} };
+    case DSPMode::SAM:
+        // From Thetis console.cs:5485-5525 [v2.10.3.13] — SAM F1-F10, symmetric
+        return { {-10000,10000}, {-6000,6000}, {-5000,5000},
+                 {-4000,4000},   {-3000,3000}, {-2500,2500},
+                 {-2000,2000},   {-1500,1500}, {-1000,1000}, {-500,500} };
+    case DSPMode::DRM:
+        // DRM: wide digital AM-like filters
+        return { {-10000,10000}, {-5000,5000} };
+    }
+    // Fallback
+    return { {100, 3000} };
+}
+
+// ---------------------------------------------------------------------------
 // Mode name utilities
 // ---------------------------------------------------------------------------
 

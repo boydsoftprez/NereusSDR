@@ -120,6 +120,7 @@
 #include "core/NbFamily.h"
 #include "core/WdspTypes.h"
 
+#include <QList>
 #include <QObject>
 #include <QString>
 
@@ -576,10 +577,15 @@ public:
         return m_frequency + (m_ritEnabled ? static_cast<double>(m_ritHz) : 0.0);
     }
 
-    // ---- Per-mode filter defaults ----
+    // ---- Per-mode filter presets ----
     // Returns the F5 (default) filter low/high for a given mode.
     // Ported from Thetis console.cs:5180-5575 InitFilterPresets.
     static std::pair<int, int> defaultFilterForMode(DSPMode mode);
+
+    // Returns the full ordered filter preset list for the given mode.
+    // Source of truth: InitFilterPresets() table (Thetis console.cs:5180-5575 [v2.10.3.13]).
+    // Each pair is (low_hz, high_hz) relative to the carrier.
+    static QList<std::pair<int, int>> presetsForMode(DSPMode mode);
 
     // Returns human-readable mode name (e.g., DSPMode::LSB → "LSB")
     static QString modeName(DSPMode mode);

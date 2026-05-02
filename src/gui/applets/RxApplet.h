@@ -121,12 +121,16 @@
 #pragma once
 
 #include "AppletWidget.h"
+#include "core/WdspTypes.h"
 #include "gui/widgets/TriBtn.h"
 #include "models/Band.h"
 
+#include <QList>
 #include <QPushButton>
 #include <QStringList>
 #include <QVector>
+
+#include <utility>
 
 class QCheckBox;
 class QComboBox;
@@ -222,9 +226,9 @@ private:
     void connectSlice(SliceModel* s);
     void disconnectSlice(SliceModel* s);
     void updateFilterLabel();
-    void rebuildFilterButtons();
+    void rebuildFilterButtons(DSPMode mode);
     void updateFilterButtons();
-    void applyFilterPreset(int widthHz);
+    void applyFilterPreset(int low, int high);
 
     // Phase 3P-F Task 4: read AlexController per-band assignments and push
     // them into SliceModel so the antenna buttons reflect the active band.
@@ -237,9 +241,9 @@ private:
     PanadapterModel* m_pan   = nullptr;  // observed for bandChanged (Phase 3P-F Task 4)
     QStringList m_antList{QStringLiteral("ANT1"), QStringLiteral("ANT2"), QStringLiteral("ANT3")};
 
-    // Filter preset widths by mode (USB default)
-    QVector<int> m_filterWidths{1800, 2100, 2400, 2700, 2900, 3300,
-                                 500,  800, 1200, 1600};
+    // Filter presets for the active mode — (low_hz, high_hz) pairs from SliceModel::presetsForMode().
+    // Rebuilt on every dspModeChanged via rebuildFilterButtons(mode).
+    QList<std::pair<int, int>> m_filterPresets;
 
     // ── Row 1: badge | lock | rx ant | tx ant | filter label ──────────────
     QLabel*      m_sliceBadge     = nullptr;   // Control 1
