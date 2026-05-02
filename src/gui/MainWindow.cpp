@@ -1536,9 +1536,13 @@ void MainWindow::populateDefaultMeter()
     m_phoneCwApplet = new PhoneCwApplet(m_radioModel, nullptr);
     panel->addApplet(m_phoneCwApplet);
 
-    // EqApplet — 10-band EQ, NYI (Phase 3I-3)
-    m_eqApplet = new EqApplet(m_radioModel, nullptr);
-    panel->addApplet(m_eqApplet);
+    // Ghost applets — hidden per docs/superpowers/plans/2026-05-01-ui-polish-right-panel.md §Task 6.
+    // These applets are entirely placeholder-only today (no wired controls).
+    // Showing them is misleading — users click e.g. "Equalizer" and nothing happens.
+    // Uncomment each when its feature phase ships (one-line re-enable).
+    //
+    // m_eqApplet = new EqApplet(m_radioModel, nullptr);           // TODO 3I-3: TX/RX EQ wiring
+    // panel->addApplet(m_eqApplet);
 
     // VaxApplet — per-VAX-channel gain + mute + level meters
     // (Phase 3O Sub-Phase 9 Task 9.2b).
@@ -1546,19 +1550,21 @@ void MainWindow::populateDefaultMeter()
                                 m_radioModel->audioEngine(), nullptr);
     panel->addApplet(m_vaxApplet);
 
-    // Tasks 7-10: NYI applets created but NOT added to the container.
-    // Task 15 (final assembly) will wire these via the Containers menu.
-    m_digitalApplet    = new DigitalApplet(m_radioModel, nullptr);
-    m_pureSignalApplet = new PureSignalApplet(m_radioModel, nullptr);
-    m_diversityApplet  = new DiversityApplet(m_radioModel, nullptr);
-    m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);
-    m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);
-    m_catApplet        = new CatApplet(m_radioModel, nullptr);
-    m_tunerApplet      = new TunerApplet(m_radioModel, nullptr);
+    // Ghost applets: constructed but not added to the panel or the Containers menu
+    // until their feature phases ship. Uncomment the construction + addContainerToggle
+    // call (in buildMenuBar) together when the feature lands.
+    //
+    // m_digitalApplet    = new DigitalApplet(m_radioModel, nullptr);    // TODO 3-VAX
+    // m_pureSignalApplet = new PureSignalApplet(m_radioModel, nullptr); // TODO 3M-4 (PureSignal)
+    // m_diversityApplet  = new DiversityApplet(m_radioModel, nullptr);  // TODO 3F (multi-RX)
+    // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
+    // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
+    // m_catApplet        = new CatApplet(m_radioModel, nullptr);        // TODO 3J/3K/3-VAX
+    // m_tunerApplet      = new TunerApplet(m_radioModel, nullptr);      // TODO ATU phase
 
     c0->setContent(panel);
     qCDebug(lcMeter) << "Installed default meter layout: S-Meter + Power/SWR + ALC";
-    qCDebug(lcContainer) << "Container #0: Meters + RxApplet + TxApplet + PhoneCwApplet + EqApplet (10-band)";
+    qCDebug(lcContainer) << "Container #0: Meters + RxApplet + TxApplet + PhoneCwApplet + VaxApplet";
 }
 
 void MainWindow::buildMenuBar()
@@ -2302,30 +2308,37 @@ void MainWindow::buildMenuBar()
 
     containersMenu->addSeparator();
 
-    // Dynamic show/hide toggles for the 7 optional applets in Container #0.
+    // Dynamic show/hide toggles for optional applets in Container #0.
     // Checked = visible in panel; unchecked = hidden/removed.
-    // All 7 are hidden by default; user enables as needed.
-    auto addContainerToggle = [&](const QString& name, AppletWidget* applet, bool defaultVisible) {
-        auto* action = containersMenu->addAction(name);
-        action->setCheckable(true);
-        action->setChecked(defaultVisible);
-        connect(action, &QAction::toggled, this, [this, applet](bool show) {
-            if (!m_appletPanel) { return; }
-            if (show) {
-                m_appletPanel->addApplet(applet);
-            } else {
-                m_appletPanel->removeApplet(applet);
-            }
-        });
-    };
+    // Currently commented out (ghost applets hidden per
+    // docs/superpowers/plans/2026-05-01-ui-polish-right-panel.md §Task 6).
+    // Re-enable by un-commenting the lambda AND the addContainerToggle calls below,
+    // alongside the construction block in buildDefaultContainerLayout().
+    //
+    // auto addContainerToggle = [&](const QString& name, AppletWidget* applet, bool defaultVisible) {
+    //     auto* action = containersMenu->addAction(name);
+    //     action->setCheckable(true);
+    //     action->setChecked(defaultVisible);
+    //     connect(action, &QAction::toggled, this, [this, applet](bool show) {
+    //         if (!m_appletPanel) { return; }
+    //         if (show) {
+    //             m_appletPanel->addApplet(applet);
+    //         } else {
+    //             m_appletPanel->removeApplet(applet);
+    //         }
+    //     });
+    // };
 
-    addContainerToggle(QStringLiteral("Digital / VAC"), m_digitalApplet,    false);
-    addContainerToggle(QStringLiteral("PureSignal"),    m_pureSignalApplet, false);
-    addContainerToggle(QStringLiteral("Diversity"),     m_diversityApplet,  false);
-    addContainerToggle(QStringLiteral("CW Keyer"),      m_cwxApplet,        false);
-    addContainerToggle(QStringLiteral("Voice Keyer"),   m_dvkApplet,        false);
-    addContainerToggle(QStringLiteral("CAT / TCI"),     m_catApplet,        false);
-    addContainerToggle(QStringLiteral("ATU Control"),   m_tunerApplet,      false);
+    // Ghost-applet Containers menu entries — disabled until feature phases ship.
+    // Re-enable alongside the construction block in buildDefaultContainerLayout().
+    //
+    // addContainerToggle(QStringLiteral("Digital / VAC"), m_digitalApplet,    false); // TODO 3-VAX
+    // addContainerToggle(QStringLiteral("PureSignal"),    m_pureSignalApplet, false); // TODO 3M-4
+    // addContainerToggle(QStringLiteral("Diversity"),     m_diversityApplet,  false); // TODO 3F
+    // addContainerToggle(QStringLiteral("CW Keyer"),      m_cwxApplet,        false); // TODO 3M-2
+    // addContainerToggle(QStringLiteral("Voice Keyer"),   m_dvkApplet,        false); // TODO 3M-1
+    // addContainerToggle(QStringLiteral("CAT / TCI"),     m_catApplet,        false); // TODO 3J/3K
+    // addContainerToggle(QStringLiteral("ATU Control"),   m_tunerApplet,      false); // TODO ATU
 
     // =========================================================================
     // TOOLS
