@@ -1413,6 +1413,13 @@ target_compile_definitions(tst_general_options_page_rx_only PRIVATE NEREUS_BUILD
 # (Thetis has no tooltip on this control). Default unchecked.
 nereus_add_test(tst_general_setup_options)
 
+# ── Setup IA reshape Phase 2: top-level PA category placeholder pages ────────
+# Verifies PaGainByBandPage / PaWattMeterPage / PaValuesPage construct cleanly
+# with the expected page titles and a placeholder QLabel hinting at the future
+# phase tag.  Mirrors Thetis tpPowerAmplifier (setup.designer.cs:47366-47371
+# [v2.10.3.13]); panel-level wiring lands in Phase 3+.
+nereus_add_test(tst_pa_setup_pages)
+
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
 # the MainWindow status bar:

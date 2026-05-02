@@ -7,6 +7,8 @@
 #include "setup/GeneralOptionsPage.h"
 // Hardware
 #include "setup/HardwarePage.h"
+// PA (Setup IA reshape Phase 2 — placeholder pages, content lands in Phase 3+)
+#include "setup/PaSetupPages.h"
 // Audio
 #include "setup/AudioBackendStrip.h"
 #include "setup/AudioDevicesPage.h"
@@ -188,6 +190,26 @@ void SetupDialog::buildTree()
     // ── Hardware ─────────────────────────────────────────────────────────────
     QTreeWidgetItem* hardware = addCategory("Hardware");
     add(hardware, "Hardware Config", new HardwarePage(m_model));
+
+    // ── PA ────────────────────────────────────────────────────────────────────
+    // Top-level PA category mirrors Thetis tpPowerAmplifier
+    // (setup.designer.cs:47366-47371 [v2.10.3.13]). Three sub-pages:
+    //   - PA Gain         → Thetis tpGainByBand (placeholder for Phase 3M-3)
+    //   - Watt Meter      → Thetis tpWattMeter (cal spinboxes — Phase 3)
+    //   - PA Values       → NereusSDR-spin live telemetry page (Phase 4)
+    //
+    // Visibility gate: only shown when the connected radio reports
+    // hasPaProfile=true. RX-only kits and Atlas (no integrated PA) hide
+    // the entire category. Mirrors the access pattern used by HardwarePage
+    // (HardwarePage.cpp:219 [v2.10.3.13]) — caps is a const pointer on
+    // HardwareProfile so the null guard is mandatory.
+    if (m_model && m_model->hardwareProfile().caps
+        && m_model->hardwareProfile().caps->hasPaProfile) {
+        QTreeWidgetItem* pa = addCategory("PA");
+        add(pa, "PA Gain",    new PaGainByBandPage(m_model));
+        add(pa, "Watt Meter", new PaWattMeterPage(m_model));
+        add(pa, "PA Values",  new PaValuesPage(m_model));
+    }
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     QTreeWidgetItem* audio = addCategory("Audio");
