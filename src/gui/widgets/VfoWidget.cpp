@@ -270,6 +270,7 @@ warren@wpratt.com
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
 #include "core/HpsdrModel.h"
+#include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
 
 #include <QPainter>
@@ -287,50 +288,91 @@ warren@wpratt.com
 
 namespace NereusSDR {
 
-// Styles — matching dark theme from CONTRIBUTING.md
-static const char* kFlatBtn =
-    "QPushButton {"
-    "  background: transparent; border: none;"
-    "  padding: 1px 4px; font-size: 11px; font-weight: bold;"
-    "}";
+// File-local style helpers — §A2 exception: each diverges from canonical
+// Style:: on font-size (13px vs 10px), border colour (#304050 vs #205070),
+// or hover behaviour (border-change vs bg-change). Do NOT collapse into
+// canonical without re-auditing those visual properties first.
 
-static const char* kTabBtn =
-    "QPushButton {"
-    "  background: transparent; border: none;"
-    "  color: #6888a0; font-size: 12px; font-weight: bold;"
-    "  padding: 2px 6px;"
-    "}"
-    "QPushButton:checked {"
-    "  color: #00b4d8;"
-    "  border-bottom: 2px solid #00b4d8;"
-    "}";
+// Transparent/borderless antenna-row buttons (11px, 1px 4px padding).
+// Diverges from buttonBaseStyle(): transparent bg, no border, larger font.
+// Used with colour override suffix: e.g. vfoFlatBtnStyle() + "QPushButton { color: … }"
+static inline QString vfoFlatBtnStyle()
+{
+    return QStringLiteral(
+        "QPushButton {"
+        "  background: transparent; border: none;"
+        "  padding: 1px 4px; font-size: 11px; font-weight: bold;"
+        "}"
+    );
+}
 
-// From AetherSDR VfoWidget.cpp:158-162 — kDspToggle style
-static const char* kDspToggle =
-    "QPushButton {"
-    "  background: #1a2a3a; border: 1px solid #304050;"
-    "  border-radius: 2px; color: #c8d8e8;"
-    "  font-size: 13px; font-weight: bold;"
-    "  padding: 2px 4px; min-width: 32px;"
-    "}"
-    "QPushButton:checked {"
-    "  background: #1a6030; color: #ffffff;"
-    "  border: 1px solid #20a040;"
-    "}"
-    "QPushButton:hover {"
-    "  border: 1px solid #0090e0;"
-    "}";
+// Tab-row selector buttons (12px, underline indicator, muted-blue default).
+// Diverges from buttonBaseStyle(): transparent bg, underline :checked indicator,
+// different font-size and base colour.
+static inline QString vfoTabBtnStyle()
+{
+    return QStringLiteral(
+        "QPushButton {"
+        "  background: transparent; border: none;"
+        "  color: #6888a0; font-size: 12px; font-weight: bold;"
+        "  padding: 2px 6px;"
+        "}"
+        "QPushButton:checked {"
+        "  color: %1;"
+        "  border-bottom: 2px solid %1;"
+        "}"
+    ).arg(NereusSDR::Style::kAccent);
+}
 
-// From VfoStyles.h kModeBtn — blue-checked mode/filter button (AetherSDR pattern)
-static const char* kModeBtn =
-    "QPushButton {"
-    "  background: #1a2a3a; border: 1px solid #304050; border-radius: 2px;"
-    "  color: #c8d8e8; font-size: 13px; font-weight: bold; padding: 3px;"
-    "}"
-    "QPushButton:checked {"
-    "  background: #0070c0; color: #ffffff; border: 1px solid #0090e0;"
-    "}"
-    "QPushButton:hover { border: 1px solid #0090e0; }";
+// DSP toggle buttons (13px, border-change hover, green :checked).
+// From AetherSDR VfoWidget.cpp:158-162.
+// Diverges from buttonBaseStyle()+dspToggleStyle(): 13px vs 10px font-size;
+// unchecked border #304050 vs #205070; hover changes border not background;
+// checked text #ffffff vs kDspToggleText (#80ff80).
+static inline QString vfoDspToggleStyle()
+{
+    return QStringLiteral(
+        "QPushButton {"
+        "  background: %1; border: 1px solid #304050;"
+        "  border-radius: 2px; color: %2;"
+        "  font-size: 13px; font-weight: bold;"
+        "  padding: 2px 4px; min-width: 32px;"
+        "}"
+        "QPushButton:checked {"
+        "  background: %3; color: #ffffff;"
+        "  border: 1px solid %4;"
+        "}"
+        "QPushButton:hover {"
+        "  border: 1px solid %5;"
+        "}"
+    ).arg(NereusSDR::Style::kButtonBg,
+          NereusSDR::Style::kTextPrimary,
+          NereusSDR::Style::kDspToggleBg,
+          NereusSDR::Style::kDspToggleBorder,
+          NereusSDR::Style::kBlueBorder);
+}
+
+// Mode/filter preset buttons (13px, border-change hover, blue :checked).
+// From VfoStyles.h kModeBtn — blue-checked mode/filter button (AetherSDR pattern).
+// Diverges from buttonBaseStyle()+blueCheckedStyle(): 13px vs 10px font-size;
+// unchecked border #304050 vs #205070; hover changes border not background.
+static inline QString vfoModeBtnStyle()
+{
+    return QStringLiteral(
+        "QPushButton {"
+        "  background: %1; border: 1px solid #304050; border-radius: 2px;"
+        "  color: %2; font-size: 13px; font-weight: bold; padding: 3px;"
+        "}"
+        "QPushButton:checked {"
+        "  background: %3; color: %4; border: 1px solid %5;"
+        "}"
+        "QPushButton:hover { border: 1px solid %5; }"
+    ).arg(NereusSDR::Style::kButtonBg,
+          NereusSDR::Style::kTextPrimary,
+          NereusSDR::Style::kBlueBg,
+          NereusSDR::Style::kBlueText,
+          NereusSDR::Style::kBlueBorder);
+}
 
 // ---- Construction ----
 
@@ -424,7 +466,7 @@ void VfoWidget::buildHeaderRow()
     // RX antenna button (blue)
     m_rxAntBtn = new QPushButton(QStringLiteral("ANT1"), this);
     m_rxAntBtn->setObjectName(QStringLiteral("m_rxAntBtn"));
-    m_rxAntBtn->setStyleSheet(QString(kFlatBtn) +
+    m_rxAntBtn->setStyleSheet(vfoFlatBtnStyle() +
         QStringLiteral("QPushButton { color: #4488ff; }"));
     m_rxAntBtn->setFixedHeight(18);
     // From Thetis console.resx:8277 — chkRxAnt.ToolTip
@@ -453,7 +495,7 @@ void VfoWidget::buildHeaderRow()
     m_rxBypassBtn = new QPushButton(QStringLiteral("BYPS"), this);
     m_rxBypassBtn->setObjectName(QStringLiteral("m_rxBypassBtn"));
     m_rxBypassBtn->setCheckable(true);
-    m_rxBypassBtn->setStyleSheet(QString(kFlatBtn) +
+    m_rxBypassBtn->setStyleSheet(vfoFlatBtnStyle() +
         QStringLiteral("QPushButton { color: #888888; }"
                        "QPushButton:checked { color: #ffcc44; background: #2a2a1a; }"));
     m_rxBypassBtn->setFixedHeight(18);
@@ -470,7 +512,7 @@ void VfoWidget::buildHeaderRow()
     // TX antenna button (red)
     m_txAntBtn = new QPushButton(QStringLiteral("ANT1"), this);
     m_txAntBtn->setObjectName(QStringLiteral("m_txAntBtn"));
-    m_txAntBtn->setStyleSheet(QString(kFlatBtn) +
+    m_txAntBtn->setStyleSheet(vfoFlatBtnStyle() +
         QStringLiteral("QPushButton { color: #ff4444; }"));
     m_txAntBtn->setFixedHeight(18);
     // NereusSDR native — no single Thetis TX-antenna tooltip (TX ant is configured
@@ -629,7 +671,7 @@ void VfoWidget::buildTabBar()
 
         auto* btn = new QPushButton(tabLabels[i], this);
         btn->setCheckable(true);
-        btn->setStyleSheet(kTabBtn);
+        btn->setStyleSheet(vfoTabBtnStyle());
         btn->setFixedHeight(24);  // 24px from AetherSDR
         btn->setToolTip(QString::fromLatin1(kTabTooltips[i]));
         connect(btn, &QPushButton::clicked, this, [this, i]() {
@@ -678,7 +720,7 @@ void VfoWidget::buildAudioTab()
     {
         auto* row = new QHBoxLayout;
         auto* label = new QLabel(QStringLiteral("AF"), audioWidget);
-        label->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
+        label->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(NereusSDR::Style::kLabelMid));
         label->setFixedWidth(24);
         row->addWidget(label);
 
@@ -726,7 +768,7 @@ void VfoWidget::buildAudioTab()
             m_agcBtns[i] = new QPushButton(
                 QString::fromLatin1(kAgcLabels[i]), audioWidget);
             m_agcBtns[i]->setCheckable(true);
-            m_agcBtns[i]->setStyleSheet(kDspToggle);
+            m_agcBtns[i]->setStyleSheet(vfoDspToggleStyle());
             m_agcBtns[i]->setToolTip(QString::fromLatin1(kAgcTooltips[i]));
             row->addWidget(m_agcBtns[i]);
         }
@@ -759,7 +801,7 @@ void VfoWidget::buildAudioTab()
     {
         auto* row = new QHBoxLayout;
         auto* label = new QLabel(QStringLiteral("Pan"), audioWidget);
-        label->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
+        label->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(NereusSDR::Style::kLabelMid));
         label->setFixedWidth(24);
         row->addWidget(label);
 
@@ -795,13 +837,13 @@ void VfoWidget::buildAudioTab()
 
         m_muteBtn = new QPushButton(QStringLiteral("Mute"), audioWidget);
         m_muteBtn->setCheckable(true);
-        m_muteBtn->setStyleSheet(kDspToggle);
+        m_muteBtn->setStyleSheet(vfoDspToggleStyle());
         m_muteBtn->setToolTip(QStringLiteral("Mute RX audio output (SetRXAPanelRun)\nFrom Thetis dsp.cs:393 — WDSP patchpanel.c:126"));
         row->addWidget(m_muteBtn);
 
         m_binBtn = new QPushButton(QStringLiteral("BIN"), audioWidget);
         m_binBtn->setCheckable(true);
-        m_binBtn->setStyleSheet(kDspToggle);
+        m_binBtn->setStyleSheet(vfoDspToggleStyle());
         m_binBtn->setToolTip(QStringLiteral("Binaural audio: I/Q channels separate for headphone stereo image (SetRXAPanelBinaural)\nFrom Thetis radio.cs:1145 — WDSP patchpanel.c:187"));
         row->addWidget(m_binBtn);
 
@@ -827,7 +869,7 @@ void VfoWidget::buildAudioTab()
 
         m_sqlBtn = new QPushButton(QStringLiteral("SQL"), audioWidget);
         m_sqlBtn->setCheckable(true);
-        m_sqlBtn->setStyleSheet(kDspToggle);
+        m_sqlBtn->setStyleSheet(vfoDspToggleStyle());
         m_sqlBtn->setFixedWidth(40);
         // From Thetis console.resx:5631 — chkSquelch.ToolTip
         m_sqlBtn->setToolTip(QStringLiteral("Squelch Enable"));
@@ -869,7 +911,7 @@ void VfoWidget::buildAudioTab()
         // First row: AGC-T label + slider + dB value + AUTO badge
         auto* row = new QHBoxLayout;
         m_agcTLabelWidget = new QLabel(QStringLiteral("AGC-T"), m_agcTContainer);
-        m_agcTLabelWidget->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
+        m_agcTLabelWidget->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(NereusSDR::Style::kLabelMid));
         m_agcTLabelWidget->setFixedWidth(40);
         row->addWidget(m_agcTLabelWidget);
 
@@ -959,7 +1001,7 @@ void VfoWidget::buildDspTab()
     auto makeToggle = [dspWidget](const QString& label) -> QPushButton* {
         auto* btn = new QPushButton(label, dspWidget);
         btn->setCheckable(true);
-        btn->setStyleSheet(kDspToggle);
+        btn->setStyleSheet(vfoDspToggleStyle());
         return btn;
     };
 
@@ -1098,7 +1140,7 @@ void VfoWidget::buildDspTab()
         apfRow->addWidget(m_apfTuneSlider);
 
         m_apfTuneLabel = new QLabel(QStringLiteral("0 Hz"), dspWidget);
-        m_apfTuneLabel->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
+        m_apfTuneLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(NereusSDR::Style::kLabelMid));
         m_apfTuneLabel->setFixedWidth(44);
         m_apfTuneLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         apfRow->addWidget(m_apfTuneLabel);
@@ -1276,7 +1318,7 @@ void VfoWidget::buildXRitTab()
 
         m_ritBtn = new QPushButton(QStringLiteral("RIT"), ritWidget);
         m_ritBtn->setCheckable(true);
-        m_ritBtn->setStyleSheet(kDspToggle);
+        m_ritBtn->setStyleSheet(vfoDspToggleStyle());
         m_ritBtn->setFixedHeight(22);
         // From Thetis console.resx:4335 — chkRIT.ToolTip
         m_ritBtn->setToolTip(QStringLiteral("Receive Incremental Tuning - offset RX frequency by value below in Hz."));
@@ -1309,7 +1351,7 @@ void VfoWidget::buildXRitTab()
 
         m_xitBtn = new QPushButton(QStringLiteral("XIT"), ritWidget);
         m_xitBtn->setCheckable(true);
-        m_xitBtn->setStyleSheet(kDspToggle);
+        m_xitBtn->setStyleSheet(vfoDspToggleStyle());
         m_xitBtn->setFixedHeight(22);
         // From Thetis console.resx:4416 — chkXIT.ToolTip
         // XIT stored in SliceModel for Phase 3M-1 TX use; client offset displayed now.
@@ -1343,7 +1385,7 @@ void VfoWidget::buildXRitTab()
 
         m_xritLockBtn = new QPushButton(QStringLiteral("LOCK"), ritWidget);
         m_xritLockBtn->setCheckable(true);
-        m_xritLockBtn->setStyleSheet(kDspToggle);
+        m_xritLockBtn->setStyleSheet(vfoDspToggleStyle());
         m_xritLockBtn->setFixedHeight(22);
         // From Thetis console.resx:5787 — chkVFOLock.ToolTip
         m_xritLockBtn->setToolTip(QStringLiteral("Keeps the VFO from changing while in the middle of a QSO."));
@@ -1506,7 +1548,7 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
     for (const auto& p : presets) {
         auto* btn = new QPushButton(QString::fromLatin1(p.label), m_filterBtnContainer);
         btn->setCheckable(true);
-        btn->setStyleSheet(kModeBtn);
+        btn->setStyleSheet(vfoModeBtnStyle());
         btn->setFixedHeight(26);
         int low = p.low;
         int high = p.high;
