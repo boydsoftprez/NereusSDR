@@ -2487,36 +2487,16 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // values into the RadioStatus model owned by RadioModel. Any UI bound to
     // RadioStatus signals (Diagnostics → Radio Status page, S-meter PA tile)
     // refreshes automatically.
+    //
+    // P1 full-parity §3.4 (2026-05-02): the FWD reading is routed through
+    // CalibrationController::calibratedFwdPowerWatts() inside
+    // handlePaTelemetry — see that method for the inline cite.
     connect(m_connection, &RadioConnection::paTelemetryUpdated,
             this, [this](quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
                          quint16 userAdc0Raw, quint16 userAdc1Raw,
                          quint16 supplyRaw) {
-        const HPSDRModel model = m_hardwareProfile.model;
-        const double fwdW   = scaleFwdPowerWatts(fwdRaw, model);
-        const double revW   = scaleRevPowerWatts(revRaw, model);
-        const double paV    = scalePaVolts(userAdc0Raw, model);
-        const double paA    = scalePaAmps(userAdc1Raw, model);
-        const double paTemp = scalePaTemperatureCelsius(0, model);
-        Q_UNUSED(paV);       // RadioStatus does not expose PA volts directly (per its design header)
-        Q_UNUSED(supplyRaw); // supply_volts surfaced via RadioConnection::supplyVoltsChanged signal (sub-PR-2 B.3)
-
-        m_radioStatus.setForwardPower(fwdW);
-        m_radioStatus.setReflectedPower(revW);
-        m_radioStatus.setExciterPowerMw(static_cast<int>(exciterRaw));
-        m_radioStatus.setPaCurrent(paA);
-        // Only push temp when we have a real source (non-zero); leaves the
-        // last-known value alone otherwise so a stale 0 doesn't overwrite a
-        // good HL2 reading from another path.
-        if (paTemp > 0.0) {
-            m_radioStatus.setPaTemperature(paTemp);
-        }
-
-        // Phase 3M-0 Task 17 + Codex P1 follow-up: feed SwrProtectionController
-        // here (one call per hardware sample with consistent fwd/rev), not
-        // from RadioStatus::powerChanged (which emits twice per sample).
-        m_swrProt.ingest(static_cast<float>(fwdW),
-                         static_cast<float>(revW),
-                         m_transmitModel.isTune());
+        handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
+                          userAdc0Raw, userAdc1Raw, supplyRaw);
     });
 
     // Error handling
@@ -2625,6 +2605,55 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     QObject::connect(&m_transmitModel, &TransmitModel::pureSigChanged,
                      m_connection, &RadioConnection::setPuresignalRun,
                      Qt::QueuedConnection);
+}
+
+// P1 full-parity §3.4: per-sample PA telemetry handler.
+// Extracted from the wireConnectionSignals lambda so the test hook
+// handlePaTelemetryForTest() can drive the routing without spinning up
+// the full DSP-thread / RxDspWorker pipeline.
+void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
+                                   quint16 exciterRaw, quint16 userAdc0Raw,
+                                   quint16 userAdc1Raw, quint16 supplyRaw)
+{
+    const HPSDRModel model = m_hardwareProfile.model;
+    const double fwdW   = scaleFwdPowerWatts(fwdRaw, model);
+    const double revW   = scaleRevPowerWatts(revRaw, model);
+    const double paV    = scalePaVolts(userAdc0Raw, model);
+    const double paA    = scalePaAmps(userAdc1Raw, model);
+    const double paTemp = scalePaTemperatureCelsius(0, model);
+    Q_UNUSED(paV);       // RadioStatus does not expose PA volts directly (per its design header)
+    Q_UNUSED(supplyRaw); // supply_volts surfaced via RadioConnection::supplyVoltsChanged signal (sub-PR-2 B.3)
+
+    // From Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+    // route raw alex_fwd through the per-board cal table before publishing
+    // to RadioStatus.  Identity transform when no profile is loaded
+    // (boardClass == None, see CalibrationController::calibratedFwdPowerWatts).
+    // Reflected-power path is unchanged: Thetis's CalibratedPAPower is FWD-only.
+    const double fwdWCal = double(
+        m_calController.calibratedFwdPowerWatts(static_cast<float>(fwdW)));
+
+    m_radioStatus.setForwardPower(fwdWCal);
+    m_radioStatus.setReflectedPower(revW);
+    m_radioStatus.setExciterPowerMw(static_cast<int>(exciterRaw));
+    m_radioStatus.setPaCurrent(paA);
+    // Only push temp when we have a real source (non-zero); leaves the
+    // last-known value alone otherwise so a stale 0 doesn't overwrite a
+    // good HL2 reading from another path.
+    if (paTemp > 0.0) {
+        m_radioStatus.setPaTemperature(paTemp);
+    }
+
+    // Phase 3M-0 Task 17 + Codex P1 follow-up: feed SwrProtectionController
+    // here (one call per hardware sample with consistent fwd/rev), not
+    // from RadioStatus::powerChanged (which emits twice per sample).
+    // Note: SWR protection ingests the raw post-scale fwdW (not fwdWCal) —
+    // the user-cal table can extrapolate above-bridge values that would
+    // skew the foldback math; raw bridge watts are the canonical input
+    // Thetis uses for protection (console.cs alex_fwd path is independent
+    // of CalibratedPAPower).
+    m_swrProt.ingest(static_cast<float>(fwdW),
+                     static_cast<float>(revW),
+                     m_transmitModel.isTune());
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.

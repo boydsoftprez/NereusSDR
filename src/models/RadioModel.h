@@ -437,6 +437,19 @@ public:
     }
     NereusSDR::Band lastBand() const { return m_lastBand; }
 
+    // P1 full-parity §3.4 test hook — invoke the per-sample PA telemetry
+    // handler directly without spinning up the full wireConnectionSignals
+    // pipeline (which constructs DSP threads and the RxDspWorker).  Mirrors
+    // the existing on*ForTest pattern (setConnectionStateForTest /
+    // onConnectedForTest / setLastBandForTest).  Production code reaches
+    // the same handler via the lambda installed in wireConnectionSignals.
+    void handlePaTelemetryForTest(quint16 fwdRaw, quint16 revRaw,
+                                  quint16 exciterRaw, quint16 userAdc0Raw,
+                                  quint16 userAdc1Raw, quint16 supplyRaw) {
+        handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
+                          userAdc0Raw, userAdc1Raw, supplyRaw);
+    }
+
     // 3M-1b L.1 test seams: expose raw pointers into the mic-source strategy
     // objects so ownership, threading, and lifecycle tests can inspect state
     // without coupling to production API surfaces.
@@ -663,6 +676,21 @@ private:
     void wireConnectionSignals(int wdspInSize);
     void wireSliceSignals();
     void teardownConnection();
+
+    // P1 full-parity §3.4 — per-sample PA telemetry handler.
+    // Applies per-board ADC→watts scaling (scaleFwdPowerWatts /
+    // scaleRevPowerWatts / scalePaVolts / scalePaAmps), routes the FWD
+    // reading through CalibrationController::calibratedFwdPowerWatts()
+    // (Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]) and
+    // publishes the calibrated values to RadioStatus + SwrProtectionController.
+    //
+    // Wired by wireConnectionSignals to RadioConnection::paTelemetryUpdated
+    // via a thin forwarding lambda.  Extracted from that lambda so the test
+    // hook handlePaTelemetryForTest can drive it directly without spinning
+    // up the full wireConnectionSignals DSP-thread pipeline.
+    void handlePaTelemetry(quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
+                           quint16 userAdc0Raw, quint16 userAdc1Raw,
+                           quint16 supplyRaw);
     void loadSliceState(SliceModel* slice);
     void saveSliceState(SliceModel* slice);
     void scheduleSettingsSave();

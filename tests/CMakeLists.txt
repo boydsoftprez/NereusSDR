@@ -886,6 +886,14 @@ nereus_add_test(tst_calibration_controller)
 # Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
 nereus_add_test(tst_calibration_controller_pa_cal)
 
+# ── P1 full-parity §3.4: alex_fwd routing through CalibratedPAPower ─────────
+# Verifies that RadioModel::handlePaTelemetry routes the raw alex_fwd watts
+# through CalibrationController::calibratedFwdPowerWatts before publishing
+# to RadioStatus.  Identity (no profile) and active (Anan100 with mutated
+# watts[5]) paths plus a guard that the reflected-power path is unaffected.
+# Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
+nereus_add_test(tst_radio_model_pa_cal_routing)
+
 # ── Phase 3P-G commit 2: CalibrationTab UI smoke tests ───────────────────────
 # Verifies construction doesn't crash, 6 group boxes present
 # (Freq Cal / Level Cal / HPSDR Freq Cal Diagnostic / TX Display Cal /
