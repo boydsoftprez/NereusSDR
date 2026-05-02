@@ -48,6 +48,7 @@ warren@wpratt.com
 
 #include <QtTest/QtTest>
 
+#include "core/TxChannel.h"
 #include "core/WdspEngine.h"
 
 using namespace NereusSDR;
@@ -209,6 +210,42 @@ private slots:
         QVERIFY(kTxChannelId != kRxChannelId);
         QCOMPARE(kTxChannelId, 1);   // TX ID per WDSP.id(1,0) + CMsubrcvr=CMrcvr=1
         QCOMPARE(kRxChannelId, 0);
+    }
+
+    // ── TxChannel created via WdspEngine must have no Qt parent ─────────────
+    //
+    // Regression introduced by Phase 3M-1c TX pump v3 redesign: WdspEngine::
+    // createTxChannel constructed TxChannel with parent=this (the engine —
+    // main-thread-affined), but RadioModel::connectToRadio then does
+    // m_txChannel->moveToThread(workerThread).  Qt invariant: a QObject with
+    // a parent CANNOT be moved across threads.  moveToThread silently fails
+    // (one warning), TxChannel stays on the main thread, and TxWorkerThread::
+    // run drains QCoreApplication::sendPostedEvents(m_txChannel) from the
+    // worker thread — producing tens of thousands to millions of "Cannot send
+    // posted events for objects in another thread" warnings per session and
+    // starving the main thread.
+    //
+    // Ownership of TxChannel is held by std::unique_ptr in
+    // WdspEngine::m_txChannels — a Qt parent on top of that is redundant and
+    // breaks moveToThread.
+    //
+    // We use the test-only friend access (WdspEngine.h, gated on
+    // NEREUS_BUILD_TESTS) to set m_initialized = true synchronously, bypassing
+    // the async wisdom path which would otherwise need a running event loop
+    // and a real WDSP wisdom file to complete.
+    void createdTxChannelHasNoQtParentForThreadAffinity() {
+        WdspEngine engine;
+        engine.m_initialized = true;   // friend access, test-only path
+
+        TxChannel* tx = engine.createTxChannel(kTxChannelId);
+        QVERIFY(tx != nullptr);
+        QVERIFY2(tx->parent() == nullptr,
+                 "TxChannel created via WdspEngine::createTxChannel must "
+                 "have no Qt parent so RadioModel::connectToRadio can move "
+                 "it onto TxWorkerThread without tripping Qt's "
+                 "'cannot move objects with a parent' invariant");
+
+        engine.destroyTxChannel(kTxChannelId);
     }
 };
 

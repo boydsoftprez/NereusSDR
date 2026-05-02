@@ -90,6 +90,14 @@ warren@wpratt.com
 #include <map>
 #include <memory>
 
+#ifdef NEREUS_BUILD_TESTS
+// Forward declaration for test-only friend access (see end of class).  The
+// test class lives in the global namespace because it inherits from QObject
+// in tests/tst_wdsp_engine_tx_channel.cpp without a NereusSDR namespace
+// wrapper — friend declarations need the fully-qualified name.
+class TestWdspEngineTxChannel;
+#endif
+
 namespace NereusSDR {
 
 class RxChannel;
@@ -242,6 +250,14 @@ private:
     // pipeline that WDSP constructs when OpenChannel(type=1) is called.
     // destroyTxChannel's erase() runs the unique_ptr destructor automatically.
     std::map<int, std::unique_ptr<TxChannel>> m_txChannels;
+
+#ifdef NEREUS_BUILD_TESTS
+    // Test-only friend: lets unit tests bypass async wisdom load by setting
+    // m_initialized = true directly so they can exercise createTxChannel /
+    // createRxChannel without a running event loop or a real WDSP wisdom
+    // file.  Production builds (without NEREUS_BUILD_TESTS) never see this.
+    friend class ::TestWdspEngineTxChannel;
+#endif
 };
 
 } // namespace NereusSDR

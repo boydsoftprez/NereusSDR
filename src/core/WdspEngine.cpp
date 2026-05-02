@@ -472,6 +472,16 @@ TxChannel* WdspEngine::createTxChannel(int channelId,
     // The 31 TXA stages (create_txa()) are live; TxChannel provides the typed
     // C++ facade.  unique_ptr destructor handles cleanup automatically on erase().
     //
+    // Parent argument: nullptr — DO NOT pass `this` here.  RadioModel::
+    // connectToRadio does m_txChannel->moveToThread(workerThread) shortly
+    // after createTxChannel returns, and Qt's invariant is that a QObject
+    // with a parent CANNOT be moved across threads (silent failure with one
+    // warning, then TxWorkerThread::run drains sendPostedEvents on a
+    // wrong-thread channel forever, generating an event-flood storm).
+    // Ownership stays with std::unique_ptr in m_txChannels — the Qt parent
+    // is redundant.  See tst_wdsp_engine_tx_channel.cpp:
+    // createdTxChannelHasNoQtParentForThreadAffinity for the regression test.
+    //
     // Bench fix round 3 (Issue A): pass inputBufferSize and outputBufferSize so
     // TxChannel sizes its fexchange0 buffers correctly.  (3M-1c TX pump v3
     // changed the production callsite from fexchange2 → fexchange0; the
@@ -485,7 +495,7 @@ TxChannel* WdspEngine::createTxChannel(int channelId,
     // From Thetis wdsp/cmaster.c:179-183 [v2.10.3.13] — in_size / ch_outrate.
     // From Thetis wdsp/cmsetup.c:106-110 [v2.10.3.13] — getbuffsize(48000)==64.
     const int outputBufferSize = inputBufferSize * outputSampleRate / inputSampleRate;
-    auto wrapper = std::make_unique<TxChannel>(channelId, inputBufferSize, outputBufferSize, this);
+    auto wrapper = std::make_unique<TxChannel>(channelId, inputBufferSize, outputBufferSize, nullptr);
     TxChannel* raw = wrapper.get();
     m_txChannels.emplace(channelId, std::move(wrapper));
 
