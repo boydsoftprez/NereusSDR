@@ -216,13 +216,15 @@ void RxApplet::buildUi()
         // Control 2: Lock button (checkable, 20×20, emoji 🔓/🔒)
         // Live in S2.9 — wired to SliceModel::setLocked (client-side guard).
         // Checked color: #4488ff.
+        // §A2 one-off: #4488ff is NereusSDR-original "live blue" (lock + RX-ant accents).
+        // Not the same as kBlueBg (#0070c0) or kAccent (#00b4d8). Flagged for B7/B3 review.
         m_lockBtn = new QPushButton(QString::fromUtf8("\xF0\x9F\x94\x93"), this); // 🔓
         m_lockBtn->setCheckable(true);
         m_lockBtn->setFixedSize(20, 20);
         m_lockBtn->setFlat(true);
         m_lockBtn->setStyleSheet(QStringLiteral(
             "QPushButton { font-size: 13px; padding: 0; background: transparent; border: none; }"
-            "QPushButton:checked { color: #4488ff; }"
+            "QPushButton:checked { color: #4488ff; }"  // §A2 one-off "live blue"
         ));
         connect(m_lockBtn, &QPushButton::toggled, this, [this](bool locked) {
             m_lockBtn->setText(locked
@@ -237,15 +239,17 @@ void RxApplet::buildUi()
 
         // Control 3: RX antenna button (flat, color #4488ff, transparent bg)
         // From AetherSDR RxApplet.cpp lines 270-289
+        // §A2 one-off: #4488ff/"#66aaff" are NereusSDR-original "live blue" accent.
+        // Not kAccent (#00b4d8). Flagged for B7/B3 review.
         m_rxAntBtn = new QPushButton(QStringLiteral("ANT1"), this);
         m_rxAntBtn->setObjectName(QStringLiteral("m_rxAntBtn"));
         m_rxAntBtn->setFlat(true);
         m_rxAntBtn->setStyleSheet(QStringLiteral(
             "QPushButton {"
-            "  color: #4488ff; background: transparent; border: none;"
+            "  color: #4488ff; background: transparent; border: none;"  // §A2 one-off "live blue"
             "  font-size: 10px; font-weight: bold; padding: 0 2px;"
             "}"
-            "QPushButton:hover { color: #66aaff; }"
+            "QPushButton:hover { color: #66aaff; }"  // §A2 one-off hover derived from #4488ff
         ));
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
             QMenu menu(this);
@@ -274,15 +278,18 @@ void RxApplet::buildUi()
 
         // Control 4: TX antenna button (flat, color #ff4444, transparent bg)
         // From AetherSDR RxApplet.cpp lines 292-311
+        // §A2 one-off: #ff4444 used as semantic "TX color" (not error/danger indicator).
+        // kRedBorder/kGaugeDanger are also #ff4444 but connote error — using them here
+        // would misname the intent. #ff6666 is the hover. Flagged for B3 review.
         m_txAntBtn = new QPushButton(QStringLiteral("ANT1"), this);
         m_txAntBtn->setObjectName(QStringLiteral("m_txAntBtn"));
         m_txAntBtn->setFlat(true);
         m_txAntBtn->setStyleSheet(QStringLiteral(
             "QPushButton {"
-            "  color: #ff4444; background: transparent; border: none;"
+            "  color: #ff4444; background: transparent; border: none;"  // §A2 one-off TX color
             "  font-size: 10px; font-weight: bold; padding: 0 2px;"
             "}"
-            "QPushButton:hover { color: #ff6666; }"
+            "QPushButton:hover { color: #ff6666; }"  // §A2 one-off hover derived from #ff4444
         ));
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
             QMenu menu(this);
@@ -313,10 +320,12 @@ void RxApplet::buildUi()
         row->addStretch(1);
 
         // Control 5: Filter width label (color #00c8ff, 11px bold)
+        // §A2 one-off: #00c8ff is a lighter cyan than kAccent (#00b4d8); distinct
+        // intent (filter display highlight vs interactive accent). Not snapped.
         m_filterWidthLbl = new QLabel(QStringLiteral("2.9K"), this);
         m_filterWidthLbl->setAlignment(Qt::AlignCenter);
         m_filterWidthLbl->setStyleSheet(QStringLiteral(
-            "QLabel { color: #00c8ff; font-size: 11px; font-weight: bold; }"
+            "QLabel { color: #00c8ff; font-size: 11px; font-weight: bold; }"  // §A2 one-off filter highlight
         ));
         row->addWidget(m_filterWidthLbl);
 
@@ -555,7 +564,7 @@ void RxApplet::buildUi()
         m_attLabel = new QLabel(QStringLiteral("ATT"), this);
         m_attLabel->setFixedWidth(34);
         m_attLabel->setStyleSheet(QStringLiteral(
-            "QLabel { color: #8aa8c0; font-size: 11px; }"));
+            "QLabel { color: %1; font-size: 11px; }").arg(Style::kTitleText));
         row->addWidget(m_attLabel);
 
         m_attStack = new QStackedWidget(this);
@@ -646,7 +655,7 @@ void RxApplet::buildUi()
         // First row: AGC-T label + slider + dB value + AUTO badge
         auto* sliderRow = new QHBoxLayout;
         m_agcTLabelWidget = new QLabel(QStringLiteral("AGC-T"), m_agcTContainer);
-        m_agcTLabelWidget->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
+        m_agcTLabelWidget->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(Style::kLabelMid));
         m_agcTLabelWidget->setFixedWidth(40);
         sliderRow->addWidget(m_agcTLabelWidget);
 
@@ -656,21 +665,27 @@ void RxApplet::buildUi()
         m_agcTSlider->setValue(-20);
         m_agcTSlider->setFixedHeight(18);
         m_agcTSlider->setStyleSheet(
-            QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
-                            "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
+            QStringLiteral("QSlider::groove:horizontal { background: %1; height: 6px; border-radius: 3px; }"
+                            "QSlider::handle:horizontal { background: %2; width: 12px; margin: -3px 0; border-radius: 6px; }")
+                .arg(Style::kButtonBg, Style::kAccent));
         // From Thetis console.resx:8397 — ptbRF.ToolTip (ptbRF is the AGC-T slider)
         m_agcTSlider->setToolTip(QStringLiteral("AGC Max Gain - Operates similarly to traditional RF Gain. Right click AUTO based on noise floor."));
         sliderRow->addWidget(m_agcTSlider);
 
         m_agcTLabel = new QLabel(QStringLiteral("-20"), m_agcTContainer);
-        m_agcTLabel->setStyleSheet(QStringLiteral("color: #c8d8e8; font-size: 11px;"));
+        m_agcTLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(Style::kTextPrimary));
         m_agcTLabel->setFixedWidth(32);
         m_agcTLabel->setAlignment(Qt::AlignRight);
         sliderRow->addWidget(m_agcTLabel);
 
+        // §A2 one-offs for AUTO badge (inactive state):
+        // #1a1a1a = near-black bg (darker than kDisabledBg #1a1a2a — no blue tint).
+        // #445 / #556 = very dim purple-gray border/text (3-digit shorthands, off-palette).
+        // #adff2f = lime-green hover accent (active-AUTO color, NereusSDR-original).
+        // None of these map cleanly to a canonical constant; all kept as one-offs.
         m_agcAutoLabel = new QPushButton(QStringLiteral("AUTO"), m_agcTContainer);
         m_agcAutoLabel->setStyleSheet(
-            QStringLiteral("QPushButton { background: #1a1a1a; border: 1px solid #445;"
+            QStringLiteral("QPushButton { background: #1a1a1a; border: 1px solid #445;"  // §A2 one-off
                             "color: #556; font-size: 7px; padding: 0 3px; border-radius: 2px; }"
                             "QPushButton:hover { border-color: #adff2f; }"));
         m_agcAutoLabel->setFixedHeight(14);
@@ -687,6 +702,8 @@ void RxApplet::buildUi()
 
         // Second row: info sub-line (hidden by default)
         m_agcInfoLabel = new QLabel(m_agcTContainer);
+        // §A2 one-off: #33aa33 is NereusSDR-original AGC-info green (one location).
+        // Not in StyleConstants; distinct from kGreenBg/kGreenText. Kept as one-off.
         m_agcInfoLabel->setStyleSheet(QStringLiteral("color: #33aa33; font-size: 7px; padding: 0 2px;"));
         m_agcInfoLabel->hide();
         containerLayout->addWidget(m_agcInfoLabel);
@@ -859,8 +876,8 @@ void RxApplet::buildUi()
         if (dualAdc) {
             m_rx1PreampToggle = new QCheckBox(QStringLiteral("RX1 preamp"), this);
             m_rx1PreampToggle->setStyleSheet(QStringLiteral(
-                "QCheckBox { color: #8aa8c0; font-size: 10px; }"
-                "QCheckBox::indicator { width: 12px; height: 12px; }"));
+                "QCheckBox { color: %1; font-size: 10px; }"
+                "QCheckBox::indicator { width: 12px; height: 12px; }").arg(Style::kTitleText));
             // Phase 3P-B Task 10: RX1 preamp wires to P2RadioConnection::setRx1Preamp
             // which routes to CodecContext.p2Rx1Preamp → byte 1403 bit 1.
             connect(m_rx1PreampToggle, &QCheckBox::toggled, this, [this](bool on) {
@@ -1328,16 +1345,20 @@ void RxApplet::connectSlice(SliceModel* s)
                     " border-radius: 3px; font-size: 9px; font-weight: bold;"
                     " padding: 1px 4px; }"));
             } else if (level == OverloadLevel::Yellow) {
+                // §A2 one-off: #FFD700 is standard gold/yellow for ADC overload warning badge.
+                // kAmberWarn (#ddbb00) is darker; these are distinct intents.
                 badge->setStyleSheet(QStringLiteral(
                     "QLabel { background: rgba(255,200,0,0.20);"
-                    " color: #FFD700;"
+                    " color: #FFD700;"  // §A2 one-off overload warning gold
                     " border: 1px solid rgba(255,200,0,0.40);"
                     " border-radius: 3px; font-size: 9px; font-weight: bold;"
                     " padding: 1px 4px; }"));
             } else {  // Red
+                // §A2 one-off: #FF6868 is a soft red for ADC overload critical badge.
+                // kGaugeDanger (#ff4444) is more saturated; distinct intent.
                 badge->setStyleSheet(QStringLiteral(
                     "QLabel { background: rgba(255,90,90,0.25);"
-                    " color: #FF6868;"
+                    " color: #FF6868;"  // §A2 one-off overload critical soft-red
                     " border: 1px solid rgba(255,90,90,0.50);"
                     " border-radius: 3px; font-size: 9px; font-weight: bold;"
                     " padding: 1px 4px; }"));
@@ -1364,9 +1385,11 @@ void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double off
 
     if (autoOn) {
         // AUTO badge → bright green (active) — only the button illuminates
+        // §A2 one-offs: #1a2a1a (dark green bg), #adff2f (lime border+text), #2a3a2a (hover).
+        // NereusSDR-original active-AUTO palette; not in StyleConstants.
         if (m_agcAutoLabel) {
             m_agcAutoLabel->setStyleSheet(
-                QStringLiteral("QPushButton { background: #1a2a1a; border: 1px solid #adff2f;"
+                QStringLiteral("QPushButton { background: #1a2a1a; border: 1px solid #adff2f;"  // §A2 one-off
                                 "color: #adff2f; font-size: 7px; padding: 0 3px; border-radius: 2px; }"
                                 "QPushButton:hover { background: #2a3a2a; }"));
         }
@@ -1381,9 +1404,10 @@ void RxApplet::updateAgcAutoVisuals(bool autoOn, float noiseFloorDbm, double off
         }
     } else {
         // AUTO badge → dim gray (inactive)
+        // §A2 one-offs: same #1a1a1a/#445/#556/#adff2f as construction-time style; see above.
         if (m_agcAutoLabel) {
             m_agcAutoLabel->setStyleSheet(
-                QStringLiteral("QPushButton { background: #1a1a1a; border: 1px solid #445;"
+                QStringLiteral("QPushButton { background: #1a1a1a; border: 1px solid #445;"  // §A2 one-off
                                 "color: #556; font-size: 7px; padding: 0 3px; border-radius: 2px; }"
                                 "QPushButton:hover { border-color: #adff2f; }"));
         }
