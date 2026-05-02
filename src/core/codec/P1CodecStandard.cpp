@@ -240,7 +240,11 @@ void P1CodecStandard::bank11(const CodecContext& ctx, quint8 out[5]) const
                   | (!ctx.p1MicTipRing ? 0x10 : 0x00)    // mic_trs (inverted) — 3M-1b G.3
                   | (ctx.p1MicBias    ? 0x20 : 0x00)     // mic_bias (no inversion) — 3M-1b G.4
                   | (ctx.p1MicPTT     ? 0x40 : 0x00));   // mic_ptt (DIRECT — matches Thetis networkproto1.c:597-598 [v2.10.3.13])
-    out[2] = 0;
+    // C2: line_in_gain (low 5 bits) | puresignal_run (bit 6).
+    // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    out[2] = quint8((ctx.p1LineInGain & 0x1F)
+                  | (ctx.p1PuresignalRun ? 0x40 : 0x00));
     out[3] = 0;
     // canonical 5-bit ramdor encoding
     out[4] = quint8((ctx.rxStepAttn[0] & 0x1F) | 0x20);

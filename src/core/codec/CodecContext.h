@@ -212,6 +212,23 @@ struct CodecContext {
     // Populated by buildCodecContext() from RadioConnection::m_micPTT.
     bool    p1MicPTT{false};
 
+    // Mic line-in gain — prn->mic.line_in_gain, 5-bit (0-31).
+    // Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    // P1 wire: bank 11 C2 low 5 bits.
+    // P2 wire: byte 51 of CmdHighPriority (already plumbed via P2's m_mic.lineInGain).
+    int     p1LineInGain{0};
+
+    // PureSignal feedback running flag — prn->puresignal_run.
+    // Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    // P1 wire: bank 11 C2 bit 6.
+    // Distinct from BoardCapabilities.hasPureSignal (capability) and from
+    // TransmitModel::puresignalEnabled (user toggle) — this tracks whether
+    // the PureSignal feedback DDC routing is currently *active* on the wire.
+    // Wired in Task 2.5 to TransmitModel::puresignalEnabled until 3M-4 lights
+    // up the actual feedback DDC routing.
+    bool    p1PuresignalRun{false};
+
     // RX VFO frequency words (Hz, raw, no phase-word conversion on P1).
     quint64 rxFreqHz[7]{};
     quint64 txFreqHz{0};

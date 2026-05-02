@@ -58,6 +58,72 @@ private slots:
         QCOMPARE(int(out[0]), 0x14);
         QCOMPARE(int(out[1] & 0x40), 0x40);  // mic_ptt=true → bit 6 = 1
     }
+
+    // ── 3. C2 line_in_gain — 5-bit value lands in low 5 bits ────────────────
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    // P1 full-parity Task 1.2.
+    void c2_line_in_gain_in_low_5_bits() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.p1LineInGain = 0x17;  // 23 — fits in 5 bits
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[2] & 0x1F), 0x17);
+    }
+
+    // ── 4. C2 line_in_gain — high bits get masked off ───────────────────────
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ...
+    // P1 full-parity Task 1.2.
+    void c2_line_in_gain_masked_to_5_bits() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.p1LineInGain = 0x3F;  // 63 — high bit must be masked off
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[2] & 0x1F), 0x1F);
+    }
+
+    // ── 5. C2 puresignal_run=true → bit 6 SET ───────────────────────────────
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    //   C2 = ... | ((prn->puresignal_run & 1) << 6);
+    // P1 full-parity Task 1.2.
+    void c2_puresignal_run_sets_bit_6() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.p1PuresignalRun = true;
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[2] & 0x40), 0x40);
+    }
+
+    // ── 6. C2 puresignal_run default false → bit 6 CLEAR ────────────────────
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    // P1 full-parity Task 1.2.
+    void c2_puresignal_run_default_clears_bit_6() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        // p1PuresignalRun default = false
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[2] & 0x40), 0x00);
+    }
+
+    // ── 7. C2 combined line_in_gain + puresignal_run ────────────────────────
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    // 0x40 (puresignal bit 6) | 0x0F (line_in_gain low nibble) = 0x4F
+    // P1 full-parity Task 1.2.
+    void c2_combined_line_in_and_puresignal() {
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.p1LineInGain = 0x0F;
+        ctx.p1PuresignalRun = true;
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[2]), 0x4F);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestP1CodecStandardBank11Polarity)
