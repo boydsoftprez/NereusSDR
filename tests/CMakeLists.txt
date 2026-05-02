@@ -362,6 +362,15 @@ nereus_add_test(tst_transmit_model_mon)
 # no-op before loadFromSettings.
 nereus_add_test(tst_transmit_model_persistence)
 
+# ── P1 full-parity Task 2.4: TransmitModel lineInGain + userDigOut ───────────
+# Verifies the model→connection plumbing for line_in_gain (bank 11 C2 low 5
+# bits) and user_dig_out (bank 11 C3 low 4 bits): defaults, clamp/mask in
+# setters, signal emission, idempotent guard, AppSettings round-trip via
+# loadFromSettings + persistToSettings, and MicProfileManager bundle round-trip
+# via the Mic_LineInGain / Mic_UserDigOut bundle keys.
+# Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].
+nereus_add_test(tst_transmit_model_line_in_gain_user_dig_out)
+
 # ── Phase 3M-1c B.2: TransmitModel two-tone test properties (7x) ────────────
 # Verifies defaults, round-trip setters + signals, idempotent guards, and
 # range clamping for: TwoToneFreq1 / TwoToneFreq2 / TwoToneLevel /

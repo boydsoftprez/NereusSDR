@@ -369,6 +369,30 @@ void TransmitModel::setMicPttDisabled(bool disabled)
     emit micPttDisabledChanged(disabled);
 }
 
+// ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
+
+void TransmitModel::setLineInGain(int gain)
+{
+    // Clamp to bank 11 C2 low 5 bits per Thetis networkproto1.c:600 [v2.10.3.13]:
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ...
+    const int clamped = std::clamp(gain, 0, 31);
+    if (clamped == m_lineInGain) { return; }  // idempotent guard
+    m_lineInGain = clamped;
+    persistOne(QStringLiteral("LineInGain"), QString::number(m_lineInGain));  // L.2 auto-persist
+    emit lineInGainChanged(clamped);
+}
+
+void TransmitModel::setUserDigOut(int dig)
+{
+    // Mask to bank 11 C3 low 4 bits per Thetis networkproto1.c:601 [v2.10.3.13]:
+    //   C3 = prn->user_dig_out & 0b00001111;
+    const int masked = dig & 0x0F;
+    if (masked == m_userDigOut) { return; }  // idempotent guard
+    m_userDigOut = masked;
+    persistOne(QStringLiteral("UserDigOut"), QString::number(m_userDigOut));  // L.2 auto-persist
+    emit userDigOutChanged(masked);
+}
+
 // ── Per-band tune power (G.3) ─────────────────────────────────────────────
 
 int TransmitModel::tunePowerForBand(Band band) const
@@ -521,6 +545,17 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool micPttDisabled = s.value(pfx + QLatin1String("Mic_PTT_Disabled"),
                                          QStringLiteral("False")).toString() == QLatin1String("True");
     setMicPttDisabled(micPttDisabled);
+
+    // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
+    // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
+    //   line_in_gain default 0 (no line-in attenuation),
+    //   user_dig_out default 0 (all 4 user digital pins low).
+    const int lineInGain = s.value(pfx + QLatin1String("LineInGain"),
+                                     QStringLiteral("0")).toInt();
+    setLineInGain(lineInGain);
+    const int userDigOut = s.value(pfx + QLatin1String("UserDigOut"),
+                                     QStringLiteral("0")).toInt();
+    setUserDigOut(userDigOut);
 
     // ── VOX properties (voxEnabled NOT loaded — safety: always false) ─────
     const int voxThresholdDb = s.value(pfx + QLatin1String("Dexp_Threshold"),
@@ -717,6 +752,10 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("Mic_TipRing"),       m_micTipRing      ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("Mic_Bias"),          m_micBias         ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("Mic_PTT_Disabled"),   m_micPttDisabled  ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
+    s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));
+    s.setValue(pfx + QLatin1String("UserDigOut"),         QString::number(m_userDigOut));
 
     // ── VOX properties (voxEnabled excluded — safety) ────────────────────
     s.setValue(pfx + QLatin1String("Dexp_Threshold"),   QString::number(m_voxThresholdDb));

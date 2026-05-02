@@ -165,6 +165,8 @@ class TransmitModel : public QObject {
     Q_PROPERTY(int    power     READ power       WRITE setPower     NOTIFY powerChanged)
     Q_PROPERTY(float  micGain   READ micGain     WRITE setMicGain   NOTIFY micGainChanged)
     Q_PROPERTY(bool   pureSig   READ pureSigEnabled WRITE setPureSigEnabled NOTIFY pureSigChanged)
+    Q_PROPERTY(int  lineInGain READ lineInGain WRITE setLineInGain NOTIFY lineInGainChanged)
+    Q_PROPERTY(int  userDigOut READ userDigOut WRITE setUserDigOut NOTIFY userDigOutChanged)
 
 public:
     explicit TransmitModel(QObject* parent = nullptr);
@@ -383,6 +385,32 @@ public:
     ///   ... NetworkIO.SetMicPTT(Convert.ToInt32(value));
     /// Default FALSE: PTT enabled by default (sensible safety default).
     bool micPttDisabled() const noexcept { return m_micPttDisabled; }
+
+    // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
+    //
+    // These two fields are the model layer for the wire-bit setters added in
+    // Tasks 2.1 (setLineInGain) and 2.2 (setUserDigOut).  RadioModel wires
+    // lineInGainChanged / userDigOutChanged into the matching RadioConnection
+    // setters at connectToRadio time, plus an initial push so the first
+    // connection state matches model state without waiting for a user change.
+    //
+    // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    //     C3 = prn->user_dig_out & 0b00001111;
+    //
+    // Both clamp/mask at the model boundary so the stored state matches the
+    // wire byte 1:1.  user_dig_out is a P1/Penny-only feature with no P2
+    // wire equivalent (the P2 setter stores it for symmetric API only).
+
+    /// Line-in input gain.  Clamped to [0, 31].
+    /// Default 0 = no line-in attenuation.
+    int  lineInGain() const { return m_lineInGain; }
+
+    /// User digital outputs.  Masked to [0, 15] (low 4 bits).
+    /// Drives the 4 user-controllable digital pins on the Penny/Hermes
+    /// Ctrl accessory header.  Default 0 = all pins low.
+    int  userDigOut() const { return m_userDigOut; }
 
     // Line-in boost range constants.
     // From Thetis setup.designer.cs:46898-46907 [v2.10.3.13]:
@@ -1089,6 +1117,13 @@ public slots:
     void setMicBias(bool on);
     void setMicPttDisabled(bool disabled);
 
+    // ── line_in_gain + user_dig_out setters (Task 2.4) ──────────────────
+    /// Set line-in gain.  Clamped to [0, 31] (5 bits).
+    void setLineInGain(int gain);
+    /// Set user digital outputs.  Int parameter for Q_PROPERTY compatibility;
+    /// masked to [0, 15] (low 4 bits) at the use site.
+    void setUserDigOut(int dig);
+
     // ── Anti-VOX setters (3M-1b C.4) ─────────────────────────────────────────
     void setAntiVoxGainDb(int dB);
     void setAntiVoxSourceVax(bool useVax);
@@ -1141,6 +1176,10 @@ signals:
     void micTipRingChanged(bool tipIsMic);
     void micBiasChanged(bool on);
     void micPttDisabledChanged(bool disabled);
+
+    // ── line_in_gain + user_dig_out signals (Task 2.4) ──────────────────
+    void lineInGainChanged(int gain);
+    void userDigOutChanged(int dig);
 
     // ── Anti-VOX signals (3M-1b C.4) ─────────────────────────────────────────
     void antiVoxGainDbChanged(int dB);
@@ -1228,6 +1267,11 @@ private:
     bool   m_micTipRing     = true;   // setup.designer.cs:8683: radOrionMicTip.Checked=true
     bool   m_micBias        = false;  // setup.designer.cs:8779: radOrionBiasOff.Checked=true
     bool   m_micPttDisabled = false;  // console.cs:19757: mic_ptt_disabled = false
+
+    // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
+    // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].
+    int    m_lineInGain     = 0;      // bank 11 C2 low 5 bits, range [0, 31]
+    int    m_userDigOut     = 0;      // bank 11 C3 low 4 bits, range [0, 15]
 
     // ── Anti-VOX properties (3M-1b C.4) ──────────────────────────────────
     // From Thetis audio.cs:446-454 [v2.10.3.13] (antivox_source_VAC) and

@@ -2337,6 +2337,21 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         });
     }
 
+    // ── Task 2.4 of P1 full-parity epic: initial push of TransmitModel state ─
+    // Push lineInGain + userDigOut onto the connection BEFORE the first
+    // connectToRadio dispatch so the very first C&C frame carries the
+    // persisted model state instead of the connection-default 0/0.  Mirrors
+    // the setSampleRate / setReceiverFrequency push pattern above (FIFO order
+    // ensures these run before connectToRadio's sendCommandFrame).
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                              g = m_transmitModel.lineInGain()]() {
+        conn->setLineInGain(g);
+    });
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                              d = m_transmitModel.userDigOut()]() {
+        conn->setUserDigOut(quint8(d & 0x0F));
+    });
+
     // Now dispatch connectToRadio -- it will find the correct m_rxFreqHz[0]
     // and m_sampleRate when sendCommandFrame runs inside it.
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, info]() {
@@ -2533,6 +2548,29 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 m_moxController, &MoxController::onMicPttFromRadio,
                 Qt::QueuedConnection);
     }
+
+    // ── Task 2.4 of P1 full-parity epic: TransmitModel → RadioConnection ────
+    // Wire lineInGain + userDigOut model-layer signals to the wire-bit setters
+    // added in Tasks 2.1 and 2.2.  Both connection setters live on the worker
+    // thread, so cross-thread dispatch goes through Qt::QueuedConnection (or
+    // QMetaObject::invokeMethod for the int→quint8 adapter).
+    //
+    // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    //     C3 = prn->user_dig_out & 0b00001111;
+    //
+    // userDigOut needs the lambda because Q_PROPERTY(int) doesn't directly
+    // bind to setUserDigOut(quint8) — masked to low 4 bits at the bridge.
+    QObject::connect(&m_transmitModel, &TransmitModel::lineInGainChanged,
+                     m_connection, &RadioConnection::setLineInGain,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::userDigOutChanged, m_connection,
+                     [conn = m_connection](int d) {
+        QMetaObject::invokeMethod(conn, [conn, d]() {
+            conn->setUserDigOut(quint8(d & 0x0F));
+        });
+    });
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.
