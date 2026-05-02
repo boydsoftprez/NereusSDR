@@ -265,7 +265,7 @@ void SetupDialog::buildTree()
 
     // ── Transmit ──────────────────────────────────────────────────────────────
     QTreeWidgetItem* transmit = addCategory("Transmit");
-    add(transmit, "Power & PA",         new PowerPaPage(m_model));
+    add(transmit, "Power",              new PowerPage(m_model));
     add(transmit, "TX Profiles",        new TxProfilesPage(m_model));
 
     // SpeechProcessorPage is the TX dashboard (3M-3a-i Batch 5).  Its

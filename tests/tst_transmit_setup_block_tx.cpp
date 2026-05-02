@@ -31,7 +31,7 @@ private slots:
 
 void TestTransmitSetupBlockTx::blockTxAnt2_present_withNereusOriginalLabel()
 {
-    PowerPaPage page(/*model=*/nullptr);
+    PowerPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpBlockTxAntennas");
     QVERIFY(group);
 
@@ -46,7 +46,7 @@ void TestTransmitSetupBlockTx::blockTxAnt2_present_withNereusOriginalLabel()
 
 void TestTransmitSetupBlockTx::blockTxAnt3_present_withNereusOriginalLabel()
 {
-    PowerPaPage page(/*model=*/nullptr);
+    PowerPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpBlockTxAntennas");
     QVERIFY(group);
 
@@ -61,7 +61,7 @@ void TestTransmitSetupBlockTx::blockTxAnt3_present_withNereusOriginalLabel()
 
 void TestTransmitSetupBlockTx::chkHFTRRelay_present_withThetisTooltip()
 {
-    PowerPaPage page(/*model=*/nullptr);
+    PowerPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpHfPaControl");
     QVERIFY(group);
 

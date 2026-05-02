@@ -1372,7 +1372,9 @@ nereus_add_test(tst_tx_cfc_dialog)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_mon)
 
-# ── Phase 3M-1a H.4: PowerPaPage wiring — Max Power, per-band Tune Power, ATT-on-TX ──
+# ── Phase 3M-1a H.4: PowerPage wiring — Max Power, per-band Tune Power, ATT-on-TX ──
+# (class renamed from PowerPaPage in IA reshape Phase 6, 2026-05-02; test
+#  filename retains 'power_pa_page' for git history continuity)
 # Verifies Max Power slider ↔ TransmitModel::power(), per-band tune-power spinboxes
 # ↔ TransmitModel::tunePowerForBand(), chkATTOnTX and chkForceATTwhenPSAoff widget
 # existence + null-controller guards.

@@ -76,15 +76,16 @@ class QPushButton;
 namespace NereusSDR {
 
 // ---------------------------------------------------------------------------
-// Transmit > Power & PA
-// Corresponds to Thetis setup.cs PA / Power tab.
+// Transmit > Power
+// Corresponds to Thetis setup.cs Power tab (PA-specific groups live under
+// the new top-level PA category — IA reshape Phase 2 / Phase 6, 2026-05-02).
 // Phase 3M-1a H.4: Max Power, per-band Tune Power, ATT-on-TX, and
 // ForceATTwhenPSAoff are wired. Other sections deferred to later phases.
 // ---------------------------------------------------------------------------
-class PowerPaPage : public SetupPage {
+class PowerPage : public SetupPage {
     Q_OBJECT
 public:
-    explicit PowerPaPage(RadioModel* model, QWidget* parent = nullptr);
+    explicit PowerPage(RadioModel* model, QWidget* parent = nullptr);
 
 private:
     void buildUI();
@@ -101,7 +102,7 @@ private:
 
     // Section: ATT-on-TX (H.4 — wired)
     // chkATTOnTX — Thetis setup.designer.cs:5926-5939 [v2.10.3.13] (tpAlexAntCtrl).
-    // NereusSDR places it in Power & PA (better thematic grouping).
+    // NereusSDR places it in Power (better thematic grouping).
     QCheckBox* m_chkAttOnTx{nullptr};
 
     // ForceATTwhenPSAoff — Thetis setup.designer.cs:5660-5671 [v2.10.3.13].
@@ -117,10 +118,6 @@ private:
     // (Phase 3L extension) have no TX power slot — TX is HF-only on HL2.
     static constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
     std::array<QSpinBox*, kBandCount> m_tunePwrSpins{};
-
-    // Section: PA
-    QLabel*    m_perBandGainLabel{nullptr};    // placeholder: future table
-    QComboBox* m_fanControlCombo{nullptr};     // Off/Low/Med/High/Auto
 
     // Section: SWR Protection (Task 9)
     // grpSWRProtectionControl per setup.designer.cs:5793-5924 [v2.10.3.13]
