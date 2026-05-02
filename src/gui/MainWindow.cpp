@@ -672,6 +672,7 @@ MainWindow::MainWindow(QWidget* parent)
         // Same flush as closeEvent — covers the signal-shutdown path
         // (SIGTERM, force-quit, debugger detach) where closeEvent
         // doesn't run. Idempotent when closeEvent already flushed.
+        m_shuttingDown = true;
         if (m_radioModel) {
             m_radioModel->flushPendingSettingsSave();
         }
@@ -4113,10 +4114,14 @@ void MainWindow::onConnectionStateChanged()
         // Phase 3Q Task 5 — auto-open: on disconnect (after having been connected),
         // open the ConnectionPanel so the user can reconnect.
         // Guard: m_autoReconnectInProgress suppresses the panel during background
-        // auto-reconnect (Task 17), and the very first state read at startup is
-        // Disconnected which should not open the panel.
+        // auto-reconnect (Task 17); m_shuttingDown suppresses it during ⌘Q so
+        // ConnectionPanel's ctor doesn't restart discovery mid-close (would
+        // beach-ball the close path for the full SafeDefault scan window — see
+        // [shutdown-trace] log analysis 2026-05-02). The very first state read
+        // at startup is Disconnected which should not open the panel either —
+        // the radio-name check below handles that case.
         // The panel itself is non-modal (show/raise), matching the current pattern.
-        if (!m_autoReconnectInProgress) {
+        if (!m_autoReconnectInProgress && !m_shuttingDown) {
             // Only open if we were previously connected (transition from Connected,
             // not the initial Disconnected state at startup). We detect this by
             // checking if the model has ever reported a radio name — set on connect.
@@ -4460,6 +4465,11 @@ void MainWindow::checkVaxFirstRun()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    // Mark shutting-down BEFORE anything else so the "auto-open
+    // ConnectionPanel on Disconnect" slot below doesn't re-trigger
+    // discovery via ConnectionPanel's ctor while teardown runs.
+    m_shuttingDown = true;
+
     // Force-run any pending coalesced slice save BEFORE we tear anything
     // down. The 500 ms debounce in RadioModel::scheduleSettingsSave can't
     // fire while this handler runs synchronously (event loop blocked on

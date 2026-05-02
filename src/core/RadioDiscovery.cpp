@@ -153,6 +153,7 @@ void RadioDiscovery::startDiscovery()
     // main's cross-platform socket header fix (b3c2961) is preserved at
     // the top of this file, which is what scanAllNics() needs when it
     // does its own setsockopt(SO_BROADCAST) per NIC.
+    m_stopRequested.store(false, std::memory_order_release);
     emit discoveryStarted();
     scanAllNics();                              // one-shot NIC walk
     if (!m_staleTimer.isActive()) {
@@ -165,6 +166,14 @@ void RadioDiscovery::startDiscovery()
 
 void RadioDiscovery::stopDiscovery()
 {
+    // Cooperative cancel for any scanAllNics() currently in flight (or
+    // queued via a recently-fired m_staleTimer). Without this flip the
+    // SafeDefault profile blocks shutdown for ~4.5 s on a 2-NIC machine
+    // while the scan completes its attempts × pollTimeoutMs walk; with
+    // it the scan exits within one pollTimeoutMs window. m_staleTimer.stop()
+    // alone isn't enough — already-queued QTimer events still execute
+    // after the close path returns to the event loop.
+    m_stopRequested.store(true, std::memory_order_release);
     m_staleTimer.stop();
     emit discoveryFinished();
 }
@@ -361,6 +370,12 @@ void RadioDiscovery::scanAllNics()
 
     const auto interfaces = QNetworkInterface::allInterfaces();
     for (const QNetworkInterface& iface : interfaces) {
+        // Cooperative cancel — see stopDiscovery(). Bail before touching
+        // a new NIC if a shutdown was requested. (Inner loop also checks.)
+        if (m_stopRequested.load(std::memory_order_acquire)) {
+            return;
+        }
+
         // From Thetis isNicCandidate(): Up/Running, not loopback
         if (!(iface.flags() & QNetworkInterface::IsUp)
             || !(iface.flags() & QNetworkInterface::IsRunning)
@@ -422,6 +437,13 @@ void RadioDiscovery::scanAllNics()
 
             int quietPolls = 0;
             while (quietPolls < quietBeforeStop) {
+                // Cooperative cancel — see stopDiscovery(). Checked after
+                // each waitForReadyRead window so shutdown latency is at
+                // most one pollTimeoutMs (~150 ms on SafeDefault).
+                if (m_stopRequested.load(std::memory_order_acquire)) {
+                    sock.close();
+                    return;
+                }
                 // From Thetis: s.Poll(pollMs * 1000, SelectMode.SelectRead)
                 bool readable = sock.waitForReadyRead(pollMs);
                 if (!readable) {
