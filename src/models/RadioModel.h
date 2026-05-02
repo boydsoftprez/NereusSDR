@@ -380,6 +380,10 @@ public:
     // state handler, and override board capabilities. Production code
     // must never use these.
     void injectConnectionForTest(RadioConnection* conn) { m_connection = conn; }
+    // B6 — XIT: allow tests to trigger wireSliceSignals() directly after
+    // injecting a mock connection, mirroring what wireConnectionSignals() does
+    // when a real radio connects.
+    void wireSliceSignalsForTest() { wireSliceSignals(); }
     void setLastBandForTest(NereusSDR::Band b) {
         const bool cross = (b != m_lastBand);
         m_lastBand = b;

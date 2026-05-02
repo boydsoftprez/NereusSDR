@@ -2512,11 +2512,14 @@ void RadioModel::wireSliceSignals()
         if (rxIdx >= 0) {
             m_receiverManager->setReceiverFrequency(rxIdx, static_cast<quint64>(freq));
         }
-        // TX follows RX (simplex)
+        // TX follows RX (simplex), with XIT offset applied.
+        // XIT offsets the TX NCO without moving the RX DDC — mirroring Thetis
+        // console.cs VFO_Pots pattern where chkXIT shifts only the TX frequency.
         if (m_connection) {
-            quint64 freqHz = static_cast<quint64>(freq);
-            QMetaObject::invokeMethod(m_connection, [conn = m_connection, freqHz]() {
-                conn->setTxFrequency(freqHz);
+            const qint64 xitOffset = slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
+            const quint64 txFreqHz = static_cast<quint64>(static_cast<qint64>(freq) + xitOffset);
+            QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
+                conn->setTxFrequency(txFreqHz);
             });
         }
         // Track band from VFO frequency so per-band saves target the correct
@@ -3118,6 +3121,21 @@ void RadioModel::wireSliceSignals()
     connect(slice, &SliceModel::diguOffsetHzChanged, this, updateShiftFrequency);
     connect(slice, &SliceModel::dspModeChanged,      this, updateShiftFrequency);
 
+    // XIT change → push updated TX frequency (offset from current VFO freq).
+    // Parallel to the RIT updateShiftFrequency pattern above: when XIT state
+    // changes, recompute and push the new TX NCO frequency.  The VFO frequency
+    // itself does not change — only the TX NCO offset.
+    auto updateTxFrequency = [this, slice]() {
+        if (!m_connection) { return; }
+        const qint64 xitOffset = slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
+        const quint64 txFreqHz = static_cast<quint64>(static_cast<qint64>(slice->frequency()) + xitOffset);
+        QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
+            conn->setTxFrequency(txFreqHz);
+        });
+    };
+    connect(slice, &SliceModel::xitEnabledChanged, this, updateTxFrequency);
+    connect(slice, &SliceModel::xitHzChanged,      this, updateTxFrequency);
+
     // RTTY mark + shift → bandpass filter
     //
     // RTTY uses two audio tones: mark (freq1 = 2295 Hz) and space (freq0 = 2125 Hz).
@@ -3199,7 +3217,9 @@ void RadioModel::wireSliceSignals()
         scheduleSettingsSave();
     });
 
-    // Send initial frequency to radio (after connection init completes)
+    // Send initial frequency to radio (after connection init completes).
+    // XIT offset applied here too so on-connect TX NCO matches the stored
+    // XIT state without needing a separate update trigger.
     QTimer::singleShot(100, this, [this, slice]() {
         if (m_connection && m_connection->isConnected()) {
             int rxIdx = slice->receiverIndex();
@@ -3207,8 +3227,10 @@ void RadioModel::wireSliceSignals()
             if (rxIdx >= 0) {
                 m_receiverManager->setReceiverFrequency(rxIdx, freqHz);
             }
-            QMetaObject::invokeMethod(m_connection, [conn = m_connection, freqHz]() {
-                conn->setTxFrequency(freqHz);
+            const qint64 xitOffset = slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
+            const quint64 txFreqHz = static_cast<quint64>(static_cast<qint64>(freqHz) + xitOffset);
+            QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
+                conn->setTxFrequency(txFreqHz);
             });
         }
     });

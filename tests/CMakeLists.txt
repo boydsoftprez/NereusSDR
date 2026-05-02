@@ -2592,3 +2592,12 @@ nereus_add_test(tst_applet_panel_gutter)
 # labels() round-trip. Uses actual BoardCapabilities + SkuUiProfile flags.
 # Per docs/superpowers/plans/2026-05-01-ui-polish-cross-surface.md §B3.
 nereus_add_test(tst_antenna_popup_builder)
+
+# ── UI Polish Foundation B6: XIT offset application in RadioModel ────────────
+# TDD: verifies that wireSliceSignals() applies xitHz to setTxFrequency,
+# mirroring the Thetis chkXIT TX NCO shift pattern.
+# 5 tests: disabled XIT no shift, enabled+Hz shift, enable/disable toggle,
+# negative offset subtracts, zero offset sends base freq.
+# Per docs/superpowers/plans/2026-05-01-ui-polish-cross-surface.md §B6.
+nereus_add_test(tst_xit_offset_application)
+target_compile_definitions(tst_xit_offset_application PRIVATE NEREUS_BUILD_TESTS)
