@@ -333,7 +333,7 @@ static inline QString vfoDspToggleStyle()
 {
     return QStringLiteral(
         "QPushButton {"
-        "  background: %1; border: 1px solid #304050;"
+        "  background: %1; border: 1px solid %6;"
         "  border-radius: 2px; color: %2;"
         "  font-size: 13px; font-weight: bold;"
         "  padding: 2px 4px; min-width: 32px;"
@@ -349,7 +349,8 @@ static inline QString vfoDspToggleStyle()
           NereusSDR::Style::kTextPrimary,
           NereusSDR::Style::kDspToggleBg,
           NereusSDR::Style::kDspToggleBorder,
-          NereusSDR::Style::kBlueBorder);
+          NereusSDR::Style::kBlueBorder,
+          NereusSDR::Style::kOverlayBorder);
 }
 
 // Mode/filter preset buttons (13px, border-change hover, blue :checked).
@@ -360,7 +361,7 @@ static inline QString vfoModeBtnStyle()
 {
     return QStringLiteral(
         "QPushButton {"
-        "  background: %1; border: 1px solid #304050; border-radius: 2px;"
+        "  background: %1; border: 1px solid %6; border-radius: 2px;"
         "  color: %2; font-size: 13px; font-weight: bold; padding: 3px;"
         "}"
         "QPushButton:checked {"
@@ -371,7 +372,8 @@ static inline QString vfoModeBtnStyle()
           NereusSDR::Style::kTextPrimary,
           NereusSDR::Style::kBlueBg,
           NereusSDR::Style::kBlueText,
-          NereusSDR::Style::kBlueBorder);
+          NereusSDR::Style::kBlueBorder,
+          NereusSDR::Style::kOverlayBorder);
 }
 
 // ---- Construction ----
