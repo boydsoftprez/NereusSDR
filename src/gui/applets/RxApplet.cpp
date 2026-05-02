@@ -511,17 +511,8 @@ void RxApplet::buildUi()
         row->addWidget(m_muteBtn);
         NyiOverlay::markNyi(m_muteBtn, QStringLiteral("Phase 3I"));
 
-        // Control 11: AF gain slider (Tier 1 wired → SliceModel::setAfGain())
-        m_afSlider = new QSlider(Qt::Horizontal, this);
-        m_afSlider->setRange(0, 100);
-        m_afSlider->setValue(50);
-        m_afSlider->setFixedHeight(18);
-        m_afSlider->setStyleSheet(Style::sliderHStyle());
-        connect(m_afSlider, &QSlider::valueChanged, this, [this](int v) {
-            if (m_updatingFromModel || !m_slice) { return; }
-            m_slice->setAfGain(v);
-        });
-        row->addWidget(m_afSlider, 1);
+        // AF gain slider removed: TitleBar master volume + VfoWidget per-slice
+        // AF control are the canonical 2 surfaces (§B4 ui-polish-cross-surface).
 
         rightCol->addLayout(row);
     }
@@ -943,8 +934,7 @@ void RxApplet::buildUi()
     m_modeCombo->setToolTip(QStringLiteral("Select operating mode"));
     // From Thetis console.resx:1560 — chkRX2Mute.ToolTip (same text for RX1)
     m_muteBtn->setToolTip(QStringLiteral("Mute - Mutes the output to the speaker."));
-    // From Thetis console.resx:8433 — ptbAF.ToolTip
-    m_afSlider->setToolTip(QStringLiteral("AF Gain - Monitor Volume for RX/TX"));
+    // m_afSlider removed in §B4 — TitleBar master + VfoWidget AF are the 2 surfaces.
     // From Thetis console.resx:4554 — comboAGC.ToolTip
     m_agcCombo->setToolTip(QStringLiteral("Automatic Gain Control Mode Setting"));
     // From Thetis console.resx:8397 — ptbRF.ToolTip (ptbRF is the AGC-T slider)
@@ -1136,8 +1126,7 @@ void RxApplet::syncFromModel()
         }
     }
 
-    // AF gain slider
-    m_afSlider->setValue(m_slice->afGain());
+    // AF gain slider removed — see §B4.
 
     // Antenna buttons
     m_rxAntBtn->setText(m_slice->rxAntenna());
@@ -1204,12 +1193,7 @@ void RxApplet::connectSlice(SliceModel* s)
         m_updatingFromModel = false;
     });
 
-    // AF gain change → update slider
-    connect(s, &SliceModel::afGainChanged, this, [this](int gain) {
-        m_updatingFromModel = true;
-        m_afSlider->setValue(gain);
-        m_updatingFromModel = false;
-    });
+    // AF gain slider removed from RxApplet (§B4) — signal handled by VfoWidget.
 
     // Filter change → update label + buttons + passband widget
     connect(s, &SliceModel::filterChanged, this, [this](int lo, int hi) {

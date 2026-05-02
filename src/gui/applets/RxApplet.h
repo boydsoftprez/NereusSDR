@@ -283,9 +283,8 @@ private:
     FilterPassbandWidget* m_filterPassband = nullptr;
 
     // ── Right column ──────────────────────────────────────────────────────
-    // Controls 11 + 12: Mute + AF gain
-    QPushButton* m_muteBtn     = nullptr;   // Control 12
-    QSlider*     m_afSlider    = nullptr;   // Control 11
+    // Control 12: Mute (AF gain removed §B4 — TitleBar + VfoWidget cover it)
+    QPushButton* m_muteBtn     = nullptr;
 
     // Control 13: Audio pan
     QSlider*     m_panSlider   = nullptr;
