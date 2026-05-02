@@ -278,9 +278,7 @@ QHBoxLayout* SetupPage::addLabeledSpinner(QLayout* parent, const QString& label,
 
 QHBoxLayout* SetupPage::addLabeledEdit(QLayout* parent, const QString& label, QLineEdit* edit)
 {
-    edit->setStyleSheet(
-        "QLineEdit { background: #1a2a3a; border: 1px solid #304050; "
-        "border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }");
+    edit->setStyleSheet(Style::kLineEditStyle);
     return makeLabeledRow(parent, label, edit);
 }
 
