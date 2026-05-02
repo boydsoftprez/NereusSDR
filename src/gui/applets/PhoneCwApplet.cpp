@@ -104,6 +104,24 @@ static const QString kNyiProc   = QStringLiteral("Phase 3I-3");
 static const QString kNyiVax    = QStringLiteral("Phase 3-VAX");
 static const QString kNyiFm     = QStringLiteral("Phase 3I-1");
 
+// Phone/CW-specific button background — bluer (#1a3a5a) than the
+// canonical kButtonBg (#1a2a3a) used by Style::buttonBaseStyle().
+// Retained as a tightly-scoped file-local exception per
+// docs/architecture/ui-audit-polish-plan.md §A2: "tightly-scoped local
+// blocks for legitimate exceptions." The Phone/CW applet's bluer button
+// theming is intentional visual differentiation; the canonical helper
+// would flatten it (also adds padding: 2px 4px which the original lacked).
+static inline QString phoneButtonStyle()
+{
+    return QStringLiteral(
+        "QPushButton { background: #1a3a5a; border: 1px solid %1;"
+        "  border-radius: 3px; color: %2; font-size: 10px; font-weight: bold; }"
+        "QPushButton:hover { background: %3; }"
+    ).arg(NereusSDR::Style::kBorder,
+          NereusSDR::Style::kTextPrimary,
+          NereusSDR::Style::kButtonAltHover);
+}
+
 // CTCSS tones (standard 38-tone list from Thetis setup.cs)
 static const QStringList kCtcssTones = {
     QStringLiteral("67.0"),  QStringLiteral("71.9"),  QStringLiteral("74.4"),
@@ -158,7 +176,7 @@ void PhoneCwApplet::buildUI()
         m_phoneTabBtn->setChecked(true);
         m_phoneTabBtn->setFixedHeight(20);
         m_phoneTabBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_phoneTabBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_phoneTabBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_tabGroup->addButton(m_phoneTabBtn, 0);
         tabRow->addWidget(m_phoneTabBtn);
 
@@ -166,7 +184,7 @@ void PhoneCwApplet::buildUI()
         m_cwTabBtn->setCheckable(true);
         m_cwTabBtn->setFixedHeight(20);
         m_cwTabBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_cwTabBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_cwTabBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_tabGroup->addButton(m_cwTabBtn, 1);
         tabRow->addWidget(m_cwTabBtn);
 
@@ -293,7 +311,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_accBtn->setCheckable(true);
         m_accBtn->setFixedWidth(48);
         m_accBtn->setFixedHeight(22);
-        m_accBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_accBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_accBtn->setAccessibleName(QStringLiteral("Accessory mic input"));
         row->addWidget(m_accBtn);
 
@@ -312,7 +330,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_procBtn->setCheckable(true);
         m_procBtn->setFixedWidth(48);
         m_procBtn->setFixedHeight(22);
-        m_procBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_procBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_procBtn->setAccessibleName(QStringLiteral("Speech processor"));
         m_procBtn->setObjectName(QStringLiteral("PhoneCwProcButton"));
         m_procBtn->setToolTip(QStringLiteral(
@@ -329,9 +347,8 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         procVbox->setContentsMargins(0, 0, 0, 0);
         procVbox->setSpacing(0);
 
-        // Numeric value label, right-aligned, same style family as the
-        // tick labels we just retired (8px kTextPrimary, consistent
-        // with adjacent slider areas).
+        // Numeric value label, right-aligned: 8px kTextPrimary — compact
+        // value readout matching adjacent slider tick labels.
         m_procValueLabel = new QLabel(QStringLiteral("0 dB"), procGroup);
         m_procValueLabel->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 8px; }").arg(NereusSDR::Style::kTextPrimary));
         m_procValueLabel->setAlignment(Qt::AlignRight | Qt::AlignBottom);
@@ -360,7 +377,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_vaxBtn->setCheckable(true);
         m_vaxBtn->setFixedWidth(48);
         m_vaxBtn->setFixedHeight(22);
-        m_vaxBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_vaxBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_vaxBtn->setAccessibleName(QStringLiteral("VAX digital audio"));
         row->addWidget(m_vaxBtn);
 
@@ -376,7 +393,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_monBtn->setCheckable(true);
         m_monBtn->setFixedWidth(48);
         m_monBtn->setFixedHeight(22);
-        m_monBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_monBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_monBtn->setAccessibleName(QStringLiteral("TX monitor"));
         row->addWidget(m_monBtn);
 
@@ -411,7 +428,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_voxBtn->setCheckable(true);
         m_voxBtn->setFixedWidth(36);
         m_voxBtn->setFixedHeight(22);
-        m_voxBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_voxBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_voxBtn->setAccessibleName(QStringLiteral("VOX voice-operated transmit"));
         row->addWidget(m_voxBtn);
 
@@ -453,7 +470,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_dexpBtn->setCheckable(true);
         m_dexpBtn->setFixedWidth(48);
         m_dexpBtn->setFixedHeight(22);
-        m_dexpBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_dexpBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_dexpBtn->setAccessibleName(QStringLiteral("Downward expander / noise gate"));
         row->addWidget(m_dexpBtn);
 
@@ -691,7 +708,7 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         m_sidetoneBtn->setCheckable(true);
         m_sidetoneBtn->setFixedHeight(22);
         m_sidetoneBtn->setFixedWidth(kLeftColW);
-        m_sidetoneBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_sidetoneBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_sidetoneBtn->setAccessibleName(QStringLiteral("CW sidetone"));
         row->addWidget(m_sidetoneBtn);
 
@@ -723,7 +740,7 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         m_breakinBtn->setCheckable(true);
         m_breakinBtn->setFixedHeight(22);
         m_breakinBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_breakinBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_breakinBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_breakinBtn->setAccessibleName(QStringLiteral("CW break-in / QSK"));
         row->addWidget(m_breakinBtn, 1);
 
@@ -732,7 +749,7 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         m_iambicBtn->setCheckable(true);
         m_iambicBtn->setFixedHeight(22);
         m_iambicBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_iambicBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_iambicBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_iambicBtn->setAccessibleName(QStringLiteral("Iambic paddle keyer"));
         row->addWidget(m_iambicBtn, 1);
 
@@ -741,7 +758,7 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         m_fwKeyerBtn->setCheckable(true);
         m_fwKeyerBtn->setFixedHeight(22);
         m_fwKeyerBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_fwKeyerBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_fwKeyerBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_fwKeyerBtn->setAccessibleName(QStringLiteral("Firmware CW keyer"));
         row->addWidget(m_fwKeyerBtn, 1);
 
@@ -834,7 +851,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_dev5kBtn->setChecked(true);
         m_dev5kBtn->setFixedHeight(22);
         m_dev5kBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_dev5kBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_dev5kBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_dev5kBtn->setAccessibleName(QStringLiteral("5 kHz deviation"));
         row->addWidget(m_dev5kBtn, 1);
 
@@ -842,7 +859,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_dev25kBtn->setCheckable(true);
         m_dev25kBtn->setFixedHeight(22);
         m_dev25kBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_dev25kBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_dev25kBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_dev25kBtn->setAccessibleName(QStringLiteral("2.5 kHz deviation (narrow FM)"));
         row->addWidget(m_dev25kBtn, 1);
 
@@ -859,7 +876,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_ctcssBtn->setCheckable(true);
         m_ctcssBtn->setFixedHeight(22);
         m_ctcssBtn->setFixedWidth(52);
-        m_ctcssBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_ctcssBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_ctcssBtn->setAccessibleName(QStringLiteral("CTCSS sub-audible tone squelch"));
         row->addWidget(m_ctcssBtn);
 
@@ -880,7 +897,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_simplexBtn = new QPushButton(QStringLiteral("Simplex"), page);
         m_simplexBtn->setCheckable(true);
         m_simplexBtn->setFixedHeight(22);
-        m_simplexBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::greenCheckedStyle());
+        m_simplexBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_simplexBtn->setAccessibleName(QStringLiteral("Simplex (no repeater offset)"));
         row->addWidget(m_simplexBtn);
         row->addStretch();
@@ -930,7 +947,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_offsetMinusBtn->setCheckable(true);
         m_offsetMinusBtn->setFixedHeight(22);
         m_offsetMinusBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_offsetMinusBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_offsetMinusBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_offsetMinusBtn->setAccessibleName(QStringLiteral("Negative repeater offset"));
         row->addWidget(m_offsetMinusBtn, 1);
 
@@ -938,7 +955,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_offsetPlusBtn->setCheckable(true);
         m_offsetPlusBtn->setFixedHeight(22);
         m_offsetPlusBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_offsetPlusBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_offsetPlusBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_offsetPlusBtn->setAccessibleName(QStringLiteral("Positive repeater offset"));
         row->addWidget(m_offsetPlusBtn, 1);
 
@@ -946,7 +963,7 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
         m_offsetRevBtn->setCheckable(true);
         m_offsetRevBtn->setFixedHeight(22);
         m_offsetRevBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_offsetRevBtn->setStyleSheet(NereusSDR::Style::buttonBaseStyle() + NereusSDR::Style::blueCheckedStyle());
+        m_offsetRevBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::blueCheckedStyle());
         m_offsetRevBtn->setAccessibleName(QStringLiteral("Reverse repeater offset"));
         row->addWidget(m_offsetRevBtn, 1);
 
@@ -994,13 +1011,13 @@ void PhoneCwApplet::buildFmPage(QWidget* page)
 
         m_fmMemPrev = new QPushButton(QStringLiteral("\u25c4"), page);
         m_fmMemPrev->setFixedSize(22, 22);
-        m_fmMemPrev->setStyleSheet(NereusSDR::Style::buttonBaseStyle());
+        m_fmMemPrev->setStyleSheet(phoneButtonStyle());
         m_fmMemPrev->setAccessibleName(QStringLiteral("Previous FM memory"));
         row->addWidget(m_fmMemPrev);
 
         m_fmMemNext = new QPushButton(QStringLiteral("\u25ba"), page);
         m_fmMemNext->setFixedSize(22, 22);
-        m_fmMemNext->setStyleSheet(NereusSDR::Style::buttonBaseStyle());
+        m_fmMemNext->setStyleSheet(phoneButtonStyle());
         m_fmMemNext->setAccessibleName(QStringLiteral("Next FM memory"));
         row->addWidget(m_fmMemNext);
 
