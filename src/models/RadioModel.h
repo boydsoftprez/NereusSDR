@@ -646,6 +646,23 @@ signals:
     // Subscribers should uncheck the TUN button and display `reason` to the user.
     void tuneRefused(const QString& reason);
 
+    // ── Plan 4 D8: per-profile TX filter relay signal ─────────────────────────
+    //
+    // Intermediate signal that carries the 3-arg filter request (audio Hz + mode)
+    // from the main-thread lambda (subscribed to TransmitModel::filterChanged)
+    // across to TxChannel::requestFilterChange on the audio thread.
+    //
+    // TransmitModel lives on the main thread; TxChannel lives on TxWorkerThread
+    // after RadioModel's moveToThread call.  A direct lambda-connect from
+    // TransmitModel::filterChanged → m_txChannel lambda would fire on the main
+    // thread (because TransmitModel is the sender and its thread is main).
+    // Routing through this intermediate signal ensures Qt auto-connection
+    // selects QueuedConnection for TxChannel::requestFilterChange, which runs
+    // the slot on TxWorkerThread where the debounce timer is live.
+    //
+    // NereusSDR-original glue (no Thetis equivalent needed).
+    void txFilterRequest(int audioLowHz, int audioHighHz, NereusSDR::DSPMode mode);
+
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
 

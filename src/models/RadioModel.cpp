@@ -2162,6 +2162,28 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 });
             }
 
+            // Plan 4 D8: per-profile TX filter → WDSP via 50 ms debounce.
+            //
+            // TransmitModel lives on the main thread; TxChannel lives on
+            // TxWorkerThread (moved below).  We route through the intermediate
+            // RadioModel::txFilterRequest signal so Qt auto-connection selects
+            // QueuedConnection for TxChannel::requestFilterChange — ensuring the
+            // debounce timer and WDSP call execute on the audio thread.
+            //
+            // Step 1: main-thread lambda captures active slice DSP mode and
+            //         re-emits as txFilterRequest(low, high, mode).
+            connect(&m_transmitModel, &TransmitModel::filterChanged,
+                    this, [this](int audioLow, int audioHigh) {
+                DSPMode mode = m_activeSlice ? m_activeSlice->dspMode()
+                                             : DSPMode::USB;
+                emit txFilterRequest(audioLow, audioHigh, mode);
+            });
+            // Step 2: txFilterRequest (main thread sender) → requestFilterChange
+            //         (audio thread slot).  Auto-connection becomes QueuedConnection
+            //         after moveToThread below.
+            connect(this, &RadioModel::txFilterRequest,
+                    m_txChannel, &TxChannel::requestFilterChange);
+
             // Initial sync — push current TransmitModel state (loaded by
             // loadFromSettings at line 1106) into TxChannel before the worker
             // thread takes over.  Runs on the main thread; subsequent setter
