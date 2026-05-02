@@ -1248,12 +1248,14 @@ void VfoWidget::buildModeTab()
         // rather than a combo box. No single Thetis control has an equivalent tooltip.
         m_modeCmb->setToolTip(QStringLiteral("Select demodulation mode"));
         // From Thetis enums.cs DSPMode — common modes
+        // 11 modes — parity with RxApplet; order follows Thetis enums.cs DSPMode enum
         m_modeCmb->addItems({
             QStringLiteral("LSB"), QStringLiteral("USB"),
             QStringLiteral("AM"), QStringLiteral("CWL"),
             QStringLiteral("CWU"), QStringLiteral("FM"),
             QStringLiteral("DIGU"), QStringLiteral("DIGL"),
-            QStringLiteral("SAM")
+            QStringLiteral("SAM"), QStringLiteral("DSB"),
+            QStringLiteral("DRM")
         });
         m_modeCmb->setCurrentText(QStringLiteral("USB"));
         m_modeCmb->setStyleSheet(
@@ -1537,6 +1539,15 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
                    {"1.0K",-(o+500),-(o-500)}, {"600",-(o+300),-(o-300)}};
         break;
     }
+    case DSPMode::DSB:
+        // From Thetis console.cs:5527-5575 [v2.10.3.13] (DSB F1-F10) — symmetric passband
+        presets = {{"10K",-5000,5000}, {"8.0K",-4000,4000}, {"6.6K",-3300,3300},
+                   {"5.0K",-2500,2500}, {"4.0K",-2000,2000}};
+        break;
+    case DSPMode::DRM:
+        // DRM requires a wide ~10 kHz channel; offer standard DRM widths
+        presets = {{"20K",-10000,10000}, {"10K",-5000,5000}};
+        break;
     default:
         presets = {{"10K",-5000,5000}, {"6.0K",-3000,3000}};
         break;
