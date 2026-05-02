@@ -165,8 +165,8 @@ class SliceModel;
 //  8.  FilterPassband widget (ported from AetherSDR, Tier 1 wired)
 //  9.  AGC combo (Tier 1 wired)
 //  10. AGC threshold slider (NYI — setAgcThreshold not in SliceModel yet)
-//  11. AF gain slider (Tier 1 wired)
-//  12. Mute button (NYI — setMuted not in SliceModel yet)
+//  11. AF gain slider (removed §B4 — TitleBar + VfoWidget cover it)
+//  12. Mute button (removed §B4 bench review — VfoWidget + TitleBar are the 2 surfaces)
 //  13. Audio pan slider (NYI)
 //  14. Squelch toggle + slider (NYI)
 //  15. RIT toggle + offset + zero (NYI)
@@ -283,9 +283,7 @@ private:
     FilterPassbandWidget* m_filterPassband = nullptr;
 
     // ── Right column ──────────────────────────────────────────────────────
-    // Control 12: Mute (AF gain removed §B4 — TitleBar + VfoWidget cover it)
-    QPushButton* m_muteBtn     = nullptr;
-
+    // Mute button removed §B4 bench review — VfoWidget + TitleBar are the 2 surfaces.
     // Control 13: Audio pan
     QSlider*     m_panSlider   = nullptr;
 

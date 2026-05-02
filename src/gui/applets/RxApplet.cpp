@@ -484,37 +484,11 @@ void RxApplet::buildUi()
     auto* rightCol = new QVBoxLayout;
     rightCol->setSpacing(2);
 
-    // Controls 11 + 12: Mute + AF gain slider
-    // From AetherSDR RxApplet.cpp lines 654-683
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        // Control 12: Mute button (18×18, emoji 🔊/🔇)
-        // Wired to SliceModel::setMuted() — §B4 ui-polish-cross-surface.
-        m_muteBtn = new QPushButton(QString::fromUtf8("\xF0\x9F\x94\x8A"), this); // 🔊
-        m_muteBtn->setCheckable(true);
-        m_muteBtn->setFixedSize(18, 18);
-        m_muteBtn->setStyleSheet(QStringLiteral(
-            "QPushButton {"
-            "  background: transparent; border: none; font-size: 12px; padding: 0px;"
-            "}"
-            "QPushButton:hover { background: %1; border-radius: 3px; }"
-        ).arg(Style::kButtonAltHover));
-        connect(m_muteBtn, &QPushButton::toggled, this, [this](bool muted) {
-            m_muteBtn->setText(muted
-                ? QString::fromUtf8("\xF0\x9F\x94\x87")    // 🔇
-                : QString::fromUtf8("\xF0\x9F\x94\x8A"));  // 🔊
-            if (m_updatingFromModel || !m_slice) { return; }
-            m_slice->setMuted(muted);
-        });
-        row->addWidget(m_muteBtn);
-
-        // AF gain slider removed: TitleBar master volume + VfoWidget per-slice
-        // AF control are the canonical 2 surfaces (§B4 ui-polish-cross-surface).
-
-        rightCol->addLayout(row);
-    }
+    // Mute button removed: VfoWidget + TitleBar are the 2 canonical surfaces.
+    // AGC-T container placed here after AGC combo is constructed below.
+    // (§B4 ui-polish-cross-surface — bench feedback Plan 3 review)
+    // AF gain slider removed: TitleBar master volume + VfoWidget per-slice
+    // AF control are the canonical 2 surfaces (§B4 ui-polish-cross-surface).
 
     // Control 13: Audio pan slider — L ←→ R, center = 50
     // Wired to SliceModel::setAudioPan() — §B4 ui-polish-cross-surface.
@@ -652,6 +626,8 @@ void RxApplet::buildUi()
 
     // Controls 9 + 10: AGC combo + AGC threshold slider
     // From AetherSDR RxApplet.cpp lines 738-768
+    // AGC-T container moved to a dedicated full-width row below (bench feedback
+    // Plan 3 review — shared row left slider only ~40 px wide, unusable).
     {
         auto* agcRow = new QHBoxLayout;
         agcRow->setSpacing(4);
@@ -677,9 +653,15 @@ void RxApplet::buildUi()
             m_slice->setAgcMode(mode);
         });
         agcRow->addWidget(m_agcCombo);
+        rightCol->addLayout(agcRow);
+    }
 
-        // Control 10: AGC threshold slider — wrapped in container with
-        // AUTO badge, dB readout, info sub-line (matches VfoWidget Task 6)
+    // Control 10: AGC threshold slider — full-width row (moved from agcRow).
+    // Wrapped in container with AUTO badge, dB readout, info sub-line
+    // (matches VfoWidget Task 6). Previously shared with AGC combo, leaving
+    // the slider only ~40 px wide. Now takes the row formerly used by the
+    // Mute button (removed §B4 bench review), getting the full applet width.
+    {
         m_agcTContainer = new QWidget(this);
         auto* containerLayout = new QVBoxLayout(m_agcTContainer);
         containerLayout->setContentsMargins(0, 0, 0, 0);
@@ -754,9 +736,7 @@ void RxApplet::buildUi()
             emit openSetupRequested();
         });
 
-        agcRow->addWidget(m_agcTContainer, 1);
-
-        rightCol->addLayout(agcRow);
+        rightCol->addWidget(m_agcTContainer);
     }
 
     rightCol->addStretch(1);
@@ -961,8 +941,7 @@ void RxApplet::buildUi()
     m_filterWidthLbl->setToolTip(QStringLiteral("Current filter passband width"));
     // NereusSDR native — Thetis uses discrete radio buttons per mode
     m_modeCombo->setToolTip(QStringLiteral("Select operating mode"));
-    // From Thetis console.resx:1560 — chkRX2Mute.ToolTip (same text for RX1)
-    m_muteBtn->setToolTip(QStringLiteral("Mute - Mutes the output to the speaker."));
+    // m_muteBtn removed §B4 bench review — VfoWidget + TitleBar are the 2 surfaces.
     // m_afSlider removed in §B4 — TitleBar master + VfoWidget AF are the 2 surfaces.
     // From Thetis console.resx:4554 — comboAGC.ToolTip
     m_agcCombo->setToolTip(QStringLiteral("Automatic Gain Control Mode Setting"));
@@ -1157,15 +1136,8 @@ void RxApplet::syncFromModel()
 
     // AF gain slider removed — see §B4.
 
-    // Mute / Pan / SQL — wired in §B4
-    {
-        QSignalBlocker bl(m_muteBtn);
-        const bool muted = m_slice->muted();
-        m_muteBtn->setChecked(muted);
-        m_muteBtn->setText(muted
-            ? QString::fromUtf8("\xF0\x9F\x94\x87")    // 🔇
-            : QString::fromUtf8("\xF0\x9F\x94\x8A"));  // 🔊
-    }
+    // Mute removed from RxApplet (§B4 bench review) — VfoWidget is the surface.
+    // Pan / SQL — wired in §B4
     {
         QSignalBlocker bl(m_panSlider);
         // SliceModel pan: −1.0..+1.0 → slider 0..100 (center = 50)
@@ -1269,14 +1241,8 @@ void RxApplet::connectSlice(SliceModel* s)
 
     // AF gain slider removed from RxApplet (§B4) — signal handled by VfoWidget.
 
-    // Mute / Pan / SQL model → UI sync (§B4)
-    connect(s, &SliceModel::mutedChanged, this, [this](bool on) {
-        QSignalBlocker bl(m_muteBtn);
-        m_muteBtn->setChecked(on);
-        m_muteBtn->setText(on
-            ? QString::fromUtf8("\xF0\x9F\x94\x87")    // 🔇
-            : QString::fromUtf8("\xF0\x9F\x94\x8A"));  // 🔊
-    });
+    // mutedChanged removed from RxApplet (§B4 bench review) — VfoWidget is the surface.
+    // Pan / SQL model → UI sync (§B4)
     connect(s, &SliceModel::audioPanChanged, this, [this](double pan) {
         QSignalBlocker bl(m_panSlider);
         m_panSlider->setValue(qRound(pan * 50.0 + 50.0));
