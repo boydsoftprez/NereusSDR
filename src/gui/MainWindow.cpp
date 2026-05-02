@@ -1127,6 +1127,16 @@ void MainWindow::buildUI()
         // B8 Task 22: wire Fill Color button to SpectrumWidget::setFillColor.
         connect(m_overlayPanel, &SpectrumOverlayPanel::fillColorChanged,
                 m_spectrumWidget, &SpectrumWidget::setFillColor);
+
+        // B8 Task 24: wire "More Display Options →" link to Setup → Display.
+        connect(m_overlayPanel, &SpectrumOverlayPanel::openSetupRequested,
+                this, [this](const QString& page) {
+            auto* dialog = new SetupDialog(m_radioModel, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            wireSetupDialog(dialog);
+            dialog->selectPage(page);
+            dialog->show();
+        });
     }
 
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution

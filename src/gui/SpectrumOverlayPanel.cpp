@@ -835,15 +835,20 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
         ++row;
     }
 
-    // "More Display Options →" footer link
+    // "More Display Options →" footer link — B8 Task 24: wired to Setup → Display.
     {
         auto* moreLbl = new QLabel("<a href=\"#more\" style=\"color: #00b4d8; "
                                    "text-decoration: none; font-size: 10px;\">"
                                    "More Display Options &#x2192;</a>");
         moreLbl->setTextFormat(Qt::RichText);
         moreLbl->setTextInteractionFlags(Qt::TextBrowserInteraction);
-        moreLbl->setToolTip("Open full display settings (NYI)");
+        moreLbl->setToolTip("Open full display settings in Setup → Display");
         grid->addWidget(moreLbl, row, 0, 1, 4);
+        // linkActivated fires when the anchor is clicked; ignore the href value
+        // and always navigate to the Display page.
+        connect(moreLbl, &QLabel::linkActivated, this, [this](const QString&) {
+            emit openSetupRequested(QStringLiteral("Display"));
+        });
         ++row;
     }
 
