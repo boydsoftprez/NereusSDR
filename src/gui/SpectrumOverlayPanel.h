@@ -180,11 +180,8 @@ private:
     QPushButton* m_fillColorBtn{nullptr};
     QPushButton* m_showGridBtn{nullptr};
     QPushButton* m_cursorFreqBtn{nullptr};
-    QPushButton* m_heatMapBtn{nullptr};
-    QPushButton* m_noiseFloorBtn{nullptr};
-    QSlider*     m_noiseFloorSlider{nullptr};
-    QLabel*      m_noiseFloorLabel{nullptr};
-    QPushButton* m_weightedAvgBtn{nullptr};
+    // m_heatMapBtn / m_noiseFloorBtn / m_noiseFloorSlider / m_noiseFloorLabel /
+    // m_weightedAvgBtn removed B8 Task 23 — unbacked theatre controls.
 
     // ── Clarity badge + Re-tune (Phase 3G-9c) ────────────────────────────
     QLabel*      m_clarityBadge{nullptr};

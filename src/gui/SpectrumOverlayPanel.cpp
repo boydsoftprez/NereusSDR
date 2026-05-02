@@ -793,85 +793,12 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
         ++row;
     }
 
-    // Heat Map toggle
-    {
-        auto* lbl = new QLabel("Heat Map:");
-        lbl->setStyleSheet(labelStyle);
-        grid->addWidget(lbl, row, 0, 1, 2);
-
-        m_heatMapBtn = new QPushButton("Off");
-        m_heatMapBtn->setCheckable(true);
-        m_heatMapBtn->setChecked(false);
-        m_heatMapBtn->setFixedSize(36, 18);
-        m_heatMapBtn->setStyleSheet(
-            "QPushButton { background: #1a2a3a; color: #8090a0; border: 1px solid #304050;"
-            " border-radius: 3px; font-size: 10px; font-weight: bold; }"
-            "QPushButton:checked { background: #006040; color: #00ff88; border: 1px solid #00a060; }");
-        m_heatMapBtn->setToolTip("Colors spectrum trace by signal strength");
-        grid->addWidget(m_heatMapBtn, row, 2, 1, 2);
-        connect(m_heatMapBtn, &QPushButton::toggled, this, [this](bool on) {
-            m_heatMapBtn->setText(on ? "On" : "Off");
-        });
-        ++row;
-    }
-
-    // Noise Floor toggle + position slider
-    {
-        auto* lbl = new QLabel("Noise Floor:");
-        lbl->setStyleSheet(labelStyle);
-        grid->addWidget(lbl, row, 0);
-
-        m_noiseFloorBtn = new QPushButton("Off");
-        m_noiseFloorBtn->setCheckable(true);
-        m_noiseFloorBtn->setChecked(false);
-        m_noiseFloorBtn->setFixedSize(36, 18);
-        m_noiseFloorBtn->setStyleSheet(overlayDisplayToggleStyle());
-        m_noiseFloorBtn->setToolTip("Show noise floor reference line on spectrum");
-        grid->addWidget(m_noiseFloorBtn, row, 1);
-
-        m_noiseFloorSlider = new QSlider(Qt::Horizontal);
-        m_noiseFloorSlider->setRange(0, 100);
-        m_noiseFloorSlider->setValue(75);
-        m_noiseFloorSlider->setStyleSheet(sliderStyle);
-        m_noiseFloorSlider->setToolTip("Vertical position of noise floor reference line");
-        grid->addWidget(m_noiseFloorSlider, row, 2);
-
-        m_noiseFloorLabel = new QLabel("75");
-        m_noiseFloorLabel->setStyleSheet(valStyle);
-        m_noiseFloorLabel->setFixedWidth(28);
-        m_noiseFloorLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        grid->addWidget(m_noiseFloorLabel, row, 3);
-
-        connect(m_noiseFloorBtn, &QPushButton::toggled, this, [this](bool on) {
-            m_noiseFloorBtn->setText(on ? "On" : "Off");
-            m_noiseFloorSlider->setEnabled(on);
-        });
-        connect(m_noiseFloorSlider, &QSlider::valueChanged, this, [this](int v) {
-            m_noiseFloorLabel->setText(QString::number(v));
-        });
-        ++row;
-    }
-
-    // Weighted Average toggle
-    {
-        auto* lbl = new QLabel("Weighted Avg:");
-        lbl->setStyleSheet(labelStyle);
-        grid->addWidget(lbl, row, 0, 1, 2);
-
-        m_weightedAvgBtn = new QPushButton("Off");
-        m_weightedAvgBtn->setCheckable(true);
-        m_weightedAvgBtn->setChecked(false);
-        m_weightedAvgBtn->setFixedSize(36, 18);
-        m_weightedAvgBtn->setStyleSheet(overlayDisplayToggleStyle());
-        m_weightedAvgBtn->setToolTip("Weight recent FFT frames more heavily for faster signal response");
-        grid->addWidget(m_weightedAvgBtn, row, 3, Qt::AlignRight);
-        connect(m_weightedAvgBtn, &QPushButton::toggled, this, [this](bool on) {
-            m_weightedAvgBtn->setText(on ? "On" : "Off");
-        });
-        ++row;
-    }
-
     // Phase 3G-9c: Clarity adaptive tuning — status badge + Re-tune button
+    // NOTE: Heat Map / Noise Floor / Weighted Avg toggles were removed (B8
+    // Task 23). They were pure label-update theatre with no signal/model state.
+    // Noise floor estimation uses NoiseFloorEstimator + ClarityController (the
+    // canonical path). Heat Map gradient control is in Setup → Display → Gradient.
+    // Weighted Average is configurable in Setup → Display → Average Mode.
     {
         auto* lbl = new QLabel("Clarity:");
         lbl->setStyleSheet(labelStyle);
