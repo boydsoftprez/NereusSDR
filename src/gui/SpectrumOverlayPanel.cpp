@@ -41,6 +41,8 @@
 #include "StyleConstants.h"
 #include "core/AntennaLabels.h"
 #include "core/BoardCapabilities.h"
+#include "core/SkuUiProfile.h"
+#include "gui/AntennaPopupBuilder.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -1152,8 +1154,19 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
 {
     if (!m_rxAntCmb || !m_txAntCmb) { return; }
 
-    const QStringList labels = antennaLabels(caps);
-    const bool show = !labels.isEmpty();
+    // B3: use AntennaPopupBuilder::labels() for the capability-gated list.
+    // Derive SkuUiProfile from RadioModel (already accessible) so RX-only
+    // labels (EXT1/EXT2/XVTR/BYPS/RX1/RX2) appear when rxOnlyAntennaCount > 0.
+    // Falls back to antennaLabels(caps) (ANT1-3 only) when no model is set.
+    const SkuUiProfile sku = m_radioModel
+        ? skuUiProfileFor(m_radioModel->hardwareProfile().model)
+        : SkuUiProfile{};
+
+    const QStringList rxLabels = AntennaPopupBuilder::labels(caps, sku,
+        AntennaPopupBuilder::Mode::RX);
+    const QStringList txLabels = AntennaPopupBuilder::labels(caps, sku,
+        AntennaPopupBuilder::Mode::TX);
+    const bool show = !rxLabels.isEmpty();
 
     // Suppress widget→model echo while we clear + refill the combos.
     // Clearing a combo emits currentTextChanged("") and addItems()
@@ -1162,8 +1175,8 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
     m_updatingFromModel = true;
     m_rxAntCmb->clear();
     m_txAntCmb->clear();
-    m_rxAntCmb->addItems(labels);
-    m_txAntCmb->addItems(labels);
+    m_rxAntCmb->addItems(rxLabels);
+    m_txAntCmb->addItems(txLabels);
     m_updatingFromModel = false;
 
     if (m_rxAntRow) { m_rxAntRow->setVisible(show); }
