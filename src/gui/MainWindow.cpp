@@ -1080,6 +1080,18 @@ void MainWindow::buildUI()
     connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
             m_clarityController, &ClarityController::setTransmitting);
 
+    // Plan 4 D9 (Cluster E): TX filter audio range → spectrum overlay.
+    // TransmitModel::filterChanged carries (low, high) audio Hz; SpectrumWidget
+    // converts to IQ-space at draw time using m_txMode (set below via slice).
+    if (m_spectrumWidget) {
+        connect(&m_radioModel->transmitModel(), &TransmitModel::filterChanged,
+                m_spectrumWidget, &SpectrumWidget::setTxFilterRange);
+
+        // Initial sync from current TransmitModel state.
+        const auto& txModel = m_radioModel->transmitModel();
+        m_spectrumWidget->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
+    }
+
     // Clarity → SpectrumWidget threshold update + clarityActive flag
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
             m_spectrumWidget, [this](float low, float high) {
@@ -3138,7 +3150,18 @@ void MainWindow::wireSliceToSpectrum()
         vfo->setFilter(low, high);
     });
 
+    // Plan 4 D9 (Cluster E): initial TX mode push so the overlay has the right
+    // IQ-space sign convention before the first paint.
+    if (m_spectrumWidget) {
+        m_spectrumWidget->setTxMode(slice->dspMode());
+    }
+
     connect(slice, &SliceModel::dspModeChanged, this, [this, vfo](DSPMode mode) {
+        // Plan 4 D9 (Cluster E): keep TX mode in sync so drawTxFilterOverlay
+        // maps audio Hz to the correct IQ-space sideband.
+        if (m_spectrumWidget) {
+            m_spectrumWidget->setTxMode(mode);
+        }
         vfo->setMode(mode);
         // Switch PhoneCwApplet page based on active mode
         if (m_phoneCwApplet) {
