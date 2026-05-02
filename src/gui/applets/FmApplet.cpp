@@ -150,10 +150,6 @@ static inline QString fmButtonStyle()
           Style::kButtonHover);
 }
 
-// Section label style — no canonical helper exists for this pattern.
-static const char* kSectionLabel =
-    "QLabel { color: #8090a0; font-size: 10px; }";
-
 // --------------------------------------------------------------------------
 // FmApplet
 // --------------------------------------------------------------------------
@@ -179,7 +175,7 @@ void FmApplet::buildUI()
         row->setSpacing(4);
 
         auto* lbl = new QLabel(QStringLiteral("FM Mic"), this);
-        lbl->setStyleSheet(kSectionLabel);
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(44);
         row->addWidget(lbl);
 
@@ -206,7 +202,7 @@ void FmApplet::buildUI()
         row->setSpacing(4);
 
         auto* lbl = new QLabel(QStringLiteral("Dev"), this);
-        lbl->setStyleSheet(kSectionLabel);
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(44);
         row->addWidget(lbl);
 
@@ -288,7 +284,7 @@ void FmApplet::buildUI()
         row->setSpacing(4);
 
         auto* lbl = new QLabel(QStringLiteral("Offset"), this);
-        lbl->setStyleSheet(kSectionLabel);
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(44);
         row->addWidget(lbl);
 
@@ -315,7 +311,7 @@ void FmApplet::buildUI()
         row->setSpacing(4);
 
         auto* lbl = new QLabel(QStringLiteral("Dir"), this);
-        lbl->setStyleSheet(kSectionLabel);
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(44);
         row->addWidget(lbl);
 
@@ -349,7 +345,7 @@ void FmApplet::buildUI()
         row->setSpacing(4);
 
         auto* lbl = new QLabel(QStringLiteral("Profile"), this);
-        lbl->setStyleSheet(kSectionLabel);
+        lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(44);
         row->addWidget(lbl);
 
