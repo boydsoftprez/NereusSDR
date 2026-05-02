@@ -779,13 +779,15 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
 
         m_cursorFreqBtn = new QPushButton("Off");
         m_cursorFreqBtn->setCheckable(true);
-        m_cursorFreqBtn->setChecked(false);
+        m_cursorFreqBtn->setChecked(true);   // default on — matches SpectrumWidget default
+        m_cursorFreqBtn->setText("On");
         m_cursorFreqBtn->setFixedSize(36, 18);
         m_cursorFreqBtn->setStyleSheet(overlayDisplayToggleStyle());
         m_cursorFreqBtn->setToolTip("Show frequency at mouse cursor position");
         grid->addWidget(m_cursorFreqBtn, row, 3, Qt::AlignRight);
         connect(m_cursorFreqBtn, &QPushButton::toggled, this, [this](bool on) {
             m_cursorFreqBtn->setText(on ? "On" : "Off");
+            emit cursorFreqVisibleChanged(on);  // B8 Task 21
         });
         ++row;
     }

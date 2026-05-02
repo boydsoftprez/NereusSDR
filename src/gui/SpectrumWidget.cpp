@@ -485,6 +485,9 @@ void SpectrumWidget::loadSettings()
                              QStringLiteral("False")).toString() == QStringLiteral("True");
     m_showFps = s.value(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
                         QStringLiteral("False")).toString() == QStringLiteral("True");
+    // B8 Task 21: cursor frequency readout persists across restarts.
+    m_showCursorFreq = s.value(settingsKey(QStringLiteral("DisplayShowCursorFreq"), m_panIndex),
+                               QStringLiteral("True")).toString() == QStringLiteral("True");
     m_dbmScaleVisible = s.value(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
                                 QStringLiteral("True")).toString() == QStringLiteral("True");
     m_bandPlanFontSize = s.value(QStringLiteral("BandPlanFontSize"),
@@ -575,6 +578,8 @@ void SpectrumWidget::saveSettings()
               m_showZeroLine ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayShowFps"), m_panIndex),
               m_showFps ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(settingsKey(QStringLiteral("DisplayShowCursorFreq"), m_panIndex),
+              m_showCursorFreq ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(settingsKey(QStringLiteral("DisplayDbmScaleVisible"), m_panIndex),
               m_dbmScaleVisible ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("BandPlanFontSize"),
@@ -1043,6 +1048,14 @@ void SpectrumWidget::setShowFps(bool on)
     markOverlayDirty();
 }
 
+void SpectrumWidget::setCursorFreqVisible(bool on)
+{
+    if (m_showCursorFreq == on) { return; }
+    m_showCursorFreq = on;
+    scheduleSettingsSave();
+    markOverlayDirty();
+}
+
 void SpectrumWidget::setDbmScaleVisible(bool on)
 {
     if (m_dbmScaleVisible == on) { return; }
@@ -1314,7 +1327,10 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     // strip lands in the same right-edge column as the dBm scale strip.
     const QRect wfRectFull(0, wfRect.top(), width(), wfRect.height());
     drawTimeScale(p, wfRectFull);
-    drawCursorInfo(p, specRect);
+    // B8 Task 21: guard cursor frequency readout by m_showCursorFreq.
+    if (m_showCursorFreq) {
+        drawCursorInfo(p, specRect);
+    }
 
     // FPS overlay (Phase 3G-8 commit 5 / G8 ShowFPS). Cheap rolling counter
     // updated once per second. QPainter fallback path only; GPU path prints
@@ -3742,8 +3758,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 p.drawText(specRect.right() - tw - 8, specRect.top() + 14, fpsText);
             }
 
-            // Cursor info
-            if (m_mouseInWidget) {
+            // Cursor info — guarded by m_showCursorFreq (B8 Task 21).
+            if (m_showCursorFreq && m_mouseInWidget) {
                 drawCursorInfo(p, specRect);
             }
 

@@ -85,6 +85,7 @@ signals:
     void wfColorGainChanged(int gain);
     void wfBlackLevelChanged(int level);
     void colorSchemeChanged(int scheme);
+    void cursorFreqVisibleChanged(bool on);  // B8 Task 21
 
     // Zoom buttons
     void zoomSegment();

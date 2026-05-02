@@ -412,6 +412,11 @@ public:
     void setShowFps(bool on);
     bool showFps() const { return m_showFps; }
 
+    // B8 Task 21: cursor frequency readout visibility.
+    // Default true (matches the previously always-on behavior).
+    void setCursorFreqVisible(bool on);
+    bool cursorFreqVisible() const noexcept { return m_showCursorFreq; }
+
     void setFreqLabelAlign(FreqLabelAlign a);
     FreqLabelAlign freqLabelAlign() const { return m_freqLabelAlign; }
 
@@ -774,6 +779,7 @@ private:
     bool  m_showZeroLine{false};
     bool  m_showFps{false};
     bool  m_dbmScaleVisible{true};  // right-edge dBm strip; false → spectrum fills full width
+    bool  m_showCursorFreq{true};   // B8 Task 21: cursor frequency readout; default on
     FreqLabelAlign m_freqLabelAlign{FreqLabelAlign::Center};
 
     NereusSDR::BandPlanManager* m_bandPlanMgr{nullptr};   // non-owning

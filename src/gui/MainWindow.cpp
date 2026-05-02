@@ -1119,6 +1119,10 @@ void MainWindow::buildUI()
             m_spectrumWidget->setWfColorScheme(
                 static_cast<WfColorScheme>(qBound(0, idx, schemeCount - 1)));
         });
+
+        // B8 Task 21: wire Cursor Freq toggle to SpectrumWidget visibility guard.
+        connect(m_overlayPanel, &SpectrumOverlayPanel::cursorFreqVisibleChanged,
+                m_spectrumWidget, &SpectrumWidget::setCursorFreqVisible);
     }
 
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution
