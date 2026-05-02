@@ -260,6 +260,7 @@ warren@wpratt.com
 #include "core/LogCategories.h"
 #include "core/NoiseFloorTracker.h"
 #include "core/ModelPaths.h"
+#include "core/SkuUiProfile.h"
 #include "core/wdsp_api.h"
 #include "gui/SpectrumWidget.h"
 
@@ -3202,10 +3203,30 @@ void RadioModel::wireSliceSignals()
     // persistence uniform across all UI surfaces
     // (see docs/architecture/antenna-routing-design.md §5.1).
     connect(slice, &SliceModel::rxAntennaChanged, this, [this](const QString& ant) {
-        int antNum = 1;
-        if (ant == QLatin1String("ANT2")) { antNum = 2; }
-        else if (ant == QLatin1String("ANT3")) { antNum = 3; }
-        m_alexController.setRxAnt(m_lastBand, antNum);
+        // ANT1/2/3 → setRxAnt (direct hardware port). Non-ANT/non-bypass
+        // labels (EXT1, EXT2, XVTR, RX1, RX2, BYPS…) → setRxOnlyAnt with
+        // the 1-based position in SkuUiProfile::rxOnlyLabels, mirroring the
+        // routing used by RxApplet's popup handler (RxApplet.cpp:279-293).
+        // "RX out on TX" is a bypass toggle handled separately, not here.
+        // Fixes SpectrumOverlayPanel antenna combo silently no-op'ing for
+        // non-ANT selections (B3 fix-up).
+        // Source: same routing as RxApplet popup handler (RxApplet.cpp:279-293).
+        if (ant.startsWith(QStringLiteral("ANT"))) {
+            int antNum = 1;
+            if (ant == QLatin1String("ANT2")) { antNum = 2; }
+            else if (ant == QLatin1String("ANT3")) { antNum = 3; }
+            m_alexController.setRxAnt(m_lastBand, antNum);
+        } else if (ant != QStringLiteral("RX out on TX")) {
+            // RX-only label: find 1-based position in SkuUiProfile::rxOnlyLabels.
+            const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+            const auto& lbls = sku.rxOnlyLabels;
+            for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
+                if (lbls[static_cast<size_t>(i)] == ant) {
+                    m_alexController.setRxOnlyAnt(m_lastBand, i + 1);
+                    break;
+                }
+            }
+        }
         scheduleSettingsSave();
     });
     connect(slice, &SliceModel::txAntennaChanged, this, [this](const QString& ant) {
