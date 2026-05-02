@@ -78,7 +78,11 @@ AppletPanelWidget::AppletPanelWidget(QWidget* parent)
     auto* stackWidget = new QWidget(m_scrollArea);
     stackWidget->setStyleSheet(QStringLiteral("background: %1;").arg(Style::kPanelBg));
     m_stackLayout = new QVBoxLayout(stackWidget);
-    m_stackLayout->setContentsMargins(0, 0, 0, 0);
+    // Reserve 8 px on the right for the always-visible vertical scrollbar.
+    // Per docs/architecture/ui-audit-polish-plan.md §A1: with 13 applets stacked,
+    // the scrollbar is virtually always present; reserving the gutter prevents
+    // content from clipping under the bar.
+    m_stackLayout->setContentsMargins(0, 0, 8, 0);
     m_stackLayout->setSpacing(0);
     m_stackLayout->addStretch();
 
