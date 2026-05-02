@@ -53,6 +53,7 @@
 
 #include "TitleBar.h"
 
+#include "StyleConstants.h"
 #include "widgets/MasterOutputWidget.h"
 
 #include <QHBoxLayout>
@@ -73,22 +74,6 @@ namespace NereusSDR {
 
 
 namespace {
-
-// Strip background + bottom border. From AetherSDR TitleBar.cpp:31.
-constexpr auto kStripStyle =
-    "TitleBar { background: #0a0a14; border-bottom: 1px solid #203040; }";
-
-// App-name label. From AetherSDR TitleBar.cpp:102.
-constexpr auto kAppNameStyle =
-    "QLabel { color: #00b4d8; font-size: 14px; font-weight: bold; }";
-
-// Menu-bar restyle. From AetherSDR TitleBar.cpp:285-290.
-constexpr auto kMenuBarStyle =
-    "QMenuBar { background: transparent; color: #8aa8c0; font-size: 12px; }"
-    "QMenuBar::item { padding: 4px 8px; }"
-    "QMenuBar::item:selected { background: #203040; color: #ffffff; }"
-    "QMenu { background: #0f0f1a; color: #c8d8e8; border: 1px solid #304050; }"
-    "QMenu::item:selected { background: #0070c0; }";
 
 // Content-margins + spacing from AetherSDR TitleBar.cpp:34-35.
 constexpr int kMarginLeft   = 4;
@@ -397,7 +382,10 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     : QWidget(parent)
 {
     setFixedHeight(kStripHeight);
-    setStyleSheet(QLatin1String(kStripStyle));
+    // Strip background + bottom border. From AetherSDR TitleBar.cpp:31.
+    setStyleSheet(QStringLiteral("TitleBar { background: %1; border-bottom: 1px solid %2; }")
+                  .arg(QLatin1String(Style::kStatusBarBg),
+                       QLatin1String(Style::kBorderSubtle)));
 
     m_hbox = new QHBoxLayout(this);
     m_hbox->setContentsMargins(kMarginLeft, kMarginTop, kMarginRight, kMarginBottom);
@@ -421,7 +409,9 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // ── App-name label ─────────────────────────────────────────────────────
     // From AetherSDR TitleBar.cpp:101-104 — text swapped to "NereusSDR".
     auto* appName = new QLabel(QStringLiteral("NereusSDR"), this);
-    appName->setStyleSheet(QLatin1String(kAppNameStyle));
+    // App-name label. From AetherSDR TitleBar.cpp:102.
+    appName->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }")
+                           .arg(QLatin1String(Style::kAccent)));
     appName->setAlignment(Qt::AlignCenter);
     m_hbox->addWidget(appName);
 
@@ -490,6 +480,8 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     m_featureBtn->setFixedSize(28, 28);
     m_featureBtn->setToolTip(QStringLiteral("Submit a feature request or bug report"));
     m_featureBtn->setAccessibleName(QStringLiteral("Feature request"));
+    // NereusSDR-original — amber dark for the 💡 feature-request button.
+    // One-off; no palette promotion warranted per §A2 design intent.
     m_featureBtn->setStyleSheet(QStringLiteral(
         "QPushButton { background: #3a2a00; border: 1px solid #806020; "
         "border-radius: 4px; padding: 0; }"
@@ -505,7 +497,17 @@ void TitleBar::setMenuBar(QMenuBar* mb)
     if (!mb) {
         return;
     }
-    mb->setStyleSheet(QLatin1String(kMenuBarStyle));
+    // Menu-bar restyle. From AetherSDR TitleBar.cpp:285-290.
+    mb->setStyleSheet(QStringLiteral(
+        "QMenuBar { background: transparent; color: %1; font-size: 12px; }"
+        "QMenuBar::item { padding: 4px 8px; }"
+        "QMenuBar::item:selected { background: %2; color: #ffffff; }"
+        "QMenu { background: %3; color: #c8d8e8; border: 1px solid %4; }"
+        "QMenu::item:selected { background: #0070c0; }")
+        .arg(QLatin1String(Style::kTitleText),
+             QLatin1String(Style::kBorderSubtle),
+             QLatin1String(Style::kAppBg),
+             QLatin1String(Style::kOverlayBorder)));
     mb->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).
