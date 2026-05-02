@@ -234,11 +234,7 @@ QHBoxLayout* SetupPage::addLabeledCombo(QLayout* parent, const QString& label, Q
 QHBoxLayout* SetupPage::addLabeledSlider(QLayout* parent, const QString& label,
                                           QSlider* slider, QLabel* valueLabel)
 {
-    slider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; "
-        "border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #00b4d8; width: 12px; "
-        "height: 12px; border-radius: 6px; margin: -4px 0; }");
+    slider->setStyleSheet(Style::kSliderStyle);
 
     if (valueLabel != nullptr) {
         valueLabel->setStyleSheet("QLabel { color: #00c8ff; font-size: 12px; "
