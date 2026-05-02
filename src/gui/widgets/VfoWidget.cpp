@@ -1375,6 +1375,7 @@ void VfoWidget::buildXRitTab()
         m_xitBtn->setFixedHeight(22);
         // From Thetis console.resx:4416 — chkXIT.ToolTip
         // XIT stored in SliceModel for Phase 3M-1 TX use; client offset displayed now.
+        // XIT wired in B6 — TX NCO shift functional.
         m_xitBtn->setToolTip(QStringLiteral("Transmit Incremental Tuning - offset TX frequency by the value below in Hz."));
         row->addWidget(m_xitBtn);
 
@@ -1482,10 +1483,7 @@ void VfoWidget::buildXRitTab()
     });
 
     // RIT controls are live — no NYI badge.
-    // XIT stored for 3M-1 (TX phase); keep NYI badge with TX note.
-    NyiOverlay::markNyi(m_xitBtn,      QStringLiteral("XIT — TX gated by Phase 3M-1"));
-    NyiOverlay::markNyi(m_xitLabel,    QStringLiteral("XIT — TX gated by Phase 3M-1"));
-    NyiOverlay::markNyi(m_xitZeroBtn,  QStringLiteral("XIT — TX gated by Phase 3M-1"));
+    // XIT controls are live (B6) — no NYI badge.
     // LOCK is live in S2.9 — no NYI badge.
 
     m_tabStack->addWidget(ritWidget);
