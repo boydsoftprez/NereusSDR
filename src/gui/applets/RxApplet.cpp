@@ -855,10 +855,28 @@ void RxApplet::buildUi()
 
         rightCol->addLayout(row);
 
-        // XIT stored for 3M-1; keep NYI badges.
-        NyiOverlay::markNyi(m_xitOnBtn, QStringLiteral("XIT — TX gated by Phase 3M-1"));
-        NyiOverlay::markNyi(m_xitMinus, QStringLiteral("XIT — TX gated by Phase 3M-1"));
-        NyiOverlay::markNyi(m_xitPlus,  QStringLiteral("XIT — TX gated by Phase 3M-1"));
+        // Wire XIT controls to SliceModel (B6).
+        // Toggle → enable/disable XIT on the slice.
+        connect(m_xitOnBtn, &QPushButton::toggled, this, [this](bool on) {
+            if (m_updatingFromModel || !m_slice) { return; }
+            m_slice->setXitEnabled(on);
+        });
+        // Minus/Plus → decrement/increment by current step, clamped to ±10000 Hz.
+        connect(m_xitMinus, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            int step = m_slice->stepHz();
+            m_slice->setXitHz(std::clamp(m_slice->xitHz() - step, -10000, 10000));
+        });
+        connect(m_xitPlus, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            int step = m_slice->stepHz();
+            m_slice->setXitHz(std::clamp(m_slice->xitHz() + step, -10000, 10000));
+        });
+        // Zero → reset XIT offset to 0.
+        connect(m_xitZero, &QPushButton::clicked, this, [this]() {
+            if (!m_slice) { return; }
+            m_slice->setXitHz(0);
+        });
     }
 
     columns->addLayout(rightCol, 3);
@@ -1188,6 +1206,18 @@ void RxApplet::syncFromModel()
             .arg(hz));
     }
 
+    // XIT state (B6)
+    {
+        QSignalBlocker bl(m_xitOnBtn);
+        m_xitOnBtn->setChecked(m_slice->xitEnabled());
+    }
+    {
+        const int hz = m_slice->xitHz();
+        m_xitLabel->setText(QStringLiteral("%1%2 Hz")
+            .arg(hz >= 0 ? QStringLiteral("+") : QString{})
+            .arg(hz));
+    }
+
     // Step size label (Issue #69)
     m_stepLabel->setText(QStringLiteral("%1 Hz").arg(m_slice->stepHz()));
 
@@ -1284,6 +1314,19 @@ void RxApplet::connectSlice(SliceModel* s)
     });
     connect(s, &SliceModel::ritHzChanged, this, [this](int hz) {
         m_ritLabel->setText(QStringLiteral("%1%2 Hz")
+            .arg(hz >= 0 ? QStringLiteral("+") : QString{})
+            .arg(hz));
+    });
+
+    // XIT model → UI sync (B6)
+    connect(s, &SliceModel::xitEnabledChanged, this, [this](bool on) {
+        m_updatingFromModel = true;
+        QSignalBlocker bl(m_xitOnBtn);
+        m_xitOnBtn->setChecked(on);
+        m_updatingFromModel = false;
+    });
+    connect(s, &SliceModel::xitHzChanged, this, [this](int hz) {
+        m_xitLabel->setText(QStringLiteral("%1%2 Hz")
             .arg(hz >= 0 ? QStringLiteral("+") : QString{})
             .arg(hz));
     });
