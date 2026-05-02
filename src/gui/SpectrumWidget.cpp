@@ -513,11 +513,17 @@ void SpectrumWidget::loadSettings()
     m_gridFineColor = readColor(QStringLiteral("DisplayGridFineColor"), m_gridFineColor);
     m_hGridColor    = readColor(QStringLiteral("DisplayHGridColor"), m_hGridColor);
     m_gridTextColor = readColor(QStringLiteral("DisplayGridTextColor"), m_gridTextColor);
-    m_zeroLineColor = readColor(QStringLiteral("DisplayZeroLineColor"), m_zeroLineColor);
+    // Plan 4 D9c-1: old single key "DisplayZeroLineColor" dropped (branch not
+    // yet on main — no migration burden).  Load the split RX/TX keys.
+    m_rxZeroLineColor = readColor(QStringLiteral("DisplayRxZeroLineColor"), m_rxZeroLineColor);
+    m_txZeroLineColor = readColor(QStringLiteral("DisplayTxZeroLineColor"), m_txZeroLineColor);
     m_bandEdgeColor = readColor(QStringLiteral("DisplayBandEdgeColor"), m_bandEdgeColor);
     // Plan 4 D9b (Cluster F): TX / RX filter overlay colors.
     m_txFilterColor = readColor(QStringLiteral("DisplayTxFilterColor"), m_txFilterColor);
     m_rxFilterColor = readColor(QStringLiteral("DisplayRxFilterColor"), m_rxFilterColor);
+    // Plan 4 D9c-4: TNF + SubRX scaffolding colors.
+    m_tnfFilterColor   = readColor(QStringLiteral("DisplayTnfFilterColor"),   m_tnfFilterColor);
+    m_subRxFilterColor = readColor(QStringLiteral("DisplaySubRxFilterColor"), m_subRxFilterColor);
 }
 
 void SpectrumWidget::saveSettings()
@@ -605,11 +611,16 @@ void SpectrumWidget::saveSettings()
     writeColor(QStringLiteral("DisplayGridFineColor"), m_gridFineColor);
     writeColor(QStringLiteral("DisplayHGridColor"),    m_hGridColor);
     writeColor(QStringLiteral("DisplayGridTextColor"), m_gridTextColor);
-    writeColor(QStringLiteral("DisplayZeroLineColor"), m_zeroLineColor);
+    // Plan 4 D9c-1: split zero-line color — write RX + TX keys.
+    writeColor(QStringLiteral("DisplayRxZeroLineColor"), m_rxZeroLineColor);
+    writeColor(QStringLiteral("DisplayTxZeroLineColor"), m_txZeroLineColor);
     writeColor(QStringLiteral("DisplayBandEdgeColor"), m_bandEdgeColor);
     // Plan 4 D9b (Cluster F): TX / RX filter overlay colors.
     writeColor(QStringLiteral("DisplayTxFilterColor"), m_txFilterColor);
     writeColor(QStringLiteral("DisplayRxFilterColor"), m_rxFilterColor);
+    // Plan 4 D9c-4: TNF + SubRX scaffolding colors.
+    writeColor(QStringLiteral("DisplayTnfFilterColor"),   m_tnfFilterColor);
+    writeColor(QStringLiteral("DisplaySubRxFilterColor"), m_subRxFilterColor);
 }
 
 void SpectrumWidget::scheduleSettingsSave()
@@ -1161,12 +1172,63 @@ void SpectrumWidget::setGridTextColor(const QColor& c)
     markOverlayDirty();
 }
 
-void SpectrumWidget::setZeroLineColor(const QColor& c)
+// Plan 4 D9c-1: zero-line color split into RX + TX.
+// Old setZeroLineColor(c) replaced by setRxZeroLineColor(c) + setTxZeroLineColor(c).
+// Both setters write immediately (matching D9b setTxFilterColor / setRxFilterColor)
+// rather than using the 500 ms scheduleSettingsSave() — ensures persistence is
+// observable synchronously in tests and after crash.
+void SpectrumWidget::setRxZeroLineColor(const QColor& c)
 {
-    if (!c.isValid() || m_zeroLineColor == c) { return; }
-    m_zeroLineColor = c;
-    scheduleSettingsSave();
+    if (!c.isValid() || m_rxZeroLineColor == c) { return; }
+    m_rxZeroLineColor = c;
+    AppSettings::instance().setValue(
+        settingsKey(QStringLiteral("DisplayRxZeroLineColor"), m_panIndex),
+        c.name(QColor::HexArgb));
     markOverlayDirty();
+    update();
+}
+
+void SpectrumWidget::setTxZeroLineColor(const QColor& c)
+{
+    if (!c.isValid() || m_txZeroLineColor == c) { return; }
+    m_txZeroLineColor = c;
+    AppSettings::instance().setValue(
+        settingsKey(QStringLiteral("DisplayTxZeroLineColor"), m_panIndex),
+        c.name(QColor::HexArgb));
+    markOverlayDirty();
+    update();
+}
+
+// Plan 4 D9c-3: reset all Plan 4 D9/D9c display colors to compile-time defaults.
+// Scoped to the 4 colors introduced in Tasks 7-10 only.  Plan 5+ may extend.
+void SpectrumWidget::resetDisplayColorsToDefaults()
+{
+    setTxFilterColor(QColor(255, 120, 60, 46));    // matches kTxFilterOverlayFill
+    setRxFilterColor(QColor(0, 180, 216, 80));     // matches kRxFilterOverlayFill
+    setRxZeroLineColor(QColor(255, 0, 0));         // red — Thetis convention
+    setTxZeroLineColor(QColor(255, 184, 0));       // amber — NereusSDR-original
+}
+
+// Plan 4 D9c-4: TNF + SubRX scaffolding setters.  No paint code consumes these
+// yet.  Persisted so user choices survive the future feature ship.
+void SpectrumWidget::setTnfFilterColor(const QColor& c)
+{
+    if (!c.isValid() || m_tnfFilterColor == c) { return; }
+    m_tnfFilterColor = c;
+    AppSettings::instance().setValue(
+        settingsKey(QStringLiteral("DisplayTnfFilterColor"), m_panIndex),
+        c.name(QColor::HexArgb));
+    // No update() — no paint code consumes this yet.
+}
+
+void SpectrumWidget::setSubRxFilterColor(const QColor& c)
+{
+    if (!c.isValid() || m_subRxFilterColor == c) { return; }
+    m_subRxFilterColor = c;
+    AppSettings::instance().setValue(
+        settingsKey(QStringLiteral("DisplaySubRxFilterColor"), m_panIndex),
+        c.name(QColor::HexArgb));
+    // No update() — no paint code consumes this yet.
 }
 
 void SpectrumWidget::setBandEdgeColor(const QColor& c)
@@ -1536,12 +1598,24 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     p.drawPolyline(points.data(), count);
 
     // Zero line (0 dBm) — Phase 3G-8 commit 5 (G7).
+    // Plan 4 D9c-1: uses m_rxZeroLineColor (was m_zeroLineColor).
     if (m_showZeroLine) {
         const int zy = dbmToY(0.0f, specRect);
         if (zy >= specRect.top() && zy <= specRect.bottom()) {
-            QPen zeroPen(m_zeroLineColor, 1, Qt::DashLine);
+            QPen zeroPen(m_rxZeroLineColor, 1, Qt::DashLine);
             p.setPen(zeroPen);
             p.drawLine(specRect.left(), zy, specRect.right(), zy);
+        }
+    }
+
+    // TX zero line on panadapter — Plan 4 D9c-1.  MOX-gated so the TX
+    // centre-frequency marker only appears when transmitting.
+    if (m_moxOverlay && m_vfoHz > 0.0) {
+        const int tx_x = hzToX(m_vfoHz, specRect);
+        if (tx_x >= specRect.left() && tx_x <= specRect.right()) {
+            QPen txZeroPen(m_txZeroLineColor, 1, Qt::DashLine);
+            p.setPen(txZeroPen);
+            p.drawLine(tx_x, specRect.top(), tx_x, specRect.bottom());
         }
     }
 }
@@ -1640,13 +1714,22 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
     if (m_showTxFilterOnRxWaterfall && m_moxOverlay) {
         drawTxFilterWaterfallColumn(p, wfRect);
     }
-    Q_UNUSED(m_showTxZeroLineOnWaterfall);
-
+    // Plan 4 D9c-1: RX zero-line uses m_rxZeroLineColor (was hardcoded red 180).
     if (m_showRxZeroLineOnWaterfall && m_vfoHz > 0.0) {
         const int x = hzToX(m_vfoHz, wfRect);
         if (x >= wfRect.left() && x <= wfRect.right()) {
-            QPen zeroPen(QColor(255, 0, 0, 180), 1);
+            QPen zeroPen(m_rxZeroLineColor, 1);
             p.setPen(zeroPen);
+            p.drawLine(x, wfRect.top(), x, wfRect.bottom());
+        }
+    }
+
+    // Plan 4 D9c-1: TX zero-line on waterfall — MOX-gated.
+    if (m_showTxZeroLineOnWaterfall && m_moxOverlay && m_vfoHz > 0.0) {
+        const int x = hzToX(m_vfoHz, wfRect);
+        if (x >= wfRect.left() && x <= wfRect.right()) {
+            QPen txZeroPen(m_txZeroLineColor, 1);
+            p.setPen(txZeroPen);
             p.drawLine(x, wfRect.top(), x, wfRect.bottom());
         }
     }

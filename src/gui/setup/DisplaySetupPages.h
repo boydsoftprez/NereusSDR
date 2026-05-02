@@ -185,12 +185,13 @@ private:
     QCheckBox*      m_zeroLineToggle{nullptr};
     QCheckBox*      m_showFpsToggle{nullptr};
 
-    ColorSwatchButton* m_gridColorBtn{nullptr};       // G9
-    ColorSwatchButton* m_gridFineColorBtn{nullptr};   // G10
-    ColorSwatchButton* m_hGridColorBtn{nullptr};      // G11
-    ColorSwatchButton* m_gridTextColorBtn{nullptr};   // G12
-    ColorSwatchButton* m_zeroLineColorBtn{nullptr};   // G13
-    ColorSwatchButton* m_bandEdgeColorBtn{nullptr};   // G6
+    ColorSwatchButton* m_gridColorBtn{nullptr};          // G9
+    ColorSwatchButton* m_gridFineColorBtn{nullptr};      // G10
+    ColorSwatchButton* m_hGridColorBtn{nullptr};         // G11
+    ColorSwatchButton* m_gridTextColorBtn{nullptr};      // G12
+    ColorSwatchButton* m_rxZeroLineColorBtn{nullptr};    // G13 — Plan 4 D9c-1 (was m_zeroLineColorBtn)
+    ColorSwatchButton* m_txZeroLineColorBtn{nullptr};    // G13 TX — Plan 4 D9c-1
+    ColorSwatchButton* m_bandEdgeColorBtn{nullptr};      // G6
 };
 
 // ---------------------------------------------------------------------------

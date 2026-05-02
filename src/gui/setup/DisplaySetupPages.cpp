@@ -562,6 +562,39 @@ void SpectrumDefaultsPage::buildUI()
     threadForm->addRow(QStringLiteral("Display Thread Priority:"), m_threadPriorityCombo);
 
     contentLayout()->addWidget(threadGroup);
+
+    // Plan 4 D9c-3 — "Reset display colors" button.
+    // Centred row at the bottom of Spectrum Defaults page.  Resets the 4
+    // Plan 4 D9/D9c display colors (TX filter, RX filter, RX/TX zero line)
+    // to factory defaults.  All other display state is unaffected.
+    auto* colorResetRow = new QHBoxLayout;
+    colorResetRow->setSpacing(6);
+    colorResetRow->addStretch(1);
+
+    auto* colorResetBtn = new QPushButton(QStringLiteral("Reset display colors"), this);
+    colorResetBtn->setToolTip(QStringLiteral(
+        "Reset TX/RX filter overlay colors and RX/TX zero-line colors to "
+        "factory defaults. Other display settings are not affected."));
+    connect(colorResetBtn, &QPushButton::clicked, this, [this]() {
+        const auto res = QMessageBox::question(
+            this,
+            QStringLiteral("Reset display colors"),
+            QStringLiteral(
+                "Reset TX/RX filter overlay and zero-line colors to "
+                "factory defaults?\n\n"
+                "Custom colors set in Setup pages will be discarded. "
+                "Other display settings are not affected."),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (res != QMessageBox::Yes) { return; }
+        if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
+            w->resetDisplayColorsToDefaults();
+        }
+    });
+    colorResetRow->addWidget(colorResetBtn);
+    colorResetRow->addStretch(1);
+    contentLayout()->addLayout(colorResetRow);
+
     contentLayout()->addStretch();
 
     Q_UNUSED(sw);
@@ -983,12 +1016,14 @@ void GridScalesPage::loadFromRenderer()
     m_zeroLineToggle->setChecked(sw->showZeroLine());
     m_showFpsToggle->setChecked(sw->showFps());
 
-    if (m_gridColorBtn)     { m_gridColorBtn->setColor(sw->gridColor()); }
-    if (m_gridFineColorBtn) { m_gridFineColorBtn->setColor(sw->gridFineColor()); }
-    if (m_hGridColorBtn)    { m_hGridColorBtn->setColor(sw->hGridColor()); }
-    if (m_gridTextColorBtn) { m_gridTextColorBtn->setColor(sw->gridTextColor()); }
-    if (m_zeroLineColorBtn) { m_zeroLineColorBtn->setColor(sw->zeroLineColor()); }
-    if (m_bandEdgeColorBtn) { m_bandEdgeColorBtn->setColor(sw->bandEdgeColor()); }
+    if (m_gridColorBtn)       { m_gridColorBtn->setColor(sw->gridColor()); }
+    if (m_gridFineColorBtn)   { m_gridFineColorBtn->setColor(sw->gridFineColor()); }
+    if (m_hGridColorBtn)      { m_hGridColorBtn->setColor(sw->hGridColor()); }
+    if (m_gridTextColorBtn)   { m_gridTextColorBtn->setColor(sw->gridTextColor()); }
+    // Plan 4 D9c-1: split zero-line refresh (was m_zeroLineColorBtn / zeroLineColor()).
+    if (m_rxZeroLineColorBtn) { m_rxZeroLineColorBtn->setColor(sw->rxZeroLineColor()); }
+    if (m_txZeroLineColorBtn) { m_txZeroLineColorBtn->setColor(sw->txZeroLineColor()); }
+    if (m_bandEdgeColorBtn)   { m_bandEdgeColorBtn->setColor(sw->bandEdgeColor()); }
 
     applyBandSlot(pan);
 }
@@ -1170,11 +1205,21 @@ void GridScalesPage::buildUI()
     m_gridTextColorBtn->setToolTip(QStringLiteral("Colour of the frequency and dB labels drawn on the panadapter grid."));
     colForm->addRow(QStringLiteral("Text Color:"), m_gridTextColorBtn);
 
-    m_zeroLineColorBtn = makeBtn(colGroup, QColor(255, 0, 0), &SpectrumWidget::setZeroLineColor);
-    // Thetis: setup.designer.cs:3204 (clrbtnZeroLine) — rewritten
+    // Plan 4 D9c-1: split zero-line color into RX + TX.
+    m_rxZeroLineColorBtn = makeBtn(colGroup, QColor(255, 0, 0), &SpectrumWidget::setRxZeroLineColor);
+    // Thetis: setup.designer.cs:3204 (clrbtnZeroLine) — rewritten; split per Plan 4 D9c-1
     // Thetis original: (none)
-    m_zeroLineColorBtn->setToolTip(QStringLiteral("Colour of the zero line (0 dBm marker) drawn on the panadapter when Show zero line is checked."));
-    colForm->addRow(QStringLiteral("Zero Line Color:"), m_zeroLineColorBtn);
+    m_rxZeroLineColorBtn->setToolTip(QStringLiteral(
+        "Colour of the RX zero line (0 dBm marker) drawn on the panadapter "
+        "when Show zero line is checked."));
+    colForm->addRow(QStringLiteral("RX Zero Line Color:"), m_rxZeroLineColorBtn);
+
+    m_txZeroLineColorBtn = makeBtn(colGroup, QColor(255, 184, 0), &SpectrumWidget::setTxZeroLineColor);
+    // NereusSDR Plan 4 D9c-1 — no Thetis equivalent (NereusSDR-original).
+    m_txZeroLineColorBtn->setToolTip(QStringLiteral(
+        "Colour of the TX zero line drawn on the panadapter and waterfall "
+        "at the TX centre frequency when transmitting (MOX active)."));
+    colForm->addRow(QStringLiteral("TX Zero Line Color:"), m_txZeroLineColorBtn);
 
     m_bandEdgeColorBtn = makeBtn(colGroup, QColor(255, 0, 0), &SpectrumWidget::setBandEdgeColor);
     // Thetis: setup.designer.cs:3232 (clrbtnBandEdge) — rewritten

@@ -433,8 +433,33 @@ public:
     QColor hGridColor() const { return m_hGridColor; }
     void setGridTextColor(const QColor& c);
     QColor gridTextColor() const { return m_gridTextColor; }
-    void setZeroLineColor(const QColor& c);
-    QColor zeroLineColor() const { return m_zeroLineColor; }
+    // Plan 4 D9c-1: zero-line color split into separate RX and TX colors.
+    // RX default: red (Thetis convention).
+    // TX default: amber (NereusSDR-original — distinguishes during split TX).
+    void setRxZeroLineColor(const QColor& c);
+    QColor rxZeroLineColor() const noexcept { return m_rxZeroLineColor; }
+
+    void setTxZeroLineColor(const QColor& c);
+    QColor txZeroLineColor() const noexcept { return m_txZeroLineColor; }
+
+    /// Reset all user-customisable Plan 4 D9/D9c display colors to compile-time
+    /// defaults.  Gives users an escape hatch from broken color combinations.
+    /// Plan 4 D9c-3 — scoped to TX filter, RX filter, RX zero line, TX zero
+    /// line only.  Plan 5+ may extend the scope.
+    void resetDisplayColorsToDefaults();
+
+    // Plan 4 D9c-4 — forward-compat scaffolding.  No paint code yet — these
+    // colors light up only when:
+    //   - TNF (Tracking Notch Filter) feature ships
+    //   - SubRX (3F multi-pan / multi-RX) ships
+    // Persisted now so user-customised colors survive across the version
+    // that adds the feature.
+    void setTnfFilterColor(const QColor& c);
+    QColor tnfFilterColor() const noexcept { return m_tnfFilterColor; }
+
+    void setSubRxFilterColor(const QColor& c);
+    QColor subRxFilterColor() const noexcept { return m_subRxFilterColor; }
+
     void setBandEdgeColor(const QColor& c);
     QColor bandEdgeColor() const { return m_bandEdgeColor; }
 
@@ -839,8 +864,14 @@ private:
     QColor m_gridFineColor{255, 255, 255, 20};   // 1/5 step fine grid
     QColor m_hGridColor{255, 255, 255, 40};      // horizontal dBm grid
     QColor m_gridTextColor{255, 255, 0};         // yellow text default
-    QColor m_zeroLineColor{255, 0, 0};           // red default (Thetis)
+    // Plan 4 D9c-1: split zero-line color into RX + TX.
+    QColor m_rxZeroLineColor{255, 0, 0};         // red default (Thetis convention)
+    QColor m_txZeroLineColor{255, 184, 0};       // amber default (NereusSDR-original)
     QColor m_bandEdgeColor{255, 0, 0};           // red default (Thetis)
+
+    // Plan 4 D9c-4: TNF + SubRX forward-compat scaffolding.  No paint yet.
+    QColor m_tnfFilterColor  {255,  80,  80,  80};   // red translucent placeholder
+    QColor m_subRxFilterColor{180,   0, 220,  80};   // purple translucent placeholder
 
     // FPS overlay tracking
     int    m_fpsFrameCount{0};
