@@ -16,6 +16,7 @@
 #include "TxProfileSetupPage.h"
 
 #include "core/MicProfileManager.h"
+#include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 
@@ -28,6 +29,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -110,6 +112,58 @@ void TxProfileSetupPage::buildUi()
             this, &TxProfileSetupPage::onSaveClicked);
     connect(m_deleteBtn, &QPushButton::clicked,
             this, &TxProfileSetupPage::onDeleteClicked);
+
+    // ── Plan 4 Cluster C (Task 5 / D6): TX Filter group ──────────────────────
+    // Low/High cutoff spinboxes for the TX bandpass filter.  Bidirectional with
+    // TransmitModel::filterLow / filterHigh via filterChanged(int,int).
+    // Cross-surface sync with TxApplet spinboxes happens automatically through
+    // the shared TransmitModel::filterChanged signal — no extra wiring needed.
+    if (m_tx) {
+        QGroupBox* filterGroup = addSection(QStringLiteral("TX Filter"));
+        auto* filterForm = new QFormLayout();
+        filterForm->setContentsMargins(0, 0, 0, 0);
+
+        auto* lowSpin = new QSpinBox(filterGroup);
+        lowSpin->setRange(0, 5000);
+        lowSpin->setSuffix(QStringLiteral(" Hz"));
+        lowSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        lowSpin->setToolTip(QStringLiteral(
+            "TX bandpass filter lower cutoff (Hz).  0 Hz for voice SSB modes."));
+        lowSpin->setValue(m_tx->filterLow());
+        filterForm->addRow(QStringLiteral("Low cutoff:"), lowSpin);
+
+        auto* highSpin = new QSpinBox(filterGroup);
+        highSpin->setRange(200, 10000);
+        highSpin->setSuffix(QStringLiteral(" Hz"));
+        highSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+        highSpin->setToolTip(QStringLiteral(
+            "TX bandpass filter upper cutoff (Hz).  2900 Hz for typical SSB voice."));
+        highSpin->setValue(m_tx->filterHigh());
+        filterForm->addRow(QStringLiteral("High cutoff:"), highSpin);
+
+        if (auto* vlay = qobject_cast<QVBoxLayout*>(filterGroup->layout())) {
+            vlay->addLayout(filterForm);
+        }
+
+        // UI → Model
+        connect(lowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                m_tx, &TransmitModel::setFilterLow);
+        connect(highSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                m_tx, &TransmitModel::setFilterHigh);
+
+        // Model → UI (filterChanged carries both values)
+        connect(m_tx, &TransmitModel::filterChanged,
+                this, [lowSpin, highSpin](int low, int high) {
+            {
+                QSignalBlocker bLo(lowSpin);
+                lowSpin->setValue(low);
+            }
+            {
+                QSignalBlocker bHi(highSpin);
+                highSpin->setValue(high);
+            }
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -67,6 +67,7 @@
 class QComboBox;
 class QLabel;
 class QPushButton;
+class QSpinBox;
 
 namespace NereusSDR {
 
