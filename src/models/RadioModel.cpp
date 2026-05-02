@@ -1442,16 +1442,23 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     // renders and updates.  The dialog is Qt::ApplicationModal (see
     // MainWindow.cpp:600) so other windows are blocked from interaction
     // during the wait — no re-entrant Connect-clicks or similar.
+    //
+    // Order: register the listener BEFORE checking isInitialized().  Qt's
+    // current threading semantics make the check-then-connect race
+    // theoretically impossible (no event pump between the read and the
+    // connect), but the canonical wait-for-signal idiom is connect → check
+    // → exec — robust against future Qt internals changes and trivially
+    // race-proof regardless of when the worker's QThread::finished posts.
+    QEventLoop wisdomLoop;
+    QMetaObject::Connection waitConn = QObject::connect(
+        m_wdspEngine, &WdspEngine::initializedChanged,
+        &wisdomLoop, [&wisdomLoop](bool ok) {
+            if (ok) wisdomLoop.quit();
+        });
     if (!m_wdspEngine->isInitialized()) {
-        QEventLoop wisdomLoop;
-        QMetaObject::Connection waitConn = QObject::connect(
-            m_wdspEngine, &WdspEngine::initializedChanged,
-            &wisdomLoop, [&wisdomLoop](bool ok) {
-                if (ok) wisdomLoop.quit();
-            });
         wisdomLoop.exec();
-        QObject::disconnect(waitConn);
     }
+    QObject::disconnect(waitConn);
 
     // Factory-create the connection (no parent — will be moved to thread)
     auto conn = RadioConnection::create(info);
