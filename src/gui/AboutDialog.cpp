@@ -160,7 +160,8 @@ void AboutDialog::buildUI()
             .arg(QCoreApplication::applicationVersion()),
         this);
     version->setAlignment(Qt::AlignCenter);
-    version->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 13px;"));
+    version->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 13px;").arg(Style::kLabelMid));
     mainLayout->addWidget(version);
 
     auto* buildInfo = new QLabel(
@@ -169,19 +170,22 @@ void AboutDialog::buildUI()
                  QStringLiteral(__DATE__)),
         this);
     buildInfo->setAlignment(Qt::AlignCenter);
-    buildInfo->setStyleSheet(QStringLiteral("color: #8899aa; font-size: 11px;"));
+    buildInfo->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 11px;").arg(Style::kLabelMid));
     mainLayout->addWidget(buildInfo);
 
     mainLayout->addSpacing(4);
 
     auto* author = new QLabel(QStringLiteral("Created by JJ Boyd · KG4VCF"), this);
     author->setAlignment(Qt::AlignCenter);
+    // §D exception: #aabbcc — author byline; lighter blue-gray than kTitleText (#8aa8c0).
     author->setStyleSheet(QStringLiteral("color: #aabbcc; font-size: 12px;"));
     mainLayout->addWidget(author);
 
     // ── Divider ─────────────────────────────────────────────────────────
     auto* div1 = new QFrame(this);
     div1->setFrameShape(QFrame::HLine);
+    // §D exception: #334455 — divider line; darker blue-gray than kBorderSubtle (#203040).
     div1->setStyleSheet(QStringLiteral(
         "QFrame { color: #334455; margin-top: 12px; margin-bottom: 12px; }"));
     mainLayout->addWidget(div1);
@@ -210,6 +214,8 @@ void AboutDialog::buildUI()
         this);
     origin->setWordWrap(true);
     origin->setOpenExternalLinks(true);
+    // §D exception: #99aabb — supplementary body text; midpoint between kTextSecondary
+    // (#8090a0) and kTitleText (#8aa8c0), used for secondary prose in About sections.
     origin->setStyleSheet(QStringLiteral(
         "color: #99aabb; font-size: 11px; padding-bottom: 6px;"));
     mainLayout->addWidget(origin);
@@ -320,7 +326,7 @@ void AboutDialog::buildUI()
     links->setWordWrap(true);
     links->setAlignment(Qt::AlignLeft);
     links->setStyleSheet(QStringLiteral(
-        "color: #99aabb; font-size: 11px; padding: 2px 0;"));
+        "color: #99aabb; font-size: 11px; padding: 2px 0;"));  // §D exception: see origin label above
     mainLayout->addWidget(links);
 
     // ── Divider ─────────────────────────────────────────────────────────
@@ -353,8 +359,9 @@ void AboutDialog::buildUI()
     cardRow->setSpacing(10);
 
     for (const auto& lib : kLibraries) {
+        // §D exception: #aabbcc — card subtitle blue-gray; lighter than kTitleText (#8aa8c0).
         auto* card = new QLabel(
-            QStringLiteral("<b>%1</b><br><span style=\"color:#aabbcc\">%2</span>")
+            QStringLiteral("<b>%1</b><br><span style=\"color:#aabbcc\">%2</span>")  // §D exception
                 .arg(QString::fromUtf8(lib.name),
                      QString::fromUtf8(lib.desc)),
             this);
@@ -412,6 +419,9 @@ void AboutDialog::buildUI()
     copyright->setAlignment(Qt::AlignCenter);
     copyright->setWordWrap(true);
     copyright->setOpenExternalLinks(true);
+    // §D exception: #667788 — legal footer text; intentionally subdued blue-gray,
+    // darker than kTextInactive (#405060) and distinct from other text levels.
+    // Used for all GPL notices, warranty, license links, and HPSDR credit below.
     copyright->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
     mainLayout->addWidget(copyright);
 
@@ -420,7 +430,7 @@ void AboutDialog::buildUI()
                        "see sections 15-16 of the License for details."),
         this);
     warranty->setAlignment(Qt::AlignCenter);
-    warranty->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    warranty->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));  // §D exception: see copyright label above
     mainLayout->addWidget(warranty);
 
     auto* license = new QLabel(
@@ -440,7 +450,7 @@ void AboutDialog::buildUI()
     license->setAlignment(Qt::AlignCenter);
     license->setOpenExternalLinks(true);
     license->setWordWrap(true);
-    license->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    license->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));  // §D exception: see copyright label above
     mainLayout->addWidget(license);
 
     auto* aiDisclosure = new QLabel(
@@ -452,7 +462,7 @@ void AboutDialog::buildUI()
         this);
     aiDisclosure->setAlignment(Qt::AlignCenter);
     aiDisclosure->setWordWrap(true);
-    aiDisclosure->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    aiDisclosure->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));  // §D exception: see copyright label above
     mainLayout->addWidget(aiDisclosure);
 
     auto* repoLink = new QLabel(
@@ -461,13 +471,13 @@ void AboutDialog::buildUI()
         this);
     repoLink->setAlignment(Qt::AlignCenter);
     repoLink->setOpenExternalLinks(true);
-    repoLink->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    repoLink->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));  // §D exception: see copyright label above
     mainLayout->addWidget(repoLink);
 
     auto* hpsdr = new QLabel(
         QStringLiteral("HPSDR protocol © TAPR"), this);
     hpsdr->setAlignment(Qt::AlignCenter);
-    hpsdr->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));
+    hpsdr->setStyleSheet(QStringLiteral("color: #667788; font-size: 11px;"));  // §D exception: see copyright label above
     mainLayout->addWidget(hpsdr);
 
     mainLayout->addSpacing(12);
@@ -477,10 +487,11 @@ void AboutDialog::buildUI()
     okBtn->setDefault(true);
     okBtn->setAutoDefault(false);
     okBtn->setFixedWidth(80);
+    // §D exception: hover #33c8e8 — brightened accent variant; no canonical match.
     okBtn->setStyleSheet(
         QStringLiteral("QPushButton { background: %1; color: %2; border-radius: 4px;"
                        " padding: 6px 16px; font-weight: bold; }"
-                       "QPushButton:hover { background: #33c8e8; }")
+                       "QPushButton:hover { background: #33c8e8; }")  // §D exception: accent-light hover
             .arg(Style::kAccent, Style::kAppBg));
     connect(okBtn, &QPushButton::clicked, this, &QDialog::accept);
 
