@@ -1123,6 +1123,10 @@ void MainWindow::buildUI()
         // B8 Task 21: wire Cursor Freq toggle to SpectrumWidget visibility guard.
         connect(m_overlayPanel, &SpectrumOverlayPanel::cursorFreqVisibleChanged,
                 m_spectrumWidget, &SpectrumWidget::setCursorFreqVisible);
+
+        // B8 Task 22: wire Fill Color button to SpectrumWidget::setFillColor.
+        connect(m_overlayPanel, &SpectrumOverlayPanel::fillColorChanged,
+                m_spectrumWidget, &SpectrumWidget::setFillColor);
     }
 
     // Wire: zoom changes → adjust FFT size for appropriate bin resolution

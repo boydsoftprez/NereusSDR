@@ -747,6 +747,7 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
                 m_fillColorBtn->setStyleSheet(
                     QString("QPushButton { background: %1; border: 1px solid #506070;"
                             " border-radius: 2px; }").arg(c.name()));
+                emit fillColorChanged(c);  // B8 Task 22
             }
         });
         ++row;

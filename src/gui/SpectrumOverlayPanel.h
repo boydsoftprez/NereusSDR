@@ -86,6 +86,7 @@ signals:
     void wfBlackLevelChanged(int level);
     void colorSchemeChanged(int scheme);
     void cursorFreqVisibleChanged(bool on);  // B8 Task 21
+    void fillColorChanged(const QColor& color); // B8 Task 22
 
     // Zoom buttons
     void zoomSegment();
