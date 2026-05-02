@@ -9,16 +9,15 @@
 
 using NereusSDR::AppletPanelWidget;
 
-class TestAppletPanelGutter : public QObject {
+class TstAppletPanelGutter : public QObject {
     Q_OBJECT
 private slots:
     void stackLayoutReservesEightPxRightMargin();
 };
 
-void TestAppletPanelGutter::stackLayoutReservesEightPxRightMargin()
+void TstAppletPanelGutter::stackLayoutReservesEightPxRightMargin()
 {
     AppletPanelWidget panel;
-    // Find the QScrollArea, then its widget()'s layout — that's the stack layout.
     auto* scroll = panel.findChild<QScrollArea*>();
     QVERIFY(scroll != nullptr);
     auto* stackWidget = scroll->widget();
@@ -33,5 +32,5 @@ void TestAppletPanelGutter::stackLayoutReservesEightPxRightMargin()
     QCOMPARE(m.bottom(), 0);
 }
 
-QTEST_MAIN(TestAppletPanelGutter)
+QTEST_MAIN(TstAppletPanelGutter)
 #include "tst_applet_panel_gutter.moc"
