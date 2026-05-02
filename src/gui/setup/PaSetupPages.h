@@ -26,6 +26,9 @@
 //   2026-05-02 — Original implementation.  PA top-level category for
 //                 Setup IA reshape Phase 2.  AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-05-02 — Phase 4: PaValuesPage gains MetricLabel members + test
+//                 accessors guarded by NEREUS_BUILD_TESTS.  AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -75,9 +78,12 @@
 
 #include "gui/SetupPage.h"
 
+#include <QString>
+
 namespace NereusSDR {
 
 class PaCalibrationGroup;
+class MetricLabel;
 
 // ---------------------------------------------------------------------------
 // PA > PA Gain
@@ -114,12 +120,44 @@ private:
 // Meter tab.  NereusSDR promotes this readout to a dedicated page so the
 // live telemetry can be enriched (raw + calibrated FWD/REV, SWR, PA current,
 // PA voltage, PA temperature, ADC overload state, drive byte) without
-// crowding the cal-point editor.  Phase 4 binds this page to RadioStatus.
+// crowding the cal-point editor.  Phase 4 binds this page to RadioStatus
+// (forward / reflected / SWR / PA current / PA temperature) and to
+// RadioConnection (supply volts / raw FWD-REV ADC counts / ADC overload).
+//
+// Skipped for MVP (TODO in source):
+//   * textFwdVoltage / textRevVoltage — per-stage RF voltage readouts.
+//     Need a public scaleFwdPowerWatts utility (today private to RadioModel).
+//   * btnResetPAValues — peak/min tracking reset.  Phase 4 surfaces only the
+//     instantaneous values; tracking can land alongside the future
+//     PaPeakTracker model.
 // ---------------------------------------------------------------------------
 class PaValuesPage : public SetupPage {
     Q_OBJECT
 public:
     explicit PaValuesPage(RadioModel* model, QWidget* parent = nullptr);
+
+#ifdef NEREUS_BUILD_TESTS
+    QString fwdCalibratedTextForTest() const;
+    QString revPowerTextForTest()      const;
+    QString swrTextForTest()           const;
+    QString paCurrentTextForTest()     const;
+    QString paTempTextForTest()        const;
+    QString supplyVoltsTextForTest()   const;
+    QString fwdAdcTextForTest()        const;
+    QString revAdcTextForTest()        const;
+    QString adcOverloadTextForTest()   const;
+#endif
+
+private:
+    MetricLabel* m_fwdCalibratedLabel{nullptr};
+    MetricLabel* m_revPowerLabel{nullptr};
+    MetricLabel* m_swrLabel{nullptr};
+    MetricLabel* m_paCurrentLabel{nullptr};
+    MetricLabel* m_paTempLabel{nullptr};
+    MetricLabel* m_supplyVoltsLabel{nullptr};
+    MetricLabel* m_adcOverloadLabel{nullptr};
+    MetricLabel* m_fwdAdcLabel{nullptr};
+    MetricLabel* m_revAdcLabel{nullptr};
 };
 
 } // namespace NereusSDR

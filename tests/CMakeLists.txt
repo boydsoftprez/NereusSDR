@@ -949,6 +949,19 @@ target_compile_definitions(tst_pa_calibration_group PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_pa_watt_meter_page)
 target_compile_definitions(tst_pa_watt_meter_page PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Setup IA reshape Phase 4: live PA Values page ────────────────────────────
+# Verifies PaValuesPage builds at least 8 MetricLabel children and updates
+# them when the bound RadioStatus + RadioConnection signals fire:
+#   - powerChanged → FWD calibrated, REV, SWR labels
+#   - paTemperatureChanged / paCurrentChanged → temperature / current labels
+#   - supplyVoltsChanged → supply volts label
+#   - paTelemetryUpdated → FWD/REV ADC raw labels
+#   - adcOverflow → overload label
+#   - null-model construction is safe (model-less preview fallback)
+# Source: Thetis panelPAValues setup.designer.cs:51155-51177 [v2.10.3.13].
+nereus_add_test(tst_pa_values_page)
+target_compile_definitions(tst_pa_values_page PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
 # Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis
 # console.cs:setAlex2HPF / setAlex2LPF (7060-7299) first-match range logic

@@ -71,9 +71,14 @@ void TstPaSetupPages::pa_watt_meter_page_constructs_with_placeholder_label()
 
 void TstPaSetupPages::pa_values_page_constructs_with_placeholder_label()
 {
+    // Setup IA reshape Phase 4 (2026-05-02): the placeholder body was
+    // replaced wholesale with the live MetricLabel grid bound to RadioStatus
+    // + RadioConnection signals.  When constructed without a model, the
+    // page falls back to a brief hint label so model-less previews still
+    // render coherently.  Live-binding integration coverage lives in
+    // tst_pa_values_page.
     PaValuesPage page(/*model=*/nullptr);
-    QVERIFY2(labelContains(page, QStringLiteral("Phase 4")),
-             "PaValuesPage placeholder must mention 'Phase 4'");
+    QCOMPARE(page.pageTitle(), QStringLiteral("PA Values"));
 }
 
 void TstPaSetupPages::all_three_pages_have_setupPage_title()
