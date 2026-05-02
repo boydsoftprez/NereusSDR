@@ -119,7 +119,10 @@
 #include "RxApplet.h"
 #include "NyiOverlay.h"
 #include "core/BoardCapabilities.h"
+#include "core/HpsdrModel.h"
+#include "core/SkuUiProfile.h"
 #include "core/P2RadioConnection.h"
+#include "gui/AntennaPopupBuilder.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/accessories/AlexController.h"
@@ -252,25 +255,45 @@ void RxApplet::buildUi()
             "QPushButton:hover { color: #66aaff; }"  // §A2 one-off hover derived from #4488ff
         ));
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
+            // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
             QMenu menu(this);
-            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
             const QString cur = m_slice ? m_slice->rxAntenna() : QString{};
-            for (const QString& ant : m_antList) {
-                QAction* act = menu.addAction(ant);
-                act->setCheckable(true);
-                act->setChecked(ant == cur);
+            if (m_popupCaps && m_popupSku) {
+                AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
+                    AntennaPopupBuilder::Mode::RX, cur);
+            } else {
+                for (const QString& ant : m_antList) {
+                    QAction* act = menu.addAction(ant);
+                    act->setCheckable(true);
+                    act->setChecked(ant == cur);
+                }
             }
+            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
             const QAction* sel = menu.exec(
                 m_rxAntBtn->mapToGlobal(QPoint(0, m_rxAntBtn->height())));
             if (sel && m_slice) {
-                m_slice->setRxAntenna(sel->text());
+                const QString text = sel->data().isValid() ? sel->data().toString()
+                                                           : sel->text();
+                m_slice->setRxAntenna(text);
                 // Phase 3P-F Task 4: persist per-band assignment in AlexController.
                 if (m_model && m_pan) {
-                    const QString& text = sel->text();
-                    int antNum = 1;
-                    if (text == QStringLiteral("ANT2")) { antNum = 2; }
-                    else if (text == QStringLiteral("ANT3")) { antNum = 3; }
-                    m_model->alexControllerMutable().setRxAnt(m_pan->band(), antNum);
+                    // ANT1/2/3 → setRxAnt. RX-only labels → setRxOnlyAnt (position in sku).
+                    // "RX out on TX" is the bypass toggle — not routed via setRxAnt.
+                    if (text.startsWith(QStringLiteral("ANT"))) {
+                        int antNum = 1;
+                        if (text == QStringLiteral("ANT2")) { antNum = 2; }
+                        else if (text == QStringLiteral("ANT3")) { antNum = 3; }
+                        m_model->alexControllerMutable().setRxAnt(m_pan->band(), antNum);
+                    } else if (m_popupSku && text != QStringLiteral("RX out on TX")) {
+                        // RX-only label: find its position in sku.rxOnlyLabels (1-indexed)
+                        const auto& lbls = m_popupSku->rxOnlyLabels;
+                        for (int i = 0; i < static_cast<int>(lbls.size()); ++i) {
+                            if (lbls[static_cast<size_t>(i)] == text) {
+                                m_model->alexControllerMutable().setRxOnlyAnt(m_pan->band(), i + 1);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -292,22 +315,29 @@ void RxApplet::buildUi()
             "QPushButton:hover { color: #ff6666; }"  // §A2 one-off hover derived from #ff4444
         ));
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
+            // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
             QMenu menu(this);
-            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));
             const QString cur = m_slice ? m_slice->txAntenna() : QString{};
-            for (const QString& ant : m_antList) {
-                QAction* act = menu.addAction(ant);
-                act->setCheckable(true);
-                act->setChecked(ant == cur);
+            if (m_popupCaps && m_popupSku) {
+                AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
+                    AntennaPopupBuilder::Mode::TX, cur);
+            } else {
+                for (const QString& ant : m_antList) {
+                    QAction* act = menu.addAction(ant);
+                    act->setCheckable(true);
+                    act->setChecked(ant == cur);
+                }
             }
+            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
             const QAction* sel = menu.exec(
                 m_txAntBtn->mapToGlobal(QPoint(0, m_txAntBtn->height())));
             if (sel && m_slice) {
-                m_slice->setTxAntenna(sel->text());
+                const QString text = sel->data().isValid() ? sel->data().toString()
+                                                           : sel->text();
+                m_slice->setTxAntenna(text);
                 // Phase 3P-F Task 4: persist per-band TX assignment in AlexController.
                 // setTxAnt() respects blockTxAnt2/3 safety guards from Task 1.
                 if (m_model && m_pan) {
-                    const QString& text = sel->text();
                     int antNum = 1;
                     if (text == QStringLiteral("ANT2")) { antNum = 2; }
                     else if (text == QStringLiteral("ANT3")) { antNum = 3; }
@@ -1068,6 +1098,16 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_stepAttSpin && caps.attenuator.present) {
         m_stepAttSpin->setRange(caps.attenuator.minDb, caps.attenuator.maxDb);
     }
+
+    // B3: store caps for AntennaPopupBuilder (popup lambdas read this).
+    m_popupCaps = caps;
+}
+
+// B3: per-SKU UI overlay for antenna popup — mirrors VfoWidget::setHpsdrSku.
+// Called by MainWindow on currentRadioChanged after setBoardCapabilities.
+void RxApplet::setHpsdrSku(HPSDRModel sku)
+{
+    m_popupSku = skuUiProfileFor(sku);
 }
 
 // ── Model → UI sync ───────────────────────────────────────────────────────────

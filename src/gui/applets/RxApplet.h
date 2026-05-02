@@ -121,6 +121,8 @@
 #pragma once
 
 #include "AppletWidget.h"
+#include "core/BoardCapabilities.h"
+#include "core/SkuUiProfile.h"
 #include "core/WdspTypes.h"
 #include "gui/widgets/TriBtn.h"
 #include "models/Band.h"
@@ -130,6 +132,7 @@
 #include <QStringList>
 #include <QVector>
 
+#include <optional>
 #include <utility>
 
 class QCheckBox;
@@ -144,7 +147,7 @@ class QStackedWidget;
 
 namespace NereusSDR {
 
-struct BoardCapabilities;
+enum class HPSDRModel : int;
 class FilterPassbandWidget;
 class PanadapterModel;
 class SliceModel;
@@ -196,6 +199,10 @@ public slots:
     // Hidden on HL2/Atlas and any board without an Alex front-end.
     void setBoardCapabilities(const NereusSDR::BoardCapabilities& caps);
 
+    // Per-SKU UI overlay for antenna popup (B3) — mirrors VfoWidget::setHpsdrSku.
+    // Called by MainWindow on currentRadioChanged after setBoardCapabilities.
+    void setHpsdrSku(NereusSDR::HPSDRModel sku);
+
 #ifdef NEREUS_BUILD_TESTS
 public:
     // Test-only: returns current step-att spinbox maximum (for range assertions).
@@ -240,6 +247,12 @@ private:
     SliceModel*      m_slice = nullptr;
     PanadapterModel* m_pan   = nullptr;  // observed for bandChanged (Phase 3P-F Task 4)
     QStringList m_antList{QStringLiteral("ANT1"), QStringLiteral("ANT2"), QStringLiteral("ANT3")};
+
+    // Stored board capabilities and SKU profile for antenna popup construction
+    // (AntennaPopupBuilder B3). Populated by setBoardCapabilities() + setHpsdrSku().
+    // Optional so we can detect "not yet set" (null = no radio connected).
+    std::optional<BoardCapabilities> m_popupCaps;
+    std::optional<SkuUiProfile>      m_popupSku;
 
     // Filter presets for the active mode — (low_hz, high_hz) pairs from SliceModel::presetsForMode().
     // Rebuilt on every dspModeChanged via rebuildFilterButtons(mode).

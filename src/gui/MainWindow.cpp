@@ -1396,10 +1396,13 @@ void MainWindow::populateDefaultMeter()
 
     // Phase 3P-I-a T16 — push board caps into RxApplet so ANT buttons
     // hide on HL2/Atlas. Matches the VFO Flag wiring below (T15).
+    // B3: also push SKU profile so AntennaPopupBuilder knows rxOnlyLabels.
     m_rxApplet->setBoardCapabilities(m_radioModel->boardCapabilities());
+    m_rxApplet->setHpsdrSku(m_radioModel->hardwareProfile().model);
     connect(m_radioModel, &RadioModel::currentRadioChanged, m_rxApplet,
             [this]() {
         m_rxApplet->setBoardCapabilities(m_radioModel->boardCapabilities());
+        m_rxApplet->setHpsdrSku(m_radioModel->hardwareProfile().model);
     });
 
     // TxApplet — NYI shell (Phase 3I-1)
