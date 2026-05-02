@@ -66,6 +66,7 @@ mw0lge@grange-lane.co.uk
 // project-level Thetis LICENSE applies.
 
 #include "AddCustomRadioDialog.h"
+#include "StyleConstants.h"
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
 #include "core/LogCategories.h"
@@ -93,30 +94,57 @@ namespace NereusSDR {
 // ---------------------------------------------------------------------------
 // Style constants (local to this translation unit)
 // ---------------------------------------------------------------------------
+// Per docs/architecture/ui-audit-polish-plan.md §D — Task 22.
+// All palette constants verified against StyleConstants.h:
+//   Style::kTextPrimary (#c8d8e8), Style::kOverlayBorder (#304050),
+//   Style::kAccent (#00b4d8), Style::kAppBg (#0f0f1a),
+//   Style::kTextSecondary (#8090a0).
+//
+// §D exception values (no canonical match — dialog-specific):
+//   #12202e  — field input background; deeper inset than kButtonBg (#1a2a3a),
+//               lighter than kPanelBg (#0a0a18). Kept as named constant.
+//   #0096b7  — primary button hover; darker accent variant not in palette.
+//   #303850  — primary button disabled bg; bluish-gray not in palette.
+//   #606878  — primary button disabled fg; not in palette.
+//   #405060  — secondary button border and hover; not in palette.
 
-static const QString kFieldStyle = QStringLiteral(
-    "QLineEdit, QSpinBox, QComboBox {"
-    "  background: #12202e; color: #c8d8e8;"
-    "  border: 1px solid #304050; border-radius: 3px; padding: 4px 6px;"
-    "}"
-    "QLineEdit:focus, QSpinBox:focus, QComboBox:focus {"
-    "  border-color: #00b4d8;"
-    "}");
+// Field input background — deeper inset than kButtonBg; no canonical match.
+// §D documented exception.
+static constexpr const char* kFieldInputBg = "#12202e";
 
-static const QString kPrimaryButtonStyle = QStringLiteral(
-    "QPushButton {"
-    "  background: #00b4d8; color: #fff;"
-    "  border: none; border-radius: 4px; padding: 6px 16px; font-weight: bold;"
-    "}"
-    "QPushButton:hover { background: #0096b7; }"
-    "QPushButton:disabled { background: #303850; color: #606878; }");
+static const QString kFieldStyle =
+    QStringLiteral(
+        "QLineEdit, QSpinBox, QComboBox {"
+        "  background: %1; color: %2;"
+        "  border: 1px solid %3; border-radius: 3px; padding: 4px 6px;"
+        "}"
+        "QLineEdit:focus, QSpinBox:focus, QComboBox:focus {"
+        "  border-color: %4;"
+        "}")
+    .arg(kFieldInputBg, Style::kTextPrimary, Style::kOverlayBorder, Style::kAccent);
 
-static const QString kSecondaryButtonStyle = QStringLiteral(
-    "QPushButton {"
-    "  background: #304050; color: #c8d8e8;"
-    "  border: 1px solid #405060; border-radius: 4px; padding: 6px 16px;"
-    "}"
-    "QPushButton:hover { background: #405060; }");
+// Primary (accent-filled) button — kAccent bg, white fg, darker hover.
+// Hover #0096b7 and disabled colors have no canonical match; §D exception.
+static const QString kPrimaryButtonStyle =
+    QStringLiteral(
+        "QPushButton {"
+        "  background: %1; color: #fff;"
+        "  border: none; border-radius: 4px; padding: 6px 16px; font-weight: bold;"
+        "}"
+        "QPushButton:hover { background: #0096b7; }"        // §D exception: accent-dark hover
+        "QPushButton:disabled { background: #303850; color: #606878; }")  // §D exception: disabled
+    .arg(Style::kAccent);
+
+// Secondary (outline) button — kOverlayBorder bg, kTextPrimary fg.
+// Border/hover #405060 has no canonical match; §D exception.
+static const QString kSecondaryButtonStyle =
+    QStringLiteral(
+        "QPushButton {"
+        "  background: %1; color: %2;"
+        "  border: 1px solid #405060; border-radius: 4px; padding: 6px 16px;"  // §D: #405060 exception
+        "}"
+        "QPushButton:hover { background: #405060; }")       // §D exception: secondary hover
+    .arg(Style::kOverlayBorder, Style::kTextPrimary);
 
 // ---------------------------------------------------------------------------
 // Constructor / Destructor
@@ -211,8 +239,9 @@ void AddCustomRadioDialog::buildUi()
             "Use this for radios accessed over VPN or a static route.\n"
             "Discovery will not find it automatically — it is saved\n"
             "to your settings and shown in the list at launch."));
-    infoLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #8090a0; font-size: 12px; padding: 4px; }"));
+    infoLabel->setStyleSheet(
+        QStringLiteral("QLabel { color: %1; font-size: 12px; padding: 4px; }")
+        .arg(Style::kTextSecondary));
     outerLayout->addWidget(infoLabel);
 
     // --- Form ---
@@ -275,10 +304,16 @@ void AddCustomRadioDialog::buildUi()
     auto* optLayout = new QVBoxLayout(optGroup);
     optLayout->setContentsMargins(10, 14, 10, 10);
 
-    static const QString kCheckStyle = QStringLiteral(
-        "QCheckBox { color: #c8d8e8; }"
-        "QCheckBox::indicator { border: 1px solid #304050; background: #12202e; width: 14px; height: 14px; }"
-        "QCheckBox::indicator:checked { background: #00b4d8; }");
+    // Checkbox style uses kTextPrimary + kOverlayBorder + kAccent.
+    // Indicator bg uses kFieldInputBg (dialog-specific inset; §D exception).
+    // kCheckBoxStyle adds font-size:12px + border-radius:2px which this omits
+    // by design (dialog fields use tighter sizing). §D documented exception.
+    static const QString kCheckStyle =
+        QStringLiteral(
+            "QCheckBox { color: %1; }"
+            "QCheckBox::indicator { border: 1px solid %2; background: %3; width: 14px; height: 14px; }"
+            "QCheckBox::indicator:checked { background: %4; }")
+        .arg(Style::kTextPrimary, Style::kOverlayBorder, kFieldInputBg, Style::kAccent);
 
     // Pin to MAC — AppSettings::saveRadio pinToMac flag
     m_pinToMacCheck = new QCheckBox(
@@ -344,22 +379,25 @@ void AddCustomRadioDialog::buildUi()
     btnRow->addWidget(cancelButton);
     outerLayout->addLayout(btnRow);
 
-    // Dark theme
-    setStyleSheet(QStringLiteral(
-        "QDialog { background: #0f0f1a; }"
-        "QGroupBox {"
-        "  color: #8090a0;"
-        "  border: 1px solid #203040;"
-        "  border-radius: 4px;"
-        "  margin-top: 8px;"
-        "  padding-top: 12px;"
-        "}"
-        "QGroupBox::title {"
-        "  subcontrol-origin: margin;"
-        "  left: 10px;"
-        "  padding: 0 3px;"
-        "}"
-        "QLabel { color: #a0b0c0; }"));
+    // Dark theme — §D: #a0b0c0 label fg has no canonical match (off-palette
+    // label warm-blue used in this dialog only; §D documented exception).
+    setStyleSheet(
+        QStringLiteral(
+            "QDialog { background: %1; }"
+            "QGroupBox {"
+            "  color: %2;"
+            "  border: 1px solid %3;"
+            "  border-radius: 4px;"
+            "  margin-top: 8px;"
+            "  padding-top: 12px;"
+            "}"
+            "QGroupBox::title {"
+            "  subcontrol-origin: margin;"
+            "  left: 10px;"
+            "  padding: 0 3px;"
+            "}"
+            "QLabel { color: #a0b0c0; }")          // §D exception: off-palette label warm-blue
+        .arg(Style::kAppBg, Style::kTextSecondary, Style::kBorderSubtle));
 
     // Wire validation to field changes
     connect(m_nameEdit,     &QLineEdit::textChanged,
@@ -647,7 +685,7 @@ void AddCustomRadioDialog::onSaveOfflineClicked()
                     "we have no way to learn it.\n"
                     "Protocol 1 = HL2 / classic ANAN. Protocol 2 = Saturn / ANAN-G2."));
             m_protocolCombo->setStyleSheet(
-                kFieldStyle + QStringLiteral("QComboBox { border: 1px solid #5985b8; }"));
+                kFieldStyle + QStringLiteral("QComboBox { border: 1px solid #5985b8; }"));  // §D exception: info-blue highlight
             return;
         }
     }
@@ -691,16 +729,21 @@ void AddCustomRadioDialog::validateFields()
         m_saveOfflineButton->setEnabled(fieldsOk);
     }
 
-    // Visual feedback on MAC field
+    // Visual feedback on MAC field.
+    // #e06060 / #804040 = MAC error highlight; no canonical match (§D exception).
     if (!macOk) {
-        m_macEdit->setStyleSheet(QStringLiteral(
-            "QLineEdit { background: #12202e; color: #e06060;"
-            "  border: 1px solid #804040; border-radius: 3px; padding: 4px 6px; }"));
+        m_macEdit->setStyleSheet(
+            QStringLiteral(
+                "QLineEdit { background: %1; color: #e06060;"    // §D exception: error red fg
+                "  border: 1px solid #804040; border-radius: 3px; padding: 4px 6px; }")  // §D exception: error border
+            .arg(kFieldInputBg));
     } else {
-        m_macEdit->setStyleSheet(QStringLiteral(
-            "QLineEdit { background: #12202e; color: #c8d8e8;"
-            "  border: 1px solid #304050; border-radius: 3px; padding: 4px 6px; }"
-            "QLineEdit:focus { border-color: #00b4d8; }"));
+        m_macEdit->setStyleSheet(
+            QStringLiteral(
+                "QLineEdit { background: %1; color: %2;"
+                "  border: 1px solid %3; border-radius: 3px; padding: 4px 6px; }"
+                "QLineEdit:focus { border-color: %4; }")
+            .arg(kFieldInputBg, Style::kTextPrimary, Style::kOverlayBorder, Style::kAccent));
     }
 }
 
