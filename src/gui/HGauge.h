@@ -19,8 +19,8 @@ public:
     void setPeakValue(double val);
     void setTickLabels(const QStringList& labels);
 
-    QSize sizeHint() const override { return {200, 24}; }
-    QSize minimumSizeHint() const override { return {100, 20}; }
+    QSize sizeHint() const override { return {200, 30}; }
+    QSize minimumSizeHint() const override { return {100, 26}; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;

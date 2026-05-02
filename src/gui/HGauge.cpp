@@ -8,7 +8,7 @@ namespace NereusSDR {
 
 HGauge::HGauge(QWidget* parent) : QWidget(parent)
 {
-    setFixedHeight(24);
+    setFixedHeight(30);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
