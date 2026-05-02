@@ -1,3 +1,7 @@
+// no-port-check: NereusSDR-original test fixture. References to Thetis
+// files in comments are upstream-comparison citations (documenting that
+// upstream does NOT board-gate the sidetone control), not a port.
+//
 // =================================================================
 // tests/tst_board_capability_flag_wiring.cpp  (NereusSDR)
 // =================================================================
@@ -43,6 +47,7 @@
 
 #include "core/AppSettings.h"
 #include "core/StepAttenuatorController.h"
+#include "gui/setup/DspSetupPages.h"
 
 using namespace NereusSDR;
 
@@ -167,11 +172,61 @@ private slots:
     }
 
     // ── Task 4.2 — hasSidetoneGenerator ──────────────────────────────────────
-    // (Reserved — to be filled in by Task 4.2 implementer per plan §4.2.)
     //
-    // Expected cases:
-    //   - sidetone_toggle_visibility_gated_when_flag_false (CwxApplet)
-    //   - sidetone_toggle_visible_when_flag_true (HL2 etc.)
+    // HL2 firmware generates the CW sidetone in hardware (with its own
+    // volume control routed through the radio's audio path); standard P1
+    // boards rely on host-generated software sidetone. We use the
+    // BoardCapabilities.hasSidetoneGenerator flag to visibility-gate the
+    // "Sidetone Volume" row in CwSetupPage so users on non-HL2 boards
+    // don't see a control that does nothing on their hardware.
+    //
+    // Thetis upstream comparison (setup.cs [v2.10.3.13 @501e3f51]):
+    // Thetis does NOT board-gate the sidetone control — chkSideTones,
+    // chkDSPKeyerSidetone (HW), chkDSPKeyerSidetone_software (SW) are
+    // mutually-exclusive checkboxes that are always visible.  This
+    // gate is therefore NereusSDR-specific use of the populated flag,
+    // not a port of an upstream gate.
+
+    // Case 1: Default — before any setHasSidetoneGenerator() call, the
+    // sidetone row is hidden (so users opening Setup before any radio
+    // connects don't see a useless control).
+    void sidetoneRow_hiddenByDefault()
+    {
+        CwSetupPage page(nullptr);
+        QCOMPARE(page.sidetoneRowVisibleForTest(), false);
+    }
+
+    // Case 2: When the flag is true (HL2 family connected), the row
+    // becomes visible.
+    void sidetoneRow_visibleWhenFlagTrue()
+    {
+        CwSetupPage page(nullptr);
+        page.setHasSidetoneGenerator(true);
+        QCOMPARE(page.sidetoneRowVisibleForTest(), true);
+    }
+
+    // Case 3: When the flag flips back to false (e.g. user disconnects
+    // HL2 then connects an Atlas/Hermes), the row hides again.
+    void sidetoneRow_hidesWhenFlagFlipsFalse()
+    {
+        CwSetupPage page(nullptr);
+        page.setHasSidetoneGenerator(true);
+        page.setHasSidetoneGenerator(false);
+        QCOMPARE(page.sidetoneRowVisibleForTest(), false);
+    }
+
+    // Case 4: Repeated calls with the same value are idempotent (no
+    // visibility flicker on noisy connection-state-changed signals).
+    void sidetoneRow_idempotentOnRepeat()
+    {
+        CwSetupPage page(nullptr);
+        page.setHasSidetoneGenerator(true);
+        page.setHasSidetoneGenerator(true);
+        QCOMPARE(page.sidetoneRowVisibleForTest(), true);
+        page.setHasSidetoneGenerator(false);
+        page.setHasSidetoneGenerator(false);
+        QCOMPARE(page.sidetoneRowVisibleForTest(), false);
+    }
 
     // ── Task 4.3 — hasPennyLane ──────────────────────────────────────────────
     // (Reserved — to be filled in by Task 4.3 implementer per plan §4.3.)
