@@ -1,0 +1,89 @@
+name: Release macOS Shakedown (throwaway)
+
+# This workflow exists ONLY to scout `macos-13` runner availability and
+# x86_64 build path on macOS before adding the Intel matrix row to
+# release.yml. It triggers manually only — no tag push, no pull_request,
+# no schedule. Deleted in the Phase 2 commit of the same PR.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shakedown-macos-intel:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x86_64
+            deployment_target: "11.0"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify runner identity
+        run: |
+          echo "Runner: ${{ matrix.runner }}"
+          echo "Arch (uname -m): $(uname -m)"
+          echo "macOS version: $(sw_vers -productVersion)"
+          echo "Xcode: $(xcodebuild -version 2>&1 | head -1)"
+
+      - name: Install dependencies
+        run: brew install qt@6 ninja create-dmg fftw ccache
+
+      - name: Verify Qt version is 6.8+
+        run: |
+          QT_VER=$(brew list --versions qt@6 | awk '{print $2}')
+          echo "Brew qt@6 version: $QT_VER"
+          MAJOR=$(echo "$QT_VER" | cut -d. -f1)
+          MINOR=$(echo "$QT_VER" | cut -d. -f2)
+          if [ "$MAJOR" -lt 6 ] || { [ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 8 ]; }; then
+            echo "::error::Qt $QT_VER is below 6.8 minimum required"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up DeepFilterNet3 library
+        run: bash setup-deepfilter.sh
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --no-tests=ignore
+
+      - name: Verify built binary is x86_64
+        run: |
+          BIN_PATH=build/NereusSDR.app/Contents/MacOS/NereusSDR
+          if [ ! -f "$BIN_PATH" ]; then
+            echo "::error::$BIN_PATH not found"
+            exit 1
+          fi
+          FILE_OUTPUT=$(file "$BIN_PATH")
+          echo "$FILE_OUTPUT"
+          if ! echo "$FILE_OUTPUT" | grep -q "Mach-O 64-bit executable x86_64"; then
+            echo "::error::Binary is NOT x86_64. Got: $FILE_OUTPUT"
+            exit 1
+          fi
+          echo "✓ Binary confirmed x86_64"
+
+      - name: Upload .app artifact for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: shakedown-macos-intel-app
+          path: build/NereusSDR.app
+          retention-days: 3
