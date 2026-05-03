@@ -109,16 +109,26 @@ jobs:
 
       - name: Configure
         run: |
+          FFTW_PREFIX="${{ github.workspace }}/fftw-x86_64"
           # Prepend our cross-compiled FFTW pkgconfig dir to PKG_CONFIG_PATH
           # so NereusSDR's `pkg_check_modules(FFTW3 fftw3)` finds the x86_64
           # build instead of falling through to system paths (which contain
           # no FFTW since we did not brew-install it).
-          export PKG_CONFIG_PATH="${{ github.workspace }}/fftw-x86_64/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export PKG_CONFIG_PATH="$FFTW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          # Add the FFTW lib dir to the linker search path. CMake's
+          # pkg_check_modules populates FFTW3_LIBRARY_DIRS but NereusSDR's
+          # third_party CMakeLists.txt files only call target_link_libraries
+          # (not target_link_directories), so the -L flag is not added per
+          # target. On the existing arm64 path brew's /opt/homebrew/lib is
+          # in the default linker search; cross-compile prefix is not.
+          # CMake reads LDFLAGS at configure time and folds it into
+          # CMAKE_EXE_LINKER_FLAGS_INIT / CMAKE_SHARED_LINKER_FLAGS_INIT.
+          export LDFLAGS="-L$FFTW_PREFIX/lib $LDFLAGS"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
-            -DCMAKE_PREFIX_PATH="${{ github.workspace }}/fftw-x86_64"
+            -DCMAKE_PREFIX_PATH="$FFTW_PREFIX"
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
