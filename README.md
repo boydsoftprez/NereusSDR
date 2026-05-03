@@ -2,6 +2,7 @@
 
 **A cross-platform SDR console for OpenHPSDR radios**
 
+> [!IMPORTANT]
 > 📖 **Alpha testers — start here:** [docs/debugging/v0.3.1-alpha-tester-smoketest.md](docs/debugging/v0.3.1-alpha-tester-smoketest.md)
 >
 > v0.3.1 carries forward everything v0.3.0 was supposed to deliver (SSB voice

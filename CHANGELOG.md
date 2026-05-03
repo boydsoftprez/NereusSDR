@@ -2,8 +2,10 @@
 
 ## [0.3.1] - 2026-05-03
 
+> [!NOTE]
 > **You can transmit SSB now, on every board including the Hermes Lite 2.** v0.3.0 was pulled within hours of release for a packaging fix and effectively never reached testers. v0.3.1 is the first build most users will see — it carries forward everything 0.3.0 was supposed to deliver (SSB voice transmit with broadcast-grade processing, the rebuilt VPN-reach connection workflow, the expanded HL2 configuration surface, status-bar redesign, signed/notarized macOS builds) **plus** the post-0.3.0 polish: per-profile TX bandwidth control, user-editable filter presets, TX filter overlay on the panadapter and waterfall, mode-aware filter grids, the per-board PA forward-power calibration system (Watt Meter / PA Values pages), the Setup IA reshape, and the Hermes Lite 2 ATT/filter safety audit closure that clears HL2 SSB transmit for bench testing.
 
+> [!IMPORTANT]
 > 📖 **Alpha testers — start here:** [docs/debugging/v0.3.1-alpha-tester-smoketest.md](https://github.com/boydsoftprez/NereusSDR/blob/main/docs/debugging/v0.3.1-alpha-tester-smoketest.md)
 >
 > Walkthrough of what to try, what "success" looks like on your radio, and what's intentionally cold so you don't file bugs against it. v0.3.1 expands the v0.3.0 doc with the new TX bandwidth controls, filter preset editor, TX filter overlay, and **clears HL2 for bench-TX** with the ATT/filter safety steps the audit produced. Returning testers — receive-side coverage didn't move; the v0.2.3 doc is still the right reference for RX-side behavior.
