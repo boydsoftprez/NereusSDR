@@ -130,8 +130,10 @@
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/widgets/FilterPassbandWidget.h"
 #include "models/PanadapterModel.h"
+#include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "gui/widgets/FilterPresetEditDialog.h"
 
 #include <algorithm>
 
@@ -175,6 +177,19 @@ RxApplet::RxApplet(SliceModel* slice, RadioModel* model, QWidget* parent)
                 this, [this](Band band) {
             if (m_pan && band == m_pan->band()) {
                 populateAntennaButtons(band);
+            }
+        });
+    }
+
+    // Stage C2: subscribe to FilterPresetStore so user edits/reorders/resets
+    // immediately update the filter button grid.
+    if (m_model && m_model->filterPresetStore()) {
+        connect(m_model->filterPresetStore(), &FilterPresetStore::presetsChanged,
+                this, [this](DSPMode mode) {
+            // Only rebuild when the changed mode matches the currently-active mode.
+            if (m_slice && mode == m_slice->dspMode()) {
+                rebuildFilterButtons(mode);
+                updateFilterButtons();
             }
         });
     }
@@ -961,17 +976,38 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
     }
     m_filterBtns.clear();
 
-    // Canonical preset list from SliceModel — source of truth is InitFilterPresets
-    // (Thetis console.cs:5180-5575 [v2.10.3.13]). Up to 10 presets in 3-column grid.
+    // Stage C2: prefer FilterPresetStore (user overrides over Thetis defaults).
+    // Fall back to SliceModel::presetsForMode if no store is available.
+    // InitFilterPresets source: Thetis console.cs:5180-5575 [v2.10.3.13].
+    // Up to 10 presets in 3-column grid.
     // Tier 1 wired → SliceModel::setFilter() via applyFilterPreset(low, high).
-    m_filterPresets = SliceModel::presetsForMode(mode);
+    FilterPresetStore* store = m_model ? m_model->filterPresetStore() : nullptr;
+
+    QList<FilterPreset> storePresets;
+    if (store) {
+        storePresets = store->presetsForMode(mode);
+        // Mirror as pairs for m_filterPresets (needed by updateFilterButtons).
+        m_filterPresets.clear();
+        for (const FilterPreset& fp : storePresets) {
+            m_filterPresets.append({fp.low, fp.high});
+        }
+    } else {
+        m_filterPresets = SliceModel::presetsForMode(mode);
+        for (const auto& [low, high] : m_filterPresets) {
+            FilterPreset fp;
+            fp.name = QString();
+            fp.low  = low;
+            fp.high = high;
+            storePresets.append(fp);
+        }
+    }
 
     static constexpr int kCols = 3;
-    const int count = qMin(m_filterPresets.size(), 10);
+    const int count = qMin(storePresets.size(), 10);
 
     for (int i = 0; i < count; ++i) {
-        const auto [low, high] = m_filterPresets[i];
-        const int widthHz = qAbs(high - low);
+        const FilterPreset& fp = storePresets[i];
+        const int widthHz = qAbs(fp.high - fp.low);
         QString label;
         if (widthHz >= 1000) {
             label = QStringLiteral("%1K").arg(widthHz / 1000.0, 0, 'g', 2);
@@ -986,9 +1022,36 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
         // (matches AetherSDR kButtonBase: padding 1px 2px)
         btn->setStyleSheet(btn->styleSheet() + QStringLiteral(
             "QPushButton { padding: 1px 2px; }"));
+        // Tooltip: show name + filter edges
+        btn->setToolTip(QStringLiteral("%1: %2 Hz to %3 Hz")
+            .arg(fp.name.isEmpty() ? QStringLiteral("F%1").arg(i + 1) : fp.name)
+            .arg(fp.low).arg(fp.high));
 
+        const int low  = fp.low;
+        const int high = fp.high;
         connect(btn, &QPushButton::clicked, this, [this, low, high] {
             applyFilterPreset(low, high);
+        });
+
+        // Stage C2: right-click context menu → edit / reset this preset.
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        const int slot = i;
+        connect(btn, &QPushButton::customContextMenuRequested, this,
+                [this, slot, mode](const QPoint& pos) {
+            if (!m_model || !m_model->filterPresetStore()) { return; }
+            FilterPresetStore* store = m_model->filterPresetStore();
+            QMenu menu(this);
+            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Stage C2 — issue #98 parity
+            QAction* editAct = menu.addAction(QStringLiteral("Edit this preset…"));
+            QAction* resetAct = menu.addAction(QStringLiteral("Reset this preset"));
+            QAction* chosen = menu.exec(qobject_cast<QWidget*>(sender())->mapToGlobal(pos));
+            if (chosen == editAct) {
+                auto* dlg = new FilterPresetEditDialog(store, mode, slot, this);
+                dlg->setAttribute(Qt::WA_DeleteOnClose);
+                dlg->exec();
+            } else if (chosen == resetAct) {
+                store->resetPreset(mode, slot);
+            }
         });
 
         m_filterBtns.append(btn);

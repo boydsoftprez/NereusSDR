@@ -234,6 +234,7 @@ warren@wpratt.com
 #include "core/MicProfileManager.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TwoToneController.h"
+#include "models/FilterPresetStore.h"
 #include "core/accessories/N2adrPreset.h"
 #include "core/TxChannel.h"
 // 3M-1c TX pump architecture redesign — dedicated worker thread for
@@ -804,6 +805,11 @@ RadioModel::RadioModel(QObject* parent)
     m_twoToneController = new TwoToneController(this);
     m_twoToneController->setTransmitModel(&m_transmitModel);
     m_twoToneController->setMoxController(m_moxController);
+
+    // ── Stage C2: FilterPresetStore ───────────────────────────────────────────
+    // Wraps Thetis-verbatim defaults from SliceModel::presetsForMode with a
+    // user-override layer persisted in AppSettings (keys: "filters/<mode>/<slot>/…").
+    m_filterPresetStore = new FilterPresetStore(this);
 
     // 3M-1a (Codex review on PR #144): wire RF-Power-slider movements to
     // the radio's drive byte.  Without this, the slider updates UI/model

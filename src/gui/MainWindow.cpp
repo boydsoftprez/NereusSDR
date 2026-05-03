@@ -3093,6 +3093,9 @@ void MainWindow::wireSliceToSpectrum()
     connect(&m_radioModel->alexController(), &AlexController::rxOutOnTxChanged,
             vfo, &VfoWidget::setRxBypassActive);
 
+    // Stage C2: wire FilterPresetStore so VFO flag filter buttons use user overrides.
+    vfo->setFilterPresetStore(m_radioModel->filterPresetStore());
+
     // --- Slice → spectrum display ---
 
     // VFO frequency change → move VFO marker

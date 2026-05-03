@@ -2635,3 +2635,9 @@ nereus_add_test(tst_tx_filter_offset_to_wdsp)
 # fires after show, USB/LSB/AM per-mode IQ-space coordinate mapping verified.
 # Per docs/superpowers/plans/2026-05-01-tx-bandwidth.md §Task 7/8.
 nereus_add_test(tst_spectrum_tx_overlay)
+
+# ── Stage C2: FilterPresetStore user-customisable presets ────────────────────
+# 5 tests: defaults match SliceModel::presetsForMode verbatim, setPreset
+# round-trips through AppSettings, resetPreset restores Thetis default,
+# setPresetsForMode reorder persists, presetsChanged fires on every mutator.
+nereus_add_test(tst_filter_preset_store)

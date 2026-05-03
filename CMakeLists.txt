@@ -469,6 +469,7 @@ set(MODEL_SOURCES
     src/models/PanadapterModel.cpp
     src/models/MeterModel.cpp
     src/models/TransmitModel.cpp
+    src/models/FilterPresetStore.cpp
 )
 
 set(GUI_SOURCES
@@ -486,6 +487,7 @@ set(GUI_SOURCES
     src/gui/widgets/DspParamPopup.cpp
     src/gui/widgets/VoxSettingsPopup.cpp
     src/gui/widgets/FilterPassbandWidget.cpp
+    src/gui/widgets/FilterPresetEditDialog.cpp
     src/gui/widgets/GuardedComboBox.h
     src/gui/widgets/GuardedSlider.h
     src/gui/widgets/MeterSlider.h
@@ -629,6 +631,7 @@ set(GUI_SOURCES
     src/gui/setup/AudioVaxPage.cpp
     src/gui/setup/DeviceCard.cpp
     src/gui/setup/DspSetupPages.cpp
+    src/gui/setup/FilterPresetsSetupPage.cpp
     src/gui/setup/DisplaySetupPages.cpp
     src/gui/setup/SetupHelpers.cpp
     src/gui/setup/TransmitSetupPages.cpp

@@ -273,6 +273,9 @@ warren@wpratt.com
 #include "core/HpsdrModel.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "models/FilterPresetStore.h"
+#include "models/SliceModel.h"
+#include "gui/widgets/FilterPresetEditDialog.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -1493,19 +1496,33 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
     grid->setSpacing(2);
     grid->setContentsMargins(0, 0, 0, 0);
 
-    // Full 10-preset list — same source of truth as RxApplet so the flag's
-    // filter grid is uniform with the RX applet's filter grid. Sourced from
-    // SliceModel::presetsForMode() (Thetis console.cs:5180-5575 [v2.10.3.13]
-    // — InitFilterPresets, F1-F10 per mode). 3-column layout matches
-    // RxApplet's 3-column grid (i/kCols × i%kCols positioning).
-    const auto pairs = SliceModel::presetsForMode(mode);
+    // Stage C2: prefer FilterPresetStore (user overrides over Thetis defaults).
+    // Fall back to SliceModel::presetsForMode if no store is available.
+    // InitFilterPresets source: Thetis console.cs:5180-5575 [v2.10.3.13].
+    // 3-column layout matches RxApplet's 3-column grid (i/kCols × i%kCols).
+    QList<FilterPreset> storePresets;
+    if (m_filterPresetStore) {
+        storePresets = m_filterPresetStore->presetsForMode(mode);
+    } else {
+        const auto pairs = SliceModel::presetsForMode(mode);
+        for (int idx = 0; idx < pairs.size(); ++idx) {
+            FilterPreset fp;
+            fp.name = QStringLiteral("F%1").arg(idx + 1);
+            fp.low  = pairs[idx].first;
+            fp.high = pairs[idx].second;
+            storePresets.append(fp);
+        }
+    }
+
     auto [defLow, defHigh] = SliceModel::defaultFilterForMode(mode);
 
     static constexpr int kCols = 3;
-    const int count = qMin(static_cast<int>(pairs.size()), 10);
+    const int count = qMin(storePresets.size(), 10);
 
     for (int i = 0; i < count; ++i) {
-        const auto [low, high] = pairs[i];
+        const FilterPreset& fp = storePresets[i];
+        const int low  = fp.low;
+        const int high = fp.high;
         const int widthHz = qAbs(high - low);
         QString label;
         if (widthHz >= 1000) {
@@ -1520,8 +1537,9 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
         btn->setFixedHeight(22);
         btn->setProperty("filterLow", low);
         btn->setProperty("filterHigh", high);
-        // Tooltip: show the filter edges so the user knows what they're selecting
-        btn->setToolTip(QStringLiteral("Select filter preset: %1 Hz to %2 Hz")
+        // Tooltip: show name + filter edges
+        btn->setToolTip(QStringLiteral("%1: %2 Hz to %3 Hz")
+            .arg(fp.name.isEmpty() ? QStringLiteral("F%1").arg(i + 1) : fp.name)
             .arg(low).arg(high));
         // Check if this matches current filter
         if (low == defLow && high == defHigh) {
@@ -1544,10 +1562,56 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
                 emit filterChanged(low, high);
             }
         });
+
+        // Stage C2: right-click context menu → edit / reset this preset.
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        const int slot = i;
+        connect(btn, &QPushButton::customContextMenuRequested, this,
+                [this, slot, mode](const QPoint& pos) {
+            if (!m_filterPresetStore) { return; }
+            QMenu menu(this);
+            menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Stage C2 — issue #98 parity
+            QAction* editAct  = menu.addAction(QStringLiteral("Edit this preset…"));
+            QAction* resetAct = menu.addAction(QStringLiteral("Reset this preset"));
+            QAction* chosen = menu.exec(qobject_cast<QWidget*>(sender())->mapToGlobal(pos));
+            if (chosen == editAct) {
+                auto* dlg = new FilterPresetEditDialog(m_filterPresetStore, mode, slot, this);
+                dlg->setAttribute(Qt::WA_DeleteOnClose);
+                dlg->exec();
+            } else if (chosen == resetAct) {
+                m_filterPresetStore->resetPreset(mode, slot);
+            }
+        });
+
         grid->addWidget(btn, i / kCols, i % kCols);
     }
 
     m_filterBtnContainer->setLayout(grid);
+}
+
+// ---- Stage C2: FilterPresetStore coupling ----
+
+void VfoWidget::setFilterPresetStore(FilterPresetStore* store)
+{
+    // Disconnect from old store if any.
+    if (m_filterPresetStore) {
+        disconnect(m_filterPresetStore, &FilterPresetStore::presetsChanged,
+                   this, nullptr);
+    }
+    m_filterPresetStore = store;
+    if (m_filterPresetStore) {
+        connect(m_filterPresetStore, &FilterPresetStore::presetsChanged,
+                this, [this](DSPMode mode) {
+            // Only rebuild when the changed mode matches the currently-shown mode.
+            if (mode == m_currentMode) {
+                rebuildFilterButtons(mode);
+                // The active highlight is restored by setFilter() which the model
+                // will call (or already has set via the filterChanged guard path).
+            }
+        });
+    }
+    // Rebuild immediately so existing buttons reflect the store state.
+    rebuildFilterButtons(m_currentMode);
 }
 
 // ---- State setters (guarded) ----

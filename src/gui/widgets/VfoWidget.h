@@ -398,6 +398,12 @@ public:
     // --- Slice coupling (for mode container binding only) ---
     void setSlice(SliceModel* slice);
 
+    // --- Stage C2: FilterPresetStore coupling ---
+    // When set, rebuildFilterButtons reads user overrides from the store and
+    // the right-click context menu on each filter button opens the edit dialog.
+    // When nullptr, falls back to SliceModel::presetsForMode (Thetis defaults).
+    void setFilterPresetStore(class FilterPresetStore* store);
+
     // --- Positioning ---
 
     // Reposition the flag at the given pixel x of the VFO marker.
@@ -509,6 +515,10 @@ private:
 
     // Guard to prevent signal re-emission during model updates
     bool m_updatingFromModel{false};
+
+    // Stage C2: optional user-override preset store.
+    // Non-owning; lifetime managed by RadioModel.  Null until MainWindow wires it.
+    class FilterPresetStore* m_filterPresetStore{nullptr};
 
     // Internal helper — update m_locked + drive Close-strip lock button + emit lockChanged.
     // Called by the floating m_lockBtn toggled lambda.  X/RIT-tab Lock removed (B7).

@@ -126,6 +126,8 @@ class MicProfileManager;
 class TwoToneController;
 // 3M-1c TX pump architecture redesign — TxWorkerThread.
 class TxWorkerThread;
+// Stage C2 filter preset editor — user-override layer over Thetis defaults.
+class FilterPresetStore;
 
 // RadioModel is the central data model for a connected radio.
 // It owns the RadioConnection (on a worker thread), ReceiverManager,
@@ -300,6 +302,11 @@ public:
     // TxApplet (J.2 setter) for the 2-TONE button + status mirror.
     // Non-owning; lifetime is RadioModel's lifetime.
     TwoToneController* twoToneController() const { return m_twoToneController; }
+
+    // Stage C2: expose FilterPresetStore so RxApplet, VfoWidget, and
+    // FilterPresetsSetupPage can read/write user-customised presets.
+    // Constructed once in RadioModel ctor; lifetime is RadioModel's lifetime.
+    FilterPresetStore* filterPresetStore() const { return m_filterPresetStore; }
 
     // 3M-1a G.1: expose TxChannel view so TxApplet and G.4 TUNE function
     // can call setTuneTone / setRunning without depending on WdspEngine.
@@ -996,6 +1003,10 @@ private:
     // happens inside stopPump, but reset only after the worker is torn
     // down so the consumer side is fully disconnected).
     std::unique_ptr<class TxMicSource> m_txMicSource;
+
+    // Stage C2 — filter preset user-override store.
+    // Constructed in RadioModel ctor; QObject child so dtor cleans up.
+    FilterPresetStore* m_filterPresetStore{nullptr};
 };
 
 } // namespace NereusSDR

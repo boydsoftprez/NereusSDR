@@ -16,6 +16,7 @@
 #include "setup/AudioAdvancedPage.h"
 // DSP
 #include "setup/DspSetupPages.h"
+#include "setup/FilterPresetsSetupPage.h"
 // Display
 #include "setup/DisplaySetupPages.h"
 // Transmit
@@ -232,6 +233,11 @@ void SetupDialog::buildTree()
             this,    &SetupDialog::cfcDialogRequested);
 
     add(dsp, "MNF",      new MnfSetupPage(m_model));
+    // Stage C2: user-customisable filter preset editor (10 slots × 12 modes).
+    add(dsp, "Filter Presets",
+        new FilterPresetsSetupPage(
+            m_model ? m_model->filterPresetStore() : nullptr,
+            m_model));
 
     // ── Display ───────────────────────────────────────────────────────────────
     QTreeWidgetItem* display = addCategory("Display");
