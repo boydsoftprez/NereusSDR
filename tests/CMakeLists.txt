@@ -1843,6 +1843,17 @@ target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUIL
 nereus_add_test(tst_step_att_tx_path)
 target_compile_definitions(tst_step_att_tx_path PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 1 Agent 1D of #167: setAttOnTxValue setter ──────────────────────
+# Verifies the ATT-on-TX setter used by TransmitModel::setPowerUsingTargetDbm
+# (Thetis console.cs:46740-46748 [v2.10.3.13]) — the PS-active power-change
+# safety gate writes through this method.
+#   1. round-trip set/get
+#   2. range clamp at +31 / -28 (HL2 bounds via setMin/MaxAttenuation)
+#   3. legacy-board lower bound (default min=0)
+#   4. per-MAC persistence round-trip
+#   5. writes per-band TX storage slot for current band
+nereus_add_test(tst_step_att_on_tx_value)
+
 # ── Phase 3M-1a Task G.4: RadioModel::setTune orchestrator ───────────────────
 # Verifies all TUNE side-effects outside MoxController:
 #   1. tuneRefused emitted when not connected
