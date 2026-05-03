@@ -29,6 +29,15 @@
 //                 resetPaValuesRequested for PaValuesPage / Phase 5B
 //                 peak-min reset).  AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-05-03 — Phase 5 Agent 5B of issue #167 PA calibration safety
+//                 hotfix.  PaValuesPage closes the panelPAValues 4-label
+//                 gap (Raw FWD power, Drive, FWD voltage, REV voltage)
+//                 via PaTelemetryScaling (Phase 1B), adds running
+//                 peak/min tracking on six telemetry values, and
+//                 surfaces a Reset button + resetPaValues() public slot
+//                 for cross-page wiring to Phase 5A's PaWattMeterPage::
+//                 resetPaValuesRequested signal.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -80,16 +89,21 @@
 
 #include "core/AppSettings.h"
 #include "core/CalibrationController.h"
+#include "core/HardwareProfile.h"
+#include "core/HpsdrModel.h"
 #include "core/PaCalProfile.h"
+#include "core/PaTelemetryScaling.h"
 #include "core/RadioConnection.h"
 #include "core/RadioStatus.h"
 #include "gui/setup/hardware/PaCalibrationGroup.h"
 #include "gui/widgets/MetricLabel.h"
 #include "models/RadioModel.h"
+#include "models/TransmitModel.h"
 
 #include <QCheckBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QString>
@@ -311,15 +325,26 @@ void PaWattMeterPage::clickResetPaValuesForTest()
 //   * RadioConnection — supply volts, raw FWD/REV ADC counts (via the unified
 //                    paTelemetryUpdated signal), and ADC overflow events.
 //
-// Skipped for MVP (TODO):
-//   * textFwdVoltage / textRevVoltage — per-stage RF voltage readouts.
-//     Thetis derives these from raw ADC via per-board scale curves
-//     (computeAlexFwdPower / computeAlexRevPower).  Wiring needs a public
-//     scaleFwdPowerWatts utility — today private to RadioModel.cpp — so we
-//     defer until that helper is exposed.
-//   * btnResetPAValues — peak/min tracking reset.  Phase 4 only surfaces the
-//     instantaneous values; peak tracking is queued for the future
-//     PaPeakTracker model.
+// Phase 5B (#167) closes the four panelPAValues label gaps:
+//
+//   * Raw FWD power (W)  — scaled via PaTelemetryScaling::scaleFwdPowerWatts
+//     (Phase 1 Agent 1B; Thetis textPAFwdPower).
+//   * Drive (W)          — slider position from TransmitModel::power().
+//                          Thetis textDrivePower shows averaged exciter
+//                          drive (mW) — NereusSDR uses the slider in W
+//                          since it's already what the user just set.
+//   * FWD voltage (V)    — PaTelemetryScaling::scaleFwdRevVoltage
+//                          (Thetis textFwdVoltage).
+//   * REV voltage (V)    — same scaler reused per Phase 1B's combined-API
+//                          design note (Thetis textRevVoltage).
+//
+// Plus running peak/min tracking on six telemetry values (FWD calibrated /
+// REV / SWR / PA current / PA temperature / supply volts) and a Reset
+// button.  Reset clears peak/min back to the current value, mirroring the
+// semantic (not the literal text-clear) of Thetis btnResetPAValues_Click
+// at setup.cs:16346-16357 [v2.10.3.13].  The public resetPaValues() slot
+// is intended to be cross-wired to Phase 5A's PaWattMeterPage::
+// resetPaValuesRequested signal at SetupDialog construction time.
 //
 // All connect() calls capture `this` and Qt auto-disconnects on destruction.
 PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
@@ -338,19 +363,36 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     }
 
     // ── Group: Power ──────────────────────────────────────────────────────
-    // Calibrated FWD (post-CalibratedPAPower) + REV + SWR.
-    // The "Forward (raw)" placeholder is omitted for MVP — see TODO above.
+    // Calibrated FWD (post-CalibratedPAPower) + raw FWD + REV + SWR + drive.
+    // From Thetis panelPAValues setup.designer.cs:51155-51177 [v2.10.3.13]:
+    //   textCaldFwdPower / textPAFwdPower / textPARevPower / textSWR /
+    //   textDrivePower.
     auto* powerGroup  = new QGroupBox(QStringLiteral("Power"), this);
     auto* powerForm   = new QFormLayout(powerGroup);
     m_fwdCalibratedLabel = new MetricLabel(QStringLiteral("FWD (cal)"),
+                                           QStringLiteral("0.00 W"), powerGroup);
+    // Phase 5B (#167) — Raw FWD power label, scaled from raw ADC counts via
+    // PaTelemetryScaling helpers (Phase 1B).
+    // From Thetis panelPAValues textPAFwdPower setup.designer.cs:51155-51177
+    // [v2.10.3.13] — `alex_fwd.ToString("f1") + " W"` at console.cs:24670.
+    m_fwdRawLabel        = new MetricLabel(QStringLiteral("FWD (raw)"),
                                            QStringLiteral("0.00 W"), powerGroup);
     m_revPowerLabel      = new MetricLabel(QStringLiteral("REV"),
                                            QStringLiteral("0.00 W"), powerGroup);
     m_swrLabel           = new MetricLabel(QStringLiteral("SWR"),
                                            QStringLiteral("1.00"), powerGroup);
+    // Phase 5B (#167) — Drive label, populated from TransmitModel::power().
+    // From Thetis panelPAValues textDrivePower setup.designer.cs:51155-51177
+    // [v2.10.3.13] — Thetis renders averaged exciter drive in mW; NereusSDR
+    // uses the slider position in W (it's already what the user just set
+    // and the slider 0..100 maps directly to watts on most boards).
+    m_driveLabel         = new MetricLabel(QStringLiteral("Drive"),
+                                           QStringLiteral("0 W"), powerGroup);
     powerForm->addRow(QStringLiteral("Forward (calibrated):"), m_fwdCalibratedLabel);
+    powerForm->addRow(QStringLiteral("Forward (raw):"),        m_fwdRawLabel);
     powerForm->addRow(QStringLiteral("Reflected:"),            m_revPowerLabel);
     powerForm->addRow(QStringLiteral("SWR:"),                  m_swrLabel);
+    powerForm->addRow(QStringLiteral("Drive:"),                m_driveLabel);
     contentLayout()->insertWidget(contentLayout()->count() - 1, powerGroup);
 
     // ── Group: PA Telemetry ───────────────────────────────────────────────
@@ -362,11 +404,22 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
                                          QStringLiteral("0.0 \xC2\xB0""C"), paGroup);
     m_supplyVoltsLabel = new MetricLabel(QStringLiteral("V"),
                                          QStringLiteral("0.0 V"), paGroup);
+    // Phase 5B (#167) — FWD/REV RF voltage labels, derived from raw ADC
+    // via PaTelemetryScaling::scaleFwdRevVoltage (Phase 1B).
+    // From Thetis panelPAValues textFwdVoltage / textRevVoltage at
+    // setup.designer.cs:51155-51177 [v2.10.3.13] — `volts.ToString("f2") + " V"`
+    // at console.cs:25068 / :25002.
+    m_fwdVoltageLabel  = new MetricLabel(QStringLiteral("FWD V"),
+                                         QStringLiteral("0.00 V"), paGroup);
+    m_revVoltageLabel  = new MetricLabel(QStringLiteral("REV V"),
+                                         QStringLiteral("0.00 V"), paGroup);
     m_adcOverloadLabel = new MetricLabel(QStringLiteral("ADC OVF"),
                                          QStringLiteral("No"), paGroup);
     paForm->addRow(QStringLiteral("PA Current:"),     m_paCurrentLabel);
     paForm->addRow(QStringLiteral("PA Temperature:"), m_paTempLabel);
     paForm->addRow(QStringLiteral("Supply Voltage:"), m_supplyVoltsLabel);
+    paForm->addRow(QStringLiteral("FWD Voltage:"),    m_fwdVoltageLabel);
+    paForm->addRow(QStringLiteral("REV Voltage:"),    m_revVoltageLabel);
     paForm->addRow(QStringLiteral("ADC Overload:"),   m_adcOverloadLabel);
     contentLayout()->insertWidget(contentLayout()->count() - 1, paGroup);
 
@@ -381,56 +434,107 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     adcForm->addRow(QStringLiteral("REV ADC:"), m_revAdcLabel);
     contentLayout()->insertWidget(contentLayout()->count() - 1, adcGroup);
 
+    // ── Reset Peak/Min button ────────────────────────────────────────────
+    // Mirrors Thetis btnResetPAValues setup.cs:16346-16357 [v2.10.3.13].
+    // Thetis clears the textbox text strings; NereusSDR's spin tracks
+    // running peak/min and resets those to the current value (more useful
+    // than blanking the display since the live value is still meaningful).
+    auto* resetRow    = new QWidget(this);
+    auto* resetLayout = new QHBoxLayout(resetRow);
+    resetLayout->setContentsMargins(0, 0, 0, 0);
+    resetLayout->addStretch(1);
+    m_resetButton = new QPushButton(tr("Reset Peak/Min"), resetRow);
+    m_resetButton->setToolTip(tr("Reset running peak/min trackers to current values."));
+    resetLayout->addWidget(m_resetButton);
+    contentLayout()->insertWidget(contentLayout()->count() - 1, resetRow);
+
+    connect(m_resetButton, &QPushButton::clicked,
+            this, &PaValuesPage::resetPaValues);
+
     // ── RadioStatus subscriptions ─────────────────────────────────────────
     // RadioStatus aggregates fwd/rev/swr into a single powerChanged signal,
     // so we subscribe once and update all three labels in the slot.
+    // Phase 5B (#167) — also feeds peak/min tracking and re-renders with
+    // the (P / M) annotation.
     RadioStatus& rs = model->radioStatus();
 
     connect(&rs, &RadioStatus::powerChanged, this,
             [this](double fwdW, double revW, double swr) {
+                m_fwdCurrent = fwdW;
+                m_revCurrent = revW;
+                m_swrCurrent = swr;
+                m_fwdPeakMin.update(fwdW);
+                m_revPeakMin.update(revW);
+                m_swrPeakMin.update(swr);
                 if (m_fwdCalibratedLabel) {
-                    m_fwdCalibratedLabel->setValue(
-                        QString::number(fwdW, 'f', 2) + QStringLiteral(" W"));
+                    m_fwdCalibratedLabel->setValue(formatWithPeakMin(
+                        fwdW, m_fwdPeakMin, QStringLiteral(" W"), 2));
                 }
                 if (m_revPowerLabel) {
-                    m_revPowerLabel->setValue(
-                        QString::number(revW, 'f', 2) + QStringLiteral(" W"));
+                    m_revPowerLabel->setValue(formatWithPeakMin(
+                        revW, m_revPeakMin, QStringLiteral(" W"), 2));
                 }
                 if (m_swrLabel) {
-                    m_swrLabel->setValue(QString::number(swr, 'f', 2));
+                    m_swrLabel->setValue(formatWithPeakMin(
+                        swr, m_swrPeakMin, QString(), 2));
                 }
             });
 
     connect(&rs, &RadioStatus::paCurrentChanged, this,
             [this](double amps) {
+                m_paCurrentCurrent = amps;
+                m_paCurrentPeakMin.update(amps);
                 if (m_paCurrentLabel) {
-                    m_paCurrentLabel->setValue(
-                        QString::number(amps, 'f', 2) + QStringLiteral(" A"));
+                    m_paCurrentLabel->setValue(formatWithPeakMin(
+                        amps, m_paCurrentPeakMin, QStringLiteral(" A"), 2));
                 }
             });
 
     connect(&rs, &RadioStatus::paTemperatureChanged, this,
             [this](double celsius) {
+                m_paTempCurrent = celsius;
+                m_paTempPeakMin.update(celsius);
                 if (m_paTempLabel) {
-                    m_paTempLabel->setValue(
-                        QString::number(celsius, 'f', 1)
-                        + QStringLiteral(" \xC2\xB0""C"));
+                    m_paTempLabel->setValue(formatWithPeakMin(
+                        celsius, m_paTempPeakMin,
+                        QStringLiteral(" \xC2\xB0""C"), 1));
                 }
             });
 
     // Populate from current state so the page renders meaningful values
     // even when no signal has fired yet (e.g. opened mid-session after
-    // telemetry has already settled).
-    m_fwdCalibratedLabel->setValue(
-        QString::number(rs.forwardPowerWatts(), 'f', 2) + QStringLiteral(" W"));
-    m_revPowerLabel->setValue(
-        QString::number(rs.reflectedPowerWatts(), 'f', 2) + QStringLiteral(" W"));
-    m_swrLabel->setValue(QString::number(rs.swrRatio(), 'f', 2));
-    m_paCurrentLabel->setValue(
-        QString::number(rs.paCurrentAmps(), 'f', 2) + QStringLiteral(" A"));
-    m_paTempLabel->setValue(
-        QString::number(rs.paTemperatureCelsius(), 'f', 1)
-        + QStringLiteral(" \xC2\xB0""C"));
+    // telemetry has already settled).  Peak/min trackers stay at ±inf
+    // sentinel values until a real signal lands; formatWithPeakMin omits
+    // the (P/M) annotation in that case for a clean first-render.
+    m_fwdCurrent       = rs.forwardPowerWatts();
+    m_revCurrent       = rs.reflectedPowerWatts();
+    m_swrCurrent       = rs.swrRatio();
+    m_paCurrentCurrent = rs.paCurrentAmps();
+    m_paTempCurrent    = rs.paTemperatureCelsius();
+    m_fwdCalibratedLabel->setValue(formatWithPeakMin(
+        m_fwdCurrent, m_fwdPeakMin, QStringLiteral(" W"), 2));
+    m_revPowerLabel->setValue(formatWithPeakMin(
+        m_revCurrent, m_revPeakMin, QStringLiteral(" W"), 2));
+    m_swrLabel->setValue(formatWithPeakMin(
+        m_swrCurrent, m_swrPeakMin, QString(), 2));
+    m_paCurrentLabel->setValue(formatWithPeakMin(
+        m_paCurrentCurrent, m_paCurrentPeakMin, QStringLiteral(" A"), 2));
+    m_paTempLabel->setValue(formatWithPeakMin(
+        m_paTempCurrent, m_paTempPeakMin,
+        QStringLiteral(" \xC2\xB0""C"), 1));
+
+    // ── TransmitModel drive subscription (Phase 5B #167) ─────────────────
+    // The Drive label tracks the user's TX power slider position via
+    // TransmitModel::powerChanged.  Render the current value at
+    // construction time too so the label isn't empty for new pages.
+    TransmitModel& tx = model->transmitModel();
+    auto renderDrive = [this](int watts) {
+        if (m_driveLabel) {
+            m_driveLabel->setValue(QString::number(watts) + QStringLiteral(" W"));
+        }
+    };
+    connect(&tx, &TransmitModel::powerChanged, this, renderDrive);
+    renderDrive(tx.power());
 
     // ── RadioConnection subscriptions ─────────────────────────────────────
     // Connection may be null at construction time (no active radio); the
@@ -441,27 +545,58 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
     if (conn) {
         connect(conn, &RadioConnection::supplyVoltsChanged, this,
                 [this](float volts) {
+                    const double v = static_cast<double>(volts);
+                    m_supplyCurrent = v;
+                    m_supplyPeakMin.update(v);
                     if (m_supplyVoltsLabel) {
-                        m_supplyVoltsLabel->setValue(
-                            QString::number(volts, 'f', 1) + QStringLiteral(" V"));
+                        m_supplyVoltsLabel->setValue(formatWithPeakMin(
+                            v, m_supplyPeakMin, QStringLiteral(" V"), 1));
                     }
                 });
 
+        // Capture HPSDRModel by value so the lambda survives any later
+        // hardware-profile swap (PaValuesPage reconstructs on Setup-open
+        // anyway; this is just defensive against mid-page-life swaps).
+        const HPSDRModel hpsdrModel = model->hardwareProfile().model;
+
         connect(conn, &RadioConnection::paTelemetryUpdated, this,
-                [this](quint16 fwdRaw, quint16 revRaw,
-                       quint16 /*exciterRaw*/, quint16 /*userAdc0*/,
-                       quint16 /*userAdc1*/,   quint16 /*supply*/) {
+                [this, hpsdrModel](quint16 fwdRaw, quint16 revRaw,
+                                   quint16 /*exciterRaw*/, quint16 /*userAdc0*/,
+                                   quint16 /*userAdc1*/,   quint16 /*supply*/) {
                     if (m_fwdAdcLabel) {
                         m_fwdAdcLabel->setValue(QString::number(fwdRaw));
                     }
                     if (m_revAdcLabel) {
                         m_revAdcLabel->setValue(QString::number(revRaw));
                     }
-                    // TODO(future): expose scaleFwdPowerWatts as a public
-                    // utility so we can show "Forward (raw): N.NN W" alongside
-                    // the calibrated value.  See Thetis console.cs
-                    // computeAlexFwdPower for the per-board formulas
-                    // (setup.designer.cs:51155-51177 [v2.10.3.13]).
+                    // Phase 5B (#167) — Raw FWD power label, scaled via
+                    // PaTelemetryScaling::scaleFwdPowerWatts (Phase 1B).
+                    // From Thetis console.cs computeAlexFwdPower
+                    // [v2.10.3.13] — the raw alex_fwd shown on
+                    // textPAFwdPower at console.cs:24670.
+                    if (m_fwdRawLabel) {
+                        const double watts = scaleFwdPowerWatts(hpsdrModel, fwdRaw);
+                        m_fwdRawLabel->setValue(
+                            QString::number(watts, 'f', 2)
+                            + QStringLiteral(" W"));
+                    }
+                    // Phase 5B (#167) — FWD/REV voltage labels.  Both use
+                    // the FWD-side scaler curve per Phase 1B's combined-API
+                    // design (REV-side per-board offset difference is below
+                    // the f2 UI display resolution).
+                    // From Thetis console.cs:25068 / :25002 [v2.10.3.13].
+                    if (m_fwdVoltageLabel) {
+                        const double v = scaleFwdRevVoltage(hpsdrModel, fwdRaw);
+                        m_fwdVoltageLabel->setValue(
+                            QString::number(v, 'f', 2)
+                            + QStringLiteral(" V"));
+                    }
+                    if (m_revVoltageLabel) {
+                        const double v = scaleFwdRevVoltage(hpsdrModel, revRaw);
+                        m_revVoltageLabel->setValue(
+                            QString::number(v, 'f', 2)
+                            + QStringLiteral(" V"));
+                    }
                 });
 
         connect(conn, &RadioConnection::adcOverflow, this,
@@ -480,6 +615,83 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
                     });
                 });
     }
+}
+
+// ---------------------------------------------------------------------------
+// resetPaValues — public slot (Phase 5B #167).
+// Mirrors Thetis btnResetPAValues_Click semantic at setup.cs:16346-16357
+// [v2.10.3.13].  Thetis simply blanks the textbox text strings; NereusSDR's
+// spin tracks running peak/min and resets each tracker to its current value
+// (so the live readout stays meaningful while history clears).
+// ---------------------------------------------------------------------------
+void PaValuesPage::resetPaValues()
+{
+    m_fwdPeakMin.reset(m_fwdCurrent);
+    m_revPeakMin.reset(m_revCurrent);
+    m_swrPeakMin.reset(m_swrCurrent);
+    m_paCurrentPeakMin.reset(m_paCurrentCurrent);
+    m_paTempPeakMin.reset(m_paTempCurrent);
+    m_supplyPeakMin.reset(m_supplyCurrent);
+
+    // Re-render every tracked label so the (P/M) annotation collapses to
+    // P==M==current — the reset is visible to the user immediately even
+    // when telemetry is paused (e.g. radio disconnected).
+    if (m_fwdCalibratedLabel) {
+        m_fwdCalibratedLabel->setValue(formatWithPeakMin(
+            m_fwdCurrent, m_fwdPeakMin, QStringLiteral(" W"), 2));
+    }
+    if (m_revPowerLabel) {
+        m_revPowerLabel->setValue(formatWithPeakMin(
+            m_revCurrent, m_revPeakMin, QStringLiteral(" W"), 2));
+    }
+    if (m_swrLabel) {
+        m_swrLabel->setValue(formatWithPeakMin(
+            m_swrCurrent, m_swrPeakMin, QString(), 2));
+    }
+    if (m_paCurrentLabel) {
+        m_paCurrentLabel->setValue(formatWithPeakMin(
+            m_paCurrentCurrent, m_paCurrentPeakMin, QStringLiteral(" A"), 2));
+    }
+    if (m_paTempLabel) {
+        m_paTempLabel->setValue(formatWithPeakMin(
+            m_paTempCurrent, m_paTempPeakMin,
+            QStringLiteral(" \xC2\xB0""C"), 1));
+    }
+    if (m_supplyVoltsLabel) {
+        m_supplyVoltsLabel->setValue(formatWithPeakMin(
+            m_supplyCurrent, m_supplyPeakMin, QStringLiteral(" V"), 1));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// formatWithPeakMin — render "current unit  (P peak / M min)".
+// Annotation is omitted (just "current unit") when:
+//   * peak/min are still at sentinel ±infinity values (no signal yet), OR
+//   * peak == min == current (single sample, range hasn't opened up yet).
+// This keeps fresh / single-sample readings clean and only surfaces the
+// (P/M) annotation once the value has actually moved.
+// ---------------------------------------------------------------------------
+QString PaValuesPage::formatWithPeakMin(double current,
+                                        const PeakMin& pm,
+                                        const QString& unit,
+                                        int precision)
+{
+    QString base = QString::number(current, 'f', precision) + unit;
+    if (!pm.valid()) {
+        return base;
+    }
+    // Compare formatted strings so we collapse "0.001 vs 0.002 at f0
+    // precision" into a single annotation-free reading — the user can't
+    // see the difference anyway.
+    const QString peakStr = QString::number(pm.peak, 'f', precision);
+    const QString minStr  = QString::number(pm.min,  'f', precision);
+    if (peakStr == minStr) {
+        return base;
+    }
+    return base
+        + QStringLiteral("  (P ") + peakStr
+        + QStringLiteral(" / M ") + minStr
+        + QStringLiteral(")");
 }
 
 #ifdef NEREUS_BUILD_TESTS
@@ -526,6 +738,54 @@ QString PaValuesPage::revAdcTextForTest() const
 QString PaValuesPage::adcOverloadTextForTest() const
 {
     return m_adcOverloadLabel ? m_adcOverloadLabel->value() : QString();
+}
+
+// ── Phase 5B (#167) gap-fill test accessors ─────────────────────────────────
+QString PaValuesPage::fwdRawTextForTest() const
+{
+    return m_fwdRawLabel ? m_fwdRawLabel->value() : QString();
+}
+
+QString PaValuesPage::driveTextForTest() const
+{
+    return m_driveLabel ? m_driveLabel->value() : QString();
+}
+
+QString PaValuesPage::fwdVoltageTextForTest() const
+{
+    return m_fwdVoltageLabel ? m_fwdVoltageLabel->value() : QString();
+}
+
+QString PaValuesPage::revVoltageTextForTest() const
+{
+    return m_revVoltageLabel ? m_revVoltageLabel->value() : QString();
+}
+
+QString PaValuesPage::fwdCalibratedPeakForTest() const
+{
+    if (!m_fwdPeakMin.valid()) {
+        return QString();
+    }
+    return QString::number(m_fwdPeakMin.peak, 'f', 2) + QStringLiteral(" W");
+}
+
+QString PaValuesPage::fwdCalibratedMinForTest() const
+{
+    if (!m_fwdPeakMin.valid()) {
+        return QString();
+    }
+    return QString::number(m_fwdPeakMin.min, 'f', 2) + QStringLiteral(" W");
+}
+
+void PaValuesPage::clickResetForTest()
+{
+    if (m_resetButton) {
+        m_resetButton->click();
+    } else {
+        // Fall back to the slot directly — useful when the button-row
+        // didn't construct (model-less preview path).
+        resetPaValues();
+    }
 }
 #endif
 

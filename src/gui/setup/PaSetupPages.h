@@ -36,6 +36,15 @@
 //                 "Reset PA Values" button (emits resetPaValuesRequested
 //                 for PaValuesPage / Phase 5B peak-min reset).
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-03 — Phase 5 Agent 5B of issue #167 PA calibration safety
+//                 hotfix.  PaValuesPage closes the panelPAValues 4-label
+//                 gap (Raw FWD power, Drive, FWD voltage, REV voltage)
+//                 via PaTelemetryScaling (Phase 1B), adds running
+//                 peak/min tracking on six telemetry values (FWD
+//                 calibrated / REV / SWR / PA current / PA temperature /
+//                 supply volts), exposes a Reset button, and a public
+//                 resetPaValues() slot intended to be cross-page-wired
+//                 to PaWattMeterPage::resetPaValuesRequested (Phase 5A).
 // =================================================================
 
 //=================================================================
@@ -86,6 +95,9 @@
 #include "gui/SetupPage.h"
 
 #include <QString>
+#include <limits>
+
+class QPushButton;
 
 class QCheckBox;
 class QPushButton;
@@ -166,17 +178,37 @@ private:
 // (forward / reflected / SWR / PA current / PA temperature) and to
 // RadioConnection (supply volts / raw FWD-REV ADC counts / ADC overload).
 //
-// Skipped for MVP (TODO in source):
-//   * textFwdVoltage / textRevVoltage — per-stage RF voltage readouts.
-//     Need a public scaleFwdPowerWatts utility (today private to RadioModel).
-//   * btnResetPAValues — peak/min tracking reset.  Phase 4 surfaces only the
-//     instantaneous values; tracking can land alongside the future
-//     PaPeakTracker model.
+// Phase 5B (#167 PA-cal hotfix) closes the four label-gaps Phase 4 deferred:
+//   * m_fwdRawLabel      — raw FWD power, scaleFwdPowerWatts (Phase 1B)
+//   * m_driveLabel       — drive power from TransmitModel slider
+//   * m_fwdVoltageLabel  — FWD voltage,  scaleFwdRevVoltage  (Phase 1B)
+//   * m_revVoltageLabel  — REV voltage,  scaleFwdRevVoltage  (Phase 1B,
+//                          uses the FWD-side curve per the API design
+//                          note in PaTelemetryScaling.h — REV-side curve
+//                          difference is below the f2 UI display
+//                          resolution).
+// Plus running peak/min tracking on six values (FWD calibrated / REV / SWR /
+// PA current / PA temperature / supply volts), an in-page Reset button, and
+// a `resetPaValues()` public slot that SetupDialog (or the future Phase 5A
+// PaWattMeterPage::resetPaValuesRequested signal) can connect to so the
+// reset action is shared between sibling pages.
 // ---------------------------------------------------------------------------
 class PaValuesPage : public SetupPage {
     Q_OBJECT
 public:
     explicit PaValuesPage(RadioModel* model, QWidget* parent = nullptr);
+
+public slots:
+    /// Reset peak/min tracking on all six tracked telemetry labels back to
+    /// their current value.  Connected to the in-page Reset button and
+    /// intended to be cross-wired to PaWattMeterPage's
+    /// resetPaValuesRequested signal (Phase 5A) by SetupDialog so a single
+    /// reset action clears tracked peaks on both sibling pages.
+    ///
+    /// From Thetis btnResetPAValues_Click setup.cs:16346-16357 [v2.10.3.13]
+    /// — Thetis clears the textbox text strings; NereusSDR's spin tracks
+    /// running peak/min and resets those to current.
+    void resetPaValues();
 
 #ifdef NEREUS_BUILD_TESTS
     QString fwdCalibratedTextForTest() const;
@@ -188,9 +220,19 @@ public:
     QString fwdAdcTextForTest()        const;
     QString revAdcTextForTest()        const;
     QString adcOverloadTextForTest()   const;
+
+    // Phase 5B (#167) gap-fill accessors.
+    QString fwdRawTextForTest()        const;
+    QString driveTextForTest()         const;
+    QString fwdVoltageTextForTest()    const;
+    QString revVoltageTextForTest()    const;
+    QString fwdCalibratedPeakForTest() const;
+    QString fwdCalibratedMinForTest()  const;
+    void    clickResetForTest();
 #endif
 
 private:
+    // ── Existing labels (Phase 4) ────────────────────────────────────────
     MetricLabel* m_fwdCalibratedLabel{nullptr};
     MetricLabel* m_revPowerLabel{nullptr};
     MetricLabel* m_swrLabel{nullptr};
@@ -200,6 +242,66 @@ private:
     MetricLabel* m_adcOverloadLabel{nullptr};
     MetricLabel* m_fwdAdcLabel{nullptr};
     MetricLabel* m_revAdcLabel{nullptr};
+
+    // ── Phase 5B (#167) gap-fill labels + reset button ───────────────────
+    MetricLabel* m_fwdRawLabel{nullptr};       // Raw FWD power (W)
+    MetricLabel* m_driveLabel{nullptr};        // Drive power slider value
+    MetricLabel* m_fwdVoltageLabel{nullptr};   // FWD RF voltage (V)
+    MetricLabel* m_revVoltageLabel{nullptr};   // REV RF voltage (V)
+    QPushButton* m_resetButton{nullptr};
+
+    // ── Peak/min running tracking state ──────────────────────────────────
+    // Six values benefit from peak/min — the calibrated power triplet, PA
+    // current, PA temperature, and supply volts.  Raw ADC counts and
+    // voltages are skipped (they're noisy and the user wants the live
+    // value, not the historical extreme).  Drive is also skipped — it's
+    // a slider position, not a measurement.
+    struct PeakMin {
+        double peak{-std::numeric_limits<double>::infinity()};
+        double min { std::numeric_limits<double>::infinity()};
+
+        void update(double v) noexcept {
+            if (v > peak) { peak = v; }
+            if (v < min)  { min  = v; }
+        }
+        void reset(double current) noexcept {
+            peak = current;
+            min  = current;
+        }
+        bool valid() const noexcept {
+            return peak != -std::numeric_limits<double>::infinity()
+                && min  !=  std::numeric_limits<double>::infinity();
+        }
+    };
+
+    PeakMin m_fwdPeakMin;       ///< calibrated FWD watts
+    PeakMin m_revPeakMin;       ///< REV watts
+    PeakMin m_swrPeakMin;       ///< SWR ratio
+    PeakMin m_paCurrentPeakMin; ///< amps
+    PeakMin m_paTempPeakMin;    ///< Celsius
+    PeakMin m_supplyPeakMin;    ///< volts
+
+    // Last-known current values, retained so `resetPaValues()` can clamp
+    // peak/min back to the live reading without needing a fresh telemetry
+    // signal to land first.
+    double m_fwdCurrent{0.0};
+    double m_revCurrent{0.0};
+    double m_swrCurrent{1.0};
+    double m_paCurrentCurrent{0.0};
+    double m_paTempCurrent{0.0};
+    double m_supplyCurrent{0.0};
+
+    // Helper: format a label with peak/min annotation.  Output shape:
+    //   "12.34 W  (P 50.00 / M 5.00)"
+    // The annotation is collapsed (just "current unit") when:
+    //   * peak/min are still at sentinel ±infinity values (no signal yet), OR
+    //   * formatted peak == formatted min (single-sample path; range hasn't
+    //     opened up at the requested precision yet).
+    // Both cases keep first-impression and steady-state readings clean.
+    static QString formatWithPeakMin(double current,
+                                     const PeakMin& pm,
+                                     const QString& unit,
+                                     int precision);
 };
 
 } // namespace NereusSDR

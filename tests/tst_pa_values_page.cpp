@@ -116,6 +116,9 @@ void TstPaValuesPage::forward_power_label_updates_on_status_signal()
 // powerChanged(fwd, rev, swr) — setting reflected power also recomputes SWR.
 // ARRL formula:  rho = sqrt(refl/fwd);  swr = (1 + rho)/(1 - rho)
 // fwd=50, refl=5  →  rho = sqrt(0.1) ≈ 0.3162  →  swr ≈ 1.92
+// Phase 5B (#167) adds running peak/min to the rev/swr labels — the
+// annotation may follow the formatted value once the tracker has seen
+// more than one sample, so pin only the leading current-value substring.
 // ---------------------------------------------------------------------------
 void TstPaValuesPage::reflected_power_and_swr_update_on_powerChanged()
 {
@@ -125,7 +128,9 @@ void TstPaValuesPage::reflected_power_and_swr_update_on_powerChanged()
     model.radioStatus().setForwardPower(50.0);
     model.radioStatus().setReflectedPower(5.0);
 
-    QCOMPARE(page.revPowerTextForTest(), QStringLiteral("5.00 W"));
+    QVERIFY2(page.revPowerTextForTest().startsWith(QStringLiteral("5.00 W")),
+             qPrintable(QStringLiteral("expected leading '5.00 W', got '%1'")
+                            .arg(page.revPowerTextForTest())));
     // SWR formula yields ~1.92 for fwd=50/refl=5; assert the label starts with "1." so
     // we don't pin a specific decimal that depends on RadioStatus::computeSwr rounding.
     QVERIFY2(page.swrTextForTest().startsWith(QStringLiteral("1.")),

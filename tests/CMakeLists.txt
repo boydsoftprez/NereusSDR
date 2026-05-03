@@ -1089,6 +1089,19 @@ target_compile_definitions(tst_pa_watt_meter_page_gap_fill PRIVATE NEREUS_BUILD_
 nereus_add_test(tst_pa_values_page)
 target_compile_definitions(tst_pa_values_page PRIVATE NEREUS_BUILD_TESTS)
 
+# ── PA hotfix #167 Phase 5B: PaValuesPage 4-label gap fill + peak/min ─────────
+# Verifies the four new MetricLabels added in Phase 5B (raw FWD power,
+# drive, FWD voltage, REV voltage) populate correctly from the
+# PaTelemetryScaling helpers (Phase 1B) and from
+# TransmitModel::powerChanged.  Also verifies peak/min running tracking
+# on FWD-calibrated / REV / SWR / PA-current / PA-temp / supply-volts,
+# the in-page Reset button, and the resetPaValues() public slot used by
+# Phase 5A's PaWattMeterPage::resetPaValuesRequested cross-page wiring.
+# Source: Thetis panelPAValues setup.designer.cs:51155-51177 +
+#         btnResetPAValues_Click setup.cs:16346-16357 [v2.10.3.13].
+nereus_add_test(tst_pa_values_page_gap_fill)
+target_compile_definitions(tst_pa_values_page_gap_fill PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
 # Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis
 # console.cs:setAlex2HPF / setAlex2LPF (7060-7299) first-match range logic
