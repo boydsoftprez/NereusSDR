@@ -285,11 +285,19 @@ TxChannel::TxChannel(int channelId,
     //
     // Plan: docs/architecture/phase3m-1c-tx-pump-architecture-plan.md
 
-    // Plan 4 D8: 50 ms single-shot filter-change debounce timer.
-    // Matches the magnitude of Thetis SetTXFilter coalescing (rapid spinbox
-    // ticks coalesce to one WDSP SetTXABandpassFreqs call once the user pauses).
+    // Plan 4 D8 + bench-fix: the original 50 ms QTimer-based debounce was
+    // removed because TxWorkerThread::run() is a custom semaphore-wake loop
+    // (not QThread::exec()).  QTimer events only dispatch when processEvents()
+    // is called between audio frames, which makes the timer unreliable —
+    // bench-confirmed by JJ on ANAN-G2: spinbox changes never reached
+    // SetTXABandpassFreqs.  See requestFilterChange comment for details.
+    //
+    // The timer + slot are retained as no-op members for ABI stability of the
+    // public API surface (tst_tx_filter_offset_to_wdsp still references the
+    // signal); requestFilterChange now calls applyTxFilterForMode directly.
+    m_filterDebounceTimer.setParent(this);
     m_filterDebounceTimer.setSingleShot(true);
-    m_filterDebounceTimer.setInterval(50);   // 50 ms debounce
+    m_filterDebounceTimer.setInterval(50);
     connect(&m_filterDebounceTimer, &QTimer::timeout,
             this, &TxChannel::applyPendingFilter);
 
@@ -1006,10 +1014,22 @@ void TxChannel::setTxBandpass(int lowHz, int highHz)
 // ---------------------------------------------------------------------------
 void TxChannel::requestFilterChange(int audioLowHz, int audioHighHz, DSPMode mode)
 {
+    // Plan 4 D8 follow-up — the original 50 ms QTimer-based debounce did not
+    // work on TxWorkerThread.  TxWorkerThread::run() is a custom semaphore-
+    // wake loop (not QThread::exec()), so QTimer events only get dispatched
+    // when processEvents() is called between audio frames — which means the
+    // timer effectively never fires while not transmitting, and even during
+    // TX the dispatch cadence is unreliable on macOS.  Bench-confirmed by
+    // JJ on ANAN-G2: TX BW spinbox changes never reached SetTXABandpassFreqs.
+    //
+    // Apply directly.  Rapid UI events (spinbox arrow-key held down) still
+    // coalesce naturally via Qt's queued-event compression on the worker
+    // thread.  The slot is cheap (mode dispatch + WDSP setter call), so the
+    // per-tick cost is acceptable even without explicit debouncing.
     m_pendingAudioLow  = audioLowHz;
     m_pendingAudioHigh = audioHighHz;
     m_pendingMode      = mode;
-    m_filterDebounceTimer.start();   // restart on each call
+    applyTxFilterForMode(audioLowHz, audioHighHz, mode);
 }
 
 // ---------------------------------------------------------------------------
