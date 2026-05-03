@@ -45,8 +45,8 @@ Works with any radio implementing OpenHPSDR Protocol 1 or Protocol 2:
 ## Releases & Installation
 
 Pre-built binaries for Linux (AppImage, x86_64 + aarch64), macOS (DMG +
-PKG, Apple Silicon), and Windows (NSIS installer + portable ZIP, x64) are
-published as GitHub Releases:
+PKG, Apple Silicon + Intel), and Windows (NSIS installer + portable ZIP,
+x64) are published as GitHub Releases:
 
 **<https://github.com/boydsoftprez/NereusSDR/releases>**
 
@@ -92,7 +92,7 @@ sha256sum -c SHA256SUMS.txt
 - **Status-bar chrome** — title-bar `ConnectionSegment` shows `[state dot] [▲ tx Mbps] [RTT ms] [▼ rx Mbps] [♪ audio]` with hover tooltip and right-click menu. Receive-info `BadgePair` ladder drops in priority order on narrow windows (mode + filter never drop). `StationBlock` clickable radio-name anchor. `AdcOverloadBadge` (yellow > 0, red > 3, 2 s auto-hide). CPU System / App right-click toggle. SVG icon system on `StatusBadge`. Min-filtered RTT for accurate sub-millisecond LAN ping readout.
 - **Hermes Lite 2 configuration surface** — new Hermes Lite Options tab (I2C control, I/O pin state), N2ADR HERCULES toggle writing all 13 SWL pin-7 entries, signed −28..+32 dB step-attenuator range, 13 SWL bands × 7 pins matrix, full per-MAC persistence. Bigger gaps elsewhere in the app remain; this expands a previously-thin HL2 surface.
 - **App polish** — Help → About NereusSDR (version / Qt / WDSP / GPG fingerprint / heritage credits), 💡 AI-assisted issue reporter in the menu bar corner (structured prompts, submits to the `bug_report.yml` / `feature_request.yml` GitHub templates), radio-model override persistence, P1 full 17-bank C&C round-robin, `NetworkDiagnosticsDialog` 4-section health grid.
-- **Packaging** — `release.yml` prepare → build×3 → sign-and-publish pipeline. **macOS DMG and PKG are now Apple Developer ID-signed and notarized** in v0.3.0+; Windows installer remains unsigned (Authenticode certificate pending). All artifacts GPG-signed via `SHA256SUMS.txt.asc`. Per-platform artifacts: Linux AppImage (x86_64 + aarch64), macOS Apple Silicon DMG + PKG, Windows portable ZIP + NSIS installer.
+- **Packaging** — `release.yml` prepare → build×3 → sign-and-publish pipeline. **macOS DMG and PKG are now Apple Developer ID-signed and notarized** in v0.3.0+; Windows installer remains unsigned (Authenticode certificate pending). All artifacts GPG-signed via `SHA256SUMS.txt.asc`. Per-platform artifacts: Linux AppImage (x86_64 + aarch64), macOS DMG + PKG (Apple Silicon + Intel), Windows portable ZIP + NSIS installer.
 
 ### Deferred / not yet implemented
 
@@ -137,7 +137,7 @@ sha256sum -c SHA256SUMS.txt
 - Connection workflow with state machine + unicast probe + auto-connect-on-launch + disconnect overlay (Phase 3Q)
 - Hermes Lite 2 configuration tabs (Hermes Lite Options + I/O Pin State + N2ADR HERCULES + SWL matrix + signed S-ATT range, all per-MAC)
 - Status-bar redesign — title-bar connection segment, drop-priority receive badges, ADC overload indicator, station-name anchor, CPU System/App toggle
-- GPG-signed cross-platform builds — Linux AppImage ×2 archs, macOS Apple Silicon DMG + PKG (Developer ID-signed + notarized in v0.3.0+), Windows portable ZIP + NSIS installer
+- GPG-signed cross-platform builds — Linux AppImage ×2 archs, macOS DMG + PKG ×2 archs (Apple Silicon + Intel; Developer ID-signed + notarized in v0.3.0+), Windows portable ZIP + NSIS installer
 
 **Planned (see Roadmap):**
 - **Phase 3M-3a-iii TX Processing tail** — DEXP/VOX + AM-Squelch (next up)

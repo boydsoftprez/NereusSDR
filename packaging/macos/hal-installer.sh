@@ -24,7 +24,14 @@ PKG_DIR="${BUILD_DIR}/pkg-staging"
 # looked for build/NereusSDR-0.3.1-rc1-macOS.pkg and failed with exit 64.
 VERSION="${VERSION:-$(grep 'project(NereusSDR' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")}"
 
-echo "=== Building NereusSDR macOS installer v${VERSION} ==="
+# PKG_SUFFIX selects the arch-tagged segment of the output filename. The
+# matrix-driven release pipeline sets this per matrix row to one of
+# 'macOS-apple-silicon' or 'macOS-intel' so two matrix rows do not
+# collide on the same output filename. Defaults to plain 'macOS' so
+# devs running this script by hand keep the historical filename.
+PKG_SUFFIX="${PKG_SUFFIX:-macOS}"
+
+echo "=== Building NereusSDR macOS installer v${VERSION} (${PKG_SUFFIX}) ==="
 
 # 1. Build app — skip if already built (preserves pre-existing signatures from CI).
 if [ ! -d "${BUILD_DIR}/NereusSDR.app" ]; then
@@ -161,8 +168,8 @@ if [ -n "${APPLE_INSTALLER_ID:-}" ]; then
 else
     echo "--- APPLE_INSTALLER_ID not set; producing unsigned .pkg ---"
 fi
-PRODUCTBUILD_ARGS+=("${BUILD_DIR}/NereusSDR-${VERSION}-macOS.pkg")
+PRODUCTBUILD_ARGS+=("${BUILD_DIR}/NereusSDR-${VERSION}-${PKG_SUFFIX}.pkg")
 productbuild "${PRODUCTBUILD_ARGS[@]}"
 
 echo ""
-echo "=== Installer created: ${BUILD_DIR}/NereusSDR-${VERSION}-macOS.pkg ==="
+echo "=== Installer created: ${BUILD_DIR}/NereusSDR-${VERSION}-${PKG_SUFFIX}.pkg ==="

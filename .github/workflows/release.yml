@@ -277,12 +277,17 @@ jobs:
             arch: arm64
             dmg_suffix: macOS-apple-silicon
             deployment_target: "14.0"
-    # Intel Mac (macos-13) build dropped: GitHub Actions reports the runner
-    # label as unsupported ("configuration 'macos-13-us-default' is not
-    # supported") as of Phase 3N shakedown 2026-04-12. Intel Mac users should
-    # build from source until either the runner is restored OR we cross-
-    # compile an x86_64 binary on macos-15 via CMAKE_OSX_ARCHITECTURES.
-    # Tracked for Phase 3N+1.
+          # Intel Mac restored 2026-05-03 via cross-compile from the abundant
+          # Apple Silicon runner. Native macos-13 was unviable: original Phase
+          # 3N attempt failed on label rejection (2026-04-12); re-attempt found
+          # the runner pool effectively empty (queue waits >13 min with no
+          # allocation as Apple deprecates Intel CI). Cross-compile path uses
+          # aqtinstall for Qt, FFTW from source, and Rust target
+          # x86_64-apple-darwin. ctest runs via Rosetta on the arm64 host.
+          - runner: macos-15
+            arch: x86_64
+            dmg_suffix: macOS-intel
+            deployment_target: "11.0"
     runs-on: ${{ matrix.runner }}
     # Capture the Apple Developer ID secret into a job-level env var so
     # step-level `if:` guards can evaluate it. GitHub Actions forbids
@@ -296,11 +301,64 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - name: Install dependencies
+      - name: Install dependencies (arm64 native)
+        if: matrix.arch == 'arm64'
         run: brew install qt@6 ninja create-dmg fftw ccache
+
+      - name: Install non-Qt brew packages (x86_64 cross-compile)
+        if: matrix.arch == 'x86_64'
+        run: brew install ninja create-dmg ccache
+
+      - name: Install Qt 6.8 for x86_64 macOS via aqtinstall
+        if: matrix.arch == 'x86_64'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          modules: 'qtmultimedia qtshadertools'
+          cache: true
+
+      - name: Build FFTW from source for x86_64 (both precisions)
+        if: matrix.arch == 'x86_64'
+        run: |
+          # NereusSDR needs both libfftw3 (double, for libspecbleach + WDSP)
+          # and libfftw3f (single, for FFTEngine). FFTW autotools forces one
+          # precision per configure run, so we run install twice into the
+          # same prefix.
+          PREFIX="${{ github.workspace }}/fftw-x86_64"
+          CFLAGS="-arch x86_64 -mmacosx-version-min=${{ matrix.deployment_target }}"
+          curl -fsSL https://fftw.org/pub/fftw/fftw-3.3.10.tar.gz -o fftw.tar.gz
+          tar xzf fftw.tar.gz
+          cd fftw-3.3.10
+
+          # Pass 1 — double precision (libfftw3)
+          ./configure --enable-shared --disable-doc \
+            --prefix="$PREFIX" CFLAGS="$CFLAGS" --host=x86_64-apple-darwin
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          make distclean
+
+          # Pass 2 — single precision (libfftw3f)
+          ./configure --enable-single --enable-shared --disable-doc \
+            --prefix="$PREFIX" CFLAGS="$CFLAGS" --host=x86_64-apple-darwin
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
+          # Sanity-check both precisions installed
+          test -f "$PREFIX/include/fftw3.h"            || { echo "::error::fftw3.h not installed"; exit 1; }
+          test -f "$PREFIX/lib/pkgconfig/fftw3.pc"     || { echo "::error::fftw3.pc not installed"; exit 1; }
+          test -f "$PREFIX/lib/pkgconfig/fftw3f.pc"    || { echo "::error::fftw3f.pc not installed"; exit 1; }
+          test -f "$PREFIX/lib/libfftw3.dylib"         || { echo "::error::libfftw3 (double) not installed"; exit 1; }
+          test -f "$PREFIX/lib/libfftw3f.dylib"        || { echo "::error::libfftw3f (single) not installed"; exit 1; }
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # Add the cross-compile target on the Intel matrix row so DFNR
+          # builds for x86_64; leave native arm64 to default host triple.
+          targets: ${{ matrix.arch == 'x86_64' && 'x86_64-apple-darwin' || '' }}
 
       # Import Apple Developer ID certs into a temporary keychain so
       # codesign / productbuild can find them. Gated on the secret being
@@ -341,6 +399,11 @@ jobs:
           rm "$P12_PATH"
 
       - name: Set up DeepFilterNet3 library
+        env:
+          # Coerces setup-deepfilter.sh to build for the matrix arch instead
+          # of the host arch (uname -m). Without this the cross-compile row
+          # would build aarch64 DFNR and the link step would fail.
+          NEREUS_TARGET_ARCH: ${{ matrix.arch }}
         run: bash setup-deepfilter.sh
 
       - name: Restore ccache
@@ -354,11 +417,31 @@ jobs:
       - name: Configure
         run: |
           ccache --max-size=2G
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            # Cross-compile path: FFTW comes from our source build at
+            # ${{ github.workspace }}/fftw-x86_64. PKG_CONFIG_PATH lets
+            # NereusSDR's pkg_check_modules(FFTW3 fftw3) find it; LDFLAGS
+            # adds -L so the linker resolves -lfftw3 (NereusSDR's
+            # third_party CMakeLists.txt files only call
+            # target_link_libraries, not target_link_directories — brew's
+            # /opt/homebrew/lib is in the default linker path on the arm64
+            # row, our cross-compile prefix is not). Qt is installed by
+            # jurplel/install-qt-action and exposed via Qt6_DIR env.
+            FFTW_PREFIX="${{ github.workspace }}/fftw-x86_64"
+            export PKG_CONFIG_PATH="$FFTW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+            export LDFLAGS="-L$FFTW_PREFIX/lib $LDFLAGS"
+            CMAKE_PREFIX_PATH_VAL="$FFTW_PREFIX"
+          else
+            # Native path: brew supplies both Qt and FFTW under the brew
+            # prefix (/opt/homebrew on Apple Silicon). No env-var dance
+            # needed because brew's lib dir is in the default search path.
+            CMAKE_PREFIX_PATH_VAL="$(brew --prefix)"
+          fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}" \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH_VAL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -371,8 +454,15 @@ jobs:
 
       - name: Bundle Qt frameworks
         run: |
-          $(brew --prefix qt@6)/bin/macdeployqt build/NereusSDR.app \
-            -verbose=1 -always-overwrite
+          # macdeployqt comes from brew on the arm64 row, from aqtinstall on
+          # the x86_64 row. jurplel/install-qt-action exposes the install via
+          # QT_ROOT_DIR.
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            MACDEPLOYQT="$QT_ROOT_DIR/bin/macdeployqt"
+          else
+            MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
+          fi
+          "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite
 
       - name: Copy license notices into app bundle
         run: |
@@ -415,7 +505,11 @@ jobs:
 
       - name: Build HAL plugin
         run: |
-          cmake -B build-hal -S hal-plugin -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          # Thread the matrix arch + deployment target through so the HAL
+          # plugin matches the host app bundle on both rows.
+          cmake -B build-hal -S hal-plugin -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}"
           cmake --build build-hal
 
       - name: Sign HAL plugin
@@ -430,19 +524,23 @@ jobs:
         env:
           APPLE_INSTALLER_ID: ${{ secrets.APPLE_INSTALLER_ID }}
           # Pass the FULL tag version (including any -rcN / -alpha / -beta
-          # suffix) so productbuild writes NereusSDR-${VERSION}-macOS.pkg
-          # at the same path the notarize/staple/upload steps below expect.
+          # suffix) so productbuild writes the correctly-suffixed PKG at
+          # the same path the notarize/staple/upload steps below expect.
           # CMakeLists.txt VERSION can only carry the numeric base, so the
           # packaging script's CMake-parse fallback would otherwise drop
           # the suffix and break pre-release builds.
           VERSION: ${{ needs.prepare.outputs.version }}
+          # PKG_SUFFIX selects the arch-tagged segment of the PKG filename
+          # so the two matrix rows do not collide in the staging step
+          # below. Mirrors the DMG dmg_suffix convention.
+          PKG_SUFFIX: ${{ matrix.dmg_suffix }}
         run: bash packaging/macos/hal-installer.sh
 
       - name: Notarize .pkg
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
         run: |
           xcrun notarytool submit \
-            build/NereusSDR-${{ needs.prepare.outputs.version }}-macOS.pkg \
+            build/NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.dmg_suffix }}.pkg \
             --apple-id "${{ secrets.APPLE_ID }}" \
             --team-id "${{ secrets.APPLE_TEAM_ID }}" \
             --password "${{ secrets.APPLE_APP_PASSWORD }}" \
@@ -452,7 +550,7 @@ jobs:
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
         run: |
           xcrun stapler staple \
-            build/NereusSDR-${{ needs.prepare.outputs.version }}-macOS.pkg
+            build/NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.dmg_suffix }}.pkg
 
       - name: Create DMG
         run: |
