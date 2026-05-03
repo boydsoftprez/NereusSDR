@@ -412,6 +412,7 @@ set(CORE_SOURCES
     src/core/StepAttenuatorController.cpp
     src/core/CalibrationController.cpp
     src/core/PaCalProfile.cpp
+    src/core/PaGainProfile.cpp
     src/core/OcMatrix.cpp
     src/core/RadioStatus.cpp
     src/core/SettingsHygiene.cpp

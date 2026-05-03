@@ -189,6 +189,13 @@ target_compile_definitions(tst_radio_model_puresignal_run_wiring PRIVATE NEREUS_
 #   - interpolate degenerate zero-span: defensive guard, no crash.
 nereus_add_test(tst_pa_cal_profile)
 
+# ── Issue #167 Phase 1 Agent 1A: PaGainProfile factory tables ─────────────
+# Byte-for-byte parity vs Thetis clsHardwareSpecific.cs:459-751 [v2.10.3.13]
+# DefaultPAGainsForBands(HPSDRModel) plus mi0bot HL2 row from
+# clsHardwareSpecific.cs:769-797 [v2.10.3.13-beta2 @c26a8a4]. K2GX
+# regression spotlight: ANAN-8000DLE 80m == 50.5f exactly.
+nereus_add_test(tst_pa_gain_profile)
+
 # ── Phase 3P-A P1CodecAnvelinaPro3 bank 17 extra OC (Task 7) ──
 nereus_add_test(tst_p1_codec_anvelina_pro3)
 
