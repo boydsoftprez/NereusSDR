@@ -7,6 +7,13 @@ name: Release macOS Shakedown (throwaway)
 
 on:
   workflow_dispatch:
+  # Temporary push trigger keyed to this throwaway branch so GHA actually
+  # fires the workflow without requiring it to be merged to main first
+  # (workflow_dispatch via API/CLI requires the workflow file to exist on
+  # the default branch). Removed when the file is deleted in Stage B.
+  push:
+    branches: ['claude/sweet-euclid-18d4fe']
+    paths: ['.github/workflows/release-macos-shakedown.yml']
 
 permissions:
   contents: read
