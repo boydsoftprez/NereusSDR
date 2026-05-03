@@ -1,5 +1,8 @@
 #include "AppearanceSetupPages.h"
+#include "gui/ColorSwatchButton.h"
+#include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
+#include "models/RadioModel.h"
 
 #include <QVBoxLayout>
 #include <QFormLayout>
@@ -11,25 +14,11 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QHBoxLayout>
+#include <QMessageBox>
+
+#include <functional>
 
 namespace NereusSDR {
-
-namespace {
-
-// Build a color swatch placeholder label.
-QLabel* makeColorSwatch(const QString& label, const QString& hexColor, QWidget* parent)
-{
-    auto* lbl = new QLabel(QStringLiteral("  %1  ").arg(label), parent);
-    lbl->setStyleSheet(QStringLiteral(
-        "QLabel { background: %1; color: #c8d8e8; border: 1px solid #203040;"
-        " border-radius: 3px; padding: 2px 6px; }").arg(hexColor));
-    lbl->setFixedHeight(24);
-    lbl->setEnabled(false);  // NYI
-    lbl->setToolTip(QStringLiteral("Color picker — not yet implemented"));
-    return lbl;
-}
-
-} // anonymous namespace
 
 // ---------------------------------------------------------------------------
 // ColorsThemePage
@@ -45,32 +34,132 @@ void ColorsThemePage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    // --- Section: Background ---
-    auto* bgGroup = new QGroupBox(QStringLiteral("Background"), this);
-    auto* bgForm  = new QFormLayout(bgGroup);
-    bgForm->setSpacing(6);
+    SpectrumWidget* sw = model() ? model()->spectrumWidget() : nullptr;
 
-    m_bgColorLabel = makeColorSwatch(QStringLiteral("Background Color"), QStringLiteral("#0f0f1a"), bgGroup);
-    bgForm->addRow(QStringLiteral("Background:"), m_bgColorLabel);
-
-    m_textColorLabel = makeColorSwatch(QStringLiteral("Text Color"), QStringLiteral("#405060"), bgGroup);
-    bgForm->addRow(QStringLiteral("Text:"), m_textColorLabel);
-
-    contentLayout()->addWidget(bgGroup);
+    // Helper: build a functional ColorSwatchButton wired to a SpectrumWidget setter.
+    auto makeBtn = [this, sw](QWidget* parent, const QColor& defaultColor,
+                              std::function<QColor(SpectrumWidget*)> getter,
+                              void (SpectrumWidget::*setter)(const QColor&)) {
+        const QColor initial = (sw && getter) ? getter(sw) : defaultColor;
+        auto* btn = new ColorSwatchButton(initial, parent);
+        connect(btn, &ColorSwatchButton::colorChanged, this,
+                [this, setter](const QColor& c) {
+            if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
+                (w->*setter)(c);
+            }
+        });
+        return btn;
+    };
 
     // --- Section: Spectrum ---
     auto* specGroup = new QGroupBox(QStringLiteral("Spectrum"), this);
     auto* specForm  = new QFormLayout(specGroup);
     specForm->setSpacing(6);
 
-    m_gridColorLabel = makeColorSwatch(QStringLiteral("Grid Color"), QStringLiteral("#203040"), specGroup);
-    specForm->addRow(QStringLiteral("Grid:"), m_gridColorLabel);
+    // Trace & Fill Color — moved from Display → Spectrum Defaults "Trace Colors" group.
+    m_traceFillColorBtn = makeBtn(specGroup,
+        QColor(0x00, 0xe5, 0xff),
+        [](SpectrumWidget* w){ return w->fillColor(); },
+        &SpectrumWidget::setFillColor);
+    // Thetis: setup.designer.cs:3234 (clrbtnDataLine) / :3217 (clrbtnDataFill) — collapsed into
+    // one picker because SpectrumWidget currently shares one colour for line and fill.
+    m_traceFillColorBtn->setToolTip(QStringLiteral(
+        "Click to choose the spectrum trace line and fill colour. "
+        "QColorDialog lets you adjust alpha for the fill opacity."));
+    specForm->addRow(QStringLiteral("Trace & Fill Color:"), m_traceFillColorBtn);
 
-    m_traceColorLabel = makeColorSwatch(QStringLiteral("Trace Color"), QStringLiteral("#1a4a6a"), specGroup);
-    specForm->addRow(QStringLiteral("Trace:"), m_traceColorLabel);
+    // Grid Color — moved from Display → Grid & Scales "Colors" group (G9).
+    m_gridColorBtn = makeBtn(specGroup,
+        QColor(255, 255, 255, 40),
+        [](SpectrumWidget* w){ return w->gridColor(); },
+        &SpectrumWidget::setGridColor);
+    // Thetis: setup.designer.cs:3202 (clrbtnGrid) — rewritten
+    // Thetis original: (none)
+    m_gridColorBtn->setToolTip(QStringLiteral("Colour of the major vertical grid lines on the panadapter."));
+    specForm->addRow(QStringLiteral("Grid Color:"), m_gridColorBtn);
 
-    m_filterColorLabel = makeColorSwatch(QStringLiteral("Filter Color"), QStringLiteral("#003060"), specGroup);
-    specForm->addRow(QStringLiteral("Filter:"), m_filterColorLabel);
+    // Grid Fine Color — moved from Display → Grid & Scales "Colors" group (G10).
+    m_gridFineColorBtn = makeBtn(specGroup,
+        QColor(255, 255, 255, 20),
+        [](SpectrumWidget* w){ return w->gridFineColor(); },
+        &SpectrumWidget::setGridFineColor);
+    // Thetis: setup.designer.cs:3198 (clrbtnGridFine) — rewritten
+    // Thetis original: (none)
+    m_gridFineColorBtn->setToolTip(QStringLiteral("Colour of the minor (fine) grid lines between major grid lines on the panadapter."));
+    specForm->addRow(QStringLiteral("Grid Fine Color:"), m_gridFineColorBtn);
+
+    // H-Grid Color — moved from Display → Grid & Scales "Colors" group (G11).
+    m_hGridColorBtn = makeBtn(specGroup,
+        QColor(255, 255, 255, 40),
+        [](SpectrumWidget* w){ return w->hGridColor(); },
+        &SpectrumWidget::setHGridColor);
+    // Thetis: setup.designer.cs:3193 (clrbtnHGridColor) — rewritten
+    // Thetis original: (none)
+    m_hGridColorBtn->setToolTip(QStringLiteral("Colour of the horizontal dB grid lines on the panadapter."));
+    specForm->addRow(QStringLiteral("H-Grid Color:"), m_hGridColorBtn);
+
+    // Grid Text Color — moved from Display → Grid & Scales "Colors" group (G12).
+    m_gridTextColorBtn = makeBtn(specGroup,
+        QColor(255, 255, 0),
+        [](SpectrumWidget* w){ return w->gridTextColor(); },
+        &SpectrumWidget::setGridTextColor);
+    // Thetis: setup.designer.cs:3206 (clrbtnText) — rewritten
+    // Thetis original: (none)
+    m_gridTextColorBtn->setToolTip(QStringLiteral("Colour of the frequency and dB labels drawn on the panadapter grid."));
+    specForm->addRow(QStringLiteral("Grid Text Color:"), m_gridTextColorBtn);
+
+    // Band Edge Color — moved from Display → Grid & Scales "Colors" group (G6).
+    m_bandEdgeColorBtn = makeBtn(specGroup,
+        QColor(255, 0, 0),
+        [](SpectrumWidget* w){ return w->bandEdgeColor(); },
+        &SpectrumWidget::setBandEdgeColor);
+    // Thetis: setup.designer.cs:3232 (clrbtnBandEdge) — rewritten
+    // Thetis original: (none)
+    m_bandEdgeColorBtn->setToolTip(QStringLiteral("Colour of the band edge markers drawn at the amateur band boundaries on the panadapter."));
+    specForm->addRow(QStringLiteral("Band Edge Color:"), m_bandEdgeColorBtn);
+
+    // RX Zero Line Color — moved from Display → Grid & Scales "Colors" group (G13).
+    m_rxZeroLineColorBtn = makeBtn(specGroup,
+        QColor(255, 0, 0),
+        [](SpectrumWidget* w){ return w->rxZeroLineColor(); },
+        &SpectrumWidget::setRxZeroLineColor);
+    // Thetis: setup.designer.cs:3204 (clrbtnZeroLine) — rewritten; split per Plan 4 D9c-1
+    // Thetis original: (none)
+    m_rxZeroLineColorBtn->setToolTip(QStringLiteral(
+        "Colour of the RX zero line (0 dBm marker) drawn on the panadapter "
+        "when Show zero line is checked."));
+    specForm->addRow(QStringLiteral("RX Zero Line Color:"), m_rxZeroLineColorBtn);
+
+    // TX Zero Line Color — moved from Display → Grid & Scales "Colors" group (G13 TX).
+    m_txZeroLineColorBtn = makeBtn(specGroup,
+        QColor(255, 184, 0),
+        [](SpectrumWidget* w){ return w->txZeroLineColor(); },
+        &SpectrumWidget::setTxZeroLineColor);
+    // NereusSDR Plan 4 D9c-1 — no Thetis equivalent (NereusSDR-original).
+    m_txZeroLineColorBtn->setToolTip(QStringLiteral(
+        "Colour of the TX zero line drawn on the panadapter and waterfall "
+        "at the TX centre frequency when transmitting (MOX active)."));
+    specForm->addRow(QStringLiteral("TX Zero Line Color:"), m_txZeroLineColorBtn);
+
+    // RX Passband Color — Plan 4 D9b, already lived here.
+    m_rxFilterColorBtn = makeBtn(specGroup,
+        QColor(0x00, 0xb4, 0xd8, 80),
+        [](SpectrumWidget* w){ return w->rxFilterColor(); },
+        &SpectrumWidget::setRxFilterColor);
+    m_rxFilterColorBtn->setToolTip(QStringLiteral(
+        "Click to choose the RX passband overlay colour and opacity. "
+        "Shown on the panadapter and waterfall slice band during receive."));
+    specForm->addRow(QStringLiteral("RX Passband Color:"), m_rxFilterColorBtn);
+
+    // TX Passband Color — Plan 4 D9b, already lived here.
+    m_txFilterColorBtn = makeBtn(specGroup,
+        QColor(255, 120, 60, 46),
+        [](SpectrumWidget* w){ return w->txFilterColor(); },
+        &SpectrumWidget::setTxFilterColor);
+    m_txFilterColorBtn->setToolTip(QStringLiteral(
+        "Click to choose the TX passband overlay colour and opacity. "
+        "Shown on the panadapter and waterfall during MOX/TUNE."));
+    specForm->addRow(QStringLiteral("TX Passband Color:"), m_txFilterColorBtn);
 
     contentLayout()->addWidget(specGroup);
 
@@ -79,13 +168,57 @@ void ColorsThemePage::buildUI()
     auto* wfForm  = new QFormLayout(wfGroup);
     wfForm->setSpacing(6);
 
-    m_wfLowColorLabel = makeColorSwatch(QStringLiteral("Low Level Color"), QStringLiteral("#000030"), wfGroup);
-    wfForm->addRow(QStringLiteral("Low Level:"), m_wfLowColorLabel);
-
-    m_wfHighColorLabel = makeColorSwatch(QStringLiteral("High Level Color"), QStringLiteral("#ff8000"), wfGroup);
-    wfForm->addRow(QStringLiteral("High Level:"), m_wfHighColorLabel);
+    // Low Level Color — moved from Display → Waterfall Defaults "Levels" group (W10).
+    // SpectrumWidget uses gradient tables; the custom colour is persisted for future
+    // Custom-scheme wiring but does not rebuild the gradient live yet.
+    m_wfLowColorBtn = new ColorSwatchButton(QColor(Qt::black), wfGroup);
+    // Thetis: setup.designer.cs:34176 (clrbtnWaterfallLow)
+    m_wfLowColorBtn->setToolTip(QStringLiteral("The Color to use when the signal level is at or below the low level set above."));
+    connect(m_wfLowColorBtn, &ColorSwatchButton::colorChanged,
+            this, [](const QColor&) { /* stored via AppSettings on save */ });
+    wfForm->addRow(QStringLiteral("Low Level Color:"), m_wfLowColorBtn);
 
     contentLayout()->addWidget(wfGroup);
+
+    // Reset all colors to defaults — broadened from the Plan 4 D9c-3 button
+    // that lived on Spectrum Defaults to cover all Colors & Theme entries.
+    auto* resetRow = new QHBoxLayout;
+    resetRow->addStretch(1);
+    auto* resetBtn = new QPushButton(QStringLiteral("Reset all colors to defaults"), this);
+    resetBtn->setToolTip(QStringLiteral(
+        "Reset all spectrum and waterfall colours to factory defaults. "
+        "Other display settings (FPS, averaging, thresholds, etc.) are not affected."));
+    connect(resetBtn, &QPushButton::clicked, this, [this]() {
+        const auto res = QMessageBox::question(
+            this,
+            QStringLiteral("Reset all colors to defaults"),
+            QStringLiteral(
+                "Reset all spectrum and waterfall colours to factory defaults?\n\n"
+                "Custom colours set here will be discarded. "
+                "Other display settings are not affected."),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (res != QMessageBox::Yes) { return; }
+        auto* w = model() ? model()->spectrumWidget() : nullptr;
+        if (!w) { return; }
+        w->resetDisplayColorsToDefaults();
+        // Reload all swatches from the model so the buttons reflect the reset values.
+        m_traceFillColorBtn->setColor(w->fillColor());
+        m_gridColorBtn->setColor(w->gridColor());
+        m_gridFineColorBtn->setColor(w->gridFineColor());
+        m_hGridColorBtn->setColor(w->hGridColor());
+        m_gridTextColorBtn->setColor(w->gridTextColor());
+        m_bandEdgeColorBtn->setColor(w->bandEdgeColor());
+        m_rxZeroLineColorBtn->setColor(w->rxZeroLineColor());
+        m_txZeroLineColorBtn->setColor(w->txZeroLineColor());
+        m_rxFilterColorBtn->setColor(w->rxFilterColor());
+        m_txFilterColorBtn->setColor(w->txFilterColor());
+        m_wfLowColorBtn->setColor(QColor(Qt::black));   // waterfall low default
+    });
+    resetRow->addWidget(resetBtn);
+    resetRow->addStretch(1);
+    contentLayout()->addLayout(resetRow);
+
     contentLayout()->addStretch();
 }
 

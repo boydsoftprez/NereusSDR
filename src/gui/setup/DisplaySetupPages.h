@@ -71,7 +71,6 @@ class QLabel;
 namespace NereusSDR {
 
 class PanadapterModel;
-class ColorSwatchButton;
 
 // ---------------------------------------------------------------------------
 // Display > Spectrum Defaults
@@ -102,10 +101,7 @@ private:
     QSlider*   m_lineWidthSlider{nullptr};   // 1–3
     QCheckBox* m_gradientToggle{nullptr};    // S14 gradient enabled
 
-    // Section: Colors (S11/S13)
-    ColorSwatchButton* m_dataLineColorBtn{nullptr};
-    QSlider*           m_dataLineAlphaSlider{nullptr}; // S12
-    ColorSwatchButton* m_dataFillColorBtn{nullptr};
+    // Section: Colors moved to Setup → Appearance → Colors & Theme (S11/S12/S13).
 
     // Section: Calibration
     QDoubleSpinBox* m_calOffsetSpin{nullptr}; // Display calibration offset (dBm)
@@ -134,7 +130,7 @@ private:
     QSlider*           m_highThresholdSlider{nullptr};
     QSlider*           m_lowThresholdSlider{nullptr};
     QCheckBox*         m_agcToggle{nullptr};
-    ColorSwatchButton* m_lowColorBtn{nullptr};                // W10
+    // W10 Low Color moved to Setup → Appearance → Colors & Theme.
     QCheckBox*         m_useSpectrumMinMaxToggle{nullptr};    // W15
 
     // Section: Display
@@ -180,18 +176,11 @@ private:
     QSpinBox*       m_dbMinSpin{nullptr};
     QSpinBox*       m_dbStepSpin{nullptr};
 
-    // Section: Labels & Colors
+    // Section: Labels
     QComboBox*      m_freqLabelAlignCombo{nullptr}; // Left/Center/Right/Auto/Off
     QCheckBox*      m_zeroLineToggle{nullptr};
     QCheckBox*      m_showFpsToggle{nullptr};
-
-    ColorSwatchButton* m_gridColorBtn{nullptr};          // G9
-    ColorSwatchButton* m_gridFineColorBtn{nullptr};      // G10
-    ColorSwatchButton* m_hGridColorBtn{nullptr};         // G11
-    ColorSwatchButton* m_gridTextColorBtn{nullptr};      // G12
-    ColorSwatchButton* m_rxZeroLineColorBtn{nullptr};    // G13 — Plan 4 D9c-1 (was m_zeroLineColorBtn)
-    ColorSwatchButton* m_txZeroLineColorBtn{nullptr};    // G13 TX — Plan 4 D9c-1
-    ColorSwatchButton* m_bandEdgeColorBtn{nullptr};      // G6
+    // G6/G9–G13 colour pickers moved to Setup → Appearance → Colors & Theme.
 };
 
 // ---------------------------------------------------------------------------

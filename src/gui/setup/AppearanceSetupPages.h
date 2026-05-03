@@ -11,6 +11,8 @@ class QPushButton;
 
 namespace NereusSDR {
 
+class ColorSwatchButton;
+
 // ---------------------------------------------------------------------------
 // Appearance > Colors & Theme
 // ---------------------------------------------------------------------------
@@ -22,18 +24,21 @@ public:
 private:
     void buildUI();
 
-    // Section: Background
-    QLabel* m_bgColorLabel{nullptr};    // color swatch placeholder
-    QLabel* m_textColorLabel{nullptr};  // color swatch placeholder
-
-    // Section: Spectrum
-    QLabel* m_gridColorLabel{nullptr};   // color swatch placeholder
-    QLabel* m_traceColorLabel{nullptr};  // color swatch placeholder
-    QLabel* m_filterColorLabel{nullptr}; // color swatch placeholder
+    // Section: Spectrum — functional colour pickers (live, wired to SpectrumWidget).
+    ColorSwatchButton* m_traceFillColorBtn{nullptr};   // → setFillColor
+    ColorSwatchButton* m_gridColorBtn{nullptr};        // → setGridColor       (G9)
+    ColorSwatchButton* m_gridFineColorBtn{nullptr};    // → setGridFineColor   (G10)
+    ColorSwatchButton* m_hGridColorBtn{nullptr};       // → setHGridColor      (G11)
+    ColorSwatchButton* m_gridTextColorBtn{nullptr};    // → setGridTextColor   (G12)
+    ColorSwatchButton* m_bandEdgeColorBtn{nullptr};    // → setBandEdgeColor   (G6)
+    ColorSwatchButton* m_rxZeroLineColorBtn{nullptr};  // → setRxZeroLineColor (G13)
+    ColorSwatchButton* m_txZeroLineColorBtn{nullptr};  // → setTxZeroLineColor (G13 TX)
+    // Plan 4 D9b — RX + TX passband overlay colour pickers (live).
+    ColorSwatchButton* m_rxFilterColorBtn{nullptr};    // → setRxFilterColor
+    ColorSwatchButton* m_txFilterColorBtn{nullptr};    // → setTxFilterColor
 
     // Section: Waterfall
-    QLabel* m_wfLowColorLabel{nullptr};  // color swatch placeholder
-    QLabel* m_wfHighColorLabel{nullptr}; // color swatch placeholder
+    ColorSwatchButton* m_wfLowColorBtn{nullptr};       // → waterfall low colour (W10)
 };
 
 // ---------------------------------------------------------------------------

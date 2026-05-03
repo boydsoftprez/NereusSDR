@@ -1199,14 +1199,32 @@ void SpectrumWidget::setTxZeroLineColor(const QColor& c)
     update();
 }
 
-// Plan 4 D9c-3: reset all Plan 4 D9/D9c display colors to compile-time defaults.
-// Scoped to the 4 colors introduced in Tasks 7-10 only.  Plan 5+ may extend.
+// Plan 4 D9c-3 + Colors & Theme consolidation: reset every theme colour
+// exposed via Setup → Appearance → Colors & Theme.
+// Original 4 Plan 4 D9/D9c colors are preserved exactly so
+// tst_spectrum_tx_overlay::resetDisplayColorsToDefaults() still passes.
 void SpectrumWidget::resetDisplayColorsToDefaults()
 {
-    setTxFilterColor(QColor(255, 120, 60, 46));    // matches kTxFilterOverlayFill
-    setRxFilterColor(QColor(0, 180, 216, 80));     // matches kRxFilterOverlayFill
-    setRxZeroLineColor(QColor(255, 0, 0));         // red — Thetis convention
-    setTxZeroLineColor(QColor(255, 184, 0));       // amber — NereusSDR-original
+    // Spectrum trace & fill
+    setFillColor(QColor(0x00, 0xe5, 0xff));             // default cyan trace
+
+    // Grid colours — defaults match compile-time member initialisers in SpectrumWidget.h
+    setGridColor(QColor(255, 255, 255, 40));             // m_gridColor default
+    setGridFineColor(QColor(255, 255, 255, 20));         // m_gridFineColor default
+    setHGridColor(QColor(255, 255, 255, 40));            // m_hGridColor default
+    setGridTextColor(QColor(255, 255, 0));               // m_gridTextColor default (yellow)
+    setBandEdgeColor(QColor(255, 0, 0));                 // m_bandEdgeColor default (red)
+
+    // Zero-line colours — Plan 4 D9c-1 (unchanged values, kept for test compat)
+    setRxZeroLineColor(QColor(255, 0, 0));               // red — Thetis convention
+    setTxZeroLineColor(QColor(255, 184, 0));             // amber — NereusSDR-original
+
+    // Passband overlay colours — Plan 4 D9b (unchanged values, kept for test compat)
+    setRxFilterColor(QColor(0, 180, 216, 80));           // matches kRxFilterOverlayFill
+    setTxFilterColor(QColor(255, 120, 60, 46));          // matches kTxFilterOverlayFill
+
+    // Waterfall low colour — no backing setter yet; reset handled on the
+    // ColorsThemePage side (resets the swatch to Qt::black).
 }
 
 // Plan 4 D9c-4: TNF + SubRX scaffolding setters.  No paint code consumes these
