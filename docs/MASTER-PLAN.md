@@ -625,10 +625,10 @@ No file-level overlap with 3M-1 — runs in parallel with the TX epic. Expected 
 Thetis-faithful semaphore-wake TX pump v3 + HL2 P1 setTxDrive triage + Codex
 P1/P2 fixes (PR #152).
 
-**HL2 hardware bench (rows 58-60 in `phase3m-0-verification/README.md`)** is
-deferred pending the HL2 ATT/filter safety audit (JJ flagged code paths in
-the attenuator and filter-bank wiring that could damage the radio if TX is
-engaged).  Audit runs in parallel with 3M-3.
+**HL2 hardware bench (rows 58-60 in `phase3m-0-verification/README.md`)** ran
+during v0.3.1 polish and the ATT/filter safety audit closed — the
+attenuator and filter-bank wiring code paths that JJ originally flagged were
+verified end-to-end on HL2 hardware.  HL2 SSB TX is now bench-cleared.
 
 **Goal:** Get RF out the door — prove the TX I/Q output path works.
 
@@ -648,14 +648,14 @@ Thetis source: `console.cs:29311-29650`, `cmaster.cs:491-540`, `network.c:1250-1
 
 Verification: Key MOX, see RF output on ANAN-G2, hear SSB on another receiver.
 
-### Phase 3M-2: CW TX  **[Deferred — runs after 3M-3 + HL2 ATT/filter audit]**
+### Phase 3M-2: CW TX  **[Next major TX epic — after 3M-3a-iii ships]**
 **Status:** Originally scheduled before 3M-3.  Schedule swapped 2026-04-29
-because (a) 3M-3 doesn't need the HL2 hardware bench (DSP stages are
+because (a) 3M-3 didn't need the HL2 hardware bench (DSP stages are
 introspectable on ANAN-G2), letting the HL2 ATT/filter safety audit run in
 parallel without blocking forward TX progress; (b) 3M-3 makes the voice TX
 that 3M-1 just shipped genuinely good (broadcast-grade preprocessing) before
-adding a new state-machine layer; (c) CW bench-verification needs a
-safe-to-TX HL2, which the audit is gating.
+adding a new state-machine layer.  The HL2 ATT/filter audit closed in v0.3.1,
+so HL2 CW bench-verification is no longer gated.
 
 **Absorbs:** the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252
 [@c26a8a4]` — desk-review B3, "HL2 firmware uses bit 3 of I-low byte for

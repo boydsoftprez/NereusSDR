@@ -1,5 +1,170 @@
 # Changelog
 
+## [0.3.1] - 2026-05-03
+
+> **You can transmit SSB now, on every board including the Hermes Lite 2.** v0.3.0 was pulled within hours of release for a packaging fix and effectively never reached testers. v0.3.1 is the first build most users will see — it carries forward everything 0.3.0 was supposed to deliver (SSB voice transmit with broadcast-grade processing, the rebuilt VPN-reach connection workflow, the expanded HL2 configuration surface, status-bar redesign, signed/notarized macOS builds) **plus** the post-0.3.0 polish: per-profile TX bandwidth control, user-editable filter presets, TX filter overlay on the panadapter and waterfall, mode-aware filter grids, the per-board PA forward-power calibration system (Watt Meter / PA Values pages), the Setup IA reshape, and the Hermes Lite 2 ATT/filter safety audit closure that clears HL2 SSB transmit for bench testing.
+
+> 📖 **Alpha testers — start here:** [docs/debugging/v0.3.1-alpha-tester-smoketest.md](https://github.com/boydsoftprez/NereusSDR/blob/main/docs/debugging/v0.3.1-alpha-tester-smoketest.md)
+>
+> Walkthrough of what to try, what "success" looks like on your radio, and what's intentionally cold so you don't file bugs against it. v0.3.1 expands the v0.3.0 doc with the new TX bandwidth controls, filter preset editor, TX filter overlay, and **clears HL2 for bench-TX** with the ATT/filter safety steps the audit produced. Returning testers — receive-side coverage didn't move; the v0.2.3 doc is still the right reference for RX-side behavior.
+
+### Upgrade Steps
+
+* **Existing users** — no action required. Your saved radios, mic profiles, DSP settings, and per-band Clarity memory carry forward. Mic profiles gain new `FilterLow` / `FilterHigh` keys; existing profiles get sensible defaults seeded automatically on first launch.
+* **Fresh installs** — the spectrum and waterfall ship 12 dB lower than they did in v0.2.3 so band noise no longer floods the bottom of the panadapter on a typical residential antenna. If you preferred the old look, Setup → Display → Reset to legacy defaults.
+* **macOS** — the DMG and PKG are Apple Developer ID-signed and notarized. Gatekeeper should accept both without right-click → Open. If you have an older alpha installed, uninstall it before installing v0.3.1.
+* **Hermes Lite 2** — N2ADR filter board options and step-attenuator settings are saved per radio (was global). Verify Setup → Hardware → Hermes Lite Options matches your prior config the first time you connect. **HL2 TX is now bench-cleared** — see the alpha-tester guide for the ATT/filter pre-flight checklist before keying up.
+* **Anyone running the v0.3.0 build that briefly published** — uninstall and replace with v0.3.1. The 0.3.0 artifacts shipped a Windows portable bundle with missing MinGW runtime DLLs; that's fixed in 0.3.1.
+
+### Breaking Changes
+
+* The PSU/supply-voltage status indicator is gone. The PA drain-voltage label remains on MkII-class boards (Saturn / G2 / 8000D / 7000DLE / OrionMkII / Anvelina Pro 3) and is now the sole supply readout.
+* The "OC Outputs" setup page is renamed to "Hermes Lite Control" when an HL2 is connected.
+* Default spectrum/waterfall levels shifted 12 dB lower (new installs only).
+* Clarity (adaptive noise-floor tuning) defaults to ON for new installs.
+* **PA / Watt Meter / PA Values** are now top-level Setup categories (previously bundled under Transmit). The Hardware → Calibration tab Group 5 was relabelled "PA Current (A) calculation" → "Volts/Amps Calibration".
+* Transmit → "Power & PA" was renamed to **Power**; the placeholder per-band PA gain group was removed (deferred to 3M-3 follow-up).
+
+### New Features
+
+**You can transmit SSB voice — on every supported radio family, including Hermes Lite 2.** Microphone in, RF out. The HL2 ATT/filter safety audit closed during 0.3.1 polish — the step-attenuator and filter gating have been verified end-to-end on HL2 hardware. The MOX path is hardened with VOX, anti-VOX, and a two-tone test mode for measuring carrier suppression and IMD.
+
+**Broadcast-grade transmit audio.** A full processing chain you can dial in or run from a preset:
+
+* 10-band transmit equalizer with click-and-drag parametric editor
+* Transmit leveler and ALC with attack/decay/hang
+* Multi-band continuous-frequency compressor (CFC) with per-band gain and post-EQ
+* Compander pre-distortion / drive-ratio (CPDR)
+* Controlled-envelope SSB (CESSB) for legal-limit power without flat-topping
+* Phase rotator for symmetric peak distribution
+
+**21 factory mic profiles** ported verbatim from Thetis (Heil PR40, Heil PR781, Yamaha CM500, Behringer XM8500, etc.) — drop-down on the TX applet, save your own with one click. Each profile now includes per-profile TX bandwidth (FilterLow/FilterHigh) seeded from sensible defaults.
+
+**Per-profile TX bandwidth control** *(new in 0.3.1 since rc1)*:
+
+* TxApplet gains TX BW low/high spinboxes and a live status label (e.g. `100 – 3100 Hz · 3.0 kHz`)
+* TX Filter group on TxProfileSetupPage for editing per-profile bandwidth
+* Debounced TX filter → WDSP path applies changes without keying glitches
+* MicProfileManager extended with FilterLow/FilterHigh on every profile
+
+**User-editable filter preset store** *(new in 0.3.1 since rc1)*:
+
+* Filter presets are now editable per-mode (CW / SSB / AM / FM / DIGI)
+* New Setup → Filters → Filter Presets page with per-mode lists and edit dialog
+* `FilterPresetEditDialog` for adjusting low/high cut and naming presets
+* Mode-aware filter preset grid on RxApplet — buttons reflect the current mode
+* Shift+click a preset on the TX applet to snap TX BW to match the active RX preset
+
+**TX filter overlay on the panadapter and waterfall** *(new in 0.3.1 since rc1)*:
+
+* TX bandwidth is drawn on the spectrum and waterfall during MOX/TUNE — orange when transmitting, cyan otherwise
+* Z-ordered under bandplan and frequency labels so it doesn't obscure tick marks
+* TX/RX overlay color pickers in Setup → Display → Colors & Theme
+* Color pickers consolidated under one Colors & Theme section (was scattered across Spectrum / Waterfall / Grid)
+
+**Connection workflow rebuilt:**
+
+* Radios behind a VPN tunnel (WireGuard, ZeroTier, Tailscale) now connect — the unicast probe path doesn't require UDP broadcast.
+* New 16-model picker organized by silicon family (Auto-detect, Atlas, Hermes, Hermes II, Angelia, Orion, Orion MkII, Hermes Lite 2, Saturn).
+* Auto-connect-on-launch with a per-radio toggle.
+* When the radio drops, the spectrum fades and shows a "DISCONNECTED" overlay you can click to open the connection panel — no more frozen-spectrum mystery.
+* Saved radios stay in the list permanently; only discovered-only entries age out.
+
+**Status bar redesign:**
+
+* The title bar now shows a compact strip: state dot · transmit Mbps · ping ms · receive Mbps · audio indicator. Hover for the full diagnostic tooltip.
+* The receive panel adapts to window width: at full width it shows mode, filter, AGC, NR, NB, APF, and squelch side-by-side; on narrow windows the less-critical badges drop out and a "…" overflow chip lists what was hidden.
+* New ADC overload badge (yellow on any clip, red on level > 3, auto-clears).
+* New CPU readout — right-click to toggle between system-wide and this-process-only.
+
+**Per-board PA forward-power calibration** *(new in 0.3.1):*
+
+* `PaCalProfile` model with `PaCalBoardClass` enum (None / Anan10 / Anan100 / Anan8000); HL2 maps to Anan10.
+* `CalibrationController` persists 10 cal-points per board class, scoped per-MAC.
+* New Setup → PA → Watt Meter page hosts the calibration grid.
+* `alex_fwd` reading routed through `CalibratedPAPower` interpolation; SWR protection scaling factor applied at every `setTxDrive` site.
+
+**Setup IA reshape** *(new in 0.3.1):*
+
+* New top-level **PA** category in SetupDialog (gated on `caps.hasPaProfile`) with three sub-pages: PA Gain (placeholder for 3M-3 follow-up), Watt Meter (cal points), PA Values (9 live telemetry fields including FWD / REV / SWR / PA current / temperature / supply volts / ADC overload / raw ADC).
+* Hardware → Calibration tab is always visible; PA-specific groups self-gate at the new top-level.
+
+**P1 wire-format parity expanded** *(new in 0.3.1):*
+
+* bank 11 C2 wires `line_in_gain` (low 5 bits) + `puresignal_run` flag (bit 6)
+* bank 11 C3 wires `user_dig_out` (low 4 bits)
+* C0 XmitBit on frequency banks (1, 2, 3, 5-9) under MOX
+* New `RadioConnection` virtual setters: `setLineInGain`, `setUserDigOut`, `setPuresignalRun` (P1 + P2 overrides)
+
+**Hermes Lite 2 configuration surface expanded:**
+
+* Hermes Lite Options tab: I2C control, I/O pin state, real-time pin readout
+* N2ADR filter board: HERCULES toggle writes all 13 SWL pin-7 entries
+* SWL bands × 7-pins matrix on the OC Outputs page
+* Step attenuator now accepts the full signed −28..+32 dB range
+* All HL2 settings persist per radio
+* **HL2 SSB transmit is bench-cleared** as of 0.3.1 — ATT/filter audit closed during polish
+
+**More accurate diagnostics:**
+
+* Network Diagnostics dialog with 4-section health grid
+* Ping/round-trip readout uses a min-filter window — sub-millisecond LAN connections now read correctly instead of showing a smeared average
+
+**Capability-gated UI cleanups** *(new in 0.3.1)*:
+
+* `hasStepAttenuatorCal` gates the Adaptive auto-att mode visibility
+* `hasSidetoneGenerator` gates the CW Sidetone Volume slider
+* `hasPennyLane` gates the User Dig Out UI on `OcOutputsTab`
+* Antenna popup builder is now capability-gated and shared between VfoWidget and RxApplet
+* Filter preset grid is mode-aware (driven by `commonPresetsForMode`)
+* DSB and DRM modes added to VFO mode list (11-mode parity with RxApplet)
+
+**XIT support wired** *(new in 0.3.1 since rc1)*:
+
+* VFO Flag X/RIT tab and RxApplet wire XIT placeholders to SliceModel
+* `xitHz` offset applied to TX frequency (mirrors RIT pattern on RX)
+
+### Bug Fixes
+
+* **PA voltage on ANAN-G2 and other MkII radios was off by ~20 %** — formula corrected to match Thetis. A live G2 reading 13.8 V was being displayed as 11.0 V; now reads correctly.
+* **HL2 mic_ptt was inverted on every non-HL2 P1 board** — eliminates rapid T/R relay clicking on TUNE/TX for Atlas, Hermes, HermesII, Angelia, Orion, OrionMkII, AnvelinaPro3, RedPitaya. Matches Thetis `networkproto1.c:597-598` direct polarity.
+* **Hermes Lite 2 PA enable** — the bit that turns on the HL2 power amplifier on transmit was missing in earlier builds; HL2 transmit now works on the wire (and is now bench-cleared as of 0.3.1).
+* **P2 ANAN transmit path** — a WDSP filter stage was incorrectly active on Protocol 2 and broke ANAN transmit; now gated to the protocols that need it.
+* **Hermes Lite 2 mic decimation** — radio-rate mic samples are now correctly down-converted to 48 kHz before reaching the transmit chain (PR #161, KM4BLG).
+* **Hermes Lite 2 N2ADR settings used to leak between radios** — now stored per-MAC.
+* **PA cal-point spinbox edits weren't persisting** *(0.3.1 since rc1)* — `PaCalibrationGroup` now routes spinbox edits through the controller's save() path.
+* **macOS .pkg filename was missing the -rcN suffix on pre-release tags** *(0.3.1 since rc1)* — release.yml now preserves the pre-release suffix in the .pkg artifact name.
+* **//MI0BOT author tag was being dropped during ports** *(0.3.1 since rc1)* — pre-commit hook now preserves verbatim near `mi0bot setup.cs:5463` cite.
+* **Network Diagnostics throughput showed 0.00 Mbps** for any real traffic — fixed a redundant unit conversion.
+* **Glyph rendering on macOS** — up/down arrows and em-dashes were rendering as garbage characters under certain font fallback paths. Switched to Unicode codepoints, sweep complete.
+* **TX filter coalescing was dropping mid-flight changes** *(0.3.1 since rc1)* — replaced a broken QTimer debounce with direct WDSP application; aligned tests with direct-apply behavior.
+* **TX filter and bandplan z-order on the spectrum** *(0.3.1 since rc1)* — TX/RX overlays now sit under bandplan and frequency labels.
+* **Spectrum overlay defaults** *(0.3.1 since rc1)* — TX overlay flags now default to True; spectrum repaints on MOX flip.
+* **AGC-T slider direction on VFO Flag** *(0.3.1 since rc1)* — now matches RxApplet (and Thetis) instead of inverting.
+* **Filter overlay color theming** *(0.3.1 since rc1)* — passband cyan in RX, orange in TX/TUNE, MOX-gated to avoid flicker.
+
+### Performance Improvements
+
+* Transmit mic resampler runs without periodic stalls (clean 720 → 256 sample re-blocking).
+* PipeWire audio backend on Linux delivers lower latency and no stutter under load.
+* Spectrum overlay is cached and only invalidated on real changes — fewer unnecessary GPU uploads.
+* AppletPanel scrollbar reserves a fixed 8 px gutter to prevent content clipping/repaint thrash *(0.3.1 since rc1)*.
+
+### Other Changes
+
+* Build system bumped to Qt 6.8 LTS (3-year support window) on all platforms.
+* Linux PipeWire support is the default Linux audio path; the legacy pactl/FIFO bridge stays as a fallback.
+* macOS builds use the Apple Silicon-native arm64 toolchain.
+* All published artifacts are GPG-signed; checksums file shipped alongside.
+* Bundled neural noise-reduction models (rnnoise + DeepFilterNet3) ship inside every release artifact.
+* Substantial style-constants consolidation pass — TitleBar, RxApplet, PhoneCwApplet, FmApplet, EqApplet, VaxApplet, VfoWidget, SpectrumOverlayPanel, all Setup pages, AboutDialog, SupportDialog, NetworkDiagnosticsDialog, AddCustomRadioDialog, GeneralOptionsPage, AppearanceSetupPages, TransmitSetupPages now use canonical `Style::*` palette helpers (`applyDarkPageStyle`, `kLineEditStyle`, `kButtonStyle`, `kSliderStyle`, `kComboStyle`, `kLabelMid`, `dspToggleStyle`, `doubleSpinBoxStyle`).
+* TxApplet visual cleanup: TUNE+MOX repositioned above VOX+MON for action-button prominence; NYI rows (ATU / MEM / Tune Mode / DUP / xPA) removed; SWR Prot LED wired to `SwrProtectionController`; SWR gauge wired to `powerChanged`.
+* RxApplet AF gain row dropped (the VFO flag and master cover the same surface); Mute relocated; AGC-T moved to its own full-width row (Option B from the polish plan).
+* PhoneCwApplet CW tab is now a stub until 3M-2 ships.
+* MainWindow hides ghost applets until their feature phases ship.
+* "Colour" → "Color" (American spelling) in user-visible strings; internal type names retain "Colour" for Thetis source parity.
+* TxCfcDialog landed scalar-complete (profile combo + global spinboxes + 30 per-band spinboxes for F/COMP/POST-EQ across 10 bands) but is visually spartan; full Thetis-faithful `ucParametricEq` widget port is queued as a follow-up.
+
 ## [0.3.1-rc1] - 2026-05-02
 
 Pre-release for bench verification of the P1 full-parity epic and Setup IA
