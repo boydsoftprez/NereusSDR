@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NereusSDR VERSION 0.3.0 LANGUAGES C CXX)
+project(NereusSDR VERSION 0.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -411,6 +411,7 @@ set(CORE_SOURCES
     src/core/ClarityController.cpp
     src/core/StepAttenuatorController.cpp
     src/core/CalibrationController.cpp
+    src/core/PaCalProfile.cpp
     src/core/OcMatrix.cpp
     src/core/RadioStatus.cpp
     src/core/SettingsHygiene.cpp
@@ -603,6 +604,7 @@ set(GUI_SOURCES
     src/gui/setup/GeneralSetupPages.cpp
     src/gui/setup/GeneralOptionsPage.cpp
     src/gui/setup/HardwarePage.cpp
+    src/gui/setup/PaSetupPages.cpp
     src/gui/setup/hardware/RadioInfoTab.cpp
     src/gui/setup/hardware/AntennaAlexTab.cpp
     src/gui/setup/hardware/AntennaAlexAntennaControlTab.cpp
@@ -615,6 +617,7 @@ set(GUI_SOURCES
     src/gui/setup/hardware/PureSignalTab.cpp
     src/gui/setup/hardware/DiversityTab.cpp
     src/gui/setup/hardware/CalibrationTab.cpp
+    src/gui/setup/hardware/PaCalibrationGroup.cpp
     src/gui/setup/hardware/Hl2IoBoardTab.cpp
     src/gui/setup/hardware/Hl2OptionsTab.cpp
     src/gui/setup/hardware/BandwidthMonitorTab.cpp

@@ -56,14 +56,17 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
         case 12: bank12(ctx, out); return;
 
         // Bank 1 — TX VFO
-        // Source: networkproto1.c:477-481 [@501e3f5]
+        // Source: Thetis ChannelMaster/networkproto1.c:476-481 [v2.10.3.13]
+        //   C0 = XmitBit; before the switch (line 447).
+        //   case 1: C0 |= 2;  → final C0 = XmitBit | 0x02.
         //
-        // Bug-parity note: legacy composeCcBankTxFreq hardcodes out[0] = 0x02
-        // with NO MOX bit, matching networkproto1.c:477 "C0 |= 2" (not
-        // C0 = XmitBit | 2).  Frequency banks do not carry the MOX bit.
+        // Frequency banks DO carry the MOX bit (XmitBit) — Thetis sets it on
+        // every bank's C0 base.  Prior NereusSDR comment claimed otherwise; that
+        // claim was wrong.  Matches HL2 codec (P1CodecHl2.cpp:85) which already
+        // emits C0base | 0x02 here.
         case 1: {
             const quint32 hz = quint32(ctx.txFreqHz);
-            out[0] = 0x02;  // no MOX bit — frequency banks only carry address
+            out[0] = quint8(C0base | 0x02);
             out[1] = quint8((hz >> 24) & 0xFF);
             out[2] = quint8((hz >> 16) & 0xFF);
             out[3] = quint8((hz >>  8) & 0xFF);
@@ -72,15 +75,20 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
         }
 
         // Banks 2-3 — RX1/RX2 VFOs (DDC0/DDC1)
-        // Source: networkproto1.c:485-511 [@501e3f5]
+        // Source: Thetis ChannelMaster/networkproto1.c:485,498 [v2.10.3.13]
+        //   C0 = XmitBit; before the switch (line 447).
+        //   case 2: C0 |= 4;  → final C0 = XmitBit | 0x04.
+        //   case 3: C0 |= 6;  → final C0 = XmitBit | 0x06.
         //
-        // Bug-parity note: composeCcBankRxFreq hardcodes out[0] = addrBits with
-        // NO MOX bit.  Frequency banks do not carry the MOX bit.
+        // Frequency banks DO carry the MOX bit (XmitBit) — Thetis sets it on
+        // every bank's C0 base.  Prior NereusSDR comment claimed otherwise; that
+        // claim was wrong.  Matches HL2 codec (P1CodecHl2.cpp:107,119) which
+        // already emits C0base | <addr> here.
         case 2: case 3: {
             // bank 2 → rxIdx 0 (C0 = 0x04), bank 3 → rxIdx 1 (C0 = 0x06)
             static const quint8 kRx01C0[] = { 0x04, 0x06 };
             const int rxIdx = bank - 2;
-            out[0] = kRx01C0[rxIdx];  // no MOX bit — frequency banks only carry address
+            out[0] = quint8(C0base | kRx01C0[rxIdx]);
             const quint64 freq = (rxIdx < ctx.activeRxCount)
                                   ? ctx.rxFreqHz[rxIdx]
                                   : ctx.txFreqHz;  // unused DDCs default to TX freq
@@ -103,17 +111,25 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
             return;
 
         // Banks 5-9 — RX3-RX7 VFOs (DDC2-DDC6)
-        // Source: networkproto1.c:525-576 [@501e3f5]
+        // Source: Thetis ChannelMaster/networkproto1.c:526,539,549,560,569 [v2.10.3.13]
+        //   C0 = XmitBit; before the switch (line 447).
+        //   case 5: C0 |= 8;     → final C0 = XmitBit | 0x08.
+        //   case 6: C0 |= 0x0a;  → final C0 = XmitBit | 0x0A.
+        //   case 7: C0 |= 0x0c;  → final C0 = XmitBit | 0x0C.
+        //   case 8: C0 |= 0x0e;  → final C0 = XmitBit | 0x0E.
+        //   case 9: C0 |= 0x10;  → final C0 = XmitBit | 0x10.
         // Unused DDCs get TX freq as a safe default.
         //
-        // Bug-parity note: composeCcBankRxFreq hardcodes out[0] = addrBits with
-        // NO MOX bit.  Frequency banks do not carry the MOX bit.
+        // Frequency banks DO carry the MOX bit (XmitBit) — Thetis sets it on
+        // every bank's C0 base.  Prior NereusSDR comment claimed otherwise; that
+        // claim was wrong.  Matches HL2 codec (P1CodecHl2.cpp:155) which already
+        // emits C0base | kRxC0Addr[bank - 5] here.
         case 5: case 6: case 7: case 8: case 9: {
             // bank 5 → rxIdx 2 (C0 = 0x08), ..., bank 9 → rxIdx 6 (C0 = 0x10)
             // Address table: rxIdx 2=0x08, 3=0x0A, 4=0x0C, 5=0x0E, 6=0x10
             static const quint8 kRxC0Addr[] = { 0x08, 0x0A, 0x0C, 0x0E, 0x10 };
             const int rxIdx = bank - 3;  // bank 5 → rxIdx 2, bank 9 → rxIdx 6
-            out[0] = kRxC0Addr[bank - 5];  // no MOX bit — frequency banks only carry address
+            out[0] = quint8(C0base | kRxC0Addr[bank - 5]);
             const quint64 freq = (rxIdx < ctx.activeRxCount)
                                   ? ctx.rxFreqHz[rxIdx]
                                   : ctx.txFreqHz;
@@ -215,23 +231,40 @@ void P1CodecStandard::bank11(const CodecContext& ctx, quint8 out[5]) const
 {
     out[0] = (ctx.mox ? 0x01 : 0x00) | 0x14;
     // C1: preamp bits 0-3 (bit 3 = rx0 again, Thetis quirk) + mic_trs bit 4
-    //     + mic_bias bit 5 + mic_ptt bit 6 (INVERTED).
+    //     + mic_bias bit 5 + mic_ptt bit 6.
     // mic_trs polarity inversion: wire bit set when tip is BIAS/PTT (!tipHot).
     // mic_bias polarity: 1 = bias on (no inversion).
-    // mic_ptt polarity inversion: wire bit set when PTT is DISABLED (!enabled).
+    // mic_ptt polarity: DIRECT — matches Thetis networkproto1.c:597-598
+    // [v2.10.3.13] (commit @501e3f51):
+    //   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
+    // Pre-fix the codec wrote `!ctx.p1MicPTT`, mirroring the inversion bug
+    // that PR #161 (commit ca8cd73) fixed in P1CodecHl2 for HL2.  With
+    // p1MicPTT default false, the inverted code emitted bit 6 = 1 every CC
+    // frame; Hermes-class firmware reads bit 6 as "track mic-jack tip as
+    // PTT source", so the floating mic tip caused phantom PTT signals
+    // fighting software MOX → rapid T/R relay flutter on TUNE/TX.  Symptom
+    // reported on ANAN-10E (HermesII); same root cause hits every board
+    // using P1CodecStandard or its subclasses (AnvelinaPro3, RedPitaya).
     // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]
     //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ((prn->mic.mic_bias & 1) << 5)
     //           | ((prn->mic.mic_ptt & 1) << 6);
-    //   3M-1b G.3 (mic_trs) + G.4 (mic_bias) + G.5 (mic_ptt)
+    //   3M-1b G.3 (mic_trs) + G.4 (mic_bias) + G.5 (mic_ptt — direct as of P1 full-parity)
     out[1] = quint8((ctx.rxPreamp[0] ? 0x01 : 0)
                   | (ctx.rxPreamp[1] ? 0x02 : 0)
                   | (ctx.rxPreamp[2] ? 0x04 : 0)
                   | (ctx.rxPreamp[0] ? 0x08 : 0)         // bit3 = rx0 again (Thetis quirk)
                   | (!ctx.p1MicTipRing ? 0x10 : 0x00)    // mic_trs (inverted) — 3M-1b G.3
                   | (ctx.p1MicBias    ? 0x20 : 0x00)     // mic_bias (no inversion) — 3M-1b G.4
-                  | (!ctx.p1MicPTT    ? 0x40 : 0x00));   // mic_ptt (INVERTED) — 3M-1b G.5
-    out[2] = 0;
-    out[3] = 0;
+                  | (ctx.p1MicPTT     ? 0x40 : 0x00));   // mic_ptt (DIRECT — matches Thetis networkproto1.c:597-598 [v2.10.3.13])
+    // C2: line_in_gain (low 5 bits) | puresignal_run (bit 6).
+    // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    out[2] = quint8((ctx.p1LineInGain & 0x1F)
+                  | (ctx.p1PuresignalRun ? 0x40 : 0x00));
+    // C3: user digital outputs, low 4 bits.
+    // From Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13]
+    //   C3 = prn->user_dig_out & 0b00001111;
+    out[3] = quint8(ctx.p1UserDigOut & 0x0F);
     // canonical 5-bit ramdor encoding
     out[4] = quint8((ctx.rxStepAttn[0] & 0x1F) | 0x20);
 }

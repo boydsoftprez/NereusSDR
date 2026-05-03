@@ -1068,6 +1068,89 @@ void P2RadioConnection::setMicBias(bool on)
 }
 
 // ---------------------------------------------------------------------------
+// setLineInGain (Task 2.1 of P1 full-parity epic) — P2 path
+//
+// Bridges the new RadioConnection::setLineInGain virtual to P2's existing
+// m_mic.lineInGain field, which is already plumbed onto byte 51 of
+// CmdHighPriority (sendCmdTx() emits buf[51] = m_mic.lineInGain at the
+// 100 ms pacer tick).  Store, clamp to 5 bits, mirror into shared base
+// storage for cross-API consistency, and let the next high-priority frame
+// carry the new value.
+//
+// Source: Thetis ChannelMaster/network.c CmdHighPriority byte 51 — line_in_gain
+// (P2 mic struct already wired pre-this-task; this bridges the new virtual).
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setLineInGain(int gain)
+{
+    const int clamped = qBound(0, gain, 31);
+    if (m_mic.lineInGain == clamped) {
+        return;  // idempotent — 100 ms heartbeat covers any state drift
+    }
+    m_mic.lineInGain = clamped;
+    m_lineInGain = clamped;  // keep base storage in sync (debug visibility, no functional dependency)
+    if (m_running && m_socket) {
+        sendCmdTx();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setUserDigOut (Task 2.2 of P1 full-parity epic) — P2 path
+//
+// P1-ONLY FEATURE.  user_dig_out drives the 4 user-controllable digital pins
+// on the Penny / Hermes Ctrl accessory header — a P1 hardware feature with
+// no equivalent in P2.  Thetis P2 (network.c CmdHighPriority) carries no
+// byte for prn->user_dig_out: the field exists in the prn struct but is
+// only read by the P1 networkproto1.c case-11 emitter (line 601).
+//
+// This override therefore does NOT touch the wire.  It stores the value in
+// the shared base m_userDigOut for symmetric-API consistency only — callers
+// that want to set user_dig_out on a P2 connection get a silent no-op on
+// the wire (the value is preserved in base storage for debug visibility,
+// matching the P1 path's m_userDigOut semantics).
+//
+// Source: absence-of-byte in Thetis ChannelMaster/network.c CmdHighPriority
+// frame layout — searched the P2 emitter; user_dig_out has no corresponding
+// byte position.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setUserDigOut(quint8 dig)
+{
+    // Mask to low 4 bits at the API boundary — symmetric with P1.
+    m_userDigOut = dig & 0x0F;
+    // No wire emission: P2 has no user_dig_out byte in CmdHighPriority.
+}
+
+// ---------------------------------------------------------------------------
+// setPuresignalRun (Task 2.3 of P1 full-parity epic) — P2 path
+//
+// PureSignal feedback DDC routing on P2 is handled by feedback DDC plumbing
+// planned for 3M-4.  Thetis's `prn->puresignal_run` is a P1-bank-11 wire
+// field (networkproto1.c:600 [v2.10.3.13]); P2 (CmdHighPriority) has no
+// equivalent direct wire-bit because P2's PureSignal architecture routes
+// the feedback signal through a dedicated DDC on a separate UDP port,
+// gated by the per-DDC enable bytes — there is no single "PS running"
+// byte in CmdHighPriority that mirrors the P1 bank 11 C2 bit 6.
+//
+// This override therefore does NOT touch the wire today.  It stores the
+// flag in the shared base m_puresignalRun for symmetric-API consistency
+// only — callers that wire `setPuresignalRun(true)` on a P2 connection
+// get a silent no-op on the wire until 3M-4 lights up the feedback DDC
+// routing, at which point this setter will gain wire side-effects.
+//
+// Source: absence-of-byte in Thetis ChannelMaster/network.c CmdHighPriority
+// frame layout — searched the P2 emitter; puresignal_run has no
+// corresponding byte position.  See PureSignal phase 3M-4 plan for the
+// actual P2 feedback DDC routing implementation.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setPuresignalRun(bool run)
+{
+    m_puresignalRun = run;
+    // No wire emission: P2's PureSignal feedback DDC routing is 3M-4 deferred.
+    // When 3M-4 lands, this setter will additionally toggle the feedback DDC
+    // enable byte in CmdHighPriority and trigger sendCmdTx() / sendCmdHigh()
+    // as appropriate.
+}
+
+// ---------------------------------------------------------------------------
 // setMicPTT (3M-1b G.5)
 //
 // Enables or disables the hardware mic-jack PTT line (Orion/ANAN front-panel).

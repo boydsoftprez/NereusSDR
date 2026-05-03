@@ -301,7 +301,7 @@ WDSP source is in `third_party/wdsp/` (TAPR v1.29 + linux_port.h for cross-platf
 FFTW3: system package on Linux/macOS, pre-built DLL on Windows (`third_party/fftw3/`).
 First run generates FFTW wisdom (~15 min). Cached in `~/.config/NereusSDR/` for subsequent launches.
 
-Current version: **0.2.0** (set in `CMakeLists.txt`).
+Current version: **0.3.1** (set in `CMakeLists.txt`; tagged pre-releases use `vX.Y.Z-rcN` suffix).
 
 ---
 

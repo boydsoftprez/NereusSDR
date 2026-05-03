@@ -95,9 +95,14 @@ private slots:
         // CESSB (1) — database.cs:4689.
         QVERIFY(defs.contains(QStringLiteral("CESSB_On")));
 
+        // P1 full-parity epic Task 2.4 (2) — bank 11 C2/C3 mic-domain keys.
+        // Source: Thetis networkproto1.c:600-601 [v2.10.3.13].
+        QVERIFY(defs.contains(QStringLiteral("Mic_LineInGain")));
+        QVERIFY(defs.contains(QStringLiteral("Mic_UserDigOut")));
+
         // Total bundle = 50 (existing) + 1 TXParaEQData (3M-3a-ii follow-up
-        // Batch 6) + 41 (new) = 92 keys.
-        QCOMPARE(defs.size(), 92);
+        // Batch 6) + 41 (new) + 2 (P1 full-parity Task 2.4) = 94 keys.
+        QCOMPARE(defs.size(), 94);
     }
 
     // =========================================================================

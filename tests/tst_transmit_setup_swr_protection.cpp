@@ -24,7 +24,7 @@ private slots:
 
 void TestTransmitSetupSwrProtection::groupBoxBuilt_fiveControlsPresent()
 {
-    PowerPaPage page(/*model=*/nullptr);
+    PowerPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpSWRProtectionControl");
     QVERIFY(group);
 

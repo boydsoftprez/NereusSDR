@@ -290,6 +290,45 @@ public slots:
     /// (firmware ignores it).
     virtual void setMicBias(bool on) = 0;
 
+    /// Set mic line-in gain (0-31, 5 bits).  Maps to Thetis prn->mic.line_in_gain.
+    /// Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    ///   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    /// P1: bank 11 C2 low 5 bits.
+    /// P2: byte 51 of CmdHighPriority (already wired pre-this-virtual via the
+    ///     P2 mic struct; the P2 override bridges this virtual to that path).
+    /// Default 0 = no line-in attenuation.
+    virtual void setLineInGain(int gain) = 0;
+
+    /// Set user digital outputs (0-15, low 4 bits).  Maps to Thetis prn->user_dig_out.
+    /// Source: Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13]
+    ///   C3 = prn->user_dig_out & 0b00001111;
+    /// P1: bank 11 C3 low 4 bits.  Drives the 4 user-controllable digital pins
+    ///     on the Penny/Hermes Ctrl accessory header.
+    /// P2: NO EQUIVALENT — user_dig_out is a P1/Penny-only feature with no
+    ///     corresponding byte in CmdHighPriority.  The P2 override stores into
+    ///     base m_userDigOut for symmetric API only; it does NOT emit anything
+    ///     on the wire.
+    /// Default 0 = all 4 user-dig-out pins low.
+    virtual void setUserDigOut(quint8 dig) = 0;
+
+    /// Set PureSignal feedback DDC routing-active flag.  Maps to Thetis prn->puresignal_run.
+    /// Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    ///   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    /// P1: bank 11 C2 bit 6 (mask 0x40).
+    /// P2: NO DIRECT WIRE-BIT — PureSignal feedback DDC routing on P2 is
+    ///     handled by the feedback DDC plumbing planned for 3M-4.  The P2
+    ///     override stores into base m_puresignalRun for symmetric API only;
+    ///     it does NOT emit anything on the wire until 3M-4.
+    ///
+    /// Semantic: tracks whether PureSignal feedback DDC routing is currently
+    /// *active*.  Distinct from BoardCapabilities.hasPureSignal (capability)
+    /// and from TransmitModel::puresignalEnabled (user toggle).  Until 3M-4
+    /// lights up the actual feedback DDC routing, the PureSignalApplet
+    /// "Enable" toggle is the proxy that drives this — wiring done in
+    /// Task 2.5 of the P1 full-parity epic, not here.
+    /// Default false = PureSignal feedback DDC NOT routing.
+    virtual void setPuresignalRun(bool run) = 0;
+
     /// Hardware mic-jack PTT enable (Orion/ANAN front-panel PTT).
     ///
     /// NereusSDR parameter convention: `enabled = true` means PTT is enabled
@@ -593,6 +632,31 @@ protected:
     // P2: emitted to transmit_specific_buffer[50] bit 4 (0x10).
     // From Thetis networkproto1.c:597 [v2.10.3.13]; deskhpsdr new_protocol.c:1496-1498 [@120188f].
     bool m_micBias{false};
+
+    // Shared state for setLineInGain (Task 2.1 of P1 full-parity epic).
+    // 5-bit field (0-31).  Default 0 = no line-in attenuation.
+    // P1: emitted to case 11 (C0=0x14) C2 low 5 bits via ctx.p1LineInGain.
+    // P2: bridged into m_mic.lineInGain → byte 51 of CmdHighPriority.
+    // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]:
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    int m_lineInGain{0};
+
+    // Shared state for setUserDigOut (Task 2.2 of P1 full-parity epic).
+    // 4-bit field (0-15).  Default 0 = all 4 user-dig-out pins low.
+    // P1: emitted to case 11 (C0=0x14) C3 low 4 bits via ctx.p1UserDigOut.
+    // P2: STORAGE-ONLY (no wire emission — user_dig_out is P1/Penny-only).
+    // From Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13]:
+    //   C3 = prn->user_dig_out & 0b00001111;
+    quint8 m_userDigOut{0};
+
+    // Shared state for setPuresignalRun (Task 2.3 of P1 full-parity epic).
+    // Bool flag tracking whether PureSignal feedback DDC routing is active.
+    // Default false = NOT routing.
+    // P1: emitted to case 11 (C0=0x14) C2 bit 6 (mask 0x40) via ctx.p1PuresignalRun.
+    // P2: STORAGE-ONLY (no wire emission — PS feedback DDC routing is 3M-4 deferred).
+    // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]:
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    bool m_puresignalRun{false};
 
     // Shared state for setMicPTT (3M-1b G.5).
     // POLARITY INVERSION: m_micPTT=true means PTT is enabled (intuitive UI semantic).

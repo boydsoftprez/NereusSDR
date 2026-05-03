@@ -429,6 +429,13 @@ jobs:
       - name: Build .pkg
         env:
           APPLE_INSTALLER_ID: ${{ secrets.APPLE_INSTALLER_ID }}
+          # Pass the FULL tag version (including any -rcN / -alpha / -beta
+          # suffix) so productbuild writes NereusSDR-${VERSION}-macOS.pkg
+          # at the same path the notarize/staple/upload steps below expect.
+          # CMakeLists.txt VERSION can only carry the numeric base, so the
+          # packaging script's CMake-parse fallback would otherwise drop
+          # the suffix and break pre-release builds.
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: bash packaging/macos/hal-installer.sh
 
       - name: Notarize .pkg

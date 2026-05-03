@@ -25,7 +25,7 @@ private slots:
 
 void TestTransmitSetupTxInhibit::groupBoxBuilt_bothControlsPresent()
 {
-    PowerPaPage page(/*model=*/nullptr);
+    PowerPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpExtTXInhibit");
     QVERIFY(group);
 
@@ -45,7 +45,7 @@ void TestTransmitSetupTxInhibit::chkTXInhibit_toggle_persistsToAppSettings()
     // Clear any leftover key from a previous run in the sandbox
     AppSettings::instance().setValue(QStringLiteral("TxInhibitMonitorEnabled"), QStringLiteral("False"));
 
-    PowerPaPage page(/*model=*/nullptr);
+    PowerPage page(/*model=*/nullptr);
     auto* group = page.findChild<QGroupBox*>("grpExtTXInhibit");
     QVERIFY(group);
     auto* chk = group->findChild<QCheckBox*>("chkTXInhibit");

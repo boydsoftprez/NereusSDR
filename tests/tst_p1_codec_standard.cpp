@@ -53,22 +53,23 @@ private slots:
 
         // Bank 11 — RX ATT 20 dB, no MOX (5-bit mask + 0x20 enable)
         // Source: networkproto1.c:601 [@501e3f5]
-        // C1 = 0x40: bit 6 (mic_ptt, INVERTED) is SET by default because
-        //   CodecContext.p1MicPTT defaults false → !false = 1 on wire (PTT disabled).
-        //   Thetis networkproto1.c:597-598 [v2.10.3.13]: ((prn->mic.mic_ptt & 1) << 6)
+        // C1 = 0x00: bit 6 (mic_ptt, DIRECT polarity) is CLEAR by default
+        //   because CodecContext.p1MicPTT defaults false → wire bit = 0.
+        //   Thetis networkproto1.c:597-598 [v2.10.3.13 @501e3f51]: ((prn->mic.mic_ptt & 1) << 6)
         //   Preamp bits 0-3 = 0; mic_trs bit 4 = 0 (p1MicTipRing default true → !true = 0);
-        //   mic_bias bit 5 = 0 (p1MicBias default false). 3M-1b G.5.
+        //   mic_bias bit 5 = 0 (p1MicBias default false).  3M-1b G.5 + P1 full-parity Task 1.1.
         QTest::newRow("bank11_rx_att_20dB_ramdor_encoding")
             << 11 << false
-            << 0x14 << 0x40 << 0x00 << 0x00 << ((20 & 0x1F) | 0x20)
+            << 0x14 << 0x00 << 0x00 << 0x00 << ((20 & 0x1F) | 0x20)
             << QByteArray(R"({"rxStepAttn":[20,0,0]})");
 
         // Bank 11 — RX ATT 31 dB max
         // Source: networkproto1.c:601 [@501e3f5]
-        // C1 = 0x40: same mic_ptt default reasoning as bank11_rx_att_20dB. 3M-1b G.5.
+        // C1 = 0x00: same mic_ptt direct-polarity default reasoning as bank11_rx_att_20dB.
+        // 3M-1b G.5 + P1 full-parity Task 1.1.
         QTest::newRow("bank11_rx_att_31dB_max")
             << 11 << false
-            << 0x14 << 0x40 << 0x00 << 0x00 << ((31 & 0x1F) | 0x20)
+            << 0x14 << 0x00 << 0x00 << 0x00 << ((31 & 0x1F) | 0x20)
             << QByteArray(R"({"rxStepAttn":[31,0,0]})");
 
         // Bank 12 — ADC1 ATT during RX (no MOX), value 7

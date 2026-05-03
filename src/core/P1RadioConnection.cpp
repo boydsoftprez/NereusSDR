@@ -1392,33 +1392,138 @@ void P1RadioConnection::setMicBias(bool on)
 }
 
 // ---------------------------------------------------------------------------
+// setLineInGain (Task 2.1 of P1 full-parity epic)
+//
+// Updates m_lineInGain (shared base member) and arms m_forceBank11Next so
+// the new line-in-gain value lands on the wire within ≤1 frame of the call.
+// 5-bit field (0..31) — clamped at the API boundary.  Higher values produce
+// greater line-in attenuation per Thetis upstream semantic.
+//
+// Wire bytes: bank 11 (C0=0x14) C2 low 5 bits.  C2 also carries
+// puresignal_run at bit 6 (Task 2.5 plumbing); both bits OR into the same
+// codec C2 byte and never collide.
+//
+// Porting from Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+//   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+//
+// Flush pattern mirrors setMicBias (Codex P2): m_forceBank11Next is set
+// BEFORE the idempotent guard so the bit lands on the wire within ≤1 frame.
+// Reuses m_forceBank11Next + captureBank11ForTest infrastructure from G.3.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setLineInGain(int gain)
+{
+    const int clamped = qBound(0, gain, 31);
+
+    // Codex P2: set flush flag BEFORE idempotent guard.
+    m_forceBank11Next = true;
+
+    if (m_lineInGain == clamped) {
+        return;  // idempotent — flush flag already set above
+    }
+    m_lineInGain = clamped;
+}
+
+// ---------------------------------------------------------------------------
+// setUserDigOut (Task 2.2 of P1 full-parity epic)
+//
+// Updates m_userDigOut (shared base member) and arms m_forceBank11Next so
+// the new user-dig-out value lands on the wire within ≤1 frame of the call.
+// 4-bit field (0..15) — masked at the API boundary via & 0x0F so values above
+// 15 silently wrap to the low nibble (the codec also masks via & 0x0F, so
+// stored state matches the wire bytes 1:1 either way).
+//
+// Wire bytes: bank 11 (C0=0x14) C3 low 4 bits — the same bank as
+// setLineInGain (C2) and setMicBias / setMicTipRing / setMicPTT (C1), all of
+// which OR into different bytes of the same case-11 frame.
+//
+// Porting from Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13]
+//   C3 = prn->user_dig_out & 0b00001111;
+//
+// Flush pattern mirrors setLineInGain / setMicBias (Codex P2): m_forceBank11Next
+// is set BEFORE the idempotent guard so the bits land on the wire within
+// ≤1 frame.  Reuses m_forceBank11Next + captureBank11ForTest infrastructure
+// from G.3.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setUserDigOut(quint8 dig)
+{
+    const quint8 masked = dig & 0x0F;
+
+    // Codex P2: set flush flag BEFORE idempotent guard.
+    m_forceBank11Next = true;
+
+    if (m_userDigOut == masked) {
+        return;  // idempotent — flush flag already set above
+    }
+    m_userDigOut = masked;
+}
+
+// ---------------------------------------------------------------------------
+// setPuresignalRun (Task 2.3 of P1 full-parity epic)
+//
+// Updates m_puresignalRun (shared base member) and arms m_forceBank11Next so
+// the new puresignal-run flag lands on the wire within ≤1 frame of the call.
+// Bool field — wire bit 6 of bank 11 C2.
+//
+// Wire bytes: bank 11 (C0=0x14) C2 bit 6 (mask 0x40) — the same C2 byte that
+// also carries line_in_gain (low 5 bits, Task 2.1).  Both fields OR together
+// into the same byte; this setter only flips bit 6, never touching the low
+// 5 bits — see test §3 (cross-bit guard for line_in_gain).
+//
+// Porting from Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+//   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+//
+// Semantic: this flag tracks whether PureSignal feedback DDC routing is
+// currently *active* on the wire — distinct from BoardCapabilities.hasPureSignal
+// (capability) and from TransmitModel::puresignalEnabled (user toggle).  The
+// wiring from PureSignalApplet's "Enable" toggle to this setter is Task 2.5,
+// not this task; until 3M-4 lights up the actual feedback DDC routing, the
+// applet toggle is the proxy that drives this flag.
+//
+// Flush pattern mirrors setLineInGain / setUserDigOut (Codex P2):
+// m_forceBank11Next is set BEFORE the idempotent guard so the bit lands on
+// the wire within ≤1 frame.  Reuses m_forceBank11Next + captureBank11ForTest
+// infrastructure from G.3.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setPuresignalRun(bool run)
+{
+    // Codex P2: set flush flag BEFORE idempotent guard.
+    m_forceBank11Next = true;
+
+    if (m_puresignalRun == run) {
+        return;  // idempotent — flush flag already set above
+    }
+    m_puresignalRun = run;
+}
+
+// ---------------------------------------------------------------------------
 // setMicPTT (3M-1b G.5)
 //
 // Enables or disables the hardware mic-jack PTT line (Orion/ANAN front-panel).
-// NereusSDR parameter convention: enabled=true → PTT enabled (intuitive).
+// NereusSDR API contract: enabled=true → PTT enabled → wire bit 6 SET; this
+// is direct polarity, mirroring Thetis networkproto1.c:597-598 [v2.10.3.13]
+// (commit @501e3f51):
+//   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
 //
-// POLARITY INVERSION AT THE WIRE LAYER:
-// Both Thetis and deskhpsdr carry the *disable* flag on the wire:
-//   Thetis field name: mic_ptt  (1 = PTT DISABLED)
-//   deskhpsdr: mic_ptt_enabled == 0 → set bit (bit set = PTT disabled)
-//   Thetis console.cs:19758 [v2.10.3.13]: MicPTTDisabled property name
-//     confirms the storage convention (disable flag, not enable flag).
-// Therefore the implementation writes (!enabled) to the wire bit:
-//   enabled=true  → PTT enabled  → wire bit 6 CLEAR (0)
-//   enabled=false → PTT disabled → wire bit 6 SET   (1)
-//
-// Wire bit: bank 11 (C0=0x14) C1 byte bit 6 (mask 0x40), INVERTED.
+// Wire bit: bank 11 (C0=0x14) C1 byte bit 6 (mask 0x40), DIRECT polarity.
 // This is the SAME C1 byte as G.3 (bit 4) + G.4 (bit 5) — all OR'd in.
 //
-// Porting from Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]:
-//   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
-//   mic_ptt: 1 = PTT disabled on wire (polarity inversion at API layer).
+// Pre-fix history: the codec wrote `!enabled` to the wire (inverted),
+// mirroring the same bug PR #161 fixed in P1CodecHl2 (commit ca8cd73).  With
+// the default m_micPTT=false, the inverted code put bit 6 = 1 every CC frame;
+// Hermes-class firmware reads bit 6 as "track mic-jack tip as PTT source" and
+// the floating mic tip caused phantom PTT signals fighting software MOX —
+// rapid T/R relay flutter on TUNE/TX (ANAN-10E bench symptom).  Codec is now
+// direct; setMicPTT(true) sets the wire bit, setMicPTT(false) clears it.
 //
-// Cross-reference:
-//   deskhpsdr/src/old_protocol.c:3000-3002 [@120188f]:
-//     if (mic_ptt_enabled == 0) { output_buffer[C1] |= 0x40; }  // same inversion
-//   deskhpsdr/src/new_protocol.c:1488-1490 [@120188f] — P2 byte 50 bit 2.
-//   Thetis console.cs:19764 [v2.10.3.13] — MicPTTDisabled calls SetMicPTT(value).
+// Cross-reference notes:
+//   deskhpsdr/src/old_protocol.c:3000-3002 [@120188f]: deskhpsdr's
+//     `mic_ptt_enabled` is a higher-level wrapper that inverts before
+//     writing the wire field; the wire field itself (mic_ptt) is direct.
+//   Thetis console.cs:19758 [v2.10.3.13]: `MicPTTDisabled` property is a
+//     UI-facing inverted view; it calls `NetworkIO.SetMicPTT(disabled?1:0)`,
+//     and the wire field is direct.
+//   deskhpsdr/src/new_protocol.c:1488-1490 [@120188f] — P2 byte 50 bit 2
+//     (P2 mic_ptt path, separate codec, same direct-polarity convention).
 //
 // Flush pattern mirrors setMicBias (Codex P2): m_forceBank11Next is set
 // BEFORE the idempotent guard so the bit lands on the wire within ≤1 frame.
@@ -1664,6 +1769,9 @@ CodecContext P1RadioConnection::buildCodecContext() const
     ctx.p1LineIn       = m_lineIn;
     ctx.p1MicTipRing   = m_micTipRing;
     ctx.p1MicBias      = m_micBias;     // 3M-1b G.4
+    ctx.p1LineInGain   = m_lineInGain;  // Task 2.1 of P1 full-parity epic
+    ctx.p1UserDigOut   = m_userDigOut;  // Task 2.2 of P1 full-parity epic
+    ctx.p1PuresignalRun = m_puresignalRun;  // Task 2.3 of P1 full-parity epic
     ctx.p1MicPTT       = m_micPTT;      // 3M-1b G.5
     ctx.duplex         = m_duplex;
     ctx.diversity      = m_diversity;
@@ -2526,10 +2634,17 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
     case 11: // Preamp control (networkproto1.c:593-601)
         out[0] = C0base | 0x14;
         // C1: preamp bits 0-3 (bit 3 = rx0 again, Thetis quirk) + mic_trs bit 4
-        //     + mic_bias bit 5 + mic_ptt bit 6 (INVERTED).
+        //     + mic_bias bit 5 + mic_ptt bit 6 (INVERTED — LEGACY ONLY).
         // mic_trs polarity inversion: 1 = tip is BIAS/PTT → write !m_micTipRing.
         // mic_bias polarity: 1 = bias on (no inversion) → write m_micBias.
         // mic_ptt polarity inversion: 1 = PTT DISABLED on wire → write !m_micPTT.
+        // TODO(legacy-codec-cleanup): same mic_ptt inversion bug as the codec
+        // path; flip when re-enabling NEREUS_USE_LEGACY_P1_CODEC=1.  P1CodecStandard
+        // (the production path) was flipped to direct polarity in the same
+        // commit that introduced this TODO; this legacy compose path is
+        // kept inverted only because it is unreachable in shipped builds
+        // (gated by the env var).  See P1CodecStandard.cpp:bank11 for the
+        // direct-polarity wire formula and Thetis cite.
         // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]
         //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ((prn->mic.mic_bias & 1) << 5)
         //           | ((prn->mic.mic_ptt & 1) << 6);
@@ -2540,7 +2655,7 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
                  | (m_rxPreamp[0] ? 0x08 : 0)        // bit3 = rx0 again (Thetis quirk)
                  | (!m_micTipRing ? 0x10 : 0x00)      // 3M-1b G.3 — mic_trs (inverted)
                  | (m_micBias    ? 0x20 : 0x00)       // 3M-1b G.4 — mic_bias (no inversion)
-                 | (!m_micPTT    ? 0x40 : 0x00));     // 3M-1b G.5 — mic_ptt (INVERTED)
+                 | (!m_micPTT    ? 0x40 : 0x00));     // 3M-1b G.5 — mic_ptt (INVERTED — LEGACY ONLY; see TODO above)
         out[2] = 0; // line_in_gain + puresignal
         out[3] = 0; // user digital outputs
         out[4] = static_cast<quint8>((m_stepAttn[0] & 0x1F) | 0x20); // ADC0 step ATT + enable

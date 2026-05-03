@@ -182,7 +182,7 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
 
     // We lay out the 5 group boxes in a 2-column grid using two QVBoxLayouts
     // inside a QHBoxLayout (top half: col 0 = Freq Cal + Level Cal,
-    // col 1 = HPSDR Diag + TX Display Cal; bottom: PA Current full-width).
+    // col 1 = HPSDR Diag + TX Display Cal; bottom: Volts/Amps Cal full-width).
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     auto* scrollWidget = new QWidget(scrollArea);
@@ -336,36 +336,56 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     rightCol->addStretch();
 
     // =========================================================================
-    // Group 5: PA Current (A) calculation (preserved from PaCalibrationTab)
-    // Source: console.cs:6691-6724 CalibratedPAPower -- sensitivity + offset [@501e3f5]
+    // Group 5: Volts/Amps Calibration -- Thetis groupBoxTS27 equivalent.
+    // Source: Thetis setup.designer.cs:11672-11677 (groupBoxTS27 contents:
+    //         chkLogVoltsAmps + btnAmpDefault + udAmpSens + udAmpVoff)
+    //         + console.cs:24893 _amp_voff = 360.0f default [v2.10.3.13]
+    // Was previously labelled "PA Current (A) calculation" -- relabelled
+    // 2026-05-02 to match Thetis intent (V/A calibration constants for
+    // PA volts/amps computation).  The CalibrationController model-layer
+    // API (paCurrentSensitivity / paCurrentOffset) is intentionally NOT
+    // renamed in the same pass -- separate audit, since persistence keys
+    // ride on those names.
     // =========================================================================
-    auto* paCurrentGroup = new QGroupBox(tr("PA Current (A) calculation"), scrollWidget);
-    auto* paCurrentForm  = new QFormLayout(paCurrentGroup);
+    auto* vaCalGroup = new QGroupBox(tr("Volts/Amps Calibration"), scrollWidget);
+    auto* vaCalForm  = new QFormLayout(vaCalGroup);
 
-    m_paSensSpin = makeSpinBox(-100.0, 100.0, 1.0, 0.1, 4, paCurrentGroup);
-    m_paSensSpin->setToolTip(
-        tr("PA current sensor sensitivity (volts/amp). Hardware-specific constant."));
-    paCurrentForm->addRow(tr("Sensitivity:"), m_paSensSpin);
+    // Source: Thetis udAmpSens setup.designer.cs:11672-11677 [v2.10.3.13];
+    //         setup.cs:24255 udAmpSens_ValueChanged -> console.AmpSens.
+    m_ampSensSpin = makeSpinBox(-100.0, 100.0, 1.0, 0.1, 4, vaCalGroup);
+    m_ampSensSpin->setToolTip(
+        tr("Amp sensitivity for PA volts/amps calculation. Hardware-specific constant."));
+    vaCalForm->addRow(tr("Sensitivity:"), m_ampSensSpin);
 
-    m_paOffsetSpin = makeSpinBox(-10.0, 10.0, 0.0, 0.01, 4, paCurrentGroup);
-    m_paOffsetSpin->setToolTip(
-        tr("PA current sensor offset (amps). Hardware-specific constant."));
-    paCurrentForm->addRow(tr("Offset:"), m_paOffsetSpin);
+    // Source: Thetis udAmpVoff setup.designer.cs:11672-11677 [v2.10.3.13];
+    //         setup.cs:24247 udAmpVoff_ValueChanged -> console.AmpVoff.
+    //         Default upstream is 360.0f (console.cs:24893 _amp_voff).
+    m_ampVoffSpin = makeSpinBox(-10.0, 10.0, 0.0, 0.01, 4, vaCalGroup);
+    m_ampVoffSpin->setToolTip(
+        tr("Amp voltage offset for PA volts/amps calculation. Hardware-specific constant."));
+    vaCalForm->addRow(tr("Offset:"), m_ampVoffSpin);
 
-    auto* paBtnRow = new QHBoxLayout;
-    m_paDefaultBtn = new QPushButton(tr("Default"), paCurrentGroup);
-    m_paDefaultBtn->setToolTip(tr("Restore PA current sensitivity/offset to board defaults."));
-    paBtnRow->addWidget(m_paDefaultBtn);
-    paBtnRow->addStretch();
-    paCurrentForm->addRow(paBtnRow);
+    auto* vaBtnRow = new QHBoxLayout;
+    // Source: Thetis btnAmpDefault setup.designer.cs:11672-11677 [v2.10.3.13]
+    //         -- restores AmpSens / AmpVoff to factory defaults.
+    m_ampDefaultBtn = new QPushButton(tr("Default"), vaCalGroup);
+    m_ampDefaultBtn->setToolTip(tr("Restore amp sensitivity / voltage offset to board defaults."));
+    vaBtnRow->addWidget(m_ampDefaultBtn);
+    vaBtnRow->addStretch();
+    vaCalForm->addRow(vaBtnRow);
 
     // Source: console.cs:27457-27463 chkLogVoltsAmps -> console.LogVA [@501e3f5]
     // Upstream inline attribution preserved verbatim (console.cs:27453):
     //   chkVFOBLock.Enabled = false; //[2.10.3.7]MW0LGE
-    m_logVoltsAmpsCheck = new QCheckBox(tr("Log Volts/Amps to VALog.txt"), paCurrentGroup);
-    paCurrentForm->addRow(m_logVoltsAmpsCheck);
+    m_logVoltsAmpsCheck = new QCheckBox(tr("Log Volts/Amps to VALog.txt"), vaCalGroup);
+    vaCalForm->addRow(m_logVoltsAmpsCheck);
 
-    mainLayout->addWidget(paCurrentGroup);
+    mainLayout->addWidget(vaCalGroup);
+
+    // Note: the per-board PA forward-power cal spinbox group (PaCalibrationGroup)
+    // previously lived here as Group 6.  Migrated to PA → Watt Meter
+    // (PaWattMeterPage) on 2026-05-02 as part of Setup IA reshape Phase 3A —
+    // see docs/architecture/2026-05-02-p1-full-parity-plan.md.
 
     // =========================================================================
     // Connections: UI -> CalibrationController
@@ -454,22 +474,25 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
         emit settingChanged(QStringLiteral("cal/txDisplayOffset"), v);
     });
 
-    // PA Current
-    connect(m_paSensSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+    // Volts/Amps Calibration -- Thetis groupBoxTS27 wiring.
+    // Note: the model-layer setters are still named setPaCurrent{Sensitivity,Offset}
+    // pending a separate audit of the persistence keys; the UI-side names match
+    // Thetis (udAmpSens / udAmpVoff / btnAmpDefault).
+    connect(m_ampSensSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (m_updatingFromModel || !m_calCtrl) { return; }
         m_calCtrl->setPaCurrentSensitivity(v);
         m_calCtrl->save();
         emit settingChanged(QStringLiteral("cal/paSens"), v);
     });
-    connect(m_paOffsetSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+    connect(m_ampVoffSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {
         if (m_updatingFromModel || !m_calCtrl) { return; }
         m_calCtrl->setPaCurrentOffset(v);
         m_calCtrl->save();
         emit settingChanged(QStringLiteral("cal/paOffset"), v);
     });
-    connect(m_paDefaultBtn, &QPushButton::clicked, this, [this]() {
+    connect(m_ampDefaultBtn, &QPushButton::clicked, this, [this]() {
         if (!m_calCtrl) { return; }
         // Restore to model defaults (1.0 sensitivity, 0.0 offset)
         m_calCtrl->setPaCurrentSensitivity(1.0);
@@ -487,6 +510,10 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     if (m_calCtrl) {
         syncFromController();
     }
+
+    // Note: the PaCalibrationGroup live-rebuild on paCalProfileChanged was moved
+    // to PaWattMeterPage on 2026-05-02 (Setup IA reshape Phase 3A) when the
+    // group itself migrated to PA → Watt Meter.
 }
 
 // -- onControllerChanged -------------------------------------------------------
@@ -535,12 +562,12 @@ void CalibrationTab::syncFromController()
         m_txDisplayOffsetSpin->setValue(m_calCtrl->txDisplayOffsetDb());
     }
     {
-        QSignalBlocker sb7(m_paSensSpin);
-        m_paSensSpin->setValue(m_calCtrl->paCurrentSensitivity());
+        QSignalBlocker sb7(m_ampSensSpin);
+        m_ampSensSpin->setValue(m_calCtrl->paCurrentSensitivity());
     }
     {
-        QSignalBlocker sb8(m_paOffsetSpin);
-        m_paOffsetSpin->setValue(m_calCtrl->paCurrentOffset());
+        QSignalBlocker sb8(m_ampVoffSpin);
+        m_ampVoffSpin->setValue(m_calCtrl->paCurrentOffset());
     }
 
     m_updatingFromModel = false;
@@ -554,6 +581,8 @@ void CalibrationTab::populate(const RadioInfo& /*info*/, const BoardCapabilities
     if (m_calCtrl) {
         syncFromController();
     }
+    // Note: PaCalibrationGroup repopulation on radio swap is now handled by
+    // PaWattMeterPage (Setup IA reshape Phase 3A, 2026-05-02).
 }
 
 // -- restoreSettings -----------------------------------------------------------

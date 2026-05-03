@@ -142,6 +142,27 @@ public:
     void setAutoAttEnabled(bool on);
     void setAutoAttMode(AutoAttMode mode);
 
+    // Gate AutoAttMode::Adaptive on board support — set on connect from
+    // RadioModel using BoardCapabilities::hasStepAttenuatorCal.  Default
+    // true so existing behaviour holds when not yet wired.
+    //
+    // When false:
+    //   - setAutoAttMode(Adaptive) is silently coerced to Classic.
+    //   - loadSettings() clamps a persisted "Adaptive" string to Classic
+    //     (handles cross-radio reconnects with different capabilities).
+    //   - The applyAdaptiveAutoAtt() invocation site in tick() is gated
+    //     defence-in-depth (the mode-coerce above already prevents reach,
+    //     but if a stale state slips through, this is a safety net).
+    //
+    // Source: NereusSDR-internal extension. AutoAttMode::Adaptive is a
+    // NereusSDR feature, not Thetis-derived; the hasStepAttenuatorCal flag
+    // was added to BoardCapabilities to gate per-step cal-table support,
+    // and we use it here to gate the Adaptive cal mode that depends on
+    // per-step calibration data.  See plan
+    // docs/architecture/2026-05-02-p1-full-parity-plan.md §4.1.
+    void setHasStepAttenuatorCal(bool on) noexcept { m_hasStepAttCal = on; }
+    bool hasStepAttenuatorCal() const noexcept { return m_hasStepAttCal; }
+
     // Classic mode: enable timer-based undo of auto-applied attenuation.
     void setAutoAttUndo(bool on);
     void setAutoUndoDelaySec(int sec);
@@ -320,6 +341,13 @@ private:
     bool m_autoAttEnabled = false;
     AutoAttMode m_autoAttMode = AutoAttMode::Classic;
     bool m_autoAttApplied = false;
+
+    // Gates AutoAttMode::Adaptive selection.  Default true so existing
+    // behaviour holds when not yet wired by RadioModel.  Set to
+    // BoardCapabilities::hasStepAttenuatorCal on connect; see the
+    // setHasStepAttenuatorCal() header comment for full semantics.  Plan
+    // docs/architecture/2026-05-02-p1-full-parity-plan.md §4.1.
+    bool m_hasStepAttCal{true};
 
     // Classic mode state — Thetis uses a stack of historic readings.
     // We simplify to tracking the pre-auto-att value.

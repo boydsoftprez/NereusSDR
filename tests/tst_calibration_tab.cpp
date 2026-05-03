@@ -6,7 +6,11 @@
 // Covers:
 //  - Construction with a dummy RadioModel doesn't crash
 //  - groupBoxCountForTest() returns 5 (Freq Cal, Level Cal, HPSDR Diag,
-//    TX Display Cal, PA Current)
+//    TX Display Cal, Volts/Amps Calibration).  Group 6 (PA Forward Power
+//    Calibration / PaCalibrationGroup) was migrated to PA → Watt Meter on
+//    2026-05-02 (Setup IA reshape Phase 3A) and is covered by
+//    tst_pa_watt_meter_page.  Group 5 was relabelled from "PA Current (A)
+//    calculation" to "Volts/Amps Calibration" 2026-05-02 (Phase 3B).
 //  - Setting a controller value updates the UI (controller -> UI sync)
 //  - Changing a UI spinbox updates the controller (UI -> controller write)
 
@@ -42,7 +46,12 @@ void TstCalibrationTab::groupBoxCount_isFive()
     NereusSDR::RadioModel model;
     NereusSDR::CalibrationTab tab(&model);
     // 5 group boxes: Freq Cal, Level Cal, HPSDR Freq Cal Diagnostic,
-    // TX Display Cal, PA Current (A) calculation
+    // TX Display Cal, Volts/Amps Calibration.
+    // Group 6 (PA Forward Power Calibration / PaCalibrationGroup) was
+    // migrated to PA → Watt Meter on 2026-05-02 (Setup IA reshape Phase 3A);
+    // see tst_pa_watt_meter_page for that integration coverage.
+    // Group 5 was previously titled "PA Current (A) calculation"; renamed
+    // to "Volts/Amps Calibration" 2026-05-02 (Setup IA reshape Phase 3B).
     QCOMPARE(tab.groupBoxCountForTest(), 5);
 }
 

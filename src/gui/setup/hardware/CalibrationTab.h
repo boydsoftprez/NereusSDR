@@ -151,10 +151,20 @@ struct BoardCapabilities;
 //   2. Level Cal -- reference freq/level + per-RX 6m LNA offsets
 //   3. HPSDR Freq Cal Diagnostic -- correction factor + 10 MHz ext ref toggle
 //   4. TX Display Cal -- TX display dB offset
-//   5. PA Current (A) calculation -- sensitivity/offset (preserved from PaCalibrationTab)
+//   5. Volts/Amps Calibration -- Amp sensitivity / Amp Voff / log toggle /
+//        default-restore button (Thetis groupBoxTS27 contents:
+//        setup.designer.cs:11672-11677 [v2.10.3.13])
+//
+// Setup IA reshape Phase 3A (2026-05-02) migrated the per-board PA forward-
+// power cal spinbox group out to PA → Watt Meter (PaWattMeterPage); see
+// docs/architecture/2026-05-02-p1-full-parity-plan.md Setup IA reshape Phase 3A.
+// Phase 3B (2026-05-02) relabelled Group 5 from the NereusSDR-original
+// "PA Current (A) calculation" to the Thetis-faithful "Volts/Amps Calibration"
+// (groupBoxTS27) and renamed m_paSensSpin/m_paOffsetSpin/m_paDefaultBtn to
+// m_ampSensSpin/m_ampVoffSpin/m_ampDefaultBtn for upstream-naming consistency.
 //
 // Backed by CalibrationController (Phase 3P-G). Per-MAC persistence via
-// AppSettings under hardware/<mac>/cal/.
+// AppSettings under hardware/<mac>/cal/ + hardware/<mac>/paCalibration/.
 //
 // Renamed from PaCalibrationTab (Phase 3P-G commit 2).
 class CalibrationTab : public QWidget {
@@ -208,12 +218,23 @@ private:
     // Source: setup.cs:14325-14333 udTXDisplayCalOffset [@501e3f5]
     QDoubleSpinBox* m_txDisplayOffsetSpin{nullptr}; // udTXDisplayCalOffset
 
-    // -- Group 5: PA Current (A) calculation (preserved from PaCalibrationTab) --
-    // Source: console.cs:6691-6724 CalibratedPAPower [@501e3f5]
-    QDoubleSpinBox* m_paSensSpin{nullptr};
-    QDoubleSpinBox* m_paOffsetSpin{nullptr};
-    QPushButton*    m_paDefaultBtn{nullptr};
+    // -- Group 5: Volts/Amps Calibration -- Thetis groupBoxTS27 equivalent. ----
+    // Source: Thetis setup.designer.cs:11672-11677 (groupBoxTS27 contents:
+    //         chkLogVoltsAmps + btnAmpDefault + udAmpSens + udAmpVoff)
+    //         + console.cs:24893 _amp_voff = 360.0f default [v2.10.3.13]
+    // Field-by-field mapping (NereusSDR <-> Thetis):
+    //   m_ampSensSpin       <-> udAmpSens
+    //   m_ampVoffSpin       <-> udAmpVoff   (default 360.0f per console.cs:24893)
+    //   m_ampDefaultBtn     <-> btnAmpDefault
+    //   m_logVoltsAmpsCheck <-> chkLogVoltsAmps
+    QDoubleSpinBox* m_ampSensSpin{nullptr};
+    QDoubleSpinBox* m_ampVoffSpin{nullptr};
+    QPushButton*    m_ampDefaultBtn{nullptr};
     QCheckBox*      m_logVoltsAmpsCheck{nullptr};  // chkLogVoltsAmps -- console.cs:27457 [@501e3f5]
+
+    // Note: the per-board PA forward-power cal spinbox group (PaCalibrationGroup)
+    // was migrated to PA → Watt Meter (PaWattMeterPage) on 2026-05-02 as part of
+    // Setup IA reshape Phase 3A.  See docs/architecture/2026-05-02-p1-full-parity-plan.md.
 
     // Echo-loop guard: prevents model->UI update from triggering UI->model write
     bool m_updatingFromModel{false};

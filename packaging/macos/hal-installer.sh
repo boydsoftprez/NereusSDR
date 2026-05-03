@@ -12,7 +12,17 @@ set -euo pipefail
 BUILD_DIR="${1:-build}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="${BUILD_DIR}/pkg-staging"
-VERSION=$(grep 'project(NereusSDR' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
+# Prefer caller-supplied VERSION (release.yml exports the full tag version,
+# including any -rcN / -alpha / -beta suffix). Fall back to parsing
+# CMakeLists.txt for local invocations. The CMake regex matches only the
+# numeric base (X.Y.Z) because CMake's project(VERSION ...) field cannot
+# carry a non-numeric suffix -- so for pre-release builds the regex would
+# silently strip "-rcN" and the resulting .pkg filename would diverge from
+# release.yml's notarize/staple/upload steps that use the full tag version.
+# This was the root cause of the v0.3.1-rc1 build failure (run 25267007020):
+# productbuild wrote build/NereusSDR-0.3.1-macOS.pkg, but the notarize step
+# looked for build/NereusSDR-0.3.1-rc1-macOS.pkg and failed with exit 64.
+VERSION="${VERSION:-$(grep 'project(NereusSDR' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")}"
 
 echo "=== Building NereusSDR macOS installer v${VERSION} ==="
 

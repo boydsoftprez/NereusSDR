@@ -91,6 +91,9 @@ public:
     void setLineIn(bool) override {}
     void setMicTipRing(bool) override {}
     void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
     void setMicPTT(bool) override {}
     void setMicXlr(bool) override {}
 };
@@ -386,8 +389,15 @@ private slots:
         pump();
 
         // At least one setTxDrive call must have arrived with the tune power.
+        // RadioModel scales percent (0-100) → wire byte (0-255) via the
+        // formula clamp(int(255.0f * f * swrProtect), 0, 255) where f is
+        // power/100 and swrProtect defaults to 1.0 — see RadioModel.cpp:835,
+        // P1 full-parity epic Phase 3.5 (commit 1aa1a88). 50% → wire 127.
+        // From mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]:
+        //   int i = (int)(255 * f * _swr_protect);
         QVERIFY(!conn->txDriveLog.isEmpty());
-        QCOMPARE(conn->txDriveLog.first(), expectedTunePower);
+        const int expectedWireByte = (expectedTunePower * 255) / 100;
+        QCOMPARE(conn->txDriveLog.first(), expectedWireByte);
 
         model.setTune(false);
         pump();
@@ -424,8 +434,10 @@ private slots:
 
         // TUN-off must have pushed at least one more setTxDrive call.
         QVERIFY(conn->txDriveLog.size() > logSizeAfterOn);
-        // The most recent call (TUN-off restore) must equal the saved power (80).
-        QCOMPARE(conn->txDriveLog.last(), 80);
+        // The most recent call (TUN-off restore) must equal the saved power
+        // scaled to wire byte: 80% → (80 * 255) / 100 = 204. See setTxDrive
+        // scaling note above (mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]).
+        QCOMPARE(conn->txDriveLog.last(), (80 * 255) / 100);
 
         model.injectConnectionForTest(nullptr);
     }

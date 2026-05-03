@@ -220,6 +220,19 @@ void TransmitModel::setPureSigEnabled(bool enabled)
     }
 }
 
+void TransmitModel::setSwrProtectFactor(float f)
+{
+    // Clamp to [0.0, 1.0]; mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+    // applies _swr_protect ≤ 1.0 inside the wire-byte multiply, so any
+    // value > 1.0 would over-amplify drive — clamp defensively.
+    const float clamped = std::clamp(f, 0.0f, 1.0f);
+    if (qFuzzyCompare(m_swrProtectFactor, clamped)) {
+        return;
+    }
+    m_swrProtectFactor = clamped;
+    emit swrProtectFactorChanged(clamped);
+}
+
 void TransmitModel::setTxOwnerSlot(VaxSlot s)
 {
     const VaxSlot prev = m_txOwnerSlot.exchange(s, std::memory_order_acq_rel);
@@ -367,6 +380,30 @@ void TransmitModel::setMicPttDisabled(bool disabled)
     m_micPttDisabled = disabled;
     persistOne(QStringLiteral("Mic_PTT_Disabled"), disabled ? QStringLiteral("True") : QStringLiteral("False"));  // L.2 auto-persist
     emit micPttDisabledChanged(disabled);
+}
+
+// ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
+
+void TransmitModel::setLineInGain(int gain)
+{
+    // Clamp to bank 11 C2 low 5 bits per Thetis networkproto1.c:600 [v2.10.3.13]:
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ...
+    const int clamped = std::clamp(gain, 0, 31);
+    if (clamped == m_lineInGain) { return; }  // idempotent guard
+    m_lineInGain = clamped;
+    persistOne(QStringLiteral("LineInGain"), QString::number(m_lineInGain));  // L.2 auto-persist
+    emit lineInGainChanged(clamped);
+}
+
+void TransmitModel::setUserDigOut(int dig)
+{
+    // Mask to bank 11 C3 low 4 bits per Thetis networkproto1.c:601 [v2.10.3.13]:
+    //   C3 = prn->user_dig_out & 0b00001111;
+    const int masked = dig & 0x0F;
+    if (masked == m_userDigOut) { return; }  // idempotent guard
+    m_userDigOut = masked;
+    persistOne(QStringLiteral("UserDigOut"), QString::number(m_userDigOut));  // L.2 auto-persist
+    emit userDigOutChanged(masked);
 }
 
 // ── Per-band tune power (G.3) ─────────────────────────────────────────────
@@ -521,6 +558,38 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool micPttDisabled = s.value(pfx + QLatin1String("Mic_PTT_Disabled"),
                                          QStringLiteral("False")).toString() == QLatin1String("True");
     setMicPttDisabled(micPttDisabled);
+
+    // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
+    // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
+    //   line_in_gain default 0 (no line-in attenuation),
+    //   user_dig_out default 0 (all 4 user digital pins low).
+    const int lineInGain = s.value(pfx + QLatin1String("LineInGain"),
+                                     QStringLiteral("0")).toInt();
+    setLineInGain(lineInGain);
+    const int userDigOut = s.value(pfx + QLatin1String("UserDigOut"),
+                                     QStringLiteral("0")).toInt();
+    setUserDigOut(userDigOut);
+
+    // ── pureSig (Task 2.5 of P1 full-parity epic) ────────────────────────
+    // Loads the user PureSignal-enable toggle from the existing per-MAC
+    // hardware/<mac>/pureSignal/enabled key (set by HardwarePage's
+    // PureSignalTab "Enable" checkbox via setHardwareValue).  The model
+    // property is the single source of truth at runtime; the load here
+    // seeds it on connect so the initial-push in
+    // RadioModel::connectToRadio carries the persisted state to the
+    // wire-bit setter.
+    //
+    // Default false = PureSignal feedback DDC NOT routing.  Matches Thetis
+    // PSForm.cs:234 [v2.10.3.13] _psenabled = false initial state.
+    //
+    // NOTE: this read uses the pureSignal/ namespace (NOT tx/) to share
+    // storage with HardwarePage::onTabSettingChanged.  setPureSigEnabled
+    // intentionally does NOT auto-persist — HardwarePage owns persistence
+    // for this key, model is read-only on connect.
+    const bool pureSigOn = s.value(
+        QStringLiteral("hardware/%1/pureSignal/enabled").arg(mac),
+        QStringLiteral("False")).toString() == QLatin1String("True");
+    setPureSigEnabled(pureSigOn);
 
     // ── VOX properties (voxEnabled NOT loaded — safety: always false) ─────
     const int voxThresholdDb = s.value(pfx + QLatin1String("Dexp_Threshold"),
@@ -717,6 +786,10 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("Mic_TipRing"),       m_micTipRing      ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("Mic_Bias"),          m_micBias         ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("Mic_PTT_Disabled"),   m_micPttDisabled  ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
+    s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));
+    s.setValue(pfx + QLatin1String("UserDigOut"),         QString::number(m_userDigOut));
 
     // ── VOX properties (voxEnabled excluded — safety) ────────────────────
     s.setValue(pfx + QLatin1String("Dexp_Threshold"),   QString::number(m_voxThresholdDb));

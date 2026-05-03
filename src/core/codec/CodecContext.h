@@ -187,19 +187,57 @@ struct CodecContext {
     // Populated by buildCodecContext() from RadioConnection::m_micBias.
     bool    p1MicBias{false};
 
-    // P1 mic-jack PTT enable — bank 11 (C0=0x14) C1 bit 6 (0x40), POLARITY INVERTED.
-    // NereusSDR convention: true = PTT enabled (intuitive).
-    // POLARITY INVERSION: wire bit is written as !p1MicPTT.
-    //   p1MicPTT = true  → PTT enabled  → wire bit 6 = 0 (PTT-disabled-flag clear)
-    //   p1MicPTT = false → PTT disabled → wire bit 6 = 1 (PTT-disabled-flag set)
-    // Default false → wire bit 6 = 1 (PTT disabled by default, matching
-    //   TransmitModel::micPttDisabled default from pre-code review §2.3 / §2.7).
-    // Source: Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]
+    // P1 mic-jack PTT enable — bank 11 (C0=0x14) C1 bit 6 (0x40), DIRECT polarity.
+    // NereusSDR convention: true = PTT enabled (intuitive); wire bit mirrors
+    // p1MicPTT directly per Thetis networkproto1.c:597-598 [v2.10.3.13]
+    // (commit @501e3f51):
     //   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
-    //   mic_ptt: 1 = PTT DISABLED (confirmed by Thetis console.cs:19758:
-    //   MicPTTDisabled property; deskhpsdr old_protocol.c:3000: mic_ptt_enabled==0).
+    //   p1MicPTT = true  → wire bit 6 = 1 (PTT enabled)
+    //   p1MicPTT = false → wire bit 6 = 0 (PTT disabled)
+    // Default false → wire bit 6 = 0.
+    //
+    // Pre-fix history: P1CodecStandard wrote `!p1MicPTT` (inverted), mirroring
+    // the same bug PR #161 fixed in P1CodecHl2 (commit ca8cd73).  With the
+    // default false, inverted code put bit 6 = 1 every CC frame; Hermes-class
+    // firmware reads bit 6 as "track mic-jack tip as PTT source" and the
+    // floating mic tip caused phantom PTT signals fighting software MOX,
+    // producing rapid T/R relay flutter on TUNE/TX (ANAN-10E bench symptom).
+    //
+    // Note: the deskhpsdr fork's `mic_ptt_enabled` flag (old_protocol.c:3000-3002)
+    // and Thetis's `MicPTTDisabled` property (console.cs:19758) are higher-level
+    // API wrappers that invert their argument before calling NetworkIO.SetMicPTT;
+    // by the time the value reaches the wire (mic_ptt field in networkproto1.c)
+    // it is direct.  NereusSDR keeps the user-facing API direct (p1MicPTT mirrors
+    // wire mic_ptt) and delegates any "disable" semantic to the caller.
     // Populated by buildCodecContext() from RadioConnection::m_micPTT.
     bool    p1MicPTT{false};
+
+    // Mic line-in gain — prn->mic.line_in_gain, 5-bit (0-31).
+    // Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    // P1 wire: bank 11 C2 low 5 bits.
+    // P2 wire: byte 51 of CmdHighPriority (already plumbed via P2's m_mic.lineInGain).
+    int     p1LineInGain{0};
+
+    // PureSignal feedback running flag — prn->puresignal_run.
+    // Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
+    // P1 wire: bank 11 C2 bit 6.
+    // Distinct from BoardCapabilities.hasPureSignal (capability) and from
+    // TransmitModel::puresignalEnabled (user toggle) — this tracks whether
+    // the PureSignal feedback DDC routing is currently *active* on the wire.
+    // Wired in Task 2.5 to TransmitModel::puresignalEnabled until 3M-4 lights
+    // up the actual feedback DDC routing.
+    bool    p1PuresignalRun{false};
+
+    // User digital outputs — prn->user_dig_out, low 4 bits (0-15).
+    // Source: Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    //   C3 = prn->user_dig_out & 0b00001111;
+    // P1 wire: bank 11 C3 low 4 bits.
+    // Drives the 4 user-controllable digital pins on the radio's accessory
+    // header (Penny / Hermes Ctrl board). UI added in Task 4.3 (Setup →
+    // Hardware → OC Outputs → "User Dig Out 1..4"), gated on
+    // BoardCapabilities.hasPennyLane.
+    quint8  p1UserDigOut{0};
 
     // RX VFO frequency words (Hz, raw, no phase-word conversion on P1).
     quint64 rxFreqHz[7]{};
