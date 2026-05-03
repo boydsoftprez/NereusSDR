@@ -122,6 +122,13 @@ void StepAttenuatorController::setAutoAttEnabled(bool on)
 
 void StepAttenuatorController::setAutoAttMode(AutoAttMode mode)
 {
+    // P1 full-parity §4.1: gate Adaptive on BoardCapabilities flag.
+    // Silent-coerce to Classic when the connected board lacks per-step
+    // ATT calibration support.  Refusing would break Setup combo flows
+    // that may try to set Adaptive on any radio.
+    if (mode == AutoAttMode::Adaptive && !m_hasStepAttCal) {
+        mode = AutoAttMode::Classic;
+    }
     m_autoAttMode = mode;
 }
 
@@ -458,20 +465,28 @@ void StepAttenuatorController::tick()
             }
         }
 
+        // P1 full-parity §4.1: defence-in-depth — the setAutoAttMode +
+        // loadSettings gates above already prevent m_autoAttMode reaching
+        // Adaptive on a hasStepAttenuatorCal=false board, but if a stale
+        // state slips through (e.g. flag toggled mid-run) treat it as
+        // Classic here too.
+        const bool adaptiveAllowed =
+            (m_autoAttMode == AutoAttMode::Adaptive) && m_hasStepAttCal;
+
         if (anyRed) {
-            if (m_autoAttMode == AutoAttMode::Classic) {
+            if (!adaptiveAllowed) {
                 applyClassicAutoAtt(redAdc);
             } else {
                 applyAdaptiveAutoAtt(redAdc);
             }
         } else if (m_autoAttApplied) {
             // No overload — try undo.
-            if (m_autoAttMode == AutoAttMode::Classic) {
+            if (!adaptiveAllowed) {
                 applyClassicUndo();
             }
             // Adaptive decay is handled inside applyAdaptiveAutoAtt
             // even when there's no red — but only if previously applied.
-            if (m_autoAttMode == AutoAttMode::Adaptive && m_autoAttApplied) {
+            if (adaptiveAllowed && m_autoAttApplied) {
                 applyAdaptiveAutoAtt(-1);  // decay path
             }
         }
@@ -804,7 +819,11 @@ void StepAttenuatorController::loadSettings(const QString& mac)
                                        QStringLiteral("False")).toString() == QStringLiteral("True");
     QString modeStr = s.hardwareValue(mac, QStringLiteral("options/autoAtt/rx1Mode"),
                                       QStringLiteral("Classic")).toString();
-    m_autoAttMode = (modeStr == QStringLiteral("Adaptive"))
+    // P1 full-parity §4.1: clamp persisted "Adaptive" to Classic when the
+    // connected board lacks per-step ATT cal support.  Handles cross-radio
+    // reconnects where a user set Adaptive on a hasStepAttenuatorCal=true
+    // radio, then reconnects with a different board that lacks the feature.
+    m_autoAttMode = (modeStr == QStringLiteral("Adaptive") && m_hasStepAttCal)
                         ? AutoAttMode::Adaptive : AutoAttMode::Classic;
     m_autoUndoEnabled = s.hardwareValue(mac, QStringLiteral("options/autoAtt/rx1Undo"),
                                          QStringLiteral("False")).toString() == QStringLiteral("True");

@@ -75,6 +75,7 @@
 #include "core/HardwareProfile.h"
 #include "core/RadioDiscovery.h"
 #include "models/RadioModel.h"
+#include "models/TransmitModel.h"
 
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -190,6 +191,22 @@ void HardwarePage::onTabSettingChanged(const QString& tabKey,
 
     AppSettings::instance().setHardwareValue(m_currentMac, fullKey, value);
     AppSettings::instance().save();
+
+    // ── Task 2.5 of P1 full-parity epic: PureSignal "Enable" → TransmitModel ─
+    // When the user toggles the Setup → Hardware → PureSignal "Enable"
+    // checkbox, also drive the TransmitModel::pureSig property so the
+    // model→connection wiring (RadioModel::wireConnectionSignals) emits
+    // setPuresignalRun on the wire bit.  TransmitModel::loadFromSettings
+    // reads the same hardware/<mac>/pureSignal/enabled key on connect, so
+    // persistence stays single-sourced from this writer.
+    //
+    // Source: Thetis PSForm.cs:240 [v2.10.3.13] — _psenabled = value
+    // is the user-facing PS-enable toggle that drives prn->puresignal_run
+    // via NetworkIO.SetPureSignal.
+    if (m_model && tabKey == QLatin1String("pureSignal")
+                && bareKey == QLatin1String("enabled")) {
+        m_model->transmitModel().setPureSigEnabled(value.toBool());
+    }
 }
 
 // ── onCurrentRadioChanged ─────────────────────────────────────────────────────
@@ -217,7 +234,12 @@ void HardwarePage::onCurrentRadioChanged(const RadioInfo& info)
     m_tabs->setTabVisible(m_xvtrIdx,        caps.xvtrJackCount > 0);
     m_tabs->setTabVisible(m_pureSignalIdx,  caps.hasPureSignal);
     m_tabs->setTabVisible(m_diversityIdx,   caps.hasDiversityReceiver);
-    m_tabs->setTabVisible(m_paCalIdx,       caps.hasPaProfile);
+    // Calibration tab is always visible — its 4 remaining groups (Freq Cal,
+    // Level Cal, HPSDR Diag, TX Display) apply to every board, and Group 5
+    // (Volts/Amps Cal) is harmless on boards without integrated PA. PA-cal
+    // spinboxes (formerly Group 6) moved to PA → Watt Meter in IA reshape
+    // Phase 3, gated there on caps.hasPaProfile via the PA top-level
+    // category gate in SetupDialog.cpp.
     m_tabs->setTabVisible(m_hl2OptionsIdx,  caps.hasIoBoardHl2);
     m_tabs->setTabVisible(m_hl2IoIdx,       caps.hasIoBoardHl2);
     m_tabs->setTabVisible(m_bwMonitorIdx,   caps.hasBandwidthMonitor);

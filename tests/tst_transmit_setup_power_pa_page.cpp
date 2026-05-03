@@ -1,4 +1,7 @@
-// no-port-check: unit tests for PowerPaPage H.4 wiring (3M-1a).
+// no-port-check: unit tests for PowerPage H.4 wiring (3M-1a).
+//
+// Note: filename retains 'power_pa_page' for git history continuity.
+// Class renamed to PowerPage in IA reshape Phase 6 (2026-05-02).
 //
 // Tests verify:
 //   1. Max Power slider value initialises from TransmitModel::power().
@@ -35,9 +38,9 @@
 using namespace NereusSDR;
 
 // ---------------------------------------------------------------------------
-// TestPowerPaPageH4 — PowerPaPage wiring verification for 3M-1a H.4.
+// TestPowerPageH4 — PowerPage wiring verification for 3M-1a H.4.
 // ---------------------------------------------------------------------------
-class TestPowerPaPageH4 : public QObject
+class TestPowerPageH4 : public QObject
 {
     Q_OBJECT
 
@@ -65,7 +68,7 @@ private slots:
     void chkForceAttWhenPsOff_wiredController_togglesController();
 };
 
-void TestPowerPaPageH4::initTestCase()
+void TestPowerPageH4::initTestCase()
 {
     if (!qApp) {
         static int   argc = 0;
@@ -77,12 +80,12 @@ void TestPowerPaPageH4::initTestCase()
 // ---------------------------------------------------------------------------
 // 1. Max Power slider initialises from TransmitModel::power()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::maxPowerSlider_initFromModel()
+void TestPowerPageH4::maxPowerSlider_initFromModel()
 {
     RadioModel model;
     model.transmitModel().setPower(42);
 
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();  // realize widgets
 
     auto* slider = page.findChild<QSlider*>(QStringLiteral("maxPowerSlider"));
@@ -93,10 +96,10 @@ void TestPowerPaPageH4::maxPowerSlider_initFromModel()
 // ---------------------------------------------------------------------------
 // 2. Changing the Max Power slider updates TransmitModel::power()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::maxPowerSlider_changesModel()
+void TestPowerPageH4::maxPowerSlider_changesModel()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* slider = page.findChild<QSlider*>(QStringLiteral("maxPowerSlider"));
@@ -109,10 +112,10 @@ void TestPowerPaPageH4::maxPowerSlider_changesModel()
 // ---------------------------------------------------------------------------
 // 3. Changing TransmitModel::power() updates the slider (reverse wiring)
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::maxPowerSlider_updatesFromModel()
+void TestPowerPageH4::maxPowerSlider_updatesFromModel()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* slider = page.findChild<QSlider*>(QStringLiteral("maxPowerSlider"));
@@ -125,12 +128,12 @@ void TestPowerPaPageH4::maxPowerSlider_updatesFromModel()
 // ---------------------------------------------------------------------------
 // 4. Per-band tune-power spinboxes initialise from TransmitModel
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::tunePwrSpin_initFromModel()
+void TestPowerPageH4::tunePwrSpin_initFromModel()
 {
     RadioModel model;
     model.transmitModel().setTunePowerForBand(Band::Band20m, 17);
 
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band20m);
@@ -142,10 +145,10 @@ void TestPowerPaPageH4::tunePwrSpin_initFromModel()
 // ---------------------------------------------------------------------------
 // 5. Editing a spinbox updates TransmitModel::tunePowerForBand()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::tunePwrSpin_changesModel()
+void TestPowerPageH4::tunePwrSpin_changesModel()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band40m);
@@ -159,10 +162,10 @@ void TestPowerPaPageH4::tunePwrSpin_changesModel()
 // ---------------------------------------------------------------------------
 // 6. TransmitModel::tunePowerByBandChanged updates the spinbox (reverse)
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::tunePwrSpin_updatesFromModel()
+void TestPowerPageH4::tunePwrSpin_updatesFromModel()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band80m);
@@ -178,13 +181,13 @@ void TestPowerPaPageH4::tunePwrSpin_updatesFromModel()
 // ---------------------------------------------------------------------------
 // 7. chkATTOnTX initialises from StepAttenuatorController::attOnTxEnabled()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkAttOnTx_initFromController()
+void TestPowerPageH4::chkAttOnTx_initFromController()
 {
     RadioModel model;
 
     // StepAttenuatorController defaults to attOnTxEnabled = true (console.cs:19042 default).
     // Confirm the checkbox reflects this.
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkATTOnTX"));
@@ -198,10 +201,10 @@ void TestPowerPaPageH4::chkAttOnTx_initFromController()
 // ---------------------------------------------------------------------------
 // 8. chkATTOnTX toggle updates StepAttenuatorController::attOnTxEnabled()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkAttOnTx_togglesController()
+void TestPowerPageH4::chkAttOnTx_togglesController()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkATTOnTX"));
@@ -217,10 +220,10 @@ void TestPowerPaPageH4::chkAttOnTx_togglesController()
 // ---------------------------------------------------------------------------
 // 9. chkForceATTwhenPSAoff initialises from StepAttenuatorController::forceAttWhenPsOff()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkForceAttWhenPsOff_initFromController()
+void TestPowerPageH4::chkForceAttWhenPsOff_initFromController()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkForceATTwhenPSAoff"));
@@ -230,10 +233,10 @@ void TestPowerPaPageH4::chkForceAttWhenPsOff_initFromController()
 // ---------------------------------------------------------------------------
 // 10. chkForceATTwhenPSAoff toggle no-crash when controller is null
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkForceAttWhenPsOff_togglesController()
+void TestPowerPageH4::chkForceAttWhenPsOff_togglesController()
 {
     RadioModel model;
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkForceATTwhenPSAoff"));
@@ -246,7 +249,7 @@ void TestPowerPaPageH4::chkForceAttWhenPsOff_togglesController()
 // ---------------------------------------------------------------------------
 // 11. chkATTOnTX initialises from controller when controller is wired
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkAttOnTx_wiredController_initFromController()
+void TestPowerPageH4::chkAttOnTx_wiredController_initFromController()
 {
     RadioModel model;
     // Wire a real StepAttenuatorController so the checkbox reads from it.
@@ -255,7 +258,7 @@ void TestPowerPaPageH4::chkAttOnTx_wiredController_initFromController()
     att->setAttOnTxEnabled(false);          // set to non-default so the init is observable
     model.setStepAttController(att);
 
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkATTOnTX"));
@@ -270,14 +273,14 @@ void TestPowerPaPageH4::chkAttOnTx_wiredController_initFromController()
 // ---------------------------------------------------------------------------
 // 12. chkATTOnTX toggle actually calls StepAttenuatorController::setAttOnTxEnabled()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkAttOnTx_wiredController_togglesController()
+void TestPowerPageH4::chkAttOnTx_wiredController_togglesController()
 {
     RadioModel model;
     auto* att = new StepAttenuatorController(&model);
     att->setAttOnTxEnabled(true);           // start checked
     model.setStepAttController(att);
 
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkATTOnTX"));
@@ -295,7 +298,7 @@ void TestPowerPaPageH4::chkAttOnTx_wiredController_togglesController()
 // ---------------------------------------------------------------------------
 // 13. chkForceATTwhenPSAoff initialises from controller when controller is wired
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_initFromController()
+void TestPowerPageH4::chkForceAttWhenPsOff_wiredController_initFromController()
 {
     RadioModel model;
     auto* att = new StepAttenuatorController(&model);
@@ -303,7 +306,7 @@ void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_initFromController(
     att->setForceAttWhenPsOff(false);       // non-default so init is observable
     model.setStepAttController(att);
 
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkForceATTwhenPSAoff"));
@@ -314,14 +317,14 @@ void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_initFromController(
 // ---------------------------------------------------------------------------
 // 14. chkForceATTwhenPSAoff toggle actually calls StepAttenuatorController::setForceAttWhenPsOff()
 // ---------------------------------------------------------------------------
-void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_togglesController()
+void TestPowerPageH4::chkForceAttWhenPsOff_wiredController_togglesController()
 {
     RadioModel model;
     auto* att = new StepAttenuatorController(&model);
     att->setForceAttWhenPsOff(true);        // start checked
     model.setStepAttController(att);
 
-    PowerPaPage page(&model);
+    PowerPage page(&model);
     page.show();
 
     auto* chk = page.findChild<QCheckBox*>(QStringLiteral("chkForceATTwhenPSAoff"));
@@ -336,5 +339,5 @@ void TestPowerPaPageH4::chkForceAttWhenPsOff_wiredController_togglesController()
     QCOMPARE(att->forceAttWhenPsOff(), true);
 }
 
-QTEST_MAIN(TestPowerPaPageH4)
+QTEST_MAIN(TestPowerPageH4)
 #include "tst_transmit_setup_power_pa_page.moc"

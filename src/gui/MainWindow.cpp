@@ -4168,6 +4168,11 @@ void MainWindow::onConnectionStateChanged()
         //   if (HardwareSpecific.Model == HPSDRModel.HPSDR) { ... }).
         m_stepAttController->setIsHpsdrBoard(
             m_radioModel->connection()->radioInfo().boardType == HPSDRHW::Atlas);
+        // P1 full-parity §4.1: gate AutoAttMode::Adaptive on per-step
+        // calibration support.  Must be set BEFORE loadSettings() so a
+        // persisted "Adaptive" string is clamped to Classic when the
+        // connected board lacks the feature.
+        m_stepAttController->setHasStepAttenuatorCal(caps.hasStepAttenuatorCal);
         m_stepAttController->loadSettings(m_radioModel->connection()->radioInfo().macAddress);
 
         // Phase 3Q Task 5 — auto-close: 1 s after connect, accept() the panel if open.

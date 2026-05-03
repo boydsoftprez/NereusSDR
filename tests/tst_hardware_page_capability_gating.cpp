@@ -52,7 +52,10 @@ private slots:
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Xvtr));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
-        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
+        // Calibration tab is always visible after IA reshape Phase 5 —
+        // PA-specific groups moved to PA → Watt Meter, so the per-board
+        // hasPaProfile gate at the parent-tab level was dropped.
+        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Hl2IoBoard));
         QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::BandwidthMonitor));
         // HL2 Options tab is a new Phase 3L surface — also gated on
@@ -135,7 +138,11 @@ private slots:
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Xvtr));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::PureSignal));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Diversity));
-        QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
+        // Calibration tab is always visible after IA reshape Phase 5 —
+        // PA-specific groups moved to PA → Watt Meter, so the per-board
+        // hasPaProfile gate at the parent-tab level was dropped. Atlas
+        // shows the freq/level/HPSDR/TX-display/Volts-Amps Cal groups now.
+        QVERIFY( page.isTabVisibleForTest(HardwarePage::Tab::Calibration));
         QVERIFY(!page.isTabVisibleForTest(HardwarePage::Tab::Hl2Options));
     }
 

@@ -60,6 +60,8 @@
 #include "DspSetupPages.h"
 
 #include "core/AppSettings.h"
+#include "core/BoardCapabilities.h"
+#include "core/RadioConnection.h"
 #include "core/wdsp_api.h"
 #include "models/RadioModel.h"
 #include "core/WdspEngine.h"
@@ -1637,9 +1639,41 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
     semiDelay->setRange(0, 2000);
     addLabeledSlider(timingLay, "Semi-Break-In Delay (ms)", semiDelay);
 
+    // P1 full-parity §4.2 — Sidetone Volume row is wrapped in a single
+    // QWidget so we can visibility-gate the whole row (label + slider) on
+    // BoardCapabilities.hasSidetoneGenerator via setHasSidetoneGenerator().
+    // We bypass the addLabeledSlider() helper here because it stitches the
+    // label and slider into a QHBoxLayout that's added to timingLay
+    // directly — there's no row-level QWidget to toggle.  Default:
+    // hidden until a board with hasSidetoneGenerator=true connects.
+    //
+    // Thetis upstream comparison (setup.cs [v2.10.3.13 @501e3f51]
+    // chkSideTones / chkDSPKeyerSidetone[_software]):  Thetis does NOT
+    // board-gate its sidetone controls — they're always visible and
+    // mutually-exclusive via the toggle logic at setup.cs:8823-8854.
+    // This visibility gate is NereusSDR-specific use of the populated
+    // hasSidetoneGenerator flag, not a port of an upstream gate.
+    m_sidetoneRow = new QWidget;
+    auto* sidetoneRowLay = new QHBoxLayout(m_sidetoneRow);
+    sidetoneRowLay->setContentsMargins(0, 0, 0, 0);
+    sidetoneRowLay->setSpacing(8);
+    auto* sidetoneLbl = new QLabel("Sidetone Volume");
+    sidetoneLbl->setFixedWidth(150);
+    // Match SetupPage::makeLabeledRow label styling (kLabelStyle in
+    // SetupPage.cpp).  Inlined here because the helper is file-scope.
+    sidetoneLbl->setStyleSheet(QStringLiteral(
+        "QLabel { color: #c8d8e8; font-size: 12px; }"));
     auto* sidetoneVol = new QSlider(Qt::Horizontal);
     sidetoneVol->setRange(0, 100);
-    addLabeledSlider(timingLay, "Sidetone Volume", sidetoneVol);
+    sidetoneVol->setStyleSheet(
+        "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; "
+        "border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: #00b4d8; width: 12px; "
+        "height: 12px; border-radius: 6px; margin: -4px 0; }");
+    sidetoneRowLay->addWidget(sidetoneLbl);
+    sidetoneRowLay->addWidget(sidetoneVol, 1);
+    timingLay->addWidget(m_sidetoneRow);
+    m_sidetoneRow->setVisible(false);
 
     disableGroup(timingGrp);
 
@@ -1663,6 +1697,50 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
     addLabeledSlider(apfLay, "Gain", apfGain);
 
     disableGroup(apfGrp);
+
+    // P1 full-parity §4.2 — subscribe to model so the Sidetone Volume row
+    // visibility reflects the connected board's hasSidetoneGenerator flag
+    // automatically.  SetupDialog is constructed lazily on every Setup
+    // menu click (see SetupDialog.cpp) so this page can't be poked from
+    // MainWindow's connectionStateChanged slot — instead it tracks model
+    // signals itself, mirroring HardwarePage's same-pattern wiring at
+    // HardwarePage.cpp:144-153.
+    if (model) {
+        connect(model, &RadioModel::currentRadioChanged,
+                this, [this](const NereusSDR::RadioInfo& info) {
+            const auto& caps = NereusSDR::BoardCapsTable::forBoard(info.boardType);
+            setHasSidetoneGenerator(caps.hasSidetoneGenerator);
+        });
+        connect(model, &RadioModel::connectionStateChanged,
+                this, [this](NereusSDR::ConnectionState s) {
+            if (s != NereusSDR::ConnectionState::Connected) {
+                // On any non-Connected transition (Disconnected /
+                // Connecting / Disconnecting / Error), hide the row so
+                // the user doesn't see a useless control between
+                // sessions.
+                setHasSidetoneGenerator(false);
+            }
+        });
+        // Apply current state — the dialog may have been opened while a
+        // radio is already connected.
+        if (model->isConnected() && model->connection()) {
+            const auto& caps = NereusSDR::BoardCapsTable::forBoard(
+                model->connection()->radioInfo().boardType);
+            setHasSidetoneGenerator(caps.hasSidetoneGenerator);
+        }
+    }
+}
+
+void CwSetupPage::setHasSidetoneGenerator(bool on)
+{
+    if (m_sidetoneRow != nullptr) {
+        m_sidetoneRow->setVisible(on);
+    }
+}
+
+bool CwSetupPage::sidetoneRowVisibleForTest() const
+{
+    return m_sidetoneRow != nullptr && !m_sidetoneRow->isHidden();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

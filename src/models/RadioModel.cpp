@@ -831,15 +831,21 @@ RadioModel::RadioModel(QObject* parent)
             [this](int power) {
         if (m_transmitModel.isTune()) { return; }
         if (!m_connection)            { return; }
-        // Scale percent (0-100) → wire byte (0-255).  Mirrors mi0bot
-        // NetworkIO.cs:209-211 [v2.10.3.14-beta1]:
-        //   int i = (int)(255 * f * _swr_protect);  // f normalised 0..1
+        // Scale percent (0-100) → wire byte (0-255), with SWR-protection
+        // foldback applied per mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]:
+        //   int i = (int)(255 * f * _swr_protect);   // f normalised 0..1,
+        //                                            // _swr_protect ≤ 1.0
         //   SetOutputPowerFactor(i);
         // setTxDrive's contract is the wire byte (0-255); m_transmitModel
         // power is 0-100 percent.  Without this scaling, 50% power was
         // reaching the wire as drive_level=50 (~20 % of max) and bench
-        // RF output measured 0 W.
-        const int wireDrive = qBound(0, (power * 255) / 100, 255);
+        // RF output measured 0 W.  Default swrProtectFactor=1.0 → identity
+        // to the prior `(power * 255) / 100` formula; foldback wires up
+        // when SwrProtectionController drives the factor (follow-up).
+        const float f          = std::clamp(power / 100.0f, 0.0f, 1.0f);
+        const float swrProtect =
+            std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+        const int wireDrive = std::clamp(int(255.0f * f * swrProtect), 0, 255);
         auto* conn = m_connection;
         QMetaObject::invokeMethod(conn, [conn, wireDrive]() {
             conn->setTxDrive(wireDrive);
@@ -1159,6 +1165,18 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // Phase 3P-G. Pushed to P2RadioConnection via setCalibrationController() below.
         m_calController.setMacAddress(info.macAddress);
         m_calController.load();
+
+        // P1 full-parity §3.2: seed PA forward-power cal profile from the
+        // hardware model on first connect to this MAC. `load()` above leaves
+        // `paCalProfile().boardClass == None` if no `paCalibration/boardClass`
+        // key was persisted; in that case we install the factory `defaults()`
+        // for the current board class. Reconnects with persisted state leave
+        // the user-edited table intact.
+        // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]
+        if (m_calController.paCalProfile().boardClass == PaCalBoardClass::None) {
+            m_calController.setPaCalProfile(
+                PaCalProfile::defaults(paCalBoardClassFor(m_hardwareProfile.model)));
+        }
 
         // Load per-MAC per-band tune power (50W default per band on first init).
         // Phase 3M-1a G.3. Source: Thetis console.cs:1819-1820 / :4904-4910 [v2.10.3.13].
@@ -2366,6 +2384,38 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         });
     }
 
+    // ── Task 2.4 of P1 full-parity epic: initial push of TransmitModel state ─
+    // Push lineInGain + userDigOut onto the connection BEFORE the first
+    // connectToRadio dispatch so the very first C&C frame carries the
+    // persisted model state instead of the connection-default 0/0.  Mirrors
+    // the setSampleRate / setReceiverFrequency push pattern above (FIFO order
+    // ensures these run before connectToRadio's sendCommandFrame).
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                              g = m_transmitModel.lineInGain()]() {
+        conn->setLineInGain(g);
+    });
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                              d = m_transmitModel.userDigOut()]() {
+        conn->setUserDigOut(quint8(d & 0x0F));
+    });
+
+    // ── Task 2.5 of P1 full-parity epic: initial push of pureSig state ──────
+    // Push the PureSignal user-enable toggle onto the connection BEFORE the
+    // first connectToRadio dispatch so the very first C&C frame carries the
+    // persisted state.  Mirrors the lineInGain/userDigOut FIFO ordering above.
+    //
+    // Source: Thetis ChannelMaster/networkproto1.c:599-600 [v2.10.3.13]:
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    // Until 3M-4 lights up the actual feedback DDC routing, the user's
+    // PureSignal-enable toggle (PureSignalTab "Enable") is the proxy for
+    // the wire bit — same semantic as Thetis PSForm.cs:240 [v2.10.3.13]
+    // calling NetworkIO.SetPureSignal(1) when the user enables PS.
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                              ps = m_transmitModel.pureSigEnabled()]() {
+        conn->setPuresignalRun(ps);
+    });
+
     // Now dispatch connectToRadio -- it will find the correct m_rxFreqHz[0]
     // and m_sampleRate when sendCommandFrame runs inside it.
     QMetaObject::invokeMethod(m_connection, [conn = m_connection, info]() {
@@ -2472,36 +2522,16 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // values into the RadioStatus model owned by RadioModel. Any UI bound to
     // RadioStatus signals (Diagnostics → Radio Status page, S-meter PA tile)
     // refreshes automatically.
+    //
+    // P1 full-parity §3.4 (2026-05-02): the FWD reading is routed through
+    // CalibrationController::calibratedFwdPowerWatts() inside
+    // handlePaTelemetry — see that method for the inline cite.
     connect(m_connection, &RadioConnection::paTelemetryUpdated,
             this, [this](quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
                          quint16 userAdc0Raw, quint16 userAdc1Raw,
                          quint16 supplyRaw) {
-        const HPSDRModel model = m_hardwareProfile.model;
-        const double fwdW   = scaleFwdPowerWatts(fwdRaw, model);
-        const double revW   = scaleRevPowerWatts(revRaw, model);
-        const double paV    = scalePaVolts(userAdc0Raw, model);
-        const double paA    = scalePaAmps(userAdc1Raw, model);
-        const double paTemp = scalePaTemperatureCelsius(0, model);
-        Q_UNUSED(paV);       // RadioStatus does not expose PA volts directly (per its design header)
-        Q_UNUSED(supplyRaw); // supply_volts surfaced via RadioConnection::supplyVoltsChanged signal (sub-PR-2 B.3)
-
-        m_radioStatus.setForwardPower(fwdW);
-        m_radioStatus.setReflectedPower(revW);
-        m_radioStatus.setExciterPowerMw(static_cast<int>(exciterRaw));
-        m_radioStatus.setPaCurrent(paA);
-        // Only push temp when we have a real source (non-zero); leaves the
-        // last-known value alone otherwise so a stale 0 doesn't overwrite a
-        // good HL2 reading from another path.
-        if (paTemp > 0.0) {
-            m_radioStatus.setPaTemperature(paTemp);
-        }
-
-        // Phase 3M-0 Task 17 + Codex P1 follow-up: feed SwrProtectionController
-        // here (one call per hardware sample with consistent fwd/rev), not
-        // from RadioStatus::powerChanged (which emits twice per sample).
-        m_swrProt.ingest(static_cast<float>(fwdW),
-                         static_cast<float>(revW),
-                         m_transmitModel.isTune());
+        handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
+                          userAdc0Raw, userAdc1Raw, supplyRaw);
     });
 
     // Error handling
@@ -2562,6 +2592,103 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                 m_moxController, &MoxController::onMicPttFromRadio,
                 Qt::QueuedConnection);
     }
+
+    // ── Task 2.4 of P1 full-parity epic: TransmitModel → RadioConnection ────
+    // Wire lineInGain + userDigOut model-layer signals to the wire-bit setters
+    // added in Tasks 2.1 and 2.2.  Both connection setters live on the worker
+    // thread, so cross-thread dispatch goes through Qt::QueuedConnection (or
+    // QMetaObject::invokeMethod for the int→quint8 adapter).
+    //
+    // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    //     C3 = prn->user_dig_out & 0b00001111;
+    //
+    // userDigOut needs the lambda because Q_PROPERTY(int) doesn't directly
+    // bind to setUserDigOut(quint8) — masked to low 4 bits at the bridge.
+    QObject::connect(&m_transmitModel, &TransmitModel::lineInGainChanged,
+                     m_connection, &RadioConnection::setLineInGain,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::userDigOutChanged, m_connection,
+                     [conn = m_connection](int d) {
+        QMetaObject::invokeMethod(conn, [conn, d]() {
+            conn->setUserDigOut(quint8(d & 0x0F));
+        });
+    });
+
+    // ── Task 2.5 of P1 full-parity epic: pureSig → setPuresignalRun ─────────
+    // Wire the user PureSignal-enable toggle to the wire-bit setter added in
+    // Task 2.3.  Direct signal→slot bind (bool→bool, no adapter needed).
+    //
+    // Source: Thetis PSForm.cs:240 [v2.10.3.13]
+    //   _psenabled = value;
+    //   if (_psenabled) {
+    //     ...
+    //     NetworkIO.SetPureSignal(1);   // → prn->puresignal_run = 1
+    //     ...
+    //   }
+    // Source: Thetis ChannelMaster/networkproto1.c:599-600 [v2.10.3.13]:
+    //   case 11:
+    //     C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
+    //
+    // Until 3M-4 lights up the actual feedback DDC routing, the user's
+    // PureSignal-enable toggle (PureSignalTab "Enable" checkbox) is the proxy
+    // for the wire bit — same semantic as Thetis's PSEnabled property setter
+    // calling NetworkIO.SetPureSignal(1).  The P2 override (Task 2.3) stores
+    // the flag for symmetric API only and emits nothing on the wire until
+    // 3M-4 wires up the feedback DDC routing.
+    QObject::connect(&m_transmitModel, &TransmitModel::pureSigChanged,
+                     m_connection, &RadioConnection::setPuresignalRun,
+                     Qt::QueuedConnection);
+}
+
+// P1 full-parity §3.4: per-sample PA telemetry handler.
+// Extracted from the wireConnectionSignals lambda so the test hook
+// handlePaTelemetryForTest() can drive the routing without spinning up
+// the full DSP-thread / RxDspWorker pipeline.
+void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
+                                   quint16 exciterRaw, quint16 userAdc0Raw,
+                                   quint16 userAdc1Raw, quint16 supplyRaw)
+{
+    const HPSDRModel model = m_hardwareProfile.model;
+    const double fwdW   = scaleFwdPowerWatts(fwdRaw, model);
+    const double revW   = scaleRevPowerWatts(revRaw, model);
+    const double paV    = scalePaVolts(userAdc0Raw, model);
+    const double paA    = scalePaAmps(userAdc1Raw, model);
+    const double paTemp = scalePaTemperatureCelsius(0, model);
+    Q_UNUSED(paV);       // RadioStatus does not expose PA volts directly (per its design header)
+    Q_UNUSED(supplyRaw); // supply_volts surfaced via RadioConnection::supplyVoltsChanged signal (sub-PR-2 B.3)
+
+    // From Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13] —
+    // route raw alex_fwd through the per-board cal table before publishing
+    // to RadioStatus.  Identity transform when no profile is loaded
+    // (boardClass == None, see CalibrationController::calibratedFwdPowerWatts).
+    // Reflected-power path is unchanged: Thetis's CalibratedPAPower is FWD-only.
+    const double fwdWCal = double(
+        m_calController.calibratedFwdPowerWatts(static_cast<float>(fwdW)));
+
+    m_radioStatus.setForwardPower(fwdWCal);
+    m_radioStatus.setReflectedPower(revW);
+    m_radioStatus.setExciterPowerMw(static_cast<int>(exciterRaw));
+    m_radioStatus.setPaCurrent(paA);
+    // Only push temp when we have a real source (non-zero); leaves the
+    // last-known value alone otherwise so a stale 0 doesn't overwrite a
+    // good HL2 reading from another path.
+    if (paTemp > 0.0) {
+        m_radioStatus.setPaTemperature(paTemp);
+    }
+
+    // Phase 3M-0 Task 17 + Codex P1 follow-up: feed SwrProtectionController
+    // here (one call per hardware sample with consistent fwd/rev), not
+    // from RadioStatus::powerChanged (which emits twice per sample).
+    // Note: SWR protection ingests the raw post-scale fwdW (not fwdWCal) —
+    // the user-cal table can extrapolate above-bridge values that would
+    // skew the foldback math; raw bridge watts are the canonical input
+    // Thetis uses for protection (console.cs alex_fwd path is independent
+    // of CalibratedPAPower).
+    m_swrProt.ingest(static_cast<float>(fwdW),
+                     static_cast<float>(revW),
+                     m_transmitModel.isTune());
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.
@@ -3725,6 +3852,14 @@ void RadioModel::teardownConnection()
         m_micProfileMgr->setMacAddress(QString());
     }
 
+    // P1 full-parity §3.2: reset PA forward-power cal profile to None so a
+    // subsequent connect to a different SKU (under the same MAC, or a fresh
+    // MAC) gets the right `PaCalProfile::defaults(class)` applied. Without
+    // this, an Anan100 profile loaded for a previous radio would survive
+    // into a connect to e.g. Anan10 hardware before the next load().
+    // Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]
+    m_calController.setPaCalProfile(PaCalProfile{});
+
     // 3M-1a G.1: detach the production loop pointers before clearing m_txChannel.
     // setConnection(nullptr) stops driveOneTxBlock() from calling sendTxIq on
     // a destroyed connection; setMicRouter(nullptr) drops the TxMicRouter ref.
@@ -4143,9 +4278,15 @@ void RadioModel::setTune(bool on)
                                     ? bandFromFrequency(m_activeSlice->frequency())
                                     : m_lastBand;
         const int tunePower = m_transmitModel.tunePowerForBand(currentBand);
-        // Scale percent (0-100) → wire byte (0-255). See setTxDrive scaling
-        // comment in connection-power lambda above for the mi0bot citation.
-        const int wireTuneDrive = qBound(0, (tunePower * 255) / 100, 255);
+        // Scale percent (0-100) → wire byte (0-255) with SWR-protection
+        // foldback. See setTxDrive scaling comment in connection-power
+        // lambda above for the mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+        // citation. Default factor=1.0 → identity to prior formula.
+        const float fTune          = std::clamp(tunePower / 100.0f, 0.0f, 1.0f);
+        const float swrProtectTune =
+            std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+        const int wireTuneDrive =
+            std::clamp(int(255.0f * fTune * swrProtectTune), 0, 255);
         if (m_connection) {
             auto* conn = m_connection;
             QMetaObject::invokeMethod(conn, [conn, wireTuneDrive]() {
@@ -4261,9 +4402,15 @@ void RadioModel::setTune(bool on)
         //   //MW0LGE_22b  [original inline comment from console.cs:30033]
         if (m_connection) {
             auto* conn = m_connection;
-            // Scale percent (0-100) → wire byte (0-255). See setTxDrive scaling
-            // comment in connection-power lambda for the mi0bot citation.
-            const int savedWireDrive = qBound(0, (m_savedPowerPct * 255) / 100, 255);
+            // Scale percent (0-100) → wire byte (0-255) with SWR-protection
+            // foldback. See setTxDrive scaling comment in connection-power
+            // lambda for the mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+            // citation. Default factor=1.0 → identity to prior formula.
+            const float fSaved          = std::clamp(m_savedPowerPct / 100.0f, 0.0f, 1.0f);
+            const float swrProtectSaved =
+                std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+            const int savedWireDrive =
+                std::clamp(int(255.0f * fSaved * swrProtectSaved), 0, 255);
             QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
                 conn->setTxDrive(savedWireDrive);
             });

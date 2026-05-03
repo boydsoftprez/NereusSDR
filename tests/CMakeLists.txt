@@ -77,6 +77,118 @@ nereus_add_test(tst_alex_filter_map)
 # ── Phase 3P-A P1CodecStandard ramdor WriteMainLoop port (Task 5+6) ──
 nereus_add_test(tst_p1_codec_standard)
 
+# ── P1 full-parity Task 1.1: P1CodecStandard mic_ptt direct polarity ──
+# Closes the gap PR #161 left for non-HL2 boards (relay flutter root cause
+# on ANAN-10E/HermesII; same fix as HL2 commit ca8cd73).
+nereus_add_test(tst_p1_codec_standard_bank11_polarity)
+
+# ── P1 full-parity Task 1.4: P1CodecStandard XmitBit on frequency banks ──
+# Closes the gap PR #161 left for non-HL2 boards: Thetis networkproto1.c:447
+# sets C0 = XmitBit before the case switch, so every bank's C0 carries XmitBit
+# on the wire — including frequency banks (1, 2, 3, 5-9).
+nereus_add_test(tst_p1_codec_standard_freq_bank_xmitbit)
+
+# ── P1 full-parity Task 2.1: P1RadioConnection::setLineInGain virtual ────────
+# 12 tests pin the line_in_gain field (bank 11 C2 low 5 bits, mask 0x1F) in
+# P1RadioConnection::setLineInGain():
+#   1.  Default state: C2 low 5 bits = 0 (m_lineInGain default 0).
+#   2.  setLineInGain(15) → C2 low 5 bits = 0x0F.
+#   3.  setLineInGain(31) → C2 low 5 bits = 0x1F (max).
+#   4.  setLineInGain(-5) → clamps to 0 (after first storing non-zero).
+#   5.  setLineInGain(50) → clamps to 31.
+#   6.  setLineInGain does NOT touch C2 bit 6 (puresignal_run cross-bit guard).
+#   7.  Bank 11 C0 address remains 0x14.
+#   8.  Round-trip: 0 → 23 → 0 produces correct bit values.
+#   9.  setLineInGain sets m_forceBank11Next (Codex P2 flush pattern).
+#  10.  Repeated same-value call still sets the flush flag.
+#  11.  Idempotency: setLineInGain(15) twice doesn't crash.
+#  12.  Codec path (HL2): C2 emits 0 unconditionally — documents intentional
+#       codec divergence (HL2 has no mic jack); flush flag still fires.
+# Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13].
+nereus_add_test(tst_p1_line_in_gain_setter)
+target_compile_definitions(tst_p1_line_in_gain_setter PRIVATE NEREUS_BUILD_TESTS)
+
+# ── P1 full-parity Task 2.2: P1RadioConnection::setUserDigOut virtual ────────
+# 13 tests pin the user_dig_out field (bank 11 C3 low 4 bits, mask 0x0F) in
+# P1RadioConnection::setUserDigOut():
+#   1.  Default state: C3 low 4 bits = 0 (m_userDigOut default 0).
+#   2.  setUserDigOut(0) → C3 low 4 bits = 0 (explicit zero).
+#   3.  setUserDigOut(0x0A) → C3 low 4 bits = 0x0A (alternating bits).
+#   4.  setUserDigOut(0x0F) → C3 low 4 bits = 0x0F (max).
+#   5.  setUserDigOut(0xFF) → C3 = 0x0F (high-nibble masked off).
+#   6.  Cross-bit guard: setUserDigOut leaves C1 (mic bits) unchanged.
+#   7.  Cross-bit guard: setUserDigOut leaves C2 (line_in/puresignal) unchanged.
+#   8.  Bank 11 C0 address remains 0x14.
+#   9.  Round-trip: 0 → 0x07 → 0 produces correct bit values.
+#  10.  setUserDigOut sets m_forceBank11Next (Codex P2 flush pattern).
+#  11.  Repeated same-value call still sets the flush flag.
+#  12.  Idempotency: setUserDigOut(0x0A) twice doesn't crash.
+#  13.  Codec path (HL2): C3 emits 0 unconditionally — documents intentional
+#       codec divergence (HL2 has no Penny header); flush flag still fires.
+# Source: Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13].
+nereus_add_test(tst_p1_user_dig_out_setter)
+target_compile_definitions(tst_p1_user_dig_out_setter PRIVATE NEREUS_BUILD_TESTS)
+
+# ── P1 full-parity Task 2.3: P1RadioConnection::setPuresignalRun virtual ─────
+# 12 tests pin the puresignal_run flag (bank 11 C2 bit 6, mask 0x40) in
+# P1RadioConnection::setPuresignalRun():
+#   1.  Default state: C2 bit 6 = 0 (m_puresignalRun default false).
+#   2.  setPuresignalRun(false) → C2 bit 6 = 0 (explicit baseline).
+#   3.  setPuresignalRun(true)  → C2 bit 6 = 0x40 (set, no other bits).
+#   4.  Cross-bit guard: leaves C2 low 5 bits (line_in_gain) unchanged.
+#   5.  Cross-bit guard: leaves C1 (mic bits) unchanged.
+#   6.  Cross-bit guard: leaves C3 (user_dig_out) unchanged.
+#   7.  Bank 11 C0 address remains 0x14.
+#   8.  Round-trip: false → true → false produces correct bit values.
+#   9.  setPuresignalRun sets m_forceBank11Next (Codex P2 flush pattern).
+#  10.  Repeated same-value call still sets the flush flag.
+#  11.  Idempotency: setPuresignalRun(true) twice doesn't crash.
+#  12.  Codec path (HL2): C2 emits 0 unconditionally — documents intentional
+#       codec divergence (HL2 has no on-radio PS path); flush flag still fires.
+# Source: Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13].
+nereus_add_test(tst_p1_puresignal_run_setter)
+target_compile_definitions(tst_p1_puresignal_run_setter PRIVATE NEREUS_BUILD_TESTS)
+
+# ── P1 full-parity Task 2.5: TransmitModel::pureSig → setPuresignalRun wiring ─
+# 8 tests pin the model-to-connection wiring installed in
+# RadioModel::wireConnectionSignals + the initial-push pattern in
+# RadioModel::connectToRadio.  Wire-byte side (bank 11 C2 bit 6) is
+# already covered by tst_p1_puresignal_run_setter; these tests cover the
+# higher-level model-layer wiring contract:
+#   1.  Initial push: default model state → bank 11 C2 bit 6 clear.
+#   2.  Initial push: persisted true → bank 11 C2 bit 6 = 0x40.
+#   3.  Toggle on: model setter → wiring → connection setter → bit set.
+#   4.  Toggle off: model false → wiring clears bit 6.
+#   5.  Round-trip: false → true → false bit-tracks across the wiring.
+#   6.  Idempotent setter: same value twice → wiring fires only on change.
+#   7.  Cross-bit guard: pureSig wiring does not perturb C2 line_in_gain.
+#   8.  loadFromSettings reads the pureSignal/enabled key.
+#   8b. loadFromSettings defaults to false when key absent.
+# Source: Thetis ChannelMaster/networkproto1.c:599-600 + PSForm.cs:240
+#         [v2.10.3.13].
+nereus_add_test(tst_radio_model_puresignal_run_wiring)
+target_compile_definitions(tst_radio_model_puresignal_run_wiring PRIVATE NEREUS_BUILD_TESTS)
+
+# ── P1 full-parity Task 3.1: PaCalProfile model + interpolation ──────────────
+# Tests the per-board PA calibration model: paCalBoardClassFor() mapping for
+# every HPSDRModel value, defaults() factory tables for each board class, and
+# interpolate() matching Thetis console.cs:6691-6768 CalibratedPAPower +
+# PowerKernel [v2.10.3.13]:
+#   - Board-class mapping: 17 cases covering every HPSDRModel + sentinels.
+#   - defaults(): Anan10/Anan100/Anan8000/HermesLite cal tables match the
+#     ud{10,100,200}PA{N}W spinbox label values + None returns all zeros.
+#   - interpolate(0): zero-passthrough across all classes.
+#   - interpolate identity: default tables round-trip raw → raw at cal points
+#     and between cal points.
+#   - interpolate at calibrated points: user cal tables recover the spinbox
+#     LABEL value (Thetis PowerKernel returns idx*interval, not table[idx]).
+#   - interpolate between calibrated points: piecewise-linear.
+#   - interpolate above max: linear extrapolation of the last segment.
+#   - interpolate None class: identity passthrough.
+#   - interpolate below zero: identity on default tables.
+#   - interpolate degenerate zero-span: defensive guard, no crash.
+nereus_add_test(tst_pa_cal_profile)
+
 # ── Phase 3P-A P1CodecAnvelinaPro3 bank 17 extra OC (Task 7) ──
 nereus_add_test(tst_p1_codec_anvelina_pro3)
 
@@ -215,6 +327,16 @@ nereus_add_test(tst_band_change_recursion_guard)
 # ── Step attenuator / ADC overload detection ─────────────────────────────
 nereus_add_test(tst_step_attenuator_controller)
 
+# ── BoardCapabilities flag-wiring (P1 full-parity §4) ────────────────────
+# Verifies populated-but-previously-unconsumed BoardCapabilities flags now
+# affect runtime behaviour:
+#   §4.1 hasStepAttenuatorCal — gates AutoAttMode::Adaptive selection
+#                                (silent-coerce to Classic when false)
+#   §4.2 hasSidetoneGenerator  — gates CwSetupPage Sidetone Volume row
+#   §4.3 hasPennyLane          — gates OcOutputsTab "User Dig Out" group
+#                                (4 bit-toggle checkboxes → TransmitModel)
+nereus_add_test(tst_board_capability_flag_wiring)
+
 # ── Issue #118: band-button auto-mode ────────────────────────────────────
 nereus_add_test(tst_band_from_name)
 nereus_add_test(tst_slice_has_settings_for)
@@ -289,6 +411,15 @@ nereus_add_test(tst_transmit_model_mon)
 # multi-MAC isolation, bulk persistToSettings round-trip, and auto-persist
 # no-op before loadFromSettings.
 nereus_add_test(tst_transmit_model_persistence)
+
+# ── P1 full-parity Task 2.4: TransmitModel lineInGain + userDigOut ───────────
+# Verifies the model→connection plumbing for line_in_gain (bank 11 C2 low 5
+# bits) and user_dig_out (bank 11 C3 low 4 bits): defaults, clamp/mask in
+# setters, signal emission, idempotent guard, AppSettings round-trip via
+# loadFromSettings + persistToSettings, and MicProfileManager bundle round-trip
+# via the Mic_LineInGain / Mic_UserDigOut bundle keys.
+# Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].
+nereus_add_test(tst_transmit_model_line_in_gain_user_dig_out)
 
 # ── Phase 3M-1c B.2: TransmitModel two-tone test properties (7x) ────────────
 # Verifies defaults, round-trip setters + signals, idempotent guards, and
@@ -758,12 +889,78 @@ nereus_add_test(tst_radio_model_status_wiring)
 # console.cs:9766-9844; 21022-21086 [@501e3f5].
 nereus_add_test(tst_calibration_controller)
 
+# ── P1 full-parity §3.2: CalibrationController PA-cal storage + persistence ─
+# Verifies setPaCalProfile / setPaCalPoint signals + de-dup, idx-zero +
+# out-of-range guards, calibratedFwdPowerWatts forwarding, and per-MAC
+# AppSettings round-trip for boardClass + 10 cal-point watts entries.
+# Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
+nereus_add_test(tst_calibration_controller_pa_cal)
+
+# ── P1 full-parity §3.4: alex_fwd routing through CalibratedPAPower ─────────
+# Verifies that RadioModel::handlePaTelemetry routes the raw alex_fwd watts
+# through CalibrationController::calibratedFwdPowerWatts before publishing
+# to RadioStatus.  Identity (no profile) and active (Anan100 with mutated
+# watts[5]) paths plus a guard that the reflected-power path is unaffected.
+# Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
+nereus_add_test(tst_radio_model_pa_cal_routing)
+
+# ── P1 full-parity §3.5: SWR-foldback drive scaling ─────────────────────────
+# Verifies the TransmitModel::swrProtectFactor property (clamp + signal
+# de-dup) and the percent→wire-byte formula
+#   wire = clamp(int(255 * f * swrProtect), 0, 255)
+# applied at every RadioModel setTxDrive site.  At default factor=1.0 the
+# formula is identity to the prior `(power * 255) / 100` — bench behaviour
+# for live radios is unchanged until SwrProtectionController is wired in
+# a follow-up task.
+# Source: mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1].
+nereus_add_test(tst_pa_cal_swr_foldback)
+target_compile_definitions(tst_pa_cal_swr_foldback PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-G commit 2: CalibrationTab UI smoke tests ───────────────────────
 # Verifies construction doesn't crash, 5 group boxes present
 # (Freq Cal / Level Cal / HPSDR Freq Cal Diagnostic / TX Display Cal /
-# PA Current), controller->UI sync, and UI->controller write-back.
+# Volts/Amps Calibration), controller->UI sync, and UI->controller write-back.
+# Group 6 (PA Forward Power Calibration / PaCalibrationGroup) was migrated
+# to PA → Watt Meter on 2026-05-02 (Setup IA reshape Phase 3A) — so the
+# tab is back to 5 groups; see tst_pa_watt_meter_page for the migrated
+# group's integration coverage.  Group 5 was relabelled from "PA Current (A)
+# calculation" to "Volts/Amps Calibration" 2026-05-02 (Phase 3B).
 nereus_add_test(tst_calibration_tab)
 target_compile_definitions(tst_calibration_tab PRIVATE NEREUS_BUILD_TESTS)
+
+# ── P1 full-parity §3.3: PaCalibrationGroup widget ───────────────────────────
+# Verifies the per-board-class PA forward-power cal-point spinbox group:
+# default construction has zero spinboxes; populate() builds 10 spinboxes
+# with class-specific labels (1W..10W / 10W..100W / 20W..200W / 0.5W..5W);
+# None hides the group; spinbox→controller writes via setPaCalPoint;
+# controller→spinbox sync via paCalPointChanged; repopulate rebuilds; echo-
+# loop guard prevents recursion.
+# Source: Thetis setup.cs:5404-5594 ud{10|100|200}PA{N}W spinbox blocks
+# [v2.10.3.13 @501e3f51].
+nereus_add_test(tst_pa_calibration_group)
+target_compile_definitions(tst_pa_calibration_group PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Setup IA reshape Phase 3A: PaCalibrationGroup integrated into ────────────
+# PA → Watt Meter (PaWattMeterPage). Verifies the page hosts exactly one
+# PaCalibrationGroup child, populates from the controller's profile at
+# construction, and rebuilds on CalibrationController::paCalProfileChanged
+# (radio-swap path). The widget itself is exercised by tst_pa_calibration_group;
+# this test pins the host integration only.
+nereus_add_test(tst_pa_watt_meter_page)
+target_compile_definitions(tst_pa_watt_meter_page PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Setup IA reshape Phase 4: live PA Values page ────────────────────────────
+# Verifies PaValuesPage builds at least 8 MetricLabel children and updates
+# them when the bound RadioStatus + RadioConnection signals fire:
+#   - powerChanged → FWD calibrated, REV, SWR labels
+#   - paTemperatureChanged / paCurrentChanged → temperature / current labels
+#   - supplyVoltsChanged → supply volts label
+#   - paTelemetryUpdated → FWD/REV ADC raw labels
+#   - adcOverflow → overload label
+#   - null-model construction is safe (model-less preview fallback)
+# Source: Thetis panelPAValues setup.designer.cs:51155-51177 [v2.10.3.13].
+nereus_add_test(tst_pa_values_page)
+target_compile_definitions(tst_pa_values_page PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
 # Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis
@@ -1175,7 +1372,9 @@ nereus_add_test(tst_tx_cfc_dialog)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_mon)
 
-# ── Phase 3M-1a H.4: PowerPaPage wiring — Max Power, per-band Tune Power, ATT-on-TX ──
+# ── Phase 3M-1a H.4: PowerPage wiring — Max Power, per-band Tune Power, ATT-on-TX ──
+# (class renamed from PowerPaPage in IA reshape Phase 6, 2026-05-02; test
+#  filename retains 'power_pa_page' for git history continuity)
 # Verifies Max Power slider ↔ TransmitModel::power(), per-band tune-power spinboxes
 # ↔ TransmitModel::tunePowerForBand(), chkATTOnTX and chkForceATTwhenPSAoff widget
 # existence + null-controller guards.
@@ -1241,6 +1440,13 @@ target_compile_definitions(tst_general_options_page_rx_only PRIVATE NEREUS_BUILD
 # Thetis setup.designer.cs:9050-9059 [v2.10.3.13]. Tooltip NereusSDR-original
 # (Thetis has no tooltip on this control). Default unchecked.
 nereus_add_test(tst_general_setup_options)
+
+# ── Setup IA reshape Phase 2: top-level PA category placeholder pages ────────
+# Verifies PaGainByBandPage / PaWattMeterPage / PaValuesPage construct cleanly
+# with the expected page titles and a placeholder QLabel hinting at the future
+# phase tag.  Mirrors Thetis tpPowerAmplifier (setup.designer.cs:47366-47371
+# [v2.10.3.13]); panel-level wiring lands in Phase 3+.
+nereus_add_test(tst_pa_setup_pages)
 
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to

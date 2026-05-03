@@ -77,6 +77,9 @@ public:
     void setLineIn(bool) override {}
     void setMicTipRing(bool) override {}
     void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
     void setMicPTT(bool) override {}
     void setMicXlr(bool) override {}
     void sendTxIq(const float*, int) override {}

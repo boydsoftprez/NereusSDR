@@ -149,6 +149,24 @@ class CwSetupPage : public SetupPage {
     Q_OBJECT
 public:
     explicit CwSetupPage(RadioModel* model, QWidget* parent = nullptr);
+
+    // P1 full-parity §4.2 — gate the "Sidetone Volume" row on
+    // BoardCapabilities.hasSidetoneGenerator.  HL2 firmware generates the
+    // CW sidetone in hardware (with its own volume control routed via the
+    // radio's audio path); standard P1 boards rely on host-generated
+    // software sidetone.  When false, the row is hidden so users on
+    // non-HL2 boards don't see a control that does nothing on their
+    // hardware.  Default: hidden (no flag set yet → no radio connected).
+    void setHasSidetoneGenerator(bool on);
+
+    // Test seam — returns the Sidetone Volume row's visibility state.
+    // Used by tst_board_capability_flag_wiring to assert the gate works
+    // without a fully-shown widget (isVisibleTo(parent) requires a top-
+    // level shown ancestor, which is awkward in a unit test).
+    bool sidetoneRowVisibleForTest() const;
+
+private:
+    QWidget* m_sidetoneRow = nullptr;
 };
 
 // ── AM / SAM ─────────────────────────────────────────────────────────────────

@@ -81,6 +81,10 @@ const QStringList& liveKeyList()
         QStringLiteral("Mic_TipRing"),
         QStringLiteral("Mic_Bias"),
         QStringLiteral("Mic_PTT_Disabled"),
+        // line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic):
+        // bundled in profiles so a saved profile carries the wire-bit state.
+        QStringLiteral("Mic_LineInGain"),
+        QStringLiteral("Mic_UserDigOut"),
         QStringLiteral("Dexp_Threshold"),
         QStringLiteral("VOX_GainScalar"),
         QStringLiteral("VOX_HangTime"),
@@ -1012,6 +1016,10 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     out.insert(QStringLiteral("Mic_TipRing"),          QStringLiteral("True"));          // setup.designer.cs:8683 [v2.10.3.13]
     out.insert(QStringLiteral("Mic_Bias"),             QStringLiteral("False"));         // setup.designer.cs:8779 [v2.10.3.13]
     out.insert(QStringLiteral("Mic_PTT_Disabled"),     QStringLiteral("False"));         // console.cs:19757 [v2.10.3.13]
+    // line_in_gain + user_dig_out defaults (Task 2.4 of P1 full-parity epic).
+    // Both default to 0 per Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].
+    out.insert(QStringLiteral("Mic_LineInGain"),       QStringLiteral("0"));
+    out.insert(QStringLiteral("Mic_UserDigOut"),       QStringLiteral("0"));
     out.insert(QStringLiteral("Dexp_Threshold"),       QStringLiteral("-40"));           // NereusSDR-original (ptbVOX range -80..0)
     out.insert(QStringLiteral("VOX_GainScalar"),       QStringLiteral("1"));             // audio.cs:194 [v2.10.3.13]
     out.insert(QStringLiteral("VOX_HangTime"),         QStringLiteral("500"));           // setup.designer.cs:45020-45024 [v2.10.3.13]
@@ -1131,6 +1139,9 @@ QHash<QString, QVariant> MicProfileManager::captureLiveValues(const TransmitMode
     out.insert(QStringLiteral("Mic_TipRing"),          tx->micTipRing()    ? QStringLiteral("True") : QStringLiteral("False"));
     out.insert(QStringLiteral("Mic_Bias"),             tx->micBias()       ? QStringLiteral("True") : QStringLiteral("False"));
     out.insert(QStringLiteral("Mic_PTT_Disabled"),     tx->micPttDisabled() ? QStringLiteral("True") : QStringLiteral("False"));
+    // line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic)
+    out.insert(QStringLiteral("Mic_LineInGain"),       QString::number(tx->lineInGain()));
+    out.insert(QStringLiteral("Mic_UserDigOut"),       QString::number(tx->userDigOut()));
     out.insert(QStringLiteral("Dexp_Threshold"),       QString::number(tx->voxThresholdDb()));
     out.insert(QStringLiteral("VOX_GainScalar"),       QString::number(static_cast<double>(tx->voxGainScalar())));
     out.insert(QStringLiteral("VOX_HangTime"),         QString::number(tx->voxHangTimeMs()));
@@ -1240,6 +1251,9 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     tx->setMicTipRing(take(QStringLiteral("Mic_TipRing"), QStringLiteral("True")) == QLatin1String("True"));
     tx->setMicBias(take(QStringLiteral("Mic_Bias"), QStringLiteral("False")) == QLatin1String("True"));
     tx->setMicPttDisabled(take(QStringLiteral("Mic_PTT_Disabled"), QStringLiteral("False")) == QLatin1String("True"));
+    // line_in_gain + user_dig_out (Task 2.4)
+    tx->setLineInGain(take(QStringLiteral("Mic_LineInGain"), QStringLiteral("0")).toInt());
+    tx->setUserDigOut(take(QStringLiteral("Mic_UserDigOut"), QStringLiteral("0")).toInt());
     tx->setVoxThresholdDb(take(QStringLiteral("Dexp_Threshold"), QStringLiteral("-40")).toInt());
     tx->setVoxGainScalar(take(QStringLiteral("VOX_GainScalar"), QStringLiteral("1")).toFloat());
     tx->setVoxHangTimeMs(take(QStringLiteral("VOX_HangTime"), QStringLiteral("500")).toInt());

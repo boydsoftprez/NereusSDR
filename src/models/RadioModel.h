@@ -104,6 +104,7 @@
 //  unique_ptr<MicReBlocker> destructor.  The TX pump architecture
 //  redesign (2026-04-29) deleted MicReBlocker; replaced with
 //  TxWorkerThread which drives TxChannel directly.)
+#include <algorithm>  // std::clamp (used by computeWireDriveForTest)
 #include <memory>  // std::unique_ptr
 
 namespace NereusSDR {
@@ -448,6 +449,36 @@ public:
     }
     NereusSDR::Band lastBand() const { return m_lastBand; }
 
+    // P1 full-parity §3.4 test hook — invoke the per-sample PA telemetry
+    // handler directly without spinning up the full wireConnectionSignals
+    // pipeline (which constructs DSP threads and the RxDspWorker).  Mirrors
+    // the existing on*ForTest pattern (setConnectionStateForTest /
+    // onConnectedForTest / setLastBandForTest).  Production code reaches
+    // the same handler via the lambda installed in wireConnectionSignals.
+    void handlePaTelemetryForTest(quint16 fwdRaw, quint16 revRaw,
+                                  quint16 exciterRaw, quint16 userAdc0Raw,
+                                  quint16 userAdc1Raw, quint16 supplyRaw) {
+        handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
+                          userAdc0Raw, userAdc1Raw, supplyRaw);
+    }
+
+    // P1 full-parity §3.5 test seam — pure-function counterpart of the
+    // percent-to-wire-byte SWR-foldback formula inlined at every
+    // setTxDrive call site (voice powerChanged lambda, TUNE-engage,
+    // TUNE-restore).  Tests assert against this helper to verify the
+    // formula in isolation; production callsites use the same three-line
+    // expression (see RadioModel.cpp).  A regression in the helper is a
+    // regression in the inlined production code by construction.
+    //
+    // Source: mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
+    //   int i = (int)(255 * f * _swr_protect);   // f normalised 0..1,
+    //                                            // _swr_protect ≤ 1.0
+    static int computeWireDriveForTest(int powerPct, float swrProtectFactor) {
+        const float f          = std::clamp(powerPct / 100.0f, 0.0f, 1.0f);
+        const float swrProtect = std::clamp(swrProtectFactor, 0.0f, 1.0f);
+        return std::clamp(int(255.0f * f * swrProtect), 0, 255);
+    }
+
     // 3M-1b L.1 test seams: expose raw pointers into the mic-source strategy
     // objects so ownership, threading, and lifecycle tests can inspect state
     // without coupling to production API surfaces.
@@ -691,6 +722,21 @@ private:
     void wireConnectionSignals(int wdspInSize);
     void wireSliceSignals();
     void teardownConnection();
+
+    // P1 full-parity §3.4 — per-sample PA telemetry handler.
+    // Applies per-board ADC→watts scaling (scaleFwdPowerWatts /
+    // scaleRevPowerWatts / scalePaVolts / scalePaAmps), routes the FWD
+    // reading through CalibrationController::calibratedFwdPowerWatts()
+    // (Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13]) and
+    // publishes the calibrated values to RadioStatus + SwrProtectionController.
+    //
+    // Wired by wireConnectionSignals to RadioConnection::paTelemetryUpdated
+    // via a thin forwarding lambda.  Extracted from that lambda so the test
+    // hook handlePaTelemetryForTest can drive it directly without spinning
+    // up the full wireConnectionSignals DSP-thread pipeline.
+    void handlePaTelemetry(quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
+                           quint16 userAdc0Raw, quint16 userAdc1Raw,
+                           quint16 supplyRaw);
     void loadSliceState(SliceModel* slice);
     void saveSliceState(SliceModel* slice);
     void scheduleSettingsSave();

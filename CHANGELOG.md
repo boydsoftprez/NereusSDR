@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.3.1-rc1] - 2026-05-02
+
+Pre-release for bench verification of the P1 full-parity epic and Setup IA
+reshape. Triggered by rapid T/R relay clicking on the ANAN-10E (HermesII)
+on TUNE/TX. Targets all non-HL2 P1 boards for byte-faithful Thetis parity,
+ports the per-board PA forward-power calibration system, and restructures
+the Setup tree to mirror Thetis's information architecture.
+
+### Fixes (RF-impacting)
+- **fix(p1/standard): mic_ptt direct polarity** — eliminates rapid T/R relay
+  clicking on TUNE/TX for every non-HL2 P1 board (Atlas, Hermes, HermesII,
+  Angelia, Orion, OrionMkII, AnvelinaPro3, RedPitaya). Matches Thetis
+  `networkproto1.c:597-598 [v2.10.3.13]` direct polarity.
+
+### Features
+- P1 wire-format parity (vs Thetis `networkproto1.c [v2.10.3.13]`):
+  - bank 11 C2 wires `line_in_gain` (low 5 bits) + `puresignal_run` flag (bit 6)
+  - bank 11 C3 wires `user_dig_out` (low 4 bits)
+  - C0 XmitBit on frequency banks (1, 2, 3, 5-9) under MOX
+- New `RadioConnection` virtual setters: `setLineInGain`, `setUserDigOut`,
+  `setPuresignalRun`. P1 + P2 overrides; `TransmitModel` properties wired.
+- Per-board PA forward-power calibration:
+  - `PaCalProfile` model with `PaCalBoardClass` enum (None / Anan10 / Anan100 /
+    Anan8000); HL2 maps to `Anan10` (mi0bot `setup.cs:5463-5466` byte-faithful).
+  - `CalibrationController` persistence (per-MAC under
+    `hardware/<mac>/paCalibration/calPoint{1..10}`).
+  - `PaCalibrationGroup` widget — 10 cal-point spinboxes per board class.
+  - `alex_fwd` reading routed through `CalibratedPAPower` interpolation.
+  - `TransmitModel::swrProtectFactor` applied at every `setTxDrive` scale site.
+- Three `BoardCapabilities` audit-gap closures:
+  - `hasStepAttenuatorCal` gates Adaptive auto-att mode.
+  - `hasSidetoneGenerator` gates CW Sidetone Volume slider visibility.
+  - `hasPennyLane` gates User Dig Out UI on `OcOutputsTab`.
+
+### Setup IA reshape (mirrors Thetis's information architecture)
+- New top-level **PA** category in `SetupDialog` (gated on `caps.hasPaProfile`),
+  with three sub-pages:
+  - **PA Gain** — placeholder for 3M-3 work (per-band gain table + auto-cal)
+  - **Watt Meter** — hosts the migrated `PaCalibrationGroup`
+  - **PA Values** — 9 live telemetry fields (FWD / REV / SWR / PA current /
+    temperature / supply volts / ADC overload / raw FWD-ADC / raw REV-ADC)
+- Hardware → Calibration tab Group 5 relabelled "PA Current (A) calculation"
+  → "Volts/Amps Calibration" (matches Thetis `groupBoxTS27` intent). Internal
+  members renamed to upstream `udAmpSens` / `udAmpVoff`.
+- Transmit → "Power & PA" renamed to **"Power"**; placeholder PA group
+  (per-band-gain + Fan Control NYI labels) removed.
+- Over-aggressive `setTabVisible` gate on Calibration tab dropped — tab is
+  now always visible; PA-specific groups self-gate at the new top-level.
+
+### Imported from main (since v0.3.0)
+- fix(connect): wait for wisdom completion via connect-then-check pattern
+- fix(persistence): restore last-used band/frequency on launch
+- fix(persistence): flush coalesced slice save on close, wire missing signals
+- fix(shutdown): eliminate ~5 s Cmd-Q beach ball
+- fix(tx): construct `TxChannel` with no Qt parent so `moveToThread` works
+- fix(wdsp): always show wisdom progress dialog (collapse fast/slow paths)
+- docs(readme): bring v0.3.0 features forward in main narrative
+- docs: v0.3.0 alpha-tester smoketest + README pointer
+
+### Tests
+- 17 new test files / 60+ new test cases across the two sub-epics.
+- All epic-relevant tests green locally on macOS. Full ctest expected green
+  on Linux / macOS / Windows in CI.
+
+### Known status
+- **Not yet bench-verified on hardware.** That's the whole point of this RC.
+- Open follow-ups tracked separately:
+  - v0.3.0 Windows portable bundle missing MinGW runtime DLLs
+    (`libgcc_s_seh-1.dll` + `libstdc++-6.dll` + `libwinpthread-1.dll`);
+    FFmpeg DLLs depend on these. Fix in `release.yml` deploy step targeted
+    for v0.3.1 final.
+  - 9 Thetis Transmit-tab groups not yet ported (`grpPATune`, `chkPulsedTune`,
+    `chkRecoverPAProfileFromTXProfile`, `chkLimitExtAmpOnOverload`,
+    `udTXFilterLow/HighSave`, `grpTXAM`, `grpTXMonitor`, `grpTXFilter`,
+    `chkTXExpert`) — pre-existing gaps documented in TODO in `PowerPage`.
+
+### Source citations
+Every wire-format change cites Thetis `[v2.10.3.13]` per `HOW-TO-PORT.md`.
+mi0bot HL2-specific ports cite `[v2.10.3.13-beta2]`. Production code uses
+plain version stamps (no sha-in-brackets); test files use the richer form
+where appropriate.
+
+J.J. Boyd ~ KG4VCF
+
 ## [0.3.0] - 2026-05-01
 
 ### Features

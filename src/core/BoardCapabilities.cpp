@@ -614,7 +614,11 @@ const BoardCapabilities kHermesLite = {
     .hasPureSignal    = false,
     .hasDiversityReceiver = false,
     .hasStepAttenuatorCal = false,
-    .hasPaProfile     = false,
+    .hasPaProfile     = true,        // mi0bot setup.cs:6432-6435 [v2.10.3.13-beta2]
+                                     // HL2 has FWD power sensor; PA cal applies
+                                     // (1W intervals via Anan10 class — same
+                                     // ud10PA1W..ud10PA10W spinbox set as
+                                     // ANAN10/ANAN10E per setup.cs:5463-5466).
     .hasBandwidthMonitor = true,
     .hasIoBoardHl2    = true,
     .hasSidetoneGenerator = true,
