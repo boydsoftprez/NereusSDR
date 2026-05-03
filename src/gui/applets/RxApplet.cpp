@@ -479,7 +479,11 @@ void RxApplet::buildUi()
         m_filterGrid = new QGridLayout(m_filterContainer);
         m_filterGrid->setContentsMargins(0, 0, 0, 0);
         m_filterGrid->setSpacing(2);
-        rebuildFilterButtons(DSPMode::USB);
+        // Seed from the slice's actual mode so a restore-from-AppSettings
+        // launch (e.g. LSB / DIGL) shows the correct preset grid before the
+        // first dspModeChanged event fires.  Falls back to USB if no slice
+        // is bound yet.
+        rebuildFilterButtons(m_slice ? m_slice->dspMode() : DSPMode::USB);
         leftCol->addWidget(m_filterContainer);
     }
 

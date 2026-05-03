@@ -3157,7 +3157,24 @@ void MainWindow::wireSliceToSpectrum()
     // IQ-space sign convention before the first paint.
     if (m_spectrumWidget) {
         m_spectrumWidget->setTxMode(slice->dspMode());
+        // Initial XIT offset push + signal wires below so the TX overlay
+        // centers on the actual TX frequency (RX VFO + XIT) rather than the
+        // RX VFO alone.  Codex review feedback on PR #166.
+        const int initialXitOffset = slice->xitEnabled() ? slice->xitHz() : 0;
+        m_spectrumWidget->setTxVfoOffsetHz(initialXitOffset);
     }
+
+    // XIT-enabled toggle and XIT-Hz changes both feed the spectrum's TX
+    // overlay center.  When enabled flips off, the offset goes to zero;
+    // when on, the offset tracks xitHz.
+    auto pushXitOffset = [this, slice]() {
+        if (!m_spectrumWidget) { return; }
+        m_spectrumWidget->setTxVfoOffsetHz(slice->xitEnabled() ? slice->xitHz() : 0);
+    };
+    connect(slice, &SliceModel::xitEnabledChanged, this,
+            [pushXitOffset](bool /*enabled*/) { pushXitOffset(); });
+    connect(slice, &SliceModel::xitHzChanged, this,
+            [pushXitOffset](int /*hz*/) { pushXitOffset(); });
 
     connect(slice, &SliceModel::dspModeChanged, this, [this, vfo](DSPMode mode) {
         // Plan 4 D9 (Cluster E): keep TX mode in sync so drawTxFilterOverlay

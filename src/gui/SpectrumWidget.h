@@ -528,6 +528,12 @@ public slots:
     /// Wired from SliceModel::dspModeChanged in MainWindow::wireSliceToSpectrum.
     void setTxMode(DSPMode mode);
 
+    /// Signed Hz offset added to m_vfoHz when computing the TX overlay
+    /// position.  Tracks the slice's active XIT offset (xitEnabled ? xitHz : 0)
+    /// so the orange band centers on the actual TX frequency, not the RX VFO.
+    /// Wired from SliceModel::xitEnabledChanged + xitHzChanged in MainWindow.
+    void setTxVfoOffsetHz(int offsetHz);
+
     int txFilterLow()  const noexcept { return m_txFilterLow; }
     int txFilterHigh() const noexcept { return m_txFilterHigh; }
 
@@ -959,6 +965,10 @@ private:
     int     m_txFilterLow{100};   // default matches TransmitModel::m_filterLow
     int     m_txFilterHigh{2900}; // default matches TransmitModel::m_filterHigh
     DSPMode m_txMode{DSPMode::USB};
+    // Signed Hz offset added to m_vfoHz for the TX overlay position so the
+    // orange band tracks XIT shifts (xitEnabled ? xitHz : 0).  Updated via
+    // setTxVfoOffsetHz from MainWindow on SliceModel xit signals.
+    int     m_txVfoOffsetHz{0};
     QColor  m_txFilterColor{255, 120, 60, 46}; // matches kTxFilterOverlayFill default
     // Plan 4 D9b (Cluster F): user-pickable RX filter overlay color.
     // Default matches Style::kRxFilterOverlayFill = "rgba(0, 180, 216, 80)".

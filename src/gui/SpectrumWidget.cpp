@@ -2887,6 +2887,27 @@ void SpectrumWidget::setTxMode(DSPMode mode)
 }
 
 // ---------------------------------------------------------------------------
+// setTxVfoOffsetHz()
+//
+// Plan 4 D9 + post-merge Codex review fix.  Signed Hz offset added to m_vfoHz
+// when computing the TX overlay position.  Tracks the slice's active XIT
+// offset (xitEnabled ? xitHz : 0) so the orange band centers on the actual
+// transmit frequency, not the RX VFO.  Wired from SliceModel xit signals
+// in MainWindow::wireSliceToSpectrum.
+// ---------------------------------------------------------------------------
+void SpectrumWidget::setTxVfoOffsetHz(int offsetHz)
+{
+    if (m_txVfoOffsetHz == offsetHz) {
+        return;
+    }
+    m_txVfoOffsetHz = offsetHz;
+    if (m_txFilterVisible) {
+        markOverlayDirty();
+        update();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // setTxFilterColor()
 //
 // Plan 4 D9b (Cluster F).  User-pickable TX passband overlay fill colour.
@@ -2982,8 +3003,12 @@ void SpectrumWidget::drawTxFilterOverlay(QPainter& p, const QRect& specRect)
 
     auto [iqLow, iqHigh] = txAudioToIq(m_txFilterLow, m_txFilterHigh, m_txMode);
 
-    const double absLow  = m_vfoHz + static_cast<double>(iqLow);
-    const double absHigh = m_vfoHz + static_cast<double>(iqHigh);
+    // m_txVfoOffsetHz tracks the active XIT offset so the overlay centers
+    // on the actual TX frequency rather than the RX VFO.  Zero when XIT is
+    // disabled or the slice has no XIT.
+    const double txCenter = m_vfoHz + static_cast<double>(m_txVfoOffsetHz);
+    const double absLow  = txCenter + static_cast<double>(iqLow);
+    const double absHigh = txCenter + static_cast<double>(iqHigh);
 
     int xLow  = hzToX(absLow,  specRect);
     int xHigh = hzToX(absHigh, specRect);
@@ -3074,8 +3099,11 @@ void SpectrumWidget::drawTxFilterWaterfallColumn(QPainter& p, const QRect& wfRec
 
     auto [iqLow, iqHigh] = txAudioToIq(m_txFilterLow, m_txFilterHigh, m_txMode);
 
-    const double absLow  = m_vfoHz + static_cast<double>(iqLow);
-    const double absHigh = m_vfoHz + static_cast<double>(iqHigh);
+    // m_txVfoOffsetHz tracks active XIT offset — same rationale as in
+    // drawTxFilterOverlay (panadapter side); kept in lockstep.
+    const double txCenter = m_vfoHz + static_cast<double>(m_txVfoOffsetHz);
+    const double absLow  = txCenter + static_cast<double>(iqLow);
+    const double absHigh = txCenter + static_cast<double>(iqHigh);
 
     int xLow  = hzToX(absLow,  wfRect);
     int xHigh = hzToX(absHigh, wfRect);
