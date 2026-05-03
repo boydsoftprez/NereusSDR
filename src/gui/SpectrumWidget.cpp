@@ -471,14 +471,21 @@ void SpectrumWidget::loadSettings()
                             static_cast<int>(TimestampMode::Count) - 1));
     m_showRxFilterOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxFilterOnWaterfall"), m_panIndex),
                                         QStringLiteral("False")).toString() == QStringLiteral("True");
+    // Default True — same rationale as DisplayDrawTxFilter above: the TX
+    // overlay should be visible during MOX out of the box.  The waterfall
+    // column is independently MOX-gated at the call site.
     m_showTxFilterOnRxWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxFilterOnRxWaterfall"), m_panIndex),
-                                          QStringLiteral("False")).toString() == QStringLiteral("True");
+                                          QStringLiteral("True")).toString() == QStringLiteral("True");
     // Plan 4 D9 (Cluster E): persist DrawTXFilter flag.
     // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter property.
     // Until the Setup → Display TX Display page has a wired checkbox,
     // the user can set this in AppSettings XML directly.
+    // Default True: pairs with the MOX-gated TX overlay paint at the call
+    // sites (m_txFilterVisible && m_moxOverlay).  Without this, MOX flips
+    // m_moxOverlay true, the RX cyan correctly hides, but the TX orange
+    // never paints — the panadapter goes "clear" during TX/TUNE.
     m_txFilterVisible = s.value(settingsKey(QStringLiteral("DisplayDrawTxFilter"), m_panIndex),
-                                QStringLiteral("False")).toString() == QStringLiteral("True");
+                                QStringLiteral("True")).toString() == QStringLiteral("True");
     m_showRxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowRxZeroLine"), m_panIndex),
                                           QStringLiteral("False")).toString() == QStringLiteral("True");
     m_showTxZeroLineOnWaterfall = s.value(settingsKey(QStringLiteral("DisplayShowTxZeroLine"), m_panIndex),
@@ -2801,6 +2808,10 @@ void SpectrumWidget::setMoxOverlay(bool isTx)
     }
     m_moxOverlay = isTx;
     markOverlayDirty();
+    update();   // ensure QPainter path repaints immediately on MOX flip;
+                // markOverlayDirty alone waits for the next natural QRhi
+                // frame and was visibly laggy on bench (the panadapter went
+                // "clear" briefly between cyan RX shadow + orange TX band).
 }
 
 // From Thetis display.cs:4840 [v2.10.3.13]:
