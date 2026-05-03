@@ -45,6 +45,23 @@
 //                 supply volts), exposes a Reset button, and a public
 //                 resetPaValues() slot intended to be cross-page-wired
 //                 to PaWattMeterPage::resetPaValuesRequested (Phase 5A).
+//   2026-05-03 — Phase 6 of issue #167 PA-cal hotfix: PaGainByBandPage
+//                 gains the full live editor (replaces the Phase 2
+//                 placeholder body).  Surface mirrors Thetis tpGainByBand
+//                 (setup.designer.cs:47386-47525 [v2.10.3.13]) plus
+//                 chkAutoPACalibrate (setup.designer.cs:49084
+//                 [v2.10.3.13]): profile combo, 4 lifecycle buttons
+//                 (New / Copy / Delete / Reset Defaults), 14-band gain
+//                 spinbox grid (nud160M..nudVHF13), 14x9 drive-step
+//                 adjust matrix (NereusSDR-spin densification — Thetis
+//                 ships only the row for the selected band), per-band
+//                 max-power column (nudMaxPowerForBandPA +
+//                 chkUsePowerOnDrvTunPA), warning icon + label
+//                 (pbPAProfileWarning + lblPAProfileWarning), chkPANewCal
+//                 "New Cal" toggle, and the chkAutoPACalibrate checkbox
+//                 placeholder for Phase 7's sweep state machine.
+//                 Authored by J.J. Boyd (KG4VCF) with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -94,28 +111,211 @@
 
 #include "gui/SetupPage.h"
 
+#include "core/HpsdrModel.h"
+#include "models/Band.h"
+
 #include <QString>
+#include <array>
 #include <limits>
 
-class QPushButton;
-
 class QCheckBox;
+class QComboBox;
+class QDoubleSpinBox;
+class QLabel;
 class QPushButton;
 
 namespace NereusSDR {
 
 class PaCalibrationGroup;
+class PaProfile;
+class PaProfileManager;
 class MetricLabel;
 
 // ---------------------------------------------------------------------------
 // PA > PA Gain
-// Mirrors Thetis tpGainByBand (setup.designer.cs:47386-47525 [v2.10.3.13]).
-// Phase 2 placeholder — Phase 3M-3 wires per-band gain table + auto-cal sweep.
+// Mirrors Thetis tpGainByBand (setup.designer.cs:47386-47525 [v2.10.3.13])
+// plus chkAutoPACalibrate (setup.designer.cs:49084 [v2.10.3.13]).
+//
+// Phase 6 of issue #167 promotes this from the Phase 2 placeholder to the
+// full live editor backed by PaProfileManager (Phase 2B).  Layout mirrors
+// the Thetis tpGainByBand surface 1:1 control-for-control:
+//
+//   Top row:    [combo: profile name v]  [New] [Copy] [Delete] [Reset]
+//               [warning icon] PA Profile has been modified.
+//               [chkPANewCal] "New Cal" mode
+//
+//   Main grid:  Gain By Band (dB)
+//               Band   Gain   10%   20%   ...  90%   MaxW   Use Max
+//               160m  [50.5] [0.0] [0.0]  ...  [0.0] [200]  [ ]
+//               80m   [50.5] [0.0]        ...
+//               ... (14 rows: 11 HF + 6m + GEN + WWV + XVTR)
+//
+//   Bottom:     [chkAutoPACalibrate] Auto-Calibrate (sweep)
+//                 (Phase 7 wires the sweep state machine to this checkbox.)
+//
+// All editor flows route through PaProfileManager.  Editing a spinbox
+// mutates the active profile via PaProfileManager::saveProfile so changes
+// land in AppSettings immediately (no separate Save button — matches the
+// existing TX-EQ / CFC dialogs which auto-persist on every spinbox edit).
+//
+// Test seams (always-on, gated by NEREUS_BUILD_TESTS):
+//   profileComboForTest()     / gainSpinForTest(Band)
+//   adjustSpinForTest(Band,n) / maxPowerSpinForTest(Band)
+//   useMaxPowerCheckForTest(Band) / autoCalibrateCheckForTest()
+//   newCalCheckForTest()      / warningIconForTest() / warningLabelForTest()
+//   newButtonForTest()        / copyButtonForTest()
+//   deleteButtonForTest()     / resetButtonForTest()
+//   setNextProfileNameForTest(QString) — bypass QInputDialog::getText
+//   setDeleteConfirmedForTest(bool)    — bypass delete QMessageBox
+//   setResetConfirmedForTest(bool)     — bypass reset QMessageBox
 // ---------------------------------------------------------------------------
 class PaGainByBandPage : public SetupPage {
     Q_OBJECT
 public:
+    /// Number of PA-editable bands (160m..XVTR; SWL bands are not editable
+    /// here). Public so the unnamed-namespace helpers in the .cpp can size
+    /// their loop bounds without coupling to a fixed integer literal.
+    static constexpr int kPaBandCount = 14;
+
     explicit PaGainByBandPage(RadioModel* model, QWidget* parent = nullptr);
+
+#ifdef NEREUS_BUILD_TESTS
+    QComboBox*       profileComboForTest()       const { return m_profileCombo; }
+    QDoubleSpinBox*  gainSpinForTest(Band b)     const;
+    QDoubleSpinBox*  adjustSpinForTest(Band b, int step) const;
+    QDoubleSpinBox*  maxPowerSpinForTest(Band b) const;
+    QCheckBox*       useMaxPowerCheckForTest(Band b) const;
+    QCheckBox*       autoCalibrateCheckForTest() const { return m_autoCalibrateCheck; }
+    QCheckBox*       newCalCheckForTest()        const { return m_newCalCheck; }
+    QLabel*          warningIconForTest()        const { return m_warningIcon; }
+    QLabel*          warningLabelForTest()       const { return m_warningLabel; }
+    QPushButton*     newButtonForTest()          const { return m_btnNew; }
+    QPushButton*     copyButtonForTest()         const { return m_btnCopy; }
+    QPushButton*     deleteButtonForTest()       const { return m_btnDelete; }
+    QPushButton*     resetButtonForTest()        const { return m_btnReset; }
+
+    /// Inject a name string consumed by the next New / Copy click instead of
+    /// opening QInputDialog::getText. Cleared after consumption.
+    void setNextProfileNameForTest(const QString& name)
+        { m_pendingProfileNameForTest = name; m_hasPendingProfileNameForTest = true; }
+
+    /// Inject a confirm answer consumed by the next Delete click instead of
+    /// opening QMessageBox::question.
+    void setDeleteConfirmedForTest(bool confirmed)
+        { m_deleteConfirmForTest = confirmed; m_hasDeleteConfirmForTest = true; }
+
+    /// Inject a confirm answer consumed by the next Reset Defaults click.
+    void setResetConfirmedForTest(bool confirmed)
+        { m_resetConfirmForTest = confirmed; m_hasResetConfirmForTest = true; }
+#endif
+
+private slots:
+    /// User picked a different profile in the combo.  Loads that profile's
+    /// values into all spinboxes and (re-)evaluates the warning visibility.
+    /// Mirrors Thetis comboPAProfile_SelectedIndexChanged
+    /// (setup.cs:22907-22932 [v2.10.3.13]).
+    void onProfileSelected(const QString& name);
+
+    /// "New" button — prompt for a name, build a fresh PaProfile seeded from
+    /// the connected HPSDRModel's factory row, save it, set active.
+    /// Mirrors Thetis btnNewPAProfile_Click (setup.cs:22984-22996 [v2.10.3.13]).
+    void onNewProfile();
+
+    /// "Copy" button — prompt for a new name, deep-copy the current active
+    /// profile into the new one, save it, set active.
+    /// Mirrors Thetis btnCopyPAProfile_Click (setup.cs:22967-22983 [v2.10.3.13]).
+    void onCopyProfile();
+
+    /// "Delete" button — confirm, then remove the active profile.
+    /// PaProfileManager refuses to delete the last remaining profile.
+    /// Mirrors Thetis btnDeletePAProfile_Click (setup.cs:22998-23025 [v2.10.3.13]).
+    void onDeleteProfile();
+
+    /// "Reset Defaults" button — confirm, then re-seed the active profile
+    /// from defaultPaGainsForBand for its model.
+    /// Mirrors Thetis btnResetPAProfile_Click (setup.cs:23161+ [v2.10.3.13]).
+    void onResetDefaults();
+
+    /// Per-band gain spinbox edited → mutate active profile + persist.
+    void onGainChanged(Band band, double value);
+
+    /// Per-band per-step adjust spinbox edited → mutate active profile + persist.
+    void onAdjustChanged(Band band, int step, double value);
+
+    /// Per-band max-power spinbox edited → mutate active profile + persist.
+    void onMaxPowerChanged(Band band, double watts);
+
+    /// Per-band Use-Max checkbox toggled → mutate active profile + persist.
+    void onUseMaxPowerToggled(Band band, bool use);
+
+private:
+    /// Repopulate the combo from PaProfileManager::profileNames(). Preserves
+    /// the active profile selection when the manager publishes a list change.
+    void rebuildProfileCombo();
+
+    /// Load a profile's values into every spinbox.  Sets m_updatingFromProfile
+    /// across the population so the cell setters do not re-fire onXxxChanged.
+    void loadProfileIntoUi(const PaProfile& profile);
+
+    /// Compute whether the active profile diverges from canonical
+    /// defaultPaGainsForBand for its connected model, and show / hide the
+    /// warning icon + label accordingly.
+    void warnIfProfileDiverged();
+
+    /// Connect a freshly-built spinbox/checkbox to its handler. Wraps
+    /// connect() so we can apply m_updatingFromProfile suppression uniformly.
+    void wireGainSpin(QDoubleSpinBox* spin, Band band);
+    void wireAdjustSpin(QDoubleSpinBox* spin, Band band, int step);
+    void wireMaxPowerSpin(QDoubleSpinBox* spin, Band band);
+    void wireUseMaxCheck(QCheckBox* check, Band band);
+
+    /// Borrowed PaProfileManager from RadioModel (Phase 4A wiring).
+    /// Lifetime is RadioModel's lifetime; not owned.
+    PaProfileManager* m_paProfileManager{nullptr};
+
+    /// Connected model (read once at construction). Used by the New button
+    /// to seed the right factory row, and by the warning evaluation to know
+    /// which canonical row to compare against.
+    HPSDRModel m_connectedModel{HPSDRModel::FIRST};
+
+    QComboBox*    m_profileCombo{nullptr};
+    QPushButton*  m_btnNew{nullptr};
+    QPushButton*  m_btnCopy{nullptr};
+    QPushButton*  m_btnDelete{nullptr};
+    QPushButton*  m_btnReset{nullptr};
+    QLabel*       m_warningIcon{nullptr};        // pbPAProfileWarning
+    QLabel*       m_warningLabel{nullptr};       // lblPAProfileWarning
+    QCheckBox*    m_newCalCheck{nullptr};        // chkPANewCal
+    QCheckBox*    m_autoCalibrateCheck{nullptr}; // chkAutoPACalibrate
+
+    /// Per-band PA gain spinboxes (nud160M..nudVHF13 in Thetis terms).
+    /// Index by static_cast<int>(Band) for the 14 PA-relevant bands
+    /// (Band160m..XVTR). SWL bands are not editable here.
+    std::array<QDoubleSpinBox*, kPaBandCount> m_gainSpins{};
+
+    /// 14x9 drive-step adjust matrix.  m_adjustSpins[band][step] addresses
+    /// the spinbox for drive% = (step + 1) * 10  (i.e. step 0 = 10%, step 8 = 90%).
+    std::array<std::array<QDoubleSpinBox*, 9>, kPaBandCount> m_adjustSpins{};
+
+    /// Per-band max-power column (nudMaxPowerForBandPA + chkUsePowerOnDrvTunPA
+    /// per-band variants).
+    std::array<QDoubleSpinBox*, kPaBandCount> m_maxPowerSpins{};
+    std::array<QCheckBox*,      kPaBandCount> m_useMaxPowerChecks{};
+
+    /// Re-entry guard set during loadProfileIntoUi so spinbox setValue calls
+    /// do not re-fire the user-edit handlers.
+    bool m_updatingFromProfile{false};
+
+#ifdef NEREUS_BUILD_TESTS
+    /// Test injectors (see setNextProfileNameForTest / setDeleteConfirmedForTest /
+    /// setResetConfirmedForTest above).
+    bool    m_hasPendingProfileNameForTest{false};
+    QString m_pendingProfileNameForTest;
+    bool    m_hasDeleteConfirmForTest{false};
+    bool    m_deleteConfirmForTest{false};
+    bool    m_hasResetConfirmForTest{false};
+    bool    m_resetConfirmForTest{false};
+#endif
 };
 
 // ---------------------------------------------------------------------------

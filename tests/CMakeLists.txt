@@ -1102,6 +1102,25 @@ target_compile_definitions(tst_pa_values_page PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_pa_values_page_gap_fill)
 target_compile_definitions(tst_pa_values_page_gap_fill PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 6 of #167: PaGainByBandPage live editor ───────────────────────────
+# Verifies the live editor that replaced the Phase 2 placeholder body in
+# PaSetupPages.cpp:117-145.  Surface mirrors Thetis tpGainByBand
+# (setup.designer.cs:47386-47525 [v2.10.3.13]):
+#   - profile combo (comboPAProfile) + 4 lifecycle buttons
+#     (New / Copy / Delete / Reset Defaults)
+#   - 14-band gain spinbox grid (nud160M..nudVHF13)
+#   - 14x9 drive-step adjust spinbox matrix (panelAdjustGain — NereusSDR
+#     densification: Thetis ships only the row for the selected band)
+#   - per-band max-power column (nudMaxPowerForBandPA + chkUsePowerOnDrvTunPA)
+#   - warning icon + label (pbPAProfileWarning + lblPAProfileWarning)
+#   - chkPANewCal "New Cal" mode toggle
+#   - chkAutoPACalibrate auto-cal toggle (Phase 7 wires the sweep flow)
+# Lifecycle behavior wired through PaProfileManager (Phase 2B). Tests cover
+# combo population, value round-trips, button flows (New / Copy / Delete /
+# Reset Defaults), warning visibility on profile divergence.
+nereus_add_test(tst_pa_gain_by_band_page_editor)
+target_compile_definitions(tst_pa_gain_by_band_page_editor PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
 # Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis
 # console.cs:setAlex2HPF / setAlex2LPF (7060-7299) first-match range logic
