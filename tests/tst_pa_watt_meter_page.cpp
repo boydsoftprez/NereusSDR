@@ -111,7 +111,7 @@ void TstPaWattMeterPage::persistence_round_trip_through_page()
 {
     const QString testMac = QStringLiteral("AA:BB:CC:DD:EE:42");
 
-    // --- Phase A: open page, mutate spinbox, save ---
+    // --- Phase A: open page, mutate spinbox, expect auto-persist ---
     {
         RadioModel model;
         auto& ctrl = model.calibrationControllerMutable();
@@ -123,11 +123,13 @@ void TstPaWattMeterPage::persistence_round_trip_through_page()
         QVERIFY(grp != nullptr);
         QCOMPARE(grp->spinBoxCountForTest(), 10);
 
-        // Simulate user editing cal point 5 to a non-default value.
+        // Simulate user editing cal point 5 to a non-default value. The
+        // spinbox edit MUST auto-persist via PaCalibrationGroup::onSpinChanged
+        // calling controller->save() -- a previous version of this test
+        // explicitly called ctrl.save() here, masking a real persistence
+        // regression caught by Codex on PR #165.
         grp->setSpinValueForTest(5, 47.5);
         QCOMPARE(ctrl.paCalProfile().watts[5], 47.5f);
-
-        ctrl.save();
     }
 
     // --- Phase B: fresh model + page, same MAC, load ---

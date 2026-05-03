@@ -290,6 +290,14 @@ void PaCalibrationGroup::onSpinChanged(int idx, double v)
     if (m_updatingFromController) { return; }   // echo guard
     if (!m_controller) { return; }
     m_controller->setPaCalPoint(idx, static_cast<float>(v));
+    // Persist immediately. Mirrors CalibrationTab's groups 1-4 pattern --
+    // every UI-driven setter call is followed by an explicit save(); the
+    // model-layer setters intentionally do NOT auto-save (see
+    // CalibrationController::setLevelOffsetDb / setFreqCorrectionFactor
+    // which only emit changed()). Pre-Phase-3A migration this lived in the
+    // CalibrationTab spinbox lambda; lost during the move to PaWattMeterPage
+    // and surfaced by Codex review on PR #165.
+    m_controller->save();
 }
 
 void PaCalibrationGroup::syncFromProfile()
