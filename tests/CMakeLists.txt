@@ -1064,6 +1064,18 @@ target_compile_definitions(tst_pa_calibration_group PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_pa_watt_meter_page)
 target_compile_definitions(tst_pa_watt_meter_page PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 5 Agent 5A of #167: PaWattMeterPage gap fill ────────────────────────
+# Verifies the two missing Thetis controls now wired into PaWattMeterPage:
+#   - chkPAValues toggle  → AppSettings "display/showPaValuesPage" round-trip,
+#                            default True on first run.
+#   - btnResetPAValues    → emits resetPaValuesRequested() on click;
+#                            PaValuesPage (Phase 5B) subscribes for peak/min
+#                            tracking reset.
+# Source: Thetis chkPAValues + btnResetPAValues setup.designer.cs:51155-51177
+#         + setup.cs:16340-16357 [v2.10.3.13].
+nereus_add_test(tst_pa_watt_meter_page_gap_fill)
+target_compile_definitions(tst_pa_watt_meter_page_gap_fill PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Setup IA reshape Phase 4: live PA Values page ────────────────────────────
 # Verifies PaValuesPage builds at least 8 MetricLabel children and updates
 # them when the bound RadioStatus + RadioConnection signals fire:

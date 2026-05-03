@@ -21,6 +21,14 @@
 //                 RF voltage readouts (need public scaleFwdPowerWatts
 //                 utility) and the Reset peak/min button.
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-03 — Phase 5 Agent 5A of #167: PaWattMeterPage gains the
+//                 missing Thetis controls — chkPAValues "Show PA Values
+//                 page" checkbox (persists visibility hint to
+//                 AppSettings under "display/showPaValuesPage") and
+//                 btnResetPAValues "Reset PA Values" button (emits
+//                 resetPaValuesRequested for PaValuesPage / Phase 5B
+//                 peak-min reset).  AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -70,6 +78,7 @@
 
 #include "PaSetupPages.h"
 
+#include "core/AppSettings.h"
 #include "core/CalibrationController.h"
 #include "core/PaCalProfile.h"
 #include "core/RadioConnection.h"
@@ -78,9 +87,11 @@
 #include "gui/widgets/MetricLabel.h"
 #include "models/RadioModel.h"
 
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QPushButton>
 #include <QString>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -148,7 +159,27 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
 //
 // Mirrors Thetis tpWattMeter (setup.designer.cs:49304-49309 [v2.10.3.13]).
 // Phase 3A hosts the per-board PA forward-power cal-point spinbox group
-// (PaCalibrationGroup); Phase 3+ adds the Show PA Values toggle.
+// (PaCalibrationGroup).
+//
+// Phase 5 Agent 5A of #167 closes the gap to full Thetis parity by adding:
+//   * chkPAValues        — "Show PA Values page" checkbox; toggles
+//                           AppSettings "display/showPaValuesPage" so the
+//                           SetupDialog navigation (or PaValuesPage itself)
+//                           can hide the dedicated PA Values page when the
+//                           user prefers a leaner Setup tree.  Maps to
+//                           Thetis chkPAValues_CheckedChanged
+//                           (setup.cs:16340-16343 [v2.10.3.13]) which
+//                           toggles panelPAValues.Visible inline; NereusSDR
+//                           replaces the inline panel with a separate page
+//                           plus a settings hint.
+//   * btnResetPAValues   — "Reset PA Values" button; emits
+//                           resetPaValuesRequested() so PaValuesPage owns
+//                           the peak/min reset slot.  Maps to Thetis
+//                           btnResetPAValues_Click (setup.cs:16346-16357
+//                           [v2.10.3.13]) which blanks readout text fields
+//                           directly; NereusSDR splits controller (this
+//                           page) from state owner (PaValuesPage) via a
+//                           Qt signal.
 //
 // Wiring mirrors what previously lived in CalibrationTab.cpp:
 //   * Construct PaCalibrationGroup parented to this page.
@@ -173,31 +204,93 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
             "\n"
             "Source: Thetis setup.designer.cs:49304-49309 [v2.10.3.13]"));
         contentLayout()->insertWidget(contentLayout()->count() - 1, lbl);
-        return;
+        // Note: the chkPAValues toggle and btnResetPAValues button are
+        // model-independent (settings + signal only), so we fall through to
+        // the shared block below to wire them in even in the model-less
+        // fallback path.  This keeps the page's surface area consistent
+        // across construction modes for tests and model-less previews.
+    } else {
+        auto* calCtrl = &model->calibrationControllerMutable();
+        m_paCalGroup = new PaCalibrationGroup(this);
+
+        // Insert before the trailing stretch SetupPage::init() appended so
+        // the group renders flush with the page top — matches
+        // PaGainByBandPage above.
+        contentLayout()->insertWidget(contentLayout()->count() - 1, m_paCalGroup);
+
+        // Initial populate from the controller's current profile (None hides
+        // the group; live profile change rebuilds via the lambda below).
+        m_paCalGroup->populate(calCtrl, calCtrl->paCalProfile().boardClass);
+
+        // Repopulate on radio swap / first connect — board class can flip
+        // from None → Anan10/100/8000 once RadioModel seeds m_paCalProfile
+        // from the hardware profile.  Mirrors the connect block previously
+        // living in CalibrationTab::CalibrationTab (Section 3.3 of the P1
+        // full-parity epic).
+        connect(calCtrl, &CalibrationController::paCalProfileChanged,
+                this, [this, calCtrl]() {
+            if (m_paCalGroup) {
+                m_paCalGroup->populate(calCtrl, calCtrl->paCalProfile().boardClass);
+            }
+        });
     }
 
-    auto* calCtrl = &model->calibrationControllerMutable();
-    m_paCalGroup = new PaCalibrationGroup(this);
-
-    // Insert before the trailing stretch SetupPage::init() appended so the
-    // group renders flush with the page top — matches PaGainByBandPage above.
-    contentLayout()->insertWidget(contentLayout()->count() - 1, m_paCalGroup);
-
-    // Initial populate from the controller's current profile (None hides the
-    // group; live profile change rebuilds via the lambda below).
-    m_paCalGroup->populate(calCtrl, calCtrl->paCalProfile().boardClass);
-
-    // Repopulate on radio swap / first connect — board class can flip from
-    // None → Anan10/100/8000 once RadioModel seeds m_paCalProfile from the
-    // hardware profile.  Mirrors the connect block previously living in
-    // CalibrationTab::CalibrationTab (Section 3.3 of the P1 full-parity epic).
-    connect(calCtrl, &CalibrationController::paCalProfileChanged,
-            this, [this, calCtrl]() {
-        if (m_paCalGroup) {
-            m_paCalGroup->populate(calCtrl, calCtrl->paCalProfile().boardClass);
-        }
+    // ── chkPAValues "Show PA Values page" toggle ────────────────────────────
+    // From Thetis chkPAValues setup.designer.cs:51155-51177 [v2.10.3.13]
+    // + setup.cs:16340-16343 toggle.  Thetis flips panelPAValues.Visible
+    // inline; NereusSDR persists the visibility hint to AppSettings under
+    // "display/showPaValuesPage" (default "True") so the dedicated
+    // PaValuesPage / SetupDialog navigation can honor it.
+    m_showPaValuesCheck = new QCheckBox(tr("Show PA Values page"), this);
+    m_showPaValuesCheck->setObjectName(QStringLiteral("chkPAValues"));
+    // Tooltip is user-visible plain English; Thetis cite kept in the
+    // surrounding header comment (and the From Thetis cite block above)
+    // per CLAUDE.md "No source cites in user-visible strings".
+    m_showPaValuesCheck->setToolTip(tr(
+        "Toggle visibility of the PA Values page in Setup navigation."));
+    const bool showPaValues = AppSettings::instance().value(
+        QStringLiteral("display/showPaValuesPage"),
+        QStringLiteral("True")).toString() == QStringLiteral("True");
+    m_showPaValuesCheck->setChecked(showPaValues);
+    connect(m_showPaValuesCheck, &QCheckBox::toggled, this,
+            [](bool checked) {
+        AppSettings::instance().setValue(
+            QStringLiteral("display/showPaValuesPage"),
+            checked ? QStringLiteral("True") : QStringLiteral("False"));
     });
+    contentLayout()->insertWidget(contentLayout()->count() - 1, m_showPaValuesCheck);
+
+    // ── btnResetPAValues "Reset PA Values" button ───────────────────────────
+    // From Thetis btnResetPAValues setup.designer.cs:51155-51177 [v2.10.3.13]
+    // + setup.cs:16346-16357 click handler.  Thetis blanks readout text
+    // directly on click; NereusSDR emits resetPaValuesRequested so the
+    // separate PaValuesPage (Phase 5B) can subscribe and clear its
+    // peak/min tracking.
+    m_resetPaValuesButton = new QPushButton(tr("Reset PA Values"), this);
+    m_resetPaValuesButton->setObjectName(QStringLiteral("btnResetPAValues"));
+    // Tooltip is user-visible plain English; Thetis cite kept in the
+    // surrounding header comment per CLAUDE.md "No source cites in
+    // user-visible strings".
+    m_resetPaValuesButton->setToolTip(tr(
+        "Reset peak/min tracking on the PA Values page."));
+    connect(m_resetPaValuesButton, &QPushButton::clicked, this,
+            &PaWattMeterPage::resetPaValuesRequested);
+    contentLayout()->insertWidget(contentLayout()->count() - 1, m_resetPaValuesButton);
 }
+
+#ifdef NEREUS_BUILD_TESTS
+bool PaWattMeterPage::showPaValuesCheckedForTest() const
+{
+    return m_showPaValuesCheck && m_showPaValuesCheck->isChecked();
+}
+
+void PaWattMeterPage::clickResetPaValuesForTest()
+{
+    if (m_resetPaValuesButton) {
+        m_resetPaValuesButton->click();
+    }
+}
+#endif
 
 // ── PaValuesPage ─────────────────────────────────────────────────────────────
 //

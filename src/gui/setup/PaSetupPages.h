@@ -29,6 +29,13 @@
 //   2026-05-02 — Phase 4: PaValuesPage gains MetricLabel members + test
 //                 accessors guarded by NEREUS_BUILD_TESTS.  AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-05-03 — Phase 5 Agent 5A of #167: PaWattMeterPage gains the
+//                 missing Thetis controls — chkPAValues "Show PA Values
+//                 page" checkbox (persists "display/showPaValuesPage"
+//                 visibility hint to AppSettings) + btnResetPAValues
+//                 "Reset PA Values" button (emits resetPaValuesRequested
+//                 for PaValuesPage / Phase 5B peak-min reset).
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -80,6 +87,9 @@
 
 #include <QString>
 
+class QCheckBox;
+class QPushButton;
+
 namespace NereusSDR {
 
 class PaCalibrationGroup;
@@ -102,15 +112,47 @@ public:
 // Phase 3A migrates the per-board PA forward-power cal-point spinbox group
 // (PaCalibrationGroup) here from the Hardware → Calibration tab; the group
 // is rebuilt on `CalibrationController::paCalProfileChanged` (radio swap).
-// Phase 3+ adds the Show PA Values toggle.
+//
+// Phase 5 Agent 5A of #167 adds the two missing Thetis controls from
+// panelPAValues' surrounding chrome:
+//   * chkPAValues  — "Show PA Values page" checkbox.  In Thetis this gates
+//                    the embedded panelPAValues block's visibility
+//                    (setup.cs:16340-16343 chkPAValues_CheckedChanged
+//                    [v2.10.3.13]).  In NereusSDR the readout block is
+//                    promoted to a dedicated PaValuesPage, so the toggle
+//                    persists a visibility hint to AppSettings under
+//                    "display/showPaValuesPage" (default "True").  The
+//                    SetupDialog navigation (or PaValuesPage itself) honors
+//                    the preference.
+//   * btnResetPAValues — "Reset PA Values" button.  Emits
+//                    resetPaValuesRequested() so PaValuesPage (Phase 5B)
+//                    can subscribe and reset its peak/min tracking state.
+//                    Thetis btnResetPAValues_Click at setup.cs:16346-16357
+//                    [v2.10.3.13] blanks the readout text fields directly;
+//                    NereusSDR splits the controller (this page) from the
+//                    state owner (PaValuesPage) via a signal.
 // ---------------------------------------------------------------------------
 class PaWattMeterPage : public SetupPage {
     Q_OBJECT
 public:
     explicit PaWattMeterPage(RadioModel* model, QWidget* parent = nullptr);
 
+#ifdef NEREUS_BUILD_TESTS
+    bool showPaValuesCheckedForTest() const;
+    void clickResetPaValuesForTest();
+#endif
+
+signals:
+    /// Emitted when the user clicks "Reset PA Values".  Phase 5B's
+    /// PaValuesPage subscribes and resets its peak/min state.
+    /// From Thetis btnResetPAValues_Click handler at setup.cs:16346-16357
+    /// [v2.10.3.13].
+    void resetPaValuesRequested();
+
 private:
     PaCalibrationGroup* m_paCalGroup{nullptr};
+    QCheckBox*          m_showPaValuesCheck{nullptr};
+    QPushButton*        m_resetPaValuesButton{nullptr};
 };
 
 // ---------------------------------------------------------------------------
