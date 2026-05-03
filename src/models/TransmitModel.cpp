@@ -111,6 +111,21 @@
 //                 hardware/<mac>/tx/FilterLow and FilterHigh.
 //                 NereusSDR-original (Plan 4 Cluster A, Task 2/D1).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-03 — Phase 3 Agent 3A of issue #167 (PA-cal hotfix scaffolding):
+//                 m_powerByBand[14] (default 100 W; per-band normal-mode
+//                 power array parallel to m_tunePowerByBand) +
+//                 powerForBand / setPowerForBand + powerByBandChanged
+//                 signal; 3 Thetis ATT-on-TX-on-power-change safety
+//                 properties (forceAttwhenPSAoff,
+//                 forceAttwhenPowerChangesWhenPSAon, _anddecreased) +
+//                 m_lastPower sentinel (-1; runtime-only; resets on
+//                 forceAttwhenPowerChangesWhenPSAon toggle per Thetis
+//                 console.cs:29298 [v2.10.3.13]); pureSignalActive()
+//                 predicate (returns false unconditionally — 3M-4
+//                 PureSignal phase wires the live PS-A check). Math
+//                 kernel itself (computeAudioVolume / setPowerUsingTargetDbm)
+//                 lands in Phases 3B / 3C. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TransmitModel.h"
@@ -185,6 +200,17 @@ TransmitModel::TransmitModel(QObject* parent)
     //   tunePower_by_band = new int[(int)Band.LAST];
     //   for (int i = 0; i < (int)Band.LAST; i++) tunePower_by_band[i] = 50;
     m_tunePowerByBand.fill(50);
+
+    // Initialise per-band normal-mode power to 100W (#167 Phase 3A).
+    // From Thetis console.cs:1817 [v2.10.3.13]:
+    //   limitPower_by_band = new int[(int)Band.LAST];
+    //   for (int i = 0; i < (int)Band.LAST; i++) limitPower_by_band[i] = 100;
+    // (Thetis power_by_band itself defaults to 50 at console.cs:1814; the
+    //  100 W default here matches limitPower_by_band — the band-max ceiling
+    //  used by the dBm compensator's setPowerUsingTargetDbm math kernel
+    //  in Phase 3C.  Carries over the safety-first NereusSDR default
+    //  recorded in plan §"Carry-over story".)
+    m_powerByBand.fill(100);
 }
 
 TransmitModel::~TransmitModel() = default;
@@ -439,6 +465,116 @@ void TransmitModel::setTunePowerForBand(Band band, int watts)
     }
     m_tunePowerByBand[static_cast<std::size_t>(idx)] = clamped;
     emit tunePowerByBandChanged(band, clamped);
+}
+
+// ── Per-band normal-mode power (#167 Phase 3A) ──────────────────────────────
+
+int TransmitModel::powerForBand(Band band) const
+{
+    const int idx = static_cast<int>(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return 100;  // safe fallback for out-of-range band
+    }
+    return m_powerByBand[static_cast<std::size_t>(idx)];
+}
+
+void TransmitModel::setPowerForBand(Band band, int watts)
+{
+    // From Thetis console.cs:1817 [v2.10.3.13] — limitPower_by_band default
+    // 100 W per band; NereusSDR uses 100 W as the normal-mode default for
+    // the dBm compensator (Phase 3A scaffolding for #167 Phase 3C math
+    // kernel).  Phase 3C's setPowerUsingTargetDbm txMode 0 branch writes
+    // back into m_powerByBand[band] via setPower side-effect (matches
+    // Thetis console.cs:46676 [v2.10.3.13] power_by_band[(int)_tx_band] =
+    // new_pwr).
+    const int idx = static_cast<int>(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return;
+    }
+    const int clamped = std::clamp(watts, 0, 100);
+    if (m_powerByBand[static_cast<std::size_t>(idx)] == clamped) {
+        return;
+    }
+    m_powerByBand[static_cast<std::size_t>(idx)] = clamped;
+    // Auto-persist: hardware/<m_persistMac>/powerByBand/<bandKeyName>.
+    if (!m_persistMac.isEmpty()) {
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/powerByBand/%2")
+                .arg(m_persistMac, bandKeyName(band)),
+            QString::number(clamped));
+    }
+    emit powerByBandChanged(band, clamped);
+}
+
+// ── ATT-on-TX-on-power-change safety setters (#167 Phase 3A) ────────────────
+//
+// All 3 setters follow the existing per-MAC L.2 auto-persist pattern.
+// CRITICAL: setForceAttwhenPowerChangesWhenPSAon resets m_lastPower to -1
+// when the value changes — Thetis console.cs:29298 [v2.10.3.13]:
+//     if (value != _forceATTwhenPowerChangesWhenPSAon) _lastPower = -1;
+//     _forceATTwhenPowerChangesWhenPSAon = value;
+
+void TransmitModel::setForceAttwhenPSAoff(bool on)
+{
+    if (on == m_forceAttwhenPSAoff) { return; }  // idempotent guard
+    // From Thetis console.cs:29285-29290 [v2.10.3.13]:
+    //   private bool _forceATTwhenPSAoff = true; //MW0LGE [2.9.0.7] added
+    //   public bool ForceATTwhenPSAoff
+    //   { get { return _forceATTwhenPSAoff; }
+    //     set { _forceATTwhenPSAoff = value; } }
+    m_forceAttwhenPSAoff = on;
+    persistOne(QStringLiteral("ForceATTwhenPSAoff"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit forceAttwhenPSAoffChanged(on);
+}
+
+void TransmitModel::setForceAttwhenPowerChangesWhenPSAon(bool on)
+{
+    // From Thetis console.cs:29298 [v2.10.3.13] — reset on toggle:
+    //   if (value != _forceATTwhenPowerChangesWhenPSAon) _lastPower = -1;
+    //   _forceATTwhenPowerChangesWhenPSAon = value;
+    if (on != m_forceAttwhenPowerChangesWhenPSAon) {
+        m_lastPower = -1;
+    }
+    if (on == m_forceAttwhenPowerChangesWhenPSAon) { return; }  // idempotent guard
+    m_forceAttwhenPowerChangesWhenPSAon = on;
+    persistOne(QStringLiteral("ForceATTwhenOutputPowerChangesWhenPSAon"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit forceAttwhenPowerChangesWhenPSAonChanged(on);
+}
+
+void TransmitModel::setForceAttwhenPowerChangesWhenPSAonAndDecreased(bool on)
+{
+    if (on == m_forceAttwhenPowerChangesWhenPSAonAndDecreased) { return; }  // idempotent guard
+    // From Thetis console.cs:29302-29310 [v2.10.3.13]:
+    //   private bool _forceATTwhenPowerChangesWhenPSAon_anddecreased = false;
+    //   public bool ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased
+    //   { get { return _forceATTwhenPowerChangesWhenPSAon_anddecreased; }
+    //     set { _forceATTwhenPowerChangesWhenPSAon_anddecreased = value; } }
+    m_forceAttwhenPowerChangesWhenPSAonAndDecreased = on;
+    persistOne(QStringLiteral("ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit forceAttwhenPowerChangesWhenPSAonAndDecreasedChanged(on);
+}
+
+void TransmitModel::setLastPower(int value)
+{
+    // Mirrors Thetis `private float _lastPower = -1;` (console.cs:29292
+    // [v2.10.3.13]).  Runtime-only — NOT persisted.  No signal — Phase 3C
+    // is the only writer in the production path; tests use this as
+    // bookkeeping for the ATT-on-TX gate semantics.
+    m_lastPower = value;
+}
+
+bool TransmitModel::pureSignalActive() const noexcept
+{
+    // Stub for Phase 3A scaffolding.  Phase 3M-4 (PureSignal feedback DDC
+    // wiring) replaces this with the live PS-A check
+    // (chkFWCATUBypass.Checked equivalent).  Until then the ATT-on-TX
+    // gate stays dormant — matches plan §"ATT-on-TX-on-power-change":
+    // "Returns false until 3M-4 PureSignal lands ... the gate is dormant
+    // but present."
+    return false;
 }
 
 void TransmitModel::setMacAddress(const QString& mac)
@@ -785,6 +921,50 @@ void TransmitModel::loadFromSettings(const QString& mac)
                           QStringLiteral("100")).toInt());
     setFilterHigh(s.value(pfx + QLatin1String("FilterHigh"),
                            QStringLiteral("2900")).toInt());
+
+    // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
+    //
+    // Per-band normal-mode power array.  Lives under a SEPARATE top-level
+    // scope (hardware/<mac>/powerByBand/), parallel to tunePowerByBand —
+    // not nested under tx/.  Default 100 W per band on first init.
+    // From Thetis console.cs:1817 [v2.10.3.13] — limitPower_by_band default.
+    {
+        const QString powerPfx =
+            QStringLiteral("hardware/%1/powerByBand/").arg(mac);
+        for (int i = 0; i < kBandCount; ++i) {
+            const Band band = static_cast<Band>(i);
+            const QString key = powerPfx + bandKeyName(band);
+            const int v = s.value(key, QStringLiteral("100")).toInt();
+            // Direct assignment (bypass setPowerForBand) — load is the
+            // canonical state restore; setter would re-persist, emit, and
+            // clamp.  We clamp here ourselves to keep AppSettings tampering
+            // safe.
+            m_powerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, 100);
+        }
+    }
+
+    // 3 ATT-on-TX-on-power-change safety properties.
+    // Defaults match Thetis console.cs:29285-29310 [v2.10.3.13]:
+    //   PSAoff = true (//MW0LGE [2.9.0.7]),
+    //   PSAon  = true (//MW0LGE [2.9.3.5]),
+    //   PSAonAndDecreased = false.
+    setForceAttwhenPSAoff(
+        s.value(pfx + QLatin1String("ForceATTwhenPSAoff"),
+                QStringLiteral("True")).toString() == QLatin1String("True"));
+    setForceAttwhenPowerChangesWhenPSAon(
+        s.value(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAon"),
+                QStringLiteral("True")).toString() == QLatin1String("True"));
+    setForceAttwhenPowerChangesWhenPSAonAndDecreased(
+        s.value(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased"),
+                QStringLiteral("False")).toString() == QLatin1String("True"));
+
+    // m_lastPower: runtime-only sentinel (-1).  NOT loaded — matches Thetis
+    // ephemeral `private float _lastPower = -1` (console.cs:29292
+    // [v2.10.3.13]).  Reset to -1 here so that
+    //   setForceAttwhenPowerChangesWhenPSAon(...)
+    // calls above couldn't land us in an unexpected state if a previous
+    // session left m_lastPower at some non-sentinel value.  Belt-and-braces.
+    m_lastPower = -1;
 }
 
 void TransmitModel::persistToSettings(const QString& mac) const
@@ -899,6 +1079,31 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── TX filter bandwidth (Plan 4 D1) ───────────────────────────────────
     s.setValue(pfx + QLatin1String("FilterLow"),  QString::number(m_filterLow));
     s.setValue(pfx + QLatin1String("FilterHigh"), QString::number(m_filterHigh));
+
+    // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
+    // Per-band normal-mode power array — separate top-level scope.
+    {
+        const QString powerPfx =
+            QStringLiteral("hardware/%1/powerByBand/").arg(mac);
+        for (int i = 0; i < kBandCount; ++i) {
+            const Band band = static_cast<Band>(i);
+            s.setValue(powerPfx + bandKeyName(band),
+                       QString::number(
+                           m_powerByBand[static_cast<std::size_t>(i)]));
+        }
+    }
+    // 3 ATT-on-TX safety properties (under tx/ namespace).
+    s.setValue(pfx + QLatin1String("ForceATTwhenPSAoff"),
+               m_forceAttwhenPSAoff ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAon"),
+               m_forceAttwhenPowerChangesWhenPSAon
+                   ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased"),
+               m_forceAttwhenPowerChangesWhenPSAonAndDecreased
+                   ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // m_lastPower: runtime-only sentinel — NOT persisted (matches Thetis
+    // ephemeral _lastPower at console.cs:29292 [v2.10.3.13]).
 }
 
 // ── Anti-VOX properties (3M-1b C.4) ─────────────────────────────────────────

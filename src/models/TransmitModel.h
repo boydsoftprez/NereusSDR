@@ -54,6 +54,21 @@
 //                 filterDisplayText helper + per-MAC persistence.
 //                 NereusSDR-original (Plan 4 Cluster A, Task 2/D1).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-03 — Phase 3 Agent 3A of issue #167 (PA-cal hotfix scaffolding):
+//                 m_powerByBand[14] (default 100 W; per-band normal-mode
+//                 power array parallel to m_tunePowerByBand) +
+//                 powerForBand / setPowerForBand + powerByBandChanged
+//                 signal; 3 Thetis ATT-on-TX-on-power-change safety
+//                 properties (forceAttwhenPSAoff,
+//                 forceAttwhenPowerChangesWhenPSAon, _anddecreased) +
+//                 m_lastPower (-1 sentinel; runtime-only; resets on
+//                 forceAttwhenPowerChangesWhenPSAon toggle per Thetis
+//                 console.cs:29298 [v2.10.3.13]); pureSignalActive()
+//                 predicate (returns false unconditionally — 3M-4
+//                 PureSignal phase wires the live PS-A check). Math
+//                 kernel itself (computeAudioVolume / setPowerUsingTargetDbm)
+//                 lands in Phases 3B / 3C. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -175,6 +190,21 @@ class TransmitModel : public QObject {
     Q_PROPERTY(int  lineInGain READ lineInGain WRITE setLineInGain NOTIFY lineInGainChanged)
     Q_PROPERTY(int  userDigOut READ userDigOut WRITE setUserDigOut NOTIFY userDigOutChanged)
 
+    // ── PA-calibration safety hotfix (#167 Phase 3A) ──────────────────────
+    // Three ATT-on-TX-on-power-change safety properties.  Defaults match
+    // Thetis console.cs:29285-29310 [v2.10.3.13].
+    Q_PROPERTY(bool forceAttwhenPSAoff
+        READ forceAttwhenPSAoff WRITE setForceAttwhenPSAoff
+        NOTIFY forceAttwhenPSAoffChanged)
+    Q_PROPERTY(bool forceAttwhenPowerChangesWhenPSAon
+        READ forceAttwhenPowerChangesWhenPSAon
+        WRITE setForceAttwhenPowerChangesWhenPSAon
+        NOTIFY forceAttwhenPowerChangesWhenPSAonChanged)
+    Q_PROPERTY(bool forceAttwhenPowerChangesWhenPSAonAndDecreased
+        READ forceAttwhenPowerChangesWhenPSAonAndDecreased
+        WRITE setForceAttwhenPowerChangesWhenPSAonAndDecreased
+        NOTIFY forceAttwhenPowerChangesWhenPSAonAndDecreasedChanged)
+
 public:
     explicit TransmitModel(QObject* parent = nullptr);
     ~TransmitModel() override;
@@ -247,6 +277,92 @@ public:
     /// Set the per-MAC AppSettings scope.  Must be called before load() / save().
     /// Mirrors the AlexController::setMacAddress() pattern.
     void setMacAddress(const QString& mac);
+
+    // ── Per-band normal-mode power (#167 Phase 3A) ────────────────────────
+    //
+    // Parallel to the existing tunePowerForBand() pair: while
+    // tunePower_by_band carries the TUNE-button per-band power, this array
+    // carries the regular drive-slider per-band power that
+    // SetPowerUsingTargetDBM (#167 Phase 3C) writes back into on a
+    // txMode 0 (normal-mode) commit.
+    //
+    // From Thetis console.cs:1817 [v2.10.3.13]:
+    //     limitPower_by_band = new int[(int)Band.LAST];
+    //     for (int i = 0; i < (int)Band.LAST; i++) limitPower_by_band[i] = 100;
+    // (Thetis itself initialises power_by_band to 50 W at console.cs:1814,
+    // but the math kernel needs the band-max ceiling — 100 W per the
+    // limitPower_by_band default — as the normal-mode default for the dBm
+    // compensator.  Phase 3C's setPowerUsingTargetDbm txMode 0 branch
+    // writes back into m_powerByBand[band] via setPower side-effect.)
+    //
+    // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  Phase 3L
+    // SWL bands inherit ham-band values — no separate per-SWL TX power.
+
+    /// Return the normal-mode power value (watts) for the given band.
+    /// Default 100 W on first init.  Returns 100 as a safe fallback for
+    /// out-of-range band values.
+    int  powerForBand(Band band) const;
+
+    /// Set the normal-mode power value (watts) for the given band.
+    /// Clamped to [0, 100].  Emits powerByBandChanged when the value
+    /// actually changes.  No-op for out-of-range band values.
+    /// Auto-persists to AppSettings under
+    ///   hardware/<mac>/powerByBand/<bandKeyName>
+    /// (mirrors the per-MAC tx/ namespace pattern).
+    void setPowerForBand(Band band, int watts);
+
+    // ── ATT-on-TX-on-power-change safety properties (#167 Phase 3A) ──────
+    //
+    // Three flags governing the StepAttenuatorController override that
+    // fires when the user changes TX power while PureSignal is active.
+    //
+    // From Thetis console.cs:29285-29310 [v2.10.3.13]:
+    //     private bool _forceATTwhenPSAoff = true;                     //MW0LGE [2.9.0.7] added
+    //     private bool _forceATTwhenPowerChangesWhenPSAon = true;       //MW0LGE [2.9.3.5] added
+    //     private float _lastPower = -1;
+    //     ... ForceATTwhenOutputPowerChangesWhenPSAon setter resets
+    //         _lastPower to -1 when the value changes (line 29298) ...
+    //     private bool _forceATTwhenPowerChangesWhenPSAon_anddecreased = false;
+    //
+    // All 3 are persisted per-MAC under hardware/<mac>/tx/ via the existing
+    // L.2 auto-persist pattern.  m_lastPower is RUNTIME-only (matches Thetis
+    // ephemeral _lastPower); not persisted.
+
+    /// MW0LGE [2.9.0.7] — Force step-attenuator engagement when PureSignal
+    /// is OFF (PS-Off path).  Default TRUE.
+    bool forceAttwhenPSAoff() const noexcept { return m_forceAttwhenPSAoff; }
+    void setForceAttwhenPSAoff(bool on);
+
+    /// MW0LGE [2.9.3.5] — Force step-attenuator engagement when TX power
+    /// changes while PureSignal is ON (PS-On path).  Default TRUE.
+    /// CRITICAL: setter resets m_lastPower to -1 when the value changes
+    /// (Thetis console.cs:29298 [v2.10.3.13]).
+    bool forceAttwhenPowerChangesWhenPSAon() const noexcept {
+        return m_forceAttwhenPowerChangesWhenPSAon;
+    }
+    void setForceAttwhenPowerChangesWhenPSAon(bool on);
+
+    /// Companion flag: also fire the gate when the new power is LESS than
+    /// the last known power (otherwise the gate only fires on increase).
+    /// Default FALSE.
+    bool forceAttwhenPowerChangesWhenPSAonAndDecreased() const noexcept {
+        return m_forceAttwhenPowerChangesWhenPSAonAndDecreased;
+    }
+    void setForceAttwhenPowerChangesWhenPSAonAndDecreased(bool on);
+
+    /// _lastPower sentinel for the ATT-on-TX gate.  Mirrors Thetis
+    /// `private float _lastPower = -1;` (console.cs:29292 [v2.10.3.13]).
+    /// NereusSDR uses int (the slider is int [0, 100]); the -1 sentinel
+    /// is preserved.  Phase 3C's setPowerUsingTargetDbm reads + writes
+    /// this; rarely called externally.  Runtime-only — NOT persisted.
+    int  lastPower() const noexcept { return m_lastPower; }
+    void setLastPower(int value);
+
+    /// PureSignal-active predicate.  Returns FALSE until 3M-4 wires the
+    /// live PS feedback DDC.  The ATT-on-TX gate uses this to decide
+    /// whether the gate fires.  For Phase 3A scaffolding only — Phase
+    /// 3M-4 will replace the body with the live PS-A check.
+    bool pureSignalActive() const noexcept;
 
     /// Restore all per-band tune-power values from AppSettings under the
     /// current MAC scope.  No-op when no MAC has been set.
@@ -1228,6 +1344,16 @@ signals:
     /// Emitted when a per-band tune-power value changes.
     void tunePowerByBandChanged(Band band, int watts);
 
+    // ── PA-cal hotfix scaffolding signals (#167 Phase 3A) ─────────────────
+    /// Emitted when a per-band normal-mode power value changes.
+    void powerByBandChanged(Band band, int watts);
+    /// MW0LGE [2.9.0.7] — see Thetis console.cs:29285 [v2.10.3.13].
+    void forceAttwhenPSAoffChanged(bool on);
+    /// MW0LGE [2.9.3.5] — see Thetis console.cs:29291 [v2.10.3.13].
+    void forceAttwhenPowerChangesWhenPSAonChanged(bool on);
+    /// See Thetis console.cs:29302 [v2.10.3.13].
+    void forceAttwhenPowerChangesWhenPSAonAndDecreasedChanged(bool on);
+
     // ── Mic gain signals (3M-1b C.1) ──────────────────────────────────────
     /// Emitted when micGainDb changes (carries the clamped dB value).
     void micGainDbChanged(int dB);
@@ -1311,6 +1437,23 @@ private:
     // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  Phase 3L
     // SWL bands inherit ham-band values — no separate per-SWL TX power.
     std::array<int, static_cast<std::size_t>(Band::SwlFirst)> m_tunePowerByBand{};
+
+    // Per-band normal-mode power storage.
+    // From Thetis console.cs:1817 [v2.10.3.13] — limitPower_by_band default
+    // 100 W per band.  NereusSDR uses 100 W as the normal-mode default for
+    // the dBm compensator (Phase 3A scaffolding for #167 Phase 3C math
+    // kernel).  Initialised in the constructor.
+    std::array<int, static_cast<std::size_t>(Band::SwlFirst)> m_powerByBand{};
+
+    // ── ATT-on-TX-on-power-change safety state (#167 Phase 3A) ────────────
+    // From Thetis console.cs:29285-29310 [v2.10.3.13].  Defaults match
+    // upstream: PSAoff=true (MW0LGE [2.9.0.7]), PSAon=true (MW0LGE
+    // [2.9.3.5]), PSAonAndDecreased=false.  m_lastPower is the runtime-only
+    // sentinel (-1).
+    bool m_forceAttwhenPSAoff{true};                          //MW0LGE [2.9.0.7]
+    bool m_forceAttwhenPowerChangesWhenPSAon{true};            //MW0LGE [2.9.3.5]
+    bool m_forceAttwhenPowerChangesWhenPSAonAndDecreased{false};
+    int  m_lastPower{-1};
 
     // Per-MAC AppSettings scope (mirrors AlexController pattern).
     QString m_mac;

@@ -483,6 +483,20 @@ nereus_add_test(tst_transmit_model_two_tone_properties)
 # setup.cs:11111-11119 [v2.10.3.13] (Fixed-mode behaviour reference).
 nereus_add_test(tst_transmit_model_two_tone_drive_origin)
 
+# ── Phase 3 Agent 3A of #167: TransmitModel PA-cal hotfix scaffolding ────────
+# Verifies the pre-math-kernel state plumbing for the PA calibration safety
+# hotfix (issue #167):
+#   - per-band normal-mode power array (m_powerByBand[14], default 100 W)
+#   - 3 ATT-on-TX-on-power-change safety properties (defaults match Thetis)
+#   - m_lastPower sentinel (-1, runtime-only) with reset-on-toggle semantic
+#     (CRITICAL: Thetis console.cs:29298 [v2.10.3.13])
+#   - pureSignalActive() predicate (returns false unconditionally; 3M-4
+#     PureSignal phase wires the live PS-A check)
+# Source: console.cs:1817 [v2.10.3.13] (limitPower_by_band default 100 W);
+#         console.cs:29285-29310 [v2.10.3.13] (ATT-on-TX safety props);
+#         console.cs:29298 [v2.10.3.13] (_lastPower reset on toggle).
+nereus_add_test(tst_transmit_model_pa_scaffold)
+
 # ── Phase 3M-1c F: MicProfileManager (load/save/delete/setActive) ────────────
 # Verifies the per-MAC mic-profile-bank API: F.1 class skeleton + load/save,
 # F.2 save with overwrite + comma-strip, F.3 delete with last-profile guard
