@@ -33,6 +33,19 @@ All other 140 WDSP source files remain at TAPR v1.29.  Full WDSP upstream
 re-sync is out of scope for 3M-3a-ii — see `UPSTREAM-SYNC-PROTOCOL.md` §6
 for the full-sync procedure.
 
+## NereusSDR-original glue (not from upstream)
+
+| File | Status | Reason | Date |
+| --- | --- | --- | --- |
+| `third_party/wdsp/src/txgain_stub.c` | NereusSDR-original glue stub (GPLv2-or-later, J.J. Boyd KG4VCF) | Provides `SetTXFixedGain` / `SetTXFixedGainRun` symbols so the bundled `wdsp_static` library exposes the API surface that Thetis's ChannelMaster module exports (`Project Files/Source/ChannelMaster/txgain.c [v2.10.3.13]`). NereusSDR has not yet ported the wider ChannelMaster module (only individual primitives like `cmbuffs.c` have landed in `src/core/audio/TxMicSource.{cpp,h}`); the stub stores per-channel `(Igain, Qgain)` plus a run flag in a flat static so the linker resolves and the C++ wrapper at `src/core/TxChannel.cpp::setTxFixedGain` (issue #167 Phase 1 Agent 1C) can be unit-tested. A future ChannelMaster-port phase can replace this stub with the byte-for-byte port of `txgain.c`. | 2026-05-03 |
+
+The glue stub is GPLv2-or-later (compatible with the rest of `wdsp_static`)
+and carries a verbatim NereusSDR-authored GPL header so
+`scripts/verify-thetis-headers.py --kind=wdsp` passes.  The file's
+`no-port-check:` marker exempts it from the Thetis-tells heuristic in
+`scripts/check-new-ports.py` because it is NereusSDR-original code, not a
+port.
+
 ## License Analysis
 
 ### Survey of Vendored Sources

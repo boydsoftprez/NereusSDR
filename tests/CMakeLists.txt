@@ -2171,6 +2171,19 @@ nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
 # = 48000.0) against Thetis source ranges.
 nereus_add_test(tst_tx_channel_cfc_display)
 
+# ── Issue #167 Phase 1 Agent 1C: TxChannel::setTxFixedGain wrapper ──────────
+# Phase 1 foundation work for the PA-calibration safety hotfix.  Mirrors
+# Thetis cmaster.cs:1115-1119 CMSetTXOutputLevel [v2.10.3.13]:
+#   double level = Audio.RadioVolume * Audio.HighSWRScale;
+#   cmaster.SetTXFixedGain(0, level, level);
+# The wrapper takes the already-composed `level` and pushes it through to
+# the WDSP/ChannelMaster SetTXFixedGain entry point with Igain == Qgain.
+# RadioModel call-site composition (audio_volume * swrProtect) is deferred to
+# Phase 4A.  Test strategy mirrors tst_tx_channel_mic_mute.cpp: NaN-aware
+# idempotent guard verified via lastFixedGainForTest() seam.
+nereus_add_test(tst_tx_channel_set_tx_fixed_gain)
+target_compile_definitions(tst_tx_channel_set_tx_fixed_gain PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-3a-i Task C: TransmitModel TX EQ + Leveler + ALC properties ──
 # Plan: 3M-3a-i Batch 1 Task C — 28 new properties on TransmitModel:
 #   - 23 TXProfile keys: TXEQEnabled / TXEQNumBands / TXEQPreamp / TXEQ1..10 /

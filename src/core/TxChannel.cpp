@@ -172,6 +172,21 @@ warren@wpratt.com
 //                 cited from deskhpsdr/transmitter.c:2136-2186 [@120188f].
 //                 The TUN path at lines 520-528 is untouched.
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-03 — Issue #167 Phase 1 Agent 1C — setTxFixedGain(double)
+//                 implemented by J.J. Boyd (KG4VCF).  Thin wrapper around
+//                 cmaster/ChannelMaster SetTXFixedGain (Thetis cmaster.cs:
+//                 1115-1119 CMSetTXOutputLevel [v2.10.3.13]).  NaN-aware
+//                 idempotent guard via m_lastFixedGain mirrors the
+//                 setMicPreamp / D.3 / D.6 pattern.  WDSP entry-point
+//                 forward-declaration colocated with the existing
+//                 GetTXACFCOMPDisplayCompression block; the underlying
+//                 SetTXFixedGain symbol lives in NereusSDR's bundled
+//                 third_party/wdsp/src/txgain_stub.c glue file (issue #167
+//                 Phase 1) until a future phase ports the full Thetis
+//                 ChannelMaster TXGAIN pcm storage.  RadioModel call-site
+//                 composition (audio_volume * swrProtect) is deferred to
+//                 issue #167 Phase 4A.  AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -2384,6 +2399,71 @@ bool TxChannel::getCfcDisplayCompression(double* compValues, int bufferSize) noe
 #else
     Q_UNUSED(bufferSize);
     return false;
+#endif
+}
+
+// ── TX fixed-gain output level (issue #167 Phase 1 Agent 1C) ────────────────
+//
+// Set the TXA fixed-gain scalar applied uniformly to the I and Q audio paths.
+// Wraps the cmaster/ChannelMaster SetTXFixedGain entry point used by Thetis
+// at cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel:
+//
+//   public static void CMSetTXOutputLevel()
+//   {
+//       double level = Audio.RadioVolume * Audio.HighSWRScale;
+//       cmaster.SetTXFixedGain(0, level, level);
+//   }
+//
+// Composition of `Audio.RadioVolume * Audio.HighSWRScale` is the caller's
+// concern — RadioModel call-site composition lands in issue #167 Phase 4A.
+// This wrapper takes the already-composed `level` and pushes it to WDSP/
+// ChannelMaster with channel == m_channelId and Igain == Qgain == level.
+//
+// Idempotent guard: NaN-aware, matching the setMicPreamp / D.3 / D.6 pattern.
+// m_lastFixedGain initialises to quiet_NaN so the first call (any value,
+// including 0.0) always passes.  No qCWarning / qCInfo logging — the WDSP
+// setter is hot-path during TX (every CMSetTXOutputLevel callsite at
+// cmaster.cs is per-MOX-cycle or per-Audio.RadioVolume change), so log noise
+// is undesirable.
+//
+// Forward-declare the WDSP entry point.  In Thetis the symbol is exported
+// from ChannelMaster.dll (txgain.c:127 [v2.10.3.13] — PORT-tagged) and
+// imported by C# via P/Invoke at cmaster.cs:273-274 [v2.10.3.13]:
+//   [DllImport("ChannelMaster.dll", EntryPoint = "SetTXFixedGain", ...)]
+//   public static extern void SetTXFixedGain(int id, double Igain, double Qgain);
+// NereusSDR's bundled wdsp library provides the same symbol via a NereusSDR-
+// original glue stub at third_party/wdsp/src/txgain_stub.c (issue #167
+// Phase 1) — the real per-channel pcm storage that Thetis's
+// ChannelMaster owns is deferred to a future ChannelMaster-port phase.
+
+#ifdef HAVE_WDSP
+extern "C" {
+    void SetTXFixedGain(int channel, double Igain, double Qgain);
+}
+#endif
+
+void TxChannel::setTxFixedGain(double level)
+{
+    // NaN-aware idempotent guard (matching D.3 pattern for double setters).
+    // The plain `level == m_lastFixedGain` expression handles non-NaN sentinels
+    // correctly; the explicit isnan check makes the first-call dispatch
+    // intent obvious to readers.
+    if (!std::isnan(m_lastFixedGain) && level == m_lastFixedGain) return;
+    m_lastFixedGain = level;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel —
+    // cmaster.SetTXFixedGain(0, level, level).  cmaster.SetTXFixedGain is
+    // the C# P/Invoke at cmaster.cs:273-274 [v2.10.3.13]; the native impl
+    // is Thetis ChannelMaster/txgain.c:127-134 [v2.10.3.13] —
+    //   void SetTXFixedGain(int txid, double Igain, double Qgain)
+    //   {
+    //       TXGAIN a = pcm->xmtr[txid].pgain;
+    //       EnterCriticalSection (&a->cs_update0);
+    //       a->Igain = Igain;
+    //       a->Qgain = Qgain;
+    //       LeaveCriticalSection (&a->cs_update0);
+    //   }
+    SetTXFixedGain(m_channelId, level, level);
 #endif
 }
 

@@ -238,6 +238,18 @@ warren@wpratt.com
 //                 path is unaffected; this helper runs only from the debounce
 //                 timer, not from setTuneTone).  AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-05-03 — Issue #167 Phase 1 Agent 1C — setTxFixedGain(double) wrapper
+//                 added by J.J. Boyd (KG4VCF).  Mirrors Thetis
+//                 cmaster.cs:1115-1119 CMSetTXOutputLevel [v2.10.3.13]:
+//                 the wrapper takes the already-composed `level` argument
+//                 (Audio.RadioVolume * Audio.HighSWRScale at the Thetis
+//                 call-site) and pushes it to cmaster SetTXFixedGain via
+//                 m_channelId with Igain == Qgain == level.  NaN-aware
+//                 idempotent guard via m_lastFixedGain matches the
+//                 setMicPreamp / D.3 / D.6 pattern.  RadioModel call-site
+//                 composition (audio_volume * swrProtect) is deferred to
+//                 issue #167 Phase 4A.  AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -1336,6 +1348,37 @@ public:
     /// false without touching WDSP.
     bool getCfcDisplayCompression(double* compValues, int bufferSize) noexcept;
 
+    // ── TX fixed-gain output level (issue #167 Phase 1 Agent 1C) ────────────
+    //
+    // Sets the TXA fixed-gain scalar applied uniformly to the I and Q audio
+    // paths via WDSP/ChannelMaster SetTXFixedGain(channel, Igain, Qgain).
+    //
+    // Mirrors Thetis cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel:
+    //   public static void CMSetTXOutputLevel()
+    //   {
+    //       double level = Audio.RadioVolume * Audio.HighSWRScale;
+    //       cmaster.SetTXFixedGain(0, level, level);
+    //   }
+    //
+    // The `level` argument is the already-composed product of
+    // `Audio.RadioVolume * Audio.HighSWRScale` — SWR-foldback compensation
+    // enters the chain here per Thetis cmaster.cs:1115-1119
+    // CMSetTXOutputLevel.  RadioModel call-site composition
+    // (audio_volume * swrProtect) is deferred to issue #167 Phase 4A; this
+    // wrapper takes the composed scalar and pushes it through to WDSP.
+    //
+    // Idempotent: the WDSP entry point is invoked only when `level` differs
+    // from the last applied value (matches the NaN-aware double-setter
+    // pattern used by setMicPreamp / setVoxAttackThreshold / D.3 / D.6).
+    // m_lastFixedGain initialises to quiet_NaN so the first call (any
+    // value, including 0.0) always passes the guard.
+    //
+    // Range: typically [0, 1]; values >1 are accepted (matches Thetis —
+    // the cmaster.cs setter applies no clamp; downstream WDSP handles).
+
+    /// Set the TXA fixed-gain scalar applied to the I and Q audio paths.
+    void setTxFixedGain(double level);
+
     // ── Per-stage Run override (3M-1a C.4) ──────────────────────────────────
     //
     // Activate or deactivate a single TXA pipeline stage by name.
@@ -1440,6 +1483,15 @@ public:
     //   (b) Zero-value (mute case) stores 0.0 correctly.
     //   (c) Idempotent guard fires on duplicate calls (value unchanged).
     double lastMicPreampForTest()             const noexcept { return m_micPreampLast; }
+
+    // ── Test seam (issue #167 Phase 1 Agent 1C) — TX fixed-gain last-value ──
+    //
+    // Allow tests to verify:
+    //   (a) Initial state is NaN (first call always passes the guard).
+    //   (b) First call dispatches and stores the value (NaN sentinel fires).
+    //   (c) Identical second call is a no-op (idempotent guard fires).
+    //   (d) Different value updates the stored last-value.
+    double lastFixedGainForTest()             const noexcept { return m_lastFixedGain; }
 #endif // NEREUS_BUILD_TESTS
 
 public slots:
@@ -1681,6 +1733,22 @@ private:
     //   Audio.MicPreamp = 0.0  (mute=true)
     //   Audio.MicPreamp = Math.Pow(10.0, gain_db / 20.0)  (mute=false)
     double m_micPreampLast = std::numeric_limits<double>::quiet_NaN();
+
+    // ── TX fixed-gain last-set value (issue #167 Phase 1 Agent 1C) ───────────
+    //
+    // Initialised to quiet_NaN so the first setTxFixedGain() call (any value,
+    // including 0.0) always passes the idempotent guard.  NaN != NaN is
+    // guaranteed by IEEE 754; the `std::isnan` pre-check in setTxFixedGain()
+    // makes this explicit.  This field exists purely for the redundant-call
+    // suppression — the WDSP entry point lives in cmaster.SetTXFixedGain
+    // (Thetis ChannelMaster/txgain.c:127-134 [v2.10.3.13]) and is hot-path
+    // during TX, so suppressing duplicate calls keeps cs_update0 contention
+    // minimal.
+    //
+    // From Thetis cmaster.cs:1115-1119 [v2.10.3.13] — CMSetTXOutputLevel:
+    //   double level = Audio.RadioVolume * Audio.HighSWRScale;
+    //   cmaster.SetTXFixedGain(0, level, level);
+    double m_lastFixedGain = std::numeric_limits<double>::quiet_NaN();
 
     // ── TXA PostGen split-property cache (3M-1c E.3 / E.4) ──────────────────
     //
