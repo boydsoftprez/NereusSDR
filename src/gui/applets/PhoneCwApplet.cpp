@@ -428,7 +428,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
     // ── Control 10: VOX toggle + threshold slider-stack + Hold slider ───────
     // Phase 3M-3a-iii Task 15.  Layout:
-    //   [VOX] [ON btn 36px] | { Threshold slider top, DexpPeakMeter strip
+    //   [VOX btn 48px] | { Threshold slider top, DexpPeakMeter strip
     //   below } | [-20 dB inset] | [Hold slider 1..2000 ms] | [500 ms inset]
     //
     // Threshold slider range -80..0 dB matches Thetis ptbVOX
@@ -441,18 +441,18 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     // Slider-stack: a small QVBoxLayout wraps the threshold slider (top)
     // and DexpPeakMeter (below) so the live mic peak strip sits directly
     // under the threshold knob — matches Thetis picVOX placement.
+    //
+    // 2026-05-03 bench polish: dropped the separate "VOX" QLabel + "ON"
+    // QPushButton pair — single VOX button now both labels and toggles
+    // the feature (matches the DEXP row right below it in #11).  Width
+    // 48 px to match m_dexpBtn so the two rows align visually.
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
-        auto* voxLbl = new QLabel(QStringLiteral("VOX"), page);
-        voxLbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
-        voxLbl->setFixedWidth(24);
-        row->addWidget(voxLbl);
-
-        m_voxBtn = new QPushButton(QStringLiteral("ON"), page);
+        m_voxBtn = new QPushButton(QStringLiteral("VOX"), page);
         m_voxBtn->setCheckable(true);
-        m_voxBtn->setFixedWidth(36);
+        m_voxBtn->setFixedWidth(48);
         m_voxBtn->setFixedHeight(22);
         m_voxBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
         m_voxBtn->setAccessibleName(QStringLiteral("VOX voice-operated transmit"));
