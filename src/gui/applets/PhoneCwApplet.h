@@ -21,6 +21,25 @@
 //                 console.Designer.cs:6042-6043 [v2.10.3.13]).  NOR/DX/DX+
 //                 labels replaced with a numeric "X dB" value display.
 //                 NyiOverlay::markNyi calls dropped on PROC button + slider.
+//   2026-05-03 — Phase 3M-3a-iii Task 15: VOX (#10) and DEXP (#11) rows
+//                 wired to TransmitModel.  Each row gets a slider-stack
+//                 (threshold slider above a thin DexpPeakMeter strip).
+//                 Threshold slider ranges retuned to dB scales (VOX
+//                 -80..0, DEXP -160..0).  Right-click on either [ON]
+//                 button emits openSetupRequested("Transmit", "DEXP/VOX")
+//                 so MainWindow can jump to the DexpVoxPage (Task 14).
+//                 100 ms QTimer drives both peak meters (matches Thetis
+//                 UpdateNoiseGate Task.Delay(100), console.cs:25347
+//                 [v2.10.3.13]).
+//   2026-05-04 — Phase 3M-3a-iii bench polish: VOX row (#10) relocated to
+//                 TxApplet under TUNE/MOX (Option B - full row).  Operators
+//                 wanted the VOX engage surface next to MOX/TUNE on the
+//                 right pane.  Full row moved as a unit including the live
+//                 DexpPeakMeter strip + 100 ms peak-meter poller +
+//                 right-click → Setup → Transmit → DEXP/VOX.  DEXP row
+//                 (#11) stays here — only VOX moves.  Members
+//                 m_voxBtn/m_voxSlider/m_voxLvlLabel/m_voxDlySlider/
+//                 m_voxDlyLabel/m_voxPeakMeter removed from this header.
 // =================================================================
 
 //=================================================================
@@ -83,6 +102,7 @@ class QTimer;
 namespace NereusSDR {
 
 class HGauge;
+class DexpPeakMeter;
 
 // PhoneCwApplet — QStackedWidget with Phone (0) and CW (1) pages.
 // FM is a separate FmApplet per the reconciled design spec.
@@ -105,6 +125,22 @@ public:
 
     // Switch the stacked widget page: 0=Phone, 1=CW, 2=FM
     void showPage(int index);
+
+signals:
+    /// Phase 3M-3a-iii Task 15: emitted when the user right-clicks the VOX
+    /// or DEXP [ON] button.  MainWindow listens and jumps the SetupDialog
+    /// to the requested leaf page.  `category` is informational (currently
+    /// always "Transmit"); `page` is the SetupDialog leaf-item label
+    /// (currently always "DEXP/VOX").
+    void openSetupRequested(const QString& category, const QString& page);
+
+private slots:
+    /// Phase 3M-3a-iii Task 15: 100 ms timer slot — pulls live peaks from
+    /// TxChannel::getDexpPeakSignal() and getTxMicMeterDb(), maps them to
+    /// 0..1 normalized scales for the two DexpPeakMeter strips.  Cadence
+    /// matches Thetis UpdateNoiseGate (console.cs:25347 [v2.10.3.13])
+    /// which is `Task.Delay(100)`.
+    void pollDexpMeters();
 
 private:
     void buildUI();
@@ -157,16 +193,30 @@ private:
     QPushButton* m_monBtn{nullptr};
     QSlider*     m_monSlider{nullptr};
     QLabel*      m_monLabel{nullptr};
-    // #10 VOX toggle (36px) + level slider + delay slider + 2 insets
-    QPushButton* m_voxBtn{nullptr};
-    QSlider*     m_voxSlider{nullptr};
-    QLabel*      m_voxLvlLabel{nullptr};
-    QSlider*     m_voxDlySlider{nullptr};
-    QLabel*      m_voxDlyLabel{nullptr};
-    // #11 DEXP toggle (36px) + level slider + inset
-    QPushButton* m_dexpBtn{nullptr};
-    QSlider*     m_dexpSlider{nullptr};
-    QLabel*      m_dexpLabel{nullptr};
+    // (Control 10 VOX row relocated to TxApplet 2026-05-04 — bench polish.
+    //  See TxApplet.{h,cpp} section 4b for the new home.  Members removed
+    //  from this header in the same commit.)
+    // #11 DEXP toggle (36px) + threshold slider (-160..0 dB) + inset +
+    //     DexpPeakMeter under threshold slider.  Toggle wired to
+    //     TransmitModel::dexpEnabled.  Threshold slider is DECORATIVE
+    //     (FAITHFUL Thetis quirk per console.cs:28962-28970 [v2.10.3.13]):
+    //     drives the meter marker only, never pushed to WDSP.  See
+    //     wireControls() for the verbatim quote.
+    QPushButton*   m_dexpBtn{nullptr};
+    QSlider*       m_dexpSlider{nullptr};
+    QLabel*        m_dexpLabel{nullptr};
+    DexpPeakMeter* m_dexpPeakMeter{nullptr};
+
+    // Phase 3M-3a-iii Task 15: UI-only DEXP threshold marker (dB).  NOT
+    // pushed to TransmitModel or TxChannel.  Stock Thetis ptbNoiseGate
+    // also stores the value only for the picNoiseGate marker draw; we
+    // mirror that exactly (see wireControls() inline comment).
+    double m_dexpThresholdMarkerDb{-50.0};
+
+    // Phase 3M-3a-iii Task 15: 100 ms QTimer driving both DexpPeakMeters.
+    // Cadence matches Thetis UpdateNoiseGate Task.Delay(100) at
+    // console.cs:25347 [v2.10.3.13].
+    QTimer* m_dexpMeterTimer{nullptr};
     // #12 TX filter Low/High sliders removed — superseded by TxApplet
     // Lo/Hi spinboxes (Plan 4 Cluster C); the sliders here were NYI and
     // never reached WDSP.

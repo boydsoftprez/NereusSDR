@@ -3629,6 +3629,40 @@ void MainWindow::wireSliceToSpectrum()
         // VfoWidget::openNbSetupRequested above handles the NB→Setup hop.
     }
 
+    // --- PhoneCwApplet → Setup → Transmit → DEXP/VOX page (Phase 3M-3a-iii Task 15).
+    // Right-click on the DEXP [ON] button on the Phone tab opens the
+    // SetupDialog and jumps to the DexpVoxPage leaf (Task 14).  Mirrors
+    // the SpeechProcessorPage cross-link pattern (TransmitSetupPages.h:201).
+    // (VOX-button right-click moved to TxApplet 2026-05-04 with the rest
+    // of the VOX surface — see the TxApplet connect just below.)
+    if (m_phoneCwApplet) {
+        connect(m_phoneCwApplet, &PhoneCwApplet::openSetupRequested, this,
+                [this](const QString& /*category*/, const QString& page) {
+            auto* dialog = new SetupDialog(m_radioModel, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            wireSetupDialog(dialog);
+            dialog->selectPage(page);
+            dialog->show();
+            dialog->raise();
+        });
+    }
+
+    // --- TxApplet → Setup → Transmit → DEXP/VOX page (3M-3a-iii bench polish 2026-05-04).
+    // Right-click on the VOX button (relocated from PhoneCwApplet) opens
+    // the same DexpVoxPage leaf.  Same lambda body as the PhoneCwApplet
+    // connect above.
+    if (m_txApplet) {
+        connect(m_txApplet, &TxApplet::openSetupRequested, this,
+                [this](const QString& /*category*/, const QString& page) {
+            auto* dialog = new SetupDialog(m_radioModel, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            wireSetupDialog(dialog);
+            dialog->selectPage(page);
+            dialog->show();
+            dialog->raise();
+        });
+    }
+
     // --- Wire overlay Band flyout to RadioModel band-click handler (#118) ---
     // The signal still carries legacy (name, freqHz, mode) args for
     // backwards-compat with SpectrumOverlayPanel's kBands table, but the

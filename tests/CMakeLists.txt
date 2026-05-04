@@ -426,6 +426,14 @@ nereus_add_test(tst_transmit_model_mic_jack_flags)
 #         setup.designer.cs:45005-45024 [v2.10.3.13] (udDEXPHold range 1..2000).
 nereus_add_test(tst_transmit_model_vox_properties)
 
+# ── Phase 3M-3a-iii Tasks 7-10: TransmitModel DEXP properties (11x) ──────────
+# Verifies defaults, round-trip, signals, idempotency, clamps, and persistence
+# for the 11 DEXP properties (envelope x4, gate-ratio x2, look-ahead x2,
+# side-channel filter x3).  All 11 persist; dexpEnabled has no PTT-safety
+# carve-out (only voxEnabled does).
+# Source: setup.Designer.cs:44788-45260 [v2.10.3.13] (grpDEXPVOX + grpSCF).
+nereus_add_test(tst_transmit_model_dexp)
+
 # ── Phase 3M-1b C.4: TransmitModel anti-VOX properties (2x) ─────────────────
 # Verifies defaults (antiVoxGainDb=0 NereusSDR-original / antiVoxSourceVax=false
 # matches Thetis audio.cs:446 [v2.10.3.13]), round-trip setters, signal emission,
@@ -580,6 +588,19 @@ nereus_add_test(tst_mic_profile_manager_cfc_round_trip)
 # saveProfile → setActiveProfile back), and bool serialization sanity
 # for the 5 new bool keys.
 nereus_add_test(tst_mic_profile_manager_cfc_live_path)
+
+# ── Phase 3M-3a-iii Task 11: MicProfileManager DEXP round-trip ────────────
+# Verifies the 11 new DEXP bundle keys (envelope, gate ratios, look-ahead,
+# side-channel filter) round-trip through MicProfileManager byte-for-byte.
+# Defaults sourced from Thetis setup.Designer.cs:44755-45250 [v2.10.3.13]
+# (grpDEXPVOX + grpDEXPLookAhead + grpSCF on tpDSPVOXDE).  Covers: bundle-
+# key presence (asserting total bundle count of 107), defaultProfileValues()
+# for the 11 new keys with verbatim Thetis Designer source cites, capture
+# round-trip (TM property -> AppSettings bundle key), apply round-trip
+# (bundle key -> TM getter), end-to-end full-bundle 11-key round trip
+# (catches accidental key/setter swaps within a section), and bool
+# serialization sanity for the 3 new bool keys.
+nereus_add_test(tst_mic_profile_manager_dexp_round_trip)
 
 # ── Phase 3M-3a-ii follow-up Batch 6: ParaEqEnvelope helper tests ────
 # Verifies the gzip+base64url envelope helper that wraps the
@@ -1496,16 +1517,17 @@ nereus_add_test(tst_phone_applet_mic_gain)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_phone_applet_mic_level_gauge)
 
-# ── Phase 3M-1b J.2: TxApplet VOX toggle button + VoxSettingsPopup ───────────
-# Verifies the model-layer contracts + VoxSettingsPopup that the VOX button
-# depends on:
+# ── Phase 3M-1b J.2 → 3M-3a-iii Task 16: VOX toggle (model-layer) ───────────
+# Verifies the model-layer contracts that BOTH the historical TxApplet VOX
+# button AND the current PhoneCwApplet VOX button depend on:
 #   default voxEnabled=false (plan §0 row 8 safety — VOX always loads OFF),
 #   UI→Model toggle ON/OFF (setVoxEnabled / voxEnabled getter),
 #   Model→UI: voxEnabledChanged fires with correct bool,
 #   visual state on toggle (signal fires on change),
-#   no feedback loop / idempotency (same-value set → no extra emit),
-#   VoxSettingsPopup constructed with exactly 3 sliders,
-#   popup slider round-trip: thresholdDbChanged → model update.
+#   no feedback loop / idempotency (same-value set → no extra emit).
+# (The VoxSettingsPopup-specific cases were dropped in 3M-3a-iii Task 16
+# alongside the popup widget itself — VOX settings now live in
+# Setup → Transmit → DEXP/VOX, exercised by tst_dexp_vox_setup_page.)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_vox_toggle)
 
@@ -1604,6 +1626,14 @@ nereus_add_test(tst_speech_processor_page)
 # mirrors Thetis tpDSPCFC tab 1:1 (setup.Designer.cs:46162-46280 [v2.10.3.13]
 # for grpPhRot).
 nereus_add_test(tst_cfc_setup_page)
+
+# ── Phase 3M-3a-iii Task 14: DexpVoxPage full implementation ─────────────────
+# Verifies the three group boxes (VOX / DEXP, Audio LookAhead, Side-Channel
+# Trigger Filter) construct, all 14 controls exist with verbatim Thetis object
+# names, initial values reflect TransmitModel defaults, bidirectional binding
+# works in both directions, and group titles match Thetis verbatim.  Layout
+# mirrors Thetis tpDSPVOXDE tab 1:1 (setup.designer.cs:44763-45260 [v2.10.3.13]).
+nereus_add_test(tst_dexp_vox_setup_page)
 
 # ── Phase 3M-0 Task 12: Hardware Configuration group box on Setup → General ──
 # Verifies grpHardwareConfig has 4 controls + 1 warning label per
@@ -1894,6 +1924,27 @@ target_compile_definitions(tst_mox_controller_mic_ptt_extraction PRIVATE NEREUS_
 #   Channel ID: WDSP.id(1, 0) = CMsubrcvr * CMrcvr = 1 with single-RX layout.
 nereus_add_test(tst_wdsp_engine_tx_channel)
 
+# ── Phase 3M-3a-iii Task 20: WdspEngine DEXP DSP-instance lifecycle ──────────
+# The bench-failing fix: before Task 20, pdexp[1] was permanently nullptr
+# after createTxChannel because create_dexp had never been ported into
+# NereusSDR's TX-init path.  Every SetDEXP* setter and the SendCBPushDexpVox
+# callback registration silently no-op'd via their pdexp[id] null guards;
+# VOX-keying never engaged MOX because xdexp() never ran.
+# Verifies:
+#   createTxChannel populates pdexp[1] (non-null) - the assertion that
+#     proves the fix vs. the bench-failing baseline;
+#   destroy + recreate cycle is consistent (create_dexp runs again on
+#     the second create);
+#   TxChannel::pumpDexp is null-safe before WdspEngine wires the buffer
+#     pointer (test builds that construct TxChannel directly without
+#     going through WdspEngine::createTxChannel must not segfault).
+# Source map (all [v2.10.3.13]):
+#   wdsp/cmaster.c:130-157 - Thetis create_dexp call site (default args);
+#   wdsp/cmaster.c:267     - Thetis destroy_dexp call site (BEFORE CloseChannel);
+#   wdsp/dexp.c:187-227    - create_dexp impl: allocates DEXP, stores pdexp[id];
+#   wdsp/dexp.c:230-239    - destroy_dexp impl: frees, but does NOT null pdexp[id].
+nereus_add_test(tst_wdsp_engine_dexp_init)
+
 # ── Phase 3M-1a Task C.2: TxChannel 31-stage TXA pipeline skeleton ────────────
 # Verifies:
 #   Stage::kStageCount == 31 (authoritative from wdsp/TXA.c:31-479 [v2.10.3.13]);
@@ -2000,6 +2051,17 @@ target_compile_definitions(tst_radio_model_g1_wiring PRIVATE NEREUS_BUILD_TESTS)
 # the model-side fan-out (signal-on-setter, idempotent guard, signal-payload
 # correctness) that the RadioModel-installed lambdas consume.
 nereus_add_test(tst_radio_model_eq_lev_alc_wiring)
+
+# ── Phase 3M-3a-iii Task 12: TransmitModel→TxChannel DEXP routing ────────────
+# Verifies the 11 connect() pairings for the new DEXP signals
+# (envelope/gate ratios/look-ahead/SCF) added in Tasks 7-10. Mirrors the
+# eq_lev_alc_wiring pattern: m_txChannel stays null in unit-test builds (no
+# WDSP); the test confirms the model-side fan-out (signal-on-setter,
+# idempotent guard, signal-payload correctness) that the RadioModel-installed
+# lambdas consume, plus the on-connect push surface (pushTxProcessingChain
+# reads each TM getter and pushes the loaded default to TxChannel; we verify
+# the getter surface returns the Thetis Designer defaults).
+nereus_add_test(tst_radio_model_dexp_routing)
 
 # ── Phase 3M-1a Task F.1: RadioModel::onMoxHardwareFlipped slot ──────────────
 # Verifies the three-step fan-out in Thetis HdwMOXChanged order (§2.3):
@@ -2129,6 +2191,88 @@ nereus_add_test(tst_tx_channel_per_mode_config)
 nereus_add_test(tst_tx_channel_vox_anti_vox)
 target_compile_definitions(tst_tx_channel_vox_anti_vox PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-iii Tasks 1-2: TxChannel DEXP envelope/timing wrappers ───────
+#
+# Exercises (NEREUS_BUILD_TESTS required for test-seam accessors):
+#   setDexpRun(bool)             → SetDEXPRun         [cmaster.cs:166-167 v2.10.3.13]
+#   setDexpDetectorTau(double)   → SetDEXPDetectorTau [cmaster.cs:169-170]
+#   setDexpAttackTime(double)    → SetDEXPAttackTime  [cmaster.cs:172-173]
+#   setDexpReleaseTime(double)   → SetDEXPReleaseTime [cmaster.cs:175-176]
+# Thetis ranges (setup.Designer.cs [v2.10.3.13]):
+#   udDEXPDetTau   1..100 ms default 20   (lines 45070-45098)
+#   udDEXPAttack   2..100 ms default 2    (lines 45027-45055)
+#   udDEXPRelease  2..1000 ms default 100 (lines 44967-44995)
+nereus_add_test(tst_tx_channel_dexp_envelope)
+target_compile_definitions(tst_tx_channel_dexp_envelope PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-3a-iii Tasks 3-5: TxChannel DEXP gate / SCF / look-ahead ────────
+#
+# Exercises (NEREUS_BUILD_TESTS required for test-seam accessors):
+#   setDexpExpansionRatio(double)        → SetDEXPExpansionRatio       [cmaster.cs:181-182 v2.10.3.13]
+#                                          (Math.Pow(10, dB/20) at WDSP boundary)
+#   setDexpHysteresisRatio(double)       → SetDEXPHysteresisRatio      [cmaster.cs:184-185]
+#                                          (Math.Pow(10, -dB/20) — NEGATIVE sign per setup.cs:18924)
+#   setDexpLowCut(double)                → SetDEXPLowCut               [cmaster.cs:190-191]
+#   setDexpHighCut(double)               → SetDEXPHighCut              [cmaster.cs:193-194]
+#   setDexpRunSideChannelFilter(bool)    → SetDEXPRunSideChannelFilter [cmaster.cs:196-197]
+#   setDexpRunAudioDelay(bool)           → SetDEXPRunAudioDelay        [cmaster.cs:202-203]
+#   setDexpAudioDelay(double)            → SetDEXPAudioDelay           [cmaster.cs:205-206]
+# Thetis ranges (setup.Designer.cs [v2.10.3.13]):
+#   udDEXPExpansionRatio  0..30 dB    default 10.0  (lines 44876-44905)
+#   udDEXPHysteresisRatio 0..10 dB    default 2.0   (lines 44845-44874)
+#   udSCFLowCut           100..10000 Hz default 500  (lines 45217-45245)
+#   udSCFHighCut          100..10000 Hz default 1500 (lines 45187-45215)
+#   chkSCFEnable          default CHECKED            (line 45250)
+#   udDEXPLookAhead       10..999 ms default 60      (lines 44765-44793)
+#   chkDEXPLookAheadEnable default CHECKED           (line 44808)
+nereus_add_test(tst_tx_channel_dexp_gate)
+target_compile_definitions(tst_tx_channel_dexp_gate PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-3a-iii Task 17 (bench fix): TxChannel DEXP pushvox bridge ───────
+#
+# Verifies the WDSP DEXP threshold-crossing callback bridge that was missed
+# in the original 3M-3a-iii plan and surfaced on JJ's bench (clicking [VOX]
+# correctly set run_vox=1 in WDSP but mic envelope crossings never reached
+# MoxController because the WDSP callback was never registered).
+#
+# Test seam: TxChannel::invokePushVoxForTest(int id, int active) is exposed
+# under NEREUS_BUILD_TESTS as a static method that forwards to the static
+# s_pushVoxCallback bridge.  WDSP normally invokes the bridge from inside
+# `xdexp` on the audio worker thread; the seam lets tests drive it
+# synchronously without a live mic stream / DEXP detector.
+#
+# Source references [v2.10.3.13]:
+#   wdsp/dexp.c:330,339      — pushvox firing points (active=1 attack, =0 release)
+#   wdsp/dexp.c:399-403      — SendCBPushDexpVox setter signature
+#   cmaster.cs:1125          — Thetis analogue registration callsite
+#   cmaster.cs:1903-1906     — Thetis VOX.PushVox callback body
+nereus_add_test(tst_tx_channel_pushvox_callback)
+target_compile_definitions(tst_tx_channel_pushvox_callback PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-3a-iii Task 18 (bench fix): TxChannel VOX-listening pump gate ──
+#
+# Verifies the VOX-listening pump gate that closes the SECOND of two VOX-
+# keying gaps the original 3M-3a-iii plan missed.  Task 17 wired the WDSP
+# pushvox callback (commit 56d6921) but the callback never fired because
+# the TXA pipeline pump itself only ran when MOX was engaged
+# (driveOneTxBlock + driveOneTxBlockFromInterleaved both early-returned
+# on !m_running), creating a chicken-and-egg that prevented VOX from
+# ever keying the radio (DEXP couldn't fire pushvox if it never saw mic).
+#
+# Test seam: TxChannel::voxListeningForTest() exposes the m_voxListening
+# atomic for round-trip verification under NEREUS_BUILD_TESTS.
+#
+# Source references [v2.10.3.13]:
+#   wdsp/dexp.c:304          — "DEXP code runs continuously so it can be
+#                              used to trigger VOX also." (Thetis pumps
+#                              continuously; MOX gates radio-write only.)
+#   audio.cs:168-192         — Audio.VOXEnabled setter (only flips DEXP
+#                              run_vox via cmaster.CMSetTXAVoxRun; does not
+#                              touch channel state).
+#   cmaster.cs:1039-1052     — CMSetTXAVoxRun → SetDEXPRunVox.
+nereus_add_test(tst_tx_channel_vox_listening)
+target_compile_definitions(tst_tx_channel_vox_listening PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task D.4: TxChannel::setStageRunning expansion ───────────────
 # Verifies Panel (existing), MicMeter, AlcMeter, AmMod, FmMod dispatch.
 # MicMeter/AlcMeter: always-on meter stages — no public WDSP Run setter (meter.c);
@@ -2199,6 +2343,26 @@ target_compile_definitions(tst_tx_channel_mic_mute PRIVATE NEREUS_BUILD_TESTS)
 #   deferred: getEqMeter, getLvlrMeter, getCfcMeter, getCompMeter (all zero)
 #   distinctness: deferred-not-sentinel, sentinel-not-zero
 nereus_add_test(tst_tx_channel_meters)
+
+# ── Phase 3M-3a-iii Task 6: TxChannel DEXP meter readers ─────────────────────
+# Pure crash-free + sane-bounds smoke test for two `const noexcept` accessors:
+#   getDexpPeakSignal()  — LINEAR amplitude 0..1 (caller does 20*log10 → dB)
+#                          From Thetis cmaster.cs:163-164 [v2.10.3.13] +
+#                          wdsp/dexp.c:647-654 + console.cs:28952 callsite.
+#   getTxMicMeterDb()    — RAW negative dB (caller does sign + 3 dB offset)
+#                          From Thetis console.cs:25346-25359 [v2.10.3.13] +
+#                          dsp.cs:992-1057 (CalculateTXMeter MIC -> TXA_MIC_AV).
+#
+# WDSP channel never opened in test build → both wrappers must null-guard
+# (pdexp[m_channelId] == nullptr / txa[m_channelId].rsmpin.p == nullptr) and
+# return Thetis-faithful idle defaults: 0.0 (DEXP peak) and -200.0 (mic dB).
+#
+# Test cases (4):
+#   - getDexpPeakSignal_returnsZeroWhenIdle              (peak in [0.0, 1.0))
+#   - getDexpPeakSignal_callableMultipleTimes_noCrash    (20 successive reads)
+#   - getTxMicMeterDb_returnsFloorWhenIdle               (db in [-200.0, 0.0])
+#   - getTxMicMeterDb_callableMultipleTimes_noCrash      (20 successive reads)
+nereus_add_test(tst_tx_channel_dexp_meters)
 
 # ── Phase 3M-1b Task E.1: AudioEngine::pullTxMic ─────────────────────────────
 # Verifies the TX-mic pull accessor that PcMicSource (Phase F.1) will tap:
@@ -3027,6 +3191,30 @@ nereus_add_test(tst_parametric_eq_widget_interaction)
 
 # -- Phase 3M-3a-ii follow-up Batch 5: ParametricEqWidget JSON marshal + public API --
 nereus_add_test(tst_parametric_eq_widget_json)
+
+# -- Phase 3M-3a-iii Task 13: DexpPeakMeter widget (VOX/DEXP live peak strip) --
+# 5 tests: default-construct paint safety, signal-level clamp to [0,1], green
+# peak fill, red threshold marker, red above-threshold overlay (mirrors Thetis
+# picVOX_Paint:28958-28959 [v2.10.3.13] visual recipe).
+nereus_add_test(tst_dexp_peak_meter)
+
+# -- Phase 3M-3a-iii Task 15: PhoneCwApplet DEXP (#11) wiring --
+# (VOX wiring tests moved to tst_tx_applet_vox_relocated 2026-05-04 with
+#  the relocation of the VOX surface to TxApplet.)
+# 7 tests: DEXP [ON] bidirectional with TransmitModel, DEXP Th decorative-
+# only (Thetis quirk console.cs:28962-28970 [v2.10.3.13]), right-click on
+# DEXP [ON] emits openSetupRequested("Transmit","DEXP/VOX"), 100 ms timer
+# cadence (matches Thetis UpdateNoiseGate Task.Delay(100)), DexpPeakMeter
+# strip constructed, NyiOverlay markers cleared, VOX widgets absent.
+nereus_add_test(tst_phone_cw_applet_dexp_wiring)
+
+# -- Phase 3M-3a-iii bench polish 2026-05-04: TxApplet VOX row relocation --
+# 7 tests: VOX [ON]/Th/Hold bidirectional with TransmitModel on the new
+# TxApplet location (under TUNE/MOX), right-click on VOX emits
+# openSetupRequested("Transmit","DEXP/VOX"), DexpPeakMeter constructed,
+# 100 ms QTimer drives pollVoxMeter(), and PhoneCw* VOX object names
+# absent from TxApplet (one-way relocation pin).
+nereus_add_test(tst_tx_applet_vox_relocated)
 
 # -- UI Polish Foundation A1: AppletPanelWidget scrollbar gutter --
 nereus_add_test(tst_applet_panel_gutter)

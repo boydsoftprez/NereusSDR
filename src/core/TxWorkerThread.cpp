@@ -28,6 +28,12 @@
 //                 got < kBlockFrames.  Prevents radio mic data from
 //                 leaking into a PC-mic-selected TX block.  Same
 //                 author / same AI tooling.
+//   2026-05-03 — Phase 3M-3a-iii Task 20 — dispatchOneBlock now invokes
+//                 TxChannel::pumpDexp BEFORE driveOneTxBlockFromInterleaved,
+//                 mirroring Thetis cmaster.c:388-389 [v2.10.3.13]
+//                 (xdexp(tx) before fexchange0).  Replaces the placeholder
+//                 comment that documented the gap.  J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file.  The Thetis cmbuffs.c /
@@ -257,11 +263,29 @@ void TxWorkerThread::dispatchOneBlock()
         }
     }
 
-    // VOX / DEXP gating placeholder.  Thetis cmaster.c:388 [v2.10.3.13]
-    // calls xdexp(tx) here, but create_dexp / xdexp are not yet ported
-    // (deferred follow-up).  Until then VOX is functionally inert; the
-    // setVoxRun / setAntiVox setters in TxChannel are null-guarded so
-    // user toggling does not crash.
+    // VOX / DEXP detector — mirrors Thetis cmaster.c:388 [v2.10.3.13]:
+    //   xdexp (tx);   // vox-dexp
+    // (called BEFORE fexchange0 at cmaster.c:389).
+    //
+    // Phase 3M-3a-iii Task 20: TxChannel::pumpDexp copies m_in into the
+    // WdspEngine-owned per-channel DEXP buffer and runs xdexp.  WDSP
+    // fires the pushvox callback synchronously from inside xdexp if the
+    // mic envelope crosses the attack threshold or if the HOLD timer
+    // expires after audio drops below threshold — that callback is the
+    // VOX-keying entry point (TxChannel::s_pushVoxCallback emits
+    // voxActiveChanged → MoxController::onVoxActive).
+    //
+    // NereusSDR's DEXP buffer architecture is parallel-only (see
+    // WdspEngine.cpp create_dexp callsite for the full narrative): the
+    // copy + xdexp here drive the detector for VOX-keying purposes only;
+    // the DEXP module's audio-domain output is not chained into m_in,
+    // so DEXP audio expansion (run_dexp=1) does not affect the bytes
+    // that fexchange0 reads.  This is a known limitation; VOX-keying
+    // is what was bench-failing and is now fixed.
+    //
+    // Null-safe inside pumpDexp: degrades to a no-op if pdexp[id] /
+    // txa[].rsmpin.p / m_dexpBuffer are missing.
+    m_txChannel->pumpDexp(m_in.data());
 
     // fexchange0 — mirrors cmaster.c:389 [v2.10.3.13]:
     //   fexchange0 (chid (stream, 0), pcm->in[stream],

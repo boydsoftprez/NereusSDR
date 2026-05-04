@@ -771,7 +771,10 @@ RadioModel::RadioModel(QObject* parent)
     // the phase-H comment block is self-contained.
     //
     //   onCatPtt: 3K — full CAT integration (rigctld / serial / network)
-    //   onVoxActive: 3M-3a or via TxChannel TX-meter polling (WDSP DEXP output)
+    //   onVoxActive: WIRED in 3M-3a-iii Task 17 (bench fix, 2026-05-04) via
+    //     TxChannel::voxActiveChanged — see connectToRadio() H.1 block for
+    //     the connect() callsite. The wire-up was deferred from 3M-1b and
+    //     omitted from the 3M-3a-iii plan; JJ's bench surfaced the gap.
     //   onSpacePtt: 3M-3a — UI keyboard handler (MainWindow keyPressEvent)
     //   onX2Ptt: 3M-3a or later — X2 status-frame parsing in RadioConnection
 
@@ -1946,6 +1949,73 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setVoxRun(run);
             });
 
+            // ── Phase 3M-3a-iii Task 17 (bench fix) ───────────────────────────
+            //
+            // TxChannel::voxActiveChanged → MoxController::onVoxActive.
+            //
+            // This closes the deferred wire from 3M-1b
+            // (RadioModel.cpp:756 — "onVoxActive: 3M-3a or via TxChannel
+            // TX-meter polling (WDSP DEXP output)") that the 3M-3a-iii
+            // implementation plan did not capture as a task.  Without it
+            // [VOX] correctly enables run_vox=1 in WDSP but mic envelope
+            // crossings never reach MoxController — VOX silently fails to
+            // key the radio.  TxChannel registers the WDSP DEXP pushvox
+            // callback in its constructor; the callback emits this signal
+            // from the WDSP audio worker thread.  Qt::AutoConnection
+            // promotes to QueuedConnection across the worker→main-thread
+            // boundary, so MoxController::onVoxActive runs on the main
+            // thread (its declared affinity — see MoxController H.5
+            // comment block in this same RadioModel ctor).
+            //
+            // Thetis analogue: cmaster.cs:1903-1906 [v2.10.3.13] —
+            //   `VOX.PushVox(int id, int active)
+            //    { Audio.VOXActive = (active == 1); }`
+            // wired by cmaster.cs:1125 [v2.10.3.13]
+            //   `SendCBPushVox(0, PushVoxDel)`.
+            // Thetis sets `Audio.VOXActive` and lets the PollPTT loop
+            // notice on its next tick; NereusSDR uses direct signal-driven
+            // engagement (no polling).
+            connect(m_txChannel, &TxChannel::voxActiveChanged,
+                    m_moxController, &MoxController::onVoxActive);
+
+            // ── Phase 3M-3a-iii Task 18 (bench fix) ───────────────────────────
+            //
+            // TransmitModel::voxEnabledChanged → TxChannel::setVoxListening.
+            //
+            // VOX-listening mode forces the TXA pipeline pump to run when
+            // VOX is enabled, so the WDSP DEXP detector can monitor mic
+            // envelope even when MOX is off.  Without this gate the pump
+            // only runs during MOX (driveOneTxBlock + driveOneTxBlockFromInter
+            // leaved both early-return on !m_running), creating a chicken-
+            // and-egg that prevents VOX from ever keying (DEXP can't fire
+            // pushvox if it never sees mic).
+            //
+            // Wired in parallel with the existing TM::voxEnabledChanged
+            // → MoxController::setVoxEnabled connect at the top of this
+            // ctor (~line 669-670).  Both fire on the same TM signal:
+            // MoxController gates VOX policy at the engagement layer;
+            // TxChannel pumps the DSP so the policy can be evaluated.
+            //
+            // Receiver=m_txChannel + AutoConnection auto-routes to
+            // QueuedConnection when m_txChannel lives on TxWorkerThread,
+            // matching the H.1 voxRunRequested → setVoxRun pattern above.
+            //
+            // From Thetis wdsp/dexp.c:304 [v2.10.3.13]:
+            //   "DEXP code runs continuously so it can be used to trigger
+            //    VOX also."
+            // Thetis's TXA pipeline pumps continuously after channel-open
+            // (HPSDR EP6 audio cadence drives ChannelMaster, not MOX);
+            // Audio.VOXEnabled in audio.cs:168-192 [v2.10.3.13] only
+            // flips DEXP's run_vox flag via cmaster.CMSetTXAVoxRun(0).
+            // NereusSDR's TxWorkerThread + m_running gate is a power-saving
+            // departure from Thetis (no pumping when neither MOX nor VOX
+            // is in play); this connect restores Thetis-equivalent VOX
+            // detection while keeping power saving everywhere else.
+            connect(&m_transmitModel, &TransmitModel::voxEnabledChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setVoxListening(on);
+            });
+
             // H.2 — voxThresholdRequested → setVoxAttackThreshold.
             // From Thetis cmaster.cs:1054-1059 [v2.10.3.13] — CMSetTXAVoxThresh.
             connect(m_moxController, &MoxController::voxThresholdRequested,
@@ -2133,6 +2203,24 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
                 // ── 3M-3a-ii Batch 3 — CESSB (1) ──
                 m_txChannel->setTxCessbOn(m_transmitModel.cessbOn());
+
+                // ── 3M-3a-iii Tasks 7-10 — DEXP (11) ──
+                // Initial-sync push for the 11 DEXP TM properties so a
+                // freshly-loaded profile (or a setActiveProfile invocation
+                // whose setters short-circuit on no-op writes) has its DEXP
+                // state reflected at WDSP. Mirrors the EQ/Lev/ALC + CFC/PhRot
+                // initial-sync rationale documented above (~line 1869-1898).
+                m_txChannel->setDexpRun(m_transmitModel.dexpEnabled());
+                m_txChannel->setDexpDetectorTau(m_transmitModel.dexpDetectorTauMs());
+                m_txChannel->setDexpAttackTime(m_transmitModel.dexpAttackTimeMs());
+                m_txChannel->setDexpReleaseTime(m_transmitModel.dexpReleaseTimeMs());
+                m_txChannel->setDexpExpansionRatio(m_transmitModel.dexpExpansionRatioDb());
+                m_txChannel->setDexpHysteresisRatio(m_transmitModel.dexpHysteresisRatioDb());
+                m_txChannel->setDexpRunAudioDelay(m_transmitModel.dexpLookAheadEnabled());
+                m_txChannel->setDexpAudioDelay(m_transmitModel.dexpLookAheadMs());
+                m_txChannel->setDexpLowCut(m_transmitModel.dexpLowCutHz());
+                m_txChannel->setDexpHighCut(m_transmitModel.dexpHighCutHz());
+                m_txChannel->setDexpRunSideChannelFilter(m_transmitModel.dexpSideChannelFilterEnabled());
             };
 
             // 1. txEqEnabledChanged → setTxEqRunning.
@@ -2305,6 +2393,93 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             connect(&m_transmitModel, &TransmitModel::cessbOnChanged,
                     m_txChannel, [this](bool on) {
                 m_txChannel->setTxCessbOn(on);
+            });
+
+            // ── 3M-3a-iii Tasks 7-10 — DEXP routing (11 connects) ──────────
+            //
+            // Routes the 11 new DEXP TransmitModel properties added in Tasks
+            // 7-10 (envelope / gate ratios / look-ahead / side-channel
+            // filter) into the TxChannel WDSP wrappers added in Tasks 1-5.
+            // Receiver = m_txChannel so AutoConnection resolves to
+            // QueuedConnection once moveToThread runs below — same pattern as
+            // the F.1 / H.1-H.3 / 3M-3a-i/ii TX-chain connects above.
+            //
+            // No MoxController gating layer for DEXP (unlike VOX which goes
+            // TM → MoxController → TxChannel for dB→linear + mic-boost
+            // scaling): the DEXP TxChannel wrappers do their own ms→seconds
+            // and dB→linear conversions internally (see TxChannel.h:706-914),
+            // so the model layer pushes the user-visible value directly.
+            //
+            // Naming note: TM property names use "Ms" / "Db" / "Hz" suffixes
+            // for clarity at the call-site, while TxChannel wrapper names
+            // drop the unit suffix because the wrapper docstring documents
+            // the unit unambiguously (e.g. setDexpDetectorTau takes ms,
+            // setDexpExpansionRatio takes dB).
+
+            // 28. dexpEnabledChanged → setDexpRun.
+            connect(&m_transmitModel, &TransmitModel::dexpEnabledChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setDexpRun(on);
+            });
+
+            // 29. dexpDetectorTauMsChanged → setDexpDetectorTau.
+            connect(&m_transmitModel, &TransmitModel::dexpDetectorTauMsChanged,
+                    m_txChannel, [this](double tauMs) {
+                m_txChannel->setDexpDetectorTau(tauMs);
+            });
+
+            // 30. dexpAttackTimeMsChanged → setDexpAttackTime.
+            connect(&m_transmitModel, &TransmitModel::dexpAttackTimeMsChanged,
+                    m_txChannel, [this](double attackMs) {
+                m_txChannel->setDexpAttackTime(attackMs);
+            });
+
+            // 31. dexpReleaseTimeMsChanged → setDexpReleaseTime.
+            connect(&m_transmitModel, &TransmitModel::dexpReleaseTimeMsChanged,
+                    m_txChannel, [this](double releaseMs) {
+                m_txChannel->setDexpReleaseTime(releaseMs);
+            });
+
+            // 32. dexpExpansionRatioDbChanged → setDexpExpansionRatio.
+            connect(&m_transmitModel, &TransmitModel::dexpExpansionRatioDbChanged,
+                    m_txChannel, [this](double dB) {
+                m_txChannel->setDexpExpansionRatio(dB);
+            });
+
+            // 33. dexpHysteresisRatioDbChanged → setDexpHysteresisRatio.
+            connect(&m_transmitModel, &TransmitModel::dexpHysteresisRatioDbChanged,
+                    m_txChannel, [this](double dB) {
+                m_txChannel->setDexpHysteresisRatio(dB);
+            });
+
+            // 34. dexpLookAheadEnabledChanged → setDexpRunAudioDelay.
+            connect(&m_transmitModel, &TransmitModel::dexpLookAheadEnabledChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setDexpRunAudioDelay(on);
+            });
+
+            // 35. dexpLookAheadMsChanged → setDexpAudioDelay.
+            connect(&m_transmitModel, &TransmitModel::dexpLookAheadMsChanged,
+                    m_txChannel, [this](double delayMs) {
+                m_txChannel->setDexpAudioDelay(delayMs);
+            });
+
+            // 36. dexpLowCutHzChanged → setDexpLowCut.
+            connect(&m_transmitModel, &TransmitModel::dexpLowCutHzChanged,
+                    m_txChannel, [this](double hz) {
+                m_txChannel->setDexpLowCut(hz);
+            });
+
+            // 37. dexpHighCutHzChanged → setDexpHighCut.
+            connect(&m_transmitModel, &TransmitModel::dexpHighCutHzChanged,
+                    m_txChannel, [this](double hz) {
+                m_txChannel->setDexpHighCut(hz);
+            });
+
+            // 38. dexpSideChannelFilterEnabledChanged → setDexpRunSideChannelFilter.
+            connect(&m_transmitModel, &TransmitModel::dexpSideChannelFilterEnabledChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setDexpRunSideChannelFilter(on);
             });
 
             // Profile-activation resync.  Receiver = m_txChannel so this

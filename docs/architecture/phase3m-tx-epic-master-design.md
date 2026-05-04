@@ -680,11 +680,13 @@ overrides) including AM 10k's unique `PhRotStages=9`.
   Post-EQ Gain + Open Dialog button), CESSB group (Enable + status text)
 - **TxCfcDialog** (modeless): profile combo + Save/SaveAs/Delete/Reset +
   Precomp/PostEQ-Gain spinboxes + 10×3 per-band F/COMP/POST-EQ grid.
-  **Landed scalar-complete but spartan** — full Thetis `ucParametricEq` widget
-  port (3396-line `ucParametricEq.cs`, drives both `frmCFCConfig` and
-  `frmEQConfig`; freq/gain/Q drag handles + per-band Q sliders + freq sliders
-  + live curve overlay) is queued as a separate sub-PR. Design hand-off:
-  `docs/architecture/phase3m-3a-ii-cfc-eq-parametriceq-handoff.md`.
+  Originally landed scalar-complete but spartan. Full Thetis `ucParametricEq`
+  widget port shipped via PR #159 (10 batches). `ParametricEqWidget` lives at
+  `src/gui/widgets/ParametricEqWidget.{h,cpp}`; both TxCfcDialog and
+  TxEqDialog use it (drag handles, per-band Q sliders, freq sliders, live
+  curve overlay). Design hand-off doc
+  `docs/architecture/phase3m-3a-ii-cfc-eq-parametriceq-handoff.md` retained
+  as historical record.
 - **PhoneCwApplet** PROC button/slider wired to `cpdrOn`/`cpdrLevelDb` (0..2
   step → 0..20 dB linear); replaces NOR/DX/DX+ tick labels with numeric
   "X dB". TxApplet `[PROC]` button removed (duplicate caught by JJ; surfaced
@@ -696,22 +698,54 @@ overrides) including AM 10k's unique `PhRotStages=9`.
 work, hence the scalar-complete landing + ParametricEq follow-up. CPDR +
 CESSB defaults sourced byte-for-byte from Thetis factory profiles.
 
-### 7.3 Phase 3M-3a-iii — Gating: DEXP/VOX (full parameters) + AMSQ
+### 7.3 Phase 3M-3a-iii — Gating: DEXP/VOX (full parameters)
 
-**Goal:** Full DEXP downward expander parameter set. AMSQ TX squelch.
+**Goal:** Full DEXP downward expander parameter set with Thetis-faithful main-console peak meters and Setup-form parity.
 
-**WDSP setters:**
-- DEXP / VOX (9 parameters): `SetDEXPRunVox` + 8 more for time constants,
-  ratios, threshold, side-channel filter, audio delay
-- AMSQ: `SetTXAAMSQRun/MutedGain/Threshold`
+**WDSP setters (14 per `cmaster.cs:160-206 [v2.10.3.13]`):** `SetDEXPRun`,
+`SetDEXPRunVox`, `SetDEXPDetectorTau`, `SetDEXPAttackTime`,
+`SetDEXPReleaseTime`, `SetDEXPHoldTime`, `SetDEXPExpansionRatio`,
+`SetDEXPHysteresisRatio`, `SetDEXPAttackThreshold`, `SetDEXPLowCut`,
+`SetDEXPHighCut`, `SetDEXPRunSideChannelFilter`, `SetDEXPRunAudioDelay`,
+`SetDEXPAudioDelay`. Three already shipped in 3M-1b
+(RunVox / AttackThreshold / HoldTime); 11 remain. Plus 2 read-only meter
+imports: `GetDEXPPeakSignal` and `WDSP.CalculateTXMeter(MIC)` for the
+live peak displays.
 
-**UI surfaces:** TxApplet `[DEXP]` and `[VOX]` quick toggles (replace basic
-VOX from 3M-1b). DEXP popup with 4 quick sliders + "More Settings…". Setup
-→ Transmit → Speech Processor → DEXP/VOX page with full 9-parameter UI +
-side-channel filter sub-section. AMSQ section. Mic profile bundle gains
-DEXP/VOX section — schema fully populated.
+**UI surfaces:** PhoneCwApplet wires the existing un-wired VOX + DEXP stubs
+(Phone-page Controls #10 + #11) per the PROC-consolidation pattern from
+3M-3a-ii. Each row gets `[ON]` toggle + threshold slider with thin
+peak-meter strip stacked under it (matches Thetis `picVOX` / `picNoiseGate`
+layout). VOX row also keeps the Hold (ms) slider (the 3M-1b stub
+"VOX delay" renamed to match `lblDEXPHold.Text = "Hold (ms)"`). Right-click
+on either button opens Setup → Transmit → DEXP/VOX page. The duplicate VOX
+button on TxApplet (`m_voxBtn` at TxApplet.cpp:374) and the entire
+`VoxSettingsPopup.{h,cpp}` widget are removed. Setup gains a new
+`DexpVoxPage` with two group boxes matching `tpDSPVOXDE` 1:1: `grpDEXPVOX`
+(VOX/DEXP enables + 7 numeric controls) and `grpDEXPLookAhead`
+(enable + look-ahead spinbox). Mic profile bundle gains ~14 keys
+(baseline 94 → 108).
 
-**Risk:** Medium. DEXP timing parameters interact subtly.
+**Out of scope (revised after 2026-05-03 archaeology):**
+- **TX AMSQ** (`SetTXAAMSQRun/MutedGain/Threshold`): Thetis itself does not
+  wire any of these in stock (zero hits across cmaster.cs / dsp.cs /
+  radio.cs / setup.cs / setup.designer.cs); the WDSP setters exist but the
+  TXA `amsq` stage runs at WDSP defaults forever. Per source-first
+  ("if Thetis has it we want it"), TX AMSQ is moved to **3M-3b** where it
+  belongs alongside other AM-mode TX work (mode-gated to AM/SAM/DSB).
+- ~~**Side-channel filter UI**~~: pulled IN-SCOPE 2026-05-03 mid-port.
+  Original spec wrongly claimed Thetis had no SCF UI; source-first
+  read by the Batch B agent surfaced `grpSCF` on `tpDSPVOXDE`
+  (setup.Designer.cs:45157+ [v2.10.3.13]). Now bound to TransmitModel
+  + Setup page DexpVoxPage (3rd group box).
+- **`ptbNoiseGate` writes to WDSP**: replicated as decorative per Thetis
+  quirk (the slider value drives only the meter's threshold marker, never
+  pushed to WDSP). Inline comment documents the faithful-quirk.
+
+**Risk:** Medium. DEXP timing parameters interact subtly. Decorative
+`ptbNoiseGate` may confuse first-time users (mitigated by tooltip).
+
+**Design doc:** `docs/architecture/phase3m-3a-iii-dexp-vox-design.md`.
 
 ### 7.4 Phase 3M-3b — Mode-Specific TX (AM / FM / Digital)
 

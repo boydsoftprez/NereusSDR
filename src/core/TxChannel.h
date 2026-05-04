@@ -250,6 +250,54 @@ warren@wpratt.com
 //                 composition (audio_volume * swrProtect) is deferred to
 //                 issue #167 Phase 4A.  AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Task 6 — getDexpPeakSignal() and
+//                 getTxMicMeterDb() read accessors added by J.J. Boyd
+//                 (KG4VCF).  Both `const noexcept`, safe to call from the
+//                 GUI thread at the 100 ms picVOX/picNoiseGate cadence.
+//                 getDexpPeakSignal returns LINEAR amplitude (caller
+//                 applies 20*log10 per console.cs:28954 [v2.10.3.13]);
+//                 getTxMicMeterDb returns RAW negative dB (caller applies
+//                 sign treatment + 3 dB offset per console.cs:25353-25354
+//                 [v2.10.3.13]).  Null-guards on pdexp[m_channelId] and
+//                 txa[m_channelId].rsmpin.p match the existing wrappers.
+//                 Sentinel returns: 0.0 (DEXP idle) and -200.0 (mic-meter
+//                 idle, matches Thetis noise_gate_data init at
+//                 console.cs:25346 [v2.10.3.13]).  AI-assisted
+//                 transformation via Anthropic Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Task 20 (bench fix) — setDexpBuffer() +
+//                 pumpDexp() public methods added by J.J. Boyd (KG4VCF).
+//                 pumpDexp() copies the worker-thread-owned mic block into
+//                 the WdspEngine-owned per-channel DEXP buffer (set once
+//                 via setDexpBuffer at TX-channel-create time) and invokes
+//                 xdexp(channelId), mirroring Thetis cmaster.c:388
+//                 [v2.10.3.13] xdexp(tx) call BEFORE fexchange0.  Two new
+//                 private members (m_dexpBuffer raw pointer + size in
+//                 doubles) hold the buffer-pointer-and-size pair.  This
+//                 closes the gap that made Task 17's pushvox callback
+//                 registration silently no-op via the pdexp[id]==nullptr
+//                 guard — pdexp[id] was permanently nullptr because
+//                 create_dexp had never been called.  See WdspEngine.cpp
+//                 createTxChannel for the full root-cause / buffer-
+//                 architecture narrative.  AI-assisted transformation
+//                 via Anthropic Claude Code.
+//   2026-05-04 — Phase 3M-3a-iii Task 17 (bench fix) — voxActiveChanged(bool)
+//                 Qt signal + s_pushVoxCallback() static C-callable bridge +
+//                 s_voxKeyInstance lookup pointer + registerVoxCallback() /
+//                 unregisterVoxCallback() helpers added by J.J. Boyd (KG4VCF).
+//                 Closes the deferred wire from 3M-1b RadioModel.cpp:756
+//                 ("onVoxActive: 3M-3a or via TxChannel TX-meter polling
+//                 (WDSP DEXP output)") that the 3M-3a-iii plan did not
+//                 capture as a task — JJ caught it on the post-3M-3a-iii
+//                 bench: clicking [VOX] correctly set run_vox=1 in WDSP
+//                 (via existing setVoxRun → SetDEXPRunVox) but mic envelope
+//                 crossings never reached MoxController because the WDSP
+//                 callback was never registered (a->pushvox = NULL).
+//                 The bridge mirrors Thetis cmaster.cs:1903-1906 +
+//                 cmaster.cs:1125 [v2.10.3.13] (VOX.PushVox →
+//                 SendCBPushVox(0, PushVoxDel)) but routes through a
+//                 Qt signal to MoxController::onVoxActive instead of
+//                 Thetis's Audio.VOXActive + PollPTT polling loop.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -259,10 +307,12 @@ warren@wpratt.com
 
 #include <array>    // std::array — TX EQ 10-band graphic vector (3M-3a-i B-1)
 #include <atomic>   // std::atomic<bool> — m_running cross-thread mirror (3M-1c TxWorkerThread)
+#include <cstddef>  // std::size_t — DEXP buffer size (3M-3a-iii Task 20)
 #include <limits>   // std::numeric_limits — quiet_NaN() initialiser (D.3)
 #include <vector>
 
 #include "WdspTypes.h"
+#include "wdsp_api.h"  // NEREUS_STDCALL macro for s_pushVoxCallback (Task 17)
 
 namespace NereusSDR {
 
@@ -591,6 +641,30 @@ public:
     /// from any thread.
     bool isRunning() const noexcept { return m_running.load(std::memory_order_acquire); }
 
+    // ── VOX-listening pump gate (3M-3a-iii Task 18 — bench fix) ──────────────
+
+    /// Enable or disable VOX-listening mode.
+    ///
+    /// When true, the TX pump runs continuously to feed the WDSP DEXP
+    /// detector even when MOX is off.  Radio-write side remains gated on
+    /// m_running ONLY, so no TX I/Q reaches the radio in vox-listening mode.
+    /// See m_voxListening doc-comment for the full rationale.
+    ///
+    /// Wired by RadioModel from TransmitModel::voxEnabledChanged in parallel
+    /// with the existing TM::voxEnabledChanged → MoxController::setVoxEnabled
+    /// connect.  Without this gate, the chicken-and-egg between MOX and DEXP
+    /// prevents VOX from ever keying the radio (DEXP can't fire pushvox if
+    /// it never sees mic envelope).
+    ///
+    /// Internally also mirrors the SetChannelState gating from setRunning
+    /// when MOX is off, so fexchange0 actually processes audio for the DEXP
+    /// detector while in vox-listening mode.  When MOX is on, leaves WDSP
+    /// channel state to setRunning's existing management.
+    ///
+    /// From Thetis wdsp/dexp.c:304 [v2.10.3.13]:
+    ///   "DEXP code runs continuously so it can be used to trigger VOX also."
+    void setVoxListening(bool on);
+
     // ── Per-mode TXA configuration (3M-1b D.2) ──────────────────────────────
 
     /// Set the TXA channel's DSP mode (LSB / USB / DIGL / DIGU / etc.).
@@ -684,6 +758,232 @@ public:
     ///
     /// From Thetis cmaster.cs:211-212 [v2.10.3.13] — SetAntiVOXGain DLL import.
     void setAntiVoxGain(double gain);
+
+    // ── DEXP envelope/timing WDSP wrappers (3M-3a-iii Tasks 1-2) ────────────
+
+    /// DEXP master enable (gate the audio downward expansion).
+    ///
+    /// From Thetis cmaster.cs:166-167 [v2.10.3.13] — SetDEXPRun DLL import.
+    /// WDSP impl: wdsp/dexp.c:407 [v2.10.3.13] — SetDEXPRun.
+    /// Thetis call-site: setup.cs:18882-18888 chkDEXPEnable_CheckedChanged
+    ///   (calls cmaster.SetDEXPRun(0, chkDEXPEnable.Checked)).
+    ///
+    /// Note: distinct from setVoxRun() (SetDEXPRunVox) — setVoxRun controls
+    /// whether the DEXP detector also fires VOX-keying; setDexpRun controls
+    /// whether the audio-domain expansion actually applies.  The two are
+    /// stackable: VOX uses the same DEXP detector regardless of whether
+    /// audio-path expansion is engaged (wdsp/dexp.c:409 comment).
+    ///
+    /// Idempotent: bool `==` guard against m_dexpRunLast.
+    void setDexpRun(bool run);
+
+    /// DEXP detector smoothing time constant (low-pass on input envelope).
+    ///
+    /// From Thetis cmaster.cs:169-170 [v2.10.3.13] — SetDEXPDetectorTau DLL
+    /// import.  WDSP impl: wdsp/dexp.c:466 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:468 comment "Time-constant ... (seconds)").
+    /// Thetis call-site: setup.cs:18927-18931 udDEXPDetTau_ValueChanged:
+    ///   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
+    ///
+    /// Range: 1..100 ms (clamped at the wrapper boundary, then divided by
+    /// 1000.0 before the WDSP call).  Default: 20 ms
+    /// (setup.Designer.cs:45093 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpDetectorTau(double tauMs);
+
+    /// DEXP envelope attack time (low → high gain ramp).
+    ///
+    /// From Thetis cmaster.cs:172-173 [v2.10.3.13] — SetDEXPAttackTime DLL
+    /// import.  WDSP impl: wdsp/dexp.c:479 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:481 comment "Set attack time, seconds.  0.002 - 0.100
+    /// should be a good range.").
+    /// Thetis call-site: setup.cs:18890-18894 udDEXPAttack_ValueChanged:
+    ///   cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
+    ///
+    /// Range: 2..100 ms (clamped at the wrapper boundary, then divided by
+    /// 1000.0 before the WDSP call).  Default: 2 ms
+    /// (setup.Designer.cs:45050 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpAttackTime(double attackMs);
+
+    /// DEXP envelope release time (high → low gain ramp).
+    ///
+    /// From Thetis cmaster.cs:175-176 [v2.10.3.13] — SetDEXPReleaseTime DLL
+    /// import.  WDSP impl: wdsp/dexp.c:492 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:494 comment "Set release time, seconds.  0.002 - 0.999
+    /// should be a good range.").
+    /// Thetis call-site: setup.cs:18902-18906 udDEXPRelease_ValueChanged:
+    ///   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
+    ///
+    /// Range: 2..1000 ms (clamped at the wrapper boundary, then divided by
+    /// 1000.0 before the WDSP call).  Default: 100 ms
+    /// (setup.Designer.cs:44990 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpReleaseTime(double releaseMs);
+
+    // ── DEXP gate / ratio WDSP wrappers (3M-3a-iii Task 3) ──────────────────
+
+    /// DEXP expansion ratio (downward expansion gain ratio, dB API).
+    ///
+    /// From Thetis cmaster.cs:181-182 [v2.10.3.13] — SetDEXPExpansionRatio
+    /// DLL import.  WDSP impl: wdsp/dexp.c:518 [v2.10.3.13]; takes a linear
+    /// ratio (wdsp/dexp.c:520-521 comment "High_gain = 1.0; Low_gain =
+    /// 1.0/exp_ratio.  Range of 1.0 - 30.0 should be good.  Could use dB:
+    /// 0.0 - 30.0dB.").
+    /// Thetis call-site: setup.cs:18915-18919 udDEXPExpansionRatio_ValueChanged:
+    ///   cmaster.SetDEXPExpansionRatio(0,
+    ///                                 Math.Pow(10.0, dB / 20.0));
+    ///
+    /// Wrapper API takes dB (operator-friendly, matches Setup-form
+    /// spinbox); converts to linear via std::pow(10.0, dB/20.0) inside
+    /// before the WDSP push.  Idempotent guard compares the dB value
+    /// (post-clamp) so the user-facing sense is preserved.
+    ///
+    /// Range: 0..30 dB (clamped at the wrapper boundary).  Default: 10.0 dB
+    /// (setup.Designer.cs:44900-44904 [v2.10.3.13] — raw decimal Value=10
+    /// with no scale shift = 10.0 dB).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on the
+    /// stored dB value.
+    void setDexpExpansionRatio(double ratioDb);
+
+    /// DEXP hysteresis ratio (release-vs-attack threshold ratio, dB API).
+    ///
+    /// From Thetis cmaster.cs:184-185 [v2.10.3.13] — SetDEXPHysteresisRatio
+    /// DLL import.  WDSP impl: wdsp/dexp.c:531 [v2.10.3.13]; takes a linear
+    /// ratio (wdsp/dexp.c:533-534 comment "Hold_thresh = hysteresis_ratio *
+    /// Attack_thresh.  Expose to operator in dB: 0.0dB - 9.9dB should be
+    /// good (1.000 - 0.320).").
+    /// Thetis call-site: setup.cs:18921-18925 udDEXPHysteresisRatio_ValueChanged:
+    ///   cmaster.SetDEXPHysteresisRatio(0,
+    ///                                  Math.Pow(10.0, -dB / 20.0));
+    ///
+    /// IMPORTANT: Thetis uses a NEGATIVE sign in Math.Pow for hysteresis
+    /// (unlike ExpansionRatio which uses positive).  This is because the
+    /// hold threshold is BELOW the attack threshold (Hold_thresh < Attack_thresh
+    /// when hysteresis_ratio < 1.0).  More dB → smaller linear ratio → wider
+    /// gap between attack and release thresholds.
+    ///
+    /// Range: 0..10 dB (clamped at the wrapper boundary).  Default: 2.0 dB
+    /// (setup.Designer.cs:44869-44873 [v2.10.3.13] — raw decimal Value=20
+    /// with DecimalPlaces=1 / scale shift 65536 = 2.0 dB).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on the
+    /// stored dB value.
+    void setDexpHysteresisRatio(double ratioDb);
+
+    // ── DEXP side-channel filter wrappers (3M-3a-iii Task 4) ────────────────
+    //
+    // The side-channel filter is the band-pass that shapes the signal
+    // feeding the DEXP detector (NOT the audio that gets gated).  Used to
+    // narrow detection to the speech band so off-band hum / breath noise
+    // doesn't keep VOX up.  Thetis exposes these on the VOX/DEXP Setup
+    // page in the "Side Channel Filter" group (chkSCFEnable / udSCFLowCut
+    // / udSCFHighCut — setup.cs:18933-18948 [v2.10.3.13]).
+    //
+    // Range 100..10000 Hz on both cut frequencies, defaults 500 Hz LowCut
+    // and 1500 Hz HighCut, both clamped at the wrapper boundary
+    // (setup.Designer.cs:45187-45245 [v2.10.3.13]).
+
+    /// DEXP side-channel filter low-cut frequency (Hz).
+    ///
+    /// From Thetis cmaster.cs:190-191 [v2.10.3.13] — SetDEXPLowCut DLL
+    /// import.  WDSP impl: wdsp/dexp.c:582 [v2.10.3.13]; comment at
+    /// dexp.c:584 "Set side-channel filter low_cut (Hertz)." — same
+    /// units on both sides, no conversion needed.
+    /// Thetis call-site: setup.cs:18939-18943 udSCFLowCut_ValueChanged:
+    ///   cmaster.SetDEXPLowCut(0, (double)udSCFLowCut.Value);
+    ///
+    /// Range 100..10000 Hz (setup.Designer.cs:45230-45235 [v2.10.3.13]).
+    /// Default 500 Hz (setup.Designer.cs:45240-45245).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpLowCut(double lowCutHz);
+
+    /// DEXP side-channel filter high-cut frequency (Hz).
+    ///
+    /// From Thetis cmaster.cs:193-194 [v2.10.3.13] — SetDEXPHighCut DLL
+    /// import.  WDSP impl: wdsp/dexp.c:594 [v2.10.3.13]; comment at
+    /// dexp.c:596 "Set side-channel filter high_cut (Hertz)." — same
+    /// units on both sides, no conversion needed.
+    /// Thetis call-site: setup.cs:18945-18949 udSCFHighCut_ValueChanged:
+    ///   cmaster.SetDEXPHighCut(0, (double)udSCFHighCut.Value);
+    ///
+    /// Range 100..10000 Hz (setup.Designer.cs:45200-45205 [v2.10.3.13]).
+    /// Default 1500 Hz (setup.Designer.cs:45210-45215).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpHighCut(double highCutHz);
+
+    /// DEXP side-channel filter master enable.
+    ///
+    /// From Thetis cmaster.cs:196-197 [v2.10.3.13] —
+    /// SetDEXPRunSideChannelFilter DLL import.  WDSP impl: wdsp/dexp.c:606
+    /// [v2.10.3.13]; comment at dexp.c:608 "Turn OFF/ON the side-channel
+    /// filter and its compensating delay."
+    /// Thetis call-site: setup.cs:18933-18937 chkSCFEnable_CheckedChanged:
+    ///   cmaster.SetDEXPRunSideChannelFilter(0, chkSCFEnable.Checked);
+    ///
+    /// Thetis ships chkSCFEnable as DEFAULT CHECKED
+    /// (setup.Designer.cs:45250-45251 [v2.10.3.13]) — caller (UI/model)
+    /// is responsible for pushing true at startup if Thetis-default
+    /// behavior is desired; the cache initialises to false to match the
+    /// WDSP create_dexp boot state (a->run_filt = 0).
+    ///
+    /// Idempotent: bool `==` guard against m_dexpRunSideChannelFilterLast.
+    void setDexpRunSideChannelFilter(bool run);
+
+    // ── DEXP audio look-ahead wrappers (3M-3a-iii Task 5) ───────────────────
+    //
+    // The look-ahead path delays the audio by N ms so the DEXP detector can
+    // peek at samples that haven't been gated yet — this lets VOX or the
+    // expander open BEFORE the first syllable instead of clipping it.
+    // Two setters: a master enable bool + a delay-ms double.
+    //
+    // Thetis exposes these on the VOX/DEXP Setup page in the "Audio
+    // LookAhead" group (chkDEXPLookAheadEnable / udDEXPLookAhead —
+    // setup.cs:18951-18962 [v2.10.3.13]).  Note Thetis ALSO ANDs the user
+    // checkbox with the global VOX or DEXP enable at the call-site
+    // (setup.cs:18954: enable = chk.Checked && (vox.Checked || dexp.Checked))
+    // — that gating is a UI-layer responsibility; the wrapper just pushes
+    // the bool the caller hands it.
+
+    /// DEXP audio look-ahead master enable.
+    ///
+    /// From Thetis cmaster.cs:202-203 [v2.10.3.13] — SetDEXPRunAudioDelay
+    /// DLL import.  WDSP impl: wdsp/dexp.c:626 [v2.10.3.13]; comment at
+    /// dexp.c:628 "Turn OFF/ON audio delay line."
+    /// Thetis call-site: setup.cs:18951-18956 chkDEXPLookAheadEnable_CheckedChanged:
+    ///   bool enable = chkDEXPLookAheadEnable.Checked
+    ///                 && (chkVOXEnable.Checked || chkDEXPEnable.Checked);
+    ///   cmaster.SetDEXPRunAudioDelay(0, enable);
+    ///
+    /// Thetis ships chkDEXPLookAheadEnable as DEFAULT CHECKED
+    /// (setup.Designer.cs:44808-44809 [v2.10.3.13]) — caller (UI/model)
+    /// is responsible for pushing true at startup if Thetis-default
+    /// behavior is desired; the cache initialises to false to match the
+    /// WDSP create_dexp boot state (a->run_audelay = 0).
+    ///
+    /// Idempotent: bool `==` guard against m_dexpRunAudioDelayLast.
+    void setDexpRunAudioDelay(bool run);
+
+    /// DEXP audio look-ahead delay (ms at the wrapper, seconds at WDSP).
+    ///
+    /// From Thetis cmaster.cs:205-206 [v2.10.3.13] — SetDEXPAudioDelay DLL
+    /// import.  WDSP impl: wdsp/dexp.c:636 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:638 comment "Set the audio delay, seconds.").
+    /// Thetis call-site: setup.cs:18958-18962 udDEXPLookAhead_ValueChanged:
+    ///   cmaster.SetDEXPAudioDelay(0, (double)udDEXPLookAhead.Value / 1000.0);
+    ///
+    /// Wrapper takes ms (matches Thetis spinbox); divides by 1000.0
+    /// before WDSP push.  Range 10..999 ms (clamped at the wrapper
+    /// boundary).  Default: 60 ms (setup.Designer.cs:44788 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpAudioDelay(double delayMs);
 
     // ── Mic preamp / mic-mute path (3M-1b D.6) ──────────────────────────────
 
@@ -787,6 +1087,72 @@ public:
     /// Reads TXA_COMP_PK (= 10) when wired. From Thetis wdsp/TXA.h:61 [v2.10.3.13].
     /// Full wiring in 3M-3a per master design §5.2.1.
     float getCompMeter() const;
+
+    // ── DEXP / VOX meter readers (Phase 3M-3a-iii Task 6) ───────────────────
+
+    /// Live VOX peak signal in LINEAR amplitude (typical range 0.0..1.0).
+    ///
+    /// Returns 0.0 when pdexp[m_channelId] == nullptr (DEXP not yet
+    /// created — i.e. WDSP TX channel not opened) or when HAVE_WDSP is
+    /// not defined.  Otherwise returns the live `a->peak` snapshot under
+    /// WDSP's cs_update critical section.
+    ///
+    /// Const + noexcept: safe to call from the GUI thread at the
+    /// 100 ms picVOX/picNoiseGate cadence.  WDSP read is non-blocking
+    /// (CRITICAL_SECTION held only for the snapshot copy).
+    ///
+    /// Caller is responsible for any dB conversion: Thetis's picVOX_Paint
+    /// applies `20 * Math.Log10(audio_peak)` after the call (see
+    /// console.cs:28954 [v2.10.3.13]).  Mic boost compensation
+    /// (`audio_peak /= Audio.VOXGain`) at console.cs:28953 is also a
+    /// caller responsibility — the wrapper returns the raw WDSP value.
+    ///
+    /// Porting from Thetis cmaster.cs:163-164 [v2.10.3.13] —
+    /// GetDEXPPeakSignal DLL import:
+    ///   [DllImport("wdsp.dll", EntryPoint = "GetDEXPPeakSignal", ...)]
+    ///   public static extern void GetDEXPPeakSignal(int id, double* peak);
+    /// Caller pattern (console.cs:28952 [v2.10.3.13]):
+    ///   cmaster.GetDEXPPeakSignal(0, &audio_peak);
+    /// Porting from Thetis wdsp/dexp.c:647-654 [v2.10.3.13] —
+    /// GetDEXPPeakSignal C impl: derefs pdexp[id], snapshots a->peak.
+    double getDexpPeakSignal() const noexcept;
+
+    /// Live TX mic-meter reading in RAW dB (typical range -200..0; never
+    /// positive in normal operation).
+    ///
+    /// Returns -200.0 (Thetis's noise_gate_data init floor — see
+    /// console.cs:25346 [v2.10.3.13]) when txa[m_channelId].rsmpin.p ==
+    /// nullptr (WDSP TX channel not opened) or when HAVE_WDSP is not
+    /// defined.  Otherwise returns the raw `GetTXAMeter(channel,
+    /// TXA_MIC_AV)` (= 1) value — the AVERAGE mic level, matching
+    /// Thetis's WDSP.MeterType.MIC -> txaMeterType.TXA_MIC_AV mapping
+    /// at dsp.cs:998-999 [v2.10.3.13].
+    ///
+    /// Const + noexcept: safe to call from the GUI thread at the
+    /// 100 ms picNoiseGate cadence.  WDSP read is non-blocking.
+    ///
+    /// CALLER RESPONSIBILITIES (matching Thetis UpdateNoiseGate at
+    /// console.cs:25346-25359 [v2.10.3.13]):
+    ///   - Sign treatment: Thetis stores
+    ///       `float num = -WDSP.CalculateTXMeter(1, MIC);`
+    ///     where CalculateTXMeter (dsp.cs:1056) returns `-(float)val`.
+    ///     Net effect: `num` is the raw `val` (negative dB).  Our wrapper
+    ///     returns `val` directly — no sign-flip applied.
+    ///   - +3 dB offset: Thetis adds `+3.0f` to the result before display
+    ///     (console.cs:25354): `noise_gate_data = num + 3.0f`.  Our
+    ///     wrapper does NOT apply the offset; do it at the call site.
+    ///
+    /// Porting from Thetis dsp.cs:992-1057 [v2.10.3.13] —
+    /// CalculateTXMeter switch case MeterType.MIC -> GetTXAMeter(channel,
+    /// txaMeterType.TXA_MIC_AV).  Final return is `-(float)val` but
+    /// callers immediately re-flip via the leading `-` at console.cs:25353,
+    /// so the wrapper short-circuits the double-flip and returns the raw
+    /// negative dB.
+    /// Porting from Thetis wdsp/TXA.h:52 [v2.10.3.13]:
+    ///   TXA_MIC_AV  = 1  (second value in txaMeterType enum, average power).
+    /// Porting from Thetis wdsp/meter.c:151-159 [v2.10.3.13] — GetTXAMeter
+    /// implementation: returns txa[channel].meter[mt] (a stored dB value).
+    double getTxMicMeterDb() const noexcept;
 
     // ── TXA PostGen wrapper setters (3M-1c E.2-E.6) ─────────────────────────
     //
@@ -1476,6 +1842,30 @@ public:
     bool   lastAntiVoxRunForTest()            const noexcept { return m_antiVoxRunLast; }
     double lastAntiVoxGainForTest()           const noexcept { return m_antiVoxGainLast; }
 
+    // ── Test seams (Phase 3M-3a-iii Tasks 1-2) — DEXP envelope/timing ──────
+    bool   lastDexpRunForTest()               const noexcept { return m_dexpRunLast; }
+    double lastDexpDetectorTauForTest()       const noexcept { return m_dexpDetectorTauMsLast; }
+    double lastDexpAttackTimeForTest()        const noexcept { return m_dexpAttackTimeMsLast; }
+    double lastDexpReleaseTimeForTest()       const noexcept { return m_dexpReleaseTimeMsLast; }
+
+    // ── Test seams (Phase 3M-3a-iii Task 3) — DEXP gate / ratio ────────────
+    //
+    // Wrapper stores the user-facing dB (idempotency check); the linear
+    // value goes to WDSP via std::pow(10, ±dB/20.0) — see setDexpExpansionRatio
+    // (positive sign) and setDexpHysteresisRatio (NEGATIVE sign per
+    // setup.cs:18924 [v2.10.3.13]).
+    double lastDexpExpansionRatioDbForTest()  const noexcept { return m_dexpExpansionRatioDbLast; }
+    double lastDexpHysteresisRatioDbForTest() const noexcept { return m_dexpHysteresisRatioDbLast; }
+
+    // ── Test seams (Phase 3M-3a-iii Task 4) — DEXP side-channel filter ─────
+    double lastDexpLowCutHzForTest()              const noexcept { return m_dexpLowCutHzLast; }
+    double lastDexpHighCutHzForTest()             const noexcept { return m_dexpHighCutHzLast; }
+    bool   lastDexpRunSideChannelFilterForTest()  const noexcept { return m_dexpRunSideChannelFilterLast; }
+
+    // ── Test seams (Phase 3M-3a-iii Task 5) — DEXP audio look-ahead ────────
+    bool   lastDexpRunAudioDelayForTest()         const noexcept { return m_dexpRunAudioDelayLast; }
+    double lastDexpAudioDelayMsForTest()          const noexcept { return m_dexpAudioDelayMsLast; }
+
     // ── Test seam (Phase 3M-1b D.6) — mic preamp last-value read-back ────────
     //
     // Allow tests to verify:
@@ -1483,6 +1873,28 @@ public:
     //   (b) Zero-value (mute case) stores 0.0 correctly.
     //   (c) Idempotent guard fires on duplicate calls (value unchanged).
     double lastMicPreampForTest()             const noexcept { return m_micPreampLast; }
+
+    // ── Test seam (Phase 3M-3a-iii Task 17) — DEXP pushvox bridge ──────────
+    //
+    // Synchronously invoke the static pushvox bridge for the given channel
+    // id with the given active flag.  Used by tst_tx_channel_pushvox_callback
+    // to verify that the bridge looks up the correct TxChannel instance and
+    // emits voxActiveChanged with the matching bool value.  WDSP itself
+    // calls `s_pushVoxCallback` from inside `xdexp` on the audio thread —
+    // tests cannot easily drive that path, so the seam invokes it directly.
+    static void invokePushVoxForTest(int id, int active) {
+        s_pushVoxCallback(id, active);
+    }
+
+    // ── Test seam (Phase 3M-3a-iii Task 18 — bench fix) — VOX-listening gate ─
+    //
+    // Read-only access to the VOX-listening atomic.  Test verifies that
+    // setVoxListening round-trips the flag and operates independently of
+    // setRunning (the whole point of the fix — both gates allow the pump
+    // independently, neither suppresses the other).
+    bool voxListeningForTest() const noexcept {
+        return m_voxListening.load(std::memory_order_acquire);
+    }
 
     // ── Test seam (issue #167 Phase 1 Agent 1C) — TX fixed-gain last-value ──
     //
@@ -1559,6 +1971,50 @@ public slots:
     ///               pcm->xmtr[tx].out[0], &error);
     void driveOneTxBlockFromInterleaved(const double* interleavedIn);
 
+    // ── DEXP per-block driver (3M-3a-iii Task 20) ────────────────────────────
+    //
+    /// Wire the WdspEngine-owned DEXP I/O buffer pointer into this wrapper.
+    ///
+    /// `dexpBuf` MUST point to the same `std::vector<double>::data()` that
+    /// was passed to `create_dexp` for this channel (WdspEngine retains
+    /// ownership; this wrapper holds a non-owning raw pointer).  `size`
+    /// is the buffer length in DOUBLES — must equal 2 * inputBufferSize
+    /// (the DEXP module wants `size` complex samples == 2*size doubles).
+    ///
+    /// Called once by WdspEngine::createTxChannel right after construction
+    /// so pumpDexp() has a valid destination for its per-block memcpy.
+    /// Pass nullptr / 0 to detach (e.g. on disconnect — also implicit when
+    /// the wrapper is destroyed).
+    void setDexpBuffer(double* dexpBuf, std::size_t sizeDoubles);
+
+    /// Pump one audio block through the WDSP DEXP detector and run xdexp().
+    ///
+    /// `interleavedIn` MUST point to 2 * m_inputBufferSize doubles
+    /// (interleaved I0,Q0,I1,Q1,...).  The block is copied byte-for-byte
+    /// into the WdspEngine-owned per-channel DEXP buffer (the buffer that
+    /// was passed to create_dexp at TX-channel-create time), then xdexp()
+    /// is invoked.  WDSP fires the pushvox callback synchronously from
+    /// inside xdexp() if the mic envelope crosses the attack threshold or
+    /// if the HOLD timer expires after audio drops below threshold.
+    ///
+    /// Mirrors Thetis cmaster.c:388 [v2.10.3.13] xdexp(tx) call BEFORE
+    /// fexchange0 at cmaster.c:389.  NereusSDR uses a parallel-only buffer
+    /// architecture (see WdspEngine.cpp create_dexp comment) so the DEXP
+    /// output is discarded — only the VOX-keying side effect of xdexp()
+    /// is observable downstream.
+    ///
+    /// Thread context: called from TxWorkerThread.  WDSP synchronizes
+    /// internally via dexp.cs_update.
+    ///
+    /// Null-safe: skips the WDSP call if pdexp[channelId] is nullptr OR if
+    /// the WdspEngine-owned DEXP buffer pointer is unavailable (no-op
+    /// degradation in test builds that constructed TxChannel directly
+    /// without going through WdspEngine::createTxChannel).
+    ///
+    /// From Thetis wdsp/cmaster.c:388 [v2.10.3.13] — `xdexp (tx)`.
+    /// From Thetis wdsp/dexp.c:266-396 [v2.10.3.13] — xdexp impl.
+    void pumpDexp(const double* interleavedIn);
+
 signals:
     // ── Per-profile TX filter applied (Plan 4 D8) ────────────────────────────
     //
@@ -1599,6 +2055,32 @@ signals:
     ///
     /// Plan: 3M-1b D.5 (this commit). Pre-code review §4.3.
     void sip1OutputReady(const float* samples, int frames);
+
+    // ── Phase 3M-3a-iii Task 17 — DEXP pushvox bridge signal ─────────────────
+    //
+    /// Emitted from the WDSP DEXP detector's pushvox callback when the mic
+    /// envelope crosses the attack threshold (active=true) or when the
+    /// HOLD timer expires after audio drops back below the threshold
+    /// (active=false).
+    ///
+    /// **Thread context:** emitted from the WDSP audio worker thread (the
+    /// thread that drives `xdexp` inside `fexchange0` — for NereusSDR that
+    /// is `TxWorkerThread`).  Receivers in the GUI / main thread receive
+    /// via Qt::QueuedConnection automatically (Qt::AutoConnection
+    /// promotes to QueuedConnection on a thread crossing).  Receivers
+    /// MUST be thread-safe with respect to that auto-promotion — they
+    /// must not assume direct synchronous delivery.
+    ///
+    /// Wired by RadioModel::connectToRadio() to
+    /// MoxController::onVoxActive(bool), which actively keys MOX (sets
+    /// PttMode::Vox + setMox(active)).
+    ///
+    /// From Thetis wdsp/dexp.c:330,339 [v2.10.3.13] — pushvox firing points
+    /// in DEXP's state machine.  The Thetis Console-side analogue is
+    /// VOX.PushVox at cmaster.cs:1903-1906 [v2.10.3.13] which sets
+    /// `Audio.VOXActive = (active == 1)`; NereusSDR uses direct
+    /// signal-driven MOX engagement instead of polling.
+    void voxActiveChanged(bool active);
 
 private slots:
     // ── Per-profile TX filter (Plan 4 D8) — debounce fire slot ───────────────
@@ -1702,6 +2184,89 @@ private:
     // reads it on the same thread.
     std::atomic<bool> m_running{false};
 
+    // ── Phase 3M-3a-iii Task 18 — VOX-listening pump gate (bench fix) ────────
+    //
+    // VOX-listening mode flag.  When true, the TX pump runs continuously
+    // even with m_running=false, so the WDSP DEXP detector can monitor
+    // mic envelope and fire its pushvox callback (Task 17) regardless
+    // of MOX state.  Radio-write side stays gated on m_running ONLY,
+    // so no TX I/Q reaches the radio in vox-listening mode.
+    //
+    // Without this flag, VOX-keying is broken by chicken-and-egg:
+    // pump only runs when MOX is engaged, so DEXP never sees mic
+    // envelope when MOX is off, so VOX cannot ever engage MOX.
+    //
+    // Set by RadioModel from TransmitModel::voxEnabledChanged.
+    // Discovered as bench-surfaced bug 2026-05-04 after Task 17
+    // landed the pushvox callback wire (commit 56d6921).
+    //
+    // Mirrors Thetis's continuous TXA-pipeline pumping behavior — see
+    // wdsp/dexp.c:304 [v2.10.3.13] "DEXP code runs continuously so
+    // it can be used to trigger VOX also."  In Thetis the TXA pump
+    // is driven by hardware audio cadence (HPSDR EP6 Tx audio) and
+    // is always-on after channel-open; MOX gates radio-write at the
+    // connection layer (cmaster.cs:1027 `if (run && mox)` pattern),
+    // not the pump itself.  NereusSDR pumps via TxWorkerThread which
+    // gates on m_running for power-saving when neither MOX nor VOX
+    // is in play; this flag re-enables pumping for VOX detection.
+    std::atomic<bool> m_voxListening{false};
+
+    // ── Phase 3M-3a-iii Task 17 — DEXP pushvox bridge ────────────────────────
+    //
+    // C-callable bridge that WDSP invokes from inside `xdexp` when the DEXP
+    // detector's state machine transitions LOW→ATTACK or when the HOLD
+    // timer expires.  Looks up the TxChannel instance for the given WDSP
+    // channel id (via s_voxKeyInstance) and emits voxActiveChanged with
+    // the matching bool value.  RadioModel routes that signal into
+    // MoxController::onVoxActive for direct MOX engagement.
+    //
+    // The signature MUST match the WDSP-side typedef byte-for-byte
+    // (NEREUS_STDCALL maps to __stdcall on Windows, nothing elsewhere —
+    // see wdsp_api.h SendCBPushDexpVox doc).  Cast to the underlying
+    // function-pointer type happens implicitly at the SendCBPushDexpVox
+    // callsite in TxChannel::registerVoxCallback().
+    //
+    // Thread context: WDSP audio worker thread (TxWorkerThread for
+    // NereusSDR).  Emitting a Qt signal here is safe because Qt's
+    // AutoConnection promotes to QueuedConnection on a thread crossing.
+    static void NEREUS_STDCALL s_pushVoxCallback(int id, int active);
+
+    // Single-instance lookup table.  3M-3a-iii ships exactly one TxChannel
+    // (channel id 1) — phase 3F multi-pan TX will turn this into a small
+    // std::array<TxChannel*, N> indexed by id.  Set in registerVoxCallback,
+    // cleared in unregisterVoxCallback and the dtor.
+    static TxChannel* s_voxKeyInstance;
+
+    // Wires SendCBPushDexpVox(m_channelId, &s_pushVoxCallback) and stores
+    // `this` in s_voxKeyInstance.  Called once from the constructor —
+    // Thetis create_xmtr (cmaster.c:130-157 [v2.10.3.13]) has already
+    // run create_dexp by the time WdspEngine::createTxChannel constructs
+    // this wrapper, so pdexp[m_channelId] is non-null and the WDSP setter
+    // is safe to call (matches the rsmpin.p / pdexp guards used throughout
+    // the existing DEXP setters).
+    void registerVoxCallback();
+
+    // Clears s_voxKeyInstance and re-registers nullptr with WDSP so a
+    // late callback after destruction is a no-op.  Called from the dtor.
+    void unregisterVoxCallback();
+
+    // ── Phase 3M-3a-iii Task 20 — DEXP per-block driver buffer ──────────────
+    //
+    // Non-owning pointer to the WdspEngine-owned per-channel DEXP buffer
+    // that was passed to create_dexp at TX-channel-create time (see
+    // WdspEngine.cpp createTxChannel).  Set once by WdspEngine::
+    // createTxChannel via setDexpBuffer right after construction; stays
+    // valid for the life of the wrapper because WdspEngine destroys the
+    // C++ wrapper (m_txChannels.erase) AFTER it tears down the DEXP
+    // module (destroy_dexp).
+    //
+    // Initialised nullptr so pumpDexp degrades to a no-op in test builds
+    // that construct TxChannel directly without going through
+    // WdspEngine::createTxChannel.  Size is in DOUBLES (2 * complex
+    // samples) — matches the create_dexp `size` argument doubled.
+    double*     m_dexpBuffer{nullptr};
+    std::size_t m_dexpBufferSizeDoubles{0};
+
     // ── VOX / anti-VOX last-set values (D.3) ─────────────────────────────────
     //
     // Each setter stores the last value dispatched to WDSP and skips the WDSP
@@ -1721,6 +2286,50 @@ private:
     double m_voxHangTimeLast        = std::numeric_limits<double>::quiet_NaN();
     bool   m_antiVoxRunLast         = false;
     double m_antiVoxGainLast        = std::numeric_limits<double>::quiet_NaN();
+
+    // ── DEXP envelope/timing last-set values (3M-3a-iii Tasks 1-2) ──────────
+    //
+    // Same NaN-init pattern as the VOX double cache members above.  Bool
+    // m_dexpRunLast initialises to false, matching the value Thetis passes
+    // to create_dexp at TX setup (ChannelMaster/cmaster.c:132 [v2.10.3.13]
+    // "dexp initially set to OFF").  Doubles use quiet_NaN so the first
+    // call always passes the guard.
+    bool   m_dexpRunLast              = false;
+    double m_dexpDetectorTauMsLast    = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpAttackTimeMsLast     = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpReleaseTimeMsLast    = std::numeric_limits<double>::quiet_NaN();
+
+    // ── DEXP gate / ratio last-set values (3M-3a-iii Task 3) ────────────────
+    //
+    // Stored as user-facing dB (idempotency check operates on the dB value).
+    // The linear ratio that goes to WDSP is recomputed from this dB on every
+    // accepted call via std::pow(10, ±dB/20.0).  Sign convention:
+    //   ExpansionRatio:  positive (Math.Pow(10, +dB/20))   — setup.cs:18918
+    //   HysteresisRatio: NEGATIVE (Math.Pow(10, -dB/20))   — setup.cs:18924
+    // Both initialise to quiet_NaN so the first call always passes the guard.
+    double m_dexpExpansionRatioDbLast  = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpHysteresisRatioDbLast = std::numeric_limits<double>::quiet_NaN();
+
+    // ── DEXP side-channel filter last-set values (3M-3a-iii Task 4) ─────────
+    //
+    // LowCut / HighCut are Hz at both the wrapper and WDSP boundaries (no
+    // unit conversion).  RunSideChannelFilter caches false to match the
+    // create_dexp WDSP boot state (a->run_filt = 0); Thetis ships
+    // chkSCFEnable as default CHECKED but the caller is responsible for
+    // pushing that initial value at startup.
+    double m_dexpLowCutHzLast              = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpHighCutHzLast             = std::numeric_limits<double>::quiet_NaN();
+    bool   m_dexpRunSideChannelFilterLast  = false;
+
+    // ── DEXP audio look-ahead last-set values (3M-3a-iii Task 5) ────────────
+    //
+    // RunAudioDelay caches false to match the create_dexp WDSP boot state
+    // (a->run_audelay = 0); Thetis ships chkDEXPLookAheadEnable as default
+    // CHECKED but the caller must push true at startup for that.  AudioDelay
+    // is NaN-init so the first call always passes the guard; ms→s conversion
+    // happens on the WDSP boundary (setup.cs:18961 / wdsp/dexp.c:638).
+    bool   m_dexpRunAudioDelayLast         = false;
+    double m_dexpAudioDelayMsLast          = std::numeric_limits<double>::quiet_NaN();
 
     // ── Mic preamp last-set value (D.6) ──────────────────────────────────────
     //

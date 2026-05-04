@@ -1,11 +1,18 @@
-// no-port-check: test-only — exercises NereusSDR-native TxApplet VOX toggle wiring.
-// Phase 3M-1b J.2.
+// no-port-check: test-only — exercises NereusSDR-native VOX toggle wiring.
+// Phase 3M-1b J.2; updated 3M-3a-iii Task 16 (commit dropping the duplicate
+// TxApplet VOX surface + VoxSettingsPopup widget).
 //
-// TxApplet inserts a checkable VOX button below the Tune Power slider.
-// The button is bidirectional with TransmitModel::voxEnabled (default false;
-// does NOT persist across restarts — safety: VOX always loads OFF, plan §0 row 8).
-// Right-click opens VoxSettingsPopup with 3 sliders: threshold (dB),
-// gain (scalar), hang time (ms).
+// The wired VOX surface now lives entirely on PhoneCwApplet (Phase tab,
+// Controls #10/#11) — see tst_phone_cw_applet_vox_dexp.cpp for the
+// applet-level wiring tests.  This test file retains the model-layer
+// contracts that BOTH the old TxApplet VOX button AND the current
+// PhoneCwApplet VOX button depend on:
+//
+//   default voxEnabled=false (plan §0 row 8 safety — VOX always loads OFF),
+//   UI→Model toggle ON/OFF (setVoxEnabled / voxEnabled getter),
+//   Model→UI: voxEnabledChanged fires with correct bool,
+//   visual state on toggle (signal fires on change),
+//   no feedback loop / idempotency (same-value set → no extra emit).
 //
 // Test cases:
 //  1. Default state  — voxEnabled() default is false (plan §0 row 8 safety rule).
@@ -17,21 +24,12 @@
 //     checked state contract: button should reflect model state via signal.
 //  7. No feedback loop — setVoxEnabled(false) twice → only one signal emitted
 //     after initial set (idempotent guard).
-//  8. Popup has 3 sliders — VoxSettingsPopup constructed with 3 param rows.
-//  9. Popup slider round-trip — changing threshold slider emits thresholdDbChanged
-//     with the slider's integer value.
-//
-// These tests exercise the model layer contracts + VoxSettingsPopup that
-// TxApplet::wireControls() depends on. TxApplet itself requires a display
-// server; widget construction is not performed here (same pattern as
-// tst_tx_applet_tune_wiring.cpp and tst_tx_applet_mic_gain.cpp).
 
 #include <QtTest/QtTest>
 #include <QCoreApplication>
 #include <QSignalSpy>
 
 #include "models/TransmitModel.h"
-#include "gui/widgets/VoxSettingsPopup.h"
 
 using namespace NereusSDR;
 
@@ -47,8 +45,6 @@ private slots:
     void voxEnabledChanged_firesFalse();
     void voxEnabled_visualChangeOnToggle();
     void noFeedbackLoop_idempotentFalse();
-    void popupHasThreeSliders();
-    void popupSlider_thresholdRoundtrip();
 };
 
 // ── 1. Default state ─────────────────────────────────────────────────────────
@@ -103,7 +99,7 @@ void TestTxAppletVoxToggle::voxEnabledChanged_firesFalse()
 }
 
 // ── 6. Visual state on toggle ────────────────────────────────────────────────
-// The TxApplet VOX button's visual state (checked/unchecked) is driven by
+// The PhoneCwApplet VOX button's visual state (checked/unchecked) is driven by
 // voxEnabledChanged. Here we verify the signal fires when toggling, which is
 // the contract that causes the UI to update. We also confirm the boolean
 // sequence matches (false → true → false).
@@ -144,61 +140,6 @@ void TestTxAppletVoxToggle::noFeedbackLoop_idempotentFalse()
     // Calling setVoxEnabled(true) again → no-op (idempotent guard).
     tx.setVoxEnabled(true);
     QCOMPARE(spy.count(), 1);
-}
-
-// ── 8. Popup has 3 sliders ───────────────────────────────────────────────────
-// VoxSettingsPopup must expose exactly 3 slider rows:
-//   threshold (dB), gain (scalar), hang time (ms).
-// We use the sliderCount() accessor on the popup.
-// The popup is constructed headlessly (no QApplication show() call needed for
-// the construction + accessor query path).
-void TestTxAppletVoxToggle::popupHasThreeSliders()
-{
-    // Construct with TransmitModel defaults.
-    // Threshold: -40 dB (NereusSDR default, plan §C.3)
-    // Gain: 1.0f (Thetis audio.cs:194 [v2.10.3.13]: vox_gain = 1.0f)
-    // Hang: 500 ms (Thetis setup.designer.cs:45020-45024 [v2.10.3.13])
-    TransmitModel tx;
-    VoxSettingsPopup popup(
-        tx.voxThresholdDb(),
-        tx.voxGainScalar(),
-        tx.voxHangTimeMs(),
-        nullptr);
-
-    QCOMPARE(popup.sliderCount(), 3);
-}
-
-// ── 9. Popup slider round-trip ───────────────────────────────────────────────
-// When the popup emits thresholdDbChanged, TransmitModel::setVoxThresholdDb
-// should be called, and voxThresholdDb() should reflect the new value.
-// We exercise the signal→model binding here (same pattern the popup uses when
-// wired in TxApplet::showVoxSettingsPopup()).
-void TestTxAppletVoxToggle::popupSlider_thresholdRoundtrip()
-{
-    TransmitModel tx;
-
-    // Spy on the popup's signal (exercises the signal exists and carries int).
-    VoxSettingsPopup popup(
-        tx.voxThresholdDb(),
-        tx.voxGainScalar(),
-        tx.voxHangTimeMs(),
-        nullptr);
-
-    QSignalSpy spy(&popup, &VoxSettingsPopup::thresholdDbChanged);
-
-    // Wire popup → model (as TxApplet::showVoxSettingsPopup() does).
-    connect(&popup, &VoxSettingsPopup::thresholdDbChanged,
-            &tx,    &TransmitModel::setVoxThresholdDb);
-
-    // Simulate the popup emitting a new threshold value.
-    emit popup.thresholdDbChanged(-30);
-
-    // Signal captured.
-    QCOMPARE(spy.count(), 1);
-    QCOMPARE(spy.at(0).at(0).toInt(), -30);
-
-    // Model updated.
-    QCOMPARE(tx.voxThresholdDb(), -30);
 }
 
 QTEST_MAIN(TestTxAppletVoxToggle)

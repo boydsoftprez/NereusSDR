@@ -62,9 +62,16 @@ QString activeKey(const QString& mac)
 }
 
 // ---------------------------------------------------------------------------
-// 50 live-field keys captured per profile.  Order matches the table in the
-// chunk-F + 3M-3a-i G task specs (tools/script-friendly: sorted by group).
-// 23 mic/VOX/MON/two-tone (3M-1c F) + 27 EQ/Lev/ALC (3M-3a-i G).
+// 107 live-field keys captured per profile.  Order matches the table in the
+// chunk-F + 3M-3a-i / ii / iii task specs (tools/script-friendly: sorted by
+// group).
+//   23 mic/VOX/MON/two-tone   (3M-1c F)
+// + 27 EQ/Lev/ALC             (3M-3a-i G)
+// + 41 CFC/CPDR/CESSB/PhRot   (3M-3a-ii G)
+// +  1 TXParaEQData blob      (3M-3a-ii follow-up Batch 6)
+// +  2 FilterLow/FilterHigh   (Plan 4 Cluster A D1)
+// +  2 line_in_gain/user_dig_out (P1 full-parity Task 2.4)
+// + 11 DEXP envelope/ratios/look-ahead/SCF (3M-3a-iii Tasks 7-10)
 // ---------------------------------------------------------------------------
 const QStringList& liveKeyList()
 {
@@ -200,6 +207,24 @@ const QStringList& liveKeyList()
         // NereusSDR-original. Defaults 100/2900 (USB voice typical SSB).
         QStringLiteral("FilterLow"),
         QStringLiteral("FilterHigh"),
+        // ── 3M-3a-iii Tasks 7-10 — DEXP downward-expander (11 keys) ────────
+        // Bundles the new TransmitModel DEXP properties added in Tasks 7-10
+        // (envelope, gate ratios, look-ahead, side-channel filter).  Defaults
+        // sourced from Thetis setup.Designer.cs:44755-45250 [v2.10.3.13]
+        // (grpDEXPVOX + grpDEXPLookAhead + grpSCF on tpDSPVOXDE).  All 11
+        // properties persist (no PTT-safety carve-out — DEXP only gates audio
+        // already being processed, it cannot accidentally key the radio).
+        QStringLiteral("DEXP_Enabled"),
+        QStringLiteral("DEXP_DetectorTauMs"),
+        QStringLiteral("DEXP_AttackTimeMs"),
+        QStringLiteral("DEXP_ReleaseTimeMs"),
+        QStringLiteral("DEXP_ExpansionRatioDb"),
+        QStringLiteral("DEXP_HysteresisRatioDb"),
+        QStringLiteral("DEXP_LookAheadEnabled"),
+        QStringLiteral("DEXP_LookAheadMs"),
+        QStringLiteral("DEXP_LowCutHz"),
+        QStringLiteral("DEXP_HighCutHz"),
+        QStringLiteral("DEXP_SideChannelFilterEnabled"),
     };
     return kKeys;
 }
@@ -1120,6 +1145,22 @@ QHash<QString, QVariant> MicProfileManager::defaultProfileValues()
     // Per Plan 4 spec §Task 2 (docs/superpowers/plans/2026-05-01-tx-bandwidth.md).
     out.insert(QStringLiteral("FilterLow"),  QStringLiteral("100"));   // Plan 4 D1 — USB voice SSB default
     out.insert(QStringLiteral("FilterHigh"), QStringLiteral("2900"));  // Plan 4 D1 — USB voice SSB default
+
+    // ── 3M-3a-iii Tasks 7-10 — DEXP defaults (11 keys) ────────────────────
+    // From Thetis setup.Designer.cs:44755-45250 [v2.10.3.13] (grpDEXPVOX +
+    // grpDEXPLookAhead + grpSCF on tpDSPVOXDE).  Defaults match TransmitModel
+    // m_dexp* member initializers (see TransmitModel.h:642-808).
+    out.insert(QStringLiteral("DEXP_Enabled"),                  QStringLiteral("False"));   // setup.Designer.cs:45140 (chkDEXPEnable)
+    out.insert(QStringLiteral("DEXP_DetectorTauMs"),            QStringLiteral("20"));      // setup.Designer.cs:45093 (udDEXPDetTau.Value)
+    out.insert(QStringLiteral("DEXP_AttackTimeMs"),             QStringLiteral("2"));       // setup.Designer.cs:45050 (udDEXPAttack.Value)
+    out.insert(QStringLiteral("DEXP_ReleaseTimeMs"),            QStringLiteral("100"));     // setup.Designer.cs:44990 (udDEXPRelease.Value)
+    out.insert(QStringLiteral("DEXP_ExpansionRatioDb"),         QStringLiteral("10"));      // setup.Designer.cs:44900 (udDEXPExpansionRatio.Value)
+    out.insert(QStringLiteral("DEXP_HysteresisRatioDb"),        QStringLiteral("2"));       // setup.Designer.cs:44869 (udDEXPHysteresisRatio.Value, scaled)
+    out.insert(QStringLiteral("DEXP_LookAheadEnabled"),         QStringLiteral("True"));    // setup.Designer.cs:44808 (chkDEXPLookAheadEnable.Checked)
+    out.insert(QStringLiteral("DEXP_LookAheadMs"),              QStringLiteral("60"));      // setup.Designer.cs:44788 (udDEXPLookAhead.Value)
+    out.insert(QStringLiteral("DEXP_LowCutHz"),                 QStringLiteral("500"));     // setup.Designer.cs:45240 (udSCFLowCut.Value)
+    out.insert(QStringLiteral("DEXP_HighCutHz"),                QStringLiteral("1500"));    // setup.Designer.cs:45210 (udSCFHighCut.Value)
+    out.insert(QStringLiteral("DEXP_SideChannelFilterEnabled"), QStringLiteral("True"));    // setup.Designer.cs:45250 (chkSCFEnable.Checked)
     return out;
 }
 
@@ -1224,6 +1265,33 @@ QHash<QString, QVariant> MicProfileManager::captureLiveValues(const TransmitMode
     // ── Plan 4 D1 — TX filter bandwidth (2 keys) ─────────────────────────
     out.insert(QStringLiteral("FilterLow"),  QString::number(tx->filterLow()));
     out.insert(QStringLiteral("FilterHigh"), QString::number(tx->filterHigh()));
+
+    // ── 3M-3a-iii Tasks 7-10 — DEXP live capture (11 keys) ───────────────
+    // Bundle keys + defaults match the kKeys list (liveKeyList()) and
+    // defaultProfileValues() above.  TM getter names from TransmitModel.h
+    // [v2.10.3.13]:642-808 (Tasks 7-10 envelope/ratios/look-ahead/SCF).
+    out.insert(QStringLiteral("DEXP_Enabled"),
+               tx->dexpEnabled() ? QStringLiteral("True") : QStringLiteral("False"));
+    out.insert(QStringLiteral("DEXP_DetectorTauMs"),
+               QString::number(tx->dexpDetectorTauMs()));
+    out.insert(QStringLiteral("DEXP_AttackTimeMs"),
+               QString::number(tx->dexpAttackTimeMs()));
+    out.insert(QStringLiteral("DEXP_ReleaseTimeMs"),
+               QString::number(tx->dexpReleaseTimeMs()));
+    out.insert(QStringLiteral("DEXP_ExpansionRatioDb"),
+               QString::number(tx->dexpExpansionRatioDb()));
+    out.insert(QStringLiteral("DEXP_HysteresisRatioDb"),
+               QString::number(tx->dexpHysteresisRatioDb()));
+    out.insert(QStringLiteral("DEXP_LookAheadEnabled"),
+               tx->dexpLookAheadEnabled() ? QStringLiteral("True") : QStringLiteral("False"));
+    out.insert(QStringLiteral("DEXP_LookAheadMs"),
+               QString::number(tx->dexpLookAheadMs()));
+    out.insert(QStringLiteral("DEXP_LowCutHz"),
+               QString::number(tx->dexpLowCutHz()));
+    out.insert(QStringLiteral("DEXP_HighCutHz"),
+               QString::number(tx->dexpHighCutHz()));
+    out.insert(QStringLiteral("DEXP_SideChannelFilterEnabled"),
+               tx->dexpSideChannelFilterEnabled() ? QStringLiteral("True") : QStringLiteral("False"));
     return out;
 }
 
@@ -1346,6 +1414,34 @@ void MicProfileManager::applyValuesToModel(const QHash<QString, QVariant>& value
     // Defaults 100/2900 (USB voice typical SSB) per Plan 4 spec §Task 2.
     tx->setFilterLow( take(QStringLiteral("FilterLow"),  QStringLiteral("100")).toInt());
     tx->setFilterHigh(take(QStringLiteral("FilterHigh"), QStringLiteral("2900")).toInt());
+
+    // ── 3M-3a-iii Tasks 7-10 — DEXP apply-to-model (11 keys) ─────────────
+    // Defaults match defaultProfileValues() above and the TransmitModel
+    // m_dexp* member initializers.  TM setter names from TransmitModel.h
+    // [v2.10.3.13]:1372-1388.  Setters internally clamp to the range
+    // constants documented on each getter.
+    tx->setDexpEnabled(take(QStringLiteral("DEXP_Enabled"),
+                             QStringLiteral("False")) == QLatin1String("True"));
+    tx->setDexpDetectorTauMs(take(QStringLiteral("DEXP_DetectorTauMs"),
+                                   QStringLiteral("20")).toDouble());
+    tx->setDexpAttackTimeMs(take(QStringLiteral("DEXP_AttackTimeMs"),
+                                  QStringLiteral("2")).toDouble());
+    tx->setDexpReleaseTimeMs(take(QStringLiteral("DEXP_ReleaseTimeMs"),
+                                   QStringLiteral("100")).toDouble());
+    tx->setDexpExpansionRatioDb(take(QStringLiteral("DEXP_ExpansionRatioDb"),
+                                      QStringLiteral("10")).toDouble());
+    tx->setDexpHysteresisRatioDb(take(QStringLiteral("DEXP_HysteresisRatioDb"),
+                                       QStringLiteral("2")).toDouble());
+    tx->setDexpLookAheadEnabled(take(QStringLiteral("DEXP_LookAheadEnabled"),
+                                      QStringLiteral("True")) == QLatin1String("True"));
+    tx->setDexpLookAheadMs(take(QStringLiteral("DEXP_LookAheadMs"),
+                                 QStringLiteral("60")).toDouble());
+    tx->setDexpLowCutHz(take(QStringLiteral("DEXP_LowCutHz"),
+                              QStringLiteral("500")).toDouble());
+    tx->setDexpHighCutHz(take(QStringLiteral("DEXP_HighCutHz"),
+                               QStringLiteral("1500")).toDouble());
+    tx->setDexpSideChannelFilterEnabled(take(QStringLiteral("DEXP_SideChannelFilterEnabled"),
+                                              QStringLiteral("True")) == QLatin1String("True"));
 }
 
 } // namespace NereusSDR

@@ -1136,6 +1136,52 @@ void TransmitModel::loadFromSettings(const QString& mac)
                                        QStringLiteral("500")).toInt();
     setVoxHangTimeMs(voxHangTimeMs);
 
+    // ── DEXP envelope properties (3M-3a-iii Task 7) — ALL persist ─────────
+    // Defaults from Thetis setup.Designer.cs [v2.10.3.13]:
+    //   chkDEXPEnable: WinForms default false (line 45140-45151)
+    //   udDEXPDetTau.Value=20  (line 45093)
+    //   udDEXPAttack.Value=2   (line 45050)
+    //   udDEXPRelease.Value=100 (line 44990)
+    setDexpEnabled(s.value(pfx + QLatin1String("DEXP_Enabled"),
+                            QStringLiteral("False")).toString() == QLatin1String("True"));
+    setDexpDetectorTauMs(s.value(pfx + QLatin1String("DEXP_DetectorTauMs"),
+                                  QStringLiteral("20")).toDouble());
+    setDexpAttackTimeMs(s.value(pfx + QLatin1String("DEXP_AttackTimeMs"),
+                                 QStringLiteral("2")).toDouble());
+    setDexpReleaseTimeMs(s.value(pfx + QLatin1String("DEXP_ReleaseTimeMs"),
+                                  QStringLiteral("100")).toDouble());
+
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) — both persist ──────
+    // Defaults from Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPExpansionRatio.Value=10            (line 44900-44904)
+    //   udDEXPHysteresisRatio.Value=20 -> 2.0    (line 44869-44873; scale 65536)
+    setDexpExpansionRatioDb(s.value(pfx + QLatin1String("DEXP_ExpansionRatioDb"),
+                                     QStringLiteral("10")).toDouble());
+    setDexpHysteresisRatioDb(s.value(pfx + QLatin1String("DEXP_HysteresisRatioDb"),
+                                      QStringLiteral("2")).toDouble());
+
+    // ── DEXP look-ahead properties (3M-3a-iii Task 9) — both persist ──────
+    // Defaults from Thetis setup.Designer.cs [v2.10.3.13]:
+    //   chkDEXPLookAheadEnable.Checked=true (line 44808)
+    //   udDEXPLookAhead.Value=60            (line 44788)
+    setDexpLookAheadEnabled(s.value(pfx + QLatin1String("DEXP_LookAheadEnabled"),
+                                     QStringLiteral("True")).toString() == QLatin1String("True"));
+    setDexpLookAheadMs(s.value(pfx + QLatin1String("DEXP_LookAheadMs"),
+                                QStringLiteral("60")).toDouble());
+
+    // ── DEXP side-channel filter properties (3M-3a-iii Task 10) — all persist ─
+    // Defaults from Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udSCFLowCut.Value=500     (line 45240)
+    //   udSCFHighCut.Value=1500   (line 45210)
+    //   chkSCFEnable.Checked=true (line 45250)
+    setDexpLowCutHz(s.value(pfx + QLatin1String("DEXP_LowCutHz"),
+                             QStringLiteral("500")).toDouble());
+    setDexpHighCutHz(s.value(pfx + QLatin1String("DEXP_HighCutHz"),
+                              QStringLiteral("1500")).toDouble());
+    setDexpSideChannelFilterEnabled(
+        s.value(pfx + QLatin1String("DEXP_SideChannelFilterEnabled"),
+                QStringLiteral("True")).toString() == QLatin1String("True"));
+
     // ── Anti-VOX properties ───────────────────────────────────────────────
     // antiVoxGainDb: default 0 (NereusSDR-original safe starting point)
     const int antiVoxGainDb = s.value(pfx + QLatin1String("AntiVox_Gain"),
@@ -1397,6 +1443,28 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("Dexp_Threshold"),   QString::number(m_voxThresholdDb));
     s.setValue(pfx + QLatin1String("VOX_GainScalar"),    QString::number(static_cast<double>(m_voxGainScalar)));
     s.setValue(pfx + QLatin1String("VOX_HangTime"),    QString::number(m_voxHangTimeMs));
+
+    // ── DEXP envelope properties (3M-3a-iii Task 7) — ALL persist ─────────
+    s.setValue(pfx + QLatin1String("DEXP_Enabled"),
+               m_dexpEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("DEXP_DetectorTauMs"), QString::number(m_dexpDetectorTauMs));
+    s.setValue(pfx + QLatin1String("DEXP_AttackTimeMs"),  QString::number(m_dexpAttackTimeMs));
+    s.setValue(pfx + QLatin1String("DEXP_ReleaseTimeMs"), QString::number(m_dexpReleaseTimeMs));
+
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) — both persist ──────
+    s.setValue(pfx + QLatin1String("DEXP_ExpansionRatioDb"),  QString::number(m_dexpExpansionRatioDb));
+    s.setValue(pfx + QLatin1String("DEXP_HysteresisRatioDb"), QString::number(m_dexpHysteresisRatioDb));
+
+    // ── DEXP look-ahead properties (3M-3a-iii Task 9) — both persist ──────
+    s.setValue(pfx + QLatin1String("DEXP_LookAheadEnabled"),
+               m_dexpLookAheadEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("DEXP_LookAheadMs"), QString::number(m_dexpLookAheadMs));
+
+    // ── DEXP side-channel filter properties (3M-3a-iii Task 10) — all persist ─
+    s.setValue(pfx + QLatin1String("DEXP_LowCutHz"),  QString::number(m_dexpLowCutHz));
+    s.setValue(pfx + QLatin1String("DEXP_HighCutHz"), QString::number(m_dexpHighCutHz));
+    s.setValue(pfx + QLatin1String("DEXP_SideChannelFilterEnabled"),
+               m_dexpSideChannelFilterEnabled ? QStringLiteral("True") : QStringLiteral("False"));
 
     // ── Anti-VOX properties ───────────────────────────────────────────────
     s.setValue(pfx + QLatin1String("AntiVox_Gain"),    QString::number(m_antiVoxGainDb));
@@ -1674,6 +1742,203 @@ void TransmitModel::setVoxHangTimeMs(int ms)
     m_voxHangTimeMs = clamped;
     persistOne(QStringLiteral("VOX_HangTime"), QString::number(m_voxHangTimeMs));  // L.2 auto-persist
     emit voxHangTimeMsChanged(clamped);
+}
+
+// ── DEXP envelope properties (3M-3a-iii Task 7) ────────────────────────────
+//
+// Downward expander envelope controls.  Bound to Setup -> Audio -> VOX/DEXP
+// (grpDEXPVOX on tpDSPVOXDE) per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+//
+// Defaults:
+//   chkDEXPEnable: WinForms default false (no Checked= setter at line 45140-45151)
+//   udDEXPDetTau.Value=20    (line 45093)
+//   udDEXPAttack.Value=2     (line 45050)
+//   udDEXPRelease.Value=100  (line 44990)
+//
+// Ranges:
+//   udDEXPDetTau:  Min=1,    Max=100   (line 45078-45087)
+//   udDEXPAttack:  Min=2,    Max=100   (line 45035-45044)
+//   udDEXPRelease: Min=2,    Max=1000  (line 44975-44984)
+//
+// Persistence: ALL four properties persist.  Unlike voxEnabled (which is held
+// off at startup for PTT safety), dexpEnabled does NOT key the radio — the
+// downward expander only gates already-keyed audio.  No safety carve-out.
+//
+// WDSP wiring lives in TxChannel (Tasks 1-2): setDexpRun, setDexpDetectorTau,
+// setDexpAttackTime, setDexpReleaseTime.  Setup-page binding lands in Task 14.
+
+void TransmitModel::setDexpEnabled(bool on)
+{
+    if (on == m_dexpEnabled) { return; }  // idempotent guard
+    m_dexpEnabled = on;
+    persistOne(QStringLiteral("DEXP_Enabled"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit dexpEnabledChanged(on);
+}
+
+void TransmitModel::setDexpDetectorTauMs(double ms)
+{
+    // Clamp to udDEXPDetTau range per setup.Designer.cs:45078-45087 [v2.10.3.13]:
+    //   udDEXPDetTau.Maximum = 100, udDEXPDetTau.Minimum = 1  (units: ms)
+    const double clamped = std::clamp(ms, kDexpDetectorTauMsMin, kDexpDetectorTauMsMax);
+    if (qFuzzyCompare(clamped, m_dexpDetectorTauMs)) { return; }  // idempotent guard
+    m_dexpDetectorTauMs = clamped;
+    persistOne(QStringLiteral("DEXP_DetectorTauMs"), QString::number(clamped));
+    emit dexpDetectorTauMsChanged(clamped);
+}
+
+void TransmitModel::setDexpAttackTimeMs(double ms)
+{
+    // Clamp to udDEXPAttack range per setup.Designer.cs:45035-45044 [v2.10.3.13]:
+    //   udDEXPAttack.Maximum = 100, udDEXPAttack.Minimum = 2  (units: ms)
+    const double clamped = std::clamp(ms, kDexpAttackTimeMsMin, kDexpAttackTimeMsMax);
+    if (qFuzzyCompare(clamped, m_dexpAttackTimeMs)) { return; }  // idempotent guard
+    m_dexpAttackTimeMs = clamped;
+    persistOne(QStringLiteral("DEXP_AttackTimeMs"), QString::number(clamped));
+    emit dexpAttackTimeMsChanged(clamped);
+}
+
+void TransmitModel::setDexpReleaseTimeMs(double ms)
+{
+    // Clamp to udDEXPRelease range per setup.Designer.cs:44975-44984 [v2.10.3.13]:
+    //   udDEXPRelease.Maximum = 1000, udDEXPRelease.Minimum = 2  (units: ms)
+    const double clamped = std::clamp(ms, kDexpReleaseTimeMsMin, kDexpReleaseTimeMsMax);
+    if (qFuzzyCompare(clamped, m_dexpReleaseTimeMs)) { return; }  // idempotent guard
+    m_dexpReleaseTimeMs = clamped;
+    persistOne(QStringLiteral("DEXP_ReleaseTimeMs"), QString::number(clamped));
+    emit dexpReleaseTimeMsChanged(clamped);
+}
+
+// ── DEXP gate-ratio properties (3M-3a-iii Task 8) ──────────────────────────
+//
+// Downward-expander gate ratios.  Bound to grpDEXPVOX in Setup -> Audio ->
+// VOX/DEXP per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+//
+// Defaults:
+//   udDEXPExpansionRatio.Value=10   (line 44900-44904)
+//   udDEXPHysteresisRatio.Value=20 with DecimalPlaces=1, scale=65536
+//                                  -- displayed as 2.0 (line 44869-44873)
+//
+// Ranges:
+//   udDEXPExpansionRatio:  Min=0, Max=30  (line 44885-44894)
+//   udDEXPHysteresisRatio: Min=0, Max=10  (line 44854-44863)
+//
+// The TxChannel wrapper for hysteresis applies a NEGATIVE Math.Pow exponent
+// internally (per Batch B finding); the model layer just stores the dB value.
+// Wrapper conversion lives in TxChannel setDexpHysteresisRatio (Task 3).
+//
+// Both persist.
+
+void TransmitModel::setDexpExpansionRatioDb(double dB)
+{
+    // Clamp to udDEXPExpansionRatio range per setup.Designer.cs:44885-44894 [v2.10.3.13]:
+    //   udDEXPExpansionRatio.Maximum = 30, udDEXPExpansionRatio.Minimum = 0
+    const double clamped = std::clamp(dB, kDexpExpansionRatioDbMin, kDexpExpansionRatioDbMax);
+    if (qFuzzyCompare(clamped, m_dexpExpansionRatioDb)) { return; }  // idempotent guard
+    m_dexpExpansionRatioDb = clamped;
+    persistOne(QStringLiteral("DEXP_ExpansionRatioDb"), QString::number(clamped));
+    emit dexpExpansionRatioDbChanged(clamped);
+}
+
+void TransmitModel::setDexpHysteresisRatioDb(double dB)
+{
+    // Clamp to udDEXPHysteresisRatio range per setup.Designer.cs:44854-44863 [v2.10.3.13]:
+    //   udDEXPHysteresisRatio.Maximum = 10, udDEXPHysteresisRatio.Minimum = 0
+    const double clamped = std::clamp(dB, kDexpHysteresisRatioDbMin, kDexpHysteresisRatioDbMax);
+    if (qFuzzyCompare(clamped, m_dexpHysteresisRatioDb)) { return; }  // idempotent guard
+    m_dexpHysteresisRatioDb = clamped;
+    persistOne(QStringLiteral("DEXP_HysteresisRatioDb"), QString::number(clamped));
+    emit dexpHysteresisRatioDbChanged(clamped);
+}
+
+// ── DEXP look-ahead properties (3M-3a-iii Task 9) ──────────────────────────
+//
+// Audio look-ahead controls.  Bound to grpDEXPLookAhead in Setup -> Audio ->
+// VOX/DEXP per Thetis setup.Designer.cs:44755+ [v2.10.3.13].
+//
+// Defaults:
+//   chkDEXPLookAheadEnable.Checked=true (line 44808)
+//                  -- the only DEXP boolean defaulting true
+//   udDEXPLookAhead.Value=60            (line 44788)
+//
+// Range:
+//   udDEXPLookAhead: Min=10, Max=999  (line 44773-44782; units: ms)
+//
+// Both persist.
+
+void TransmitModel::setDexpLookAheadEnabled(bool on)
+{
+    if (on == m_dexpLookAheadEnabled) { return; }  // idempotent guard
+    m_dexpLookAheadEnabled = on;
+    persistOne(QStringLiteral("DEXP_LookAheadEnabled"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit dexpLookAheadEnabledChanged(on);
+}
+
+void TransmitModel::setDexpLookAheadMs(double ms)
+{
+    // Clamp to udDEXPLookAhead range per setup.Designer.cs:44773-44782 [v2.10.3.13]:
+    //   udDEXPLookAhead.Maximum = 999, udDEXPLookAhead.Minimum = 10  (units: ms)
+    const double clamped = std::clamp(ms, kDexpLookAheadMsMin, kDexpLookAheadMsMax);
+    if (qFuzzyCompare(clamped, m_dexpLookAheadMs)) { return; }  // idempotent guard
+    m_dexpLookAheadMs = clamped;
+    persistOne(QStringLiteral("DEXP_LookAheadMs"), QString::number(clamped));
+    emit dexpLookAheadMsChanged(clamped);
+}
+
+// ── DEXP side-channel filter properties (3M-3a-iii Task 10) ────────────────
+//
+// Side-channel HP/LP filter trio used by the DEXP detector to gate which
+// audio frequencies trigger VOX/DEXP.  Bound to grpSCF in Setup -> Audio ->
+// VOX/DEXP per Thetis setup.Designer.cs:45153+ [v2.10.3.13].
+//
+// Plan scope correction (2026-05-03): originally these were planned as
+// model-only / no-UI properties, but a source-first re-read by the Batch B
+// agent surfaced grpSCF on tpDSPVOXDE -- so they DO get UI binding
+// (lands in Task 14, the DexpVoxPage Setup-page work).  Defaults below
+// therefore match the Thetis Designer values verbatim.
+//
+// Defaults:
+//   udSCFLowCut.Value=500     (line 45240)
+//   udSCFHighCut.Value=1500   (line 45210)
+//   chkSCFEnable.Checked=true (line 45250)
+//
+// Range:
+//   udSCFLowCut + udSCFHighCut both: Min=100, Max=10000 (units: Hz)
+//   (lines 45195-45234)
+// Range matches Task 4 wrapper clamps in TxChannel::setDexpLowCut/HighCut.
+//
+// All three persist.
+
+void TransmitModel::setDexpLowCutHz(double hz)
+{
+    // Clamp to udSCFLowCut range per setup.Designer.cs:45225-45234 [v2.10.3.13]:
+    //   udSCFLowCut.Maximum = 10000, udSCFLowCut.Minimum = 100  (units: Hz)
+    const double clamped = std::clamp(hz, kDexpFilterCutHzMin, kDexpFilterCutHzMax);
+    if (qFuzzyCompare(clamped, m_dexpLowCutHz)) { return; }  // idempotent guard
+    m_dexpLowCutHz = clamped;
+    persistOne(QStringLiteral("DEXP_LowCutHz"), QString::number(clamped));
+    emit dexpLowCutHzChanged(clamped);
+}
+
+void TransmitModel::setDexpHighCutHz(double hz)
+{
+    // Clamp to udSCFHighCut range per setup.Designer.cs:45195-45204 [v2.10.3.13]:
+    //   udSCFHighCut.Maximum = 10000, udSCFHighCut.Minimum = 100  (units: Hz)
+    const double clamped = std::clamp(hz, kDexpFilterCutHzMin, kDexpFilterCutHzMax);
+    if (qFuzzyCompare(clamped, m_dexpHighCutHz)) { return; }  // idempotent guard
+    m_dexpHighCutHz = clamped;
+    persistOne(QStringLiteral("DEXP_HighCutHz"), QString::number(clamped));
+    emit dexpHighCutHzChanged(clamped);
+}
+
+void TransmitModel::setDexpSideChannelFilterEnabled(bool on)
+{
+    if (on == m_dexpSideChannelFilterEnabled) { return; }  // idempotent guard
+    m_dexpSideChannelFilterEnabled = on;
+    persistOne(QStringLiteral("DEXP_SideChannelFilterEnabled"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit dexpSideChannelFilterEnabledChanged(on);
 }
 
 // ── Two-tone test properties (3M-1c B.2) ────────────────────────────────────
