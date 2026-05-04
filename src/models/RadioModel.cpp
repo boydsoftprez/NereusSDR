@@ -2757,9 +2757,20 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     const double fwdWCal = double(
         m_calController.calibratedFwdPowerWatts(static_cast<float>(fwdW)));
 
-    m_radioStatus.setForwardPower(fwdWCal);
-    m_radioStatus.setReflectedPower(revW);
-    m_radioStatus.setExciterPowerMw(static_cast<int>(exciterRaw));
+    // Bench-reported #167 follow-up: when MOX is off, the radio still emits
+    // P2 high-priority status frames containing residue alex_fwd / alex_rev
+    // values (last sample echo + directional-coupler noise floor).  Pushing
+    // those non-zero residue values to RadioStatus re-fills the Power / SWR
+    // bars after the moxChanged falling-edge handler tried to zero them.
+    // Force the TX-domain readings to 0 when MOX is off so the meters show
+    // the physical truth (no TX → no forward power) and don't oscillate
+    // back into a stale-sample stuck state.  PA current / temperature /
+    // supply voltage are slow physical quantities valid off-air; leave
+    // those samples alone.
+    const bool inMox = m_transmitModel.isMox();
+    m_radioStatus.setForwardPower(inMox ? fwdWCal : 0.0);
+    m_radioStatus.setReflectedPower(inMox ? revW : 0.0);
+    m_radioStatus.setExciterPowerMw(inMox ? static_cast<int>(exciterRaw) : 0);
     m_radioStatus.setPaCurrent(paA);
     // Only push temp when we have a real source (non-zero); leaves the
     // last-known value alone otherwise so a stale 0 doesn't overwrite a
