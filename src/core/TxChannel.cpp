@@ -381,11 +381,8 @@ TxChannel* TxChannel::s_voxKeyInstance = nullptr;
 
 void NEREUS_STDCALL TxChannel::s_pushVoxCallback(int id, int active)
 {
-    qCInfo(lcDsp) << "[VOXDIAG] s_pushVoxCallback FIRED id=" << id << "active=" << active;
     TxChannel* inst = s_voxKeyInstance;
     if (inst == nullptr || inst->m_channelId != id) {
-        qCWarning(lcDsp) << "[VOXDIAG] s_pushVoxCallback: instance lookup failed (inst="
-                         << (inst ? "set" : "NULL") << ")";
         return;
     }
     emit inst->voxActiveChanged(active != 0);
@@ -549,21 +546,11 @@ void TxChannel::registerVoxCallback()
     // SendCBPushDexpVox would dereference null (dexp.c:402:
     // `DEXP a = pdexp[id]; ... a->pushvox = pushvox;`).  Same pattern as
     // setVoxRun / setDexpRun / all other DEXP setters in this file.
-    if (txa[m_channelId].rsmpin.p == nullptr) {
-        qCWarning(lcDsp) << "[VOXDIAG] registerVoxCallback ch=" << m_channelId
-                         << " SKIPPED: txa.rsmpin.p NULL";
-        return;
-    }
-    if (pdexp[m_channelId] == nullptr) {
-        qCWarning(lcDsp) << "[VOXDIAG] registerVoxCallback ch=" << m_channelId
-                         << " SKIPPED: pdexp NULL";
-        return;
-    }
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    if (pdexp[m_channelId] == nullptr) return;
     // From Thetis wdsp/dexp.c:399-403 [v2.10.3.13] — SendCBPushDexpVox impl.
     // Cite: Thetis cmaster.cs:1125 [v2.10.3.13] — analogous registration.
     SendCBPushDexpVox(m_channelId, &TxChannel::s_pushVoxCallback);
-    qCInfo(lcDsp) << "[VOXDIAG] registerVoxCallback ch=" << m_channelId
-                  << " SendCBPushDexpVox OK (cb=" << reinterpret_cast<void*>(&TxChannel::s_pushVoxCallback) << ")";
 #endif
 }
 
@@ -1591,26 +1578,17 @@ void TxChannel::setVoxRun(bool run)
 {
     if (run == m_voxRunLast) return;  // idempotent guard
     m_voxRunLast = run;
-    qCInfo(lcDsp) << "[VOXDIAG] TxChannel::setVoxRun" << run;
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:199-200 [v2.10.3.13]
-    if (txa[m_channelId].rsmpin.p == nullptr) {
-        qCWarning(lcDsp) << "[VOXDIAG] setVoxRun: txa.rsmpin.p NULL — WDSP not initialised";
-        return;
-    }
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
     // Phase 3M-1c TX pump v3: pdexp[ch] null-guard.
     // Thetis create_xmtr (cmaster.c:130-157 [v2.10.3.13]) calls
     // create_dexp BEFORE OpenChannel, so pdexp[i] is non-null whenever
-    // rsmpin.p is non-null.  NereusSDR ports OpenChannel but NOT
-    // create_dexp (deferred follow-up), so the txa.rsmpin.p check
-    // alone does not imply pdexp[ch] is allocated.  Without this
-    // guard SetDEXPRunVox(id, ...) dereferences pdexp[id] (dexp.c:619)
-    // and crashes.
-    if (pdexp[m_channelId] == nullptr) {
-        qCWarning(lcDsp) << "[VOXDIAG] setVoxRun: pdexp[" << m_channelId << "] NULL";
-        return;
-    }
-    qCInfo(lcDsp) << "[VOXDIAG] SetDEXPRunVox(" << m_channelId << "," << (run?1:0) << ") OK";
+    // rsmpin.p is non-null.  Task 20 (commit 109c09e) ports create_dexp
+    // into NereusSDR's WdspEngine::createTxChannel so pdexp[i] is now
+    // non-null in production; the guard remains for unit-test builds
+    // that don't drive WdspEngine::initialize().
+    if (pdexp[m_channelId] == nullptr) return;
     SetDEXPRunVox(m_channelId, run ? 1 : 0);
 #else
     Q_UNUSED(run);
