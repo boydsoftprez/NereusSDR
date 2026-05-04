@@ -265,10 +265,14 @@ bool MoxController::isVoiceMode(DSPMode mode) const noexcept
 void MoxController::recomputeVoxRun()
 {
     const bool gated = m_voxEnabled && isVoiceMode(m_currentMode);
+    qInfo() << "[VOXDIAG] recomputeVoxRun: voxEnabled=" << m_voxEnabled
+                  << "isVoiceMode=" << isVoiceMode(m_currentMode)
+                  << "gated=" << gated << "(prev=" << m_lastVoxRunGated << ")";
     if (gated == m_lastVoxRunGated) {
         return;  // idempotent on emitted state; no spurious emit
     }
     m_lastVoxRunGated = gated;
+    qInfo() << "[VOXDIAG] recomputeVoxRun: emit voxRunRequested(" << gated << ")";
     emit voxRunRequested(gated);
 }
 
@@ -1115,12 +1119,14 @@ void MoxController::onCatPtt(bool pressed)
 // ---------------------------------------------------------------------------
 void MoxController::onVoxActive(bool active)
 {
+    qInfo() << "[VOXDIAG] onVoxActive ENTER active=" << active;
     // From Thetis console.cs:25507 [v2.10.3.13]: _current_ptt_mode = PTTMode.VOX;
     if (active) {
         setPttMode(PttMode::Vox);
     }
     // From Thetis console.cs:25508 [v2.10.3.13]: chkMOX.Checked = true;
     setMox(active);
+    qInfo() << "[VOXDIAG] onVoxActive EXIT (setMox returned)";
 }
 
 // ---------------------------------------------------------------------------

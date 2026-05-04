@@ -81,6 +81,7 @@
 #include "NyiOverlay.h"
 #include "core/BoardCapabilities.h"
 #include "core/AudioEngine.h"
+#include "core/MoxController.h"
 #include "core/TxChannel.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
@@ -1388,13 +1389,35 @@ void PhoneCwApplet::pollDexpMeters()
     // DEXP peak: dB → 0..1 over -160..0 range, matching Thetis
     // console.cs:28974 [v2.10.3.13]:
     //   signal_x = (noise_gate_data + 160) * width / 160
-    const double dexpDb     = ch->getTxMicMeterDb();
-    // Thetis +3 dB display offset from console.cs:25354 [v2.10.3.13]:
-    //   noise_gate_data = num + 3.0f;
-    const double dexpDbAdj  = dexpDb + 3.0;
-    const double dexpPeak01 = std::clamp((dexpDbAdj + 160.0) / 160.0, 0.0, 1.0);
+    //
+    // Gate on (MOX OR voxEnabled).  Thetis gates `UpdateNoiseGate` strictly
+    // on `_mox` (console.cs:25351 [v2.10.3.13]), so the noise-gate strip is
+    // dead in RX.  NereusSDR extends the gate to also include voxEnabled
+    // because Task 18's continuous-pump mode keeps real mic data flowing
+    // through the WDSP TX pipeline whenever VOX is engaged - so showing
+    // the live envelope is honest about what the DSP is actually doing.
+    // In pure RX (no MOX, no VOX), match Thetis: hold the meter at zero.
+    // Threshold marker is unconditional (NereusSDR-spin) so users can
+    // pre-position it before keying.  Bench feedback 2026-05-04.
+    const bool moxOn       = m_model->moxController()
+                                 ? m_model->moxController()->isMox()
+                                 : false;
+    const bool voxEnabled  = m_model->transmitModel().voxEnabled();
+    const bool meterLive   = moxOn || voxEnabled;
+
     if (m_dexpPeakMeter) {
-        m_dexpPeakMeter->setSignalLevel(dexpPeak01);
+        if (meterLive) {
+            const double dexpDb     = ch->getTxMicMeterDb();
+            // Thetis +3 dB display offset from console.cs:25354 [v2.10.3.13]:
+            //   noise_gate_data = num + 3.0f;
+            const double dexpDbAdj  = dexpDb + 3.0;
+            const double dexpPeak01 = std::clamp((dexpDbAdj + 160.0) / 160.0,
+                                                  0.0, 1.0);
+            m_dexpPeakMeter->setSignalLevel(dexpPeak01);
+        } else {
+            // Pure RX (no MOX, no VOX): hold at zero (Thetis-faithful).
+            m_dexpPeakMeter->setSignalLevel(0.0);
+        }
     }
 }
 

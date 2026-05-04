@@ -571,7 +571,18 @@ TxChannel* WdspEngine::createTxChannel(int channelId,
         1000.0,                   // low-cut for side-channel filter
         2000.0,                   // high-cut for side-channel filter
         0,                        // side-channel filter initially set to OFF
-        1,                        // VOX initially set to ON
+        // DEVIATION from Thetis cmaster.c:149 [v2.10.3.13] which passes 1
+        // ("VOX initially set to ON"). Thetis relies on its CMSetTXAVoxRun
+        // init pump firing SetDEXPRunVox(0) BEFORE the audio thread starts
+        // processing mic data (Audio.VOXEnabled defaults false). NereusSDR's
+        // MoxController only fires voxRunRequested on state CHANGES; at
+        // startup voxEnabled=false equals m_lastVoxRunGated=false so no
+        // emit happens, and a Thetis-faithful run_vox=1 boot value would
+        // stay at 1 until the user toggles VOX, causing every mic envelope
+        // crossing to fire pushvox -> onVoxActive(true) -> setMox(true)
+        // immediately on connect. Caught at bench v5 (2026-05-04).
+        // Boot run_vox=0 matches the Thetis-equivalent post-init state.
+        0,                        // VOX initially OFF (NereusSDR deviation; see comment)
         1,                        // audio delay initially set to ON
         0.060,                    // audio delay set to 60ms
         nullptr,                  // pushvox: registered later by TxChannel::registerVoxCallback
