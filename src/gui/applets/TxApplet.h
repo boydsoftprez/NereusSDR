@@ -28,6 +28,7 @@
 //                 TransmitModel::voxEnabled (default false; does NOT persist).
 //                 Right-click opens VoxSettingsPopup with 3 sliders for
 //                 threshold/gain/hang-time.
+//                 (REMOVED 2026-05-03 — see 3M-3a-iii Task 16 entry below.)
 //   2026-04-28 — Phase 3M-1b J.3: MON toggle button + monitor volume slider
 //                 added below VOX. Bidirectional with TransmitModel::monEnabled
 //                 and TransmitModel::monitorVolume (default 0.5f). Mic-source
@@ -62,6 +63,11 @@
 //                 PROC wiring moved to PhoneCwApplet; row drops to [LEV][EQ][CFC].
 //   2026-05-02 — Plan 4 Cluster C (Task 4 / D2+D3+D9-status): TX BW spinbox
 //                 row + status label added.  See TxApplet.cpp for details.
+//   2026-05-03 — Phase 3M-3a-iii Task 16: VOX toggle button removed from TxApplet
+//                 (was a duplicate — PhoneCwApplet now owns the canonical VOX
+//                 surface as part of the 3M-3a-iii Phone-tab DEXP/VOX wiring).
+//                 Same dedup pattern as 3M-3a-ii PROC cleanup.  VoxSettingsPopup
+//                 widget retired alongside (no remaining callers).
 // =================================================================
 
 //=================================================================
@@ -152,8 +158,8 @@ class TxCfcDialog;
 //  2.  SWR gauge            — HGauge 1.0–3.0, red > 2.5
 //  3.  RF Power slider row  — label(62) + slider + value(22)
 //  4.  Tune Power slider row
-//  4b. VOX toggle button    — checkable, green border on active [J.2 Phase 3M-1b]
-//      Right-click: VoxSettingsPopup with threshold/gain/hang-time sliders.
+//      (Row 4b VOX toggle removed in 3M-3a-iii Task 16 — VOX now lives on
+//       PhoneCwApplet's Phone tab.  Same dedup as 3M-3a-ii PROC cleanup.)
 //  4c. MON toggle button    — checkable, blue border on active [J.3 Phase 3M-1b]
 //      Bidirectional with TransmitModel::monEnabled (default false).
 //  4d. Monitor volume slider — 0..100 → monitorVolume 0.0..1.0 [J.3 Phase 3M-1b]
@@ -174,8 +180,8 @@ class TxCfcDialog;
 //       PhoneCwApplet (#5 slot) per JJ feedback (2026-04-28 relocation).
 //
 // Phase 3M-1a H.3: TUNE/MOX/Tune-Power/RF-Power are deep-wired.
-// Phase 3M-1b J.2: VOX toggle + VoxSettingsPopup wired.
 // Phase 3M-1b J.3: MON toggle + volume slider + mic-source badge wired.
+// (VOX moved to PhoneCwApplet in 3M-3a-iii Task 16.)
 // Out-of-phase controls (2-Tone, PS-A) are hidden.
 class TxApplet : public AppletWidget {
     Q_OBJECT
@@ -242,8 +248,6 @@ signals:
 private:
     void buildUI();
     void wireControls();  // called after buildUI() — attaches signals/slots
-    // J.2: VOX settings right-click popup.
-    void showVoxSettingsPopup(const QPoint& pos);
     // K.2: slot called when SliceModel::dspModeChanged fires (via RadioModel).
     // Updates m_moxBtn->setToolTip(tooltipForMode(mode)).
     void onMoxModeChanged(DSPMode mode);
@@ -276,8 +280,7 @@ private:
     // 4. Tune Power
     QSlider* m_tunePwrSlider  = nullptr;
     QLabel*  m_tunePwrValue   = nullptr;
-    // 4b. VOX toggle (J.2 Phase 3M-1b)
-    QPushButton* m_voxBtn     = nullptr;
+    // (Row 4b m_voxBtn removed in 3M-3a-iii Task 16 — VOX lives on PhoneCwApplet.)
     // 4c. MON toggle (J.3 Phase 3M-1b) — bidirectional with TransmitModel::monEnabled
     QPushButton* m_monBtn     = nullptr;
     // 4d. Monitor volume slider (J.3 Phase 3M-1b) — 0..100 → monitorVolume 0.0..1.0

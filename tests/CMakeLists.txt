@@ -1331,16 +1331,17 @@ nereus_add_test(tst_phone_applet_mic_gain)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_phone_applet_mic_level_gauge)
 
-# ── Phase 3M-1b J.2: TxApplet VOX toggle button + VoxSettingsPopup ───────────
-# Verifies the model-layer contracts + VoxSettingsPopup that the VOX button
-# depends on:
+# ── Phase 3M-1b J.2 → 3M-3a-iii Task 16: VOX toggle (model-layer) ───────────
+# Verifies the model-layer contracts that BOTH the historical TxApplet VOX
+# button AND the current PhoneCwApplet VOX button depend on:
 #   default voxEnabled=false (plan §0 row 8 safety — VOX always loads OFF),
 #   UI→Model toggle ON/OFF (setVoxEnabled / voxEnabled getter),
 #   Model→UI: voxEnabledChanged fires with correct bool,
 #   visual state on toggle (signal fires on change),
-#   no feedback loop / idempotency (same-value set → no extra emit),
-#   VoxSettingsPopup constructed with exactly 3 sliders,
-#   popup slider round-trip: thresholdDbChanged → model update.
+#   no feedback loop / idempotency (same-value set → no extra emit).
+# (The VoxSettingsPopup-specific cases were dropped in 3M-3a-iii Task 16
+# alongside the popup widget itself — VOX settings now live in
+# Setup → Transmit → DEXP/VOX, exercised by tst_dexp_vox_setup_page.)
 # NereusSDR-native UI (no Thetis cite stamps required for the applet layer).
 nereus_add_test(tst_tx_applet_vox_toggle)
 

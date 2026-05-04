@@ -242,7 +242,8 @@ void SetupDialog::buildTree()
     add(dsp, "CW",       new CwSetupPage(m_model));
     add(dsp, "AM/SAM",   new AmSamSetupPage(m_model));
     add(dsp, "FM",       new FmSetupPage(m_model));
-    add(dsp, "VOX/DEXP", new VoxDexpSetupPage(m_model));
+    // (DSP > "VOX/DEXP" placeholder removed in 3M-3a-iii Task 16 — the wired
+    //  page lives at Transmit > "DEXP/VOX" (DexpVoxPage from Task 14).)
 
     // Phase 3M-3a-ii Batch 6 (Task 3): CfcSetupPage's [Configure CFC bands…]
     // button emits openCfcDialogRequested.  Forward up to SetupDialog's
