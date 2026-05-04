@@ -1182,24 +1182,33 @@ EOF
 
 ---
 
-## Task 10: TransmitModel - DEXP side-channel filter properties (no UI surface)
+## Task 10: TransmitModel - DEXP side-channel filter properties (UI-bound, scope corrected 2026-05-03)
 
 **Files:** Same TransmitModel.{h,cpp}, append to `tst_transmit_model_dexp.cpp`.
 
-**Source cites:** Match Task 4. No Thetis Setup UI, but model-side properties exist for future hookup + ship-default persistence.
+**Source cites:** Match Task 4. **Scope correction:** Thetis DOES have Setup UI for these (grpSCF on tpDSPVOXDE per setup.Designer.cs:45157+ [v2.10.3.13]). Originally planned as model-only properties; promoted to fully bound (defaults + ranges aligned with Thetis grpSCF).
 
-- [ ] **Steps 1-5:** Add 3 properties: `dexpLowCutHz`, `dexpHighCutHz`, `dexpSideChannelFilterEnabled`. Defaults: 100 Hz / 5000 Hz / false. All persist.
+- [ ] **Steps 1-5:** Add 3 properties: `dexpLowCutHz`, `dexpHighCutHz`, `dexpSideChannelFilterEnabled`. Defaults match Thetis exactly: **500 Hz LowCut** (udSCFLowCut.Value, line 45240), **1500 Hz HighCut** (udSCFHighCut.Value, line 45210), **TRUE** SCF Enabled (chkSCFEnable.Checked, line 45250). Ranges 100..10000 Hz (matches Task 4 wrapper clamps). All persist. Will be bound to grpSCF UI in Task 14.
 
 ```bash
 git commit -m "$(cat <<'EOF'
 feat(transmit-model): DEXP side-channel filter properties (3M-3a-iii Task 10)
 
 Completes the 11-property DEXP TransmitModel surface with the
-side-channel HP/LP filter trio.  No Setup-page UI in this PR (Thetis
-ships these as dead WDSP setters); model surface is added for full
-WDSP coverage and to allow future PR exposure without schema breakage.
+side-channel HP/LP filter trio.  Bound to Setup UI in Task 14
+(grpSCF on the new DexpVoxPage).
 
-Defaults: 100 Hz LowCut, 5000 Hz HighCut, filter OFF.  All persist.
+Defaults match Thetis grpSCF (setup.Designer.cs:45157+ [v2.10.3.13]):
+- dexpLowCutHz = 500.0  (udSCFLowCut.Value=500, line 45240)
+- dexpHighCutHz = 1500.0 (udSCFHighCut.Value=1500, line 45210)
+- dexpSideChannelFilterEnabled = true (chkSCFEnable.Checked, line 45250)
+
+Range 100..10000 Hz (matches Task 4 wrapper clamps + udSCF spinbox
+Min/Max).  All persist.
+
+Scope correction: original plan said no UI surface for this trio.
+Source-first read by Batch B agent surfaced grpSCF on tpDSPVOXDE;
+spec + master design + plan all updated 2026-05-03 to reflect.
 
 Test: tst_transmit_model_dexp +6 assertions.  All 11 DEXP properties
 now covered.
@@ -1656,10 +1665,17 @@ EOF
 - [ ] **Step 3: Add the DexpVoxPage class declaration** to `TransmitSetupPages.h` (after existing PureSignalPage, before namespace close). Pattern matches existing `class PowerPage : public SetupPage` block. Member spinboxes/checkboxes per spec §8.2 table.
 
 - [ ] **Step 4: Implement the page** in `TransmitSetupPages.cpp`. Key bits:
-  - 2 QGroupBox containers in a horizontal QHBoxLayout: `grpDexpVox` ("VOX / DEXP") and `grpDexpLookAhead` ("Audio LookAhead").
-  - 11 widgets per spec §8.2 table.
+  - **3** QGroupBox containers in a horizontal QHBoxLayout (scope expanded 2026-05-03 mid-port): `grpDexpVox` ("VOX / DEXP"), `grpDexpLookAhead` ("Audio LookAhead"), and `grpScf` ("Side-Channel Trigger Filter").
+  - **14** widgets total (11 from original spec + 3 SCF: chkSCFEnable + udSCFLowCut + udSCFHighCut).
   - Bidirectional sync: connect spinbox/checkbox `valueChanged`/`toggled` to `m_model->setDexp*()`. Connect `m_model->dexp*Changed()` back, guarded by `QSignalBlocker` to prevent loops.
-  - Group titles + spinbox labels match Thetis verbatim per §8.1 of design.
+  - Group titles + spinbox labels match Thetis verbatim:
+    - `grpDexpVox` = `"VOX / DEXP"` (setup.Designer.cs:44843)
+    - `grpDexpLookAhead` = `"Audio LookAhead"` (setup.Designer.cs:44763)
+    - `grpScf` = `"Side-Channel Trigger Filter"` (setup.Designer.cs:45165)
+  - SCF widget bindings:
+    - `m_chkSCFEnable` (QCheckBox, default true) <-> `dexpSideChannelFilterEnabled`
+    - `m_udSCFLowCut` (QSpinBox, range 100..10000, step 10, default 500) <-> `dexpLowCutHz`
+    - `m_udSCFHighCut` (QSpinBox, range 100..10000, step 10, default 1500) <-> `dexpHighCutHz`
 
 - [ ] **Step 5: Register in SetupDialog.** Find existing `addPage("Transmit", "...", new SpeechProcessorPage(...))` call; add new line:
   ```cpp
@@ -1673,7 +1689,7 @@ git add src/gui/setup/TransmitSetupPages.{h,cpp} src/gui/SetupDialog.cpp tests/t
 git commit -m "$(cat <<'EOF'
 feat(setup): DexpVoxPage mirrors Thetis tpDSPVOXDE 1:1 (3M-3a-iii Task 14)
 
-New Setup -> Transmit -> DEXP/VOX page with two QGroupBox containers
+New Setup -> Transmit -> DEXP/VOX page with THREE QGroupBox containers
 matching Thetis exactly:
 - "VOX / DEXP" (grpDEXPVOX): chkVOXEnable + chkDEXPEnable + 7 numeric
   spinboxes (Threshold, Hyst.Ratio, Exp.Ratio, Attack, Hold, Release,
@@ -1681,6 +1697,12 @@ matching Thetis exactly:
   [v2.10.3.13].
 - "Audio LookAhead" (grpDEXPLookAhead): chkDEXPLookAheadEnable
   (default checked) + udDEXPLookAhead.
+- "Side-Channel Trigger Filter" (grpSCF): chkSCFEnable (default
+  checked) + udSCFLowCut (default 500 Hz) + udSCFHighCut (default
+  1500 Hz).  All labels verbatim from setup.Designer.cs:45157-45260
+  [v2.10.3.13].  Pulled in-scope mid-port (2026-05-03) after
+  source-first read by Batch B agent surfaced grpSCF on tpDSPVOXDE -
+  original spec wrongly claimed Thetis had no SCF UI.
 
 Bidirectional sync with TransmitModel via QSignalBlocker-guarded
 connect()s.  No feedback loops.  Range/step/decimals match Thetis

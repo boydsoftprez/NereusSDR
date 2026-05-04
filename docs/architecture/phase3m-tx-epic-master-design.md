@@ -733,8 +733,11 @@ button on TxApplet (`m_voxBtn` at TxApplet.cpp:374) and the entire
   TXA `amsq` stage runs at WDSP defaults forever. Per source-first
   ("if Thetis has it we want it"), TX AMSQ is moved to **3M-3b** where it
   belongs alongside other AM-mode TX work (mode-gated to AM/SAM/DSB).
-- **Side-channel filter UI**: 3 wrappers added on TxChannel for full
-  WDSP coverage but no Setup or applet UI (matches Thetis stock).
+- ~~**Side-channel filter UI**~~: pulled IN-SCOPE 2026-05-03 mid-port.
+  Original spec wrongly claimed Thetis had no SCF UI; source-first
+  read by the Batch B agent surfaced `grpSCF` on `tpDSPVOXDE`
+  (setup.Designer.cs:45157+ [v2.10.3.13]). Now bound to TransmitModel
+  + Setup page DexpVoxPage (3rd group box).
 - **`ptbNoiseGate` writes to WDSP**: replicated as decorative per Thetis
   quirk (the slider value drives only the meter's threshold marker, never
   pushed to WDSP). Inline comment documents the faithful-quirk.

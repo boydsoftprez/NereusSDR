@@ -86,7 +86,15 @@ Every Thetis cite in this document uses `[v2.10.3.13]`. The tag is 7 commits beh
 | `chkDEXPLookAheadEnable` | bool | **CHECKED** | | "Enable" | `SetDEXPRunAudioDelay` |
 | `udDEXPLookAhead` | 10..999 ms | 60 ms | 1 | "Look Ahead (ms)" | `SetDEXPAudioDelay` |
 
-Side-channel filter setters (`SetDEXPLowCut/HighCut/RunSideChannelFilter`) have NO Setup-form spinboxes in stock Thetis. Wrappers are added but no UI; values stay at WDSP defaults (set inside `wdsp/dexp.c`).
+`grpSCF` group title: `"Side-Channel Trigger Filter"` (`setup.Designer.cs:45165`).
+
+**Scope correction (2026-05-03 mid-implementation):** the original spec wrongly claimed Thetis had no SCF Setup UI. Source-first read by the Batch B implementer agent surfaced the actual `grpSCF` group on `tpDSPVOXDE` (third group, alongside grpDEXPVOX + grpDEXPLookAhead). Per the source-first directive ("if Thetis has it we want it"), SCF is in scope.
+
+| Control | Range | Default | Step | Thetis label | Setter |
+|---|---|---|---|---|---|
+| `chkSCFEnable` | bool | **CHECKED** | | "Enable" | `SetDEXPRunSideChannelFilter` |
+| `udSCFLowCut` | 100..10000 Hz | 500 Hz | 10 | "Low Cut (Hz)" | `SetDEXPLowCut` |
+| `udSCFHighCut` | 100..10000 Hz | 1500 Hz | 10 | "High Cut (Hz)" | `SetDEXPHighCut` |
 
 ### 3.3 Main console controls (Thetis `console.cs` → `panelModeSpecificPhone`)
 
@@ -122,8 +130,8 @@ void setDexpRun(bool run);                          // SetDEXPRun
 void setDexpDetectorTau(double tauMs);              // SetDEXPDetectorTau (ms/1000 -> seconds)
 void setDexpAttackTime(double attackMs);            // SetDEXPAttackTime
 void setDexpReleaseTime(double releaseMs);          // SetDEXPReleaseTime
-void setDexpExpansionRatio(double ratioDb);         // SetDEXPExpansionRatio (dB -> Math.Pow(10, dB/20))
-void setDexpHysteresisRatio(double ratioDb);        // SetDEXPHysteresisRatio (same conversion)
+void setDexpExpansionRatio(double ratioDb);         // SetDEXPExpansionRatio (dB -> std::pow(10, dB/20.0))
+void setDexpHysteresisRatio(double ratioDb);        // SetDEXPHysteresisRatio (dB -> std::pow(10, -dB/20.0); NEGATIVE exponent per setup.cs:18924 + wdsp/dexp.c:533-534)
 void setDexpLowCut(double hz);                      // SetDEXPLowCut
 void setDexpHighCut(double hz);                     // SetDEXPHighCut
 void setDexpRunSideChannelFilter(bool run);         // SetDEXPRunSideChannelFilter
@@ -511,7 +519,7 @@ Batches grouped to amortize Thetis-source context loads (each agent reads 2-3 Th
 **Batch D: UI (PhoneCwApplet wiring + Setup page + DexpPeakMeter widget + TxApplet cleanup)**
 - DexpPeakMeter widget creation + paint test.
 - PhoneCwApplet VOX/DEXP rows wired (threshold/hold sliders, peak meter integration, right-click signal, polling timer).
-- New `DexpVoxPage` SetupPage subclass with all 11 controls + 2 group boxes matching Thetis 1:1.
+- New `DexpVoxPage` SetupPage subclass with **14** controls in **3** group boxes matching Thetis 1:1: grpDEXPVOX (8 controls + 2 enables), grpDEXPLookAhead (1 enable + 1 numeric), grpSCF (1 enable + 2 numerics; added per scope correction §3.2).
 - TxApplet cleanup (delete VoxSettingsPopup, drop button + popup wiring).
 - SetupDialog tree leaf addition.
 - Tests: `tst_dexp_peak_meter`, `tst_dexp_vox_setup_page`, `tst_phone_cw_applet_vox_dexp_wiring`.
@@ -610,7 +618,7 @@ To be executed by JJ after PR merges, before tagging release. Pattern matches 3M
 | TX AMSQ (`SetTXAAMSQRun/MutedGain/Threshold`) | Thetis does not wire any of these (grep confirms zero hits across cmaster.cs/dsp.cs/radio.cs/setup.cs); per source-first directive, we do not invent UI Thetis lacks | 3M-3b (mode-specific TX, AM/SAM/DSB context) |
 | Pre-emphasis | Already deferred from 3M-3a-ii per master design §7.4 | 3M-3b |
 | Anti-VOX deep UI (multi-source selector) | Already deferred per master design §7.5 | 3M-3c |
-| Side-channel filter UI | Thetis ships no UI for these despite WDSP setters existing | A future cosmetic polish PR if user demand surfaces |
+| ~~Side-channel filter UI~~ | **PULLED IN-SCOPE 2026-05-03 mid-implementation:** Thetis DOES ship grpSCF on tpDSPVOXDE (setup.Designer.cs:45157+ [v2.10.3.13]). Original spec wrongly claimed otherwise; Batch B agent caught this via source-first read. Now bound in Task 14. | This PR |
 | HANDOFF.md / HANDOFF-PLAN4.md cleanup | Not strictly required for 3M-3a-iii; folded into the doc-refresh commit if JJ confirms | Doc-refresh commit (this PR) |
 
 ## 18. Risks and open items
