@@ -784,6 +784,12 @@ void TxApplet::wireControls()
         if (m_updatingFromModel) { return; }
         m_rfPowerValue->setText(QString::number(val));
         tx.setPower(val);
+        // Symmetric to the tune-slider auto-switch above: touching the RF
+        // Power slider restores the tune source to DriveSlider so the
+        // setPowerUsingTargetDbm txMode 1 branch reads tx.power() during
+        // TUNE.  Last-touched-slider-wins UX. From Thetis console.cs:46553
+        // [v2.10.3.13] DrivePowerSource.DRIVE_SLIDER is the canonical default.
+        tx.setTuneDrivePowerSource(DrivePowerSource::DriveSlider);
     });
 
     // Reverse: TransmitModel::powerChanged → slider
@@ -803,6 +809,17 @@ void TxApplet::wireControls()
         if (m_updatingFromModel) { return; }
         m_tunePwrValue->setText(QString::number(val));
         tx.setTunePowerForBand(m_currentBand, val);
+        // When the user touches the tune slider, switch the tune drive
+        // source so TUNE actually reads from tunePowerForBand instead of
+        // the regular drive slider (the default per Thetis console.cs:46553
+        // [v2.10.3.13]).  Without this the tune slider is dead UI: its
+        // value persists per-band but the math kernel
+        // (TransmitModel::setPowerUsingTargetDbm txMode 1) only consults
+        // tunePowerForBand when m_tuneDrivePowerSource == TuneSlider.
+        // NereusSDR-spin: Thetis exposes _tuneDrivePowerSource via a
+        // separate Setup combo; NereusSDR follows last-touched-slider-wins
+        // UX so users don't need to know the enum exists.
+        tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
     });
 
     // Reverse: TransmitModel::tunePowerByBandChanged → slider (only for current band)
