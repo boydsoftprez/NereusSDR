@@ -3,21 +3,19 @@
 // FAITHFUL Thetis decorative-slider quirk for ptbNoiseGate is documented
 // inline inside PhoneCwApplet::wireControls().
 // =================================================================
-// tests/tst_phone_cw_applet_vox_dexp_wiring.cpp  (NereusSDR)
+// tests/tst_phone_cw_applet_dexp_wiring.cpp  (NereusSDR)
 // =================================================================
 //
-// Phase 3M-3a-iii Task 15 — PhoneCwApplet VOX (#10) + DEXP (#11) wiring.
+// Phase 3M-3a-iii Task 15 — PhoneCwApplet DEXP (#11) row wiring.
 //
-// PhoneCwApplet's VOX [ON] button + threshold slider + Hold slider and the
-// DEXP [ON] button + (decorative) threshold slider sat un-wired and
-// NyiOverlay-marked since 3I-3.  This file pins down the wiring after Task 15:
+// (VOX wiring tests moved to tst_tx_applet_vox_relocated.cpp 2026-05-04
+// when the VOX row was relocated from PhoneCwApplet to TxApplet as part
+// of the bench-polish pass.  See TxApplet section 4b for the new home.)
 //
-//   VOX [ON]   — bidirectional ↔ TransmitModel::voxEnabled
-//                 (objectName "PhoneCwVoxButton").
-//   VOX Th     — bidirectional ↔ TransmitModel::voxThresholdDb
-//                 (objectName "PhoneCwVoxThresholdSlider", range -80..0 dB).
-//   VOX Hold   — bidirectional ↔ TransmitModel::voxHangTimeMs
-//                 (objectName "PhoneCwVoxHoldSlider", range 1..2000 ms).
+// PhoneCwApplet's DEXP [ON] button + (decorative) threshold slider sat
+// un-wired and NyiOverlay-marked since 3I-3.  This file pins down the
+// wiring after Task 15:
+//
 //   DEXP [ON]  — bidirectional ↔ TransmitModel::dexpEnabled
 //                 (objectName "PhoneCwDexpButton").
 //   DEXP Th    — DECORATIVE-ONLY (objectName "PhoneCwDexpThresholdSlider",
@@ -26,9 +24,9 @@
 //                 only drives the meter marker on the DexpPeakMeter strip
 //                 (Thetis console.cs:28962-28970 [v2.10.3.13] verbatim).
 //   Right-click on [ON] → emit openSetupRequested("Transmit", "DEXP/VOX").
-//   Peak meters — DexpPeakMeter strips under each threshold slider
-//                 (objectNames "PhoneCwVoxPeakMeter" / "PhoneCwDexpPeakMeter").
-//   Polling     — 100 ms QTimer drives both meters (matches Thetis
+//   Peak meter  — DexpPeakMeter strip under threshold slider
+//                 (objectName "PhoneCwDexpPeakMeter").
+//   Polling     — 100 ms QTimer drives the DEXP meter (matches Thetis
 //                 UpdateNoiseGate Task.Delay(100), console.cs:25347
 //                 [v2.10.3.13]).
 //
@@ -49,7 +47,7 @@
 
 using namespace NereusSDR;
 
-class TestPhoneCwAppletVoxDexpWiring : public QObject {
+class TestPhoneCwAppletDexpWiring : public QObject {
     Q_OBJECT
 
 private slots:
@@ -68,100 +66,7 @@ private slots:
         AppSettings::instance().clear();
     }
 
-    // ── 1. VOX [ON] toggle bidirectional with TM::voxEnabled ─────────────
-    void voxButton_bidirectionalWithTm()
-    {
-        RadioModel rm;
-        PhoneCwApplet applet(&rm);
-
-        auto* btn = applet.findChild<QPushButton*>(QStringLiteral("PhoneCwVoxButton"));
-        QVERIFY(btn != nullptr);
-        QVERIFY(btn->isCheckable());
-
-        // Default voxEnabled is false (TransmitModel.h:583-591 [v2.10.3.13]).
-        QCOMPARE(rm.transmitModel().voxEnabled(), false);
-        QCOMPARE(btn->isChecked(), false);
-
-        // UI → Model
-        btn->click();
-        QCOMPARE(rm.transmitModel().voxEnabled(), true);
-        QCOMPARE(btn->isChecked(), true);
-
-        btn->click();
-        QCOMPARE(rm.transmitModel().voxEnabled(), false);
-        QCOMPARE(btn->isChecked(), false);
-
-        // Model → UI
-        rm.transmitModel().setVoxEnabled(true);
-        QCOMPARE(btn->isChecked(), true);
-
-        rm.transmitModel().setVoxEnabled(false);
-        QCOMPARE(btn->isChecked(), false);
-    }
-
-    // ── 2. VOX threshold slider bidirectional with TM::voxThresholdDb ────
-    void voxThresholdSlider_bidirectionalWithTm()
-    {
-        RadioModel rm;
-        PhoneCwApplet applet(&rm);
-
-        auto* sl = applet.findChild<QSlider*>(QStringLiteral("PhoneCwVoxThresholdSlider"));
-        QVERIFY(sl != nullptr);
-
-        // Range -80..0 from console.Designer.cs:6018-6019 [v2.10.3.13].
-        QCOMPARE(sl->minimum(), -80);
-        QCOMPARE(sl->maximum(),   0);
-
-        // UI → Model
-        sl->setValue(-30);
-        QCOMPARE(rm.transmitModel().voxThresholdDb(), -30);
-
-        sl->setValue(0);
-        QCOMPARE(rm.transmitModel().voxThresholdDb(), 0);
-
-        sl->setValue(-80);
-        QCOMPARE(rm.transmitModel().voxThresholdDb(), -80);
-
-        // Model → UI
-        rm.transmitModel().setVoxThresholdDb(-25);
-        QCOMPARE(sl->value(), -25);
-
-        rm.transmitModel().setVoxThresholdDb(-60);
-        QCOMPARE(sl->value(), -60);
-    }
-
-    // ── 3. VOX hold slider bidirectional with TM::voxHangTimeMs ──────────
-    void voxHoldSlider_bidirectionalWithTm()
-    {
-        RadioModel rm;
-        PhoneCwApplet applet(&rm);
-
-        auto* sl = applet.findChild<QSlider*>(QStringLiteral("PhoneCwVoxHoldSlider"));
-        QVERIFY(sl != nullptr);
-
-        // Range 1..2000 from setup.designer.cs:45005-45013 [v2.10.3.13].
-        QCOMPARE(sl->minimum(),    1);
-        QCOMPARE(sl->maximum(), 2000);
-
-        // UI → Model
-        sl->setValue(750);
-        QCOMPARE(rm.transmitModel().voxHangTimeMs(), 750);
-
-        sl->setValue(1);
-        QCOMPARE(rm.transmitModel().voxHangTimeMs(), 1);
-
-        sl->setValue(2000);
-        QCOMPARE(rm.transmitModel().voxHangTimeMs(), 2000);
-
-        // Model → UI
-        rm.transmitModel().setVoxHangTimeMs(1200);
-        QCOMPARE(sl->value(), 1200);
-
-        rm.transmitModel().setVoxHangTimeMs(500);
-        QCOMPARE(sl->value(), 500);
-    }
-
-    // ── 4. DEXP [ON] toggle bidirectional with TM::dexpEnabled ───────────
+    // ── 1. DEXP [ON] toggle bidirectional with TM::dexpEnabled ───────────
     void dexpButton_bidirectionalWithTm()
     {
         RadioModel rm;
@@ -192,7 +97,7 @@ private slots:
         QCOMPARE(btn->isChecked(), false);
     }
 
-    // ── 5. DEXP threshold slider is DECORATIVE — does NOT push to TM/TxChannel.
+    // ── 2. DEXP threshold slider is DECORATIVE — does NOT push to TM/TxChannel.
     //      FAITHFUL Thetis quirk per console.cs:28962-28970 [v2.10.3.13] —
     //      the slider value updates only the in-applet marker dB; it must
     //      never reach TransmitModel.  We assert that:
@@ -232,32 +137,7 @@ private slots:
         QCOMPARE(rm.transmitModel().dexpEnabled(),   dexpOnBefore);
     }
 
-    // ── 6. Right-click on VOX [ON] emits openSetupRequested("Transmit",
-    //      "DEXP/VOX") ─────────────────────────────────────────────────────
-    void voxButton_rightClickEmitsOpenSetupRequested()
-    {
-        RadioModel rm;
-        PhoneCwApplet applet(&rm);
-
-        auto* btn = applet.findChild<QPushButton*>(QStringLiteral("PhoneCwVoxButton"));
-        QVERIFY(btn != nullptr);
-        QCOMPARE(btn->contextMenuPolicy(), Qt::CustomContextMenu);
-
-        QSignalSpy spy(&applet, &PhoneCwApplet::openSetupRequested);
-        QVERIFY(spy.isValid());
-
-        // CustomContextMenu policy means right-click emits
-        // customContextMenuRequested.  Emit directly to exercise the
-        // applet's connected slot.
-        emit btn->customContextMenuRequested(QPoint(0, 0));
-
-        QCOMPARE(spy.count(), 1);
-        const auto args = spy.takeFirst();
-        QCOMPARE(args.at(0).toString(), QStringLiteral("Transmit"));
-        QCOMPARE(args.at(1).toString(), QStringLiteral("DEXP/VOX"));
-    }
-
-    // ── 7. Right-click on DEXP [ON] emits openSetupRequested("Transmit",
+    // ── 3. Right-click on DEXP [ON] emits openSetupRequested("Transmit",
     //      "DEXP/VOX") ─────────────────────────────────────────────────────
     void dexpButton_rightClickEmitsOpenSetupRequested()
     {
@@ -279,7 +159,7 @@ private slots:
         QCOMPARE(args.at(1).toString(), QStringLiteral("DEXP/VOX"));
     }
 
-    // ── 8. m_dexpMeterTimer interval is 100 ms ───────────────────────────
+    // ── 4. m_dexpMeterTimer interval is 100 ms ───────────────────────────
     //      Matches Thetis UpdateNoiseGate Task.Delay(100) at
     //      console.cs:25347 [v2.10.3.13].
     void dexpMeterTimer_intervalIs100ms()
@@ -301,33 +181,27 @@ private slots:
         QVERIFY2(found100, "No active 100 ms QTimer found on PhoneCwApplet");
     }
 
-    // ── 9. m_voxPeakMeter and m_dexpPeakMeter exist (not null) ───────────
-    void peakMeters_existAfterConstruction()
+    // ── 5. m_dexpPeakMeter exists (not null) ─────────────────────────────
+    void dexpPeakMeter_existsAfterConstruction()
     {
         RadioModel rm;
         PhoneCwApplet applet(&rm);
 
-        auto* voxMeter  = applet.findChild<DexpPeakMeter*>(QStringLiteral("PhoneCwVoxPeakMeter"));
         auto* dexpMeter = applet.findChild<DexpPeakMeter*>(QStringLiteral("PhoneCwDexpPeakMeter"));
-
-        QVERIFY2(voxMeter  != nullptr, "VOX peak meter not created");
         QVERIFY2(dexpMeter != nullptr, "DEXP peak meter not created");
     }
 
-    // ── 10. NyiOverlay markers absent on the now-wired controls ──────────
+    // ── 6. NyiOverlay markers absent on the now-wired controls ───────────
     //       Defensive sanity-check: make sure the migration off NyiOverlay
-    //       actually landed for VOX [ON] / VOX Th / VOX Hold / DEXP [ON].
-    //       The decorative DEXP Th slider is also wired (just not to TM)
-    //       so it shouldn't carry a NYI tooltip either.
+    //       actually landed for DEXP [ON] / DEXP Th.  The decorative DEXP
+    //       Th slider is also wired (just not to TM) so it shouldn't carry
+    //       a NYI tooltip either.
     void wiredControls_haveNoNyiMarker()
     {
         RadioModel rm;
         PhoneCwApplet applet(&rm);
 
         const QStringList wired{
-            QStringLiteral("PhoneCwVoxButton"),
-            QStringLiteral("PhoneCwVoxThresholdSlider"),
-            QStringLiteral("PhoneCwVoxHoldSlider"),
             QStringLiteral("PhoneCwDexpButton"),
             QStringLiteral("PhoneCwDexpThresholdSlider"),
         };
@@ -341,7 +215,26 @@ private slots:
                      qPrintable(QStringLiteral("Wired control still carries NYI tooltip: %1").arg(objName)));
         }
     }
+
+    // ── 7. VOX members must NOT exist on PhoneCwApplet anymore ───────────
+    //       After the 2026-05-04 relocation to TxApplet, none of the
+    //       PhoneCw* VOX widget objectNames should match.  This pins the
+    //       removal so the relocation stays one-way.
+    void voxControls_notPresentAfterRelocation()
+    {
+        RadioModel rm;
+        PhoneCwApplet applet(&rm);
+
+        QVERIFY2(applet.findChild<QPushButton*>(QStringLiteral("PhoneCwVoxButton")) == nullptr,
+                 "VOX button should have been relocated to TxApplet");
+        QVERIFY2(applet.findChild<QSlider*>(QStringLiteral("PhoneCwVoxThresholdSlider")) == nullptr,
+                 "VOX threshold slider should have been relocated to TxApplet");
+        QVERIFY2(applet.findChild<QSlider*>(QStringLiteral("PhoneCwVoxHoldSlider")) == nullptr,
+                 "VOX hold slider should have been relocated to TxApplet");
+        QVERIFY2(applet.findChild<DexpPeakMeter*>(QStringLiteral("PhoneCwVoxPeakMeter")) == nullptr,
+                 "VOX peak meter should have been relocated to TxApplet");
+    }
 };
 
-QTEST_MAIN(TestPhoneCwAppletVoxDexpWiring)
-#include "tst_phone_cw_applet_vox_dexp_wiring.moc"
+QTEST_MAIN(TestPhoneCwAppletDexpWiring)
+#include "tst_phone_cw_applet_dexp_wiring.moc"

@@ -31,6 +31,15 @@
 //                 100 ms QTimer drives both peak meters (matches Thetis
 //                 UpdateNoiseGate Task.Delay(100), console.cs:25347
 //                 [v2.10.3.13]).
+//   2026-05-04 — Phase 3M-3a-iii bench polish: VOX row (#10) relocated to
+//                 TxApplet under TUNE/MOX (Option B - full row).  Operators
+//                 wanted the VOX engage surface next to MOX/TUNE on the
+//                 right pane.  Full row moved as a unit including the live
+//                 DexpPeakMeter strip + 100 ms peak-meter poller +
+//                 right-click → Setup → Transmit → DEXP/VOX.  DEXP row
+//                 (#11) stays here — only VOX moves.  Members
+//                 m_voxBtn/m_voxSlider/m_voxLvlLabel/m_voxDlySlider/
+//                 m_voxDlyLabel/m_voxPeakMeter removed from this header.
 // =================================================================
 
 //=================================================================
@@ -184,16 +193,9 @@ private:
     QPushButton* m_monBtn{nullptr};
     QSlider*     m_monSlider{nullptr};
     QLabel*      m_monLabel{nullptr};
-    // #10 VOX toggle (36px) + threshold slider (-80..0 dB) + Hold slider
-    //     (1..2000 ms) + 2 insets + DexpPeakMeter under threshold slider.
-    //     Wired bidirectionally to TransmitModel::voxEnabled,
-    //     voxThresholdDb, voxHangTimeMs (Phase 3M-3a-iii Task 15).
-    QPushButton*   m_voxBtn{nullptr};
-    QSlider*       m_voxSlider{nullptr};
-    QLabel*        m_voxLvlLabel{nullptr};
-    QSlider*       m_voxDlySlider{nullptr};
-    QLabel*        m_voxDlyLabel{nullptr};
-    DexpPeakMeter* m_voxPeakMeter{nullptr};
+    // (Control 10 VOX row relocated to TxApplet 2026-05-04 — bench polish.
+    //  See TxApplet.{h,cpp} section 4b for the new home.  Members removed
+    //  from this header in the same commit.)
     // #11 DEXP toggle (36px) + threshold slider (-160..0 dB) + inset +
     //     DexpPeakMeter under threshold slider.  Toggle wired to
     //     TransmitModel::dexpEnabled.  Threshold slider is DECORATIVE

@@ -50,6 +50,14 @@
 //                 orange status label shows filter description text.
 //                 Wired via filterChanged(int,int) + dspModeChanged refresh.
 //                 syncFromModel() extended to seed spinboxes + status label.
+//   2026-05-04 — Phase 3M-3a-iii bench polish: VOX row relocated from
+//                 PhoneCwApplet Phone tab (Control #10) back to TxApplet as
+//                 a full row directly under TUNE/MOX (Option B - full row).
+//                 VOX button + threshold slider + DexpPeakMeter strip + Hold
+//                 slider all move as a unit, plus the 100 ms peak-meter
+//                 poller (now TxApplet::pollVoxMeter) and the right-click
+//                 → Setup → Transmit → DEXP/VOX signal handling.  DEXP row
+//                 stays on PhoneCwApplet — only VOX moves.
 // =================================================================
 
 //=================================================================
@@ -118,7 +126,8 @@
 // TxApplet — TX control panel.
 // Phase 3M-1a H.3: TUNE/MOX/Tune-Power/RF-Power deep-wired.
 // Phase 3M-1b J.3: MON toggle + monitor volume slider + mic-source badge wired.
-// (VOX moved to PhoneCwApplet in 3M-3a-iii Task 16 — same dedup as 3M-3a-ii PROC.)
+// Phase 3M-3a-iii bench polish (2026-05-04): VOX row relocated back from
+//   PhoneCwApplet — full row [VOX btn][threshold + peak strip][Hold slider].
 // Out-of-phase controls (2-Tone, PS-A) hidden.
 //
 // Control inventory:
@@ -128,7 +137,12 @@
 //  3.  RF Power slider   + label + value  [WIRED — 3M-1a H.3]
 //  4.  Tune Power slider + label + value  [WIRED — 3M-1a H.3]
 //      (Mic Gain slider relocated to PhoneCwApplet — 2026-04-28 relocation)
-//      (Row 4b VOX toggle removed in 3M-3a-iii Task 16 — VOX now on PhoneCwApplet.)
+//  4a. TUNE + MOX button row [WIRED — 3M-1a H.3]
+//  4b. VOX row — [VOX btn][Threshold slider + DexpPeakMeter strip][-N dB]
+//      [Hold slider 1..2000 ms][N ms]  [WIRED — 3M-3a-iii bench polish]
+//      Bidirectional with voxEnabled / voxThresholdDb / voxHangTimeMs.
+//      Right-click VOX → openSetupRequested("Transmit", "DEXP/VOX").
+//      Relocated from PhoneCwApplet Phone tab Control #10.
 //  4c. MON toggle button — checkable, blue:checked style  [WIRED — 3M-1b J.3]
 //      Bidirectional with TransmitModel::monEnabled (default false).
 //  4d. Monitor volume slider — 0..100 → monitorVolume 0.0..1.0  [WIRED — 3M-1b J.3]
@@ -152,11 +166,13 @@
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
+#include "gui/widgets/DexpPeakMeter.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/MicProfileManager.h"
 #include "core/MoxController.h"
 #include "core/RadioStatus.h"
 #include "core/TwoToneController.h"
+#include "core/TxChannel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -173,6 +189,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <algorithm>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -361,7 +380,94 @@ void TxApplet::buildUI()
         vbox->addLayout(row);
     }
 
-    // (Row 4b VOX toggle removed in 3M-3a-iii Task 16 — VOX now on PhoneCwApplet.)
+    // ── 4b. VOX row (3M-3a-iii bench polish 2026-05-04) ───────────────────────
+    // Relocated from PhoneCwApplet (Phone tab Control #10).  Operators
+    // wanted the VOX engage surface next to MOX/TUNE on the right pane
+    // where they engage TX, not buried on the Phone tab.  Full row moves
+    // as a unit including the live DexpPeakMeter strip + 100 ms poller.
+    //
+    // Layout (Option B - full row):
+    //   [VOX btn 48px] | { Threshold slider top, DexpPeakMeter strip
+    //   below } | [-20 dB inset] | [Hold slider 1..2000 ms] | [500 ms inset]
+    //
+    // Threshold slider range -80..0 dB matches Thetis ptbVOX
+    // (console.Designer.cs:6018-6019 [v2.10.3.13]).  Hold slider range
+    // 1..2000 ms matches Thetis udDEXPHold (setup.designer.cs:45005-45013
+    // [v2.10.3.13]).  Default values mirror Thetis ptbVOX.Value=-20
+    // (console.Designer.cs:6024) and udDEXPHold.Value=500
+    // (setup.designer.cs:45020).
+    //
+    // Slider-stack: a small QVBoxLayout wraps the threshold slider (top)
+    // and DexpPeakMeter (below) so the live mic peak strip sits directly
+    // under the threshold knob — matches Thetis picVOX placement.
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+
+        m_voxBtn = new QPushButton(QStringLiteral("VOX"), this);
+        m_voxBtn->setCheckable(true);
+        m_voxBtn->setFixedWidth(48);
+        m_voxBtn->setFixedHeight(22);
+        m_voxBtn->setStyleSheet(Style::buttonBaseStyle()
+                                + Style::greenCheckedStyle());
+        m_voxBtn->setAccessibleName(QStringLiteral("VOX voice-operated transmit"));
+        m_voxBtn->setObjectName(QStringLiteral("TxVoxButton"));
+        m_voxBtn->setToolTip(QStringLiteral(
+            "VOX — voice-operated transmit.  Left-click to toggle.\n"
+            "Right-click to open the DEXP/VOX setup page."));
+        // CustomContextMenu so right-click hits the openSetupRequested slot
+        // instead of the default platform menu.
+        m_voxBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+        row->addWidget(m_voxBtn);
+
+        // Threshold slider-stack: slider on top, DexpPeakMeter strip below.
+        auto* voxStackGroup = new QWidget(this);
+        auto* voxStackVbox = new QVBoxLayout(voxStackGroup);
+        voxStackVbox->setContentsMargins(0, 0, 0, 0);
+        voxStackVbox->setSpacing(1);
+
+        m_voxSlider = new QSlider(Qt::Horizontal, voxStackGroup);
+        // From Thetis console.Designer.cs:6018-6019 [v2.10.3.13]:
+        //   ptbVOX.Maximum = 0; ptbVOX.Minimum = -80;
+        m_voxSlider->setRange(-80, 0);
+        m_voxSlider->setValue(-20);
+        m_voxSlider->setFixedHeight(14);
+        m_voxSlider->setStyleSheet(Style::sliderHStyle());
+        m_voxSlider->setAccessibleName(QStringLiteral("VOX threshold (dB)"));
+        m_voxSlider->setObjectName(QStringLiteral("TxVoxThresholdSlider"));
+        voxStackVbox->addWidget(m_voxSlider);
+
+        m_voxPeakMeter = new DexpPeakMeter(voxStackGroup);
+        m_voxPeakMeter->setObjectName(QStringLiteral("TxVoxPeakMeter"));
+        m_voxPeakMeter->setAccessibleName(QStringLiteral("VOX live mic peak"));
+        voxStackVbox->addWidget(m_voxPeakMeter);
+
+        row->addWidget(voxStackGroup, 1);
+
+        m_voxLvlLabel = new QLabel(QStringLiteral("-20 dB"), this);
+        m_voxLvlLabel->setStyleSheet(Style::insetValueStyle());
+        m_voxLvlLabel->setFixedWidth(38);
+        m_voxLvlLabel->setAlignment(Qt::AlignCenter);
+        row->addWidget(m_voxLvlLabel);
+
+        m_voxDlySlider = new QSlider(Qt::Horizontal, this);
+        // From Thetis setup.designer.cs:45005-45013 [v2.10.3.13]:
+        //   udDEXPHold.Maximum = 2000; udDEXPHold.Minimum = 1; (units: ms)
+        m_voxDlySlider->setRange(1, 2000);
+        m_voxDlySlider->setValue(500);
+        m_voxDlySlider->setStyleSheet(Style::sliderHStyle());
+        m_voxDlySlider->setAccessibleName(QStringLiteral("VOX hold time (ms)"));
+        m_voxDlySlider->setObjectName(QStringLiteral("TxVoxHoldSlider"));
+        row->addWidget(m_voxDlySlider, 1);
+
+        m_voxDlyLabel = new QLabel(QStringLiteral("500 ms"), this);
+        m_voxDlyLabel->setStyleSheet(Style::insetValueStyle());
+        m_voxDlyLabel->setFixedWidth(42);
+        m_voxDlyLabel->setAlignment(Qt::AlignCenter);
+        row->addWidget(m_voxDlyLabel);
+
+        vbox->addLayout(row);
+    }
 
     // ── 4c. MON toggle button + 4d. Monitor volume slider ─────────────────────
     // Phase 3M-1b J.3: below VOX toggle.
@@ -866,7 +972,126 @@ void TxApplet::wireControls()
         }
     }
 
-    // (VOX wiring removed in 3M-3a-iii Task 16 — moved to PhoneCwApplet.)
+    // ── 4b. VOX row wiring (3M-3a-iii bench polish 2026-05-04) ────────────────
+    //
+    // Bidirectional binds for [VOX] toggle + threshold/hold sliders, plus
+    // right-click → openSetupRequested("Transmit", "DEXP/VOX") and a 100 ms
+    // QTimer driving m_voxPeakMeter (TxApplet::pollVoxMeter).
+    // Mirrors the wiring pattern from PhoneCwApplet (Phase 3M-3a-iii Task
+    // 15) — relocated here as part of the 2026-05-04 bench polish.
+
+    // ── VOX [ON] toggle ↔ TransmitModel::voxEnabled ──────────────────────────
+    if (m_voxBtn) {
+        {
+            QSignalBlocker b(m_voxBtn);
+            m_voxBtn->setChecked(tx.voxEnabled());
+        }
+        // UI → Model
+        connect(m_voxBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
+            if (m_updatingFromModel) { return; }
+            tx.setVoxEnabled(on);
+        });
+        // Model → UI
+        connect(&tx, &TransmitModel::voxEnabledChanged, this, [this](bool on) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(m_voxBtn);
+                m_voxBtn->setChecked(on);
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    // ── VOX threshold slider ↔ TransmitModel::voxThresholdDb ─────────────────
+    // Range -80..0 dB from console.Designer.cs:6018-6019 [v2.10.3.13]
+    // (already set in buildUI).  Default value -20 dB matches Thetis
+    // ptbVOX.Value=-20 (console.Designer.cs:6024 [v2.10.3.13]).
+    if (m_voxSlider) {
+        {
+            QSignalBlocker b(m_voxSlider);
+            m_voxSlider->setValue(tx.voxThresholdDb());
+        }
+        if (m_voxLvlLabel) {
+            m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+        }
+        // UI → Model + label refresh
+        connect(m_voxSlider, &QSlider::valueChanged, this, [this, &tx](int dB) {
+            if (m_voxLvlLabel) {
+                m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(dB));
+            }
+            if (m_updatingFromModel) { return; }
+            tx.setVoxThresholdDb(dB);
+        });
+        // Model → UI
+        connect(&tx, &TransmitModel::voxThresholdDbChanged, this, [this](int dB) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(m_voxSlider);
+                m_voxSlider->setValue(dB);
+            }
+            if (m_voxLvlLabel) {
+                m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(dB));
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    // ── VOX Hold slider ↔ TransmitModel::voxHangTimeMs ───────────────────────
+    // Range 1..2000 ms from setup.designer.cs:45005-45013 [v2.10.3.13]
+    // (already set in buildUI).  Default 500 ms matches udDEXPHold.Value
+    // (setup.designer.cs:45020 [v2.10.3.13]).
+    if (m_voxDlySlider) {
+        {
+            QSignalBlocker b(m_voxDlySlider);
+            m_voxDlySlider->setValue(tx.voxHangTimeMs());
+        }
+        if (m_voxDlyLabel) {
+            m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+        }
+        // UI → Model + label refresh
+        connect(m_voxDlySlider, &QSlider::valueChanged, this, [this, &tx](int ms) {
+            if (m_voxDlyLabel) {
+                m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(ms));
+            }
+            if (m_updatingFromModel) { return; }
+            tx.setVoxHangTimeMs(ms);
+        });
+        // Model → UI
+        connect(&tx, &TransmitModel::voxHangTimeMsChanged, this, [this](int ms) {
+            m_updatingFromModel = true;
+            {
+                QSignalBlocker b(m_voxDlySlider);
+                m_voxDlySlider->setValue(ms);
+            }
+            if (m_voxDlyLabel) {
+                m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(ms));
+            }
+            m_updatingFromModel = false;
+        });
+    }
+
+    // ── Right-click on VOX → emit openSetupRequested ─────────────────────────
+    // Mirrors PhoneCwApplet's DEXP-button right-click pattern.  MainWindow
+    // listens and jumps the SetupDialog to the "DEXP/VOX" leaf page.
+    if (m_voxBtn) {
+        connect(m_voxBtn, &QPushButton::customContextMenuRequested, this,
+                [this](const QPoint&) {
+            emit openSetupRequested(QStringLiteral("Transmit"),
+                                    QStringLiteral("DEXP/VOX"));
+        });
+    }
+
+    // ── 100 ms timer driving m_voxPeakMeter ──────────────────────────────────
+    // Cadence matches Thetis UpdateNoiseGate Task.Delay(100) at
+    // console.cs:25347 [v2.10.3.13].  Stops automatically when the applet
+    // is destroyed (parented to `this`).  Continuous (NOT MOX-gated) since
+    // GetDEXPPeakSignal is the live DEXP detector envelope, not the
+    // TX-pipeline meter.
+    m_voxMeterTimer = new QTimer(this);
+    m_voxMeterTimer->setInterval(100);
+    connect(m_voxMeterTimer, &QTimer::timeout,
+            this, &TxApplet::pollVoxMeter);
+    m_voxMeterTimer->start();
 
     // ── MON toggle button ↔ TransmitModel::monEnabled ────────────────────────
     // Phase 3M-1b J.3.
@@ -1098,7 +1323,35 @@ void TxApplet::syncFromModel()
         m_tunePwrValue->setText(QString::number(tunePwr));
     }
 
-    // (VOX button state sync removed in 3M-3a-iii Task 16 — see PhoneCwApplet.)
+    // VOX [ON] toggle + Threshold slider + Hold slider
+    // (3M-3a-iii bench polish 2026-05-04 — relocated from PhoneCwApplet).
+    // Bidirectional sync to TransmitModel::voxEnabled / voxThresholdDb /
+    // voxHangTimeMs.  Note: voxEnabled is NEVER persisted (safety: VOX
+    // always starts OFF), but we still pull whatever the current model
+    // state is so any other UI surface (e.g. Setup → DEXP/VOX page) stays
+    // in agreement.
+    if (m_voxBtn) {
+        QSignalBlocker bv(m_voxBtn);
+        m_voxBtn->setChecked(tx.voxEnabled());
+    }
+    if (m_voxSlider) {
+        {
+            QSignalBlocker b(m_voxSlider);
+            m_voxSlider->setValue(tx.voxThresholdDb());
+        }
+        if (m_voxLvlLabel) {
+            m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
+        }
+    }
+    if (m_voxDlySlider) {
+        {
+            QSignalBlocker b(m_voxDlySlider);
+            m_voxDlySlider->setValue(tx.voxHangTimeMs());
+        }
+        if (m_voxDlyLabel) {
+            m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
+        }
+    }
 
     // MON button state (J.3 Phase 3M-1b)
     // monEnabled intentionally loads as OFF — plan §0 row 9 safety rule.
@@ -1245,6 +1498,41 @@ void TxApplet::onMoxModeChanged(DSPMode mode)
     if (m_moxBtn) {
         m_moxBtn->setToolTip(tooltipForMode(mode));
     }
+}
+
+// ── pollVoxMeter — Phase 3M-3a-iii bench polish 2026-05-04 ─────────────────
+// 100 ms tick that drives m_voxPeakMeter on the TX right pane.
+//
+//   VOX peak (linear amplitude from TxChannel::getDexpPeakSignal()):
+//     • 20 * log10(linear) → dB.
+//     • Map -80..0 dB → 0..1 normalized (range matches Thetis ptbVOX scale
+//       per console.Designer.cs:6018-6019 [v2.10.3.13]).
+//     • Threshold marker pulled from TransmitModel::voxThresholdDb() and
+//       mapped through the same -80..0 → 0..1 transform.
+//
+// Continuous (NOT MOX-gated) since GetDEXPPeakSignal is the live DEXP
+// detector envelope, not the TX-pipeline meter.  Same rationale as the
+// PhoneCwApplet::pollDexpMeters comment — see that file for the full
+// narrative.  Relocated from PhoneCwApplet as part of the 2026-05-04 bench
+// polish (VOX row moved to TxApplet under TUNE/MOX).
+void TxApplet::pollVoxMeter()
+{
+    if (!m_model) { return; }
+    TxChannel* ch = m_model->txChannel();
+    if (!ch || !m_voxPeakMeter) { return; }
+
+    // VOX peak: linear amplitude → dB → 0..1 over -80..0 range.
+    const double linearPeak = ch->getDexpPeakSignal();
+    const double voxPeakDb  = (linearPeak > 0.0)
+        ? 20.0 * std::log10(linearPeak)
+        : -80.0;
+    const double voxPeak01  = std::clamp((voxPeakDb + 80.0) / 80.0, 0.0, 1.0);
+    m_voxPeakMeter->setSignalLevel(voxPeak01);
+
+    // VOX threshold marker: voxThresholdDb is in -80..0 dB range.
+    const int thDb = m_model->transmitModel().voxThresholdDb();
+    m_voxPeakMeter->setThresholdMarker(
+        std::clamp((thDb + 80.0) / 80.0, 0.0, 1.0));
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,12 @@
 //                 (Task 6).  Right-click on either [ON] button emits
 //                 openSetupRequested("Transmit", "DEXP/VOX") so MainWindow
 //                 can jump to the DexpVoxPage (Task 14).
+//   2026-05-04 — Phase 3M-3a-iii bench polish: VOX row (#10) relocated to
+//                 TxApplet (Option B - full row under TUNE/MOX).  Members
+//                 m_voxBtn/m_voxSlider/m_voxLvlLabel/m_voxDlySlider/
+//                 m_voxDlyLabel/m_voxPeakMeter removed.  DEXP row (#11)
+//                 stays.  pollDexpMeters() trimmed to drive only the DEXP
+//                 strip; VOX peak polling lives on TxApplet now.
 // =================================================================
 
 //=================================================================
@@ -427,87 +433,9 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         vbox->addLayout(row);
     }
 
-    // ── Control 10: VOX toggle + threshold slider-stack + Hold slider ───────
-    // Phase 3M-3a-iii Task 15.  Layout:
-    //   [VOX btn 48px] | { Threshold slider top, DexpPeakMeter strip
-    //   below } | [-20 dB inset] | [Hold slider 1..2000 ms] | [500 ms inset]
-    //
-    // Threshold slider range -80..0 dB matches Thetis ptbVOX
-    // (console.Designer.cs:6018-6019 [v2.10.3.13]).  Hold slider range
-    // 1..2000 ms matches Thetis udDEXPHold (setup.designer.cs:45005-45013
-    // [v2.10.3.13]).  Default values mirror Thetis ptbVOX.Value=-20
-    // (console.Designer.cs:6024) and udDEXPHold.Value=500
-    // (setup.designer.cs:45020).
-    //
-    // Slider-stack: a small QVBoxLayout wraps the threshold slider (top)
-    // and DexpPeakMeter (below) so the live mic peak strip sits directly
-    // under the threshold knob — matches Thetis picVOX placement.
-    //
-    // 2026-05-03 bench polish: dropped the separate "VOX" QLabel + "ON"
-    // QPushButton pair — single VOX button now both labels and toggles
-    // the feature (matches the DEXP row right below it in #11).  Width
-    // 48 px to match m_dexpBtn so the two rows align visually.
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        m_voxBtn = new QPushButton(QStringLiteral("VOX"), page);
-        m_voxBtn->setCheckable(true);
-        m_voxBtn->setFixedWidth(48);
-        m_voxBtn->setFixedHeight(22);
-        m_voxBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
-        m_voxBtn->setAccessibleName(QStringLiteral("VOX voice-operated transmit"));
-        m_voxBtn->setObjectName(QStringLiteral("PhoneCwVoxButton"));
-        row->addWidget(m_voxBtn);
-
-        // Threshold slider-stack: slider on top, DexpPeakMeter strip below.
-        auto* voxStackGroup = new QWidget(page);
-        auto* voxStackVbox = new QVBoxLayout(voxStackGroup);
-        voxStackVbox->setContentsMargins(0, 0, 0, 0);
-        voxStackVbox->setSpacing(1);
-
-        m_voxSlider = new QSlider(Qt::Horizontal, voxStackGroup);
-        // From Thetis console.Designer.cs:6018-6019 [v2.10.3.13]:
-        //   ptbVOX.Maximum = 0; ptbVOX.Minimum = -80;
-        m_voxSlider->setRange(-80, 0);
-        m_voxSlider->setValue(-20);
-        m_voxSlider->setFixedHeight(14);
-        m_voxSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
-        m_voxSlider->setAccessibleName(QStringLiteral("VOX threshold (dB)"));
-        m_voxSlider->setObjectName(QStringLiteral("PhoneCwVoxThresholdSlider"));
-        voxStackVbox->addWidget(m_voxSlider);
-
-        m_voxPeakMeter = new DexpPeakMeter(voxStackGroup);
-        m_voxPeakMeter->setObjectName(QStringLiteral("PhoneCwVoxPeakMeter"));
-        m_voxPeakMeter->setAccessibleName(QStringLiteral("VOX live mic peak"));
-        voxStackVbox->addWidget(m_voxPeakMeter);
-
-        row->addWidget(voxStackGroup, 1);
-
-        m_voxLvlLabel = new QLabel(QStringLiteral("-20 dB"), page);
-        m_voxLvlLabel->setStyleSheet(NereusSDR::Style::insetValueStyle());
-        m_voxLvlLabel->setFixedWidth(38);
-        m_voxLvlLabel->setAlignment(Qt::AlignCenter);
-        row->addWidget(m_voxLvlLabel);
-
-        m_voxDlySlider = new QSlider(Qt::Horizontal, page);
-        // From Thetis setup.designer.cs:45005-45013 [v2.10.3.13]:
-        //   udDEXPHold.Maximum = 2000; udDEXPHold.Minimum = 1; (units: ms)
-        m_voxDlySlider->setRange(1, 2000);
-        m_voxDlySlider->setValue(500);
-        m_voxDlySlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
-        m_voxDlySlider->setAccessibleName(QStringLiteral("VOX hold time (ms)"));
-        m_voxDlySlider->setObjectName(QStringLiteral("PhoneCwVoxHoldSlider"));
-        row->addWidget(m_voxDlySlider, 1);
-
-        m_voxDlyLabel = new QLabel(QStringLiteral("500 ms"), page);
-        m_voxDlyLabel->setStyleSheet(NereusSDR::Style::insetValueStyle());
-        m_voxDlyLabel->setFixedWidth(42);
-        m_voxDlyLabel->setAlignment(Qt::AlignCenter);
-        row->addWidget(m_voxDlyLabel);
-
-        vbox->addLayout(row);
-    }
+    // (Control 10 VOX row relocated to TxApplet 2026-05-04 — bench polish
+    //  feedback that VOX engage surface should sit next to MOX/TUNE on the
+    //  TX right pane, not buried on the Phone tab.  See TxApplet section 4b.)
 
     // ── Control 11: DEXP toggle + threshold slider-stack ────────────────────
     // Phase 3M-3a-iii Task 15.  Layout:
@@ -602,7 +530,8 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     // #1  m_levelGauge       — wired (Phase 3M-1b mic level gauge)
     // #5  m_micLevelSlider   — wired (Phase 3M-1b mic gain)
     // #7  m_procBtn / m_procSlider — wired (Phase 3M-3a-ii post-bench cleanup)
-    // #10 m_voxBtn / m_voxSlider / m_voxDlySlider — wired (Phase 3M-3a-iii Task 15)
+    // #10 VOX row relocated to TxApplet 2026-05-04 (no NYI mark needed —
+    //     members removed entirely)
     // #11 m_dexpBtn / m_dexpSlider — wired (Phase 3M-3a-iii Task 15;
     //     m_dexpSlider is decorative-only per Thetis quirk, see wireControls())
     NyiOverlay::markNyi(m_compGauge,        kNyiProc);    // #2 — Phase 3I-3
@@ -1013,107 +942,16 @@ void PhoneCwApplet::wireControls()
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Phase 3M-3a-iii Task 15: VOX (#10) and DEXP (#11) row wiring.
+    // Phase 3M-3a-iii Task 15: DEXP (#11) row wiring.
     //
-    // Bidirectional binds for [ON] toggles + threshold/hold sliders, plus
-    // the FAITHFUL Thetis decorative-slider quirk for the DEXP threshold
-    // (preserved verbatim — see inline comment on m_dexpSlider connect()).
-    // 100 ms timer at the end of this block drives both peak meters from
-    // TxChannel meter readers.
+    // (VOX wiring relocated to TxApplet 2026-05-04 — bench polish feedback.
+    // See TxApplet::wireControls section 4b for the new home.)
+    //
+    // Bidirectional bind for [DEXP ON] toggle, plus the FAITHFUL Thetis
+    // decorative-slider quirk for the DEXP threshold (preserved verbatim
+    // — see inline comment on m_dexpSlider connect()).  100 ms timer at
+    // the end of this block drives the DEXP peak meter from TxChannel.
     // ─────────────────────────────────────────────────────────────────────────
-
-    // ── #10 VOX [ON] toggle ↔ TransmitModel::voxEnabled ──────────────────────
-    // m_updatingFromModel guard + QSignalBlocker prevent the model→UI loop
-    // from re-firing the model setter (same belt-and-suspenders pattern as
-    // PROC).  Initial UI state seeded from current TM via QSignalBlocker.
-    if (m_voxBtn) {
-        {
-            QSignalBlocker b(m_voxBtn);
-            m_voxBtn->setChecked(tx.voxEnabled());
-        }
-        // UI → Model
-        connect(m_voxBtn, &QPushButton::toggled, this, [this, &tx](bool on) {
-            if (m_updatingFromModel) { return; }
-            tx.setVoxEnabled(on);
-        });
-        // Model → UI
-        connect(&tx, &TransmitModel::voxEnabledChanged, this, [this](bool on) {
-            m_updatingFromModel = true;
-            {
-                QSignalBlocker b(m_voxBtn);
-                m_voxBtn->setChecked(on);
-            }
-            m_updatingFromModel = false;
-        });
-    }
-
-    // ── #10 VOX threshold slider ↔ TransmitModel::voxThresholdDb ─────────────
-    // Range -80..0 dB from console.Designer.cs:6018-6019 [v2.10.3.13]
-    // (already set in buildPhonePage).  Default value -20 dB matches Thetis
-    // ptbVOX.Value=-20 (console.Designer.cs:6024 [v2.10.3.13]).
-    if (m_voxSlider) {
-        {
-            QSignalBlocker b(m_voxSlider);
-            m_voxSlider->setValue(tx.voxThresholdDb());
-        }
-        if (m_voxLvlLabel) {
-            m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
-        }
-        // UI → Model + label refresh
-        connect(m_voxSlider, &QSlider::valueChanged, this, [this, &tx](int dB) {
-            if (m_voxLvlLabel) {
-                m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(dB));
-            }
-            if (m_updatingFromModel) { return; }
-            tx.setVoxThresholdDb(dB);
-        });
-        // Model → UI
-        connect(&tx, &TransmitModel::voxThresholdDbChanged, this, [this](int dB) {
-            m_updatingFromModel = true;
-            {
-                QSignalBlocker b(m_voxSlider);
-                m_voxSlider->setValue(dB);
-            }
-            if (m_voxLvlLabel) {
-                m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(dB));
-            }
-            m_updatingFromModel = false;
-        });
-    }
-
-    // ── #10 VOX Hold slider ↔ TransmitModel::voxHangTimeMs ───────────────────
-    // Range 1..2000 ms from setup.designer.cs:45005-45013 [v2.10.3.13]
-    // (already set in buildPhonePage).  Default 500 ms matches udDEXPHold.Value
-    // (setup.designer.cs:45020 [v2.10.3.13]).
-    if (m_voxDlySlider) {
-        {
-            QSignalBlocker b(m_voxDlySlider);
-            m_voxDlySlider->setValue(tx.voxHangTimeMs());
-        }
-        if (m_voxDlyLabel) {
-            m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
-        }
-        // UI → Model + label refresh
-        connect(m_voxDlySlider, &QSlider::valueChanged, this, [this, &tx](int ms) {
-            if (m_voxDlyLabel) {
-                m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(ms));
-            }
-            if (m_updatingFromModel) { return; }
-            tx.setVoxHangTimeMs(ms);
-        });
-        // Model → UI
-        connect(&tx, &TransmitModel::voxHangTimeMsChanged, this, [this](int ms) {
-            m_updatingFromModel = true;
-            {
-                QSignalBlocker b(m_voxDlySlider);
-                m_voxDlySlider->setValue(ms);
-            }
-            if (m_voxDlyLabel) {
-                m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(ms));
-            }
-            m_updatingFromModel = false;
-        });
-    }
 
     // ── #11 DEXP [ON] toggle ↔ TransmitModel::dexpEnabled ────────────────────
     if (m_dexpBtn) {
@@ -1186,18 +1024,11 @@ void PhoneCwApplet::wireControls()
         });
     }
 
-    // ── Right-click on VOX [ON] / DEXP [ON] → emit openSetupRequested ────────
+    // ── Right-click on DEXP [ON] → emit openSetupRequested ───────────────────
     // MainWindow listens and jumps the SetupDialog to the "DEXP/VOX" leaf
     // (DexpVoxPage from Task 14).  Mirrors the SpeechProcessorPage cross-link
-    // pattern in TransmitSetupPages.h:201.
-    if (m_voxBtn) {
-        m_voxBtn->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(m_voxBtn, &QPushButton::customContextMenuRequested, this,
-                [this](const QPoint&) {
-            emit openSetupRequested(QStringLiteral("Transmit"),
-                                    QStringLiteral("DEXP/VOX"));
-        });
-    }
+    // pattern in TransmitSetupPages.h:201.  (VOX-button right-click moved
+    // to TxApplet 2026-05-04 with the rest of the VOX surface.)
     if (m_dexpBtn) {
         m_dexpBtn->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(m_dexpBtn, &QPushButton::customContextMenuRequested, this,
@@ -1207,10 +1038,11 @@ void PhoneCwApplet::wireControls()
         });
     }
 
-    // ── 100 ms timer driving both DexpPeakMeter strips ───────────────────────
+    // ── 100 ms timer driving the DEXP peak meter strip ───────────────────────
     // Cadence matches Thetis UpdateNoiseGate Task.Delay(100) at
     // console.cs:25347 [v2.10.3.13].  Stops automatically when the applet
     // is destroyed (parented to `this`).
+    // (VOX peak-meter polling lives on TxApplet now — 2026-05-04 bench polish.)
     m_dexpMeterTimer = new QTimer(this);
     m_dexpMeterTimer->setInterval(100);
     connect(m_dexpMeterTimer, &QTimer::timeout,
@@ -1295,42 +1127,8 @@ void PhoneCwApplet::syncFromModel()
         m_updatingFromModel = false;
     }
 
-    // VOX [ON] toggle + Threshold slider + Hold slider (Phase 3M-3a-iii Task 15)
-    // — bidirectional sync to TransmitModel::voxEnabled / voxThresholdDb /
-    // voxHangTimeMs.  Note: voxEnabled is NEVER persisted (safety: VOX always
-    // starts OFF), but we still pull whatever the current model state is so
-    // any other UI surface (e.g. Setup → DEXP/VOX page) stays in agreement.
-    if (m_voxBtn) {
-        TransmitModel& tx = m_model->transmitModel();
-        m_updatingFromModel = true;
-        QSignalBlocker b(m_voxBtn);
-        m_voxBtn->setChecked(tx.voxEnabled());
-        m_updatingFromModel = false;
-    }
-    if (m_voxSlider) {
-        TransmitModel& tx = m_model->transmitModel();
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker b(m_voxSlider);
-            m_voxSlider->setValue(tx.voxThresholdDb());
-        }
-        if (m_voxLvlLabel) {
-            m_voxLvlLabel->setText(QStringLiteral("%1 dB").arg(tx.voxThresholdDb()));
-        }
-        m_updatingFromModel = false;
-    }
-    if (m_voxDlySlider) {
-        TransmitModel& tx = m_model->transmitModel();
-        m_updatingFromModel = true;
-        {
-            QSignalBlocker b(m_voxDlySlider);
-            m_voxDlySlider->setValue(tx.voxHangTimeMs());
-        }
-        if (m_voxDlyLabel) {
-            m_voxDlyLabel->setText(QStringLiteral("%1 ms").arg(tx.voxHangTimeMs()));
-        }
-        m_updatingFromModel = false;
-    }
+    // (VOX state sync relocated to TxApplet 2026-05-04 with the rest of the
+    //  VOX surface — bench polish feedback.  See TxApplet::syncFromModel.)
 
     // DEXP [ON] toggle (Phase 3M-3a-iii Task 15) — bidirectional sync to
     // TransmitModel::dexpEnabled.  m_dexpSlider is decorative-only (not
@@ -1348,14 +1146,9 @@ void PhoneCwApplet::syncFromModel()
 }
 
 // ── pollDexpMeters — Phase 3M-3a-iii Task 15 ─────────────────────────────────
-// 100 ms tick that drives both DexpPeakMeter strips on the Phone tab.
-//
-//   VOX peak (linear amplitude from TxChannel::getDexpPeakSignal()):
-//     • 20 * log10(linear) → dB.
-//     • Map -80..0 dB → 0..1 normalized (range matches Thetis ptbVOX scale
-//       per console.Designer.cs:6018-6019 [v2.10.3.13]).
-//     • Threshold marker pulled from TransmitModel::voxThresholdDb() and
-//       mapped through the same -80..0 → 0..1 transform.
+// 100 ms tick that drives the DEXP peak-meter strip on the Phone tab.
+// (VOX peak-meter polling moved to TxApplet 2026-05-04 with the rest of
+// the VOX surface.)
 //
 //   DEXP peak (raw negative dB from TxChannel::getTxMicMeterDb()):
 //     • Add Thetis +3 dB display offset (console.cs:25354 [v2.10.3.13]:
@@ -1369,22 +1162,6 @@ void PhoneCwApplet::pollDexpMeters()
     if (!m_model) { return; }
     TxChannel* ch = m_model->txChannel();
     if (!ch) { return; }
-
-    // VOX peak: linear amplitude → dB → 0..1 over -80..0 range.
-    const double linearPeak = ch->getDexpPeakSignal();
-    const double voxPeakDb  = (linearPeak > 0.0)
-        ? 20.0 * std::log10(linearPeak)
-        : -80.0;
-    const double voxPeak01  = std::clamp((voxPeakDb + 80.0) / 80.0, 0.0, 1.0);
-    if (m_voxPeakMeter) {
-        m_voxPeakMeter->setSignalLevel(voxPeak01);
-    }
-    // VOX threshold marker: voxThresholdDb is in -80..0 dB range.
-    if (m_voxPeakMeter) {
-        const int thDb = m_model->transmitModel().voxThresholdDb();
-        m_voxPeakMeter->setThresholdMarker(
-            std::clamp((thDb + 80.0) / 80.0, 0.0, 1.0));
-    }
 
     // DEXP peak: dB → 0..1 over -160..0 range, matching Thetis
     // console.cs:28974 [v2.10.3.13]:

@@ -2967,13 +2967,23 @@ nereus_add_test(tst_parametric_eq_widget_json)
 # picVOX_Paint:28958-28959 [v2.10.3.13] visual recipe).
 nereus_add_test(tst_dexp_peak_meter)
 
-# -- Phase 3M-3a-iii Task 15: PhoneCwApplet VOX (#10) + DEXP (#11) wiring --
-# 10 tests: VOX [ON]/Th/Hold + DEXP [ON] bidirectional with TransmitModel,
-# DEXP Th decorative-only (Thetis quirk console.cs:28962-28970 [v2.10.3.13]),
-# right-click on either [ON] emits openSetupRequested("Transmit","DEXP/VOX"),
-# 100 ms timer cadence (matches Thetis UpdateNoiseGate Task.Delay(100)),
-# both DexpPeakMeter strips constructed, NyiOverlay markers cleared.
-nereus_add_test(tst_phone_cw_applet_vox_dexp_wiring)
+# -- Phase 3M-3a-iii Task 15: PhoneCwApplet DEXP (#11) wiring --
+# (VOX wiring tests moved to tst_tx_applet_vox_relocated 2026-05-04 with
+#  the relocation of the VOX surface to TxApplet.)
+# 7 tests: DEXP [ON] bidirectional with TransmitModel, DEXP Th decorative-
+# only (Thetis quirk console.cs:28962-28970 [v2.10.3.13]), right-click on
+# DEXP [ON] emits openSetupRequested("Transmit","DEXP/VOX"), 100 ms timer
+# cadence (matches Thetis UpdateNoiseGate Task.Delay(100)), DexpPeakMeter
+# strip constructed, NyiOverlay markers cleared, VOX widgets absent.
+nereus_add_test(tst_phone_cw_applet_dexp_wiring)
+
+# -- Phase 3M-3a-iii bench polish 2026-05-04: TxApplet VOX row relocation --
+# 7 tests: VOX [ON]/Th/Hold bidirectional with TransmitModel on the new
+# TxApplet location (under TUNE/MOX), right-click on VOX emits
+# openSetupRequested("Transmit","DEXP/VOX"), DexpPeakMeter constructed,
+# 100 ms QTimer drives pollVoxMeter(), and PhoneCw* VOX object names
+# absent from TxApplet (one-way relocation pin).
+nereus_add_test(tst_tx_applet_vox_relocated)
 
 # -- UI Polish Foundation A1: AppletPanelWidget scrollbar gutter --
 nereus_add_test(tst_applet_panel_gutter)
