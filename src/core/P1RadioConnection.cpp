@@ -2372,9 +2372,12 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
         return;
     }
 
-    //[2.10.3.13]MW0LGE adc_overload accumulated (or'd) across EP6 frames, cleared only by reader [Thetis networkproto1.c:335]
-    // From Thetis networkproto1.c — ADC overflow in C&C status bytes.
-    // C0[0] bit 0 = LT2208 overflow (ADC0).
+    // Cache each subframe's C0 byte for the mic_ptt extraction below.
+    // ADC overflow does NOT live in C0 — per Thetis networkproto1.c:332-355
+    // [v2.10.3.13] it lives in C1 bit 0 of case-0x00 frames and in
+    // C1/C2/C3 bit 0 of case-0x20 frames.  See the C0-type switch lower
+    // in this function.
+    //
     // Phase 3P-E Task 2: C0 bit 7 = I2C response frame (HL2 only).
     // Source: mi0bot networkproto1.c:478-493 [@c26a8a4]
     const quint8 c0_sub0 = frame[11];
@@ -2391,10 +2394,6 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             parseI2cResponse(c0, frame[base + 4], frame[base + 5],
                              frame[base + 6], frame[base + 7]);
         }
-    }
-
-    if ((c0_sub0 & 0x01) || (c0_sub1 & 0x01)) {
-        emit adcOverflow(0);
     }
 
     // H.5: mic_ptt extraction — P1 status frame C0 bit 0 (PTT from radio).
@@ -2452,12 +2451,24 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             continue;
         }
         // Source: networkproto1.c:332 — switch (ControlBytesIn[0] & 0xf8)
-        // Adjacent upstream cases 0x00/0x20 (networkproto1.c:335/353/354/355)
-        // each preserve `// only cleared by getAndResetADC_Overload(), or'ed
-        // with existing state //[2.10.3.13]MW0LGE` — inline attribution that
-        // survives verbatim in the port even though ADC-overload extraction
-        // happens in parseEp6Frame(), not here.
+        // Cases 0x00/0x20 carry ADC-overload bits (one per ADC); the
+        // `//[2.10.3.13]MW0LGE only cleared by getAndResetADC_Overload(),
+        // or'ed with existing state` inline attributions are preserved
+        // verbatim within each case body below.  In NereusSDR the SAC
+        // hysteresis state machine (StepAttenuatorController) plays the
+        // role of `getAndResetADC_Overload()` — it OR-accumulates every
+        // adcOverflow() emission until its 100 ms tick consumes them.
         switch (c0 & 0xF8) {
+        case 0x00: {
+            // Issue #176 fix — ADC0 overload reported in C1 bit 0.
+            // From Thetis networkproto1.c:335 [v2.10.3.13]:
+            //   prn->adc[0].adc_overload = prn->adc[0].adc_overload || ControlBytesIn[1] & 0x01;
+            //   // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+            if (c1 & 0x01) {
+                emit adcOverflow(0);
+            }
+            break;
+        }
         case 0x08: {
             // From Thetis networkproto1.c:339 [@501e3f5] — exciter_power AIN5
             const quint16 exciter = static_cast<quint16>((c1 << 8) | c2);
@@ -2506,6 +2517,17 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             // Shell-chrome sub-PR-2 B.3: emit supplyVoltsChanged for all radios.
             // From Thetis networkproto1.c:350 [@501e3f5] — supply_volts AIN6 Hermes Volts //[2.10.3.13]MW0LGE
             handleSupplyRaw(supply);
+            break;
+        }
+        case 0x20: {
+            // Issue #176 fix — multi-ADC overload report (Orion / ANAN-8000 class).
+            // From Thetis networkproto1.c:353-355 [v2.10.3.13]:
+            //   prn->adc[0].adc_overload = prn->adc[0].adc_overload || ControlBytesIn[1] & 1;        // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+            //   prn->adc[1].adc_overload = prn->adc[1].adc_overload || (ControlBytesIn[2] & 1) << 1; // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+            //   prn->adc[2].adc_overload = prn->adc[2].adc_overload || (ControlBytesIn[3] & 1) << 2; // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
+            if (c1 & 0x01) { emit adcOverflow(0); }
+            if (c2 & 0x01) { emit adcOverflow(1); }
+            if (c3 & 0x01) { emit adcOverflow(2); }
             break;
         }
         default:

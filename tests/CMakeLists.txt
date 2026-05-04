@@ -1017,6 +1017,17 @@ nereus_add_test(tst_p1_status_telemetry)
 nereus_add_test(tst_p2_status_telemetry)
 nereus_add_test(tst_radio_model_status_wiring)
 
+# ── Issue #176: P1 EP6 status-frame parser was reading C0 bit 0 (mic_PTT)
+# and emitting it as adcOverflow, causing the OVL badge to fire on every
+# footswitch press while real ADC saturations went unreported.  This test
+# constructs hand-crafted ep6 frames and verifies adcOverflow / micPttFromRadio
+# fire from independent bytes per Thetis networkproto1.c:329 + 332-355
+# [v2.10.3.13]:
+#   ptt_in   = ControlBytesIn[0] & 0x1               (C0 bit 0)
+#   case 0x00: adc[0] = ControlBytesIn[1] & 0x01     (C1 bit 0)
+#   case 0x20: adc[0..2] = ControlBytesIn[1..3] & 0x01
+nereus_add_test(tst_p1_adc_overflow_extraction)
+
 # ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
 # Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission
 # (idempotent no-fire), effectiveFreqCorrectionFactor() toggle between normal
