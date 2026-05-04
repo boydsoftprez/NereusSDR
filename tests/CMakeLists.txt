@@ -27,6 +27,22 @@ nereus_add_test(tst_smoke)
 
 # ── Issue #75: receiver leak across disconnect/reconnect ──────────────────
 nereus_add_test(tst_receiver_manager_reconnect)
+
+# ── HL2 connect-init parity: spectrum DDC center push (Bug 1) ─────────────
+# Pins the contract that RadioModel::loadSliceState() emits
+# sliceStateRestored(idx) at completion, mirroring Thetis
+# txtVFOAFreq_LostFocus's unconditional state push at power-on
+# (console.cs:27204 [v2.10.3.13]).  Without this hook the spectrum widget's
+# m_ddcCenterHz stays at the slice's pre-restore default in CTUN mode.
+nereus_add_test(tst_radio_model_slice_state_restored)
+
+# ── Issue #153 sub-bug 2: SSB MOX TXA seeding ────────────────────────────
+# Pins the contract that RadioModel::pushTxModeAndBandpass() emits
+# txModeAndBandpassPushed(mode, audioLow, audioHigh) with the active
+# slice's current DSPMode + filter cutoffs.  Wired into createTxChannel,
+# SliceModel::dspModeChanged, and MoxController::txAboutToBegin so SSB
+# MOX no longer requires a prior TUN press to seed TXA mode + bp0.
+nereus_add_test(tst_radio_model_push_tx_mode_and_bandpass)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_meter_item_bar)
 nereus_add_test(tst_reading_name)

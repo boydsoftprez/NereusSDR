@@ -1665,13 +1665,38 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // getbuffsize(48000) at cmsetup.c:106-110 [v2.10.3.13] exactly.
         // Output buffer = 64 * txOutRate / 48000 — at 48 kHz out: 64; at
         // 192 kHz out (P2 G2): 256.
-        m_txChannel = m_wdspEngine->createTxChannel(/*channelId=*/1,
-                                                    /*inputBufferSize=*/64,
-                                                    /*dspBufferSize=*/WdspEngine::kTxDspBufferSize,
-                                                    /*inputSampleRate=*/48000,
-                                                    /*dspSampleRate=*/WdspEngine::kTxDspSampleRate,
-                                                    /*outputSampleRate=*/txOutRate);
-        if (m_txChannel) {
+        //
+        // Issue #153 sub-bug 1 — cold-start TxChannel race fix.
+        //
+        // On cold start (no cached FFTW wisdom), WdspEngine::initialize
+        // runs async and only emits initializedChanged(true) AFTER wisdom
+        // is generated (~15 min on a fresh install).  connectToRadio()
+        // runs synchronously, so the immediate createTxChannel attempt
+        // returns nullptr and the previous code logged a warning and
+        // gave up — TUN and MOX both produced silence for the rest of
+        // the session until reconnect.
+        //
+        // Wrap the entire create+wire body in a captured lambda so the
+        // exact same code path can run later when WdspEngine becomes
+        // initialized.  Hot-cache (wisdom present): txSetup() runs and
+        // succeeds inline.  Cold-start: txSetup() returns early at the
+        // createTxChannel-returns-nullptr guard, the retry registration
+        // below fires the same lambda once initializedChanged(true)
+        // lands, and the body runs verbatim.
+        auto txSetup = [this, txOutRate]() {
+            if (m_txChannel) {
+                return;
+            }
+            m_txChannel = m_wdspEngine->createTxChannel(
+                /*channelId=*/1,
+                /*inputBufferSize=*/64,
+                /*dspBufferSize=*/WdspEngine::kTxDspBufferSize,
+                /*inputSampleRate=*/48000,
+                /*dspSampleRate=*/WdspEngine::kTxDspSampleRate,
+                /*outputSampleRate=*/txOutRate);
+            if (!m_txChannel) {
+                return;
+            }
             m_txChannel->setConnection(m_connection);
 
             // ── L.1: construct Pc + Radio mic sources + composite router ──────────
@@ -1965,6 +1990,23 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                     m_txChannel, [this](bool run) {
                 m_txChannel->setVoxRun(run);
             });
+
+            // Issue #153 sub-bug 2 — txAboutToBegin → pushTxModeAndBandpass.
+            //
+            // MoxController phase-1 signal fires synchronously BEFORE the
+            // rfDelay timer that gates txReady (MoxController.cpp:505-507
+            // [@501e3f5]).  pushTxModeAndBandpass dispatches setTxMode +
+            // requestFilterChange to TxWorkerThread; the queued setters
+            // settle well before rfDelay completes (~50 ms typical) and
+            // txReady → setRunning(true) above starts the channel.
+            //
+            // Belt-and-suspenders re-seed at MOX-engage even though the
+            // initial seed below + the dspModeChanged seed in
+            // wireSliceSignals already cover the no-mode-change case.
+            // Defends against any state desync caused by other code
+            // paths writing TXA mode/bp0 (TUN, future PureSignal, etc.).
+            connect(m_moxController, &MoxController::txAboutToBegin,
+                    this, &RadioModel::pushTxModeAndBandpass);
 
             // ── Phase 3M-3a-iii Task 17 (bench fix) ───────────────────────────
             //
@@ -2619,9 +2661,57 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             qCInfo(lcDsp) << "G.1: TX channel 1 created (deferred until conn live)"
                           << "outRate=" << txOutRate
                           << "— SSB voice path ready (L.1 composite router wired).";
-        } else {
-            qCWarning(lcDsp) << "G.1: deferred createTxChannel(1) returned nullptr —"
-                                " TUNE will be unavailable until next reconnect.";
+
+            // Issue #153 sub-bug 2 — initial TXA mode/bandpass seed.
+            //
+            // m_txChannel is alive, m_activeSlice is non-null (loadSliceState
+            // ran earlier in connectToRadio at line ~1377 and restored the
+            // persisted dspMode + filterLow/filterHigh).  Push them now so
+            // SSB MOX no longer requires a prior TUN press to seed TXA
+            // mode (default LSB) and bp0 cutoffs (default -5000..-100).
+            //
+            // Source: Thetis SetTXFilters at console.cs:8091 [v2.10.3.13]
+            // + CurrentDSPMode setter at radio.cs:2670-2696 [v2.10.3.13];
+            // Thetis seeds at mode-change (console.cs:33937) + at
+            // chkPower → txtVFOAFreq_LostFocus path indirectly via the
+            // SetupTxFilters() preamble.  NereusSDR consolidates into
+            // one helper called at three triggers (this is trigger #1 of 3).
+            pushTxModeAndBandpass();
+        };  // end of txSetup lambda
+        txSetup();
+
+        if (!m_txChannel) {
+            // Issue #153 sub-bug 1 — cold-start retry hook.
+            //
+            // WDSP not yet initialized at connectToRadio time (typical
+            // first-launch case with no cached FFTW wisdom — async wisdom
+            // build can take ~15 minutes on a fresh install).  Register a
+            // one-shot connect to WdspEngine::initializedChanged(true)
+            // that re-runs the captured txSetup lambda.  receiver=this so
+            // the slot runs on RadioModel's main thread; QMetaObject
+            // disconnects automatically when this RadioModel is destroyed.
+            //
+            // The retry self-disconnects on first successful run.  If WDSP
+            // never initializes (e.g. wisdom build aborted) the connection
+            // remains harmlessly attached until RadioModel teardown.
+            auto retry = std::make_shared<QMetaObject::Connection>();
+            *retry = connect(m_wdspEngine, &WdspEngine::initializedChanged,
+                             this,
+                             [this, retry, txSetup = std::move(txSetup)](bool ready) {
+                if (!ready || m_txChannel) {
+                    return;
+                }
+                txSetup();
+                if (m_txChannel) {
+                    QObject::disconnect(*retry);
+                    qCInfo(lcDsp) << "Issue #153 sub-bug 1: TxChannel deferred-create "
+                                     "succeeded after WdspEngine::initializedChanged(true).";
+                }
+            }, Qt::UniqueConnection);
+            qCWarning(lcDsp) << "Issue #153 sub-bug 1: createTxChannel(1) returned nullptr "
+                                "at connect-time (WDSP not yet initialized — likely cold-"
+                                "start with no cached wisdom).  Registered one-shot retry "
+                                "on WdspEngine::initializedChanged.";
         }
     }
 
@@ -3120,6 +3210,13 @@ void RadioModel::wireSliceSignals()
         if (rxCh) {
             rxCh->setMode(mode);
         }
+        // Issue #153 sub-bug 2 — TX-side mode + bandpass push (trigger #2
+        // of 3).  Mirrors Thetis console.cs:33937 [v2.10.3.13] mode-change
+        // handler calling SetTXFilters + (CurrentDSPMode setter) →
+        // SetTXAMode.  Without this, the user can change slice mode while
+        // not transmitting and the next MOX would still use the previous
+        // mode's TXA setup.
+        pushTxModeAndBandpass();
         scheduleSettingsSave();
     });
 
@@ -3873,6 +3970,64 @@ void RadioModel::loadSliceState(SliceModel* slice)
                   << slice->frequency() / 1e6 << "MHz"
                   << "AGC:" << static_cast<int>(slice->agcMode())
                   << "AF:" << slice->afGain() << "RF:" << slice->rfGain();
+
+    // Unconditional state-restored hook for view layer.
+    //
+    // wireSliceToSpectrum() runs at sliceAdded() time — BEFORE this function —
+    // so it seeds m_spectrumWidget->setDdcCenterFrequency() / setCenterFrequency
+    // / setVfoFrequency with the slice's PRE-restore default values.  After
+    // restoreFromSettings() above, the slice now holds the persisted values,
+    // but the spectrum widget will only learn about them via
+    // SliceModel::frequencyChanged, which is gated:
+    //   (a) qFuzzyCompare guard at SliceModel.cpp:145 — no emit if equal;
+    //   (b) MainWindow::wireSliceToSpectrum lambda's offScreen test — with
+    //       CTUN=true (default) and persisted freq within ±halfBw of the
+    //       default seed, the lambda hits the CTUN-shift branch and never
+    //       calls setDdcCenterFrequency.
+    //
+    // This unconditional emit gives MainWindow an explicit hook to push the
+    // now-correct slice freq/mode/filter into the spectrum widget and VFO
+    // flag — mirroring Thetis chkPower_CheckedChanged calling
+    // txtVFOAFreq_LostFocus() unconditionally at console.cs:27204
+    // [v2.10.3.13] as the explicit "push state to display" step at power-on.
+    emit sliceStateRestored(slice->sliceIndex());
+}
+
+// Issue #153 sub-bug 2 — push the active slice's DSPMode + audio-space
+// filter cutoffs to TxChannel.  See header comment for the wire targets
+// and source-of-truth Thetis cites.  This is the helper called by all
+// three triggers (createTxChannel post-create, SliceModel::dspModeChanged,
+// MoxController::txAboutToBegin).
+void RadioModel::pushTxModeAndBandpass()
+{
+    if (!m_activeSlice) {
+        return;
+    }
+    const DSPMode mode      = m_activeSlice->dspMode();
+    const int     audioLow  = m_activeSlice->filterLow();
+    const int     audioHigh = m_activeSlice->filterHigh();
+
+    // Diagnostic / test-observation hook fires unconditionally (m_txChannel
+    // can be null during odd lifecycle moments — addSlice before
+    // connectToRadio's WDSP-init lambda runs — and tests rely on the
+    // emit to verify the trigger pipeline without standing up the full
+    // TX pipeline).
+    emit txModeAndBandpassPushed(mode, audioLow, audioHigh);
+
+    if (!m_txChannel) {
+        return;
+    }
+
+    // Queue the WDSP setter call to TxWorkerThread.  receiver=m_txChannel
+    // routes via auto-queued connection; the lambda body runs on the
+    // worker thread, where setTxMode / requestFilterChange are then
+    // same-thread direct calls.  Mirrors the F.1 / F.2 / H.1 wires inside
+    // connectToRadio's txSetup lambda (RadioModel.cpp ~1957).
+    QMetaObject::invokeMethod(m_txChannel,
+                              [tx = m_txChannel, mode, audioLow, audioHigh]() {
+        tx->setTxMode(mode);
+        tx->requestFilterChange(audioLow, audioHigh, mode);
+    });
 }
 
 // Apply AlexController state to the wire. Called from three triggers:

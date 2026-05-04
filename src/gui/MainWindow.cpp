@@ -877,6 +877,49 @@ void MainWindow::buildUI()
         }
     });
 
+    // Push restored slice state into spectrum + VFO views once
+    // RadioModel::loadSliceState() completes.
+    //
+    // wireSliceToSpectrum() above runs at sliceAdded() time — BEFORE
+    // loadSliceState() runs inside connectToRadio.  At that earlier moment
+    // the slice still holds its pre-restore default values, so the
+    // spectrum widget's m_ddcCenterHz, center freq, and VFO freq were
+    // seeded with the default (typically 14.225 MHz / 20m).  After
+    // loadSliceState() restores the persisted band/freq/mode/filter,
+    // SliceModel::frequencyChanged is gated by qFuzzyCompare and by the
+    // CTUN-shift branch in wireSliceToSpectrum's frequencyChanged lambda
+    // (the offScreen path that calls setDdcCenterFrequency only fires
+    // when persisted freq is OUTSIDE default ±halfBw).  Without an
+    // explicit re-push, m_ddcCenterHz stays at the default and spectrum
+    // bin labels point to the wrong band of RF until the first dial-
+    // tune crosses the offScreen threshold.
+    //
+    // Mirrors Thetis txtVFOAFreq_LostFocus's unconditional Display.VFOA
+    // / Display.CentreFreqRX1 push at console.cs:31272 + 15378
+    // [v2.10.3.13], invoked from chkPower_CheckedChanged at
+    // console.cs:27204 [v2.10.3.13] as the explicit "push state to
+    // display" step on power-on.
+    connect(m_radioModel, &RadioModel::sliceStateRestored, this,
+            [this](int index) {
+        if (index != 0 || !m_spectrumWidget) {
+            return;
+        }
+        SliceModel* slice = m_radioModel->activeSlice();
+        if (!slice) {
+            return;
+        }
+        const double freq = slice->frequency();
+        m_spectrumWidget->setCenterFrequency(freq);
+        m_spectrumWidget->setDdcCenterFrequency(freq);
+        m_spectrumWidget->setVfoFrequency(freq);
+        m_spectrumWidget->setFilterOffset(slice->filterLow(), slice->filterHigh());
+        if (m_vfoWidget) {
+            m_vfoWidget->setFrequency(freq);
+            m_vfoWidget->setMode(slice->dspMode());
+            m_vfoWidget->setFilter(slice->filterLow(), slice->filterHigh());
+        }
+    });
+
     // Phase 3Q Sub-PR-6 (F.1): bind RxDashboard to slice(0) once it exists.
     // buildStatusBar() runs before connectToRadio() so slices().isEmpty() at
     // construction time; defer binding to sliceAdded.
