@@ -93,6 +93,66 @@ private slots:
         ch.setDexpDetectorTau(20.0);   // idempotent re-call (no second WDSP push)
         QCOMPARE(ch.lastDexpDetectorTauForTest(), 20.0);
     }
+
+    // --------------------------------------------------------------
+    // setDexpAttackTime  (range 2..100 ms, default 2)
+    // setup.Designer.cs:45027-45055 [v2.10.3.13]
+    // --------------------------------------------------------------
+
+    void setDexpAttackTime_inRange() {
+        TxChannel ch(kChannelId);
+        QVERIFY(std::isnan(ch.lastDexpAttackTimeForTest()));
+        ch.setDexpAttackTime(2.0);
+        QCOMPARE(ch.lastDexpAttackTimeForTest(), 2.0);
+        ch.setDexpAttackTime(50.0);
+        QCOMPARE(ch.lastDexpAttackTimeForTest(), 50.0);
+    }
+    void setDexpAttackTime_clampedLow() {
+        TxChannel ch(kChannelId);
+        ch.setDexpAttackTime(0.5);
+        QCOMPARE(ch.lastDexpAttackTimeForTest(), 2.0);
+    }
+    void setDexpAttackTime_clampedHigh() {
+        TxChannel ch(kChannelId);
+        ch.setDexpAttackTime(150.0);
+        QCOMPARE(ch.lastDexpAttackTimeForTest(), 100.0);
+    }
+    void setDexpAttackTime_idempotent() {
+        TxChannel ch(kChannelId);
+        ch.setDexpAttackTime(2.0);
+        ch.setDexpAttackTime(2.0);
+        QCOMPARE(ch.lastDexpAttackTimeForTest(), 2.0);
+    }
+
+    // --------------------------------------------------------------
+    // setDexpReleaseTime  (range 2..1000 ms, default 100)
+    // setup.Designer.cs:44967-44995 [v2.10.3.13]
+    // --------------------------------------------------------------
+
+    void setDexpReleaseTime_inRange() {
+        TxChannel ch(kChannelId);
+        QVERIFY(std::isnan(ch.lastDexpReleaseTimeForTest()));
+        ch.setDexpReleaseTime(100.0);
+        QCOMPARE(ch.lastDexpReleaseTimeForTest(), 100.0);
+        ch.setDexpReleaseTime(500.0);
+        QCOMPARE(ch.lastDexpReleaseTimeForTest(), 500.0);
+    }
+    void setDexpReleaseTime_clampedLow() {
+        TxChannel ch(kChannelId);
+        ch.setDexpReleaseTime(0.5);
+        QCOMPARE(ch.lastDexpReleaseTimeForTest(), 2.0);
+    }
+    void setDexpReleaseTime_clampedHigh() {
+        TxChannel ch(kChannelId);
+        ch.setDexpReleaseTime(2000.0);
+        QCOMPARE(ch.lastDexpReleaseTimeForTest(), 1000.0);
+    }
+    void setDexpReleaseTime_idempotent() {
+        TxChannel ch(kChannelId);
+        ch.setDexpReleaseTime(100.0);
+        ch.setDexpReleaseTime(100.0);
+        QCOMPARE(ch.lastDexpReleaseTimeForTest(), 100.0);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstTxChannelDexpEnvelope)

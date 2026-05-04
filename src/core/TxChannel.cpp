@@ -172,17 +172,21 @@ warren@wpratt.com
 //                 cited from deskhpsdr/transmitter.c:2136-2186 [@120188f].
 //                 The TUN path at lines 520-528 is untouched.
 //                 AI-assisted transformation via Anthropic Claude Code.
-//   2026-05-03 — Phase 3M-3a-iii Tasks 1-2: setDexpRun(bool) and
-//                 setDexpDetectorTau(double) wrappers implemented by
+//   2026-05-03 — Phase 3M-3a-iii Tasks 1-2: setDexpRun(bool),
+//                 setDexpDetectorTau(double), setDexpAttackTime(double),
+//                 setDexpReleaseTime(double) wrappers implemented by
 //                 J.J. Boyd (KG4VCF).  setDexpRun gates the audio-domain
 //                 expansion (distinct from the existing setVoxRun() VOX-
-//                 keying gate); setDexpDetectorTau wraps the input
-//                 envelope smoothing time constant.  Same idempotent
-//                 pattern as the existing setVox*() family with NaN-aware
-//                 guards on doubles, ms→s conversion at the WDSP boundary,
-//                 std::clamp at the wrapper boundary for the Thetis range
-//                 1..100 ms (setup.Designer.cs:45070-45098 [v2.10.3.13]).
-//                 AI-assisted transformation via Anthropic Claude Code.
+//                 keying gate); the three timing setters wrap the
+//                 detector-tau / attack / release envelope parameters.
+//                 Same idempotent pattern as the existing setVox*()
+//                 family with NaN-aware guards on doubles, ms→s
+//                 conversion at the WDSP boundary, std::clamp at the
+//                 wrapper boundary for the Thetis ranges
+//                 (setup.Designer.cs:44967-45098 [v2.10.3.13]:
+//                 udDEXPDetTau 1..100, udDEXPAttack 2..100,
+//                 udDEXPRelease 2..1000).  AI-assisted transformation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -1412,6 +1416,98 @@ void TxChannel::setDexpDetectorTau(double tauMs)
     // ms→seconds for WDSP, matching setup.cs:18930 [v2.10.3.13]:
     //   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
     SetDEXPDetectorTau(m_channelId, clamped / 1000.0);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setDexpAttackTime()  — Phase 3M-3a-iii Task 2
+//
+// Set DEXP envelope attack time (low → high gain ramp duration).
+//
+// Porting from Thetis cmaster.cs:172-173 [v2.10.3.13] — SetDEXPAttackTime:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPAttackTime", ...)]
+//   public static extern void SetDEXPAttackTime(int id, double time);
+//
+// Units: seconds at the WDSP boundary (wdsp/dexp.c:481 [v2.10.3.13]
+// "Set attack time, seconds.  0.002 - 0.100 should be a good range.").
+// Thetis converts from ms at the call-site (setup.cs:18890-18894 [v2.10.3.13]):
+//   private void udDEXPAttack_ValueChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
+//   }
+//
+// Range 2..100 ms (setup.Designer.cs:45035-45050 [v2.10.3.13]).  Default 2
+// (setup.Designer.cs:45050).
+//
+// Idempotent guard: NaN-aware first-call sentinel + qFuzzyCompare on the
+// post-clamp ms value (matches setDexpDetectorTau's pattern exactly).
+//
+// From Thetis wdsp/dexp.c:479 [v2.10.3.13] — SetDEXPAttackTime impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setDexpAttackTime(double attackMs)
+{
+    // Range 2..100 ms per setup.Designer.cs:45035-45050 [v2.10.3.13].
+    const double clamped = std::clamp(attackMs, 2.0, 100.0);
+    if (!std::isnan(m_dexpAttackTimeMsLast)
+        && qFuzzyCompare(clamped, m_dexpAttackTimeMsLast)) {
+        return;  // idempotent guard
+    }
+    m_dexpAttackTimeMsLast = clamped;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:172-173 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
+    // ms→seconds for WDSP, matching setup.cs:18893 [v2.10.3.13]:
+    //   cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
+    SetDEXPAttackTime(m_channelId, clamped / 1000.0);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setDexpReleaseTime()  — Phase 3M-3a-iii Task 2
+//
+// Set DEXP envelope release time (high → low gain ramp duration).
+//
+// Porting from Thetis cmaster.cs:175-176 [v2.10.3.13] — SetDEXPReleaseTime:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPReleaseTime", ...)]
+//   public static extern void SetDEXPReleaseTime(int id, double time);
+//
+// Units: seconds at the WDSP boundary (wdsp/dexp.c:494 [v2.10.3.13]
+// "Set release time, seconds.  0.002 - 0.999 should be a good range.").
+// Thetis converts from ms at the call-site (setup.cs:18902-18906 [v2.10.3.13]):
+//   private void udDEXPRelease_ValueChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
+//   }
+//
+// Range 2..1000 ms (setup.Designer.cs:44975-44990 [v2.10.3.13]).  Default 100
+// (setup.Designer.cs:44990).
+//
+// Idempotent guard: NaN-aware first-call sentinel + qFuzzyCompare on the
+// post-clamp ms value (matches setDexpAttackTime's pattern exactly).
+//
+// From Thetis wdsp/dexp.c:492 [v2.10.3.13] — SetDEXPReleaseTime impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setDexpReleaseTime(double releaseMs)
+{
+    // Range 2..1000 ms per setup.Designer.cs:44975-44990 [v2.10.3.13].
+    const double clamped = std::clamp(releaseMs, 2.0, 1000.0);
+    if (!std::isnan(m_dexpReleaseTimeMsLast)
+        && qFuzzyCompare(clamped, m_dexpReleaseTimeMsLast)) {
+        return;  // idempotent guard
+    }
+    m_dexpReleaseTimeMsLast = clamped;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:175-176 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
+    // ms→seconds for WDSP, matching setup.cs:18905 [v2.10.3.13]:
+    //   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
+    SetDEXPReleaseTime(m_channelId, clamped / 1000.0);
 #endif
 }
 

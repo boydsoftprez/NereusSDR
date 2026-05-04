@@ -706,6 +706,38 @@ public:
     /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
     void setDexpDetectorTau(double tauMs);
 
+    /// DEXP envelope attack time (low → high gain ramp).
+    ///
+    /// From Thetis cmaster.cs:172-173 [v2.10.3.13] — SetDEXPAttackTime DLL
+    /// import.  WDSP impl: wdsp/dexp.c:479 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:481 comment "Set attack time, seconds.  0.002 - 0.100
+    /// should be a good range.").
+    /// Thetis call-site: setup.cs:18890-18894 udDEXPAttack_ValueChanged:
+    ///   cmaster.SetDEXPAttackTime(0, (double)udDEXPAttack.Value / 1000.0);
+    ///
+    /// Range: 2..100 ms (clamped at the wrapper boundary, then divided by
+    /// 1000.0 before the WDSP call).  Default: 2 ms
+    /// (setup.Designer.cs:45050 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpAttackTime(double attackMs);
+
+    /// DEXP envelope release time (high → low gain ramp).
+    ///
+    /// From Thetis cmaster.cs:175-176 [v2.10.3.13] — SetDEXPReleaseTime DLL
+    /// import.  WDSP impl: wdsp/dexp.c:492 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:494 comment "Set release time, seconds.  0.002 - 0.999
+    /// should be a good range.").
+    /// Thetis call-site: setup.cs:18902-18906 udDEXPRelease_ValueChanged:
+    ///   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
+    ///
+    /// Range: 2..1000 ms (clamped at the wrapper boundary, then divided by
+    /// 1000.0 before the WDSP call).  Default: 100 ms
+    /// (setup.Designer.cs:44990 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpReleaseTime(double releaseMs);
+
     // ── Mic preamp / mic-mute path (3M-1b D.6) ──────────────────────────────
 
     /// Set the mic preamp linear scalar pushed to WDSP via SetTXAPanelGain1.
@@ -1469,6 +1501,8 @@ public:
     // ── Test seams (Phase 3M-3a-iii Tasks 1-2) — DEXP envelope/timing ──────
     bool   lastDexpRunForTest()               const noexcept { return m_dexpRunLast; }
     double lastDexpDetectorTauForTest()       const noexcept { return m_dexpDetectorTauMsLast; }
+    double lastDexpAttackTimeForTest()        const noexcept { return m_dexpAttackTimeMsLast; }
+    double lastDexpReleaseTimeForTest()       const noexcept { return m_dexpReleaseTimeMsLast; }
 
     // ── Test seam (Phase 3M-1b D.6) — mic preamp last-value read-back ────────
     //
@@ -1716,6 +1750,8 @@ private:
     // call always passes the guard.
     bool   m_dexpRunLast              = false;
     double m_dexpDetectorTauMsLast    = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpAttackTimeMsLast     = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpReleaseTimeMsLast    = std::numeric_limits<double>::quiet_NaN();
 
     // ── Mic preamp last-set value (D.6) ──────────────────────────────────────
     //
