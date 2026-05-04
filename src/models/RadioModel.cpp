@@ -4580,20 +4580,50 @@ void RadioModel::setTune(bool on)
         // Cite: console.cs:30129-30132 [v2.10.3.13]:
         //   if (_tuneDrivePowerSource == DrivePowerSource.FIXED) PWR = PreviousPWR;
         //   //MW0LGE_22b  [original inline comment from console.cs:30033]
-        if (m_connection) {
-            auto* conn = m_connection;
-            // Scale percent (0-100) → wire byte (0-255) with SWR-protection
-            // foldback. See setTxDrive scaling comment in connection-power
-            // lambda for the mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]
-            // citation. Default factor=1.0 → identity to prior formula.
-            const float fSaved          = std::clamp(m_savedPowerPct / 100.0f, 0.0f, 1.0f);
-            const float swrProtectSaved =
-                std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
-            const int savedWireDrive =
-                std::clamp(int(255.0f * fSaved * swrProtectSaved), 0, 255);
-            QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
-                conn->setTxDrive(savedWireDrive);
-            });
+        //
+        // Codex P1 follow-up to PR #178 — route the restore through the
+        // calibrated dBm path, NOT the old linear formula.  Previously
+        // this site computed wire_byte = clamp(int(255 * pct/100 * swr),
+        // 0, 255) and wrote it directly via setTxDrive(), which left the
+        // radio holding a pre-hotfix linear byte after TUN-off.  In the
+        // common flow "TUN on → TUN off → MOX without moving slider",
+        // MOX would engage with that stale linear byte → K2GX-class
+        // over-drive on high-gain PAs.
+        //
+        // Same composition as the drive-slider lambda + TUNE-on rewrite:
+        //   wire_byte = clamp(int(audio_volume * 1.02 * 255), 0, 255)
+        //               From audio.cs:262-271 [v2.10.3.13]; NO SWR factor.
+        //   iq_gain   = audio_volume * swrProtect
+        //               From cmaster.cs:1115-1119 [v2.10.3.13]; SWR HERE.
+        // bFromTune=false routes through txMode 0 (drive-slider source)
+        // since TUN is now off and the user's saved drive-slider value
+        // is the canonical post-restore source.
+        m_transmitModel.setPower(m_savedPowerPct);
+        const Band offBand = m_activeSlice
+                                ? bandFromFrequency(m_activeSlice->frequency())
+                                : m_lastBand;
+        if (m_paProfileManager) {
+            const PaProfile* activeProfile = m_paProfileManager->activeProfile();
+            if (activeProfile) {
+                const auto result = m_transmitModel.setPowerUsingTargetDbm(
+                    *activeProfile, offBand, /*bSetPower=*/true,
+                    /*bFromTune=*/false, /*bTwoTone=*/false);
+                const float swrProtectSaved =
+                    std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+                const int savedWireDrive = std::clamp(
+                    int(result.audioVolume * 1.02 * 255.0), 0, 255);
+                const double iqGain = result.audioVolume
+                                       * static_cast<double>(swrProtectSaved);
+                if (m_txChannel) {
+                    m_txChannel->setTxFixedGain(iqGain);
+                }
+                if (m_connection) {
+                    auto* conn = m_connection;
+                    QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
+                        conn->setTxDrive(savedWireDrive);
+                    });
+                }
+            }
         }
 
         // ── RESTORE TX VFO (un-offset from cw_pitch) ───────────────────────────

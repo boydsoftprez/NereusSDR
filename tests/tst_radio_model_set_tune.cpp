@@ -472,19 +472,28 @@ private slots:
 
         // TUN-off must have pushed at least one more setTxDrive call.
         QVERIFY(conn->txDriveLog.size() > logSizeAfterOn);
-        // Phase 4 Agent 4A of issue #167: the TUN-off RESTORE path was
-        // intentionally NOT rewritten (plan §"Implementation" specifies
-        // only the drive-slider lambda + TUN-on path).  TUN-off still
-        // pushes the m_savedPowerPct value through the linear formula
-        // when restoring the user's pre-TUN slider state.  This is a
-        // visible asymmetry between TUN engage (uses dBm math) and TUN
-        // release (linear restore).  The user-facing impact is bounded:
-        // on TUN-off, the radio briefly drives back at the slider
-        // position the user set, then the next user setPower() emit
-        // routes through the new dBm chain.
-        // From mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1] (legacy):
-        //   int i = (int)(255 * f * _swr_protect);
-        QCOMPARE(conn->txDriveLog.last(), (80 * 255) / 100);
+        // Codex P1 follow-up to PR #178: the TUN-off RESTORE path now
+        // routes through TransmitModel::setPowerUsingTargetDbm (matches
+        // the TUN-on path).  Previously the restore used the linear
+        // formula `wire = clamp(int(255 * pct/100 * swr), 0, 255)` which
+        // shipped a stale pre-hotfix byte; in the flow "TUN on → TUN off
+        // → MOX without slider movement" the radio held that linear byte
+        // and engaged MOX with K2GX-class over-drive.  Now the restore
+        // recomputes via the calibrated dBm path with bFromTune=false
+        // (txMode 0 / drive-slider source).
+        //
+        // Regression check: the restored wire byte must NOT match the old
+        // linear formula `(80 * 255) / 100 == 204`.  Sane range: > 0
+        // (non-zero) and well below 255 (since 80% slider on a HERMES PA
+        // profile produces ~70-80% of full audio_volume).
+        const int restoredWireByte = conn->txDriveLog.last();
+        QVERIFY2(restoredWireByte > 0 && restoredWireByte < 255,
+                 qPrintable(QString("restored wire byte %1 out of sane range [1, 254]")
+                                .arg(restoredWireByte)));
+        QVERIFY2(restoredWireByte != (80 * 255) / 100,
+                 qPrintable(QString("restored wire byte %1 matches old linear formula "
+                                    "(should route through dBm path post-Codex P1 fix)")
+                                .arg(restoredWireByte)));
 
         model.injectConnectionForTest(nullptr);
     }
