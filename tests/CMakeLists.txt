@@ -189,6 +189,48 @@ target_compile_definitions(tst_radio_model_puresignal_run_wiring PRIVATE NEREUS_
 #   - interpolate degenerate zero-span: defensive guard, no crash.
 nereus_add_test(tst_pa_cal_profile)
 
+# ── Issue #167 Phase 1 Agent 1A: PaGainProfile factory tables ─────────────
+# Byte-for-byte parity vs Thetis clsHardwareSpecific.cs:459-751 [v2.10.3.13]
+# DefaultPAGainsForBands(HPSDRModel) plus mi0bot HL2 row from
+# clsHardwareSpecific.cs:769-797 [v2.10.3.13-beta2 @c26a8a4]. K2GX
+# regression spotlight: ANAN-8000DLE 80m == 50.5f exactly.
+nereus_add_test(tst_pa_gain_profile)
+
+# ── Issue #167 Phase 2 Agent 2A: PaProfile editable per-instance gain table ──
+# Faithful port of Thetis PAProfile (setup.cs:23763-24046 [v2.10.3.13]).
+# Covers:
+#   - Construction + ResetGainDefaultsForModel pulls factory rows from
+#     PaGainProfile (ANAN-8000DLE 80m = 50.5f).
+#   - GetGainForBand(driveValue == -1) returns base; with driveValue applies
+#     calcDriveAdjust subtraction.
+#   - calcDriveAdjust 9-step lerp boundaries: drive=0/100 short-circuit to 0,
+#     exact step idx 1/5/9, mid-lerp idx 0/5/9.
+#   - Setters silently no-op on out-of-range Band / stepIndex (matches
+#     Thetis Band.FIRST/LAST guard).
+#   - copySettings deep-copies gainValues / gainAdjust / maxPower /
+#     useMaxPower; leaves name / model / isFactoryDefault unchanged.
+#   - dataToString emits exactly 171 pipe-delimited fields (3 + 14 + 126 + 28).
+#   - dataToString → dataFromString round-trip on randomly-filled profile.
+#   - Default constructor produces valid empty state (all gains 100.0f
+#     sentinel matching Thetis init loop).
+#   - dataFromString rejects malformed inputs (wrong field count) → false.
+nereus_add_test(tst_pa_profile)
+
+# ── Phase 2 Agent 2B of issue #167: PaProfileManager ─────────────────────────
+# Per-MAC bank for PaProfile instances. Mirrors MicProfileManager API verbatim.
+# Factory regen on first connect (16 Default-<model> + Bypass) per Thetis
+# initPAProfiles (setup.cs:23295-23316 [v2.10.3.13]). Stored profiles win
+# over factory defaults per Thetis RecoverPAProfiles (setup.cs:1920-1959
+# [v2.10.3.13]) — explicit Reset Defaults button is the only path to refresh
+# from canonical tables.
+# Covers: first-launch seeding (16 + Bypass + active=Default-<model>),
+# reconnect preserves stored profiles, per-MAC isolation, save overwrites
+# without re-emitting profileListChanged, delete + last-profile guard,
+# setActiveProfile non-existent returns false, active-profile-on-connect
+# 3-case logic (NereusSDR-spin), regenerateFactoryDefaults restores factory
+# but leaves customs alone, activeProfile() accessor.
+nereus_add_test(tst_pa_profile_manager)
+
 # ── Phase 3P-A P1CodecAnvelinaPro3 bank 17 extra OC (Task 7) ──
 nereus_add_test(tst_p1_codec_anvelina_pro3)
 
@@ -449,6 +491,71 @@ nereus_add_test(tst_transmit_model_two_tone_properties)
 # setup.cs:11111-11119 [v2.10.3.13] (Fixed-mode behaviour reference).
 nereus_add_test(tst_transmit_model_two_tone_drive_origin)
 
+# ── Phase 3 Agent 3A of #167: TransmitModel PA-cal hotfix scaffolding ────────
+# Verifies the pre-math-kernel state plumbing for the PA calibration safety
+# hotfix (issue #167):
+#   - per-band normal-mode power array (m_powerByBand[14], default 100 W)
+#   - 3 ATT-on-TX-on-power-change safety properties (defaults match Thetis)
+#   - m_lastPower sentinel (-1, runtime-only) with reset-on-toggle semantic
+#     (CRITICAL: Thetis console.cs:29298 [v2.10.3.13])
+#   - pureSignalActive() predicate (returns false unconditionally; 3M-4
+#     PureSignal phase wires the live PS-A check)
+# Source: console.cs:1817 [v2.10.3.13] (limitPower_by_band default 100 W);
+#         console.cs:29285-29310 [v2.10.3.13] (ATT-on-TX safety props);
+#         console.cs:29298 [v2.10.3.13] (_lastPower reset on toggle).
+nereus_add_test(tst_transmit_model_pa_scaffold)
+
+# ── Phase 3 Agent 3B of #167: TransmitModel::computeAudioVolume math kernel ──
+# Verifies the dBm-target math kernel that translates (sliderWatts, band,
+# active PA profile) into a normalized audio output level in [0, 1.0]:
+#   - K2GX regression (CRITICAL, ship-blocking) — ANAN-8000DLE 80m at 100/200W
+#   - sliderWatts <= 0 short-circuit returns 0.0
+#   - HL2 sentinel (gbb >= 99.5) — linear fallback at 80m, dBm math at 6m
+#   - NereusSDR Bypass profile (all-100.0f) hits the same linear fallback
+#   - Safety ceiling matrix: every (HPSDRModel, Band) at radio's spec'd max
+#     watts produces audio_volume <= 1.0; tightest cell ANAN-8000D B10M @ 200W
+#   - Out-of-range Band hits sentinel via PaProfile::getGainForBand 1000-fallback
+#   - No NaN / Inf for pathological inputs (INT_MAX, INT_MIN, negative)
+#   - Drive-step lerp adjust applied at exact-step inputs
+# Source: console.cs:46720-46751 [v2.10.3.13] (SetPowerUsingTargetDBM math);
+#         mi0bot clsHardwareSpecific.cs:484 [v2.10.3.13-beta2] ("100 is no
+#                                            output power" sentinel comment).
+nereus_add_test(tst_transmit_model_compute_audio_volume)
+
+# ── Phase 3 Agent 3C of #167: TransmitModel::setPowerUsingTargetDbm wrapper ──
+# Verifies the deep-parity port of Thetis SetPowerUsingTargetDBM
+# (console.cs:46645-46762 [v2.10.3.13]) integrating Phase 3A scaffolding +
+# Phase 3B math kernel into a unified API:
+#   - All three txMode branches (0=normal, 1=tune, 2=2tone)
+#   - Drive-source enum routing for tune/2tone (DriveSlider/TuneSlider/Fixed)
+#   - power_by_band write side-effect on txMode 0 (matches console.cs:46676)
+#   - bConstrain out-param: false on Fixed drive source per console.cs:46688
+#   - ATT-on-TX-on-power-change safety gate firing/dormant/decrease cases
+#     (//[2.10.3.5]MW0LGE tag preserved verbatim) — pushes ATT_on_TX=31dB
+#     via injected StepAttenuatorController when PS-active + power changes
+#   - K2GX integration regression (ANAN-8000DLE 80m TUN slider 50)
+#   - audioVolumeChanged signal payload parity with computeAudioVolume
+#   - XVTR / power=0 / null-controller edge cases
+# Source: console.cs:46645-46762 [v2.10.3.13] (SetPowerUsingTargetDBM full).
+nereus_add_test(tst_transmit_model_set_power_using_dbm)
+
+# ── Phase 4 Agent 4A of #167: RadioModel drive-path topology + K2GX repro ────
+# Wire-byte / IQ-scalar topology (audio.cs:262-271 wire NO SWR / cmaster.cs:
+# 1115-1119 IQ HAS SWR) verification for the drive-slider lambda + TUNE
+# engagement path.  K2GX regression test pinned: ANAN-8000DLE 80m TUNE
+# slider=50 -> wire byte 47..50 (vs. pre-hotfix 127).
+# Covers:
+#   §1 K2GX regression (ship-blocking)
+#   §2 Drive-slider lambda at slider=100
+#   §3 HL2 sentinel preserves linear behaviour
+#   §4 HL2 6m uses dBm math
+#   §5 SWR foldback applies to IQ ONLY, not wire byte
+#   §6 TUNE engagement triggers full math chain
+#   §7 No active profile -> graceful no-op
+#   §8 PaTelemetryScaling::scaleFwdPowerWatts public lift parity
+nereus_add_test(tst_radio_model_drive_path)
+target_compile_definitions(tst_radio_model_drive_path PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1c F: MicProfileManager (load/save/delete/setActive) ────────────
 # Verifies the per-MAC mic-profile-bank API: F.1 class skeleton + load/save,
 # F.2 save with overwrite + comma-strip, F.3 delete with last-profile guard
@@ -522,6 +629,14 @@ nereus_add_test(tst_mic_profile_manager_para_eq_round_trip)
 # snapshot/restore of PWR, and BandPlanGuard rejection cleanup (via
 # the existing 3M-1b K.1 SSB-mode allow-list rule).
 nereus_add_test(tst_two_tone_controller)
+
+# ── Phase 4 Agent 4B of #167: TwoToneController PA-cal integration ────────
+# Verifies start()/stop() route through Phase 3C
+# TransmitModel::setPowerUsingTargetDbm with bTwoTone=true so the PA gain
+# compensation applies during the IMD test (txMode=2 routing per
+# console.cs:46693-46708 [v2.10.3.13]).  Covers all three drive-source
+# enums (DriveSlider/TuneSlider/Fixed) plus the null-manager guards.
+nereus_add_test(tst_two_tone_controller_pa_cal_integration)
 
 # ── Phase 3O VAX schema migration ─────────────────────────────────────────
 nereus_add_test(tst_app_settings_vax_migration)
@@ -970,6 +1085,18 @@ target_compile_definitions(tst_pa_calibration_group PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_pa_watt_meter_page)
 target_compile_definitions(tst_pa_watt_meter_page PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 5 Agent 5A of #167: PaWattMeterPage gap fill ────────────────────────
+# Verifies the two missing Thetis controls now wired into PaWattMeterPage:
+#   - chkPAValues toggle  → AppSettings "display/showPaValuesPage" round-trip,
+#                            default True on first run.
+#   - btnResetPAValues    → emits resetPaValuesRequested() on click;
+#                            PaValuesPage (Phase 5B) subscribes for peak/min
+#                            tracking reset.
+# Source: Thetis chkPAValues + btnResetPAValues setup.designer.cs:51155-51177
+#         + setup.cs:16340-16357 [v2.10.3.13].
+nereus_add_test(tst_pa_watt_meter_page_gap_fill)
+target_compile_definitions(tst_pa_watt_meter_page_gap_fill PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Setup IA reshape Phase 4: live PA Values page ────────────────────────────
 # Verifies PaValuesPage builds at least 8 MetricLabel children and updates
 # them when the bound RadioStatus + RadioConnection signals fire:
@@ -982,6 +1109,55 @@ target_compile_definitions(tst_pa_watt_meter_page PRIVATE NEREUS_BUILD_TESTS)
 # Source: Thetis panelPAValues setup.designer.cs:51155-51177 [v2.10.3.13].
 nereus_add_test(tst_pa_values_page)
 target_compile_definitions(tst_pa_values_page PRIVATE NEREUS_BUILD_TESTS)
+
+# ── PA hotfix #167 Phase 5B: PaValuesPage 4-label gap fill + peak/min ─────────
+# Verifies the four new MetricLabels added in Phase 5B (raw FWD power,
+# drive, FWD voltage, REV voltage) populate correctly from the
+# PaTelemetryScaling helpers (Phase 1B) and from
+# TransmitModel::powerChanged.  Also verifies peak/min running tracking
+# on FWD-calibrated / REV / SWR / PA-current / PA-temp / supply-volts,
+# the in-page Reset button, and the resetPaValues() public slot used by
+# Phase 5A's PaWattMeterPage::resetPaValuesRequested cross-page wiring.
+# Source: Thetis panelPAValues setup.designer.cs:51155-51177 +
+#         btnResetPAValues_Click setup.cs:16346-16357 [v2.10.3.13].
+nereus_add_test(tst_pa_values_page_gap_fill)
+target_compile_definitions(tst_pa_values_page_gap_fill PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 6 of #167: PaGainByBandPage live editor ───────────────────────────
+# Verifies the live editor that replaced the Phase 2 placeholder body in
+# PaSetupPages.cpp:117-145.  Surface mirrors Thetis tpGainByBand
+# (setup.designer.cs:47386-47525 [v2.10.3.13]):
+#   - profile combo (comboPAProfile) + 4 lifecycle buttons
+#     (New / Copy / Delete / Reset Defaults)
+#   - 14-band gain spinbox grid (nud160M..nudVHF13)
+#   - 14x9 drive-step adjust spinbox matrix (panelAdjustGain — NereusSDR
+#     densification: Thetis ships only the row for the selected band)
+#   - per-band max-power column (nudMaxPowerForBandPA + chkUsePowerOnDrvTunPA)
+#   - warning icon + label (pbPAProfileWarning + lblPAProfileWarning)
+#   - chkPANewCal "New Cal" mode toggle
+#   - chkAutoPACalibrate auto-cal toggle (Phase 7 wires the sweep flow)
+# Lifecycle behavior wired through PaProfileManager (Phase 2B). Tests cover
+# combo population, value round-trips, button flows (New / Copy / Delete /
+# Reset Defaults), warning visibility on profile divergence.
+nereus_add_test(tst_pa_gain_by_band_page_editor)
+target_compile_definitions(tst_pa_gain_by_band_page_editor PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 7 of #167: PaGainByBandPage auto-cal sweep state machine ──────────
+# Verifies the auto-cal sweep state machine wired to the chkAutoPACalibrate
+# checkbox added in Phase 6. The sweep iterates HF bands (160m..6m) x drive
+# levels (10/20/.../90), engages TUNE at each step, reads calibrated FWD
+# power via PaCalProfile::interpolate(), computes the gain delta from
+# observed-vs-target, and writes new gain values into the active PaProfile.
+# Mirrors Thetis CalibratePAGain at console.cs:10228-10387 [v2.10.3.13]
+# (HF-only band loop) and chkAutoPACalibrate_CheckedChanged at
+# setup.cs:15683-15698 [v2.10.3.13] (panel toggle).
+# Tests cover: initial Idle state, toggle starts sweep, state transitions
+# across bands, profile gain values updated, safety abort on over-power,
+# user cancel halts cleanly (no partial writes), completion writes profile
+# via PaProfileManager, settle timer dispatches readings, cancel during
+# initialization, HF-only sweep skips VHF/GEN/WWV/XVTR.
+nereus_add_test(tst_pa_gain_by_band_page_auto_cal)
+target_compile_definitions(tst_pa_gain_by_band_page_auto_cal PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-H Task 5a: Alex-2 Filters live LED selection ────────────────────
 # Verifies AntennaAlexAlex2Tab::updateActiveLeds() follows Thetis
@@ -1284,6 +1460,16 @@ nereus_add_test(tst_radio_model_pa_tripped)
 # Ports Thetis console.cs:25008-25072 [v2.10.3.13] (computeAlexFwdPower).
 nereus_add_test(tst_pa_scaling)
 
+# ── Phase 1 Agent 1B (issue #167 PA cal hotfix): public PaTelemetryScaling ───
+# 8 tests pin scaleFwdPowerWatts byte-for-byte parity with the existing
+# private RadioModel.cpp helper (ANAN8000D 3 raw values + HL2 default-branch
+# 3 values + FIRST sentinel + zero-raw clamps), and pin scaleFwdRevVoltage
+# per-board curve at 2 raw values per major SKU (HERMES / ORIONMKII /
+# ANAN_G2 / HL2). Ports Thetis console.cs:25008-25072 [v2.10.3.13]
+# (computeAlexFwdPower) — RadioModel.cpp call-site migration deferred to
+# Phase 4 Agent 4A.
+nereus_add_test(tst_pa_telemetry_scaling)
+
 # ── Phase 3M-0 Task 8: SpectrumWidget "HIGH SWR" overlay state ───────────────
 # Verifies setHighSwrOverlay(active, foldback) stores state, foldback flag
 # toggles independently, and repeated calls with same args are idempotent.
@@ -1477,6 +1663,27 @@ nereus_add_test(tst_general_setup_options)
 # phase tag.  Mirrors Thetis tpPowerAmplifier (setup.designer.cs:47366-47371
 # [v2.10.3.13]); panel-level wiring lands in Phase 3+.
 nereus_add_test(tst_pa_setup_pages)
+
+# ── PA calibration safety hotfix Phase 8: per-SKU PA visibility matrix ───────
+# Verifies PaGainByBandPage::applyCapabilityVisibility honors the five
+# BoardCapabilities flags the visibility wiring consumes (hasPaProfile,
+# isRxOnlySku, canDriveGanymede, hasPureSignal, hasStepAttenuatorCal) per
+# the per-SKU matrix derived from Thetis comboRadioModel_SelectedIndexChanged
+# (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]). Test matrix covers all 16
+# HPSDRModel values + RX-only + Ganymede + PureSignal scenarios (19 cases).
+nereus_add_test(tst_pa_setup_per_sku_visibility)
+target_compile_definitions(tst_pa_setup_per_sku_visibility PRIVATE NEREUS_BUILD_TESTS)
+
+# ── PA calibration safety hotfix Phase 9: SetupDialog cross-page Reset wiring ─
+# Verifies the connect() in SetupDialog::buildTree() that routes
+# PaWattMeterPage::resetPaValuesRequested (Phase 5A) into
+# PaValuesPage::resetPaValues() (Phase 5B). Drives the WattMeter page's
+# Reset button through its Phase 5A test seam, then asserts the Values
+# page's running peak/min trackers collapse to current — only possible
+# if SetupDialog actually wired the cross-page connect.
+# Source: Thetis btnResetPAValues_Click (setup.cs:16346-16357 [v2.10.3.13]).
+nereus_add_test(tst_setup_dialog_pa_reset_wiring)
+target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
@@ -1887,6 +2094,17 @@ target_compile_definitions(tst_radio_model_mox_hardware_flip PRIVATE NEREUS_BUIL
 #  12. No RadioConnection — graceful no-op (no crash)
 nereus_add_test(tst_step_att_tx_path)
 target_compile_definitions(tst_step_att_tx_path PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 1 Agent 1D of #167: setAttOnTxValue setter ──────────────────────
+# Verifies the ATT-on-TX setter used by TransmitModel::setPowerUsingTargetDbm
+# (Thetis console.cs:46740-46748 [v2.10.3.13]) — the PS-active power-change
+# safety gate writes through this method.
+#   1. round-trip set/get
+#   2. range clamp at +31 / -28 (HL2 bounds via setMin/MaxAttenuation)
+#   3. legacy-board lower bound (default min=0)
+#   4. per-MAC persistence round-trip
+#   5. writes per-band TX storage slot for current band
+nereus_add_test(tst_step_att_on_tx_value)
 
 # ── Phase 3M-1a Task G.4: RadioModel::setTune orchestrator ───────────────────
 # Verifies all TUNE side-effects outside MoxController:
@@ -2317,6 +2535,19 @@ nereus_add_test(tst_tx_channel_cfc_cpdr_cessb_setters)
 # two public constants (kCfcDisplayBinCount = 1025, kCfcDisplaySampleRateHz
 # = 48000.0) against Thetis source ranges.
 nereus_add_test(tst_tx_channel_cfc_display)
+
+# ── Issue #167 Phase 1 Agent 1C: TxChannel::setTxFixedGain wrapper ──────────
+# Phase 1 foundation work for the PA-calibration safety hotfix.  Mirrors
+# Thetis cmaster.cs:1115-1119 CMSetTXOutputLevel [v2.10.3.13]:
+#   double level = Audio.RadioVolume * Audio.HighSWRScale;
+#   cmaster.SetTXFixedGain(0, level, level);
+# The wrapper takes the already-composed `level` and pushes it through to
+# the WDSP/ChannelMaster SetTXFixedGain entry point with Igain == Qgain.
+# RadioModel call-site composition (audio_volume * swrProtect) is deferred to
+# Phase 4A.  Test strategy mirrors tst_tx_channel_mic_mute.cpp: NaN-aware
+# idempotent guard verified via lastFixedGainForTest() seam.
+nereus_add_test(tst_tx_channel_set_tx_fixed_gain)
+target_compile_definitions(tst_tx_channel_set_tx_fixed_gain PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-3a-i Task C: TransmitModel TX EQ + Leveler + ALC properties ──
 # Plan: 3M-3a-i Batch 1 Task C — 28 new properties on TransmitModel:

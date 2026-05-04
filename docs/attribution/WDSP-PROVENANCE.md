@@ -33,17 +33,31 @@ All other 140 WDSP source files remain at TAPR v1.29.  Full WDSP upstream
 re-sync is out of scope for 3M-3a-ii — see `UPSTREAM-SYNC-PROTOCOL.md` §6
 for the full-sync procedure.
 
+## NereusSDR-original glue (not from upstream)
+
+| File | Status | Reason | Date |
+| --- | --- | --- | --- |
+| `third_party/wdsp/src/txgain_stub.c` | NereusSDR-original glue stub (GPLv2-or-later, J.J. Boyd KG4VCF) | Provides `SetTXFixedGain` / `SetTXFixedGainRun` symbols so the bundled `wdsp_static` library exposes the API surface that Thetis's ChannelMaster module exports (`Project Files/Source/ChannelMaster/txgain.c [v2.10.3.13]`). NereusSDR has not yet ported the wider ChannelMaster module (only individual primitives like `cmbuffs.c` have landed in `src/core/audio/TxMicSource.{cpp,h}`); the stub stores per-channel `(Igain, Qgain)` plus a run flag in a flat static so the linker resolves and the C++ wrapper at `src/core/TxChannel.cpp::setTxFixedGain` (issue #167 Phase 1 Agent 1C) can be unit-tested. A future ChannelMaster-port phase can replace this stub with the byte-for-byte port of `txgain.c`. | 2026-05-03 |
+
+The glue stub is GPLv2-or-later (compatible with the rest of `wdsp_static`)
+and carries a verbatim NereusSDR-authored GPL header so
+`scripts/verify-thetis-headers.py --kind=wdsp` passes.  The file's
+`no-port-check:` marker exempts it from the Thetis-tells heuristic in
+`scripts/check-new-ports.py` because it is NereusSDR-original code, not a
+port.
+
 ## License Analysis
 
 ### Survey of Vendored Sources
 
-All 142 source files in `third_party/wdsp/src/` were examined:
+All 143 source files in `third_party/wdsp/src/` were examined:
 
-- **132 files** carry the full GPLv2-or-later permission block:
+- **133 files** carry the full GPLv2-or-later permission block:
   - `"either version 2 of the License, or (at your option) any later version"`
   - All signal processing core: `channel.c`, `RXA.c`, `TXA.c`, `bandpass.c`, `amd.c`, `anf.c`, `anr.c`, and 125 others
   - `rnnr.c` + `rnnr.h` + `sbnr.c` + `sbnr.h` ported in Sub-epic C-1 (NR3/NR4 backends), carry verbatim Thetis GPLv2-or-later + MW0LGE dual-license headers.
-  - All authored by Warren Pratt, NR0V, Copyright 2012–2025
+  - `txgain_stub.c` (issue #167 Phase 1 Agent 1C, NereusSDR-original glue stub authored by J.J. Boyd KG4VCF, GPLv2-or-later — see row at top of "Vendored Source Files" table).
+  - The other 132 files are Warren Pratt, NR0V, Copyright 2012–2025.
   - **Conclusion: GPLv2-or-later**
 
 - **2 files** are the POSIX portability shim — authored jointly with John Melton:

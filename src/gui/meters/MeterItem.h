@@ -434,6 +434,19 @@ public:
     // by ShowPeakValue text render and (in A3) the peak-hold marker.
     double peakValue() const { return m_peakValue; }
 
+    /// Snap the smoothed value + peak-hold marker to the supplied target
+    /// value, bypassing the attack/decay smoothing that setValue() applies.
+    /// Used on TX-end transitions: a single setValue(0) only decays one
+    /// tick (e.g. 60 → 54 with decayRatio=0.1) so the bar appears stuck
+    /// after un-key. clearSmoothing(0.0) snaps it.
+    /// NereusSDR-original safety/UX: bench-reported #167 follow-up where
+    /// Power and SWR bars stayed at the last sample after MOX-off.
+    void clearSmoothing(double v) {
+        m_value          = v;
+        m_smoothedValue  = v;
+        m_peakValue      = v;
+    }
+
     // --- Phase A2: ShowHistory / HistoryColour / HistoryDuration ---
     // From Thetis clsBarItem (MeterManager.cs:19938, 19881, 19945-19946,
     // 20040-20053). History draws a translucent trailing fill behind the

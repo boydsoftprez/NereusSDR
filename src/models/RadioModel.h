@@ -125,6 +125,12 @@ class CompositeTxMicRouter;
 // (chunk F) + the TwoToneController activation orchestrator (chunk I).
 class MicProfileManager;
 class TwoToneController;
+// Phase 4 Agent 4A of issue #167: PaProfileManager forward declaration.
+// RadioModel owns the per-MAC PA gain profile bank (parallel to
+// MicProfileManager); the active profile is passed by reference to
+// TransmitModel::setPowerUsingTargetDbm at every drive-slider /
+// TUNE / two-tone callsite.
+class PaProfileManager;
 // 3M-1c TX pump architecture redesign — TxWorkerThread.
 class TxWorkerThread;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
@@ -282,7 +288,12 @@ public:
     class ClarityController* clarityController() const { return m_clarityController; }
     void setClarityController(class ClarityController* c) { m_clarityController = c; }
     class StepAttenuatorController* stepAttController() const { return m_stepAttController; }
-    void setStepAttController(class StepAttenuatorController* c) { m_stepAttController = c; }
+    // Phase 4 Agent 4A of issue #167 — also propagates to TransmitModel
+    // so the ATT-on-TX-on-power-change safety gate inside
+    // setPowerUsingTargetDbm can call ctrl->setAttOnTxValue(31) when the
+    // gate fires (Thetis console.cs:46740-46748 [v2.10.3.13] [2.10.3.5]MW0LGE).
+    // Implementation in RadioModel.cpp.
+    void setStepAttController(class StepAttenuatorController* c);
     NoiseFloorTracker* noiseFloorTracker() const { return m_noiseFloorTracker; }
     void setNoiseFloorTracker(NoiseFloorTracker* t) { m_noiseFloorTracker = t; }
     QTimer* autoAgcTimer() const { return m_autoAgcTimer; }
@@ -298,6 +309,15 @@ public:
     // TxProfileSetupPage (J.3 ctor).  Non-owning; lifetime is RadioModel's
     // lifetime.  See header §3M-1c L.1 for the construction + connect flow.
     MicProfileManager* micProfileManager() const { return m_micProfileMgr; }
+
+    // Phase 4 Agent 4A of issue #167: expose PaProfileManager so the future
+    // PaGainByBandPage (Phase 6 Agent 6A) and tests can hand the per-MAC
+    // profile bank around.  Non-owning; lifetime is RadioModel's lifetime.
+    // Constructed once in the RadioModel ctor; setMacAddress + load() are
+    // called per-connect inside connectToRadio() (mirrors MicProfileManager
+    // wiring at lines ~1191).  Active profile is passed by reference to
+    // TransmitModel::setPowerUsingTargetDbm at every callsite.
+    PaProfileManager* paProfileManager() const { return m_paProfileManager; }
 
     // 3M-1c Phase L.2: expose TwoToneController so MainWindow can hand it to
     // TxApplet (J.2 setter) for the 2-TONE button + status mirror.
@@ -458,8 +478,17 @@ public:
     void handlePaTelemetryForTest(quint16 fwdRaw, quint16 revRaw,
                                   quint16 exciterRaw, quint16 userAdc0Raw,
                                   quint16 userAdc1Raw, quint16 supplyRaw) {
+        // The test seam injects telemetry as if the radio were
+        // transmitting — bypass the MOX gate that handlePaTelemetry
+        // applies in production (which forces TX-domain readings to 0
+        // when MoxController state != Tx so late samples don't refill
+        // the meters after un-key).  Tests calling this seam mean
+        // "behave as if in TX"; flipping the flag lets the routing
+        // pipeline run exactly as it would on a live transmit sample.
+        m_forceTxForTest = true;
         handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
                           userAdc0Raw, userAdc1Raw, supplyRaw);
+        m_forceTxForTest = false;
     }
 
     // P1 full-parity §3.5 test seam — pure-function counterpart of the
@@ -517,6 +546,23 @@ public:
     // Use between simulated reconnects in the same test.
     void simulateDisconnectForTest() {
         m_transmitModel.setMicSourceLocked(false);
+    }
+
+    // Phase 4 Agent 4A of issue #167 — test seam to inject a non-owning
+    // TxChannel pointer so the drive-slider / TUNE rewrite tests can spy on
+    // setTxFixedGain() without standing up the full WdspEngine pipeline.
+    // Production code never calls this — m_txChannel is wired by the
+    // WDSP-init lambda inside connectToRadio() (see "createTxChannel(1)"
+    // around RadioModel.cpp:1514).
+    void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
+
+    // Phase 4 Agent 4A of issue #167 — test seam to inject the HPSDRModel
+    // hardware profile directly. setBoardForTest(HPSDRHW::OrionMKII) maps
+    // through defaultModelForBoard() to ORIONMKII (the *first* model
+    // matching that board), but K2GX's regression specifically pins
+    // ANAN8000D values; this seam lets tests pick the exact HPSDRModel.
+    void setHpsdrModelForTest(HPSDRModel m) {
+        m_hardwareProfile = ::NereusSDR::profileForModel(m);
     }
 #endif
 
@@ -895,6 +941,14 @@ private:
     HPSDRHW  m_testCapsHw{HPSDRHW::Unknown};        // 3M-1b I.3: injected via setCapsHwForTest
 #endif
 
+    // Test-only override for the handlePaTelemetry MOX gate.
+    // Toggled true by handlePaTelemetryForTest() before the call and false
+    // after, simulating "the radio just sent us a transmit sample" without
+    // requiring the full MoxController state machine to be driven into
+    // MoxState::Tx.  Always false in production code paths.
+    // Bench-reported #167 follow-up.
+    bool     m_forceTxForTest{false};
+
     // Phase 3M-0 Task 6: Ganymede PA-trip live state.
     // From Thetis Andromeda/Andromeda.cs:914 [v2.10.3.13] (_ganymede_pa_issue volatile bool).
     // G8NJJ: handlers for Ganymede 500W PA protection
@@ -1018,6 +1072,14 @@ private:
     // connectToRadio(); setMacAddress("") is called in teardownConnection so
     // mutators silently no-op while no radio is selected.
     MicProfileManager* m_micProfileMgr{nullptr};
+
+    // Phase 4 Agent 4A of issue #167 — PaProfileManager.  QObject child of
+    // RadioModel; mirrors m_micProfileMgr lifecycle exactly.  Constructed
+    // once in the ctor; setMacAddress + load(connectedModel) are called
+    // per-connect inside connectToRadio().  The active profile is read at
+    // every drive-slider / TUNE callsite via paProfileManager()->activeProfile()
+    // and passed by reference to TransmitModel::setPowerUsingTargetDbm.
+    PaProfileManager* m_paProfileManager{nullptr};
     //
     // L.2 — TwoToneController (chunk I).  QObject child of RadioModel.
     // Construction-time deps that DON'T require a live connection

@@ -17,8 +17,12 @@ OUT_DIR="third_party/deepfilter"
 MODEL_NAME="DeepFilterNet3_onnx.tar.gz"
 
 # ── Detect platform ──────────────────────────────────────────────────────
+# OS always derives from the host. ARCH defaults to the host but can be
+# overridden via NEREUS_TARGET_ARCH for cross-compile scenarios — e.g.
+# building x86_64 macOS DFNR from an Apple Silicon CI runner. Valid
+# overrides: x86_64, aarch64, arm64.
 OS=$(uname -s)
-ARCH=$(uname -m)
+ARCH="${NEREUS_TARGET_ARCH:-$(uname -m)}"
 
 case "$OS" in
     Linux)

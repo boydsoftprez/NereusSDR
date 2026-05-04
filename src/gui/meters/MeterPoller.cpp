@@ -111,6 +111,36 @@ void MeterPoller::setInTx(bool isTx)
     }
     m_inTx = isTx;
     qCDebug(lcMeter) << "MeterPoller: TX mode" << (isTx ? "on" : "off");
+
+    // Bench-reported #167 follow-up: on MOX falling edge, snap all TX-meter
+    // BarItems to 0 to bypass the per-bar attack/decay smoothing.  Without
+    // this, a single zero update from RadioStatus::powerChanged after MOX-off
+    // only walks the smoothed value down by one decay tick (e.g. 60 → 54 at
+    // decayRatio=0.1), so Power / SWR / ALC bars appear stuck at the last
+    // sample for several seconds.  TextItem readouts already update via
+    // their own (non-smoothed) path so the numeric "0 W" / "1.0:1" labels
+    // were already correct; this fixes the visual-bar half of the meter
+    // ensemble.
+    if (!m_inTx) {
+        for (auto& guarded : m_targets) {
+            MeterWidget* target = guarded.data();
+            if (!target) { continue; }
+            for (MeterItem* item : target->items()) {
+                if (!item) { continue; }
+                BarItem* bar = qobject_cast<BarItem*>(item);
+                if (!bar) { continue; }
+                const int bid = bar->bindingId();
+                // Snap every TX-domain binding (100..199 range) — the
+                // 200+ hardware-telemetry bindings (HwVolts / HwAmps /
+                // HwTemperature) are NOT TX-gated; their last reading is
+                // still meaningful post-key.
+                if (bid >= MeterBinding::TxPower && bid < MeterBinding::HwVolts) {
+                    bar->clearSmoothing(0.0);
+                }
+            }
+            target->update();   // schedule repaint
+        }
+    }
 }
 
 void MeterPoller::addTarget(MeterWidget* widget)

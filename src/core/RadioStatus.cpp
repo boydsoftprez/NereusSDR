@@ -200,6 +200,18 @@ double RadioStatus::computeSwr(double fwd, double refl)
     // From Thetis console.cs:6644 [@501e3f5]: both zero → 1.0
     if (fwd <= 0.0 && refl <= 0.0) { return 1.0; }
 
+    // NereusSDR-original safety: forward-power noise floor.  Below 0.5 W
+    // SWR is meaningless (no meaningful drive on the line, sqrt(refl/0)
+    // → infinity).  HL2 specifically can have refl > 0 with fwd = 0
+    // during MOX-on/MOX-off transitions, which would trip the
+    // "refl >= fwd → 50.0" branch below and spike the meter to max scale.
+    // Standard meter convention is to display 1.0 when there's no real
+    // forward signal to measure.  Thetis uses the same idea via a
+    // "high SWR alarm" suppression at low power but the threshold lives
+    // in protection.cs not in computeSwr; we apply it here at the source.
+    constexpr double kSwrNoiseFloorWatts = 0.5;
+    if (fwd < kSwrNoiseFloorWatts) { return 1.0; }
+
     // From Thetis console.cs:6646 [@501e3f5]: rev > fwd → 50.0 (open/short limit)
     if (refl >= fwd) { return 50.0; }
 

@@ -146,6 +146,7 @@
 
 #include "AppletWidget.h"
 #include "models/Band.h"
+#include "core/HpsdrModel.h"   // HPSDRModel for rescaleFwdGaugeForModel
 #include "core/WdspTypes.h"
 
 class QPushButton;
@@ -217,6 +218,12 @@ public:
     // can reflect the stored per-band tune power.
     // Phase 3M-1a H.3.
     void setCurrentBand(Band band);
+
+    // Rescale the RF Pwr HGauge ticks + redzone for the connected SKU's
+    // PA ceiling.  Called from currentRadioChanged subscriber wired in
+    // wireControls().  HPSDRModel::FIRST is a safe sentinel default
+    // (yields 100 W ceiling).  Bench-reported #167 follow-up.
+    void rescaleFwdGaugeForModel(HPSDRModel model);
 
     // K.2: MOX button tooltip override based on current DSP mode.
     // Public static so tests can call it directly without constructing a full

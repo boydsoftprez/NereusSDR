@@ -111,10 +111,45 @@
 //                 hardware/<mac>/tx/FilterLow and FilterHigh.
 //                 NereusSDR-original (Plan 4 Cluster A, Task 2/D1).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-03 — Phase 3 Agent 3A of issue #167 (PA-cal hotfix scaffolding):
+//                 m_powerByBand[14] (default 50 W; per-band normal-mode
+//                 power array parallel to m_tunePowerByBand) +
+//                 powerForBand / setPowerForBand + powerByBandChanged
+//                 signal; 3 Thetis ATT-on-TX-on-power-change safety
+//                 properties (forceAttwhenPSAoff,
+//                 forceAttwhenPowerChangesWhenPSAon, _anddecreased) +
+//                 m_lastPower sentinel (-1; runtime-only; resets on
+//                 forceAttwhenPowerChangesWhenPSAon toggle per Thetis
+//                 console.cs:29298 [v2.10.3.13]); pureSignalActive()
+//                 predicate (returns false unconditionally — 3M-4
+//                 PureSignal phase wires the live PS-A check). Math
+//                 kernel itself (computeAudioVolume / setPowerUsingTargetDbm)
+//                 lands in Phases 3B / 3C. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-05-03 — Phase 3 Agent 3B of issue #167: computeAudioVolume()
+//                 math kernel — faithful port of Thetis SetPowerUsingTargetDBM
+//                 dBm-target math (console.cs:46720-46751 [v2.10.3.13])
+//                 with two NereusSDR-original safety short-circuits
+//                 (sliderWatts <= 0 → 0.0; gbb >= 99.5 → linear fallback).
+//                 Pure function: no state mutation, no signal emission.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-03 — Phase 3 Agent 3C of issue #167: setPowerUsingTargetDbm()
+//                 deep-parity wrapper.  Full port of Thetis
+//                 SetPowerUsingTargetDBM (console.cs:46645-46762
+//                 [v2.10.3.13]) integrating Phase 3A scaffolding +
+//                 Phase 3B math kernel into a unified API.  Adds
+//                 m_twoToneActive / m_tuneDrivePowerSource / m_tunePower
+//                 state + setters + persistence; setStepAttenuatorController
+//                 injection; audioVolumeChanged signal.  Routes all three
+//                 txMode branches and both drive-source enums; ATT-on-TX
+//                 safety gate firing via injected StepAttenuatorController.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TransmitModel.h"
 #include "core/AppSettings.h"
+#include "core/PaProfile.h"
+#include "core/StepAttenuatorController.h"
 
 #include <algorithm>
 #include <cmath>
@@ -185,6 +220,17 @@ TransmitModel::TransmitModel(QObject* parent)
     //   tunePower_by_band = new int[(int)Band.LAST];
     //   for (int i = 0; i < (int)Band.LAST; i++) tunePower_by_band[i] = 50;
     m_tunePowerByBand.fill(50);
+
+    // Initialise per-band normal-mode power to 50W (#167 Phase 3A).
+    // From Thetis console.cs:1813-1814 [v2.10.3.13]:
+    //   power_by_band = new int[(int)Band.LAST];
+    //   for (int i = 0; i < (int)Band.LAST; i++) power_by_band[i] = 50;
+    // (Thetis safety-first default; users dial up from 50 per band.
+    //  limitPower_by_band[14] (console.cs:1816-1817 [v2.10.3.13]) is a
+    //  separate band-max ceiling array we do NOT port here — Phase 3C's
+    //  setPowerUsingTargetDbm math kernel sources its slider value from
+    //  this powerByBand array, the ceiling check is independent.)
+    m_powerByBand.fill(50);
 }
 
 TransmitModel::~TransmitModel() = default;
@@ -439,6 +485,485 @@ void TransmitModel::setTunePowerForBand(Band band, int watts)
     }
     m_tunePowerByBand[static_cast<std::size_t>(idx)] = clamped;
     emit tunePowerByBandChanged(band, clamped);
+}
+
+// ── Per-band normal-mode power (#167 Phase 3A) ──────────────────────────────
+
+int TransmitModel::powerForBand(Band band) const
+{
+    const int idx = static_cast<int>(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return 100;  // safe fallback for out-of-range band
+    }
+    return m_powerByBand[static_cast<std::size_t>(idx)];
+}
+
+void TransmitModel::setPowerForBand(Band band, int watts)
+{
+    // From Thetis console.cs:1813-1814 [v2.10.3.13] — power_by_band default
+    // 50 W per band (Thetis safety-first).  Used as the slider source for
+    // the dBm compensator (Phase 3A scaffolding for #167 Phase 3C math
+    // kernel).  Phase 3C's setPowerUsingTargetDbm txMode 0 branch writes
+    // back into m_powerByBand[band] via setPower side-effect (matches
+    // Thetis console.cs:46676 [v2.10.3.13] power_by_band[(int)_tx_band] =
+    // new_pwr).
+    const int idx = static_cast<int>(band);
+    if (idx < 0 || idx >= kBandCount) {
+        return;
+    }
+    const int clamped = std::clamp(watts, 0, 100);
+    if (m_powerByBand[static_cast<std::size_t>(idx)] == clamped) {
+        return;
+    }
+    m_powerByBand[static_cast<std::size_t>(idx)] = clamped;
+    // Auto-persist: hardware/<m_persistMac>/powerByBand/<bandKeyName>.
+    if (!m_persistMac.isEmpty()) {
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/powerByBand/%2")
+                .arg(m_persistMac, bandKeyName(band)),
+            QString::number(clamped));
+    }
+    emit powerByBandChanged(band, clamped);
+}
+
+// ── ATT-on-TX-on-power-change safety setters (#167 Phase 3A) ────────────────
+//
+// All 3 setters follow the existing per-MAC L.2 auto-persist pattern.
+// CRITICAL: setForceAttwhenPowerChangesWhenPSAon resets m_lastPower to -1
+// when the value changes — Thetis console.cs:29298 [v2.10.3.13]:
+//     if (value != _forceATTwhenPowerChangesWhenPSAon) _lastPower = -1;
+//     _forceATTwhenPowerChangesWhenPSAon = value;
+
+void TransmitModel::setForceAttwhenPSAoff(bool on)
+{
+    if (on == m_forceAttwhenPSAoff) { return; }  // idempotent guard
+    // From Thetis console.cs:29285-29290 [v2.10.3.13]:
+    //   private bool _forceATTwhenPSAoff = true; //MW0LGE [2.9.0.7] added
+    //   public bool ForceATTwhenPSAoff
+    //   { get { return _forceATTwhenPSAoff; }
+    //     set { _forceATTwhenPSAoff = value; } }
+    m_forceAttwhenPSAoff = on;
+    persistOne(QStringLiteral("ForceATTwhenPSAoff"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit forceAttwhenPSAoffChanged(on);
+}
+
+void TransmitModel::setForceAttwhenPowerChangesWhenPSAon(bool on)
+{
+    // From Thetis console.cs:29298 [v2.10.3.13] — reset on toggle:
+    //   if (value != _forceATTwhenPowerChangesWhenPSAon) _lastPower = -1;
+    //   _forceATTwhenPowerChangesWhenPSAon = value;
+    if (on != m_forceAttwhenPowerChangesWhenPSAon) {
+        m_lastPower = -1;
+    }
+    if (on == m_forceAttwhenPowerChangesWhenPSAon) { return; }  // idempotent guard
+    m_forceAttwhenPowerChangesWhenPSAon = on;
+    persistOne(QStringLiteral("ForceATTwhenOutputPowerChangesWhenPSAon"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit forceAttwhenPowerChangesWhenPSAonChanged(on);
+}
+
+void TransmitModel::setForceAttwhenPowerChangesWhenPSAonAndDecreased(bool on)
+{
+    if (on == m_forceAttwhenPowerChangesWhenPSAonAndDecreased) { return; }  // idempotent guard
+    // From Thetis console.cs:29302-29310 [v2.10.3.13]:
+    //   private bool _forceATTwhenPowerChangesWhenPSAon_anddecreased = false;
+    //   public bool ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased
+    //   { get { return _forceATTwhenPowerChangesWhenPSAon_anddecreased; }
+    //     set { _forceATTwhenPowerChangesWhenPSAon_anddecreased = value; } }
+    m_forceAttwhenPowerChangesWhenPSAonAndDecreased = on;
+    persistOne(QStringLiteral("ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit forceAttwhenPowerChangesWhenPSAonAndDecreasedChanged(on);
+}
+
+void TransmitModel::setLastPower(int value)
+{
+    // Mirrors Thetis `private float _lastPower = -1;` (console.cs:29292
+    // [v2.10.3.13]).  Runtime-only — NOT persisted.  No signal — Phase 3C
+    // is the only writer in the production path; tests use this as
+    // bookkeeping for the ATT-on-TX gate semantics.
+    m_lastPower = value;
+}
+
+bool TransmitModel::pureSignalActive() const noexcept
+{
+    // Stub for Phase 3A scaffolding.  Phase 3M-4 (PureSignal feedback DDC
+    // wiring) replaces this with the live PS-A check
+    // (chkFWCATUBypass.Checked equivalent).  Until then the ATT-on-TX
+    // gate stays dormant — matches plan §"ATT-on-TX-on-power-change":
+    // "Returns false until 3M-4 PureSignal lands ... the gate is dormant
+    // but present."
+#ifdef NEREUS_BUILD_TESTS
+    // Phase 3C test seam — exercise the ATT-on-TX gate without 3M-4
+    // wiring.  Tri-state: -1 = use Phase 3A default, 0 = false, 1 = true.
+    if (m_pureSignalActiveOverride >= 0) {
+        return m_pureSignalActiveOverride == 1;
+    }
+#endif
+    return false;
+}
+
+// ── computeAudioVolume math kernel (#167 Phase 3B) ──────────────────────────
+//
+// From Thetis console.cs:46720-46734 [v2.10.3.13] — SetPowerUsingTargetDBM
+// math kernel (ATT-on-TX-on-power-change gate at 46740-46748 lands in
+// Phase 3C; sliderWatts==0 short-circuit at 46749-46751 ported below).
+// The K2GX field report (>300 W output on a 200 W ANAN-8000DLE at low
+// TUNE slider positions) was caused by the previous linear-only drive-
+// scaling lambda in RadioModel.cpp:830-853 which had no per-band PA gain
+// compensation.  This kernel ports the dBm-target math that Thetis uses
+// to translate (sliderWatts, band, profile) into the audio-volume scalar
+// that drives both the wire byte (audio.cs:268) and the IQ gain
+// (cmaster.cs:1117).
+//
+// Two NereusSDR-original safety short-circuits run BEFORE the dBm math:
+//
+//   1. sliderWatts <= 0 returns 0.0 exactly.  Matches Thetis's
+//      console.cs:46749-46751 branch:
+//          if (new_pwr == 0) { Audio.RadioVolume = 0.0; ... }
+//      Including negatives in the same branch is a NereusSDR-original safety
+//      addition — Thetis's `int new_pwr` came from a clamped slider so
+//      negatives weren't reachable upstream; in NereusSDR computeAudioVolume
+//      can be called from tests + external callers, so failing-loud-zero is
+//      the safe behavior.
+//
+//   2. gbb >= 99.5 returns clamp(sliderWatts / 100.0, 0, 1) linear fallback.
+//      NereusSDR-original deviation: HL2 PA-bypass sentinel preserves
+//      pre-v0.3.2 transmit behavior.  See mi0bot
+//      clsHardwareSpecific.cs:484 [v2.10.3.13-beta2] "100 is no output power".
+//      The 99.5 threshold catches: (a) HL2 HF bands (gbb=100), (b) NereusSDR
+//      Bypass profile (every band gbb=100), (c) any out-of-range Band cast
+//      (PaProfile::getGainForBand sentinel = 1000).  Without this short-
+//      circuit, HL2 80m at 100 W slider would produce audio_volume ≈ 0.0009
+//      (effectively silent on the air) — a regression from v0.3.1 which
+//      worked for HL2 users by virtue of having no PA-gain compensation.
+//
+// The math itself is the canonical Thetis sequence:
+//
+//   target_dbm   = 10 * log10(sliderWatts * 1000)
+//   gbb          = profile.getGainForBand(band, sliderWatts)
+//   target_dbm  -= gbb
+//   target_volts = sqrt(10^(target_dbm * 0.1) * 0.05)
+//                = sqrt(P * R) where R=50  (E = sqrt(P*R) RMS volts on 50Ω)
+//   audio_volume = min(target_volts / 0.8, 1.0)
+//
+// Always finite (no NaN / Inf) for any int input — even INT_MAX produces a
+// finite (then-clamped) result via std::pow.
+double TransmitModel::computeAudioVolume(const PaProfile& profile,
+                                         Band band,
+                                         int sliderWatts) const noexcept
+{
+    // From Thetis console.cs:46749-46751 [v2.10.3.13] — sliderWatts == 0 path.
+    // Negative slider → also returns 0 (NereusSDR-original safety).
+    if (sliderWatts <= 0) {
+        return 0.0;
+    }
+
+    // NereusSDR-original deviation: HL2 PA-bypass sentinel preserves pre-
+    // v0.3.2 transmit behavior. See mi0bot clsHardwareSpecific.cs:484
+    // [v2.10.3.13-beta2] "100 is no output power".
+    //
+    // The 99.5 threshold (vs. exact == 100.0f) handles float-precision noise
+    // from UI round-trips.  Out-of-range Band hits this path via
+    // PaProfile::getGainForBand returning the 1000 sentinel — the safety
+    // net catches programming errors (raw int casts to Band) instead of
+    // silently producing audio_volume = 1.0.
+    const float gbb = profile.getGainForBand(band, sliderWatts);
+    if (gbb >= 99.5f) {
+        const double linear = static_cast<double>(sliderWatts) / 100.0;
+        return std::clamp(linear, 0.0, 1.0);
+    }
+
+    // From Thetis console.cs:46720-46724 [v2.10.3.13]:
+    //   double target_dbm = 10 * (double)Math.Log10((double)new_pwr * 1000);
+    //   ...
+    //   target_dbm -= gbb;
+    const double targetDbmRaw =
+        10.0 * std::log10(static_cast<double>(sliderWatts) * 1000.0);
+    const double targetDbm = targetDbmRaw - static_cast<double>(gbb);
+
+    // From Thetis console.cs:46734 [v2.10.3.13]:
+    //   double target_volts = Math.Sqrt(Math.Pow(10, target_dbm * 0.1) * 0.05);
+    //                         // E = Sqrt(P * R)
+    const double targetVolts =
+        std::sqrt(std::pow(10.0, targetDbm * 0.1) * 0.05);
+
+    // From Thetis console.cs:46758 [v2.10.3.13]:
+    //   Audio.RadioVolume = (double)Math.Min((target_volts / 0.8), 1.0);
+    const double audioVolume = std::min(targetVolts / 0.8, 1.0);
+
+    // Defensive: clamp lower bound to 0.0.  std::pow / std::sqrt should
+    // never return negative for finite input, but guarantee the contract.
+    return std::clamp(audioVolume, 0.0, 1.0);
+}
+
+// ── Phase 3C state setters (#167) ──────────────────────────────────────────
+
+void TransmitModel::setTwoToneActive(bool active)
+{
+    if (m_twoToneActive == active) { return; }  // idempotent guard
+    // Mirror of TwoToneController state — Thetis chk2TONE.Checked.
+    // Runtime-only mirror; not persisted (TwoToneController owns the live
+    // state machine and starts OFF every session per its own contract).
+    m_twoToneActive = active;
+    emit twoToneActiveChanged(active);
+}
+
+void TransmitModel::setTuneDrivePowerSource(DrivePowerSource source)
+{
+    if (m_tuneDrivePowerSource == source) { return; }  // idempotent guard
+    // Port of Thetis TuneDrivePowerOrigin setter at console.cs:46554-46575
+    // [v2.10.3.13].  Persisted per-MAC under hardware/<mac>/tx/
+    // TuneDrivePowerOrigin (mirrors the existing TwoToneDrivePowerOrigin
+    // key — same drivePowerSourceToString/From helpers).
+    m_tuneDrivePowerSource = source;
+    persistOne(QStringLiteral("TuneDrivePowerOrigin"),
+               drivePowerSourceToString(source));
+    emit tuneDrivePowerSourceChanged(source);
+}
+
+void TransmitModel::setTunePower(int watts)
+{
+    // Port of Thetis tune_power setter at console.cs:17229-17242
+    // [v2.10.3.13].  Range clamped to [0, 100] (matches Thetis Designer
+    // FixedTunePower spinbox bounds).
+    const int clamped = std::clamp(watts, 0, 100);
+    if (m_tunePower == clamped) { return; }  // idempotent guard
+    m_tunePower = clamped;
+    persistOne(QStringLiteral("FixedTunePower"), QString::number(clamped));
+    emit tunePowerChanged(clamped);
+}
+
+void TransmitModel::setStepAttenuatorController(StepAttenuatorController* ctrl)
+{
+    // Non-owning pointer.  RadioModel injects the controller on connect;
+    // tests inject a controller they own directly.  nullptr -> ATT-on-TX
+    // gate becomes a no-op (used in tests + before RadioModel wires up).
+    m_stepAttCtrl = ctrl;
+}
+
+// ── setPowerUsingTargetDbm deep-parity wrapper (#167 Phase 3C) ──────────────
+//
+// Full deep-parity port of Thetis SetPowerUsingTargetDBM
+// (line-by-line cites embedded inline; entry function header at
+//  console.cs:46645 [v2.10.3.13]).  Integrates Phase 3A scaffolding
+// (m_powerByBand, ATT-on-TX safety properties, m_lastPower,
+// pureSignalActive) with Phase 3B's computeAudioVolume math kernel
+// into the unified API used by:
+//   - RadioModel drive-slider lambda (txMode 0, normal mode)
+//   - RadioModel TUNE handler        (txMode 1, bFromTune=true bTwoTone=false)
+//   - TwoToneController on/off       (txMode 2, bFromTune=false bTwoTone=true)
+//
+// Each tx mode resolves the active slider value differently:
+//   - txMode 0 (normal): m_power (PWR slider).  ALSO writes m_powerByBand
+//                        as a side-effect (matches Thetis console.cs:46676
+//                        power_by_band[(int)_tx_band] = new_pwr).
+//   - txMode 1 (tune):   m_power / tunePowerForBand / m_tunePower per
+//                        m_tuneDrivePowerSource.
+//   - txMode 2 (2tone):  m_power / tunePowerForBand / twoTonePower() per
+//                        m_twoToneDrivePowerSource.
+//
+// bConstrain semantics: false ONLY on the FIXED drive source (matches
+// console.cs:46689, 46705).  Caller respects bConstrain by skipping the
+// slider clamp; that's the Thetis behaviour that lets a setup-page-fixed
+// "10 W tune" land on the wire even if the PWR/TUN sliders disagree.
+//
+// XVTR translation: Thetis at console.cs:46711-46716 + 46724-46728 retunes
+// to the LO band before computing gbb.  NereusSDR has only one XVTR slot
+// — the sentinel fallback in computeAudioVolume catches Band::XVTR via
+// PaProfile::getGainForBand returning 1000 (Phase 3B short-circuit).  Full
+// XVTR LO-band translation is deferred per plan §"Open follow-ups".
+TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
+    const PaProfile& activeProfile,
+    Band currentBand,
+    bool bSetPower,
+    bool bFromTune,
+    bool bTwoTone)
+{
+    TxPowerResult result;
+    result.bConstrain = true;
+    int new_pwr = 0;
+
+    // From Thetis console.cs:46651-46669 [v2.10.3.13] — txMode determination.
+    //   int txMode = 0; // 0 normal, 1 tune, 2 2tone
+    //   if (!MOX && !chkTUN.Checked && !chk2TONE.Checked) {
+    //       if (bFromTune) {
+    //           if (!bTwoTone) txMode = 1;
+    //           else           txMode = 2;
+    //       }
+    //   } else {
+    //       if (chkTUN.Checked)        txMode = 1;
+    //       else if (chk2TONE.Checked) txMode = 2;
+    //   }
+    int txMode = 0;
+    if (!m_mox && !m_tune && !m_twoToneActive) {
+        if (bFromTune) {
+            txMode = bTwoTone ? 2 : 1;
+        }
+    } else {
+        if (m_tune) {
+            txMode = 1;
+        } else if (m_twoToneActive) {
+            txMode = 2;
+        }
+    }
+
+    // Drive-slider source resolution per Thetis console.cs:46671-46709
+    // [v2.10.3.13] — switch on txMode + drive-source enum.
+    switch (txMode) {
+        case 0:  // normal mode — Thetis console.cs:46673-46676.
+            //     case 0: //normal
+            //         new_pwr = ptbPWR.Value;
+            //         power_by_band[(int)_tx_band] = new_pwr;
+            //         break;
+            new_pwr = m_power;
+            // Side-effect: write back into per-band normal-mode slot.
+            // Matches Thetis power_by_band[(int)_tx_band] = new_pwr.
+            // setPowerForBand handles the bounds check + clamp + persist
+            // + emit.
+            setPowerForBand(currentBand, new_pwr);
+            break;
+        case 1:  // tune mode — Thetis console.cs:46677-46692.
+            //     case 1: //tune
+            //         switch (_tuneDrivePowerSource) {
+            //             case DRIVE_SLIDER: new_pwr = ptbPWR.Value; break;
+            //             case TUNE_SLIDER:  slider = ptbTune;
+            //                                new_pwr = ptbTune.Value; break;
+            //             case FIXED:        new_pwr = tune_power;
+            //                                bConstrain = false; break;
+            //         }
+            //         break;
+            switch (m_tuneDrivePowerSource) {
+                case DrivePowerSource::DriveSlider:
+                    new_pwr = m_power;
+                    break;
+                case DrivePowerSource::TuneSlider:
+                    new_pwr = tunePowerForBand(currentBand);
+                    break;
+                case DrivePowerSource::Fixed:
+                    new_pwr = m_tunePower;
+                    result.bConstrain = false;
+                    break;
+            }
+            break;
+        case 2:  // 2-tone mode — Thetis console.cs:46693-46708.
+            //     case 2: //2tone
+            //         switch (_2ToneDrivePowerSource) {
+            //             case DRIVE_SLIDER: new_pwr = ptbPWR.Value; break;
+            //             case TUNE_SLIDER:  slider = ptbTune;
+            //                                new_pwr = ptbTune.Value; break;
+            //             case FIXED:        new_pwr = twotone_tune_power;
+            //                                bConstrain = false; break;
+            //         }
+            //         break;
+            switch (m_twoToneDrivePowerSource) {
+                case DrivePowerSource::DriveSlider:
+                    new_pwr = m_power;
+                    break;
+                case DrivePowerSource::TuneSlider:
+                    new_pwr = tunePowerForBand(currentBand);
+                    break;
+                case DrivePowerSource::Fixed:
+                    new_pwr = m_twoTonePower;
+                    result.bConstrain = false;
+                    break;
+            }
+            break;
+    }
+
+    // XVTR translation NOT ported here.  Sentinel fallback in
+    // computeAudioVolume catches Band::XVTR via PaProfile::getGainForBand
+    // returning 1000.  See header comment + plan §"Open follow-ups".
+
+    // From Thetis console.cs:46719 [v2.10.3.13]:
+    //     if(bConstrain) new_pwr = slider.ConstrainAValue(new_pwr);
+    // Thetis's PrettyTrackBar.ConstrainAValue clamps to slider Min/Max
+    // (PWR/TUN are 0..100).  bConstrain==false is the FIXED-drive path
+    // — the setup-page fixed value bypasses the slider clamp (matches
+    // Thetis behaviour).
+    if (result.bConstrain) {
+        new_pwr = std::clamp(new_pwr, 0, 100);
+    }
+
+    result.newPower = new_pwr;
+
+    // From Thetis console.cs:46722 [v2.10.3.13]:
+    //   double target_dbm = 10 * (double)Math.Log10((double)new_pwr * 1000);
+    //   ...
+    //   target_dbm -= gbb;
+    //   ...
+    //   targetdBm = target_dbm;
+    //
+    // We pre-compute targetDbm (post-gbb-subtraction) so the result struct
+    // matches the Thetis `out double targetdBm` semantic.  For the sliderWatts
+    // <= 0 short-circuit case this is set to 0.0 (Thetis returns the dBm
+    // value unmodified, but the new_pwr==0 branch never reads it — set 0
+    // for predictability).
+    if (new_pwr <= 0) {
+        result.targetDbm = 0.0;
+    } else {
+        const float gbb = activeProfile.getGainForBand(currentBand, new_pwr);
+        result.targetDbm =
+            10.0 * std::log10(static_cast<double>(new_pwr) * 1000.0)
+            - static_cast<double>(gbb);
+    }
+
+    // Math kernel (Phase 3B) — translates (sliderWatts, band, profile) into
+    // [0, 1.0] audio_volume.  Pure function; same kernel called from every
+    // path so HL2 sentinel + Bypass profile + sliderWatts==0 short-circuits
+    // are uniform.
+    result.audioVolume = computeAudioVolume(activeProfile, currentBand, new_pwr);
+
+    // From Thetis console.cs:46738 [v2.10.3.13]:
+    //   if (!bSetPower) return new_pwr;
+    if (!bSetPower) { return result; }
+
+    // ATT-on-TX-on-power-change safety gate.
+    // From Thetis console.cs:46740-46748 [v2.10.3.13]:
+    //   //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
+    //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon)
+    //   {
+    //       if(new_pwr > _lastPower || _forceATTwhenPowerChangesWhenPSAon_anddecreased)
+    //           SetupForm.ATTOnTX = 31;
+    //
+    //       _lastPower = new_pwr;
+    //   }
+    //
+    //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
+    if (new_pwr != m_lastPower
+        && pureSignalActive()
+        && m_forceAttwhenPowerChangesWhenPSAon)
+    {
+        if (new_pwr > m_lastPower
+            || m_forceAttwhenPowerChangesWhenPSAonAndDecreased)
+        {
+            // SetupForm.ATTOnTX = 31  -> StepAttenuatorController::setAttOnTxValue(31).
+            // Mirrors mi0bot setup.cs:3988-4017 [v2.10.3.13] ATTOnTX setter
+            // (clamps + writes the per-band TX ATT slot for the active band).
+            // nullptr controller -> no-op (test seam + pre-RadioModel-wired
+            // state).
+            if (m_stepAttCtrl) {
+                m_stepAttCtrl->setAttOnTxValue(31);
+            }
+        }
+        m_lastPower = new_pwr;
+    }
+
+    // From Thetis console.cs:46749-46760 [v2.10.3.13]:
+    //   if (new_pwr == 0) { Audio.RadioVolume = 0.0; ... }
+    //   else { ... Audio.RadioVolume = (double)Math.Min((target_volts / 0.8), 1.0); }
+    //
+    // NereusSDR-equivalent: emit audioVolumeChanged so RadioModel can pump
+    // the value to TxChannel (iq_gain) + RadioConnection (wire_byte).
+    // computeAudioVolume already returns 0.0 for sliderWatts <= 0 (Phase
+    // 3B short-circuit), so the same emit handles both branches uniformly.
+    //
+    // The TXPostGenRun = 0/1 toggle (console.cs:46752-46758) is RadioModel's
+    // responsibility — TransmitModel doesn't own the post-gen run state.
+    // RadioModel will gate it on bFromTune + (new_pwr > 0) at the call site.
+    emit audioVolumeChanged(result.audioVolume);
+    return result;
 }
 
 void TransmitModel::setMacAddress(const QString& mac)
@@ -831,6 +1356,66 @@ void TransmitModel::loadFromSettings(const QString& mac)
                           QStringLiteral("100")).toInt());
     setFilterHigh(s.value(pfx + QLatin1String("FilterHigh"),
                            QStringLiteral("2900")).toInt());
+
+    // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
+    //
+    // Per-band normal-mode power array.  Lives under a SEPARATE top-level
+    // scope (hardware/<mac>/powerByBand/), parallel to tunePowerByBand —
+    // not nested under tx/.  Default 50 W per band on first init.
+    // From Thetis console.cs:1813-1814 [v2.10.3.13] — power_by_band default.
+    {
+        const QString powerPfx =
+            QStringLiteral("hardware/%1/powerByBand/").arg(mac);
+        for (int i = 0; i < kBandCount; ++i) {
+            const Band band = static_cast<Band>(i);
+            const QString key = powerPfx + bandKeyName(band);
+            const int v = s.value(key, QStringLiteral("50")).toInt();
+            // Direct assignment (bypass setPowerForBand) — load is the
+            // canonical state restore; setter would re-persist, emit, and
+            // clamp.  We clamp here ourselves to keep AppSettings tampering
+            // safe.
+            m_powerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, 100);
+        }
+    }
+
+    // 3 ATT-on-TX-on-power-change safety properties.
+    // Defaults match Thetis console.cs:29285-29310 [v2.10.3.13]:
+    //   PSAoff = true (//MW0LGE [2.9.0.7]),
+    //   PSAon  = true (//MW0LGE [2.9.3.5]),
+    //   PSAonAndDecreased = false.
+    setForceAttwhenPSAoff(
+        s.value(pfx + QLatin1String("ForceATTwhenPSAoff"),
+                QStringLiteral("True")).toString() == QLatin1String("True"));
+    setForceAttwhenPowerChangesWhenPSAon(
+        s.value(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAon"),
+                QStringLiteral("True")).toString() == QLatin1String("True"));
+    setForceAttwhenPowerChangesWhenPSAonAndDecreased(
+        s.value(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased"),
+                QStringLiteral("False")).toString() == QLatin1String("True"));
+
+    // m_lastPower: runtime-only sentinel (-1).  NOT loaded — matches Thetis
+    // ephemeral `private float _lastPower = -1` (console.cs:29292
+    // [v2.10.3.13]).  Reset to -1 here so that
+    //   setForceAttwhenPowerChangesWhenPSAon(...)
+    // calls above couldn't land us in an unexpected state if a previous
+    // session left m_lastPower at some non-sentinel value.  Belt-and-braces.
+    m_lastPower = -1;
+
+    // ── PA-cal hotfix Phase 3C state ──────────────────────────────────────
+    // m_twoToneActive: runtime-only mirror of TwoToneController.  Always
+    // starts false on load (TwoToneController doesn't persist its run
+    // state — safety: 2-tone test always starts OFF every session).  No
+    // explicit reset needed; default is false from class init.
+    //
+    // m_tuneDrivePowerSource: persisted per-MAC under TuneDrivePowerOrigin.
+    // Default DriveSlider per Thetis console.cs:46552 [v2.10.3.13].
+    setTuneDrivePowerSource(drivePowerSourceFromString(
+        s.value(pfx + QLatin1String("TuneDrivePowerOrigin"),
+                QStringLiteral("DriveSlider")).toString()));
+    // m_tunePower: persisted per-MAC under FixedTunePower.
+    // Default 10 W (NereusSDR-original safer; Thetis Designer ships 0).
+    setTunePower(s.value(pfx + QLatin1String("FixedTunePower"),
+                          QStringLiteral("10")).toInt());
 }
 
 void TransmitModel::persistToSettings(const QString& mac) const
@@ -967,6 +1552,40 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── TX filter bandwidth (Plan 4 D1) ───────────────────────────────────
     s.setValue(pfx + QLatin1String("FilterLow"),  QString::number(m_filterLow));
     s.setValue(pfx + QLatin1String("FilterHigh"), QString::number(m_filterHigh));
+
+    // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
+    // Per-band normal-mode power array — separate top-level scope.
+    {
+        const QString powerPfx =
+            QStringLiteral("hardware/%1/powerByBand/").arg(mac);
+        for (int i = 0; i < kBandCount; ++i) {
+            const Band band = static_cast<Band>(i);
+            s.setValue(powerPfx + bandKeyName(band),
+                       QString::number(
+                           m_powerByBand[static_cast<std::size_t>(i)]));
+        }
+    }
+    // 3 ATT-on-TX safety properties (under tx/ namespace).
+    s.setValue(pfx + QLatin1String("ForceATTwhenPSAoff"),
+               m_forceAttwhenPSAoff ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAon"),
+               m_forceAttwhenPowerChangesWhenPSAon
+                   ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("ForceATTwhenOutputPowerChangesWhenPSAonAndDecreased"),
+               m_forceAttwhenPowerChangesWhenPSAonAndDecreased
+                   ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // m_lastPower: runtime-only sentinel — NOT persisted (matches Thetis
+    // ephemeral _lastPower at console.cs:29292 [v2.10.3.13]).
+
+    // ── PA-cal hotfix Phase 3C state ──────────────────────────────────────
+    // m_twoToneActive: runtime-only mirror — NOT persisted.
+    // m_tuneDrivePowerSource: under TuneDrivePowerOrigin.
+    s.setValue(pfx + QLatin1String("TuneDrivePowerOrigin"),
+               drivePowerSourceToString(m_tuneDrivePowerSource));
+    // m_tunePower: under FixedTunePower.
+    s.setValue(pfx + QLatin1String("FixedTunePower"),
+               QString::number(m_tunePower));
 }
 
 // ── Anti-VOX properties (3M-1b C.4) ─────────────────────────────────────────

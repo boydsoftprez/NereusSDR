@@ -668,7 +668,13 @@ ItemGroup* ItemGroup::createPowerSwrPreset(const QString& name, QObject* parent)
     group->addItem(pwrReadout);
 
     // From Thetis MeterManager.cs AddPWRBar: 0-120W, red at 100W
+    // Range + redThreshold are reset per-SKU at runtime via
+    // MeterWidget::rescalePowerMeters() (bench-reported #167 follow-up:
+    // 0-120 W default made HL2's 5 W output a tiny sliver and ANAN-G2-1K's
+    // 1000 W output saturate the bar).  The objectName tag is the
+    // discriminator for the rescale lookup.
     BarItem* pwrBar = new BarItem();
+    pwrBar->setObjectName(QStringLiteral("PowerBar"));
     pwrBar->setRect(0.02f, 0.17f, 0.96f, 0.22f);
     pwrBar->setOrientation(BarItem::Orientation::Horizontal);
     pwrBar->setRange(0.0, 120.0);
@@ -682,6 +688,7 @@ ItemGroup* ItemGroup::createPowerSwrPreset(const QString& name, QObject* parent)
     group->addItem(pwrBar);
 
     ScaleItem* pwrScale = new ScaleItem();
+    pwrScale->setObjectName(QStringLiteral("PowerScale"));
     pwrScale->setRect(0.02f, 0.40f, 0.96f, 0.12f);
     pwrScale->setOrientation(ScaleItem::Orientation::Horizontal);
     pwrScale->setRange(0.0, 120.0);

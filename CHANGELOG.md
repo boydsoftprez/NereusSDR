@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.3.2] - 2026-05-03 - PA Calibration Safety Hotfix (#167)
+
+> [!CAUTION]
+> **Safety hotfix.** v0.3.1 could drive an ANAN-8000DLE PA past its rated 200 W ceiling at low TUNE-slider positions. K2GX measured >300 W on 80 m TUNE at slider 50 %. Root cause: the drive byte applied no per-band PA gain compensation, so high-gain PAs (8000DLE 80 m PA = 50.5 dB) reached full output well below slider 100 %. v0.3.2 ports Thetis SetPowerUsingTargetDBM faithfully and applies the per-band PA gain table at the audio output level, exactly as Thetis has done for years. Pre-hotfix wire byte 127 at slider 50 % / 80 m / 8000DLE now reads ~49.
+
+> [!IMPORTANT]
+> **Existing users — no action required.** Your saved radios, mic profiles, DSP settings, PA forward-power calibration (Watt Meter cal-points), and per-band tune power carry forward byte-identical. The new per-MAC PA Gain profiles seed automatically on first connect (16 factory rows + Bypass) and pick `Default - <connected model>` as the active profile. HL2 cannot regress on HF transmit — a sentinel deviation (gbb >= 99.5 -> linear fallback) preserves the v0.3.1 linear behaviour on bands where the factory PA gain row is 100.0 (HL2's "no compensation" marker on HF).
+
+### Safety
+- **Per-band PA gain compensation now applied** at the audio output level, not the wire-byte path. Faithful port of Thetis SetPowerUsingTargetDBM (console.cs:46645-46762 [v2.10.3.13]). Per-band gain table from clsHardwareSpecific.cs:459-751 (and mi0bot HL2 row at v2.10.3.13-beta2). The math: `target_dBm = 10*log10(slider_W*1000) - gbb; audio_volume = min(sqrt(10^(target_dBm/10) * 0.05) / 0.8, 1.0)`. Resolves K2GX (ANAN-8000DLE, P2) field report of >300 W output on a 200 W radio at low TUNE slider positions.
+- **Wire-byte vs IQ-scalar topology corrected** to MW0LGE-canonical (audio.cs:268 + cmaster.cs:1117): SWR foldback now applies to the IQ scalar only, NOT to the wire byte. Pre-hotfix code applied SWR to the wire byte (citing mi0bot NetworkIO.cs:209-211 [v2.10.3.14-beta1]); reverted to MW0LGE topology with inline citation at both call sites.
+
+### Setup -> PA full parity surface
+- **PA Gain page** (Setup → PA → PA Gain): ported from Thetis tpGainByBand (setup.designer.cs:47386-47525 [v2.10.3.13]). 14-band gain spinbox grid, 14×9 drive-step adjust matrix, per-band max-power column, profile combo with New / Copy / Delete / Reset Defaults buttons, warning icon + label, chkPANewCal toggle, chkAutoPACalibrate with auto-cal sweep state machine (HF-only band loop, per-step settle via QTimer, FWD reading via RadioStatus, gain delta written into the active profile).
+- **Watt Meter page**: Thetis tpWattMeter parity. Existing PaCalibrationGroup + new chkPAValues "Show PA Values page" toggle + Reset PA Values button.
+- **PA Values page** (NereusSDR-spin promotion): closed the 4-label gap from v0.3.1 (Raw FWD power, Drive, FWD voltage, REV voltage) via the new public PaTelemetryScaling helpers (lifted from RadioModel.cpp private helpers). Running peak/min tracking on six telemetry values + in-page Reset button.
+- **Per-SKU visibility**: `BoardCapabilities`-driven. PA category hidden on RX-only SKUs; editor controls disabled with "no PA support" banner when `caps.hasPaProfile=false` (Atlas / RedPitaya); informational warnings for Ganymede 500 W follow-up and PureSignal recovery linkage. Mirrors Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310 [v2.10.3.13]).
+
+### TX
+- **TwoToneController** routes through the new math kernel (`bTwoTone=true` so txMode=2 selects `_2ToneDrivePowerSource`; gain compensation applies during the IMD test).
+- **ATT-on-TX-on-power-change safety scaffolding** added: when PureSignal arrives in
+  Phase 3M-4, the safety gate that forces TX attenuator to 31 dB on drive-power changes
+  (preventing RX frontend over-drive via the PS feedback DDC) will activate automatically —
+  no further wiring needed. **In v0.3.2 this subsystem has no observable behaviour**
+  because PureSignal is not yet implemented; the predicate gating the safety check
+  returns false unconditionally. The state and tests pre-stage the 3M-4 enablement.
+  See `docs/architecture/pa-calibration-hotfix.md` §5.
+- New `TransmitModel::computeAudioVolume(profile, band, sliderWatts)` math kernel (HL2 sentinel + Bypass-profile short-circuit + Thetis dBm math).
+- New `TransmitModel::setPowerUsingTargetDbm(...)` deep-parity wrapper (all txMode branches + drive-source enum routing + power_by_band write side-effect on txMode 0 + ATT-on-TX gate + audioVolumeChanged signal).
+- New `m_powerByBand[14]` per-band normal-mode power array (default 100 W per `limitPower_by_band` console.cs:1817 [v2.10.3.13]).
+
+### NereusSDR-original deviations (justified inline)
+- **HL2 sentinel**: `gbb >= 99.5` short-circuits `computeAudioVolume` to a linear fallback (`clamp(sliderWatts/100, 0, 1)`). Preserves the pre-v0.3.2 HF-transmit behaviour on HL2, whose factory PA gain row at clsHardwareSpecific.cs:484 [v2.10.3.13-beta2 @c26a8a4] is 100.0 on HF as a "no compensation" marker (Thetis HL2 users live with `audio_volume ~= 0.0009`; NereusSDR's existing v0.3.1 users must not regress). Bypass profile (all-100.0 sentinel) trips the same fallback.
+- **NereusSDR-canonical PA profile serialization** (27-entry → 171-pipe-delimited fields). NOT byte-compatible with Thetis 423/507. Thetis profile-string import is a deferred follow-up.
+- **PA Values page promoted to its own dialog page** (Thetis hosts `panelPAValues` inline on the Watt Meter page). Cross-page wiring routes Reset PA Values from the WattMeter page to the Values page's `resetPaValues()` slot.
+
+### Known limitations / deferred
+- ChannelMaster `SetTXFixedGain` is a glue stub at `third_party/wdsp/src/txgain_stub.c` that stores the IQ scalar but doesn't apply DSP attenuation. The wire-byte path is the primary K2GX safety lever; full DSP attenuation lands when ChannelMaster is ported (3L).
+- XVTR transverter LO band translation not ported (NereusSDR has only one XVTR slot; sentinel fallback in `computeAudioVolume` catches `Band::XVTR` and falls back to linear).
+- PureSignal feedback DDC + `chkFWCATUBypass` live wiring deferred to Phase 3M-4. The ATT-on-TX gate becomes active when this lands.
+- Andromeda Ganymede 500 W PA tab deferred (informational warning shown when `caps.canDriveGanymede=true`).
+- Thetis profile-string import deferred.
+
+### Acknowledgments
+Thanks to **K2GX** for the field report that triggered this hotfix.
+
 ## [0.3.1] - 2026-05-03
 
 > [!NOTE]

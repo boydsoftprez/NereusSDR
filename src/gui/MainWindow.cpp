@@ -780,6 +780,28 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             pushCapsToAllContainers);
 
+    // Per-SKU power-meter rescale.  Bench-reported #167 follow-up: the
+    // top MeterPanel BarItem stack ships with a 0-120 W default that
+    // makes HL2 (5 W) a sliver and ANAN-G2-1K (1000 W) saturate.  When
+    // the active radio changes, ask every MeterWidget to rescale its
+    // PowerBar / PowerScale pair to the new SKU's PA ceiling.  Same
+    // paMaxWattsFor() helper TxApplet uses for its RF Pwr HGauge so
+    // both meter surfaces share a single source of truth.
+    auto rescaleAllPowerMeters = [this]() {
+        const HPSDRModel m = m_radioModel->hardwareProfile().model;
+        const int maxW     = paMaxWattsFor(m);
+        if (m_meterWidget) {
+            m_meterWidget->rescalePowerMeters(maxW);
+        }
+        for (ContainerWidget* c : m_containerManager->allContainers()) {
+            for (MeterWidget* mw : c->findChildren<MeterWidget*>()) {
+                mw->rescalePowerMeters(maxW);
+            }
+        }
+    };
+    connect(m_radioModel, &RadioModel::currentRadioChanged, this,
+            rescaleAllPowerMeters);
+
     // Issue #118 — helper: wire a container's bandClicked signal through
     // the RadioModel handler. Invoked from the containerAdded callback,
     // which fires for every container materialized by ContainerManager

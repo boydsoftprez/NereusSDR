@@ -10,6 +10,13 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-05-03 — Added setAttOnTxValue / attOnTxValue setter pair (Phase 1
+//                 Agent 1D of #167) — the ATT-on-TX-on-power-change safety
+//                 gate used by TransmitModel::setPowerUsingTargetDbm
+//                 (Thetis console.cs:46740-46748 [v2.10.3.13]).  Mirrors
+//                 Thetis SetupForm.ATTOnTX (mi0bot setup.cs:3988-4017
+//                 [v2.10.3.13]); range clamped to [m_minAttDb, 31].
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -265,6 +272,92 @@ void StepAttenuatorController::setTxAttenuationForBand(Band band, int dB)
 int StepAttenuatorController::txAttenuationForBand(Band band) const
 {
     return applyTxAttenuationForBand(band);
+}
+
+// --- ATT-on-TX scalar setter / getter (Phase 1 Agent 1D of #167) ---
+// From Thetis SetupForm.ATTOnTX setter (mi0bot setup.cs:3988-4017
+// [v2.10.3.13] - HL2 fork widens negative range to -28):
+//   public int ATTOnTX
+//   { ...
+//       if (value > 31) value = 31;
+//       if (HPSDRModel.HERMESLITE == HardwareSpecific.Model)
+//       { if (value < -28) value = -28; } //MI0BOT: HL2 has a greater range and can go negative
+//       else
+//       { if (value < 0) value = 0; } //MW0LGE [2.9.0.7] added after mi0bot source review
+//       ...
+//   }
+//
+// The Setup-form spinbox setter ultimately calls into console.TxAttenData
+// (setup.cs:17240 [v2.10.3.13]:
+//   console.TxAttenData = (int)udATTOnTX.Value;
+// ), which writes the validated value into the per-band TX storage and
+// (when m_bATTonTX is true) pushes it to hardware:
+//   //[2.10.3.6]MW0LGE att_fixes #399
+//   setTXstepAttenuatorForBand(_tx_band, _tx_attenuator_data);
+//   if (m_bATTonTX) NetworkIO.SetTxAttenData(_tx_attenuator_data); //[2.10.3.6]MW0LGE att_fixes
+//   else            NetworkIO.SetTxAttenData(0);
+//
+// We mirror the Thetis chain: clamp, write to current band slot, push to
+// hardware when ATT-on-TX is enabled.
+
+void StepAttenuatorController::setAttOnTxValue(int dB)
+{
+    // From Thetis (mi0bot) setup.cs:3999 [v2.10.3.13]:
+    //   if (value > 31) value = 31;
+    if (dB > 31) { dB = 31; }
+
+    // From Thetis (mi0bot) setup.cs:4001-4008 [v2.10.3.13]:
+    //   if (HPSDRModel.HERMESLITE) { if (value < -28) value = -28; } //MI0BOT
+    //   else                       { if (value < 0)   value = 0;   } //MW0LGE [2.9.0.7]
+    // NereusSDR: m_minAttDb encodes the per-board lower bound (HL2: -28
+    // via setMinAttenuation(-28) on connect; legacy boards: 0).
+    if (dB < m_minAttDb) { dB = m_minAttDb; }
+
+    // From Thetis console.cs:10612 TxAttenData setter [v2.10.3.13]
+    //   //[2.10.3.6]MW0LGE att_fixes #399
+    //   setTXstepAttenuatorForBand(_tx_band, _tx_attenuator_data);
+    // Write directly to the per-band array — the public setter
+    // setTxAttenuationForBand() hard-clamps negatives to 0, which would
+    // strip the HL2 signed range.  Bypassing the clamp here is correct:
+    // the value above is already validated against [m_minAttDb, 31].
+    int idx = static_cast<int>(m_currentBand);
+    if (idx >= 0 && idx < static_cast<int>(Band::SwlFirst)) {
+        m_txAttByBand[static_cast<size_t>(idx)] = dB;
+    }
+
+    // From Thetis console.cs:10613-10622 TxAttenData setter [v2.10.3.13]:
+    //   if (m_bATTonTX) {
+    //       NetworkIO.SetTxAttenData(_tx_attenuator_data); //[2.10.3.6]MW0LGE att_fixes
+    //       Display.TXAttenuatorOffset = _tx_attenuator_data; //[2.10.3.6]MW0LGE att_fixes
+    //   } else {
+    //       NetworkIO.SetTxAttenData(0);
+    //       Display.TXAttenuatorOffset = 0;
+    //   }
+    // Hardware push only when ATT-on-TX is enabled.  When disabled, the
+    // per-band slot is still recorded (so re-enabling later picks up the
+    // user's preference) but no wire push occurs.
+    if (m_attOnTxEnabled && m_connection) {
+        RadioConnection* conn = m_connection.get();
+        const int dBcopy = dB;
+        QMetaObject::invokeMethod(conn, [conn, dBcopy]() {
+            conn->setTxStepAttenuation(dBcopy); //[2.10.3.6]MW0LGE att_fixes
+        });
+    }
+#ifdef NEREUS_BUILD_TESTS
+    if (m_attOnTxEnabled) {
+        m_lastTxStepAttDb = dB;
+    }
+#endif
+}
+
+int StepAttenuatorController::attOnTxValue() const
+{
+    // Mirrors Thetis ATTOnTX getter (mi0bot setup.cs:3990-3994 [v2.10.3.13]):
+    //   get { if (udATTOnTX != null) return (int)udATTOnTX.Value;
+    //         else return -1; }
+    // NereusSDR: return the current band's stored TX ATT value (the
+    // setter wrote the same value here on its last invocation).
+    return applyTxAttenuationForBand(m_currentBand);
 }
 
 // Private helper — used by onMoxHardwareFlipped and the test seam.

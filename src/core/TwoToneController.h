@@ -32,6 +32,17 @@
 //                 plus the chk2TONE_CheckedChanged TUN auto-stop
 //                 (console.cs:44728-44760 [v2.10.3.13]).  RadioModel
 //                 ownership wires up in Phase L.
+//   2026-05-03 — Phase 4 Agent 4B of issue #167 PA-cal safety hotfix —
+//                 wires TwoToneController through Phase 3C
+//                 TransmitModel::setPowerUsingTargetDbm so the PA gain
+//                 compensation applies during the IMD test (txMode=2
+//                 routing per console.cs:46693-46708 [v2.10.3.13]).
+//                 Adds setPaProfileManager(PaProfileManager*) injection,
+//                 setTwoToneActive(true) on start / false on stop, and
+//                 a single bTwoTone=true wrapper invocation that pumps
+//                 audio_volume through TransmitModel::audioVolumeChanged
+//                 to RadioModel's TX path.  J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation
@@ -49,6 +60,7 @@
 namespace NereusSDR {
 
 class MoxController;
+class PaProfileManager;
 class SliceModel;
 class TxChannel;
 
@@ -185,6 +197,17 @@ public:
     void setMoxController(MoxController* mox);
     void setSliceModel(SliceModel* slice);
 
+    // PaProfileManager injection (Phase 4B of #167) — non-owning pointer
+    // to the active-PA-profile bank.  When set, setActive(true) routes the
+    // two-tone start through TransmitModel::setPowerUsingTargetDbm with
+    // bTwoTone=true so the PA gain compensation applies during the IMD
+    // test (txMode=2 per console.cs:46693-46708 [v2.10.3.13]).  When
+    // nullptr (or when activeProfile() returns nullptr — pre-load), the
+    // wrapper invocation is skipped and the controller falls back to its
+    // pre-Phase-4B behaviour (TXPostGen + MOX + Fixed-mode setPower
+    // snapshot only).  This keeps tests + early boot states working.
+    void setPaProfileManager(PaProfileManager* mgr);
+
     // setPowerOn: precondition gate.  setActive(true) returns early if
     // m_powerOn == false (mirrors !console.PowerOn at setup.cs:11063
     // [v2.10.3.13]).  RadioModel sets this from RadioConnection state
@@ -267,6 +290,9 @@ private:
     QPointer<TxChannel>      m_txChannel;
     QPointer<MoxController>  m_moxController;
     QPointer<SliceModel>     m_slice;
+    // Phase 4B of #167: optional PA-profile bank for the bTwoTone=true
+    // setPowerUsingTargetDbm route.  Non-owning.
+    QPointer<PaProfileManager> m_paProfileManager;
 
     // Whether the radio is powered on.  Default true so unit tests
     // don't have to flip it; RadioModel sets it appropriately in Phase L.

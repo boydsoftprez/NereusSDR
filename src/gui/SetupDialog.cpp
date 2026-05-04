@@ -1,5 +1,36 @@
+// =================================================================
+// src/gui/SetupDialog.cpp  (NereusSDR)
+// =================================================================
+//
+// NereusSDR-original Qt6 navigation shell for the Settings dialog.
+// Independently implemented from Thetis Setup Form interface design;
+// no direct C# port. Inline cites to Thetis files indicate per-SKU
+// behaviour rules consulted while implementing visibility wiring.
+//
+// Modification history (NereusSDR):
+//   2026-05-03 — PA calibration safety hotfix Phase 8 (#167): rewired
+//                 the Setup → PA category to be always-built, with
+//                 per-SKU visibility driven by BoardCapabilities and
+//                 RadioModel::currentRadioChanged. Replaces the
+//                 construction-time hasPaProfile gate that prevented
+//                 dynamic visibility on radio swaps. Visibility rules
+//                 derived from Thetis
+//                 comboRadioModel_SelectedIndexChanged
+//                 (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]).
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-03 — PA calibration safety hotfix Phase 9 (#167): added
+//                 cross-page connect() in buildTree() that routes
+//                 PaWattMeterPage::resetPaValuesRequested (Phase 5A)
+//                 to PaValuesPage::resetPaValues() (Phase 5B). Mirrors
+//                 Thetis btnResetPAValues_Click (setup.cs:16346-16357
+//                 [v2.10.3.13 @501e3f51]). Deferred from Phase 5 so
+//                 Agents 5A and 5B could land in parallel without
+//                 touching this file.
+// =================================================================
+
 #include "SetupDialog.h"
 #include "SetupPage.h"
+#include "core/BoardCapabilities.h"
 #include "models/RadioModel.h"
 
 // General
@@ -9,6 +40,8 @@
 #include "setup/HardwarePage.h"
 // PA (Setup IA reshape Phase 2 — placeholder pages, content lands in Phase 3+)
 #include "setup/PaSetupPages.h"
+// Phase 8 of #167: per-SKU PA visibility wiring needs RadioInfo
+#include "core/RadioDiscovery.h"
 // Audio
 #include "setup/AudioBackendStrip.h"
 #include "setup/AudioDevicesPage.h"
@@ -97,6 +130,23 @@ SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
                     m_stack->setCurrentIndex(index);
                 }
             });
+
+    // ── Phase 8 of #167: per-SKU PA visibility wiring ────────────────────────
+    // Subscribe to capability-changed signal so PA category + child pages
+    // re-evaluate visibility on radio swap. Mirrors HardwarePage's
+    // currentRadioChanged subscription pattern.
+    if (m_model) {
+        connect(m_model, &RadioModel::currentRadioChanged,
+                this, &SetupDialog::onCurrentRadioChanged);
+    }
+
+    // Apply initial visibility at construction time so the dialog opens
+    // with the right state even when no currentRadioChanged has fired yet.
+    // boardCapabilities() falls back to Unknown caps when no radio has
+    // ever connected; Unknown sets hasPaProfile=false → PA category
+    // hidden, matching the conservative default.
+    applyPaVisibility(m_model ? m_model->boardCapabilities()
+                              : BoardCapsTable::forBoard(HPSDRHW::Unknown));
 }
 
 // ── showEvent ─────────────────────────────────────────────────────────────────
@@ -195,22 +245,41 @@ void SetupDialog::buildTree()
     // ── PA ────────────────────────────────────────────────────────────────────
     // Top-level PA category mirrors Thetis tpPowerAmplifier
     // (setup.designer.cs:47366-47371 [v2.10.3.13]). Three sub-pages:
-    //   - PA Gain         → Thetis tpGainByBand (placeholder for Phase 3M-3)
+    //   - PA Gain         → Thetis tpGainByBand (Phase 6+7 live editor)
     //   - Watt Meter      → Thetis tpWattMeter (cal spinboxes — Phase 3)
     //   - PA Values       → NereusSDR-spin live telemetry page (Phase 4)
     //
-    // Visibility gate: only shown when the connected radio reports
-    // hasPaProfile=true. RX-only kits and Atlas (no integrated PA) hide
-    // the entire category. Mirrors the access pattern used by HardwarePage
-    // (HardwarePage.cpp:219 [v2.10.3.13]) — caps is a const pointer on
-    // HardwareProfile so the null guard is mandatory.
-    if (m_model && m_model->hardwareProfile().caps
-        && m_model->hardwareProfile().caps->hasPaProfile) {
-        QTreeWidgetItem* pa = addCategory("PA");
-        add(pa, "PA Gain",    new PaGainByBandPage(m_model));
-        add(pa, "Watt Meter", new PaWattMeterPage(m_model));
-        add(pa, "PA Values",  new PaValuesPage(m_model));
-    }
+    // Phase 8 of #167 — the PA category and 3 sub-pages are now ALWAYS
+    // built. Per-SKU visibility is driven dynamically via
+    // applyPaVisibility() (called from onCurrentRadioChanged + at end of
+    // ctor). The category root is hidden when caps.isRxOnlySku
+    // or when !caps.hasPaProfile. Each child page additionally toggles
+    // its own informational rows / banners per the BoardCapabilities flags.
+    //
+    // This replaces the construction-time hasPaProfile gate (which
+    // prevented the PA category from appearing on radio-swap when the
+    // dialog was already open) with a live capability subscription.
+    // From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
+    // [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility.
+    m_paCategoryItem  = addCategory("PA");
+    m_paGainPage      = new PaGainByBandPage(m_model);
+    m_paWattMeterPage = new PaWattMeterPage(m_model);
+    m_paValuesPage    = new PaValuesPage(m_model);
+    m_paGainItem      = add(m_paCategoryItem, "PA Gain",    m_paGainPage);
+    m_paWattMeterItem = add(m_paCategoryItem, "Watt Meter", m_paWattMeterPage);
+    m_paValuesItem    = add(m_paCategoryItem, "PA Values",  m_paValuesPage);
+
+    // Phase 9 of #167: cross-wire PaWattMeterPage's [Reset PA Values] button
+    // (Phase 5A — emits resetPaValuesRequested) to PaValuesPage's
+    // resetPaValues() public slot (Phase 5B — clears peak/min trackers).
+    // Deferred from Phase 5 to keep agents 5A and 5B mutually parallel and
+    // conflict-free; the connect lands here once both pages exist.
+    // Mirrors Thetis btnResetPAValues_Click (setup.cs:16346-16357
+    // [v2.10.3.13 @501e3f51]) — Thetis blanks the textbox text directly
+    // from the same panel; NereusSDR fans out to a peer page since the
+    // PA Values readout was promoted to its own dedicated page.
+    connect(m_paWattMeterPage, &PaWattMeterPage::resetPaValuesRequested,
+            m_paValuesPage,    &PaValuesPage::resetPaValues);
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     QTreeWidgetItem* audio = addCategory("Audio");
@@ -333,6 +402,68 @@ void SetupDialog::buildTree()
     add(diagnostics, "Logging",            new DiagLoggingPage);
 
     m_tree->expandAll();
+}
+
+// ── Phase 8 of #167: PA category visibility wiring ─────────────────────────────
+//
+// onCurrentRadioChanged: re-evaluate PA visibility when the connected
+// radio changes (radio swap, fresh connect, MAC switch). Forwarded
+// from RadioModel::currentRadioChanged.
+//
+// applyPaVisibility: collapses the per-SKU visibility decisions into
+// a single switch. The PA category root is hidden when caps.isRxOnlySku
+// (no TX hardware at all) or when !caps.hasPaProfile (the connected
+// board has TX but no PA gain calibration support — Atlas, RedPitaya).
+// Each child page additionally gates its own warning rows on the
+// individual capability flags via applyCapabilityVisibility().
+//
+// From Thetis comboRadioModel_SelectedIndexChanged
+// (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility.
+// Thetis swaps dozens of controls per HPSDRModel; NereusSDR collapses
+// the decisions into BoardCapabilities and surfaces the equivalent
+// visibility here.
+
+void SetupDialog::onCurrentRadioChanged(const RadioInfo& /*info*/)
+{
+    if (!m_model) { return; }
+    applyPaVisibility(m_model->boardCapabilities());
+}
+
+void SetupDialog::applyPaVisibility(const BoardCapabilities& caps)
+{
+    // Hide the entire PA category for RX-only SKUs and for boards that
+    // lack PA gain calibration support. Hidden via QTreeWidgetItem::
+    // setHidden which collapses the row out of the navigation tree
+    // entirely (clean visual — no greyed-out unreachable entry).
+    const bool paAvailable = !caps.isRxOnlySku && caps.hasPaProfile;
+
+    if (m_paCategoryItem) {
+        m_paCategoryItem->setHidden(!paAvailable);
+    }
+    if (m_paGainItem) {
+        m_paGainItem->setHidden(!paAvailable);
+    }
+    if (m_paWattMeterItem) {
+        m_paWattMeterItem->setHidden(!paAvailable);
+    }
+    if (m_paValuesItem) {
+        m_paValuesItem->setHidden(!paAvailable);
+    }
+
+    // Forward the caps to each PA page so it can self-toggle the
+    // per-SKU informational rows. Page-level visibility decisions
+    // (warning labels, banner copy, individual control gates) live
+    // inside the page implementations — SetupDialog only owns the
+    // category-level decision.
+    if (m_paGainPage) {
+        m_paGainPage->applyCapabilityVisibility(caps);
+    }
+    if (m_paWattMeterPage) {
+        m_paWattMeterPage->applyCapabilityVisibility(caps);
+    }
+    if (m_paValuesPage) {
+        m_paValuesPage->applyCapabilityVisibility(caps);
+    }
 }
 
 } // namespace NereusSDR

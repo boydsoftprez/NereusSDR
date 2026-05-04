@@ -192,6 +192,39 @@ void MeterWidget::updateMeterValue(int bindingId, double value)
 #endif
 }
 
+void MeterWidget::rescalePowerMeters(int paMaxWatts)
+{
+    if (paMaxWatts <= 0) { return; }
+
+    const double red = static_cast<double>(paMaxWatts);
+    const double top = red * 1.2;   // 20% headroom past the red zone
+
+    for (MeterItem* item : m_items) {
+        if (item->objectName() == QStringLiteral("PowerBar")) {
+            // BarItem: update range + redThreshold.  setRange/setRedThreshold
+            // are public on BarItem.  Cast through QObject::qobject_cast so
+            // a future swap (NeedleItem etc.) doesn't crash.
+            if (BarItem* bar = qobject_cast<BarItem*>(item)) {
+                bar->setRange(0.0, top);
+                bar->setRedThreshold(red);
+            }
+        } else if (item->objectName() == QStringLiteral("PowerScale")) {
+            if (ScaleItem* scale = qobject_cast<ScaleItem*>(item)) {
+                scale->setRange(0.0, top);
+                // QRP radios benefit from finer ticks: 7 ticks works for
+                // 100/200/1000 W scales but a 0-6 W scale wants 4-6
+                // labels max so the numbers don't overlap.
+                scale->setMajorTicks(paMaxWatts <= 10 ? 5 : 7);
+            }
+        }
+    }
+#ifdef NEREUS_GPU_SPECTRUM
+    markDynamicDirty();
+#else
+    update();
+#endif
+}
+
 // ============================================================================
 // Serialization
 // ============================================================================

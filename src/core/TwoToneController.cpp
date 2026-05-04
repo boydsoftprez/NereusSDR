@@ -9,6 +9,10 @@
 //
 // Modification history (NereusSDR):
 //   2026-04-29 — Phase 3M-1c chunk I.1-I.5 — see header.
+//   2026-05-03 — Phase 4 Agent 4B of issue #167 PA-cal hotfix — wires
+//                start()/stop() through Phase 3C
+//                TransmitModel::setPowerUsingTargetDbm with bTwoTone=true.
+//                See header for full attribution.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived activation flow
@@ -18,8 +22,12 @@
 
 #include "core/LogCategories.h"
 #include "core/MoxController.h"
+#include "core/PaProfile.h"
+#include "core/PaProfileManager.h"
 #include "core/TxChannel.h"
+#include "models/Band.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 #include <QLoggingCategory>
 #include <QtMath>
@@ -85,6 +93,16 @@ void TwoToneController::setMoxController(MoxController* mox)
 void TwoToneController::setSliceModel(SliceModel* slice)
 {
     m_slice = slice;
+}
+
+void TwoToneController::setPaProfileManager(PaProfileManager* mgr)
+{
+    // Phase 4B of #167.  Non-owning pointer.  RadioModel injects the
+    // manager on connect; tests inject a manager they own directly.
+    // nullptr -> Phase 4B wrapper invocation is skipped and the
+    // controller falls back to its pre-Phase-4B behaviour (TXPostGen +
+    // MOX + Fixed-mode setPower snapshot only).
+    m_paProfileManager = mgr;
 }
 
 void TwoToneController::setPowerOn(bool on)
@@ -382,6 +400,63 @@ void TwoToneController::continueActivation()
         return;
     }
 
+    // ── Stage 8b: Phase 4B of #167 — PA-cal hotfix integration.
+    //
+    // From Thetis console.cs:46693-46708 [v2.10.3.13] — chk2TONE_CheckedChanged
+    // SetPowerUsingTargetDBM txMode=2 drive-source enum routing.  In Thetis,
+    // chk2TONE.Checked is the runtime mirror that drives txMode=2 inside
+    // SetPowerUsingTargetDBM (console.cs:46667-46668).  The wrapper invocation
+    // routes through the active drive-source enum (DriveSlider / TuneSlider /
+    // Fixed) and emits TransmitModel::audioVolumeChanged so RadioModel can
+    // pump audio_volume to TxChannel (iq_gain) + RadioConnection (wire_byte).
+    //
+    // Sequenced AFTER MOX engagement (Stage 8) so:
+    //   - if BandPlanGuard rejected MOX, we never emit audio_volume to the
+    //     wire (onMoxRejected has already fired and m_activationInFlight is
+    //     cleared above; we return early then).
+    //   - the MOX state is consistent with Thetis console.cs:11122-11125
+    //     ordering (ManualMox = TwoTone = MOX = true) before the wrapper
+    //     reads it.
+    //
+    // Skips when:
+    //   - m_paProfileManager is null (test seam + pre-RadioModel-wired state).
+    //   - activeProfile() returns null (manager exists but unloaded).
+    // In both cases the controller falls back to its pre-Phase-4B behaviour
+    // (TXPostGen + MOX + Fixed-mode setPower snapshot only).  This keeps the
+    // existing tst_two_tone_controller suite green and matches early-boot
+    // RadioModel state where the manager hasn't loaded yet.
+    if (m_paProfileManager) {
+        if (const PaProfile* profile = m_paProfileManager->activeProfile()) {
+            // Mark TransmitModel two-tone-active FIRST so the wrapper's
+            // txMode determination resolves to 2 (per console.cs:46667-46668
+            // [v2.10.3.13] — else if (chk2TONE.Checked) txMode = 2).
+            m_tx->setTwoToneActive(true);
+
+            // Resolve current TX band from the slice.  bandFromFrequency
+            // never returns Band::XVTR — XVTR slot is set explicitly by UI
+            // when transverter mode is active and isn't yet wired here
+            // (deferred per plan §"Open follow-ups").  GEN/SWL bands fall
+            // through to the sentinel fallback in computeAudioVolume
+            // (PaProfile::getGainForBand returns 1000.0f for Band::XVTR
+            // and out-of-range Bands → linear fallback in the math kernel).
+            const Band band = m_slice
+                ? bandFromFrequency(m_slice->frequency())
+                : Band::Band20m;
+
+            // From Thetis console.cs:46693-46708 [v2.10.3.13] —
+            // chk2TONE.Checked txMode=2 drive-source enum routing.  Caller
+            // composes wire_byte + iq_gain from result.audioVolume; that's
+            // RadioModel's job (wired in Phase 4A).  Here we just need the
+            // audioVolumeChanged signal to fire so the TX path picks up the
+            // PA-cal-corrected volume.
+            (void) m_tx->setPowerUsingTargetDbm(
+                *profile, band,
+                /*bSetPower=*/true,
+                /*bFromTune=*/false,
+                /*bTwoTone=*/true);
+        }
+    }
+
     // ── Stage 9: Freq2Delay deferred Mag2.  From Thetis setup.cs:11134-11142
     //     [v2.10.3.13]:
     //       if ((int)udFreq2Delay.Value > 0) {
@@ -476,6 +551,20 @@ void TwoToneController::continueDeactivation()
         m_savedPwrValid = false;
     }
 
+    // Phase 4B of #167: clear the TransmitModel two-tone-active mirror.
+    // The next setPowerUsingTargetDbm call (e.g. from RadioModel's
+    // powerChanged lambda when MOX drops) will see m_twoToneActive=false
+    // and route through txMode=0 (normal mode), restoring the normal-mode
+    // audio_volume to the wire.  Phase 4B intentionally does NOT itself
+    // call setPowerUsingTargetDbm here — it would emit a "ghost" volume
+    // against now-stale 2-tone state.
+    //
+    // Cite: console.cs:11151-11177 [v2.10.3.13] — setActive(false) maps
+    //       console.TwoTone = false at line 11154.
+    if (m_tx) {
+        m_tx->setTwoToneActive(false);
+    }
+
     if (m_active) {
         m_active = false;
         emit twoToneActiveChanged(false);
@@ -521,6 +610,14 @@ void TwoToneController::onMoxRejected(const QString& reason)
     if (m_savedPwrValid && m_tx) {
         m_tx->setPower(m_savedPwr);
         m_savedPwrValid = false;
+    }
+
+    // Phase 4B of #167: clear the TransmitModel two-tone-active mirror in
+    // case it was set in continueActivation Stage 8b before MOX rejection
+    // landed.  Idempotent (TransmitModel::setTwoToneActive guards
+    // duplicates).
+    if (m_tx) {
+        m_tx->setTwoToneActive(false);
     }
 
     m_activationInFlight = false;

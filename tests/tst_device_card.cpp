@@ -221,6 +221,39 @@ private slots:
 
         QVERIFY2(spy.count() >= 1, "enabledChanged not emitted on toggle");
     }
+
+    // ── 11. configChanged stays silent during loadFromSettings (issue #172) ───
+    //
+    // Regression for the "audio gets stuck opening File - Settings" bug.
+    // The buffer-size combo uses a 200 ms debounce timer.  loadFromSettings()
+    // calls setCurrentIndex on the combo, which fires currentIndexChanged.
+    // Before the fix the start-timer lambda ignored m_suppressSignals, so the
+    // timer was scheduled during load and fired ~200 ms after construction —
+    // emitting a spurious configChanged that triggered AudioEngine::setXxxConfig
+    // and tore down/rebuilt the bus on every Settings dialog open.
+
+    void configChangedDoesNotEmitDuringLoad() {
+        // Seed AppSettings with a non-default buffer size so setCurrentIndex
+        // during loadFromSettings actually changes the index (otherwise Qt
+        // suppresses currentIndexChanged when the value is already current).
+        // kBufferSizes = {64, 128, 256, 512, 1024, 2048}; default index in
+        // loadFromSettings is 2 (256). Pick 1024 (index 4) to force a change.
+        AppSettings::instance().setValue(
+            QStringLiteral("audio/Speakers/BufferSamples"),
+            QStringLiteral("1024"));
+
+        DeviceCard card(QStringLiteral("audio/Speakers"),
+                        DeviceCard::Role::Output,
+                        false);
+
+        QSignalSpy spy(&card, &DeviceCard::configChanged);
+
+        // Buffer-size debounce timer is 200 ms. Wait long enough that any
+        // timer scheduled during loadFromSettings has had time to fire.
+        QTest::qWait(300);
+
+        QCOMPARE(spy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TstDeviceCard)

@@ -181,6 +181,39 @@ constexpr const char* displayName(HPSDRModel m) noexcept {
     return "Unknown";
 }
 
+// paMaxWattsFor — per-SKU PA output ceiling, used to scale forward-power
+// meter ranges so a 5 W QRP HL2 doesn't share the 0-200 W ANAN-8000DLE
+// scale.  Returns the manufacturer's spec'd PA maximum, NOT a software
+// clamp (the math kernel never enforces a ceiling).  Meter widgets use
+// this to set their bar / gauge ranges and red-zone thresholds.
+//
+// Sourced from the per-SKU max-watts table in the v0.3.2 PA-cal hotfix
+// design doc (docs/architecture/pa-calibration-hotfix.md §9 test matrix
+// + plan glowing-snacking-mochi.md Phase 3B safety-ceiling matrix).
+constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
+    switch (m) {
+        case HPSDRModel::HPSDR:
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN10E:
+        case HPSDRModel::REDPITAYA:    return  10;
+        case HPSDRModel::ANAN100:
+        case HPSDRModel::ANAN100B:
+        case HPSDRModel::ANAN_G2:      return 100;
+        case HPSDRModel::ANAN100D:
+        case HPSDRModel::ANAN200D:
+        case HPSDRModel::ORIONMKII:
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN8000D:
+        case HPSDRModel::ANVELINAPRO3: return 200;
+        case HPSDRModel::ANAN_G2_1K:   return 1000;
+        case HPSDRModel::HERMESLITE:   return   5;
+        case HPSDRModel::FIRST:
+        case HPSDRModel::LAST:         return 100;   // sentinel default
+    }
+    return 100;
+}
+
 // boardCodeName — returns the HPSDRHW enum label as a short model-code string.
 // Used in the status-bar board widget to show "Saturn" instead of the full
 // marketing name "ANAN-G2 (Saturn)" which truncates at typical status-bar widths.
