@@ -1844,6 +1844,44 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             connect(m_txChannel, &TxChannel::voxActiveChanged,
                     m_moxController, &MoxController::onVoxActive);
 
+            // ── Phase 3M-3a-iii Task 18 (bench fix) ───────────────────────────
+            //
+            // TransmitModel::voxEnabledChanged → TxChannel::setVoxListening.
+            //
+            // VOX-listening mode forces the TXA pipeline pump to run when
+            // VOX is enabled, so the WDSP DEXP detector can monitor mic
+            // envelope even when MOX is off.  Without this gate the pump
+            // only runs during MOX (driveOneTxBlock + driveOneTxBlockFromInter
+            // leaved both early-return on !m_running), creating a chicken-
+            // and-egg that prevents VOX from ever keying (DEXP can't fire
+            // pushvox if it never sees mic).
+            //
+            // Wired in parallel with the existing TM::voxEnabledChanged
+            // → MoxController::setVoxEnabled connect at the top of this
+            // ctor (~line 669-670).  Both fire on the same TM signal:
+            // MoxController gates VOX policy at the engagement layer;
+            // TxChannel pumps the DSP so the policy can be evaluated.
+            //
+            // Receiver=m_txChannel + AutoConnection auto-routes to
+            // QueuedConnection when m_txChannel lives on TxWorkerThread,
+            // matching the H.1 voxRunRequested → setVoxRun pattern above.
+            //
+            // From Thetis wdsp/dexp.c:304 [v2.10.3.13]:
+            //   "DEXP code runs continuously so it can be used to trigger
+            //    VOX also."
+            // Thetis's TXA pipeline pumps continuously after channel-open
+            // (HPSDR EP6 audio cadence drives ChannelMaster, not MOX);
+            // Audio.VOXEnabled in audio.cs:168-192 [v2.10.3.13] only
+            // flips DEXP's run_vox flag via cmaster.CMSetTXAVoxRun(0).
+            // NereusSDR's TxWorkerThread + m_running gate is a power-saving
+            // departure from Thetis (no pumping when neither MOX nor VOX
+            // is in play); this connect restores Thetis-equivalent VOX
+            // detection while keeping power saving everywhere else.
+            connect(&m_transmitModel, &TransmitModel::voxEnabledChanged,
+                    m_txChannel, [this](bool on) {
+                m_txChannel->setVoxListening(on);
+            });
+
             // H.2 — voxThresholdRequested → setVoxAttackThreshold.
             // From Thetis cmaster.cs:1054-1059 [v2.10.3.13] — CMSetTXAVoxThresh.
             connect(m_moxController, &MoxController::voxThresholdRequested,

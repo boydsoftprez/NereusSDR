@@ -247,6 +247,26 @@ warren@wpratt.com
 //                 create_dexp boot state and the caller must push true
 //                 at startup for Thetis-default behavior.
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-04 — Phase 3M-3a-iii Task 18 (bench fix): setVoxListening(bool)
+//                 + m_voxListening atomic + pump gate split implemented by
+//                 J.J. Boyd (KG4VCF).  Second of two VOX-keying gaps the
+//                 original 3M-3a-iii plan missed: Task 17 wired the WDSP
+//                 pushvox callback (commit 56d6921), but the callback never
+//                 fired because the TXA pipeline pump itself only ran when
+//                 MOX was engaged (driveOneTxBlock + driveOneTxBlockFromInter
+//                 leaved both early-returned on !m_running).  In Thetis the
+//                 TXA pump is driven by hardware audio cadence (HPSDR EP6
+//                 Tx audio) and is always-on after channel-open; MOX gates
+//                 radio-write at the connection layer, not the pump itself.
+//                 Per wdsp/dexp.c:304 [v2.10.3.13] "DEXP code runs
+//                 continuously so it can be used to trigger VOX also."
+//                 Fix splits the pump gate into two: pre-fexchange0 gate
+//                 becomes (m_running || m_voxListening); post-fexchange0
+//                 sendTxIq stays gated on m_running ONLY.  setVoxListening
+//                 mirrors WDSP TXA channel state (SetChannelState +
+//                 SetTXACFIRRun) when MOX is off so fexchange0 actually
+//                 processes audio for the DEXP detector.  AI-assisted
+//                 transformation via Anthropic Claude Code.
 //   2026-05-03 — Phase 3M-3a-iii Task 6: getDexpPeakSignal() and
 //                 getTxMicMeterDb() read accessors implemented by
 //                 J.J. Boyd (KG4VCF).  Both `const noexcept` for the
@@ -875,15 +895,94 @@ void TxChannel::setRunning(bool on)
         //   WDSP.SetChannelState(WDSP.id(1, 0), 1, 0);
         SetChannelState(m_channelId, 1, 0);   // channel.c:259 [v2.10.3.13]
     } else {
-        // Turn the TXA channel OFF: state=0, dmode=1 (drain in-flight samples).
-        // From Thetis console.cs:29607 [v2.10.3.13] — TX→RX transition:
-        //   WDSP.SetChannelState(WDSP.id(1, 0), 0, 1);   // turn off, drain
-        //   (preceded by: Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE [console.cs:29603])
-        SetChannelState(m_channelId, 0, 1);   // channel.c:259 [v2.10.3.13]
+        // 3M-3a-iii Task 18: if VOX-listening is on, leave the WDSP TXA
+        // channel running so the DEXP detector keeps receiving fexchange0
+        // calls when MOX drops back to RX.  The pre-fexchange0 gate in
+        // driveOneTxBlockFromInterleaved is (m_running || m_voxListening),
+        // so dropping the WDSP channel state here would silently break the
+        // VOX-listening path on every MOX→RX transition.  Only tear down
+        // the WDSP channel when neither MOX nor VOX-listening wants the
+        // pipeline up.
+        const bool voxListening = m_voxListening.load(std::memory_order_acquire);
+        if (!voxListening) {
+            // Turn the TXA channel OFF: state=0, dmode=1 (drain in-flight samples).
+            // From Thetis console.cs:29607 [v2.10.3.13] — TX→RX transition:
+            //   WDSP.SetChannelState(WDSP.id(1, 0), 0, 1);   // turn off, drain
+            //   (preceded by: Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE [console.cs:29603])
+            SetChannelState(m_channelId, 0, 1);   // channel.c:259 [v2.10.3.13]
 
-        // Drop CFIR after channel drain so no residual samples process
-        // through it on the next RX→TX engagement (P2 will re-arm above).
-        SetTXACFIRRun(m_channelId, 0);
+            // Drop CFIR after channel drain so no residual samples process
+            // through it on the next RX→TX engagement (P2 will re-arm above).
+            SetTXACFIRRun(m_channelId, 0);
+        }
+    }
+#endif // HAVE_WDSP
+}
+
+// ---------------------------------------------------------------------------
+// setVoxListening()  [3M-3a-iii Task 18 — bench fix]
+//
+// Enable/disable continuous TXA pipeline pumping for VOX detection.
+// Forces the pump to run independently of m_running so the WDSP DEXP
+// detector can monitor mic envelope when MOX is off.  Radio-write side
+// remains gated on m_running ONLY (see driveOneTxBlockFromInterleaved
+// post-fexchange0 split).
+//
+// From Thetis wdsp/dexp.c:304 [v2.10.3.13]:
+//   "DEXP code runs continuously so it can be used to trigger VOX also."
+// Thetis's TXA pipeline is pumped continuously after channel-open (the
+// ChannelMaster wrapper is driven by HPSDR EP6 Tx audio cadence, not by
+// MOX state).  Audio.VOXEnabled in audio.cs:168-192 [v2.10.3.13] only
+// flips DEXP's run_vox flag via cmaster.CMSetTXAVoxRun(0); it does not
+// touch the channel state.  NereusSDR's TxWorkerThread + m_running gate
+// is a power-saving departure from Thetis (no pumping when neither MOX
+// nor VOX is in play).  This setter restores Thetis-equivalent VOX
+// detection while keeping power saving everywhere else.
+//
+// Critical: when entering vox-listening mode the WDSP TXA channel must
+// be in the running state (SetChannelState(channelId, 1, 0)) so
+// fexchange0 actually processes audio.  The setRunning(true) path
+// already does this for MOX engagement; we mirror it here.  When
+// leaving vox-listening AND MOX is also off, drop the channel state.
+// When MOX is on, leave WDSP state alone — setRunning manages it.
+// ---------------------------------------------------------------------------
+void TxChannel::setVoxListening(bool on)
+{
+    const bool wasOn = m_voxListening.exchange(on, std::memory_order_acq_rel);
+    if (wasOn == on) {
+        return;  // idempotent
+    }
+
+    qCDebug(lcDsp) << "TxChannel" << m_channelId
+                   << (on ? "vox-listening ON (pump forced)"
+                          : "vox-listening OFF");
+
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) {
+        return;  // WDSP not initialised — same null-guard as setRunning
+    }
+
+    // Mirror the WDSP TXA channel-state gating from setRunning() so
+    // fexchange0 actually processes audio when we're pumping for VOX.
+    const bool actualRunning = m_running.load(std::memory_order_acquire);
+    if (on) {
+        // Entering vox-listening: ensure WDSP TXA channel is on.
+        // Idempotent if already on (setRunning(true) already called it).
+        if (!actualRunning) {
+            const int proto = (m_connection ? m_connection->protocolVersion() : 1);
+            const int cfirRun = (proto == 2) ? 1 : 0;
+            SetTXACFIRRun(m_channelId, cfirRun);
+            SetChannelState(m_channelId, 1, 0);
+        }
+    } else {
+        // Leaving vox-listening AND MOX is also off: drop the WDSP
+        // TXA channel state (matches setRunning(false) path).
+        if (!actualRunning) {
+            SetChannelState(m_channelId, 0, 1);
+            SetTXACFIRRun(m_channelId, 0);
+        }
+        // If MOX is on (m_running=true), leave WDSP state alone —
+        // setRunning will manage it on the next MOX→RX transition.
     }
 #endif // HAVE_WDSP
 }
@@ -2171,7 +2270,16 @@ void TxChannel::driveOneTxBlock(const float* samples, int frames)
     //   1. (samples != null, frames == m_inputBufferSize) — mic-block path
     //   2. (samples == null, frames == 0)                 — silence path
     //   3. (samples != null, frames != m_inputBufferSize) — contract violation
-    if (!m_running.load(std::memory_order_acquire) || !m_connection) {
+    //
+    // 3M-3a-iii Task 18 (bench fix): pump must run if EITHER m_running OR
+    // m_voxListening is true.  Without the m_voxListening branch the WDSP
+    // DEXP detector never sees mic envelope when MOX is off, so VOX cannot
+    // engage MOX (chicken-and-egg).  See setVoxListening doc-comment and
+    // wdsp/dexp.c:304 [v2.10.3.13].  Radio-write side is gated separately
+    // in driveOneTxBlockFromInterleaved on m_running ONLY.
+    const bool actualRunning = m_running.load(std::memory_order_acquire);
+    const bool voxListening  = m_voxListening.load(std::memory_order_acquire);
+    if ((!actualRunning && !voxListening) || !m_connection) {
         return;
     }
     const int inN = m_inputBufferSize;
@@ -2212,7 +2320,27 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     //
     // Block-size invariant matches Thetis cmaster.c:460-487 [v2.10.3.13]:
     //   r1_outsize == xcm_insize == in_size (= getbuffsize(48000) = 64).
-    if (!m_running.load(std::memory_order_acquire) || !m_connection) {
+    //
+    // 3M-3a-iii Task 18 (bench fix): two-gate split.
+    //   shouldPumpDsp = m_running || m_voxListening
+    //                — controls fexchange0 dispatch (DEXP needs samples).
+    //   shouldWriteRx = m_running ONLY
+    //                — controls sendTxIq (radio-write).
+    // The gates are independent so VOX-listening pumps the WDSP TXA pipeline
+    // (so the DEXP detector can see mic envelope and fire pushvox to engage
+    // MOX), but TX I/Q never reaches the radio wire until MOX engages for
+    // real (m_running=true via the existing MoxController::txReady chain).
+    //
+    // From Thetis wdsp/dexp.c:304 [v2.10.3.13]:
+    //   "DEXP code runs continuously so it can be used to trigger VOX also."
+    // In Thetis the TXA pipeline pumps continuously regardless of MOX
+    // (HPSDR EP6 audio cadence drives ChannelMaster, not MOX state); MOX
+    // gates radio-write at the connection layer.  NereusSDR mirrors that
+    // via the two-gate split here.
+    const bool actualRunning = m_running.load(std::memory_order_acquire);
+    const bool voxListening  = m_voxListening.load(std::memory_order_acquire);
+    const bool shouldPumpDsp = actualRunning || voxListening;
+    if (!shouldPumpDsp || !m_connection) {
         return;
     }
 
@@ -2246,6 +2374,23 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
         return;
     }
 #endif // HAVE_WDSP
+
+    // 3M-3a-iii Task 18 (bench fix): radio-write split.
+    //
+    // VOX-listening only (m_running=false, m_voxListening=true) means we
+    // pumped the WDSP TXA pipeline so the DEXP detector could see mic
+    // envelope, but no TX I/Q reaches the radio wire.  When VOX fires
+    // (DEXP's pushvox callback → MoxController::onVoxActive → MOX engage),
+    // m_running flips true via MoxController::txReady → setRunning(true)
+    // and the radio-write resumes normally on the next pump cycle.
+    //
+    // The MON-path siphon (sip1OutputReady) below is also skipped — MON
+    // audio is post-SSB-modulator output that we don't want to monitor
+    // until the operator is actually transmitting.
+    const bool shouldWriteRx = actualRunning;
+    if (!shouldWriteRx) {
+        return;
+    }
 
     // Convert m_out (interleaved double) → m_outInterleavedFloat for
     // sendTxIq, which still uses the float* SPSC ring layout.

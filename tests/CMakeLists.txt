@@ -2010,6 +2010,30 @@ target_compile_definitions(tst_tx_channel_dexp_gate PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_tx_channel_pushvox_callback)
 target_compile_definitions(tst_tx_channel_pushvox_callback PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-iii Task 18 (bench fix): TxChannel VOX-listening pump gate ──
+#
+# Verifies the VOX-listening pump gate that closes the SECOND of two VOX-
+# keying gaps the original 3M-3a-iii plan missed.  Task 17 wired the WDSP
+# pushvox callback (commit 56d6921) but the callback never fired because
+# the TXA pipeline pump itself only ran when MOX was engaged
+# (driveOneTxBlock + driveOneTxBlockFromInterleaved both early-returned
+# on !m_running), creating a chicken-and-egg that prevented VOX from
+# ever keying the radio (DEXP couldn't fire pushvox if it never saw mic).
+#
+# Test seam: TxChannel::voxListeningForTest() exposes the m_voxListening
+# atomic for round-trip verification under NEREUS_BUILD_TESTS.
+#
+# Source references [v2.10.3.13]:
+#   wdsp/dexp.c:304          — "DEXP code runs continuously so it can be
+#                              used to trigger VOX also." (Thetis pumps
+#                              continuously; MOX gates radio-write only.)
+#   audio.cs:168-192         — Audio.VOXEnabled setter (only flips DEXP
+#                              run_vox via cmaster.CMSetTXAVoxRun; does not
+#                              touch channel state).
+#   cmaster.cs:1039-1052     — CMSetTXAVoxRun → SetDEXPRunVox.
+nereus_add_test(tst_tx_channel_vox_listening)
+target_compile_definitions(tst_tx_channel_vox_listening PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task D.4: TxChannel::setStageRunning expansion ───────────────
 # Verifies Panel (existing), MicMeter, AlcMeter, AmMod, FmMod dispatch.
 # MicMeter/AlcMeter: always-on meter stages — no public WDSP Run setter (meter.c);

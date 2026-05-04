@@ -612,6 +612,30 @@ public:
     /// from any thread.
     bool isRunning() const noexcept { return m_running.load(std::memory_order_acquire); }
 
+    // ── VOX-listening pump gate (3M-3a-iii Task 18 — bench fix) ──────────────
+
+    /// Enable or disable VOX-listening mode.
+    ///
+    /// When true, the TX pump runs continuously to feed the WDSP DEXP
+    /// detector even when MOX is off.  Radio-write side remains gated on
+    /// m_running ONLY, so no TX I/Q reaches the radio in vox-listening mode.
+    /// See m_voxListening doc-comment for the full rationale.
+    ///
+    /// Wired by RadioModel from TransmitModel::voxEnabledChanged in parallel
+    /// with the existing TM::voxEnabledChanged → MoxController::setVoxEnabled
+    /// connect.  Without this gate, the chicken-and-egg between MOX and DEXP
+    /// prevents VOX from ever keying the radio (DEXP can't fire pushvox if
+    /// it never sees mic envelope).
+    ///
+    /// Internally also mirrors the SetChannelState gating from setRunning
+    /// when MOX is off, so fexchange0 actually processes audio for the DEXP
+    /// detector while in vox-listening mode.  When MOX is on, leaves WDSP
+    /// channel state to setRunning's existing management.
+    ///
+    /// From Thetis wdsp/dexp.c:304 [v2.10.3.13]:
+    ///   "DEXP code runs continuously so it can be used to trigger VOX also."
+    void setVoxListening(bool on);
+
     // ── Per-mode TXA configuration (3M-1b D.2) ──────────────────────────────
 
     /// Set the TXA channel's DSP mode (LSB / USB / DIGL / DIGU / etc.).
@@ -1801,6 +1825,16 @@ public:
     static void invokePushVoxForTest(int id, int active) {
         s_pushVoxCallback(id, active);
     }
+
+    // ── Test seam (Phase 3M-3a-iii Task 18 — bench fix) — VOX-listening gate ─
+    //
+    // Read-only access to the VOX-listening atomic.  Test verifies that
+    // setVoxListening round-trips the flag and operates independently of
+    // setRunning (the whole point of the fix — both gates allow the pump
+    // independently, neither suppresses the other).
+    bool voxListeningForTest() const noexcept {
+        return m_voxListening.load(std::memory_order_acquire);
+    }
 #endif // NEREUS_BUILD_TESTS
 
 public slots:
@@ -2036,6 +2070,33 @@ private:
     // on the channel's thread (worker after moveToThread); driveOneTxBlock
     // reads it on the same thread.
     std::atomic<bool> m_running{false};
+
+    // ── Phase 3M-3a-iii Task 18 — VOX-listening pump gate (bench fix) ────────
+    //
+    // VOX-listening mode flag.  When true, the TX pump runs continuously
+    // even with m_running=false, so the WDSP DEXP detector can monitor
+    // mic envelope and fire its pushvox callback (Task 17) regardless
+    // of MOX state.  Radio-write side stays gated on m_running ONLY,
+    // so no TX I/Q reaches the radio in vox-listening mode.
+    //
+    // Without this flag, VOX-keying is broken by chicken-and-egg:
+    // pump only runs when MOX is engaged, so DEXP never sees mic
+    // envelope when MOX is off, so VOX cannot ever engage MOX.
+    //
+    // Set by RadioModel from TransmitModel::voxEnabledChanged.
+    // Discovered as bench-surfaced bug 2026-05-04 after Task 17
+    // landed the pushvox callback wire (commit 56d6921).
+    //
+    // Mirrors Thetis's continuous TXA-pipeline pumping behavior — see
+    // wdsp/dexp.c:304 [v2.10.3.13] "DEXP code runs continuously so
+    // it can be used to trigger VOX also."  In Thetis the TXA pump
+    // is driven by hardware audio cadence (HPSDR EP6 Tx audio) and
+    // is always-on after channel-open; MOX gates radio-write at the
+    // connection layer (cmaster.cs:1027 `if (run && mox)` pattern),
+    // not the pump itself.  NereusSDR pumps via TxWorkerThread which
+    // gates on m_running for power-saving when neither MOX nor VOX
+    // is in play; this flag re-enables pumping for VOX detection.
+    std::atomic<bool> m_voxListening{false};
 
     // ── Phase 3M-3a-iii Task 17 — DEXP pushvox bridge ────────────────────────
     //
