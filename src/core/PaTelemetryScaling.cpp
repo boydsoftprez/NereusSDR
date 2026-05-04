@@ -88,9 +88,12 @@ struct PaFwdTriplet {
 // From Thetis console.cs:25008-25053 [v2.10.3.13] — computeAlexFwdPower
 // per-board switch.  Returns {bridge_volt, refvoltage, adc_cal_offset}.
 //
-// Boards without an explicit case (HERMES, HERMESLITE, ANAN10/10E, HPSDR,
-// FIRST/LAST sentinels) fall through to the default triplet, matching
-// the existing private helper in RadioModel.cpp byte-for-byte.
+// Boards without an explicit case (HERMES, ANAN10/10E, HPSDR, FIRST/LAST
+// sentinels) fall through to the default triplet, matching the existing
+// private helper in RadioModel.cpp byte-for-byte.  HERMESLITE has its
+// own row (added per mi0bot console.cs:25269-25273 [v2.10.3.13-beta2])
+// since the HL2 directional coupler has a substantially larger
+// coupling factor than the default ANAN-100 coupler.
 //
 // Inline upstream attribution preserved verbatim:
 //   :25007  case HPSDRModel.ANAN_G1: //N1GP G1 added   (NereusSDR has no G1 enum)
@@ -118,12 +121,20 @@ PaFwdTriplet fwdTripletFor(HPSDRModel model) noexcept
     case HPSDRModel::ORIONMKII:
     case HPSDRModel::ANAN8000D:
         return { 0.08, 5.0, 18 };
+    // From mi0bot console.cs:25269-25273 [v2.10.3.13-beta2] — HL2 has its
+    // own directional-coupler coupling factor (bridge_volt=1.5) which is
+    // ~16.7× larger than the default 0.09.  Bench-reported #167 follow-up:
+    // without this case HL2 was reading ~75 W at 50% TUNE (a ~15× over-
+    // read on a 5 W QRP radio) because the default ANAN-100 coupler
+    // coefficient was being applied to HL2's much-smaller bridge.
+    //   //MI0BOT: HL2  [original inline comment from mi0bot console.cs:25269]
+    case HPSDRModel::HERMESLITE:
+        return { 1.5, 3.3, 6 };
     // From Thetis console.cs:25049-25053 [v2.10.3.13] — default branch.
-    // HERMES / HERMESLITE / ANAN10 / ANAN10E / HPSDR / FIRST / LAST all
-    // land here.  Matches the existing src/models/RadioModel.cpp private
-    // helper byte-for-byte (HL2 sentinel handling lives upstream of this
-    // function in the safety/SwrProtectionController path; this scaler
-    // intentionally stays Thetis-pure).
+    // HERMES / ANAN10 / ANAN10E / HPSDR / FIRST / LAST land here.
+    // (HERMESLITE used to fall through to this default in the original
+    // ramdor/Thetis port; mi0bot adds the explicit case above for the
+    // HL2's distinct directional-coupler scaling.)
     default:
         return { 0.09, 3.3, 6 };
     }

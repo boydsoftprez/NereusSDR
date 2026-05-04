@@ -33,7 +33,7 @@ class TestPaTelemetryScaling : public QObject
 private slots:
     // ─── scaleFwdPowerWatts (port of computeAlexFwdPower) ────────────────
     void anan8000d_fwd_watts_at_three_raw_values();
-    void hl2_fwd_watts_falls_to_default_at_three_raw_values();
+    void hl2_fwd_watts_uses_mi0bot_hl2_triplet();
     void unknown_model_fwd_watts_uses_default_branch();
     void zero_raw_returns_zero_watts();
 
@@ -69,35 +69,44 @@ void TestPaTelemetryScaling::anan8000d_fwd_watts_at_three_raw_values()
     QCOMPARE(w_18, 0.0);
 }
 
-// HL2 has no HERMESLITE entry in computeAlexFwdPower (Thetis upstream).
-// Falls to the default branch:  bridge_volt=0.09, refvoltage=3.3, offset=6.
-// Preserves existing RadioModel.cpp private-helper behaviour byte-for-byte.
-//   raw=2048 -> volts=(2048-6)/3.3 / 4095 = 1.6452
-//               watts = 1.6452^2 / 0.09        ≈ 30.078 W
-//   raw=4095 -> volts ≈ 3.2952 V; watts ≈ 120.654 W
-//   raw=512  -> volts=(512-6)/4095*3.3 = 0.4078; watts ≈ 1.847 W
-void TestPaTelemetryScaling::hl2_fwd_watts_falls_to_default_at_three_raw_values()
+// HL2 has its own HERMESLITE entry per mi0bot console.cs:25269-25273
+// [v2.10.3.13-beta2]:  bridge_volt=1.5, refvoltage=3.3, offset=6.
+// Bench-reported #167 follow-up: previously HL2 fell through to the
+// default {0.09, 3.3, 6} branch which is meant for the ANAN-100 coupler
+// and over-read HL2 power by ~16.7×.  HL2 is a 5 W QRP radio.
+//   raw=2048 -> volts=(2048-6)/4095*3.3 = 1.6452
+//               watts = 1.6452² / 1.5      ≈ 1.805 W
+//   raw=4095 -> volts ≈ 3.2952 V; watts = 3.2952² / 1.5 ≈ 7.24 W
+//   raw=512  -> volts=(512-6)/4095*3.3 = 0.4078;
+//               watts = 0.4078² / 1.5      ≈ 0.111 W
+void TestPaTelemetryScaling::hl2_fwd_watts_uses_mi0bot_hl2_triplet()
 {
     const double w_2048 = scaleFwdPowerWatts(HPSDRModel::HERMESLITE, 2048);
-    QVERIFY2(w_2048 > 29.9 && w_2048 < 30.3,
-             qPrintable(QString("HL2 raw=2048 watts=%1, expected ~30.08").arg(w_2048)));
+    QVERIFY2(w_2048 > 1.79 && w_2048 < 1.82,
+             qPrintable(QString("HL2 raw=2048 watts=%1, expected ~1.805").arg(w_2048)));
 
     const double w_4095 = scaleFwdPowerWatts(HPSDRModel::HERMESLITE, 4095);
-    QVERIFY2(w_4095 > 120.0 && w_4095 < 121.5,
-             qPrintable(QString("HL2 raw=4095 watts=%1, expected ~120.65").arg(w_4095)));
+    QVERIFY2(w_4095 > 7.20 && w_4095 < 7.28,
+             qPrintable(QString("HL2 raw=4095 watts=%1, expected ~7.24").arg(w_4095)));
 
     const double w_512 = scaleFwdPowerWatts(HPSDRModel::HERMESLITE, 512);
-    QVERIFY2(w_512 > 1.7 && w_512 < 2.0,
-             qPrintable(QString("HL2 raw=512 watts=%1, expected ~1.85").arg(w_512)));
+    QVERIFY2(w_512 > 0.105 && w_512 < 0.115,
+             qPrintable(QString("HL2 raw=512 watts=%1, expected ~0.111").arg(w_512)));
 }
 
-// HPSDRModel::FIRST is the -1 sentinel. Should hit default branch (same
-// numeric result as HL2 for any given raw, since both fall to default).
+// HPSDRModel::FIRST is the -1 sentinel. Should hit default branch
+// {0.09, 3.3, 6} — distinct from HL2's {1.5, 3.3, 6} now that HL2 has
+// its own case. raw=4095 default → ~120.65 W, HL2 → ~7.24 W.
 void TestPaTelemetryScaling::unknown_model_fwd_watts_uses_default_branch()
 {
     const double w_unknown = scaleFwdPowerWatts(HPSDRModel::FIRST, 4095);
-    const double w_hl2     = scaleFwdPowerWatts(HPSDRModel::HERMESLITE, 4095);
-    QCOMPARE(w_unknown, w_hl2);
+    QVERIFY2(w_unknown > 120.0 && w_unknown < 121.5,
+             qPrintable(QString("FIRST raw=4095 watts=%1, expected ~120.65").arg(w_unknown)));
+    // HL2 explicitly NOT equal to default any more (regression check).
+    const double w_hl2 = scaleFwdPowerWatts(HPSDRModel::HERMESLITE, 4095);
+    QVERIFY2(qAbs(w_unknown - w_hl2) > 100.0,
+             qPrintable(QString("HL2 (%1) should differ from default (%2) by >100 W")
+                        .arg(w_hl2).arg(w_unknown)));
 }
 
 // At raw=0 (or anything <= adc_cal_offset), volts clamps to 0 -> watts=0.
