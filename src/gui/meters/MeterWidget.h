@@ -86,6 +86,14 @@ public:
 
     void updateMeterValue(int bindingId, double value);
 
+    // Rescale the Power BarItem + ScaleItem pair (objectName "PowerBar" /
+    // "PowerScale") for the connected SKU's PA ceiling.  20% headroom
+    // past the red zone, sub-watt tick resolution for QRP radios.
+    // Bench-reported #167 follow-up: 0-120 W default made HL2 (5 W max)
+    // and ANAN-G2-1K (1000 W max) both unreadable on the same scale.
+    // Subscribed by MainWindow to RadioModel::currentRadioChanged.
+    void rescalePowerMeters(int paMaxWatts);
+
     // Container-level mode state, consumed by the Thetis visibility filter
     // rule (MeterManager.cs:31366-31368). mox == true means TX active;
     // displayGroup selects which TX group is currently visible. Both default
