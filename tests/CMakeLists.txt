@@ -384,6 +384,14 @@ nereus_add_test(tst_transmit_model_mic_jack_flags)
 #         setup.designer.cs:45005-45024 [v2.10.3.13] (udDEXPHold range 1..2000).
 nereus_add_test(tst_transmit_model_vox_properties)
 
+# ── Phase 3M-3a-iii Tasks 7-10: TransmitModel DEXP properties (11x) ──────────
+# Verifies defaults, round-trip, signals, idempotency, clamps, and persistence
+# for the 11 DEXP properties (envelope x4, gate-ratio x2, look-ahead x2,
+# side-channel filter x3).  All 11 persist; dexpEnabled has no PTT-safety
+# carve-out (only voxEnabled does).
+# Source: setup.Designer.cs:44788-45260 [v2.10.3.13] (grpDEXPVOX + grpSCF).
+nereus_add_test(tst_transmit_model_dexp)
+
 # ── Phase 3M-1b C.4: TransmitModel anti-VOX properties (2x) ─────────────────
 # Verifies defaults (antiVoxGainDb=0 NereusSDR-original / antiVoxSourceVax=false
 # matches Thetis audio.cs:446 [v2.10.3.13]), round-trip setters, signal emission,

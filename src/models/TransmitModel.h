@@ -639,6 +639,63 @@ public:
     static constexpr int kVoxHangTimeMsMin =    1;
     static constexpr int kVoxHangTimeMsMax = 2000;
 
+    // ── DEXP envelope properties (3M-3a-iii Task 7) ──────────────────────
+    //
+    // Downward expander envelope controls.  Bound to Setup -> Audio -> VOX/DEXP
+    // (grpDEXPVOX on tpDSPVOXDE) per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+    //
+    // Persistence policy departure from voxEnabled: dexpEnabled IS persisted.
+    // The 3M-1b safety carve-out (voxEnabled always loads OFF to prevent
+    // keying on background noise at startup) does NOT apply to DEXP — the
+    // downward expander only gates audio that is already being processed; it
+    // cannot accidentally PTT the radio.  All four envelope properties persist.
+    //
+    // WDSP wiring lives in TxChannel (Tasks 1-2): setDexpRun, setDexpDetectorTau,
+    // setDexpAttackTime, setDexpReleaseTime.  Setup-page binding lands in Task 14.
+
+    /// DEXP enable toggle.  Default FALSE — Thetis chkDEXPEnable has no explicit
+    /// `Checked = true` setter, so the default is the WinForms CheckBox false.
+    /// (See setup.Designer.cs:45140-45151 [v2.10.3.13].)
+    ///
+    /// Unlike voxEnabled, this property IS persisted (no PTT safety concern).
+    bool dexpEnabled() const noexcept { return m_dexpEnabled; }
+
+    /// DEXP detector low-pass filter time-constant in milliseconds.  Clamped to
+    /// [kDexpDetectorTauMsMin, kDexpDetectorTauMsMax].  Default 20.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:45093 [v2.10.3.13] — udDEXPDetTau.Value=20.
+    /// Range from setup.Designer.cs:45078-45087 [v2.10.3.13]:
+    ///   udDEXPDetTau.Maximum=100, udDEXPDetTau.Minimum=1.
+    double dexpDetectorTauMs() const noexcept { return m_dexpDetectorTauMs; }
+
+    /// DEXP attack time in milliseconds: time from low to high gain.  Clamped to
+    /// [kDexpAttackTimeMsMin, kDexpAttackTimeMsMax].  Default 2.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:45050 [v2.10.3.13] — udDEXPAttack.Value=2.
+    /// Range from setup.Designer.cs:45035-45044 [v2.10.3.13]:
+    ///   udDEXPAttack.Maximum=100, udDEXPAttack.Minimum=2.
+    double dexpAttackTimeMs() const noexcept { return m_dexpAttackTimeMs; }
+
+    /// DEXP release time in milliseconds: time from high to low gain.  Clamped to
+    /// [kDexpReleaseTimeMsMin, kDexpReleaseTimeMsMax].  Default 100.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:44990 [v2.10.3.13] — udDEXPRelease.Value=100.
+    /// Range from setup.Designer.cs:44975-44984 [v2.10.3.13]:
+    ///   udDEXPRelease.Maximum=1000, udDEXPRelease.Minimum=2.
+    double dexpReleaseTimeMs() const noexcept { return m_dexpReleaseTimeMs; }
+
+    // DEXP envelope range constants.
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPDetTau:  Min=1,  Max=100  (line 45078-45087)
+    //   udDEXPAttack:  Min=2,  Max=100  (line 45035-45044)
+    //   udDEXPRelease: Min=2,  Max=1000 (line 44975-44984)
+    static constexpr double kDexpDetectorTauMsMin  =    1.0;
+    static constexpr double kDexpDetectorTauMsMax  =  100.0;
+    static constexpr double kDexpAttackTimeMsMin   =    2.0;
+    static constexpr double kDexpAttackTimeMsMax   =  100.0;
+    static constexpr double kDexpReleaseTimeMsMin  =    2.0;
+    static constexpr double kDexpReleaseTimeMsMax  = 1000.0;
+
     // ── Mic source (3M-1b I.1) ────────────────────────────────────────────────
     //
     // NereusSDR-native property — Thetis bakes mic-source selection directly
@@ -1201,6 +1258,12 @@ public slots:
     void setVoxGainScalar(float scalar);
     void setVoxHangTimeMs(int ms);
 
+    // ── DEXP envelope setters (3M-3a-iii Task 7) ───────────────────────────
+    void setDexpEnabled(bool on);
+    void setDexpDetectorTauMs(double ms);
+    void setDexpAttackTimeMs(double ms);
+    void setDexpReleaseTimeMs(double ms);
+
     // ── Two-tone setters (3M-1c B.2) ───────────────────────────────────────
     void setTwoToneFreq1(int hz);
     void setTwoToneFreq2(int hz);
@@ -1261,6 +1324,12 @@ signals:
     void voxThresholdDbChanged(int dB);
     void voxGainScalarChanged(float scalar);
     void voxHangTimeMsChanged(int ms);
+
+    // ── DEXP envelope signals (3M-3a-iii Task 7) ──────────────────────────
+    void dexpEnabledChanged(bool on);
+    void dexpDetectorTauMsChanged(double ms);
+    void dexpAttackTimeMsChanged(double ms);
+    void dexpReleaseTimeMsChanged(double ms);
 
     // ── Mic source signals (3M-1b I.1) ────────────────────────────────────────
     /// Emitted when micSource changes. Not emitted on idempotent calls.
@@ -1371,6 +1440,18 @@ private:
     int   m_voxThresholdDb = -40;    // NereusSDR-original default; ptbVOX range [-80,0]
     float m_voxGainScalar  = 1.0f;   // audio.cs:194: vox_gain = 1.0f
     int   m_voxHangTimeMs  = 500;    // udDEXPHold.Value=500 (setup.designer.cs:45020-45024)
+
+    // ── DEXP envelope properties (3M-3a-iii Task 7) ─────────────────────
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   chkDEXPEnable: no Checked= setter -> default false (line 45140-45151)
+    //   udDEXPDetTau.Value=20   (line 45093)
+    //   udDEXPAttack.Value=2    (line 45050)
+    //   udDEXPRelease.Value=100 (line 44990)
+    // ALL four properties persist (no PTT-safety carve-out, unlike voxEnabled).
+    bool   m_dexpEnabled         = false;
+    double m_dexpDetectorTauMs   =  20.0;
+    double m_dexpAttackTimeMs    =   2.0;
+    double m_dexpReleaseTimeMs   = 100.0;
 
     // ── Mic source (3M-1b I.1 + L.3) ───────────────────────────────────
     // NereusSDR-native. Default Pc (always available; Radio is opt-in).

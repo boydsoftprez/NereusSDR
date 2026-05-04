@@ -611,6 +611,21 @@ void TransmitModel::loadFromSettings(const QString& mac)
                                        QStringLiteral("500")).toInt();
     setVoxHangTimeMs(voxHangTimeMs);
 
+    // ── DEXP envelope properties (3M-3a-iii Task 7) — ALL persist ─────────
+    // Defaults from Thetis setup.Designer.cs [v2.10.3.13]:
+    //   chkDEXPEnable: WinForms default false (line 45140-45151)
+    //   udDEXPDetTau.Value=20  (line 45093)
+    //   udDEXPAttack.Value=2   (line 45050)
+    //   udDEXPRelease.Value=100 (line 44990)
+    setDexpEnabled(s.value(pfx + QLatin1String("DEXP_Enabled"),
+                            QStringLiteral("False")).toString() == QLatin1String("True"));
+    setDexpDetectorTauMs(s.value(pfx + QLatin1String("DEXP_DetectorTauMs"),
+                                  QStringLiteral("20")).toDouble());
+    setDexpAttackTimeMs(s.value(pfx + QLatin1String("DEXP_AttackTimeMs"),
+                                 QStringLiteral("2")).toDouble());
+    setDexpReleaseTimeMs(s.value(pfx + QLatin1String("DEXP_ReleaseTimeMs"),
+                                  QStringLiteral("100")).toDouble());
+
     // ── Anti-VOX properties ───────────────────────────────────────────────
     // antiVoxGainDb: default 0 (NereusSDR-original safe starting point)
     const int antiVoxGainDb = s.value(pfx + QLatin1String("AntiVox_Gain"),
@@ -812,6 +827,13 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("Dexp_Threshold"),   QString::number(m_voxThresholdDb));
     s.setValue(pfx + QLatin1String("VOX_GainScalar"),    QString::number(static_cast<double>(m_voxGainScalar)));
     s.setValue(pfx + QLatin1String("VOX_HangTime"),    QString::number(m_voxHangTimeMs));
+
+    // ── DEXP envelope properties (3M-3a-iii Task 7) — ALL persist ─────────
+    s.setValue(pfx + QLatin1String("DEXP_Enabled"),
+               m_dexpEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("DEXP_DetectorTauMs"), QString::number(m_dexpDetectorTauMs));
+    s.setValue(pfx + QLatin1String("DEXP_AttackTimeMs"),  QString::number(m_dexpAttackTimeMs));
+    s.setValue(pfx + QLatin1String("DEXP_ReleaseTimeMs"), QString::number(m_dexpReleaseTimeMs));
 
     // ── Anti-VOX properties ───────────────────────────────────────────────
     s.setValue(pfx + QLatin1String("AntiVox_Gain"),    QString::number(m_antiVoxGainDb));
@@ -1055,6 +1077,71 @@ void TransmitModel::setVoxHangTimeMs(int ms)
     m_voxHangTimeMs = clamped;
     persistOne(QStringLiteral("VOX_HangTime"), QString::number(m_voxHangTimeMs));  // L.2 auto-persist
     emit voxHangTimeMsChanged(clamped);
+}
+
+// ── DEXP envelope properties (3M-3a-iii Task 7) ────────────────────────────
+//
+// Downward expander envelope controls.  Bound to Setup -> Audio -> VOX/DEXP
+// (grpDEXPVOX on tpDSPVOXDE) per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+//
+// Defaults:
+//   chkDEXPEnable: WinForms default false (no Checked= setter at line 45140-45151)
+//   udDEXPDetTau.Value=20    (line 45093)
+//   udDEXPAttack.Value=2     (line 45050)
+//   udDEXPRelease.Value=100  (line 44990)
+//
+// Ranges:
+//   udDEXPDetTau:  Min=1,    Max=100   (line 45078-45087)
+//   udDEXPAttack:  Min=2,    Max=100   (line 45035-45044)
+//   udDEXPRelease: Min=2,    Max=1000  (line 44975-44984)
+//
+// Persistence: ALL four properties persist.  Unlike voxEnabled (which is held
+// off at startup for PTT safety), dexpEnabled does NOT key the radio — the
+// downward expander only gates already-keyed audio.  No safety carve-out.
+//
+// WDSP wiring lives in TxChannel (Tasks 1-2): setDexpRun, setDexpDetectorTau,
+// setDexpAttackTime, setDexpReleaseTime.  Setup-page binding lands in Task 14.
+
+void TransmitModel::setDexpEnabled(bool on)
+{
+    if (on == m_dexpEnabled) { return; }  // idempotent guard
+    m_dexpEnabled = on;
+    persistOne(QStringLiteral("DEXP_Enabled"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit dexpEnabledChanged(on);
+}
+
+void TransmitModel::setDexpDetectorTauMs(double ms)
+{
+    // Clamp to udDEXPDetTau range per setup.Designer.cs:45078-45087 [v2.10.3.13]:
+    //   udDEXPDetTau.Maximum = 100, udDEXPDetTau.Minimum = 1  (units: ms)
+    const double clamped = std::clamp(ms, kDexpDetectorTauMsMin, kDexpDetectorTauMsMax);
+    if (qFuzzyCompare(clamped, m_dexpDetectorTauMs)) { return; }  // idempotent guard
+    m_dexpDetectorTauMs = clamped;
+    persistOne(QStringLiteral("DEXP_DetectorTauMs"), QString::number(clamped));
+    emit dexpDetectorTauMsChanged(clamped);
+}
+
+void TransmitModel::setDexpAttackTimeMs(double ms)
+{
+    // Clamp to udDEXPAttack range per setup.Designer.cs:45035-45044 [v2.10.3.13]:
+    //   udDEXPAttack.Maximum = 100, udDEXPAttack.Minimum = 2  (units: ms)
+    const double clamped = std::clamp(ms, kDexpAttackTimeMsMin, kDexpAttackTimeMsMax);
+    if (qFuzzyCompare(clamped, m_dexpAttackTimeMs)) { return; }  // idempotent guard
+    m_dexpAttackTimeMs = clamped;
+    persistOne(QStringLiteral("DEXP_AttackTimeMs"), QString::number(clamped));
+    emit dexpAttackTimeMsChanged(clamped);
+}
+
+void TransmitModel::setDexpReleaseTimeMs(double ms)
+{
+    // Clamp to udDEXPRelease range per setup.Designer.cs:44975-44984 [v2.10.3.13]:
+    //   udDEXPRelease.Maximum = 1000, udDEXPRelease.Minimum = 2  (units: ms)
+    const double clamped = std::clamp(ms, kDexpReleaseTimeMsMin, kDexpReleaseTimeMsMax);
+    if (qFuzzyCompare(clamped, m_dexpReleaseTimeMs)) { return; }  // idempotent guard
+    m_dexpReleaseTimeMs = clamped;
+    persistOne(QStringLiteral("DEXP_ReleaseTimeMs"), QString::number(clamped));
+    emit dexpReleaseTimeMsChanged(clamped);
 }
 
 // ── Two-tone test properties (3M-1c B.2) ────────────────────────────────────
