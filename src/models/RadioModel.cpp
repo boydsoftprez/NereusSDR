@@ -881,6 +881,24 @@ RadioModel::RadioModel(QObject* parent)
             conn->setTxDrive(wireDrive);
         });
     });
+
+    // Bench-reported #167 follow-up: power meters stick after un-key.
+    // Root cause: handlePaTelemetry only fires while the radio is sending
+    // PA telemetry (typically only during MOX/TUNE).  When MOX goes false
+    // the telemetry pump stops and RadioStatus retains the last-known
+    // forward / reflected / SWR / PA-current values, so subscribed labels
+    // and meters keep displaying the last sample.  On MOX falling-edge we
+    // explicitly zero the power-related telemetry so every subscriber sees
+    // a clean idle reading.  PA temperature is left alone (it's a slow
+    // physical quantity and the last reading is still meaningful post-key).
+    connect(&m_transmitModel, &TransmitModel::moxChanged, this,
+            [this](bool mox) {
+        if (mox) { return; }       // MOX rising-edge: telemetry pump takes over
+        m_radioStatus.setForwardPower(0.0);
+        m_radioStatus.setReflectedPower(0.0);
+        m_radioStatus.setExciterPowerMw(0);
+        m_radioStatus.setPaCurrent(0.0);
+    });
 }
 
 RadioModel::~RadioModel()
