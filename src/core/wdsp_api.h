@@ -77,6 +77,14 @@
 //                 the CFC tab schema work in 3M-3a-ii).  Signatures match
 //                 wdsp/iir.c:675-703 [v2.10.3.13].  AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-05-03 — SetDEXPRun, SetDEXPDetectorTau, SetDEXPAttackTime,
+//                 SetDEXPReleaseTime declarations added by J.J. Boyd
+//                 (KG4VCF) during 3M-3a-iii Tasks 1-2 — TxChannel DEXP
+//                 envelope/timing wrappers (SetDEXPRun is the audio-domain
+//                 master enable, separate from the existing SetDEXPRunVox).
+//                 Signatures match wdsp/dexp.c:407, 466, 479, 492
+//                 [v2.10.3.13].  AI-assisted transformation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -911,6 +919,27 @@ void SetTXAPanelGain1(int channel, double gain);
 void SetDEXPRunVox(int id, int run);
 void SetDEXPAttackThreshold(int id, double thresh);
 void SetDEXPHoldTime(int id, double time);
+
+// DEXP envelope / timing setters (Phase 3M-3a-iii Tasks 1-2).
+// SetDEXPRun is the audio-domain master enable (separate from SetDEXPRunVox,
+// which only gates VOX-keying).  SetDEXPDetectorTau / SetDEXPAttackTime /
+// SetDEXPReleaseTime all take seconds (Thetis converts ms→s at the call-site;
+// see setup.cs:18890-18931 [v2.10.3.13]).
+// WDSP takes int for bool parameters (0=false, 1=true).
+// From Thetis wdsp/dexp.c [v2.10.3.13]:
+//   SetDEXPRun:           dexp.c:407 — audio-path expansion master enable
+//   SetDEXPDetectorTau:   dexp.c:466 — input-envelope smoothing tau (seconds)
+//   SetDEXPAttackTime:    dexp.c:479 — low→high gain ramp time (seconds)
+//   SetDEXPReleaseTime:   dexp.c:492 — high→low gain ramp time (seconds)
+// Cited from Thetis cmaster.cs [v2.10.3.13]:
+//   SetDEXPRun:           cmaster.cs:166-167
+//   SetDEXPDetectorTau:   cmaster.cs:169-170
+//   SetDEXPAttackTime:    cmaster.cs:172-173
+//   SetDEXPReleaseTime:   cmaster.cs:175-176
+void SetDEXPRun(int id, int run);
+void SetDEXPDetectorTau(int id, double tau);
+void SetDEXPAttackTime(int id, double time);
+void SetDEXPReleaseTime(int id, double time);
 
 // Anti-VOX — wires SetAntiVOXRun and SetAntiVOXGain.
 // WDSP takes int for bool parameters (0=false, 1=true).

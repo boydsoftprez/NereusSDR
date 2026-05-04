@@ -172,6 +172,17 @@ warren@wpratt.com
 //                 cited from deskhpsdr/transmitter.c:2136-2186 [@120188f].
 //                 The TUN path at lines 520-528 is untouched.
 //                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Tasks 1-2: setDexpRun(bool) and
+//                 setDexpDetectorTau(double) wrappers implemented by
+//                 J.J. Boyd (KG4VCF).  setDexpRun gates the audio-domain
+//                 expansion (distinct from the existing setVoxRun() VOX-
+//                 keying gate); setDexpDetectorTau wraps the input
+//                 envelope smoothing time constant.  Same idempotent
+//                 pattern as the existing setVox*() family with NaN-aware
+//                 guards on doubles, ms→s conversion at the WDSP boundary,
+//                 std::clamp at the wrapper boundary for the Thetis range
+//                 1..100 ms (setup.Designer.cs:45070-45098 [v2.10.3.13]).
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -1300,6 +1311,107 @@ void TxChannel::setAntiVoxGain(double gain)
     SetAntiVOXGain(m_channelId, gain);
 #else
     Q_UNUSED(gain);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setDexpRun()  — Phase 3M-3a-iii Task 1
+//
+// Enable or disable DEXP audio-domain expansion (the master "noise gate" gate).
+//
+// Porting from Thetis cmaster.cs:166-167 [v2.10.3.13] — SetDEXPRun DLL import:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPRun", ...)]
+//   public static extern void SetDEXPRun (int id, bool run);
+//
+// Distinction note: SetDEXPRunVox (cmaster.cs:199-200, wrapped by setVoxRun
+// in 3M-1b D.3) only gates whether the DEXP detector fires VOX keying.
+// SetDEXPRun gates whether the audio is actually attenuated when below
+// threshold — they are independent flags inside the same DEXP struct.
+// See wdsp/dexp.c:409 [v2.10.3.13] comment:
+//   "run != 0, puts dexp in the audio processing path; otherwise, it's only
+//    used to trigger VOX"
+//
+// Thetis call-site setup.cs:18882-18888 [v2.10.3.13]:
+//   private void chkDEXPEnable_CheckedChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.SetDEXPRun(0, chkDEXPEnable.Checked);
+//       console.NoiseGateEnabled = chkDEXPEnable.Checked;
+//       chkDEXPLookAheadEnable_CheckedChanged(this, EventArgs.Empty);
+//   }
+//
+// Idempotent: bool `==` guard against m_dexpRunLast.  WDSP signature uses
+// `int` for the bool parameter; explicit cast applied (matches setVoxRun).
+//
+// From Thetis wdsp/dexp.c:407 [v2.10.3.13] — SetDEXPRun implementation.
+// ---------------------------------------------------------------------------
+void TxChannel::setDexpRun(bool run)
+{
+    if (run == m_dexpRunLast) return;  // idempotent guard
+    m_dexpRunLast = run;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:166-167 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    // SetDEXPRun (dexp.c:410) dereferences pdexp[id] under cs_update.
+    if (pdexp[m_channelId] == nullptr) return;
+    SetDEXPRun(m_channelId, run ? 1 : 0);
+#else
+    Q_UNUSED(run);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setDexpDetectorTau()  — Phase 3M-3a-iii Task 1
+//
+// Set DEXP detector smoothing time constant (input-envelope low-pass).
+//
+// Porting from Thetis cmaster.cs:169-170 [v2.10.3.13] — SetDEXPDetectorTau:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPDetectorTau", ...)]
+//   public static extern void SetDEXPDetectorTau(int id, double tau);
+//
+// Units: seconds at the WDSP boundary (wdsp/dexp.c:468 [v2.10.3.13]
+// "Time-constant for smoothing the signal for detection (seconds).").
+// Thetis converts from ms at the call-site (setup.cs:18927-18931 [v2.10.3.13]):
+//   private void udDEXPDetTau_ValueChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
+//   }
+//
+// NereusSDR follows the same idiom: callers pass milliseconds for symmetry
+// with setVoxHangTime's seconds API would have been wrong here — Thetis
+// exposes ms in the spinbox (udDEXPDetTau Min=1 Max=100, default 20 per
+// setup.Designer.cs:45078-45093 [v2.10.3.13]) and divides by 1000 just
+// before the WDSP call.  Wrapper clamps at the spinbox range, then divides.
+//
+// Range 1..100 ms (setup.Designer.cs:45078-45093 [v2.10.3.13]).  Default 20
+// (setup.Designer.cs:45093).
+//
+// Idempotent guard: NaN-aware first-call sentinel, then qFuzzyCompare on
+// the post-clamp ms value (matches setVoxAttackThreshold's pattern but uses
+// qFuzzyCompare instead of `==` because the clamp can introduce a tiny
+// representation difference for boundary inputs like 100.0 vs 100.0001).
+//
+// From Thetis wdsp/dexp.c:466 [v2.10.3.13] — SetDEXPDetectorTau impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setDexpDetectorTau(double tauMs)
+{
+    // Range 1..100 ms per setup.Designer.cs:45078-45093 [v2.10.3.13].
+    const double clamped = std::clamp(tauMs, 1.0, 100.0);
+    if (!std::isnan(m_dexpDetectorTauMsLast)
+        && qFuzzyCompare(clamped, m_dexpDetectorTauMsLast)) {
+        return;  // idempotent guard
+    }
+    m_dexpDetectorTauMsLast = clamped;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:169-170 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
+    // ms→seconds for WDSP, matching setup.cs:18930 [v2.10.3.13]:
+    //   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
+    SetDEXPDetectorTau(m_channelId, clamped / 1000.0);
 #endif
 }
 

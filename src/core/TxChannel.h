@@ -673,6 +673,39 @@ public:
     /// From Thetis cmaster.cs:211-212 [v2.10.3.13] — SetAntiVOXGain DLL import.
     void setAntiVoxGain(double gain);
 
+    // ── DEXP envelope/timing WDSP wrappers (3M-3a-iii Tasks 1-2) ────────────
+
+    /// DEXP master enable (gate the audio downward expansion).
+    ///
+    /// From Thetis cmaster.cs:166-167 [v2.10.3.13] — SetDEXPRun DLL import.
+    /// WDSP impl: wdsp/dexp.c:407 [v2.10.3.13] — SetDEXPRun.
+    /// Thetis call-site: setup.cs:18882-18888 chkDEXPEnable_CheckedChanged
+    ///   (calls cmaster.SetDEXPRun(0, chkDEXPEnable.Checked)).
+    ///
+    /// Note: distinct from setVoxRun() (SetDEXPRunVox) — setVoxRun controls
+    /// whether the DEXP detector also fires VOX-keying; setDexpRun controls
+    /// whether the audio-domain expansion actually applies.  The two are
+    /// stackable: VOX uses the same DEXP detector regardless of whether
+    /// audio-path expansion is engaged (wdsp/dexp.c:409 comment).
+    ///
+    /// Idempotent: bool `==` guard against m_dexpRunLast.
+    void setDexpRun(bool run);
+
+    /// DEXP detector smoothing time constant (low-pass on input envelope).
+    ///
+    /// From Thetis cmaster.cs:169-170 [v2.10.3.13] — SetDEXPDetectorTau DLL
+    /// import.  WDSP impl: wdsp/dexp.c:466 [v2.10.3.13]; units are seconds
+    /// (wdsp/dexp.c:468 comment "Time-constant ... (seconds)").
+    /// Thetis call-site: setup.cs:18927-18931 udDEXPDetTau_ValueChanged:
+    ///   cmaster.SetDEXPDetectorTau(0, (double)udDEXPDetTau.Value / 1000.0);
+    ///
+    /// Range: 1..100 ms (clamped at the wrapper boundary, then divided by
+    /// 1000.0 before the WDSP call).  Default: 20 ms
+    /// (setup.Designer.cs:45093 [v2.10.3.13]).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
+    void setDexpDetectorTau(double tauMs);
+
     // ── Mic preamp / mic-mute path (3M-1b D.6) ──────────────────────────────
 
     /// Set the mic preamp linear scalar pushed to WDSP via SetTXAPanelGain1.
@@ -1433,6 +1466,10 @@ public:
     bool   lastAntiVoxRunForTest()            const noexcept { return m_antiVoxRunLast; }
     double lastAntiVoxGainForTest()           const noexcept { return m_antiVoxGainLast; }
 
+    // ── Test seams (Phase 3M-3a-iii Tasks 1-2) — DEXP envelope/timing ──────
+    bool   lastDexpRunForTest()               const noexcept { return m_dexpRunLast; }
+    double lastDexpDetectorTauForTest()       const noexcept { return m_dexpDetectorTauMsLast; }
+
     // ── Test seam (Phase 3M-1b D.6) — mic preamp last-value read-back ────────
     //
     // Allow tests to verify:
@@ -1669,6 +1706,16 @@ private:
     double m_voxHangTimeLast        = std::numeric_limits<double>::quiet_NaN();
     bool   m_antiVoxRunLast         = false;
     double m_antiVoxGainLast        = std::numeric_limits<double>::quiet_NaN();
+
+    // ── DEXP envelope/timing last-set values (3M-3a-iii Tasks 1-2) ──────────
+    //
+    // Same NaN-init pattern as the VOX double cache members above.  Bool
+    // m_dexpRunLast initialises to false, matching the value Thetis passes
+    // to create_dexp at TX setup (ChannelMaster/cmaster.c:132 [v2.10.3.13]
+    // "dexp initially set to OFF").  Doubles use quiet_NaN so the first
+    // call always passes the guard.
+    bool   m_dexpRunLast              = false;
+    double m_dexpDetectorTauMsLast    = std::numeric_limits<double>::quiet_NaN();
 
     // ── Mic preamp last-set value (D.6) ──────────────────────────────────────
     //

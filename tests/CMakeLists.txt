@@ -1911,6 +1911,20 @@ nereus_add_test(tst_tx_channel_per_mode_config)
 nereus_add_test(tst_tx_channel_vox_anti_vox)
 target_compile_definitions(tst_tx_channel_vox_anti_vox PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-iii Tasks 1-2: TxChannel DEXP envelope/timing wrappers ───────
+#
+# Exercises (NEREUS_BUILD_TESTS required for test-seam accessors):
+#   setDexpRun(bool)             → SetDEXPRun         [cmaster.cs:166-167 v2.10.3.13]
+#   setDexpDetectorTau(double)   → SetDEXPDetectorTau [cmaster.cs:169-170]
+#   setDexpAttackTime(double)    → SetDEXPAttackTime  [cmaster.cs:172-173]
+#   setDexpReleaseTime(double)   → SetDEXPReleaseTime [cmaster.cs:175-176]
+# Thetis ranges (setup.Designer.cs [v2.10.3.13]):
+#   udDEXPDetTau   1..100 ms default 20   (lines 45070-45098)
+#   udDEXPAttack   2..100 ms default 2    (lines 45027-45055)
+#   udDEXPRelease  2..1000 ms default 100 (lines 44967-44995)
+nereus_add_test(tst_tx_channel_dexp_envelope)
+target_compile_definitions(tst_tx_channel_dexp_envelope PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task D.4: TxChannel::setStageRunning expansion ───────────────
 # Verifies Panel (existing), MicMeter, AlcMeter, AmMod, FmMod dispatch.
 # MicMeter/AlcMeter: always-on meter stages — no public WDSP Run setter (meter.c);
