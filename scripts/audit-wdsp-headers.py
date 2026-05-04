@@ -26,9 +26,12 @@ WDSP_SRC = REPO / "third_party" / "wdsp" / "src"
 
 # Expected classification totals per WDSP-PROVENANCE.md.
 # Updated 2026-04-23: Sub-epic C-1 added rnnr.c/.h + sbnr.c/.h (4 new GPLv2-or-later files).
+# Updated 2026-05-04: issue #167 Phase 1 Agent 1C added txgain_stub.c
+# (NereusSDR-original glue stub authored by J.J. Boyd KG4VCF, GPLv2-or-later
+# permission block) bumping the count from 132 to 133.
 # Used to flag drift when the census shifts without a docs update.
 EXPECTED = {
-    "gpl2-or-later": 132,
+    "gpl2-or-later": 133,
     "copyright-no-permission-block": 0,
     "no-header": 10,
 }
