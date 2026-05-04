@@ -757,6 +757,27 @@ void TxApplet::wireControls()
     });
     fwdGaugeRefreshTimer->start();
 
+    // Bench-reported #167 follow-up: TxApplet's RF Pwr / SWR HGauges have
+    // their own EMA smoothing (m_fwdPowerSmoothedW, alpha=0.30) separate
+    // from the MeterPanel's BarItem stack.  A single zero from
+    // RadioStatus::powerChanged after un-key only walks the smoothed
+    // value down by 30% (e.g. 60 → 42), then no more updates flow so the
+    // gauge stays stuck at ~42.  Snap the smoothed state to 0 on MOX
+    // falling-edge so the gauge clears instantly — same idea as the
+    // BarItem clearSmoothing path in MeterPoller::setInTx.  Subscribed
+    // to MoxController::moxStateChanged (the authoritative TX boundary,
+    // covers MOX un-key AND TUNE release) rather than orphan
+    // TransmitModel::moxChanged signals.
+    if (m_model && m_model->moxController()) {
+        connect(m_model->moxController(), &MoxController::moxStateChanged,
+                this, [this](bool active) {
+            if (active) { return; }      // rising-edge: smoothing takes over
+            m_fwdPowerSmoothedW = 0.0;
+            if (m_fwdPowerGauge) { m_fwdPowerGauge->setValue(0.0); }
+            if (m_swrGauge)      { m_swrGauge->setValue(1.0); }
+        });
+    }
+
     // ── SWR Prot LED ← SwrProtectionController::highSwrChanged ─────────────
     // SwrProtectionController (Phase 3G-13) emits highSwrChanged(bool) when
     // the radio's SWR-protection state changes. Light the LED amber when
