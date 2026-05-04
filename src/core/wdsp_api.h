@@ -85,6 +85,16 @@
 //                 Signatures match wdsp/dexp.c:407, 466, 479, 492
 //                 [v2.10.3.13].  AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-05-03 — SetDEXPExpansionRatio, SetDEXPHysteresisRatio
+//                 declarations added by J.J. Boyd (KG4VCF) during
+//                 3M-3a-iii Task 3 — TxChannel DEXP gate/ratio
+//                 wrappers.  Both take linear ratio at the WDSP
+//                 boundary; the dB→linear conversion happens in the
+//                 wrapper via Math.Pow(10, ±dB/20.0) (POSITIVE sign for
+//                 Expansion, NEGATIVE for Hysteresis per setup.cs:18918,
+//                 18924 [v2.10.3.13]).  Signatures match wdsp/dexp.c:518,
+//                 531 [v2.10.3.13].  AI-assisted transformation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -940,6 +950,21 @@ void SetDEXPRun(int id, int run);
 void SetDEXPDetectorTau(int id, double tau);
 void SetDEXPAttackTime(int id, double time);
 void SetDEXPReleaseTime(int id, double time);
+
+// DEXP gate / ratio setters (Phase 3M-3a-iii Task 3).
+// Both take a LINEAR ratio at the WDSP boundary; Thetis converts at the
+// call-site via Math.Pow(10, ±dB/20.0) — POSITIVE sign for ExpansionRatio
+// (setup.cs:18918 [v2.10.3.13]), NEGATIVE sign for HysteresisRatio
+// (setup.cs:18924 [v2.10.3.13]).  Hysteresis ratio = release / attack
+// threshold: more dB → smaller linear ratio → wider gap.
+// From Thetis wdsp/dexp.c [v2.10.3.13]:
+//   SetDEXPExpansionRatio:  dexp.c:518 — exp_ratio (Hi_gain / Lo_gain)
+//   SetDEXPHysteresisRatio: dexp.c:531 — hysteresis_ratio (Hold / Attack)
+// Cited from Thetis cmaster.cs [v2.10.3.13]:
+//   SetDEXPExpansionRatio:  cmaster.cs:181-182
+//   SetDEXPHysteresisRatio: cmaster.cs:184-185
+void SetDEXPExpansionRatio(int id, double ratio);
+void SetDEXPHysteresisRatio(int id, double ratio);
 
 // Anti-VOX — wires SetAntiVOXRun and SetAntiVOXGain.
 // WDSP takes int for bool parameters (0=false, 1=true).

@@ -187,6 +187,18 @@ warren@wpratt.com
 //                 udDEXPDetTau 1..100, udDEXPAttack 2..100,
 //                 udDEXPRelease 2..1000).  AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Task 3: setDexpExpansionRatio(double)
+//                 and setDexpHysteresisRatio(double) wrappers implemented
+//                 by J.J. Boyd (KG4VCF).  Wrapper API takes dB
+//                 (operator-friendly, matches Thetis Setup-form spinbox);
+//                 internally converts to linear via std::pow(10.0, ±dB/20.0)
+//                 before WDSP push.  POSITIVE sign for ExpansionRatio
+//                 (setup.cs:18918 [v2.10.3.13]); NEGATIVE sign for
+//                 HysteresisRatio (setup.cs:18924 [v2.10.3.13]).
+//                 Idempotent guard compares the user-facing dB.  Ranges
+//                 0..30 dB (Expansion) and 0..10 dB (Hysteresis) per
+//                 setup.Designer.cs:44845-44905 [v2.10.3.13].  AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -1508,6 +1520,121 @@ void TxChannel::setDexpReleaseTime(double releaseMs)
     // ms→seconds for WDSP, matching setup.cs:18905 [v2.10.3.13]:
     //   cmaster.SetDEXPReleaseTime(0, (double)udDEXPRelease.Value / 1000.0);
     SetDEXPReleaseTime(m_channelId, clamped / 1000.0);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setDexpExpansionRatio()  — Phase 3M-3a-iii Task 3
+//
+// Set DEXP downward-expansion ratio (the "depth" of the gate).
+//
+// Porting from Thetis cmaster.cs:181-182 [v2.10.3.13] — SetDEXPExpansionRatio:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPExpansionRatio", ...)]
+//   public static extern void SetDEXPExpansionRatio(int id, double ratio);
+//
+// WDSP takes a LINEAR ratio (wdsp/dexp.c:518-528 [v2.10.3.13]; comment at
+// dexp.c:520-521: "High_gain = 1.0; Low_gain = 1.0/exp_ratio.  Range of
+// 1.0 - 30.0 should be good.  Could use dB:  0.0 - 30.0dB.").
+//
+// Thetis converts from dB at the call-site (setup.cs:18915-18919 [v2.10.3.13]):
+//   private void udDEXPExpansionRatio_ValueChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.SetDEXPExpansionRatio(0,
+//                                     Math.Pow(10.0, (double)udDEXPExpansionRatio.Value / 20.0));
+//   }
+//
+// Note POSITIVE sign in Math.Pow.  This is opposite to Hysteresis which uses
+// negative.  More dB → larger linear ratio → harder gate.
+//
+// Range 0..30 dB (setup.Designer.cs:44885-44900 [v2.10.3.13]).  Default 10.0
+// (setup.Designer.cs:44900-44904; raw decimal Value=10 with no scale shift
+// = 10.0 dB).
+//
+// Idempotent guard: NaN-aware first-call sentinel + qFuzzyCompare on the
+// post-clamp dB value (matches the timing setters' pattern; comparison is
+// in user-facing dB so re-pushes of the same dB are absorbed even if the
+// linear conversion would otherwise jitter on FP rounding).
+//
+// From Thetis wdsp/dexp.c:518 [v2.10.3.13] — SetDEXPExpansionRatio impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setDexpExpansionRatio(double ratioDb)
+{
+    // Range 0..30 dB per setup.Designer.cs:44885-44900 [v2.10.3.13].
+    const double clamped = std::clamp(ratioDb, 0.0, 30.0);
+    if (!std::isnan(m_dexpExpansionRatioDbLast)
+        && qFuzzyCompare(clamped, m_dexpExpansionRatioDbLast)) {
+        return;  // idempotent guard
+    }
+    m_dexpExpansionRatioDbLast = clamped;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:181-182 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
+    // dB→linear via Math.Pow(10, dB/20.0) — POSITIVE sign — matches Thetis
+    // setup.cs:18918 [v2.10.3.13]:
+    //   cmaster.SetDEXPExpansionRatio(0,
+    //                                 Math.Pow(10.0, (double)udDEXPExpansionRatio.Value / 20.0));
+    SetDEXPExpansionRatio(m_channelId, std::pow(10.0, clamped / 20.0));
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// setDexpHysteresisRatio()  — Phase 3M-3a-iii Task 3
+//
+// Set DEXP hysteresis ratio (release-vs-attack threshold gap).
+//
+// Porting from Thetis cmaster.cs:184-185 [v2.10.3.13] — SetDEXPHysteresisRatio:
+//   [DllImport("wdsp.dll", EntryPoint = "SetDEXPHysteresisRatio", ...)]
+//   public static extern void SetDEXPHysteresisRatio(int id, double ratio);
+//
+// WDSP takes a LINEAR ratio (wdsp/dexp.c:531-541 [v2.10.3.13]; comment at
+// dexp.c:533-534: "Hold_thresh = hysteresis_ratio * Attack_thresh.  Expose
+// to operator in dB: 0.0dB - 9.9dB should be good (1.000 - 0.320).").
+//
+// Thetis converts from dB at the call-site (setup.cs:18921-18925 [v2.10.3.13]):
+//   private void udDEXPHysteresisRatio_ValueChanged(object sender, EventArgs e)
+//   {
+//       if (initializing) return;
+//       cmaster.SetDEXPHysteresisRatio(0,
+//                                      Math.Pow(10.0, -(double)udDEXPHysteresisRatio.Value / 20.0));
+//   }
+//
+// IMPORTANT — note the NEGATIVE sign in Math.Pow.  This is the opposite of
+// ExpansionRatio (which uses positive).  Hold_thresh sits BELOW Attack_thresh
+// (hysteresis_ratio < 1.0 always), so user-facing dB grows as the linear
+// ratio shrinks: 0 dB = 1.0 (no gap), 6 dB = 0.5 (release at half attack),
+// 9.9 dB = 0.32 (release at ~1/3 attack — wide hysteresis, harder to chatter).
+//
+// Range 0..10 dB (setup.Designer.cs:44854-44869 [v2.10.3.13]).  Default 2.0
+// (setup.Designer.cs:44869-44873; raw decimal Value=20 with DecimalPlaces=1
+// / scale shift 65536 = 2.0 dB).
+//
+// Idempotent guard: NaN-aware first-call sentinel + qFuzzyCompare on the
+// post-clamp dB value (matches setDexpExpansionRatio's pattern exactly).
+//
+// From Thetis wdsp/dexp.c:531 [v2.10.3.13] — SetDEXPHysteresisRatio impl.
+// ---------------------------------------------------------------------------
+void TxChannel::setDexpHysteresisRatio(double ratioDb)
+{
+    // Range 0..10 dB per setup.Designer.cs:44854-44869 [v2.10.3.13].
+    const double clamped = std::clamp(ratioDb, 0.0, 10.0);
+    if (!std::isnan(m_dexpHysteresisRatioDbLast)
+        && qFuzzyCompare(clamped, m_dexpHysteresisRatioDbLast)) {
+        return;  // idempotent guard
+    }
+    m_dexpHysteresisRatioDbLast = clamped;
+#ifdef HAVE_WDSP
+    // From Thetis cmaster.cs:184-185 [v2.10.3.13]
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    // Phase 3M-1c TX pump v3: pdexp[ch] null-guard — see setVoxRun for rationale.
+    if (pdexp[m_channelId] == nullptr) return;
+    // dB→linear via Math.Pow(10, -dB/20.0) — NEGATIVE sign — matches Thetis
+    // setup.cs:18924 [v2.10.3.13]:
+    //   cmaster.SetDEXPHysteresisRatio(0,
+    //                                  Math.Pow(10.0, -(double)udDEXPHysteresisRatio.Value / 20.0));
+    SetDEXPHysteresisRatio(m_channelId, std::pow(10.0, -clamped / 20.0));
 #endif
 }
 

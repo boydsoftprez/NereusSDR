@@ -738,6 +738,57 @@ public:
     /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on doubles.
     void setDexpReleaseTime(double releaseMs);
 
+    // ── DEXP gate / ratio WDSP wrappers (3M-3a-iii Task 3) ──────────────────
+
+    /// DEXP expansion ratio (downward expansion gain ratio, dB API).
+    ///
+    /// From Thetis cmaster.cs:181-182 [v2.10.3.13] — SetDEXPExpansionRatio
+    /// DLL import.  WDSP impl: wdsp/dexp.c:518 [v2.10.3.13]; takes a linear
+    /// ratio (wdsp/dexp.c:520-521 comment "High_gain = 1.0; Low_gain =
+    /// 1.0/exp_ratio.  Range of 1.0 - 30.0 should be good.  Could use dB:
+    /// 0.0 - 30.0dB.").
+    /// Thetis call-site: setup.cs:18915-18919 udDEXPExpansionRatio_ValueChanged:
+    ///   cmaster.SetDEXPExpansionRatio(0,
+    ///                                 Math.Pow(10.0, dB / 20.0));
+    ///
+    /// Wrapper API takes dB (operator-friendly, matches Setup-form
+    /// spinbox); converts to linear via std::pow(10.0, dB/20.0) inside
+    /// before the WDSP push.  Idempotent guard compares the dB value
+    /// (post-clamp) so the user-facing sense is preserved.
+    ///
+    /// Range: 0..30 dB (clamped at the wrapper boundary).  Default: 10.0 dB
+    /// (setup.Designer.cs:44900-44904 [v2.10.3.13] — raw decimal Value=10
+    /// with no scale shift = 10.0 dB).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on the
+    /// stored dB value.
+    void setDexpExpansionRatio(double ratioDb);
+
+    /// DEXP hysteresis ratio (release-vs-attack threshold ratio, dB API).
+    ///
+    /// From Thetis cmaster.cs:184-185 [v2.10.3.13] — SetDEXPHysteresisRatio
+    /// DLL import.  WDSP impl: wdsp/dexp.c:531 [v2.10.3.13]; takes a linear
+    /// ratio (wdsp/dexp.c:533-534 comment "Hold_thresh = hysteresis_ratio *
+    /// Attack_thresh.  Expose to operator in dB: 0.0dB - 9.9dB should be
+    /// good (1.000 - 0.320).").
+    /// Thetis call-site: setup.cs:18921-18925 udDEXPHysteresisRatio_ValueChanged:
+    ///   cmaster.SetDEXPHysteresisRatio(0,
+    ///                                  Math.Pow(10.0, -dB / 20.0));
+    ///
+    /// IMPORTANT: Thetis uses a NEGATIVE sign in Math.Pow for hysteresis
+    /// (unlike ExpansionRatio which uses positive).  This is because the
+    /// hold threshold is BELOW the attack threshold (Hold_thresh < Attack_thresh
+    /// when hysteresis_ratio < 1.0).  More dB → smaller linear ratio → wider
+    /// gap between attack and release thresholds.
+    ///
+    /// Range: 0..10 dB (clamped at the wrapper boundary).  Default: 2.0 dB
+    /// (setup.Designer.cs:44869-44873 [v2.10.3.13] — raw decimal Value=20
+    /// with DecimalPlaces=1 / scale shift 65536 = 2.0 dB).
+    ///
+    /// Idempotent: NaN-aware first-call sentinel; qFuzzyCompare on the
+    /// stored dB value.
+    void setDexpHysteresisRatio(double ratioDb);
+
     // ── Mic preamp / mic-mute path (3M-1b D.6) ──────────────────────────────
 
     /// Set the mic preamp linear scalar pushed to WDSP via SetTXAPanelGain1.
@@ -1504,6 +1555,15 @@ public:
     double lastDexpAttackTimeForTest()        const noexcept { return m_dexpAttackTimeMsLast; }
     double lastDexpReleaseTimeForTest()       const noexcept { return m_dexpReleaseTimeMsLast; }
 
+    // ── Test seams (Phase 3M-3a-iii Task 3) — DEXP gate / ratio ────────────
+    //
+    // Wrapper stores the user-facing dB (idempotency check); the linear
+    // value goes to WDSP via std::pow(10, ±dB/20.0) — see setDexpExpansionRatio
+    // (positive sign) and setDexpHysteresisRatio (NEGATIVE sign per
+    // setup.cs:18924 [v2.10.3.13]).
+    double lastDexpExpansionRatioDbForTest()  const noexcept { return m_dexpExpansionRatioDbLast; }
+    double lastDexpHysteresisRatioDbForTest() const noexcept { return m_dexpHysteresisRatioDbLast; }
+
     // ── Test seam (Phase 3M-1b D.6) — mic preamp last-value read-back ────────
     //
     // Allow tests to verify:
@@ -1752,6 +1812,17 @@ private:
     double m_dexpDetectorTauMsLast    = std::numeric_limits<double>::quiet_NaN();
     double m_dexpAttackTimeMsLast     = std::numeric_limits<double>::quiet_NaN();
     double m_dexpReleaseTimeMsLast    = std::numeric_limits<double>::quiet_NaN();
+
+    // ── DEXP gate / ratio last-set values (3M-3a-iii Task 3) ────────────────
+    //
+    // Stored as user-facing dB (idempotency check operates on the dB value).
+    // The linear ratio that goes to WDSP is recomputed from this dB on every
+    // accepted call via std::pow(10, ±dB/20.0).  Sign convention:
+    //   ExpansionRatio:  positive (Math.Pow(10, +dB/20))   — setup.cs:18918
+    //   HysteresisRatio: NEGATIVE (Math.Pow(10, -dB/20))   — setup.cs:18924
+    // Both initialise to quiet_NaN so the first call always passes the guard.
+    double m_dexpExpansionRatioDbLast  = std::numeric_limits<double>::quiet_NaN();
+    double m_dexpHysteresisRatioDbLast = std::numeric_limits<double>::quiet_NaN();
 
     // ── Mic preamp last-set value (D.6) ──────────────────────────────────────
     //

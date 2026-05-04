@@ -1925,6 +1925,29 @@ target_compile_definitions(tst_tx_channel_vox_anti_vox PRIVATE NEREUS_BUILD_TEST
 nereus_add_test(tst_tx_channel_dexp_envelope)
 target_compile_definitions(tst_tx_channel_dexp_envelope PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-iii Tasks 3-5: TxChannel DEXP gate / SCF / look-ahead ────────
+#
+# Exercises (NEREUS_BUILD_TESTS required for test-seam accessors):
+#   setDexpExpansionRatio(double)        → SetDEXPExpansionRatio       [cmaster.cs:181-182 v2.10.3.13]
+#                                          (Math.Pow(10, dB/20) at WDSP boundary)
+#   setDexpHysteresisRatio(double)       → SetDEXPHysteresisRatio      [cmaster.cs:184-185]
+#                                          (Math.Pow(10, -dB/20) — NEGATIVE sign per setup.cs:18924)
+#   setDexpLowCut(double)                → SetDEXPLowCut               [cmaster.cs:190-191]
+#   setDexpHighCut(double)               → SetDEXPHighCut              [cmaster.cs:193-194]
+#   setDexpRunSideChannelFilter(bool)    → SetDEXPRunSideChannelFilter [cmaster.cs:196-197]
+#   setDexpRunAudioDelay(bool)           → SetDEXPRunAudioDelay        [cmaster.cs:202-203]
+#   setDexpAudioDelay(double)            → SetDEXPAudioDelay           [cmaster.cs:205-206]
+# Thetis ranges (setup.Designer.cs [v2.10.3.13]):
+#   udDEXPExpansionRatio  0..30 dB    default 10.0  (lines 44876-44905)
+#   udDEXPHysteresisRatio 0..10 dB    default 2.0   (lines 44845-44874)
+#   udSCFLowCut           100..10000 Hz default 500  (lines 45217-45245)
+#   udSCFHighCut          100..10000 Hz default 1500 (lines 45187-45215)
+#   chkSCFEnable          default CHECKED            (line 45250)
+#   udDEXPLookAhead       10..999 ms default 60      (lines 44765-44793)
+#   chkDEXPLookAheadEnable default CHECKED           (line 44808)
+nereus_add_test(tst_tx_channel_dexp_gate)
+target_compile_definitions(tst_tx_channel_dexp_gate PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task D.4: TxChannel::setStageRunning expansion ───────────────
 # Verifies Panel (existing), MicMeter, AlcMeter, AmMod, FmMod dispatch.
 # MicMeter/AlcMeter: always-on meter stages — no public WDSP Run setter (meter.c);
