@@ -328,6 +328,12 @@ public:
     /// Inject a confirm answer consumed by the next Reset Defaults click.
     void setResetConfirmedForTest(bool confirmed)
         { m_resetConfirmForTest = confirmed; m_hasResetConfirmForTest = true; }
+
+    /// Suppress the "Cannot delete the last remaining PA profile"
+    /// QMessageBox::information modal so headless test runs do not
+    /// block on a dialog that requires a user click.
+    void setSuppressLastProfileWarningForTest(bool suppress)
+        { m_suppressLastProfileWarningForTest = suppress; }
 #endif
 
 private slots:
@@ -539,6 +545,7 @@ private:
     bool    m_deleteConfirmForTest{false};
     bool    m_hasResetConfirmForTest{false};
     bool    m_resetConfirmForTest{false};
+    bool    m_suppressLastProfileWarningForTest{false};
 #endif
 };
 

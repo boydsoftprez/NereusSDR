@@ -1019,6 +1019,11 @@ void PaGainByBandPage::onDeleteProfile()
     if (!ok) {
         // Manager refused (last-remaining-profile guard).  Surface the
         // verbatim Thetis precedent string used by MicProfileManager.
+        // Test seam: skip the modal so headless tests don't block on
+        // a dialog that requires a user click.
+#ifdef NEREUS_BUILD_TESTS
+        if (m_suppressLastProfileWarningForTest) { return; }
+#endif
         QMessageBox::information(
             this, tr("Cannot Delete Profile"),
             tr("It is not possible to delete the last remaining PA profile."));

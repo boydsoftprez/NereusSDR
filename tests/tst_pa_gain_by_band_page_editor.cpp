@@ -352,6 +352,10 @@ void TstPaGainByBandPageEditor::delete_button_refuses_last_remaining_profile()
 
     // Bypass QMessageBox::question — confirm the delete intent.
     page.setDeleteConfirmedForTest(true);
+    // Suppress the "Cannot delete the last remaining PA profile"
+    // QMessageBox::information modal so this headless test does not
+    // block waiting for a user OK click.
+    page.setSuppressLastProfileWarningForTest(true);
     btnDelete->click();
 
     // Manager refused; the lone profile remains.
