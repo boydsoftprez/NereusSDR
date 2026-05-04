@@ -62,6 +62,20 @@
 //                 cancel or safety abort (observed > band_max * 1.1).
 //                 Authored by J.J. Boyd (KG4VCF) with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-05-03 — Phase 8 of issue #167 PA-cal hotfix: per-SKU visibility
+//                 wiring.  Adds applyCapabilityVisibility(BoardCapabilities)
+//                 to all three PA pages, plus four informational warning
+//                 labels on PaGainByBandPage (no-PA-support banner,
+//                 Ganymede 500W follow-up, PA/TX-Profile recovery
+//                 linkage, ATT-on-TX gate).  When caps.hasPaProfile is
+//                 false, the live editor controls (Phase 6+7) — combo,
+//                 buttons, spinbox grid, adjust matrix, max-power column,
+//                 auto-cal checkbox + sub-panel — are all disabled.
+//                 Visibility logic mirrors Thetis
+//                 comboRadioModel_SelectedIndexChanged
+//                 (setup.cs:19812-20310 [v2.10.3.13]).
+//                 Authored by J.J. Boyd (KG4VCF) with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -112,6 +126,7 @@
 #include "PaSetupPages.h"
 
 #include "core/AppSettings.h"
+#include "core/BoardCapabilities.h"
 #include "core/CalibrationController.h"
 #include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
@@ -218,17 +233,85 @@ bool isPaEditableBand(Band b) noexcept {
 
 }  // namespace
 
+// ── Phase 8 (#167) helper: build the four informational warning rows ─────────
+//
+// Extracted out of PaGainByBandPage's constructor so it can run in both the
+// model-less (test fixture / headless preview) and live editor paths. The
+// labels are always created; applyCapabilityVisibility() toggles them per
+// the BoardCapabilities flags.
+namespace {
+void buildPhase8WarningRows(
+    QLabel*& noPaSupportBanner,
+    QLabel*& ganymedeWarning,
+    QLabel*& psWarning,
+    QLabel*& attOnTxWarning,
+    QWidget* parent,
+    QBoxLayout* contentLayout)
+{
+    noPaSupportBanner = new QLabel(QStringLiteral(
+        "This radio does not support per-band PA gain calibration.\n"
+        "PA gain by band is unavailable for the connected board class."), parent);
+    noPaSupportBanner->setStyleSheet(QStringLiteral(
+        "QLabel { color: #d09060; padding: 8px; font-style: italic; }"));
+    noPaSupportBanner->setWordWrap(true);
+    noPaSupportBanner->setVisible(true);
+    contentLayout->insertWidget(contentLayout->count() - 1, noPaSupportBanner);
+
+    ganymedeWarning = new QLabel(QStringLiteral(
+        "ANAN Ganymede 500W PA support is a follow-up to this PR. The "
+        "standard PA Gain table below applies to the radio's internal PA. "
+        "Ganymede-specific PA calibration will arrive in a separate Setup tab."), parent);
+    ganymedeWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: #80b0d0; padding: 8px; }"));
+    ganymedeWarning->setWordWrap(true);
+    ganymedeWarning->setVisible(false);
+    contentLayout->insertWidget(contentLayout->count() - 1, ganymedeWarning);
+
+    psWarning = new QLabel(QStringLiteral(
+        "PA Profile / TX Profile recovery linkage active. PureSignal "
+        "feedback can re-tune the PA gain table; see Setup -> Transmit "
+        "-> PureSignal for details."), parent);
+    psWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: #80b0d0; padding: 8px; }"));
+    psWarning->setWordWrap(true);
+    psWarning->setVisible(false);
+    contentLayout->insertWidget(contentLayout->count() - 1, psWarning);
+
+    attOnTxWarning = new QLabel(QStringLiteral(
+        "ATT on TX safety gate: when PureSignal is enabled and drive power "
+        "changes, the receive step attenuator forces 31 dB to protect the "
+        "feedback ADC. See Setup -> General -> Options for the gate flags."), parent);
+    attOnTxWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: #80b0d0; padding: 8px; }"));
+    attOnTxWarning->setWordWrap(true);
+    attOnTxWarning->setVisible(false);
+    contentLayout->insertWidget(contentLayout->count() - 1, attOnTxWarning);
+}
+} // namespace
+
 PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     : SetupPage(QStringLiteral("PA Gain"), model, parent)
 {
-    // Resolve PaProfileManager from the model. Without it (model-less preview)
-    // we render an inert placeholder — same fallback PaWattMeterPage uses.
+    // Resolve PaProfileManager from the model. Without it (model-less preview /
+    // headless test fixture) we render an inert placeholder for the editor
+    // surface but still build the Phase 8 informational warning labels so
+    // applyCapabilityVisibility() has something to toggle.
     if (!model || !model->paProfileManager()) {
         auto* lbl = buildPlaceholderLabel(QStringLiteral(
             "PA Gain -- requires a connected RadioModel with PaProfileManager.\n"
             "\n"
             "Source: Thetis setup.designer.cs:47386-47525 [v2.10.3.13]"));
         contentLayout()->insertWidget(contentLayout()->count() - 1, lbl);
+        // Phase 8 (#167): Track the placeholder so test seams have a proxy
+        // for editor-enabled state. Tests construct PaGainByBandPage(nullptr)
+        // and invoke applyCapabilityVisibility() without a live editor; the
+        // placeholder's enabled flag rides the same editorEnabled boolean.
+        m_placeholderLabel = lbl;
+        // Build the Phase 8 informational warning rows so the test seams
+        // have non-null targets to toggle visibility on.
+        buildPhase8WarningRows(m_noPaSupportBanner, m_ganymedeWarning,
+                               m_psWarning, m_attOnTxWarning,
+                               this, contentLayout());
         return;
     }
     m_paProfileManager = model->paProfileManager();
@@ -488,12 +571,189 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     connect(&model->radioStatus(), &RadioStatus::powerChanged,
             this, &PaGainByBandPage::onFwdPowerSample);
 
+    // ── Phase 8 (#167) capability-gated informational warning rows ────────
+    // All four labels are constructed visible by default; applyCapabilityVisibility
+    // toggles them per the connected board's BoardCapabilities flags. The
+    // initial visibility (before any radio connects) follows the safest
+    // default: banner shown (caps.hasPaProfile is conservative-false), and
+    // Ganymede / PS / ATT warnings hidden. Plain QLabel (not
+    // buildPlaceholderLabel) so the warning copy renders in the normal-state
+    // font, distinct from the disabled-italic placeholder bodies elsewhere.
+    // Inline cite: Thetis comboRadioModel_SelectedIndexChanged
+    // setup.cs:19812-20310 [v2.10.3.13] — per-SKU PA tab visibility.
+
+    m_noPaSupportBanner = new QLabel(QStringLiteral(
+        "This radio does not support per-band PA gain calibration.\n"
+        "PA gain by band is unavailable for the connected board class."), this);
+    m_noPaSupportBanner->setStyleSheet(QStringLiteral(
+        "QLabel { color: #d09060; padding: 8px; font-style: italic; }"));
+    m_noPaSupportBanner->setWordWrap(true);
+    m_noPaSupportBanner->setVisible(true);  // safest default: shown until caps prove PA support
+    contentLayout()->insertWidget(contentLayout()->count() - 1, m_noPaSupportBanner);
+
+    m_ganymedeWarning = new QLabel(QStringLiteral(
+        "ANAN Ganymede 500W PA support is a follow-up to this PR. The "
+        "standard PA Gain table below applies to the radio's internal PA. "
+        "Ganymede-specific PA calibration will arrive in a separate Setup tab."), this);
+    m_ganymedeWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: #80b0d0; padding: 8px; }"));
+    m_ganymedeWarning->setWordWrap(true);
+    m_ganymedeWarning->setVisible(false);
+    contentLayout()->insertWidget(contentLayout()->count() - 1, m_ganymedeWarning);
+
+    m_psWarning = new QLabel(QStringLiteral(
+        "PA Profile / TX Profile recovery linkage active. PureSignal "
+        "feedback can re-tune the PA gain table; see Setup -> Transmit "
+        "-> PureSignal for details."), this);
+    m_psWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: #80b0d0; padding: 8px; }"));
+    m_psWarning->setWordWrap(true);
+    m_psWarning->setVisible(false);
+    contentLayout()->insertWidget(contentLayout()->count() - 1, m_psWarning);
+
+    m_attOnTxWarning = new QLabel(QStringLiteral(
+        "ATT on TX safety gate: when PureSignal is enabled and drive power "
+        "changes, the receive step attenuator forces 31 dB to protect the "
+        "feedback ADC. See Setup -> General -> Options for the gate flags."), this);
+    m_attOnTxWarning->setStyleSheet(QStringLiteral(
+        "QLabel { color: #80b0d0; padding: 8px; }"));
+    m_attOnTxWarning->setWordWrap(true);
+    m_attOnTxWarning->setVisible(false);
+    contentLayout()->insertWidget(contentLayout()->count() - 1, m_attOnTxWarning);
+
     // Initial population.
     rebuildProfileCombo();
     if (const PaProfile* active = m_paProfileManager->activeProfile()) {
         loadProfileIntoUi(*active);
     }
 }
+
+// ── Phase 8 of #167: per-SKU visibility wiring ────────────────────────────────
+//
+// applyCapabilityVisibility — collapses the per-SKU visibility decisions for
+// the live editor surface (Phase 6+7) and the four informational warning
+// rows. When caps.hasPaProfile=false, the entire editor is disabled (combo,
+// buttons, spinbox grid, adjust matrix, max-power column, auto-cal toggle +
+// sub-panel) and the no-PA-support banner is shown. Other warnings layer
+// independently on top.
+//
+// From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
+// [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility. Thetis swaps dozens
+// of controls (chkApolloPresent / chkAlexPresent / labelATTOnTX /
+// chkAutoPACalibrate / etc.) per HPSDRModel; NereusSDR collapses those
+// decisions into BoardCapabilities flags and surfaces the equivalent
+// per-page visibility decisions here.
+void PaGainByBandPage::applyCapabilityVisibility(const BoardCapabilities& caps)
+{
+    // ── Editor surface enable gate ──────────────────────────────────────
+    // Phase 6+7 ships the live editor (combo + 4 lifecycle buttons + 14
+    // gain spinboxes + 14×9 adjust matrix + 14 max-power spinboxes + 14
+    // use-max checkboxes + auto-cal checkbox + auto-cal sub-panel). When
+    // !caps.hasPaProfile, every editor control is disabled to prevent
+    // editing a profile that has no underlying PA hardware. In the
+    // model-less path (test fixture / headless preview) the live editor
+    // isn't built; m_placeholderLabel rides the same editorEnabled flag
+    // so test seams can verify the toggle behavior.
+    const bool editorEnabled = caps.hasPaProfile;
+
+    if (m_profileCombo)        { m_profileCombo->setEnabled(editorEnabled); }
+    if (m_btnNew)              { m_btnNew->setEnabled(editorEnabled); }
+    if (m_btnCopy)             { m_btnCopy->setEnabled(editorEnabled); }
+    if (m_btnDelete)           { m_btnDelete->setEnabled(editorEnabled); }
+    if (m_btnReset)            { m_btnReset->setEnabled(editorEnabled); }
+    if (m_newCalCheck)         { m_newCalCheck->setEnabled(editorEnabled); }
+    if (m_autoCalibrateCheck)  { m_autoCalibrateCheck->setEnabled(editorEnabled); }
+    if (m_autoCalPanel)        { m_autoCalPanel->setEnabled(editorEnabled); }
+    // Model-less proxy: placeholder rides the same gate as the live editor.
+    if (m_placeholderLabel)    { m_placeholderLabel->setEnabled(editorEnabled); }
+
+    for (int n = 0; n < kPaBandCount; ++n) {
+        if (m_gainSpins[n])        { m_gainSpins[n]->setEnabled(editorEnabled); }
+        if (m_maxPowerSpins[n])    { m_maxPowerSpins[n]->setEnabled(editorEnabled); }
+        if (m_useMaxPowerChecks[n]) { m_useMaxPowerChecks[n]->setEnabled(editorEnabled); }
+        for (int step = 0; step < kAutoCalDriveSteps; ++step) {
+            if (m_adjustSpins[n][step]) {
+                m_adjustSpins[n][step]->setEnabled(editorEnabled);
+            }
+        }
+    }
+
+    // ── No-PA-support banner ────────────────────────────────────────────
+    // Shown when caps.hasPaProfile=false. Atlas / RX-only kits / RedPitaya
+    // hit this branch.
+    if (m_noPaSupportBanner) {
+        m_noPaSupportBanner->setVisible(!caps.hasPaProfile);
+    }
+
+    // ── Ganymede 500W PA follow-up ──────────────────────────────────────
+    // Andromeda console only. From Thetis Andromeda/Andromeda.cs:914-920
+    // [v2.10.3.13] — the Ganymede-specific PA tab is a separate UI surface
+    // queued as a follow-up to this hotfix.
+    if (m_ganymedeWarning) {
+        m_ganymedeWarning->setVisible(caps.canDriveGanymede);
+    }
+
+    // ── PA / TX-Profile recovery linkage warning ────────────────────────
+    // PS-capable radios only. The warning describes future 3M-4 PS feedback
+    // behaviour; the gate itself is dormant until the PS feedback DDC lands.
+    if (m_psWarning) {
+        m_psWarning->setVisible(caps.hasPureSignal);
+    }
+
+    // ── ATT-on-TX informational row ─────────────────────────────────────
+    // Hidden when caps.hasStepAttenuatorCal=false. Thetis surfaces
+    // labelATTOnTX / udATTOnTX (setup.cs:19849-19850 [v2.10.3.13]) only on
+    // boards with a calibrated step attenuator chain.
+    if (m_attOnTxWarning) {
+        m_attOnTxWarning->setVisible(caps.hasStepAttenuatorCal);
+    }
+}
+
+#ifdef NEREUS_BUILD_TESTS
+// Phase 8 (#167) test seams.
+//
+// isPaEditorEnabledForTest: returns whether the editor surface is enabled.
+// Live editor mode: m_profileCombo is the canonical proxy (toggled in
+// lockstep with every other editor control via the editorEnabled boolean).
+// Model-less mode (test fixture / headless preview): m_placeholderLabel
+// rides the same gate. Tests that construct PaGainByBandPage(nullptr) hit
+// the model-less path so this fallback ensures isPaEditorEnabledForTest()
+// reports the correct enable state regardless of construction mode.
+bool PaGainByBandPage::isPaEditorEnabledForTest() const
+{
+    if (m_profileCombo) {
+        return m_profileCombo->isEnabled();
+    }
+    if (m_placeholderLabel) {
+        return m_placeholderLabel->isEnabled();
+    }
+    return false;
+}
+
+bool PaGainByBandPage::isNoPaSupportBannerVisibleForTest() const
+{
+    // isVisibleTo(this) checks the visibility relative to the ancestor
+    // chain rooted at `this` so we don't false-negative when the page
+    // is itself hidden (which happens during construction before Setup
+    // is shown).
+    return m_noPaSupportBanner && m_noPaSupportBanner->isVisibleTo(this);
+}
+
+bool PaGainByBandPage::isGanymedeWarningVisibleForTest() const
+{
+    return m_ganymedeWarning && m_ganymedeWarning->isVisibleTo(this);
+}
+
+bool PaGainByBandPage::isPsWarningVisibleForTest() const
+{
+    return m_psWarning && m_psWarning->isVisibleTo(this);
+}
+
+bool PaGainByBandPage::isAttOnTxWarningVisibleForTest() const
+{
+    return m_attOnTxWarning && m_attOnTxWarning->isVisibleTo(this);
+}
+#endif
 
 // ── Combo + profile-load plumbing ────────────────────────────────────────────
 
@@ -1419,6 +1679,32 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
     contentLayout()->insertWidget(contentLayout()->count() - 1, m_resetPaValuesButton);
 }
 
+// Phase 8 (#167) — PaWattMeterPage capability gate.
+//
+// From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
+// [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility. The Thetis Watt Meter
+// tab visibility is page-level: hidden when the connected board lacks PA
+// hardware. Implemented here by toggling the PaCalibrationGroup + the
+// chkPAValues toggle + Reset PA Values button; the page itself is hidden by
+// SetupDialog when the parent PA category goes hidden (caps.isRxOnlySku
+// or !caps.hasPaProfile).
+void PaWattMeterPage::applyCapabilityVisibility(const BoardCapabilities& caps)
+{
+    // The PaCalibrationGroup auto-rebuilds via paCalProfileChanged when the
+    // controller swaps board classes. We additionally hide it when the
+    // connected board reports no PA support — this is the live cal-spinbox
+    // editor and there is nothing to calibrate without an integrated PA.
+    if (m_paCalGroup) {
+        m_paCalGroup->setVisible(caps.hasPaProfile);
+    }
+    if (m_showPaValuesCheck) {
+        m_showPaValuesCheck->setVisible(caps.hasPaProfile);
+    }
+    if (m_resetPaValuesButton) {
+        m_resetPaValuesButton->setVisible(caps.hasPaProfile);
+    }
+}
+
 #ifdef NEREUS_BUILD_TESTS
 bool PaWattMeterPage::showPaValuesCheckedForTest() const
 {
@@ -1746,6 +2032,42 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
 
 // ---------------------------------------------------------------------------
 // resetPaValues — public slot (Phase 5B #167).
+// Phase 8 (#167) — PaValuesPage capability gate.
+//
+// From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
+// [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility. Thetis embeds
+// panelPAValues inside the Watt Meter tab and gates it on chkPAValues
+// (setup.cs:16342 [v2.10.3.13]). NereusSDR promotes the readout to a
+// dedicated page; per-SKU visibility hides every MetricLabel + every
+// QGroupBox child when caps.hasPaProfile=false. SetupDialog also hides
+// the parent PA category when caps.isRxOnlySku, so this method only
+// has to toggle the page's own children.
+void PaValuesPage::applyCapabilityVisibility(const BoardCapabilities& caps)
+{
+    // Toggle every MetricLabel child in one pass — no PA telemetry to
+    // display when the board has no integrated PA. findChildren walks
+    // the entire descendant tree so child labels nested inside QGroupBoxes
+    // are caught.
+    const QList<MetricLabel*> rows = findChildren<MetricLabel*>();
+    for (MetricLabel* row : rows) {
+        if (row) {
+            row->setVisible(caps.hasPaProfile);
+        }
+    }
+    // Also hide the parent QGroupBox containers so the page is visually
+    // quiet on PA-less boards (no empty group headings).
+    const QList<QGroupBox*> groups = findChildren<QGroupBox*>();
+    for (QGroupBox* g : groups) {
+        if (g) {
+            g->setVisible(caps.hasPaProfile);
+        }
+    }
+    // Reset button is meaningless without telemetry; gate it too.
+    if (m_resetButton) {
+        m_resetButton->setVisible(caps.hasPaProfile);
+    }
+}
+
 // Mirrors Thetis btnResetPAValues_Click semantic at setup.cs:16346-16357
 // [v2.10.3.13].  Thetis simply blanks the textbox text strings; NereusSDR's
 // spin tracks running peak/min and resets each tracker to its current value

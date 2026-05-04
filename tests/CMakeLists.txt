@@ -1634,6 +1634,16 @@ nereus_add_test(tst_general_setup_options)
 # [v2.10.3.13]); panel-level wiring lands in Phase 3+.
 nereus_add_test(tst_pa_setup_pages)
 
+# ── PA calibration safety hotfix Phase 8: per-SKU PA visibility matrix ───────
+# Verifies PaGainByBandPage::applyCapabilityVisibility honors the five
+# BoardCapabilities flags the visibility wiring consumes (hasPaProfile,
+# isRxOnlySku, canDriveGanymede, hasPureSignal, hasStepAttenuatorCal) per
+# the per-SKU matrix derived from Thetis comboRadioModel_SelectedIndexChanged
+# (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]). Test matrix covers all 16
+# HPSDRModel values + RX-only + Ganymede + PureSignal scenarios (19 cases).
+nereus_add_test(tst_pa_setup_per_sku_visibility)
+target_compile_definitions(tst_pa_setup_per_sku_visibility PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
 # the MainWindow status bar:

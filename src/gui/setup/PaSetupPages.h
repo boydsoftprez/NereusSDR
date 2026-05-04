@@ -80,6 +80,24 @@
 //                 (observed > band_max * 1.1).  Authored by J.J. Boyd
 //                 (KG4VCF) with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-05-03 — Phase 8 of issue #167 PA-cal hotfix: per-SKU visibility
+//                 wiring.  Adds applyCapabilityVisibility(BoardCapabilities)
+//                 to all three PA pages so SetupDialog can drive
+//                 visibility from RadioModel::currentRadioChanged.
+//                 PaGainByBandPage gains four informational warning
+//                 labels: m_noPaSupportBanner (shown when !hasPaProfile),
+//                 m_ganymedeWarning (shown when canDriveGanymede),
+//                 m_psWarning (shown when hasPureSignal), and
+//                 m_attOnTxWarning (shown when hasStepAttenuatorCal).
+//                 When !hasPaProfile, the live editor controls (profile
+//                 combo, lifecycle buttons, gain spinbox grid, drive-step
+//                 adjust matrix, max-power column, autoCal checkbox) are
+//                 all disabled — Phase 8 targets the live editor controls
+//                 (Phase 6+7), not a stale m_placeholderLabel.  Visibility
+//                 logic mirrors Thetis comboRadioModel_SelectedIndexChanged
+//                 (setup.cs:19812-20310 [v2.10.3.13]).  Authored by
+//                 J.J. Boyd (KG4VCF) with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -152,6 +170,7 @@ class PaCalibrationGroup;
 class PaProfile;
 class PaProfileManager;
 class MetricLabel;
+struct BoardCapabilities;
 
 // ---------------------------------------------------------------------------
 // PA > PA Gain
@@ -239,6 +258,21 @@ public:
 
     explicit PaGainByBandPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // Phase 8 (#167) per-SKU visibility wiring. Called by SetupDialog on
+    // construct + on RadioModel::currentRadioChanged.
+    //   caps.hasPaProfile        = false → live editor disabled + banner shown
+    //   caps.canDriveGanymede    = true  → Ganymede 500W follow-up warning
+    //   caps.hasPureSignal       = true  → PA/TX-Profile recovery warning
+    //   caps.hasStepAttenuatorCal= true  → ATT-on-TX informational row
+    // When hasPaProfile is false, Phase 8 disables the live editor surface
+    // (profile combo + 4 lifecycle buttons + 14 gain spinboxes + 14×9 adjust
+    // matrix + 14 max-power spinboxes + 14 use-max checkboxes + auto-cal
+    // checkbox + auto-cal sub-panel). The Phase 6+7 live editor is the
+    // disable target, NOT a stale Phase 2 placeholder label.
+    // From Thetis comboRadioModel_SelectedIndexChanged setup.cs:19812-20310
+    // [v2.10.3.13].
+    void applyCapabilityVisibility(const BoardCapabilities& caps);
+
 #ifdef NEREUS_BUILD_TESTS
     QComboBox*       profileComboForTest()       const { return m_profileCombo; }
     QDoubleSpinBox*  gainSpinForTest(Band b)     const;
@@ -253,6 +287,13 @@ public:
     QPushButton*     copyButtonForTest()         const { return m_btnCopy; }
     QPushButton*     deleteButtonForTest()       const { return m_btnDelete; }
     QPushButton*     resetButtonForTest()        const { return m_btnReset; }
+
+    // Phase 8 (#167) per-SKU visibility test seams.
+    bool isPaEditorEnabledForTest()           const;
+    bool isNoPaSupportBannerVisibleForTest()  const;
+    bool isGanymedeWarningVisibleForTest()    const;
+    bool isPsWarningVisibleForTest()          const;
+    bool isAttOnTxWarningVisibleForTest()     const;
 
     /// Phase 7 auto-cal test seams.
     AutoCalState autoCalStateForTest() const noexcept { return m_autoCalState; }
@@ -434,6 +475,22 @@ private:
     /// do not re-fire the user-edit handlers.
     bool m_updatingFromProfile{false};
 
+    // ── Phase 8 of #167: per-SKU informational warning labels ────────────
+    // Each is constructed at PaGainByBandPage build time; visibility is
+    // toggled by applyCapabilityVisibility() per the BoardCapabilities
+    // flags. Defaults (before any radio connects): banner shown,
+    // Ganymede / PS / ATT warnings hidden.
+    QLabel* m_noPaSupportBanner{nullptr};   // shown when !caps.hasPaProfile
+    QLabel* m_ganymedeWarning{nullptr};     // shown when caps.canDriveGanymede
+    QLabel* m_psWarning{nullptr};           // shown when caps.hasPureSignal
+    QLabel* m_attOnTxWarning{nullptr};      // shown when caps.hasStepAttenuatorCal
+
+    // Phase 8 of #167: model-less placeholder. Set only when the page is
+    // constructed without a live RadioModel (test fixture / headless
+    // preview). The live editor controls are not built in that path; the
+    // placeholder's enabled flag is the test seam's proxy for editor state.
+    QLabel* m_placeholderLabel{nullptr};
+
     // ── Phase 7 of #167: auto-cal sweep state machine ────────────────────
     AutoCalState m_autoCalState{AutoCalState::Idle};
     /// QTimer driving the per-step settle delay (Thetis on_time = 2500 ms;
@@ -497,6 +554,14 @@ class PaWattMeterPage : public SetupPage {
 public:
     explicit PaWattMeterPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // Phase 8 (#167) per-SKU visibility wiring. The PaCalibrationGroup
+    // already auto-rebuilds on paCalProfileChanged; this method hides the
+    // live cal group + chkPAValues toggle + Reset button when the connected
+    // board reports !caps.hasPaProfile (Atlas, RX-only kits, RedPitaya).
+    // From Thetis comboRadioModel_SelectedIndexChanged setup.cs:19812-20310
+    // [v2.10.3.13].
+    void applyCapabilityVisibility(const BoardCapabilities& caps);
+
 #ifdef NEREUS_BUILD_TESTS
     bool showPaValuesCheckedForTest() const;
     void clickResetPaValuesForTest();
@@ -545,6 +610,14 @@ class PaValuesPage : public SetupPage {
     Q_OBJECT
 public:
     explicit PaValuesPage(RadioModel* model, QWidget* parent = nullptr);
+
+    // Phase 8 (#167) per-SKU visibility wiring. Hides every MetricLabel
+    // child + every QGroupBox container when caps.hasPaProfile=false (no
+    // PA telemetry to display on RX-only / Atlas / RedPitaya boards).
+    // SetupDialog also hides the parent PA category when caps.isRxOnlySku.
+    // From Thetis comboRadioModel_SelectedIndexChanged setup.cs:19812-20310
+    // [v2.10.3.13].
+    void applyCapabilityVisibility(const BoardCapabilities& caps);
 
 public slots:
     /// Reset peak/min tracking on all six tracked telemetry labels back to
