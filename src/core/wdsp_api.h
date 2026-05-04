@@ -77,7 +77,7 @@
 //                 the CFC tab schema work in 3M-3a-ii).  Signatures match
 //                 wdsp/iir.c:675-703 [v2.10.3.13].  AI-assisted
 //                 transformation via Anthropic Claude Code.
-//   2026-05-03 — Phase 3M-3a-iii Tasks 1-5 by J.J. Boyd (KG4VCF):
+//   2026-05-03 — Phase 3M-3a-iii Tasks 1-6 by J.J. Boyd (KG4VCF):
 //                 SetDEXPRun, SetDEXPDetectorTau, SetDEXPAttackTime,
 //                 SetDEXPReleaseTime (Tasks 1-2: envelope/timing,
 //                 wdsp/dexp.c:407, 466, 479, 492 [v2.10.3.13]),
@@ -91,9 +91,12 @@
 //                 SetDEXPRunAudioDelay, SetDEXPAudioDelay (Task 5: audio
 //                 look-ahead so VOX/expander can fire BEFORE the first
 //                 syllable; ms→s /1000.0 conv at WDSP boundary per
-//                 setup.cs:18961; wdsp/dexp.c:626, 636).  All signatures
-//                 [v2.10.3.13].  AI-assisted transformation via Anthropic
-//                 Claude Code.
+//                 setup.cs:18961; wdsp/dexp.c:626, 636),
+//                 GetDEXPPeakSignal (Task 6: DEXP peak readback for the
+//                 picVOX live meter; linear amplitude OUT, log conv at
+//                 caller per console.cs:28952-28954; wdsp/dexp.c:647-654;
+//                 cmaster.cs:163-164).  All signatures [v2.10.3.13].
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  wdsp.cs
@@ -1008,6 +1011,20 @@ void SetDEXPAudioDelay(int id, double delay);
 //   SetAntiVOXGain: cmaster.cs:211-212
 void SetAntiVOXRun(int id, int run);
 void SetAntiVOXGain(int id, double gain);
+
+// DEXP peak signal readback (Phase 3M-3a-iii Task 6).
+// Returns the live audio peak observed by the DEXP detector.  Output is
+// LINEAR amplitude (typical 0.0..1.0); Thetis converts to dB at the
+// callsite via 20*Math.Log10(audio_peak) — see picVOX_Paint at
+// console.cs:28952-28954 [v2.10.3.13].  `peak` is an OUT pointer (WDSP
+// writes through it under cs_update); pass a non-null double.
+// From Thetis wdsp/dexp.c:647-654 [v2.10.3.13]:
+//   PORT void GetDEXPPeakSignal (int id, double* peak)
+//   { DEXP a = pdexp[id]; ... *peak = a->peak; ... }
+// Cited from Thetis cmaster.cs:163-164 [v2.10.3.13]:
+//   [DllImport("wdsp.dll", EntryPoint = "GetDEXPPeakSignal", ...)]
+//   public static extern void GetDEXPPeakSignal(int id, double* peak);
+void GetDEXPPeakSignal(int id, double* peak);
 
 } // extern "C"
 

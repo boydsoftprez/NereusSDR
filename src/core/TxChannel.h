@@ -238,6 +238,20 @@ warren@wpratt.com
 //                 path is unaffected; this helper runs only from the debounce
 //                 timer, not from setTuneTone).  AI-assisted transformation
 //                 via Anthropic Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Task 6 — getDexpPeakSignal() and
+//                 getTxMicMeterDb() read accessors added by J.J. Boyd
+//                 (KG4VCF).  Both `const noexcept`, safe to call from the
+//                 GUI thread at the 100 ms picVOX/picNoiseGate cadence.
+//                 getDexpPeakSignal returns LINEAR amplitude (caller
+//                 applies 20*log10 per console.cs:28954 [v2.10.3.13]);
+//                 getTxMicMeterDb returns RAW negative dB (caller applies
+//                 sign treatment + 3 dB offset per console.cs:25353-25354
+//                 [v2.10.3.13]).  Null-guards on pdexp[m_channelId] and
+//                 txa[m_channelId].rsmpin.p match the existing wrappers.
+//                 Sentinel returns: 0.0 (DEXP idle) and -200.0 (mic-meter
+//                 idle, matches Thetis noise_gate_data init at
+//                 console.cs:25346 [v2.10.3.13]).  AI-assisted
+//                 transformation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -1001,6 +1015,72 @@ public:
     /// Reads TXA_COMP_PK (= 10) when wired. From Thetis wdsp/TXA.h:61 [v2.10.3.13].
     /// Full wiring in 3M-3a per master design §5.2.1.
     float getCompMeter() const;
+
+    // ── DEXP / VOX meter readers (Phase 3M-3a-iii Task 6) ───────────────────
+
+    /// Live VOX peak signal in LINEAR amplitude (typical range 0.0..1.0).
+    ///
+    /// Returns 0.0 when pdexp[m_channelId] == nullptr (DEXP not yet
+    /// created — i.e. WDSP TX channel not opened) or when HAVE_WDSP is
+    /// not defined.  Otherwise returns the live `a->peak` snapshot under
+    /// WDSP's cs_update critical section.
+    ///
+    /// Const + noexcept: safe to call from the GUI thread at the
+    /// 100 ms picVOX/picNoiseGate cadence.  WDSP read is non-blocking
+    /// (CRITICAL_SECTION held only for the snapshot copy).
+    ///
+    /// Caller is responsible for any dB conversion: Thetis's picVOX_Paint
+    /// applies `20 * Math.Log10(audio_peak)` after the call (see
+    /// console.cs:28954 [v2.10.3.13]).  Mic boost compensation
+    /// (`audio_peak /= Audio.VOXGain`) at console.cs:28953 is also a
+    /// caller responsibility — the wrapper returns the raw WDSP value.
+    ///
+    /// Porting from Thetis cmaster.cs:163-164 [v2.10.3.13] —
+    /// GetDEXPPeakSignal DLL import:
+    ///   [DllImport("wdsp.dll", EntryPoint = "GetDEXPPeakSignal", ...)]
+    ///   public static extern void GetDEXPPeakSignal(int id, double* peak);
+    /// Caller pattern (console.cs:28952 [v2.10.3.13]):
+    ///   cmaster.GetDEXPPeakSignal(0, &audio_peak);
+    /// Porting from Thetis wdsp/dexp.c:647-654 [v2.10.3.13] —
+    /// GetDEXPPeakSignal C impl: derefs pdexp[id], snapshots a->peak.
+    double getDexpPeakSignal() const noexcept;
+
+    /// Live TX mic-meter reading in RAW dB (typical range -200..0; never
+    /// positive in normal operation).
+    ///
+    /// Returns -200.0 (Thetis's noise_gate_data init floor — see
+    /// console.cs:25346 [v2.10.3.13]) when txa[m_channelId].rsmpin.p ==
+    /// nullptr (WDSP TX channel not opened) or when HAVE_WDSP is not
+    /// defined.  Otherwise returns the raw `GetTXAMeter(channel,
+    /// TXA_MIC_AV)` (= 1) value — the AVERAGE mic level, matching
+    /// Thetis's WDSP.MeterType.MIC -> txaMeterType.TXA_MIC_AV mapping
+    /// at dsp.cs:998-999 [v2.10.3.13].
+    ///
+    /// Const + noexcept: safe to call from the GUI thread at the
+    /// 100 ms picNoiseGate cadence.  WDSP read is non-blocking.
+    ///
+    /// CALLER RESPONSIBILITIES (matching Thetis UpdateNoiseGate at
+    /// console.cs:25346-25359 [v2.10.3.13]):
+    ///   - Sign treatment: Thetis stores
+    ///       `float num = -WDSP.CalculateTXMeter(1, MIC);`
+    ///     where CalculateTXMeter (dsp.cs:1056) returns `-(float)val`.
+    ///     Net effect: `num` is the raw `val` (negative dB).  Our wrapper
+    ///     returns `val` directly — no sign-flip applied.
+    ///   - +3 dB offset: Thetis adds `+3.0f` to the result before display
+    ///     (console.cs:25354): `noise_gate_data = num + 3.0f`.  Our
+    ///     wrapper does NOT apply the offset; do it at the call site.
+    ///
+    /// Porting from Thetis dsp.cs:992-1057 [v2.10.3.13] —
+    /// CalculateTXMeter switch case MeterType.MIC -> GetTXAMeter(channel,
+    /// txaMeterType.TXA_MIC_AV).  Final return is `-(float)val` but
+    /// callers immediately re-flip via the leading `-` at console.cs:25353,
+    /// so the wrapper short-circuits the double-flip and returns the raw
+    /// negative dB.
+    /// Porting from Thetis wdsp/TXA.h:52 [v2.10.3.13]:
+    ///   TXA_MIC_AV  = 1  (second value in txaMeterType enum, average power).
+    /// Porting from Thetis wdsp/meter.c:151-159 [v2.10.3.13] — GetTXAMeter
+    /// implementation: returns txa[channel].meter[mt] (a stored dB value).
+    double getTxMicMeterDb() const noexcept;
 
     // ── TXA PostGen wrapper setters (3M-1c E.2-E.6) ─────────────────────────
     //

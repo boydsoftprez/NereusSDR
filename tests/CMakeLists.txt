@@ -2019,6 +2019,26 @@ target_compile_definitions(tst_tx_channel_mic_mute PRIVATE NEREUS_BUILD_TESTS)
 #   distinctness: deferred-not-sentinel, sentinel-not-zero
 nereus_add_test(tst_tx_channel_meters)
 
+# ── Phase 3M-3a-iii Task 6: TxChannel DEXP meter readers ─────────────────────
+# Pure crash-free + sane-bounds smoke test for two `const noexcept` accessors:
+#   getDexpPeakSignal()  — LINEAR amplitude 0..1 (caller does 20*log10 → dB)
+#                          From Thetis cmaster.cs:163-164 [v2.10.3.13] +
+#                          wdsp/dexp.c:647-654 + console.cs:28952 callsite.
+#   getTxMicMeterDb()    — RAW negative dB (caller does sign + 3 dB offset)
+#                          From Thetis console.cs:25346-25359 [v2.10.3.13] +
+#                          dsp.cs:992-1057 (CalculateTXMeter MIC -> TXA_MIC_AV).
+#
+# WDSP channel never opened in test build → both wrappers must null-guard
+# (pdexp[m_channelId] == nullptr / txa[m_channelId].rsmpin.p == nullptr) and
+# return Thetis-faithful idle defaults: 0.0 (DEXP peak) and -200.0 (mic dB).
+#
+# Test cases (4):
+#   - getDexpPeakSignal_returnsZeroWhenIdle              (peak in [0.0, 1.0))
+#   - getDexpPeakSignal_callableMultipleTimes_noCrash    (20 successive reads)
+#   - getTxMicMeterDb_returnsFloorWhenIdle               (db in [-200.0, 0.0])
+#   - getTxMicMeterDb_callableMultipleTimes_noCrash      (20 successive reads)
+nereus_add_test(tst_tx_channel_dexp_meters)
+
 # ── Phase 3M-1b Task E.1: AudioEngine::pullTxMic ─────────────────────────────
 # Verifies the TX-mic pull accessor that PcMicSource (Phase F.1) will tap:
 #   nullBus_returnsZero       — no bus configured → 0
