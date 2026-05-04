@@ -626,6 +626,15 @@ void TransmitModel::loadFromSettings(const QString& mac)
     setDexpReleaseTimeMs(s.value(pfx + QLatin1String("DEXP_ReleaseTimeMs"),
                                   QStringLiteral("100")).toDouble());
 
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) — both persist ──────
+    // Defaults from Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPExpansionRatio.Value=10            (line 44900-44904)
+    //   udDEXPHysteresisRatio.Value=20 -> 2.0    (line 44869-44873; scale 65536)
+    setDexpExpansionRatioDb(s.value(pfx + QLatin1String("DEXP_ExpansionRatioDb"),
+                                     QStringLiteral("10")).toDouble());
+    setDexpHysteresisRatioDb(s.value(pfx + QLatin1String("DEXP_HysteresisRatioDb"),
+                                      QStringLiteral("2")).toDouble());
+
     // ── Anti-VOX properties ───────────────────────────────────────────────
     // antiVoxGainDb: default 0 (NereusSDR-original safe starting point)
     const int antiVoxGainDb = s.value(pfx + QLatin1String("AntiVox_Gain"),
@@ -834,6 +843,10 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("DEXP_DetectorTauMs"), QString::number(m_dexpDetectorTauMs));
     s.setValue(pfx + QLatin1String("DEXP_AttackTimeMs"),  QString::number(m_dexpAttackTimeMs));
     s.setValue(pfx + QLatin1String("DEXP_ReleaseTimeMs"), QString::number(m_dexpReleaseTimeMs));
+
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) — both persist ──────
+    s.setValue(pfx + QLatin1String("DEXP_ExpansionRatioDb"),  QString::number(m_dexpExpansionRatioDb));
+    s.setValue(pfx + QLatin1String("DEXP_HysteresisRatioDb"), QString::number(m_dexpHysteresisRatioDb));
 
     // ── Anti-VOX properties ───────────────────────────────────────────────
     s.setValue(pfx + QLatin1String("AntiVox_Gain"),    QString::number(m_antiVoxGainDb));
@@ -1142,6 +1155,48 @@ void TransmitModel::setDexpReleaseTimeMs(double ms)
     m_dexpReleaseTimeMs = clamped;
     persistOne(QStringLiteral("DEXP_ReleaseTimeMs"), QString::number(clamped));
     emit dexpReleaseTimeMsChanged(clamped);
+}
+
+// ── DEXP gate-ratio properties (3M-3a-iii Task 8) ──────────────────────────
+//
+// Downward-expander gate ratios.  Bound to grpDEXPVOX in Setup -> Audio ->
+// VOX/DEXP per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+//
+// Defaults:
+//   udDEXPExpansionRatio.Value=10   (line 44900-44904)
+//   udDEXPHysteresisRatio.Value=20 with DecimalPlaces=1, scale=65536
+//                                  -- displayed as 2.0 (line 44869-44873)
+//
+// Ranges:
+//   udDEXPExpansionRatio:  Min=0, Max=30  (line 44885-44894)
+//   udDEXPHysteresisRatio: Min=0, Max=10  (line 44854-44863)
+//
+// The TxChannel wrapper for hysteresis applies a NEGATIVE Math.Pow exponent
+// internally (per Batch B finding); the model layer just stores the dB value.
+// Wrapper conversion lives in TxChannel setDexpHysteresisRatio (Task 3).
+//
+// Both persist.
+
+void TransmitModel::setDexpExpansionRatioDb(double dB)
+{
+    // Clamp to udDEXPExpansionRatio range per setup.Designer.cs:44885-44894 [v2.10.3.13]:
+    //   udDEXPExpansionRatio.Maximum = 30, udDEXPExpansionRatio.Minimum = 0
+    const double clamped = std::clamp(dB, kDexpExpansionRatioDbMin, kDexpExpansionRatioDbMax);
+    if (qFuzzyCompare(clamped, m_dexpExpansionRatioDb)) { return; }  // idempotent guard
+    m_dexpExpansionRatioDb = clamped;
+    persistOne(QStringLiteral("DEXP_ExpansionRatioDb"), QString::number(clamped));
+    emit dexpExpansionRatioDbChanged(clamped);
+}
+
+void TransmitModel::setDexpHysteresisRatioDb(double dB)
+{
+    // Clamp to udDEXPHysteresisRatio range per setup.Designer.cs:44854-44863 [v2.10.3.13]:
+    //   udDEXPHysteresisRatio.Maximum = 10, udDEXPHysteresisRatio.Minimum = 0
+    const double clamped = std::clamp(dB, kDexpHysteresisRatioDbMin, kDexpHysteresisRatioDbMax);
+    if (qFuzzyCompare(clamped, m_dexpHysteresisRatioDb)) { return; }  // idempotent guard
+    m_dexpHysteresisRatioDb = clamped;
+    persistOne(QStringLiteral("DEXP_HysteresisRatioDb"), QString::number(clamped));
+    emit dexpHysteresisRatioDbChanged(clamped);
 }
 
 // ── Two-tone test properties (3M-1c B.2) ────────────────────────────────────

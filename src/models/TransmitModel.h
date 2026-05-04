@@ -696,6 +696,46 @@ public:
     static constexpr double kDexpReleaseTimeMsMin  =    2.0;
     static constexpr double kDexpReleaseTimeMsMax  = 1000.0;
 
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) ─────────────────────
+    //
+    // Downward-expander gate ratios.  Bound to grpDEXPVOX in Setup -> Audio ->
+    // VOX/DEXP per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+    //
+    // Both properties persist (no PTT-safety carve-out).
+    //
+    // The TxChannel wrapper for hysteresis applies a NEGATIVE Math.Pow exponent
+    // internally (per Batch B finding); the model layer just stores the dB
+    // value as the user sees it in Setup.  Wrapper conversion is in TxChannel
+    // setDexpHysteresisRatio (Task 3).
+
+    /// DEXP expansion ratio in dB.  Clamped to
+    /// [kDexpExpansionRatioDbMin, kDexpExpansionRatioDbMax].  Default 10.0 dB.
+    ///
+    /// From Thetis setup.Designer.cs:44900-44904 [v2.10.3.13]:
+    ///   udDEXPExpansionRatio.Value = 10
+    /// Range from setup.Designer.cs:44885-44894 [v2.10.3.13]:
+    ///   udDEXPExpansionRatio.Maximum = 30, udDEXPExpansionRatio.Minimum = 0
+    double dexpExpansionRatioDb() const noexcept { return m_dexpExpansionRatioDb; }
+
+    /// DEXP hysteresis ratio in dB.  Clamped to
+    /// [kDexpHysteresisRatioDbMin, kDexpHysteresisRatioDbMax].  Default 2.0 dB.
+    ///
+    /// From Thetis setup.Designer.cs:44869-44873 [v2.10.3.13]:
+    ///   udDEXPHysteresisRatio.Value = 20 (with DecimalPlaces=1, scale 65536)
+    ///   -- displayed as 2.0
+    /// Range from setup.Designer.cs:44854-44863 [v2.10.3.13]:
+    ///   udDEXPHysteresisRatio.Maximum = 10, udDEXPHysteresisRatio.Minimum = 0
+    double dexpHysteresisRatioDb() const noexcept { return m_dexpHysteresisRatioDb; }
+
+    // DEXP gate-ratio range constants.
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPExpansionRatio:  Min=0, Max=30 (line 44885-44894)
+    //   udDEXPHysteresisRatio: Min=0, Max=10 (line 44854-44863)
+    static constexpr double kDexpExpansionRatioDbMin  =  0.0;
+    static constexpr double kDexpExpansionRatioDbMax  = 30.0;
+    static constexpr double kDexpHysteresisRatioDbMin =  0.0;
+    static constexpr double kDexpHysteresisRatioDbMax = 10.0;
+
     // ── Mic source (3M-1b I.1) ────────────────────────────────────────────────
     //
     // NereusSDR-native property — Thetis bakes mic-source selection directly
@@ -1264,6 +1304,10 @@ public slots:
     void setDexpAttackTimeMs(double ms);
     void setDexpReleaseTimeMs(double ms);
 
+    // ── DEXP gate-ratio setters (3M-3a-iii Task 8) ─────────────────────────
+    void setDexpExpansionRatioDb(double dB);
+    void setDexpHysteresisRatioDb(double dB);
+
     // ── Two-tone setters (3M-1c B.2) ───────────────────────────────────────
     void setTwoToneFreq1(int hz);
     void setTwoToneFreq2(int hz);
@@ -1330,6 +1374,10 @@ signals:
     void dexpDetectorTauMsChanged(double ms);
     void dexpAttackTimeMsChanged(double ms);
     void dexpReleaseTimeMsChanged(double ms);
+
+    // ── DEXP gate-ratio signals (3M-3a-iii Task 8) ────────────────────────
+    void dexpExpansionRatioDbChanged(double dB);
+    void dexpHysteresisRatioDbChanged(double dB);
 
     // ── Mic source signals (3M-1b I.1) ────────────────────────────────────────
     /// Emitted when micSource changes. Not emitted on idempotent calls.
@@ -1452,6 +1500,15 @@ private:
     double m_dexpDetectorTauMs   =  20.0;
     double m_dexpAttackTimeMs    =   2.0;
     double m_dexpReleaseTimeMs   = 100.0;
+
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) ───────────────────
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPExpansionRatio.Value=10  (line 44900-44904)
+    //   udDEXPHysteresisRatio.Value=20 with DecimalPlaces=1, scale=65536
+    //                                   -- displayed as 2.0 (line 44869-44873)
+    // Both persist.
+    double m_dexpExpansionRatioDb  = 10.0;
+    double m_dexpHysteresisRatioDb =  2.0;
 
     // ── Mic source (3M-1b I.1 + L.3) ───────────────────────────────────
     // NereusSDR-native. Default Pc (always available; Radio is opt-in).

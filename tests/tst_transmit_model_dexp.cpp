@@ -265,6 +265,115 @@ private slots:
         t2.loadFromSettings(kMac);
         QCOMPARE(t2.dexpReleaseTimeMs(), 250.0);
     }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // TASK 8 — DEXP gate-ratio properties (2 props)
+    //   dexpExpansionRatioDb, dexpHysteresisRatioDb
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    // ── Defaults match Thetis ──────────────────────────────────────
+
+    void default_dexpExpansionRatioDb_is10() {
+        // setup.Designer.cs:44900-44904 [v2.10.3.13] - udDEXPExpansionRatio.Value=10.
+        TransmitModel t;
+        QCOMPARE(t.dexpExpansionRatioDb(), 10.0);
+    }
+
+    void default_dexpHysteresisRatioDb_is2() {
+        // setup.Designer.cs:44869-44873 [v2.10.3.13] -
+        //   udDEXPHysteresisRatio.Value=20 with DecimalPlaces=1, scale=65536
+        //   -> displayed as 2.0.
+        TransmitModel t;
+        QCOMPARE(t.dexpHysteresisRatioDb(), 2.0);
+    }
+
+    // ── Round-trip + signal emission ──────────────────────────────
+
+    void setDexpExpansionRatioDb_roundTrip_emitsSignal() {
+        TransmitModel t;
+        QSignalSpy spy(&t, &TransmitModel::dexpExpansionRatioDbChanged);
+        t.setDexpExpansionRatioDb(15.0);
+        QCOMPARE(t.dexpExpansionRatioDb(), 15.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toDouble(), 15.0);
+    }
+
+    void setDexpHysteresisRatioDb_roundTrip_emitsSignal() {
+        TransmitModel t;
+        QSignalSpy spy(&t, &TransmitModel::dexpHysteresisRatioDbChanged);
+        t.setDexpHysteresisRatioDb(4.5);
+        QCOMPARE(t.dexpHysteresisRatioDb(), 4.5);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toDouble(), 4.5);
+    }
+
+    // ── Idempotent guards ──────────────────────────────────────────
+
+    void idempotent_dexpExpansionRatioDb_default_noSignal() {
+        TransmitModel t;
+        QSignalSpy spy(&t, &TransmitModel::dexpExpansionRatioDbChanged);
+        t.setDexpExpansionRatioDb(10.0);  // default
+        QCOMPARE(spy.count(), 0);
+    }
+
+    void idempotent_dexpHysteresisRatioDb_default_noSignal() {
+        TransmitModel t;
+        QSignalSpy spy(&t, &TransmitModel::dexpHysteresisRatioDbChanged);
+        t.setDexpHysteresisRatioDb(2.0);  // default
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // ── Range clamps ───────────────────────────────────────────────
+    // udDEXPExpansionRatio:  0..30  (setup.Designer.cs:44885-44894 [v2.10.3.13])
+    // udDEXPHysteresisRatio: 0..10  (setup.Designer.cs:44854-44863 [v2.10.3.13])
+
+    void dexpExpansionRatioDb_clampBelowMin() {
+        TransmitModel t;
+        t.setDexpExpansionRatioDb(-5.0);
+        QCOMPARE(t.dexpExpansionRatioDb(), TransmitModel::kDexpExpansionRatioDbMin);
+    }
+
+    void dexpExpansionRatioDb_clampAboveMax() {
+        TransmitModel t;
+        t.setDexpExpansionRatioDb(99.0);
+        QCOMPARE(t.dexpExpansionRatioDb(), TransmitModel::kDexpExpansionRatioDbMax);
+    }
+
+    void dexpHysteresisRatioDb_clampBelowMin() {
+        TransmitModel t;
+        t.setDexpHysteresisRatioDb(-1.0);
+        QCOMPARE(t.dexpHysteresisRatioDb(), TransmitModel::kDexpHysteresisRatioDbMin);
+    }
+
+    void dexpHysteresisRatioDb_clampAboveMax() {
+        TransmitModel t;
+        t.setDexpHysteresisRatioDb(50.0);
+        QCOMPARE(t.dexpHysteresisRatioDb(), TransmitModel::kDexpHysteresisRatioDbMax);
+    }
+
+    // ── Persistence across instances ──────────────────────────────
+
+    void dexpExpansionRatioDb_persistsAcrossInstances() {
+        {
+            TransmitModel t;
+            t.loadFromSettings(kMac);
+            t.setDexpExpansionRatioDb(20.0);
+        }
+        TransmitModel t2;
+        t2.loadFromSettings(kMac);
+        QCOMPARE(t2.dexpExpansionRatioDb(), 20.0);
+    }
+
+    void dexpHysteresisRatioDb_persistsAcrossInstances() {
+        {
+            TransmitModel t;
+            t.loadFromSettings(kMac);
+            t.setDexpHysteresisRatioDb(5.5);
+        }
+        TransmitModel t2;
+        t2.loadFromSettings(kMac);
+        QCOMPARE(t2.dexpHysteresisRatioDb(), 5.5);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstTransmitModelDexp)
