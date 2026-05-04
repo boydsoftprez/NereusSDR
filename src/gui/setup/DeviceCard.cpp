@@ -352,7 +352,10 @@ void DeviceCard::buildLayout()
         connect(m_bufferSizeDebounceTimer, &QTimer::timeout,
                 this, &DeviceCard::onAnyControlChanged);
         connect(m_bufferSizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, [this](int) { m_bufferSizeDebounceTimer->start(); });
+                this, [this](int) {
+                    if (m_suppressSignals) { return; }
+                    m_bufferSizeDebounceTimer->start();
+                });
     }
 
     // Device combo fires populateDeviceCombo on driver-API change, then
