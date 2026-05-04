@@ -65,14 +65,17 @@ QString probeModel(const QString& subdir, const QString& filename)
         if (!p.isEmpty()) { return p; }
     }
 
-    // 5-7. Dev build — binary is inside the build tree, source is a few levels up.
-    //    macOS:  build/NereusSDR.app/Contents/MacOS/NereusSDR
-    //    Linux:  build/NereusSDR  (or build/bin/NereusSDR)
+    // 5-8. Dev build — binary is inside the build tree, source is a few levels up.
+    //    Windows: build/NereusSDR.exe                              (1 level)
+    //    Linux:   build/NereusSDR                                  (1 level)
+    //    Linux:   build/bin/NereusSDR                              (2 levels)
+    //    macOS:   build/NereusSDR.app/Contents/MacOS/NereusSDR     (4 levels)
     //    The third_party/<libname>/models/ path is relative to the repo root.
     const QString libname = (subdir == QStringLiteral("dfnet3"))
         ? QStringLiteral("deepfilter")
         : QStringLiteral("rnnoise");
     for (const char* rel : {
+             "/../third_party/",
              "/../../third_party/",
              "/../../../third_party/",
              "/../../../../third_party/",
