@@ -623,6 +623,39 @@ RadioModel::RadioModel(QObject* parent)
             this, &RadioModel::onMoxHardwareFlipped,
             Qt::QueuedConnection);
 
+    // Issue #177 fix — Thetis-faithful TUN-off ordering.
+    //
+    // setTune(false) latches m_pendingTuneOff and kicks off the MoxController
+    // TX→RX walk, then returns immediately.  When MoxController emits rxReady
+    // (TX→RX phase 4 of 4 — RX channels active, MOX wire bit dropped, WDSP TX
+    // off), we wait an additional m_tuneOffSettleMs (default 100) and then
+    // call completeTuneOff() to kill gen1, restore the DSP mode, restore the
+    // power slider, and un-offset the TX VFO.
+    //
+    // From Thetis console.cs:30106-30109 [v2.10.3.13] — chkTUN_CheckedChanged
+    // else-branch:
+    //     chkMOX.Checked = false;          // synchronously walks TX→RX (~30 ms blocking)
+    //     await Task.Delay(100);
+    //     radio.GetDSPTX(0).TXPostGenRun = 0;
+    //
+    // The deferred completion prevents the gen1-off transient from reaching
+    // the radio while the WDSP TX channel is still pumping (issue #177).
+    connect(m_moxController, &MoxController::rxReady, this, [this]() {
+        if (!m_pendingTuneOff) {
+            return;
+        }
+        QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
+            // Re-check the latch: a fresh setTune(true) (or a teardown) can
+            // clear it between rxReady and the timer firing.  In that case the
+            // deferred completion is a no-op because the new TUN-on path has
+            // already established fresh saved state and re-engaged MOX.
+            if (!m_pendingTuneOff) {
+                return;
+            }
+            completeTuneOff();
+        });
+    });
+
     // MoxController::txReady → TxChannel::setRunning(true) and
     // MoxController::txaFlushed → TxChannel::setRunning(false) are wired in
     // connectToRadio() once m_txChannel is live (see the "MoxController →
@@ -3870,6 +3903,15 @@ void RadioModel::teardownConnection()
         m_transmitModel.persistToSettings(m_lastRadioInfo.macAddress);
     }
 
+    // Issue #177 — clear any in-flight TUN-off bookkeeping.  If we are
+    // tearing down mid-walk, MoxController::rxReady will never fire (timers
+    // are stopped) so the deferred completion would otherwise stay armed
+    // across the next connect.  Clearing the latch + m_isTuning matches
+    // Thetis chkTUN_CheckedChanged's _tuning=false reset (console.cs:30122
+    // [v2.10.3.13]) at session end.
+    m_pendingTuneOff = false;
+    m_isTuning       = false;
+
     // L.3: Release the HL2 mic-source lock on disconnect.
     // A subsequent connectToRadio() to a non-HL2 radio must be free to use
     // MicSource::Radio if the user selects it.  The lock is re-engaged
@@ -4340,6 +4382,15 @@ void RadioModel::setTune(bool on)
         // matches Thetis ordering for future maintainers reading side-by-side.
         m_isTuning = true;
 
+        // Issue #177 — cancel any pending TUN-off completion.  If the user
+        // double-clicks TUN (off → on within the rxReady + 100 ms settle
+        // window) we are mid-walk: the rxReady slot has not yet fired or has
+        // scheduled a singleShot that has not fired.  Clearing this flag
+        // makes both the rxReady slot and the QTimer body no-op when they
+        // run, leaving this fresh TUN-on path as the sole authority on saved
+        // state and MOX engagement.
+        m_pendingTuneOff = false;
+
         // ── SAVE meter mode ────────────────────────────────────────────────────
         // Cite: console.cs:30011 [v2.10.3.13]:
         //   old_meter_tx_mode_before_tune = current_meter_tx_mode;
@@ -4551,104 +4602,211 @@ void RadioModel::setTune(bool on)
             return;
         }
 
+        // Issue #177 fix — Thetis-faithful TUN-off ordering.
+        //
+        // From Thetis console.cs:30106-30109 [v2.10.3.13]:
+        //   chkMOX.Checked = false;        // synchronous walk TX→RX (~30 ms)
+        //   await Task.Delay(100);
+        //   radio.GetDSPTX(0).TXPostGenRun = 0;
+        //
+        // Thetis's chkMOX setter blocks the UI thread inside chkMOX_CheckedChanged2
+        // through Thread.Sleep(mox_delay=10) + Thread.Sleep(ptt_out_delay=20),
+        // then waits an additional 100 ms before turning gen1 off.  By the time
+        // gen1.run is set to 0, the WDSP TX channel has already been disabled
+        // (line 29607) and is no longer producing samples — so the hard step at
+        // gen1's output never enters a running TXA chain and there is no
+        // filter-ringing transient.
+        //
+        // NereusSDR's MoxController is timer-based (non-blocking).  We latch
+        // m_pendingTuneOff and let the rxReady → settle-timer slot wired in
+        // the constructor invoke completeTuneOff() at T+30+m_tuneOffSettleMs ms.
+        // Until then, the rest of the TUN-off work (gen1 off, mode restore,
+        // power restore, VFO un-offset) is deferred.
+        m_pendingTuneOff = true;
+
+        // Capture MOX state BEFORE calling MoxController::setTune so we can
+        // detect the "MOX already RX" path that would otherwise strand the
+        // latch.  Codex P1 catch on PR #180: setMox(false)'s idempotent guard
+        // (MoxController.cpp:461) emits no TX→RX phase signals when m_mox is
+        // already false, so no rxReady fires and the deferred completion
+        // never runs — m_pendingTuneOff sits latched, and a later unrelated
+        // rxReady (from a normal PTT cycle) consumes the stale latch.
+        //
+        // This mirrors Thetis exactly. In Thetis the post-MOX work runs
+        // unconditionally because `await Task.Delay(100)` at console.cs:30107
+        // [v2.10.3.13] lives in the TUN handler — not in chkMOX_CheckedChanged2
+        // — so it fires regardless of whether the chkMOX assignment triggered
+        // a walk.  WinForms silently no-ops `chkMOX.Checked = false` when it
+        // is already false, but the next line in chkTUN_CheckedChanged still
+        // awaits 100 ms and then sets gen1.run = 0.
+        //
+        // Bug window for this guard: something has to drop MOX externally
+        // while m_isTuning is still latched (e.g. PA-fault trip dropping
+        // MOX, manual MOX click during TUN, or future PureSignal /
+        // SwrProtectionController force-unkey paths).  Narrow but real.
+        const bool moxWasOn = (m_moxController != nullptr)
+                              && m_moxController->isMox();
+
         // ── RELEASE MOX via MoxController ────────────────────────────────────
-        // Cite: console.cs:30105 [v2.10.3.13]: chkMOX.Checked = false;
-        // MoxController::setTune(false) drives the full TX→RX walk (B.5).
+        // Cite: console.cs:30106 [v2.10.3.13]: chkMOX.Checked = false;
+        // MoxController::setTune(false) drives the full TX→RX walk (B.5)
+        // when MOX is on: it fires hardwareFlipped(false) synchronously and
+        // then chains keyUpDelayTimer (mox_delay) → txaFlushed →
+        // pttOutDelayTimer (ptt_out_delay) → rxReady.  Always called (even
+        // when MOX is already off) because it also clears m_manualMox and
+        // emits manualMoxChanged(false) — Cite: console.cs:30142 [v2.10.3.13].
         if (m_moxController) {
             m_moxController->setTune(false);
         }
 
-        // ── RELEASE TUNE TONE ──────────────────────────────────────────────────
-        // Cite: console.cs:30109 [v2.10.3.13]: radio.GetDSPTX(0).TXPostGenRun = 0;
-        if (m_txChannel) {
-            m_txChannel->setTuneTone(false, 0.0, 0.0);
-        }
-
-        // ── RESTORE DSP MODE if swapped ────────────────────────────────────────
-        // Cite: console.cs:30112-30122 [v2.10.3.13]:
-        //   switch (old_dsp_mode) { case CWL: case CWU:
-        //       radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode; ... }
-        if (m_activeSlice) {
-            const bool wasSwapped = (m_savedTxDspMode == DSPMode::CWL ||
-                                     m_savedTxDspMode == DSPMode::CWU);
-            if (wasSwapped) {
-                m_activeSlice->setDspMode(m_savedTxDspMode);
-            }
-        }
-
-        // ── RESTORE POWER ──────────────────────────────────────────────────────
-        // Cite: console.cs:30129-30132 [v2.10.3.13]:
-        //   if (_tuneDrivePowerSource == DrivePowerSource.FIXED) PWR = PreviousPWR;
-        //   //MW0LGE_22b  [original inline comment from console.cs:30033]
-        //
-        // Codex P1 follow-up to PR #178 — route the restore through the
-        // calibrated dBm path, NOT the old linear formula.  Previously
-        // this site computed wire_byte = clamp(int(255 * pct/100 * swr),
-        // 0, 255) and wrote it directly via setTxDrive(), which left the
-        // radio holding a pre-hotfix linear byte after TUN-off.  In the
-        // common flow "TUN on → TUN off → MOX without moving slider",
-        // MOX would engage with that stale linear byte → K2GX-class
-        // over-drive on high-gain PAs.
-        //
-        // Same composition as the drive-slider lambda + TUNE-on rewrite:
-        //   wire_byte = clamp(int(audio_volume * 1.02 * 255), 0, 255)
-        //               From audio.cs:262-271 [v2.10.3.13]; NO SWR factor.
-        //   iq_gain   = audio_volume * swrProtect
-        //               From cmaster.cs:1115-1119 [v2.10.3.13]; SWR HERE.
-        // bFromTune=false routes through txMode 0 (drive-slider source)
-        // since TUN is now off and the user's saved drive-slider value
-        // is the canonical post-restore source.
-        m_transmitModel.setPower(m_savedPowerPct);
-        const Band offBand = m_activeSlice
-                                ? bandFromFrequency(m_activeSlice->frequency())
-                                : m_lastBand;
-        if (m_paProfileManager) {
-            const PaProfile* activeProfile = m_paProfileManager->activeProfile();
-            if (activeProfile) {
-                const auto result = m_transmitModel.setPowerUsingTargetDbm(
-                    *activeProfile, offBand, /*bSetPower=*/true,
-                    /*bFromTune=*/false, /*bTwoTone=*/false);
-                const float swrProtectSaved =
-                    std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
-                const int savedWireDrive = std::clamp(
-                    int(result.audioVolume * 1.02 * 255.0), 0, 255);
-                const double iqGain = result.audioVolume
-                                       * static_cast<double>(swrProtectSaved);
-                if (m_txChannel) {
-                    m_txChannel->setTxFixedGain(iqGain);
+        if (!moxWasOn) {
+            // No TX→RX walk will fire because MoxController::setMox(false)
+            // hit its idempotent guard.  Schedule completeTuneOff directly
+            // off a QTimer::singleShot so the deferred path still gets a
+            // turn.  The settle delay matches m_tuneOffSettleMs both for
+            // ordering symmetry with the walk path and because Thetis's
+            // `await Task.Delay(100)` (console.cs:30107 [v2.10.3.13]) is
+            // unconditional — it fires whether or not the chkMOX assignment
+            // triggered a walk.  The lambda re-checks the latch in case a
+            // fresh setTune(true) clears it before the timer fires.
+            QTimer::singleShot(m_tuneOffSettleMs, this, [this]() {
+                if (!m_pendingTuneOff) {
+                    return;
                 }
-                if (m_connection) {
-                    auto* conn = m_connection;
-                    QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
-                        conn->setTxDrive(savedWireDrive);
-                    });
-                }
-            }
-        }
-
-        // ── RESTORE TX VFO (un-offset from cw_pitch) ───────────────────────────
-        // Mirrors Thetis console.cs:31788-31810 [v2.10.3.13] which only
-        // applies the ±cw_pitch tx_freq offset while chkTUN.Checked == true.
-        // Once TUNE drops, txtVFOAFreq_LostFocus recomputes tx_freq without
-        // the offset so the carrier returns to dial freq.
-        if (m_activeSlice && m_connection) {
-            const quint64 dialHz =
-                static_cast<quint64>(m_activeSlice->frequency());
-            auto* conn = m_connection;
-            QMetaObject::invokeMethod(conn, [conn, dialHz]() {
-                conn->setTxFrequency(dialHz);
+                completeTuneOff();
             });
         }
 
-        // ── RESTORE METER MODE ─────────────────────────────────────────────────
-        // Cite: console.cs:30136-30137 [v2.10.3.13]:
-        //   if (current_meter_tx_mode != old_meter_tx_mode_before_tune) //MW0LGE_21j
-        //       CurrentMeterTXMode = old_meter_tx_mode_before_tune;
-        // NereusSDR: deferred to H.3 (no MeterModel setTxDisplayMode() yet).
-        // [H.3 hook: restore meterModel().setTxDisplayMode(savedMode) here]
-
-        m_isTuning = false;
+        // The remainder of the TUN-off work runs from completeTuneOff()
+        // when MoxController::rxReady fires + m_tuneOffSettleMs elapses
+        // (walk path), or directly from the singleShot above (no-walk path).
+        // Wired in the RadioModel constructor next to F.1.
     }
+}
+
+// ---------------------------------------------------------------------------
+// completeTuneOff — Thetis-faithful TUN-off completion (issue #177).
+//
+// Invoked from a QTimer::singleShot(m_tuneOffSettleMs) chained off
+// MoxController::rxReady.  By this point the TX→RX walk has finished, the
+// MOX wire bit is off, the WDSP TX channel has been drained and stopped
+// (txaFlushed → setRunning(false)), and the radio's PA is no longer
+// transmitting.  Cutting gen1 here cannot cause a filter-ringing transient
+// to reach the wire because the TXA chain has stopped processing.
+//
+// Mirrors Thetis console.cs:30109-30134 [v2.10.3.13]:
+//   radio.GetDSPTX(0).TXPostGenRun = 0;     // 30109 — gen1 OFF
+//   ...
+//   switch (old_dsp_mode) { case CWL/CWU: restore }   // 30113-30121
+//   _tuning = false;                        // 30122
+//   updateVFOFreqs(false, true);            // 30124 — un-offset TX VFO
+//   if (_tuneDrivePowerSource == FIXED) PWR = PreviousPWR;   // 30130-30134
+//   //MW0LGE_22b  [original inline comment from console.cs:30033]
+//
+// Idempotent: re-checks m_pendingTuneOff and bails if a fresh setTune(true)
+// or a teardown has cleared it.  The constructor lambda also guards before
+// dispatching here, but a defense-in-depth check makes the contract
+// explicit at this entry point.
+// ---------------------------------------------------------------------------
+void RadioModel::completeTuneOff()
+{
+    if (!m_pendingTuneOff) {
+        return;
+    }
+    m_pendingTuneOff = false;
+
+    // ── RELEASE TUNE TONE ──────────────────────────────────────────────────
+    // Cite: console.cs:30109 [v2.10.3.13]: radio.GetDSPTX(0).TXPostGenRun = 0;
+    // The TX channel has already been stopped by F.1 txaFlushed → setRunning(false),
+    // so this gen1 update lands on an idle TXA chain — no transient.
+    if (m_txChannel) {
+        m_txChannel->setTuneTone(false, 0.0, 0.0);
+    }
+
+    // ── RESTORE DSP MODE if swapped ────────────────────────────────────────
+    // Cite: console.cs:30112-30122 [v2.10.3.13]:
+    //   switch (old_dsp_mode) { case CWL: case CWU:
+    //       radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode; ... }
+    if (m_activeSlice) {
+        const bool wasSwapped = (m_savedTxDspMode == DSPMode::CWL ||
+                                 m_savedTxDspMode == DSPMode::CWU);
+        if (wasSwapped) {
+            m_activeSlice->setDspMode(m_savedTxDspMode);
+        }
+    }
+
+    // ── RESTORE POWER ──────────────────────────────────────────────────────
+    // Cite: console.cs:30129-30132 [v2.10.3.13]:
+    //   if (_tuneDrivePowerSource == DrivePowerSource.FIXED) PWR = PreviousPWR;
+    //   //MW0LGE_22b  [original inline comment from console.cs:30033]
+    //
+    // Codex P1 follow-up to PR #178 — route the restore through the
+    // calibrated dBm path, NOT the old linear formula.  Previously
+    // this site computed wire_byte = clamp(int(255 * pct/100 * swr),
+    // 0, 255) and wrote it directly via setTxDrive(), which left the
+    // radio holding a pre-hotfix linear byte after TUN-off.  In the
+    // common flow "TUN on → TUN off → MOX without moving slider",
+    // MOX would engage with that stale linear byte → K2GX-class
+    // over-drive on high-gain PAs.
+    //
+    // Same composition as the drive-slider lambda + TUNE-on rewrite:
+    //   wire_byte = clamp(int(audio_volume * 1.02 * 255), 0, 255)
+    //               From audio.cs:262-271 [v2.10.3.13]; NO SWR factor.
+    //   iq_gain   = audio_volume * swrProtect
+    //               From cmaster.cs:1115-1119 [v2.10.3.13]; SWR HERE.
+    // bFromTune=false routes through txMode 0 (drive-slider source)
+    // since TUN is now off and the user's saved drive-slider value
+    // is the canonical post-restore source.
+    m_transmitModel.setPower(m_savedPowerPct);
+    const Band offBand = m_activeSlice
+                            ? bandFromFrequency(m_activeSlice->frequency())
+                            : m_lastBand;
+    if (m_paProfileManager) {
+        const PaProfile* activeProfile = m_paProfileManager->activeProfile();
+        if (activeProfile) {
+            const auto result = m_transmitModel.setPowerUsingTargetDbm(
+                *activeProfile, offBand, /*bSetPower=*/true,
+                /*bFromTune=*/false, /*bTwoTone=*/false);
+            const float swrProtectSaved =
+                std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
+            const int savedWireDrive = std::clamp(
+                int(result.audioVolume * 1.02 * 255.0), 0, 255);
+            const double iqGain = result.audioVolume
+                                   * static_cast<double>(swrProtectSaved);
+            if (m_txChannel) {
+                m_txChannel->setTxFixedGain(iqGain);
+            }
+            if (m_connection) {
+                auto* conn = m_connection;
+                QMetaObject::invokeMethod(conn, [conn, savedWireDrive]() {
+                    conn->setTxDrive(savedWireDrive);
+                });
+            }
+        }
+    }
+
+    // ── RESTORE TX VFO (un-offset from cw_pitch) ───────────────────────────
+    // Mirrors Thetis console.cs:31788-31810 [v2.10.3.13] which only
+    // applies the ±cw_pitch tx_freq offset while chkTUN.Checked == true.
+    // Once TUNE drops, txtVFOAFreq_LostFocus recomputes tx_freq without
+    // the offset so the carrier returns to dial freq.
+    if (m_activeSlice && m_connection) {
+        const quint64 dialHz =
+            static_cast<quint64>(m_activeSlice->frequency());
+        auto* conn = m_connection;
+        QMetaObject::invokeMethod(conn, [conn, dialHz]() {
+            conn->setTxFrequency(dialHz);
+        });
+    }
+
+    // ── RESTORE METER MODE ─────────────────────────────────────────────────
+    // Cite: console.cs:30136-30137 [v2.10.3.13]:
+    //   if (current_meter_tx_mode != old_meter_tx_mode_before_tune) //MW0LGE_21j
+    //       CurrentMeterTXMode = old_meter_tx_mode_before_tune;
+    // NereusSDR: deferred to H.3 (no MeterModel setTxDisplayMode() yet).
+    // [H.3 hook: restore meterModel().setTxDisplayMode(savedMode) here]
+
+    m_isTuning = false;
 }
 
 void RadioModel::onMoxHardwareFlipped(bool isTx)

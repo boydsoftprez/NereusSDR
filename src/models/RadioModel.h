@@ -455,6 +455,20 @@ public:
         m_testCapsOverride     = true;
         m_testCapsHasMicJack   = hasMicJack;
     }
+    // Issue #177 — drive the tune-off settle delay synchronously in tests.
+    // Production default is 100 ms (mirrors `await Task.Delay(100)` at Thetis
+    // console.cs:30107 [v2.10.3.13]).  Setting this to 0 makes completeTuneOff
+    // schedule on the next event loop iteration, so QCoreApplication::processEvents
+    // can drive the deferred completion synchronously.
+    void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
+    bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
+
+    // TUN state, exported for H.3 UI polling and for issue #177 tests.
+    // True between setTune(true) and the completion of the corresponding
+    // setTune(false) → completeTuneOff() chain.
+    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
+    // many UI/meter/PA paths in console.cs).
+    bool isTune() const noexcept { return m_isTuning; }
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
     // group box in AudioTxInputPage without a live radio connection.
     // Does not reset other test-cap flags — independent of hasMicJack.
@@ -769,6 +783,23 @@ private:
     void wireSliceSignals();
     void teardownConnection();
 
+    // Issue #177 — deferred completion of the TUN-off path.
+    //
+    // Called from the rxReady → settle-timer slot wired in the constructor.
+    // Performs everything that used to run synchronously inside setTune(false)
+    // EXCEPT the MoxController::setTune(false) call: gen1 OFF, DSP-mode
+    // restore (CWL/CWU), tune-power restore through the dBm path, TX VFO
+    // un-offset, and the m_isTuning / m_pendingTuneOff state clears.
+    //
+    // Cite: Thetis console.cs:30106-30148 [v2.10.3.13] — chkTUN_CheckedChanged
+    // TUN-off branch.  Thetis runs the equivalent block AFTER
+    // chkMOX.Checked = false (which is synchronous and blocks ~30 ms inside
+    // chkMOX_CheckedChanged2) and AFTER `await Task.Delay(100)`.  In NereusSDR
+    // this method is invoked from a QTimer::singleShot(m_tuneOffSettleMs)
+    // chained off MoxController::rxReady, so the same total ~130 ms gap
+    // separates the user's click from gen1 going off.
+    void completeTuneOff();
+
     // P1 full-parity §3.4 — per-sample PA telemetry handler.
     // Applies per-board ADC→watts scaling (scaleFwdPowerWatts /
     // scaleRevPowerWatts / scalePaVolts / scalePaAmps), routes the FWD
@@ -998,6 +1029,34 @@ private:
     //   exported for H.3 UI polling.
     //   Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true.
     bool m_isTuning{false};
+
+    // ── Issue #177 fix — Thetis-faithful TUN-off ordering ────────────────────
+    //
+    // m_pendingTuneOff: latched true at the START of the setTune(false) path,
+    //   cleared inside completeTuneOff().  setTune(false) now only kicks off
+    //   the MoxController TX→RX walk; the rest (gen1 off, mode restore, drive
+    //   restore, VFO restore) runs from completeTuneOff() AFTER MoxController
+    //   emits rxReady AND an additional 100 ms settle elapses.
+    //
+    //   This mirrors Thetis console.cs:30106-30109 [v2.10.3.13]:
+    //     chkMOX.Checked = false;        // synchronously walks TX→RX (~30 ms)
+    //     await Task.Delay(100);
+    //     radio.GetDSPTX(0).TXPostGenRun = 0;
+    //
+    //   Without the deferral, gen1 was killed at T+0 while the WDSP TX channel
+    //   was still pumping fexchange0 (setRunning(false) does not fire until
+    //   txaFlushed at T+10 ms).  The hard step at gen1's output produced a
+    //   filter-ringing transient through the 31-stage TXA chain that briefly
+    //   exceeded steady-state amplitude on the wire.  Combined with the wire
+    //   drive byte staying at TUNE level for one EP2 frame after MOX-off
+    //   (round-robin priority bank0 > bank10), this produced an RF spike past
+    //   the radio's spec at high tune-slider settings.  Issue #177.
+    bool m_pendingTuneOff{false};
+
+    // m_tuneOffSettleMs: explicit 100 ms wait between MoxController::rxReady
+    //   and completeTuneOff().  Mirrors `await Task.Delay(100)` at Thetis
+    //   console.cs:30107 [v2.10.3.13].  Tests override via the *ForTest seam.
+    int m_tuneOffSettleMs{100};
 
     // ── 3M-1a G.1: TX-side integration ──────────────────────────────────────
     // Master design §5.1.1; pre-code review §1.6 + §2.5.
