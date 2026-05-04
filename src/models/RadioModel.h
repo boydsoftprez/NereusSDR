@@ -478,8 +478,17 @@ public:
     void handlePaTelemetryForTest(quint16 fwdRaw, quint16 revRaw,
                                   quint16 exciterRaw, quint16 userAdc0Raw,
                                   quint16 userAdc1Raw, quint16 supplyRaw) {
+        // The test seam injects telemetry as if the radio were
+        // transmitting — bypass the MOX gate that handlePaTelemetry
+        // applies in production (which forces TX-domain readings to 0
+        // when MoxController state != Tx so late samples don't refill
+        // the meters after un-key).  Tests calling this seam mean
+        // "behave as if in TX"; flipping the flag lets the routing
+        // pipeline run exactly as it would on a live transmit sample.
+        m_forceTxForTest = true;
         handlePaTelemetry(fwdRaw, revRaw, exciterRaw,
                           userAdc0Raw, userAdc1Raw, supplyRaw);
+        m_forceTxForTest = false;
     }
 
     // P1 full-parity §3.5 test seam — pure-function counterpart of the
@@ -931,6 +940,14 @@ private:
     bool     m_testCapsHasMicJack{true};             // 3M-1b I.1: injected via setCapsHasMicJackForTest
     HPSDRHW  m_testCapsHw{HPSDRHW::Unknown};        // 3M-1b I.3: injected via setCapsHwForTest
 #endif
+
+    // Test-only override for the handlePaTelemetry MOX gate.
+    // Toggled true by handlePaTelemetryForTest() before the call and false
+    // after, simulating "the radio just sent us a transmit sample" without
+    // requiring the full MoxController state machine to be driven into
+    // MoxState::Tx.  Always false in production code paths.
+    // Bench-reported #167 follow-up.
+    bool     m_forceTxForTest{false};
 
     // Phase 3M-0 Task 6: Ganymede PA-trip live state.
     // From Thetis Andromeda/Andromeda.cs:914 [v2.10.3.13] (_ganymede_pa_issue volatile bool).

@@ -2793,8 +2793,12 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     //
     // PA current / temperature / supply voltage are slow physical
     // quantities valid off-air; leave those samples alone.
-    const bool inTx = m_moxController
-                       && m_moxController->state() == MoxState::Tx;
+    // Test-seam override: handlePaTelemetryForTest sets m_forceTxForTest
+    // to simulate a transmit sample without driving the full MoxController
+    // state machine.  Production code paths leave the flag false.
+    const bool inTx = m_forceTxForTest
+                       || (m_moxController
+                            && m_moxController->state() == MoxState::Tx);
     m_radioStatus.setForwardPower(inTx ? fwdWCal : 0.0);
     m_radioStatus.setReflectedPower(inTx ? revW : 0.0);
     m_radioStatus.setExciterPowerMw(inTx ? static_cast<int>(exciterRaw) : 0);
