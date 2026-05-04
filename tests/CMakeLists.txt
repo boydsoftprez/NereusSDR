@@ -482,6 +482,19 @@ nereus_add_test(tst_mic_profile_manager_cfc_round_trip)
 # for the 5 new bool keys.
 nereus_add_test(tst_mic_profile_manager_cfc_live_path)
 
+# ── Phase 3M-3a-iii Task 11: MicProfileManager DEXP round-trip ────────────
+# Verifies the 11 new DEXP bundle keys (envelope, gate ratios, look-ahead,
+# side-channel filter) round-trip through MicProfileManager byte-for-byte.
+# Defaults sourced from Thetis setup.Designer.cs:44755-45250 [v2.10.3.13]
+# (grpDEXPVOX + grpDEXPLookAhead + grpSCF on tpDSPVOXDE).  Covers: bundle-
+# key presence (asserting total bundle count of 107), defaultProfileValues()
+# for the 11 new keys with verbatim Thetis Designer source cites, capture
+# round-trip (TM property -> AppSettings bundle key), apply round-trip
+# (bundle key -> TM getter), end-to-end full-bundle 11-key round trip
+# (catches accidental key/setter swaps within a section), and bool
+# serialization sanity for the 3 new bool keys.
+nereus_add_test(tst_mic_profile_manager_dexp_round_trip)
+
 # ── Phase 3M-3a-ii follow-up Batch 6: ParaEqEnvelope helper tests ────
 # Verifies the gzip+base64url envelope helper that wraps the
 # ParametricEqWidget JSON for storage in TXProfile blobs (TXParaEQData /
