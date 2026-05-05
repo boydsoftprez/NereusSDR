@@ -311,7 +311,8 @@ void SetupDialog::buildTree()
     add(dsp, "CW",       new CwSetupPage(m_model));
     add(dsp, "AM/SAM",   new AmSamSetupPage(m_model));
     add(dsp, "FM",       new FmSetupPage(m_model));
-    add(dsp, "VOX/DEXP", new VoxDexpSetupPage(m_model));
+    // (DSP > "VOX/DEXP" placeholder removed in 3M-3a-iii Task 16 — the wired
+    //  page lives at Transmit > "DEXP/VOX" (DexpVoxPage from Task 14).)
 
     // Phase 3M-3a-ii Batch 6 (Task 3): CfcSetupPage's [Configure CFC bands…]
     // button emits openCfcDialogRequested.  Forward up to SetupDialog's
@@ -355,6 +356,15 @@ void SetupDialog::buildTree()
     });
 
     add(transmit, "PureSignal",         new PureSignalPage(m_model));
+
+    // Phase 3M-3a-iii Task 14: full DexpVoxPage that mirrors Thetis tpDSPVOXDE
+    // 1:1 (setup.designer.cs:44763-45260 [v2.10.3.13]).  Registered as the
+    // "DEXP/VOX" leaf so PhoneCwApplet's Task 15 right-click target
+    // (SetupDialog::selectPage("DEXP/VOX")) lands here.  This is distinct
+    // from the legacy DSP > VOX/DEXP placeholder above (line 245), which
+    // remains a lightweight 4-control disabled stub for back-compat with
+    // the Thetis tpDSPVOX tab IA.
+    add(transmit, "DEXP/VOX",           new DexpVoxPage(m_model));
 
     // ── Appearance ────────────────────────────────────────────────────────────
     QTreeWidgetItem* appearance = addCategory("Appearance");

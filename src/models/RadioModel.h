@@ -699,6 +699,22 @@ signals:
     void sliceAdded(int index);
     void sliceRemoved(int index);
     void activeSliceChanged(int index);
+    // Emitted once at the end of loadSliceState() after the slice has been
+    // restored from AppSettings. Mirrors Thetis console.cs:27204 [v2.10.3.13]
+    // chkPower_CheckedChanged calling txtVFOAFreq_LostFocus() as the
+    // explicit "push state to display" step at power-on. Listeners
+    // (MainWindow, SpectrumWidget bridge) push the now-correct slice
+    // freq/mode/filter into views, since the wireSliceToSpectrum() seed
+    // ran with the slice's pre-restore default values.
+    void sliceStateRestored(int index);
+    // Issue #153 sub-bug 2 — diagnostic + test observation hook.
+    // Emitted by pushTxModeAndBandpass() when an active slice exists,
+    // BEFORE the queued setter dispatch to TxWorkerThread.  Carries the
+    // slice's current DSPMode + audio-space filter cutoffs.  Tests use
+    // it as a proxy for "push helper triggered with X"; production code
+    // can wire it into diagnostic logging.
+    void txModeAndBandpassPushed(NereusSDR::DSPMode mode,
+                                 int audioLowHz, int audioHighHz);
     void panadapterAdded(int index);
     void panadapterRemoved(int index);
 
@@ -825,7 +841,6 @@ private:
     void handlePaTelemetry(quint16 fwdRaw, quint16 revRaw, quint16 exciterRaw,
                            quint16 userAdc0Raw, quint16 userAdc1Raw,
                            quint16 supplyRaw);
-    void loadSliceState(SliceModel* slice);
     void saveSliceState(SliceModel* slice);
     void scheduleSettingsSave();
 
@@ -837,6 +852,49 @@ public:
     // tweak when they immediately close the app. No-op when nothing's
     // pending. Idempotent — calling repeatedly is safe.
     void flushPendingSettingsSave();
+
+    // Restore a slice's persisted state from AppSettings.  Public so unit
+    // tests can drive it without spinning up the full connectToRadio()
+    // pipeline.  Production callers: connectToRadio() at RadioModel.cpp
+    // line ~1377 — fires once per session per slice on Connected. Emits
+    // sliceStateRestored(index) on completion (see comment on the signal).
+    void loadSliceState(SliceModel* slice);
+
+    // Issue #153 sub-bug 2 — push the active slice's DSPMode + the
+    // user's configured TX bandpass (TransmitModel::filterLow/High) to
+    // TxChannel.  No-op if no active slice.
+    //
+    // Filter source is TransmitModel, NOT SliceModel.  TransmitModel
+    // stores audio-space TX cutoffs (positive, low<=high invariant),
+    // which is what TxChannel::requestFilterChange + applyTxFilterForMode
+    // expect.  SliceModel filter values are RX-passband IQ-space
+    // (negative for LSB-family); routing them through
+    // applyTxFilterForMode would double-negate on LSB and clobber
+    // any user-configured TX bandwidth on every connect/MOX.  Mirrors
+    // the canonical wire at RadioModel.cpp:2550-2560 which sources
+    // audio cutoffs from TransmitModel::filterChanged.
+    //
+    // Read happens on RadioModel's main thread; the TxChannel setter
+    // call is queued to TxWorkerThread via QMetaObject::invokeMethod
+    // (receiver=m_txChannel) so the receiver-thread invariant holds —
+    // mirrors the F.1 / F.2 / H.1 wires inside connectToRadio's txSetup
+    // lambda.  Emits txModeAndBandpassPushed(mode, audioLow, audioHigh)
+    // before the queued dispatch as a test/diagnostic observation hook
+    // (fires even when m_txChannel is null so test fixtures can drive
+    // the helper without standing up the full TX pipeline).
+    //
+    // Wire targets (set up inside the txSetup lambda + wireSliceSignals):
+    //   - createTxChannel success → pushTxModeAndBandpass (initial seed)
+    //   - SliceModel::dspModeChanged → pushTxModeAndBandpass
+    //   - MoxController::txAboutToBegin → pushTxModeAndBandpass
+    //
+    // Source-of-truth: Thetis SetTXFilters at console.cs:8091 +
+    // CurrentDSPMode setter at radio.cs:2670-2696 [v2.10.3.13], wired
+    // into the mode-change handler at console.cs:33937 [v2.10.3.13].
+    // The MOX-engage trigger is NereusSDR's belt-and-suspenders re-seed
+    // (Thetis seeds at mode-change only; we additionally re-seed at
+    // MOX-engage so prior TUN-state desync cannot starve SSB MOX).
+    void pushTxModeAndBandpass();
 
 private:
     // Sub-components (owned, main thread)

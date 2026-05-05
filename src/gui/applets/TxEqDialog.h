@@ -164,8 +164,8 @@ class TransmitModel;
 //   └─────────────────────────────────────────────────────────────────┘
 //
 // The legacy panel is bidirectionally bound to RadioModel::transmit-
-// Model() via a m_updatingFromModel echo guard (mirrors VfoWidget /
-// VoxSettingsPopup pattern).  WDSP plumbing is already in place from
+// Model() via a m_updatingFromModel echo guard (mirrors VfoWidget
+// pattern).  WDSP plumbing is already in place from
 // Phase 3M-3a-i Batches 1 & 2 — this dialog is pure UI on top.
 //
 // The parametric panel embeds a ParametricEqWidget (Tasks 1-5).

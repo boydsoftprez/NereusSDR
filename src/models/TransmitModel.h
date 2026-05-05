@@ -944,6 +944,173 @@ public:
     static constexpr int kVoxHangTimeMsMin =    1;
     static constexpr int kVoxHangTimeMsMax = 2000;
 
+    // ── DEXP envelope properties (3M-3a-iii Task 7) ──────────────────────
+    //
+    // Downward expander envelope controls.  Bound to Setup -> Audio -> VOX/DEXP
+    // (grpDEXPVOX on tpDSPVOXDE) per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+    //
+    // Persistence policy departure from voxEnabled: dexpEnabled IS persisted.
+    // The 3M-1b safety carve-out (voxEnabled always loads OFF to prevent
+    // keying on background noise at startup) does NOT apply to DEXP — the
+    // downward expander only gates audio that is already being processed; it
+    // cannot accidentally PTT the radio.  All four envelope properties persist.
+    //
+    // WDSP wiring lives in TxChannel (Tasks 1-2): setDexpRun, setDexpDetectorTau,
+    // setDexpAttackTime, setDexpReleaseTime.  Setup-page binding lands in Task 14.
+
+    /// DEXP enable toggle.  Default FALSE — Thetis chkDEXPEnable has no explicit
+    /// `Checked = true` setter, so the default is the WinForms CheckBox false.
+    /// (See setup.Designer.cs:45140-45151 [v2.10.3.13].)
+    ///
+    /// Unlike voxEnabled, this property IS persisted (no PTT safety concern).
+    bool dexpEnabled() const noexcept { return m_dexpEnabled; }
+
+    /// DEXP detector low-pass filter time-constant in milliseconds.  Clamped to
+    /// [kDexpDetectorTauMsMin, kDexpDetectorTauMsMax].  Default 20.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:45093 [v2.10.3.13] — udDEXPDetTau.Value=20.
+    /// Range from setup.Designer.cs:45078-45087 [v2.10.3.13]:
+    ///   udDEXPDetTau.Maximum=100, udDEXPDetTau.Minimum=1.
+    double dexpDetectorTauMs() const noexcept { return m_dexpDetectorTauMs; }
+
+    /// DEXP attack time in milliseconds: time from low to high gain.  Clamped to
+    /// [kDexpAttackTimeMsMin, kDexpAttackTimeMsMax].  Default 2.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:45050 [v2.10.3.13] — udDEXPAttack.Value=2.
+    /// Range from setup.Designer.cs:45035-45044 [v2.10.3.13]:
+    ///   udDEXPAttack.Maximum=100, udDEXPAttack.Minimum=2.
+    double dexpAttackTimeMs() const noexcept { return m_dexpAttackTimeMs; }
+
+    /// DEXP release time in milliseconds: time from high to low gain.  Clamped to
+    /// [kDexpReleaseTimeMsMin, kDexpReleaseTimeMsMax].  Default 100.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:44990 [v2.10.3.13] — udDEXPRelease.Value=100.
+    /// Range from setup.Designer.cs:44975-44984 [v2.10.3.13]:
+    ///   udDEXPRelease.Maximum=1000, udDEXPRelease.Minimum=2.
+    double dexpReleaseTimeMs() const noexcept { return m_dexpReleaseTimeMs; }
+
+    // DEXP envelope range constants.
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPDetTau:  Min=1,  Max=100  (line 45078-45087)
+    //   udDEXPAttack:  Min=2,  Max=100  (line 45035-45044)
+    //   udDEXPRelease: Min=2,  Max=1000 (line 44975-44984)
+    static constexpr double kDexpDetectorTauMsMin  =    1.0;
+    static constexpr double kDexpDetectorTauMsMax  =  100.0;
+    static constexpr double kDexpAttackTimeMsMin   =    2.0;
+    static constexpr double kDexpAttackTimeMsMax   =  100.0;
+    static constexpr double kDexpReleaseTimeMsMin  =    2.0;
+    static constexpr double kDexpReleaseTimeMsMax  = 1000.0;
+
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) ─────────────────────
+    //
+    // Downward-expander gate ratios.  Bound to grpDEXPVOX in Setup -> Audio ->
+    // VOX/DEXP per Thetis setup.Designer.cs:44820+ [v2.10.3.13].
+    //
+    // Both properties persist (no PTT-safety carve-out).
+    //
+    // The TxChannel wrapper for hysteresis applies a NEGATIVE Math.Pow exponent
+    // internally (per Batch B finding); the model layer just stores the dB
+    // value as the user sees it in Setup.  Wrapper conversion is in TxChannel
+    // setDexpHysteresisRatio (Task 3).
+
+    /// DEXP expansion ratio in dB.  Clamped to
+    /// [kDexpExpansionRatioDbMin, kDexpExpansionRatioDbMax].  Default 10.0 dB.
+    ///
+    /// From Thetis setup.Designer.cs:44900-44904 [v2.10.3.13]:
+    ///   udDEXPExpansionRatio.Value = 10
+    /// Range from setup.Designer.cs:44885-44894 [v2.10.3.13]:
+    ///   udDEXPExpansionRatio.Maximum = 30, udDEXPExpansionRatio.Minimum = 0
+    double dexpExpansionRatioDb() const noexcept { return m_dexpExpansionRatioDb; }
+
+    /// DEXP hysteresis ratio in dB.  Clamped to
+    /// [kDexpHysteresisRatioDbMin, kDexpHysteresisRatioDbMax].  Default 2.0 dB.
+    ///
+    /// From Thetis setup.Designer.cs:44869-44873 [v2.10.3.13]:
+    ///   udDEXPHysteresisRatio.Value = 20 (with DecimalPlaces=1, scale 65536)
+    ///   -- displayed as 2.0
+    /// Range from setup.Designer.cs:44854-44863 [v2.10.3.13]:
+    ///   udDEXPHysteresisRatio.Maximum = 10, udDEXPHysteresisRatio.Minimum = 0
+    double dexpHysteresisRatioDb() const noexcept { return m_dexpHysteresisRatioDb; }
+
+    // DEXP gate-ratio range constants.
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPExpansionRatio:  Min=0, Max=30 (line 44885-44894)
+    //   udDEXPHysteresisRatio: Min=0, Max=10 (line 44854-44863)
+    static constexpr double kDexpExpansionRatioDbMin  =  0.0;
+    static constexpr double kDexpExpansionRatioDbMax  = 30.0;
+    static constexpr double kDexpHysteresisRatioDbMin =  0.0;
+    static constexpr double kDexpHysteresisRatioDbMax = 10.0;
+
+    // ── DEXP look-ahead properties (3M-3a-iii Task 9) ─────────────────────
+    //
+    // Audio look-ahead controls.  Bound to grpDEXPLookAhead in Setup -> Audio ->
+    // VOX/DEXP per Thetis setup.Designer.cs:44755+ [v2.10.3.13].
+    //
+    // The look-ahead engages the WDSP audio buffer so VOX can fire just before
+    // the first syllable instead of clipping it.  Both properties persist.
+    //
+    // dexpLookAheadEnabled is the only DEXP boolean that ships TRUE.
+
+    /// DEXP audio look-ahead enable toggle.  Default TRUE per Thetis
+    /// chkDEXPLookAheadEnable.Checked=true at setup.Designer.cs:44808 [v2.10.3.13].
+    bool dexpLookAheadEnabled() const noexcept { return m_dexpLookAheadEnabled; }
+
+    /// DEXP audio look-ahead time in milliseconds.  Clamped to
+    /// [kDexpLookAheadMsMin, kDexpLookAheadMsMax].  Default 60.0 ms.
+    ///
+    /// From Thetis setup.Designer.cs:44788 [v2.10.3.13] - udDEXPLookAhead.Value=60.
+    /// Range from setup.Designer.cs:44773-44782 [v2.10.3.13]:
+    ///   udDEXPLookAhead.Maximum=999, udDEXPLookAhead.Minimum=10.
+    double dexpLookAheadMs() const noexcept { return m_dexpLookAheadMs; }
+
+    // DEXP look-ahead range constants.
+    // From Thetis setup.Designer.cs:44773-44782 [v2.10.3.13]:
+    //   udDEXPLookAhead: Min=10, Max=999 (units: ms)
+    static constexpr double kDexpLookAheadMsMin =  10.0;
+    static constexpr double kDexpLookAheadMsMax = 999.0;
+
+    // ── DEXP side-channel filter properties (3M-3a-iii Task 10) ───────────
+    //
+    // Side-channel HP/LP filter trio used by the DEXP detector to gate which
+    // audio frequencies trigger VOX/DEXP.  Bound to grpSCF in Setup -> Audio ->
+    // VOX/DEXP per Thetis setup.Designer.cs:45153+ [v2.10.3.13].
+    //
+    // Plan scope correction (2026-05-03): originally these were planned as
+    // model-only / no-UI properties, but a source-first re-read by the Batch B
+    // agent surfaced grpSCF on tpDSPVOXDE — so they DO get UI binding
+    // (lands in Task 14, the DexpVoxPage Setup-page work).  Defaults below
+    // therefore match the Thetis Designer values verbatim.
+    //
+    // All three persist.
+
+    /// DEXP side-channel filter low cut-off frequency in Hz.  Clamped to
+    /// [kDexpFilterCutHzMin, kDexpFilterCutHzMax].  Default 500.0 Hz.
+    ///
+    /// From Thetis setup.Designer.cs:45240 [v2.10.3.13] - udSCFLowCut.Value=500.
+    /// Range from setup.Designer.cs:45225-45234 [v2.10.3.13]:
+    ///   udSCFLowCut.Maximum=10000, udSCFLowCut.Minimum=100.
+    double dexpLowCutHz() const noexcept { return m_dexpLowCutHz; }
+
+    /// DEXP side-channel filter high cut-off frequency in Hz.  Clamped to
+    /// [kDexpFilterCutHzMin, kDexpFilterCutHzMax].  Default 1500.0 Hz.
+    ///
+    /// From Thetis setup.Designer.cs:45210 [v2.10.3.13] - udSCFHighCut.Value=1500.
+    /// Range from setup.Designer.cs:45195-45204 [v2.10.3.13]:
+    ///   udSCFHighCut.Maximum=10000, udSCFHighCut.Minimum=100.
+    double dexpHighCutHz() const noexcept { return m_dexpHighCutHz; }
+
+    /// DEXP side-channel filter enable toggle.  Default TRUE per Thetis
+    /// chkSCFEnable.Checked=true at setup.Designer.cs:45250 [v2.10.3.13].
+    bool dexpSideChannelFilterEnabled() const noexcept { return m_dexpSideChannelFilterEnabled; }
+
+    // DEXP side-channel filter range constants.
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udSCFLowCut + udSCFHighCut both: Min=100, Max=10000 (units: Hz)
+    //   (lines 45195-45234)
+    // Range matches Task 4 wrapper clamps in TxChannel::setDexpLowCut/HighCut.
+    static constexpr double kDexpFilterCutHzMin =   100.0;
+    static constexpr double kDexpFilterCutHzMax = 10000.0;
+
     // ── Mic source (3M-1b I.1) ────────────────────────────────────────────────
     //
     // NereusSDR-native property — Thetis bakes mic-source selection directly
@@ -1506,6 +1673,25 @@ public slots:
     void setVoxGainScalar(float scalar);
     void setVoxHangTimeMs(int ms);
 
+    // ── DEXP envelope setters (3M-3a-iii Task 7) ───────────────────────────
+    void setDexpEnabled(bool on);
+    void setDexpDetectorTauMs(double ms);
+    void setDexpAttackTimeMs(double ms);
+    void setDexpReleaseTimeMs(double ms);
+
+    // ── DEXP gate-ratio setters (3M-3a-iii Task 8) ─────────────────────────
+    void setDexpExpansionRatioDb(double dB);
+    void setDexpHysteresisRatioDb(double dB);
+
+    // ── DEXP look-ahead setters (3M-3a-iii Task 9) ─────────────────────────
+    void setDexpLookAheadEnabled(bool on);
+    void setDexpLookAheadMs(double ms);
+
+    // ── DEXP side-channel filter setters (3M-3a-iii Task 10) ───────────────
+    void setDexpLowCutHz(double hz);
+    void setDexpHighCutHz(double hz);
+    void setDexpSideChannelFilterEnabled(bool on);
+
     // ── Two-tone setters (3M-1c B.2) ───────────────────────────────────────
     void setTwoToneFreq1(int hz);
     void setTwoToneFreq2(int hz);
@@ -1592,6 +1778,25 @@ signals:
     void voxThresholdDbChanged(int dB);
     void voxGainScalarChanged(float scalar);
     void voxHangTimeMsChanged(int ms);
+
+    // ── DEXP envelope signals (3M-3a-iii Task 7) ──────────────────────────
+    void dexpEnabledChanged(bool on);
+    void dexpDetectorTauMsChanged(double ms);
+    void dexpAttackTimeMsChanged(double ms);
+    void dexpReleaseTimeMsChanged(double ms);
+
+    // ── DEXP gate-ratio signals (3M-3a-iii Task 8) ────────────────────────
+    void dexpExpansionRatioDbChanged(double dB);
+    void dexpHysteresisRatioDbChanged(double dB);
+
+    // ── DEXP look-ahead signals (3M-3a-iii Task 9) ────────────────────────
+    void dexpLookAheadEnabledChanged(bool on);
+    void dexpLookAheadMsChanged(double ms);
+
+    // ── DEXP side-channel filter signals (3M-3a-iii Task 10) ──────────────
+    void dexpLowCutHzChanged(double hz);
+    void dexpHighCutHzChanged(double hz);
+    void dexpSideChannelFilterEnabledChanged(bool on);
 
     // ── Mic source signals (3M-1b I.1) ────────────────────────────────────────
     /// Emitted when micSource changes. Not emitted on idempotent calls.
@@ -1759,6 +1964,46 @@ private:
     int   m_voxThresholdDb = -40;    // NereusSDR-original default; ptbVOX range [-80,0]
     float m_voxGainScalar  = 1.0f;   // audio.cs:194: vox_gain = 1.0f
     int   m_voxHangTimeMs  = 500;    // udDEXPHold.Value=500 (setup.designer.cs:45020-45024)
+
+    // ── DEXP envelope properties (3M-3a-iii Task 7) ─────────────────────
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   chkDEXPEnable: no Checked= setter -> default false (line 45140-45151)
+    //   udDEXPDetTau.Value=20   (line 45093)
+    //   udDEXPAttack.Value=2    (line 45050)
+    //   udDEXPRelease.Value=100 (line 44990)
+    // ALL four properties persist (no PTT-safety carve-out, unlike voxEnabled).
+    bool   m_dexpEnabled         = false;
+    double m_dexpDetectorTauMs   =  20.0;
+    double m_dexpAttackTimeMs    =   2.0;
+    double m_dexpReleaseTimeMs   = 100.0;
+
+    // ── DEXP gate-ratio properties (3M-3a-iii Task 8) ───────────────────
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udDEXPExpansionRatio.Value=10  (line 44900-44904)
+    //   udDEXPHysteresisRatio.Value=20 with DecimalPlaces=1, scale=65536
+    //                                   -- displayed as 2.0 (line 44869-44873)
+    // Both persist.
+    double m_dexpExpansionRatioDb  = 10.0;
+    double m_dexpHysteresisRatioDb =  2.0;
+
+    // ── DEXP look-ahead properties (3M-3a-iii Task 9) ────────────────────
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   chkDEXPLookAheadEnable.Checked=true (line 44808)
+    //                  -- the only DEXP boolean defaulting true
+    //   udDEXPLookAhead.Value=60            (line 44788)
+    // Both persist.
+    bool   m_dexpLookAheadEnabled = true;
+    double m_dexpLookAheadMs      = 60.0;
+
+    // ── DEXP side-channel filter properties (3M-3a-iii Task 10) ──────────
+    // From Thetis setup.Designer.cs [v2.10.3.13]:
+    //   udSCFLowCut.Value=500   (line 45240)
+    //   udSCFHighCut.Value=1500 (line 45210)
+    //   chkSCFEnable.Checked=true (line 45250)
+    // All three persist.
+    double m_dexpLowCutHz                  =  500.0;
+    double m_dexpHighCutHz                 = 1500.0;
+    bool   m_dexpSideChannelFilterEnabled  = true;
 
     // ── Mic source (3M-1b I.1 + L.3) ───────────────────────────────────
     // NereusSDR-native. Default Pc (always available; Radio is opt-in).

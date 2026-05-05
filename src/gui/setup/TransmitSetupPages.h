@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Task 14: added DexpVoxPage (mirrors
+//                 Thetis tpDSPVOXDE 1:1 — setup.designer.cs:44763-45260
+//                 [v2.10.3.13]).
 // =================================================================
 
 //=================================================================
@@ -252,6 +255,48 @@ private:
     QComboBox* m_feedbackDdcCombo{nullptr};  // DDC selection
     QSlider*   m_attentionSlider{nullptr};
     QLabel*    m_infoLabel{nullptr};         // status/info placeholder
+};
+
+// ---------------------------------------------------------------------------
+// Transmit > DEXP/VOX
+//
+// Phase 3M-3a-iii Task 14: full Setup page mirroring Thetis tpDSPVOXDE 1:1
+// (setup.designer.cs:44763-45260 [v2.10.3.13]).  Three QGroupBox containers
+// laid out left-to-right:
+//   1. grpDEXPVOX           ("VOX / DEXP")               — line 44843
+//   2. grpDEXPLookAhead     ("Audio LookAhead")          — line 44763
+//   3. grpScf               ("Side-Channel Trigger Filter") — line 45165
+//
+// 14 controls total bound bidirectionally to TransmitModel via QSignalBlocker
+// guards.  Object names (chkVOXEnable, udDEXPThreshold, …) match the Thetis
+// Designer verbatim so that downstream code (PhoneCwApplet right-click in
+// Task 15) can target controls via findChild() if ever needed.
+// ---------------------------------------------------------------------------
+class DexpVoxPage : public SetupPage {
+    Q_OBJECT
+public:
+    explicit DexpVoxPage(RadioModel* model, QWidget* parent = nullptr);
+
+private:
+    // ── grpDEXPVOX ───────────────────────────────────────────────────────────
+    QCheckBox*      m_chkVOXEnable{nullptr};
+    QCheckBox*      m_chkDEXPEnable{nullptr};
+    QSpinBox*       m_udDEXPThreshold{nullptr};         // dBV     int (range -80..0)
+    QDoubleSpinBox* m_udDEXPHysteresisRatio{nullptr};   // dB      1 dp (range 0..10)
+    QDoubleSpinBox* m_udDEXPExpansionRatio{nullptr};    // dB      1 dp (range 0..30)
+    QSpinBox*       m_udDEXPAttack{nullptr};            // ms      int (range 2..100)
+    QSpinBox*       m_udDEXPHold{nullptr};              // ms      int (range 1..2000, step 10)
+    QSpinBox*       m_udDEXPRelease{nullptr};           // ms      int (range 2..1000)
+    QSpinBox*       m_udDEXPDetTau{nullptr};            // ms      int (range 1..100)
+
+    // ── grpDEXPLookAhead ─────────────────────────────────────────────────────
+    QCheckBox*      m_chkDEXPLookAheadEnable{nullptr};
+    QSpinBox*       m_udDEXPLookAhead{nullptr};         // ms      int (range 10..999)
+
+    // ── grpScf ───────────────────────────────────────────────────────────────
+    QCheckBox*      m_chkSCFEnable{nullptr};
+    QSpinBox*       m_udSCFLowCut{nullptr};             // Hz      int (range 100..10000, step 10)
+    QSpinBox*       m_udSCFHighCut{nullptr};            // Hz      int (range 100..10000, step 10)
 };
 
 } // namespace NereusSDR

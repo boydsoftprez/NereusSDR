@@ -200,14 +200,18 @@ private slots:
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Codex P2 (PR #160 review): when the key is absent, the CHECKBOX must
-    // also be reset to false.  The Hl2IoBoardTab instance is reused across
-    // currentRadioChanged emissions; without the reset, switching from a
-    // radio with N2ADR=True to one with no persisted key would leave the
-    // checkbox checked while the new radio's matrix was reconciled to
-    // False at connect-time — UI/hardware mismatch.
+    // Codex P2 (PR #160 review) + Issue #174: when the key is absent, the
+    // CHECKBOX must be reset to the default state.  The Hl2IoBoardTab
+    // instance is reused across currentRadioChanged emissions; without
+    // the reset, switching radios would show stale UI from the previously
+    // selected radio, decoupled from the connect-time matrix state.
+    //
+    // Default flipped to TRUE in issue #174 — strict mi0bot port from
+    // setup.designer.cs:17466-17467 [v2.10.3.13-beta2] chkHERCULES.Checked.
+    // RadioModel::connectToRadio now reconciles the matrix to True on
+    // absent key; the checkbox must match.
     // ─────────────────────────────────────────────────────────────────────
-    void restoreSettings_with_missing_key_resets_checkbox_to_false()
+    void restoreSettings_with_missing_key_resets_checkbox_to_default_true()
     {
         RadioModel model;
 #ifdef NEREUS_BUILD_TESTS
@@ -215,17 +219,18 @@ private slots:
 #endif
         Hl2IoBoardTab tab(&model);
 
-        // Simulate a previously-selected HL2 having left the box checked.
-        tab.setN2adrCheckboxStateForTest(true);
-        QVERIFY(tab.n2adrCheckboxStateForTest());
+        // Simulate a previously-selected HL2 having left the box unchecked.
+        tab.setN2adrCheckboxStateForTest(false);
+        QVERIFY(!tab.n2adrCheckboxStateForTest());
 
         // Switch to an HL2 with no persisted N2ADR key.
         QMap<QString, QVariant> emptySettings;
         tab.restoreSettings(emptySettings);
 
-        QVERIFY2(!tab.n2adrCheckboxStateForTest(),
-                 "Codex P2: restoreSettings with missing key did not reset "
-                 "the checkbox — stale UI from previously selected radio");
+        QVERIFY2(tab.n2adrCheckboxStateForTest(),
+                 "Issue #174: restoreSettings with missing key did not "
+                 "reset the checkbox to mi0bot default True — checkbox "
+                 "would be out of sync with the connect-time matrix");
     }
 
     // ─────────────────────────────────────────────────────────────────────

@@ -1481,18 +1481,46 @@ void RxApplet::connectSlice(SliceModel* s)
             }
         });
 
-        // React to step-att-enabled changes (ATT ↔ S-ATT mode switch)
-        connect(attCtrl, &StepAttenuatorController::stepAttEnabledChanged,
-                this, [this](bool stepOn) {
-            m_attLabel->setText(stepOn ? QStringLiteral("S-ATT")
-                                      : QStringLiteral("ATT"));
+        // Helper: pick label text for the current (stepOn, autoOn) tuple.
+        //
+        // Inspired by mi0bot-Thetis console.cs:21342-21365 [v2.10.3.13-beta2]
+        // AutoAttRX1 setter (HL2-only A-ATT label).  NereusSDR widens the
+        // flip to all boards because StepAttenuatorController auto-att is
+        // universal (not HL2-gated like mi0bot's is).  Without the widen,
+        // non-HL2 users with auto-att enabled would have the same blind
+        // spot issue #174 reported on HL2.
+        //
+        // Preserves "ATT" for preamp-combo mode (stepOn=false), which is
+        // the existing NereusSDR convention across all boards.  mi0bot
+        // pins HL2 into the step-att label family even in preamp mode,
+        // but in NereusSDR HL2 users can flip to preamp mode via the
+        // step-att toggle, so we keep "ATT" reachable on every board.
+        auto attLabelText = [](bool stepOn, bool autoOn) {
+            if (!stepOn) {
+                return QStringLiteral("ATT");
+            }
+            return autoOn ? QStringLiteral("A-ATT")
+                          : QStringLiteral("S-ATT");
+        };
+
+        auto refreshAttLabel = [this, attCtrl, attLabelText]() {
+            const bool stepOn = attCtrl->stepAttEnabled();
+            const bool autoOn = attCtrl->autoAttEnabled();
+            m_attLabel->setText(attLabelText(stepOn, autoOn));
             m_attStack->setCurrentIndex(stepOn ? 1 : 0);
-        });
+        };
+
+        // React to step-att-enabled changes (ATT ↔ S-ATT/A-ATT mode switch)
+        connect(attCtrl, &StepAttenuatorController::stepAttEnabledChanged,
+                this, [refreshAttLabel](bool) { refreshAttLabel(); });
+
+        // React to auto-att enable toggles — drives S-ATT ↔ A-ATT on HL2.
+        // From mi0bot-Thetis console.cs:21342-21365 [v2.10.3.13-beta2].
+        connect(attCtrl, &StepAttenuatorController::autoAttEnabledChanged,
+                this, [refreshAttLabel](bool) { refreshAttLabel(); });
 
         // Sync initial state from controller
-        const bool stepOn = attCtrl->stepAttEnabled();
-        m_attLabel->setText(stepOn ? QStringLiteral("S-ATT") : QStringLiteral("ATT"));
-        m_attStack->setCurrentIndex(stepOn ? 1 : 0);
+        refreshAttLabel();
         {
             QSignalBlocker blk(m_stepAttSpin);
             m_stepAttSpin->setValue(attCtrl->attenuatorDb());
@@ -1675,6 +1703,11 @@ int RxApplet::activeTxAntennaForTest() const
     if (text == QStringLiteral("ANT2")) { return 2; }
     if (text == QStringLiteral("ANT3")) { return 3; }
     return -1;
+}
+
+QString RxApplet::attLabelTextForTest() const
+{
+    return m_attLabel ? m_attLabel->text() : QString();
 }
 #endif
 

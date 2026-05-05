@@ -75,9 +75,11 @@
 //   CwSetupPage       — Keyer / Timing / APF
 //   AmSamSetupPage    — AM TX / SAM / Squelch
 //   FmSetupPage       — FM RX / FM TX
-//   VoxDexpSetupPage  — VOX / DEXP
 //   CfcSetupPage      — CFC / Profile
 //   MnfSetupPage      — Manual Notch Filter
+//
+// (VoxDexpSetupPage placeholder removed in 3M-3a-iii Task 16 — the wired
+//  page lives at Setup → Transmit → DEXP/VOX (DexpVoxPage from Task 14).)
 
 #include "core/WdspTypes.h"   // NrSlot
 #include "gui/SetupPage.h"
@@ -185,13 +187,8 @@ public:
     explicit FmSetupPage(RadioModel* model, QWidget* parent = nullptr);
 };
 
-// ── VOX / DEXP ───────────────────────────────────────────────────────────────
-
-class VoxDexpSetupPage : public SetupPage {
-    Q_OBJECT
-public:
-    explicit VoxDexpSetupPage(RadioModel* model, QWidget* parent = nullptr);
-};
+// (VoxDexpSetupPage placeholder removed in 3M-3a-iii Task 16 — wired page
+//  lives at Setup → Transmit → DEXP/VOX (DexpVoxPage from Task 14).)
 
 // ── CFC ──────────────────────────────────────────────────────────────────────
 //

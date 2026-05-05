@@ -42,6 +42,35 @@
 //                 tpDSPCFC tab IA).  TxProfilesPage::Compression section
 //                 removed (orphan placeholder, master-design meta rule
 //                 §2.2.1 violation).
+//   2026-05-03 — Phase 3M-3a-iii Task 14: new DexpVoxPage that mirrors
+//                 Thetis tpDSPVOXDE 1:1 (setup.designer.cs:44763-45260
+//                 [v2.10.3.13]).  Three QGroupBox containers with 14
+//                 controls bidirectionally bound to TransmitModel via
+//                 QSignalBlocker guards (no feedback loops).  Group titles
+//                 + label captions copied verbatim from the Thetis
+//                 Designer.  Registered as the "DEXP/VOX" leaf under the
+//                 "Transmit" SetupDialog category.  PhoneCwApplet
+//                 right-click in Task 15 will route here via
+//                 SetupDialog::selectPage("DEXP/VOX").
+//   2026-05-03 — Bench polish: DexpVoxPage outer layout switched from
+//                 a single QHBoxLayout (three boxes side-by-side) to a
+//                 2x2 QGridLayout (VOX/DEXP big box spanning column 0
+//                 rows 0+1; Audio LookAhead top-right; Side-Channel
+//                 Trigger Filter bottom-right).  The horizontal layout
+//                 exceeded standard Setup-dialog width and forced
+//                 horizontal scroll; the grid keeps everything inside
+//                 the dialog without panning.  Bidirectional bindings
+//                 unchanged.
+//   2026-05-04 — Bench polish: DexpVoxPage QGridLayout now inserts BEFORE
+//                 the auto-trailing stretch in SetupPage::init() rather
+//                 than appending after it.  The previous code sandwiched
+//                 the grid between the auto-stretch and an explicit
+//                 trailing addStretch(), centring the boxes vertically
+//                 when the dialog page area was taller than the grid.
+//                 The fix mirrors SetupPage::addSection's
+//                 insertWidget(stretchIndex, group) pattern so the boxes
+//                 cluster at the top of the page like every other
+//                 Setup-page family.
 // =================================================================
 
 //=================================================================
@@ -1095,5 +1124,494 @@ void PureSignalPage::buildUI()
     contentLayout()->addWidget(psGroup);
     contentLayout()->addStretch();
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DexpVoxPage  (Phase 3M-3a-iii Task 14)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Mirrors Thetis tpDSPVOXDE 1:1 (setup.designer.cs:44763-45260 [v2.10.3.13]).
+// Three QGroupBox containers laid out left-to-right inside a QHBoxLayout:
+//   1. grpDEXPVOX           ("VOX / DEXP")               — line 44843
+//   2. grpDEXPLookAhead     ("Audio LookAhead")          — line 44763
+//   3. grpScf               ("Side-Channel Trigger Filter") — line 45165
+//
+// 14 controls total: 9 in the DEXP/VOX group, 2 in Audio LookAhead, 3 in SCF.
+// Object names + label captions copied verbatim from the Thetis Designer file
+// so that future cross-tooling (or PhoneCwApplet right-click target traversal)
+// can rely on stable identifiers.
+//
+// Bidirectional binding to TransmitModel uses the established CfcSetupPage
+// pattern: spinbox/checkbox -> tx.setX(); tx.xChanged -> QSignalBlocker-guarded
+// widget setter.  No feedback loops.
+//
+// Special property mappings (some are 3M-1b VOX properties shared with DEXP
+// per the Thetis surface design — udDEXPThreshold and udDEXPHold have no
+// dedicated DEXP-only TM properties; they re-use the VOX values, matching
+// audio.cs:1015-1110 [v2.10.3.13] where vox_threshold + vox_hang_time drive
+// both VOX gating and DEXP detection):
+//   chkVOXEnable          <-> voxEnabled
+//   chkDEXPEnable         <-> dexpEnabled
+//   udDEXPThreshold       <-> voxThresholdDb              (shared)
+//   udDEXPHysteresisRatio <-> dexpHysteresisRatioDb
+//   udDEXPExpansionRatio  <-> dexpExpansionRatioDb
+//   udDEXPAttack          <-> dexpAttackTimeMs
+//   udDEXPHold            <-> voxHangTimeMs               (shared)
+//   udDEXPRelease         <-> dexpReleaseTimeMs
+//   udDEXPDetTau          <-> dexpDetectorTauMs
+//   chkDEXPLookAheadEnable<-> dexpLookAheadEnabled
+//   udDEXPLookAhead       <-> dexpLookAheadMs
+//   chkSCFEnable          <-> dexpSideChannelFilterEnabled
+//   udSCFLowCut           <-> dexpLowCutHz
+//   udSCFHighCut          <-> dexpHighCutHz
+
+namespace {
+
+// Helper: build a labelled row "[label]    [control]" inside a QGridLayout.
+// Mirrors the Thetis label-on-left / spinbox-on-right designer layout that
+// every grp* container uses on tpDSPVOXDE.
+void addLabelledRow(QGridLayout* grid, int row, const QString& labelText, QWidget* control)
+{
+    auto* lbl = new QLabel(labelText);
+    grid->addWidget(lbl,     row, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    grid->addWidget(control, row, 1, Qt::AlignLeft | Qt::AlignVCenter);
+}
+
+} // namespace
+
+DexpVoxPage::DexpVoxPage(RadioModel* model, QWidget* parent)
+    : SetupPage(QStringLiteral("DEXP/VOX"), model, parent)
+{
+    // 2026-05-04 bench polish: align with the Setup-page family by
+    // applying the canonical dark page stylesheet.  Without this the
+    // QSpinBox / QDoubleSpinBox / QGroupBox widgets ship with Qt-default
+    // borders that look mismatched against CfcSetupPage / AgcAlcSetupPage
+    // and the rest of the Setup pages.  Same one-line call PowerPage
+    // (line 160), TxProfilesPage (543), SpeechProcessorPage (637),
+    // PureSignalPage (1084) all use.
+    NereusSDR::Style::applyDarkPageStyle(this);
+
+    if (!model) {
+        // No model — show empty placeholder (matches CfcSetupPage no-model path).
+        return;
+    }
+
+    TransmitModel& tx = model->transmitModel();
+
+    // ── 2x2 grid: VOX/DEXP big box spans col-0 rows; small boxes stacked col-1 ─
+    //
+    // 2026-05-03 bench polish: switched from a single horizontal QHBoxLayout
+    // (three boxes side-by-side) to a 2x2 QGridLayout because the original
+    // arrangement exceeded the standard Setup-dialog width and forced
+    // horizontal scroll.  New shape:
+    //   col 0 (rows 0+1, spanned)  : VOX / DEXP big box
+    //   col 1 row 0                : Audio LookAhead small box
+    //   col 1 row 1                : Side-Channel Trigger Filter small box
+    // Top-justified by inserting the QGridLayout BEFORE the auto-trailing
+    // stretch added in SetupPage::init() (SetupPage.cpp:90).  See the
+    // insertLayout block at the bottom of the buildUI for the mechanism.
+    auto* row = new QGridLayout;
+    row->setSpacing(12);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Group 1: VOX / DEXP ──────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // From Thetis setup.designer.cs:44820-45151 [v2.10.3.13] — grpDEXPVOX.
+    // Title "VOX / DEXP" verbatim from line 44843.
+
+    auto* dexpVoxGrp = new QGroupBox(QStringLiteral("VOX / DEXP"));
+    dexpVoxGrp->setObjectName(QStringLiteral("grpDEXPVOX"));
+    auto* dexpVoxLay = new QVBoxLayout(dexpVoxGrp);
+
+    // chkVOXEnable — "Enable VOX" — line 45065
+    m_chkVOXEnable = new QCheckBox(QStringLiteral("Enable VOX"));
+    m_chkVOXEnable->setObjectName(QStringLiteral("chkVOXEnable"));
+    m_chkVOXEnable->setChecked(tx.voxEnabled());
+    // From Thetis setup.designer.cs:45066 [v2.10.3.13] — chkVOXEnable tooltip.
+    m_chkVOXEnable->setToolTip(QStringLiteral("Enable voice activated transmit"));
+    dexpVoxLay->addWidget(m_chkVOXEnable);
+
+    // chkDEXPEnable — "Enable DEXP" — line 45148
+    m_chkDEXPEnable = new QCheckBox(QStringLiteral("Enable DEXP"));
+    m_chkDEXPEnable->setObjectName(QStringLiteral("chkDEXPEnable"));
+    m_chkDEXPEnable->setChecked(tx.dexpEnabled());
+    // From Thetis setup.designer.cs:45149 [v2.10.3.13] — chkDEXPEnable tooltip.
+    m_chkDEXPEnable->setToolTip(QStringLiteral("Enable Downward Expander"));
+    dexpVoxLay->addWidget(m_chkDEXPEnable);
+
+    // 7 numeric spinboxes laid out in a 4-row × 4-col grid (label / control /
+    // label / control), matching the Thetis Designer two-column spinbox grid.
+    auto* dexpVoxGrid = new QGridLayout;
+    dexpVoxGrid->setHorizontalSpacing(10);
+    dexpVoxGrid->setVerticalSpacing(6);
+
+    // Left column: Attack, Hold, Release  (lines 45120-45128 / 45110-45118 / 45100-45108)
+    // Right column: Threshold, ExpRatio, HystRatio, DetTau (lines 44937-44945 / 44957-44965 /
+    //               44947-44955 / 45130-45138)
+
+    // udDEXPAttack — range 2..100 default 2 — line 45027-45055
+    m_udDEXPAttack = new QSpinBox;
+    m_udDEXPAttack->setObjectName(QStringLiteral("udDEXPAttack"));
+    m_udDEXPAttack->setRange(2, 100);
+    m_udDEXPAttack->setSingleStep(1);
+    m_udDEXPAttack->setValue(static_cast<int>(tx.dexpAttackTimeMs()));
+    // From Thetis setup.designer.cs:45049 [v2.10.3.13] — udDEXPAttack tooltip.
+    m_udDEXPAttack->setToolTip(QStringLiteral(
+        "Time from low to high gain of downward expander"));
+
+    // udDEXPHold — range 1..2000 default 500 step 10 — line 44997-45025
+    m_udDEXPHold = new QSpinBox;
+    m_udDEXPHold->setObjectName(QStringLiteral("udDEXPHold"));
+    m_udDEXPHold->setRange(1, 2000);
+    m_udDEXPHold->setSingleStep(10);
+    m_udDEXPHold->setValue(tx.voxHangTimeMs());
+    // From Thetis setup.designer.cs:45019 [v2.10.3.13] — udDEXPHold tooltip.
+    m_udDEXPHold->setToolTip(QStringLiteral(
+        "Time from signal drop to initiation of gain increase"));
+
+    // udDEXPRelease — range 2..1000 default 100 — line 44967-44995
+    m_udDEXPRelease = new QSpinBox;
+    m_udDEXPRelease->setObjectName(QStringLiteral("udDEXPRelease"));
+    m_udDEXPRelease->setRange(2, 1000);
+    m_udDEXPRelease->setSingleStep(1);
+    m_udDEXPRelease->setValue(static_cast<int>(tx.dexpReleaseTimeMs()));
+    // From Thetis setup.designer.cs:44989 [v2.10.3.13] — udDEXPRelease tooltip.
+    m_udDEXPRelease->setToolTip(QStringLiteral(
+        "Time from high to low gain of downward expander"));
+
+    // udDEXPThreshold — range -80..0 default -20 — line 44907-44935
+    // (NereusSDR ships voxThresholdDb default -40 per TM.h:1576; the runtime
+    // value is what reaches the spinbox, range matches Thetis verbatim.)
+    m_udDEXPThreshold = new QSpinBox;
+    m_udDEXPThreshold->setObjectName(QStringLiteral("udDEXPThreshold"));
+    m_udDEXPThreshold->setRange(-80, 0);
+    m_udDEXPThreshold->setSingleStep(1);
+    m_udDEXPThreshold->setValue(tx.voxThresholdDb());
+    // From Thetis setup.designer.cs:44929 [v2.10.3.13] — udDEXPThreshold tooltip.
+    m_udDEXPThreshold->setToolTip(QStringLiteral("Activation threshold"));
+
+    // udDEXPExpansionRatio — range 0..30 default 10.0 step 0.1 dp 1 — line 44876-44905
+    m_udDEXPExpansionRatio = new QDoubleSpinBox;
+    m_udDEXPExpansionRatio->setObjectName(QStringLiteral("udDEXPExpansionRatio"));
+    m_udDEXPExpansionRatio->setDecimals(1);
+    m_udDEXPExpansionRatio->setRange(0.0, 30.0);
+    m_udDEXPExpansionRatio->setSingleStep(0.1);
+    m_udDEXPExpansionRatio->setValue(tx.dexpExpansionRatioDb());
+    // From Thetis setup.designer.cs:44899 [v2.10.3.13] — udDEXPExpansionRatio tooltip.
+    m_udDEXPExpansionRatio->setToolTip(QStringLiteral(
+        "Ratio between full gain and reduced gain of expander"));
+
+    // udDEXPHysteresisRatio — range 0..10 default 2.0 step 0.1 dp 1 — line 44845-44874
+    m_udDEXPHysteresisRatio = new QDoubleSpinBox;
+    m_udDEXPHysteresisRatio->setObjectName(QStringLiteral("udDEXPHysteresisRatio"));
+    m_udDEXPHysteresisRatio->setDecimals(1);
+    m_udDEXPHysteresisRatio->setRange(0.0, 10.0);
+    m_udDEXPHysteresisRatio->setSingleStep(0.1);
+    m_udDEXPHysteresisRatio->setValue(tx.dexpHysteresisRatioDb());
+    // From Thetis setup.designer.cs:44868 [v2.10.3.13] — udDEXPHysteresisRatio tooltip.
+    m_udDEXPHysteresisRatio->setToolTip(QStringLiteral(
+        "Ratio of activation level and hold level"));
+
+    // udDEXPDetTau — range 1..100 default 20 — line 45070-45098
+    m_udDEXPDetTau = new QSpinBox;
+    m_udDEXPDetTau->setObjectName(QStringLiteral("udDEXPDetTau"));
+    m_udDEXPDetTau->setRange(1, 100);
+    m_udDEXPDetTau->setSingleStep(1);
+    m_udDEXPDetTau->setValue(static_cast<int>(tx.dexpDetectorTauMs()));
+    // From Thetis setup.designer.cs:45092 [v2.10.3.13] — udDEXPDetTau tooltip.
+    m_udDEXPDetTau->setToolTip(QStringLiteral(
+        "Time-constant for low-pass filtering of input"));
+
+    // Layout: left column = time controls, right column = level/ratio controls.
+    // Row labels copied verbatim from the Thetis Designer (see comments).
+    int r = 0;
+    // Row 0:  "Attack (ms)"      / "Threshold (dBV)"
+    //         (lblDEXPAttack:45128 / lblDEXPThreshold:44945)
+    addLabelledRow(dexpVoxGrid, r, QStringLiteral("Attack (ms)"),     m_udDEXPAttack);
+    {
+        auto* lbl = new QLabel(QStringLiteral("Threshold (dBV)"));
+        dexpVoxGrid->addWidget(lbl,                r, 2, Qt::AlignLeft | Qt::AlignVCenter);
+        dexpVoxGrid->addWidget(m_udDEXPThreshold,  r, 3, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    ++r;
+
+    // Row 1:  "Hold (ms)"        / "Exp. Ratio (dB)"
+    //         (lblDEXPHold:45118  / lblDEXPExpRatio:44965)
+    addLabelledRow(dexpVoxGrid, r, QStringLiteral("Hold (ms)"),       m_udDEXPHold);
+    {
+        auto* lbl = new QLabel(QStringLiteral("Exp. Ratio (dB)"));
+        dexpVoxGrid->addWidget(lbl,                       r, 2, Qt::AlignLeft | Qt::AlignVCenter);
+        dexpVoxGrid->addWidget(m_udDEXPExpansionRatio,    r, 3, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    ++r;
+
+    // Row 2:  "Release (ms)"     / "Hyst.Ratio (dB)"
+    //         (lblDEXPRelease:45108 / lblDEXPHystRatio:44955)
+    addLabelledRow(dexpVoxGrid, r, QStringLiteral("Release (ms)"),    m_udDEXPRelease);
+    {
+        auto* lbl = new QLabel(QStringLiteral("Hyst.Ratio (dB)"));
+        dexpVoxGrid->addWidget(lbl,                       r, 2, Qt::AlignLeft | Qt::AlignVCenter);
+        dexpVoxGrid->addWidget(m_udDEXPHysteresisRatio,   r, 3, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    ++r;
+
+    // Row 3:  (spacer)           / "Det.Tau (ms)"
+    //                              (lblDetTau:45138 — verbatim "Det.Tau (ms)" with the dot)
+    {
+        auto* lbl = new QLabel(QStringLiteral("Det.Tau (ms)"));
+        dexpVoxGrid->addWidget(lbl,             r, 2, Qt::AlignLeft | Qt::AlignVCenter);
+        dexpVoxGrid->addWidget(m_udDEXPDetTau,  r, 3, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    ++r;
+
+    dexpVoxLay->addLayout(dexpVoxGrid);
+    dexpVoxLay->addStretch();
+
+    // VOX/DEXP big box — column 0, spans both rows (row=0, col=0, rowSpan=2, colSpan=1).
+    row->addWidget(dexpVoxGrp, 0, 0, 2, 1);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Group 2: Audio LookAhead ─────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // From Thetis setup.designer.cs:44758-44818 [v2.10.3.13] — grpDEXPLookAhead.
+    // Title "Audio LookAhead" verbatim from line 44763.
+
+    auto* lookAheadGrp = new QGroupBox(QStringLiteral("Audio LookAhead"));
+    lookAheadGrp->setObjectName(QStringLiteral("grpDEXPLookAhead"));
+    auto* lookAheadLay = new QVBoxLayout(lookAheadGrp);
+
+    // chkDEXPLookAheadEnable — "Enable" — line 44815, default checked
+    m_chkDEXPLookAheadEnable = new QCheckBox(QStringLiteral("Enable"));
+    m_chkDEXPLookAheadEnable->setObjectName(QStringLiteral("chkDEXPLookAheadEnable"));
+    m_chkDEXPLookAheadEnable->setChecked(tx.dexpLookAheadEnabled());
+    // From Thetis setup.designer.cs:44816 [v2.10.3.13] — chkDEXPLookAheadEnable tooltip.
+    m_chkDEXPLookAheadEnable->setToolTip(QStringLiteral(
+        "Trigger VOX ahead of transmit audio"));
+    lookAheadLay->addWidget(m_chkDEXPLookAheadEnable);
+
+    // udDEXPLookAhead — range 10..999 default 60 — line 44765-44793
+    m_udDEXPLookAhead = new QSpinBox;
+    m_udDEXPLookAhead->setObjectName(QStringLiteral("udDEXPLookAhead"));
+    m_udDEXPLookAhead->setRange(10, 999);
+    m_udDEXPLookAhead->setSingleStep(1);
+    m_udDEXPLookAhead->setValue(static_cast<int>(tx.dexpLookAheadMs()));
+    // From Thetis setup.designer.cs:44787 [v2.10.3.13] — udDEXPLookAhead tooltip.
+    m_udDEXPLookAhead->setToolTip(QStringLiteral("Time for VOX audio lookahead"));
+
+    auto* lookAheadGrid = new QGridLayout;
+    lookAheadGrid->setHorizontalSpacing(10);
+    lookAheadGrid->setVerticalSpacing(6);
+    // "Look Ahead (ms)" — verbatim from lblDEXPAudioLookAhead.Text:44803
+    addLabelledRow(lookAheadGrid, 0,
+                   QStringLiteral("Look Ahead (ms)"), m_udDEXPLookAhead);
+    lookAheadLay->addLayout(lookAheadGrid);
+    lookAheadLay->addStretch();
+
+    // Audio LookAhead small box — column 1, row 0 (top-right cell).
+    // AlignTop keeps the box from stretching vertically inside its grid cell.
+    row->addWidget(lookAheadGrp, 0, 1, Qt::AlignTop);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Group 3: Side-Channel Trigger Filter ─────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // From Thetis setup.designer.cs:45153-45260 [v2.10.3.13] — grpSCF.
+    // Title "Side-Channel Trigger Filter" verbatim from line 45165.
+
+    auto* scfGrp = new QGroupBox(QStringLiteral("Side-Channel Trigger Filter"));
+    scfGrp->setObjectName(QStringLiteral("grpSCF"));
+    auto* scfLay = new QVBoxLayout(scfGrp);
+
+    // chkSCFEnable — "Enable" — line 45257, default checked
+    m_chkSCFEnable = new QCheckBox(QStringLiteral("Enable"));
+    m_chkSCFEnable->setObjectName(QStringLiteral("chkSCFEnable"));
+    m_chkSCFEnable->setChecked(tx.dexpSideChannelFilterEnabled());
+    // From Thetis setup.designer.cs:45258 [v2.10.3.13] — chkSCFEnable tooltip.
+    m_chkSCFEnable->setToolTip(QStringLiteral("Filter audio that triggers VOX"));
+    scfLay->addWidget(m_chkSCFEnable);
+
+    // udSCFLowCut — range 100..10000 default 500 step 10 — line 45217-45245
+    m_udSCFLowCut = new QSpinBox;
+    m_udSCFLowCut->setObjectName(QStringLiteral("udSCFLowCut"));
+    m_udSCFLowCut->setRange(100, 10000);
+    m_udSCFLowCut->setSingleStep(10);
+    m_udSCFLowCut->setValue(static_cast<int>(tx.dexpLowCutHz()));
+    // From Thetis setup.designer.cs:45239 [v2.10.3.13] — udSCFLowCut tooltip.
+    m_udSCFLowCut->setToolTip(QStringLiteral(
+        "Low frequency cut-off for VOX trigger filter"));
+
+    // udSCFHighCut — range 100..10000 default 1500 step 10 — line 45187-45215
+    m_udSCFHighCut = new QSpinBox;
+    m_udSCFHighCut->setObjectName(QStringLiteral("udSCFHighCut"));
+    m_udSCFHighCut->setRange(100, 10000);
+    m_udSCFHighCut->setSingleStep(10);
+    m_udSCFHighCut->setValue(static_cast<int>(tx.dexpHighCutHz()));
+    // From Thetis setup.designer.cs:45209 [v2.10.3.13] — udSCFHighCut tooltip.
+    m_udSCFHighCut->setToolTip(QStringLiteral(
+        "High frequency cut-off for VOX trigger filter"));
+
+    auto* scfGrid = new QGridLayout;
+    scfGrid->setHorizontalSpacing(10);
+    scfGrid->setVerticalSpacing(6);
+    // "Low  Cut (Hz)"  — verbatim from lblSCFLowCut.Text:45185 (note: the
+    //                    Thetis Designer ships TWO spaces between "Low" and
+    //                    "Cut"; we preserve that spacing rather than collapse).
+    // "High Cut (Hz)"  — verbatim from lblSCFHighCut.Text:45175
+    addLabelledRow(scfGrid, 0, QStringLiteral("Low  Cut (Hz)"),  m_udSCFLowCut);
+    addLabelledRow(scfGrid, 1, QStringLiteral("High Cut (Hz)"),  m_udSCFHighCut);
+    scfLay->addLayout(scfGrid);
+    scfLay->addStretch();
+
+    // Side-Channel Trigger Filter small box — column 1, row 1 (bottom-right cell).
+    // AlignTop keeps the box from stretching vertically inside its grid cell.
+    row->addWidget(scfGrp, 1, 1, Qt::AlignTop);
+
+    // Top-justify the grid: insert the QGridLayout BEFORE the auto-trailing
+    // stretch added by SetupPage::init() (SetupPage.cpp:90 [m_contentLayout
+    // ->addStretch(1)]).  The previous code called contentLayout()->addLayout
+    // followed by addStretch(), which left the grid sandwiched between the
+    // auto-stretch (above) and the new explicit stretch (below) — vertically
+    // centring the boxes when the dialog page area was taller than the grid.
+    // Mirrors the pattern in SetupPage::addSection (SetupPage.cpp:126-127)
+    // which uses insertWidget(stretchIndex, group) for the same reason.
+    // Bench feedback 2026-05-04.
+    {
+        const int stretchIndex = contentLayout()->count() - 1;
+        contentLayout()->insertLayout(stretchIndex, row);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── Bidirectional bindings ───────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // chkVOXEnable <-> voxEnabled
+    connect(m_chkVOXEnable, &QCheckBox::toggled,
+            &tx, &TransmitModel::setVoxEnabled);
+    connect(&tx, &TransmitModel::voxEnabledChanged,
+            m_chkVOXEnable, [this](bool on) {
+        QSignalBlocker b(m_chkVOXEnable);
+        m_chkVOXEnable->setChecked(on);
+    });
+
+    // chkDEXPEnable <-> dexpEnabled
+    connect(m_chkDEXPEnable, &QCheckBox::toggled,
+            &tx, &TransmitModel::setDexpEnabled);
+    connect(&tx, &TransmitModel::dexpEnabledChanged,
+            m_chkDEXPEnable, [this](bool on) {
+        QSignalBlocker b(m_chkDEXPEnable);
+        m_chkDEXPEnable->setChecked(on);
+    });
+
+    // udDEXPThreshold <-> voxThresholdDb (shared param)
+    connect(m_udDEXPThreshold, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setVoxThresholdDb);
+    connect(&tx, &TransmitModel::voxThresholdDbChanged,
+            m_udDEXPThreshold, [this](int dB) {
+        QSignalBlocker b(m_udDEXPThreshold);
+        m_udDEXPThreshold->setValue(dB);
+    });
+
+    // udDEXPHysteresisRatio <-> dexpHysteresisRatioDb
+    connect(m_udDEXPHysteresisRatio, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            &tx, &TransmitModel::setDexpHysteresisRatioDb);
+    connect(&tx, &TransmitModel::dexpHysteresisRatioDbChanged,
+            m_udDEXPHysteresisRatio, [this](double dB) {
+        QSignalBlocker b(m_udDEXPHysteresisRatio);
+        m_udDEXPHysteresisRatio->setValue(dB);
+    });
+
+    // udDEXPExpansionRatio <-> dexpExpansionRatioDb
+    connect(m_udDEXPExpansionRatio, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            &tx, &TransmitModel::setDexpExpansionRatioDb);
+    connect(&tx, &TransmitModel::dexpExpansionRatioDbChanged,
+            m_udDEXPExpansionRatio, [this](double dB) {
+        QSignalBlocker b(m_udDEXPExpansionRatio);
+        m_udDEXPExpansionRatio->setValue(dB);
+    });
+
+    // udDEXPAttack <-> dexpAttackTimeMs (TM stores double; spinbox int — exact
+    // round-trip up to integer ms, which is what the Thetis Designer ships)
+    connect(m_udDEXPAttack, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, [&tx](int ms) { tx.setDexpAttackTimeMs(static_cast<double>(ms)); });
+    connect(&tx, &TransmitModel::dexpAttackTimeMsChanged,
+            m_udDEXPAttack, [this](double ms) {
+        QSignalBlocker b(m_udDEXPAttack);
+        m_udDEXPAttack->setValue(static_cast<int>(ms));
+    });
+
+    // udDEXPHold <-> voxHangTimeMs (shared param, both int ms)
+    connect(m_udDEXPHold, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, &TransmitModel::setVoxHangTimeMs);
+    connect(&tx, &TransmitModel::voxHangTimeMsChanged,
+            m_udDEXPHold, [this](int ms) {
+        QSignalBlocker b(m_udDEXPHold);
+        m_udDEXPHold->setValue(ms);
+    });
+
+    // udDEXPRelease <-> dexpReleaseTimeMs
+    connect(m_udDEXPRelease, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, [&tx](int ms) { tx.setDexpReleaseTimeMs(static_cast<double>(ms)); });
+    connect(&tx, &TransmitModel::dexpReleaseTimeMsChanged,
+            m_udDEXPRelease, [this](double ms) {
+        QSignalBlocker b(m_udDEXPRelease);
+        m_udDEXPRelease->setValue(static_cast<int>(ms));
+    });
+
+    // udDEXPDetTau <-> dexpDetectorTauMs
+    connect(m_udDEXPDetTau, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, [&tx](int ms) { tx.setDexpDetectorTauMs(static_cast<double>(ms)); });
+    connect(&tx, &TransmitModel::dexpDetectorTauMsChanged,
+            m_udDEXPDetTau, [this](double ms) {
+        QSignalBlocker b(m_udDEXPDetTau);
+        m_udDEXPDetTau->setValue(static_cast<int>(ms));
+    });
+
+    // chkDEXPLookAheadEnable <-> dexpLookAheadEnabled
+    connect(m_chkDEXPLookAheadEnable, &QCheckBox::toggled,
+            &tx, &TransmitModel::setDexpLookAheadEnabled);
+    connect(&tx, &TransmitModel::dexpLookAheadEnabledChanged,
+            m_chkDEXPLookAheadEnable, [this](bool on) {
+        QSignalBlocker b(m_chkDEXPLookAheadEnable);
+        m_chkDEXPLookAheadEnable->setChecked(on);
+    });
+
+    // udDEXPLookAhead <-> dexpLookAheadMs
+    connect(m_udDEXPLookAhead, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, [&tx](int ms) { tx.setDexpLookAheadMs(static_cast<double>(ms)); });
+    connect(&tx, &TransmitModel::dexpLookAheadMsChanged,
+            m_udDEXPLookAhead, [this](double ms) {
+        QSignalBlocker b(m_udDEXPLookAhead);
+        m_udDEXPLookAhead->setValue(static_cast<int>(ms));
+    });
+
+    // chkSCFEnable <-> dexpSideChannelFilterEnabled
+    connect(m_chkSCFEnable, &QCheckBox::toggled,
+            &tx, &TransmitModel::setDexpSideChannelFilterEnabled);
+    connect(&tx, &TransmitModel::dexpSideChannelFilterEnabledChanged,
+            m_chkSCFEnable, [this](bool on) {
+        QSignalBlocker b(m_chkSCFEnable);
+        m_chkSCFEnable->setChecked(on);
+    });
+
+    // udSCFLowCut <-> dexpLowCutHz
+    connect(m_udSCFLowCut, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, [&tx](int hz) { tx.setDexpLowCutHz(static_cast<double>(hz)); });
+    connect(&tx, &TransmitModel::dexpLowCutHzChanged,
+            m_udSCFLowCut, [this](double hz) {
+        QSignalBlocker b(m_udSCFLowCut);
+        m_udSCFLowCut->setValue(static_cast<int>(hz));
+    });
+
+    // udSCFHighCut <-> dexpHighCutHz
+    connect(m_udSCFHighCut, QOverload<int>::of(&QSpinBox::valueChanged),
+            &tx, [&tx](int hz) { tx.setDexpHighCutHz(static_cast<double>(hz)); });
+    connect(&tx, &TransmitModel::dexpHighCutHzChanged,
+            m_udSCFHighCut, [this](double hz) {
+        QSignalBlocker b(m_udSCFHighCut);
+        m_udSCFHighCut->setValue(static_cast<int>(hz));
+    });
+}
+
 
 } // namespace NereusSDR

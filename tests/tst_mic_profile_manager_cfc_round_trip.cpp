@@ -102,8 +102,10 @@ private slots:
 
         // Total bundle = 50 (existing) + 1 TXParaEQData (3M-3a-ii follow-up
         // Batch 6) + 41 (new CFC/PhRot) + 2 FilterLow/FilterHigh (Plan 4 D1)
-        // + 2 line_in_gain/user_dig_out (P1 full-parity Task 2.4) = 96 keys.
-        QCOMPARE(defs.size(), 96);
+        // + 2 line_in_gain/user_dig_out (P1 full-parity Task 2.4)
+        // + 11 DEXP envelope/ratios/look-ahead/SCF (3M-3a-iii Tasks 7-10)
+        // = 107 keys.
+        QCOMPARE(defs.size(), 107);
     }
 
     // =========================================================================

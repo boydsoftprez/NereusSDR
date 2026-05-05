@@ -13,6 +13,12 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-05-03 — Phase 3M-3a-iii Task 20 by J.J. Boyd (KG4VCF):
+//                 Per-TX-channel DEXP buffer storage added to back the
+//                 create_dexp() callsite that was missing from
+//                 createTxChannel until 2026-05-03.  See WdspEngine.cpp
+//                 for the full root-cause / port narrative.
+//                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -89,6 +95,7 @@ warren@wpratt.com
 
 #include <map>
 #include <memory>
+#include <vector>
 
 #ifdef NEREUS_BUILD_TESTS
 // Forward declaration for test-only friend access (see end of class).  The
@@ -96,6 +103,8 @@ warren@wpratt.com
 // in tests/tst_wdsp_engine_tx_channel.cpp without a NereusSDR namespace
 // wrapper — friend declarations need the fully-qualified name.
 class TestWdspEngineTxChannel;
+// Phase 3M-3a-iii Task 20: same pattern for the create_dexp lifecycle test.
+class TstWdspEngineDexpInit;
 #endif
 
 namespace NereusSDR {
@@ -251,12 +260,38 @@ private:
     // destroyTxChannel's erase() runs the unique_ptr destructor automatically.
     std::map<int, std::unique_ptr<TxChannel>> m_txChannels;
 
+    // Per-TX-channel DEXP in/out buffer (Phase 3M-3a-iii Task 20).
+    //
+    // Backs the create_dexp() callsite in createTxChannel.  Mirrors Thetis
+    // ChannelMaster's pcm->in[in_id] buffer at cmaster.c:285 [v2.10.3.13]
+    // (allocated for every TX-stream slot, passed to BOTH create_dexp's
+    // `in` and `out` parameters at cmaster.c:134-135 [v2.10.3.13]) — but
+    // NereusSDR uses a parallel-only architecture, so this buffer is
+    // private to the DEXP detector and never feeds the fexchange0 audio
+    // path (TxWorkerThread::m_in is a separate buffer that fexchange0
+    // reads).  TxWorkerThread::dispatchOneBlock copies a snapshot of m_in
+    // into this buffer once per audio block (via TxChannel::pumpDexp)
+    // before calling xdexp(channelId).
+    //
+    // Sized 2 * inputBufferSize doubles to hold complex (interleaved I/Q)
+    // samples — matches Thetis's complex-sample layout at cmaster.c:285
+    // (`getbuffsize(pcm->cmMAXInRate) * sizeof(complex)`).
+    //
+    // Ownership: WdspEngine.  Lifetime: must outlive the WDSP DEXP DSP
+    // module (pdexp[id]) — the WDSP module retains the raw pointer set
+    // by create_dexp until destroy_dexp clears it.  destroyTxChannel
+    // destroys the WDSP DEXP via destroy_dexp BEFORE erasing this map,
+    // so the ordering is correct.
+    std::map<int, std::vector<double>> m_dexpBuffers;
+
 #ifdef NEREUS_BUILD_TESTS
     // Test-only friend: lets unit tests bypass async wisdom load by setting
     // m_initialized = true directly so they can exercise createTxChannel /
     // createRxChannel without a running event loop or a real WDSP wisdom
     // file.  Production builds (without NEREUS_BUILD_TESTS) never see this.
     friend class ::TestWdspEngineTxChannel;
+    // Phase 3M-3a-iii Task 20: same friendship for the create_dexp test.
+    friend class ::TstWdspEngineDexpInit;
 #endif
 };
 

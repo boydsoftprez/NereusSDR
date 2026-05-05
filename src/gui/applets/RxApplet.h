@@ -221,6 +221,11 @@ public:
     // Phase 3P-F Task 4: verifies per-band wiring to AlexController.
     int activeRxAntennaForTest() const;
     int activeTxAntennaForTest() const;
+
+    // Test-only: current text of the ATT/S-ATT/A-ATT label.
+    // Issue #174: verifies the mi0bot-Thetis console.cs:21342-21365
+    // [v2.10.3.13-beta2] HL2 A-ATT label flip on auto-att toggle.
+    QString attLabelTextForTest() const;
 private:
 #endif
 

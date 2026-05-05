@@ -866,4 +866,20 @@ void AppSettings::migrateLegacyN2adrFilter(AppSettings& s)
     s.save();
 }
 
+// ---------------------------------------------------------------------------
+// Issue #174: orphan-key cleanup for hardware/oc/n2adrFilter
+// ---------------------------------------------------------------------------
+
+void AppSettings::removeOrphanOcN2adrFilter(AppSettings& s)
+{
+    static constexpr auto kOrphanKey = QLatin1String("hardware/oc/n2adrFilter");
+    if (!s.contains(QString(kOrphanKey))) {
+        return;  // already clean (also the idempotent path)
+    }
+    s.remove(QString(kOrphanKey));
+    qDebug() << "Removed orphan settings key" << QString(kOrphanKey)
+             << "(issue #174 — OcOutputsHfTab N2ADR checkbox had no consumer)";
+    s.save();
+}
+
 } // namespace NereusSDR

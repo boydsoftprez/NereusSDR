@@ -1034,11 +1034,18 @@ void Hl2IoBoardTab::restoreSettings(const QMap<QString, QVariant>& settings)
     // HL2-A while connected to HL2-B that never had N2ADR set).  We
     // touch only the checkbox here, not the matrix — connect-time
     // (RadioModel::connectToRadio) has already reconciled the matrix to
-    // the per-MAC value (defaulting to False) before this hook runs.
+    // the per-MAC value before this hook runs.
+    //
+    // Issue #174: default to True when the key is absent — strict
+    // mi0bot port from setup.designer.cs:17466-17467 [v2.10.3.13-beta2]
+    // (chkHERCULES.Checked = true).  Must match the connect-time default
+    // in RadioModel.cpp; otherwise the checkbox would render unchecked
+    // while the OcMatrix is already populated with the N2ADR preset.
     const auto it = settings.constFind(QStringLiteral("n2adrFilter"));
     const bool keyPresent = (it != settings.constEnd());
     const bool checked = keyPresent
-                       && it.value().toString() == QStringLiteral("True");
+                       ? it.value().toString() == QStringLiteral("True")
+                       : true;
     {
         QSignalBlocker blocker(m_n2adrFilter);
         m_n2adrFilter->setChecked(checked);

@@ -317,6 +317,14 @@ public:
     // instance via QTemporaryDir without touching the singleton.
     static void migrateLegacyN2adrFilter(AppSettings& s);
 
+    // Issue #174 cleanup: the OcOutputsHfTab "N2ADR Filter (HERCULES)"
+    // checkbox wrote to a global "hardware/oc/n2adrFilter" key that had
+    // no consumer.  The actual N2ADR setting lives at per-MAC
+    // hardware/<mac>/hl2IoBoard/n2adrFilter (Hl2IoBoardTab).  This
+    // one-shot removes the orphan key so it doesn't linger in users'
+    // settings files after upgrade.  Idempotent (no-op if key absent).
+    static void removeOrphanOcN2adrFilter(AppSettings& s);
+
 private:
     // Private default constructor — used only by instance().
     AppSettings();

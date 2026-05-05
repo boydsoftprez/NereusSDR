@@ -119,12 +119,19 @@ OverloadLevel StepAttenuatorController::overloadLevel(int adc) const
 
 void StepAttenuatorController::setAutoAttEnabled(bool on)
 {
+    if (m_autoAttEnabled == on) {
+        return;
+    }
     m_autoAttEnabled = on;
     if (!on && m_autoAttApplied) {
         // Clear auto-att state when disabled.
         // From Thetis console.cs:21509-21514: clear stack when auto-att off.
         applyClassicUndo();
     }
+    // RxApplet listens here to flip S-ATT ↔ A-ATT on HL2.  See
+    // mi0bot-Thetis console.cs:21342-21365 [v2.10.3.13-beta2] AutoAttRX1
+    // setter — same convention, same label.
+    emit autoAttEnabledChanged(on);
 }
 
 void StepAttenuatorController::setAutoAttMode(AutoAttMode mode)
