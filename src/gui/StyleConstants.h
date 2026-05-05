@@ -284,6 +284,13 @@ constexpr auto kButtonStyle =
 //   header-position shift, matching the rest of the app).
 // All other rules match the locals byte-for-byte so callers see no
 // other visual change.
+//
+// Issue #175 follow-up (2026-05-04): added QRadioButton rules.  Without
+// these, calling applyDarkPageStyle() on a SetupPage subclass overwrote
+// the QRadioButton::indicator style installed in SetupPage::init() via
+// kRadioButtonStyle, leaving radio-button text + indicators in system
+// default (black-on-black on dark theme).  Caught on PowerPage's new
+// "Tune" group radios.  Mirrors kRadioButtonStyle (lines 241-245 above).
 inline void applyDarkPageStyle(QWidget* w)
 {
     if (!w) { return; }
@@ -310,6 +317,10 @@ inline void applyDarkPageStyle(QWidget* w)
         "QCheckBox::indicator { width: 14px; height: 14px; background: %4;"
         "  border: 1px solid %3; border-radius: 2px; }"
         "QCheckBox::indicator:checked { background: %5; border-color: %5; }"
+        "QRadioButton { color: %2; }"
+        "QRadioButton::indicator { width: 14px; height: 14px; background: %4;"
+        "  border: 1px solid %3; border-radius: 7px; }"
+        "QRadioButton::indicator:checked { background: %5; border-color: %5; }"
         "QLineEdit { background: %4; color: %2; border: 1px solid %3;"
         "  border-radius: 3px; padding: 2px 6px; }"
         "QPushButton { background: %4; color: %2; border: 1px solid %3;"

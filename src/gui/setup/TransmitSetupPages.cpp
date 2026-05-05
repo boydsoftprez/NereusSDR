@@ -385,6 +385,19 @@ void PowerPage::buildTuneGroup()
     m_fixedTunePwrSpin->setObjectName(QStringLiteral("udTXTunePower"));
     form->addRow(QStringLiteral("Fixed Tune Power:"), m_fixedTunePwrSpin);
 
+    // ── Reset Tune Power Defaults button (Issue #175 follow-up) ────────────
+    // Operator-friendly recovery from manual tweaks: restores the factory
+    // defaults across all 4 control types (drive source / TX TUN Meter /
+    // Fixed Tune Power / per-band Tune Power x 14).  Defaults are SKU-aware
+    // — see defaultFixedTunePowerFor / defaultPerBandTunePowerFor in
+    // HpsdrModel.h for the per-SKU values.
+    m_btnResetTuneDefaults = new QPushButton(
+        QStringLiteral("Reset Tune Power Defaults"), m_grpPATune);
+    m_btnResetTuneDefaults->setObjectName(QStringLiteral("btnResetTunePowerDefaults"));
+    form->addRow(QString(), m_btnResetTuneDefaults);
+    connect(m_btnResetTuneDefaults, &QPushButton::clicked,
+            this, &PowerPage::onResetTunePowerDefaults);
+
     // Apply default-SKU bounds so a no-model test still gets a sensible
     // initial range; the constructor's applyHpsdrModel() call after
     // buildUI() overwrites this once the model knows its hardware.
@@ -466,6 +479,65 @@ void PowerPage::onTuneDriveSourceChanged(DrivePowerSource src)
 {
     if (m_fixedTunePwrSpin) {
         m_fixedTunePwrSpin->setEnabled(src == DrivePowerSource::Fixed);
+    }
+}
+
+// Issue #175 follow-up — Reset Tune Power Defaults slot.
+//
+// Operator-recovery action.  After someone tweaks Fixed Tune Power, per-band
+// Tune Power, drive source or TX TUN Meter and loses track of the factory
+// values, this button restores all 4 control types to defaults in one go.
+//
+// Defaults polymorph by SKU:
+//   - Drive source     : Tune Slider (mi0bot designer initial state).
+//   - TX TUN Meter     : Forward Power (combo index 0).
+//   - Fixed Tune Power : 10 W (non-HL2) / encoded -7.5 dB (HL2).
+//   - Per-band Tune Power x 14 : 50 W (non-HL2) / encoded -3 dB (HL2).
+//
+// Storage stays as int (TransmitModel::setTunePower / setTunePowerForBand
+// take int regardless of SKU); the per-band-grid spinboxes pick up the new
+// values via the existing tunePowerByBandChanged signal wiring.  The Fixed
+// spinbox needs an explicit setValue(...) refresh because tunePowerChanged
+// is emitted but the spinbox isn't directly connected to it (it's connected
+// to applyHpsdrModel via the model-side path which doesn't fire here).
+void PowerPage::onResetTunePowerDefaults()
+{
+    if (!model()) {
+        return;
+    }
+    TransmitModel& tx = model()->transmitModel();
+    const HPSDRModel m = model()->hardwareProfile().model;
+
+    // Drive source: Tune Slider per mi0bot default.
+    tx.setTuneDrivePowerSource(DrivePowerSource::TuneSlider);
+    if (m_radTuneSlider) {
+        m_radTuneSlider->setChecked(true);
+    }
+
+    // TX TUN Meter: Forward Power (combo index 0).
+    if (m_comboTxTunMeter) {
+        m_comboTxTunMeter->setCurrentIndex(0);
+    }
+
+    // Fixed Tune Power: SKU-aware default (int storage).
+    tx.setTunePower(defaultFixedTunePowerFor(m));
+
+    // Per-band Tune Power: SKU-aware default for every band.  Per-band
+    // spinboxes pick up the new values automatically via the existing
+    // TransmitModel::tunePowerByBandChanged wiring inside
+    // buildTunePowerGroup().
+    const int perBand = defaultPerBandTunePowerFor(m);
+    for (int i = 0; i < kBandCount; ++i) {
+        tx.setTunePowerForBand(static_cast<Band>(i), perBand);
+    }
+
+    // Refresh the Fixed spinbox display value to match the new stored value.
+    // The spinbox isn't directly bound to TransmitModel::tunePowerChanged
+    // (it's the persisted "global" tune power; mi0bot setup.cs:5305-5312
+    // applies the dB-vs-W display conversion via FixedTunePower setter).
+    if (m_fixedTunePwrSpin) {
+        QSignalBlocker b(m_fixedTunePwrSpin);
+        m_fixedTunePwrSpin->setValue(tunePowerDisplayFromStored(tx.tunePower()));
     }
 }
 

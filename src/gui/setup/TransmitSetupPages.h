@@ -117,6 +117,13 @@ private:
     // spinbox so it tracks the active drive source.
     void onTuneDriveSourceChanged(DrivePowerSource src);
 
+    // Issue #175 follow-up — Reset Tune Power Defaults button slot.
+    // Restores: drive source -> Tune Slider; TX TUN Meter -> Fwd Pwr;
+    // Fixed Tune Power -> SKU-aware default; per-band Tune Power -> SKU-aware
+    // default for every band.  Mirrors Thetis ramdor setup.designer.cs:47263
+    // factory default (10 W non-HL2) plus mi0bot encoding for HL2.
+    void onResetTunePowerDefaults();
+
     // Issue #175 Task 9 — SKU-aware UI <-> storage conversion for the
     // per-band Tune Power grid.  On HL2: stored int 0..99 maps to dB
     // -16.5..0 via (stored / 3.0 - 33.0) / 2.0; on every other SKU,
@@ -151,6 +158,8 @@ private:
     QButtonGroup*    m_tuneDriveButtons{nullptr};
     QComboBox*       m_comboTxTunMeter{nullptr};
     QDoubleSpinBox*  m_fixedTunePwrSpin{nullptr};
+    // Issue #175 follow-up — operator-friendly factory-defaults reset.
+    QPushButton*     m_btnResetTuneDefaults{nullptr};
 
     // Section: Per-band tune power (H.4 — wired)
     // NereusSDR extension: exposes tunePower_by_band[] (console.cs:12094 [v2.10.3.13])

@@ -1,3 +1,7 @@
+// no-port-check: test fixture; cite comments reference upstream setup.cs /
+// setup.designer.cs as documentation of the constants under test (no logic
+// is ported here, only constant values are asserted).
+//
 // Per-SKU PA constants assertion suite for mi0bot-Thetis HL2 parity.
 // Spec: docs/architecture/2026-05-04-hl2-tx-mi0bot-parity-design.md §5.1
 
@@ -45,6 +49,28 @@ private slots:
         // does the actual scaling. mi0bot only deviates for HERMESLITE.
         QCOMPARE(NereusSDR::rfPowerSliderMaxFor(HPSDRModel::ANAN_G2_1K), 100);
         QCOMPARE(NereusSDR::tuneSliderMaxFor(HPSDRModel::ANAN_G2_1K),    100);
+    }
+
+    // Issue #175 follow-up — Reset Tune Power Defaults helpers.
+    //
+    // Non-HL2 default 10 W matches Thetis ramdor setup.designer.cs:47263.
+    // HL2 default 54 = (33 + (-7.5 * 2)) * 3 — encodes -7.5 dB via mi0bot
+    // int formula at setup.cs:9395-9398 [v2.10.3.13-beta2].
+    void defaultFixedTunePower() {
+        QCOMPARE(NereusSDR::defaultFixedTunePowerFor(HPSDRModel::HERMESLITE), 54);
+        QCOMPARE(NereusSDR::defaultFixedTunePowerFor(HPSDRModel::ANAN100),    10);
+        QCOMPARE(NereusSDR::defaultFixedTunePowerFor(HPSDRModel::ANAN_G2),    10);
+        QCOMPARE(NereusSDR::defaultFixedTunePowerFor(HPSDRModel::ANAN8000D),  10);
+    }
+
+    // Per-band default 50 W on non-HL2 matches the existing
+    // m_tunePowerByBand.fill(50) cold-start; HL2 81 = (33 + (-3 * 2)) * 3
+    // encodes -3 dB.
+    void defaultPerBandTunePower() {
+        QCOMPARE(NereusSDR::defaultPerBandTunePowerFor(HPSDRModel::HERMESLITE), 81);
+        QCOMPARE(NereusSDR::defaultPerBandTunePowerFor(HPSDRModel::ANAN100),    50);
+        QCOMPARE(NereusSDR::defaultPerBandTunePowerFor(HPSDRModel::ANAN_G2),    50);
+        QCOMPARE(NereusSDR::defaultPerBandTunePowerFor(HPSDRModel::ANAN8000D),  50);
     }
 };
 
