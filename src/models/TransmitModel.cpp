@@ -557,6 +557,22 @@ void TransmitModel::setAllModeMicPTT(bool on)
     emit allModeMicPTTChanged(on);
 }
 
+// ── radio-mic-input Task 7: PTT-out drop-to-RX delay ────────────────────
+void TransmitModel::setPttOutDelayMs(int ms)
+{
+    // Clamp to designer range 0..500 per setup.designer.cs:9176-9204
+    // [v2.10.3.13+501e3f51] (udGenPTTOutDelay Min=0 Max=500).
+    const int clamped = std::clamp(ms, 0, 500);
+    if (clamped == m_pttOutDelayMs) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:19694 [v2.10.3.13+501e3f51]:
+    //   private int ptt_out_delay = 20;
+    // The MoxController slot that consumes this property is added in a later
+    // task; model just stores + signals + persists.
+    m_pttOutDelayMs = clamped;
+    persistOne(QStringLiteral("PTT_Out_Delay"), QString::number(clamped));
+    emit pttOutDelayMsChanged(clamped);
+}
+
 // ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
 
 void TransmitModel::setLineInGain(int gain)
@@ -1333,6 +1349,11 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool allModeMicPTT = s.value(pfx + QLatin1String("All_Mode_Mic_PTT"),
                                         QStringLiteral("False")).toString() == QLatin1String("True");
     setAllModeMicPTT(allModeMicPTT);
+    // pttOutDelayMs: default 20 (console.cs:19694 [v2.10.3.13+501e3f51])
+    // PTT-out drop-to-RX delay (ms); radio-mic-input Task 7.
+    const int pttOutDelayMs = s.value(pfx + QLatin1String("PTT_Out_Delay"),
+                                       QStringLiteral("20")).toInt();
+    setPttOutDelayMs(pttOutDelayMs);
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
@@ -1732,6 +1753,9 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── radio-mic-input Task 6: All-mode mic PTT ─────────────────────────
     s.setValue(pfx + QLatin1String("All_Mode_Mic_PTT"),
                m_allModeMicPTT ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── radio-mic-input Task 7: PTT-out drop-to-RX delay ─────────────────
+    s.setValue(pfx + QLatin1String("PTT_Out_Delay"), QString::number(m_pttOutDelayMs));
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));

@@ -316,6 +316,10 @@ class TransmitModel : public QObject {
     // From Thetis console.cs:12022 [v2.10.3.13+501e3f51].
     Q_PROPERTY(bool allModeMicPTT READ allModeMicPTT WRITE setAllModeMicPTT NOTIFY allModeMicPTTChanged)
 
+    // ── radio-mic-input Task 7: PTT-out drop-to-RX delay ────────────────
+    // From Thetis console.cs:19694 [v2.10.3.13+501e3f51].
+    Q_PROPERTY(int pttOutDelayMs READ pttOutDelayMs WRITE setPttOutDelayMs NOTIFY pttOutDelayMsChanged)
+
     // ── PA-calibration safety hotfix (#167 Phase 3A) ──────────────────────
     // Three ATT-on-TX-on-power-change safety properties.  Defaults match
     // Thetis console.cs:29285-29310 [v2.10.3.13].
@@ -877,6 +881,16 @@ public:
     ///   private bool _all_mode_mic_ptt = false;
     /// Default FALSE: mic PTT restricted to voice modes (Thetis-faithful).
     bool allModeMicPTT() const noexcept { return m_allModeMicPTT; }
+
+    /// PTT-out drop-to-RX delay, in milliseconds.  Inserted after MOX drops
+    /// to give external amplifiers time to switch back to RX before the
+    /// radio enables RX audio.
+    /// From Thetis console.cs:19694 [v2.10.3.13+501e3f51]:
+    ///   private int ptt_out_delay = 20;
+    /// Designer range 0..500 ms (setup.designer.cs:9176-9204
+    /// [v2.10.3.13+501e3f51] — udGenPTTOutDelay Min=0 Max=500).
+    /// Default 20 ms.
+    int pttOutDelayMs() const noexcept { return m_pttOutDelayMs; }
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     //
@@ -1878,6 +1892,13 @@ public slots:
     /// Mirrors Thetis console.cs:12022 [v2.10.3.13+501e3f51].
     void setAllModeMicPTT(bool on);
 
+    // ── radio-mic-input Task 7: PTT-out drop-to-RX delay ────────────────
+    /// Set the PTT-out drop-to-RX delay in milliseconds.  Clamped to [0,500]
+    /// per setup.designer.cs:9176-9204 [v2.10.3.13+501e3f51] (udGenPTTOutDelay
+    /// spinbox Min=0 Max=500).
+    /// Mirrors Thetis console.cs:19694 [v2.10.3.13+501e3f51].
+    void setPttOutDelayMs(int ms);
+
     // ── line_in_gain + user_dig_out setters (Task 2.4) ──────────────────
     /// Set line-in gain.  Clamped to [0, 31] (5 bits).
     void setLineInGain(int gain);
@@ -2008,6 +2029,9 @@ signals:
 
     // ── radio-mic-input Task 6: allModeMicPTT signal ────────────────────
     void allModeMicPTTChanged(bool on);
+
+    // ── radio-mic-input Task 7: pttOutDelayMs signal ────────────────────
+    void pttOutDelayMsChanged(int ms);
 
     // ── line_in_gain + user_dig_out signals (Task 2.4) ──────────────────
     void lineInGainChanged(int gain);
@@ -2226,6 +2250,9 @@ private:
 
     // ── radio-mic-input Task 6: All-mode mic PTT ─────────────────────────
     bool   m_allModeMicPTT  = false;  // console.cs:12022: _all_mode_mic_ptt = false
+
+    // ── radio-mic-input Task 7: PTT-out drop-to-RX delay ─────────────────
+    int    m_pttOutDelayMs  = 20;     // console.cs:19694: ptt_out_delay = 20
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].

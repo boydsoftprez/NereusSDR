@@ -786,6 +786,14 @@ nereus_add_test(tst_transmit_model_disable_ptt)
 # Source: console.cs:12022 [v2.10.3.13+501e3f51] (_all_mode_mic_ptt = false).
 nereus_add_test(tst_transmit_model_all_mode_mic_ptt)
 
+# ── radio-mic-input Task 7: TransmitModel pttOutDelayMs property ─────────────
+# Verifies default (20 ms), clamp [0,500], setter+signal, and per-MAC
+# persistence under key PTT_Out_Delay.
+# Source: console.cs:19694 [v2.10.3.13+501e3f51] (ptt_out_delay = 20);
+#         setup.designer.cs:9176-9204 [v2.10.3.13+501e3f51] (udGenPTTOutDelay
+#         range 0..500).
+nereus_add_test(tst_transmit_model_ptt_out_delay)
+
 # ── Phase 3M-1c B.2: TransmitModel two-tone test properties (7x) ────────────
 # Verifies defaults, round-trip setters + signals, idempotent guards, and
 # range clamping for: TwoToneFreq1 / TwoToneFreq2 / TwoToneLevel /
