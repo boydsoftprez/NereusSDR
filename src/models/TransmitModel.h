@@ -308,6 +308,10 @@ class TransmitModel : public QObject {
     Q_PROPERTY(int  lineInGain READ lineInGain WRITE setLineInGain NOTIFY lineInGainChanged)
     Q_PROPERTY(int  userDigOut READ userDigOut WRITE setUserDigOut NOTIFY userDigOutChanged)
 
+    // ── radio-mic-input Task 5: Global PTT-loop disable ──────────────────
+    // From Thetis console.cs:19750-19755 [v2.10.3.13+501e3f51].
+    Q_PROPERTY(bool disablePTT READ disablePTT WRITE setDisablePTT NOTIFY disablePTTChanged)
+
     // ── PA-calibration safety hotfix (#167 Phase 3A) ──────────────────────
     // Three ATT-on-TX-on-power-change safety properties.  Defaults match
     // Thetis console.cs:29285-29310 [v2.10.3.13].
@@ -852,6 +856,16 @@ public:
     ///   ... NetworkIO.SetMicPTT(Convert.ToInt32(value));
     /// Default FALSE: PTT enabled by default (sensible safety default).
     bool micPttDisabled() const noexcept { return m_micPttDisabled; }
+
+    /// Global PTT-loop disable.  TRUE = PollPTT loop runs no PTT polling at
+    /// all, blocking every mic-jack / FootSwitch / RCA-jack PTT input.
+    /// Distinct from micPttDisabled (which only gates the mic-jack PTT line).
+    /// From Thetis console.cs:19750-19755 [v2.10.3.13+501e3f51]:
+    ///   private bool _disable_ptt = false;
+    ///   public bool DisablePTT { get; set; }
+    /// Bound to chkGeneralDisablePTT in setup.cs:6535-6539 [v2.10.3.13+501e3f51].
+    /// Default FALSE: PTT polling enabled by default.
+    bool disablePTT() const noexcept { return m_disablePTT; }
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     //
@@ -1843,6 +1857,11 @@ public slots:
     void setMicBias(bool on);
     void setMicPttDisabled(bool disabled);
 
+    // ── radio-mic-input Task 5: Global PTT-loop disable ─────────────────
+    /// Set the global PollPTT-loop disable flag.
+    /// Mirrors Thetis console.cs:19750-19755 [v2.10.3.13+501e3f51].
+    void setDisablePTT(bool on);
+
     // ── line_in_gain + user_dig_out setters (Task 2.4) ──────────────────
     /// Set line-in gain.  Clamped to [0, 31] (5 bits).
     void setLineInGain(int gain);
@@ -1967,6 +1986,9 @@ signals:
     void micTipRingChanged(bool tipIsMic);
     void micBiasChanged(bool on);
     void micPttDisabledChanged(bool disabled);
+
+    // ── radio-mic-input Task 5: disablePTT signal ───────────────────────
+    void disablePTTChanged(bool on);
 
     // ── line_in_gain + user_dig_out signals (Task 2.4) ──────────────────
     void lineInGainChanged(int gain);
@@ -2179,6 +2201,9 @@ private:
     bool   m_micTipRing     = true;   // setup.designer.cs:8683: radOrionMicTip.Checked=true
     bool   m_micBias        = false;  // setup.designer.cs:8779: radOrionBiasOff.Checked=true
     bool   m_micPttDisabled = false;  // console.cs:19757: mic_ptt_disabled = false
+
+    // ── radio-mic-input Task 5: Global PTT-loop disable ──────────────────
+    bool   m_disablePTT     = false;  // console.cs:19750: _disable_ptt = false
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].

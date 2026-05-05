@@ -773,6 +773,13 @@ nereus_add_test(tst_transmit_model_persistence)
 # Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].
 nereus_add_test(tst_transmit_model_line_in_gain_user_dig_out)
 
+# ── radio-mic-input Task 5: TransmitModel disablePTT property ────────────────
+# Verifies default (false), setter+signal, idempotent guard, and per-MAC
+# persistence under key Disable_PTT.
+# Source: console.cs:19750-19755 [v2.10.3.13+501e3f51] (_disable_ptt = false);
+#         setup.cs:6535-6539 [v2.10.3.13+501e3f51] (chkGeneralDisablePTT handler).
+nereus_add_test(tst_transmit_model_disable_ptt)
+
 # ── Phase 3M-1c B.2: TransmitModel two-tone test properties (7x) ────────────
 # Verifies defaults, round-trip setters + signals, idempotent guards, and
 # range clamping for: TwoToneFreq1 / TwoToneFreq2 / TwoToneLevel /

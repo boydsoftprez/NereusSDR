@@ -527,6 +527,21 @@ void TransmitModel::setMicPttDisabled(bool disabled)
     emit micPttDisabledChanged(disabled);
 }
 
+// ── radio-mic-input Task 5: Global PTT-loop disable ─────────────────────
+void TransmitModel::setDisablePTT(bool on)
+{
+    if (on == m_disablePTT) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:19750-19755 [v2.10.3.13+501e3f51]:
+    //   private bool _disable_ptt = false;
+    //   public bool DisablePTT { get => _disable_ptt; set => _disable_ptt = value; }
+    // The MoxController gate that consumes this property is added in a later
+    // task (Tasks 17-19); model just stores + signals + persists.
+    m_disablePTT = on;
+    persistOne(QStringLiteral("Disable_PTT"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit disablePTTChanged(on);
+}
+
 // ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
 
 void TransmitModel::setLineInGain(int gain)
@@ -1293,6 +1308,11 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool micPttDisabled = s.value(pfx + QLatin1String("Mic_PTT_Disabled"),
                                          QStringLiteral("False")).toString() == QLatin1String("True");
     setMicPttDisabled(micPttDisabled);
+    // disablePTT: default false (console.cs:19750 [v2.10.3.13+501e3f51])
+    // Global PTT-loop disable; radio-mic-input Task 5.
+    const bool disablePTT = s.value(pfx + QLatin1String("Disable_PTT"),
+                                     QStringLiteral("False")).toString() == QLatin1String("True");
+    setDisablePTT(disablePTT);
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
@@ -1684,6 +1704,10 @@ void TransmitModel::persistToSettings(const QString& mac) const
     s.setValue(pfx + QLatin1String("Mic_TipRing"),       m_micTipRing      ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("Mic_Bias"),          m_micBias         ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(pfx + QLatin1String("Mic_PTT_Disabled"),   m_micPttDisabled  ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── radio-mic-input Task 5: Global PTT-loop disable ──────────────────
+    s.setValue(pfx + QLatin1String("Disable_PTT"),
+               m_disablePTT ? QStringLiteral("True") : QStringLiteral("False"));
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));
