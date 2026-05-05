@@ -234,28 +234,51 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
             // MI0BOT: Different read loop for HL2 — Larger range for the HL2 attenuator
             // [original inline comment from networkproto1.c:1100,1102]
             if (ctx.mox) {
-                // HL2 TX path: wire byte = 0 by default (no TX attenuation,
-                // full PA drive).  Mirrors Thetis console.cs:10685-10688
-                // [v2.10.3.14-beta1]:
-                //   else  // m_bATTonTX == false (the default)
-                //     NetworkIO.SetTxAttenData(0);
-                // i.e. when the "Apply RX ATT during TX" toggle is OFF —
-                // which is the Thetis-out-of-the-box default — TX ATT is
-                // forced to 0 regardless of the user's RX ATT slider value.
+                // HL2 TX path — issue #175 follow-up bench, 2026-05-04 (JJ).
                 //
-                // Thetis HL2 capture (2026-05-01) confirmed wire byte is
-                // 0x40 (= 0 | 0x40 enable bit) throughout TUNE.  The prior
-                // emission `(31 - txStepAttn[0]) & 0x3F | 0x40` produced
-                // 0x5F = 15.5 dB ATT during TUNE when txStepAttn defaults
-                // to 0, severely cutting PA drive (combined with the
-                // un-scaled drive_level=50 wire byte, this resulted in 0 W
-                // measured output on bench).
+                // From mi0bot networkproto1.c:1099-1100 [v2.10.3.13-beta2]:
+                //   if (XmitBit)
+                //     C4 = (prn->adc[0].tx_step_attn & 0b00111111) | 0b01000000;
+                // The codec writes the network-buffer value DIRECTLY (6-bit
+                // mask + 0x40 enable bit).  The (31 - userDb) HL2-specific
+                // inversion is applied upstream at the wire-send call site,
+                // mi0bot console.cs:10658 [v2.10.3.13-beta2]:
+                //   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)
+                //       NetworkIO.SetTxAttenData(31 - _tx_attenuator_data);
+                //         // MI0BOT: Greater range for HL2
+                // The HL2 firmware reads the wire field with inverted polarity
+                // — higher wire value = more attenuation — so mi0bot performs
+                // the (31 - userDb) flip before storing into the buffer.
                 //
-                // Future enhancement: wire up the `m_bATTonTX` flag (Thetis
-                // console.cs:10670) so the user can opt-in to applying RX
-                // ATT during TX.  When that flag is true, restore the
-                // `31 - userDb` formula gated on it.
-                out[4] = quint8(0x40);  // wire = 0 + enable bit
+                // NereusSDR architecture stores the user's raw signed dB in
+                // m_txStepAttn (set via P1RadioConnection::setTxStepAttenuation
+                // — no inversion).  We perform the (31 - userDb) inversion
+                // at the codec — same pattern as the RX-path branch
+                // immediately below, which inverts (31 - ctx.rxStepAttn[0])
+                // at emission.  Architectural choice: keep the user-facing
+                // value at the connection layer; do all wire-format inversion
+                // at the codec.  Saves one layer of indirection and matches
+                // the RX path.
+                //
+                // The pre-fix emission `quint8(0x40)` (forced wire = 0,
+                // user 31 dB equivalent) was a 3M-1c bench overcorrection
+                // motivated by a 0 W TUNE bug that turned out to be caused
+                // by an unrelated drive-scaling issue.  With the hardcode in
+                // place, m_txStepAttn was silently discarded — so when JJ
+                // enabled "ATT on TX" and engaged MOX expecting 31 dB to
+                // protect the HL2's RX ADC from own-TX leakage, the radio
+                // saw wire = 0 (= 0 dB attenuation), which is the opposite
+                // of the requested behavior.
+                //
+                // After this fix:
+                //   user 0 dB  → wire = (31 - 0)  & 0x3F | 0x40 = 0x5F (no ATT)
+                //   user 15 dB → wire = (31 - 15) & 0x3F | 0x40 = 0x50
+                //   user 31 dB → wire = (31 - 31) & 0x3F | 0x40 = 0x40 (max ATT)
+                //
+                // Signed user-facing range -28..+31 dB applies on TX as well
+                // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).
+                const int txUserDb = qBound(-28, static_cast<int>(ctx.txStepAttn[0]), 31);
+                out[4] = quint8(((31 - txUserDb) & 0b00111111) | 0b01000000);  // Larger range for the HL2 attenuator
             } else {
                 // HL2 RX path: same (31 - userDb) inversion as TX. mi0bot applies
                 // the inversion at three console.cs callsites (RX1 ADC0
@@ -267,9 +290,9 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
                 // From mi0bot-Thetis console.cs:11075, 11251, 19380 [@c26a8a4]
                 // MI0BOT: Greater range for HL2
                 //
-                // Signed user-facing range −28..+32 dB applies on RX as well
+                // Signed user-facing range −28..+31 dB applies on RX as well
                 // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).
-                const int rxUserDb = qBound(-28, static_cast<int>(ctx.rxStepAttn[0]), 32);
+                const int rxUserDb = qBound(-28, static_cast<int>(ctx.rxStepAttn[0]), 31);
                 out[4] = quint8(((31 - rxUserDb) & 0b00111111) | 0b01000000);  // Larger range for the HL2 attenuator
             }
             return;

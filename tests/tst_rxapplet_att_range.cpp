@@ -30,14 +30,17 @@ private slots:
         }
     }
 
-    // HL2 S-ATT slider uses signed −28..+32 dB range (mi0bot
-    // setup.cs:16085-16086 [v2.10.3.13-beta2] udHermesStepAttenuatorData).
+    // HL2 S-ATT slider uses signed −28..+31 dB range.  mi0bot widens
+    // upper bound to +32 at console.cs:11043 [v2.10.3.13-beta2] but that
+    // is an off-by-one upstream bug (wire encoding `31 - userDb` produces
+    // wire = -1 at userDb=32 → 6-bit-masks to LNA-gain wraparound region).
+    // NereusSDR caps at +31 per maintainer approval (issue #175).
     void hl2_slider_max_is_signed_range()
     {
         RadioModel model;
         model.setBoardForTest(HPSDRHW::HermesLite);
         RxApplet applet(nullptr, &model);
-        QCOMPARE(applet.stepAttMaxForTest(), 32);
+        QCOMPARE(applet.stepAttMaxForTest(), 31);
     }
 
     // All standard-attenuator boards stay at 0–31 dB (no Alex present at

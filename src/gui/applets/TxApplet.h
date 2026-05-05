@@ -257,8 +257,34 @@ public:
     // ── Test accessors ──────────────────────────────────────────────────────
     // Always-on (no NEREUS_BUILD_TESTS guard) — same convention as
     // TestTwoTonePage (matches AudioTxInputPage / RxApplet patterns).
-    QComboBox*   profileCombo()  const { return m_profileCombo; }
-    QPushButton* twoToneButton() const { return m_twoToneBtn; }
+    QComboBox*   profileCombo()      const { return m_profileCombo; }
+    QPushButton* twoToneButton()     const { return m_twoToneBtn; }
+    // Issue #175 Task 7: HL2 slider rescale + dB label test access.
+    QSlider*     rfPowerSlider()    const noexcept { return m_rfPowerSlider; }
+    QSlider*     tunePowerSlider()  const noexcept { return m_tunePwrSlider; }
+    QLabel*      rfPowerLabel()     const noexcept { return m_rfPowerValue; }
+    QLabel*      tunePowerLabel()   const noexcept { return m_tunePwrValue; }
+
+    // ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────
+    // mi0bot-Thetis HL2 parity helpers.
+    //
+    // rescalePowerSlidersForModel(): adjusts RF Power and Tune Power slider
+    // ranges/steps for the given SKU (HL2 → 0..90/6 and 0..99/3, all others
+    // → canonical Thetis 0..100/1) and rewrites both slider tooltips with
+    // Thetis-faithful "Transmit Drive - relative value" wording.  Wired to
+    // RadioModel::currentRadioChanged in wireControls() alongside the
+    // existing rescaleFwdGaugeForModel() call.
+    //
+    // updatePowerSliderLabels(): rewrites the inset value labels using the
+    // mi0bot HL2 dB formula on HL2 (RF: (round(drv/6.0)/2)-7.5; Tune:
+    // (slider/3.0-33.0)/2.0) or the bare integer slider value on every
+    // other SKU.  Called from rescalePowerSlidersForModel() and from each
+    // slider's valueChanged signal.
+    //
+    // From mi0bot-Thetis console.cs:2098-2108 (slider Max/step) +
+    // console.cs:29245-29274 (label formula) [v2.10.3.13-beta2].
+    void rescalePowerSlidersForModel(HPSDRModel m);
+    void updatePowerSliderLabels();
 
 signals:
     // ── Phase 3M-1c J.1: right-click on TX Profile combo ────────────────────
@@ -412,6 +438,15 @@ private:
     // Current band — used to resolve per-band tune power.
     // Updated by setCurrentBand() when PanadapterModel::bandChanged fires.
     Band m_currentBand{Band::Band20m};
+
+    // Issue #175 Task 7: cached SKU for the slider/label formatter.  Set by
+    // rescalePowerSlidersForModel() so updatePowerSliderLabels() formats in
+    // the SKU that the slider was last rescaled for, not whatever the live
+    // RadioModel happens to report (the two diverge during unit tests where
+    // the test calls rescalePowerSlidersForModel directly without rebuilding
+    // the radio profile).  Default HPSDRModel::FIRST is the same sentinel
+    // used by rescaleFwdGaugeForModel(HPSDRModel::FIRST) at construction.
+    HPSDRModel m_powerSliderModel{HPSDRModel::FIRST};
 
     // Flag preventing echo loops between the model and the UI.
     bool m_updatingFromModel{false};

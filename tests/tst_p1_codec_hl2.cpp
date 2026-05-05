@@ -35,32 +35,61 @@ private slots:
         QCOMPARE(int(out[4]), ((31 - 20) & 0x3F) | 0x40);
     }
 
-    // Bank 11 C4 — TX path: HL2 emits wire byte = 0 (no TX attenuation, full
-    // PA drive) regardless of txStepAttn[0].  Mirrors Thetis console.cs:
-    // 10685-10688 [v2.10.3.14-beta1] which sends SetTxAttenData(0) when the
-    // (default-OFF) `m_bATTonTX` flag is false.  Verified against a Thetis
-    // HL2 capture (2026-05-01) that emitted 0x40 (= 0 | 0x40 enable bit)
-    // throughout TUNE.
-    void bank11_tx_att_zero_during_mox_default_attontx_off() {
+    // Bank 11 C4 — TX path: HL2 emits the (31 - userDb) inversion in the
+    // 6-bit field, same as the RX path.  Issue #175 follow-up: pre-fix the
+    // codec hardcoded wire = 0x40 (= 0 dB applied), silently discarding
+    // m_txStepAttn — so "ATT on TX" with force-31 emitted no actual
+    // attenuation on the wire.
+    //
+    // From mi0bot networkproto1.c:1099-1100 [v2.10.3.13-beta2]:
+    //   if (XmitBit) C4 = (prn->adc[0].tx_step_attn & 0b00111111) | 0b01000000;
+    // The (31 - userDb) inversion is applied upstream in mi0bot at
+    // console.cs:10658 [v2.10.3.13-beta2]; NereusSDR applies it at the codec
+    // (matching the RX-path branch below).
+    //
+    // ATT-on-TX-disabled default: StepAttenuatorController emits
+    // setTxStepAttenuation(0) on RX→TX → m_txStepAttn=0 → user 0 dB →
+    // wire = (31 - 0) & 0x3F | 0x40 = 0x5F (= "no attenuation" on HL2's
+    // inverted-polarity wire field).
+    void bank11_tx_att_inverts_userDb_under_mox() {
         P1CodecHl2 codec;
         CodecContext ctx;
         ctx.mox = true;
-        // txStepAttn[0] should NOT affect TX wire byte under default config —
-        // m_bATTonTX defaults false, so TX always emits wire=0.
-        for (int v : { 0, 15, 20, 31, 63 }) {
-            ctx.txStepAttn[0] = v;
-            quint8 out[5] = {};
-            codec.composeCcForBank(11, ctx, out);
-            QCOMPARE(int(out[0]), 0x15);  // C0 = 0x14 | mox
-            QCOMPARE(int(out[4]), 0x40);  // wire = 0 + enable bit
-        }
+
+        // user 0 dB → wire = (31 - 0) & 0x3F | 0x40 = 0x5F (no ATT)
+        ctx.txStepAttn[0] = 0;
+        quint8 out[5] = {};
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[0]), 0x15);  // C0 = 0x14 | mox
+        QCOMPARE(int(out[4]), 0x5F);
+
+        // user 15 dB → wire = (31 - 15) & 0x3F | 0x40 = 0x50
+        ctx.txStepAttn[0] = 15;
+        std::fill_n(out, 5, quint8{0});
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[4]), 0x50);
+
+        // user 31 dB (max ATT — the JJ bench scenario) → wire = (31 - 31) & 0x3F | 0x40 = 0x40
+        ctx.txStepAttn[0] = 31;
+        std::fill_n(out, 5, quint8{0});
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[4]), 0x40);
+
+        // user -28 dB (HL2 lower corner) → wire = (31 - (-28)) & 0x3F | 0x40 = 0x7B
+        ctx.txStepAttn[0] = -28;
+        std::fill_n(out, 5, quint8{0});
+        codec.composeCcForBank(11, ctx, out);
+        QCOMPARE(int(out[4]), 0x7B);
     }
 
     // Bank 11 C4 — RX path range. HL2 user-facing slider is signed
-    // −28..+32 dB (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]
-    // udHermesStepAttenuatorData.{Maximum=32, Minimum=-28}). Inputs outside
-    // that range clamp to the corner; the (31 - userDb) inversion folds the
-    // clamped value into the 6-bit wire field.
+    // −28..+31 dB (issue #175 follow-up — capped at +31 per maintainer
+    // approval; mi0bot widens to +32 at console.cs:11043 [v2.10.3.13-beta2]
+    // but that is an off-by-one upstream bug since wire encoding
+    // `31 - userDb` produces wire = -1 at userDb=32 which 6-bit-masks to
+    // the LNA-gain wraparound region).  Inputs outside the range clamp
+    // to the corner; the (31 - userDb) inversion folds the clamped value
+    // into the 6-bit wire field.
     void bank11_rx_att_signed_range_corners() {
         P1CodecHl2 codec;
 
@@ -83,14 +112,14 @@ private slots:
             QCOMPARE(int(out[4]), 0x5F);
         }
 
-        // Positive corner: userDb=+32 → wire = (31-32) & 0x3F | 0x40
-        //                = -1 & 0x3F | 0x40 = 0x3F | 0x40 = 0x7F.
+        // Positive corner: userDb=+31 → wire = (31-31) & 0x3F | 0x40
+        //                = 0 | 0x40 = 0x40 (max chip ATT).
         {
             CodecContext ctx;
-            ctx.rxStepAttn[0] = 32;
+            ctx.rxStepAttn[0] = 31;
             quint8 out[5] = {};
             codec.composeCcForBank(11, ctx, out);
-            QCOMPARE(int(out[4]), 0x7F);
+            QCOMPARE(int(out[4]), 0x40);
         }
 
         // Out-of-range low: userDb=-100 → clamped to -28 → wire 0x7B.
@@ -102,13 +131,13 @@ private slots:
             QCOMPARE(int(out[4]), 0x7B);
         }
 
-        // Out-of-range high: userDb=+100 → clamped to +32 → wire 0x7F.
+        // Out-of-range high: userDb=+100 → clamped to +31 → wire 0x40.
         {
             CodecContext ctx;
             ctx.rxStepAttn[0] = 100;
             quint8 out[5] = {};
             codec.composeCcForBank(11, ctx, out);
-            QCOMPARE(int(out[4]), 0x7F);
+            QCOMPARE(int(out[4]), 0x40);
         }
     }
 

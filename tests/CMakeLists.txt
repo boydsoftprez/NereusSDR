@@ -555,6 +555,14 @@ nereus_add_test(tst_transmit_model_compute_audio_volume)
 # Source: console.cs:46645-46762 [v2.10.3.13] (SetPowerUsingTargetDBM full).
 nereus_add_test(tst_transmit_model_set_power_using_dbm)
 
+# ── Issue #175 Task 6: TransmitModel polymorphic per-band tune-power clamp ───
+# Verifies setTunePowerForBand clamp ceiling polymorphs by SKU:
+#   HERMESLITE: [0, 99]   (mi0bot Tune slider scale, 33 sub-steps)
+#   others:     [0, 100]  (canonical Thetis 0-100 watts target)
+# Also pins the dB<->int conversion formula round-trip used by Task 9.
+# Source: mi0bot console.cs:47616-47666 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_hl2_persistence)
+
 # ── Phase 4 Agent 4A of #167: RadioModel drive-path topology + K2GX repro ────
 # Wire-byte / IQ-scalar topology (audio.cs:262-271 wire NO SWR / cmaster.cs:
 # 1115-1119 IQ HAS SWR) verification for the drive-slider lambda + TUNE
@@ -1651,17 +1659,28 @@ nereus_add_test(tst_transmit_setup_power_pa_page)
 # Thetis setup.designer.cs:5793-5924 [v2.10.3.13].
 nereus_add_test(tst_transmit_setup_swr_protection)
 
+# ── Issue #175 Task 8: PowerPage grpPATune (Tune group) HL2-aware port ──────
+# Verifies the new "Tune" group box on Setup → Transmit → Power has 3 drive-
+# source radios + comboTXTUNMeter + udTXTunePower; spinbox bounds polymorph
+# by SKU (HL2: -16.5..0 dB / 0.5 step / 1 dp / " dB"; others: 0..100 W /
+# 1 step / 0 dp / " W"); fixed-mode toggle persists to TransmitModel; the
+# spinbox is disabled when a non-Fixed radio is selected.
+# mi0bot-Thetis cites:
+#   setup.designer.cs:47874-47930 [v2.10.3.13-beta2] (group layout)
+#   setup.cs:20328-20331         [v2.10.3.13-beta2] (HL2 spinbox bounds)
+nereus_add_test(tst_transmit_setup_power_page_hl2)
+
 # ── Phase 3M-0 Task 10: External TX Inhibit group box on Setup → Transmit ────
 # Verifies grpExtTXInhibit has 2 checkboxes with correct objectNames, defaults,
 # verbatim tooltip text per setup.designer.cs:46626-46657 [v2.10.3.13], and
 # that toggling chkTXInhibit persists to AppSettings.
 nereus_add_test(tst_transmit_setup_tx_inhibit)
 
-# ── Phase 3M-0 Task 11: Block-TX antennas + Disable HF PA ────────────────────
-# Verifies chkBlockTxAnt2/3 carry NereusSDR-original labels and tooltips
-# (Thetis ships unlabelled column-header checkboxes per
-# setup.designer.cs:6704-6724 [v2.10.3.13]), and chkHFTRRelay tooltip
-# "Disables HF PA." verbatim from setup.designer.cs:5786 [v2.10.3.13].
+# ── Phase 3M-0 Task 11: Disable HF PA ────────────────────────────────────────
+# Verifies chkHFTRRelay tooltip "Disables HF PA." verbatim from
+# setup.designer.cs:5786 [v2.10.3.13].  Issue #175 Wave 1: chkBlockTxAnt2/3
+# cases dropped (Power-page checkboxes wrote dead AppSettings keys; live
+# editor lives at AntennaAlexAntennaControlTab via AlexController).
 nereus_add_test(tst_transmit_setup_block_tx)
 
 # ── Phase 3M-3a-i Batch 5 Task E: SpeechProcessorPage TX dashboard ───────────
@@ -3284,6 +3303,14 @@ nereus_add_test(tst_phone_cw_applet_dexp_wiring)
 # absent from TxApplet (one-way relocation pin).
 nereus_add_test(tst_tx_applet_vox_relocated)
 
+# -- Issue #175 Task 7: TxApplet HL2 power-slider rescale + dB labels --
+# 7 tests: HL2 RF/Tune slider Max+step rescale (mi0bot
+# console.cs:2098-2108 [v2.10.3.13-beta2]), SKU swap-back to canonical
+# 0..100 step 1, HL2 RF dB label formula (round(drv/6.0)/2)-7.5 at
+# slider=60 and slider=90 (mi0bot console.cs:29245-29274), non-HL2
+# bare-integer label, Thetis-faithful tooltip wording.
+nereus_add_test(tst_tx_applet_hl2_slider)
+
 # -- UI Polish Foundation A1: AppletPanelWidget scrollbar gutter --
 nereus_add_test(tst_applet_panel_gutter)
 
@@ -3334,3 +3361,48 @@ nereus_add_test(tst_spectrum_tx_overlay)
 # round-trips through AppSettings, resetPreset restores Thetis default,
 # setPresetsForMode reorder persists, presetsChanged fires on every mutator.
 nereus_add_test(tst_filter_preset_store)
+
+# ── Issue #175 Task 1: per-SKU PA UI constants for HL2 mi0bot parity ─────────
+# 5 tests asserting the 9 constexpr helpers + 2 attenuator constants added
+# in HpsdrModel.h for HL2 (HERMESLITE) mi0bot-Thetis slider/spinbox parity:
+#   hl2_rfPowerSlider, hl2_tuneSlider, hl2_fixedTuneSpinbox, hl2_attenuator,
+#   anan100_default_100W, ananG2_1k_default_100W_slider.
+# Source: mi0bot-Thetis console.cs:2101-2108 + setup.cs:20328-20331 +
+#         console.cs:29245-29274 [v2.10.3.13-beta2].
+nereus_add_test(tst_hpsdr_model_pa_constants)
+
+# ── Issue #175 Task 2: TxChannel::setPostGenToneMag WDSP wrapper ──────────────
+# 2 tests asserting round-trip store-and-retrieve for the thin C++ wrapper
+# around SetTXAPostGenToneMag (third_party/wdsp/src/gen.c:800-805 [v2.10.3.13]).
+# Used by Task 4 (TransmitModel::setPowerUsingTargetDbm) for HL2 sub-step
+# DSP audio-gain modulation.
+# Source: mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
+nereus_add_test(tst_tx_channel_post_gen_tone_mag)
+
+# ── Issue #175 Task 3: TransmitModel::txPostGenToneMag property + signal ──────
+# 4 tests: default value (1.0 non-HL2 sentinel), round-trip setter+getter,
+# signal emission, and dedupe-on-equal guard (NereusSDR setter convention).
+# Wired to TxChannel::setPostGenToneMag in Task 10.
+# Source: mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_tx_post_gen_tone_mag)
+
+# ── Issue #175 Task 4: HL2 sub-step DSP modulation in setPowerUsingTargetDbm ──
+# 6 tests asserting the txMode 1 TUNE_SLIDER HL2 branch:
+#   slider 0/25/51 -> sub-step (mag 0.40/0.65/0.91, new_pwr 0);
+#   slider 52/99   -> attenuator (mag 0.9999, new_pwr -4/90);
+#   non-HL2 model  -> pass-through (mag unchanged, new_pwr equals slider).
+# Source: mi0bot-Thetis console.cs:47660-47673 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_hl2_dbm)
+
+# ── Issue #175 Task 5: HL2 audio-volume formula in computeAudioVolume ─────────
+# 5 tests covering the mi0bot HL2 branch ((hl2Power * gbb/100) / 93.75)
+# placed BEFORE the gbb >= 99.5 sentinel so HL2 HF bands actually use the
+# formula instead of falling into the legacy linear path:
+#   §1 HL2 40m (gbb=100) at full   -> clamps to 1.0
+#   §2 HL2 40m (gbb=100) at zero   -> 0.0 (sliderWatts<=0 short-circuit)
+#   §3 HL2 40m (gbb=100) at mid    -> 50/93.75 exactly
+#   §4 HL2 6m  (gbb=38.8) at full  -> (99 * 0.388) / 93.75
+#   §5 ANAN-100 model on a Bypass profile -> legacy linear fallback (0.5),
+#                                           differs from the HL2 formula value.
+# Source: mi0bot-Thetis console.cs:47775-47778 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_hl2_audio_volume)

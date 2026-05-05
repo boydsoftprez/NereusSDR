@@ -192,8 +192,11 @@ public:
 
     // Attenuator value bounds (hardware limits).
     //   Most boards: 0..31 dB unsigned.
-    //   HL2 (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]): −28..+32 dB
-    //     signed; wire byte derives via `wire = 31 - userDb` in P1CodecHl2.
+    //   HL2: −28..+31 dB signed (#175 follow-up — mi0bot widens upper to
+    //     +32 at console.cs:11043 [v2.10.3.13-beta2] but that is an
+    //     off-by-one bug; chip-correct cap is +31 per InitConsole at
+    //     console.cs:2111).  Wire byte derives via `wire = 31 - userDb`
+    //     in P1CodecHl2.
     int maxAttenuation() const { return m_maxAttDb; }
     void setMaxAttenuation(int dB);
     int minAttenuation() const { return m_minAttDb; }
@@ -445,10 +448,46 @@ private:
     // of the SWL slice you tune to.  Sized at Band::SwlFirst (=14).
     std::array<int, static_cast<size_t>(Band::SwlFirst)> m_txAttByBand{};
 
+    // MOX state mirror — set by onMoxHardwareFlipped().  Auto-att (Classic +
+    // Adaptive) reads this to skip overload-driven ATT bumps during TX, since
+    // any ADC overflow during TX is own-TX leakage, not antenna signal.
+    // Without this gate the auto-att would bump from 31 → 32 on the first
+    // tick after MOX engages because own-TX leakage trips ADC overflow.
+    bool m_isMox{false};
+
     // HPSDR-only preamp save/restore (F.2).
     // Distinct from m_classicSavedPreamp (which is for the auto-att
     // Classic mode undo path and serves a different purpose).
     PreampMode m_savedPreampMode{PreampMode::Off};
+
+    // Saved RX att for restore on TX→RX (#175 follow-up bench, 2026-05-04).
+    //
+    // Stashed by onMoxHardwareFlipped(true) before swapping m_attDb to txAtt;
+    // read back on onMoxHardwareFlipped(false).  Init to 0 (matches default
+    // RX att); only meaningful between MOX flips.
+    //
+    // Why a separate field instead of overwriting
+    // m_bandState[currentBand].attDb: the per-band slot is the user's
+    // RX-time setting and must stay untouched.  If we wrote txAtt into it on
+    // RX→TX, then a band-change while transmitting would corrupt the stored
+    // RX value.  m_savedRxAttDbForTx is a transient TX-window stash.
+    //
+    // Mirrors Thetis behavior — mi0bot console.cs:29960-30002
+    // [v2.10.3.13-beta2] updateAttNudsCombos() swaps a separate
+    // udTXStepAttData spinbox over udRX1StepAttData during MOX, and restores
+    // the RX-time spinbox on un-key.  NereusSDR has a single S-ATT spinbox
+    // bound to attenuationChanged, so we emit the TX value into m_attDb +
+    // attenuationChanged on RX→TX, then restore on TX→RX.  User-visible
+    // result is identical: "the spinbox jumped to 31 during TX".
+    int m_savedRxAttDbForTx{0};
+
+    // Stash-valid flag for m_savedRxAttDbForTx (#175 PR #194 review fix,
+    // 2026-05-04).  Only true between an RX→TX transition that actually
+    // populated the stash (m_attOnTxEnabled path on a non-HPSDR board) and
+    // the matching TX→RX restore.  Codex review found that without this
+    // gate, the TX→RX restore ran unconditionally and clobbered the user's
+    // RX att value with the default-zero stash whenever ATT-on-TX was OFF.
+    bool m_savedRxAttDbValid{false};
 
     // Internal tick timer.
     QTimer m_tickTimer;

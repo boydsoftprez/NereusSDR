@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-05-04 — Issue #175 Wave 1: dropped misplaced AM TX / Carrier
+//                 Level stub from AmSamSetupPage (control belongs at
+//                 Thetis grpTXAM on tpTransmit, not the DSP/AM tab).
 // =================================================================
 
 //=================================================================
@@ -73,7 +76,10 @@
 //   NrAnfSetupPage    — Noise Reduction / ANF / EMNR
 //   NbSnbSetupPage    — NB1 / NB2 / SNB
 //   CwSetupPage       — Keyer / Timing / APF
-//   AmSamSetupPage    — AM TX / SAM / Squelch
+//   AmSamSetupPage    — SAM / Squelch  (AM TX moved to Transmit page —
+//                       Thetis grpTXAM lives on tpTransmit, not the
+//                       DSP/AM tab; mi0bot setup.designer.cs:47710-47711
+//                       [v2.10.3.13-beta2])
 //   FmSetupPage       — FM RX / FM TX
 //   CfcSetupPage      — CFC / Profile
 //   MnfSetupPage      — Manual Notch Filter

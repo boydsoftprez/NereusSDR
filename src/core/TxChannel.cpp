@@ -3059,6 +3059,29 @@ void TxChannel::setTxPostGenRun(bool on)
 #endif
 }
 
+// ── Issue #175 Task 2: HL2 sub-step DSP audio-gain modulation ────────────────
+//
+// From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2] — HL2 TUNE path:
+//   if (new_pwr <= 51) {
+//       radio.GetDSPTX(0).TXPostGenToneMag = (double)(new_pwr + 40) / 100;
+//       new_pwr = 0;
+//   } else {
+//       radio.GetDSPTX(0).TXPostGenToneMag = 0.9999;
+//       new_pwr = (new_pwr - 54) * 2;
+//   }
+// WDSP: SetTXAPostGenToneMag — third_party/wdsp/src/gen.c:800-805 [v2.10.3.13]
+//   txa[ch].gen1.p->tone.mag = mag;
+void TxChannel::setPostGenToneMag(double mag)
+{
+    m_postGenToneMag = mag;
+#ifdef HAVE_WDSP
+    if (txa[m_channelId].rsmpin.p == nullptr) return;
+    SetTXAPostGenToneMag(m_channelId, mag);   // gen.c:800 [v2.10.3.13]
+#else
+    Q_UNUSED(mag);
+#endif
+}
+
 // ── B-1: TX EQ wrappers (Phase 3M-3a-i Batch 1) ─────────────────────────────
 //
 // Each wrapper is a thin pass-through over the WDSP `SetTXAEQ*` family.  Run

@@ -7,32 +7,31 @@
 //   1. Max Power slider value initialises from TransmitModel::power().
 //   2. Changing the slider updates TransmitModel::power().
 //   3. Changing TransmitModel::power() updates the slider (reverse).
-//   4. Per-band tune-power spinboxes initialise from TransmitModel.
-//   5. Editing a spinbox updates TransmitModel::tunePowerForBand().
-//   6. TransmitModel::tunePowerByBandChanged updates the spinbox (reverse).
-//   7. chkATTOnTX initialises from StepAttenuatorController::attOnTxEnabled().
-//   8. chkATTOnTX toggle updates StepAttenuatorController::attOnTxEnabled().
-//   9. chkForceATTwhenPSAoff initialises from StepAttenuatorController::forceAttWhenPsOff().
-//  10. chkForceATTwhenPSAoff toggle updates StepAttenuatorController::forceAttWhenPsOff().
+//   4. chkATTOnTX initialises from StepAttenuatorController::attOnTxEnabled().
+//   5. chkATTOnTX toggle updates StepAttenuatorController::attOnTxEnabled().
+//   6. chkForceATTwhenPSAoff initialises from StepAttenuatorController::forceAttWhenPsOff().
+//   7. chkForceATTwhenPSAoff toggle updates StepAttenuatorController::forceAttWhenPsOff().
 //
 // Thetis references:
 //   Max Power slider — console.cs:4822 [v2.10.3.13] PWR setter
-//   Tune power per band — console.cs:12094 [v2.10.3.13] tunePower_by_band[]
 //   chkATTOnTX — setup.designer.cs:5926-5939 [v2.10.3.13] + setup.cs:15452-15455
 //   chkForceATTwhenPSAoff — setup.designer.cs:5660-5671 [v2.10.3.13] + setup.cs:24264-24268
 //   //MW0LGE [2.9.0.7] added  [original inline comment from console.cs:29285]
+//
+// Issue #175 Wave 1: per-band Tune Power 14-spinbox grid dropped (no Thetis
+// upstream — Thetis uses a single udTXTunePower with active-band pivot).
+// Tune-power test cases below removed; the model-level coverage in
+// tst_transmit_model_tune_power.cpp stays untouched.
 
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QSlider>
-#include <QSpinBox>
 #include <QCheckBox>
 #include <QSignalSpy>
 
 #include "gui/setup/TransmitSetupPages.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
-#include "models/Band.h"
 #include "core/StepAttenuatorController.h"
 
 using namespace NereusSDR;
@@ -50,10 +49,6 @@ private slots:
     void maxPowerSlider_initFromModel();
     void maxPowerSlider_changesModel();
     void maxPowerSlider_updatesFromModel();
-
-    void tunePwrSpin_initFromModel();
-    void tunePwrSpin_changesModel();
-    void tunePwrSpin_updatesFromModel();
 
     void chkAttOnTx_initFromController();
     void chkAttOnTx_togglesController();
@@ -126,60 +121,7 @@ void TestPowerPageH4::maxPowerSlider_updatesFromModel()
 }
 
 // ---------------------------------------------------------------------------
-// 4. Per-band tune-power spinboxes initialise from TransmitModel
-// ---------------------------------------------------------------------------
-void TestPowerPageH4::tunePwrSpin_initFromModel()
-{
-    RadioModel model;
-    model.transmitModel().setTunePowerForBand(Band::Band20m, 17);
-
-    PowerPage page(&model);
-    page.show();
-
-    const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band20m);
-    auto* spin = page.findChild<QSpinBox*>(name);
-    QVERIFY(spin);
-    QCOMPARE(spin->value(), 17);
-}
-
-// ---------------------------------------------------------------------------
-// 5. Editing a spinbox updates TransmitModel::tunePowerForBand()
-// ---------------------------------------------------------------------------
-void TestPowerPageH4::tunePwrSpin_changesModel()
-{
-    RadioModel model;
-    PowerPage page(&model);
-    page.show();
-
-    const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band40m);
-    auto* spin = page.findChild<QSpinBox*>(name);
-    QVERIFY(spin);
-
-    spin->setValue(25);
-    QCOMPARE(model.transmitModel().tunePowerForBand(Band::Band40m), 25);
-}
-
-// ---------------------------------------------------------------------------
-// 6. TransmitModel::tunePowerByBandChanged updates the spinbox (reverse)
-// ---------------------------------------------------------------------------
-void TestPowerPageH4::tunePwrSpin_updatesFromModel()
-{
-    RadioModel model;
-    PowerPage page(&model);
-    page.show();
-
-    const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band80m);
-    auto* spin = page.findChild<QSpinBox*>(name);
-    QVERIFY(spin);
-
-    // Setting via TxApplet path (model setter) should propagate to setup page.
-    model.transmitModel().setTunePowerForBand(Band::Band80m, 33);
-    QCoreApplication::processEvents();
-    QCOMPARE(spin->value(), 33);
-}
-
-// ---------------------------------------------------------------------------
-// 7. chkATTOnTX initialises from StepAttenuatorController::attOnTxEnabled()
+// 4. chkATTOnTX initialises from StepAttenuatorController::attOnTxEnabled()
 // ---------------------------------------------------------------------------
 void TestPowerPageH4::chkAttOnTx_initFromController()
 {

@@ -214,6 +214,77 @@ constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
     return 100;
 }
 
+// =============================================================================
+// Per-SKU PA UI constants — mi0bot-Thetis HL2 parity
+// =============================================================================
+//
+// HL2 (HERMESLITE) treats RF Power and Tune Power sliders as dB attenuators
+// rather than watts targets. Specifically:
+//   - RF Power slider: Max=90, step=6 (16-step output attenuator, 0.5 dB/step)
+//   - Tune Power slider: Max=99, step=3 (33 sub-steps; 0..51 = DSP audio gain
+//     modulation; 52..99 = PA attenuator territory)
+//   - Fixed-mode Tune Power spinbox: -16.5..0 dB, 0.5 dB increments
+//
+// Non-HL2 SKUs keep the canonical Thetis 0..100 unitless drive scale.
+//
+// From mi0bot-Thetis console.cs:2101-2108 [v2.10.3.13-beta2]
+//   ptbPWR.Maximum = 90;        // MI0BOT: Changes for HL2 only having a 16 step output attenuator
+//   ptbPWR.LargeChange = 6;
+//   ptbPWR.SmallChange = 6;
+//   ptbTune.Maximum = 99;
+//   ptbTune.LargeChange = 3;
+//   ptbTune.SmallChange = 3;
+// From mi0bot-Thetis setup.cs:20328-20331 [v2.10.3.13-beta2]
+//   udTXTunePower.DecimalPlaces = 1;
+//   udTXTunePower.Increment = (decimal)0.5;
+//   udTXTunePower.Maximum = (decimal)0;
+//   udTXTunePower.Minimum = (decimal)-16.5;
+
+constexpr int rfPowerSliderMaxFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 90 : 100;
+}
+
+constexpr int rfPowerSliderStepFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 6 : 1;
+}
+
+constexpr int tuneSliderMaxFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 99 : 100;
+}
+
+constexpr int tuneSliderStepFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 3 : 1;
+}
+
+constexpr float fixedTuneSpinboxMinFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? -16.5f : 0.0f;
+}
+
+constexpr float fixedTuneSpinboxMaxFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 0.0f : 100.0f;
+}
+
+constexpr float fixedTuneSpinboxStepFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 0.5f : 1.0f;
+}
+
+constexpr int fixedTuneSpinboxDecimalsFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? 1 : 0;
+}
+
+constexpr const char* fixedTuneSpinboxSuffixFor(HPSDRModel m) noexcept {
+    return (m == HPSDRModel::HERMESLITE) ? " dB" : " W";
+}
+
+// HL2 attenuator hardware model (used by RF Power label formula at TxApplet
+// updatePowerSliderLabels). 16 levels (slider 0/6/12/.../84/90), 0.5 dB per
+// half-step → -7.5..0 dB total range.
+//
+// From mi0bot-Thetis console.cs:29245-29274 [v2.10.3.13-beta2]
+//   formula: lblPWR.Text = "Drive: " + ((round(drv/6.0)/2) - 7.5) + "dB"
+constexpr float hl2AttenuatorDbPerStep() noexcept { return 0.5f; }
+constexpr int   hl2AttenuatorStepCount() noexcept { return 16; }
+
 // boardCodeName — returns the HPSDRHW enum label as a short model-code string.
 // Used in the status-bar board widget to show "Saturn" instead of the full
 // marketing name "ANAN-G2 (Saturn)" which truncates at typical status-bar widths.

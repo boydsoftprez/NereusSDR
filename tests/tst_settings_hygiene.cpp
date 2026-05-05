@@ -33,8 +33,9 @@ static BoardCapabilities makeHermesCaps()
     return BoardCapsTable::forBoard(HPSDRHW::Hermes);
 }
 
-// Helper: build an HL2 BoardCapabilities with signed −28..+32 dB attenuator
-// range (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]) + hasIoBoardHl2.
+// Helper: build an HL2 BoardCapabilities with signed −28..+31 dB attenuator
+// range (issue #175 follow-up — capped at +31 per maintainer approval to
+// avoid mi0bot's off-by-one wire wraparound at userDb=32).
 static BoardCapabilities makeHl2Caps()
 {
     return BoardCapsTable::forBoard(HPSDRHW::HermesLite);
@@ -67,8 +68,9 @@ private slots:
 
     void att30_onHl2_signedRange_noIssue()
     {
-        // HL2 user-facing range: signed −28..+32 dB (mi0bot setup.cs:16085-16086
-        // [v2.10.3.13-beta2]). Persisted 30 dB is within range → no Warning.
+        // HL2 user-facing range: signed −28..+31 dB (issue #175 follow-up,
+        // capped at +31 per maintainer approval).  Persisted 30 dB is within
+        // range → no Warning.
         testSettings().setValue(
             QStringLiteral("hardware/%1/sAtt").arg(kTestMac), 30);
 

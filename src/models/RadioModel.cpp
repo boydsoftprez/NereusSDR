@@ -523,6 +523,7 @@ RadioModel::RadioModel(QObject* parent)
     connect(&m_alexController, &AlexController::xvtrActiveChanged,
             this, [reapply](bool) { reapply(); });
 
+
     // Connection starts null — created by connectToRadio() via factory.
     //
     // Phase 3G-9b: the smooth-defaults profile is reachable only via the
@@ -907,9 +908,13 @@ RadioModel::RadioModel(QObject* parent)
         // Phase 3C deep-parity wrapper: computes audio_volume + applies
         // ATT-on-TX safety gate (PS-active dormant until 3M-4).  txMode 0
         // (normal): bFromTune=false, bTwoTone=false.
+        // Issue #175 Task 4: thread connected model so HL2 sub-step path
+        // resolves correctly (txMode 0 path is non-HL2-affected, but
+        // passing the model keeps the call site uniform with TUN path).
         const auto result = m_transmitModel.setPowerUsingTargetDbm(
             *activeProfile, currentBand, /*bSetPower=*/true,
-            /*bFromTune=*/false, /*bTwoTone=*/false);
+            /*bFromTune=*/false, /*bTwoTone=*/false,
+            m_hardwareProfile.model);
 
         // Compose wire byte + IQ scalar per Thetis topology cited above.
         const float swrProtect =
@@ -1219,7 +1224,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     // hermes-filter-debug Bug 1: push the connected board's attenuator range
     // into StepAttenuatorController so consumers (RxApplet S-ATT spinbox,
     // GeneralOptionsPage spinboxes) read board-correct min/max.  Default
-    // controller bounds are 0..31; HL2 needs the signed -28..+32 range
+    // controller bounds are 0..31; HL2 needs the signed -28..+31 range
     // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).  Without this sync,
     // the spinbox UI clamps any negative dB the user types back to 0 even
     // though BoardCapabilities advertises the wider range.
@@ -1320,6 +1325,15 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
         // Load per-MAC per-band tune power (50W default per band on first init).
         // Phase 3M-1a G.3. Source: Thetis console.cs:1819-1820 / :4904-4910 [v2.10.3.13].
+        //
+        // Issue #175 review fix: push the connected hardware model into
+        // TransmitModel BEFORE load() so the polymorphic [0, 99] HL2
+        // clamp inside TransmitModel::load() (mi0bot
+        // console.cs:47616-47666 [v2.10.3.13-beta2]) sees the correct
+        // SKU.  Idempotent: the second push at line ~4420 in the
+        // Connected state-transition handler is a no-op when the model
+        // is unchanged.
+        m_transmitModel.setHpsdrModel(m_hardwareProfile.model);
         m_transmitModel.setMacAddress(info.macAddress);
         m_transmitModel.load();
 
@@ -2539,6 +2553,18 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             connect(&m_transmitModel, &TransmitModel::dexpSideChannelFilterEnabledChanged,
                     m_txChannel, [this](bool on) {
                 m_txChannel->setDexpRunSideChannelFilter(on);
+            });
+
+            // 39. txPostGenToneMagChanged → setPostGenToneMag.
+            // Task 10: routes the HL2 sub-step DSP modulation value written by
+            // TransmitModel::setPowerUsingTargetDbm (Task 4) into WDSP via
+            // TxChannel::setPostGenToneMag → SetTXAPostGenToneMag (gen.c:800
+            // [v2.10.3.13]).  Without this connect the modulation magnitude
+            // computed in the HL2 path (mi0bot setup.cs:1501-1509
+            // [v2.10.3.13-beta2]) never reaches the DSP engine.
+            connect(&m_transmitModel, &TransmitModel::txPostGenToneMagChanged,
+                    m_txChannel, [this](double mag) {
+                m_txChannel->setPostGenToneMag(mag);
             });
 
             // Profile-activation resync.  Receiver = m_txChannel so this
@@ -4608,6 +4634,15 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         if (!m_lastRadioInfo.macAddress.isEmpty()) {
             m_settingsHygiene.validate(m_lastRadioInfo.macAddress, boardCapabilities());
         }
+        // Task 10 (#175): push the connected hardware model into TransmitModel
+        // so the m_hpsdrModel field (added in Task 6) is non-FIRST before any
+        // user TX action fires.  This activates the HL2 polymorphic clamp in
+        // setTunePowerForBand (Task 7), the HL2 DSP modulation sub-step in
+        // setPowerUsingTargetDbm (Task 4), and the HL2 audio-volume formula in
+        // computeAudioVolume (Task 5).  Must be set BEFORE the emit so any
+        // slot connected to currentRadioChanged that reads transmitModel()
+        // already sees the correct model.
+        m_transmitModel.setHpsdrModel(m_hardwareProfile.model);
         // Phase 3I — fan out to HardwarePage so its sub-tabs populate with
         // the connected radio's fields (Radio Info labels, sample rate,
         // capability-gated tab visibility, per-MAC settings restore).
@@ -4906,9 +4941,13 @@ void RadioModel::setTune(bool on)
         if (m_paProfileManager) {
             const PaProfile* activeProfile = m_paProfileManager->activeProfile();
             if (activeProfile) {
+                // Issue #175 Task 4: thread connected model so HL2
+                // sub-step DSP audio-gain modulation engages on the TUN
+                // path (mi0bot console.cs:47660-47673 [v2.10.3.13-beta2]).
                 const auto result = m_transmitModel.setPowerUsingTargetDbm(
                     *activeProfile, currentBand, /*bSetPower=*/true,
-                    /*bFromTune=*/true, /*bTwoTone=*/false);
+                    /*bFromTune=*/true, /*bTwoTone=*/false,
+                    m_hardwareProfile.model);
 
                 const float swrProtect =
                     std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
@@ -5172,9 +5211,13 @@ void RadioModel::completeTuneOff()
     if (m_paProfileManager) {
         const PaProfile* activeProfile = m_paProfileManager->activeProfile();
         if (activeProfile) {
+            // Issue #175 Task 4: thread connected model so the TUN-off
+            // restore (txMode 0 path back to drive slider) is uniform
+            // with the TUN-on path; non-HL2 SKUs unaffected.
             const auto result = m_transmitModel.setPowerUsingTargetDbm(
                 *activeProfile, offBand, /*bSetPower=*/true,
-                /*bFromTune=*/false, /*bTwoTone=*/false);
+                /*bFromTune=*/false, /*bTwoTone=*/false,
+                m_hardwareProfile.model);
             const float swrProtectSaved =
                 std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
             const int savedWireDrive = std::clamp(

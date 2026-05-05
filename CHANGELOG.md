@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **HL2 TX UI parity with mi0bot-Thetis (#175)**: the RF Power and Tune Power sliders, the per-band Tune Power grid in Setup, and the underlying TX power/tune DSP path now follow mi0bot's HL2 attenuator semantics rather than the canonical 0-100 W scale. On HL2: RF Power slider 0-90 step 6 (16-step output attenuator, 0.5 dB/step); Tune Power slider 0-99 step 3 (33 sub-steps; 0-51 = DSP audio gain modulation, 52-99 = PA attenuator territory); Fixed-mode Tune Power spinbox -16.5 to 0 dB in 0.5 dB increments. Setup → Transmit → Power gains a new "Tune" group (`grpPATune` port) with 3 drive-source radios + TX TUN Meter combo + Fixed-mode spinbox, sitting above the existing per-band grid. TX volume on the wire matches mi0bot exactly via the new `setPowerUsingTargetDbm` HL2 sub-step DSP modulation and `computeAudioVolume` HL2 audio-volume formula `(hl2Power * gbb / 100) / 93.75` (`mi0bot-Thetis console.cs:47660-47673 + 47775-47778 [v2.10.3.13-beta2]`). Non-HL2 SKUs unchanged.
+- **Tooltip wording** on RF Power and Tune Power sliders rewritten across every SKU to match Thetis upstream: "Transmit Drive — relative value, not watts unless the PA profile is configured with MAX watts @ 100%". Replaces the previous "RF output power (0-100 W)" wording which was misleading on every SKU, not just HL2.
+
+### Migration
+HL2 users upgrading: existing per-band Tune Power values reinterpret as int 0-99 (mi0bot encoding) → dB at the UI boundary. No migration step required (matches mi0bot's polymorphic-key pattern).
+
 ## [0.3.2] - 2026-05-03 - PA Calibration Safety Hotfix (#167)
 
 > [!CAUTION]

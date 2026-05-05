@@ -6,6 +6,51 @@
 //   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
 //
 // =================================================================
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 // Modification history (NereusSDR):
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
@@ -71,60 +116,51 @@
 //                 insertWidget(stretchIndex, group) pattern so the boxes
 //                 cluster at the top of the page like every other
 //                 Setup-page family.
+//   2026-05-04 — Issue #175 Task 9: per-band Tune Power grid SKU-aware.
+//                 m_tunePwrSpins[14] flips QSpinBox* -> QDoubleSpinBox* so
+//                 the per-SKU display semantics can vary the decimal count.
+//                 On HL2: range -16.5..0 dB / 0.5 step / 1 dp / " dB"
+//                 suffix; displayed = (stored / 3.0 - 33.0) / 2.0; on user
+//                 edit, stored = round((33 + dB*2) * 3).  On other SKUs the
+//                 grid behaves exactly as before (decimals=0, " W" suffix,
+//                 display == stored).  Storage stays as int under the
+//                 existing tunePower_by_band/<band> AppSettings key — same
+//                 key, polymorphic semantic by SKU (mi0bot pattern, no
+//                 migration step).  applyHpsdrModel() extends to refresh
+//                 the per-band grid bounds + displayed values on
+//                 RadioModel::currentRadioChanged.
+//   2026-05-04 — Issue #175 Wave 1: TxProfilesPage placeholder body
+//                 dropped (5 disabled-stub controls with no Thetis
+//                 upstream).  Live TX-profile editor lives at Setup →
+//                 Audio → TX Profile.
+//   2026-05-04 — Issue #175 PR #194 review fix: udTXTunePower spinbox
+//                 wired bidirectionally to TransmitModel::tunePower /
+//                 setTunePower with SKU-aware unit conversion
+//                 (tunePowerDisplayFromStored / tunePowerStoredFromDisplay).
+//                 Codex review found the spinbox had bounds + enabled-state
+//                 wiring but no model read/write, so edits were ignored
+//                 and "Use Fixed Drive" left the actual tune-power value at
+//                 default.  Conversion formulae from mi0bot setup.cs:
+//                 5305-5311 (stored→display) + 9395-9398 (display→stored)
+//                 [v2.10.3.13-beta2] HERMESLITE branch; non-HL2 SKUs use
+//                 identity (display == stored, watts).  applyHpsdrModel()
+//                 now also re-renders the cached value in the new SKU's
+//                 display units on RadioModel::currentRadioChanged.
+//   2026-05-04 — Issue #175 Wave 1 (cont): PowerPage source-first
+//                 strip-out — dropped dead "SWR Protection" slider stub,
+//                 per-band Tune Power 14-spinbox grid + helpers, Reset
+//                 Tune Power Defaults button + slot, and Block-TX-on-RX
+//                 antennas group (was writing dead AppSettings keys; live
+//                 editor lives at Hardware → Antenna/ALEX → Antenna
+//                 Control).  TX TUN Meter combo items now mi0bot-verbatim
+//                 (Fwd Pwr / Ref Pwr / Fwd SWR / SWR / Off).
 // =================================================================
-
-//=================================================================
-// setup.cs
-//=================================================================
-// Thetis is a C# implementation of a Software Defined Radio.
-// Copyright (C) 2004-2009  FlexRadio Systems
-// Copyright (C) 2010-2020  Doug Wigley
-//
-// This program is free software; you can redistribute it and/or
-// modify it under the terms of the GNU General Public License
-// as published by the Free Software Foundation; either version 2
-// of the License, or (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program; if not, write to the Free Software
-// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-//
-// You may contact us via email at: sales@flex-radio.com.
-// Paper mail may be sent to: 
-//    FlexRadio Systems
-//    8900 Marybank Dr.
-//    Austin, TX 78750
-//    USA
-//
-//=================================================================
-// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
-//=================================================================
-//
-//============================================================================================//
-// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
-// ------------------------------------------------------------------------------------------ //
-// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
-// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
-// right to use, license, and distribute such code under different terms, including           //
-// closed-source and proprietary licences, in addition to the GNU General Public License      //
-// granted above. Nothing in this statement restricts any rights granted to recipients under  //
-// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
-// its original terms and is not affected by this dual-licensing statement in any way.        //
-// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
-//============================================================================================//
-
 #include "TransmitSetupPages.h"
 #include "gui/StyleConstants.h"
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
-#include "models/Band.h"
 #include "core/StepAttenuatorController.h"
 #include "gui/applets/TxEqDialog.h"
 
@@ -139,9 +175,13 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
-#include <QLineEdit>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QAbstractButton>
 #include <QSignalBlocker>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -160,17 +200,26 @@ void PowerPage::buildUI()
     NereusSDR::Style::applyDarkPageStyle(this);
 
     buildPowerGroup();
-    buildTunePowerGroup();
+    buildTuneGroup();           // Issue #175 Task 8 — grpPATune
     buildSwrProtectionGroup();
     buildExternalTxInhibitGroup();
-    buildBlockTxAntennaGroup();
     buildHfPaGroup();
+
+    // Issue #175 Task 8 — reapply SKU-specific spinbox bounds whenever the
+    // active radio changes.  The initial apply runs at construction time
+    // inside buildTuneGroup() so cold-launch lands the right bounds before
+    // the first connection.
+    if (model()) {
+        connect(model(), &RadioModel::currentRadioChanged, this,
+                [this](const NereusSDR::RadioInfo&) {
+            applyHpsdrModel(model()->hardwareProfile().model);
+        });
+        applyHpsdrModel(model()->hardwareProfile().model);
+    }
 
     // TODO(future): Thetis Transmit tab also has these groups not yet
     // covered by NereusSDR. Tracked separately from this PR; pre-existing
     // gaps, not introduced by the IA reshape.
-    //   - grpPATune (TUN power mode: fixed/drive-slider/tune-slider radio
-    //                + comboTXTUNMeter selector)
     //   - chkPulsedTune + grpPulsedTune (pulsed tune mode)
     //   - chkRecoverPAProfileFromTXProfile (TX↔PA profile linkage)
     //   - chkLimitExtAmpOnOverload (external amp overload limiter)
@@ -235,13 +284,11 @@ void PowerPage::buildPowerGroup()
     }
     pwrForm->addRow(QStringLiteral("Max Power (W):"), m_maxPowerSlider);
 
-    // SWR protection threshold — future use.
-    m_swrProtectionSlider = new QSlider(Qt::Horizontal, pwrGroup);
-    m_swrProtectionSlider->setRange(10, 50);   // SWR * 10 for integer slider
-    m_swrProtectionSlider->setValue(30);        // 3.0:1
-    m_swrProtectionSlider->setEnabled(false);   // NYI
-    m_swrProtectionSlider->setToolTip(QStringLiteral("SWR protection threshold — not yet implemented"));
-    pwrForm->addRow(QStringLiteral("SWR Protection:"), m_swrProtectionSlider);
+    // Issue #175 Wave 1: dropped dead "SWR Protection" slider stub (NYI,
+    // disabled).  The real udSwrProtectionLimit + 4 other SWR controls
+    // live in buildSwrProtectionGroup() below; that group is the verified
+    // port from Thetis grpSWRProtectionControl
+    // (setup.designer.cs:5847-5853 [v2.10.3.13]).
 
     // chkATTOnTX — "Enables Attenuator on Mercury during Transmit."
     // From Thetis setup.designer.cs:5935 [v2.10.3.13]:
@@ -283,64 +330,257 @@ void PowerPage::buildPowerGroup()
 }
 
 // ---------------------------------------------------------------------------
-// PowerPage::buildTunePowerGroup — H.4
+// PowerPage::buildTuneGroup — Issue #175 Task 8
 // ---------------------------------------------------------------------------
 //
-// Per-band tune-power spinboxes.
-// NereusSDR extension: exposes tunePower_by_band[14] (console.cs:12094 [v2.10.3.13])
-// directly in the setup dialog so the operator can set per-band tune power without
-// having to visit each band from the main VFO.  Thetis uses a single udTXTunePower
-// (setup.cs:5262 [v2.10.3.13]) that updates one slot on band change.
-void PowerPage::buildTunePowerGroup()
+// "Tune" group box on Setup → Transmit → Power.  Mirrors mi0bot-Thetis
+// grpPATune layout from setup.designer.cs:47874-47930 [v2.10.3.13-beta2]:
+//   3 drive-source radios (radUseFixedDriveTune / radUseTuneSliderTune /
+//   radUseDriveSliderTune) + comboTXTUNMeter (Fwd/Ref/SWR/Mic/ALC) +
+//   udTXTunePower spinbox (Fixed-mode tune drive).
+//
+// The Fixed-mode spinbox is enabled only when "Use Fixed Drive" is the
+// selected radio (mi0bot setup.cs udTXTunePower wiring).  Spinbox bounds
+// polymorph by SKU via applyHpsdrModel() — HL2 swings to the dB attenuation
+// range per setup.cs:20328-20331 [v2.10.3.13-beta2].
+//
+// The default radio is "Use Tune Slider" matching the mi0bot designer
+// initial state (radUseTuneSliderTune.TabIndex = 10 — first selectable).
+void PowerPage::buildTuneGroup()
 {
-    auto* group  = new QGroupBox(QStringLiteral("Tune Power (per band)"), this);
-    auto* grid   = new QGridLayout(group);
-    grid->setSpacing(4);
+    m_grpPATune = new QGroupBox(QStringLiteral("Tune"), this);
+    m_grpPATune->setObjectName(QStringLiteral("grpPATune"));
 
-    // Column headers
-    grid->addWidget(new QLabel(QStringLiteral("Band"), group), 0, 0);
-    grid->addWidget(new QLabel(QStringLiteral("Watts"), group), 0, 1);
+    auto* form = new QFormLayout(m_grpPATune);
+    form->setSpacing(4);
 
-    for (int i = 0; i < kBandCount; ++i) {
-        const Band band = static_cast<Band>(i);
-        const QString label = bandLabel(band);
+    // ── Drive-source radios ────────────────────────────────────────────────
+    // Captions match mi0bot setup.designer.cs Text properties verbatim:
+    //   radUseFixedDriveTune.Text   = "Use Fixed Drive"   (line 47898)
+    //   radUseDriveSliderTune.Text  = "Use Drive Slider"  (line 47912)
+    //   radUseTuneSliderTune.Text   = "Use Tune Slider"   (line 47925)
+    m_radFixedDrive  = new QRadioButton(QStringLiteral("Use Fixed Drive"),  m_grpPATune);
+    m_radFixedDrive->setObjectName(QStringLiteral("radUseFixedDriveTune"));
+    m_radDriveSlider = new QRadioButton(QStringLiteral("Use Drive Slider"), m_grpPATune);
+    m_radDriveSlider->setObjectName(QStringLiteral("radUseDriveSliderTune"));
+    m_radTuneSlider  = new QRadioButton(QStringLiteral("Use Tune Slider"),  m_grpPATune);
+    m_radTuneSlider->setObjectName(QStringLiteral("radUseTuneSliderTune"));
 
-        auto* lbl  = new QLabel(label, group);
-        auto* spin = new QSpinBox(group);
-        spin->setRange(0, 100);
-        spin->setSuffix(QStringLiteral(" W"));
-        spin->setObjectName(QStringLiteral("spinTunePwr_") + label);
-        spin->setToolTip(QStringLiteral("Tune carrier power for %1 (0–100 W)").arg(label));
-        m_tunePwrSpins[i] = spin;
+    m_tuneDriveButtons = new QButtonGroup(m_grpPATune);
+    m_tuneDriveButtons->addButton(m_radFixedDrive,  static_cast<int>(DrivePowerSource::Fixed));
+    m_tuneDriveButtons->addButton(m_radDriveSlider, static_cast<int>(DrivePowerSource::DriveSlider));
+    m_tuneDriveButtons->addButton(m_radTuneSlider,  static_cast<int>(DrivePowerSource::TuneSlider));
 
-        grid->addWidget(lbl,  i + 1, 0);
-        grid->addWidget(spin, i + 1, 1);
+    // mi0bot designer order: radUseDriveSliderTune (top, y=50) →
+    // radUseTuneSliderTune (middle, y=73) → radUseFixedDriveTune (bottom, y=96).
+    auto* radioBox = new QVBoxLayout;
+    radioBox->setSpacing(2);
+    radioBox->addWidget(m_radDriveSlider);
+    radioBox->addWidget(m_radTuneSlider);
+    radioBox->addWidget(m_radFixedDrive);
+    form->addRow(QStringLiteral("Drive Source:"), radioBox);
 
-        if (model()) {
-            TransmitModel& tx = model()->transmitModel();
+    // ── TX TUN Meter combo ─────────────────────────────────────────────────
+    // Items list mi0bot-verbatim: TUNE injects a constant carrier and
+    // disables ALC, so Mic and ALC cannot logically source the TUN meter
+    // — the prior items were fabrications.  Full meter routing wiring
+    // is a follow-up task; this surface lands the combo so the page
+    // matches mi0bot 1:1.
+    m_comboTxTunMeter = new QComboBox(m_grpPATune);
+    m_comboTxTunMeter->setObjectName(QStringLiteral("comboTXTUNMeter"));
+    // From mi0bot-Thetis setup.designer.cs:47933-47938 [v2.10.3.13-beta2]
+    m_comboTxTunMeter->addItem(QStringLiteral("Fwd Pwr"));
+    m_comboTxTunMeter->addItem(QStringLiteral("Ref Pwr"));
+    m_comboTxTunMeter->addItem(QStringLiteral("Fwd SWR"));
+    m_comboTxTunMeter->addItem(QStringLiteral("SWR"));
+    m_comboTxTunMeter->addItem(QStringLiteral("Off"));
+    form->addRow(QStringLiteral("TX TUN Meter:"), m_comboTxTunMeter);
 
-            // Initialise from model
-            {
-                QSignalBlocker b(spin);
-                spin->setValue(tx.tunePowerForBand(band));
-            }
+    // ── Fixed-mode tune-power spinbox ──────────────────────────────────────
+    // Bounds / step / decimals / suffix are set in applyHpsdrModel() and
+    // re-applied on every RadioModel::currentRadioChanged.  The default
+    // (FIRST = ANAN100) keeps a sane Watts range until the first connect.
+    m_fixedTunePwrSpin = new QDoubleSpinBox(m_grpPATune);
+    m_fixedTunePwrSpin->setObjectName(QStringLiteral("udTXTunePower"));
+    form->addRow(QStringLiteral("Fixed Tune Power:"), m_fixedTunePwrSpin);
 
-            // Spinbox → model
-            connect(spin, &QSpinBox::valueChanged, this, [this, band](int val) {
-                model()->transmitModel().setTunePowerForBand(band, val);
-            });
+    // Apply default-SKU bounds so a no-model test still gets a sensible
+    // initial range; the constructor's applyHpsdrModel() call after
+    // buildUI() overwrites this once the model knows its hardware.
+    applyHpsdrModel(HPSDRModel::FIRST);
 
-            // Model → spinbox (reverse — needed when TxApplet slider changes the value)
-            connect(&tx, &TransmitModel::tunePowerByBandChanged,
-                    spin, [band, spin](Band changedBand, int watts) {
-                if (changedBand != band) { return; }
-                QSignalBlocker b(spin);
-                spin->setValue(watts);
-            });
-        }
+    // Issue #175 PR #194 review fix — bidirectional binding to
+    // TransmitModel::tunePower.  Codex review found the spinbox was
+    // constructed with bounds + enabled-state but no read/write to the
+    // model: edits did nothing and "Use Fixed Drive" left the actual
+    // tune-power value at default.
+    //
+    // SKU-aware unit conversion via tunePowerDisplayFromStored /
+    // tunePowerStoredFromDisplay (mi0bot setup.cs:5305-5311 + 9395-9398
+    // [v2.10.3.13-beta2]).  Forward and reverse paths are blocked through
+    // QSignalBlocker on the reverse path to prevent feedback loops.
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+
+        // Initial value from model (non-blocking — no slot connected yet).
+        m_fixedTunePwrSpin->setValue(tunePowerDisplayFromStored(tx.tunePower()));
+
+        // Spinbox → model.
+        connect(m_fixedTunePwrSpin,
+                qOverload<double>(&QDoubleSpinBox::valueChanged),
+                this, [this](double display) {
+            if (!model()) { return; }
+            model()->transmitModel().setTunePower(
+                tunePowerStoredFromDisplay(display));
+        });
+
+        // Model → spinbox (reverse, e.g. settings load or another editor).
+        connect(&tx, &TransmitModel::tunePowerChanged, m_fixedTunePwrSpin,
+                [this](int stored) {
+            QSignalBlocker b(m_fixedTunePwrSpin);
+            m_fixedTunePwrSpin->setValue(tunePowerDisplayFromStored(stored));
+        });
     }
 
-    contentLayout()->addWidget(group);
+    // ── Wire model ↔ radios ────────────────────────────────────────────────
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+
+        // Initial state from model.  Selects the matching radio without
+        // emitting buttonClicked (setChecked-driven idToggled is suppressed
+        // by the QSignalBlocker on the button group below).
+        const DrivePowerSource initial = tx.tuneDrivePowerSource();
+        QRadioButton* initialBtn = m_radTuneSlider;
+        switch (initial) {
+            case DrivePowerSource::Fixed:       initialBtn = m_radFixedDrive;  break;
+            case DrivePowerSource::DriveSlider: initialBtn = m_radDriveSlider; break;
+            case DrivePowerSource::TuneSlider:  initialBtn = m_radTuneSlider;  break;
+        }
+        {
+            QSignalBlocker b(m_tuneDriveButtons);
+            initialBtn->setChecked(true);
+        }
+        onTuneDriveSourceChanged(initial);
+
+        // Radio → model.  Use idToggled (not buttonClicked) so the slot
+        // fires both on user clicks and on programmatic setChecked() — the
+        // latter matters for tests and for sync with the model-→-radio
+        // reverse path.  Filter on `checked` so we react only to the
+        // positive edge of the newly-selected button (the deselect of the
+        // previous button fires checked=false which we ignore).
+        connect(m_tuneDriveButtons, &QButtonGroup::idToggled,
+                this, [this](int id, bool checked) {
+            if (!checked) { return; }
+            if (!model()) { return; }
+            const auto src = static_cast<DrivePowerSource>(id);
+            model()->transmitModel().setTuneDrivePowerSource(src);
+            onTuneDriveSourceChanged(src);
+        });
+
+        // Model → radio (reverse).  When the active source flips elsewhere
+        // (TxApplet RF-slider auto-switch in console.cs:46553 [v2.10.3.13]
+        // path), reflect the change on the page.
+        connect(&tx, &TransmitModel::tuneDrivePowerSourceChanged,
+                this, [this](DrivePowerSource src) {
+            QRadioButton* target = m_radTuneSlider;
+            switch (src) {
+                case DrivePowerSource::Fixed:       target = m_radFixedDrive;  break;
+                case DrivePowerSource::DriveSlider: target = m_radDriveSlider; break;
+                case DrivePowerSource::TuneSlider:  target = m_radTuneSlider;  break;
+            }
+            QSignalBlocker b(m_tuneDriveButtons);
+            target->setChecked(true);
+            onTuneDriveSourceChanged(src);
+        });
+    } else {
+        // No-model path (test fixture).  Default to "Use Tune Slider" per
+        // mi0bot designer initial state and keep the spinbox disabled.
+        m_radTuneSlider->setChecked(true);
+        onTuneDriveSourceChanged(DrivePowerSource::TuneSlider);
+        // Even without a RadioModel the radio toggle must still update the
+        // spinbox enabled state so users get visual feedback on the page.
+        // Use idToggled (not buttonClicked) so programmatic setChecked()
+        // also updates the spinbox state.
+        connect(m_tuneDriveButtons, &QButtonGroup::idToggled,
+                this, [this](int id, bool checked) {
+            if (!checked) { return; }
+            onTuneDriveSourceChanged(static_cast<DrivePowerSource>(id));
+        });
+    }
+
+    contentLayout()->addWidget(m_grpPATune);
+}
+
+// Issue #175 Task 8 — flip the udTXTunePower enabled state so it tracks
+// whether "Use Fixed Drive" is the active radio.  Mirrors the mi0bot
+// designer wiring where the spinbox is meaningful only in Fixed mode.
+void PowerPage::onTuneDriveSourceChanged(DrivePowerSource src)
+{
+    if (m_fixedTunePwrSpin) {
+        m_fixedTunePwrSpin->setEnabled(src == DrivePowerSource::Fixed);
+    }
+}
+
+// Issue #175 Task 8 — per-SKU bounds on the Fixed-mode spinbox.
+// From mi0bot-Thetis setup.cs:20328-20331 [v2.10.3.13-beta2] HERMESLITE
+// branch; ANAN/Saturn/Orion paths keep the canonical 0..100 W range.
+//
+// Issue #175 PR #194 review fix: also refresh the displayed value via the
+// SKU-aware conversion so a runtime SKU swap (RadioModel::currentRadioChanged)
+// re-renders the cached TransmitModel::tunePower() in the new units.
+void PowerPage::applyHpsdrModel(HPSDRModel m)
+{
+    // Fixed-mode spinbox (Task 8).
+    if (m_fixedTunePwrSpin) {
+        m_fixedTunePwrSpin->setRange(static_cast<double>(fixedTuneSpinboxMinFor(m)),
+                                     static_cast<double>(fixedTuneSpinboxMaxFor(m)));
+        m_fixedTunePwrSpin->setSingleStep(static_cast<double>(fixedTuneSpinboxStepFor(m)));
+        m_fixedTunePwrSpin->setDecimals(fixedTuneSpinboxDecimalsFor(m));
+        m_fixedTunePwrSpin->setSuffix(QString::fromLatin1(fixedTuneSpinboxSuffixFor(m)));
+
+        // Re-render the stored tunePower() in the new SKU's display units.
+        // Use the model's hpsdrModel() rather than the parameter `m` so the
+        // conversion matches the live SKU (caller invariant: applyHpsdrModel
+        // is called after RadioModel::currentRadioChanged commits the
+        // hardware profile).  Block to suppress the forward connect.
+        if (model()) {
+            QSignalBlocker b(m_fixedTunePwrSpin);
+            m_fixedTunePwrSpin->setValue(
+                tunePowerDisplayFromStored(model()->transmitModel().tunePower()));
+        }
+    }
+}
+
+// Issue #175 PR #194 review fix — SKU-aware unit conversion for the
+// Fixed-mode tune-power spinbox.  See declarations in TransmitSetupPages.h
+// for the formulae.  Conversions read TransmitModel::hpsdrModel() so they
+// always match the live SKU and stay correct across runtime swaps.
+double PowerPage::tunePowerDisplayFromStored(int stored)
+{
+    if (model() &&
+        model()->transmitModel().hpsdrModel() == HPSDRModel::HERMESLITE) {
+        // mi0bot setup.cs:5307 [v2.10.3.13-beta2]:
+        //   udTXTunePower.Value = (decimal)(value/3 - 33)/2;
+        return (static_cast<double>(stored) / 3.0 - 33.0) / 2.0;
+    }
+    return static_cast<double>(stored);
+}
+
+int PowerPage::tunePowerStoredFromDisplay(double display)
+{
+    if (model() &&
+        model()->transmitModel().hpsdrModel() == HPSDRModel::HERMESLITE) {
+        // mi0bot setup.cs:9397 [v2.10.3.13-beta2]:
+        //   console.TunePower = (int) ((33 + (udTXTunePower.Value * 2)) * 3);
+        // The int cast in C# is truncation-toward-zero; std::lround better
+        // matches the user-visible "0.5 dB step → 3 sub-step increment"
+        // expectation (avoids accumulating floor() truncation drift).  For
+        // exact half-step inputs both behave identically; for non-step
+        // inputs (e.g. mid-cell scroll) round() picks the nearest legal
+        // sub-step instead of always biasing low.
+        return static_cast<int>(std::lround((33.0 + display * 2.0) * 3.0));
+    }
+    return static_cast<int>(std::lround(display));
 }
 
 // ---------------------------------------------------------------------------
@@ -462,45 +702,14 @@ void PowerPage::buildExternalTxInhibitGroup()
     contentLayout()->addWidget(group);
 }
 
-// Task 11a — Block TX on RX antennas
-// NereusSDR-original label and tooltip — Thetis ships these as unlabelled
-// column-header checkboxes per setup.designer.cs:6704-6724 [v2.10.3.13];
-// we add accessible copy. AppSettings keys mirror AlexController (Task 3P-F).
-void PowerPage::buildBlockTxAntennaGroup()
-{
-    auto& s = AppSettings::instance();
-
-    auto* group = new QGroupBox(tr("Block TX on RX antennas"), this);
-    group->setObjectName(QStringLiteral("grpBlockTxAntennas"));
-    auto* layout = new QVBoxLayout(group);
-    layout->setSpacing(6);
-
-    // chkBlockTxAnt2 — From Thetis setup.designer.cs:6715-6724 [v2.10.3.13]
-    // NereusSDR-original label/tooltip (Thetis has no text on these checkboxes)
-    m_chkBlockTxAnt2 = new QCheckBox(tr("Block TX on Ant 2"), group);
-    m_chkBlockTxAnt2->setObjectName(QStringLiteral("chkBlockTxAnt2"));
-    m_chkBlockTxAnt2->setToolTip(tr("When checked, the radio cannot transmit on Antenna 2"));
-    m_chkBlockTxAnt2->setChecked(
-        s.value(QStringLiteral("AlexAnt2RxOnly"), QStringLiteral("False")).toString() == QStringLiteral("True"));
-    connect(m_chkBlockTxAnt2, &QCheckBox::toggled, this, [](bool on) {
-        AppSettings::instance().setValue(QStringLiteral("AlexAnt2RxOnly"), on ? QStringLiteral("True") : QStringLiteral("False"));
-    });
-    layout->addWidget(m_chkBlockTxAnt2);
-
-    // chkBlockTxAnt3 — From Thetis setup.designer.cs:6704-6713 [v2.10.3.13]
-    // NereusSDR-original label/tooltip (Thetis has no text on these checkboxes)
-    m_chkBlockTxAnt3 = new QCheckBox(tr("Block TX on Ant 3"), group);
-    m_chkBlockTxAnt3->setObjectName(QStringLiteral("chkBlockTxAnt3"));
-    m_chkBlockTxAnt3->setToolTip(tr("When checked, the radio cannot transmit on Antenna 3"));
-    m_chkBlockTxAnt3->setChecked(
-        s.value(QStringLiteral("AlexAnt3RxOnly"), QStringLiteral("False")).toString() == QStringLiteral("True"));
-    connect(m_chkBlockTxAnt3, &QCheckBox::toggled, this, [](bool on) {
-        AppSettings::instance().setValue(QStringLiteral("AlexAnt3RxOnly"), on ? QStringLiteral("True") : QStringLiteral("False"));
-    });
-    layout->addWidget(m_chkBlockTxAnt3);
-
-    contentLayout()->addWidget(group);
-}
+// Issue #175 Wave 1: dropped Block TX on RX antennas group from PowerPage.
+// The checkboxes were writing dead AppSettings keys (AlexAnt2RxOnly /
+// AlexAnt3RxOnly) that nothing ever read.  The live editor for the same
+// setting lives at Hardware → Antenna/ALEX → Antenna Control
+// (AntennaAlexAntennaControlTab via AlexController, persisted per-MAC at
+// hardware/<mac>/alex/antenna/blockTxAnt2).  Thetis hosts the checkboxes
+// once on panelAlexRXAntControl (setup.designer.cs:6720-6721
+// [v2.10.3.13-beta2]).
 
 // Task 11b — PA Control (Disable HF PA)
 // From Thetis setup.designer.cs:5780-5791 [v2.10.3.13]
@@ -542,59 +751,26 @@ void TxProfilesPage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    // --- Section: Profile ---
-    auto* profGroup = new QGroupBox(QStringLiteral("Profile"), this);
-    auto* profLayout = new QVBoxLayout(profGroup);
-    profLayout->setSpacing(6);
-
-    m_profileListLabel = new QLabel(QStringLiteral("(Profile list — not yet implemented)"), profGroup);
-    m_profileListLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #607080; font-style: italic; "
+    // Issue #175 Wave 1 follow-up — page body was a fully disabled
+    // placeholder (5 controls all setEnabled(false), zero connect()).
+    // The live TX-profile editor lives at Setup → Audio → TX Profile
+    // (TxProfileSetupPage, fully wired to MicProfileManager).  Thetis
+    // ships grpTXProfile (combo + Save/Delete) directly on tpTransmit
+    // at mi0bot setup.designer.cs:47829-47836 [v2.10.3.13-beta2];
+    // no dedicated "TX Profiles" tab page exists upstream.  Leaf
+    // retained in SetupDialog tree per JJ's direction (IA reshape
+    // decisions deferred to a separate audit).
+    auto* info = new QLabel(
+        QStringLiteral("TX Profile editing has moved to Setup → Audio "
+                       "→ TX Profile."),
+        this);
+    info->setAlignment(Qt::AlignCenter);
+    info->setWordWrap(true);
+    info->setStyleSheet(QStringLiteral(
+        "QLabel { color: #b0c0d0; font-style: italic; "
         " background: #1a2a3a; border: 1px solid #203040; "
-        " border-radius: 3px; padding: 8px; }"));
-    m_profileListLabel->setMinimumHeight(80);
-    m_profileListLabel->setEnabled(false);
-    m_profileListLabel->setAlignment(Qt::AlignCenter);
-    profLayout->addWidget(m_profileListLabel);
-
-    auto* nameRow = new QHBoxLayout();
-    nameRow->addWidget(new QLabel(QStringLiteral("Name:"), profGroup));
-    m_nameEdit = new QLineEdit(profGroup);
-    m_nameEdit->setPlaceholderText(QStringLiteral("Profile name"));
-    m_nameEdit->setEnabled(false);  // NYI
-    m_nameEdit->setToolTip(QStringLiteral("TX profile name — not yet implemented"));
-    nameRow->addWidget(m_nameEdit, 1);
-    profLayout->addLayout(nameRow);
-
-    auto* btnRow = new QHBoxLayout();
-    m_newBtn = new QPushButton(QStringLiteral("New"), profGroup);
-    m_newBtn->setEnabled(false);  // NYI
-    m_newBtn->setToolTip(QStringLiteral("New TX profile — not yet implemented"));
-    m_newBtn->setAutoDefault(false);
-    btnRow->addWidget(m_newBtn);
-
-    m_deleteBtn = new QPushButton(QStringLiteral("Delete"), profGroup);
-    m_deleteBtn->setEnabled(false);  // NYI
-    m_deleteBtn->setToolTip(QStringLiteral("Delete TX profile — not yet implemented"));
-    m_deleteBtn->setAutoDefault(false);
-    btnRow->addWidget(m_deleteBtn);
-
-    m_copyBtn = new QPushButton(QStringLiteral("Copy"), profGroup);
-    m_copyBtn->setEnabled(false);  // NYI
-    m_copyBtn->setToolTip(QStringLiteral("Copy TX profile — not yet implemented"));
-    m_copyBtn->setAutoDefault(false);
-    btnRow->addWidget(m_copyBtn);
-
-    btnRow->addStretch();
-    profLayout->addLayout(btnRow);
-
-    contentLayout()->addWidget(profGroup);
-
-    // ── Phase 3M-3a-ii Batch 5: Compression section removed.
-    // CPDR enable + gain + CESSB live on Setup → DSP → CFC (Batch 5) and
-    // on the TxApplet [PROC] quick-toggle / dashboard.  The previous
-    // disabled-stub trio violated master-design meta rule §2.2.1 (no
-    // half-shipped placeholders).
+        " border-radius: 3px; padding: 12px; }"));
+    contentLayout()->addWidget(info);
 
     contentLayout()->addStretch();
 }

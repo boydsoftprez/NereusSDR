@@ -302,7 +302,9 @@ void TxApplet::buildUI()
 
         rfSlider->setFixedHeight(18);
         rfSlider->setEnabled(true);   // Phase 3M-1a H.3: wired
-        rfSlider->setToolTip(QStringLiteral("RF output power (0–100 W)"));
+        // Tooltip set by rescalePowerSlidersForModel() (Issue #175 Task 7) -
+        // Thetis-faithful "Transmit Drive - relative value" wording, applied
+        // every time the active SKU changes.  No initial setToolTip here.
         row->addWidget(rfSlider, 1);
         row->addWidget(rfValue);
 
@@ -337,7 +339,10 @@ void TxApplet::buildUI()
 
         tunSlider->setFixedHeight(18);
         tunSlider->setEnabled(true);  // Phase 3M-1a H.3: wired
-        tunSlider->setToolTip(QStringLiteral("Tune carrier power for current band (0–100 W)"));
+        // Tooltip set by rescalePowerSlidersForModel() (Issue #175 Task 7) -
+        // Thetis-faithful "Tune and/or 2Tone Drive - relative value" wording,
+        // applied every time the active SKU changes.  No initial setToolTip
+        // here.
         row->addWidget(tunSlider, 1);
         row->addWidget(tunValue);
 
@@ -858,14 +863,24 @@ void TxApplet::wireControls()
     // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
     // unreadable.  Subscribe to currentRadioChanged so the gauge ticks
     // and red-zone redraw whenever the active radio changes.
+    //
+    // Issue #175 Task 7: also rescale the RF Power and Tune Power sliders
+    // (HL2 → 0..90/6 and 0..99/3 with -X.X dB labels via mi0bot formulae;
+    //  every other SKU → canonical 0..100/1 with bare integer labels).
     connect(m_model, &RadioModel::currentRadioChanged, this,
             [this](const NereusSDR::RadioInfo&) {
-        rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
+        const auto model = m_model->hardwareProfile().model;
+        rescaleFwdGaugeForModel(model);
+        rescalePowerSlidersForModel(model);
     });
     // Apply the current model's scale at wireControls() time so cold-launch
-    // (or reconnect-on-startup) lands a properly-sized gauge before the
-    // first telemetry sample.
-    rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
+    // (or reconnect-on-startup) lands a properly-sized gauge + sliders before
+    // the first telemetry sample.
+    {
+        const auto model = m_model->hardwareProfile().model;
+        rescaleFwdGaugeForModel(model);
+        rescalePowerSlidersForModel(model);
+    }
 
     // ── SWR Prot LED ← SwrProtectionController::highSwrChanged ─────────────
     // SwrProtectionController (Phase 3G-13) emits highSwrChanged(bool) when
@@ -890,9 +905,14 @@ void TxApplet::wireControls()
     // ── RF Power slider → TransmitModel::setPower(int) ──────────────────────
     // From Thetis chkMOX_CheckedChanged2 power flow [v2.10.3.13]:
     //   the RF Power slider maps 0–100 to TX drive level.
+    //
+    // Issue #175 Task 7: label text is now driven by updatePowerSliderLabels()
+    // which formats the value in -X.X dB on HL2 and bare integer on every
+    // other SKU.  The old direct setText(QString::number(val)) would have
+    // bypassed the dB conversion on HL2.
     connect(m_rfPowerSlider, &QSlider::valueChanged, this, [this, &tx](int val) {
+        updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
-        m_rfPowerValue->setText(QString::number(val));
         tx.setPower(val);
         // Per-band write: matches Thetis ptbPWR_Scroll at console.cs:28642
         // [v2.10.3.13] (`power_by_band[(int)_tx_band] = ptbPWR.Value;`).
@@ -924,7 +944,7 @@ void TxApplet::wireControls()
         QSignalBlocker b(m_rfPowerSlider);
         m_updatingFromModel = true;
         m_rfPowerSlider->setValue(power);
-        m_rfPowerValue->setText(QString::number(power));
+        updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
         m_updatingFromModel = false;
     });
 
@@ -932,9 +952,12 @@ void TxApplet::wireControls()
     // Per-band tune power, ported from Thetis console.cs:12094 [v2.10.3.13]:
     //   private int[] tunePower_by_band;
     // The current band is tracked by m_currentBand (updated by setCurrentBand).
+    //
+    // Issue #175 Task 7: label text routed through updatePowerSliderLabels()
+    // for the HL2 (slider/3.0 - 33.0)/2.0 dB conversion.
     connect(m_tunePwrSlider, &QSlider::valueChanged, this, [this, &tx](int val) {
+        updatePowerSliderLabels();
         if (m_updatingFromModel) { return; }
-        m_tunePwrValue->setText(QString::number(val));
         tx.setTunePowerForBand(m_currentBand, val);
         // When the user touches the tune slider, switch the tune drive
         // source so TUNE actually reads from tunePowerForBand instead of
@@ -956,7 +979,7 @@ void TxApplet::wireControls()
         QSignalBlocker b(m_tunePwrSlider);
         m_updatingFromModel = true;
         m_tunePwrSlider->setValue(watts);
-        m_tunePwrValue->setText(QString::number(watts));
+        updatePowerSliderLabels();   // Issue #175 Task 7: HL2 dB / non-HL2 int
         m_updatingFromModel = false;
     });
 
@@ -1381,7 +1404,6 @@ void TxApplet::syncFromModel()
     {
         QSignalBlocker b(m_rfPowerSlider);
         m_rfPowerSlider->setValue(tx.power());
-        m_rfPowerValue->setText(QString::number(tx.power()));
     }
 
     // Tune Power for current band
@@ -1389,8 +1411,12 @@ void TxApplet::syncFromModel()
         QSignalBlocker b(m_tunePwrSlider);
         const int tunePwr = tx.tunePowerForBand(m_currentBand);
         m_tunePwrSlider->setValue(tunePwr);
-        m_tunePwrValue->setText(QString::number(tunePwr));
     }
+
+    // Issue #175 Task 7: refresh both labels through the central
+    // formatter (HL2 dB / non-HL2 int).  Replaces the two inline
+    // QString::number() calls that bypassed HL2 dB conversion above.
+    updatePowerSliderLabels();
 
     // VOX [ON] toggle + Threshold slider + Hold slider
     // (3M-3a-iii bench polish 2026-05-04 — relocated from PhoneCwApplet).
@@ -1526,6 +1552,105 @@ void TxApplet::rescaleFwdGaugeForModel(HPSDRModel model)
     });
 }
 
+// ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────────
+//
+// From mi0bot-Thetis console.cs:2098-2108 [v2.10.3.13-beta2]
+//   if (HPSDRHW.HermesLite == Audio.LastRadioHardware ||
+//       HPSDRModel.HERMESLITE == HardwareSpecific.Model)     // MI0BOT: Need an early indication of hardware type due to HL2 rx attenuator can be negative
+//   {
+//       ptbPWR.Maximum = 90;        // MI0BOT: Changes for HL2 only having a 16 step output attenuator
+//       ptbPWR.Value = 0;
+//       ptbPWR.LargeChange = 6;
+//       ptbPWR.SmallChange = 6;
+//       ptbTune.Maximum = 99;
+//       ptbTune.Value = 0;
+//       ptbTune.LargeChange = 3;
+//       ptbTune.SmallChange = 3;
+//       ...
+//   }
+//
+// HL2: RF Power slider 0..90 step 6 (16-step output attenuator,
+//      0.5 dB/step); Tune slider 0..99 step 3 (33 sub-steps).
+// Other SKUs: canonical Thetis 0..100 step 1.
+//
+// MI0BOT: Changes for HL2 only having a 16 step output attenuator
+// [original inline comment from mi0bot console.cs:2098]
+void TxApplet::rescalePowerSlidersForModel(HPSDRModel model)
+{
+    if (!m_rfPowerSlider || !m_tunePwrSlider) { return; }
+
+    // Cache for updatePowerSliderLabels() so the formatter sees the same
+    // SKU the slider was rescaled for, even when called outside the live
+    // currentRadioChanged path (unit tests, headless harness).
+    m_powerSliderModel = model;
+
+    const QSignalBlocker rfBlock(m_rfPowerSlider);
+    const QSignalBlocker tunBlock(m_tunePwrSlider);
+
+    m_rfPowerSlider->setRange(0, rfPowerSliderMaxFor(model));
+    m_rfPowerSlider->setSingleStep(rfPowerSliderStepFor(model));
+    m_rfPowerSlider->setPageStep(rfPowerSliderStepFor(model));
+
+    m_tunePwrSlider->setRange(0, tuneSliderMaxFor(model));
+    m_tunePwrSlider->setSingleStep(tuneSliderStepFor(model));
+    m_tunePwrSlider->setPageStep(tuneSliderStepFor(model));
+
+    // Tooltip - Thetis-faithful on every SKU.  Replaces the previous
+    // "RF output power (0-100 W)" / "Tune carrier power for current band
+    // (0-100 W)" wording, which contradicted Thetis semantics on every
+    // SKU (the slider is a relative drive level, not watts).
+    //
+    // From Thetis console.resx + mi0bot-Thetis console.resx [v2.10.3.13-beta2]
+    //   <data ...><value>Transmit Drive - This is a relative value and is
+    //   not meant to imply watts, unless the PA profile is configured
+    //   with MAX watts @ 100%</value></data>
+    m_rfPowerSlider->setToolTip(QStringLiteral(
+        "Transmit Drive - relative value, not watts unless the PA profile "
+        "is configured with MAX watts @ 100%"));
+    m_tunePwrSlider->setToolTip(QStringLiteral(
+        "Tune and/or 2Tone Drive - relative value, not watts unless the "
+        "PA profile is configured with MAX watts @ 100%"));
+
+    updatePowerSliderLabels();
+}
+
+// From mi0bot-Thetis console.cs:29245-29274 [v2.10.3.13-beta2]
+//   if (HardwareSpecific.Model == HPSDRModel.HERMESLITE)       // MI0BOT: HL2 has only 15 output power levels
+//   {
+//       ...
+//       lblPWR.Text = "Drive:  " + ((Math.Round(drv / 6.0) / 2) - 7.5).ToString() + "dB";
+//   }
+//
+// HL2 RF Power label formula:
+//   dB = (round(drv/6.0)/2) - 7.5     // 0.5 dB steps in [-7.5, 0]
+// HL2 Tune slider label formula (slider 0..99 -> dB -16.5..0):
+//   dB = (slider/3 - 33) / 2          // inverse of the persistence formula
+//
+// MI0BOT: HL2 has only 15 output power levels
+// [original inline comment from mi0bot console.cs:29245]
+void TxApplet::updatePowerSliderLabels()
+{
+    if (!m_rfPowerSlider || !m_tunePwrSlider
+        || !m_rfPowerValue || !m_tunePwrValue) { return; }
+
+    // Use the cached SKU set by rescalePowerSlidersForModel() so the
+    // label format always matches the slider's effective range (HL2
+    // 0..90 step 6 / 0..99 step 3, all others 0..100 step 1).
+    const HPSDRModel model = m_powerSliderModel;
+    const int        rfVal  = m_rfPowerSlider->value();
+    const int        tunVal = m_tunePwrSlider->value();
+
+    if (model == HPSDRModel::HERMESLITE) {
+        const float rfDb  = (std::round(rfVal  / 6.0f) / 2.0f) - 7.5f;
+        const float tunDb = (tunVal / 3.0f - 33.0f) / 2.0f;
+        m_rfPowerValue->setText(QString::number(rfDb,  'f', 1));
+        m_tunePwrValue->setText(QString::number(tunDb, 'f', 1));
+    } else {
+        m_rfPowerValue->setText(QString::number(rfVal));
+        m_tunePwrValue->setText(QString::number(tunVal));
+    }
+}
+
 // Canonical TX band — derived from the active slice's frequency (which
 // is what RadioModel.cpp:903-905 uses to compose the TX wire byte).
 // Falls back to m_currentBand when:
@@ -1566,7 +1691,11 @@ void TxApplet::setCurrentBand(Band band)
         QSignalBlocker b(m_tunePwrSlider);
         m_updatingFromModel = true;
         m_tunePwrSlider->setValue(tunePwr);
-        m_tunePwrValue->setText(QString::number(tunePwr));
+        // Issue #175 Task 7: HL2 dB / non-HL2 integer — replaces the
+        // bare m_tunePwrValue->setText(QString::number(tunePwr)) so HL2
+        // operators see the dB-attenuator label rather than a raw 0..99
+        // slider integer.
+        updatePowerSliderLabels();
         m_updatingFromModel = false;
     }
 

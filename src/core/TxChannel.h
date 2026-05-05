@@ -1335,6 +1335,40 @@ public:
     /// 'virtual' for the I.1 TwoToneController test seam.
     virtual void setTxPostGenRun(bool on);
 
+    // ── HL2 sub-step DSP audio-gain modulation (Issue #175 Task 2) ──────────
+    //
+    // From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2] — HL2 TUNE path:
+    //   if (new_pwr <= 51) {
+    //       radio.GetDSPTX(0).TXPostGenToneMag = (double)(new_pwr + 40) / 100;
+    //       new_pwr = 0;
+    //   } else {
+    //       radio.GetDSPTX(0).TXPostGenToneMag = 0.9999;
+    //       new_pwr = (new_pwr - 54) * 2;
+    //   }
+    //
+    // DSP audio-gain modulation parameter for HL2 sub-step tune.
+    // Range 0.4..0.9999 on HL2 sub-step path; 1.0 on non-HL2 (no effect).
+    // Wrapper for WDSP SetTXAPostGenToneMag (third_party/wdsp/src/gen.c:800).
+    //
+    // The value is stored so Task 4 (TransmitModel::setPowerUsingTargetDbm)
+    // can read it back via postGenToneMag() for persistence / display.
+
+    /// HL2 sub-step tone magnitude setter.
+    ///
+    /// Wraps SetTXAPostGenToneMag(channel, mag).
+    /// Stores the value in m_postGenToneMag for retrieval via postGenToneMag().
+    ///
+    /// From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
+    /// WDSP: third_party/wdsp/src/gen.c:800-805 [v2.10.3.13].
+    void setPostGenToneMag(double mag);
+
+    /// Returns the most recently set PostGen tone magnitude (default 1.0).
+    ///
+    /// Default 1.0 matches kMaxToneMag used in the non-HL2 path and the
+    /// setTuneTone(true) call in chkTUN_CheckedChanged (console.cs:30039
+    /// [v2.10.3.13]).
+    double postGenToneMag() const noexcept { return m_postGenToneMag; }
+
     // ── TX EQ wrappers (3M-3a-i Task B-1) ───────────────────────────────────
     //
     // Seven thin wrappers over the WDSP `SetTXAEQ*` family that drives the
@@ -2382,6 +2416,11 @@ private:
     double m_postGenTTPulseToneFreq2Cache = 0.0;
     double m_postGenTTPulseMag1Cache      = 0.0;
     double m_postGenTTPulseMag2Cache      = 0.0;
+
+    // HL2 sub-step tone magnitude (Issue #175 Task 2).
+    // Default 1.0 matches kMaxToneMag (non-HL2 path and setTuneTone default).
+    // From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
+    double m_postGenToneMag               = 1.0;
 
     // ── Per-profile TX filter debounce (Plan 4 D8) ───────────────────────────
     //

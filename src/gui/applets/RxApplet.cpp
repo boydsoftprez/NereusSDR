@@ -274,6 +274,13 @@ void RxApplet::buildUi()
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
             // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
             QMenu menu(this);
+            // Dark popup palette — without this, Ubuntu's default theme renders
+            // items as dark-on-dark (only visible on hover). Issue #98.
+            menu.setStyleSheet(QStringLiteral(
+                "QMenu { background: #1a2a3a; color: #e0e8f0;"
+                "        border: 1px solid #304050; }"
+                "QMenu::item { padding: 4px 20px; }"
+                "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
             const QString cur = m_slice ? m_slice->rxAntenna() : QString{};
             if (m_popupCaps && m_popupSku) {
                 AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
@@ -334,6 +341,12 @@ void RxApplet::buildUi()
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
             // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
             QMenu menu(this);
+            // Dark popup palette — see RX button above. Issue #98.
+            menu.setStyleSheet(QStringLiteral(
+                "QMenu { background: #1a2a3a; color: #e0e8f0;"
+                "        border: 1px solid #304050; }"
+                "QMenu::item { padding: 4px 20px; }"
+                "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
             const QString cur = m_slice ? m_slice->txAntenna() : QString{};
             if (m_popupCaps && m_popupSku) {
                 AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
@@ -622,7 +635,7 @@ void RxApplet::buildUi()
 
         // Page 1: Step att spinbox (S-ATT mode — step att enabled)
         // Phase 3P-A Task 15: initialize range from BoardCapabilities so HL2
-        // (signed −28..+32 per mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2])
+        // (signed −28..+31 per mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2])
         // is correct at widget creation, not only after connect.
         // From Thetis setup.cs:15765 [v2.10.3.13].
         {
@@ -1183,7 +1196,7 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     // connectSlice() only fires when the slice happens to be re-set after
     // the radio is up.  This hook is the canonical board-driven path: it
     // runs on every currentRadioChanged emission (MainWindow.cpp:1400-1403)
-    // so HL2's signed -28..+32 range (mi0bot setup.cs:16085-16086
+    // so HL2's signed -28..+31 range (mi0bot setup.cs:16085-16086
     // [v2.10.3.13-beta2]) takes effect as soon as caps are known.
     if (m_stepAttSpin && caps.attenuator.present) {
         m_stepAttSpin->setRange(caps.attenuator.minDb, caps.attenuator.maxDb);

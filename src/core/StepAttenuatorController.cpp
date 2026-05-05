@@ -208,8 +208,10 @@ void StepAttenuatorController::setBand(Band band)
 void StepAttenuatorController::setAttenuation(int dB, int rx)
 {
     // Clamp to the active board's signed range.  HL2 advertises
-    // [m_minAttDb=-28, m_maxAttDb=+32] (mi0bot setup.cs:1087-1088
-    // [v2.10.3.13-beta2]); legacy ANAN/Hermes boards keep m_minAttDb=0
+    // [m_minAttDb=-28, m_maxAttDb=+31] (issue #175 follow-up — capped at
+    // +31 per maintainer approval; mi0bot's +32 widening at
+    // console.cs:11043 [v2.10.3.13-beta2] is an off-by-one upstream bug).
+    // Legacy ANAN/Hermes boards keep m_minAttDb=0
     // so behaviour is unchanged for them.  Without honouring m_minAttDb
     // here, any negative HL2 value selected in the RX UI gets snapped
     // back to 0 before reaching P1RadioConnection — Codex P1 in PR #157.
@@ -437,6 +439,10 @@ bool StepAttenuatorController::shouldForce31Db(DSPMode dspMode, bool isPsOff) co
 
 void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
 {
+    // Mirror MOX state for auto-att gating in tick().  Set BEFORE the path
+    // branches below so a tick() racing this slot reads the new value.
+    m_isMox = isTx;
+
     if (isTx) {
         // RX→TX transition.
         if (!m_attOnTxEnabled) {
@@ -480,6 +486,36 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             if (shouldForce31Db(m_currentDspMode, psOff)) {
                 txAtt = 31; // reset when PS is OFF or in CW mode
             }
+
+            // Issue #175 follow-up bench (2026-05-04 JJ): the S-ATT spinbox
+            // on RxApplet binds to attenuationChanged, so to make it follow
+            // the live applied attenuation during TX (matching Thetis), we
+            // stash the current RX att and emit the TX value here.
+            //
+            // Mirrors mi0bot console.cs:29960-30002 [v2.10.3.13-beta2]
+            // updateAttNudsCombos() — Thetis swaps a separate udTXStepAttData
+            // spinbox over udRX1StepAttData during MOX (same screen position,
+            // different control).  NereusSDR has a single bound spinbox so
+            // we update m_attDb + emit instead.  User-visible result is
+            // identical: "the spinbox jumped to 31 during TX".
+            //
+            // Do NOT overwrite m_bandState[currentBand].attDb — that's the
+            // user's RX-time setting and must survive the TX window untouched
+            // (a band change during MOX would otherwise corrupt the stored
+            // RX value).  Use the dedicated m_savedRxAttDbForTx stash.
+            //
+            // m_savedRxAttDbValid (#175 PR #194 review fix) gates the
+            // matching TX→RX restore so it only runs when this branch
+            // actually populated the stash.  Without the flag, the restore
+            // ran unconditionally and clobbered the user's RX att value
+            // with the default-zero stash whenever ATT-on-TX was OFF.
+            m_savedRxAttDbForTx = m_attDb;
+            m_savedRxAttDbValid = true;
+            if (m_attDb != txAtt) {
+                m_attDb = txAtt;
+                emit attenuationChanged(txAtt);
+            }
+
             // Marshalled to connection thread — m_connection is connection-thread owned.
             if (m_connection) {
                 RadioConnection* conn = m_connection.get();
@@ -497,10 +533,8 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // HPSDR: restore the preamp mode saved at TX start.
             restoreRxPreampMode();
         } else {
-            // Standard board: re-apply the current band's RX ATT.
-            // setBand() with the same band is a no-op (idempotent guard),
-            // so we call a direct restore of m_bandState.
-            // Clear TX ATT back to 0.
+            // Standard board: clear TX ATT back to 0 + restore the saved RX
+            // att so the S-ATT spinbox tracks the un-keyed value.
             // From Thetis console.cs:29658 [v2.10.3.13]:
             //   NetworkIO.SetTxAttenData(0);
             //   Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes
@@ -514,10 +548,37 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
 #ifdef NEREUS_BUILD_TESTS
             m_lastTxStepAttDb = 0;
 #endif
-            // Restore RX ATT: re-apply stored per-band value.
-            auto it = m_bandState.find(static_cast<int>(m_currentBand));
-            if (it != m_bandState.end() && it->second.attDb != m_attDb) {
-                setAttenuation(it->second.attDb, 0);
+
+            // Issue #175 follow-up bench (2026-05-04 JJ): restore the RX att
+            // we stashed on RX→TX so the spinbox snaps back to the un-keyed
+            // value.  Mirrors Thetis updateAttNudsCombos() un-keying its
+            // udTXStepAttData overlay and re-exposing udRX1StepAttData
+            // (mi0bot console.cs:30004-30018 [v2.10.3.13-beta2]).
+            //
+            // Use direct emit rather than setAttenuation() to avoid pushing
+            // to connection (connection layer already cleared TX ATT above;
+            // the RX att will get re-pushed on the next CC bank that reads
+            // m_stepAttn — already-stored unchanged from before MOX).
+            //
+            // Then re-sync m_bandState entry in case the band-state RX att
+            // diverged during MOX (defensive — should not happen in 3M-1
+            // single-RX scope, but cheap to verify).
+            //
+            // #175 PR #194 review fix (2026-05-04): gate on
+            // m_savedRxAttDbValid so the restore only runs when the matching
+            // RX→TX branch actually populated the stash.  Without this
+            // gate, MOX cycles with ATT-on-TX OFF clobbered the user's RX
+            // att with the default-zero (or stale) stash value.
+            if (m_savedRxAttDbValid) {
+                if (m_attDb != m_savedRxAttDbForTx) {
+                    m_attDb = m_savedRxAttDbForTx;
+                    emit attenuationChanged(m_attDb);
+                }
+                auto it = m_bandState.find(static_cast<int>(m_currentBand));
+                if (it != m_bandState.end() && it->second.attDb != m_attDb) {
+                    setAttenuation(it->second.attDb, 0);
+                }
+                m_savedRxAttDbValid = false;
             }
         }
     }
@@ -572,6 +633,15 @@ void StepAttenuatorController::tick()
         // Classic here too.
         const bool adaptiveAllowed =
             (m_autoAttMode == AutoAttMode::Adaptive) && m_hasStepAttCal;
+
+        // Skip auto-att during MOX.  Any ADC overflow during TX is own-TX
+        // leakage — the operator-set ATT-on-TX value (or force-31 path)
+        // already governs RX desensitization for this state.  Letting auto-
+        // att run here would bump m_attDb past the intended TX value (e.g.
+        // 31 → 32 → ...) on every overflow tick.
+        if (m_isMox) {
+            return;
+        }
 
         if (anyRed) {
             if (!adaptiveAllowed) {

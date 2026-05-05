@@ -299,15 +299,17 @@ private slots:
     // --- Per-board quirks (Task 11) ---
 
     void hermesLiteAttenClampsToSignedRange() {
-        // HL2 user-facing range: signed -28..+32 per BoardCapabilities.cpp
-        // kHermesLite. From mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]
-        // udHermesStepAttenuatorData.{Maximum=32, Minimum=-28}. The 6-bit
-        // wire mask (0x3F) folds the signed corners through `wire = 31 - userDb`.
+        // HL2 user-facing range: signed -28..+31 per BoardCapabilities.cpp
+        // kHermesLite. mi0bot widens to +32 at console.cs:11043
+        // [v2.10.3.13-beta2] but that is an off-by-one upstream bug
+        // (wire encoding `31 - userDb` produces wire = -1 at userDb=32
+        // which 6-bit-masks to 0x3F, the LNA-gain wraparound region).
+        // NereusSDR caps at +31 per maintainer approval (issue #175).
         P1RadioConnection conn;
         conn.init();
         conn.setBoardForTest(HPSDRHW::HermesLite);
-        conn.setAttenuator(80);  // above max → +32
-        QCOMPARE(conn.currentAttenForTest(), 32);
+        conn.setAttenuator(80);  // above max → +31
+        QCOMPARE(conn.currentAttenForTest(), 31);
         conn.setAttenuator(-50);  // below min → -28
         QCOMPARE(conn.currentAttenForTest(), -28);
         conn.setAttenuator(0);

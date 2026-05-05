@@ -147,7 +147,7 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
 
     if (m_ctrl) {
         // hermes-filter-debug Bug 1: pull BOTH bounds from the controller —
-        // HL2 uses the signed -28..+32 range (mi0bot setup.cs:16085-16086
+        // HL2 uses the signed -28..+31 range (mi0bot setup.cs:16085-16086
         // [v2.10.3.13-beta2]).  The previous hardcoded `0` minimum clamped
         // any HL2 negative-dB value the user typed back to zero.
         const int minDb = m_ctrl->minAttenuation();
