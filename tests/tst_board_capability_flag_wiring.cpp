@@ -30,7 +30,7 @@
 // depends on per-step calibration. Thetis setup.cs has no
 // "step attenuator cal" page (grepped: no
 // 'StepAttenuator.*Cal|adaptive.*att|AdaptAtt' matches in setup.cs
-// [v2.10.3.13 @501e3f51]); the only StepAttenuator references are
+// [v2.10.3.13+501e3f51]); the only StepAttenuator references are
 // the chkHermesStepAttenuator / udHermesStepAttenuatorData controls
 // which gate the simple linear ATT path on hardware presence, not
 // per-step calibration.
@@ -195,7 +195,7 @@ private slots:
     // "Sidetone Volume" row in CwSetupPage so users on non-HL2 boards
     // don't see a control that does nothing on their hardware.
     //
-    // Thetis upstream comparison (setup.cs [v2.10.3.13 @501e3f51]):
+    // Thetis upstream comparison (setup.cs [v2.10.3.13+501e3f51]):
     // Thetis does NOT board-gate the sidetone control — chkSideTones,
     // chkDSPKeyerSidetone (HW), chkDSPKeyerSidetone_software (SW) are
     // mutually-exclusive checkboxes that are always visible.  This
@@ -253,7 +253,7 @@ private slots:
     // board, false on HL2 + RX-only kits).
     //
     // Thetis upstream comparison: Thetis tpPennyCtrl (setup.cs:6364
-    // [v2.10.3.13 @501e3f51]) is the OC Control / Hermes Ctrl tab — hosts the
+    // [v2.10.3.13+501e3f51]) is the OC Control / Hermes Ctrl tab — hosts the
     // OC matrix itself, not separate user_dig_out pin checkboxes. user_dig_out
     // is set in firmware via networkproto1.c bank 11 C3, but Thetis does NOT
     // expose UI checkboxes for those 4 bits. This is a NereusSDR-specific

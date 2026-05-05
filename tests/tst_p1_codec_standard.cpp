@@ -55,7 +55,7 @@ private slots:
         // Source: networkproto1.c:601 [@501e3f5]
         // C1 = 0x00: bit 6 (mic_ptt, DIRECT polarity) is CLEAR by default
         //   because CodecContext.p1MicPTT defaults false → wire bit = 0.
-        //   Thetis networkproto1.c:597-598 [v2.10.3.13 @501e3f51]: ((prn->mic.mic_ptt & 1) << 6)
+        //   Thetis networkproto1.c:597-598 [v2.10.3.13+501e3f51]: ((prn->mic.mic_ptt & 1) << 6)
         //   Preamp bits 0-3 = 0; mic_trs bit 4 = 0 (p1MicTipRing default true → !true = 0);
         //   mic_bias bit 5 = 0 (p1MicBias default false).  3M-1b G.5 + P1 full-parity Task 1.1.
         QTest::newRow("bank11_rx_att_20dB_ramdor_encoding")

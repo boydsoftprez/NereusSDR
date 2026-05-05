@@ -3058,6 +3058,22 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         });
     });
 
+    // ── Issue #182: TransmitModel::micPttDisabled → RadioConnection wire bit ──
+    // Mirror the persisted user preference onto the radio firmware and prime
+    // the connection with the current model value so a fresh connect honours
+    // whatever the user last saved (the Setup -> Audio -> TX Input ->
+    // Mic PTT Disabled checkbox).
+    //
+    // Source: Thetis console.cs:19761-19764 [v2.10.3.13+501e3f51]:
+    //   set {
+    //       mic_ptt_disabled = value;
+    //       NetworkIO.SetMicPTT(Convert.ToInt32(value));
+    //   }
+    // The MicPTTDisabled property setter pushes to NetworkIO unconditionally,
+    // so the radio sees every UI flip.  NereusSDR mirrors that via a queued
+    // signal/slot bind here, and primes once below.
+    connectMicPttDisabledSignal();
+
     // ── Task 2.5 of P1 full-parity epic: pureSig → setPuresignalRun ─────────
     // Wire the user PureSignal-enable toggle to the wire-bit setter added in
     // Task 2.3.  Direct signal→slot bind (bool→bool, no adapter needed).
@@ -3162,6 +3178,40 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     m_swrProt.ingest(static_cast<float>(fwdW),
                      static_cast<float>(revW),
                      m_transmitModel.isTune());
+}
+
+// Issue #182 — TransmitModel::micPttDisabled → RadioConnection wire bit.
+//
+// Mirrors the persisted user preference onto the radio firmware (the Setup
+// -> Audio -> TX Input -> "Mic PTT Disabled" checkbox), and primes the
+// connection with the current model value once so a fresh connect honours
+// whatever the user last saved.  Tests reach this helper through the
+// wireMicPttDisabledForTest() seam to avoid the full wireConnectionSignals
+// DSP-thread pipeline.
+//
+// Source: Thetis console.cs:19761-19764 [v2.10.3.13+501e3f51]:
+//   set {
+//       mic_ptt_disabled = value;
+//       NetworkIO.SetMicPTT(Convert.ToInt32(value));
+//   }
+// The MicPTTDisabled property setter pushes to NetworkIO unconditionally on
+// every UI flip; this helper does the equivalent through the Qt signal/slot
+// system (queued because the connection lives on its own worker thread).
+void RadioModel::connectMicPttDisabledSignal()
+{
+    if (!m_connection) {
+        return;
+    }
+    QObject::connect(&m_transmitModel, &TransmitModel::micPttDisabledChanged,
+                     m_connection, &RadioConnection::setMicPTTDisabled,
+                     Qt::QueuedConnection);
+    // Prime: push the current model value so the wire bit reflects the user
+    // preference even before the first toggle.  Queued so production callers
+    // on the main thread don't synchronously block on the connection thread.
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection,
+                                             d = m_transmitModel.micPttDisabled()]() {
+        conn->setMicPTTDisabled(d);
+    }, Qt::QueuedConnection);
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.

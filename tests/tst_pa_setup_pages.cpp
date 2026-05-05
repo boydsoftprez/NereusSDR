@@ -8,10 +8,10 @@
 // expose a placeholder QLabel hinting at the future-phase tag.
 //
 // Source attribution (lives in production headers, not the test):
-//   Thetis tpPowerAmplifier   setup.designer.cs:47366-47371 [v2.10.3.13 @501e3f51]
-//   Thetis tpGainByBand       setup.designer.cs:47386-47525 [v2.10.3.13 @501e3f51]
-//   Thetis tpWattMeter        setup.designer.cs:49304-49309 [v2.10.3.13 @501e3f51]
-//   Thetis panelPAValues      setup.designer.cs:51155-51177 [v2.10.3.13 @501e3f51]
+//   Thetis tpPowerAmplifier   setup.designer.cs:47366-47371 [v2.10.3.13+501e3f51]
+//   Thetis tpGainByBand       setup.designer.cs:47386-47525 [v2.10.3.13+501e3f51]
+//   Thetis tpWattMeter        setup.designer.cs:49304-49309 [v2.10.3.13+501e3f51]
+//   Thetis panelPAValues      setup.designer.cs:51155-51177 [v2.10.3.13+501e3f51]
 
 #include <QtTest/QtTest>
 #include <QLabel>

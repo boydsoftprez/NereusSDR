@@ -51,7 +51,7 @@ private slots:
     // Phase 8 of #167: drives per-SKU PA category + page visibility from
     // RadioModel::currentRadioChanged. Mirrors Thetis
     // comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
-    // [v2.10.3.13 @501e3f51]) per-SKU PA tab visibility.
+    // [v2.10.3.13+501e3f51]) per-SKU PA tab visibility.
     void onCurrentRadioChanged(const RadioInfo& info);
 
 private:

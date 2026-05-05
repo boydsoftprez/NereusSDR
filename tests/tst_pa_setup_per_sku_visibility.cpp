@@ -11,7 +11,7 @@
 // Verifies that each PA setup page (PaGainByBandPage / PaWattMeterPage /
 // PaValuesPage) honors the BoardCapabilities flags in the per-SKU matrix
 // derived from Thetis comboRadioModel_SelectedIndexChanged
-// (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]):
+// (setup.cs:19812-20310 [v2.10.3.13+501e3f51]):
 //
 //   caps.hasPaProfile        — false → PaGainByBandPage disabled + banner shown
 //   caps.isRxOnlySku         — true  → entire PA category should hide

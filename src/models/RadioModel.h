@@ -412,6 +412,10 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(); }
+    // Issue #182 — invoke the mic_ptt_disabled wiring helper directly so
+    // tst_radio_model_mic_ptt_wire can verify the signal/slot bind + prime
+    // path without spinning up the full wireConnectionSignals pipeline.
+    void wireMicPttDisabledForTest() { connectMicPttDisabledSignal(); }
     void setLastBandForTest(NereusSDR::Band b) {
         const bool cross = (b != m_lastBand);
         m_lastBand = b;
@@ -798,6 +802,13 @@ private:
     void wireConnectionSignals(int wdspInSize);
     void wireSliceSignals();
     void teardownConnection();
+
+    // Issue #182 — wire TransmitModel::micPttDisabledChanged →
+    // RadioConnection::setMicPTTDisabled and prime the connection with the
+    // current model value once.  Extracted so the connect() can be exercised
+    // in isolation by tst_radio_model_mic_ptt_wire without needing to spin
+    // up the full DSP-thread pipeline that wireConnectionSignals starts.
+    void connectMicPttDisabledSignal();
 
     // Issue #177 — deferred completion of the TUN-off path.
     //

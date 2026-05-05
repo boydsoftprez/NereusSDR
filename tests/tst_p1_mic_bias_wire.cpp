@@ -123,18 +123,22 @@ private slots:
         QCOMPARE(int(quint8(bank11[1]) & 0x10), 0);
     }
 
-    // ── 8. setMicBias(true) produces C1 = 0x60 in default state (after G.5) ───
+    // ── 8. setMicBias(true) produces C1 = 0x20 in default state (post issue #182) ──
     // With no preamp set, no mic_trs override: bit 5 (mic_bias) is set.
-    // After G.5 is wired, bit 6 (0x40) is ALSO set by default because
-    // m_micPTT defaults false → !false = 1 on wire (PTT disabled = mic_ptt=1).
-    // Source: Thetis networkproto1.c:597-598 [v2.10.3.13]
-    void setMicBiasTrue_c1IsExactly0x60InDefaultState() {
+    // mic_ptt bit 6 stays clear because m_micPTTDisabled defaults false (PTT
+    // enabled), matching Thetis console.cs:19757 [v2.10.3.13+501e3f51]:
+    //   private bool mic_ptt_disabled = false;
+    // Pre-fix the inverted-polarity legacy path emitted bit 6 = 1 by default;
+    // the issue #182 follow-up flipped the legacy path to direct, so the bit
+    // is now 0 by default.
+    // Source: Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13+501e3f51]
+    void setMicBiasTrue_c1IsExactly0x20InDefaultState() {
         P1RadioConnection conn;
         conn.setMicBias(true);
 
         const QByteArray bank11 = conn.captureBank11ForTest();
-        // 0x20 (mic_bias bit 5) | 0x40 (mic_ptt default inverted bit 6) = 0x60.
-        QCOMPARE(int(quint8(bank11[1])), 0x60);
+        // 0x20 (mic_bias bit 5) | 0x00 (mic_ptt direct, default disabled=false) = 0x20.
+        QCOMPARE(int(quint8(bank11[1])), 0x20);
     }
 
     // ── 9. Flush flag: setMicBias sets m_forceBank11Next (Codex P2) ──────────

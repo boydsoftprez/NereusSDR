@@ -15,7 +15,7 @@
 //   - null model constructs safely (model-less preview path)
 //
 // Source attribution (lives in production headers, not the test):
-//   Thetis panelPAValues  setup.designer.cs:51155-51177 [v2.10.3.13 @501e3f51]
+//   Thetis panelPAValues  setup.designer.cs:51155-51177 [v2.10.3.13+501e3f51]
 
 #include <QtTest/QtTest>
 
@@ -56,7 +56,7 @@ public:
     void setLineInGain(int) override {}
     void setUserDigOut(quint8) override {}
     void setPuresignalRun(bool) override {}
-    void setMicPTT(bool) override {}
+    void setMicPTTDisabled(bool) override {}
     void setMicXlr(bool) override {}
     void setWatchdogEnabled(bool) override {}
 

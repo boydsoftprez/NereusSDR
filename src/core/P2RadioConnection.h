@@ -53,6 +53,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setMicBias (G.4): byte 50 bit 4 (0x10), polarity 1=on. deskhpsdr new_protocol.c:1496-1498 [@120188f]. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setMicPTT (G.5): byte 50 bit 2 (0x04, INVERTED). deskhpsdr new_protocol.c:1488-1490 [@120188f]. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-04 — setMicPTT renamed to setMicPTTDisabled (issue #182): direct polarity matches Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]; default MicState::micControl flipped 0x24→0x20 so PTT is enabled at firmware out of the box. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setMicXlr (G.6): byte 50 bit 5 (0x20), P2-only, polarity 1=XLR. deskhpsdr new_protocol.c:1500-1502 [@120188f]. MicState::micControl default updated 0x04 -> 0x24. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -231,7 +232,7 @@ public slots:
     void setLineInGain(int gain) override;
     void setUserDigOut(quint8 dig) override;
     void setPuresignalRun(bool run) override;
-    void setMicPTT(bool enabled) override;
+    void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
 
     // Bench fix round 3 (Issue B): P2 TX I/Q output is always at 192 kHz.
@@ -526,17 +527,23 @@ private:
     //   Bit 4: Mic Bias (0=disabled, 1=enabled)
     //   Bit 5: Balanced Input (0=disabled, 1=enabled, Saturn only)
     //
-    // Initial value 0x24: reflects two default-set bits:
-    //   bit 2 (0x04) SET = PTT disabled by default (matches m_micPTT=false
-    //     default in RadioConnection.h — polarity inversion: !false = 1 on wire).
-    //     deskhpsdr src/new_protocol.c:1488-1490 [@120188f]: mic_ptt_enabled==0 → set bit.
+    // Initial value 0x20: reflects one default-set bit:
+    //   bit 2 (0x04) CLEAR = PTT enabled at firmware (matches m_micPTTDisabled=false
+    //     default in RadioConnection.h — direct polarity: false = 0 on wire).
+    //     From Thetis console.cs:19757 [v2.10.3.13+501e3f51]:
+    //       private bool mic_ptt_disabled = false;
     //   bit 5 (0x20) SET = XLR jack selected by default (matches m_micXlr=true
     //     default in RadioConnection.h — no inversion: true = 1 on wire).
     //     deskhpsdr src/new_protocol.c:1500-1502 [@120188f]: mic_input_xlr → set bit.
     //     Saturn G2 ships with XLR-enabled config; default true per pre-code review §2.7.
     // Bit 3 CLEAR = Tip-is-mic (matches m_micTipRing=true default — !true = 0 on wire).
+    //
+    // Issue #182: bit 2 was previously SET (0x24) to mark "PTT disabled" out of
+    // the box, which orphaned the mic-jack PTT line on every Protocol 2 OrionMKII
+    // / Saturn family board because no model→connection wiring ever cleared it.
+    // Default now matches Thetis mic_ptt_disabled=false out of the box.
     struct MicState {
-        unsigned char micControl{0x24};  // PTT disabled (bit 2) + XLR selected (bit 5) — 3M-1b G.5+G.6 defaults
+        unsigned char micControl{0x20};  // PTT enabled (bit 2 clear) + XLR selected (bit 5)
         int lineInGain{0};
     };
     MicState m_mic;

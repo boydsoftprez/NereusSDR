@@ -6,7 +6,7 @@
 // below documents which upstream behaviour is exercised; no C# is
 // translated in this file.
 //
-// Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51]
+// Source: Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13+501e3f51]
 //
 // P1 full-parity §3.4: verifies that RadioModel routes the raw alex_fwd
 // watts reading through CalibrationController::calibratedFwdPowerWatts()

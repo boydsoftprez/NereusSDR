@@ -9,8 +9,8 @@
 // paCalProfileChanged signals (radio swap rebuild path).
 //
 // Source attribution (lives in production headers, not the test):
-//   Thetis tpWattMeter   setup.designer.cs:49304-49309 [v2.10.3.13 @501e3f51]
-//   Thetis CalibratedPAPower  console.cs:6691-6724      [v2.10.3.13 @501e3f51]
+//   Thetis tpWattMeter   setup.designer.cs:49304-49309 [v2.10.3.13+501e3f51]
+//   Thetis CalibratedPAPower  console.cs:6691-6724      [v2.10.3.13+501e3f51]
 
 #include <QtTest/QtTest>
 

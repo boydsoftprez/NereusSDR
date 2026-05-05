@@ -2,30 +2,34 @@
 // comments that document which upstream line each assertion verifies.
 // No deskhpsdr logic is ported here; this file is NereusSDR-original.
 //
-// Wire-byte snapshot tests for P2RadioConnection::setMicPTT() (3M-1b Task G.5).
+// Wire-byte snapshot tests for P2RadioConnection::setMicPTTDisabled() (3M-1b
+// Task G.5; renamed from setMicPTT for issue #182 to match Thetis storage
+// name MicPTTDisabled / mic_ptt_disabled).
 //
 // mic_ptt bit position: CmdTx buffer byte 50, bit 2 (mask 0x04).
-// POLARITY INVERSION: parameter enabled = true means "PTT is enabled" (intuitive).
-// Wire bit is INVERTED: 0 = PTT-enabled (enabled=true), 1 = PTT-disabled (enabled=false).
+// Direct polarity (matches Thetis byte-for-byte):
+//   setMicPTTDisabled(false) → bit 2 CLEAR (PTT enabled at firmware, default)
+//   setMicPTTDisabled(true)  → bit 2 SET   (PTT disabled at firmware)
 //
 // Source cite:
-//   deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]
-//     if (mic_ptt_enabled == 0) { // set if disabled
-//       transmit_specific_buffer[50] |= 0x04;
+//   Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]
+//     private bool mic_ptt_disabled = false;        // default PTT enabled
+//     public bool MicPTTDisabled {
+//         set {
+//             mic_ptt_disabled = value;
+//             NetworkIO.SetMicPTT(Convert.ToInt32(value));
+//         }
 //     }
-//
-//   Thetis console.cs:19758-19764 [v2.10.3.13]:
-//     MicPTTDisabled property → NetworkIO.SetMicPTT(Convert.ToInt32(value))
-//     confirming the wire convention (bit set = PTT disabled).
-//
-// Note: P2 bit position (bit 2 = 0x04) differs from P1 bit position
-// (bit 6 = 0x40 in C1 of bank 11). Both carry the same inverted semantics.
+//   deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]
+//     if (mic_ptt_enabled == 0) { transmit_specific_buffer[50] |= 0x04; }
+//   (deskhpsdr's mic_ptt_enabled is the inverse of mic_ptt_disabled; both
+//    collapse to the same wire-bit-set-when-disabled convention.)
 //
 // CmdTx buffer layout (60 bytes, relevant bytes only):
 //   byte 50: mic control byte (m_mic.micControl)
 //             bit 0 (0x01): line_in       (G.2)
 //             bit 1 (0x02): mic_boost     (G.1)
-//             bit 2 (0x04): mic_ptt_disabled (INVERTED — G.5)
+//             bit 2 (0x04): mic_ptt_disabled (direct, issue #182)
 //             bit 3 (0x08): mic_ptt_tip_bias_ring (INVERTED — G.3)
 //             bit 4 (0x10): mic_bias      (G.4)
 //             bit 5 (0x20): mic_xlr (Saturn/XLR only)
@@ -43,116 +47,117 @@ class TestP2MicPttWire : public QObject {
     Q_OBJECT
 private slots:
 
-    // ── 1. Default state: byte 50 bit 2 is SET (PTT disabled by default) ─────
-    // m_micPTT defaults false (PTT not enabled), so CmdTx byte 50 bit 2 must be 1
-    // (PTT-disabled-flag set — polarity inverted).
-    // Source: deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]
-    void defaultState_byte50Bit2IsSet() {
+    // ── 1. Default state: byte 50 bit 2 is CLEAR (PTT enabled at firmware) ───
+    // m_micPTTDisabled defaults false (matches Thetis console.cs:19757), so
+    // CmdTx byte 50 bit 2 must be 0 (firmware honors mic-jack PTT).
+    //
+    // Pre-fix (issue #182): MicState::micControl{0x24} shipped with bit 2 SET
+    // out of the box, which orphaned the mic-jack PTT line on every Protocol 2
+    // OrionMKII / Saturn family board. Default now matches Thetis exactly.
+    void defaultState_byte50Bit2IsClear() {
         P2RadioConnection conn;
-        quint8 buf[60] = {};
-        conn.composeCmdTxForTest(buf);
-        // Default m_micPTT=false → wire bit 2 = 1 (PTT disabled).
-        QCOMPARE(int(buf[50] & 0x04), 0x04);
-    }
-
-    // ── 2. setMicPTT(true) [enabled] → byte 50 bit 2 clear ───────────────────
-    // enabled=true → PTT enabled → bit 2 = 0 (PTT-disabled-flag cleared).
-    // Source: deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]
-    //   if (mic_ptt_enabled == 0) { transmit_specific_buffer[50] |= 0x04; }
-    void setMicPTTTrue_byte50Bit2IsClear() {
-        P2RadioConnection conn;
-        conn.setMicPTT(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x04), 0);
     }
 
-    // ── 3. setMicPTT(false) [disabled] → byte 50 bit 2 set ───────────────────
-    void setMicPTTFalse_byte50Bit2IsSet() {
+    // ── 2. setMicPTTDisabled(true) → byte 50 bit 2 SET ───────────────────────
+    // disabled=true → wire bit 2 = 1 (firmware ignores mic-jack PTT line).
+    // Source: Thetis console.cs:19764 [v2.10.3.13+501e3f51]
+    //   NetworkIO.SetMicPTT(Convert.ToInt32(value));   // value=true → 1
+    void setMicPTTDisabledTrue_byte50Bit2IsSet() {
         P2RadioConnection conn;
-        conn.setMicPTT(true);   // enable first
-        conn.setMicPTT(false);  // then disable
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x04), 0x04);
     }
 
-    // ── 4. Round-trip: true → false → true ────────────────────────────────────
-    void roundTrip_trueToFalseToTrue() {
+    // ── 3. setMicPTTDisabled(false) → byte 50 bit 2 CLEAR ────────────────────
+    // disabled=false → wire bit 2 = 0 (firmware honors mic-jack PTT line).
+    void setMicPTTDisabledFalse_byte50Bit2IsClear() {
+        P2RadioConnection conn;
+        conn.setMicPTTDisabled(true);   // disable first
+        conn.setMicPTTDisabled(false);  // then re-enable
+        quint8 buf[60] = {};
+        conn.composeCmdTxForTest(buf);
+        QCOMPARE(int(buf[50] & 0x04), 0);
+    }
+
+    // ── 4. Round-trip: false → true → false ──────────────────────────────────
+    // Now that micControl{0x20} matches m_micPTTDisabled{false} (issue #182),
+    // the default starts in a consistent "PTT enabled" wire state.
+    void roundTrip_falseToTrueToFalse() {
         P2RadioConnection conn;
 
-        conn.setMicPTT(true);
+        // Start from default. Bit 2 should be clear.
+        quint8 buf0[60] = {};
+        conn.composeCmdTxForTest(buf0);
+        QCOMPARE(int(buf0[50] & 0x04), 0);
+
+        conn.setMicPTTDisabled(true);
         quint8 buf1[60] = {};
         conn.composeCmdTxForTest(buf1);
-        QCOMPARE(int(buf1[50] & 0x04), 0);
+        QCOMPARE(int(buf1[50] & 0x04), 0x04);
 
-        conn.setMicPTT(false);
+        conn.setMicPTTDisabled(false);
         quint8 buf2[60] = {};
         conn.composeCmdTxForTest(buf2);
-        QCOMPARE(int(buf2[50] & 0x04), 0x04);
-
-        conn.setMicPTT(true);
-        quint8 buf3[60] = {};
-        conn.composeCmdTxForTest(buf3);
-        QCOMPARE(int(buf3[50] & 0x04), 0);
+        QCOMPARE(int(buf2[50] & 0x04), 0);
     }
 
-    // ── 5. setMicPTT(true) does NOT touch byte-50 bits 0-1 (G.1/G.2 bits) ───
+    // ── 5. setMicPTTDisabled(true) does NOT touch byte-50 bits 0-1 ──────────
     // Cross-bit guard: mic_ptt (bit 2 = 0x04) must not collide with
     // line_in (bit 0 = 0x01) or mic_boost (bit 1 = 0x02).
-    // Source: deskhpsdr/src/new_protocol.c:1480-1490 [@120188f]
-    void micBoostAndLineInBits_unaffectedByMicPTT() {
+    void micBoostAndLineInBits_unaffectedByMicPTTDisabled() {
         P2RadioConnection conn;
-        conn.setMicPTT(true);
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // Bit 2 (mic_ptt enabled) must be 0.
-        QCOMPARE(int(buf[50] & 0x04), 0);
-        // Bits 0 (line_in) and 1 (mic_boost) must be 0 — not set by setMicPTT.
+        QCOMPARE(int(buf[50] & 0x04), 0x04);
         QCOMPARE(int(buf[50] & 0x01), 0);
         QCOMPARE(int(buf[50] & 0x02), 0);
     }
 
-    // ── 6. setMicPTT(true) does NOT touch byte-50 bit 3 (G.3 mic_trs) ────────
+    // ── 6. setMicPTTDisabled(true) does NOT touch byte-50 bit 3 (G.3) ────────
     // Cross-bit guard for G.3: mic_trs (bit 3 = 0x08) must stay at its
     // default value when only mic_ptt changes.
-    void setMicPTTTrue_doesNotTouchBit3() {
+    void setMicPTTDisabledTrue_doesNotTouchBit3() {
         P2RadioConnection conn;
-        conn.setMicPTT(true);
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // Bit 3 (mic_ptt_tip_bias_ring, default: m_micTipRing=true → inverted → bit 0).
+        // Bit 3 (mic_ptt_tip_bias_ring): m_micTipRing=true default → inverted → 0.
         QCOMPARE(int(buf[50] & 0x08), 0);
     }
 
-    // ── 7. Idempotent: setMicPTT(true) twice → bit stays 0 ──────────────────
-    void idempotency_setMicPTTTrueTwice_bitStays0() {
+    // ── 7. Idempotent: setMicPTTDisabled(true) twice → bit stays 1 ──────────
+    void idempotency_setMicPTTDisabledTrueTwice_bitStays1() {
         P2RadioConnection conn;
-        conn.setMicPTT(true);
-        conn.setMicPTT(true);
+        conn.setMicPTTDisabled(true);
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        QCOMPARE(int(buf[50] & 0x04), 0);
+        QCOMPARE(int(buf[50] & 0x04), 0x04);
     }
 
     // ── 8. Codec path (OrionMKII): mic_ptt bit lands at byte 50 bit 2 ────────
     // setBoardForTest(OrionMKII) installs P2CodecOrionMkII which reads
-    // ctx.p2MicControl for byte 50.  setMicPTT must set the same bit
+    // ctx.p2MicControl for byte 50.  setMicPTTDisabled must set the same bit
     // in m_mic.micControl so the codec path agrees with the legacy path.
-    // Source: deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]
     void codecPath_orionMkII_micPttBitLandsAtByte50Bit2() {
         P2RadioConnection conn;
         conn.setBoardForTest(HPSDRHW::OrionMKII);
 
-        conn.setMicPTT(true);
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        QCOMPARE(int(buf[50] & 0x04), 0);
+        QCOMPARE(int(buf[50] & 0x04), 0x04);
 
-        conn.setMicPTT(false);
+        conn.setMicPTTDisabled(false);
         memset(buf, 0, sizeof(buf));
         conn.composeCmdTxForTest(buf);
-        QCOMPARE(int(buf[50] & 0x04), 0x04);
+        QCOMPARE(int(buf[50] & 0x04), 0);
     }
 
     // ── 9. Codec path (Saturn/ANAN-G2): same mic_ptt behaviour ──────────────
@@ -160,23 +165,23 @@ private slots:
         P2RadioConnection conn;
         conn.setBoardForTest(HPSDRHW::Saturn);
 
-        conn.setMicPTT(true);
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        QCOMPARE(int(buf[50] & 0x04), 0);
+        QCOMPARE(int(buf[50] & 0x04), 0x04);
 
-        conn.setMicPTT(false);
+        conn.setMicPTTDisabled(false);
         memset(buf, 0, sizeof(buf));
         conn.composeCmdTxForTest(buf);
-        QCOMPARE(int(buf[50] & 0x04), 0x04);
+        QCOMPARE(int(buf[50] & 0x04), 0);
     }
 
-    // ── 10. Byte 51 (line_in gain) unaffected by setMicPTT ──────────────────
+    // ── 10. Byte 51 (line_in gain) unaffected by setMicPTTDisabled ──────────
     // Byte 51 = line_in gain (m_mic.lineInGain). Must stay at its
     // default-encoded value when only the mic_ptt bit changes.
-    void byte51_unaffectedByMicPTT() {
+    void byte51_unaffectedByMicPTTDisabled() {
         P2RadioConnection conn;
-        conn.setMicPTT(true);
+        conn.setMicPTTDisabled(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         // Compare byte 51 with default state (no mic_ptt change).

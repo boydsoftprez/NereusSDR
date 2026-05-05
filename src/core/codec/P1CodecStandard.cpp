@@ -234,28 +234,19 @@ void P1CodecStandard::bank11(const CodecContext& ctx, quint8 out[5]) const
     //     + mic_bias bit 5 + mic_ptt bit 6.
     // mic_trs polarity inversion: wire bit set when tip is BIAS/PTT (!tipHot).
     // mic_bias polarity: 1 = bias on (no inversion).
-    // mic_ptt polarity: DIRECT — matches Thetis networkproto1.c:597-598
-    // [v2.10.3.13] (commit @501e3f51):
-    //   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
-    // Pre-fix the codec wrote `!ctx.p1MicPTT`, mirroring the inversion bug
-    // that PR #161 (commit ca8cd73) fixed in P1CodecHl2 for HL2.  With
-    // p1MicPTT default false, the inverted code emitted bit 6 = 1 every CC
-    // frame; Hermes-class firmware reads bit 6 as "track mic-jack tip as
-    // PTT source", so the floating mic tip caused phantom PTT signals
-    // fighting software MOX → rapid T/R relay flutter on TUNE/TX.  Symptom
-    // reported on ANAN-10E (HermesII); same root cause hits every board
-    // using P1CodecStandard or its subclasses (AnvelinaPro3, RedPitaya).
-    // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]
+    // mic_ptt polarity: direct — bit set when PTT is disabled at firmware,
+    // matching Thetis console.cs:19764 [v2.10.3.13+501e3f51]:
+    //   NetworkIO.SetMicPTT(Convert.ToInt32(mic_ptt_disabled));
+    // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13+501e3f51]
     //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ((prn->mic.mic_bias & 1) << 5)
     //           | ((prn->mic.mic_ptt & 1) << 6);
-    //   3M-1b G.3 (mic_trs) + G.4 (mic_bias) + G.5 (mic_ptt — direct as of P1 full-parity)
     out[1] = quint8((ctx.rxPreamp[0] ? 0x01 : 0)
                   | (ctx.rxPreamp[1] ? 0x02 : 0)
                   | (ctx.rxPreamp[2] ? 0x04 : 0)
-                  | (ctx.rxPreamp[0] ? 0x08 : 0)         // bit3 = rx0 again (Thetis quirk)
-                  | (!ctx.p1MicTipRing ? 0x10 : 0x00)    // mic_trs (inverted) — 3M-1b G.3
-                  | (ctx.p1MicBias    ? 0x20 : 0x00)     // mic_bias (no inversion) — 3M-1b G.4
-                  | (ctx.p1MicPTT     ? 0x40 : 0x00));   // mic_ptt (DIRECT — matches Thetis networkproto1.c:597-598 [v2.10.3.13])
+                  | (ctx.rxPreamp[0] ? 0x08 : 0)             // bit3 = rx0 again (Thetis quirk)
+                  | (!ctx.p1MicTipRing      ? 0x10 : 0x00)   // mic_trs (inverted) — 3M-1b G.3
+                  | (ctx.p1MicBias          ? 0x20 : 0x00)   // mic_bias (no inversion) — 3M-1b G.4
+                  | (ctx.p1MicPTTDisabled   ? 0x40 : 0x00)); // mic_ptt (direct, issue #182)
     // C2: line_in_gain (low 5 bits) | puresignal_run (bit 6).
     // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]
     //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);

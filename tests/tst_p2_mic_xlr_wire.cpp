@@ -100,7 +100,8 @@ private slots:
     // Bit 5 (0x20) must not collide with G.1-G.5 bits (0x1F).
     // All five lower bits must remain at their default state.
     // G.1 (mic_boost=false → 0), G.2 (line_in=false → 0),
-    // G.5 (mic_ptt disabled → bit 2 SET = 0x04), G.3 (tip-ring=true → bit 3 CLEAR),
+    // G.5 (mic_ptt_disabled=false → bit 2 CLEAR — micControl{0x20} default
+    //   post issue #182), G.3 (tip-ring=true → bit 3 CLEAR),
     // G.4 (mic_bias=false → bit 4 CLEAR).
     // Source: deskhpsdr/src/new_protocol.c:1480-1500 [@120188f]
     void setMicXlrTrue_doesNotTouchBits0to4() {
@@ -109,33 +110,24 @@ private slots:
         conn.setMicXlr(true);   // set XLR — lower bits must stay unchanged
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // Bit 5 (XLR) must be set.
         QCOMPARE(int(buf[50] & 0x20), 0x20);
-        // Bit 1 (mic_boost, G.1) must be 0 (default false).
         QCOMPARE(int(buf[50] & 0x02), 0);
-        // Bit 0 (line_in, G.2) must be 0 (default false).
         QCOMPARE(int(buf[50] & 0x01), 0);
-        // Bit 2 (mic_ptt disabled, G.5) must be 1 (default PTT disabled).
-        QCOMPARE(int(buf[50] & 0x04), 0x04);
-        // Bit 3 (mic_trs, G.3) must be 0 (default m_micTipRing=true → !true = 0).
+        // Bit 2 (mic_ptt_disabled, default false → PTT enabled) must be clear.
+        QCOMPARE(int(buf[50] & 0x04), 0);
         QCOMPARE(int(buf[50] & 0x08), 0);
-        // Bit 4 (mic_bias, G.4) must be 0 (default false).
         QCOMPARE(int(buf[50] & 0x10), 0);
     }
 
     // ── 6. Cross-bit guard: setMicXlr(false) does NOT touch bits 0-4 ────────
-    // Clearing XLR must not disturb G.1-G.5 bits.
-    // Source: deskhpsdr/src/new_protocol.c:1480-1500 [@120188f]
     void setMicXlrFalse_doesNotTouchBits0to4() {
         P2RadioConnection conn;
         conn.setMicXlr(false);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // Bit 5 (XLR) must be 0 (cleared).
         QCOMPARE(int(buf[50] & 0x20), 0);
-        // Bit 2 (mic_ptt disabled, G.5) must still be 1 (unchanged default).
-        QCOMPARE(int(buf[50] & 0x04), 0x04);
-        // Bits 0,1,3,4 must be 0 (unchanged defaults).
+        // Bit 2 (mic_ptt_disabled, default false → PTT enabled) must be clear.
+        QCOMPARE(int(buf[50] & 0x04), 0);
         QCOMPARE(int(buf[50] & 0x01), 0);
         QCOMPARE(int(buf[50] & 0x02), 0);
         QCOMPARE(int(buf[50] & 0x08), 0);

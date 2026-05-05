@@ -2,7 +2,7 @@
 // src/core/PaTelemetryScaling.h  (NereusSDR)
 // =================================================================
 //
-// Ported from Thetis [v2.10.3.13 @501e3f51]:
+// Ported from Thetis [v2.10.3.13+501e3f51]:
 //   Project Files/Source/Console/console.cs
 //
 // Original licence from the Thetis source file is included below,
