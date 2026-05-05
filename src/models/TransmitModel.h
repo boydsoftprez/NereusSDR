@@ -320,6 +320,10 @@ class TransmitModel : public QObject {
     // From Thetis console.cs:19694 [v2.10.3.13+501e3f51].
     Q_PROPERTY(int pttOutDelayMs READ pttOutDelayMs WRITE setPttOutDelayMs NOTIFY pttOutDelayMsChanged)
 
+    // ── radio-mic-input Task 8: Mic-gain slider floor ───────────────────
+    // From Thetis setup.cs:9678-9683 [v2.10.3.13+501e3f51].
+    Q_PROPERTY(int micGainMinDb READ micGainMinDb WRITE setMicGainMinDb NOTIFY micGainMinDbChanged)
+
     // ── PA-calibration safety hotfix (#167 Phase 3A) ──────────────────────
     // Three ATT-on-TX-on-power-change safety properties.  Defaults match
     // Thetis console.cs:29285-29310 [v2.10.3.13].
@@ -891,6 +895,14 @@ public:
     /// [v2.10.3.13+501e3f51] — udGenPTTOutDelay Min=0 Max=500).
     /// Default 20 ms.
     int pttOutDelayMs() const noexcept { return m_pttOutDelayMs; }
+
+    /// Mic-gain slider floor, in dB.  Sets the lower bound of the user-facing
+    /// MicGain slider; together with micGainMaxDb, defines the slider range.
+    /// Bound in Thetis to udMicGainMin spinbox (setup.cs:9678-9683
+    /// [v2.10.3.13+501e3f51]:  console.MicGainMin = (int)udMicGainMin.Value).
+    /// Designer range -96..0 dB, default -40 dB (setup.designer.cs:46808-46835
+    /// [v2.10.3.13+501e3f51]).
+    int micGainMinDb() const noexcept { return m_micGainMinDb; }
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     //
@@ -1899,6 +1911,13 @@ public slots:
     /// Mirrors Thetis console.cs:19694 [v2.10.3.13+501e3f51].
     void setPttOutDelayMs(int ms);
 
+    // ── radio-mic-input Task 8: Mic-gain slider floor ───────────────────
+    /// Set the mic-gain slider floor in dB.  Clamped to [-96,0] per
+    /// setup.designer.cs:46808-46835 [v2.10.3.13+501e3f51] (udMicGainMin
+    /// spinbox Min=-96 Max=0).
+    /// Mirrors Thetis setup.cs:9678-9683 [v2.10.3.13+501e3f51].
+    void setMicGainMinDb(int dB);
+
     // ── line_in_gain + user_dig_out setters (Task 2.4) ──────────────────
     /// Set line-in gain.  Clamped to [0, 31] (5 bits).
     void setLineInGain(int gain);
@@ -2032,6 +2051,9 @@ signals:
 
     // ── radio-mic-input Task 7: pttOutDelayMs signal ────────────────────
     void pttOutDelayMsChanged(int ms);
+
+    // ── radio-mic-input Task 8: micGainMinDb signal ─────────────────────
+    void micGainMinDbChanged(int dB);
 
     // ── line_in_gain + user_dig_out signals (Task 2.4) ──────────────────
     void lineInGainChanged(int gain);
@@ -2253,6 +2275,9 @@ private:
 
     // ── radio-mic-input Task 7: PTT-out drop-to-RX delay ─────────────────
     int    m_pttOutDelayMs  = 20;     // console.cs:19694: ptt_out_delay = 20
+
+    // ── radio-mic-input Task 8: Mic-gain slider floor ────────────────────
+    int    m_micGainMinDb   = -40;    // setup.designer.cs:46830: udMicGainMin.Value = -40
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].

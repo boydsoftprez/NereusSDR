@@ -573,6 +573,22 @@ void TransmitModel::setPttOutDelayMs(int ms)
     emit pttOutDelayMsChanged(clamped);
 }
 
+// ── radio-mic-input Task 8: Mic-gain slider floor ───────────────────────
+void TransmitModel::setMicGainMinDb(int dB)
+{
+    // Clamp to designer range -96..0 per setup.designer.cs:46808-46835
+    // [v2.10.3.13+501e3f51] (udMicGainMin Min=-96 Max=0).
+    const int clamped = std::clamp(dB, -96, 0);
+    if (clamped == m_micGainMinDb) { return; }  // idempotent guard
+    // Porting from Thetis setup.cs:9678-9683 [v2.10.3.13+501e3f51]:
+    //   console.MicGainMin = (int)udMicGainMin.Value;
+    // The Setup spinbox that drives this property is added in a later task;
+    // model just stores + signals + persists.
+    m_micGainMinDb = clamped;
+    persistOne(QStringLiteral("MicGainMin"), QString::number(clamped));
+    emit micGainMinDbChanged(clamped);
+}
+
 // ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
 
 void TransmitModel::setLineInGain(int gain)
@@ -1354,6 +1370,11 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const int pttOutDelayMs = s.value(pfx + QLatin1String("PTT_Out_Delay"),
                                        QStringLiteral("20")).toInt();
     setPttOutDelayMs(pttOutDelayMs);
+    // micGainMinDb: default -40 (setup.designer.cs:46830 [v2.10.3.13+501e3f51])
+    // Mic-gain slider floor; radio-mic-input Task 8.
+    const int micGainMinDb = s.value(pfx + QLatin1String("MicGainMin"),
+                                      QStringLiteral("-40")).toInt();
+    setMicGainMinDb(micGainMinDb);
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
@@ -1756,6 +1777,9 @@ void TransmitModel::persistToSettings(const QString& mac) const
 
     // ── radio-mic-input Task 7: PTT-out drop-to-RX delay ─────────────────
     s.setValue(pfx + QLatin1String("PTT_Out_Delay"), QString::number(m_pttOutDelayMs));
+
+    // ── radio-mic-input Task 8: Mic-gain slider floor ────────────────────
+    s.setValue(pfx + QLatin1String("MicGainMin"), QString::number(m_micGainMinDb));
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));
