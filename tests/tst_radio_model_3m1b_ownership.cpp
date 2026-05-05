@@ -20,7 +20,8 @@
 //   9.  MoxCheck rejection path — moxRejected signal emitted on !ok result.
 //  10.  MoxCheck cleared on nullptr-like check — setMox(true) allowed after clear.
 //  11.  Mic source objects null before connect: pcMicSourceForTest.
-//  12.  Mic source objects null before connect: radioMicSourceForTest.
+//  12.  (removed) radioMicSourceForTest — RadioMicSource ownership dropped
+//        from RadioModel in radio-mic-input Thetis parity Task 12.
 //  13   Mic source objects null before connect: compositeMicRouterForTest.
 //  14.  Construct + destroy RadioModel without crash (lifecycle).
 //  15.  RadioMicSource ring starts empty (zero fill level).
@@ -143,12 +144,10 @@ private slots:
         QVERIFY(model.pcMicSourceForTest() == nullptr);
     }
 
-    // ── 2. radioMicSourceForTest() returns nullptr before connectToRadio() ─────
-    void radioMicSourceNullBeforeConnect()
-    {
-        RadioModel model;
-        QVERIFY(model.radioMicSourceForTest() == nullptr);
-    }
+    // ── 2. (removed) radioMicSourceForTest accessor — RadioMicSource ownership
+    // dropped from RadioModel in radio-mic-input Thetis parity Task 12.  The
+    // Radio source path now flows through m_txMicSource, exposed via
+    // txMicSourceForTest (added in Phase 3M-1c).
 
     // ── 3. compositeMicRouterForTest() returns nullptr before connectToRadio() ──
     void compositeMicRouterNullBeforeConnect()
@@ -386,7 +385,6 @@ private slots:
             RadioModel model;
             // Verify test seams return null (pre-connect state).
             QVERIFY(model.pcMicSourceForTest()         == nullptr);
-            QVERIFY(model.radioMicSourceForTest()       == nullptr);
             QVERIFY(model.compositeMicRouterForTest()  == nullptr);
         }
         // Destructor ran — no crash.
@@ -401,7 +399,6 @@ private slots:
         for (int i = 0; i < 2; ++i) {
             RadioModel model;
             QVERIFY(model.pcMicSourceForTest()        == nullptr);
-            QVERIFY(model.radioMicSourceForTest()      == nullptr);
             QVERIFY(model.compositeMicRouterForTest() == nullptr);
         }
         QVERIFY(true);

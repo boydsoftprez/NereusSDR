@@ -122,7 +122,6 @@ class MoxController;
 class TxChannel;
 // 3M-1b L.1: forward declarations for mic-source strategy objects.
 class PcMicSource;
-class RadioMicSource;
 class VaxTxMicSource;  // VAX TX consumer (added 2026-05-06).
 class CompositeTxMicRouter;
 // 3M-1c L.1 / L.2: forward declarations for the MicProfileManager bank
@@ -767,10 +766,9 @@ public:
     // 3M-1b L.1 test seams: expose raw pointers into the mic-source strategy
     // objects so ownership, threading, and lifecycle tests can inspect state
     // without coupling to production API surfaces.
-    // All three return nullptr before the first connectToRadio() / after
+    // All accessors return nullptr before the first connectToRadio() / after
     // teardownConnection() — exactly the lifecycle the tests verify.
     const PcMicSource*           pcMicSourceForTest()          const { return m_pcMicSource.get(); }
-    const RadioMicSource*        radioMicSourceForTest()        const { return m_radioMicSource.get(); }
     const CompositeTxMicRouter*  compositeMicRouterForTest()   const { return m_compositeMicRouter.get(); }
 
     // 3M-1c TX pump architecture redesign test seam: returns the unique_ptr's
@@ -1878,17 +1876,17 @@ private:
     // is RadioModel's lifetime, so the non-owning AudioEngine* is always valid
     // while m_pcMicSource is alive.
     //
-    // RadioMicSource IS a QObject but its parent is set to nullptr here because
-    // RadioModel manages its lifetime via unique_ptr. This matches the convention
-    // used by TxChannel (non-owning view, managed externally).
+    // The Radio source path now routes through m_txMicSource (the live ring
+    // fed by P1 EP6 + P2 port-1026), not through the dead RadioMicSource
+    // dropped in radio-mic-input Thetis parity Task 12.
     //
-    // Plan: 3M-1b Task L.1. Pre-code review §0.3 + master design §5.2.4.
+    // Plan: 3M-1b Task L.1; radio-mic-input Thetis parity Task 12.
+    // Pre-code review §0.3 + master design §5.2.4.
     std::unique_ptr<PcMicSource>           m_pcMicSource;
-    std::unique_ptr<RadioMicSource>        m_radioMicSource;
     // VAX TX consumer (added 2026-05-06, eager-borg-d64bed).  Pulls
     // audio from /nereussdr-vax-tx shared memory via AudioEngine and
     // is registered with m_compositeMicRouter via setVaxSource().
-    // Reset before m_compositeMicRouter on teardown — see notes
+    // Reset before m_compositeMicRouter on teardown, see notes
     // around teardownConnection().
     std::unique_ptr<VaxTxMicSource>        m_vaxTxMicSource;
     std::unique_ptr<CompositeTxMicRouter>  m_compositeMicRouter;

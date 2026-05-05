@@ -268,7 +268,6 @@ warren@wpratt.com
 #include "core/TxWorkerThread.h"
 // 3M-1b L.1: concrete mic-source strategy objects.
 #include "core/audio/PcMicSource.h"
-#include "core/audio/RadioMicSource.h"
 #include "core/audio/VaxTxMicSource.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/TxMicSource.h"
@@ -3104,8 +3103,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // Plan: 3M-1b Task L.1; radio-mic-input Thetis parity Task 11.
             // Pre-code review §0.3 + master design §5.2.4.
             m_pcMicSource = std::make_unique<PcMicSource>(m_audioEngine);
-            m_radioMicSource = std::make_unique<RadioMicSource>(m_connection, nullptr);
-            // VAX TX mic source — pulls audio from /nereussdr-vax-tx
+            // VAX TX mic source: pulls audio from /nereussdr-vax-tx
             // shared memory (written by 3rd-party apps via the HAL
             // plugin's "NereusSDR TX" device).  Registered with the
             // composite router via setVaxSource() so MicSource::Vax
@@ -3130,17 +3128,14 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                     m_audioEngine, &AudioEngine::txMonitorBlockReady,
                     Qt::DirectConnection);
 
-            // L.1 connection 2 — REMOVED (Codex review on PR #149).
-            // RadioMicSource::RadioMicSource subscribes to micFrameDecoded
-            // itself with Qt::DirectConnection in its constructor; adding a
-            // second QueuedConnection from RadioModel caused onMicFrame to
-            // fire TWICE per frame from two producer threads (connection
-            // thread + main thread), violating the SPSC ring's
-            // single-producer assumption (m_writeIdx uses relaxed atomics).
-            // The duplicated push corrupted the ring under load and was a
-            // likely contributor to the audible noise floor JJ saw on the
-            // bench. RadioMicSource owns the subscription; do not add a
-            // second one here.
+            // L.1 connection 2 — REMOVED twice over.
+            // First pass (Codex review on PR #149): RadioMicSource owned its
+            // own subscription to micFrameDecoded so a second wiring here
+            // would have double-fed the SPSC ring.
+            // Second pass (radio-mic-input Thetis parity Task 12): the entire
+            // RadioMicSource path is gone — TxMicSource is the live ring fed
+            // by P1 EP6 + P2 port-1026 directly, and CompositeTxMicRouter
+            // routes the Radio source through it.
 
             // L.1 connection 3: TransmitModel mic preamp → TxChannel.
             // Auto (main thread → main thread); TxChannel::setMicPreamp is
@@ -6817,15 +6812,17 @@ void RadioModel::teardownConnection()
         m_moxController->setMoxCheck({});
     }
 
-    // 3M-1b L.1: destroy mic-source strategy objects in reverse-construction order
-    // so CompositeTxMicRouter (which holds raw pointers to pc + radio sources
-    // + the VAX TX source registered via setVaxSource) is released BEFORE the
-    // sources it points into.
+    // 3M-1b L.1 (radio-mic-input Thetis parity Task 12 update):
+    // destroy mic-source strategy objects in reverse-construction order so
+    // CompositeTxMicRouter (which holds raw pointers to pc + tx-mic sources
+    // + the VAX TX source registered via setVaxSource) is released BEFORE
+    // the sources it points into.
     // After reset(), pullSamples() on the composite is unreachable (TxChannel
-    // already has setMicRouter(nullptr) above).
+    // already has setMicRouter(nullptr) above).  The radio-mic source path is
+    // now backed by m_txMicSource (reset later in the TX-pump teardown block);
+    // RadioMicSource was dropped in Task 12.
     m_compositeMicRouter.reset();
     m_vaxTxMicSource.reset();
-    m_radioMicSource.reset();
     m_pcMicSource.reset();
 
     // Clear the non-owning TX channel view before WdspEngine::shutdown()
