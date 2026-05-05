@@ -71,6 +71,19 @@
 //                 insertWidget(stretchIndex, group) pattern so the boxes
 //                 cluster at the top of the page like every other
 //                 Setup-page family.
+//   2026-05-04 — Issue #175 Task 9: per-band Tune Power grid SKU-aware.
+//                 m_tunePwrSpins[14] flips QSpinBox* -> QDoubleSpinBox* so
+//                 the per-SKU display semantics can vary the decimal count.
+//                 On HL2: range -16.5..0 dB / 0.5 step / 1 dp / " dB"
+//                 suffix; displayed = (stored / 3.0 - 33.0) / 2.0; on user
+//                 edit, stored = round((33 + dB*2) * 3).  On other SKUs the
+//                 grid behaves exactly as before (decimals=0, " W" suffix,
+//                 display == stored).  Storage stays as int under the
+//                 existing tunePower_by_band/<band> AppSettings key — same
+//                 key, polymorphic semantic by SKU (mi0bot pattern, no
+//                 migration step).  applyHpsdrModel() extends to refresh
+//                 the per-band grid bounds + displayed values on
+//                 RadioModel::currentRadioChanged.
 // =================================================================
 
 //=================================================================
@@ -145,6 +158,8 @@
 #include <QButtonGroup>
 #include <QAbstractButton>
 #include <QSignalBlocker>
+
+#include <cmath>   // std::round (Issue #175 Task 9 dB <-> int conversion)
 
 namespace NereusSDR {
 
@@ -457,21 +472,95 @@ void PowerPage::onTuneDriveSourceChanged(DrivePowerSource src)
 // Issue #175 Task 8 — per-SKU bounds on the Fixed-mode spinbox.
 // From mi0bot-Thetis setup.cs:20328-20331 [v2.10.3.13-beta2] HERMESLITE
 // branch; ANAN/Saturn/Orion paths keep the canonical 0..100 W range.
-// Per-band tune-power grid bounds are handled in Task 9.
+//
+// Issue #175 Task 9 — also rescales every per-band Tune Power spinbox
+// using the same per-SKU helpers (mi0bot uses the same range/step/decimals
+// logic for the udTXTunePower spinbox, NereusSDR mirrors that across all
+// 14 per-band slots) and refreshes their displayed values to match the
+// new SKU's display semantics (dB on HL2 via tunePowerDisplayFromStored).
 void PowerPage::applyHpsdrModel(HPSDRModel m)
 {
-    if (!m_fixedTunePwrSpin) {
-        return;
+    // Fixed-mode spinbox (Task 8).
+    if (m_fixedTunePwrSpin) {
+        m_fixedTunePwrSpin->setRange(static_cast<double>(fixedTuneSpinboxMinFor(m)),
+                                     static_cast<double>(fixedTuneSpinboxMaxFor(m)));
+        m_fixedTunePwrSpin->setSingleStep(static_cast<double>(fixedTuneSpinboxStepFor(m)));
+        m_fixedTunePwrSpin->setDecimals(fixedTuneSpinboxDecimalsFor(m));
+        m_fixedTunePwrSpin->setSuffix(QString::fromLatin1(fixedTuneSpinboxSuffixFor(m)));
     }
-    m_fixedTunePwrSpin->setRange(static_cast<double>(fixedTuneSpinboxMinFor(m)),
-                                 static_cast<double>(fixedTuneSpinboxMaxFor(m)));
-    m_fixedTunePwrSpin->setSingleStep(static_cast<double>(fixedTuneSpinboxStepFor(m)));
-    m_fixedTunePwrSpin->setDecimals(fixedTuneSpinboxDecimalsFor(m));
-    m_fixedTunePwrSpin->setSuffix(QString::fromLatin1(fixedTuneSpinboxSuffixFor(m)));
+
+    // Per-band grid (Task 9).  Same per-SKU rules as the Fixed-mode
+    // spinbox; storage is int 0-99 (HL2) / 0-100 (others).  UI displays
+    // dB on HL2, W elsewhere.
+    for (auto* spin : m_tunePwrSpins) {
+        if (!spin) {
+            continue;
+        }
+        QSignalBlocker b(spin);
+        spin->setRange(static_cast<double>(fixedTuneSpinboxMinFor(m)),
+                       static_cast<double>(fixedTuneSpinboxMaxFor(m)));
+        spin->setSingleStep(static_cast<double>(fixedTuneSpinboxStepFor(m)));
+        spin->setDecimals(fixedTuneSpinboxDecimalsFor(m));
+        spin->setSuffix(QString::fromLatin1(fixedTuneSpinboxSuffixFor(m)));
+    }
+
+    // Refresh displayed values to match the new SKU's display semantics.
+    // tunePowerDisplayFromStored() looks up the *current* hardware model on
+    // each call, so we don't need to thread `m` through here — it just
+    // reads model()->hardwareProfile().model which has already been
+    // updated by RadioModel::setCurrentRadio() before this signal fires.
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+        for (int i = 0; i < kBandCount; ++i) {
+            auto* spin = m_tunePwrSpins[i];
+            if (!spin) {
+                continue;
+            }
+            QSignalBlocker b(spin);
+            spin->setValue(tunePowerDisplayFromStored(
+                tx.tunePowerForBand(static_cast<Band>(i))));
+        }
+    }
+}
+
+// Issue #175 Task 9 — per-SKU UI <-> storage conversion for the per-band
+// Tune Power grid.  Storage stays as int 0..99 (HL2) / 0..100 (others)
+// regardless of SKU.  On HL2 the displayed value is a 1-dp dB number in
+// the range -16.5..0; everywhere else displayed == stored watts.
+//
+// From mi0bot-Thetis setup.cs:5305-5312 [v2.10.3.13-beta2]
+//   FixedTunePower setter (UI display side):
+//   if (HPSDRModel.HERMESLITE == HardwareSpecific.Model)
+//       udTXTunePower.Value = (decimal)(value/3 - 33)/2;
+//   else
+//       udTXTunePower.Value = (decimal)value;
+double PowerPage::tunePowerDisplayFromStored(int stored)
+{
+    const HPSDRModel m = model() ? model()->hardwareProfile().model
+                                 : HPSDRModel::FIRST;
+    if (m == HPSDRModel::HERMESLITE) {
+        // mi0bot: Range is 0..99 stored -> -16.5..0 dB displayed.
+        return (static_cast<double>(stored) / 3.0 - 33.0) / 2.0;
+    }
+    return static_cast<double>(stored);
+}
+
+// From mi0bot-Thetis setup.cs:9395-9398 [v2.10.3.13-beta2]
+//   ValueChanged handler (UI -> stored side):
+//   // MI0BOT: Range is 0 to -16.5 - convert to 99 - 0
+//   console.TunePower = (int) ((33 + (udTXTunePower.Value * 2)) * 3);
+int PowerPage::tunePowerStoredFromDisplay(double display)
+{
+    const HPSDRModel m = model() ? model()->hardwareProfile().model
+                                 : HPSDRModel::FIRST;
+    if (m == HPSDRModel::HERMESLITE) {
+        return static_cast<int>(std::round((33.0 + display * 2.0) * 3.0));
+    }
+    return static_cast<int>(std::round(display));
 }
 
 // ---------------------------------------------------------------------------
-// PowerPage::buildTunePowerGroup — H.4
+// PowerPage::buildTunePowerGroup — H.4 + Issue #175 Task 9
 // ---------------------------------------------------------------------------
 //
 // Per-band tune-power spinboxes.
@@ -479,6 +568,13 @@ void PowerPage::applyHpsdrModel(HPSDRModel m)
 // directly in the setup dialog so the operator can set per-band tune power without
 // having to visit each band from the main VFO.  Thetis uses a single udTXTunePower
 // (setup.cs:5262 [v2.10.3.13]) that updates one slot on band change.
+//
+// Issue #175 Task 9 — spinboxes are QDoubleSpinBox so the per-SKU display
+// semantics can vary the decimal count.  Range / step / decimals / suffix
+// land in applyHpsdrModel(); the constructor seeds them from
+// HPSDRModel::FIRST so cold-launch lands the right bounds before the first
+// connection.  UI <-> storage conversion goes through tunePowerDisplayFromStored
+// / tunePowerStoredFromDisplay.
 void PowerPage::buildTunePowerGroup()
 {
     auto* group  = new QGroupBox(QStringLiteral("Tune Power (per band)"), this);
@@ -487,18 +583,19 @@ void PowerPage::buildTunePowerGroup()
 
     // Column headers
     grid->addWidget(new QLabel(QStringLiteral("Band"), group), 0, 0);
-    grid->addWidget(new QLabel(QStringLiteral("Watts"), group), 0, 1);
+    grid->addWidget(new QLabel(QStringLiteral("Power"), group), 0, 1);
 
     for (int i = 0; i < kBandCount; ++i) {
         const Band band = static_cast<Band>(i);
         const QString label = bandLabel(band);
 
         auto* lbl  = new QLabel(label, group);
-        auto* spin = new QSpinBox(group);
-        spin->setRange(0, 100);
-        spin->setSuffix(QStringLiteral(" W"));
+        // Issue #175 Task 9 — QDoubleSpinBox so per-SKU decimal count can
+        // vary.  Range/step/decimals/suffix populated by applyHpsdrModel()
+        // immediately below the for-loop.
+        auto* spin = new QDoubleSpinBox(group);
         spin->setObjectName(QStringLiteral("spinTunePwr_") + label);
-        spin->setToolTip(QStringLiteral("Tune carrier power for %1 (0–100 W)").arg(label));
+        spin->setToolTip(QStringLiteral("Tune carrier power for %1").arg(label));
         m_tunePwrSpins[i] = spin;
 
         grid->addWidget(lbl,  i + 1, 0);
@@ -507,25 +604,39 @@ void PowerPage::buildTunePowerGroup()
         if (model()) {
             TransmitModel& tx = model()->transmitModel();
 
-            // Initialise from model
-            {
-                QSignalBlocker b(spin);
-                spin->setValue(tx.tunePowerForBand(band));
-            }
+            // Initial display value seeded by applyHpsdrModel() at the end
+            // of buildTunePowerGroup() — both for the cold-launch SKU and
+            // on every RadioModel::currentRadioChanged later.
 
-            // Spinbox → model
-            connect(spin, &QSpinBox::valueChanged, this, [this, band](int val) {
-                model()->transmitModel().setTunePowerForBand(band, val);
+            // Spinbox -> model.  Convert the displayed value (dB on HL2,
+            // watts elsewhere) back to the int storage representation.
+            connect(spin, &QDoubleSpinBox::valueChanged, this,
+                    [this, band](double display) {
+                model()->transmitModel().setTunePowerForBand(
+                    band, tunePowerStoredFromDisplay(display));
             });
 
-            // Model → spinbox (reverse — needed when TxApplet slider changes the value)
+            // Model -> spinbox (reverse — needed when TxApplet slider
+            // changes the value).  Convert the int storage value into the
+            // current SKU's display representation.
             connect(&tx, &TransmitModel::tunePowerByBandChanged,
-                    spin, [band, spin](Band changedBand, int watts) {
-                if (changedBand != band) { return; }
+                    spin, [this, band, spin](Band changedBand, int storedValue) {
+                if (changedBand != band) {
+                    return;
+                }
                 QSignalBlocker b(spin);
-                spin->setValue(watts);
+                spin->setValue(tunePowerDisplayFromStored(storedValue));
             });
         }
+    }
+
+    // Seed range/step/decimals/suffix and displayed values for the
+    // cold-launch SKU.  When RadioModel::currentRadioChanged fires later,
+    // PowerPage::buildUI() re-invokes applyHpsdrModel() with the new SKU.
+    if (model()) {
+        applyHpsdrModel(model()->hardwareProfile().model);
+    } else {
+        applyHpsdrModel(HPSDRModel::FIRST);
     }
 
     contentLayout()->addWidget(group);

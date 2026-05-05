@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QSlider>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QSignalSpy>
 
@@ -33,6 +34,7 @@
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 #include "models/Band.h"
+#include "core/HpsdrModel.h"
 #include "core/StepAttenuatorController.h"
 
 using namespace NereusSDR;
@@ -54,6 +56,10 @@ private slots:
     void tunePwrSpin_initFromModel();
     void tunePwrSpin_changesModel();
     void tunePwrSpin_updatesFromModel();
+
+    // Issue #175 Task 9 — per-band Tune Power grid SKU-aware (HL2 dB / others W).
+    void perBandSpinboxes_hl2_dB();
+    void perBandSpinboxes_anan100_W();
 
     void chkAttOnTx_initFromController();
     void chkAttOnTx_togglesController();
@@ -127,6 +133,10 @@ void TestPowerPageH4::maxPowerSlider_updatesFromModel()
 
 // ---------------------------------------------------------------------------
 // 4. Per-band tune-power spinboxes initialise from TransmitModel
+//    Cast: Issue #175 Task 9 flipped m_tunePwrSpins[] from QSpinBox* to
+//    QDoubleSpinBox* so the per-SKU display semantics (dB on HL2, W
+//    elsewhere) can vary the decimal count.  On non-HL2 SKUs the displayed
+//    value still equals the stored watts, so the integer 17 round-trips.
 // ---------------------------------------------------------------------------
 void TestPowerPageH4::tunePwrSpin_initFromModel()
 {
@@ -137,9 +147,9 @@ void TestPowerPageH4::tunePwrSpin_initFromModel()
     page.show();
 
     const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band20m);
-    auto* spin = page.findChild<QSpinBox*>(name);
+    auto* spin = page.findChild<QDoubleSpinBox*>(name);
     QVERIFY(spin);
-    QCOMPARE(spin->value(), 17);
+    QCOMPARE(spin->value(), 17.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,10 +162,10 @@ void TestPowerPageH4::tunePwrSpin_changesModel()
     page.show();
 
     const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band40m);
-    auto* spin = page.findChild<QSpinBox*>(name);
+    auto* spin = page.findChild<QDoubleSpinBox*>(name);
     QVERIFY(spin);
 
-    spin->setValue(25);
+    spin->setValue(25.0);
     QCOMPARE(model.transmitModel().tunePowerForBand(Band::Band40m), 25);
 }
 
@@ -169,13 +179,51 @@ void TestPowerPageH4::tunePwrSpin_updatesFromModel()
     page.show();
 
     const QString name = QStringLiteral("spinTunePwr_") + bandLabel(Band::Band80m);
-    auto* spin = page.findChild<QSpinBox*>(name);
+    auto* spin = page.findChild<QDoubleSpinBox*>(name);
     QVERIFY(spin);
 
     // Setting via TxApplet path (model setter) should propagate to setup page.
     model.transmitModel().setTunePowerForBand(Band::Band80m, 33);
     QCoreApplication::processEvents();
-    QCOMPARE(spin->value(), 33);
+    QCOMPARE(spin->value(), 33.0);
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Issue #175 Task 9 — per-band grid SKU-aware: HL2 flips to dB display
+// ---------------------------------------------------------------------------
+void TestPowerPageH4::perBandSpinboxes_hl2_dB()
+{
+    RadioModel model;
+    PowerPage page(&model);
+    page.applyHpsdrModel(HPSDRModel::HERMESLITE);
+
+    // Pick a band that's exercised by the per-band grid (HF amateur slot).
+    auto* sb = page.findChild<QDoubleSpinBox*>(
+        QStringLiteral("spinTunePwr_") + bandLabel(Band::Band40m));
+    QVERIFY(sb != nullptr);
+    QCOMPARE(sb->minimum(),    -16.5);
+    QCOMPARE(sb->maximum(),      0.0);
+    QCOMPARE(sb->singleStep(),   0.5);
+    QCOMPARE(sb->decimals(),       1);
+    QCOMPARE(sb->suffix(), QStringLiteral(" dB"));
+}
+
+// ---------------------------------------------------------------------------
+// 4c. Issue #175 Task 9 — per-band grid SKU-aware: ANAN-100 stays in W
+// ---------------------------------------------------------------------------
+void TestPowerPageH4::perBandSpinboxes_anan100_W()
+{
+    RadioModel model;
+    PowerPage page(&model);
+    page.applyHpsdrModel(HPSDRModel::ANAN100);
+
+    auto* sb = page.findChild<QDoubleSpinBox*>(
+        QStringLiteral("spinTunePwr_") + bandLabel(Band::Band40m));
+    QVERIFY(sb != nullptr);
+    QCOMPARE(sb->minimum(),    0.0);
+    QCOMPARE(sb->maximum(),  100.0);
+    QCOMPARE(sb->decimals(),     0);
+    QCOMPARE(sb->suffix(), QStringLiteral(" W"));
 }
 
 // ---------------------------------------------------------------------------

@@ -98,7 +98,9 @@ public:
     // step / decimals / suffix for the given SKU.  Mirrors mi0bot
     // setup.cs:20328-20331 [v2.10.3.13-beta2] HERMESLITE branch.
     // Called from the constructor and from RadioModel::currentRadioChanged.
-    // Per-band tune-power grid bounds rescale lands in Task 9.
+    // Issue #175 Task 9 — also rescales the per-band Tune Power grid using
+    // the same per-SKU helpers.  On HL2 the grid flips to dB display
+    // (-16.5..0 in 0.5 dB steps); storage stays as int 0-99 mi0bot encoding.
     void applyHpsdrModel(HPSDRModel m);
 
 private:
@@ -114,6 +116,16 @@ private:
     // Issue #175 Task 8 helper — flip enabled state on the Fixed-mode
     // spinbox so it tracks the active drive source.
     void onTuneDriveSourceChanged(DrivePowerSource src);
+
+    // Issue #175 Task 9 — SKU-aware UI <-> storage conversion for the
+    // per-band Tune Power grid.  On HL2: stored int 0..99 maps to dB
+    // -16.5..0 via (stored / 3.0 - 33.0) / 2.0; on every other SKU,
+    // stored == displayed watts.  Mirrors mi0bot setup.cs:5305-5312
+    // [v2.10.3.13-beta2] FixedTunePower setter (UI display) and
+    // setup.cs:9395-9398 [v2.10.3.13-beta2] ValueChanged handler
+    // (UI -> stored).  Non-const because SetupPage::model() is non-const.
+    double tunePowerDisplayFromStored(int stored);
+    int    tunePowerStoredFromDisplay(double display);
 
     // Section: Power (H.4 — wired)
     QSlider*   m_maxPowerSlider{nullptr};        // 0–100 W — wired to TransmitModel::setPower
@@ -148,7 +160,10 @@ private:
     // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  SWL bands
     // (Phase 3L extension) have no TX power slot — TX is HF-only on HL2.
     static constexpr int kBandCount = static_cast<int>(Band::SwlFirst);  // 14
-    std::array<QSpinBox*, kBandCount> m_tunePwrSpins{};
+    // Issue #175 Task 9 — flipped from QSpinBox* to QDoubleSpinBox* so the
+    // per-SKU display semantics (dB on HL2, W elsewhere) can vary the
+    // decimal count.  Storage stays as int under tunePower_by_band/<band>.
+    std::array<QDoubleSpinBox*, kBandCount> m_tunePwrSpins{};
 
     // Section: SWR Protection (Task 9)
     // grpSWRProtectionControl per setup.designer.cs:5793-5924 [v2.10.3.13]
