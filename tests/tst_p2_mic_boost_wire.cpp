@@ -109,23 +109,20 @@ private slots:
         QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
-    // ── 6. Bits 2 (G.5) and 5 (G.6) are set by default; bits 3-4,6-7 unaffected ──
-    // After G.5: bit 2 (0x04) SET by default (m_micPTT=false → PTT disabled on wire).
-    // After G.6: bit 5 (0x20) SET by default (m_micXlr=true → XLR selected on wire).
+    // ── 6. Bits 2 (G.5) and 5 (G.6) set by default; bits 3-4,6-7 unaffected ──
+    // micControl{0x24} ships with bit 2 SET (PTT disabled at firmware) and
+    // bit 5 SET (XLR selected). The issue #182 follow-up commit flips bit 2
+    // back to 0 and updates the assertions below to match.
     // setMicBoost must not change bits 2, 5, or 3-4, 6-7.
-    // Only bit 1 (mic_boost) changes; bits 3,4,6,7 (0xD8) must remain 0.
     // Source: deskhpsdr/src/new_protocol.c:1484-1486 [@120188f]
     void byte50UpperBits_unaffectedByMicBoost() {
         P2RadioConnection conn;
         conn.setMicBoost(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // After G.5+G.6: bits 2 (0x04) and 5 (0x20) are set by default.
-        // Bits 3,4,6,7 (0xD8) must be 0 — not set by setMicBoost or G.5/G.6 defaults.
+        // Bits 2+5 set; bits 3,4,6,7 (0xD8) must be 0.
         QCOMPARE(int(buf[50] & 0xD8), 0);
-        // Bit 2 (mic_ptt disabled by default) must be set.
         QCOMPARE(int(buf[50] & 0x04), 0x04);
-        // Bit 5 (mic_xlr, XLR selected by default) must be set.
         QCOMPARE(int(buf[50] & 0x20), 0x20);
     }
 

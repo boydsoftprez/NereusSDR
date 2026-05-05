@@ -1496,32 +1496,31 @@ void P1RadioConnection::setPuresignalRun(bool run)
 }
 
 // ---------------------------------------------------------------------------
-// setMicPTT (3M-1b G.5)
+// setMicPTTDisabled (issue #182 — renamed from setMicPTT for parameter
+// parity with Thetis MicPTTDisabled / mic_ptt_disabled storage name).
 //
-// Enables or disables the hardware mic-jack PTT line (Orion/ANAN front-panel).
-// NereusSDR API contract: enabled=true → PTT enabled → wire bit 6 SET; this
-// is direct polarity, mirroring Thetis networkproto1.c:597-598 [v2.10.3.13]
-// (commit @501e3f51):
-//   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
+// Wire convention matches Thetis byte-for-byte:
+//   disabled=true  → wire bit 6 SET   (firmware ignores mic-jack PTT line)
+//   disabled=false → wire bit 6 CLEAR (firmware honors mic-jack PTT line)
 //
-// Wire bit: bank 11 (C0=0x14) C1 byte bit 6 (mask 0x40), DIRECT polarity.
+// Wire bit: bank 11 (C0=0x14) C1 byte bit 6 (mask 0x40), direct polarity.
 // This is the SAME C1 byte as G.3 (bit 4) + G.4 (bit 5) — all OR'd in.
 //
-// Pre-fix history: the codec wrote `!enabled` to the wire (inverted),
-// mirroring the same bug PR #161 fixed in P1CodecHl2 (commit ca8cd73).  With
-// the default m_micPTT=false, the inverted code put bit 6 = 1 every CC frame;
-// Hermes-class firmware reads bit 6 as "track mic-jack tip as PTT source" and
-// the floating mic tip caused phantom PTT signals fighting software MOX —
-// rapid T/R relay flutter on TUNE/TX (ANAN-10E bench symptom).  Codec is now
-// direct; setMicPTT(true) sets the wire bit, setMicPTT(false) clears it.
+// From Thetis console.cs:19757-19766 [v2.10.3.13 @501e3f51]:
+//   private bool mic_ptt_disabled = false;        // default PTT enabled
+//   public bool MicPTTDisabled {
+//       set {
+//           mic_ptt_disabled = value;
+//           NetworkIO.SetMicPTT(Convert.ToInt32(value));
+//       }
+//   }
+// From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13 @501e3f51]:
+//   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
 //
 // Cross-reference notes:
 //   deskhpsdr/src/old_protocol.c:3000-3002 [@120188f]: deskhpsdr's
 //     `mic_ptt_enabled` is a higher-level wrapper that inverts before
 //     writing the wire field; the wire field itself (mic_ptt) is direct.
-//   Thetis console.cs:19758 [v2.10.3.13]: `MicPTTDisabled` property is a
-//     UI-facing inverted view; it calls `NetworkIO.SetMicPTT(disabled?1:0)`,
-//     and the wire field is direct.
 //   deskhpsdr/src/new_protocol.c:1488-1490 [@120188f] — P2 byte 50 bit 2
 //     (P2 mic_ptt path, separate codec, same direct-polarity convention).
 //
@@ -1529,15 +1528,15 @@ void P1RadioConnection::setPuresignalRun(bool run)
 // BEFORE the idempotent guard so the bit lands on the wire within ≤1 frame.
 // Reuses m_forceBank11Next + captureBank11ForTest infrastructure from G.3.
 // ---------------------------------------------------------------------------
-void P1RadioConnection::setMicPTT(bool enabled)
+void P1RadioConnection::setMicPTTDisabled(bool disabled)
 {
     // Codex P2: set flush flag BEFORE idempotent guard.
     m_forceBank11Next = true;
 
-    if (m_micPTT == enabled) {
+    if (m_micPTTDisabled == disabled) {
         return;  // idempotent — flush flag already set above
     }
-    m_micPTT = enabled;
+    m_micPTTDisabled = disabled;
 }
 
 // ---------------------------------------------------------------------------
@@ -1772,7 +1771,7 @@ CodecContext P1RadioConnection::buildCodecContext() const
     ctx.p1LineInGain   = m_lineInGain;  // Task 2.1 of P1 full-parity epic
     ctx.p1UserDigOut   = m_userDigOut;  // Task 2.2 of P1 full-parity epic
     ctx.p1PuresignalRun = m_puresignalRun;  // Task 2.3 of P1 full-parity epic
-    ctx.p1MicPTT       = m_micPTT;      // 3M-1b G.5
+    ctx.p1MicPTTDisabled = m_micPTTDisabled;  // 3M-1b G.5; renamed for issue #182
     ctx.duplex         = m_duplex;
     ctx.diversity      = m_diversity;
     ctx.antennaIdx     = m_antennaIdx;
@@ -2637,14 +2636,12 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
         //     + mic_bias bit 5 + mic_ptt bit 6 (INVERTED — LEGACY ONLY).
         // mic_trs polarity inversion: 1 = tip is BIAS/PTT → write !m_micTipRing.
         // mic_bias polarity: 1 = bias on (no inversion) → write m_micBias.
-        // mic_ptt polarity inversion: 1 = PTT DISABLED on wire → write !m_micPTT.
-        // TODO(legacy-codec-cleanup): same mic_ptt inversion bug as the codec
-        // path; flip when re-enabling NEREUS_USE_LEGACY_P1_CODEC=1.  P1CodecStandard
-        // (the production path) was flipped to direct polarity in the same
-        // commit that introduced this TODO; this legacy compose path is
-        // kept inverted only because it is unreachable in shipped builds
-        // (gated by the env var).  See P1CodecStandard.cpp:bank11 for the
-        // direct-polarity wire formula and Thetis cite.
+        // mic_ptt polarity: legacy compose retains pre-issue-#182 inversion
+        //   (writes !m_micPTTDisabled). The follow-up issue #182 commit flips
+        //   this to direct so the legacy path matches the codec path.
+        // TODO(legacy-codec-cleanup): same mic_ptt inversion as the prior codec
+        //   path; gated by NEREUS_USE_LEGACY_P1_CODEC=1 so unreachable in shipped
+        //   builds, but the test suite hits this path when no codec is installed.
         // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]
         //   C1 = ... | ((prn->mic.mic_trs & 1) << 4) | ((prn->mic.mic_bias & 1) << 5)
         //           | ((prn->mic.mic_ptt & 1) << 6);
@@ -2652,10 +2649,10 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
                    (m_rxPreamp[0] ? 0x01 : 0)
                  | (m_rxPreamp[1] ? 0x02 : 0)
                  | (m_rxPreamp[2] ? 0x04 : 0)
-                 | (m_rxPreamp[0] ? 0x08 : 0)        // bit3 = rx0 again (Thetis quirk)
-                 | (!m_micTipRing ? 0x10 : 0x00)      // 3M-1b G.3 — mic_trs (inverted)
-                 | (m_micBias    ? 0x20 : 0x00)       // 3M-1b G.4 — mic_bias (no inversion)
-                 | (!m_micPTT    ? 0x40 : 0x00));     // 3M-1b G.5 — mic_ptt (INVERTED — LEGACY ONLY; see TODO above)
+                 | (m_rxPreamp[0] ? 0x08 : 0)            // bit3 = rx0 again (Thetis quirk)
+                 | (!m_micTipRing      ? 0x10 : 0x00)    // 3M-1b G.3 — mic_trs (inverted)
+                 | (m_micBias          ? 0x20 : 0x00)    // 3M-1b G.4 — mic_bias (no inversion)
+                 | (!m_micPTTDisabled  ? 0x40 : 0x00));  // 3M-1b G.5 — mic_ptt (legacy inversion; flipped in issue #182 follow-up)
         out[2] = 0; // line_in_gain + puresignal
         out[3] = 0; // user digital outputs
         out[4] = static_cast<quint8>((m_stepAttn[0] & 0x1F) | 0x20); // ADC0 step ATT + enable

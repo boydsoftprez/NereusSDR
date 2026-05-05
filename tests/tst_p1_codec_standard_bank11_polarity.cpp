@@ -8,7 +8,7 @@
 // [v2.10.3.13 @501e3f51]:
 //   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
 //
-// Pre-fix the codec wrote `!ctx.p1MicPTT` (inverted), mirroring the same bug
+// Pre-fix the codec wrote `!ctx.p1MicPTTDisabled` (inverted), mirroring the same bug
 // PR #161 (commit ca8cd73) fixed in P1CodecHl2 for HL2.  With p1MicPTT
 // default false, the inverted code emitted bit 6 = 1 every CC frame; Hermes-
 // class firmware reads bit 6 as "track mic-jack tip as PTT source", so the
@@ -38,7 +38,7 @@ private slots:
     void mic_ptt_direct_polarity_default_false_emits_bit_clear() {
         P1CodecStandard codec;
         CodecContext ctx{};
-        ctx.p1MicPTT = false;  // default
+        ctx.p1MicPTTDisabled = false;  // default
         quint8 out[5] = {};
         codec.composeCcForBank(11, ctx, out);
         QCOMPARE(int(out[0]), 0x14);  // C0: bank 11 address with MOX=0
@@ -52,7 +52,7 @@ private slots:
     void mic_ptt_direct_polarity_true_emits_bit_set() {
         P1CodecStandard codec;
         CodecContext ctx{};
-        ctx.p1MicPTT = true;
+        ctx.p1MicPTTDisabled = true;
         quint8 out[5] = {};
         codec.composeCcForBank(11, ctx, out);
         QCOMPARE(int(out[0]), 0x14);

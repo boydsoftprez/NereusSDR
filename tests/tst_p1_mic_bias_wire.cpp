@@ -123,17 +123,18 @@ private slots:
         QCOMPARE(int(quint8(bank11[1]) & 0x10), 0);
     }
 
-    // ── 8. setMicBias(true) produces C1 = 0x60 in default state (after G.5) ───
-    // With no preamp set, no mic_trs override: bit 5 (mic_bias) is set.
-    // After G.5 is wired, bit 6 (0x40) is ALSO set by default because
-    // m_micPTT defaults false → !false = 1 on wire (PTT disabled = mic_ptt=1).
+    // ── 8. setMicBias(true) produces C1 = 0x60 in default state (legacy path) ──
+    // With no preamp set, no mic_trs override: bit 5 (mic_bias) is set. The
+    // legacy compose path still inverts mic_ptt (default m_micPTTDisabled=false
+    // → !false = 1 → bit 6 set), so C1 == 0x60. The follow-up issue #182 commit
+    // flips the legacy path to direct and updates this assertion to 0x20.
     // Source: Thetis networkproto1.c:597-598 [v2.10.3.13]
     void setMicBiasTrue_c1IsExactly0x60InDefaultState() {
         P1RadioConnection conn;
         conn.setMicBias(true);
 
         const QByteArray bank11 = conn.captureBank11ForTest();
-        // 0x20 (mic_bias bit 5) | 0x40 (mic_ptt default inverted bit 6) = 0x60.
+        // 0x20 (mic_bias bit 5) | 0x40 (mic_ptt legacy inversion bit 6) = 0x60.
         QCOMPARE(int(quint8(bank11[1])), 0x60);
     }
 

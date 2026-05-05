@@ -112,24 +112,25 @@ private slots:
 
         const QByteArray bank11 = conn.captureBank11ForTest();
         // Bit 4 (0x10) is set by setMicTipRing(false); bit 6 (0x40) is ALSO set
-        // because m_micPTT defaults false → !false = 1 on wire (G.5 default state).
-        // Bits 0-3 (preamp) and bit 5 (mic_bias) must be 0. Bit 7 reserved = 0.
-        // Total C1 should equal 0x50 (0x10 | 0x40) after G.5 is wired.
+        // because the legacy compose path still inverts mic_ptt (default
+        // m_micPTTDisabled=false → !false = 1 on wire). Total C1 = 0x50.
+        // The follow-up issue #182 commit flips the legacy path to direct and
+        // updates this assertion to 0x10.
         // Source: Thetis networkproto1.c:597-598 [v2.10.3.13]
         QCOMPARE(int(quint8(bank11[1])), 0x50);
     }
 
     // ── 7. setMicTipRing(true) does NOT clobber C1 bits 0-3 ─────────────────
-    // In default state with tipHot=true, C1 has ONLY bit 6 set (G.5: mic_ptt
-    // default is false → !false = 1 on wire = PTT disabled by default).
+    // In default state with tipHot=true, C1 has ONLY bit 6 set (legacy path
+    // inversion: mic_ptt default false → !false = 1 → bit 6 set).
     // Bit 4 (mic_trs) is 0 (tipHot=true), bit 5 (mic_bias) is 0 (default false).
+    // The follow-up issue #182 commit flips the legacy path to direct and
+    // updates this assertion to 0x00.
     void setMicTipRingTrue_c1BitsAllZeroExceptPtt() {
         P1RadioConnection conn;
         conn.setMicTipRing(true);
 
         const QByteArray bank11 = conn.captureBank11ForTest();
-        // After G.5, bit 6 (0x40) is on by default (PTT disabled = mic_ptt=1 on wire).
-        // Bit 4 (mic_trs) must be 0 (tipHot=true → !true = 0). Bit 5 = 0.
         QCOMPARE(int(quint8(bank11[1])), 0x40);
     }
 
