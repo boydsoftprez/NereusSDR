@@ -902,7 +902,15 @@ void TxApplet::wireControls()
         // Result: slider moves while disconnected (or before profiles load)
         // never persist across restart.  setPowerForBand auto-persists to
         // hardware/<mac>/powerByBand/<band> when m_persistMac is non-empty.
-        tx.setPowerForBand(m_currentBand, val);
+        //
+        // Source the band from the active slice (the canonical TX band per
+        // RadioModel.cpp:903-905), NOT m_currentBand.  m_currentBand tracks
+        // UI state and is fed by both PanadapterModel::bandChanged AND
+        // SliceModel::frequencyChanged, so it can drift to the panadapter
+        // band on CTUN pans without slice retune — writing through it would
+        // silently corrupt other bands' stored values.  txBand() falls back
+        // to m_currentBand when the active slice is unavailable.
+        tx.setPowerForBand(txBand(), val);
         // Symmetric to the tune-slider auto-switch above: touching the RF
         // Power slider restores the tune source to DriveSlider so the
         // setPowerUsingTargetDbm txMode 1 branch reads tx.power() during
@@ -1518,6 +1526,23 @@ void TxApplet::rescaleFwdGaugeForModel(HPSDRModel model)
     });
 }
 
+// Canonical TX band — derived from the active slice's frequency (which
+// is what RadioModel.cpp:903-905 uses to compose the TX wire byte).
+// Falls back to m_currentBand when:
+//   - m_model is null (early bootstrap — TxApplet exists before
+//     RadioModel pointer wired up; see TxApplet ctor parent),
+//   - activeSlice() is null (no slice yet — first launch before
+//     addSlice fires, or post-disconnect cleanup state).
+// In both fallback cases m_currentBand is the best information we have
+// and is what the pre-fix code already used.
+Band TxApplet::txBand() const
+{
+    if (!m_model) { return m_currentBand; }
+    SliceModel* slice = m_model->activeSlice();
+    if (!slice) { return m_currentBand; }
+    return bandFromFrequency(slice->frequency());
+}
+
 void TxApplet::setCurrentBand(Band band)
 {
     // No same-band early-return: the bootstrap call from
@@ -1545,13 +1570,27 @@ void TxApplet::setCurrentBand(Band band)
         m_updatingFromModel = false;
     }
 
-    // Update the RF Power slider to reflect the per-band stored value.
-    // Matches Thetis TXBand setter at console.cs:17513 [v2.10.3.13]
-    // (`PWR = power_by_band[(int)value];`).  Routed through setPower so
-    // the existing reverse-binding lambda (TxApplet.cpp:905) paints the
-    // slider; setPower's same-value early-return makes the no-band-change
-    // call free.
-    tx.setPower(tx.powerForBand(band));
+    // Update the RF Power slider to reflect the per-band stored value —
+    // ONLY when the band passed in is the canonical TX band (i.e. the
+    // active slice's band).  Matches Thetis TXBand setter at
+    // console.cs:17513 [v2.10.3.13] (`PWR = power_by_band[(int)value];`),
+    // where `_tx_band` is single-source-of-truth for TX state.
+    //
+    // Why the gate: setCurrentBand is wired in MainWindow to BOTH
+    // PanadapterModel::bandChanged and SliceModel::frequencyChanged, so it
+    // can fire from a CTUN pan that does NOT change the slice.  Recalling
+    // the panadapter band's RF power into the live slider would (a) jump
+    // the displayed value off the actual TX band, and (b) leak that
+    // wrong value back into the active slice's band slot via the
+    // setPowerUsingTargetDbm txMode-0 side-effect on the next powerChanged
+    // emission — silently corrupting per-band storage.
+    //
+    // Routed through setPower so the existing reverse-binding lambda
+    // (TxApplet.cpp:905) paints the slider; setPower's same-value
+    // early-return makes the no-band-change call free.
+    if (band == txBand()) {
+        tx.setPower(tx.powerForBand(band));
+    }
 }
 
 // ── Phase 3M-1b K.2: tooltipForMode ──────────────────────────────────────────

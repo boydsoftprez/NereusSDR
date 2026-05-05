@@ -27,6 +27,20 @@
 //   console.cs:28642 [v2.10.3.13] — power_by_band[(int)_tx_band] = ptbPWR.Value
 //   console.cs:17513 [v2.10.3.13] — PWR = power_by_band[(int)value]
 //   console.cs:1813-1814 [v2.10.3.13] — power_by_band default 50 W
+//
+// Codex P1 review on PR #192 (threads r3190869829 + r3190869831):
+// flagged that the original fix used m_currentBand as the per-band
+// storage key.  m_currentBand is fed by both PanadapterModel::
+// bandChanged AND SliceModel::frequencyChanged from MainWindow, so a
+// CTUN pan that does not retune the slice would leave m_currentBand on
+// the panadapter band while the actual TX band (per RadioModel.cpp:
+// 903-905) was the active slice's band.  Slider writes through that
+// stale key would silently corrupt the wrong band's stored value, and
+// the recall on panadapter-only band changes would jump live RF drive
+// to a non-TX band's preset and leak that wrong value back into the
+// slice band's slot via the setPowerUsingTargetDbm txMode-0 side-
+// effect (TransmitModel.cpp:825).  Tests 7 and 8 below pin both
+// regressions.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -257,6 +271,109 @@ private slots:
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.at(0).at(0).value<Band>(), Band::Band40m);
         QCOMPARE(spy.at(0).at(1).toInt(), 60);
+    }
+
+    // ── 7. CTUN pan: slider write goes to active-slice band, not pan band ──
+    //
+    // Codex P1 review on PR #192 thread r3190869829: when the user pans
+    // the panadapter (CTUN mode) without retuning the slice, MainWindow's
+    // PanadapterModel::bandChanged callback fires setCurrentBand(panBand),
+    // which moves m_currentBand off the slice band.  Pre-fix, a slider
+    // event in this state wrote to powerByBand[panBand] instead of the
+    // canonical TX band slot (active-slice band), silently corrupting the
+    // wrong band's stored value.
+    //
+    // Fix: TxApplet::txBand() pulls from the active slice's frequency.
+    // setPowerForBand uses txBand(), not m_currentBand.
+    void slider_write_usesActiveSliceBand_notPanBand()
+    {
+        RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        // Active slice on 40m (7.150 MHz).
+        slice->setFrequency(7'150'000.0);
+        QCOMPARE(bandFromFrequency(slice->frequency()), Band::Band40m);
+
+        TxApplet applet(&rm);
+
+        // Simulate the panadapter drifting to 20m (panadapter
+        // bandChanged → setCurrentBand(Band20m)).  Slice still on 40m.
+        applet.setCurrentBand(Band::Band20m);
+
+        auto* slider = applet.findChild<QSlider*>(
+            QStringLiteral("TxRfPowerSlider"));
+        QVERIFY(slider != nullptr);
+
+        // Pre-condition: stored values for both bands at default 50 W.
+        QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 50);
+        QCOMPARE(rm.transmitModel().powerForBand(Band::Band20m), 50);
+
+        // User moves the slider while panadapter shows 20m.  The TX
+        // band per RadioModel.cpp:903-905 is still 40m (the slice
+        // didn't move), so the write must land on 40m.
+        slider->setValue(85);
+
+        QCOMPARE(rm.transmitModel().powerForBand(Band::Band40m), 85);
+        // Pan band's slot must NOT be touched.
+        QCOMPARE(rm.transmitModel().powerForBand(Band::Band20m), 50);
+    }
+
+    // ── 8. CTUN pan: setCurrentBand recall ignores non-TX-band updates ─────
+    //
+    // Codex P1 review on PR #192 thread r3190869831: setCurrentBand
+    // unconditionally called tx.setPower(tx.powerForBand(band)) on every
+    // invocation.  When fired from PanadapterModel::bandChanged with a
+    // non-slice band, this paints the slider with the wrong band's value
+    // AND the resulting powerChanged emission can write that wrong value
+    // back into the active slice band's slot via setPowerUsingTargetDbm
+    // txMode-0 side-effect (TransmitModel.cpp:825) — corruption.
+    //
+    // Fix: setCurrentBand only recalls the RF Power slider when
+    // band == txBand() (the active slice's band).  Panadapter pans
+    // without slice retune leave the slider locked on the TX band.
+    void setCurrentBand_recall_skippedForNonTxBand()
+    {
+        RadioModel rm;
+        rm.addSlice();
+        SliceModel* slice = rm.activeSlice();
+        QVERIFY(slice != nullptr);
+        // Slice on 40m, with a pre-stored per-band value of 65 W.
+        slice->setFrequency(7'150'000.0);
+        rm.transmitModel().setPowerForBand(Band::Band40m, 65);
+        rm.transmitModel().setPowerForBand(Band::Band20m, 5);
+
+        TxApplet applet(&rm);
+
+        auto* slider = applet.findChild<QSlider*>(
+            QStringLiteral("TxRfPowerSlider"));
+        QVERIFY(slider != nullptr);
+
+        // Establish the slider on the slice band first (TX band recall
+        // path — must work).
+        applet.setCurrentBand(Band::Band40m);
+        QCOMPARE(slider->value(), 65);
+
+        // Simulate panadapter drifting to 20m: slider must stay on 65
+        // because the slice didn't move.
+        applet.setCurrentBand(Band::Band20m);
+        QCOMPARE(slider->value(), 65);
+
+        // m_power must also stay at 65 W — preventing the corruption
+        // pipeline Codex flagged (powerChanged → setPowerUsingTargetDbm
+        // → setPowerForBand(activeSliceBand, m_power) writing 5 W
+        // into 40m's slot).
+        QCOMPARE(rm.transmitModel().power(), 65);
+
+        // Move the slice to 20m: now the slider SHOULD update because
+        // the TX band actually changed.  Drive it via the same wire
+        // MainWindow uses (slice frequencyChanged → setCurrentBand
+        // with bandFromFrequency(slice->frequency())).
+        slice->setFrequency(14'250'000.0);
+        QCOMPARE(bandFromFrequency(slice->frequency()), Band::Band20m);
+        applet.setCurrentBand(Band::Band20m);
+        QCOMPARE(slider->value(), 5);
+        QCOMPARE(rm.transmitModel().power(), 5);
     }
 };
 
