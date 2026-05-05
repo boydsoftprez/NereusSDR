@@ -3458,6 +3458,17 @@ target_compile_definitions(tst_p2_mic_ptt_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_radio_model_mic_ptt_wire)
 target_compile_definitions(tst_radio_model_mic_ptt_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-iii Task 1: setLineInBoost(double dB) dB-to-index ──────────
+# 6 tests verify the default RadioConnection::setLineInBoost(double) maps a
+# continuous dB value to the discrete 0..31 line_in_gain index per the
+# Thetis 32-entry table: -34.5 dB -> 0, 0.0 dB -> 23, +12.0 dB -> 31, with
+# below-min clamping to 0 and above-max clamping to 31. Step-walk sweeps
+# all 32 1.5 dB steps to confirm round-to-nearest behaviour.
+# Source cite: Thetis console.cs:40827-40859 [v2.10.3.13+501e3f51]
+#   MakeLineInList() + SetMicGain().
+nereus_add_test(tst_radio_connection_set_line_in_boost_db)
+target_compile_definitions(tst_radio_connection_set_line_in_boost_db PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.6: P1 mic_xlr storage-only ──────────────────────────
 # 8 tests verify that P1RadioConnection::setMicXlr() is STORAGE-ONLY.
 # Saturn G2 P2-only feature — P1 hardware has no XLR jack. No wire emission.

@@ -15,6 +15,7 @@
 #include <QObject>
 #include <QVector>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 
@@ -298,6 +299,30 @@ public slots:
     ///     P2 mic struct; the P2 override bridges this virtual to that path).
     /// Default 0 = no line-in attenuation.
     virtual void setLineInGain(int gain) = 0;
+
+    /// Set the mic line-in boost level in dB. Thetis-faithful translation
+    /// from a continuous dB value to the discrete 5-bit `line_in_gain`
+    /// wire field used by the radio firmware.
+    ///
+    /// From Thetis console.cs:40827-40859 [v2.10.3.13+501e3f51]
+    ///   MakeLineInList: 32-entry table indexed 0..31, value -34.5..+12.0
+    ///                    in 1.5 dB steps.
+    ///   SetMicGain:     Array.IndexOf(lineinboost, line_in_boost.ToString())
+    ///                    -> NetworkIO.SetLineBoost(lineboost).
+    /// The default implementation maps dB to index by rounding to the
+    /// nearest 1.5 dB step (clamped to 0..31) and forwards to
+    /// setLineInGain(int). P1 / P2 inherit this default; override only
+    /// if a subclass needs a different translation.
+    virtual void setLineInBoost(double dB) {
+        constexpr double kMinDb  = -34.5;
+        constexpr double kMaxDb  =  12.0;
+        constexpr double kStepDb =   1.5;
+        if (dB <= kMinDb) { setLineInGain(0);  return; }
+        if (dB >= kMaxDb) { setLineInGain(31); return; }
+        const int index = static_cast<int>((dB - kMinDb) / kStepDb + 0.5);
+        const int clamped = std::clamp(index, 0, 31);
+        setLineInGain(clamped);
+    }
 
     /// Set user digital outputs (0-15, low 4 bits).  Maps to Thetis prn->user_dig_out.
     /// Source: Thetis ChannelMaster/networkproto1.c:601 [v2.10.3.13]
