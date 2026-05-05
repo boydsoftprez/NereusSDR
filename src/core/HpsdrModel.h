@@ -285,28 +285,6 @@ constexpr const char* fixedTuneSpinboxSuffixFor(HPSDRModel m) noexcept {
 constexpr float hl2AttenuatorDbPerStep() noexcept { return 0.5f; }
 constexpr int   hl2AttenuatorStepCount() noexcept { return 16; }
 
-// Issue #175 follow-up — Reset Tune Power Defaults helpers.
-//
-// Cold-start factory default for the global Fixed Tune Power, stored as
-// int 0-99 (HL2 mi0bot encoding) / 0-100 (others).
-//
-// Non-HL2: 10 — matches Thetis ramdor setup.designer.cs:47263 default.
-// HL2:     54 — encodes -7.5 dB via mi0bot int formula (33+(-7.5*2))*3.
-//          ≈ 1 W on a 5 W radio — sensible tune level (half attenuator).
-constexpr int defaultFixedTunePowerFor(HPSDRModel m) noexcept {
-    return (m == HPSDRModel::HERMESLITE) ? 54 : 10;
-}
-
-// Cold-start factory default for per-band Tune Power, stored as int.
-//
-// Non-HL2: 50 — matches NereusSDR existing m_tunePowerByBand.fill(50).
-// HL2:     81 — encodes -3 dB via mi0bot int formula (33+(-3*2))*3.
-//          ≈ 2.5 W on a 5 W radio — proportional half-power match to
-//          non-HL2's 50/100.
-constexpr int defaultPerBandTunePowerFor(HPSDRModel m) noexcept {
-    return (m == HPSDRModel::HERMESLITE) ? 81 : 50;
-}
-
 // boardCodeName — returns the HPSDRHW enum label as a short model-code string.
 // Used in the status-bar board widget to show "Saturn" instead of the full
 // marketing name "ANAN-G2 (Saturn)" which truncates at typical status-bar widths.

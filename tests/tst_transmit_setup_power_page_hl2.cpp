@@ -11,6 +11,10 @@
 // Source cites:
 //   mi0bot-Thetis setup.designer.cs:47874-47930 [v2.10.3.13-beta2] (group layout)
 //   mi0bot-Thetis setup.cs:20328-20331         [v2.10.3.13-beta2] (HL2 spinbox)
+//
+// Issue #175 Wave 1: Reset Tune Power Defaults cases removed (button +
+// slot dropped from PowerPage — no Thetis upstream).  defaultFixedTunePowerFor
+// / defaultPerBandTunePowerFor helpers also dropped from HpsdrModel.h.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -18,12 +22,10 @@
 #include <QRadioButton>
 #include <QComboBox>
 #include <QDoubleSpinBox>
-#include <QPushButton>
 
 #include "gui/setup/TransmitSetupPages.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
-#include "models/Band.h"
 #include "core/HpsdrModel.h"
 
 using NereusSDR::HPSDRModel;
@@ -40,12 +42,6 @@ private slots:
     void tuneGroup_fixedSpinbox_anan100();
     void tuneGroup_radioToggle_persists();
     void tuneGroup_fixedSpinbox_disabledWhenNotFixed();
-
-    // Issue #175 follow-up — Reset Tune Power Defaults button.
-    void resetButton_exists();
-    void resetButton_restoresDefaults_hl2();
-    void resetButton_restoresDefaults_anan100();
-    void resetButton_restoresDriveSourceAndMeter();
 };
 
 void TestTransmitSetupPowerPageHl2::initTestCase()
@@ -131,105 +127,6 @@ void TestTransmitSetupPowerPageHl2::tuneGroup_fixedSpinbox_disabledWhenNotFixed(
     auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
     QVERIFY(sb != nullptr);
     QVERIFY(!sb->isEnabled());
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Issue #175 follow-up — Reset Tune Power Defaults button
-// ─────────────────────────────────────────────────────────────────────────
-
-void TestTransmitSetupPowerPageHl2::resetButton_exists()
-{
-    NereusSDR::RadioModel rm;
-    NereusSDR::PowerPage page(&rm);
-    auto* btn = page.findChild<QPushButton*>(QStringLiteral("btnResetTunePowerDefaults"));
-    QVERIFY(btn != nullptr);
-    QCOMPARE(btn->text(), QStringLiteral("Reset Tune Power Defaults"));
-}
-
-void TestTransmitSetupPowerPageHl2::resetButton_restoresDefaults_hl2()
-{
-    NereusSDR::RadioModel rm;
-    rm.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
-    NereusSDR::PowerPage page(&rm);
-
-    NereusSDR::TransmitModel& tx = rm.transmitModel();
-    tx.setHpsdrModel(HPSDRModel::HERMESLITE);
-
-    // Pick a non-default Fixed Tune Power and a non-default per-band power.
-    // HL2 storage is int 0..99 — anything other than 54 / 81 is fine.
-    tx.setTunePower(20);                              // ≠ HL2 default 54
-    tx.setTunePowerForBand(NereusSDR::Band::Band20m, 10);  // ≠ HL2 default 81
-
-    // Click the reset button.
-    auto* btn = page.findChild<QPushButton*>(QStringLiteral("btnResetTunePowerDefaults"));
-    QVERIFY(btn != nullptr);
-    btn->click();
-
-    // Fixed Tune Power and per-band Tune Power both back to HL2 defaults.
-    QCOMPARE(tx.tunePower(), 54);                                  // -7.5 dB
-    QCOMPARE(tx.tunePowerForBand(NereusSDR::Band::Band20m), 81);   // -3.0 dB
-
-    // The Fixed spinbox display reflects the new stored value via the
-    // mi0bot dB conversion: (54/3 - 33)/2 = -7.5.
-    auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
-    QVERIFY(sb != nullptr);
-    QCOMPARE(sb->value(), -7.5);
-}
-
-void TestTransmitSetupPowerPageHl2::resetButton_restoresDefaults_anan100()
-{
-    NereusSDR::RadioModel rm;
-    rm.setHpsdrModelForTest(HPSDRModel::ANAN100);
-    NereusSDR::PowerPage page(&rm);
-
-    NereusSDR::TransmitModel& tx = rm.transmitModel();
-    tx.setHpsdrModel(HPSDRModel::ANAN100);
-
-    // Pick non-default values (defaults are 10 W / 50 W on ANAN100).
-    tx.setTunePower(75);
-    tx.setTunePowerForBand(NereusSDR::Band::Band40m, 25);
-
-    auto* btn = page.findChild<QPushButton*>(QStringLiteral("btnResetTunePowerDefaults"));
-    QVERIFY(btn != nullptr);
-    btn->click();
-
-    QCOMPARE(tx.tunePower(), 10);
-    QCOMPARE(tx.tunePowerForBand(NereusSDR::Band::Band40m), 50);
-
-    auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
-    QVERIFY(sb != nullptr);
-    QCOMPARE(sb->value(), 10.0);  // displayed = stored on non-HL2
-}
-
-void TestTransmitSetupPowerPageHl2::resetButton_restoresDriveSourceAndMeter()
-{
-    NereusSDR::RadioModel rm;
-    NereusSDR::PowerPage page(&rm);
-
-    // Switch drive source to Fixed and TX TUN Meter combo away from index 0.
-    auto* radFixed = page.findChild<QRadioButton*>(QStringLiteral("radUseFixedDriveTune"));
-    QVERIFY(radFixed != nullptr);
-    radFixed->setChecked(true);
-    QCOMPARE(rm.transmitModel().tuneDrivePowerSource(),
-             NereusSDR::DrivePowerSource::Fixed);
-
-    auto* combo = page.findChild<QComboBox*>(QStringLiteral("comboTXTUNMeter"));
-    QVERIFY(combo != nullptr);
-    combo->setCurrentIndex(2);  // SWR
-    QCOMPARE(combo->currentIndex(), 2);
-
-    // Click Reset.
-    auto* btn = page.findChild<QPushButton*>(QStringLiteral("btnResetTunePowerDefaults"));
-    QVERIFY(btn != nullptr);
-    btn->click();
-
-    // Drive source restored to Tune Slider; meter combo restored to index 0.
-    QCOMPARE(rm.transmitModel().tuneDrivePowerSource(),
-             NereusSDR::DrivePowerSource::TuneSlider);
-    auto* radTune = page.findChild<QRadioButton*>(QStringLiteral("radUseTuneSliderTune"));
-    QVERIFY(radTune != nullptr);
-    QVERIFY(radTune->isChecked());
-    QCOMPARE(combo->currentIndex(), 0);
 }
 
 QTEST_MAIN(TestTransmitSetupPowerPageHl2)

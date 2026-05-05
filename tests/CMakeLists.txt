@@ -1664,11 +1664,11 @@ nereus_add_test(tst_transmit_setup_power_page_hl2)
 # that toggling chkTXInhibit persists to AppSettings.
 nereus_add_test(tst_transmit_setup_tx_inhibit)
 
-# ── Phase 3M-0 Task 11: Block-TX antennas + Disable HF PA ────────────────────
-# Verifies chkBlockTxAnt2/3 carry NereusSDR-original labels and tooltips
-# (Thetis ships unlabelled column-header checkboxes per
-# setup.designer.cs:6704-6724 [v2.10.3.13]), and chkHFTRRelay tooltip
-# "Disables HF PA." verbatim from setup.designer.cs:5786 [v2.10.3.13].
+# ── Phase 3M-0 Task 11: Disable HF PA ────────────────────────────────────────
+# Verifies chkHFTRRelay tooltip "Disables HF PA." verbatim from
+# setup.designer.cs:5786 [v2.10.3.13].  Issue #175 Wave 1: chkBlockTxAnt2/3
+# cases dropped (Power-page checkboxes wrote dead AppSettings keys; live
+# editor lives at AntennaAlexAntennaControlTab via AlexController).
 nereus_add_test(tst_transmit_setup_block_tx)
 
 # ── Phase 3M-3a-i Batch 5 Task E: SpeechProcessorPage TX dashboard ───────────
