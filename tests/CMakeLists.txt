@@ -1542,6 +1542,18 @@ nereus_add_test(tst_meter_poller_tx_bindings)
 # Derives from Thetis console.cs:4822 + 12094 + 29978-30157 [v2.10.3.13].
 nereus_add_test(tst_tx_applet_tune_wiring)
 
+# ── RF Power per-band persistence wiring (regression) ────────────────────────
+# Drives a real TxApplet QWidget so QApplication is required.  Covers:
+#   (1) slider valueChanged -> setPowerForBand(currentBand)
+#   (2) setCurrentBand(band) -> slider value pulled from powerForBand(band)
+#   (3) bootstrap call with default-band still recalls (Gap 3 regression)
+#   (4) per-band isolation across slider moves
+#   (5) AppSettings round-trip through TransmitModel reconstruction + reload
+#   (6) powerByBandChanged signal fires on slider events
+# Mirrors Thetis ptbPWR_Scroll @ console.cs:28642 + TXBand setter @
+# console.cs:17513 [v2.10.3.13].
+nereus_add_test(tst_tx_applet_rf_power_per_band)
+
 # ── Phase 3M-1b (relocated): PhoneCwApplet Mic Gain slider ──────────────────
 # Verifies the model-layer contracts that PhoneCwApplet's Mic Gain slider depends on
 # (relocated from TxApplet J.1 per JJ feedback 2026-04-28):

@@ -299,6 +299,18 @@ private:
     // Updates m_moxBtn->setToolTip(tooltipForMode(mode)).
     void onMoxModeChanged(DSPMode mode);
 
+    // Canonical TX band derived from the active slice's frequency.  This
+    // is the band the radio actually transmits on (RadioModel.cpp:903-905
+    // uses the same expression for the TX wire path).  Distinct from
+    // m_currentBand, which tracks UI state and is fed by both
+    // PanadapterModel::bandChanged AND SliceModel::frequencyChanged from
+    // MainWindow — m_currentBand can drift to the panadapter band when
+    // the user pans without retuning the slice (CTUN), so it is NOT safe
+    // to use as the storage key for per-band TX state.  Falls back to
+    // m_currentBand when the active slice is unavailable (early bootstrap
+    // or after disconnection).
+    Band txBand() const;
+
     // ── J.1: combo refresh helpers ──────────────────────────────────────────
     // Rebuild combo entries from m_micProfileMgr->profileNames(), preserving
     // the currently-active profile selection where possible.  Does nothing
