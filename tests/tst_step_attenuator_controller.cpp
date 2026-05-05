@@ -229,6 +229,39 @@ private slots:
         QCOMPARE(spy.first().at(0).toInt(), 1);
     }
 
+    void autoAtt_skippedDuringMox()
+    {
+        // Issue #175 follow-up: auto-att must not run during MOX, otherwise
+        // own-TX leakage tripping ADC overflow bumps m_attDb past the
+        // intended TX value (e.g. force-31 → 32 → ...).  This test pins
+        // the gate added in the m_isMox branch of tick().
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setStepAttEnabled(true);
+        ctrl.setAutoAttEnabled(true);
+        ctrl.setAutoAttMode(AutoAttMode::Classic);
+
+        // Engage MOX — fires force-31 path (default ATT-on-TX enabled,
+        // PS off, force-when-PS-off enabled, SSB).  m_attDb := 31.
+        ctrl.onMoxHardwareFlipped(true);
+        const int attDuringTx = ctrl.attenuatorDb();
+        QCOMPARE(attDuringTx, 31);
+
+        // Simulate own-TX leakage: 4 ADC overflow ticks would normally
+        // push to Red and bump m_attDb past 31.  With the m_isMox gate,
+        // tick() must early-return and leave m_attDb at 31.
+        for (int i = 0; i < 4; ++i) {
+            ctrl.onAdcOverflow(0);
+            ctrl.tick();
+        }
+
+        QCOMPARE(ctrl.attenuatorDb(), 31);  // Unchanged — no auto-att bump.
+
+        // Disengage MOX — m_attDb restores to the saved RX value (0).
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.attenuatorDb(), 0);
+    }
+
     void classicAutoAtt_bumpsOnRed()
     {
         // Classic auto-att bumps the step attenuator by the ADC overload

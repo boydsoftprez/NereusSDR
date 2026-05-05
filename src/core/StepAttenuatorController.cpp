@@ -437,6 +437,10 @@ bool StepAttenuatorController::shouldForce31Db(DSPMode dspMode, bool isPsOff) co
 
 void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
 {
+    // Mirror MOX state for auto-att gating in tick().  Set BEFORE the path
+    // branches below so a tick() racing this slot reads the new value.
+    m_isMox = isTx;
+
     if (isTx) {
         // RX→TX transition.
         if (!m_attOnTxEnabled) {
@@ -611,6 +615,15 @@ void StepAttenuatorController::tick()
         // Classic here too.
         const bool adaptiveAllowed =
             (m_autoAttMode == AutoAttMode::Adaptive) && m_hasStepAttCal;
+
+        // Skip auto-att during MOX.  Any ADC overflow during TX is own-TX
+        // leakage — the operator-set ATT-on-TX value (or force-31 path)
+        // already governs RX desensitization for this state.  Letting auto-
+        // att run here would bump m_attDb past the intended TX value (e.g.
+        // 31 → 32 → ...) on every overflow tick.
+        if (m_isMox) {
+            return;
+        }
 
         if (anyRed) {
             if (!adaptiveAllowed) {

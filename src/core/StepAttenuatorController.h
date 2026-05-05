@@ -445,6 +445,13 @@ private:
     // of the SWL slice you tune to.  Sized at Band::SwlFirst (=14).
     std::array<int, static_cast<size_t>(Band::SwlFirst)> m_txAttByBand{};
 
+    // MOX state mirror — set by onMoxHardwareFlipped().  Auto-att (Classic +
+    // Adaptive) reads this to skip overload-driven ATT bumps during TX, since
+    // any ADC overflow during TX is own-TX leakage, not antenna signal.
+    // Without this gate the auto-att would bump from 31 → 32 on the first
+    // tick after MOX engages because own-TX leakage trips ADC overflow.
+    bool m_isMox{false};
+
     // HPSDR-only preamp save/restore (F.2).
     // Distinct from m_classicSavedPreamp (which is for the auto-att
     // Classic mode undo path and serves a different purpose).
