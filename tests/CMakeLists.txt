@@ -1647,6 +1647,17 @@ nereus_add_test(tst_transmit_setup_power_pa_page)
 # Thetis setup.designer.cs:5793-5924 [v2.10.3.13].
 nereus_add_test(tst_transmit_setup_swr_protection)
 
+# ── Issue #175 Task 8: PowerPage grpPATune (Tune group) HL2-aware port ──────
+# Verifies the new "Tune" group box on Setup → Transmit → Power has 3 drive-
+# source radios + comboTXTUNMeter + udTXTunePower; spinbox bounds polymorph
+# by SKU (HL2: -16.5..0 dB / 0.5 step / 1 dp / " dB"; others: 0..100 W /
+# 1 step / 0 dp / " W"); fixed-mode toggle persists to TransmitModel; the
+# spinbox is disabled when a non-Fixed radio is selected.
+# mi0bot-Thetis cites:
+#   setup.designer.cs:47874-47930 [v2.10.3.13-beta2] (group layout)
+#   setup.cs:20328-20331         [v2.10.3.13-beta2] (HL2 spinbox bounds)
+nereus_add_test(tst_transmit_setup_power_page_hl2)
+
 # ── Phase 3M-0 Task 10: External TX Inhibit group box on Setup → Transmit ────
 # Verifies grpExtTXInhibit has 2 checkboxes with correct objectNames, defaults,
 # verbatim tooltip text per setup.designer.cs:46626-46657 [v2.10.3.13], and

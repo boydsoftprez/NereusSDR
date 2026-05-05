@@ -141,6 +141,9 @@
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QAbstractButton>
 #include <QSignalBlocker>
 
 namespace NereusSDR {
@@ -160,17 +163,28 @@ void PowerPage::buildUI()
     NereusSDR::Style::applyDarkPageStyle(this);
 
     buildPowerGroup();
+    buildTuneGroup();           // Issue #175 Task 8 — grpPATune above the per-band grid
     buildTunePowerGroup();
     buildSwrProtectionGroup();
     buildExternalTxInhibitGroup();
     buildBlockTxAntennaGroup();
     buildHfPaGroup();
 
+    // Issue #175 Task 8 — reapply SKU-specific spinbox bounds whenever the
+    // active radio changes.  The initial apply runs at construction time
+    // inside buildTuneGroup() so cold-launch lands the right bounds before
+    // the first connection.
+    if (model()) {
+        connect(model(), &RadioModel::currentRadioChanged, this,
+                [this](const NereusSDR::RadioInfo&) {
+            applyHpsdrModel(model()->hardwareProfile().model);
+        });
+        applyHpsdrModel(model()->hardwareProfile().model);
+    }
+
     // TODO(future): Thetis Transmit tab also has these groups not yet
     // covered by NereusSDR. Tracked separately from this PR; pre-existing
     // gaps, not introduced by the IA reshape.
-    //   - grpPATune (TUN power mode: fixed/drive-slider/tune-slider radio
-    //                + comboTXTUNMeter selector)
     //   - chkPulsedTune + grpPulsedTune (pulsed tune mode)
     //   - chkRecoverPAProfileFromTXProfile (TX↔PA profile linkage)
     //   - chkLimitExtAmpOnOverload (external amp overload limiter)
@@ -280,6 +294,180 @@ void PowerPage::buildPowerGroup()
     pwrForm->addRow(QString(), m_chkForceAttWhenPsOff);
 
     contentLayout()->addWidget(pwrGroup);
+}
+
+// ---------------------------------------------------------------------------
+// PowerPage::buildTuneGroup — Issue #175 Task 8
+// ---------------------------------------------------------------------------
+//
+// "Tune" group box on Setup → Transmit → Power.  Mirrors mi0bot-Thetis
+// grpPATune layout from setup.designer.cs:47874-47930 [v2.10.3.13-beta2]:
+//   3 drive-source radios (radUseFixedDriveTune / radUseTuneSliderTune /
+//   radUseDriveSliderTune) + comboTXTUNMeter (Fwd/Ref/SWR/Mic/ALC) +
+//   udTXTunePower spinbox (Fixed-mode tune drive).
+//
+// The Fixed-mode spinbox is enabled only when "Use Fixed Drive" is the
+// selected radio (mi0bot setup.cs udTXTunePower wiring).  Spinbox bounds
+// polymorph by SKU via applyHpsdrModel() — HL2 swings to the dB attenuation
+// range per setup.cs:20328-20331 [v2.10.3.13-beta2].
+//
+// The default radio is "Use Tune Slider" matching the mi0bot designer
+// initial state (radUseTuneSliderTune.TabIndex = 10 — first selectable).
+void PowerPage::buildTuneGroup()
+{
+    m_grpPATune = new QGroupBox(QStringLiteral("Tune"), this);
+    m_grpPATune->setObjectName(QStringLiteral("grpPATune"));
+
+    auto* form = new QFormLayout(m_grpPATune);
+    form->setSpacing(4);
+
+    // ── Drive-source radios ────────────────────────────────────────────────
+    // Captions match mi0bot setup.designer.cs Text properties verbatim:
+    //   radUseFixedDriveTune.Text   = "Use Fixed Drive"   (line 47898)
+    //   radUseDriveSliderTune.Text  = "Use Drive Slider"  (line 47912)
+    //   radUseTuneSliderTune.Text   = "Use Tune Slider"   (line 47925)
+    m_radFixedDrive  = new QRadioButton(QStringLiteral("Use Fixed Drive"),  m_grpPATune);
+    m_radFixedDrive->setObjectName(QStringLiteral("radUseFixedDriveTune"));
+    m_radDriveSlider = new QRadioButton(QStringLiteral("Use Drive Slider"), m_grpPATune);
+    m_radDriveSlider->setObjectName(QStringLiteral("radUseDriveSliderTune"));
+    m_radTuneSlider  = new QRadioButton(QStringLiteral("Use Tune Slider"),  m_grpPATune);
+    m_radTuneSlider->setObjectName(QStringLiteral("radUseTuneSliderTune"));
+
+    m_tuneDriveButtons = new QButtonGroup(m_grpPATune);
+    m_tuneDriveButtons->addButton(m_radFixedDrive,  static_cast<int>(DrivePowerSource::Fixed));
+    m_tuneDriveButtons->addButton(m_radDriveSlider, static_cast<int>(DrivePowerSource::DriveSlider));
+    m_tuneDriveButtons->addButton(m_radTuneSlider,  static_cast<int>(DrivePowerSource::TuneSlider));
+
+    // mi0bot designer order: radUseDriveSliderTune (top, y=50) →
+    // radUseTuneSliderTune (middle, y=73) → radUseFixedDriveTune (bottom, y=96).
+    auto* radioBox = new QVBoxLayout;
+    radioBox->setSpacing(2);
+    radioBox->addWidget(m_radDriveSlider);
+    radioBox->addWidget(m_radTuneSlider);
+    radioBox->addWidget(m_radFixedDrive);
+    form->addRow(QStringLiteral("Drive Source:"), radioBox);
+
+    // ── TX TUN Meter combo ─────────────────────────────────────────────────
+    // From mi0bot setup.designer.cs:47931-47948 [v2.10.3.13-beta2] — Items
+    // list is "Fwd Pwr" / "Ref Pwr" / ... (kept in mi0bot-faithful Thetis
+    // wording rather than spelling out "Forward Power" etc.).  Full meter
+    // routing wiring is a follow-up task; this surface lands the combo so
+    // the page matches the mi0bot layout 1:1.
+    m_comboTxTunMeter = new QComboBox(m_grpPATune);
+    m_comboTxTunMeter->setObjectName(QStringLiteral("comboTXTUNMeter"));
+    m_comboTxTunMeter->addItem(QStringLiteral("Fwd Pwr"));
+    m_comboTxTunMeter->addItem(QStringLiteral("Ref Pwr"));
+    m_comboTxTunMeter->addItem(QStringLiteral("SWR"));
+    m_comboTxTunMeter->addItem(QStringLiteral("Mic"));
+    m_comboTxTunMeter->addItem(QStringLiteral("ALC"));
+    form->addRow(QStringLiteral("TX TUN Meter:"), m_comboTxTunMeter);
+
+    // ── Fixed-mode tune-power spinbox ──────────────────────────────────────
+    // Bounds / step / decimals / suffix are set in applyHpsdrModel() and
+    // re-applied on every RadioModel::currentRadioChanged.  The default
+    // (FIRST = ANAN100) keeps a sane Watts range until the first connect.
+    m_fixedTunePwrSpin = new QDoubleSpinBox(m_grpPATune);
+    m_fixedTunePwrSpin->setObjectName(QStringLiteral("udTXTunePower"));
+    form->addRow(QStringLiteral("Fixed Tune Power:"), m_fixedTunePwrSpin);
+
+    // Apply default-SKU bounds so a no-model test still gets a sensible
+    // initial range; the constructor's applyHpsdrModel() call after
+    // buildUI() overwrites this once the model knows its hardware.
+    applyHpsdrModel(HPSDRModel::FIRST);
+
+    // ── Wire model ↔ radios ────────────────────────────────────────────────
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+
+        // Initial state from model.  Selects the matching radio without
+        // emitting buttonClicked (setChecked-driven idToggled is suppressed
+        // by the QSignalBlocker on the button group below).
+        const DrivePowerSource initial = tx.tuneDrivePowerSource();
+        QRadioButton* initialBtn = m_radTuneSlider;
+        switch (initial) {
+            case DrivePowerSource::Fixed:       initialBtn = m_radFixedDrive;  break;
+            case DrivePowerSource::DriveSlider: initialBtn = m_radDriveSlider; break;
+            case DrivePowerSource::TuneSlider:  initialBtn = m_radTuneSlider;  break;
+        }
+        {
+            QSignalBlocker b(m_tuneDriveButtons);
+            initialBtn->setChecked(true);
+        }
+        onTuneDriveSourceChanged(initial);
+
+        // Radio → model.  Use idToggled (not buttonClicked) so the slot
+        // fires both on user clicks and on programmatic setChecked() — the
+        // latter matters for tests and for sync with the model-→-radio
+        // reverse path.  Filter on `checked` so we react only to the
+        // positive edge of the newly-selected button (the deselect of the
+        // previous button fires checked=false which we ignore).
+        connect(m_tuneDriveButtons, &QButtonGroup::idToggled,
+                this, [this](int id, bool checked) {
+            if (!checked) { return; }
+            if (!model()) { return; }
+            const auto src = static_cast<DrivePowerSource>(id);
+            model()->transmitModel().setTuneDrivePowerSource(src);
+            onTuneDriveSourceChanged(src);
+        });
+
+        // Model → radio (reverse).  When the active source flips elsewhere
+        // (TxApplet RF-slider auto-switch in console.cs:46553 [v2.10.3.13]
+        // path), reflect the change on the page.
+        connect(&tx, &TransmitModel::tuneDrivePowerSourceChanged,
+                this, [this](DrivePowerSource src) {
+            QRadioButton* target = m_radTuneSlider;
+            switch (src) {
+                case DrivePowerSource::Fixed:       target = m_radFixedDrive;  break;
+                case DrivePowerSource::DriveSlider: target = m_radDriveSlider; break;
+                case DrivePowerSource::TuneSlider:  target = m_radTuneSlider;  break;
+            }
+            QSignalBlocker b(m_tuneDriveButtons);
+            target->setChecked(true);
+            onTuneDriveSourceChanged(src);
+        });
+    } else {
+        // No-model path (test fixture).  Default to "Use Tune Slider" per
+        // mi0bot designer initial state and keep the spinbox disabled.
+        m_radTuneSlider->setChecked(true);
+        onTuneDriveSourceChanged(DrivePowerSource::TuneSlider);
+        // Even without a RadioModel the radio toggle must still update the
+        // spinbox enabled state so users get visual feedback on the page.
+        // Use idToggled (not buttonClicked) so programmatic setChecked()
+        // also updates the spinbox state.
+        connect(m_tuneDriveButtons, &QButtonGroup::idToggled,
+                this, [this](int id, bool checked) {
+            if (!checked) { return; }
+            onTuneDriveSourceChanged(static_cast<DrivePowerSource>(id));
+        });
+    }
+
+    contentLayout()->addWidget(m_grpPATune);
+}
+
+// Issue #175 Task 8 — flip the udTXTunePower enabled state so it tracks
+// whether "Use Fixed Drive" is the active radio.  Mirrors the mi0bot
+// designer wiring where the spinbox is meaningful only in Fixed mode.
+void PowerPage::onTuneDriveSourceChanged(DrivePowerSource src)
+{
+    if (m_fixedTunePwrSpin) {
+        m_fixedTunePwrSpin->setEnabled(src == DrivePowerSource::Fixed);
+    }
+}
+
+// Issue #175 Task 8 — per-SKU bounds on the Fixed-mode spinbox.
+// From mi0bot-Thetis setup.cs:20328-20331 [v2.10.3.13-beta2] HERMESLITE
+// branch; ANAN/Saturn/Orion paths keep the canonical 0..100 W range.
+// Per-band tune-power grid bounds are handled in Task 9.
+void PowerPage::applyHpsdrModel(HPSDRModel m)
+{
+    if (!m_fixedTunePwrSpin) {
+        return;
+    }
+    m_fixedTunePwrSpin->setRange(static_cast<double>(fixedTuneSpinboxMinFor(m)),
+                                 static_cast<double>(fixedTuneSpinboxMaxFor(m)));
+    m_fixedTunePwrSpin->setSingleStep(static_cast<double>(fixedTuneSpinboxStepFor(m)));
+    m_fixedTunePwrSpin->setDecimals(fixedTuneSpinboxDecimalsFor(m));
+    m_fixedTunePwrSpin->setSuffix(QString::fromLatin1(fixedTuneSpinboxSuffixFor(m)));
 }
 
 // ---------------------------------------------------------------------------

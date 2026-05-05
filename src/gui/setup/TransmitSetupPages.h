@@ -64,6 +64,8 @@
 
 #include "gui/SetupPage.h"
 #include "models/Band.h"
+#include "models/TransmitModel.h"   // DrivePowerSource enum (Issue #175 Task 8)
+#include "core/HpsdrModel.h"        // HPSDRModel enum + spinbox helpers (Issue #175 Task 8)
 
 #include <array>
 
@@ -75,6 +77,8 @@ class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QRadioButton;
+class QButtonGroup;
 
 namespace NereusSDR {
 
@@ -90,14 +94,26 @@ class PowerPage : public SetupPage {
 public:
     explicit PowerPage(RadioModel* model, QWidget* parent = nullptr);
 
+    // Issue #175 Task 8 — reconfigure the udTXTunePower spinbox bounds /
+    // step / decimals / suffix for the given SKU.  Mirrors mi0bot
+    // setup.cs:20328-20331 [v2.10.3.13-beta2] HERMESLITE branch.
+    // Called from the constructor and from RadioModel::currentRadioChanged.
+    // Per-band tune-power grid bounds rescale lands in Task 9.
+    void applyHpsdrModel(HPSDRModel m);
+
 private:
     void buildUI();
     void buildPowerGroup();         // H.4: Max Power slider + ATT-on-TX + Force-ATT
+    void buildTuneGroup();          // Issue #175 Task 8: grpPATune (Tune source + meter + fixed-mode pwr)
     void buildTunePowerGroup();     // H.4: Per-band tune-power spinboxes
     void buildSwrProtectionGroup();
     void buildExternalTxInhibitGroup();
     void buildBlockTxAntennaGroup();
     void buildHfPaGroup();
+
+    // Issue #175 Task 8 helper — flip enabled state on the Fixed-mode
+    // spinbox so it tracks the active drive source.
+    void onTuneDriveSourceChanged(DrivePowerSource src);
 
     // Section: Power (H.4 — wired)
     QSlider*   m_maxPowerSlider{nullptr};        // 0–100 W — wired to TransmitModel::setPower
@@ -111,6 +127,18 @@ private:
     // ForceATTwhenPSAoff — Thetis setup.designer.cs:5660-5671 [v2.10.3.13].
     // //MW0LGE [2.9.0.7] added  [original inline comment from console.cs:29285]
     QCheckBox* m_chkForceAttWhenPsOff{nullptr};
+
+    // Section: grpPATune "Tune" group (Issue #175 Task 8)
+    // From mi0bot-Thetis setup.designer.cs:47874-47930 [v2.10.3.13-beta2].
+    // Three drive-source radios + TX TUN Meter combo + Fixed-mode tune power
+    // spinbox.  Spinbox bounds polymorph by SKU via applyHpsdrModel().
+    QGroupBox*       m_grpPATune{nullptr};
+    QRadioButton*    m_radFixedDrive{nullptr};
+    QRadioButton*    m_radDriveSlider{nullptr};
+    QRadioButton*    m_radTuneSlider{nullptr};
+    QButtonGroup*    m_tuneDriveButtons{nullptr};
+    QComboBox*       m_comboTxTunMeter{nullptr};
+    QDoubleSpinBox*  m_fixedTunePwrSpin{nullptr};
 
     // Section: Per-band tune power (H.4 — wired)
     // NereusSDR extension: exposes tunePower_by_band[] (console.cs:12094 [v2.10.3.13])
