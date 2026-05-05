@@ -449,6 +449,9 @@ void TwoToneController::continueActivation()
             // RadioModel's job (wired in Phase 4A).  Here we just need the
             // audioVolumeChanged signal to fire so the TX path picks up the
             // PA-cal-corrected volume.
+            // TODO(#175): thread connected model through if HL2 path needed
+            // here.  bTwoTone=true → txMode 2; the HL2 sub-step branch lives
+            // inside txMode 1 TuneSlider, so default FIRST is safe today.
             (void) m_tx->setPowerUsingTargetDbm(
                 *profile, band,
                 /*bSetPower=*/true,

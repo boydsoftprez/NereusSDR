@@ -155,6 +155,7 @@
 #pragma once
 
 #include "Band.h"
+#include "core/HpsdrModel.h"
 #include "core/WdspTypes.h"
 #include "core/audio/CompositeTxMicRouter.h"
 
@@ -558,11 +559,16 @@ public:
     ///   wire_byte = clamp(int(audioVolume * 1.02 * 255), 0, 255)
     ///                                                    // audio.cs:268
     ///   iq_gain   = audioVolume * swrProtect             // cmaster.cs:1117
+    /// `model` selects radio-specific TUNE_SLIDER behavior (Issue #175 Task 4).
+    /// HERMESLITE engages the mi0bot HL2 sub-step DSP audio-gain modulation
+    /// path (console.cs:47660-47673 [v2.10.3.13-beta2]); every other value
+    /// (default FIRST = -1 sentinel) leaves the slider value untouched.
     TxPowerResult setPowerUsingTargetDbm(const PaProfile& activeProfile,
                                          Band currentBand,
                                          bool bSetPower,
                                          bool bFromTune,
-                                         bool bTwoTone);
+                                         bool bTwoTone,
+                                         HPSDRModel model = HPSDRModel::FIRST);
 
     /// Restore all per-band tune-power values from AppSettings under the
     /// current MAC scope.  No-op when no MAC has been set.

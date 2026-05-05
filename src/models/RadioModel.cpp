@@ -907,9 +907,13 @@ RadioModel::RadioModel(QObject* parent)
         // Phase 3C deep-parity wrapper: computes audio_volume + applies
         // ATT-on-TX safety gate (PS-active dormant until 3M-4).  txMode 0
         // (normal): bFromTune=false, bTwoTone=false.
+        // Issue #175 Task 4: thread connected model so HL2 sub-step path
+        // resolves correctly (txMode 0 path is non-HL2-affected, but
+        // passing the model keeps the call site uniform with TUN path).
         const auto result = m_transmitModel.setPowerUsingTargetDbm(
             *activeProfile, currentBand, /*bSetPower=*/true,
-            /*bFromTune=*/false, /*bTwoTone=*/false);
+            /*bFromTune=*/false, /*bTwoTone=*/false,
+            m_hardwareProfile.model);
 
         // Compose wire byte + IQ scalar per Thetis topology cited above.
         const float swrProtect =
@@ -4856,9 +4860,13 @@ void RadioModel::setTune(bool on)
         if (m_paProfileManager) {
             const PaProfile* activeProfile = m_paProfileManager->activeProfile();
             if (activeProfile) {
+                // Issue #175 Task 4: thread connected model so HL2
+                // sub-step DSP audio-gain modulation engages on the TUN
+                // path (mi0bot console.cs:47660-47673 [v2.10.3.13-beta2]).
                 const auto result = m_transmitModel.setPowerUsingTargetDbm(
                     *activeProfile, currentBand, /*bSetPower=*/true,
-                    /*bFromTune=*/true, /*bTwoTone=*/false);
+                    /*bFromTune=*/true, /*bTwoTone=*/false,
+                    m_hardwareProfile.model);
 
                 const float swrProtect =
                     std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
@@ -5122,9 +5130,13 @@ void RadioModel::completeTuneOff()
     if (m_paProfileManager) {
         const PaProfile* activeProfile = m_paProfileManager->activeProfile();
         if (activeProfile) {
+            // Issue #175 Task 4: thread connected model so the TUN-off
+            // restore (txMode 0 path back to drive slider) is uniform
+            // with the TUN-on path; non-HL2 SKUs unaffected.
             const auto result = m_transmitModel.setPowerUsingTargetDbm(
                 *activeProfile, offBand, /*bSetPower=*/true,
-                /*bFromTune=*/false, /*bTwoTone=*/false);
+                /*bFromTune=*/false, /*bTwoTone=*/false,
+                m_hardwareProfile.model);
             const float swrProtectSaved =
                 std::clamp(m_transmitModel.swrProtectFactor(), 0.0f, 1.0f);
             const int savedWireDrive = std::clamp(

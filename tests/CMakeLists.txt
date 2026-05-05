@@ -3333,3 +3333,11 @@ nereus_add_test(tst_tx_channel_post_gen_tone_mag)
 # Wired to TxChannel::setPostGenToneMag in Task 10.
 # Source: mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
 nereus_add_test(tst_transmit_model_tx_post_gen_tone_mag)
+
+# ── Issue #175 Task 4: HL2 sub-step DSP modulation in setPowerUsingTargetDbm ──
+# 6 tests asserting the txMode 1 TUNE_SLIDER HL2 branch:
+#   slider 0/25/51 -> sub-step (mag 0.40/0.65/0.91, new_pwr 0);
+#   slider 52/99   -> attenuator (mag 0.9999, new_pwr -4/90);
+#   non-HL2 model  -> pass-through (mag unchanged, new_pwr equals slider).
+# Source: mi0bot-Thetis console.cs:47660-47673 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_hl2_dbm)

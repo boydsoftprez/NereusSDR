@@ -791,7 +791,8 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
     Band currentBand,
     bool bSetPower,
     bool bFromTune,
-    bool bTwoTone)
+    bool bTwoTone,
+    HPSDRModel model)
 {
     TxPowerResult result;
     result.bConstrain = true;
@@ -852,6 +853,21 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
                     break;
                 case DrivePowerSource::TuneSlider:
                     new_pwr = tunePowerForBand(currentBand);
+                    // From mi0bot-Thetis console.cs:47660-47673 [v2.10.3.13-beta2]
+                    // MI0BOT: As HL2 only has 15 step output attenuator,
+                    //         reduce the level further
+                    if (model == HPSDRModel::HERMESLITE) {
+                        if (result.bConstrain) {
+                            new_pwr = std::clamp(new_pwr, 0, 99);
+                        }
+                        if (new_pwr <= 51) {
+                            setTxPostGenToneMag((new_pwr + 40) / 100.0);
+                            new_pwr = 0;
+                        } else {
+                            setTxPostGenToneMag(0.9999);
+                            new_pwr = (new_pwr - 54) * 2;
+                        }
+                    }
                     break;
                 case DrivePowerSource::Fixed:
                     new_pwr = m_tunePower;
