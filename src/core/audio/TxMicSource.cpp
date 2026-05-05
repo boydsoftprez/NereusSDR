@@ -289,4 +289,83 @@ void TxMicSource::drainBlock(double* dst)
     }
 }
 
+// ---------------------------------------------------------------------------
+// pullSamples — alternate consumer primitive in mono float for the
+// CompositeTxMicRouter::pullSamples path.  Drains the same ring as
+// drainBlock but reads only the I-channel (mic input is mono) and
+// demotes from double to float.
+//
+// Semantics (matches the TxMicRouter abstract contract):
+//   - Always returns `n` when `dst` is non-null and `n > 0` (zero-fills
+//     on underrun).
+//   - Returns 0 only when `dst` is null or `n <= 0`.
+//   - Thread-safe via m_csOut (same lock drainBlock uses).
+//
+// In production this method is unused: TxWorkerThread drives the WDSP
+// TX path via drainBlock(double*).  pullSamples is wired through
+// CompositeTxMicRouter for the future TxChannel::m_micRouter path
+// (TxChannel.h:2128-2133) and for unit tests.  Only ONE of
+// {pullSamples, drainBlock} is the active consumer at a time.
+// ---------------------------------------------------------------------------
+int TxMicSource::pullSamples(float* dst, int n)
+{
+    if (dst == nullptr || n <= 0) {
+        return 0;
+    }
+
+    QMutexLocker lock(&m_csOut);
+
+    const int cap = ringFrameCapacity();
+    if (cap <= 0) {
+        std::fill_n(dst, n, 0.0f);
+        return n;
+    }
+
+    // Compute available frames in the ring under m_csOut.  m_writeIdx is
+    // mutated under m_csIn (different lock) so we take a snapshot under
+    // a momentary m_csIn acquisition.  The producer may advance further
+    // during pullSamples, but the snapshot is conservative — we never
+    // read past what's been committed at the moment of inspection.
+    int writeSnap = 0;
+    {
+        QMutexLocker lockIn(&m_csIn);
+        writeSnap = m_writeIdx;
+    }
+    int available = writeSnap - m_readIdx;
+    if (available < 0) {
+        available += cap;
+    }
+
+    const int toCopy = std::min(n, available);
+
+    // Wrap-aware split read of the I channel (even-indexed doubles).
+    int first  = std::min(toCopy, cap - m_readIdx);
+    int second = toCopy - first;
+
+    for (int i = 0; i < first; ++i) {
+        const int srcIdx = (m_readIdx + i) * 2;  // I channel
+        dst[i] = static_cast<float>(m_ring[static_cast<size_t>(srcIdx)]);
+    }
+    for (int i = 0; i < second; ++i) {
+        const int srcIdx = i * 2;
+        dst[first + i] = static_cast<float>(m_ring[static_cast<size_t>(srcIdx)]);
+    }
+
+    // Zero-fill the remainder on underrun.
+    for (int i = toCopy; i < n; ++i) {
+        dst[i] = 0.0f;
+    }
+
+    // Advance read head by ACTUAL frames drained (not n).  Underrun
+    // zero-fill must not advance past committed producer data.
+    if (toCopy > 0) {
+        m_readIdx += toCopy;
+        if (m_readIdx >= cap) {
+            m_readIdx -= cap;
+        }
+    }
+
+    return n;
+}
+
 } // namespace NereusSDR

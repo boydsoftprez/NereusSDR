@@ -3074,24 +3074,35 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // can call rebuild() when the active mode's DSP-Options settings change.
             m_txChannel->setWdspEngine(m_wdspEngine);
 
-            // ── L.1: construct Pc + Radio mic sources + composite router ──────────
-            // Construct after m_connection is live so RadioMicSource has a valid
-            // connection pointer and caps are known for the hasMicJack gate.
+            // L.1: construct Pc mic source + composite router.
+            // Construct after m_connection is live so caps are known for the
+            // hasMicJack gate.
             //
-            // Ownership: RadioModel holds all three via unique_ptr (declared in
-            // RadioModel.h §3M-1b L.1). CompositeTxMicRouter holds non-owning
-            // raw pointers to the pc + radio sources — it must be reset FIRST
+            // Ownership: RadioModel holds Pc + composite via unique_ptr (declared
+            // in RadioModel.h §3M-1b L.1). CompositeTxMicRouter holds non-owning
+            // raw pointers to the pc + tx-mic sources — it must be reset FIRST
             // during teardown (see teardownConnection).
             //
-            // hasMicJack gates RadioMicSource dispatch inside CompositeTxMicRouter.
-            // On HL2 (hasMicJack=false) setActiveSource(Radio) is silently ignored
-            // and Pc is always used.
+            // hasMicJack gates the Radio source dispatch inside
+            // CompositeTxMicRouter.  On HL2 (hasMicJack=false) setActiveSource
+            // (Radio) is silently ignored and Pc is always used.
             //
             // PcMicSource: non-QObject — no Qt parent needed.
-            // RadioMicSource: QObject — parent=nullptr because unique_ptr owns
-            //   the lifetime (Qt parent would cause double-free).
             //
-            // Plan: 3M-1b Task L.1. Pre-code review §0.3 + master design §5.2.4.
+            // Radio-mic source change (radio-mic-input Thetis parity Task 11):
+            //   Previously routed through RadioMicSource which subscribed to
+            //   RadioConnection::micFrameDecoded.  That signal was never
+            //   emitted in production, so RadioMicSource always returned
+            //   silence.  TxMicSource (already owned by RadioModel for the
+            //   TxWorkerThread cmbuffs path) is the live ring fed by P1 EP6
+            //   (P1RadioConnection.cpp:2580 [v2.10.3.13+501e3f51]) and P2
+            //   port 1026 (P2RadioConnection.cpp:1322 [v2.10.3.13+501e3f51]).
+            //   Routing the Radio source through TxMicSource finally makes
+            //   the user's PC/Radio mic toggle real.  RadioMicSource is
+            //   deleted in follow-up Tasks 12+13.
+            //
+            // Plan: 3M-1b Task L.1; radio-mic-input Thetis parity Task 11.
+            // Pre-code review §0.3 + master design §5.2.4.
             m_pcMicSource = std::make_unique<PcMicSource>(m_audioEngine);
             m_radioMicSource = std::make_unique<RadioMicSource>(m_connection, nullptr);
             // VAX TX mic source — pulls audio from /nereussdr-vax-tx
@@ -3104,7 +3115,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                         ? m_hardwareProfile.caps->hasMicJack
                                         : true;  // safe default: assume mic jack present
             m_compositeMicRouter = std::make_unique<CompositeTxMicRouter>(
-                m_pcMicSource.get(), m_radioMicSource.get(), hasMicJack);
+                m_pcMicSource.get(), m_txMicSource.get(), hasMicJack);
             m_compositeMicRouter->setVaxSource(m_vaxTxMicSource.get());
 
             // Replace the 3M-1a NullMicSource stub with the composite router.

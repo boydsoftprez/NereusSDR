@@ -133,6 +133,27 @@ public:
     /// waitForBlock().
     void drainBlock(double* dst);
 
+    /// Alternate consumer-side primitive: drain up to `n` mono float
+    /// samples from the same ring as drainBlock.  Reads only the
+    /// I-channel (mic input is mono).  Returns the number of samples
+    /// written; on underrun, zero-fills the remainder and still returns
+    /// `n`.  Returns 0 only when `dst` is null or `n <= 0`.
+    ///
+    /// Used by CompositeTxMicRouter::pullSamples for the Radio source
+    /// path (TxMicRouter abstract API works in mono floats, not
+    /// interleaved I/Q doubles).  Acquires the same m_csOut lock as
+    /// drainBlock; only ONE of {pullSamples, drainBlock} should be the
+    /// active consumer at any time — the production path uses drainBlock
+    /// via TxWorkerThread; pullSamples is reserved for the future
+    /// TxChannel::m_micRouter wiring (see TxChannel.h:2128-2133) and
+    /// for unit tests.
+    ///
+    /// Lock-free constraint: this method holds m_csOut briefly. It is
+    /// safe to call from the WDSP audio thread because m_csOut is only
+    /// otherwise contended by drainBlock (single-consumer in production
+    /// — never concurrent with itself).
+    int pullSamples(float* dst, int n);
+
     /// Lifecycle.  start() opens the inbound gate and resets the ring;
     /// stop() closes the gate, releases any waiter via a poison
     /// semaphore release, and prevents further block consumption.

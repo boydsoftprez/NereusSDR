@@ -5,12 +5,15 @@
 // NereusSDR-original file. No Thetis logic ported here — Thetis bakes
 // mic-source selection directly into audio.cs rather than using the
 // strategy pattern. CompositeTxMicRouter is a NereusSDR-native selector
-// that holds PcMicSource + RadioMicSource and dispatches pullSamples
+// that holds PcMicSource + TxMicSource and dispatches pullSamples
 // to the active source at runtime.
 //
 // Design: docs/architecture/phase3m-1b-thetis-pre-code-review.md §0.3
 // (PcMicSource arch lock) + master design §5.2.1.
-// Plan: 3M-1b F.3.
+// Plan: 3M-1b F.3 (initial); radio-mic-input Thetis parity Task 11
+// (Radio source switched from RadioMicSource to TxMicSource — the live
+//  ring fed by P1 EP6 + P2 port-1026; RadioMicSource was a dead path
+//  whose feeder signal was never emitted in production).
 //
 // This is free software; you can redistribute it and/or modify it
 // under the terms of the GNU General Public License as published by
@@ -32,6 +35,10 @@
 //   2026-04-27 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), Phase 3M-1b Task F.3, with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-05-05 — Radio source switched from RadioMicSource to
+//                 TxMicSource (radio-mic-input Thetis parity Task 11).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
@@ -45,7 +52,7 @@
 namespace NereusSDR {
 
 class PcMicSource;
-class RadioMicSource;
+class TxMicSource;
 class VaxTxMicSource;
 
 /// MicSource — strategy-pattern enum for which mic source is active.
@@ -69,7 +76,7 @@ enum class MicSource : int {
     Vax   = 2,  ///< VAX TX virtual device (3rd-party app → /nereussdr-vax-tx)
 };
 
-/// CompositeTxMicRouter — selector that holds PcMicSource + RadioMicSource
+/// CompositeTxMicRouter — selector that holds PcMicSource + TxMicSource
 /// and dispatches pullSamples based on the user's active selection.
 ///
 /// Special behaviors:
@@ -86,27 +93,28 @@ enum class MicSource : int {
 /// Constructor takes non-owning pointers. The router does not own its
 /// sources — lifetime is managed by the caller (RadioModel in production).
 ///
-/// hasMicJack is collapsed with radioSource at construction: if either
-/// hasMicJack is false OR radioSource is nullptr, the router behaves as
+/// hasMicJack is collapsed with txMicSource at construction: if either
+/// hasMicJack is false OR txMicSource is nullptr, the router behaves as
 /// if Radio is unavailable (force-PC). This means passing a non-null
-/// radioSource with hasMicJack=false is handled identically to null.
+/// txMicSource with hasMicJack=false is handled identically to null.
 ///
 /// Audio-thread contract: pullSamples() is called from the WDSP audio
 /// thread. All state is accessed via std::atomic with acquire/release
 /// ordering. No blocking, no allocation.
 ///
-/// Plan: 3M-1b F.3. Pre-code review §0.3 + master design §5.2.1.
+/// Plan: 3M-1b F.3 (initial); radio-mic-input Thetis parity Task 11
+/// (RadioMicSource → TxMicSource).
 class CompositeTxMicRouter : public TxMicRouter {
 public:
     /// Construct with PcMicSource (always present) and optional
-    /// RadioMicSource (null on HL2 since the radio-mic path doesn't
+    /// TxMicSource (null on HL2 since the radio-mic path doesn't
     /// exist). hasMicJack mirrors BoardCapabilities::hasMicJack.
     ///
-    /// If hasMicJack is false OR radioSource is nullptr, the router
+    /// If hasMicJack is false OR txMicSource is nullptr, the router
     /// collapses to Pc-only mode (Radio selection silently ignored).
-    CompositeTxMicRouter(PcMicSource*    pcSource,
-                         RadioMicSource* radioSource,
-                         bool            hasMicJack);
+    CompositeTxMicRouter(PcMicSource* pcSource,
+                         TxMicSource* txMicSource,
+                         bool         hasMicJack);
 
     ~CompositeTxMicRouter() override = default;
 
@@ -180,9 +188,9 @@ public:
 #endif
 
 private:
-    PcMicSource*    m_pcSource;     // non-owning; always present
-    RadioMicSource* m_radioSource;  // non-owning; may be null (HL2)
-    const bool      m_hasMicJack;   // collapsed: false if !hasMicJack || !radioSource
+    PcMicSource* m_pcSource;       // non-owning; always present
+    TxMicSource* m_txMicSource;    // non-owning; may be null (HL2 or no jack)
+    const bool   m_hasMicJack;     // collapsed: false if !hasMicJack || !txMicSource
 
     // Audio-thread–accessible state. All accessed with acquire/release.
     std::atomic<MicSource> m_activeSource;     // currently dispatching source

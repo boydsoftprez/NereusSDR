@@ -4,26 +4,29 @@
 //
 // NereusSDR-original file. See CompositeTxMicRouter.h for design notes.
 //
-// Plan: 3M-1b F.3. Pre-code review §0.3 + master design §5.2.1.
+// Plan: 3M-1b F.3 (initial); radio-mic-input Thetis parity Task 11
+// (Radio source switched from RadioMicSource to TxMicSource).
+// Pre-code review §0.3 + master design §5.2.1.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; no Thetis logic ported here.
 
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/PcMicSource.h"
-#include "core/audio/RadioMicSource.h"
+#include "core/audio/TxMicSource.h"
 #include "core/audio/VaxTxMicSource.h"
 
 namespace NereusSDR {
 
-CompositeTxMicRouter::CompositeTxMicRouter(PcMicSource*    pcSource,
-                                           RadioMicSource* radioSource,
-                                           bool            hasMicJack)
+CompositeTxMicRouter::CompositeTxMicRouter(PcMicSource* pcSource,
+                                           TxMicSource* txMicSource,
+                                           bool         hasMicJack)
     : m_pcSource(pcSource)
-    , m_radioSource(radioSource)
-    // Collapse: if hasMicJack is false OR radioSource is null, Radio is
-    // permanently unavailable. Both conditions map to "no radio mic".
-    , m_hasMicJack(hasMicJack && radioSource != nullptr)
+    // Collapse: if hasMicJack is false, the Radio path is permanently
+    // unavailable.  Storing nullptr here makes the pullSamples dispatch
+    // a single atomic load + null check.
+    , m_txMicSource(hasMicJack ? txMicSource : nullptr)
+    , m_hasMicJack(hasMicJack && txMicSource != nullptr)
 {
     // Default to Pc on construction regardless of persisted preference.
     // The caller (RadioModel) will call setActiveSource() with the
@@ -83,8 +86,8 @@ int CompositeTxMicRouter::pullSamples(float* dst, int n)
 
     const MicSource source = m_activeSource.load(std::memory_order_acquire);
 
-    if (source == MicSource::Radio && m_radioSource != nullptr) {
-        return m_radioSource->pullSamples(dst, n);
+    if (source == MicSource::Radio && m_txMicSource != nullptr) {
+        return m_txMicSource->pullSamples(dst, n);
     }
 
     if (source == MicSource::Vax) {

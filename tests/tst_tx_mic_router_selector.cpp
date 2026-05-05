@@ -5,26 +5,28 @@
 // NereusSDR-original test file. No Thetis port at this layer.
 //
 // Exercises CompositeTxMicRouter — the strategy-pattern selector that
-// holds PcMicSource + RadioMicSource and dispatches pullSamples based
+// holds PcMicSource + TxMicSource and dispatches pullSamples based
 // on the active MicSource selection (Phase 3M-1b Task F.3).
 //
 // Strategy: each test harness builds a real PcMicSource (backed by a
-// FakeAudioBus-injected AudioEngine) and/or a real RadioMicSource
-// (backed by a TestRadioConnection). The selector is driven via
-// setActiveSource() and setMoxActive(), then pullSamples() is called
-// to verify which source's data flows through.
-//
-// TestRadioConnection is inline here (same pattern as
-// tst_radio_mic_source.cpp — each test binary is self-contained).
+// FakeAudioBus-injected AudioEngine) and a real TxMicSource (the live
+// ring fed by P1 EP6 + P2 port-1026 in production).  The selector is
+// driven via setActiveSource() and setMoxActive(), then pullSamples()
+// is called to verify which source's data flows through.
 //
 // Pre-code review cite: §0.3 + master design §5.2.1.
-// Plan: 3M-1b F.3.
+// Plan: 3M-1b F.3 (initial); radio-mic-input Thetis parity Task 11
+// (Radio source switched from RadioMicSource to TxMicSource).
 // =================================================================
 //
 // Modification history (NereusSDR):
 //   2026-04-27 — Original test for NereusSDR by J.J. Boyd (KG4VCF),
 //                 Phase 3M-1b Task F.3, with AI-assisted implementation
 //                 via Anthropic Claude Code.
+//   2026-05-05 — Radio source switched from RadioMicSource to
+//                 TxMicSource (radio-mic-input Thetis parity Task 11).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file.
@@ -33,9 +35,8 @@
 
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/PcMicSource.h"
-#include "core/audio/RadioMicSource.h"
+#include "core/audio/TxMicSource.h"
 #include "core/AudioEngine.h"
-#include "core/RadioConnection.h"
 #include "core/IAudioBus.h"
 
 #include "fakes/FakeAudioBus.h"
@@ -45,50 +46,6 @@
 #include <memory>
 
 using namespace NereusSDR;
-
-// ---------------------------------------------------------------------------
-// TestRadioConnection — minimal concrete subclass of RadioConnection.
-// Stubs all pure-virtual slots as no-ops.
-// Exposes emitMicFrame() so tests can fire micFrameDecoded synchronously.
-// Duplicated from tst_radio_mic_source.cpp — each test binary is self-contained.
-// ---------------------------------------------------------------------------
-class TestRadioConnection : public RadioConnection {
-    Q_OBJECT
-public:
-    explicit TestRadioConnection(QObject* parent = nullptr)
-        : RadioConnection(parent)
-    {}
-
-    void init() override {}
-    void connectToRadio(const NereusSDR::RadioInfo&) override {}
-    void disconnect() override {}
-    void setReceiverFrequency(int, quint64) override {}
-    void setTxFrequency(quint64) override {}
-    void setActiveReceiverCount(int) override {}
-    void setSampleRate(int) override {}
-    void setAttenuator(int) override {}
-    void setPreamp(bool) override {}
-    void setTxDrive(int) override {}
-    void setWatchdogEnabled(bool) override {}
-    void setAntennaRouting(AntennaRouting) override {}
-    void setMox(bool) override {}
-    void setTrxRelay(bool) override {}
-    void setMicBoost(bool) override {}
-    void setLineIn(bool) override {}
-    void setMicTipRing(bool) override {}
-    void setMicBias(bool) override {}
-    void setLineInGain(int) override {}
-    void setUserDigOut(quint8) override {}
-    void setPuresignalRun(bool) override {}
-    void setMicPTTDisabled(bool) override {}
-    void setMicXlr(bool) override {}
-    void sendTxIq(const float*, int) override {}
-
-    void emitMicFrame(const float* samples, int frames)
-    {
-        emit micFrameDecoded(samples, frames);
-    }
-};
 
 // ---------------------------------------------------------------------------
 // Helper: build a QByteArray of Int16 interleaved stereo samples.
@@ -114,16 +71,14 @@ class TstTxMicRouterSelector : public QObject {
 
 private:
     // Full harness: AudioEngine + FakeAudioBus for PcMicSource,
-    // TestRadioConnection for RadioMicSource.
+    // TxMicSource for the Radio source path.
     struct Harness {
-        std::unique_ptr<AudioEngine>     engine;
-        FakeAudioBus*                    pcBus;   // non-owning; engine owns
-        TestRadioConnection              radioConn;
-        std::unique_ptr<PcMicSource>     pcSrc;
-        std::unique_ptr<RadioMicSource>  radioSrc;
+        std::unique_ptr<AudioEngine>  engine;
+        FakeAudioBus*                 pcBus;   // non-owning; engine owns
+        TxMicSource                   txMicSource;
+        std::unique_ptr<PcMicSource>  pcSrc;
 
         explicit Harness(bool openPcBus = true)
-            : radioConn()
         {
             AudioFormat fmt;
             fmt.sampleRate = 48000;
@@ -139,13 +94,22 @@ private:
             pcBus = fakeBus.get();
             engine->setTxInputBusForTest(std::move(fakeBus));
 
-            pcSrc    = std::make_unique<PcMicSource>(engine.get());
-            radioSrc = std::make_unique<RadioMicSource>(&radioConn);
+            pcSrc = std::make_unique<PcMicSource>(engine.get());
+
+            // Open the inbound gate so inbound() is accepted.  Mirrors the
+            // production sequence in RadioModel where TxMicSource::start()
+            // is called immediately after construction.
+            txMicSource.start();
+        }
+
+        ~Harness()
+        {
+            txMicSource.stop();
         }
 
         CompositeTxMicRouter makeRouter(bool hasMicJack = true)
         {
-            return CompositeTxMicRouter(pcSrc.get(), radioSrc.get(), hasMicJack);
+            return CompositeTxMicRouter(pcSrc.get(), &txMicSource, hasMicJack);
         }
     };
 
@@ -185,14 +149,15 @@ private slots:
 
     // ── 3. setActiveSource_Radio_dispatchesToRadio ────────────────────────
     // When Radio is selected (hasMicJack=true), pullSamples routes to
-    // RadioMicSource.
+    // TxMicSource (the live ring).
 
     void setActiveSource_Radio_dispatchesToRadio()
     {
         Harness h;
-        // Push recognizable values to the radio mic ring.
+        // Push recognizable values to the TxMicSource ring directly —
+        // matches what the production P1 EP6 / P2 port-1026 parsers do.
         const std::array<float, 3> radioData{0.1f, 0.2f, 0.3f};
-        h.radioConn.emitMicFrame(radioData.data(), 3);
+        h.txMicSource.inbound(radioData.data(), 3);
 
         auto router = h.makeRouter(/*hasMicJack=*/true);
         router.setActiveSource(MicSource::Radio);
@@ -200,7 +165,7 @@ private slots:
         std::array<float, 4> dst{9.9f, 9.9f, 9.9f, 9.9f};
         const int got = router.pullSamples(dst.data(), 4);
 
-        // RadioMicSource always returns n (zero-fills remainder).
+        // TxMicSource::pullSamples always returns n (zero-fills remainder).
         QCOMPARE(got, 4);
         QCOMPARE(dst[0], 0.1f);
         QCOMPARE(dst[1], 0.2f);
@@ -217,9 +182,9 @@ private slots:
         Harness h;
         // Push data to PC bus so we can distinguish PC vs Radio.
         h.pcBus->setPullData(makeInt16StereoBytes({{8192, 0}}));
-        // Also push to radio ring — should NOT appear in output.
+        // Also push to TxMicSource ring — should NOT appear in output.
         const std::array<float, 2> radioData{0.75f, 0.5f};
-        h.radioConn.emitMicFrame(radioData.data(), 2);
+        h.txMicSource.inbound(radioData.data(), 2);
 
         // hasMicJack=false → HL2 force-PC
         auto router = h.makeRouter(/*hasMicJack=*/false);
@@ -236,17 +201,17 @@ private slots:
     }
 
     // ── 5. setActiveSource_Radio_nullRadioSource_dispatchesToPc ──────────
-    // When radioSource is nullptr, the constructor collapses hasMicJack
-    // to false, and Radio selection is permanently ignored.
+    // When the txMicSource pointer is nullptr, the constructor collapses
+    // hasMicJack to false, and Radio selection is permanently ignored.
 
     void setActiveSource_Radio_nullRadioSource_dispatchesToPc()
     {
         Harness h;
         h.pcBus->setPullData(makeInt16StereoBytes({{4096, 0}}));
 
-        // Pass nullptr for radioSource — collapsed to Pc-only mode.
+        // Pass nullptr for txMicSource — collapsed to Pc-only mode.
         CompositeTxMicRouter router(h.pcSrc.get(), nullptr, /*hasMicJack=*/true);
-        router.setActiveSource(MicSource::Radio);  // ignored (null radioSource)
+        router.setActiveSource(MicSource::Radio);  // ignored (null txMicSource)
 
         QCOMPARE(static_cast<int>(router.activeSource()),
                  static_cast<int>(MicSource::Pc));
@@ -415,7 +380,7 @@ private slots:
     }
 
     // ── 14. pullSamples_noSources_zeroFills ───────────────────────────────
-    // When both pcSource and radioSource are null, pullSamples zero-fills
+    // When both pcSource and txMicSource are null, pullSamples zero-fills
     // and returns n (defensive path — should not occur in production).
 
     void pullSamples_noSources_zeroFills()

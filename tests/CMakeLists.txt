@@ -3280,6 +3280,21 @@ target_compile_definitions(tst_radio_mic_source PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_tx_mic_router_selector)
 target_compile_definitions(tst_tx_mic_router_selector PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Radio-mic-input Thetis parity Task 11: TxMicSource backing the Radio path ─
+# Verifies the post-refactor router contract: when MicSource::Radio is
+# selected and hasMicJack=true, CompositeTxMicRouter::pullSamples drains
+# from the live TxMicSource ring (fed by P1 EP6 + P2 port-1026), not from
+# the dead RadioMicSource path.
+# Cases (2):
+#   radioBranchPullsFromTxMicSource  — push 0.5f via TxMicSource::inbound
+#                                      → router pulls 0.5f back through Radio
+#   radioBranchSilentWhenNoMicJack    — hasMicJack=false collapses Radio→Pc;
+#                                      no TxMicSource data leaks through
+#
+# Plan: 2026-05-05-radio-mic-input-thetis-parity.md Task 11.
+nereus_add_test(tst_composite_tx_mic_router_uses_tx_mic_source)
+target_compile_definitions(tst_composite_tx_mic_router_uses_tx_mic_source PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.1: P1 mic_boost wire-byte snapshot ────────────────────
 # 14 tests pin the mic_boost bit (C2 bit 0 = 0x01) of bank 10 (C0=0x12) in
 # P1RadioConnection::setMicBoost():
