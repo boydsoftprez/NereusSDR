@@ -3267,6 +3267,14 @@ nereus_add_test(tst_phone_cw_applet_dexp_wiring)
 # absent from TxApplet (one-way relocation pin).
 nereus_add_test(tst_tx_applet_vox_relocated)
 
+# -- Issue #175 Task 7: TxApplet HL2 power-slider rescale + dB labels --
+# 7 tests: HL2 RF/Tune slider Max+step rescale (mi0bot
+# console.cs:2098-2108 [v2.10.3.13-beta2]), SKU swap-back to canonical
+# 0..100 step 1, HL2 RF dB label formula (round(drv/6.0)/2)-7.5 at
+# slider=60 and slider=90 (mi0bot console.cs:29245-29274), non-HL2
+# bare-integer label, Thetis-faithful tooltip wording.
+nereus_add_test(tst_tx_applet_hl2_slider)
+
 # -- UI Polish Foundation A1: AppletPanelWidget scrollbar gutter --
 nereus_add_test(tst_applet_panel_gutter)
 
