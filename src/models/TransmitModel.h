@@ -304,9 +304,20 @@ public:
     int tunePowerForBand(Band band) const;
 
     /// Set the tune-power value (watts) for the given band.
-    /// Clamped to [0, 100].  Emits tunePowerByBandChanged when the value
-    /// actually changes.  No-op for out-of-range band values.
+    /// Clamp ceiling polymorphs by SKU: HERMESLITE [0,99], others [0,100].
+    /// Emits tunePowerByBandChanged when the value actually changes.
+    /// No-op for out-of-range band values.
     void setTunePowerForBand(Band band, int watts);
+
+    /// Return the connected radio model (defaults to HPSDRModel::FIRST).
+    /// Used to polymorph SKU-specific behaviour (e.g. tune-power clamp
+    /// ceiling, HL2 sub-step DSP modulation).
+    HPSDRModel hpsdrModel() const noexcept { return m_hpsdrModel; }
+
+    /// Set the connected radio model.  Call before setTunePowerForBand or
+    /// setPowerUsingTargetDbm to engage SKU-specific behaviour.
+    /// No signal needed for Task 6 — wired from RadioModel in Task 10.
+    void setHpsdrModel(HPSDRModel m) noexcept { m_hpsdrModel = m; }
 
     /// Set the per-MAC AppSettings scope.  Must be called before load() / save().
     /// Mirrors the AlexController::setMacAddress() pattern.
@@ -1868,10 +1879,20 @@ private:
     float m_swrProtectFactor{1.0f};
     std::atomic<VaxSlot> m_txOwnerSlot{VaxSlot::MicDirect};  // Atomic for lock-free reads from the audio thread.
 
-    // Per-band tune power storage.
-    // From Thetis console.cs:12094 [v2.10.3.13]: private int[] tunePower_by_band;
+    // Connected radio model.  Defaults to HPSDRModel::FIRST (non-HL2 path).
+    // Injected by RadioModel via setHpsdrModel() on connect (Task 10).
+    // Used to polymorph: tune-power clamp ceiling (#175 Task 6) and
+    // HL2 sub-step DSP modulation (#175 Task 4).
+    HPSDRModel m_hpsdrModel{HPSDRModel::FIRST};
+
+    // Per-band tune power storage.  NereusSDR-original per-band extension:
+    // Thetis console.cs:12094 [v2.10.3.13] declares a flat tunePower_by_band[]
+    // but persists/restores it as a pipe-delimited block (console.cs:3087-3091
+    // save, :4904-4910 restore) — NereusSDR uses scalar per-band AppSettings
+    // keys instead.  Clamp ceiling polymorphs by SKU in setTunePowerForBand
+    // (#175 Task 6); Thetis has no equivalent polymorphic clamp.
     // Initialised to 50W per band in the constructor
-    // (console.cs:1819-1820 [v2.10.3.13]).
+    // (Thetis console.cs:1819-1820 [v2.10.3.13]).
     // HF amateur + GEN/WWV/XVTR only (Band::SwlFirst == 14).  Phase 3L
     // SWL bands inherit ham-band values — no separate per-SWL TX power.
     std::array<int, static_cast<std::size_t>(Band::SwlFirst)> m_tunePowerByBand{};

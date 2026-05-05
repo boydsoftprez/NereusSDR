@@ -555,6 +555,14 @@ nereus_add_test(tst_transmit_model_compute_audio_volume)
 # Source: console.cs:46645-46762 [v2.10.3.13] (SetPowerUsingTargetDBM full).
 nereus_add_test(tst_transmit_model_set_power_using_dbm)
 
+# ── Issue #175 Task 6: TransmitModel polymorphic per-band tune-power clamp ───
+# Verifies setTunePowerForBand clamp ceiling polymorphs by SKU:
+#   HERMESLITE: [0, 99]   (mi0bot Tune slider scale, 33 sub-steps)
+#   others:     [0, 100]  (canonical Thetis 0-100 watts target)
+# Also pins the dB<->int conversion formula round-trip used by Task 9.
+# Source: mi0bot console.cs:47616-47666 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_hl2_persistence)
+
 # ── Phase 4 Agent 4A of #167: RadioModel drive-path topology + K2GX repro ────
 # Wire-byte / IQ-scalar topology (audio.cs:262-271 wire NO SWR / cmaster.cs:
 # 1115-1119 IQ HAS SWR) verification for the drive-slider lambda + TUNE

@@ -474,12 +474,23 @@ int TransmitModel::tunePowerForBand(Band band) const
 
 void TransmitModel::setTunePowerForBand(Band band, int watts)
 {
-    // From Thetis console.cs:12094 [v2.10.3.13]: private int[] tunePower_by_band;
+    // NereusSDR-original: per-band tune-power memory.
+    //
+    // Thetis (both ramdor and mi0bot) stores a single global tune_power; we
+    // extend it to per-band so the operator does not have to readjust on
+    // band change.  Mirrors NereusSDR's existing per-band power_by_band[]
+    // pattern.
+    //
+    // Clamp range polymorphs on the connected radio model (#175 Task 6):
+    //   HERMESLITE: [0, 99]  (mi0bot Tune slider scale, 33 sub-steps;
+    //     mi0bot console.cs:47616-47666 [v2.10.3.13-beta2])
+    //   others:     [0, 100] (canonical Thetis 0-100 watts target)
     const int idx = static_cast<int>(band);
     if (idx < 0 || idx >= kBandCount) {
         return;
     }
-    const int clamped = std::clamp(watts, 0, 100);
+    const int hi = (m_hpsdrModel == HPSDRModel::HERMESLITE) ? 99 : 100;
+    const int clamped = std::clamp(watts, 0, hi);
     if (m_tunePowerByBand[static_cast<std::size_t>(idx)] == clamped) {
         return;
     }
