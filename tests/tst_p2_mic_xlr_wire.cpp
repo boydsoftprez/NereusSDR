@@ -46,17 +46,21 @@ class TestP2MicXlrWire : public QObject {
     Q_OBJECT
 private slots:
 
-    // ── 1. Default state: byte 50 bit 5 is SET (XLR selected by default) ─────
-    // m_micXlr defaults true → wire bit 5 = 1 (XLR jack selected).
-    // No inversion: true → 1 on wire.
-    // MicState::micControl default is 0x24 (bit 2 + bit 5 both set).
-    // Source: deskhpsdr/src/new_protocol.c:1500-1502 [@120188f]
-    void defaultState_byte50Bit5IsSet() {
+    // ── 1. Default state: byte 50 bit 5 is CLEAR (3.5 mm selected by default) ─
+    // m_micXlr defaults false → wire bit 5 = 0 (3.5 mm jack selected).
+    // No inversion: false → 0 on wire.
+    // MicState::micControl default is 0x02 (bit 1 set, all others clear).
+    // Source: setup.designer.cs:8635 [v2.10.3.13+501e3f51] (radSaturn3p5mm.Checked = true)
+    // and the no-guard handler at setup.cs:16450-16454 [v2.10.3.13+501e3f51] that
+    // calls NetworkIO.SetMicXlr(0) during designer init.  See TransmitModel.h
+    // m_micXlr comment for the dual-source analysis.
+    // Wire spec: deskhpsdr/src/new_protocol.c:1500-1502 [@120188f].
+    void defaultState_byte50Bit5IsClear() {
         P2RadioConnection conn;
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // Default m_micXlr=true → wire bit 5 = 1 (XLR selected).
-        QCOMPARE(int(buf[50] & 0x20), 0x20);
+        // Default m_micXlr=false → wire bit 5 = 0 (3.5 mm jack selected).
+        QCOMPARE(int(buf[50] & 0x20), 0);
     }
 
     // ── 2. setMicXlr(true) → byte 50 bit 5 set ───────────────────────────────
@@ -98,22 +102,24 @@ private slots:
 
     // ── 5. Cross-bit guard: setMicXlr(true) does NOT touch bits 0-4 ─────────
     // Bit 5 (0x20) must not collide with G.1-G.5 bits (0x1F).
-    // All five lower bits must remain at their default state.
-    // G.1 (mic_boost=false → 0), G.2 (line_in=false → 0),
-    // G.5 (mic_ptt_disabled=false → bit 2 CLEAR — micControl{0x20} default
-    //   post issue #182), G.3 (tip-ring=true → bit 3 CLEAR),
-    // G.4 (mic_bias=false → bit 4 CLEAR).
+    // Lower-bit expectations track the connection-side defaults baked into
+    // MicState::micControl seed:
+    //   G.1 (mic_boost=true, console.cs:13237 [v2.10.3.13+501e3f51]): bit 1 = 0x02
+    //   G.2 (line_in=false): bit 0 = 0
+    //   G.5 (mic_ptt_disabled=false: console.cs:19757 [v2.10.3.13+501e3f51]): bit 2 = 0
+    //   G.3 (tip-ring=true): bit 3 = 0
+    //   G.4 (mic_bias=false): bit 4 = 0
     // Source: deskhpsdr/src/new_protocol.c:1480-1500 [@120188f]
     void setMicXlrTrue_doesNotTouchBits0to4() {
         P2RadioConnection conn;
         conn.setMicXlr(false);  // clear XLR to isolate lower bits
-        conn.setMicXlr(true);   // set XLR — lower bits must stay unchanged
+        conn.setMicXlr(true);   // set XLR: lower bits must stay unchanged
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x20), 0x20);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        QCOMPARE(int(buf[50] & 0x02), 0x02);  // mic_boost on by default
         QCOMPARE(int(buf[50] & 0x01), 0);
-        // Bit 2 (mic_ptt_disabled, default false → PTT enabled) must be clear.
+        // Bit 2 (mic_ptt_disabled, default false: PTT enabled) must be clear.
         QCOMPARE(int(buf[50] & 0x04), 0);
         QCOMPARE(int(buf[50] & 0x08), 0);
         QCOMPARE(int(buf[50] & 0x10), 0);
@@ -126,19 +132,21 @@ private slots:
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x20), 0);
-        // Bit 2 (mic_ptt_disabled, default false → PTT enabled) must be clear.
+        // Bit 2 (mic_ptt_disabled, default false: PTT enabled) must be clear.
         QCOMPARE(int(buf[50] & 0x04), 0);
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        QCOMPARE(int(buf[50] & 0x02), 0x02);  // mic_boost on by default
         QCOMPARE(int(buf[50] & 0x08), 0);
         QCOMPARE(int(buf[50] & 0x10), 0);
     }
 
     // ── 7. Idempotent: setMicXlr(true) twice → bit stays 1 ──────────────────
+    // Default m_micXlr=false, so the first call switches to true and sets bit 5;
+    // the second call is the idempotent no-op. Either way bit 5 stays 1.
     void idempotency_setMicXlrTrueTwice_bitStays1() {
         P2RadioConnection conn;
-        conn.setMicXlr(true);   // re-set the already-true default
-        conn.setMicXlr(true);   // second call — idempotent guard fires
+        conn.setMicXlr(true);   // default false: this call sets XLR
+        conn.setMicXlr(true);   // second call: idempotent guard fires
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x20), 0x20);

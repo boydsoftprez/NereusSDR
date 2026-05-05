@@ -61,12 +61,17 @@ private slots:
         QVERIFY(t.micBoost());
     }
 
-    void firstRunDefaults_micXlr_true()
+    void firstRunDefaults_micXlr_false()
     {
         TransmitModel t;
         t.loadFromSettings(kMacA);
-        // Default true — console.cs:13249 [v2.10.3.13]
-        QVERIFY(t.micXlr());
+        // Default false: matches Thetis user-visible Saturn 3.5 mm default.
+        // Cite setup.designer.cs:8635 [v2.10.3.13+501e3f51]
+        // (radSaturn3p5mm.Checked = true) plus the no-guard handler at
+        // setup.cs:16450-16454 [v2.10.3.13+501e3f51] that clears the XLR
+        // wire bit during designer init. See TransmitModel.h m_micXlr
+        // comment for the constructor-vs-designer dual-source analysis.
+        QVERIFY(!t.micXlr());
     }
 
     void firstRunDefaults_lineIn_false()

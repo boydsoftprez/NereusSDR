@@ -2282,7 +2282,20 @@ private:
     // naming preserved — see MicMute getter doc-comment above).
     bool   m_micMute        = true;   // console.designer.cs:2029-2030: Checked=true
     bool   m_micBoost       = true;   // console.cs:13237: mic_boost = true
-    bool   m_micXlr         = true;   // console.cs:13249: mic_xlr = true
+    // Default false: matches Thetis user-visible Saturn startup state.
+    // Thetis has a self-contradiction here:
+    //   console.cs:13249 [v2.10.3.13+501e3f51]:  private bool mic_xlr = true;
+    //   setup.designer.cs:8635 [v2.10.3.13+501e3f51]:
+    //     this.radSaturn3p5mm.Checked = true;  // 3.5 mm radio button selected
+    // The radSaturn3p5mm_CheckedChanged handler (setup.cs:16450-16454
+    // [v2.10.3.13+501e3f51]) has no `initializing` guard, so it fires
+    // during designer init and calls NetworkIO.SetMicXlr(0) (XLR wire bit
+    // cleared).  It does not update console.mic_xlr, so Thetis runs with
+    // an inconsistent in-memory state (mic_xlr=true) but a 3.5 mm wire byte.
+    // NereusSDR aligns model + wire + UI to the user-visible Thetis Saturn
+    // default (3.5 mm) by initialising the model bool to false.  Existing
+    // user settings persist via AppSettings; only fresh installs change.
+    bool   m_micXlr         = false;
     bool   m_lineIn         = false;  // console.cs:13213: line_in = false
     double m_lineInBoost    = 0.0;    // console.cs:13225: line_in_boost = 0.0
     bool   m_micTipRing     = true;   // setup.designer.cs:8683: radOrionMicTip.Checked=true

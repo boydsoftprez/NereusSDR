@@ -53,10 +53,15 @@ private slots:
         QCOMPARE(t.micBoost(), true);
     }
 
-    void default_micXlr_isTrue() {
-        // From Thetis console.cs:13249 [v2.10.3.13]: private bool mic_xlr = true;
+    void default_micXlr_isFalse() {
+        // From Thetis user-visible Saturn 3.5 mm default; cite
+        // setup.designer.cs:8635 [v2.10.3.13+501e3f51] (radSaturn3p5mm.Checked = true)
+        // and the no-guard handler at setup.cs:16450-16454 that clears
+        // the XLR wire bit during designer init.  See TransmitModel.h
+        // m_micXlr comment for the constructor vs designer dual-source
+        // explanation.
         TransmitModel t;
-        QCOMPARE(t.micXlr(), true);
+        QCOMPARE(t.micXlr(), false);
     }
 
     void default_lineIn_isFalse() {
@@ -168,11 +173,12 @@ private slots:
     }
 
     void setMicXlr_emitsSignal() {
+        // Default is false (Thetis user-visible Saturn 3.5 mm); flip to true.
         TransmitModel t;
         QSignalSpy spy(&t, &TransmitModel::micXlrChanged);
-        t.setMicXlr(false);
+        t.setMicXlr(true);
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.first().at(0).toBool(), false);
+        QCOMPARE(spy.first().at(0).toBool(), true);
     }
 
     void setLineIn_emitsSignal() {
@@ -261,12 +267,12 @@ private slots:
     }
 
     void idempotent_micXlr_default_noSignal() {
-        // setMicXlr(true) on fresh model (default = true) must NOT emit.
+        // setMicXlr(false) on fresh model (default = false) must NOT emit.
         // Guards that a future refactor cannot silently drop the == check in
         // TransmitModel::setMicXlr without a CI failure.
         TransmitModel t;
         QSignalSpy spy(&t, &TransmitModel::micXlrChanged);
-        t.setMicXlr(true);   // default is true
+        t.setMicXlr(false);   // default is false
         QCOMPARE(spy.count(), 0);
     }
 

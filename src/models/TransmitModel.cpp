@@ -1347,9 +1347,11 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool micBoost = s.value(pfx + QLatin1String("Mic_Input_Boost"),
                                    QStringLiteral("True")).toString() == QLatin1String("True");
     setMicBoost(micBoost);
-    // micXlr: default true (console.cs:13249 [v2.10.3.13])
+    // micXlr: default false (Thetis user-visible Saturn 3.5 mm default;
+    // see TransmitModel.h m_micXlr comment for the dual-source explanation).
+    // Cite: setup.designer.cs:8635 [v2.10.3.13+501e3f51].
     const bool micXlr = s.value(pfx + QLatin1String("Mic_XLR"),
-                                  QStringLiteral("True")).toString() == QLatin1String("True");
+                                  QStringLiteral("False")).toString() == QLatin1String("True");
     setMicXlr(micXlr);
     // lineIn: default false (console.cs:13213 [v2.10.3.13])
     const bool lineIn = s.value(pfx + QLatin1String("Line_Input_On"),

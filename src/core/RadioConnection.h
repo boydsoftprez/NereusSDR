@@ -695,14 +695,22 @@ protected:
     //   but does NOT emit any wire bytes. "Saturn G2 P2-only feature; P1 hardware
     //   has no XLR jack." P1 case-10 and case-11 C&C bytes are UNCHANGED
     //   regardless of m_micXlr value.
-    // Polarity: 1 = XLR selected (no inversion — parameter maps directly to wire bit).
-    // Default true — Saturn G2 ships with XLR-enabled configuration.
-    //   This matches pre-code review §2.7 and TransmitModel::micXlr default in C.2.
+    // Polarity: 1 = XLR selected (no inversion: parameter maps directly to wire bit).
+    // Default false: matches Thetis user-visible Saturn 3.5 mm default. Thetis
+    //   has a self-contradiction here (console.cs:13249 [v2.10.3.13+501e3f51]
+    //   initialises mic_xlr=true; setup.designer.cs:8635 [v2.10.3.13+501e3f51]
+    //   sets radSaturn3p5mm.Checked=true and the no-guard handler at
+    //   setup.cs:16450-16454 [v2.10.3.13+501e3f51] clears the wire bit during
+    //   designer init). NereusSDR aligns model + wire + UI to the user-visible
+    //   3.5 mm default. See TransmitModel.h m_micXlr for the full analysis.
+    // Required because P2 setMicXlr() short-circuits via its idempotent guard
+    //   when the requested value matches m_micXlr; flipping this here keeps
+    //   the prime-on-connect path working.
     // P1: STORAGE-ONLY (no wire emission).
     // P2: emitted to transmit_specific_buffer[50] bit 5 (0x20).
     // From deskhpsdr new_protocol.c:1500-1502 [@120188f]:
     //   if (mic_input_xlr) { transmit_specific_buffer[50] |= 0x20; }
-    bool m_micXlr{true};
+    bool m_micXlr{false};
 };
 
 } // namespace NereusSDR
