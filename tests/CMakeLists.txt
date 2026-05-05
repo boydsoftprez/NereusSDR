@@ -802,6 +802,14 @@ nereus_add_test(tst_transmit_model_ptt_out_delay)
 #         spinbox Min=-96 Max=0 Default=-40).
 nereus_add_test(tst_transmit_model_mic_gain_min)
 
+# ── radio-mic-input Task 9: TransmitModel micGainMaxDb property ──────────────
+# Verifies default (+10 dB), clamp [1,70], setter+signal, and per-MAC
+# persistence under key MicGainMax.
+# Source: setup.cs:9685-9689 [v2.10.3.13+501e3f51] (udMicGainMax handler);
+#         setup.designer.cs:46838-46866 [v2.10.3.13+501e3f51] (udMicGainMax
+#         spinbox Min=1 Max=70 Default=10).
+nereus_add_test(tst_transmit_model_mic_gain_max)
+
 # ── Phase 3M-1c B.2: TransmitModel two-tone test properties (7x) ────────────
 # Verifies defaults, round-trip setters + signals, idempotent guards, and
 # range clamping for: TwoToneFreq1 / TwoToneFreq2 / TwoToneLevel /

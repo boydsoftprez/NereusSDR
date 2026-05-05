@@ -324,6 +324,10 @@ class TransmitModel : public QObject {
     // From Thetis setup.cs:9678-9683 [v2.10.3.13+501e3f51].
     Q_PROPERTY(int micGainMinDb READ micGainMinDb WRITE setMicGainMinDb NOTIFY micGainMinDbChanged)
 
+    // ── radio-mic-input Task 9: Mic-gain slider ceiling ─────────────────
+    // From Thetis setup.cs:9685-9689 [v2.10.3.13+501e3f51].
+    Q_PROPERTY(int micGainMaxDb READ micGainMaxDb WRITE setMicGainMaxDb NOTIFY micGainMaxDbChanged)
+
     // ── PA-calibration safety hotfix (#167 Phase 3A) ──────────────────────
     // Three ATT-on-TX-on-power-change safety properties.  Defaults match
     // Thetis console.cs:29285-29310 [v2.10.3.13].
@@ -903,6 +907,14 @@ public:
     /// Designer range -96..0 dB, default -40 dB (setup.designer.cs:46808-46835
     /// [v2.10.3.13+501e3f51]).
     int micGainMinDb() const noexcept { return m_micGainMinDb; }
+
+    /// Mic-gain slider ceiling, in dB.  Sets the upper bound of the user-facing
+    /// MicGain slider; together with micGainMinDb, defines the slider range.
+    /// Bound in Thetis to udMicGainMax spinbox (setup.cs:9685-9689
+    /// [v2.10.3.13+501e3f51]:  console.MicGainMax = (int)udMicGainMax.Value).
+    /// Designer range 1..70 dB, default +10 dB (setup.designer.cs:46838-46866
+    /// [v2.10.3.13+501e3f51]).
+    int micGainMaxDb() const noexcept { return m_micGainMaxDb; }
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     //
@@ -1918,6 +1930,13 @@ public slots:
     /// Mirrors Thetis setup.cs:9678-9683 [v2.10.3.13+501e3f51].
     void setMicGainMinDb(int dB);
 
+    // ── radio-mic-input Task 9: Mic-gain slider ceiling ─────────────────
+    /// Set the mic-gain slider ceiling in dB.  Clamped to [1,70] per
+    /// setup.designer.cs:46838-46866 [v2.10.3.13+501e3f51] (udMicGainMax
+    /// spinbox Min=1 Max=70).
+    /// Mirrors Thetis setup.cs:9685-9689 [v2.10.3.13+501e3f51].
+    void setMicGainMaxDb(int dB);
+
     // ── line_in_gain + user_dig_out setters (Task 2.4) ──────────────────
     /// Set line-in gain.  Clamped to [0, 31] (5 bits).
     void setLineInGain(int gain);
@@ -2054,6 +2073,9 @@ signals:
 
     // ── radio-mic-input Task 8: micGainMinDb signal ─────────────────────
     void micGainMinDbChanged(int dB);
+
+    // ── radio-mic-input Task 9: micGainMaxDb signal ─────────────────────
+    void micGainMaxDbChanged(int dB);
 
     // ── line_in_gain + user_dig_out signals (Task 2.4) ──────────────────
     void lineInGainChanged(int gain);
@@ -2278,6 +2300,9 @@ private:
 
     // ── radio-mic-input Task 8: Mic-gain slider floor ────────────────────
     int    m_micGainMinDb   = -40;    // setup.designer.cs:46830: udMicGainMin.Value = -40
+
+    // ── radio-mic-input Task 9: Mic-gain slider ceiling ──────────────────
+    int    m_micGainMaxDb   = 10;     // setup.designer.cs:46861: udMicGainMax.Value = 10
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].

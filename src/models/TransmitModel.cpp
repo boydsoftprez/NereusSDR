@@ -589,6 +589,22 @@ void TransmitModel::setMicGainMinDb(int dB)
     emit micGainMinDbChanged(clamped);
 }
 
+// ── radio-mic-input Task 9: Mic-gain slider ceiling ─────────────────────
+void TransmitModel::setMicGainMaxDb(int dB)
+{
+    // Clamp to designer range 1..70 per setup.designer.cs:46838-46866
+    // [v2.10.3.13+501e3f51] (udMicGainMax Min=1 Max=70).
+    const int clamped = std::clamp(dB, 1, 70);
+    if (clamped == m_micGainMaxDb) { return; }  // idempotent guard
+    // Porting from Thetis setup.cs:9685-9689 [v2.10.3.13+501e3f51]:
+    //   console.MicGainMax = (int)udMicGainMax.Value;
+    // The Setup spinbox that drives this property is added in a later task;
+    // model just stores + signals + persists.
+    m_micGainMaxDb = clamped;
+    persistOne(QStringLiteral("MicGainMax"), QString::number(clamped));
+    emit micGainMaxDbChanged(clamped);
+}
+
 // ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
 
 void TransmitModel::setLineInGain(int gain)
@@ -1375,6 +1391,11 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const int micGainMinDb = s.value(pfx + QLatin1String("MicGainMin"),
                                       QStringLiteral("-40")).toInt();
     setMicGainMinDb(micGainMinDb);
+    // micGainMaxDb: default 10 (setup.designer.cs:46861 [v2.10.3.13+501e3f51])
+    // Mic-gain slider ceiling; radio-mic-input Task 9.
+    const int micGainMaxDb = s.value(pfx + QLatin1String("MicGainMax"),
+                                      QStringLiteral("10")).toInt();
+    setMicGainMaxDb(micGainMaxDb);
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
@@ -1780,6 +1801,9 @@ void TransmitModel::persistToSettings(const QString& mac) const
 
     // ── radio-mic-input Task 8: Mic-gain slider floor ────────────────────
     s.setValue(pfx + QLatin1String("MicGainMin"), QString::number(m_micGainMinDb));
+
+    // ── radio-mic-input Task 9: Mic-gain slider ceiling ──────────────────
+    s.setValue(pfx + QLatin1String("MicGainMax"), QString::number(m_micGainMaxDb));
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));
