@@ -3406,6 +3406,26 @@ target_compile_definitions(tst_p1_mic_bias_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_line_in_boost_wire)
 target_compile_definitions(tst_p1_line_in_boost_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── radio-mic-input parity Task 3: P2 setLineInBoost(double) wire-byte ───────
+# 7 tests pin the dB-to-5-bit-index translation in
+# RadioConnection::setLineInBoost(double dB) and the resulting CmdTx byte 51
+# low-5-bit field on P2.  P2 stores the index directly in m_mic.lineInGain
+# and emits it at byte 51 unmodified (no formula — see P2RadioConnection.cpp:1960).
+# Boundary cases verbatim from the Thetis 32-entry MakeLineInList table
+# (-34.5..+12.0 dB in 1.5 dB steps):
+#   1.  Default state: byte 51 low 5 bits = 0 (default m_mic.lineInGain = 0).
+#   2.  setLineInBoost(-34.5) -> index 0 (table low end).
+#   3.  setLineInBoost(-50.0) -> clamps to index 0 (below range).
+#   4.  setLineInBoost(0.0)   -> index 23 (mid point: -34.5 + 23*1.5 = 0).
+#   5.  setLineInBoost(+12.0) -> index 31 (table high end).
+#   6.  setLineInBoost(+20.0) -> clamps to index 31 (above range).
+#   7.  Byte 50 (mic control) unaffected by the line-in-boost path —
+#       cross-byte guard.
+# Source: Thetis Console/console.cs:40827-40859 [v2.10.3.13+501e3f51] (table)
+#         deskhpsdr/src/new_protocol.c:1502 [@120188f] (byte 51 wire field).
+nereus_add_test(tst_p2_line_in_boost_wire)
+target_compile_definitions(tst_p2_line_in_boost_wire PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.4: P2 mic_bias wire-byte snapshot ─────────────────────
 # 10 tests pin the mic_bias_enabled bit (CmdTx byte 50 bit 4 = 0x10)
 # in P2RadioConnection::setMicBias().
