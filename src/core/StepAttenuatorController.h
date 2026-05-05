@@ -481,6 +481,14 @@ private:
     // result is identical: "the spinbox jumped to 31 during TX".
     int m_savedRxAttDbForTx{0};
 
+    // Stash-valid flag for m_savedRxAttDbForTx (#175 PR #194 review fix,
+    // 2026-05-04).  Only true between an RX→TX transition that actually
+    // populated the stash (m_attOnTxEnabled path on a non-HPSDR board) and
+    // the matching TX→RX restore.  Codex review found that without this
+    // gate, the TX→RX restore ran unconditionally and clobbered the user's
+    // RX att value with the default-zero stash whenever ATT-on-TX was OFF.
+    bool m_savedRxAttDbValid{false};
+
     // Internal tick timer.
     QTimer m_tickTimer;
 

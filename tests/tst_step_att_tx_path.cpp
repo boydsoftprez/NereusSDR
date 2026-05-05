@@ -635,6 +635,72 @@ private slots:
         QCOMPARE(spy.count(), 0);
         QCOMPARE(ctrl.attenuatorDb(), 8);
     }
+
+    // ── Issue #175 PR #194 review fix (2026-05-04): ATT-on-TX OFF preserves RX
+    // Codex review on PR #194 found that with m_attOnTxEnabled=false the
+    // RX→TX branch early-returns after pushing TX ATT=0 without populating
+    // m_savedRxAttDbForTx.  The TX→RX restore then ran unconditionally and
+    // clobbered the user's RX att with the default-zero stash.  Fix: gate
+    // restore on m_savedRxAttDbValid.  This test exercises the failing
+    // scenario: S-ATT=15, ATT-on-TX OFF, MOX cycle, RX att must still be 15.
+    void attOnTxOff_unkey_preservesUserAtt()
+    {
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setIsHpsdrBoard(false);            // non-HPSDR (HL2 / standard)
+        ctrl.setAttOnTxEnabled(false);          // ATT-on-TX OFF
+        ctrl.setBand(Band::Band20m);
+
+        // Set user RX att to 15.
+        ctrl.setAttenuation(15, /*rx=*/0);
+        QCOMPARE(ctrl.attenuatorDb(), 15);
+
+        QSignalSpy spy(&ctrl, &StepAttenuatorController::attenuationChanged);
+        spy.clear();   // discard the setAttenuation emission
+
+        // MOX cycle with no connection (graceful no-op on the wire side).
+        ctrl.onMoxHardwareFlipped(true);
+        ctrl.onMoxHardwareFlipped(false);
+
+        // Crucial: RX att must still be 15 — not clamped to 0 from the
+        // never-populated stash.  No spurious attenuationChanged emissions
+        // either, since the gate suppresses the restore entirely.
+        QCOMPARE(ctrl.attenuatorDb(), 15);
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Issue #175 PR #194 review fix companion: confirm the restore IS still
+    // happening on the ATT-on-TX-ENABLED path (regression check that the
+    // gate didn't accidentally suppress the populated-stash case).  This
+    // duplicates a slice of onMoxHardwareFlipped_emitsAttChanged_forceCwOrPsOff
+    // but isolates the "stash-was-set, restore must fire" path.
+    void attOnTxOn_unkey_restoresStashedRxAtt()
+    {
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setIsHpsdrBoard(false);
+        ctrl.setAttOnTxEnabled(true);            // ATT-on-TX ON
+        ctrl.setForceAttWhenPsOff(true);
+        ctrl.setPsActive(false);                 // → force-31 path armed
+        ctrl.setCurrentDspMode(DSPMode::USB);
+        ctrl.setBand(Band::Band20m);
+        ctrl.setAttenuation(22, /*rx=*/0);       // user's RX-time setting
+
+        QSignalSpy spy(&ctrl, &StepAttenuatorController::attenuationChanged);
+        spy.clear();
+
+        // RX→TX: stash populated, m_attDb jumps to 31.
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.attenuatorDb(), 31);
+        QCOMPARE(spy.count(), 1);
+        spy.clear();
+
+        // TX→RX: gate fires, m_attDb restored to 22.
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.attenuatorDb(), 22);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.takeFirst().at(0).toInt(), 22);
+    }
 };
 
 QTEST_MAIN(TestStepAttTxPath)

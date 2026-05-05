@@ -503,7 +503,14 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // user's RX-time setting and must survive the TX window untouched
             // (a band change during MOX would otherwise corrupt the stored
             // RX value).  Use the dedicated m_savedRxAttDbForTx stash.
+            //
+            // m_savedRxAttDbValid (#175 PR #194 review fix) gates the
+            // matching TX→RX restore so it only runs when this branch
+            // actually populated the stash.  Without the flag, the restore
+            // ran unconditionally and clobbered the user's RX att value
+            // with the default-zero stash whenever ATT-on-TX was OFF.
             m_savedRxAttDbForTx = m_attDb;
+            m_savedRxAttDbValid = true;
             if (m_attDb != txAtt) {
                 m_attDb = txAtt;
                 emit attenuationChanged(txAtt);
@@ -556,13 +563,22 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // Then re-sync m_bandState entry in case the band-state RX att
             // diverged during MOX (defensive — should not happen in 3M-1
             // single-RX scope, but cheap to verify).
-            if (m_attDb != m_savedRxAttDbForTx) {
-                m_attDb = m_savedRxAttDbForTx;
-                emit attenuationChanged(m_attDb);
-            }
-            auto it = m_bandState.find(static_cast<int>(m_currentBand));
-            if (it != m_bandState.end() && it->second.attDb != m_attDb) {
-                setAttenuation(it->second.attDb, 0);
+            //
+            // #175 PR #194 review fix (2026-05-04): gate on
+            // m_savedRxAttDbValid so the restore only runs when the matching
+            // RX→TX branch actually populated the stash.  Without this
+            // gate, MOX cycles with ATT-on-TX OFF clobbered the user's RX
+            // att with the default-zero (or stale) stash value.
+            if (m_savedRxAttDbValid) {
+                if (m_attDb != m_savedRxAttDbForTx) {
+                    m_attDb = m_savedRxAttDbForTx;
+                    emit attenuationChanged(m_attDb);
+                }
+                auto it = m_bandState.find(static_cast<int>(m_currentBand));
+                if (it != m_bandState.end() && it->second.attDb != m_attDb) {
+                    setAttenuation(it->second.attDb, 0);
+                }
+                m_savedRxAttDbValid = false;
             }
         }
     }
