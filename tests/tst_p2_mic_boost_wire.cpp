@@ -39,16 +39,18 @@ class TestP2MicBoostWire : public QObject {
     Q_OBJECT
 private slots:
 
-    // ── 1. Default state: byte 50 bit 1 is clear ─────────────────────────
-    // A freshly constructed P2RadioConnection has m_micBoost = false, so
-    // CmdTx byte 50 bit 1 must be 0.
-    // Source: deskhpsdr/src/new_protocol.c:1480 [@120188f]
-    //   transmit_specific_buffer[50] = 0;  // cleared before setting bits
-    void defaultState_byte50Bit1IsClear() {
+    // ── 1. Default state: byte 50 bit 1 is set ───────────────────────────
+    // A freshly constructed P2RadioConnection has m_micBoost = true (Thetis
+    // parity), so CmdTx byte 50 bit 1 must be 0x02.
+    // Source: Thetis console.cs:13237 [v2.10.3.13+501e3f51]
+    //   private bool mic_boost = true;
+    // Wire encoding: deskhpsdr/src/new_protocol.c:1484-1486 [@120188f]
+    //   if (mic_boost) { transmit_specific_buffer[50] |= 0x02; }
+    void defaultState_byte50Bit1IsSet() {
         P2RadioConnection conn;
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
     // ── 2. setMicBoost(true) → byte 50 bit 1 set ─────────────────────────

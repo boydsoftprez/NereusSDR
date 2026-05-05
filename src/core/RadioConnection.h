@@ -622,10 +622,15 @@ protected:
     bool m_trxRelay{false};
 
     // Shared state for setMicBoost (3M-1b G.1).
+    // Default true: matches Thetis console.cs:13237 [v2.10.3.13+501e3f51]
+    //   private bool mic_boost = true;
+    // TransmitModel::m_micBoost is already true; bringing the connection
+    // field in line eliminates a one-frame race between fresh connect
+    // and the first prime-on-connect push from RadioModel.
     // P1: emitted to case 10 (C0=0x12) C2 bit 0 (0x01).
     // P2: emitted to transmit_specific_buffer[50] bit 1 (0x02).
-    // From Thetis networkproto1.c:581 [v2.10.3.13]; deskhpsdr new_protocol.c:1484-1486 [@120188f].
-    bool m_micBoost{false};
+    // From Thetis networkproto1.c:581 [v2.10.3.13+501e3f51]; deskhpsdr new_protocol.c:1484-1486 [@120188f].
+    bool m_micBoost{true};
 
     // Shared state for setLineIn (3M-1b G.2).
     // P1: emitted to case 10 (C0=0x12) C2 bit 1 (0x02).

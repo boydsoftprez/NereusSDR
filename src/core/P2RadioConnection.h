@@ -578,7 +578,14 @@ private:
     //   Bit 4: Mic Bias (0=disabled, 1=enabled)
     //   Bit 5: Balanced Input (0=disabled, 1=enabled, Saturn only)
     //
-    // Initial value 0x20: reflects one default-set bit:
+    // Initial value 0x22: reflects two default-set bits:
+    //   bit 1 (0x02) SET = mic_boost ON by default (matches m_micBoost=true
+    //     default in RadioConnection.h — Thetis console.cs:13237 [v2.10.3.13+501e3f51]:
+    //       private bool mic_boost = true;
+    //     Required because P2 setMicBoost() short-circuits via the idempotent
+    //     guard when the requested value matches m_micBoost; without seeding
+    //     bit 1 here, a default-true state would never reach byte 50 on the wire.
+    //     deskhpsdr src/new_protocol.c:1484-1486 [@120188f]: mic_boost → set bit.
     //   bit 2 (0x04) CLEAR = PTT enabled at firmware (matches m_micPTTDisabled=false
     //     default in RadioConnection.h — direct polarity: false = 0 on wire).
     //     From Thetis console.cs:19757 [v2.10.3.13+501e3f51]:
@@ -594,7 +601,7 @@ private:
     // / Saturn family board because no model→connection wiring ever cleared it.
     // Default now matches Thetis mic_ptt_disabled=false out of the box.
     struct MicState {
-        unsigned char micControl{0x20};  // PTT enabled (bit 2 clear) + XLR selected (bit 5)
+        unsigned char micControl{0x22};  // mic_boost (bit 1) + PTT enabled (bit 2 clear) + XLR (bit 5)
         int lineInGain{0};
     };
     MicState m_mic;
