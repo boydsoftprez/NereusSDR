@@ -88,6 +88,19 @@
 //                 dropped (5 disabled-stub controls with no Thetis
 //                 upstream).  Live TX-profile editor lives at Setup →
 //                 Audio → TX Profile.
+//   2026-05-04 — Issue #175 PR #194 review fix: udTXTunePower spinbox
+//                 wired bidirectionally to TransmitModel::tunePower /
+//                 setTunePower with SKU-aware unit conversion
+//                 (tunePowerDisplayFromStored / tunePowerStoredFromDisplay).
+//                 Codex review found the spinbox had bounds + enabled-state
+//                 wiring but no model read/write, so edits were ignored
+//                 and "Use Fixed Drive" left the actual tune-power value at
+//                 default.  Conversion formulae from mi0bot setup.cs:
+//                 5305-5311 (stored→display) + 9395-9398 (display→stored)
+//                 [v2.10.3.13-beta2] HERMESLITE branch; non-HL2 SKUs use
+//                 identity (display == stored, watts).  applyHpsdrModel()
+//                 now also re-renders the cached value in the new SKU's
+//                 display units on RadioModel::currentRadioChanged.
 //   2026-05-04 — Issue #175 Wave 1 (cont): PowerPage source-first
 //                 strip-out — dropped dead "SWR Protection" slider stub,
 //                 per-band Tune Power 14-spinbox grid + helpers, Reset
@@ -168,6 +181,8 @@
 #include <QButtonGroup>
 #include <QAbstractButton>
 #include <QSignalBlocker>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -395,6 +410,39 @@ void PowerPage::buildTuneGroup()
     // buildUI() overwrites this once the model knows its hardware.
     applyHpsdrModel(HPSDRModel::FIRST);
 
+    // Issue #175 PR #194 review fix — bidirectional binding to
+    // TransmitModel::tunePower.  Codex review found the spinbox was
+    // constructed with bounds + enabled-state but no read/write to the
+    // model: edits did nothing and "Use Fixed Drive" left the actual
+    // tune-power value at default.
+    //
+    // SKU-aware unit conversion via tunePowerDisplayFromStored /
+    // tunePowerStoredFromDisplay (mi0bot setup.cs:5305-5311 + 9395-9398
+    // [v2.10.3.13-beta2]).  Forward and reverse paths are blocked through
+    // QSignalBlocker on the reverse path to prevent feedback loops.
+    if (model()) {
+        TransmitModel& tx = model()->transmitModel();
+
+        // Initial value from model (non-blocking — no slot connected yet).
+        m_fixedTunePwrSpin->setValue(tunePowerDisplayFromStored(tx.tunePower()));
+
+        // Spinbox → model.
+        connect(m_fixedTunePwrSpin,
+                qOverload<double>(&QDoubleSpinBox::valueChanged),
+                this, [this](double display) {
+            if (!model()) { return; }
+            model()->transmitModel().setTunePower(
+                tunePowerStoredFromDisplay(display));
+        });
+
+        // Model → spinbox (reverse, e.g. settings load or another editor).
+        connect(&tx, &TransmitModel::tunePowerChanged, m_fixedTunePwrSpin,
+                [this](int stored) {
+            QSignalBlocker b(m_fixedTunePwrSpin);
+            m_fixedTunePwrSpin->setValue(tunePowerDisplayFromStored(stored));
+        });
+    }
+
     // ── Wire model ↔ radios ────────────────────────────────────────────────
     if (model()) {
         TransmitModel& tx = model()->transmitModel();
@@ -477,6 +525,10 @@ void PowerPage::onTuneDriveSourceChanged(DrivePowerSource src)
 // Issue #175 Task 8 — per-SKU bounds on the Fixed-mode spinbox.
 // From mi0bot-Thetis setup.cs:20328-20331 [v2.10.3.13-beta2] HERMESLITE
 // branch; ANAN/Saturn/Orion paths keep the canonical 0..100 W range.
+//
+// Issue #175 PR #194 review fix: also refresh the displayed value via the
+// SKU-aware conversion so a runtime SKU swap (RadioModel::currentRadioChanged)
+// re-renders the cached TransmitModel::tunePower() in the new units.
 void PowerPage::applyHpsdrModel(HPSDRModel m)
 {
     // Fixed-mode spinbox (Task 8).
@@ -486,7 +538,50 @@ void PowerPage::applyHpsdrModel(HPSDRModel m)
         m_fixedTunePwrSpin->setSingleStep(static_cast<double>(fixedTuneSpinboxStepFor(m)));
         m_fixedTunePwrSpin->setDecimals(fixedTuneSpinboxDecimalsFor(m));
         m_fixedTunePwrSpin->setSuffix(QString::fromLatin1(fixedTuneSpinboxSuffixFor(m)));
+
+        // Re-render the stored tunePower() in the new SKU's display units.
+        // Use the model's hpsdrModel() rather than the parameter `m` so the
+        // conversion matches the live SKU (caller invariant: applyHpsdrModel
+        // is called after RadioModel::currentRadioChanged commits the
+        // hardware profile).  Block to suppress the forward connect.
+        if (model()) {
+            QSignalBlocker b(m_fixedTunePwrSpin);
+            m_fixedTunePwrSpin->setValue(
+                tunePowerDisplayFromStored(model()->transmitModel().tunePower()));
+        }
     }
+}
+
+// Issue #175 PR #194 review fix — SKU-aware unit conversion for the
+// Fixed-mode tune-power spinbox.  See declarations in TransmitSetupPages.h
+// for the formulae.  Conversions read TransmitModel::hpsdrModel() so they
+// always match the live SKU and stay correct across runtime swaps.
+double PowerPage::tunePowerDisplayFromStored(int stored)
+{
+    if (model() &&
+        model()->transmitModel().hpsdrModel() == HPSDRModel::HERMESLITE) {
+        // mi0bot setup.cs:5307 [v2.10.3.13-beta2]:
+        //   udTXTunePower.Value = (decimal)(value/3 - 33)/2;
+        return (static_cast<double>(stored) / 3.0 - 33.0) / 2.0;
+    }
+    return static_cast<double>(stored);
+}
+
+int PowerPage::tunePowerStoredFromDisplay(double display)
+{
+    if (model() &&
+        model()->transmitModel().hpsdrModel() == HPSDRModel::HERMESLITE) {
+        // mi0bot setup.cs:9397 [v2.10.3.13-beta2]:
+        //   console.TunePower = (int) ((33 + (udTXTunePower.Value * 2)) * 3);
+        // The int cast in C# is truncation-toward-zero; std::lround better
+        // matches the user-visible "0.5 dB step → 3 sub-step increment"
+        // expectation (avoids accumulating floor() truncation drift).  For
+        // exact half-step inputs both behave identically; for non-step
+        // inputs (e.g. mid-cell scroll) round() picks the nearest legal
+        // sub-step instead of always biasing low.
+        return static_cast<int>(std::lround((33.0 + display * 2.0) * 3.0));
+    }
+    return static_cast<int>(std::lround(display));
 }
 
 // ---------------------------------------------------------------------------

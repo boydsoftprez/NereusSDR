@@ -118,6 +118,20 @@ private:
     // spinbox so it tracks the active drive source.
     void onTuneDriveSourceChanged(DrivePowerSource src);
 
+    // Issue #175 PR #194 review fix — SKU-aware unit conversion for the
+    // udTXTunePower Fixed-mode spinbox.  Storage is the int slider scale
+    // (TransmitModel::tunePower(): 0..100 watts on non-HL2, 0..99 mi0bot
+    // sub-step units on HL2).  Display unit polymorphs by SKU:
+    //   - non-HL2: identity (display == stored, watts)
+    //   - HL2:     dB attenuation, formulae from mi0bot setup.cs:5305-5311
+    //              and 9395-9398 [v2.10.3.13-beta2]:
+    //                stored→display: (stored / 3.0 - 33.0) / 2.0
+    //                display→stored: (int)((33.0 + display * 2.0) * 3.0)
+    // Both helpers consult the live TransmitModel::hpsdrModel() so the same
+    // displayed-value cell maps correctly when the connected SKU changes.
+    double tunePowerDisplayFromStored(int stored);
+    int    tunePowerStoredFromDisplay(double display);
+
     // Section: Power (H.4 — wired)
     QSlider*   m_maxPowerSlider{nullptr};        // 0–100 W — wired to TransmitModel::setPower
 

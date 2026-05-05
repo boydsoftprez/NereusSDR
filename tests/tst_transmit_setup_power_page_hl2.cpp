@@ -42,6 +42,13 @@ private slots:
     void tuneGroup_fixedSpinbox_anan100();
     void tuneGroup_radioToggle_persists();
     void tuneGroup_fixedSpinbox_disabledWhenNotFixed();
+
+    // Issue #175 PR #194 review fix: bidirectional binding between
+    // udTXTunePower and TransmitModel::tunePower with SKU-aware unit
+    // conversion (mi0bot setup.cs:5305-5311 / 9395-9398 [v2.10.3.13-beta2]).
+    void fixedTunePowerSpinbox_initFromModel_anan100();
+    void fixedTunePowerSpinbox_writesToModel_anan100();
+    void fixedTunePowerSpinbox_dBRoundTrip_hl2();
 };
 
 void TestTransmitSetupPowerPageHl2::initTestCase()
@@ -127,6 +134,71 @@ void TestTransmitSetupPowerPageHl2::tuneGroup_fixedSpinbox_disabledWhenNotFixed(
     auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
     QVERIFY(sb != nullptr);
     QVERIFY(!sb->isEnabled());
+}
+
+// Issue #175 PR #194 review fix — initial spinbox value reflects the
+// model's tunePower() at construction time on a non-HL2 SKU (identity
+// conversion: display == stored, watts).
+void TestTransmitSetupPowerPageHl2::fixedTunePowerSpinbox_initFromModel_anan100()
+{
+    NereusSDR::RadioModel rm;
+    rm.transmitModel().setHpsdrModel(HPSDRModel::ANAN100);
+    rm.transmitModel().setTunePower(42);
+
+    NereusSDR::PowerPage page(&rm);
+    page.applyHpsdrModel(HPSDRModel::ANAN100);
+
+    auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
+    QVERIFY(sb != nullptr);
+    QCOMPARE(sb->value(), 42.0);
+}
+
+// Issue #175 PR #194 review fix — user edits to the spinbox propagate to
+// TransmitModel::setTunePower on a non-HL2 SKU (identity conversion).
+void TestTransmitSetupPowerPageHl2::fixedTunePowerSpinbox_writesToModel_anan100()
+{
+    NereusSDR::RadioModel rm;
+    rm.transmitModel().setHpsdrModel(HPSDRModel::ANAN100);
+
+    NereusSDR::PowerPage page(&rm);
+    page.applyHpsdrModel(HPSDRModel::ANAN100);
+
+    auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
+    QVERIFY(sb != nullptr);
+
+    sb->setValue(73.0);
+    QCOMPARE(rm.transmitModel().tunePower(), 73);
+}
+
+// Issue #175 PR #194 review fix — HL2 dB ↔ slider sub-step round-trip
+// through both directions of the binding.  Verifies the mi0bot conversion
+// formulae land bit-for-bit (mi0bot setup.cs:5307 + 9397 [v2.10.3.13-beta2]).
+void TestTransmitSetupPowerPageHl2::fixedTunePowerSpinbox_dBRoundTrip_hl2()
+{
+    NereusSDR::RadioModel rm;
+    rm.transmitModel().setHpsdrModel(HPSDRModel::HERMESLITE);
+
+    NereusSDR::PowerPage page(&rm);
+    page.applyHpsdrModel(HPSDRModel::HERMESLITE);
+
+    auto* sb = page.findChild<QDoubleSpinBox*>(QStringLiteral("udTXTunePower"));
+    QVERIFY(sb != nullptr);
+
+    // Forward: user types -7.5 dB → stored = round((33 + (-7.5*2)) * 3)
+    //   = round((33 - 15) * 3) = round(54) = 54.
+    sb->setValue(-7.5);
+    QCOMPARE(rm.transmitModel().tunePower(), 54);
+
+    // Reverse: stored 99 → display = (99/3 - 33)/2 = (33 - 33)/2 = 0.0 dB
+    // (the 0 dB ceiling of mi0bot's HL2 dB scale, mi0bot setup.cs:1089
+    // [v2.10.3.13-beta2]).
+    rm.transmitModel().setTunePower(99);
+    QCOMPARE(sb->value(), 0.0);
+
+    // Reverse: stored 0 → display = (0/3 - 33)/2 = -16.5 dB (the -16.5 dB
+    // floor of mi0bot's HL2 dB scale).
+    rm.transmitModel().setTunePower(0);
+    QCOMPARE(sb->value(), -16.5);
 }
 
 QTEST_MAIN(TestTransmitSetupPowerPageHl2)
