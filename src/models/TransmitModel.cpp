@@ -735,6 +735,18 @@ void TransmitModel::setTunePower(int watts)
     emit tunePowerChanged(clamped);
 }
 
+void TransmitModel::setTxPostGenToneMag(double mag)
+{
+    // From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2]:
+    //   SetTXAPostGenToneMag(0, postGenToneMag);
+    // HL2 sub-step DSP audio-gain modulation.  Range 0.4..0.9999 on HL2
+    // sub-step path; 1.0 = no modulation (default, non-HL2 path).
+    // dedupe; matches NereusSDR setter convention
+    if (m_txPostGenToneMag == mag) { return; }
+    m_txPostGenToneMag = mag;
+    emit txPostGenToneMagChanged(mag);
+}
+
 void TransmitModel::setStepAttenuatorController(StepAttenuatorController* ctrl)
 {
     // Non-owning pointer.  RadioModel injects the controller on connect;

@@ -487,6 +487,17 @@ public:
     int  tunePower() const noexcept { return m_tunePower; }
     void setTunePower(int watts);
 
+    // ── HL2 sub-step DSP audio-gain modulation (#175 Task 3) ─────────────────
+    //
+    // From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2]:
+    //   SetTXAPostGenToneMag(0, postGenToneMag);
+    // HL2 sub-step DSP audio-gain modulation parameter. Set by
+    // setPowerUsingTargetDbm in HL2 tune-slider mode. Propagates to
+    // WDSP via TxChannel::setPostGenToneMag (Task 10). Range 0.4..0.9999 on
+    // HL2 sub-step path; 1.0 means "no modulation" (default, used on non-HL2).
+    double txPostGenToneMag() const noexcept { return m_txPostGenToneMag; }
+    void   setTxPostGenToneMag(double mag);
+
     /// Inject the StepAttenuatorController for the ATT-on-TX safety gate.
     /// nullptr -> gate becomes no-op (used in tests + before RadioModel
     /// wires up).  Caller retains ownership; TransmitModel does not
@@ -1739,6 +1750,10 @@ signals:
     /// Emitted when tunePower() (fixed) changes.  Mirrors Thetis
     /// tune_power setter at console.cs:17229-17242 [v2.10.3.13].
     void tunePowerChanged(int watts);
+    /// Emitted when txPostGenToneMag() changes.  From mi0bot-Thetis
+    /// console.cs:47666 [v2.10.3.13-beta2].  Wired to
+    /// TxChannel::setPostGenToneMag in Task 10.
+    void txPostGenToneMagChanged(double mag);
     /// Emitted by setPowerUsingTargetDbm when bSetPower=true.
     /// Caller (RadioModel drive-slider lambda + TUNE handler) pumps:
     ///   wire_byte = clamp(int(volume * 1.02 * 255), 0, 255) -> setTxDrive
@@ -1880,6 +1895,12 @@ private:
     // [v2.10.3.13]).  Default 10 W (NereusSDR-original safer; Thetis
     // Designer ships 0).
     int  m_tunePower{10};
+    // HL2 sub-step DSP audio-gain modulation parameter (#175 Task 3).
+    // From mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
+    // Default 1.0 = no modulation (non-HL2 path).  HL2 path writes
+    // 0.4..0.9999 per mi0bot formula.  Wired to TxChannel::setPostGenToneMag
+    // in Task 10.
+    double m_txPostGenToneMag{1.0};
     // StepAttenuatorController for ATT-on-TX safety gate (#167 Phase 3C).
     // Non-owning pointer; nullptr until RadioModel injects via
     // setStepAttenuatorController(); when nullptr the gate becomes a no-op.

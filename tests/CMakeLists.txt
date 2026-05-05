@@ -3326,3 +3326,10 @@ nereus_add_test(tst_hpsdr_model_pa_constants)
 # DSP audio-gain modulation.
 # Source: mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
 nereus_add_test(tst_tx_channel_post_gen_tone_mag)
+
+# ── Issue #175 Task 3: TransmitModel::txPostGenToneMag property + signal ──────
+# 4 tests: default value (1.0 non-HL2 sentinel), round-trip setter+getter,
+# signal emission, and dedupe-on-equal guard (NereusSDR setter convention).
+# Wired to TxChannel::setPostGenToneMag in Task 10.
+# Source: mi0bot-Thetis console.cs:47666 [v2.10.3.13-beta2].
+nereus_add_test(tst_transmit_model_tx_post_gen_tone_mag)
