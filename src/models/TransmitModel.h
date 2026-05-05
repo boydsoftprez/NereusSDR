@@ -312,6 +312,10 @@ class TransmitModel : public QObject {
     // From Thetis console.cs:19750-19755 [v2.10.3.13+501e3f51].
     Q_PROPERTY(bool disablePTT READ disablePTT WRITE setDisablePTT NOTIFY disablePTTChanged)
 
+    // ── radio-mic-input Task 6: All-mode mic PTT ────────────────────────
+    // From Thetis console.cs:12022 [v2.10.3.13+501e3f51].
+    Q_PROPERTY(bool allModeMicPTT READ allModeMicPTT WRITE setAllModeMicPTT NOTIFY allModeMicPTTChanged)
+
     // ── PA-calibration safety hotfix (#167 Phase 3A) ──────────────────────
     // Three ATT-on-TX-on-power-change safety properties.  Defaults match
     // Thetis console.cs:29285-29310 [v2.10.3.13].
@@ -866,6 +870,13 @@ public:
     /// Bound to chkGeneralDisablePTT in setup.cs:6535-6539 [v2.10.3.13+501e3f51].
     /// Default FALSE: PTT polling enabled by default.
     bool disablePTT() const noexcept { return m_disablePTT; }
+
+    /// All-mode mic PTT.  TRUE = mic PTT input triggers MOX in any mode
+    /// (incl. CW / digital); FALSE = mic PTT only valid in voice modes.
+    /// From Thetis console.cs:12022 [v2.10.3.13+501e3f51]:
+    ///   private bool _all_mode_mic_ptt = false;
+    /// Default FALSE: mic PTT restricted to voice modes (Thetis-faithful).
+    bool allModeMicPTT() const noexcept { return m_allModeMicPTT; }
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     //
@@ -1862,6 +1873,11 @@ public slots:
     /// Mirrors Thetis console.cs:19750-19755 [v2.10.3.13+501e3f51].
     void setDisablePTT(bool on);
 
+    // ── radio-mic-input Task 6: All-mode mic PTT ────────────────────────
+    /// Set the all-mode mic-PTT flag.
+    /// Mirrors Thetis console.cs:12022 [v2.10.3.13+501e3f51].
+    void setAllModeMicPTT(bool on);
+
     // ── line_in_gain + user_dig_out setters (Task 2.4) ──────────────────
     /// Set line-in gain.  Clamped to [0, 31] (5 bits).
     void setLineInGain(int gain);
@@ -1989,6 +2005,9 @@ signals:
 
     // ── radio-mic-input Task 5: disablePTT signal ───────────────────────
     void disablePTTChanged(bool on);
+
+    // ── radio-mic-input Task 6: allModeMicPTT signal ────────────────────
+    void allModeMicPTTChanged(bool on);
 
     // ── line_in_gain + user_dig_out signals (Task 2.4) ──────────────────
     void lineInGainChanged(int gain);
@@ -2204,6 +2223,9 @@ private:
 
     // ── radio-mic-input Task 5: Global PTT-loop disable ──────────────────
     bool   m_disablePTT     = false;  // console.cs:19750: _disable_ptt = false
+
+    // ── radio-mic-input Task 6: All-mode mic PTT ─────────────────────────
+    bool   m_allModeMicPTT  = false;  // console.cs:12022: _all_mode_mic_ptt = false
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     // Source: Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13].

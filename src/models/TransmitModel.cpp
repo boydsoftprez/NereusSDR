@@ -542,6 +542,21 @@ void TransmitModel::setDisablePTT(bool on)
     emit disablePTTChanged(on);
 }
 
+// ── radio-mic-input Task 6: All-mode mic PTT ────────────────────────────
+void TransmitModel::setAllModeMicPTT(bool on)
+{
+    if (on == m_allModeMicPTT) { return; }  // idempotent guard
+    // Porting from Thetis console.cs:12022 [v2.10.3.13+501e3f51]:
+    //   private bool _all_mode_mic_ptt = false;
+    //   public bool AllModeMicPTT { get => _all_mode_mic_ptt; set => ... }
+    // The MoxController gate that consumes this property is added in a later
+    // task; model just stores + signals + persists.
+    m_allModeMicPTT = on;
+    persistOne(QStringLiteral("All_Mode_Mic_PTT"),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit allModeMicPTTChanged(on);
+}
+
 // ── line_in_gain + user_dig_out setters (Task 2.4 of P1 full-parity epic) ─
 
 void TransmitModel::setLineInGain(int gain)
@@ -1313,6 +1328,11 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool disablePTT = s.value(pfx + QLatin1String("Disable_PTT"),
                                      QStringLiteral("False")).toString() == QLatin1String("True");
     setDisablePTT(disablePTT);
+    // allModeMicPTT: default false (console.cs:12022 [v2.10.3.13+501e3f51])
+    // All-mode mic-PTT; radio-mic-input Task 6.
+    const bool allModeMicPTT = s.value(pfx + QLatin1String("All_Mode_Mic_PTT"),
+                                        QStringLiteral("False")).toString() == QLatin1String("True");
+    setAllModeMicPTT(allModeMicPTT);
 
     // ── line_in_gain + user_dig_out (Task 2.4 of P1 full-parity epic) ────
     // Defaults from Thetis ChannelMaster/networkproto1.c:600-601 [v2.10.3.13]:
@@ -1708,6 +1728,10 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── radio-mic-input Task 5: Global PTT-loop disable ──────────────────
     s.setValue(pfx + QLatin1String("Disable_PTT"),
                m_disablePTT ? QStringLiteral("True") : QStringLiteral("False"));
+
+    // ── radio-mic-input Task 6: All-mode mic PTT ─────────────────────────
+    s.setValue(pfx + QLatin1String("All_Mode_Mic_PTT"),
+               m_allModeMicPTT ? QStringLiteral("True") : QStringLiteral("False"));
 
     // ── line_in_gain + user_dig_out (Task 2.4) ───────────────────────────
     s.setValue(pfx + QLatin1String("LineInGain"),         QString::number(m_lineInGain));

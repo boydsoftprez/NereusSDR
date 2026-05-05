@@ -780,6 +780,12 @@ nereus_add_test(tst_transmit_model_line_in_gain_user_dig_out)
 #         setup.cs:6535-6539 [v2.10.3.13+501e3f51] (chkGeneralDisablePTT handler).
 nereus_add_test(tst_transmit_model_disable_ptt)
 
+# ── radio-mic-input Task 6: TransmitModel allModeMicPTT property ─────────────
+# Verifies default (false), setter+signal, idempotent guard, and per-MAC
+# persistence under key All_Mode_Mic_PTT.
+# Source: console.cs:12022 [v2.10.3.13+501e3f51] (_all_mode_mic_ptt = false).
+nereus_add_test(tst_transmit_model_all_mode_mic_ptt)
+
 # ── Phase 3M-1c B.2: TransmitModel two-tone test properties (7x) ────────────
 # Verifies defaults, round-trip setters + signals, idempotent guards, and
 # range clamping for: TwoToneFreq1 / TwoToneFreq2 / TwoToneLevel /
