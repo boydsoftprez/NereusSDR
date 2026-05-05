@@ -208,8 +208,10 @@ void StepAttenuatorController::setBand(Band band)
 void StepAttenuatorController::setAttenuation(int dB, int rx)
 {
     // Clamp to the active board's signed range.  HL2 advertises
-    // [m_minAttDb=-28, m_maxAttDb=+32] (mi0bot setup.cs:1087-1088
-    // [v2.10.3.13-beta2]); legacy ANAN/Hermes boards keep m_minAttDb=0
+    // [m_minAttDb=-28, m_maxAttDb=+31] (issue #175 follow-up — capped at
+    // +31 per maintainer approval; mi0bot's +32 widening at
+    // console.cs:11043 [v2.10.3.13-beta2] is an off-by-one upstream bug).
+    // Legacy ANAN/Hermes boards keep m_minAttDb=0
     // so behaviour is unchanged for them.  Without honouring m_minAttDb
     // here, any negative HL2 value selected in the RX UI gets snapped
     // back to 0 before reaching P1RadioConnection — Codex P1 in PR #157.

@@ -4,7 +4,7 @@
 //   * StepAttenuatorController defaults to 0..31; setMin/Max round-trip works.
 //   * setAttenuation respects an active negative minimum (no clamp-to-zero).
 //   * RxApplet::setBoardCapabilities(HL2 caps) re-ranges m_stepAttSpin to the
-//     signed -28..+32 range advertised in BoardCapabilities (mirrors mi0bot
+//     signed -28..+31 range advertised in BoardCapabilities (mirrors mi0bot
 //     setup.cs:16085-16086 [v2.10.3.13-beta2]).
 //
 // hermes-filter-debug 2026-05-01 — JJ Boyd (KG4VCF), AI-assisted.
@@ -51,9 +51,9 @@ private slots:
     {
         StepAttenuatorController c;
         c.setMinAttenuation(-28);
-        c.setMaxAttenuation(32);
+        c.setMaxAttenuation(31);
         QCOMPARE(c.minAttenuation(), -28);
-        QCOMPARE(c.maxAttenuation(), 32);
+        QCOMPARE(c.maxAttenuation(), 31);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ private slots:
     {
         StepAttenuatorController c;
         c.setMinAttenuation(-28);
-        c.setMaxAttenuation(32);
+        c.setMaxAttenuation(31);
 
         c.setAttenuation(-10);
         QCOMPARE(c.attenuatorDb(), -10);
@@ -80,7 +80,7 @@ private slots:
 
         // Above ceiling — clamp to ceiling.
         c.setAttenuation(99);
-        QCOMPARE(c.attenuatorDb(), 32);
+        QCOMPARE(c.attenuatorDb(), 31);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ private slots:
         applet.setBoardCapabilities(hl2);
 
         QCOMPARE(stepAttSpin->minimum(), -28);
-        QCOMPARE(stepAttSpin->maximum(), 32);
+        QCOMPARE(stepAttSpin->maximum(), 31);
     }
 };
 

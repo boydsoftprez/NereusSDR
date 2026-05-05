@@ -83,10 +83,13 @@ private slots:
     }
 
     // Bank 11 C4 — RX path range. HL2 user-facing slider is signed
-    // −28..+32 dB (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]
-    // udHermesStepAttenuatorData.{Maximum=32, Minimum=-28}). Inputs outside
-    // that range clamp to the corner; the (31 - userDb) inversion folds the
-    // clamped value into the 6-bit wire field.
+    // −28..+31 dB (issue #175 follow-up — capped at +31 per maintainer
+    // approval; mi0bot widens to +32 at console.cs:11043 [v2.10.3.13-beta2]
+    // but that is an off-by-one upstream bug since wire encoding
+    // `31 - userDb` produces wire = -1 at userDb=32 which 6-bit-masks to
+    // the LNA-gain wraparound region).  Inputs outside the range clamp
+    // to the corner; the (31 - userDb) inversion folds the clamped value
+    // into the 6-bit wire field.
     void bank11_rx_att_signed_range_corners() {
         P1CodecHl2 codec;
 
@@ -109,14 +112,14 @@ private slots:
             QCOMPARE(int(out[4]), 0x5F);
         }
 
-        // Positive corner: userDb=+32 → wire = (31-32) & 0x3F | 0x40
-        //                = -1 & 0x3F | 0x40 = 0x3F | 0x40 = 0x7F.
+        // Positive corner: userDb=+31 → wire = (31-31) & 0x3F | 0x40
+        //                = 0 | 0x40 = 0x40 (max chip ATT).
         {
             CodecContext ctx;
-            ctx.rxStepAttn[0] = 32;
+            ctx.rxStepAttn[0] = 31;
             quint8 out[5] = {};
             codec.composeCcForBank(11, ctx, out);
-            QCOMPARE(int(out[4]), 0x7F);
+            QCOMPARE(int(out[4]), 0x40);
         }
 
         // Out-of-range low: userDb=-100 → clamped to -28 → wire 0x7B.
@@ -128,13 +131,13 @@ private slots:
             QCOMPARE(int(out[4]), 0x7B);
         }
 
-        // Out-of-range high: userDb=+100 → clamped to +32 → wire 0x7F.
+        // Out-of-range high: userDb=+100 → clamped to +31 → wire 0x40.
         {
             CodecContext ctx;
             ctx.rxStepAttn[0] = 100;
             quint8 out[5] = {};
             codec.composeCcForBank(11, ctx, out);
-            QCOMPARE(int(out[4]), 0x7F);
+            QCOMPARE(int(out[4]), 0x40);
         }
     }
 

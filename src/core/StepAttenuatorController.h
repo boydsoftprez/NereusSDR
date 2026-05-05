@@ -192,8 +192,11 @@ public:
 
     // Attenuator value bounds (hardware limits).
     //   Most boards: 0..31 dB unsigned.
-    //   HL2 (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]): −28..+32 dB
-    //     signed; wire byte derives via `wire = 31 - userDb` in P1CodecHl2.
+    //   HL2: −28..+31 dB signed (#175 follow-up — mi0bot widens upper to
+    //     +32 at console.cs:11043 [v2.10.3.13-beta2] but that is an
+    //     off-by-one bug; chip-correct cap is +31 per InitConsole at
+    //     console.cs:2111).  Wire byte derives via `wire = 31 - userDb`
+    //     in P1CodecHl2.
     int maxAttenuation() const { return m_maxAttDb; }
     void setMaxAttenuation(int dB);
     int minAttenuation() const { return m_minAttDb; }

@@ -1224,7 +1224,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     // hermes-filter-debug Bug 1: push the connected board's attenuator range
     // into StepAttenuatorController so consumers (RxApplet S-ATT spinbox,
     // GeneralOptionsPage spinboxes) read board-correct min/max.  Default
-    // controller bounds are 0..31; HL2 needs the signed -28..+32 range
+    // controller bounds are 0..31; HL2 needs the signed -28..+31 range
     // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).  Without this sync,
     // the spinbox UI clamps any negative dB the user types back to 0 even
     // though BoardCapabilities advertises the wider range.

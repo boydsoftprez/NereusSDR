@@ -635,7 +635,7 @@ void RxApplet::buildUi()
 
         // Page 1: Step att spinbox (S-ATT mode — step att enabled)
         // Phase 3P-A Task 15: initialize range from BoardCapabilities so HL2
-        // (signed −28..+32 per mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2])
+        // (signed −28..+31 per mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2])
         // is correct at widget creation, not only after connect.
         // From Thetis setup.cs:15765 [v2.10.3.13].
         {
@@ -1196,7 +1196,7 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     // connectSlice() only fires when the slice happens to be re-set after
     // the radio is up.  This hook is the canonical board-driven path: it
     // runs on every currentRadioChanged emission (MainWindow.cpp:1400-1403)
-    // so HL2's signed -28..+32 range (mi0bot setup.cs:16085-16086
+    // so HL2's signed -28..+31 range (mi0bot setup.cs:16085-16086
     // [v2.10.3.13-beta2]) takes effect as soon as caps are known.
     if (m_stepAttSpin && caps.attenuator.present) {
         m_stepAttSpin->setRange(caps.attenuator.minDb, caps.attenuator.maxDb);

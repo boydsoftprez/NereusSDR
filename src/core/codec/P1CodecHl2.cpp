@@ -281,9 +281,9 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
                 //   user 15 dB → wire = (31 - 15) & 0x3F | 0x40 = 0x50
                 //   user 31 dB → wire = (31 - 31) & 0x3F | 0x40 = 0x40 (max ATT)
                 //
-                // Signed user-facing range -28..+32 dB applies on TX as well
+                // Signed user-facing range -28..+31 dB applies on TX as well
                 // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).
-                const int txUserDb = qBound(-28, static_cast<int>(ctx.txStepAttn[0]), 32);
+                const int txUserDb = qBound(-28, static_cast<int>(ctx.txStepAttn[0]), 31);
                 out[4] = quint8(((31 - txUserDb) & 0b00111111) | 0b01000000);  // Larger range for the HL2 attenuator
             } else {
                 // HL2 RX path: same (31 - userDb) inversion as TX. mi0bot applies
@@ -296,9 +296,9 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
                 // From mi0bot-Thetis console.cs:11075, 11251, 19380 [@c26a8a4]
                 // MI0BOT: Greater range for HL2
                 //
-                // Signed user-facing range −28..+32 dB applies on RX as well
+                // Signed user-facing range −28..+31 dB applies on RX as well
                 // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).
-                const int rxUserDb = qBound(-28, static_cast<int>(ctx.rxStepAttn[0]), 32);
+                const int rxUserDb = qBound(-28, static_cast<int>(ctx.rxStepAttn[0]), 31);
                 out[4] = quint8(((31 - rxUserDb) & 0b00111111) | 0b01000000);  // Larger range for the HL2 attenuator
             }
             return;

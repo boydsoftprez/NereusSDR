@@ -569,10 +569,16 @@ const BoardCapabilities kOrionMKII = {
 // Source: network.h:454 (HermesLite=6), IoBoardHl2.cs, clsHardwareSpecific.cs:94-99
 // ADC: SetRxADC(1) — single ADC. Protocol 1.
 // HL2 supports 384k (Setup.cs:850-853 "The HL supports 384K", include_extra_p1_rate=true)
-// Attenuator: HL2 uses LNA range -28..+32 (60 dB span), step 1
+// Attenuator: HL2 uses LNA range -28..+31 (59 dB span), step 1
 //   (Setup.cs:1084-1088 PerformDelayedInitialisation, :16085-16086 udHermesStepAttenuatorData)
-//   Stored as minDb=0, maxDb=60 to represent the total span; the sign-aware
-//   range [-28..+32] is handled at UI layer (not in capabilities struct).
+//   NOTE: mi0bot widens the upper bound to +32 at runtime (console.cs:11043
+//   [v2.10.3.13-beta2] RadioModelChanged HL2 branch) but that is an
+//   off-by-one upstream bug — wire encoding `31 - userDb` (console.cs:11075)
+//   produces wire = -1 at userDb=32 which 6-bit-masks to 0x3F, the same
+//   wire value the chip would interpret as max-LNA-gain wraparound, NOT
+//   "32 dB attenuation".  mi0bot's own InitConsole at console.cs:2111
+//   sets Max=31 (chip-correct).  NereusSDR caps at +31 per maintainer
+//   approval (issue #175 follow-up bench finding).
 // No Alex filters or OC outputs on HL2.
 // hasBandwidthMonitor: HL2 has bandwidth_monitor via IoBoardHl2
 //   (ChannelMaster/bandwidth_monitor.h + IoBoardHl2.cs)
@@ -596,12 +602,18 @@ const BoardCapabilities kHermesLite = {
     .maxReceivers     = 4,
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
-    // HL2: signed user-facing range −28..+32 dB (mi0bot setup.cs:16085-16086
-    // [v2.10.3.13-beta2] udHermesStepAttenuatorData.{Maximum=32, Minimum=-28}).
+    // HL2: signed user-facing range −28..+31 dB.  mi0bot widens to +32 at
+    // console.cs:11043 [v2.10.3.13-beta2] (RadioModelChanged HL2 branch) but
+    // that is an off-by-one upstream bug: wire encoding `31 - userDb`
+    // (console.cs:11075) produces wire = -1 at userDb=32 which 6-bit-masks
+    // to 0x3F, indistinguishable from the LNA-gain wraparound region.
+    // mi0bot's own InitConsole at console.cs:2111 sets Max=31 (chip-correct).
+    // NereusSDR honors the chip-correct cap per maintainer approval
+    // (issue #175 follow-up bench finding).
     // Wire conversion `wire = 31 - userDb` lives in P1CodecHl2.cpp; mask=0x3F,
     // enableBit=0x40 (6-bit field per mi0bot WriteMainLoop_HL2 [@c26a8a4]);
     // MOX branches ATT.
-    .attenuator       = {-28, 32, 1, true, 0x3F, 0x40, true},
+    .attenuator       = {-28, 31, 1, true, 0x3F, 0x40, true},
     .preamp           = {false, false},
     .ocOutputCount    = 0,
     .hasAlexFilters   = false,
@@ -647,9 +659,10 @@ const BoardCapabilities kHermesLiteRxOnly = {
     .maxReceivers     = 4,
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
-    // HL2 RX-only inherits the standard HL2 signed −28..+32 dB ATT range
-    // (mi0bot setup.cs:16085-16086 [v2.10.3.13-beta2]).
-    .attenuator       = {-28, 32, 1, true, 0x3F, 0x40, true},
+    // HL2 RX-only inherits the standard HL2 signed −28..+31 dB ATT range.
+    // See kHermesLite for the maintainer-approved deviation from mi0bot's
+    // off-by-one upstream bug at console.cs:11043 (issue #175 follow-up).
+    .attenuator       = {-28, 31, 1, true, 0x3F, 0x40, true},
     .preamp           = {false, false},
     .ocOutputCount    = 0,
     .hasAlexFilters   = false,
