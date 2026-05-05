@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-05-04 — Issue #175 Wave 1: dropped misplaced AM TX / Carrier
+//                 Level stub from AmSamSetupPage (control belongs at
+//                 Thetis grpTXAM on tpTransmit, not the DSP/AM tab).
 // =================================================================
 
 //=================================================================
@@ -1748,22 +1751,21 @@ bool CwSetupPage::sidetoneRowVisibleForTest() const
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // From Thetis setup.cs — tabDSP / tabPageAMSAM controls:
-//   tbAMTXCarrierLevel, comboSAMFadeLevel, comboSAMDSBMode,
+//   comboSAMFadeLevel, comboSAMDSBMode,
 //   tbAMSquelchThreshold, udAMSquelchMaxTail
+//
+// Issue #175 Wave 1 follow-up — the disabled "AM TX / Carrier Level"
+// stub that previously lived here was a misplaced surface.  The control
+// belongs at Thetis grpTXAM on tpTransmit (mi0bot setup.designer.cs:
+// 47710-47711 [v2.10.3.13-beta2]), not on the DSP/AM tab.  NOTE: the
+// Thetis DSP/AM tab DOES host a different TX-side group, grpAMTX (Tx
+// USB/LSB/DSB sideband select radios), at mi0bot setup.designer.cs:
+// 40200, 40326-40336 [v2.10.3.13-beta2].  NereusSDR is missing this
+// group entirely; tracked as a separate follow-up issue, not this PR.
 //
 AmSamSetupPage::AmSamSetupPage(RadioModel* model, QWidget* parent)
     : SetupPage("AM/SAM", model, parent)
 {
-    // ── AM TX ─────────────────────────────────────────────────────────────────
-    QGroupBox* amGrp = addSection("AM TX");
-    QVBoxLayout* amLay = qobject_cast<QVBoxLayout*>(amGrp->layout());
-
-    auto* carrierLevel = new QSlider(Qt::Horizontal);
-    carrierLevel->setRange(0, 100);
-    addLabeledSlider(amLay, "Carrier Level", carrierLevel);
-
-    disableGroup(amGrp);
-
     // ── SAM ───────────────────────────────────────────────────────────────────
     QGroupBox* samGrp = addSection("SAM");
     QVBoxLayout* samLay = qobject_cast<QVBoxLayout*>(samGrp->layout());
