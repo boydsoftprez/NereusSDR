@@ -5,6 +5,12 @@
 // Ported from Thetis source:
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
 //
+// Ported from mi0bot-Thetis source:
+//   Project Files/Source/Console/console.cs:47660-47673, 47666, 47775-47778
+//     (HL2 setPowerUsingTargetDbm tune-slider sub-step DSP modulation;
+//      setTxPostGenToneMag property/signal; computeAudioVolume HL2 branch)
+//   original licence from mi0bot-Thetis source is included below
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-04-26 — tunePowerByBand[14] + per-MAC persistence (G.3, Phase 3M-1a)
@@ -52,6 +58,61 @@
 //                 (B.3, Phase 3M-1c).  J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
 // =================================================================
+
+// --- From console.cs (Thetis v2.10.3.13) ---
+
+//=================================================================
+// console.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+// Credit is given to Sizenko Alexander of Style-7 (http://www.styleseven.com/) for the Digital-7 font.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to:
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Modifications to support the Behringer Midi controllers
+// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines.
+// Modifications for using the new database import function.  W2PA, 29 May 2017
+// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019
+// Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
+
+// --- From mi0bot-Thetis console.cs [v2.10.3.13-beta2] ---
 
 //=================================================================
 // console.cs
@@ -144,6 +205,23 @@
 //                 txMode branches and both drive-source enums; ATT-on-TX
 //                 safety gate firing via injected StepAttenuatorController.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-04 — Issue #175: HL2 TX mi0bot parity port.  Added
+//                 setTxPostGenToneMag property + signal; HL2 sub-step
+//                 DSP modulation in setPowerUsingTargetDbm tune-slider
+//                 path; HL2 audio-volume formula in computeAudioVolume.
+//                 Cites mi0bot-Thetis console.cs:47660-47673 +
+//                 47775-47778 [v2.10.3.13-beta2].  J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-05-04 — Issue #175 review fix: setTunePower (Fixed-mode global)
+//                 ceiling polymorphs on the connected SKU to match
+//                 setTunePowerForBand (line 475).  load() per-band clamp
+//                 also polymorphs.  Closes a code-review gap where a
+//                 Fixed-mode value of 100 stored on a non-HL2 radio
+//                 would survive HL2 reconnect.  Multi-source NereusSDR
+//                 block above + appended mi0bot console.cs verbatim
+//                 header below complete the GPL attribution.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "TransmitModel.h"
@@ -764,7 +842,15 @@ void TransmitModel::setTunePower(int watts)
     // Port of Thetis tune_power setter at console.cs:17229-17242
     // [v2.10.3.13].  Range clamped to [0, 100] (matches Thetis Designer
     // FixedTunePower spinbox bounds).
-    const int clamped = std::clamp(watts, 0, 100);
+    //
+    // Issue #175 review fix: ceiling polymorphs on the connected radio
+    // model to match setTunePowerForBand (line 475) and spec §6.  HL2
+    // mi0bot Tune scale is 0..99 (33 sub-steps; mi0bot
+    // console.cs:47616-47666 [v2.10.3.13-beta2]).  Without this gate, a
+    // user who stored a Fixed-mode value of 100 on a non-HL2 radio,
+    // then connects HL2, would bypass the spec [0, 99] HL2 ceiling.
+    const int hi = (m_hpsdrModel == HPSDRModel::HERMESLITE) ? 99 : 100;
+    const int clamped = std::clamp(watts, 0, hi);
     if (m_tunePower == clamped) { return; }  // idempotent guard
     m_tunePower = clamped;
     persistOne(QStringLiteral("FixedTunePower"), QString::number(clamped));
@@ -1059,10 +1145,20 @@ void TransmitModel::load()
     auto& s = AppSettings::instance();
     const QString prefix =
         QStringLiteral("hardware/%1/tunePowerByBand/").arg(m_mac);
+    // Issue #175 review fix: ceiling polymorphs on the connected radio
+    // model to match setTunePowerForBand (line 475) and spec §6.  HL2
+    // mi0bot Tune scale is 0..99 (33 sub-steps; mi0bot
+    // console.cs:47616-47666 [v2.10.3.13-beta2]).  Without this gate, a
+    // user who stored 100 on a non-HL2 radio, then connects HL2, would
+    // load 100 into the array instead of being clamped to 99.  Requires
+    // setHpsdrModel() to have been called before load() — the connect
+    // sequence in RadioModel::connectToRadio sets m_hpsdrModel via
+    // setHpsdrModel(m_hardwareProfile.model) before invoking load().
+    const int hi = (m_hpsdrModel == HPSDRModel::HERMESLITE) ? 99 : 100;
     for (int i = 0; i < kBandCount; ++i) {
         const QString key = prefix + QString::number(i);
         const int v = s.value(key, QStringLiteral("50")).toInt();
-        m_tunePowerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, 100);
+        m_tunePowerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, hi);
     }
 }
 

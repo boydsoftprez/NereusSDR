@@ -72,6 +72,25 @@ private slots:
         const double dB_54 = (54.0/3.0 - 33.0) / 2.0;
         QVERIFY(qFuzzyCompare(dB_54, -7.5));
     }
+
+    void hl2_setTunePower_global_clamps_to_99() {
+        // Issue #175 review fix: setTunePower (Fixed-mode global) must
+        // polymorph the same way as setTunePowerForBand.  Without the
+        // fix, the global Fixed value would be allowed to reach 100 on
+        // an HL2, violating spec §6 [0, 99] HL2 ceiling.
+        NereusSDR::TransmitModel m;
+        m.setHpsdrModel(HPSDRModel::HERMESLITE);
+        m.setTunePower(150);
+        QCOMPARE(m.tunePower(), 99);
+    }
+
+    void nonHl2_setTunePower_global_clamps_to_100() {
+        // Mirror test for non-HL2: ceiling stays at 100.
+        NereusSDR::TransmitModel m;
+        m.setHpsdrModel(HPSDRModel::ANAN100);
+        m.setTunePower(150);
+        QCOMPARE(m.tunePower(), 100);
+    }
 };
 
 QTEST_MAIN(TestTransmitModelHl2Persistence)

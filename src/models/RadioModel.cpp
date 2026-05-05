@@ -1325,6 +1325,15 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
         // Load per-MAC per-band tune power (50W default per band on first init).
         // Phase 3M-1a G.3. Source: Thetis console.cs:1819-1820 / :4904-4910 [v2.10.3.13].
+        //
+        // Issue #175 review fix: push the connected hardware model into
+        // TransmitModel BEFORE load() so the polymorphic [0, 99] HL2
+        // clamp inside TransmitModel::load() (mi0bot
+        // console.cs:47616-47666 [v2.10.3.13-beta2]) sees the correct
+        // SKU.  Idempotent: the second push at line ~4420 in the
+        // Connected state-transition handler is a no-op when the model
+        // is unchanged.
+        m_transmitModel.setHpsdrModel(m_hardwareProfile.model);
         m_transmitModel.setMacAddress(info.macAddress);
         m_transmitModel.load();
 
