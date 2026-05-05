@@ -523,6 +523,7 @@ RadioModel::RadioModel(QObject* parent)
     connect(&m_alexController, &AlexController::xvtrActiveChanged,
             this, [reapply](bool) { reapply(); });
 
+
     // Connection starts null — created by connectToRadio() via factory.
     //
     // Phase 3G-9b: the smooth-defaults profile is reachable only via the

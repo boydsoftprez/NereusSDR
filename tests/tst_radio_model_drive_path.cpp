@@ -20,8 +20,8 @@
 //   §1 K2GX regression: ANAN-8000DLE 80m TUN slider=50 -> wire byte ~= 49
 //      (vs. pre-hotfix 127).  Hand-computed expectation pinned in test.
 //   §2 Drive-slider lambda: ANAN-8000DLE 80m slider=100 -> wire byte ~= 68.
-//   §3 HL2 sentinel preserves linear behaviour (gbb >= 99.5 short-circuit).
-//   §4 HL2 6m uses dBm math (gbb=38.8 entry, hits the rail).
+//   §3 HL2 HF band uses mi0bot audioVolume formula (gbb=100, audio_volume~0.533).
+//   §4 HL2 6m uses mi0bot audioVolume formula (gbb=38.8, below rail ~107).
 //   §5 SWR foldback applies to IQ ONLY, not wire byte.
 //   §6 TUNE engagement triggers full math chain.
 //   §7 No PaProfileManager / no active profile -> graceful no-op.
@@ -250,13 +250,18 @@ private slots:
                             .arg(wireByte)));
     }
 
-    // ── §3 HL2 sentinel preserves linear behaviour ───────────────────────────
-    // HL2 80m PA gain row contains 100.0 sentinel (mi0bot:484 "100 is no
-    // output power").  computeAudioVolume short-circuits on gbb >= 99.5
-    // and returns clamp(slider/100, 0, 1) linear fallback.
-    //   audio_volume = 50/100 = 0.5
-    //   wire = int(0.5 * 1.02 * 255) = int(130.05) = 130
-    void hl2_sentinel_preservesLinearBehaviour()
+    // ── §3 HL2 HF band uses mi0bot audio-volume formula ─────────────────────
+    // Task 5 of #175 ported mi0bot's HL2 formula BEFORE the gbb >= 99.5
+    // sentinel, so HL2 HF bands now use:
+    //   audio_volume = clamp((sliderWatts * gbb/100) / 93.75, 0, 1)
+    // From mi0bot-Thetis console.cs:47775-47778 [v2.10.3.13-beta2].
+    //
+    // HL2 80m gbb = 100.0f (sentinel value from the mi0bot gain table, but
+    // mi0bot's own formula consumes it directly rather than short-circuiting).
+    //
+    //   audio_volume = (50 * 100.0/100.0) / 93.75 = 50.0 / 93.75 = 0.5333
+    //   wire = int(0.5333 * 1.02 * 255) = int(138.82) = 138
+    void hl2_hf_uses_mi0bot_audioVolume()
     {
         RadioModel model;
         MockConnection* conn = nullptr;
@@ -277,21 +282,29 @@ private slots:
         QVERIFY(!conn->txDriveLog.isEmpty());
         const int wireByte = conn->txDriveLog.last();
 
-        // Linear fallback: 50/100 = 0.5 -> wire = int(0.5 * 1.02 * 255) = 130
-        QVERIFY2(wireByte >= 129 && wireByte <= 131,
-                 qPrintable(QStringLiteral("HL2 sentinel-band wire byte %1 "
-                            "not at linear-fallback ~130 (50%% slider)")
+        // mi0bot formula: (50 * 100.0/100.0) / 93.75 = 0.5333
+        // wire = int(0.5333 * 1.02 * 255) = 138  (±1 for IEEE 754 rounding)
+        // From mi0bot-Thetis console.cs:47775-47778 [v2.10.3.13-beta2].
+        QVERIFY2(wireByte >= 137 && wireByte <= 139,
+                 qPrintable(QStringLiteral("HL2 HF-band wire byte %1 "
+                            "not at mi0bot-formula ~138 (50W, gbb=100)")
                             .arg(wireByte)));
     }
 
-    // ── §4 HL2 6m uses dBm math (gbb=38.8 row entry) ─────────────────────────
-    // HL2 6m PA gain = 38.8 dB (real entry, NOT sentinel).
-    //   target_dbm = 10*log10(100000) - 38.8 = 50 - 38.8 = 11.2
-    //   volts = sqrt(10^1.12 * 0.05) = sqrt(0.6592) = 0.8119
-    //   volume = min(0.8119/0.8, 1.0) = min(1.015, 1.0) = 1.0
-    //   wire = clamp(int(1.0 * 1.02 * 255), 0, 255) = clamp(260, 0, 255) = 255
-    // HL2 6m hits the rail at 100W slider per Phase 3B's audit.
-    void hl2_6m_usesDbmMath_hitsRail()
+    // ── §4 HL2 6m uses mi0bot audio-volume formula (below rail) ─────────────
+    // Task 5 of #175 ported mi0bot's HL2 formula BEFORE the gbb >= 99.5
+    // sentinel.  HL2 6m gbb = 38.8f (real entry, not sentinel), and with
+    // mi0bot's formula the 6m band no longer rails at 100W — it produces a
+    // well-below-1.0 audio_volume:
+    //
+    //   audio_volume = clamp((sliderWatts * gbb/100) / 93.75, 0, 1)
+    //                = (100 * 38.8/100) / 93.75 = 38.8 / 93.75 = 0.4139
+    //   wire = int(0.4139 * 1.02 * 255) = int(107.58) = 107
+    //
+    // From mi0bot-Thetis console.cs:47775-47778 [v2.10.3.13-beta2].
+    // The old dBm/target_volts path (which would have railed at 255) is no
+    // longer reached for HL2 — mi0bot's branch intercepts first.
+    void hl2_6m_uses_mi0bot_audioVolume_belowRail()
     {
         RadioModel model;
         MockConnection* conn = nullptr;
@@ -316,8 +329,14 @@ private slots:
         QVERIFY(!conn->txDriveLog.isEmpty());
         const int wireByte = conn->txDriveLog.last();
 
-        // 6m at 100W on HL2 hits the rail (audio_volume clamped to 1.0).
-        QCOMPARE(wireByte, 255);
+        // mi0bot formula: (100 * 38.8/100) / 93.75 = 0.4139
+        // wire = int(0.4139 * 1.02 * 255) = 107  (±1 for IEEE 754 rounding)
+        // From mi0bot-Thetis console.cs:47775-47778 [v2.10.3.13-beta2].
+        QVERIFY2(wireByte >= 106 && wireByte <= 108,
+                 qPrintable(QStringLiteral("HL2 6m wire byte %1 outside "
+                            "expected mi0bot-formula range [106..108] "
+                            "(100W, gbb=38.8, audio_volume~0.414)")
+                            .arg(wireByte)));
     }
 
     // ── §5 SWR foldback applies to IQ ONLY, not wire byte ────────────────────

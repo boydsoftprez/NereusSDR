@@ -274,6 +274,13 @@ void RxApplet::buildUi()
         connect(m_rxAntBtn, &QPushButton::clicked, this, [this] {
             // B3: AntennaPopupBuilder — capability-gated popup (Phase 3P-I-a T22).
             QMenu menu(this);
+            // Dark popup palette — without this, Ubuntu's default theme renders
+            // items as dark-on-dark (only visible on hover). Issue #98.
+            menu.setStyleSheet(QStringLiteral(
+                "QMenu { background: #1a2a3a; color: #e0e8f0;"
+                "        border: 1px solid #304050; }"
+                "QMenu::item { padding: 4px 20px; }"
+                "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
             const QString cur = m_slice ? m_slice->rxAntenna() : QString{};
             if (m_popupCaps && m_popupSku) {
                 AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
@@ -334,6 +341,12 @@ void RxApplet::buildUi()
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
             // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
             QMenu menu(this);
+            // Dark popup palette — see RX button above. Issue #98.
+            menu.setStyleSheet(QStringLiteral(
+                "QMenu { background: #1a2a3a; color: #e0e8f0;"
+                "        border: 1px solid #304050; }"
+                "QMenu::item { padding: 4px 20px; }"
+                "QMenu::item:selected { background: #2a5a8a; color: #ffffff; }"));
             const QString cur = m_slice ? m_slice->txAntenna() : QString{};
             if (m_popupCaps && m_popupSku) {
                 AntennaPopupBuilder::populate(&menu, *m_popupCaps, *m_popupSku,
