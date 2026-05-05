@@ -335,6 +335,12 @@ signals:
     // Emitted when step-att-enabled changes (ATT ↔ S-ATT mode switch).
     void stepAttEnabledChanged(bool enabled);
 
+    // Emitted when the user toggles "Auto Attenuate RX1 Enable" in
+    // Setup → General → Options.  RxApplet listens here to flip the
+    // S-ATT label to A-ATT on HL2 boards (mi0bot console.cs:21342-21365
+    // [v2.10.3.13-beta2] AutoAttRX1 property: lblPreamp.Text = "A-ATT").
+    void autoAttEnabledChanged(bool enabled);
+
     // Emitted when ADC-linked state changes (both RX share same ADC).
     void adcLinkedChanged(bool linked);
 

@@ -212,6 +212,11 @@ int main(int argc, char* argv[])
     NereusSDR::AppSettings::migrateLegacyN2adrFilter(
         NereusSDR::AppSettings::instance());
 
+    // Issue #174: drop the orphan "hardware/oc/n2adrFilter" key written by
+    // the now-removed OcOutputsHfTab checkbox.  Idempotent.
+    NereusSDR::AppSettings::removeOrphanOcN2adrFilter(
+        NereusSDR::AppSettings::instance());
+
     // Restore logging category toggles from settings
     NereusSDR::LogManager::instance().loadSettings();
 

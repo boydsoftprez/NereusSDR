@@ -810,6 +810,22 @@ target_compile_definitions(tst_audio_engine_reset_audio_settings PRIVATE NEREUS_
 nereus_add_test(tst_rxapplet_adc_ovl)
 target_compile_definitions(tst_rxapplet_adc_ovl PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Issue #174: HL2 A-ATT label flip on auto-att toggle ─────────────────────
+# Strict mi0bot port from console.cs:21342-21365 [v2.10.3.13-beta2] AutoAttRX1
+# property — on Hermes Lite 2, lblPreamp.Text flips S-ATT ↔ A-ATT when
+# auto-attenuate is toggled.  Other boards keep "S-ATT" (ramdor/Thetis
+# baseline).  Also covers the new autoAttEnabledChanged signal contract.
+nereus_add_test(tst_rxapplet_a_att_label)
+target_compile_definitions(tst_rxapplet_a_att_label PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Issue #174: OcOutputsHfTab N2ADR dead-checkbox tombstone ────────────────
+# The "N2ADR Filter (HERCULES)" checkbox wrote to a global key with no
+# consumer — removed in the same PR.  This tombstone test verifies the
+# orphan-key cleanup helper works and that constructing the tab does not
+# (re-)write the dead key.  If either fails, the dead checkbox is back.
+nereus_add_test(tst_oc_outputs_hf_no_n2adr_writer)
+target_compile_definitions(tst_oc_outputs_hf_no_n2adr_writer PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-C Step 2+3: preamp combo per-board contents contract ─────────────
 # Locks BoardCapabilities::preampItemsForBoard() output 1:1 with Thetis
 # SetComboPreampForHPSDR console.cs:40755-40825 [@501e3f5]:

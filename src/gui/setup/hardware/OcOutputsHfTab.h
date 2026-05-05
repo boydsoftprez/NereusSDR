@@ -161,8 +161,8 @@ private:
     OcMatrix*   m_ocMatrix{nullptr};
 
     // Master toggles (AppSettings keys under hardware/<mac>/oc/)
+    // Issue #174: m_n2adrFilter removed — see OcOutputsHfTab.cpp:113.
     QCheckBox* m_pennyExtCtrl{nullptr};
-    QCheckBox* m_n2adrFilter{nullptr};
     QCheckBox* m_allowHotSwitching{nullptr};
 
     // RX / TX matrix grids: [bandIdx][pinIdx 0-6]

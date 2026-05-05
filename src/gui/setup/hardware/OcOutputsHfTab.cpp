@@ -112,6 +112,14 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
 
     // ── Row 1: Master toggles ───────────────────────────────────────────────
     // Source: Thetis setup.designer.cs tpOCHFControl master checkboxes [@501e3f5]
+    //
+    // Issue #174 cleanup: removed the redundant "N2ADR Filter (HERCULES)"
+    // checkbox.  It wrote to a global key (hardware/oc/n2adrFilter) that
+    // had no consumer — the actual N2ADR control lives on the HL2 I/O
+    // Board tab and writes to a per-MAC key (hardware/<mac>/hl2IoBoard/
+    // n2adrFilter).  The dual surface confused users into toggling the
+    // dead checkbox and concluding N2ADR was broken.  An italic hint
+    // pointer is shown in its place to preserve discoverability.
     {
         auto* row = new QHBoxLayout();
 
@@ -119,9 +127,15 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         m_pennyExtCtrl->setToolTip(tr("Enable the Penelope/Hermes open-collector external control outputs"));
         row->addWidget(m_pennyExtCtrl);
 
-        m_n2adrFilter = new QCheckBox(tr("N2ADR Filter (HERCULES)"), this);
-        m_n2adrFilter->setToolTip(tr("Enable N2ADR filter board control via OC outputs (HERCULES mode)"));
-        row->addWidget(m_n2adrFilter);
+        auto* n2adrHint = new QLabel(
+            tr("N2ADR Filter (HL2): Hardware → HL2 I/O Board"),
+            this);
+        n2adrHint->setStyleSheet(QStringLiteral(
+            "QLabel { color: #888; font-style: italic; font-size: 10px; }"));
+        n2adrHint->setToolTip(tr(
+            "On Hermes Lite 2, N2ADR filter board control is configured "
+            "on the HL2 I/O Board tab."));
+        row->addWidget(n2adrHint);
 
         m_allowHotSwitching = new QCheckBox(tr("Allow hot switching"), this);
         m_allowHotSwitching->setToolTip(tr("Allow OC output lines to switch while transmitting"));
@@ -345,15 +359,11 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
     }
 
     // ── Wire master toggles → AppSettings ────────────────────────────────────
+    // Issue #174: removed n2adrFilter writer — see Row 1 cleanup notes.
     connect(m_pennyExtCtrl, &QCheckBox::toggled, this, [this](bool v) {
         if (m_syncing) { return; }
         AppSettings::instance().setValue(
             QStringLiteral("hardware/oc/pennyExtCtrl"), v);
-    });
-    connect(m_n2adrFilter, &QCheckBox::toggled, this, [this](bool v) {
-        if (m_syncing) { return; }
-        AppSettings::instance().setValue(
-            QStringLiteral("hardware/oc/n2adrFilter"), v);
     });
     connect(m_allowHotSwitching, &QCheckBox::toggled, this, [this](bool v) {
         if (m_syncing) { return; }
