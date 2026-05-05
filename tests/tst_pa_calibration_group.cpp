@@ -6,7 +6,7 @@
 // no-port-check: test file — Thetis cites in commentary only; behaviour
 // is exercised through PaCalProfile + CalibrationController (already-cited
 // owners). Source attribution: Thetis setup.cs:5404-5594 ud{10|100|200}PA{N}W
-// spinbox blocks [v2.10.3.13 @501e3f51].
+// spinbox blocks [v2.10.3.13+501e3f51].
 //
 // Covers:
 //   - default_construction_has_no_spinboxes: fresh widget before populate()

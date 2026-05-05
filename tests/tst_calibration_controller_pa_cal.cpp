@@ -21,7 +21,7 @@
 //     (out-of-range guard).
 //   - calibratedFwdPowerWatts forwards to PaCalProfile::interpolate for
 //     two non-trivial inputs (Thetis console.cs:6691-6724 PowerKernel
-//     [v2.10.3.13 @501e3f51]).
+//     [v2.10.3.13+501e3f51]).
 //   - Round-trip: install Anan100 defaults, mutate cal points 1/5/10,
 //     save, reload from a fresh controller, confirm boardClass + every
 //     watts slot survives the round trip.
@@ -167,7 +167,7 @@ void TstCalibrationControllerPaCal::setPaCalPoint_outOfRange_isNoOp()
 // ---------------------------------------------------------------------------
 // calibratedFwdPowerWatts is a thin forwarder to PaCalProfile::interpolate.
 // Verify it matches for two non-trivial inputs against the same Anan100
-// table that Thetis console.cs:6691-6724 PowerKernel [v2.10.3.13 @501e3f51]
+// table that Thetis console.cs:6691-6724 PowerKernel [v2.10.3.13+501e3f51]
 // would produce.
 // ---------------------------------------------------------------------------
 void TstCalibrationControllerPaCal::calibratedFwdPowerWatts_forwardsToInterpolate()

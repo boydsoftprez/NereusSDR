@@ -17,7 +17,7 @@
 //   line 549  — case 7: C0 |= 0x0c  (RX5 VFO / DDC4)
 //   line 560  — case 8: C0 |= 0x0e  (RX6 VFO / DDC5)
 //   line 569  — case 9: C0 |= 0x10  (RX7 VFO / DDC6)
-// [v2.10.3.13 @501e3f51]
+// [v2.10.3.13+501e3f51]
 //
 // Pre-fix the standard codec hardcoded out[0] = <addr> on these eight banks
 // with NO MOX bit (mirroring the pre-refactor legacy composeCcBankRxFreq /

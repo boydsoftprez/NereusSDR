@@ -108,23 +108,23 @@ private slots:
         QCOMPARE(int(buf[50] & 0x02), 0);
     }
 
-    // ── 6. Bits 2 (G.5) and 5 (G.6) are set by default; others unaffected ───
-    // After G.5: bit 2 (0x04) SET by default (m_micPTT=false → PTT disabled on wire).
-    // After G.6: bit 5 (0x20) SET by default (m_micXlr=true → XLR selected on wire).
+    // ── 6. Bit 5 (G.6) set by default; bit 2 (G.5, post issue #182) clear; ──
+    //      bits 3-4,6-7 unaffected.
+    // Post issue #182: bit 2 (0x04) CLEAR by default (m_micPTTDisabled=false →
+    //   PTT enabled at firmware on wire; matches Thetis console.cs:19757
+    //   [v2.10.3.13+501e3f51] private bool mic_ptt_disabled = false).
+    // After G.6: bit 5 (0x20) SET by default (m_micXlr=true → XLR selected).
     // setLineIn must not change bits 2, 5, or 3-4, 6-7.
-    // Only bit 0 (line_in) changes; bits 3,4,6,7 (0xD8) must remain 0.
     // Source: deskhpsdr/src/new_protocol.c:1480-1482 [@120188f]
     void byte50UpperBits_unaffectedByLineIn() {
         P2RadioConnection conn;
         conn.setLineIn(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // After G.5+G.6: bits 2 (0x04) and 5 (0x20) are set by default.
-        // Bits 3,4,6,7 (0xD8) must be 0 — not set by setLineIn or G.5/G.6 defaults.
-        QCOMPARE(int(buf[50] & 0xD8), 0);
-        // Bit 2 (mic_ptt disabled by default) must be set.
-        QCOMPARE(int(buf[50] & 0x04), 0x04);
-        // Bit 5 (mic_xlr, XLR selected by default) must be set.
+        // Post issue #182: only bit 5 (0x20) is set by default.
+        // Bits 2,3,4,6,7 (0xDC) must be 0 — not set by setLineIn or defaults.
+        QCOMPARE(int(buf[50] & 0xDC), 0);
+        QCOMPARE(int(buf[50] & 0x04), 0);
         QCOMPARE(int(buf[50] & 0x20), 0x20);
     }
 

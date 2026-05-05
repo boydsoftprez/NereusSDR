@@ -329,38 +329,30 @@ public slots:
     /// Default false = PureSignal feedback DDC NOT routing.
     virtual void setPuresignalRun(bool run) = 0;
 
-    /// Hardware mic-jack PTT enable (Orion/ANAN front-panel PTT).
+    /// Hardware mic-jack PTT disable flag (Orion/ANAN front-panel PTT).
     ///
-    /// NereusSDR parameter convention: `enabled = true` means PTT is enabled
-    /// (the intuitive meaning — front-panel PTT button is active).
+    /// Parameter and wire convention match Thetis NetworkIO.SetMicPTT exactly:
+    ///   disabled = true  → PTT disabled at firmware → wire bit = 1
+    ///   disabled = false → PTT enabled  at firmware → wire bit = 0  (default)
     ///
-    /// POLARITY INVERSION AT THE WIRE LAYER — both upstream sources store and
-    /// transmit the *disable* flag (i.e. "PTT disabled" is the field name):
-    ///   Thetis field name: mic_ptt  (networkproto1.c case 11 C1 bit 6 = 0x40)
-    ///     → `mic_ptt` = 1 means PTT is DISABLED (not enabled)
-    ///   deskhpsdr field: mic_ptt_enabled == 0 → set the bit  (new_protocol.c:1488)
-    ///     → bit set means PTT is DISABLED
-    ///   Thetis console.cs:19758 stores `MicPTTDisabled` (bool) — the property
-    ///     name confirms the wire semantic: 1 = disabled.
-    /// Therefore both P1 and P2 write `!enabled` to the wire bit:
-    ///   enabled=true  → PTT is enabled  → wire bit = 0 (disabled-flag cleared)
-    ///   enabled=false → PTT is disabled → wire bit = 1 (disabled-flag set)
+    /// Source: Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]
+    ///   private bool mic_ptt_disabled = false;        // default PTT enabled
+    ///   public bool MicPTTDisabled {
+    ///       set {
+    ///           mic_ptt_disabled = value;
+    ///           NetworkIO.SetMicPTT(Convert.ToInt32(value));
+    ///       }
+    ///   }
     ///
-    /// P1 source: Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13]
-    ///   case 11 (C0=0x14) C1 byte: ((prn->mic.mic_ptt & 1) << 6) → bit 6 (0x40)
-    ///   (same bank 11 / case 11 as G.3 mic_trs + G.4 mic_bias — all OR into C1)
-    ///
-    /// P2 source: deskhpsdr src/new_protocol.c:1488-1490 [@120188f]
-    ///   if (mic_ptt_enabled == 0) { transmit_specific_buffer[50] |= 0x04; }
-    ///   (bit 2, mask 0x04 in byte 50 — different bit position from P1)
-    ///
-    /// Cross-reference: Thetis console.cs:19764 [v2.10.3.13]
-    ///   MicPTTDisabled setter calls NetworkIO.SetMicPTT(Convert.ToInt32(value))
-    ///   confirming the UI inverts: UI "PTT off" → sets the disable flag.
+    /// P1 wire field: Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13+501e3f51]
+    ///   case 11 (C0=0x14) C1 byte: ((prn->mic.mic_ptt & 1) << 6) → bit 6 (0x40), DIRECT
+    /// P2 wire field: deskhpsdr src/new_protocol.c:1488-1490 [@120188f]
+    ///   if (mic_ptt_enabled == 0) { transmit_specific_buffer[50] |= 0x04; }  // byte 50 bit 2
+    /// Both upstreams use the same direct-to-disabled wire convention.
     ///
     /// HL2 has no front-panel PTT jack; the P1 implementation still writes the
     /// bit (firmware ignores it).
-    virtual void setMicPTT(bool enabled) = 0;
+    virtual void setMicPTTDisabled(bool disabled) = 0;
 
     /// Hardware mic-jack XLR input select (Saturn G2 / ANAN-G2 only).
     ///
@@ -658,20 +650,15 @@ protected:
     //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
     bool m_puresignalRun{false};
 
-    // Shared state for setMicPTT (3M-1b G.5).
-    // POLARITY INVERSION: m_micPTT=true means PTT is enabled (intuitive UI semantic).
-    // Both wire ends carry the *disable* flag — setter writes !m_micPTT to the bit.
-    //   m_micPTT=true  (enabled)  → wire bit = 0 (PTT-disabled-flag cleared)
-    //   m_micPTT=false (disabled) → wire bit = 1 (PTT-disabled-flag set)
-    // Default false — PTT not enabled by default; wire bit will be 1 (disabled) by default.
-    //   This matches pre-code review §2.3 / §2.7 and TransmitModel::micPttDisabled
-    //   default (disabled=true → m_micPTT=false here) in C.2.
-    // P1: emitted to case 11 (C0=0x14) C1 bit 6 (0x40), INVERTED.
-    // P2: emitted to transmit_specific_buffer[50] bit 2 (0x04), INVERTED.
-    // From Thetis networkproto1.c:597-598 [v2.10.3.13]; deskhpsdr new_protocol.c:1488-1490 [@120188f].
-    // Thetis console.cs:19764 [v2.10.3.13] confirms MicPTTDisabled is the
-    //   UI property (storage name = disable flag) — NereusSDR flips to enabled.
-    bool m_micPTT{false};
+    // Shared state for setMicPTTDisabled (3M-1b G.5; renamed for issue #182
+    // to match Thetis MicPTTDisabled / mic_ptt_disabled storage name exactly).
+    // Direct polarity: m_micPTTDisabled=true means PTT is disabled at the
+    // firmware (wire bit = 1). Default false — PTT enabled by default,
+    // matching Thetis console.cs:19757 [v2.10.3.13+501e3f51]:
+    //   private bool mic_ptt_disabled = false;
+    // P1 wire: case 11 (C0=0x14) C1 bit 6 (0x40), direct.
+    // P2 wire: transmit_specific_buffer[50] bit 2 (0x04), direct.
+    bool m_micPTTDisabled{false};
 
     // Shared state for setMicXlr (3M-1b G.6).
     // P2-only wire emission. P1 stores the flag for cross-board API consistency

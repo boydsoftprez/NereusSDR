@@ -71,7 +71,7 @@ public:
     void setLineIn(bool) override {}
     void setMicTipRing(bool) override {}
     void setMicBias(bool) override {}
-    void setMicPTT(bool) override {}
+    void setMicPTTDisabled(bool) override {}
     void setMicXlr(bool) override {}
     // Added on main during the merge: P1 full-parity Task 2.4 introduced
     // setLineInGain + setUserDigOut + setPuresignalRun pure virtuals.

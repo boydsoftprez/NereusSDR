@@ -1647,7 +1647,7 @@ CwSetupPage::CwSetupPage(RadioModel* model, QWidget* parent)
     // directly — there's no row-level QWidget to toggle.  Default:
     // hidden until a board with hasSidetoneGenerator=true connects.
     //
-    // Thetis upstream comparison (setup.cs [v2.10.3.13 @501e3f51]
+    // Thetis upstream comparison (setup.cs [v2.10.3.13+501e3f51]
     // chkSideTones / chkDSPKeyerSidetone[_software]):  Thetis does NOT
     // board-gate its sidetone controls — they're always visible and
     // mutually-exclusive via the toggle logic at setup.cs:8823-8854.

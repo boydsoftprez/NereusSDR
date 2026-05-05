@@ -444,7 +444,7 @@ PureSignal in Phase 3M-4.)
 `SetupDialog::applyPaVisibility` consumes `BoardCapabilities` and
 hides / disables PA controls per SKU. Mirrors Thetis
 `comboRadioModel_SelectedIndexChanged` (setup.cs:19812-20310
-[v2.10.3.13 @501e3f51]).
+[v2.10.3.13+501e3f51]).
 
 ### Capability flags consumed
 

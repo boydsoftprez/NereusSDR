@@ -6,7 +6,7 @@
 
 **Architecture:** Three coordinated packages in one PR: (1) `P1CodecStandard` wire-format parity vs Thetis `networkproto1.c` `WriteMainLoop` for banks 0/10/11/freq-banks; (2) per-board PA calibration port — `PaCalProfile` model + `PaCalibrationGroup` UI + `CalibratedPAPower` interpolation + SWR foldback; (3) close three documented `BoardCapabilities` flag-wiring gaps (`hasStepAttenuatorCal`, `hasSidetoneGenerator`, `hasPennyLane`).
 
-**Tech Stack:** C++20, Qt6, FFTW3, GoogleTest. Authoritative source: `../Thetis/Project Files/Source/ChannelMaster/networkproto1.c [v2.10.3.13 @501e3f51]` for wire format; `console.cs [v2.10.3.13 @501e3f51]` for `CalibratedPAPower()`; `setup.cs [v2.10.3.13 @501e3f51]` for per-board PA cal UI groups (`tcPACalibration`).
+**Tech Stack:** C++20, Qt6, FFTW3, GoogleTest. Authoritative source: `../Thetis/Project Files/Source/ChannelMaster/networkproto1.c [v2.10.3.13+501e3f51]` for wire format; `console.cs [v2.10.3.13+501e3f51]` for `CalibratedPAPower()`; `setup.cs [v2.10.3.13+501e3f51]` for per-board PA cal UI groups (`tcPACalibration`).
 
 **Provenance:** This plan touches three already-registered NereusSDR files (`P1CodecStandard.{cpp,h}`, `CodecContext.h`) and creates new ones (`PaCalProfile.{h,cpp}`, `PaCalibrationGroup.{h,cpp}`, possibly `PaCalibrationController.{h,cpp}`). Per `docs/attribution/HOW-TO-PORT.md` Pre-port checklist:
 - `P1CodecStandard.cpp` already has Thetis `networkproto1.c` header — no new attribution event for that file.
@@ -64,7 +64,7 @@
 
 ## Section 1 — P1CodecStandard wire-format parity
 
-Thetis `networkproto1.c [v2.10.3.13 @501e3f51]` is authoritative.
+Thetis `networkproto1.c [v2.10.3.13+501e3f51]` is authoritative.
 
 ### Task 1.1 — Fix mic_ptt direct polarity (relay clicking root cause)
 
@@ -116,7 +116,7 @@ ctest --test-dir build --output-on-failure -R p1_codec_standard_bank11_polarity
 // src/core/codec/P1CodecStandard.cpp:232 — was:
 //   | (!ctx.p1MicPTT    ? 0x40 : 0x00));   // mic_ptt (INVERTED) — 3M-1b G.5
 // becomes:
-              | (ctx.p1MicPTT     ? 0x40 : 0x00));   // mic_ptt (DIRECT — matches Thetis networkproto1.c:597-598 [v2.10.3.13 @501e3f51])
+              | (ctx.p1MicPTT     ? 0x40 : 0x00));   // mic_ptt (DIRECT — matches Thetis networkproto1.c:597-598 [v2.10.3.13+501e3f51])
 ```
 
 Update the comment block at line 218-225 to remove "(INVERTED)" and document the polarity match with the HL2 fix in PR #161.
@@ -144,7 +144,7 @@ fix(p1/standard): mic_ptt direct polarity — fixes relay flutter on all non-HL2
 
 P1CodecStandard.cpp:232 was emitting bank 11 C1 bit 6 = !p1MicPTT, mirroring
 the same inversion bug fixed for HL2 in PR #161 commit ca8cd73 (#2). Thetis
-networkproto1.c:597-598 [v2.10.3.13 @501e3f51] is direct:
+networkproto1.c:597-598 [v2.10.3.13+501e3f51] is direct:
     C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
 
 With p1MicPTT default false, the prior code set bit 6=1 every CC frame on the
@@ -181,12 +181,12 @@ Thetis emits: `C2 = (mic.line_in_gain & 0x1F) | ((puresignal_run & 1) << 6)`. Cu
 ```cpp
 // src/core/codec/CodecContext.h — after p1MicPTT block (~line 203)
     // Mic line-in gain — prn->mic.line_in_gain, 5-bit (0-31).
-    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13+501e3f51]
     //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
     int     p1LineInGain{0};
 
     // PureSignal feedback running flag — prn->puresignal_run.
-    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13+501e3f51]
     // Bank 11 C2 bit 6. Distinct from PureSignal-capability (BoardCapabilities)
     // and from PureSignal-enabled (TransmitModel) — this tracks whether the
     // PS feedback DDC routing is currently *active*. False until 3M-4 lights
@@ -231,7 +231,7 @@ TEST(P1CodecStandardBank11, c2_puresignal_run_sets_bit_6) {
 // src/core/codec/P1CodecStandard.cpp:233 — was: out[2] = 0;
 // becomes:
     // C2: line_in_gain (low 5 bits) | puresignal_run (bit 6).
-    // Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    // Source: Thetis networkproto1.c:600 [v2.10.3.13+501e3f51]
     out[2] = quint8((ctx.p1LineInGain & 0x1F)
                   | (ctx.p1PuresignalRun ? 0x40 : 0x00));
 ```
@@ -243,7 +243,7 @@ TEST(P1CodecStandardBank11, c2_puresignal_run_sets_bit_6) {
 ```
 git commit -m "feat(p1/standard): bank 11 C2 line_in_gain + puresignal_run flag
 
-[Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51] full quote in commit body]
+[Thetis networkproto1.c:600 [v2.10.3.13+501e3f51] full quote in commit body]
 [3 test cases listed]
 [Co-Authored-By line]"
 ```
@@ -264,7 +264,7 @@ Thetis emits: `C3 = prn->user_dig_out & 0b00001111`. Currently `out[3] = 0`. Fie
 ```cpp
 // src/core/codec/CodecContext.h — after p1PuresignalRun
     // User digital outputs — prn->user_dig_out, low 4 bits (0-15).
-    // Source: Thetis networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    // Source: Thetis networkproto1.c:601 [v2.10.3.13+501e3f51]
     //   C3 = prn->user_dig_out & 0b00001111;
     // Drives the 4 user-controllable digital pins on the radio's accessory
     // header. UI: Setup → Hardware → OC Outputs → "User Dig Out 1..4"
@@ -300,7 +300,7 @@ TEST(P1CodecStandardBank11, c3_user_dig_out_masked_to_4_bits) {
 ```cpp
 // src/core/codec/P1CodecStandard.cpp:234 — was: out[3] = 0;
     // C3: user digital outputs, low 4 bits.
-    // Source: Thetis networkproto1.c:601 [v2.10.3.13 @501e3f51]
+    // Source: Thetis networkproto1.c:601 [v2.10.3.13+501e3f51]
     out[3] = quint8(ctx.p1UserDigOut & 0x0F);
 ```
 
@@ -369,21 +369,21 @@ Three sites in `P1CodecStandard.cpp`:
 // Bank 1 (line ~66) — was: out[0] = 0x02;
         case 1: {
             const quint32 hz = quint32(ctx.txFreqHz);
-            out[0] = quint8(C0base | 0x02);  // Thetis networkproto1.c:477 [v2.10.3.13 @501e3f51] — C0 = XmitBit | 2
+            out[0] = quint8(C0base | 0x02);  // Thetis networkproto1.c:477 [v2.10.3.13+501e3f51] — C0 = XmitBit | 2
             ...
         }
 
 // Banks 2-3 (line ~83) — was: out[0] = kRx01C0[rxIdx];
         case 2: case 3: {
             ...
-            out[0] = quint8(C0base | kRx01C0[rxIdx]);  // Thetis networkproto1.c:485,498 [v2.10.3.13 @501e3f51]
+            out[0] = quint8(C0base | kRx01C0[rxIdx]);  // Thetis networkproto1.c:485,498 [v2.10.3.13+501e3f51]
             ...
         }
 
 // Banks 5-9 (line ~116) — was: out[0] = kRxC0Addr[bank - 5];
         case 5: case 6: case 7: case 8: case 9: {
             ...
-            out[0] = quint8(C0base | kRxC0Addr[bank - 5]);  // Thetis networkproto1.c:526,539,549,560,569 [v2.10.3.13 @501e3f51]
+            out[0] = quint8(C0base | kRxC0Addr[bank - 5]);  // Thetis networkproto1.c:526,539,549,560,569 [v2.10.3.13+501e3f51]
             ...
         }
 ```
@@ -434,7 +434,7 @@ TEST(P1MicLineInGain, setter_propagates_to_bank_11_c2) {
 ```cpp
 // after setMicBias declaration (~line 295)
     /// Set mic line-in gain (0-31). Maps to Thetis prn->mic.line_in_gain.
-    /// Source: Thetis networkproto1.c:600 [v2.10.3.13 @501e3f51]
+    /// Source: Thetis networkproto1.c:600 [v2.10.3.13+501e3f51]
     /// P1: bank 11 C2 low 5 bits.  P2: byte 51 of CmdHighPriority (already wired).
     virtual void setLineInGain(int gain) = 0;
 
@@ -546,7 +546,7 @@ The `puresignal_run` flag tracks whether the PureSignal feedback DDC routing is 
 
 ## Section 3 — Per-board PA Calibration port
 
-Thetis source — `console.cs:6691-6724` `CalibratedPAPower()` [v2.10.3.13 @501e3f51]:
+Thetis source — `console.cs:6691-6724` `CalibratedPAPower()` [v2.10.3.13+501e3f51]:
 
 ```csharp
 public float CalibratedPAPower() {
@@ -591,7 +591,7 @@ The cal points are user-set (not factory defaults — but Thetis ships with each
 namespace NereusSDR {
 
 // Per-board-class PA calibration interval. Maps to Thetis's per-model
-// switch in CalibratedPAPower (console.cs:6717-6783 [v2.10.3.13 @501e3f51]).
+// switch in CalibratedPAPower (console.cs:6717-6783 [v2.10.3.13+501e3f51]).
 enum class PaCalBoardClass {
     None,        // No PA — Atlas, HermesLite RxOnly
     Anan10,      // ANAN-10 / ANAN-10E:    1 W intervals,  10 W max
@@ -614,7 +614,7 @@ struct PaCalProfile {
 
     // Linear interpolation: rawAdc (in watts at Thetis's "uncalibrated"
     // scale = alex_fwd reading) → calibrated watts.
-    // Matches Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13 @501e3f51].
+    // Matches Thetis console.cs:6691-6724 CalibratedPAPower [v2.10.3.13+501e3f51].
     float interpolate(float rawWatts) const noexcept;
 
     float interval() const noexcept;
@@ -767,7 +767,7 @@ The radio reports raw forward-power readings via the EP6 status path. Find the e
 grep -rn 'MeterScale::Fwd\|alex_fwd\|fwdPowerWatts' src/ | head -20
 ```
 
-- [ ] **Step 3.4.2: Insert calibration step** in the FWD meter publication site. Cite Thetis `console.cs:6691-6724` [v2.10.3.13 @501e3f51] inline.
+- [ ] **Step 3.4.2: Insert calibration step** in the FWD meter publication site. Cite Thetis `console.cs:6691-6724` [v2.10.3.13+501e3f51] inline.
 
 - [ ] **Step 3.4.3: Test** — synthesise raw FWD readings of 1.0, 5.0, 10.0; with non-default cal points, verify reported watts match `interpolate()`.
 
@@ -933,7 +933,7 @@ Final pre-PR checkpoint. All previous task checkboxes must be ticked.
 ### Fixed
 - **P1 (all non-HL2 boards)**: mic_ptt direct polarity in `P1CodecStandard` —
   fixes rapid T/R relay clicking on TUNE/TX (ANAN-10E reported, all standard-codec
-  boards affected). Source: Thetis networkproto1.c:597-598 [v2.10.3.13 @501e3f51].
+  boards affected). Source: Thetis networkproto1.c:597-598 [v2.10.3.13+501e3f51].
 
 ### Added
 - **P1 (all non-HL2 boards)**: bank 11 C2 (`line_in_gain` + `puresignal_run` flag)
@@ -944,7 +944,7 @@ Final pre-PR checkpoint. All previous task checkboxes must be ticked.
   `PaCalProfile` model + `PaCalibrationGroup` UI with 10 cal-point spinboxes
   per board class (1 W intervals for ANAN-10/10E; 10 W for ANAN-100 family;
   20 W for ANAN-8000DLE), `CalibratedPAPower` interpolation pipeline, SWR
-  foldback in drive scaling. Source: Thetis console.cs:6691-6724 [v2.10.3.13 @501e3f51].
+  foldback in drive scaling. Source: Thetis console.cs:6691-6724 [v2.10.3.13+501e3f51].
 - **All boards with `hasPennyLane=true`**: User Dig Out UI (4 checkboxes) +
   per-MAC persistence + bank 11 C3 wire emission.
 
@@ -992,7 +992,7 @@ parity gaps affect every standard-codec P1 board.
 
 ## Source citations
 
-Every wire-format change cites Thetis `[v2.10.3.13 @501e3f51]` per CLAUDE.md
+Every wire-format change cites Thetis `[v2.10.3.13+501e3f51]` per CLAUDE.md
 HOW-TO-PORT.md.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

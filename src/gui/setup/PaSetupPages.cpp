@@ -778,7 +778,7 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
 // independently on top.
 //
 // From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
-// [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility. Thetis swaps dozens
+// [v2.10.3.13+501e3f51]) — per-SKU PA tab visibility. Thetis swaps dozens
 // of controls (chkApolloPresent / chkAlexPresent / labelATTOnTX /
 // chkAutoPACalibrate / etc.) per HPSDRModel; NereusSDR collapses those
 // decisions into BoardCapabilities flags and surfaces the equivalent
@@ -1890,7 +1890,7 @@ PaWattMeterPage::PaWattMeterPage(RadioModel* model, QWidget* parent)
 // Phase 8 (#167) — PaWattMeterPage capability gate.
 //
 // From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
-// [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility. The Thetis Watt Meter
+// [v2.10.3.13+501e3f51]) — per-SKU PA tab visibility. The Thetis Watt Meter
 // tab visibility is page-level: hidden when the connected board lacks PA
 // hardware. Implemented here by toggling the PaCalibrationGroup + the
 // chkPAValues toggle + Reset PA Values button; the page itself is hidden by
@@ -2248,7 +2248,7 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
 // Phase 8 (#167) — PaValuesPage capability gate.
 //
 // From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
-// [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility. Thetis embeds
+// [v2.10.3.13+501e3f51]) — per-SKU PA tab visibility. Thetis embeds
 // panelPAValues inside the Watt Meter tab and gates it on chkPAValues
 // (setup.cs:16342 [v2.10.3.13]). NereusSDR promotes the readout to a
 // dedicated page; per-SKU visibility hides every MetricLabel + every

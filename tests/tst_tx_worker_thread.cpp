@@ -94,7 +94,7 @@ public:
     void setLineInGain(int) override {}
     void setUserDigOut(quint8) override {}
     void setPuresignalRun(bool) override {}
-    void setMicPTT(bool) override {}
+    void setMicPTTDisabled(bool) override {}
     void setMicXlr(bool) override {}
 
     void sendTxIq(const float* iq, int n) override

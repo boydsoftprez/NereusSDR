@@ -198,7 +198,7 @@ public slots:
     void setLineInGain(int gain) override;
     void setUserDigOut(quint8 dig) override;
     void setPuresignalRun(bool run) override;
-    void setMicPTT(bool enabled) override;
+    void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
 
     // HL2-specific: enqueue the I/O board probe (HW version + FW major/minor

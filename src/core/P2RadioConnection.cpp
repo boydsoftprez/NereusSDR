@@ -51,6 +51,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setMicBias (G.4): byte 50 bit 4 (0x10), polarity 1=on. deskhpsdr new_protocol.c:1496-1498 [@120188f]. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setMicPTT (G.5): byte 50 bit 2 (0x04, INVERTED). deskhpsdr new_protocol.c:1488-1490 [@120188f]. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-05-04 — setMicPTT renamed to setMicPTTDisabled (issue #182): direct polarity matches Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]; default MicState::micControl flipped 0x24→0x20 so PTT is enabled at firmware out of the box. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-28 — setMicXlr (G.6): byte 50 bit 5 (0x20), P2-only, polarity 1=XLR. deskhpsdr new_protocol.c:1500-1502 [@120188f]. MicState::micControl default updated 0x04 -> 0x24. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -1151,47 +1152,43 @@ void P2RadioConnection::setPuresignalRun(bool run)
 }
 
 // ---------------------------------------------------------------------------
-// setMicPTT (3M-1b G.5)
+// setMicPTTDisabled (issue #182 — renamed from setMicPTT for parameter parity
+// with Thetis MicPTTDisabled / mic_ptt_disabled storage name).
 //
-// Enables or disables the hardware mic-jack PTT line (Orion/ANAN front-panel).
-// NereusSDR parameter convention: enabled=true → PTT enabled (intuitive).
+// Wire convention matches Thetis byte-for-byte:
+//   disabled=true  → wire bit 2 SET   (firmware ignores mic-jack PTT line)
+//   disabled=false → wire bit 2 CLEAR (firmware honors mic-jack PTT line)
 //
-// POLARITY INVERSION AT THE WIRE LAYER:
-// deskhpsdr carries the *disable* flag at byte 50 bit 2 (mask 0x04):
-//   mic_ptt_enabled == 0 → set the bit (bit set means PTT is DISABLED)
-// Thetis console.cs:19758 MicPTTDisabled property confirms the disable-flag
-//   convention — MicPTTDisabled=true (PTT off) maps to the wire bit = 1.
-// Thetis networkproto1.c case 11 C1 bit 6 (0x40) also carries the disable flag.
-// Therefore this implementation writes (!enabled) to the wire bit:
-//   enabled=true  → PTT enabled  → bit 2 CLEAR (0)
-//   enabled=false → PTT disabled → bit 2 SET   (1)
+// Wire byte: transmit_specific_buffer[50] bit 2 (mask 0x04), direct polarity.
 //
-// Wire byte: transmit_specific_buffer[50] bit 2 (mask 0x04), INVERTED.
-//
-// Porting from deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]:
-//   if (mic_ptt_enabled == 0) { // set if disabled
+// From Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]:
+//   private bool mic_ptt_disabled = false;        // default PTT enabled
+//   public bool MicPTTDisabled {
+//       set {
+//           mic_ptt_disabled = value;
+//           NetworkIO.SetMicPTT(Convert.ToInt32(value));
+//       }
+//   }
+// From deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]:
+//   if (mic_ptt_enabled == 0) { // bit set when PTT is disabled
 //     transmit_specific_buffer[50] |= 0x04;
 //   }
-//
-// Cross-reference:
-//   deskhpsdr/src/old_protocol.c:3000-3002 [@120188f] — P1 same inversion at C1 bit 6.
-//   Thetis console.cs:19764 [v2.10.3.13] — MicPTTDisabled calls SetMicPTT(value).
+// (deskhpsdr's mic_ptt_enabled is the inverse of mic_ptt_disabled; both
+//  collapse to the same wire-bit-set-when-disabled convention.)
 //
 // Note: P2 bit position (bit 2 = 0x04) differs from P1 bit position
-// (bit 6 = 0x40 in C1 of bank 11). Both carry the same inverted semantics.
+// (bit 6 = 0x40 in C1 of bank 11). Both carry the same direct semantics now.
 // ---------------------------------------------------------------------------
-void P2RadioConnection::setMicPTT(bool enabled)
+void P2RadioConnection::setMicPTTDisabled(bool disabled)
 {
-    if (m_micPTT == enabled) {
+    if (m_micPTTDisabled == disabled) {
         return;  // idempotent — 100 ms heartbeat covers any state drift
     }
-    m_micPTT = enabled;
-    // POLARITY INVERSION: mic_ptt_enabled == 0 → bit 2 SET (PTT disabled on wire).
-    // setMicPTT(true)  = PTT enabled  → wire bit 2 CLEAR.
-    // setMicPTT(false) = PTT disabled → wire bit 2 SET.
-    // From deskhpsdr/src/new_protocol.c:1488-1490 [@120188f]:
-    //   if (mic_ptt_enabled == 0) { transmit_specific_buffer[50] |= 0x04; }
-    if (!enabled) {
+    m_micPTTDisabled = disabled;
+    // Direct polarity: disabled=true → SET bit 2; disabled=false → CLEAR bit 2.
+    // From Thetis console.cs:19764 [v2.10.3.13+501e3f51]:
+    //   NetworkIO.SetMicPTT(Convert.ToInt32(mic_ptt_disabled));
+    if (disabled) {
         m_mic.micControl |= 0x04;
     } else {
         m_mic.micControl &= ~quint8(0x04);

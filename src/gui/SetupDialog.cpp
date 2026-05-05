@@ -16,14 +16,14 @@
 //                 dynamic visibility on radio swaps. Visibility rules
 //                 derived from Thetis
 //                 comboRadioModel_SelectedIndexChanged
-//                 (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]).
+//                 (setup.cs:19812-20310 [v2.10.3.13+501e3f51]).
 //                 AI-assisted transformation via Anthropic Claude Code.
 //   2026-05-03 — PA calibration safety hotfix Phase 9 (#167): added
 //                 cross-page connect() in buildTree() that routes
 //                 PaWattMeterPage::resetPaValuesRequested (Phase 5A)
 //                 to PaValuesPage::resetPaValues() (Phase 5B). Mirrors
 //                 Thetis btnResetPAValues_Click (setup.cs:16346-16357
-//                 [v2.10.3.13 @501e3f51]). Deferred from Phase 5 so
+//                 [v2.10.3.13+501e3f51]). Deferred from Phase 5 so
 //                 Agents 5A and 5B could land in parallel without
 //                 touching this file.
 // =================================================================
@@ -260,7 +260,7 @@ void SetupDialog::buildTree()
     // prevented the PA category from appearing on radio-swap when the
     // dialog was already open) with a live capability subscription.
     // From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
-    // [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility.
+    // [v2.10.3.13+501e3f51]) — per-SKU PA tab visibility.
     m_paCategoryItem  = addCategory("PA");
     m_paGainPage      = new PaGainByBandPage(m_model);
     m_paWattMeterPage = new PaWattMeterPage(m_model);
@@ -275,7 +275,7 @@ void SetupDialog::buildTree()
     // Deferred from Phase 5 to keep agents 5A and 5B mutually parallel and
     // conflict-free; the connect lands here once both pages exist.
     // Mirrors Thetis btnResetPAValues_Click (setup.cs:16346-16357
-    // [v2.10.3.13 @501e3f51]) — Thetis blanks the textbox text directly
+    // [v2.10.3.13+501e3f51]) — Thetis blanks the textbox text directly
     // from the same panel; NereusSDR fans out to a peer page since the
     // PA Values readout was promoted to its own dedicated page.
     connect(m_paWattMeterPage, &PaWattMeterPage::resetPaValuesRequested,
@@ -418,7 +418,7 @@ void SetupDialog::buildTree()
 // individual capability flags via applyCapabilityVisibility().
 //
 // From Thetis comboRadioModel_SelectedIndexChanged
-// (setup.cs:19812-20310 [v2.10.3.13 @501e3f51]) — per-SKU PA tab visibility.
+// (setup.cs:19812-20310 [v2.10.3.13+501e3f51]) — per-SKU PA tab visibility.
 // Thetis swaps dozens of controls per HPSDRModel; NereusSDR collapses
 // the decisions into BoardCapabilities and surfaces the equivalent
 // visibility here.
