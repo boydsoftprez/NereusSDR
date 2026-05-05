@@ -3384,6 +3384,28 @@ target_compile_definitions(tst_p2_mic_tip_ring_wire PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_p1_mic_bias_wire)
 target_compile_definitions(tst_p1_mic_bias_wire PRIVATE NEREUS_BUILD_TESTS)
 
+# ── radio-mic-input parity Task 2: P1 setLineInBoost(double) wire-byte ───────
+# 7 tests pin the dB-to-5-bit-index translation in
+# RadioConnection::setLineInBoost(double dB) and the resulting bank-11
+# (C0=0x14) C2 low-5-bit field.  All tests use setBoardForTest(HermesII) to
+# exercise the codec path, matching the convention from
+# tst_p1_line_in_gain_setter.cpp (the legacy compose path emits 0 for C2
+# unconditionally — pre-existing and out of scope for this task).
+# Boundary cases verbatim from the Thetis 32-entry MakeLineInList table
+# (-34.5..+12.0 dB in 1.5 dB steps):
+#   1.  Default state: C2 low 5 bits = 0 (m_lineInGain=0).
+#   2.  setLineInBoost(-34.5) -> index 0 (table low end).
+#   3.  setLineInBoost(-50.0) -> clamps to index 0 (below range).
+#   4.  setLineInBoost(0.0)   -> index 23 (mid point: -34.5 + 23*1.5 = 0).
+#   5.  setLineInBoost(+12.0) -> index 31 (table high end).
+#   6.  setLineInBoost(+20.0) -> clamps to index 31 (above range).
+#   7.  setPuresignalRun toggle (C2 bit 6) does NOT alter line_in_gain
+#       low 5 bits — cross-bit guard in same byte.
+# Source: Thetis Console/console.cs:40827-40859 [v2.10.3.13+501e3f51] (table)
+#         Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13+501e3f51] (wire).
+nereus_add_test(tst_p1_line_in_boost_wire)
+target_compile_definitions(tst_p1_line_in_boost_wire PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.4: P2 mic_bias wire-byte snapshot ─────────────────────
 # 10 tests pin the mic_bias_enabled bit (CmdTx byte 50 bit 4 = 0x10)
 # in P2RadioConnection::setMicBias().
