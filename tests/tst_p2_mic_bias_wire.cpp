@@ -101,28 +101,32 @@ private slots:
         conn.composeCmdTxForTest(buf);
         // Bit 4 (mic_bias) must be 1.
         QCOMPARE(int(buf[50] & 0x10), 0x10);
-        // Bits 0 (line_in) and 1 (mic_boost) must be 0.
+        // Bit 0 (line_in) must be 0, not set by setMicBias.
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // Bit 1 (mic_boost) must be 0x02. Default mic_boost=true (Thetis
+        // console.cs:13237 [v2.10.3.13+501e3f51] private bool mic_boost = true)
+        // is preserved by setMicBias.
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
         // Bit 3 (mic_trs, G.3, default tipHot=true → inverted → 0) must be 0.
         QCOMPARE(int(buf[50] & 0x08), 0);
     }
 
-    // ── 6. Bits 6-7 of byte 50 unaffected by setMicBias; bit 5 is XLR default ─
-    // After G.6: bit 5 (0x20) is SET by default (m_micXlr=true, XLR selected).
-    // setMicBias must not change bit 5 (G.6 XLR) or bits 6-7.
-    // Only bit 4 (mic_bias) changes; bits 6-7 (0xC0) must remain 0.
+    // ── 6. Bits 5-7 of byte 50 unaffected by setMicBias; defaults preserved ─
+    // Post Task 10: bit 5 (0x20) is CLEAR by default (m_micXlr=false →
+    //   3.5 mm jack selected on wire; matches Thetis Saturn user-visible default).
+    // setMicBias must not change bit 5 (XLR) or bits 6-7.
+    // Only bit 4 (mic_bias) changes; bits 5-7 (0xE0) must remain 0.
     // Source: deskhpsdr/src/new_protocol.c:1496-1502 [@120188f]
     void byte50UpperBits_unaffectedByMicBias() {
         P2RadioConnection conn;
         conn.setMicBias(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // After G.6: bit 5 (0x20) is on by default (XLR selected default).
-        // Bits 6-7 (0xC0) must be 0 — not set by setMicBias or G.6 defaults.
-        QCOMPARE(int(buf[50] & 0xC0), 0);
-        // Bit 5 (mic_xlr, default true) must be set.
-        QCOMPARE(int(buf[50] & 0x20), 0x20);
+        // Post Task 10: bit 5 (0x20) is clear by default (3.5 mm jack default).
+        // Bits 5,6,7 (0xE0) must be 0, not set by setMicBias or defaults.
+        QCOMPARE(int(buf[50] & 0xE0), 0);
+        // Bit 5 (mic_xlr, default false → 3.5 mm jack) must be clear.
+        QCOMPARE(int(buf[50] & 0x20), 0);
     }
 
     // ── 7. Idempotent: setMicBias(true) twice → bit remains 1 ────────────────

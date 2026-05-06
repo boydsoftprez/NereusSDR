@@ -111,12 +111,13 @@ private slots:
         QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
-    // ── 6. Bit 5 (G.6) set by default; bit 2 (G.5, post issue #182) clear; ──
+    // ── 6. Bit 2 (G.5, post issue #182) clear; bit 5 (post Task 10) clear; ──
     //      bits 3-4,6-7 unaffected.
     // Post issue #182: bit 2 (0x04) CLEAR by default (m_micPTTDisabled=false →
     //   PTT enabled at firmware on wire; matches Thetis console.cs:19757
     //   [v2.10.3.13+501e3f51] private bool mic_ptt_disabled = false).
-    // After G.6: bit 5 (0x20) SET by default (m_micXlr=true → XLR selected).
+    // Post Task 10: bit 5 (0x20) CLEAR by default (m_micXlr=false → 3.5 mm
+    //   jack selected on wire; matches Thetis Saturn user-visible default).
     // setMicBoost must not change bits 2, 5, or 3-4, 6-7.
     // Source: deskhpsdr/src/new_protocol.c:1484-1486 [@120188f]
     void byte50UpperBits_unaffectedByMicBoost() {
@@ -124,11 +125,11 @@ private slots:
         conn.setMicBoost(true);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // Post issue #182: only bit 5 (0x20) is set by default.
-        // Bits 2,3,4,6,7 (0xDC) must be 0 — not set by setMicBoost or defaults.
-        QCOMPARE(int(buf[50] & 0xDC), 0);
+        // Post Task 10: bit 5 (0x20) is clear by default (3.5 mm jack default).
+        // Bits 2,3,4,5,6,7 (0xFC) must be 0, not set by setMicBoost or defaults.
+        QCOMPARE(int(buf[50] & 0xFC), 0);
         QCOMPARE(int(buf[50] & 0x04), 0);
-        QCOMPARE(int(buf[50] & 0x20), 0x20);
+        QCOMPARE(int(buf[50] & 0x20), 0);
     }
 
     // ── 7. Idempotent: setMicBoost(true) twice → bit remains 1 ───────────

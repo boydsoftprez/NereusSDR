@@ -6,7 +6,9 @@
 //
 // Visibility tests:
 //   1.  HL2 (hasMicJack=false) — all 3 groups hidden regardless of MicSource.
-//   2.  Saturn G2 + Radio Mic — only Saturn group visible; Hermes + Orion hidden.
+//   2.  Saturn G2 + Radio Mic: Saturn AND Orion groups visible (Thetis-faithful
+//       co-existence per setup.cs:19830-20405 + 6181-6189 [v2.10.3.13+501e3f51]);
+//       Hermes hidden.
 //   3.  OrionMKII + Radio Mic — only Orion group visible; Hermes + Saturn hidden.
 //   4.  HermesII + Radio Mic — only Hermes group visible; Orion + Saturn hidden.
 //   5.  Switch from PC Mic to Radio Mic (Saturn) — Saturn group becomes visible.
@@ -100,8 +102,22 @@ private slots:
                  "Saturn group must be hidden on HL2 (hasMicJack=false)");
     }
 
-    // ── 2. Saturn G2 + Radio Mic → only Saturn group visible ─────────────────
-
+    // ── 2. Saturn G2 + Radio Mic, Saturn group AND Orion group visible ───────
+    //
+    // Per Thetis, Saturn (ANAN_G2 / ANAN_G2_1K) shows BOTH the Orion-class
+    // mic-jack panel AND the Saturn-specific XLR / 3.5 mm radio-button panel.
+    // The two panels are additive in Thetis, not mutually exclusive:
+    //
+    //   setup.cs:19830-20405 [v2.10.3.13+501e3f51], pnlGeneralHardwareORION
+    //     enable map. ANAN_G2 (line 20153) and ANAN_G2_1K (line 20207) both
+    //     set pnlGeneralHardwareORION.Enabled = true, alongside ANAN200D /
+    //     ANAN7000D / ANAN8000D / ANVELINAPRO3.
+    //
+    //   setup.cs:6181-6189 [v2.10.3.13+501e3f51], panelSaturnMicInput is
+    //     additionally enabled when Model is ANAN_G2 or ANAN_G2_1K. This is
+    //     gated INSIDE a block that has already enabled the Orion-class panel.
+    //
+    // Hermes group stays hidden (it's the Hermes-class layout, not Orion).
     void saturn_radioMic_saturnGroupVisible()
     {
         RadioModel model;
@@ -119,8 +135,13 @@ private slots:
                  "Saturn group must be visible on Saturn + Radio Mic");
         QVERIFY2(page.hermesRadioMicGroup()->isHidden(),
                  "Hermes group must be hidden on Saturn board");
-        QVERIFY2(page.orionRadioMicGroup()->isHidden(),
-                 "Orion group must be hidden on Saturn board");
+        // Per Thetis pnlGeneralHardwareORION enable map (setup.cs:19830-20405
+        // [v2.10.3.13+501e3f51]), Saturn enables the Orion-class panel.
+        // panelSaturnMicInput (setup.cs:6181-6189 [v2.10.3.13+501e3f51]) is
+        // ADDITIONAL to that, not a replacement, so both groups are visible.
+        QVERIFY2(!page.orionRadioMicGroup()->isHidden(),
+                 "Orion group must also be visible on Saturn board "
+                 "(Thetis pnlGeneralHardwareORION includes ANAN_G2)");
     }
 
     // ── 3. OrionMKII + Radio Mic → only Orion group visible ──────────────────

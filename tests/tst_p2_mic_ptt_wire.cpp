@@ -116,7 +116,10 @@ private slots:
         conn.composeCmdTxForTest(buf);
         QCOMPARE(int(buf[50] & 0x04), 0x04);
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // Bit 1 (mic_boost) must be 0x02. Default mic_boost=true (Thetis
+        // console.cs:13237 [v2.10.3.13+501e3f51] private bool mic_boost = true)
+        // is preserved by setMicPTTDisabled.
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
     // ── 6. setMicPTTDisabled(true) does NOT touch byte-50 bit 3 (G.3) ────────

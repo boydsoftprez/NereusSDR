@@ -102,26 +102,30 @@ private slots:
         conn.composeCmdTxForTest(buf);
         // Bit 3 (mic_trs) must be 1.
         QCOMPARE(int(buf[50] & 0x08), 0x08);
-        // Bits 0 (line_in) and 1 (mic_boost) must be 0.
+        // Bit 0 (line_in) must be 0, not set by setMicTipRing.
         QCOMPARE(int(buf[50] & 0x01), 0);
-        QCOMPARE(int(buf[50] & 0x02), 0);
+        // Bit 1 (mic_boost) must be 0x02. Default mic_boost=true (Thetis
+        // console.cs:13237 [v2.10.3.13+501e3f51] private bool mic_boost = true)
+        // is preserved by setMicTipRing.
+        QCOMPARE(int(buf[50] & 0x02), 0x02);
     }
 
-    // ── 6. Bits 4,6-7 of byte 50 unaffected by setMicTipRing; bit 5 is G.6 default ─
-    // After G.6: bit 5 (0x20) SET by default (m_micXlr=true → XLR selected on wire).
-    // setMicTipRing must not change bit 5 (G.6 XLR), bit 4 (G.4 mic_bias), or bits 6-7.
-    // Only bit 3 (mic_trs) changes; bits 4,6,7 (0xD0) must remain 0.
+    // ── 6. Bits 4-7 of byte 50 unaffected by setMicTipRing; defaults preserved ─
+    // Post Task 10: bit 5 (0x20) CLEAR by default (m_micXlr=false → 3.5 mm
+    //   jack selected on wire; matches Thetis Saturn user-visible default).
+    // setMicTipRing must not change bit 5 (XLR), bit 4 (mic_bias), or bits 6-7.
+    // Only bit 3 (mic_trs) changes; bits 4,5,6,7 (0xF0) must remain 0.
     // Source: deskhpsdr/src/new_protocol.c:1492-1502 [@120188f]
     void byte50UpperBits_unaffectedByMicTipRing() {
         P2RadioConnection conn;
         conn.setMicTipRing(false);
         quint8 buf[60] = {};
         conn.composeCmdTxForTest(buf);
-        // After G.6: bit 5 (0x20) is on by default (XLR selected default).
-        // Bits 4,6,7 (0xD0) must be 0 — not set by setMicTipRing or G.6 defaults.
-        QCOMPARE(int(buf[50] & 0xD0), 0);
-        // Bit 5 (mic_xlr, XLR selected by default) must be set.
-        QCOMPARE(int(buf[50] & 0x20), 0x20);
+        // Post Task 10: bit 5 (0x20) is clear by default (3.5 mm jack default).
+        // Bits 4,5,6,7 (0xF0) must be 0, not set by setMicTipRing or defaults.
+        QCOMPARE(int(buf[50] & 0xF0), 0);
+        // Bit 5 (mic_xlr, default false → 3.5 mm jack) must be clear.
+        QCOMPARE(int(buf[50] & 0x20), 0);
     }
 
     // ── 7. Idempotent: setMicTipRing(false) twice → bit remains 1 ────────────

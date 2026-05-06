@@ -89,17 +89,21 @@ private slots:
     }
 
     // ── 5. No spillover into other C2 bits (bits 7, 5..2 stay 0) ─────────
-    // Only bit 1 (line_in) and bit 6 (Apollo default) should be set.
-    // Bits 7, 5, 4, 3, 2 and 0 (mic_boost) are all 0 in default state.
-    // Source: Thetis networkproto1.c:581 [v2.10.3.13]
+    // Bit 0 (mic_boost), bit 1 (line_in) and bit 6 (Apollo default) may be set.
+    // Bits 7, 5, 4, 3, 2 are all 0 in default state.
+    // Post Task 4: bit 0 (mic_boost) defaults SET. m_micBoost=true matches
+    // Thetis console.cs:13237 [v2.10.3.13+501e3f51] private bool mic_boost = true.
+    // Source: Thetis networkproto1.c:581 [v2.10.3.13+501e3f51]
     void setLineInTrue_otherC2BitsUnchanged() {
         P1RadioConnection conn;
         conn.setLineIn(true);
 
         const QByteArray bank10 = conn.captureBank10ForTest();
-        // Bits 7, 5..2, 0 must all be 0.  Only bits 1 and 6 may be set.
-        // Mask = 0xFF & ~0x42 = 0xBD → all other bits must be zero.
-        QCOMPARE(int(quint8(bank10[2]) & 0xBD), 0);
+        // Bits 7, 5..2 must all be 0.  Only bits 0 (mic_boost), 1 (line_in)
+        // and 6 (Apollo default) may be set.
+        // Mask = 0xFF & ~0x42 = 0xBD covers bit 0 (mic_boost).
+        // Post Task 4 (mic_boost default true): bit 0 = 1, masked value = 0x01.
+        QCOMPARE(int(quint8(bank10[2]) & 0xBD), 0x01);
     }
 
     // ── 6. Bank 10 C0 address must be 0x12 ───────────────────────────────
@@ -202,18 +206,21 @@ private slots:
     // ── 14. setLineIn(true) does NOT touch C2 bit 0 (mic_boost) ──────────
     // Cross-bit guard: line_in (bit 1 = 0x02) must not collide with
     // mic_boost (bit 0 = 0x01). Both bits are independent.
-    // Source: Thetis networkproto1.c:581 [v2.10.3.13]
+    // Post Task 4: mic_boost defaults true (Thetis console.cs:13237
+    //   [v2.10.3.13+501e3f51] private bool mic_boost = true), so bit 0 = 1
+    //   in the default state. setLineIn must preserve that bit.
+    // Source: Thetis networkproto1.c:581 [v2.10.3.13+501e3f51]
     //   C2 = ((prn->mic.mic_boost & 1) | ((prn->mic.line_in & 1) << 1) | ...)
     void setLineInTrue_doesNotTouchMicBoostBit() {
         P1RadioConnection conn;
-        // Only set line_in — mic_boost must remain 0.
+        // Only set line_in. mic_boost must remain at its default (1).
         conn.setLineIn(true);
 
         const QByteArray bank10 = conn.captureBank10ForTest();
         // Bit 1 (line_in) must be 1.
         QCOMPARE(int(quint8(bank10[2]) & 0x02), 0x02);
-        // Bit 0 (mic_boost) must be 0 — not set by setLineIn.
-        QCOMPARE(int(quint8(bank10[2]) & 0x01), 0);
+        // Bit 0 (mic_boost) must be 1, default mic_boost=true is preserved.
+        QCOMPARE(int(quint8(bank10[2]) & 0x01), 0x01);
     }
 };
 
