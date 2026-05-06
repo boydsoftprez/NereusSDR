@@ -3540,6 +3540,16 @@ target_compile_definitions(tst_radio_model_mic_ptt_wire PRIVATE NEREUS_BUILD_TES
 nereus_add_test(tst_radio_connection_set_line_in_boost_db)
 target_compile_definitions(tst_radio_connection_set_line_in_boost_db PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-3a-iii Task 16: RadioModel mic-jack wire ──────────────────────
+# 7 tests verify RadioModel::connectMicJackSignals wires every TransmitModel
+# mic-jack signal through to its RadioConnection counterpart over a queued
+# connection AND primes the connection with the model's current state at
+# attach time.  Mirrors the connectMicPttDisabledSignal pattern from issue
+# #182's PR #193, applied across all six remaining mic-jack signals.
+# Spec coverage: docs/architecture/radio-mic-input-thetis-parity.md §4.6.
+nereus_add_test(tst_radio_model_mic_jack_wire)
+target_compile_definitions(tst_radio_model_mic_jack_wire PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3M-1b Task G.6: P1 mic_xlr storage-only ──────────────────────────
 # 8 tests verify that P1RadioConnection::setMicXlr() is STORAGE-ONLY.
 # Saturn G2 P2-only feature — P1 hardware has no XLR jack. No wire emission.

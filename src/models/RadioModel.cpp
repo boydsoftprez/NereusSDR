@@ -5358,15 +5358,72 @@ void RadioModel::connectMicPttDisabledSignal()
 }
 
 // Mic-jack signal wiring: 6 queued connects + 6 primes. Mirrors
-// connectMicPttDisabledSignal pattern from issue #182.  Body filled in by
-// the next commit; this stub establishes the seam so the test seam
-// (wireMicJackForTest()) exists at link time.
+// connectMicPttDisabledSignal pattern from issue #182.
+//
+// Each TransmitModel mic-jack signal is wired to its RadioConnection
+// counterpart through Qt::QueuedConnection (m_connection lives on a worker
+// thread in production), then primed via QMetaObject::invokeMethod so a
+// fresh connect honours the persisted user state.
+//
+// Spec coverage: docs/architecture/radio-mic-input-thetis-parity.md §4.6.
+//
+// The lineInBoost signal carries a continuous dB value; the connection's
+// virtual setLineInBoost(double) base impl maps it to the discrete 5-bit
+// line_in_gain field via the Thetis 32-entry table.  See
+// Thetis console.cs:40827-40859 [v2.10.3.13+501e3f51] MakeLineInList()
+// + SetMicGain() (ported in Task 1 of this epic).
 void RadioModel::connectMicJackSignals()
 {
     if (!m_connection) {
         return;
     }
-    // Body: 6 connect + 6 prime calls land in the next commit.
+
+    // 6 queued connects.
+    QObject::connect(&m_transmitModel, &TransmitModel::micBoostChanged,
+                     m_connection, &RadioConnection::setMicBoost,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::lineInChanged,
+                     m_connection, &RadioConnection::setLineIn,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::micTipRingChanged,
+                     m_connection, &RadioConnection::setMicTipRing,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::micBiasChanged,
+                     m_connection, &RadioConnection::setMicBias,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::micXlrChanged,
+                     m_connection, &RadioConnection::setMicXlr,
+                     Qt::QueuedConnection);
+    QObject::connect(&m_transmitModel, &TransmitModel::lineInBoostChanged,
+                     m_connection, &RadioConnection::setLineInBoost,
+                     Qt::QueuedConnection);
+
+    // 6 primes via invokeMethod so the connection thread sees the current
+    // model value at attach time.  Pattern matches connectMicPttDisabledSignal.
+    QMetaObject::invokeMethod(m_connection,
+        [conn = m_connection, v = m_transmitModel.micBoost()]() {
+            conn->setMicBoost(v);
+        }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_connection,
+        [conn = m_connection, v = m_transmitModel.lineIn()]() {
+            conn->setLineIn(v);
+        }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_connection,
+        [conn = m_connection, v = m_transmitModel.micTipRing()]() {
+            conn->setMicTipRing(v);
+        }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_connection,
+        [conn = m_connection, v = m_transmitModel.micBias()]() {
+            conn->setMicBias(v);
+        }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_connection,
+        [conn = m_connection, v = m_transmitModel.micXlr()]() {
+            conn->setMicXlr(v);
+        }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_connection,
+        [conn = m_connection, v = m_transmitModel.lineInBoost()]() {
+            conn->setLineInBoost(v);
+        }, Qt::QueuedConnection);
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.
