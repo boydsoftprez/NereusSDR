@@ -1169,19 +1169,49 @@ void MoxController::primeWdspState()
 // ---------------------------------------------------------------------------
 // onMicPttFromRadio — MIC PTT from radio hardware.
 //
-// Porting from Thetis Project Files/Source/Console/console.cs [v2.10.3.13]:
-//   PollPTT: bool mic_ptt = (dotdashptt & 0x01) != 0; // PTT from radio
-//   _current_ptt_mode = PTTMode.MIC;  console.cs:25492 [v2.10.3.13]
-//   chkMOX.Checked = true;            console.cs:25494 [v2.10.3.13]
+// Porting from Thetis Project Files/Source/Console/console.cs:25480-25495
+// [v2.10.3.13+501e3f51] — original C# logic (PollPTT mic_ptt mode-gate):
+//   if ((tx_mode == DSPMode.LSB ||
+//        tx_mode == DSPMode.USB ||
+//        tx_mode == DSPMode.DSB ||
+//        tx_mode == DSPMode.AM  ||
+//        tx_mode == DSPMode.SAM ||
+//        tx_mode == DSPMode.DIGU ||
+//        tx_mode == DSPMode.DIGL ||
+//        tx_mode == DSPMode.FM  ||
+//        _all_mode_mic_ptt) &&
+//       mic_ptt &&
+//       _current_ptt_mode != PTTMode.CW)
+//   {
+//       _current_ptt_mode = PTTMode.MIC;
+//       chkMOX.Checked = true;
+//   }
 //
-// H.5 will extract mic_ptt from the P1/P2 status frame and call this slot.
-// Wiring deferred to H.5; this slot establishes the API.
+// Voice-family disjunction: mic_ptt always fires in the 8 voice modes
+// (LSB, USB, DSB, AM, SAM, DIGU, DIGL, FM) regardless of the flag.
+// Non-voice modes (CWL, CWU, SPEC, DRM): mic_ptt is suppressed unless
+// AllModeMicPTT is true.
+//
+// CW dispatch in non-voice modes (mic_ptt -> PttMode::CW per
+// console.cs:25473-25478 [v2.10.3.13+501e3f51]) is deferred to 3M-2; the
+// gate here leaves that path open by suppressing the mic_ptt call so 3M-2
+// can substitute its own setPttMode(PttMode::CW) branch.
+//
+// The Thetis "_current_ptt_mode != PTTMode.CW" guard prevents a CW-keyer-
+// originated PTT from being overwritten by a simultaneous mic_ptt; that
+// guard is N/A in 3M-1b because no CW source exists yet (onCwPtt rejects).
 // ---------------------------------------------------------------------------
 void MoxController::onMicPttFromRadio(bool pressed)
 {
     if (pressed) {
-        // Mic PTT pressed: claim MOX, set PttMode::Mic.
-        // From Thetis console.cs:25492-25494 [v2.10.3.13]:
+        // Voice-family disjunction (console.cs:25480-25488 [v2.10.3.13+501e3f51]).
+        // Suppress mic_ptt outside voice modes unless AllModeMicPTT is set.
+        const bool voice = isVoiceMode(m_currentMode);
+        if (!voice && !m_allModeMicPTT) {
+            return;
+        }
+
+        // From Thetis console.cs:25492-25494 [v2.10.3.13+501e3f51]:
         //   _current_ptt_mode = PTTMode.MIC; chkMOX.Checked = true;
         // PttMode set BEFORE setMox(true) per the dispatch pattern.
         setPttMode(PttMode::Mic);
@@ -1189,7 +1219,7 @@ void MoxController::onMicPttFromRadio(bool pressed)
     } else {
         // Mic PTT released: only drop MOX if THIS source engaged it.
         // RadioConnection::micPttFromRadio fires unconditionally on every
-        // P1/P2 status frame (~50–100 Hz); without this source-arbitration
+        // P1/P2 status frame (~50-100 Hz); without this source-arbitration
         // guard the constant mic_ptt=0 stream from a radio whose mic
         // isn't pressed would un-key MOX whenever the user clicked the
         // MOX button (PttMode::Manual) or TUN, or any other PTT source
