@@ -5057,6 +5057,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // so the radio sees every UI flip.  NereusSDR mirrors that via a queued
     // signal/slot bind here, and primes once below.
     connectMicPttDisabledSignal();
+    connectMicJackSignals();
 
     // ── Task 2.5 of P1 full-parity epic: pureSig → setPuresignalRun ─────────
     // Wire the user PureSignal-enable toggle to the wire-bit setter added in
@@ -5354,6 +5355,18 @@ void RadioModel::connectMicPttDisabledSignal()
                                              d = m_transmitModel.micPttDisabled()]() {
         conn->setMicPTTDisabled(d);
     }, Qt::QueuedConnection);
+}
+
+// Mic-jack signal wiring: 6 queued connects + 6 primes. Mirrors
+// connectMicPttDisabledSignal pattern from issue #182.  Body filled in by
+// the next commit; this stub establishes the seam so the test seam
+// (wireMicJackForTest()) exists at link time.
+void RadioModel::connectMicJackSignals()
+{
+    if (!m_connection) {
+        return;
+    }
+    // Body: 6 connect + 6 prime calls land in the next commit.
 }
 
 // Wire active slice signals to WDSP channel and radio hardware.

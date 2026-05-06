@@ -647,6 +647,10 @@ public:
     // tst_radio_model_mic_ptt_wire can verify the signal/slot bind + prime
     // path without spinning up the full wireConnectionSignals pipeline.
     void wireMicPttDisabledForTest() { connectMicPttDisabledSignal(); }
+    // Test seam — mirrors wireMicPttDisabledForTest. Lets unit tests
+    // exercise the mic-jack signal pipeline without spinning up the full
+    // wireConnectionSignals DSP-thread setup.
+    void wireMicJackForTest() { connectMicJackSignals(); }
     void setLastBandForTest(NereusSDR::Band b) {
         const bool cross = (b != m_lastBand);
         m_lastBand = b;
@@ -1440,6 +1444,11 @@ private:
     // in isolation by tst_radio_model_mic_ptt_wire without needing to spin
     // up the full DSP-thread pipeline that wireConnectionSignals starts.
     void connectMicPttDisabledSignal();
+
+    // Wires every TransmitModel mic-jack signal to its RadioConnection
+    // counterpart through queued connections, then primes each one with
+    // the current model value.  Mirrors connectMicPttDisabledSignal.
+    void connectMicJackSignals();
 
     // Issue #177 — deferred completion of the TUN-off path.
     //
