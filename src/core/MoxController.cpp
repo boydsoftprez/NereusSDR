@@ -117,7 +117,6 @@
 #include "core/LogCategories.h"
 
 #include <algorithm>
-
 #include <cmath>
 
 namespace NereusSDR {
@@ -285,6 +284,35 @@ bool MoxController::isVoiceMode(DSPMode mode) const noexcept
 void MoxController::setAllModeMicPTT(bool on)
 {
     m_allModeMicPTT = on;
+}
+
+// ---------------------------------------------------------------------------
+// setPttOutDelayMs — production slot for the user-configurable ptt_out_delay
+// timer interval (radio-mic-input Task 18).
+//
+// Porting from Thetis Project Files/Source/Console/console.cs:19694
+// [v2.10.3.13+501e3f51] — original C# logic:
+//   private int ptt_out_delay = 20;
+//   public int PTTOutDelay
+//   {
+//       get { return ptt_out_delay; }
+//       set { ptt_out_delay = value; }
+//   }
+//
+// Distinct from the test-only setTimerIntervals(...) helper: only updates
+// the ptt_out timer, leaves rf/mox/space/keyUp/breakIn untouched.
+//
+// Clamps to [0, 500] ms — matches the udGenPTTOutDelay designer range
+// (setup.designer.cs:9029-9226 [v2.10.3.13+501e3f51]) and protects the
+// QTimer against accidental negatives from malformed AppSettings.
+//
+// No emit/no signal: the QTimer interval is the single source of truth;
+// the getter pttOutDelayMs() reads it back directly.
+// ---------------------------------------------------------------------------
+void MoxController::setPttOutDelayMs(int ms)
+{
+    const int clamped = std::clamp(ms, 0, 500);
+    m_pttOutDelayTimer.setInterval(clamped);
 }
 
 // ---------------------------------------------------------------------------

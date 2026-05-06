@@ -238,6 +238,14 @@ public:
     // From Thetis console.cs:12022 [v2.10.3.13+501e3f51]:
     //   private bool _all_mode_mic_ptt = false;
     bool     allModeMicPTT() const noexcept { return m_allModeMicPTT; }
+
+    // pttOutDelayMs: current ptt_out_delay timer interval (ms).
+    //
+    // Reads directly from the QTimer so the production slot
+    // setPttOutDelayMs(int) and the test-only setTimerIntervals(...) helper
+    // share a single source of truth. Default 20 ms from Thetis
+    // console.cs:19694 [v2.10.3.13+501e3f51]: private int ptt_out_delay = 20;
+    int      pttOutDelayMs() const noexcept { return m_pttOutDelayTimer.interval(); }
     // isManualMox: true while MOX is engaged via the TUN button.
     //
     // Mirrors Thetis _manual_mox (console.cs:240 [v2.10.3.13]):
@@ -344,6 +352,23 @@ public slots:
     // Wired by RadioModel Task 20:
     //   TransmitModel::allModeMicPTTChanged → MoxController::setAllModeMicPTT
     void setAllModeMicPTT(bool on);
+
+    // setPttOutDelayMs: production slot for the user-configurable
+    // ptt_out_delay timer interval.
+    //
+    // Mirrors Thetis console.cs:19694 [v2.10.3.13+501e3f51]:
+    //   private int ptt_out_delay = 20;
+    // Designer range 0..500 ms (setup.designer.cs:9029-9226
+    // [v2.10.3.13+501e3f51], udGenPTTOutDelay).
+    //
+    // Distinct from the test-only setTimerIntervals(...) helper: this slot
+    // only updates the ptt_out timer, leaving rf/mox/space/keyUp/breakIn
+    // untouched. Out-of-range inputs are clamped to [0, 500] for safety
+    // against malformed AppSettings entries.
+    //
+    // Wired by RadioModel Task 20:
+    //   TransmitModel::pttOutDelayMsChanged → MoxController::setPttOutDelayMs
+    void setPttOutDelayMs(int ms);
 
     // setVoxEnabled: engage/disengage VOX with voice-family mode-gate.
     //

@@ -2404,6 +2404,17 @@ target_compile_definitions(tst_mox_controller_mic_ptt_extraction PRIVATE NEREUS_
 # onMicPttFromRadio (CW-without-flag, CW-with-flag, voice-unconditional).
 nereus_add_test(tst_mox_controller_all_mode_mic_ptt)
 
+# ── radio-mic-input Task 18: MoxController::setPttOutDelayMs production slot ─
+# Verifies the production slot that updates only the ptt_out timer interval
+# (distinct from the test-only setTimerIntervals(...) helper):
+#   - default pttOutDelayMs() is 20 (matches Thetis console.cs:19694
+#     [v2.10.3.13+501e3f51] private int ptt_out_delay = 20);
+#   - in-range value (75) round-trips through the getter;
+#   - below-range (-5) clamps to 0;
+#   - above-range (800) clamps to 500 (matches udGenPTTOutDelay designer
+#     range from setup.designer.cs:9029-9226 [v2.10.3.13+501e3f51]).
+nereus_add_test(tst_mox_controller_set_ptt_out_delay_ms)
+
 # ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
 # Verifies:
 #   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:
