@@ -81,6 +81,10 @@ void OcMatrix::setPin(Band band, int pin, bool tx, bool enabled)
         if (slot == enabled) { return; }
         slot = enabled;
     }
+    // Issue #191: persist immediately. The HF / SWL OC tab toggle handlers
+    // call setPin() directly and don't follow up with save(); without this,
+    // user edits never reach AppSettings and are lost on app restart.
+    save();
     emit changed();
 }
 
@@ -116,6 +120,10 @@ void OcMatrix::setPinAction(int pin, TXPinAction action)
         if (m_pinActions[pin] == action) { return; }
         m_pinActions[pin] = action;
     }
+    // Issue #191: persist immediately. The HF tab pin-action lambda calls
+    // setPinAction() directly without an explicit save(); without this,
+    // user edits never reach AppSettings and are lost on app restart.
+    save();
     emit changed();
 }
 
@@ -229,6 +237,9 @@ void OcMatrix::resetDefaults()
         }
         m_pinActions.fill(TXPinAction::MoxTuneTwoTone);
     }
+    // Issue #191: persist immediately. Reset OC defaults button calls
+    // resetDefaults() with no follow-up save().
+    save();
     emit changed();
 }
 
