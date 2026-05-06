@@ -625,17 +625,65 @@ void AudioTxInputPage::updatePcMicGroupVisibility(MicSource source)
 // normal use; these groups are also explicitly hidden in that case.
 // ---------------------------------------------------------------------------
 
+/*static*/ bool AudioTxInputPage::boardShowsOrionMicJackPanel(HPSDRHW hw)
+{
+    // From Thetis setup.cs:19830-20405 [v2.10.3.13+501e3f51], the
+    // pnlGeneralHardwareORION.Enabled bit is true only for the
+    // following HPSDRModel values (mapped to HPSDRHW via boardForModel):
+    //   ANAN200D     -> Orion       (true)
+    //   ANAN7000D    -> OrionMKII   (true)
+    //   ANAN8000D    -> OrionMKII   (true)
+    //   ANVELINAPRO3 -> OrionMKII   (true)
+    //   ANAN_G2      -> Saturn      (true)  // added G8NJJ
+    //   ANAN_G2_1K   -> Saturn      (true)  // added G8NJJ
+    //   REDPITAYA    -> OrionMKII   (false) //DH1KLM [original tag from
+    //                                        setup.cs:20355 — REDPITAYA case
+    //                                        sets pnlGeneralHardwareORION
+    //                                        .Enabled=false at :20360]
+    //
+    // SaturnMKII is the NereusSDR-original Saturn board-revision slot;
+    // grouped with Saturn for mic-jack purposes per spec §4.5.
+    //
+    // All other boards (Hermes / HermesII / Angelia / Atlas / HermesLite /
+    // HermesLiteRxOnly / Andromeda / Unknown) fall through to the
+    // default-false branch.
+    switch (hw) {
+        case HPSDRHW::Orion:
+        case HPSDRHW::OrionMKII:
+        case HPSDRHW::Saturn:
+        case HPSDRHW::SaturnMKII:
+            return true;
+        case HPSDRHW::Atlas:
+        case HPSDRHW::Hermes:
+        case HPSDRHW::HermesII:
+        case HPSDRHW::Angelia:
+        case HPSDRHW::HermesLite:
+        case HPSDRHW::HermesLiteRxOnly:
+        case HPSDRHW::Andromeda:
+        case HPSDRHW::Unknown:
+            return false;
+    }
+    return false;
+}
+
 void AudioTxInputPage::updateRadioMicGroupVisibility(MicSource source, HPSDRHW hw)
 {
     // Only show a Radio Mic group when Radio Mic is actually selected.
     const bool radioMicActive = (source == MicSource::Radio);
 
+    // Hermes-class mic-jack panel: per Thetis, only the Hermes / HermesII
+    // boards expose the radMicIn / radLineIn radio-button pair on
+    // grpHardwareConfigHermes.  Atlas (HPSDR/Metis) and Angelia have a
+    // different radio-mic UI not yet ported.
     const bool isHermes = (hw == HPSDRHW::Hermes
-                        || hw == HPSDRHW::HermesII
-                        || hw == HPSDRHW::Angelia
-                        || hw == HPSDRHW::Atlas);
-    const bool isOrion  = (hw == HPSDRHW::Orion
-                        || hw == HPSDRHW::OrionMKII);
+                        || hw == HPSDRHW::HermesII);
+
+    // Orion-class mic-jack panel: tighter per-SKU gating that mirrors the
+    // Thetis pnlGeneralHardwareORION.Enabled enable map.
+    const bool isOrion  = boardShowsOrionMicJackPanel(hw);
+
+    // Saturn G2 panel: gated separately per Thetis setup.cs:6181-6189
+    // [v2.10.3.13+501e3f51] (panelSaturnMicInput.Enabled).
     const bool isSaturn = (hw == HPSDRHW::Saturn
                         || hw == HPSDRHW::SaturnMKII);
 

@@ -3700,6 +3700,14 @@ target_compile_definitions(tst_audio_tx_input_mic_gain_mirror PRIVATE NEREUS_BUI
 nereus_add_test(tst_audio_tx_input_mic_gain_min_max)
 
 # =============================================================================
+# radio-mic-input Task 22 — Per-SKU mic-jack panel gating helper
+# =============================================================================
+# Verifies AudioTxInputPage::boardShowsOrionMicJackPanel(HPSDRHW) returns
+# the same Orion-class enable map as Thetis pnlGeneralHardwareORION
+# (setup.cs:19830-20405 [v2.10.3.13+501e3f51]).
+nereus_add_test(tst_audio_tx_input_per_sku_gating)
+
+# =============================================================================
 # Phase 3M-1b Task I.5 — Integration: chk20dbMicBoost → VOX threshold scaling
 # =============================================================================
 # Verifies the full chain:

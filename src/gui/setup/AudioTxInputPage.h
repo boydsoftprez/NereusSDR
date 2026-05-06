@@ -142,6 +142,20 @@ public:
     QGroupBox* orionRadioMicGroup()  const { return m_orionGroup; }
     QGroupBox* saturnRadioMicGroup() const { return m_saturnGroup; }
 
+    /// Per-SKU enable map for the Orion-style mic-jack panel
+    /// (radio-mic-input Task 22).
+    ///
+    /// Mirrors Thetis pnlGeneralHardwareORION.Enabled in
+    /// setup.cs:19830-20405 [v2.10.3.13+501e3f51] + panelSaturnMicInput.Enabled
+    /// in setup.cs:6181-6189 [v2.10.3.13+501e3f51].  Returns true only for
+    /// Orion / OrionMKII / Saturn / SaturnMKII.  Hermes-class boards
+    /// (Hermes, HermesII) keep the separate Hermes mic-jack group; Atlas /
+    /// Angelia / HermesLite / HermesLiteRxOnly / Andromeda / Unknown do
+    /// NOT show any Orion-style panel (pnlGeneralHardwareORION.Enabled =
+    /// false in the Thetis switch, or default-false for boards not in
+    /// the switch).
+    static bool boardShowsOrionMicJackPanel(HPSDRHW hw);
+
 private slots:
     void onMicSourceButtonToggled(int id, bool checked);
     void onModelMicSourceChanged(MicSource source);
