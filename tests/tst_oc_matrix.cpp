@@ -112,6 +112,75 @@ private slots:
         m.setPinAction(0, OcMatrix::TXPinAction::Mox);
         QCOMPARE(spy.count(), 1);
     }
+
+    // Issue #191 regression: setPin must persist immediately (no explicit
+    // save() needed). The HF/SWL OC tab toggle handlers only call
+    // setPin(); they don't follow up with save(). Before the fix, user
+    // edits never reached AppSettings and were lost on app restart.
+    void setPin_persists_without_explicit_save() {
+        const QString mac = QStringLiteral("11:22:33:44:55:66");
+
+        OcMatrix m1;
+        m1.setMacAddress(mac);
+        m1.setPin(Band::Band20m, 3, /*tx=*/false, true);
+        m1.setPin(Band::Band40m, 1, /*tx=*/true,  true);
+        // No m1.save() — mimics the OcOutputsHfTab / OcOutputsSwlTab
+        // checkbox toggle paths.
+
+        OcMatrix m2;
+        m2.setMacAddress(mac);
+        m2.load();
+        QVERIFY(m2.pinEnabled(Band::Band20m, 3, /*tx=*/false));
+        QVERIFY(m2.pinEnabled(Band::Band40m, 1, /*tx=*/true));
+        QVERIFY(!m2.pinEnabled(Band::Band20m, 3, /*tx=*/true));
+    }
+
+    // Issue #191 regression: setPinAction must persist immediately.
+    void setPinAction_persists_without_explicit_save() {
+        const QString mac = QStringLiteral("22:33:44:55:66:77");
+
+        OcMatrix m1;
+        m1.setMacAddress(mac);
+        m1.setPinAction(2, OcMatrix::TXPinAction::Mox);
+        m1.setPinAction(5, OcMatrix::TXPinAction::TuneTwoTone);
+        // No explicit save() — mimics the HF tab pin-action lambda.
+
+        OcMatrix m2;
+        m2.setMacAddress(mac);
+        m2.load();
+        QCOMPARE(m2.pinAction(2), OcMatrix::TXPinAction::Mox);
+        QCOMPARE(m2.pinAction(5), OcMatrix::TXPinAction::TuneTwoTone);
+    }
+
+    // Issue #191 regression: resetDefaults must persist immediately so
+    // that the user-visible "Reset OC defaults" button survives restart.
+    // Establish a non-default baseline via an explicit save() first, so
+    // that the post-reset cleared state is observably different from the
+    // pre-reset baseline (otherwise an unpersisted reset looks identical
+    // to the baseline-default-everywhere case and the test passes
+    // coincidentally).
+    void resetDefaults_persists_without_explicit_save() {
+        const QString mac = QStringLiteral("33:44:55:66:77:88");
+
+        OcMatrix m1;
+        m1.setMacAddress(mac);
+        m1.setPin(Band::Band20m, 0, /*tx=*/false, true);
+        m1.setPinAction(0, OcMatrix::TXPinAction::Mox);
+        m1.save();  // explicit save → baseline is durable
+
+        OcMatrix m2;
+        m2.setMacAddress(mac);
+        m2.load();
+        QVERIFY(m2.pinEnabled(Band::Band20m, 0, /*tx=*/false));  // baseline visible
+        m2.resetDefaults();
+        // No explicit save() — mimics OcOutputsHfTab::onResetClicked().
+
+        OcMatrix m3;
+        m3.setMacAddress(mac);
+        m3.load();
+        QVERIFY(!m3.pinEnabled(Band::Band20m, 0, /*tx=*/false));
+        QCOMPARE(m3.pinAction(0), OcMatrix::TXPinAction::MoxTuneTwoTone);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestOcMatrix)
