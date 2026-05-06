@@ -3212,17 +3212,12 @@ nereus_add_test(tst_transmit_model_mic_source_preconnect)
 nereus_add_test(tst_transmit_model_vax_toggle)
 
 # ── Phase 3M-1b Task F.4: RadioConnection::micFrameDecoded signal ─────────────
-# Verifies the micFrameDecoded Qt signal added to the RadioConnection base class.
-# Uses TestRadioConnection minimal concrete subclass (stubs all pure-virtuals).
-# Cases (4):
-#   micFrameDecoded_signalExists        — QSignalSpy attaches successfully
-#   micFrameDecoded_emit_capturedBySpy  — emitMicFrame → spy.count() == 1
-#   micFrameDecoded_signalCarriesFrameCount — args.at(1) int frames matches n
-#   micFrameDecoded_multipleEmissions   — spy accumulates across 3 emits
-#
-# DirectConnection-only contract documented in RadioConnection.h.
-# Pre-code review §6.4.
-nereus_add_test(tst_radio_connection_mic_frame_signal)
+# REMOVED in radio-mic-input Thetis parity Task 14 (2026-05-05).  The
+# micFrameDecoded signal was never emitted by P1 / P2 production code; its
+# only consumer (RadioMicSource) was deleted in Task 13, and the signal
+# itself is gone in Task 14.  Mic frames now flow exclusively through
+# TxMicSource::inbound (covered by tst_tx_mic_source +
+# tst_p1_mic_decimation + tst_tx_mic_router_selector).
 
 # ── Phase 3M-1b Task F.2: RadioMicSource ─────────────────────────────────────
 # REMOVED in radio-mic-input Thetis parity Task 13 (2026-05-05).  RadioMicSource

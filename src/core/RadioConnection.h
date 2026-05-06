@@ -490,27 +490,12 @@ signals:
     // Emitted when mic samples are available.
     void micDataReceived(const QVector<float>& samples);
 
-    /// Decoded mic-frame audio from the radio's mic-jack input.
-    ///
-    /// Emitted by P1RadioConnection on EP2 mic-byte zone arrival (Phase G);
-    /// emitted by P2RadioConnection on port-1026 packet arrival (Phase G).
-    /// Carries float-converted mic samples + frame count.
-    ///
-    /// **DirectConnection ONLY.** The pointer is only valid during the
-    /// synchronous slot dispatch — Qt signals cannot safely queue raw
-    /// pointers across threads. Subscribers (RadioMicSource in F.2) MUST
-    /// connect with Qt::DirectConnection and immediately copy the samples
-    /// into their own lock-free SPSC ring before returning.
-    ///
-    /// This matches the D.5 sip1OutputReady contract in TxChannel: the same
-    /// raw-pointer + DirectConnection pattern is used wherever the audio
-    /// thread passes data across a signal boundary.
-    ///
-    /// Sample format: float32 mono at the radio's mic sample rate
-    /// (typically 48 kHz on HPSDR family).
-    ///
-    /// Plan: 3M-1b F.4. Pre-code review §6.4.
-    void micFrameDecoded(const float* samples, int frames);
+    // micFrameDecoded — REMOVED in radio-mic-input Thetis parity Task 14
+    // (2026-05-05).  The signal was declared in 3M-1b F.4 to feed the
+    // RadioMicSource subscriber, but no production code path emitted it
+    // (P1 / P2 always pushed mic frames through TxMicSource::inbound
+    // directly).  RadioMicSource was the only consumer and was deleted in
+    // Task 13.  Mic frames now flow exclusively through TxMicSource.
 
     // --- Meters ---
     void meterDataReceived(float forwardPower, float reversePower,
