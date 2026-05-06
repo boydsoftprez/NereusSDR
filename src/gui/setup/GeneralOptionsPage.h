@@ -150,6 +150,13 @@ private:
     QCheckBox* m_chkHideFeedback{nullptr};
     QCheckBox* m_chkSwapRedBlue{nullptr};
 
+    // radio-mic-input Task 23 — Disable PTT / All-Mode Mic PTT / PTT Out Delay.
+    // From Thetis setup.designer.cs:9217-9237 + 9176-9204 [v2.10.3.13+501e3f51]
+    // (chkGenAllModeMicPTT, chkGeneralDisablePTT, udGenPTTOutDelay).
+    QCheckBox* m_disablePttCheck{nullptr};
+    QCheckBox* m_allModeMicPttCheck{nullptr};
+    QSpinBox*  m_pttOutDelaySpin{nullptr};
+
     // Step Attenuator group
     QCheckBox* m_chkRx1StepAttEnable{nullptr};
     QSpinBox*  m_spnRx1StepAttValue{nullptr};

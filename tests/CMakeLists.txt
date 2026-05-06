@@ -3708,6 +3708,20 @@ nereus_add_test(tst_audio_tx_input_mic_gain_min_max)
 nereus_add_test(tst_audio_tx_input_per_sku_gating)
 
 # =============================================================================
+# radio-mic-input Task 23 — General Options page: DisablePTT / AllModeMicPTT /
+#                            PTT Out Delay round-trip with TransmitModel
+# =============================================================================
+# Three controls on Setup -> General -> Options bind to TransmitModel.
+# Cites:
+#   setup.cs:6535-6539  [v2.10.3.13+501e3f51] — chkGeneralDisablePTT_CheckedChanged.
+#   setup.cs:12127-12130 [v2.10.3.13+501e3f51] — chkGenAllModeMicPTT_CheckedChanged.
+#   setup.cs:14302-14305 [v2.10.3.13+501e3f51] — udGenPTTOutDelay_ValueChanged.
+#   setup.designer.cs:9176-9204 [v2.10.3.13+501e3f51] — PTT Out Delay 0..500.
+nereus_add_test(tst_general_options_page_disable_ptt)
+nereus_add_test(tst_general_options_page_all_mode_mic_ptt)
+nereus_add_test(tst_general_options_page_ptt_out_delay)
+
+# =============================================================================
 # Phase 3M-1b Task I.5 — Integration: chk20dbMicBoost → VOX threshold scaling
 # =============================================================================
 # Verifies the full chain:

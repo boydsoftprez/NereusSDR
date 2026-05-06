@@ -60,6 +60,7 @@
 #include "GeneralOptionsPage.h"
 #include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
+#include "models/TransmitModel.h"
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/PureSignal.h"
@@ -463,6 +464,78 @@ void GeneralOptionsPage::buildOptionsGroup()
         rateRow->addWidget(m_cpuMeterRateHz);
         rateRow->addStretch();
         vbox->addLayout(rateRow);
+    }
+
+    // radio-mic-input Task 23 controls.
+    // Three new controls bind directly to TransmitModel; persistence is
+    // per-MAC inside TransmitModel::loadFromSettings/persistToSettings.
+    // Per project rule "no source cites in user-visible strings" tooltips
+    // stay plain English; Thetis cites live only in these inline comments.
+
+    if (RadioModel* rm = model()) {
+        TransmitModel& tm = rm->transmitModel();
+
+        // Disable PTT.
+        // From Thetis setup.cs:6535-6539 [v2.10.3.13+501e3f51]
+        //   chkGeneralDisablePTT_CheckedChanged: console.DisablePTT = chkGeneralDisablePTT.Checked
+        // Designer: setup.designer.cs:9228-9237 [v2.10.3.13+501e3f51]
+        //   Text="Disable PTT", tooltip "Disable Push To Talk detection."
+        m_disablePttCheck = new QCheckBox(tr("Disable PTT"), group);
+        m_disablePttCheck->setObjectName(QStringLiteral("disablePttCheck"));
+        m_disablePttCheck->setToolTip(QStringLiteral(
+            "Block all PTT sources from engaging the radio. Mirrors Thetis "
+            "Setup -> General -> Options -> Disable PTT."));
+        m_disablePttCheck->setChecked(tm.disablePTT());
+        connect(m_disablePttCheck, &QCheckBox::toggled,
+                &tm, &TransmitModel::setDisablePTT);
+        connect(&tm, &TransmitModel::disablePTTChanged,
+                m_disablePttCheck, &QCheckBox::setChecked);
+        vbox->addWidget(m_disablePttCheck);
+
+        // All-Mode Mic PTT.
+        // From Thetis setup.cs:12127-12130 [v2.10.3.13+501e3f51]
+        //   chkGenAllModeMicPTT_CheckedChanged: console.AllModeMicPTT = chkGenAllModeMicPTT.Checked
+        // Designer: setup.designer.cs:9217-9226 [v2.10.3.13+501e3f51]
+        //   Text="All Mode Mic PTT", tooltip "If checked, the Mic PTT is no
+        //   longer limited to just voice modes."
+        m_allModeMicPttCheck = new QCheckBox(tr("All-Mode Mic PTT"), group);
+        m_allModeMicPttCheck->setObjectName(QStringLiteral("allModeMicPttCheck"));
+        m_allModeMicPttCheck->setToolTip(QStringLiteral(
+            "Allow mic-jack PTT to drive transmit in non-voice modes (CW etc.). "
+            "Mirrors Thetis Setup -> General -> Options -> All Mode Mic PTT."));
+        m_allModeMicPttCheck->setChecked(tm.allModeMicPTT());
+        connect(m_allModeMicPttCheck, &QCheckBox::toggled,
+                &tm, &TransmitModel::setAllModeMicPTT);
+        connect(&tm, &TransmitModel::allModeMicPTTChanged,
+                m_allModeMicPttCheck, &QCheckBox::setChecked);
+        vbox->addWidget(m_allModeMicPttCheck);
+
+        // PTT Out Delay.
+        // From Thetis setup.cs:14302-14305 [v2.10.3.13+501e3f51]
+        //   udGenPTTOutDelay_ValueChanged: console.PTTOutDelay = (int)udGenPTTOutDelay.Value
+        // Range from setup.designer.cs:9176-9204 [v2.10.3.13+501e3f51]:
+        //   Min=0, Max=500, Increment=1.  Tooltip "Delay between PTT Out
+        //   drops to RX On."
+        auto* pttRow = new QHBoxLayout;
+        auto* pttLabel = new QLabel(tr("PTT Out Delay:"), group);
+        m_pttOutDelaySpin = new QSpinBox(group);
+        m_pttOutDelaySpin->setObjectName(QStringLiteral("pttOutDelaySpin"));
+        m_pttOutDelaySpin->setRange(0, 500);
+        m_pttOutDelaySpin->setSuffix(QStringLiteral(" ms"));
+        m_pttOutDelaySpin->setFixedWidth(80);
+        m_pttOutDelaySpin->setToolTip(QStringLiteral(
+            "Delay between local TX engagement and the rear-panel PTT-OUT "
+            "relay closing. Mirrors Thetis Setup -> General -> Options -> "
+            "PTT Out Delay."));
+        m_pttOutDelaySpin->setValue(tm.pttOutDelayMs());
+        connect(m_pttOutDelaySpin, &QSpinBox::valueChanged,
+                &tm, &TransmitModel::setPttOutDelayMs);
+        connect(&tm, &TransmitModel::pttOutDelayMsChanged,
+                m_pttOutDelaySpin, &QSpinBox::setValue);
+        pttRow->addWidget(pttLabel);
+        pttRow->addWidget(m_pttOutDelaySpin);
+        pttRow->addStretch();
+        vbox->addLayout(pttRow);
     }
 
     contentLayout()->addWidget(group);
