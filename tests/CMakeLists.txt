@@ -3688,6 +3688,18 @@ nereus_add_test(tst_audio_tx_input_mic_gain_mirror)
 target_compile_definitions(tst_audio_tx_input_mic_gain_mirror PRIVATE NEREUS_BUILD_TESTS)
 
 # =============================================================================
+# radio-mic-input Task 21 — MicGainMin/Max spinboxes on AudioTxInputPage
+# =============================================================================
+# Covers:
+#   1.  Min spinbox reflects TransmitModel::micGainMinDb at construction.
+#   2.  Max spinbox reflects TransmitModel::micGainMaxDb at construction.
+#   3.  Min spinbox change pushes back to TransmitModel::micGainMinDb.
+#   4.  Max spinbox change pushes back to TransmitModel::micGainMaxDb.
+#   5.  Slider min/max range tracks persisted bounds.
+# Source: setup.cs:9678-9694 + setup.designer.cs:46808-46866 [v2.10.3.13+501e3f51].
+nereus_add_test(tst_audio_tx_input_mic_gain_min_max)
+
+# =============================================================================
 # Phase 3M-1b Task I.5 — Integration: chk20dbMicBoost → VOX threshold scaling
 # =============================================================================
 # Verifies the full chain:

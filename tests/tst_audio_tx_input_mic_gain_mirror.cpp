@@ -52,18 +52,22 @@ private slots:
         AppSettings::instance().clear();
     }
 
-    // ── 1. Unknown board: slider range = -50..+70 ─────────────────────────────
+    // ── 1. Unknown board: slider range tracks TransmitModel::micGainMin/MaxDb ─
 
     void unknownBoard_sliderRange_fallback()
     {
         // Default RadioModel (no test-cap override) returns Unknown board.
+        // After radio-mic-input Tasks 8/9/21, the slider range is sourced
+        // from the persisted TransmitModel::micGainMinDb / micGainMaxDb
+        // (defaults -40 / +10 per setup.designer.cs:46808-46866
+        // [v2.10.3.13+501e3f51]), not the BoardCapabilities fallback.
         RadioModel model;
         AudioTxInputPage page(&model);
 
         QSlider* slider = page.micGainSlider();
         QVERIFY2(slider != nullptr, "micGainSlider must exist");
-        QCOMPARE(slider->minimum(), -50);
-        QCOMPARE(slider->maximum(), +70);
+        QCOMPARE(slider->minimum(), -40);
+        QCOMPARE(slider->maximum(), +10);
     }
 
     // ── 2. Hermes board: slider range = -40..+10 ──────────────────────────────
@@ -192,7 +196,11 @@ private slots:
     void transmitModel_clampsAboveGlobalMax()
     {
         RadioModel model;
-        // Unknown board → slider max = +70 = kMicGainDbMax.
+        // Unknown board: after radio-mic-input Tasks 8/9/21 the slider
+        // range now follows the persisted TransmitModel::micGainMin/MaxDb
+        // bounds (defaults -40..+10).  TransmitModel::setMicGainDb still
+        // clamps to the global kMicGainDbMin/Max range (-50..+70), but
+        // the QSlider re-clamps to its own [minimum(), maximum()].
         AudioTxInputPage page(&model);
 
         QSlider* slider = page.micGainSlider();
@@ -202,9 +210,11 @@ private slots:
         model.transmitModel().setMicGainDb(+999);
         QApplication::processEvents();
 
-        // TransmitModel clamps to kMicGainDbMax before emitting the signal.
+        // TransmitModel clamps to kMicGainDbMax (+70) before emitting.
         QCOMPARE(model.transmitModel().micGainDb(), TransmitModel::kMicGainDbMax);
-        QCOMPARE(slider->value(), TransmitModel::kMicGainDbMax);
+        // QSlider clamps the +70 to its own maximum (+10 default Max).
+        QCOMPARE(slider->value(), slider->maximum());
+        QCOMPARE(slider->value(), +10);
     }
 
     // ── 10. No feedback loop: model → UI → no re-emission ────────────────────

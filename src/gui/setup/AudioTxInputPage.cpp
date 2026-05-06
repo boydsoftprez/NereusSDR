@@ -470,6 +470,64 @@ void AudioTxInputPage::buildPcMicGroup(QVBoxLayout* parentLayout)
     connect(m_micGainSlider, &QSlider::valueChanged,
             this, &AudioTxInputPage::onMicGainSliderChanged);
 
+    // ── Rows 6-7: Mic Gain Min / Max spinboxes (Task 21) ─────────────────────
+    //
+    // From Thetis setup.cs:9678-9694 [v2.10.3.13+501e3f51] (handlers) +
+    // setup.designer.cs:46808-46866 [v2.10.3.13+501e3f51] (designer ranges):
+    //   udMicGainMin: -96..0  (designer Min=-96, Max=0)
+    //   udMicGainMax:   1..70 (designer Min=1, Max=70)
+    // ValueChanged handler simply assigns console.MicGainMin / MicGainMax;
+    // upstream then propagates to the slider bounds. We mirror that here
+    // by updating m_micGainSlider->setMinimum / setMaximum live so the
+    // user sees the new range immediately.
+    m_micGainMinSpin = new QSpinBox(this);
+    m_micGainMinSpin->setObjectName(QStringLiteral("micGainMinSpin"));
+    m_micGainMinSpin->setRange(-96, 0);
+    if (model()) {
+        m_micGainMinSpin->setValue(model()->transmitModel().micGainMinDb());
+    }
+    grpLayout->addRow(QStringLiteral("Mic Gain Min (dB):"), m_micGainMinSpin);
+    connect(m_micGainMinSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+                if (model()) {
+                    model()->transmitModel().setMicGainMinDb(v);
+                }
+                if (m_micGainSlider) { m_micGainSlider->setMinimum(v); }
+            });
+
+    m_micGainMaxSpin = new QSpinBox(this);
+    m_micGainMaxSpin->setObjectName(QStringLiteral("micGainMaxSpin"));
+    m_micGainMaxSpin->setRange(1, 70);
+    if (model()) {
+        m_micGainMaxSpin->setValue(model()->transmitModel().micGainMaxDb());
+    }
+    grpLayout->addRow(QStringLiteral("Mic Gain Max (dB):"), m_micGainMaxSpin);
+    connect(m_micGainMaxSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+                if (model()) {
+                    model()->transmitModel().setMicGainMaxDb(v);
+                }
+                if (m_micGainSlider) { m_micGainSlider->setMaximum(v); }
+            });
+
+    // Reverse: model -> spin (handles Setup-page reopen / external changes
+    // such as MIC profile load).
+    if (model()) {
+        TransmitModel* tx = &model()->transmitModel();
+        connect(tx, &TransmitModel::micGainMinDbChanged,
+                m_micGainMinSpin, &QSpinBox::setValue);
+        connect(tx, &TransmitModel::micGainMaxDbChanged,
+                m_micGainMaxSpin, &QSpinBox::setValue);
+
+        // Initial slider range to match the persisted bounds. This overrides
+        // the default per-board range from BoardCapabilities so a user-edited
+        // Min/Max persisted in AppSettings is honoured on re-open.
+        if (m_micGainSlider) {
+            m_micGainSlider->setMinimum(tx->micGainMinDb());
+            m_micGainSlider->setMaximum(tx->micGainMaxDb());
+        }
+    }
+
     parentLayout->addWidget(m_pcMicGroup);
 }
 

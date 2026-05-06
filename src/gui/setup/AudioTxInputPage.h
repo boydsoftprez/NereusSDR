@@ -77,6 +77,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTimer>
 
 namespace NereusSDR {
@@ -231,6 +232,12 @@ private:
     // Row 5: Mic Gain
     QSlider*     m_micGainSlider{nullptr};
     QLabel*      m_micGainLabel{nullptr};
+
+    // Rows 6-7: Mic Gain Min / Max spinboxes (radio-mic-input Task 21).
+    // Mirror Thetis udMicGainMin / udMicGainMax (setup.cs:9678-9694
+    // [v2.10.3.13+501e3f51]); editing these updates the slider range live.
+    QSpinBox*    m_micGainMinSpin{nullptr};
+    QSpinBox*    m_micGainMaxSpin{nullptr};
 
     // Guard flag for both source-selector, mic-gain and radio-mic two-way sync.
     bool m_updatingFromModel{false};
