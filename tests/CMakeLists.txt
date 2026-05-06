@@ -2415,6 +2415,18 @@ nereus_add_test(tst_mox_controller_all_mode_mic_ptt)
 #     range from setup.designer.cs:9029-9226 [v2.10.3.13+501e3f51]).
 nereus_add_test(tst_mox_controller_set_ptt_out_delay_ms)
 
+# ── radio-mic-input Task 20: RadioModel TM → MoxController wiring ────────────
+# Verifies the TransmitModel → MoxController wiring for both AllModeMicPTT
+# and PTT_Out_Delay:
+#   - TransmitModel::setPttOutDelayMs(123) reaches MoxController::pttOutDelayMs();
+#   - TransmitModel::setAllModeMicPTT(true/false) reaches MoxController::
+#     allModeMicPTT();
+#   - Default values match Thetis (20 ms; AllModeMicPTT=false);
+#   - Out-of-range pttOutDelayMs (10000) clamps to 500 in BOTH layers
+#     (TransmitModel and MoxController) and the wired signal carries the
+#     model-clamped value.
+nereus_add_test(tst_radio_model_ptt_out_delay)
+
 # ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
 # Verifies:
 #   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:

@@ -821,6 +821,34 @@ RadioModel::RadioModel(QObject* parent)
     // TxChannel setters are wired in connectToRadio() once m_txChannel is
     // live — same reason as txReady / txaFlushed above.
 
+    // ── radio-mic-input Task 20: AllModeMicPTT + PTT_Out_Delay → MoxController ─
+    // Closes the spec §4.7 wiring gap so user-configurable AllModeMicPTT and
+    // PTT_Out_Delay flow from TransmitModel into MoxController. MoxController
+    // shares the main thread with TransmitModel, so the default Qt::AutoConnection
+    // resolves to a direct call — no QueuedConnection required (unlike the
+    // RadioConnection wiring in connectMicJackSignals() which crosses threads).
+    //
+    // Signal chain:
+    //   TransmitModel::allModeMicPTTChanged → MoxController::setAllModeMicPTT
+    //     drives the mode-gate inside onMicPttFromRadio (Task 19).
+    //   TransmitModel::pttOutDelayMsChanged → MoxController::setPttOutDelayMs
+    //     drives the ptt_out timer interval used at the end of the TX→RX walk.
+    //
+    // Source: Thetis console.cs:12022 [v2.10.3.13+501e3f51] (AllModeMicPTT
+    //   default false); console.cs:19694 [v2.10.3.13+501e3f51] (ptt_out_delay
+    //   default 20).
+    connect(&m_transmitModel, &TransmitModel::allModeMicPTTChanged,
+            m_moxController,  &MoxController::setAllModeMicPTT);
+    connect(&m_transmitModel, &TransmitModel::pttOutDelayMsChanged,
+            m_moxController,  &MoxController::setPttOutDelayMs);
+
+    // Prime once at setup time so the persisted user state takes effect
+    // without waiting for a UI toggle. Defaults match Thetis (false / 20)
+    // so the prime is a no-op for fresh installs but flips MoxController
+    // into the persisted user state after settings load on a returning user.
+    m_moxController->setAllModeMicPTT(m_transmitModel.allModeMicPTT());
+    m_moxController->setPttOutDelayMs(m_transmitModel.pttOutDelayMs());
+
     // ── H.5: P1/P2 status-frame mic_ptt → MoxController PTT-source dispatch ──
     //
     // RadioConnection::micPttFromRadio(bool) is emitted unconditionally on every
