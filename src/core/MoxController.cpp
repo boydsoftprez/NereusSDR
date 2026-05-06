@@ -264,6 +264,30 @@ bool MoxController::isVoiceMode(DSPMode mode) const noexcept
 }
 
 // ---------------------------------------------------------------------------
+// setAllModeMicPTT — store the AllModeMicPTT gate flag (radio-mic-input Task 17).
+//
+// Porting from Thetis Project Files/Source/Console/console.cs:12022
+// [v2.10.3.13+501e3f51] — original C# logic:
+//   private bool _all_mode_mic_ptt = false;
+//   public bool AllModeMicPTT
+//   {
+//       get { return _all_mode_mic_ptt; }
+//       set { _all_mode_mic_ptt = value; }
+//   }
+//
+// Default false: Thetis ignores mic_ptt outside voice modes unless this
+// flag is set. Task 19 implements the gate inside onMicPttFromRadio.
+//
+// No emit / no signal: Thetis simply assigns the field; nothing observes
+// it directly. The gate consumer (onMicPttFromRadio) reads m_allModeMicPTT
+// at PTT-decode time.
+// ---------------------------------------------------------------------------
+void MoxController::setAllModeMicPTT(bool on)
+{
+    m_allModeMicPTT = on;
+}
+
+// ---------------------------------------------------------------------------
 // recomputeVoxRun — recalculate gated VOX state and emit if changed.
 //
 // Idempotent on the EMITTED (gated) value, not the raw inputs.

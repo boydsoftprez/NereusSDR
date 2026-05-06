@@ -2395,6 +2395,15 @@ nereus_add_test(tst_mox_controller_multicast_signals)
 nereus_add_test(tst_mox_controller_mic_ptt_extraction)
 target_compile_definitions(tst_mox_controller_mic_ptt_extraction PRIVATE NEREUS_BUILD_TESTS)
 
+# ── radio-mic-input Task 17: MoxController::setAllModeMicPTT slot ────────────
+# Verifies storage + getter contract:
+#   - default allModeMicPTT() is false (matches Thetis console.cs:12022
+#     [v2.10.3.13+501e3f51]);
+#   - setAllModeMicPTT(true/false) round-trips through the getter.
+# Task 19 will extend this same test file with gate-behaviour cases for
+# onMicPttFromRadio (CW-without-flag, CW-with-flag, voice-unconditional).
+nereus_add_test(tst_mox_controller_all_mode_mic_ptt)
+
 # ── Phase 3M-1a Task C.1: WdspEngine TX channel API ──────────────────────────
 # Verifies:
 #   TX channel constants match Thetis cmaster.c:177-190 [v2.10.3.13]:

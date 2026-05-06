@@ -231,6 +231,13 @@ public:
     bool     isMox()      const noexcept { return m_mox; }
     MoxState state()      const noexcept { return m_state; }
     PttMode  pttMode()    const noexcept { return m_pttMode; }
+    // allModeMicPTT: gate flag for onMicPttFromRadio (Task 19).
+    //
+    // When false (default), mic_ptt presses outside voice modes (CW/SPEC/DRM)
+    // are ignored. When true, every mode treats mic_ptt as a MIC PTT trigger.
+    // From Thetis console.cs:12022 [v2.10.3.13+501e3f51]:
+    //   private bool _all_mode_mic_ptt = false;
+    bool     allModeMicPTT() const noexcept { return m_allModeMicPTT; }
     // isManualMox: true while MOX is engaged via the TUN button.
     //
     // Mirrors Thetis _manual_mox (console.cs:240 [v2.10.3.13]):
@@ -323,6 +330,20 @@ public slots:
     // TX→RX branch at console.cs:29539 [v2.10.3.13]). The full rationale
     // is in MoxController.cpp in the setTune(false) body comment.
     void setTune(bool on);
+
+    // setAllModeMicPTT: store the AllModeMicPTT gate flag.
+    //
+    // Mirrors Thetis console.cs:12022 [v2.10.3.13+501e3f51]:
+    //   private bool _all_mode_mic_ptt = false;
+    //   public bool AllModeMicPTT { get; set; }
+    //
+    // Default false: Thetis ignores mic_ptt outside voice modes unless this
+    // flag is set. Task 19 implements the gate inside onMicPttFromRadio
+    // using m_allModeMicPTT.
+    //
+    // Wired by RadioModel Task 20:
+    //   TransmitModel::allModeMicPTTChanged → MoxController::setAllModeMicPTT
+    void setAllModeMicPTT(bool on);
 
     // setVoxEnabled: engage/disengage VOX with voice-family mode-gate.
     //
@@ -998,6 +1019,13 @@ private:
     MoxCheckFn m_moxCheck;
 
     // ── Fields ───────────────────────────────────────────────────────────────
+
+    // ── AllModeMicPTT gate state (radio-mic-input Task 17) ───────────────────
+    // From Thetis console.cs:12022 [v2.10.3.13+501e3f51]:
+    //   private bool _all_mode_mic_ptt = false;
+    // Consulted by onMicPttFromRadio (Task 19) to decide whether mic_ptt
+    // outside the voice-mode family should engage MOX.
+    bool     m_allModeMicPTT{false};
 
     // ── VOX gate state (H.1) ─────────────────────────────────────────────────
     // From Thetis CMSetTXAVoxRun (cmaster.cs:1039-1052 [v2.10.3.13]):
