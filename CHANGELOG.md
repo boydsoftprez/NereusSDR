@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Radio Mic Input Thetis Parity Port**: closes the radio-mic-input gap left after issue #182. Spec at `docs/architecture/radio-mic-input-thetis-parity.md`.
+  - `RadioConnection::setLineInBoost(double dB)` virtual that translates dB to the discrete 5-bit `line_in_gain` wire field through the Thetis 32-entry table (`console.cs:40827-40859 [v2.10.3.13+501e3f51]`).
+  - `TransmitModel` properties: `disablePTT`, `allModeMicPTT`, `pttOutDelayMs` (0..500 ms), `micGainMinDb` (-96..0 dB), `micGainMaxDb` (1..70 dB). Each persists per-MAC.
+  - `MoxController` slots: `setAllModeMicPTT(bool)` and `setPttOutDelayMs(int)` (production wrapper distinct from the test-only `setTimerIntervals` helper).
+  - `RadioModel::connectMicJackSignals()` wires 6 mic-jack signals (mic boost, line-in, tip/ring, bias, XLR, line-in-boost dB) from `TransmitModel` to `RadioConnection` via queued connections plus prime-on-connect.
+  - Setup -> Audio -> TX Input: Mic Gain Min and Mic Gain Max spinboxes that update the mic-gain slider's range live.
+  - Setup -> General -> Options: Disable PTT checkbox, All-Mode Mic PTT checkbox, PTT Out Delay spinbox.
+  - `AudioTxInputPage::boardShowsOrionMicJackPanel(HPSDRHW)` static helper that mirrors Thetis `pnlGeneralHardwareORION` enable list (`setup.cs:19830-20405 [v2.10.3.13+501e3f51]`).
+
+### Fixed
+- 5 mic-jack wire bits (mic boost, line in, tip/ring, bias, XLR) now reach the radio end-to-end. Previously the Setup checkboxes updated the model but never flowed through to the wire.
+- PC-Mic / Radio-Mic toggle now actually switches the TX source on both Protocol 1 and Protocol 2. Previously P1 had a parallel dead path through `RadioMicSource`; the toggle was decorative.
+- Saturn boards now boot into 3.5 mm mic routing by default (matches Thetis `radSaturn3p5mm.Checked = true` in `setup.designer.cs:8635 [v2.10.3.13+501e3f51]` plus the no-guard handler at `setup.cs:16450-16454` that clears the XLR wire bit during designer init). Previously fresh installs booted into XLR routing.
+- Connection-side `m_micBoost` default now matches Thetis `mic_boost = true` (`console.cs:13237 [v2.10.3.13+501e3f51]`); eliminates a one-frame race between fresh connect and the first prime-on-connect push.
+- `MoxController::onMicPttFromRadio` now respects `AllModeMicPTT`: outside voice modes, mic-jack PTT is suppressed unless the user has explicitly enabled all-mode mic PTT (per Thetis `console.cs:25480-25495 [v2.10.3.13+501e3f51]`).
+
+### Removed
+- Dead `RadioMicSource` class and `RadioConnection::micFrameDecoded` signal. Both were declared and tested but never emitted in production code; `CompositeTxMicRouter` now pulls Radio-source samples from `TxMicSource` directly (the live ring fed by P1 EP6 mic-byte zone and P2 port-1026 parser).
+
 ## [0.5.1] - 2026-05-15
 
 > [!NOTE]

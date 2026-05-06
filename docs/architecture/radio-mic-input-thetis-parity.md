@@ -1,6 +1,6 @@
 # Radio Mic Input: Thetis Parity Port
 
-**Status:** design (2026-05-05)
+**Status:** implemented (2026-05-05; PR pending)
 **Author:** J.J. Boyd ~ KG4VCF, AI-assisted via Anthropic Claude Code
 **Thetis source stamp:** `[v2.10.3.13+501e3f51]`
 **Scope owner:** single PR; no sub-project decomposition
