@@ -3225,40 +3225,22 @@ nereus_add_test(tst_transmit_model_vax_toggle)
 nereus_add_test(tst_radio_connection_mic_frame_signal)
 
 # ── Phase 3M-1b Task F.2: RadioMicSource ─────────────────────────────────────
-# Verifies RadioMicSource — the TxMicRouter implementation that drains a
-# lock-free SPSC float ring fed by RadioConnection::micFrameDecoded.
-# Uses TestRadioConnection (inline subclass) to drive micFrameDecoded
-# synchronously via DirectConnection. Test seam: NEREUS_BUILD_TESTS exposes
-# ringFillForTest() and ringDroppedForTest().
-# Cases (14):
-#   pullSamples_emptyRing_zeroFills         — empty ring → zero-fill + return n
-#   pullSamples_partialRing_returnsZeroFilledRest
-#                                           — 4 samples pushed, pull 8 → 4 data + 4 zero
-#   pullSamples_fullDrain_returnsAllSamples — push n, pull n → ring empty
-#   pullSamples_fifoOrder_preserved         — 16 values in order
-#   onMicFrame_pushesToRing                 — ringFill increases after emit
-#   onMicFrame_overflow_dropsExtra_recordsDropCount
-#                                           — full ring → 5 more dropped, counter=5
-#   onMicFrame_nullSamples_noOp             — nullptr samples → no crash, no state change
-#   onMicFrame_zeroFrames_noOp              — frames=0 → no crash, no state change
-#   roundTrip_pushAndPull                   — two batches pushed, read back in order
-#   multipleCycles_fifo_preserved           — 8×1024 cycles, crosses ring wraparound
-#   nullConnection_constructorOk            — nullptr conn → constructs ok, zero-fills
-#   pullSamples_returnAlwaysN               — underrun → returns n (not toRead)
-#   pullSamples_nullDst_returnsZero         — nullptr dst → 0, ring unchanged
-#   viaBasePointer_dispatchWorks            — virtual dispatch through TxMicRouter*
-#
-# Master design §5.2.1. Plan: 3M-1b F.2.
-nereus_add_test(tst_radio_mic_source)
-target_compile_definitions(tst_radio_mic_source PRIVATE NEREUS_BUILD_TESTS)
+# REMOVED in radio-mic-input Thetis parity Task 13 (2026-05-05).  RadioMicSource
+# was a dead path: it subscribed to RadioConnection::micFrameDecoded which was
+# never emitted by any production P1 / P2 code.  CompositeTxMicRouter now
+# routes the Radio source through TxMicSource (the live ring fed by P1 EP6 +
+# P2 port-1026), covered by tst_composite_tx_mic_router_uses_tx_mic_source +
+# tst_tx_mic_router_selector.
 
 # ── Phase 3M-1b Task F.3: CompositeTxMicRouter ───────────────────────────────
 # Verifies CompositeTxMicRouter — the strategy-pattern selector that holds
-# PcMicSource + RadioMicSource and dispatches pullSamples based on MicSource
+# PcMicSource + TxMicSource and dispatches pullSamples based on MicSource
 # selection, with HL2 force-PC and MOX-locked switching.
 # Uses real PcMicSource (FakeAudioBus-backed AudioEngine) and real
-# RadioMicSource (TestRadioConnection). Test seam: NEREUS_BUILD_TESTS exposes
-# hasPendingSwitchForTest().
+# TxMicSource (driven via inbound() directly). Test seam: NEREUS_BUILD_TESTS
+# exposes hasPendingSwitchForTest().
+# Note: the Radio source was switched from RadioMicSource to TxMicSource
+# in radio-mic-input Thetis parity Task 11.
 # Cases (14):
 #   defaultSource_isPc                           — construction defaults to Pc
 #   setActiveSource_Pc_dispatchesToPc            — Pc selected → PC data flows

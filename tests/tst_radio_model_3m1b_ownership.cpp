@@ -5,26 +5,24 @@
 // mic sources and composite router owned by RadioModel.  Phase 3M-1c TX pump
 // architecture redesign extends this with TxWorkerThread ownership cases.
 //
-// Unit tests for Phase 3M-1b Task L.1 + 3M-1c TX pump architecture redesign:
+// Unit tests for Phase 3M-1b Task L.1 + 3M-1c TX pump architecture redesign
+// (updated for radio-mic-input Thetis parity Tasks 12 and 13):
 //   1.  mic source test seams return nullptr before connectToRadio().
-//   2.  RadioMicSource (QObject) lives on the main thread.
-//   3.  RadioMicSource construction (standalone) doesn't crash with null connection.
-//   4.  CompositeTxMicRouter construction (standalone) — zero-fills on pullSamples
+//   2.  (removed) radioMicSourceForTest accessor — Task 12 dropped the member.
+//   3.  compositeMicRouterForTest() returns nullptr before connectToRadio().
+//   4-6. (removed) standalone RadioMicSource tests — Task 13 deleted the class.
+//   7.  CompositeTxMicRouter construction (standalone) — zero-fills on pullSamples
 //       when both sources are null.
-//   5.  TransmitModel::micPreampChanged → AudioEngine (direct connect) wiring shape.
-//   6.  TransmitModel::monEnabledChanged → AudioEngine::setTxMonitorEnabled
+//   8.  TransmitModel::micPreampChanged → AudioEngine (direct connect) wiring shape.
+//   9.  TransmitModel::monEnabledChanged → AudioEngine::setTxMonitorEnabled
 //       wiring shape verified via state accessor.
-//   7.  TransmitModel::monitorVolumeChanged → AudioEngine::setTxMonitorVolume
+//  10.  TransmitModel::monitorVolumeChanged → AudioEngine::setTxMonitorVolume
 //       wiring shape verified via state accessor.
-//   8.  MoxCheck callback lifecycle — install, invoke, clear.
-//   9.  MoxCheck rejection path — moxRejected signal emitted on !ok result.
-//  10.  MoxCheck cleared on nullptr-like check — setMox(true) allowed after clear.
-//  11.  Mic source objects null before connect: pcMicSourceForTest.
-//  12.  (removed) radioMicSourceForTest — RadioMicSource ownership dropped
-//        from RadioModel in radio-mic-input Thetis parity Task 12.
-//  13   Mic source objects null before connect: compositeMicRouterForTest.
+//  11.  MoxCheck callback lifecycle — install, invoke, clear.
+//  12.  MoxCheck rejection path — moxRejected signal emitted on !ok result.
+//  13.  MoxCheck cleared on nullptr-like check — setMox(true) allowed after clear.
 //  14.  Construct + destroy RadioModel without crash (lifecycle).
-//  15.  RadioMicSource ring starts empty (zero fill level).
+//  15.  Double-construct lifecycle — RadioModel survives two consecutive instances.
 //  16.  TxWorkerThread test seam returns nullptr before connectToRadio()
 //       (Phase 3M-1c TX pump architecture redesign).
 //  17.  Construct + destroy RadioModel — TxWorkerThread null throughout
@@ -75,7 +73,6 @@
 #include "core/TxWorkerThread.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/PcMicSource.h"
-#include "core/audio/RadioMicSource.h"
 #include "core/safety/BandPlanGuard.h"
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
@@ -156,47 +153,13 @@ private slots:
         QVERIFY(model.compositeMicRouterForTest() == nullptr);
     }
 
-    // ── 4. RadioMicSource (QObject) lives on the main thread after construction ──
-    // RadioMicSource is a QObject with no parent; it inherits the thread affinity
-    // of the constructing thread (main thread in tests). The producer (connection
-    // thread) pushes into the lock-free ring; pullSamples is called from the
-    // WDSP audio thread. Neither producer nor consumer needs thread affinity
-    // on RadioMicSource itself, but this test documents the invariant.
-    void radioMicSourceOnMainThread()
-    {
-        // Construct standalone (not through RadioModel — WDSP not available).
-        RadioMicSource src(nullptr, nullptr);
-        QCOMPARE(src.thread(), QThread::currentThread());
-    }
-
-    // ── 5. RadioMicSource construction with null connection doesn't crash ───────
-    // L.1 passes m_connection to the RadioMicSource constructor. The RadioMicSource
-    // header documents that null is safe (no slot is connected; pullSamples
-    // always zero-fills). This test verifies that contract.
-    void radioMicSourceNullConnectionNocrash()
-    {
-        {
-            RadioMicSource src(nullptr, nullptr);
-            // Pull samples with a zero connection — should zero-fill without crash.
-            std::array<float, 8> buf{};
-            const int got = src.pullSamples(buf.data(), 8);
-            // Always returns n (8) even on underrun (zero-fill path).
-            QCOMPARE(got, 8);
-            // All samples must be zero (ring was never fed).
-            for (float s : buf) {
-                QCOMPARE(s, 0.0f);
-            }
-        }
-        QVERIFY(true);  // reach here = no crash on destruction
-    }
-
-    // ── 6. RadioMicSource ring starts empty ────────────────────────────────────
-    // No frames have been pushed via onMicFrame. pullSamples zero-fills.
-    void radioMicSourceRingStartsEmpty()
-    {
-        RadioMicSource src(nullptr, nullptr);
-        QCOMPARE(src.ringFillForTest(), 0);
-    }
+    // ── 4-6. (removed) RadioMicSource standalone tests — RadioMicSource was
+    // deleted entirely in radio-mic-input Thetis parity Task 13.  The class was
+    // dead code: it subscribed to RadioConnection::micFrameDecoded which was
+    // never emitted by P1 / P2 production code.  The Radio source path now
+    // flows through TxMicSource, exercised by tst_tx_mic_source +
+    // tst_composite_tx_mic_router_uses_tx_mic_source +
+    // tst_tx_mic_router_selector.
 
     // ── 7. CompositeTxMicRouter zero-fills when both sources pass null ──────────
     // This is the edge-case branch in CompositeTxMicRouter::pullSamples when

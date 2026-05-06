@@ -473,7 +473,6 @@ set(CORE_SOURCES
     src/core/audio/PcMicSource.cpp
     src/core/audio/RadeTxFilters.cpp
     src/core/audio/RadeTxFilters.h
-    src/core/audio/RadioMicSource.cpp
     src/core/audio/VaxTxMicSource.cpp
     src/core/audio/CompositeTxMicRouter.cpp
     src/core/audio/PortAudioBus.cpp
