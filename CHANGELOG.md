@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.1] - 2026-05-09
+
+> [!NOTE]
+> **PureSignal hotfix.** PureSignal correction never landed on Hermes / ANAN-10 / ANAN-10E / ANAN-100 / ANAN-100B / AnvelinaPro3-on-P1 in v0.4.0 because `RadioModel` never pushed the connected hardware `HPSDRModel` into `ReceiverManager`, leaving the per-board codec dispatcher stuck on the safe Atlas default. The codec emitted an empty `PsDdcConfig`, `PsccPump` never activated, and calcc never received feedback samples. HL2 (P1CodecHl2) and G2 / G2-1K / 100D / 200D / 7000DLE / 8000DLE on P2 (P2CodecOrionMkII / P2CodecSaturn) were unaffected because their codecs ignore the model parameter — only `P1CodecStandard` and its `P1CodecAnvelinaPro3` subclass read it.
+>
+> **Step-att hygiene also fixed.** `setAttenuator` and `setPreamp` now flush bank 11 on the next EP2 frame (≤2.6 ms instead of ~22 ms worst case), matching peer-setter parity. `StepAttenuatorController` cross-thread connection pushes now marshal via `QMetaObject::invokeMethod` (closes a latent ARM64 thread-safety hazard).
+
+### Fixed
+- **PureSignal correction never lands on Hermes-class P1 boards.** `RadioModel::connectToRadio` now fans the connected `HPSDRModel` into both `TransmitModel` and `ReceiverManager` via the new `applyHpsdrModel()` helper. Without the `ReceiverManager` push, `P1CodecStandard::applyPureSignalDdcConfig` fell through its model switch's default branch and emitted an empty `PsDdcConfig` — keeping `PsccPump` inactive (its `wantActive` gate requires `ddcEnable` bit 0 set, `syncEnable` bit 1 set, and matching ps_rates — all zero in an empty cfg). Affects: HERMES, ANAN10, ANAN10E, ANAN100, ANAN100B, AnvelinaPro3 (P1 mode). HL2 / RedPitaya / G2 / G2-1K / 100D / 200D / 7000DLE / 8000DLE unaffected.
+- **`setAttenuator` + `setPreamp` missing bank-11 flush flag.** Both setters now set `m_forceBank11Next = true` before their state writes, matching the Codex P2 pattern used by every other bank-11 setter (`setMicTipRing` / `setMicBoost` / `setLineIn` / `setUserDigOut` / `setMicPTTDisabled` / `setPuresignalRun`). RX step-att and preamp UI changes now land within ≤2.6 ms instead of ~22 ms worst case.
+- **`StepAttenuatorController` cross-thread connection pushes.** The three RX-side `m_connection->setAttenuator()` / `m_connection->setPreamp()` call sites (in `setAttenuation`, `setPreampMode`, and `applyAttToHardware`) now marshal via `QMetaObject::invokeMethod` so connection-thread state mutations happen on the connection thread. Latent ARM64 thread-safety hazard; previously worked on x86/x64 by accident due to atomic aligned-int writes. The four TX-side (`setTxStepAttenuation`) sites already followed this pattern.
+
+### Tests
+- `tst_radio_model_hpsdr_model_push` (5 tests) — pins the `applyHpsdrModel` fan-out contract.
+- `tst_p1_step_att_flush_flag` (8 tests) — pins the bank-11 flush-flag pattern on `setAttenuator` + `setPreamp`.
+- `tst_step_att_cross_thread` (2 tests) — pins the `QMetaObject::invokeMethod` cross-thread marshalling on `setAttenuation` + `setPreampMode`.
+
 ## [0.4.0] - 2026-05-08
 
 > [!NOTE]
