@@ -3931,3 +3931,17 @@ target_compile_definitions(tst_p1_step_att_flush_flag PRIVATE NEREUS_BUILD_TESTS
 # parity for the RX-side setters that v0.4.0 missed.
 nereus_add_test(tst_step_att_cross_thread)
 target_compile_definitions(tst_step_att_cross_thread PRIVATE NEREUS_BUILD_TESTS)
+
+# ── v0.4.1 hotfix: P1CodecStandard bank 16 ps_run wire (smoking gun) ─────────
+# 5 tests pinning that P1CodecStandard's bank 16 emits the puresignal_run bit
+# on C2 bit 6 — the same fix that landed in P1CodecHl2 on 2026-05-07 (PR #212
+# follow-up bench-fix) but never propagated to P1CodecStandard. Without this
+# bit, the radio FPGA fires the cmaster.cs bookkeeping but the PA-loopback
+# physical path stays disengaged on Hermes-class boards (Hermes / ANAN-10 /
+# ANAN-10E / ANAN-100 / ANAN-100B), causing calcc to reach LCOLLECT but never
+# see usable feedback samples. Verified against bench bundle from a friend's
+# ANAN-10E running v0.4.1-rc1: TX envelope 0.20 (-14 dBFS) but FB envelope
+# 0.0003 (-70 dBFS, ADC noise floor) for 1361 pumped blocks straight.
+# Thetis source: networkproto1.c:657-666 [v2.10.3.13] case 16.
+nereus_add_test(tst_p1_bank16_pursignal_run)
+target_compile_definitions(tst_p1_bank16_pursignal_run PRIVATE NEREUS_BUILD_TESTS)

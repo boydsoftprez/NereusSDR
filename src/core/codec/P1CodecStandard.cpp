@@ -188,9 +188,39 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
         // Source: networkproto1.c:650-654 [@501e3f5]
         case 15: out[0] = C0base | 0x22; return;
 
-        // Bank 16 — BPF2
-        // Source: networkproto1.c:658-665 [@501e3f5]
-        case 16: out[0] = C0base | 0x24; return;
+        // Bank 16 — BPF2 + xvtr_enable + puresignal_run
+        // Source: Thetis ChannelMaster/networkproto1.c:657-666 [v2.10.3.13]:
+        //   case 16: // BPF2
+        //       C0 |= 0x24;
+        //       C1 = (BPF2 HPF/LPF/preamp bits + rx2_gnd<<7);
+        //       C2 = (xvtr_enable & 1) | ((prn->puresignal_run & 1) << 6);
+        //       C3 = 0;
+        //       C4 = 0;
+        //
+        // v0.4.1-rc2 bench-fix (J.J. KG4VCF, 2026-05-09): pre-fix this was a
+        // stub (C0 only, C1-C4 = 0).  Bench evidence from a friend's ANAN-10E
+        // running v0.4.1-rc1 showed PsccPump pumping 1361 blocks straight
+        // with TX envelope 0.20 (-14 dBFS) but feedback envelope stuck at
+        // 0.0003 (-70 dBFS, ADC noise floor); calcc reached LCOLLECT
+        // (state=4) but never converged.  Thetis emits ps_run on BOTH bank
+        // 11 C2 bit 6 AND bank 16 C2 bit 6 — without the bank-16 bit, the
+        // FPGA fires the cmaster.cs bookkeeping but the PA-loopback
+        // physical path stays disengaged on Hermes-class boards.  Same fix
+        // landed in P1CodecHl2 on 2026-05-07 (PR #212 follow-up bench-fix);
+        // this is the parity propagation to P1CodecStandard.
+        //
+        // BPF2 (HL2's secondary BPF board / Hermes-class HPF2) state isn't
+        // tracked in NereusSDR yet — emit C1 = 0 (no BPF2 routing) until
+        // BPF2 support lands.  xvtr_enable is also not yet plumbed —
+        // emit 0.  Only the ps_run bit is wired here; that's what the
+        // FPGA needs for PS feedback to engage.
+        case 16:
+            out[0] = C0base | 0x24;
+            out[1] = 0;     // BPF2 filter bits — not plumbed in NereusSDR yet
+            out[2] = quint8(ctx.p1PuresignalRun ? 0x40 : 0x00);  // ps_run only
+            out[3] = 0;
+            out[4] = 0;
+            return;
 
         // Bank 17 — AnvelinaPro3 extra OC pins
         // Source: networkproto1.c:668-669 [@501e3f5] — "HPSDRModel_ANVELINAPRO3 only"
