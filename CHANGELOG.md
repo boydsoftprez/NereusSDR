@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.1] - 2026-05-09
+## [0.4.1-rc1] - 2026-05-09
 
 > [!NOTE]
 > **PureSignal hotfix.** PureSignal correction never landed on Hermes / ANAN-10 / ANAN-10E / ANAN-100 / ANAN-100B / AnvelinaPro3-on-P1 in v0.4.0 because `RadioModel` never pushed the connected hardware `HPSDRModel` into `ReceiverManager`, leaving the per-board codec dispatcher stuck on the safe Atlas default. The codec emitted an empty `PsDdcConfig`, `PsccPump` never activated, and calcc never received feedback samples. HL2 (P1CodecHl2) and G2 / G2-1K / 100D / 200D / 7000DLE / 8000DLE on P2 (P2CodecOrionMkII / P2CodecSaturn) were unaffected because their codecs ignore the model parameter — only `P1CodecStandard` and its `P1CodecAnvelinaPro3` subclass read it.
