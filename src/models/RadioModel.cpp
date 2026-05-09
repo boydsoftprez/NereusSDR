@@ -1273,11 +1273,20 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     m_intentionalDisconnect = false;
 
     // Compute HardwareProfile from model override (Phase 3I-RP).
+    //
+    // v0.4.1 hotfix: applyHpsdrModel() also fans the resolved model out
+    // to TransmitModel and ReceiverManager in one call, replacing the
+    // previously-separate `m_transmitModel.setHpsdrModel(...)` push at
+    // the bottom of this block (around the issue #175 review-fix
+    // comment further down) AND the missing ReceiverManager push that
+    // broke v0.4.0 PureSignal on Hermes / ANAN-10 / ANAN-10E /
+    // ANAN-100 / ANAN-100B / AnvelinaPro3-on-P1.  See the
+    // applyHpsdrModel definition for the full bug context.
     HPSDRModel selectedModel = info.modelOverride;
     if (selectedModel == HPSDRModel::FIRST) {
         selectedModel = defaultModelForBoard(info.boardType);
     }
-    m_hardwareProfile = profileForModel(selectedModel);
+    applyHpsdrModel(selectedModel);
 
     qCDebug(lcConnection) << "HardwareProfile: model=" << displayName(m_hardwareProfile.model)
                           << "effectiveBoard=" << static_cast<int>(m_hardwareProfile.effectiveBoard)
@@ -1395,7 +1404,12 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // SKU.  Idempotent: the second push at line ~4420 in the
         // Connected state-transition handler is a no-op when the model
         // is unchanged.
-        m_transmitModel.setHpsdrModel(m_hardwareProfile.model);
+        //
+        // v0.4.1 hotfix: the push is now done up-front by applyHpsdrModel()
+        // (called from the model-override resolution block above), which
+        // also fans out to ReceiverManager so the per-board codec sees
+        // the correct model.  Both pushes still land BEFORE load(), which
+        // is what the issue #175 fix required.
         m_transmitModel.setMacAddress(info.macAddress);
         m_transmitModel.load();
 
@@ -5183,6 +5197,43 @@ void RadioModel::applyClaritySmoothDefaults()
     AppSettings::instance().setValue(
         QStringLiteral("DisplayProfileApplied"),
         QStringLiteral("True"));
+}
+
+// v0.4.1 hotfix — single point that fans the connected hardware HPSDRModel
+// out to every sub-model that needs it.  Replaces three previously-separate
+// sites (m_hardwareProfile = profileForModel, m_transmitModel.setHpsdrModel,
+// and the missing m_receiverManager->setHpsdrModel that broke PureSignal in
+// v0.4.0).
+//
+// Production caller: RadioModel::connectToRadio (after model-override /
+// defaultModelForBoard resolution at the top of the function).
+// Test caller:       setHpsdrModelForTest (test-only seam in RadioModel.h).
+//
+// ReceiverManager::setHpsdrModel is null-guarded because legacy test
+// fixtures may construct a RadioModel with sub-models still null at the
+// moment a test injects a model via setHpsdrModelForTest.  Production
+// flow always has m_receiverManager non-null (constructed in RadioModel
+// ctor at RadioModel.cpp:464).
+//
+// Bug context: v0.4.0 shipped without the ReceiverManager push, leaving
+// m_hpsdrModel at the safe Atlas default HPSDRModel::HPSDR.  The codec
+// layer (P1CodecStandard::applyPureSignalDdcConfig) dispatches on this
+// enum — see codec/P1CodecStandard.cpp:339-391.  Without the correct
+// model the switch falls through to the default branch and emits an
+// empty PsDdcConfig, which keeps PsccPump inactive (its wantActive gate
+// requires ddcEnable bit 0 set, syncEnable bit 1 set, and matching
+// ps_rates — all zero in an empty cfg).  Result: no feedback samples
+// reach calcc → state[15] stays 0 → PureSignal never converges.
+// HL2 / G2 / Saturn / RedPitaya unaffected because their codecs ignore
+// the model parameter (P1CodecHl2.cpp:530, P2CodecOrionMkII.cpp:436,
+// P1CodecRedPitaya.cpp:77).
+void RadioModel::applyHpsdrModel(HPSDRModel m)
+{
+    m_hardwareProfile = ::NereusSDR::profileForModel(m);
+    m_transmitModel.setHpsdrModel(m_hardwareProfile.model);
+    if (m_receiverManager) {
+        m_receiverManager->setHpsdrModel(m_hardwareProfile.model);
+    }
 }
 
 void RadioModel::setConnectionState(ConnectionState s)

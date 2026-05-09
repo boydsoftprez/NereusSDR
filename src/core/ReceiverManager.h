@@ -189,6 +189,7 @@ public:
     // dispatches on this enum (e.g. P1CodecStandard maps multiple HpsdrModel
     // values to distinct UpdateDDCs branches).
     void setHpsdrModel(HPSDRModel model);
+    HPSDRModel hpsdrModel() const noexcept { return m_hpsdrModel; }
 
     // PureSignal master enable (TX-side).  When true and MOX is also true,
     // the per-board codec emits the PS-on DDC layout (G2: DDC0+DDC2 with

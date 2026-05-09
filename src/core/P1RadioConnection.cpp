@@ -988,6 +988,15 @@ void P1RadioConnection::restartStreamWithCount(int newActiveRxCount)
 
 void P1RadioConnection::setAttenuator(int dB)
 {
+    // v0.4.1 hotfix — flush bank 11 on the next EP2 frame so the new ADC0
+    // step-att value lands within ≤2.6 ms instead of waiting up to ~22 ms
+    // for the next natural round-robin visit (maxBank=16, two banks per
+    // frame at 380.95 fps).  Codex P2 pattern: set the flag BEFORE any
+    // clamp / idempotent guard so even no-op writes still flush.  Mirrors
+    // peer setters setMicTipRing / setMicBoost / setLineIn / setUserDigOut /
+    // setMicPTTDisabled / setPuresignalRun.
+    m_forceBank11Next = true;
+
     // Source: specHPSDR.cs per-HPSDRHW branches + BoardCapabilities registry.
     // Clamp to board-reported range so UI callers can't exceed hardware limits.
     if (m_caps && m_caps->attenuator.present) {
@@ -998,7 +1007,14 @@ void P1RadioConnection::setAttenuator(int dB)
     }
     m_stepAttn[0] = dB;
 }
-void P1RadioConnection::setPreamp(bool enabled)              { m_rxPreamp[0] = enabled; }
+void P1RadioConnection::setPreamp(bool enabled)
+{
+    // v0.4.1 hotfix — flush bank 11 on the next EP2 frame so the new
+    // preamp bit lands within ≤2.6 ms.  Same Codex P2 pattern as
+    // setAttenuator above; matches peer-setter parity.
+    m_forceBank11Next = true;
+    m_rxPreamp[0] = enabled;
+}
 // ---------------------------------------------------------------------------
 // setTxDrive — 3M-1c follow-up (HL2 bench triage 2026-04-29)
 //

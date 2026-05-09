@@ -696,8 +696,14 @@ public:
     // through defaultModelForBoard() to ORIONMKII (the *first* model
     // matching that board), but K2GX's regression specifically pins
     // ANAN8000D values; this seam lets tests pick the exact HPSDRModel.
+    //
+    // v0.4.1 hotfix: routes through applyHpsdrModel() so tests get the
+    // same TransmitModel + ReceiverManager fan-out as production
+    // connectToRadio.  Without this, the test seam drifts from
+    // production and tests miss regressions in the ReceiverManager
+    // push (root cause of the v0.4.0 PureSignal-broken-on-Hermes bug).
     void setHpsdrModelForTest(HPSDRModel m) {
-        m_hardwareProfile = ::NereusSDR::profileForModel(m);
+        applyHpsdrModel(m);
     }
 #endif
 
@@ -959,6 +965,20 @@ private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
     // Guards against redundant transitions (no emit if state unchanged).
     void setConnectionState(ConnectionState s);
+
+    // v0.4.1 hotfix: single point that fans the connected hardware
+    // HPSDRModel out to every sub-model that needs it.  Updates
+    // m_hardwareProfile, then pushes the model into TransmitModel
+    // (issue #175 HL2 mi0bot polymorphic-clamp setup) AND
+    // ReceiverManager (drives per-board codec dispatch in
+    // applyPureSignalDdcConfig — without this fan-out, the codec
+    // sees the default HPSDRModel::HPSDR enum, falls through its
+    // model switch's default branch, and emits an empty PsDdcConfig
+    // → PsccPump never activates → PureSignal correction never
+    // lands).  Called from connectToRadio() and the test-only
+    // setHpsdrModelForTest() seam so production and tests stay in
+    // sync.
+    void applyHpsdrModel(HPSDRModel m);
 
     // Pushes AlexController's per-band antenna state to the connection.
     // Full port of Thetis HPSDR/Alex.cs:310-413 UpdateAlexAntSelection.

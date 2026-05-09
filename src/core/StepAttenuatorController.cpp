@@ -221,8 +221,23 @@ void StepAttenuatorController::setAttenuation(int dB, int rx)
     m_attDb = dB;
 
     // Send to hardware — from Thetis console.cs RX1AttenuatorData property.
+    //
+    // v0.4.1 hotfix — marshal across the controller↔connection thread
+    // boundary via QMetaObject::invokeMethod so the connection-thread
+    // state mutation (m_stepAttn[0] write + m_forceBank11Next flush
+    // flag) happens on the connection thread.  Mirrors the established
+    // pattern used by the four setTxStepAttenuation call sites in this
+    // file (lines 364, 469, 535, 557); without this, the call ran
+    // directly on the controller thread and bypassed Qt's queued
+    // dispatch — a latent thread-safety hazard that surfaces as
+    // delayed / paired-with-stale-reads on weaker memory models
+    // (ARM64).
     if (m_connection) {
-        m_connection->setAttenuator(dB);
+        RadioConnection* conn = m_connection.get();
+        const int dBcopy = dB;
+        QMetaObject::invokeMethod(conn, [conn, dBcopy]() {
+            conn->setAttenuator(dBcopy);
+        });
     }
 
     emit attenuationChanged(m_attDb);
@@ -257,8 +272,17 @@ void StepAttenuatorController::setPreampMode(PreampMode mode)
     m_preampMode = mode;
 
     // Send to hardware — from Thetis console.cs comboPreamp_SelectedIndexChanged.
+    //
+    // v0.4.1 hotfix — marshal via QMetaObject::invokeMethod so the
+    // connection-thread state (m_rxPreamp[0] + m_forceBank11Next) is
+    // written on the connection thread, not the controller thread.
+    // Same rationale as setAttenuation above.
     if (m_connection) {
-        m_connection->setPreamp(mode != PreampMode::Off);
+        RadioConnection* conn = m_connection.get();
+        const bool enabled = (mode != PreampMode::Off);
+        QMetaObject::invokeMethod(conn, [conn, enabled]() {
+            conn->setPreamp(enabled);
+        });
     }
 
     emit preampModeChanged(m_preampMode);
@@ -820,8 +844,17 @@ void StepAttenuatorController::applyAdaptiveAutoAtt(int adc)
 void StepAttenuatorController::applyAttToHardware(int dB)
 {
     m_attDb = dB;
+    // v0.4.1 hotfix — same QMetaObject::invokeMethod marshalling as
+    // setAttenuation / setPreampMode above.  applyAttToHardware is the
+    // auto-attenuate convergence + classic / band-restore push path
+    // (called from PureSignal::autoAttentionTick and the MOX-flip
+    // restoration handlers); same thread-safety contract applies.
     if (m_connection) {
-        m_connection->setAttenuator(dB);
+        RadioConnection* conn = m_connection.get();
+        const int dBcopy = dB;
+        QMetaObject::invokeMethod(conn, [conn, dBcopy]() {
+            conn->setAttenuator(dBcopy);
+        });
     }
     emit attenuationChanged(m_attDb);
 }
