@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1-rc3] - 2026-05-09
+
+> [!NOTE]
+> **Bench diagnostic build.** rc2 bench data on the friend's ANAN-10E showed feedback ADC envelope still stuck at 0.0003 (-70 dBFS, ADC noise floor) despite the bank-16 ps_run fix landing. Either the friend isn't running rc2 (Gatekeeper / install path issue), or the chain `PS-A click → cmd-state → setPsEnabledWithFanOut → emit psEnabledChanged → cross-thread queued setPuresignalRun` is breaking somewhere we can't see without explicit logging. This rc adds two diagnostic log lines so the next bench bundle definitively answers both questions.
+
+### Added (diagnostic — will be removed before final v0.4.1)
+- **Startup banner.** `qInfo("NereusSDR <ver> (v0.4.1-rc3 bench - bank-16 ps_run flush + setPuresignalRun diagnostic) starting")` at the top of main.cpp's QApplication construction. Confirms which RC the bundle was captured from (system-info.json's appVersion only carries the base "0.4.1" without the rc tag).
+- **`P1RadioConnection::setPuresignalRun` entry log.** `qCInfo(lcConnection) << "P1: setPuresignalRun(" << run << ") previous=" << m_puresignalRun;` Confirms whether the cross-thread queued call from `PureSignal::psEnabledChanged` actually reaches the connection thread when the user clicks PS-A. If this log line is missing from the next bench bundle, the chain is broken at the signal/slot wiring; if it appears with `(true)`, the wire-byte path is working as coded and the remaining issue is on the radio side.
+
 ## [0.4.1-rc2] - 2026-05-09
 
 > [!NOTE]

@@ -1610,6 +1610,15 @@ void P1RadioConnection::setUserDigOut(quint8 dig)
 // ---------------------------------------------------------------------------
 void P1RadioConnection::setPuresignalRun(bool run)
 {
+    // v0.4.1-rc3 bench-diagnostic: log every setPuresignalRun call so the
+    // bench can confirm whether the chain (PS-A click → cmd-state machine →
+    // setPsEnabledWithFanOut → emit psEnabledChanged → queued cross-thread
+    // call → setPuresignalRun) is firing.  rc2 bench data showed FB ADC
+    // stuck at noise floor even with bank-16 fix in place — need to confirm
+    // m_puresignalRun actually reaches `true` on the connection thread.
+    qCInfo(lcConnection) << "P1: setPuresignalRun(" << run << ")"
+                          << "previous=" << m_puresignalRun;
+
     // Codex P2: set flush flag BEFORE idempotent guard.
     m_forceBank11Next = true;
 
