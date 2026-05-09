@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1-rc2] - 2026-05-09
+
+> [!NOTE]
+> **Bench follow-up to rc1.** rc1 fixed the codec dispatch (PsccPump now activates correctly on Hermes-class boards) but exposed a second bug: `P1CodecStandard`'s bank 16 was a stub that wrote only C0 and zero-filled C1-C4. Thetis emits `puresignal_run` on TWO banks (bank 11 C2 bit 6 AND bank 16 C2 bit 6); without the bank-16 bit, the radio FPGA fires the bookkeeping but the PA-loopback physical path stays disengaged on every Hermes-class board. HL2's codec was fixed for this on 2026-05-07 (PR #212 follow-up) but the same fix never propagated to `P1CodecStandard`, which is why HL2 PS worked while Hermes / ANAN-10 / ANAN-10E / ANAN-100 / ANAN-100B all stayed broken even after rc1 landed.
+>
+> Bench data from a friend's ANAN-10E running rc1: `PsccPump` pumped 1361 blocks straight with TX envelope 0.20 (-14 dBFS) but feedback envelope stuck at 0.0003 (-70 dBFS — ADC noise floor); calcc reached `LCOLLECT` (state=4) but never converged because the FB ADC was deaf to the PA. After rc2, the FPGA loopback engages and the FB ADC sees the PA output at the expected -30 to -40 dB below TX.
+
+### Fixed
+- **`P1CodecStandard` bank 16 missing `puresignal_run` bit.** Pre-fix the bank-16 compose was `out[0] = C0base | 0x24; return;` — only C0 written. Now writes the full 5 bytes per Thetis `networkproto1.c:657-666 [v2.10.3.13]`: `C0 = 0x24`, `C1 = 0` (BPF2 not yet plumbed), `C2 = (puresignal_run & 1) << 6`, `C3 = 0`, `C4 = 0`. Mirrors the same fix that landed in `P1CodecHl2` on 2026-05-07. Affects every P1 board dispatching through `P1CodecStandard`: HERMES, ANAN10, ANAN100, ANAN10E, ANAN100B, AnvelinaPro3 in P1 mode.
+
+### Tests
+- `tst_p1_bank16_pursignal_run` (8 tests) — pins the `puresignal_run` bit emission on bank 16 C2 bit 6, for both Hermes-class and HermesII-class dispatch through `P1CodecStandard`. Includes no-clobber guards on other C2 bits.
+
 ## [0.4.1-rc1] - 2026-05-09
 
 > [!NOTE]
