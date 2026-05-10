@@ -3945,3 +3945,17 @@ target_compile_definitions(tst_step_att_cross_thread PRIVATE NEREUS_BUILD_TESTS)
 # Thetis source: networkproto1.c:657-666 [v2.10.3.13] case 16.
 nereus_add_test(tst_p1_bank16_pursignal_run)
 target_compile_definitions(tst_p1_bank16_pursignal_run PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-5b: TX Waterfall Colormap (TDD red) ──────────────────────────────
+# 4 tests locking in Thetis-verbatim defaults and the per-frame MOX-conditional
+# render-path branch mirroring display.cs:6506-6595 [v2.10.3.13+501e3f51]:
+#   defaults_match_thetis: txWfLowLevel==-70, txWfHighLevel==30,
+#     txWfPalette==Enhanced, txWfLowColor==Qt::black.
+#   settings_round_trip: save+load cycle preserves all 4 TX-wf settings.
+#   mox_gate_thresholds: dbmToRgb uses TX thresholds on MOX, RX thresholds off.
+#   mox_gate_palette: dbmToRgb uses TX palette on MOX, RX palette off.
+# Sources: Display.cs:1911-1937 + :2516-2521 + :428-437 [v2.10.3.13+501e3f51]
+#          display.cs:6506-6595 [v2.10.3.13+501e3f51].
+# NOTE: Steps 1.3-1.8 add the impl + test seams; this target is RED until then.
+# Uses QTEST_MAIN (QApplication required for SpectrumWidget construction).
+nereus_add_test(tst_tx_waterfall_colormap)
