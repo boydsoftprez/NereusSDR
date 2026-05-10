@@ -24,8 +24,8 @@ Both menus stay in sync, share persistence, and only list applets that are actua
 | 2 | Applet inclusion | Only currently-wired applets (5: Rx, Tx, PhoneCw, Vax, PureSignal). Ghosts excluded until their phase ships. |
 | 3 | Architecture | New `AppletVisibilityController` class — single source of truth shared by both menus and the panel. Fits existing controller pattern (Alex/Mox/Clarity/Antenna). |
 | 4 | Order preservation | Hide/show via `QWidget::setVisible()` on the wrapper (not `removeApplet`/`addApplet`). Order stays stable across toggles. Requires new `AppletPanelWidget::setAppletVisible(applet, bool)` method. |
-| 5 | Banner button gesture | Visible `☰` icon button (5th button, after gear). Discoverable. Right-click context menu rejected as too hidden. |
-| 6 | Banner button scope | Only on Container #0 (the applet panel). Other containers don't host applets, so no `☰` button. |
+| 5 | Banner button gesture | Visible `☰` icon button. Discoverable. Right-click context menu rejected as too hidden. |
+| 6 | Banner button location | A new ~22 px header row added to `AppletPanelWidget` itself (the panel has no banner today; not wrapped in `ContainerWidget`). Floating meter containers and other `ContainerWidget` instances don't get the button. |
 | 7 | Persistence keys | `AppletRxVisible`, `AppletTxVisible`, `AppletPhoneCwVisible`, `AppletVaxVisible`, `AppletPureSignalVisible`. Stored as `True`/`False` strings per AppSettings convention. |
 | 8 | Persistence scope | Global (not per-MAC). UI preference — survives radio swaps. |
 | 9 | First-run defaults (shipped 5) | All 5 visible. Matches current behavior — no surprise for existing users. |
@@ -57,18 +57,18 @@ Section-header rendering: prefer `QMenu::addSection("Applets")` (Qt 5.1+; styles
 
 Each of the 5 new entries is a checkable `QAction`. Toggling flips the check immediately and shows/hides the corresponding applet in the right-side panel. Display labels match the applet's `appletTitle()` virtual.
 
-### 3.2 Banner button — Container #0
+### 3.2 Banner button — AppletPanelWidget
 
-Today's banner has 4 icon buttons (`ContainerWidget.cpp:117-166`): axis-lock, pin-on-top, float/dock, settings (gear).
+**Important context.** The right-side AppletPanelWidget is *not* wrapped in a `ContainerWidget`. The `ContainerWidget` class (with its 4-button banner: axis-lock / pin / float / settings) is used for floating meter containers and overlay-docked containers — it is not the host of the applet panel. The applet panel sits directly in the main `QSplitter` with no banner header today.
 
-Add a 5th, immediately right of the gear:
+Therefore: this design adds a **new thin header row** to `AppletPanelWidget` itself, above the existing MeterWidget header area. ~22 px tall, dark background matching the per-applet title bars (`Style::titleBarStyle()`), containing only the `☰` button right-aligned.
 
-- Icon: `☰` (hamburger). Same 16×16 button cell as the others.
-- Tooltip: `"Show or hide applets in this container."`
+- Icon: `☰` (hamburger). 22×22 button.
+- Tooltip: `"Show or hide applets."`
 - Click: opens a `QMenu` aligned to the button's bottom-right corner.
 - Menu contents: same 5 checkable items as the top-menu Applets section.
 
-The button is **only created on the AppletPanel-bearing container** (Container #0). Other containers (floating meter windows, future panadapter containers) do not host applets and do not get the button. Implementation detail: `ContainerWidget::setHostedAppletPanel(...)` (or equivalent) becomes the trigger that adds the button.
+Floating meter containers and other `ContainerWidget` instances do not get the button (they don't host applets).
 
 ### 3.3 Behavior — both menus
 
@@ -156,9 +156,9 @@ In the menu builder (the existing block around `MainWindow.cpp:2764`):
 - For each `id` in `m_appletVis->registeredIds()`, add a checkable QAction whose `toggled(bool)` slot calls `m_appletVis->setVisible(id, checked)`.
 - Store these QActions in `QHash<QString, QAction*> m_appletMenuActions` for later checkmark sync.
 
-In a new `ContainerWidget` extension (or a small `BannerAppletMenuButton` helper):
-- Build the same QAction list, parented to the `☰` button's `QMenu`.
-- Same `toggled` connection to `m_appletVis->setVisible(...)`.
+In `AppletPanelWidget`:
+- Add a `setBannerMenu(QMenu* menu)` API (or constructor-time `setBannerMenu` call from `MainWindow`) that installs the menu on the new ☰ button.
+- Build the same 5 checkable actions parented to that menu, wired to `m_appletVis->setVisible(...)` via `toggled`.
 
 In the controller's signal handler (a slot on `MainWindow`):
 - Look up `applet = m_appletsById[id]`.
