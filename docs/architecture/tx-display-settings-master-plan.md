@@ -66,8 +66,8 @@ Discovered during the audit prior to writing this plan:
 |---|---|---|---|---|
 | **0a** Mockup + master plan | This doc + HTML mockup | done | 2 | 0 |
 | **0b** Cleanup squash | Drop 3 throwaway probes (gen-state, attempt-2-frame, wf-histogram). Keep real fixes (stash apply, params + bridge, BH4 swap, Clarity-during-TX gate). | 1-2 | 0 | -3 commits net |
-| **1** TX Waterfall Colormap | 5 controls + Setup tab structure + per-frame MOX branch. **The "still hot" fix.** | 6-8 | 0 | ~7 |
-| **2** Custom Gradient Picker | Reusable multi-stop gradient editor widget. Used by Phase 1 (Custom palette) and Phase 5 (panadapter/waterfall gradients). | 8-12 | 2-3 | ~4 |
+| **1** TX Waterfall Colormap | 5 controls + Setup tab structure + per-frame MOX branch. **The "still hot" fix.** **DONE 2026-05-09 (5e1cdb7..2ca79db; bench passed).** | 6-8 | 0 | ~7 |
+| **2** Custom Gradient Picker | Reusable multi-stop gradient editor widget. Used by Phase 1 (Custom palette) and Phase 5 (panadapter/waterfall gradients). **DONE 2026-05-10 (c996c2f..f7b5c7e; bench passed; tst_gradient_picker 12/12 green).** | 8-12 | 2-3 | ~4 |
 | **3** TX FFT + Detector + Averaging | 9 controls. Reuse RX FFT slider + window combo + detector combo + averaging combo. Wire `TxAnalyzer::applySetAnalyzer` from settings instead of hardcoded. | 6-8 | 0-1 | ~5 |
 | **4** TX Grid Scale | 6 controls. New TX-specific grid renderer state in `SpectrumWidget`. Per-frame MOX branch in grid-draw path. | 4-6 | 0 | ~4 |
 | **5** TX Appearance colors | 13+ controls + 2 toggles + 1 line-width slider. **Migrate** existing TX color controls (`m_txZeroLineColorBtn`, `m_txFilterColorBtn`) into a dedicated "TX Display" sub-tab in Appearance. **Audit-before-add** for any duplicate. | 6-9 | 1 | ~5 |
