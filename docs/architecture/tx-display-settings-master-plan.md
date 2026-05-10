@@ -207,7 +207,7 @@ private slots:
 Test bodies:
 
 ```cpp
-// From Thetis Display.cs:1911-1937 + :428-437 + setup.cs:33314-33322
+// From Thetis Display.cs:1911-1937 + :428-437 + setup.cs:33627 (handler) + setup.cs:223 (default text)
 // [v2.10.3.13+501e3f51].  These four defaults are the Thetis-verbatim
 // values that 3M-5b ports.
 void TestTxWaterfallColormap::defaults_match_thetis()
@@ -288,7 +288,7 @@ Expected: 0/4 pass (the four behaviors don't exist yet). If the test fails to BU
 **READ first:**
 - `Display.cs:1911-1937 [v2.10.3.13+501e3f51]`: `TXWFAmpMin` / `TXWFAmpMax` property getter+setter pair.
 - `Display.cs:2516-2521 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (`Color.Black`).
-- `setup.cs:33314-33322 [v2.10.3.13+501e3f51]`: `comboColorPalette_tx_SelectedIndexChanged` handler that writes `_tx_color_scheme` (default Enhanced).
+- `setup.cs:33627 (handler) + setup.cs:223 (default text) [v2.10.3.13+501e3f51]`: `comboColorPalette_tx_SelectedIndexChanged` handler that writes `_tx_color_scheme` (default Enhanced).
 
 **SHOW (in commit message):** quote each cited C# block (~10 lines total) so the cite trail survives the port.
 
@@ -298,7 +298,7 @@ Expected: 0/4 pass (the four behaviors don't exist yet). If the test fails to BU
 // From Thetis Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax defaults.
 m_txWfLowLevel  = readInt(QStringLiteral("DisplayTxWfLowLevel"), -70);
 m_txWfHighLevel = readInt(QStringLiteral("DisplayTxWfHighLevel"), 30);
-// From Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] — comboColorPalette_tx default.
+// From Thetis setup.cs:33627 (handler) + setup.cs:223 (default text) [v2.10.3.13+501e3f51] — comboColorPalette_tx default.
 m_txWfPalette = static_cast<WfColorScheme>(qBound(0,
     s.value(settingsKey(QStringLiteral("DisplayTxWfPalette"), m_panIndex),
             QString::number(static_cast<int>(WfColorScheme::Enhanced))).toInt(),
@@ -377,7 +377,7 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] — per-frame
     // MOX-conditional render path.  No state machine; branch is inline
     // per pixel.
-    const bool isTx = m_moxActive;  // m_moxActive is set by setMoxOverlay
+    const bool isTx = m_moxOverlay;  // m_moxOverlay is set by setMoxOverlay
     const float lowThreshold  = isTx ? static_cast<float>(m_txWfLowLevel)
                                      : m_wfLowThreshold;
     const float highThreshold = isTx ? static_cast<float>(m_txWfHighLevel)
@@ -412,7 +412,7 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
 ```cpp
 // 3M-5b: AGC + NF-AGC are RX-only.  TX uses static thresholds from
 // m_txWfLowLevel / m_txWfHighLevel set in Setup → Display → TX.
-const bool isTx = m_moxActive;
+const bool isTx = m_moxOverlay;
 if (!isTx && m_wfAgcEnabled && !m_clarityActive) {
     // ...existing AGC code (unchanged inside)...
 }
@@ -667,7 +667,7 @@ Before writing any new Phase 5 control, grep `AppearanceSetupPages.cpp` for exis
 
 ## Risks and open questions
 
-1. **Per-frame MOX branch performance.** The render path runs at 15-30 fps with potentially 1024+ pixels per frame; an extra `if (m_moxActive)` per frame is negligible, but the `dbmToRgb` change does have a small runtime cost. Profile if waterfall rendering shows regression. Likely irrelevant.
+1. **Per-frame MOX branch performance.** The render path runs at 15-30 fps with potentially 1024+ pixels per frame; an extra `if (m_moxOverlay)` per frame is negligible, but the `dbmToRgb` change does have a small runtime cost. Profile if waterfall rendering shows regression. Likely irrelevant.
 
 2. **AGC behavior preservation for RX.** Phase 1 wraps the AGC and NF-AGC blocks in `!isTx` guards. Verify that RX behavior matches pre-Phase-1 state on the bench (no regression).
 
