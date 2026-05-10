@@ -1333,6 +1333,11 @@ void SetDisplayAvBackmult(int disp, int pixout, double mult);
 // analyzer.c:1843 — SetDisplaySampleRate (input sample rate change)
 void SetDisplaySampleRate(int disp, int rate);
 
+// analyzer.c:1856 — SetDisplayNormOneHz (normalize trace to 1 Hz reference)
+// Thetis specHPSDR.cs:288-294 [v2.10.3.13] gates this on DetTypePan in
+// {2,3,4} via updateNormalizePan(); the WDSP call itself is unconditional.
+void SetDisplayNormOneHz(int disp, int pixout, int norm);
+
 // analyzer.c:1101 — ResetPixelBuffers (clear analyzer pixel buffers)
 void ResetPixelBuffers(int disp);
 

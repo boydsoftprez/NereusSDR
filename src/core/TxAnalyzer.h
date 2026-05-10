@@ -110,20 +110,121 @@ public:
     /// WDSP disp ID this analyzer owns.
     int dispId() const noexcept { return m_dispId; }
 
+    // ── Phase 3M-5d: 9-control state surface ────────────────────────────
+    // Each property below mirrors a Thetis SpecHPSDR field and is wired
+    // to the same WDSP setter Thetis uses.  Setters persist to
+    // AppSettings on every mutation (PascalCase keys, no per-pan
+    // suffix — TX has one analyzer for the single TX disp).
+    //
+    // FFT size: 4096 * 2^slider per setup.cs:18138 [v2.10.3.13+501e3f51].
+    void setFftSize(int n);
+    int  fftSize() const noexcept { return m_fftSize; }
+
+    /// Slider position 0..N → fftSize = 4096 * 2^position.  Mirrors Thetis
+    /// tbTXDisplayFFTSize_Scroll at setup.cs:18138 [v2.10.3.13+501e3f51].
+    void setFftSizeSliderPosition(int position);
+
+    /// Current bin width in Hz = sampleRate / fftSize.  Mirrors Thetis
+    /// setup.cs:18140 [v2.10.3.13+501e3f51].
+    double binWidthHz() const noexcept;
+
+    // Window type 0..6 per comboTXDispWinType ordering at
+    // setup.designer.cs:36555-36562 [v2.10.3.13+501e3f51]:
+    //   0=Rectangular, 1=Blackman-Harris 4T, 2=Hann, 3=Flat-Top,
+    //   4=Hamming, 5=Kaiser, 6=Blackman-Harris 7T.
+    // Default 4 (Hamming) per specHPSDR.cs:134 [v2.10.3.13+501e3f51].
+    void setWindowType(int t);
+    int  windowType() const noexcept { return m_windowType; }
+
+    // Pan detector 0..4 per comboTXDispPanDetector items at
+    // setup.designer.cs:36718-36723 [v2.10.3.13+501e3f51]:
+    //   0=Peak, 1=Rosenfell, 2=Average, 3=Sample, 4=RMS.
+    // Default 0 per specHPSDR.cs:301 [v2.10.3.13+501e3f51].
+    void setPanDetector(int d);
+    int  panDetector() const noexcept { return m_panDetector; }
+
+    // Pan averaging mode 0..3 per comboTXDispPanAveraging items at
+    // setup.designer.cs:36693-36697 [v2.10.3.13+501e3f51]:
+    //   0=None, 1=Recursive, 2=Time Window, 3=Log Recursive.
+    // Default 0 per specHPSDR.cs:382 [v2.10.3.13+501e3f51].
+    void setPanAveraging(int m);
+    int  panAveraging() const noexcept { return m_panAveraging; }
+
+    // Pan averaging time in ms; tau seconds = ms * 0.001 per Thetis
+    // setup.cs:18125 [v2.10.3.13+501e3f51].  Default 30 ms per
+    // setup.designer.cs:36753 [v2.10.3.13+501e3f51].
+    void   setPanAvTimeMs(int ms);
+    int    panAvTimeMs() const noexcept { return m_panAvTimeMs; }
+    double panAvTauSeconds() const noexcept;
+
+    // Pan normalize-to-1-Hz checkbox per setup.cs:18129-18134.  Gated on
+    // DetTypePan in {2,3,4} per setup.cs:18111-18112 [v2.10.3.13+501e3f51]
+    // MW0LGE comment.
+    void setPanNormalize(bool on);
+    bool panNormalize()        const noexcept { return m_panNormalize; }
+    bool panNormalizeEnabled() const noexcept;  // gated on detector >= 2
+
+    // WF detector 0..3 per comboTXDispWFDetector items at
+    // setup.designer.cs:36459-36463 [v2.10.3.13+501e3f51]:
+    //   0=Peak, 1=Rosenfell, 2=Average, 3=Sample.  (No RMS slot for WF.)
+    // Default 0 per specHPSDR.cs:313 [v2.10.3.13+501e3f51].
+    void setWfDetector(int d);
+    int  wfDetector() const noexcept { return m_wfDetector; }
+
+    // WF averaging mode 0..3 per comboTXDispWFAveraging items at
+    // setup.designer.cs:36434-36438 [v2.10.3.13+501e3f51]:
+    //   0=None, 1=Recursive, 2=Time Window, 3=Log Recursive.
+    // Default 0 per specHPSDR.cs:402 [v2.10.3.13+501e3f51].
+    void setWfAveraging(int m);
+    int  wfAveraging() const noexcept { return m_wfAveraging; }
+
+    // WF averaging time in ms; tau seconds = ms * 0.001 per Thetis
+    // setup.cs:18169 [v2.10.3.13+501e3f51].  Default 120 ms per
+    // setup.designer.cs:36493 [v2.10.3.13+501e3f51].
+    void   setWfAvTimeMs(int ms);
+    int    wfAvTimeMs() const noexcept { return m_wfAvTimeMs; }
+    double wfAvTauSeconds() const noexcept;
+
+    // Number of WDSP pixel-out planes the analyzer is configured for.
+    // 3M-5d ships n_pixout=2 (pan + wf independent) per Thetis
+    // specHPSDR.cs:471-480 [v2.10.3.13+501e3f51] _pixel_out default.
+    int nPixout() const noexcept { return m_nPixout; }
+
+    // Test seam: ticks each time TxAnalyzer pushes a config to WDSP
+    // (SetAnalyzer / SetDisplay*).  Used by
+    // tests/tst_tx_analyzer_settings.cpp `setAnalyzer_called_on_each_setter`.
+    int analyzerConfigCount() const noexcept { return m_analyzerConfigCount; }
+
 signals:
-    /// FFT bins ready (in dBm).  Compatible signature with
-    /// FFTEngine::fftReady so SpectrumWidget::updateSpectrum can be
-    /// connected interchangeably.  receiverId arg is sentinel -1 to
-    /// distinguish from RX (receiverId 0).
+    /// FFT bins ready (in dBm) for the spectrum trace plane (pixout=0).
+    /// Compatible signature with FFTEngine::fftReady so
+    /// SpectrumWidget::updateSpectrum can be connected interchangeably.
+    /// receiverId arg is sentinel -1 to distinguish from RX (receiverId 0).
     void txFftReady(int receiverId, const QVector<float>& binsDbm);
 
+    /// FFT bins ready (in dBm) for the waterfall plane (pixout=1).
+    /// 3M-5d split off from txFftReady so the WF plane uses
+    /// DetTypeWF + AverageModeWF (configured independently in WDSP)
+    /// instead of sharing the pan plane's detector + averaging.
+    /// receiverId arg is sentinel -1, same convention as txFftReady.
+    void txWaterfallReady(int receiverId, const QVector<float>& binsDbm);
+
 private slots:
-    /// Polled at outputFps.  Calls GetPixels(dispId, 0, ...); if the
-    /// flag returns 1 (new frame available), emits txFftReady.
+    /// Polled at outputFps.  Calls GetPixels(dispId, 0, ...) for the
+    /// spectrum plane and GetPixels(dispId, 1, ...) for the waterfall
+    /// plane; emits txFftReady / txWaterfallReady on each new frame
+    /// (flag != 0).
     void poll();
 
 private:
     void applySetAnalyzer();
+    void applyDetectorMode(int pixout, int mode);
+    void applyAverageMode(int pixout, int mode);
+    void applyAvTau(int pixout, int avTimeMs);
+    void applyNormalizePan();
+
+    void loadSettings();
+    void saveSettings();
 
     const int m_dispId;
     int m_numPixels{2048};   // matches typical SpectrumWidget width
@@ -132,10 +233,46 @@ private:
     // From Thetis specHPSDR.cs:335 [v2.10.3.13+501e3f51] — frame_rate default = 15.
     int m_outputFps{15};
 
+    // From Thetis specHPSDR.cs:134 [v2.10.3.13+501e3f51] — window_type
+    // default = 4 (Hamming).  3M-5d reverts the 3M-5b NereusSDR
+    // BH4 (= 1) divergence per controller decision 2026-05-10.
+    int m_windowType{4};
+
+    // From Thetis specHPSDR.cs:301, :382 [v2.10.3.13+501e3f51] — det_type
+    // and av_mode defaults are 0 (Peak / None).
+    int m_panDetector{0};
+    int m_panAveraging{0};
+
+    // From Thetis setup.designer.cs:36753 [v2.10.3.13+501e3f51] —
+    // udTXDisplayAVGTime.Value = 30.  Spec table at master plan §Phase 3
+    // says 120 for both; source-read overrides — Thetis pan default is 30.
+    int m_panAvTimeMs{30};
+
+    // From Thetis specHPSDR.cs:324 [v2.10.3.13+501e3f51] — norm_oneHz_pan
+    // default = false.
+    bool m_panNormalize{false};
+
+    int m_wfDetector{0};
+    int m_wfAveraging{0};
+
+    // From Thetis setup.designer.cs:36493 [v2.10.3.13+501e3f51] —
+    // udTXDisplayAVTime.Value = 120.
+    int m_wfAvTimeMs{120};
+
+    // 3M-5d: bump from 1 to 2 so pan + wf detector/averaging diverge.
+    // From Thetis specHPSDR.cs:471 [v2.10.3.13+501e3f51] — _pixel_out
+    // default = 2.
+    int m_nPixout{2};
+
     QTimer m_pollTimer;
-    QVector<float> m_pixBuf;  // pre-allocated GetPixels output buffer
+    QVector<float> m_pixBuf;     // pixout=0 (spectrum trace)
+    QVector<float> m_pixBufWf;   // pixout=1 (waterfall)
 
     bool m_analyzerCreated{false};
+
+    // Test seam: ticks on each WDSP config push.  Exposed via
+    // analyzerConfigCount() for tst_tx_analyzer_settings.
+    int m_analyzerConfigCount{0};
 };
 
 } // namespace NereusSDR
