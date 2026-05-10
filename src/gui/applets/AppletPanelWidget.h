@@ -31,6 +31,8 @@
 
 class QVBoxLayout;
 class QScrollArea;
+class QPushButton;
+class QMenu;
 
 namespace NereusSDR {
 
@@ -83,6 +85,11 @@ public:
     // null or unknown applets. NereusSDR-original (no Thetis equivalent).
     void setAppletVisible(AppletWidget* applet, bool visible);
 
+    // Install a menu on the panel's top-right ☰ button. Until this is
+    // called, the button is hidden. Pass nullptr to remove the menu and
+    // re-hide the button.
+    void setBannerMenu(QMenu* menu);
+
     // Add a raw widget (e.g., MeterWidget) with a custom title to the scroll area
     void addWidget(QWidget* widget, const QString& title);
 
@@ -107,6 +114,9 @@ private:
     // Non-owning after setHeaderWidget(); the title-bar wrapper owns the tree.
     // Accessed by MainWindow via smeterWidget() for Task 41/43 wiring.
     SMeterWidget* m_sMeter        = nullptr;
+
+    QWidget*      m_bannerRow{nullptr};        // 22 px top header row
+    QPushButton*  m_bannerMenuButton{nullptr}; // ☰ button (right-aligned)
 };
 
 } // namespace NereusSDR

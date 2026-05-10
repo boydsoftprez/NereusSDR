@@ -38,6 +38,8 @@
 #include <QLabel>
 #include <QSizePolicy>
 #include <QResizeEvent>
+#include <QPushButton>
+#include <QMenu>
 
 namespace NereusSDR {
 
@@ -53,6 +55,33 @@ AppletPanelWidget::AppletPanelWidget(QWidget* parent)
     m_rootLayout = new QVBoxLayout(this);
     m_rootLayout->setContentsMargins(0, 0, 0, 0);
     m_rootLayout->setSpacing(0);
+
+    // Banner row at the very top — hosts the ☰ menu button (hidden
+    // until setBannerMenu installs a menu).
+    m_bannerRow = new QWidget(this);
+    m_bannerRow->setFixedHeight(22);
+    m_bannerRow->setStyleSheet(Style::titleBarStyle());
+    auto* bannerLayout = new QHBoxLayout(m_bannerRow);
+    bannerLayout->setContentsMargins(2, 0, 4, 0);
+    bannerLayout->setSpacing(4);
+    bannerLayout->addStretch();
+
+    m_bannerMenuButton = new QPushButton(QStringLiteral("☰"), m_bannerRow);
+    m_bannerMenuButton->setObjectName(QStringLiteral("appletPanelBannerButton"));
+    m_bannerMenuButton->setFixedSize(22, 18);
+    // User-visible tooltip — plain English, no source cites.
+    m_bannerMenuButton->setToolTip(QStringLiteral("Show or hide applets"));
+    m_bannerMenuButton->setStyleSheet(QStringLiteral(
+        "QPushButton {"
+        "  background: transparent; color: %1;"
+        "  border: none; font-size: 12px;"
+        "}"
+        "QPushButton:hover { color: %2; }"
+    ).arg(Style::kTitleText, Style::kAccent));
+    m_bannerMenuButton->hide();   // hidden until setBannerMenu called
+    bannerLayout->addWidget(m_bannerMenuButton);
+
+    m_rootLayout->addWidget(m_bannerRow);
 
     // Fixed header area (above scroll) — for MeterWidget / S-Meter
     m_headerLayout = new QVBoxLayout;
@@ -205,6 +234,13 @@ void AppletPanelWidget::setAppletVisible(AppletWidget* applet, bool visible)
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (!wrapper) { return; }  // applet not in this panel
     wrapper->setVisible(visible);
+}
+
+void AppletPanelWidget::setBannerMenu(QMenu* menu)
+{
+    if (!m_bannerMenuButton) { return; }
+    m_bannerMenuButton->setMenu(menu);
+    m_bannerMenuButton->setVisible(menu != nullptr);
 }
 
 void AppletPanelWidget::addWidget(QWidget* widget, const QString& title)
