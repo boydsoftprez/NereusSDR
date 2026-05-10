@@ -502,6 +502,14 @@ public:
     float wfLowThreshold() const { return m_wfLowThreshold; }
     void setWfAgcEnabled(bool on);
     bool wfAgcEnabled() const { return m_wfAgcEnabled; }
+
+    /// Force the waterfall-AGC running min/max tracker to re-prime on the
+    /// next bin push.  Use when the bin source changes dynamic range
+    /// abruptly (e.g. MOX edge: RX colormap is centered around -100 dBm,
+    /// TX bins land around -50 dBm) — without this, the 0.05 alpha
+    /// follower takes ~3 s to converge and the waterfall saturates solid
+    /// red in the meantime.
+    void resetWaterfallAgc() { m_wfAgcPrimed = false; }
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.

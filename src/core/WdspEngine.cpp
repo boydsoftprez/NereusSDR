@@ -893,6 +893,33 @@ TxChannel* WdspEngine::createTxChannel(int channelId,
 
     m_txChannels.emplace(channelId, std::move(wrapper));
 
+    // ── PR #212 follow-up bench fix (J.J. KG4VCF, 2026-05-07) ────────────
+    // Arm the TXA siphon to feed the WDSP analyzer for TX panadapter
+    // display.  Mirrors Thetis cmaster.cs:538-540 [v2.10.3.13]:
+    //   WDSP.TXASetSipMode(txch, 1);            // 1 => call analyzer
+    //   WDSP.TXASetSipDisplay(txch, txinid);    // disp = txinid
+    //
+    // The siphon at TXA.c:586 (xsiphon, line 586 — BEFORE xiqc at line
+    // 587) runs every fexchange0 invocation.  With mode=1 it dispatches
+    // Spectrum0(1, disp, 0, 0, in) per siphon.c:129-132.  The disp ID
+    // points to the WDSP analyzer instance owned by TxAnalyzer
+    // (kTxDispId=5, mirroring Thetis's cmaster.inid(1, 0) = cmRCVR + 0 = 5).
+    //
+    // Pre-IQC tap = clean intended pre-PA signal (the operator's
+    // intended modulation), as opposed to the antenna readback which
+    // shows actual radiated RF including PA IMD.  Thetis chooses
+    // pre-IQC; we match.
+    //
+    // Sequencing safety: TxAnalyzer is constructed in MainWindow setup
+    // BEFORE any radio connect, so XCreateAnalyzer(kTxDispId) has
+    // already populated pdisp[5] by the time this code runs and
+    // xsiphon's first push fires.  See TxAnalyzer.h header for the
+    // ordering invariant.
+#ifdef HAVE_WDSP
+    TXASetSipMode(channelId, 1);
+    TXASetSipDisplay(channelId, /*txinid=*/5);  // = TxAnalyzer::kTxDispId
+#endif
+
     qCInfo(lcDsp) << "Created TX channel" << channelId;
     return raw;
 }

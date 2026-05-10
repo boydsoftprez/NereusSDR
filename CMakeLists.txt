@@ -436,6 +436,7 @@ set(CORE_SOURCES
     src/core/ParaEqEnvelope.cpp
     src/core/TwoToneController.cpp
     src/core/FFTEngine.cpp
+    src/core/TxAnalyzer.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp
     src/core/ClarityController.cpp

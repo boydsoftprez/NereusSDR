@@ -87,6 +87,7 @@ class ConnectionPanel;
 class SupportDialog;
 class WdspEngine;
 class FFTEngine;
+class TxAnalyzer;
 class SpectrumWidget;
 class ClarityController;
 class ContainerManager;
@@ -265,6 +266,21 @@ private:
     SpectrumWidget*     m_spectrumWidget{nullptr};
     FFTEngine*          m_fftEngine{nullptr};
     QThread*            m_fftThread{nullptr};
+    // PR #212 follow-up: TX-side panadapter source via WDSP analyzer.
+    // Source-switched in via the MoxController::moxStateChanged lambda
+    // (FFTEngine for RX, TxAnalyzer for TX).  See TxAnalyzer.h header.
+    TxAnalyzer*         m_txAnalyzer{nullptr};
+    // Saved RX panadapter state captured on MOX-up so we can restore on
+    // MOX-down.  During TX, the SpectrumWidget is reconfigured to display
+    // the *TX filter passband* (a few-kHz window around the carrier) per
+    // Thetis's UpdateTXDisplayVars + CalcSpectrum (console.cs:8015-8049 +
+    // specHPSDR.cs:738-806 [v2.10.3.13]) — so all four state values
+    // (sample rate, center, bandwidth, DDC center) need to flip on MOX
+    // edge and restore on un-key.
+    double              m_savedSpectrumSampleRate{0.0};
+    double              m_savedSpectrumCenterHz{0.0};
+    double              m_savedSpectrumBandwidth{0.0};
+    double              m_savedSpectrumDdcHz{0.0};
     ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
     // Right-side strip wrapper widget — the inner QWidget hosting the

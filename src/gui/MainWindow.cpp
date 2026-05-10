@@ -259,6 +259,7 @@ warren@wpratt.com
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
+#include "core/TxAnalyzer.h"
 #include "core/NbFamily.h"
 #include "core/ClarityController.h"
 #include "core/StepAttenuatorController.h"
@@ -1052,6 +1053,22 @@ void MainWindow::buildUI()
     connect(m_fftEngine, &FFTEngine::fftReadyLinear,
             m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
 
+    // ── PR #212 follow-up bench fix (J.J. KG4VCF, 2026-05-07) ────────────
+    // TxAnalyzer drives the panadapter from the WDSP TX siphon during MOX.
+    // Created here on the main thread; MOX-aware source-switch is wired
+    // below in the MoxController connect block.  See TxAnalyzer.h header
+    // for the design rationale and Thetis source-first cite map.
+    m_txAnalyzer = new TxAnalyzer(TxAnalyzer::kTxDispId, this);
+    // TX dsp_rate = 96 kHz per WdspEngine::kTxDspSampleRate (= cmaster.c:182
+    // [v2.10.3.13] hardcoded 96000).  The siphon at TXA.c:586 delivers
+    // dsp_size = 4096 complex samples per fexchange0 cycle at this rate.
+    m_txAnalyzer->setSampleRate(96000.0);
+    m_txAnalyzer->setOutputFps(15);  // Thetis frame_rate default per specHPSDR.cs:335 [v2.10.3.13+501e3f51]
+    // Filter passband + n_pix get re-applied on every MOX-up edge in the
+    // MoxController connect block below — the active slice's mode/filter
+    // and the SpectrumWidget's laid-out width aren't known yet at ctor
+    // time.
+
     // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
     // reach the renderer / FFT engine without depending on MainWindow.
     m_radioModel->setSpectrumWidget(m_spectrumWidget);
@@ -1118,6 +1135,119 @@ void MainWindow::buildUI()
             connect(mox, &MoxController::moxStateChanged,
                     m_spectrumWidget, &SpectrumWidget::setMoxOverlay,
                     Qt::QueuedConnection);
+        }
+
+        // ── PR #212 follow-up bench fix (J.J. KG4VCF, 2026-05-07) ────────
+        // MOX-aware panadapter source switch: FFTEngine (RX-DDC FFTW3) ↔
+        // TxAnalyzer (WDSP TX siphon, pre-IQC).
+        //
+        // From Thetis console.cs:24399-24462 [v2.10.3.13] DisplayThread2:
+        //   if (bLocalMox && !_display_duplex)
+        //       SpecHPSDRDLL.GetPixels(cmaster.inid(1, 0), 0, ptr, ref flag);
+        //   else
+        //       SpecHPSDRDLL.GetPixels(0, 0, ptr, ref flag);
+        //
+        // We achieve the same effect by signal/slot reconnection rather
+        // than runtime branching in a polling loop: on MOX up, swap the
+        // SpectrumWidget connection from FFTEngine::fftReadyLinear to
+        // TxAnalyzer::txFftReady; reverse on MOX down.
+        //
+        // API note: fftReadyLinear/updateSpectrumLinear carry extra params
+        // (windowEnb, dbmOffset) for the Thetis WDSP analyzer pipeline.
+        // txFftReady emits pre-computed dBm bins; the lambda adapter bridges
+        // the signature mismatch by passing windowEnb=1.0, dbmOffset=0.0
+        // (no additional scaling — TxAnalyzer already computes dBm output).
+        // This is a throwaway debug adapter; Task 2 may refine TxAnalyzer
+        // to emit the full fftReadyLinear-compatible signature.
+        //
+        // Qt::QueuedConnection mirrors the pattern established by the
+        // hardwareFlipped + setMoxOverlay connects above.  Capture
+        // shouldn't outlive MainWindow (this), so the lambda is safe.
+        if (m_spectrumWidget && m_txAnalyzer && m_fftEngine) {
+            connect(mox, &MoxController::moxStateChanged, this,
+                    [this](bool isTx) {
+                if (isTx) {
+                    // Save just the two settings the TX path actually
+                    // needs to flip:
+                    //   sampleRate  — RX is at the wire DDC rate (768k
+                    //                 Saturn / 192k HL2); TX is fixed at
+                    //                 96 kHz (WdspEngine::kTxDspSampleRate
+                    //                 = cmaster.c:182 [v2.10.3.13]).
+                    //   ddcCenterHz — RX DDC may be off-VFO under CTUN;
+                    //                 TX FFT is centered on the carrier.
+                    // Critically we DO NOT touch centerHz / bandwidth so
+                    // the user's zoom level survives the transition; the
+                    // waterfall scrolls continuously across MOX edges
+                    // because no setFrequencyRange call fires the
+                    // largeShift-clear path in SpectrumWidget.
+                    m_savedSpectrumSampleRate = m_spectrumWidget->sampleRate();
+                    m_savedSpectrumDdcHz      = m_spectrumWidget->ddcCenterFrequency();
+
+                    // TX FFT is centered on the active slice's carrier.
+                    // If no slice (shouldn't happen during MOX, but guard
+                    // anyway) reuse the RX DDC center as a best-effort
+                    // fallback so the bins still render somewhere sane.
+                    SliceModel* slice = m_radioModel
+                        ? m_radioModel->activeSlice() : nullptr;
+                    const double carrierHz = slice
+                        ? static_cast<double>(slice->frequency())
+                        : m_savedSpectrumDdcHz;
+
+                    // Reconfigure the bin-frequency mapping.  centerHz /
+                    // bandwidth are LEFT ALONE — the user's zoom window
+                    // stays put, and visibleBinRange() now maps that
+                    // window onto the TX bins (96 kHz centered on
+                    // carrier) instead of the RX DDC bins.  Both setters
+                    // bypass setFrequencyRange so neither triggers the
+                    // history-clear path.
+                    m_spectrumWidget->setSampleRate(96000.0);
+                    m_spectrumWidget->setDdcCenterFrequency(carrierHz);
+
+                    // Match analyzer output bin count to display width so
+                    // every panadapter pixel comes from a unique bin.
+                    m_txAnalyzer->setNumPixels(m_spectrumWidget->width());
+
+                    disconnect(m_fftEngine, &FFTEngine::fftReadyLinear,
+                               m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
+                    // Lambda adapter: txFftReady emits (int, QVector<float> dBm);
+                    // updateSpectrumLinear expects (int, QVector<float> linear, double windowEnb, double dbmOffset).
+                    // Bridge with windowEnb=1.0 (no ENB correction) and dbmOffset=0.0 (pre-computed dBm).
+                    connect(m_txAnalyzer, &TxAnalyzer::txFftReady,
+                            m_spectrumWidget,
+                            [this](int rxId, const QVector<float>& binsDbm) {
+                        m_spectrumWidget->updateSpectrumLinear(rxId, binsDbm, 1.0, 0.0);
+                    });
+                    // Force the waterfall-AGC tracker to re-prime on the
+                    // first TX frame.  RX bins live around -110 dBm; TX
+                    // siphon bins land around -50 dBm.  Without an AGC
+                    // reset the 0.05-alpha follower needs ~3 s to drag
+                    // the colormap thresholds up and the panadapter
+                    // saturates solid red until then.
+                    m_spectrumWidget->resetWaterfallAgc();
+                    m_txAnalyzer->start();
+                } else {
+                    m_txAnalyzer->stop();
+                    // Disconnect the lambda — Qt requires matching signal pointer for context-based disconnect
+                    disconnect(m_txAnalyzer, &TxAnalyzer::txFftReady, m_spectrumWidget, nullptr);
+                    connect(m_fftEngine, &FFTEngine::fftReadyLinear,
+                            m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
+
+                    // Restore the RX-side bin-frequency mapping (sample
+                    // rate + DDC center).  centerHz / bandwidth never
+                    // changed, so they don't need restoring; the
+                    // waterfall picks up where it left off without a
+                    // history wipe.
+                    if (m_savedSpectrumSampleRate > 0.0) {
+                        m_spectrumWidget->setSampleRate(m_savedSpectrumSampleRate);
+                        m_spectrumWidget->setDdcCenterFrequency(m_savedSpectrumDdcHz);
+                    }
+                    // Symmetric AGC reset on un-key so the waterfall
+                    // snaps back to the RX dynamic range without the
+                    // same 3 s saturation pause in the other direction.
+                    m_spectrumWidget->resetWaterfallAgc();
+                }
+            },
+            Qt::QueuedConnection);
         }
 
         // ── Phase 3M-4 Task 12: SpectrumWidget IMD overlay state wiring ──────

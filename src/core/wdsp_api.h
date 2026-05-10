@@ -1274,6 +1274,79 @@ void PSRestoreCorr(int channel, char* filename);
 void SetPSRxIdx(int id, int idx);
 void SetPSTxIdx(int id, int idx);
 
+// ---------------------------------------------------------------------------
+// Analyzer + siphon API — WDSP spectrum/waterfall infrastructure
+//
+// Used by TxAnalyzer (NereusSDR src/core/TxAnalyzer.cpp) to drive the TX
+// panadapter display from the pre-IQC siphon tap during MOX.  Mirrors
+// Thetis's panadapter source-switch (console.cs:24399-24462 [v2.10.3.13]):
+// MOX-on swaps the GetPixels source from RX disp → TX disp.
+//
+// From Thetis ChannelMaster/cmaster.cs:538-540 [v2.10.3.13]:
+//   WDSP.TXASetSipMode(txch, 1);            // 1=>call the appropriate analyzer
+//   WDSP.TXASetSipDisplay(txch, txinid);    // disp = txinid = tx stream
+//
+// Vendored sources: third_party/wdsp/src/analyzer.c, siphon.c, TXA.c [v2.10.3.13].
+// ---------------------------------------------------------------------------
+
+// analyzer.h:168 — XCreateAnalyzer (allocate analyzer instance for disp ID)
+//   m_LO = max number of LO positions per subspan
+//   m_stitch = max number of subspans
+//   app_data_path = char* (not const) per WDSP signature
+void XCreateAnalyzer(int disp, int* success, int m_size,
+                     int m_LO, int m_stitch, char* app_data_path);
+
+// analyzer.c:1425 — DestroyAnalyzer (free analyzer instance)
+void DestroyAnalyzer(int disp);
+
+// analyzer.c:1173 — SetAnalyzer (configure analyzer parameters)
+//   typ=1: complex I/Q input; typ=0: real input
+//   win_type=0..7: 0=rectangular, 1=Blackman-Harris 4-term, 4=Kaiser, etc.
+void SetAnalyzer(int disp, int n_pixout, int n_fft, int typ,
+                 int* flp, int sz, int bf_sz, int win_type, double pi,
+                 int ovrlp, int clp, double fscLin, double fscHin,
+                 int n_pix, int n_stch, int calset,
+                 double fmin, double fmax, int max_w);
+
+// analyzer.c:1505 — GetPixels (drain the next ready pixel frame)
+//   pix: float[n_pix] output buffer (dOUTREAL is float per comm.h:126)
+//   flag: out — 1 if frame written, 0 if no new frame ready
+void GetPixels(int disp, int pixout, float* pix, int* flag);
+
+// analyzer.c:1726 — Spectrum0 (push input samples; called from xsiphon mode 1)
+//   Not invoked directly by TxAnalyzer — the siphon dispatcher calls it
+//   from within fexchange0 when TXASetSipMode(ch, 1) has been set.
+void Spectrum0(int run, int disp, int ss, int LO, double* pbuff);
+
+// analyzer.c:1772 — SetDisplayDetectorMode (peak/avg/sample/min etc.)
+void SetDisplayDetectorMode(int disp, int pixout, int mode);
+
+// analyzer.c:1784 — SetDisplayAverageMode (avg type: TimeAvg / Log / Linear etc.)
+void SetDisplayAverageMode(int disp, int pixout, int mode);
+
+// analyzer.c:1816 — SetDisplayNumAverage (averaging window size)
+void SetDisplayNumAverage(int disp, int pixout, int num);
+
+// analyzer.c:1831 — SetDisplayAvBackmult (average back-multiplier)
+void SetDisplayAvBackmult(int disp, int pixout, double mult);
+
+// analyzer.c:1843 — SetDisplaySampleRate (input sample rate change)
+void SetDisplaySampleRate(int disp, int rate);
+
+// analyzer.c:1101 — ResetPixelBuffers (clear analyzer pixel buffers)
+void ResetPixelBuffers(int disp);
+
+// siphon.c:236 — TXASetSipMode (0 = buffer only, 1 = call analyzer/Spectrum0)
+void TXASetSipMode(int channel, int mode);
+
+// siphon.c:245 — TXASetSipDisplay (which analyzer disp ID to push to)
+void TXASetSipDisplay(int channel, int disp);
+
+// siphon.c:227 — TXASetSipPosition (where in TXA chain the siphon taps;
+// default is the existing TXA.c:586 position, BEFORE xiqc — pre-PS
+// correction = the clean intended signal Thetis displays)
+void TXASetSipPosition(int channel, int pos);
+
 } // extern "C"
 
 #endif // HAVE_WDSP
