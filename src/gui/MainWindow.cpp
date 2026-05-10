@@ -280,6 +280,7 @@ warren@wpratt.com
 #include "applets/AppletPanelWidget.h"
 #include "SMeterWidget.h"            // Task 41 (Phase 3P-II): SMeterWidget header wiring
 #include "applets/AmpApplet.h"
+#include "applets/AppletVisibilityController.h"
 #include "applets/RxApplet.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
@@ -2510,6 +2511,61 @@ void MainWindow::populateDefaultMeter()
             }
         });
     }
+
+    // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
+    // NereusSDR-original. Backs the show/hide menu surfaces. Registration
+    // order matches the order the applets were added above; toggle
+    // defaults are all true (existing layout preserved on first launch).
+    //
+    // TCI applets (Phase 23, above) keep their own AppSettings keys
+    // (TciApplet_Visible / ClientChainApplet_Visible) and direct setVisible
+    // — they are not registered with this controller in v1.
+    //
+    // AmpApplet and TunerApplet (Phase 3P-II Task 20, just above) are also
+    // not yet registered with this controller — both shipped on main while
+    // this branch was in development. Integrating Amp, Tuner, and TCI under
+    // the controller's roof is a follow-up; the current split means the ☰
+    // banner menu and Containers > Applets section show only the original
+    // 5 wired applets, and the others are managed via their own controls.
+    m_appletVis = new AppletVisibilityController(this);
+
+    m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
+    m_appletsById[QStringLiteral("Tx")]         = m_txApplet;
+    m_appletsById[QStringLiteral("PhoneCw")]    = m_phoneCwApplet;
+    m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
+    m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
+
+    // Display names match each applet's appletTitle() — keep in sync if
+    // an applet's title changes.
+    m_appletVis->registerApplet(QStringLiteral("Rx"),
+                                QStringLiteral("RX"),         true);
+    m_appletVis->registerApplet(QStringLiteral("Tx"),
+                                QStringLiteral("TX"),         true);
+    m_appletVis->registerApplet(QStringLiteral("PhoneCw"),
+                                QStringLiteral("Phone / CW"), true);
+    m_appletVis->registerApplet(QStringLiteral("Vax"),
+                                QStringLiteral("VAX"),        true);
+    m_appletVis->registerApplet(QStringLiteral("PureSignal"),
+                                QStringLiteral("PureSignal"), true);
+
+    // Apply initial visibility state from the controller (in case
+    // AppSettings already had values from a prior session).
+    for (const QString& id : m_appletVis->registeredIds()) {
+        if (auto* a = m_appletsById.value(id, nullptr)) {
+            panel->setAppletVisible(a, m_appletVis->isVisible(id));
+        }
+    }
+
+    // Pump future visibility changes from the controller into the panel.
+    connect(m_appletVis, &AppletVisibilityController::visibilityChanged,
+            this, [this](const QString& id, bool visible) {
+        if (auto* a = m_appletsById.value(id, nullptr)) {
+            if (m_appletPanel) {
+                m_appletPanel->setAppletVisible(a, visible);
+            }
+        }
+    });
+
 
     // Ghost applets: constructed but not added to the panel or the Containers menu
     // until their feature phases ship. Uncomment the construction + addContainerToggle
