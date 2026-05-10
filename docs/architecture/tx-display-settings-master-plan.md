@@ -817,9 +817,11 @@ All 9 properties live on the `SpecHPSDR` class (`specHPSDR.cs:301-322` for DetTy
 
 To make pan vs WF Detector/Averaging independently configurable (Thetis parity), `n_pixout` must bump from 1 to 2. Today's `GetPixels(dispId, 0, pixBuf)` reads pixout-0; bumping requires the WF tap to read `GetPixels(dispId, 1, pixBuf)` as the second pixel output. SpectrumWidget consumes the same FFT data today for both trace and waterfall; this phase splits the read points so detector + avg apply differently to each.
 
-**NereusSDR-architectural divergence (carried from 3M-5b):**
+**Default window — reverts to Thetis Hamming (3M-5d controller decision 2026-05-10):**
 
-Default window remains BH4 (NereusSDR pick), NOT Thetis Hamming. User can switch via combo at any time. Combo offers all 7 Thetis windows. The default applies to first-launch only; user choice persists.
+3M-5b shipped with `TxAnalyzer.cpp:201-208` hardcoded to BH4 (window 1) as a NereusSDR-architectural divergence from Thetis default Hamming (window 4 per `specHPSDR.cs:134`). That divergence rationale ("Hamming sidelobes + auto-AGC = splattery waterfall") predated 3M-5b's avenger-clear-on-MOX + tightened Low/High thresholds. With 3M-5b's colormap fix landed, the controller has elected to revert the divergence and ship Thetis-faithful Hamming as the fresh-install default. If splatter returns on bench, the user can flip the combo to BH4 (or any of 7 windows) without recompile.
+
+Implication: existing 3M-5b users with no `DisplayTxWindowType` key present will see Hamming take effect on next launch after 3M-5d. The implementer must replace the BH4 literal in `TxAnalyzer.cpp:209` with a member read so the settings-driven default propagates correctly.
 
 **Files:**
 - Modify: `src/core/TxAnalyzer.{h,cpp}` — add 7 new state members + setters + load-from-settings, bump `n_pixout=2`, propagate pan/WF detector/avg/normalize via WDSP setters.
@@ -833,7 +835,7 @@ Default window remains BH4 (NereusSDR pick), NOT Thetis Hamming. User can switch
 | Key | Type | Default | Thetis source |
 |---|---|---|---|
 | `DisplayTxFftSize` | int | 4096 | `setup.cs:18138` formula = `4096 * 2^0` |
-| `DisplayTxWindowType` | int | **1 (BH4)** | NereusSDR pick; Thetis = 4 (Hamming) at `specHPSDR.cs:134` |
+| `DisplayTxWindowType` | int | **4 (Hamming)** | Thetis default at `specHPSDR.cs:134`. 3M-5d reverts the 3M-5b BH4 divergence (controller decision 2026-05-10). Combo lets user switch to any of 7 windows. |
 | `DisplayTxPanDetector` | int | 0 (Peak) | `specHPSDR.cs:301` default |
 | `DisplayTxPanAveraging` | int | 0 (Off) | `specHPSDR.cs:312` default |
 | `DisplayTxPanAvTimeMs` | int | 120 (= 0.120 s tau) | Thetis NumericUpDownTS default — verify in source-read |
@@ -855,7 +857,7 @@ Implementer must source-read the actual Thetis designer defaults for `udTXDispla
 - [ ] RX side unchanged — no regressions on the RX FFT slider, detector, averaging.
 - [ ] `tst_tx_analyzer_settings` green (8+ cases).
 - [ ] `tst_tx_waterfall_colormap` + `tst_gradient_picker` still green (no regressions on shipped phases).
-- [ ] Default window remains BH4 (3M-5b behavior preserved on fresh install).
+- [ ] Default window = Hamming (Thetis-faithful per controller 2026-05-10 decision). User can pick BH4 (or any of 7 windows) via combo if splatter returns.
 
 ### Tasks
 
@@ -869,7 +871,7 @@ Implementer must source-read the actual Thetis designer defaults for `udTXDispla
 - NereusSDR `src/core/TxAnalyzer.{h,cpp}` (current state surface)
 
 **TRANSLATE:** 8 test cases. Header has `// no-port-check:` marker.
-1. `defaults_match_spec` — TxAnalyzer constructs with FFT=4096, Window=BH4 (1), PanDet=0, PanAvg=0, PanAvTimeMs=<Thetis>, PanNormalize=false, WfDet=0, WfAvg=0, WfAvTimeMs=<Thetis>.
+1. `defaults_match_spec` — TxAnalyzer constructs with FFT=4096, Window=Hamming (4), PanDet=0, PanAvg=0, PanAvTimeMs=<Thetis>, PanNormalize=false, WfDet=0, WfAvg=0, WfAvTimeMs=<Thetis>.
 2. `settings_round_trip` — set each of the 9 via setter, save to AppSettings, reload, verify each one survives.
 3. `fft_size_formula` — `setFftSizeSliderPosition(0)` ⇒ fftSize=4096; position(1) ⇒ 8192; position(2) ⇒ 16384.
 4. `bin_width_formula` — `binWidthHz() == sampleRate / fftSize`.
