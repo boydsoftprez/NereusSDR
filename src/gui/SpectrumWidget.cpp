@@ -117,6 +117,7 @@
 #include "ImdOverlay.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
+#include "widgets/GradientPickerWidget.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"   // Phase 3M-4 bench-fix Round 2: lcSpectrum
 #include "dbm_strip_math.h"
@@ -588,9 +589,28 @@ void SpectrumWidget::loadSettings()
         QColor c = QColor::fromString(hex);
         m_txWfLowColor = c.isValid() ? c : QColor(Qt::black);
     }
-    // Custom gradient (3M-5c placeholder; default = same as RX gradient default).
+    // 3M-5c: Custom gradient encoded text (default empty -> picker reverts
+    // to Thetis-verbatim 8-stop grayscale on first show; the cached
+    // m_txCustomLut stays invalid until the user picks Custom palette and
+    // mutates the gradient at least once).
     m_txWfGradient = s.value(settingsKey(QStringLiteral("DisplayTxWfGradient"), m_panIndex),
                              QString()).toString();
+    m_txCustomLutValid = false;
+    if (!m_txWfGradient.isEmpty()) {
+        // Rebuild cached LUT from persisted encoded text. Same Thetis
+        // setup.cs:33314-33322 [v2.10.3.13+501e3f51] consumer pattern as
+        // setTxWfGradient() but invoked at load time so the very first
+        // MOX paint after launch already has the cached 101-color LUT.
+        GradientPickerWidget tempPicker;
+        tempPicker.setEncodedText(m_txWfGradient);
+        const QVector<QColor> lut = tempPicker.colorTable(101);
+        if (lut.size() == 101) {
+            for (int k = 0; k < 101; ++k) {
+                m_txCustomLut[k] = lut[k].rgba();
+            }
+            m_txCustomLutValid = true;
+        }
+    }
 
     // Sub-epic E: scrollback depth (default 20 min, range 60s..20min).
     m_waterfallHistoryMs = s.value(
@@ -1977,6 +1997,29 @@ void SpectrumWidget::setTxWfGradient(const QString& encoded)
 {
     if (m_txWfGradient == encoded) { return; }
     m_txWfGradient = encoded;
+
+    // 3M-5c: Rebuild the cached 101-entry color LUT from the encoded
+    // string. Mirrors the WaterfallTXGradient() consumer at Thetis
+    // setup.cs:33314-33322 [v2.10.3.13+501e3f51]:
+    //   Color[] waterfall_grad = new Color[101];
+    //   for (int p = 0; p <= 100; p++)
+    //       waterfall_grad[p] = lgLinearGradientTX_waterfall.GetColourAtPercent(p / 100f);
+    // GradientPickerWidget::setEncodedText is a silent no-op on empty /
+    // malformed input, so a fresh-install empty string leaves the picker
+    // at its Thetis-verbatim default 8-stop grayscale ramp.
+    m_txCustomLutValid = false;
+    if (!encoded.isEmpty()) {
+        GradientPickerWidget tempPicker;
+        tempPicker.setEncodedText(encoded);
+        const QVector<QColor> lut = tempPicker.colorTable(101);
+        if (lut.size() == 101) {
+            for (int k = 0; k < 101; ++k) {
+                m_txCustomLut[k] = lut[k].rgba();
+            }
+            m_txCustomLutValid = true;
+        }
+    }
+
     scheduleSettingsSave();
     update();
     emit txWfSettingsChanged();
@@ -4103,6 +4146,19 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     float range = effectiveHigh - effectiveLow;
     float adjusted = (dbm - effectiveLow) / range;
     adjusted = qBound(0.0f, adjusted, 1.0f);
+
+    // 3M-5c: TX + Custom palette + populated 101-LUT -> direct index into
+    // the GradientPickerWidget-built LUT. Mirrors the WaterfallTXGradient
+    // consumer at Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] which
+    // builds Color[101] from GetColourAtPercent(p / 100f) and indexes by
+    // percent-of-range. When the LUT hasn't been populated yet (fresh
+    // install, user has not opened Setup -> Display -> TX -> Custom) the
+    // code falls through to the existing kCustomFallbackStops path so the
+    // Custom palette stays usable as a default colour scheme.
+    if (isTx && scheme == WfColorScheme::Custom && m_txCustomLutValid) {
+        const int idx = qBound(0, static_cast<int>(adjusted * 100.0f + 0.5f), 100);
+        return m_txCustomLut[idx];
+    }
 
     // Look up in gradient stops for current color scheme (TX or RX).
     int stopCount = 0;

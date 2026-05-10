@@ -70,6 +70,7 @@
 #include "models/RadioModel.h"
 #include "core/NoiseFloorTracker.h"
 #include "gui/ColorSwatchButton.h"
+#include "gui/widgets/GradientPickerWidget.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -2339,13 +2340,18 @@ void TxDisplayPage::buildUI()
         "Color used when the signal level is at or below the Low Level set above."));
     ampForm->addRow(QStringLiteral("Low Color:"), m_txWfLowColorBtn);
 
-    // Custom Gradient placeholder (3M-5c — lands when Palette = Custom).
-    auto* gradLabel = new QLabel(
-        QStringLiteral("<i>(custom gradient editor wired in 3M-5c when palette = Custom)</i>"),
-        ampGroup);
-    gradLabel->setEnabled(false);
-    gradLabel->setStyleSheet(QStringLiteral("QLabel { color: #607080; }"));
-    ampForm->addRow(QStringLiteral("Custom Gradient:"), gradLabel);
+    // Custom Gradient (3M-5c functional). Port of Thetis
+    // lgLinearGradientTX_waterfall instance at setup.designer.cs:3283 area
+    // [v2.10.3.13+501e3f51]. Visibility binds to palette = Custom; encoded
+    // text persists under DisplayTxWfGradient (already reserved by 3M-5b).
+    m_txWfGradientPicker = new GradientPickerWidget(ampGroup);
+    m_txWfGradientPicker->setToolTip(QStringLiteral(
+        "Multi-stop linear gradient editor. Click the strip body to add a "
+        "stop, drag a stop to move it, double-click to recolor, right-click "
+        "to delete (the two end-cap stops cannot be removed)."));
+    auto* gradRowLabel = new QLabel(QStringLiteral("Custom Gradient:"), ampGroup);
+    m_txWfGradientRowLabel = gradRowLabel;
+    ampForm->addRow(gradRowLabel, m_txWfGradientPicker);
 
     contentLayout()->addWidget(ampGroup);
 
@@ -2361,6 +2367,16 @@ void TxDisplayPage::buildUI()
 
     // Wire the 4 functional Waterfall Amplitude Scale controls to SpectrumWidget.
     // Initial sync from current SpectrumWidget state.
+    auto applyGradientVisibility = [this](WfColorScheme s) {
+        const bool show = (s == WfColorScheme::Custom);
+        if (m_txWfGradientPicker) {
+            m_txWfGradientPicker->setVisible(show);
+        }
+        if (m_txWfGradientRowLabel) {
+            m_txWfGradientRowLabel->setVisible(show);
+        }
+    };
+
     if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
         QSignalBlocker bLow(m_txWfLowLevelSpin);
         QSignalBlocker bHigh(m_txWfHighLevelSpin);
@@ -2380,6 +2396,26 @@ void TxDisplayPage::buildUI()
         }
 
         m_txWfLowColorBtn->setColor(sw->txWfLowColor());
+
+        // Restore the gradient picker state from the persisted encoded
+        // text. setEncodedText is a silent no-op on empty/malformed
+        // input so a fresh install retains the GradientPickerWidget
+        // default-ctor state (Thetis-verbatim 8-stop grayscale).
+        if (m_txWfGradientPicker) {
+            const QString persisted = sw->txWfGradient();
+            if (!persisted.isEmpty()) {
+                QSignalBlocker bGrad(m_txWfGradientPicker);
+                m_txWfGradientPicker->setEncodedText(persisted);
+            }
+        }
+
+        // Initial visibility: only show the picker row when palette = Custom.
+        applyGradientVisibility(sw->txWfPalette());
+    } else if (m_txWfGradientPicker) {
+        // No model wired (test / preview construction) — hide the picker
+        // row by default; the palette change handler below will reveal it
+        // when the user picks Custom.
+        applyGradientVisibility(WfColorScheme::Default);
     }
 
     // Low Level: user edit propagates to SpectrumWidget.
@@ -2400,12 +2436,14 @@ void TxDisplayPage::buildUI()
 
     // Palette: current item's data value is the WfColorScheme ordinal.
     connect(m_txWfPaletteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int i) {
+            this, [this, applyGradientVisibility](int i) {
+        const int val = m_txWfPaletteCombo->itemData(i).toInt();
+        const auto scheme = static_cast<WfColorScheme>(
+            qBound(0, val, static_cast<int>(WfColorScheme::Count) - 1));
         if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
-            const int val = m_txWfPaletteCombo->itemData(i).toInt();
-            sw->setTxWfPalette(static_cast<WfColorScheme>(
-                qBound(0, val, static_cast<int>(WfColorScheme::Count) - 1)));
+            sw->setTxWfPalette(scheme);
         }
+        applyGradientVisibility(scheme);
     });
 
     // Low Color: ColorSwatchButton emits colorChanged on user pick.
@@ -2415,6 +2453,19 @@ void TxDisplayPage::buildUI()
             sw->setTxWfLowColor(c);
         }
     });
+
+    // Custom Gradient picker: every mutation persists the encoded text on
+    // SpectrumWidget. SpectrumWidget caches the rebuilt 101-LUT from inside
+    // setTxWfGradient (Step 2.12), so the live MOX render path picks up the
+    // change on the next pushed waterfall row.
+    if (m_txWfGradientPicker) {
+        connect(m_txWfGradientPicker, &GradientPickerWidget::changed,
+                this, [this]() {
+            if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+                sw->setTxWfGradient(m_txWfGradientPicker->encodedText());
+            }
+        });
+    }
 }
 
 } // namespace NereusSDR

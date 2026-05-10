@@ -307,9 +307,13 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Forward decl for the Custom-palette gradient picker (Phase 3M-5c).
+class GradientPickerWidget;
+
 // Display > TX Display
 // From Thetis tpDisplayTransmit [setup.designer.cs:36232 v2.10.3.13+501e3f51].
 // 3M-5b: Waterfall Amplitude Scale group is functional.
+// 3M-5c: Custom Gradient Picker (visible when palette = Custom).
 // Remaining groups (FFT, Panadapter, Waterfall FFT, TX Grid Scale) are
 // placeholder labels naming the sub-phase that wires them.
 // ---------------------------------------------------------------------------
@@ -327,6 +331,12 @@ private:
     QSpinBox*          m_txWfHighLevelSpin{nullptr};  // udTXWFAmpMax: range -200..200, step 5, default +30 dBm
     QComboBox*         m_txWfPaletteCombo{nullptr};   // comboColorPalette_tx: 7-item Thetis list
     ColorSwatchButton* m_txWfLowColorBtn{nullptr};    // clrbtnWaterfallLow_tx: default Black
+
+    // Group 4 (cont.): Custom Gradient Picker (functional in 3M-5c).
+    // From Thetis lgLinearGradientTX_waterfall [setup.designer.cs:3283 area
+    // v2.10.3.13+501e3f51]. The picker row is hidden unless palette = Custom.
+    GradientPickerWidget* m_txWfGradientPicker{nullptr};
+    QWidget*              m_txWfGradientRowLabel{nullptr}; // form-row label widget; toggled with picker
 };
 
 } // namespace NereusSDR

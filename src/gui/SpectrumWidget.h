@@ -163,6 +163,7 @@ mw0lge@grange-lane.co.uk
 #include "spectrum/PeakBlobDetector.h"
 #include "spectrum/SpectrumAvenger.h"
 
+#include <array>
 #include <utility>
 
 #include "core/ConnectionState.h"
@@ -1333,7 +1334,17 @@ private:
     int           m_txWfHighLevel{30};         // dBm, from Thetis Display.cs:1911 [v2.10.3.13+501e3f51] tx_wf_amp_max default
     WfColorScheme m_txWfPalette{WfColorScheme::Enhanced}; // Thetis Display.cs:428 [v2.10.3.13+501e3f51] _tx_color_scheme = ColorScheme.enhanced
     QColor        m_txWfLowColor{Qt::black};   // Thetis Display.cs:2516 [v2.10.3.13+501e3f51] waterfall_low_color_tx = Color.Black
-    QString       m_txWfGradient;              // encoded gradient string for Custom palette (3M-5c placeholder)
+    QString       m_txWfGradient;              // encoded gradient string for Custom palette
+    // 3M-5c: 101-entry color LUT cached from m_txWfGradient encoded text.
+    // Mirrors the Thetis WaterfallTXGradient() 101-color array built at
+    // setup.cs:33314-33322 [v2.10.3.13+501e3f51]. Rebuilt inside
+    // setTxWfGradient() whenever the encoded string changes; consumed by
+    // dbmToRgb() when isTx && palette == Custom. m_txCustomLutValid stays
+    // false until the LUT has been populated at least once (signals "fall
+    // back to kCustomFallbackStops" so the Custom palette behaves usefully
+    // before the user picks one in Setup -> Display -> TX).
+    std::array<QRgb, 101> m_txCustomLut{};
+    bool                  m_txCustomLutValid{false};
 
     // ---- Phase 3G-8 commit 4: waterfall renderer state ----
 
