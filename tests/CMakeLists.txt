@@ -3959,3 +3959,19 @@ target_compile_definitions(tst_p1_bank16_pursignal_run PRIVATE NEREUS_BUILD_TEST
 # NOTE: Steps 1.3-1.8 add the impl + test seams; this target is RED until then.
 # Uses QTEST_MAIN (QApplication required for SpectrumWidget construction).
 nereus_add_test(tst_tx_waterfall_colormap)
+
+# ── Phase 3M-5c: Custom Gradient Picker widget (TDD red) ─────────────────────
+# 10 tests locking in Thetis ucLGPicker default-state, encoded format, color
+# interpolation, mutation rules, and 101-entry LUT consumer pattern. Sources:
+#   ucLGPicker.cs:55-130    (constants + default ctor 8-stop grayscale ramp)
+#   ucLGPicker.cs:75-80     (private GradColours struct)
+#   ucLGPicker.cs:387-446   (LGPicker_MouseDown add-on-empty-strip)
+#   ucLGPicker.cs:582-597   (RemoveSelectedGripper end-cap protection / min 2)
+#   ucLGPicker.cs:666-738   (Text get/set, malformed-input no-op)
+#   ucLGPicker.cs:770-792   (GetColourAtPercent — clamp + interp)
+#   ucLGPicker.cs:912-930   (EncodedText base64 wrapper)
+#   setup.cs:33304-33312    (101-entry waterfall LUT consumer pattern)
+# All v2.10.3.13+501e3f51. NOTE: Steps 2.3-2.6 add the impl + test seams; this
+# target is RED until then. Uses QTEST_MAIN (QApplication required for the
+# GradientPickerWidget QWidget subclass).
+nereus_add_test(tst_gradient_picker)

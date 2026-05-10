@@ -546,6 +546,9 @@ set(GUI_SOURCES
     src/gui/widgets/DspParamPopup.cpp
     src/gui/widgets/FilterPassbandWidget.cpp
     src/gui/widgets/FilterPresetEditDialog.cpp
+    src/gui/widgets/GradientPickerWidget.h
+    src/gui/widgets/GradientPickerWidget.cpp
+    src/gui/widgets/GradientStop.h
     src/gui/widgets/GuardedComboBox.h
     src/gui/widgets/GuardedSlider.h
     src/gui/widgets/MeterSlider.h
