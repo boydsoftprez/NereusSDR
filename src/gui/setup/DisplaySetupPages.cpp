@@ -2288,8 +2288,7 @@ void TxDisplayPage::buildUI()
     m_txWfLowLevelSpin->setSingleStep(5);
     m_txWfLowLevelSpin->setSuffix(QStringLiteral(" dBm"));
     m_txWfLowLevelSpin->setToolTip(QStringLiteral(
-        "Waterfall Low Signal - Show Low Color below this value (gradient in between). "
-        "From Thetis udTXWFAmpMin [setup.designer.cs:36319 v2.10.3.13+501e3f51]."));
+        "Waterfall Low Signal. Show Low Color below this value, with gradient in between."));
     ampForm->addRow(QStringLiteral("Low Level:"), m_txWfLowLevelSpin);
 
     // High Level: From Thetis udTXWFAmpMax
@@ -2301,8 +2300,7 @@ void TxDisplayPage::buildUI()
     m_txWfHighLevelSpin->setSingleStep(5);
     m_txWfHighLevelSpin->setSuffix(QStringLiteral(" dBm"));
     m_txWfHighLevelSpin->setToolTip(QStringLiteral(
-        "Waterfall High Signal - Show High Color above this value (gradient in between). "
-        "From Thetis udTXWFAmpMax [setup.designer.cs:36350 v2.10.3.13+501e3f51]."));
+        "Waterfall High Signal. Show High Color above this value, with gradient in between."));
     ampForm->addRow(QStringLiteral("High Level:"), m_txWfHighLevelSpin);
 
     // Palette: From Thetis comboColorPalette_tx
@@ -2329,8 +2327,7 @@ void TxDisplayPage::buildUI()
     m_txWfPaletteCombo->addItem(QStringLiteral("Custom"),
         QVariant::fromValue(static_cast<int>(WfColorScheme::Custom)));
     m_txWfPaletteCombo->setToolTip(QStringLiteral(
-        "Sets the color scheme for the TX waterfall. "
-        "From Thetis comboColorPalette_tx [setup.designer.cs:36290 v2.10.3.13+501e3f51]."));
+        "Sets the color scheme for the TX waterfall."));
     ampForm->addRow(QStringLiteral("Palette:"), m_txWfPaletteCombo);
 
     // Low Color: From Thetis clrbtnWaterfallLow_tx
@@ -2339,8 +2336,7 @@ void TxDisplayPage::buildUI()
     // is at or below the low level set above."
     m_txWfLowColorBtn = new ColorSwatchButton(QColor(Qt::black), ampGroup);
     m_txWfLowColorBtn->setToolTip(QStringLiteral(
-        "The Color to use when the signal level is at or below the low level set above. "
-        "From Thetis clrbtnWaterfallLow_tx [setup.designer.cs:36265 v2.10.3.13+501e3f51]."));
+        "Color used when the signal level is at or below the Low Level set above."));
     ampForm->addRow(QStringLiteral("Low Color:"), m_txWfLowColorBtn);
 
     // Custom Gradient placeholder (3M-5c — lands when Palette = Custom).
