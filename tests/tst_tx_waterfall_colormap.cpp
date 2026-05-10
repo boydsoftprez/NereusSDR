@@ -1,18 +1,23 @@
+// no-port-check: NereusSDR-original test file. Cites Thetis line numbers
+// as verification anchors (we assert that NereusSDR defaults match Thetis
+// verbatim), not as port-from references. No verbatim Thetis source is
+// reproduced here beyond brief default-value quotes used as test oracles.
+//
 // tst_tx_waterfall_colormap.cpp
 //
-// Phase 3M-5b — TX Waterfall Colormap. Locks in 4 acceptance behaviors against
-// Thetis-verbatim values. Tests reference the master plan at
-// docs/architecture/tx-display-settings-master-plan.md §3M-5b.
+// Phase 3M-5b: TX Waterfall Colormap. Locks in 4 acceptance behaviors
+// against Thetis-verbatim values. Tests reference the master plan at
+// docs/architecture/tx-display-settings-master-plan.md section 3M-5b.
 //
 // SHOW (Thetis sources read for this test):
 //
-// 1. Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMax / TXWFAmpMin:
+// 1. Display.cs:1911-1937 [v2.10.3.13+501e3f51], TXWFAmpMax / TXWFAmpMin:
 //      private static int tx_wf_amp_max = 30;     // TXWFAmpMax default
 //      private static int tx_wf_amp_min = -70;    // TXWFAmpMin default
 //    These field initializers give the Thetis-verbatim defaults that
 //    NereusSDR m_txWfHighLevel (30) and m_txWfLowLevel (-70) must match.
 //
-// 2. Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx:
+// 2. Display.cs:2516-2521 [v2.10.3.13+501e3f51], waterfall_low_color_tx:
 //      private static Color waterfall_low_color_tx = Color.Black;
 //      public static Color WaterfallLowColorTX {
 //          get { return waterfall_low_color_tx; }
@@ -20,13 +25,13 @@
 //      }
 //    Default is Color.Black, which maps to Qt::black / #FF000000.
 //
-// 3. Display.cs:428-437 [v2.10.3.13+501e3f51] — _tx_color_scheme field:
+// 3. Display.cs:428-437 [v2.10.3.13+501e3f51], _tx_color_scheme field:
 //      private static ColorScheme _tx_color_scheme = ColorScheme.enhanced;
 //      public static ColorScheme TXColorScheme { ... }
 //    Default palette is ColorScheme.enhanced, mapping to WfColorScheme::Enhanced.
 //    (setup.cs:223 [v2.10.3.13+501e3f51] also confirms: comboColorPalette_tx.Text = "enhanced";)
 //
-// 4. display.cs:6506-6595 [v2.10.3.13+501e3f51] — per-frame MOX-conditional render path:
+// 4. display.cs:6506-6595 [v2.10.3.13+501e3f51], per-frame MOX-conditional render path:
 //    if (local_mox) {
 //        low_threshold  = (float)TXWFAmpMin;    // TX static thresholds
 //        high_threshold = (float)TXWFAmpMax;
@@ -55,9 +60,9 @@ private slots:
 
     // Verifies the four Thetis-verbatim defaults that 3M-5b ports.
     // Sources:
-    //   Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax defaults.
-    //   Display.cs:428-437   [v2.10.3.13+501e3f51] — _tx_color_scheme default ColorScheme.enhanced.
-    //   Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx default Color.Black.
+    //   Display.cs:1911-1937 [v2.10.3.13+501e3f51], TXWFAmpMin / TXWFAmpMax defaults.
+    //   Display.cs:428-437   [v2.10.3.13+501e3f51], _tx_color_scheme default ColorScheme.enhanced.
+    //   Display.cs:2516-2521 [v2.10.3.13+501e3f51], waterfall_low_color_tx default Color.Black.
     void defaults_match_thetis()
     {
         SpectrumWidget w(nullptr);  // no AppSettings populated, pure defaults
@@ -102,7 +107,7 @@ private slots:
     }
 
     // Verifies that dbmToRgb uses TX thresholds when MOX active, RX thresholds
-    // when MOX off — mirroring display.cs:6506-6595 [v2.10.3.13+501e3f51] inline branch.
+    // when MOX off, mirroring display.cs:6506-6595 [v2.10.3.13+501e3f51] inline branch.
     //
     // setWfLowThresholdForTest() and setWfHighThresholdForTest() are test seams that
     // will be added in 3M-5b Steps 1.7/1.8; expected to fail to compile until then.

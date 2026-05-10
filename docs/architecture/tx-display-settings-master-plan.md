@@ -189,7 +189,7 @@ Each code-modifying step uses **READ → SHOW → TRANSLATE** per `feedback_suba
 
 **READ first:**
 - `Display.cs:1911-1937 [v2.10.3.13+501e3f51]`: `TXWFAmpMin` / `TXWFAmpMax` C# property getter/setter pair (defaults are the integers in the field initializer).
-- `Display.cs:428-437 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (Black).
+- `Display.cs:2516-2521 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (Black).
 - `display.cs:6506-6595 [v2.10.3.13+501e3f51]`: the per-frame MOX-conditional render path; the test verifies our NereusSDR mirror of this branch.
 
 **SHOW (in the test source's header comment):** quote each Thetis default verbatim with cite.
@@ -287,7 +287,7 @@ Expected: 0/4 pass (the four behaviors don't exist yet). If the test fails to BU
 
 **READ first:**
 - `Display.cs:1911-1937 [v2.10.3.13+501e3f51]`: `TXWFAmpMin` / `TXWFAmpMax` property getter+setter pair.
-- `Display.cs:428-437 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (`Color.Black`).
+- `Display.cs:2516-2521 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (`Color.Black`).
 - `setup.cs:33314-33322 [v2.10.3.13+501e3f51]`: `comboColorPalette_tx_SelectedIndexChanged` handler that writes `_tx_color_scheme` (default Enhanced).
 
 **SHOW (in commit message):** quote each cited C# block (~10 lines total) so the cite trail survives the port.
@@ -303,7 +303,7 @@ m_txWfPalette = static_cast<WfColorScheme>(qBound(0,
     s.value(settingsKey(QStringLiteral("DisplayTxWfPalette"), m_panIndex),
             QString::number(static_cast<int>(WfColorScheme::Enhanced))).toInt(),
     static_cast<int>(WfColorScheme::Count) - 1));
-// From Thetis Display.cs:428-437 [v2.10.3.13+501e3f51] — waterfall_low_color_tx default Black.
+// From Thetis Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx default Black.
 m_txWfLowColor = QColor::fromString(s.value(
     settingsKey(QStringLiteral("DisplayTxWfLowColor"), m_panIndex),
     QStringLiteral("#FF000000")).toString());
