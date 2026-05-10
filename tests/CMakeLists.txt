@@ -4071,6 +4071,9 @@ nereus_add_test(tst_applet_panel_gutter)
 # -- AppletPanelWidget setAppletVisible: order-preserving show/hide --
 nereus_add_test(tst_applet_panel_set_visible)
 
+# -- AppletVisibilityController: state, persistence, signal emission --
+nereus_add_test(tst_applet_visibility_controller)
+
 # ── UI Polish Foundation B3: AntennaPopupBuilder capability-gated popup factory ──
 # 5 tests cover Tier 1 (full Alex + bypass), Tier 2 (mid Alex, no bypass),
 # Tier 3 (no Alex, at most 1 entry), TX mode (no RX-only section), and
