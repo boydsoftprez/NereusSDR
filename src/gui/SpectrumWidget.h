@@ -866,6 +866,32 @@ public slots:
     void setRxFilterColor(const QColor& c);
     QColor rxFilterColor() const noexcept { return m_rxFilterColor; }
 
+    // ---- 3M-5b: TX waterfall colormap setters / getters ----
+    // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
+    // palette, and low-color are switched inline per-frame when MOX is active.
+    int  txWfLowLevel()  const noexcept { return m_txWfLowLevel;  }
+    int  txWfHighLevel() const noexcept { return m_txWfHighLevel; }
+    WfColorScheme txWfPalette()   const noexcept { return m_txWfPalette;   }
+    QColor        txWfLowColor()  const noexcept { return m_txWfLowColor;  }
+    QString       txWfGradient()  const noexcept { return m_txWfGradient;  }
+
+    void setTxWfLowLevel(int dbm);
+    void setTxWfHighLevel(int dbm);
+    void setTxWfPalette(WfColorScheme s);
+    void setTxWfLowColor(const QColor& c);
+    void setTxWfGradient(const QString& encoded);
+
+#ifdef NEREUS_BUILD_TESTS
+    // Test seams for tst_tx_waterfall_colormap (3M-5b).
+    // These expose private methods via the NEREUS_BUILD_TESTS gate so the
+    // test binary can round-trip settings and call dbmToRgb directly.
+    void saveSettingsForTest()              { saveSettings(); }
+    void loadSettingsForTest()              { loadSettings(); }
+    QRgb dbmToRgbForTest(float dbm) const  { return dbmToRgb(dbm); }
+    void setWfLowThresholdForTest(float dbm)  { m_wfLowThreshold  = dbm; }
+    void setWfHighThresholdForTest(float dbm) { m_wfHighThreshold = dbm; }
+#endif
+
     // ---- Per-pan settings persistence ----
     void setPanIndex(int idx) { m_panIndex = idx; }
     int  panIndex() const { return m_panIndex; }
@@ -934,6 +960,10 @@ public slots:
     void clearWaterfallHistory();
 
 signals:
+    // 3M-5b: emitted when any TX waterfall colormap property changes.
+    // Setup page wires this to update the preview / UI state.
+    void txWfSettingsChanged();
+
     // Phase 3Q-8: emitted on a left-click while not Connected.
     // MainWindow wires this to showConnectionPanel().
     void disconnectedClickRequest();
@@ -1286,6 +1316,15 @@ private:
 
     // Ported from Thetis Display.RX1DisplayCalOffset (display.cs:1372).
     float       m_dbmCalOffset{0.0f};
+
+    // ---- 3M-5b: TX-specific waterfall colormap settings ----
+    // Active during MOX per Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51]
+    // inline per-frame branch.  No state machine.
+    int           m_txWfLowLevel{-70};        // dBm, from Thetis Display.cs:1925 [v2.10.3.13+501e3f51] tx_wf_amp_min default
+    int           m_txWfHighLevel{30};         // dBm, from Thetis Display.cs:1911 [v2.10.3.13+501e3f51] tx_wf_amp_max default
+    WfColorScheme m_txWfPalette{WfColorScheme::Enhanced}; // Thetis Display.cs:428 [v2.10.3.13+501e3f51] _tx_color_scheme = ColorScheme.enhanced
+    QColor        m_txWfLowColor{Qt::black};   // Thetis Display.cs:2516 [v2.10.3.13+501e3f51] waterfall_low_color_tx = Color.Black
+    QString       m_txWfGradient;              // encoded gradient string for Custom palette (3M-5c placeholder)
 
     // ---- Phase 3G-8 commit 4: waterfall renderer state ----
 

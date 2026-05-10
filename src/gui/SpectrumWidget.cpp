@@ -571,6 +571,27 @@ void SpectrumWidget::loadSettings()
     m_wfOpacity          = readInt(QStringLiteral("DisplayWfOpacity"), 100);
     m_wfUpdatePeriodMs   = readInt(QStringLiteral("DisplayWfUpdatePeriodMs"), 30);
 
+    // 3M-5b: TX waterfall colormap settings.
+    // From Thetis Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax defaults.
+    m_txWfLowLevel  = readInt(QStringLiteral("DisplayTxWfLowLevel"),  -70);
+    m_txWfHighLevel = readInt(QStringLiteral("DisplayTxWfHighLevel"),  30);
+    // From Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] — comboColorPalette_tx default.
+    m_txWfPalette = static_cast<WfColorScheme>(qBound(0,
+        s.value(settingsKey(QStringLiteral("DisplayTxWfPalette"), m_panIndex),
+                QString::number(static_cast<int>(WfColorScheme::Enhanced))).toInt(),
+        static_cast<int>(WfColorScheme::Count) - 1));
+    // From Thetis Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx default Black.
+    {
+        const QString hex = s.value(
+            settingsKey(QStringLiteral("DisplayTxWfLowColor"), m_panIndex),
+            QStringLiteral("#FF000000")).toString();
+        QColor c = QColor::fromString(hex);
+        m_txWfLowColor = c.isValid() ? c : QColor(Qt::black);
+    }
+    // Custom gradient (3M-5c placeholder; default = same as RX gradient default).
+    m_txWfGradient = s.value(settingsKey(QStringLiteral("DisplayTxWfGradient"), m_panIndex),
+                             QString()).toString();
+
     // Sub-epic E: scrollback depth (default 20 min, range 60s..20min).
     m_waterfallHistoryMs = s.value(
         settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
@@ -802,6 +823,21 @@ void SpectrumWidget::saveSettings()
               m_wfStopOnTx ? QStringLiteral("True") : QStringLiteral("False"));
     writeInt(QStringLiteral("DisplayWfOpacity"), m_wfOpacity);
     writeInt(QStringLiteral("DisplayWfUpdatePeriodMs"), m_wfUpdatePeriodMs);
+
+    // 3M-5b: TX waterfall colormap settings.
+    // From Thetis Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax.
+    writeInt(QStringLiteral("DisplayTxWfLowLevel"),  m_txWfLowLevel);
+    writeInt(QStringLiteral("DisplayTxWfHighLevel"), m_txWfHighLevel);
+    // From Thetis setup.cs:33314-33322 [v2.10.3.13+501e3f51] — comboColorPalette_tx.
+    s.setValue(settingsKey(QStringLiteral("DisplayTxWfPalette"), m_panIndex),
+               QString::number(static_cast<int>(m_txWfPalette)));
+    // From Thetis Display.cs:2516-2521 [v2.10.3.13+501e3f51] — waterfall_low_color_tx.
+    s.setValue(settingsKey(QStringLiteral("DisplayTxWfLowColor"), m_panIndex),
+               m_txWfLowColor.name(QColor::HexArgb).toUpper());
+    // Custom gradient (3M-5c placeholder).
+    s.setValue(settingsKey(QStringLiteral("DisplayTxWfGradient"), m_panIndex),
+               m_txWfGradient);
+
     s.setValue(settingsKey(QStringLiteral("DisplayWaterfallHistoryMs"), m_panIndex),
                QString::number(m_waterfallHistoryMs));
     s.setValue(settingsKey(QStringLiteral("DisplayWfUseSpectrumMinMax"), m_panIndex),
@@ -1896,6 +1932,54 @@ void SpectrumWidget::setWaterfallAGCOffsetDb(int db)
     if (m_wfNfAgcOffsetDb == db) { return; }
     m_wfNfAgcOffsetDb = db;
     scheduleSettingsSave();
+}
+
+// 3M-5b: TX waterfall colormap setters.
+// From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- TX thresholds,
+// palette, and low-color switch inline per-frame when m_moxOverlay is active.
+void SpectrumWidget::setTxWfLowLevel(int dbm)
+{
+    if (m_txWfLowLevel == dbm) { return; }
+    m_txWfLowLevel = dbm;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfHighLevel(int dbm)
+{
+    if (m_txWfHighLevel == dbm) { return; }
+    m_txWfHighLevel = dbm;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfPalette(WfColorScheme s)
+{
+    if (m_txWfPalette == s) { return; }
+    m_txWfPalette = s;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfLowColor(const QColor& c)
+{
+    if (m_txWfLowColor == c) { return; }
+    m_txWfLowColor = c;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
+}
+
+void SpectrumWidget::setTxWfGradient(const QString& encoded)
+{
+    if (m_txWfGradient == encoded) { return; }
+    m_txWfGradient = encoded;
+    scheduleSettingsSave();
+    update();
+    emit txWfSettingsChanged();
 }
 
 // Task 2.8: Stop-on-TX — gate pushWaterfallRow() while TX is active.
@@ -3894,10 +3978,18 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
 
     const int n = wfPixelsDbm.size();
 
+    // 3M-5b: AGC + NF-AGC are RX-only.  TX uses static thresholds from
+    // m_txWfLowLevel / m_txWfHighLevel set in Setup -> Display -> TX.  Per
+    // Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51], TX path is purely
+    // static thresholds with no per-frame AGC tracking.
+    // Note: setClarityActive(false) is still called on MOX-rise in MainWindow
+    // as defense-in-depth; this !isTx gate is the primary mechanism.
+    const bool isTx = m_moxOverlay;
+
     // AGC: track a slow envelope of display-pixel min/max and bias the
     // effective thresholds toward it. Simple one-pole follower.
     // Phase 3G-9c: skipped when Clarity is actively driving thresholds.
-    if (m_wfAgcEnabled && !m_clarityActive) {
+    if (!isTx && m_wfAgcEnabled && !m_clarityActive) {
         float mn = wfPixelsDbm[0];
         float mx = mn;
         for (int i = 1; i < n; ++i) {
@@ -3918,7 +4010,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
         const float margin = 12.0f;
         m_wfLowThreshold  = m_wfAgcRunMin - margin;
         m_wfHighThreshold = m_wfAgcRunMax + margin;
-    } else if (m_wfUseSpectrumMinMax) {
+    } else if (!isTx && m_wfUseSpectrumMinMax) {
         m_wfHighThreshold = m_refLevel;
         m_wfLowThreshold  = m_refLevel - m_dynamicRange;
     }
@@ -3927,7 +4019,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     // floor + configured offset.  Takes priority over spectrum-min-max
     // but yields to the existing legacy AGC (which is a different
     // feature).  Sort over the full pixel array for the percentile.
-    if (m_wfNfAgcEnabled && !m_clarityActive) {
+    if (!isTx && m_wfNfAgcEnabled && !m_clarityActive) {
         QVector<float> sorted = wfPixelsDbm;
         std::sort(sorted.begin(), sorted.end());
         const float nf = sorted[qBound(0, sorted.size() / 10, sorted.size() - 1)];
@@ -3978,12 +4070,31 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
 // Color gain adjusts high_threshold, black level adjusts low_threshold.
 QRgb SpectrumWidget::dbmToRgb(float dbm) const
 {
-    // Effective thresholds adjusted by gain/black level sliders
-    // Black level slider (0-125): lower = more black, higher = less black
-    // Color gain slider (0-100): shifts high threshold DOWN (more color)
-    // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130
-    float effectiveLow = m_wfLowThreshold + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
-    float effectiveHigh = m_wfHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
+    // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] -- per-frame
+    // MOX-conditional render path.  No state machine; branch is inline
+    // per pixel.  When MOX is active, TX-specific thresholds + palette are
+    // used instead of RX values.  Black-level / color-gain sliders are NOT
+    // applied for TX (Thetis does not expose them per-direction).
+    const bool isTx = m_moxOverlay;
+    const WfColorScheme scheme = isTx ? m_txWfPalette : m_wfColorScheme;
+
+    float effectiveLow;
+    float effectiveHigh;
+    if (isTx) {
+        // TX: static thresholds from m_txWfLowLevel / m_txWfHighLevel.
+        // From Thetis display.cs:6536-6539 [v2.10.3.13+501e3f51]:
+        //   low_threshold  = (float)TXWFAmpMin;
+        //   high_threshold = (float)TXWFAmpMax;
+        effectiveLow  = static_cast<float>(m_txWfLowLevel);
+        effectiveHigh = static_cast<float>(m_txWfHighLevel);
+    } else {
+        // RX: existing black-level / color-gain adjustment math unchanged.
+        // Black level slider (0-125): lower = more black, higher = less black.
+        // Color gain slider (0-100): shifts high threshold DOWN (more color).
+        // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130.
+        effectiveLow  = m_wfLowThreshold  + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
+        effectiveHigh = m_wfHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
+    }
     if (effectiveHigh <= effectiveLow) {
         effectiveHigh = effectiveLow + 1.0f;
     }
@@ -3993,11 +4104,11 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
     float adjusted = (dbm - effectiveLow) / range;
     adjusted = qBound(0.0f, adjusted, 1.0f);
 
-    // Look up in gradient stops for current color scheme
+    // Look up in gradient stops for current color scheme (TX or RX).
     int stopCount = 0;
-    const WfGradientStop* stops = wfSchemeStops(m_wfColorScheme, stopCount);
+    const WfGradientStop* stops = wfSchemeStops(scheme, stopCount);
 
-    // Find the two surrounding stops and interpolate
+    // Find the two surrounding stops and interpolate.
     for (int i = 0; i < stopCount - 1; ++i) {
         if (adjusted <= stops[i + 1].pos) {
             float t = (adjusted - stops[i].pos)
