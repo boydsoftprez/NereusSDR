@@ -779,21 +779,161 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ## Phase 3: TX FFT + Detector + Averaging
 
-**Goal:** 9 controls in groups 1-3 of Setup → Display → TX wired to TxAnalyzer state. **Reuse RX widgets** (FFT slider, window combo, detector combo, averaging combo, time spinbox) by refactoring them into reusable components if not already, then instantiating one per direction.
+**Goal:** Wire 9 TX Display controls (Setup → Display → TX groups 1-3) to TxAnalyzer state so the user can change FFT size, window type, pan/WF detector, pan/WF averaging, pan/WF av-time, and pan normalize during TX and see the spectrum/waterfall respond live. Today these three groups are placeholder text. TxAnalyzer hardcodes FFT=4096, window=BH4, detector=peak, averaging=off; 3M-5d turns them into bound state.
+
+**Source-first context (Thetis v2.10.3.13+501e3f51):**
+
+All 9 controls live in `tpDisplayTransmit`. Designer block at `setup.designer.cs:2200-2235`:
+
+**Group 1 — Fast Fourier Transform (`groupBoxTS8`):**
+- `tbTXDisplayFFTSize` TrackBarTS at `:2227`. Handler `setup.cs:18136-18143`: `FFTSize = 4096 * 2^slider`. Also emits bin-width readout = `SampleRate / FFTSize`.
+- `comboTXDispWinType` ComboBoxTS at `:2220`. Handler `setup.cs:18145-18150`: `WindowType = combo.SelectedIndex`. Items at `:36555-36563` (7 windows: Rectangular, Hann, Welch, Bartlett, Hamming, Blackman-Harris, Nuttall — match Thetis ordering).
+- Readouts: `lblTXFFT_size` + `lblTXDispBinWidth` at `:2218 / :2224`.
+
+**Group 2 — Panadapter (`groupBoxTS7`):**
+- `comboTXDispPanDetector` ComboBoxTS at `:2233`. Handler `setup.cs:18105-18113`: `DetTypePan = combo.SelectedIndex`. Also: `chkDispTXNormalize.Enabled = (DetTypePan >= 2)`. Author note `[2.10.3.5]MW0LGE` preserved at `:18111`.
+- `comboTXDispPanAveraging` ComboBoxTS at `:2231`. Handler `setup.cs:18115-18120`: `AverageMode = combo.SelectedIndex`.
+- `udTXDisplayAVGTime` NumericUpDownTS at `:2234`. Handler `setup.cs:18122-18127`: `AvTau = 0.001 * value` (value in milliseconds; tau in seconds).
+- `chkDispTXNormalize` CheckBoxTS at `:2229`. Handler `setup.cs:18129-18134`: `NormOneHzPan = checked`.
+
+**Group 3 — Waterfall (`groupBoxTS9`):**
+- `comboTXDispWFDetector` ComboBoxTS at `:2214`. Handler `setup.cs:18152-18157`: `DetTypeWF = combo.SelectedIndex`.
+- `comboTXDispWFAveraging` ComboBoxTS at `:2212`. Handler `setup.cs:18159-18164`: `AverageModeWF = combo.SelectedIndex`.
+- `udTXDisplayAVTime` NumericUpDownTS at `:2215`. Handler `setup.cs:18166-18171`: `AvTauWF = 0.001 * value`.
+
+Each handler calls `console.UpdateTXSpectrumDisplayVars()` (`console.cs:7968-7971`) which forwards to `UpdateTXDisplayVars` (`console.cs:8015+`). That re-runs `specRX.GetSpecRX(...).CalcSpectrum(...)` which pushes the new SetAnalyzer config to WDSP.
+
+All 9 properties live on the `SpecHPSDR` class (`specHPSDR.cs:301-322` for DetType*, `:529 + :534-643` for the SetAnalyzer call, `:134` for the WindowType default = 4 / Hamming, `:335` for FrameRate = 15).
+
+**Current NereusSDR state (`src/core/TxAnalyzer.cpp:170-229`):**
+- `m_fftSize{4096}`, `m_outputFps{15}` are bound state. The other 7 properties are hardcoded inside `applySetAnalyzer`:
+  - `win_type=1` (Blackman-Harris 4-term) — **NereusSDR-architectural divergence** from Thetis default 4/Hamming. Inline rationale at `TxAnalyzer.cpp:201-208`: Hamming -42 dB sidelobes + AGC colormap interaction = splattery waterfall.
+  - `n_pixout=1` (single pixel-out — pan and WF share the same detector + avg mode).
+  - `DetTypePan/AverageMode/NumAverage = 0/0/1` (peak / off / 1).
+  - `DetTypeWF/AverageModeWF` — not configured (only one pixel-out anyway).
+- No settings binding. Defaults baked in at compile time.
+
+**Required architectural change — `n_pixout=2`:**
+
+To make pan vs WF Detector/Averaging independently configurable (Thetis parity), `n_pixout` must bump from 1 to 2. Today's `GetPixels(dispId, 0, pixBuf)` reads pixout-0; bumping requires the WF tap to read `GetPixels(dispId, 1, pixBuf)` as the second pixel output. SpectrumWidget consumes the same FFT data today for both trace and waterfall; this phase splits the read points so detector + avg apply differently to each.
+
+**NereusSDR-architectural divergence (carried from 3M-5b):**
+
+Default window remains BH4 (NereusSDR pick), NOT Thetis Hamming. User can switch via combo at any time. Combo offers all 7 Thetis windows. The default applies to first-launch only; user choice persists.
 
 **Files:**
-- Modify: `src/gui/setup/DisplaySetupPages.cpp` (refactor RX FFT slider widget into reusable form, then instantiate twice)
-- Modify: `src/core/TxAnalyzer.{h,cpp}` (read FFT size + window + detector + averaging from settings instead of hardcoding)
-- Modify: `src/gui/SpectrumWidget.{h,cpp}` (TX-specific spectrum/waterfall detector + averaging mode, MOX-gated)
+- Modify: `src/core/TxAnalyzer.{h,cpp}` — add 7 new state members + setters + load-from-settings, bump `n_pixout=2`, propagate pan/WF detector/avg/normalize via WDSP setters.
+- Modify: `src/core/TxAnalyzer.h` (signal `pixelsForWaterfallReady` or similar so SpectrumWidget can tap pixout=1).
+- Modify: `src/gui/SpectrumWidget.{h,cpp}` — accept TX waterfall pixout=1 frames during MOX (separate path from the existing trace path).
+- Modify: `src/gui/setup/DisplaySetupPages.cpp` — replace 3 placeholder groups in `TxDisplayPage::buildUI` (lines around 2241-2360) with 9 functional controls. Mirror RX-side widget patterns (do NOT refactor RX widgets; per `feedback_clarity_addon_not_replacement.md` we add alongside not in-place).
+- Create: `tests/tst_tx_analyzer_settings.cpp` — TDD tests for the new state surface + persistence.
 
-**Tasks (summary; expand when phase starts):**
+**Settings keys (PascalCase, persisted in AppSettings):**
 
-- [ ] Refactor existing RX FFT slider + readout pair (DisplaySetupPages.cpp:438+) into a reusable `FFTSizeSliderWidget` class taking a getter + setter callback.
-- [ ] Reuse the detector combo, averaging combo, and time spinbox patterns same way (or use the existing pattern directly with TX-bound callbacks).
-- [ ] Wire `TxAnalyzer::applySetAnalyzer` to read `m_fftSize`, `m_windowType`, `m_panDetector`, `m_panAveraging`, `m_panAvTime`, `m_wfDetector`, `m_wfAveraging`, `m_wfAvTime` from `AppSettings` instead of hardcoded values.
-- [ ] Add MOX-gated TX detector / averaging mode in `SpectrumWidget` for the trace render path.
-- [ ] Bench: change FFT size in Setup → Display → TX, observe spectrum bin width changes during TX. Same for window type.
-- [ ] Commit.
+| Key | Type | Default | Thetis source |
+|---|---|---|---|
+| `DisplayTxFftSize` | int | 4096 | `setup.cs:18138` formula = `4096 * 2^0` |
+| `DisplayTxWindowType` | int | **1 (BH4)** | NereusSDR pick; Thetis = 4 (Hamming) at `specHPSDR.cs:134` |
+| `DisplayTxPanDetector` | int | 0 (Peak) | `specHPSDR.cs:301` default |
+| `DisplayTxPanAveraging` | int | 0 (Off) | `specHPSDR.cs:312` default |
+| `DisplayTxPanAvTimeMs` | int | 120 (= 0.120 s tau) | Thetis NumericUpDownTS default — verify in source-read |
+| `DisplayTxPanNormalize` | bool | false | `specHPSDR.cs` default |
+| `DisplayTxWfDetector` | int | 0 (Peak) | `specHPSDR.cs:301` default |
+| `DisplayTxWfAveraging` | int | 0 (Off) | `specHPSDR.cs:312` default |
+| `DisplayTxWfAvTimeMs` | int | 120 (= 0.120 s tau) | Thetis NumericUpDownTS default — verify in source-read |
+
+Implementer must source-read the actual Thetis designer defaults for `udTXDisplayAVGTime.Value` and `udTXDisplayAVTime.Value` before committing the AvTimeMs defaults. If Thetis says 100 not 120, match Thetis.
+
+**Acceptance criteria:**
+
+- [ ] All 9 controls render in Setup → Display → TX. FFT trackbar + 2 readouts (FFT size + bin width). 4 combos with correct item lists. 2 spinboxes (AvTimeMs). 1 checkbox (Normalize) with `enabled = (DetTypePan >= 2)` gate per Thetis MW0LGE comment.
+- [ ] Each control round-trips through AppSettings (close + relaunch preserves user choice).
+- [ ] Changing any control during TX visibly changes the spectrum and/or waterfall live (with the appropriate detector / avg / window behaviour).
+- [ ] FFT size change updates bin-width readout = `SampleRate / FFTSize` per `setup.cs:18140`.
+- [ ] DetTypePan switch enables/disables Normalize checkbox per `setup.cs:18112`.
+- [ ] `n_pixout=2` lets pan and WF use independent detector + averaging.
+- [ ] RX side unchanged — no regressions on the RX FFT slider, detector, averaging.
+- [ ] `tst_tx_analyzer_settings` green (8+ cases).
+- [ ] `tst_tx_waterfall_colormap` + `tst_gradient_picker` still green (no regressions on shipped phases).
+- [ ] Default window remains BH4 (3M-5b behavior preserved on fresh install).
+
+### Tasks
+
+#### Step 3.1: Write `tst_tx_analyzer_settings` (TDD red)
+
+**READ:**
+- Thetis `specHPSDR.cs:301-322` (detector + avg + normalize property setters)
+- Thetis `specHPSDR.cs:534-643` (SetAnalyzer call)
+- Thetis `setup.cs:18105-18171` (all 9 handlers)
+- Thetis `setup.designer.cs:2200-2235` (control declarations)
+- NereusSDR `src/core/TxAnalyzer.{h,cpp}` (current state surface)
+
+**TRANSLATE:** 8 test cases. Header has `// no-port-check:` marker.
+1. `defaults_match_spec` — TxAnalyzer constructs with FFT=4096, Window=BH4 (1), PanDet=0, PanAvg=0, PanAvTimeMs=<Thetis>, PanNormalize=false, WfDet=0, WfAvg=0, WfAvTimeMs=<Thetis>.
+2. `settings_round_trip` — set each of the 9 via setter, save to AppSettings, reload, verify each one survives.
+3. `fft_size_formula` — `setFftSizeSliderPosition(0)` ⇒ fftSize=4096; position(1) ⇒ 8192; position(2) ⇒ 16384.
+4. `bin_width_formula` — `binWidthHz() == sampleRate / fftSize`.
+5. `normalize_gated_on_pan_detector` — `panNormalizeEnabled() == false` when PanDet < 2; `true` when PanDet >= 2.
+6. `av_time_ms_to_tau_seconds` — setter takes ms, internal storage / SetAnalyzer call uses seconds (×0.001).
+7. `setAnalyzer_called_on_each_setter` — under test seam, each setter increments a call counter on a mock SetAnalyzer / SetDisplayDetectorMode hook.
+8. `pixout_2_after_phase` — `nPixout()` reads 2 (used by SpectrumWidget tap point).
+
+#### Step 3.2: Run failing tests (red)
+
+#### Step 3.3: Add 7 new state members + setters to `TxAnalyzer.{h,cpp}`
+
+**READ:** Thetis `specHPSDR.cs:301-322`. NereusSDR `TxAnalyzer.h:128-138`.
+
+**TRANSLATE:** add private members + public setters/getters mirroring the RX-side conventions in `WdspEngine` / `RxChannel`. Setters call `applySetAnalyzer()` (existing entry point) or finer-grained WDSP setters.
+
+#### Step 3.4: Bump `n_pixout=2`; route WF reads to `GetPixels(dispId, 1, ...)`
+
+**READ:** Thetis `specHPSDR.cs:534-643` (SetAnalyzer with `n_pixout=2`), `:301-322` (per-pixout detector setters).
+
+**TRANSLATE:** Pass `n_pixout=2` into `SetAnalyzer`. Add a second `m_pixBufWf` member for pixout=1. Poll loop reads both and emits a separate signal for the WF path.
+
+#### Step 3.5: Wire 9 controls in `TxDisplayPage::buildUI`
+
+**READ:** existing RX-side widgets in `DisplaySetupPages.cpp`. Find a representative RX FFT trackbar / detector combo / averaging combo / normalize checkbox / AvTimeMs spinbox. DO NOT refactor those — copy the pattern and use it standalone for TX.
+
+**TRANSLATE:** replace the 3 placeholder groups (search for `makePlaceholderGroup` in TxDisplayPage::buildUI). Each group becomes a real `QGroupBox` with the listed controls. Wire each to TxAnalyzer setters via `connect(..., this, [sw=...](){ sw->setXxx(...); });` lambdas. Tooltips plain English (no source cites in user strings per `feedback_no_cites_in_user_strings.md`).
+
+#### Step 3.6: Settings load/save in `TxAnalyzer::loadSettings` + `::saveSettings`
+
+**READ:** `RxChannel::loadSettings`-equivalent or existing TX settings load pattern.
+
+**TRANSLATE:** read the 9 keys on construction (or via a `loadSettings()` entry point called from MainWindow wiring), persist via `AppSettings::setValue` on every setter (or batched via `scheduleSettingsSave`).
+
+#### Step 3.7: SpectrumWidget WF pixout=1 tap
+
+**READ:** existing `pushWaterfallRow` and `updateSpectrumLinear` paths in SpectrumWidget. Phase 1 added the per-frame MOX branch for thresholds; this phase adds a parallel path for the WF data source when isTx.
+
+**TRANSLATE:** when `isTx && MOX`, the waterfall row data comes from pixout=1 (the WF-detector-with-WF-averaging pixels) instead of pixout=0 (the trace path). RX path is unaffected.
+
+#### Step 3.8: Tests pass (green; 1 build + 1 ctest of new test only)
+
+#### Step 3.9: Clean build of `NereusSDR` target
+
+#### Step 3.10: Commit (GPG-signed). 4 commits planned:
+- Commit 1 after 3.2: `test(3m-5d): tst_tx_analyzer_settings red (TDD)`.
+- Commit 2 after 3.4 + 3.8: `feat(3m-5d): TxAnalyzer 9-control state + n_pixout=2 (green)`.
+- Commit 3 after 3.5 + 3.6 + 3.7 + 3.9: `feat(3m-5d): wire 9 controls in Setup -> Display -> TX + SpectrumWidget WF pixout=1 tap`.
+- Commit 4 after manual bench (controller, not implementer): `docs(3m-5d): close Phase 3`.
+
+#### Step 3.11: Manual bench (controller — Step 2.13-equivalent)
+
+- Setup → Display → TX → all 9 controls render.
+- TX + 2-tone: change FFT size (slider) → bin width readout updates; spectrum bin width changes live.
+- Change window type → spectrum sidelobe shape changes (BH4 narrow vs Hamming wide).
+- Change Pan Detector → pan trace changes (peak vs average vs sample). Normalize checkbox enables for Det >= 2.
+- Change Pan Averaging → trace smoothness changes.
+- Change WF Detector → waterfall response changes independently of pan.
+- Change WF Averaging → waterfall smoothness changes independently.
+- Change AvTimeMs values → smoothness ramps.
+- Toggle Normalize → trace normalizes to 1 Hz reference.
+- Restart app → all 9 choices persist.
+- RX side: confirm RX FFT slider, detector, averaging unaffected.
+- 3M-5b/5c regressions: confirm waterfall colormap controls + Custom gradient editor + MOX cycle visual still behave per their acceptance.
 
 ---
 
