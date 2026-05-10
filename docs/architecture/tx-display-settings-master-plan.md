@@ -787,7 +787,7 @@ All 9 controls live in `tpDisplayTransmit`. Designer block at `setup.designer.cs
 
 **Group 1 — Fast Fourier Transform (`groupBoxTS8`):**
 - `tbTXDisplayFFTSize` TrackBarTS at `:2227`. Handler `setup.cs:18136-18143`: `FFTSize = 4096 * 2^slider`. Also emits bin-width readout = `SampleRate / FFTSize`.
-- `comboTXDispWinType` ComboBoxTS at `:2220`. Handler `setup.cs:18145-18150`: `WindowType = combo.SelectedIndex`. Items at `:36555-36563` (7 windows: Rectangular, Hann, Welch, Bartlett, Hamming, Blackman-Harris, Nuttall — match Thetis ordering).
+- `comboTXDispWinType` ComboBoxTS at `:2220`. Handler `setup.cs:18145-18150`: `WindowType = combo.SelectedIndex`. Items at `:36555-36562` (source-verified Thetis order: **Rectangular, Blackman-Harris 4T, Hann, Flat-Top, Hamming, Kaiser, Blackman-Harris 7T**; Hamming = index 4). Earlier draft of this spec listed wrong combo labels; corrected at 3M-5d ship time.
 - Readouts: `lblTXFFT_size` + `lblTXDispBinWidth` at `:2218 / :2224`.
 
 **Group 2 — Panadapter (`groupBoxTS7`):**
@@ -838,11 +838,11 @@ Implication: existing 3M-5b users with no `DisplayTxWindowType` key present will
 | `DisplayTxWindowType` | int | **4 (Hamming)** | Thetis default at `specHPSDR.cs:134`. 3M-5d reverts the 3M-5b BH4 divergence (controller decision 2026-05-10). Combo lets user switch to any of 7 windows. |
 | `DisplayTxPanDetector` | int | 0 (Peak) | `specHPSDR.cs:301` default |
 | `DisplayTxPanAveraging` | int | 0 (Off) | `specHPSDR.cs:312` default |
-| `DisplayTxPanAvTimeMs` | int | 120 (= 0.120 s tau) | Thetis NumericUpDownTS default — verify in source-read |
+| `DisplayTxPanAvTimeMs` | int | **30 (= 0.030 s tau)** | Thetis `udTXDisplayAVGTime.Value = 30` at `setup.designer.cs:36753 [v2.10.3.13+501e3f51]` (source-first correction; was 120 in earlier draft) |
 | `DisplayTxPanNormalize` | bool | false | `specHPSDR.cs` default |
 | `DisplayTxWfDetector` | int | 0 (Peak) | `specHPSDR.cs:301` default |
 | `DisplayTxWfAveraging` | int | 0 (Off) | `specHPSDR.cs:312` default |
-| `DisplayTxWfAvTimeMs` | int | 120 (= 0.120 s tau) | Thetis NumericUpDownTS default — verify in source-read |
+| `DisplayTxWfAvTimeMs` | int | 120 (= 0.120 s tau) | Thetis `udTXDisplayAVTime.Value = 120` at `setup.designer.cs:36493 [v2.10.3.13+501e3f51]` (source-verified) |
 
 Implementer must source-read the actual Thetis designer defaults for `udTXDisplayAVGTime.Value` and `udTXDisplayAVTime.Value` before committing the AvTimeMs defaults. If Thetis says 100 not 120, match Thetis.
 
