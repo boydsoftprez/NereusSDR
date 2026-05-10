@@ -78,6 +78,11 @@ public:
     // The applet widget itself is hidden and reparented to nullptr (not deleted).
     void removeApplet(AppletWidget* applet);
 
+    // Toggle visibility of an already-added applet without removing it
+    // from the layout. Preserves stack position when re-shown. No-op for
+    // null or unknown applets. NereusSDR-original (no Thetis equivalent).
+    void setAppletVisible(AppletWidget* applet, bool visible);
+
     // Add a raw widget (e.g., MeterWidget) with a custom title to the scroll area
     void addWidget(QWidget* widget, const QString& title);
 

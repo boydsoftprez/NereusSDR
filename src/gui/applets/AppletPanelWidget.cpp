@@ -199,6 +199,14 @@ void AppletPanelWidget::removeApplet(AppletWidget* applet)
     m_applets.removeOne(applet);
 }
 
+void AppletPanelWidget::setAppletVisible(AppletWidget* applet, bool visible)
+{
+    if (!applet) { return; }
+    QWidget* wrapper = m_wrappers.value(applet, nullptr);
+    if (!wrapper) { return; }  // applet not in this panel
+    wrapper->setVisible(visible);
+}
+
 void AppletPanelWidget::addWidget(QWidget* widget, const QString& title)
 {
     if (!widget) { return; }
