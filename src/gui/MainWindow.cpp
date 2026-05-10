@@ -353,6 +353,7 @@ warren@wpratt.com
 #include <QVersionNumber>
 #include <QPointer>
 
+#include <cmath>
 #include <cstdlib>
 
 // Cross-platform CPU usage readers — see readProcessCpuPercent and
@@ -1209,13 +1210,24 @@ void MainWindow::buildUI()
 
                     disconnect(m_fftEngine, &FFTEngine::fftReadyLinear,
                                m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
-                    // Lambda adapter: txFftReady emits (int, QVector<float> dBm);
-                    // updateSpectrumLinear expects (int, QVector<float> linear, double windowEnb, double dbmOffset).
-                    // Bridge with windowEnb=1.0 (no ENB correction) and dbmOffset=0.0 (pre-computed dBm).
+                    // TxAnalyzer emits dBm values from WDSP GetPixels (which applies
+                    // 10*log10 internally per analyzer.c:1505 [v2.10.3.13+501e3f51]).
+                    // SpectrumWidget::updateSpectrumLinear expects linear power
+                    // |X[k]|^2 and applies its own 10*log10(linear*scale) per
+                    // SpectrumWidget.cpp:2315-2317.  Convert dBm to linear here so
+                    // the SpectrumWidget side produces the original dBm.  windowEnb=1
+                    // disables additional ENB correction (already baked into WDSP's
+                    // dBm output); dbmOffset=0 because tx_display_cal_offset = 0 per
+                    // Display.cs:1407 [v2.10.3.13+501e3f51].
                     connect(m_txAnalyzer, &TxAnalyzer::txFftReady,
                             m_spectrumWidget,
-                            [this](int rxId, const QVector<float>& binsDbm) {
-                        m_spectrumWidget->updateSpectrumLinear(rxId, binsDbm, 1.0, 0.0);
+                            [this](int rid, const QVector<float>& binsDbm) {
+                        QVector<float> binsLinear(binsDbm.size());
+                        for (int i = 0; i < binsDbm.size(); ++i) {
+                            binsLinear[i] = static_cast<float>(
+                                std::pow(10.0, static_cast<double>(binsDbm[i]) / 10.0));
+                        }
+                        m_spectrumWidget->updateSpectrumLinear(rid, binsLinear, 1.0, 0.0);
                     });
                     // Force the waterfall-AGC tracker to re-prime on the
                     // first TX frame.  RX bins live around -110 dBm; TX

@@ -8,17 +8,23 @@
 // Implementation notes
 // --------------------
 // The XCreateAnalyzer / SetAnalyzer parameter values come from Thetis's
-// CalcSpectrum path at specHPSDR.cs:738-806 [v2.10.3.13], adapted for the
-// TX siphon source.  The siphon pushes interleaved I/Q doubles via
-// Spectrum0(1, disp, 0, 0, in) inside xsiphon mode 1, so typ=1 (complex
-// I/Q) is correct.  Window type 1 (Blackman-Harris 4-term) and 30 fps
-// match the panadapter defaults.
+// initAnalyzer path at specHPSDR.cs:504-650 [v2.10.3.13+501e3f51] — the
+// PANAFALL/PANADAPTER analyzer setup.  attempt 1 mistakenly sourced from
+// CalcSpectrum (specHPSDR.cs:738-806), which is the SPECTRUM/HISTOGRAM/
+// SPECTRASCOPE path that PANAFALL never reaches per console.cs:8015-8020 +
+// :8098-8108 [v2.10.3.13+501e3f51].  See
+// docs/architecture/tx-display-attempt2-design.md §3.1 for the param
+// deltas.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-05-07 — Created by J.J. Boyd (KG4VCF) for the PR #212
 //                 follow-up TX waterfall fix.  AI-assisted source-first
 //                 protocol via Anthropic Claude Code.
+//   2026-05-10 — Strict Thetis-parity attempt 2 by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.  Swapped
+//                 CalcSpectrum-derived params to initAnalyzer-derived
+//                 params; updated kTxDispId from 2 to 5.
 // =================================================================
 
 #include "TxAnalyzer.h"
@@ -210,57 +216,26 @@ void TxAnalyzer::poll()
 #ifdef HAVE_WDSP
 void TxAnalyzer::applySetAnalyzer()
 {
-    // Parameter derivation from Thetis specHPSDR.cs:738-806 CalcSpectrum
-    // [v2.10.3.13] — TX path (single subspan, no spur elimination, complex
-    // I/Q input from xsiphon at TXA.c:586).
+    // From Thetis specHPSDR.cs:529 + :534-643 [v2.10.3.13+501e3f51] —
+    // initAnalyzer case 1 (complex FFT) + the SetAnalyzer call at :624.
     //
-    //   n_pixout = 1                  // single pixel output
-    //   n_fft    = 1                  // no spur elimination on TX
-    //   typ      = 1                  // complex I/Q (siphon delivers
-    //                                   interleaved doubles via Spectrum0)
-    //   flp      = {0}                // no high-side LO flip
-    //   sz       = m_fftSize          // 4096 default (matches FFTEngine)
-    //   bf_sz    = m_fftSize          // each xsiphon→Spectrum0 call delivers
-    //                                   the full TXA midbuff (sized to
-    //                                   ch[channel].dsp_size = 4096 per
-    //                                   cmaster.c:113 [v2.10.3.13]).  The
-    //                                   prior bench attempt used bf_sz=64
-    //                                   (mic input size) which caused the
-    //                                   analyzer to read only the first 64
-    //                                   samples of each 4096-sample buffer
-    //                                   → 1 FFT/sec instead of 30 fps.
-    //   win_type = 1                  // Blackman-Harris 4-term
-    //   pi       = 0.0                // unused (Kaiser-only)
-    //   ovrlp    = max(0, fft_size - sampleRate / fps)  // specHPSDR.cs:784
-    //   clp      = 0                  // no per-subspan clip
-    //   fscLin   = 0.0
-    //   fscHin   = 0.0
-    //   n_pix    = m_numPixels        // panadapter width
-    //   n_stch   = 1                  // single stitched span
-    //   calset   = 0                  // no calibration
-    //   fmin     = 0.0
-    //   fmax     = 0.0
-    //   max_w    = fft_size + min(KEEP_TIME * sampleRate,
-    //                              KEEP_TIME * fft_size * fps)
-    //              // KEEP_TIME = 0.1 per specHPSDR.cs:779
-    int flp[1] = {0};
-    constexpr double kKeepTime = 0.1;  // specHPSDR.cs:779 [v2.10.3.13]
-    const double samplesPerFrame = m_sampleRate / static_cast<double>(m_outputFps);
+    // Defaults: window_type=4 (Hamming) at :134; kaiser_pi=14.0 at :145;
+    // frame_rate=15 at :335; CLIP_FRACTION=0.04 at :529; KEEP_TIME=0.1
+    // at :779.
+    constexpr double kClipFraction = 0.04;
+    constexpr double kKeepTime     = 0.1;
+    const int clip = static_cast<int>(
+        std::floor(kClipFraction * static_cast<double>(m_fftSize)));
+    const double samplesPerFrame =
+        m_sampleRate / static_cast<double>(m_outputFps);
     const int ovrlp = std::max(0,
-        static_cast<int>(std::ceil(m_fftSize - samplesPerFrame)));
+        static_cast<int>(std::ceil(static_cast<double>(m_fftSize) -
+                                    samplesPerFrame)));
     const int max_w = m_fftSize + static_cast<int>(std::min(
         kKeepTime * m_sampleRate,
-        kKeepTime * static_cast<double>(m_fftSize) * static_cast<double>(m_outputFps)));
-
-    // fscLin / fscHin = 0 — output bins span the full ±sample_rate/2 FFT
-    // range so the SpectrumWidget can zoom into whatever sub-window the
-    // user has set on the panadapter (mirrors RX behavior: the analyzer
-    // produces a full-bandwidth spectrum and the widget's visibleBinRange
-    // does the zoom).  Thetis's CalcSpectrum (specHPSDR.cs:765-774
-    // [v2.10.3.13]) does in-analyzer clipping to the TX filter passband
-    // because Thetis's TX panadapter is a fixed filter-band view; we
-    // intentionally diverge here so MOX-up keeps the user's RX zoom
-    // level rather than yanking it to a 3 kHz filter window.
+        kKeepTime * static_cast<double>(m_fftSize) *
+                    static_cast<double>(m_outputFps)));
+    int flp[1] = {0};
 
     SetAnalyzer(
         m_dispId,
@@ -270,10 +245,10 @@ void TxAnalyzer::applySetAnalyzer()
         flp,
         /*sz=*/m_fftSize,
         /*bf_sz=*/m_fftSize,
-        /*win_type=*/1,
-        /*pi=*/0.0,
+        /*win_type=*/4,            // Thetis default (Hamming)
+        /*pi=*/14.0,               // Thetis default (unused for non-Kaiser)
         /*ovrlp=*/ovrlp,
-        /*clp=*/0,
+        /*clp=*/clip,              // Thetis: floor(0.04 * fft_size) = 163
         /*fscLin=*/0.0,
         /*fscHin=*/0.0,
         /*n_pix=*/m_numPixels,
@@ -283,12 +258,13 @@ void TxAnalyzer::applySetAnalyzer()
         /*fmax=*/0.0,
         /*max_w=*/max_w);
 
-    // Detector + average defaults (peak detect, no averaging) — matches
-    // panadapter first-time setup in specHPSDR.cs.
+    // From Thetis specHPSDR.cs:301-322 [v2.10.3.13+501e3f51] — DetTypePan
+    // / DetTypeWF setters.  Default UI state is peak detection (mode 0),
+    // average off (mode 0), num_avg = 1.
     SetDisplayDetectorMode(m_dispId, /*pixout=*/0, /*mode=*/0);
-    SetDisplayAverageMode(m_dispId, /*pixout=*/0, /*mode=*/0);
-    SetDisplayNumAverage(m_dispId, /*pixout=*/0, /*num=*/1);
-    SetDisplaySampleRate(m_dispId, static_cast<int>(m_sampleRate));
+    SetDisplayAverageMode (m_dispId, /*pixout=*/0, /*mode=*/0);
+    SetDisplayNumAverage  (m_dispId, /*pixout=*/0, /*num=*/1);
+    SetDisplaySampleRate  (m_dispId, static_cast<int>(m_sampleRate));
 }
 #endif // HAVE_WDSP
 
