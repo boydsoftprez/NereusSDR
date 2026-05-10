@@ -530,29 +530,250 @@ Single commit titled "feat(setup,display): TX waterfall amplitude scale (3M-5b)"
 
 ## Phase 2: Custom Gradient Picker widget
 
-**Goal:** A reusable multi-stop linear gradient editor widget that can be embedded in any Setup page. Both Phase 1 (TX Waterfall Custom palette) and Phase 5 (TX Appearance panadapter/waterfall gradients) depend on this. Once it exists, the RX-side custom gradient (currently a flat color or single-stop placeholder) can also use it (out-of-scope for Phase 2; tracked separately).
+**Goal:** Port Thetis `ucLGPicker` (1009-line `UserControl` from `ucLGPicker.cs`) to a reusable Qt widget `GradientPickerWidget`. Phase 1 (TX Waterfall Custom palette) and Phase 5 (TX Appearance panadapter/waterfall gradients) both consume it. Eventual RX-side migration is tracked separately.
+
+**Source-first context (Thetis v2.10.3.13+501e3f51):**
+
+The Thetis widget is `Thetis.ucLGPicker : UserControl` at `ucLGPicker.cs:55-955`. Four instances at `setup.designer.cs:3283-3318`:
+- `lgLinearGradientTX_waterfall` (TX waterfall)
+- `lgLinearGradientTX` (TX panadapter spectrum gradient)
+- `lgLinearGradientRX1` (RX1 panadapter spectrum gradient)
+- `lgLinearGradient_waterfall` (RX waterfall)
+
+Defaults (8 grayscale grippers): `ucLGPicker.cs:98-108` linear ramp `i*(256/8-1)` for i in 0..7 + final `(255,255,255)`.
+Internal dBm range: `LOW=150`, `HIGH=10`, `SPAN=160` ⇒ widget covers `-150..+10` dBm. `ucLGPicker.cs:57-59`.
+Stop struct: `GradColours { float percent; Color color; bool enabled; bool highlighted }` at `ucLGPicker.cs:75-80`.
+Storage: `Dictionary<int, GradColours> m_dictColours` at `ucLGPicker.cs:83`. `m_nGrippers = 8` total; min 2 enabled.
+
+Public API (verified in `ucLGPicker.cs`):
+- `Low / High / ShowAsPercent / IncludeAlphaInPreview / ColourForSelectedGripper`
+- `Text` (raw pipe-delimited) at `:666-738`
+- `EncodedText` (base64-of-UTF-8-Text) at `:912-930`
+- `GetColourForDBM(float)` at `:764-769`, `GetColourAtPercent(float)` at `:770-920`
+- `HighlightFirstGripper()`, `RemoveSelectedGripper(bool)`
+- Events: `Changed`, `GripperSelected`, `GripperDBMChanged`, `GripperMouseEnter`, `GripperMouseLeave`
+
+Consumers (waterfall LUT build) at `setup.cs:33304-33323`: builds `Color[101]` by sampling `GetColourAtPercent(perc / 100f)` per integer percent, broadcasts via `WaterfallRXGradientChangedHandlers` / `WaterfallTXGradientChangedHandlers`.
+
+**Encoded format (CRITICAL — must match byte-for-byte for skin import):**
+
+Raw `Text` format from `ucLGPicker.cs:666-682`:
+```
+<count>|<en0>|<perc0>|<argb0>|<en1>|<perc1>|<argb1>|...|
+```
+- `count` = int (decimal)
+- `enabled` = `"0"` or `"1"`
+- `percent` = `"0.000"` format (3 decimals)
+- `argb` = signed int32 from `Color.ToArgb()` as decimal string
+- Trailing pipe present
+
+`EncodedText` = `Convert.ToBase64String(Encoding.UTF8.GetBytes(Text))` per `ucLGPicker.cs:912-930`.
+
+`Text` setter (`ucLGPicker.cs:684-738`) defensively no-ops on malformed input — partial parse failure leaves `m_dictColours` untouched.
 
 **Files:**
-- Create: `src/gui/widgets/GradientPickerWidget.{h,cpp}` (new)
-- Create: `src/gui/widgets/GradientStop.h` (small struct: position 0-1, QColor)
-- Optionally: serialization helper for the encoded string format (matches Thetis `lgLinearGradient*` storage convention).
+- Create: `src/gui/widgets/GradientPickerWidget.h` (new — Q_OBJECT, public API)
+- Create: `src/gui/widgets/GradientPickerWidget.cpp` (new — paint, mouse, serialization, color interpolation)
+- Create: `src/gui/widgets/GradientStop.h` (new — small POD struct: `float percent; QColor color; bool enabled`)
+- Create: `tests/tst_gradient_picker.cpp` (new — TDD tests)
+- Modify: `tests/CMakeLists.txt` (add tst_gradient_picker)
+- Modify: `src/CMakeLists.txt` (add new sources)
+- Modify: `src/gui/setup/DisplaySetupPages.cpp` (replace TxDisplayPage Custom Gradient placeholder with real widget)
+- Modify: `src/gui/SpectrumWidget.{h,cpp}` (consume 101-entry LUT when palette = Custom; rebuild on changed signal)
 
-**Design:**
-- Visual: horizontal gradient strip with movable stop markers below it. Click on the strip to add a stop, drag a stop to move, double-click a stop to edit color, right-click to delete (min 2 stops).
-- Reads/writes `QString` encoded format (Thetis-compatible: `pos:#RRGGBB,pos:#RRGGBB,...`).
-- Provides preview pixmap for use in combo box previews.
-- Modal `editorDialog()` for full-screen editing if Setup-row inline editing is too cramped.
+**Design (NereusSDR-architectural):**
+- The widget itself is a Qt UI control — UI is NereusSDR-native (per `feedback_source_first_ui_vs_dsp.md`). API freedom granted.
+- Encoded format is **strict 1:1 with Thetis** (skin-import compat in 3H).
+- Default stop count + default colors **strict 1:1 with Thetis** (so brand-new NereusSDR users get the same Custom-palette starting point).
 
-**Tasks (summary; expand when phase starts):**
+**Acceptance criteria:**
 
-- [ ] Spec the widget API (header).
-- [ ] Implement gradient strip rendering (QPainter with QLinearGradient).
-- [ ] Implement stop marker drag handling.
-- [ ] Implement add/edit/delete stop interactions.
-- [ ] Implement encoded-string serialization round-trip.
-- [ ] Unit tests for serialization (round-trip identity, malformed-input fallback).
-- [ ] Integrate into Phase 1's TxDisplayPage Custom Gradient slot.
-- [ ] Bench: select Custom palette in Setup → Display → TX, edit gradient, verify it shows on waterfall during TX.
+- [ ] `GradientPickerWidget` constructs with 8 grayscale stops matching Thetis `ucLGPicker.cs:106-108`.
+- [ ] `text()` getter produces byte-for-byte the format from Thetis `ucLGPicker.cs:666-683`.
+- [ ] `setText()` round-trips Thetis-emitted text without data loss.
+- [ ] `encodedText()` round-trips through base64 per Thetis `ucLGPicker.cs:912-930`.
+- [ ] `colorAtPercent(p)` linear-interpolates ARGB between adjacent enabled stops; clamps at endpoints.
+- [ ] `colorTable(101)` returns the same 101-entry array Thetis `setup.cs:33304-33312` builds.
+- [ ] Add stop on empty strip, drag stop, double-click → color picker, right-click → delete (min 2 stops).
+- [ ] `changed()` signal fires on every mutation.
+- [ ] TxDisplayPage Custom Gradient placeholder is replaced by a real widget; settings round-trip.
+- [ ] SpectrumWidget consumes the 101-LUT when `m_txWfPalette == Custom` during MOX.
+- [ ] `tst_gradient_picker` 10/10 green.
+- [ ] No port-check verifier failures.
+
+### Tasks
+
+#### Step 2.1: Write `tst_gradient_picker` (TDD red, tests-first)
+
+**READ:**
+- Thetis `ucLGPicker.cs:55-130` — class scaffolding, constants, default constructor.
+- Thetis `ucLGPicker.cs:75-80` — `GradColours` struct.
+- Thetis `ucLGPicker.cs:98-108` — default 8-stop grayscale ramp.
+- Thetis `ucLGPicker.cs:666-738` — `Text` getter + setter, both formats and the malformed-input no-op.
+- Thetis `ucLGPicker.cs:770-920` — `GetColourAtPercent` interpolation logic.
+- Thetis `ucLGPicker.cs:912-930` — `EncodedText` base64.
+- Thetis `setup.cs:33304-33312` — 101-entry LUT build pattern.
+
+**SHOW:** quote each block at top of test file under `// From Thetis ucLGPicker.cs:NNN-MMM [v2.10.3.13+501e3f51]`.
+
+**TRANSLATE:** TDD tests first (no implementation yet). 10 cases:
+
+1. `default_constructor_has_8_grayscale_stops` — verify count == 9 entries (8 grippers indices 0..7 + the final addColour at index 8 with white per `:108`), enabled count == 9, colors match `Color.FromArgb(255, i*(256/8-1), i*(256/8-1), i*(256/8-1))` for i 0..7 and `(255,255,255,255)` for i=8.
+2. `text_format_matches_thetis_byte_for_byte` — call `text()`, compare to a Thetis-emitted reference string captured in a fixture file or hex-encoded literal.
+3. `text_round_trip_via_setText` — set text → get text == identity.
+4. `encoded_text_round_trip` — `setEncodedText(s); encodedText() == s`.
+5. `empty_string_to_setText_is_noop` — state unchanged.
+6. `malformed_text_to_setText_is_noop` — verify `m_dictColours` (or our equivalent) is untouched, count and stops unchanged.
+7. `add_stop_at_percent_inserts_with_interpolated_color` — `addStop(0.5)` returns an index, color at that stop matches what `colorAtPercent(0.5)` returned BEFORE the add (`ucLGPicker.cs:415` — Thetis grabs `GetColourAtPercent(midWay)` for new stops).
+8. `remove_stop_enforces_min_2` — removing stops down to 2 enabled, third remove is a no-op.
+9. `color_at_percent_clamps_to_endpoints` — perc < first stop → first stop color; perc > last → last.
+10. `color_table_101_matches_thetis_LUT_build` — `colorTable(101)[k] == colorAtPercent(k/100.0f)` for k in 0..100.
+
+Header gets `// no-port-check:` marker (NereusSDR-original test, cites Thetis values for verification not as a port).
+
+#### Step 2.2: Run failing tests (TDD red)
+
+```bash
+cd /Users/j.j.boyd/NereusSDR/.claude/worktrees/tx-display
+cmake --build build --parallel --target tst_gradient_picker 2>&1 | tail -5
+ctest --test-dir build -R tst_gradient_picker --output-on-failure 2>&1 | tail -10
+```
+
+Expected: 10/10 fail (no impl yet).
+
+#### Step 2.3: Add `GradientStop.h` POD struct
+
+**READ:** Thetis `ucLGPicker.cs:75-80` (`GradColours` struct).
+
+**TRANSLATE:**
+```cpp
+struct GradientStop {
+    float percent;   // 0.0 .. 1.0
+    QColor color;    // ARGB
+    bool enabled;    // matches Thetis enabled flag
+};
+```
+
+No `highlighted` flag in the data model — that's view state, kept inside the widget.
+
+#### Step 2.4: Add `GradientPickerWidget.h` API skeleton
+
+**READ:**
+- Thetis `ucLGPicker.cs:118-128` (Low/High/ShowAsPercent properties).
+- Thetis `ucLGPicker.cs:552-564` (`ColourForSelectedGripper`).
+- Thetis `ucLGPicker.cs:666-738` (`Text`).
+- Thetis `ucLGPicker.cs:912-930` (`EncodedText`).
+- Thetis `ucLGPicker.cs:86-96` (event delegates).
+
+**TRANSLATE:** Q_OBJECT widget. Public:
+- Q_PROPERTY: `low`, `high`, `showAsPercent`, `includeAlphaInPreview`, `colorForSelectedStop`, `text`, `encodedText`.
+- Methods: `colorAtPercent(float) const`, `colorForDbm(float) const`, `colorTable(int n=101) const`, `addStop(float)`, `removeSelectedStop()`, `highlightFirstStop()`, `gradientStops() const`.
+- Signals: `changed()`, `stopSelected(QColor)`, `stopDbmChanged(int dBm, float percent)`, `stopMouseEnter(int dBm, float percent)`, `stopMouseLeave(int dBm, float percent)`.
+- Test seams under `#ifdef NEREUS_BUILD_TESTS`: `setStopsForTest(QVector<GradientStop>)`, `stopsForTest() const`.
+
+#### Step 2.5: Implement encoded-format round-trip
+
+**READ:**
+- Thetis `ucLGPicker.cs:666-682` — `Text` getter (forward).
+- Thetis `ucLGPicker.cs:684-738` — `Text` setter (with malformed-input no-op).
+- Thetis `ucLGPicker.cs:912-930` — `EncodedText` base64.
+
+**TRANSLATE:** Match the format byte-for-byte. Notes:
+- Use `QString::number(stop.percent, 'f', 3)` to match `.ToString("0.000")`.
+- ARGB int32: `static_cast<qint32>(color.rgba())` (Qt stores ARGB in `QRgb`/`uint`, Thetis uses signed `Color.ToArgb()`; negative values for high alpha — careful to round-trip the sign bit).
+- Base64: `QByteArray(text.toUtf8()).toBase64()` and inverse.
+- Trailing pipe in serializer; setter must tolerate its presence (Thetis splits on `'|'` which produces an empty trailing element — match that arithmetic).
+
+#### Step 2.6: Implement color interpolation
+
+**READ:**
+- Thetis `ucLGPicker.cs:770-920` — `GetColourAtPercent`.
+- Thetis `ucLGPicker.cs:970-1008` — `ColorInterpolator.InterpolateBetween` (component-wise byte interp).
+
+**TRANSLATE:** linear interpolate ARGB component-wise between adjacent enabled stops. Edge clamp.
+
+#### Step 2.7: Run tests pass (TDD green; 2x ctest invocation total per `feedback_minimize_test_invocations.md`)
+
+```bash
+cd /Users/j.j.boyd/NereusSDR/.claude/worktrees/tx-display
+cmake --build build --parallel --target tst_gradient_picker 2>&1 | tail -5
+ctest --test-dir build -R tst_gradient_picker --output-on-failure 2>&1 | tail -10
+```
+
+Expected: 10/10 pass.
+
+#### Step 2.8: Implement painting
+
+**READ:**
+- Thetis `ucLGPicker.cs:175-211` — `actualWidth`, `drawTextCentre`, `drawScales`.
+- Thetis `ucLGPicker.cs:213-278` — `LGPicker_Paint`.
+
+**TRANSLATE:** Override `paintEvent`. QPainter with QLinearGradient for the strip. Triangular gripper markers below. Highlighted stop drawn distinctively. Scale labels respect `showAsPercent` (0..100% vs `low..high` dBm).
+
+#### Step 2.9: Implement mouse interactions
+
+**READ:**
+- Thetis `ucLGPicker.cs:296-362` — `LGPicker_MouseMove`.
+- Thetis `ucLGPicker.cs:387-446` — `LGPicker_MouseDown` (LMB on strip = add at midway; LMB on stop = drag).
+- Thetis `ucLGPicker.cs:447-468` — `LGPicker_MouseUp`.
+- Thetis `ucLGPicker.cs:582-597` — `RemoveSelectedGripper`.
+
+**TRANSLATE:** Override `mousePressEvent` / `mouseMoveEvent` / `mouseReleaseEvent` / `mouseDoubleClickEvent` / `contextMenuEvent`. LMB-on-stop drag + clamp to neighbors. LMB-on-strip-empty add. Double-click → `QColorDialog`. RMB → remove (gated by min-2).
+
+#### Step 2.10: Build clean
+
+```bash
+cd /Users/j.j.boyd/NereusSDR/.claude/worktrees/tx-display
+cmake --build build --parallel --target NereusSDR 2>&1 | tail -10
+```
+
+#### Step 2.11: Wire into TxDisplayPage Custom Gradient slot
+
+**READ:** `src/gui/setup/DisplaySetupPages.cpp` Phase-1 placeholder for "Custom Gradient" inside the Waterfall Amplitude Scale group; Phase 1 master plan §1.10 for the placeholder location.
+
+**TRANSLATE:** replace placeholder QLabel with `GradientPickerWidget`. Visibility binds to `m_txWfPaletteCombo->currentIndex() == Custom`. Encoded text persists under `DisplayTxWfGradient` (already reserved in Phase 1 SpectrumWidget settings keys).
+
+#### Step 2.12: Wire SpectrumWidget consumption
+
+**READ:** `src/gui/SpectrumWidget.cpp` `dbmToRgb` — Phase 1 added the per-frame MOX branch; the Custom path currently falls back to defaults.
+
+**TRANSLATE:** When `isTx && m_txWfPalette == Custom`, index into a cached `m_txCustomLut[101]` rebuilt whenever the gradient changes. Connect to the widget's `changed()` signal at MainWindow wiring level (or via a settings-changed re-emit hub).
+
+#### Step 2.13: Manual bench
+
+1. Setup → Display → TX → Palette: Custom.
+2. Verify GradientPickerWidget appears (replacing placeholder).
+3. Run TUN + 2-tone. Waterfall renders custom gradient.
+4. Drag stops, add stops, delete stops, double-click → recolor. Waterfall live-updates.
+5. Restart app: gradient persists (encoded text in settings file).
+6. Switch palette back to Enhanced → reverts cleanly. Switch back to Custom → restored.
+7. Verify RX waterfall is unaffected (still uses RX-side palette logic; Custom gradient not yet wired to RX).
+
+#### Step 2.14: Commit (GPG-signed)
+
+Single commit closing Phase 2. Conventional message:
+
+```
+feat(tx-display): port ucLGPicker → GradientPickerWidget (3M-5c)
+
+Reusable multi-stop linear gradient editor widget. Phase 2 of the
+3M-5 TX Display Refactor master plan. Lands the Custom palette path
+that Phase 1 (3M-5b TX Waterfall Colormap) reserved.
+
+Source-first port from Thetis ucLGPicker.cs [v2.10.3.13+501e3f51]:
+- Default 8 grayscale stops (ucLGPicker.cs:98-108)
+- Pipe-delimited Text format (ucLGPicker.cs:666-738)
+- Base64 EncodedText (ucLGPicker.cs:912-930)
+- Color interpolation (ucLGPicker.cs:770-920)
+- 101-entry LUT consumer pattern (setup.cs:33304-33312)
+
+UI is NereusSDR-native (Qt). Encoded format is byte-for-byte Thetis
+for skin-import compatibility (3H).
+
+Tests: tst_gradient_picker 10/10 green.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+```
 
 ---
 
