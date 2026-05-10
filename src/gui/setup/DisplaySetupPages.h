@@ -308,6 +308,10 @@ private:
 
 // ---------------------------------------------------------------------------
 // Display > TX Display
+// From Thetis tpDisplayTransmit [setup.designer.cs:36232 v2.10.3.13+501e3f51].
+// 3M-5b: Waterfall Amplitude Scale group is functional.
+// Remaining groups (FFT, Panadapter, Waterfall FFT, TX Grid Scale) are
+// placeholder labels naming the sub-phase that wires them.
 // ---------------------------------------------------------------------------
 class TxDisplayPage : public SetupPage {
     Q_OBJECT
@@ -317,11 +321,12 @@ public:
 private:
     void buildUI();
 
-    // Section: TX Spectrum
-    QLabel*         m_bgColorLabel{nullptr};    // placeholder color swatch
-    QLabel*         m_gridColorLabel{nullptr};  // placeholder color swatch
-    QSlider*        m_lineWidthSlider{nullptr}; // 1–3
-    QDoubleSpinBox* m_calOffsetSpin{nullptr};   // dBm offset
+    // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
+    // From Thetis grpTXWFAmpScale [setup.designer.cs:36246 v2.10.3.13+501e3f51].
+    QSpinBox*          m_txWfLowLevelSpin{nullptr};   // udTXWFAmpMin: range -200..200, step 5, default -70 dBm
+    QSpinBox*          m_txWfHighLevelSpin{nullptr};  // udTXWFAmpMax: range -200..200, step 5, default +30 dBm
+    QComboBox*         m_txWfPaletteCombo{nullptr};   // comboColorPalette_tx: 7-item Thetis list
+    ColorSwatchButton* m_txWfLowColorBtn{nullptr};    // clrbtnWaterfallLow_tx: default Black
 };
 
 } // namespace NereusSDR

@@ -101,17 +101,18 @@ namespace NereusSDR {
 
 namespace {
 
-// Build a color swatch placeholder label (NYI — no color picker yet).
-QLabel* makeColorSwatch(const QString& label, const QString& hexColor, QWidget* parent)
+// Build a placeholder QGroupBox with a single dimmed label inside.
+// Used by TxDisplayPage for groups wired in later sub-phases.
+QGroupBox* makePlaceholderGroup(const QString& title, const QString& phText, QWidget* parent)
 {
-    auto* lbl = new QLabel(QStringLiteral("  %1  ").arg(label), parent);
-    lbl->setStyleSheet(QStringLiteral(
-        "QLabel { background: %1; color: #c8d8e8; border: 1px solid #203040;"
-        " border-radius: 3px; padding: 2px 6px; }").arg(hexColor));
-    lbl->setFixedHeight(24);
-    lbl->setEnabled(false);  // NYI
-    lbl->setToolTip(QStringLiteral("Color picker — not yet implemented"));
-    return lbl;
+    auto* group  = new QGroupBox(title, parent);
+    auto* layout = new QVBoxLayout(group);
+    layout->setSpacing(4);
+    auto* label  = new QLabel(phText, group);
+    label->setEnabled(false);
+    label->setStyleSheet(QStringLiteral("QLabel { color: #607080; font-style: italic; }"));
+    layout->addWidget(label);
+    return group;
 }
 
 } // anonymous namespace
@@ -2239,41 +2240,185 @@ TxDisplayPage::TxDisplayPage(RadioModel* model, QWidget* parent)
 
 void TxDisplayPage::buildUI()
 {
+    // From Thetis tpDisplayTransmit [setup.designer.cs:36232 v2.10.3.13+501e3f51].
+    // 5 groups matching Thetis layout order. Only group 4 (Waterfall Amplitude
+    // Scale) is functional in 3M-5b. Others carry placeholder labels naming the
+    // sub-phase that wires them.
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    // --- Section: TX Spectrum ---
-    auto* specGroup = new QGroupBox(QStringLiteral("TX Spectrum"), this);
-    auto* specForm  = new QFormLayout(specGroup);
-    specForm->setSpacing(6);
+    // Group 1: Fast Fourier Transform (3M-5d)
+    // From Thetis groupBoxTS7 on tpDisplayTransmit
+    // [setup.designer.cs:36236 v2.10.3.13+501e3f51].
+    contentLayout()->addWidget(makePlaceholderGroup(
+        QStringLiteral("Fast Fourier Transform"),
+        QStringLiteral("FFT Size + Window controls (wired in 3M-5d)"),
+        this));
 
-    m_bgColorLabel = makeColorSwatch(QStringLiteral("Background Color"), QStringLiteral("#0a0a14"), specGroup);
-    specForm->addRow(QStringLiteral("Background:"), m_bgColorLabel);
+    // Group 2: Panadapter (3M-5d)
+    // From Thetis groupBoxTS8 on tpDisplayTransmit
+    // [setup.designer.cs:36237 v2.10.3.13+501e3f51].
+    contentLayout()->addWidget(makePlaceholderGroup(
+        QStringLiteral("Panadapter"),
+        QStringLiteral("Detector + Averaging + Time + Normalize (wired in 3M-5d)"),
+        this));
 
-    m_gridColorLabel = makeColorSwatch(QStringLiteral("Grid Color"), QStringLiteral("#203040"), specGroup);
-    specForm->addRow(QStringLiteral("Grid Color:"), m_gridColorLabel);
+    // Group 3: Waterfall (3M-5d)
+    // From Thetis groupBoxTS9 on tpDisplayTransmit
+    // [setup.designer.cs:36238 v2.10.3.13+501e3f51].
+    contentLayout()->addWidget(makePlaceholderGroup(
+        QStringLiteral("Waterfall"),
+        QStringLiteral("Detector + Averaging + Time (wired in 3M-5d)"),
+        this));
 
-    m_lineWidthSlider = new QSlider(Qt::Horizontal, specGroup);
-    m_lineWidthSlider->setRange(1, 3);
-    m_lineWidthSlider->setValue(1);
-    m_lineWidthSlider->setEnabled(false);  // NYI
-    m_lineWidthSlider->setToolTip(QStringLiteral("TX trace line width (1–3 px) — not yet implemented"));
-    specForm->addRow(QStringLiteral("Line Width:"), m_lineWidthSlider);
+    // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
+    // From Thetis grpTXWFAmpScale [setup.designer.cs:36246-36379 v2.10.3.13+501e3f51].
+    // Thetis label text: "Waterfall" (grpTXWFAmpScale.Text = "Waterfall").
+    // NereusSDR uses the more descriptive "Waterfall Amplitude Scale" to match
+    // the Thetis RX-side label wording and distinguish from Group 3.
+    auto* ampGroup = new QGroupBox(QStringLiteral("Waterfall Amplitude Scale"), this);
+    auto* ampForm  = new QFormLayout(ampGroup);
+    ampForm->setSpacing(6);
 
-    m_calOffsetSpin = new QDoubleSpinBox(specGroup);
-    m_calOffsetSpin->setRange(-30.0, 30.0);
-    m_calOffsetSpin->setSingleStep(0.5);
-    m_calOffsetSpin->setSuffix(QStringLiteral(" dBm"));
-    m_calOffsetSpin->setValue(0.0);
-    m_calOffsetSpin->setEnabled(false);  // NYI
-    m_calOffsetSpin->setToolTip(QStringLiteral("TX calibration offset — not yet implemented"));
-    specForm->addRow(QStringLiteral("Cal Offset:"), m_calOffsetSpin);
+    // Low Level: From Thetis udTXWFAmpMin
+    // [setup.designer.cs:36319-36348 v2.10.3.13+501e3f51].
+    // Range -200..200 step 5, default -70 dBm.
+    // Thetis tooltip: "Waterfall Low Signal - Show Low Color below this value (gradient in between)."
+    m_txWfLowLevelSpin = new QSpinBox(ampGroup);
+    m_txWfLowLevelSpin->setRange(-200, 200);
+    m_txWfLowLevelSpin->setSingleStep(5);
+    m_txWfLowLevelSpin->setSuffix(QStringLiteral(" dBm"));
+    m_txWfLowLevelSpin->setToolTip(QStringLiteral(
+        "Waterfall Low Signal - Show Low Color below this value (gradient in between). "
+        "From Thetis udTXWFAmpMin [setup.designer.cs:36319 v2.10.3.13+501e3f51]."));
+    ampForm->addRow(QStringLiteral("Low Level:"), m_txWfLowLevelSpin);
 
-    contentLayout()->addWidget(specGroup);
+    // High Level: From Thetis udTXWFAmpMax
+    // [setup.designer.cs:36350-36379 v2.10.3.13+501e3f51].
+    // Range -200..200 step 5, default +30 dBm.
+    // Thetis tooltip: "Waterfall High Signal - Show High Color above this value (gradient in between)."
+    m_txWfHighLevelSpin = new QSpinBox(ampGroup);
+    m_txWfHighLevelSpin->setRange(-200, 200);
+    m_txWfHighLevelSpin->setSingleStep(5);
+    m_txWfHighLevelSpin->setSuffix(QStringLiteral(" dBm"));
+    m_txWfHighLevelSpin->setToolTip(QStringLiteral(
+        "Waterfall High Signal - Show High Color above this value (gradient in between). "
+        "From Thetis udTXWFAmpMax [setup.designer.cs:36350 v2.10.3.13+501e3f51]."));
+    ampForm->addRow(QStringLiteral("High Level:"), m_txWfHighLevelSpin);
 
-    // TX passband overlay colour picker moved to Setup → Appearance →
-    // Colors & Theme alongside the RX passband picker (Plan 4 D9b follow-up).
+    // Palette: From Thetis comboColorPalette_tx
+    // [setup.designer.cs:36290-36307 v2.10.3.13+501e3f51].
+    // Thetis 7-item list: Enhanced / Spectran / BlackWhite / LinLog / LinRad / LinAuto / Custom.
+    // NereusSDR WfColorScheme: Default(0)=AetherSDR, Enhanced(1), Spectran(2),
+    //   BlackWhite(3), LinLog(4), LinRad(5), Custom(6), ClarityBlue(7).
+    // Thetis "LinAuto" maps to NereusSDR "Default" (AetherSDR/SmartSDR style).
+    // Thetis tooltip: "Sets the color scheme"
+    m_txWfPaletteCombo = new QComboBox(ampGroup);
+    m_txWfPaletteCombo->addItem(QStringLiteral("Enhanced"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Enhanced)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("Spectran"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Spectran)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("BlackWhite"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::BlackWhite)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("LinLog"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::LinLog)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("LinRad"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::LinRad)));
+    // Thetis "LinAuto" maps to NereusSDR Default (AetherSDR/SmartSDR style palette).
+    m_txWfPaletteCombo->addItem(QStringLiteral("LinAuto"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Default)));
+    m_txWfPaletteCombo->addItem(QStringLiteral("Custom"),
+        QVariant::fromValue(static_cast<int>(WfColorScheme::Custom)));
+    m_txWfPaletteCombo->setToolTip(QStringLiteral(
+        "Sets the color scheme for the TX waterfall. "
+        "From Thetis comboColorPalette_tx [setup.designer.cs:36290 v2.10.3.13+501e3f51]."));
+    ampForm->addRow(QStringLiteral("Palette:"), m_txWfPaletteCombo);
+
+    // Low Color: From Thetis clrbtnWaterfallLow_tx
+    // [setup.designer.cs:36265-36279 v2.10.3.13+501e3f51].
+    // Default Color.Black. Thetis tooltip: "The Color to use when the signal level
+    // is at or below the low level set above."
+    m_txWfLowColorBtn = new ColorSwatchButton(QColor(Qt::black), ampGroup);
+    m_txWfLowColorBtn->setToolTip(QStringLiteral(
+        "The Color to use when the signal level is at or below the low level set above. "
+        "From Thetis clrbtnWaterfallLow_tx [setup.designer.cs:36265 v2.10.3.13+501e3f51]."));
+    ampForm->addRow(QStringLiteral("Low Color:"), m_txWfLowColorBtn);
+
+    // Custom Gradient placeholder (3M-5c — lands when Palette = Custom).
+    auto* gradLabel = new QLabel(
+        QStringLiteral("<i>(custom gradient editor wired in 3M-5c when palette = Custom)</i>"),
+        ampGroup);
+    gradLabel->setEnabled(false);
+    gradLabel->setStyleSheet(QStringLiteral("QLabel { color: #607080; }"));
+    ampForm->addRow(QStringLiteral("Custom Gradient:"), gradLabel);
+
+    contentLayout()->addWidget(ampGroup);
+
+    // Group 5: TX Grid Scale (3M-5e)
+    // From Thetis grpTXSpectrumGrid on tpDisplayTransmit
+    // [setup.designer.cs:36239 v2.10.3.13+501e3f51].
+    contentLayout()->addWidget(makePlaceholderGroup(
+        QStringLiteral("TX Grid Scale"),
+        QStringLiteral("Max + Min + Step + Display Grid + Fill + Label Align (wired in 3M-5e)"),
+        this));
 
     contentLayout()->addStretch();
+
+    // Wire the 4 functional Waterfall Amplitude Scale controls to SpectrumWidget.
+    // Initial sync from current SpectrumWidget state.
+    if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+        QSignalBlocker bLow(m_txWfLowLevelSpin);
+        QSignalBlocker bHigh(m_txWfHighLevelSpin);
+        QSignalBlocker bPal(m_txWfPaletteCombo);
+        QSignalBlocker bColor(m_txWfLowColorBtn);
+
+        m_txWfLowLevelSpin->setValue(sw->txWfLowLevel());
+        m_txWfHighLevelSpin->setValue(sw->txWfHighLevel());
+
+        // Sync palette combo: find item whose data matches current scheme ordinal.
+        const int schemeVal = static_cast<int>(sw->txWfPalette());
+        for (int i = 0; i < m_txWfPaletteCombo->count(); ++i) {
+            if (m_txWfPaletteCombo->itemData(i).toInt() == schemeVal) {
+                m_txWfPaletteCombo->setCurrentIndex(i);
+                break;
+            }
+        }
+
+        m_txWfLowColorBtn->setColor(sw->txWfLowColor());
+    }
+
+    // Low Level: user edit propagates to SpectrumWidget.
+    connect(m_txWfLowLevelSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfLowLevel(v);
+        }
+    });
+
+    // High Level: user edit propagates to SpectrumWidget.
+    connect(m_txWfHighLevelSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfHighLevel(v);
+        }
+    });
+
+    // Palette: current item's data value is the WfColorScheme ordinal.
+    connect(m_txWfPaletteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int i) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            const int val = m_txWfPaletteCombo->itemData(i).toInt();
+            sw->setTxWfPalette(static_cast<WfColorScheme>(
+                qBound(0, val, static_cast<int>(WfColorScheme::Count) - 1)));
+        }
+    });
+
+    // Low Color: ColorSwatchButton emits colorChanged on user pick.
+    connect(m_txWfLowColorBtn, &ColorSwatchButton::colorChanged,
+            this, [this](const QColor& c) {
+        if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
+            sw->setTxWfLowColor(c);
+        }
+    });
 }
 
 } // namespace NereusSDR
