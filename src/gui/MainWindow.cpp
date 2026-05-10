@@ -2566,6 +2566,36 @@ void MainWindow::populateDefaultMeter()
         }
     });
 
+    // ── Banner ☰ menu on AppletPanelWidget ──────────────────────────────
+    if (m_appletVis && m_appletPanel) {
+        m_bannerAppletsMenu = new QMenu(this);
+
+        for (const QString& id : m_appletVis->registeredIds()) {
+            QAction* act = m_bannerAppletsMenu->addAction(
+                m_appletVis->displayName(id));
+            act->setCheckable(true);
+            act->setChecked(m_appletVis->isVisible(id));
+            // User-visible tooltip — plain English.
+            act->setToolTip(QStringLiteral("Show or hide the %1 applet")
+                            .arg(m_appletVis->displayName(id)));
+
+            connect(act, &QAction::toggled, this, [this, id](bool checked) {
+                if (m_appletVis) { m_appletVis->setVisible(id, checked); }
+            });
+            m_bannerAppletActions.insert(id, act);
+        }
+
+        // Sync banner checkmarks when state changes elsewhere (top menu).
+        connect(m_appletVis, &AppletVisibilityController::visibilityChanged,
+                this, [this](const QString& id, bool visible) {
+            if (auto* act = m_bannerAppletActions.value(id, nullptr)) {
+                QSignalBlocker block(act);
+                act->setChecked(visible);
+            }
+        });
+
+        m_appletPanel->setBannerMenu(m_bannerAppletsMenu);
+    }
 
     // Ghost applets: constructed but not added to the panel or the Containers menu
     // until their feature phases ship. Uncomment the construction + addContainerToggle

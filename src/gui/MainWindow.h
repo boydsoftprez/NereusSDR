@@ -580,6 +580,8 @@ private:
     AppletVisibilityController* m_appletVis{nullptr};
     QHash<QString, AppletWidget*> m_appletsById;
     QHash<QString, QAction*> m_topMenuAppletActions;
+    QMenu* m_bannerAppletsMenu{nullptr};
+    QHash<QString, QAction*> m_bannerAppletActions;
 
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
