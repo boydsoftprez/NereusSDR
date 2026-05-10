@@ -3975,3 +3975,25 @@ nereus_add_test(tst_tx_waterfall_colormap)
 # target is RED until then. Uses QTEST_MAIN (QApplication required for the
 # GradientPickerWidget QWidget subclass).
 nereus_add_test(tst_gradient_picker)
+
+# ── Phase 3M-5d: TX FFT + Detector + Averaging (TDD red) ─────────────────────
+# 8 tests pinning the TxAnalyzer 9-control state surface + n_pixout=2.
+#   defaults_match_spec: FFT=4096, Window=Hamming (4), PanDet=0, PanAvg=0,
+#     PanAvTimeMs=30, PanNormalize=false, WfDet=0, WfAvg=0, WfAvTimeMs=120.
+#   settings_round_trip: 9-key AppSettings save+load cycle preserves all.
+#   fft_size_formula: setFftSizeSliderPosition(N) ⇒ 4096 * 2^N.
+#   bin_width_formula: binWidthHz() = sampleRate / fftSize.
+#   normalize_gated_on_pan_detector: panNormalizeEnabled() true iff
+#     PanDet >= 2 (per MW0LGE comment at setup.cs:18111-18112).
+#   av_time_ms_to_tau_seconds: setter takes ms; tau() returns seconds.
+#   setAnalyzer_called_on_each_setter: each setter ticks
+#     analyzerConfigCount() test seam.
+#   pixout_2_after_phase: nPixout() == 2 (pan + wf independent).
+# Sources: setup.designer.cs:36493 (WF AvTime ms=120) + :36753 (Pan ms=30)
+#          setup.designer.cs:2200-2235 (control declarations)
+#          setup.cs:18105-18171        (9 control handlers)
+#          specHPSDR.cs:134, :301-322, :351-380, :382-418, :471-480
+# All v2.10.3.13+501e3f51. NOTE: Steps 3.3-3.4 add the impl + test seams;
+# this target is RED until then. Uses QTEST_MAIN (QCoreApplication only —
+# TxAnalyzer is non-GUI).
+nereus_add_test(tst_tx_analyzer_settings)
