@@ -510,6 +510,15 @@ public:
     /// follower takes ~3 s to converge and the waterfall saturates solid
     /// red in the meantime.
     void resetWaterfallAgc() { m_wfAgcPrimed = false; }
+
+    /// Clear the spectrum + waterfall avenger accumulators.  Use on bin-source
+    /// changes that are abrupt enough that fading from the previous source's
+    /// state via LogRecursive smoothing produces visible artifacts (e.g. MOX
+    /// rise: the trace pipeline averages over ~3 s and during that window the
+    /// trace shows a blend of pre-MOX RX state and post-MOX TX state, which
+    /// looks like mic-driven content overlaid on the tune tone).
+    void clearAvengers() { m_spectrumAvenger.clear(); m_waterfallAvenger.clear(); }
+
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.

@@ -1248,6 +1248,13 @@ void MainWindow::buildUI()
                     // the colormap thresholds up and the panadapter
                     // saturates solid red until then.
                     m_spectrumWidget->resetWaterfallAgc();
+                    // 3M-5b polish (KG4VCF, 2026-05-10): clear the spectrum +
+                    // waterfall avenger accumulators on MOX rise so the trace
+                    // doesn't fade from pre-MOX RX state into TX state via
+                    // LogRecursive smoothing (~3 s time constant), which would
+                    // otherwise show a brief mic-like blend overlaid on the
+                    // TUNE tone for the first few frames after key.
+                    m_spectrumWidget->clearAvengers();
                     m_txAnalyzer->start();
                 } else {
                     m_txAnalyzer->stop();
@@ -1269,6 +1276,9 @@ void MainWindow::buildUI()
                     // snaps back to the RX dynamic range without the
                     // same 3 s saturation pause in the other direction.
                     m_spectrumWidget->resetWaterfallAgc();
+                    // Symmetric avenger clear on un-key so the trace doesn't
+                    // fade from TX tone state into RX state.
+                    m_spectrumWidget->clearAvengers();
                 }
             },
             Qt::QueuedConnection);
