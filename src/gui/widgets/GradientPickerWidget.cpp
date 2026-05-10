@@ -63,11 +63,17 @@ mw0lge@grange-lane.co.uk
 #include "gui/widgets/GradientPickerWidget.h"
 
 #include <QByteArray>
+#include <QColorDialog>
 #include <QContextMenuEvent>
 #include <QEvent>
+#include <QFontMetrics>
+#include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPen>
+#include <QPoint>
+#include <QRect>
 #include <QString>
 #include <QStringList>
 
@@ -184,6 +190,13 @@ GradientPickerWidget::GradientPickerWidget(QWidget* parent)
 
     // Mouse tracking is needed for hover-style gripper highlight reporting.
     setMouseTracking(true);
+
+    // Geometry hint: Thetis uses Y=12 for the strip baseline, draws scale
+    // labels at Y=24 (ucLGPicker.cs:186, :213-276), so the visible strip +
+    // labels fit in ~42 px. Pad to 48 for label descender / ellipse rim.
+    setMinimumHeight(48);
+    setMinimumWidth(kPaddingPx * 4);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
 GradientPickerWidget::~GradientPickerWidget() = default;
@@ -813,17 +826,395 @@ int GradientPickerWidget::findStopIndexAtPixel(int x, int y) const
     return -1;
 }
 
-void GradientPickerWidget::paintEvent(QPaintEvent* /*event*/)                {}
-void GradientPickerWidget::mousePressEvent(QMouseEvent* /*event*/)           {}
-void GradientPickerWidget::mouseMoveEvent(QMouseEvent* /*event*/)            {}
-void GradientPickerWidget::mouseReleaseEvent(QMouseEvent* /*event*/)         {}
-void GradientPickerWidget::mouseDoubleClickEvent(QMouseEvent* /*event*/)     {}
-void GradientPickerWidget::contextMenuEvent(QContextMenuEvent* /*event*/)    {}
-void GradientPickerWidget::leaveEvent(QEvent* /*event*/)                     {}
+// From Thetis ucLGPicker.cs:213-277 [v2.10.3.13+501e3f51]:
+//
+//   g.PixelOffsetMode = PixelOffsetMode.Half;
+//   Point pEnd = new Point(m_nPadding + actualWidth, 12);
+//   ...
+//   foreach kvp in m_kvpSortedColours { ... draw 24-px-thick gradient line +
+//       fill+stroke 12-px ellipse at the LEFT (previous) gripper of each pair ... }
+//   ... after the loop, draw the final ellipse at pEnd ...
+//   drawScales(g);
+//
+// Each painted "ellipse" is the gripper marker: white fill, black outline,
+// or red fill if highlighted. Highlight color stays NereusSDR-native red
+// to match Thetis. When the widget is disabled, all colors flatten to gray.
+void GradientPickerWidget::paintEvent(QPaintEvent* /*event*/)
+{
+    if (m_sortedEnabledIndices.isEmpty()) {
+        return;
+    }
 
-void GradientPickerWidget::drawScales(QPainter& /*painter*/) const           {}
-void GradientPickerWidget::drawTextCentered(QPainter& /*painter*/,
-                                             const QString& /*s*/,
-                                             int /*x*/) const                {}
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const int aw = actualWidth();
+    if (aw <= 0) {
+        return;
+    }
+
+    // Strip baseline Y matches Thetis: ucLGPicker.cs:218 pEnd Y=12.
+    constexpr int kStripY = 12;
+    constexpr int kStripThickness = 24;
+    constexpr int kEllipseRadius = 6;
+
+    // Walk adjacent enabled-stop pairs and paint gradient segments + the
+    // LEFT gripper marker of each pair. Right end-cap drawn after the loop.
+    auto colorForDraw = [this](const QColor& c) -> QColor {
+        QColor out = isEnabled() ? c : QColor(Qt::gray);
+        if (!m_includeAlphaInPreview) {
+            out.setAlpha(255);
+        }
+        return out;
+    };
+
+    for (int n = 0; n < m_sortedEnabledIndices.size() - 1; ++n) {
+        const int prevIdx = m_sortedEnabledIndices[n];
+        const int thisIdx = m_sortedEnabledIndices[n + 1];
+
+        const QColor prevColor = colorForDraw(m_stops[prevIdx].color);
+        const QColor thisColor = colorForDraw(m_stops[thisIdx].color);
+
+        const int xPrev = percentToPixel(m_stops[prevIdx].percent);
+        const int xThis = percentToPixel(m_stops[thisIdx].percent);
+
+        // Thetis guards against 0-width segment (LinearGradientBrush memory
+        // error per ucLGPicker.cs:235 comment); same guard here.
+        if (xPrev < xThis) {
+            QLinearGradient grad(QPointF(xPrev, kStripY), QPointF(xThis, kStripY));
+            grad.setColorAt(0.0, prevColor);
+            grad.setColorAt(1.0, thisColor);
+            QPen pen(QBrush(grad), kStripThickness);
+            pen.setCapStyle(Qt::FlatCap);
+            painter.setPen(pen);
+            painter.drawLine(xPrev, kStripY, xThis, kStripY);
+        }
+
+        // Gripper ellipse at the LEFT (previous) stop. From Thetis
+        // ucLGPicker.cs:256-260: highlighted == red, else white, gray when
+        // widget disabled. 12 px diameter centred on (xPrev, kStripY).
+        const bool prevHighlighted = (prevIdx == m_highlightedIndex);
+        const QBrush fill(isEnabled()
+            ? (prevHighlighted ? QColor(Qt::red) : QColor(Qt::white))
+            : QColor(Qt::gray));
+        painter.setBrush(fill);
+        painter.setPen(QPen(QColor(Qt::black), 1));
+        painter.drawEllipse(QPoint(xPrev, kStripY), kEllipseRadius, kEllipseRadius);
+    }
+
+    // Final right end-cap ellipse. From Thetis ucLGPicker.cs:270-274.
+    const int lastIdx = m_sortedEnabledIndices.last();
+    const int xEnd = percentToPixel(m_stops[lastIdx].percent);
+    const bool lastHighlighted = (lastIdx == m_highlightedIndex);
+    const QBrush endFill(isEnabled()
+        ? (lastHighlighted ? QColor(Qt::red) : QColor(Qt::white))
+        : QColor(Qt::gray));
+    painter.setBrush(endFill);
+    painter.setPen(QPen(QColor(Qt::black), 1));
+    painter.drawEllipse(QPoint(xEnd, kStripY), kEllipseRadius, kEllipseRadius);
+
+    drawScales(painter);
+}
+
+// From Thetis ucLGPicker.cs:189-211 [v2.10.3.13+501e3f51] (drawScales):
+//
+//   if (_show_percent) {
+//       drawTextCentre("LOW", padding);
+//       drawTextCentre("HIGH", padding + actualWidth);
+//       drawTextCentre("MID", padding + actualWidth/2);
+//   } else {
+//       drawTextCentre((-LOW), padding);                 // "150"
+//       drawTextCentre((HIGH), padding + actualWidth);   // "10"
+//       drawTextCentre("0", ...);                        // 0 dBm tick
+//       drawTextCentre("-93", ...);
+//       drawTextCentre("-73", ...);
+//   }
+void GradientPickerWidget::drawScales(QPainter& painter) const
+{
+    const int aw = actualWidth();
+    if (aw <= 0) {
+        return;
+    }
+
+    if (m_showAsPercent) {
+        drawTextCentered(painter, QStringLiteral("LOW"), kPaddingPx);
+        drawTextCentered(painter, QStringLiteral("HIGH"), kPaddingPx + aw);
+        drawTextCentered(painter, QStringLiteral("MID"), kPaddingPx + aw / 2);
+    } else {
+        // From Thetis ucLGPicker.cs:191-192:
+        //   int zeroPoint = LOW; int span = SPAN;
+        // i.e. zeroPoint is the absolute value of the LOW endpoint (150)
+        // expressed as a positive integer offset along the span.
+        const int zeroPoint = -kLowDbm;  // 150
+        const int span = kSpanDbm;        // 160
+
+        drawTextCentered(painter, QString::number(-kLowDbm), kPaddingPx);
+        drawTextCentered(painter, QString::number(kHighDbm),
+                         kPaddingPx + aw);
+        drawTextCentered(painter, QStringLiteral("0"),
+                         kPaddingPx + static_cast<int>(
+                             (static_cast<float>(aw) / static_cast<float>(span))
+                             * static_cast<float>(zeroPoint)));
+        drawTextCentered(painter, QStringLiteral("-93"),
+                         kPaddingPx + static_cast<int>(
+                             (static_cast<float>(aw) / static_cast<float>(span))
+                             * static_cast<float>(zeroPoint - 93)));
+        drawTextCentered(painter, QStringLiteral("-73"),
+                         kPaddingPx + static_cast<int>(
+                             (static_cast<float>(aw) / static_cast<float>(span))
+                             * static_cast<float>(zeroPoint - 73)));
+    }
+}
+
+// From Thetis ucLGPicker.cs:180-187 [v2.10.3.13+501e3f51] (drawTextCentre):
+//   Size textSize = TextRenderer.MeasureText(s, drawFont);
+//   Brush br = Enabled ? Brushes.Black : Brushes.Gray;
+//   g.DrawString(s, drawFont, br, new Point(x - (textSize.Width / 2), 24));
+void GradientPickerWidget::drawTextCentered(QPainter& painter,
+                                             const QString& s,
+                                             int x) const
+{
+    const QFontMetrics fm(painter.font());
+    const int w = fm.horizontalAdvance(s);
+    const QColor textColor = isEnabled() ? QColor(Qt::black) : QColor(Qt::gray);
+    painter.setPen(textColor);
+    painter.drawText(x - w / 2, 24 + fm.ascent(), s);
+}
+
+// ---- Mouse interactions ----
+
+// From Thetis ucLGPicker.cs:387-445 [v2.10.3.13+501e3f51] (LGPicker_MouseDown):
+//
+//   int index = findColourIndexGrip(X, Y);
+//   if (index != m_nSelectedGripper) highlightGripper(m_nSelectedGripper, false);
+//
+//   if (index == -1 && Y >= 0 && Y <= 24) {
+//       float perc = percFromPixels(X);
+//       int indexLeft = indexOfClosestToLeft(perc);
+//       int indexRight = indexOfClosestToRight(perc);
+//       if (indexLeft != -1 && indexRight != -1) {
+//           float percWidth = m_dictColours[indexRight].percent - m_dictColours[indexLeft].percent;
+//           if (percWidth * actualWidth > 32) {
+//               float midWay = m_dictColours[indexLeft].percent + (percWidth / 2);
+//               int newIndex = addGripper(midWay, GetColourAtPercent(midWay), false);
+//               if (newIndex != -1) {
+//                   highlightGripper(newIndex, true);
+//                   m_nSelectedGripper = newIndex;
+//                   OnGripperSelected(...);
+//                   Invalidate();
+//               }
+//           }
+//       }
+//       return;
+//   }
+//   if (index == -1) return;
+//   if (e.Button != MouseButtons.None) {
+//       m_bGripperSelectedForDrag = true;
+//       highlightGripper(index, true);
+//       m_nSelectedGripper = index;
+//       OnGripperSelected(...);
+//   }
+//   Invalidate();
+//
+// NereusSDR-architectural: right-click on a gripper triggers the
+// remove-stop path (the Thetis Setup form has a separate Delete button
+// at setup.cs:33249-33253 — NereusSDR has no equivalent button outside
+// the widget, so we expose it as a context-menu shortcut on the widget
+// itself per feedback_source_first_ui_vs_dsp.md UI-native carve-out).
+// The wire format and stop-data semantics stay 1:1 with Thetis.
+void GradientPickerWidget::mousePressEvent(QMouseEvent* event)
+{
+    const int x = event->pos().x();
+    const int y = event->pos().y();
+
+    const int idx = findStopIndexAtPixel(x, y);
+
+    // De-highlight current selection if we're moving to a different stop.
+    if (idx != m_selectedIndex && m_highlightedIndex != -1) {
+        m_highlightedIndex = -1;
+    }
+
+    // Right-click on a gripper -> remove (NereusSDR-native; min-2 enforced
+    // by removeSelectedStop end-cap protection).
+    if (event->button() == Qt::RightButton && idx != -1) {
+        m_selectedIndex = idx;
+        if (removeSelectedStop()) {
+            event->accept();
+            return;
+        }
+    }
+
+    // Left-click on empty strip body -> add stop at midway between
+    // closest-left and closest-right. Same arithmetic as Thetis.
+    if (event->button() == Qt::LeftButton && idx == -1 && y >= 0 && y <= 24) {
+        const float perc = percFromPixel(x);
+        const int idxLeft = indexClosestLeft(perc);
+        const int idxRight = indexClosestRight(perc);
+        if (idxLeft != -1 && idxRight != -1) {
+            const float percWidth =
+                m_stops[idxRight].percent - m_stops[idxLeft].percent;
+            // From Thetis ucLGPicker.cs:411 — minimum-gap guard.
+            if (percWidth * static_cast<float>(actualWidth()) > 32.0f) {
+                const float midWay = m_stops[idxLeft].percent + (percWidth / 2.0f);
+                const int newIdx = addStop(midWay);
+                if (newIdx != -1) {
+                    m_highlightedIndex = newIdx;
+                    m_selectedIndex = newIdx;
+                    update();
+                    emit stopSelected(m_stops[newIdx].color);
+                }
+            }
+        }
+        event->accept();
+        return;
+    }
+
+    if (idx == -1) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+
+    if (event->button() == Qt::LeftButton) {
+        m_dragSelected = true;
+        m_highlightedIndex = idx;
+        m_selectedIndex = idx;
+        update();
+        emit stopSelected(m_stops[idx].color);
+    }
+
+    event->accept();
+}
+
+// From Thetis ucLGPicker.cs:296-362 [v2.10.3.13+501e3f51] (LGPicker_MouseMove):
+//   - Drag clamps the dragged gripper between its closest-left and
+//     closest-right enabled neighbors with a 6-px gripper-radius gap.
+//   - Hover (no drag) emits stopMouseEnter / stopMouseLeave.
+void GradientPickerWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    const int x = event->pos().x();
+    const int y = event->pos().y();
+    const int aw = actualWidth();
+
+    if (m_dragSelected
+        && m_selectedIndex > 0
+        && m_selectedIndex < m_stops.size() - 1
+        && aw > 0)
+    {
+        float perc = percFromPixel(x);
+
+        const int leftClose = indexClosestLeft(m_selectedIndex);
+        const int rightClose = indexClosestRight(m_selectedIndex);
+
+        // Clamp to (leftClose.percent + 6/aw, rightClose.percent - 6/aw).
+        if (leftClose != -1) {
+            const float minPerc =
+                ((static_cast<float>(aw) * m_stops[leftClose].percent) + 6.0f)
+                / static_cast<float>(aw);
+            if (perc < minPerc) {
+                perc = minPerc;
+            }
+        }
+        if (rightClose != -1) {
+            const float maxPerc =
+                ((static_cast<float>(aw) * m_stops[rightClose].percent) - 6.0f)
+                / static_cast<float>(aw);
+            if (perc > maxPerc) {
+                perc = maxPerc;
+            }
+        }
+
+        m_stops[m_selectedIndex].percent = perc;
+        m_changedDuringDrag = true;
+        rebuildSortedStops();
+        update();
+        emit stopDbmChanged(percentToDbm(perc), perc);
+        event->accept();
+        return;
+    }
+
+    // Hover (no drag). Emit stopMouseEnter / stopMouseLeave when the
+    // hovered gripper changes.
+    const int hoverIdx = findStopIndexAtPixel(x, y);
+    if (hoverIdx != -1) {
+        if (hoverIdx != m_mouseOverIndex) {
+            if (m_mouseOverIndex != -1) {
+                emit stopMouseLeave(0, 0.0f);
+            }
+            const float perc = m_stops[hoverIdx].percent;
+            emit stopMouseEnter(percentToDbm(perc), perc);
+            m_mouseOverIndex = hoverIdx;
+        }
+    } else if (m_mouseOverIndex != -1) {
+        emit stopMouseLeave(0, 0.0f);
+        m_mouseOverIndex = -1;
+    }
+
+    QWidget::mouseMoveEvent(event);
+}
+
+// From Thetis ucLGPicker.cs:447-467 [v2.10.3.13+501e3f51] (LGPicker_MouseUp):
+//   - If a drag mutation happened, fire OnChanged once (the per-pixel drag
+//     already updated state but the Changed event is debounced to release).
+//   - Clear the drag flag.
+void GradientPickerWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (m_changedDuringDrag) {
+        m_changedDuringDrag = false;
+        emit changed();
+    }
+    m_dragSelected = false;
+    if (m_selectedIndex == -1) {
+        emit stopSelected(QColor());
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+// NereusSDR-architectural: double-click a gripper -> open QColorDialog.
+// Thetis exposes ColourForSelectedGripper as a property and the Setup form
+// drives a separate clrbtnLGPickerWaterfall_Click that opens a Windows
+// ColorDialog (setup.cs:33199 area). NereusSDR rolls that into a built-in
+// affordance because we don't carry the same external setup-form scaffolding
+// around the widget. Wire format and stop-data semantics stay 1:1 with
+// Thetis.
+void GradientPickerWidget::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    const int idx = findStopIndexAtPixel(event->pos().x(), event->pos().y());
+    if (idx == -1) {
+        QWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    m_selectedIndex = idx;
+    m_highlightedIndex = idx;
+
+    QColorDialog dlg(m_stops[idx].color, this);
+    dlg.setOption(QColorDialog::ShowAlphaChannel, true);
+    if (dlg.exec() == QDialog::Accepted) {
+        const QColor newColor = dlg.currentColor();
+        if (newColor.isValid()) {
+            m_stops[idx].color = newColor;
+            rebuildSortedStops();
+            update();
+            emit stopSelected(newColor);
+            emit changed();
+        }
+    }
+    event->accept();
+}
+
+void GradientPickerWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    // Right-click handled in mousePressEvent via Qt::RightButton. Suppress
+    // the default Qt context-menu so it doesn't fight the remove-stop path.
+    event->accept();
+}
+
+void GradientPickerWidget::leaveEvent(QEvent* event)
+{
+    if (m_mouseOverIndex != -1) {
+        emit stopMouseLeave(0, 0.0f);
+        m_mouseOverIndex = -1;
+    }
+    QWidget::leaveEvent(event);
+}
 
 } // namespace NereusSDR
