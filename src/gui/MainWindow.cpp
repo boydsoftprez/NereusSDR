@@ -3391,37 +3391,47 @@ void MainWindow::buildMenuBar()
 
     containersMenu->addSeparator();
 
-    // Dynamic show/hide toggles for optional applets in Container #0.
-    // Checked = visible in panel; unchecked = hidden/removed.
-    // Currently commented out (ghost applets hidden per
-    // docs/superpowers/plans/2026-05-01-ui-polish-right-panel.md §Task 6).
-    // Re-enable by un-commenting the lambda AND the addContainerToggle calls below,
-    // alongside the construction block in buildDefaultContainerLayout().
+    // ── Containers > Applets section ─────────────────────────────────────
+    // Show/hide toggles for each currently-wired applet. Backed by
+    // m_appletVis (AppletVisibilityController). Two-way sync with the
+    // ☰ menu on AppletPanelWidget happens via the controller's
+    // visibilityChanged signal.
     //
-    // auto addContainerToggle = [&](const QString& name, AppletWidget* applet, bool defaultVisible) {
-    //     auto* action = containersMenu->addAction(name);
-    //     action->setCheckable(true);
-    //     action->setChecked(defaultVisible);
-    //     connect(action, &QAction::toggled, this, [this, applet](bool show) {
-    //         if (!m_appletPanel) { return; }
-    //         if (show) {
-    //             m_appletPanel->addApplet(applet);
-    //         } else {
-    //             m_appletPanel->removeApplet(applet);
-    //         }
-    //     });
-    // };
+    // Predecessor: dead lambda was disabled in 25597df because its 7
+    // entries were all ghost applets. The new section ships only
+    // currently-wired applets. Add new entries here as additional
+    // applets ship (default visible per design §5.2).
+    if (m_appletVis) {
+        // Section header. addSection is the idiomatic Qt API; falls back
+        // gracefully on platforms where it renders as a plain label.
+        containersMenu->addSection(QStringLiteral("Applets"));
 
-    // Ghost-applet Containers menu entries — disabled until feature phases ship.
-    // Re-enable alongside the construction block in buildDefaultContainerLayout().
-    //
-    // addContainerToggle(QStringLiteral("Digital / VAC"), m_digitalApplet,    false); // TODO 3-VAX
-    // addContainerToggle(QStringLiteral("PureSignal"),    m_pureSignalApplet, false); // TODO 3M-4
-    // addContainerToggle(QStringLiteral("Diversity"),     m_diversityApplet,  false); // TODO 3F
-    // addContainerToggle(QStringLiteral("CW Keyer"),      m_cwxApplet,        false); // TODO 3M-2
-    // addContainerToggle(QStringLiteral("Voice Keyer"),   m_dvkApplet,        false); // TODO 3M-1
-    // addContainerToggle(QStringLiteral("CAT / TCI"),     m_catApplet,        false); // TODO 3J/3K
-    // addContainerToggle(QStringLiteral("ATU Control"),   m_tunerApplet,      false); // TODO ATU
+        for (const QString& id : m_appletVis->registeredIds()) {
+            QAction* act = containersMenu->addAction(
+                m_appletVis->displayName(id));
+            act->setCheckable(true);
+            act->setChecked(m_appletVis->isVisible(id));
+            // User-visible tooltip — plain English, no source cites.
+            act->setToolTip(QStringLiteral("Show or hide the %1 applet")
+                            .arg(m_appletVis->displayName(id)));
+
+            connect(act, &QAction::toggled, this, [this, id](bool checked) {
+                if (m_appletVis) { m_appletVis->setVisible(id, checked); }
+            });
+            m_topMenuAppletActions.insert(id, act);
+        }
+
+        // Sync checkmark when the controller's state changes (e.g. via
+        // the banner ☰ menu in Task 6). QSignalBlocker prevents
+        // recursive toggle.
+        connect(m_appletVis, &AppletVisibilityController::visibilityChanged,
+                this, [this](const QString& id, bool visible) {
+            if (auto* act = m_topMenuAppletActions.value(id, nullptr)) {
+                QSignalBlocker block(act);
+                act->setChecked(visible);
+            }
+        });
+    }
 
     // =========================================================================
     // TOOLS

@@ -579,6 +579,7 @@ private:
     // Constructed in the layout-build path after the panel is wired.
     AppletVisibilityController* m_appletVis{nullptr};
     QHash<QString, AppletWidget*> m_appletsById;
+    QHash<QString, QAction*> m_topMenuAppletActions;
 
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
