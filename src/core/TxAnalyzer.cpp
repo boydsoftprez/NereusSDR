@@ -245,7 +245,15 @@ void TxAnalyzer::applySetAnalyzer()
         flp,
         /*sz=*/m_fftSize,
         /*bf_sz=*/m_fftSize,
-        /*win_type=*/4,            // Thetis default (Hamming)
+        // Deliberate divergence from Thetis default (4 = Hamming).  Bench
+        // on 2026-05-10 showed Hamming's -42 dB sidelobes spread tone power
+        // across the entire useable bin range, and NereusSDR's waterfall
+        // colormap (auto-AGC running min/max + 12 dB margin per
+        // SpectrumWidget.cpp:3900-3920) has no instantaneous averaging, so
+        // every bin lit up warm.  BH4 (-92 dB sidelobes) drops far-from-tone
+        // bins below the colormap floor.  Spectrum trace is fine either way
+        // because LogRecursive averaging masks instantaneous wide content.
+        /*win_type=*/1,            // 1 = Blackman-Harris 4-term (NereusSDR pick)
         /*pi=*/14.0,               // Thetis default (unused for non-Kaiser)
         /*ovrlp=*/ovrlp,
         /*clp=*/clip,              // Thetis: floor(0.04 * fft_size) = 163
