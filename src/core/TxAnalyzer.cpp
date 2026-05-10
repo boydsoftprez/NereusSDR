@@ -157,53 +157,6 @@ void TxAnalyzer::poll()
     int flag = 0;
     GetPixels(m_dispId, /*pixout=*/0, m_pixBuf.data(), &flag);
 
-    // BENCH DIAGNOSTIC (PR #212 follow-up TX waterfall debug, 2026-05-07):
-    // log frame arrival rate + bin-layout probe so we can tell whether
-    // (a) the analyzer outputs FFT-shifted [-Nyq..+Nyq] (top bins cluster
-    //     around N/2) or raw FFT order (top bins at small + large indices)
-    // (b) the absolute peak is uncalibrated (vs Thetis -50 dBm-ish).
-    // Drop before commit.
-    {
-        static int s_frameCount = 0;
-        if (flag != 0) s_frameCount++;
-        if (flag != 0 && (s_frameCount % 60) == 1) {
-            // Find top 5 bin indices by descending dBm.
-            const int n = m_pixBuf.size();
-            int topIdx[5] = {-1, -1, -1, -1, -1};
-            float topVal[5] = {-1e9f, -1e9f, -1e9f, -1e9f, -1e9f};
-            for (int i = 0; i < n; ++i) {
-                const float v = m_pixBuf[i];
-                for (int k = 0; k < 5; ++k) {
-                    if (v > topVal[k]) {
-                        // Shift down to make room.
-                        for (int j = 4; j > k; --j) {
-                            topVal[j] = topVal[j-1];
-                            topIdx[j] = topIdx[j-1];
-                        }
-                        topVal[k] = v;
-                        topIdx[k] = i;
-                        break;
-                    }
-                }
-            }
-            // Probe values at canonical positions to detect FFT-shift.
-            const int probeIdx[5] = {0, n/4, n/2, 3*n/4, n-1};
-            qCInfo(lcDsp).nospace()
-                << "TxAnalyzer probe: bins=" << n
-                << " top5=[(" << topIdx[0] << "," << topVal[0] << ")"
-                << " (" << topIdx[1] << "," << topVal[1] << ")"
-                << " (" << topIdx[2] << "," << topVal[2] << ")"
-                << " (" << topIdx[3] << "," << topVal[3] << ")"
-                << " (" << topIdx[4] << "," << topVal[4] << ")]"
-                << " probes=[bin0=" << m_pixBuf[probeIdx[0]]
-                << " bin" << probeIdx[1] << "=" << m_pixBuf[probeIdx[1]]
-                << " binN/2=" << m_pixBuf[probeIdx[2]]
-                << " bin" << probeIdx[3] << "=" << m_pixBuf[probeIdx[3]]
-                << " binEnd=" << m_pixBuf[probeIdx[4]] << "]"
-                << " rate=" << m_sampleRate;
-        }
-    }
-
     if (flag != 0) {
         // sentinel receiverId = -1 to signal "TX panadapter" to consumers
         // (SpectrumWidget Q_UNUSEDs the id today; -1 lets future code
