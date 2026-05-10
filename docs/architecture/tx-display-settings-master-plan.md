@@ -160,30 +160,139 @@ Expected: 6 commits between `4eef91e` (origin/main) and the new HEAD: docs/desig
 **Goal:** Setup → Display → TX gains the full 5-group Thetis layout (FFT, Panadapter, Waterfall, Waterfall Amplitude Scale, TX Grid Scale). All groups get their group boxes; only the **Waterfall Amplitude Scale** group is wired to functional controls in this phase. The other 4 groups get placeholder UI that becomes functional in Phases 3-4. Per-frame MOX branch lands in `SpectrumWidget::pushWaterfallRow` and the colormap function `dbmToRgb`.
 
 **Files:**
-- Create: none.
+- Create:
+  - `tests/setup/tst_tx_waterfall_colormap.cpp` (TDD red-then-green for the 4 acceptance behaviors that are testable without a live MOX state machine)
 - Modify:
-  - `src/core/AppSettings.h` (defaults block, if applicable; otherwise just settings keys are referenced inline)
-  - `src/gui/SpectrumWidget.h` (add `m_txWf*` members + setters + signals)
+  - `tests/setup/CMakeLists.txt` (or wherever new test executables are registered)
+  - `src/gui/SpectrumWidget.h` (add `m_txWf*` members + setters + signals; possibly mark `dbmToRgb` testable or expose a thin test seam)
   - `src/gui/SpectrumWidget.cpp` (per-frame MOX branch in `pushWaterfallRow` + `dbmToRgb`; settings load/save)
   - `src/gui/setup/DisplaySetupPages.h` (`TxDisplayPage` private member additions)
   - `src/gui/setup/DisplaySetupPages.cpp` (`TxDisplayPage::buildUI` rewrite, settings wiring)
-  - `src/gui/MainWindow.cpp` (MOX-rise lambda no longer needs to disable Clarity for TX as the per-frame branch supersedes it; but keep the Clarity-gate as belt-and-suspenders for safety)
+  - `src/gui/MainWindow.cpp` (MOX-rise lambda no longer needs to disable Clarity for TX as the per-frame branch supersedes it, but keep the Clarity-gate as belt-and-suspenders for safety)
 
 ### Acceptance criteria
 
 - [ ] Setup → Display → TX shows the 5 group boxes per the mockup.
-- [ ] The Waterfall Amplitude Scale group has 4 working controls (Low Level, High Level, Palette, Low Color) plus a placeholder for Custom Gradient (visible only when Palette = Custom; placeholder text "(custom gradient editor lands in Phase 2)").
+- [ ] The Waterfall Amplitude Scale group has 4 working controls (Low Level, High Level, Palette, Low Color) plus a placeholder for Custom Gradient (visible only when Palette = Custom; placeholder text "(custom gradient editor lands in 3M-5c)").
 - [ ] Defaults match Thetis verbatim: Low = -70 dBm, High = +30 dBm, Palette = Enhanced, Low Color = #000000FF.
 - [ ] Settings persist across app restart via `AppSettings`.
 - [ ] During TX (MOX active), the waterfall renders using the TX values. AGC + Clarity are bypassed for the colormap; thresholds are static.
 - [ ] During RX (MOX off), the existing AGC + Clarity behavior is preserved (no regression).
+- [ ] `tst_tx_waterfall_colormap` passes 4/4 cases (defaults_match_thetis, settings_round_trip, mox_gate_thresholds, mox_gate_palette). Per `feedback_minimize_test_invocations.md`, this test runs 2x: once before impl (red) and once after impl (green); no full ctest suite during 3M-5b.
 - [ ] Bench: TUN + 2-tone visually clean. Background dark (not warm sea). Tones clearly visible. User confirms.
 
 ### Tasks
 
-- [ ] **Step 1.1: Add AppSettings keys with Thetis-verbatim defaults.**
+Each code-modifying step uses **READ → SHOW → TRANSLATE** per `feedback_subagent_thetis_source_first.md`. Subagents that cannot locate a Thetis source for a value/range/default/behavior STOP and report; they do not invent, infer, or paraphrase.
 
-In whatever location settings keys are documented (likely no central registry; just reference inline in `SpectrumWidget.cpp`'s `loadSettings()`). Add reads in `loadSettings`:
+#### Step 1.1: Write `tst_tx_waterfall_colormap` (TDD red, tests-first)
+
+**READ first:**
+- `Display.cs:1911-1937 [v2.10.3.13+501e3f51]`: `TXWFAmpMin` / `TXWFAmpMax` C# property getter/setter pair (defaults are the integers in the field initializer).
+- `Display.cs:428-437 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (Black).
+- `display.cs:6506-6595 [v2.10.3.13+501e3f51]`: the per-frame MOX-conditional render path; the test verifies our NereusSDR mirror of this branch.
+
+**SHOW (in the test source's header comment):** quote each Thetis default verbatim with cite.
+
+**TRANSLATE:** create `tests/setup/tst_tx_waterfall_colormap.cpp` with these four `QTest` slots:
+
+```cpp
+private slots:
+    void defaults_match_thetis();
+    void settings_round_trip();
+    void mox_gate_thresholds();
+    void mox_gate_palette();
+```
+
+Test bodies:
+
+```cpp
+// From Thetis Display.cs:1911-1937 + :428-437 + setup.cs:33314-33322
+// [v2.10.3.13+501e3f51].  These four defaults are the Thetis-verbatim
+// values that 3M-5b ports.
+void TestTxWaterfallColormap::defaults_match_thetis()
+{
+    SpectrumWidget w(0);  // m_panIndex=0, no AppSettings populated
+    QCOMPARE(w.txWfLowLevel(), -70);
+    QCOMPARE(w.txWfHighLevel(), 30);
+    QCOMPARE(static_cast<int>(w.txWfPalette()),
+             static_cast<int>(WfColorScheme::Enhanced));
+    QCOMPARE(w.txWfLowColor(), QColor(Qt::black));
+}
+
+void TestTxWaterfallColormap::settings_round_trip()
+{
+    SpectrumWidget w(0);
+    w.setTxWfLowLevel(-100);
+    w.setTxWfHighLevel(50);
+    w.setTxWfPalette(WfColorScheme::ClarityBlue);
+    w.setTxWfLowColor(QColor("#FF112233"));
+    // Force a save+load cycle (saveSettings()/loadSettings()).
+    w.saveSettingsForTest();
+    SpectrumWidget w2(0);
+    w2.loadSettingsForTest();
+    QCOMPARE(w2.txWfLowLevel(), -100);
+    QCOMPARE(w2.txWfHighLevel(), 50);
+    QCOMPARE(static_cast<int>(w2.txWfPalette()),
+             static_cast<int>(WfColorScheme::ClarityBlue));
+    QCOMPARE(w2.txWfLowColor(), QColor("#FF112233"));
+}
+
+void TestTxWaterfallColormap::mox_gate_thresholds()
+{
+    SpectrumWidget w(0);
+    w.setTxWfLowLevel(-100);
+    w.setTxWfHighLevel(20);
+    // RX-side thresholds set to obviously different values so we can tell
+    // which path dbmToRgb chose.
+    w.setWfLowThresholdForTest(-200);
+    w.setWfHighThresholdForTest(-50);
+    // MOX off: dbmToRgb should use RX thresholds.
+    w.setMoxOverlay(false);
+    const QRgb rxColor = w.dbmToRgbForTest(-100);  // should hit the RX colormap
+    // MOX on: dbmToRgb should use TX thresholds.
+    w.setMoxOverlay(true);
+    const QRgb txColor = w.dbmToRgbForTest(-100);  // should hit the TX colormap
+    QVERIFY(rxColor != txColor);  // different mappings produce different colors
+}
+
+void TestTxWaterfallColormap::mox_gate_palette()
+{
+    SpectrumWidget w(0);
+    w.setWfColorScheme(WfColorScheme::Default);
+    w.setTxWfPalette(WfColorScheme::ClarityBlue);
+    w.setMoxOverlay(false);
+    const QRgb rxColor = w.dbmToRgbForTest(-90);  // Default palette
+    w.setMoxOverlay(true);
+    const QRgb txColor = w.dbmToRgbForTest(-90);  // ClarityBlue palette
+    QVERIFY(rxColor != txColor);
+}
+```
+
+If `dbmToRgb`, `saveSettings`, `loadSettings`, `m_wfLowThreshold` writes are private and there's no existing test seam, add minimal test-only accessors guarded by `#ifdef NEREUS_BUILD_TESTS` (the existing test-build flag NereusSDR uses) named `*ForTest`. Do NOT widen the public API.
+
+Register the test executable in `tests/setup/CMakeLists.txt` following the existing `tst_setup_helpers` / `tst_clarity_defaults` pattern.
+
+#### Step 1.2: Run failing tests (TDD red)
+
+```bash
+cd /Users/j.j.boyd/NereusSDR/.claude/worktrees/tx-display && \
+cmake --build build --parallel --target tst_tx_waterfall_colormap && \
+ctest --test-dir build -R tst_tx_waterfall_colormap --output-on-failure 2>&1 | tail -20
+```
+
+Expected: 0/4 pass (the four behaviors don't exist yet). If the test fails to BUILD (compile errors on `setTxWfLowLevel` etc.), that's also a valid red-state: the symbols are defined in subsequent steps.
+
+#### Step 1.3: Add AppSettings keys with Thetis-verbatim defaults
+
+**READ first:**
+- `Display.cs:1911-1937 [v2.10.3.13+501e3f51]`: `TXWFAmpMin` / `TXWFAmpMax` property getter+setter pair.
+- `Display.cs:428-437 [v2.10.3.13+501e3f51]`: `waterfall_low_color_tx` field default initializer (`Color.Black`).
+- `setup.cs:33314-33322 [v2.10.3.13+501e3f51]`: `comboColorPalette_tx_SelectedIndexChanged` handler that writes `_tx_color_scheme` (default Enhanced).
+
+**SHOW (in commit message):** quote each cited C# block (~10 lines total) so the cite trail survives the port.
+
+**TRANSLATE:** in `SpectrumWidget::loadSettings()`, add:
 
 ```cpp
 // From Thetis Display.cs:1911-1937 [v2.10.3.13+501e3f51] — TXWFAmpMin / TXWFAmpMax defaults.
@@ -198,17 +307,24 @@ m_txWfPalette = static_cast<WfColorScheme>(qBound(0,
 m_txWfLowColor = QColor::fromString(s.value(
     settingsKey(QStringLiteral("DisplayTxWfLowColor"), m_panIndex),
     QStringLiteral("#FF000000")).toString());
-// Custom gradient (Phase 2 placeholder; default = same as RX gradient default).
+// Custom gradient (3M-5c placeholder; default = same as RX gradient default).
 m_txWfGradient = s.value(settingsKey(QStringLiteral("DisplayTxWfGradient"), m_panIndex),
                          QString()).toString();
 ```
 
 Mirror writes in `saveSettings`.
 
-- [ ] **Step 1.2: Add `m_txWf*` private members to `SpectrumWidget.h`.**
+#### Step 1.4: Add `m_txWf*` private members to `SpectrumWidget.h`
+
+**READ first:**
+- `display.cs:6506-6595 [v2.10.3.13+501e3f51]`: the per-frame MOX-conditional render path that consumes these members.
+
+**SHOW (in commit message):** the architecture statement: NereusSDR mirrors Thetis's render path exactly. No state machine, no save/restore on MOX edge, render path reads `m_txWf*` when isTx else `m_wf*`.
+
+**TRANSLATE:**
 
 ```cpp
-// Phase 1 (TX Waterfall Colormap): TX-specific colormap settings.
+// 3M-5b (TX Waterfall Colormap): TX-specific colormap settings.
 // Active during MOX per Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51]
 // inline per-frame branch.  No state machine.
 int           m_txWfLowLevel{-70};       // dBm, from Thetis udTXWFAmpMin default
@@ -218,7 +334,11 @@ QColor        m_txWfLowColor{Qt::black}; // Thetis waterfall_low_color_tx defaul
 QString       m_txWfGradient;            // encoded gradient string for Custom palette
 ```
 
-- [ ] **Step 1.3: Add public setters + signals to `SpectrumWidget.h`.**
+#### Step 1.5: Add public setters + signals to `SpectrumWidget.h`
+
+**READ first:** the existing `setWfLowThreshold` / `setWfHighThreshold` / `setWfColorScheme` setters in `SpectrumWidget.cpp:1855-1885`: match their idempotency-guard, `scheduleSettingsSave()`, `update()`, and signal-emit shape.
+
+**TRANSLATE:**
 
 ```cpp
 public:
@@ -238,29 +358,34 @@ signals:
     void txWfSettingsChanged();
 ```
 
-- [ ] **Step 1.4: Implement setters in `SpectrumWidget.cpp` (one block per setter, idempotent guard, `scheduleSettingsSave()`, `update()`, signal emit).**
+#### Step 1.6: Implement setters in `SpectrumWidget.cpp`
 
-(Show full implementation; ~25-40 lines total.)
+Each setter follows the existing pattern: idempotency guard via `qFuzzyCompare` / `==`, then assign + `scheduleSettingsSave()` + `update()` + emit `txWfSettingsChanged()`. ~25-40 lines total.
 
-- [ ] **Step 1.5: Add the per-frame MOX branch to `dbmToRgb`.**
+#### Step 1.7: Add the per-frame MOX branch to `dbmToRgb`
 
-The existing `dbmToRgb` reads `m_wfLowThreshold` / `m_wfHighThreshold` / `m_wfColorScheme` etc. After Phase 1, it reads `m_txWf*` instead when MOX is active. Critically, the AGC tracker and Clarity overrides in `pushWaterfallRow` should **also be MOX-gated** so they don't write to `m_wfLowThreshold` during TX.
+**READ first:**
+- `display.cs:6506-6595 [v2.10.3.13+501e3f51]`: verbatim per-frame MOX-conditional. Critical lines: `if (local_mox) { use TX values } else { use RX values }`. Branch is inside the per-pixel rendering loop (no edge handler).
+
+**SHOW (in commit message):** quote the `display.cs:6506-6595` block (~30 lines of C#) so the inline-branch architecture is captured for future readers.
+
+**TRANSLATE:**
 
 ```cpp
 QRgb SpectrumWidget::dbmToRgb(float dbm) const
 {
-    // Phase 1: per-frame MOX branch.  From Thetis display.cs:6506-6595
-    // [v2.10.3.13+501e3f51] — during local_mox, use TX-tuned thresholds
-    // and palette; otherwise the existing RX path.
+    // From Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51] — per-frame
+    // MOX-conditional render path.  No state machine; branch is inline
+    // per pixel.
     const bool isTx = m_moxActive;  // m_moxActive is set by setMoxOverlay
     const float lowThreshold  = isTx ? static_cast<float>(m_txWfLowLevel)
                                      : m_wfLowThreshold;
     const float highThreshold = isTx ? static_cast<float>(m_txWfHighLevel)
                                      : m_wfHighThreshold;
     const WfColorScheme scheme = isTx ? m_txWfPalette : m_wfColorScheme;
-    // For TX, black-level / color-gain sliders are NOT applied (Thetis doesn't
-    // expose them per-direction); use raw thresholds.  For RX the existing
-    // black-level / color-gain math stays.
+    // For TX, black-level / color-gain sliders are NOT applied (Thetis
+    // doesn't expose them per-direction); use raw thresholds.  For RX
+    // the existing black-level / color-gain math stays.
     float effectiveLow, effectiveHigh;
     if (isTx) {
         effectiveLow  = lowThreshold;
@@ -276,55 +401,76 @@ QRgb SpectrumWidget::dbmToRgb(float dbm) const
 }
 ```
 
-- [ ] **Step 1.6: MOX-gate the AGC + Clarity threshold writes in `pushWaterfallRow`.**
+#### Step 1.8: MOX-gate the AGC + Clarity threshold writes in `pushWaterfallRow`
 
-Wrap the existing AGC and NF-AGC blocks in `if (!isTx) { ... }` so they don't override TX thresholds:
+**READ first:**
+- `display.cs:6506-6595 [v2.10.3.13+501e3f51]` (re-read): Thetis does NOT run an AGC during MOX; thresholds are static from `TXWFAmpMin` / `TXWFAmpMax`. Our existing AGC + Clarity must skip when isTx so they don't write to `m_wfLowThreshold` / `m_wfHighThreshold` mid-MOX.
+- `feedback_clarity_addon_not_replacement.md`: Clarity is an add-on, not a supersession; gating it during TX preserves the RX behavior unchanged.
+
+**TRANSLATE:** wrap the existing AGC and NF-AGC blocks with `if (!isTx) { ... }`:
 
 ```cpp
-// Phase 1: AGC + NF-AGC are RX-only.  TX uses static thresholds from
+// 3M-5b: AGC + NF-AGC are RX-only.  TX uses static thresholds from
 // m_txWfLowLevel / m_txWfHighLevel set in Setup → Display → TX.
 const bool isTx = m_moxActive;
 if (!isTx && m_wfAgcEnabled && !m_clarityActive) {
-    // ...existing AGC code...
+    // ...existing AGC code (unchanged inside)...
 }
 if (!isTx && m_wfNfAgcEnabled && !m_clarityActive) {
-    // ...existing NF-AGC code...
+    // ...existing NF-AGC code (unchanged inside)...
 }
 // Note: the existing setClarityActive(false) call in the MainWindow MOX-rise
 // lambda becomes belt-and-suspenders; the per-frame `!isTx` gate is the
-// primary mechanism.
+// primary mechanism per Thetis display.cs:6506-6595 [v2.10.3.13+501e3f51].
 ```
 
-- [ ] **Step 1.7: Build TxDisplayPage UI per the mockup.**
+#### Step 1.9: Run tests passing (TDD green; 2x ctest invocation total)
 
-Replace the current 4-stub buildUI with the 5-group layout. For Phase 1, only the Waterfall Amplitude Scale group is functional; the other 4 groups have placeholder labels saying which phase wires them.
+```bash
+cd /Users/j.j.boyd/NereusSDR/.claude/worktrees/tx-display && \
+cmake --build build --parallel --target tst_tx_waterfall_colormap && \
+ctest --test-dir build -R tst_tx_waterfall_colormap --output-on-failure 2>&1 | tail -20
+```
+
+Expected: 4/4 pass. If any case fails, the impl deviates from the Thetis-verbatim defaults or the per-frame branch is wired wrong.
+
+#### Step 1.10: Build TxDisplayPage UI per the mockup
+
+**READ first:**
+- `setup.designer.cs:36246-36379 [v2.10.3.13+501e3f51]`: `grpTXWFAmpScale` group box layout (the "Waterfall" amp-scale group containing Low / High / Palette / Low Color).
+- `setup.designer.cs:36278 [v2.10.3.13+501e3f51]`: `udTXWFAmpMin` spinbox specifics (Min/Max/Increment/Value defaults for tooltip + control range).
+- Existing NereusSDR `TxDisplayPage::buildUI` at `DisplaySetupPages.cpp:2240-2278`: the 4-stub buildUI that 3M-5b replaces.
+
+**SHOW (in commit message):** quote the C# designer block for `grpTXWFAmpScale` so the layout port is traceable.
+
+**TRANSLATE:** replace the current 4-stub buildUI with the 5-group layout from the mockup. For 3M-5b, only the Waterfall Amplitude Scale group is functional; the other 4 groups have placeholder labels saying which sub-phase wires them (3M-5d / 3M-5e).
 
 ```cpp
 void TxDisplayPage::buildUI()
 {
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    // Group 1: Fast Fourier Transform (Phase 3)
+    // Group 1: Fast Fourier Transform (3M-5d)
     auto* fftGroup = makePlaceholderGroup(QStringLiteral("Fast Fourier Transform"),
-        QStringLiteral("FFT Size + Window controls (lands in Phase 3)"));
+        QStringLiteral("FFT Size + Window controls (lands in 3M-5d)"));
     contentLayout()->addWidget(fftGroup);
 
-    // Group 2: Panadapter (Phase 3)
+    // Group 2: Panadapter (3M-5d)
     auto* panGroup = makePlaceholderGroup(QStringLiteral("Panadapter"),
-        QStringLiteral("Detector + Averaging + Time + Normalize (lands in Phase 3)"));
+        QStringLiteral("Detector + Averaging + Time + Normalize (lands in 3M-5d)"));
     contentLayout()->addWidget(panGroup);
 
-    // Group 3: Waterfall (Phase 3)
+    // Group 3: Waterfall (3M-5d)
     auto* wfFftGroup = makePlaceholderGroup(QStringLiteral("Waterfall"),
-        QStringLiteral("Detector + Averaging + Time (lands in Phase 3)"));
+        QStringLiteral("Detector + Averaging + Time (lands in 3M-5d)"));
     contentLayout()->addWidget(wfFftGroup);
 
-    // Group 4: Waterfall Amplitude Scale (Phase 1, THE FIX)
+    // Group 4: Waterfall Amplitude Scale (3M-5b: THE FIX)
     auto* ampGroup = new QGroupBox(QStringLiteral("Waterfall Amplitude Scale"), this);
     auto* ampForm  = new QFormLayout(ampGroup);
     ampForm->setSpacing(6);
 
-    // Low Level spinbox
+    // From Thetis setup.designer.cs:36278 [v2.10.3.13+501e3f51] — udTXWFAmpMin.
     m_txWfLowLevelSpin = new QSpinBox(ampGroup);
     m_txWfLowLevelSpin->setRange(-200, 200);
     m_txWfLowLevelSpin->setSingleStep(5);
@@ -338,32 +484,47 @@ void TxDisplayPage::buildUI()
     // High Level spinbox (analogous, default +30, range, tooltip)
     // Palette combo (analogous, items match Thetis enum, tooltip)
     // Low Color picker (ColorSwatchButton, default black, tooltip)
-    // Custom Gradient placeholder (Phase 2)
+    // Custom Gradient placeholder (3M-5c)
 
     contentLayout()->addWidget(ampGroup);
 
-    // Group 5: TX Grid Scale (Phase 4)
+    // Group 5: TX Grid Scale (3M-5e)
     auto* gridGroup = makePlaceholderGroup(QStringLiteral("TX Grid Scale"),
-        QStringLiteral("Max + Min + Step + Display Grid + Fill + Label Align (lands in Phase 4)"));
+        QStringLiteral("Max + Min + Step + Display Grid + Fill + Label Align (lands in 3M-5e)"));
     contentLayout()->addWidget(gridGroup);
 
     contentLayout()->addStretch();
 }
 ```
 
-- [ ] **Step 1.8: Wire the 4 functional controls to SpectrumWidget setters.**
+#### Step 1.11: Wire the 4 functional controls to SpectrumWidget setters
 
-Standard Setup-page connect pattern (signal blocker on programmatic update, valueChanged → setter, settingChanged signal for the dirty indicator).
+**READ first:** the existing Setup-page wiring patterns in `DisplaySetupPages.cpp` for RX waterfall thresholds (search for `setWfHighThreshold` / `setWfLowThreshold` connect blocks): match their signal-blocker, valueChanged, settingChanged shape.
 
-- [ ] **Step 1.9: Build and verify clean compile.**
+**TRANSLATE:** standard Setup-page connect pattern for each of Low Level, High Level, Palette, Low Color.
 
-- [ ] **Step 1.10: Manual bench (TUN + 2-tone). Verify defaults give a clean waterfall.**
+#### Step 1.12: Build clean
 
-If defaults need tweaking (e.g., user moves Low Level to -90 instead of -70 to get the visual they want), that's user tuning; defaults stay at Thetis verbatim values.
+```bash
+cd /Users/j.j.boyd/NereusSDR/.claude/worktrees/tx-display && \
+cmake --build build --parallel --target NereusSDR 2>&1 | tail -10
+```
 
-- [ ] **Step 1.11: Commit (GPG-signed).**
+Expected: clean build, zero warnings on the new code paths.
 
-Single commit titled "feat(setup,display): TX waterfall amplitude scale (Phase 1)". Body explains the per-frame MOX branch + 5 controls + Thetis cite + acceptance criteria met.
+#### Step 1.13: Manual bench (TUN + 2-tone)
+
+Verify defaults give a clean waterfall on the live radio. If defaults need tweaking (e.g., user moves Low Level to -90 instead of -70 to get the visual they want), that's user tuning; defaults stay at Thetis verbatim values.
+
+#### Step 1.14: Commit (GPG-signed)
+
+Single commit titled "feat(setup,display): TX waterfall amplitude scale (3M-5b)". Body explains:
+- Per-frame MOX branch matching `display.cs:6506-6595 [v2.10.3.13+501e3f51]`.
+- 5 controls + Setup tab structure with placeholder groups for 3M-5d / 3M-5e.
+- Defaults verbatim from Thetis (Low -70, High +30, Palette Enhanced, Low Color #000000FF).
+- AGC + NF-AGC + Clarity all MOX-gated to RX-only paths.
+- `tst_tx_waterfall_colormap` 4/4 green.
+- Acceptance criteria met.
 
 ---
 
