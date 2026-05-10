@@ -1204,6 +1204,18 @@ void MainWindow::buildUI()
                     m_spectrumWidget->setSampleRate(96000.0);
                     m_spectrumWidget->setDdcCenterFrequency(carrierHz);
 
+                    // PR #212 follow-up bench fix (KG4VCF, 2026-05-10):
+                    // disable Clarity so the waterfall AGC takes over for
+                    // TX dynamic range.  Clarity tracks RX noise floor
+                    // (~-100 dBm range) and was leaving its RX-tuned
+                    // thresholds in place during TX, mapping every TX bin
+                    // (which sits well above the RX threshold band) to
+                    // the colormap's red end.  Clarity's next RX-side
+                    // emit re-enables itself via the lambda at MainWindow
+                    // line 1430+ (which is now MOX-gated to ignore TX
+                    // emissions).
+                    m_spectrumWidget->setClarityActive(false);
+
                     // Match analyzer output bin count to display width so
                     // every panadapter pixel comes from a unique bin.
                     m_txAnalyzer->setNumPixels(m_spectrumWidget->width());
@@ -1424,6 +1436,16 @@ void MainWindow::buildUI()
     // Clarity → SpectrumWidget threshold update + clarityActive flag
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
             m_spectrumWidget, [this](float low, float high) {
+        // PR #212 follow-up bench fix (KG4VCF, 2026-05-10): suppress
+        // Clarity threshold updates while MOX is active.  Clarity tracks
+        // RX noise floor and would otherwise re-enable itself with
+        // RX-tuned thresholds during TX, defeating the
+        // setClarityActive(false) call in the MOX-rise lambda.
+        MoxController* mox = m_radioModel ? m_radioModel->moxController()
+                                          : nullptr;
+        if (mox && mox->isMox()) {
+            return;
+        }
         m_spectrumWidget->setClarityActive(true);
         m_spectrumWidget->setWfLowThreshold(low);
         m_spectrumWidget->setWfHighThreshold(high);
