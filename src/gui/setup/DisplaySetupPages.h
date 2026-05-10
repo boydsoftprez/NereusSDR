@@ -337,6 +337,24 @@ private:
     // v2.10.3.13+501e3f51]. The picker row is hidden unless palette = Custom.
     GradientPickerWidget* m_txWfGradientPicker{nullptr};
     QWidget*              m_txWfGradientRowLabel{nullptr}; // form-row label widget; toggled with picker
+
+    // Groups 1-3 (functional in 3M-5d): FFT, Panadapter, Waterfall.
+    // 9 controls total -- all bound to TxAnalyzer via lambdas.
+    // From Thetis tpDisplayTransmit groups groupBoxTS8 / groupBoxTS7 /
+    // groupBoxTS9 at setup.designer.cs:36511-36768 [v2.10.3.13+501e3f51].
+    QSlider*    m_txFftSizeSlider{nullptr};   // tbTXDisplayFFTSize (Min=0 Max=6)
+    QLabel*     m_txFftSizeReadout{nullptr};  // lblTXFFT_size  (Bisque numeric)
+    QLabel*     m_txBinWidthLabel{nullptr};   // lblTXDispBinWidth (Bisque numeric)
+    QComboBox*  m_txWindowCombo{nullptr};     // comboTXDispWinType (7 windows)
+
+    QComboBox*  m_txPanDetectorCombo{nullptr};   // comboTXDispPanDetector (5 items + RMS)
+    QComboBox*  m_txPanAveragingCombo{nullptr};  // comboTXDispPanAveraging (4 items)
+    QSpinBox*   m_txPanAvTimeSpin{nullptr};      // udTXDisplayAVGTime ms (default 30)
+    QCheckBox*  m_txPanNormalizeCheck{nullptr};  // chkDispTXNormalize (gated on PanDet>=2)
+
+    QComboBox*  m_txWfDetectorCombo{nullptr};    // comboTXDispWFDetector (4 items, no RMS)
+    QComboBox*  m_txWfAveragingCombo{nullptr};   // comboTXDispWFAveraging (4 items)
+    QSpinBox*   m_txWfAvTimeSpin{nullptr};       // udTXDisplayAVTime ms (default 120)
 };
 
 } // namespace NereusSDR

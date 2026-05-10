@@ -65,6 +65,7 @@
 #include "core/FFTEngine.h"
 #include "core/ClarityController.h"
 #include "core/AppSettings.h"
+#include "core/TxAnalyzer.h"
 #include "models/Band.h"
 #include "models/PanadapterModel.h"
 #include "models/RadioModel.h"
@@ -2247,29 +2248,229 @@ void TxDisplayPage::buildUI()
     // sub-phase that wires them.
     NereusSDR::Style::applyDarkPageStyle(this);
 
-    // Group 1: Fast Fourier Transform (3M-5d)
-    // From Thetis groupBoxTS7 on tpDisplayTransmit
-    // [setup.designer.cs:36236 v2.10.3.13+501e3f51].
-    contentLayout()->addWidget(makePlaceholderGroup(
-        QStringLiteral("Fast Fourier Transform"),
-        QStringLiteral("FFT Size + Window controls (wired in 3M-5d)"),
-        this));
+    // Sunken-readout stylesheet for the FFT size + bin width numeric cells.
+    // Matches the RX-side FFT readout style introduced in 3G-8 (recessed
+    // dark inset with cyan-accent text on the dark theme).
+    const QString readoutStyle = QStringLiteral(
+        "QLabel { background-color: #0a0a18; color: #00b4d8; "
+        "border: 1px solid #1e2e3e; padding: 1px 6px; "
+        "font-family: Menlo, Consolas, monospace; }");
 
-    // Group 2: Panadapter (3M-5d)
-    // From Thetis groupBoxTS8 on tpDisplayTransmit
-    // [setup.designer.cs:36237 v2.10.3.13+501e3f51].
-    contentLayout()->addWidget(makePlaceholderGroup(
-        QStringLiteral("Panadapter"),
-        QStringLiteral("Detector + Averaging + Time + Normalize (wired in 3M-5d)"),
-        this));
+    // ── Group 1: Fast Fourier Transform ────────────────────────────────
+    // From Thetis groupBoxTS8 [setup.designer.cs:36509-36644 v2.10.3.13+501e3f51].
+    // Controls (Thetis -> NereusSDR):
+    //   tbTXDisplayFFTSize      QSlider, range 0..6, default 3 (Thetis ship)
+    //   lblTXFFT_size           QLabel,  readout "4096" .. "262144"
+    //   lblTXDispBinWidth       QLabel,  readout "0.000" .. "23.438"
+    //   comboTXDispWinType      QComboBox, 7 windows (Rectangular..BH7)
+    auto* fftGroup = new QGroupBox(
+        QStringLiteral("Fast Fourier Transform"), this);
+    auto* fftGrid = new QGridLayout(fftGroup);
+    fftGrid->setSpacing(6);
+    fftGrid->setColumnStretch(0, 0);
+    fftGrid->setColumnStretch(1, 1);
+    fftGrid->setColumnStretch(2, 0);
+    fftGrid->setColumnStretch(3, 1);
 
-    // Group 3: Waterfall (3M-5d)
-    // From Thetis groupBoxTS9 on tpDisplayTransmit
-    // [setup.designer.cs:36238 v2.10.3.13+501e3f51].
-    contentLayout()->addWidget(makePlaceholderGroup(
-        QStringLiteral("Waterfall"),
-        QStringLiteral("Detector + Averaging + Time (wired in 3M-5d)"),
-        this));
+    // Row 0: "Size" header centered.
+    auto* txSizeHeader = new QLabel(QStringLiteral("Size"), fftGroup);
+    txSizeHeader->setAlignment(Qt::AlignHCenter);
+    fftGrid->addWidget(txSizeHeader, 0, 1, 1, 2);
+
+    // Row 1: "Min" + slider + "Max".  Thetis trackbar Max=6.
+    // From setup.designer.cs:36638-36642 [v2.10.3.13+501e3f51] —
+    // tbTXDisplayFFTSize: Maximum=6, Value=3.  3M-5d binds slider position
+    // to TxAnalyzer::setFftSizeSliderPosition (4096 * 2^position).
+    auto* txMinLabel = new QLabel(QStringLiteral("Min"), fftGroup);
+    auto* txMaxLabel = new QLabel(QStringLiteral("Max"), fftGroup);
+    txMinLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    txMaxLabel->setAlignment(Qt::AlignLeft  | Qt::AlignVCenter);
+
+    m_txFftSizeSlider = new QSlider(Qt::Horizontal, fftGroup);
+    m_txFftSizeSlider->setRange(0, 6);
+    m_txFftSizeSlider->setSingleStep(1);
+    m_txFftSizeSlider->setPageStep(1);
+    m_txFftSizeSlider->setTickPosition(QSlider::NoTicks);
+    m_txFftSizeSlider->setToolTip(QStringLiteral(
+        "TX FFT size used during MOX. Range 4096 to 262144 in powers of "
+        "two. Larger gives finer frequency resolution and a smaller bin "
+        "width at higher CPU cost. RX FFT slider is independent."));
+    fftGrid->addWidget(txMinLabel,         1, 0);
+    fftGrid->addWidget(m_txFftSizeSlider,  1, 1, 1, 2);
+    fftGrid->addWidget(txMaxLabel,         1, 3);
+
+    // Row 2: bin-width readout + FFT-size readout, side by side.
+    auto* txBinWidthPrefix = new QLabel(
+        QStringLiteral("Bin Width (Hz)"), fftGroup);
+    m_txBinWidthLabel = new QLabel(QStringLiteral("0.000"), fftGroup);
+    m_txBinWidthLabel->setMinimumWidth(54);
+    m_txBinWidthLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_txBinWidthLabel->setStyleSheet(readoutStyle);
+    m_txBinWidthLabel->setToolTip(QStringLiteral(
+        "Live bin width in Hz (TX sample rate / FFT size)."));
+
+    auto* txFftSizePrefix = new QLabel(QStringLiteral("FFT Size"), fftGroup);
+    m_txFftSizeReadout = new QLabel(QStringLiteral("4096"), fftGroup);
+    m_txFftSizeReadout->setMinimumWidth(54);
+    m_txFftSizeReadout->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_txFftSizeReadout->setStyleSheet(readoutStyle);
+    m_txFftSizeReadout->setToolTip(QStringLiteral(
+        "Current TX FFT size in bins (4096 * 2^slider)."));
+
+    fftGrid->addWidget(txBinWidthPrefix,    2, 0);
+    fftGrid->addWidget(m_txBinWidthLabel,   2, 1);
+    fftGrid->addWidget(txFftSizePrefix,     2, 2);
+    fftGrid->addWidget(m_txFftSizeReadout,  2, 3);
+
+    // Row 3: "Window" prefix + 7-item combo.
+    // From setup.designer.cs:36555-36562 [v2.10.3.13+501e3f51] —
+    // comboTXDispWinType.Items.AddRange order: Rectangular, BH4, Hann,
+    // Flat-Top, Hamming, Kaiser, BH7.  Combo index 0..6 maps 1:1 to
+    // WDSP analyzer window_type per specHPSDR.cs:134 default = 4 (Hamming).
+    auto* txWindowPrefix = new QLabel(QStringLiteral("Window"), fftGroup);
+    m_txWindowCombo = new QComboBox(fftGroup);
+    m_txWindowCombo->addItems({
+        QStringLiteral("Rectangular"),         // 0
+        QStringLiteral("Blackman-Harris 4T"),  // 1
+        QStringLiteral("Hann"),                // 2
+        QStringLiteral("Flat-Top"),            // 3
+        QStringLiteral("Hamming"),             // 4 (default)
+        QStringLiteral("Kaiser"),              // 5
+        QStringLiteral("Blackman-Harris 7T")   // 6
+    });
+    m_txWindowCombo->setToolTip(QStringLiteral(
+        "TX FFT window function. Hamming (default) trades a wide main "
+        "lobe for moderate sidelobe rejection. Blackman-Harris (4T or 7T) "
+        "gives strong sidelobe rejection for cleaner waterfall during TX. "
+        "Flat-Top is best for amplitude calibration. Kaiser is parameterised."));
+    fftGrid->addWidget(txWindowPrefix,  3, 0);
+    fftGrid->addWidget(m_txWindowCombo, 3, 1, 1, 3);
+
+    contentLayout()->addWidget(fftGroup);
+
+    // ── Group 2: Panadapter ────────────────────────────────────────────
+    // From Thetis groupBoxTS7 [setup.designer.cs:36645-36768 v2.10.3.13+501e3f51].
+    // Controls (Thetis -> NereusSDR):
+    //   comboTXDispPanDetector    QComboBox, 5 items (Peak..RMS)
+    //   comboTXDispPanAveraging   QComboBox, 4 items (None..Log Recursive)
+    //   udTXDisplayAVGTime        QSpinBox, 1..9999 ms, default 30
+    //   chkDispTXNormalize        QCheckBox, gated on DetTypePan >= 2
+    auto* panGroup = new QGroupBox(QStringLiteral("Panadapter"), this);
+    auto* panForm = new QFormLayout(panGroup);
+    panForm->setSpacing(6);
+
+    // Detector (Pan) — 5 items per setup.designer.cs:36718-36723.
+    m_txPanDetectorCombo = new QComboBox(panGroup);
+    m_txPanDetectorCombo->addItems({
+        QStringLiteral("Peak"),       // 0
+        QStringLiteral("Rosenfell"),  // 1
+        QStringLiteral("Average"),    // 2
+        QStringLiteral("Sample"),     // 3
+        QStringLiteral("RMS")         // 4
+    });
+    m_txPanDetectorCombo->setToolTip(QStringLiteral(
+        "TX panadapter trace detector. Peak shows the maximum bin value "
+        "per pixel (transient-friendly). Average integrates across the "
+        "bins (smoother). Sample takes one bin per pixel. RMS is true "
+        "root-mean-square. Normalize is only available for Average / "
+        "Sample / RMS."));
+    panForm->addRow(QStringLiteral("Detector:"), m_txPanDetectorCombo);
+
+    // Averaging (Pan) — 4 items per setup.designer.cs:36693-36697.
+    m_txPanAveragingCombo = new QComboBox(panGroup);
+    m_txPanAveragingCombo->addItems({
+        QStringLiteral("None"),           // 0
+        QStringLiteral("Recursive"),      // 1
+        QStringLiteral("Time Window"),    // 2
+        QStringLiteral("Log Recursive")   // 3
+    });
+    m_txPanAveragingCombo->setToolTip(QStringLiteral(
+        "TX panadapter trace averaging policy. None = instantaneous. "
+        "Recursive = exponential smoothing with the time constant set "
+        "below. Time Window = fixed-window N-frame average. Log "
+        "Recursive = recursive in the log (dBm) domain."));
+    panForm->addRow(QStringLiteral("Averaging:"), m_txPanAveragingCombo);
+
+    // AvTime (Pan) — udTXDisplayAVGTime ms.
+    // Range 1..9999 per setup.designer.cs:36738-36746.  Default 30 ms
+    // per :36753 (NOT 120 — spec table was wrong; Thetis ships 30 for
+    // the pan plane and 120 for the waterfall plane).
+    m_txPanAvTimeSpin = new QSpinBox(panGroup);
+    m_txPanAvTimeSpin->setRange(1, 9999);
+    m_txPanAvTimeSpin->setSingleStep(1);
+    m_txPanAvTimeSpin->setSuffix(QStringLiteral(" ms"));
+    m_txPanAvTimeSpin->setToolTip(QStringLiteral(
+        "TX panadapter averaging time constant in milliseconds. Larger "
+        "values give smoother traces at the cost of slower response to "
+        "transients. Internally divided by 1000 to drive the WDSP "
+        "exponential back-multiplier."));
+    panForm->addRow(QStringLiteral("Time:"), m_txPanAvTimeSpin);
+
+    // Normalize (Pan) — chkDispTXNormalize.
+    // Per Thetis setup.cs:18111-18112 + setup.designer.cs:36661-36673
+    // [v2.10.3.13+501e3f51] the checkbox is enabled only when
+    // DetTypePan >= 2 (Average / Sample / RMS).
+    m_txPanNormalizeCheck = new QCheckBox(
+        QStringLiteral("1 Hz BW: Av / Sa"), panGroup);
+    m_txPanNormalizeCheck->setToolTip(QStringLiteral(
+        "Normalize the TX panadapter trace to a 1 Hz reference "
+        "bandwidth. Only available for the Average, Sample, and RMS "
+        "detectors (the Peak and Rosenfell detectors are not power-like)."));
+    panForm->addRow(QStringLiteral(""), m_txPanNormalizeCheck);
+
+    contentLayout()->addWidget(panGroup);
+
+    // ── Group 3: Waterfall ─────────────────────────────────────────────
+    // From Thetis groupBoxTS9 [setup.designer.cs:36405-36508 v2.10.3.13+501e3f51].
+    // Controls (Thetis -> NereusSDR):
+    //   comboTXDispWFDetector    QComboBox, 4 items (Peak..Sample, no RMS)
+    //   comboTXDispWFAveraging   QComboBox, 4 items (None..Log Recursive)
+    //   udTXDisplayAVTime        QSpinBox, 1..9999 ms, default 120
+    auto* wfGroup = new QGroupBox(QStringLiteral("Waterfall"), this);
+    auto* wfForm = new QFormLayout(wfGroup);
+    wfForm->setSpacing(6);
+
+    // Detector (WF) — 4 items per setup.designer.cs:36459-36463.  No RMS.
+    m_txWfDetectorCombo = new QComboBox(wfGroup);
+    m_txWfDetectorCombo->addItems({
+        QStringLiteral("Peak"),       // 0
+        QStringLiteral("Rosenfell"),  // 1
+        QStringLiteral("Average"),    // 2
+        QStringLiteral("Sample")      // 3
+    });
+    m_txWfDetectorCombo->setToolTip(QStringLiteral(
+        "TX waterfall detector. Applied independently of the pan "
+        "detector. Peak suits transient visibility; Average gives a "
+        "smoother waterfall floor."));
+    wfForm->addRow(QStringLiteral("Detector:"), m_txWfDetectorCombo);
+
+    // Averaging (WF) — same 4-item list as Pan.
+    m_txWfAveragingCombo = new QComboBox(wfGroup);
+    m_txWfAveragingCombo->addItems({
+        QStringLiteral("None"),
+        QStringLiteral("Recursive"),
+        QStringLiteral("Time Window"),
+        QStringLiteral("Log Recursive")
+    });
+    m_txWfAveragingCombo->setToolTip(QStringLiteral(
+        "TX waterfall averaging policy. Applied independently of the "
+        "pan averaging."));
+    wfForm->addRow(QStringLiteral("Averaging:"), m_txWfAveragingCombo);
+
+    // AvTime (WF) — udTXDisplayAVTime ms.
+    // Range 1..9999 per setup.designer.cs:36478-36486.  Default 120 ms
+    // per :36493.
+    m_txWfAvTimeSpin = new QSpinBox(wfGroup);
+    m_txWfAvTimeSpin->setRange(1, 9999);
+    m_txWfAvTimeSpin->setSingleStep(1);
+    m_txWfAvTimeSpin->setSuffix(QStringLiteral(" ms"));
+    m_txWfAvTimeSpin->setToolTip(QStringLiteral(
+        "TX waterfall averaging time constant in milliseconds. Defaults "
+        "to 120 ms (longer than the pan default of 30 ms) so the "
+        "waterfall preserves a longer time history."));
+    wfForm->addRow(QStringLiteral("Time:"), m_txWfAvTimeSpin);
+
+    contentLayout()->addWidget(wfGroup);
 
     // Group 4: Waterfall Amplitude Scale (functional in 3M-5b).
     // From Thetis grpTXWFAmpScale [setup.designer.cs:36246-36379 v2.10.3.13+501e3f51].
@@ -2463,6 +2664,152 @@ void TxDisplayPage::buildUI()
                 this, [this]() {
             if (auto* sw = model() ? model()->spectrumWidget() : nullptr) {
                 sw->setTxWfGradient(m_txWfGradientPicker->encodedText());
+            }
+        });
+    }
+
+    // ── 3M-5d: Groups 1-3 wiring ──────────────────────────────────────
+    // Initial sync from TxAnalyzer's current state, then connect each
+    // control to the corresponding setter via a lambda.  All 9 controls
+    // route through model()->txAnalyzer() so the Setup page does not
+    // depend on MainWindow.
+    auto* txa = model() ? model()->txAnalyzer() : nullptr;
+    if (txa) {
+        // Initial sync uses QSignalBlocker so the first setValue does
+        // not echo back into the analyzer (no-op since the values match,
+        // but cleaner to gate).
+        {
+            QSignalBlocker bSlider(m_txFftSizeSlider);
+            QSignalBlocker bWin   (m_txWindowCombo);
+            QSignalBlocker bPanDet(m_txPanDetectorCombo);
+            QSignalBlocker bPanAvg(m_txPanAveragingCombo);
+            QSignalBlocker bPanT  (m_txPanAvTimeSpin);
+            QSignalBlocker bPanN  (m_txPanNormalizeCheck);
+            QSignalBlocker bWfDet (m_txWfDetectorCombo);
+            QSignalBlocker bWfAvg (m_txWfAveragingCombo);
+            QSignalBlocker bWfT   (m_txWfAvTimeSpin);
+
+            // Derive slider position from current fftSize.  Defensive:
+            // log2(fftSize / 4096), clamped to [0, 6].
+            const int fs = txa->fftSize();
+            int sliderPos = 0;
+            for (int p = 0; p <= 6; ++p) {
+                if ((4096 << p) >= fs) {
+                    sliderPos = p;
+                    break;
+                }
+            }
+            m_txFftSizeSlider->setValue(sliderPos);
+
+            m_txFftSizeReadout->setText(QString::number(txa->fftSize()));
+            const double bw = txa->binWidthHz();
+            m_txBinWidthLabel->setText(
+                bw > 0.0 ? QString::number(bw, 'f', 3)
+                         : QStringLiteral("0.000"));
+
+            m_txWindowCombo->setCurrentIndex(
+                std::clamp(txa->windowType(), 0, 6));
+            m_txPanDetectorCombo->setCurrentIndex(
+                std::clamp(txa->panDetector(), 0, 4));
+            m_txPanAveragingCombo->setCurrentIndex(
+                std::clamp(txa->panAveraging(), 0, 3));
+            m_txPanAvTimeSpin->setValue(txa->panAvTimeMs());
+            m_txPanNormalizeCheck->setChecked(txa->panNormalize());
+            m_txPanNormalizeCheck->setEnabled(txa->panNormalizeEnabled());
+            m_txWfDetectorCombo->setCurrentIndex(
+                std::clamp(txa->wfDetector(), 0, 3));
+            m_txWfAveragingCombo->setCurrentIndex(
+                std::clamp(txa->wfAveraging(), 0, 3));
+            m_txWfAvTimeSpin->setValue(txa->wfAvTimeMs());
+        }
+
+        // FFT size slider → setFftSizeSliderPosition + readout refresh.
+        // From Thetis setup.cs:18136-18143 [v2.10.3.13+501e3f51] —
+        // updates lblTXFFT_size + lblTXDispBinWidth on every scroll.
+        connect(m_txFftSizeSlider, &QSlider::valueChanged,
+                this, [this](int v) {
+            auto* a = model() ? model()->txAnalyzer() : nullptr;
+            if (!a) { return; }
+            a->setFftSizeSliderPosition(v);
+            m_txFftSizeReadout->setText(QString::number(a->fftSize()));
+            const double bw = a->binWidthHz();
+            m_txBinWidthLabel->setText(
+                bw > 0.0 ? QString::number(bw, 'f', 3)
+                         : QStringLiteral("0.000"));
+        });
+
+        // Window combo → setWindowType.
+        // From Thetis setup.cs:18145-18150 [v2.10.3.13+501e3f51].
+        connect(m_txWindowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWindowType(idx);
+            }
+        });
+
+        // Pan detector → setPanDetector + Normalize enable refresh.
+        // From Thetis setup.cs:18105-18113 [v2.10.3.13+501e3f51].
+        //[2.10.3.5]MW0LGE note: see updateNormalizePan() in specHPSDR as it only applies to pan detector type 2,3,4
+        connect(m_txPanDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            auto* a = model() ? model()->txAnalyzer() : nullptr;
+            if (!a) { return; }
+            a->setPanDetector(idx);
+            m_txPanNormalizeCheck->setEnabled(a->panNormalizeEnabled());
+        });
+
+        // Pan averaging → setPanAveraging.
+        // From Thetis setup.cs:18115-18120 [v2.10.3.13+501e3f51].
+        connect(m_txPanAveragingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setPanAveraging(idx);
+            }
+        });
+
+        // Pan AvTime spinbox → setPanAvTimeMs.
+        // From Thetis setup.cs:18122-18127 [v2.10.3.13+501e3f51] —
+        // AvTau = 0.001 * value (ms-to-seconds inside the setter).
+        connect(m_txPanAvTimeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int ms) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setPanAvTimeMs(ms);
+            }
+        });
+
+        // Pan normalize checkbox → setPanNormalize.
+        // From Thetis setup.cs:18129-18134 [v2.10.3.13+501e3f51].
+        connect(m_txPanNormalizeCheck, &QCheckBox::toggled,
+                this, [this](bool on) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setPanNormalize(on);
+            }
+        });
+
+        // WF detector → setWfDetector.
+        // From Thetis setup.cs:18152-18157 [v2.10.3.13+501e3f51].
+        connect(m_txWfDetectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWfDetector(idx);
+            }
+        });
+
+        // WF averaging → setWfAveraging.
+        // From Thetis setup.cs:18159-18164 [v2.10.3.13+501e3f51].
+        connect(m_txWfAveragingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int idx) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWfAveraging(idx);
+            }
+        });
+
+        // WF AvTime spinbox → setWfAvTimeMs.
+        // From Thetis setup.cs:18166-18171 [v2.10.3.13+501e3f51].
+        connect(m_txWfAvTimeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int ms) {
+            if (auto* a = model() ? model()->txAnalyzer() : nullptr) {
+                a->setWfAvTimeMs(ms);
             }
         });
     }

@@ -1065,6 +1065,9 @@ void MainWindow::buildUI()
     // dsp_size = 4096 complex samples per fexchange0 cycle at this rate.
     m_txAnalyzer->setSampleRate(96000.0);
     m_txAnalyzer->setOutputFps(15);  // Thetis frame_rate default per specHPSDR.cs:335 [v2.10.3.13+501e3f51]
+    // Phase 3M-5d: expose TxAnalyzer on RadioModel so Setup → Display → TX
+    // page can reach it without depending on MainWindow.
+    m_radioModel->setTxAnalyzer(m_txAnalyzer);
     // Filter passband + n_pix get re-applied on every MOX-up edge in the
     // MoxController connect block below — the active slice's mode/filter
     // and the SpectrumWidget's laid-out width aren't known yet at ctor
@@ -1241,6 +1244,17 @@ void MainWindow::buildUI()
                         }
                         m_spectrumWidget->updateSpectrumLinear(rid, binsLinear, 1.0, 0.0);
                     });
+                    // 3M-5d: with TxAnalyzer's n_pixout bumped to 2, the
+                    // waterfall plane is driven by pixout=1 (DetTypeWF +
+                    // AverageModeWF applied inside WDSP) rather than by
+                    // the spectrum trace path's avenger.  Tell
+                    // SpectrumWidget to skip its internal pushWaterfallRow
+                    // inside updateSpectrumLinear, and wire the pixout=1
+                    // stream straight into pushTxWaterfallRow.
+                    m_spectrumWidget->setTxExternalWaterfall(true);
+                    connect(m_txAnalyzer, &TxAnalyzer::txWaterfallReady,
+                            m_spectrumWidget,
+                            &SpectrumWidget::pushTxWaterfallRow);
                     // Force the waterfall-AGC tracker to re-prime on the
                     // first TX frame.  RX bins live around -110 dBm; TX
                     // siphon bins land around -50 dBm.  Without an AGC
@@ -1258,8 +1272,13 @@ void MainWindow::buildUI()
                     m_txAnalyzer->start();
                 } else {
                     m_txAnalyzer->stop();
+                    // 3M-5d: re-enable the internal pushWaterfallRow path
+                    // before disconnecting the pixout=1 stream so the
+                    // first RX frame post-unkey drives the waterfall.
+                    m_spectrumWidget->setTxExternalWaterfall(false);
                     // Disconnect the lambda — Qt requires matching signal pointer for context-based disconnect
                     disconnect(m_txAnalyzer, &TxAnalyzer::txFftReady, m_spectrumWidget, nullptr);
+                    disconnect(m_txAnalyzer, &TxAnalyzer::txWaterfallReady, m_spectrumWidget, nullptr);
                     connect(m_fftEngine, &FFTEngine::fftReadyLinear,
                             m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
 

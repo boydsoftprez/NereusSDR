@@ -291,6 +291,11 @@ public:
     void setSpectrumWidget(class SpectrumWidget* w) { m_spectrumWidget = w; }
     class FFTEngine* fftEngine() const { return m_fftEngine; }
     void setFftEngine(class FFTEngine* e) { m_fftEngine = e; }
+    // Phase 3M-5d: Setup → Display → TX page reaches the TX analyzer the
+    // same way it reaches the FFT engine.  Non-owning pointer wired by
+    // MainWindow at construction.
+    class TxAnalyzer* txAnalyzer() const { return m_txAnalyzer; }
+    void setTxAnalyzer(class TxAnalyzer* a) { m_txAnalyzer = a; }
     class ClarityController* clarityController() const { return m_clarityController; }
     void setClarityController(class ClarityController* c) { m_clarityController = c; }
     class StepAttenuatorController* stepAttController() const { return m_stepAttController; }
@@ -1192,9 +1197,11 @@ private:
     QList<PanadapterModel*> m_panadapters;
     SliceModel* m_activeSlice{nullptr};
 
-    // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
+    // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c +
+    // 3M-5d (m_txAnalyzer).
     class SpectrumWidget*     m_spectrumWidget{nullptr};
     class FFTEngine*          m_fftEngine{nullptr};
+    class TxAnalyzer*         m_txAnalyzer{nullptr};
     class ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
 

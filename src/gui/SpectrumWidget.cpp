@@ -2033,6 +2033,27 @@ void SpectrumWidget::setWaterfallStopOnTx(bool on)
     scheduleSettingsSave();
 }
 
+// 3M-5d: gate the internal pushWaterfallRow inside updateSpectrumLinear
+// so the external pixout=1 stream from TxAnalyzer drives the waterfall
+// plane during MOX without racing the internal path.  Flipped by
+// MainWindow on MOX edges; default false leaves RX path untouched.
+void SpectrumWidget::setTxExternalWaterfall(bool on)
+{
+    m_txExternalWaterfall = on;
+}
+
+// 3M-5d: bridge slot wired to TxAnalyzer::txWaterfallReady during MOX.
+// WDSP's GetPixels(disp, 1, ...) already applied DetTypeWF +
+// AverageModeWF in the analyzer.c domain, so we hand the dBm values
+// directly to the existing pushWaterfallRow path -- TX colormap +
+// thresholds + GPU push are unchanged.
+void SpectrumWidget::pushTxWaterfallRow(int receiverId,
+                                        const QVector<float>& binsDbm)
+{
+    Q_UNUSED(receiverId);
+    pushWaterfallRow(binsDbm);
+}
+
 void SpectrumWidget::setWfOpacity(int percent)
 {
     percent = qBound(0, percent, 100);
@@ -2620,7 +2641,15 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // threshold compute now operate on display pixels per Thetis
     // Display.cs:6713-6738 [v2.10.3.13] (waterfall_data[i] indexed by
     // pixel).
-    pushWaterfallRow(m_wfRenderedPixels);
+    //
+    // 3M-5d: skip when the waterfall is being driven externally by
+    // TxAnalyzer's pixout=1 stream (set by MainWindow on MOX-up).  This
+    // prevents the WDSP's DetTypeWF + AverageModeWF pixels from being
+    // overwritten by NereusSDR's own avenger output, and avoids a
+    // double-push race.  RX path stays at false, no behaviour change.
+    if (!m_txExternalWaterfall) {
+        pushWaterfallRow(m_wfRenderedPixels);
+    }
     m_hasNewSpectrum = true;
 }
 

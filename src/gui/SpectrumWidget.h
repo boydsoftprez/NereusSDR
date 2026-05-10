@@ -891,6 +891,27 @@ public slots:
     void setTxWfLowColor(const QColor& c);
     void setTxWfGradient(const QString& encoded);
 
+    // ---- 3M-5d: TX waterfall pixout=1 tap ----
+    // When true, updateSpectrumLinear() skips its internal call to
+    // pushWaterfallRow() because the waterfall plane is being driven
+    // separately via pushTxWaterfallRow() (TxAnalyzer's pixout=1 stream,
+    // wired in MainWindow on MOX-up).  Defaults to false; only flipped
+    // by MainWindow on MOX edges.  RX path is unaffected.
+    void setTxExternalWaterfall(bool on);
+    bool txExternalWaterfall() const noexcept { return m_txExternalWaterfall; }
+
+public slots:
+    /// Slot that bridges TxAnalyzer::txWaterfallReady (pixout=1, WDSP
+    /// already applied DetTypeWF + AverageModeWF) into the existing
+    /// waterfall-row push path.  Skips the spectrum-trace pipeline
+    /// entirely.  Only meaningful while setTxExternalWaterfall(true) has
+    /// been called by MainWindow on MOX-up; otherwise the internal
+    /// updateSpectrumLinear path is already pushing rows and a second
+    /// push would race.
+    void pushTxWaterfallRow(int receiverId, const QVector<float>& binsDbm);
+
+public:
+
 #ifdef NEREUS_BUILD_TESTS
     // Test seams for tst_tx_waterfall_colormap (3M-5b).
     // These expose private methods via the NEREUS_BUILD_TESTS gate so the
@@ -1345,6 +1366,12 @@ private:
     // before the user picks one in Setup -> Display -> TX).
     std::array<QRgb, 101> m_txCustomLut{};
     bool                  m_txCustomLutValid{false};
+
+    // 3M-5d: when true, updateSpectrumLinear skips its internal
+    // pushWaterfallRow because the waterfall is being driven externally
+    // via pushTxWaterfallRow (TxAnalyzer's pixout=1 stream).  Only set
+    // true during MOX, by MainWindow.
+    bool                  m_txExternalWaterfall{false};
 
     // ---- Phase 3G-8 commit 4: waterfall renderer state ----
 
