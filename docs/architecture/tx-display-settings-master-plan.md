@@ -834,7 +834,7 @@ Implication: existing 3M-5b users with no `DisplayTxWindowType` key present will
 
 | Key | Type | Default | Thetis source |
 |---|---|---|---|
-| `DisplayTxFftSize` | int | 4096 | `setup.cs:18138` formula = `4096 * 2^0` |
+| `DisplayTxFftSize` | int | **32768** | Thetis `tbTXDisplayFFTSize.Value = 3` at `setup.designer.cs:36642 [v2.10.3.13+501e3f51]`; formula `4096 * 2^3 = 32768`. Earlier 3M-5d draft said 4096; spec error caught at bench. |
 | `DisplayTxWindowType` | int | **4 (Hamming)** | Thetis default at `specHPSDR.cs:134`. 3M-5d reverts the 3M-5b BH4 divergence (controller decision 2026-05-10). Combo lets user switch to any of 7 windows. |
 | `DisplayTxPanDetector` | int | 0 (Peak) | `specHPSDR.cs:301` default |
 | `DisplayTxPanAveraging` | int | 0 (Off) | `specHPSDR.cs:312` default |

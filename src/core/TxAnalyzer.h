@@ -228,7 +228,12 @@ private:
 
     const int m_dispId;
     int m_numPixels{2048};   // matches typical SpectrumWidget width
-    int m_fftSize{4096};
+    // Thetis ships tbTXDisplayFFTSize.Value = 3 (setup.designer.cs:36642
+    // [v2.10.3.13+501e3f51]); formula 4096 * 2^3 = 32768.  Earlier 3M-5d
+    // spec table said 4096 (Thetis slider position 0); that was a spec
+    // error caught at bench.  Slider Maximum = 6 → max FFT = 262144 which
+    // matches the m_size passed to XCreateAnalyzer (TxAnalyzer.cpp).
+    int m_fftSize{32768};
     double m_sampleRate{96000.0};   // matches WdspEngine::kTxDspSampleRate
     // From Thetis specHPSDR.cs:335 [v2.10.3.13+501e3f51] — frame_rate default = 15.
     int m_outputFps{15};

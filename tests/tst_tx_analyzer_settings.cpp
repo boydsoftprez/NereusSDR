@@ -82,10 +82,12 @@ private slots:
     }
 
     // 1. defaults_match_spec — TxAnalyzer constructs with Thetis-faithful
-    //    defaults: FFT=4096, Window=Hamming (4), PanDet=0, PanAvg=0,
+    //    defaults: FFT=32768, Window=Hamming (4), PanDet=0, PanAvg=0,
     //    PanAvTimeMs=30, PanNormalize=false, WfDet=0, WfAvg=0,
     //    WfAvTimeMs=120.
     //    Sources (all [v2.10.3.13+501e3f51]):
+    //      setup.designer.cs:36642    tbTXDisplayFFTSize.Value = 3
+    //                                 -> FFTSize = 4096 * 2^3 = 32768
     //      specHPSDR.cs:134           window_type default 4 (Hamming)
     //      specHPSDR.cs:301, :313     DetTypePan / DetTypeWF default 0
     //      specHPSDR.cs:382, :402     AverageMode / AverageModeWF default 0
@@ -96,7 +98,7 @@ private slots:
     {
         TxAnalyzer a;
 
-        QCOMPARE(a.fftSize(),         4096);
+        QCOMPARE(a.fftSize(),         32768);
         QCOMPARE(a.windowType(),      4);     // Hamming
         QCOMPARE(a.panDetector(),     0);     // Peak
         QCOMPARE(a.panAveraging(),    0);     // None / Off
@@ -161,8 +163,8 @@ private slots:
     void bin_width_formula()
     {
         TxAnalyzer a;
-        // Default 96 kHz / 4096 = 23.4375 Hz
-        QCOMPARE(a.binWidthHz(), 96000.0 / 4096.0);
+        // Default 96 kHz / 32768 = 2.93 Hz (Thetis-faithful default fft).
+        QCOMPARE(a.binWidthHz(), 96000.0 / 32768.0);
         a.setFftSizeSliderPosition(2);  // 16384
         QCOMPARE(a.binWidthHz(), 96000.0 / 16384.0);
     }

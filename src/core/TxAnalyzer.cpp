@@ -69,14 +69,23 @@ TxAnalyzer::TxAnalyzer(int dispId, QObject* parent)
 
 #ifdef HAVE_WDSP
     // Allocate the WDSP analyzer instance.  Parameters from
-    // wbDisplay.cs:4655 [v2.10.3.13] (max FFT 16384) + the TX path's
-    // single-LO / single-stitch defaults.  app_data_path is empty —
-    // FFTW wisdom is managed centrally by WdspEngine, not per-analyzer.
+    // Thetis MeterManager.cs:42024 [v2.10.3.13+501e3f51]:
+    //   _disp = cmaster.AllocAnalyzer(..., 262144);
+    //                            // must be pow2, 262144 = max size
+    // The 262144 cap matches the Thetis FFT slider max position
+    // (setup.designer.cs:36638 Maximum=6 + setup.cs:18138 formula
+    // 4096 * 2^slider).  Earlier draft of 3M-5d shipped 16384 which
+    // is correct for the wideband display (wbDisplay.cs:4655) but
+    // silently truncates panadapter FFTs that exceed it — re-planning
+    // FFTW with sz > buffer size at analyzer.c:1223 produces garbage
+    // output instead of any visible change.  Fixed at 3M-5d bench.
+    // app_data_path is empty: FFTW wisdom is managed centrally by
+    // WdspEngine, not per-analyzer.
     int success = 0;
     char emptyPath[1] = {0};
     XCreateAnalyzer(m_dispId,
                     &success,
-                    /*m_size=*/16384,
+                    /*m_size=*/262144,
                     /*m_LO=*/1,
                     /*m_stitch=*/1,
                     emptyPath);
