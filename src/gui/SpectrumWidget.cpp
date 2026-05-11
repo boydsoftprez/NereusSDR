@@ -1046,6 +1046,30 @@ void SpectrumWidget::setSampleRate(double hz)
     }
 }
 
+// 3M-5d follow-up: setters for TX-side bin-frequency context.  See
+// visibleBinRange() for usage.  Both are safe to call at any time;
+// the MOX branch in visibleBinRange picks them up only while
+// m_moxOverlay is true so RX-only operation is unaffected.
+void SpectrumWidget::setTxCenterFrequency(double hz)
+{
+    if (!qFuzzyCompare(m_txCenterHz + 1.0, hz + 1.0)) {
+        m_txCenterHz = hz;
+        if (m_moxOverlay) {
+            update();
+        }
+    }
+}
+
+void SpectrumWidget::setTxSampleRate(double hz)
+{
+    if (hz > 0.0 && !qFuzzyCompare(m_txSampleRateHz, hz)) {
+        m_txSampleRateHz = hz;
+        if (m_moxOverlay) {
+            update();
+        }
+    }
+}
+
 void SpectrumWidget::setFilterOffset(int lowHz, int highHz)
 {
     m_filterLowHz = lowHz;
@@ -2044,13 +2068,14 @@ void SpectrumWidget::setTxExternalWaterfall(bool on)
 
 // 3M-5d: bridge slot wired to TxAnalyzer::txWaterfallReady during MOX.
 // WDSP's GetPixels(disp, 1, ...) already applied DetTypeWF +
-// AverageModeWF in the analyzer.c domain.  Source array spans the full
-// DDC bandwidth; before forwarding to pushWaterfallRow we apply the
-// same visibleBinRange() slice updateSpectrumLinear uses for the trace
-// path so the waterfall X-axis matches the panadapter's visible
-// frequency window.  Without this slice the entire baseband stretches
-// to fill the screen width and the WF appears offset from the trace
-// (caught at 3M-5d bench, 2026-05-10).
+// AverageModeWF in the analyzer.c domain.  Source array spans the
+// TX baseband (96 kHz at WdspEngine::kTxDspSampleRate, centered at
+// the TX channel = VFO frequency); visibleBinRange() picks up the
+// TX context when m_moxOverlay is true (TX center / TX rate) so the
+// slice maps to the panadapter's visible RF window correctly.  The
+// slice happens here for the WF path; the trace path slices inside
+// updateSpectrumLinear (same code).  Both paths therefore use
+// matching X-axis math.
 void SpectrumWidget::pushTxWaterfallRow(int receiverId,
                                         const QVector<float>& binsDbm)
 {
@@ -2061,9 +2086,6 @@ void SpectrumWidget::pushTxWaterfallRow(int receiverId,
     }
     auto [firstBin, lastBin] = visibleBinRange(binsDbm.size());
     if (lastBin < firstBin) {
-        // visibleBinRange returns an empty slice when display geometry
-        // is degenerate; passing the original array keeps the legacy
-        // stretch-to-fill behaviour rather than a black waterfall row.
         pushWaterfallRow(binsDbm);
         return;
     }
@@ -3675,12 +3697,24 @@ double SpectrumWidget::xToHz(int x, const QRect& r) const
 
 std::pair<int, int> SpectrumWidget::visibleBinRange(int binCount) const
 {
-    if (binCount <= 0 || m_sampleRateHz <= 0.0) {
+    // 3M-5d follow-up: during MOX the bin array comes from the TX
+    // analyzer (TxAnalyzer's pixout=0|1 stream) which covers a
+    // narrower baseband (96 kHz, centered at the TX channel = VFO
+    // frequency) than the RX DDC rate.  Branching here keeps the
+    // RX path byte-identical to pre-3M-5d behavior; only the MOX
+    // branch picks TX context.
+    const bool useTx = m_moxOverlay
+                    && m_txSampleRateHz > 0.0
+                    && m_txCenterHz != 0.0;
+    const double rateHz   = useTx ? m_txSampleRateHz : m_sampleRateHz;
+    const double centerHz = useTx ? m_txCenterHz     : m_ddcCenterHz;
+
+    if (binCount <= 0 || rateHz <= 0.0) {
         return {0, -1};  // empty range — callers compute count = 0
     }
 
-    double binWidth = m_sampleRateHz / binCount;
-    double fftLowHz = m_ddcCenterHz - m_sampleRateHz / 2.0;
+    double binWidth = rateHz / binCount;
+    double fftLowHz = centerHz - rateHz / 2.0;
 
     double displayLowHz  = m_centerHz - m_bandwidthHz / 2.0;
     double displayHighHz = m_centerHz + m_bandwidthHz / 2.0;

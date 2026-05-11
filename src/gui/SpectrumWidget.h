@@ -326,6 +326,21 @@ public:
     void setSampleRate(double hz);
     double sampleRate() const { return m_sampleRateHz; }
 
+    /// 3M-5d follow-up: TX-side bin-frequency context used by
+    /// visibleBinRange() when m_moxOverlay is true.  RX path is
+    /// unchanged.  m_txCenterHz is the TX channel center (VFO
+    /// frequency on the air); m_txSampleRateHz is the TX baseband
+    /// sample rate the TxAnalyzer feeds into WDSP (96000 Hz on the
+    /// HL2 + ANAN-G2 family).  Without these, the WDSP bin array
+    /// from GetPixels(pixout=0|1) gets sliced against the RX DDC
+    /// rate + center, which produces a stretched, mis-mapped
+    /// waterfall during MOX (bench 2026-05-10 surfaced three peaks
+    /// across the visible window from a single TUNE tone).
+    void setTxCenterFrequency(double hz);
+    double txCenterFrequency() const noexcept { return m_txCenterHz; }
+    void setTxSampleRate(double hz);
+    double txSampleRate() const noexcept { return m_txSampleRateHz; }
+
     // ---- Display range ----
     void setDbmRange(float minDbm, float maxDbm);
     float refLevel() const { return m_refLevel; }
@@ -1632,6 +1647,17 @@ private:
     // ---- MOX / TX overlay state (H.1, Phase 3M-1a) ----
     // From Thetis display.cs:1568 [v2.10.3.13]: static bool _mox = false;
     bool  m_moxOverlay{false};
+
+    // 3M-5d follow-up: TX-side bin-frequency context for visibleBinRange().
+    // Set by MainWindow on MOX rise (and on VFO change during TX) so the
+    // TX FFT pixel array can be sliced against the TX channel center
+    // + TX sample rate instead of the RX DDC rate + center.  Without
+    // these, the same WDSP bin array gets sliced as if it covered the
+    // RX DDC bandwidth, which on HL2 is 8x wider than the TX bandwidth
+    // -- producing a stretched display that aliases TX-baseband edges
+    // onto the visible window (bench 2026-05-10).
+    double m_txCenterHz{0.0};
+    double m_txSampleRateHz{96000.0};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.
     // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
     float m_txAttOffsetDb{0.0f};
