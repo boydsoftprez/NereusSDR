@@ -2044,14 +2044,34 @@ void SpectrumWidget::setTxExternalWaterfall(bool on)
 
 // 3M-5d: bridge slot wired to TxAnalyzer::txWaterfallReady during MOX.
 // WDSP's GetPixels(disp, 1, ...) already applied DetTypeWF +
-// AverageModeWF in the analyzer.c domain, so we hand the dBm values
-// directly to the existing pushWaterfallRow path -- TX colormap +
-// thresholds + GPU push are unchanged.
+// AverageModeWF in the analyzer.c domain.  Source array spans the full
+// DDC bandwidth; before forwarding to pushWaterfallRow we apply the
+// same visibleBinRange() slice updateSpectrumLinear uses for the trace
+// path so the waterfall X-axis matches the panadapter's visible
+// frequency window.  Without this slice the entire baseband stretches
+// to fill the screen width and the WF appears offset from the trace
+// (caught at 3M-5d bench, 2026-05-10).
 void SpectrumWidget::pushTxWaterfallRow(int receiverId,
                                         const QVector<float>& binsDbm)
 {
     Q_UNUSED(receiverId);
-    pushWaterfallRow(binsDbm);
+    if (binsDbm.isEmpty()) {
+        pushWaterfallRow(binsDbm);
+        return;
+    }
+    auto [firstBin, lastBin] = visibleBinRange(binsDbm.size());
+    if (lastBin < firstBin) {
+        // visibleBinRange returns an empty slice when display geometry
+        // is degenerate; passing the original array keeps the legacy
+        // stretch-to-fill behaviour rather than a black waterfall row.
+        pushWaterfallRow(binsDbm);
+        return;
+    }
+    QVector<float> visible(lastBin - firstBin + 1);
+    for (int k = firstBin; k <= lastBin; ++k) {
+        visible[k - firstBin] = binsDbm[k];
+    }
+    pushWaterfallRow(visible);
 }
 
 void SpectrumWidget::setWfOpacity(int percent)
