@@ -505,6 +505,31 @@ public:
     bool wfAgcEnabled() const { return m_wfAgcEnabled; }
     void setClarityActive(bool on);
     bool clarityActive() const { return m_clarityActive; }
+
+    // Issue #230 fix — Thetis-faithful split between persistent user
+    // thresholds (above) and runtime render-active thresholds (below).
+    // From Thetis display.cs:6575-6594 [v2.10.3.13]: the render path
+    // seeds per-draw locals from the persistent fields then lets AGC /
+    // NF-AGC / "Use spectrum min/max" / Clarity override the locals.
+    // Active getters are exposed for the regression test; no public
+    // setter — runtime layers set these via the dedicated paths below
+    // and composeWaterfallActiveThresholds().
+    float wfActiveLowThreshold()  const { return m_wfActiveLowThreshold;  }
+    float wfActiveHighThreshold() const { return m_wfActiveHighThreshold; }
+
+    // Clarity controller writes the render-active mirror only — never
+    // the persisted user field. Modeled on the AGC path in
+    // Thetis display.cs:6584 [v2.10.3.13] where the AGC running min
+    // (_RX1waterfallPreviousMinValue) is a runtime field separate from
+    // waterfall_low_threshold.
+    void setClarityWaterfallThresholds(float low, float high);
+
+    // Threshold composition pulled out of pushWaterfallRow() so the
+    // regression test can drive it headlessly. Mutates the active
+    // mirror and the AGC running-envelope state; never the persistent
+    // user fields. Mirrors the Thetis local-variable composition at
+    // display.cs:6575-6594 [v2.10.3.13].
+    void composeWaterfallActiveThresholds(const QVector<float>& wfPixelsDbm);
     // NF-AGC: auto-track waterfall thresholds to noise floor + offset.
     void setWaterfallNFAGCEnabled(bool on);
     bool waterfallNFAGCEnabled() const { return m_wfNfAgcEnabled; }
@@ -1339,10 +1364,21 @@ private:
     int    m_wfColorGain{45};         // 0-100
     int    m_wfBlackLevel{104};       // 0-125 — keep in sync with loadSettings ship default
     // Waterfall uses its own dBm range (narrower than spectrum for better contrast).
-    // Seed values; WfAgc (default on) continuously recomputes these at runtime.
+    // Persistent user-configured thresholds (saved/loaded as DisplayWfHigh/LowLevel).
     // Ship defaults — keep in sync with loadSettings (SpectrumWidget.cpp)
+    // From Thetis display.cs:2522 + 2536 [v2.10.3.13] waterfall_high_threshold /
+    // waterfall_low_threshold (the persisted user values, distinct from
+    // _RX1waterfallPreviousMinValue runtime AGC tracking state).
     float  m_wfHighThreshold{-62.0f};
     float  m_wfLowThreshold{-122.0f};
+
+    // Render-active mirror, equivalent to Thetis's per-render
+    // local high_threshold / low_threshold at display.cs:6575/6584/6590
+    // [v2.10.3.13]. AGC / NF-AGC / Clarity override these; the
+    // persistent fields above are never touched by runtime overrides.
+    // Issue #230 fix.
+    float  m_wfActiveHighThreshold{-62.0f};
+    float  m_wfActiveLowThreshold{-122.0f};
 
     // ---- Smoothing constant ----
     // From AetherSDR SpectrumWidget.h:417 — SMOOTH_ALPHA = 0.35f

@@ -1513,6 +1513,13 @@ nereus_add_test(tst_waterfall_scrollback)
 # and smoke test for setActivePeakHoldTxActive + setWaterfallStopOnTx combo.
 nereus_add_test(tst_waterfall_defaults_changes)
 
+# ── Issue #230: waterfall threshold persistence under AGC/NF-AGC/Clarity ─────
+# Thetis sources: display.cs:2522-2548 + 6575-6594 (persistent vs runtime
+# threshold split) and console.cs:9094-9108 (setWaterfallGainsIfLinkedToSpectrum
+# grid-change path). Regression test: AGC/NF-AGC/Clarity must write to the
+# active-threshold mirror, not the persisted user fields.
+nereus_add_test(tst_waterfall_threshold_persistence)
+
 # ── Task 2.9: NF-aware grid + Copy button + NoiseFloorEstimator::prime() ─────
 # Thetis source: console.cs:46074-46086 [v2.10.3.13] GridMinFollowsNFRX1 /
 # tmrAutoAGC_Tick NF grid block. NereusSDR-original: global panadapter default.

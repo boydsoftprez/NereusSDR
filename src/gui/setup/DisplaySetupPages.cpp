@@ -1288,6 +1288,20 @@ void WaterfallDefaultsPage::loadFromRenderer()
     m_updatePeriodSlider->setValue(sw->wfUpdatePeriodMs());
     m_opacitySlider->setValue(sw->wfOpacity());
 
+    // Issue #230 fix: gate the low/high threshold + AGC controls when
+    // "Use spectrum min/max" is on — the spectrum grid is the
+    // authority for those values in that mode.  Mirrors Thetis
+    // chkWaterfallUseRX1SpectrumMinMax_CheckedChanged at
+    // setup.cs:19224-19232 [v2.10.3.13].
+    {
+        const bool useMinMax = sw->wfUseSpectrumMinMax();
+        if (m_highThresholdSlider) { m_highThresholdSlider->setEnabled(!useMinMax); }
+        if (m_lowThresholdSlider)  { m_lowThresholdSlider->setEnabled(!useMinMax);  }
+        if (m_agcToggle)           { m_agcToggle->setEnabled(!useMinMax);           }
+        if (m_wfNfAgcEnable)       { m_wfNfAgcEnable->setEnabled(!useMinMax);       }
+        if (m_wfAgcOffsetDb)       { m_wfAgcOffsetDb->setEnabled(!useMinMax);       }
+    }
+
     // Task 2.8: NF-AGC + Stop-on-TX
     if (m_wfNfAgcEnable) {
         QSignalBlocker bn(m_wfNfAgcEnable);
@@ -1439,6 +1453,16 @@ void WaterfallDefaultsPage::buildUI()
         if (auto* w = model() ? model()->spectrumWidget() : nullptr) {
             w->setWfUseSpectrumMinMax(on);
         }
+        // Issue #230 fix: mirror Thetis's
+        // chkWaterfallUseRX1SpectrumMinMax_CheckedChanged at
+        // setup.cs:19224-19232 [v2.10.3.13] — disable the conflicting
+        // threshold and AGC controls so the user can't fight the
+        // grid-driven values.
+        if (m_highThresholdSlider) { m_highThresholdSlider->setEnabled(!on); }
+        if (m_lowThresholdSlider)  { m_lowThresholdSlider->setEnabled(!on);  }
+        if (m_agcToggle)           { m_agcToggle->setEnabled(!on);           }
+        if (m_wfNfAgcEnable)       { m_wfNfAgcEnable->setEnabled(!on);       }
+        if (m_wfAgcOffsetDb)       { m_wfAgcOffsetDb->setEnabled(!on);       }
     });
     levForm->addRow(QString(), m_useSpectrumMinMaxToggle);
 
