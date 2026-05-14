@@ -313,6 +313,7 @@ warren@wpratt.com
 
 #pragma once
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -324,6 +325,7 @@ warren@wpratt.com
 #include <vector>
 
 #include "WdspTypes.h"
+#include "audio/AudioRingSpsc.h"  // m_tciInputRing — TCI TX audio buffer (3J-1 bench fix)
 #include "dsp/ChannelConfig.h"
 #include "dsp/TxChannelState.h"
 #include "wdsp_api.h"  // NEREUS_STDCALL macro for s_pushVoxCallback (Task 17)
@@ -824,6 +826,77 @@ public:
     int    antiVoxSize()        const noexcept { return m_antiVoxSize; }
     double antiVoxRate()        const noexcept { return m_antiVoxRate; }
     double antiVoxDetectorTau() const noexcept { return m_antiVoxTauSec; }
+
+    // ── TCI TX audio injection (Phase 3J-1 Task 17.1) ────────────────────────
+    //
+    // Injects an arbitrary-length block of interleaved stereo float audio
+    // from the TCI binary pipeline into the TX channel.  The audio is
+    // accumulated in an internal ring buffer and dispatched in m_inputBufferSize
+    // blocks to driveOneTxBlock().  This is the TCI equivalent of the mic-input
+    // path; it replaces mic input for the duration of TCI PTT.
+    //
+    // `interleavedStereo`  — L0,R0,L1,R1,... float array (or mono if channels==1)
+    // `frames`             — number of stereo frames (total floats / channels)
+    // `channels`           — 1 (mono → duplicated to L+R) or 2 (stereo)
+    // `srcRate`            — source sample rate from the TCI binary header
+    //                        (informational for Phase 17; resampling deferred)
+    //
+    // Phase 3J-1 review P1.1: feedTxAudioFromTci is now a public slot so that
+    // TciServer can dispatch it across the thread boundary using
+    // QMetaObject::invokeMethod with Qt::QueuedConnection.  TxChannel lives on
+    // TxWorkerThread; calling this from the main thread (where the WS binary
+    // handler fires) would race the worker pump.  QueuedConnection routes the
+    // call onto TxChannel's owning thread before any WDSP state is touched.
+    //
+    // Signature uses QByteArray + int parameters (all value types) so that the
+    // queued-connection argument copies are safe — raw float* cannot be captured
+    // across the queue boundary because the decoding buffer may be freed before
+    // the slot fires.
+    //
+    // Phase 3J-1 Task 17.1 — NereusSDR-original entry point.
+    // No Thetis equivalent directly; Thetis dequeues from m_txAudioQueue in
+    // a separate thread (TCIServer.cs:5586-5600 TryDequeueTxAudio).
+    Q_INVOKABLE void feedTxAudioFromTci(const QByteArray& interleavedStereoBytes,
+                                        int frames, int channels, int srcRate);
+
+    // ── Phase 3J-1 bench fix (2026-05-10): TCI audio source gate ──────────
+    //
+    // Set to true when a TCI client acquires the TX audio mutex
+    // (trx:N,true,tci;) and back to false on release / disconnect.  Read by
+    // TxWorkerThread::dispatchOneBlock to short-circuit its own
+    // driveOneTxBlockFromInterleaved dispatch, leaving the TCI binary
+    // pipeline (feedTxAudioFromTci → driveOneTxBlock) as the sole source
+    // of WDSP TX audio for the duration of TCI PTT.
+    //
+    // Atomic so the worker thread's load sees the main-thread store
+    // immediately; no signal/slot or queued event involved.
+    /// Set the TCI audio gate.  Thread-safe (atomic).
+    void setTciAudioActive(bool active) {
+        m_tciAudioActive.store(active, std::memory_order_release);
+    }
+    /// Query the TCI audio gate.  Thread-safe (atomic).
+    bool isTciAudioActive() const {
+        return m_tciAudioActive.load(std::memory_order_acquire);
+    }
+
+    /// Pull up to `frames` float audio samples from the TCI input ring into
+    /// `dst`.  Returns the number of samples actually pulled (0 if the ring
+    /// is empty).  Called from TxWorkerThread::dispatchOneBlock on the
+    /// worker thread when isTciAudioActive() is true — gives the worker a
+    /// 64-frame-block-rate consumer for the burst-rate producer in
+    /// feedTxAudioFromTci.  See m_tciInputRing doc-comment for the
+    /// burst-vs-steady-state rationale.
+    ///
+    /// SPSC contract: only TxWorkerThread calls this method.
+    int pullTciAudio(float* dst, int frames);
+
+    /// Drain the TCI input ring.  Called on TX cycle stop
+    /// (TciServer::stopTxChrono) so the next cycle starts with a clean
+    /// ring instead of inheriting any leftover audio that the worker
+    /// hadn't pulled before the cycle ended.  Safe to call from main
+    /// thread (TciServer's TX_CHRONO start/stop hooks run there) because
+    /// the worker stops pulling once m_tciAudioActive flips false.
+    void clearTciAudio();
 
     // ── Anti-VOX detector audio feed (3M-3a-iv Task 3) ──────────────────────
     //
@@ -2600,6 +2673,96 @@ private:
     // is in play; this flag re-enables pumping for VOX detection.
     std::atomic<bool> m_voxListening{false};
 
+    // ── Phase 3J-1 bench fix (2026-05-10): TCI audio source gate ───────────
+    // When a TCI client holds the TX audio mutex (trx:N,true,tci;) the
+    // binary-frame pipeline drives WDSP via feedTxAudioFromTci's internal
+    // driveOneTxBlock calls.  Without this flag, the TxWorkerThread mic-source
+    // pump ALSO calls driveOneTxBlockFromInterleaved (with silence from the
+    // null/PC/VAX mic source), producing two competing fexchange0 dispatches
+    // per cycle and overrunning the TX I/Q ring at 2x the radio's wire rate —
+    // half of each cycle gets dropped, the audio chops into burst-and-silence
+    // segments, and WSJT-X / SunSDR FT8 tones don't survive the corruption.
+    //
+    // When this flag is true the worker's dispatchOneBlock returns early
+    // (before pumpDexp / driveOneTxBlockFromInterleaved), so the TCI path
+    // is the only audio source feeding the radio for the duration of TCI PTT.
+    //
+    // Set/cleared by MainWindow on TciServer::txAudioActiveClientChanged.
+    // Cleared automatically on client disconnect via the same signal.
+    std::atomic<bool> m_tciAudioActive{false};
+
+    // Phase 3J-1 closeout Item 11 (2026-05-12): pre-TXA scalar applied to
+    // TCI audio in feedTxAudioFromTci BEFORE the resample + ring push.
+    // Driven by the TciApplet "TX gain" slider via setTciTxGainLinear().
+    // Stored as a linear multiplier (10^(dB/20)); default 1.0 (0 dB, no
+    // attenuation, matches the slider's persisted default).
+    //
+    // Independent of WDSP Panel gain (mic slider).  Math: TCI audio gets
+    // `samples × tciTxGain` here, then the WDSP TXA chain multiplies by
+    // Panel gain at stage 2.  Two orthogonal knobs that both apply.
+    //
+    // Atomic so the GUI thread can write while the producer slot
+    // (feedTxAudioFromTci on TxWorkerThread) reads; no torn-store hazard
+    // on the float bit pattern because Qt 6 + C++20 guarantees
+    // std::atomic<float> is lock-free on every NereusSDR target.
+    std::atomic<float> m_tciTxGainLinear{1.0f};
+public:
+    void setTciTxGainLinear(float lin) {
+        m_tciTxGainLinear.store(lin, std::memory_order_release);
+    }
+
+    // Phase 3J-1 closeout Item 13 (2026-05-12): TX-audio peak sample,
+    // updated atomically by feedTxAudioFromTci AFTER the gain multiply +
+    // before the ring push.  Read by TciApplet's refresh timer to drive
+    // the TX level meter -- replaces the fake sine-wave placeholder.
+    //
+    // Single producer (feedTxAudioFromTci on TxWorkerThread), single
+    // consumer (TciApplet::refresh on GUI thread); each block-write
+    // overwrites the previous value, so old peaks decay naturally with
+    // sample-block cadence.  No accumulation needed.
+    float tciTxPeakAbs() const {
+        return m_tciTxPeakAbs.load(std::memory_order_acquire);
+    }
+private:
+    std::atomic<float> m_tciTxPeakAbs{0.0f};
+
+    // ── Phase 3J-1 bench fix (2026-05-10): TCI TX audio ring ────────────────
+    //
+    // SPSC ring buffer that bridges the burst-rate TCI producer
+    // (feedTxAudioFromTci pushes 2048 frames per WSJT-X message in
+    // microseconds) to the steady-rate consumer (TxWorkerThread pulls 64
+    // frames every ~1.33 ms to match the HL2 wire rate of 48 kHz).
+    //
+    // Without this ring, feedTxAudioFromTci dispatched driveOneTxBlock
+    // synchronously — 32 fexchange0+sendTxIq calls back-to-back per WSJT-X
+    // message.  That delivered the right average rate to the radio (48 kHz)
+    // but overran the downstream TX I/Q ring (P1RadioConnection
+    // kTxIqBufSamples = 4032, ~84 ms headroom) because each WSJT-X burst
+    // arrived in <1 ms and pushed 2048 samples instantly.  After ~7 bursts
+    // the I/Q ring overflowed and TX audio dropped — the radio keyed but
+    // transmitted only fragments, then mostly silence.
+    //
+    // With this ring (~680 ms headroom at 48 kHz), feedTxAudioFromTci just
+    // queues the burst.  TxWorkerThread::dispatchOneBlock pulls one 64-frame
+    // block per worker iteration when the gate is set, splicing the pulled
+    // samples into m_in exactly the same way the PC/VAX mic override paths
+    // splice their data.  Producer-vs-consumer rate is balanced by the
+    // worker's natural drain timing, and the downstream TX I/Q ring never
+    // sees a burst — only a steady 64-frame trickle that matches the
+    // radio's wire rate.
+    //
+    // Capacity 131072 bytes == 32768 floats (mono, MSB+LSB Float32) ==
+    // 32768 frames at 48 kHz ≈ 682 ms.  Power of two so the AudioRingSpsc
+    // bit-mask wrap works.
+    //
+    // SPSC discipline: feedTxAudioFromTci (queued event on TxWorkerThread)
+    // is the producer; pullTciAudio (worker run loop on TxWorkerThread) is
+    // the consumer.  Both run on the same thread but at different points in
+    // the loop — feedTxAudioFromTci is called via sendPostedEvents BEFORE
+    // dispatchOneBlock each iteration, so the producer always wins the
+    // ordering race.  Same-thread is the strongest possible SPSC contract.
+    AudioRingSpsc<131072> m_tciInputRing;
+
     // ── Phase 3M-3a-iii Task 17 — DEXP pushvox bridge ────────────────────────
     //
     // C-callable bridge that WDSP invokes from inside `xdexp` when the DEXP
@@ -2915,6 +3078,42 @@ private:
     int     m_pendingAudioLow  = 0;
     int     m_pendingAudioHigh = 0;
     DSPMode m_pendingMode      = DSPMode::USB;
+
+    // ── TCI TX audio accumulator (Phase 3J-1 Task 17.1) ─────────────────────
+    //
+    // feedTxAudioFromTci() accumulates incoming TCI binary frames here.
+    // driveOneTxBlock() expects exactly m_inputBufferSize float frames per call;
+    // TCI frames arrive in arbitrary sizes (Thetis default 2048 complex samples
+    // per TCIQueuedTxAudio at TCIServer.cs:5677-5684 [v2.10.3.13]).
+    //
+    // Ring capacity: 131072 bytes ≈ 131072 / 4 = 32768 floats = 16384 stereo
+    // frames.  At 48 kHz that's ~341 ms of headroom — enough to buffer several
+    // TCI frames between drain ticks.
+    //
+    // Phase 3J-1 Task 17.1 — NereusSDR-original.
+    std::vector<float> m_tciTxAccum;  // accumulation buffer for partial blocks
+    int                m_tciTxAccumSize{0};  // valid frames in m_tciTxAccum
+
+    // ── TCI TX-path resampler (Phase 3J-1 closeout Item 8, 2026-05-12) ──────
+    //
+    // FreeDV / Quisk / JTDX-at-12k send TX_AUDIO_STREAM at non-48 kHz rates
+    // (Thetis accepts 8000 / 12000 / 24000 / 48000 per TCIServer.cs:5750
+    // [v2.10.3.13]).  WDSP TXA input is always 48 kHz, so any non-48k input
+    // must be resampled before feeding the ring.
+    //
+    // From Thetis cmaster.cs:1411-1444 [v2.10.3.13]:
+    //   m_tciTxResampler = WDSP.create_resampleFV(inputRate, targetRate);
+    //   ... xresampleFV(input, output, numIn, out int numOut, m_tciTxResampler);
+    //   ... WDSP.destroy_resampleFV(m_tciTxResampler);
+    // Lazy-created on the first frame with srcRate != 48000; destroyed and
+    // recreated whenever the input rate changes mid-stream (FreeDV mode
+    // change can flip 8k <-> 24k).  Destroyed in clearTciAudio() on cycle
+    // stop and in the destructor.
+    //
+    // void* opaque ptr — RESAMPLEF, see resample.c:342-360 [WDSP TAPR v1.29].
+    void* m_tciTxResampler{nullptr};
+    int   m_tciTxResamplerInputRate{0};  // last create_resampleFV in_rate
+    std::vector<float> m_tciTxResampleOut;  // scratch output buffer
 };
 
 } // namespace NereusSDR

@@ -24,6 +24,8 @@ class PaWattMeterPage;
 class PaValuesPage;
 struct BoardCapabilities;
 struct RadioInfo;
+class TciServer;
+class CatTciServerPage;
 
 // Main settings dialog with tree-based navigation.
 // Left pane: QTreeWidget with top-level category items.
@@ -36,6 +38,13 @@ public:
     // Navigate to a page by its label text (e.g. "AGC/ALC").
     void selectPage(const QString& label);
 
+    // Phase 3J-1 bench fix (2026-05-11): wire the live TciServer state into
+    // the CatTciServerPage's Server group box title and Status label.  Pass
+    // nullptr to detach (e.g. server destroyed).  The dialog forwards to the
+    // page's setTciServer(); the page tracks via QPointer so the connection
+    // is safe across server lifecycle changes.
+    void setTciServer(class NereusSDR::TciServer* server);
+
 signals:
     // Phase 3M-3a-ii Batch 6 (Task 3): forwarded from CfcSetupPage's
     // [Configure CFC bands…] button.  MainWindow connects this to the
@@ -43,6 +52,23 @@ signals:
     // instance is shared between the Setup page and the [CFC] right-click
     // on the TxApplet.
     void cfcDialogRequested();
+
+    // Phase 3J-1 review P2.4: forwarded from CatTciServerPage — enable checkbox
+    // toggled.  MainWindow connects this to call TciServer::start() / stop()
+    // so the server goes live immediately without a disconnect/reconnect cycle.
+    void tciServerEnableToggled(bool on, quint16 port);
+
+    // Phase 3J-1 closeout Item 1 (2026-05-12): forwarded from CatTciServerPage —
+    // bind-interface dropdown or port spinbox changed.  MainWindow restarts the
+    // server live if it's running so the new bind/port takes effect without a
+    // manual disable/enable cycle.
+    void tciServerBindOrPortChanged(const QString& bindAddress, quint16 port);
+
+    // Phase 3J-1 closeout Item 2 (2026-05-12): forwarded from CatTciServerPage —
+    // "Show Log..." button clicked.  MainWindow lazy-constructs the TciLogWindow
+    // and connects it to TciServer::messageLogged so the window outlives this
+    // dialog closing.
+    void tciShowLogRequested();
 
     // Task 3.6: forwarded from GeneralOptionsPage — CPU meter rate spinbox.
     // MainWindow::setCpuTimerIntervalHz() is the handler.
@@ -74,6 +100,10 @@ private:
     RadioModel*      m_model   = nullptr;
     QTreeWidget*     m_tree    = nullptr;
     QStackedWidget*  m_stack   = nullptr;
+
+    // Phase 3J-1 bench fix (2026-05-11): store the TciServer page reference
+    // so setTciServer() can forward to it without a tree-walk lookup.
+    CatTciServerPage* m_tciServerPage = nullptr;
 
     // Phase 8 of #167: PA category nav-tree root + 3 child items, plus
     // the page widgets themselves so applyPaVisibility() can toggle each.

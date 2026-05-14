@@ -4634,6 +4634,36 @@ void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
     QMap<int, QVector<SpotMarker>> overflowGroups;
     constexpr int ClusterBinWidth = 40;  // pixels — spots within this range cluster together
 
+    // Phase 3J-1 closeout follow-up (2026-05-12): one-shot diagnostic
+    // log so the bench operator can verify the per-source mask state
+    // matches the spots being rendered.  Logs once per second of
+    // unique state to avoid spamming the log file.  The mask check
+    // is otherwise unchanged: missing key in m_spotSourceVisible
+    // defaults to visible (true); explicit `false` value hides.
+    static qint64 s_lastSpotMaskLogMs = 0;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!m_spotMarkers.isEmpty() && nowMs - s_lastSpotMaskLogMs > 1000) {
+        QStringList parts;
+        for (auto it = m_spotSourceVisible.constBegin();
+             it != m_spotSourceVisible.constEnd(); ++it) {
+            parts << QString("%1=%2").arg(it.key())
+                                     .arg(it.value() ? "T" : "F");
+        }
+        QStringList sources;
+        for (const auto& s : m_spotMarkers) {
+            if (!s.source.isEmpty() && !sources.contains(s.source)) {
+                sources << s.source;
+            }
+        }
+        // qCInfo so the bench log captures it (lcSpectrum defaults to
+        // QtInfoMsg; qCDebug would be suppressed).  Throttled to once
+        // per second of unique state so it doesn't spam mid-tune.
+        qCInfo(lcSpectrum) << "drawSpotMarkers: mask=" << parts
+                           << "spot.sources=" << sources
+                           << "total=" << m_spotMarkers.size();
+        s_lastSpotMaskLogMs = nowMs;
+    }
+
     for (const auto& spot : m_spotMarkers) {
         // 2026-05-12 bench fix (Gap #7).  Per-source panadapter
         // visibility mask.  Missing key in m_spotSourceVisible defaults

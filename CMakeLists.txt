@@ -408,6 +408,11 @@ set(CORE_SOURCES
     src/core/SupportBundle.cpp
     src/core/RadioDiscovery.cpp
     src/core/RadioConnection.cpp
+    src/core/TciProtocol.cpp
+    src/core/TciSendQueue.cpp
+    src/core/TciVfoCoalescer.cpp
+    src/core/TciBinaryFrame.cpp
+    src/core/TciServer.cpp
     src/core/codec/AlexFilterMap.cpp
     src/core/codec/P1CodecStandard.cpp
     src/core/codec/P1CodecAnvelinaPro3.cpp
@@ -722,6 +727,7 @@ set(GUI_SOURCES
     src/gui/setup/TransmitSetupPages.cpp
     src/gui/setup/AppearanceSetupPages.cpp
     src/gui/setup/CatNetworkSetupPages.cpp
+    src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
     src/gui/diagnostics/RadioStatusPage.cpp
@@ -745,6 +751,8 @@ set(GUI_SOURCES
     src/gui/applets/DvkApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/TunerApplet.cpp
+    src/gui/applets/TciApplet.cpp
+    src/gui/applets/ClientChainApplet.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -1135,6 +1143,17 @@ endif()
 # matches CI.
 # --------------------------------------------------------------------------
 option(NEREUS_USE_PCH "Use precompiled headers to speed up builds" ON)
+# Phase 3J-1 closeout follow-up (2026-05-13): exclude Objective-C++ (.mm)
+# translation units from the PCH.  The PCH is generated as plain C++; an
+# Objective-C++ TU that tries to reuse it errors out with "Objective-C was
+# disabled in precompiled file ... but is currently enabled".  Affects
+# MacMicPermission.mm on macOS.  set_source_files_properties with
+# SKIP_PRECOMPILE_HEADERS bypasses the include for that single file
+# without disabling PCH for the whole target.
+if(APPLE)
+    set_source_files_properties(src/core/MacMicPermission.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
 if(NEREUS_USE_PCH)
     target_precompile_headers(NereusSDRObjs PRIVATE
         # Qt6 core (every model + worker TU)

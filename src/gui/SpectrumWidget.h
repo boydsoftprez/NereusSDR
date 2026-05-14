@@ -982,9 +982,18 @@ public:
     // "SpotCollector", "POTA", "FreeDV", "PSK", "Memory".
     void setSpotSourceVisible(const QString& source, bool visible) {
         const bool current = m_spotSourceVisible.value(source, true);
-        if (current == visible) { return; }
+        // Phase 3J-1 closeout follow-up (2026-05-12): always INSERT the
+        // mask state, even when current==visible.  Previously we'd skip
+        // the insert if the new value matched the default, leaving the
+        // hash empty.  That's fine until a spot arrives later whose
+        // source somehow doesn't match the key string format -- the
+        // mask check m_spotSourceVisible.value(...) falls back to the
+        // default 'true' and shows it.  Always inserting guarantees
+        // the key is present for predictable mask behaviour and avoids
+        // a class of "default-true silently shows" bugs the bench
+        // operator hit with FreeDV spots on 2026-05-12.
         m_spotSourceVisible.insert(source, visible);
-        update();
+        if (current != visible) { update(); }
     }
     bool isSpotSourceVisible(const QString& source) const {
         return m_spotSourceVisible.value(source, true);

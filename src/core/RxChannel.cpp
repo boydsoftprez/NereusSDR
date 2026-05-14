@@ -1496,6 +1496,24 @@ void RxChannel::processIq(float* inI, float* inQ,
     }
 #endif
 
+    // Phase 3J-1 Task 16.2 — TCI audio tap.
+    // Emit post-DSP stereo audio for any TCI clients subscribed via the
+    // TciServer audio binary pipeline (Phase 16 Task 16.3). This fires
+    // after fexchange2 AND all post-DSP NR stages (DFNR, MNR) so the tap
+    // captures the same enhanced audio that flows to AudioEngine.
+    //
+    // Direct-connection only: receivers must copy into their own buffer
+    // (e.g. AudioRingSpsc) before returning — outI/outQ are scratch
+    // buffers owned by RxDspWorker and may be reused on the next chunk.
+    //
+    // srcRate: WDSP RX output rate is always 48000 Hz (set in
+    // WdspEngine::createRxChannel — RadioModel.cpp:1534-1535 [v0.4.0]).
+    // Phase 16 Task 16.3 (TciServer) connects this with Qt::DirectConnection.
+    {
+        constexpr int kWdspRxOutputRate = 48000;
+        emit audioFrameReady(m_channelId, outI, outQ, postCount, kWdspRxOutputRate);
+    }
+
 #else
     // WDSP not available — output silence
     std::memset(outI, 0, sampleCount * sizeof(float));

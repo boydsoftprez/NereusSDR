@@ -18,8 +18,10 @@
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
 //                 Layout mirrors AetherSDR `src/gui/CatApplet.{h,cpp}`
-//                 (serial CAT / rigctl / TCI enable rows + PTT LEDs).
+//                 (serial CAT / rigctld enable rows + PTT LEDs).
 //                 All controls NYI — wired in later phase.
+//   2026-05-10 — Phase 24 (Task 24.1): stripped TCI button row; TCI
+//                 controls now live in TciApplet (Phase 21, 0b615a7).
 // =================================================================
 
 #include "CatApplet.h"
@@ -31,7 +33,6 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
-#include <QLineEdit>
 #include <QComboBox>
 
 namespace NereusSDR {
@@ -45,18 +46,6 @@ static QLabel* makeLed(const QString& name, QWidget* parent)
         "QLabel { background: #405060; color: #c8d8e8; border-radius: 2px;"
         " font-size: 8px; font-weight: bold; }"));
     return led;
-}
-
-static QLineEdit* makePortEdit(const QString& def, int w, QWidget* parent)
-{
-    auto* ed = new QLineEdit(def, parent);
-    ed->setFixedWidth(w);
-    ed->setStyleSheet(QStringLiteral(
-        "QLineEdit {"
-        "  background: %1; border: 1px solid %2;"
-        "  border-radius: 3px; color: %3; font-size: 10px;"
-        "}").arg(Style::kInsetBg, Style::kInsetBorder, Style::kTextPrimary));
-    return ed;
 }
 
 static QLabel* makePathLabel(const QString& text, QWidget* parent)
@@ -78,7 +67,7 @@ void CatApplet::buildUI()
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
-    root->addWidget(appletTitleBar(QStringLiteral("CAT / TCI")));
+    root->addWidget(appletTitleBar(QStringLiteral("CAT")));
 
     auto* body = new QWidget(this);
     auto* vbox = new QVBoxLayout(body);
@@ -130,31 +119,7 @@ void CatApplet::buildUI()
 
     vbox->addWidget(divider());
 
-    // --- Control 3: TCI enable + port + status LED ---
-    {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(4);
-
-        m_tciBtn = greenToggle(QStringLiteral("TCI"));
-        m_tciBtn->setCheckable(true);
-        row->addWidget(m_tciBtn);
-
-        m_tciPort = makePortEdit(QStringLiteral("40001"), 55, this);
-        row->addWidget(m_tciPort);
-
-        m_tciLed = makeLed(QStringLiteral("\u2022"), this);
-        row->addWidget(m_tciLed);
-        row->addStretch();
-
-        vbox->addLayout(row);
-
-        NyiOverlay::markNyi(m_tciBtn,  QStringLiteral("3J"));
-        NyiOverlay::markNyi(m_tciPort, QStringLiteral("3J"));
-    }
-
-    vbox->addWidget(divider());
-
-    // --- Control 4: VAX enable + 4 channel status labels ---
+    // --- Control 3: VAX enable + 4 channel status labels ---
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
@@ -173,7 +138,7 @@ void CatApplet::buildUI()
         NyiOverlay::markNyi(m_vaxBtn, QStringLiteral("3-VAX"));
     }
 
-    // --- Control 5: VAX IQ enable + rate combo ---
+    // --- Control 4: VAX IQ enable + rate combo ---
     {
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
@@ -203,7 +168,7 @@ void CatApplet::buildUI()
 
 void CatApplet::syncFromModel()
 {
-    // NYI — Phase 3K / 3J / 3-VAX
+    // NYI — Phase 3K / 3-VAX
 }
 
 } // namespace NereusSDR

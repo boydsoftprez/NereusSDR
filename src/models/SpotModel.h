@@ -39,8 +39,10 @@
 
 #include <QObject>
 #include <QMap>
+#include <QHash>
 #include <QString>
 #include <QDateTime>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -75,6 +77,33 @@ public:
     void clear();
     void refresh();
 
+    // Phase 3J-1 closeout follow-up (2026-05-12): cross-source spot dedup.
+    //
+    // The 3J-2 port wired every per-source client (DxCluster / RBN /
+    // WSJT-X / SpotCollector / POTA / FreeDV Reporter / PSK Reporter)
+    // to bump `RadioModel::m_nextSpotIndex` for every incoming spot, so
+    // SpotModel never saw a duplicate index and `spotAdded` fired on
+    // EVERY spot, EVERY re-emit, from EVERY source.  Result: same
+    // callsign appears 5-10 times on the spot list within seconds.
+    //
+    // dedupIndexFor(callsign, freqMhz, windowMs) returns:
+    //   - the existing index for (callsign, freqBucket) when within
+    //     windowMs of the previous emit -> caller passes it to
+    //     applySpotStatus, which then emits spotUpdated (not spotAdded);
+    //   - a freshly-minted monotonic index otherwise.
+    //
+    // freqBucket is the freqMhz rounded to the nearest 1 kHz so split-
+    // operating spots (e.g. DX 14.205 vs 14.206) merge to one entry.
+    // Default windowMs of 60 s catches the typical "RBN sends every
+    // CQ" rate without losing the user's ability to see the same
+    // station spotted again hours later as a fresh entry.
+    //
+    // Caller is RadioModel's on*SpotReceived family of handlers.
+    // SpotModel itself remains TCI-keyed: TCI clients drive their own
+    // index allocation and don't go through dedup.
+    int dedupIndexFor(const QString& callsign, double freqMhz,
+                      qint64 windowMs = 60000);
+
 signals:
     void spotAdded(const SpotData& spot);
     void spotUpdated(const SpotData& spot);
@@ -85,6 +114,12 @@ signals:
 
 private:
     QMap<int, SpotData> m_spots;
+
+    // Phase 3J-1 closeout follow-up (2026-05-12): dedup state.
+    // Key:   "<UPPER_CALLSIGN>|<freqBucketKHz>"
+    // Value: <last spot index, last-seen ms epoch>
+    QHash<QString, std::pair<int, qint64>> m_dedupCache;
+    int m_nextDedupIndex{0};
 };
 
 } // namespace NereusSDR

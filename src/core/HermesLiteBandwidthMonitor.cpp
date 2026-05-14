@@ -244,7 +244,23 @@ void HermesLiteBandwidthMonitor::tick()
     const bool ep6Silent = (ep6Bps < 1.0);
     const bool ep2Active = (ep2Bps > 1.0);
 
-    if (ep6Silent && ep2Active) {
+    // Phase 3J-1 closeout Item 10 (2026-05-12): startup grace period.
+    // Before the radio has sent its first ep6 frame, the silent-tick counter
+    // must not advance.  The watchdog fires at ~30 Hz, so three ticks
+    // elapse in ~100 ms -- well before any HL2 firmware can respond to
+    // metis-start with the first frame.  Without this gate the monitor
+    // false-positives on every fresh connect (bench log 2026-05-12 15:38
+    // showed the trip 104 ms after "Connected (metis-start sent)").
+    //
+    // m_inTotalBytes is an atomic counter that recordEp6Bytes() increments
+    // for each datagram, so `> 0` is the canonical "first frame ever seen"
+    // predicate.  No new state variable required; rate computation above
+    // is unaffected (computeBps handles the m_inLastBytes==m_inTotalBytes
+    // delta-zero case correctly).
+    const bool everSawEp6 =
+        (m_inTotalBytes.load(std::memory_order_relaxed) > 0);
+
+    if (ep6Silent && ep2Active && everSawEp6) {
         ++m_silentTicks;
     } else {
         m_silentTicks = 0;

@@ -1,0 +1,127 @@
+# SYNTHETIC GOLDEN — replace before merge with a real ANAN-G2 capture.
+# Generator: TciProtocol::buildInitBurst() with Phase 4 Task 4.2 hardcoded
+# placeholder values (RX1=14250000 USB, RX2 disabled, MOX=false, etc.).
+# Captured: 2026-05-10 (Phase 3J-1 Task 4.3)
+# Thetis comparison version: v2.10.3.13 @501e3f51
+# Replace before final PR merge per docs/superpowers/plans/...phase3j-1...plan.md row 4.3.
+#
+# Capture conditions:
+#   AppSettings TciEmulateExpertSDR3Protocol = False  => protocol:Thetis,2.0;
+#   AppSettings TciEmulateSunSDR2Pro         = False  => device:NereusSDR;
+#   AppSettings TciCwluBecomesCw             = False  => cwl,cwu (no cw suffix)
+#   AppSettings TciSendInitialFrequencyStateOnConnect = True  (bSend=true)
+#   bRX2Enabled = false (Phase 4 placeholder; Phase 6+ wires RadioModel)
+#   rx1FreqHz = 14250000 Hz (20m USB demo value)
+#   rx2FreqHz = 7100000 Hz  (40m USB demo value, in burst even though RX2 disabled)
+#   txFreqHz  = 14250000 Hz
+#   filterLow=200 Hz, filterHigh=2900 Hz (SSB default)
+#   agcMode=normal, agcGain=40
+#   iqSampleRate=192000, audioSampleRate=48000
+#   audioStreamSamples=2048, txStreamBufferingMs=50
+# Total lines: 106 (8 wrapper + 97 body + 1 ready;)
+protocol:Thetis,2.0;
+device:NereusSDR;
+receive_only:false;
+trx_count:2;
+channels_count:2;
+vfo_limits:0,64000000;
+if_limits:-96000,96000;
+modulations_list:AM,SAM,DSB,LSB,USB,NFM,FM,DIGL,DIGU,CWL,CWU;
+dds:0,14250000;
+dds:1,7100000;
+if:0,0,0;
+if:0,1,0;
+if:1,0,0;
+if:1,1,0;
+vfo:0,0,14250000;
+vfo:0,1,14250000;
+vfo:1,0,7100000;
+vfo:1,1,7100000;
+tx_frequency:14250000;
+tx_frequency_thetis:14250000,20m,false,false;
+modulation:0,USB;
+modulation:1,USB;
+rx_filter_band:0,200,2900;
+rx_filter_band:1,200,2900;
+rx_enable:0,true;
+rx_enable:1,false;
+rx_nr_enable:0,false;
+rx_nr_enable:1,false;
+rx_nr_enable_ex:0,false,0;
+rx_nr_enable_ex:1,false,0;
+rx_nb_enable:0,false;
+rx_nb_enable:1,false;
+rx_bin_enable:0,false;
+rx_bin_enable:1,false;
+rx_anf_enable:0,false;
+rx_anf_enable:1,false;
+rx_apf_enable:0,false;
+rx_apf_enable:1,false;
+rx_nf_enable:0,false;
+rx_nf_enable:1,false;
+rx_volume:0,0,0.00;
+rx_volume:0,1,-60.00;
+rx_volume:1,0,0.00;
+rx_volume:1,1,0.00;
+rx_balance:0,0,40.00;
+rx_balance:0,1,40.00;
+rx_balance:1,0,40.00;
+rx_balance:1,1,40.00;
+agc_mode:0,normal;
+agc_mode:1,normal;
+agc_gain:0,40;
+agc_gain:1,40;
+rx_ctun_ex:0,false;
+rx_ctun_ex:1,false;
+tx_profiles_ex:Default;
+tx_profile_ex:Default;
+calibration_ex:0,0.000000,0.000000,0.000000,0.000000,0.000000;
+calibration_ex:1,0.000000,0.000000,0.000000,0.000000,0.000000;
+rit_enable:0,false;
+rit_enable:1,false;
+xit_enable:0,false;
+xit_enable:1,false;
+rit_offset:0,0;
+rit_offset:1,0;
+xit_offset:0,0;
+xit_offset:1,0;
+lock:0,false;
+vfo_lock:0,0,false;
+vfo_lock:0,1,false;
+sql_enable:0,false;
+sql_enable:1,false;
+sql_level:0,-150;
+sql_level:1,-150;
+digl_offset:0;
+digu_offset:0;
+cw_macros_speed:25;
+cw_macros_delay:0;
+cw_keyer_speed:25;
+split_enable:0,false;
+split_enable:1,false;
+tx_enable:0,true;
+tx_enable:1,false;
+rx_channel_enable:0,0,true;
+rx_channel_enable:0,1,false;
+rx_channel_enable:1,0,false;
+rx_channel_enable:1,1,false;
+trx:0,false;
+trx:1,false;
+tune:0,false;
+tune:1,false;
+iq_stop:0;
+iq_stop:1;
+iq_samplerate:192000;
+audio_samplerate:48000;
+audio_stream_sample_type:float32;
+audio_stream_channels:2;
+audio_stream_samples:2048;
+tx_stream_audio_buffering:50;
+mute:false;
+rx_mute:0,false;
+rx_mute:1,false;
+volume:0.0;
+mon_enable:false;
+mon_volume:0.0;
+start;
+ready;

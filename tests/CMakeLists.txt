@@ -2057,6 +2057,29 @@ nereus_add_test(tst_connection_panel_state_pills)
 # NereusSDR-original; no Thetis attribution needed.
 nereus_add_test(tst_app_settings_migration)
 
+# ── Phase 3J-1 closeout Item 7 (2026-05-12): arbitrary-key persistence ───────
+# Pins the contract that AppSettings does NOT purge top-level keys on save/
+# reload, regardless of whether the key matches any "known schema".  Audit of
+# the load/save/setValue/remove code paths found zero filters; this test
+# prevents any future change from accidentally adding one.  Background in
+# docs/architecture/2026-05-12-phase3j-1-loose-ends-plan.md Item 7.
+nereus_add_test(tst_app_settings_arbitrary_key_persistence)
+
+# ── Phase 3J-1 closeout Item 3 (2026-05-12): production Q_INVOKABLE shims ───
+# 18 category-level tests invoking the new RadioModel shims via
+# QMetaObject::invokeMethod (the same path TciProtocol uses in production),
+# verifying each routes to the right SliceModel property / RadioModel field.
+# Matrix-test parity against TestMockRadioModel is covered separately by
+# tst_tci_matrix_runner -- this file pins the PRODUCTION-side wiring.
+nereus_add_test(tst_tci_radio_model_shims)
+
+# ── Phase 3J-1 closeout Item 4 (2026-05-12): per-(band, mode) filter ────────
+# Pins the contract that SliceModel::setDspMode saves the current filter
+# under (currentBand, OLD mode) and restores from (currentBand, NEW mode)
+# instead of slamming defaultFilterForMode.  Mirrors Thetis preset[m].
+# LastFilter (console.cs:14653-14671 [v2.10.3.13]).
+nereus_add_test(tst_slice_filter_per_band_per_mode_persistence)
+
 # ── Issue #241: settings file crash-safety + corruption recovery ─────────────
 # 8 tests covering atomic save (QSaveFile), .bak rotation, leading-NUL
 # corruption recovery, mid-stream XML parse-error recovery, no-.bak fallback
@@ -4061,6 +4084,150 @@ target_compile_definitions(tst_step_att_cross_thread PRIVATE NEREUS_BUILD_TESTS)
 # Thetis source: networkproto1.c:657-666 [v2.10.3.13] case 16.
 nereus_add_test(tst_p1_bank16_pursignal_run)
 target_compile_definitions(tst_p1_bank16_pursignal_run PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3J-1 Task 2.1: TciServer + ClientSession lifecycle ─────────────────
+# 3 tests: start/listen/signal, double-start rejection, stop/clear.
+# Gated on Qt6WebSockets_FOUND — TciServer.h/.cpp are #ifdef HAVE_WEBSOCKETS.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_server_lifecycle)
+    target_link_libraries(tst_tci_server_lifecycle PRIVATE Qt6::WebSockets)
+
+    # Phase 3J-1 Task 2.2: server-driven 20s ping with payload "Thetis"
+    nereus_add_test(tst_tci_server_ping)
+    target_link_libraries(tst_tci_server_ping PRIVATE Qt6::WebSockets)
+
+    # Phase 3J-1 Task 3.2: silent-error invariant
+    nereus_add_test(tst_tci_silent_error_invariant)
+    target_link_libraries(tst_tci_silent_error_invariant PRIVATE Qt6::WebSockets)
+endif()
+
+# ── Phase 3J-1 Task 16.3 (sub-commit a): TciBinaryFrame encode ───────────────
+# Tests buildStreamPayload + encodeSamples byte-for-byte parity with
+# Thetis TCIServer.cs:5240-5305 [v2.10.3.13].
+# Transport-blind: no Qt6WebSockets dependency.
+nereus_add_test(tst_tci_binary_frame)
+
+# ── Phase 3J-1 Task 16.3 (sub-commit b): WDSP resampler lifecycle ─────────────
+# Verifies per-(client, slice) create_resampleFV lifecycle:
+#   subscribe → 1; second client subscribes same slice → 2;
+#   first unsubscribes → 1; server stop → 0.
+# Gated on Qt6WebSockets_FOUND (TciServer requires HAVE_WEBSOCKETS).
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_resampler_lifecycle)
+    target_link_libraries(tst_tci_resampler_lifecycle PRIVATE Qt6::WebSockets)
+endif()
+
+# ── Phase 3J-1 Task 16.4: PCM round-trip integration test ─────────────────────
+# Spins up a real TciServer + real QWebSocket client, subscribes to audio for
+# slice 0, injects 250ms of synthetic 1 kHz sine via the test-only
+# injectAudioFrameForTest hook, then asserts the client receives ≥ 1 binary
+# frame with streamType==1 (RX_AUDIO_STREAM), a valid 64-byte LE header, and a
+# decoded Float32 payload with peak amplitude ≥ 0.5.  Validates the Phase 16.2
+# AudioRingSpsc + Phase 16.3 drain timer + TciBinaryFrame pipeline end-to-end.
+# Gated on Qt6WebSockets_FOUND (TciServer requires HAVE_WEBSOCKETS).
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_audio_roundtrip)
+    target_link_libraries(tst_tci_audio_roundtrip PRIVATE Qt6::WebSockets)
+endif()
+
+# ── Phase 3J-1 Task 18.1: IQ binary stream pipeline + IQSwap + AlwaysStreamIQ ──
+# Spins up a real TciServer + real QWebSocket client, subscribes to IQ for
+# slice 0, injects synthetic I/Q via the test-only injectRawIqForTest hook,
+# then asserts the client receives ≥ 1 binary frame with streamType==0
+# (IQ_STREAM) and a valid 64-byte LE header.  Validates the Phase 18 IQ tap,
+# wantsIQStream early-out, IQSwap flag, and AlwaysStreamIQ override.
+# From Thetis TCIServer.cs:5397-5435 + 6111 [v2.10.3.13].
+# Gated on Qt6WebSockets_FOUND (TciServer requires HAVE_WEBSOCKETS).
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_iq_roundtrip)
+    target_link_libraries(tst_tci_iq_roundtrip PRIVATE Qt6::WebSockets)
+endif()
+
+# ── Phase 3J-1 Task 17.1: TX audio binary pipeline + single-client mutex ──────
+# Tests: TX mutex acquire/release, active-client-frame-lands, non-active-client-
+# frame-dropped (ring invariant).
+# Gated on Qt6WebSockets_FOUND (TciServer requires HAVE_WEBSOCKETS).
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_tci_tx_mutex)
+    target_link_libraries(tst_tci_tx_mutex PRIVATE Qt6::WebSockets)
+endif()
+
+# ── Phase 3J-1 Task 1.1: TCI verification matrix runner ──────────────────────
+# Loads tests/data/tci/matrix.csv and feeds each row's command into
+# TciProtocol::handleCommand(), asserting the response + notification queue
+# match the expected columns. Passes vacuously until Phase 5 adds data rows.
+# SETUP:Key=Value;;command convention: SETUP: segments apply AppSettings
+# preconditions before the actual command (final ";;" segment) is dispatched.
+nereus_add_test(tst_tci_matrix_runner TestMockRadioModel.cpp)
+target_compile_definitions(tst_tci_matrix_runner PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# ── Phase 3J-1 Task 14.1: TciSendQueue priority queues (pure logic, no WebSockets) ──
+# Verifies: drain order (Urgent > Binary > Control > FIFO within tier),
+# bounded-overflow oldest-drop semantics, and multi-thread push/pop safety.
+# Transport-blind: no Qt6WebSockets dependency.
+nereus_add_test(tst_tci_priority_queues)
+
+# ── Phase 3J-1 Task 15.1: TciVfoCoalescer (pure logic, no WebSockets) ────────
+# Layer 3 outbound-coalesced map per Thetis TCIServer.cs:1722-1727 [v2.10.3.13].
+# Verifies: latest-wins replacement, arrival-order drain, 200-update burst
+# collapses to 1 per key, clear() drops without emitting.
+# Transport-blind: no Qt6WebSockets dependency.
+nereus_add_test(tst_tci_vfo_coalescer)
+
+# ── Phase 3J-1 Task 10: TCI volume dB math (pure logic, no WebSockets) ───────
+# Tests tciLinearToDbVolume / tciDbToLinearVolume from TciVolume.h.
+# Port of Thetis TCIServer.cs:4110-4132 [v2.10.3.13] linearToDbVolume /
+# dbToLinearVolume. Test-impl bundle — both TciVolume.h and this test land
+# in the same commit.
+nereus_add_test(tst_tci_volume_db)
+
+# ── Phase 3J-1 Task 19.1: TciSensorManager wire formats + interval aggregation ──
+# Tests the 4 formatXxx helpers and minimumRequiredInterval from TciSensorManager.h.
+# Port of Thetis TCIServer.cs:2314-2332 [v2.10.3.13] sendRxSensors /
+# sendRxChannelSensors / sendTxSensors and clsTCISensorManager clampIntervalMs /
+# MinimumRequiredRxSensorInterval / MinimumRequiredTxSensorInterval.
+# Pure logic: no WebSockets dependency.
+nereus_add_test(tst_tci_sensor_formats)
+
+# ── Phase 3J-1 Task 3.1: TciProtocol dispatch seam ────────────────────────────
+# Verifies two-switch routing: query path (no ':'), set path (with ':'), silent-
+# error invariant for unknown commands, and trailing-';' stripping. Transport-
+# blind: no Qt6WebSockets dependency.
+# TestMockRadioModel.cpp provides the moc vtable for the QObject-derived mock.
+nereus_add_test(tst_tci_dispatch_seam TestMockRadioModel.cpp)
+
+# ── Phase 3J-1 Task 4.1: TciProtocol init burst smoke ──────────────────────
+# Verifies buildInitBurst() returns non-empty, first entry starts with
+# "protocol:", and last entry equals "ready;". Strict byte-for-byte assertions
+# live in Phase 4 Task 4.3 golden file. Transport-blind: no Qt6WebSockets
+# dependency.
+nereus_add_test(tst_tci_init_burst_smoke TestMockRadioModel.cpp)
+
+# ── Phase 3J-1 Task 4.2: typo-divergence test ────────────────────────────────
+# Verifies that our init burst emits BOTH if:1,0,...; AND if:1,1,...; (the
+# intended cross-product), whereas Thetis TCIServer.cs:2374-2375 [v2.10.3.13]
+# mistakenly calls sendIF(1,1) twice. Exactly one if:1,1 line must be present.
+nereus_add_test(tst_tci_init_burst_typo_divergence TestMockRadioModel.cpp)
+
+# ── Phase 3J-1 Task 4.3: init burst golden file + CI assertion ────────────────
+# Compares buildInitBurst() output against the synthetic golden file at
+# tests/data/tci/init_burst_anan_g2_rx1.txt (SYNTHETIC — replace before merge
+# with a real ANAN-G2 capture per Phase 26 Task 26.4).
+# Strict-protocol prefixes (protocol: trx_count: channels_count:
+# modulations_list: receive_only: ready;) are compared byte-for-byte.
+# Radio-identifying fields (device: vfo: dds: if: tx_frequency:
+# tx_frequency_thetis:) are compared loosely (prefix-only).
+nereus_add_test(tst_tci_init_burst_golden TestMockRadioModel.cpp)
+target_compile_definitions(tst_tci_init_burst_golden PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# ── Phase 3J-1 closeout Item 2: TciLogWindow append + filter + clear + pause ──
+# Verifies the log view widget honors direction filter, pause toggle, and
+# clear button.  Headless: never show()s the dialog -- Qt's off-screen
+# platform exercises QPlainTextEdit just fine.  Source comes from NereusSDRObjs
+# (which the macro already links) so no extra source arg is needed.
+nereus_add_test(tst_tci_log_window)
 
 # ── Phase 3J-2 Task B1: SpotCollectorClient DX-line parser ──────────────────
 # Pins the contract that SpotCollectorClient parses the standard DXLab

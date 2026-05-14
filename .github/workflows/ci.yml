@@ -243,6 +243,36 @@ jobs:
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
             libxcb-xinerama0 libxcb-xkb1
 
+      # Free up disk space on the Linux runner. ubuntu-24.04 ships with
+      # ~75 GB total, but ~25 GB is consumed by pre-installed Android
+      # SDK / .NET / GHC / unused hosted-tool-cache entries.  Phase
+      # 3J-1 closeout pushed the total link-time on-disk footprint
+      # past the remaining free budget: 451 test executables each
+      # linking against NereusSDRObjs (~700 MB stripped, much larger
+      # with debug info) plus the vendored RADE neural-codec tree.
+      # Run #25835957362 died mid-link with "No space left on
+      # device" and the log blob got truncated before upload finished.
+      #
+      # Removes the canonical no-cost paths from the actions/runner-
+      # images known-issue:
+      #   https://github.com/actions/runner-images/issues/2840
+      # ~25 GB recovered, verified by `df -h` in the action output.
+      - name: Free up disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "── Before cleanup ──"
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache/PyPy
+          sudo rm -rf /opt/hostedtoolcache/Ruby
+          sudo rm -rf /opt/hostedtoolcache/go
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "── After cleanup ──"
+          df -h /
+
       - name: Install Qt (Linux)
         if: runner.os == 'Linux'
         uses: jurplel/install-qt-action@v4
