@@ -1,19 +1,68 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-05-13
 
 > [!NOTE]
-> **A substantial 0.4.x point release on top of v0.4.0 / v0.4.1-rcN.** Two epics + an extended bench-fix tail land together: Phase 3J-2 (the full spot system + FreeDV Reporter + PSK Reporter), Phase 3R (RADE as a true peer mode, including end-to-end TX), and ~16 wire / parser / UX gap fixes that surfaced during on-air bench testing. ~70 commits across the `claude/elegant-liskov-73ad75` branch since v0.4.0 ship. Version number + tag will be picked by the `/release` skill at release time.
+> **A substantial minor release on top of v0.4.0.** Three epics + a bench-fix tail land together. (The earlier `v0.4.1-rcN` tags were bench-diagnostic builds that never shipped as a final v0.4.1.)
 >
-> 1. **Phase 3J-2 (Spot system + FreeDV Reporter + PSK Reporter).** 7 spot-source clients (DX cluster + RBN + WSJT-X UDP + SpotCollector / DXLab UDP + POTA HTTPS + FreeDV Reporter Socket.IO + PSK Reporter IPFIX). Two new modeless dialogs: SpotHubDialog (Tools > Spot Hub, Ctrl+Shift+S, 10 tabs covering Settings + per-source views + unified Spot List with band + source pill filters + a Display knobs tab) and FreeDVReporterDialog (Tools > FreeDV Reporter, Ctrl+Shift+R, 14-column live station view with TX/RX highlights, QSY support, MRU status messages, and 2-hour idle auto-removal). DXCC color priority via cty.dat + ADIF worked-status 4-tier resolver. Panadapter overlay renders spots with collision-avoidance multi-level stacking and `+N` cluster badges; click-to-tune snaps the active slice to the spot frequency. Hover tooltips, right-click context menu (Tune / Copy Callsign / Lookup on QRZ / Remove Spot), bidirectional Spot-List ↔ panadapter hover sync, per-source panadapter visibility toggles. Auto-connect restore on app launch (`RadioModel::restoreSpotClientAutoStartState`).
-> 2. **Phase 3R (RADE as a true peer mode, RX + TX end-to-end).** RADE is wired as a first-class DSP mode (`DSPMode::RADE_U` / `DSPMode::RADE_L`), not as a DIGU pretense or a virtual audio bus or a slice-mute hack. RX: mode dispatch swaps RxChannel for a new RadeChannel; band changes inside RADE keep the channel alive; speech decodes through librade and reaches AudioEngine; a mode-aware SNR row lands on the VFO flag and shows the EOO-decoded speaker callsign when known. TX: TxWorkerThread semaphore-wake pump feeds the RADE encoder, `sendTxIq` carries the 24 kHz stereo modem output, and TUNE in RADE mode routes through the WDSP modulator. RadeApplet docks in the right column when RADE is active. The earlier draft K-bench deferral is retired — RADE TX confirmed end-to-end on ANAN-G2 via on-air decode at remote receivers.
-> 3. **Bench-fix tail.** 16 distinct wire / parser / UX gaps closed (first-MOX audio-volume seed, spot dialog → client wiring x10, DXSpider parser, SpotModel → panadapter bridge, SpotTableModel ownership relocation, UI feedback on every spot tab, PSK Reporter source-first port, 10-gap spot-overlay closure against AetherSDR audit, FreeDV Reporter 4 missing features, distance/heading wiring, row-highlight vs selection fix, message push on Socket.IO ACK, VFO freq-publish throttle, RADE callsign on flag, first-time setup UX). All ported source-first from upstream where applicable.
+> 1. **Phase 3J-1: TCI v2.0 WebSocket server.** External programs (WSJT-X, JTDX, FreeDV, Quisk, ESDR3, N1MM, Log4OM, contest software) can now drive NereusSDR over Thetis-compatible TCI. Setup -> CAT/Network -> TCI Server configures bind interface + port + sensor intervals; Tools -> TCI Server opens the log viewer; the bottom-bar TCI indicator shows Disabled / Listening / Connected / Error. 62 dispatch commands across 8 families. Binary audio pipeline negotiates 8 / 12 / 16 / 44.1 / 48 kHz client rates with per-stream resampling, so FreeDV 8 kHz / Quisk / JTDX 12 kHz all work end-to-end. Init burst is byte-for-byte parity with Thetis (~98 wire frames). 15 closeout items shipped after the initial port stabilized the on-bench behaviour against real clients.
+> 2. **Phase 3J-2: Spot system + FreeDV Reporter + PSK Reporter.** Seven spot-source clients in one dialog: DX cluster, RBN, WSJT-X UDP, SpotCollector / DXLab UDP, POTA HTTPS, FreeDV Reporter Socket.IO, PSK Reporter IPFIX. Tools -> Spot Hub (Ctrl+Shift+S) opens a 10-tab modeless dialog (Settings + per-source views + unified Spot List + Display knobs). Tools -> FreeDV Reporter (Ctrl+Shift+R) opens the 14-column live station view with TX/RX highlights, QSY, status messages, and 2-hour idle auto-removal. Spots render on the panadapter with collision-avoidance stacking and click-to-tune; DXCC coloring resolves through cty.dat plus the operator's ADIF log.
+> 3. **Phase 3R: RADE as a true peer mode (RX + TX end-to-end).** RADE is wired as a first-class DSP mode (`DSPMode::RADE_U` / `DSPMode::RADE_L`), not a DIGU pretense or a virtual audio bus or a slice-mute hack. RX swaps RxChannel for a dedicated RadeChannel; speech decodes through librade and reaches AudioEngine. The VFO flag gains a mode-aware SNR row and shows the EOO-decoded speaker callsign when known. TX runs end-to-end: TxWorkerThread feeds the RADE encoder and `sendTxIq` carries the 24 kHz stereo modem output. RadeApplet docks in the right column when RADE is the active mode. Confirmed on-air on ANAN-G2 via remote receivers; the earlier K-bench deferral is retired.
+> 4. **Bench-fix tail.** Wire / parser / UX gaps that surfaced when the 3J-1 + 3J-2 + 3R drafts hit real radios, real DX clusters, real WSJT-X feeds, and real WSJT-X TCI cycles. Highlights: first-MOX audio-volume seed, ten missing spot-client lifecycle wires, the DXSpider parser, FreeDV Reporter row-highlight / Socket.IO ACK message push / VFO freq-publish throttle, RADE callsign on the flag + idle-clear timer, and cross-source spot dedup via `SpotModel::dedupIndexFor`. Detail in the per-section bullets below.
 
 > [!IMPORTANT]
 > **Existing users: no action required.** Saved radios, mic profiles, DSP settings, container layout, spectrum / waterfall settings all carry forward. The new RADE factory profile (Profile #22) appears automatically alongside existing profiles. Spot system identity / connection keys default to inactive on first launch (no auto-connect until the user enables it).
 
 > [!NOTE]
 > **Binary size impact.** Vendoring `radae_nopy` + Opus (LPCNet + FARGAN) under `third_party/rade/` adds roughly 9 MB to the binary on every platform. Neural-net weights are compiled into librade so no external model file ships and no post-install model-download step is needed.
+
+### Phase 3J-1: TCI v2.0 WebSocket server
+
+Thetis-faithful port of the Transceiver Control Interface, so external programs can drive NereusSDR RX/TX over a WebSocket. Ported source-first from Thetis `v2.10.3.13 @501e3f51`, with AetherSDR informing the Qt6 class structure. The 9 documented divergences from upstream live in the design doc's §7 ledger.
+
+**Server core (`src/core/tci/`):**
+- 8 new classes: `TciServer` (lifecycle + listen socket + bind-interface), `TciProtocol` (text command dispatch), `TciClientSession` (per-client state), `TciBinaryFrame` (RX audio / TX audio / IQ framing), `TciSensorManager` (RX S-meter + TX power/SWR fan-out with per-client aggregation), `TciVfoCoalescer` (Layer-3 wheel-spin collapse), `TciSendQueue` (3-priority: status / sensor / spectrum), `TciVolume` (gain control mapped to pre-TXA / pre-resample scalars).
+- 62 dispatch commands across 8 families: session, VFO, filter, tune, audio, IQ, settings, spot. Selected examples: `protocol`, `iam`, `start`, `stop`, `close`, `vfo`, `mode`, `rit_offset`, `xit_offset`, `rx_filter_band`, `tx_filter_band`, `tune`, `mox`, `trx`, `audio_start`, `audio_samplerate`, `rx_audio_compression`, `iq_start`, `iq_samplerate`, `iq_swap`, `split_enable`, `agc_mode`, `volume`, `cw_pitch`, `keyer_speed`, `spot`, `spot_delete`, `spot_clear`, `spot_drx`.
+- 3-priority send queue keeps status replies ahead of bursty sensor or spectrum traffic.
+- Layer-3 VFO coalescer collapses wheel-acceleration spins (100+ ticks/sec) into one `vfo:` event per dwell window. Ported from Thetis `TCIVfoCoalescer.cs:1-200 [v2.10.3.13]`.
+- Init burst is byte-for-byte parity with Thetis (~98 wire frames) modulo one documented typo fix in §7.
+
+**Binary streams:**
+- **RX audio:** TCI clients negotiate 8 / 12 / 16 / 44.1 / 48 kHz. Non-48 kHz clients get a per-stream WDSP resampler, so FreeDV 8 kHz, Quisk, and JTDX 12 kHz all work end-to-end. Mirrors Thetis `cmaster.cs:1411-1444 [v2.10.3.13]`.
+- **TX audio:** single-client mutex (a second client trying to push TX gets a `tx_busy:` reply). Cross-thread dispatch from `TciClientSession::onBinaryFrame` to `TxWorkerThread::feedTxAudioFromTci`, ring-buffered so burst producers match the steady WDSP consumer.
+- **IQ stream:** IQSwap toggle (some clients expect Q+I order) and AlwaysStreamIQ option (stream IQ even when no client has called `iq_start`; useful for spectrum-fed external decoders).
+
+**UI surfaces:**
+- **Setup -> CAT/Network -> TCI Server** page: 6 group boxes covering enable / bind interface / port / TX-stream audio buffering / IQ swap / AlwaysStreamIQ / per-RX sensor interval / TX sensor interval / log window.
+- **Tools -> TCI Server** opens the modeless `TciLogWindow` viewer (filter + pause + clear + autoscroll, persisted geometry).
+- **View -> Network Applets** toggles the `TciApplet` (Slice A meter + TX peak meter + TX/RX gain sliders) and `ClientChainApplet` (per-client bytes-in / bytes-out / state pill) docks.
+- **Bottom-bar TCI indicator** (`m_tciIndicator`): 4 states (Disabled / Listening / Connected (N clients) / Error).
+
+**Verification harness:**
+- ~80 rows in `tests/data/tci/matrix.csv` driven by `tests/tst_tci_protocol_matrix.cpp`; generator at `tools/gen-tci-matrix-readme.py`. Every (command, args, expected reply) tuple exercised.
+- 18 TCI ctest binaries total.
+
+**15 closeout items** shipped after the initial port hit real clients on a real bench (`docs/architecture/2026-05-12-phase3j-1-loose-ends-plan.md`). Grouped by theme:
+
+*Client compatibility:*
+- **(3) `RadioModel` `Q_INVOKABLE` long tail.** 56 production shims (`setMode`, `setFrequency`, etc.) exposed for ESDR3 / N1MM / Log4OM. 18 category-level tests in `tst_tci_radio_model_shims`.
+- **(8) TX-path resampling for non-48 kHz clients.** FreeDV 8 kHz, Quisk 12 kHz, JTDX 12 kHz all play correctly through `TxWorkerThread`'s polyphase resampler.
+- **(1) Bind-interface dropdown.** `QNetworkInterface::allInterfaces()` enumeration with LAN-exposure warning tooltip; replaces the locked-loopback label. Live restart on bind/port change.
+- **(6) CW pitch from AppSettings.** 3 `SliceModel` sites read `CW/SidetonePitch` instead of the previous hard-coded 600 Hz.
+- **(5) `tx_stream_audio_buffering`** honored from AppSettings (`TciTxStreamBufferingMs`, default 200 ms, range 50..2000 ms).
+- **(4) Per-(band, mode) `LastFilter` persistence.** Mirrors Thetis `preset[m].LastFilter` via a new `bandModePrefix` namespace under `Slice<N>/Band<key>/Mode<key>/`. Reverts the DIGU/DIGL F1 (3 kHz) workaround back to the F5 (1.2 kHz) default now that filter choices stick per (band, mode).
+
+*Operator-facing polish:*
+- **(2) `TciLogWindow` viewer.** Modeless QDialog wired to `TciServer::messageLogged` firehose signal; filter + pause + clear + autoscroll + persisted geometry.
+- **(13) Real audio-peak level meters** on TciApplet (replaces the fake sine-wave placeholder from the initial port).
+- **(15) Real RX S-meter + TX power/SWR sensor values** from `RxChannel::getMeter` / `RadioStatus`.
+- **(14) MOX-gated TX sensor broadcast.** TX power / drive / SWR sensors stream only while `mox=1`; matches Thetis behaviour (was always-on in the initial port).
+- **(11)/(12) TCI gain sliders** wired: TX gain as a pre-TXA scalar, slice-A RX gain as a pre-resample scalar.
+
+*Stability:*
+- **(9) `QPointer<RadioModel>` shutdown-crash fix.** TciServer now survives child-destruction-order races on app exit; previously a partially-destroyed RadioModel raced teardown.
+- **(10) HL2 bandwidth-monitor startup grace.** No false-trip during legitimate connect-time ep6 silence on HL2; the throttle detector grants the first ~2 s of connection a clean slate.
+- **(7) Settings-purge regression pin.** `tst_app_settings_arbitrary_key_persistence` (4 subtests) confirms no purge mechanism exists and keeps it that way.
 
 ### Phase 3J-2: Spot system + FreeDV Reporter + PSK Reporter
 
@@ -92,7 +141,7 @@ Gaps surfaced when the 3J-2 + 3R drafts hit a real radio + a real DX cluster + a
 ### Deferred / known limitations
 
 - **HL2 RADE bench verification** is gated on closure of the HL2 ATT/filter safety audit. Row 9 of the Phase 3R bench matrix is tagged Deferred until the audit signs off.
-- **RADE multi-slice** (RADE on slice A while SSB on slice B) is exploratory at the next 0.4.x release; full coverage waits on Phase 3F multi-panadapter. Row 12 of the Phase 3R bench matrix is tagged Deferred.
+- **RADE multi-slice** (RADE on slice A while SSB on slice B) is exploratory in v0.5.0; full coverage waits on Phase 3F multi-panadapter. Row 12 of the Phase 3R bench matrix is tagged Deferred.
 - **RADE TX produces a DSB modulation** (I = real-valued modem baseband, Q = 0).  The receiver-side correlator in RADE syncs on its kernel regardless of sideband presentation so the link decodes either way, but constructing a proper analytic (Hilbert-transformed) baseband to get a true single-sideband presentation that matches the RADE_U / RADE_L mode selection is a follow-up DSP refinement.
 
 ### Vendored
@@ -106,7 +155,7 @@ Gaps surfaced when the 3J-2 + 3R drafts hit a real radio + a real DX cluster + a
 - `docs/architecture/phase3j2-verification/README.md`: 11-row bench matrix covering DX cluster, RBN, WSJT-X UDP, SpotCollector, POTA, FreeDV Reporter (14-col view + TX/RX highlights + QSY + status messages + idle auto-delete), PSK Reporter, DXCC coloring with real ADIF, panadapter collision avoidance, auto-connect restore, Display knob round-trip.
 - `docs/architecture/phase3r-verification/README.md`: 12-row bench matrix covering RADE RX, RADE TX (K-bench follow-up gated), TX preset routing, mode dispatch round-trip, mode dispatch across band change, VfoWidget SNR row, RadeApplet behaviour, Mode menu entry, HL2 RADE (HL2 audit gated), TX-on-RADE PA safety, DEXP/VOX interaction, single-RX multi-slice limitations.
 
-All non-deferred rows must pass before next 0.4.x release is tagged. Failed rows produce GitHub issues on the NereusSDR repo and block the final tag.
+All non-deferred rows must pass before v0.5.0 is tagged. Failed rows produce GitHub issues on the NereusSDR repo and block the final tag.
 
 ### Design / plan reference
 

@@ -89,6 +89,77 @@ set_target_properties(opus PROPERTIES
     IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libopus${CMAKE_STATIC_LIBRARY_SUFFIX}"
 )
 
+elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
+
+# NereusSDR vendored patch (macOS single-arch cross-compile):
+# release.yml does NOT set BUILD_OSX_UNIVERSAL — each macOS row
+# builds for a single arch (matrix.arch ∈ {x86_64, arm64}) and
+# passes -DCMAKE_OSX_ARCHITECTURES=<arch>. The plain autotools
+# `else` branch below ignores CMAKE_OSX_ARCHITECTURES, so on the
+# macos-15 (arm64) runner the Intel row produced arm64 Opus
+# objects and the NereusSDR link failed with
+#   "ignoring file libopus.a: found arch 'arm64', required 'x86_64'"
+# Pass --host/--target plus CFLAGS=-arch X to autoconf so Opus
+# builds for the requested arch regardless of runner host arch.
+# Mirrors the per-arch CONFIGURE_COMMAND extension that the
+# `APPLE AND BUILD_OSX_UNIVERSAL` branch uses for its two
+# sub-builds. See Task A2 of phase3j2-3r-spots-and-rade-design.md.
+#
+# Gate uses bare `CMAKE_OSX_ARCHITECTURES` (truthy-test) rather than
+# `DEFINED CMAKE_OSX_ARCHITECTURES` so an empty-string value (ci.yml
+# does not pass -DCMAKE_OSX_ARCHITECTURES, leaving it defined-but-empty)
+# falls through to the plain autotools `else` branch instead of
+# hitting the FATAL_ERROR below.
+
+list(LENGTH CMAKE_OSX_ARCHITECTURES _osx_arch_count)
+if(_osx_arch_count GREATER 1)
+    message(FATAL_ERROR
+        "BuildOpus.cmake: multi-arch CMAKE_OSX_ARCHITECTURES (${CMAKE_OSX_ARCHITECTURES}) "
+        "requires BUILD_OSX_UNIVERSAL=ON path; got single-arch path. Set BUILD_OSX_UNIVERSAL "
+        "or pick a single arch.")
+endif()
+
+if(CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+    set(_opus_host_triple "x86_64-apple-darwin")
+elseif(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+    set(_opus_host_triple "aarch64-apple-darwin")
+else()
+    message(FATAL_ERROR "BuildOpus.cmake: unsupported CMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
+endif()
+
+if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+endif()
+
+set(_opus_binary_dir ${CMAKE_CURRENT_BINARY_DIR}/build_opus-prefix/src/build_opus)
+set(_opus_static_lib ${_opus_binary_dir}/.libs/libopus${CMAKE_STATIC_LIBRARY_SUFFIX})
+
+ExternalProject_Add(build_opus
+    DOWNLOAD_EXTRACT_TIMESTAMP NO
+    BUILD_IN_SOURCE 1
+    PATCH_COMMAND sh -c "patch dnn/nnet.h < ${CMAKE_CURRENT_LIST_DIR}/../src/opus-nnet.h.diff"
+    CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
+        --host=${_opus_host_triple}
+        --target=${_opus_host_triple}
+        CFLAGS=-arch\ ${CMAKE_OSX_ARCHITECTURES}\ -O2\ -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}
+    BUILD_COMMAND make
+    BUILD_BYPRODUCTS ${_opus_static_lib}
+    INSTALL_COMMAND ""
+    URL ${OPUS_URL}
+)
+
+ExternalProject_Get_Property(build_opus BINARY_DIR)
+ExternalProject_Get_Property(build_opus SOURCE_DIR)
+add_library(opus STATIC IMPORTED)
+add_dependencies(opus build_opus)
+
+set_target_properties(opus PROPERTIES
+    IMPORTED_LOCATION "${_opus_static_lib}"
+    IMPORTED_IMPLIB   "${_opus_static_lib}"
+)
+
+include_directories(${SOURCE_DIR}/dnn ${SOURCE_DIR}/celt ${SOURCE_DIR}/include ${SOURCE_DIR})
+
 elseif(WIN32)
 
 # NereusSDR vendored patch (Windows): bypass autotools, use Opus's

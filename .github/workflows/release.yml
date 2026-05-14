@@ -214,6 +214,27 @@ jobs:
           mkdir -p AppDir/usr/share/doc/NereusSDR/rnnoise
           cp third_party/rnnoise/LICENSE          AppDir/usr/share/doc/NereusSDR/rnnoise/
 
+      - name: Stage librade for AppImage packaging
+        run: |
+          # The vendored RADE library (third_party/rade/src/CMakeLists.txt
+          # ports radae_nopy at b289102) builds librade.so.0.1 into the
+          # CMake build tree but has no install() declaration, so
+          # `cmake --install` (Install to AppDir, above) does not copy
+          # it into AppDir/usr/lib/. linuxdeploy then cannot resolve the
+          # librade.so.0.1 SONAME when tracing NereusSDR's ELF deps and
+          # bails with: ERROR: Could not find dependency: librade.so.0.1.
+          # Stage the library and both symlinks (librade.so, librade.so.0)
+          # so linuxdeploy's dep tracer finds them. Preserve symlinks
+          # (cp -P) so the SONAME chain stays intact.
+          mkdir -p AppDir/usr/lib
+          find build/third_party/rade -maxdepth 4 -name 'librade.so*' -exec cp -P {} AppDir/usr/lib/ \;
+          if ! ls AppDir/usr/lib/librade.so* >/dev/null 2>&1; then
+            echo "ERROR: librade.so* not found in build tree after staging" >&2
+            find build -name 'librade.so*' >&2
+            exit 1
+          fi
+          ls -l AppDir/usr/lib/librade.so*
+
       - name: Build AppImage
         env:
           LDAI_OUTPUT: NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.AppImage

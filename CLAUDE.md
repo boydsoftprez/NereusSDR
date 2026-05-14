@@ -323,7 +323,7 @@ WDSP source is in `third_party/wdsp/` (TAPR v1.29 + linux_port.h for cross-platf
 FFTW3: system package on Linux/macOS, pre-built DLL on Windows (`third_party/fftw3/`).
 First run generates FFTW wisdom (~15 min). Cached in `~/.config/NereusSDR/` for subsequent launches.
 
-Current version: **0.4.1** (set in `CMakeLists.txt`; tagged pre-releases use `vX.Y.Z-rcN` suffix). The pending Phase 3J-2 + 3R + bench-fix work targets the next 0.4.x release; the exact version is picked by the `/release` skill at release time.
+Current version: **0.5.0** (set in `CMakeLists.txt`; tagged pre-releases use `vX.Y.Z-rcN` suffix). 3M-2 CW TX is the next major epic; the exact version of the next release is picked by the `/release` skill at release time.
 
 ---
 
