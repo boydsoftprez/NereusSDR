@@ -745,6 +745,20 @@ jobs:
             Write-Error "deepfilter.dll missing from third_party\deepfilter\lib\windows-x86_64\ — Windows artifact would ship broken (DFNR will crash at load)"
             exit 1
           }
+          # rade.dll: librade SHARED library produced by third_party/rade.
+          # NereusSDR.exe load-time imports it via __declspec(dllimport),
+          # so without rade.dll on the DLL search path the .exe fails to
+          # launch with "rade.dll was not found". windeployqt only resolves
+          # Qt DLLs, so this non-Qt dep must be staged by hand. v0.5.0
+          # shipped without this stanza and the Windows installer was
+          # broken; never again.
+          $radeDll = "build\third_party\rade\src\rade.dll"
+          if (Test-Path $radeDll) {
+            Copy-Item $radeDll deploy\
+          } else {
+            Write-Error "rade.dll missing from build\third_party\rade\src\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'rade.dll was not found')"
+            exit 1
+          }
           # Copy third-party license notices + both root license files
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.

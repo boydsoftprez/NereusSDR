@@ -939,6 +939,19 @@ target_include_directories(NereusSDRObjs PUBLIC
     ${CMAKE_BINARY_DIR}/third_party/rade/build_opus-prefix/src/build_opus
 )
 
+# rade is a SHARED library on Windows (rade.dll). NereusSDR.exe load-time
+# imports it via __declspec(dllimport), so without rade.dll on the DLL
+# search path the .exe fails to launch with "rade.dll was not found".
+# CMake places rade.dll in third_party/rade/src/ but the .exe lives at
+# $<TARGET_FILE_DIR:NereusSDR>, so copy it next to the .exe at build time.
+# Mirrors the ENABLE_DFNR / deepfilter.dll pattern below.
+if(WIN32)
+    add_custom_command(TARGET NereusSDR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:rade>" "$<TARGET_FILE_DIR:NereusSDR>"
+        COMMENT "Copying rade.dll to build directory")
+endif()
+
 # --------------------------------------------------------------------------
 # r8brain-free-src high-quality polyphase resampler (Phase 3R Task I2)
 # License: MIT (see third_party/r8brain/LICENSE.txt)
