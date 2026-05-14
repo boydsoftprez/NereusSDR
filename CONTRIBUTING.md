@@ -233,6 +233,30 @@ missing headers and unregistered ports before push, not after a 7-minute
 CI cycle. Do not bypass the hook with `--no-verify`; fix the attribution
 instead.
 
+### Point hooks at your Thetis clone
+
+One of the hooks — `verify-inline-tag-preservation.py` — checks that
+inline author tags (`// MW0LGE`, `// W2PA`, `// DH1KLM`, etc.) from
+Thetis source are preserved verbatim in every ported file. To do that
+check locally it needs a path to your Thetis clone. Without the path the
+hook silently skips the check, so dropped tags are caught only in CI after
+a 7-minute round-trip.
+
+Set `NEREUS_THETIS_DIR` in your shell rc so it is present for every commit:
+
+```bash
+# ~/.bashrc or ~/.zshrc
+export NEREUS_THETIS_DIR=/path/to/your/Thetis-clone
+```
+
+Or supply it inline for individual one-off commits:
+
+```bash
+NEREUS_THETIS_DIR=/path/to/your/Thetis-clone git commit -m "..."
+```
+
+The variable is only read by the local hook; CI sets it independently.
+
 ## Code of Conduct
 
 Be respectful, constructive, and patient. Ham radio has a long tradition

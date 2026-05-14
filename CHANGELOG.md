@@ -113,6 +113,21 @@ All non-deferred rows must pass before next 0.4.x release is tagged. Failed rows
 - Design doc: `docs/architecture/phase3j2-3r-spots-and-rade-design.md`
 - Implementation plan: `docs/architecture/phase3j2-3r-spots-and-rade-plan.md`
 
+### Phase 3J-1: TCI Server (Thetis port) — closeout
+
+Phase 3J-1 ships the full TCI WebSocket server (port 50001 default, loopback bind, Thetis-faithful) alongside Phase 3J-2 in this point release. Init burst (`sendInitialisationData` + `sendInitialRadioState`) ports approximately 98 wire frames byte-for-byte; 62 dispatch commands across 8 families (VFO, mode/filter, TRX, DSP, audio stream, IQ stream, stubs, bespoke `_ex`); three-priority send queue per client (Urgent / Binary / Control) with bounded-depth oldest-drop; 3-layer VFO coalescer; audio binary RX pipeline with WDSP resampler lifecycle per-(client, slice); TX audio binary inbound with single-client mutex; IQ binary stream pipeline with IQSwap + AlwaysStreamIQ flag effects; TciSensorManager with 4 wire formats and interval aggregation. Operator surfaces: 6 group boxes in Setup → Network → TCI Server, TciApplet + ClientChainApplet docked in Container #0, bottom status-bar 4-state `m_tciIndicator`. Verification: 18 ctest binaries (matrix runner, dispatch seam, lifecycle, init burst smoke + typo divergence + golden, priority queues, VFO coalescer, sensor formats, audio + IQ roundtrip, TX mutex, resampler lifecycle, volume math, server lifecycle, server ping, silent-error invariant, log window).
+
+**Closeout items (PR #229 follow-up):**
+- TX-path resampler: `feedTxAudioFromTci` now honors the per-frame `srcRate` from the TX_AUDIO_STREAM binary header (was ignored — comment said "Phase 17 simplified scope: no rate conversion"). FreeDV at 8 kHz / Quisk / JTDX at 12 kHz / 24 kHz all play correctly on-air; WSJT-X 48 kHz path is unchanged. Mirrors Thetis `cmaster.cs:1411-1444 [v2.10.3.13]`.
+- `QPointer<RadioModel>` on TciServer to survive child-destruction-order races during MainWindow shutdown. Fixes a `EXC_BAD_ACCESS` segfault in `TciServer::stop()` at `QObject::disconnect(m_model, ...)` when `RadioModel` was destroyed first.
+- HermesLiteBandwidthMonitor startup grace: silent-tick counter no longer advances until at least one ep6 byte has been recorded. Fixes false connect-time throttle trip (bench log showed trip at +104 ms after `Connected (metis-start sent)`).
+- Bind-interface dropdown on Setup → Network → TCI Server (QNetworkInterface-enumerated; LAN-exposure tooltip warning; persisted as `TciServerBindAddress`); diverges from Thetis free-text `IP:port` field per `feedback_source_first_ui_vs_dsp.md`.
+- TciLogWindow viewer ("Show Log…" button — Setup → Network → TCI Server): modeless QDialog with filter combo (All / In / Out) + Pause + Clear + auto-scroll, persisted geometry. New `TciServer::messageLogged` firehose signal feeds it; MainWindow owns the lazy-constructed window so it survives Setup close.
+- `tx_stream_audio_buffering` AppSettings value now flows into the init burst.
+- CW pitch (`CWPitch`) read from AppSettings (was hardcoded 600 Hz in three SliceModel sites).
+
+**Known divergences from Thetis:** init-burst typo fix (Thetis `TCIServer.cs:2374-2375` sends duplicate `if:1,1,...; × 2` copy-paste bug; NereusSDR emits the intended `if:1,0,...; if:1,1,...;` cross-product); Qt6 `QWebSocketServer` replaces Thetis's hand-rolled RFC 6455 framing; Slice A/B/C/D in UI mapped to `trx:N` at the TciProtocol layer boundary; UTF-8 outbound text on all platforms (vs Thetis-on-Windows `Encoding.Default` Windows-1252; ASCII content is byte-identical); single-class `ClientChainApplet` (vs AetherSDR's split); `MinimumRequiredRxSensorInterval` aggregation surfaced in Setup UI.
+
 ## [0.4.1-rc3] - 2026-05-09
 
 > [!NOTE]

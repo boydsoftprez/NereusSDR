@@ -1146,6 +1146,13 @@ RadioModel::RadioModel(QObject* parent)
                 qCInfo(lcDsp) << "FreeDVReporter: pushing initial freq="
                               << freqHz << "Hz";
                 m_freeDvReporter->setFrequency(freqHz);
+
+                // Phase 3J-1 closeout follow-up (2026-05-12): hide our
+                // station from the dashboard unless we connected while
+                // already in RADE.  Otherwise we'd flash visible for
+                // one tick on connect before the dspModeChanged handler
+                // hides us.
+                updateFreedvReporterVisibility();
                 // 2026-05-12 bench: seed the dwell-throttle baseline so
                 // subsequent slice.frequencyChanged calls measure delta
                 // against the connect-time freq.  Without this seed the
@@ -1392,8 +1399,12 @@ void RadioModel::onClusterSpotReceived(const DxSpot& spot)
                                  1800).toInt();
     const QString color = s.value(QStringLiteral("DxClusterSpotColor"),
                                   QStringLiteral("#D2B48C")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    // Phase 3J-1 closeout follow-up (2026-05-12): route through SpotModel
+    // dedup so re-emits of the same callsign / freq from the cluster +
+    // overlapping RBN feeds don't spam the list.  60 s window default;
+    // cluster lifetime stays at 30 min so the spot persists in the UI.
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 }
 
 void RadioModel::onRbnSpotReceived(const DxSpot& spot)
@@ -1404,8 +1415,8 @@ void RadioModel::onRbnSpotReceived(const DxSpot& spot)
                                  1800).toInt();
     const QString color = s.value(QStringLiteral("RbnSpotColor"),
                                   QStringLiteral("#4488FF")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 }
 
 void RadioModel::onWsjtxSpotReceived(const DxSpot& spot)
@@ -1419,8 +1430,8 @@ void RadioModel::onWsjtxSpotReceived(const DxSpot& spot)
                                  120).toInt();
     const QString color = s.value(QStringLiteral("WsjtxSpotColor"),
                                   QStringLiteral("#00FF00")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 
     // RxDecodeModel dual-feed: every WSJT-X decode also lands in the
     // "what my radio just heard" sink. WsjtxClient does not emit a separate
@@ -1467,8 +1478,8 @@ void RadioModel::onSpotCollectorSpotReceived(const DxSpot& spot)
                                  1800).toInt();
     const QString color = s.value(QStringLiteral("SpotCollectorSpotColor"),
                                   QStringLiteral("#B0C4DE")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 }
 
 void RadioModel::onPotaSpotReceived(const DxSpot& spot)
@@ -1479,8 +1490,8 @@ void RadioModel::onPotaSpotReceived(const DxSpot& spot)
                                  3600).toInt();
     const QString color = s.value(QStringLiteral("PotaSpotColor"),
                                   QStringLiteral("#FFFF00")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 }
 
 void RadioModel::onFreeDvReporterSpotReceived(const DxSpot& spot)
@@ -1491,8 +1502,8 @@ void RadioModel::onFreeDvReporterSpotReceived(const DxSpot& spot)
                                  1800).toInt();
     const QString color = s.value(QStringLiteral("FreeDvSpotColor"),
                                   QStringLiteral("#FF8C00")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 }
 
 void RadioModel::onPskReporterSpotReceived(const DxSpot& spot)
@@ -1503,8 +1514,8 @@ void RadioModel::onPskReporterSpotReceived(const DxSpot& spot)
                                  1800).toInt();
     const QString color = s.value(QStringLiteral("PskReporterSpotColor"),
                                   QStringLiteral("#FF00FF")).toString();
-    m_spotModel->applySpotStatus(m_nextSpotIndex++,
-                                 kvsFromSpot(spot, lifetime, color));
+    const int idx = m_spotModel->dedupIndexFor(spot.dxCall, spot.freqMhz);
+    m_spotModel->applySpotStatus(idx, kvsFromSpot(spot, lifetime, color));
 }
 
 // ── Phase 3J-2 + 3R M3: spot-client auto-start state restore ───────────────
@@ -2312,6 +2323,31 @@ void RadioModel::flushFreedvFrequencyDwell()
     if (m_freedvFreqDwellTimer) {
         m_freedvFreqDwellTimer->stop();
     }
+}
+
+// Phase 3J-1 closeout follow-up (2026-05-12): show/hide our station on
+// the FreeDV Reporter dashboard based on the active slice's mode.
+// FreeDV Reporter is a tracker FOR FreeDV operators -- a station running
+// SSB or WSJT-X has no business appearing in that list.  Mirrors freedv-
+// gui's connect-and-hide-when-not-on-FreeDV behavior (FreeDVReporter.cpp
+// :167-185 + :704-729 [@77e793a] -- hideFromView / showOurselves).
+//
+// Connection stays alive so we can still see other FreeDV stations on
+// the dashboard (FreeDVReporterDialog UI works) and report decodes via
+// sendRxReport when our RadeChannel pulls an EOO callsign.
+void RadioModel::updateFreedvReporterVisibility()
+{
+    if (!m_freeDvReporter) { return; }
+
+    const SliceModel* slice = activeSlice();
+    const bool inRade = slice
+        && (slice->dspMode() == DSPMode::RADE_U
+         || slice->dspMode() == DSPMode::RADE_L);
+
+    // setHiddenFromView no-ops on the network side when the requested
+    // state matches the server's view, so this is safe to call on every
+    // mode change without flooding qso.freedv.org with hide/show events.
+    m_freeDvReporter->setHiddenFromView(!inRade);
 }
 
 void RadioModel::setActiveSlice(int index)
@@ -5286,6 +5322,11 @@ void RadioModel::wireSliceSignals()
     // filter/filter-type) and rebuild the WDSP channel if any setting changed.
     // dspChangeMeasured is emitted with elapsed ms when a rebuild occurs.
     connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
+        // Phase 3J-1 closeout follow-up (2026-05-12): re-evaluate FreeDV
+        // Reporter visibility on every mode change.  Show our station on
+        // the dashboard only when we're in RADE_U / RADE_L.
+        updateFreedvReporterVisibility();
+
         RxChannel* rxCh = m_wdspEngine->rxChannel(0);
         if (rxCh) {
             rxCh->setMode(mode);
@@ -7392,6 +7433,462 @@ void RadioModel::setTune(bool on)
         // Wired in the RadioModel constructor next to F.1.
     }
 }
+
+// ---------------------------------------------------------------------------
+// ── Phase 3J-1 follow-up: TCI Q_INVOKABLE shims (bench wire-up) ──────────────
+//
+// These methods are invoked by name from src/core/TciProtocol.cpp via
+// QMetaObject::invokeMethod(...) when WSJT-X / ESDR3 / SunSDR clients drive
+// the TCI server.  Phase 6 wired the call sites against TestMockRadioModel
+// (which has matching Q_INVOKABLE methods); these production shims close the
+// gap so real clients actuate the radio.
+//
+// Scope (WSJT-X minimum): PTT (trx), VFO (vfo), mode (modulation),
+// split_enable.  Long tail (DSP toggles, AGC, SQL, RIT/XIT, balance, audio
+// stream config, calibration) lands in a separate follow-up commit.
+// ---------------------------------------------------------------------------
+
+void RadioModel::setMox(bool on)
+{
+    // Route through MoxController when installed — that path enforces the
+    // BandPlanGuard MoxCheck callback, fans out hardwareFlipped, and runs the
+    // Codex P2 safety-effects-before-idempotent-guard ordering.  Without a
+    // controller we fall back to the TransmitModel latch (matches the
+    // pre-controller path Thetis uses during early construction).
+    if (m_moxController) {
+        m_moxController->setMox(on);
+    } else {
+        m_transmitModel.setMox(on);
+    }
+}
+
+bool RadioModel::mox() const
+{
+    if (m_moxController) {
+        return m_moxController->isMox();
+    }
+    return m_transmitModel.isMox();
+}
+
+void RadioModel::setVfoHz(int rx, int chan, qint64 hz)
+{
+    // NereusSDR has one frequency per slice.  VFO B (chan==1) maps to a
+    // separate slice in this model, so per-slice VFO B writes are silently
+    // ignored — TCI clients that drive VFO B should target a second slice.
+    if (chan != 0) {
+        return;
+    }
+    SliceModel* slice = sliceAt(rx);
+    if (!slice) {
+        return;
+    }
+    slice->setFrequency(static_cast<double>(hz));
+}
+
+qint64 RadioModel::vfoHz(int rx, int chan) const
+{
+    // Both chan==0 and chan==1 return the slice frequency.  See setVfoHz note
+    // — VFO B per slice is not modeled, so reads return the same value.
+    (void)chan;
+    const SliceModel* slice = sliceAt(rx);
+    if (!slice) {
+        return 0;
+    }
+    return static_cast<qint64>(slice->frequency());
+}
+
+void RadioModel::setMode(int rx, QString modeStr)
+{
+    SliceModel* slice = sliceAt(rx);
+    if (!slice) {
+        return;
+    }
+    const DSPMode mode = SliceModel::modeFromName(modeStr);
+    slice->setDspMode(mode);
+}
+
+QString RadioModel::mode(int rx) const
+{
+    const SliceModel* slice = sliceAt(rx);
+    if (!slice) {
+        return QString();
+    }
+    return SliceModel::modeName(slice->dspMode());
+}
+
+void RadioModel::setSplit(int rx, bool on)
+{
+    // Per-slice split-TX is not yet modeled in NereusSDR; arriving here means
+    // TciProtocol parsed `split_enable:rx,true;` and dispatched it.  We accept
+    // the value silently — TciProtocol still broadcasts the confirmation
+    // notification so WSJT-X sees the round-trip — but the radio does not
+    // change state.  Wire this up properly when Phase 3F multi-panadapter
+    // lands the per-slice VFO B / split TX model.
+    (void)rx;
+    (void)on;
+}
+
+bool RadioModel::split(int rx) const
+{
+    (void)rx;
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3J-1 closeout Item 3 (2026-05-12): TCI Q_INVOKABLE long tail.
+//
+// Each shim routes a TciProtocol::invokeMethod call to the right model
+// state.  Most are 1:1 with a SliceModel Q_PROPERTY (locked/muted/etc.);
+// some are radio-global (RIT/XIT/AfLinear/etc.); a handful are stubs that
+// store-and-return until their underlying feature lands (rxBin/rxApf/etc.).
+//
+// All slice-indexed shims sanity-check sliceAt(rx) and silently no-op on
+// out-of-range so a misbehaving client can't crash NereusSDR.  Getters
+// return sensible defaults (false / 0 / "" / 0.0) when the slice doesn't
+// exist, matching the TestMockRadioModel convention.
+// ---------------------------------------------------------------------------
+
+// ── VFO Lock ────────────────────────────────────────────────────────────────
+void RadioModel::setVfoLock(int rx, int chan, bool locked)
+{
+    (void)chan;  // NereusSDR collapses VFOALock/VFOBLock to slice-level locked
+    if (auto* s = sliceAt(rx)) { s->setLocked(locked); }
+}
+bool RadioModel::vfoLock(int rx, int chan) const
+{
+    (void)chan;
+    if (const auto* s = sliceAt(rx)) { return s->locked(); }
+    return false;
+}
+void RadioModel::setLock(int rx, bool locked)
+{
+    if (auto* s = sliceAt(rx)) { s->setLocked(locked); }
+}
+bool RadioModel::lock(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->locked(); }
+    return false;
+}
+
+// ── Mute ────────────────────────────────────────────────────────────────────
+void RadioModel::setGlobalMute(bool on) { m_tciGlobalMute = on; }
+bool RadioModel::globalMute() const     { return m_tciGlobalMute; }
+void RadioModel::setRxMute(int rx, bool on)
+{
+    if (auto* s = sliceAt(rx)) { s->setMuted(on); }
+}
+bool RadioModel::rxMute(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->muted(); }
+    return false;
+}
+
+// ── Filter ──────────────────────────────────────────────────────────────────
+void RadioModel::setFilterBand(int rx, int lowHz, int highHz)
+{
+    if (auto* s = sliceAt(rx)) {
+        s->setFilterLow(lowHz);
+        s->setFilterHigh(highHz);
+    }
+}
+int RadioModel::filterLow(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->filterLow(); }
+    return 0;
+}
+int RadioModel::filterHigh(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->filterHigh(); }
+    return 0;
+}
+
+// ── AGC mode ────────────────────────────────────────────────────────────────
+void RadioModel::setAgcMode(int rx, const QString& mode)
+{
+    auto* s = sliceAt(rx);
+    if (!s) { return; }
+    const QString upper = mode.toUpper();
+    AGCMode m = AGCMode::Med;
+    if      (upper == QLatin1String("OFF"))    { m = AGCMode::Off;    }
+    else if (upper == QLatin1String("LONG"))   { m = AGCMode::Long;   }
+    else if (upper == QLatin1String("SLOW"))   { m = AGCMode::Slow;   }
+    else if (upper == QLatin1String("MED")
+          || upper == QLatin1String("MEDIUM")) { m = AGCMode::Med;    }
+    else if (upper == QLatin1String("FAST"))   { m = AGCMode::Fast;   }
+    else if (upper == QLatin1String("CUSTOM")) { m = AGCMode::Custom; }
+    s->setAgcMode(m);
+}
+QString RadioModel::agcMode(int rx) const
+{
+    const auto* s = sliceAt(rx);
+    if (!s) { return QString(); }
+    switch (s->agcMode()) {
+        case AGCMode::Off:    return QStringLiteral("OFF");
+        case AGCMode::Long:   return QStringLiteral("LONG");
+        case AGCMode::Slow:   return QStringLiteral("SLOW");
+        case AGCMode::Med:    return QStringLiteral("MED");
+        case AGCMode::Fast:   return QStringLiteral("FAST");
+        case AGCMode::Custom: return QStringLiteral("CUSTOM");
+    }
+    return QStringLiteral("MED");
+}
+
+// ── AGC gain (threshold) ────────────────────────────────────────────────────
+void RadioModel::setAgcGain(int rx, int gain)
+{
+    if (auto* s = sliceAt(rx)) { s->setAgcThreshold(gain); }
+}
+int RadioModel::agcGain(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->agcThreshold(); }
+    return 0;
+}
+
+// ── Squelch ─────────────────────────────────────────────────────────────────
+void RadioModel::setSqlEnable(int rx, bool on)
+{
+    if (auto* s = sliceAt(rx)) { s->setSsqlEnabled(on); }
+}
+bool RadioModel::sqlEnable(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->ssqlEnabled(); }
+    return false;
+}
+void RadioModel::setSqlLevel(int rx, int level)
+{
+    if (auto* s = sliceAt(rx)) { s->setSsqlThresh(static_cast<double>(level)); }
+}
+int RadioModel::sqlLevel(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) {
+        return static_cast<int>(s->ssqlThresh());
+    }
+    return 0;
+}
+
+// ── RIT / XIT (active slice) ────────────────────────────────────────────────
+void RadioModel::setRitEnable(bool on)
+{
+    if (auto* s = activeSlice()) { s->setRitEnabled(on); }
+}
+bool RadioModel::ritEnable() const
+{
+    if (const auto* s = activeSlice()) { return s->ritEnabled(); }
+    return false;
+}
+void RadioModel::setRitOffset(int hz)
+{
+    if (auto* s = activeSlice()) { s->setRitHz(hz); }
+}
+int RadioModel::ritOffset() const
+{
+    if (const auto* s = activeSlice()) { return s->ritHz(); }
+    return 0;
+}
+void RadioModel::setXitEnable(bool on)
+{
+    if (auto* s = activeSlice()) { s->setXitEnabled(on); }
+}
+bool RadioModel::xitEnable() const
+{
+    if (const auto* s = activeSlice()) { return s->xitEnabled(); }
+    return false;
+}
+void RadioModel::setXitOffset(int hz)
+{
+    if (auto* s = activeSlice()) { s->setXitHz(hz); }
+}
+int RadioModel::xitOffset() const
+{
+    if (const auto* s = activeSlice()) { return s->xitHz(); }
+    return 0;
+}
+
+// ── RX balance / audio pan ──────────────────────────────────────────────────
+void RadioModel::setRxBalance(int rx, int chan, double balance)
+{
+    (void)chan;
+    if (auto* s = sliceAt(rx)) { s->setAudioPan(balance); }
+}
+double RadioModel::rxBalance(int rx, int chan) const
+{
+    (void)chan;
+    if (const auto* s = sliceAt(rx)) { return s->audioPan(); }
+    return 0.0;
+}
+
+// ── CTUN (stub until model lands) ───────────────────────────────────────────
+void RadioModel::setRxCtun(int rx, bool on)
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxCtun[rx] = on; }
+}
+bool RadioModel::rxCtun(int rx) const
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxCtun[rx]; }
+    return false;
+}
+
+// ── NB / NR / ANF ───────────────────────────────────────────────────────────
+void RadioModel::setRxNb(int rx, bool on)
+{
+    if (auto* s = sliceAt(rx)) {
+        s->setNbMode(on ? NbMode::NB : NbMode::Off);
+    }
+}
+bool RadioModel::rxNb(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->nbMode() != NbMode::Off; }
+    return false;
+}
+void RadioModel::setRxNr(int rx, bool on, int nrIndex)
+{
+    auto* s = sliceAt(rx);
+    if (!s) { return; }
+    if (!on) {
+        s->setActiveNr(NrSlot::Off);
+        return;
+    }
+    NrSlot slot = NrSlot::NR1;
+    switch (nrIndex) {
+        case 0: slot = NrSlot::NR1;  break;
+        case 1: slot = NrSlot::NR2;  break;
+        case 2: slot = NrSlot::NR3;  break;
+        case 3: slot = NrSlot::NR4;  break;
+        case 4: slot = NrSlot::DFNR; break;
+        case 5: slot = NrSlot::BNR;  break;
+        case 6: slot = NrSlot::MNR;  break;
+        default: slot = NrSlot::NR1; break;
+    }
+    s->setActiveNr(slot);
+}
+bool RadioModel::rxNr(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) { return s->activeNr() != NrSlot::Off; }
+    return false;
+}
+int RadioModel::rxNrIndex(int rx) const
+{
+    if (const auto* s = sliceAt(rx)) {
+        switch (s->activeNr()) {
+            case NrSlot::Off:  return 0;
+            case NrSlot::NR1:  return 0;
+            case NrSlot::NR2:  return 1;
+            case NrSlot::NR3:  return 2;
+            case NrSlot::NR4:  return 3;
+            case NrSlot::DFNR: return 4;
+            case NrSlot::BNR:  return 5;
+            case NrSlot::MNR:  return 6;
+        }
+    }
+    return 0;
+}
+// ANF: NereusSDR doesn't expose a separate ANF state -- Thetis's auto-notch
+// is a WDSP RXA stage independent of the NR slot system.  Stub until ANF
+// gets its own Q_PROPERTY on SliceModel.
+void RadioModel::setRxAnf(int rx, bool on)
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) {
+        m_tciStubRxApf[rx] = on;  // reuse: ANF stored alongside APF semantically
+    }
+}
+bool RadioModel::rxAnf(int rx) const
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxApf[rx]; }
+    return false;
+}
+
+// ── Stub DSP toggles (no model state yet) ───────────────────────────────────
+void RadioModel::setRxBin(int rx, bool on)
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxBin[rx] = on; }
+}
+bool RadioModel::rxBin(int rx) const
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxBin[rx]; }
+    return false;
+}
+void RadioModel::setRxApf(int rx, bool on)
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxApf[rx] = on; }
+}
+bool RadioModel::rxApf(int rx) const
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxApf[rx]; }
+    return false;
+}
+void RadioModel::setRxNf(int rx, bool on)
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxNf[rx] = on; }
+}
+bool RadioModel::rxNf(int rx) const
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxNf[rx]; }
+    return false;
+}
+void RadioModel::setRxEnable(int rx, bool on)
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { m_tciStubRxEnable[rx] = on; }
+}
+bool RadioModel::rxEnable(int rx) const
+{
+    if (rx >= 0 && rx < kTciStubSliceMax) { return m_tciStubRxEnable[rx]; }
+    return false;
+}
+
+// ── Volume (radio-global) ───────────────────────────────────────────────────
+void RadioModel::setAfLinear(int v)   { m_tciAfLinear  = v; }
+int  RadioModel::afLinear() const     { return m_tciAfLinear; }
+void RadioModel::setMonLinear(int v)  { m_tciMonLinear = v; }
+int  RadioModel::monLinear() const    { return m_tciMonLinear; }
+
+// ── IQ rate ─────────────────────────────────────────────────────────────────
+void RadioModel::setIqSampleRate(int sr) { m_tciIqSampleRate = sr; }
+int  RadioModel::iqSampleRate() const    { return m_tciIqSampleRate; }
+
+// ── Audio stream config (parity-only; TciServer intercepts) ─────────────────
+void RadioModel::setAudioSampleRate(int sr)          { m_tciAudioSampleRate = sr; }
+int  RadioModel::audioSampleRate() const             { return m_tciAudioSampleRate; }
+void RadioModel::setAudioStreamSampleType(const QString& t) { m_tciAudioStreamSampleType = t; }
+QString RadioModel::audioStreamSampleType() const    { return m_tciAudioStreamSampleType; }
+void RadioModel::setAudioStreamChannels(int n)       { m_tciAudioStreamChannels = n; }
+int  RadioModel::audioStreamChannels() const         { return m_tciAudioStreamChannels; }
+void RadioModel::setAudioStreamSamples(int n)        { m_tciAudioStreamSamples = n; }
+int  RadioModel::audioStreamSamples() const          { return m_tciAudioStreamSamples; }
+
+// ── TX profile (MicProfileManager) ──────────────────────────────────────────
+// MicProfileManager::setActiveProfile takes (name, TransmitModel*) -- pass
+// our owned m_transmitModel reference so the profile's settings actually
+// fan out to the model + WDSP.
+void RadioModel::setTxProfile(const QString& name)
+{
+    if (m_micProfileMgr) {
+        m_micProfileMgr->setActiveProfile(name, &m_transmitModel);
+    }
+}
+QString RadioModel::txProfile() const
+{
+    if (m_micProfileMgr) {
+        return m_micProfileMgr->activeProfileName();
+    }
+    return QString();
+}
+QStringList RadioModel::txProfilesList() const
+{
+    if (m_micProfileMgr) {
+        return m_micProfileMgr->profileNames();
+    }
+    return {};
+}
+
+// ── Calibration (getter-only stubs) ─────────────────────────────────────────
+// No calibration model exists yet.  All getters return 0.0 = "no calibration
+// applied".  Real implementation lands when CalibrationModel + per-slice
+// persistence are added.
+double RadioModel::calibrationMeter(int rx) const     { (void)rx; return 0.0; }
+double RadioModel::calibrationDisplay(int rx) const   { (void)rx; return 0.0; }
+double RadioModel::calibrationXvtr(int rx) const      { (void)rx; return 0.0; }
+double RadioModel::calibrationSixMeter(int rx) const  { (void)rx; return 0.0; }
+double RadioModel::calibrationTxDisplay(int rx) const { (void)rx; return 0.0; }
 
 // ---------------------------------------------------------------------------
 // completeTuneOff — Thetis-faithful TUN-off completion (issue #177).

@@ -2822,12 +2822,17 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
 
     rightCol->addLayout(grid);
 
-    // 2026-05-12 bench fix (Gap #7 — per-source panadapter visibility).
-    // Seven checkboxes, one per spot source, that toggle whether that
-    // source's spots paint on the panadapter overlay.  The Spot List
-    // table is unaffected (per-source visibility on the list lives
-    // elsewhere if at all).  Setting persists per source.
-    auto* visTitle = new QLabel("Show on panadapter");
+    // 2026-05-12 bench fix (Gap #7 — per-source visibility).  Seven
+    // checkboxes, one per spot source, that toggle whether that
+    // source's spots appear anywhere -- panadapter overlay AND Spot
+    // List table.  Updated 2026-05-12 (Phase 3J-1 closeout follow-up)
+    // to ALSO hide the spots from the Spot List by routing through
+    // BandFilterProxy::setSourceVisible.  Previously only affected
+    // the panadapter; bench operator unchecked FreeDV expecting
+    // global hide and the spots kept appearing in the list.  Spot List
+    // tab's source pills remain a secondary filter for fine-grained
+    // control without opening this tab.
+    auto* visTitle = new QLabel("Show spots from source");
     visTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; "
                             "margin-top: 8px; }");
     rightCol->addWidget(visTitle);
@@ -2851,14 +2856,29 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
         auto* cb = new QCheckBox(label);
         cb->setObjectName(QStringLiteral("displaySourceShow_") + source);
         cb->setChecked(on);
+        // Apply persisted state to the Spot List immediately on dialog
+        // construct -- otherwise the list shows everything until the
+        // operator toggles the checkbox once.
+        if (!on && m_spotProxyModel) {
+            m_spotProxyModel->setSourceVisible(source, false);
+        }
         connect(cb, &QCheckBox::toggled, this,
                 [save, key, source, this](bool on) {
             save(key, on ? "True" : "False");
             // settingsChanged emit (inside `save`) triggers MainWindow's
-            // loadSpotDisplaySettings which now also pulls per-source
-            // visibility into the SpectrumWidget.
-            Q_UNUSED(source);
-            Q_UNUSED(this);
+            // loadSpotDisplaySettings which pulls per-source visibility
+            // into the SpectrumWidget (panadapter overlay mask).
+            //
+            // Phase 3J-1 closeout follow-up (2026-05-12): ALSO route
+            // through BandFilterProxy::setSourceVisible so the Spot List
+            // table hides this source's rows.  Before this, the Display
+            // tab toggle only affected the panadapter -- user-visible bug
+            // because the section label ("Show on panadapter") was
+            // misleading; the operator's mental model is "hide
+            // everywhere".  See 2026-05-12 bench session.
+            if (m_spotProxyModel) {
+                m_spotProxyModel->setSourceVisible(source, on);
+            }
         });
         visGrid->addWidget(cb, i, 0);
     }

@@ -62,10 +62,12 @@
 
 #include "AppSettings.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QXmlStreamReader>
@@ -336,22 +338,61 @@ static QString sanitizeXmlForLoad(const QString& text)
     return out;
 }
 
-void AppSettings::load()
-{
-    QFile file(m_filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qDebug() << "No settings file found at" << m_filePath << "— using defaults";
-        return;
-    }
+// Corruption-aware load helpers (issue #241).
+//
+// readFileForParse: returns the raw XML text only when the file looks
+//                   intact enough to attempt a parse. Returns nullopt for
+//                   "file is missing", "file is unreadable", "file is
+//                   empty", and "file starts with NUL bytes" (the canonical
+//                   shape produced by an NTFS journal rollback over an
+//                   in-flight write — see issue #241).
+//
+// parseSettingsXml: parses sanitized XML into the supplied QMaps and
+//                   returns true only when the parser reaches the end
+//                   without raising hasError(). On a clean failure both
+//                   maps are left empty so the caller can fall through to
+//                   the .bak path without inheriting half-loaded keys.
+namespace {
 
-    // Read the entire file as UTF-8 text and run it through the recovery
-    // sanitizer before parsing. Pre-2026-04-30 builds wrote element names
-    // with literal '+' (and other non-NameChars from Thetis profile names),
-    // which causes QXmlStreamReader to bail mid-file. The sanitizer escapes
-    // those chars structurally; well-formed files pass through unchanged.
-    const QString rawXml      = QString::fromUtf8(file.readAll());
-    const QString sanitizedXml = sanitizeXmlForLoad(rawXml);
+enum class ReadResult {
+    Ok,             // file was readable + non-empty + did not start with NULs
+    Missing,        // file does not exist (first-run path — no corruption)
+    Unreadable,     // file exists but open() failed (treat as corrupt)
+    EmptyOrZeroed,  // file is zero bytes or starts with NUL (treat as corrupt)
+};
+
+ReadResult readFileForParse(const QString& path, QString& outXml)
+{
+    QFileInfo info(path);
+    if (!info.exists()) {
+        return ReadResult::Missing;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return ReadResult::Unreadable;
+    }
+    const QByteArray bytes = file.readAll();
     file.close();
+    if (bytes.isEmpty()) {
+        return ReadResult::EmptyOrZeroed;
+    }
+    // NTFS journal rollback over an in-flight write zeroes whole sectors at
+    // the head of the file (issue #241 — 28 × 4 KB = 114,688 leading NULs
+    // observed). A leading NUL byte is never valid for our XML output.
+    if (bytes.at(0) == '\0') {
+        return ReadResult::EmptyOrZeroed;
+    }
+    outXml = QString::fromUtf8(bytes);
+    return ReadResult::Ok;
+}
+
+bool parseSettingsXml(const QString& sanitizedXml,
+                      QMap<QString, QString>& outSettings,
+                      QMap<QString, QString>& outStationSettings,
+                      QString& outStationName)
+{
+    outSettings.clear();
+    outStationSettings.clear();
 
     QXmlStreamReader xml(sanitizedXml);
     QString currentStation;
@@ -361,24 +402,22 @@ void AppSettings::load()
         xml.readNext();
         if (xml.isStartElement()) {
             const QString tag = xml.name().toString();
-            if (tag == "NereusSDR") {
+            if (tag == QStringLiteral("NereusSDR")) {
                 continue;
             }
-            // Check if this is a station section
             if (!inStation && xml.attributes().hasAttribute(QStringLiteral("type"))
                 && xml.attributes().value(QStringLiteral("type")) == QStringLiteral("station")) {
                 inStation = true;
                 currentStation = tag;
-                m_stationName = tag;
+                outStationName = tag;
                 continue;
             }
-            // Read element text as value; decode key back to internal format
             const QString value = xml.readElementText();
             const QString key   = decodeXmlKey(tag);
             if (inStation) {
-                m_stationSettings.insert(key, value);
+                outStationSettings.insert(key, value);
             } else {
-                m_settings.insert(key, value);
+                outSettings.insert(key, value);
             }
         } else if (xml.isEndElement() && inStation) {
             if (xml.name().toString() == currentStation) {
@@ -388,15 +427,24 @@ void AppSettings::load()
     }
 
     if (xml.hasError()) {
-        qWarning() << "XML parse error in settings:" << xml.errorString();
+        // Wipe the partially-populated maps — half-loaded settings are
+        // worse than starting from .bak or defaults (silent data loss is
+        // exactly what issue #241 was filed against).
+        outSettings.clear();
+        outStationSettings.clear();
+        return false;
     }
+    return true;
+}
 
+void logLoadedSummary(const QMap<QString, QString>& settings,
+                      int stationSettingsCount)
+{
     int radiosCount = 0;
     QStringList radioMacs;
-    for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
+    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
         if (it.key().startsWith(QStringLiteral("radios/"))) {
             radiosCount++;
-            // Capture distinct MAC keys for the diagnostic
             const QString rest = it.key().mid(QStringLiteral("radios/").size());
             const int slash = rest.indexOf(QLatin1Char('/'));
             if (slash > 0) {
@@ -407,10 +455,110 @@ void AppSettings::load()
             }
         }
     }
-    qDebug() << "Loaded" << m_settings.size() << "settings,"
-             << m_stationSettings.size() << "station settings;"
+    qDebug() << "Loaded" << settings.size() << "settings,"
+             << stationSettingsCount << "station settings;"
              << radiosCount << "saved-radio keys across"
              << radioMacs.size() << "MAC(s)";
+}
+
+} // namespace
+
+void AppSettings::load()
+{
+    // Reset diagnostic state at the top of every load() so wasCorruptedOnLoad()
+    // / preservedCorruptFilePath() / recoveredFromBackup() always reflect THIS
+    // load attempt rather than a previous instance's history.
+    m_wasCorruptedOnLoad       = false;
+    m_preservedCorruptFilePath.clear();
+    m_recoveredFromBackup      = false;
+
+    const QString bakPath = m_filePath + QStringLiteral(".bak");
+
+    // Try the main settings file first.
+    QString rawXml;
+    const ReadResult mainRead = readFileForParse(m_filePath, rawXml);
+
+    if (mainRead == ReadResult::Ok) {
+        const QString sanitized = sanitizeXmlForLoad(rawXml);
+        if (parseSettingsXml(sanitized, m_settings, m_stationSettings, m_stationName)) {
+            logLoadedSummary(m_settings, m_stationSettings.size());
+            return;
+        }
+        qWarning() << "XML parse error in settings:" << m_filePath
+                   << "— treating as corrupt (issue #241 recovery path)";
+    } else if (mainRead == ReadResult::EmptyOrZeroed) {
+        qWarning() << "Settings file" << m_filePath
+                   << "is empty or starts with NUL bytes (NTFS journal rollback shape)"
+                   << "— treating as corrupt (issue #241 recovery path)";
+    } else if (mainRead == ReadResult::Unreadable) {
+        qWarning() << "Settings file" << m_filePath
+                   << "exists but could not be opened — treating as corrupt";
+    } else {
+        // ReadResult::Missing — first-run path. No corruption, no .bak attempt.
+        qDebug() << "No settings file found at" << m_filePath << "— using defaults";
+        return;
+    }
+
+    // ── Corruption path ──────────────────────────────────────────────────
+    //
+    // Preserve the corrupt file BEFORE doing anything else so the user
+    // (or a developer) can attempt manual recovery. The next save() would
+    // otherwise overwrite the only remaining copy with factory defaults
+    // (the exact failure mode reported in issue #241).
+    const QString stamp = QDateTime::currentDateTime().toString(
+                              QStringLiteral("yyyyMMdd-HHmmss"));
+    const QString corruptPath = m_filePath + QStringLiteral(".corrupt-") + stamp;
+    if (QFile::rename(m_filePath, corruptPath)) {
+        m_wasCorruptedOnLoad      = true;
+        m_preservedCorruptFilePath = corruptPath;
+        qWarning() << "Corrupt settings file preserved as" << corruptPath;
+    } else {
+        // Rename failed (cross-volume, permissions, etc.). Fall back to a
+        // copy + remove; if even that fails just leave the corrupt file
+        // alone — defaults will still write through QSaveFile and won't
+        // touch it until the next save() runs.
+        if (QFile::copy(m_filePath, corruptPath)) {
+            QFile::remove(m_filePath);
+            m_wasCorruptedOnLoad       = true;
+            m_preservedCorruptFilePath = corruptPath;
+            qWarning() << "Corrupt settings file copied (rename failed) to" << corruptPath;
+        } else {
+            qWarning() << "Could not preserve corrupt settings file at" << corruptPath
+                       << "— attempting backup recovery anyway";
+        }
+    }
+
+    // Try the .bak fallback. If it exists and parses cleanly we restore
+    // the previous good state; otherwise we leave m_settings empty and
+    // proceed with defaults.
+    if (QFileInfo::exists(bakPath)) {
+        QString bakXml;
+        const ReadResult bakRead = readFileForParse(bakPath, bakXml);
+        if (bakRead == ReadResult::Ok) {
+            const QString sanitized = sanitizeXmlForLoad(bakXml);
+            if (parseSettingsXml(sanitized, m_settings, m_stationSettings, m_stationName)) {
+                m_recoveredFromBackup = true;
+                qWarning() << "Recovered settings from backup file" << bakPath;
+                logLoadedSummary(m_settings, m_stationSettings.size());
+                return;
+            }
+            qWarning() << "Backup settings file" << bakPath
+                       << "is also corrupt — falling back to defaults";
+        } else if (bakRead != ReadResult::Missing) {
+            qWarning() << "Backup settings file" << bakPath
+                       << "exists but is unreadable / empty / NUL-prefixed"
+                       << "— falling back to defaults";
+        }
+    } else {
+        qWarning() << "No backup settings file at" << bakPath
+                   << "— falling back to defaults";
+    }
+
+    // Defaults path — leave both maps empty so first save() writes a fresh
+    // factory-default file. The corrupt file (if rename succeeded) and the
+    // .bak (if any) are untouched on disk for forensic inspection.
+    m_settings.clear();
+    m_stationSettings.clear();
 }
 
 void AppSettings::save()
@@ -418,36 +566,92 @@ void AppSettings::save()
     // Ensure directory exists
     QDir().mkpath(QFileInfo(m_filePath).absolutePath());
 
-    QFile file(m_filePath);
+    // ── .bak rotation (issue #241) ──────────────────────────────────────
+    //
+    // Before overwriting the live settings file we copy the current good
+    // version to "<filePath>.bak" via a .bak.tmp staging step that we
+    // atomically rename into place. This guarantees that if a crash takes
+    // down the system mid-save, the next launch finds either:
+    //   (a) the previous good main file (atomic write below has not yet
+    //       run), OR
+    //   (b) the new main file plus a .bak holding the previous good state.
+    //
+    // We never enter a state where main is corrupt AND .bak is missing —
+    // that's the exact failure mode reported in issue #241 (NTFS journal
+    // rollback over a non-atomic write left the user with no recovery
+    // path at all).
+    if (QFileInfo::exists(m_filePath)) {
+        const QString bakPath    = m_filePath + QStringLiteral(".bak");
+        const QString bakTmpPath = m_filePath + QStringLiteral(".bak.tmp");
+        QFile::remove(bakTmpPath);  // tolerate stale .bak.tmp from a prior crash
+        if (QFile::copy(m_filePath, bakTmpPath)) {
+            // QFile::rename refuses to clobber an existing destination, so
+            // remove the previous .bak first. The window between remove()
+            // and rename() is tolerable here: even if a crash hits between
+            // the two, the main file is still intact (we have not touched
+            // it yet) and .bak.tmp will be cleaned up on the next save.
+            QFile::remove(bakPath);
+            if (!QFile::rename(bakTmpPath, bakPath)) {
+                qWarning() << "Could not rotate settings backup to" << bakPath
+                           << "— previous .bak (if any) lost; main save proceeding";
+                QFile::remove(bakTmpPath);
+            }
+        } else {
+            qWarning() << "Could not stage settings backup at" << bakTmpPath
+                       << "— main save proceeding without rotating .bak";
+        }
+    }
+
+    // ── Atomic write of the main file (issue #241) ──────────────────────
+    //
+    // QSaveFile writes to a hidden temp file alongside the destination,
+    // calls fsync() on commit(), then performs an atomic rename over the
+    // destination. On NTFS that rename uses MoveFileEx with
+    // MOVEFILE_REPLACE_EXISTING which is journaled at the metadata level
+    // — the destination is either entirely the previous version or
+    // entirely the new version, never a partial overlay. This makes the
+    // "leading 28 × 4 KB sectors zeroed" failure mode from issue #241
+    // structurally impossible.
+    QSaveFile file(m_filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning() << "Could not save settings to" << m_filePath;
+        qWarning() << "Could not save settings to" << m_filePath
+                   << ":" << file.errorString();
         return;
     }
 
-    QXmlStreamWriter xml(&file);
-    xml.setAutoFormatting(true);
-    xml.writeStartDocument();
-    xml.writeStartElement("NereusSDR");
+    {
+        QXmlStreamWriter xml(&file);
+        xml.setAutoFormatting(true);
+        xml.writeStartDocument();
+        xml.writeStartElement(QStringLiteral("NereusSDR"));
 
-    // Write top-level settings (encode keys so XML element names are valid)
-    for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
-        xml.writeTextElement(encodeXmlKey(it.key()), it.value());
-    }
-
-    // Write station settings
-    if (!m_stationSettings.isEmpty()) {
-        xml.writeStartElement(m_stationName);
-        xml.writeAttribute("type", "station");
-        for (auto it = m_stationSettings.constBegin(); it != m_stationSettings.constEnd(); ++it) {
+        // Write top-level settings (encode keys so XML element names are valid)
+        for (auto it = m_settings.constBegin(); it != m_settings.constEnd(); ++it) {
             xml.writeTextElement(encodeXmlKey(it.key()), it.value());
         }
-        xml.writeEndElement();
+
+        // Write station settings
+        if (!m_stationSettings.isEmpty()) {
+            xml.writeStartElement(m_stationName);
+            xml.writeAttribute(QStringLiteral("type"), QStringLiteral("station"));
+            for (auto it = m_stationSettings.constBegin(); it != m_stationSettings.constEnd(); ++it) {
+                xml.writeTextElement(encodeXmlKey(it.key()), it.value());
+            }
+            xml.writeEndElement();
+        }
+
+        xml.writeEndElement(); // NereusSDR
+        xml.writeEndDocument();
     }
 
-    xml.writeEndElement(); // NereusSDR
-    xml.writeEndDocument();
+    if (!file.commit()) {
+        qWarning() << "Could not commit settings to" << m_filePath
+                   << ":" << file.errorString();
+        return;
+    }
 
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    QFile::setPermissions(m_filePath,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 }
 
 QVariant AppSettings::value(const QString& key, const QVariant& defaultValue) const

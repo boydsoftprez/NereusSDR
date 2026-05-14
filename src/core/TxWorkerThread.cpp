@@ -385,6 +385,45 @@ void TxWorkerThread::dispatchOneBlock()
         return;
     }
 
+    // ── Phase 3J-1 bench fix (2026-05-10): TCI audio source override ───────
+    //
+    // When a TCI client holds the TX audio mutex (trx:N,true,tci;) the
+    // binary-frame pipeline pushes WSJT-X's audio into m_tciInputRing on
+    // TxChannel.  Pull one 64-frame block from that ring here and splice it
+    // into m_in (overwriting whatever the mic source put there) — same
+    // pattern as the PC/VAX mic override branches below.
+    //
+    // Rate match: TCI producer pushes ~2048 samples per WSJT-X message
+    // (every ~43 ms in bursts of <1 ms).  Consumer (us) pulls 64 samples
+    // every ~1.33 ms == 48 kHz, matching the HL2 wire rate exactly.  The
+    // ring (~680 ms headroom) absorbs the burst-vs-steady mismatch.  The
+    // downstream TX I/Q ring sees a steady 64-frame trickle — no
+    // overflow, no dropped samples.
+    //
+    // If the ring is empty (TCI producer hasn't pushed yet, or briefly
+    // between WSJT-X messages), zero-fill the block.  Silence is the
+    // correct degradation — same policy as the PC/VAX mic override
+    // partial-pull case.
+    if (m_txChannel->isTciAudioActive()) {
+        const int got = m_txChannel->pullTciAudio(m_pcMicBuf.data(), kBlockFrames);
+        const int n   = std::clamp(got, 0, kBlockFrames);
+        for (int i = 0; i < n; ++i) {
+            m_in[static_cast<size_t>(2 * i + 0)] =
+                static_cast<double>(m_pcMicBuf[static_cast<size_t>(i)]);
+            m_in[static_cast<size_t>(2 * i + 1)] = 0.0;
+        }
+        for (int i = n; i < kBlockFrames; ++i) {
+            m_in[static_cast<size_t>(2 * i + 0)] = 0.0;
+            m_in[static_cast<size_t>(2 * i + 1)] = 0.0;
+        }
+        // Skip the PC/VAX mic override branches below — TCI is the
+        // active source.  Fall through to pumpDexp + driveOneTxBlock so
+        // WDSP processes the TCI audio just like a normal mic block.
+        m_txChannel->pumpDexp(m_in.data());
+        m_txChannel->driveOneTxBlockFromInterleaved(m_in.data());
+        return;
+    }
+
     // ── Phase 3R K-bench: mode-aware path RADE pump ────────────────────
     //
     // RadioModel updates m_currentTxPath on every MOX-on transition

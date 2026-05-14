@@ -312,8 +312,8 @@ cmake --build build -j$(nproc)
 ./build/NereusSDR
 ```
 
-Dependencies (Arch): `qt6-base qt6-multimedia qt6-svg cmake ninja pkgconf fftw alsa-lib jack2 pipewire`
-Dependencies (Ubuntu/Debian): `qt6-base-dev qt6-base-private-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev cmake ninja-build pkg-config libfftw3-dev libgl1-mesa-dev libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev`
+Dependencies (Arch): `qt6-base qt6-multimedia qt6-svg qt6-websockets cmake ninja pkgconf fftw alsa-lib jack2 pipewire`
+Dependencies (Ubuntu/Debian): `qt6-base-dev qt6-base-private-dev qt6-multimedia-dev qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev cmake ninja-build pkg-config libfftw3-dev libgl1-mesa-dev libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev`
 Notes:
 * `qt6-svg` / `qt6-svg-dev` is hard-required (`find_package(Qt6 REQUIRED COMPONENTS Svg)`).
 * `alsa-lib` / `libasound2-dev` and `jack2` / `libjack-jackd2-dev` are hard-required on Linux because PortAudio is built with `PA_USE_ALSA=ON` and `PA_USE_JACK=ON FORCE`; without them the static libportaudio links with zero host APIs.
@@ -364,6 +364,16 @@ Key source directories: `src/core/` (protocol, audio, DSP), `src/models/`
 * `HGauge` — horizontal bar gauge widget
 * `ComboStyle` — styled combo box shared across applets
 * `ColorSwatchButton` (`src/gui/ColorSwatchButton.h`) — reusable color picker button: QPushButton subclass, QColorDialog with alpha, `colorChanged(QColor)` signal, static `colorToHex` / `colorFromHex` helpers for AppSettings `"#RRGGBBAA"` round-trip. Added in 3G-8; used by 9 call sites across the Display setup pages (S11/S13 trace colours, W10 waterfall low colour, G6 band edge, G9–G13 grid/text/zero-line colours).
+* `TciServer` — Qt6 QWebSocketServer wrapper + multi-client lifecycle + 5ms drain timer + per-client `TciSendQueue`; loopback bind port 50001; ping-interval 20s; emits `clientConnected` / `clientDisconnected`
+* `TciProtocol` — Thetis-faithful command dispatch (two-switch: 60 set + 21 query handlers across 8 families); parse → dispatch → optional synchronous response string
+* `TciClientSession` — per-client state struct (subscriptions, RX/TX audio ring lifecycle, IQ stream state, drop counters, last-command log); condenses Thetis's 49-field `TCPIPtciSocketListener` to 14 fields
+* `TciBinaryFrame` — 64-byte LE header binary frame encode/decode; `TCISampleType` + `TCIStreamType` enum mirrors; `encodeSamples` handles FLOAT32/INT16/INT24/INT32 paths
+* `TciSensorManager` — 4 wire format helpers (`formatRxSensors`, `formatRxChannelSensors`, `formatRxChannelSensorsEx`, `formatTxSensors`) + `minimumRequiredInterval` clamp (30..1000 ms, default 200 ms)
+* `TciVfoCoalescer` — outbound-coalesced-map dedup (Layer 3 of Thetis 3-layer VFO throttle); Layers 1+2 subsumed by Qt event loop
+* `TciSendQueue` — 3-priority FIFO per client (Urgent / Binary / Control) with bounded-depth oldest-drop; drain order mirrors Thetis `tryDequeueNextOutboundFrameLocked`
+* `TciApplet` — operator-facing TCI status applet (Container #0): status dot + port + client count + Setup button; Slice A + TX level meters with gain sliders
+* `ClientChainApplet` — per-client TCI connection detail applet (Container #0): TX badge, peer/name, subscription badges, last command, drop counter, disconnect button; 1 Hz auto-refresh
+* `CatTciServerPage` (inside `CatNetworkSetupPages`) — Setup → Network → TCI Server: 6 group boxes (Server / Compatibility / IQ Stream / Audio Stream / Sensors / VFO Quirks), 17 AppSettings keys
 
 **Phase 3J-2 (Spot system) classes (pending next 0.4.x release):**
 
@@ -553,7 +563,7 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | 1B: Thetis Analysis | Dual-thread DSP (RX1/RX2), pre-allocated receivers, one-way protocol, skin system |
 | 1C: WDSP Analysis | 256 API functions, channel-based DSP, fexchange2() for I/Q, PureSignal feedback loop |
 
-### Current Phase: Phase 3J-2 + 3R + bench-fix tail (pending next 0.4.x release). Next major epic: 3M-2 CW TX.
+### Current Phase: Phase 3J-1 closeout + 3J-2 + 3R + bench-fix tail (pending next 0.4.x release). Next major epic: 3M-2 CW TX.
 
 **Pending next 0.4.x release (2026-05-11 → 2026-05-12)** with two major epics landing together:
 
@@ -617,7 +627,8 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | 3M-4: PureSignal (was 3I-PS) | Feedback DDC, calcc/IQC engine, PSForm, AmpView | Planned |
 | 3F: Multi-Panadapter | DDC assignment (incl. PS states), FFTRouter, PanadapterStack, enable RX2 | Planned |
 | 3H: Skins | Thetis-inspired skin format, 4-pan, legacy import | Planned |
-| 3J: TCI + Spots | TCI server, DX Cluster/RBN clients, spot overlay | Planned |
+| **3J-1: TCI Server** | **TCI WebSocket server + 6 setup group boxes + 2 applets + bottom-bar indicator + Tools/View menu integration + matrix-driven verification harness with ~80 rows + init burst golden + 17 unit tests** | **Complete (this PR)** |
+| 3J-2: Spots | DX Cluster/RBN clients, spot overlay | Planned |
 | 3K: CAT/rigctld | 4-channel rigctld, TCP CAT server | Planned |
 | 3L: HL2 ChannelMaster.dll port | HL2 IoBoardHl2 I2C-over-ep2 wire encoding, bandwidth monitor full port | Planned |
 | 3M: Recording | WAV record/playback, I/Q record, scheduled | Planned |

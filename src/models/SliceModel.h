@@ -122,6 +122,8 @@
 
 #include <QList>
 #include <QObject>
+#include <QPointer>
+#include <QTimer>
 #include <QString>
 
 #include <atomic>
@@ -931,6 +933,43 @@ private:
     // emits lastRadeRxCallsignChanged only on actual change so the VFO
     // flag does not redraw on every EOO repeat decode of the same call.
     QString m_lastRadeRxCallsign;
+
+    // ── 2026-05-12 bench: RADE idle-clear timer ──────────────────────
+    //
+    // The Phase 3R callsign + SNR display on the VFO flag was sticky
+    // until mode-off-RADE / sideband swap / 2s-debounced sync rise.
+    // Operator-reported gap: when the remote station stops transmitting
+    // mid-QSO (no mode change, no sideband swap, sync may still be
+    // marginal-true), the last decoded callsign + SNR hang on the
+    // flag indefinitely.  Adds a per-slice single-shot timer that
+    // clears both fields after 20 s of inactivity (no fresh SNR
+    // update AND no fresh callsign decode).
+    //
+    // Restart triggers (recent activity heard):
+    //   - setSnrDb(non-NaN) while m_dspMode is RADE_U/RADE_L
+    //   - setLastRadeRxCallsign(non-empty) while in RADE
+    //
+    // Stop triggers (we already cleared via another path):
+    //   - setDspMode() leaving RADE
+    //   - setDspMode() swapping RADE_U <-> RADE_L (existing clear)
+    //
+    // Expiry: clear callsign to "" and SNR to NaN.  VfoWidget renders
+    // those as "RADE" prefix + "---" SNR respectively (no "NaN" on
+    // screen).
+    //
+    // Window is operator-configurable via AppSettings key
+    // RadeIdleClearMs (default 20000, clamp 5000..120000).
+    QTimer*  m_radeIdleClearTimer{nullptr};
+    int      m_radeIdleClearMs{20000};
+
+    // Helper: restart the idle timer if we're currently in RADE and the
+    // timer was constructed.  No-op otherwise (e.g. SSB receive doesn't
+    // care about RADE idle).
+    void restartRadeIdleClearTimer();
+
+    // Constructor helper: build the timer + connect its expiry lambda.
+    // Called from both SliceModel ctor overloads.
+    void setupRadeIdleClearTimer();
 };
 
 } // namespace NereusSDR

@@ -27,6 +27,7 @@
 
 #include "SpotModel.h"
 #include <QDateTime>
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -97,6 +98,62 @@ void SpotModel::clear()
 void SpotModel::refresh()
 {
     emit spotsRefreshed();
+}
+
+// Phase 3J-1 closeout follow-up (2026-05-12): cross-source spot dedup.
+// See SpotModel.h for design + rationale.  Implemented here (not header-
+// inline) so the cache prune logic doesn't bloat every translation unit.
+int SpotModel::dedupIndexFor(const QString& callsign,
+                             double freqMhz,
+                             qint64 windowMs)
+{
+    // Bucket by 1 kHz so 14.205 / 14.2055 / 14.206 collapse to one spot.
+    const long bucketKHz =
+        static_cast<long>(std::llround(freqMhz * 1000.0));
+    const QString key = callsign.toUpper()
+                         + QLatin1Char('|')
+                         + QString::number(bucketKHz);
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+    auto it = m_dedupCache.find(key);
+    if (it != m_dedupCache.end()) {
+        const int existingIdx = it.value().first;
+        const qint64 lastMs   = it.value().second;
+        if (nowMs - lastMs <= windowMs) {
+            // Within the dedup window -- reuse the existing index so
+            // applySpotStatus emits spotUpdated instead of spotAdded.
+            // Refresh last-seen so a steadily-active station doesn't
+            // expire mid-stream.
+            it.value().second = nowMs;
+            return existingIdx;
+        }
+        // Window expired -- treat as fresh.  Mint a new index but
+        // overwrite the cache slot so memory doesn't grow without
+        // bound for ham contests that have ten thousand stations.
+        const int newIdx = ++m_nextDedupIndex;
+        it.value() = {newIdx, nowMs};
+        return newIdx;
+    }
+
+    // Brand-new (callsign, freqBucket).  Mint, cache, return.
+    const int newIdx = ++m_nextDedupIndex;
+    m_dedupCache.insert(key, {newIdx, nowMs});
+
+    // Periodic prune: every 100th allocation, drop entries older than
+    // 4x window.  Cheap amortized; keeps the cache table bounded.
+    if ((m_nextDedupIndex % 100) == 0) {
+        const qint64 pruneCutoff = nowMs - (4 * windowMs);
+        auto pit = m_dedupCache.begin();
+        while (pit != m_dedupCache.end()) {
+            if (pit.value().second < pruneCutoff) {
+                pit = m_dedupCache.erase(pit);
+            } else {
+                ++pit;
+            }
+        }
+    }
+    return newIdx;
 }
 
 } // namespace NereusSDR

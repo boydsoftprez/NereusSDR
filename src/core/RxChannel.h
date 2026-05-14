@@ -744,6 +744,28 @@ signals:
     void activeChanged(bool active);
     void filterChanged(double low, double high);
 
+    // Phase 3J-1 (Task 16.2): TCI audio tap. Emitted from the audio thread
+    // after fexchange2 and any post-DSP NR (DFNR, MNR) produce the final
+    // enhanced audio block for this receiver. Receivers MUST use
+    // Qt::DirectConnection — the L/R pointers are owned by the audio thread
+    // (outI/outQ scratch buffers in RxDspWorker) and are valid only for the
+    // duration of the slot call. Cross-thread listeners (e.g. TciServer)
+    // must copy the audio into their own buffer (typically an SPSC ring)
+    // before the slot returns.
+    //
+    // slice: WDSP channel ID (0 = RX1, 1 = RX2) — maps to TCI trx:N at the
+    //   protocol-layer boundary. Phase 16+ may introduce a dedicated receiver-
+    //   index field when Slice C/D arrive; for now channelId() == sliceIndex.
+    // L, R: post-DSP audio in 32-bit float, linear, [-1.0..+1.0].
+    // n: number of float samples per channel (NOT byte count, NOT stereo-frame).
+    // srcRate: WDSP output sample rate (48000 Hz for all current RX channels).
+    //
+    // From design doc §3.5 + §1 (TCI thread architecture). Phase 16 Task 16.3
+    // (TciServer-side) connects this signal with Qt::DirectConnection and
+    // pushes into AudioRingSpsc.
+    void audioFrameReady(int slice, const float* L, const float* R,
+                         int n, int srcRate);
+
 private:
     const int m_channelId;
     // m_bufferSize and m_sampleRate are mutated by setSampleRate() — they

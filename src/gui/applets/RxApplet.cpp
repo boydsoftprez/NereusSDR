@@ -400,13 +400,19 @@ void RxApplet::buildUi()
     {
         m_modeCombo = new QComboBox(this);
         m_modeCombo->setFixedHeight(20);
+        // Mode list mirrors the MainWindow Mode menu (MainWindow.cpp
+        // 2960) -- the canonical Thetis 11 + NereusSDR-native RADE-U /
+        // RADE-L from Phase 3R Task J1.  Both spellings use a hyphen
+        // (SliceModel::modeName returns "RADE-U" / "RADE-L"), so combo
+        // text must match for modeFromName round-trip to work.
         m_modeCombo->addItems({
             QStringLiteral("USB"), QStringLiteral("LSB"),
             QStringLiteral("CWU"), QStringLiteral("CWL"),
             QStringLiteral("AM"),  QStringLiteral("SAM"),
             QStringLiteral("FM"),  QStringLiteral("DSB"),
             QStringLiteral("DIGU"),QStringLiteral("DIGL"),
-            QStringLiteral("DRM")
+            QStringLiteral("DRM"),
+            QStringLiteral("RADE-U"), QStringLiteral("RADE-L")
         });
         applyComboStyle(m_modeCombo);
 
