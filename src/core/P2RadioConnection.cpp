@@ -551,7 +551,12 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     m_p2HeartbeatCycle = 0;
     m_p2HeartbeatTimer->start();
 
-    setState(ConnectionState::Connected);
+    // State stays Connecting; processIqPacket() promotes Connecting -> Connected
+    // on the first DDC I/Q packet. ConnectionState.h:17-20: Connecting means
+    // "start sent, awaiting first frame"; Connected means "data flowing".
+    // Issue #239: previously transitioned to Connected here, which made the
+    // UI claim "Connected" for the full 2 s connect-watchdog window even when
+    // the radio was powered off.
 
     // Arm the connect watchdog: if no first DDC I/Q frame arrives within
     // kConnectTimeoutMs, emit connectFailed(Timeout, ...).
@@ -2260,6 +2265,14 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
         if (m_connectWatchdog && m_connectWatchdog->isActive()) {
             m_connectWatchdog->stop();
         }
+
+        // Issue #239: promote Connecting -> Connected only after the first
+        // I/Q frame actually arrives. Until now connectToRadio() left state
+        // at Connecting; without this transition the UI would never show
+        // "Connected" for a healthy radio.
+        if (state() == ConnectionState::Connecting) {
+            setState(ConnectionState::Connected);
+        }
     } else if (m_totalIqPackets % 10000 == 0) {
         qCDebug(lcProtocol) << "P2: I/Q packets:" << m_totalIqPackets;
     }
@@ -2349,7 +2362,21 @@ void P2RadioConnection::onConnectTimeout()
     if (m_totalIqPackets > 0) { return; }
 
     qCWarning(lcConnection) << "P2: Connect watchdog fired — no DDC I/Q frame within"
-                            << kConnectTimeoutMs << "ms; emitting connectFailed(Timeout)";
+                            << kConnectTimeoutMs << "ms; tearing down and emitting connectFailed(Timeout)";
+
+    // Issue #239: tear down to Disconnected so the UI does not claim
+    // "Connected" while the radio is unreachable. Stop the keep-alive,
+    // TX-IQ, heartbeat, and reconnect timers, close the socket, and clear
+    // m_running. m_intentionalDisconnect is set so any straggling datagrams
+    // drained later are dropped without re-arming the state machine.
+    m_running = false;
+    m_intentionalDisconnect = true;
+    if (m_keepAliveTimer) { m_keepAliveTimer->stop(); }
+    if (m_txIqTimer) { m_txIqTimer->stop(); }
+    if (m_p2HeartbeatTimer) { m_p2HeartbeatTimer->stop(); }
+    if (m_reconnectTimer) { m_reconnectTimer->stop(); }
+    if (m_socket) { m_socket->close(); }
+    setState(ConnectionState::Disconnected);
 
     emit connectFailed(ConnectFailure::Timeout,
                        QStringLiteral("No response from radio within %1 ms — "
