@@ -1116,6 +1116,63 @@ else()
 endif()
 
 # --------------------------------------------------------------------------
+# Precompiled header (NEREUS_USE_PCH=ON by default)
+#
+# CI bake-off (ubuntu-24.04, 4 vCPU, 451 test executables) showed Linux
+# spending ~33m in the build step vs ~6m on macOS / ~12m on Windows.
+# Most of that is repeated parsing of Qt6 + STL headers across the
+# NereusSDRObjs translation units AND across every test target that
+# REUSE_FROMs this PCH (see tests/CMakeLists.txt nereus_add_test()).
+#
+# Keep the list conservative: only headers used by the vast majority of
+# TUs. Adding rarely-used headers slows incremental builds because every
+# PCH change retriggers all consumers.
+#
+# ccache must be configured with sloppiness=pch_defines,time_macros for
+# PCH'd compiles to be cacheable; CI sets this in the "Configure ccache"
+# step. Local builds inherit ccache's defaults — fine for clean builds,
+# may have lower hit rates on incremental until ~/.config/ccache/ccache.conf
+# matches CI.
+# --------------------------------------------------------------------------
+option(NEREUS_USE_PCH "Use precompiled headers to speed up builds" ON)
+if(NEREUS_USE_PCH)
+    target_precompile_headers(NereusSDRObjs PRIVATE
+        # Qt6 core (every model + worker TU)
+        <QObject>
+        <QString>
+        <QStringList>
+        <QByteArray>
+        <QVariant>
+        <QHash>
+        <QMap>
+        <QList>
+        <QVector>
+        <QPointer>
+        <QTimer>
+        <QDebug>
+        # GUI commons (every applet + dialog + widget TU)
+        <QWidget>
+        <QPainter>
+        <QPaintEvent>
+        <QColor>
+        <QFont>
+        <QPen>
+        <QBrush>
+        # STL fundamentals
+        <vector>
+        <string>
+        <memory>
+        <atomic>
+        <functional>
+        <algorithm>
+        <array>
+        <chrono>
+        <cstdint>
+        <utility>
+    )
+endif()
+
+# --------------------------------------------------------------------------
 # Install
 # --------------------------------------------------------------------------
 include(GNUInstallDirs)

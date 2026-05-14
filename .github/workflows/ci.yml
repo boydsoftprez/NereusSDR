@@ -11,29 +11,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            name: Linux x64
-          - os: macos-15
-            name: macOS Apple Silicon
-          - os: windows-latest
-            name: Windows x64
-
-    runs-on: ${{ matrix.os }}
-    name: Build (${{ matrix.name }})
-
+  # --------------------------------------------------------------------
+  # Compliance + provenance + license attribution.
+  #
+  # Split out of the per-platform build matrix on 2026-05-13 (Linux CI
+  # speed-alignment epic). Previously every Linux compliance script ran
+  # serially in front of the slow 33-minute Linux build; that pushed
+  # Linux's wall-clock to ~44m vs ~11m on macOS and ~13m on Windows.
+  # Running compliance as a sibling job in parallel removes ~5 minutes
+  # from the Linux build's critical path. Both jobs remain required
+  # checks, so a compliance failure still blocks the PR.
+  # --------------------------------------------------------------------
+  compliance:
+    runs-on: ubuntu-24.04
+    name: Compliance & Provenance
     steps:
       - uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------
-      # Compliance verification (Linux only)
-      # ------------------------------------------------------------------
       - name: Verify Thetis license headers
-        if: runner.os == 'Linux'
         run: python3 scripts/verify-thetis-headers.py
 
       - name: Check for un-attributed new ports (PR diff scan)
@@ -43,7 +38,7 @@ jobs:
         # like a port but aren't in PROVENANCE.md or marked as opt-out.
         # Closes the gap left by verify-thetis-headers.py, which only
         # checks files already registered in PROVENANCE.
-        if: runner.os == 'Linux' && github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request'
         env:
           CHECK_NEW_PORTS_BASE_REF: origin/${{ github.base_ref }}
         run: |
@@ -58,7 +53,6 @@ jobs:
         # slipped through without attribution. Extends the heuristic to
         # AetherSDR tells (KK7GWY, "Ported from AetherSDR" comments,
         # AetherSDR filenames adjacent to the "AetherSDR" marker).
-        if: runner.os == 'Linux'
         env:
           CHECK_NEW_PORTS_FULL: "1"
         run: python3 scripts/check-new-ports.py
@@ -72,14 +66,12 @@ jobs:
         # Fails if a Bucket A file is missing the project-level
         # AetherSDR attribution, or if a WDSP source lost its upstream
         # GPL permission block on re-import.
-        if: runner.os == 'Linux'
         run: python3 scripts/verify-thetis-headers.py --all-kinds
 
       - name: Verify provenance tables match the source tree
         # Already enforced in pre-commit Ring 2. Re-run in CI Ring 3
         # because squashed merges and rebases can introduce drift the
         # hook never saw.
-        if: runner.os == 'Linux'
         run: python3 scripts/verify-provenance-sync.py
 
       - name: Verify inline '// From Thetis' cite version stamps
@@ -88,20 +80,31 @@ jobs:
         # tests/compliance/inline-cites-baseline.json (288 as of
         # 2026-04-18 sweep). --strict will replace this once the
         # baseline has been remediated to zero.
-        if: runner.os == 'Linux'
         run: python3 scripts/verify-inline-cites.py
 
       - name: Compliance inventory — no missing required markers
         # Walks every git-tracked file, classifies by upstream lineage,
         # verifies per-kind header markers. Fails on any missing marker.
-        if: runner.os == 'Linux'
         run: python3 scripts/compliance-inventory.py --fail-on-unclassified
 
       # ------------------------------------------------------------------
       # Inline author-tag preservation (added 2026-04-21 after DH1KLM drop)
       # ------------------------------------------------------------------
-      - name: Clone Thetis + mi0bot-Thetis upstream for tag check
-        if: runner.os == 'Linux'
+      - name: Cache pinned Thetis + mi0bot-Thetis upstream checkouts
+        # Both upstreams are pinned to fixed SHAs (ramdor 501e3f5,
+        # mi0bot c26a8a4) so the cache key never invalidates until we
+        # re-pin upstream — bump the trailing -vN if the pinned SHAs
+        # change. Saves ~90 seconds per run vs a fresh full clone.
+        id: thetis-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../Thetis
+            ${{ github.workspace }}/../mi0bot-Thetis
+          key: thetis-clones-501e3f5-c26a8a4-v1
+
+      - name: Clone Thetis + mi0bot-Thetis upstream (cache miss only)
+        if: steps.thetis-cache.outputs.cache-hit != 'true'
         # Both upstreams are pinned to the exact commit our inline cites
         # were verified against. Without these pins, HEAD drift shifts
         # line numbers out from under our cites and the hook flags
@@ -121,18 +124,27 @@ jobs:
         # ANAN_G1 case at setup.cs:20238 carrying a `//N1GP` tag,
         # making the verifier flag four phantom missing tags on the
         # untouched HermesLite cite block we ported from c26a8a4.
+        #
+        # Shallow fetch + checkout of the pinned SHA avoids cloning the
+        # full git history. GitHub's git server allows `fetch --depth=1
+        # <sha>` because uploadpack.allowReachableSHA1InWant is enabled.
         run: |
-          git clone https://github.com/ramdor/Thetis.git ../Thetis
-          git -C ../Thetis checkout 501e3f513f73f07742d7e1b85a0e9528bd14977d
-          git clone https://github.com/mi0bot/OpenHPSDR-Thetis.git ../mi0bot-Thetis
-          git -C ../mi0bot-Thetis checkout c26a8a4c7592605039be5f4b5973b33e04e91e54
+          mkdir -p ../Thetis
+          git -C ../Thetis init -q
+          git -C ../Thetis remote add origin https://github.com/ramdor/Thetis.git
+          git -C ../Thetis fetch --depth=1 -q origin 501e3f513f73f07742d7e1b85a0e9528bd14977d
+          git -C ../Thetis checkout -q FETCH_HEAD
+          mkdir -p ../mi0bot-Thetis
+          git -C ../mi0bot-Thetis init -q
+          git -C ../mi0bot-Thetis remote add origin https://github.com/mi0bot/OpenHPSDR-Thetis.git
+          git -C ../mi0bot-Thetis fetch --depth=1 -q origin c26a8a4c7592605039be5f4b5973b33e04e91e54
+          git -C ../mi0bot-Thetis checkout -q FETCH_HEAD
 
       - name: Corpus drift — upstream author tags match committed corpus
         # Fails if upstream Thetis (ramdor or mi0bot fork) contains
         # contributor tags that the committed
         # docs/attribution/thetis-author-tags.json does not yet list.
         # Forces corpus refresh before any port can cite a new region.
-        if: runner.os == 'Linux'
         env:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
@@ -143,7 +155,6 @@ jobs:
         # line N and requires any author tag in ±5 source lines to
         # appear within ±10 port lines. This is the safety net that
         # would have caught the 2026-04-21 DH1KLM drop at PR time.
-        if: runner.os == 'Linux'
         env:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
@@ -155,7 +166,6 @@ jobs:
         # committed indexes drift. Ensures the two human-readable
         # audit docs stay in lockstep with the mechanical corpus, and
         # by extension with upstream Thetis source.
-        if: runner.os == 'Linux'
         env:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
@@ -166,23 +176,45 @@ jobs:
         # the counts drift from WDSP-PROVENANCE.md's documented split
         # (128 gpl2-or-later + 10 utility no-header). Catches a WDSP
         # re-sync that forgets to update PROVENANCE.
-        if: runner.os == 'Linux'
         run: python3 scripts/audit-wdsp-headers.py
 
       - name: Set up Python for pytest
-        if: runner.os == 'Linux'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install pytest
-        if: runner.os == 'Linux'
         run: python3 -m pip install --upgrade pip pytest
 
       - name: pytest — compliance test suite
         # Runs tests/compliance/ (inventory schema + cite baseline).
-        if: runner.os == 'Linux'
         run: python3 -m pytest tests/compliance/ -v
+
+  # --------------------------------------------------------------------
+  # Per-platform build + C++ test gate.
+  #
+  # Linux is the source-of-truth gate for the C++ test suite (see the
+  # Configure (Linux) and Test step comments below for the reasoning).
+  # macOS + Windows still build the main app and configure with tests
+  # OFF because the test fakes are Linux/Qt-specific.
+  # --------------------------------------------------------------------
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: Linux x64
+          - os: macos-15
+            name: macOS Apple Silicon
+          - os: windows-latest
+            name: Windows x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - uses: actions/checkout@v4
 
       # ------------------------------------------------------------------
       # Linux dependencies
@@ -193,11 +225,16 @@ jobs:
         # get QRhiWidget on Linux too. Apt qt6-* on ubuntu-24.04 was Qt
         # 6.4.2, which is too old for QRhiWidget and forced
         # -DNEREUS_GPU_SPECTRUM=OFF on Linux.
+        #
+        # mold (the apt mold package) is the fast linker. With 451 test
+        # executables linking against NereusSDRObjs + Qt6 the default
+        # ld linker dominated Linux build time at ~33 minutes. The
+        # Configure (Linux) step below selects mold via -fuse-ld=mold.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake ninja-build pkg-config g++ \
+            cmake ninja-build pkg-config g++ mold \
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev \
@@ -281,8 +318,15 @@ jobs:
 
       - name: Configure ccache
         if: runner.os != 'Windows'
+        # sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+        # is required so PCH'd compilations are cacheable. Without it, ccache
+        # bypasses any TU compiled with -include-pch (treats them as
+        # "no_input_file"). hash_dir=false improves cross-runner cache reuse
+        # by removing the absolute path from the hash inputs.
         run: |
           ccache --max-size=2G
+          ccache --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+          ccache --set-config=hash_dir=false
           ccache --zero-stats
 
       # Windows intentionally skips sccache. The GitHub Actions Cache backend
@@ -299,23 +343,33 @@ jobs:
       # ------------------------------------------------------------------
       - name: Configure (Linux)
         if: runner.os == 'Linux'
+        # 2026-05-12 (PR #238 review P1 #4): NEREUS_BUILD_TESTS=ON
+        # so the test suite actually compiles + runs in CI.  Prior
+        # configure left it off, the ctest step ran with
+        # --no-tests=ignore, and any drift in test sources (signal
+        # signatures, ctor sigs, factory-profile defaults) silently
+        # passed.  Now we build + run the whole test suite on Linux.
+        #
+        # 2026-05-13: Qt now comes from install-qt-action (6.8.*)
+        # instead of apt qt6-* (which was 6.4.2 on ubuntu-24.04).
+        # That makes QRhiWidget available on Linux CI so we no
+        # longer need -DNEREUS_GPU_SPECTRUM=OFF.  Matches release.yml
+        # x86_64 path and Windows CI.
+        #
+        # 2026-05-13 (Linux CI speed-alignment): -fuse-ld=mold replaces
+        # the default ld linker on the EXE/SHARED/MODULE link lines.
+        # mold is roughly 5x faster than ld on highly-parallel link
+        # graphs; with 451 test executables this saves the bulk of the
+        # build wall-clock. _INIT suffix means it composes with any
+        # toolchain-provided defaults instead of clobbering them.
         run: |
-          # 2026-05-12 (PR #238 review P1 #4): NEREUS_BUILD_TESTS=ON
-          # so the test suite actually compiles + runs in CI.  Prior
-          # configure left it off, the ctest step ran with
-          # --no-tests=ignore, and any drift in test sources (signal
-          # signatures, ctor sigs, factory-profile defaults) silently
-          # passed.  Now we build + run the whole test suite on Linux.
-          #
-          # 2026-05-13: Qt now comes from install-qt-action (6.8.*)
-          # instead of apt qt6-* (which was 6.4.2 on ubuntu-24.04).
-          # That makes QRhiWidget available on Linux CI so we no
-          # longer need -DNEREUS_GPU_SPECTRUM=OFF.  Matches release.yml
-          # x86_64 path and Windows CI.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DNEREUS_BUILD_TESTS=ON
 
       - name: Configure (macOS)

@@ -145,6 +145,33 @@ public:
     QString filePath() const { return m_filePath; }
 
     // ------------------------------------------------------------------
+    // Crash-safety + corruption recovery (issue #241).
+    //
+    // load() may detect a corrupt settings file (leading zero bytes from
+    // an NTFS journal rollback, a mid-stream XML parse failure, or any
+    // other condition that prevents a clean parse). When that happens:
+    //
+    //   1. The corrupt file is renamed in place to
+    //      "<filePath>.corrupt-YYYYMMDD-HHMMSS" so the user can attempt
+    //      manual recovery (or hand it to a developer).
+    //   2. If a "<filePath>.bak" sidecar exists from the previous good
+    //      save() it is parsed; on a clean parse those values become the
+    //      live settings and the next save() rewrites .bak as the
+    //      one-deep history again.
+    //   3. If .bak is missing or also corrupt the in-memory state is
+    //      empty (defaults will be written on the next save()).
+    //
+    // wasCorruptedOnLoad() returns true once load() has hit case (1).
+    // preservedCorruptFilePath() returns the renamed path for use in a
+    // post-startup UI notification. recoveredFromBackup() reports
+    // whether case (2) succeeded.  All three are query-only and reset
+    // on the next load().
+    // ------------------------------------------------------------------
+    bool    wasCorruptedOnLoad() const     { return m_wasCorruptedOnLoad; }
+    QString preservedCorruptFilePath() const { return m_preservedCorruptFilePath; }
+    bool    recoveredFromBackup() const    { return m_recoveredFromBackup; }
+
+    // ------------------------------------------------------------------
     // Profile support (Issue #100) — multiple concurrent NereusSDR
     // instances against different radios. A profile name scopes the
     // settings file (and the log dir, in main.cpp) to a per-profile
@@ -354,6 +381,12 @@ private:
     QMap<QString, QString> m_settings;
     QMap<QString, QString> m_stationSettings;
     QString m_stationName{"NereusSDR"};
+
+    // Issue #241 — corruption-recovery diagnostics (cleared at the top of
+    // every load()).
+    bool    m_wasCorruptedOnLoad{false};
+    QString m_preservedCorruptFilePath;
+    bool    m_recoveredFromBackup{false};
 };
 
 } // namespace NereusSDR
