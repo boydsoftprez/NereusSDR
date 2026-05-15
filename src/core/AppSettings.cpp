@@ -494,37 +494,56 @@ void AppSettings::load()
         qWarning() << "Settings file" << m_filePath
                    << "exists but could not be opened — treating as corrupt";
     } else {
-        // ReadResult::Missing — first-run path. No corruption, no .bak attempt.
-        qDebug() << "No settings file found at" << m_filePath << "— using defaults";
-        return;
+        // ReadResult::Missing — could be first-run, or could be the
+        // "orphan .bak" case introduced by PR #244 itself: the corrupt-
+        // preserve branch below renames a corrupt main file away to
+        // <file>.corrupt-<ts>, leaving the on-disk state as
+        //   main: missing,   .bak: good,   .corrupt-<ts>: bad
+        // If the user kills the app after recovery but before the next
+        // save() runs, the next launch sees main missing and would
+        // silently fall through to defaults — re-creating the exact
+        // data-loss failure mode #241 was filed against.
+        //
+        // Discriminate first-run from orphan-.bak by checking whether
+        // .bak exists at all. If it does we fall through to the .bak
+        // attempt (skipping the corrupt-preserve step — there's nothing
+        // to preserve when main is missing).
+        if (!QFileInfo::exists(bakPath)) {
+            qDebug() << "No settings file found at" << m_filePath << "— using defaults";
+            return;
+        }
+        qDebug() << "Settings file" << m_filePath
+                 << "missing but" << bakPath << "found — attempting recovery";
     }
 
-    // ── Corruption path ──────────────────────────────────────────────────
+    // ── Corrupt-preserve step (skipped when main is missing) ────────────
     //
     // Preserve the corrupt file BEFORE doing anything else so the user
     // (or a developer) can attempt manual recovery. The next save() would
     // otherwise overwrite the only remaining copy with factory defaults
     // (the exact failure mode reported in issue #241).
-    const QString stamp = QDateTime::currentDateTime().toString(
-                              QStringLiteral("yyyyMMdd-HHmmss"));
-    const QString corruptPath = m_filePath + QStringLiteral(".corrupt-") + stamp;
-    if (QFile::rename(m_filePath, corruptPath)) {
-        m_wasCorruptedOnLoad      = true;
-        m_preservedCorruptFilePath = corruptPath;
-        qWarning() << "Corrupt settings file preserved as" << corruptPath;
-    } else {
-        // Rename failed (cross-volume, permissions, etc.). Fall back to a
-        // copy + remove; if even that fails just leave the corrupt file
-        // alone — defaults will still write through QSaveFile and won't
-        // touch it until the next save() runs.
-        if (QFile::copy(m_filePath, corruptPath)) {
-            QFile::remove(m_filePath);
+    if (mainRead != ReadResult::Missing) {
+        const QString stamp = QDateTime::currentDateTime().toString(
+                                  QStringLiteral("yyyyMMdd-HHmmss"));
+        const QString corruptPath = m_filePath + QStringLiteral(".corrupt-") + stamp;
+        if (QFile::rename(m_filePath, corruptPath)) {
             m_wasCorruptedOnLoad       = true;
             m_preservedCorruptFilePath = corruptPath;
-            qWarning() << "Corrupt settings file copied (rename failed) to" << corruptPath;
+            qWarning() << "Corrupt settings file preserved as" << corruptPath;
         } else {
-            qWarning() << "Could not preserve corrupt settings file at" << corruptPath
-                       << "— attempting backup recovery anyway";
+            // Rename failed (cross-volume, permissions, etc.). Fall back to a
+            // copy + remove; if even that fails just leave the corrupt file
+            // alone — defaults will still write through QSaveFile and won't
+            // touch it until the next save() runs.
+            if (QFile::copy(m_filePath, corruptPath)) {
+                QFile::remove(m_filePath);
+                m_wasCorruptedOnLoad       = true;
+                m_preservedCorruptFilePath = corruptPath;
+                qWarning() << "Corrupt settings file copied (rename failed) to" << corruptPath;
+            } else {
+                qWarning() << "Could not preserve corrupt settings file at" << corruptPath
+                           << "— attempting backup recovery anyway";
+            }
         }
     }
 
