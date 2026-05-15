@@ -43,7 +43,17 @@ find_package(Qt6 REQUIRED COMPONENTS
     Network
     Multimedia
     Svg
+    WebSockets
 )
+
+# WebSockets is REQUIRED (not optional) because both the TCI server and the
+# FreeDV Reporter / PSK Reporter spot ingest depend on it. v0.5.0 shipped a
+# macOS x86_64 build with `qtwebsockets` missing from the install-qt-action
+# modules list; CMake's QUIET find_package silently left HAVE_WEBSOCKETS
+# undefined and the resulting binary disabled both features at runtime with
+# only a warning in the log. Mirroring the v0.1.1 NEREUS_GPU_SPECTRUM lesson
+# (see release.yml Configure step): if a feature is mandatory, the build
+# system has to refuse to configure without it.
 
 # Optional Qt components
 find_package(Qt6 QUIET COMPONENTS SerialPort)
@@ -51,13 +61,6 @@ if(Qt6SerialPort_FOUND)
     message(STATUS "Qt6::SerialPort found — serial PTT/CW support enabled")
 else()
     message(STATUS "Qt6::SerialPort not found — serial PTT/CW support disabled")
-endif()
-
-find_package(Qt6 QUIET COMPONENTS WebSockets)
-if(Qt6WebSockets_FOUND)
-    message(STATUS "Qt6::WebSockets found — TCI server enabled")
-else()
-    message(STATUS "Qt6::WebSockets not found — TCI server disabled")
 endif()
 
 # --------------------------------------------------------------------------
@@ -868,10 +871,13 @@ if(Qt6SerialPort_FOUND)
     target_compile_definitions(NereusSDRObjs PUBLIC HAVE_SERIALPORT)
 endif()
 
-if(Qt6WebSockets_FOUND)
-    target_link_libraries(NereusSDRObjs PUBLIC Qt6::WebSockets)
-    target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WEBSOCKETS)
-endif()
+# Qt6::WebSockets is REQUIRED above; the link and HAVE_WEBSOCKETS define
+# are unconditional. The #ifdef HAVE_WEBSOCKETS guards in TciServer,
+# FreeDVReporterClient, MainWindow, and SpotHubDialog are now redundant
+# but left in place to keep this PR surgical; cleanup tracked as a
+# follow-up.
+target_link_libraries(NereusSDRObjs PUBLIC Qt6::WebSockets)
+target_compile_definitions(NereusSDRObjs PUBLIC HAVE_WEBSOCKETS)
 
 if(FFTW3_FOUND)
     target_include_directories(NereusSDRObjs PUBLIC ${FFTW3_INCLUDE_DIRS})

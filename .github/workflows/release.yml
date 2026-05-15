@@ -132,7 +132,8 @@ jobs:
         if: matrix.use_aqt == false
         run: |
           sudo apt-get install -y qt6-base-dev qt6-multimedia-dev \
-            qt6-base-private-dev qt6-shadertools-dev qt6-svg-dev
+            qt6-base-private-dev qt6-shadertools-dev qt6-svg-dev \
+            qt6-websockets-dev
 
       - name: Install Qt 6.8 via aqtinstall (x86_64)
         if: matrix.use_aqt == true
@@ -140,7 +141,7 @@ jobs:
           pip3 install aqtinstall
           # Qt 6.8+ folds qtsvg/qttools/qttranslations into qtbase; not listable as -m modules.
           aqt install-qt linux desktop 6.8.3 linux_gcc_64 \
-            -m qtmultimedia qtshadertools \
+            -m qtmultimedia qtshadertools qtwebsockets \
             --outputdir ${{ github.workspace }}/Qt
           echo "Qt6_DIR=${{ github.workspace }}/Qt/6.8.3/gcc_64/lib/cmake/Qt6" >> $GITHUB_ENV
           echo "CMAKE_PREFIX_PATH=${{ github.workspace }}/Qt/6.8.3/gcc_64" >> $GITHUB_ENV
@@ -348,7 +349,7 @@ jobs:
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
-          modules: 'qtmultimedia qtshadertools'
+          modules: 'qtmultimedia qtshadertools qtwebsockets'
           cache: true
 
       - name: Build FFTW from source for x86_64 (both precisions)
