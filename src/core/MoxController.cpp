@@ -1046,6 +1046,28 @@ void MoxController::setAntiVoxRun(bool run)
     emit antiVoxRunRequested(run);
 }
 
+// ---------------------------------------------------------------------------
+// primeWdspState — bench fix 2026-05-14 ("VOX needs juggling to prime").
+//
+// Resets the three NaN sentinels that guard the *Requested signals and
+// re-runs the recompute helpers so the late-wired TxChannel receives the
+// current values.  See the header comment block for the full motivation.
+//
+// Anti-VOX tau and anti-VOX run are NOT covered here because their TM ->
+// MoxController connects are deferred to wireConnectionSignals
+// (RadioModel.cpp:5025/5051) and the explicit re-push there
+// (RadioModel.cpp:5043/5070) already lands after TxWorkerThread is wired.
+// ---------------------------------------------------------------------------
+void MoxController::primeWdspState()
+{
+    m_lastVoxThresholdEmitted = std::numeric_limits<double>::quiet_NaN();
+    m_lastVoxHangTimeEmitted  = std::numeric_limits<double>::quiet_NaN();
+    m_lastAntiVoxGainEmitted  = std::numeric_limits<double>::quiet_NaN();
+    recomputeVoxThreshold();
+    recomputeVoxHangTime();
+    recomputeAntiVoxGain();
+}
+
 // ===========================================================================
 // H.4 — PTT-source dispatch slots (MIC / CAT / VOX / SPACE / X2)
 //
