@@ -214,27 +214,6 @@ jobs:
           mkdir -p AppDir/usr/share/doc/NereusSDR/rnnoise
           cp third_party/rnnoise/LICENSE          AppDir/usr/share/doc/NereusSDR/rnnoise/
 
-      - name: Stage librade for AppImage packaging
-        run: |
-          # The vendored RADE library (third_party/rade/src/CMakeLists.txt
-          # ports radae_nopy at b289102) builds librade.so.0.1 into the
-          # CMake build tree but has no install() declaration, so
-          # `cmake --install` (Install to AppDir, above) does not copy
-          # it into AppDir/usr/lib/. linuxdeploy then cannot resolve the
-          # librade.so.0.1 SONAME when tracing NereusSDR's ELF deps and
-          # bails with: ERROR: Could not find dependency: librade.so.0.1.
-          # Stage the library and both symlinks (librade.so, librade.so.0)
-          # so linuxdeploy's dep tracer finds them. Preserve symlinks
-          # (cp -P) so the SONAME chain stays intact.
-          mkdir -p AppDir/usr/lib
-          find build/third_party/rade -maxdepth 4 -name 'librade.so*' -exec cp -P {} AppDir/usr/lib/ \;
-          if ! ls AppDir/usr/lib/librade.so* >/dev/null 2>&1; then
-            echo "ERROR: librade.so* not found in build tree after staging" >&2
-            find build -name 'librade.so*' >&2
-            exit 1
-          fi
-          ls -l AppDir/usr/lib/librade.so*
-
       - name: Build AppImage
         env:
           LDAI_OUTPUT: NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.AppImage
@@ -274,6 +253,31 @@ jobs:
           cp resources/icons/NereusSDR.iconset/icon_128x128.png   AppDir/usr/share/icons/hicolor/128x128/apps/nereussdr.png
           cp resources/icons/NereusSDR.iconset/icon_256x256.png   AppDir/usr/share/icons/hicolor/256x256/apps/nereussdr.png
           cp resources/icons/NereusSDR.iconset/icon_512x512.png   AppDir/usr/share/icons/hicolor/512x512/apps/nereussdr.png
+
+          # The vendored RADE library (third_party/rade/src/CMakeLists.txt
+          # ports radae_nopy at b289102) builds librade.so.0.1 as a SHARED
+          # target in the CMake build tree with no install() declaration,
+          # so the "Install to AppDir" cmake --install step does not copy
+          # it into AppDir/usr/lib. linuxdeploy traces NEEDED ELF deps via
+          # ld.so / LD_LIBRARY_PATH / RPATH and does NOT scan AppDir/usr/lib
+          # by default, so it bails with:
+          #   ERROR: Could not find dependency: librade.so.0.1
+          # The --library flag SHOULD register the lib but in the linuxdeploy
+          # continuous build (1-alpha @a9f929f) it did not — linuxdeploy
+          # errored on the NereusSDR dep trace before processing --library.
+          # Use the documented LD_LIBRARY_PATH approach instead: prepend the
+          # build-tree directory containing librade.so* to LD_LIBRARY_PATH so
+          # linuxdeploy's standard resolver finds it during dep tracing and
+          # auto-copies it into AppDir/usr/lib.
+          LIBRADE_PATH="$(find build/third_party/rade -maxdepth 4 -name 'librade.so.0.1' | head -n1)"
+          if [ -z "$LIBRADE_PATH" ]; then
+            echo "ERROR: librade.so.0.1 not found in build tree" >&2
+            find build -name 'librade.so*' >&2
+            exit 1
+          fi
+          LIBRADE_DIR="$(dirname "$LIBRADE_PATH")"
+          echo "Adding $LIBRADE_DIR to LD_LIBRARY_PATH for linuxdeploy"
+          export LD_LIBRARY_PATH="$PWD/$LIBRADE_DIR:$LD_LIBRARY_PATH"
 
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
