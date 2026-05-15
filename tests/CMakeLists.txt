@@ -2146,10 +2146,12 @@ nereus_add_test(tst_tci_radio_model_shims)
 nereus_add_test(tst_slice_filter_per_band_per_mode_persistence)
 
 # ── Issue #241: settings file crash-safety + corruption recovery ─────────────
-# 8 tests covering atomic save (QSaveFile), .bak rotation, leading-NUL
+# 10 tests covering atomic save (QSaveFile), .bak rotation, leading-NUL
 # corruption recovery, mid-stream XML parse-error recovery, no-.bak fallback
 # to defaults, missing-file = first-run (not corruption), diagnostics-reset
-# between load() calls, and no QSaveFile temp residue.
+# between load() calls, no QSaveFile temp residue, plus PR #244 post-merge
+# review gap: orphan-.bak recovery (main missing + .bak good must still
+# recover instead of silently falling through to defaults).
 nereus_add_test(tst_app_settings_corruption)
 
 # ── Task 5.1: SettingsSchemaVersion + v0.3.0 migration ────────────────────────
