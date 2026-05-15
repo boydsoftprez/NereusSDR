@@ -322,7 +322,7 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
-          modules: 'qtmultimedia qtshadertools'
+          modules: 'qtmultimedia qtshadertools qtwebsockets'
           cache: true
 
       # ------------------------------------------------------------------
@@ -347,7 +347,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_mingw
-          modules: 'qtmultimedia qtshadertools'
+          modules: 'qtmultimedia qtshadertools qtwebsockets'
           tools: 'tools_mingw1310'
           cache: true
 
