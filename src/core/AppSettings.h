@@ -161,6 +161,16 @@ public:
     //   3. If .bak is missing or also corrupt the in-memory state is
     //      empty (defaults will be written on the next save()).
     //
+    // load() also handles the "orphan .bak" case (PR #244 follow-up):
+    // when main is *missing* but .bak exists, recovery is attempted from
+    // .bak before declaring first-run.  This closes the data-loss hole
+    // where the corrupt-preserve rename in (1) leaves main missing on
+    // disk; if the user kills the app between recovery and the next
+    // save(), the next launch must still find the .bak rather than
+    // silently restoring defaults.  In that case wasCorruptedOnLoad()
+    // stays false (no corruption was observed *this* load) but
+    // recoveredFromBackup() is true.
+    //
     // wasCorruptedOnLoad() returns true once load() has hit case (1).
     // preservedCorruptFilePath() returns the renamed path for use in a
     // post-startup UI notification. recoveredFromBackup() reports
