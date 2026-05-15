@@ -2274,6 +2274,14 @@ nereus_add_test(tst_mox_controller_vox_threshold)
 # Source: Thetis setup.cs:18896-18900 + 18986-18990 [v2.10.3.13].
 nereus_add_test(tst_mox_controller_anti_vox)
 
+# ── Bench fix 2026-05-14: MoxController::primeWdspState() ─────────────────
+# Verifies that primeWdspState() re-emits voxThresholdRequested,
+# voxHangTimeRequested, and antiVoxGainRequested after the NaN-sentinel
+# "first-call emit" was consumed by loadFromSettings into a void receiver
+# (TxChannel not yet wired).  Regression for the "VOX needs juggling to
+# prime" bench symptom.
+nereus_add_test(tst_mox_controller_prime_wdsp_state)
+
 # ── Phase 3M-1b Task H.4: MoxController PTT-source dispatch ──────────────────
 # Verifies:
 #   Accepted slots (5): onMicPttFromRadio, onCatPtt, onVoxActive, onSpacePtt,

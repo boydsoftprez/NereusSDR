@@ -507,6 +507,40 @@ public slots:
     //   MoxController::antiVoxRunRequested → TxWorkerThread::setAntiVoxRun
     void setAntiVoxRun(bool run);
 
+    // ── Bench fix 2026-05-14: WDSP re-prime after late-wired TxChannel ───────
+    //
+    // primeWdspState: re-emit the three NaN-sentinel-guarded signals
+    //   voxThresholdRequested, voxHangTimeRequested, antiVoxGainRequested
+    // using the current MoxController member state, by resetting the
+    // m_lastXxxEmitted sentinels and re-running the recompute() helpers.
+    //
+    // Motivation (reported bench symptom 2026-05-14, "VOX needs juggling to
+    // prime"): TransmitModel::loadFromSettings (RadioModel.cpp:2631) is called
+    // EARLY in connectToRadio, before the MoxController -> TxChannel connects
+    // at RadioModel.cpp:3604/3612/3620 are established by the WDSP-init
+    // lambda.  During that load the TM -> MoxController connections (wired in
+    // RadioModel ctor at lines 770/812) fire setVoxThreshold / setVoxHangTime
+    // / setAntiVoxGain, each consuming its NaN sentinel via the first-call
+    // emit -- but those emits land in a void receiver because TxChannel
+    // doesn't exist yet.  After TxChannel is wired the sentinels are already
+    // consumed, so a same-value call short-circuits.  Result: WDSP retains
+    // its construction-time defaults until the user moves a slider, which
+    // generates a different value that passes the equality guard.
+    //
+    // The asymmetric design choice for antiVoxTau (RadioModel.cpp:5025) and
+    // antiVoxRun (RadioModel.cpp:5051) -- defer the TM -> Mox connect until
+    // after TxWorkerThread is constructed and add an explicit re-push --
+    // avoids the race entirely.  primeWdspState() retrofits the equivalent
+    // semantic for the three older paths without restructuring their connect
+    // ordering.
+    //
+    // Called from RadioModel::pushTxProcessingChain (the WDSP-init lambda at
+    // RadioModel.cpp:3747) after the MoxController -> TxChannel connects are
+    // established.  Safe to call multiple times -- each call resets the
+    // sentinels and re-emits, which is the desired behaviour on
+    // disconnect/reconnect (a fresh TxChannel needs to be re-primed).
+    void primeWdspState();
+
     // ── H.4: PTT-source dispatch slots ───────────────────────────────────────
     //
     // Each slot routes an external PTT event through the MoxController state

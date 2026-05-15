@@ -3804,6 +3804,29 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txChannel->setDexpLowCut(m_transmitModel.dexpLowCutHz());
                 m_txChannel->setDexpHighCut(m_transmitModel.dexpHighCutHz());
                 m_txChannel->setDexpRunSideChannelFilter(m_transmitModel.dexpSideChannelFilterEnabled());
+
+                // ── Bench fix 2026-05-14: re-prime MoxController WDSP signals ──
+                //
+                // loadFromSettings (line 2631) ran BEFORE the MoxController ->
+                // TxChannel connects above (lines 3604/3612/3620), so the
+                // first-call NaN-sentinel emit of voxThresholdRequested /
+                // voxHangTimeRequested / antiVoxGainRequested landed in a
+                // void receiver and the sentinels are now consumed.  Reset
+                // them and re-run the recompute helpers so the load-time
+                // values reach the freshly-wired TxChannel.
+                //
+                // Reported bench symptom: "VOX needs juggling to prime" --
+                // sliders show correct visual position on launch (model
+                // restored from per-MAC AppSettings) but WDSP retains its
+                // construction-time defaults until the user moves a slider.
+                //
+                // antiVoxTau and antiVoxRun are not covered here -- their
+                // TM -> Mox connects are deferred to wireConnectionSignals
+                // (lines 5025/5051) where an explicit re-push already
+                // happens after TxWorkerThread is wired.
+                if (m_moxController) {
+                    m_moxController->primeWdspState();
+                }
             };
 
             // 1. txEqEnabledChanged → setTxEqRunning.
