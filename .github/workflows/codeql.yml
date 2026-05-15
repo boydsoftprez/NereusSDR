@@ -24,16 +24,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        # System libs only. Qt itself comes from install-qt-action below
+        # so CodeQL matches ci.yml + release.yml (Qt 6.8.*). Apt qt6-*
+        # on ubuntu-24.04 ships Qt 6.4.2, which is too old for
+        # QRhiWidget and used to force -DNEREUS_GPU_SPECTRUM=OFF here;
+        # aligning Qt versions across all three workflows removes that
+        # workaround and stops CodeQL drifting from CI behavior.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build pkg-config g++ \
-            qt6-base-dev qt6-base-private-dev qt6-multimedia-dev \
-            qt6-shadertools-dev qt6-svg-dev qt6-websockets-dev \
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          # Qt 6.8+ folds qtsvg into qtbase; not listable as a module.
+          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          cache: true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -42,13 +57,8 @@ jobs:
 
       - name: Build
         run: |
-          # CodeQL runs on Ubuntu with apt-managed Qt 6.4.2, which is
-          # older than QRhiWidget's 6.7+ requirement. GPU spectrum is
-          # explicitly disabled here so CMake's FATAL_ERROR path does
-          # not trip. Same reasoning as Linux ci.yml Configure step.
           cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DNEREUS_GPU_SPECTRUM=OFF
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
           cmake --build build -j$(nproc)
 
       - name: Perform CodeQL Analysis

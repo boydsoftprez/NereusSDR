@@ -315,6 +315,7 @@ warren@wpratt.com
 #  include "applets/ClientChainApplet.h"
 #  include "core/TciServer.h"
 #  include "setup/TciLogWindow.h"  // Phase 3J-1 closeout Item 2 (2026-05-12)
+#  include <QWebSocket>
 #endif
 #include "SpectrumOverlayPanel.h"
 #include "SetupDialog.h"

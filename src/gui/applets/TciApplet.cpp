@@ -39,6 +39,7 @@
 #include <QSlider>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QWebSocket>
 
 #include <cmath>
 

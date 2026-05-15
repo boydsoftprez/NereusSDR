@@ -11,6 +11,7 @@
 #include <QNetworkInterface>
 #ifdef HAVE_WEBSOCKETS
 #include "core/TciServer.h"
+#include <QWebSocket>
 #endif
 
 #include <QVBoxLayout>
