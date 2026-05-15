@@ -101,7 +101,7 @@ sha256sum -c SHA256SUMS.txt
 
 ## Current Status
 
-**Current release: v0.5.0** (2026-05-13). A substantial minor release on top of v0.4.0 with three epics and a bench-fix tail landing together.
+**Current release: v0.5.1** (2026-05-15). Patch release on top of v0.5.0: closes three ship-blocking gaps in v0.5.0's release artifacts (Windows `rade.dll`, macOS x86_64 `Qt6::WebSockets`, HL2 + Win11 waterfall slider persistence), three correctness fixes (orphan `.bak` recovery, connect-state-stuck-green, VOX prime-on-connect), and two CodeQL pipeline maintenance fixes. v0.5.0 detail below.
 
 **Phase 3J-1: TCI v2.0 WebSocket server.** External programs (WSJT-X, JTDX, FreeDV, Quisk, ESDR3, N1MM, Log4OM, contest software) can now drive NereusSDR over Thetis-compatible TCI. Setup > CAT/Network > TCI Server configures bind interface, port, and sensor intervals; Tools > TCI Server opens the log viewer; the bottom-bar TCI indicator shows live state. The audio pipeline negotiates 8 / 12 / 16 / 44.1 / 48 kHz with per-stream resampling, so FreeDV 8 kHz, Quisk, and JTDX 12 kHz all work end-to-end. 15 closeout items shipped after the initial port stabilized the on-bench behaviour against real clients.
 
