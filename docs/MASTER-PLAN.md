@@ -176,17 +176,18 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 **RxApplet Tier 1 wired:** mode, AGC, AF gain, and filter presets fully wired to SliceModel
 
-### Up Next (after next 0.4.x release)
+### Up Next (after v0.5.0)
 - **Phase 3M-2 — CW TX** (next major epic). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
 - **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
 - **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
 - **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
-- **Phase 3H (Skin system)**, **Phase 3J-1 (TCI server)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
+- **Phase 3H (Skin system)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
 
-### Pending release in the next 0.4.x family (2026-05-11 → 2026-05-12)
+### Shipped in v0.5.0 (2026-05-13)
 
-**Two major epics + an extended bench-fix tail landing together in a single 0.4.x release:**
+**Three major epics + an extended bench-fix tail landing together in a single minor release on top of v0.4.0:**
 
+- **Phase 3J-1 (TCI v2.0 WebSocket server).** Thetis-faithful port of the TCI server so external programs (WSJT-X, JTDX, FreeDV, Quisk, ESDR3, N1MM, Log4OM, contest software) can drive NereusSDR over a WebSocket (Setup > CAT/Network > TCI Server). 8 new core classes (`TciServer`, `TciProtocol`, `TciClientSession`, `TciBinaryFrame`, `TciSensorManager`, `TciVfoCoalescer`, `TciSendQueue`, `TciVolume`), 2 new applets (`TciApplet` + `ClientChainApplet`), Tools > TCI Server + View > Network Applets menu entries, 4-state bottom-bar TCI indicator. Init burst is byte-for-byte parity with Thetis (~98 wire frames) modulo a documented typo divergence. 62 dispatch commands across 8 families, 3-priority send queue (status > sensor > spectrum), Layer-3 VFO coalescer for wheel-acceleration spins. Binary RX audio pipeline with per-stream WDSP resampler lifecycle (8 / 12 / 16 / 44.1 / 48 kHz client rates; FreeDV 8 kHz / Quisk / JTDX 12 kHz round-trip end-to-end). TX audio gated by single-client mutex + ring buffer so burst producers match the WDSP steady consumer. IQ stream with IQSwap + AlwaysStreamIQ. 18 ctest binaries + matrix-driven verification harness (~80 rows in `tests/data/tci/matrix.csv`). 15 closeout items shipped after the initial port stabilized the on-bench behaviour against real clients (WSJT-X TX cycles, FreeDV 8 kHz audio, ESDR3 / N1MM / Log4OM `Q_INVOKABLE` long tail of 56 production shims, bind-interface dropdown, TciLogWindow viewer, per-(band, mode) `LastFilter` persistence, MOX-gated TX sensor broadcast, real RX S-meter + TX power/SWR sensor wiring, HL2 bandwidth-monitor startup grace). 9 documented divergences from Thetis (init-burst typo fix, Qt6 `QWebSocketServer` replacing hand-rolled RFC 6455 framing, Slice A/B/C/D in UI vs `trx:N` on wire, UTF-8 outbound text, single-class `ClientChainApplet`, sensor-interval aggregation, broadcast-to-all-clients, bind-interface dropdown, DIGU/DIGL F5 default restoration).
 - **Phase 3J-2 (Spot system + FreeDV Reporter + PSK Reporter).** Full client-side ingest for DX cluster (telnet to e.g. `dxc.k1ttt.net:7300`), RBN (`telnet.reversebeacon.net:7000` with per-spot SNR), WSJT-X UDP (port 2237), SpotCollector / DXLab UDP, POTA HTTPS auto-poll, FreeDV Reporter (`qso.freedv.org` Socket.IO), and PSK Reporter IPFIX. SpotHubDialog (Tools > Spot Hub, Ctrl+Shift+S) with 9 tabs: per-source tabs, unified Spot List with band + source pill filters, and a Display tab whose knobs (ShowSpotsOnSpectrum / MaxSpotsPerSpectrum / font size / per-source toggles) round-trip through AppSettings. FreeDVReporterDialog (Tools > FreeDV Reporter, Ctrl+Shift+R) with a 14-column live station view, TX-station red highlight + RX-station green highlight + 6-second clear, QSY to remote station, MRU status messages, and 2-hour idle auto-removal. SpotModel + SpotTableModel + BandFilterProxy + FreeDVStationModel + RxDecodeModel own the data tier. DxccColorProvider integrates a 4-tier worked-status resolver against cty.dat (in-tree quarterly refresh) and an operator-supplied ADIF log (e.g. WSJT-X's `wsjtx_log.adi`). Panadapter overlay renders spots with collision-avoidance multi-level stacking and `+N` cluster badges; click-to-tune snaps the active slice to the spot frequency. Auto-connect restore on launch via `RadioModel::restoreSpotClientAutoStartState`. RadioModel owns 7 spot clients (DxClusterClient telnet, WsjtxClient UDP, SpotCollectorClient UDP, PotaClient HTTPS, FreeDVReporterClient Socket.IO, PskReporterClient IPFIX, plus the RBN client driven through DxClusterClient on the RBN host).
 - **Phase 3R (RADE as a true peer mode).** Vendored `radae_nopy` (BSD-2-Clause, pinned to SHA b289102) and Opus (LPCNet + FARGAN) under `third_party/rade/`. Neural-net weights are compiled into the librade binary, so no external model file ships. Added approximately 9 MB to the binary on every platform. `RadeChannel` (RX + TX paths, hybrid port from AetherSDR's structure + freedv-gui's DSP pipeline) wired to WdspEngine via a mode-aware channel swap on `DSPMode::RADE_U` / `DSPMode::RADE_L` (sideband split landed in `0928d88d` to give RADE the correct 1700 Hz bandpass). Adopted the Task I4 Option B decision (per upstream review BLOCKED): use third_party/rade's native callsign-over-EOO API directly through a thin `RadeText` wrapper instead of porting freedv-gui's `rade_text.c` + roughly 1500 lines of codec2 dependencies. RADE TX shipped end-to-end (the earlier draft K-bench deferral has been retired): `TxWorkerThread` semaphore-wake pump feeds the RADE encoder, `sendTxIq` carries the 24 kHz stereo modem output, and TUNE in RADE mode routes through the WDSP modulator. Mode menu surfaces RADE entries; VFO flag gains a mode-aware SNR row (grey / yellow / green by SliceModel::snrDb) plus a speaker-callsign prefix when the EOO decoder extracts one; RadeApplet docks in the right column when RADE is the active mode (profile combo + sync indicator + Reset Vocoder button). `MicProfileManager` ships a new RADE factory profile (22 total, was 21): Leveler enabled, ALC + CFC + CESSB + Phase Rotator all bypassed. `RxDecodeModel` now sources from both WSJT-X UDP decodes and RADE callsign-over-EOO decodes.
 - **Bench-fix tail (2026-05-11 → 2026-05-12).** Sixteen wire / parser / UX gaps that surfaced when the 3J-2 + 3R drafts hit a real radio + a real DX cluster + a real WSJT-X feed:
@@ -210,7 +211,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 **Architecture-level changes:** `MicProfileManager` factory profile count 21 -> 22 (added RADE). `RxDecodeModel` now sources from RADE callsign decodes in addition to WSJT-X. `SpectrumWidget` extended with `loadSpotDisplaySettings` and spot test seams. `SpotTableModel` ownership now lives on `RadioModel` (sibling to `SpotModel`). AppSettings gains the spot-source connection identity keys, the Display-tab knobs, the DXCC color tracking keys, the per-slice RADE state, the FreeDV Reporter Hidden / FrequencyAsKhz / SortColumn / SortAscending / ColumnWidths keys, and the per-source `SpotSourceVisible/<source>` panadapter-visibility keys.
 
-**Deferred / known limitations pending next 0.4.x release:**
+**Deferred / known limitations in v0.5.0:**
 
 - HL2 RADE bench verification is gated on the HL2 ATT/filter safety audit closure (Row 9 of the Phase 3R bench matrix).
 - RADE-on-A while SSB-on-B multi-slice is exploratory; full coverage waits on Phase 3F.
@@ -830,15 +831,15 @@ Verification: Load a Thetis skin, see colors/images applied, 4 pans still work.
 
 **Goal:** TCI v2.0 WebSocket server + DX spot overlay system. **Split into two sub-phases:**
 
-- **Phase 3J-1 (TCI WebSocket server)** (planned). The TCI-specific server work, separated from the spot system because TCI depends on the Phase 3O `IAudioBus` contract.
-- **Phase 3J-2 (Spot system + FreeDV Reporter + PSK Reporter)** pending next 0.4.x release (see entry below).
+- **Phase 3J-1 (TCI WebSocket server)** shipped in v0.5.0 (see entry above). The TCI-specific server work, separated from the spot system because TCI depends on the Phase 3O `IAudioBus` contract.
+- **Phase 3J-2 (Spot system + FreeDV Reporter + PSK Reporter)** shipped in v0.5.0 (see entry below).
 
 Phase 3J-1 scope:
 - TCI WebSocket server (~50 commands, scope v2.0 command set)
 - TCI spot ingestion path (external programs push spots via TCI)
 - Verify against Thetis `SpotManager2.cs` for completeness
 
-### Phase 3J-2: Spot System + FreeDV Reporter + PSK Reporter (pending next 0.4.x release)
+### Phase 3J-2: Spot System + FreeDV Reporter + PSK Reporter (shipped in v0.5.0)
 
 **Goal:** Standalone client-side spot pipeline (DX cluster, RBN, WSJT-X UDP, SpotCollector, POTA, FreeDV Reporter, PSK Reporter) + DXCC color provider + panadapter overlay, **not** gated on TCI.
 
@@ -858,9 +859,9 @@ Scope (all shipped):
 - AppSettings: per-source connection identity (host, port, login callsign, AutoConnect), Display tab knobs (ShowSpotsOnSpectrum, MaxSpotsPerSpectrum, font size, per-source toggles), DXCC color tracking keys.
 - Attribution: byte-for-byte freedv-gui headers + new FREEDV-GUI-PROVENANCE.md registry + `discover-freedv-gui-author-tags.py` + integration into `verify-inline-tag-preservation.py`.
 
-Bench verification: matrix at `docs/architecture/phase3j2-verification/README.md` (11 rows). All rows must pass before next 0.4.x release.
+Bench verification: matrix at `docs/architecture/phase3j2-verification/README.md` (11 rows). All non-deferred rows verified for v0.5.0.
 
-### Phase 3R: RADE as a True Peer Mode (pending next 0.4.x release)
+### Phase 3R: RADE as a True Peer Mode (shipped in v0.5.0)
 
 **Goal:** Add RADE (Radio Autoencoder) as a first-class peer DSP mode. Not implemented as a DIGU pretense, not a virtual audio bus, not a slice-mute hack: `DSPMode::RADE` routes I/Q through a dedicated `RadeChannel` exactly as `SSB` routes through `RxChannel`.
 
@@ -881,7 +882,7 @@ Scope (all shipped):
 - RxDecodeModel: now sources from RADE callsign-over-EOO decodes in addition to WSJT-X UDP decodes.
 - Audio: route RADE rxSpeechReady to AudioEngine; SliceModel snrDb Q_PROPERTY for VFO flag SNR row.
 
-Bench verification: matrix at `docs/architecture/phase3r-verification/README.md` (12 rows). Rows 2 (RADE TX bench), 9 (HL2 RADE bench), and 12 (multi-slice) are explicitly deferred at the next 0.4.x release; remaining 9 non-deferred rows must pass.
+Bench verification: matrix at `docs/architecture/phase3r-verification/README.md` (12 rows). Row 2 (RADE TX bench) confirmed end-to-end on ANAN-G2 via on-air decode; Rows 9 (HL2 RADE bench) and 12 (multi-slice) remain explicitly deferred in v0.5.0. The 10 non-deferred rows passed.
 
 ### Phase 3K: CAT/rigctld + TCP Server
 **Goal:** External radio control for logging and contest software.
@@ -1023,7 +1024,7 @@ The next meaningful steps:
 - **3G-RX-Epic v0.2.3 (dBm strip + NB family + 7-filter NR + PipeWire)** — ✅ Sub-A AetherSDR-style dBm scale strip with wheel-zoom range and hover crosshair; Sub-B full Thetis NB/NB2/SNB family port via `NbFamily` wrapper; Sub-C-1 7-filter NR stack on VFO flag DSP grid (NR1/NR2/NR3 RNNR rnnoise / NR4 SBNR libspecbleach / DFNR DeepFilterNet3 / MNR Apple Accelerate MMSE-Wiener / ANF) with `DspParamPopup` right-click quick controls; Phase 3O Linux PipeWire-native audio bridge supersedes 0.2.2 pactl fallback.
 - **3M-1 (Basic SSB TX)** (formerly 3I-1; renumbered after Phase 3I became the radio connector port) — **NEXT.** TxChannel WDSP wrapper, mic input, MOX state machine, TX I/Q output. Proves the TX path end-to-end and unblocks 3M-2..4, 3F, 3H.
 
-Execution order: **3M-1..4 -> 3J-2 + 3R (pending next 0.4.x release) -> 3M-2 -> 3F -> 3H -> 3K -> ...** (all 3G-* RX prep and 3P all-board parity shipped; 3J-2 spot system and 3R RADE peer mode pending next 0.4.x release; 3M-2 CW TX is the next major epic)
+Execution order: **3M-1..4 -> 3J-2 + 3R (shipped in v0.5.0) -> 3M-2 -> 3F -> 3H -> 3K -> ...** (all 3G-* RX prep and 3P all-board parity shipped; 3J-2 spot system and 3R RADE peer mode shipped in v0.5.0; 3M-2 CW TX is the next major epic)
 
 ### Phase Dependencies
 

@@ -136,14 +136,6 @@ int main(int argc, char* argv[])
     app.setOrganizationName("NereusSDR");
     app.setWindowIcon(QIcon(":/icons/NereusSDR.png"));
 
-    // v0.4.1-rc3 bench-diagnostic startup banner — explicit build identifier
-    // so support bundles can confirm WHICH RC the user is running (system-
-    // info.json's appVersion is just NEREUSSDR_VERSION which doesn't carry
-    // the rc tag).  Bumped per RC; will be removed before final v0.4.1.
-    qInfo().noquote() << "NereusSDR" << NEREUSSDR_VERSION
-                      << "(v0.4.1-rc3 bench — bank-16 ps_run flush + setPuresignalRun diagnostic)"
-                      << "starting";
-
     // Trigger the macOS microphone permission dialog deterministically
     // (issue #203). The OS only prompts when something actually engages
     // TCC; relying on PortAudio's CoreAudio backend to do so is unreliable

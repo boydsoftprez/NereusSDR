@@ -39,17 +39,27 @@
 
 #include <sys/types.h>
 
+// NereusSDR vendored patch: drop __stdcall from the Windows export
+// decoration. RADE_EXPORT prefixes function declarations like:
+//   RADE_EXPORT void rade_initialize(void);
+// which expanded to
+//   __declspec(dllexport) __stdcall void rade_initialize(void);
+// and tripped MSVC C2059 "syntax error: 'type'" at every site. MSVC
+// requires calling-convention specifiers (__stdcall / __cdecl) between
+// the return type and the function name, not before the return type.
+// Default cdecl is fine for the rade ABI — none of the callers assume
+// a non-default convention. Linux/macOS paths unchanged.
 #if IS_BUILDING_RADE_API
 #if _WIN32
-#define RADE_EXPORT __declspec(dllexport) __stdcall
+#define RADE_EXPORT __declspec(dllexport)
 #else
 #define RADE_EXPORT __attribute__((visibility("default")))
 #endif // _WIN32
 #else
 #if _WIN32
-#define RADE_EXPORT __declspec(dllimport) __stdcall
+#define RADE_EXPORT __declspec(dllimport)
 #else
-#define RADE_EXPORT 
+#define RADE_EXPORT
 #endif // _WIN32
 #endif // IS_BUILDING_RADE_API
 

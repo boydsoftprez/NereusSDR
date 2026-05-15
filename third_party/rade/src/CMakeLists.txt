@@ -1,8 +1,16 @@
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+# NereusSDR vendored patch: gate libm linking on non-Windows. MSVC has
+# no separate `m.lib` (math functions live in the default CRT); CMake
+# resolves `target_link_libraries(... m)` to `m.lib` on Windows and
+# fails with LNK1181: cannot open input file 'm.lib'. Use a generator
+# expression so Linux/macOS keep the explicit libm link unchanged and
+# Windows drops it.
+set(RADE_LIBM $<$<NOT:$<PLATFORM_ID:Windows>>:m>)
+
 # LPCNet feature extraction tool
 add_executable(lpcnet_demo lpcnet_demo.c)
-target_link_libraries(lpcnet_demo opus m)
+target_link_libraries(lpcnet_demo opus ${RADE_LIBM})
 
 # DSP source files
 set(RADE_DSP_SOURCES
@@ -23,7 +31,7 @@ add_library(rade SHARED
     rade_dec_data.c
     ${RADE_DSP_SOURCES}
 )
-target_link_libraries(rade opus m)
+target_link_libraries(rade opus ${RADE_LIBM})
 target_compile_definitions(rade PRIVATE -DIS_BUILDING_RADE_API=1 -DRADE_PYTHON_FREE=1)
 
 set_target_properties(rade PROPERTIES
