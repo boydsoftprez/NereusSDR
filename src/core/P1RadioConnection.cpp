@@ -746,7 +746,12 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     m_ep2PacerClock.restart();
     m_ep2PacketsSent = 0;
     m_ep2PacerTimer->start();
-    setState(ConnectionState::Connected);
+    // State stays Connecting; onReadyRead() promotes Connecting -> Connected
+    // on the first ep6 frame. ConnectionState.h:17-20: Connecting means
+    // "metis-start sent, awaiting first ep6"; Connected means "data flowing".
+    // Issue #239: previously transitioned to Connected here, which made the
+    // UI claim "Connected" for the full 2 s connect-watchdog window even when
+    // the radio was powered off.
 
     // Arm the connect watchdog: if no first ep6 arrives within kConnectTimeoutMs,
     // emit connectFailed(Timeout, ...). onReadyRead() cancels this on first good frame.
@@ -754,7 +759,7 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
         m_connectWatchdog->start(kConnectTimeoutMs);
     }
 
-    qCDebug(lcConnection) << "P1: Connected (metis-start sent)";
+    qCDebug(lcConnection) << "P1: Connecting (metis-start sent, awaiting first ep6)";
 }
 
 // ---------------------------------------------------------------------------
@@ -2128,16 +2133,24 @@ void P1RadioConnection::onReadyRead()
                                      << "(1032 bytes)";
             }
 
-            // If we were in a reconnect attempt, the first good frame means recovery.
-            // Stop the reconnect timer and transition to Connected.
+            // First good ep6 frame promotes Connecting -> Connected. This
+            // path serves both the initial connect (issue #239) and the
+            // reconnect-after-LinkLost flow (design doc §3.6 step 5). The
+            // log message branches on m_reconnectAttempts so an initial
+            // connect doesn't claim it was "Reconnected".
             if (cs == ConnectionState::Connecting) {
+                const bool wasReconnecting = (m_reconnectAttempts > 0);
                 m_reconnectAttempts = 0;
                 if (m_reconnectTimer) { m_reconnectTimer->stop(); }
                 if (!m_watchdogTimer->isActive()) { m_watchdogTimer->start(); }
                 setState(ConnectionState::Connected);
-                if (!m_reconnectedLogged) {
-                    qCDebug(lcConnection) << "P1: Reconnected — ep6 stream restored";
-                    m_reconnectedLogged = true;
+                if (wasReconnecting) {
+                    if (!m_reconnectedLogged) {
+                        qCDebug(lcConnection) << "P1: Reconnected, ep6 stream restored";
+                        m_reconnectedLogged = true;
+                    }
+                } else {
+                    qCDebug(lcConnection) << "P1: Connected, ep6 stream established";
                 }
             }
 
@@ -2348,7 +2361,21 @@ void P1RadioConnection::onConnectTimeout()
     if (m_lastEp6At.isValid()) { return; }
 
     qCWarning(lcConnection) << "P1: Connect watchdog fired — no ep6 frame within"
-                            << kConnectTimeoutMs << "ms; emitting connectFailed(Timeout)";
+                            << kConnectTimeoutMs << "ms; tearing down and emitting connectFailed(Timeout)";
+
+    // Issue #239: tear down to Disconnected so the UI does not claim
+    // "Connected" while the radio is unreachable. We stop the ep2 pacer,
+    // silence watchdog, and reconnect timer (none of these should keep
+    // pumping after a failed initial connect) and close the socket; the
+    // user has to click Connect again. m_intentionalDisconnect is then set
+    // so any in-flight datagram drained by onReadyRead() is ignored.
+    m_running = false;
+    m_intentionalDisconnect = true;
+    if (m_watchdogTimer) { m_watchdogTimer->stop(); }
+    if (m_ep2PacerTimer) { m_ep2PacerTimer->stop(); }
+    if (m_reconnectTimer) { m_reconnectTimer->stop(); }
+    if (m_socket) { m_socket->close(); }
+    setState(ConnectionState::Disconnected);
 
     emit connectFailed(ConnectFailure::Timeout,
                        QStringLiteral("No response from radio within %1 ms — "

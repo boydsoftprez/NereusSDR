@@ -102,12 +102,18 @@ private slots:
 
         conn.connectToRadio(makeInfo(fake));
         QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+        // Wait for the fake to register the metis-start before issuing
+        // metis-stop — otherwise the stop can race ahead of the start in
+        // the fake's event loop and m_running ends up true.
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
 
         conn.disconnect();
         QCOMPARE(conn.state(), ConnectionState::Disconnected);
 
-        // The fake should have received a metis-stop and cleared m_running
-        QVERIFY(!fake.isRunning());
+        // The fake should have received a metis-stop and cleared m_running.
+        // Use QTRY_VERIFY because the stop is processed asynchronously by
+        // the fake's readyRead slot one event-loop turn after disconnect().
+        QTRY_VERIFY_WITH_TIMEOUT(!fake.isRunning(), 1000);
 
         fake.stop();
     }

@@ -1467,12 +1467,18 @@ void MainWindow::buildUI()
         m_spectrumWidget->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
     }
 
-    // Clarity → SpectrumWidget threshold update + clarityActive flag
+    // Clarity → SpectrumWidget threshold update + clarityActive flag.
+    // Issue #230 fix: write the render-active mirror, not the
+    // persistent user fields — Clarity is runtime state per Thetis's
+    // AGC pattern (display.cs:6584 [v2.10.3.13] uses
+    // _RX1waterfallPreviousMinValue, a runtime field separate from
+    // waterfall_low_threshold).  The previous setWfLow/HighThreshold
+    // calls were silently overwriting the user's saved thresholds via
+    // scheduleSettingsSave() on every Clarity tick.
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
             m_spectrumWidget, [this](float low, float high) {
         m_spectrumWidget->setClarityActive(true);
-        m_spectrumWidget->setWfLowThreshold(low);
-        m_spectrumWidget->setWfHighThreshold(high);
+        m_spectrumWidget->setClarityWaterfallThresholds(low, high);
     });
 
     // Clarity → SpectrumWidget NF-aware grid (Task 2.9).

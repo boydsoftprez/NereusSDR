@@ -427,6 +427,13 @@ void SpectrumWidget::loadSettings()
     m_wfBlackLevel   = readInt(QStringLiteral("DisplayWfBlackLevel"), 104);
     m_wfHighThreshold = readFloat(QStringLiteral("DisplayWfHighLevel"), -62.0f);
     m_wfLowThreshold = readFloat(QStringLiteral("DisplayWfLowLevel"), -122.0f);
+    // Seed render-active mirror from persistent user values — matches
+    // Thetis's per-render local seed at display.cs:6575/6590
+    // [v2.10.3.13]. AGC / NF-AGC / Clarity will override these at
+    // composeWaterfallActiveThresholds() time; the persistent fields
+    // above stay untouched (issue #230 fix).
+    m_wfActiveHighThreshold = m_wfHighThreshold;
+    m_wfActiveLowThreshold  = m_wfLowThreshold;
     m_fillAlpha      = readFloat(QStringLiteral("DisplayFftFillAlpha"), 0.70f);
     m_panFill        = s.value(settingsKey(QStringLiteral("DisplayPanFill"), m_panIndex),
                                QStringLiteral("True")).toString() == QStringLiteral("True");
@@ -1016,6 +1023,20 @@ void SpectrumWidget::setDbmRange(float minDbm, float maxDbm)
     // Note: callers that invoke setDbmRange deliberately (Copy button, user drag)
     // schedule their own save. The NF-aware grid onNoiseFloorChanged() avoids
     // scheduling saves because it fires at 500ms cadence.
+
+    // Issue #230 fix: when "Use spectrum min/max" is on, the spectrum
+    // grid drives the persistent waterfall thresholds — once per
+    // grid change, not per render frame.  Mirrors Thetis
+    // setWaterfallGainsIfLinkedToSpectrum at console.cs:9098-9101
+    // [v2.10.3.13]:
+    //     if (m_bWaterfallUseRX1SpectrumMinMax && rx == 1) {
+    //         Display.WaterfallLowThreshold  = SetupForm.DisplayGridMin;
+    //         Display.WaterfallHighThreshold = SetupForm.DisplayGridMax;
+    //     }
+    if (m_wfUseSpectrumMinMax) {
+        setWfLowThreshold(minDbm);
+        setWfHighThreshold(maxDbm);
+    }
 }
 
 void SpectrumWidget::setWfColorScheme(WfColorScheme scheme)
@@ -1863,6 +1884,12 @@ void SpectrumWidget::setWfHighThreshold(float dbm)
 {
     if (qFuzzyCompare(m_wfHighThreshold, dbm)) { return; }
     m_wfHighThreshold = dbm;
+    // Mirror into render-active so the next paint reflects the new
+    // user value even before composeWaterfallActiveThresholds() runs.
+    // AGC / NF-AGC / Clarity will re-override active on their next
+    // tick — they are the runtime layer per Thetis display.cs:6575-6594
+    // [v2.10.3.13].
+    m_wfActiveHighThreshold = dbm;
     scheduleSettingsSave();
     update();
 }
@@ -1871,6 +1898,7 @@ void SpectrumWidget::setWfLowThreshold(float dbm)
 {
     if (qFuzzyCompare(m_wfLowThreshold, dbm)) { return; }
     m_wfLowThreshold = dbm;
+    m_wfActiveLowThreshold = dbm;
     scheduleSettingsSave();
     update();
 }
@@ -1911,6 +1939,26 @@ void SpectrumWidget::setWaterfallStopOnTx(bool on)
     if (m_wfStopOnTx == on) { return; }
     m_wfStopOnTx = on;
     scheduleSettingsSave();
+}
+
+// Issue #230 fix: Clarity is a NereusSDR-only override modeled on
+// Thetis's AGC pattern at display.cs:6584 [v2.10.3.13], where the AGC
+// running-min is a runtime field (_RX1waterfallPreviousMinValue) that
+// flows into per-render locals — never the persisted user fields.
+// Previously the Clarity controller called setWfLow/HighThreshold,
+// which scheduled a settings save on every tick and silently
+// overwrote the user's saved thresholds.
+void SpectrumWidget::setClarityWaterfallThresholds(float low, float high)
+{
+    if (qFuzzyCompare(m_wfActiveLowThreshold, low) &&
+        qFuzzyCompare(m_wfActiveHighThreshold, high)) {
+        return;
+    }
+    m_wfActiveLowThreshold  = low;
+    m_wfActiveHighThreshold = high;
+    update();
+    // No scheduleSettingsSave() — Clarity output is runtime state, not
+    // a user preference.
 }
 
 void SpectrumWidget::setWfOpacity(int percent)
@@ -1960,6 +2008,17 @@ void SpectrumWidget::setWfUseSpectrumMinMax(bool on)
     if (m_wfUseSpectrumMinMax == on) { return; }
     m_wfUseSpectrumMinMax = on;
     scheduleSettingsSave();
+
+    // Issue #230 fix: enabling the flag immediately syncs the
+    // persistent waterfall thresholds from the current spectrum
+    // range — same effect as Thetis's checkbox handler at
+    // setup.cs:19221-19243 [v2.10.3.13], which routes through the
+    // WaterfallUseRX1SpectrumMinMax property setter and triggers
+    // setWaterfallGainsIfLinkedToSpectrum (console.cs:9098).
+    if (on) {
+        setWfLowThreshold(m_refLevel - m_dynamicRange);
+        setWfHighThreshold(m_refLevel);
+    }
     update();
 }
 
@@ -3878,6 +3937,80 @@ void SpectrumWidget::reprojectWaterfall(double oldCenterHz, double oldBandwidthH
 #endif
 }
 
+// ---- Waterfall threshold composition ----
+// Mirrors Thetis display.cs:6575-6594 [v2.10.3.13]: persistent user
+// fields (waterfall_low/high_threshold) are seeded into per-render
+// locals, then AGC / NF-AGC / Clarity override only the locals.  The
+// persistent user fields stay untouched — exactly the bug that
+// caused issue #230 before this split landed.
+//
+// In NereusSDR, "locals" become member fields (m_wfActiveLow/High) so
+// external runtime layers (Clarity, between-row signal updates) can
+// stick a value that survives until the next row push.  AGC's
+// running-envelope state (m_wfAgcRunMin/Max) is the equivalent of
+// Thetis's _RX1waterfallPreviousMinValue field.
+void SpectrumWidget::composeWaterfallActiveThresholds(const QVector<float>& wfPixelsDbm)
+{
+    if (wfPixelsDbm.isEmpty()) { return; }
+    const int n = wfPixelsDbm.size();
+
+    // Seed from persistent user values unless Clarity is the live
+    // driver — Clarity writes m_wfActive* directly via
+    // setClarityWaterfallThresholds() and must survive between rows.
+    // Matches the Thetis "high_threshold = waterfall_high_threshold"
+    // seed at display.cs:6575 [v2.10.3.13].
+    if (!m_clarityActive) {
+        m_wfActiveLowThreshold  = m_wfLowThreshold;
+        m_wfActiveHighThreshold = m_wfHighThreshold;
+    }
+
+    // AGC: one-pole follower on display-pixel min/max biases the
+    // effective thresholds.  Skipped while Clarity is the driver.
+    // Phase 3G-9c.
+    if (m_wfAgcEnabled && !m_clarityActive) {
+        float mn = wfPixelsDbm[0];
+        float mx = mn;
+        for (int i = 1; i < n; ++i) {
+            const float v = wfPixelsDbm[i];
+            if (v < mn) { mn = v; }
+            if (v > mx) { mx = v; }
+        }
+        if (!m_wfAgcPrimed) {
+            m_wfAgcRunMin = mn;
+            m_wfAgcRunMax = mx;
+            m_wfAgcPrimed = true;
+        } else {
+            constexpr float kAgcAlpha = 0.05f;
+            m_wfAgcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_wfAgcRunMin;
+            m_wfAgcRunMax = kAgcAlpha * mx + (1.0f - kAgcAlpha) * m_wfAgcRunMax;
+        }
+        // Phase 3G-9b: 12 dB margin for palette breathing room.
+        const float margin = 12.0f;
+        m_wfActiveLowThreshold  = m_wfAgcRunMin - margin;
+        m_wfActiveHighThreshold = m_wfAgcRunMax + margin;
+    }
+
+    // Note: "Use spectrum min/max" no longer mutates here.  Thetis
+    // wires that flag via setWaterfallGainsIfLinkedToSpectrum
+    // (console.cs:9094-9108 [v2.10.3.13]) — the grid-change handler
+    // calls the persistent property setter once per grid change, not
+    // per render frame.  NereusSDR's port lives in setDbmRange() +
+    // setWfUseSpectrumMinMax().  Per-frame mutation here was the
+    // issue #230 source.
+
+    // Task 2.8: NF-AGC -- override thresholds from 10th-percentile
+    // noise floor + configured offset.  Runs after AGC so it wins on
+    // tie; defers to Clarity.
+    if (m_wfNfAgcEnabled && !m_clarityActive) {
+        QVector<float> sorted = wfPixelsDbm;
+        std::sort(sorted.begin(), sorted.end());
+        const float nf = sorted[qBound(0, sorted.size() / 10, sorted.size() - 1)];
+        const float offsetF = static_cast<float>(m_wfNfAgcOffsetDb);
+        m_wfActiveLowThreshold  = nf + offsetF;
+        m_wfActiveHighThreshold = m_wfActiveLowThreshold + 60.0f;
+    }
+}
+
 // ---- Waterfall row push ----
 // From Thetis Display.cs:7719 -- new row at top, old content shifts down.
 // Ring buffer equivalent: decrement write pointer so newest row is always
@@ -3907,50 +4040,13 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     }
     m_wfLastPushMs = now;
 
+    // Issue #230 fix: threshold composition moved out — writes go to
+    // the render-active mirror (m_wfActiveLow/High), never the
+    // persisted user fields. Thetis-faithful per Thetis
+    // display.cs:6575-6594 [v2.10.3.13].
+    composeWaterfallActiveThresholds(wfPixelsDbm);
+
     const int n = wfPixelsDbm.size();
-
-    // AGC: track a slow envelope of display-pixel min/max and bias the
-    // effective thresholds toward it. Simple one-pole follower.
-    // Phase 3G-9c: skipped when Clarity is actively driving thresholds.
-    if (m_wfAgcEnabled && !m_clarityActive) {
-        float mn = wfPixelsDbm[0];
-        float mx = mn;
-        for (int i = 1; i < n; ++i) {
-            const float v = wfPixelsDbm[i];
-            if (v < mn) { mn = v; }
-            if (v > mx) { mx = v; }
-        }
-        if (!m_wfAgcPrimed) {
-            m_wfAgcRunMin = mn;
-            m_wfAgcRunMax = mx;
-            m_wfAgcPrimed = true;
-        } else {
-            constexpr float kAgcAlpha = 0.05f;
-            m_wfAgcRunMin = kAgcAlpha * mn + (1.0f - kAgcAlpha) * m_wfAgcRunMin;
-            m_wfAgcRunMax = kAgcAlpha * mx + (1.0f - kAgcAlpha) * m_wfAgcRunMax;
-        }
-        // Phase 3G-9b: 12 dB margin for palette breathing room.
-        const float margin = 12.0f;
-        m_wfLowThreshold  = m_wfAgcRunMin - margin;
-        m_wfHighThreshold = m_wfAgcRunMax + margin;
-    } else if (m_wfUseSpectrumMinMax) {
-        m_wfHighThreshold = m_refLevel;
-        m_wfLowThreshold  = m_refLevel - m_dynamicRange;
-    }
-
-    // Task 2.8: NF-AGC -- override thresholds from 10th-percentile noise
-    // floor + configured offset.  Takes priority over spectrum-min-max
-    // but yields to the existing legacy AGC (which is a different
-    // feature).  Sort over the full pixel array for the percentile.
-    if (m_wfNfAgcEnabled && !m_clarityActive) {
-        QVector<float> sorted = wfPixelsDbm;
-        std::sort(sorted.begin(), sorted.end());
-        const float nf = sorted[qBound(0, sorted.size() / 10, sorted.size() - 1)];
-        const float offsetF = static_cast<float>(m_wfNfAgcOffsetDb);
-        m_wfLowThreshold  = nf + offsetF;
-        m_wfHighThreshold = m_wfLowThreshold + 60.0f;
-    }
-
     int h = m_waterfall.height();
     // Decrement write pointer so newest row is always at m_wfWriteRow.
     m_wfWriteRow = (m_wfWriteRow - 1 + h) % h;
@@ -3993,12 +4089,16 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
 // Color gain adjusts high_threshold, black level adjusts low_threshold.
 QRgb SpectrumWidget::dbmToRgb(float dbm) const
 {
-    // Effective thresholds adjusted by gain/black level sliders
-    // Black level slider (0-125): lower = more black, higher = less black
-    // Color gain slider (0-100): shifts high threshold DOWN (more color)
-    // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130
-    float effectiveLow = m_wfLowThreshold + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
-    float effectiveHigh = m_wfHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
+    // Effective thresholds adjusted by gain/black level sliders.
+    // Black level slider (0-125): lower = more black, higher = less black.
+    // Color gain slider (0-100): shifts high threshold DOWN (more color).
+    // From Thetis display.cs:2522-2536 defaults: high=-80, low=-130.
+    // Issue #230 fix: read the render-active mirror, not the
+    // persistent user fields — AGC / NF-AGC / Clarity drive the
+    // active mirror via composeWaterfallActiveThresholds() and
+    // setClarityWaterfallThresholds().  Persistent values stay clean.
+    float effectiveLow = m_wfActiveLowThreshold + static_cast<float>(125 - m_wfBlackLevel) * 0.4f;
+    float effectiveHigh = m_wfActiveHighThreshold - static_cast<float>(m_wfColorGain) * 0.3f;
     if (effectiveHigh <= effectiveLow) {
         effectiveHigh = effectiveLow + 1.0f;
     }

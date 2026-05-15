@@ -1590,6 +1590,13 @@ nereus_add_test(tst_waterfall_scrollback)
 # and smoke test for setActivePeakHoldTxActive + setWaterfallStopOnTx combo.
 nereus_add_test(tst_waterfall_defaults_changes)
 
+# ── Issue #230: waterfall threshold persistence under AGC/NF-AGC/Clarity ─────
+# Thetis sources: display.cs:2522-2548 + 6575-6594 (persistent vs runtime
+# threshold split) and console.cs:9094-9108 (setWaterfallGainsIfLinkedToSpectrum
+# grid-change path). Regression test: AGC/NF-AGC/Clarity must write to the
+# active-threshold mirror, not the persisted user fields.
+nereus_add_test(tst_waterfall_threshold_persistence)
+
 # ── Task 2.9: NF-aware grid + Copy button + NoiseFloorEstimator::prime() ─────
 # Thetis source: console.cs:46074-46086 [v2.10.3.13] GridMinFollowsNFRX1 /
 # tmrAutoAGC_Tick NF grid block. NereusSDR-original: global panadapter default.
@@ -2146,10 +2153,12 @@ nereus_add_test(tst_tci_radio_model_shims)
 nereus_add_test(tst_slice_filter_per_band_per_mode_persistence)
 
 # ── Issue #241: settings file crash-safety + corruption recovery ─────────────
-# 8 tests covering atomic save (QSaveFile), .bak rotation, leading-NUL
+# 10 tests covering atomic save (QSaveFile), .bak rotation, leading-NUL
 # corruption recovery, mid-stream XML parse-error recovery, no-.bak fallback
 # to defaults, missing-file = first-run (not corruption), diagnostics-reset
-# between load() calls, and no QSaveFile temp residue.
+# between load() calls, no QSaveFile temp residue, plus PR #244 post-merge
+# review gap: orphan-.bak recovery (main missing + .bak good must still
+# recover instead of silently falling through to defaults).
 nereus_add_test(tst_app_settings_corruption)
 
 # ── Task 5.1: SettingsSchemaVersion + v0.3.0 migration ────────────────────────

@@ -263,6 +263,111 @@ private slots:
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // PR #244 post-merge review gap: the corrupt-preserve rename in load()
+    // leaves main missing on disk, then loads from .bak into memory only.
+    // If the user kills the app before the next save() runs, the next
+    // launch sees main missing + .bak good and (pre-fix) silently fell
+    // through to defaults — recreating the exact data-loss failure mode
+    // #241 was filed against. Reviewer-suggested regression test:
+    // recover from .bak, create a fresh AppSettings without saving, then
+    // load() must still recover the previous values.
+    // ─────────────────────────────────────────────────────────────────────
+    void missingMainWithGoodBakRecovers()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        const QString path    = tmp.filePath(QStringLiteral("NereusSDR.settings"));
+        const QString bakPath = path + QStringLiteral(".bak");
+
+        // Build a populated .bak via the rotation pattern, then simulate
+        // the orphan-bak state: main file removed, .bak intact. This is
+        // exactly the on-disk shape the corrupt-preserve rename produces.
+        {
+            AppSettings s(path);
+            s.setValue(QStringLiteral("UserPref"), QStringLiteral("first-good"));
+            s.save();
+            s.setValue(QStringLiteral("UserPref"), QStringLiteral("second-good"));
+            s.save();
+        }
+        QVERIFY(QFileInfo::exists(bakPath));
+        QVERIFY(QFile::remove(path));
+        QVERIFY(!QFileInfo::exists(path));
+        QVERIFY(QFileInfo::exists(bakPath));
+
+        // Fresh AppSettings — no in-memory state, no save() yet.
+        AppSettings recovered(path);
+        recovered.load();
+
+        QVERIFY2(recovered.recoveredFromBackup(),
+                 "Orphan .bak must be tried before declaring first-run");
+        QVERIFY2(!recovered.wasCorruptedOnLoad(),
+                 "Missing main is not itself a corruption event — "
+                 "wasCorruptedOnLoad() should remain false here");
+        QVERIFY2(recovered.preservedCorruptFilePath().isEmpty(),
+                 "No corrupt file existed to preserve in the orphan-.bak case");
+
+        // The recovered value is the one .bak held — i.e. the previous
+        // good save (one save behind by rotation design).
+        QCOMPARE(recovered.value(QStringLiteral("UserPref")).toString(),
+                 QStringLiteral("first-good"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // End-to-end orphan-bak: corrupt main → recover from .bak (in memory)
+    // → simulate crash before next save() (manually re-create the orphan
+    // state) → re-load → still recovers. This exercises the full failure
+    // mode the reviewer flagged on PR #244.
+    // ─────────────────────────────────────────────────────────────────────
+    void orphanBakAfterCorruptPreserveStillRecovers()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        const QString path    = tmp.filePath(QStringLiteral("NereusSDR.settings"));
+        const QString bakPath = path + QStringLiteral(".bak");
+
+        // Seed three saves so .bak holds populated previous-good state.
+        {
+            AppSettings s(path);
+            s.setValue(QStringLiteral("Pref"), QStringLiteral("a"));
+            s.save();
+            s.setValue(QStringLiteral("Pref"), QStringLiteral("b"));
+            s.save();
+            s.setValue(QStringLiteral("Pref"), QStringLiteral("c"));
+            s.save();
+        }
+        QVERIFY(QFileInfo::exists(bakPath));
+
+        // Corrupt main with NTFS-style leading NULs.
+        QVERIFY(writeRawBytes(path, QByteArray(4096, '\0')));
+
+        // First load: corrupt-preserve renames main to .corrupt-*, recovers
+        // from .bak into memory. Disk is now: no main, .bak good, .corrupt-* preserved.
+        {
+            AppSettings firstLoad(path);
+            firstLoad.load();
+            QVERIFY(firstLoad.wasCorruptedOnLoad());
+            QVERIFY(firstLoad.recoveredFromBackup());
+            QVERIFY(QFileInfo::exists(firstLoad.preservedCorruptFilePath()));
+        }
+
+        // Simulate crash before save(): main is still missing, .bak is still
+        // present. (We deliberately do NOT call save() on firstLoad.)
+        QVERIFY2(!QFileInfo::exists(path),
+                 "After corrupt-preserve, main file should be absent on disk "
+                 "until the next save() runs");
+        QVERIFY(QFileInfo::exists(bakPath));
+
+        // Second load — pre-fix this dropped the user back to defaults.
+        AppSettings secondLoad(path);
+        secondLoad.load();
+        QVERIFY2(secondLoad.recoveredFromBackup(),
+                 "Orphan .bak from the previous corrupt-preserve must still "
+                 "be recoverable on subsequent loads (PR #244 review gap)");
+        QCOMPARE(secondLoad.value(QStringLiteral("Pref")).toString(),
+                 QStringLiteral("b"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // First-run path is NOT a corruption event (no diagnostics tripped).
     // ─────────────────────────────────────────────────────────────────────
     void missingFileIsNotTreatedAsCorruption()
