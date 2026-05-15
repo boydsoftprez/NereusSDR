@@ -17,15 +17,19 @@ class TstAppSettingsProfile : public QObject {
     Q_OBJECT
 private slots:
     void emptyProfileResolvesToLegacyPath() {
+        // PR #238 unified the path resolver: both macOS and the other
+        // platforms route through QStandardPaths::writableLocation(
+        // GenericConfigLocation) + "/NereusSDR" so TestSandboxInit's
+        // setTestModeEnabled(true) redirect actually takes effect on
+        // every platform. The pre-#238 macOS branch hardcoded
+        // ~/Library/Preferences/NereusSDR which bypassed the test
+        // sandbox; this assertion now mirrors production for all
+        // platforms (and therefore picks up the .qttest/ prefix during
+        // test runs without needing a #ifdef shim).
         const QString path = AppSettings::resolveSettingsPath(QString());
-#ifdef Q_OS_MAC
-        const QString expected = QDir::homePath() +
-            "/Library/Preferences/NereusSDR/NereusSDR.settings";
-#else
         const QString expected = QStandardPaths::writableLocation(
             QStandardPaths::GenericConfigLocation) +
             "/NereusSDR/NereusSDR.settings";
-#endif
         QCOMPARE(path, expected);
     }
 
