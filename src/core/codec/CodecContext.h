@@ -299,6 +299,21 @@ struct CodecContext {
     // Source: Thetis networkproto1.c:455 [v2.10.3.13 @501e3f5]
     bool    rxOut{false};
 
+    // Mk II BPF board flag — true for ORIONMKII / ANAN-7000D / ANAN-8000D /
+    // ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 (anything routed through the Mk II
+    // band-pass-filter board). Drives the rx-only relay encoding split in
+    // P2CodecOrionMkII::buildAlex0().
+    //
+    // Source: Thetis ChannelMaster/netInterface.c:461-477 [v2.10.3.13 @501e3f51]
+    // (the `if (mkiibpf)` branch in SetAntBits). When set, the wire layer
+    // routes RX-only selections to `_10_dB_Atten` (bit 14, "RX MASTER IN SEL"
+    // RL22) instead of `_Rx_1_Out` (bit 11, RL17 RX BYPASS OUT) for every
+    // RX-only path except EXT2 (rx_only_ant==1) and transmit.
+    //
+    // Populated by P2RadioConnection::buildCodecContext() from
+    // m_hardwareProfile.mkiiBpf (HardwareProfile.cpp:137-172).
+    bool    mkiiBpf{false};
+
     // Duplex / diversity (bank 0 C4 bits 2 + 7).
     bool    duplex{true};
     bool    diversity{false};

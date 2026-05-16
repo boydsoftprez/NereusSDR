@@ -522,8 +522,13 @@ RadioModel::RadioModel(QObject* parent)
         applyAlexAntennaForBand(b);
         // T13 — keep the slice's cached ANT labels in sync so UI
         // surfaces reading slice->rxAntenna() see the current-band value.
+        //
+        // Issue #257: pass the SkuUiProfile so the RX-only label slot
+        // (EXT1 / BYPS / XVTR depending on SKU) wins over the ANT* default
+        // when rxOnlyAnt(band) != 0.
         if (m_activeSlice) {
-            m_activeSlice->refreshAntennasFromAlex(m_alexController, b);
+            const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+            m_activeSlice->refreshAntennasFromAlex(m_alexController, b, &sku);
         }
     });
     // Also persist the two blockTxAnt* safety toggles; they can change
@@ -5343,8 +5348,12 @@ void RadioModel::wireSliceSignals()
             // on the previous band's label (caught during PR #N
             // bench testing — KG4VCF 2026-04-22). Mirrors the T9
             // path at line 476-478.
+            //
+            // Issue #257: pass the SkuUiProfile so the new band's RX-only
+            // selection (if any) gets the right SKU-specific label.
             if (m_activeSlice) {
-                m_activeSlice->refreshAntennasFromAlex(m_alexController, newBand);
+                const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);
+                m_activeSlice->refreshAntennasFromAlex(m_alexController, newBand, &sku);
             }
         }
         scheduleSettingsSave();
@@ -6124,11 +6133,20 @@ void RadioModel::wireSliceSignals()
         // Fixes SpectrumOverlayPanel antenna combo silently no-op'ing for
         // non-ANT selections (B3 fix-up).
         // Source: same routing as RxApplet popup handler (RxApplet.cpp:279-293).
+        //
+        // Issue #257: the antenna popup is a single mutually-exclusive
+        // selection, so picking ANT1/2/3 must also clear the rx-only mux
+        // (rxOnlyAnt → 0). Without this the RX-bypass relay stays engaged
+        // from a prior EXT1/BYPS/XVTR pick and the radio never returns to
+        // the main RX input. Mirrors Thetis ProcessAlexAntCheckBox
+        // (setup.cs:13643-13705 [v2.10.3.13 @501e3f51]) where unchecking
+        // every RX-only checkbox sends `setRxOnlyAnt(band, 0)`.
         if (ant.startsWith(QStringLiteral("ANT"))) {
             int antNum = 1;
             if (ant == QLatin1String("ANT2")) { antNum = 2; }
             else if (ant == QLatin1String("ANT3")) { antNum = 3; }
             m_alexController.setRxAnt(m_lastBand, antNum);
+            m_alexController.setRxOnlyAnt(m_lastBand, 0);  // issue #257 — release bypass mux
         } else if (ant != QStringLiteral("RX out on TX")) {
             // RX-only label: find 1-based position in SkuUiProfile::rxOnlyLabels.
             const SkuUiProfile sku = skuUiProfileFor(m_hardwareProfile.model);

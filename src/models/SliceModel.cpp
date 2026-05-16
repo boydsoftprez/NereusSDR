@@ -118,6 +118,7 @@
 #include "core/RadeChannel.h"
 #include "core/WdspEngine.h"
 #include "core/accessories/AlexController.h"
+#include "core/SkuUiProfile.h"  // issue #257 — rxOnlyLabels lookup in refreshAntennasFromAlex
 #include "models/RadioModel.h"
 
 #include <QFile>
@@ -518,10 +519,22 @@ void SliceModel::setTxAntenna(const QString& ant)
 // is idempotent — AlexController::setRxAnt/setTxAnt returns early (without
 // emitting antennaChanged) when the stored value equals the new value
 // (AlexController.cpp:95,107), so no signal loop occurs.
-void SliceModel::refreshAntennasFromAlex(const AlexController& alex, Band band)
+//
+// Issue #257: when AlexController::rxOnlyAnt(band) != 0 the radio is
+// actually routing through the rx-only mux (EXT1 / EXT2 / BYPS / XVTR
+// depending on SKU). The cached m_rxAntenna label must reflect that or
+// the user sees "ANT1" while the radio is on EXT1 — and the next pick of
+// "ANT1" in the popup gets no-op'd by setRxAntenna's equality guard,
+// trapping the user on the bypass path. With the SkuUiProfile in hand
+// we resolve rxOnlyAnt (1..3) to the per-SKU label trio (BYPS/EXT1/XVTR
+// for ANAN-7000D, EXT2/EXT1/XVTR for ANAN-100D, etc).
+void SliceModel::refreshAntennasFromAlex(const AlexController& alex,
+                                         Band band,
+                                         const SkuUiProfile* sku)
 {
-    const int rx = alex.rxAnt(band);   // 1..3
-    const int tx = alex.txAnt(band);
+    const int rxOnly = alex.rxOnlyAnt(band);  // 0=none, 1/2/3 indexed
+    const int rx     = alex.rxAnt(band);      // 1..3
+    const int tx     = alex.txAnt(band);      // 1..3
     auto name = [](int n) {
         switch (n) {
             case 2:  return QStringLiteral("ANT2");
@@ -529,12 +542,26 @@ void SliceModel::refreshAntennasFromAlex(const AlexController& alex, Band band)
             default: return QStringLiteral("ANT1");
         }
     };
+
+    // Issue #257: prefer the SKU-specific RX-only label when the bypass mux
+    // is engaged. Fall back to the ANT* label when sku is null, when the
+    // mux is disengaged (rxOnly == 0), or when the indexed slot in the SKU
+    // is empty (defensive — should never happen because rxOnlyLabels is
+    // always-3 in SkuUiProfile.h).
+    QString rxLabel;
+    if (sku && rxOnly >= 1 && rxOnly <= 3) {
+        const QString& slot = sku->rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        rxLabel = slot.isEmpty() ? name(rx) : slot;
+    } else {
+        rxLabel = name(rx);
+    }
+
     // Use the public setters so rxAntennaChanged / txAntennaChanged
     // signals fire — VFO Flag and RxApplet listen. The loop back to
     // AlexController via T12's handler is idempotent: AlexController's
     // setRxAnt/setTxAnt returns early on equal value, so no signal is
     // emitted.
-    setRxAntenna(name(rx));
+    setRxAntenna(rxLabel);
     setTxAntenna(name(tx));
 }
 

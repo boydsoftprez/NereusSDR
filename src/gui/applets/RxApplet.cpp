@@ -303,11 +303,19 @@ void RxApplet::buildUi()
                 if (m_model && m_pan) {
                     // ANT1/2/3 → setRxAnt. RX-only labels → setRxOnlyAnt (position in sku).
                     // "RX out on TX" is the bypass toggle — not routed via setRxAnt.
+                    //
+                    // Issue #257: picking ANT1/2/3 also clears any pending
+                    // rx-only mux (rxOnlyAnt → 0) so the RX bypass relay
+                    // releases and the main TX/RX input is restored. Mirrors
+                    // Thetis ProcessAlexAntCheckBox (setup.cs:13643-13705
+                    // [v2.10.3.13 @501e3f51]) where unchecking every RX-only
+                    // checkbox sends `setRxOnlyAnt(band, 0)`.
                     if (text.startsWith(QStringLiteral("ANT"))) {
                         int antNum = 1;
                         if (text == QStringLiteral("ANT2")) { antNum = 2; }
                         else if (text == QStringLiteral("ANT3")) { antNum = 3; }
                         m_model->alexControllerMutable().setRxAnt(m_pan->band(), antNum);
+                        m_model->alexControllerMutable().setRxOnlyAnt(m_pan->band(), 0);  // issue #257
                     } else if (m_popupSku && text != QStringLiteral("RX out on TX")) {
                         // RX-only label: find its position in sku.rxOnlyLabels (1-indexed)
                         const auto& lbls = m_popupSku->rxOnlyLabels;
