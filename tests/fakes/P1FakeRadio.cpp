@@ -45,7 +45,9 @@ void P1FakeRadio::start()
     m_streamTimer = new QTimer(this);
     m_streamTimer->setInterval(10);
     connect(m_streamTimer, &QTimer::timeout, this, &P1FakeRadio::onAutoStreamTick);
-    m_streamTimer->start();
+    if (m_autoStreamEnabled) {
+        m_streamTimer->start();
+    }
 }
 
 void P1FakeRadio::stop()
@@ -82,6 +84,17 @@ void P1FakeRadio::resume()
     m_silent = false;
     // m_clientAddress/m_clientPort will be repopulated when the reconnect
     // attempt sends a fresh metis-start.
+}
+
+void P1FakeRadio::setAutoStreamEnabled(bool enabled)
+{
+    m_autoStreamEnabled = enabled;
+    if (!m_streamTimer) { return; }  // start() not called yet
+    if (enabled) {
+        if (!m_streamTimer->isActive()) { m_streamTimer->start(); }
+    } else {
+        if (m_streamTimer->isActive()) { m_streamTimer->stop(); }
+    }
 }
 
 // ---------------------------------------------------------------------------

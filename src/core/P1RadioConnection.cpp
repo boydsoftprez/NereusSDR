@@ -2090,7 +2090,18 @@ void P1RadioConnection::onReadyRead()
 {
     if (!m_socket) { return; }
 
-    const ConnectionState cs = state();
+    // Note: not `const` — we update this local snapshot below when the
+    // Connecting -> Connected promotion fires on the first 1032-byte
+    // datagram, so the "ep6 stream established" log line emits exactly
+    // once per readyRead batch instead of once per datagram in the batch.
+    // Without the update, when UDP delivers a burst of ep6 frames in a
+    // single readyRead (common on first-connect because the radio is
+    // already streaming when metis-start lands), every iteration of the
+    // drain loop below sees `cs == Connecting`, calls setState(Connected)
+    // (idempotent), and re-emits the log line.  Issue #258 — observed
+    // 181 spurious "Connected, ep6 stream established" lines in <10 ms
+    // on first connect, misread as a "reconnect storm" in the bug report.
+    ConnectionState cs = state();
     // Only process ep6 data when Connected or Connecting (reconnect attempt).
     if (cs != ConnectionState::Connected && cs != ConnectionState::Connecting) {
         // Drain the socket anyway to avoid buffering.
@@ -2144,6 +2155,9 @@ void P1RadioConnection::onReadyRead()
                 if (m_reconnectTimer) { m_reconnectTimer->stop(); }
                 if (!m_watchdogTimer->isActive()) { m_watchdogTimer->start(); }
                 setState(ConnectionState::Connected);
+                // Sync the local snapshot so subsequent iterations of the
+                // drain loop don't re-enter this branch.  Issue #258.
+                cs = ConnectionState::Connected;
                 if (wasReconnecting) {
                     if (!m_reconnectedLogged) {
                         qCDebug(lcConnection) << "P1: Reconnected, ep6 stream restored";
