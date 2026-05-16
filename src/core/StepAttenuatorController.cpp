@@ -1099,8 +1099,16 @@ void StepAttenuatorController::loadSettings(const QString& mac)
     }
 
     // Notify UI of restored values.
+    //
+    // Issue #259 fix: stepAttEnabledChanged is emitted here so the
+    // "RX1 Enable" / "RX2 Enable" checkboxes on Setup → General → Options
+    // pick up the restored value on connect. Without this emit, the
+    // controller's m_stepAttEnabled is correct but the checkbox stays
+    // at its constructor default (unchecked) until the user clicks it
+    // — so persistence appears broken even when the round-trip works.
     emit attenuationChanged(m_attDb);
     emit preampModeChanged(m_preampMode);
+    emit stepAttEnabledChanged(m_stepAttEnabled);
 }
 
 }  // namespace NereusSDR

@@ -508,9 +508,15 @@ void GeneralOptionsPage::buildStepAttGroup()
             m_ctrl->setStepAttEnabled(on);
         }
     });
+    // Issue #259: RX2 toggle routes through the same single-RX controller as
+    // RX1 so its state persists. For ANAN-10E / single-ADC boards this matches
+    // Thetis's chkRX2StepAtt ↔ chkHermesStepAttenuator mirror (setup.cs:15719
+    // -15721 [v2.10.3.13]). Full per-RX state is Phase 3F (multi-pan) scope.
     connect(m_chkRx2StepAttEnable, &QCheckBox::toggled, this, [this](bool on) {
         m_spnRx2StepAttValue->setEnabled(on);
-        // Controller is single-RX for step-att enable; RX2 is future expansion.
+        if (m_ctrl) {
+            m_ctrl->setStepAttEnabled(on);
+        }
     });
 
     // --- Spinbox → controller ---
@@ -645,11 +651,34 @@ void GeneralOptionsPage::connectController()
     connect(m_ctrl, &StepAttenuatorController::adcLinkedChanged,
             m_lblAdcLinked, &QLabel::setVisible);
 
-    // Attenuation changed → update RX1 spinbox (controller is single-RX)
+    // Attenuation changed → update both RX1 and RX2 spinboxes. The controller
+    // is single-RX (m_attDb backs both), so a write from either spinbox
+    // propagates to the other via this signal. Issue #259: previously only
+    // RX1 was wired, leaving RX2 stuck at zero after loadSettings restored
+    // a non-zero value through attenuationChanged.
     connect(m_ctrl, &StepAttenuatorController::attenuationChanged,
             this, [this](int dB) {
-        QSignalBlocker blk(m_spnRx1StepAttValue);
+        QSignalBlocker blk1(m_spnRx1StepAttValue);
+        QSignalBlocker blk2(m_spnRx2StepAttValue);
         m_spnRx1StepAttValue->setValue(dB);
+        m_spnRx2StepAttValue->setValue(dB);
+    });
+
+    // Enable state changed → update both RX1 and RX2 checkboxes and cascade
+    // each spinbox's enabled state. Issue #259: without this wiring, the
+    // controller's m_stepAttEnabled (correctly restored by loadSettings)
+    // never reaches the UI, so the user sees the box unchecked even when
+    // persistence worked end-to-end.
+    connect(m_ctrl, &StepAttenuatorController::stepAttEnabledChanged,
+            this, [this](bool on) {
+        {
+            QSignalBlocker blk1(m_chkRx1StepAttEnable);
+            QSignalBlocker blk2(m_chkRx2StepAttEnable);
+            m_chkRx1StepAttEnable->setChecked(on);
+            m_chkRx2StepAttEnable->setChecked(on);
+        }
+        m_spnRx1StepAttValue->setEnabled(on);
+        m_spnRx2StepAttValue->setEnabled(on);
     });
 }
 
