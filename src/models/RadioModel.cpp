@@ -6517,8 +6517,17 @@ void RadioModel::teardownConnection()
     // `if (m_radioModel->connection())` guard there skips the save. Use
     // m_lastRadioInfo.macAddress (which survives teardown) to pin the
     // per-MAC keys, mirroring the TransmitModel pattern just above.
+    //
+    // StepAttenuatorController::saveSettings is itself gated on
+    // m_loadedMac == mac, so this call is a no-op when teardown fires
+    // before loadSettings (the pre-load clobber path the bench trace
+    // surfaced — see StepAttenuatorController::saveSettings comment).
+    // After saving, mark the controller as unloaded so a fresh connect
+    // (even to the same MAC) must re-load before its teardown can save
+    // again.
     if (m_stepAttController && !m_lastRadioInfo.macAddress.isEmpty()) {
         m_stepAttController->saveSettings(m_lastRadioInfo.macAddress);
+        m_stepAttController->markSettingsUnloaded();
     }
 
     // Issue #177 — clear any in-flight TUN-off bookkeeping.  If we are

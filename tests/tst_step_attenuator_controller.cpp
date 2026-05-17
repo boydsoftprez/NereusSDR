@@ -414,10 +414,16 @@ private slots:
 
         // First controller: simulate the user toggling enable + value, then
         // saving on disconnect.
+        //
+        // The leading loadSettings tags the controller as loaded for this
+        // MAC so saveSettings is allowed to write. Issue #259: an unloaded
+        // controller's saveSettings is a no-op to prevent the pre-load
+        // clobber path (see persistence_saveBeforeLoad_doesNotClobber).
         {
             StepAttenuatorController ctrl;
             ctrl.setTickTimerEnabled(false);
             ctrl.setMaxAttenuation(31);
+            ctrl.loadSettings(mac);  // tag as loaded
             ctrl.setStepAttEnabled(true);
             ctrl.setAttenuation(5);
             QCOMPARE(ctrl.stepAttEnabled(), true);
@@ -459,6 +465,118 @@ private slots:
             QVERIFY2(attSpy.count() >= 1,
                 "loadSettings must emit attenuationChanged for spinbox sync");
             QCOMPARE(attSpy.last().at(0).toInt(), 5);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Issue #259 regression: saveSettings before loadSettings must NOT
+    // clobber the persisted file with constructor defaults.
+    //
+    // Bench failure mode: RadioModel::connectToRadio calls teardown-
+    // Connection when a previous m_connection still exists (auto-reconnect
+    // retry, panel-driven reconnect, etc). teardownConnection's
+    // saveSettings would fire with m_attDb=0 / m_stepAttEnabled=true
+    // before the matching loadSettings, overwriting the user's real
+    // persisted state. Confirmed at /tmp/nereus259/run.log:
+    //   18:31:11.242 saveSettings m_attDb=0
+    //   18:31:15.854 loadSettings DONE m_attDb=0  (reads back the clobber)
+    //
+    // The gate: m_loadedMac is empty until loadSettings runs for the MAC,
+    // and saveSettings short-circuits when m_loadedMac != mac.
+    // ─────────────────────────────────────────────────────────────────────
+    void persistence_saveBeforeLoad_doesNotClobber()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:de:ad:03");
+
+        // Session 1: user saved m_attDb=12 cleanly.
+        {
+            StepAttenuatorController ctrl;
+            ctrl.setTickTimerEnabled(false);
+            ctrl.setMaxAttenuation(31);
+            ctrl.setStepAttEnabled(true);
+            ctrl.setAttenuation(12);
+
+            ctrl.loadSettings(mac);  // tag the controller as loaded for this MAC
+            // (the values just read are at-defaults / not-yet-saved; loadSettings
+            //  is idempotent with respect to in-memory state we just set above)
+            ctrl.setAttenuation(12);  // re-apply after load
+            ctrl.saveSettings(mac);
+            AppSettings::instance().save();
+        }
+
+        // Session 2: fresh controller. saveSettings fires (simulating the
+        // pre-load teardown clobber path) BEFORE loadSettings runs.
+        {
+            StepAttenuatorController ctrl;
+            ctrl.setTickTimerEnabled(false);
+            ctrl.setMaxAttenuation(31);
+            QCOMPARE(ctrl.attenuatorDb(), 0);   // default
+            QCOMPARE(ctrl.settingsLoaded(), false);
+
+            // The bug: this would write m_attDb=0 to disk.
+            ctrl.saveSettings(mac);
+            AppSettings::instance().save();
+        }
+
+        // Session 3: verify the persisted value is still 12, not the
+        // accidental zero from Session 2.
+        {
+            StepAttenuatorController ctrl;
+            ctrl.setTickTimerEnabled(false);
+            ctrl.setMaxAttenuation(31);
+            ctrl.loadSettings(mac);
+            QCOMPARE(ctrl.attenuatorDb(), 12);
+            QCOMPARE(ctrl.settingsLoaded(), true);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Issue #259: markSettingsUnloaded() re-arms the gate so a re-connect
+    // (even to the same MAC) cannot save until loadSettings has run again.
+    // ─────────────────────────────────────────────────────────────────────
+    void persistence_markUnloaded_reArmsGate()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:de:ad:04");
+
+        // Prime: load + write a real value.
+        {
+            StepAttenuatorController ctrl;
+            ctrl.setTickTimerEnabled(false);
+            ctrl.setMaxAttenuation(31);
+            ctrl.loadSettings(mac);
+            ctrl.setAttenuation(7);
+            QVERIFY(ctrl.settingsLoaded());
+            ctrl.saveSettings(mac);
+            AppSettings::instance().save();
+        }
+
+        // Simulate disconnect-then-reconnect race: a fresh controller
+        // loads, marks unloaded (disconnect path), then sees a stray
+        // saveSettings before the next loadSettings runs. The save must
+        // be rejected so the persisted 7 survives.
+        {
+            StepAttenuatorController ctrl;
+            ctrl.setTickTimerEnabled(false);
+            ctrl.setMaxAttenuation(31);
+            ctrl.loadSettings(mac);
+            QCOMPARE(ctrl.attenuatorDb(), 7);
+
+            ctrl.markSettingsUnloaded();
+            QCOMPARE(ctrl.settingsLoaded(), false);
+
+            // Stray save in the unloaded state — must be a no-op.
+            ctrl.setAttenuation(0);  // simulate default reset by some code path
+            ctrl.saveSettings(mac);
+            AppSettings::instance().save();
+        }
+
+        // Verify the prior 7 survived the stray save.
+        {
+            StepAttenuatorController ctrl;
+            ctrl.setTickTimerEnabled(false);
+            ctrl.setMaxAttenuation(31);
+            ctrl.loadSettings(mac);
+            QCOMPARE(ctrl.attenuatorDb(), 7);
         }
     }
 

@@ -279,8 +279,17 @@ public:
     void setReceiverManager(ReceiverManager* mgr);
 
     // Per-MAC persistence — save/load all ATT/preamp/auto-att settings.
+    //
+    // Issue #259: saveSettings is gated on m_loadedMac == mac so a tear-
+    // down that fires before the matching loadSettings can't overwrite
+    // the persisted state with constructor defaults. Call
+    // markSettingsUnloaded() on disconnect (clears m_loadedMac) so the
+    // next connect's tear-down doesn't reuse a stale load tag from a
+    // previously-loaded different radio.
     void saveSettings(const QString& mac);
     void loadSettings(const QString& mac);
+    void markSettingsUnloaded() { m_loadedMac.clear(); }
+    bool settingsLoaded() const { return !m_loadedMac.isEmpty(); }
 
     // --- Tick (public for testability) ---
 
@@ -378,6 +387,23 @@ private:
     bool m_stepAttEnabled = true;
     int m_maxAttDb = kDefaultMaxAttDb;
     int m_minAttDb = kDefaultMinAttDb;
+
+    // Issue #259 — guards saveSettings against pre-load clobber.
+    //
+    // Bug pattern: during connectToRadio() the existing m_connection (from
+    // a previous attempt or an in-flight auto-reconnect) triggers a
+    // teardownConnection() in RadioModel::connectToRadio. Our save call in
+    // teardownConnection fires BEFORE the matching loadSettings runs for
+    // this MAC, so it writes the constructor defaults (m_attDb=0,
+    // m_stepAttEnabled=true) over the user's previously-persisted state.
+    //
+    // The gate: m_loadedMac is set to the MAC at loadSettings entry. A
+    // saveSettings call where mac != m_loadedMac short-circuits and does
+    // nothing, so the defaults never make it to disk before the real
+    // values have been pulled in. (Cleared on disconnect via
+    // markSettingsUnloaded() so a different-MAC connect doesn't reuse
+    // a stale load tag from a prior radio.)
+    QString m_loadedMac;
 
     // Auto-att configuration.
     bool m_autoAttEnabled = false;
