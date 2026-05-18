@@ -376,6 +376,34 @@ void TxWorkerThread::run()
         dispatchOneBlock();
     }
 
+    // Issue #258 — move m_txChannel back to this worker's creator thread
+    // (i.e. RadioModel's thread = main) BEFORE run() exits.
+    //
+    // Qt6's QObject::moveToThread requires the call to be made from the
+    // object's CURRENT thread.  If RadioModel::teardownConnection (or
+    // setActiveRxCountLive) tries to do this from the main thread AFTER
+    // stopPump returns, m_txChannel's affinity is still THIS (now-finished)
+    // worker — Qt emits "Current thread (%p) is not the object's thread"
+    // and silently aborts the move.  m_txWorker.reset() then destroys
+    // this QThread while m_txChannel still holds thread affinity pointing
+    // at it; the dangling thread-data is then walked during m_txChannel's
+    // own destruction, which on Windows surfaces as a 0xc0000409
+    // security-check failure in ucrtbase.dll (field-observed in #258).
+    //
+    // Doing the move HERE — from this worker thread, which IS m_txChannel's
+    // current affinity — satisfies Qt's precondition and lets stopPump's
+    // QThread::wait() return with m_txChannel already safely back on main.
+    // The corresponding moveToThread calls in RadioModel.cpp are preserved
+    // as defensive no-ops (Qt early-returns when target == current).
+    //
+    // `this->thread()` is the QObject affinity of the TxWorkerThread
+    // *object* (not the OS thread executing run()), which by construction
+    // is the thread that constructed this TxWorkerThread — RadioModel's
+    // thread = main.
+    if (m_txChannel) {
+        m_txChannel->moveToThread(this->thread());
+    }
+
     qCInfo(lcTxWorker) << "run: worker thread loop exited";
 }
 

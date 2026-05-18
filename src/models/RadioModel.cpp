@@ -6602,6 +6602,14 @@ void RadioModel::teardownConnection()
         // semaphore release that breaks the worker out of waitForBlock).
         m_txWorker->stopPump();
         if (m_txChannel) {
+            // Issue #258: TxWorkerThread::run() moves m_txChannel back to
+            // this thread before returning, so by the time stopPump's
+            // QThread::wait() unblocks, m_txChannel is already here.  This
+            // call is therefore a defensive no-op (Qt early-returns when
+            // the target thread equals the object's current thread).  Keep
+            // it so the invariant is explicit at the teardown site and a
+            // future refactor that breaks the run()-side move still leaves
+            // teardown safe rather than introducing a hard crash.
             m_txChannel->moveToThread(this->thread());
         }
         m_txWorker.reset();
@@ -8464,6 +8472,10 @@ qint64 RadioModel::setActiveRxCountLive(int newCount)
     if (m_txWorker) {
         m_txWorker->stopPump();
         if (m_txChannel) {
+            // Issue #258: TxWorkerThread::run() moves m_txChannel back to
+            // this thread before returning, so this call is a defensive
+            // no-op (Qt early-returns when target == current).  See
+            // teardownConnection for the full rationale.
             m_txChannel->moveToThread(this->thread());
         }
     }

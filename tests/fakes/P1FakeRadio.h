@@ -40,6 +40,15 @@ public:
     // Resume handling packets and restart auto-streaming.
     void resume();
 
+    // Disable (or re-enable) the 10 ms auto-stream timer so a test has full
+    // control over when ep6 frames arrive at the receiver.  Must be called
+    // BEFORE start() to suppress the timer entirely; called after start() it
+    // stops the timer in place.  Tests that need to burst-inject N ep6
+    // frames into a single readyRead batch (e.g. the issue #258 first-
+    // connect log-spam regression) call this before start(), then drive
+    // frames manually with sendEp6Frames(N).  Default is enabled.
+    void setAutoStreamEnabled(bool enabled);
+
     int  ep2FramesReceived() const { return m_ep2Count; }
     bool isRunning()         const { return m_running; }
 
@@ -65,6 +74,7 @@ private:
     quint16      m_clientPort{0};
     bool         m_running{false};
     bool         m_silent{false};
+    bool         m_autoStreamEnabled{true};
     int          m_ep2Count{0};
     quint32      m_ep6Seq{0};
     int          m_firmwareVersion{72};  // arbitrary default; any value is now valid

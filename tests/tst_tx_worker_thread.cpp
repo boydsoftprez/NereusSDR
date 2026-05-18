@@ -689,6 +689,83 @@ private slots:
 
         QCOMPARE(ch.antiVoxDetectorTau(), 0.020);
     }
+
+    // ── 15. Issue #258 — stopPump moves m_txChannel back to caller thread ──
+    //
+    // Regression for the field crash where switching audio devices on
+    // Windows triggered a 0xc0000409 stack-buffer-overflow in
+    // ucrtbase.dll during disconnect.  Root cause: RadioModel::
+    // teardownConnection called m_txChannel->moveToThread(this->thread())
+    // from the main thread AFTER stopPump() had already joined the
+    // worker.  Qt6's moveToThread requires the call to be made from the
+    // object's CURRENT thread; with m_txChannel still affined to the
+    // (finished) worker, the move silently aborted with a warning and
+    // left m_txChannel with dangling thread-affinity once the worker
+    // QThread was reset().  The fix moves m_txChannel back from inside
+    // TxWorkerThread::run() before it exits.
+    //
+    // This test asserts BOTH halves of the invariant:
+    //   (a) After stopPump() returns, m_txChannel->thread() == the
+    //       creator thread (here: the test thread).
+    //   (b) No "Current thread (%p) is not the object's thread" warning
+    //       was emitted at any point during the teardown.
+    void stopPump_movesTxChannelToCallerThread_noWarning()
+    {
+        // ── Install a Qt message handler that counts moveToThread warnings.
+        static std::atomic<int> warningCount{0};
+        warningCount.store(0);
+        QtMessageHandler prev = qInstallMessageHandler(
+            [](QtMsgType type, const QMessageLogContext&, const QString& msg) {
+                Q_UNUSED(type);
+                if (msg.contains(QStringLiteral(
+                        "Current thread")) &&
+                    msg.contains(QStringLiteral(
+                        "is not the object's thread"))) {
+                    warningCount.fetch_add(1);
+                }
+            });
+
+        AudioEngine engine;
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+
+        TxMicSource src;
+        src.start();
+
+        TxWorkerThread w;
+        w.setTxChannel(&ch);
+        w.setAudioEngine(&engine);
+        w.setMicSource(&src);
+
+        // Mimic the production handoff: move TxChannel into the worker.
+        // This MUST be done from main (TxChannel's current thread).
+        QThread* const callerThread = QThread::currentThread();
+        ch.moveToThread(&w);
+        QCOMPARE(ch.thread(), static_cast<QThread*>(&w));
+
+        w.startPump();
+        QTRY_COMPARE_WITH_TIMEOUT(w.isRunning(), true, 500);
+
+        // Spin briefly so run() definitely enters its waitForBlock loop.
+        QTest::qWait(50);
+
+        // Tear down — this is the call sequence RadioModel uses.
+        w.stopPump();
+        QCOMPARE(w.isRunning(), false);
+
+        // (a) After stopPump returns, TxChannel must be back on the
+        //     caller thread.  Pre-fix: it stayed on the (finished) worker.
+        QCOMPARE(ch.thread(), callerThread);
+
+        // (b) No moveToThread cross-thread warning fired anywhere along
+        //     the way (neither inside run() nor at the now-defensive
+        //     call sites in RadioModel — though those aren't exercised
+        //     here; the run()-side move is enough to clear the warning).
+        QCOMPARE(warningCount.load(), 0);
+
+        qInstallMessageHandler(prev);
+    }
 };
 
 QTEST_MAIN(TestTxWorkerThread)
