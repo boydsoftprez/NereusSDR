@@ -6509,6 +6509,27 @@ void RadioModel::teardownConnection()
         m_transmitModel.persistToSettings(m_lastRadioInfo.macAddress);
     }
 
+    // Issue #259 — flush step-attenuator state to AppSettings BEFORE the
+    // RadioConnection is destroyed. The MainWindow disconnect-branch in
+    // onConnectionStateChanged also calls saveSettings(), but by the time
+    // setConnectionState(Disconnected) fires below, m_connection has
+    // already been nulled by teardownWorkerThreadedConnection() and the
+    // `if (m_radioModel->connection())` guard there skips the save. Use
+    // m_lastRadioInfo.macAddress (which survives teardown) to pin the
+    // per-MAC keys, mirroring the TransmitModel pattern just above.
+    //
+    // StepAttenuatorController::saveSettings is itself gated on
+    // m_loadedMac == mac, so this call is a no-op when teardown fires
+    // before loadSettings (the pre-load clobber path the bench trace
+    // surfaced — see StepAttenuatorController::saveSettings comment).
+    // After saving, mark the controller as unloaded so a fresh connect
+    // (even to the same MAC) must re-load before its teardown can save
+    // again.
+    if (m_stepAttController && !m_lastRadioInfo.macAddress.isEmpty()) {
+        m_stepAttController->saveSettings(m_lastRadioInfo.macAddress);
+        m_stepAttController->markSettingsUnloaded();
+    }
+
     // Issue #177 — clear any in-flight TUN-off bookkeeping.  If we are
     // tearing down mid-walk, MoxController::rxReady will never fire (timers
     // are stopped) so the deferred completion would otherwise stay armed

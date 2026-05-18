@@ -666,6 +666,11 @@ nereus_add_test(tst_band_change_recursion_guard)
 # ── Step attenuator / ADC overload detection ─────────────────────────────
 nereus_add_test(tst_step_attenuator_controller)
 
+# ── Issue #259: GeneralOptionsPage pulls controller state at construction ──
+# Pins the regression fix for lazy SetupDialog construction missing the
+# load-time stepAttEnabledChanged signal.
+nereus_add_test(tst_general_options_page_step_att_init)
+
 # ── BoardCapabilities flag-wiring (P1 full-parity §4) ────────────────────
 # Verifies populated-but-previously-unconsumed BoardCapabilities flags now
 # affect runtime behaviour:

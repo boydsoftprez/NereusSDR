@@ -157,6 +157,14 @@ GeneralOptionsPage::GeneralOptionsPage(RadioModel* model, QWidget* parent)
         m_spnRx1StepAttValue->setRange(minDb, maxDb);
         m_spnRx2StepAttValue->setRange(minDb, maxDb);
         connectController();
+        // Issue #259 — pull the controller's already-restored state into
+        // the widgets. Must run AFTER connectController() so that any
+        // controller signal that fires later goes to wired slots; must run
+        // AT construction so the cold-open case (page constructed after
+        // RadioModel::loadSliceState has already triggered the controller's
+        // loadSettings) doesn't show stale defaults. See the function-level
+        // comment in initFromController() for the full lazy-construct trace.
+        initFromController();
     }
 }
 
@@ -484,12 +492,23 @@ void GeneralOptionsPage::buildStepAttGroup()
     vbox->addLayout(rx1Row);
 
     // --- RX2 row ---
+    // Issue #259: RX2 step-att UI is constructed (m_chkRx2StepAttEnable +
+    // m_spnRx2StepAttValue) and added to the layout, then hidden until the
+    // controller gains independent RX2 state (m_stepAttEnabledRx2 / m_attDbRx2)
+    // plus its own rx2Enabled / rx2Value / rx2Band/<band> persistence schema.
+    // Hiding rather than removing keeps the existing widget members alive so
+    // the connectController() / initFromController() blocks below stay
+    // structurally identical to the eventual RX2-enabled wiring. The Thetis
+    // contract — independent RX1/RX2 storage with a click-time
+    // RX1↔RX2 mirror when nRX1ADCinUse == nRX2ADCinUse (setup.cs:15741-15760
+    // [v2.10.3.13]) — is the follow-up implementation target.
     auto* rx2Row = new QHBoxLayout;
     m_chkRx2StepAttEnable = new QCheckBox(QStringLiteral("RX2 Enable"), group);
-    // From Thetis setup.cs: chkHermesStepAttenuator (RX2 mirror)
     m_chkRx2StepAttEnable->setToolTip(QStringLiteral("Enable the step attenuator."));
+    m_chkRx2StepAttEnable->setVisible(false);
     m_spnRx2StepAttValue = makeDbSpinBox(group);
     m_spnRx2StepAttValue->setEnabled(false);
+    m_spnRx2StepAttValue->setVisible(false);
     rx2Row->addWidget(m_chkRx2StepAttEnable);
     rx2Row->addWidget(m_spnRx2StepAttValue);
     rx2Row->addStretch();
@@ -502,26 +521,27 @@ void GeneralOptionsPage::buildStepAttGroup()
     vbox->addWidget(m_lblAdcLinked);
 
     // --- Enable/disable cascade ---
+    // From Thetis setup.cs:15730-15762 [v2.10.3.13] chkHermesStepAttenuator_
+    // CheckedChanged. The RX1↔RX2 click-time mirror lives in that handler
+    // (lines 15750-15760), gated on chk != null (sender is a CheckBoxTS, i.e.
+    // a real user click) AND HasSteppedAttenuation(2) AND shared-ADC. Mirror
+    // wiring is deferred until the controller carries independent RX2 state.
+    //MW0LGE [2.9.0.6]  [original inline comment from setup.cs:15742 — "only if we click it"]
     connect(m_chkRx1StepAttEnable, &QCheckBox::toggled, this, [this](bool on) {
         m_spnRx1StepAttValue->setEnabled(on);
         if (m_ctrl) {
             m_ctrl->setStepAttEnabled(on);
         }
     });
-    connect(m_chkRx2StepAttEnable, &QCheckBox::toggled, this, [this](bool on) {
-        m_spnRx2StepAttValue->setEnabled(on);
-        // Controller is single-RX for step-att enable; RX2 is future expansion.
-    });
 
     // --- Spinbox → controller ---
+    // From Thetis setup.cs:15765-15772 [v2.10.3.13] udHermesStepAttenuator
+    // Data_ValueChanged → console.RX1AttenuatorData. (The model-gated
+    // Maximum=61 branch at setup.cs:15773-15786 lives in BoardCapsTable
+    // ::stepAttMaxDb in NereusSDR.)
     connect(m_spnRx1StepAttValue, &QSpinBox::valueChanged, this, [this](int dB) {
         if (m_ctrl) {
             m_ctrl->setAttenuation(dB, 0);
-        }
-    });
-    connect(m_spnRx2StepAttValue, &QSpinBox::valueChanged, this, [this](int dB) {
-        if (m_ctrl) {
-            m_ctrl->setAttenuation(dB, 1);
         }
     });
 
@@ -622,6 +642,16 @@ void GeneralOptionsPage::buildAutoAttGroup()
         }
 
         contentLayout()->addWidget(group);
+
+        // Issue #259: hide the Auto-Att RX2 group alongside the hidden
+        // RX2 step-att row. The controller is single-RX (auto-att is
+        // RX1-only too); independent RX2 auto-att lands with the
+        // controller-side RX2 refactor. From Thetis groupBoxTS47 the
+        // Auto-Att RX1 / RX2 boxes are independent — same Phase 3F
+        // follow-up scope as RX2 step-att.
+        if (rx == 1) {
+            group->setVisible(false);
+        }
     };
 
     buildOneRx(QStringLiteral("Auto Attenuate RX1"), 0,
@@ -645,12 +675,113 @@ void GeneralOptionsPage::connectController()
     connect(m_ctrl, &StepAttenuatorController::adcLinkedChanged,
             m_lblAdcLinked, &QLabel::setVisible);
 
-    // Attenuation changed → update RX1 spinbox (controller is single-RX)
+    // Attenuation changed → update RX1 spinbox. Controller is single-RX
+    // (m_attDb backs RX1 only); the RX2 row is hidden until the controller
+    // gains independent RX2 state.
     connect(m_ctrl, &StepAttenuatorController::attenuationChanged,
             this, [this](int dB) {
         QSignalBlocker blk(m_spnRx1StepAttValue);
         m_spnRx1StepAttValue->setValue(dB);
     });
+
+    // Enable state changed → update RX1 checkbox + cascade RX1 spinbox
+    // enabled state. Issue #259: this is what closes the loop for the
+    // post-reload restore on the next live signal (e.g. an external
+    // setStepAttEnabled), but the cold-open case is handled in the
+    // constructor via initFromController() — see GeneralOptionsPage ctor
+    // for the full rationale.
+    connect(m_ctrl, &StepAttenuatorController::stepAttEnabledChanged,
+            this, [this](bool on) {
+        {
+            QSignalBlocker blk(m_chkRx1StepAttEnable);
+            m_chkRx1StepAttEnable->setChecked(on);
+        }
+        m_spnRx1StepAttValue->setEnabled(on);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// initFromController — pull the controller's current state into the widgets
+// at page construction time.
+//
+// Issue #259 — the SetupDialog (and every page in it) is constructed lazily
+// on every Tools → Setup open via `new SetupDialog(m_radioModel, this)` at
+// the seven call sites in MainWindow.cpp. So:
+//
+//   1. App launches, no SetupDialog yet.
+//   2. RadioModel connects, StepAttenuatorController::loadSettings runs,
+//      m_stepAttEnabled / m_attDb are restored, and the controller emits
+//      stepAttEnabledChanged + attenuationChanged. The page does not exist
+//      yet — nobody is listening.
+//   3. User opens Setup. GeneralOptionsPage constructor runs, connect-
+//      Controller() wires future signals, but nothing fires retroactively.
+//      Widget state is the QCheckBox / QSpinBox default (unchecked / 0).
+//
+// initFromController() pulls the current controller state into the widgets
+// once, at construction time, with signals blocked so the read does not
+// loop back into the controller. From this point on, future user edits
+// (toggled / valueChanged) and future controller signals (stepAttEnabled-
+// Changed / attenuationChanged) keep the two sides in sync.
+// ---------------------------------------------------------------------------
+void GeneralOptionsPage::initFromController()
+{
+    if (!m_ctrl) {
+        return;
+    }
+
+    const bool stepOn = m_ctrl->stepAttEnabled();
+    const int  attDb  = m_ctrl->attenuatorDb();
+
+    {
+        QSignalBlocker blk(m_chkRx1StepAttEnable);
+        m_chkRx1StepAttEnable->setChecked(stepOn);
+    }
+    {
+        QSignalBlocker blk(m_spnRx1StepAttValue);
+        m_spnRx1StepAttValue->setValue(attDb);
+    }
+    m_spnRx1StepAttValue->setEnabled(stepOn);
+
+    // Auto-att group — same lazy-construct problem. Issue #259 PR #260
+    // review fix: previously this only pulled enable + mode, leaving
+    // chkAutoAttUndoRx1 + spnAutoAttHoldRx1 at their constructor defaults
+    // even when the controller had restored real values from disk. Pull
+    // all four fields and apply the mode-aware Undo↔Decay relabel + the
+    // mode-aware hold-vs-delay spinbox value (the same handler the cmbMode
+    // currentIndexChanged slot wires up in buildAutoAttGroup at line ~596).
+    {
+        QSignalBlocker blk(m_chkAutoAttRx1);
+        m_chkAutoAttRx1->setChecked(m_ctrl->autoAttEnabled());
+    }
+    {
+        QSignalBlocker blk(m_cmbAutoAttRx1Mode);
+        m_cmbAutoAttRx1Mode->setCurrentIndex(static_cast<int>(m_ctrl->autoAttMode()));
+    }
+    const bool isAdaptive =
+        (m_ctrl->autoAttMode() == AutoAttMode::Adaptive);
+    {
+        QSignalBlocker blk(m_chkAutoAttUndoRx1);
+        m_chkAutoAttUndoRx1->setChecked(m_ctrl->autoAttUndo());
+        // Match the cmbMode::currentIndexChanged handler in buildAutoAttGroup
+        // (line ~596) — Adaptive uses "Decay", Classic uses "Undo".
+        m_chkAutoAttUndoRx1->setText(isAdaptive
+            ? QStringLiteral("Decay") : QStringLiteral("Undo"));
+    }
+    {
+        QSignalBlocker blk(m_spnAutoAttHoldRx1);
+        // In Adaptive mode the spinbox holds the seconds-of-hold; in
+        // Classic mode it holds the undo-delay seconds. The
+        // spnHold::valueChanged binding (buildAutoAttGroup line ~615)
+        // dispatches setAutoAttHoldSeconds vs setAutoUndoDelaySec on
+        // the same widget; mirror that here on the read side.
+        m_spnAutoAttHoldRx1->setValue(isAdaptive
+            ? m_ctrl->adaptiveHoldSeconds()
+            : m_ctrl->autoUndoDelaySec());
+    }
+    const bool autoOn = m_ctrl->autoAttEnabled();
+    m_cmbAutoAttRx1Mode->setEnabled(autoOn);
+    m_chkAutoAttUndoRx1->setEnabled(autoOn);
+    m_spnAutoAttHoldRx1->setEnabled(autoOn && m_chkAutoAttUndoRx1->isChecked());
 }
 
 // ---------------------------------------------------------------------------
