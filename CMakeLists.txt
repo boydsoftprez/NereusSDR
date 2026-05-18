@@ -489,6 +489,7 @@ set(CORE_SOURCES
     src/core/DxClusterClient.cpp
     src/core/WsjtxClient.cpp
     src/core/FreeDVReporterClient.cpp
+    src/core/FreeDVRadeReporterBridge.cpp
     src/core/PskReporterClient.cpp
     src/core/CtyDatParser.cpp
     src/core/AdifParser.cpp
