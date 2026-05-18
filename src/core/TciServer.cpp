@@ -487,7 +487,7 @@ void TciServer::hookAudioAndIqTaps()
                             Qt::DirectConnection);
                     // Phase 26 review finding #4: track so stop() can
                     // explicitly disconnect before tearing down TciServer state.
-                    m_audioTapSources.insert(rxCh);
+                    m_audioTapSources.append(rxCh);
                     qCInfo(lcTci) << "TciServer: RX audio tap connected to RxChannel 0";
                 }
             };
@@ -656,8 +656,16 @@ void TciServer::stop()
         QObject::disconnect(m_model, nullptr, this, nullptr);
         m_iqTapConnected = false;  // P2.3: reset so start() can reconnect
     }
-    for (RxChannel* rxCh : std::as_const(m_audioTapSources)) {
-        QObject::disconnect(rxCh, nullptr, this, nullptr);
+    // 2026-05-17 crash fix: m_audioTapSources is now QSet<QPointer<RxChannel>>
+    // (see TciServer.h).  Skip entries whose underlying RxChannel was
+    // already destroyed (typical after a disconnect-from-radio that ran
+    // m_wdspEngine->shutdown()).  Qt::~QObject already auto-disconnected
+    // those signals when the channel died, so the missed iteration is a
+    // no-op rather than missed cleanup.
+    for (const QPointer<RxChannel>& rxCh : std::as_const(m_audioTapSources)) {
+        if (rxCh) {
+            QObject::disconnect(rxCh.data(), nullptr, this, nullptr);
+        }
     }
     m_audioTapSources.clear();  // P2.3: reset so hookAudioAndIqTaps() re-arms
 

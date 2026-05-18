@@ -35,6 +35,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QVector>
 #include <array>
 #include <memory>
 
@@ -366,10 +367,19 @@ private:
     // could race with destruction if the signal fires after m_clients is
     // cleared but before the TciServer stack frame is gone.
     //
-    // QSet of raw pointers — we do NOT own these; they are owned by WdspEngine.
-    // stop() iterates and calls QObject::disconnect(rxCh, nullptr, this, nullptr).
-    // The set is cleared last so the disconnect calls are always valid.
-    QSet<RxChannel*> m_audioTapSources;
+    // 2026-05-17 crash fix: was QSet<RxChannel*> — raw pointers.  WdspEngine
+    // destroys RxChannels on disconnect-from-radio, but nothing pruned this
+    // set, leaving dangling raw pointers.  On the next stop() (typically at
+    // app exit) the disconnect loop dereferenced freed memory and SIGSEGV'd.
+    // QPointer is Qt's guarded pointer: it auto-nulls when the underlying
+    // QObject is destroyed (zero-overhead hook into QObject::~QObject), so
+    // the stop() loop can skip dead entries safely.  We still do NOT own
+    // these channels — WdspEngine remains the owner.
+    //
+    // QVector rather than QSet because QPointer has no built-in qHash; the
+    // set is always 0 or 1 entry in practice (single RX channel until 3F),
+    // so the linear-scan dedupe in hookAudioAndIqTaps is free.
+    QVector<QPointer<RxChannel>> m_audioTapSources;
 
     // Phase 3J-1 review P2.3: guard flag for the IQ tap connection.
     // hookAudioAndIqTaps() sets this to true after connecting
