@@ -156,6 +156,7 @@ class WsjtxClient;
 class SpotCollectorClient;
 class PotaClient;
 class FreeDVReporterClient;
+class FreeDVRadeReporterBridge;
 class PskReporterClient;
 class DxccColorProvider;
 class SpotModel;
@@ -2011,6 +2012,13 @@ private:
     std::unique_ptr<PotaClient>           m_pota;
     std::unique_ptr<FreeDVReporterClient> m_freeDvReporter;
     std::unique_ptr<PskReporterClient>    m_pskReporter;
+
+    // Phase 3R-bridge: drives the freedv-gui-style RADE "sync-only"
+    // rx_report upload (empty callsign, "RADEV1" mode, 1 Hz) into
+    // m_freeDvReporter. Ported from freedv-gui src/main.cpp:
+    // 1971-1996 [@77e793a]. Path A (callsign-decoded via EOO) is
+    // separately driven by RadioModel::onRadeTextDecoded.
+    std::unique_ptr<FreeDVRadeReporterBridge> m_radeReporterBridge;
 
     // Monotonic index passed to SpotModel::applySpotStatus on every adapter
     // dispatch. Increments once per emitted spot regardless of source.

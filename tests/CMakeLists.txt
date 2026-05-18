@@ -4366,6 +4366,15 @@ nereus_add_test(tst_wsjtx_decoder)
 # AetherSDR src/core/FreeDvClient.cpp [@0cd4559].
 nereus_add_test(tst_freedv_reporter_socketio)
 
+# ── Phase 3R-bridge: FreeDVRadeReporterBridge ───────────────────────────────
+# Pins the contract that the bridge mirrors freedv-gui's RADE Path B
+# (sync-only, empty-callsign) upload from MainFrame::OnTimer at
+# 10 Hz / modulo-10 = 1 Hz cadence. 7 tests cover: emit count over 30
+# ticks, sync gate, TX gate, reporter-disconnected gate, NaN-SNR gate,
+# wire-shape (empty callsign + "RADEV1" mode), upstream (int)(snr+0.5)
+# rounding. Source: freedv-gui src/main.cpp:1971-1996 [@77e793a].
+nereus_add_test(tst_freedv_rade_reporter_bridge)
+
 # ── Phase 3J-2 Task B6: PskReporterClient IPFIX protocol parser ────────────
 # Pins the contract that PskReporterClient implements PSK Reporter's
 # IPFIX (RFC 5101) v0.1 framing used by report.pskreporter.info:

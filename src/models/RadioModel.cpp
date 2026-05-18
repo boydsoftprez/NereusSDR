@@ -299,6 +299,7 @@ warren@wpratt.com
 #include "core/SpotCollectorClient.h"
 #include "core/PotaClient.h"
 #include "core/FreeDVReporterClient.h"
+#include "core/FreeDVRadeReporterBridge.h"
 #include "core/PskReporterClient.h"
 #include "core/DxccColorProvider.h"
 #include "core/DxSpot.h"
@@ -1052,6 +1053,36 @@ RadioModel::RadioModel(QObject* parent)
     wireSpotTable(m_pota.get());
     wireSpotTable(m_freeDvReporter.get());
     wireSpotTable(m_pskReporter.get());
+
+    // ── Phase 3R-bridge: RADE Path B (sync-only) rx_report upload ─────────
+    // Ported from freedv-gui src/main.cpp:1971-1996 [@77e793a]
+    // (MainFrame::OnTimer's FREEDV_MODE_RADE && syncState else-if).
+    //
+    // Path A (callsign-decoded via EOO text channel) is already driven
+    // by onRadeTextDecoded calling FreeDVReporterClient::sendRxReport.
+    // Path B handles the long stretches where RADE has sync but the
+    // remote operator has not yet sent an EOO frame -- without it,
+    // qso.freedv.org would not know we are receiving anything and our
+    // row's "Last RX SNR" column stays blank.
+    //
+    // Bridge is permanently enabled at construction (the upstream gate
+    // is the operator's reportingEnabled checkbox -- we model that as
+    // "reporter has been started", i.e. m_freeDvReporter is connected;
+    // the bridge re-checks isConnected() inside shouldEmitPathB_).
+    m_radeReporterBridge = std::make_unique<FreeDVRadeReporterBridge>(
+        m_freeDvReporter.get(), m_pskReporter.get(), this);
+    m_radeReporterBridge->setReportingEnabled(true);
+    connect(this, &RadioModel::radeSyncChanged,
+            m_radeReporterBridge.get(),
+            &FreeDVRadeReporterBridge::onRadeSyncChanged);
+    connect(this, &RadioModel::radeSnrChanged,
+            m_radeReporterBridge.get(),
+            &FreeDVRadeReporterBridge::onRadeSnrChanged);
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::moxStateChanged,
+                m_radeReporterBridge.get(),
+                &FreeDVRadeReporterBridge::onMoxStateChanged);
+    }
 
     // FreeDV Reporter station signals drive FreeDVStationModel directly.
     // The model's onStationAdded/Updated/Removed slots stamp distance + heading

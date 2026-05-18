@@ -194,6 +194,7 @@ public:
     // directly so a real WebSocket round-trip is not required.
     int pingIntervalMsForTest() const { return m_pingIntervalMs; }
     QString lastSentMessageForTest() const { return m_lastSentForTest; }
+    void clearLastSentForTest() { m_lastSentForTest.clear(); }
     void handleEngineIOForTest(const QString& msg) { handleEngineIO(msg); }
     void handleSocketIOForTest(const QString& msg) { handleSocketIO(msg); }
 

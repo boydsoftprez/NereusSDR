@@ -289,12 +289,24 @@ void FreeDVReporterClient::setFrequency(quint64 freqHz)
 void FreeDVReporterClient::sendRxReport(const QString& callsign,
                                         const QString& mode, int snrDb)
 {
-    // From freedv-gui src/reporting/FreeDVReporter.cpp addReceiveRecord
-    // [@77e793a]. Emits a Socket.IO "rx_report" event so qso.freedv.org
-    // marks our row as decoding the source station. NereusSDR fires
-    // this from RadioModel when RadeChannel decodes a callsign + has
-    // a valid SNR estimate.
-    if (!m_connected.load() || callsign.isEmpty()) {
+    // From freedv-gui src/reporting/FreeDVReporter.cpp:187-203 [@77e793a]
+    // (addReceiveRecord). Emits a Socket.IO "rx_report" event so
+    // qso.freedv.org marks our row as decoding the source station.
+    //
+    // Two upstream callers (freedv-gui main.cpp:1959-1996 [@77e793a]):
+    //   - Path A: callsign decoded from RADE EOO text channel ->
+    //     `(callsign, "RADEV1", snr)`. NereusSDR drives this from
+    //     RadioModel::onRadeTextDecoded.
+    //   - Path B: RADE has sync but no callsign yet -> empty callsign
+    //     `("", "RADEV1", snr)` every ~1 s while synced. NereusSDR
+    //     drives this from FreeDVRadeReporterBridge.
+    //
+    // Upstream addReceiveRecord does NOT reject empty callsigns
+    // (FreeDVReporter.cpp:187-203): the only gate is `isFullyConnected_`.
+    // An earlier port added a `callsign.isEmpty()` short-circuit that
+    // blocked Path B silently; re-porting to match upstream verbatim
+    // semantics so both paths emit identically.
+    if (!m_connected.load()) {
         return;
     }
 
