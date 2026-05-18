@@ -190,6 +190,9 @@ namespace NereusSDR {
 // primaryRxDdcForBoard — see header.
 //
 // From Thetis console.cs:8554-8632 GetDDC() P2 branch [v2.10.3.13].
+//
+// Upstream inline attribution preserved verbatim (console.cs:8559):
+//   case HPSDRHW.Saturn:        // ANAN-G2, G21K    (G8NJJ)
 int P2RadioConnection::primaryRxDdcForBoard(HPSDRHW board) noexcept
 {
     switch (board) {
@@ -201,6 +204,7 @@ int P2RadioConnection::primaryRxDdcForBoard(HPSDRHW board) noexcept
     default:
         // Angelia / Orion / OrionMKII / Saturn / SaturnMKII and any future
         // 2-ADC SKU: rx1 = DDC2 (console.cs:8556-8598 [v2.10.3.13]).
+        // (G8NJJ Saturn case at console.cs:8559 [v2.10.3.13])
         return 2;
     }
 }

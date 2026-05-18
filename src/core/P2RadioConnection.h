@@ -219,6 +219,9 @@ public:
     //   case HPSDRHW.Angelia / Orion / OrionMKII / Saturn:   rx1 = DDC2, rx2 = DDC3
     //   case HPSDRHW.Hermes / HermesII:                       rx1 = DDC0, rx2 = DDC1
     //
+    // Upstream inline attribution preserved verbatim (console.cs:8559):
+    //   case HPSDRHW.Saturn:        // ANAN-G2, G21K    (G8NJJ)
+    //
     // Defaults to 2 for unknown / future boards (matches the prior NereusSDR
     // hardcode and is the right answer for every modern Apache Labs P2 SKU).
     static int primaryRxDdcForBoard(HPSDRHW board) noexcept;
