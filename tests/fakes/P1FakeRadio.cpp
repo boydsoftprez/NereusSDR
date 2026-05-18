@@ -1,5 +1,13 @@
 // tests/fakes/P1FakeRadio.cpp
 //
+// no-port-check: NereusSDR-original test fake.  The `networkproto1.c`
+// filename references below are wire-format spec citations (byte
+// layouts the fake emits and consumes), not ported logic; the
+// implementation here is independently written against the OpenHPSDR
+// Protocol 1 wire format.  See HOW-TO-PORT.md §Inline cite versioning
+// for the difference between port-attribution-bearing cites and
+// documentation-only filename references in tests.
+//
 // Protocol 1 fake radio for loopback integration tests.
 // Implements just enough of the P1 wire protocol to exercise
 // P1RadioConnection's socket path.
