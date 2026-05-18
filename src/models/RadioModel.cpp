@@ -2675,15 +2675,27 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     m_receiverManager->setMaxReceivers(info.maxReceivers);
 
     // Create receiver 0 with protocol-appropriate DDC mapping.
-    // P2 2-ADC boards (ANAN-G2/Saturn) use DDC2 as primary RX per
-    // Thetis console.cs:8216 UpdateDDCs. P1 radios deliver samples on
-    // hardware receiver index 0, so leave the mapping auto-assigned
-    // (which rebuildHardwareMapping resolves to 0 for the first active
-    // receiver). Hardcoding DDC2 for everything dropped every P1 ep6
-    // packet at ReceiverManager::feedIqData on tester hardware.
+    // P2 2-ADC boards (Angelia / Orion / OrionMKII / Saturn / ANAN-G2) use
+    // DDC2 as primary RX because DDC0/DDC1 are reserved for the diversity /
+    // PureSignal pair (Thetis console.cs:8556-8598 GetDDC() P2 branch
+    // [v2.10.3.13]). 1-ADC P2 boards (Hermes / HermesII — ANAN-10E /
+    // ANAN-100B running community P2 firmware) use DDC0 as primary
+    // (console.cs:8600-8632 [v2.10.3.13]).  P1 radios deliver samples on
+    // hardware receiver index 0, so leave the mapping auto-assigned (which
+    // rebuildHardwareMapping resolves to 0 for the first active receiver).
+    // Hardcoding DDC2 for everything dropped every P1 ep6 packet at
+    // ReceiverManager::feedIqData on tester hardware; hardcoding DDC2 for
+    // every P2 board left HermesII users with no I/Q stream and a 2-second
+    // watchdog timeout (issue #263).
     int rxIdx = m_receiverManager->createReceiver();
     if (info.protocol == ProtocolVersion::Protocol2) {
-        m_receiverManager->setDdcMapping(rxIdx, 2);   // DDC2 for 2-ADC P2 boards
+        const int primaryDdc =
+            NereusSDR::P2RadioConnection::primaryRxDdcForBoard(info.boardType);
+        if (primaryDdc != 0) {
+            m_receiverManager->setDdcMapping(rxIdx, primaryDdc);
+        }
+        // primaryDdc == 0 → leave auto-assigned; rebuildHardwareMapping
+        // resolves the first active receiver to hw=0.
     }
     m_receiverManager->setAdcForReceiver(rxIdx, 0); // ADC0
 

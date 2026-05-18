@@ -187,6 +187,24 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 namespace NereusSDR {
 
+// primaryRxDdcForBoard — see header.
+//
+// From Thetis console.cs:8554-8632 GetDDC() P2 branch [v2.10.3.13].
+int P2RadioConnection::primaryRxDdcForBoard(HPSDRHW board) noexcept
+{
+    switch (board) {
+    case HPSDRHW::Hermes:
+    case HPSDRHW::HermesII:
+        // ANAN-10 / ANAN-100 / ANAN-10E / ANAN-100B running community P2
+        // firmware: rx1 = DDC0 (console.cs:8600-8632 [v2.10.3.13]).
+        return 0;
+    default:
+        // Angelia / Orion / OrionMKII / Saturn / SaturnMKII and any future
+        // 2-ADC SKU: rx1 = DDC2 (console.cs:8556-8598 [v2.10.3.13]).
+        return 2;
+    }
+}
+
 P2RadioConnection::P2RadioConnection(QObject* parent)
     : RadioConnection(parent)
 {
@@ -477,35 +495,44 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     m_numDac = 1;
     m_wdt = 1;  // Watchdog timer MUST be enabled — radio requires it for streaming
 
-    // From Thetis console.cs:8216 UpdateDDCs() for ANAN-G2 (OrionMkII/Saturn)
-    // In non-diversity, non-PureSignal RX mode:
-    //   DDCEnable = DDC2 (bit 2), Rate[2] = rx1_rate
-    // This means DDC2 is the primary receiver, not DDC0!
-    // From Thetis console.cs:8234-8241
+    // From Thetis console.cs:8216 UpdateDDCs() — 2-ADC P2 boards (Angelia /
+    // Orion / OrionMKII / Saturn / ANAN-G2) place RX1 on DDC2 because DDC0/
+    // DDC1 are reserved for the diversity / PureSignal pair.  1-ADC P2 boards
+    // (Hermes / HermesII — ANAN-10E / ANAN-100B running community P2
+    // firmware) place RX1 on DDC0 (console.cs:8451-8521 + 8600-8632
+    // [v2.10.3.13]).  Picking the wrong DDC means the radio either ignores
+    // the enable bit or streams on a DDC NereusSDR isn't listening to —
+    // either way no I/Q frames arrive, the connect watchdog fires after
+    // kConnectTimeoutMs, and the user sees "connects for a few seconds
+    // then disconnects" (issue #263).
+    //
     // Upstream inline attribution preserved verbatim (console.cs:8238):
     //   if (p1) Rate[0] = rx1_rate; // [2.10.3.13]MW0LGE p1 !
-    m_rx[2].enable = 1;
+    const int primaryDdc = primaryRxDdcForBoard(info.boardType);
+
+    m_rx[primaryDdc].enable = 1;
     // Phase 3P-I-a bench-bug fix (KG4VCF 2026-04-22):
     // RadioModel::connectToRadio queues setReceiverFrequency BEFORE
     // this method in the worker-thread FIFO — so by the time we run,
-    // m_rx[2].frequency already holds the persisted VFO (e.g. 14.3 MHz
-    // for 20m) and m_alex.hpfBits/lpfBits reflect the same. Only seed
-    // the 80m default when nothing has been stored yet (m_rx[2].frequency==0);
-    // the prior unconditional assign clobbered the real VFO, so the
-    // initial CmdHighPriority packet went out with DDC2 tuned to 80m
-    // but BPF bits for 20m — radio heard nothing until the next
-    // setReceiverFrequency fired from a user tune. The comment that used
-    // to read "overridden by setReceiverFrequency" had the FIFO order
-    // backwards.
-    if (m_rx[2].frequency == 0) {
-        m_rx[2].frequency = 3865000;   // 80m LSB — first-boot default only
-        double freqMhz = m_rx[2].frequency / 1.0e6;
+    // m_rx[primaryDdc].frequency already holds the persisted VFO (e.g.
+    // 14.3 MHz for 20m) and m_alex.hpfBits/lpfBits reflect the same. Only
+    // seed the 80m default when nothing has been stored yet
+    // (m_rx[primaryDdc].frequency==0); the prior unconditional assign
+    // clobbered the real VFO, so the initial CmdHighPriority packet went
+    // out with the primary DDC tuned to 80m but BPF bits for 20m — radio
+    // heard nothing until the next setReceiverFrequency fired from a user
+    // tune. The comment that used to read "overridden by
+    // setReceiverFrequency" had the FIFO order backwards.
+    if (m_rx[primaryDdc].frequency == 0) {
+        m_rx[primaryDdc].frequency = 3865000;   // 80m LSB — first-boot default only
+        double freqMhz = m_rx[primaryDdc].frequency / 1.0e6;
         m_alex.hpfBits = NereusSDR::codec::alex::computeHpf(freqMhz);
         m_alex.lpfBits = NereusSDR::codec::alex::computeLpf(freqMhz);
     }
-    // DDC2 samplingRate is set by setSampleRate() which RadioModel queues
-    // before connectToRadio in the FIFO (see RadioModel::connectToRadio).
-    // Do NOT hardcode a rate here — it would stomp the user-selected value.
+    // The primary DDC's samplingRate is set by setSampleRate() which
+    // RadioModel queues before connectToRadio in the FIFO (see
+    // RadioModel::connectToRadio).  Do NOT hardcode a rate here — it
+    // would stomp the user-selected value.
 
     // From pcap: Thetis enables dither and random on all ADCs
     m_adc[0].dither = 1;

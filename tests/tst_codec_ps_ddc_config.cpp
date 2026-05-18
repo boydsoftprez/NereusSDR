@@ -181,6 +181,161 @@ private slots:
     }
 
     // ====================================================================
+    // P2CodecOrionMkII — Hermes-class branch (HERMES / ANAN10 / ANAN100 on P2)
+    //
+    // Thetis source: console.cs:8378-8449 [v2.10.3.13]
+    //
+    // 1-ADC family running community P2 firmware. Primary RX = DDC0 (not
+    // DDC2 like G2-class).  Issue #263 fix.
+    // ====================================================================
+
+    // Hermes PS-off, no MOX, no diversity → p1DdcConfig=4, DDCEnable=DDC0
+    // Source: console.cs:8385-8398 [v2.10.3.13]
+    void p2_hermes_psOff_noMox_noDivers() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMES,
+            false, false, false, 48000, 0, false, 0, 0);
+        QCOMPARE(int(cfg.p1DdcConfig), 4);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));   // 0x01
+        QCOMPARE(int(cfg.syncEnable), 0);
+        QCOMPARE(int(cfg.rate[0]), 48000);
+        QCOMPARE(int(cfg.cntrl1),  0);
+        QCOMPARE(cfg.p1RxCount, 4);
+        QCOMPARE(cfg.nDdc,      4);
+    }
+
+    // ANAN10 PS-off, no MOX, RX2 enabled → DDC0+DDC1
+    // Source: console.cs:8394-8398 [v2.10.3.13]
+    void p2_hermes_anan10_rx2Enabled_addsDdc1() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN10,
+            false, false, false, 192000, 96000, true, 0, 0);
+        QCOMPARE(int(cfg.ddcEnable), int(DDC0 + DDC1));   // 0x03
+        QCOMPARE(int(cfg.rate[0]), 192000);
+        QCOMPARE(int(cfg.rate[1]), 96000);
+    }
+
+    // ANAN100 PS-on MOX → p1DdcConfig=6, DDC0+sync DDC1, cntrl1=4
+    // Source: console.cs:8438-8447 [v2.10.3.13]
+    void p2_hermes_anan100_psOn_mox() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN100,
+            true, false, true, 48000, 0, false, 0, 0);
+        QCOMPARE(int(cfg.p1DdcConfig), 6);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.syncEnable), int(DDC1));
+        QCOMPARE(int(cfg.rate[0]), kPsRate);
+        QCOMPARE(int(cfg.rate[1]), kPsRate);
+        QCOMPARE(int(cfg.cntrl1),  4);
+        QCOMPARE(int(cfg.psFbDdc), 0);
+        QCOMPARE(int(cfg.txMonDdc), 1);
+    }
+
+    // Hermes diversity, no MOX → DDC0+sync DDC1, same rate
+    // Source: console.cs:8400-8409 [v2.10.3.13]
+    void p2_hermes_diversity_noMox() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::HERMES,
+            false, true, false, 96000, 0, false, 0, 0);
+        QCOMPARE(int(cfg.p1DdcConfig), 5);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.syncEnable), int(DDC1));
+        QCOMPARE(int(cfg.rate[0]), 96000);
+        QCOMPARE(int(cfg.rate[1]), 96000);
+    }
+
+    // ====================================================================
+    // P2CodecOrionMkII — HermesII-class branch (ANAN10E / ANAN100B on P2)
+    //
+    // Thetis source: console.cs:8451-8521 [v2.10.3.13]
+    //
+    // 1-ADC family with nddc=2.  This is the issue #263 regression case:
+    // ANAN-10E running community P2 firmware was previously routed through
+    // the G2-class branch and never received I/Q because the G2 branch
+    // selects DDC2 as primary.
+    // ====================================================================
+
+    // ANAN10E PS-off, no MOX, no diversity → p1DdcConfig=4, DDCEnable=DDC0
+    // Source: console.cs:8457-8470 [v2.10.3.13]
+    void p2_hermesII_anan10e_psOff_noMox_noDivers_DDC0() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN10E,
+            false, false, false, 48000, 0, false, 0, 0);
+        QCOMPARE(int(cfg.p1DdcConfig), 4);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));   // 0x01 — NOT DDC2 (0x04)
+        QCOMPARE(int(cfg.syncEnable), 0);
+        QCOMPARE(int(cfg.rate[0]), 48000);
+        QCOMPARE(int(cfg.rate[2]), 0);              // G2 branch would set rate[2]
+        QCOMPARE(int(cfg.cntrl1),  0);
+        QCOMPARE(cfg.p1RxCount, 2);
+        QCOMPARE(cfg.nDdc,      2);
+    }
+
+    // ANAN100B PS-off, no MOX, RX2 enabled → DDC0+DDC1
+    // Source: console.cs:8466-8470 [v2.10.3.13]
+    void p2_hermesII_anan100b_rx2Enabled() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN100B,
+            false, false, false, 192000, 192000, true, 0, 0);
+        QCOMPARE(int(cfg.ddcEnable), int(DDC0 + DDC1));   // 0x03
+        QCOMPARE(int(cfg.rate[0]), 192000);
+        QCOMPARE(int(cfg.rate[1]), 192000);
+    }
+
+    // ANAN10E PS-on MOX → p1DdcConfig=5 (NOT 6 like Hermes), DDC0+sync DDC1
+    // Source: console.cs:8510-8519 [v2.10.3.13]
+    void p2_hermesII_anan10e_psOn_mox() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN10E,
+            true, false, true, 48000, 0, false, 0, 0);
+        QCOMPARE(int(cfg.p1DdcConfig), 5);   // HermesII uses 5 here; Hermes uses 6
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.syncEnable), int(DDC1));
+        QCOMPARE(int(cfg.rate[0]), kPsRate);
+        QCOMPARE(int(cfg.rate[1]), kPsRate);
+        QCOMPARE(int(cfg.cntrl1),  4);
+        QCOMPARE(int(cfg.psFbDdc), 0);
+        QCOMPARE(int(cfg.txMonDdc), 1);
+    }
+
+    // ANAN10E diversity, no MOX → DDC0+sync DDC1
+    // Source: console.cs:8472-8481 [v2.10.3.13]
+    void p2_hermesII_anan10e_diversity_noMox() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN10E,
+            false, true, false, 96000, 0, false, 0, 0);
+        QCOMPARE(int(cfg.p1DdcConfig), 5);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.syncEnable), int(DDC1));
+        QCOMPARE(int(cfg.rate[0]), 96000);
+        QCOMPARE(int(cfg.rate[1]), 96000);
+    }
+
+    // Regression marker for issue #263: PS-off MOX must use DDC0, not DDC2.
+    // Before the fix, every P2 board fell through the G2-class branch and
+    // emitted DDCEnable=DDC2.  This is the byte-level assertion that the
+    // dispatcher routes ANAN10E to the HermesII-class branch.
+    void p2_hermesII_psOff_mox_NOT_DDC2_issue263() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN10E,
+            false, false, true, 192000, 0, false, 0, 0);
+        QVERIFY2((cfg.ddcEnable & DDC2) == 0,
+                 "issue #263: HermesII on P2 must NOT enable DDC2");
+        QCOMPARE(int(cfg.ddcEnable), int(DDC0));
+        QCOMPARE(int(cfg.rate[0]), 192000);
+        QCOMPARE(int(cfg.rate[2]), 0);
+    }
+
+    // ====================================================================
     // P1CodecHl2 — HL2 branch (mi0bot deltas: rx1_rate not ps_rate)
     //
     // Thetis source: mi0bot console.cs:8408-8490 [v2.10.3.13-beta2]
