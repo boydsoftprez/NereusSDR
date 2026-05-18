@@ -162,12 +162,15 @@ private slots:
 
     // ── 6. applyPsDdcConfig packs cntrl1+cntrl2 into m_adcCtrl ──────────────
     //
-    // Source: mi0bot console.cs:8531-8532 [v2.10.3.13-beta2]:
-    //   NetworkIO.SetADC_cntrl1(cntrl1);  → bank 4 C1 = adcCtrl & 0xFF
-    //   NetworkIO.SetADC_cntrl2(cntrl2);  → bank 4 C2 = (adcCtrl >> 8) & 0x3F
+    // Source: Thetis UpdateDDCs() at console.cs:8531-8532 [v2.10.3.13]
+    //   NetworkIO.SetADC_cntrl1(cntrl1);  → prn->rx[0..3].rx_adc (P2 wire)
+    //   NetworkIO.SetADC_cntrl2(cntrl2);  → prn->rx[4..6].rx_adc (P2 wire)
     //
-    // For HL2 PS-MOX, codec returns cntrl1=4, cntrl2=0 — so m_adcCtrl=0x04
-    // and bank 4 C1 emits 0x04 (DDC1's input routed to ADC1 = PS feedback path).
+    // NereusSDR P1RadioConnection retains m_adcCtrl as the absorbed
+    // cntrl1+cntrl2 value for any P2-side consumer that reads it (no
+    // such consumer exists on P1 today; the field is preserved for
+    // symmetry and to allow PS-state-machine assertions). On the P1
+    // wire bank 4 C1/C2 come from a different field — see test 6b below.
     void applyPsDdcConfig_packsCntrl1Cntrl2_intoAdcCtrl() {
         P1RadioConnection conn;
         conn.setBoardForTest(HPSDRHW::HermesLite);
@@ -181,10 +184,99 @@ private slots:
         conn.applyPsDdcConfig(cfg);
 
         QCOMPARE(int(conn.adcCtrlForTest()), 0x0004);
+    }
+
+    // ── 6b. Bank 4 C1/C2 wire bytes come from m_p1AdcCntrl, not cfg.cntrl1 ──
+    //
+    // After the 2026-05-17 P1 ADC-ctrl port-fidelity fix, the bank-4 wire
+    // bytes are sourced from P1RadioConnection::m_p1AdcCntrl (mirror of
+    // Thetis `P1_adc_cntrl` global, networkproto1.c:519-520 [v2.10.3.13])
+    // and NOT from cfg.cntrl1 (which is UpdateDDCs's P2-side output).
+    //
+    // applyBoardQuirks() sets m_p1AdcCntrl based on the board:
+    //   HermesLite (HL2):  0x04 (Thetis fresh-install default)
+    //   2-ADC boards:      0x04 (Thetis fresh-install default)
+    //   Hermes / HermesII: 0x00 (empirical match for working ANAN-10E)
+    //
+    // This test feeds a deliberately-distinct cfg.cntrl1 to prove the
+    // wire byte stays anchored to m_p1AdcCntrl, not the cfg value.
+    void bank4WireBytes_comeFromP1AdcCntrl_notCfgCntrl1() {
+        P1RadioConnection conn;
+        conn.setBoardForTest(HPSDRHW::HermesLite);  // applyBoardQuirks sets m_p1AdcCntrl=0x04
+        conn.setActiveReceiverCount(2);
+
+        // Feed a cfg.cntrl1 that is DIFFERENT from m_p1AdcCntrl's default.
+        // If the conflation regressed, the wire byte would change to 0x1F.
+        PsDdcConfig cfg;
+        cfg.nDdc = 4;
+        cfg.p1RxCount = 4;
+        cfg.cntrl1 = 0x1F;
+        cfg.cntrl2 = 0x2A;
+        conn.applyPsDdcConfig(cfg);
 
         const QByteArray bank4 = conn.captureBank4ForTest();
-        QCOMPARE(int(quint8(bank4[1])), 0x04);              // C1 = cntrl1
-        QCOMPARE(int(quint8(bank4[2]) & 0x3F), 0x00);       // C2 = cntrl2 low 6 bits
+        // C1 = m_p1AdcCntrl (board default 0x04 for HL2), NOT cfg.cntrl1 (0x1F)
+        QCOMPARE(int(quint8(bank4[1])), 0x04);
+        // C2 = (m_p1AdcCntrl >> 8) & 0x3F = 0, NOT cfg.cntrl2 (0x2A)
+        QCOMPARE(int(quint8(bank4[2]) & 0x3F), 0x00);
+        // m_adcCtrl still absorbed cfg.cntrl1+cntrl2 (test 6 verified that).
+        QCOMPARE(int(conn.adcCtrlForTest()), 0x2A1F);
+    }
+
+    // ── 6c. setP1AdcCntrl drives the bank-4 wire byte ───────────────────────
+    //
+    // Mirror of Thetis SetADC_cntrl_P1 — explicit user-driven setter that
+    // changes the per-DDC ADC routing word. Used by the future Setup →
+    // Hardware → P1 ADC Routing page and by per-MAC AppSettings restore.
+    void setP1AdcCntrl_updatesBank4WireByte() {
+        P1RadioConnection conn;
+        conn.setBoardForTest(HPSDRHW::Hermes);  // 1-ADC Hermes default 0x00
+        QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0000);
+
+        conn.setP1AdcCntrl(0x0014);
+        QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0014);
+
+        const QByteArray bank4 = conn.captureBank4ForTest();
+        QCOMPARE(int(quint8(bank4[1])), 0x14);
+        QCOMPARE(int(quint8(bank4[2]) & 0x3F), 0x00);
+
+        // Clamps to 14 bits (Thetis netInterface.c:992-996 [v2.10.3.13]
+        // stores `bits` directly into P1_adc_cntrl, but the readers mask
+        // to 14 bits at emit time — networkproto1.c:519-520).
+        conn.setP1AdcCntrl(0xFFFF);
+        QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x3FFF);  // 14-bit mask
+    }
+
+    // ── 6d. applyBoardQuirks default per board class ────────────────────────
+    void applyBoardQuirks_p1AdcCntrlDefaults() {
+        // HermesLite (HL2): default 4
+        {
+            P1RadioConnection conn;
+            conn.setBoardForTest(HPSDRHW::HermesLite);
+            QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0004);
+        }
+        // Hermes / HermesII (other 1-ADC): default 0
+        {
+            P1RadioConnection conn;
+            conn.setBoardForTest(HPSDRHW::Hermes);
+            QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0000);
+        }
+        {
+            P1RadioConnection conn;
+            conn.setBoardForTest(HPSDRHW::HermesII);
+            QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0000);
+        }
+        // 2-ADC: default 4
+        {
+            P1RadioConnection conn;
+            conn.setBoardForTest(HPSDRHW::Angelia);
+            QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0004);
+        }
+        {
+            P1RadioConnection conn;
+            conn.setBoardForTest(HPSDRHW::OrionMKII);
+            QCOMPARE(int(conn.p1AdcCntrlForTest()), 0x0004);
+        }
     }
 
     // ── 7. applyPsDdcConfig arms bank 0 + bank 4 flush flags ────────────────

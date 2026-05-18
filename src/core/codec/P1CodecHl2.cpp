@@ -162,10 +162,16 @@ void P1CodecHl2::composeCcForBank(int bank, const CodecContext& ctx,
         //   C2 = (P1_adc_cntrl >> 8) & 0x3FF;
         //   C3 = adc[0].tx_step_attn & 0x1F;
         //   C4 = 0;
+        //
+        // `P1_adc_cntrl` is a separate Thetis variable from the
+        // UpdateDDCs `cntrl1` — the latter maps to prn->rx[i].rx_adc
+        // (P2 wire) only. Reading `ctx.p1AdcCntrl` here matches the
+        // upstream mi0bot networkproto1.c byte source. See
+        // CodecContext.h::p1AdcCntrl for the conflation history.
         case 4:
             out[0] = C0base | 0x1C;
-            out[1] = quint8(ctx.adcCtrl & 0xFF);
-            out[2] = quint8((ctx.adcCtrl >> 8) & 0x3F);
+            out[1] = quint8(ctx.p1AdcCntrl & 0xFF);
+            out[2] = quint8((ctx.p1AdcCntrl >> 8) & 0x3F);
             out[3] = quint8(ctx.txStepAttn[0] & 0x1F);
             out[4] = 0;
             return;

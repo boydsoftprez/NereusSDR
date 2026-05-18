@@ -489,10 +489,23 @@ private slots:
         QCOMPARE(int(cfg.syncEnable), int(DDC1));
         QCOMPARE(int(cfg.rate[0]), kPsRate);
         QCOMPARE(int(cfg.rate[1]), kPsRate);
-        // From Thetis wire authority - HermesII puresignal cntrl1=0, not 4.
-        // Production fix landed in main commit 1d7fa566 but the test update
-        // slipped through. Caught at the N5 end-of-epic ctest run.
-        QCOMPARE(int(cfg.cntrl1),  0);
+        // Source-faithful per Thetis console.cs:8517 [v2.10.3.13]: cntrl1=4.
+        //
+        // Background: from 2026-05-09 until 2026-05-17 this branch carried
+        // an empirical override forcing cfg.cntrl1=0 because working
+        // Thetis on a friend's ANAN-10E (HermesII) was observed sending
+        // 0 on bank-4 C1 during PS-MOX. The override was patching the
+        // wrong layer — NereusSDR P1 codecs used to read cfg.cntrl1 as
+        // the bank-4 wire byte, which conflated UpdateDDCs's cntrl1 with
+        // the separate Thetis P1_adc_cntrl global. After the 2026-05-17
+        // port-fidelity refactor the P1 wire byte comes from
+        // P1RadioConnection::m_p1AdcCntrl (mirror of Thetis P1_adc_cntrl),
+        // which defaults to 0 for Hermes/HermesII via applyBoardQuirks().
+        // The cfg.cntrl1 value here is now P2-side state only (maps to
+        // prn->rx[i].rx_adc via SetADC_cntrl1) and no longer reaches the
+        // P1 wire — so the source value 4 is correct and the previous
+        // empirical override is obsolete.
+        QCOMPARE(int(cfg.cntrl1),  4);
         QCOMPARE(cfg.p1RxCount, 2);          // 2 not 4
         QCOMPARE(cfg.nDdc,      2);
     }

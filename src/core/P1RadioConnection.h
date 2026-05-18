@@ -237,6 +237,29 @@ public slots:
     void setMicPTTDisabled(bool disabled) override;
     void setMicXlr(bool xlrJack) override;
 
+    // Set the P1-only per-DDC ADC routing word (Thetis `P1_adc_cntrl`).
+    //
+    // 14 bits wide, 2 bits per DDC, layout 66554433221100 per
+    // console.cs:15120 [v2.10.3.13]:
+    //   bits  1: 0 = DDC0's ADC select  (0=ADC0, 1=ADC1, 2=ADC2)
+    //   bits  3: 2 = DDC1's ADC select
+    //   ... DDC6 = bits 13:12
+    //
+    // Bits above 13 are masked off. Wire bytes update on the next
+    // bank-4 emit (bank 4 is a steady-state round-robin slot, so the
+    // change reaches the radio within ~16 frames at default cadence).
+    //
+    // Mirrors Thetis SetADC_cntrl_P1 (netInterface.c:992-996 [v2.10.3.13])
+    // semantics: the field becomes the C1/C2 bytes of bank 4 directly.
+    //
+    // Called from:
+    //   - RadioModel after AppSettings restore on connect (per-MAC).
+    //   - The future Setup → Hardware → P1 ADC Routing page when the
+    //     user toggles a radDDC*ADC* radio button. Without that page
+    //     end users can edit `hardware/<mac>/p1AdcCntrl` in the XML
+    //     settings file directly to override the board default.
+    void setP1AdcCntrl(int bits);
+
     // Phase 3M-4 Task 17 P1 follow-up — apply per-board PS DDC config.
     //
     // P1 mirror of P2RadioConnection::applyPsDdcConfig.  Receives the
@@ -593,6 +616,35 @@ private:
     mutable int m_lastOcByteLogged{0xFFFF};
     quint16 m_adcCtrl{0};          // ADC-to-DDC assignment bits
 
+    // P1-only ADC-to-DDC routing — Thetis `P1_adc_cntrl` global mirror.
+    //
+    // Source: Thetis console.cs:15120 [v2.10.3.13] declares
+    //   `private int rx_adc_ctrl_P1 = 4`. Setter at console.cs:15121-15128
+    //   invokes UpdateRXADCCtrlP1() (line 7325-7328) which calls
+    //   NetworkIO.SetADC_cntrl_P1 (netInterface.c:992-996 [v2.10.3.13])
+    //   storing into `P1_adc_cntrl`. The P1 wire reader is
+    //   networkproto1.c:519-520 [v2.10.3.13]:
+    //     C1 = P1_adc_cntrl & 0xFF;
+    //     C2 = (P1_adc_cntrl >> 8) & 0b0011111111;
+    //
+    // Distinct from `m_adcCtrl` above: that field carries the P2-side
+    // cntrl1/cntrl2 from UpdateDDCs (Thetis prn->rx[i].rx_adc fields).
+    // Before 2026-05-17 NereusSDR P1 codecs conflated the two — surfaced
+    // while diagnosing issue #263, fixed by this struct + the codec
+    // bank-4 read switching to ctx.p1AdcCntrl.
+    //
+    // Default 0 is the NereusSDR-side practical default: matches wire
+    // bytes observed on a working Thetis-driven ANAN-10E on 2026-05-09.
+    // Thetis fresh-install defaults to 4; we override based on board
+    // adcCount at connect time (applyBoardQuirks sets 4 for 2-ADC SKUs,
+    // 0 for 1-ADC SKUs). Per-MAC AppSettings under
+    //   hardware/<mac>/p1AdcCntrl
+    // overrides the board default for users who configured a specific
+    // per-DDC ADC routing via the future Setup → Hardware → P1 ADC
+    // Routing page (planned follow-up; manual AppSettings edit works
+    // today).
+    quint16 m_p1AdcCntrl{0};
+
     // Reconnect log guard
     bool    m_reconnectedLogged{false};
 
@@ -763,6 +815,7 @@ public:
     int  psNDdcForTest() const { return m_psNDdc; }
     int  activeRxCountForTest() const { return m_activeRxCount; }
     quint16 adcCtrlForTest() const { return m_adcCtrl; }
+    quint16 p1AdcCntrlForTest() const { return m_p1AdcCntrl; }
 
     // ── 3M-1a E.2 TX I/Q test seams ─────────────────────────────────────────
     // sendTxIqAndCapture — feeds n interleaved float I/Q samples through the

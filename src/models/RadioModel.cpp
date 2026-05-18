@@ -4569,6 +4569,38 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         p1->setBandwidthMonitor(&m_bwMonitor);
     }
 
+    // Per-MAC P1 ADC routing override (Thetis `P1_adc_cntrl`).
+    //
+    // Thetis stores per-DDC ADC selection in a separate 14-bit global
+    // (console.cs:15120 [v2.10.3.13]) edited via Setup form's
+    // radP1DDC*ADC* radio buttons. NereusSDR P1RadioConnection mirrors
+    // this in m_p1AdcCntrl; applyBoardQuirks() seeds a sensible board
+    // default (HL2 / 2-ADC → 4, Hermes / HermesII → 0). If the user
+    // (or the future Setup → Hardware → P1 ADC Routing page) has
+    // persisted a per-MAC override under hardware/<mac>/p1AdcCntrl,
+    // apply it now so the first bank-4 emit goes out with the user's
+    // chosen routing.
+    //
+    // Done before m_connection->moveToThread() below so the synchronous
+    // setter is safe. The board default in applyBoardQuirks() has
+    // already run during connectToRadio() preflight; this is a strict
+    // override on top of that.
+    if (auto* p1 = qobject_cast<class P1RadioConnection*>(m_connection)) {
+        const QVariant persisted = AppSettings::instance().hardwareValue(
+            info.macAddress, QStringLiteral("p1AdcCntrl"));
+        if (persisted.isValid()) {
+            bool ok = false;
+            const int bits = persisted.toString().toInt(&ok, 0);  // base 0: accepts "0x14" too
+            if (ok) {
+                p1->setP1AdcCntrl(bits);
+            } else {
+                qCWarning(lcConnection) << "P1: hardware/" << info.macAddress
+                                        << "/p1AdcCntrl = '" << persisted.toString()
+                                        << "' is not a valid integer; using board default";
+            }
+        }
+    }
+
     // Create worker thread
     m_connThread = new QThread(this);
     m_connThread->setObjectName(QStringLiteral("ConnectionThread"));

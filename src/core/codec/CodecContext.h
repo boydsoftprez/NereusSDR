@@ -283,8 +283,43 @@ struct CodecContext {
     // OC output byte (bank 0 C2). Phase D will drive this from OcMatrix.
     quint8  ocByte{0};
 
-    // ADC-to-DDC routing (bank 4 C1+C2).
+    // ADC-to-DDC routing — historical NereusSDR field that absorbs the
+    // P2 cntrl1 + cntrl2 bytes from `UpdateDDCs` (Thetis console.cs:8531
+    // `NetworkIO.SetADC_cntrl1` / 8532 `SetADC_cntrl2` [v2.10.3.13]).
+    // On P2 it correctly drives the per-DDC ADC-assign bytes (CmdRx bytes
+    // 17/23/29/35) via composeCmdRx. NOT used by the P1 wire (see
+    // `p1AdcCntrl` below): NereusSDR P1 codecs used to read this for
+    // bank 4 C1/C2 too, which conflated UpdateDDCs's cntrl1 with the
+    // separate `P1_adc_cntrl` Thetis global — a real port-fidelity bug
+    // surfaced while diagnosing #263. The P1 codecs now read
+    // `p1AdcCntrl` for bank 4; `adcCtrl` is retained for any
+    // P2-specific code path still reading it.
     quint16 adcCtrl{0};
+
+    // P1-specific ADC routing (Thetis `P1_adc_cntrl` global; 14 bits,
+    // 2 bits per DDC, layout 6655...1100 per console.cs:15120 [v2.10.3.13]).
+    //
+    // Source-of-truth for P1 bank 4 C1/C2 wire bytes per Thetis
+    // networkproto1.c:519-520 [v2.10.3.13]:
+    //   C1 = P1_adc_cntrl & 0xFF;
+    //   C2 = (P1_adc_cntrl >> 8) & 0b0011111111;
+    //
+    // Thetis `P1_adc_cntrl` lives in netInterface.c as the storage
+    // target of SetADC_cntrl_P1, which is called only from
+    // console.cs:7325-7328 UpdateRXADCCtrlP1(), which fires only when
+    // the user touches `radP1DDC*ADC*` radio buttons in Setup. The
+    // cntrl1 value UpdateDDCs computes (and which we still carry through
+    // `adcCtrl` for P2) is independent — that path maps to
+    // prn->rx[i].rx_adc (P2 wire bytes) only.
+    //
+    // P1RadioConnection populates this from m_p1AdcCntrl, which defaults
+    // to 0 for 1-ADC boards (Hermes / HermesII / HL2) and 4 for 2-ADC
+    // boards (Angelia / Orion / OrionMkII / Saturn / G2). The 0 default
+    // for 1-ADC matches the wire bytes observed on a working
+    // Thetis-driven ANAN-10E on 2026-05-09; the 4 default for 2-ADC
+    // matches Thetis fresh-install (console.cs:15120 initializer). Per-MAC
+    // AppSettings override via `hardware/<mac>/p1AdcCntrl`.
+    quint16 p1AdcCntrl{0};
 
     // Antenna selection (bank 0 C4 low 2 bits).
     int     antennaIdx{0};
