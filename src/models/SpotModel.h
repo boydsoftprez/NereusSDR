@@ -42,7 +42,7 @@
 #include <QHash>
 #include <QString>
 #include <QDateTime>
-#include <utility>
+#include <QTimer>
 
 namespace NereusSDR {
 
@@ -61,14 +61,23 @@ struct SpotData {
     QDateTime timestamp;
     int lifetimeSeconds{1800};  // default 30 min
     int priority{0};
-    qint64 addedMs{0};         // local wall-clock when added
+    qint64 addedMs{0};         // local wall-clock when first added (immutable)
+    // Issue #263 review follow-up (2026-05-18): local wall-clock of the
+    // most recent observation.  Refreshed by applySpotStatus on every
+    // update AND by dedupIndexForAtTime when it reuses an existing
+    // index, so a station re-emitted regularly inside its lifetime
+    // does NOT expire mid-stream (which would flicker the label /
+    // bounce the Spot List row).  Expiration checks against
+    // lastSeenMs, not addedMs.
+    qint64 lastSeenMs{0};
 };
 
 // From AetherSDR src/models/SpotModel.h:27-49 [@0cd4559]
 class SpotModel : public QObject {
     Q_OBJECT
 public:
-    explicit SpotModel(QObject* parent = nullptr) : QObject(parent) {}
+    explicit SpotModel(QObject* parent = nullptr);
+    ~SpotModel() override = default;
 
     const QMap<int, SpotData>& spots() const { return m_spots; }
 
@@ -86,23 +95,41 @@ public:
     // EVERY spot, EVERY re-emit, from EVERY source.  Result: same
     // callsign appears 5-10 times on the spot list within seconds.
     //
-    // dedupIndexFor(callsign, freqMhz, windowMs) returns:
-    //   - the existing index for (callsign, freqBucket) when within
-    //     windowMs of the previous emit -> caller passes it to
+    // Issue #263 (2026-05-17): the original 60 s fixed window expired
+    // long before the typical 1800 s spot lifetime, so a re-emit of
+    // CT3MD on the same kHz at +90 s minted a fresh index, and (because
+    // there was no expiration sweeper either) the prior entry stayed in
+    // m_spots.  Result: the panadapter overlay stacked N copies of the
+    // same callsign.  Fix: dedupIndexFor now reuses the existing index
+    // for as long as the previous spot is still alive (addedMs +
+    // lifetimeSeconds * 1000 > nowMs).  expireOlderThan() (driven by an
+    // internal QTimer) sweeps aged spots so the index can be recycled.
+    //
+    // dedupIndexFor(callsign, freqMhz) returns:
+    //   - the existing index for (callsign, freqBucket) when the prior
+    //     spot's lifetime hasn't elapsed -> caller passes it to
     //     applySpotStatus, which then emits spotUpdated (not spotAdded);
-    //   - a freshly-minted monotonic index otherwise.
+    //   - a freshly-minted monotonic index otherwise (and evicts the
+    //     stale entry so the panadapter overlay loses it).
     //
     // freqBucket is the freqMhz rounded to the nearest 1 kHz so split-
     // operating spots (e.g. DX 14.205 vs 14.206) merge to one entry.
-    // Default windowMs of 60 s catches the typical "RBN sends every
-    // CQ" rate without losing the user's ability to see the same
-    // station spotted again hours later as a fresh entry.
     //
     // Caller is RadioModel's on*SpotReceived family of handlers.
     // SpotModel itself remains TCI-keyed: TCI clients drive their own
     // index allocation and don't go through dedup.
-    int dedupIndexFor(const QString& callsign, double freqMhz,
-                      qint64 windowMs = 60000);
+    int dedupIndexFor(const QString& callsign, double freqMhz);
+
+    // Clock-injectable test seam for dedup.  Production calls
+    // dedupIndexFor() which delegates to this with the wall clock.
+    int dedupIndexForAtTime(const QString& callsign, double freqMhz,
+                            qint64 nowMs);
+
+    // Issue #263: periodic sweeper.  Removes every spot whose
+    // addedMs + lifetimeSeconds * 1000 < nowMs and emits spotRemoved
+    // for each.  Production wires this to a 30 s QTimer in the ctor;
+    // the parameter overload is the test seam.
+    void expireOlderThan(qint64 nowMs);
 
 signals:
     void spotAdded(const SpotData& spot);
@@ -115,11 +142,13 @@ signals:
 private:
     QMap<int, SpotData> m_spots;
 
-    // Phase 3J-1 closeout follow-up (2026-05-12): dedup state.
-    // Key:   "<UPPER_CALLSIGN>|<freqBucketKHz>"
-    // Value: <last spot index, last-seen ms epoch>
-    QHash<QString, std::pair<int, qint64>> m_dedupCache;
+    // Phase 3J-1 closeout follow-up (2026-05-12) + issue #263 (2026-05-17).
+    // Maps "<UPPER_CALLSIGN>|<freqBucketKHz>" to the live SpotData index.
+    // An entry is valid only as long as m_spots still contains that
+    // index; expireOlderThan() and removeSpot() prune both maps together.
+    QHash<QString, int> m_dedupCache;
     int m_nextDedupIndex{0};
+    QTimer m_expireTimer;
 };
 
 } // namespace NereusSDR
