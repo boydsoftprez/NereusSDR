@@ -136,6 +136,9 @@ namespace NereusSDR {
 // Forward declaration — full type used only in refreshAntennasFromAlex()
 // which takes a const-ref. The full header is included in SliceModel.cpp.
 class AlexController;
+struct SkuUiProfile;  // issue #257 — passed to refreshAntennasFromAlex so the
+                      // RX-only label slot (rxOnly != 0) wins over the main
+                      // ANT* label on Mk II BPF / EXT* path reads.
 
 // Stage 1 stub ladder — Stage 2 replaces with Thetis tune_step_list
 // (console.cs tune_step_list has 11 entries; Stage 1 uses this 6-entry
@@ -694,8 +697,16 @@ public slots:
     // grid in Setup. Relies on AlexController::setRxAnt/setTxAnt being
     // idempotent (no signal on equal value) to avoid a feedback loop
     // with the T12 slice→AlexController write path.
+    //
+    // Issue #257: when the per-band AlexController state has rxOnlyAnt != 0
+    // (user picked EXT1 / EXT2 / BYPS / XVTR), the indicator must show the
+    // SKU-specific RX-only label instead of "ANT1/2/3" (which would lie
+    // about the actual radio routing). The optional SkuUiProfile parameter
+    // carries the per-SKU label trio; nullptr keeps the prior ANT-only
+    // behavior for callers that have no SKU context.
     void refreshAntennasFromAlex(const NereusSDR::AlexController& alex,
-                                 NereusSDR::Band band);
+                                 NereusSDR::Band band,
+                                 const NereusSDR::SkuUiProfile* sku = nullptr);
 
 signals:
     void frequencyChanged(double freq);

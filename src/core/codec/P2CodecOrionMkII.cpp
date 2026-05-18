@@ -331,8 +331,60 @@ quint32 P2CodecOrionMkII::buildAlex0(const CodecContext& ctx) const
         } else if (rxOnlyBits == 0x03) {
             reg |= (1u <<  8);  // _XVTR_Rx_In [network.h:279 @501e3f5]
         }
-        if (ctx.rxOut) {
-            reg |= (1u << 11);  // _Rx_1_Out [network.h:282 @501e3f5]
+
+        // RX bypass / RX MASTER IN SEL relay encoding — issue #257.
+        //
+        // From Thetis ChannelMaster/netInterface.c:461-477 [v2.10.3.13 @501e3f51]:
+        //   if (mkiibpf)
+        //   {
+        //       if (rx_only_ant == 1 || tx) // set rx bypass only if Ext2 enabled
+        //       {
+        //           prbpfilter->_Rx_1_Out = (rx_out & 0x01) != 0; // RX BYPASS OUT RL17
+        //           prbpfilter->_10_dB_Atten = 0; // RX MASTER IN SEL RL22
+        //       }
+        //       else
+        //       {
+        //           prbpfilter->_Rx_1_Out = 0; // RX BYPASS OUT RL17
+        //           prbpfilter->_10_dB_Atten = rx_out & 0x1; // RX MASTER IN SEL RL22
+        //       }
+        //   }
+        //   else
+        //   {
+        //       prbpfilter->_Rx_1_Out = (rx_out & 0x01) != 0; // RX BYPASS OUT RL17
+        //   }
+        //
+        // Non-Mk II boards (HERMES / ANAN10/100/200D / REDPITAYA) keep the
+        // legacy single-relay encoding: bit 11 (_Rx_1_Out, RL17) carries
+        // rx_out unconditionally.
+        //
+        // Mk II BPF boards (ORIONMKII / ANAN-7000D / ANAN-8000D / ANAN_G2 /
+        // ANAN_G2_1K / ANVELINAPRO3) split it:
+        //   - EXT2 (rx_only_ant==1) OR transmitting → bit 11 (_Rx_1_Out, RL17)
+        //   - Everything else (EXT1 / BYPS / XVTR while receiving) →
+        //       bit 14 (_10_dB_Atten, the "RX MASTER IN SEL" RL22 line on
+        //       Mk II BPF — same wire bit, different physical relay).
+        //
+        // ctx.mox carries the MOX (transmit) bit; matches Thetis SetAntBits()
+        // `tx` parameter (Alex.cs:401 `NetworkIO.SetAntBits(rx_only_ant,
+        // trx_ant, tx_ant, rx_out, tx);`).
+        //
+        // Bit-14 reference: network.h:285 `_10_dB_Atten : 1, // bit 14
+        // (RX MASTER IN SEL RL22)`.
+        if (ctx.mkiiBpf) {
+            const bool ext2OrTx = (rxOnlyBits == 0x01) || ctx.mox;
+            if (ext2OrTx) {
+                if (ctx.rxOut) {
+                    reg |= (1u << 11);  // _Rx_1_Out RL17 — EXT2 or TX path
+                }
+            } else {
+                if (ctx.rxOut) {
+                    reg |= (1u << 14);  // _10_dB_Atten / RX MASTER IN SEL RL22
+                }
+            }
+        } else {
+            if (ctx.rxOut) {
+                reg |= (1u << 11);  // _Rx_1_Out [network.h:282 @501e3f5]
+            }
         }
     }
 

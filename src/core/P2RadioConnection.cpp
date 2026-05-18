@@ -1837,6 +1837,18 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.rxOnlyAnt = m_alex.rxOnlyAnt;
     ctx.rxOut     = m_alex.rxOut;
 
+    // Mk II BPF board flag — drives the rx-only relay encoding split in
+    // P2CodecOrionMkII::buildAlex0(). True for ORIONMKII / ANAN-7000D /
+    // ANAN-8000D / ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 per
+    // HardwareProfile.cpp:137-172 (which mirrors Thetis
+    // clsHardwareSpecific.cs:85-184 SetMKIIBPF(1) callsites).
+    //
+    // Source: Thetis ChannelMaster/netInterface.c:461-477 [v2.10.3.13 @501e3f51]
+    // (the `if (mkiibpf)` branch in SetAntBits — without this, RX-only
+    // selections fire the wrong relay on Mk II BPF boards and the antenna
+    // never actually reaches the receiver). Issue #257.
+    ctx.mkiiBpf = m_hardwareProfile.mkiiBpf;
+
     // Alex HPF / LPF bits (recomputed by setReceiverFrequency on freq change)
     ctx.alexHpfBits = static_cast<quint8>(m_alex.hpfBits);
     ctx.alexLpfBits = static_cast<quint8>(m_alex.lpfBits);

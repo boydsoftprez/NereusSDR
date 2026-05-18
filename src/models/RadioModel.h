@@ -87,6 +87,7 @@
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
+#include "core/SkuUiProfile.h"  // issue #257 — setLastBandForTest passes the SKU into refreshAntennasFromAlex
 #include "core/safety/SwrProtectionController.h"
 #include "core/safety/TxInhibitMonitor.h"
 #include "core/safety/BandPlanGuard.h"
@@ -654,8 +655,14 @@ public:
             // Mirror the production T10 path so tests catch regressions
             // in the slice-label refresh (see RadioModel.cpp frequencyChanged
             // handler for the canonical version).
+            //
+            // Issue #257: production now passes the SkuUiProfile so the
+            // RX-only label slot wins over the ANT* default. Mirror that
+            // here so band-cross tests exercise the same path.
             if (m_activeSlice) {
-                m_activeSlice->refreshAntennasFromAlex(m_alexController, b);
+                const NereusSDR::SkuUiProfile sku =
+                    NereusSDR::skuUiProfileFor(m_hardwareProfile.model);
+                m_activeSlice->refreshAntennasFromAlex(m_alexController, b, &sku);
             }
         }
     }
