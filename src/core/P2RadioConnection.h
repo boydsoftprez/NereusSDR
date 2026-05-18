@@ -207,6 +207,25 @@ public:
     // Protocol identifier — 2 for OpenHPSDR P2.  See RadioConnection::protocolVersion.
     int protocolVersion() const override { return 2; }
 
+    // primaryRxDdcForBoard — which DDC carries RX1 I/Q on the wire for this board.
+    //
+    // 2-ADC P2 boards (Angelia / Orion / OrionMKII / Saturn / SaturnMKII) place
+    // RX1 on DDC2 because DDC0 and DDC1 are reserved for the diversity /
+    // PureSignal pair. 1-ADC P2 boards (Hermes / HermesII — ANAN-10E /
+    // ANAN-100B running community P2 firmware) place RX1 on DDC0 with no
+    // such reservation.
+    //
+    // From Thetis console.cs:8554-8632 GetDDC() P2 branch [v2.10.3.13]:
+    //   case HPSDRHW.Angelia / Orion / OrionMKII / Saturn:   rx1 = DDC2, rx2 = DDC3
+    //   case HPSDRHW.Hermes / HermesII:                       rx1 = DDC0, rx2 = DDC1
+    //
+    // Upstream inline attribution preserved verbatim (console.cs:8559):
+    //   case HPSDRHW.Saturn:        // ANAN-G2, G21K    (G8NJJ)
+    //
+    // Defaults to 2 for unknown / future boards (matches the prior NereusSDR
+    // hardcode and is the right answer for every modern Apache Labs P2 SKU).
+    static int primaryRxDdcForBoard(HPSDRHW board) noexcept;
+
 public slots:
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;

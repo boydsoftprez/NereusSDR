@@ -136,11 +136,25 @@ void P1CodecStandard::composeCcForBank(int bank, const CodecContext& ctx,
         }
 
         // Bank 4 — ADC-to-DDC routing + TX step attenuator
-        // Source: networkproto1.c:517-523 [@501e3f5]
+        // Source: networkproto1.c:517-523 [v2.10.3.13]:
+        //   case 4: // ADC assignments & ADC Tx ATT
+        //       C0 |= 0x1c; //C0 0001 110x
+        //       C1 = P1_adc_cntrl & 0xFF;
+        //       C2 = (P1_adc_cntrl >> 8) & 0b0011111111;
+        //       C3 = prn->adc[0].tx_step_attn & 0b00011111;
+        //       C4 = 0;
+        //
+        // C1/C2 read from `P1_adc_cntrl` (set only by SetADC_cntrl_P1 at
+        // netInterface.c:992-996 [v2.10.3.13], which is called only from
+        // UpdateRXADCCtrlP1 at console.cs:7325-7328 [v2.10.3.13] when the
+        // user touches `radP1DDC*ADC*` radio buttons in Setup). That's a
+        // SEPARATE Thetis variable from the `cntrl1` UpdateDDCs computes
+        // — see CodecContext.h::p1AdcCntrl block for the conflation
+        // history.
         case 4:
             out[0] = C0base | 0x1C;
-            out[1] = quint8(ctx.adcCtrl & 0xFF);
-            out[2] = quint8((ctx.adcCtrl >> 8) & 0x3F);
+            out[1] = quint8(ctx.p1AdcCntrl & 0xFF);
+            out[2] = quint8((ctx.p1AdcCntrl >> 8) & 0x3F);
             out[3] = quint8(ctx.txStepAttn[0] & 0x1F);
             out[4] = 0;
             return;
@@ -741,43 +755,32 @@ PsDdcConfig P1CodecStandard::psDdcConfigHermesIIClass(
             //       cntrl2 = 0;
             //   }
             //
-            // rc4 bench-fix (J.J. KG4VCF, 2026-05-09): SOURCE SAYS cntrl1=4
-            // but WIRE OBSERVATION shows working Thetis on a friend's
-            // ANAN-10E (HermesII) sends cntrl1=0 every PS-MOX frame.
-            // Wire-pcap diff:
-            //   Thetis (Windows i7-6700K, working): bank-4 cntrl1 = {0: 1514}
-            //                                       ps_run on banks 11/16: always 1
-            //                                       mox=1 frames: 181 (TX active)
-            //                                       PS reduces IMD (works)
-            //   NereusSDR (cntrl1=4 during PS-MOX): bank-4 cntrl1 = {0: 1862, 4: 520}
-            //                                       PS predistortion ineffective
-            //                                       (calcc converges to phase-
-            //                                        rotation map, IMD unchanged)
+            // Source-faithful. Note that on P1 this cfg.cntrl1 is a
+            // P2-side value that maps to prn->rx[i].rx_adc via Thetis
+            // SetADC_cntrl1 (netInterface.c:949-962 [v2.10.3.13]). The
+            // P1 wire bank-4 C1/C2 bytes come from the SEPARATE
+            // `P1_adc_cntrl` global instead (networkproto1.c:519-520
+            // [v2.10.3.13]), which is set only by SetADC_cntrl_P1
+            // (netInterface.c:992-996) — independent of UpdateDDCs.
+            // NereusSDR carries the P1 wire value via
+            // P1RadioConnection::m_p1AdcCntrl → CodecContext::p1AdcCntrl,
+            // with a board-aware default (0 for 1-ADC, 4 for 2-ADC) set
+            // in applyBoardQuirks(). See CodecContext.h::p1AdcCntrl for
+            // the full conflation history.
             //
-            // The friend's Thetis runtime sends cntrl1=0 despite
-            // v2.10.3.13 source at console.cs:8527 saying =4.  Likely
-            // explanation: SetADC_cntrl_P1 (console.cs:7336) reads
-            // rx_adc_ctrl_P1 separately and overwrites the cntrl1=4
-            // value UpdateDDCs() pushed.  We did not locate the exact
-            // Thetis override site; what is definitive is the byte the
-            // radio actually receives from working Thetis on this exact
-            // radio.
-            //
-            // HermesII has only ONE physical ADC.  cntrl1 is a 2-bits-
-            // per-DDC ADC selector for boards with multiple ADCs.  For
-            // HermesII the per-DDC ADC select is meaningless, but
-            // sending cntrl1=4 (bit 2 set) appears to interact with
-            // HermesII firmware in a way that confuses the PA-loopback
-            // path or the PS feedback DDC routing (observed: calcc
-            // produces a wrong-shape correction map; PS predistortion
-            // has no effect on TX spectrum).  Sending cntrl1=0 matches
-            // the working Thetis wire and is the empirical fix.
+            // Before 2026-05-17, NereusSDR P1 codecs read this cfg.cntrl1
+            // on the wire (a port-fidelity bug). A 2026-05-09 empirical
+            // override forced cfg.cntrl1=0 here because observed Thetis
+            // wire on a friend's ANAN-10E was 0; the override is no
+            // longer required now that the wire byte is correctly
+            // sourced from m_p1AdcCntrl (which defaults to 0 for
+            // HermesII via applyBoardQuirks()).
             cfg.p1DdcConfig = 5;
             cfg.ddcEnable   = DDC0;
             cfg.syncEnable  = DDC1;
             cfg.rate[0]     = ps_rate;
             cfg.rate[1]     = ps_rate;
-            cfg.cntrl1      = 0;  // EMPIRICAL: matches working Thetis wire on ANAN-10E
+            cfg.cntrl1      = 4;   // source-faithful; not on P1 wire
             cfg.cntrl2      = 0;
 
             // Phase 3M-4 mi0bot audit: PS DDC pair indices for HermesII /

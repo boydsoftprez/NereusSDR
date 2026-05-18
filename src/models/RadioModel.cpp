@@ -2680,15 +2680,27 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     m_receiverManager->setMaxReceivers(info.maxReceivers);
 
     // Create receiver 0 with protocol-appropriate DDC mapping.
-    // P2 2-ADC boards (ANAN-G2/Saturn) use DDC2 as primary RX per
-    // Thetis console.cs:8216 UpdateDDCs. P1 radios deliver samples on
-    // hardware receiver index 0, so leave the mapping auto-assigned
-    // (which rebuildHardwareMapping resolves to 0 for the first active
-    // receiver). Hardcoding DDC2 for everything dropped every P1 ep6
-    // packet at ReceiverManager::feedIqData on tester hardware.
+    // P2 2-ADC boards (Angelia / Orion / OrionMKII / Saturn / ANAN-G2) use
+    // DDC2 as primary RX because DDC0/DDC1 are reserved for the diversity /
+    // PureSignal pair (Thetis console.cs:8556-8598 GetDDC() P2 branch
+    // [v2.10.3.13]). 1-ADC P2 boards (Hermes / HermesII — ANAN-10E /
+    // ANAN-100B running community P2 firmware) use DDC0 as primary
+    // (console.cs:8600-8632 [v2.10.3.13]).  P1 radios deliver samples on
+    // hardware receiver index 0, so leave the mapping auto-assigned (which
+    // rebuildHardwareMapping resolves to 0 for the first active receiver).
+    // Hardcoding DDC2 for everything dropped every P1 ep6 packet at
+    // ReceiverManager::feedIqData on tester hardware; hardcoding DDC2 for
+    // every P2 board left HermesII users with no I/Q stream and a 2-second
+    // watchdog timeout (issue #263).
     int rxIdx = m_receiverManager->createReceiver();
     if (info.protocol == ProtocolVersion::Protocol2) {
-        m_receiverManager->setDdcMapping(rxIdx, 2);   // DDC2 for 2-ADC P2 boards
+        const int primaryDdc =
+            NereusSDR::P2RadioConnection::primaryRxDdcForBoard(info.boardType);
+        if (primaryDdc != 0) {
+            m_receiverManager->setDdcMapping(rxIdx, primaryDdc);
+        }
+        // primaryDdc == 0 → leave auto-assigned; rebuildHardwareMapping
+        // resolves the first active receiver to hw=0.
     }
     m_receiverManager->setAdcForReceiver(rxIdx, 0); // ADC0
 
@@ -4560,6 +4572,38 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     if (auto* p1 = qobject_cast<class P1RadioConnection*>(m_connection)) {
         m_bwMonitor.reset();
         p1->setBandwidthMonitor(&m_bwMonitor);
+    }
+
+    // Per-MAC P1 ADC routing override (Thetis `P1_adc_cntrl`).
+    //
+    // Thetis stores per-DDC ADC selection in a separate 14-bit global
+    // (console.cs:15120 [v2.10.3.13]) edited via Setup form's
+    // radP1DDC*ADC* radio buttons. NereusSDR P1RadioConnection mirrors
+    // this in m_p1AdcCntrl; applyBoardQuirks() seeds a sensible board
+    // default (HL2 / 2-ADC → 4, Hermes / HermesII → 0). If the user
+    // (or the future Setup → Hardware → P1 ADC Routing page) has
+    // persisted a per-MAC override under hardware/<mac>/p1AdcCntrl,
+    // apply it now so the first bank-4 emit goes out with the user's
+    // chosen routing.
+    //
+    // Done before m_connection->moveToThread() below so the synchronous
+    // setter is safe. The board default in applyBoardQuirks() has
+    // already run during connectToRadio() preflight; this is a strict
+    // override on top of that.
+    if (auto* p1 = qobject_cast<class P1RadioConnection*>(m_connection)) {
+        const QVariant persisted = AppSettings::instance().hardwareValue(
+            info.macAddress, QStringLiteral("p1AdcCntrl"));
+        if (persisted.isValid()) {
+            bool ok = false;
+            const int bits = persisted.toString().toInt(&ok, 0);  // base 0: accepts "0x14" too
+            if (ok) {
+                p1->setP1AdcCntrl(bits);
+            } else {
+                qCWarning(lcConnection) << "P1: hardware/" << info.macAddress
+                                        << "/p1AdcCntrl = '" << persisted.toString()
+                                        << "' is not a valid integer; using board default";
+            }
+        }
     }
 
     // Create worker thread

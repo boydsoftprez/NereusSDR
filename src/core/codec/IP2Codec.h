@@ -41,24 +41,33 @@ public:
     virtual void composeCmdRx          (const CodecContext& ctx, quint8 buf[1444]) const = 0;
     virtual void composeCmdTx          (const CodecContext& ctx, quint8 buf[60])   const = 0;
 
-    // PureSignal DDC config emission. Phase 3M-4 Task 5.
+    // PureSignal DDC config emission. Phase 3M-4 Task 5 + 2026-05-17 expansion.
     // Returns the wire-byte map describing how this board configures its
-    // DDCs when PureSignal is active. Called from
-    // ReceiverManager::updateDdcAssignment() (Task 6) to drive the PS
-    // branches of per-board UpdateDDCs.
+    // DDCs in every (mox × diversity × PS) state. Called from
+    // ReceiverManager::updateDdcAssignment() (Task 6) on every MOX or PS
+    // state change, and from P2RadioConnection::connectToRadio (issue
+    // #263 fix) to seed the initial RX-only DDC topology.
     //
-    // The `model` parameter is included for symmetry with IP1Codec
-    // (where P1CodecStandard handles multiple HpsdrModel values).  P2
-    // codec subclasses currently map 1:1 to single board families —
-    // P2CodecOrionMkII covers ANAN-100D/200D/ORIONMKII/7000D/8000D/
-    // ANVELINAPRO3, P2CodecSaturn covers ANAN-G2/G2-1K — and the Thetis
-    // switch lumps both into the same G2-class branch
-    // (console.cs:8211-8295 [v2.10.3.13]).  Reserved for future
-    // per-model divergence.
+    // The `model` parameter selects the per-board branch:
+    //   - G2-class (ANAN-100D / 200D / OrionMkII / 7000D / 8000D / G2 /
+    //     G2-1K / ANVELINAPRO3): RX1 on DDC2, PS pair on DDC0+DDC1
+    //   - Hermes-class (HERMES / ANAN10 / ANAN100): RX1 on DDC0,
+    //     PS pair on DDC0+DDC1 (cntrl1=4 ADC steering on P1; P2 freq
+    //     override at network.c:936-945 handles the steering on P2)
+    //   - HermesII-class (ANAN10E / ANAN100B): same as Hermes-class but
+    //     with nddc=2 instead of nddc=4
+    //   - HPSDR / HERMESLITE / REDPITAYA / unknown: empty cfg
+    //
+    // P2 codec subclasses inherit one shared dispatch table via
+    // P2CodecOrionMkII; P2CodecSaturn re-uses it untouched because Thetis
+    // groups G2 and Saturn into the same case statement
+    // (console.cs:8211-8218 [v2.10.3.13]).
     //
     // The `adcCtrl1` / `adcCtrl2` parameters carry the live ADC control
     // bytes (Thetis console.cs `rx_adc_ctrl1` / `rx_adc_ctrl2` members
-    // [v2.10.3.13]) into the masked emission formulas.
+    // [v2.10.3.13]) into the masked emission formulas. Ignored on 1-ADC
+    // boards (Hermes / HermesII have no ADC selector bits — cfg.cntrl1
+    // and cfg.cntrl2 are always 0 or 4 there).
     //
     // Source: ports the per-board branches in Thetis console.cs UpdateDDCs()
     // (lines 8186-8538) [v2.10.3.13].

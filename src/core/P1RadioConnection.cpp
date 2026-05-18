@@ -1823,7 +1823,65 @@ void P1RadioConnection::applyBoardQuirks()
         m_stepAttn[0] = 0;
     }
 
+    // Board-aware default for the P1 per-DDC ADC routing word (Thetis
+    // `P1_adc_cntrl`). The default mirrors what each board sees in
+    // Thetis fresh-install with no Setup-form modifications, except for
+    // the HermesII bench-override case noted below.
+    //
+    //   2-ADC boards (Angelia / Orion / OrionMkII / Saturn / G2-class):
+    //     default 0x0004 — matches Thetis fresh-install
+    //     (console.cs:15120 [v2.10.3.13] `rx_adc_ctrl_P1 = 4`).
+    //     Bit 2 set → DDC1's ADC select = 01 (ADC1, the PA-feedback tap),
+    //     which is what users running PureSignal on 2-ADC P1 boards
+    //     expect out of the box.
+    //
+    //   HermesLite (HL2, 1-ADC):
+    //     default 0x0004 — matches Thetis fresh-install and the wire
+    //     bytes observed on working HL2 setups. HL2 firmware
+    //     accepts the cntrl1=4 ADC-steering bits during PS-MOX.
+    //
+    //   Hermes / HermesII (1-ADC ANAN-10 / 10E / 100 / 100B):
+    //     default 0x0000 — matches wire bytes observed on a working
+    //     Thetis-driven ANAN-10E (HermesII) during PS-MOX on 2026-05-09.
+    //     On 1-ADC Hermes-family hardware the per-DDC ADC selector is
+    //     hardware-meaningless except that bit 2 set has been observed
+    //     to confuse HermesII firmware's PA-loopback path in PS-MOX
+    //     (calcc produces a wrong-shape correction map, PS predistortion
+    //     has no effect). 0 is the empirically-safe default. Users who
+    //     prefer the Thetis-faithful default of 4 can override per-MAC.
+    //
+    // Either default can be overridden per-MAC via the AppSettings key
+    // `hardware/<mac>/p1AdcCntrl` (loaded by RadioModel after this
+    // applyBoardQuirks() runs at connect time).
+    if (m_caps->adcCount >= 2) {
+        m_p1AdcCntrl = 0x0004;
+    } else if (m_caps->board == HPSDRHW::HermesLite) {
+        m_p1AdcCntrl = 0x0004;
+    } else {
+        // Hermes / HermesII (and any future 1-ADC non-HL2 board)
+        m_p1AdcCntrl = 0x0000;
+    }
+
     selectCodec();
+}
+
+// ---------------------------------------------------------------------------
+// setP1AdcCntrl — Thetis SetADC_cntrl_P1 (netInterface.c:992-996 [v2.10.3.13])
+//
+// Stores the 14-bit per-DDC ADC routing word in m_p1AdcCntrl; the next
+// bank-4 emit (round-robin) picks it up via buildCodecContext() →
+// ctx.p1AdcCntrl → P1CodecStandard / P1CodecHl2 bank-4 C1/C2 bytes.
+// Mirrors `NetworkIO.SetADC_cntrl_P1(rx_adc_ctrl_P1)` at
+// console.cs:7327 [v2.10.3.13].
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setP1AdcCntrl(int bits)
+{
+    const quint16 clamped = static_cast<quint16>(bits & 0x3FFF);  // 14 bits
+    if (m_p1AdcCntrl != clamped) {
+        m_p1AdcCntrl = clamped;
+        qCInfo(lcConnection).nospace()
+            << "P1: setP1AdcCntrl(0x" << QString::number(clamped, 16) << ")";
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2043,6 +2101,7 @@ CodecContext P1RadioConnection::buildCodecContext() const
         m_lastOcByteLogged = ctx.ocByte;
     }
     ctx.adcCtrl        = m_adcCtrl;
+    ctx.p1AdcCntrl     = m_p1AdcCntrl;
     ctx.alexHpfBits    = m_alexHpfBits;
     ctx.alexLpfBits    = m_alexLpfBits;
     ctx.txFreqHz       = m_txFreqHz;
