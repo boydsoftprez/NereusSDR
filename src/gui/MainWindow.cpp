@@ -718,7 +718,23 @@ MainWindow::MainWindow(QWidget* parent)
     // network I/O fires. Each client guards against double-start so
     // re-invocation is harmless (e.g. if a future code path also calls
     // this after a profile switch).
+    //
+    // 2026-05-18 bench fix: seed the SpectrumWidget per-source visibility
+    // mask BEFORE restoring any auto-start state.  Without this, the
+    // panadapter overlay mask (m_spotSourceVisible) is empty at startup
+    // and the renderer's missing-key fallback (true == visible) leaks
+    // every source's spots regardless of the user's "Show on panadapter"
+    // checkbox state.  Bench operator hit it with FreeDV: FreeDvAutoStart
+    // + Display checkbox unchecked = spots still painting at app start
+    // until SpotHub was opened manually.  Six of seven sources share the
+    // same symmetry break (PSK Reporter is send-only); fixing it here
+    // closes the gap for all of them in one place.  The matching seed
+    // inside openSpotHub() is now a defensive guard kept for the case
+    // where the spectrum widget races construction; see lines below.
     QTimer::singleShot(0, this, [this] {
+        if (m_spectrumWidget) {
+            m_spectrumWidget->loadSpotDisplaySettings();
+        }
         if (m_radioModel) {
             m_radioModel->restoreSpotClientAutoStartState();
         }
@@ -5461,10 +5477,16 @@ void MainWindow::openSpotHub()
                         m_spectrumWidget->loadSpotDisplaySettings();
                     }
                 });
-        // First-time seed: pick up any settings that were persisted
-        // before the dialog was ever opened. Without this, the spectrum
-        // overlay would only reflect the AppSettings defaults until the
-        // operator first opened the dialog and changed a knob.
+        // Defensive re-seed.  The primary seed runs at MainWindow startup
+        // (see the QTimer::singleShot(0, ...) lambda earlier in this file
+        // that pairs loadSpotDisplaySettings + restoreSpotClientAutoStartState),
+        // which guarantees the panadapter mask is populated before any
+        // auto-started spot client emits its first spot.  This call is kept
+        // as a belt-and-suspenders idempotent re-seed for the (rare) case
+        // where the spectrum widget was not yet available at startup but
+        // is now -- loadSpotDisplaySettings re-reads AppSettings and the
+        // setter is no-op when the value is unchanged, so the cost is
+        // bounded and the behaviour is correct either way.
         if (m_spectrumWidget) {
             m_spectrumWidget->loadSpotDisplaySettings();
         }
