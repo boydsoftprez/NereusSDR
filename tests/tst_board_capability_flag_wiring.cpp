@@ -159,6 +159,12 @@ private slots:
         ctrl.setTickTimerEnabled(false);
         ctrl.setHasStepAttenuatorCal(false);
 
+        // Issue #259 gate: saveSettings is a no-op until loadSettings has
+        // tagged the controller for this MAC. Call loadSettings(kTestMac)
+        // first (it reads defaults since no keys exist yet) so the
+        // subsequent setAutoAttHoldSeconds + saveSettings actually persist.
+        ctrl.loadSettings(kTestMac);
+
         // Persist via saveSettings + reload to confirm the value round-trips
         // (the controller has no public hold-ms getter, only the persistence
         // key — so we exercise that path).

@@ -526,6 +526,7 @@ void GeneralOptionsPage::buildStepAttGroup()
     // (lines 15750-15760), gated on chk != null (sender is a CheckBoxTS, i.e.
     // a real user click) AND HasSteppedAttenuation(2) AND shared-ADC. Mirror
     // wiring is deferred until the controller carries independent RX2 state.
+    //MW0LGE [2.9.0.6]  [original inline comment from setup.cs:15742 — "only if we click it"]
     connect(m_chkRx1StepAttEnable, &QCheckBox::toggled, this, [this](bool on) {
         m_spnRx1StepAttValue->setEnabled(on);
         if (m_ctrl) {
@@ -534,8 +535,10 @@ void GeneralOptionsPage::buildStepAttGroup()
     });
 
     // --- Spinbox → controller ---
-    // From Thetis setup.cs:15765-15787 [v2.10.3.13] udHermesStepAttenuator
-    // Data_ValueChanged → console.RX1AttenuatorData.
+    // From Thetis setup.cs:15765-15772 [v2.10.3.13] udHermesStepAttenuator
+    // Data_ValueChanged → console.RX1AttenuatorData. (The model-gated
+    // Maximum=61 branch at setup.cs:15773-15786 lives in BoardCapsTable
+    // ::stepAttMaxDb in NereusSDR.)
     connect(m_spnRx1StepAttValue, &QSpinBox::valueChanged, this, [this](int dB) {
         if (m_ctrl) {
             m_ctrl->setAttenuation(dB, 0);
