@@ -144,6 +144,20 @@ public:
     bool autoAttEnabled() const noexcept { return m_autoAttEnabled; }
     bool autoAttApplied() const noexcept { return m_autoAttApplied; }
 
+    // Issue #259 (review fix): expose Undo / Hold / Decay state so the
+    // GeneralOptionsPage cold-open init pulls every persisted auto-att
+    // field, not just enable + mode.  Without these the chkAutoAttUndoRx1
+    // and spnAutoAttHoldRx1 widgets stay at their constructor defaults
+    // even after loadSettings() restores the controller — exactly the
+    // partial-restore case the reviewer flagged on PR #260.
+    bool autoAttUndo() const noexcept { return m_autoUndoEnabled; }
+    // Adaptive-mode hold window expressed in whole seconds (Setup spinbox
+    // is integer-valued).  Internal storage is ms; the page wraps the
+    // setter pair setAutoAttHoldSeconds (Adaptive) / setAutoUndoDelaySec
+    // (Classic) on the same spinbox.
+    int adaptiveHoldSeconds() const noexcept { return m_adaptiveHoldMs / 1000; }
+    int autoUndoDelaySec() const noexcept { return m_autoUndoDelaySec; }
+
     // --- Configuration setters ---
 
     void setAutoAttEnabled(bool on);

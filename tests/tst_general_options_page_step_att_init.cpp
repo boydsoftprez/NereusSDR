@@ -18,6 +18,7 @@
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QGroupBox>
 #include <QSpinBox>
 
@@ -212,6 +213,108 @@ private slots:
         QVERIFY2(autoAttRx1, "Auto Attenuate RX1 groupbox not found");
         QVERIFY2(!autoAttRx1->isHidden(),
                  "Auto Attenuate RX1 must remain visible");
+    }
+
+    // ── Auto-Att RX1: full cold-open restore (PR #260 review fix). ───────────
+    //
+    // The first pass of initFromController only pulled autoAttEnabled +
+    // autoAttMode. The reviewer flagged that the Undo/Decay checkbox and
+    // the Hold/Delay spinbox stayed at constructor defaults even when the
+    // controller had restored real values from disk. This test pins the
+    // expanded init so every Auto-Att RX1 widget reflects the controller.
+    //
+    // Adaptive mode + autoUndoEnabled=true + adaptiveHoldMs=4000:
+    //   - cmbAutoAttRx1Mode → "Adaptive"
+    //   - chkAutoAttUndoRx1: checked, label "Decay" (Adaptive renames Undo
+    //     → Decay per buildAutoAttGroup line ~596).
+    //   - spnAutoAttHoldRx1: 4 seconds, enabled (autoOn && chkUndo).
+    void initFromController_restoresAutoAttAdaptive()
+    {
+        RadioModel model;
+        auto* ctrl = new StepAttenuatorController(&model);
+        ctrl->setMaxAttenuation(31);
+        ctrl->setStepAttEnabled(true);
+        ctrl->setHasStepAttenuatorCal(true);  // gate Adaptive on
+        ctrl->setAutoAttEnabled(true);
+        ctrl->setAutoAttMode(AutoAttMode::Adaptive);
+        ctrl->setAutoAttUndo(true);
+        ctrl->setAutoAttHoldSeconds(4.0);    // 4s → 4000 ms
+        model.setStepAttController(ctrl);
+
+        auto* page = new GeneralOptionsPage(&model, qobject_cast<QWidget*>(this));
+
+        // Find the Auto Attenuate RX1 group + its three widgets.
+        QGroupBox* group = nullptr;
+        for (auto* g : page->findChildren<QGroupBox*>()) {
+            if (g->title() == QStringLiteral("Auto Attenuate RX1")) {
+                group = g;
+                break;
+            }
+        }
+        QVERIFY2(group, "Auto Attenuate RX1 groupbox not found");
+
+        QComboBox* mode  = group->findChild<QComboBox*>();
+        QCheckBox* undo  = nullptr;
+        QCheckBox* en    = nullptr;
+        for (auto* c : group->findChildren<QCheckBox*>()) {
+            if (c->text() == QStringLiteral("Enable")) {
+                en = c;
+            } else {
+                undo = c;  // the only other QCheckBox is the Undo/Decay one
+            }
+        }
+        QSpinBox* hold = group->findChild<QSpinBox*>();
+        QVERIFY2(en   && mode && undo && hold, "Auto-Att widgets missing");
+
+        QCOMPARE(en->isChecked(),   true);
+        QCOMPARE(mode->currentText(), QStringLiteral("Adaptive"));
+        QCOMPARE(undo->isChecked(), true);
+        QCOMPARE(undo->text(),      QStringLiteral("Decay"));
+        QCOMPARE(hold->value(),     4);
+        QCOMPARE(mode->isEnabled(), true);
+        QCOMPARE(undo->isEnabled(), true);
+        QCOMPARE(hold->isEnabled(), true);
+    }
+
+    // ── Auto-Att RX1: Classic mode pulls autoUndoDelaySec onto the spinbox. ──
+    void initFromController_restoresAutoAttClassic()
+    {
+        RadioModel model;
+        auto* ctrl = new StepAttenuatorController(&model);
+        ctrl->setMaxAttenuation(31);
+        ctrl->setStepAttEnabled(true);
+        ctrl->setAutoAttEnabled(true);
+        ctrl->setAutoAttMode(AutoAttMode::Classic);
+        ctrl->setAutoAttUndo(true);
+        ctrl->setAutoUndoDelaySec(9);
+        model.setStepAttController(ctrl);
+
+        auto* page = new GeneralOptionsPage(&model, qobject_cast<QWidget*>(this));
+
+        QGroupBox* group = nullptr;
+        for (auto* g : page->findChildren<QGroupBox*>()) {
+            if (g->title() == QStringLiteral("Auto Attenuate RX1")) {
+                group = g;
+                break;
+            }
+        }
+        QVERIFY2(group, "Auto Attenuate RX1 groupbox not found");
+
+        QComboBox* mode = group->findChild<QComboBox*>();
+        QCheckBox* undo = nullptr;
+        for (auto* c : group->findChildren<QCheckBox*>()) {
+            if (c->text() != QStringLiteral("Enable")) {
+                undo = c;
+                break;
+            }
+        }
+        QSpinBox* hold = group->findChild<QSpinBox*>();
+        QVERIFY(mode && undo && hold);
+
+        QCOMPARE(mode->currentText(), QStringLiteral("Classic"));
+        QCOMPARE(undo->isChecked(),   true);
+        QCOMPARE(undo->text(),        QStringLiteral("Undo"));  // Classic keeps "Undo"
+        QCOMPARE(hold->value(),       9);                       // delay seconds, not hold
     }
 };
 

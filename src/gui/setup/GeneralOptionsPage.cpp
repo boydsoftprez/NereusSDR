@@ -742,7 +742,13 @@ void GeneralOptionsPage::initFromController()
     }
     m_spnRx1StepAttValue->setEnabled(stepOn);
 
-    // Auto-att group — same lazy-construct problem.
+    // Auto-att group — same lazy-construct problem. Issue #259 PR #260
+    // review fix: previously this only pulled enable + mode, leaving
+    // chkAutoAttUndoRx1 + spnAutoAttHoldRx1 at their constructor defaults
+    // even when the controller had restored real values from disk. Pull
+    // all four fields and apply the mode-aware Undo↔Decay relabel + the
+    // mode-aware hold-vs-delay spinbox value (the same handler the cmbMode
+    // currentIndexChanged slot wires up in buildAutoAttGroup at line ~596).
     {
         QSignalBlocker blk(m_chkAutoAttRx1);
         m_chkAutoAttRx1->setChecked(m_ctrl->autoAttEnabled());
@@ -751,7 +757,28 @@ void GeneralOptionsPage::initFromController()
         QSignalBlocker blk(m_cmbAutoAttRx1Mode);
         m_cmbAutoAttRx1Mode->setCurrentIndex(static_cast<int>(m_ctrl->autoAttMode()));
     }
-    const bool autoOn = m_chkAutoAttRx1->isChecked();
+    const bool isAdaptive =
+        (m_ctrl->autoAttMode() == AutoAttMode::Adaptive);
+    {
+        QSignalBlocker blk(m_chkAutoAttUndoRx1);
+        m_chkAutoAttUndoRx1->setChecked(m_ctrl->autoAttUndo());
+        // Match the cmbMode::currentIndexChanged handler in buildAutoAttGroup
+        // (line ~596) — Adaptive uses "Decay", Classic uses "Undo".
+        m_chkAutoAttUndoRx1->setText(isAdaptive
+            ? QStringLiteral("Decay") : QStringLiteral("Undo"));
+    }
+    {
+        QSignalBlocker blk(m_spnAutoAttHoldRx1);
+        // In Adaptive mode the spinbox holds the seconds-of-hold; in
+        // Classic mode it holds the undo-delay seconds. The
+        // spnHold::valueChanged binding (buildAutoAttGroup line ~615)
+        // dispatches setAutoAttHoldSeconds vs setAutoUndoDelaySec on
+        // the same widget; mirror that here on the read side.
+        m_spnAutoAttHoldRx1->setValue(isAdaptive
+            ? m_ctrl->adaptiveHoldSeconds()
+            : m_ctrl->autoUndoDelaySec());
+    }
+    const bool autoOn = m_ctrl->autoAttEnabled();
     m_cmbAutoAttRx1Mode->setEnabled(autoOn);
     m_chkAutoAttUndoRx1->setEnabled(autoOn);
     m_spnAutoAttHoldRx1->setEnabled(autoOn && m_chkAutoAttUndoRx1->isChecked());
