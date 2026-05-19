@@ -4969,6 +4969,11 @@ nereus_add_test(tst_pgxl_connection_keepalive)
 # pingTimesOutViaFlushSeam (testFlushPingTimeouts() -> pingTimedOut signal).
 nereus_add_test(tst_pgxl_connection_ping)
 
+# Task 67: TGXL pong correlation + ping timeout (parallel to Task 58 above).
+# Tests: pingEmitsPongReceivedOnReply (V1.2.17 handshake + R-frame -> pongReceived);
+# pingTimesOutAfterFiveSeconds (testFlushPingTimeouts() -> pingTimedOut signal).
+nereus_add_test(tst_tgxl_connection_ping)
+
 # Task 59: auto-reconnect exponential backoff (1/2/5/10/30/60 s, cap at 60 s).
 # Test: backoffSequence verifies 8 calls to testForceDisconnect() produce
 # reconnectAttempt signals with delays 1000/2000/5000/10000/30000/60000/
