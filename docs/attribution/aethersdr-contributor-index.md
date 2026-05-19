@@ -245,7 +245,7 @@ per-file NereusSDR-side diff).
 | `src/models/PanadapterModel.{h,cpp}` | `src/models/PanadapterModel.{h,cpp}` | Per-pan display-state template. NereusSDR's PanadapterModel also holds per-band grid (added 3G-8) which is Thetis-derived, not AetherSDR-derived. |
 | `src/models/MeterModel.{h,cpp}` | (structurally split across MeterWidget/MeterPoller/MeterItem) | |
 | `src/models/TransmitModel.{h,cpp}` | (NereusSDR TX models pending 3M) | |
-| `src/models/TunerModel.{h,cpp}` | (none yet) | TGXL tuner state. |
+| `src/models/TunerModel.{h,cpp}` | `src/models/TunerModel.{h,cpp}` | TGXL tuner state. |
 | `src/models/EqualizerModel.{h,cpp}` | (none direct — EQ is in EqApplet) | |
 | `src/models/TnfModel.{h,cpp}` | (none yet) | Tracking notch filters. |
 | `src/models/SpotModel.{h,cpp}` | (none yet) | DX spot overlay. |

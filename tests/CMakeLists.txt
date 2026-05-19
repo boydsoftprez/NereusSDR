@@ -4899,3 +4899,9 @@ nereus_add_test(tst_pgxl_connection_parse)
 # TCP telemetry, port 9010). Ported from AetherSDR src/core/TgxlConnection.{h,cpp}
 # [@0cd4559]. V/R/S frame parsing with state/status object discrimination.
 nereus_add_test(tst_tgxl_connection_parse)
+
+# ── Phase 3P-II TGXL tuner model ─────────────────────────────────────────
+# Pins the applyStatus contract for TunerModel (4O3A Tuner Genius XL state
+# model). Ported from AetherSDR src/models/TunerModel.{h,cpp} [@0cd4559].
+# Tests: relay values, operate/bypass, antenna-switch model, meters, presence.
+nereus_add_test(tst_tuner_model_apply_status)

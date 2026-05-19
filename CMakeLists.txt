@@ -498,6 +498,8 @@ set(CORE_SOURCES
     # Phase 3P-II PGXL/TGXL accessories
     src/core/PgxlConnection.cpp
     src/core/TgxlConnection.cpp
+    # Phase 3P-II TGXL tuner model
+    src/models/TunerModel.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
