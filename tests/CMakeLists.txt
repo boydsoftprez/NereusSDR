@@ -4922,3 +4922,10 @@ nereus_add_test(tst_tuner_model_apply_status)
 #          wdsp/analyzer.c:775+830+1442 [@501e3f5] (C implementation + example)
 #          Console/console.cs:957+51150 [@501e3f5] (Thetis call sites)
 nereus_add_test(tst_wdsp_engine_max_bin)
+
+# Pins SMeterWidget::setPowerScale snap-logic across three brackets:
+# barefoot (<= 100W -> 120/100), Aurora (> 100W -> 600/500), and
+# PGXL amplifier (hasAmplifier=true -> 2000/1500).
+# Ported from AetherSDR src/gui/SMeterWidget.cpp:642-656 [@0cd4559].
+# Phase 3P-II Phase 2, Tasks 34/35/36.
+nereus_add_test(tst_smeter_widget_scale)
