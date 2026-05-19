@@ -370,6 +370,7 @@ public:
     // Returns the averaged S-meter reading (dBm) from the RXA pipeline.
     // Reads WDSP RXA_S_AV via GetRXAMeter; the value is only meaningful
     // after the channel has been activated with SetChannelState(channel, 1).
+    // Returns -140.0 sentinel when the engine is not yet initialized.
     // Prefer RxChannel::getMeter(RxMeterType::SignalAvg) when a channel
     // wrapper is available -- this helper is for callers that hold only
     // the engine and a raw WDSP channel id (e.g. the Analog S-Meter path).

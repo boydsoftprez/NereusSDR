@@ -1222,8 +1222,14 @@ qint64 WdspEngine::rebuildTxChannel(int channelId, const ChannelConfig& cfg)
 // The value is lock-free at the WDSP boundary (GetRXAMeter reads the WDSP
 // meter output register directly, same as RxChannel::getMeter). Callers must
 // ensure the channel is active before reading meaningful values.
+//
+// Guard: returns -140.0 sentinel if the engine is not yet initialized (mirrors
+// RxChannel::getMeter's !m_active.load() guard at RxChannel.cpp:1537).
 double WdspEngine::getRxaSignalAverage(int channel) const
 {
+    if (!m_initialized) {
+        return -140.0;
+    }
 #ifdef HAVE_WDSP
     // From Thetis Console/dsp.cs:387-388 [@501e3f5]
     // From Thetis Console/console.cs:957 [@501e3f5]
@@ -1251,10 +1257,17 @@ double WdspEngine::getRxaSignalAverage(int channel) const
 //   // SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60);
 // This is the canonical illustrative call in the WDSP source (LSB
 // passband on a 192 kHz DDC, 0.5 s smoothing tau, 60 fps display).
+//
+// Guard: early-returns if the engine is not yet initialized because
+// SetupDetectMaxBin requires pdisp[disp] to be non-null (CreateAnalyzer
+// is called during WDSPwisdom; accessing pdisp[] before that segfaults).
 void WdspEngine::setupMaxBinDetector(int disp, int ss, int LO,
                                      double rate, double fLow, double fHigh,
                                      double tau, int frameRate)
 {
+    if (!m_initialized) {
+        return;
+    }
 #ifdef HAVE_WDSP
     // From Thetis Console/dsp.cs:846-847 [@501e3f5]
     // From Thetis wdsp/analyzer.c:775 [@501e3f5]
@@ -1273,9 +1286,13 @@ void WdspEngine::setupMaxBinDetector(int disp, int ss, int LO,
 // under EnterCriticalSection/LeaveCriticalSection.
 //
 // Returns -400.0 when no display frame has been processed yet
-// (wdsp/analyzer.c:703 initializes dmb_max_dB = -400.0 in Init_DetectMaxBin).
+// (wdsp/analyzer.c:703 initializes dmb_max_dB = -400.0 in Init_DetectMaxBin),
+// or when the engine is not yet initialized (pdisp[] uninitialized guard).
 double WdspEngine::getMaxBinDbm(int disp) const
 {
+    if (!m_initialized) {
+        return -400.0;
+    }
 #ifdef HAVE_WDSP
     // From Thetis Console/dsp.cs:849-850 [@501e3f5]
     // From Thetis wdsp/analyzer.c:830 [@501e3f5]

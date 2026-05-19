@@ -4911,3 +4911,14 @@ nereus_add_test(tst_lan_discovery_regex)
 # model). Ported from AetherSDR src/models/TunerModel.{h,cpp} [@0cd4559].
 # Tests: relay values, operate/bypass, antenna-switch model, meters, presence.
 nereus_add_test(tst_tuner_model_apply_status)
+
+# ── Phase 3P-II Phase 2 (S-Meter port) ───────────────────────────────────
+# Smoke tests for WdspEngine::getRxaSignalAverage (Task 31, RXA_S_AV
+# wrapper), setupMaxBinDetector (Task 32, SetupDetectMaxBin wrapper), and
+# getMaxBinDbm (Task 32, GetDetectMaxBin wrapper).
+# All three wrappers guard on m_initialized so a default-constructed engine
+# is safe to call (no FFTW wisdom or CreateAnalyzer required).
+# Sources: Thetis Console/dsp.cs:387-388+846-850 [@501e3f5] (P/Invoke decls)
+#          wdsp/analyzer.c:775+830+1442 [@501e3f5] (C implementation + example)
+#          Console/console.cs:957+51150 [@501e3f5] (Thetis call sites)
+nereus_add_test(tst_wdsp_engine_max_bin)
