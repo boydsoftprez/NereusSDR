@@ -97,7 +97,7 @@ SMeterWidget::SMeterWidget(QWidget* parent)
     // Load persisted mode and peak-hold settings from AppSettings.
     // Defaults match the member initialisers: TxSelect=0 (Power),
     // RxSelect=0 (Signal), PeakHoldEnabled=true, PeakDecayRate=Medium.
-    // Task 47 — NereusSDR-native (AetherSDR has no AppSettings persistence).
+    // Task 47 - NereusSDR-native (AetherSDR has no AppSettings persistence).
     auto& s = AppSettings::instance();
 
     const int txSel = s.value("SMeter_TxSelect", 0).toInt();

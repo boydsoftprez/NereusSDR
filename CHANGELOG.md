@@ -11,40 +11,40 @@ from Thetis) follows in the next dispatch.
 
 **New classes:**
 
-- `PgxlConnection` (`src/core/PgxlConnection.{h,cpp}`) — TCP client on
+- `PgxlConnection` (`src/core/PgxlConnection.{h,cpp}`): TCP client on
   port 9008. Parses V (banner), R (request/reply key-value), and S
   (unsolicited status push) frames per strict S-frame design (§6.1 of
   the phase design doc). Port of `src/core/PgxlConnection.{h,cpp}` from
   AetherSDR `[@a29ff40]`. 3 parse tests in `tst_pgxl_connection_parse`.
 
-- `TgxlConnection` (`src/core/TgxlConnection.{h,cpp}`) — TCP client on
+- `TgxlConnection` (`src/core/TgxlConnection.{h,cpp}`): TCP client on
   port 9010. V/R/S frame parsing with state/status object discrimination.
   Port of `src/core/TgxlConnection.{h,cpp}` from AetherSDR `[@a29ff40]`.
   3 parse tests in `tst_tgxl_connection_parse`.
 
-- `TunerModel` (`src/models/TunerModel.{h,cpp}`) — TGXL state model with
+- `TunerModel` (`src/models/TunerModel.{h,cpp}`): TGXL state model with
   13 Q_PROPERTYs (state, status, bypassMode, antennaPort, txPower,
   reflectedPower, swr, inductance, capacitance, tuneTime,
   isConnected, serialNumber, firmwareVersion). Wired to `TgxlConnection`
   via `bindConnection`; `applyStatus` dispatches S-frame key-value maps.
   11 applyStatus tests in `tst_tuner_model_apply_status`.
 
-- `RelayBar` (`src/gui/RelayBar.{h,cpp}`) — horizontal relay-position
+- `RelayBar` (`src/gui/RelayBar.{h,cpp}`): horizontal relay-position
   gauge widget extracted from AetherSDR's inner `TunerApplet::RelayBar`
   class. Supports mousewheel stepping and emits `positionChangeRequested`.
 
-- `LanDiscovery` (`src/core/LanDiscovery.{h,cpp}`) — NereusSDR-native
+- `LanDiscovery` (`src/core/LanDiscovery.{h,cpp}`): NereusSDR-native
   UDP broadcast listener on ports 9008 and 9010. Parses device model,
   IP, version, serial, and nickname via the official FlexRadio LAN
   discovery regex. Deduplicates by serial number before emitting
   `deviceDiscovered`. Regex tests in `tst_lan_discovery_regex`.
 
-- `AmpApplet` (`src/gui/applets/AmpApplet.{h,cpp}`) — PGXL telemetry
+- `AmpApplet` (`src/gui/applets/AmpApplet.{h,cpp}`): PGXL telemetry
   applet with three `HGauge` meters (forward power, reflected power,
   SWR), state label, and OPERATE toggle. Port of `src/gui/AmpApplet.{h,cpp}`
   from AetherSDR `[@a29ff40]`.
 
-- `LanScanDialog` (`src/gui/LanScanDialog.{h,cpp}`) — NereusSDR-native
+- `LanScanDialog` (`src/gui/LanScanDialog.{h,cpp}`): NereusSDR-native
   modeless 3-second LAN scan dialog. Shows discovered devices in a
   6-column table (Model, IP, Port, Version, Serial, Nickname).
   Double-click fills the Host and Port fields in the PeripheralsPage
@@ -52,22 +52,22 @@ from Thetis) follows in the next dispatch.
 
 **Modified classes:**
 
-- `TunerApplet` (`src/gui/applets/TunerApplet.{h,cpp}`) — rewired for
-  TGXL: `RelayBar` replaces the capacitor/inductor position bars, single
+- `TunerApplet` (`src/gui/applets/TunerApplet.{h,cpp}`): rewired for
+  TGXL. `RelayBar` replaces the capacitor/inductor position bars, single
   Cycle button replaces the dual-step controls, `TunerModel` wired as
   the data source, title updated to "Tuner Genius XL".
 
-- `RadioModel` (`src/models/RadioModel.{h,cpp}`) — owns `PgxlConnection`,
+- `RadioModel` (`src/models/RadioModel.{h,cpp}`): owns `PgxlConnection`,
   `TgxlConnection`, and `TunerModel`. Emits `amplifierChanged` and
   `ampMetersChanged` for `AmpApplet` data binding. Auto-connects PGXL
   and TGXL when the radio connects.
 
-- `MainWindow` (`src/gui/MainWindow.{h,cpp}`) — auto-connects PGXL and
+- `MainWindow` (`src/gui/MainWindow.{h,cpp}`): auto-connects PGXL and
   TGXL on radio connect; routes `AmpApplet` meter signals; adds a TGXL
   presence chip to the bottom status bar.
 
-- `SetupDialog` + `CatNetworkSetupPages` (`src/gui/setup/CatNetworkSetupPages.{h,cpp}`)
-  — new Peripherals page under Setup > Network with PGXL and TGXL rows
+- `SetupDialog` + `CatNetworkSetupPages` (`src/gui/setup/CatNetworkSetupPages.{h,cpp}`):
+  new Peripherals page under Setup > Network with PGXL and TGXL rows
   (Host + Port + Scan LAN button for each). All 4 fields persist via
   AppSettings keys `Pgxl/Host`, `Pgxl/Port`, `Tgxl/Host`, `Tgxl/Port`.
 

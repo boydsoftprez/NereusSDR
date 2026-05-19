@@ -61,7 +61,7 @@ public:
     // Connect the TciServer reference so the Server group box title shows
     // the live client count (`TCI Server (N clients)`) and the Status label
     // reflects running/stopped state.  Modeled on Thetis
-    // Setup.cs:9491-9494 [v2.10.3.13] — TCIClientsConnectedChange setter
+    // Setup.cs:9491-9494 [v2.10.3.13] (TCIClientsConnectedChange setter
     // updates `grpTCIServer.Text`.
     //
     // Pass nullptr to detach (e.g. when the server is destroyed); the page
@@ -75,8 +75,8 @@ signals:
     // Phase 3J-1 review P2.4: MainWindow::wireSetupDialog connects this to
     // the live start/stop path so the server starts or stops immediately
     // without a disconnect/reconnect cycle.
-    // `on`   — true: start the server on the persisted port.
-    // `port` — the port currently shown in the Port spinbox (persisted at emit
+    // `on`:   true means start the server on the persisted port.
+    // `port`: the port currently shown in the Port spinbox (persisted at emit
     //          time; MainWindow should re-read AppSettings or accept the value
     //          directly to avoid a race with a concurrent port-spinbox change).
     void tciServerEnableToggled(bool on, quint16 port);
@@ -119,8 +119,8 @@ private:
     // Phase 3J-1 bench fix: live status state.  Updated by setTciServer
     // signal-connected lambdas.  m_clientCount tracks via increment on
     // clientConnected and decrement on clientDisconnected (TciServer
-    // exposes connect/disconnect signals but not a count getter — local
-    // tracking is the canonical pattern).
+    // exposes connect/disconnect signals but not a count getter; local
+    // tracking is the canonical pattern.
     QPointer<class NereusSDR::TciServer> m_tciServerRef;
     bool m_tciServerRunning{false};
     int  m_tciClientCount{0};
@@ -218,10 +218,10 @@ private slots:
 
 private:
     // Build one device row into m_grid at the given row index.
-    // name       — display label ("Tuner Genius XL" / "Power Genius XL")
-    // ipKey      — AppSettings key for the host IP ("TGXL_ManualIp" / "PGXL_ManualIp")
-    // portKey    — AppSettings key for the port   ("TGXL_ManualPort" / "PGXL_ManualPort")
-    // defaultPort — factory default (9010 / 9008)
+    // name        - display label ("Tuner Genius XL" / "Power Genius XL")
+    // ipKey       - AppSettings key for the host IP ("TGXL_ManualIp" / "PGXL_ManualIp")
+    // portKey     - AppSettings key for the port ("TGXL_ManualPort" / "PGXL_ManualPort")
+    // defaultPort - factory default (9010 / 9008)
     void buildRow(int row, const QString& name,
                   const QString& ipKey, const QString& portKey,
                   quint16 defaultPort);
