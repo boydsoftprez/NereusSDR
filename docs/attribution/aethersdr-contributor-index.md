@@ -265,7 +265,8 @@ per-file NereusSDR-side diff).
 | `src/gui/EqApplet.{h,cpp}` | `src/gui/applets/EqApplet.{h,cpp}` | |
 | `src/gui/CatApplet.{h,cpp}` | (pending 3K) | |
 | `src/gui/TunerApplet.{h,cpp}` (inner `RelayBar` class) | `src/gui/RelayBar.{h,cpp}` | RelayBar widget extracted from AetherSDR inner class; supports mousewheel relay position adjustment. |
-| `src/gui/AmpApplet.{h,cpp}` / `AntennaGeniusApplet.{h,cpp}` | (FlexRadio accessory-specific — not in NereusSDR) | |
+| `src/gui/AmpApplet.{h,cpp}` | `src/gui/applets/AmpApplet.{h,cpp}` | PGXL amp telemetry applet (Phase 3P-II Task 15). |
+| `src/gui/AntennaGeniusApplet.{h,cpp}` | (FlexRadio accessory-specific, not in NereusSDR) | |
 | `src/gui/PanadapterApplet.{h,cpp}` / `PanadapterStack.{h,cpp}` / `PanLayoutDialog.{h,cpp}` | (pending Phase 3F) | Multi-pan management UI. |
 | `src/gui/RadioSetupDialog.{h,cpp}` | `src/gui/setup/*` pages + `HardwarePage.{h,cpp}` + `setup/hardware/*` tabs + `SetupPage.cpp` + `TransmitSetupPages.{h,cpp}` + `DspSetupPages.cpp` + `DisplaySetupPages.{h,cpp}` + `GeneralOptionsPage.{h,cpp}` | Pattern only; content is Thetis-feature-driven. AetherSDR's `RadioSetupDialog.cpp` §License Info block (lines 263-312) is SmartSDR-license-specific, has no NereusSDR counterpart. |
 | `src/gui/ProfileManagerDialog.{h,cpp}` | (none yet) | |
