@@ -137,6 +137,11 @@ public slots:
     // Called from SetupDialog::tgxlAntennaLabelChanged (wired in wireSetupDialog).
     void onAntennaLabelChanged(int index, const QString& label);
 
+    // Phase 3P-II review fix C1: update m_currentBand so Save/Recall/Clear
+    // context-menu actions operate on the correct (antenna, band) slot.
+    // Wired by MainWindow::wireSliceToSpectrum to SliceModel::bandChanged.
+    void setBand(Band band);
+
 protected:
     // Phase 3P-II Phase 4 Task 89: right-click context menu.
     void contextMenuEvent(QContextMenuEvent* ev) override;

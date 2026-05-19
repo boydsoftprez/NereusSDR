@@ -248,6 +248,14 @@ void TunerApplet::onAntennaLabelChanged(int index, const QString& label)
     }
 }
 
+// Phase 3P-II review fix C1: update m_currentBand so Save/Recall/Clear
+// context-menu actions operate on the correct (antenna, band) slot.
+// Wired by MainWindow::wireSliceToSpectrum to SliceModel::bandChanged.
+void TunerApplet::setBand(Band band)
+{
+    m_currentBand = band;
+}
+
 void TunerApplet::setTunerModel(TunerModel* model)
 {
     // From AetherSDR src/gui/TunerApplet.cpp:setTunerModel [@0cd4559]
@@ -333,9 +341,17 @@ void TunerApplet::setTunerModel(TunerModel* model)
             [this, updateAntVisible](int antA) {
                 updateAntVisible();
                 updateAntennaButtons(antA);
+                // Phase 3P-II review fix C1: keep m_currentAntenna in sync so
+                // Save/Recall/Clear context-menu actions operate on the correct
+                // (antenna, band) slot.  TunerModel uses 0-indexed antA;
+                // TuneMemoryStore uses 1-indexed -- mirror RadioModel.cpp:8936
+                // convention where antennaA() + 1 is the store key.
+                m_currentAntenna = antA + 1;
             });
     updateAntVisible();
     updateAntennaButtons(m_tunerModel->antennaA());
+    // Seed m_currentAntenna from the model's current value.
+    m_currentAntenna = m_tunerModel->antennaA() + 1;
 
     // Initial full sync.
     syncFromModel();

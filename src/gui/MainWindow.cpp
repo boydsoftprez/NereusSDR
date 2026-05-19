@@ -5114,6 +5114,17 @@ void MainWindow::wireSliceToSpectrum()
         if (!s) { return; }
         pgxl->setBand(static_cast<int>(s->frequency()));
     });
+
+    // Phase 3P-II review fix C1: keep TunerApplet m_currentBand in sync so
+    // right-click Save/Recall/Clear actions always address the actual current
+    // (antenna, band) slot rather than the Band::Band20m default.
+    if (m_tunerApplet) {
+        connect(slice, &SliceModel::bandChanged,
+                m_tunerApplet, &TunerApplet::setBand);
+        // Seed with the slice's current band so the first context-menu open
+        // before any band crossing is already correct.
+        m_tunerApplet->setBand(bandFromFrequency(slice->frequency()));
+    }
 }
 
 void MainWindow::reapplyRightStripDropPriority(bool force)
