@@ -387,6 +387,11 @@ public:
     //                                               before SWR gate activates.
     //   PGXL_TxSwrGate          bool    "False"     Gate TX when SWR exceeds swrGateMax.
     //   PGXL_TxSwrGateMax       float   "3.0"       SWR limit for the gate (dimensionless).
+    //
+    // PGXL power-cap soft-alert (Task 97).
+    //   PGXL_PowerCapEnabled  string  "False"  Soft-alert only; TX is not blocked.
+    //   PGXL_PowerCapW        int     1500     Forward-power threshold (watts) for the
+    //                                          toast; de-bounced per exceedance event.
 
     void    setHardwareValue(const QString& mac, const QString& key, const QVariant& value);
     QVariant hardwareValue(const QString& mac, const QString& key,
