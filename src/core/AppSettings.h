@@ -323,6 +323,14 @@ public:
     //   setHardwareValue("aa:bb:cc:11:22:33", "radioInfo/sampleRate", 192000)
     //   → stored as flat key "hardware/aa:bb:cc:11:22:33/radioInfo/sampleRate"
     // -------------------------------------------------------------------------
+
+    // PGXL/TGXL peripherals (Phase 3P-II baseline)
+    // Empty manualIp disables auto-connect; ports default per FlexRadio API
+    //   PGXL_ManualIp      string  ""     (default empty)
+    //   PGXL_ManualPort    int     9008
+    //   TGXL_ManualIp      string  ""
+    //   TGXL_ManualPort    int     9010
+
     void    setHardwareValue(const QString& mac, const QString& key, const QVariant& value);
     QVariant hardwareValue(const QString& mac, const QString& key,
                            const QVariant& defaultValue = QVariant()) const;
