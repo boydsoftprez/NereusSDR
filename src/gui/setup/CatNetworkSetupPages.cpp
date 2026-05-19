@@ -1013,25 +1013,29 @@ PeripheralsPage::PeripheralsPage(RadioModel* model, QWidget* parent)
 void PeripheralsPage::wireStatusSignals()
 {
     // Row index map: 0 = TGXL, 1 = PGXL (matches buildRow call order above).
-    // m_statusLabels is sized to 2 before wireStatusSignals() runs.
+    // m_statusLabels and m_connectBtns are sized to 2 before this runs.
 
     // --- PGXL (row 1) ---
-    PgxlConnection* pgxl = m_model->pgxlConnection();
-    QLabel* pgxlLabel = m_statusLabels[1];
+    PgxlConnection* pgxl      = m_model->pgxlConnection();
+    QLabel*         pgxlLabel = m_statusLabels[1];
+    QPushButton*    pgxlBtn   = m_connectBtns[1];
 
     connect(pgxl, &PgxlConnection::connected, this,
-            [pgxlLabel]() {
+            [pgxlLabel, pgxlBtn]() {
                 pgxlLabel->setText(QObject::tr("Connected (pairing...)"));
+                pgxlBtn->setText(QObject::tr("Disconnect"));
             });
 
     connect(pgxl, &PgxlConnection::disconnected, this,
-            [pgxlLabel]() {
+            [pgxlLabel, pgxlBtn]() {
                 pgxlLabel->setText(QObject::tr("Disconnected"));
+                pgxlBtn->setText(QObject::tr("Connect"));
             });
 
     connect(pgxl, &PgxlConnection::connectionFailed, this,
-            [pgxlLabel](const QString& msg) {
+            [pgxlLabel, pgxlBtn](const QString& msg) {
                 pgxlLabel->setText(QObject::tr("Error: %1").arg(msg));
+                pgxlBtn->setText(QObject::tr("Connect"));
             });
 
     connect(pgxl, &PgxlConnection::pairingResult, this,
@@ -1044,24 +1048,38 @@ void PeripheralsPage::wireStatusSignals()
                 }
             });
 
+    // Restore button label to match current connection state on page open.
+    if (pgxl->isConnected()) {
+        pgxlBtn->setText(QObject::tr("Disconnect"));
+    }
+
     // --- TGXL (row 0) ---
-    TgxlConnection* tgxl = m_model->tgxlConnection();
-    QLabel* tgxlLabel = m_statusLabels[0];
+    TgxlConnection* tgxl      = m_model->tgxlConnection();
+    QLabel*         tgxlLabel = m_statusLabels[0];
+    QPushButton*    tgxlBtn   = m_connectBtns[0];
 
     connect(tgxl, &TgxlConnection::connected, this,
-            [tgxlLabel]() {
+            [tgxlLabel, tgxlBtn]() {
                 tgxlLabel->setText(QObject::tr("Connected"));
+                tgxlBtn->setText(QObject::tr("Disconnect"));
             });
 
     connect(tgxl, &TgxlConnection::disconnected, this,
-            [tgxlLabel]() {
+            [tgxlLabel, tgxlBtn]() {
                 tgxlLabel->setText(QObject::tr("Disconnected"));
+                tgxlBtn->setText(QObject::tr("Connect"));
             });
 
     connect(tgxl, &TgxlConnection::connectionFailed, this,
-            [tgxlLabel](const QString& msg) {
+            [tgxlLabel, tgxlBtn](const QString& msg) {
                 tgxlLabel->setText(QObject::tr("Error: %1").arg(msg));
+                tgxlBtn->setText(QObject::tr("Connect"));
             });
+
+    // Restore button label to match current connection state on page open.
+    if (tgxl->isConnected()) {
+        tgxlBtn->setText(QObject::tr("Disconnect"));
+    }
 }
 
 void PeripheralsPage::buildRow(int row, const QString& name,
@@ -1163,14 +1181,64 @@ void PeripheralsPage::onScanLan(int rowIdx)
 
 void PeripheralsPage::onConnect(int rowIdx)
 {
-    // TODO(Task 19): wire to m_model->pgxlConnection()->connectToPgxl(host, port)
-    // for row 1 (PGXL) and m_model->tgxlConnection()->connectToTgxl(host, port)
-    // for row 0 (TGXL). Task 19 adds the RadioModel accessors and owns the
-    // PgxlConnection / TgxlConnection lifecycle. The Connect button label should
-    // toggle to "Disconnect" once connected, driven by the connected() /
-    // disconnected() signals from those connection objects.
-    qCDebug(lcPeripherals) << "Connect/Disconnect requested for row" << rowIdx
-                           << "(stub: RadioModel accessors wired in Task 19)";
+    // rowIdx 0 = TGXL (port 9010), rowIdx 1 = PGXL (port 9008).
+    // Grid row = rowIdx + 1 (row 0 is the header). Column 1 = IP edit, column 2 = port spin.
+    if (!m_model) {
+        qCWarning(lcPeripherals) << "onConnect: m_model is null";
+        return;
+    }
+
+    const int gridRow = rowIdx + 1;
+
+    auto* ipEdit   = qobject_cast<QLineEdit*>(
+                         m_grid->itemAtPosition(gridRow, 1)->widget());
+    auto* portSpin = qobject_cast<QSpinBox*>(
+                         m_grid->itemAtPosition(gridRow, 2)->widget());
+
+    if (!ipEdit || !portSpin) {
+        qCWarning(lcPeripherals) << "onConnect: could not find row widgets for rowIdx"
+                                 << rowIdx;
+        return;
+    }
+
+    const QString host = ipEdit->text().trimmed();
+    const quint16 port = static_cast<quint16>(portSpin->value());
+
+    if (rowIdx == 1) {
+        // PGXL row.
+        PgxlConnection* pgxl = m_model->pgxlConnection();
+        if (!pgxl) {
+            qCWarning(lcPeripherals) << "onConnect: pgxlConnection() returned null";
+            return;
+        }
+        if (pgxl->isConnected()) {
+            pgxl->disconnect();
+        } else {
+            if (host.isEmpty() || port == 0) {
+                qCWarning(lcPeripherals)
+                    << "onConnect(PGXL): host or port not set; fill in the fields first";
+                return;
+            }
+            pgxl->connectToPgxl(host, port);
+        }
+    } else {
+        // TGXL row (rowIdx == 0).
+        TgxlConnection* tgxl = m_model->tgxlConnection();
+        if (!tgxl) {
+            qCWarning(lcPeripherals) << "onConnect: tgxlConnection() returned null";
+            return;
+        }
+        if (tgxl->isConnected()) {
+            tgxl->disconnect();
+        } else {
+            if (host.isEmpty() || port == 0) {
+                qCWarning(lcPeripherals)
+                    << "onConnect(TGXL): host or port not set; fill in the fields first";
+                return;
+            }
+            tgxl->connectToTgxl(host, port);
+        }
+    }
 }
 
 } // namespace NereusSDR
