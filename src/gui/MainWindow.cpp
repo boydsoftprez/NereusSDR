@@ -4137,6 +4137,46 @@ void MainWindow::openTciSetupPage()
     dialog->show();
 }
 
+// openSetup(pageKey) -- Phase 3P-II Phase 4 Task 90
+//
+// Generic navigation entry point wired to applet right-click menus.
+// Maps a well-known key string to a SetupDialog tree label and opens the
+// dialog at that page. If the key is not recognised, logs a warning and
+// opens the dialog at the default page (first leaf).
+//
+// Key -> tree label mapping (Option 1 per plan Task 90):
+//   "pgxlAdvanced"  -> "PGXL Advanced"
+//   "tgxlAdvanced"  -> "TGXL Advanced"
+//   "pgxlInterlock" -> "PGXL Interlock"
+//   "peripherals"   -> "Peripherals"
+//
+// Pattern matches openTciSetupPage(): fresh SetupDialog with WA_DeleteOnClose
+// so geometry is not preserved across opens (consistent with all other Setup
+// entry points in this file).
+void MainWindow::openSetup(const QString& pageKey)
+{
+    static const QHash<QString, QString> kKeyToLabel = {
+        {QStringLiteral("pgxlAdvanced"),  QStringLiteral("PGXL Advanced")},
+        {QStringLiteral("tgxlAdvanced"),  QStringLiteral("TGXL Advanced")},
+        {QStringLiteral("pgxlInterlock"), QStringLiteral("PGXL Interlock")},
+        {QStringLiteral("peripherals"),   QStringLiteral("Peripherals")},
+    };
+
+    auto* dialog = new SetupDialog(m_radioModel, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    wireSetupDialog(dialog);
+
+    const QString label = kKeyToLabel.value(pageKey);
+    if (label.isEmpty()) {
+        qWarning("MainWindow::openSetup: unknown pageKey '%s' -- opening at default page",
+                 qUtf8Printable(pageKey));
+    } else {
+        dialog->selectPage(label);
+    }
+    dialog->show();
+    dialog->raise();
+}
+
 // ── Task 3.6: CPU meter rate ─────────────────────────────────────────────────
 // Live-applies the CPU meter update interval from GeneralOptionsPage spinbox.
 // Restarts m_cpuTimer with the new period. hz is clamped to [1, 30] so a
@@ -6065,9 +6105,9 @@ void MainWindow::onConnectionStateChanged()
                 QGuiApplication::clipboard()->setText(text);
             });
 
-            // Phase 3P-II Phase 4 Task 90 (TODO): wire navigationRequested to openSetup().
-            // connect(m_ampApplet, &AmpApplet::navigationRequested, this, &MainWindow::openSetup);
-            // Wiring added in Task 90 when openSetup() is implemented.
+            // Phase 3P-II Phase 4 Task 90: wire navigationRequested to openSetup().
+            connect(m_ampApplet, &AmpApplet::navigationRequested,
+                    this, &MainWindow::openSetup);
         }
 
         // Phase 3P-II Phase 4 Task 89: wire TunerApplet context menu signals to
@@ -6114,9 +6154,10 @@ void MainWindow::onConnectionStateChanged()
                 QGuiApplication::clipboard()->setText(text);
             }, Qt::UniqueConnection);
 
-            // Phase 3P-II Phase 4 Task 90 (TODO): wire navigationRequested to openSetup().
-            // connect(m_tunerApplet, &TunerApplet::navigationRequested, this, &MainWindow::openSetup);
-            // Wiring added in Task 90 when openSetup() is implemented.
+            // Phase 3P-II Phase 4 Task 90: wire navigationRequested to openSetup().
+            connect(m_tunerApplet, &TunerApplet::navigationRequested,
+                    this, &MainWindow::openSetup,
+                    Qt::UniqueConnection);
         }
     } else {
         m_radioModelLabel->setText(QStringLiteral("—"));

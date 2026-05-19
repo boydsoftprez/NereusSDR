@@ -195,6 +195,15 @@ private slots:
     // tciAction triggered + m_tciIndicator click + TciApplet::setupRequested.
     void openTciSetupPage();
 
+    // Phase 3P-II Phase 4 Task 90: generic navigation entry point for applet
+    // right-click menus. Maps a pageKey string to a SetupDialog tree label:
+    //   "pgxlAdvanced"  -> "PGXL Advanced"
+    //   "tgxlAdvanced"  -> "TGXL Advanced"
+    //   "pgxlInterlock" -> "PGXL Interlock"
+    //   "peripherals"   -> "Peripherals"
+    // Unknown keys are logged and ignored (current page unchanged).
+    void openSetup(const QString& pageKey);
+
 private:
     void buildUI();
     void buildMenuBar();
