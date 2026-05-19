@@ -91,8 +91,37 @@ void PgxlConnection::pollStatus() {
 }
 
 void PgxlConnection::processLine(const QString& line) {
-    // V/R/S frame parsing implemented incrementally in Tasks 6+7.
-    qCDebug(lcPgxl) << "rx" << line;
+    // Version: V3.8.9
+    if (!m_gotVersion && line.startsWith('V')) {
+        m_version = line.mid(1);
+        m_gotVersion = true;
+        qCInfo(lcPgxl) << "PGXL version" << m_version;
+        sendCommand("info");
+        sendCommand("status");
+        m_connected = true;
+        m_pollTimer.start();
+        emit connected();
+        return;
+    }
+    // Response: R<seq>|<hex>|<body>
+    if (line.startsWith('R')) {
+        int pipe1 = line.indexOf('|');
+        int pipe2 = (pipe1 >= 0) ? line.indexOf('|', pipe1 + 1) : -1;
+        if (pipe2 >= 0) {
+            QString body = line.mid(pipe2 + 1).trimmed();
+            if (!body.isEmpty()) {
+                QMap<QString,QString> kvs;
+                const auto parts = body.split(' ', Qt::SkipEmptyParts);
+                for (const auto& p : parts) {
+                    int eq = p.indexOf('=');
+                    if (eq > 0) kvs.insert(p.left(eq), p.mid(eq + 1));
+                }
+                if (!kvs.isEmpty()) emit statusUpdated(kvs);
+            }
+        }
+        return;
+    }
+    // S frames implemented in Task 7
 }
 
 }  // namespace NereusSDR
