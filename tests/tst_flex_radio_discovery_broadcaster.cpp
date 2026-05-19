@@ -23,7 +23,7 @@ void FlexRadioDiscoveryBroadcasterTest::headerLayout()
 {
     NereusSDR::FlexRadioDiscoveryBroadcaster b;
     b.setSerial(QStringLiteral("1234-5678-9012-3456"));
-    b.setVersion(QStringLiteral("0.5.1"));
+    b.setVersion(QStringLiteral("4.0.0.1"));
     b.setNickname(QStringLiteral("NereusSDR"));
     b.setCallsign(QStringLiteral("KG4VCF"));
     b.setMacAddress(QStringLiteral("aa:bb:cc:dd:ee:ff"));
@@ -66,7 +66,7 @@ void FlexRadioDiscoveryBroadcasterTest::payloadIsAscii()
 {
     NereusSDR::FlexRadioDiscoveryBroadcaster b;
     b.setSerial(QStringLiteral("0001-0002-0003-0004"));
-    b.setVersion(QStringLiteral("0.5.1"));
+    b.setVersion(QStringLiteral("4.0.0.1"));
     b.setNickname(QStringLiteral("TestNick"));
     b.setCallsign(QStringLiteral("W1AW"));
     b.setMacAddress(QStringLiteral("11:22:33:44:55:66"));
@@ -88,11 +88,12 @@ void FlexRadioDiscoveryBroadcasterTest::payloadIsAscii()
     const QString payloadStr = QString::fromLatin1(payload);
     QVERIFY(payloadStr.contains(QStringLiteral("model=FLEX-6400")));
     QVERIFY(payloadStr.contains(QStringLiteral("serial=0001-0002-0003-0004")));
-    QVERIFY(payloadStr.contains(QStringLiteral("version=0.5.1")));
+    QVERIFY(payloadStr.contains(QStringLiteral("version=4.0.0.1")));
     QVERIFY(payloadStr.contains(QStringLiteral("nickname=TestNick")));
     QVERIFY(payloadStr.contains(QStringLiteral("callsign=W1AW")));
     QVERIFY(payloadStr.contains(QStringLiteral("port=4992")));
     QVERIFY(payloadStr.contains(QStringLiteral("status=Available")));
+    QVERIFY(payloadStr.contains(QStringLiteral("wan_connected=1")));
     // radio_license_id must start with FlexRadio OUI 00-1C-2D; last 3 octets
     // derived from host MAC (11:22:33:44:55:66 -> last 3 = 44-55-66).
     QVERIFY(payloadStr.contains(QStringLiteral("radio_license_id=00-1C-2D-44-55-66")));
@@ -101,7 +102,7 @@ void FlexRadioDiscoveryBroadcasterTest::payloadIsAscii()
 void FlexRadioDiscoveryBroadcasterTest::packetCountRolls()
 {
     NereusSDR::FlexRadioDiscoveryBroadcaster b;
-    b.setVersion(QStringLiteral("0.5.1"));
+    b.setVersion(QStringLiteral("4.0.0.1"));
     b.setNickname(QStringLiteral("NereusSDR"));
 
     // Verify byte 1 changes correctly for counts 0..15
@@ -120,7 +121,7 @@ void FlexRadioDiscoveryBroadcasterTest::totalSizeIsMultipleOf4()
 {
     NereusSDR::FlexRadioDiscoveryBroadcaster b;
     b.setSerial(QStringLiteral("5555-6666-7777-8888"));
-    b.setVersion(QStringLiteral("0.5.1"));
+    b.setVersion(QStringLiteral("4.0.0.1"));
     b.setNickname(QStringLiteral("NereusSDR"));
     b.setCallsign(QStringLiteral("KG4VCF"));
     b.setMacAddress(QStringLiteral("aa:bb:cc:dd:ee:ff"));
@@ -145,7 +146,7 @@ void FlexRadioDiscoveryBroadcasterTest::totalSizeIsMultipleOf4()
 void FlexRadioDiscoveryBroadcasterTest::startSucceedsWithValidIp()
 {
     NereusSDR::FlexRadioDiscoveryBroadcaster b;
-    b.setVersion(QStringLiteral("0.5.1"));
+    b.setVersion(QStringLiteral("4.0.0.1"));
     b.setNickname(QStringLiteral("TestBroadcaster"));
 
     // start() should succeed even if port 4992 is in use; it falls back to

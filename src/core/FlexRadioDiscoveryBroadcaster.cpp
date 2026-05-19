@@ -205,8 +205,12 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     const QString serialStr   = m_serial.isEmpty()
                                     ? QStringLiteral("0000-0000-0000-0000")
                                     : m_serial;
+    // PGXL likely validates that version is in Flex's 4-part X.Y.Z.NNNNN format
+    // (real radios send e.g. 4.2.18.41174). NereusSDR's actual app version
+    // (0.5.1) is 3-part and looks non-Flex. Use a Flex-shaped placeholder so
+    // PGXL accepts the beacon. Operator can override via setVersion().
     const QString versionStr  = m_version.isEmpty()
-                                    ? QStringLiteral("0.5.1")
+                                    ? QStringLiteral("4.0.0.1")
                                     : m_version;
     const QString nicknameStr = m_nickname.isEmpty()
                                     ? QStringLiteral("NereusSDR")
@@ -254,7 +258,9 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     payload += QLatin1Char(' ');
     payload += QStringLiteral("fpc_mac=00:00:00:00:00:00");
     payload += QLatin1Char(' ');
-    payload += QStringLiteral("wan_connected=0");
+    // PGXL appears to filter the FlexRadio dropdown to wan_connected=1 entries.
+    // We're not actually WAN-routed but the value is metadata, not validated.
+    payload += QStringLiteral("wan_connected=1");
     payload += QLatin1Char(' ');
     payload += QStringLiteral("licensed_clients=2");
     payload += QLatin1Char(' ');
