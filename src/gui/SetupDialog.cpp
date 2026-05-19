@@ -66,6 +66,8 @@
 #include "setup/CatNetworkSetupPages.h"
 // Phase 3P-II Phase 4 Task 78: PGXL Advanced page
 #include "setup/PgxlAdvancedPage.h"
+// Phase 3P-II Phase 4 Task 85: TGXL Advanced page
+#include "setup/TgxlAdvancedPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -491,6 +493,12 @@ void SetupDialog::buildTree()
     // openSetup() navigation requests from AmpApplet context menu (Task 90).
     // addWrapped() used because PgxlAdvancedPage is a plain QWidget.
     addWrapped(cat, "PGXL Advanced", new PgxlAdvancedPage(m_model));
+    // Phase 3P-II Phase 4 Task 85: TGXL Advanced page.
+    // Registered unconditionally; visibility gate (TGXL_ManualIp non-empty)
+    // can be applied in a later polish pass. Key "tgxlAdvanced" used by
+    // openSetup() navigation requests from TunerApplet context menu (Task 95).
+    // addWrapped() used because TgxlAdvancedPage is a plain QWidget.
+    addWrapped(cat, "TGXL Advanced", new TgxlAdvancedPage(m_model));
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);
 

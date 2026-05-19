@@ -374,6 +374,13 @@ public:
     //     When "True", SliceModel::bandChanged triggers auto-recall if a
     //     memory slot exists for the new (antenna, band) combination.
     //
+    // TgxlAdvancedPage identity + antenna labels (Task 85).
+    //   TGXL_Nickname   string  ""    Operator-assigned nickname for the TGXL device.
+    //   TGXL_Ant1_Label string  ""    User-defined label for ANT 1 (e.g. "80 m dipole").
+    //   TGXL_Ant2_Label string  ""    User-defined label for ANT 2 (e.g. "vertical").
+    //   TGXL_Ant3_Label string  ""    User-defined label for ANT 3 (e.g. "beverage").
+    //     Labels propagate to TunerApplet antenna buttons (Task 95).
+    //
     // TxInterlockPolicy (Task 77).
     //   PGXL_TxInterlockMode    string  "Disabled"  "Disabled" / "Warn" / "Block"
     //   PGXL_TxInterlockGraceMs int     3000        Grace period (ms) after OPERATE-on
