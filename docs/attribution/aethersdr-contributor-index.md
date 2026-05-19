@@ -227,7 +227,7 @@ per-file NereusSDR-side diff).
 | `src/core/FreeDvClient.{h,cpp}` | (none) | FreeDV Reporter. |
 | `src/core/DvkWavTransfer.{h,cpp}` | (none) | DVK file transfer. |
 | `src/core/PgxlConnection.{h,cpp}` | `src/core/PgxlConnection.{h,cpp}` | PGXL amp. |
-| `src/core/TgxlConnection.{h,cpp}` | (none yet - pending Task 8) | TGXL tuner. |
+| `src/core/TgxlConnection.{h,cpp}` | `src/core/TgxlConnection.{h,cpp}` | TGXL tuner. |
 | `src/core/LogManager.{h,cpp}` | (no direct counterpart — NereusSDR uses `qCWarning(lcCategory)` directly) | Qt logging category wrappers. |
 | `src/core/ShortcutManager.{h,cpp}` | (none yet) | Keyboard shortcuts. |
 | `src/core/SupportBundle.{h,cpp}` | (none yet — pending 3G-14) | Diagnostic bundle. |

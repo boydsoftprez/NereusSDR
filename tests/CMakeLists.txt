@@ -4895,3 +4895,7 @@ target_compile_definitions(tst_rade_tx_pump PRIVATE NEREUS_BUILD_TESTS)
 # TCP telemetry, port 9008). Ported from AetherSDR src/core/PgxlConnection.{h,cpp}
 # [@0cd4559]. Real assertions for V/R/S frame parsing land in Tasks 6+7.
 nereus_add_test(tst_pgxl_connection_parse)
+# Pins the parse contracts for TgxlConnection (4O3A Tuner Genius XL tuner
+# TCP telemetry, port 9010). Ported from AetherSDR src/core/TgxlConnection.{h,cpp}
+# [@0cd4559]. V/R/S frame parsing with state/status object discrimination.
+nereus_add_test(tst_tgxl_connection_parse)
