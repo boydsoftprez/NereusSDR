@@ -6227,17 +6227,17 @@ void MainWindow::onConnectionStateChanged()
         }
 
         // Phase 3P-II Phase 4 Task 89: wire TunerApplet context menu signals to
-        // TgxlConnection. Guard with m_tunerAppletWired if double-connect becomes
-        // an issue; for now TgxlConnection uses UniqueConnection semantics on
-        // connected/disconnected so duplicates are benign.
+        // TgxlConnection. buildUI() runs once at startup, so no deduplication
+        // guard is needed. Qt::UniqueConnection is intentionally NOT used here:
+        // Qt6 silently no-ops UniqueConnection when the slot is a lambda (it
+        // requires a pointer-to-member-function of a QObject subclass), so
+        // all four connects below would have been dead on arrival.
         if (m_tunerApplet) {
             // Track TGXL connected state for Disconnect/Reconnect label.
             connect(m_radioModel->tgxlConnection(), &TgxlConnection::connected,
-                    this, [this]() { m_tunerApplet->setTgxlConnected(true); },
-                    Qt::UniqueConnection);
+                    this, [this]() { m_tunerApplet->setTgxlConnected(true); });
             connect(m_radioModel->tgxlConnection(), &TgxlConnection::disconnected,
-                    this, [this]() { m_tunerApplet->setTgxlConnected(false); },
-                    Qt::UniqueConnection);
+                    this, [this]() { m_tunerApplet->setTgxlConnected(false); });
 
             // connectionToggleRequested: disconnect or reconnect TGXL.
             connect(m_tunerApplet, &TunerApplet::connectionToggleRequested,
@@ -6255,7 +6255,7 @@ void MainWindow::onConnectionStateChanged()
                         tgxl->connectToTgxl(ip, port);
                     }
                 }
-            }, Qt::UniqueConnection);
+            });
 
             // diagnosticsCopyRequested: build diagnostic string and copy to clipboard.
             connect(m_tunerApplet, &TunerApplet::diagnosticsCopyRequested,
@@ -6268,7 +6268,7 @@ void MainWindow::onConnectionStateChanged()
                 ).arg(tgxl && tgxl->isConnected() ? QStringLiteral("Yes") : QStringLiteral("No"))
                  .arg(tgxl ? tgxl->peerAddress() : QStringLiteral("--"));
                 QGuiApplication::clipboard()->setText(text);
-            }, Qt::UniqueConnection);
+            });
 
             // Phase 3P-II Phase 4 Task 90: wire navigationRequested to openSetup().
             connect(m_tunerApplet, &TunerApplet::navigationRequested,
