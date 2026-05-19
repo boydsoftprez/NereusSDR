@@ -351,6 +351,10 @@ public:
     //   PGXL_FlexRadioSerial string ""   (default: derived from MAC; format XXXX-XXXX-XXXX-XXXX)
     //                                     Override when the auto-derived serial collides with
     //                                     another NereusSDR installation on the same PGXL.
+    //   PGXL_BroadcastDiscovery string "True"       Toggle the 1 Hz UDP 4992 SmartSDR-format
+    //                                               discovery beacon. PGXL/TGXL listen for these
+    //                                               to populate their FlexRadio dropdown.
+    //   PGXL_BroadcastNickname  string "NereusSDR"  Nickname shown in PGXL UI.
     //
     // TGXL connection robustness (Phase 3P-II Phase 3, Task 60)
     // Wire formats from design §4.2.1 + §6.4 (4O3A TGXL Ethernet API).

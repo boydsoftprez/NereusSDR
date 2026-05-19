@@ -321,6 +321,10 @@ warren@wpratt.com
 // the radeMicBlockReady signal.
 #include "core/Resampler.h"
 
+// FlexRadio UDP 4992 discovery beacon. Owned by RadioModel; configured
+// and started on radio connect so PGXL/TGXL auto-discover NereusSDR.
+#include "core/FlexRadioDiscoveryBroadcaster.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -942,6 +946,14 @@ RadioModel::RadioModel(QObject* parent)
     // instance is provided now so TgxlAdvancedPage can use the shared log.
     m_pgxlFaultLog = new FaultLog(QStringLiteral("PGXL_FaultHistory"), this);
     m_tgxlFaultLog = new FaultLog(QStringLiteral("TGXL_FaultHistory"), this);
+
+    // FlexRadio UDP 4992 discovery beacon.
+    // Constructed once; configured in connectToRadio() once the radio MAC is
+    // known; stopped in teardownConnection(). Allows PGXL/TGXL to auto-discover
+    // NereusSDR in their "FlexRadio" dropdown without any manual IP entry.
+    // Wire format reverse-engineered from a FLEX-8600 beacon captured 2026-05-19
+    // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
+    m_flexBroadcaster = new FlexRadioDiscoveryBroadcaster(this);
 
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
     //
@@ -4811,6 +4823,34 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         conn->connectToRadio(info);
     });
 
+    // Configure and start the FlexRadio UDP 4992 discovery beacon so PGXL/TGXL
+    // can auto-discover NereusSDR in their FlexRadio dropdown. The serial is
+    // derived from the radio MAC via the same SHA-256 path used in
+    // onPgxlConnected(); both call derivedFlexSerial() so the values match.
+    if (m_flexBroadcaster) {
+        const AppSettings& as = AppSettings::instance();
+        const QString mac = info.macAddress.isEmpty()
+                                ? QStringLiteral("00:00:00:00:00:00")
+                                : info.macAddress;
+        m_flexBroadcaster->setMacAddress(mac);
+        m_flexBroadcaster->setSerial(derivedFlexSerial(mac));
+        m_flexBroadcaster->setVersion(QStringLiteral(NEREUSSDR_VERSION));
+        m_flexBroadcaster->setCallsign(
+            as.value(QStringLiteral("StationCallsign"),
+                     QStringLiteral("NEREUS")).toString());
+        m_flexBroadcaster->setNickname(
+            as.value(QStringLiteral("PGXL_BroadcastNickname"),
+                     QStringLiteral("NereusSDR")).toString());
+
+        const bool enabled =
+            as.value(QStringLiteral("PGXL_BroadcastDiscovery"),
+                     QStringLiteral("True")).toString()
+            == QStringLiteral("True");
+        if (enabled) {
+            m_flexBroadcaster->start();
+        }
+    }
+
     // Tell MainWindow / FFTEngine / SpectrumWidget the wire rate so bin math
     // matches the persisted hardware rate. Without this the FFT uses a stale
     // rate and compresses/expands the spectrum incorrectly.
@@ -6645,6 +6685,12 @@ void RadioModel::teardownConnection()
     // immediate close-after-tweak silently drops the change. Cheap and
     // idempotent — no-op when nothing's pending.
     flushPendingSettingsSave();
+
+    // Stop the FlexRadio discovery beacon so we no longer announce ourselves
+    // as "Available" after the radio disconnects.
+    if (m_flexBroadcaster) {
+        m_flexBroadcaster->stop();
+    }
 
     // 3M-1a G.1 fixup: drop any prior WdspEngine::initializedChanged subscribers
     // we registered in connectToRadio(). Without this, each reconnect cycle
@@ -8880,6 +8926,48 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
 }
 
 // ---------------------------------------------------------------------------
+// derivedFlexSerial: extract the serial derivation so both the PGXL
+// pairing flow and the FlexRadio discovery beacon use the same value.
+// ---------------------------------------------------------------------------
+
+QString RadioModel::derivedFlexSerial(const QString& mac) const
+{
+    // Phase 3P-II bench-discovered: PGXL's FlexRadio tab expects a 16-digit
+    // dashed serial in 4-4-4-4 groups (e.g. 2923-1104-6600-8823). The earlier
+    // "NereusSDR-<mac>" format was silently dropped by PGXL's regex validator.
+    // SHA-256 the MAC + a salt, take 8 bytes -> 64-bit number -> mod 10^16 ->
+    // dash-format. Deterministic per (host + radio MAC) install. Operator can
+    // override via PGXL_FlexRadioSerial AppSettings key when a collision is
+    // suspected.
+    const AppSettings& s = AppSettings::instance();
+    QString serial = s.value(QStringLiteral("PGXL_FlexRadioSerial"),
+                             QString()).toString().trimmed();
+    if (!serial.isEmpty()) {
+        return serial;
+    }
+
+    const QByteArray salt = QByteArrayLiteral("NereusSDR-PGXL-v1");
+    QByteArray hash = QCryptographicHash::hash(
+        (mac.toUtf8() + salt), QCryptographicHash::Sha256);
+    // Take first 8 bytes -> uint64 -> mod 10^16.
+    quint64 n = 0;
+    for (int i = 0; i < 8; ++i) {
+        n = (n << 8) | static_cast<quint8>(hash[i]);
+    }
+    constexpr quint64 mod16 = 10000000000000000ULL;  // 10^16
+    n %= mod16;
+    const QString d = QString::number(n).rightJustified(16, '0');
+    serial = QStringLiteral("%1-%2-%3-%4")
+                 .arg(d.mid(0, 4))
+                 .arg(d.mid(4, 4))
+                 .arg(d.mid(8, 4))
+                 .arg(d.mid(12, 4));
+    qCInfo(lcConnection) << "FlexRadio serial derived from MAC:" << serial
+                         << "(override via PGXL_FlexRadioSerial key)";
+    return serial;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 3P-II Task 62: PGXL pairing-flow runner
 // ---------------------------------------------------------------------------
 
@@ -8895,35 +8983,8 @@ void RadioModel::onPgxlConnected()
                             ? QStringLiteral("00:00:00:00:00:00")
                             : m_lastRadioInfo.macAddress;
 
-    // Phase 3P-II bench-discovered: PGXL's FlexRadio tab expects a 16-digit
-    // dashed serial in 4-4-4-4 groups (e.g. 2923-1104-6600-8823). The earlier
-    // "NereusSDR-<mac>" format was silently dropped by PGXL's regex validator.
-    // SHA-256 the MAC + a salt, take 8 bytes -> 64-bit number -> mod 10^16 ->
-    // dash-format. Deterministic per (host + radio MAC) install. Operator can
-    // override via PGXL_FlexRadioSerial AppSettings key when a collision is
-    // suspected.
-    QString ourSerial = s.value(QStringLiteral("PGXL_FlexRadioSerial"),
-                                QString()).toString().trimmed();
-    if (ourSerial.isEmpty()) {
-        const QByteArray salt = QByteArrayLiteral("NereusSDR-PGXL-v1");
-        QByteArray hash = QCryptographicHash::hash(
-            (mac.toUtf8() + salt), QCryptographicHash::Sha256);
-        // Take first 8 bytes -> uint64 -> mod 10^16.
-        quint64 n = 0;
-        for (int i = 0; i < 8; ++i) {
-            n = (n << 8) | static_cast<quint8>(hash[i]);
-        }
-        constexpr quint64 mod16 = 10000000000000000ULL;  // 10^16
-        n %= mod16;
-        const QString d = QString::number(n).rightJustified(16, '0');
-        ourSerial = QStringLiteral("%1-%2-%3-%4")
-                        .arg(d.mid(0, 4))
-                        .arg(d.mid(4, 4))
-                        .arg(d.mid(8, 4))
-                        .arg(d.mid(12, 4));
-        qCInfo(lcConnection) << "FlexRadio serial derived from MAC:" << ourSerial
-                             << "(override via PGXL_FlexRadioSerial key)";
-    }
+    const QString ourSerial = derivedFlexSerial(mac);
+
     const QString antMap = s.value(QStringLiteral("PGXL_AntMap"),
                                    QStringLiteral("ANT1:PORTA,ANT2:PORTB")).toString();
     m_pgxlConnection->amplifierCreate(ourSerial, QStringLiteral("NereusSDR"), antMap);

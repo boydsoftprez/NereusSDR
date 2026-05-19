@@ -5050,3 +5050,13 @@ nereus_add_test(tst_pgxl_connection_ifconf)
 #   saveResponseEmitsSaveAcknowledged (R<seq>|0|saving -> saveAcknowledged());
 #   saveSeqIsPositive (seq > 0).
 nereus_add_test(tst_pgxl_connection_save)
+
+# FlexRadio UDP 4992 discovery beacon — wire format verification.
+# Verifies 28-byte VITA-49-style header layout + ASCII payload content against
+# the FLEX-8600 discovery beacon captured 2026-05-19.
+# Tests: headerLayout (byte 0=0x38, byte1=0x5|count, size-words, Class ID,
+#   timestamp, zero-padding, payload prefix); payloadIsAscii (all bytes
+#   printable, required keys present, MAC normalised to dashed-uppercase);
+#   packetCountRolls (upper nibble=0x5, lower=count for 0..15);
+#   totalSizeIsMultipleOf4 (packet size and size-words field consistent).
+nereus_add_test(tst_flex_radio_discovery_broadcaster)

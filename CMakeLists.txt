@@ -506,6 +506,8 @@ set(CORE_SOURCES
     src/core/FaultLog.cpp
     src/core/TuneMemoryStore.cpp
     src/core/TxInterlockPolicy.cpp
+    # FlexRadio UDP 4992 discovery beacon (PGXL/TGXL auto-detect)
+    src/core/FlexRadioDiscoveryBroadcaster.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

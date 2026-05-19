@@ -1505,6 +1505,14 @@ private:
     void wireSliceSignals();
     void teardownConnection();
 
+    // Derives the 16-digit dashed FlexRadio-style serial number from the
+    // radio's MAC address. SHA-256(mac + salt) -> first 8 bytes -> uint64 ->
+    // mod 10^16 -> "XXXX-XXXX-XXXX-XXXX". Used by both onPgxlConnected() and
+    // connectToRadio() (FlexRadio discovery beacon) so the serial matches in
+    // both contexts. If PGXL_FlexRadioSerial is set in AppSettings, returns
+    // that override instead of the derived value.
+    QString derivedFlexSerial(const QString& mac) const;
+
     // Issue #182 — wire TransmitModel::micPttDisabledChanged →
     // RadioConnection::setMicPTTDisabled and prime the connection with the
     // current model value once.  Extracted so the connect() can be exercised
@@ -2175,6 +2183,13 @@ private:
     // Tracks "previous state" so we capture only on FAULT *transitions*
     // (not on every repeated FAULT status push).
     QString m_lastPgxlState;
+
+    // FlexRadio UDP 4992 discovery beacon. Owned by RadioModel (Qt parent=this).
+    // Constructed once in the ctor; configured and started in connectToRadio()
+    // once m_lastRadioInfo.macAddress is known; stopped in teardownConnection().
+    // Allows PGXL/TGXL to auto-discover NereusSDR in their FlexRadio dropdown
+    // without any manual IP entry.
+    class FlexRadioDiscoveryBroadcaster* m_flexBroadcaster{nullptr};
 };
 
 } // namespace NereusSDR
