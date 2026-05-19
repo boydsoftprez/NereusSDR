@@ -925,6 +925,10 @@ RadioModel::RadioModel(QObject* parent)
     connect(m_pgxlConnection, &PgxlConnection::statusUpdated,
             this, &RadioModel::onPgxlStatus);
 
+    // Phase 3P-II Task 62: run amplifier+pair+keepalive sequence on connect.
+    connect(m_pgxlConnection, &PgxlConnection::connected,
+            this, &RadioModel::onPgxlConnected);
+
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //
     // View models first so the per-source adapter slots have live sinks the
@@ -8785,6 +8789,41 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
         if (ratio < 1.0f) { ratio = 1.0f; }  // clamp measurement noise
         emit ampMetersChanged(watts, ratio);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3P-II Task 62: PGXL pairing-flow runner
+// ---------------------------------------------------------------------------
+
+void RadioModel::onPgxlConnected()
+{
+    if (!m_pgxlConnection) { return; }
+    auto& s = AppSettings::instance();
+
+    // Serial number: "NereusSDR-<macAddress>" per design §6.4 example.
+    // m_lastRadioInfo.macAddress may be empty before a radio connects;
+    // fall back to a fixed placeholder so amplifier create still works.
+    const QString mac = m_lastRadioInfo.macAddress.isEmpty()
+                            ? QStringLiteral("00:00:00:00:00:00")
+                            : m_lastRadioInfo.macAddress;
+    const QString ourSerial = QStringLiteral("NereusSDR-") + mac;
+    const QString antMap = s.value(QStringLiteral("PGXL_AntMap"),
+                                   QStringLiteral("ANT1:PORTA,ANT2:PORTB")).toString();
+    m_pgxlConnection->amplifierCreate(ourSerial, QStringLiteral("NereusSDR"), antMap);
+
+    // Optional flexradio pairing (enabled by default via PGXL_PairAttempt).
+    if (s.value(QStringLiteral("PGXL_PairAttempt"), QStringLiteral("True")).toString()
+            == QStringLiteral("True")) {
+        QChar slice = s.value(QStringLiteral("PGXL_FlexAmpSlice"),
+                              QStringLiteral("A")).toString().at(0);
+        const QString txAnt = s.value(QStringLiteral("PGXL_TxAnt"),
+                                      QStringLiteral("ANT1")).toString();
+        m_pgxlConnection->flexradioPair(slice, ourSerial, txAnt,
+                                        /*pttOverLan=*/true, /*active=*/true);
+    }
+
+    // Always enable keepalive after pairing attempt.
+    m_pgxlConnection->enableKeepalive();
 }
 
 } // namespace NereusSDR

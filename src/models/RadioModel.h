@@ -1435,6 +1435,12 @@ private slots:
     // "peakfwd" (dBm) and "swr" (return-loss dB) and emits ampMetersChanged.
     void onPgxlStatus(const QMap<QString, QString>& kvs);
 
+    // Phase 3P-II Task 62: runs the amplifierCreate + flexradioPair +
+    // enableKeepalive sequence once PgxlConnection reports connected.
+    // Reads PGXL_PairAttempt / PGXL_FlexAmpSlice / PGXL_TxAnt / PGXL_AntMap
+    // from AppSettings. Serial is "NereusSDR-<macAddress>".
+    void onPgxlConnected();
+
 private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
     // Guards against redundant transitions (no emit if state unchanged).
