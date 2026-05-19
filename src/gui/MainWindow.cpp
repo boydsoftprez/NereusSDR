@@ -3630,6 +3630,28 @@ void MainWindow::buildStatusBar()
     m_paVoltLabelSep->setVisible(false);
     hbox->addWidget(m_paVoltLabelSep);
 
+    // Phase 3P-II Task 21: TGXL presence chip.
+    // Hidden until TunerModel::presenceChanged fires true; text reflects
+    // operate/bypass/standby state via stateChanged.
+    m_tgxlChip = new QLabel(QStringLiteral("TGXL"), barWidget);
+    m_tgxlChip->setStyleSheet(QStringLiteral(
+        "QLabel { background:#1a3a5a; border:1px solid #205070; "
+        "padding:1px 8px; border-radius:3px; color:#88e0ff; }"));
+    m_tgxlChip->setVisible(false);
+    hbox->addWidget(m_tgxlChip);
+
+    connect(m_radioModel->tunerModel(), &TunerModel::presenceChanged,
+            m_tgxlChip, &QWidget::setVisible);
+    connect(m_radioModel->tunerModel(), &TunerModel::stateChanged,
+            this, [this]() {
+        TunerModel* t = m_radioModel->tunerModel();
+        QString s = t->isOperate()
+                    ? (t->isBypass() ? QStringLiteral("BYPS")
+                                     : QStringLiteral("OPER"))
+                    : QStringLiteral("SBY");
+        m_tgxlChip->setText(QStringLiteral("TGXL ") + s);
+    });
+
     // Helper: reflect current row visibility back onto the container, so
     // when both rows are hidden the trailing separator collapses too.
     auto refreshPaStackVisibility = [this]() {
