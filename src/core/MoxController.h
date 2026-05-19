@@ -698,9 +698,12 @@ public slots:
     //
     // When a policy is installed and setMox(true) is called:
     //   policy->evaluateTxRequest(m_ampPresent, m_ampInOperate, m_lastSwr)
-    // returns false (Block mode) => emit moxRejected(reason) + return.
-    // returns true (Disabled/Warn) => TX proceeds; Warn causes the UI toast
-    // wired in Task 97 to display; this task only emits the signal.
+    // returns false (Block mode) => the policy emits denied(reason) and
+    //   setMox returns early. The denied() signal is connected in
+    //   MainWindow::buildUI() to onTxInterlockDenial() which toasts the
+    //   operator via QStatusBar::showMessage.
+    // returns true (Disabled/Warn) => TX proceeds; in Warn mode the policy
+    //   emits warned(reason) which reaches onTxInterlockWarning similarly.
     //
     // Amp state and SWR are cached via the two slots below and updated
     // by RadioModel signal connections established after this call.
