@@ -4985,3 +4985,26 @@ nereus_add_test(tst_pgxl_connection_reconnect)
 # countsReconnectsFromSignal (3x testForceDisconnect -> reconnectCount==3);
 # rebindToTgxlClearsPgxlCounts (PGXL->TGXL rebind resets framesIn to 0).
 nereus_add_test(tst_connection_diagnostics)
+
+# ── Phase 3P-II Phase 4 (Advanced UI + helpers) ───────────────────────────
+# Three NereusSDR-native helper classes with ring-buffer / JSON persistence.
+# No upstream port; headers follow NereusSDR-native LanDiscovery.h style.
+
+# Task 75: FaultLog ring buffer.
+# AppSettings key: PGXL_FaultHistory / TGXL_FaultHistory (JSON arrays).
+# Tests: ringBufferKeepsNewestTen (12 events -> 10 kept, newest first);
+# likelyCauseSwrTrip (SWR 3.0 -> "SWR trip");
+# persistsAcrossInstances (JSON round-trip across two FaultLog instances).
+nereus_add_test(tst_fault_log)
+
+# Task 76: TuneMemoryStore per-(antenna,band) relay cache.
+# AppSettings keys: TGXL_TuneMemory_Ant<N>_Band<M> (JSON object per slot).
+# Tests: recallReturnsStoredValue; clearRemovesEntry; persistsAcrossInstances.
+nereus_add_test(tst_tune_memory_store)
+
+# Task 77: TxInterlockPolicy Disabled/Warn/Block gate.
+# AppSettings keys: PGXL_TxInterlockMode, PGXL_TxInterlockGraceMs,
+#   PGXL_TxSwrGate, PGXL_TxSwrGateMax.
+# Tests: disabledAlwaysAllows; blockDeniesWhenAmpStandby;
+#   warnAllowsButEmits.
+nereus_add_test(tst_tx_interlock_policy)

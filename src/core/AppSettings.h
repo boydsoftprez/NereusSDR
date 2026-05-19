@@ -356,6 +356,31 @@ public:
     //   TGXL_AutoReconnect  bool   "True" Enable exponential-backoff auto-reconnect on drop.
     //                                     Backoff sequence: 1/2/5/10/30/60 s (cap at 60 s).
 
+    // Phase 3P-II Phase 4 (Advanced UI + helpers)
+    //
+    // FaultLog ring buffer (Task 75). JSON arrays; newest entry first.
+    //   PGXL_FaultHistory   string  ""    Up to 10 FaultEvent JSON objects.
+    //   TGXL_FaultHistory   string  ""    Up to 10 FaultEvent JSON objects.
+    //   Each element: { "whenMs":<qint64>, "state":<str>,
+    //                   "fwdAtFaultW":<float>, "swrAtFault":<float>,
+    //                   "tempAtFaultC":<float>, "likelyCause":<str> }
+    //
+    // TuneMemoryStore per-(antenna,band) relay cache (Task 76).
+    //   TGXL_TuneMemory_Ant<N>_Band<M>  string  ""
+    //     One key per (antenna, band) pair. N is 1..3; M is Band::bandKeyName()
+    //     suffix (e.g. "20m", "160m", "GEN"). Value is a JSON object:
+    //     { "c1":<int>, "l":<int>, "c2":<int>, "savedAt":<qint64> }
+    //   TGXL_AutoTuneMemoryRecall  bool  "False"
+    //     When "True", SliceModel::bandChanged triggers auto-recall if a
+    //     memory slot exists for the new (antenna, band) combination.
+    //
+    // TxInterlockPolicy (Task 77).
+    //   PGXL_TxInterlockMode    string  "Disabled"  "Disabled" / "Warn" / "Block"
+    //   PGXL_TxInterlockGraceMs int     3000        Grace period (ms) after OPERATE-on
+    //                                               before SWR gate activates.
+    //   PGXL_TxSwrGate          bool    "False"     Gate TX when SWR exceeds swrGateMax.
+    //   PGXL_TxSwrGateMax       float   "3.0"       SWR limit for the gate (dimensionless).
+
     void    setHardwareValue(const QString& mac, const QString& key, const QVariant& value);
     QVariant hardwareValue(const QString& mac, const QString& key,
                            const QVariant& defaultValue = QVariant()) const;

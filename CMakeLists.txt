@@ -502,6 +502,10 @@ set(CORE_SOURCES
     src/core/ConnectionDiagnostics.cpp
     # Phase 3P-II TGXL tuner model
     src/models/TunerModel.cpp
+    # Phase 3P-II Phase 4 (Advanced UI + helpers)
+    src/core/FaultLog.cpp
+    src/core/TuneMemoryStore.cpp
+    src/core/TxInterlockPolicy.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
