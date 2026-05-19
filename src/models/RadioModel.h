@@ -70,6 +70,7 @@
 #include "core/ConnectionState.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
+#include "core/TxInterlockPolicy.h"
 #include "models/TunerModel.h"
 #include "Band.h"
 #include "BandPlanManager.h"
@@ -494,6 +495,12 @@ public:
     TunerModel*     tunerModel()     { return m_tunerModel;     }
     bool hasAmplifier() const { return m_hasAmplifier; }
     bool ampOperate()  const  { return m_ampOperate; }
+
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Constructed once in the ctor (Qt parent-ownership). Non-null from
+    // construction time. Shared with PgxlInterlockPage (non-owning read/write)
+    // and MoxController (non-owning gate via setInterlockPolicy).
+    TxInterlockPolicy* txInterlockPolicy() { return m_txInterlockPolicy; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -2124,6 +2131,10 @@ private:
     // Amplifier presence and operate-state cache (driven by onPgxlStatus).
     bool m_hasAmplifier{false};
     bool m_ampOperate{false};
+
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Qt parent-ownership (parent=this); non-null from construction time.
+    TxInterlockPolicy* m_txInterlockPolicy{nullptr};
 };
 
 } // namespace NereusSDR

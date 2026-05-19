@@ -68,6 +68,8 @@
 #include "setup/PgxlAdvancedPage.h"
 // Phase 3P-II Phase 4 Task 85: TGXL Advanced page
 #include "setup/TgxlAdvancedPage.h"
+// Phase 3P-II Task 86: PGXL Interlock page (Setup -> Transmit -> PGXL Interlock)
+#include "setup/PgxlInterlockPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -450,6 +452,11 @@ void SetupDialog::buildTree()
     // remains a lightweight 4-control disabled stub for back-compat with
     // the Thetis tpDSPVOX tab IA.
     add(transmit, "DEXP/VOX",           new DexpVoxPage(m_model));
+
+    // Phase 3P-II Task 86: PGXL Interlock policy page under Transmit.
+    // Registered as "PGXL Interlock"; key used by Task 90 openSetup navigation.
+    // addWrapped() is used because PgxlInterlockPage is a plain QWidget.
+    addWrapped(transmit, "PGXL Interlock", new PgxlInterlockPage(m_model));
 
     // ── Appearance ────────────────────────────────────────────────────────────
     QTreeWidgetItem* appearance = addCategory("Appearance");

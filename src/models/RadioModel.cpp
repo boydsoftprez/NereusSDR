@@ -922,6 +922,12 @@ RadioModel::RadioModel(QObject* parent)
     m_tunerModel     = new TunerModel(this);
     m_tunerModel->bindConnection(m_tgxlConnection);
 
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Loads persisted mode/grace/SWR-gate values from AppSettings in its ctor.
+    // Non-null from this point; shared (non-owning) with PgxlInterlockPage
+    // and MoxController (wired below after m_moxController construction).
+    m_txInterlockPolicy = new TxInterlockPolicy(this);
+
     connect(m_pgxlConnection, &PgxlConnection::statusUpdated,
             this, &RadioModel::onPgxlStatus);
 
