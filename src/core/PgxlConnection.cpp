@@ -266,10 +266,15 @@ void PgxlConnection::scheduleReconnect() {
 
     int idx = std::min(m_reconnectAttempts, int(std::size(kBackoffSec)) - 1);
     int delayMs = kBackoffSec[idx] * 1000;
-    emit reconnectAttempt(m_reconnectAttempts + 1, delayMs);
-    QTimer::singleShot(delayMs, this, [this] {
-        ++m_reconnectAttempts;
-        m_socket.connectToHost(m_lastHost, m_lastPort);
+    // Increment attempt counter synchronously so the next call to
+    // scheduleReconnect() (or testForceDisconnect()) uses the updated index.
+    // The singleShot only fires the actual socket reconnect.
+    ++m_reconnectAttempts;
+    emit reconnectAttempt(m_reconnectAttempts, delayMs);
+    QString host = m_lastHost;
+    quint16 port = m_lastPort;
+    QTimer::singleShot(delayMs, this, [this, host, port] {
+        m_socket.connectToHost(host, port);
     });
 }
 
