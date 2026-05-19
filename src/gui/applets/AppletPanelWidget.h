@@ -35,6 +35,7 @@ class QScrollArea;
 namespace NereusSDR {
 
 class AppletWidget;
+class SMeterWidget;
 
 // Scrollable vertical stack of applets with AetherSDR AppletPanel styling.
 // This is a SINGLE widget that goes into ContainerWidget::setContent().
@@ -65,6 +66,11 @@ public:
 
     QWidget* headerWidget() const { return m_headerWidget; }
 
+    // Access the SMeterWidget installed as the fixed header.
+    // Returns nullptr before the panel is built (should never happen after
+    // buildUI is called from the constructor chain, but callers must guard).
+    SMeterWidget* smeterWidget() const { return m_sMeter; }
+
     // Add an applet — wraps it with a title bar and adds to the scroll stack
     void addApplet(AppletWidget* applet);
 
@@ -89,9 +95,13 @@ private:
     QVBoxLayout* m_stackLayout = nullptr;    // inside scroll area
     QList<AppletWidget*> m_applets;
     QMap<AppletWidget*, QWidget*> m_wrappers;  // applet → wrapper widget
-    QWidget* m_headerWidget = nullptr;         // header widget for dynamic resize
-    QWidget* m_headerWrapper = nullptr;        // title-bar wrapper of the header
-    float m_headerAspect = 0.0f;               // width/height ratio for header
+    QWidget*      m_headerWidget  = nullptr;   // header widget for dynamic resize
+    QWidget*      m_headerWrapper = nullptr;   // title-bar wrapper of the header
+    float         m_headerAspect  = 0.0f;      // width/height ratio for header
+    // SMeterWidget installed as the fixed header (Task 40, Phase 3P-II).
+    // Non-owning after setHeaderWidget(); the title-bar wrapper owns the tree.
+    // Accessed by MainWindow via smeterWidget() for Task 41/43 wiring.
+    SMeterWidget* m_sMeter        = nullptr;
 };
 
 } // namespace NereusSDR

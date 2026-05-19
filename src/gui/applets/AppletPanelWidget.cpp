@@ -26,6 +26,11 @@
 #include "AppletPanelWidget.h"
 #include "AppletWidget.h"
 #include "gui/StyleConstants.h"
+// Task 40 (Phase 3P-II): analog S-Meter replaces the composite MeterWidget
+// header.  The right-click context menu (Tasks 38/39) is the only entry
+// point for RX/TX mode selection and peak-hold settings; the inline settings
+// strip that AetherSDR renders inside the AppletPanel is intentionally absent.
+#include "gui/SMeterWidget.h"
 
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -87,6 +92,23 @@ AppletPanelWidget::AppletPanelWidget(QWidget* parent)
 
     m_scrollArea->setWidget(stackWidget);
     m_rootLayout->addWidget(m_scrollArea);
+
+    // Task 40 (Phase 3P-II): install the analog SMeterWidget as the fixed header.
+    // The composite ItemGroup-based S-Meter previously set here via the
+    // m_meterWidget path in MainWindow::buildUI() is no longer used for the
+    // header; the underlying MeterWidget (Container #0) stays alive for
+    // Container #1 and other targets -- this call only replaces the fixed top
+    // header of the applet panel.
+    //
+    // Right-click context menu (Tasks 38/39) is the only entry point for
+    // mode selection and peak-hold settings per design doc ss5.4.2.
+    // The inline settings strip (TX/RX combos + peak-hold checkbox + decay
+    // combo + reset button) that AetherSDR renders in AppletPanel is not
+    // present in NereusSDR.
+    m_sMeter = new SMeterWidget(this);
+    // aspectRatio 2.0f: width/height = 2.0 gives the needle arc comfortable
+    // vertical room (same ratio as AetherSDR's 280:140 default).
+    setHeaderWidget(m_sMeter, QStringLiteral("S-Meter"), 2.0f);
 }
 
 void AppletPanelWidget::setHeaderWidget(QWidget* widget, const QString& title,

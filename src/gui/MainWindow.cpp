@@ -2042,14 +2042,14 @@ void MainWindow::populateDefaultMeter()
         delete alc;
     }
 
-    // Build an AppletPanelWidget: MeterWidget on top, then all applets below.
-    // This is a single scrollable content widget per the v2 plan.
+    // Build an AppletPanelWidget: SMeterWidget header + scrollable applets.
+    // Task 40 (Phase 3P-II): AppletPanelWidget constructor now installs the
+    // analog SMeterWidget as the fixed header automatically.  The old
+    // setHeaderWidget(m_meterWidget, ...) call is removed; the composite
+    // MeterWidget (m_meterWidget) remains the Container #0 content for the
+    // traditional GroupBox-based meters and is not affected.
     m_appletPanel = new AppletPanelWidget();
     auto* panel = m_appletPanel;
-    // Fixed header: MeterWidget stays visible, never scrolls.
-    // Height scales dynamically with width. 1.3:1 gives the S-Meter arc
-    // enough vertical room to not look squished.
-    panel->setHeaderWidget(m_meterWidget, QStringLiteral("Meters"), 1.3f);
 
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
