@@ -23,15 +23,30 @@
 //                 time injection into updatePeakHoldValue(). No production behavior
 //                 changed; decay constants (Fast 20/Medium 10/Slow 5 dB/s) already
 //                 ported verbatim from AetherSDR src/gui/SMeterWidget.cpp:675-681 [@0cd4559].
+//   2026-05-19  Task 38: right-click context menu implemented. buildContextMenu()
+//                 factory builds the TX Mode / RX Mode / Peak Hold submenus.
+//                 contextMenuEvent() delegates + exec()s. txModeToLabel() and
+//                 rxModeToLabel() helpers convert enum to the label strings used
+//                 by setTxMode() / setRxMode(). AppSettings persistence added to
+//                 setTxMode() (SMeter_TxSelect int 0..3), setRxMode()
+//                 (SMeter_RxSelect int 0..3), setPeakHoldEnabled()
+//                 (PeakHoldEnabled "True"/"False"), and setPeakDecayRate(QString)
+//                 (PeakDecayRate "Fast"/"Medium"/"Slow").
+//                 NereusSDR-native: AetherSDR has no contextMenuEvent; it uses
+//                 an inline settings strip in AppletPanel (removed by Task 40).
 // =================================================================
 #include "SMeterWidget.h"
 
+#include <QActionGroup>
 #include <QContextMenuEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QSet>
 #include <QtMath>
 #include <QFontMetrics>
+
+#include "core/AppSettings.h"
 
 namespace NereusSDR {
 
@@ -155,6 +170,12 @@ void SMeterWidget::setTxMode(const QString& mode)
     else if (mode == "SWR")         m_txMode = TxMode::SWR;
     else if (mode == "Level")       m_txMode = TxMode::Level;
     else if (mode == "Compression") m_txMode = TxMode::Compression;
+
+    // Persist TX mode selection.
+    // Key SMeter_TxSelect (int 0..3): Power=0, SWR=1, Level=2, Compression=3.
+    // NereusSDR-native key per design doc ss5.4.2.
+    AppSettings::instance().setValue("SMeter_TxSelect",
+                                     static_cast<int>(m_txMode));
     updateNeedleTarget();
     update();
 }
@@ -164,14 +185,19 @@ void SMeterWidget::setTxMode(const QString& mode)
 //   "S-Meter" -> SMeter, anything else -> SMeterPeak.
 // NereusSDR adds "Sig Avg" (SignalAverage) and "Max Bin" (MaxBin)
 // per design doc ss5.4.1.
+// Context menu uses "Signal" / "Sig Avg" / "Signal Peak" / "Max Bin"
+// per design doc ss5.4.2; "S-Meter" is the legacy external-caller form.
 void SMeterWidget::setRxMode(const QString& mode)
 {
-    if (mode == "S-Meter") {
+    if (mode == "S-Meter" || mode == "Signal") {
         m_rxMode = RxMode::SMeter;
         m_source = "S-Meter";
     } else if (mode == "Sig Avg") {
         m_rxMode = RxMode::SignalAverage;
         m_source = "Sig Avg";
+    } else if (mode == "Signal Peak") {
+        m_rxMode = RxMode::SMeterPeak;
+        m_source = "S-Meter Peak";
     } else if (mode == "Max Bin") {
         m_rxMode = RxMode::MaxBin;
         m_source = "Max Bin";
@@ -180,6 +206,12 @@ void SMeterWidget::setRxMode(const QString& mode)
         m_rxMode = RxMode::SMeterPeak;
         m_source = "S-Meter Peak";
     }
+
+    // Persist RX mode selection.
+    // Key SMeter_RxSelect (int 0..3): Signal=0, SignalAverage=1, SignalPeak=2, MaxBin=3.
+    // Range widened from AetherSDR's 0..1 per design doc ss5.4.2.
+    AppSettings::instance().setValue("SMeter_RxSelect",
+                                     static_cast<int>(m_rxMode));
     updateNeedleTarget();
     update();
 }
@@ -738,6 +770,11 @@ void SMeterWidget::setPeakHoldEnabled(bool enabled)
     m_peakHoldDbm = m_levelDbm;
     m_peakHoldDecayStartDbm = m_levelDbm;
     m_peakHoldTimerRunning = false;
+
+    // Persist peak hold enabled state.
+    // Key PeakHoldEnabled ("True"/"False") per design doc ss5.4.2.
+    AppSettings::instance().setValue("PeakHoldEnabled",
+                                     enabled ? QString("True") : QString("False"));
     updateNeedleTarget();
     update();
 }
@@ -761,6 +798,14 @@ void SMeterWidget::setPeakDecayRate(const QString& rate)
     if (rate == "Fast")        setPeakDecayRate(DecayRate::Fast);
     else if (rate == "Slow")   setPeakDecayRate(DecayRate::Slow);
     else                       setPeakDecayRate(DecayRate::Medium);
+
+    // Persist decay rate selection.
+    // Key PeakDecayRate ("Fast"/"Medium"/"Slow") per design doc ss5.4.2.
+    // Normalize the stored string to the canonical set.
+    const QString canonical = (rate == "Fast")  ? QString("Fast")
+                            : (rate == "Slow")  ? QString("Slow")
+                                                : QString("Medium");
+    AppSettings::instance().setValue("PeakDecayRate", canonical);
 }
 
 void SMeterWidget::resetPeak()
@@ -773,11 +818,141 @@ void SMeterWidget::resetPeak()
 }
 
 // --- Context menu ------------------------------------------------------------
-// Body implemented in Task 38 per design doc ss5.4.2.
-// From AetherSDR src/gui/SMeterWidget.h (design doc ss5.4.1) [@0cd4559]
+// NereusSDR-native UX per design doc ss5.4.2. AetherSDR does not have a
+// contextMenuEvent; it uses an inline settings strip in AppletPanel (removed
+// by Task 40). The menu structure matches the design doc exactly:
+//   TX Mode (exclusive) -> Power / SWR / Level / Compression
+//   RX Mode (exclusive) -> Signal / Sig Avg / Signal Peak / Max Bin
+//   Peak Hold -> Enabled (toggle) / Decay (Fast/Medium/Slow) / Reset
+
 void SMeterWidget::contextMenuEvent(QContextMenuEvent* ev)
 {
-    Q_UNUSED(ev); // Implemented in Task 38
+    QMenu* menu = buildContextMenu(this);
+    menu->exec(ev->globalPos());
+    menu->deleteLater();
+}
+
+QMenu* SMeterWidget::buildContextMenu(QObject* parent)
+{
+    auto* menu = new QMenu(qobject_cast<QWidget*>(parent));
+
+    // ---- TX Mode submenu (exclusive action group) ----------------------------
+    QMenu* txMenu = menu->addMenu("TX Mode");
+    auto* txGroup = new QActionGroup(menu);
+    txGroup->setExclusive(true);
+
+    struct TxEntry { const char* label; TxMode mode; };
+    const TxEntry txEntries[] = {
+        {"Power",       TxMode::Power},
+        {"SWR",         TxMode::SWR},
+        {"Level",       TxMode::Level},
+        {"Compression", TxMode::Compression},
+    };
+    for (const auto& e : txEntries) {
+        auto* a = txMenu->addAction(QLatin1String(e.label));
+        a->setCheckable(true);
+        a->setChecked(m_txMode == e.mode);
+        txGroup->addAction(a);
+        const TxMode capturedMode = e.mode;
+        connect(a, &QAction::triggered, this, [this, capturedMode]() {
+            setTxMode(txModeToLabel(capturedMode));
+        });
+    }
+
+    // ---- RX Mode submenu (exclusive action group) ----------------------------
+    // Labels per design doc ss5.4.2 (Signal / Sig Avg / Signal Peak / Max Bin).
+    QMenu* rxMenu = menu->addMenu("RX Mode");
+    auto* rxGroup = new QActionGroup(menu);
+    rxGroup->setExclusive(true);
+
+    struct RxEntry { const char* label; RxMode mode; };
+    const RxEntry rxEntries[] = {
+        {"Signal",       RxMode::SMeter},
+        {"Sig Avg",      RxMode::SignalAverage},
+        {"Signal Peak",  RxMode::SMeterPeak},
+        {"Max Bin",      RxMode::MaxBin},
+    };
+    for (const auto& e : rxEntries) {
+        auto* a = rxMenu->addAction(QLatin1String(e.label));
+        a->setCheckable(true);
+        a->setChecked(m_rxMode == e.mode);
+        rxGroup->addAction(a);
+        const RxMode capturedMode = e.mode;
+        connect(a, &QAction::triggered, this, [this, capturedMode]() {
+            setRxMode(rxModeToLabel(capturedMode));
+        });
+    }
+
+    // ---- Peak Hold submenu ---------------------------------------------------
+    QMenu* peakMenu = menu->addMenu("Peak Hold");
+
+    // Enabled toggle
+    auto* enabledA = peakMenu->addAction("Enabled");
+    enabledA->setCheckable(true);
+    enabledA->setChecked(m_peakHoldEnabled);
+    connect(enabledA, &QAction::triggered, this,
+            [this](bool checked) { setPeakHoldEnabled(checked); });
+
+    // Decay sub-submenu (exclusive action group)
+    QMenu* decayMenu = peakMenu->addMenu("Decay");
+    auto* decayGroup = new QActionGroup(menu);
+    decayGroup->setExclusive(true);
+
+    struct DecayEntry { const char* label; DecayRate rate; float dbPerSec; };
+    const DecayEntry decayEntries[] = {
+        {"Fast",   DecayRate::Fast,   20.0f},
+        {"Medium", DecayRate::Medium, 10.0f},
+        {"Slow",   DecayRate::Slow,    5.0f},
+    };
+    for (const auto& e : decayEntries) {
+        const QString labelWithRate = QString("%1 (%2 dB/s)")
+            .arg(QLatin1String(e.label))
+            .arg(static_cast<int>(e.dbPerSec));
+        auto* a = decayMenu->addAction(labelWithRate);
+        a->setCheckable(true);
+        a->setChecked(qFuzzyCompare(m_peakDecayDbPerSec, e.dbPerSec));
+        decayGroup->addAction(a);
+        const QString rateName(QLatin1String(e.label));
+        connect(a, &QAction::triggered, this, [this, rateName]() {
+            setPeakDecayRate(rateName);
+        });
+    }
+
+    peakMenu->addSeparator();
+
+    // Reset transient action
+    auto* resetA = peakMenu->addAction("Reset");
+    connect(resetA, &QAction::triggered, this, &SMeterWidget::resetPeak);
+
+    return menu;
+}
+
+// Convert TxMode enum to the label string accepted by setTxMode().
+// NereusSDR-native; no upstream equivalent.
+QString SMeterWidget::txModeToLabel(TxMode mode)
+{
+    switch (mode) {
+    case TxMode::Power:       return "Power";
+    case TxMode::SWR:         return "SWR";
+    case TxMode::Level:       return "Level";
+    case TxMode::Compression: return "Compression";
+    }
+    return "Power";
+}
+
+// Convert RxMode enum to the canonical label string accepted by setRxMode().
+// Uses the context-menu display strings (Signal / Sig Avg / Signal Peak / Max Bin)
+// per design doc ss5.4.2.
+// NereusSDR-native; no upstream equivalent.
+QString SMeterWidget::rxModeToLabel(RxMode mode)
+{
+    switch (mode) {
+    case RxMode::SMeter:         return "Signal";
+    case RxMode::SignalAverage:  return "Sig Avg";
+    case RxMode::SMeterPeak:     return "Signal Peak";
+    case RxMode::MaxBin:         return "Max Bin";
+    }
+    return "Signal";
 }
 
 } // namespace NereusSDR

@@ -28,6 +28,17 @@
 //                 testSetPeakHoldTimeMs(int ms), testPeakLevel().
 //                 m_testTimeOffsetMs member added for synthetic time injection.
 //                 No production API or behavior changed.
+//   2026-05-19  Task 38: right-click context menu implemented (NereusSDR-native
+//                 UX; AetherSDR uses an inline settings strip in AppletPanel
+//                 which Task 40 removes). buildContextMenu() returns QMenu*;
+//                 contextMenuEvent() delegates to it and exec()s.
+//                 txModeToLabel() / rxModeToLabel() private helpers added.
+//                 setTxMode() and setRxMode() now persist to AppSettings:
+//                 SMeter_TxSelect (int 0..3) and SMeter_RxSelect (int 0..3).
+//                 setPeakHoldEnabled() and setPeakDecayRate(QString) now persist
+//                 to AppSettings: PeakHoldEnabled ("True"/"False") and
+//                 PeakDecayRate ("Fast"/"Medium"/"Slow").
+//                 buildContextMenuForTesting() public accessor for Task 39 test.
 // =================================================================
 #pragma once
 
@@ -35,8 +46,9 @@
 #include <QTimer>
 #include <QElapsedTimer>
 
-// Forward declaration for contextMenuEvent
+// Forward declarations
 class QContextMenuEvent;
+class QMenu;
 
 namespace NereusSDR {
 
@@ -77,6 +89,11 @@ public:
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
     float testPowerRedStart()  const { return m_powerRedStart; }
+
+    // Test-only: build and return the context menu without exec()-ing it.
+    // Allows tests to inspect menu structure without a live event loop.
+    // NereusSDR-native test seam; no upstream equivalent.
+    QMenu* buildContextMenuForTesting() { return buildContextMenu(this); }
 
     // Test-only: advance internal synthetic clock by `ms` milliseconds and
     // apply any pending peak hold decay without waiting for real timer ticks.
@@ -131,14 +148,29 @@ public slots:
 
 protected:
     void paintEvent(QPaintEvent* event) override;
-    // Right-click context menu. Body implemented in Task 38.
-    // From AetherSDR src/gui/SMeterWidget.h (design doc ss5.4.1) [@0cd4559]
+    // Right-click context menu delegates to buildContextMenu().
+    // NereusSDR replaces AetherSDR's inline settings strip with a
+    // right-click menu per design doc ss5.4.2. AetherSDR has no
+    // contextMenuEvent; this is a NereusSDR-native UX surface.
     void contextMenuEvent(QContextMenuEvent* ev) override;
 
 private:
     void updateNeedleTarget();
     void animateNeedle();
     void updatePeakHoldValue();
+
+    // Build the right-click context menu (TX Mode / RX Mode / Peak Hold).
+    // Returns a heap-allocated QMenu* parented to `parent`.
+    // NereusSDR-native: AetherSDR does not have a contextMenuEvent;
+    // its settings live in an AppletPanel inline strip (removed in Task 40).
+    QMenu* buildContextMenu(QObject* parent);
+
+    // Convert TxMode/RxMode enum to the label string accepted by
+    // setTxMode() / setRxMode(), so action handlers can call the
+    // same public slots used by external callers.
+    // NereusSDR-native (no upstream equivalent).
+    static QString txModeToLabel(TxMode mode);
+    static QString rxModeToLabel(RxMode mode);
 
     // Map dBm to fraction (0.0 = left, 1.0 = right) for RX S-meter scale
     // From AetherSDR src/gui/SMeterWidget.h:71-72 [@0cd4559]
