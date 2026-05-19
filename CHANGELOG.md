@@ -80,6 +80,78 @@ display surface on MeterWidget). Bench-verification matrix scaffold at
 `docs/architecture/phase3p-ii-verification/` (Task 98, planned for
 Phase 2 closeout).
 
+### Added (Phase 3P-II Phase 2 - analog S-Meter port)
+
+13 commits (Tasks 31-43). Ports the AetherSDR `SMeterWidget` analog
+S-Meter gauge into NereusSDR and wires 4 WDSP meter sources through
+`MeterPoller`, `SliceModel`, and `MainWindow`.
+
+**New WDSP wrappers (`src/core/WdspEngine.{h,cpp}`):**
+
+- `getRxaSignalAverage(int channel)` - reads `RXA_S_AV` (Thetis signal
+  average). Task 31.
+- `getRxaSignalPeak(int channel)` - reads `RXA_S_PK` (Thetis signal peak).
+  Task 31.
+- `setupMaxBinDetector(int channel, float freqHz, float bwHz)` - calls
+  Thetis `SetupDetectMaxBin` from `analyzer.c`. Task 32.
+- `getMaxBinDbm(int channel)` - calls Thetis `GetDetectMaxBin`. Task 32.
+
+**New class: `SMeterWidget` (`src/gui/SMeterWidget.{h,cpp}`):**
+
+Ported from AetherSDR `src/gui/SMeterWidget.{h,cpp}` `[@0cd4559]`
+(134 + 701 LOC). Analog gauge with 180-degree needle arc, S-unit scale
+(S0 = -127 dBm, 6 dB/S-unit, S9+60 = -13 dBm), animated needle
+(45 ms attack / 180 ms release), and configurable peak hold line.
+
+NereusSDR divergences from AetherSDR upstream:
+
+- `RxMode` enum expanded from 2 entries (SMeter / SMeterPeak) to 4:
+  adds `SignalAverage` (WDSP `RXA_S_AV`) and `MaxBin` (`GetDetectMaxBin`).
+- Right-click context menu replaces AetherSDR's inline settings strip;
+  covers TX Mode (Power / SWR / Level / Compression), RX Mode (Signal /
+  Sig Avg / Signal Peak / Max Bin), and Peak Hold (Enable toggle /
+  Decay Fast|Medium|Slow / Reset).
+- `AppSettings` persistence for `SMeter_TxSelect` (int 0-3),
+  `SMeter_RxSelect` (int 0-3), `PeakHoldEnabled` ("True"/"False"),
+  `PeakDecayRate` ("Fast"/"Medium"/"Slow"). Constructor loads these on
+  startup so the widget starts in the saved state.
+- PGXL-aware 2 kW power scale snap: `setPowerScale(2000, true)` triggers
+  the amplifier scale (120 W / 600 W / 2000 W snaps).
+- Test seams: `testAdvanceTime(int ms)`, `testSetPeakHoldTimeMs(int ms)`,
+  `testPeakLevel()` for synthetic peak-hold decay verification without
+  real timer ticks.
+
+Peak hold decay constants (verbatim from AetherSDR
+`src/gui/SMeterWidget.cpp:675-681 [@0cd4559]`): Fast = 20 dB/s,
+Medium = 10 dB/s, Slow = 5 dB/s.
+
+**Modified classes:**
+
+- `AppletPanelWidget` (`src/gui/AppletPanelWidget.{h,cpp}`) - header
+  widget swapped from composite `MeterWidget` to `SMeterWidget`. Task 40.
+
+- `MeterPoller` (`src/core/MeterPoller.{h,cpp}`) - 100 ms poll loop now
+  branches on `SMeterWidget::rxMode()`: Signal calls `getRxaSmeter`,
+  SignalAverage calls `getRxaSignalAverage`, SMeterPeak calls
+  `getRxaSmeter` (peak tracked inside `SMeterWidget`), MaxBin calls
+  `getMaxBinDbm`. Task 41.
+
+- `SliceModel` (`src/models/SliceModel.{h,cpp}`) - connects
+  `filterChanged` to `setupMaxBinDetector` with a 100 ms debounce so
+  the Max Bin detector recenters on the passband after every filter
+  change. Task 42.
+
+- `MainWindow` (`src/gui/MainWindow.{h,cpp}`) - PGXL-aware S-Meter feed
+  switch: connects amp forward/reflected power and radio S-meter signals
+  to `SMeterWidget`; on `amplifierChanged` snaps the power scale to
+  2 kW when a PGXL is connected; on `ampStateChanged` recomputes the
+  needle source between amp power and radio power. Task 43.
+
+**Tests added:** `tst_smeter_widget_scale` (3 slots),
+`tst_smeter_widget_peak_hold` (3 slots),
+`tst_smeter_widget_context_menu` (2 slots),
+`tst_wdsp_engine_max_bin` (2 slots). Total: 4 tests, 10 slots.
+
 ## [0.5.1] - 2026-05-15
 
 > [!NOTE]

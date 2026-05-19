@@ -34,6 +34,12 @@
 //                 (PeakDecayRate "Fast"/"Medium"/"Slow").
 //                 NereusSDR-native: AetherSDR has no contextMenuEvent; it uses
 //                 an inline settings strip in AppletPanel (removed by Task 40).
+//   2026-05-19  Task 47: constructor now loads the 4 persisted keys from
+//                 AppSettings (SMeter_TxSelect, SMeter_RxSelect,
+//                 PeakHoldEnabled, PeakDecayRate) and applies them via the
+//                 existing public setters so the widget starts in the saved
+//                 state across restarts.
+//                 NereusSDR-native (AetherSDR has no AppSettings persistence).
 // =================================================================
 #include "SMeterWidget.h"
 
@@ -87,6 +93,26 @@ SMeterWidget::SMeterWidget(QWidget* parent)
         updateNeedleTarget();
         update();
     });
+
+    // Load persisted mode and peak-hold settings from AppSettings.
+    // Defaults match the member initialisers: TxSelect=0 (Power),
+    // RxSelect=0 (Signal), PeakHoldEnabled=true, PeakDecayRate=Medium.
+    // Task 47 — NereusSDR-native (AetherSDR has no AppSettings persistence).
+    auto& s = AppSettings::instance();
+
+    const int txSel = s.value("SMeter_TxSelect", 0).toInt();
+    const QString txLabels[] = { "Power", "SWR", "Level", "Compression" };
+    setTxMode(txLabels[qBound(0, txSel, 3)]);
+
+    const int rxSel = s.value("SMeter_RxSelect", 0).toInt();
+    const QString rxLabels[] = { "Signal", "Sig Avg", "Signal Peak", "Max Bin" };
+    setRxMode(rxLabels[qBound(0, rxSel, 3)]);
+
+    const bool peakOn = s.value("PeakHoldEnabled", QString("True")).toString() == "True";
+    setPeakHoldEnabled(peakOn);
+
+    const QString decayRate = s.value("PeakDecayRate", QString("Medium")).toString();
+    setPeakDecayRate(decayRate);
 }
 
 // --- Public interface --------------------------------------------------------
