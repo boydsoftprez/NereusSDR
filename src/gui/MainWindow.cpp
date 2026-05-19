@@ -278,7 +278,10 @@ warren@wpratt.com
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
 #include "applets/AppletPanelWidget.h"
+#include "applets/AmpApplet.h"
 #include "applets/RxApplet.h"
+#include "core/PgxlConnection.h"
+#include "core/TgxlConnection.h"
 #include "applets/TxApplet.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
@@ -2257,6 +2260,22 @@ void MainWindow::populateDefaultMeter()
     }
 #endif
 
+    // Phase 3P-II Task 20: AmpApplet (PGXL telemetry + OPERATE toggle).
+    // Added to the panel alongside the other applets. Signal routing to
+    // PgxlConnection is wired in onConnectionStateChanged() so every
+    // radio-connect gets a fresh binding without double-connects.
+    m_ampApplet = new AmpApplet(m_radioModel, nullptr);
+    panel->addApplet(m_ampApplet);
+
+    // Phase 3P-II Task 20: TunerApplet (TGXL controls + relay bars).
+    // Was previously commented out ("TODO ATU phase"). Now constructed
+    // with the TunerModel* owned by RadioModel so it tracks TGXL state
+    // from construction time.
+    m_tunerApplet = new TunerApplet(m_radioModel,
+                                    m_radioModel->tunerModel(),
+                                    nullptr);
+    panel->addApplet(m_tunerApplet);
+
     // Ghost applets: constructed but not added to the panel or the Containers menu
     // until their feature phases ship. Uncomment the construction + addContainerToggle
     // call (in buildMenuBar) together when the feature lands.
@@ -2266,7 +2285,6 @@ void MainWindow::populateDefaultMeter()
     // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
     // m_catApplet        = new CatApplet(m_radioModel, nullptr);        // TODO 3J/3K/3-VAX
-    // m_tunerApplet      = new TunerApplet(m_radioModel, nullptr);      // TODO ATU phase
 
     c0->setContent(panel);
     qCDebug(lcMeter) << "Installed default meter layout: S-Meter + Power/SWR + ALC";
@@ -5808,6 +5826,67 @@ void MainWindow::onConnectionStateChanged()
                     && m_radioModel->isConnected()) {
                     m_connectionPanel->accept();
                 }
+            });
+        }
+
+        // Phase 3P-II Task 20: auto-connect PGXL / TGXL when a Manual IP is
+        // configured and the peripheral is not already connected.
+        {
+            auto& s = AppSettings::instance();
+
+            QString pgxlIp = s.value(QStringLiteral("PGXL_ManualIp"),
+                                     QStringLiteral("")).toString();
+            if (!pgxlIp.isEmpty()
+                && !m_radioModel->pgxlConnection()->isConnected()) {
+                quint16 p = quint16(s.value(QStringLiteral("PGXL_ManualPort"),
+                                            QStringLiteral("9008")).toInt());
+                m_radioModel->pgxlConnection()->connectToPgxl(pgxlIp, p);
+            }
+
+            QString tgxlIp = s.value(QStringLiteral("TGXL_ManualIp"),
+                                     QStringLiteral("")).toString();
+            if (!tgxlIp.isEmpty()
+                && !m_radioModel->tgxlConnection()->isConnected()) {
+                quint16 p = quint16(s.value(QStringLiteral("TGXL_ManualPort"),
+                                            QStringLiteral("9010")).toInt());
+                m_radioModel->tgxlConnection()->connectToTgxl(tgxlIp, p);
+            }
+        }
+
+        // Phase 3P-II Task 20: wire AmpApplet controls to PgxlConnection.
+        // operateToggled: translate bool to "operate"/"standby" command string.
+        // statusUpdated: fan the k=v map into AmpApplet setter slots.
+        // These connects are made on every radio-connect. Qt lambda
+        // connects do not support UniqueConnection, so guard with a flag
+        // to avoid stacking connections across reconnects. The flag is
+        // instance-local; resetFlag is intentional (first time = wire).
+        if (m_ampApplet && !m_ampAppletWired) {
+            m_ampAppletWired = true;
+
+            connect(m_ampApplet, &AmpApplet::operateToggled,
+                    this, [this](bool wantOperate) {
+                m_radioModel->pgxlConnection()->sendCommand(
+                    wantOperate ? QStringLiteral("operate")
+                                : QStringLiteral("standby"));
+            });
+
+            connect(m_radioModel->pgxlConnection(),
+                    &PgxlConnection::statusUpdated,
+                    this, [this](const QMap<QString, QString>& kvs) {
+                if (kvs.contains(QStringLiteral("temp")))
+                    m_ampApplet->setTemp(kvs.value(QStringLiteral("temp")).toFloat());
+                if (kvs.contains(QStringLiteral("id")))
+                    m_ampApplet->setDrainCurrent(kvs.value(QStringLiteral("id")).toFloat());
+                if (kvs.contains(QStringLiteral("vac")))
+                    m_ampApplet->setMainsVoltage(kvs.value(QStringLiteral("vac")).toInt());
+                if (kvs.contains(QStringLiteral("state")))
+                    m_ampApplet->setState(kvs.value(QStringLiteral("state")));
+                if (kvs.contains(QStringLiteral("meffa")))
+                    m_ampApplet->setMeff(kvs.value(QStringLiteral("meffa")));
+                if (kvs.contains(QStringLiteral("peakfwd")))
+                    m_ampApplet->setFwdPower(kvs.value(QStringLiteral("peakfwd")).toFloat());
+                if (kvs.contains(QStringLiteral("swr")))
+                    m_ampApplet->setSwr(kvs.value(QStringLiteral("swr")).toFloat());
             });
         }
     } else {

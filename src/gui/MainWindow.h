@@ -487,6 +487,8 @@ private:
     class VfoWidget* m_vfoWidget{nullptr};
 
     // Applets (Phase 3-UI)
+    class AmpApplet*   m_ampApplet{nullptr};
+    bool               m_ampAppletWired{false};  // guards one-time AmpApplet signal connects
     class RxApplet* m_rxApplet{nullptr};
     // Phase 3M-3a-ii Batch 6: cached so SetupDialog instances can route
     // CfcSetupPage's [Configure CFC bands…] button to the same modeless
@@ -544,6 +546,11 @@ private:
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
     TitleBar* m_titleBar{nullptr};
+
+    // Phase 3P-II Task 21: TGXL status bar chip.
+    // Shown when TunerModel::presenceChanged fires true; hidden otherwise.
+    // Text is "TGXL" / "TGXL OPER" / "TGXL BYPS" / "TGXL SBY".
+    QLabel* m_tgxlChip{nullptr};
 };
 
 } // namespace NereusSDR
