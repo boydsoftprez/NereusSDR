@@ -478,6 +478,11 @@ void SetupDialog::buildTree()
                 this,    &SetupDialog::tciShowLogRequested);
         add(cat, "TCI Server", tciPage);
     }
+    // Phase 3P-II Task 17: Peripherals page (PGXL / TGXL manual IP + port +
+    // connect stubs). addWrapped() is used because PeripheralsPage is a plain
+    // QWidget, not a SetupPage subclass. Task 19 wires the Connect buttons to
+    // RadioModel's PgxlConnection and TgxlConnection accessors.
+    addWrapped(cat, "Peripherals", new PeripheralsPage(m_model));
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);
 

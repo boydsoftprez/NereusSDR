@@ -7,6 +7,7 @@
 #include "CatNetworkSetupPages.h"
 #include "gui/StyleConstants.h"
 #include "core/AppSettings.h"
+#include "models/RadioModel.h"
 
 #include <QNetworkInterface>
 #ifdef HAVE_WEBSOCKETS
@@ -24,6 +25,9 @@
 #include <QSpinBox>
 #include <QComboBox>
 #include <QPushButton>
+#include <QLoggingCategory>
+
+Q_LOGGING_CATEGORY(lcPeripherals, "nereus.peripherals")
 
 namespace NereusSDR {
 
@@ -918,6 +922,176 @@ void CatMidiControlPage::buildUI()
 
     contentLayout()->addWidget(group);
     contentLayout()->addStretch();
+}
+
+// ---------------------------------------------------------------------------
+// PeripheralsPage
+// Phase 3P-II Task 17: Setup > Network > Peripherals.
+// Two device rows (TGXL, PGXL) with six columns each:
+//   Name | Host IP | Port | Scan LAN | Connect | Status
+// AppSettings keys (global, not per-MAC):
+//   TGXL_ManualIp (string, default ""), TGXL_ManualPort (int, default 9010)
+//   PGXL_ManualIp (string, default ""), PGXL_ManualPort (int, default 9008)
+// Connect/Disconnect button is a stub until Task 19 wires RadioModel
+// accessors for PgxlConnection and TgxlConnection.
+// ---------------------------------------------------------------------------
+
+PeripheralsPage::PeripheralsPage(RadioModel* model, QWidget* parent)
+    : QWidget(parent)
+    , m_model(model)
+{
+    setStyleSheet(QString::fromLatin1(Style::kPageStyle));
+
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(12, 12, 12, 12);
+    outer->setSpacing(10);
+
+    // ── Group box: Peripherals ────────────────────────────────────────────────
+    auto* group = new QGroupBox(tr("Peripherals"), this);
+    group->setStyleSheet(QString::fromLatin1(Style::kGroupBoxStyle));
+
+    m_grid = new QGridLayout(group);
+    m_grid->setSpacing(8);
+    m_grid->setContentsMargins(10, 16, 10, 10);
+
+    // Column header labels (row 0).
+    static const char* kHeaders[] = {
+        "Device", "Host IP", "Port", "Scan", "Action", "Status"
+    };
+    for (int col = 0; col < 6; ++col) {
+        auto* hdr = new QLabel(tr(kHeaders[col]), group);
+        hdr->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
+        m_grid->addWidget(hdr, 0, col);
+    }
+
+    // Column width hints: generous so long "Connected to 192.168.1.42:9010" fits.
+    m_grid->setColumnMinimumWidth(0, 160);  // Device name
+    m_grid->setColumnMinimumWidth(1, 180);  // Host IP
+    m_grid->setColumnMinimumWidth(2,  80);  // Port
+    m_grid->setColumnMinimumWidth(3,  80);  // Scan LAN
+    m_grid->setColumnMinimumWidth(4, 100);  // Connect/Disconnect
+    m_grid->setColumnMinimumWidth(5, 280);  // Status
+    m_grid->setColumnStretch(5, 1);         // Status expands with window width
+
+    // Reserve space for 2 device rows (added by buildRow below).
+    m_statusLabels.resize(2);
+    m_connectBtns.resize(2);
+
+    // Row 1: TGXL (Tuner Genius XL, port 9010)
+    buildRow(1,
+             QStringLiteral("Tuner Genius XL"),
+             QStringLiteral("TGXL_ManualIp"),
+             QStringLiteral("TGXL_ManualPort"),
+             9010);
+
+    // Row 2: PGXL (Power Genius XL, port 9008)
+    buildRow(2,
+             QStringLiteral("Power Genius XL"),
+             QStringLiteral("PGXL_ManualIp"),
+             QStringLiteral("PGXL_ManualPort"),
+             9008);
+
+    outer->addWidget(group);
+
+    // Footnote text (from design spec §5.3).
+    auto* note = new QLabel(
+        tr("Configure peripherals on your local network. Devices auto-connect on app"
+           " launch if a Host is configured. The Scan LAN button passively listens for"
+           " 4O3A device announcements on UDP 9008 / 9010 for 3 seconds."),
+        this);
+    note->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
+    note->setWordWrap(true);
+    outer->addWidget(note);
+
+    outer->addStretch();
+}
+
+void PeripheralsPage::buildRow(int row, const QString& name,
+                               const QString& ipKey, const QString& portKey,
+                               quint16 defaultPort)
+{
+    // Map grid row to m_statusLabels / m_connectBtns index (row 1 -> 0, row 2 -> 1).
+    const int idx = row - 1;
+
+    auto& s = AppSettings::instance();
+
+    // Column 0: device name label.
+    auto* nameLabel = new QLabel(name, this);
+    nameLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
+    m_grid->addWidget(nameLabel, row, 0);
+
+    // Column 1: host IP line edit.
+    auto* ipEdit = new QLineEdit(this);
+    ipEdit->setStyleSheet(QString::fromLatin1(Style::kLineEditStyle));
+    ipEdit->setPlaceholderText(QStringLiteral("192.168.1.42"));
+    ipEdit->setToolTip(tr("IP address or hostname of the %1 on your LAN. "
+                          "Leave blank to disable auto-connect.").arg(name));
+    const QString savedIp = s.value(ipKey, QStringLiteral("")).toString();
+    ipEdit->setText(savedIp);
+    connect(ipEdit, &QLineEdit::textChanged, this, [ipKey](const QString& text) {
+        AppSettings::instance().setValue(ipKey, text);
+    });
+    m_grid->addWidget(ipEdit, row, 1);
+
+    // Column 2: port spinbox.
+    auto* portSpin = new QSpinBox(this);
+    portSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
+    portSpin->setRange(1, 65535);
+    portSpin->setToolTip(tr("TCP port the %1 listens on (default %2).")
+                             .arg(name).arg(defaultPort));
+    portSpin->setValue(s.value(portKey, static_cast<int>(defaultPort)).toInt());
+    connect(portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [portKey](int v) {
+                AppSettings::instance().setValue(portKey, v);
+            });
+    m_grid->addWidget(portSpin, row, 2);
+
+    // Column 3: Scan LAN button.
+    auto* scanBtn = new QPushButton(tr("Scan LAN"), this);
+    scanBtn->setStyleSheet(QString::fromLatin1(Style::kButtonStyle));
+    scanBtn->setToolTip(tr("Listen for %1 announcements on the LAN for 3 seconds.").arg(name));
+    // Capture idx by value for the slot dispatch.
+    connect(scanBtn, &QPushButton::clicked, this, [this, idx]() {
+        onScanLan(idx);
+    });
+    m_grid->addWidget(scanBtn, row, 3);
+
+    // Column 4: Connect / Disconnect button.
+    auto* connectBtn = new QPushButton(tr("Connect"), this);
+    connectBtn->setStyleSheet(QString::fromLatin1(Style::kButtonStyle));
+    connectBtn->setToolTip(tr("Connect to or disconnect from the %1.").arg(name));
+    m_connectBtns[idx] = connectBtn;
+    connect(connectBtn, &QPushButton::clicked, this, [this, idx]() {
+        onConnect(idx);
+    });
+    m_grid->addWidget(connectBtn, row, 4);
+
+    // Column 5: status label.
+    auto* statusLabel = new QLabel(tr("Disconnected"), this);
+    statusLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
+    m_statusLabels[idx] = statusLabel;
+    m_grid->addWidget(statusLabel, row, 5);
+}
+
+void PeripheralsPage::onScanLan(int rowIdx)
+{
+    // TODO(Task 18): open a modeless LanScanDialog that listens for 4O3A
+    // device announcements on UDP 9008 / 9010 for 3 seconds, then fills
+    // the Host and Port fields of the matching Peripherals row on double-click.
+    qCDebug(lcPeripherals) << "Scan LAN requested for row" << rowIdx
+                           << "(stub: LanScanDialog wired in Task 18)";
+}
+
+void PeripheralsPage::onConnect(int rowIdx)
+{
+    // TODO(Task 19): wire to m_model->pgxlConnection()->connectToPgxl(host, port)
+    // for row 1 (PGXL) and m_model->tgxlConnection()->connectToTgxl(host, port)
+    // for row 0 (TGXL). Task 19 adds the RadioModel accessors and owns the
+    // PgxlConnection / TgxlConnection lifecycle. The Connect button label should
+    // toggle to "Disconnect" once connected, driven by the connected() /
+    // disconnected() signals from those connection objects.
+    qCDebug(lcPeripherals) << "Connect/Disconnect requested for row" << rowIdx
+                           << "(stub: RadioModel accessors wired in Task 19)";
 }
 
 } // namespace NereusSDR

@@ -5,14 +5,18 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QVector>
+#include <QWidget>
 
 namespace NereusSDR { class TciServer; }
+namespace NereusSDR { class RadioModel; }
 
 namespace NereusSDR {
 
@@ -192,6 +196,43 @@ private:
     QPushButton* m_learnButton{nullptr};
 
     void buildUI();
+};
+
+// ---------------------------------------------------------------------------
+// Network > Peripherals
+// Two-row grid: TGXL (port 9010) and PGXL (port 9008).
+// Six columns per row: Name, Host IP, Port, Scan LAN, Connect, Status.
+// AppSettings keys: TGXL_ManualIp, TGXL_ManualPort, PGXL_ManualIp,
+//                   PGXL_ManualPort.
+// Phase 3P-II Task 17.
+// ---------------------------------------------------------------------------
+class PeripheralsPage : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit PeripheralsPage(RadioModel* model, QWidget* parent = nullptr);
+
+private slots:
+    void onScanLan(int rowIdx);
+    void onConnect(int rowIdx);
+
+private:
+    // Build one device row into m_grid at the given row index.
+    // name       — display label ("Tuner Genius XL" / "Power Genius XL")
+    // ipKey      — AppSettings key for the host IP ("TGXL_ManualIp" / "PGXL_ManualIp")
+    // portKey    — AppSettings key for the port   ("TGXL_ManualPort" / "PGXL_ManualPort")
+    // defaultPort — factory default (9010 / 9008)
+    void buildRow(int row, const QString& name,
+                  const QString& ipKey, const QString& portKey,
+                  quint16 defaultPort);
+
+    RadioModel*   m_model{nullptr};
+    QGridLayout*  m_grid{nullptr};
+
+    // Per-row status labels; indexed by row (0 = TGXL, 1 = PGXL).
+    QVector<QLabel*>       m_statusLabels;
+    // Per-row Connect buttons; label toggles "Connect" / "Disconnect".
+    QVector<QPushButton*>  m_connectBtns;
 };
 
 } // namespace NereusSDR
