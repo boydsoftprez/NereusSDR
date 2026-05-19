@@ -68,6 +68,9 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "core/ConnectionState.h"
+#include "core/PgxlConnection.h"
+#include "core/TgxlConnection.h"
+#include "models/TunerModel.h"
 #include "Band.h"
 #include "BandPlanManager.h"
 #include "SliceModel.h"
@@ -480,6 +483,17 @@ public:
     // in TxChannel drives fexchange2 → sendTxIq (SPSC ring) while running.
     // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
     TxChannel* txChannel() const { return m_txChannel; }
+
+    // Phase 3P-II: PGXL / TGXL / Tuner accessors.
+    // PgxlConnection and TgxlConnection are QObject children of RadioModel
+    // (constructed once in the ctor with parent=this). TunerModel is likewise
+    // a QObject child that binds its connection once in the ctor.
+    // All three accessors return non-null pointers from construction time.
+    PgxlConnection* pgxlConnection() { return m_pgxlConnection; }
+    TgxlConnection* tgxlConnection() { return m_tgxlConnection; }
+    TunerModel*     tunerModel()     { return m_tunerModel;     }
+    bool hasAmplifier() const { return m_hasAmplifier; }
+    bool ampOperate()  const  { return m_ampOperate; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -1349,6 +1363,17 @@ signals:
     // only on actual offset change.
     void radeFreqOffsetChanged(int sliceId, float hz);
 
+    // Phase 3P-II: PGXL amplifier presence / state / meter signals.
+    // amplifierChanged: fires once on the first statusUpdated from PgxlConnection
+    //   (m_hasAmplifier transitions false -> true). present=true only.
+    // ampStateChanged: fires whenever m_ampOperate changes (OPERATE-family vs not).
+    // ampMetersChanged: fires on each statusUpdated that carries peakfwd + swr keys.
+    //   fwd is forward power in watts (dBm input converted: watts = 10^(dbm/10)/1000).
+    //   swr is the SWR ratio (return-loss dB input: ratio = 10^(-rl/20), clamped >= 1.0).
+    void amplifierChanged(bool present);
+    void ampStateChanged();
+    void ampMetersChanged(float fwd, float swr);
+
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
 
@@ -1402,6 +1427,13 @@ private slots:
     void onPotaSpotReceived(const NereusSDR::DxSpot& spot);
     void onFreeDvReporterSpotReceived(const NereusSDR::DxSpot& spot);
     void onPskReporterSpotReceived(const NereusSDR::DxSpot& spot);
+
+    // Phase 3P-II Task 19: PGXL status update handler.
+    // Called on every statusUpdated from PgxlConnection. On first call sets
+    // m_hasAmplifier and emits amplifierChanged(true). Parses the "state" key
+    // to update m_ampOperate and emits ampStateChanged() on transition. Parses
+    // "peakfwd" (dBm) and "swr" (return-loss dB) and emits ampMetersChanged.
+    void onPgxlStatus(const QMap<QString, QString>& kvs);
 
 private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
@@ -2075,6 +2107,17 @@ private:
     quint64  m_freedvPendingHz{0};
     static constexpr int     kFreedvFreqDwellMs = 7000;
     static constexpr quint64 kFreedvFreqJumpHz  = 100'000;
+
+    // Phase 3P-II Task 19: PGXL / TGXL / Tuner ownership.
+    // All three are QObject children of RadioModel (parent=this, constructed
+    // once in the ctor). Raw pointer pattern follows m_moxController et al.
+    PgxlConnection* m_pgxlConnection{nullptr};
+    TgxlConnection* m_tgxlConnection{nullptr};
+    TunerModel*     m_tunerModel{nullptr};
+
+    // Amplifier presence and operate-state cache (driven by onPgxlStatus).
+    bool m_hasAmplifier{false};
+    bool m_ampOperate{false};
 };
 
 } // namespace NereusSDR

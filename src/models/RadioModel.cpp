@@ -912,6 +912,19 @@ RadioModel::RadioModel(QObject* parent)
     // user-override layer persisted in AppSettings (keys: "filters/<mode>/<slot>/…").
     m_filterPresetStore = new FilterPresetStore(this);
 
+    // ── Phase 3P-II Task 19: PGXL / TGXL / Tuner ownership ───────────────────
+    // Constructed once here; accessors return non-null from this point on.
+    // PgxlConnection and TgxlConnection are QObject children (parent=this).
+    // TunerModel is likewise a QObject child; bindConnection() wires the
+    // TGXL state/status signals immediately.
+    m_pgxlConnection = new PgxlConnection(this);
+    m_tgxlConnection = new TgxlConnection(this);
+    m_tunerModel     = new TunerModel(this);
+    m_tunerModel->bindConnection(m_tgxlConnection);
+
+    connect(m_pgxlConnection, &PgxlConnection::statusUpdated,
+            this, &RadioModel::onPgxlStatus);
+
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //
     // View models first so the per-source adapter slots have live sinks the
@@ -8724,6 +8737,54 @@ QString RadioModel::buildConnectionTooltip() const
            + QChar(0x25BC)
            + QStringLiteral(" %1 Mbps").arg(QString::number(rxMbps, 'f', 1));
     return lines;
+}
+
+// ── Phase 3P-II Task 19: PGXL status update handler ─────────────────────────
+//
+// Called on every PgxlConnection::statusUpdated. Behaviour:
+//   1. First call (m_hasAmplifier still false): set m_hasAmplifier=true
+//      and emit amplifierChanged(true).
+//   2. Parse "state" key. The PGXL is considered in operate mode when the
+//      state string is one of: IDLE, OPERATE, TRANSMIT_A, TRANSMIT_B
+//      (the four states where the amp is on-air ready or transmitting).
+//      If m_ampOperate changed, emit ampStateChanged().
+//   3. Parse "peakfwd" (dBm float) and "swr" (dB return-loss float).
+//      Convert: watts = 10^(dbm/10) / 1000
+//               ratio = 10^(-rl_db/20)  (clamped to >= 1.0 to handle noise)
+//      Emit ampMetersChanged(watts, ratio) when both keys are present.
+void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
+{
+    // 1. First-presence detection.
+    if (!m_hasAmplifier) {
+        m_hasAmplifier = true;
+        emit amplifierChanged(true);
+    }
+
+    // 2. Operate-state parse.
+    if (kvs.contains(QStringLiteral("state"))) {
+        const QString& st = kvs.value(QStringLiteral("state"));
+        const bool nowOperate =
+            (st == QStringLiteral("IDLE")        ||
+             st == QStringLiteral("OPERATE")     ||
+             st == QStringLiteral("TRANSMIT_A")  ||
+             st == QStringLiteral("TRANSMIT_B"));
+        if (nowOperate != m_ampOperate) {
+            m_ampOperate = nowOperate;
+            emit ampStateChanged();
+        }
+    }
+
+    // 3. Power + SWR meter conversion.
+    const bool hasFwd = kvs.contains(QStringLiteral("peakfwd"));
+    const bool hasSwr = kvs.contains(QStringLiteral("swr"));
+    if (hasFwd && hasSwr) {
+        const float dbm   = kvs.value(QStringLiteral("peakfwd")).toFloat();
+        const float rlDb  = kvs.value(QStringLiteral("swr")).toFloat();
+        const float watts = std::pow(10.0f, dbm / 10.0f) / 1000.0f;
+        float ratio       = std::pow(10.0f, -rlDb / 20.0f);
+        if (ratio < 1.0f) { ratio = 1.0f; }  // clamp measurement noise
+        emit ampMetersChanged(watts, ratio);
+    }
 }
 
 } // namespace NereusSDR
