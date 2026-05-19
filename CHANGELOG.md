@@ -260,6 +260,123 @@ PGXL/TGXL connection family.
 **Phase 4 deferred:** smoke-run on live PGXL + TGXL hardware (bench-verification
 matrix row verification); PeripheralsPage paired/error state full-cycle test.
 
+### Added (Phase 3P-II Phase 4 - advanced UI, fault log, interlock policy, applet right-click nav)
+
+~20 commits (Tasks 75-97). Completes the Phase 3P-II epic with the full advanced
+Setup UI, fault history, TX interlock policy, tune memory management, antenna
+labels, power-cap toast, and right-click navigation from the operator applets.
+
+**New helper classes:**
+
+- `FaultLog` (`src/core/FaultLog.{h,cpp}`) - NereusSDR-native ring buffer of 10
+  `FaultEntry` records. Each entry carries a timestamp, fault code, and a
+  `likelyCause` string derived from heuristic pattern matching against PGXL
+  S-frame fault codes. JSON-persisted via `AppSettings` under `PGXL_FaultLog`.
+  Wired to `PgxlConnection::faultTransitionReceived`; `RadioModel` owns the
+  instance and exposes it to the Advanced page via accessor. 3 unit tests in
+  `tst_fault_log` (ring-buffer overflow, persist round-trip, likelyCause
+  heuristic).
+
+- `TuneMemoryStore` (`src/core/TuneMemoryStore.{h,cpp}`) - NereusSDR-native
+  per-(antenna, band) relay-position cache. Key is `(antennaPort, Band)`; value
+  is a `TuneMemoryEntry` with inductance, capacitance, and timestamp. JSON-
+  persisted under `TGXL_TuneMemory`. Auto-recall wired to
+  `SliceModel::bandChanged` when `TGXL_AutoTuneMemoryRecall` is enabled; on a
+  band change, the stored position is restored via `TgxlConnection::setRelayPosition`
+  (or a fresh tune triggers if the device does not support absolute-relay-write).
+  3 unit tests in `tst_tune_memory_store` (store/recall, persist round-trip,
+  band-change auto-recall).
+
+- `TxInterlockPolicy` (`src/core/TxInterlockPolicy.{h,cpp}`) - NereusSDR-native
+  TX interlock for PGXL-aware environments. Three modes: `Disabled` (default),
+  `Warn` (toast, TX proceeds), `Block` (toast, MOX is denied). Optional SWR
+  gate (enable + max-SWR threshold). Grace period (ms) starts counting when the
+  connection transitions to OPERATE; policy does not fire inside the window.
+  Wired via `MoxController::interlockCheck()`; emits `interlockDenied()` and
+  `interlockWarned()`. 3 unit tests in `tst_tx_interlock_policy` (Disabled pass,
+  Warn toast, Block deny).
+
+**New Setup pages:**
+
+- `TgxlAdvancedPage` (`src/gui/setup/TgxlAdvancedPage.{h,cpp}`) - Setup ->
+  Network -> TGXL Advanced. Five sections: Identity (serial, firmware, nickname),
+  Hardware (antenna port labels ANT 1/2/3), Network (static IP via `ifconf`),
+  Diagnostics (ConnectionDiagnostics live binding: uptime, RTT, frames, bytes,
+  reconnects), Tune Memory Management (per-band table with Save / Recall /
+  Clear All + auto-recall toggle). Antenna label edits persist under
+  `TGXL_AntLabel_1` / `_2` / `_3` and propagate to `TunerApplet` button text
+  via `TunerModel::antLabelChanged(int, QString)`.
+
+- `PgxlAdvancedPage` (previous Task 80-82 commits, closing here) - Setup ->
+  Network -> PGXL Advanced. Six sections: Identity, Hardware (bias mode, fan
+  mode, LED), Network (static IP, port), Pairing (slice, TX ant, ant map, PTT
+  mode), Diagnostics (ConnectionDiagnostics live binding), Fault History
+  (scrollable table with timestamp / code / likelyCause + Clear All button).
+
+- `PgxlInterlockPage` (`src/gui/setup/PgxlInterlockPage.{h,cpp}`) - Setup ->
+  Transmit -> PGXL Interlock. Three radio buttons (Disabled / Warn / Block) +
+  grace period spinbox (0-30 s) + SWR gate checkbox with max-SWR spinbox. All
+  fields persist via `AppSettings`: `PGXL_InterlockMode`, `PGXL_InterlockGraceMs`,
+  `PGXL_InterlockSwrGate`, `PGXL_InterlockMaxSwr`. Live-wired to
+  `TxInterlockPolicy` so changes take effect immediately without restart.
+
+**New dialog:**
+
+- `PgxlSaveRebootDialog` (`src/gui/PgxlSaveRebootDialog.{h,cpp}`) - modal
+  confirmation dialog launched from PGXL Advanced -> Save & Reboot. Shows a
+  two-sentence warning that the amplifier will reboot and auto-reconnect will
+  attempt recovery within 30 s. Two buttons: Cancel and Save & Reboot. On
+  confirm, calls `PgxlConnection::writeSetup()` then `PgxlConnection::save()`;
+  the connection drop triggers the existing auto-reconnect path.
+
+**Navigation API:**
+
+- `MainWindow::openSetup(QString pageKey)` - slot that opens the SetupDialog
+  and navigates to the page matching `pageKey`. Called by AmpApplet and
+  TunerApplet right-click context menu actions. Key strings: `"pgxl_advanced"`,
+  `"tgxl_advanced"`, `"pgxl_interlock"`.
+
+**Applet context menus:**
+
+- `AmpApplet` right-click context menu: Open PGXL Advanced (calls
+  `openSetup("pgxl_advanced")`), Disconnect / Reconnect, Copy diagnostics
+  (serialises `ConnectionDiagnostics` to JSON on the clipboard).
+- `TunerApplet` right-click context menu: Open TGXL Advanced (calls
+  `openSetup("tgxl_advanced")`), Disconnect / Reconnect, Save current tune
+  memory, Recall tune memory, Clear tune memory, Copy diagnostics.
+
+**Power-cap toast:**
+
+- `MainWindow` wires `PgxlConnection::forwardPowerExceededCap(float watt)` to
+  `showStatusBarToast(QString)`. Toast fires on the first sample that exceeds
+  the `PGXL_TxPowerCapWatts` limit (soft alert only; TX continues). Re-arms
+  after a 5 s cooldown so it does not spam during sustained high-power TX.
+
+**RadioModel additions:**
+
+- `faultLog()` accessor (non-owning view, `FaultLog*`).
+- `tuneMemoryStore()` accessor (non-owning view, `TuneMemoryStore*`).
+- `txInterlockPolicy()` accessor (non-owning view, `TxInterlockPolicy*`).
+- Wires `PgxlConnection::faultTransitionReceived` to `FaultLog::append()` so
+  FAULT-state transitions are captured without polling.
+
+**PgxlConnection unit tests (Tasks 91-94):**
+
+- `tst_pgxl_connection_setup` (3 slots): `readSetup` request wire format,
+  `writeSetup` with modified fields, R-frame deserialization into `QVariantMap`.
+- `tst_pgxl_connection_ifconf` (2 slots): `readIfconf` request format, static-IP
+  write round-trip.
+- `tst_pgxl_connection_save` (3 slots): save command wire format, reboot-detection
+  (connection drops within 5 s of save), auto-reconnect fires after reboot.
+
+Combined with the 20 pre-existing slots across the connection family: 11
+executables, 28 slots total for the PGXL/TGXL connection family.
+
+**Bench-verification matrix:** 36 rows at
+`docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`. Rows pending
+live PGXL + TGXL hardware (all non-deferred rows); Row 18 (HL2) gated on the
+open ATT/filter safety audit.
+
 ## [0.5.1] - 2026-05-15
 
 > [!NOTE]

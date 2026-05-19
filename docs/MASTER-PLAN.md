@@ -697,8 +697,8 @@ Thetis source: `console.cs:29311-29650`, `cmaster.cs:491-540`, `network.c:1250-1
 
 Verification: Key MOX, see RF output on ANAN-G2, hear SSB on another receiver.
 
-### Phase 3P-II: External RF accessories (PGXL + TGXL) + analog S-Meter port  **[Next major epic, slotted before 3M-2]**
-**Status:** Designed + planned, ready for subagent-driven execution. Spec at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` (1688 lines); plan at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md` (3112 lines, 4 phases, ~100 tasks, 289 actionable checkboxes).
+### Phase 3P-II: External RF accessories (PGXL + TGXL) + analog S-Meter port  **[Feature-complete, bench verification pending]**
+**Status:** Feature-complete; bench verification pending. All 4 phases implemented on branch `claude/jolly-golick-11c3c3`. Bench matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (36 rows). Spec at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` (1688 lines); plan at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md` (3112 lines, 4 phases, ~100 tasks, 289 actionable checkboxes).
 
 **Why this slot.** v0.5.0 shipped 3J-2 + 3R; the 3M-3 TX-processing tail is closed; HL2 ATT/filter audit is closed. The remaining big-ticket TX work (3M-2 CW TX) wants HL2 bench time, so pulling PGXL/TGXL forward gets the amplifier story shipped against an ANAN-G2 in parallel without blocking 3M-2.
 
