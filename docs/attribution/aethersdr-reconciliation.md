@@ -1314,3 +1314,12 @@ All three follow-up actions are complete:
 The AetherSDR citation form follows `docs/attribution/HOW-TO-PORT.md`
 rule 6 (project-level reference, since AetherSDR has no per-file headers
 to copy verbatim). Bucket D.2 closed.
+
+---
+
+## Phase 3P-II PGXL/TGXL Accessories
+
+| NereusSDR file | AetherSDR counterpart | Port notes | Mod-history wording |
+|---|---|---|---|
+| `src/core/PgxlConnection.h` | `src/core/PgxlConnection.h` [@0cd4559] | Direct port: namespace AetherSDR -> NereusSDR; `onError` signature changed from `onError(QAbstractSocket::SocketError)` to `onError()` (no-arg, uses `m_socket.errorString()` internally) to match the `connectionFailed(QString)` signal that NereusSDR adds; `connectionFailed(QString)` signal added (AetherSDR only emits `connected`/`disconnected`/`statusUpdated`); `connectToPgxl` and `sendCommand` promoted to `public slots` for QML/signal wiring convenience; `injectLineForTesting` test-seam added in the same commit as the .cpp port (Tasks 4+5). | "PGXL amp TCP telemetry ported from AetherSDR `src/core/PgxlConnection.{h,cpp}` [@0cd4559]. Namespace AetherSDR -> NereusSDR. onError no-arg (was socket-error-code param). connectionFailed(QString) signal added. processLine() stubbed; V/R/S frame parsing lands in Tasks 6+7." |
+| `src/core/PgxlConnection.cpp` | `src/core/PgxlConnection.cpp` [@0cd4559] | Direct port: namespace + logging-category renamed (`lcTuner` -> `lcPgxl`); `onError` body uses `m_socket.errorString()` + emits `connectionFailed`; `processLine()` stubbed (V/R/S frame parsing deferred to Tasks 6+7 per plan); `pollStatus()` preserves upstream `if (m_connected)` guard; debug-log prefix strings updated to remove "PgxlConnection:" redundancy. | "Same as .h." |

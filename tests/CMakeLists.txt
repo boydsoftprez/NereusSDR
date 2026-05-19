@@ -4889,3 +4889,9 @@ nereus_add_test(tst_rade_channel_model_wiring)
 #                                     RadioConnection::sendTxIq.
 nereus_add_test(tst_rade_tx_pump)
 target_compile_definitions(tst_rade_tx_pump PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-II PGXL/TGXL networking ─────────────────────────────────────
+# Pins the parse contracts for PgxlConnection (4O3A Power Genius XL amp
+# TCP telemetry, port 9008). Ported from AetherSDR src/core/PgxlConnection.{h,cpp}
+# [@0cd4559]. Real assertions for V/R/S frame parsing land in Tasks 6+7.
+nereus_add_test(tst_pgxl_connection_parse)

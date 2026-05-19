@@ -495,6 +495,8 @@ set(CORE_SOURCES
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp
+    # Phase 3P-II PGXL/TGXL accessories
+    src/core/PgxlConnection.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
