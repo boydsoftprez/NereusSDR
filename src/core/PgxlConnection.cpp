@@ -99,7 +99,16 @@ void PgxlConnection::onConnected() {
 }
 
 void PgxlConnection::onDisconnected() {
-    qCDebug(lcPgxl) << "disconnected";
+    // Phase 3P-II bench-diagnostic logging: record why PGXL dropped so the
+    // bench audit trail shows the root cause. errorString() is populated by
+    // Qt when the disconnect was caused by a network error; empty string means
+    // a clean (operator-initiated) close.
+    const QString err = m_socket.errorString();
+    if (err.isEmpty()) {
+        qCInfo(lcPgxl) << "PGXL disconnected cleanly";
+    } else {
+        qCWarning(lcPgxl) << "PGXL disconnected with error:" << err;
+    }
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
     m_connected = false;
@@ -110,8 +119,17 @@ void PgxlConnection::onDisconnected() {
 }
 
 void PgxlConnection::onError() {
-    QString err = m_socket.errorString();
-    qCWarning(lcPgxl) << "socket error:" << err;
+    const QString err = m_socket.errorString();
+    if (m_connected) {
+        // Transient socket noise on an established connection (e.g., brief
+        // network blip during status polling). Log it; don't overwrite the
+        // UI status label via connectionFailed. The connection will either
+        // recover silently or onDisconnected will fire and update status
+        // cleanly.
+        qCWarning(lcPgxl) << "transient socket error while connected:" << err;
+        return;
+    }
+    qCWarning(lcPgxl) << "connect-time socket error:" << err;
     emit connectionFailed(err);
 }
 

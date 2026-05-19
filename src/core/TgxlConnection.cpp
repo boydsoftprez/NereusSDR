@@ -102,7 +102,16 @@ void TgxlConnection::onConnected()
 // From AetherSDR src/core/TgxlConnection.cpp:45 [@0cd4559]
 void TgxlConnection::onDisconnected()
 {
-    qCDebug(lcTgxl) << "TgxlConnection: disconnected";
+    // Phase 3P-II bench-diagnostic logging: record why TGXL dropped so the
+    // bench audit trail shows the root cause. errorString() is populated by
+    // Qt when the disconnect was caused by a network error; empty string means
+    // a clean (operator-initiated) close.
+    const QString err = m_socket.errorString();
+    if (err.isEmpty()) {
+        qCInfo(lcTgxl) << "TGXL disconnected cleanly";
+    } else {
+        qCWarning(lcTgxl) << "TGXL disconnected with error:" << err;
+    }
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
     m_connected = false;
@@ -113,8 +122,18 @@ void TgxlConnection::onDisconnected()
 // From AetherSDR src/core/TgxlConnection.cpp:53 [@0cd4559]
 void TgxlConnection::onError()
 {
-    qCWarning(lcTgxl) << "TgxlConnection: socket error" << m_socket.errorString();
-    emit connectionFailed(m_socket.errorString());
+    const QString err = m_socket.errorString();
+    if (m_connected) {
+        // Transient socket noise on an established connection (e.g., brief
+        // network blip during status polling). Log it; don't overwrite the
+        // UI status label via connectionFailed. The connection will either
+        // recover silently or onDisconnected will fire and update status
+        // cleanly.
+        qCWarning(lcTgxl) << "transient socket error while connected:" << err;
+        return;
+    }
+    qCWarning(lcTgxl) << "TgxlConnection: connect-time socket error:" << err;
+    emit connectionFailed(err);
 }
 
 // From AetherSDR src/core/TgxlConnection.cpp:60 [@0cd4559]
