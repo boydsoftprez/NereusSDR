@@ -2062,6 +2062,60 @@ void MainWindow::populateDefaultMeter()
         m_meterPoller->setWdspEngine(m_radioModel->wdspEngine());
     }
 
+    // Task 43 (Phase 3P-II): PGXL-aware power scale + TX meter feed.
+    //
+    // Four permanent connects (RadioModel persists across radio connects):
+    //
+    // 1. ampMetersChanged: when PGXL is OPERATE, forward the amp's
+    //    forward-power/SWR readings to the SMeterWidget TX display.
+    //    RadioModel::ampMetersChanged is fired by PgxlConnection on each
+    //    statusUpdated containing "peakfwd" and "swr" keys.
+    //
+    // 2. RadioStatus::powerChanged: when PGXL is absent or STANDBY, use the
+    //    radio's own PA telemetry (barefoot or Aurora) for the TX display.
+    //    fwd is forward power in watts; the third argument (swr) is used.
+    //
+    // 3. amplifierChanged: snap the power scale to 2 kW on PGXL connect.
+    //
+    // 4. ampStateChanged: re-evaluate scale whenever OPERATE/STANDBY toggles.
+    //    When returning to STANDBY (amp present but not OPERATE), the scale
+    //    reverts to barefoot by passing hasAmplifier()=false to setPowerScale.
+    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+        // Connect 1: PGXL amp meters (OPERATE path).
+        connect(m_radioModel, &RadioModel::ampMetersChanged, this,
+                [this, sm](float fwd, float swr) {
+            if (m_radioModel->hasAmplifier() && m_radioModel->ampOperate()) {
+                sm->setTxMeters(fwd, swr);
+            }
+        });
+
+        // Connect 2: radio barefoot/Aurora TX meters (STANDBY or no amp).
+        // RadioStatus::powerChanged carries (fwdWatts, revWatts, swr); we
+        // take fwdWatts (arg 1) and swr (arg 3) to match setTxMeters() signature.
+        connect(&m_radioModel->radioStatus(), &RadioStatus::powerChanged,
+                this, [this, sm](double fwd, double /*rev*/, double swr) {
+            if (!m_radioModel->hasAmplifier() || !m_radioModel->ampOperate()) {
+                sm->setTxMeters(static_cast<float>(fwd), static_cast<float>(swr));
+            }
+        });
+
+        // Connect 3: PGXL connect event snaps scale to 2 kW.
+        connect(m_radioModel, &RadioModel::amplifierChanged, this,
+                [sm](bool present) {
+            sm->setPowerScale(/*maxWatts=*/0, present);
+        });
+
+        // Connect 4: OPERATE/STANDBY state change re-evaluates scale.
+        // When STANDBY: hasAmplifier()=true but we want barefoot scale,
+        // so pass false (treat as absent) until OPERATE resumes.
+        connect(m_radioModel, &RadioModel::ampStateChanged, this,
+                [this, sm]() {
+            const bool amplifying = m_radioModel->hasAmplifier()
+                                    && m_radioModel->ampOperate();
+            sm->setPowerScale(/*maxWatts=*/0, amplifying);
+        });
+    }
+
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
     panel->addApplet(m_rxApplet);
