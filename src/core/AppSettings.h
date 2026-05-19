@@ -331,11 +331,18 @@ public:
     //   TGXL_ManualIp      string  ""
     //   TGXL_ManualPort    int     9010
 
-    // PGXL/TGXL connection robustness (Phase 3P-II Phase 3, Tasks 58+59)
+    // PGXL/TGXL connection robustness (Phase 3P-II Phase 3, Tasks 58+59+60)
     // Wire formats from FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
     //   PGXL_KeepaliveSec   int     30    Cadence for keepalive status pokes.
     //   PGXL_PingSec        int     10    Auto-ping interval (0 = disabled); used by Task 67+.
     //   PGXL_AutoReconnect  bool   "True" Enable exponential-backoff auto-reconnect on drop.
+    //                                     Backoff sequence: 1/2/5/10/30/60 s (cap at 60 s).
+    //
+    // TGXL connection robustness (Phase 3P-II Phase 3, Task 60)
+    // Wire formats from design §4.2.1 + §6.4 (4O3A TGXL Ethernet API).
+    //   TGXL_KeepaliveSec   int     30    Cadence for keepalive status pokes.
+    //   TGXL_PingSec        int     10    Auto-ping interval (0 = disabled); wired in Task 67.
+    //   TGXL_AutoReconnect  bool   "True" Enable exponential-backoff auto-reconnect on drop.
     //                                     Backoff sequence: 1/2/5/10/30/60 s (cap at 60 s).
 
     void    setHardwareValue(const QString& mac, const QString& key, const QVariant& value);
