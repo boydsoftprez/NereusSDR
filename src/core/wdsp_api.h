@@ -127,7 +127,7 @@
 //                 RXOutputGain setter is the canonical call site; signature
 //                 matches dsp.cs:399-400 P/Invoke decl and wdsp/patchpanel.c:142.
 //                 AI-assisted transformation via Anthropic Claude Code.
-//   2026-05-19 — SetupDetectMaxBin + GetDetectMaxBin declarations added by
+//   2026-05-19  SetupDetectMaxBin + GetDetectMaxBin declarations added by
 //                 J.J. Boyd (KG4VCF) during Phase 3P-II Phase 2 Task 31/32
 //                 (Analog S-Meter port, MaxBin peak-bin detector wrappers).
 //                 Signatures match Thetis Console/dsp.cs:846-850 [@501e3f5]
