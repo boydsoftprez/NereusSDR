@@ -380,6 +380,15 @@ void Hl2OptionsTab::buildI2cControl(QWidget* parent)
     connect(m_btnWrite, &QPushButton::clicked,
             this, &Hl2OptionsTab::onI2cWriteClicked);
 
+    // Belt-and-braces Write gate: m_btnWrite only enables when BOTH
+    // chkI2cEnable and chkI2cWriteEnable are checked. Wired exactly once
+    // here in the build path — previously this was wired inside
+    // onI2cEnableToggled with Qt::UniqueConnection + lambda, which is the
+    // shape Qt warns about ("unique connections require a pointer to member
+    // function") because lambdas can't be deduped. #272.
+    connect(m_chkI2cWriteEnable, &QCheckBox::toggled,
+            this, &Hl2OptionsTab::syncI2cWriteButtonEnabled);
+
     // Push read responses into the byte labels as they arrive.
     if (m_ioBoard) {
         connect(m_ioBoard, &IoBoardHl2::i2cReadResponseReceived, this,
@@ -483,20 +492,18 @@ void Hl2OptionsTab::onI2cEnableToggled(bool on)
     if (m_udI2cWriteData)  { m_udI2cWriteData->setEnabled(on); }
     if (m_chkI2cWriteEnable) { m_chkI2cWriteEnable->setEnabled(on); }
     if (m_btnRead)         { m_btnRead->setEnabled(on); }
-    // Write button needs both gates.
-    if (m_btnWrite) {
-        m_btnWrite->setEnabled(on && m_chkI2cWriteEnable
-                               && m_chkI2cWriteEnable->isChecked());
-    }
-    if (m_chkI2cWriteEnable) {
-        connect(m_chkI2cWriteEnable, &QCheckBox::toggled, m_btnWrite,
-                [this](bool we) {
-                    if (m_btnWrite) {
-                        m_btnWrite->setEnabled(
-                            m_chkI2cEnable && m_chkI2cEnable->isChecked() && we);
-                    }
-                }, Qt::UniqueConnection);
-    }
+    // Write button is gated by both checkboxes — route through the helper
+    // so the build-time chkI2cWriteEnable toggle wire and this enable
+    // toggle both end up at the same place.
+    syncI2cWriteButtonEnabled();
+}
+
+void Hl2OptionsTab::syncI2cWriteButtonEnabled()
+{
+    if (!m_btnWrite) { return; }
+    const bool i2cOn = m_chkI2cEnable && m_chkI2cEnable->isChecked();
+    const bool writeOn = m_chkI2cWriteEnable && m_chkI2cWriteEnable->isChecked();
+    m_btnWrite->setEnabled(i2cOn && writeOn);
 }
 
 void Hl2OptionsTab::onI2cReadClicked()
