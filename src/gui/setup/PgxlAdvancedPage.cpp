@@ -44,6 +44,7 @@
 #include "../../core/FaultLog.h"
 #include "../../core/PgxlConnection.h"
 #include "../../models/RadioModel.h"
+#include "../PgxlSaveRebootDialog.h"
 
 namespace NereusSDR {
 
@@ -708,46 +709,21 @@ void PgxlAdvancedPage::onDiagnosticsChanged()
 
 void PgxlAdvancedPage::onSaveAndReboot()
 {
-    // The Save & Reboot modal (Task 84) is in PgxlSaveRebootDialog.
-    // We need a forward declaration here; include deferred to avoid circular.
-    // We use the dialog inline here via dynamic include pattern.
-    // NOTE: Task 84 wires this slot to PgxlSaveRebootDialog via SetupDialog.
-    // For now emit a QDialog inline as a placeholder that will be
-    // replaced by PgxlSaveRebootDialog.cpp (Task 84 extends this method).
-
-    // This method body is replaced entirely in Task 84.
-    // Left as stub intentionally; see PgxlSaveRebootDialog.
-
-    auto* dlg = new QDialog(this);
-    dlg->setWindowTitle(QStringLiteral("Save & Reboot PGXL"));
-    dlg->setAttribute(Qt::WA_DeleteOnClose);
-
-    auto* lay = new QVBoxLayout(dlg);
-    auto* text = new QLabel(
-        QStringLiteral("Sending <tt>save</tt> will persist your configuration to flash and "
-                       "reboot the PGXL. The amplifier will be offline for approximately "
-                       "20 seconds. NereusSDR will auto-reconnect when it returns. "
-                       "Do not transmit during reboot."));
-    text->setWordWrap(true);
-    lay->addWidget(text);
-
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-    lay->addWidget(buttons);
-
-    connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
-
-    if (dlg->exec() == QDialog::Accepted) {
-        if (m_model && m_model->pgxlConnection()) {
-            m_model->pgxlConnection()->save();
-        }
-        m_stateBadge->setText(QStringLiteral("Rebooting..."));
-        m_stateBadge->setStyleSheet(
-            QStringLiteral("background: #c88000; color: #fff;"
-                           " border-radius: 3px; padding: 2px 6px;"));
-        setPendingState(false);
+    if (!m_model || !m_model->pgxlConnection()) {
+        return;
     }
+
+    PgxlSaveRebootDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    m_model->pgxlConnection()->save();
+    m_stateBadge->setText(QStringLiteral("Rebooting..."));
+    m_stateBadge->setStyleSheet(
+        QStringLiteral("background: #c88000; color: #fff;"
+                       " border-radius: 3px; padding: 2px 6px;"));
+    m_pendingSaveReboot = false;
 }
 
 void PgxlAdvancedPage::onRevert()
