@@ -5025,3 +5025,28 @@ nereus_add_test(tst_amp_applet_context_menu)
 #   clearActionRemovesEntry (Clear -> store.recall() returns nullopt);
 #   menuOpensTgxlAdvanced (action 0 -> navigationRequested("tgxlAdvanced")).
 nereus_add_test(tst_tuner_applet_context_menu)
+
+# ── Phase 3P-II Phase 4 PGXL test polish (Tasks 91-93) ───────────────────────
+
+# Task 91: readSetup / writeSetup command coverage + R-frame parse routing.
+# Uses testFrameWrittenForTesting seam + injectLineForTesting (same pattern as
+# tst_pgxl_connection_pairing). Wire format: "setup read" / "setup k=v...".
+# Tests: readSetupSendsCommand (seq > 0, frame contains "setup read");
+#   writeSetupBuildsKvCommand (frame contains "setup" + all kv pairs);
+#   parsesSetupResponse (R-frame -> statusUpdated with parsed kv map);
+#   seqIncrementsBetweenCalls (second readSetup() returns seq > first).
+nereus_add_test(tst_pgxl_connection_setup)
+
+# Task 92: readIfconf / writeIfconf command coverage + R-frame parse routing.
+# Wire format: "ifconf read" / "ifconf address=<ip> netmask=... gateway=... dhcp=...".
+# Tests: readIfconfSendsCommand (seq > 0, frame contains "ifconf read");
+#   writeIfconfBuildsCommandWithIpFields (frame contains all 4 IP fields);
+#   parsesIfconfResponse (R-frame -> statusUpdated with 4 kv keys).
+nereus_add_test(tst_pgxl_connection_ifconf)
+
+# Task 93: save command lifecycle coverage.
+# Wire format: "save" -> R<seq>|0|saving -> saveAcknowledged signal.
+# Tests: saveSendsCommand (frame contains "save");
+#   saveResponseEmitsSaveAcknowledged (R<seq>|0|saving -> saveAcknowledged());
+#   saveSeqIsPositive (seq > 0).
+nereus_add_test(tst_pgxl_connection_save)
