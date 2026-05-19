@@ -135,6 +135,10 @@ private:
     int     m_reconnectAttempts{0};
     int     m_keepaliveMissed{0};
     quint32 m_pendingPairingSeq{0};
+    // Phase 3P-II Task 66: serial captured from flexradioPair() so setBand()
+    // can send "flexradio ampslice=<x> serial=<serial> band=<hz>".
+    // Cleared on disconnect or pairing failure.
+    QString m_pairedRadioSerial;
     struct PendingPing { quint32 seq; qint64 sentMs; QString tag; };
     QHash<quint32, PendingPing> m_pendingPings;
     qint64  m_lastFrameMs{0};

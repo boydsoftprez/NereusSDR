@@ -91,6 +91,8 @@ void PgxlConnection::onDisconnected() {
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
     m_connected = false;
+    // Phase 3P-II Task 66: clear paired serial on disconnect so setBand() stays silent.
+    m_pairedRadioSerial.clear();
     emit disconnected();
     scheduleReconnect();
 }
@@ -148,6 +150,8 @@ quint32 PgxlConnection::flexradioPair(QChar ampSlice,
                                       const QString& txAnt,
                                       bool pttOverLan,
                                       bool active) {
+    // Phase 3P-II Task 66: capture serial so setBand() can use it.
+    m_pairedRadioSerial = radioSerial;
     quint32 seq = sendCommand(
         QString("flexradio ampslice=%1 serial=%2 txant=%3 ptt=%4 active=%5")
             .arg(ampSlice)
@@ -230,13 +234,24 @@ quint32 PgxlConnection::save() {
 }
 
 // setBand: sends band via the paired flexradio path if paired, else no-op.
-// Design §6.4: uses flexradio ampslice=A serial=... band=<hz>.
-// No-op (returns 0) if pairing has not completed (m_pendingPairingSeq reset
-// to 0 on success) - this slot is wired by Task 66 which sets the serial.
+// From FlexRadio wiki spec: flexradio ampslice=<A|B|C|D> serial=<radio_serial> band=<hz>
+// Phase 3P-II Task 66: full implementation.
+// Returns 0 (no-op) if pairing is still in flight or serial is not set.
 quint32 PgxlConnection::setBand(int bandHz) {
-    Q_UNUSED(bandHz)
-    // Full wiring deferred to Task 66 (requires paired serial tracking).
-    return 0;
+    // m_pendingPairingSeq is non-zero while the R-frame ack has not arrived yet.
+    // m_pairedRadioSerial is empty until flexradioPair() captures it.
+    if (m_pendingPairingSeq != 0 || m_pairedRadioSerial.isEmpty()) {
+        return 0;
+    }
+    auto& s = AppSettings::instance();
+    QChar slice = s.value(QStringLiteral("PGXL_FlexAmpSlice"),
+                          QStringLiteral("A")).toString().at(0);
+    // From FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
+    return sendCommand(
+        QString("flexradio ampslice=%1 serial=%2 band=%3")
+            .arg(slice)
+            .arg(m_pairedRadioSerial)
+            .arg(bandHz));
 }
 
 void PgxlConnection::onKeepaliveTimeout() {
@@ -321,6 +336,11 @@ void PgxlConnection::processLine(const QString& line) {
             // Check for pairing result correlation.
             if (m_pendingPairingSeq != 0 && rseq == m_pendingPairingSeq) {
                 bool succeeded = (hexOk && hexCode == 0);
+                // Phase 3P-II Task 66: if pairing failed, clear the serial so
+                // setBand() stays a no-op until a new successful pair arrives.
+                if (!succeeded) {
+                    m_pairedRadioSerial.clear();
+                }
                 emit pairingResult(succeeded, body);
                 m_pendingPairingSeq = 0;
             }
