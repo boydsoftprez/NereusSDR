@@ -2088,6 +2088,14 @@ target_compile_definitions(tst_pa_setup_per_sku_visibility PRIVATE NEREUS_BUILD_
 nereus_add_test(tst_setup_dialog_pa_reset_wiring)
 target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD_TESTS)
 
+# ── #272 regression: zero Qt programming-error warnings during SetupDialog ──
+# construction. Pre-fix the W4ORS May 16 log captured 7× "QLayout: Attempting
+# to add QLayout" warnings (DeviceCard double setLayout) and 1× "unique
+# connections require a pointer to member function" warning
+# (Hl2OptionsTab lambda + Qt::UniqueConnection). Both fixed; this test
+# pins them at zero.
+nereus_add_test(tst_setup_dialog_qt_warnings)
+
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
 # the MainWindow status bar:

@@ -326,7 +326,11 @@ void DeviceCard::buildLayout()
         outer->addLayout(pillRow);
     }
 
-    setLayout(outer);
+    // `outer` was already installed as this widget's layout by the
+    // `new QVBoxLayout(this)` parent-ctor at the top of this function; a
+    // second `setLayout(outer)` triggers the QGroupBox "already has a layout"
+    // runtime warning (×7 on Settings open — fired 3 times from AudioDevicesPage
+    // and 4 times from AudioVaxPage's VaxChannelCards before #272).
 
     // ── Wire all controls to the commit slot ────────────────────────────
     // Use event-filter on QComboBox / QCheckBox inside the card so wheel
