@@ -348,6 +348,9 @@ public:
     //   PGXL_FlexAmpSlice  string "A"     Slice letter (A/B/C/D) passed to flexradioPair
     //                                     and setBand.
     //   PGXL_TxAnt         string "ANT1"  TX antenna name passed to flexradioPair.
+    //   PGXL_FlexRadioSerial string ""   (default: derived from MAC; format XXXX-XXXX-XXXX-XXXX)
+    //                                     Override when the auto-derived serial collides with
+    //                                     another NereusSDR installation on the same PGXL.
     //
     // TGXL connection robustness (Phase 3P-II Phase 3, Task 60)
     // Wire formats from design §4.2.1 + §6.4 (4O3A TGXL Ethernet API).

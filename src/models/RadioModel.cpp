@@ -324,6 +324,7 @@ warren@wpratt.com
 #include <algorithm>
 #include <cmath>
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -8887,13 +8888,42 @@ void RadioModel::onPgxlConnected()
     if (!m_pgxlConnection) { return; }
     auto& s = AppSettings::instance();
 
-    // Serial number: "NereusSDR-<macAddress>" per design §6.4 example.
+    // Serial number derivation.
     // m_lastRadioInfo.macAddress may be empty before a radio connects;
     // fall back to a fixed placeholder so amplifier create still works.
     const QString mac = m_lastRadioInfo.macAddress.isEmpty()
                             ? QStringLiteral("00:00:00:00:00:00")
                             : m_lastRadioInfo.macAddress;
-    const QString ourSerial = QStringLiteral("NereusSDR-") + mac;
+
+    // Phase 3P-II bench-discovered: PGXL's FlexRadio tab expects a 16-digit
+    // dashed serial in 4-4-4-4 groups (e.g. 2923-1104-6600-8823). The earlier
+    // "NereusSDR-<mac>" format was silently dropped by PGXL's regex validator.
+    // SHA-256 the MAC + a salt, take 8 bytes -> 64-bit number -> mod 10^16 ->
+    // dash-format. Deterministic per (host + radio MAC) install. Operator can
+    // override via PGXL_FlexRadioSerial AppSettings key when a collision is
+    // suspected.
+    QString ourSerial = s.value(QStringLiteral("PGXL_FlexRadioSerial"),
+                                QString()).toString().trimmed();
+    if (ourSerial.isEmpty()) {
+        const QByteArray salt = QByteArrayLiteral("NereusSDR-PGXL-v1");
+        QByteArray hash = QCryptographicHash::hash(
+            (mac.toUtf8() + salt), QCryptographicHash::Sha256);
+        // Take first 8 bytes -> uint64 -> mod 10^16.
+        quint64 n = 0;
+        for (int i = 0; i < 8; ++i) {
+            n = (n << 8) | static_cast<quint8>(hash[i]);
+        }
+        constexpr quint64 mod16 = 10000000000000000ULL;  // 10^16
+        n %= mod16;
+        const QString d = QString::number(n).rightJustified(16, '0');
+        ourSerial = QStringLiteral("%1-%2-%3-%4")
+                        .arg(d.mid(0, 4))
+                        .arg(d.mid(4, 4))
+                        .arg(d.mid(8, 4))
+                        .arg(d.mid(12, 4));
+        qCInfo(lcConnection) << "FlexRadio serial derived from MAC:" << ourSerial
+                             << "(override via PGXL_FlexRadioSerial key)";
+    }
     const QString antMap = s.value(QStringLiteral("PGXL_AntMap"),
                                    QStringLiteral("ANT1:PORTA,ANT2:PORTB")).toString();
     m_pgxlConnection->amplifierCreate(ourSerial, QStringLiteral("NereusSDR"), antMap);
