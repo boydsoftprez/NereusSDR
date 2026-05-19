@@ -204,6 +204,37 @@ void MoxController::setMoxCheck(MoxCheckFn check)
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3P-II Task 87 — setInterlockPolicy / onAmpStateChanged / onAmpSwrUpdated
+//
+// setInterlockPolicy: wire the TxInterlockPolicy that setMox(true) consults
+// immediately after the BandPlanGuard (K.2) check and before the Codex P2
+// safety effects.  Passing nullptr removes the policy.
+//
+// onAmpStateChanged: update the cached amplifier presence + OPERATE flag
+// so that evaluateTxRequest() sees a consistent snapshot at every setMox
+// call.  Wired from RadioModel amplifierChanged / ampStateChanged lambdas.
+//
+// onAmpSwrUpdated: update the cached SWR ratio from the PGXL meter stream.
+// Wired from RadioModel ampMetersChanged(float fwd, float swr) lambda.
+// Only the swr argument is forwarded.
+// ---------------------------------------------------------------------------
+void MoxController::setInterlockPolicy(TxInterlockPolicy* policy)
+{
+    m_interlockPolicy = policy;
+}
+
+void MoxController::onAmpStateChanged(bool hasAmp, bool inOperate)
+{
+    m_ampPresent   = hasAmp;
+    m_ampInOperate = inOperate;
+}
+
+void MoxController::onAmpSwrUpdated(float swr)
+{
+    m_lastSwr = swr;
+}
+
+// ---------------------------------------------------------------------------
 // C.4 — setRx2Enabled / setVfobTx
 //
 // Idempotent setters that update the internal flags consumed by
@@ -458,6 +489,23 @@ void MoxController::setMox(bool on)
         const auto result = m_moxCheck();
         if (!result.ok) {
             emit moxRejected(result.reason);
+            return;
+        }
+    }
+
+    // ── Phase 3P-II Task 87: TxInterlockPolicy gate ───────────────────────────
+    //
+    // Placed AFTER the BandPlanGuard check (K.2) and BEFORE the Codex P2
+    // safety effects so:
+    //   - BandPlan violations are already caught by the stricter band guard.
+    //   - Safety effects (Alex routing, ATT) only fire for accepted TX requests.
+    //
+    // evaluateTxRequest may emit warned(reason) or denied(reason) on the policy
+    // object.  The warned/denied signals are plumbed to the operator UI toast
+    // in Task 97.  For this task the signals exist but have no UI subscriber.
+    if (on && m_interlockPolicy) {
+        if (!m_interlockPolicy->evaluateTxRequest(m_ampPresent, m_ampInOperate, m_lastSwr)) {
+            // denied() signal already emitted by the policy.
             return;
         }
     }

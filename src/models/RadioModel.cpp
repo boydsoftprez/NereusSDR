@@ -928,6 +928,35 @@ RadioModel::RadioModel(QObject* parent)
     // and MoxController (wired below after m_moxController construction).
     m_txInterlockPolicy = new TxInterlockPolicy(this);
 
+    // Phase 3P-II Task 87: wire interlock policy into MoxController.
+    //
+    // setInterlockPolicy: MoxController's setMox(true) consults the policy
+    // immediately after the BandPlanGuard (K.2) check.
+    m_moxController->setInterlockPolicy(m_txInterlockPolicy);
+
+    // Amp state cache: amplifierChanged(bool) and ampStateChanged() together
+    // carry the m_hasAmplifier / m_ampOperate snapshot. We can't connect them
+    // directly (different signatures) so use a lambda that reads current values
+    // via RadioModel::hasAmplifier() / ampOperate() and forwards to the slot.
+    //
+    // amplifierChanged fires once (present=true) when PGXL first appears.
+    // ampStateChanged fires on every OPERATE-family transition.
+    // Both paths flush the same onAmpStateChanged snapshot to MoxController.
+    connect(this, &RadioModel::amplifierChanged,
+            this, [this](bool /*present*/) {
+        m_moxController->onAmpStateChanged(m_hasAmplifier, m_ampOperate);
+    });
+    connect(this, &RadioModel::ampStateChanged,
+            this, [this]() {
+        m_moxController->onAmpStateChanged(m_hasAmplifier, m_ampOperate);
+    });
+
+    // SWR cache: forward the swr argument from ampMetersChanged.
+    connect(this, &RadioModel::ampMetersChanged,
+            this, [this](float /*fwd*/, float swr) {
+        m_moxController->onAmpSwrUpdated(swr);
+    });
+
     connect(m_pgxlConnection, &PgxlConnection::statusUpdated,
             this, &RadioModel::onPgxlStatus);
 

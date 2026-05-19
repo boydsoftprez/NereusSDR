@@ -153,6 +153,8 @@
 #include "core/PttMode.h"
 #include "core/WdspTypes.h"
 #include "core/safety/BandPlanGuard.h"
+// Phase 3P-II Task 87: TxInterlockPolicy gate in setMox(true).
+#include "core/TxInterlockPolicy.h"
 
 namespace NereusSDR {
 
@@ -688,6 +690,45 @@ public slots:
     void setRx2Enabled(bool enabled);
     void setVfobTx(bool enabled);
 
+    // ── Phase 3P-II Task 87: TxInterlockPolicy gate ───────────────────────────
+    //
+    // setInterlockPolicy: install (or clear) the TxInterlockPolicy that
+    // setMox(true) consults immediately after the BandPlanGuard check
+    // (K.2) and before the Codex P2 safety effects.
+    //
+    // When a policy is installed and setMox(true) is called:
+    //   policy->evaluateTxRequest(m_ampPresent, m_ampInOperate, m_lastSwr)
+    // returns false (Block mode) => emit moxRejected(reason) + return.
+    // returns true (Disabled/Warn) => TX proceeds; Warn causes the UI toast
+    // wired in Task 97 to display; this task only emits the signal.
+    //
+    // Amp state and SWR are cached via the two slots below and updated
+    // by RadioModel signal connections established after this call.
+    //
+    // Pass nullptr to remove the policy (reverts to pre-policy behavior).
+    // Called once from RadioModel ctor after both m_moxController and
+    // m_txInterlockPolicy are constructed.
+    void setInterlockPolicy(TxInterlockPolicy* policy);
+
+    // onAmpStateChanged: update the cached amplifier presence and operate
+    // flags used by the interlock gate.
+    //
+    // RadioModel wires this from its amplifierChanged / ampStateChanged
+    // lambda so MoxController always has an up-to-date snapshot without
+    // holding a RadioModel pointer.
+    //
+    // Thread safety: must be called from the main thread (same as setMox).
+    void onAmpStateChanged(bool hasAmp, bool inOperate);
+
+    // onAmpSwrUpdated: cache the most-recent SWR ratio from the PGXL
+    // meter stream.
+    //
+    // RadioModel wires this from ampMetersChanged(float fwd, float swr).
+    // Only the swr argument is forwarded here.
+    //
+    // Thread safety: must be called from the main thread (same as setMox).
+    void onAmpSwrUpdated(float swr);
+
     // setMox: Codex P2-ordered slot.
     //
     // Order (must not be reordered):
@@ -996,6 +1037,24 @@ private:
     // setMox(true) consults this BEFORE Codex P2 safety effects. If the check
     // returns !ok, moxRejected is emitted and setMox returns early.
     MoxCheckFn m_moxCheck;
+
+    // ── Phase 3P-II Task 87: TxInterlockPolicy gate ───────────────────────────
+    // Non-owning pointer. Null by default; set by RadioModel after both
+    // m_moxController and m_txInterlockPolicy are constructed.
+    // setMox(true) consults this AFTER the BandPlanGuard (K.2) check and
+    // BEFORE the Codex P2 safety effects.
+    TxInterlockPolicy* m_interlockPolicy{nullptr};
+
+    // Cached amplifier state snapshot (updated by onAmpStateChanged).
+    // Default false/false: no amp present, not in OPERATE.
+    bool  m_ampPresent{false};
+    bool  m_ampInOperate{false};
+
+    // Cached SWR from PGXL meter stream (updated by onAmpSwrUpdated).
+    // Default 0.0f: no SWR reading yet.  0.0f is below any non-trivial
+    // swrGateMax so the gate does not falsely trip before the first meter
+    // packet arrives.
+    float m_lastSwr{0.0f};
 
     // ── Fields ───────────────────────────────────────────────────────────────
 
