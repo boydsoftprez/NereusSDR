@@ -2116,6 +2116,13 @@ void MainWindow::populateDefaultMeter()
         });
     }
 
+    // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
+    // Fires a 5-second status-bar toast when peak forward power exceeds the
+    // cap configured in Setup -> Peripherals -> PGXL Advanced -> Hardware.
+    // De-bounced: one toast per exceedance event (re-arms below cap).
+    connect(m_radioModel, &RadioModel::ampMetersChanged,
+            this, &MainWindow::onAmpMetersForPowerCap);
+
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
     panel->addApplet(m_rxApplet);
@@ -4175,6 +4182,52 @@ void MainWindow::openSetup(const QString& pageKey)
     }
     dialog->show();
     dialog->raise();
+}
+
+// Phase 3P-II Phase 4 Task 97: PGXL power cap soft-alert toast.
+//
+// Fires a 5-second QStatusBar toast when peak forward power exceeds the
+// operator-configured PGXL cap.  De-bounced: one toast per exceedance event
+// (re-armed when fwd drops back below the cap threshold so a subsequent
+// exceedance fires a fresh toast).
+//
+// Design reference:
+//   docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md
+//   Task 97 / design ss5.6.2 "TX power cap: soft alert only".
+//
+// Keys:
+//   PGXL_PowerCapEnabled  -- "True"/"False", default "False"
+//   PGXL_PowerCapW        -- int watts, default 1500
+//
+// Connected to RadioModel::ampMetersChanged in buildUI() near Task 43.
+void MainWindow::onAmpMetersForPowerCap(float fwd, float /*swr*/)
+{
+    const bool enabled = AppSettings::instance()
+        .value(QStringLiteral("PGXL_PowerCapEnabled"), QStringLiteral("False"))
+        .toString() == QStringLiteral("True");
+    if (!enabled) {
+        m_powerCapToastShown = false;   // keep re-arm state sane if feature toggled
+        return;
+    }
+
+    const float capW = AppSettings::instance()
+        .value(QStringLiteral("PGXL_PowerCapW"), 1500).toFloat();
+
+    if (fwd <= capW) {
+        m_powerCapToastShown = false;   // re-arm: fwd is back below cap
+        return;
+    }
+
+    if (m_powerCapToastShown) { return; }   // de-bounce: already toasted this exceedance
+    m_powerCapToastShown = true;
+
+    const QString msg = QStringLiteral("PGXL power %1 W exceeds cap %2 W")
+        .arg(static_cast<int>(fwd))
+        .arg(static_cast<int>(capW));
+    if (QStatusBar* sb = statusBar()) {
+        sb->showMessage(msg, 5000);
+    }
+    qCWarning(lcMeter) << msg;
 }
 
 // ── Task 3.6: CPU meter rate ─────────────────────────────────────────────────
