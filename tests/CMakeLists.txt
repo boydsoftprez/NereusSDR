@@ -4958,3 +4958,13 @@ nereus_add_test(tst_smeter_widget_context_menu)
 # seam; flexradioPair success (R|0|...) emits pairingResult(true);
 # flexradioPair failure (R|nonzero|...) emits pairingResult(false).
 nereus_add_test(tst_pgxl_connection_pairing)
+
+# Task 58: keepalive timer + enableKeepalive frame format.
+# Tests: enableKeepaliveSendsKeepaliveEnable (frame contains "keepalive enable");
+# keepaliveTimerStartsAfterEnable (testKeepaliveTimerActive() seam returns true).
+nereus_add_test(tst_pgxl_connection_keepalive)
+
+# Task 58: ping RTT measurement + timeout eviction.
+# Tests: pingEmitsPongReceivedOnReply (R-frame -> pongReceived with rttMs < 100 ms);
+# pingTimesOutViaFlushSeam (testFlushPingTimeouts() -> pingTimedOut signal).
+nereus_add_test(tst_pgxl_connection_ping)
