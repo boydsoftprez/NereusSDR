@@ -8839,16 +8839,25 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
         // sustained fault condition.
         if (st.startsWith(QStringLiteral("FAULT"))
                 && !m_lastPgxlState.startsWith(QStringLiteral("FAULT"))) {
-            const float fwd  = kvs.value(QStringLiteral("fwd")).toFloat();
-            const float swr  = kvs.value(QStringLiteral("swr")).toFloat();
-            const float temp = kvs.value(QStringLiteral("temp")).toFloat();
+            // Phase 3P-II review fix C3: convert PGXL wire values to the
+            // units expected by FaultEvent (watts / ratio) and
+            // FaultLog::likelyCauseFor.  The 'fwd' key is dBm (same wire
+            // encoding as 'peakfwd' in the meter path below) and 'swr' is
+            // return loss in dB (negative from PGXL).  Mirror the exact
+            // conversion from the meter path (lines 8865-8867).
+            const float fwdDbm = kvs.value(QStringLiteral("fwd")).toFloat();
+            const float rlDb   = kvs.value(QStringLiteral("swr")).toFloat();
+            const float temp   = kvs.value(QStringLiteral("temp")).toFloat();
+            const float fwdW   = std::pow(10.0f, fwdDbm / 10.0f) / 1000.0f;
+            float swrRatio     = std::pow(10.0f, -rlDb / 20.0f);
+            if (swrRatio < 1.0f) { swrRatio = 1.0f; }  // clamp measurement noise
             FaultEvent ev{
                 QDateTime::currentMSecsSinceEpoch(),
                 st,
-                fwd,
-                swr,
+                fwdW,
+                swrRatio,
                 temp,
-                FaultLog::likelyCauseFor(fwd, swr, temp)
+                FaultLog::likelyCauseFor(fwdW, swrRatio, temp)
             };
             m_pgxlFaultLog->capture(ev);
         }
