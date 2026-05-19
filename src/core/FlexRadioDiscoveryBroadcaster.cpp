@@ -2,14 +2,14 @@
 // src/core/FlexRadioDiscoveryBroadcaster.cpp  (NereusSDR)
 // =================================================================
 //
-// NereusSDR-original — no Thetis or AetherSDR upstream.
+// NereusSDR-original: no Thetis or AetherSDR upstream.
 // Wire format reverse-engineered from FLEX-8600 v4.2.18.41174 discovery
 // beacon captured 2026-05-19
 // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-05-19 — Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//   2026-05-19 - Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 // =================================================================
@@ -242,7 +242,7 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     payload += QLatin1Char(' ');
     payload += QStringLiteral("turf_region=USA");
 
-    // Convert payload to UTF-8 bytes (ASCII only — no special chars expected).
+    // Convert payload to UTF-8 bytes (ASCII only; no special chars expected).
     QByteArray payloadBytes = payload.toUtf8();
 
     // Pad the total packet length (header + payload) to a multiple of 4 bytes

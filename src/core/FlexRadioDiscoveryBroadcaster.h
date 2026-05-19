@@ -2,14 +2,14 @@
 // src/core/FlexRadioDiscoveryBroadcaster.h  (NereusSDR)
 // =================================================================
 //
-// NereusSDR-original — no Thetis or AetherSDR upstream.
+// NereusSDR-original: no Thetis or AetherSDR upstream.
 // Wire format reverse-engineered from FLEX-8600 v4.2.18.41174 discovery
 // beacon captured 2026-05-19
 // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-05-19 — Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
+//   2026-05-19 - Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
 // =================================================================
