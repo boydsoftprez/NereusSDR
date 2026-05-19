@@ -211,6 +211,12 @@ private slots:
     // Guards: PGXL_PowerCapEnabled == "True" and fwd > PGXL_PowerCapW.
     void onAmpMetersForPowerCap(float fwd, float swr);
 
+    // Phase 3P-II review fix C2: show TX interlock warning/denial on the
+    // status bar so bench rows 28/29/31 are visible to the operator.
+    // Connected to TxInterlockPolicy::warned / denied in buildUI().
+    void onTxInterlockWarning(const QString& reason);
+    void onTxInterlockDenial(const QString& reason);
+
 private:
     void buildUI();
     void buildMenuBar();

@@ -2123,6 +2123,16 @@ void MainWindow::populateDefaultMeter()
     connect(m_radioModel, &RadioModel::ampMetersChanged,
             this, &MainWindow::onAmpMetersForPowerCap);
 
+    // Phase 3P-II review fix C2: surface TX interlock decisions to the
+    // operator via 5-second status-bar toasts.  Without these connections
+    // Block mode silently gates TX with no operator feedback.
+    if (TxInterlockPolicy* policy = m_radioModel->txInterlockPolicy()) {
+        connect(policy, &TxInterlockPolicy::warned,
+                this, &MainWindow::onTxInterlockWarning);
+        connect(policy, &TxInterlockPolicy::denied,
+                this, &MainWindow::onTxInterlockDenial);
+    }
+
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
     panel->addApplet(m_rxApplet);
@@ -4224,6 +4234,29 @@ void MainWindow::onAmpMetersForPowerCap(float fwd, float /*swr*/)
     const QString msg = QStringLiteral("PGXL power %1 W exceeds cap %2 W")
         .arg(static_cast<int>(fwd))
         .arg(static_cast<int>(capW));
+    if (QStatusBar* sb = statusBar()) {
+        sb->showMessage(msg, 5000);
+    }
+    qCWarning(lcMeter) << msg;
+}
+
+// ── Phase 3P-II review fix C2: TX interlock warning/denial toasts ────────────
+// Both slots display a 5-second status-bar message so the operator knows why
+// TX was warned or blocked.  The distinction: warning allows TX to proceed;
+// denial means MOX was rejected.  Pattern mirrors onAmpMetersForPowerCap above
+// (QStatusBar::showMessage + qCWarning(lcMeter)).
+void MainWindow::onTxInterlockWarning(const QString& reason)
+{
+    const QString msg = QString("TX interlock warning: %1").arg(reason);
+    if (QStatusBar* sb = statusBar()) {
+        sb->showMessage(msg, 5000);
+    }
+    qCWarning(lcMeter) << msg;
+}
+
+void MainWindow::onTxInterlockDenial(const QString& reason)
+{
+    const QString msg = QString("TX interlock blocked: %1").arg(reason);
     if (QStatusBar* sb = statusBar()) {
         sb->showMessage(msg, 5000);
     }
