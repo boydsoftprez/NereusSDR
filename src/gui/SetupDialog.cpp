@@ -505,7 +505,15 @@ void SetupDialog::buildTree()
     // can be applied in a later polish pass. Key "tgxlAdvanced" used by
     // openSetup() navigation requests from TunerApplet context menu (Task 95).
     // addWrapped() used because TgxlAdvancedPage is a plain QWidget.
-    addWrapped(cat, "TGXL Advanced", new TgxlAdvancedPage(m_model));
+    // Phase 3P-II Phase 4 Task 95: keep a local pointer so we can forward
+    // antennaLabelChanged to this dialog's tgxlAntennaLabelChanged signal,
+    // which wireSetupDialog then connects to TunerApplet::onAntennaLabelChanged.
+    {
+        auto* tgxlPage = new TgxlAdvancedPage(m_model);
+        addWrapped(cat, "TGXL Advanced", tgxlPage);
+        connect(tgxlPage, &TgxlAdvancedPage::antennaLabelChanged,
+                this, &SetupDialog::tgxlAntennaLabelChanged);
+    }
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);
 

@@ -775,20 +775,29 @@ void TgxlAdvancedPage::onRevert()
 
 void TgxlAdvancedPage::onAnt1LabelEdited()
 {
+    const QString label = m_ant1Label->text().trimmed();
     auto& s = AppSettings::instance();
-    s.setValue(QStringLiteral("TGXL_Ant1_Label"), m_ant1Label->text().trimmed());
+    s.setValue(QStringLiteral("TGXL_Ant1_Label"), label);
+    // Phase 3P-II Phase 4 Task 95: propagate to TunerApplet via SetupDialog forward.
+    emit antennaLabelChanged(1, label);
 }
 
 void TgxlAdvancedPage::onAnt2LabelEdited()
 {
+    const QString label = m_ant2Label->text().trimmed();
     auto& s = AppSettings::instance();
-    s.setValue(QStringLiteral("TGXL_Ant2_Label"), m_ant2Label->text().trimmed());
+    s.setValue(QStringLiteral("TGXL_Ant2_Label"), label);
+    // Phase 3P-II Phase 4 Task 95: propagate to TunerApplet via SetupDialog forward.
+    emit antennaLabelChanged(2, label);
 }
 
 void TgxlAdvancedPage::onAnt3LabelEdited()
 {
+    const QString label = m_ant3Label->text().trimmed();
     auto& s = AppSettings::instance();
-    s.setValue(QStringLiteral("TGXL_Ant3_Label"), m_ant3Label->text().trimmed());
+    s.setValue(QStringLiteral("TGXL_Ant3_Label"), label);
+    // Phase 3P-II Phase 4 Task 95: propagate to TunerApplet via SetupDialog forward.
+    emit antennaLabelChanged(3, label);
 }
 
 // ---------------------------------------------------------------------------

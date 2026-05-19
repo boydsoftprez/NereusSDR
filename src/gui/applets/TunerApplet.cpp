@@ -30,6 +30,7 @@
 // =================================================================
 
 #include "TunerApplet.h"
+#include "core/AppSettings.h"
 #include "gui/HGauge.h"
 #include "gui/RelayBar.h"
 #include "models/TunerModel.h"
@@ -208,6 +209,43 @@ void TunerApplet::buildUI()
 
     vbox->addStretch();
     root->addWidget(body);
+
+    // Phase 3P-II Phase 4 Task 95: apply persisted antenna labels from AppSettings.
+    refreshAntennaLabels();
+}
+
+// Phase 3P-II Phase 4 Task 95: read TGXL_Ant{1,2,3}_Label from AppSettings
+// and apply to the three antenna QPushButtons.  Default to "ANT N" when empty.
+void TunerApplet::refreshAntennaLabels()
+{
+    const auto& s = AppSettings::instance();
+    struct { QPushButton* btn; const char* key; const char* def; } rows[] = {
+        { m_ant1Btn, "TGXL_Ant1_Label", "ANT 1" },
+        { m_ant2Btn, "TGXL_Ant2_Label", "ANT 2" },
+        { m_ant3Btn, "TGXL_Ant3_Label", "ANT 3" },
+    };
+    for (auto& row : rows) {
+        if (!row.btn) { continue; }
+        const QString val = s.value(QString::fromLatin1(row.key), QString{}).toString().trimmed();
+        row.btn->setText(val.isEmpty() ? QString::fromLatin1(row.def) : val);
+    }
+}
+
+// Phase 3P-II Phase 4 Task 95: live-update a single antenna button label.
+// index is 1..3; label is the new text (empty string resets to "ANT N").
+void TunerApplet::onAntennaLabelChanged(int index, const QString& label)
+{
+    QPushButton* btn = nullptr;
+    QString def;
+    switch (index) {
+    case 1: btn = m_ant1Btn; def = QStringLiteral("ANT 1"); break;
+    case 2: btn = m_ant2Btn; def = QStringLiteral("ANT 2"); break;
+    case 3: btn = m_ant3Btn; def = QStringLiteral("ANT 3"); break;
+    default: return;
+    }
+    if (btn) {
+        btn->setText(label.trimmed().isEmpty() ? def : label.trimmed());
+    }
 }
 
 void TunerApplet::setTunerModel(TunerModel* model)

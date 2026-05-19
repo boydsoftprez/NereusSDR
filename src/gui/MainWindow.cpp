@@ -4236,6 +4236,13 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
         connect(dialog, &SetupDialog::cfcDialogRequested,
                 m_txApplet, &TxApplet::requestOpenCfcDialog);
     }
+    // Phase 3P-II Phase 4 Task 95: propagate TGXL antenna label edits from
+    // Setup -> Network -> TGXL Advanced -> Antenna Labels to the TunerApplet
+    // antenna buttons so they update live without restarting.
+    if (m_tunerApplet) {
+        connect(dialog, &SetupDialog::tgxlAntennaLabelChanged,
+                m_tunerApplet, &TunerApplet::onAntennaLabelChanged);
+    }
     // Task 3.6: CPU meter rate live-apply.
     connect(dialog, &SetupDialog::cpuMeterRateChanged,
             this,   &MainWindow::setCpuTimerIntervalHz);

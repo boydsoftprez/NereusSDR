@@ -59,6 +59,13 @@ public:
     explicit TgxlAdvancedPage(RadioModel* model, QWidget* parent = nullptr);
     ~TgxlAdvancedPage() override;
 
+signals:
+    // Phase 3P-II Phase 4 Task 95: emitted when the operator edits an antenna
+    // label and presses Enter / moves focus.  index is 1..3; label is the new
+    // text (may be empty, meaning "reset to default ANT N").
+    // Forwarded by SetupDialog::tgxlAntennaLabelChanged to TunerApplet.
+    void antennaLabelChanged(int index, const QString& label);
+
 private slots:
     void onTgxlConnected();
     void onTgxlDisconnected();

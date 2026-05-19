@@ -78,6 +78,11 @@ signals:
     // MainWindow::setVoltsAmpsVisible() is the handler.
     void anan8000DleVoltsAmpsChanged(bool visible);
 
+    // Phase 3P-II Phase 4 Task 95: forwarded from TgxlAdvancedPage::antennaLabelChanged.
+    // MainWindow::wireSetupDialog connects this to TunerApplet::onAntennaLabelChanged.
+    // index is 1..3; label is the new text (empty resets to "ANT N" default).
+    void tgxlAntennaLabelChanged(int index, const QString& label);
+
 protected:
     void showEvent(QShowEvent* event) override;
 

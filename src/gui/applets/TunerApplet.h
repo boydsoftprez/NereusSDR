@@ -132,6 +132,11 @@ public slots:
     // From AetherSDR src/gui/TunerApplet.h:updateMeters [@0cd4559]
     void updateMeters(float fwdPower, float swr);
 
+    // Phase 3P-II Phase 4 Task 95: live-update a single antenna button label.
+    // index is 1..3 (matches AppSettings key suffix TGXL_Ant1_Label etc.).
+    // Called from SetupDialog::tgxlAntennaLabelChanged (wired in wireSetupDialog).
+    void onAntennaLabelChanged(int index, const QString& label);
+
 protected:
     // Phase 3P-II Phase 4 Task 89: right-click context menu.
     void contextMenuEvent(QContextMenuEvent* ev) override;
@@ -147,6 +152,13 @@ private slots:
 
 private:
     void buildUI();
+
+    // Phase 3P-II Phase 4 Task 95: reads TGXL_Ant{1,2,3}_Label from AppSettings
+    // and applies text to the three antenna QPushButtons.
+    // Defaults to "ANT 1" / "ANT 2" / "ANT 3" when a key is empty.
+    // Called once at construction (after buildUI) and on-demand via
+    // onAntennaLabelChanged.
+    void refreshAntennaLabels();
 
     // Phase 3P-II Phase 4 Task 89: builds the context menu.
     QMenu* buildContextMenu(QObject* menuParent);
