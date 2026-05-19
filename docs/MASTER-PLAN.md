@@ -177,7 +177,8 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 **RxApplet Tier 1 wired:** mode, AGC, AF gain, and filter presets fully wired to SliceModel
 
 ### Up Next (after v0.5.1)
-- **Phase 3M-2 — CW TX** (next major epic). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
+- **Phase 3P-II - External RF accessories (PGXL + TGXL) + analog S-Meter port (with Thetis Max Bin / Sig Avg)** (new next-up, slotted before 3M-2 per `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` §13). AetherSDR 1:1 baseline (PgxlConnection, TgxlConnection, TunerModel, AmpApplet, TunerApplet rewire, RelayBar, LanDiscovery, SMeterWidget) plus NereusSDR-native FlexRadio API extensions (amplifier create, flexradio pairing with graceful fallback, keepalive, ping, auto-reconnect, setup read/write, ifconf, save, interlock). Two Thetis RX modes on the analog needle: Sig Avg via `GetRXAMeter(RXA_S_AV)` (`console.cs:957 [@501e3f5]`) and Max Bin via `SetupDetectMaxBin` / `GetDetectMaxBin` (`wdsp/analyzer.c:688..830 [@501e3f5]`). S-Meter settings move from inline strip to right-click context menu. New Setup pages: Setup -> Network -> Peripherals (Scan LAN), PGXL Advanced, TGXL Advanced (parallel), Setup -> Transmit -> PGXL Interlock. Right-click AmpApplet / TunerApplet opens its Advanced page. Fault history + tune memory + connection diagnostics + optional TX interlock. ~3000 LOC of production code plus 14 new unit tests + 36 bench-matrix rows, single PR. Detail in §"Phase 3P-II".
+- **Phase 3M-2 - CW TX** (after 3P-II). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
 - **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
 - **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
 - **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
@@ -696,7 +697,39 @@ Thetis source: `console.cs:29311-29650`, `cmaster.cs:491-540`, `network.c:1250-1
 
 Verification: Key MOX, see RF output on ANAN-G2, hear SSB on another receiver.
 
-### Phase 3M-2: CW TX  **[Next major TX epic — after 3M-3a-iii ships]**
+### Phase 3P-II: External RF accessories (PGXL + TGXL) + analog S-Meter port  **[Next major epic, slotted before 3M-2]**
+**Status:** Designed + planned, ready for subagent-driven execution. Spec at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` (1688 lines); plan at `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md` (3112 lines, 4 phases, ~100 tasks, 289 actionable checkboxes).
+
+**Why this slot.** v0.5.0 shipped 3J-2 + 3R; the 3M-3 TX-processing tail is closed; HL2 ATT/filter audit is closed. The remaining big-ticket TX work (3M-2 CW TX) wants HL2 bench time, so pulling PGXL/TGXL forward gets the amplifier story shipped against an ANAN-G2 in parallel without blocking 3M-2.
+
+**Goal:** Wire NereusSDR to FlexRadio / 4O3A PGXL amplifier and TGXL tuner over Ethernet with PGXL-aware analog S-Meter, full FlexRadio API command surface, and operator-facing device-config UI.
+
+**Two upstreams:**
+- **AetherSDR** (GPLv3) is the 1:1 baseline for PgxlConnection / TgxlConnection / TunerModel / AmpApplet / TunerApplet rewire / RelayBar / SMeterWidget. Verified against the AetherSDR HEAD at the time of port (sha captured in `.aether-sha` scratch file per plan Task 1).
+- **Thetis** (`v2.10.3.13-7-g501e3f51`, cite `[@501e3f5]`) for the two new SMeterWidget RX modes (Sig Avg + Max Bin) and the WDSP `SetupDetectMaxBin` / `GetDetectMaxBin` + `GetRXAMeter(RXA_S_AV)` calls.
+- **FlexRadio's published PowerGenius Ethernet API wiki** is the documentation-of-truth (not an attribution source) for the Tier 2-4 command verbs AetherSDR doesn't call: `amplifier create`, `flexradio ampslice=...`, `keepalive enable`, `ping`, `interlock create / disable`, `setup read` + write, `ifconf read` + write, `save`. These additions exist because NereusSDR is the exciter in this topology, not a peer client like AetherSDR.
+
+**Scope (per spec, four phases):**
+1. **PGXL/TGXL baseline** (~1200 LOC). Port the AetherSDR command set + UI. Setup -> Network -> Peripherals page with manual IP + Scan LAN (UDP listener on 9008 / 9010 with the official FlexRadio regex). MainWindow auto-connect, bottom-status TGXL chip.
+2. **Analog S-Meter port** (~900 LOC). SMeterWidget replaces the composite header. Settings move to a right-click context menu (TX Mode / RX Mode / Peak Hold submenus). RX modes: Signal / Sig Avg / Signal Peak / Max Bin (last two ported from Thetis). PGXL-aware power scale snaps to 2 kW with a red 1.5 kW threshold when the amp is in OPERATE; falls back to barefoot 120 W / Aurora 600 W otherwise. Standby-aware feed switch routes from PGXL `peakfwd` when paired + operating, exciter `FWDPWR` otherwise.
+3. **Connection robustness** (~600 LOC). `amplifier create` on connect; attempt `flexradio` pairing with graceful fallback (PGXL may reject an ANAN serial format - the spec is honest about that risk). `keepalive enable` + `ping` watchdog; auto-reconnect with 1 / 2 / 5 / 10 / 30 / 60 s backoff. Band notify on SliceModel `bandChanged`. ConnectionDiagnostics (uptime / RTT / frame counts) bound to the Advanced page.
+4. **Advanced UI + UX wins** (~700 LOC). Setup -> Network -> PGXL Advanced (6 sections: Identity, Hardware, Network, Pairing, Diagnostics, Fault history) + Setup -> Network -> TGXL Advanced (5 sections, parallel structure, plus antenna labels and tune-memory management). Setup -> Transmit -> PGXL Interlock policy (Disabled / Warn / Block + grace period + optional SWR gate). Save & Reboot modal with reconnect-after-reboot recovery. Right-click context menus on AmpApplet (-> PGXL Advanced) and TunerApplet (-> TGXL Advanced + memory shortcuts). FaultLog (ring buffer of 10, JSON-persisted, `likelyCause` heuristic). TuneMemoryStore (per-band per-antenna relay cache).
+
+**NereusSDR-native UX divergences from AetherSDR** (intentional, called out in the spec):
+- S-Meter settings live behind a right-click context menu, not an always-visible inline strip.
+- Right-click on either accessory applet opens the corresponding Advanced page.
+- Two extra RX meter modes (Sig Avg, Max Bin) from Thetis.
+- Per-antenna user-defined labels on TGXL ANT 1/2/3 buttons.
+- Frequency-keyed tune memory store (TGXL has internal memory but AetherSDR doesn't surface it; NereusSDR manages this client-side).
+- Optional TX interlock policy (Disabled default, opt-in).
+
+**Out of scope:** OpenHPSDR-native amp/tuner abstraction (future epic); per-MAC scoping of PGXL/TGXL settings; PGXL chip in bottom status bar (AetherSDR has none); Antenna Genius integration; SO2R 3WAY variant; CAT-serial pairing path (`catradio` command, requires 3K rigctld); PGXL `message` verb (debug-only).
+
+**Verification:** 14 unit tests (parsing, applyStatus, scale, peak hold, context menu, MaxBin smoothing, pairing accept/reject, keepalive miss, reconnect schedule, ping RTT, diagnostics aggregation, fault log ring buffer, tune memory recall, interlock modes). 36-row bench matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (created with the implementation PR), covering ANAN-G2 happy-path rows + HL2 rows gated on the existing ATT/filter audit precedent.
+
+**Estimated tenure:** ~3000 LOC of production code + ~30 new unit tests + ~20 new bench-matrix rows. Single PR per operator direction; expect the branch to live 2-3 weeks before merge.
+
+### Phase 3M-2: CW TX  **[After Phase 3P-II]**
 **Status:** Originally scheduled before 3M-3.  Schedule swapped 2026-04-29
 because (a) 3M-3 didn't need the HL2 hardware bench (DSP stages are
 introspectable on ANAN-G2), letting the HL2 ATT/filter safety audit run in
