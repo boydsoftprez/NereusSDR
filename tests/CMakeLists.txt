@@ -4900,6 +4900,12 @@ nereus_add_test(tst_pgxl_connection_parse)
 # [@0cd4559]. V/R/S frame parsing with state/status object discrimination.
 nereus_add_test(tst_tgxl_connection_parse)
 
+# Pins the UDP parser for LanDiscovery (4O3A PowerGeniusXL / TeragenXL
+# announcements on ports 9008 / 9010). NereusSDR-native FlexRadio regex
+# parsing. Tests: valid-announcement capture, malformed-line rejection,
+# deduplication by serial.
+nereus_add_test(tst_lan_discovery_regex)
+
 # ── Phase 3P-II TGXL tuner model ─────────────────────────────────────────
 # Pins the applyStatus contract for TunerModel (4O3A Tuner Genius XL state
 # model). Ported from AetherSDR src/models/TunerModel.{h,cpp} [@0cd4559].
