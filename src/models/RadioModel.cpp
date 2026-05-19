@@ -325,6 +325,10 @@ warren@wpratt.com
 // and started on radio connect so PGXL/TGXL auto-discover NereusSDR.
 #include "core/FlexRadioDiscoveryBroadcaster.h"
 
+// Passive SmartSDR API listener on TCP 4992. Bench-recon stub: logs every
+// line PGXL sends so we can design the response layer in a follow-up.
+#include "core/SmartSdrApiListener.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -954,6 +958,16 @@ RadioModel::RadioModel(QObject* parent)
     // Wire format reverse-engineered from a FLEX-8600 beacon captured 2026-05-19
     // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
     m_flexBroadcaster = new FlexRadioDiscoveryBroadcaster(this);
+
+    // Passive SmartSDR API listener on TCP 4992.
+    // Bench-recon stub: accepts PGXL TCP connections and logs every query line
+    // so we can design the response layer in a follow-up dispatch. Sends nothing.
+    m_smartSdrListener = new SmartSdrApiListener(this);
+    if (m_smartSdrListener->start()) {
+        qCInfo(lcConnection) << "SmartSDR API listener started on TCP 4992";
+    } else {
+        qCWarning(lcConnection) << "SmartSDR API listener failed to bind TCP 4992";
+    }
 
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
     //

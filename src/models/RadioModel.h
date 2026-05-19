@@ -2190,6 +2190,11 @@ private:
     // Allows PGXL/TGXL to auto-discover NereusSDR in their FlexRadio dropdown
     // without any manual IP entry.
     class FlexRadioDiscoveryBroadcaster* m_flexBroadcaster{nullptr};
+
+    // Passive SmartSDR API listener on TCP 4992. Bench-recon stub: logs every
+    // line PGXL sends so we can design the response layer in a follow-up.
+    // Phase 3P-II follow-up: replace with a full SmartSDR API server.
+    class SmartSdrApiListener* m_smartSdrListener{nullptr};
 };
 
 } // namespace NereusSDR
