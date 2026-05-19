@@ -4392,6 +4392,37 @@ void MainWindow::wireSliceToSpectrum()
         vfo->setFilter(low, high);
     });
 
+    // Task 42 (Phase 3P-II): reconfigure the Max Bin detector whenever the
+    // IF passband changes so the passband-strongest-bin reading follows the
+    // active filter window.
+    //
+    // 100 ms QTimer::singleShot debounce: rapid filter edge drags (e.g.
+    // VFO flag drag) would otherwise call SetupDetectMaxBin on every
+    // intermediate sample, which re-initialises the WDSP analyzer DSP
+    // block at display-interrupt rate and wastes CPU.
+    //
+    // WdspEngine::setupMaxBinDetector wraps Thetis Console/dsp.cs:846-847
+    // [@501e3f5] SetupDetectMaxBin; display channel = 0 (single panadapter).
+    // Sample rate: m_fftEngine->sampleRate() at call time, which reflects
+    // the currently active DDC bandwidth.
+    // Frame rate: m_fftEngine->outputFps() * 1.1 matches Thetis
+    //   console.cs:51150 [@501e3f5]: (int)Math.Max(1, _display_fps * 1.1f).
+    connect(slice, &SliceModel::filterChanged, this, [this](int low, int high) {
+        QTimer::singleShot(100, this, [this, low, high]() {
+            if (!m_radioModel || !m_fftEngine) { return; }
+            WdspEngine* eng = m_radioModel->wdspEngine();
+            if (!eng) { return; }
+            const double rate = m_fftEngine->sampleRate();
+            const int fps = qMax(1, static_cast<int>(m_fftEngine->outputFps() * 1.1f));
+            eng->setupMaxBinDetector(/*disp=*/0, /*ss=*/0, /*LO=*/0,
+                                     rate,
+                                     static_cast<double>(low),
+                                     static_cast<double>(high),
+                                     /*tauSeconds=*/0.5,
+                                     fps);
+        });
+    });
+
     // Plan 4 D9 (Cluster E): initial TX mode push so the overlay has the right
     // IQ-space sign convention before the first paint.
     if (m_spectrumWidget) {
