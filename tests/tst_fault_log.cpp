@@ -13,7 +13,6 @@
 
 #include <QtTest/QtTest>
 #include "core/FaultLog.h"
-#include "core/AppSettings.h"
 
 class FaultLogTest : public QObject {
     Q_OBJECT

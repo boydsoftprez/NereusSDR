@@ -13,7 +13,6 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <algorithm>
 
 namespace NereusSDR {
 
