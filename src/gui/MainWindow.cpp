@@ -1442,6 +1442,18 @@ void MainWindow::buildUI()
         nfTracker->feed(binsDbm, kFrameIntervalMs);
     });
 
+    // Max Bin detector: feed FFTEngine dBm bins into WdspEngine's NereusSDR-native
+    // Max Bin pipeline.  See WdspEngine::setupMaxBinDetector for the algorithm
+    // cite and the divergence rationale (WDSP analyzer not wired; FFTEngine
+    // uses raw FFTW3 directly; NereusSDR runs the same Thetis algorithm against
+    // the dBm bins emitted here).
+    //
+    // Algorithm from Thetis wdsp/analyzer.c:800-822 [@501e3f5].
+    if (auto* eng = (m_radioModel ? m_radioModel->wdspEngine() : nullptr)) {
+        connect(m_fftEngine, &FFTEngine::fftReady,
+                eng,         &WdspEngine::onSpectrumBinsForMaxBin);
+    }
+
     // Fast-attack triggers — deferred until slice exists
     // From Thetis v2.10.3.13 display.cs:905 — freq change triggers fast attack
     // From Thetis v2.10.3.13 display.cs:880 — mode change triggers fast attack

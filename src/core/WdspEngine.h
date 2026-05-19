@@ -93,6 +93,7 @@ warren@wpratt.com
 
 #include <QObject>
 #include <QString>
+#include <QVector>
 
 #include <map>
 #include <memory>
@@ -413,9 +414,20 @@ public:
     // Returns -400.0 (WDSP's dmb_max_dB initial value) if the detector
     // has never processed a display frame.
     //
-    // From Thetis Console/dsp.cs:849-850 [@501e3f5] (P/Invoke)
-    // From Thetis wdsp/analyzer.c:830 [@501e3f5] (DSP body)
+    // Algorithm ported from Thetis wdsp/analyzer.c:830 [@501e3f5].
+    // NereusSDR-native: runs against FFTEngine dBm bins; see
+    // setupMaxBinDetector docstring for the full rationale.
     double getMaxBinDbm(int displayChannel) const;
+
+public slots:
+    // Fed by FFTEngine::fftReady.  binsDbm is FFT-shifted (negative freqs
+    // first, then positive).  Updates every active MaxBinDetector.
+    //
+    // Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]:
+    // scan for max in configured [firstBin, lastBin] window; apply
+    // slow-release smoothing (decay = exp(-1/(tau*fps))), fast peak attack.
+    // NereusSDR-native: binsDbm already in dBm so no magnitude-to-dB step.
+    void onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& binsDbm);
 
 signals:
     void initializedChanged(bool initialized);
@@ -450,6 +462,28 @@ private:
     // pipeline that WDSP constructs when OpenChannel(type=1) is called.
     // destroyTxChannel's erase() runs the unique_ptr destructor automatically.
     std::map<int, std::unique_ptr<TxChannel>> m_txChannels;
+
+    // NereusSDR-native strongest-bin-in-passband detector state.
+    //
+    // Algorithm from Thetis wdsp/analyzer.c:688-830 [@501e3f5]; implemented
+    // here because the WDSP analyzer pipeline (CreateAnalyzer + SetAnalyzer
+    // + Spectrum buffer feed) is not wired in NereusSDR -- FFTEngine uses raw
+    // FFTW3 directly.  The public API (setupMaxBinDetector / getMaxBinDbm)
+    // preserves the Thetis names; the implementation runs the same scan +
+    // slow-release smoothing on the dBm bins emitted by FFTEngine::fftReady
+    // via onSpectrumBinsForMaxBin.
+    struct MaxBinDetector {
+        bool   active{false};
+        double rate{192000.0};
+        double fLow{-3000.0};
+        double fHigh{-300.0};
+        double tau{0.5};
+        int    frameRate{60};
+        double decay{0.0};      // exp(-1.0 / (tau * frameRate))
+        double maxDb{-400.0};   // smoothed max in dBm (Thetis dmb_max_dB sentinel)
+    };
+    // Indexed by display channel (disp).  Grown on demand in setupMaxBinDetector.
+    QVector<MaxBinDetector> m_maxBinDetectors;
 
     // Per-TX-channel DEXP in/out buffer (Phase 3M-3a-iii Task 20).
     //

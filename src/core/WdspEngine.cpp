@@ -54,6 +54,8 @@ warren@wpratt.com
 
 #include "WdspEngine.h"
 #include "RxChannel.h"
+
+#include <cmath>
 #include "TxChannel.h"
 #include "PsFeedbackChannel.h"
 #include "RadeChannel.h"
@@ -1270,65 +1272,122 @@ double WdspEngine::getRxaSignalPeak(int channel) const
 
 // Configure the strongest-bin-in-passband detector for a display channel.
 //
-// Porting from Thetis Console/dsp.cs:846-847 [@501e3f5] -- original C# P/Invoke:
-//   void SetupDetectMaxBin(int run, int disp, int ss, int LO, double rate,
-//                          double fLow, double fHigh, double tau, int frame_rate)
+// Algorithm ported from Thetis wdsp/analyzer.c:688-830 [@501e3f5]:
+//   SetupDetectMaxBin / DetectMaxBin / GetDetectMaxBin -- bin-range scan,
+//   slow-release smoothing (decay = exp(-1/(tau*fps))), peak attack.
+//
+// Originally wrapped Thetis's C ::SetupDetectMaxBin which requires a WDSP
+// analyzer display channel (CreateAnalyzer + SetAnalyzer + Spectrum buffer
+// feed).  NereusSDR's FFTEngine uses raw FFTW3 directly and does not wire
+// the WDSP analyzer subsystem.  Wiring the analyzer pipeline is a
+// follow-up epic; for now the algorithm runs against FFTEngine's existing
+// dBm bins via onSpectrumBinsForMaxBin slot.  Operator-visible behavior
+// matches the Thetis spec; the underlying DSP plumbing diverges.
+//
+// 'ss' and 'LO' Thetis arguments are accepted for API compatibility but
+// unused in NereusSDR (Thetis multi-stream / multi-LO does not apply).
 //
 // Thetis call site at Console/console.cs:51150 [@501e3f5]:
 //   WDSP.SetupDetectMaxBin(enabled ? 1 : 0, disp, 0, 0, sample_rate,
 //                          low, high, 0.5, frame_rate);
-// where low/high are the active filter edges (Hz, relative to DDC center)
-// and frame_rate = (int)Math.Max(1, _display_fps * 1.1f).
-//
-// Default parameter values match the developer example in
-// wdsp/analyzer.c:1442 [@501e3f5]:
+// Default values match the developer example in wdsp/analyzer.c:1442 [@501e3f5]:
 //   // SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60);
-// This is the canonical illustrative call in the WDSP source (LSB
-// passband on a 192 kHz DDC, 0.5 s smoothing tau, 60 fps display).
-//
-// Guard: early-returns if the engine is not yet initialized because
-// SetupDetectMaxBin requires pdisp[disp] to be non-null (CreateAnalyzer
-// is called during WDSPwisdom; accessing pdisp[] before that segfaults).
 void WdspEngine::setupMaxBinDetector(int disp, int ss, int LO,
                                      double rate, double fLow, double fHigh,
                                      double tau, int frameRate)
 {
-    if (!m_initialized) {
-        return;
+    Q_UNUSED(ss); Q_UNUSED(LO);  // Thetis-API placeholders; not used in NereusSDR.
+
+    if (disp < 0) { return; }
+    if (m_maxBinDetectors.size() <= disp) {
+        m_maxBinDetectors.resize(disp + 1);
     }
-#ifdef HAVE_WDSP
-    // From Thetis Console/dsp.cs:846-847 [@501e3f5]
-    // From Thetis wdsp/analyzer.c:775 [@501e3f5]
-    ::SetupDetectMaxBin(/*run=*/1, disp, ss, LO, rate, fLow, fHigh, tau, frameRate);
-#else
-    Q_UNUSED(disp); Q_UNUSED(ss); Q_UNUSED(LO); Q_UNUSED(rate);
-    Q_UNUSED(fLow); Q_UNUSED(fHigh); Q_UNUSED(tau); Q_UNUSED(frameRate);
-#endif
+    auto& d = m_maxBinDetectors[disp];
+    d.active    = true;
+    d.rate      = rate;
+    d.fLow      = fLow;
+    d.fHigh     = fHigh;
+    d.tau       = tau;
+    d.frameRate = qMax(1, frameRate);
+    d.decay     = std::exp(-1.0 / (d.tau * static_cast<double>(d.frameRate)));
+    // From Thetis wdsp/analyzer.c:703 [@501e3f5] Init_DetectMaxBin sentinel.
+    d.maxDb     = -400.0;
 }
 
 // Returns the strongest-bin dBm value from the configured detector.
 //
-// Porting from Thetis Console/dsp.cs:849-850 [@501e3f5] -- original C# P/Invoke:
-//   double GetDetectMaxBin(int disp)
-// DSP body: Thetis wdsp/analyzer.c:830 [@501e3f5] -- returns dmb_max_dB
-// under EnterCriticalSection/LeaveCriticalSection.
+// Algorithm ported from Thetis wdsp/analyzer.c:830 [@501e3f5] -- returns
+// dmb_max_dB (the slow-release smoothed max).
+// NereusSDR-native: state lives in m_maxBinDetectors[disp] rather than
+// the WDSP pdisp[] array; see setupMaxBinDetector for the full rationale.
 //
-// Returns -400.0 when no display frame has been processed yet
-// (wdsp/analyzer.c:703 initializes dmb_max_dB = -400.0 in Init_DetectMaxBin),
-// or when the engine is not yet initialized (pdisp[] uninitialized guard).
+// Returns -400.0 sentinel when disp is out of range, the detector is not
+// yet active, or no display frame has been processed yet.  Matches the
+// Thetis Init_DetectMaxBin sentinel at wdsp/analyzer.c:703 [@501e3f5].
 double WdspEngine::getMaxBinDbm(int disp) const
 {
-    if (!m_initialized) {
-        return -400.0;
+    if (disp < 0 || disp >= m_maxBinDetectors.size()) { return -400.0; }
+    const auto& d = m_maxBinDetectors[disp];
+    if (!d.active) { return -400.0; }
+    return d.maxDb;
+}
+
+// Slot: receive FFTEngine dBm bins and run the Max Bin scan + smoothing.
+//
+// Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]
+// (DetectMaxBin inner loop + smoothing step):
+//
+//   for (i = begin; i <= end; i++) {
+//       mag = fft_out[i][0]^2 + fft_out[i][1]^2;
+//       if (mag > dmb_max) dmb_max = mag;
+//   }
+//   a->dmb_max_dB -= fabs((1.0 - a->dmb_decay) * a->dmb_max_dB);
+//   dmb_max_dB = 10.0 * mlog10(a->scale * dmb_max);
+//   if (dmb_max_dB > a->dmb_max_dB) a->dmb_max_dB = dmb_max_dB;
+//
+// NereusSDR adaptations (not guessing -- explicit divergences):
+//   1. binsDbm is already in dBm (FFTEngine applied 10*log10(scale*mag)),
+//      so the magnitude scan and 10*log10 step are replaced by a direct
+//      max-dBm scan over the window.
+//   2. FFTEngine emits FFT-shifted bins (neg freqs first, then positive),
+//      so Thetis's two-window split (begin0/end0 + begin1/end1 for
+//      wdsp/analyzer.c:723-756 calc_dmb) collapses to a single contiguous
+//      range: firstBin = N/2 + round(fLow / binSpacing).
+//   3. Multi-panadapter (Phase 3F) will need a receiverId->disp mapping;
+//      for now all data targets disp=0 (single-panadapter assumption).
+void WdspEngine::onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& binsDbm)
+{
+    Q_UNUSED(receiverId);  // single-panadapter: disp=0 for all receivers.
+    const int N = binsDbm.size();
+    if (N <= 0 || m_maxBinDetectors.isEmpty()) { return; }
+
+    // Single-panadapter assumption (Phase 3F will add receiverId->disp mapping).
+    auto& d = m_maxBinDetectors[0];
+    if (!d.active) { return; }
+
+    // Bin range computation.
+    // From Thetis wdsp/analyzer.c:688-756 [@501e3f5] calc_dmb:
+    //   bin_spacing = rate / size
+    // FFT-shifted layout: bins[N/2 + k] = frequency k * binSpacing,
+    // so the single-window collapsed form is:
+    //   firstBin = clamp(N/2 + round(fLow  / binSpacing), 0, N-1)
+    //   lastBin  = clamp(N/2 + round(fHigh / binSpacing), 0, N-1)
+    const double binSpacing = d.rate / static_cast<double>(N);
+    const int half     = N / 2;
+    const int firstBin = qBound(0, half + static_cast<int>(std::round(d.fLow  / binSpacing)), N - 1);
+    const int lastBin  = qBound(0, half + static_cast<int>(std::round(d.fHigh / binSpacing)), N - 1);
+    if (lastBin < firstBin) { return; }  // degenerate window
+
+    // Scan: find max dBm in the window.
+    // binsDbm already in dBm -- skip the magnitude->dB step from analyzer.c:807.
+    float newMaxDb = -400.0f;
+    for (int i = firstBin; i <= lastBin; ++i) {
+        if (binsDbm[i] > newMaxDb) { newMaxDb = binsDbm[i]; }
     }
-#ifdef HAVE_WDSP
-    // From Thetis Console/dsp.cs:849-850 [@501e3f5]
-    // From Thetis wdsp/analyzer.c:830 [@501e3f5]
-    return ::GetDetectMaxBin(disp);
-#else
-    Q_UNUSED(disp);
-    return -400.0;
-#endif
+
+    // Smoothing -- verbatim from wdsp/analyzer.c:815-818 [@501e3f5].
+    d.maxDb -= std::abs((1.0 - d.decay) * d.maxDb);
+    if (static_cast<double>(newMaxDb) > d.maxDb) { d.maxDb = static_cast<double>(newMaxDb); }
 }
 
 } // namespace NereusSDR
