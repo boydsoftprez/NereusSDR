@@ -4950,3 +4950,11 @@ nereus_add_test(tst_smeter_widget_peak_hold)
 # NereusSDR-native test; AetherSDR has no contextMenuEvent on SMeterWidget.
 # Phase 3P-II Phase 2, Task 39.
 nereus_add_test(tst_smeter_widget_context_menu)
+
+# ── Phase 3P-II Phase 3 (Connection robustness) ──────────────────────────
+# Tasks 55+56: amplifierCreate frame format + flexradioPair accept/reject.
+# Wire formats from FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
+# Tests: amplifierCreate emits correct frame via testFrameWrittenForTesting
+# seam; flexradioPair success (R|0|...) emits pairingResult(true);
+# flexradioPair failure (R|nonzero|...) emits pairingResult(false).
+nereus_add_test(tst_pgxl_connection_pairing)
