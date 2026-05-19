@@ -337,6 +337,12 @@ void TunerApplet::setTunerModel(TunerModel* model)
                                    && m_tunerModel->hasAntennaSwitch());
     };
     connect(m_tunerModel, &TunerModel::directConnectionChanged, this, updateAntVisible);
+    // Also re-evaluate when state keys (including one_by_three) arrive via
+    // applyStatus().  hasAntennaSwitch() is NOTIFY stateChanged, so the first
+    // status frame that sets one_by_three=1 only fires stateChanged, not
+    // directConnectionChanged.  Without this wire the antenna container stays
+    // hidden even when the 1x3 TGXL is live.
+    connect(m_tunerModel, &TunerModel::stateChanged, this, updateAntVisible);
     connect(m_tunerModel, &TunerModel::antennaAChanged, this,
             [this, updateAntVisible](int antA) {
                 updateAntVisible();
