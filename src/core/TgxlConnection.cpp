@@ -55,11 +55,21 @@ TgxlConnection::TgxlConnection(QObject* parent)
 // From AetherSDR src/core/TgxlConnection.cpp:18 [@0cd4559]
 void TgxlConnection::connectToTgxl(const QString& host, quint16 port)
 {
+    // Idempotent guard: if the socket is in any state other than Unconnected,
+    // a connect attempt is already in flight or established.  Re-issuing
+    // connectToHost() emits "Trying to connect while connection is in progress".
+    // Auto-connect (Task 20) + a manual click can race during the TCP handshake
+    // window between connectToHost() and the V-frame arrival that sets m_connected.
+    if (m_socket.state() != QAbstractSocket::UnconnectedState) {
+        qCDebug(lcTgxl) << "connectToTgxl: socket already in state"
+                        << m_socket.state() << "- ignoring duplicate";
+        return;
+    }
+
     // Stash host/port for auto-reconnect.
     m_lastHost = host;
     m_lastPort = port;
 
-    // Abort any pending or active connection before starting a new one (#1039)
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
     m_connected = false;
@@ -67,7 +77,6 @@ void TgxlConnection::connectToTgxl(const QString& host, quint16 port)
     m_version.clear();
     m_readBuf.clear();
     m_seq = 0;
-    m_socket.abort();
     qCDebug(lcTgxl) << "TgxlConnection: connecting to" << host << ":" << port;
     m_socket.connectToHost(host, port);
 }

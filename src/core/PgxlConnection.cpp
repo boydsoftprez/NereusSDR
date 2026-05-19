@@ -51,7 +51,17 @@ PgxlConnection::PgxlConnection(QObject* parent)
 }
 
 void PgxlConnection::connectToPgxl(const QString& host, quint16 port) {
-    if (m_connected) { disconnect(); }
+    // Idempotent guard: if the socket is in any state other than Unconnected,
+    // a connect attempt is already in flight or established.  Re-issuing
+    // connectToHost() on the same QTcpSocket emits "Trying to connect while
+    // connection is in progress".  Auto-connect (Task 20) + a manual click
+    // can race exactly during the handshake window between connectToHost()
+    // and the V-frame arrival that flips m_connected = true.
+    if (m_socket.state() != QAbstractSocket::UnconnectedState) {
+        qCDebug(lcPgxl) << "connectToPgxl: socket already in state"
+                        << m_socket.state() << "- ignoring duplicate";
+        return;
+    }
     m_lastHost = host;
     m_lastPort = port;
     m_seq = 0;
