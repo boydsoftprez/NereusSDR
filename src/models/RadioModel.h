@@ -1464,6 +1464,14 @@ private slots:
     // from AppSettings. Serial is "NereusSDR-<macAddress>".
     void onPgxlConnected();
 
+    // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory when the
+    // active slice crosses a band boundary.  Connected to
+    // SliceModel::bandChanged from addSlice().  Fires only when
+    // TGXL_AutoTuneMemoryRecall == "True" and a stored entry exists for
+    // (activeAntenna, newBand).  Falls back to issuing "tune start" per
+    // design bench-caveat (absolute relay-write API not yet confirmed).
+    void onSliceBandChanged(NereusSDR::Band band);
+
 private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
     // Guards against redundant transitions (no emit if state unchanged).

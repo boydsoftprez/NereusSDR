@@ -1835,7 +1835,7 @@ int RadioModel::addSlice()
     slice->setSliceIndex(index);
     m_slices.append(slice);
 
-    // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged →
+    // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
     // MoxController. The construction-time wire-up at line ~677 silently
     // no-ops because m_slices is empty at that point; the first slice is
     // added here. Codex P1 fix on PR #149.
@@ -1843,6 +1843,13 @@ int RadioModel::addSlice()
         connect(slice, &SliceModel::dspModeChanged,
                 m_moxController, &MoxController::onModeChanged);
     }
+
+    // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory when this
+    // slice crosses a band boundary.  In Phase 3F multi-slice, this should
+    // be gated to the active slice only; for now all slices are valid
+    // triggers because NereusSDR is single-slice (Slice A).
+    connect(slice, &SliceModel::bandChanged,
+            this, &RadioModel::onSliceBandChanged);
 
     if (!m_activeSlice) {
         m_activeSlice = slice;
@@ -8895,6 +8902,66 @@ void RadioModel::onPgxlConnected()
 
     // Always enable keepalive after pairing attempt.
     m_pgxlConnection->enableKeepalive();
+}
+
+// Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory on band change.
+//
+// Design reference: docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md
+// Task 96 / design ss4.8 "Recall flow".
+//
+// Bench caveat (design ss4.8): the TGXL absolute-relay-position write verb is
+// not in AetherSDR's command set and has not been bench-confirmed.  Until a
+// confirmed "relay set" API lands, recall issues a fresh "tune start" so the
+// TGXL auto-tunes from its current position.  The stored memory acts as a UX
+// hint (the table shows what was tuned last time).  The fall-back is noted in
+// the log so a future implementer can see the placeholder clearly.
+//
+// Connected from addSlice() to every SliceModel::bandChanged.  The active-slice
+// guard (m_activeSlice == caller) is not checked here because in single-slice
+// builds every band change is from the active slice.  If multi-slice lands
+// (Phase 3F) the connect site in addSlice() should be guarded to the active
+// slice only.
+void RadioModel::onSliceBandChanged(NereusSDR::Band band)
+{
+    if (!m_tuneMemoryStore || !m_tgxlConnection) { return; }
+
+    const bool autoRecall = AppSettings::instance()
+        .value(QStringLiteral("TGXL_AutoTuneMemoryRecall"), QStringLiteral("False"))
+        .toString() == QStringLiteral("True");
+    if (!autoRecall) { return; }
+
+    // Determine the active antenna (1-indexed; TunerModel is 0-indexed).
+    int antenna = 1;
+    if (m_tunerModel && m_tunerModel->hasAntennaSwitch()) {
+        antenna = m_tunerModel->antennaA() + 1;
+        if (antenna < 1 || antenna > 3) { antenna = 1; }
+    }
+
+    const auto rec = m_tuneMemoryStore->recall(antenna, band);
+    if (!rec.has_value()) {
+        qCDebug(lcMeter) << "TGXL auto-recall: no stored memory for ant="
+                         << antenna << "band=" << bandLabel(band) << "- no-op";
+        return;
+    }
+
+    if (!m_tgxlConnection->isConnected()) {
+        qCDebug(lcMeter) << "TGXL auto-recall: TGXL not connected, skipping for band="
+                         << bandLabel(band);
+        return;
+    }
+
+    // Bench-caveat placeholder: absolute relay-position write not yet confirmed.
+    // Issue "tune start" so the TGXL re-tunes from its current position.
+    // Replace with a direct relay-set command once the TGXL API is confirmed.
+    m_tgxlConnection->sendCommand(QStringLiteral("tune start"));
+    qCInfo(lcMeter) << "TGXL auto-recall: triggered tune start for"
+                    << "ant=" << antenna
+                    << "band=" << bandLabel(band)
+                    << "(stored relay C1=" << rec->c1
+                    << "L=" << rec->l
+                    << "C2=" << rec->c2
+                    << "savedAt=" << rec->savedAtMs << ");"
+                    << "absolute relay-write deferred pending bench confirmation";
 }
 
 } // namespace NereusSDR
