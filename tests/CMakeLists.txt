@@ -5008,3 +5008,10 @@ nereus_add_test(tst_tune_memory_store)
 # Tests: disabledAlwaysAllows; blockDeniesWhenAmpStandby;
 #   warnAllowsButEmits.
 nereus_add_test(tst_tx_interlock_policy)
+
+# Task 88: AmpApplet right-click context menu signal emission.
+# Uses buildContextMenuForTesting() seam (same pattern as Task 38/SMeterWidget).
+# Tests: menuOpensPgxlAdvanced (action 0 -> navigationRequested("pgxlAdvanced"));
+#   disconnectActionEmitsToggle (Disconnect action -> connectionToggleRequested());
+#   copyDiagnosticsActionEmitsSignal (copy action -> diagnosticsCopyRequested()).
+nereus_add_test(tst_amp_applet_context_menu)

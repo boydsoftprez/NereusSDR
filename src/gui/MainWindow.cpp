@@ -6020,6 +6020,51 @@ void MainWindow::onConnectionStateChanged()
                 if (kvs.contains(QStringLiteral("swr")))
                     m_ampApplet->setSwr(kvs.value(QStringLiteral("swr")).toFloat());
             });
+
+            // Phase 3P-II Phase 4 Task 88: track PGXL connected state for the
+            // context menu Disconnect/Reconnect label.
+            connect(m_radioModel->pgxlConnection(), &PgxlConnection::connected,
+                    this, [this]() { m_ampApplet->setPgxlConnected(true); });
+            connect(m_radioModel->pgxlConnection(), &PgxlConnection::disconnected,
+                    this, [this]() { m_ampApplet->setPgxlConnected(false); });
+
+            // Phase 3P-II Phase 4 Task 88: context menu right-click signals.
+
+            // connectionToggleRequested: disconnect or reconnect PGXL.
+            connect(m_ampApplet, &AmpApplet::connectionToggleRequested,
+                    this, [this]() {
+                PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+                if (!pgxl) { return; }
+                if (pgxl->isConnected()) {
+                    pgxl->disconnect();
+                } else {
+                    // Re-use the persisted IP and port from AppSettings.
+                    const QString ip = AppSettings::instance()
+                        .value(QStringLiteral("PGXL_IpAddress"), QString{}).toString();
+                    const quint16 port = static_cast<quint16>(AppSettings::instance()
+                        .value(QStringLiteral("PGXL_Port"), 50001).toInt());
+                    if (!ip.isEmpty()) {
+                        pgxl->connectToPgxl(ip, port);
+                    }
+                }
+            });
+
+            // diagnosticsCopyRequested: build a brief diagnostic string and copy to clipboard.
+            connect(m_ampApplet, &AmpApplet::diagnosticsCopyRequested,
+                    this, [this]() {
+                PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+                const QString text = QStringLiteral(
+                    "PGXL Diagnostics\n"
+                    "Connected: %1\n"
+                    "IP: %2\n"
+                ).arg(pgxl && pgxl->isConnected() ? QStringLiteral("Yes") : QStringLiteral("No"))
+                 .arg(pgxl ? pgxl->peerAddress() : QStringLiteral("--"));
+                QGuiApplication::clipboard()->setText(text);
+            });
+
+            // Phase 3P-II Phase 4 Task 90 (TODO): wire navigationRequested to openSetup().
+            // connect(m_ampApplet, &AmpApplet::navigationRequested, this, &MainWindow::openSetup);
+            // Wiring added in Task 90 when openSetup() is implemented.
         }
     } else {
         m_radioModelLabel->setText(QStringLiteral("—"));

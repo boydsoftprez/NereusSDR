@@ -20,8 +20,10 @@
 #include "AmpApplet.h"
 #include "gui/HGauge.h"
 
+#include <QContextMenuEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -218,4 +220,53 @@ void AmpApplet::setMeff(const QString& meff)
     m_meffLabel->show();
 }
 
+
+// Phase 3P-II Phase 4 Task 88: update PGXL connected flag for context menu.
+void AmpApplet::setPgxlConnected(bool connected)
+{
+    m_pgxlConnected = connected;
+}
+
+// Phase 3P-II Phase 4 Task 88: right-click context menu.
+// Menu structure per design doc ss5.9:
+//   Open PGXL Advanced...        -> navigationRequested("pgxlAdvanced")
+//   (separator)
+//   Disconnect / Reconnect        -> connectionToggleRequested()
+//   Copy diagnostics to clipboard -> diagnosticsCopyRequested()
+void AmpApplet::contextMenuEvent(QContextMenuEvent* ev)
+{
+    QMenu* menu = buildContextMenu(this);
+    menu->exec(ev->globalPos());
+    menu->deleteLater();
+}
+
+QMenu* AmpApplet::buildContextMenu(QObject* menuParent)
+{
+    auto* menu = new QMenu(qobject_cast<QWidget*>(menuParent));
+
+    // Open PGXL Advanced...
+    auto* openAdvancedAction = menu->addAction(QStringLiteral("Open PGXL Advanced..."));
+    connect(openAdvancedAction, &QAction::triggered, this, [this]() {
+        emit navigationRequested(QStringLiteral("pgxlAdvanced"));
+    });
+
+    menu->addSeparator();
+
+    // Disconnect or Reconnect depending on current state
+    const QString toggleLabel = m_pgxlConnected
+        ? QStringLiteral("Disconnect")
+        : QStringLiteral("Reconnect");
+    auto* toggleAction = menu->addAction(toggleLabel);
+    connect(toggleAction, &QAction::triggered, this, [this]() {
+        emit connectionToggleRequested();
+    });
+
+    // Copy diagnostics to clipboard
+    auto* copyDiagAction = menu->addAction(QStringLiteral("Copy diagnostics to clipboard"));
+    connect(copyDiagAction, &QAction::triggered, this, [this]() {
+        emit diagnosticsCopyRequested();
+    });
+
+    return menu;
+}
 } // namespace NereusSDR
