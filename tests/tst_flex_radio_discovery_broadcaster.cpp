@@ -90,7 +90,7 @@ void FlexRadioDiscoveryBroadcasterTest::payloadIsAscii()
 
     // Check that required keys are present in the payload string
     const QString payloadStr = QString::fromLatin1(payload);
-    QVERIFY(payloadStr.contains(QStringLiteral("model=NereusSDR")));
+    QVERIFY(payloadStr.contains(QStringLiteral("model=FLEX-6400")));
     QVERIFY(payloadStr.contains(QStringLiteral("serial=0001-0002-0003-0004")));
     QVERIFY(payloadStr.contains(QStringLiteral("version=0.5.1")));
     QVERIFY(payloadStr.contains(QStringLiteral("nickname=TestNick")));

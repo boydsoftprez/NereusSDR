@@ -67,6 +67,11 @@ void FlexRadioDiscoveryBroadcaster::setMacAddress(const QString& macColonForm)
     m_mac = m_mac.toUpper();
 }
 
+void FlexRadioDiscoveryBroadcaster::setModel(const QString& model)
+{
+    m_model = model;
+}
+
 void FlexRadioDiscoveryBroadcaster::start()
 {
     // Refresh LAN IP on every start() call in case interface state changed.
@@ -188,6 +193,9 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     const QString callsignStr = m_callsign.isEmpty()
                                     ? QStringLiteral("NEREUS")
                                     : m_callsign;
+    const QString modelStr    = m_model.isEmpty()
+                                    ? QStringLiteral("FLEX-6400")
+                                    : m_model;
     const QString ipStr       = m_ip.isEmpty()
                                     ? QStringLiteral("0.0.0.0")
                                     : m_ip;
@@ -199,7 +207,7 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     payload.reserve(512);
     payload += QStringLiteral("discovery_protocol_version=3.1.0.4");
     payload += QLatin1Char(' ');
-    payload += QStringLiteral("model=NereusSDR");
+    payload += QStringLiteral("model=") + modelStr;
     payload += QLatin1Char(' ');
     payload += QStringLiteral("serial=") + serialStr;
     payload += QLatin1Char(' ');

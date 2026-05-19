@@ -355,6 +355,9 @@ public:
     //                                               discovery beacon. PGXL/TGXL listen for these
     //                                               to populate their FlexRadio dropdown.
     //   PGXL_BroadcastNickname  string "NereusSDR"  Nickname shown in PGXL UI.
+    //   PGXL_DiscoveryModel     string "FLEX-6400"  Model string in the SmartSDR discovery beacon;
+    //                                               must match a real Flex model for PGXL to
+    //                                               accept the broadcast and populate its dropdown.
     //
     // TGXL connection robustness (Phase 3P-II Phase 3, Task 60)
     // Wire formats from design §4.2.1 + §6.4 (4O3A TGXL Ethernet API).

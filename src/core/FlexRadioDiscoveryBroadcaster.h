@@ -44,6 +44,7 @@ public:
     void setCallsign(const QString& callsign);
     void setVersion(const QString& version);         // e.g. "0.5.1"
     void setMacAddress(const QString& macColonForm); // "aa:bb:cc:dd:ee:ff"
+    void setModel(const QString& model);             // e.g. "FLEX-6400" (Flex model string for PGXL validation)
 
     // Lifecycle
     void start();  // begins 1 Hz emission; safe to call repeatedly
@@ -72,6 +73,7 @@ private:
     QString m_nickname;
     QString m_callsign;
     QString m_version;
+    QString m_model;  // e.g. "FLEX-6400" (model= field in discovery beacon)
     QString m_mac;  // dashed uppercase form for radio_license_id
     QString m_ip;
     QHostAddress m_broadcastAddress; // subnet broadcast for the LAN interface

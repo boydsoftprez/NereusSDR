@@ -4841,6 +4841,9 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         m_flexBroadcaster->setNickname(
             as.value(QStringLiteral("PGXL_BroadcastNickname"),
                      QStringLiteral("NereusSDR")).toString());
+        m_flexBroadcaster->setModel(
+            as.value(QStringLiteral("PGXL_DiscoveryModel"),
+                     QStringLiteral("FLEX-6400")).toString());
 
         const bool enabled =
             as.value(QStringLiteral("PGXL_BroadcastDiscovery"),
