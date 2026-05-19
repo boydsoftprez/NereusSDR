@@ -79,7 +79,11 @@ void TunerModel::applyStatus(const QMap<QString, QString>& kvs)
                 changed = true;
                 emit antennaAChanged(v);
             }
-        } else if (key == "one_by_three") {
+        } else if (key == "one_by_three" || key == "3way") {
+            // Bench-discovered 2026-05-19: TGXL firmware v1.2.17 emits `3way=1` in
+            // the info response (instead of `one_by_three=1` per the design spec).
+            // Accept both keys so the 3x1 antenna switch is recognized regardless
+            // of firmware variant.
             bool v = (val == "1");
             if (m_oneByThree != v) { m_oneByThree = v; changed = true; }
         } else if (key == "ip") {
