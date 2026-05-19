@@ -53,7 +53,18 @@ void PgxlConnectionParseTest::parsesResponseFrameWithKvBody() {
     QCOMPARE(kvs.value("swr"),   QString("2.1"));
 }
 
-void PgxlConnectionParseTest::parsesUnsolicitedStatusPush()    { QVERIFY(true); }
+void PgxlConnectionParseTest::parsesUnsolicitedStatusPush() {
+    NereusSDR::PgxlConnection conn;
+    QSignalSpy statusSpy(&conn, &NereusSDR::PgxlConnection::statusUpdated);
+
+    conn.injectLineForTesting("V3.8.9");
+    conn.injectLineForTesting("S0|state=FAULT fwd=1820.0 swr=2.85 temp=78.0");
+
+    QCOMPARE(statusSpy.count(), 1);
+    auto kvs = statusSpy.takeFirst().at(0).value<QMap<QString,QString>>();
+    QCOMPARE(kvs.value("state"), QString("FAULT"));
+    QCOMPARE(kvs.value("swr"),   QString("2.85"));
+}
 
 QTEST_GUILESS_MAIN(PgxlConnectionParseTest)
 #include "tst_pgxl_connection_parse.moc"

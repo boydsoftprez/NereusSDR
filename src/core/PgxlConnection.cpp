@@ -121,7 +121,27 @@ void PgxlConnection::processLine(const QString& line) {
         }
         return;
     }
-    // S frames implemented in Task 7
+    // Status push: S0|state ... or S0|temp=... etc.
+    if (line.startsWith('S')) {
+        int pipe = line.indexOf('|');
+        if (pipe < 0) return;
+        QString rest = line.mid(pipe + 1);
+        int firstEq = rest.indexOf('=');
+        if (firstEq < 0) return;
+        int lastSpaceBeforeEq = rest.lastIndexOf(' ', firstEq);
+        QString kvString = (lastSpaceBeforeEq >= 0)
+            ? rest.mid(lastSpaceBeforeEq + 1) : rest;
+        QMap<QString,QString> kvs;
+        const auto parts = kvString.split(' ', Qt::SkipEmptyParts);
+        for (const auto& part : parts) {
+            int eq = part.indexOf('=');
+            if (eq > 0)
+                kvs.insert(part.left(eq), part.mid(eq + 1));
+        }
+        if (!kvs.isEmpty())
+            emit statusUpdated(kvs);
+        return;
+    }
 }
 
 }  // namespace NereusSDR
