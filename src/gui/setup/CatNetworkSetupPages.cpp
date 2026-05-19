@@ -1005,6 +1005,63 @@ PeripheralsPage::PeripheralsPage(RadioModel* model, QWidget* parent)
     outer->addWidget(note);
 
     outer->addStretch();
+
+    // Phase 3P-II Task 63: connect live status signals from PGXL and TGXL.
+    wireStatusSignals();
+}
+
+void PeripheralsPage::wireStatusSignals()
+{
+    // Row index map: 0 = TGXL, 1 = PGXL (matches buildRow call order above).
+    // m_statusLabels is sized to 2 before wireStatusSignals() runs.
+
+    // --- PGXL (row 1) ---
+    PgxlConnection* pgxl = m_model->pgxlConnection();
+    QLabel* pgxlLabel = m_statusLabels[1];
+
+    connect(pgxl, &PgxlConnection::connected, this,
+            [pgxlLabel]() {
+                pgxlLabel->setText(QObject::tr("Connected (pairing...)"));
+            });
+
+    connect(pgxl, &PgxlConnection::disconnected, this,
+            [pgxlLabel]() {
+                pgxlLabel->setText(QObject::tr("Disconnected"));
+            });
+
+    connect(pgxl, &PgxlConnection::connectionFailed, this,
+            [pgxlLabel](const QString& msg) {
+                pgxlLabel->setText(QObject::tr("Error: %1").arg(msg));
+            });
+
+    connect(pgxl, &PgxlConnection::pairingResult, this,
+            [pgxlLabel](bool succeeded, const QString& detail) {
+                if (succeeded) {
+                    pgxlLabel->setText(QObject::tr("Connected, paired"));
+                } else {
+                    pgxlLabel->setText(
+                        QObject::tr("Connected (pairing failed: %1)").arg(detail));
+                }
+            });
+
+    // --- TGXL (row 0) ---
+    TgxlConnection* tgxl = m_model->tgxlConnection();
+    QLabel* tgxlLabel = m_statusLabels[0];
+
+    connect(tgxl, &TgxlConnection::connected, this,
+            [tgxlLabel]() {
+                tgxlLabel->setText(QObject::tr("Connected"));
+            });
+
+    connect(tgxl, &TgxlConnection::disconnected, this,
+            [tgxlLabel]() {
+                tgxlLabel->setText(QObject::tr("Disconnected"));
+            });
+
+    connect(tgxl, &TgxlConnection::connectionFailed, this,
+            [tgxlLabel](const QString& msg) {
+                tgxlLabel->setText(QObject::tr("Error: %1").arg(msg));
+            });
 }
 
 void PeripheralsPage::buildRow(int row, const QString& name,

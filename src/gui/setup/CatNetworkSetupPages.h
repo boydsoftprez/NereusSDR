@@ -204,7 +204,7 @@ private:
 // Six columns per row: Name, Host IP, Port, Scan LAN, Connect, Status.
 // AppSettings keys: TGXL_ManualIp, TGXL_ManualPort, PGXL_ManualIp,
 //                   PGXL_ManualPort.
-// Phase 3P-II Task 17.
+// Phase 3P-II Task 17; Task 63 adds live status-label signal wiring.
 // ---------------------------------------------------------------------------
 class PeripheralsPage : public QWidget {
     Q_OBJECT
@@ -225,6 +225,11 @@ private:
     void buildRow(int row, const QString& name,
                   const QString& ipKey, const QString& portKey,
                   quint16 defaultPort);
+
+    // Phase 3P-II Task 63: connect PgxlConnection + TgxlConnection signals
+    // to m_statusLabels[1] (PGXL) and m_statusLabels[0] (TGXL) respectively.
+    // Called at end of constructor after both rows are built.
+    void wireStatusSignals();
 
     RadioModel*   m_model{nullptr};
     QGridLayout*  m_grid{nullptr};
