@@ -4997,6 +4997,20 @@ void MainWindow::wireSliceToSpectrum()
             m_radioModel->onBandButtonClicked(bandFromName(name));
         });
     }
+
+    // Phase 3P-II Task 65: notify PGXL of band changes so the amplifier can
+    // switch its bias / antenna profile when the operator crosses a band boundary.
+    // Gate: no-op if PGXL is not connected at the time of the band change.
+    // Use the slice's actual frequency rather than a band center lookup because
+    // Band.h has no centerFreqHz() helper (not needed elsewhere).
+    connect(slice, &SliceModel::bandChanged,
+            this, [this](NereusSDR::Band /*b*/) {
+        PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+        if (!pgxl || !pgxl->isConnected()) { return; }
+        SliceModel* s = m_radioModel->activeSlice();
+        if (!s) { return; }
+        pgxl->setBand(static_cast<int>(s->frequency()));
+    });
 }
 
 void MainWindow::reapplyRightStripDropPriority(bool force)
