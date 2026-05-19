@@ -5,7 +5,7 @@
 ### Added (Phase 3P-II - PGXL/TGXL + analog S-Meter baseline, in progress)
 
 AetherSDR 1:1 baseline for PowerGenius XL amplifier telemetry and
-TeraGenius XL antenna tuner control over Ethernet. 22 commits, Phase 1
+Tuner Genius XL antenna tuner control over Ethernet. 22 commits, Phase 1
 of the PGXL/TGXL + analog S-Meter epic. Phase 2 (analog S-Meter port
 from Thetis) follows in the next dispatch.
 

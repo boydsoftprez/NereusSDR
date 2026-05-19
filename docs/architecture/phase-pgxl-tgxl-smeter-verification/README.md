@@ -1,6 +1,6 @@
 # Phase 3P-II PGXL/TGXL + analog S-Meter bench verification
 
-**Goal:** Confirm PowerGenius XL amplifier telemetry, TeraGenius XL tuner
+**Goal:** Confirm PowerGenius XL amplifier telemetry, Tuner Genius XL tuner
 control, analog S-Meter port, connection robustness, and advanced UI all
 work end-to-end on real hardware against a live PGXL and TGXL unit over
 Ethernet.

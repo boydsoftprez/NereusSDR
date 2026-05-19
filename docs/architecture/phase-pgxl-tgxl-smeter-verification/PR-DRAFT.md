@@ -9,7 +9,7 @@
 ## Summary
 
 This PR wires NereusSDR to the FlexRadio PowerGenius XL (PGXL) amplifier and
-TeraGenius XL (TGXL) tuner over Ethernet, ports the AetherSDR analog S-Meter
+Tuner Genius XL (TGXL) tuner over Ethernet, ports the AetherSDR analog S-Meter
 widget with two Thetis-native RX meter modes (Sig Avg and Max Bin), adds full
 FlexRadio API connection robustness (pairing, keepalive, auto-reconnect), and
 delivers the complete operator-facing device-config UI including fault history,
