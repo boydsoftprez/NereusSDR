@@ -4929,3 +4929,13 @@ nereus_add_test(tst_wdsp_engine_max_bin)
 # Ported from AetherSDR src/gui/SMeterWidget.cpp:642-656 [@0cd4559].
 # Phase 3P-II Phase 2, Tasks 34/35/36.
 nereus_add_test(tst_smeter_widget_scale)
+
+# Verifies SMeterWidget peak hold decay rate logic across DecayRate::Fast,
+# Medium, and Slow.  Uses testAdvanceTime() + testPeakLevel() test seams to
+# inject synthetic time without real QTimer ticks.
+# Decay constants from AetherSDR src/gui/SMeterWidget.cpp:675-681 [@0cd4559]:
+#   Fast 20 dB/s -> 1 s of decay from -50 dBm yields -70 +/-1 dBm
+#   Medium 10 dB/s -> -60 +/-1 dBm
+#   Slow 5 dB/s -> -55 +/-1 dBm
+# Phase 3P-II Phase 2, Task 37.
+nereus_add_test(tst_smeter_widget_peak_hold)

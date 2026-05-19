@@ -17,7 +17,12 @@
 //                 contextMenuEvent stubbed (Task 38 implements body).
 //                 Peak hold decay logic preserved from upstream (animateNeedle,
 //                 updatePeakHoldValue, setPeakHoldEnabled/TimeMs/DecayRate,
-//                 resetPeak). Peak hold context-menu wiring (Task 37) deferred.
+//                 resetPeak). Peak hold context-menu wiring (Task 38) deferred.
+//   2026-05-19  Task 37: added testAdvanceTime(int ms) + testSetPeakHoldTimeMs(int ms) +
+//                 testPeakLevel() test seams; m_testTimeOffsetMs member for synthetic
+//                 time injection into updatePeakHoldValue(). No production behavior
+//                 changed; decay constants (Fast 20/Medium 10/Slow 5 dB/s) already
+//                 ported verbatim from AetherSDR src/gui/SMeterWidget.cpp:675-681 [@0cd4559].
 // =================================================================
 #include "SMeterWidget.h"
 
@@ -254,13 +259,14 @@ void SMeterWidget::animateNeedle()
 }
 
 // From AetherSDR src/gui/SMeterWidget.cpp:214-231 [@0cd4559]
+// m_testTimeOffsetMs is 0 in production; testAdvanceTime() sets it for unit tests.
 void SMeterWidget::updatePeakHoldValue()
 {
     if (!m_peakHoldEnabled || !m_peakHoldTimerRunning) {
         return;
     }
 
-    const qint64 elapsedMs = m_peakHoldTimer.elapsed();
+    const qint64 elapsedMs = m_peakHoldTimer.elapsed() + m_testTimeOffsetMs;
     if (elapsedMs <= m_peakHoldTimeMs) {
         return;
     }
@@ -271,6 +277,15 @@ void SMeterWidget::updatePeakHoldValue()
     if (m_peakHoldDbm <= m_levelDbm) {
         m_peakHoldDbm = m_levelDbm;
     }
+}
+
+// Test-only: advance synthetic time offset by ms and apply pending decay.
+// Not called in production.  Each call to testAdvanceTime accumulates; call
+// resetPeak() or re-enable peak hold between test cases to reset state.
+void SMeterWidget::testAdvanceTime(int ms)
+{
+    m_testTimeOffsetMs += static_cast<qint64>(ms);
+    updatePeakHoldValue();
 }
 
 // --- sUnitsText --------------------------------------------------------------

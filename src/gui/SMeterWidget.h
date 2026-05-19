@@ -22,8 +22,12 @@
 //                 contextMenuEvent declared; body implemented in Task 38.
 //                 Peak hold config slots (setPeakHoldEnabled/setPeakHoldTimeMs/
 //                 setPeakDecayRate/resetPeak) ported from upstream verbatim.
-//                 Peak hold decay logic (Task 37) deferred.
+//                 Peak hold decay logic was already ported in this commit.
 //                 Right-click context menu (Tasks 38-39) deferred.
+//   2026-05-19  Task 37: test seams added: testAdvanceTime(int ms),
+//                 testSetPeakHoldTimeMs(int ms), testPeakLevel().
+//                 m_testTimeOffsetMs member added for synthetic time injection.
+//                 No production API or behavior changed.
 // =================================================================
 #pragma once
 
@@ -73,6 +77,22 @@ public:
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
     float testPowerRedStart()  const { return m_powerRedStart; }
+
+    // Test-only: advance internal synthetic clock by `ms` milliseconds and
+    // apply any pending peak hold decay without waiting for real timer ticks.
+    // Production code never calls this.
+    // From AetherSDR src/gui/SMeterWidget.cpp:214-231 [@0cd4559] (decay logic
+    // tested synthetically here).
+    void testAdvanceTime(int ms);
+
+    // Test-only: bypass the 100 ms minimum hold-time clamp so tests can set
+    // holdTimeMs = 0 and have the full testAdvanceTime(N) count as decay time.
+    // Production code uses setPeakHoldTimeMs() which enforces the clamp.
+    void testSetPeakHoldTimeMs(int ms) { m_peakHoldTimeMs = ms; }
+
+    // Test-only: read the configurable peak hold level in dBm.
+    // Production code reads m_peakHoldDbm indirectly via paintEvent.
+    float testPeakLevel() const { return m_peakHoldDbm; }
 
 public slots:
     // Update the displayed RX level (S-meter dBm).
@@ -170,6 +190,10 @@ private:
     float          m_peakDecayDbPerSec{10.0f};  // Medium default
     QElapsedTimer  m_peakHoldTimer;
     bool           m_peakHoldTimerRunning{false};
+
+    // Test-only: synthetic time offset added to m_peakHoldTimer.elapsed() in
+    // updatePeakHoldValue(). Always 0 in production; testAdvanceTime() sets it.
+    qint64         m_testTimeOffsetMs{0};
 
     // S-unit reference: S0 = -127 dBm, each S-unit = 6 dB
     // From AetherSDR src/gui/SMeterWidget.h:114-117 [@0cd4559]
