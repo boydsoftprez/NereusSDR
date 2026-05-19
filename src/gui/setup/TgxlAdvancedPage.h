@@ -99,7 +99,9 @@ private:
     // -------------------------------------------------------
     RadioModel*            m_model{nullptr};
     ConnectionDiagnostics* m_diagnostics{nullptr};        // owned by this
-    FaultLog*              m_faultLog{nullptr};            // owned by this
+    // Phase 3P-II Phase 4 Task 94: non-owning when m_model != nullptr (RadioModel owns
+    // the shared instance); falls back to a local QWidget-parented instance in tests.
+    FaultLog*              m_faultLog{nullptr};
     // Phase 3P-II Phase 4 Task 89: TuneMemoryStore is now owned by RadioModel
     // (shared instance accessed via m_model->tuneMemoryStore()). This pointer
     // is non-owning; do not delete it.

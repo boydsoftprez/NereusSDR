@@ -241,7 +241,11 @@ TgxlAdvancedPage::TgxlAdvancedPage(RadioModel* model, QWidget* parent)
     : QWidget(parent)
     , m_model(model)
     , m_diagnostics(new ConnectionDiagnostics(this))
-    , m_faultLog(new FaultLog(QStringLiteral("TGXL_FaultHistory"), this))
+    // Phase 3P-II Phase 4 Task 94: FaultLog is now owned by RadioModel (shared instance).
+    // Use m_model->tgxlFaultLog() when m_model is non-null; fall back to a local instance
+    // (same key) when m_model is null (unit-test construction without a live RadioModel).
+    , m_faultLog(model ? model->tgxlFaultLog()
+                       : new FaultLog(QStringLiteral("TGXL_FaultHistory"), this))
     // Phase 3P-II Phase 4 Task 89: use the RadioModel's shared TuneMemoryStore so
     // saves from TunerApplet's context menu are visible here and vice versa.
     // Fallback to a local instance when m_model is null (e.g. in unit tests).

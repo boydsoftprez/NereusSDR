@@ -933,6 +933,15 @@ RadioModel::RadioModel(QObject* parent)
     // TunerApplet. Lifetime: same as RadioModel (Qt parent-ownership).
     m_tuneMemoryStore = new TuneMemoryStore(this);
 
+    // Phase 3P-II Phase 4 Task 94: FaultLog ring buffers for PGXL and TGXL.
+    // Non-null from this point; shared (non-owning) with PgxlAdvancedPage and
+    // TgxlAdvancedPage. Lifetime: same as RadioModel (Qt parent-ownership).
+    // RadioModel captures PGXL FAULT state transitions via onPgxlStatus().
+    // TGXL fault capture is bench-deferred (design doc section 4.7); the
+    // instance is provided now so TgxlAdvancedPage can use the shared log.
+    m_pgxlFaultLog = new FaultLog(QStringLiteral("PGXL_FaultHistory"), this);
+    m_tgxlFaultLog = new FaultLog(QStringLiteral("TGXL_FaultHistory"), this);
+
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
     //
     // setInterlockPolicy: MoxController's setMox(true) consults the policy
@@ -8816,6 +8825,28 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
             m_ampOperate = nowOperate;
             emit ampStateChanged();
         }
+
+        // Phase 3P-II Phase 4 Task 94: capture FAULT state *transitions* only.
+        // A repeated FAULT push (same FAULT state, no edge) is not re-captured
+        // so the ring buffer does not fill with duplicate events during a
+        // sustained fault condition.
+        if (st.startsWith(QStringLiteral("FAULT"))
+                && !m_lastPgxlState.startsWith(QStringLiteral("FAULT"))) {
+            const float fwd  = kvs.value(QStringLiteral("fwd")).toFloat();
+            const float swr  = kvs.value(QStringLiteral("swr")).toFloat();
+            const float temp = kvs.value(QStringLiteral("temp")).toFloat();
+            FaultEvent ev{
+                QDateTime::currentMSecsSinceEpoch(),
+                st,
+                fwd,
+                swr,
+                temp,
+                FaultLog::likelyCauseFor(fwd, swr, temp)
+            };
+            m_pgxlFaultLog->capture(ev);
+        }
+
+        m_lastPgxlState = st;
     }
 
     // 3. Power + SWR meter conversion.

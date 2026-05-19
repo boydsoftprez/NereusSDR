@@ -70,6 +70,7 @@
 #include "core/ConnectionState.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
+#include "core/FaultLog.h"
 #include "core/TxInterlockPolicy.h"
 #include "core/TuneMemoryStore.h"
 #include "models/TunerModel.h"
@@ -508,6 +509,14 @@ public:
     // Non-null from construction time. Shared by TgxlAdvancedPage (non-owning
     // view/edit) and TunerApplet (non-owning save/recall from context menu).
     TuneMemoryStore* tuneMemoryStore() { return m_tuneMemoryStore; }
+
+    // Phase 3P-II Phase 4 Task 94: FaultLog -- shared PGXL / TGXL fault ring buffers.
+    // Constructed once in the ctor (Qt parent-ownership). Non-null from construction
+    // time. RadioModel captures PGXL FAULT state transitions into m_pgxlFaultLog.
+    // Shared (non-owning) with PgxlAdvancedPage and TgxlAdvancedPage so their
+    // Fault History tables reflect live captures.
+    FaultLog* pgxlFaultLog() { return m_pgxlFaultLog; }
+    FaultLog* tgxlFaultLog() { return m_tgxlFaultLog; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -2147,6 +2156,17 @@ private:
     // TGXL relay position cache. Qt parent-ownership (parent=this); non-null from
     // construction time. Shared (non-owning) with TgxlAdvancedPage and TunerApplet.
     TuneMemoryStore* m_tuneMemoryStore{nullptr};
+
+    // Phase 3P-II Phase 4 Task 94: FaultLog ring buffers for PGXL and TGXL.
+    // Qt parent-ownership (parent=this); non-null from construction time.
+    // Shared (non-owning) with PgxlAdvancedPage and TgxlAdvancedPage.
+    FaultLog* m_pgxlFaultLog{nullptr};
+    FaultLog* m_tgxlFaultLog{nullptr};
+
+    // Phase 3P-II Phase 4 Task 94: last known PGXL state string.
+    // Tracks "previous state" so we capture only on FAULT *transitions*
+    // (not on every repeated FAULT status push).
+    QString m_lastPgxlState;
 };
 
 } // namespace NereusSDR
