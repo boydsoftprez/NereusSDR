@@ -119,6 +119,7 @@ private:
 
     // Tier 2 state.
     QTimer  m_keepaliveTimer;
+    QTimer  m_pingTimer;         // periodic auto-ping (PGXL_PingSec); wired in Task 67.
     QTimer  m_pingTimeoutTimer;
     QTimer  m_reconnectTimer;
     int     m_reconnectAttempts{0};
