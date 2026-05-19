@@ -6,6 +6,7 @@
 
 #include "CatNetworkSetupPages.h"
 #include "gui/StyleConstants.h"
+#include "gui/LanScanDialog.h"
 #include "core/AppSettings.h"
 #include "models/RadioModel.h"
 
@@ -1075,11 +1076,32 @@ void PeripheralsPage::buildRow(int row, const QString& name,
 
 void PeripheralsPage::onScanLan(int rowIdx)
 {
-    // TODO(Task 18): open a modeless LanScanDialog that listens for 4O3A
-    // device announcements on UDP 9008 / 9010 for 3 seconds, then fills
-    // the Host and Port fields of the matching Peripherals row on double-click.
-    qCDebug(lcPeripherals) << "Scan LAN requested for row" << rowIdx
-                           << "(stub: LanScanDialog wired in Task 18)";
+    // rowIdx is 0-based (0 = TGXL, 1 = PGXL). Grid row = rowIdx + 1 because
+    // row 0 is the header. Column 1 = IP edit, column 2 = port spin.
+    const int gridRow = rowIdx + 1;
+
+    auto* ipEdit   = qobject_cast<QLineEdit*>(
+                         m_grid->itemAtPosition(gridRow, 1)->widget());
+    auto* portSpin = qobject_cast<QSpinBox*>(
+                         m_grid->itemAtPosition(gridRow, 2)->widget());
+
+    if (!ipEdit || !portSpin) {
+        qCWarning(lcPeripherals) << "onScanLan: could not find row widgets for rowIdx"
+                                 << rowIdx;
+        return;
+    }
+
+    auto* dialog = new LanScanDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    // On double-click: fill the row's IP edit and port spin, then persist.
+    connect(dialog, &LanScanDialog::deviceSelected,
+            this, [ipEdit, portSpin](const QString& ip, quint16 port) {
+                ipEdit->setText(ip);
+                portSpin->setValue(static_cast<int>(port));
+            });
+
+    dialog->show();
 }
 
 void PeripheralsPage::onConnect(int rowIdx)
