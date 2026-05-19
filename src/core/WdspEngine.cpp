@@ -1205,4 +1205,85 @@ qint64 WdspEngine::rebuildTxChannel(int channelId, const ChannelConfig& cfg)
     return elapsedMs;
 }
 
+// ---------------------------------------------------------------------------
+// Metering wrappers (Phase 3P-II Phase 2 Tasks 31-32)
+// ---------------------------------------------------------------------------
+
+// Returns the averaged S-meter reading (dBm) from the RXA pipeline.
+//
+// Porting from Thetis Console/dsp.cs:387-388 [@501e3f5] -- original C# logic:
+//   [DllImport("wdsp.dll", EntryPoint = "GetRXAMeter", ...)]
+//   public static extern double GetRXAMeter(int channel, rxaMeterType meter);
+// Selector site: Thetis Console/console.cs:957 [@501e3f5]:
+//   case MeterType.AVG_SIGNAL_STRENGTH:
+//       val = GetRXAMeter(channel, rxaMeterType.RXA_S_AV);
+//
+// RXA_S_AV == 1 (see wdsp/RXA.h rxaMeterType enum / WdspTypes.h SignalAvg).
+// The value is lock-free at the WDSP boundary (GetRXAMeter reads the WDSP
+// meter output register directly, same as RxChannel::getMeter). Callers must
+// ensure the channel is active before reading meaningful values.
+double WdspEngine::getRxaSignalAverage(int channel) const
+{
+#ifdef HAVE_WDSP
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5]
+    // From Thetis Console/console.cs:957 [@501e3f5]
+    return ::GetRXAMeter(channel, /*RXA_S_AV=*/1);
+#else
+    Q_UNUSED(channel);
+    return -140.0;
+#endif
+}
+
+// Configure the strongest-bin-in-passband detector for a display channel.
+//
+// Porting from Thetis Console/dsp.cs:846-847 [@501e3f5] -- original C# P/Invoke:
+//   void SetupDetectMaxBin(int run, int disp, int ss, int LO, double rate,
+//                          double fLow, double fHigh, double tau, int frame_rate)
+//
+// Thetis call site at Console/console.cs:51150 [@501e3f5]:
+//   WDSP.SetupDetectMaxBin(enabled ? 1 : 0, disp, 0, 0, sample_rate,
+//                          low, high, 0.5, frame_rate);
+// where low/high are the active filter edges (Hz, relative to DDC center)
+// and frame_rate = (int)Math.Max(1, _display_fps * 1.1f).
+//
+// Default parameter values match the developer example in
+// wdsp/analyzer.c:1442 [@501e3f5]:
+//   // SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60);
+// This is the canonical illustrative call in the WDSP source (LSB
+// passband on a 192 kHz DDC, 0.5 s smoothing tau, 60 fps display).
+void WdspEngine::setupMaxBinDetector(int disp, int ss, int LO,
+                                     double rate, double fLow, double fHigh,
+                                     double tau, int frameRate)
+{
+#ifdef HAVE_WDSP
+    // From Thetis Console/dsp.cs:846-847 [@501e3f5]
+    // From Thetis wdsp/analyzer.c:775 [@501e3f5]
+    ::SetupDetectMaxBin(/*run=*/1, disp, ss, LO, rate, fLow, fHigh, tau, frameRate);
+#else
+    Q_UNUSED(disp); Q_UNUSED(ss); Q_UNUSED(LO); Q_UNUSED(rate);
+    Q_UNUSED(fLow); Q_UNUSED(fHigh); Q_UNUSED(tau); Q_UNUSED(frameRate);
+#endif
+}
+
+// Returns the strongest-bin dBm value from the configured detector.
+//
+// Porting from Thetis Console/dsp.cs:849-850 [@501e3f5] -- original C# P/Invoke:
+//   double GetDetectMaxBin(int disp)
+// DSP body: Thetis wdsp/analyzer.c:830 [@501e3f5] -- returns dmb_max_dB
+// under EnterCriticalSection/LeaveCriticalSection.
+//
+// Returns -400.0 when no display frame has been processed yet
+// (wdsp/analyzer.c:703 initializes dmb_max_dB = -400.0 in Init_DetectMaxBin).
+double WdspEngine::getMaxBinDbm(int disp) const
+{
+#ifdef HAVE_WDSP
+    // From Thetis Console/dsp.cs:849-850 [@501e3f5]
+    // From Thetis wdsp/analyzer.c:830 [@501e3f5]
+    return ::GetDetectMaxBin(disp);
+#else
+    Q_UNUSED(disp);
+    return -400.0;
+#endif
+}
+
 } // namespace NereusSDR

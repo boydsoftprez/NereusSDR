@@ -358,12 +358,52 @@ public:
     // Rebuild a TX channel in-place: capture state, destroy the existing
     // WDSP channel, recreate with new config, reapply state.
     //
-    // Returns elapsed milliseconds (≥ 0 on success). Returns -1 if the
+    // Returns elapsed milliseconds (>= 0 on success). Returns -1 if the
     // channel ID is not found or WdspEngine is not initialized.
     //
     // Thread safety: call on main thread only. The TX worker thread must not
     // be running (setRunning(false) + thread stop before calling this).
     qint64 rebuildTxChannel(int channelId, const ChannelConfig& cfg);
+
+    // --- Metering ---
+
+    // Returns the averaged S-meter reading (dBm) from the RXA pipeline.
+    // Reads WDSP RXA_S_AV via GetRXAMeter; the value is only meaningful
+    // after the channel has been activated with SetChannelState(channel, 1).
+    // Prefer RxChannel::getMeter(RxMeterType::SignalAvg) when a channel
+    // wrapper is available -- this helper is for callers that hold only
+    // the engine and a raw WDSP channel id (e.g. the Analog S-Meter path).
+    //
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
+    // From Thetis Console/console.cs:957 [@501e3f5] (RXA_S_AV selector)
+    double getRxaSignalAverage(int channel) const;
+
+    // Configure the strongest-bin-in-passband detector for a display channel.
+    // Pass the current DDC sample rate, the active filter edges (Hz, relative
+    // to DDC center), the smoothing tau (seconds), and the display frame rate.
+    // run is always 1 (detector enabled); call with run=0 via the raw WDSP
+    // API to disable.  Defaults match the Thetis developer example in
+    // wdsp/analyzer.c:1442 [@501e3f5]:
+    //   SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60)
+    //
+    // From Thetis Console/dsp.cs:846-847 [@501e3f5] (P/Invoke)
+    // From Thetis wdsp/analyzer.c:775 [@501e3f5] (DSP body)
+    // Call site: Thetis Console/console.cs:51150 [@501e3f5]
+    void setupMaxBinDetector(int displayChannel,
+                             int ss = 0, int LO = 0,
+                             double rateHz = 192000.0,
+                             double fLowHz = -3000.0,
+                             double fHighHz = -300.0,
+                             double tauSeconds = 0.5,
+                             int frameRate = 60);
+
+    // Returns the strongest-bin dBm value from the configured detector.
+    // Returns -400.0 (WDSP's dmb_max_dB initial value) if the detector
+    // has never processed a display frame.
+    //
+    // From Thetis Console/dsp.cs:849-850 [@501e3f5] (P/Invoke)
+    // From Thetis wdsp/analyzer.c:830 [@501e3f5] (DSP body)
+    double getMaxBinDbm(int displayChannel) const;
 
 signals:
     void initializedChanged(bool initialized);
