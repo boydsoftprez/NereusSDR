@@ -41,26 +41,22 @@ void FlexRadioDiscoveryBroadcasterTest::headerLayout()
                               | static_cast<quint8>(pkt[3]);
     QCOMPARE(static_cast<int>(sizeWords * 4), pkt.size());
 
-    // Words 1-2: Class ID bytes 4..11 = 00 00 08 00 1C 2D 53 4C
-    QByteArray expectedClassId;
-    expectedClassId.append('\x00');
-    expectedClassId.append('\x00');
-    expectedClassId.append('\x08');
-    expectedClassId.append('\x00');
-    expectedClassId.append('\x1c');
-    expectedClassId.append('\x2d');
-    expectedClassId.append('\x53');
-    expectedClassId.append('\x4c');
-    QCOMPARE(pkt.mid(4, 8), expectedClassId);
+    // Word 1 (bytes 4-7): VITA dialect marker 00 00 08 00
+    QCOMPARE(pkt.mid(4, 4), QByteArray::fromHex("00000800"));
 
-    // Words 3-4: Integer timestamp at bytes 12..15 = 0x6A0CD77D (big-endian)
-    QCOMPARE(static_cast<quint8>(pkt[12]), quint8(0x6A));
-    QCOMPARE(static_cast<quint8>(pkt[13]), quint8(0x0C));
-    QCOMPARE(static_cast<quint8>(pkt[14]), quint8(0xD7));
-    QCOMPARE(static_cast<quint8>(pkt[15]), quint8(0x7D));
+    // Words 2-3 (bytes 8-15): 8-byte VITA-49 Class ID block
+    //   00 00 1C 2D  (pad=0x00, OUI=FlexRadio 00-1C-2D)
+    //   53 4C FF FF  (Info Class Code "SL", Packet Class Code 0xFFFF)
+    QCOMPARE(pkt.mid(8, 8), QByteArray::fromHex("00001c2d534cffff"));
 
-    // Fractional + padding (bytes 16..27) = all zero (12 bytes)
-    QCOMPARE(pkt.mid(16, 12), QByteArray(12, '\0'));
+    // Word 4 (bytes 16-19): Integer timestamp = 0x6A0CD77D (big-endian)
+    QCOMPARE(static_cast<quint8>(pkt[16]), quint8(0x6A));
+    QCOMPARE(static_cast<quint8>(pkt[17]), quint8(0x0C));
+    QCOMPARE(static_cast<quint8>(pkt[18]), quint8(0xD7));
+    QCOMPARE(static_cast<quint8>(pkt[19]), quint8(0x7D));
+
+    // Words 5-6 (bytes 20-27): fractional timestamp + reserved = all zero
+    QCOMPARE(pkt.mid(20, 8), QByteArray(8, '\0'));
 
     // Payload starts at byte 28 with "discovery_protocol_version="
     QVERIFY(pkt.mid(28).startsWith("discovery_protocol_version="));
@@ -97,8 +93,9 @@ void FlexRadioDiscoveryBroadcasterTest::payloadIsAscii()
     QVERIFY(payloadStr.contains(QStringLiteral("callsign=W1AW")));
     QVERIFY(payloadStr.contains(QStringLiteral("port=4992")));
     QVERIFY(payloadStr.contains(QStringLiteral("status=Available")));
-    // MAC should be dashed uppercase
-    QVERIFY(payloadStr.contains(QStringLiteral("radio_license_id=11-22-33-44-55-66")));
+    // radio_license_id must start with FlexRadio OUI 00-1C-2D; last 3 octets
+    // derived from host MAC (11:22:33:44:55:66 -> last 3 = 44-55-66).
+    QVERIFY(payloadStr.contains(QStringLiteral("radio_license_id=00-1C-2D-44-55-66")));
 }
 
 void FlexRadioDiscoveryBroadcasterTest::packetCountRolls()

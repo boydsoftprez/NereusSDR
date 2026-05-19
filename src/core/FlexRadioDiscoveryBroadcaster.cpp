@@ -23,6 +23,23 @@
 
 namespace NereusSDR {
 
+// PGXL appears to validate that radio_license_id starts with FlexRadio
+// Systems' OUI prefix 00-1C-2D. Bench finding 2026-05-19: using the host's
+// actual MAC (e.g. 2C-CF-67-XX-XX-XX) caused PGXL to reject the beacon
+// silently. We spoof the prefix while keeping the last 3 octets derived from
+// the host MAC for per-install determinism.
+static QString spoofFlexLicenseId(const QString& hostMacDashed)
+{
+    const QStringList parts = hostMacDashed.split(QLatin1Char('-'));
+    if (parts.size() == 6) {
+        return QStringLiteral("00-1C-2D-%1-%2-%3")
+            .arg(parts[3].toUpper())
+            .arg(parts[4].toUpper())
+            .arg(parts[5].toUpper());
+    }
+    return QStringLiteral("00-1C-2D-00-00-00");
+}
+
 // Wire format reference: FLEX-8600 v4.2.18.41174 discovery beacon
 // captured 2026-05-19
 // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
@@ -157,22 +174,26 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeaconForTesting(
 
 // Build the full VITA-49-style discovery beacon packet.
 //
-// Wire format from FLEX-8600 v4.2.18.41174 discovery beacon captured
-// 2026-05-19
-// (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng):
+// Corrected wire format from FLEX-8600 v4.2.18.41174 bench diff 2026-05-19
+// (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
+// Prior code had a 4-byte Class ID offset bug: it packed the OUI+info bytes
+// at bytes 4-7 and omitted the FF FF Packet Class Code, causing PGXL to
+// silently reject every beacon. TGXL accepted because it has a looser parser.
 //
 //   Header (28 bytes, big-endian):
-//     Word 0  (4 bytes):
+//     Word 0 (bytes 0-3):
 //       byte 0: 0x38  (Type 3 = Context Packet without Stream ID, Class ID present)
 //       byte 1: 0x50 | (packetCount & 0x0F)
 //               (top nibble 0x5 = TSI=01 UTC + TSF=01 real-time;
 //                low nibble = rolling 4-bit sequence)
 //       bytes 2-3: 16-bit big-endian packet size in 32-bit words
-//     Words 1-2 (Class ID, 8 bytes): 00 00 08 00 1C 2D 53 4C (constant)
-//     Word 3 (4 bytes): 32-bit big-endian UNIX epoch seconds
-//     Word 4 (4 bytes): fractional timestamp hi (zero)
-//     Word 5 (4 bytes): fractional timestamp lo (zero)
-//     Word 6 (4 bytes): 00 00 00 00 (reserved/padding)
+//     Word 1 (bytes 4-7):  00 00 08 00  (VITA dialect marker, standalone field)
+//     Words 2-3 (bytes 8-15): 8-byte VITA-49 Class ID block:
+//       bytes 8-11:  00 00 1C 2D  (pad=0x00, OUI = FlexRadio Systems 00-1C-2D)
+//       bytes 12-15: 53 4C FF FF  (Info Class "SL", Packet Class 0xFFFF)
+//     Word 4 (bytes 16-19): 32-bit big-endian UNIX epoch seconds
+//     Word 5 (bytes 20-23): fractional timestamp (zero)
+//     Word 6 (bytes 24-27): reserved (zero)
 //
 //   Payload: ASCII key=value pairs, space-separated, no terminator.
 //   Total packet length must be a multiple of 4 bytes (padded with spaces).
@@ -229,7 +250,7 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     payload += QLatin1Char(' ');
     payload += QStringLiteral("max_licensed_version=v4");
     payload += QLatin1Char(' ');
-    payload += QStringLiteral("radio_license_id=") + macStr;
+    payload += QStringLiteral("radio_license_id=") + spoofFlexLicenseId(macStr);
     payload += QLatin1Char(' ');
     payload += QStringLiteral("fpc_mac=00:00:00:00:00:00");
     payload += QLatin1Char(' ');
@@ -288,32 +309,44 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
     QByteArray hdr;
     hdr.reserve(28);
 
-    // Word 0: packet-type / TSI / TSF / packet-count / packet-size
+    // Word 0 (bytes 0-3): packet-type / TSI / TSF / packet-count / packet-size
     const quint8 byte1 = static_cast<quint8>(0x50U | (packetCount & 0x0FU));
     hdr.append(static_cast<char>(0x38));
     hdr.append(static_cast<char>(byte1));
     hdr.append(static_cast<char>((totalWords >> 8) & 0xFF));
     hdr.append(static_cast<char>(totalWords & 0xFF));
 
-    // Words 1-2: Class ID (8 bytes, constant)
-    // Value from FLEX-8600 capture: 00 00 08 00 1C 2D 53 4C
+    // Word 1 (bytes 4-7): VITA dialect marker; verbatim from FLEX reference.
+    // Bench capture (2026-05-19): this word is a standalone field, NOT part of
+    // the 8-byte Class ID block that follows.
+    hdr.append(static_cast<char>(0x00));
+    hdr.append(static_cast<char>(0x00));
+    hdr.append(static_cast<char>(0x08));
+    hdr.append(static_cast<char>(0x00));
+
+    // Words 2-3 (bytes 8-15): 8-byte VITA-49 Class ID block.
+    //   byte  8: Pad Bit Count = 0x00
+    //   bytes 9-11: OUI = 0x00-0x1C-0x2D (FlexRadio Systems)
+    //   bytes 12-13: Information Class Code = 0x53 0x4C ("SL")
+    //   bytes 14-15: Packet Class Code = 0xFF 0xFF
+    // Bench diff: prior code emitted only 4 bytes here (1C 2D 53 4C), omitting
+    // the leading 00 00 pad+OUI prefix and the trailing FF FF class code.
+    // PGXL rejects packets with a malformed Class ID; TGXL accepted them.
     static const quint8 kClassId[8] = {
-        0x00, 0x00, 0x08, 0x00,
-        0x1C, 0x2D, 0x53, 0x4C
+        0x00, 0x00, 0x1C, 0x2D,
+        0x53, 0x4C, 0xFF, 0xFF
     };
     hdr.append(reinterpret_cast<const char*>(kClassId), 8);
 
-    // Words 3-4: Timestamp
-    //   bytes 0-3: 32-bit big-endian UNIX epoch seconds (Integer Timestamp)
-    //   bytes 4-7: 32-bit fractional seconds = 0
+    // Word 4 (bytes 16-19): Integer Timestamp (Unix epoch seconds, BE uint32).
     hdr.append(static_cast<char>((unixSeconds >> 24) & 0xFF));
     hdr.append(static_cast<char>((unixSeconds >> 16) & 0xFF));
     hdr.append(static_cast<char>((unixSeconds >>  8) & 0xFF));
     hdr.append(static_cast<char>( unixSeconds        & 0xFF));
-    hdr.append(QByteArray(4, '\0')); // fractional seconds hi (word 4) = 0
-    hdr.append(QByteArray(4, '\0')); // fractional seconds lo (word 5) = 0
-    // Word 6: reserved/padding (4 zero bytes)
-    hdr.append(QByteArray(4, '\0'));
+
+    // Words 5-6 (bytes 20-27): Fractional timestamp + reserved (all zeros).
+    hdr.append(QByteArray(4, '\0')); // fractional seconds hi (word 5) = 0
+    hdr.append(QByteArray(4, '\0')); // fractional seconds lo / reserved (word 6) = 0
 
     Q_ASSERT(hdr.size() == 28);
 
