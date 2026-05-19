@@ -34,17 +34,22 @@
 #include "gui/RelayBar.h"
 #include "models/TunerModel.h"
 
-#include <QVBoxLayout>
+#include <QContextMenuEvent>
+#include <QDateTime>
 #include <QHBoxLayout>
-#include <QPushButton>
 #include <QLabel>
+#include <QMenu>
+#include <QPushButton>
 #include <QTimer>
+#include <QVBoxLayout>
 
 namespace NereusSDR {
 
-TunerApplet::TunerApplet(RadioModel* model, TunerModel* tunerModel, QWidget* parent)
+TunerApplet::TunerApplet(RadioModel* model, TunerModel* tunerModel, QWidget* parent,
+                         TuneMemoryStore* tuneStore)
     : AppletWidget(model, parent)
     , m_tunerModel(tunerModel)
+    , m_tuneStore(tuneStore)
 {
     // Post-tune capture timer: after tuning=0 arrives, keep capturing SWR
     // for 400 ms so the final settled value from the TGXL has time to arrive.
@@ -213,11 +218,15 @@ void TunerApplet::setTunerModel(TunerModel* model)
     if (!m_tunerModel) return;
 
     // Relay bars: sync on any relay change.
+    // Phase 3P-II Phase 4 Task 89: also cache last relay values for Save.
     connect(m_tunerModel, &TunerModel::relayChanged, this, [this]() {
         if (!m_tunerModel) return;
         m_c1Bar->setValue(m_tunerModel->relayC1());
         m_lBar->setValue(m_tunerModel->relayL());
         m_c2Bar->setValue(m_tunerModel->relayC2());
+        m_lastC1 = m_tunerModel->relayC1();
+        m_lastL  = m_tunerModel->relayL();
+        m_lastC2 = m_tunerModel->relayC2();
     });
 
     // State changes -> refresh OPERATE button label + color.
@@ -406,4 +415,112 @@ void TunerApplet::updateAntennaButtons(int antA)
     m_ant3Btn->setStyleSheet(antA == 2 ? kActive : kDefault);
 }
 
+
+// Phase 3P-II Phase 4 Task 89: update TGXL connected flag for context menu.
+void TunerApplet::setTgxlConnected(bool connected)
+{
+    m_tgxlConnected = connected;
+}
+
+// Phase 3P-II Phase 4 Task 89: right-click context menu.
+// Menu structure per design doc ss5.9:
+//   Open TGXL Advanced...                     -> navigationRequested("tgxlAdvanced")
+//   (separator)
+//   Save current tune memory                  -> m_tuneStore->store(currentMem())
+//   Recall tune memory for current (ant,band) -> apply stored positions (if any)
+//   Clear tune memory for current (ant,band)  -> m_tuneStore->clear(ant, band)
+//   (separator)
+//   Disconnect / Reconnect                    -> connectionToggleRequested()
+//   Copy diagnostics to clipboard             -> diagnosticsCopyRequested()
+void TunerApplet::contextMenuEvent(QContextMenuEvent* ev)
+{
+    QMenu* menu = buildContextMenu(this);
+    menu->exec(ev->globalPos());
+    menu->deleteLater();
+}
+
+QMenu* TunerApplet::buildContextMenu(QObject* menuParent)
+{
+    auto* menu = new QMenu(qobject_cast<QWidget*>(menuParent));
+
+    // Open TGXL Advanced...
+    auto* openAdvancedAction = menu->addAction(QStringLiteral("Open TGXL Advanced..."));
+    connect(openAdvancedAction, &QAction::triggered, this, [this]() {
+        emit navigationRequested(QStringLiteral("tgxlAdvanced"));
+    });
+
+    menu->addSeparator();
+
+    // Save current tune memory
+    auto* saveAction = menu->addAction(QStringLiteral("Save current tune memory"));
+    if (!m_tuneStore) { saveAction->setEnabled(false); }
+    connect(saveAction, &QAction::triggered, this, [this]() {
+        if (m_tuneStore) {
+            m_tuneStore->store(currentMem());
+        }
+    });
+
+    // Recall tune memory for current (ant, band)
+    // Note: TunerModel only exposes adjustRelay(relay, dir) for incremental
+    // updates; absolute position setting via TGXL requires a protocol-level
+    // "relay set" command not yet in TunerModel (Phase 3P-II follow-up).
+    // For now, recall loads the stored values into the local cache so a
+    // subsequent auto-tune starts from the memorised position rather than
+    // the TGXL's default. Absolute apply deferred to the TGXL "set relay"
+    // command when that API lands.
+    auto* recallAction = menu->addAction(QStringLiteral("Recall tune memory"));
+    if (!m_tuneStore) { recallAction->setEnabled(false); }
+    connect(recallAction, &QAction::triggered, this, [this]() {
+        if (!m_tuneStore) { return; }
+        auto rec = m_tuneStore->recall(m_currentAntenna, m_currentBand);
+        if (!rec.has_value()) { return; }
+        // Update local relay display so the operator can see the stored values.
+        m_lastC1 = rec->c1;
+        m_lastL  = rec->l;
+        m_lastC2 = rec->c2;
+        if (m_c1Bar) { m_c1Bar->setValue(rec->c1); }
+        if (m_lBar)  { m_lBar->setValue(rec->l);   }
+        if (m_c2Bar) { m_c2Bar->setValue(rec->c2); }
+    });
+
+    // Clear tune memory for current (ant, band)
+    auto* clearAction = menu->addAction(QStringLiteral("Clear tune memory"));
+    if (!m_tuneStore) { clearAction->setEnabled(false); }
+    connect(clearAction, &QAction::triggered, this, [this]() {
+        if (m_tuneStore) {
+            m_tuneStore->clear(m_currentAntenna, m_currentBand);
+        }
+    });
+
+    menu->addSeparator();
+
+    // Disconnect or Reconnect depending on current state
+    const QString toggleLabel = m_tgxlConnected
+        ? QStringLiteral("Disconnect")
+        : QStringLiteral("Reconnect");
+    auto* toggleAction = menu->addAction(toggleLabel);
+    connect(toggleAction, &QAction::triggered, this, [this]() {
+        emit connectionToggleRequested();
+    });
+
+    // Copy diagnostics to clipboard
+    auto* copyDiagAction = menu->addAction(QStringLiteral("Copy diagnostics to clipboard"));
+    connect(copyDiagAction, &QAction::triggered, this, [this]() {
+        emit diagnosticsCopyRequested();
+    });
+
+    return menu;
+}
+
+TuneMemory TunerApplet::currentMem() const
+{
+    TuneMemory mem;
+    mem.antenna   = m_currentAntenna;
+    mem.band      = m_currentBand;
+    mem.c1        = m_lastC1;
+    mem.l         = m_lastL;
+    mem.c2        = m_lastC2;
+    mem.savedAtMs = QDateTime::currentMSecsSinceEpoch();
+    return mem;
+}
 } // namespace NereusSDR

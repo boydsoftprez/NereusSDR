@@ -100,7 +100,10 @@ private:
     RadioModel*            m_model{nullptr};
     ConnectionDiagnostics* m_diagnostics{nullptr};        // owned by this
     FaultLog*              m_faultLog{nullptr};            // owned by this
-    TuneMemoryStore*       m_tuneMemoryStore{nullptr};    // owned by this
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore is now owned by RadioModel
+    // (shared instance accessed via m_model->tuneMemoryStore()). This pointer
+    // is non-owning; do not delete it.
+    TuneMemoryStore*       m_tuneMemoryStore{nullptr};    // non-owning; from RadioModel
     TgxlFaultLogTableModel* m_faultTableModel{nullptr};   // owned by this
     TuneMemoryTableModel*  m_tuneMemTableModel{nullptr};  // owned by this
 

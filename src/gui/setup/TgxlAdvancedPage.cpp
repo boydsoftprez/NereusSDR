@@ -242,7 +242,10 @@ TgxlAdvancedPage::TgxlAdvancedPage(RadioModel* model, QWidget* parent)
     , m_model(model)
     , m_diagnostics(new ConnectionDiagnostics(this))
     , m_faultLog(new FaultLog(QStringLiteral("TGXL_FaultHistory"), this))
-    , m_tuneMemoryStore(new TuneMemoryStore(this))
+    // Phase 3P-II Phase 4 Task 89: use the RadioModel's shared TuneMemoryStore so
+    // saves from TunerApplet's context menu are visible here and vice versa.
+    // Fallback to a local instance when m_model is null (e.g. in unit tests).
+    , m_tuneMemoryStore(model ? model->tuneMemoryStore() : new TuneMemoryStore(this))
     , m_faultTableModel(new TgxlFaultLogTableModel(m_faultLog, this))
     , m_tuneMemTableModel(new TuneMemoryTableModel(m_tuneMemoryStore, this))
 {

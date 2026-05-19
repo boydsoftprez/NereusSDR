@@ -928,6 +928,11 @@ RadioModel::RadioModel(QObject* parent)
     // and MoxController (wired below after m_moxController construction).
     m_txInterlockPolicy = new TxInterlockPolicy(this);
 
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared TGXL relay cache.
+    // Non-null from this point; shared (non-owning) with TgxlAdvancedPage and
+    // TunerApplet. Lifetime: same as RadioModel (Qt parent-ownership).
+    m_tuneMemoryStore = new TuneMemoryStore(this);
+
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
     //
     // setInterlockPolicy: MoxController's setMox(true) consults the policy

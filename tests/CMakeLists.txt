@@ -5015,3 +5015,13 @@ nereus_add_test(tst_tx_interlock_policy)
 #   disconnectActionEmitsToggle (Disconnect action -> connectionToggleRequested());
 #   copyDiagnosticsActionEmitsSignal (copy action -> diagnosticsCopyRequested()).
 nereus_add_test(tst_amp_applet_context_menu)
+
+# Task 89: TunerApplet right-click context menu + TuneMemoryStore interactions.
+# Uses buildContextMenuForTesting() + testSetCurrentBandAndAntenna() +
+# testSetRelayValues() test seams. TuneMemoryStore is a local stack instance
+# passed to the TunerApplet constructor (non-owning; RadioModel owns the shared
+# instance in production).
+# Tests: saveCurrentMemoryStoresSlot (Save -> store.recall() has c1=42/l=199/c2=88);
+#   clearActionRemovesEntry (Clear -> store.recall() returns nullopt);
+#   menuOpensTgxlAdvanced (action 0 -> navigationRequested("tgxlAdvanced")).
+nereus_add_test(tst_tuner_applet_context_menu)

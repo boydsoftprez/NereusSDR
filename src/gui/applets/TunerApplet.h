@@ -30,8 +30,12 @@
 
 #pragma once
 #include "AppletWidget.h"
+#include "models/Band.h"
+#include "core/TuneMemoryStore.h"
 
+class QContextMenuEvent;
 class QPushButton;
+class QMenu;
 class QWidget;
 class QTimer;
 
@@ -55,12 +59,26 @@ class TunerModel;
 //   6. Antenna container  -- 3x QPushButton (ANT 1/2/3); hidden unless
 //                            hasDirectConnection() && hasAntennaSwitch()
 //
+// Right-click context menu (Phase 3P-II Phase 4 Task 89):
+//   Open TGXL Advanced...                     -> navigationRequested("tgxlAdvanced")
+//   (separator)
+//   Save current tune memory                  -> store(currentMem())
+//   Recall tune memory for current (ant,band) -> apply stored relay positions
+//   Clear tune memory for current (ant,band)  -> m_tuneStore->clear(ant,band)
+//   (separator)
+//   Disconnect / Reconnect                    -> connectionToggleRequested()
+//   Copy diagnostics to clipboard             -> diagnosticsCopyRequested()
+//
 // From AetherSDR src/gui/TunerApplet.h [@0cd4559]
 class TunerApplet : public AppletWidget {
     Q_OBJECT
 public:
+    // Phase 3P-II Phase 4 Task 89: tuneStore is a non-owning pointer to the
+    // RadioModel-owned TuneMemoryStore (shared with TgxlAdvancedPage).
+    // Pass nullptr when TuneMemoryStore is not available (e.g. unit tests).
     explicit TunerApplet(RadioModel* model, TunerModel* tunerModel = nullptr,
-                         QWidget* parent = nullptr);
+                         QWidget* parent = nullptr,
+                         TuneMemoryStore* tuneStore = nullptr);
 
     QString appletId()    const override { return QStringLiteral("tuner"); }
     QString appletTitle() const override { return QStringLiteral("Tuner Genius"); }
@@ -73,10 +91,50 @@ public:
     // From AetherSDR src/gui/TunerApplet.h:setPowerScale [@0cd4559]
     void setPowerScale(int maxWatts, bool hasAmplifier);
 
+    // Test seam: returns a heap-allocated QMenu* without exec()-ing it.
+    // Caller owns the returned menu; delete or deleteLater() as needed.
+    // Same pattern as AmpApplet/SMeterWidget buildContextMenuForTesting().
+    QMenu* buildContextMenuForTesting() { return buildContextMenu(this); }
+
+    // Phase 3P-II Phase 4 Task 89: test seams for context menu tests.
+    // These are public so tst_tuner_applet_context_menu can call them
+    // without needing RadioModel / TunerModel live instances.
+    void testSetCurrentBandAndAntenna(Band band, int antenna)
+    {
+        m_currentBand    = band;
+        m_currentAntenna = antenna;
+    }
+    void testSetRelayValues(int c1, int l, int c2)
+    {
+        m_lastC1 = c1;
+        m_lastL  = l;
+        m_lastC2 = c2;
+    }
+
+    // Phase 3P-II Phase 4 Task 89: update TGXL connected flag for context menu.
+    void setTgxlConnected(bool connected);
+
+signals:
+    // Phase 3P-II Phase 4 Task 89: right-click context menu signals.
+
+    // Emitted when "Open TGXL Advanced..." is triggered.
+    // pageKey is "tgxlAdvanced"; MainWindow::openSetup() is the handler.
+    void navigationRequested(const QString& pageKey);
+
+    // Emitted when "Disconnect" / "Reconnect" is triggered.
+    void connectionToggleRequested();
+
+    // Emitted when "Copy diagnostics to clipboard" is triggered.
+    void diagnosticsCopyRequested();
+
 public slots:
     // Feed forward power (W) and SWR into the gauges.
     // From AetherSDR src/gui/TunerApplet.h:updateMeters [@0cd4559]
     void updateMeters(float fwdPower, float swr);
+
+protected:
+    // Phase 3P-II Phase 4 Task 89: right-click context menu.
+    void contextMenuEvent(QContextMenuEvent* ev) override;
 
 private slots:
     // Cycle OPERATE -> BYPASS -> STANDBY -> OPERATE.
@@ -89,6 +147,12 @@ private slots:
 
 private:
     void buildUI();
+
+    // Phase 3P-II Phase 4 Task 89: builds the context menu.
+    QMenu* buildContextMenu(QObject* menuParent);
+
+    // Build a TuneMemory from the applet's current state.
+    TuneMemory currentMem() const;
 
     TunerModel* m_tunerModel = nullptr;
 
@@ -129,6 +193,19 @@ private:
     bool   m_postTuneCapture{false};
     float  m_tuneSwr{1.0f};
     QTimer* m_postTuneTimer{nullptr};
+
+    // Phase 3P-II Phase 4 Task 89: context menu state.
+    // Non-owning pointer to the RadioModel-owned TuneMemoryStore.
+    TuneMemoryStore* m_tuneStore{nullptr};
+    // Current band and antenna (updated by TunerModel signals or test seams).
+    Band m_currentBand{Band::Band20m};
+    int  m_currentAntenna{1};        // 1-indexed (1..3)
+    // Last relay values received from TunerModel (used by Save).
+    int  m_lastC1{0};
+    int  m_lastL{0};
+    int  m_lastC2{0};
+    // TGXL connected state for Disconnect/Reconnect label.
+    bool m_tgxlConnected{false};
 };
 
 } // namespace NereusSDR

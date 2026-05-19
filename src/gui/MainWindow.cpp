@@ -2336,9 +2336,12 @@ void MainWindow::populateDefaultMeter()
     // Was previously commented out ("TODO ATU phase"). Now constructed
     // with the TunerModel* owned by RadioModel so it tracks TGXL state
     // from construction time.
+    // Phase 3P-II Phase 4 Task 89: pass RadioModel's shared TuneMemoryStore
+    // so saves from the context menu are visible in TgxlAdvancedPage and vice versa.
     m_tunerApplet = new TunerApplet(m_radioModel,
                                     m_radioModel->tunerModel(),
-                                    nullptr);
+                                    nullptr,
+                                    m_radioModel->tuneMemoryStore());
     panel->addApplet(m_tunerApplet);
 
     // Ghost applets: constructed but not added to the panel or the Containers menu
@@ -6064,6 +6067,55 @@ void MainWindow::onConnectionStateChanged()
 
             // Phase 3P-II Phase 4 Task 90 (TODO): wire navigationRequested to openSetup().
             // connect(m_ampApplet, &AmpApplet::navigationRequested, this, &MainWindow::openSetup);
+            // Wiring added in Task 90 when openSetup() is implemented.
+        }
+
+        // Phase 3P-II Phase 4 Task 89: wire TunerApplet context menu signals to
+        // TgxlConnection. Guard with m_tunerAppletWired if double-connect becomes
+        // an issue; for now TgxlConnection uses UniqueConnection semantics on
+        // connected/disconnected so duplicates are benign.
+        if (m_tunerApplet) {
+            // Track TGXL connected state for Disconnect/Reconnect label.
+            connect(m_radioModel->tgxlConnection(), &TgxlConnection::connected,
+                    this, [this]() { m_tunerApplet->setTgxlConnected(true); },
+                    Qt::UniqueConnection);
+            connect(m_radioModel->tgxlConnection(), &TgxlConnection::disconnected,
+                    this, [this]() { m_tunerApplet->setTgxlConnected(false); },
+                    Qt::UniqueConnection);
+
+            // connectionToggleRequested: disconnect or reconnect TGXL.
+            connect(m_tunerApplet, &TunerApplet::connectionToggleRequested,
+                    this, [this]() {
+                TgxlConnection* tgxl = m_radioModel->tgxlConnection();
+                if (!tgxl) { return; }
+                if (tgxl->isConnected()) {
+                    tgxl->disconnect();
+                } else {
+                    const QString ip = AppSettings::instance()
+                        .value(QStringLiteral("TGXL_ManualIp"), QString{}).toString();
+                    const quint16 port = static_cast<quint16>(AppSettings::instance()
+                        .value(QStringLiteral("TGXL_ManualPort"), 9010).toInt());
+                    if (!ip.isEmpty()) {
+                        tgxl->connectToTgxl(ip, port);
+                    }
+                }
+            }, Qt::UniqueConnection);
+
+            // diagnosticsCopyRequested: build diagnostic string and copy to clipboard.
+            connect(m_tunerApplet, &TunerApplet::diagnosticsCopyRequested,
+                    this, [this]() {
+                TgxlConnection* tgxl = m_radioModel->tgxlConnection();
+                const QString text = QStringLiteral(
+                    "TGXL Diagnostics\n"
+                    "Connected: %1\n"
+                    "IP: %2\n"
+                ).arg(tgxl && tgxl->isConnected() ? QStringLiteral("Yes") : QStringLiteral("No"))
+                 .arg(tgxl ? tgxl->peerAddress() : QStringLiteral("--"));
+                QGuiApplication::clipboard()->setText(text);
+            }, Qt::UniqueConnection);
+
+            // Phase 3P-II Phase 4 Task 90 (TODO): wire navigationRequested to openSetup().
+            // connect(m_tunerApplet, &TunerApplet::navigationRequested, this, &MainWindow::openSetup);
             // Wiring added in Task 90 when openSetup() is implemented.
         }
     } else {

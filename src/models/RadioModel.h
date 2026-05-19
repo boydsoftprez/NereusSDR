@@ -71,6 +71,7 @@
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
 #include "core/TxInterlockPolicy.h"
+#include "core/TuneMemoryStore.h"
 #include "models/TunerModel.h"
 #include "Band.h"
 #include "BandPlanManager.h"
@@ -501,6 +502,12 @@ public:
     // construction time. Shared with PgxlInterlockPage (non-owning read/write)
     // and MoxController (non-owning gate via setInterlockPolicy).
     TxInterlockPolicy* txInterlockPolicy() { return m_txInterlockPolicy; }
+
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared per-(antenna,band)
+    // TGXL relay position cache. Constructed once in the ctor (Qt parent-ownership).
+    // Non-null from construction time. Shared by TgxlAdvancedPage (non-owning
+    // view/edit) and TunerApplet (non-owning save/recall from context menu).
+    TuneMemoryStore* tuneMemoryStore() { return m_tuneMemoryStore; }
 
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
@@ -2135,6 +2142,11 @@ private:
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Qt parent-ownership (parent=this); non-null from construction time.
     TxInterlockPolicy* m_txInterlockPolicy{nullptr};
+
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared per-(antenna,band)
+    // TGXL relay position cache. Qt parent-ownership (parent=this); non-null from
+    // construction time. Shared (non-owning) with TgxlAdvancedPage and TunerApplet.
+    TuneMemoryStore* m_tuneMemoryStore{nullptr};
 };
 
 } // namespace NereusSDR
