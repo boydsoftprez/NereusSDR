@@ -122,10 +122,16 @@
 //                 RX audio panel instead of an external post-DSP scalar.
 //                 wdsp/rxa.c:538 [v2.10.3.14] initializes panel.gain1 = 4.0
 //                 (+12 dB), so a host that never calls SetRXAPanelGain1
-//                 ships hot — that's the distortion-at-high-volume bug
+//                 ships hot -- that's the distortion-at-high-volume bug
 //                 surfaced 2026-05-07.  Thetis radio.cs:1089 [v2.10.3.14]
 //                 RXOutputGain setter is the canonical call site; signature
 //                 matches dsp.cs:399-400 P/Invoke decl and wdsp/patchpanel.c:142.
+//                 AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-19 — SetupDetectMaxBin + GetDetectMaxBin declarations added by
+//                 J.J. Boyd (KG4VCF) during Phase 3P-II Phase 2 Task 31/32
+//                 (Analog S-Meter port, MaxBin peak-bin detector wrappers).
+//                 Signatures match Thetis Console/dsp.cs:846-850 [@501e3f5]
+//                 P/Invoke decls and wdsp/analyzer.c:775+830 [@501e3f5].
 //                 AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
@@ -681,6 +687,25 @@ void SetRXAFMSQThreshold(int channel, double threshold);
 double GetRXAMeter(int channel, int mt);
 
 double GetTXAMeter(int channel, int mt);
+
+// ---------------------------------------------------------------------------
+// Peak-bin detector (analyzer.c)
+//
+// These two functions configure and read the "strongest bin in passband"
+// detector that Thetis drives from setupDisplayMaxBinDetect().
+//
+// From Thetis Console/dsp.cs:846-847 [@501e3f5] (P/Invoke declarations):
+//   void SetupDetectMaxBin(int run, int disp, int ss, int LO, double rate,
+//                          double fLow, double fHigh, double tau, int frame_rate)
+//   double GetDetectMaxBin(int disp)
+// From Thetis wdsp/analyzer.c:775 and 830 [@501e3f5] (C implementation).
+// Call site: Thetis Console/console.cs:51150 [@501e3f5]
+// ---------------------------------------------------------------------------
+
+void SetupDetectMaxBin(int run, int disp, int ss, int LO, double rate,
+                       double fLow, double fHigh, double tau, int frame_rate);
+
+double GetDetectMaxBin(int disp);
 
 // ---------------------------------------------------------------------------
 // Wisdom + impulse cache (wisdom.c, impulse_cache.h)
