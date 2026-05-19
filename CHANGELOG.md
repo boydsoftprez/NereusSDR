@@ -152,6 +152,114 @@ Medium = 10 dB/s, Slow = 5 dB/s.
 `tst_smeter_widget_context_menu` (2 slots),
 `tst_wdsp_engine_max_bin` (2 slots). Total: 4 tests, 10 slots.
 
+### Added (Phase 3P-II Phase 3 - Connection Robustness)
+
+12 commits (Tasks 55-67). Adds exponential-backoff auto-reconnect, keepalive
+timers, RTT-correlated ping, the full PGXL pairing flow, band-change
+notifications, a live diagnostics model, and per-connection status labels on
+the Peripherals page. Bench-verification matrix: Tasks 68-74 (smoke-run deferred
+to hardware bench; code paths verified by 6 new test executables, 13 new slots).
+
+**PgxlConnection Tier 2 (Tasks 55-59, 62, 65-66):**
+
+- `amplifierCreate` (Task 55-56): sends `amplifier create serial=<s> name=<n>
+  antmap=<m>` to register this client with the amplifier. Parses
+  `amplifier_create_result=` R-frame ack. Antenna port map defaults via
+  `PGXL_AntMap` AppSettings key (default `"ANT1:PORTA,ANT2:PORTB"`).
+- `flexradioPair` (Tasks 55-56, 62): sends `flexradio pair serial=<s> slice=<x>
+  txant=<a> ptt_over_lan=<b> active=<b>` after a successful create. Captures
+  the paired radio serial from the R-frame ack for use by later `setBand` calls.
+  Gated by `PGXL_PairAttempt` AppSettings key (default `"True"`).
+- `enableKeepalive` (Task 57): sends `status` on a `PGXL_KeepaliveSec`
+  (default 30 s) timer. Timer starts after the connect handshake.
+- `ping` with RTT measurement (Task 58): sends `ping seq=<n>` on a
+  `PGXL_PingSec` (default 10 s) interval. Correlates the `pong=<n>` R-frame
+  reply to compute RTT. Emits `pingRttMs(quint32)`. Closes the connection on a
+  5 s unanswered-ping timeout.
+- `interlockCreate`, `interlockDisable` (Task 59): wire-level `interlock create`
+  and `interlock disable` commands; R-frame acks route through the existing
+  dispatch table.
+- `readSetup`, `writeSetup`, `readIfconf`, `writeIfconf`, `save` (Task 59):
+  full setup/ifconf round-trip. R-frame responses are deserialized into
+  `QVariantMap` and emitted via `setupReceived` / `ifconfReceived` signals.
+- Auto-reconnect with exponential backoff (Task 59): on disconnect, schedules
+  reconnect at 1 / 2 / 5 / 10 / 30 / 60 s (table saturates at 60 s). Gated by
+  `PGXL_AutoReconnect` AppSettings key (default `"True"`).
+- Frame counters: `m_framesIn`, `m_framesOut`, `m_bytesIn`, `m_bytesOut`
+  incremented in `sendCommand` and `onReadyRead`; exposed for
+  `ConnectionDiagnostics` binding.
+- `setBand` (Task 66): sends `flexradio ampslice=<x> serial=<paired>
+  band=<hz>` when a paired serial is known and no pairing R-frame is in flight.
+  Slice letter from `PGXL_FlexAmpSlice` AppSettings key (default `"A"`).
+- `RadioModel` pairing-flow runner (Task 62): on `PgxlConnection::connected`,
+  executes `amplifierCreate` (reading `PGXL_AntMap`) -> `flexradioPair` if
+  `PGXL_PairAttempt` is true (reading `PGXL_FlexAmpSlice` and `PGXL_TxAnt`,
+  default `"ANT1"`) -> `enableKeepalive`.
+
+**TgxlConnection Tier 2 parallel (Task 60):**
+
+- `enableKeepalive`, `ping`, `readSetup`, `writeSetup`, `readIfconf`,
+  `writeIfconf`, `save` added in parallel with the PGXL set. TGXL does not
+  have pairing commands (`amplifierCreate` / `flexradioPair` are PGXL-only).
+- Auto-reconnect with same 1/2/5/10/30/60 s exponential backoff. Gated by
+  `TGXL_AutoReconnect` (default `"True"`). Ping interval via `TGXL_PingSec`
+  (default 10 s); keepalive cadence via `TGXL_KeepaliveSec` (default 30 s).
+- Frame counters in parallel with PGXL.
+
+**ConnectionDiagnostics (Task 61):**
+
+- New `ConnectionDiagnostics` (`src/core/ConnectionDiagnostics.{h,cpp}`):
+  NereusSDR-native `QObject` with 10 `Q_PROPERTY`s: `uptimeSec`, `rttMs`,
+  `keepaliveMissed`, `reconnectCount`, `framesIn`, `framesOut`, `bytesIn`,
+  `bytesOut`, `lastFrameMs`, `faultsSession`. Two `bindTo` overloads:
+  `bindTo(PgxlConnection*)` and `bindTo(TgxlConnection*)`. On `bindTo`,
+  all counters reset and the object connects to the live connection's signals.
+  Emits coalesced `changed()` once per second via a 1 Hz coalesce timer.
+  `testFlushCoalesceTimer()` test seam for deterministic verification.
+
+**Band-change wiring (Tasks 64-65):**
+
+- `SliceModel::bandChanged(Band)` (Task 64): emits when the panadapter band
+  crosses a boundary, derived from `Band::bandFromFrequency()`.
+- `MainWindow` wires `SliceModel::bandChanged` to `PgxlConnection::setBand`
+  (Task 65): operator band changes trigger the amplifier to update its
+  bias/antenna profile without any user action.
+
+**UI: PeripheralsPage live status labels (Task 63):**
+
+- PGXL and TGXL rows on Setup -> Network -> Peripherals now show live
+  connection state. Four states via live signals: Disconnected (grey),
+  Connecting (yellow), Connected (green), Connected + paired (green bold for
+  PGXL), Error (red).
+
+**AppSettings keys documented (Tasks 68-69):**
+
+All Phase 3 persistence keys are documented in `AppSettings.h`: `PGXL_AutoReconnect`,
+`PGXL_KeepaliveSec`, `PGXL_PingSec`, `PGXL_PairAttempt`, `PGXL_FlexAmpSlice`,
+`PGXL_TxAnt`, `PGXL_AntMap`, `TGXL_AutoReconnect`, `TGXL_KeepaliveSec`,
+`TGXL_PingSec`.
+
+**Tests added (6 executables, 13 slots):**
+
+- `tst_pgxl_connection_pairing` (3 slots): amplifierCreate wire format, pairing
+  ack capture, early-exit when pairing is in flight.
+- `tst_pgxl_connection_keepalive` (2 slots): timer fires `status` command,
+  timer stops on disconnect.
+- `tst_pgxl_connection_ping` (2 slots): ping frame format, pong correlation +
+  RTT emit.
+- `tst_pgxl_connection_reconnect` (1 slot): auto-reconnect schedules on
+  disconnect with first backoff interval.
+- `tst_tgxl_connection_ping` (2 slots): parallel TGXL ping/pong coverage.
+- `tst_connection_diagnostics` (3 slots): bindTo resets counters, frame counter
+  increments, coalesce timer flush.
+
+Combined with the 7 pre-existing slots in `tst_pgxl_connection_parse` (3) and
+`tst_tgxl_connection_parse` (4): 8 executables, 20 slots total for the
+PGXL/TGXL connection family.
+
+**Phase 4 deferred:** smoke-run on live PGXL + TGXL hardware (bench-verification
+matrix row verification); PeripheralsPage paired/error state full-cycle test.
+
 ## [0.5.1] - 2026-05-15
 
 > [!NOTE]

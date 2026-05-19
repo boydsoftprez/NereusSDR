@@ -338,6 +338,17 @@ public:
     //   PGXL_AutoReconnect  bool   "True" Enable exponential-backoff auto-reconnect on drop.
     //                                     Backoff sequence: 1/2/5/10/30/60 s (cap at 60 s).
     //
+    // PGXL pairing-flow (Phase 3P-II Phase 3, Task 62)
+    // Used by RadioModel's connected-lambda to configure amplifierCreate + flexradioPair.
+    //   PGXL_AntMap        string "ANT1:PORTA,ANT2:PORTB"
+    //                                     Antenna port mapping passed to amplifierCreate;
+    //                                     comma-separated RADIO_ANT:AMP_PORT pairs.
+    //   PGXL_PairAttempt   bool   "True"  Gate for flexradioPair call after amplifierCreate.
+    //                                     Set to "False" to skip pairing (amp standalone).
+    //   PGXL_FlexAmpSlice  string "A"     Slice letter (A/B/C/D) passed to flexradioPair
+    //                                     and setBand.
+    //   PGXL_TxAnt         string "ANT1"  TX antenna name passed to flexradioPair.
+    //
     // TGXL connection robustness (Phase 3P-II Phase 3, Task 60)
     // Wire formats from design §4.2.1 + §6.4 (4O3A TGXL Ethernet API).
     //   TGXL_KeepaliveSec   int     30    Cadence for keepalive status pokes.
