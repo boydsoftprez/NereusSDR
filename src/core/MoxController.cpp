@@ -204,7 +204,7 @@ void MoxController::setMoxCheck(MoxCheckFn check)
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3P-II Task 87 — setInterlockPolicy / onAmpStateChanged / onAmpSwrUpdated
+// Phase 3P-II Task 87: setInterlockPolicy / onAmpStateChanged / onAmpSwrUpdated
 //
 // setInterlockPolicy: wire the TxInterlockPolicy that setMox(true) consults
 // immediately after the BandPlanGuard (K.2) check and before the Codex P2
