@@ -121,17 +121,21 @@ void PgxlConnection::processLine(const QString& line) {
         }
         return;
     }
-    // Status push: S0|state ... or S0|temp=... etc.
+    // Status push: S0|<object> <kv> ... (PGXL may push unsolicited status).
+    // Frame format per FlexRadio PowerGenius Ethernet API + design §6.1:
+    // the <object> prefix is required; drop frames that lack it.
     if (line.startsWith('S')) {
         int pipe = line.indexOf('|');
         if (pipe < 0) return;
+
         QString rest = line.mid(pipe + 1);
         int firstEq = rest.indexOf('=');
         if (firstEq < 0) return;
         int lastSpaceBeforeEq = rest.lastIndexOf(' ', firstEq);
-        QString kvString = (lastSpaceBeforeEq >= 0)
-            ? rest.mid(lastSpaceBeforeEq + 1) : rest;
-        QMap<QString,QString> kvs;
+        if (lastSpaceBeforeEq < 0) return;
+
+        QString kvString = rest.mid(lastSpaceBeforeEq + 1);
+        QMap<QString, QString> kvs;
         const auto parts = kvString.split(' ', Qt::SkipEmptyParts);
         for (const auto& part : parts) {
             int eq = part.indexOf('=');

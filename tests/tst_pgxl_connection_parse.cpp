@@ -58,7 +58,7 @@ void PgxlConnectionParseTest::parsesUnsolicitedStatusPush() {
     QSignalSpy statusSpy(&conn, &NereusSDR::PgxlConnection::statusUpdated);
 
     conn.injectLineForTesting("V3.8.9");
-    conn.injectLineForTesting("S0|state=FAULT fwd=1820.0 swr=2.85 temp=78.0");
+    conn.injectLineForTesting("S0|state state=FAULT fwd=1820.0 swr=2.85 temp=78.0");
 
     QCOMPARE(statusSpy.count(), 1);
     auto kvs = statusSpy.takeFirst().at(0).value<QMap<QString,QString>>();
