@@ -13,11 +13,11 @@
 // An optional SWR gate (swrGateEnabled + swrGateMax) adds a second check:
 // when enabled, high-SWR conditions trigger the same Warn/Block action.
 //
-// The graceMs field is persisted for future use: the design intends to
-// ignore SWR spikes in the first <graceMs> milliseconds after the amplifier
-// transitions to OPERATE. Phase 4 polish or a bench-verification follow-up
-// will wire the grace period into evaluateTxRequest once live timing is
-// confirmed on hardware.
+// The graceMs field suppresses the SWR gate check for <graceMs> milliseconds
+// after the amplifier transitions to OPERATE. This avoids false interlock
+// trips during the amplifier warm-up transient before the SWR reading
+// stabilises. m_ampLastOperateMs is set by onAmpStateChanged on the
+// not-in-operate -> in-operate edge and consulted in evaluateTxRequest.
 //
 // Design reference: docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md §4.9
 //
@@ -69,6 +69,13 @@ public slots:
     void setSwrGateEnabled(bool on);
     void setSwrGateMax(float x);
 
+    // Phase 3P-II review fix I2: update the OPERATE transition timestamp so
+    // the grace period gate in evaluateTxRequest can suppress the SWR check
+    // during the window immediately after the amplifier enters OPERATE.
+    // Called by MoxController::onAmpStateChanged which is already wired from
+    // RadioModel amplifierChanged / ampStateChanged lambdas.
+    void onAmpStateChanged(bool ampPresent, bool ampInOperate);
+
 signals:
     void warned(const QString& reason);
     void denied(const QString& reason);
@@ -80,9 +87,12 @@ private:
     bool  m_swrGateEnabled{false};
     float m_swrGateMax{3.0f};
 
-    // Timestamp (epoch ms) of the last OPERATE-on transition. Reserved for
-    // the grace-period gate wired in a future bench-verification follow-up.
+    // Timestamp (epoch ms) of the last not-in-operate -> in-operate transition.
+    // Set by onAmpStateChanged; consulted by evaluateTxRequest to suppress the
+    // SWR gate check during the grace window.
     qint64 m_ampLastOperateMs{0};
+    // Previous operate state tracked to detect rising edge only.
+    bool   m_prevAmpInOperate{false};
 };
 
 }  // namespace NereusSDR

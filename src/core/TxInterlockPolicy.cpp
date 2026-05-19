@@ -10,6 +10,8 @@
 #include "core/TxInterlockPolicy.h"
 #include "core/AppSettings.h"
 
+#include <QDateTime>
+
 namespace NereusSDR {
 
 TxInterlockPolicy::TxInterlockPolicy(QObject* parent)
@@ -49,20 +51,39 @@ bool TxInterlockPolicy::evaluateTxRequest(bool ampPresent, bool ampInOperate, fl
         return true;
     }
 
-    // Check 2: SWR gate.
+    // Check 2: SWR gate -- skipped during the grace window after OPERATE-on.
+    // Phase 3P-II review fix I2: m_ampLastOperateMs is set by onAmpStateChanged
+    // on the not-in-operate -> in-operate rising edge; m_graceMs suppresses
+    // high-SWR false trips during the amplifier warm-up transient.
     if (m_swrGateEnabled && currentSwr > m_swrGateMax) {
-        const QString reason = QString("SWR %1 above limit %2")
-                                   .arg(static_cast<double>(currentSwr))
-                                   .arg(static_cast<double>(m_swrGateMax));
-        if (m_mode == Block) {
-            emit denied(reason);
-            return false;
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const bool inGrace = (m_ampLastOperateMs > 0)
+                             && ((nowMs - m_ampLastOperateMs) < m_graceMs);
+        if (!inGrace) {
+            const QString reason = QString("SWR %1 above limit %2")
+                                       .arg(static_cast<double>(currentSwr))
+                                       .arg(static_cast<double>(m_swrGateMax));
+            if (m_mode == Block) {
+                emit denied(reason);
+                return false;
+            }
+            emit warned(reason);
+            return true;
         }
-        emit warned(reason);
-        return true;
     }
 
     return true;
+}
+
+// Phase 3P-II review fix I2: track OPERATE-on transitions so evaluateTxRequest
+// can suppress the SWR gate check during the grace window.
+void TxInterlockPolicy::onAmpStateChanged(bool /*ampPresent*/, bool ampInOperate)
+{
+    // Only record the timestamp on the rising edge (false -> true).
+    if (ampInOperate && !m_prevAmpInOperate) {
+        m_ampLastOperateMs = QDateTime::currentMSecsSinceEpoch();
+    }
+    m_prevAmpInOperate = ampInOperate;
 }
 
 void TxInterlockPolicy::setMode(Mode m)

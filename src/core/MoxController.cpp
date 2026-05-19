@@ -227,6 +227,11 @@ void MoxController::onAmpStateChanged(bool hasAmp, bool inOperate)
 {
     m_ampPresent   = hasAmp;
     m_ampInOperate = inOperate;
+    // Phase 3P-II review fix I2: forward to the interlock policy so it can
+    // track the OPERATE-on rising edge for the grace-period gate.
+    if (m_interlockPolicy) {
+        m_interlockPolicy->onAmpStateChanged(hasAmp, inOperate);
+    }
 }
 
 void MoxController::onAmpSwrUpdated(float swr)
