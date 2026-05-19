@@ -64,6 +64,8 @@
 #include "setup/AppearanceSetupPages.h"
 // CAT & Network
 #include "setup/CatNetworkSetupPages.h"
+// Phase 3P-II Phase 4 Task 78: PGXL Advanced page
+#include "setup/PgxlAdvancedPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -483,6 +485,12 @@ void SetupDialog::buildTree()
     // QWidget, not a SetupPage subclass. Task 19 wires the Connect buttons to
     // RadioModel's PgxlConnection and TgxlConnection accessors.
     addWrapped(cat, "Peripherals", new PeripheralsPage(m_model));
+    // Phase 3P-II Phase 4 Task 78: PGXL Advanced page.
+    // Registered unconditionally; visibility gate (PGXL_ManualIp non-empty)
+    // can be applied in a later polish pass. Key "pgxlAdvanced" used by
+    // openSetup() navigation requests from AmpApplet context menu (Task 90).
+    // addWrapped() used because PgxlAdvancedPage is a plain QWidget.
+    addWrapped(cat, "PGXL Advanced", new PgxlAdvancedPage(m_model));
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);
 
