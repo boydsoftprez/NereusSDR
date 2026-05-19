@@ -32,7 +32,6 @@
 #include "TunerApplet.h"
 #include "gui/HGauge.h"
 #include "gui/RelayBar.h"
-#include "gui/StyleConstants.h"
 #include "models/TunerModel.h"
 
 #include <QVBoxLayout>
