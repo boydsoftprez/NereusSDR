@@ -5160,6 +5160,31 @@ void MainWindow::wireSliceToSpectrum()
         pgxl->setBand(static_cast<int>(s->frequency()));
     });
 
+    // Bench-fix 2026-05-19: also push on within-band frequency changes so
+    // PGXL sees every tune, not just band-boundary crossings.
+    // bandChanged fires only when the slice crosses a band edge; within-band
+    // tunes (e.g. 7.200 -> 7.250 MHz) never trigger it, leaving PGXL's
+    // bandA field stale until the operator crosses into an adjacent band.
+    // Operator confirmed on-bench: after pairing PGXL via the serial field,
+    // frequency changes from the tune wheel were not visible in PGXL status.
+    // Debounced: a 200 ms QTimer::singleShot coalesces a burst of tune-wheel
+    // clicks into one outbound command. m_pgxlBandPushTokenMs is the last
+    // token; only the most recently scheduled callback fires the push.
+    connect(slice, &SliceModel::frequencyChanged,
+            this, [this](qint64 hz) {
+        Q_UNUSED(hz);
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_pgxlBandPushTokenMs = nowMs;
+        QTimer::singleShot(200, this, [this, nowMs]() {
+            if (m_pgxlBandPushTokenMs != nowMs) { return; }
+            PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+            if (!pgxl || !pgxl->isConnected()) { return; }
+            SliceModel* s = m_radioModel->activeSlice();
+            if (!s) { return; }
+            pgxl->setBand(static_cast<int>(s->frequency()));
+        });
+    });
+
     // Phase 3P-II review fix C1: keep TunerApplet m_currentBand in sync so
     // right-click Save/Recall/Clear actions always address the actual current
     // (antenna, band) slot rather than the Band::Band20m default.

@@ -482,6 +482,12 @@ private:
     quint64 m_cpuSysPrevIdle{0};
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
 
+    // Bench-fix 2026-05-19: debounce token for within-band PGXL frequency push.
+    // frequencyChanged fires on every tune-wheel click; we coalesce into one
+    // setBand call per 200 ms burst. The token (timestamp in ms) lets the
+    // QTimer::singleShot callback drop stale invocations.
+    qint64 m_pgxlBandPushTokenMs{0};
+
     // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle)
     // m_txInhibitLabel — red "TX INHIBIT" pill, hidden by default,
     //   shown when TxInhibitMonitor::inhibited() asserts (wired Task 17).

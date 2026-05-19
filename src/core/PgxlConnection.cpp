@@ -277,11 +277,14 @@ quint32 PgxlConnection::setBand(int bandHz) {
     QChar slice = s.value(QStringLiteral("PGXL_FlexAmpSlice"),
                           QStringLiteral("A")).toString().at(0);
     // From FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
-    return sendCommand(
-        QString("flexradio ampslice=%1 serial=%2 band=%3")
+    const QString cmd = QString("flexradio ampslice=%1 serial=%2 band=%3")
             .arg(slice)
             .arg(m_pairedRadioSerial)
-            .arg(bandHz));
+            .arg(bandHz);
+    // Bench-fix 2026-05-19: log before send so /tmp/nereus-pgxl.log shows the
+    // exact wire command, confirming both that the push fires and what PGXL sees.
+    qCInfo(lcPgxl) << "setBand sending:" << cmd;
+    return sendCommand(cmd);
 }
 
 void PgxlConnection::onKeepaliveTimeout() {
