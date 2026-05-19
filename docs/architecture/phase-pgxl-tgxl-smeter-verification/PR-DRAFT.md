@@ -2,7 +2,7 @@
 
 ## Title
 
-`Phase 3P-II: PGXL/TGXL + analog S-Meter port (~80 commits, 4 phases)`
+`Phase 3P-II: PGXL/TGXL + analog S-Meter port (78 commits, 4 phases + review-fix sweep)`
 
 ---
 
@@ -14,9 +14,11 @@ widget with two Thetis-native RX meter modes (Sig Avg and Max Bin), adds full
 FlexRadio API connection robustness (pairing, keepalive, auto-reconnect), and
 delivers the complete operator-facing device-config UI including fault history,
 TX interlock policy, tune memory management, and applet right-click navigation.
-Four phases across roughly 80 commits; ~3000 LOC of production code; 28 unit
-test slots across 11 test executables; 36-row bench matrix. Single PR per the
-operator's direction.
+Four phases across 78 commits (71 implementation + 7 review-fix); 17,019 net
+insertions across 87 files; 28 unit test slots across 11 test executables;
+36-row bench matrix. Single PR per the operator's direction. End-of-epic code
+review found 3 critical + 4 important findings; all landed as the closing
+7-commit sweep before this PR.
 
 ---
 
@@ -25,7 +27,7 @@ operator's direction.
 ### Phase 1 - PGXL/TGXL baseline (AetherSDR 1:1 port)
 
 - `PgxlConnection`, `TgxlConnection`, `TunerModel`, `RelayBar`, `LanDiscovery`,
-  `AmpApplet`, `LanScanDialog` ported from AetherSDR `[@a29ff40]`.
+  `AmpApplet`, `LanScanDialog` ported from AetherSDR `[@0cd4559]`.
 - `TunerApplet` rewired for TGXL; `RadioModel` owns both connections.
 - Setup -> Network -> Peripherals page (PGXL + TGXL rows, manual IP, Scan LAN).
 - 4 test executables, 7 slots.
@@ -74,6 +76,22 @@ operator's direction.
 - `PgxlConnection` `readSetup` / `writeSetup` / `readIfconf` / `writeIfconf` /
   `save` unit tests: 3 new executables, 8 new slots (28 total).
 
+### Review-fix sweep (post end-of-epic review)
+
+- C1: TunerApplet now tracks `(currentAntenna, currentBand)` from production
+  signals (was only updated by test seam, so Save/Recall/Clear always wrote
+  to slot (ANT1, 20m) regardless of actual band/antenna).
+- C2: `TxInterlockPolicy::warned` / `denied` signals now feed MainWindow
+  status-bar toasts (operator was blind to Block-mode denials before).
+- C3: FaultLog capture path now converts PGXL wire `fwd` (dBm) and `swr`
+  (negative-dB return loss) to watts and ratio before passing to
+  `likelyCauseFor` (otherwise every fault classified as "Unknown").
+- I1: 16 NereusSDR-drafted em-dashes dropped (CHANGELOG + 2 source files).
+- I2: `TxInterlockPolicy` grace period now wired into `evaluateTxRequest`
+  via `onAmpStateChanged` rising-edge timestamp.
+- I3: MoxController docstring drift corrected.
+- I4: `PGXL_PowerCapEnabled` / `PGXL_PowerCapW` documented in `AppSettings.h`.
+
 ---
 
 ## Test coverage
@@ -115,6 +133,17 @@ Row 18 (HL2) is gated on the open ATT/filter safety audit (3R precedent; see
 - PGXL `message` verb (debug-only, no operator-facing value).
 - Discovery of Antenna Genius devices on UDP 9007.
 - PGXL chip in the bottom status bar (AetherSDR has none; no prior precedent).
+
+---
+
+## Known test characteristics
+
+- **Parallel-execution flakiness in 2 pre-existing tests:** `tst_core_audio_hal_bus`
+  and `tst_wdsp_engine_tx_channel` (CoreAudio HAL + WDSP wisdom-file shared
+  resources) occasionally fail under high-parallelism ctest. Both pass cleanly
+  in isolation and under `ctest -j1` (495/495 PASS verified). Not introduced by
+  this epic; pre-existing macOS behavior. Recommended verification: run
+  `ctest --test-dir build -j1` before PR merge.
 
 ---
 
