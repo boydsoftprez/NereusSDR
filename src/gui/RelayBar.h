@@ -4,10 +4,10 @@
 // src/gui/RelayBar.h  (NereusSDR)
 // =================================================================
 //
-// Source attribution (AetherSDR — GPLv3):
+// Source attribution (AetherSDR, GPLv3):
 //
 //   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
-//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
 //       and About dialog for the live contributor list)
 //
 //   This file is a port or structural derivative of AetherSDR source.
@@ -16,7 +16,7 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-05-18 — Extracted RelayBar widget from AetherSDR
+//   2026-05-18  Extracted RelayBar widget from AetherSDR
 //                 src/gui/HGauge.h (inner class) into standalone
 //                 NereusSDR widget by J.J. Boyd (KG4VCF), with
 //                 AI-assisted transformation via Anthropic Claude Code.

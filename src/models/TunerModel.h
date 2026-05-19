@@ -36,9 +36,9 @@ class TgxlConnection;
 // State model for a 4O3A Tuner Genius XL (TGXL).
 //
 // Two data paths feed this model:
-//   1. applyStatus(kvs) — key=value pairs from the TGXL direct TCP connection
+//   1. applyStatus(kvs): key=value pairs from the TGXL direct TCP connection
 //      parsed by TgxlConnection (stateUpdated / statusUpdated signals).
-//   2. bindConnection(conn) — wires TgxlConnection::stateUpdated / statusUpdated
+//   2. bindConnection(conn): wires TgxlConnection::stateUpdated / statusUpdated
 //      signals to applyStatus and tracks direct-connection state.
 //
 // Commands (autoTune, adjustRelay, setAntennaA, setOperate, setBypass) forward
