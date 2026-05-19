@@ -35,6 +35,16 @@ public:
     QString peerAddress() const { return m_socket.peerAddress().toString(); }
     quint16 peerPort()    const { return m_socket.peerPort(); }
 
+    // Read-only metric accessors for ConnectionDiagnostics polling (1 Hz).
+    quint64 framesIn()         const noexcept { return m_framesIn; }
+    quint64 framesOut()        const noexcept { return m_framesOut; }
+    quint64 bytesIn()          const noexcept { return m_bytesIn; }
+    quint64 bytesOut()         const noexcept { return m_bytesOut; }
+    qint64  connectedSinceMs() const noexcept { return m_connectedSinceMs; }
+    qint64  lastFrameMs()      const noexcept { return m_lastFrameMs; }
+    int     keepaliveMissed()  const noexcept { return m_keepaliveMissed; }
+    int     reconnectCount()   const noexcept { return m_reconnectAttempts; }
+
     // Test-only: feed a single line into processLine (no newline needed).
     // Used by tst_pgxl_connection_parse. Production code never calls this.
     void injectLineForTesting(const QString& line) { processLine(line); }

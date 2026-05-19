@@ -499,6 +499,7 @@ set(CORE_SOURCES
     src/core/PgxlConnection.cpp
     src/core/TgxlConnection.cpp
     src/core/LanDiscovery.cpp
+    src/core/ConnectionDiagnostics.cpp
     # Phase 3P-II TGXL tuner model
     src/models/TunerModel.cpp
 )

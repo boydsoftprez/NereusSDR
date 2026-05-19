@@ -4974,3 +4974,9 @@ nereus_add_test(tst_pgxl_connection_ping)
 # reconnectAttempt signals with delays 1000/2000/5000/10000/30000/60000/
 # 60000/60000 ms.
 nereus_add_test(tst_pgxl_connection_reconnect)
+
+# Task 61: ConnectionDiagnostics 1 Hz coalesced metrics aggregator.
+# Tests: tracksFrameCount (2 injectLineForTesting calls -> framesIn==2);
+# countsReconnectsFromSignal (3x testForceDisconnect -> reconnectCount==3);
+# rebindToTgxlClearsPgxlCounts (PGXL->TGXL rebind resets framesIn to 0).
+nereus_add_test(tst_connection_diagnostics)
