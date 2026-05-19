@@ -84,6 +84,8 @@ quint32 PgxlConnection::sendCommand(const QString& cmd) {
     QString line = QString("C%1|%2\n").arg(seq).arg(cmd);
     m_socket.write(line.toUtf8());
     qCDebug(lcPgxl) << "sent" << line.trimmed();
+    // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+    qCInfo(lcPgxl) << "TX seq=" << seq << "cmd:" << cmd;
     emit testFrameWrittenForTesting(line.trimmed());  // test seam
     ++m_framesOut;
     m_bytesOut += quint64(line.size());
@@ -322,6 +324,8 @@ void PgxlConnection::processLine(const QString& line) {
         m_version = line.mid(1);
         m_gotVersion = true;
         qCInfo(lcPgxl) << "PGXL version" << m_version;
+        // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+        qCInfo(lcPgxl) << "RX V-frame version=" << m_version;
         sendCommand("info");
         sendCommand("status");
         m_connected = true;
@@ -342,6 +346,13 @@ void PgxlConnection::processLine(const QString& line) {
             uint hexCode = hexStr.toUInt(&hexOk, 16);
 
             QString body = line.mid(pipe2 + 1).trimmed();
+
+            // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+            if (hexOk && hexCode != 0) {
+                qCWarning(lcPgxl) << "RX R-frame seq=" << rseq << "hex=" << QString::number(hexCode, 16) << "body:" << body;
+            } else {
+                qCInfo(lcPgxl) << "RX R-frame seq=" << rseq << "hex=" << (hexOk ? QString::number(hexCode, 16) : "PARSE_ERROR") << "body:" << body;
+            }
 
             // Check for pairing result correlation.
             if (m_pendingPairingSeq != 0 && rseq == m_pendingPairingSeq) {
@@ -400,6 +411,10 @@ void PgxlConnection::processLine(const QString& line) {
             int eq = part.indexOf('=');
             if (eq > 0)
                 kvs.insert(part.left(eq), part.mid(eq + 1));
+        }
+        // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+        if (!kvs.isEmpty()) {
+            qCInfo(lcPgxl) << "RX S-frame state=" << kvs.value("state", "unknown");
         }
         if (!kvs.isEmpty())
             emit statusUpdated(kvs);

@@ -147,6 +147,8 @@ void TgxlConnection::processLine(const QString& line)
         m_version = line.mid(1);
         m_gotVersion = true;
         qCDebug(lcTgxl) << "TgxlConnection: TGXL version" << m_version;
+        // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+        qCInfo(lcTgxl) << "RX V-frame version=" << m_version;
 
         // Send init commands
         sendCommand("info");
@@ -173,6 +175,13 @@ void TgxlConnection::processLine(const QString& line)
             uint hexCode = hexStr.toUInt(&hexOk, 16);
 
             QString body = line.mid(pipe2 + 1).trimmed();
+
+            // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+            if (hexOk && hexCode != 0) {
+                qCWarning(lcTgxl) << "RX R-frame seq=" << rseq << "hex=" << QString::number(hexCode, 16) << "body:" << body;
+            } else {
+                qCInfo(lcTgxl) << "RX R-frame seq=" << rseq << "hex=" << (hexOk ? QString::number(hexCode, 16) : "PARSE_ERROR") << "body:" << body;
+            }
 
             // Pong correlation: any R-frame matching a pending ping seq is a pong.
             if (m_pendingPings.contains(rseq)) {
@@ -261,6 +270,11 @@ void TgxlConnection::processLine(const QString& line)
                 kvs.insert(part.left(eq), part.mid(eq + 1));
         }
 
+        // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+        if (!kvs.isEmpty()) {
+            qCInfo(lcTgxl) << "RX S-frame object=" << object << "state=" << kvs.value("state", kvs.value("status", "unknown"));
+        }
+
         if (object == "state") {
             emit stateUpdated(kvs);
         } else if (object == "status") {
@@ -277,6 +291,8 @@ quint32 TgxlConnection::sendCommand(const QString& cmd)
     QString line = QString("C%1|%2\n").arg(seq).arg(cmd);
     m_socket.write(line.toUtf8());
     qCDebug(lcTgxl) << "TgxlConnection: sent" << line.trimmed();
+    // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
+    qCInfo(lcTgxl) << "TX seq=" << seq << "cmd:" << cmd;
     emit testFrameWrittenForTesting(line.trimmed());  // test seam
     ++m_framesOut;
     m_bytesOut += quint64(line.size());
