@@ -61,6 +61,7 @@ private slots:
 private:
     QByteArray buildBeacon(quint8 packetCount, quint32 unixSeconds) const;
     QString    detectLanIpv4() const; // first non-loopback IPv4 host address
+    QHostAddress computeBroadcastAddress() const; // subnet broadcast for m_ip
 
     QUdpSocket m_socket;
     QTimer     m_timer;
@@ -73,6 +74,7 @@ private:
     QString m_version;
     QString m_mac;  // dashed uppercase form for radio_license_id
     QString m_ip;
+    QHostAddress m_broadcastAddress; // subnet broadcast for the LAN interface
 };
 
 }  // namespace NereusSDR

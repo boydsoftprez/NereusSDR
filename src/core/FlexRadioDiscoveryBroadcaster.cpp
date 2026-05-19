@@ -75,18 +75,34 @@ void FlexRadioDiscoveryBroadcaster::start()
         qCWarning(lcFlexDisc) << "No LAN-facing IPv4 found; beacon ip= will be 0.0.0.0";
     }
 
-    // Bind to 0.0.0.0:4992 with ShareAddress + ReuseAddressHint so we
-    // coexist with other listeners on port 4992 (e.g. a SmartSDR instance
-    // running locally). Broadcast write still works via QUdpSocket because
-    // Qt sets SO_BROADCAST implicitly when writing to QHostAddress::Broadcast.
+    // Compute the subnet broadcast address for the interface owning m_ip.
+    // This ensures the beacon reaches all hosts on the same subnet, even on
+    // multi-interface Macs where the kernel's route for 255.255.255.255 may
+    // pick the wrong interface.
+    m_broadcastAddress = computeBroadcastAddress();
+
+    // Bind to the LAN IP:4992 so the source address in the broadcast packet
+    // matches the interface the beacon will egress on. Port 4992 may already
+    // be claimed, so fall back to ephemeral port if needed.
+    const QHostAddress bindAddr = m_ip.isEmpty()
+        ? QHostAddress::AnyIPv4
+        : QHostAddress(m_ip);
+
     if (!m_socket.isValid()
             || m_socket.state() != QAbstractSocket::BoundState) {
-        bool bound = m_socket.bind(QHostAddress::AnyIPv4, 4992,
+        bool bound = m_socket.bind(bindAddr, 4992,
                                    QUdpSocket::ShareAddress
                                        | QUdpSocket::ReuseAddressHint);
         if (!bound) {
+            // Port 4992 may already be in use (e.g. by SmartSDR instance).
+            // Fall back to ephemeral source port.
+            bound = m_socket.bind(bindAddr, 0,
+                                  QUdpSocket::ShareAddress
+                                      | QUdpSocket::ReuseAddressHint);
+        }
+        if (!bound) {
             qCWarning(lcFlexDisc)
-                << "UDP 4992 bind failed:"
+                << "UDP bind failed:"
                 << m_socket.errorString()
                 << "- discovery beacon disabled";
             return;
@@ -95,8 +111,8 @@ void FlexRadioDiscoveryBroadcaster::start()
 
     if (!m_timer.isActive()) {
         m_timer.start();
-        qCInfo(lcFlexDisc) << "FlexRadio discovery beacon started on UDP 4992"
-                           << "ip=" << m_ip;
+        qCInfo(lcFlexDisc) << "FlexRadio discovery beacon started, src=" << m_ip
+                           << "dst=" << m_broadcastAddress.toString() << ":4992";
     }
 }
 
@@ -113,12 +129,13 @@ void FlexRadioDiscoveryBroadcaster::onTick()
     const quint32 now = static_cast<quint32>(QDateTime::currentSecsSinceEpoch());
     const QByteArray pkt = buildBeacon(m_packetCount, now);
 
-    // Bind source port to 4992 so the FLEX-style src_port=4992 is preserved.
-    // QUdpSocket::writeDatagram with bound socket works for broadcast on macOS
-    // provided SO_BROADCAST is set; QUdpSocket sets it implicitly when
-    // writing to a broadcast address.
+    // Write to the subnet broadcast address (not 255.255.255.255) so that on
+    // multi-interface systems, the kernel routes the packet out the correct
+    // interface (the one that owns m_ip). The bound socket source address and
+    // the broadcast destination together ensure the beacon reaches all hosts
+    // on the same subnet.
     qint64 written = m_socket.writeDatagram(pkt,
-                                            QHostAddress::Broadcast,
+                                            m_broadcastAddress,
                                             /*port=*/4992);
     if (written != pkt.size()) {
         qCWarning(lcFlexDisc) << "broadcast write failed:"
@@ -316,6 +333,40 @@ QString FlexRadioDiscoveryBroadcaster::detectLanIpv4() const
         }
     }
     return QStringLiteral("0.0.0.0");
+}
+
+QHostAddress FlexRadioDiscoveryBroadcaster::computeBroadcastAddress() const
+{
+    // For the LAN IP m_ip, find its associated network interface and return
+    // the broadcast address for that subnet. This ensures the beacon reaches
+    // all hosts on the same subnet, even on multi-interface systems where the
+    // kernel's route for 255.255.255.255 may pick the wrong interface.
+    //
+    // On multi-interface Macs, binding the socket source to m_ip + sending to
+    // the subnet broadcast address ensures the packet egresses the correct
+    // interface.
+    if (m_ip.isEmpty()) {
+        return QHostAddress::Broadcast;
+    }
+
+    const QHostAddress lanAddr(m_ip);
+    const QList<QNetworkInterface> ifaces = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface& iface : ifaces) {
+        if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
+
+        const QList<QNetworkAddressEntry> entries = iface.addressEntries();
+        for (const QNetworkAddressEntry& entry : entries) {
+            if (entry.ip() == lanAddr) {
+                const QHostAddress bcast = entry.broadcast();
+                if (!bcast.isNull()) {
+                    return bcast;
+                }
+            }
+        }
+    }
+
+    // Fallback to limited broadcast if subnet broadcast not found.
+    return QHostAddress::Broadcast;
 }
 
 }  // namespace NereusSDR
