@@ -379,6 +379,17 @@ public:
     // From Thetis Console/console.cs:957 [@501e3f5] (RXA_S_AV selector)
     double getRxaSignalAverage(int channel) const;
 
+    // Returns the peak S-meter reading (dBm) from the RXA pipeline.
+    // Reads WDSP RXA_S_PK via GetRXAMeter (enum value 0).
+    // Used by SMeterWidget RxMode::SMeter and RxMode::SMeterPeak paths
+    // in MeterPoller::pollSMeter() (Task 41, Phase 3P-II).
+    // Returns -140.0 sentinel when the engine is not yet initialized.
+    //
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
+    // From Thetis Console/dsp.cs:889 [@501e3f5] (rxaMeterType enum: RXA_S_PK = 0)
+    // From Thetis Console/console.cs:954 [@501e3f5] (RXA_S_PK selector)
+    double getRxaSignalPeak(int channel) const;
+
     // Configure the strongest-bin-in-passband detector for a display channel.
     // Pass the current DDC sample rate, the active filter edges (Hz, relative
     // to DDC center), the smoothing tau (seconds), and the display frame rate.

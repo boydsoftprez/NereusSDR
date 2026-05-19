@@ -278,6 +278,7 @@ warren@wpratt.com
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
 #include "applets/AppletPanelWidget.h"
+#include "SMeterWidget.h"            // Task 41 (Phase 3P-II): SMeterWidget header wiring
 #include "applets/AmpApplet.h"
 #include "applets/RxApplet.h"
 #include "core/PgxlConnection.h"
@@ -2050,6 +2051,16 @@ void MainWindow::populateDefaultMeter()
     // traditional GroupBox-based meters and is not affected.
     m_appletPanel = new AppletPanelWidget();
     auto* panel = m_appletPanel;
+
+    // Task 41 (Phase 3P-II): wire the SMeterWidget (installed by the
+    // AppletPanelWidget constructor) into MeterPoller.  WdspEngine is
+    // needed for getRxaSignalPeak() and getMaxBinDbm() (MaxBin mode).
+    if (m_meterPoller) {
+        if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+            m_meterPoller->setSMeter(sm);
+        }
+        m_meterPoller->setWdspEngine(m_radioModel->wdspEngine());
+    }
 
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);

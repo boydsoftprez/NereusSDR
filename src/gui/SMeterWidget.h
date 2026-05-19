@@ -86,6 +86,13 @@ public:
     enum class RxMode { SMeter, SignalAverage, SMeterPeak, MaxBin };
     enum class DecayRate { Fast, Medium, Slow };
 
+    // Current RX/TX mode accessors.
+    // Used by MeterPoller::pollSMeter() (Task 41) to branch on the active
+    // WDSP source without coupling the poller to AppSettings.
+    // NereusSDR-native (AetherSDR reads mode directly from its combo box).
+    RxMode rxMode() const { return m_rxMode; }
+    TxMode txMode() const { return m_txMode; }
+
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
     float testPowerRedStart()  const { return m_powerRedStart; }

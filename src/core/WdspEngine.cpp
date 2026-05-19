@@ -1240,6 +1240,34 @@ double WdspEngine::getRxaSignalAverage(int channel) const
 #endif
 }
 
+// Returns the peak S-meter reading (dBm) from the RXA pipeline.
+//
+// Porting from Thetis Console/dsp.cs:387-388 [@501e3f5] -- original C# P/Invoke:
+//   [DllImport("wdsp.dll", EntryPoint = "GetRXAMeter", ...)]
+//   public static extern double GetRXAMeter(int channel, rxaMeterType meter);
+// Selector site: Thetis Console/console.cs:954 [@501e3f5]:
+//   case MeterType.SIGNAL_STRENGTH:
+//       val = GetRXAMeter(channel, rxaMeterType.RXA_S_PK);
+//
+// RXA_S_PK == 0 (first entry in Thetis dsp.cs:889 rxaMeterType enum
+// [@501e3f5]; also matches WdspTypes.h RxMeterType::SignalPeak = 0).
+// Used by SMeterWidget RxMode::SMeter and RxMode::SMeterPeak paths in
+// MeterPoller::pollSMeter() (Task 41, Phase 3P-II).
+double WdspEngine::getRxaSignalPeak(int channel) const
+{
+    if (!m_initialized) {
+        return -140.0;
+    }
+#ifdef HAVE_WDSP
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5]
+    // From Thetis Console/console.cs:954 [@501e3f5]
+    return ::GetRXAMeter(channel, /*RXA_S_PK=*/0);
+#else
+    Q_UNUSED(channel);
+    return -140.0;
+#endif
+}
+
 // Configure the strongest-bin-in-passband detector for a display channel.
 //
 // Porting from Thetis Console/dsp.cs:846-847 [@501e3f5] -- original C# P/Invoke:

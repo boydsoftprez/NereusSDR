@@ -70,6 +70,9 @@ mw0lge@grange-lane.co.uk
 #include "core/LogCategories.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/mmio/MmioEndpoint.h"
+// Task 41 (Phase 3P-II): SMeterWidget + WdspEngine for the pollSMeter() path.
+#include "gui/SMeterWidget.h"
+#include "core/WdspEngine.h"
 
 // WDSP GetTXAMeter — lock-free TX meter read.
 // From Thetis dsp.cs:390-391 [v2.10.3.13]:
@@ -104,6 +107,22 @@ void MeterPoller::setTxChannel(TxChannel* channel)
     m_txChannel = channel;
     qCDebug(lcMeter) << "MeterPoller: TxChannel set, channelId:"
                       << (channel ? channel->channelId() : -1);
+}
+
+// Task 41 (Phase 3P-II): store non-owning pointer to the analog SMeterWidget.
+// Call with nullptr on panel destruction (QPointer auto-clears on widget delete).
+void MeterPoller::setSMeter(SMeterWidget* widget)
+{
+    m_sMeter = widget;
+    qCDebug(lcMeter) << "MeterPoller: SMeterWidget set:" << (widget ? "yes" : "nullptr");
+}
+
+// Task 41 (Phase 3P-II): store non-owning pointer to WdspEngine for getMaxBinDbm.
+// RadioModel owns the engine; call with nullptr on disconnect if needed.
+void MeterPoller::setWdspEngine(WdspEngine* engine)
+{
+    m_wdspEngine = engine;
+    qCDebug(lcMeter) << "MeterPoller: WdspEngine set:" << (engine ? "yes" : "nullptr");
 }
 
 // H.2 (Phase 3M-1a): switch poll set on MOX engage/release.
@@ -274,6 +293,57 @@ void MeterPoller::poll()
     // Push S-meter value to VfoWidget level bar.
     // smeterUpdated connects to VfoWidget::setSmeter in MainWindow.
     emit smeterUpdated(smeterDbm);
+
+    // Task 41 (Phase 3P-II): drive the analog SMeterWidget header.
+    pollSMeter();
+}
+
+// Drive the analog SMeterWidget with the WDSP source selected by its current
+// rxMode().
+//
+// Branches on SMeterWidget::rxMode() (Task 41, Phase 3P-II).
+//
+// Source mapping (Thetis Console/console.cs:952-957 [@501e3f5]):
+//   case MeterType.SIGNAL_STRENGTH:     RXA_S_PK  (peak S-unit reading)
+//   case MeterType.AVG_SIGNAL_STRENGTH: RXA_S_AV  (averaged S-unit reading)
+// MaxBin uses GetDetectMaxBin (wdsp/analyzer.c:830 [@501e3f5]) -- no direct
+// Thetis console.cs call site; the detector is always display-channel 0 in
+// single-panadapter builds.
+void MeterPoller::pollSMeter()
+{
+    SMeterWidget* sm = m_sMeter.data();
+    if (!sm) { return; }
+    if (!m_rxChannel) { return; }
+
+    const int ch = m_rxChannel->channelId();
+
+    float dbm = -127.0f;
+    switch (sm->rxMode()) {
+    case SMeterWidget::RxMode::SMeter:
+    case SMeterWidget::RxMode::SMeterPeak:
+        // From Thetis Console/console.cs:954 [@501e3f5]:
+        //   case MeterType.SIGNAL_STRENGTH: val = GetRXAMeter(channel, RXA_S_PK);
+        if (m_wdspEngine) {
+            dbm = static_cast<float>(m_wdspEngine->getRxaSignalPeak(ch));
+        } else {
+            // Fallback via RxChannel wrapper (RXA_S_PK = RxMeterType::SignalPeak = 0).
+            dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalPeak));
+        }
+        break;
+    case SMeterWidget::RxMode::SignalAverage:
+        // From Thetis Console/console.cs:957 [@501e3f5]:
+        //   case MeterType.AVG_SIGNAL_STRENGTH: val = GetRXAMeter(channel, RXA_S_AV);
+        dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalAvg));
+        break;
+    case SMeterWidget::RxMode::MaxBin:
+        // GetDetectMaxBin(disp=0) -- single-pan display channel 0.
+        // From Thetis Console/dsp.cs:849-850 [@501e3f5] (P/Invoke GetDetectMaxBin).
+        if (m_wdspEngine) {
+            dbm = static_cast<float>(m_wdspEngine->getMaxBinDbm(/*disp=*/0));
+        }
+        break;
+    }
+    sm->setLevel(dbm);
 }
 
 // Poll the four WDSP TX meters active in 3M-1a and push to meter widget targets.
