@@ -4939,3 +4939,14 @@ nereus_add_test(tst_smeter_widget_scale)
 #   Slow 5 dB/s -> -55 +/-1 dBm
 # Phase 3P-II Phase 2, Task 37.
 nereus_add_test(tst_smeter_widget_peak_hold)
+
+# Verifies SMeterWidget right-click context menu structure and AppSettings
+# persistence via the buildContextMenuForTesting() test seam (Task 38 refactor).
+# Tests:
+#   menuHasFourRxModes: RX Mode submenu contains Signal / Sig Avg /
+#     Signal Peak / Max Bin per design doc ss5.4.2.
+#   settingTxModePersistsToAppSettings: setTxMode("SWR") writes
+#     SMeter_TxSelect == 1 to AppSettings (Power=0, SWR=1, Level=2, Compression=3).
+# NereusSDR-native test; AetherSDR has no contextMenuEvent on SMeterWidget.
+# Phase 3P-II Phase 2, Task 39.
+nereus_add_test(tst_smeter_widget_context_menu)
