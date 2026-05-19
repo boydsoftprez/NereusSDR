@@ -164,4 +164,4 @@ Row 18 (HL2) is gated on the open ATT/filter safety audit (3R precedent; see
 
 ---
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+J.J. Boyd ~ KG4VCF
