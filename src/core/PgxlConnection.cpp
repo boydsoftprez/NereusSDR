@@ -150,7 +150,7 @@ quint32 PgxlConnection::amplifierCreate(const QString& serial,
     QString ourIp = m_socket.localAddress().toString();
     return sendCommand(QString("amplifier create ip=%1 port=%2 model=%3 serial_num=%4 ant=%5")
         .arg(ourIp)
-        .arg(9008)
+        .arg(4992)  // SmartSDR API port (real FlexRadios advertise this; PGXL validates)
         .arg(model)
         .arg(serial)
         .arg(antMap));
