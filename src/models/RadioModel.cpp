@@ -959,14 +959,53 @@ RadioModel::RadioModel(QObject* parent)
     // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
     m_flexBroadcaster = new FlexRadioDiscoveryBroadcaster(this);
 
-    // Passive SmartSDR API listener on TCP 4992.
-    // Bench-recon stub: accepts PGXL TCP connections and logs every query line
-    // so we can design the response layer in a follow-up dispatch. Sends nothing.
+    // SmartSDR API responder on TCP 4992. Accepts PGXL/TGXL connections,
+    // serves slice + transmit S-frames, and forwards LAN PTT requests
+    // (`transmit tune on/off`) to RadioModel::setTune so a TGXL hardware
+    // TUNE press actually engages the local CW tune carrier.
     m_smartSdrListener = new SmartSdrApiListener(this);
     if (m_smartSdrListener->start()) {
         qCInfo(lcConnection) << "SmartSDR API listener started on TCP 4992";
     } else {
         qCWarning(lcConnection) << "SmartSDR API listener failed to bind TCP 4992";
+    }
+    // LAN PTT wiring: TGXL emits `C<seq>|transmit tune on` when its
+    // hardware TUNE button (or its native app TUNE button) is pressed; the
+    // listener parses + ACKs the frame then emits tuneRequested(true).
+    // We pipe that into the G.4 orchestrator setTune(true) so the gen1
+    // PostGen tone is actually emitted. Symmetric path on tune off.
+    // No latch needed here because TGXL is authoritative -- the off arrives
+    // when TGXL has finished tuning regardless of who initiated.
+    connect(m_smartSdrListener, &SmartSdrApiListener::tuneRequested,
+            this, [this](bool on) {
+        qCInfo(lcConnection) << "LAN PTT tuneRequested(" << on << ") -> setTune";
+        setTune(on);
+    });
+
+    // Mirror local TUN / MOX state into the listener's outbound `transmit`
+    // S-frame so TGXL's bandA-tracker AND its tune-detector see what we're
+    // doing. Specifically: when the operator clicks the NereusSDR app TUNE
+    // button (TunerApplet or TxApplet), MoxController fires
+    // manualMoxChanged(true) at the end of the TUN-on walk -- we propagate
+    // that to the listener as tune=1 in the next S-frame burst. TGXL reads
+    // tune=1, knows the FlexRadio (us) is in tune mode, and starts its own
+    // relay sweep. Without this propagation, the only path to a TGXL sweep
+    // is the LAN PTT round-trip from a TGXL-initiated tune (hardware
+    // button), which forced the operator to release the carrier manually
+    // when our app TUNE was clicked.
+    if (m_moxController) {
+        connect(m_moxController, &MoxController::manualMoxChanged,
+                this, [this](bool isManual) {
+            if (m_smartSdrListener) {
+                m_smartSdrListener->setTuneActive(isManual);
+            }
+        });
+        connect(m_moxController, &MoxController::moxStateChanged,
+                this, [this](bool on) {
+            if (m_smartSdrListener) {
+                m_smartSdrListener->setTxActive(on);
+            }
+        });
     }
 
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
@@ -9082,10 +9121,12 @@ void RadioModel::onSliceBandChanged(NereusSDR::Band band)
     }
 
     // Bench-caveat placeholder: absolute relay-position write not yet confirmed.
-    // Issue "tune start" so the TGXL re-tunes from its current position.
+    // Issue "autotune" so the TGXL re-tunes from its current position.
     // Replace with a direct relay-set command once the TGXL API is confirmed.
-    m_tgxlConnection->sendCommand(QStringLiteral("tune start"));
-    qCInfo(lcMeter) << "TGXL auto-recall: triggered tune start for"
+    // Bench-fix 2026-05-19: was `tune start`; pcap analysis shows real
+    // PGXL/TGXL workflow uses `autotune` on the :9010 control channel.
+    m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
+    qCInfo(lcMeter) << "TGXL auto-recall: triggered autotune for"
                     << "ant=" << antenna
                     << "band=" << bandLabel(band)
                     << "(stored relay C1=" << rec->c1

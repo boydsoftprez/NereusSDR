@@ -31,7 +31,6 @@
 
 #include "TunerApplet.h"
 #include "core/AppSettings.h"
-#include "core/MoxController.h"
 #include "gui/HGauge.h"
 #include "gui/RelayBar.h"
 #include "models/RadioModel.h"
@@ -173,18 +172,44 @@ void TunerApplet::buildUI()
     // a real FlexRadio that handles the carrier internally).
     connect(m_tuneBtn, &QPushButton::clicked, this, [this]() {
         if (!m_tunerModel) { return; }
-        auto* mox = m_model ? m_model->moxController() : nullptr;
-        if (mox && !mox->isManualMox()) {
-            mox->setTune(true);
+        // Engage local CW tune carrier via the G.4 orchestrator
+        // RadioModel::setTune(true). That call configures the gen1 PostGen
+        // tone (TxChannel::setTuneTone), swaps CW->LSB/USB if needed,
+        // loads tune power, and engages MOX. MoxController::setTune by
+        // itself only flips MOX state -- it never asks TxChannel to emit a
+        // tone, so a TGXL tune cycle preceded by that would see MOX-on but
+        // no RF and abort with "low RF power" (bench-confirmed 22:19 on
+        // 2026-05-19).
+        if (m_model && !m_model->isTune()) {
+            m_model->setTune(true);
             m_carrierEngagedForTgxlTune = true;
             // Settle delay so the MoxController state walk completes and
             // the tune carrier is on-air before TGXL begins its sweep.
-            // TGXL's "low RF power" abort fires within a few hundred ms
-            // of `tune start` if no carrier is detected.
+            // TGXL's "low RF power" / "no PTT in" aborts fire quickly if
+            // the carrier isn't detected when the sweep starts.
             QTimer::singleShot(200, this, [this]() {
                 if (m_tunerModel) { m_tunerModel->autoTune(); }
             });
+            // Watchdog: if TGXL never enters tuning=1 within 30 s, auto-
+            // release the carrier so the operator is not stranded with an
+            // on-air carrier. Bench-observed scenario 2026-05-19: when
+            // TGXL silently ACKs the tune command without sweeping (e.g.
+            // wrong command syntax pre-`autotune` fix), tuning=0 never
+            // fires and the latch stays set, forcing the operator to
+            // unclick TUN in TxApplet.
+            QTimer::singleShot(30 * 1000, this, [this]() {
+                if (m_carrierEngagedForTgxlTune && m_model) {
+                    qInfo() << "TunerApplet::TUNE watchdog: no tuning state"
+                               " from TGXL within 30 s, releasing carrier";
+                    m_model->setTune(false);
+                    m_carrierEngagedForTgxlTune = false;
+                }
+            });
         } else {
+            // TUN already engaged (operator pressed TxApplet TUNE first
+            // and is now extending the cycle to a TGXL sweep) OR no
+            // RadioModel available (test seam). Fall through to TGXL
+            // command; the existing carrier is already on-air.
             m_tunerModel->autoTune();
         }
     });
@@ -349,13 +374,15 @@ void TunerApplet::setTunerModel(TunerModel* model)
                 "border-radius: 3px; color: #ffffff; font-size: 10px; font-weight: bold; }"));
             m_tuneBtn->setText(QStringLiteral("TUNING..."));
 
-            // Engage local tune-carrier for TGXL hardware TUNE.
+            // Engage local CW tune carrier for TGXL hardware TUNE.
             // Our applet TUNE click already engaged it via the click handler;
-            // isManualMox() will be true here, so we skip the second engage.
-            auto* mox = m_model ? m_model->moxController() : nullptr;
-            if (mox && !mox->isManualMox()
+            // isTune() will be true here, so we skip the second engage.
+            // Routes through RadioModel::setTune (G.4 orchestrator) so the
+            // gen1 PostGen tone is actually emitted -- not just MOX. See
+            // the TUNE click handler above for the rationale.
+            if (m_model && !m_model->isTune()
                     && !m_carrierEngagedForTgxlTune) {
-                mox->setTune(true);
+                m_model->setTune(true);
                 m_carrierEngagedForTgxlTune = true;
             }
         } else {
@@ -368,10 +395,12 @@ void TunerApplet::setTunerModel(TunerModel* model)
             // Drop our orchestrated carrier (and ONLY ours) when TGXL
             // reports tune complete. An operator's manual TUN (engaged via
             // TxApplet) remains untouched -- m_carrierEngagedForTgxlTune
-            // is false in that case.
+            // is false in that case. Routes through RadioModel::setTune so
+            // the G.4 orchestrator unwinds the gen1 tone, restores power,
+            // and releases MOX in the correct order.
             if (m_carrierEngagedForTgxlTune) {
-                if (auto* mox = m_model ? m_model->moxController() : nullptr) {
-                    mox->setTune(false);
+                if (m_model) {
+                    m_model->setTune(false);
                 }
                 m_carrierEngagedForTgxlTune = false;
             }

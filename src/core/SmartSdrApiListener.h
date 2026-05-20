@@ -66,11 +66,40 @@ public:
     void setSliceFrequencyHz(int sliceId, qint64 freqHz);
     void setSliceMode(int sliceId, const QString& mode);
     void setTxActive(bool active);
+    // Local TUN state. When NereusSDR engages its CW tune carrier
+    // (RadioModel::setTune(true) -> gen1 PostGen tone on-air), call
+    // setTuneActive(true) so the listener's outbound `transmit` S-frame
+    // carries tune=1. TGXL reads that key and starts its relay sweep
+    // instead of waiting on the LAN PTT round-trip that only triggers
+    // from a TGXL-initiated tune (hardware button or native app).
+    void setTuneActive(bool active);
 
 signals:
     void clientConnected(const QString& peerHost, quint16 peerPort);
     void lineReceived(const QString& peerHost, quint16 peerPort,
                       const QString& line);
+
+    // LAN PTT received from a SmartSDR-API client (PGXL / TGXL). Fired
+    // when the peer sends `transmit tune on` / `transmit tune off`. The
+    // peer expects the (real) FlexRadio to engage / drop a CW tune
+    // carrier on receipt. RadioModel connects this to its setTune slot
+    // so a TGXL hardware TUNE press, which goes:
+    //
+    //   TGXL hardware TUNE -> TGXL state cycle -> C<n>|transmit tune on
+    //   -> our listener -> tuneRequested(true) -> RadioModel::setTune(true)
+    //   -> CW carrier on-air -> TGXL relay sweep -> ...
+    //   -> C<n>|transmit tune off -> tuneRequested(false) -> setTune(false)
+    //
+    // ends up actually engaging the carrier instead of being ACKed-and-
+    // dropped. NereusSDR-native: AetherSDR has no equivalent because the
+    // real FlexRadio handles this internally.
+    void tuneRequested(bool on);
+
+    // LAN PTT MOX request from a SmartSDR-API client. Same pattern as
+    // tuneRequested but for regular `transmit mox on/off` (no tune
+    // carrier). Reserved for future wiring -- TGXL doesn't appear to
+    // send this; PGXL might during some pairing paths.
+    void moxRequested(bool on);
 
 private slots:
     void onNewConnection();
@@ -102,6 +131,7 @@ private:
     qint64  m_sliceFreqHz{14250000};   // VFO A in Hz; default 14.250 USB
     QString m_sliceMode{QStringLiteral("USB")};
     bool    m_txActive{false};
+    bool    m_tuneActive{false};
 };
 
 }  // namespace NereusSDR

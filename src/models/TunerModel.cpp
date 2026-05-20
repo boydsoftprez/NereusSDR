@@ -267,14 +267,21 @@ void TunerModel::setBypass(bool on)
 }
 
 // From AetherSDR src/models/TunerModel.cpp:autoTune [@0cd4559]
+// Bench-fix 2026-05-19: pcap analysis (flex-pgxl-tgxl-capture stream 1,
+// .19 TunerGeniusDesktop -> .234 TGXL :9010) shows the actually-used
+// wire command for an operator-initiated tune cycle is `autotune`, not
+// `tune start`. The latter was AetherSDR's port-time guess and TGXL
+// silently ACK'd it with hex=0 but never engaged the sweep -- bench
+// observation 22:29 on 2026-05-19. Switching to `autotune` matches the
+// frame format the real PGXL/TGXL ecosystem uses.
 void TunerModel::autoTune()
 {
     if (!m_conn || !m_conn->isConnected()) {
         qCDebug(lcTunerModel) << "TunerModel::autoTune: no connection, ignoring";
         return;
     }
-    qCDebug(lcTunerModel) << "TunerModel: tune start";
-    m_conn->sendCommand(QStringLiteral("tune start"));
+    qCInfo(lcTunerModel) << "TunerModel: autotune";
+    m_conn->sendCommand(QStringLiteral("autotune"));
 }
 
 // From AetherSDR src/models/TunerModel.cpp:setAntennaA [@0cd4559]

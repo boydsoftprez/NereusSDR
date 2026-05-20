@@ -92,6 +92,14 @@ void SmartSdrApiListener::setTxActive(bool active)
     broadcastSliceState();
 }
 
+void SmartSdrApiListener::setTuneActive(bool active)
+{
+    if (m_tuneActive == active) { return; }
+    m_tuneActive = active;
+    qCInfo(lcSmartSdr) << "tune state change -> broadcasting transmit tune=" << (active ? 1 : 0);
+    broadcastSliceState();
+}
+
 void SmartSdrApiListener::onNewConnection()
 {
     while (m_server.hasPendingConnections()) {
@@ -125,7 +133,8 @@ void SmartSdrApiListener::onNewConnection()
                        .arg(state.handle)
                        .arg(m_sliceMode));
         sendStatus(sock, state.handle,
-                   QStringLiteral("transmit tune=0 mon=0 mox=%1")
+                   QStringLiteral("transmit tune=%1 mon=0 mox=%2")
+                       .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
 
         emit clientConnected(host, port);
@@ -246,7 +255,48 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
         body = QStringLiteral("0");
     }
 
+    // LAN PTT: TGXL (and other SmartSDR-API clients) request the FlexRadio to
+    // emit a CW tune carrier by sending `transmit tune on` / `transmit tune off`
+    // on this control channel. We must ACK with hex=0 AND fire a signal so
+    // RadioModel can engage / drop the local TUN. Order: ACK first (so the
+    // client's seq counter advances), then emit. Bench-confirmed wire format:
+    //   C7|transmit tune on    -> emit tuneRequested(true)
+    //   C7|transmit tune off   -> emit tuneRequested(false)
+    // Captured 2026-05-19 22:29:59 / 22:30:00 from TGXL .234 after the
+    // operator pressed the device's hardware TUNE button.
+    bool emitTuneOn  = false;
+    bool emitTuneOff = false;
+    bool emitMoxOn   = false;
+    bool emitMoxOff  = false;
+    if (cmd == QStringLiteral("transmit tune on")) {
+        emitTuneOn = true;
+    } else if (cmd == QStringLiteral("transmit tune off")) {
+        emitTuneOff = true;
+    } else if (cmd == QStringLiteral("transmit mox on")) {
+        emitMoxOn = true;
+    } else if (cmd == QStringLiteral("transmit mox off")) {
+        emitMoxOff = true;
+    }
+
     sendResponse(sock, seq, /*err=*/0, body);
+
+    if (emitTuneOn) {
+        qCInfo(lcSmartSdr) << "LAN PTT tune on from"
+                           << sock->peerAddress().toString();
+        emit tuneRequested(true);
+    } else if (emitTuneOff) {
+        qCInfo(lcSmartSdr) << "LAN PTT tune off from"
+                           << sock->peerAddress().toString();
+        emit tuneRequested(false);
+    } else if (emitMoxOn) {
+        qCInfo(lcSmartSdr) << "LAN PTT mox on from"
+                           << sock->peerAddress().toString();
+        emit moxRequested(true);
+    } else if (emitMoxOff) {
+        qCInfo(lcSmartSdr) << "LAN PTT mox off from"
+                           << sock->peerAddress().toString();
+        emit moxRequested(false);
+    }
 
     // After a successful sub of slice / transmit, immediately push a fresh
     // S-frame so PGXL gets data without waiting for the next 1 Hz tick.
@@ -266,7 +316,8 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                        .arg(handle)
                        .arg(m_sliceMode));
         sendStatus(sock, handle,
-                   QStringLiteral("transmit tune=0 mon=0 mox=%1")
+                   QStringLiteral("transmit tune=%1 mon=0 mox=%2")
+                       .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
     }
 }
@@ -303,7 +354,8 @@ void SmartSdrApiListener::broadcastSliceState()
     // and the client_handle on the slice, PGXL's bandA tracker won't pick
     // up the RF_frequency for band lookup.
     const QString txBody =
-        QStringLiteral("transmit tune=0 mon=0 mox=%1")
+        QStringLiteral("transmit tune=%1 mon=0 mox=%2")
+            .arg(m_tuneActive ? 1 : 0)
             .arg(m_txActive ? 1 : 0);
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         const QString sliceBody =

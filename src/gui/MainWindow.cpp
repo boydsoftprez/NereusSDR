@@ -6209,9 +6209,14 @@ void MainWindow::onConnectionStateChanged()
 
             connect(m_ampApplet, &AmpApplet::operateToggled,
                     this, [this](bool wantOperate) {
+                // Bench-fix 2026-05-19: pcap stream 11 (.19 PowerGeniusDesktop
+                // -> .235 PGXL :9008) shows the actually-used wire command
+                // for OPERATE is `operate=1` (key=value), not bare `operate`.
+                // PGXL rejected `operate` / `standby` with error 50000016
+                // every click.
                 m_radioModel->pgxlConnection()->sendCommand(
-                    wantOperate ? QStringLiteral("operate")
-                                : QStringLiteral("standby"));
+                    wantOperate ? QStringLiteral("operate=1")
+                                : QStringLiteral("operate=0"));
             });
 
             connect(m_radioModel->pgxlConnection(),
