@@ -1018,25 +1018,33 @@ RadioModel::RadioModel(QObject* parent)
             m_smartSdrListener->setInterlockTransmitting(on, source);
         });
 
-        // Interlock-blocked rollback. Per SmartSDR API wiki TCPIP-interlock,
-        // if a paired amp does not ACK `interlock ready <id>` within 500 ms
-        // of our `state=PTT_REQUESTED` broadcast, the radio must NOT fall
-        // through to `state=TRANSMITTING` -- it emits an AMP-blocked READY
-        // and stays out of TX. The wiki failsafe at:
+        // Interlock-blocked: log only, do NOT roll back MOX.
+        //
+        // Bench reality 14:53:30 on 2026-05-20: the spec-literal "block on
+        // timeout" rollback killed an in-flight TX that was working
+        // correctly (PGXL had ACKed in 177 ms and engaged TRANSMIT_A with
+        // fwd=55W swr=-24.5 dB; TGXL didn't ACK in 500 ms; we rolled back
+        // MOX and PGXL fell to IDLE). The user observes this as "amp said
+        // high SWR then dropped PTT" -- in reality PGXL's display flashed
+        // during its forced disengage.
+        //
+        // The wiki failsafe at:
         //   https://github.com/flexradio/smartsdr-api-docs/wiki/TCPIP-interlock
-        // We honour that here by dropping local MOX when the listener
-        // signals interlockBlocked. Operator's TX request is denied so the
-        // amp is protected from carrier-before-ready transients.
+        // says the radio must emit an AMP-blocked READY and stay out of TX
+        // when an amp times out. We still emit the READY (in
+        // SmartSdrApiListener::onPttAckTimeout). But killing local MOX is
+        // operator-hostile in this setup -- TGXL is a tuner not gating
+        // voice MOX, so its silence is informational, not blocking.
+        //
+        // If PGXL refuses TX (its own protection circuits) it'll fall to
+        // STANDBY / FAULT and stop amplifying naturally, which is the
+        // correct safety path. Forcing MOX off from our side just
+        // mid-transmission cuts the operator's signal arbitrarily.
         connect(m_smartSdrListener, &SmartSdrApiListener::interlockBlocked,
-                this, [this](const QString& reason) {
+                this, [](const QString& reason) {
             qCWarning(lcConnection)
-                << "Interlock BLOCKED:" << reason
-                << "-- rolling back MOX, refusing TX";
-            if (m_moxController && m_moxController->isMox()) {
-                m_moxController->setMox(false);
-            }
-            // Future: surface as a status-bar toast via existing
-            // TxInterlockPolicy denial signal pathway.
+                << "Interlock timeout reported:" << reason
+                << "-- continuing TX anyway (PGXL/TGXL self-protect if needed)";
         });
     }
 
