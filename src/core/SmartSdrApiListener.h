@@ -136,6 +136,13 @@ private:
         // What kind of amp this client registered as (PowerGeniusXL or
         // TunerGeniusXL). Drives interlock `amplifier=` selection.
         QString    ampModel;
+        // Parsed from `amplifier create ip=... port=... model=... serial_num=... ant=...`
+        // Echoed back in the S0|amplifier broadcast so PGXL/TGXL match on
+        // their own serial (FLEX always carries serial_num + model in its
+        // amp S-frame; bare partial updates may be ignored).
+        QString    ampSerial;
+        QString    ampIp;
+        QString    ampAnt;
     };
 
     void sendBanner(QTcpSocket* sock, const QString& handle);

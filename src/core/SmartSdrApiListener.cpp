@@ -114,26 +114,50 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
     const int pttVal = transmitting ? 1 : 0;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         if (it->ampHandle.isEmpty()) { continue; }
-        // Partial update: just the pttA field. FLEX emits full amp state
-        // each broadcast (model, serial, relays, ant, etc.) but we don't
-        // track the amp's relay/operate/bypass state from our side --
-        // those are the amp's own internal state, reported to us via
-        // their status frames. Per-key updates are accepted by PGXL/TGXL
-        // (bench-confirmed elsewhere); we only need pttA to flip.
-        const QString body =
-            QStringLiteral("amplifier 0x%1 pttA=%2 pttB=0")
-                .arg(it->ampHandle).arg(pttVal);
-        const QByteArray frame =
+        // FLEX-canonical full amp state broadcast. PGXL/TGXL match on
+        // serial_num + model when consuming amp updates -- a partial
+        // body with just pttA=X was silently ignored at the bench. We
+        // echo back the identity fields we got from `amplifier create`
+        // (serial_num, model, ip, ant) plus the pttA flag we're toggling.
+        // We omit the operate / bypass / tuning / relay fields because
+        // those are the amp's own state -- if we mirror them with stale
+        // values we'd risk overwriting the amp's display with junk.
+        QString body = QStringLiteral("amplifier 0x%1").arg(it->ampHandle);
+        if (!it->ampSerial.isEmpty()) {
+            body += QStringLiteral(" serial_num=%1").arg(it->ampSerial);
+        }
+        if (!it->ampModel.isEmpty()) {
+            body += QStringLiteral(" model=%1").arg(it->ampModel);
+        }
+        if (!it->ampIp.isEmpty()) {
+            body += QStringLiteral(" ip=%1").arg(it->ampIp);
+        }
+        if (!it->ampAnt.isEmpty()) {
+            body += QStringLiteral(" ant=%1").arg(it->ampAnt);
+        }
+        body += QStringLiteral(" pttA=%1 pttB=0").arg(pttVal);
+        // Send TWO forms: S0|amplifier for system broadcast, and
+        // S<amp_handle>|amplifier as a targeted update. FLEX uses both
+        // (pcap stream 2 shows both `S0|amplifier 0x7CC669A7 ...` and
+        // `S<recipient>|amplifier 0x7CC669A7 ...`). TGXL filters per-amp
+        // updates by the S-frame prefix matching its own amp handle, so
+        // a global-only broadcast misses the targeted path.
+        const QByteArray globalFrame =
             QStringLiteral("S0|%1\n").arg(body).toUtf8();
+        const QByteArray targetedFrame =
+            QStringLiteral("S%1|%2\n").arg(it->ampHandle).arg(body).toUtf8();
         for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
             QTcpSocket* sock = jt.key();
             if (sock && sock->isOpen()) {
-                sock->write(frame);
+                sock->write(globalFrame);
+                sock->write(targetedFrame);
             }
         }
-        qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << it->ampHandle
+        qCInfo(lcSmartSdr) << "TX amplifier 0x" << it->ampHandle
                            << "pttA=" << pttVal
-                           << "(model" << it->ampModel << ")";
+                           << "(S0 + S<amphandle> dual broadcast)"
+                           << "model=" << it->ampModel
+                           << "serial=" << it->ampSerial;
     }
 
     // Second half: interlock state transitions. PTT_REQUESTED + TRANSMITTING
@@ -217,8 +241,12 @@ void SmartSdrApiListener::onNewConnection()
                        .arg(state.handle)
                        .arg(m_sliceMode));
         sendStatus(sock, state.handle,
-                   QStringLiteral("transmit tune=%1 tune_mode=single_tone mon=0 mox=%2"
+                   QStringLiteral("transmit freq=%1 rfpower=100 tunepower=10 tx_slice_mode=%2"
+                                      " tune=%3 tune_mode=single_tone mon=0 mox=%4"
+                                      " hwalc_enabled=0 inhibit=0 dax=0"
                                       " tx_rf_power_changes_allowed=1 max_power_level=100")
+                       .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
+                       .arg(m_sliceMode)
                        .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
 
@@ -357,19 +385,28 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
             it->ampHandle = QStringLiteral("7%1")
                                 .arg(r, 7, 16, QLatin1Char('0'))
                                 .toUpper();
-            // Pull model from the create command for later interlock
-            // amplifier= field selection (TUN -> TGXL handle, MOX -> PGXL).
-            const int modelIdx = cmd.indexOf(QStringLiteral("model="));
-            if (modelIdx >= 0) {
-                const int end = cmd.indexOf(QLatin1Char(' '), modelIdx);
-                it->ampModel = (end >= 0)
-                    ? cmd.mid(modelIdx + 6, end - modelIdx - 6)
-                    : cmd.mid(modelIdx + 6);
-            }
+            // Parse model / serial_num / ip / ant so we can echo them in
+            // subsequent `S0|amplifier <handle> ...` broadcasts. PGXL/TGXL
+            // match on serial_num + model when consuming amp updates, so
+            // a partial update with just pttA=X is silently ignored.
+            auto extractValue = [&cmd](const QString& key) -> QString {
+                const int idx = cmd.indexOf(key);
+                if (idx < 0) { return QString(); }
+                const int valStart = idx + key.size();
+                const int end = cmd.indexOf(QLatin1Char(' '), valStart);
+                return (end >= 0)
+                    ? cmd.mid(valStart, end - valStart)
+                    : cmd.mid(valStart);
+            };
+            it->ampModel  = extractValue(QStringLiteral("model="));
+            it->ampSerial = extractValue(QStringLiteral("serial_num="));
+            it->ampIp     = extractValue(QStringLiteral("ip="));
+            it->ampAnt    = extractValue(QStringLiteral("ant="));
             qCInfo(lcSmartSdr) << "amplifier create -> assigned handle 0x"
-                               << it->ampHandle << "for model"
-                               << it->ampModel
-                               << "(client" << sock->peerAddress().toString() << ")";
+                               << it->ampHandle << "model=" << it->ampModel
+                               << "serial=" << it->ampSerial
+                               << "ip=" << it->ampIp
+                               << "ant=" << it->ampAnt;
         }
         body = QStringLiteral("0x%1").arg(it->ampHandle);
     }
@@ -435,8 +472,12 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                        .arg(handle)
                        .arg(m_sliceMode));
         sendStatus(sock, handle,
-                   QStringLiteral("transmit tune=%1 tune_mode=single_tone mon=0 mox=%2"
+                   QStringLiteral("transmit freq=%1 rfpower=100 tunepower=10 tx_slice_mode=%2"
+                                      " tune=%3 tune_mode=single_tone mon=0 mox=%4"
+                                      " hwalc_enabled=0 inhibit=0 dax=0"
                                       " tx_rf_power_changes_allowed=1 max_power_level=100")
+                       .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
+                       .arg(m_sliceMode)
                        .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
     }
@@ -474,8 +515,12 @@ void SmartSdrApiListener::broadcastSliceState()
     // and the client_handle on the slice, PGXL's bandA tracker won't pick
     // up the RF_frequency for band lookup.
     const QString txBody =
-        QStringLiteral("transmit tune=%1 tune_mode=single_tone mon=0 mox=%2"
+        QStringLiteral("transmit freq=%1 rfpower=100 tunepower=10 tx_slice_mode=%2"
+                       " tune=%3 tune_mode=single_tone mon=0 mox=%4"
+                       " hwalc_enabled=0 inhibit=0 dax=0"
                        " tx_rf_power_changes_allowed=1 max_power_level=100")
+            .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
+            .arg(m_sliceMode)
             .arg(m_tuneActive ? 1 : 0)
             .arg(m_txActive ? 1 : 0);
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
@@ -490,8 +535,20 @@ void SmartSdrApiListener::broadcastSliceState()
                 .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
                 .arg(it.value().handle)
                 .arg(m_sliceMode);
-        sendStatus(it.key(), it.value().handle, sliceBody);
-        sendStatus(it.key(), it.value().handle, txBody);
+        // S-frame prefix: amp handle for amp clients (PGXL/TGXL), else the
+        // banner-issued client handle. FLEX prefixes per-recipient S-frames
+        // with the recipient's own handle so the client can filter at the
+        // protocol layer -- TGXL sees `S<TGXL_amp_handle>|...` and matches
+        // its own handle, then processes. With the client handle prefix
+        // (which we generate at banner time, top nibble 4) TGXL didn't
+        // match either of its handles and dropped the frame, leaving
+        // freqA/modeA/bandA/antA at 0 even though the body was correct.
+        // Bench-confirmed 23:51 on 2026-05-19.
+        const QString prefix = it.value().ampHandle.isEmpty()
+            ? it.value().handle
+            : it.value().ampHandle;
+        sendStatus(it.key(), prefix, sliceBody);
+        sendStatus(it.key(), prefix, txBody);
     }
 }
 
