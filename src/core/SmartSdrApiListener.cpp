@@ -313,31 +313,56 @@ void SmartSdrApiListener::onPttAckTimeout()
     //
     // FlexLib source confirms this is event-driven (Radio.cs:7440-7450:
     // InterlockState is mutated ONLY from inbound status broadcasts; no
-    // client-side fallthrough timer). So the radio side must NOT fall
-    // through to TRANSMITTING on timeout -- it must emit READY with
-    // reason=AMP:<name> and refuse TX.
+    // client-side fallthrough timer).
     //
     // Source: https://github.com/flexradio/smartsdr-api-docs/wiki/TCPIP-interlock
     //         https://github.com/jeffu231/Flexlib/blob/master/FlexLib/Radio.cs#L7440
+    //
+    // Bench reality: amps in NereusSDR's test setup reconnect frequently
+    // (~14 s cycles for TGXL). An amp that disconnects DURING our 500 ms
+    // ACK wait is gone, not blocking. The wiki's "amp blocking transmit"
+    // semantic only applies when the amp is connected and refusing to ACK.
+    // We therefore treat amps that disappeared from m_clients as
+    // implicitly granting (they're no longer in the chain to block).
     if (m_pttPendingSource.isEmpty()) { return; }  // already resolved
 
-    int totalInterlocks = 0;
+    int totalConnectedInterlocks = 0;
     int readyCount = 0;
     QStringList laggards;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         if (it->interlockId == 0) { continue; }
-        ++totalInterlocks;
+        ++totalConnectedInterlocks;
         if (it->ackReady) {
             ++readyCount;
         } else {
             laggards << it->interlockName;
         }
     }
+
+    // Lenient grant: if every currently-connected interlocked amp has ACKed
+    // (or there are no interlocked amps left at all, because they all
+    // disconnected mid-cycle), grant the TX. The amps that disappeared
+    // aren't blocking us; only an amp that's still connected and refusing
+    // counts as blocking per the wiki "preventing transmit" semantic.
+    if (laggards.isEmpty()) {
+        qCInfo(lcSmartSdr)
+            << "interlock ACK timeout: all connected amps acked"
+            << "(" << readyCount << "of" << totalConnectedInterlocks << ")"
+            << "-- some amps may have disconnected mid-cycle; granting TX";
+        // Mark stale entries as ready so advanceToTransmittingIfReady's
+        // own check passes, then advance.
+        for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+            if (it->interlockId != 0) { it->ackReady = true; }
+        }
+        advanceToTransmittingIfReady();
+        return;
+    }
+
     m_pttPendingSource.clear();
     const QString blockedReason =
         QStringLiteral("AMP:%1").arg(laggards.join(QStringLiteral(",")));
     qCWarning(lcSmartSdr) << "interlock ACK timeout (500 ms):"
-                          << readyCount << "of" << totalInterlocks
+                          << readyCount << "of" << totalConnectedInterlocks
                           << "amps acked; laggards=" << laggards
                           << "-- emitting interlock-blocked, NOT advancing to TX";
 
