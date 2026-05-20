@@ -96,6 +96,15 @@ void PgxlConnection::onConnected() {
     qCDebug(lcPgxl) << "TCP connected, waiting for version line";
     m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
     m_reconnectAttempts = 0;
+    // Bench-fix 2026-05-20: reset the version-received latch so the next
+    // V-frame arrival re-arms the handshake and re-sets m_connected=true.
+    // Without this, m_gotVersion stays sticky from the previous session,
+    // the V-frame from the new connection is silently dropped by the
+    // `if (!m_gotVersion ...)` guard in processLine(), and the Peripherals
+    // dialog reports "disconnected" forever despite an ESTABLISHED TCP
+    // socket. Confirmed by lsof showing TCP ESTABLISHED to 9008 while
+    // m_connected=false. Same bug pattern existed in TgxlConnection.
+    m_gotVersion = false;
 }
 
 void PgxlConnection::onDisconnected() {
