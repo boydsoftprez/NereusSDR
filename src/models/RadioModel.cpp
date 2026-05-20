@@ -1018,31 +1018,83 @@ RadioModel::RadioModel(QObject* parent)
             // false (operator's full-beans TUN doesn't touch PGXL state).
             if (!isManual && m_tgxlAutotuneInProgress) {
                 m_tgxlAutotuneInProgress = false;
+                // Clear the interlock-grant gate too; if the cycle ends
+                // before interlockGranted fires (e.g. operator hit TUN-off
+                // very early, or PGXL force-tripped FAULT mid-handshake),
+                // we don't want a future interlockGranted from an
+                // unrelated TX to fire the (now stale) autotune.
+                m_awaitingInterlockForAutotune = false;
                 if (m_pgxlSavedOperate && m_pgxlConnection
                     && m_pgxlConnection->isConnected()) {
                     m_pgxlConnection->sendCommand(QStringLiteral("operate=1"));
                     qCInfo(lcConnection)
-                        << "TGXL autotune complete: PGXL -> OPERATE restored";
+                        << "TGXL autotune complete: sent operate=1 to PGXL"
+                           " (expect state edge STANDBY -> OPERATE soon)";
+                } else if (m_pgxlSavedOperate) {
+                    qCWarning(lcConnection)
+                        << "TGXL autotune complete: PGXL was operating"
+                           " before cycle but connection is down; cannot"
+                           " send operate=1 -- amp will stay STANDBY";
+                } else {
+                    qCInfo(lcConnection)
+                        << "TGXL autotune complete: PGXL was not operating"
+                           " before cycle, leaving in current state";
                 }
                 m_pgxlSavedOperate = false;
             }
         });
-        connect(m_moxController, &MoxController::moxStateChanged,
-                this, [this](bool on) {
+        // Split engage / release across two MoxController phase signals
+        // so the interlock chain runs in the right RF-safe order:
+        //
+        //   MOX engage (RX->TX):
+        //     txAboutToBegin   -- fires BEFORE rfDelay, BEFORE any RF is
+        //                         on-air. We send PTT_REQUESTED here so
+        //                         PGXL has the full ~30 ms rfDelay PLUS
+        //                         the time the local RF takes to ramp up
+        //                         to switch its relays into the amp path.
+        //                         The actual carrier doesn't flow until
+        //                         interlockGranted clears the F.1 gate
+        //                         below (TxChannel::setRunning(true)).
+        //     [rfDelay]
+        //     txReady          -- F.1 gate: deferred until interlock-
+        //                         Granted fires; then audio flows.
+        //
+        //   MOX release (TX->RX):
+        //     moxStateChanged(false) -- fires at the very end of the
+        //                         TX->RX walk, AFTER txaFlushed has
+        //                         already stopped TxChannel. The carrier
+        //                         is already dead, so releasing the
+        //                         interlock here is safe.
+        //
+        // 2026-05-20 bench-driven: previously BOTH engage and release
+        // were on moxStateChanged, which fires at the END of the engage
+        // walk -- i.e. AFTER rfDelay AND AFTER txReady. RF was flowing
+        // at full power into PGXL's bypass path for ~250 ms before PGXL
+        // had a chance to ACK PTT_REQUESTED and switch to the amp path,
+        // causing intermittent (~5 %) high-SWR trips on PGXL.
+        connect(m_moxController, &MoxController::txAboutToBegin,
+                this, [this]() {
             if (!m_smartSdrListener) { return; }
-            m_smartSdrListener->setTxActive(on);
-            // FLEX-canonical interlock state broadcast: PGXL and TGXL
-            // watch the `S0|interlock state=TRANSMITTING source=TUNE|MOX`
-            // global frame to know PTT is live. Without this, an operator
-            // TxApplet TUNE or MOX press leaves both amps reporting "no
-            // PTT in" even with the local carrier on-air, because their
-            // pttA flag tracks interlock state, not raw RF detection.
-            // source=TUNE when the engagement came via TUN (manual MOX);
-            // source=MOX for regular voice MOX.
+            m_smartSdrListener->setTxActive(true);
             const QString source = m_moxController->isManualMox()
                 ? QStringLiteral("TUNE")
                 : QStringLiteral("MOX");
-            m_smartSdrListener->setInterlockTransmitting(on, source);
+            m_smartSdrListener->setInterlockTransmitting(true, source);
+        });
+        connect(m_moxController, &MoxController::moxStateChanged,
+                this, [this](bool on) {
+            if (on) { return; }  // engage handled by txAboutToBegin above
+            // Clear the RF-flow gate so a late interlockGranted (from
+            // a slow amp ACKing after we already unkeyed) doesn't fire
+            // setRunning(true) on a TX channel that's already been
+            // drained back to RX by the TX->RX walk above.
+            m_awaitingInterlockForTx = false;
+            if (!m_smartSdrListener) { return; }
+            m_smartSdrListener->setTxActive(false);
+            const QString source = m_moxController->isManualMox()
+                ? QStringLiteral("TUNE")
+                : QStringLiteral("MOX");
+            m_smartSdrListener->setInterlockTransmitting(false, source);
         });
 
         // Interlock-blocked: log only, do NOT roll back MOX.
@@ -1072,6 +1124,71 @@ RadioModel::RadioModel(QObject* parent)
             qCWarning(lcConnection)
                 << "Interlock timeout reported:" << reason
                 << "-- continuing TX anyway (PGXL/TGXL self-protect if needed)";
+        });
+
+        // TGXL autotune orchestration: interlock-granted hook.
+        //
+        // When we're mid-autotune and waiting for the FlexAPI interlock
+        // chain to confirm TRANSMITTING (m_awaitingInterlockForAutotune),
+        // this signal is our event-driven cue that TGXL has now received
+        // `S0|interlock state=TRANSMITTING` and knows PTT is live. Only
+        // then is it safe to send `autotune` to TGXL on :9010 -- earlier
+        // and TGXL replies "no PTT in" and aborts (~350 ms after the
+        // command). Bench-observed first-press failure on cold caches
+        // 2026-05-19 to 2026-05-20.
+        //
+        // A 150 ms settle is applied between interlockGranted and the
+        // autotune command. Two things need to land at TGXL before the
+        // sweep cmd:
+        //   (a) the TRANSMITTING S-frame on TCP :4992 (so TGXL's internal
+        //       pttA flag flips true)
+        //   (b) actual RF on-air from our gen1 PostGen tone (so TGXL's
+        //       directional couplers see carrier amplitude > its detection
+        //       threshold)
+        // The :4992 socket and the :9010 socket are independent flows;
+        // without a settle TGXL can briefly see "no PTT in" because the
+        // autotune lands before either (a) is fully processed or (b) has
+        // ramped up to detectable levels. Bench-confirmed 2026-05-20:
+        // 50 ms still caused a brief "no PTT in" flash even though the
+        // sweep recovered. 150 ms eliminates the flash.
+        connect(m_smartSdrListener, &SmartSdrApiListener::interlockGranted,
+                this, [this](const QString& source) {
+            // RF-flow gate (deck item #3): TxChannel was deferred at
+            // txReady waiting for this grant. Now that TRANSMITTING has
+            // been broadcast, PGXL is/will-be in TRANSMIT_A with its
+            // relays on the amp path -- safe to start the audio pump
+            // and let RF flow.
+            if (m_awaitingInterlockForTx) {
+                m_awaitingInterlockForTx = false;
+                if (m_txChannel) {
+                    qCInfo(lcConnection)
+                        << "RF-flow gate: interlock TRANSMITTING confirmed"
+                           " (source=" << source
+                        << "), starting TxChannel now (carrier hits amp"
+                           " path, not bypass)";
+                    m_txChannel->setRunning(true);
+                }
+            }
+
+            // Autotune gate (deck item #2): TGXL autotune cmd was held
+            // for 150 ms post-grant so the TRANSMITTING frame on :4992
+            // and the `autotune` cmd on :9010 land on TGXL in the right
+            // order without a TCP-socket race.
+            if (!m_awaitingInterlockForAutotune) { return; }
+            if (!m_tgxlAutotuneInProgress) {
+                // Cycle was cancelled before grant; clear the gate.
+                m_awaitingInterlockForAutotune = false;
+                return;
+            }
+            m_awaitingInterlockForAutotune = false;
+            qCInfo(lcConnection)
+                << "TGXL autotune: interlock TRANSMITTING confirmed (source="
+                << source << "), sending autotune in 150 ms";
+            QTimer::singleShot(150, this, [this]() {
+                if (m_tgxlAutotuneInProgress) {
+                    sendTgxlAutotuneCmd();
+                }
+            });
         });
     }
 
@@ -3751,12 +3868,48 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // Source-of-truth: docs/architecture/phase3m-1c-tx-pump-architecture-plan.md
             // §5.2 last bullet (TxChannel cross-thread setter audit).
 
-            // F.1 — txReady → setRunning(true).
+            // F.1 — txReady → setRunning(true), GATED on interlockGranted.
             // From Thetis console.cs:29595 [v2.10.3.13] — TX-on callsite after
             // Thread.Sleep(rf_delay) in chkMOX_CheckedChanged2.
+            //
+            // 2026-05-20 bench fix (deck item #3 -- MOX RF-gate): if an
+            // external amp is in the chain (anyone with an ampHandle in
+            // the listener), we defer setRunning(true) until interlock-
+            // Granted fires. PGXL needs to ACK PTT_REQUESTED and switch
+            // its relays from bypass to amp path BEFORE the carrier
+            // arrives, or it intermittently trips its own SWR protection
+            // on ~5 % of key-ups (carrier into bypass-routed antenna).
+            //
+            // The interlockGranted lambda in the listener wire above will
+            // see m_awaitingInterlockForTx=true and complete the engage.
+            // 1500 ms failsafe ensures the operator isn't stranded if
+            // the grant never fires.
             connect(m_moxController, &MoxController::txReady,
-                    m_txChannel, [this]() {
-                m_txChannel->setRunning(true);
+                    this, [this]() {
+                if (!m_txChannel) { return; }
+                const bool hasAmpInChain =
+                    m_smartSdrListener && m_smartSdrListener->hasInterlockedAmp();
+                if (!hasAmpInChain) {
+                    // No external amp registered (PGXL absent or disconnected
+                    // and no other interlock subscriber). No relay-switch
+                    // race to wait on -- engage immediately, Thetis-faithful.
+                    m_txChannel->setRunning(true);
+                    return;
+                }
+                m_awaitingInterlockForTx = true;
+                qCInfo(lcConnection)
+                    << "RF-flow gate armed: waiting interlockGranted before"
+                       " starting TxChannel (amp relay-switch race fix)";
+                QTimer::singleShot(1500, this, [this]() {
+                    if (m_awaitingInterlockForTx && m_txChannel) {
+                        qCWarning(lcConnection)
+                            << "RF-flow gate: interlockGranted didn't fire"
+                               " within 1.5 s, starting TxChannel anyway"
+                               " (failsafe)";
+                        m_awaitingInterlockForTx = false;
+                        m_txChannel->setRunning(true);
+                    }
+                });
             });
 
             // F.1 — txaFlushed → setRunning(false).
@@ -9028,6 +9181,16 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
              st == QStringLiteral("OPERATE")     ||
              st == QStringLiteral("TRANSMIT_A")  ||
              st == QStringLiteral("TRANSMIT_B"));
+        // Surface PGXL state edges in the log so the autotune
+        // standby/restore cycle and the TX-engagement (OPERATE ->
+        // TRANSMIT_A) handshake are visible without a debugger.
+        // Bench-noisy at most a few transitions per minute under normal
+        // ops; not a logspam risk.
+        if (st != m_lastPgxlState) {
+            qCInfo(lcConnection)
+                << "PGXL state edge:" << m_lastPgxlState << "->" << st
+                << "(ampOperate=" << (nowOperate ? "true" : "false") << ")";
+        }
         if (nowOperate != m_ampOperate) {
             m_ampOperate = nowOperate;
             emit ampStateChanged();
@@ -9250,10 +9413,30 @@ void RadioModel::startTgxlAutotune(bool fromHardware)
 }
 
 // Second half of the TGXL autotune orchestration: engage local TUN
-// carrier and (if WE initiated) send `autotune` to TGXL. Called either
-// directly from startTgxlAutotune (PGXL already in standby) or from
-// the ampStateChanged signal handler (PGXL just transitioned to standby)
-// or from the 1.5 s failsafe timer.
+// carrier and (if WE initiated) wait for the FlexAPI interlock chain
+// to broadcast TRANSMITTING before sending `autotune` to TGXL. Called
+// either directly from startTgxlAutotune (PGXL already in standby) or
+// from the ampStateChanged signal handler (PGXL just transitioned to
+// standby) or from the 1.5 s standby failsafe timer.
+//
+// 2026-05-20 fix: previously this used a fixed 200 ms QTimer::singleShot
+// to delay the `autotune` command, on the theory that 200 ms was enough
+// for the carrier to settle. On cold caches the FlexAPI interlock chain
+// (MoxController walk -> moxStateChanged -> PTT_REQUESTED broadcast ->
+// amp ACK round-trip -> TRANSMITTING broadcast) takes longer than 200 ms
+// for the first key-up, so `autotune` arrived at TGXL on :9010 BEFORE
+// TGXL had seen `S0|interlock state=TRANSMITTING` on :4992. TGXL then
+// aborted ~350 ms later with "no PTT in". Bench timing 2026-05-20:
+// first press cycle 547 ms (aborted), second 520 ms (aborted), third
+// 2.98 s (successful). User: "first press of the tgxl tune failed with
+// no ptt in message second tune worked".
+//
+// The fix is the same event-driven pattern we use for the PGXL standby
+// confirmation: set a flag, wait for the signal, then proceed. The flag
+// is m_awaitingInterlockForAutotune, the signal is interlockGranted from
+// SmartSdrApiListener (wired in the ctor). A 1.5 s failsafe sends the
+// autotune anyway if interlockGranted never fires (e.g. amps all
+// disconnected mid-cycle before they could ACK).
 void RadioModel::continueTgxlAutotuneAfterStandby()
 {
     if (!m_tgxlAutotuneInProgress) {
@@ -9265,17 +9448,45 @@ void RadioModel::continueTgxlAutotuneAfterStandby()
         << "TGXL autotune: PGXL standby ready, engaging local TUN carrier";
     setTune(true);
 
-    if (!m_tgxlAutotuneFromHardware) {
-        // Settle delay so the MoxController state walk completes and the
-        // CW carrier is on-air before TGXL starts the relay sweep. TGXL's
-        // "low RF power" abort fires within ~100 ms if no carrier seen.
-        QTimer::singleShot(200, this, [this]() {
-            if (m_tgxlConnection && m_tgxlConnection->isConnected()
-                && m_tgxlAutotuneInProgress) {
-                m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
-                qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
-            }
-        });
+    if (m_tgxlAutotuneFromHardware) {
+        // TGXL initiated this cycle via LAN PTT (`transmit tune on`); it's
+        // already sweeping its own relays and just needed the carrier.
+        // No `autotune` command to send and no interlock wait to gate on.
+        return;
+    }
+
+    // Arm the gate: when interlockGranted fires (TRANSMITTING was just
+    // broadcast to all clients including TGXL), the lambda in the ctor
+    // sends the autotune command after a small 50 ms TCP socket settle.
+    m_awaitingInterlockForAutotune = true;
+
+    // Failsafe: amps usually ACK in <100 ms (and the listener's lenient
+    // 500 ms timeout grants anyway). If 1500 ms elapses without
+    // interlockGranted firing -- e.g. every amp disconnected mid-cycle
+    // before it could ACK -- send the autotune anyway so the operator's
+    // TUNE isn't stranded. Mirrors the standby failsafe in startTgxl-
+    // Autotune (same 1.5 s budget, same "proceed with warning" semantic).
+    QTimer::singleShot(1500, this, [this]() {
+        if (m_awaitingInterlockForAutotune && m_tgxlAutotuneInProgress) {
+            qCWarning(lcConnection)
+                << "TGXL autotune: interlockGranted didn't fire within"
+                   " 1.5 s, sending autotune anyway (failsafe)";
+            m_awaitingInterlockForAutotune = false;
+            sendTgxlAutotuneCmd();
+        }
+    });
+}
+
+// Send the `autotune` command on the TGXL :9010 control socket. Called
+// from the interlockGranted handler (event-driven path, normal case) or
+// from the 1.5 s failsafe timer in continueTgxlAutotuneAfterStandby
+// (degraded path, no interlock confirmation arrived).
+void RadioModel::sendTgxlAutotuneCmd()
+{
+    if (m_tgxlConnection && m_tgxlConnection->isConnected()
+        && m_tgxlAutotuneInProgress) {
+        m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
+        qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
     }
 }
 

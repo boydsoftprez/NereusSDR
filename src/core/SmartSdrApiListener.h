@@ -90,6 +90,14 @@ public:
     //              reason= source=TUNE tx_allowed=1 amplifier=
     void setInterlockTransmitting(bool transmitting, const QString& source);
 
+    // Returns true if any connected client has registered an interlock
+    // (sent `interlock create`) AND the interlock is currently enabled.
+    // Used by RadioModel's RF-flow gate (deck item #3) to decide whether
+    // to defer TxChannel::setRunning until interlockGranted: if no amp
+    // is in the chain, there's no relay-switch race to wait on, so we
+    // engage RF immediately the Thetis-faithful way.
+    bool hasInterlockedAmp() const;
+
 signals:
     void clientConnected(const QString& peerHost, quint16 peerPort);
     void lineReceived(const QString& peerHost, quint16 peerPort,
@@ -177,6 +185,14 @@ private:
         int     interlockId{0};      // 0 = no interlock registered yet
         QString interlockName;       // e.g. "PG-XL", "TG" (from create name=)
         bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage
+        // Per smartsdr-api-docs TCPIP-interlock, amps can toggle their
+        // interlock enable/disable. PGXL bench-confirmed 2026-05-20:
+        // sends `interlock disable <id>` immediately on operate=0 (going
+        // STANDBY) and `interlock enable <id>` when transitioning back to
+        // IDLE/OPERATE. A disabled interlock does NOT participate in the
+        // PTT_REQUESTED ACK chain (the amp has stepped out of the TX
+        // path). Default is true on `interlock create` per the wiki.
+        bool    interlockEnabled{true};
     };
 
     void sendBanner(QTcpSocket* sock, const QString& handle);

@@ -100,10 +100,30 @@ void SmartSdrApiListener::setTuneActive(bool active)
     broadcastSliceState();
 }
 
+bool SmartSdrApiListener::hasInterlockedAmp() const
+{
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it->interlockId != 0 && it->interlockEnabled) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
                                                    const QString& source)
 {
-    if (m_clients.isEmpty()) { return; }
+    if (m_clients.isEmpty()) {
+        // No subscribers, so vacuously granted. Emit interlockGranted on
+        // engage so any RadioModel orchestration gated on it (e.g. the
+        // RF-flow gate in MoxController::txReady -> TxChannel::setRunning)
+        // proceeds without a 1.5 s failsafe stall. No wire frames sent;
+        // there's nobody to send them to.
+        if (transmitting) {
+            emit interlockGranted(source);
+        }
+        return;
+    }
 
     // Wiki-canonical wire source values: "MIC" for voice MOX (operator
     // pressed MIC PTT or MOX in the radio's UI) and "TUNE" for the TUN
@@ -123,18 +143,30 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // registered interlock amp ACKs via `C|interlock ready <id>`.
 
         m_pttPendingSource = wireSource;
-        // Reset ACK state for every registered interlock amp.
+        // Reset ACK state for every registered+enabled interlock amp.
+        // Disabled interlocks (e.g. PGXL after `interlock disable` on
+        // STANDBY) don't participate in this PTT cycle.
         bool anyInterlockedAmp = false;
         for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
-            if (it->interlockId != 0) {
+            if (it->interlockId != 0 && it->interlockEnabled) {
                 it->ackReady = false;
                 anyInterlockedAmp = true;
             }
         }
 
-        // Emit one PTT_REQUESTED S-frame per registered amp, matching the
-        // FLEX pcap format (not the wiki example, which differs).
-        // Pcap reality from FLEX-8600 stream 2 at T=541.716:
+        // NOTE: amplifier pttA=1 push moved to advanceToTransmittingIfReady
+        // (i.e. fires together with the TRANSMITTING broadcast). With the
+        // RF-flow gate (deck item #3) the local carrier doesn't actually
+        // come on-air until interlockGranted releases the gate, which
+        // happens at the TRANSMITTING broadcast. Pushing pttA=1 here at
+        // txAboutToBegin (~500 ms before carrier on a PGXL+TGXL setup
+        // where TGXL doesn't ACK in time) caused TGXL to revert its
+        // display to "no PTT in" because it saw pttA=1 but no carrier
+        // for the duration of the wait. Bench-confirmed 2026-05-20.
+
+        // Emit one PTT_REQUESTED S-frame per registered+enabled amp,
+        // matching the FLEX pcap format (not the wiki example, which
+        // differs). Pcap reality from FLEX-8600 stream 2 at T=541.716:
         //   S0|interlock tx_client_handle=0x4C70DC9B state=PTT_REQUESTED
         //               reason= source=TUNE tx_allowed=1 amplifier=0x7CC669A7
         // Note: reason= is EMPTY (not AMP:<name>) and tx_client_handle is
@@ -144,7 +176,7 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // SmartSDR-Win's handle here; we don't have a separate GUI client.
         if (anyInterlockedAmp) {
             for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-                if (it->interlockId == 0) { continue; }
+                if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
                 const QString body =
                     QStringLiteral("interlock tx_client_handle=0x%1"
                                    " state=PTT_REQUESTED reason="
@@ -201,6 +233,24 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
                                << "source=" << wireSource
                                << "(no registered amp interlocks)";
+            // Also push pttA=1 to any amp that did `amplifier create`
+            // without `interlock create` -- their UI still binds against
+            // the amplifier state frame even if they opted out of the
+            // interlock ACK chain.
+            for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+                if (it->ampHandle.isEmpty()) { continue; }
+                const QString ampBody = QStringLiteral("amplifier 0x%1 pttA=1")
+                                            .arg(it->ampHandle);
+                const QByteArray ampFrame =
+                    QStringLiteral("S%1|%2\n").arg(it->handle)
+                                              .arg(ampBody).toUtf8();
+                QTcpSocket* sock = it.key();
+                if (sock && sock->isOpen()) { sock->write(ampFrame); }
+            }
+            // Still fire interlockGranted so RadioModel orchestration
+            // (e.g. TGXL autotune wait + RF-flow gate) advances even
+            // when no amp has registered an interlock yet.
+            emit interlockGranted(wireSource);
         }
     } else {
         // ── Release path: stop the ACK wait, then broadcast READY.
@@ -210,6 +260,21 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // amplifier= empty on the unkey transition).
         m_pttAckTimeout.stop();
         m_pttPendingSource.clear();
+
+        // Mirror the amplifier pttA=0 push so each amp's UI flips back
+        // to "no PTT in" cleanly. Without this the TGXL would latch
+        // pttA=1 on its display until the next key-up cycle pushed a
+        // fresh frame.
+        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+            if (it->ampHandle.isEmpty()) { continue; }
+            const QString body = QStringLiteral("amplifier 0x%1 pttA=0")
+                                     .arg(it->ampHandle);
+            const QByteArray frame =
+                QStringLiteral("S%1|%2\n").arg(it->handle).arg(body).toUtf8();
+            QTcpSocket* sock = it.key();
+            if (sock && sock->isOpen()) { sock->write(frame); }
+        }
+        qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=0 to all subscribed amps";
 
         bool anyInterlockedAmp = false;
         for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
@@ -262,24 +327,26 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     int totalInterlocks = 0;
     int readyCount = 0;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        if (it->interlockId == 0) { continue; }
+        if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
         ++totalInterlocks;
         if (it->ackReady) { ++readyCount; }
     }
-    if (totalInterlocks == 0) { return; }  // no amps to wait for
+    if (totalInterlocks == 0) { return; }  // no enabled amps to wait for
     if (readyCount < totalInterlocks) { return; }  // still waiting
 
-    // All registered amps have ACKed. Stop the timeout, advance to
+    // All registered+enabled amps have ACKed. Stop the timeout, advance to
     // TRANSMITTING, then clear m_pttPendingSource so a stale ACK doesn't
     // re-fire this path.
     m_pttAckTimeout.stop();
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
 
-    // One TRANSMITTING S-frame per amp, matching the pcap PTT_REQUESTED
-    // format exactly (non-zero tx_client_handle, empty reason).
+    // One TRANSMITTING S-frame per enabled amp, matching the pcap
+    // PTT_REQUESTED format exactly (non-zero tx_client_handle, empty
+    // reason). Disabled-interlock amps don't get one (they've stepped
+    // out of the chain).
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        if (it->interlockId == 0) { continue; }
+        if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
         const QString body =
             QStringLiteral("interlock tx_client_handle=0x%1"
                            " state=TRANSMITTING reason= source=%2"
@@ -296,6 +363,27 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
                            << "amplifier=0x" << it->ampHandle
                            << "(all" << totalInterlocks << "amps acked)";
     }
+
+    // Push `S<client_handle>|amplifier 0x<amp_handle> pttA=1` to every
+    // amp that's subscribed. This is the frame TGXL watches to flip its
+    // on-screen "PTT in" indicator. We push here (at TRANSMITTING) rather
+    // than at PTT_REQUESTED so the pttA=1 push lands in lockstep with
+    // the RF-flow gate release in RadioModel -- carrier flows now too.
+    // Bench-confirmed 2026-05-20: pushing earlier (at txAboutToBegin)
+    // caused TGXL to revert to "no PTT in" because pttA=1 was set ~500 ms
+    // before any RF was on-air.
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it->ampHandle.isEmpty()) { continue; }
+        const QString body = QStringLiteral("amplifier 0x%1 pttA=1")
+                                 .arg(it->ampHandle);
+        const QByteArray frame =
+            QStringLiteral("S%1|%2\n").arg(it->handle).arg(body).toUtf8();
+        QTcpSocket* sock = it.key();
+        if (sock && sock->isOpen()) { sock->write(frame); }
+    }
+    qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=1 to all subscribed amps"
+                       << "(synchronized with TRANSMITTING + RF-flow gate"
+                          " release)";
 
     // Signal RadioModel that the handshake completed successfully so
     // any TX-gating logic on the RadioModel side (e.g. logging,
@@ -330,7 +418,7 @@ void SmartSdrApiListener::onPttAckTimeout()
     int readyCount = 0;
     QStringList laggards;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        if (it->interlockId == 0) { continue; }
+        if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
         ++totalConnectedInterlocks;
         if (it->ackReady) {
             ++readyCount;
@@ -339,55 +427,56 @@ void SmartSdrApiListener::onPttAckTimeout()
         }
     }
 
-    // Lenient grant: if every currently-connected interlocked amp has ACKed
-    // (or there are no interlocked amps left at all, because they all
-    // disconnected mid-cycle), grant the TX. The amps that disappeared
-    // aren't blocking us; only an amp that's still connected and refusing
-    // counts as blocking per the wiki "preventing transmit" semantic.
-    if (laggards.isEmpty()) {
+    // 2026-05-20 bench-driven policy change: ALWAYS advance to TRANSMITTING
+    // on timeout, regardless of laggards.
+    //
+    // The wiki's "block TX on amp non-ACK" semantic does not match real-
+    // world 4O3A behavior at the bench. Two key observations:
+    //
+    //   1. TGXL (`name=TG`, type=AMP) takes ~1.4 s to send `interlock
+    //      ready <id>` -- WAY longer than the wiki's 500 ms window. We
+    //      always time out before TGXL ACKs. Yet TGXL clearly *intends*
+    //      to participate (it sends the create + the late ACK).
+    //
+    //   2. PGXL transitions IDLE -> TRANSMIT_A on PTT_REQUESTED alone
+    //      (within ~80 ms of its own ACK at ~180 ms) -- but DROPS back
+    //      to IDLE if it never sees TRANSMITTING. With the old strict-
+    //      mode block, PGXL flashes TRANSMIT_A then falls out, which
+    //      the operator sees as "amp briefly engages then quits".
+    //
+    // The fix: treat laggards as PASSIVE SUBSCRIBERS (they still want to
+    // see TRANSMITTING for their internal pttA tracker; they just don't
+    // veto the TX). Broadcast TRANSMITTING to all enabled interlocks.
+    // PGXL stays in TRANSMIT_A. TGXL eventually sees TRANSMITTING and
+    // sets pttA=1, which is exactly what its autotune sweep needs.
+    //
+    // Safety note: PGXL's own SWR / temp / V_dd protection still trips
+    // independently of our interlock state. If real SWR is high, PGXL
+    // self-faults and stops amplifying -- we're not bypassing safety,
+    // just removing a coordination protocol assumption that didn't fit.
+    if (!laggards.isEmpty()) {
+        qCWarning(lcSmartSdr)
+            << "interlock ACK timeout (500 ms):" << readyCount
+            << "of" << totalConnectedInterlocks
+            << "enabled amps acked; laggards=" << laggards
+            << "-- advancing to TRANSMITTING anyway (passive-subscriber"
+               " grant; PGXL self-protects if real SWR is high)";
+    } else {
         qCInfo(lcSmartSdr)
-            << "interlock ACK timeout: all connected amps acked"
-            << "(" << readyCount << "of" << totalConnectedInterlocks << ")"
-            << "-- some amps may have disconnected mid-cycle; granting TX";
-        // Mark stale entries as ready so advanceToTransmittingIfReady's
-        // own check passes, then advance.
-        for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
-            if (it->interlockId != 0) { it->ackReady = true; }
-        }
-        advanceToTransmittingIfReady();
-        return;
+            << "interlock ACK timeout: all enabled amps acked"
+            << "(" << readyCount << "of" << totalConnectedInterlocks
+            << ") -- some amps may have disconnected mid-cycle; granting TX";
     }
-
-    m_pttPendingSource.clear();
-    const QString blockedReason =
-        QStringLiteral("AMP:%1").arg(laggards.join(QStringLiteral(",")));
-    qCWarning(lcSmartSdr) << "interlock ACK timeout (500 ms):"
-                          << readyCount << "of" << totalConnectedInterlocks
-                          << "amps acked; laggards=" << laggards
-                          << "-- emitting interlock-blocked, NOT advancing to TX";
-
-    // Per wiki: emit READY with reason=AMP:<laggard_name> so the laggard
-    // amp learns it blocked the TX (some amp UIs surface this).
-    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        if (it->interlockId == 0) { continue; }
-        if (it->ackReady) { continue; }  // only emit for laggards
-        const QString body =
-            QStringLiteral("interlock tx_client_handle=0x%1"
-                           " state=READY reason=AMP:%2"
-                           " source= tx_allowed=0 amplifier=")
-                .arg(it->handle).arg(it->interlockName);
-        const QByteArray frame =
-            QStringLiteral("S0|%1\n").arg(body).toUtf8();
-        for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-            QTcpSocket* sock = jt.key();
-            if (sock && sock->isOpen()) { sock->write(frame); }
+    // Mark every enabled interlock as ready so advanceToTransmitting-
+    // IfReady's totalInterlocks==readyCount check passes. Laggards that
+    // ACK after this point will hit the mismatched-id warning path,
+    // which is fine -- their ACK is informational at that point.
+    for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+        if (it->interlockId != 0 && it->interlockEnabled) {
+            it->ackReady = true;
         }
     }
-
-    // Signal RadioModel to roll back the local MOX -- the operator's
-    // TX request was denied by an amp interlock. RadioModel surfaces
-    // this as a toast and drops MoxController::setMox(false).
-    emit interlockBlocked(blockedReason);
+    advanceToTransmittingIfReady();
 }
 
 void SmartSdrApiListener::onNewConnection()
@@ -605,6 +694,10 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
         auto it = m_clients.find(sock);
         if (it != m_clients.end() && it->interlockId == 0) {
             it->interlockId = m_nextInterlockId++;
+            // Default to enabled on create -- the wiki interlock state
+            // machine starts in the enabled state; explicit
+            // `interlock disable` later steps the amp out.
+            it->interlockEnabled = true;
             // Parse name= and serial= for `reason=AMP:<name>` field selection
             // in the subsequent PTT_REQUESTED broadcasts.
             auto extractValue = [&cmd](const QString& key) -> QString {
@@ -655,10 +748,56 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                                       << it->interlockId << ")";
             }
         }
-    } else if (cmd.startsWith(QStringLiteral("interlock enable"))) {
-        // C|interlock enable 0|1  - amp toggling its interlock enable flag.
-        // We acknowledge but don't track this internally yet. PGXL sends
-        // `interlock enable 0` at boot (bench-confirmed) before the create.
+    } else if (cmd.startsWith(QStringLiteral("interlock enable"))
+               || cmd.startsWith(QStringLiteral("interlock disable"))) {
+        // C|interlock enable <id>   - amp re-joining the interlock chain
+        // C|interlock disable <id>  - amp stepping out (e.g. on STANDBY)
+        //
+        // Bench-confirmed PGXL behavior 2026-05-20:
+        //   t=0:    we send `operate=0` to PGXL
+        //   t+~100ms: PGXL sends `interlock disable <id>` (stepping out)
+        //   t+~200ms: PGXL state edges OPERATE -> STANDBY
+        //   ...
+        //   when PGXL transitions back to IDLE/OPERATE:
+        //   t+0: PGXL sends `interlock enable <id>` (rejoining chain)
+        //
+        // A disabled interlock means the amp is NOT in the TX path and
+        // CANNOT ACK PTT_REQUESTED. Tracking this correctly prevents the
+        // amp from being mis-flagged as a 500 ms laggard during a normal
+        // autotune-induced STANDBY cycle.
+        const bool enabling = cmd.startsWith(QStringLiteral("interlock enable"));
+        auto it = m_clients.find(sock);
+        if (it != m_clients.end()) {
+            // Parse trailing id (tolerates "<verb> <id>" or "<verb>=<id>"
+            // formats; spec uses space-separated).
+            const QString prefix = enabling
+                ? QStringLiteral("interlock enable")
+                : QStringLiteral("interlock disable");
+            const QString tail = cmd.mid(prefix.size()).trimmed();
+            bool ok = false;
+            const int wireId = tail.startsWith(QLatin1Char('='))
+                ? tail.mid(1).toInt(&ok)
+                : tail.toInt(&ok);
+            // Only honour the toggle if the id matches this client's
+            // registered interlockId. Some amps may send the verb without
+            // an id (or with id=0 meaning "self"); accept those too.
+            if (!ok || wireId == 0 || wireId == it->interlockId) {
+                it->interlockEnabled = enabling;
+                qCInfo(lcSmartSdr) << "interlock" << (enabling ? "enable" : "disable")
+                                   << "from" << sock->peerAddress().toString()
+                                   << "id=" << it->interlockId
+                                   << "name=" << it->interlockName;
+                // If an in-progress PTT_REQUESTED wait was blocked on this
+                // amp ACKing and the amp just disabled, re-check whether
+                // we can advance. Otherwise the wait stalls until the
+                // 500 ms wiki timeout for an amp that's deliberately
+                // not participating in this cycle.
+                if (!enabling && !m_pttPendingSource.isEmpty()) {
+                    QTimer::singleShot(0, this,
+                        &SmartSdrApiListener::advanceToTransmittingIfReady);
+                }
+            }
+        }
         // No body needed.
     }
 

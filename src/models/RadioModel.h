@@ -2202,19 +2202,54 @@ private:
     //   2. Send `operate=0` to PGXL (if it was operating)
     //   3. Wait for ampStateChanged(false) confirmation (PGXL transitioned
     //      to STANDBY), then call continueTgxlAutotuneAfterStandby()
-    //   4. Engage local TUN carrier + send `autotune` to TGXL
-    //   5. On tuningChanged(false) -> drop carrier -> manualMoxChanged(false)
+    //   4. Engage local TUN carrier; set m_awaitingInterlockForAutotune
+    //   5. Wait for interlockGranted from SmartSdrApiListener (TGXL has
+    //      now received S0|interlock state=TRANSMITTING and knows PTT is
+    //      live), then send `autotune` to TGXL on :9010
+    //   6. On tuningChanged(false) -> drop carrier -> manualMoxChanged(false)
     //      -> restore PGXL to m_pgxlSavedOperate state
     //
     // m_tgxlAutotuneFromHardware: true if TGXL initiated (LAN PTT). Skips
-    //   the `autotune` cmd because TGXL is already sweeping.
+    //   the `autotune` cmd because TGXL is already sweeping. We also skip
+    //   the interlockGranted wait in that case.
+    // m_awaitingInterlockForAutotune: true between continueTgxlAutotune-
+    //   AfterStandby and the interlockGranted handler. Gates the autotune
+    //   command on TRANSMITTING actually being broadcast so TGXL sees PTT
+    //   before it gets the sweep command (previously a 200 ms fixed timer
+    //   raced the interlock chain and caused first-press "no PTT in"
+    //   aborts on cold caches).
     // 1500 ms failsafe in case PGXL never confirms standby (e.g. amp
     //   disconnected / unresponsive) -- proceed anyway and log a warning.
+    // 1500 ms failsafe also on the interlockGranted wait, for the same
+    //   degraded-amp case (e.g. amp disconnected mid-cycle before ACK).
     bool m_pgxlSavedOperate{false};
     bool m_tgxlAutotuneInProgress{false};
     bool m_pgxlStandbyPending{false};
     bool m_tgxlAutotuneFromHardware{false};
+    bool m_awaitingInterlockForAutotune{false};
     void continueTgxlAutotuneAfterStandby();
+    void sendTgxlAutotuneCmd();
+
+    // RF-flow gate state (NereusSDR-native, deck item #3).
+    //
+    // When MoxController::txReady fires (rfDelay elapsed, radio ready to
+    // TX), we normally call TxChannel::setRunning(true) which causes the
+    // audio pump to start feeding samples to the radio. With an external
+    // amp like PGXL in the chain, this is too early: PGXL needs to ACK
+    // PTT_REQUESTED and switch its relays from bypass to amp path BEFORE
+    // the carrier arrives, or it sees ~250 ms of carrier through bypass
+    // into a (possibly unmatched) antenna and intermittently trips its
+    // own SWR protection.
+    //
+    // The fix: defer setRunning(true) until interlockGranted fires
+    // (TRANSMITTING was just broadcast to all amps; PGXL has ACKed or
+    // the 500 ms lenient grant has fired). The lambda in the ctor reads
+    // this flag and calls setRunning(true) when the grant arrives.
+    //
+    // 1500 ms failsafe (same budget as the autotune gate): if interlock-
+    // Granted doesn't fire, start the audio anyway so the operator isn't
+    // stuck with a silent TX.
+    bool m_awaitingInterlockForTx{false};
 
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Qt parent-ownership (parent=this); non-null from construction time.
