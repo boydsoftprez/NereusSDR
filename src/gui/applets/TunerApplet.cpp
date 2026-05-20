@@ -49,9 +49,14 @@ namespace NereusSDR {
 TunerApplet::TunerApplet(RadioModel* model, TunerModel* tunerModel, QWidget* parent,
                          TuneMemoryStore* tuneStore)
     : AppletWidget(model, parent)
-    , m_tunerModel(tunerModel)
     , m_tuneStore(tuneStore)
 {
+    // NOTE: m_tunerModel is deliberately NOT initialised from `tunerModel` in
+    // the initializer list. The setTunerModel() call below uses an `if (==)`
+    // early-return to detect a no-op rebind; passing the same pointer twice
+    // would skip every signal connect in setTunerModel() (state/antA/
+    // direct-connection wiring etc.), leaving the antenna buttons gated on
+    // a flag that nothing ever updates. Bench-fix 2026-05-19.
     // Post-tune capture timer: after tuning=0 arrives, keep capturing SWR
     // for 400 ms so the final settled value from the TGXL has time to arrive.
     // From AetherSDR src/gui/TunerApplet.cpp:TunerApplet() [@0cd4559]
@@ -69,8 +74,8 @@ TunerApplet::TunerApplet(RadioModel* model, TunerModel* tunerModel, QWidget* par
 
     buildUI();
 
-    if (m_tunerModel) {
-        setTunerModel(m_tunerModel);
+    if (tunerModel) {
+        setTunerModel(tunerModel);
     }
 }
 
@@ -172,6 +177,13 @@ void TunerApplet::buildUI()
     {
         m_antContainer = new QWidget(this);
         m_antContainer->setVisible(false);
+        // Bench-fix 2026-05-19: reserve 24 px of layout height when visible.
+        // Without an explicit minimum, the TUNE / STANDBY buttons above
+        // (QSizePolicy::Expanding vertical) consumed every available pixel
+        // in the column, leaving zero space for the antenna row even though
+        // setVisible(true) had been called.
+        m_antContainer->setMinimumHeight(24);
+        m_antContainer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         auto* antRow = new QHBoxLayout(m_antContainer);
         antRow->setContentsMargins(0, 0, 0, 0);
         antRow->setSpacing(2);

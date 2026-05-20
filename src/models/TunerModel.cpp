@@ -85,7 +85,13 @@ void TunerModel::applyStatus(const QMap<QString, QString>& kvs)
             // Accept both keys so the 3x1 antenna switch is recognized regardless
             // of firmware variant.
             bool v = (val == "1");
-            if (m_oneByThree != v) { m_oneByThree = v; changed = true; }
+            if (m_oneByThree != v) {
+                m_oneByThree = v;
+                changed = true;
+                qCInfo(lcTunerModel)
+                    << "TunerModel: 1x3 antenna switch flag set to" << v
+                    << "via key" << key;
+            }
         } else if (key == "ip") {
             if (m_ip != val) { m_ip = val; changed = true; }
         } else if (key == "fwd") {
@@ -150,32 +156,24 @@ void TunerModel::bindConnection(TgxlConnection* conn)
         // From AetherSDR src/models/TunerModel.cpp:stateUpdated lambda [@0cd4559]
         // NereusSDR: fwd/swr conversion (dBm->watts, return-loss->SWR ratio)
         // lives here in the direct-connection path, matching upstream.
+        // Bench-fix 2026-05-19: route ALL non-meter keys through applyStatus
+        // so identity / 1x3-switch / antA / relay parsing matches the public
+        // test harness path. Without this, info R-frames containing 3way=1
+        // would route through statusUpdated -> a lambda that only knew about
+        // antA/fwd/swr, leaving m_oneByThree=false and hiding the antenna
+        // buttons even on a confirmed 1x3 TGXL.
         connect(m_conn, &TgxlConnection::stateUpdated, this,
                 [this](const QMap<QString, QString>& kvs) {
-            bool changed = false;
-            bool relay = false;
-            if (kvs.contains("relayC1")) {
-                int v = kvs.value("relayC1").toInt();
-                if (m_relayC1 != v) { m_relayC1 = v; relay = true; }
+            // Strip meter fields before calling applyStatus so the raw dBm /
+            // return-loss values don't leak into m_fwd / m_swr and emit a
+            // metersChanged with wrong units before this lambda's conversion.
+            QMap<QString, QString> nonMeterKvs = kvs;
+            nonMeterKvs.remove(QStringLiteral("fwd"));
+            nonMeterKvs.remove(QStringLiteral("swr"));
+            if (!nonMeterKvs.isEmpty()) {
+                applyStatus(nonMeterKvs);
             }
-            if (kvs.contains("relayL")) {
-                int v = kvs.value("relayL").toInt();
-                if (m_relayL != v) { m_relayL = v; relay = true; }
-            }
-            if (kvs.contains("relayC2")) {
-                int v = kvs.value("relayC2").toInt();
-                if (m_relayC2 != v) { m_relayC2 = v; relay = true; }
-            }
-            if (kvs.contains("antA")) {
-                int v = kvs.value("antA").toInt();
-                if (m_antA != v) {
-                    m_antA = v;
-                    changed = true;
-                    emit antennaAChanged(v);
-                }
-            }
-            if (relay) { emit relayChanged(); changed = true; }
-            if (changed) { emit stateChanged(); }
+
             // Forward power and SWR from direct TGXL connection (#625).
             // TGXL reports fwd in dBm and swr as return loss (negative dB).
             // Convert to watts and SWR ratio for the gauge.
@@ -198,17 +196,22 @@ void TunerModel::bindConnection(TgxlConnection* conn)
             }
             if (meters) { emit metersChanged(m_fwd, m_swr); }
         });
-        // Also parse antA + meters from 1/sec status poll responses.
+        // Also parse antA + meters from 1/sec status poll responses, and
+        // identity / 1x3-switch keys from `info` R-frame replies (which
+        // TgxlConnection routes through statusUpdated with the full body).
+        // Bench-fix 2026-05-19: route through applyStatus so the
+        // 3way / one_by_three key in the info reply actually flips
+        // m_oneByThree -- without this the antenna buttons stayed hidden on
+        // a confirmed 1x3 TGXL because the old statusUpdated lambda only
+        // knew about antA / fwd / swr.
         // From AetherSDR src/models/TunerModel.cpp:statusUpdated lambda [@0cd4559]
         connect(m_conn, &TgxlConnection::statusUpdated, this,
                 [this](const QMap<QString, QString>& kvs) {
-            if (kvs.contains("antA")) {
-                int v = kvs.value("antA").toInt();
-                if (m_antA != v) {
-                    m_antA = v;
-                    emit antennaAChanged(v);
-                    emit stateChanged();
-                }
+            QMap<QString, QString> nonMeterKvs = kvs;
+            nonMeterKvs.remove(QStringLiteral("fwd"));
+            nonMeterKvs.remove(QStringLiteral("swr"));
+            if (!nonMeterKvs.isEmpty()) {
+                applyStatus(nonMeterKvs);
             }
             // Forward power and SWR from direct TGXL status poll (#625).
             // Always emit — see #1530 for why equality suppression was removed.
