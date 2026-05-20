@@ -74,6 +74,22 @@ public:
     // from a TGXL-initiated tune (hardware button or native app).
     void setTuneActive(bool active);
 
+    // Broadcast a `S0|interlock` global state frame to all clients.
+    // FLEX uses this object as the canonical PTT signal: PGXL and TGXL
+    // watch the interlock state transitions (READY -> PTT_REQUESTED ->
+    // TRANSMITTING -> UNKEY_REQUESTED -> READY) and set their internal
+    // pttA flag from it. Without this broadcast a TGXL relay sweep
+    // initiated by our local TUN/MOX press aborts with "no PTT in" even
+    // though the carrier is on-air, because TGXL trusts the interlock
+    // object more than direct RF sensing.
+    //
+    // source: "TUNE" for a TUN-engaged TX (gen1 tone), "MOX" for a
+    // regular voice MOX. Empty string for the READY transition.
+    // Wire format observed in stream 2 of the bench capture:
+    //   S0|interlock tx_client_handle=0x00000000 state=TRANSMITTING
+    //              reason= source=TUNE tx_allowed=1 amplifier=
+    void setInterlockTransmitting(bool transmitting, const QString& source);
+
 signals:
     void clientConnected(const QString& peerHost, quint16 peerPort);
     void lineReceived(const QString& peerHost, quint16 peerPort,
@@ -112,6 +128,14 @@ private:
     struct ClientState {
         QByteArray readBuffer;     // line accumulator (CR-terminated)
         QString    handle;         // 8-hex unique handle for this client
+        // Amp handle assigned when the client sends `amplifier create`.
+        // Returned in the R-frame body so the client knows its own amp
+        // handle, then echoed in `S0|amplifier <handle> pttA=X` updates
+        // when local TUN/MOX engages. Empty until the client registers.
+        QString    ampHandle;
+        // What kind of amp this client registered as (PowerGeniusXL or
+        // TunerGeniusXL). Drives interlock `amplifier=` selection.
+        QString    ampModel;
     };
 
     void sendBanner(QTcpSocket* sock, const QString& handle);

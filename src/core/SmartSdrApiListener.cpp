@@ -100,6 +100,90 @@ void SmartSdrApiListener::setTuneActive(bool active)
     broadcastSliceState();
 }
 
+void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
+                                                   const QString& source)
+{
+    if (m_clients.isEmpty()) { return; }
+
+    // First half: amp pttA broadcast. PGXL and TGXL read their own pttA
+    // from `S0|amplifier <their_handle> ... pttA=X` updates. Without this,
+    // even with a perfect interlock S-frame they refuse to engage their
+    // side of the chain and report "no PTT in" / "no RF" because the
+    // FLEX-canonical PTT propagation goes through the amplifier object,
+    // not the interlock one.
+    const int pttVal = transmitting ? 1 : 0;
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it->ampHandle.isEmpty()) { continue; }
+        // Partial update: just the pttA field. FLEX emits full amp state
+        // each broadcast (model, serial, relays, ant, etc.) but we don't
+        // track the amp's relay/operate/bypass state from our side --
+        // those are the amp's own internal state, reported to us via
+        // their status frames. Per-key updates are accepted by PGXL/TGXL
+        // (bench-confirmed elsewhere); we only need pttA to flip.
+        const QString body =
+            QStringLiteral("amplifier 0x%1 pttA=%2 pttB=0")
+                .arg(it->ampHandle).arg(pttVal);
+        const QByteArray frame =
+            QStringLiteral("S0|%1\n").arg(body).toUtf8();
+        for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+            QTcpSocket* sock = jt.key();
+            if (sock && sock->isOpen()) {
+                sock->write(frame);
+            }
+        }
+        qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << it->ampHandle
+                           << "pttA=" << pttVal
+                           << "(model" << it->ampModel << ")";
+    }
+
+    // Second half: interlock state transitions. PTT_REQUESTED + TRANSMITTING
+    // on engage; UNKEY_REQUESTED + READY on release. Matches the
+    // FLEX-8600 sequence captured in stream 2. amplifier= references the
+    // TGXL handle for source=TUNE and PGXL handle for source=MOX, so the
+    // recipient knows whether its own chain is involved.
+    QString ampHandleStr;
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        const bool isTuner = (it->ampModel
+                              == QStringLiteral("TunerGeniusXL"));
+        const bool isPower = (it->ampModel
+                              == QStringLiteral("PowerGeniusXL"));
+        if ((source == QStringLiteral("TUNE") && isTuner)
+            || (source == QStringLiteral("MOX") && isPower)) {
+            ampHandleStr = QStringLiteral("0x%1").arg(it->ampHandle);
+            break;
+        }
+    }
+
+    auto bodyFor = [&](const QString& state) {
+        const QString src = (state == QStringLiteral("READY")
+                             || state == QStringLiteral("UNKEY_REQUESTED"))
+                            ? QString() : source;
+        return QStringLiteral("interlock tx_client_handle=0x00000000 state=%1"
+                              " reason= source=%2 tx_allowed=1 amplifier=%3")
+            .arg(state).arg(src).arg(ampHandleStr);
+    };
+
+    const QStringList sequence = transmitting
+        ? QStringList{QStringLiteral("PTT_REQUESTED"),
+                      QStringLiteral("TRANSMITTING")}
+        : QStringList{QStringLiteral("UNKEY_REQUESTED"),
+                      QStringLiteral("READY")};
+
+    for (const QString& state : sequence) {
+        const QByteArray frame =
+            QStringLiteral("S0|%1\n").arg(bodyFor(state)).toUtf8();
+        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+            QTcpSocket* sock = it.key();
+            if (sock && sock->isOpen()) {
+                sock->write(frame);
+            }
+        }
+        qCInfo(lcSmartSdr) << "TX S0|interlock state=" << state
+                           << "source=" << source
+                           << "amplifier=" << ampHandleStr;
+    }
+}
+
 void SmartSdrApiListener::onNewConnection()
 {
     while (m_server.hasPendingConnections()) {
@@ -133,7 +217,8 @@ void SmartSdrApiListener::onNewConnection()
                        .arg(state.handle)
                        .arg(m_sliceMode));
         sendStatus(sock, state.handle,
-                   QStringLiteral("transmit tune=%1 mon=0 mox=%2")
+                   QStringLiteral("transmit tune=%1 tune_mode=single_tone mon=0 mox=%2"
+                                      " tx_rf_power_changes_allowed=1 max_power_level=100")
                        .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
 
@@ -253,6 +338,40 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
         body = sock->peerAddress().toString();
     } else if (cmd.startsWith(QStringLiteral("slice list"))) {
         body = QStringLiteral("0");
+    } else if (cmd.startsWith(QStringLiteral("amplifier create"))) {
+        // Assign an amp handle for this client and return it. FLEX
+        // behaviour: when a SmartSDR-API client (PGXL/TGXL) sends
+        // `amplifier create ip=... model=PowerGeniusXL|TunerGeniusXL ...`,
+        // the radio assigns an 8-hex amp handle and returns it in the
+        // R-frame body. The client then knows its own amp handle and
+        // expects subsequent `S0|amplifier <handle> ... pttA=X` updates
+        // from the radio. Without the handle assignment+return, PGXL/TGXL
+        // never see their amp in our outbound interlock/amp updates and
+        // never set their internal pttA, so a TUN/MOX press from us
+        // produces a "no PTT in" abort on their side.
+        auto it = m_clients.find(sock);
+        if (it != m_clients.end() && it->ampHandle.isEmpty()) {
+            // Random 8-hex handle, top nibble 7 so it doesn't clash with
+            // client handles (which we start with top nibble 4).
+            const quint32 r = QRandomGenerator::global()->generate() & 0x0FFFFFFF;
+            it->ampHandle = QStringLiteral("7%1")
+                                .arg(r, 7, 16, QLatin1Char('0'))
+                                .toUpper();
+            // Pull model from the create command for later interlock
+            // amplifier= field selection (TUN -> TGXL handle, MOX -> PGXL).
+            const int modelIdx = cmd.indexOf(QStringLiteral("model="));
+            if (modelIdx >= 0) {
+                const int end = cmd.indexOf(QLatin1Char(' '), modelIdx);
+                it->ampModel = (end >= 0)
+                    ? cmd.mid(modelIdx + 6, end - modelIdx - 6)
+                    : cmd.mid(modelIdx + 6);
+            }
+            qCInfo(lcSmartSdr) << "amplifier create -> assigned handle 0x"
+                               << it->ampHandle << "for model"
+                               << it->ampModel
+                               << "(client" << sock->peerAddress().toString() << ")";
+        }
+        body = QStringLiteral("0x%1").arg(it->ampHandle);
     }
 
     // LAN PTT: TGXL (and other SmartSDR-API clients) request the FlexRadio to
@@ -316,7 +435,8 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                        .arg(handle)
                        .arg(m_sliceMode));
         sendStatus(sock, handle,
-                   QStringLiteral("transmit tune=%1 mon=0 mox=%2")
+                   QStringLiteral("transmit tune=%1 tune_mode=single_tone mon=0 mox=%2"
+                                      " tx_rf_power_changes_allowed=1 max_power_level=100")
                        .arg(m_tuneActive ? 1 : 0)
                        .arg(m_txActive ? 1 : 0));
     }
@@ -354,7 +474,8 @@ void SmartSdrApiListener::broadcastSliceState()
     // and the client_handle on the slice, PGXL's bandA tracker won't pick
     // up the RF_frequency for band lookup.
     const QString txBody =
-        QStringLiteral("transmit tune=%1 mon=0 mox=%2")
+        QStringLiteral("transmit tune=%1 tune_mode=single_tone mon=0 mox=%2"
+                       " tx_rf_power_changes_allowed=1 max_power_level=100")
             .arg(m_tuneActive ? 1 : 0)
             .arg(m_txActive ? 1 : 0);
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {

@@ -1002,9 +1002,20 @@ RadioModel::RadioModel(QObject* parent)
         });
         connect(m_moxController, &MoxController::moxStateChanged,
                 this, [this](bool on) {
-            if (m_smartSdrListener) {
-                m_smartSdrListener->setTxActive(on);
-            }
+            if (!m_smartSdrListener) { return; }
+            m_smartSdrListener->setTxActive(on);
+            // FLEX-canonical interlock state broadcast: PGXL and TGXL
+            // watch the `S0|interlock state=TRANSMITTING source=TUNE|MOX`
+            // global frame to know PTT is live. Without this, an operator
+            // TxApplet TUNE or MOX press leaves both amps reporting "no
+            // PTT in" even with the local carrier on-air, because their
+            // pttA flag tracks interlock state, not raw RF detection.
+            // source=TUNE when the engagement came via TUN (manual MOX);
+            // source=MOX for regular voice MOX.
+            const QString source = m_moxController->isManualMox()
+                ? QStringLiteral("TUNE")
+                : QStringLiteral("MOX");
+            m_smartSdrListener->setInterlockTransmitting(on, source);
         });
     }
 
