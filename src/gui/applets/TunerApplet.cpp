@@ -181,18 +181,19 @@ void TunerApplet::buildUI()
         // no RF and abort with "low RF power" (bench-confirmed 22:19 on
         // 2026-05-19).
         if (m_model && !m_model->isTune()) {
-            m_model->setTune(true);
             m_carrierEngagedForTgxlTune = true;
             // Reset the per-cycle "did TGXL ever enter tuning=1" flag so
             // the short-watchdog below knows whether to escape.
             m_tgxlEnteredTuning = false;
-            // Settle delay so the MoxController state walk completes and
-            // the tune carrier is on-air before TGXL begins its sweep.
-            // TGXL's "low RF power" / "no PTT in" aborts fire quickly if
-            // the carrier isn't detected when the sweep starts.
-            QTimer::singleShot(200, this, [this]() {
-                if (m_tunerModel) { m_tunerModel->autoTune(); }
-            });
+            // Route through RadioModel::startTgxlAutotune which does the
+            // PGXL standby + setTune(true) + autotune-after-settle
+            // orchestration in one place. The 200 ms settle for the
+            // autotune command lives there. fromHardware=false because
+            // we (the operator's app click) are initiating the cycle.
+            // Bench-discovered 2026-05-20: TGXL refuses the sweep with
+            // "no PTT" when PGXL is in OPERATE -- the amp's amplified
+            // carrier breaks TGXL's calibration. Auto-standby PGXL fixes.
+            m_model->startTgxlAutotune(/*fromHardware=*/false);
             // Short watchdog (3 s): if TGXL never enters its own
             // tuning=1 state within this window, TGXL refused to start
             // the cycle (typical: "no PTT" abort because PGXL is in

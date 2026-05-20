@@ -966,6 +966,33 @@ public slots:
     // Cite: Thetis console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged.
     void setTune(bool on);
 
+    // TGXL autotune orchestration (NereusSDR-native, no Thetis source).
+    //
+    // Bench-driven on 2026-05-20: TGXL refuses to run its relay sweep when
+    // PGXL is in OPERATE -- the amp is amplifying the radio's tune carrier
+    // and TGXL can't calibrate against an amplified signal. The operator
+    // workflow with real FlexRadio is: put PGXL in STANDBY, run TGXL
+    // autotune at radio tunepower (~10-25 W), then re-arm PGXL to OPERATE.
+    //
+    // This method orchestrates that sequence:
+    //   1. Save current PGXL operate-state (m_pgxlSavedOperate)
+    //   2. Send `operate=0` to PGXL if it was operating
+    //   3. Engage local CW tune carrier via setTune(true). Thetis-faithful
+    //      `chkTUN_CheckedChanged` already swaps rfpower -> tunepower for
+    //      the cycle (console.cs:30075 [v2.10.3.13]).
+    //   4. After 200 ms settle, send `autotune` to TGXL on :9010 (unless
+    //      fromHardware=true, in which case TGXL is already running its
+    //      own internal cycle and we only need to provide the carrier).
+    //   5. Wait for TGXL tuning=0 -> drop carrier (handled by the
+    //      TunerApplet tuningChanged path that calls setTune(false)).
+    //   6. On carrier drop, if m_pgxlSavedOperate was true, send
+    //      `operate=1` to restore PGXL.
+    //
+    // fromHardware: true when the cycle was initiated by a TGXL hardware
+    // TUNE button (we received `transmit tune on` via LAN PTT). Skips
+    // step 4 because TGXL is already running its own sweep internally.
+    void startTgxlAutotune(bool fromHardware);
+
     // ── Phase 3J-1 follow-up: TCI Q_INVOKABLE shims (bench wire-up) ──────────
     //
     // TciProtocol calls into RadioModel by *method name string* via
@@ -2167,6 +2194,15 @@ private:
     // Amplifier presence and operate-state cache (driven by onPgxlStatus).
     bool m_hasAmplifier{false};
     bool m_ampOperate{false};
+
+    // TGXL autotune orchestration state (NereusSDR-native).
+    // m_pgxlSavedOperate: snapshot of m_ampOperate at startTgxlAutotune time
+    //   so we can restore PGXL to its prior state when the tune cycle ends.
+    // m_tgxlAutotuneInProgress: latch that gates the post-tune restore so
+    //   we don't accidentally restore on a non-autotune carrier drop (e.g.
+    //   TxApplet TUNE which never put PGXL in standby in the first place).
+    bool m_pgxlSavedOperate{false};
+    bool m_tgxlAutotuneInProgress{false};
 
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Qt parent-ownership (parent=this); non-null from construction time.

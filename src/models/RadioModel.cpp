@@ -978,8 +978,20 @@ RadioModel::RadioModel(QObject* parent)
     // when TGXL has finished tuning regardless of who initiated.
     connect(m_smartSdrListener, &SmartSdrApiListener::tuneRequested,
             this, [this](bool on) {
-        qCInfo(lcConnection) << "LAN PTT tuneRequested(" << on << ") -> setTune";
-        setTune(on);
+        qCInfo(lcConnection) << "LAN PTT tuneRequested(" << on << ")";
+        if (on) {
+            // TGXL hardware TUNE pressed (or TGXL native app TUNE). TGXL
+            // is already running its own internal sweep cycle; we just
+            // need to provide the carrier and put PGXL in STANDBY for
+            // the duration. Same orchestration as TunerApplet TUNE click,
+            // but with fromHardware=true to skip the redundant `autotune`
+            // command (TGXL already started).
+            startTgxlAutotune(/*fromHardware=*/true);
+        } else {
+            // TGXL released tune (cycle done or aborted). Drop our local
+            // carrier; the manualMoxChanged(false) handler restores PGXL.
+            setTune(false);
+        }
     });
 
     // Mirror local TUN / MOX state into the listener's outbound `transmit`
@@ -998,6 +1010,21 @@ RadioModel::RadioModel(QObject* parent)
                 this, [this](bool isManual) {
             if (m_smartSdrListener) {
                 m_smartSdrListener->setTuneActive(isManual);
+            }
+            // TGXL autotune orchestration: restore PGXL when local TUN
+            // drops. m_tgxlAutotuneInProgress is set by startTgxlAutotune
+            // and only those cycles need the PGXL state restore. TxApplet
+            // TUN drops won't trigger this branch because the flag stays
+            // false (operator's full-beans TUN doesn't touch PGXL state).
+            if (!isManual && m_tgxlAutotuneInProgress) {
+                m_tgxlAutotuneInProgress = false;
+                if (m_pgxlSavedOperate && m_pgxlConnection
+                    && m_pgxlConnection->isConnected()) {
+                    m_pgxlConnection->sendCommand(QStringLiteral("operate=1"));
+                    qCInfo(lcConnection)
+                        << "TGXL autotune complete: PGXL -> OPERATE restored";
+                }
+                m_pgxlSavedOperate = false;
             }
         });
         connect(m_moxController, &MoxController::moxStateChanged,
@@ -9112,6 +9139,73 @@ void RadioModel::onPgxlConnected()
 
     // Always enable keepalive after pairing attempt.
     m_pgxlConnection->enableKeepalive();
+}
+
+// ---------------------------------------------------------------------------
+// startTgxlAutotune - PGXL standby + TGXL relay sweep + PGXL restore.
+// ---------------------------------------------------------------------------
+//
+// Bench-driven 2026-05-20: TGXL refuses to sweep relays when PGXL is in
+// OPERATE because PGXL amplifies the radio's tune carrier and TGXL can't
+// calibrate against the amplified signal -- TGXL reports "no PTT" and
+// aborts. The correct operator workflow with real FlexRadio (per 4O3A's
+// PGXL/TGXL User Guides and community guidance):
+//   1. Put PGXL in STANDBY (amp bypassed)
+//   2. Run TGXL autotune at radio tunepower (~10-25 W, low enough that
+//      tuning a high-SWR load can't damage the amp/antenna)
+//   3. Re-arm PGXL to OPERATE when tune completes
+//
+// fromHardware==true means the TGXL hardware TUNE button was pressed;
+// TGXL is already running its own internal sweep and just needs the
+// radio's carrier. We skip the explicit `autotune` command in that case.
+//
+// fromHardware==false means TunerApplet TUNE was clicked; we send
+// `autotune` to TGXL on :9010 to start the sweep.
+//
+// PGXL state restore happens via the m_moxController->manualMoxChanged
+// wire that detects local TUN dropping (handled in ctor). When that
+// fires AND m_tgxlAutotuneInProgress is true, we send `operate=1` to
+// restore PGXL to OPERATE (if it was operating before the tune cycle).
+void RadioModel::startTgxlAutotune(bool fromHardware)
+{
+    if (!m_tgxlConnection || !m_tgxlConnection->isConnected()) {
+        qCWarning(lcConnection)
+            << "TGXL autotune requested but TGXL not connected; ignoring";
+        return;
+    }
+
+    // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
+    // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
+    m_pgxlSavedOperate = m_hasAmplifier && m_ampOperate;
+    m_tgxlAutotuneInProgress = true;
+
+    qCInfo(lcConnection)
+        << "TGXL autotune starting. fromHardware=" << fromHardware
+        << "pgxlSavedOperate=" << m_pgxlSavedOperate;
+
+    // Put PGXL in STANDBY if it's currently operating. The amp's RF
+    // chain disengages within ~50 ms; the radio's local TUN engagement
+    // below has a 30 ms rfDelay so the timing typically overlaps cleanly.
+    if (m_pgxlSavedOperate && m_pgxlConnection
+        && m_pgxlConnection->isConnected()) {
+        m_pgxlConnection->sendCommand(QStringLiteral("operate=0"));
+        qCInfo(lcConnection) << "TGXL autotune: PGXL -> STANDBY for safe tune";
+    }
+
+    // Engage local CW tune carrier. setTune(true) is Thetis-faithful and
+    // already loads tunepower instead of rfpower for the cycle.
+    setTune(true);
+
+    // Send `autotune` to TGXL only when WE are initiating the cycle.
+    // For the hardware-button path, TGXL has already started its sweep.
+    if (!fromHardware) {
+        QTimer::singleShot(200, this, [this]() {
+            if (m_tgxlConnection && m_tgxlConnection->isConnected()) {
+                m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
+                qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
+            }
+        });
+    }
 }
 
 // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory on band change.
