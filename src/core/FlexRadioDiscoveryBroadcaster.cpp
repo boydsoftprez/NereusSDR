@@ -21,6 +21,13 @@
 #include <QNetworkInterface>
 #include <QLoggingCategory>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <cstring>
+#include <string.h>
+
 namespace NereusSDR {
 
 // PGXL appears to validate that radio_license_id starts with FlexRadio
@@ -112,6 +119,16 @@ void FlexRadioDiscoveryBroadcaster::start()
 
     if (!m_socket.isValid()
             || m_socket.state() != QAbstractSocket::BoundState) {
+        // Try to set SO_BROADCAST BEFORE bind. Some systems require this order.
+        // Get the socket fd from the unbound socket (may be invalid, but we try anyway).
+#ifdef Q_OS_UNIX
+        int sockFd = static_cast<int>(m_socket.socketDescriptor());
+        if (sockFd >= 0) {
+            int yes = 1;
+            ::setsockopt(sockFd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+        }
+#endif
+
         bool bound = m_socket.bind(bindAddr, 4992,
                                    QUdpSocket::ShareAddress
                                        | QUdpSocket::ReuseAddressHint);
@@ -129,6 +146,21 @@ void FlexRadioDiscoveryBroadcaster::start()
                 << "- discovery beacon disabled";
             return;
         }
+
+        // Re-set SO_BROADCAST after bind to be sure (some impls require post-bind set).
+#ifdef Q_OS_UNIX
+        sockFd = static_cast<int>(m_socket.socketDescriptor());
+        if (sockFd >= 0) {
+            int yes = 1;
+            if (::setsockopt(sockFd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) != 0) {
+                qCWarning(lcFlexDisc) << "setsockopt SO_BROADCAST failed on fd" << sockFd << "errno" << errno;
+            } else {
+                qCDebug(lcFlexDisc) << "SO_BROADCAST set on fd" << sockFd << "after bind";
+            }
+        } else {
+            qCWarning(lcFlexDisc) << "socketDescriptor() returned invalid fd after bind" << sockFd;
+        }
+#endif
     }
 
     if (!m_timer.isActive()) {
@@ -148,21 +180,72 @@ void FlexRadioDiscoveryBroadcaster::stop()
 
 void FlexRadioDiscoveryBroadcaster::onTick()
 {
+    // Detect if the LAN IP has changed (e.g. DHCP renewal) and rebind the socket if so.
+    const QString currentIp = detectLanIpv4();
+    if (!currentIp.isEmpty() && currentIp != m_ip) {
+        qCInfo(lcFlexDisc) << "LAN IP changed from" << m_ip << "to" << currentIp
+                           << "- rebinding broadcaster";
+        m_ip = currentIp;
+
+        // Close and rebind the socket to the new IP.
+        m_socket.close();
+        const QHostAddress bindAddr(m_ip);
+
+#ifdef Q_OS_UNIX
+        int fd = static_cast<int>(m_socket.socketDescriptor());
+        if (fd >= 0) {
+            int yes = 1;
+            ::setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+        }
+#endif
+
+        bool bound = m_socket.bind(bindAddr, 4992,
+                                   QUdpSocket::ShareAddress
+                                       | QUdpSocket::ReuseAddressHint);
+        if (!bound) {
+            // Port 4992 may already be in use; fall back to ephemeral port.
+            bound = m_socket.bind(bindAddr, 0,
+                                  QUdpSocket::ShareAddress
+                                      | QUdpSocket::ReuseAddressHint);
+        }
+
+        if (bound) {
+            // Re-set SO_BROADCAST after the rebind.
+#ifdef Q_OS_UNIX
+            fd = static_cast<int>(m_socket.socketDescriptor());
+            if (fd >= 0) {
+                int yes = 1;
+                ::setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+            }
+#endif
+            m_broadcastAddress = computeBroadcastAddress();
+            qCInfo(lcFlexDisc) << "Broadcaster rebound to src=" << m_ip
+                               << "dst=" << m_broadcastAddress.toString();
+        } else {
+            qCWarning(lcFlexDisc) << "Broadcaster rebind failed for new IP" << m_ip;
+            return;
+        }
+    }
+
     const quint32 now = static_cast<quint32>(QDateTime::currentSecsSinceEpoch());
     const QByteArray pkt = buildBeacon(m_packetCount, now);
 
-    // Write to the subnet broadcast address (not 255.255.255.255) so that on
-    // multi-interface systems, the kernel routes the packet out the correct
-    // interface (the one that owns m_ip). The bound socket source address and
-    // the broadcast destination together ensure the beacon reaches all hosts
-    // on the same subnet.
+    const int sockFd = static_cast<int>(m_socket.socketDescriptor());
+    if (sockFd < 0) {
+        qCWarning(lcFlexDisc) << "broadcast: invalid socket fd";
+        return;
+    }
+
+    // Try writing to 255.255.255.255 (limited broadcast) with SO_BROADCAST set.
+    // This is more portable than trying to compute and use subnet broadcast addresses.
     qint64 written = m_socket.writeDatagram(pkt,
-                                            m_broadcastAddress,
+                                            QHostAddress::Broadcast,
                                             /*port=*/4992);
     if (written != pkt.size()) {
-        qCWarning(lcFlexDisc) << "broadcast write failed:"
+        qCWarning(lcFlexDisc) << "broadcast write failed (fd=" << sockFd << "):"
                               << m_socket.errorString();
     }
+
     m_packetCount = (m_packetCount + 1) & 0x0F; // 4-bit rolling counter 0..15
 }
 
