@@ -117,6 +117,22 @@ signals:
     // send this; PGXL might during some pairing paths.
     void moxRequested(bool on);
 
+    // Interlock handshake resolution. Fired exactly once after each
+    // setInterlockTransmitting(true) call:
+    //
+    //   - interlockGranted(source): all registered amps ACKed with
+    //     `C<seq>|interlock ready <id>` and the TRANSMITTING S-frame was
+    //     broadcast. The TX path is clear; RF may flow.
+    //   - interlockBlocked(reason): 500 ms wiki-spec timeout elapsed
+    //     without all amps ACKing. Per wiki TCPIP-interlock the radio
+    //     does NOT fall through to TRANSMITTING; it emits an AMP-blocked
+    //     READY and stays out of TX. RadioModel listens for this and
+    //     rolls back the local MOX (degraded -> RX) + surfaces a toast.
+    //
+    // RadioModel wires these to the appropriate MOX / UI rollback paths.
+    void interlockGranted(const QString& source);
+    void interlockBlocked(const QString& reason);
+
 private slots:
     void onNewConnection();
     void onClientDataReady();

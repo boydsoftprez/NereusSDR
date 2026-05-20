@@ -1017,6 +1017,27 @@ RadioModel::RadioModel(QObject* parent)
                 : QStringLiteral("MOX");
             m_smartSdrListener->setInterlockTransmitting(on, source);
         });
+
+        // Interlock-blocked rollback. Per SmartSDR API wiki TCPIP-interlock,
+        // if a paired amp does not ACK `interlock ready <id>` within 500 ms
+        // of our `state=PTT_REQUESTED` broadcast, the radio must NOT fall
+        // through to `state=TRANSMITTING` -- it emits an AMP-blocked READY
+        // and stays out of TX. The wiki failsafe at:
+        //   https://github.com/flexradio/smartsdr-api-docs/wiki/TCPIP-interlock
+        // We honour that here by dropping local MOX when the listener
+        // signals interlockBlocked. Operator's TX request is denied so the
+        // amp is protected from carrier-before-ready transients.
+        connect(m_smartSdrListener, &SmartSdrApiListener::interlockBlocked,
+                this, [this](const QString& reason) {
+            qCWarning(lcConnection)
+                << "Interlock BLOCKED:" << reason
+                << "-- rolling back MOX, refusing TX";
+            if (m_moxController && m_moxController->isMox()) {
+                m_moxController->setMox(false);
+            }
+            // Future: surface as a status-bar toast via existing
+            // TxInterlockPolicy denial signal pathway.
+        });
     }
 
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
