@@ -79,7 +79,14 @@ void SmartSdrApiListener::onClientDataReady()
     const QString peerHost = sock->peerAddress().toString();
     const quint16 peerPort = sock->peerPort();
 
-    m_readBuffers[sock].append(sock->readAll());
+    QByteArray chunk = sock->readAll();
+    if (!chunk.isEmpty()) {
+        qCInfo(lcSmartSdr) << "RX raw from" << peerHost << ":" << peerPort
+                           << "(" << chunk.size() << "bytes):"
+                           << chunk.toHex(' ').left(120)
+                           << "| ascii:" << QString::fromUtf8(chunk).left(80);
+    }
+    m_readBuffers[sock].append(chunk);
 
     // SmartSDR API uses CR-terminated lines (matching PgxlConnection convention).
     QByteArray& buf = m_readBuffers[sock];
@@ -108,8 +115,8 @@ void SmartSdrApiListener::onClientDisconnected()
         return;
     }
     qCInfo(lcSmartSdr) << "client disconnected from"
-                        << sock->peerAddress().toString()
-                        << ":" << sock->peerPort();
+                        << sock->peerAddress().toString() << ":" << sock->peerPort()
+                        << "total buffered:" << m_readBuffers.value(sock).size() << "bytes";
     m_readBuffers.remove(sock);
     sock->deleteLater();
 }
