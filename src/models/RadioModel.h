@@ -2196,13 +2196,25 @@ private:
     bool m_ampOperate{false};
 
     // TGXL autotune orchestration state (NereusSDR-native).
-    // m_pgxlSavedOperate: snapshot of m_ampOperate at startTgxlAutotune time
-    //   so we can restore PGXL to its prior state when the tune cycle ends.
-    // m_tgxlAutotuneInProgress: latch that gates the post-tune restore so
-    //   we don't accidentally restore on a non-autotune carrier drop (e.g.
-    //   TxApplet TUNE which never put PGXL in standby in the first place).
+    // Event-driven flow (mirrors the FlexAPI interlock handshake pattern):
+    //   1. startTgxlAutotune() snapshots PGXL state into m_pgxlSavedOperate
+    //      and sets m_tgxlAutotuneInProgress + m_pgxlStandbyPending
+    //   2. Send `operate=0` to PGXL (if it was operating)
+    //   3. Wait for ampStateChanged(false) confirmation (PGXL transitioned
+    //      to STANDBY), then call continueTgxlAutotuneAfterStandby()
+    //   4. Engage local TUN carrier + send `autotune` to TGXL
+    //   5. On tuningChanged(false) -> drop carrier -> manualMoxChanged(false)
+    //      -> restore PGXL to m_pgxlSavedOperate state
+    //
+    // m_tgxlAutotuneFromHardware: true if TGXL initiated (LAN PTT). Skips
+    //   the `autotune` cmd because TGXL is already sweeping.
+    // 1500 ms failsafe in case PGXL never confirms standby (e.g. amp
+    //   disconnected / unresponsive) -- proceed anyway and log a warning.
     bool m_pgxlSavedOperate{false};
     bool m_tgxlAutotuneInProgress{false};
+    bool m_pgxlStandbyPending{false};
+    bool m_tgxlAutotuneFromHardware{false};
+    void continueTgxlAutotuneAfterStandby();
 
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Qt parent-ownership (parent=this); non-null from construction time.

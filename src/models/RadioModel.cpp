@@ -1075,6 +1075,22 @@ RadioModel::RadioModel(QObject* parent)
         });
     }
 
+    // TGXL autotune orchestration: PGXL standby-confirmation hook. When
+    // we're in an autotune cycle waiting for PGXL to transition to
+    // STANDBY (m_pgxlStandbyPending), this signal fires from
+    // onPgxlStatus() when m_ampOperate flips false. That's our event-
+    // driven confirmation that PGXL has acknowledged operate=0 and is no
+    // longer amplifying -- now safe to engage local TUN carrier.
+    connect(this, &RadioModel::ampStateChanged, this, [this]() {
+        if (m_tgxlAutotuneInProgress && m_pgxlStandbyPending
+            && !m_ampOperate) {
+            m_pgxlStandbyPending = false;
+            qCInfo(lcConnection)
+                << "TGXL autotune: PGXL confirmed STANDBY, proceeding";
+            continueTgxlAutotuneAfterStandby();
+        }
+    });
+
     // Phase 3P-II Task 87: wire interlock policy into MoxController.
     //
     // setInterlockPolicy: MoxController's setMox(true) consults the policy
@@ -9174,33 +9190,88 @@ void RadioModel::startTgxlAutotune(bool fromHardware)
         return;
     }
 
+    // Suppress recursive call. When WE initiate (fromHardware=false), our
+    // `autotune` command causes TGXL to send back `transmit tune on` (LAN
+    // PTT request -- TGXL telling the radio "please key up so I can sweep").
+    // That arrives at SmartSdrApiListener and would re-enter this method
+    // with fromHardware=true. The recursive entry would re-send operate=0
+    // (already in flight) and any subsequent `transmit tune off` from TGXL
+    // would trigger a premature carrier drop via manualMoxChanged(false).
+    // Treat the LAN PTT during an in-progress cycle as confirmation only.
+    if (m_tgxlAutotuneInProgress && fromHardware) {
+        qCInfo(lcConnection)
+            << "TGXL autotune: LAN PTT ack received during in-progress"
+               " cycle, ignoring (we initiated and are already engaged)";
+        return;
+    }
+
     // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
     // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
     m_pgxlSavedOperate = m_hasAmplifier && m_ampOperate;
     m_tgxlAutotuneInProgress = true;
+    m_tgxlAutotuneFromHardware = fromHardware;
+    m_pgxlStandbyPending = m_pgxlSavedOperate;  // need to await STANDBY confirm?
 
     qCInfo(lcConnection)
         << "TGXL autotune starting. fromHardware=" << fromHardware
         << "pgxlSavedOperate=" << m_pgxlSavedOperate;
 
-    // Put PGXL in STANDBY if it's currently operating. The amp's RF
-    // chain disengages within ~50 ms; the radio's local TUN engagement
-    // below has a 30 ms rfDelay so the timing typically overlaps cleanly.
-    if (m_pgxlSavedOperate && m_pgxlConnection
-        && m_pgxlConnection->isConnected()) {
-        m_pgxlConnection->sendCommand(QStringLiteral("operate=0"));
-        qCInfo(lcConnection) << "TGXL autotune: PGXL -> STANDBY for safe tune";
+    if (!m_pgxlSavedOperate) {
+        // PGXL already in non-operate state (STANDBY / FAULT / POWERUP /
+        // not present). No need to wait for transition -- proceed.
+        continueTgxlAutotuneAfterStandby();
+        return;
     }
 
-    // Engage local CW tune carrier. setTune(true) is Thetis-faithful and
-    // already loads tunepower instead of rfpower for the cycle.
+    // Send `operate=0` and wait for PGXL to broadcast `state=STANDBY` in
+    // its next R-frame status update. The wait is event-driven via the
+    // ampStateChanged signal (subscribed in the ctor). Mirrors the
+    // PTT_REQUESTED / interlock-ready handshake pattern: send request,
+    // wait for confirmation, then proceed -- no fragile fixed delay.
+    if (m_pgxlConnection && m_pgxlConnection->isConnected()) {
+        m_pgxlConnection->sendCommand(QStringLiteral("operate=0"));
+        qCInfo(lcConnection)
+            << "TGXL autotune: PGXL operate=0 sent, awaiting STANDBY ack";
+    }
+
+    // Failsafe: PGXL polls its state at ~10 Hz so the ampStateChanged
+    // signal usually fires within 100-200 ms. If 1500 ms elapses without
+    // confirmation (amp disconnected mid-cycle, status poll stuck), we
+    // proceed anyway with a warning so the operator's TUNE isn't stranded.
+    QTimer::singleShot(1500, this, [this]() {
+        if (m_tgxlAutotuneInProgress && m_pgxlStandbyPending) {
+            qCWarning(lcConnection)
+                << "TGXL autotune: PGXL didn't confirm STANDBY within"
+                   " 1.5 s, proceeding anyway (failsafe)";
+            m_pgxlStandbyPending = false;
+            continueTgxlAutotuneAfterStandby();
+        }
+    });
+}
+
+// Second half of the TGXL autotune orchestration: engage local TUN
+// carrier and (if WE initiated) send `autotune` to TGXL. Called either
+// directly from startTgxlAutotune (PGXL already in standby) or from
+// the ampStateChanged signal handler (PGXL just transitioned to standby)
+// or from the 1.5 s failsafe timer.
+void RadioModel::continueTgxlAutotuneAfterStandby()
+{
+    if (!m_tgxlAutotuneInProgress) {
+        // Cycle was cancelled (e.g. operator hit TUN-off) before we got
+        // here. Bail out -- don't engage TUN and don't send autotune.
+        return;
+    }
+    qCInfo(lcConnection)
+        << "TGXL autotune: PGXL standby ready, engaging local TUN carrier";
     setTune(true);
 
-    // Send `autotune` to TGXL only when WE are initiating the cycle.
-    // For the hardware-button path, TGXL has already started its sweep.
-    if (!fromHardware) {
+    if (!m_tgxlAutotuneFromHardware) {
+        // Settle delay so the MoxController state walk completes and the
+        // CW carrier is on-air before TGXL starts the relay sweep. TGXL's
+        // "low RF power" abort fires within ~100 ms if no carrier seen.
         QTimer::singleShot(200, this, [this]() {
-            if (m_tgxlConnection && m_tgxlConnection->isConnected()) {
+            if (m_tgxlConnection && m_tgxlConnection->isConnected()
+                && m_tgxlAutotuneInProgress) {
                 m_tgxlConnection->sendCommand(QStringLiteral("autotune"));
                 qCInfo(lcConnection) << "TGXL autotune: sent autotune cmd";
             }
