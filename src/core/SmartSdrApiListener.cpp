@@ -27,10 +27,14 @@ bool SmartSdrApiListener::start()
     if (m_server.isListening()) {
         m_server.close();
     }
-    bool ok = m_server.listen(QHostAddress::Any, 4992);
+    bool ok = m_server.listen(QHostAddress::AnyIPv4, 4992);
     if (!ok) {
         qCWarning(lcSmartSdr) << "failed to bind TCP 4992:"
                                << m_server.errorString();
+    } else {
+        qCInfo(lcSmartSdr) << "SmartSDR API listener listening on"
+                           << m_server.serverAddress().toString()
+                           << ":" << m_server.serverPort();
     }
     return ok;
 }
