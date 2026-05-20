@@ -211,6 +211,16 @@ private:
     float  m_tuneSwr{1.0f};
     QTimer* m_postTuneTimer{nullptr};
 
+    // Latch: did *we* engage the local tune-carrier via MoxController::setTune
+    // for the current TGXL tune cycle? If so, drop it on tuning=0. We do NOT
+    // touch MOX if the operator already has TUN engaged via the TxApplet
+    // TUNE button (isManualMox() was true at the moment we evaluated).
+    // Without this latch a TGXL tune cycle would release an operator-
+    // initiated TUN when it finished, which would surprise the operator.
+    // NereusSDR-native: no AetherSDR equivalent because AetherSDR talks to a
+    // real FlexRadio that handles the carrier internally.
+    bool   m_carrierEngagedForTgxlTune{false};
+
     // Phase 3P-II Phase 4 Task 89: context menu state.
     // Non-owning pointer to the RadioModel-owned TuneMemoryStore.
     TuneMemoryStore* m_tuneStore{nullptr};

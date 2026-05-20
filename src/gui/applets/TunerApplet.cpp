@@ -31,8 +31,10 @@
 
 #include "TunerApplet.h"
 #include "core/AppSettings.h"
+#include "core/MoxController.h"
 #include "gui/HGauge.h"
 #include "gui/RelayBar.h"
+#include "models/RadioModel.h"
 #include "models/TunerModel.h"
 
 #include <QContextMenuEvent>
@@ -151,8 +153,40 @@ void TunerApplet::buildUI()
         "QPushButton:hover { background: #204060; }"));
     btnCol->addWidget(m_tuneBtn);
 
+    // TUNE click orchestrates a full tune cycle:
+    //   1. engage local tune-carrier (MoxController::setTune(true)) so RF is
+    //      present at the TGXL input -- TGXL aborts with "low RF power" if
+    //      it can't sense a carrier when it starts the relay sweep;
+    //   2. after a 200 ms settle, send `tune start` to TGXL (TGXL then
+    //      sweeps its relays under the carrier);
+    //   3. on tuning=0 from TGXL (handled in the tuningChanged lambda
+    //      below) drop the carrier we engaged.
+    //
+    // If the operator already has TUN engaged via the TxApplet TUNE button
+    // (isManualMox() true), we skip step 1 and just start the TGXL sweep
+    // immediately -- the operator's carrier is already on-air. The latch
+    // m_carrierEngagedForTgxlTune tracks whether *we* engaged TUN so the
+    // tuningChanged lambda only drops the carrier we put up, never the
+    // operator's manual TUN.
+    //
+    // NereusSDR-native; no AetherSDR equivalent (AetherSDR routes through
+    // a real FlexRadio that handles the carrier internally).
     connect(m_tuneBtn, &QPushButton::clicked, this, [this]() {
-        if (m_tunerModel) m_tunerModel->autoTune();
+        if (!m_tunerModel) { return; }
+        auto* mox = m_model ? m_model->moxController() : nullptr;
+        if (mox && !mox->isManualMox()) {
+            mox->setTune(true);
+            m_carrierEngagedForTgxlTune = true;
+            // Settle delay so the MoxController state walk completes and
+            // the tune carrier is on-air before TGXL begins its sweep.
+            // TGXL's "low RF power" abort fires within a few hundred ms
+            // of `tune start` if no carrier is detected.
+            QTimer::singleShot(200, this, [this]() {
+                if (m_tunerModel) { m_tunerModel->autoTune(); }
+            });
+        } else {
+            m_tunerModel->autoTune();
+        }
     });
 
     // Single cycle button: OPERATE -> BYPASS -> STANDBY -> OPERATE.
@@ -292,6 +326,18 @@ void TunerApplet::setTunerModel(TunerModel* model)
 
     // Tuning state: red button + "TUNING..." + post-tune SWR flash.
     // From AetherSDR src/gui/TunerApplet.cpp:setTunerModel() tuningChanged [@0cd4559]
+    //
+    // NereusSDR adds carrier orchestration here:
+    //   * on tuning=1 from a TGXL hardware TUNE press (operator pushed the
+    //     button on the device) we engage the local tune-carrier so TGXL
+    //     sees RF and doesn't abort with "low RF power". When the TUNE
+    //     click came from our applet the carrier is already engaged via the
+    //     click handler above -- the !isManualMox() gate prevents a double
+    //     engage.
+    //   * on tuning=0 we drop the carrier ONLY if we engaged it for this
+    //     cycle (m_carrierEngagedForTgxlTune). If the operator engaged TUN
+    //     manually via TxApplet, the cycle finishing must not drop their
+    //     carrier.
     connect(m_tunerModel, &TunerModel::tuningChanged, this, [this](bool tuning) {
         if (tuning) {
             m_wasTuning = true;
@@ -302,12 +348,33 @@ void TunerApplet::setTunerModel(TunerModel* model)
                 "QPushButton { background: #cc2222; border: 1px solid #ff4444; "
                 "border-radius: 3px; color: #ffffff; font-size: 10px; font-weight: bold; }"));
             m_tuneBtn->setText(QStringLiteral("TUNING..."));
+
+            // Engage local tune-carrier for TGXL hardware TUNE.
+            // Our applet TUNE click already engaged it via the click handler;
+            // isManualMox() will be true here, so we skip the second engage.
+            auto* mox = m_model ? m_model->moxController() : nullptr;
+            if (mox && !mox->isManualMox()
+                    && !m_carrierEngagedForTgxlTune) {
+                mox->setTune(true);
+                m_carrierEngagedForTgxlTune = true;
+            }
         } else {
             // Restore normal style.
             m_tuneBtn->setStyleSheet(QStringLiteral(
                 "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
                 "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; }"
                 "QPushButton:hover { background: #204060; }"));
+
+            // Drop our orchestrated carrier (and ONLY ours) when TGXL
+            // reports tune complete. An operator's manual TUN (engaged via
+            // TxApplet) remains untouched -- m_carrierEngagedForTgxlTune
+            // is false in that case.
+            if (m_carrierEngagedForTgxlTune) {
+                if (auto* mox = m_model ? m_model->moxController() : nullptr) {
+                    mox->setTune(false);
+                }
+                m_carrierEngagedForTgxlTune = false;
+            }
 
             // Don't display result immediately -- the final settled SWR from the TGXL
             // often arrives after tuning=0 via TCP.  Start a short capture window.
