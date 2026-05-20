@@ -143,6 +143,24 @@ private:
         QString    ampSerial;
         QString    ampIp;
         QString    ampAnt;
+
+        // ── Ethernet Interlock state (per smartsdr-api-docs TCPIP-interlock) ──
+        // When the amp sends `C<seq>|interlock create type=AMP name=<name>
+        // serial=<serial> valid_antennas=...`, we assign a numeric interlock
+        // id and return it in the R-frame body (e.g. `R<seq>|0|1`). The amp
+        // then references this id in subsequent `C<seq>|interlock ready <id>`
+        // ACKs we wait for during the PTT handshake.
+        //
+        // The handshake (driven by our setInterlockTransmitting() entry):
+        //   1. amp -> us:    C|interlock create type=AMP name=X ...
+        //   2. us -> amp:    R|0|<interlock_id>  (this stores interlockId + name)
+        //   3. us -> all:    S0|interlock state=PTT_REQUESTED reason=AMP:X source=MIC
+        //   4. amp -> us:    C|interlock ready <interlock_id>  (sets ackReady=true)
+        //   5. us -> all:    S0|interlock state=TRANSMITTING source=MIC  (when all ready)
+        //   6. us -> all:    S0|interlock state=READY reason=AMP:X (on TX release)
+        int     interlockId{0};      // 0 = no interlock registered yet
+        QString interlockName;       // e.g. "PG-XL", "TG" (from create name=)
+        bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage
     };
 
     void sendBanner(QTcpSocket* sock, const QString& handle);
@@ -163,6 +181,19 @@ private:
     QString m_sliceMode{QStringLiteral("USB")};
     bool    m_txActive{false};
     bool    m_tuneActive{false};
+
+    // Monotonically increasing interlock id, assigned sequentially on each
+    // `C|interlock create`. FLEX returns `R<seq>|0|1`, `R<seq>|0|2`, etc.
+    int     m_nextInterlockId{1};
+
+    // Pending PTT engage state: when we send PTT_REQUESTED and wait for
+    // amps to ACK with `C|interlock ready <id>`. m_pttPendingSource records
+    // the source (MIC / TUNE) the requester used so we can resume
+    // TRANSMITTING with the same value once all amps are ready.
+    QString m_pttPendingSource;        // empty when not waiting for ACKs
+    QTimer  m_pttAckTimeout;           // 500 ms per wiki spec
+    void    advanceToTransmittingIfReady();
+    void    onPttAckTimeout();
 };
 
 }  // namespace NereusSDR

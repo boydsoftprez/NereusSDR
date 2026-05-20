@@ -105,107 +105,218 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
 {
     if (m_clients.isEmpty()) { return; }
 
-    // First half: amp pttA broadcast. PGXL and TGXL read their own pttA
-    // from `S0|amplifier <their_handle> ... pttA=X` updates. Without this,
-    // even with a perfect interlock S-frame they refuse to engage their
-    // side of the chain and report "no PTT in" / "no RF" because the
-    // FLEX-canonical PTT propagation goes through the amplifier object,
-    // not the interlock one.
-    const int pttVal = transmitting ? 1 : 0;
+    // Wiki-canonical wire source values: "MIC" for voice MOX (operator
+    // pressed MIC PTT or MOX in the radio's UI) and "TUNE" for the TUN
+    // function (CW carrier). Per the wiki literal example in
+    // TCPIP-interlock.md: `S0|interlock state=PTT_REQUESTED reason=...
+    // source=MIC tx_allowed=1`. Our internal source label "MOX" (from
+    // MoxController) maps to wire "MIC"; "TUNE" passes through.
+    const QString wireSource = (source == QStringLiteral("MOX"))
+        ? QStringLiteral("MIC")
+        : source;
+
+    if (transmitting) {
+        // ── Step 3 of the canonical handshake: emit PTT_REQUESTED.
+        // Reset per-amp ackReady flags, broadcast PTT_REQUESTED, then
+        // arm the 500 ms wiki-spec ACK timeout. The TRANSMITTING
+        // advance happens in advanceToTransmittingIfReady() once each
+        // registered interlock amp ACKs via `C|interlock ready <id>`.
+
+        m_pttPendingSource = wireSource;
+        // Reset ACK state for every registered interlock amp.
+        bool anyInterlockedAmp = false;
+        for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+            if (it->interlockId != 0) {
+                it->ackReady = false;
+                anyInterlockedAmp = true;
+            }
+        }
+
+        // Emit one PTT_REQUESTED S-frame per registered amp, each
+        // carrying its own reason=AMP:<name> and amplifier=0x<handle>
+        // so the amp can recognize itself in the chain. If no amp has
+        // registered an interlock yet, emit a single S0|interlock with
+        // reason= empty (still helpful for any non-amp SmartSDR client
+        // displaying status).
+        if (anyInterlockedAmp) {
+            for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+                if (it->interlockId == 0) { continue; }
+                const QString body =
+                    QStringLiteral("interlock tx_client_handle=0x00000000"
+                                   " state=PTT_REQUESTED reason=AMP:%1"
+                                   " source=%2 tx_allowed=1 amplifier=0x%3")
+                        .arg(it->interlockName)
+                        .arg(wireSource)
+                        .arg(it->ampHandle);
+                const QByteArray frame =
+                    QStringLiteral("S0|%1\n").arg(body).toUtf8();
+                // Broadcast to all connections (FLEX broadcasts S0 globally).
+                for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                    QTcpSocket* sock = jt.key();
+                    if (sock && sock->isOpen()) { sock->write(frame); }
+                }
+                qCInfo(lcSmartSdr) << "TX S0|interlock state=PTT_REQUESTED"
+                                   << "reason=AMP:" << it->interlockName
+                                   << "source=" << wireSource
+                                   << "amplifier=0x" << it->ampHandle
+                                   << "(waiting for interlock ready ack)";
+            }
+            // Arm the 500 ms wiki-spec timeout. If the ACKs don't all
+            // arrive in time, advanceToTransmittingIfReady() is called
+            // anyway so we still send TRANSMITTING (degraded path) and
+            // RF flows. Better UX than aborting TX silently.
+            if (!m_pttAckTimeout.isActive()) {
+                m_pttAckTimeout.setSingleShot(true);
+                m_pttAckTimeout.setInterval(500);
+                disconnect(&m_pttAckTimeout, &QTimer::timeout, nullptr, nullptr);
+                connect(&m_pttAckTimeout, &QTimer::timeout,
+                        this, &SmartSdrApiListener::onPttAckTimeout);
+            }
+            m_pttAckTimeout.start();
+            // Also check immediately in case there were no amps to wait
+            // for (i.e. interlockId==0 for every client). The check is
+            // cheap and handles the edge case.
+            QTimer::singleShot(0, this,
+                               &SmartSdrApiListener::advanceToTransmittingIfReady);
+        } else {
+            // No registered amp interlocks: emit TRANSMITTING directly
+            // with a single S0|interlock so any SmartSDR-API client (e.g.
+            // a status-display UI) sees the radio is keyed. amplifier=
+            // stays empty per wiki when no amp is in the chain.
+            const QString body =
+                QStringLiteral("interlock tx_client_handle=0x00000000"
+                               " state=TRANSMITTING reason="
+                               " source=%1 tx_allowed=1 amplifier=")
+                    .arg(wireSource);
+            const QByteArray frame =
+                QStringLiteral("S0|%1\n").arg(body).toUtf8();
+            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                QTcpSocket* sock = jt.key();
+                if (sock && sock->isOpen()) { sock->write(frame); }
+            }
+            qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
+                               << "source=" << wireSource
+                               << "(no registered amp interlocks)";
+        }
+    } else {
+        // ── Release path: stop the ACK wait, then broadcast READY.
+        // Per wiki: when TX drops, the radio emits S0|interlock
+        // state=READY reason=AMP:<name> tx_allowed=1 once per amp.
+        // No more amplifier= field on the READY (pcap T=543.292 shows
+        // amplifier= empty on the unkey transition).
+        m_pttAckTimeout.stop();
+        m_pttPendingSource.clear();
+
+        bool anyInterlockedAmp = false;
+        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+            if (it->interlockId == 0) { continue; }
+            anyInterlockedAmp = true;
+            const QString body =
+                QStringLiteral("interlock tx_client_handle=0x00000000"
+                               " state=READY reason=AMP:%1"
+                               " source= tx_allowed=1 amplifier=")
+                    .arg(it->interlockName);
+            const QByteArray frame =
+                QStringLiteral("S0|%1\n").arg(body).toUtf8();
+            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                QTcpSocket* sock = jt.key();
+                if (sock && sock->isOpen()) { sock->write(frame); }
+            }
+            qCInfo(lcSmartSdr) << "TX S0|interlock state=READY"
+                               << "reason=AMP:" << it->interlockName;
+        }
+        if (!anyInterlockedAmp) {
+            const QString body =
+                QStringLiteral("interlock tx_client_handle=0x00000000"
+                               " state=READY reason= source= tx_allowed=1"
+                               " amplifier=");
+            const QByteArray frame =
+                QStringLiteral("S0|%1\n").arg(body).toUtf8();
+            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                QTcpSocket* sock = jt.key();
+                if (sock && sock->isOpen()) { sock->write(frame); }
+            }
+            qCInfo(lcSmartSdr) << "TX S0|interlock state=READY (no amps)";
+        }
+    }
+}
+
+void SmartSdrApiListener::advanceToTransmittingIfReady()
+{
+    // Called after every `interlock ready` ACK arrives (and once after
+    // PTT_REQUESTED is broadcast, as a no-amps shortcut). Checks if all
+    // registered amps have ackReady=true; if yes, broadcasts TRANSMITTING.
+    if (m_pttPendingSource.isEmpty()) { return; }  // not currently engaging
+
+    int totalInterlocks = 0;
+    int readyCount = 0;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        if (it->ampHandle.isEmpty()) { continue; }
-        // FLEX-canonical full amp state broadcast. PGXL/TGXL match on
-        // serial_num + model when consuming amp updates -- a partial
-        // body with just pttA=X was silently ignored at the bench. We
-        // echo back the identity fields we got from `amplifier create`
-        // (serial_num, model, ip, ant) plus the pttA flag we're toggling.
-        // We omit the operate / bypass / tuning / relay fields because
-        // those are the amp's own state -- if we mirror them with stale
-        // values we'd risk overwriting the amp's display with junk.
-        QString body = QStringLiteral("amplifier 0x%1").arg(it->ampHandle);
-        if (!it->ampSerial.isEmpty()) {
-            body += QStringLiteral(" serial_num=%1").arg(it->ampSerial);
-        }
-        if (!it->ampModel.isEmpty()) {
-            body += QStringLiteral(" model=%1").arg(it->ampModel);
-        }
-        if (!it->ampIp.isEmpty()) {
-            body += QStringLiteral(" ip=%1").arg(it->ampIp);
-        }
-        if (!it->ampAnt.isEmpty()) {
-            body += QStringLiteral(" ant=%1").arg(it->ampAnt);
-        }
-        body += QStringLiteral(" pttA=%1 pttB=0").arg(pttVal);
-        // Send TWO forms: S0|amplifier for system broadcast, and
-        // S<amp_handle>|amplifier as a targeted update. FLEX uses both
-        // (pcap stream 2 shows both `S0|amplifier 0x7CC669A7 ...` and
-        // `S<recipient>|amplifier 0x7CC669A7 ...`). TGXL filters per-amp
-        // updates by the S-frame prefix matching its own amp handle, so
-        // a global-only broadcast misses the targeted path.
-        const QByteArray globalFrame =
+        if (it->interlockId == 0) { continue; }
+        ++totalInterlocks;
+        if (it->ackReady) { ++readyCount; }
+    }
+    if (totalInterlocks == 0) { return; }  // no amps to wait for
+    if (readyCount < totalInterlocks) { return; }  // still waiting
+
+    // All registered amps have ACKed. Stop the timeout, advance to
+    // TRANSMITTING, then clear m_pttPendingSource so a stale ACK doesn't
+    // re-fire this path.
+    m_pttAckTimeout.stop();
+    const QString source = m_pttPendingSource;
+    m_pttPendingSource.clear();
+
+    // One TRANSMITTING S-frame per amp, mirroring the PTT_REQUESTED
+    // pattern. amplifier= references the amp that's currently engaging.
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it->interlockId == 0) { continue; }
+        const QString body =
+            QStringLiteral("interlock tx_client_handle=0x00000000"
+                           " state=TRANSMITTING reason= source=%1"
+                           " tx_allowed=1 amplifier=0x%2")
+                .arg(source).arg(it->ampHandle);
+        const QByteArray frame =
             QStringLiteral("S0|%1\n").arg(body).toUtf8();
-        const QByteArray targetedFrame =
-            QStringLiteral("S%1|%2\n").arg(it->ampHandle).arg(body).toUtf8();
         for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
             QTcpSocket* sock = jt.key();
-            if (sock && sock->isOpen()) {
-                sock->write(globalFrame);
-                sock->write(targetedFrame);
-            }
+            if (sock && sock->isOpen()) { sock->write(frame); }
         }
-        qCInfo(lcSmartSdr) << "TX amplifier 0x" << it->ampHandle
-                           << "pttA=" << pttVal
-                           << "(S0 + S<amphandle> dual broadcast)"
-                           << "model=" << it->ampModel
-                           << "serial=" << it->ampSerial;
-    }
-
-    // Second half: interlock state transitions. PTT_REQUESTED + TRANSMITTING
-    // on engage; UNKEY_REQUESTED + READY on release. Matches the
-    // FLEX-8600 sequence captured in stream 2. amplifier= references the
-    // TGXL handle for source=TUNE and PGXL handle for source=MOX, so the
-    // recipient knows whether its own chain is involved.
-    QString ampHandleStr;
-    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        const bool isTuner = (it->ampModel
-                              == QStringLiteral("TunerGeniusXL"));
-        const bool isPower = (it->ampModel
-                              == QStringLiteral("PowerGeniusXL"));
-        if ((source == QStringLiteral("TUNE") && isTuner)
-            || (source == QStringLiteral("MOX") && isPower)) {
-            ampHandleStr = QStringLiteral("0x%1").arg(it->ampHandle);
-            break;
-        }
-    }
-
-    auto bodyFor = [&](const QString& state) {
-        const QString src = (state == QStringLiteral("READY")
-                             || state == QStringLiteral("UNKEY_REQUESTED"))
-                            ? QString() : source;
-        return QStringLiteral("interlock tx_client_handle=0x00000000 state=%1"
-                              " reason= source=%2 tx_allowed=1 amplifier=%3")
-            .arg(state).arg(src).arg(ampHandleStr);
-    };
-
-    const QStringList sequence = transmitting
-        ? QStringList{QStringLiteral("PTT_REQUESTED"),
-                      QStringLiteral("TRANSMITTING")}
-        : QStringList{QStringLiteral("UNKEY_REQUESTED"),
-                      QStringLiteral("READY")};
-
-    for (const QString& state : sequence) {
-        const QByteArray frame =
-            QStringLiteral("S0|%1\n").arg(bodyFor(state)).toUtf8();
-        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-            QTcpSocket* sock = it.key();
-            if (sock && sock->isOpen()) {
-                sock->write(frame);
-            }
-        }
-        qCInfo(lcSmartSdr) << "TX S0|interlock state=" << state
+        qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
                            << "source=" << source
-                           << "amplifier=" << ampHandleStr;
+                           << "amplifier=0x" << it->ampHandle
+                           << "(all" << totalInterlocks << "amps acked)";
     }
+}
+
+void SmartSdrApiListener::onPttAckTimeout()
+{
+    // Wiki: "Failure to send this message within the timeout period of
+    // the interlock (generally 500ms)" causes the interlock to time out.
+    // We log the timeout but proceed to TRANSMITTING anyway -- silent
+    // abort would be worse UX (operator's TX would fail mysteriously).
+    // The amp not ACKing in time is bench data for future investigation,
+    // not a reason to refuse the operator's keying.
+    int totalInterlocks = 0;
+    int readyCount = 0;
+    QStringList laggards;
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it->interlockId == 0) { continue; }
+        ++totalInterlocks;
+        if (it->ackReady) {
+            ++readyCount;
+        } else {
+            laggards << it->interlockName;
+        }
+    }
+    if (m_pttPendingSource.isEmpty()) { return; }  // already advanced
+    qCWarning(lcSmartSdr) << "interlock ACK timeout (500 ms):"
+                          << readyCount << "of" << totalInterlocks
+                          << "amps acked; laggards=" << laggards
+                          << "-- proceeding to TRANSMITTING anyway";
+    // Force the advance even though not all amps acked.
+    for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+        if (it->interlockId != 0) { it->ackReady = true; }
+    }
+    advanceToTransmittingIfReady();
 }
 
 void SmartSdrApiListener::onNewConnection()
@@ -367,28 +478,26 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
     } else if (cmd.startsWith(QStringLiteral("slice list"))) {
         body = QStringLiteral("0");
     } else if (cmd.startsWith(QStringLiteral("amplifier create"))) {
-        // Assign an amp handle for this client and return it. FLEX
-        // behaviour: when a SmartSDR-API client (PGXL/TGXL) sends
-        // `amplifier create ip=... model=PowerGeniusXL|TunerGeniusXL ...`,
-        // the radio assigns an 8-hex amp handle and returns it in the
-        // R-frame body. The client then knows its own amp handle and
-        // expects subsequent `S0|amplifier <handle> ... pttA=X` updates
-        // from the radio. Without the handle assignment+return, PGXL/TGXL
-        // never see their amp in our outbound interlock/amp updates and
-        // never set their internal pttA, so a TUN/MOX press from us
-        // produces a "no PTT in" abort on their side.
+        // FLEX-canonical response: `R<seq>|0` with EMPTY body. Per
+        // https://github.com/flexradio/smartsdr-api-docs/wiki/TCPIP-amplifier
+        // the amplifier create response is status-code only. The amp
+        // handle is the client's own connection handle (the one we
+        // assigned in the H<handle> banner at TCP accept) -- it is NOT a
+        // separate handle returned in the R-frame body. Earlier code
+        // generated a random 8-hex value and returned it as `R<seq>|0|0xXXXX`
+        // which TGXL parsed as an error code, breaking the amplifier
+        // registration and causing the regression where TGXL hardware
+        // TUNE reported "no PTT in" / "pse unkey".
+        //
+        // We still parse + cache the model / serial_num / ip / ant fields
+        // from the create command so we can echo them in subsequent
+        // S<client_handle>|amplifier ... broadcasts using the CLIENT's
+        // banner handle (which is also the amp handle per the FlexLib
+        // Amplifier(Radio,string) constructor convention).
         auto it = m_clients.find(sock);
         if (it != m_clients.end() && it->ampHandle.isEmpty()) {
-            // Random 8-hex handle, top nibble 7 so it doesn't clash with
-            // client handles (which we start with top nibble 4).
-            const quint32 r = QRandomGenerator::global()->generate() & 0x0FFFFFFF;
-            it->ampHandle = QStringLiteral("7%1")
-                                .arg(r, 7, 16, QLatin1Char('0'))
-                                .toUpper();
-            // Parse model / serial_num / ip / ant so we can echo them in
-            // subsequent `S0|amplifier <handle> ...` broadcasts. PGXL/TGXL
-            // match on serial_num + model when consuming amp updates, so
-            // a partial update with just pttA=X is silently ignored.
+            // Amp handle == client banner handle (FlexLib convention).
+            it->ampHandle = it->handle;
             auto extractValue = [&cmd](const QString& key) -> QString {
                 const int idx = cmd.indexOf(key);
                 if (idx < 0) { return QString(); }
@@ -402,13 +511,84 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
             it->ampSerial = extractValue(QStringLiteral("serial_num="));
             it->ampIp     = extractValue(QStringLiteral("ip="));
             it->ampAnt    = extractValue(QStringLiteral("ant="));
-            qCInfo(lcSmartSdr) << "amplifier create -> assigned handle 0x"
-                               << it->ampHandle << "model=" << it->ampModel
-                               << "serial=" << it->ampSerial
-                               << "ip=" << it->ampIp
-                               << "ant=" << it->ampAnt;
+            qCInfo(lcSmartSdr) << "amplifier create -> using client handle"
+                               << it->ampHandle << "as amp handle, model="
+                               << it->ampModel << "serial=" << it->ampSerial;
         }
-        body = QStringLiteral("0x%1").arg(it->ampHandle);
+        // body stays empty; canonical R-frame response is just status code.
+    } else if (cmd.startsWith(QStringLiteral("interlock create"))) {
+        // Per smartsdr-api-docs TCPIP-interlock wiki:
+        //   (1) Device: C2|interlock create type=AMP name=KZX-2500 serial=... valid_antennas=...
+        //   (2) Radio:  R2|0|1                  <- response body is the assigned interlock ID
+        //   (3) Radio:  S0|interlock state=PTT_REQUESTED reason=AMP:KZX-2500 source=MIC tx_allowed=1
+        //   (4) Device: C2|interlock ready 1    <- amp ACKs the request using its id
+        //   (5) Radio:  R2|0|
+        //   (6) Radio:  S0|interlock state=TRANSMITTING source=MIC tx_allowed=1
+        //
+        // The amp keeps the interlock id locally and references it in step 4
+        // to ACK ANY future PTT_REQUESTED. Empty R-frame body (our prior
+        // behavior) means the amp never knows its id and can never ACK,
+        // which blocks the entire interlock state machine.
+        //
+        // Source: https://github.com/flexradio/smartsdr-api-docs/wiki/TCPIP-interlock
+        auto it = m_clients.find(sock);
+        if (it != m_clients.end() && it->interlockId == 0) {
+            it->interlockId = m_nextInterlockId++;
+            // Parse name= and serial= for `reason=AMP:<name>` field selection
+            // in the subsequent PTT_REQUESTED broadcasts.
+            auto extractValue = [&cmd](const QString& key) -> QString {
+                const int idx = cmd.indexOf(key);
+                if (idx < 0) { return QString(); }
+                const int valStart = idx + key.size();
+                const int end = cmd.indexOf(QLatin1Char(' '), valStart);
+                return (end >= 0)
+                    ? cmd.mid(valStart, end - valStart)
+                    : cmd.mid(valStart);
+            };
+            const QString name = extractValue(QStringLiteral("name="));
+            if (!name.isEmpty()) { it->interlockName = name; }
+            qCInfo(lcSmartSdr) << "interlock create -> id=" << it->interlockId
+                               << "name=" << it->interlockName
+                               << "for client" << sock->peerAddress().toString();
+        }
+        // Wiki returns the id as ASCII decimal in the R-frame body.
+        body = QString::number(it->interlockId);
+    } else if (cmd.startsWith(QStringLiteral("interlock ready"))) {
+        // Amp ACK of our PTT_REQUESTED broadcast. Body is the interlock id
+        // the amp got at step (2). We mark the amp as ready, then if all
+        // pending amps are ready, we advance to TRANSMITTING (step 6).
+        auto it = m_clients.find(sock);
+        if (it != m_clients.end()) {
+            // Parse the id from the command tail; tolerate "ready <id>" or
+            // "ready=<id>".
+            const QString tail = cmd.mid(QStringLiteral("interlock ready").size())
+                                    .trimmed();
+            bool ok = false;
+            const int ackId = tail.startsWith(QLatin1Char('='))
+                ? tail.mid(1).toInt(&ok)
+                : tail.toInt(&ok);
+            if (ok && ackId == it->interlockId) {
+                it->ackReady = true;
+                qCInfo(lcSmartSdr) << "interlock ready ACK from"
+                                   << sock->peerAddress().toString()
+                                   << "id=" << ackId
+                                   << "name=" << it->interlockName;
+                // Body stays empty per wiki: R<seq>|0|
+                // Defer the TRANSMITTING advance until AFTER we send the
+                // R-frame back so the amp's seq counter is settled.
+                QTimer::singleShot(0, this,
+                                   &SmartSdrApiListener::advanceToTransmittingIfReady);
+            } else {
+                qCWarning(lcSmartSdr) << "interlock ready: mismatched id"
+                                      << "(amp sent" << ackId << "expected"
+                                      << it->interlockId << ")";
+            }
+        }
+    } else if (cmd.startsWith(QStringLiteral("interlock enable"))) {
+        // C|interlock enable 0|1  - amp toggling its interlock enable flag.
+        // We acknowledge but don't track this internally yet. PGXL sends
+        // `interlock enable 0` at boot (bench-confirmed) before the create.
+        // No body needed.
     }
 
     // LAN PTT: TGXL (and other SmartSDR-API clients) request the FlexRadio to
