@@ -26,7 +26,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <cstring>
-#include <string.h>
 
 namespace NereusSDR {
 
@@ -444,14 +443,72 @@ QByteArray FlexRadioDiscoveryBroadcaster::buildBeacon(
 
 QString FlexRadioDiscoveryBroadcaster::detectLanIpv4() const
 {
-    // Walk all network interfaces and return the first non-loopback,
-    // IPv4, up-and-running unicast address. If none is found, return
-    // "0.0.0.0" and let the caller log a warning.
+    // Primary: kernel route lookup via connected UDP socket.
+    //
+    // On multi-interface hosts (e.g. macOS with feth* virtual ethernets coexisting
+    // with en0) iterating QNetworkInterface order can return a virtual interface
+    // before the real LAN nic. That mismatches the source IP the kernel actually
+    // uses for outbound TCP — including the IP we advertise in PGXL amplifier
+    // create. So PGXL gets a beacon from .52 but a TCP src of .88, and silently
+    // fails to TCP-connect back to us.
+    //
+    // The fix: ask the kernel which local IP it would use to reach a remote.
+    // QUdpSocket::connectToHost() on UDP is a *local* operation; no packets are
+    // sent. The kernel performs a route lookup, picks the egress interface, and
+    // binds the local socket address. localAddress() then returns that source IP,
+    // which by construction matches the source IP of any subsequent TCP socket
+    // to the same destination (assuming the default route).
+    //
+    // We probe 8.8.8.8 (Google DNS) because it always resolves through the
+    // default route and is reachable everywhere we'd plausibly run, but no
+    // packet is ever sent so its identity is irrelevant. A peer hint can be
+    // set via setPeerHint() if we need to scope to a specific subnet (e.g. when
+    // PGXL is on a different routing domain than the default gateway).
+    {
+        QUdpSocket probe;
+        const QHostAddress target = m_peerHint.isNull()
+            ? QHostAddress(QStringLiteral("8.8.8.8"))
+            : m_peerHint;
+        probe.connectToHost(target, /*port=*/9 /* discard */);
+        if (probe.waitForConnected(/*ms=*/50)) {
+            const QHostAddress local = probe.localAddress();
+            if (local.protocol() == QAbstractSocket::IPv4Protocol
+                    && local != QHostAddress::LocalHost
+                    && local != QHostAddress::AnyIPv4
+                    && !local.isNull()) {
+                return local.toString();
+            }
+        }
+    }
+
+    // Fallback: iterate interfaces but skip virtual / point-to-point types.
+    // On macOS feth* (fake-ethernet) appears before en0 in QNetworkInterface
+    // enumeration and is up+running with a 192.168.x.x address, which would
+    // otherwise win the original first-match scan.
+    static const QStringList kSkipPrefixes = {
+        QStringLiteral("feth"),
+        QStringLiteral("utun"),
+        QStringLiteral("awdl"),
+        QStringLiteral("llw"),
+        QStringLiteral("bridge"),
+        QStringLiteral("vmnet"),
+        QStringLiteral("p2p"),
+        QStringLiteral("ipsec"),
+        QStringLiteral("gif"),
+        QStringLiteral("stf"),
+    };
     const QList<QNetworkInterface> ifaces = QNetworkInterface::allInterfaces();
     for (const QNetworkInterface& iface : ifaces) {
         if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
         if (!iface.flags().testFlag(QNetworkInterface::IsRunning)) { continue; }
         if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
+
+        const QString name = iface.name();
+        bool skip = false;
+        for (const QString& prefix : kSkipPrefixes) {
+            if (name.startsWith(prefix)) { skip = true; break; }
+        }
+        if (skip) { continue; }
 
         const QList<QNetworkAddressEntry> entries = iface.addressEntries();
         for (const QNetworkAddressEntry& entry : entries) {

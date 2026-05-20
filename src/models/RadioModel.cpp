@@ -4859,6 +4859,20 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             as.value(QStringLiteral("PGXL_DiscoveryModel"),
                      QStringLiteral("FLEX-6400")).toString());
 
+        // Route-lookup hint: if we know PGXL's IP, ask the kernel which local
+        // source IP it would use to reach PGXL, and bind the beacon to that
+        // same source. This keeps the beacon's source IP consistent with the
+        // amplifier-create TCP source IP. Without this, on multi-interface
+        // hosts (e.g. macOS with feth* virtual ethernets alongside en0) the
+        // beacon can advertise one local IP while the TCP control connection
+        // uses another, and PGXL's SmartSDR-API pull silently fails.
+        const QString pgxlIpStr =
+            as.value(QStringLiteral("PGXL_ManualIp"),
+                     QStringLiteral("")).toString();
+        if (!pgxlIpStr.isEmpty()) {
+            m_flexBroadcaster->setPeerHint(QHostAddress(pgxlIpStr));
+        }
+
         const bool enabled =
             as.value(QStringLiteral("PGXL_BroadcastDiscovery"),
                      QStringLiteral("True")).toString()

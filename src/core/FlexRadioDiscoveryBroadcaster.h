@@ -21,6 +21,7 @@
 #include <QTimer>
 #include <QString>
 #include <QByteArray>
+#include <QHostAddress>
 
 namespace NereusSDR {
 
@@ -45,6 +46,13 @@ public:
     void setVersion(const QString& version);         // e.g. "0.5.1"
     void setMacAddress(const QString& macColonForm); // "aa:bb:cc:dd:ee:ff"
     void setModel(const QString& model);             // e.g. "FLEX-6400" (Flex model string for PGXL validation)
+
+    // Optional route-lookup hint. When set, detectLanIpv4() probes this peer
+    // address via a connected UDP socket to find the kernel-chosen local
+    // source IP, instead of using the default-route fallback (8.8.8.8). Useful
+    // when the PGXL/TGXL subnet is reached via a non-default route. No packet
+    // is ever sent to the hint address; UDP connect is a local-only operation.
+    void setPeerHint(const QHostAddress& peer) { m_peerHint = peer; }
 
     // Lifecycle
     void start();  // begins 1 Hz emission; safe to call repeatedly
@@ -77,6 +85,7 @@ private:
     QString m_mac;  // dashed uppercase form for radio_license_id
     QString m_ip;
     QHostAddress m_broadcastAddress; // subnet broadcast for the LAN interface
+    QHostAddress m_peerHint;         // optional route-lookup hint; default-route probe if null
 };
 
 }  // namespace NereusSDR

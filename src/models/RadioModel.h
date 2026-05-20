@@ -495,6 +495,10 @@ public:
     PgxlConnection* pgxlConnection() { return m_pgxlConnection; }
     TgxlConnection* tgxlConnection() { return m_tgxlConnection; }
     TunerModel*     tunerModel()     { return m_tunerModel;     }
+    // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
+    // Used by MainWindow to push slice/transmit state so PGXL/TGXL pull the
+    // current band/freq via the SmartSDR API rather than from a stale cache.
+    class SmartSdrApiListener* smartSdrListener() { return m_smartSdrListener; }
     bool hasAmplifier() const { return m_hasAmplifier; }
     bool ampOperate()  const  { return m_ampOperate; }
 

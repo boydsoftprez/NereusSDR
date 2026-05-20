@@ -283,6 +283,7 @@ warren@wpratt.com
 #include "applets/RxApplet.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
+#include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
@@ -5183,6 +5184,33 @@ void MainWindow::wireSliceToSpectrum()
             if (!s) { return; }
             pgxl->setBand(static_cast<int>(s->frequency()));
         });
+    });
+
+    // SmartSDR API responder: also push slice freq/mode and TX state into the
+    // TCP 4992 listener so PGXL/TGXL (acting as SmartSDR clients) pull current
+    // band data via the documented API path rather than relying solely on the
+    // explicit `flexradio band=N` push above. This is what `bsrcA=FLEX` on the
+    // PGXL status frame consumes: the FlexRadio's slice 0 RF_frequency, mode,
+    // and transmit MOX state.
+    if (auto* l = m_radioModel->smartSdrListener()) {
+        // Push current state immediately so the listener doesn't sit on
+        // the constructor default (14.250 MHz USB) until the operator first
+        // turns the dial. Without this, PGXL would see a misleading band
+        // until the first frequency change.
+        l->setSliceFrequencyHz(/*sliceId=*/0, slice->frequency());
+        l->setSliceMode(/*sliceId=*/0, SliceModel::modeName(slice->dspMode()));
+    }
+    connect(slice, &SliceModel::frequencyChanged,
+            this, [this](qint64 hz) {
+        if (auto* l = m_radioModel->smartSdrListener()) {
+            l->setSliceFrequencyHz(/*sliceId=*/0, hz);
+        }
+    });
+    connect(slice, &SliceModel::dspModeChanged,
+            this, [this](NereusSDR::DSPMode mode) {
+        if (auto* l = m_radioModel->smartSdrListener()) {
+            l->setSliceMode(/*sliceId=*/0, SliceModel::modeName(mode));
+        }
     });
 
     // Phase 3P-II review fix C1: keep TunerApplet m_currentBand in sync so
