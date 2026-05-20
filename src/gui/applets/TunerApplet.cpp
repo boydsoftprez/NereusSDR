@@ -183,6 +183,9 @@ void TunerApplet::buildUI()
         if (m_model && !m_model->isTune()) {
             m_model->setTune(true);
             m_carrierEngagedForTgxlTune = true;
+            // Reset the per-cycle "did TGXL ever enter tuning=1" flag so
+            // the short-watchdog below knows whether to escape.
+            m_tgxlEnteredTuning = false;
             // Settle delay so the MoxController state walk completes and
             // the tune carrier is on-air before TGXL begins its sweep.
             // TGXL's "low RF power" / "no PTT in" aborts fire quickly if
@@ -190,17 +193,30 @@ void TunerApplet::buildUI()
             QTimer::singleShot(200, this, [this]() {
                 if (m_tunerModel) { m_tunerModel->autoTune(); }
             });
-            // Watchdog: if TGXL never enters tuning=1 within 30 s, auto-
-            // release the carrier so the operator is not stranded with an
-            // on-air carrier. Bench-observed scenario 2026-05-19: when
-            // TGXL silently ACKs the tune command without sweeping (e.g.
-            // wrong command syntax pre-`autotune` fix), tuning=0 never
-            // fires and the latch stays set, forcing the operator to
-            // unclick TUN in TxApplet.
-            QTimer::singleShot(30 * 1000, this, [this]() {
-                if (m_carrierEngagedForTgxlTune && m_model) {
-                    qInfo() << "TunerApplet::TUNE watchdog: no tuning state"
-                               " from TGXL within 30 s, releasing carrier";
+            // Short watchdog (3 s): if TGXL never enters its own
+            // tuning=1 state within this window, TGXL refused to start
+            // the cycle (typical: "no PTT" abort because PGXL is in
+            // OPERATE rather than STANDBY, or autotune command rejected).
+            // Drop the stuck local carrier so the operator isn't stranded.
+            //
+            // The watchdog is gated on m_tgxlEnteredTuning -- if TGXL
+            // DID enter tuning=1, the tuningChanged(true) handler set
+            // the flag and this watchdog is a no-op. The long tune cycle
+            // (TGXL relay sweep, up to ~30 s) is then bounded by the
+            // existing tuningChanged(false) handler, not this watchdog.
+            //
+            // Bench-fix 2026-05-20: the prior 30 s watchdog left the
+            // operator stranded with an on-air carrier for half a minute
+            // when TGXL aborted immediately. 3 s is enough for TGXL to
+            // reply to `autotune` with either tuning=1 (sweep started)
+            // or no state change (aborted).
+            QTimer::singleShot(3 * 1000, this, [this]() {
+                if (m_carrierEngagedForTgxlTune
+                        && !m_tgxlEnteredTuning
+                        && m_model) {
+                    qInfo() << "TunerApplet::TUNE watchdog: TGXL never"
+                               " entered tuning=1 within 3 s, aborting"
+                               " (likely 'no PTT' / amp-in-OPERATE)";
                     m_model->setTune(false);
                     m_carrierEngagedForTgxlTune = false;
                 }
@@ -366,6 +382,12 @@ void TunerApplet::setTunerModel(TunerModel* model)
     connect(m_tunerModel, &TunerModel::tuningChanged, this, [this](bool tuning) {
         if (tuning) {
             m_wasTuning = true;
+            // Tell the short-watchdog (in the TUNE click handler above)
+            // that TGXL has confirmed it's running the sweep, so the
+            // 3 s "did TGXL respond at all" guard becomes a no-op. The
+            // long sweep cycle is bounded by the matching
+            // tuningChanged(false) below, not by the watchdog.
+            m_tgxlEnteredTuning = true;
             m_postTuneCapture = false;
             m_postTuneTimer->stop();
             m_tuneSwr = 999.0f;  // reset high so capture tracking works

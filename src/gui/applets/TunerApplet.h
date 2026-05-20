@@ -221,6 +221,16 @@ private:
     // real FlexRadio that handles the carrier internally.
     bool   m_carrierEngagedForTgxlTune{false};
 
+    // Has TGXL entered its own tuning=1 state since the last TUNE click?
+    // Reset on each TUNE click; set true on tuningChanged(true). Used by
+    // the short-watchdog escape path: if 3 s elapses after `autotune` was
+    // sent and m_tgxlEnteredTuning is still false, TGXL aborted (likely
+    // "no PTT" / amp-in-OPERATE confusion) and the watchdog drops the
+    // stuck local carrier. Long tune cycles (TGXL relay sweep up to ~30 s)
+    // are gated by m_tgxlEnteredTuning being true -- the carrier rides
+    // until tuningChanged(false) arrives normally.
+    bool   m_tgxlEnteredTuning{false};
+
     // Phase 3P-II Phase 4 Task 89: context menu state.
     // Non-owning pointer to the RadioModel-owned TuneMemoryStore.
     TuneMemoryStore* m_tuneStore{nullptr};
