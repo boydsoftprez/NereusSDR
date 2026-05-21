@@ -2229,6 +2229,67 @@ const BoardCapabilities& RadioModel::boardCapabilities() const
     return BoardCapsTable::forBoard(HPSDRHW::Unknown);
 }
 
+// ── RX meter calibration offset (Thetis-faithful port) ──────────────────────
+//
+// Ported from Thetis console.cs:21040 RXOffset(rx) + :20989 RXPreampOffset
+// + :21022 RXCalibrationOffset [v2.10.3.13].
+//
+// Returns: RXPreampOffset(1) + RXCalibrationOffset(1)
+//
+//   RXPreampOffset(1)  = step_att_enabled ? attenuator_data
+//                                         : preamp_offset[preamp_mode]
+//   RXCalibrationOffset(1) = _rx1_meter_cal_offset
+//                            (+ _rx1_xvtr_gain_offset deferred to XVTR epic)
+//                            (+ _rx1_6m_gain_offset   deferred to 6m epic)
+//
+// _rx1_meter_cal_offset defaults to rxMeterCalOffsetDefaultFor(model)
+// (clsHardwareSpecific.cs:395-411 port) unless the user has saved an
+// override via the AppSettings key "RX1_MeterCalOffsetDb" (matches Thetis
+// RX1MeterCalOffset at console.cs:21051).  The Thetis Multimeter Setup
+// page exposes the override; in NereusSDR 0.4.x the page hosts the same
+// key but the UI control is queued behind the 4O3A Settings refactor
+// (planned next).  Power users can edit the key directly today.
+double RadioModel::rxMeterOffsetDb() const
+{
+    const HPSDRModel model = m_hardwareProfile.model;
+
+    // Per-radio factory cal default + user override (AppSettings key
+    // RX1_MeterCalOffsetDb).  Default = Thetis factory value per model.
+    const float factoryDefault = ::NereusSDR::rxMeterCalOffsetDefaultFor(model);
+    bool keyOk = false;
+    const double userOverride = AppSettings::instance()
+        .value(QStringLiteral("RX1_MeterCalOffsetDb"),
+               QString::number(static_cast<double>(factoryDefault), 'f', 6))
+        .toString()
+        .toDouble(&keyOk);
+    const float meterCalOffset = keyOk
+        ? static_cast<float>(userOverride)
+        : factoryDefault;
+
+    // RXPreampOffset branch: step-att enabled vs preamp mode.  Both paths
+    // require the StepAttenuatorController; if absent (no radio yet) the
+    // chain reduces to the cal_offset alone.  From Thetis console.cs:20991:
+    //   if (_ignore_attenuator_offset) return 0.0f;
+    // The "ignore" toggle is not exposed in NereusSDR (Thetis Setup-only,
+    // dormant in modern builds), so we always include the preamp term.
+    float preampOffset = 0.0f;
+    if (m_stepAttController) {
+        if (m_stepAttController->stepAttEnabled()) {
+            // Step-att enabled path: use raw attenuator dB.
+            // From console.cs:20996: fOffset = (float)_rx1_attenuator_data;
+            preampOffset = static_cast<float>(
+                m_stepAttController->attenuatorDb());
+        } else {
+            // Preamp-mode path: lookup table per console.cs:1991-2001.
+            const int modeIdx = static_cast<int>(
+                m_stepAttController->preampMode());
+            preampOffset = ::NereusSDR::rxPreampOffsetDbFor(modeIdx);
+        }
+    }
+
+    return static_cast<double>(preampOffset + meterCalOffset);
+}
+
 // --- Slice Management ---
 
 SliceModel* RadioModel::sliceAt(int index) const

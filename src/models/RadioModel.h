@@ -545,6 +545,44 @@ public:
     // construction time, not only after a connection is established.
     const BoardCapabilities& boardCapabilities() const;
 
+    // ── RX meter calibration offset (Thetis-faithful port) ────────────────
+    //
+    // Returns the cumulative dB offset applied to WDSP S-meter readings
+    // (RXA_S_PK, RXA_S_AV) and MaxBin readings before display.  Without
+    // this offset, raw WDSP meter values are in ADC dBFS rather than
+    // antenna dBm.
+    //
+    // Ported from Thetis console.cs:21040 [v2.10.3.13]:
+    //   public float RXOffset(int rx) {
+    //       return RXPreampOffset(rx) + RXCalibrationOffset(rx);
+    //   }
+    //
+    // RXPreampOffset (console.cs:20989) selects between attenuator_data
+    // (when step-att enabled) and preamp_offset[mode] (when disabled).
+    //
+    // RXCalibrationOffset (console.cs:21022) sums per-radio meter cal +
+    // XVTR + 6m offsets.  NereusSDR currently applies only the per-radio
+    // meter cal (defaults from rxMeterCalOffsetDefaultFor() and the user
+    // override AppSettings key RX1_MeterCalOffsetDb); XVTR/6m offsets
+    // ride a future XVTR/transverter epic.
+    //
+    // Consumed by MeterPoller::pollSMeter and MeterPoller::poll for the
+    // SignalPeak / SignalAvg / SIGNAL_MAX_BIN bindings only; matches
+    // Thetis console.cs:46824 + :46881 [v2.10.3.13] where +offset is
+    // applied to those exact reading types.  ADC_PK / ADC_AV / AGC_PK /
+    // AGC_AV / AGC_GAIN do NOT take the offset (Thetis line 46831-46835
+    // omit +offset for the same reason).
+    double rxMeterOffsetDb() const;
+
+signals:
+    // Emitted when rxMeterOffsetDb() changes (model swap, preamp change,
+    // step-att enable/disable, attenuator dB change, or AppSettings
+    // RX1_MeterCalOffsetDb override).  MeterPoller connects this to
+    // refresh its cached offset value.
+    void rxMeterOffsetChanged(double db);
+
+public:
+
     bool isConnected() const;
 
     // ── Phase 3Q sub-PR-3: NetworkDiagnosticsDialog text accessors ───────────

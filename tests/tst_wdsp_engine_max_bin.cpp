@@ -43,7 +43,9 @@
 //   2026-05-19 - Crash-fix (Option C): replaced WDSP-dependent paths
 //                with NereusSDR-native MaxBinDetector algorithm tests.
 //                Extended to cover findsMaxInPassbandWindow,
-//                decaysWithoutNewPeaks, clampsBinRangeToArrayBounds.
+//                smoothsTowardSteadyState (was decaysWithoutNewPeaks
+//                before per-bin averaging replaced output drift),
+//                clampsBinRangeToArrayBounds.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                via Anthropic Claude Code.
 // =================================================================
@@ -145,25 +147,23 @@ private slots:
         QVERIFY(qFuzzyCompare(result, -50.0));
     }
 
-    // ── Test 5: decaysWithoutNewPeaks ────────────────────────────────────────
+    // ── Test 5: smoothsTowardSteadyState ─────────────────────────────────────
     //
-    // After a peak is established, frames with truly silent bins (-400 dBm)
-    // let maxDb drift away from zero (slow release).  Then a new peak replaces.
+    // After per-bin averaging was added, MaxBin no longer uses the
+    // analyzer.c:815-818 output-side drift formula.  Instead, each bin
+    // is recursively averaged in dB domain (matching SpectrumAvenger's
+    // LogRecursive mode), and the max-scan reads the smoothed bin
+    // values.  Behavior:
+    //   - First frame copies binsDbm[i] directly into binDbAvg[i]
+    //     (initialization).
+    //   - Subsequent frames update binDbAvg[i] = 0.85*prev + 0.15*new
+    //     for bins in the scan range.
+    //   - Bins outside the scan range hold their last value.
     //
-    // From Thetis wdsp/analyzer.c:815-818 [@501e3f5]:
-    //   a->dmb_max_dB -= fabs((1.0 - a->dmb_decay) * a->dmb_max_dB);
-    //   if (dmb_max_dB > a->dmb_max_dB) a->dmb_max_dB = dmb_max_dB;
-    //
-    // The drift direction is away from zero (more negative), not toward zero.
-    // Important: if "quiet" bins are at -120 the peak-attack fires once maxDb
-    // drifts below -120, clamping the decay at -120.  For a true decay test
-    // we use -400 dBm (the WDSP sentinel) so no peak attack fires during the
-    // quiet phase.
-    //
-    // With fps=60, tau=0.5s, decay~0.9672, per-frame drift factor = 3.28%.
-    // After 60 silent frames starting from -50: maxDb ~ -346 (verified
-    // analytically).  We assert < -200 with margin.
-    void decaysWithoutNewPeaks() {
+    // So with 60 silent frames, the scan-range bins exponentially
+    // average DOWN to the silent value, and a new peak takes several
+    // frames to converge UP to the new peak value.  No output drift.
+    void smoothsTowardSteadyState() {
         WdspEngine engine;
         engine.setupMaxBinDetector(0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60);
 
@@ -174,25 +174,34 @@ private slots:
         const int peakBin = 512 + static_cast<int>(std::round(-1500.0 / binSpacing));
         peakBins[peakBin] = -50.0f;
 
-        // Drive one peak frame to establish maxDb = -50.
+        // Drive one peak frame to establish maxDb = -50 (first-frame copy).
         engine.onSpectrumBinsForMaxBin(0, peakBins);
         QVERIFY(qFuzzyCompare(engine.getMaxBinDbm(0), -50.0));
 
-        // Drive 60 frames at the -400 sentinel (truly silent -- no peak attack
-        // fires so the slow-release drift is unobstructed).
+        // Drive 60 silent frames (-400) so the peak bin averages down.
+        // alpha = 0.85, per-frame factor = 0.85.  After 60 frames:
+        //   final = 0.85^60 * (-50) + (1 - 0.85^60) * (-400)
+        //         ≈ 6.4e-5 * -50 + ~1.0 * -400 ≈ -400
         QVector<float> silentBins(N, -400.0f);
         for (int i = 0; i < 60; ++i) {
             engine.onSpectrumBinsForMaxBin(0, silentBins);
         }
-        // After 60 silent frames from -50, decay ~ (1.03279)^60 ~ 7.15,
-        // so maxDb ~ -50 * 7.15 = -357.  Assert well below -200 with margin.
         QVERIFY(engine.getMaxBinDbm(0) < -200.0);
 
-        // Then drive a new peak at -55: fast attack replaces immediately.
+        // Drive 60 frames at the new peak value -55: per-bin averaging
+        // converges toward -55 (and well above the -400 floor).  After
+        // many frames the peak bin's average is close to -55, well above
+        // the silent floor everywhere else.
         QVector<float> peak2Bins(N, -400.0f);
         peak2Bins[peakBin] = -55.0f;
-        engine.onSpectrumBinsForMaxBin(0, peak2Bins);
-        QVERIFY(qFuzzyCompare(engine.getMaxBinDbm(0), -55.0));
+        for (int i = 0; i < 60; ++i) {
+            engine.onSpectrumBinsForMaxBin(0, peak2Bins);
+        }
+        // After 60 steady-state frames: 0.85^60 * (-400) + (1 - 0.85^60) * (-55)
+        //                              ≈ -55 (converged).
+        const double result = engine.getMaxBinDbm(0);
+        QVERIFY2(std::abs(result - (-55.0)) < 1.0,
+                 qPrintable(QString("expected close to -55, got %1").arg(result)));
     }
 
     // ── Test 6: clampsBinRangeToArrayBounds ──────────────────────────────────
@@ -218,6 +227,106 @@ private slots:
 
         // Global max in the array is -40.0 (bins[0]).
         QVERIFY(qFuzzyCompare(engine.getMaxBinDbm(0), -40.0));
+    }
+
+    // ── Test 7: sliceOffsetHz shifts the scan window (CTUN-on case) ──────────
+    //
+    // FFTEngine bins are emitted in DDC baseband.  With CTUN on (NereusSDR's
+    // default), the user's tuned slice does NOT sit at DDC center.  Without
+    // applying the sliceOffsetHz term to the scan window, MaxBin always
+    // points at DDC center bins (noise floor) and never tracks the signal
+    // the user is listening to.  This test pins the fix: setting
+    // setMaxBinSliceOffsetHz moves the scan window so the slice's signal
+    // is found.
+    //
+    // Setup mirrors a CTUN-tuned LSB SSB receive scenario:
+    //   - DDC at 14.200 MHz (FFT bin N/2)
+    //   - Slice tuned to 14.225 MHz (25 kHz above DDC center)
+    //   - Slice's audio filter: -2850 to -150 Hz (LSB SSB default)
+    //   - Signal appears at DDC-baseband ~+24 kHz (slice center + ~-1 kHz
+    //     in-passband audio offset)
+    void sliceOffsetMovesScanWindow() {
+        WdspEngine engine;
+        engine.setupMaxBinDetector(/*disp=*/0, /*ss=*/0, /*LO=*/0,
+                                   /*rate=*/192000.0,
+                                   /*fLow=*/-2850.0,   // slice-baseband SSB filter
+                                   /*fHigh=*/-150.0,
+                                   /*tau=*/0.5, /*fps=*/60);
+
+        const int N = 1024;
+        const double binSpacing = 192000.0 / N;
+        QVector<float> bins(N, -120.0f);  // -120 dBm noise floor everywhere
+
+        // Place a strong peak at DDC-baseband +24000 Hz (matching a slice
+        // tuned to DDC + 25 kHz with the signal landing inside the SSB
+        // audio passband ~1 kHz below slice center).
+        const int peakBin = 512 + static_cast<int>(std::round(+24000.0 / binSpacing));
+        QVERIFY(peakBin > 512 && peakBin < N);
+        bins[peakBin] = -50.0f;
+
+        // Step A: no slice offset.  Default scan window is [-2850, -150] Hz
+        // (slightly left of DDC center).  The +24 kHz peak is far OUTSIDE
+        // that window; the scan only sees the -120 dBm noise floor.
+        engine.onSpectrumBinsForMaxBin(0, bins);
+        const double withoutOffset = engine.getMaxBinDbm(0);
+        QVERIFY2(withoutOffset < -110.0,
+                 "Without slice offset, MaxBin should read the noise floor, "
+                 "not the +24 kHz peak.  Bug: scan window stuck at DDC center.");
+
+        // Step B: set slice offset = +25 kHz (mirrors slice 25 kHz above DDC).
+        // Scan window slides to [+25000 - 2850, +25000 - 150] Hz =
+        // [+22150, +24850] Hz.  The +24 kHz peak now falls INSIDE.
+        engine.setMaxBinSliceOffsetHz(/*disp=*/0, /*sliceOffsetHz=*/25000.0);
+        engine.onSpectrumBinsForMaxBin(0, bins);
+        const double withOffset = engine.getMaxBinDbm(0);
+        QCOMPARE(withOffset, -50.0);  // peak found exactly
+    }
+
+    // ── Test 8: setMaxBinSliceOffsetHz is idempotent and survives setup ──────
+    //
+    // Calling setMaxBinSliceOffsetHz with the same value twice is a no-op
+    // (no detector reset).  More importantly, a subsequent
+    // setupMaxBinDetector call must NOT clear the stored offset -- otherwise
+    // every filter change would silently re-zero the CTUN offset until the
+    // next slice frequency emit re-pushes it.
+    void sliceOffsetSurvivesSetupAndIsIdempotent() {
+        WdspEngine engine;
+        engine.setupMaxBinDetector(0, 0, 0, 192000.0, -2850.0, -150.0, 0.5, 60);
+        engine.setMaxBinSliceOffsetHz(/*disp=*/0, /*sliceOffsetHz=*/12345.0);
+
+        // Reconfigure with new filter edges (mirrors a CW filter change).
+        engine.setupMaxBinDetector(0, 0, 0, 192000.0, -250.0, +250.0, 0.5, 60);
+
+        // Offset must still be in effect.  Drive a peak at +12 kHz; with
+        // the offset preserved, the scan window is roughly [+12095, +12595]
+        // Hz so a peak at +12300 falls inside.
+        const int N = 1024;
+        const double binSpacing = 192000.0 / N;
+        QVector<float> bins(N, -120.0f);
+        const int peakBin = 512 + static_cast<int>(std::round(+12300.0 / binSpacing));
+        bins[peakBin] = -55.0f;
+
+        engine.onSpectrumBinsForMaxBin(0, bins);
+        QCOMPARE(engine.getMaxBinDbm(0), -55.0);
+    }
+
+    // ── Test 9: zero slice offset matches the legacy DDC-center scan ─────────
+    //
+    // Default offset is 0 (CTUN-off equivalent: DDC follows slice).  Bin
+    // scan behaves identically to the pre-fix code path; no regression.
+    void zeroSliceOffsetMatchesLegacyScan() {
+        WdspEngine engine;
+        engine.setupMaxBinDetector(0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60);
+        // Offset stays at default 0.
+
+        const int N = 1024;
+        const double binSpacing = 192000.0 / N;
+        QVector<float> bins(N, -120.0f);
+        const int peakBin = 512 + static_cast<int>(std::round(-1500.0 / binSpacing));
+        bins[peakBin] = -50.0f;
+
+        engine.onSpectrumBinsForMaxBin(0, bins);
+        QCOMPARE(engine.getMaxBinDbm(0), -50.0);
     }
 };
 

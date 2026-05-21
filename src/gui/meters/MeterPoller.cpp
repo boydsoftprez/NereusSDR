@@ -125,6 +125,25 @@ void MeterPoller::setWdspEngine(WdspEngine* engine)
     qCDebug(lcMeter) << "MeterPoller: WdspEngine set:" << (engine ? "yes" : "nullptr");
 }
 
+// RX meter cal offset source (Thetis-faithful port).
+//
+// Stores a std::function returning the current dB offset.  Called once per
+// pollSMeter() and the SignalPeak/SignalAvg loop in poll() to add the
+// cumulative RXOffset(rx) value to WDSP-sourced readings before display.
+//
+// Thetis equivalent: console.cs:46821 [v2.10.3.13]:
+//   float offset = RXOffset(1);
+// where RXOffset = RXPreampOffset + RXCalibrationOffset.
+//
+// Set by MainWindow once during RadioModel wiring; refreshed at every poll
+// tick (the callable is cheap; see RadioModel::rxMeterOffsetDb).
+void MeterPoller::setRxOffsetSource(std::function<double()> source)
+{
+    m_rxOffsetSource = std::move(source);
+    qCDebug(lcMeter) << "MeterPoller: rxOffsetSource set:"
+                      << (m_rxOffsetSource ? "yes" : "nullptr");
+}
+
 // H.2 (Phase 3M-1a): switch poll set on MOX engage/release.
 // Porting from Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch:
 //   the switch on MeterType selects TX vs RX meter reads.
@@ -275,13 +294,28 @@ void MeterPoller::poll()
 
     if (!m_rxChannel) { return; }
 
+    // Thetis-faithful RX meter cal offset for the SignalPeak / SignalAvg
+    // bindings (RXA_S_PK / RXA_S_AV).  ADC_PK / ADC_AV / AGC_PK / AGC_AV /
+    // AGC_GAIN bindings do NOT take the offset (Thetis console.cs:46831-
+    // 46835 [v2.10.3.13] omit +offset for those exact rows.
+    // Cite: console.cs:46821 -> float offset = RXOffset(1);
+    //       console.cs:46824 -> ... = CalculateRXMeter(...) + offset;  // SIGNAL_STRENGTH
+    //       console.cs:46828 -> ... = CalculateRXMeter(...) + offset;  // AVG_SIGNAL_STRENGTH
+    const double rxOffsetDb = m_rxOffsetSource ? m_rxOffsetSource() : 0.0;
+
     // Poll all RX meter types. GetRXAMeter is lock-free.
     double smeterDbm = -140.0;
     for (int bindingId = MeterBinding::SignalPeak;
          bindingId <= MeterBinding::AgcAvg; ++bindingId) {
         double value = m_rxChannel->getMeter(static_cast<RxMeterType>(bindingId));
+        // Apply RXOffset to SignalPeak / SignalAvg only (matches Thetis
+        // console.cs:46824 + :46828, NOT :46831-:46835).
+        if (bindingId == MeterBinding::SignalPeak
+         || bindingId == MeterBinding::SignalAvg) {
+            value += rxOffsetDb;
+        }
         if (bindingId == MeterBinding::SignalAvg) {
-            smeterDbm = value;
+            smeterDbm = value;   // post-offset; matches VfoWidget expectation
         }
         for (auto& guarded : m_targets) {
             MeterWidget* target = guarded.data();
@@ -290,11 +324,15 @@ void MeterPoller::poll()
         }
     }
 
-    // Push S-meter value to VfoWidget level bar.
-    // smeterUpdated connects to VfoWidget::setSmeter in MainWindow.
-    emit smeterUpdated(smeterDbm);
-
     // Task 41 (Phase 3P-II): drive the analog SMeterWidget header.
+    // pollSMeter() also emits smeterUpdated with the SAME dBm value it
+    // pushes to the analog needle, so the VFO flag mini-bar and the
+    // analog SMeter always agree on source (both follow the analog
+    // widget's rxMode() selection).  Previously poll() emitted
+    // smeterUpdated with the SignalAvg value (line removed here)
+    // while pollSMeter set the analog widget from SignalPeak when in
+    // SMeter mode -- a 3-15 dB divergence depending on signal/noise.
+    Q_UNUSED(smeterDbm);
     pollSMeter();
 }
 
@@ -317,33 +355,68 @@ void MeterPoller::pollSMeter()
 
     const int ch = m_rxChannel->channelId();
 
+    // Thetis-faithful RX meter cal offset (Thetis-faithful port).
+    // Applied to ALL three RxMode branches (SIGNAL_STRENGTH,
+    // AVG_SIGNAL_STRENGTH, SIGNAL_MAX_BIN) to match Thetis console.cs:
+    //   :46824 (SIGNAL_STRENGTH)      ... + offset
+    //   :46828 (AVG_SIGNAL_STRENGTH)  ... + offset
+    //   :46881 (SIGNAL_MAX_BIN)       ... + offset
+    // RXOffset = RXPreampOffset + RXCalibrationOffset (console.cs:21040).
+    const float rxOffsetDb = m_rxOffsetSource
+        ? static_cast<float>(m_rxOffsetSource())
+        : 0.0f;
+
     float dbm = -127.0f;
     switch (sm->rxMode()) {
     case SMeterWidget::RxMode::SMeter:
     case SMeterWidget::RxMode::SMeterPeak:
         // From Thetis Console/console.cs:954 [@501e3f5]:
         //   case MeterType.SIGNAL_STRENGTH: val = GetRXAMeter(channel, RXA_S_PK);
+        // Display-side offset add per console.cs:46824 [v2.10.3.13]:
+        //   _RX1MeterValues[Reading.SIGNAL_STRENGTH] = ... + offset;
         if (m_wdspEngine) {
-            dbm = static_cast<float>(m_wdspEngine->getRxaSignalPeak(ch));
+            dbm = static_cast<float>(m_wdspEngine->getRxaSignalPeak(ch)) + rxOffsetDb;
         } else {
             // Fallback via RxChannel wrapper (RXA_S_PK = RxMeterType::SignalPeak = 0).
-            dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalPeak));
+            dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalPeak)) + rxOffsetDb;
         }
         break;
     case SMeterWidget::RxMode::SignalAverage:
         // From Thetis Console/console.cs:957 [@501e3f5]:
         //   case MeterType.AVG_SIGNAL_STRENGTH: val = GetRXAMeter(channel, RXA_S_AV);
-        dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalAvg));
+        // Display-side offset add per console.cs:46828 [v2.10.3.13]:
+        //   _RX1MeterValues[Reading.AVG_SIGNAL_STRENGTH] = ... + offset;
+        dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalAvg)) + rxOffsetDb;
         break;
     case SMeterWidget::RxMode::MaxBin:
         // GetDetectMaxBin(disp=0) -- single-pan display channel 0.
         // From Thetis Console/dsp.cs:849-850 [@501e3f5] (P/Invoke GetDetectMaxBin).
+        // Display-side offset add per console.cs:46881 [v2.10.3.13]:
+        //   if (max_bin > -400f)
+        //       _RX1MeterValues[Reading.SIGNAL_MAX_BIN] = max_bin + offset;
+        // NereusSDR sources MaxBin from FFTEngine via WdspEngine::getMaxBinDbm
+        // (single-panadapter assumption; see WdspEngine.cpp:1327).  Same
+        // logical reading as Thetis GetDetectMaxBin so the same +offset
+        // applies (gates on the -400 sentinel matching Thetis).
         if (m_wdspEngine) {
-            dbm = static_cast<float>(m_wdspEngine->getMaxBinDbm(/*disp=*/0));
+            const float maxBinRaw = static_cast<float>(m_wdspEngine->getMaxBinDbm(/*disp=*/0));
+            if (maxBinRaw > -400.0f) {
+                dbm = maxBinRaw + rxOffsetDb;
+            } else {
+                dbm = maxBinRaw;  // pass through sentinel unchanged
+            }
         }
         break;
     }
     sm->setLevel(dbm);
+
+    // Emit the SAME dBm value to the VFO flag mini-bar so it always
+    // tracks the analog meter's current source (peak / avg / MaxBin).
+    // Without this, the flag bar was hard-wired to SignalAvg in poll()
+    // and could disagree with the analog SMeter by 3-15 dB.  Done last
+    // so the analog widget sees the value first (matches the order
+    // VfoWidget::setSmeter listeners expect for cross-meter alignment).
+    emit smeterUpdated(static_cast<double>(dbm));
 }
 
 // Poll the four WDSP TX meters active in 3M-1a and push to meter widget targets.

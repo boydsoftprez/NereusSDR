@@ -993,6 +993,10 @@ void SpectrumWidget::setDdcCenterFrequency(double hz)
     if (!qFuzzyCompare(m_ddcCenterHz, hz)) {
         m_ddcCenterHz = hz;
         update();
+        // Notify listeners (MainWindow wires this to refresh MaxBin's
+        // slice-offset so its scan window follows the slice when the
+        // DDC NCO moves without a slice retune).
+        emit ddcCenterFrequencyChanged(hz);
     }
 }
 

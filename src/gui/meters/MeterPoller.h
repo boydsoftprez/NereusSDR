@@ -61,6 +61,8 @@ mw0lge@grange-lane.co.uk
 
 #include "core/WdspTypes.h"
 
+#include <functional>  // std::function for setRxOffsetSource (RXOffset port)
+
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -190,6 +192,25 @@ public:
     /// aggregates forward/reflected/swr from that loop via powerChanged).
     void setRadioStatus(RadioStatus* status);
 
+    // ── RX meter calibration offset (Thetis-faithful port) ───────────────
+    //
+    // Source for the per-poll cumulative offset (preamp + cal) applied to
+    // SignalPeak / SignalAvg / MaxBin readings before display.
+    //
+    // The callable is invoked once per poll tick and must be lightweight
+    // (RadioModel::rxMeterOffsetDb() is a const lookup over
+    // m_hardwareProfile + StepAttenuatorController + AppSettings, no
+    // mutex, no I/O).  Returning 0.0 disables the offset cleanly.
+    //
+    // Thetis call sites:
+    //   console.cs:46821  float offset = RXOffset(1);
+    //   console.cs:46824  ... = CalculateRXMeter(...) + offset;       // S_PK
+    //   console.cs:46828  ... = CalculateRXMeter(...) + offset;       // S_AV
+    //   console.cs:46881  ... = GetDetectMaxBin(0)    + offset;       // MaxBin
+    //
+    // Pass nullptr to detach (e.g. on RadioModel teardown).
+    void setRxOffsetSource(std::function<double()> source);
+
 public slots:
     // Switch between RX and TX meter polling.
     // Connected to MoxController::moxStateChanged(bool) by MainWindow (H.2).
@@ -255,6 +276,13 @@ private:
     // the m_rxChannel / m_txChannel safety pattern above.
     QPointer<SMeterWidget>  m_sMeter;
     WdspEngine*             m_wdspEngine{nullptr};
+
+    // RX meter cal offset (Thetis-faithful port).  Set via
+    // setRxOffsetSource(); empty callable yields 0.0 dB (no offset).
+    // Polled once per pollSMeter() invocation, then reused for the
+    // poll() SignalPeak/SignalAvg loop and the smeterUpdated emit.
+    // See setRxOffsetSource() doc for Thetis console.cs:46821 cite.
+    std::function<double()> m_rxOffsetSource;
 };
 
 } // namespace NereusSDR

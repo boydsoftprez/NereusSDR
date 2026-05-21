@@ -1332,6 +1332,22 @@ double WdspEngine::getMaxBinDbm(int disp) const
     return d.maxDb;
 }
 
+// Set the CTUN slice-to-DDC offset for the named detector.  Stored as a
+// signed Hz value; consumed by onSpectrumBinsForMaxBin to shift the
+// bin scan window away from DDC center to the user's tuned slice.
+// Safe to call before setupMaxBinDetector (grows the vector to fit);
+// safe to call repeatedly (idempotent same-value writes elided).
+void WdspEngine::setMaxBinSliceOffsetHz(int disp, double sliceOffsetHz)
+{
+    if (disp < 0) { return; }
+    if (m_maxBinDetectors.size() <= disp) {
+        m_maxBinDetectors.resize(disp + 1);
+    }
+    auto& d = m_maxBinDetectors[disp];
+    if (d.sliceOffsetHz == sliceOffsetHz) { return; }
+    d.sliceOffsetHz = sliceOffsetHz;
+}
+
 // Slot: receive FFTEngine dBm bins and run the Max Bin scan + smoothing.
 //
 // Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]
@@ -1370,22 +1386,43 @@ void WdspEngine::onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& b
     //   bin_spacing = rate / size
     // FFT-shifted layout: bins[N/2 + k] = frequency k * binSpacing,
     // so the single-window collapsed form is:
-    //   firstBin = clamp(N/2 + round(fLow  / binSpacing), 0, N-1)
-    //   lastBin  = clamp(N/2 + round(fHigh / binSpacing), 0, N-1)
-    const double binSpacing = d.rate / static_cast<double>(N);
-    const int half     = N / 2;
-    const int firstBin = qBound(0, half + static_cast<int>(std::round(d.fLow  / binSpacing)), N - 1);
-    const int lastBin  = qBound(0, half + static_cast<int>(std::round(d.fHigh / binSpacing)), N - 1);
+    //   firstBin = clamp(N/2 + round((fLow  + sliceOffsetHz) / binSpacing), 0, N-1)
+    //   lastBin  = clamp(N/2 + round((fHigh + sliceOffsetHz) / binSpacing), 0, N-1)
+    //
+    // NereusSDR-only sliceOffsetHz term: with CTUN on (default), the
+    // user's slice does NOT match DDC center.  FFTEngine bins are in
+    // DDC baseband, so we shift the scan window by (sliceFreq - ddcCenter)
+    // to land on the user's tuned signal.  See setMaxBinSliceOffsetHz
+    // for the architectural rationale (NereusSDR taps FFTEngine ahead of
+    // the WDSP shift, where Thetis's analyzer is fed post-shift).
+    const double binSpacing  = d.rate / static_cast<double>(N);
+    const int    half        = N / 2;
+    const double scanLowHz   = d.fLow  + d.sliceOffsetHz;
+    const double scanHighHz  = d.fHigh + d.sliceOffsetHz;
+    const int    firstBin    = qBound(0, half + static_cast<int>(std::round(scanLowHz  / binSpacing)), N - 1);
+    const int    lastBin     = qBound(0, half + static_cast<int>(std::round(scanHighHz / binSpacing)), N - 1);
     if (lastBin < firstBin) { return; }  // degenerate window
 
-    // Scan: find max dBm in the window.
-    // binsDbm already in dBm -- skip the magnitude->dB step from analyzer.c:807.
+    // Scan: find max raw per-frame dBm in the window.
+    //
+    // Per-frame max with output-side peak-hold-with-decay smoothing
+    // (Thetis analyzer.c:815-818 [v2.10.3.13]).  Riding peaks and
+    // slow-decaying between is the right algorithm for modulation
+    // envelopes -- voice peaks reaching -88 stay visible at -88 for
+    // ~tau seconds rather than being averaged away.
     float newMaxDb = -400.0f;
     for (int i = firstBin; i <= lastBin; ++i) {
-        if (binsDbm[i] > newMaxDb) { newMaxDb = binsDbm[i]; }
+        if (binsDbm[i] > newMaxDb) {
+            newMaxDb = binsDbm[i];
+        }
     }
 
-    // Smoothing -- verbatim from wdsp/analyzer.c:815-818 [@501e3f5].
+    // Output-side smoothing -- verbatim from wdsp/analyzer.c:815-818
+    // [v2.10.3.13].  Peak attack (replace immediately on new max),
+    // slow-release decay (drift toward more negative each frame).
+    // For voice / modulated signals this rides peak frames at the
+    // signal level and only falls between peaks, producing the
+    // expected "pumping" behavior.
     d.maxDb -= std::abs((1.0 - d.decay) * d.maxDb);
     if (static_cast<double>(newMaxDb) > d.maxDb) { d.maxDb = static_cast<double>(newMaxDb); }
 }

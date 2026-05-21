@@ -1856,6 +1856,14 @@ nereus_add_test(tst_spectrum_widget_mox_overlay)
 # Derives from Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
 nereus_add_test(tst_meter_poller_tx_bindings)
 
+# ── RX meter cal offset port (Thetis-faithful) ───────────────────────────────
+# Verifies the per-radio factory default lookup (rxMeterCalOffsetDefaultFor)
+# and the preamp-mode offset table (rxPreampOffsetDbFor) match Thetis byte-
+# for-byte, plus MeterPoller::setRxOffsetSource accepts a callable safely.
+# Derived from Thetis clsHardwareSpecific.cs:395-411 + console.cs:1991-2001
+# + console.cs:21040 RXOffset(rx) [v2.10.3.13].
+nereus_add_test(tst_rx_meter_offset)
+
 # ── Phase 3M-1a H.3: TxApplet wiring model-layer contracts ───────────────────
 # Verifies TransmitModel::setPower/tunePowerForBand round-trips, powerChanged
 # and tunePowerByBandChanged signals, MoxController default states,

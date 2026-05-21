@@ -1105,6 +1105,13 @@ signals:
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
 
+    // Emitted when m_ddcCenterHz changes (panadapter pan, band jump, etc.).
+    // Used by MainWindow to re-push the CTUN slice offset into MaxBin's
+    // detector so its scan window tracks the slice even when only the DDC
+    // moves.  Without this, panning the spectrum leaves MaxBin scanning
+    // bins at the OLD DDC-relative position until the next slice tune.
+    void ddcCenterFrequencyChanged(double hz);
+
     // Plan 4 D9 test seam: fires from drawTxFilterOverlay() after pixel
     // coordinates are computed.  Production code ignores this signal;
     // tests use QSignalSpy to verify paint was triggered with the right band.

@@ -419,6 +419,26 @@ public:
     // setupMaxBinDetector docstring for the full rationale.
     double getMaxBinDbm(int displayChannel) const;
 
+    // Set the CTUN slice-to-DDC frequency offset in Hz for a detector.
+    //
+    // FFTEngine bins are emitted in DDC baseband (bins[N/2] = DDC NCO
+    // freq).  With CTUN enabled (default), the user's tuned slice does
+    // NOT match DDC center; the slice sits at an offset within the DDC
+    // passband.  Without applying that offset to the bin scan range,
+    // MaxBin scans bins near DDC center (typically noise floor) instead
+    // of the user's signal, and the meter does not track modulation.
+    //
+    // sliceOffsetHz = sliceFreqHz - ddcCenterHz (signed; 0 when CTUN off
+    // because hardware DDC NCO follows the slice).  Re-call whenever
+    // either side moves.  Defaults to 0; thread-safe via the same
+    // m_maxBinDetectors store as setupMaxBinDetector / getMaxBinDbm.
+    //
+    // NereusSDR-only API: Thetis's WDSP analyzer subsystem (CreateAnalyzer
+    // + SetAnalyzer + Spectrum) is fed by the SHIFTED WDSP channel so its
+    // analyzer DC is always the slice DC.  NereusSDR taps FFTEngine ahead
+    // of the WDSP shift, so we apply the shift in our MaxBin scan.
+    void setMaxBinSliceOffsetHz(int displayChannel, double sliceOffsetHz);
+
 public slots:
     // Fed by FFTEngine::fftReady.  binsDbm is FFT-shifted (negative freqs
     // first, then positive).  Updates every active MaxBinDetector.
@@ -477,6 +497,12 @@ private:
         double rate{192000.0};
         double fLow{-3000.0};
         double fHigh{-300.0};
+        // CTUN slice offset within DDC baseband (Hz).  Added to fLow/fHigh
+        // when computing the bin scan window so MaxBin tracks the user's
+        // tuned slice, not the DDC NCO center.  See setMaxBinSliceOffsetHz
+        // for the full rationale.  Defaults to 0 (CTUN off; DDC follows
+        // slice; offset is zero).
+        double sliceOffsetHz{0.0};
         double tau{0.5};
         int    frameRate{60};
         double decay{0.0};      // exp(-1.0 / (tau * frameRate))

@@ -2073,6 +2073,37 @@ void MainWindow::populateDefaultMeter()
             m_meterPoller->setSMeter(sm);
         }
         m_meterPoller->setWdspEngine(m_radioModel->wdspEngine());
+
+        // RX meter cal offset source (Thetis-faithful port).
+        // RadioModel::rxMeterOffsetDb() returns RXPreampOffset(1) +
+        // RXCalibrationOffset(1) per Thetis console.cs:21040 [v2.10.3.13].
+        // The callable captures m_radioModel by raw pointer (lives for
+        // the lifetime of MainWindow); pollSMeter / poll invoke it
+        // once per tick.  Without this wire-up the WDSP S-meter readings
+        // sit in raw ADC dBFS instead of at-antenna dBm.
+        m_meterPoller->setRxOffsetSource([rm = m_radioModel]() -> double {
+            return rm ? rm->rxMeterOffsetDb() : 0.0;
+        });
+    }
+
+    // Refresh MaxBin's CTUN slice offset whenever the DDC center moves.
+    // The frequencyChanged lambda in wireSliceToSpectrum pushes the
+    // offset on slice retune, but a spectrum pan moves the DDC NCO
+    // without moving the slice -- without this hook, MaxBin's scan
+    // window stays at the OLD DDC-relative bin range until the next
+    // slice retune (or CTUN toggle).  Observable as "MaxBin meter
+    // drifts off the carrier when I pan the panadapter."
+    if (m_spectrumWidget) {
+        connect(m_spectrumWidget, &SpectrumWidget::ddcCenterFrequencyChanged,
+                this, [this](double ddcCenter) {
+            if (!m_radioModel) { return; }
+            auto* eng = m_radioModel->wdspEngine();
+            if (!eng) { return; }
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (!slice) { return; }
+            eng->setMaxBinSliceOffsetHz(/*disp=*/0,
+                                        slice->frequency() - ddcCenter);
+        });
     }
 
     // Task 43 (Phase 3P-II): PGXL-aware power scale + TX meter feed.
@@ -4627,7 +4658,7 @@ void MainWindow::wireSliceToSpectrum()
 
             m_handlingBandJump = false;
         } else {
-            // From Thetis radio.rs:1417 — WDSP shift = +(freq - center)
+            // From Thetis radio.rs:1417 -- WDSP shift = +(freq - center)
             double shiftHz = freq - center;
             RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
             if (rxCh) {
@@ -4636,6 +4667,18 @@ void MainWindow::wireSliceToSpectrum()
         }
         m_spectrumWidget->setVfoFrequency(freq);
         vfo->setFrequency(freq);
+
+        // Keep MaxBin's scan window aligned with the user's slice.  See
+        // WdspEngine::setMaxBinSliceOffsetHz for the architectural cite.
+        // sliceOffsetHz = sliceFreq - DDC center.  When CTUN is off the
+        // DDC NCO follows the slice and this term is zero; when CTUN is
+        // on the term is non-zero and the MaxBin scan range slides with
+        // the slice so the meter pumps on the user's modulation rather
+        // than the noise floor sitting at DDC center.
+        if (auto* eng = m_radioModel->wdspEngine()) {
+            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            eng->setMaxBinSliceOffsetHz(/*disp=*/0, freq - ddcCenter);
+        }
     });
 
     connect(slice, &SliceModel::filterChanged, this, [this, vfo](int low, int high) {
@@ -4658,8 +4701,8 @@ void MainWindow::wireSliceToSpectrum()
     // the currently active DDC bandwidth.
     // Frame rate: m_fftEngine->outputFps() * 1.1 matches Thetis
     //   console.cs:51150 [@501e3f5]: (int)Math.Max(1, _display_fps * 1.1f).
-    connect(slice, &SliceModel::filterChanged, this, [this](int low, int high) {
-        QTimer::singleShot(100, this, [this, low, high]() {
+    connect(slice, &SliceModel::filterChanged, this, [this, slice](int low, int high) {
+        QTimer::singleShot(100, this, [this, slice, low, high]() {
             if (!m_radioModel || !m_fftEngine) { return; }
             WdspEngine* eng = m_radioModel->wdspEngine();
             if (!eng) { return; }
@@ -4671,6 +4714,16 @@ void MainWindow::wireSliceToSpectrum()
                                      static_cast<double>(high),
                                      /*tauSeconds=*/0.5,
                                      fps);
+            // Re-sync the CTUN slice offset after every setup call.  Filter
+            // changes don't move the slice, but they re-run setupMaxBinDetector
+            // and we want the offset to be authoritative against the current
+            // slice freq vs DDC center -- not whatever stale offset was last
+            // pushed by frequencyChanged.  Without this re-sync, a filter
+            // change immediately after a CTUN tune could leave the detector
+            // pointing at the wrong bins until the user nudges the VFO again.
+            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            const double sliceFreq = slice ? slice->frequency() : ddcCenter;
+            eng->setMaxBinSliceOffsetHz(/*disp=*/0, sliceFreq - ddcCenter);
         });
     });
 
