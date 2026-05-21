@@ -143,6 +143,15 @@ void TgxlConnection::onError()
     }
     qCWarning(lcTgxl) << "TgxlConnection: connect-time socket error:" << err;
     emit connectionFailed(err);
+    // 2026-05-20 bench fix: connect-time failures (e.g. TGXL refusing the
+    // initial handshake, "Unknown error", "Invalid socket descriptor")
+    // do NOT trigger onDisconnected, so without this scheduleReconnect()
+    // the exponential backoff stops dead after a single failed retry.
+    // Schedule another attempt so the connection keeps trying until
+    // TGXL accepts (typically 1-15 s after the device's hardware
+    // watchdog reset). Without this fix, TGXL :9010 stays dead for
+    // the rest of the session after any single failed retry.
+    scheduleReconnect();
 }
 
 // From AetherSDR src/core/TgxlConnection.cpp:60 [@0cd4559]
@@ -440,8 +449,33 @@ void TgxlConnection::onPingTimeoutCheck()
 void TgxlConnection::scheduleReconnect()
 {
     auto& s = AppSettings::instance();
-    if (s.value("TGXL_AutoReconnect", "True").toString() != "True") { return; }
-    if (m_lastHost.isEmpty()) { return; }
+    if (s.value("TGXL_AutoReconnect", "True").toString() != "True") {
+        qCInfo(lcTgxl) << "scheduleReconnect: TGXL_AutoReconnect=False, NOT retrying";
+        return;
+    }
+    if (m_lastHost.isEmpty()) {
+        qCInfo(lcTgxl) << "scheduleReconnect: m_lastHost empty, NOT retrying"
+                          " (never had a successful initial connect)";
+        return;
+    }
+    // Dedup window: Qt fires BOTH errorOccurred and disconnected for the
+    // same connect-time failure on most platforms. With scheduleReconnect
+    // wired to both (so we don't miss the case where only one fires), the
+    // common case ends up scheduling two retries back-to-back. The second
+    // retry's connectToHost can fail because the first is still mid-
+    // handshake. 500 ms is long enough to coalesce the duplicate Qt
+    // signals but much shorter than even the fastest backoff (1 s).
+    static constexpr qint64 kReconnectDedupMs = 500;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastReconnectScheduleMs > 0
+        && nowMs - m_lastReconnectScheduleMs < kReconnectDedupMs) {
+        qCDebug(lcTgxl) << "scheduleReconnect: duplicate within"
+                        << kReconnectDedupMs << "ms of last call ("
+                        << (nowMs - m_lastReconnectScheduleMs) << "ms ago),"
+                        << "ignoring";
+        return;
+    }
+    m_lastReconnectScheduleMs = nowMs;
 
     int idx = std::min(m_reconnectAttempts, int(std::size(kTgxlBackoffSec)) - 1);
     int delayMs = kTgxlBackoffSec[idx] * 1000;
@@ -451,7 +485,20 @@ void TgxlConnection::scheduleReconnect()
     emit reconnectAttempt(m_reconnectAttempts, delayMs);
     QString host = m_lastHost;
     quint16 port = m_lastPort;
+    qCInfo(lcTgxl) << "scheduleReconnect: attempt #" << m_reconnectAttempts
+                   << "scheduled in" << delayMs << "ms to" << host << ":" << port;
     QTimer::singleShot(delayMs, this, [this, host, port] {
+        // Reset to UnconnectedState first; Qt sometimes leaves the socket
+        // in BoundState or ClosingState after a remote close, which causes
+        // connectToHost to no-op silently. abort() forces it back to
+        // UnconnectedState so connectToHost can proceed.
+        if (m_socket.state() != QAbstractSocket::UnconnectedState) {
+            qCDebug(lcTgxl) << "scheduleReconnect lambda: socket in state"
+                            << m_socket.state() << "before reconnect, aborting";
+            m_socket.abort();
+        }
+        qCInfo(lcTgxl) << "scheduleReconnect lambda: firing connectToHost"
+                       << host << ":" << port;
         m_socket.connectToHost(host, port);
     });
 }
@@ -459,6 +506,11 @@ void TgxlConnection::scheduleReconnect()
 void TgxlConnection::testForceDisconnect()
 {
     m_connected = false;
+    // Reset the dedup timestamp so back-to-back testForceDisconnect calls
+    // in a unit test each count as a distinct disconnect event and
+    // exercise the full backoff schedule. Production code never calls
+    // testForceDisconnect.
+    m_lastReconnectScheduleMs = 0;
     scheduleReconnect();
 }
 

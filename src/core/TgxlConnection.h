@@ -136,6 +136,15 @@ private:
     QTimer  m_pingTimeoutTimer;
     QTimer  m_reconnectTimer;
     int     m_reconnectAttempts{0};
+    // Dedup window for scheduleReconnect: when Qt fires BOTH errorOccurred
+    // and disconnected for the same socket failure (happens on most
+    // connect-time errors), we'd otherwise schedule two retries back-to-
+    // back which race and waste an attempt. This timestamp is set every
+    // time scheduleReconnect is invoked; if called again within
+    // kReconnectDedupMs ms, the second call is treated as a duplicate
+    // and ignored. Bench-confirmed 2026-05-20 18:19:25 (two scheduleR-
+    // econnect calls in the same millisecond from onError + onDisc).
+    qint64  m_lastReconnectScheduleMs{0};
     int     m_keepaliveMissed{0};
     quint32 m_pendingSetupSeq{0};
     quint32 m_pendingIfconfSeq{0};

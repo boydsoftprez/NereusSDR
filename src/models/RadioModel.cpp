@@ -980,6 +980,46 @@ RadioModel::RadioModel(QObject* parent)
             this, [this](bool on) {
         qCInfo(lcConnection) << "LAN PTT tuneRequested(" << on << ")";
         if (on) {
+            // 2026-05-20 bench fix: TGXL ECHOES our outbound `tune=1` in
+            // the slice/transmit S-frame back to us as `transmit tune
+            // on` -- effectively saying "I acknowledge the tune state."
+            // The old code treated every `transmit tune on` as a
+            // TGXL-hardware-TUNE press and recursively kicked off
+            // startTgxlAutotune, which sent `operate=0` to PGXL mid-TX
+            // and collapsed the in-progress operator-initiated TUN.
+            //
+            // Guards (any one short-circuits the autotune trigger):
+            //
+            //  (a) m_tgxlAutotuneInProgress: a TunerApplet-initiated
+            //      autotune is already running. Same guard the old code
+            //      had; TGXL's `tune on` echo here is informational
+            //      because m_tgxlAutotuneFromHardware was set false and
+            //      we've already executed the standby + autotune cmd.
+            //  (b) m_isTuning: the operator is already in a TUN cycle
+            //      (TxApplet TUNE click, or any other path that called
+            //      RadioModel::setTune(true)). TGXL's `tune on` here is
+            //      the echo, NOT a hardware TUNE press. Without this
+            //      guard, the echo aborts the user's full-beans TUN by
+            //      flipping PGXL to STANDBY mid-key.
+            //
+            // The TGXL hardware TUNE button path (where TGXL initiates)
+            // still flows through correctly: at that moment isTune() is
+            // false AND m_tgxlAutotuneInProgress is false, so neither
+            // guard fires and startTgxlAutotune(fromHardware=true) runs.
+            if (m_tgxlAutotuneInProgress) {
+                qCInfo(lcConnection)
+                    << "LAN PTT tuneRequested(true) suppressed:"
+                       " TunerApplet autotune already in progress"
+                       " (TGXL echo)";
+                return;
+            }
+            if (m_isTuning) {
+                qCInfo(lcConnection)
+                    << "LAN PTT tuneRequested(true) suppressed:"
+                       " operator-initiated TUN already engaged"
+                       " (TGXL echo, not a hardware-TUNE press)";
+                return;
+            }
             // TGXL hardware TUNE pressed (or TGXL native app TUNE). TGXL
             // is already running its own internal sweep cycle; we just
             // need to provide the carrier and put PGXL in STANDBY for
@@ -989,7 +1029,20 @@ RadioModel::RadioModel(QObject* parent)
             startTgxlAutotune(/*fromHardware=*/true);
         } else {
             // TGXL released tune (cycle done or aborted). Drop our local
-            // carrier; the manualMoxChanged(false) handler restores PGXL.
+            // carrier only if WE engaged it via the autotune orchestration
+            // (m_tgxlAutotuneInProgress). When the operator is running an
+            // operator-initiated TUN (TxApplet TUNE click), TGXL's
+            // `transmit tune off` is just an echo telling us TGXL is no
+            // longer participating -- but the operator's TUN cycle is
+            // separate from TGXL's view and shouldn't be aborted by an
+            // echo. The operator's own TUN click decides when to drop.
+            if (!m_tgxlAutotuneInProgress) {
+                qCInfo(lcConnection)
+                    << "LAN PTT tuneRequested(false) suppressed:"
+                       " no autotune in progress (TGXL echo, operator"
+                       " TUN cycle owns the drop)";
+                return;
+            }
             setTune(false);
         }
     });
@@ -1075,6 +1128,25 @@ RadioModel::RadioModel(QObject* parent)
         connect(m_moxController, &MoxController::txAboutToBegin,
                 this, [this]() {
             if (!m_smartSdrListener) { return; }
+            // ARM the RF-flow gate BEFORE setInterlockTransmitting may
+            // synchronously emit interlockGranted (fast-ACK case where
+            // an amp ACKs PTT_REQUESTED within ~100 ms; we've seen 117 ms
+            // on TGXL). Without arming here, interlockGranted would land
+            // BEFORE txReady arms the gate, the grant handler would find
+            // m_awaitingInterlockForTx still false, do nothing, and then
+            // txReady would arm the gate to wait for a grant that has
+            // already happened -> stuck. m_txReadyReceived tracks the
+            // matching condition and the helper below releases setRunning
+            // when BOTH have fired (regardless of order).
+            //
+            // Reset m_txReadyReceived here too so a previous cycle's
+            // value doesn't leak into this one.
+            m_txReadyReceived = false;
+            if (m_smartSdrListener->hasInterlockedAmp()) {
+                m_awaitingInterlockForTx = true;
+            } else {
+                m_awaitingInterlockForTx = false;
+            }
             m_smartSdrListener->setTxActive(true);
             const QString source = m_moxController->isManualMox()
                 ? QStringLiteral("TUNE")
@@ -1089,6 +1161,7 @@ RadioModel::RadioModel(QObject* parent)
             // setRunning(true) on a TX channel that's already been
             // drained back to RX by the TX->RX walk above.
             m_awaitingInterlockForTx = false;
+            m_txReadyReceived = false;
             if (!m_smartSdrListener) { return; }
             m_smartSdrListener->setTxActive(false);
             const QString source = m_moxController->isManualMox()
@@ -1126,6 +1199,59 @@ RadioModel::RadioModel(QObject* parent)
                 << "-- continuing TX anyway (PGXL/TGXL self-protect if needed)";
         });
 
+        // 2026-05-20 pcap-driven proxy: forward `amplifier set 0x<h> <k>=<v>`
+        // received on :4992 to the right amp's native protocol socket
+        // (PGXL :9008 or TGXL :9010). This is how TGXL coordinates with
+        // PGXL during its own autotune cycle in the real FlexRadio setup
+        // (e.g. flex-tgxl-direct-CONTROL.pcapng @T+172.201: TGXL sends
+        // "amplifier set 0x22E8213A operate=0", FLEX forwards to PGXL :9008
+        // "operate=0"). Without this proxy, NereusSDR was missing the
+        // mechanism real FLEX uses for amp-to-amp orchestration, forcing
+        // us into the buggier startTgxlAutotune workaround.
+        connect(m_smartSdrListener, &SmartSdrApiListener::amplifierSetRequested,
+                this, [this](const QString& ampHandle,
+                             const QString& key,
+                             const QString& value) {
+            if (!m_smartSdrListener) { return; }
+            const QString model = m_smartSdrListener->ampModelForHandle(ampHandle);
+            if (model.isEmpty()) {
+                qCWarning(lcConnection)
+                    << "amplifier set proxy: unknown ampHandle=" << ampHandle
+                    << "(no registered client owns it); dropping"
+                    << key << "=" << value;
+                return;
+            }
+            const QString cmd = QStringLiteral("%1=%2").arg(key).arg(value);
+            if (model == QStringLiteral("PowerGeniusXL")) {
+                if (m_pgxlConnection && m_pgxlConnection->isConnected()) {
+                    m_pgxlConnection->sendCommand(cmd);
+                    qCInfo(lcConnection)
+                        << "amplifier set proxy -> PGXL:9008" << cmd
+                        << "(ampHandle=0x" << ampHandle << ")";
+                } else {
+                    qCWarning(lcConnection)
+                        << "amplifier set proxy: PGXL target but PgxlConnection"
+                           " not connected; dropping" << cmd;
+                }
+            } else if (model == QStringLiteral("TunerGeniusXL")) {
+                if (m_tgxlConnection && m_tgxlConnection->isConnected()) {
+                    m_tgxlConnection->sendCommand(cmd);
+                    qCInfo(lcConnection)
+                        << "amplifier set proxy -> TGXL:9010" << cmd
+                        << "(ampHandle=0x" << ampHandle << ")";
+                } else {
+                    qCWarning(lcConnection)
+                        << "amplifier set proxy: TGXL target but TgxlConnection"
+                           " not connected; dropping" << cmd;
+                }
+            } else {
+                qCWarning(lcConnection)
+                    << "amplifier set proxy: unknown ampModel=" << model
+                    << "for ampHandle=" << ampHandle
+                    << "; dropping" << cmd;
+            }
+        });
+
         // TGXL autotune orchestration: interlock-granted hook.
         //
         // When we're mid-autotune and waiting for the FlexAPI interlock
@@ -1153,20 +1279,39 @@ RadioModel::RadioModel(QObject* parent)
         // sweep recovered. 150 ms eliminates the flash.
         connect(m_smartSdrListener, &SmartSdrApiListener::interlockGranted,
                 this, [this](const QString& source) {
-            // RF-flow gate (deck item #3): TxChannel was deferred at
-            // txReady waiting for this grant. Now that TRANSMITTING has
-            // been broadcast, PGXL is/will-be in TRANSMIT_A with its
-            // relays on the amp path -- safe to start the audio pump
-            // and let RF flow.
+            // RF-flow gate (deck item #3, 2026-05-20 ordering fix):
+            // BOTH txReady AND interlockGranted must have fired before
+            // TxChannel::setRunning is called. txReady means radio is in
+            // TX mode; interlockGranted means amp relays are on amp
+            // path. We only call setRunning when whichever signal fires
+            // SECOND lands -- the first one just records its arrival.
+            //
+            // The grant clears m_awaitingInterlockForTx so the symmetric
+            // check in the txReady wire (when it fires later) sees the
+            // gate as already released and calls setRunning then.
             if (m_awaitingInterlockForTx) {
                 m_awaitingInterlockForTx = false;
-                if (m_txChannel) {
+                if (m_txReadyReceived) {
+                    // txReady already fired (rare with fast amp ACK but
+                    // possible if rfDelay is unusually short). Both
+                    // conditions met: start TxChannel now.
+                    if (m_txChannel) {
+                        qCInfo(lcConnection)
+                            << "RF-flow gate: interlock TRANSMITTING confirmed"
+                               " (source=" << source
+                            << ") AND txReady was already received -- starting"
+                               " TxChannel now (carrier hits amp path)";
+                        m_txChannel->setRunning(true);
+                    }
+                } else {
+                    // Grant arrived first (common: fast amp ACK lands
+                    // before MoxController rfDelay completes). Wait for
+                    // txReady; it will start TxChannel when it sees the
+                    // gate as already released.
                     qCInfo(lcConnection)
                         << "RF-flow gate: interlock TRANSMITTING confirmed"
                            " (source=" << source
-                        << "), starting TxChannel now (carrier hits amp"
-                           " path, not bypass)";
-                    m_txChannel->setRunning(true);
+                        << "), waiting for txReady (race: grant arrived first)";
                 }
             }
 
@@ -3872,34 +4017,41 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // From Thetis console.cs:29595 [v2.10.3.13] — TX-on callsite after
             // Thread.Sleep(rf_delay) in chkMOX_CheckedChanged2.
             //
-            // 2026-05-20 bench fix (deck item #3 -- MOX RF-gate): if an
-            // external amp is in the chain (anyone with an ampHandle in
-            // the listener), we defer setRunning(true) until interlock-
-            // Granted fires. PGXL needs to ACK PTT_REQUESTED and switch
-            // its relays from bypass to amp path BEFORE the carrier
-            // arrives, or it intermittently trips its own SWR protection
-            // on ~5 % of key-ups (carrier into bypass-routed antenna).
+            // 2026-05-20 bench fix (deck item #3 -- MOX RF-gate, then
+            // 21:19 ordering refactor): if an external amp is in the
+            // chain, we defer setRunning(true) until BOTH txReady AND
+            // interlockGranted have fired. Whichever fires SECOND
+            // triggers setRunning. We can't rely on a single arming
+            // point because the two signals can race in either order
+            // depending on amp ACK speed (fast TGXL ACK -> grant before
+            // txReady).
             //
-            // The interlockGranted lambda in the listener wire above will
-            // see m_awaitingInterlockForTx=true and complete the engage.
-            // 1500 ms failsafe ensures the operator isn't stranded if
-            // the grant never fires.
+            // The gate is ARMED at txAboutToBegin above (before PTT_-
+            // REQUESTED can fire any synchronous interlockGranted) and
+            // CLEARED by the interlockGranted handler in the listener
+            // wire above. Here we only flip m_txReadyReceived and call
+            // setRunning if interlockGranted has already cleared the
+            // gate. The grant handler does the symmetric check.
+            //
+            // 1500 ms failsafe armed if the grant never fires
+            // (e.g. amp disconnected mid-cycle).
             connect(m_moxController, &MoxController::txReady,
                     this, [this]() {
                 if (!m_txChannel) { return; }
-                const bool hasAmpInChain =
-                    m_smartSdrListener && m_smartSdrListener->hasInterlockedAmp();
-                if (!hasAmpInChain) {
-                    // No external amp registered (PGXL absent or disconnected
-                    // and no other interlock subscriber). No relay-switch
-                    // race to wait on -- engage immediately, Thetis-faithful.
+                m_txReadyReceived = true;
+                if (!m_awaitingInterlockForTx) {
+                    // Either no amp in chain (gate never armed) OR the
+                    // grant already cleared the gate (fast-ACK race).
+                    // Either way, start TxChannel now.
+                    qCInfo(lcConnection)
+                        << "RF-flow gate: txReady arrived; gate already"
+                           " released (or no amp). Starting TxChannel.";
                     m_txChannel->setRunning(true);
                     return;
                 }
-                m_awaitingInterlockForTx = true;
                 qCInfo(lcConnection)
-                    << "RF-flow gate armed: waiting interlockGranted before"
-                       " starting TxChannel (amp relay-switch race fix)";
+                    << "RF-flow gate: txReady arrived; waiting interlock"
+                       "Granted before starting TxChannel";
                 QTimer::singleShot(1500, this, [this]() {
                     if (m_awaitingInterlockForTx && m_txChannel) {
                         qCWarning(lcConnection)
@@ -9161,10 +9313,23 @@ QString RadioModel::buildConnectionTooltip() const
 //      state string is one of: IDLE, OPERATE, TRANSMIT_A, TRANSMIT_B
 //      (the four states where the amp is on-air ready or transmitting).
 //      If m_ampOperate changed, emit ampStateChanged().
-//   3. Parse "peakfwd" (dBm float) and "swr" (dB return-loss float).
+//   3. Parse "peakfwd" (dBm float) and "swr" (signed dB return-loss float).
 //      Convert: watts = 10^(dbm/10) / 1000
-//               ratio = 10^(-rl_db/20)  (clamped to >= 1.0 to handle noise)
-//      Emit ampMetersChanged(watts, ratio) when both keys are present.
+//               |reflection_coeff| = 10^(rl_db/20)   (rl_db is negative
+//                                                    on a good match; e.g.
+//                                                    swr=-24.5 -> |G|=0.0596)
+//               SWR = (1 + |G|) / (1 - |G|)          (-> 1.13 for the
+//                                                    example above)
+//      Clamp |G| -> SWR at 99 when |G| approaches 1.0 (effectively
+//      infinite SWR; open or short). Emit ampMetersChanged(watts, swr)
+//      when both keys are present.
+//
+//      2026-05-20 bench fix: prior formula was `10^(-rl_db/20)` which
+//      inverts the math -- for swr=-24.5 (well-matched antenna) it
+//      produced ratio = 16.78 instead of 1.13, so the SMeterWidget TX
+//      display showed a wildly wrong high-SWR readout the whole time
+//      PGXL was actually amplifying into a low-SWR load. User report:
+//      "always high SWR readout on PGXL".
 void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
 {
     // 1. First-presence detection.
@@ -9206,14 +9371,29 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
             // units expected by FaultEvent (watts / ratio) and
             // FaultLog::likelyCauseFor.  The 'fwd' key is dBm (same wire
             // encoding as 'peakfwd' in the meter path below) and 'swr' is
-            // return loss in dB (negative from PGXL).  Mirror the exact
-            // conversion from the meter path (lines 8865-8867).
-            const float fwdDbm = kvs.value(QStringLiteral("fwd")).toFloat();
-            const float rlDb   = kvs.value(QStringLiteral("swr")).toFloat();
-            const float temp   = kvs.value(QStringLiteral("temp")).toFloat();
-            const float fwdW   = std::pow(10.0f, fwdDbm / 10.0f) / 1000.0f;
-            float swrRatio     = std::pow(10.0f, -rlDb / 20.0f);
-            if (swrRatio < 1.0f) { swrRatio = 1.0f; }  // clamp measurement noise
+            // signed dB return loss (negative on a good match per the
+            // PGXL Ethernet API; e.g. swr=-24.5 -> RL 24.5 dB -> SWR 1.13).
+            //
+            // 2026-05-20 bench fix: the prior formula `10^(-rl_db/20)`
+            // inverted the math and produced ~16.8 for a well-matched
+            // antenna. Replaced with the canonical |reflection| -> SWR
+            // calculation. Mirrors the same conversion in the meter
+            // path below.
+            const float fwdDbm   = kvs.value(QStringLiteral("fwd")).toFloat();
+            const float rlDbWire = kvs.value(QStringLiteral("swr")).toFloat();
+            const float temp     = kvs.value(QStringLiteral("temp")).toFloat();
+            const float fwdW     = std::pow(10.0f, fwdDbm / 10.0f) / 1000.0f;
+            float swrRatio;
+            if (rlDbWire >= 0.0f) {
+                // RL >= 0 dB is physically open/short or measurement
+                // glitch; cap to 99 for display.
+                swrRatio = 99.0f;
+            } else {
+                const float gamma = std::pow(10.0f, rlDbWire / 20.0f);
+                swrRatio = (gamma >= 0.999f)
+                    ? 99.0f
+                    : (1.0f + gamma) / (1.0f - gamma);
+            }
             FaultEvent ev{
                 QDateTime::currentMSecsSinceEpoch(),
                 st,
@@ -9228,15 +9408,23 @@ void RadioModel::onPgxlStatus(const QMap<QString, QString>& kvs)
         m_lastPgxlState = st;
     }
 
-    // 3. Power + SWR meter conversion.
+    // 3. Power + SWR meter conversion (header doc-block above explains
+    // the math + the 2026-05-20 bench-driven sign fix).
     const bool hasFwd = kvs.contains(QStringLiteral("peakfwd"));
     const bool hasSwr = kvs.contains(QStringLiteral("swr"));
     if (hasFwd && hasSwr) {
-        const float dbm   = kvs.value(QStringLiteral("peakfwd")).toFloat();
-        const float rlDb  = kvs.value(QStringLiteral("swr")).toFloat();
-        const float watts = std::pow(10.0f, dbm / 10.0f) / 1000.0f;
-        float ratio       = std::pow(10.0f, -rlDb / 20.0f);
-        if (ratio < 1.0f) { ratio = 1.0f; }  // clamp measurement noise
+        const float dbm      = kvs.value(QStringLiteral("peakfwd")).toFloat();
+        const float rlDbWire = kvs.value(QStringLiteral("swr")).toFloat();
+        const float watts    = std::pow(10.0f, dbm / 10.0f) / 1000.0f;
+        float ratio;
+        if (rlDbWire >= 0.0f) {
+            ratio = 99.0f;  // RL=0 -> infinite SWR; cap for display
+        } else {
+            const float gamma = std::pow(10.0f, rlDbWire / 20.0f);
+            ratio = (gamma >= 0.999f)
+                ? 99.0f
+                : (1.0f + gamma) / (1.0f - gamma);
+        }
         emit ampMetersChanged(watts, ratio);
     }
 }

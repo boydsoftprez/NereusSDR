@@ -98,6 +98,16 @@ public:
     // engage RF immediately the Thetis-faithful way.
     bool hasInterlockedAmp() const;
 
+    // Look up the registered amp model string for a given amp handle.
+    // Used by RadioModel's `amplifier set` proxy: when TGXL sends
+    // `amplifier set 0x<handle> <kv>` we need to figure out which amp
+    // owns that handle so we can forward the cmd on the right native
+    // protocol socket (PGXL:9008 vs TGXL:9010). ampHandle is the hex
+    // string WITHOUT the "0x" prefix. Returns "PowerGeniusXL" or
+    // "TunerGeniusXL" (per the `model=` field from `amplifier create`),
+    // or an empty string if no client has registered that handle.
+    QString ampModelForHandle(const QString& ampHandle) const;
+
 signals:
     void clientConnected(const QString& peerHost, quint16 peerPort);
     void lineReceived(const QString& peerHost, quint16 peerPort,
@@ -140,6 +150,29 @@ signals:
     // RadioModel wires these to the appropriate MOX / UI rollback paths.
     void interlockGranted(const QString& source);
     void interlockBlocked(const QString& reason);
+
+    // 2026-05-20 pcap-driven (flex-tgxl-direct-CONTROL.pcapng @T+172.201):
+    // When TGXL (or any amp) wants to coordinate with another amp in the
+    // chain, it sends `C<seq>|amplifier set 0x<handle> <key>=<value>` to
+    // the radio. The real FlexRadio acts as a passive proxy: it looks up
+    // which amp owns the handle and forwards the command to that amp via
+    // its native protocol (TCP 9008 for PGXL, 9010 for TGXL). Example:
+    //
+    //   TGXL -> FLEX:4992  "amplifier set 0x22E8213A operate=0"
+    //   FLEX -> PGXL:9008  "operate=0"        (FLEX recognized 0x22E8213A
+    //                                          as the PGXL amp handle)
+    //
+    // This is how TGXL auto-standbys PGXL during its own autotune cycle
+    // -- and the path NereusSDR was previously missing. We emit this
+    // signal whenever we receive an `amplifier set` from a client;
+    // RadioModel listens, matches the handle against the right amp
+    // connection, and forwards the command.
+    //
+    // ampHandle is the hex string (e.g. "22E8213A") WITHOUT the "0x"
+    // prefix. key and value are the verbatim text from the wire.
+    void amplifierSetRequested(const QString& ampHandle,
+                               const QString& key,
+                               const QString& value);
 
 private slots:
     void onNewConnection();
@@ -185,6 +218,18 @@ private:
         int     interlockId{0};      // 0 = no interlock registered yet
         QString interlockName;       // e.g. "PG-XL", "TG" (from create name=)
         bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage
+        // Timestamp when ackReady was most recently set true. Used by
+        // setInterlockTransmitting to decide whether to honor a "pre-ack"
+        // (an `interlock ready N` that arrived BEFORE our PTT_REQUESTED
+        // -- happens on TGXL hardware TUNE press, where TGXL sends
+        // `transmit tune on` and `interlock ready N` in the same TCP
+        // burst before we've completed PGXL standby + carrier engage).
+        // If the ack is recent (within ~500 ms), we treat it as valid
+        // for the current cycle and don't wipe it. Bench-confirmed
+        // 2026-05-20 21:30: without this, the hardware-TUNE path's
+        // pre-ack got wiped, grant never fired, TGXL aborted with
+        // "low input power" because TxChannel never started.
+        qint64  ackReceivedMs{0};
         // Per smartsdr-api-docs TCPIP-interlock, amps can toggle their
         // interlock enable/disable. PGXL bench-confirmed 2026-05-20:
         // sends `interlock disable <id>` immediately on operate=0 (going

@@ -2250,6 +2250,20 @@ private:
     // Granted doesn't fire, start the audio anyway so the operator isn't
     // stuck with a silent TX.
     bool m_awaitingInterlockForTx{false};
+    // RF-flow gate two-condition tracker (deck item #3, ordering fix
+    // 2026-05-20 21:19): TxChannel::setRunning(true) needs BOTH
+    //   (a) MoxController::txReady fired (radio is in TX mode), and
+    //   (b) SmartSdrApiListener::interlockGranted fired (amp in
+    //       TRANSMITTING state, relays switched to amp path).
+    // Whichever signal fires SECOND triggers setRunning. We track each
+    // independently because Qt event-queue ordering can race; we cannot
+    // rely on one always firing before the other when amp ACK is fast.
+    // m_txReadyReceived is set in the txReady wire, cleared on TX-off
+    // (moxStateChanged(false)). m_awaitingInterlockForTx is set in the
+    // txAboutToBegin wire (BEFORE PTT_REQUESTED is sent so the gate is
+    // armed before any interlockGranted can fire) and cleared by the
+    // grant handler.
+    bool m_txReadyReceived{false};
 
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Qt parent-ownership (parent=this); non-null from construction time.

@@ -2127,6 +2127,20 @@ void MainWindow::populateDefaultMeter()
                                     && m_radioModel->ampOperate();
             sm->setPowerScale(/*maxWatts=*/0, amplifying);
         });
+
+        // Connect 5: 2026-05-20 bench fix -- SMeterWidget::setTransmitting
+        // was implemented but never wired. m_transmitting stayed false so
+        // updateNeedleTarget() always fell through to the RX dBm path,
+        // even when ampMetersChanged was feeding watts via setTxMeters.
+        // The needle therefore showed an RX S-meter reading during TX
+        // even though PGXL was clearly delivering power. Wire MoxController
+        // so the needle switches to the TX-power scale on key, returns to
+        // RX scale on unkey. moxStateChanged fires at end of walk so the
+        // switch lines up with carrier-on-air.
+        if (MoxController* mox = m_radioModel->moxController()) {
+            connect(mox, &MoxController::moxStateChanged,
+                    sm, &SMeterWidget::setTransmitting);
+        }
     }
 
     // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
@@ -2373,6 +2387,40 @@ void MainWindow::populateDefaultMeter()
                                     nullptr,
                                     m_radioModel->tuneMemoryStore());
     panel->addApplet(m_tunerApplet);
+
+    // 2026-05-20 bench fix: rescale TunerApplet's fwd-power bar when
+    // PGXL comes into the chain. TunerApplet defaults to 0-200 W
+    // (barefoot) which pegs out the moment PGXL pushes its amplified
+    // ~450-2000 W through the tuner. Mirror the same amplifierChanged
+    // + ampStateChanged wires we use for the SMeterWidget above.
+    if (m_tunerApplet) {
+        // Initial scale: match current PGXL state at construction time.
+        const bool amplifyingNow =
+            m_radioModel->hasAmplifier() && m_radioModel->ampOperate();
+        m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifyingNow);
+
+        // PGXL connect/disconnect snaps the scale to 2 kW or back to
+        // barefoot. maxWatts=0 means "use the standard barefoot/PGXL
+        // range from TunerApplet::setPowerScale defaults".
+        connect(m_radioModel, &RadioModel::amplifierChanged, this,
+                [this](bool present) {
+            if (m_tunerApplet) {
+                m_tunerApplet->setPowerScale(/*maxWatts=*/0, present);
+            }
+        });
+
+        // OPERATE/STANDBY edges re-evaluate scale. STANDBY -> barefoot
+        // until OPERATE resumes (pass amplifying=false to drop the
+        // 2 kW scale back to 200 W).
+        connect(m_radioModel, &RadioModel::ampStateChanged, this,
+                [this]() {
+            if (m_tunerApplet) {
+                const bool amplifying = m_radioModel->hasAmplifier()
+                                        && m_radioModel->ampOperate();
+                m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifying);
+            }
+        });
+    }
 
     // Ghost applets: constructed but not added to the panel or the Containers menu
     // until their feature phases ship. Uncomment the construction + addContainerToggle
@@ -6232,10 +6280,53 @@ void MainWindow::onConnectionStateChanged()
                     m_ampApplet->setState(kvs.value(QStringLiteral("state")));
                 if (kvs.contains(QStringLiteral("meffa")))
                     m_ampApplet->setMeff(kvs.value(QStringLiteral("meffa")));
-                if (kvs.contains(QStringLiteral("peakfwd")))
-                    m_ampApplet->setFwdPower(kvs.value(QStringLiteral("peakfwd")).toFloat());
-                if (kvs.contains(QStringLiteral("swr")))
-                    m_ampApplet->setSwr(kvs.value(QStringLiteral("swr")).toFloat());
+
+                // 2026-05-20 bench fix: when PGXL leaves TRANSMIT_A/B,
+                // force the fwd power + SWR gauges back to idle values.
+                // PGXL stops pushing peakfwd / swr on unkey (state goes
+                // IDLE / OPERATE) so without an explicit reset the
+                // AmpApplet gauges latch at the last transmit-time value
+                // and look like the amp is still keying. User: "tx power
+                // on the applet stays at the last value after we unkey".
+                if (kvs.contains(QStringLiteral("state"))) {
+                    const QString st = kvs.value(QStringLiteral("state"));
+                    const bool transmitting =
+                        (st == QStringLiteral("TRANSMIT_A")
+                         || st == QStringLiteral("TRANSMIT_B"));
+                    if (!transmitting) {
+                        m_ampApplet->setFwdPower(0.0f);
+                        m_ampApplet->setSwr(1.0f);
+                    }
+                }
+
+                // 2026-05-20 bench fix: peakfwd is dBm (not watts) and swr
+                // is signed dB return loss (not an SWR ratio). The legacy
+                // raw passthrough fed an unconverted -24.5 to the SWR
+                // gauge (range 1.0-3.0; clamped to 1.0 always) and an
+                // unconverted dBm to the power gauge (range 0-200/2000 W;
+                // dBm values in [0, 60] mostly hit the low end of the
+                // scale). Convert here so the AmpApplet gauges read the
+                // same numbers the SMeterWidget already gets via
+                // RadioModel::ampMetersChanged.
+                if (kvs.contains(QStringLiteral("peakfwd"))) {
+                    const float dbm   = kvs.value(QStringLiteral("peakfwd")).toFloat();
+                    const float watts = std::pow(10.0f, dbm / 10.0f) / 1000.0f;
+                    m_ampApplet->setFwdPower(watts);
+                }
+                if (kvs.contains(QStringLiteral("swr"))) {
+                    const float rlDbWire =
+                        kvs.value(QStringLiteral("swr")).toFloat();
+                    float ratio;
+                    if (rlDbWire >= 0.0f) {
+                        ratio = 99.0f;  // RL>=0 -> open/short, cap display
+                    } else {
+                        const float gamma = std::pow(10.0f, rlDbWire / 20.0f);
+                        ratio = (gamma >= 0.999f)
+                            ? 99.0f
+                            : (1.0f + gamma) / (1.0f - gamma);
+                    }
+                    m_ampApplet->setSwr(ratio);
+                }
             });
 
             // Phase 3P-II Phase 4 Task 88: track PGXL connected state for the

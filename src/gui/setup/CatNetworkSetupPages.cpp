@@ -1048,9 +1048,14 @@ void PeripheralsPage::wireStatusSignals()
                 }
             });
 
-    // Restore button label to match current connection state on page open.
+    // Restore status label + button label to match current connection
+    // state on page open. The connected/disconnected signals only fire
+    // on transition; if PGXL already connected before the Setup dialog
+    // was opened, the wires above don't fire and the label sits at its
+    // initial "Disconnected" text. Bench-confirmed dead-end 2026-05-20.
     if (pgxl->isConnected()) {
         pgxlBtn->setText(QObject::tr("Disconnect"));
+        pgxlLabel->setText(QObject::tr("Connected"));
     }
 
     // --- TGXL (row 0) ---
@@ -1076,9 +1081,12 @@ void PeripheralsPage::wireStatusSignals()
                 tgxlBtn->setText(QObject::tr("Connect"));
             });
 
-    // Restore button label to match current connection state on page open.
+    // Same dead-end fix as PGXL above: status label needs an explicit
+    // refresh on page open since the connected signal only fires on
+    // transition, not on subscription.
     if (tgxl->isConnected()) {
         tgxlBtn->setText(QObject::tr("Disconnect"));
+        tgxlLabel->setText(QObject::tr("Connected"));
     }
 }
 

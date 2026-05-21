@@ -140,6 +140,12 @@ void PgxlConnection::onError() {
     }
     qCWarning(lcPgxl) << "connect-time socket error:" << err;
     emit connectionFailed(err);
+    // 2026-05-20 bench fix (mirror of TgxlConnection): connect-time
+    // failures do NOT trigger onDisconnected, so without this
+    // scheduleReconnect() the exponential backoff stops dead after a
+    // single failed retry. Schedule another attempt so the connection
+    // keeps trying until PGXL accepts.
+    scheduleReconnect();
 }
 
 void PgxlConnection::onReadyRead() {
@@ -318,8 +324,32 @@ void PgxlConnection::onPingTimeoutCheck() {
 
 void PgxlConnection::scheduleReconnect() {
     auto& s = AppSettings::instance();
-    if (s.value("PGXL_AutoReconnect", "True").toString() != "True") { return; }
-    if (m_lastHost.isEmpty()) { return; }
+    if (s.value("PGXL_AutoReconnect", "True").toString() != "True") {
+        qCInfo(lcPgxl) << "scheduleReconnect: PGXL_AutoReconnect=False, NOT retrying";
+        return;
+    }
+    if (m_lastHost.isEmpty()) {
+        qCInfo(lcPgxl) << "scheduleReconnect: m_lastHost empty, NOT retrying"
+                          " (never had a successful initial connect)";
+        return;
+    }
+    // Dedup window: see TgxlConnection::scheduleReconnect for the full
+    // rationale. Qt fires both errorOccurred and disconnected for the
+    // same connect-time failure on most platforms; without this guard,
+    // both onError and onDisconnected schedule a retry, the two timers
+    // race, and the second connectToHost call can fail because the
+    // first is still mid-handshake.
+    static constexpr qint64 kReconnectDedupMs = 500;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastReconnectScheduleMs > 0
+        && nowMs - m_lastReconnectScheduleMs < kReconnectDedupMs) {
+        qCDebug(lcPgxl) << "scheduleReconnect: duplicate within"
+                        << kReconnectDedupMs << "ms of last call ("
+                        << (nowMs - m_lastReconnectScheduleMs) << "ms ago),"
+                        << "ignoring";
+        return;
+    }
+    m_lastReconnectScheduleMs = nowMs;
 
     int idx = std::min(m_reconnectAttempts, int(std::size(kBackoffSec)) - 1);
     int delayMs = kBackoffSec[idx] * 1000;
@@ -330,13 +360,31 @@ void PgxlConnection::scheduleReconnect() {
     emit reconnectAttempt(m_reconnectAttempts, delayMs);
     QString host = m_lastHost;
     quint16 port = m_lastPort;
+    qCInfo(lcPgxl) << "scheduleReconnect: attempt #" << m_reconnectAttempts
+                   << "scheduled in" << delayMs << "ms to" << host << ":" << port;
     QTimer::singleShot(delayMs, this, [this, host, port] {
+        // Reset to UnconnectedState first; Qt sometimes leaves the socket
+        // in BoundState or ClosingState after a remote close, which causes
+        // connectToHost to no-op silently. abort() forces it back to
+        // UnconnectedState so connectToHost can proceed.
+        if (m_socket.state() != QAbstractSocket::UnconnectedState) {
+            qCDebug(lcPgxl) << "scheduleReconnect lambda: socket in state"
+                            << m_socket.state() << "before reconnect, aborting";
+            m_socket.abort();
+        }
+        qCInfo(lcPgxl) << "scheduleReconnect lambda: firing connectToHost"
+                       << host << ":" << port;
         m_socket.connectToHost(host, port);
     });
 }
 
 void PgxlConnection::testForceDisconnect() {
     m_connected = false;
+    // Reset the dedup timestamp so back-to-back testForceDisconnect calls
+    // in a unit test (tst_pgxl_connection_reconnect) each count as a
+    // distinct disconnect event and exercise the full backoff schedule.
+    // Production code never calls testForceDisconnect.
+    m_lastReconnectScheduleMs = 0;
     scheduleReconnect();
 }
 

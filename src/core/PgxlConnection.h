@@ -133,6 +133,11 @@ private:
     QTimer  m_pingTimeoutTimer;
     QTimer  m_reconnectTimer;
     int     m_reconnectAttempts{0};
+    // Dedup window for scheduleReconnect: see TgxlConnection.h for the
+    // full rationale. Coalesces Qt's duplicate errorOccurred+disconnected
+    // signal firings on the same connect-time failure so we schedule
+    // exactly one retry per disconnect event, not two racing ones.
+    qint64  m_lastReconnectScheduleMs{0};
     int     m_keepaliveMissed{0};
     quint32 m_pendingPairingSeq{0};
     // Phase 3P-II Task 66: serial captured from flexradioPair() so setBand()

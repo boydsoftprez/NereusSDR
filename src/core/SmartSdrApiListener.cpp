@@ -110,6 +110,20 @@ bool SmartSdrApiListener::hasInterlockedAmp() const
     return false;
 }
 
+QString SmartSdrApiListener::ampModelForHandle(const QString& ampHandle) const
+{
+    // ampHandle in our convention == client's banner handle (uppercase hex
+    // string set by sendBanner). Compare case-insensitively since wire
+    // commands can use either case.
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (!it->ampHandle.isEmpty()
+            && it->ampHandle.compare(ampHandle, Qt::CaseInsensitive) == 0) {
+            return it->ampModel;
+        }
+    }
+    return {};
+}
+
 void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
                                                    const QString& source)
 {
@@ -143,13 +157,32 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // registered interlock amp ACKs via `C|interlock ready <id>`.
 
         m_pttPendingSource = wireSource;
-        // Reset ACK state for every registered+enabled interlock amp.
-        // Disabled interlocks (e.g. PGXL after `interlock disable` on
-        // STANDBY) don't participate in this PTT cycle.
+        // Reset ACK state for every registered+enabled interlock amp,
+        // PRESERVING recent pre-acks (within last 500 ms).
+        //
+        // 2026-05-20 bench fix: TGXL hardware TUNE button press sends
+        // `transmit tune on` and `interlock ready N` in the same TCP
+        // burst BEFORE our PTT_REQUESTED is broadcast (the request comes
+        // ~230 ms later after PGXL standby + MoxController walk). Without
+        // preserving the recent ack, we'd wipe it on engage, TGXL would
+        // not re-send (since it already acked), and we'd time out with
+        // grant never firing. setRunning never called -> no RF -> TGXL
+        // reports "low input power" and aborts.
+        //
+        // The 500 ms window matches our existing PTT ACK timeout: any
+        // ack arriving within that window of engage is considered valid
+        // for this cycle. Acks older than 500 ms are stale (from a
+        // previous cycle) and get wiped.
+        static constexpr qint64 kPreAckWindowMs = 500;
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         bool anyInterlockedAmp = false;
         for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
             if (it->interlockId != 0 && it->interlockEnabled) {
-                it->ackReady = false;
+                const bool recentAck = it->ackReady
+                    && (nowMs - it->ackReceivedMs) < kPreAckWindowMs;
+                if (!recentAck) {
+                    it->ackReady = false;
+                }
                 anyInterlockedAmp = true;
             }
         }
@@ -676,6 +709,50 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                                << it->ampModel << "serial=" << it->ampSerial;
         }
         // body stays empty; canonical R-frame response is just status code.
+    } else if (cmd.startsWith(QStringLiteral("amplifier set "))) {
+        // 2026-05-20 pcap-driven (flex-tgxl-direct-CONTROL.pcapng @T+172.201):
+        // Wire format: `amplifier set 0x<handle> <key>=<value>`
+        // Real FlexRadio recognized handles e.g.
+        //   amplifier set 0x22E8213A operate=0   (handle=PGXL, key=operate, value=0)
+        //
+        // Used by TGXL to control PGXL state during its own autotune cycle
+        // (standby PGXL before tune, restore after). FlexRadio acts as a
+        // passive proxy: looks up which amp owns the handle and forwards
+        // the command via that amp's native protocol (PGXL:9008 / TGXL:9010).
+        //
+        // We just parse + emit; RadioModel does the actual proxy because it
+        // owns the PgxlConnection / TgxlConnection objects.
+        const QString rest = cmd.mid(QStringLiteral("amplifier set ").size())
+                                .trimmed();
+        const int firstSpace = rest.indexOf(QLatin1Char(' '));
+        if (firstSpace > 0) {
+            QString handleTok = rest.left(firstSpace);
+            const QString kvTok = rest.mid(firstSpace + 1).trimmed();
+            // Strip "0x" prefix (case-insensitive) to match the stored
+            // ampHandle format (which is hex without the prefix).
+            if (handleTok.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive)) {
+                handleTok = handleTok.mid(2);
+            }
+            const int eq = kvTok.indexOf(QLatin1Char('='));
+            if (eq > 0) {
+                const QString key = kvTok.left(eq);
+                const QString val = kvTok.mid(eq + 1);
+                qCInfo(lcSmartSdr)
+                    << "amplifier set received -> handle=0x" << handleTok
+                    << "key=" << key << "value=" << val
+                    << "from" << sock->peerAddress().toString()
+                    << "(forwarding via amplifierSetRequested)";
+                emit amplifierSetRequested(handleTok, key, val);
+            } else {
+                qCWarning(lcSmartSdr)
+                    << "amplifier set: malformed key=value tail:" << kvTok;
+            }
+        } else {
+            qCWarning(lcSmartSdr)
+                << "amplifier set: malformed command:" << cmd;
+        }
+        // body stays empty per the FLEX response convention; ACK is the
+        // R<seq>|0| status code from sendResponse below.
     } else if (cmd.startsWith(QStringLiteral("interlock create"))) {
         // Per smartsdr-api-docs TCPIP-interlock wiki:
         //   (1) Device: C2|interlock create type=AMP name=KZX-2500 serial=... valid_antennas=...
@@ -733,6 +810,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                 : tail.toInt(&ok);
             if (ok && ackId == it->interlockId) {
                 it->ackReady = true;
+                it->ackReceivedMs = QDateTime::currentMSecsSinceEpoch();
                 qCInfo(lcSmartSdr) << "interlock ready ACK from"
                                    << sock->peerAddress().toString()
                                    << "id=" << ackId

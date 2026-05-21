@@ -397,16 +397,35 @@ void TunerApplet::setTunerModel(TunerModel* model)
                 "border-radius: 3px; color: #ffffff; font-size: 10px; font-weight: bold; }"));
             m_tuneBtn->setText(QStringLiteral("TUNING..."));
 
-            // Engage local CW tune carrier for TGXL hardware TUNE.
-            // Our applet TUNE click already engaged it via the click handler;
-            // isTune() will be true here, so we skip the second engage.
-            // Routes through RadioModel::setTune (G.4 orchestrator) so the
-            // gen1 PostGen tone is actually emitted -- not just MOX. See
-            // the TUNE click handler above for the rationale.
-            if (m_model && !m_model->isTune()
-                    && !m_carrierEngagedForTgxlTune) {
-                m_model->setTune(true);
+            // Engage local CW tune carrier + standby PGXL for a hardware-
+            // initiated TGXL tune cycle.
+            //
+            // 2026-05-20 pcap-driven fix (flex-tgxl-direct-CONTROL.pcapng):
+            // The TGXL hardware TUNE button does NOT send `transmit tune on`
+            // upfront -- it pushes `tuning=1` via its :9010 status stream,
+            // which lands here as TunerModel::tuningChanged(true). The
+            // prior code just called m_model->setTune(true) which engaged
+            // the CW carrier but DID NOT standby PGXL. With PGXL in OPERATE
+            // the amp amplified the carrier into TGXL's directional couplers
+            // -- TGXL saw ~450 W and aborted with "high RF power". With PGXL
+            // in STANDBY the carrier reached TGXL at tunepower (~10 W) but
+            // TGXL still complained "low input power" because no coordinated
+            // sequence had happened.
+            //
+            // Route through startTgxlAutotune(fromHardware=true) instead so
+            // the same orchestration the TunerApplet TUNE click uses
+            // (standby PGXL -> engage TUN after STANDBY ACK -> restore PGXL
+            // on tune complete) covers the hardware-initiated path too.
+            // fromHardware=true skips the redundant `autotune` cmd on :9010
+            // because TGXL is already running its own sweep.
+            //
+            // The recursion guard in startTgxlAutotune handles the case
+            // where TunerApplet TUNE click already started the cycle
+            // (m_tgxlAutotuneInProgress is true) and TGXL then echoes by
+            // pushing tuning=1; that re-entry is detected and ignored.
+            if (m_model && !m_carrierEngagedForTgxlTune) {
                 m_carrierEngagedForTgxlTune = true;
+                m_model->startTgxlAutotune(/*fromHardware=*/true);
             }
         } else {
             // Restore normal style.
