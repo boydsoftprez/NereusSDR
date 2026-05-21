@@ -1,6 +1,6 @@
 # 4O3A LAN PTT Chain: Pcap-Canonical vs NereusSDR: Divergence Analysis and Change Spec
 
-**Status:** Research + change spec (approval-gated)
+**Status:** Approved (2026-05-21 by JJ; ready for implementation planning)
 **Date:** 2026-05-21
 **Author:** J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 **Scope (locked):** SmartSDR-API handshake + PTT key/unkey chain. Excludes periodic status broadcasts, autotune protocol, slice/transmit pushes (handled elsewhere).
