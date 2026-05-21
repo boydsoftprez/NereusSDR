@@ -198,15 +198,12 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             }
         }
 
-        // NOTE: amplifier pttA=1 push moved to advanceToTransmittingIfReady
-        // (i.e. fires together with the TRANSMITTING broadcast). With the
-        // RF-flow gate (deck item #3) the local carrier doesn't actually
-        // come on-air until interlockGranted releases the gate, which
-        // happens at the TRANSMITTING broadcast. Pushing pttA=1 here at
-        // txAboutToBegin (~500 ms before carrier on a PGXL+TGXL setup
-        // where TGXL doesn't ACK in time) caused TGXL to revert its
-        // display to "no PTT in" because it saw pttA=1 but no carrier
-        // for the duration of the wait. Bench-confirmed 2026-05-20.
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C6: no explicit
+        // pttA=1 push anywhere in the listener. The canonical PTT-in
+        // indicator is the S0|amplifier 0x<h> state=TRANSMIT_A frame
+        // broadcast 5 ms after TRANSMITTING in broadcastTransmitting().
+        // Amps derive their PTT-in display from S0|interlock state= and
+        // S0|amplifier state= per pcap T+167.734 -> T+167.740.
 
         // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: ONE
         // PTT_REQUESTED frame broadcast to every subscriber, with
@@ -969,9 +966,17 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
     } else if (emitTuneOff) {
         qCInfo(lcSmartSdr) << "LAN PTT tune off from"
                            << sock->peerAddress().toString();
-        // C2: clear the recorded initiator. Next TUNE cycle re-records.
-        m_lastTuneInitiator.clear();
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: do NOT clear
+        // m_lastTuneInitiator before emitting tuneRequested(false). The
+        // emit chains synchronously into setInterlockTransmitting(false,
+        // "TUNE"), which reads m_lastTuneInitiator to pick the canonical
+        // reason=AMP:<initiator> for the UNKEY_REQUESTED frame. Clearing
+        // first would cause the un-key wire to carry reason=AMP:PG-XL
+        // (the MIC-source fallback) instead of the canonical
+        // reason=AMP:TG. Clear AFTER the emit returns so the next TUNE
+        // cycle starts with a fresh initiator slot.
         emit tuneRequested(false);
+        m_lastTuneInitiator.clear();
     } else if (emitMoxOn) {
         qCInfo(lcSmartSdr) << "LAN PTT mox on from"
                            << sock->peerAddress().toString();

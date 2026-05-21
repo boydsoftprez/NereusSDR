@@ -110,6 +110,7 @@ private slots:
     void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
     void c4_transmittingIsDelayed30msAfterLastAck();
     void c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames();
+    void c5b_wireDrivenTuneOffPreservesAmpTgReason();
     void c6_pttAPushesAreReplacedWithAmplifierStateBroadcasts();
 };
 
@@ -451,6 +452,76 @@ void SmartSdrApiListenerPttChainTest::c6_pttAPushesAreReplacedWithAmplifierState
              qPrintable(QStringLiteral("expected no pttA=0 push, got: ") + unKeyText));
     QVERIFY2(unKeyText.contains(QStringLiteral("state=IDLE")),
              qPrintable(QStringLiteral("expected state=IDLE broadcast, got: ") + unKeyText));
+}
+
+// Task 5 (C5) follow-up: when the un-key path is triggered by a
+// `transmit tune off` line coming over the wire (the production path),
+// the UNKEY_REQUESTED frame must still carry reason=AMP:<initiator-name>
+// pulled from m_lastTuneInitiator. Regression test for the
+// clear-before-emit ordering bug fixed in this commit: previously the
+// initiator was cleared BEFORE tuneRequested(false) emitted, so the
+// synchronous chain into setInterlockTransmitting(false, "TUNE") read
+// an empty initiator and fell back to AMP:PG-XL.
+void SmartSdrApiListenerPttChainTest::c5b_wireDrivenTuneOffPreservesAmpTgReason()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    // Wire the listener's tuneRequested signal back to its own
+    // setInterlockTransmitting, mirroring the RadioModel hookup so the
+    // test runs the full production cycle.
+    QObject::connect(&listener, &SmartSdrApiListener::tuneRequested,
+                     &listener,
+                     [&listener](bool on) {
+                         listener.setInterlockTransmitting(
+                             on, QStringLiteral("TUNE"));
+                     });
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    // TGXL hardware TUNE press: tune on -> ACKs -> tune off, all over wire.
+    tgxl.write("C9|transmit tune on\n");
+    tgxl.flush();
+    drain(&tgxl); drain(&pgxl);  // PTT_REQUESTED chatter
+
+    tgxl.write("C10|interlock ready 1\n"); tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n"); pgxl.flush();
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+    QVERIFY(grantSpy.wait(500));
+    drain(&tgxl); drain(&pgxl);  // TRANSMITTING + state=TRANSMIT_A
+
+    // Wire-driven un-key.
+    tgxl.write("C11|transmit tune off\n");
+    tgxl.flush();
+
+    // Capture frames for ~50 ms so the UNKEY_REQUESTED + 2 READYs land.
+    const QByteArray bytes = drain(&tgxl, 100);
+    const QStringList lines = QString::fromUtf8(bytes).split(QLatin1Char('\n'));
+
+    QString unkeyLine;
+    for (const QString& line : lines) {
+        if (line.startsWith(QStringLiteral("S0|interlock"))
+            && line.contains(QStringLiteral("state=UNKEY_REQUESTED"))) {
+            unkeyLine = line;
+            break;
+        }
+    }
+    QVERIFY2(!unkeyLine.isEmpty(),
+             qPrintable(QStringLiteral("no UNKEY_REQUESTED frame in: ")
+                            + lines.join(QStringLiteral(" || "))));
+    QVERIFY2(unkeyLine.contains(QStringLiteral("reason=AMP:TG")),
+             qPrintable(QStringLiteral("expected reason=AMP:TG (TGXL initiated TUNE), got: ")
+                            + unkeyLine));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)
