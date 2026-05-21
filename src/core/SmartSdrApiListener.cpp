@@ -208,47 +208,36 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // display to "no PTT in" because it saw pttA=1 but no carrier
         // for the duration of the wait. Bench-confirmed 2026-05-20.
 
-        // Emit one PTT_REQUESTED S-frame per registered+enabled amp,
-        // matching the FLEX pcap format (not the wiki example, which
-        // differs). Pcap reality from FLEX-8600 stream 2 at T=541.716:
-        //   S0|interlock tx_client_handle=0x4C70DC9B state=PTT_REQUESTED
-        //               reason= source=TUNE tx_allowed=1 amplifier=0x7CC669A7
-        // Note: reason= is EMPTY (not AMP:<name>) and tx_client_handle is
-        // NON-ZERO (the SmartSDR client who initiated TX). We pick the amp's
-        // own banner handle as tx_client_handle so the frame self-references
-        // -- semantically "this amp's chain is being keyed". Real FLEX uses
-        // SmartSDR-Win's handle here; we don't have a separate GUI client.
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: ONE
+        // PTT_REQUESTED frame broadcast to every subscriber, with
+        // canonical fields. reason=AMP:<initiating-amp-name>;
+        // amplifier= empty; tx_client_handle is the synthetic local
+        // handle. Matches pcap T+167.678.
         if (anyInterlockedAmp) {
-            for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-                if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
-                // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1:
-                // tx_client_handle is the synthetic local-client handle,
-                // not the amp's own banner. (C2 will collapse this loop
-                // to a single frame.)
-                const QString body =
-                    QStringLiteral("interlock tx_client_handle=0x%1"
-                                   " state=PTT_REQUESTED reason="
-                                   " source=%2 tx_allowed=1 amplifier=0x%3")
-                        .arg(m_localClientHandle)
-                        .arg(wireSource)
-                        .arg(it->ampHandle);
-                const QByteArray frame =
-                    QStringLiteral("S0|%1\n").arg(body).toUtf8();
-                // Broadcast to all connections (FLEX broadcasts S0 globally).
-                for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-                    QTcpSocket* sock = jt.key();
-                    if (sock && sock->isOpen()) { sock->write(frame); }
-                }
-                qCInfo(lcSmartSdr) << "TX S0|interlock state=PTT_REQUESTED"
-                                   << "tx_client_handle=0x" << it->handle
-                                   << "source=" << wireSource
-                                   << "amplifier=0x" << it->ampHandle
-                                   << "(waiting for interlock ready ack)";
+            const QString reasonName = initiatingAmpName(wireSource);
+            const QString reasonField = reasonName.isEmpty()
+                ? QString()
+                : QStringLiteral("AMP:") + reasonName;
+            const QString body =
+                QStringLiteral("interlock tx_client_handle=0x%1"
+                               " state=PTT_REQUESTED reason=%2"
+                               " source=%3 tx_allowed=1 amplifier=")
+                    .arg(m_localClientHandle)
+                    .arg(reasonField)
+                    .arg(wireSource);
+            const QByteArray frame =
+                QStringLiteral("S0|%1\n").arg(body).toUtf8();
+            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                QTcpSocket* sock = jt.key();
+                if (sock && sock->isOpen()) { sock->write(frame); }
             }
-            // Arm the 500 ms wiki-spec timeout. If the ACKs don't all
-            // arrive in time, advanceToTransmittingIfReady() is called
-            // anyway so we still send TRANSMITTING (degraded path) and
-            // RF flows. Better UX than aborting TX silently.
+            qCInfo(lcSmartSdr) << "TX S0|interlock state=PTT_REQUESTED"
+                               << "tx_client_handle=0x" << m_localClientHandle
+                               << "reason=" << reasonField
+                               << "source=" << wireSource
+                               << "(canonical single-frame; waiting for interlock ready ACKs)";
+
+            // Arm the 500 ms wiki-spec timeout (unchanged from C1 state).
             if (!m_pttAckTimeout.isActive()) {
                 m_pttAckTimeout.setSingleShot(true);
                 m_pttAckTimeout.setInterval(500);
@@ -257,9 +246,6 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
                         this, &SmartSdrApiListener::onPttAckTimeout);
             }
             m_pttAckTimeout.start();
-            // Also check immediately in case there were no amps to wait
-            // for (i.e. interlockId==0 for every client). The check is
-            // cheap and handles the edge case.
             QTimer::singleShot(0, this,
                                &SmartSdrApiListener::advanceToTransmittingIfReady);
         } else {
@@ -934,10 +920,21 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
     if (emitTuneOn) {
         qCInfo(lcSmartSdr) << "LAN PTT tune on from"
                            << sock->peerAddress().toString();
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: record
+        // which amp sent the tune-on so PTT_REQUESTED can carry
+        // reason=AMP:<name>. Falls back to that amp's interlockName
+        // (set when it sent `interlock create`) so the wire matches
+        // pcap T+167.678 where reason=AMP:TG names the TGXL initiator.
+        auto initIt = m_clients.find(sock);
+        if (initIt != m_clients.end() && !initIt->interlockName.isEmpty()) {
+            m_lastTuneInitiator = initIt->interlockName;
+        }
         emit tuneRequested(true);
     } else if (emitTuneOff) {
         qCInfo(lcSmartSdr) << "LAN PTT tune off from"
                            << sock->peerAddress().toString();
+        // C2: clear the recorded initiator. Next TUNE cycle re-records.
+        m_lastTuneInitiator.clear();
         emit tuneRequested(false);
     } else if (emitMoxOn) {
         qCInfo(lcSmartSdr) << "LAN PTT mox on from"
@@ -1056,6 +1053,28 @@ QString SmartSdrApiListener::generateHandle() const
     return QStringLiteral("4%1")
         .arg(r, 7, 16, QLatin1Char('0'))
         .toUpper();
+}
+
+QString SmartSdrApiListener::initiatingAmpName(const QString& wireSource) const
+{
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2:
+    // - source=TUNE: name of the amp that sent `transmit tune on`. Falls
+    //   back to empty if no tune initiator recorded.
+    // - source=MIC : first amp registered with model=PowerGeniusXL (the
+    //   power amp in the chain). Falls back to empty if no PGXL-class amp
+    //   is connected, which is acceptable per the design doc Definitions.
+    if (wireSource == QStringLiteral("TUNE")) {
+        return m_lastTuneInitiator;
+    }
+    if (wireSource == QStringLiteral("MIC")) {
+        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+            if (it->ampModel == QStringLiteral("PowerGeniusXL")
+                && !it->interlockName.isEmpty()) {
+                return it->interlockName;
+            }
+        }
+    }
+    return QString();
 }
 
 }  // namespace NereusSDR

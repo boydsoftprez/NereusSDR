@@ -53,6 +53,50 @@ QByteArray drain(QTcpSocket* sock, int timeoutMs = 200)
     return out;
 }
 
+// Send a canned `interlock create` from `sock`. Returns when the listener
+// has assigned an interlock id (i.e. it->interlockId != 0 inside the
+// listener). The fake amp ALSO needs an `amplifier create` first so the
+// listener tracks ampHandle / ampModel / interlockName correctly.
+void registerFakeAmp(QTcpSocket* sock,
+                     const QString& model,
+                     const QString& interlockName,
+                     const QString& serial = QStringLiteral("TEST-1"))
+{
+    QByteArray cmd;
+    cmd.append(QStringLiteral("C1|amplifier create ip=127.0.0.1 port=9999"
+                              " model=%1 serial_num=%2 ant=ANT1\n")
+                   .arg(model).arg(serial)
+                   .toUtf8());
+    cmd.append(QStringLiteral("C2|interlock create type=AMP name=%1"
+                              " serial=%2 valid_antennas=ANT1\n")
+                   .arg(interlockName).arg(serial)
+                   .toUtf8());
+    sock->write(cmd);
+    sock->flush();
+    // Pump the event loop so the listener processes the lines.
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 200) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+    }
+}
+
+// Find all `S0|interlock state=<state>` frames in a captured byte stream.
+// Returns the body portion after `|` so test assertions can substring-match.
+QStringList findS0InterlockFrames(const QByteArray& bytes,
+                                  const QString& state)
+{
+    QStringList out;
+    const QStringList lines = QString::fromUtf8(bytes).split(QLatin1Char('\n'));
+    for (const QString& line : lines) {
+        if (line.startsWith(QStringLiteral("S0|interlock "))
+            && line.contains(QStringLiteral("state=") + state)) {
+            out << line;
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 class SmartSdrApiListenerPttChainTest : public QObject
@@ -62,6 +106,7 @@ class SmartSdrApiListenerPttChainTest : public QObject
 private slots:
     void smoke_listenerAcceptsClientAndSendsBanner();
     void c1_localClientHandleIsStableAndDistinctFromBanners();
+    void c2_pttRequestedIsOneFrameWithCanonicalFields();
 };
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
@@ -134,6 +179,63 @@ void SmartSdrApiListenerPttChainTest::c1_localClientHandleIsStableAndDistinctFro
              qPrintable(QStringLiteral("client B banner ") + bannerB
                         + QStringLiteral(" collides with local handle ")
                         + localHandle));
+}
+
+// Task 2 (C2): PTT_REQUESTED is exactly one frame broadcast to all
+// subscribers, with canonical fields. Verified against pcap T+167.678
+// from flex-tgxl-direct-CONTROL.pcapng.
+void SmartSdrApiListenerPttChainTest::c2_pttRequestedIsOneFrameWithCanonicalFields()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+    const QString localHandle = listener.localClientHandle();
+
+    // Two amps: TGXL initiates TUNE, PGXL participates.
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);  // banner + initial status
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);  // R-frames for the create commands
+
+    // Simulate TGXL pressing its hardware TUNE button: it would send
+    // `C<n>|transmit tune on`. The listener records TG as the initiator.
+    tgxl.write("C9|transmit tune on\n");
+    tgxl.flush();
+    // Pump the event loop so the listener processes the tune-on line. We
+    // do not strictly need to see the R-frame here; what matters is that
+    // dispatchLine has run before setInterlockTransmitting is called.
+    drain(&tgxl); drain(&pgxl);
+
+    // RadioModel side: setInterlockTransmitting(true, "TUNE").
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+
+    // Both subscribers should see the same one PTT_REQUESTED frame.
+    const QByteArray tgxlBytes = drain(&tgxl);
+    const QByteArray pgxlBytes = drain(&pgxl);
+    const QStringList tgxlFrames =
+        findS0InterlockFrames(tgxlBytes, QStringLiteral("PTT_REQUESTED"));
+    const QStringList pgxlFrames =
+        findS0InterlockFrames(pgxlBytes, QStringLiteral("PTT_REQUESTED"));
+    QCOMPARE(tgxlFrames.size(), 1);
+    QCOMPARE(pgxlFrames.size(), 1);
+
+    const QString frame = tgxlFrames.first();
+    QVERIFY2(frame.contains(QStringLiteral("tx_client_handle=0x") + localHandle),
+             qPrintable(QStringLiteral("expected synthetic tx_client_handle in: ") + frame));
+    QVERIFY2(frame.contains(QStringLiteral("reason=AMP:TG ")),
+             qPrintable(QStringLiteral("expected reason=AMP:TG in: ") + frame));
+    QVERIFY2(frame.contains(QStringLiteral("source=TUNE")),
+             qPrintable(QStringLiteral("expected source=TUNE in: ") + frame));
+    QVERIFY2(frame.contains(QStringLiteral("tx_allowed=1")),
+             qPrintable(QStringLiteral("expected tx_allowed=1 in: ") + frame));
+    QVERIFY2(frame.endsWith(QStringLiteral("amplifier=")),
+             qPrintable(QStringLiteral("expected empty amplifier= in: ") + frame));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)

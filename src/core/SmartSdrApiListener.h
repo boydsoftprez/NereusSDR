@@ -294,9 +294,21 @@ private:
     // handle. NereusSDR equivalent of the SmartSDR-Win PC client's 0x66B137B7
     // in the canonical pcap (flex-tgxl-direct-CONTROL.pcapng @ T+167.678).
     QString m_localClientHandle;
+
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: name= of the amp
+    // that most recently sent `transmit tune on`. Used as reason=AMP:<name>
+    // in the PTT_REQUESTED frame when source=TUNE. Cleared on
+    // tuneRequested(false) or on next setInterlockTransmitting(false).
+    QString m_lastTuneInitiator;
+
     QTimer  m_pttAckTimeout;           // 500 ms per wiki spec
     void    advanceToTransmittingIfReady();
     void    onPttAckTimeout();
+
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: resolve
+    // reason=AMP:<name> for the canonical PTT_REQUESTED frame.
+    // wireSource is "TUNE" or "MIC".
+    QString initiatingAmpName(const QString& wireSource) const;
 };
 
 }  // namespace NereusSDR
