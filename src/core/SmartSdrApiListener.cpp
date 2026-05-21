@@ -362,10 +362,7 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
 
 void SmartSdrApiListener::advanceToTransmittingIfReady()
 {
-    // Called after every `interlock ready` ACK arrives (and once after
-    // PTT_REQUESTED is broadcast, as a no-amps shortcut). Checks if all
-    // registered amps have ackReady=true; if yes, broadcasts TRANSMITTING.
-    if (m_pttPendingSource.isEmpty()) { return; }  // not currently engaging
+    if (m_pttPendingSource.isEmpty()) { return; }
 
     int totalInterlocks = 0;
     int readyCount = 0;
@@ -374,19 +371,29 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
         ++totalInterlocks;
         if (it->ackReady) { ++readyCount; }
     }
-    if (totalInterlocks == 0) { return; }  // no enabled amps to wait for
-    if (readyCount < totalInterlocks) { return; }  // still waiting
+    if (totalInterlocks == 0) { return; }
+    if (readyCount < totalInterlocks) { return; }
 
-    // All registered+enabled amps have ACKed. Stop the timeout, advance to
-    // TRANSMITTING, then clear m_pttPendingSource so a stale ACK doesn't
-    // re-fire this path.
+    // All registered+enabled amps have ACKed. Stop the timeout, capture
+    // the source, then schedule broadcastTransmitting() 30 ms in the
+    // future per pcap T+167.704 -> T+167.734.
     m_pttAckTimeout.stop();
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
 
-    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C3: ONE TRANSMITTING
-    // frame with amplifier=<comma-separated list of every keyed amp's
-    // handle>. Matches pcap T+167.734.
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: 30 ms settle
+    // before TRANSMITTING + RF-flow gate release so TGXL relays have
+    // time to switch to TRANSMIT position before PGXL sees carrier.
+    QTimer::singleShot(30, this, [this, source]() {
+        broadcastTransmitting(source);
+    });
+}
+
+void SmartSdrApiListener::broadcastTransmitting(const QString& source)
+{
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C3 + C4:
+    // single S0|interlock state=TRANSMITTING frame with comma-separated
+    // amplifier list, emitted 30 ms after the last ACK arrives.
     QStringList ampHandles;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
@@ -410,32 +417,20 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
                        << "source=" << source
                        << "amplifier=" << ampHandles.join(QLatin1Char(','))
-                       << "(canonical single-frame; all amps acked)";
+                       << "(post 30 ms settle)";
 
-    // Push `S<client_handle>|amplifier 0x<amp_handle> pttA=1` to every
-    // amp that's subscribed. This is the frame TGXL watches to flip its
-    // on-screen "PTT in" indicator. We push here (at TRANSMITTING) rather
-    // than at PTT_REQUESTED so the pttA=1 push lands in lockstep with
-    // the RF-flow gate release in RadioModel -- carrier flows now too.
-    // Bench-confirmed 2026-05-20: pushing earlier (at txAboutToBegin)
-    // caused TGXL to revert to "no PTT in" because pttA=1 was set ~500 ms
-    // before any RF was on-air.
+    // Per-amp pttA=1 push (unchanged from C3 state; C6 retires it).
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         if (it->ampHandle.isEmpty()) { continue; }
-        const QString body = QStringLiteral("amplifier 0x%1 pttA=1")
-                                 .arg(it->ampHandle);
-        const QByteArray frame =
-            QStringLiteral("S%1|%2\n").arg(it->handle).arg(body).toUtf8();
+        const QString ampBody = QStringLiteral("amplifier 0x%1 pttA=1")
+                                    .arg(it->ampHandle);
+        const QByteArray ampFrame =
+            QStringLiteral("S%1|%2\n").arg(it->handle).arg(ampBody).toUtf8();
         QTcpSocket* sock = it.key();
-        if (sock && sock->isOpen()) { sock->write(frame); }
+        if (sock && sock->isOpen()) { sock->write(ampFrame); }
     }
-    qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=1 to all subscribed amps"
-                       << "(synchronized with TRANSMITTING + RF-flow gate"
-                          " release)";
+    qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=1 to all subscribed amps";
 
-    // Signal RadioModel that the handshake completed successfully so
-    // any TX-gating logic on the RadioModel side (e.g. logging,
-    // metering) knows the amps are now in their TRANSMITTING state.
     emit interlockGranted(source);
 }
 
@@ -515,16 +510,22 @@ void SmartSdrApiListener::onPttAckTimeout()
             << "(" << readyCount << "of" << totalConnectedInterlocks
             << ") -- some amps may have disconnected mid-cycle; granting TX";
     }
-    // Mark every enabled interlock as ready so advanceToTransmitting-
-    // IfReady's totalInterlocks==readyCount check passes. Laggards that
-    // ACK after this point will hit the mismatched-id warning path,
-    // which is fine -- their ACK is informational at that point.
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: timeout path
+    // shares the same 30 ms settle as the success path. Set every
+    // enabled amp's ackReady so the next call to broadcastTransmitting()
+    // has a consistent view. Then capture + clear m_pttPendingSource and
+    // schedule the broadcast.
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
         if (it->interlockId != 0 && it->interlockEnabled) {
             it->ackReady = true;
         }
     }
-    advanceToTransmittingIfReady();
+    if (m_pttPendingSource.isEmpty()) { return; }
+    const QString source = m_pttPendingSource;
+    m_pttPendingSource.clear();
+    QTimer::singleShot(30, this, [this, source]() {
+        broadcastTransmitting(source);
+    });
 }
 
 void SmartSdrApiListener::onNewConnection()

@@ -305,6 +305,13 @@ private:
     void    advanceToTransmittingIfReady();
     void    onPttAckTimeout();
 
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: actual emission
+    // of the canonical TRANSMITTING S-frame + RF-flow gate release.
+    // Wrapped by both the success path (advanceToTransmittingIfReady)
+    // and the timeout path (onPttAckTimeout) inside a 30 ms QTimer to
+    // match pcap T+167.704 -> T+167.734 settle window.
+    void broadcastTransmitting(const QString& source);
+
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2: resolve
     // reason=AMP:<name> for the canonical PTT_REQUESTED frame.
     // wireSource is "TUNE" or "MIC".

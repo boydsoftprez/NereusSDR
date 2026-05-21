@@ -108,6 +108,7 @@ private slots:
     void c1_localClientHandleIsStableAndDistinctFromBanners();
     void c2_pttRequestedIsOneFrameWithCanonicalFields();
     void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
+    void c4_transmittingIsDelayed30msAfterLastAck();
 };
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
@@ -284,6 +285,55 @@ void SmartSdrApiListenerPttChainTest::c3_transmittingIsOneFrameWithCommaSeparate
              qPrintable(frame));
     QVERIFY2(frame.count(QLatin1Char(',')) == 1,
              qPrintable(QStringLiteral("expected exactly one comma in amplifier=, got: ") + frame));
+}
+
+// Task 4 (C4): TRANSMITTING is emitted no sooner than ~30 ms after the
+// last interlock ready ACK arrives. Matches pcap T+167.704 to T+167.734.
+void SmartSdrApiListenerPttChainTest::c4_transmittingIsDelayed30msAfterLastAck()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    tgxl.write("C9|transmit tune on\n");
+    tgxl.flush();
+    drain(&tgxl);
+
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    drain(&tgxl); drain(&pgxl);
+
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+
+    // Both amps ACK back to back.
+    QElapsedTimer timer;
+    timer.start();
+    tgxl.write("C10|interlock ready 1\n");
+    tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n");
+    pgxl.flush();
+
+    // Wait for interlockGranted; record elapsed time from the second ACK
+    // write to the signal fire. Should be >= 25 ms (allow 5 ms jitter
+    // below the nominal 30 ms target).
+    QVERIFY(grantSpy.wait(500));
+    const qint64 elapsedMs = timer.elapsed();
+    QVERIFY2(elapsedMs >= 25,
+             qPrintable(QStringLiteral("expected >= 25 ms settle, got %1 ms")
+                            .arg(elapsedMs)));
+    // Sanity upper bound (the 500 ms ACK timeout would be a regression).
+    QVERIFY2(elapsedMs < 200,
+             qPrintable(QStringLiteral("settle too long: %1 ms").arg(elapsedMs)));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)
