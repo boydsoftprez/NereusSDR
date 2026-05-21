@@ -38,15 +38,21 @@ SmartSdrApiListener::SmartSdrApiListener(QObject* parent)
 
 bool SmartSdrApiListener::start()
 {
+    // AnyIPv4 (not Any) because Qt's default Any binds IPv6-only on macOS,
+    // which silently blocks IPv4 clients like Windows PowerGeniusDesktop.
+    return start(QHostAddress::AnyIPv4, 4992);
+}
+
+bool SmartSdrApiListener::start(QHostAddress bindAddr, quint16 port)
+{
     if (m_server.isListening()) {
         m_server.close();
     }
-    // AnyIPv4 (not Any) because Qt's default Any binds IPv6-only on macOS,
-    // which silently blocks IPv4 clients like Windows PowerGeniusDesktop.
-    bool ok = m_server.listen(QHostAddress::AnyIPv4, 4992);
+    bool ok = m_server.listen(bindAddr, port);
     if (!ok) {
-        qCWarning(lcSmartSdr) << "failed to bind TCP 4992:"
-                               << m_server.errorString();
+        qCWarning(lcSmartSdr) << "failed to bind"
+                               << bindAddr.toString() << ":" << port
+                               << ":" << m_server.errorString();
         return false;
     }
     m_periodicTimer.start();

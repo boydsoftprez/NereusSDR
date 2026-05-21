@@ -5017,6 +5017,12 @@ nereus_add_test(tst_tune_memory_store)
 #   warnAllowsButEmits.
 nereus_add_test(tst_tx_interlock_policy)
 
+# 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8: PTT chain pcap-alignment.
+# Drives SmartSdrApiListener on loopback + ephemeral port and asserts the
+# wire format of the handshake, PTT_REQUESTED, TRANSMITTING, UNKEY_REQUESTED,
+# and READY frames. Companion design doc commit: 559890a2.
+nereus_add_test(tst_smart_sdr_api_listener_ptt_chain)
+
 # Task 88: AmpApplet right-click context menu signal emission.
 # Uses buildContextMenuForTesting() seam (same pattern as Task 38/SMeterWidget).
 # Tests: menuOpensPgxlAdvanced (action 0 -> navigationRequested("pgxlAdvanced"));

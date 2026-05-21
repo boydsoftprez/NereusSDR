@@ -50,9 +50,22 @@ class SmartSdrApiListener : public QObject {
 public:
     explicit SmartSdrApiListener(QObject* parent = nullptr);
 
-    bool start();              // bind to AnyIPv4:4992
+    // Production entry point: binds to AnyIPv4:4992. Equivalent to
+    // start(QHostAddress::AnyIPv4, 4992).
+    bool start();
+
+    // Test seam: bind to a caller-chosen address and port. Used by the
+    // PTT-chain unit tests to drive a listener on loopback + ephemeral port
+    // so multiple test cases can run concurrently and the production 4992
+    // bind is not required. Production code never calls this overload.
+    bool start(QHostAddress bindAddr, quint16 port);
     void stop();
     bool isListening() const;
+
+    // Test-only convenience: return the actual port the server bound to.
+    // When start() picked an ephemeral port (port=0), this is the kernel-
+    // assigned value tests need to know in order to connect a client.
+    quint16 serverPort() const { return m_server.serverPort(); }
 
     // Push current per-slice state into the listener. The listener mirrors
     // these into S<handle>|slice <id> ... and S<handle>|transmit frames for
