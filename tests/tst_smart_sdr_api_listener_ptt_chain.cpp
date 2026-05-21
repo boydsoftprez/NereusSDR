@@ -110,6 +110,7 @@ private slots:
     void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
     void c4_transmittingIsDelayed30msAfterLastAck();
     void c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames();
+    void c6_pttAPushesAreReplacedWithAmplifierStateBroadcasts();
 };
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
@@ -397,6 +398,59 @@ void SmartSdrApiListenerPttChainTest::c5_unkeyEmitsUnkeyRequestedThenTwoReadyFra
              qPrintable(interlockLines[2]));
     QVERIFY2(interlockLines[2].contains(QStringLiteral("reason=AMP:TG")),
              qPrintable(interlockLines[2]));
+}
+
+// Task 6 (C6): on key-down, no S<h>|amplifier 0x<h> pttA=1; instead
+// S0|amplifier 0x<h> state=TRANSMIT_A for each keyed amp. On un-key,
+// no pttA=0; instead state=IDLE. Matches pcap T+167.740 (state=TRANSMIT_A
+// ~5 ms after TRANSMITTING) and T+168.881 (state=IDLE ~5 ms after the
+// second READY).
+void SmartSdrApiListenerPttChainTest::c6_pttAPushesAreReplacedWithAmplifierStateBroadcasts()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    tgxl.write("C9|transmit tune on\n");
+    tgxl.flush();
+    drain(&tgxl);
+
+    // Key-down.
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    drain(&tgxl); drain(&pgxl);
+    tgxl.write("C10|interlock ready 1\n"); tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n"); pgxl.flush();
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+    QVERIFY(grantSpy.wait(500));
+
+    // Capture key-down chatter for ~50 ms past the grant.
+    const QByteArray keyDownBytes = drain(&tgxl, 50);
+    const QString keyDownText = QString::fromUtf8(keyDownBytes);
+    QVERIFY2(!keyDownText.contains(QStringLiteral("pttA=1")),
+             qPrintable(QStringLiteral("expected no pttA=1 push, got: ") + keyDownText));
+    QVERIFY2(keyDownText.contains(QStringLiteral("state=TRANSMIT_A")),
+             qPrintable(QStringLiteral("expected state=TRANSMIT_A broadcast, got: ") + keyDownText));
+
+    // Un-key.
+    drain(&pgxl);  // clear pgxl buffer
+    listener.setInterlockTransmitting(false, QStringLiteral("TUNE"));
+    const QByteArray unKeyBytes = drain(&tgxl, 100);
+    const QString unKeyText = QString::fromUtf8(unKeyBytes);
+    QVERIFY2(!unKeyText.contains(QStringLiteral("pttA=0")),
+             qPrintable(QStringLiteral("expected no pttA=0 push, got: ") + unKeyText));
+    QVERIFY2(unKeyText.contains(QStringLiteral("state=IDLE")),
+             qPrintable(QStringLiteral("expected state=IDLE broadcast, got: ") + unKeyText));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)

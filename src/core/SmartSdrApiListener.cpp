@@ -301,19 +301,10 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             : m_lastTuneInitiator;
         m_pttPendingSource.clear();
 
-        // Preserve the existing per-amp pttA=0 push for now; C6 retires it.
-        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-            if (it->ampHandle.isEmpty()) { continue; }
-            const QString body = QStringLiteral("amplifier 0x%1 pttA=0")
-                                     .arg(it->ampHandle);
-            const QByteArray frame =
-                QStringLiteral("S%1|%2\n").arg(it->handle).arg(body).toUtf8();
-            QTcpSocket* sock = it.key();
-            if (sock && sock->isOpen()) { sock->write(frame); }
-        }
-        qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=0 to all subscribed amps"
-                            << "(retires in C6)";
-
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C6: no explicit
+        // pttA=0 push. Canonical FLEX never sends it. broadcastUnkey-
+        // Sequence handles the state=IDLE broadcast 5 ms after the second
+        // READY frame so it lands at pcap T+168.881 timing.
         broadcastUnkeySequence(initiator);
     }
 }
@@ -377,17 +368,30 @@ void SmartSdrApiListener::broadcastTransmitting(const QString& source)
                        << "amplifier=" << ampHandles.join(QLatin1Char(','))
                        << "(post 30 ms settle)";
 
-    // Per-amp pttA=1 push (unchanged from C3 state; C6 retires it).
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C6: replace the
+    // explicit pttA=1 push with canonical state=TRANSMIT_A broadcasts,
+    // emitted ~5 ms after TRANSMITTING (pcap T+167.734 -> T+167.740).
+    // Per keyed amp, broadcast to every subscriber. Amps derive their
+    // PTT-in display from state= now; pttA= is no longer needed.
+    QStringList keyedHandles;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-        if (it->ampHandle.isEmpty()) { continue; }
-        const QString ampBody = QStringLiteral("amplifier 0x%1 pttA=1")
-                                    .arg(it->ampHandle);
-        const QByteArray ampFrame =
-            QStringLiteral("S%1|%2\n").arg(it->handle).arg(ampBody).toUtf8();
-        QTcpSocket* sock = it.key();
-        if (sock && sock->isOpen()) { sock->write(ampFrame); }
+        if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
+        if (!it->ampHandle.isEmpty()) {
+            keyedHandles << it->ampHandle;
+        }
     }
-    qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=1 to all subscribed amps";
+    QTimer::singleShot(5, this, [this, keyedHandles]() {
+        for (const QString& h : keyedHandles) {
+            const QString body = QStringLiteral("amplifier 0x%1 state=TRANSMIT_A").arg(h);
+            const QByteArray frame =
+                QStringLiteral("S0|%1\n").arg(body).toUtf8();
+            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                QTcpSocket* sock = jt.key();
+                if (sock && sock->isOpen()) { sock->write(frame); }
+            }
+            qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << h << "state=TRANSMIT_A";
+        }
+    });
 
     emit interlockGranted(source);
 }
@@ -437,6 +441,29 @@ void SmartSdrApiListener::broadcastUnkeySequence(const QString& initiatorName)
             .arg(m_localClientHandle).arg(reasonField);
     QTimer::singleShot(3, this, [broadcast, readyNamedBody]() {
         broadcast(readyNamedBody);
+    });
+
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C6: state=IDLE
+    // broadcast ~5 ms after the second READY frame (pcap T+168.881).
+    // One per amp that was keyed.
+    QStringList keyedHandles;
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
+        if (!it->ampHandle.isEmpty()) {
+            keyedHandles << it->ampHandle;
+        }
+    }
+    QTimer::singleShot(8, this, [this, keyedHandles]() {
+        for (const QString& h : keyedHandles) {
+            const QString body = QStringLiteral("amplifier 0x%1 state=IDLE").arg(h);
+            const QByteArray frame =
+                QStringLiteral("S0|%1\n").arg(body).toUtf8();
+            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+                QTcpSocket* sock = jt.key();
+                if (sock && sock->isOpen()) { sock->write(frame); }
+            }
+            qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << h << "state=IDLE";
+        }
     });
 }
 
