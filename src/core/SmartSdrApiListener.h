@@ -316,6 +316,12 @@ private:
     // reason=AMP:<name> for the canonical PTT_REQUESTED frame.
     // wireSource is "TUNE" or "MIC".
     QString initiatingAmpName(const QString& wireSource) const;
+
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C5: canonical
+    // un-key sequence. Emits UNKEY_REQUESTED reason=AMP:<initiator>,
+    // then READY (empty reason) 2 ms later, then READY reason=AMP:<...>
+    // 0.5 ms after that. Matches pcap T+168.874 -> T+168.877.
+    void broadcastUnkeySequence(const QString& initiatorName);
 };
 
 }  // namespace NereusSDR

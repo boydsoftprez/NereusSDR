@@ -109,6 +109,7 @@ private slots:
     void c2_pttRequestedIsOneFrameWithCanonicalFields();
     void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
     void c4_transmittingIsDelayed30msAfterLastAck();
+    void c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames();
 };
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
@@ -334,6 +335,68 @@ void SmartSdrApiListenerPttChainTest::c4_transmittingIsDelayed30msAfterLastAck()
     // Sanity upper bound (the 500 ms ACK timeout would be a regression).
     QVERIFY2(elapsedMs < 200,
              qPrintable(QStringLiteral("settle too long: %1 ms").arg(elapsedMs)));
+}
+
+// Task 5 (C5): unkey emits UNKEY_REQUESTED, then READY (empty reason),
+// then READY (reason=AMP:<initiator>). Matches pcap T+168.874 to T+168.877.
+void SmartSdrApiListenerPttChainTest::c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    tgxl.write("C9|transmit tune on\n");
+    tgxl.flush();
+    drain(&tgxl);
+
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    drain(&tgxl); drain(&pgxl);
+    tgxl.write("C10|interlock ready 1\n"); tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n"); pgxl.flush();
+    QSignalSpy grantSpy(&listener, &SmartSdrApiListener::interlockGranted);
+    QVERIFY(grantSpy.wait(500));
+    drain(&tgxl); drain(&pgxl);  // TRANSMITTING + pttA=1 chatter
+
+    // Trigger un-key.
+    listener.setInterlockTransmitting(false, QStringLiteral("TUNE"));
+
+    // Capture frames across ~50 ms so the 2 ms + 0.5 ms gaps land.
+    const QByteArray bytes = drain(&tgxl, 100);
+    const QStringList lines = QString::fromUtf8(bytes).split(QLatin1Char('\n'));
+
+    // Filter to the S0|interlock lines in arrival order.
+    QStringList interlockLines;
+    for (const QString& line : lines) {
+        if (line.startsWith(QStringLiteral("S0|interlock"))) {
+            interlockLines << line;
+        }
+    }
+    QVERIFY2(interlockLines.size() >= 3,
+             qPrintable(QStringLiteral("expected at least 3 interlock lines, got: ")
+                            + interlockLines.join(QStringLiteral(" || "))));
+    QVERIFY2(interlockLines[0].contains(QStringLiteral("state=UNKEY_REQUESTED")),
+             qPrintable(interlockLines[0]));
+    QVERIFY2(interlockLines[0].contains(QStringLiteral("reason=AMP:TG")),
+             qPrintable(interlockLines[0]));
+    QVERIFY2(interlockLines[1].contains(QStringLiteral("state=READY")),
+             qPrintable(interlockLines[1]));
+    QVERIFY2(interlockLines[1].contains(QStringLiteral(" reason= ")),
+             qPrintable(QStringLiteral("expected empty reason in first READY: ") + interlockLines[1]));
+    QVERIFY2(interlockLines[2].contains(QStringLiteral("state=READY")),
+             qPrintable(interlockLines[2]));
+    QVERIFY2(interlockLines[2].contains(QStringLiteral("reason=AMP:TG")),
+             qPrintable(interlockLines[2]));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)

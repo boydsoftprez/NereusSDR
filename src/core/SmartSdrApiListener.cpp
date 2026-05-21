@@ -291,18 +291,17 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             emit interlockGranted(wireSource);
         }
     } else {
-        // ── Release path: stop the ACK wait, then broadcast READY.
-        // Per wiki: when TX drops, the radio emits S0|interlock
-        // state=READY reason=AMP:<name> tx_allowed=1 once per amp.
-        // No more amplifier= field on the READY (pcap T=543.292 shows
-        // amplifier= empty on the unkey transition).
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C5: canonical
+        // un-key sequence (UNKEY_REQUESTED then 2-frame READY pair). The
+        // initiator name is the one recorded for the in-flight TX (TUNE
+        // path) or the first PGXL-class amp's name (MIC/MOX path).
         m_pttAckTimeout.stop();
+        const QString initiator = m_lastTuneInitiator.isEmpty()
+            ? initiatingAmpName(QStringLiteral("MIC"))
+            : m_lastTuneInitiator;
         m_pttPendingSource.clear();
 
-        // Mirror the amplifier pttA=0 push so each amp's UI flips back
-        // to "no PTT in" cleanly. Without this the TGXL would latch
-        // pttA=1 on its display until the next key-up cycle pushed a
-        // fresh frame.
+        // Preserve the existing per-amp pttA=0 push for now; C6 retires it.
         for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
             if (it->ampHandle.isEmpty()) { continue; }
             const QString body = QStringLiteral("amplifier 0x%1 pttA=0")
@@ -312,51 +311,10 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             QTcpSocket* sock = it.key();
             if (sock && sock->isOpen()) { sock->write(frame); }
         }
-        qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=0 to all subscribed amps";
+        qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=0 to all subscribed amps"
+                            << "(retires in C6)";
 
-        bool anyInterlockedAmp = false;
-        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
-            if (it->interlockId == 0) { continue; }
-            anyInterlockedAmp = true;
-            // Pcap T=543.292: S0|interlock tx_client_handle=0x4C70DC9B
-            //   state=UNKEY_REQUESTED reason=AMP:TG source= tx_allowed=1
-            //   amplifier=
-            // Then T=543.292 also: state=READY reason= source= ... amplifier=
-            // So READY has empty reason in real FLEX too. We keep reason=AMP:
-            // for one-amp consumers (wiki spec) but drop it for strict pcap
-            // alignment if needed -- leave AMP:<name> for now.
-            // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1: same
-            // synthetic handle on the un-key READY frames. (C5 will
-            // rewrite this branch to UNKEY_REQUESTED + 2-frame READY.)
-            const QString body =
-                QStringLiteral("interlock tx_client_handle=0x%1"
-                               " state=READY reason=AMP:%2"
-                               " source= tx_allowed=1 amplifier=")
-                    .arg(m_localClientHandle).arg(it->interlockName);
-            const QByteArray frame =
-                QStringLiteral("S0|%1\n").arg(body).toUtf8();
-            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-                QTcpSocket* sock = jt.key();
-                if (sock && sock->isOpen()) { sock->write(frame); }
-            }
-            qCInfo(lcSmartSdr) << "TX S0|interlock state=READY"
-                               << "reason=AMP:" << it->interlockName;
-        }
-        if (!anyInterlockedAmp) {
-            // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1.
-            const QString body =
-                QStringLiteral("interlock tx_client_handle=0x%1"
-                               " state=READY reason= source= tx_allowed=1"
-                               " amplifier=")
-                    .arg(m_localClientHandle);
-            const QByteArray frame =
-                QStringLiteral("S0|%1\n").arg(body).toUtf8();
-            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-                QTcpSocket* sock = jt.key();
-                if (sock && sock->isOpen()) { sock->write(frame); }
-            }
-            qCInfo(lcSmartSdr) << "TX S0|interlock state=READY (no amps)";
-        }
+        broadcastUnkeySequence(initiator);
     }
 }
 
@@ -432,6 +390,54 @@ void SmartSdrApiListener::broadcastTransmitting(const QString& source)
     qCInfo(lcSmartSdr) << "TX S<h>|amplifier pttA=1 to all subscribed amps";
 
     emit interlockGranted(source);
+}
+
+void SmartSdrApiListener::broadcastUnkeySequence(const QString& initiatorName)
+{
+    const QString reasonField = initiatorName.isEmpty()
+        ? QString()
+        : QStringLiteral("AMP:") + initiatorName;
+
+    auto broadcast = [this](const QString& body) {
+        const QByteArray frame =
+            QStringLiteral("S0|%1\n").arg(body).toUtf8();
+        for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+            QTcpSocket* sock = jt.key();
+            if (sock && sock->isOpen()) { sock->write(frame); }
+        }
+    };
+
+    // Frame 1: UNKEY_REQUESTED reason=AMP:<initiator>.
+    const QString unkeyBody =
+        QStringLiteral("interlock tx_client_handle=0x%1"
+                       " state=UNKEY_REQUESTED reason=%2"
+                       " source= tx_allowed=1 amplifier=")
+            .arg(m_localClientHandle).arg(reasonField);
+    broadcast(unkeyBody);
+    qCInfo(lcSmartSdr) << "TX S0|interlock state=UNKEY_REQUESTED"
+                       << "reason=" << reasonField;
+
+    // Frame 2: READY (empty reason), 2 ms later.
+    const QString readyEmptyBody =
+        QStringLiteral("interlock tx_client_handle=0x%1"
+                       " state=READY reason= source= tx_allowed=1"
+                       " amplifier=")
+            .arg(m_localClientHandle);
+    QTimer::singleShot(2, this, [broadcast, readyEmptyBody]() {
+        broadcast(readyEmptyBody);
+    });
+
+    // Frame 3: READY reason=AMP:<initiator>, ~0.5 ms after frame 2 (round
+    // up to 3 ms total post-UNKEY since QTimer resolution on most
+    // platforms is 1 ms minimum).
+    const QString readyNamedBody =
+        QStringLiteral("interlock tx_client_handle=0x%1"
+                       " state=READY reason=%2 source= tx_allowed=1"
+                       " amplifier=")
+            .arg(m_localClientHandle).arg(reasonField);
+    QTimer::singleShot(3, this, [broadcast, readyNamedBody]() {
+        broadcast(readyNamedBody);
+    });
 }
 
 void SmartSdrApiListener::onPttAckTimeout()
