@@ -963,11 +963,27 @@ RadioModel::RadioModel(QObject* parent)
     // serves slice + transmit S-frames, and forwards LAN PTT requests
     // (`transmit tune on/off`) to RadioModel::setTune so a TGXL hardware
     // TUNE press actually engages the local CW tune carrier.
+    //
+    // Gated by the 4O3A master toggle (AppSettings key FourO3A_Enabled).
+    // Default OFF on first run so the TCP 4992 port isn't bound until the
+    // operator explicitly opts in via Setup -> CAT & Network -> 4O3A.
+    // setFourO3AEnabled(bool) provides the live start/stop path used by
+    // the General tab's master toggle.
     m_smartSdrListener = new SmartSdrApiListener(this);
-    if (m_smartSdrListener->start()) {
-        qCInfo(lcConnection) << "SmartSDR API listener started on TCP 4992";
+    const bool fourO3AEnabled =
+        AppSettings::instance().value(QStringLiteral("FourO3A_Enabled"),
+                                      QStringLiteral("False"))
+            .toString() == QStringLiteral("True");
+    if (fourO3AEnabled) {
+        if (m_smartSdrListener->start()) {
+            qCInfo(lcConnection) << "SmartSDR API listener started on TCP 4992";
+        } else {
+            qCWarning(lcConnection) << "SmartSDR API listener failed to bind TCP 4992";
+        }
     } else {
-        qCWarning(lcConnection) << "SmartSDR API listener failed to bind TCP 4992";
+        qCInfo(lcConnection) << "SmartSDR API listener NOT started"
+                              << "(FourO3A_Enabled=False; toggle on via Setup"
+                              << "-> CAT & Network -> 4O3A)";
     }
     // LAN PTT wiring: TGXL emits `C<seq>|transmit tune on` when its
     // hardware TUNE button (or its native app TUNE button) is pressed; the
@@ -2205,6 +2221,56 @@ void RadioModel::setStepAttController(StepAttenuatorController* c)
     // false unconditionally per Phase 3A).
     m_stepAttController = c;
     m_transmitModel.setStepAttenuatorController(c);
+}
+
+// ── 4O3A master toggle (Settings -> CAT & Network -> 4O3A General tab) ──────
+//
+// Persists to AppSettings key "FourO3A_Enabled" (True / False string,
+// matching the rest of NereusSDR's boolean convention).  Default OFF on
+// first run so the TCP 4992 port is not bound until the operator opts in.
+// Live-applies: starts/stops the SmartSdrApiListener immediately so the
+// UI toggle doesn't require an app restart.
+void RadioModel::setFourO3AEnabled(bool enabled)
+{
+    auto& s = AppSettings::instance();
+    const bool current = s.value(QStringLiteral("FourO3A_Enabled"),
+                                 QStringLiteral("False"))
+        .toString() == QStringLiteral("True");
+    if (current == enabled) {
+        return;  // idempotent
+    }
+    s.setValue(QStringLiteral("FourO3A_Enabled"),
+               enabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.save();
+
+    if (!m_smartSdrListener) {
+        return;  // ctor should always create it; defensive null guard
+    }
+
+    if (enabled) {
+        if (!m_smartSdrListener->isListening()) {
+            if (m_smartSdrListener->start()) {
+                qCInfo(lcConnection) << "4O3A enabled: SmartSDR API listener"
+                                      << "started on TCP 4992";
+            } else {
+                qCWarning(lcConnection) << "4O3A enabled: SmartSDR API listener"
+                                         << "failed to bind TCP 4992";
+            }
+        }
+    } else {
+        if (m_smartSdrListener->isListening()) {
+            m_smartSdrListener->stop();
+            qCInfo(lcConnection) << "4O3A disabled: SmartSDR API listener stopped";
+        }
+    }
+}
+
+bool RadioModel::fourO3AEnabled() const
+{
+    return AppSettings::instance()
+        .value(QStringLiteral("FourO3A_Enabled"),
+               QStringLiteral("False"))
+        .toString() == QStringLiteral("True");
 }
 
 const BoardCapabilities& RadioModel::boardCapabilities() const

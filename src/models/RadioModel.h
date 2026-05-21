@@ -499,6 +499,20 @@ public:
     // Used by MainWindow to push slice/transmit state so PGXL/TGXL pull the
     // current band/freq via the SmartSDR API rather than from a stale cache.
     class SmartSdrApiListener* smartSdrListener() { return m_smartSdrListener; }
+
+    // Live toggle for the 4O3A master switch (Settings -> CAT & Network ->
+    // 4O3A -> General tab).  Starts or stops the TCP 4992 listener
+    // without requiring an app restart.  Persisted automatically via
+    // AppSettings key "FourO3A_Enabled".  Default OFF on first run.
+    //
+    // When false: TCP 4992 not bound, PGXL/TGXL auto-connect skipped,
+    // and the detail tabs (PowerGenius XL / Tuner Genius XL / Diagnostics)
+    // are disabled in the Setup UI.
+    //
+    // When true: listener starts (if not already running), AppSettings
+    // persisted, FourO3APage updates its enabled state.
+    void setFourO3AEnabled(bool enabled);
+    bool fourO3AEnabled() const;
     bool hasAmplifier() const { return m_hasAmplifier; }
     bool ampOperate()  const  { return m_ampOperate; }
 
