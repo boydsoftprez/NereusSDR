@@ -107,6 +107,7 @@ private slots:
     void smoke_listenerAcceptsClientAndSendsBanner();
     void c1_localClientHandleIsStableAndDistinctFromBanners();
     void c2_pttRequestedIsOneFrameWithCanonicalFields();
+    void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
 };
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
@@ -236,6 +237,53 @@ void SmartSdrApiListenerPttChainTest::c2_pttRequestedIsOneFrameWithCanonicalFiel
              qPrintable(QStringLiteral("expected tx_allowed=1 in: ") + frame));
     QVERIFY2(frame.endsWith(QStringLiteral("amplifier=")),
              qPrintable(QStringLiteral("expected empty amplifier= in: ") + frame));
+}
+
+// Task 3 (C3): TRANSMITTING is exactly one frame with
+// amplifier=0x<h1>,0x<h2>,... (comma-separated list of every keyed amp).
+// Matches pcap T+167.734.
+void SmartSdrApiListenerPttChainTest::c3_transmittingIsOneFrameWithCommaSeparatedAmpList()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    tgxl.write("C9|transmit tune on\n");
+    tgxl.flush();
+    drain(&tgxl);
+
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+    drain(&tgxl); drain(&pgxl);  // PTT_REQUESTED frames
+
+    // Both amps ACK. The interlock ids are 1 and 2 by registration order.
+    tgxl.write("C10|interlock ready 1\n");
+    tgxl.flush();
+    pgxl.write("C10|interlock ready 2\n");
+    pgxl.flush();
+
+    const QByteArray tgxlBytes = drain(&tgxl, 300);
+    const QStringList frames =
+        findS0InterlockFrames(tgxlBytes, QStringLiteral("TRANSMITTING"));
+    QCOMPARE(frames.size(), 1);
+
+    const QString frame = frames.first();
+    QVERIFY2(frame.contains(QStringLiteral("source=TUNE")),
+             qPrintable(frame));
+    QVERIFY2(frame.contains(QStringLiteral("amplifier=0x")),
+             qPrintable(frame));
+    QVERIFY2(frame.count(QLatin1Char(',')) == 1,
+             qPrintable(QStringLiteral("expected exactly one comma in amplifier=, got: ") + frame));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)

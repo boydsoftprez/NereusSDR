@@ -384,31 +384,33 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
 
-    // One TRANSMITTING S-frame per enabled amp, matching the pcap
-    // PTT_REQUESTED format exactly (non-zero tx_client_handle, empty
-    // reason). Disabled-interlock amps don't get one (they've stepped
-    // out of the chain).
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C3: ONE TRANSMITTING
+    // frame with amplifier=<comma-separated list of every keyed amp's
+    // handle>. Matches pcap T+167.734.
+    QStringList ampHandles;
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
-        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1:
-        // tx_client_handle is the synthetic local-client handle. (C3
-        // will collapse this loop to a single frame.)
-        const QString body =
-            QStringLiteral("interlock tx_client_handle=0x%1"
-                           " state=TRANSMITTING reason= source=%2"
-                           " tx_allowed=1 amplifier=0x%3")
-                .arg(m_localClientHandle).arg(source).arg(it->ampHandle);
-        const QByteArray frame =
-            QStringLiteral("S0|%1\n").arg(body).toUtf8();
-        for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-            QTcpSocket* sock = jt.key();
-            if (sock && sock->isOpen()) { sock->write(frame); }
+        if (!it->ampHandle.isEmpty()) {
+            ampHandles << (QStringLiteral("0x") + it->ampHandle);
         }
-        qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
-                           << "source=" << source
-                           << "amplifier=0x" << it->ampHandle
-                           << "(all" << totalInterlocks << "amps acked)";
     }
+    const QString body =
+        QStringLiteral("interlock tx_client_handle=0x%1"
+                       " state=TRANSMITTING reason= source=%2"
+                       " tx_allowed=1 amplifier=%3")
+            .arg(m_localClientHandle)
+            .arg(source)
+            .arg(ampHandles.join(QLatin1Char(',')));
+    const QByteArray frame =
+        QStringLiteral("S0|%1\n").arg(body).toUtf8();
+    for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+        QTcpSocket* sock = jt.key();
+        if (sock && sock->isOpen()) { sock->write(frame); }
+    }
+    qCInfo(lcSmartSdr) << "TX S0|interlock state=TRANSMITTING"
+                       << "source=" << source
+                       << "amplifier=" << ampHandles.join(QLatin1Char(','))
+                       << "(canonical single-frame; all amps acked)";
 
     // Push `S<client_handle>|amplifier 0x<amp_handle> pttA=1` to every
     // amp that's subscribed. This is the frame TGXL watches to flip its
