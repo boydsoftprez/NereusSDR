@@ -121,6 +121,11 @@ public:
     // or an empty string if no client has registered that handle.
     QString ampModelForHandle(const QString& ampHandle) const;
 
+    // Test-only accessor for the synthetic local-client handle (C1).
+    // Production code does not call this; the value is consumed internally
+    // by every interlock S-frame builder.
+    QString localClientHandle() const { return m_localClientHandle; }
+
 signals:
     void clientConnected(const QString& peerHost, quint16 peerPort);
     void lineReceived(const QString& peerHost, quint16 peerPort,
@@ -281,6 +286,14 @@ private:
     // the source (MIC / TUNE) the requester used so we can resume
     // TRANSMITTING with the same value once all amps are ready.
     QString m_pttPendingSource;        // empty when not waiting for ACKs
+
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1: synthetic local-client
+    // handle used as tx_client_handle= in every PTT_REQUESTED / TRANSMITTING /
+    // UNKEY_REQUESTED / READY S-frame. Generated once per start() so it is
+    // stable for the listener's lifetime and distinct from every amp's banner
+    // handle. NereusSDR equivalent of the SmartSDR-Win PC client's 0x66B137B7
+    // in the canonical pcap (flex-tgxl-direct-CONTROL.pcapng @ T+167.678).
+    QString m_localClientHandle;
     QTimer  m_pttAckTimeout;           // 500 ms per wiki spec
     void    advanceToTransmittingIfReady();
     void    onPttAckTimeout();

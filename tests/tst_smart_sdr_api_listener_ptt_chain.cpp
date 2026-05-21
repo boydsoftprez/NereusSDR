@@ -61,6 +61,7 @@ class SmartSdrApiListenerPttChainTest : public QObject
 
 private slots:
     void smoke_listenerAcceptsClientAndSendsBanner();
+    void c1_localClientHandleIsStableAndDistinctFromBanners();
 };
 
 // Task 0 smoke test: prove the harness machinery works end-to-end.
@@ -84,6 +85,55 @@ void SmartSdrApiListenerPttChainTest::smoke_listenerAcceptsClientAndSendsBanner(
              qPrintable(QStringLiteral("expected V<ver>\\n prefix, got: ") + text));
     QVERIFY2(text.contains(QStringLiteral("\nH")),
              qPrintable(QStringLiteral("expected H<handle>\\n line, got: ") + text));
+}
+
+// Task 1 (C1): After start(), the listener owns a synthetic
+// local-client handle that (a) is 8-hex, (b) is the same value for the
+// lifetime of the listener, and (c) is distinct from any client's banner
+// handle assigned at accept time.
+void SmartSdrApiListenerPttChainTest::c1_localClientHandleIsStableAndDistinctFromBanners()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+
+    const QString localHandle = listener.localClientHandle();
+    QCOMPARE(localHandle.size(), 8);
+    // Hex digits only.
+    for (QChar c : localHandle) {
+        QVERIFY2(c.isDigit() || (c.toLatin1() >= 'A' && c.toLatin1() <= 'F'),
+                 qPrintable(QStringLiteral("non-hex character in handle: ") + localHandle));
+    }
+    // Stable across reads.
+    QCOMPARE(listener.localClientHandle(), localHandle);
+
+    // Connect two clients and confirm the banner-assigned handles differ
+    // from the local-client handle.
+    QTcpSocket a, b;
+    a.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(a.waitForConnected(1000));
+    b.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(b.waitForConnected(1000));
+
+    auto bannerOf = [](const QByteArray& bytes) -> QString {
+        const QString text = QString::fromUtf8(bytes);
+        const int hIdx = text.indexOf(QStringLiteral("\nH"));
+        if (hIdx < 0) { return QString(); }
+        const int nlIdx = text.indexOf(QLatin1Char('\n'), hIdx + 2);
+        return text.mid(hIdx + 2, (nlIdx - hIdx - 2));
+    };
+
+    const QString bannerA = bannerOf(drain(&a));
+    const QString bannerB = bannerOf(drain(&b));
+    QVERIFY(!bannerA.isEmpty());
+    QVERIFY(!bannerB.isEmpty());
+    QVERIFY2(bannerA != localHandle,
+             qPrintable(QStringLiteral("client A banner ") + bannerA
+                        + QStringLiteral(" collides with local handle ")
+                        + localHandle));
+    QVERIFY2(bannerB != localHandle,
+             qPrintable(QStringLiteral("client B banner ") + bannerB
+                        + QStringLiteral(" collides with local handle ")
+                        + localHandle));
 }
 
 QTEST_MAIN(SmartSdrApiListenerPttChainTest)

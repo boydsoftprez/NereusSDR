@@ -55,6 +55,11 @@ bool SmartSdrApiListener::start(QHostAddress bindAddr, quint16 port)
                                << ":" << m_server.errorString();
         return false;
     }
+    // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1: generate synthetic
+    // local-client handle once per listener boot. Stable for the lifetime
+    // of this start() call. Consumed by every interlock S-frame builder.
+    m_localClientHandle = generateHandle();
+    qCInfo(lcSmartSdr) << "local-client handle:" << m_localClientHandle;
     m_periodicTimer.start();
     qCInfo(lcSmartSdr) << "SmartSDR API listener listening on"
                        << m_server.serverAddress().toString()
@@ -216,11 +221,15 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         if (anyInterlockedAmp) {
             for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
                 if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
+                // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1:
+                // tx_client_handle is the synthetic local-client handle,
+                // not the amp's own banner. (C2 will collapse this loop
+                // to a single frame.)
                 const QString body =
                     QStringLiteral("interlock tx_client_handle=0x%1"
                                    " state=PTT_REQUESTED reason="
                                    " source=%2 tx_allowed=1 amplifier=0x%3")
-                        .arg(it->handle)        // non-zero per pcap
+                        .arg(m_localClientHandle)
                         .arg(wireSource)
                         .arg(it->ampHandle);
                 const QByteArray frame =
@@ -258,10 +267,14 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             // with a single S0|interlock so any SmartSDR-API client (e.g.
             // a status-display UI) sees the radio is keyed. amplifier=
             // stays empty per wiki when no amp is in the chain.
+            // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1: use the
+            // synthetic local-client handle even on the no-amps fallback
+            // path. (C3 will keep this as a single frame.)
             const QString body =
-                QStringLiteral("interlock tx_client_handle=0x00000000"
+                QStringLiteral("interlock tx_client_handle=0x%1"
                                " state=TRANSMITTING reason="
-                               " source=%1 tx_allowed=1 amplifier=")
+                               " source=%2 tx_allowed=1 amplifier=")
+                    .arg(m_localClientHandle)
                     .arg(wireSource);
             const QByteArray frame =
                 QStringLiteral("S0|%1\n").arg(body).toUtf8();
@@ -326,11 +339,14 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
             // So READY has empty reason in real FLEX too. We keep reason=AMP:
             // for one-amp consumers (wiki spec) but drop it for strict pcap
             // alignment if needed -- leave AMP:<name> for now.
+            // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1: same
+            // synthetic handle on the un-key READY frames. (C5 will
+            // rewrite this branch to UNKEY_REQUESTED + 2-frame READY.)
             const QString body =
                 QStringLiteral("interlock tx_client_handle=0x%1"
                                " state=READY reason=AMP:%2"
                                " source= tx_allowed=1 amplifier=")
-                    .arg(it->handle).arg(it->interlockName);
+                    .arg(m_localClientHandle).arg(it->interlockName);
             const QByteArray frame =
                 QStringLiteral("S0|%1\n").arg(body).toUtf8();
             for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
@@ -341,10 +357,12 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
                                << "reason=AMP:" << it->interlockName;
         }
         if (!anyInterlockedAmp) {
+            // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1.
             const QString body =
-                QStringLiteral("interlock tx_client_handle=0x00000000"
+                QStringLiteral("interlock tx_client_handle=0x%1"
                                " state=READY reason= source= tx_allowed=1"
-                               " amplifier=");
+                               " amplifier=")
+                    .arg(m_localClientHandle);
             const QByteArray frame =
                 QStringLiteral("S0|%1\n").arg(body).toUtf8();
             for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
@@ -386,11 +404,14 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     // out of the chain).
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         if (it->interlockId == 0 || !it->interlockEnabled) { continue; }
+        // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C1:
+        // tx_client_handle is the synthetic local-client handle. (C3
+        // will collapse this loop to a single frame.)
         const QString body =
             QStringLiteral("interlock tx_client_handle=0x%1"
                            " state=TRANSMITTING reason= source=%2"
                            " tx_allowed=1 amplifier=0x%3")
-                .arg(it->handle).arg(source).arg(it->ampHandle);
+                .arg(m_localClientHandle).arg(source).arg(it->ampHandle);
         const QByteArray frame =
             QStringLiteral("S0|%1\n").arg(body).toUtf8();
         for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
