@@ -544,6 +544,49 @@ private slots:
         QCOMPARE(int(cfg.cntrl1),  0x08);
     }
 
+    // ANAN_G2E (HermesC10) routes to Hermes-class branch — same 4-DDC config
+    // as HERMES / ANAN10 / ANAN100.
+    //
+    // From Thetis console.cs:8386-8389 [v2.10.3.15] //N1GP G2E added:
+    //   case HPSDRModel.HERMES:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN10:
+    //   case HPSDRModel.ANAN100:
+    //       P1_rxcount = 4;  nddc = 4;
+    //
+    // PS-on MOX → identical wire bytes to ANAN100 (p1DdcConfig=6, cntrl1=4,
+    // rates=ps_rate, p1RxCount=4, nDdc=4).
+    void p1_standard_ananG2e_psOn_mox_routesToHermesClass() {
+        P1CodecStandard codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN_G2E,
+            /*psEnabled=*/true, /*diversityEnabled=*/false, /*moxState=*/true,
+            /*rx1Rate=*/48000, /*rx2Rate=*/0, /*rx2Enabled=*/false,
+            /*adcCtrl1=*/0x00, /*adcCtrl2=*/0x00);
+        QCOMPARE(int(cfg.p1DdcConfig), 6);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.syncEnable), int(DDC1));
+        QCOMPARE(int(cfg.rate[0]), kPsRate);
+        QCOMPARE(int(cfg.rate[1]), kPsRate);
+        QCOMPARE(int(cfg.cntrl1),  4);
+        QCOMPARE(cfg.p1RxCount, 4);
+        QCOMPARE(cfg.nDdc,      4);
+    }
+
+    // ANAN_G2E PS-off MOX → p1DdcConfig=4 (same as HERMES PS-off MOX).
+    // From Thetis console.cs:8413-8426 [v2.10.3.15] //N1GP G2E added
+    void p1_standard_ananG2e_psOff_mox() {
+        P1CodecStandard codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN_G2E,
+            /*psEnabled=*/false, /*diversityEnabled=*/false, /*moxState=*/true,
+            /*rx1Rate=*/48000, /*rx2Rate=*/0, /*rx2Enabled=*/false,
+            /*adcCtrl1=*/0x00, /*adcCtrl2=*/0x00);
+        QCOMPARE(int(cfg.p1DdcConfig), 4);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.cntrl1),  0);
+    }
+
     // ====================================================================
     // P1CodecStandard — sentinel: HPSDR (Atlas) returns all zeros
     //
