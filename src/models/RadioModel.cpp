@@ -495,6 +495,10 @@ double scalePaTemperatureCelsius(quint16 /*adcRaw*/, HPSDRModel /*model*/)
     return 0.0;
 }
 
+// scaleExciterPowerMw() is the public free function in PaTelemetryScaling.h/cpp
+// (lifted there for testability — Phase F1 of the ANAN-G2E port).
+// No local copy needed here; PaTelemetryScaling.h is already included above.
+
 } // anonymous namespace
 
 RadioModel::RadioModel(QObject* parent)
@@ -6061,7 +6065,14 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // RadioStatusPage don't show "exciter = 942 mW" when 942 is the
     // raw temp ADC count.  Other boards keep the existing semantic.
     if (model != HPSDRModel::HERMESLITE) {
-        m_radioStatus.setExciterPowerMw(inTx ? static_cast<int>(exciterRaw) : 0);
+        // From Thetis console.cs:26001-26013 [v2.10.3.15] — per-model exciter scaling.
+        // ANAN_G2E and OrionMKII family use computeOrionMkIIExciterPower(); others use
+        // computeExciterPower(). Logic lives in PaTelemetryScaling::scaleExciterPowerMw().
+        // Inline tags preserved verbatim from upstream:
+        //   console.cs:26004  case HPSDRModel.ANAN_G2E: //N1GP G2E added
+        //   console.cs:26010  case HPSDRModel.REDPITAYA: //DH1KLM
+        m_radioStatus.setExciterPowerMw(
+            inTx ? static_cast<int>(scaleExciterPowerMw(model, exciterRaw)) : 0);
     } else if (!inTx) {
         m_radioStatus.setExciterPowerMw(0);
     }
