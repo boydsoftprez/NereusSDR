@@ -121,6 +121,7 @@ const char* modelEnumName(HPSDRModel m) noexcept
         case HPSDRModel::ANVELINAPRO3: return "ANVELINAPRO3";
         case HPSDRModel::HERMESLITE:   return "HERMESLITE";
         case HPSDRModel::REDPITAYA:    return "REDPITAYA";
+        case HPSDRModel::ANAN_G2E:     return "ANAN_G2E";  // //N1GP G2E added
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return "Unknown";
     }
@@ -140,10 +141,12 @@ QString defaultProfileNameForModel(HPSDRModel model)
 // Reverse-map a "Default - <model>" name back to the corresponding
 // HPSDRModel. For any name that doesn't match the prefix, returns FIRST
 // (which the Bypass path handles via its own branch in seedFactoryProfile).
+// From Thetis setup.cs:23394 [v2.10.3.15] — iterate n < (int)HPSDRModel.LAST
+// so future SKU additions auto-include without updating this loop bound.
 HPSDRModel modelFromFactoryName(const QString& name) noexcept
 {
     for (int n = static_cast<int>(HPSDRModel::HPSDR);
-         n <= static_cast<int>(HPSDRModel::REDPITAYA); ++n) {
+         n < static_cast<int>(HPSDRModel::LAST); ++n) {
         const HPSDRModel m = static_cast<HPSDRModel>(n);
         if (name == QStringLiteral("Default - ") +
                     QString::fromLatin1(modelEnumName(m))) {
@@ -563,15 +566,15 @@ void PaProfileManager::seedFactoryProfile(const QString& name,
 
 QStringList PaProfileManager::factoryProfileNames()
 {
-    // From Thetis setup.cs:23306-23316 [v2.10.3.13] — initPAProfiles loops
+    // From Thetis setup.cs:23394 [v2.10.3.15] — initPAProfiles loops
     // for (int n = 0; n < (int)HPSDRModel.LAST; n++) and adds one
     // "Default - <model>" per iteration, then appends one "Bypass" entry.
-    // NereusSDR walks the same enum range (HPSDR..REDPITAYA = 0..15) and
-    // appends Bypass at the end — manifest order matches Thetis combo
-    // order.
+    // NereusSDR walks the same enum range (HPSDR=0 .. LAST exclusive) and
+    // appends Bypass at the end — manifest order matches Thetis combo order.
+    // Using < LAST (not <= REDPITAYA) means future SKU additions auto-include.
     QStringList out;
     for (int n = static_cast<int>(HPSDRModel::HPSDR);
-         n <= static_cast<int>(HPSDRModel::REDPITAYA); ++n) {
+         n < static_cast<int>(HPSDRModel::LAST); ++n) {
         const HPSDRModel m = static_cast<HPSDRModel>(n);
         out.append(QStringLiteral("Default - ") +
                    QString::fromLatin1(modelEnumName(m)));
