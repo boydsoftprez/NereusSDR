@@ -1169,6 +1169,28 @@ RadioModel::RadioModel(QObject* parent)
                 : QStringLiteral("MOX");
             m_smartSdrListener->setInterlockTransmitting(true, source);
         });
+        // 2026-05-22 bench-fix: broadcast UNKEY_REQUESTED on txAboutToEnd
+        // (phase 1 of TX->RX teardown, BEFORE the WDSP TXA drain) rather
+        // than on moxStateChanged(false) (phase 4, AFTER the drain has
+        // already silenced the carrier). Previously the carrier dropped
+        // before UNKEY_REQUESTED reached the amps, leaving PGXL in
+        // state=TRANSMIT_A with no input RF, which it interpreted as a
+        // fault and briefly flashed high SWR. Canonical pcap (T+168.874)
+        // shows FLEX broadcasts UNKEY_REQUESTED first, then the carrier
+        // drops; amps process the un-key announcement before seeing the
+        // carrier vanish. Bench-confirmed 2026-05-22: JJ observed the
+        // exact high-SWR flash on un-key under the prior moxStateChanged
+        // ordering.
+        connect(m_moxController, &MoxController::txAboutToEnd,
+                this, [this]() {
+            if (!m_smartSdrListener) { return; }
+            m_smartSdrListener->setTxActive(false);
+            const QString source = m_moxController->isManualMox()
+                ? QStringLiteral("TUNE")
+                : QStringLiteral("MOX");
+            m_smartSdrListener->setInterlockTransmitting(false, source);
+        });
+
         connect(m_moxController, &MoxController::moxStateChanged,
                 this, [this](bool on) {
             if (on) { return; }  // engage handled by txAboutToBegin above
@@ -1176,14 +1198,13 @@ RadioModel::RadioModel(QObject* parent)
             // a slow amp ACKing after we already unkeyed) doesn't fire
             // setRunning(true) on a TX channel that's already been
             // drained back to RX by the TX->RX walk above.
+            // The listener side (setTxActive + setInterlockTransmitting)
+            // moved to txAboutToEnd above; this slot keeps only the
+            // local gate cleanup. Phase 4 fires after the drain, so it's
+            // the right place to clear gates that were waiting on amp
+            // ACKs from the (now completed) cycle.
             m_awaitingInterlockForTx = false;
             m_txReadyReceived = false;
-            if (!m_smartSdrListener) { return; }
-            m_smartSdrListener->setTxActive(false);
-            const QString source = m_moxController->isManualMox()
-                ? QStringLiteral("TUNE")
-                : QStringLiteral("MOX");
-            m_smartSdrListener->setInterlockTransmitting(false, source);
         });
 
         // Interlock-blocked: log only, do NOT roll back MOX.
@@ -9693,48 +9714,26 @@ void RadioModel::startTgxlAutotune(bool fromHardware)
         return;
     }
 
-    // 2026-05-22 bench-fix + pcap-confirmed: for the hardware-initiated
-    // TUNE path (TGXL hardware button press), canonical FLEX does NOT
-    // standby PGXL. Both amps stay in OPERATE and in the interlock
-    // chain. Pcap evidence from flex-tgxl-direct-CONTROL.pcapng:
+    // 2026-05-22 reverted from commit 3a8662c5: hardware-initiated TUNE
+    // path also needs to pre-standby PGXL.
     //
-    //   T+167.735 TRANSMITTING ... amplifier=0x096016A4,0x22E8213A
-    //                                          ^^^^^^^^^^ PGXL still keyed
+    // The earlier pcap-driven removal (3a8662c5) read canonical FLEX as
+    // leaving PGXL in OPERATE during TGXL hardware TUNE. JJ's bench
+    // proved this read wrong: at 2026-05-22 16:08-ish, with PGXL
+    // staying in OPERATE during a TGXL hardware-TUNE-button press, PGXL
+    // tripped on "high power" because TGXL was sweeping its relays
+    // through PGXL's amplified output. The pcap capture we read may
+    // have been from a different rig setup (lower drive, isolator,
+    // or other path that's not in our bench config).
     //
-    // FLEX broadcasts NO `operate=0` to PGXL during the whole TUNE
-    // cycle (verified by full pcap sweep of FLEX -> PGXL traffic
-    // T+167.6..168.95). PGXL has its own protection against TGXL's
-    // swept-load VSWR transients; the interlock state machine
-    // (PTT_REQUESTED -> TRANSMITTING -> UNKEY_REQUESTED -> READY) is
-    // the only coordination needed.
-    //
-    // Bench evidence 2026-05-22 15:36:18: sending operate=0 on the
-    // hardware path caused PGXL to disable its interlock (C33|interlock
-    // disable 2), which excluded PGXL from our TRANSMITTING frame's
-    // amplifier= list (we emitted amplifier=0x<TGXL> alone instead of
-    // the canonical 0x<TGXL>,0x<PGXL>). TGXL's display saw a single-
-    // amp chain instead of the full chain and showed "no PTT in", and
-    // PGXL stayed STANDBY so could not amplify.
-    //
-    // The app-initiated TUNE path (fromHardware=false, TunerApplet
-    // click) keeps the existing pre-standby orchestration for now;
-    // a separate bench cycle will verify whether it can be simplified
-    // the same way once the hardware path is bench-green.
-    if (fromHardware) {
-        m_pgxlSavedOperate = false;       // not changed, no restore needed
-        m_pgxlStandbyPending = false;
-        m_tgxlAutotuneInProgress = true;
-        m_tgxlAutotuneFromHardware = true;
-        qCInfo(lcConnection)
-            << "TGXL autotune starting (hardware TUNE; PGXL stays in OPERATE"
-               " per canonical pcap)";
-        continueTgxlAutotuneAfterStandby();
-        return;
-    }
+    // Restored behavior: both fromHardware=true (TGXL hardware press)
+    // and fromHardware=false (TunerApplet TUNE click) standby PGXL for
+    // the duration of the TGXL relay sweep, then restore on completion.
+    // Matches TunerApplet autotune's existing safe behavior that JJ
+    // confirmed works correctly.
 
-    // App-initiated path: snapshot PGXL state. m_ampOperate is the
-    // radio's view of PGXL's operate-family state (IDLE / OPERATE /
-    // TRANSMIT_A / TRANSMIT_B).
+    // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
+    // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
     m_pgxlSavedOperate = m_hasAmplifier && m_ampOperate;
     m_tgxlAutotuneInProgress = true;
     m_tgxlAutotuneFromHardware = fromHardware;
