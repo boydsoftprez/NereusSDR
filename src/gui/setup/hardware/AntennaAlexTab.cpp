@@ -144,8 +144,12 @@ void AntennaAlexTab::populate(const RadioInfo& info, const BoardCapabilities& ca
 
     // Gate Saturn BPF1 column on board type.
     // Saturn = ANAN-G2 / G2-1K (G8NJJ). SaturnMKII = MkII board revision.
-    // From spec §7: "auto-hide on non-Saturn boards" [@501e3f5]
-    const bool isSaturn = (caps.board == HPSDRHW::Saturn || caps.board == HPSDRHW::SaturnMKII);
+    // HermesC10 (ANAN-G2E) also uses the BPF1 algorithm path.
+    // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM:
+    //   setAlex1HPF dispatches setBPF1ForOrionIISaturn for OrionMKII || Saturn || HermesC10.
+    const bool isSaturn = (caps.board == HPSDRHW::Saturn
+                        || caps.board == HPSDRHW::SaturnMKII
+                        || caps.board == HPSDRHW::HermesC10);  //N1GP G2E added (HermesC10) //DK1HLM
     m_alex1Tab->updateBoardCapabilities(isSaturn);
 
     // Gate Alex-2 board status on caps.hasAlex2 (Phase 3P-I-b T8).

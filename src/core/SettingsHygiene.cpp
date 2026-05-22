@@ -66,8 +66,13 @@ void SettingsHygiene::resetSettingsToDefaults(const QString& mac,
         }
     }
 
-    // Clear Saturn BPF1 settings if not a Saturn board.
-    if (caps.board != HPSDRHW::Saturn) {
+    // Clear Saturn BPF1 settings if not a BPF1-algorithm board.
+    // HermesC10 (ANAN-G2E) uses the BPF1 algorithm path alongside Saturn/SaturnMKII.
+    // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM
+    const bool usesBpf1 = (caps.board == HPSDRHW::Saturn
+                        || caps.board == HPSDRHW::SaturnMKII
+                        || caps.board == HPSDRHW::HermesC10);  //N1GP G2E added (HermesC10) //DK1HLM
+    if (!usesBpf1) {
         const QString bpf1Base = QStringLiteral("hardware/%1/alex/bpf1").arg(mac);
         // Walk known band keys and remove.
         const QStringList bands = {
@@ -135,9 +140,12 @@ void SettingsHygiene::checkStepAtt(const QString& mac,
 void SettingsHygiene::checkSaturnBpf1(const QString& mac,
                                        const BoardCapabilities& caps)
 {
-    // Saturn BPF1 per-band edges are only meaningful on Saturn boards.
-    // If we find any stored for a non-Saturn board, report it as Info.
-    if (caps.board == HPSDRHW::Saturn) { return; }
+    // Saturn BPF1 per-band edges are only meaningful on BPF1-algorithm boards.
+    // HermesC10 (ANAN-G2E) uses the BPF1 algorithm alongside Saturn/SaturnMKII.
+    // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM
+    if (caps.board == HPSDRHW::Saturn
+     || caps.board == HPSDRHW::SaturnMKII
+     || caps.board == HPSDRHW::HermesC10) { return; }  //N1GP G2E added (HermesC10) //DK1HLM
 
     auto& s = AppSettings::instance();
     const QString bpf1Key = QStringLiteral("hardware/%1/alex/bpf1/160m/start").arg(mac);
