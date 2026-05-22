@@ -576,7 +576,11 @@ PsDdcConfig P2CodecOrionMkII::applyPureSignalDdcConfig(
                                   adcCtrl1, adcCtrl2);
 
     // From Thetis console.cs:8378-8380 [v2.10.3.13]
+    // Updated for ANAN_G2E (HermesC10) per console.cs:8387-8390 [v2.10.3.15]
+    // //N1GP G2E added — Thetis groups ANAN_G2E with the 4-DDC Hermes-class
+    // arm in UpdateDDCs (single-ADC, 4-DDC, primary RX on DDC0).
     case HPSDRModel::HERMES:
+    case HPSDRModel::ANAN_G2E:  //N1GP G2E added
     case HPSDRModel::ANAN10:
     case HPSDRModel::ANAN100:
         return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,
