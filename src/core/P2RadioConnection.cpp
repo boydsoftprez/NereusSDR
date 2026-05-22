@@ -632,27 +632,31 @@ void P2RadioConnection::disconnect()
     }
 
     if (m_running && m_socket && !m_radioInfo.address.isNull()) {
-        // From Thetis SendStop() network.c:372-376
-        m_running = false;       // prn->run = 0;
-        // 2026-05-22 bench-finding (G2E gateware lockup): NereusSDR previously
-        // sent ONE SendStop frame then immediately closed the socket.  Qt's
-        // writeDatagram queues to the OS socket buffer; close() can drop
-        // unsent datagrams before the kernel transmits them.  Result on
-        // G2E (N1GP community P2 firmware): the radio never receives run=0,
-        // its gateware stays in streaming state, and the only recovery is a
-        // power cycle.  Thetis avoids this by keeping listenSock open
-        // (network.c:362-369 — no close on SendStop).
+        // 2026-05-22 bench-finding: Thetis wire-byte capture against working
+        // session (192.168.109.247 → ANAN-G2E .196, see g2e-tzsp.pcap)
+        // shows Thetis NEVER sends a run=0 CmdHighPriority.  Source comment
+        // at network.c:372 (`SendStop: prn->run=0; CmdHighPriority()`) is
+        // misleading.  Actual on-wire disconnect pattern:
+        //   - Stop sending CmdRx/CmdTx/CmdHighPriority entirely
+        //   - Keep sending CmdGeneral at ~4 Hz indefinitely (host-alive
+        //     heartbeat that lets the radio gateware know we're still here)
         //
-        // Defensive fix: send the SendStop frame 3 times with flush + small
-        // sleep between, so the kernel actually puts at least one on the
-        // wire even under transient socket-buffer pressure.  Total added
-        // latency on disconnect: ~30 ms (well under user-perceptible).
-        for (int i = 0; i < 3; ++i) {
-            sendCmdHighPriority();   // CmdHighPriority();
+        // NereusSDR previously sent 3x CmdHighPriority(run=0) then closed
+        // the socket cold.  G2E (N1GP community P2 firmware) interprets the
+        // sudden frame cessation as host-gone, hangs gateware until power
+        // cycle.  Saturn tolerates it; G2E does not.
+        //
+        // Mimic Thetis's graceful winddown: with m_running=false, all
+        // composeCmd* paths emit run=0 bytes, but we only need a brief
+        // CmdGeneral burst (not CmdHighPriority/Rx/Tx) to let the radio
+        // see "host idle, frames stopping" before we drop the socket.
+        m_running = false;       // prn->run = 0;
+        for (int i = 0; i < 5; ++i) {
+            sendCmdGeneral();    // port 1024 — Thetis's "host still here" heartbeat
             m_socket->flush();
-            QThread::msleep(10);
+            QThread::msleep(40); // 5x40ms = 200ms winddown — matches Thetis ~4Hz cadence
         }
-        qCDebug(lcConnection) << "P2: SendStop complete (run=0, sent 3x w/ flush)";
+        qCDebug(lcConnection) << "P2: graceful winddown — 5x CmdGeneral sent (Thetis-faithful disconnect)";
     }
 
     m_running = false;
