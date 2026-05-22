@@ -395,6 +395,12 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         m_autoCalibrateCheck = new QCheckBox(
             QStringLiteral("Auto-Calibrate (sweep)"), this);
         m_autoCalibrateCheck->setVisible(true);
+        // D4 test seam: create m_bypassPaSettingsCheck so
+        // applyCapabilityVisibility() / bypassPaSettingsCheckForTest() have a
+        // non-null target in the model-less path.  Defaults hidden (standard board).
+        m_bypassPaSettingsCheck = new QCheckBox(
+            QStringLiteral("Bypass ANAN PA Settings"), this);
+        m_bypassPaSettingsCheck->setVisible(false);
         return;
     }
     m_paProfileManager = model->paProfileManager();
@@ -696,6 +702,23 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     connect(m_autoCalibrateCheck, &QCheckBox::toggled,
             this, &PaGainByBandPage::onAutoCalibrateToggled);
 
+    // ── chkBypassANANPASettings (D4: ANAN-G2E port) ──────────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+    // Thetis tooltip: "BP PA" (setup.designer.cs:49245 [v2.10.3.15]).
+    // Shown only when BoardCapabilities::showsBypassPaSettingsUi is true;
+    // defaults hidden (false) here, shown by applyCapabilityVisibility().
+    m_bypassPaSettingsCheck = new QCheckBox(
+        QStringLiteral("Bypass ANAN PA Settings"), this);
+    m_bypassPaSettingsCheck->setToolTip(QStringLiteral(
+        "Bypass the board-specific PA calibration table (BP PA). "
+        "When checked, the generic Hermes gain row is used instead "
+        "of the ANAN-G2E factory row. Useful if you have not yet "
+        "calibrated PA gain for this radio."));
+    m_bypassPaSettingsCheck->setVisible(false);  // hidden until applyCapabilityVisibility
+    contentLayout()->insertWidget(contentLayout()->count() - 1,
+                                   m_bypassPaSettingsCheck);
+
     // ── Wire profile-management buttons + combo ──────────────────────────
     connect(m_profileCombo, &QComboBox::currentTextChanged,
             this, &PaGainByBandPage::onProfileSelected);
@@ -730,6 +753,22 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     // unconditionally is safe (no spurious side effects on normal RX/TX).
     connect(&model->radioStatus(), &RadioStatus::powerChanged,
             this, &PaGainByBandPage::onFwdPowerSample);
+
+    // ── chkBypassANANPASettings ↔ TransmitModel::paSettingsBypass (D4) ───
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added.
+    // Thetis has no CheckedChanged handler; NereusSDR wires the checkbox
+    // state to TransmitModel::paSettingsBypass for persistence.
+    TransmitModel& tx = model->transmitModel();
+    if (m_bypassPaSettingsCheck) {
+        m_bypassPaSettingsCheck->setChecked(tx.paSettingsBypass());
+        connect(m_bypassPaSettingsCheck, &QCheckBox::toggled,
+                &tx, &TransmitModel::setPaSettingsBypass);
+        connect(&tx, &TransmitModel::paSettingsBypassChanged,
+                m_bypassPaSettingsCheck, [this](bool bypass) {
+                    QSignalBlocker b(m_bypassPaSettingsCheck);
+                    m_bypassPaSettingsCheck->setChecked(bypass);
+                });
+    }
 
     // ── NereusSDR-original: per-SKU informational warning labels ─────────────
     //
@@ -875,6 +914,14 @@ void PaGainByBandPage::applyCapabilityVisibility(const BoardCapabilities& caps)
         if (!caps.allowsAutoPaCalibrate) {
             m_autoCalPanel->setVisible(false);
         }
+    }
+
+    // ── Bypass ANAN PA Settings checkbox visibility (D4) ────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+    // G2E sets showsBypassPaSettingsUi=true; all other boards default false.
+    if (m_bypassPaSettingsCheck) {
+        m_bypassPaSettingsCheck->setVisible(caps.showsBypassPaSettingsUi);
     }
 
     // ── ATT-on-TX informational row ─────────────────────────────────────

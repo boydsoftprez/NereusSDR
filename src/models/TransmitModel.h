@@ -982,6 +982,34 @@ public:
     /// false (default) = anti-VOX detector OFF.  true = detector running.
     bool antiVoxRun() const noexcept { return m_antiVoxRun; }
 
+    // ── PA settings bypass (D4: ANAN-G2E port) ───────────────────────────────
+    //
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+    // setup.designer.cs:49237-49245 [v2.10.3.15]: tooltip "BP PA".
+    // Thetis stores this via its generic control-name XML serializer; no
+    // CheckedChanged handler exists in Thetis v2.10.3.15.  NereusSDR persists
+    // it explicitly under the per-MAC hardware/<mac>/tx/ prefix, key
+    // "PaSettingsBypass".
+    //
+    // false (default) = use the board-specific PA calibration table (normal
+    //   operation for all SKUs, including G2E out of the box).
+    // true  = bypass the board-specific table and fall back to the generic
+    //   Hermes 41.x dB HF row (chkBypassANANPASettings.Checked in Thetis),
+    //   allowing operators to run the radio without a board-specific PA profile.
+    //
+    // The checkbox is only shown when BoardCapabilities::showsBypassPaSettingsUi
+    // is true (G2E-group SKUs).  On all other boards the property is still
+    // writable (no harm) but the UI surface is hidden.
+    //
+    // Persistence: per-MAC key PaSettingsBypass (default False).
+
+    Q_PROPERTY(bool paSettingsBypass READ paSettingsBypass WRITE setPaSettingsBypass
+                                     NOTIFY paSettingsBypassChanged)
+
+    /// Bypass PA settings flag. false (default) = use board-specific table.
+    bool paSettingsBypass() const noexcept { return m_paSettingsBypass; }
+
     // ── MON properties (3M-1b C.5) ────────────────────────────────────────
     //
     // Porting from Thetis audio.cs:406 [v2.10.3.13]:
@@ -1868,6 +1896,12 @@ public slots:
     // [v2.10.3.13]: cmaster.SetAntiVOXRun(0, chkAntiVoxEnable.Checked).
     void setAntiVoxRun(bool run);
 
+    // ── PA settings bypass setter (D4: ANAN-G2E port) ───────────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added.
+    // Thetis has no CheckedChanged handler (chkBypassANANPASettings is UI-only
+    // in v2.10.3.15); NereusSDR wires the state explicitly for persistence.
+    void setPaSettingsBypass(bool bypass);
+
     // ── MON setters (3M-1b C.5) ──────────────────────────────────────────────
     void setMonEnabled(bool on);
     void setMonitorVolume(float volume);
@@ -1988,6 +2022,10 @@ signals:
     // (which forwards to TxChannel::setAntiVoxRun AND flips the worker's
     //  m_antiVoxRun atomic gate).
     void antiVoxRunChanged(bool run);
+
+    // ── PA settings bypass signal (D4: ANAN-G2E port) ───────────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added.
+    void paSettingsBypassChanged(bool bypass);
 
     // ── MON signals (3M-1b C.5) ──────────────────────────────────────────────
     void monEnabledChanged(bool on);
@@ -2201,6 +2239,10 @@ private:
     // From Thetis setup.designer.cs:44740-44751 [v2.10.3.13]: chkAntiVoxEnable
     // has no .Checked= setter -> default false.
     bool m_antiVoxRun       = false;
+    // ── PA settings bypass (D4: ANAN-G2E port) ───────────────────────────
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added.
+    // Defaults false (normal operation; user must explicitly enable bypass).
+    bool m_paSettingsBypass = false;
 
     // ── MON properties (3M-1b C.5) ────────────────────────────────────────
     // From Thetis audio.cs:406 [v2.10.3.13]: private bool mon = false;

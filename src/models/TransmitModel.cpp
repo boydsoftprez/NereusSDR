@@ -1398,6 +1398,14 @@ void TransmitModel::loadFromSettings(const QString& mac)
     const bool antiVoxRun = s.value(pfx + QLatin1String("AntiVox_Enable"),
                                      QStringLiteral("False")).toString() == QLatin1String("True");
     setAntiVoxRun(antiVoxRun);
+    // paSettingsBypass: default false (D4: ANAN-G2E port).
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added —
+    //   chkBypassANANPASettings.Visible = true (visibility only; no default
+    //   .Checked= in Thetis v2.10.3.15, so NereusSDR defaults to false).
+    const bool paSettingsBypass = s.value(pfx + QLatin1String("PaSettingsBypass"),
+                                           QStringLiteral("False")).toString()
+                                     == QLatin1String("True");
+    setPaSettingsBypass(paSettingsBypass);
 
     // ── MON properties (monEnabled NOT loaded — safety: always false) ─────
     // monitorVolume: default 0.5f (audio.cs:417 [v2.10.3.13] literal)
@@ -1939,6 +1947,22 @@ void TransmitModel::setAntiVoxRun(bool run)
     persistOne(QStringLiteral("AntiVox_Enable"),
                run ? QStringLiteral("True") : QStringLiteral("False"));  // auto-persist
     emit antiVoxRunChanged(run);
+}
+
+// ── PA settings bypass setter (D4: ANAN-G2E port) ────────────────────────────
+//
+// From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+//   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+// Thetis has no CheckedChanged handler in v2.10.3.15 — the checkbox is
+// UI-only, its state serialised generically.  NereusSDR persists it explicitly.
+// ─────────────────────────────────────────────────────────────────────────────
+void TransmitModel::setPaSettingsBypass(bool bypass)
+{
+    if (bypass == m_paSettingsBypass) { return; }  // idempotent guard
+    m_paSettingsBypass = bypass;
+    persistOne(QStringLiteral("PaSettingsBypass"),
+               bypass ? QStringLiteral("True") : QStringLiteral("False"));  // auto-persist
+    emit paSettingsBypassChanged(bypass);
 }
 
 // ── MON properties (3M-1b C.5) ───────────────────────────────────────────────

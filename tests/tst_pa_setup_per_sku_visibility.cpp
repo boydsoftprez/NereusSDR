@@ -67,6 +67,14 @@ private slots:
     void anan_g2e_hides_auto_calibrate_checkbox();
     void standard_board_shows_auto_calibrate_checkbox();
 
+    // ── D4: chkBypassANANPASettings visibility per showsBypassPaSettingsUi ─
+    // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings.Visible = true  (G2E case)
+    // G2E: showsBypassPaSettingsUi=true  → bypass checkbox visible.
+    // Standard boards: showsBypassPaSettingsUi=false → bypass checkbox hidden.
+    void g2e_shows_bypass_pa_settings_checkbox();
+    void standard_board_hides_bypass_pa_settings_checkbox();
+
     // ATT-on-TX warning dropped in v0.3.2 cleanup; see 3M-4 follow-up issue.
     // The corresponding test case (no_step_atten_cal_hides_att_on_tx_warning)
     // was removed alongside the m_attOnTxWarning label.
@@ -359,6 +367,43 @@ void TstPaSetupPerSkuVisibility::standard_board_shows_auto_calibrate_checkbox()
     QVERIFY2(check != nullptr, "m_autoCalibrateCheck must exist");
     QVERIFY2(check->isVisibleTo(&page),
              "Standard board (allowsAutoPaCalibrate=true) must show chkAutoPACalibrate");
+}
+
+// ── D4: chkBypassANANPASettings visibility ────────────────────────────────
+//
+// From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
+//   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
+// G2E-like caps (showsBypassPaSettingsUi=true) must show the bypass checkbox.
+void TstPaSetupPerSkuVisibility::g2e_shows_bypass_pa_settings_checkbox()
+{
+    PaGainByBandPage page(/*model=*/nullptr);
+    BoardCapabilities caps = makeCapsForVisibility(/*hasPa=*/true, /*rxOnly=*/false,
+                                                    /*ganymede=*/false, /*ps=*/false,
+                                                    /*stepAttCal=*/true);
+    caps.allowsAutoPaCalibrate    = false;  // G2E: auto-cal hidden
+    caps.showsBypassPaSettingsUi  = true;   // G2E: bypass checkbox shown
+    page.applyCapabilityVisibility(caps);
+
+    auto* check = page.bypassPaSettingsCheckForTest();
+    QVERIFY2(check != nullptr, "m_bypassPaSettingsCheck must exist");
+    QVERIFY2(check->isVisibleTo(&page),
+             "G2E (showsBypassPaSettingsUi=true) must show chkBypassANANPASettings");
+}
+
+// Standard board (showsBypassPaSettingsUi=false) must hide the bypass checkbox.
+void TstPaSetupPerSkuVisibility::standard_board_hides_bypass_pa_settings_checkbox()
+{
+    PaGainByBandPage page(/*model=*/nullptr);
+    BoardCapabilities caps = makeCapsForVisibility(/*hasPa=*/true, /*rxOnly=*/false,
+                                                    /*ganymede=*/false, /*ps=*/false,
+                                                    /*stepAttCal=*/true);
+    caps.showsBypassPaSettingsUi = false;  // default for all non-G2E boards
+    page.applyCapabilityVisibility(caps);
+
+    auto* check = page.bypassPaSettingsCheckForTest();
+    QVERIFY2(check != nullptr, "m_bypassPaSettingsCheck must exist");
+    QVERIFY2(!check->isVisibleTo(&page),
+             "Standard board (showsBypassPaSettingsUi=false) must hide chkBypassANANPASettings");
 }
 
 QTEST_MAIN(TstPaSetupPerSkuVisibility)

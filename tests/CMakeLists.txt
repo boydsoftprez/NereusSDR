@@ -750,6 +750,13 @@ nereus_add_test(tst_transmit_model_dexp)
 #         setup.cs:18986-18989 [v2.10.3.13] (SetAntiVOXGain dB→linear formula).
 nereus_add_test(tst_transmit_model_anti_vox)
 
+# ── D4 (ANAN-G2E port): TransmitModel paSettingsBypass property ──────────────
+# Verifies default (false), round-trip setter, signal emission, idempotent guard,
+# and AppSettings persistence via loadFromSettings(mac) + auto-persist.
+# Source: setup.cs:19921 [v2.10.3.15] — chkBypassANANPASettings.Visible = true
+#         (G2E case); setup.designer.cs:49237-49245 [v2.10.3.15] — tooltip "BP PA".
+nereus_add_test(tst_transmit_model_pa_settings_bypass)
+
 # ── Phase 3M-1b C.5: TransmitModel MON properties (2x) ──────────────────────
 # Verifies defaults (monEnabled=false matches Thetis audio.cs:406 [v2.10.3.13] /
 # monitorVolume=0.5f matches Thetis audio.cs:417 [v2.10.3.13] literal mix
