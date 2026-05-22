@@ -578,18 +578,24 @@ void SmartSdrApiListener::onNewConnection()
                             << "handle=" << state.handle;
 
         sendBanner(sock, state.handle);
+        // 2026-05-21 bench-fix: sign-correct filter passband per mode (see
+        // defaultFilterForMode). LSB requires negative; TGXL drops the socket
+        // otherwise.
+        const QPair<int, int> initialFilter = defaultFilterForMode(m_sliceMode);
         // Push initial state so PGXL has band/mode data before any C-frames.
         sendStatus(sock, state.handle,
                    QStringLiteral("slice 0 in_use=1 sample_rate=24000 RF_frequency=%1 "
                                       "client_handle=0x%2 index_letter=A rit_on=0 rit_freq=0 "
                                       "xit_on=0 xit_freq=0 rxant=ANT1 mode=%3 wide=0 "
-                                      "filter_lo=100 filter_hi=2800 step=100 "
+                                      "filter_lo=%4 filter_hi=%5 step=100 "
                                       "agc_mode=med agc_threshold=60 agc_off_level=10 "
                                       "pan=0x40000000 txant=ANT1 loopa=0 loopb=0 qsk=0 "
                                       "lock=0 tx=1 active=1")
                        .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
                        .arg(state.handle)
-                       .arg(m_sliceMode));
+                       .arg(m_sliceMode)
+                       .arg(initialFilter.first)
+                       .arg(initialFilter.second));
         sendStatus(sock, state.handle,
                    QStringLiteral("transmit freq=%1 rfpower=100 tunepower=10 tx_slice_mode=%2"
                                       " tune=%3 tune_mode=single_tone mon=0 mox=%4"
@@ -1056,18 +1062,23 @@ void SmartSdrApiListener::broadcastSliceState()
             .arg(m_sliceMode)
             .arg(m_tuneActive ? 1 : 0)
             .arg(m_txActive ? 1 : 0);
+    // 2026-05-21 bench-fix: sign-correct filter passband per mode so TGXL
+    // does not drop the SmartSDR API socket on LSB. See defaultFilterForMode.
+    const QPair<int, int> filterRange = defaultFilterForMode(m_sliceMode);
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         const QString sliceBody =
             QStringLiteral("slice 0 in_use=1 sample_rate=24000 RF_frequency=%1 "
                            "client_handle=0x%2 index_letter=A rit_on=0 rit_freq=0 "
                            "xit_on=0 xit_freq=0 rxant=ANT1 mode=%3 wide=0 "
-                           "filter_lo=100 filter_hi=2800 step=100 "
+                           "filter_lo=%4 filter_hi=%5 step=100 "
                            "agc_mode=med agc_threshold=60 agc_off_level=10 "
                            "pan=0x40000000 txant=ANT1 loopa=0 loopb=0 qsk=0 "
                            "lock=0 tx=1 active=1")
                 .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
                 .arg(it.value().handle)
-                .arg(m_sliceMode);
+                .arg(m_sliceMode)
+                .arg(filterRange.first)
+                .arg(filterRange.second);
         // S-frame prefix: amp handle for amp clients (PGXL/TGXL), else the
         // banner-issued client handle. FLEX prefixes per-recipient S-frames
         // with the recipient's own handle so the client can filter at the
@@ -1094,6 +1105,26 @@ QString SmartSdrApiListener::generateHandle() const
     return QStringLiteral("4%1")
         .arg(r, 7, 16, QLatin1Char('0'))
         .toUpper();
+}
+
+QPair<int, int> SmartSdrApiListener::defaultFilterForMode(const QString& mode) const
+{
+    // 2026-05-21 bench-confirmed: canonical FLEX uses NEGATIVE filter
+    // passband sign for lower-sideband modes (LSB, DIGL, FDVL) and
+    // POSITIVE for everything else. Verified against
+    // captures/flex-tgxl-direct-CONTROL.pcapng @ T+206.741:
+    //   mode=LSB wide=0 filter_lo=-2800 filter_hi=-100
+    // Without this TGXL drops the SmartSDR API socket after parsing the
+    // initial slice S-frame (positive sign for LSB fails mode-vs-filter
+    // validation). Conservative scope: pcap-verified for LSB only; all
+    // other modes keep the prior USB-positive default. Widths come from
+    // RX/TX channel pipelines elsewhere; this helper only fixes the sign.
+    if (mode == QStringLiteral("LSB")
+        || mode == QStringLiteral("DIGL")
+        || mode == QStringLiteral("FDVL")) {
+        return {-2800, -100};
+    }
+    return {100, 2800};
 }
 
 QString SmartSdrApiListener::initiatingAmpName(const QString& wireSource) const

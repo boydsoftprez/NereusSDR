@@ -9618,7 +9618,17 @@ void RadioModel::onPgxlConnected()
 
     const QString antMap = s.value(QStringLiteral("PGXL_AntMap"),
                                    QStringLiteral("ANT1:PORTA,ANT2:PORTB")).toString();
-    m_pgxlConnection->amplifierCreate(ourSerial, QStringLiteral("NereusSDR"), antMap);
+    // 2026-05-21 bench-confirmed: PGXL native protocol (TCP 9008) rejects
+    // model=NereusSDR with error 50000015 (parse/validation) and closes the
+    // socket, producing a tight reconnect loop on RadioModel's PgxlConnection.
+    // Canonical FLEX-8600 pcap (flex-tgxl-direct-CONTROL.pcapng @ T+206)
+    // advertises model="FLEX-8600M". PGXL whitelists known FlexRadio model
+    // strings; "NereusSDR" is not on that list. Claim FLEX-8600M (the closest
+    // multi-slice match for our P1/P2 support surface) so PGXL accepts the
+    // pairing handshake. Override via PGXL_PairModel for future SKU work.
+    const QString pgxlPairModel = s.value(QStringLiteral("PGXL_PairModel"),
+                                          QStringLiteral("FLEX-8600M")).toString();
+    m_pgxlConnection->amplifierCreate(ourSerial, pgxlPairModel, antMap);
 
     // Optional flexradio pairing (enabled by default via PGXL_PairAttempt).
     if (s.value(QStringLiteral("PGXL_PairAttempt"), QStringLiteral("True")).toString()

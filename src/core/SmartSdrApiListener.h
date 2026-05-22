@@ -322,6 +322,15 @@ private:
     // then READY (empty reason) 2 ms later, then READY reason=AMP:<...>
     // 0.5 ms after that. Matches pcap T+168.874 -> T+168.877.
     void broadcastUnkeySequence(const QString& initiatorName);
+
+    // 2026-05-21 bench-confirmed handshake-flap follow-up: canonical FLEX
+    // uses NEGATIVE filter passband for lower-sideband modes (LSB, DIGL,
+    // FDVL) and POSITIVE for everything else. Without sign-correct values
+    // TGXL drops the SmartSDR API socket within ~2 sec of initial status
+    // validation when the slice is in LSB. Pcap evidence: flex-tgxl-direct-
+    // CONTROL.pcapng @ T+206.741 carries `mode=LSB ... filter_lo=-2800
+    // filter_hi=-100`. Returns (lo, hi) for the slice S-frame.
+    QPair<int, int> defaultFilterForMode(const QString& mode) const;
 };
 
 }  // namespace NereusSDR

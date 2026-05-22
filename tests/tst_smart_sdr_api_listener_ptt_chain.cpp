@@ -108,6 +108,8 @@ private slots:
     void c1_localClientHandleIsStableAndDistinctFromBanners();
     void c2_pttRequestedIsOneFrameWithCanonicalFields();
     void c2b_localInitTunePicksFirstTgxlAsInitiator();
+    void handshakeFlap_lsbInitialStatusUsesNegativeFilterPassband();
+    void handshakeFlap_usbInitialStatusUsesPositiveFilterPassband();
     void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
     void c4_transmittingIsDelayed30msAfterLastAck();
     void c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames();
@@ -279,6 +281,55 @@ void SmartSdrApiListenerPttChainTest::c2b_localInitTunePicksFirstTgxlAsInitiator
     const QString frame = frames.first();
     QVERIFY2(frame.contains(QStringLiteral("reason=AMP:TG ")),
              qPrintable(QStringLiteral("expected reason=AMP:TG fallback, got: ") + frame));
+}
+
+// 2026-05-21 handshake-flap follow-up: canonical FLEX uses NEGATIVE
+// filter passband for LSB (verified by tshark against
+// captures/flex-tgxl-direct-CONTROL.pcapng @ T+206.741:
+//   mode=LSB wide=0 filter_lo=-2800 filter_hi=-100
+// ). Our prior hardcoded `filter_lo=100 filter_hi=2800` failed TGXL's
+// mode-vs-filter validation and caused the SmartSDR API socket to flap
+// within ~2 sec of connect. Regression test for the sign correction.
+void SmartSdrApiListenerPttChainTest::handshakeFlap_lsbInitialStatusUsesNegativeFilterPassband()
+{
+    SmartSdrApiListener listener;
+    listener.setSliceMode(0, QStringLiteral("LSB"));
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket fakeAmp;
+    fakeAmp.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(fakeAmp.waitForConnected(1000));
+    const QByteArray bytes = drain(&fakeAmp);
+    const QString text = QString::fromUtf8(bytes);
+    QVERIFY2(text.contains(QStringLiteral("mode=LSB ")),
+             qPrintable(QStringLiteral("expected mode=LSB in initial status, got: ")
+                            + text.left(400)));
+    QVERIFY2(text.contains(QStringLiteral("filter_lo=-2800 filter_hi=-100 ")),
+             qPrintable(QStringLiteral("expected negative LSB filter passband, got: ")
+                            + text.left(400)));
+}
+
+// USB stays positive (regression guard that the helper does not
+// invert the sign for upper-sideband modes).
+void SmartSdrApiListenerPttChainTest::handshakeFlap_usbInitialStatusUsesPositiveFilterPassband()
+{
+    SmartSdrApiListener listener;
+    listener.setSliceMode(0, QStringLiteral("USB"));
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket fakeAmp;
+    fakeAmp.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(fakeAmp.waitForConnected(1000));
+    const QByteArray bytes = drain(&fakeAmp);
+    const QString text = QString::fromUtf8(bytes);
+    QVERIFY2(text.contains(QStringLiteral("mode=USB ")),
+             qPrintable(QStringLiteral("expected mode=USB in initial status, got: ")
+                            + text.left(400)));
+    QVERIFY2(text.contains(QStringLiteral("filter_lo=100 filter_hi=2800 ")),
+             qPrintable(QStringLiteral("expected positive USB filter passband, got: ")
+                            + text.left(400)));
 }
 
 // Task 3 (C3): TRANSMITTING is exactly one frame with
