@@ -394,6 +394,13 @@ void PowerPage::buildTuneGroup()
     m_comboTxTunMeter->addItem(QStringLiteral("Fwd SWR"));
     m_comboTxTunMeter->addItem(QStringLiteral("SWR"));
     m_comboTxTunMeter->addItem(QStringLiteral("Off"));
+    // DONE_WITH_CONCERNS [anan-g2e F6]: Thetis console.cs:14868-14882 [v2.10.3.15]
+    // conditionally inserts "Ref Pwr" for ANAN_G2E and OrionMKII family
+    // (//N1GP G2E added at console.cs:14873, //DH1KLM at console.cs:14876).
+    // NereusSDR instead includes "Ref Pwr" statically for all boards above
+    // (matched from mi0bot-Thetis setup.designer.cs:47933-47938). When a full
+    // comboMeterTXMode port arrives, this combo should gain per-board gating so
+    // low-power boards (no on-board PA directional coupler) hide "Ref Pwr".
     form->addRow(QStringLiteral("TX TUN Meter:"), m_comboTxTunMeter);
 
     // ── Fixed-mode tune-power spinbox ──────────────────────────────────────

@@ -739,6 +739,10 @@ void MoxController::onKeyUpDelayElapsed()
 {
     // TODO [3M-1a F.1]: UpdateDDCs + UpdateAAudioMixerStates + AudioMOXChanged(false)
     //                   + HdwMOXChanged(false) here.
+    // DONE_WITH_CONCERNS [anan-g2e F2/F3]: When UpdateAAudioMixerStates is ported,
+    // ANAN_G2E must join the HERMES 4-DDC (USB) group at console.cs:27653-27664
+    // [v2.10.3.15] (F2) AND the HERMES 2-DDC (ETH) group at console.cs:27669-27679
+    // [v2.10.3.15] (F3). //N1GP G2E added tags are on both cite lines in Thetis.
     emit txaFlushed();                                  // TX→RX phase 3 of 4
     advanceState(MoxState::TxToRxFlush);
     m_pttOutDelayTimer.start();
