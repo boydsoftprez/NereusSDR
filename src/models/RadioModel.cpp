@@ -7742,11 +7742,21 @@ bool RadioModel::rxMute(int rx) const
 }
 
 // ── Filter ──────────────────────────────────────────────────────────────────
+//
+// Review P2 #4 fix (2026-05-22): use the atomic SliceModel::setFilter(low,
+// high) instead of the separate setFilterLow then setFilterHigh calls.  The
+// split path emitted filterChanged twice -- once with (newLow, oldHigh) and
+// again with (newLow, newHigh) -- so TCI clients tracking
+// SliceModel::filterChanged via the local-broadcast path received a stale
+// intermediate frame like "rx_filter_band:0,400,<oldHigh>;" before the
+// final value.  Atomic setFilter emits filterChanged exactly once with the
+// final pair, matching Thetis FilterChangedHandlers semantics
+// (TCIServer.cs:6732 [v2.10.3.15] -- single OnFilterChanged event per
+// FilterChanged delegate fire).
 void RadioModel::setFilterBand(int rx, int lowHz, int highHz)
 {
     if (auto* s = sliceAt(rx)) {
-        s->setFilterLow(lowHz);
-        s->setFilterHigh(highHz);
+        s->setFilter(lowHz, highHz);
     }
 }
 int RadioModel::filterLow(int rx) const
@@ -7994,14 +8004,63 @@ bool RadioModel::rxEnable(int rx) const
 }
 
 // ── Volume (radio-global) ───────────────────────────────────────────────────
-void RadioModel::setAfLinear(int v)   { m_tciAfLinear  = v; }
-int  RadioModel::afLinear() const     { return m_tciAfLinear; }
-void RadioModel::setMonLinear(int v)  { m_tciMonLinear = v; }
-int  RadioModel::monLinear() const    { return m_tciMonLinear; }
+//
+// Review P1 #1 fix (2026-05-22): forward to live AudioEngine / TransmitModel
+// state instead of the decoupled m_tciAfLinear / m_tciMonLinear caches.  The
+// caches defaulted to 0, so a fresh real-client connect saw "volume:-60.0;"
+// (muted) and "rx_volume:0,0,-60.00;" -- bench-bogus.  Thetis reads
+// consoleThreadSafe.AF / TXAF for the same fields (TCIServer.cs:2652+2655
+// [v2.10.3.15]), which are the actual UI slider positions.  NereusSDR's
+// equivalents:
+//   AF        -> AudioEngine::volume() (float [0..1]) scaled to int [0..100]
+//   TXAF/MON  -> TransmitModel::monitorVolume() (float [0..1]) same scale
+// The legacy m_tciAfLinear / m_tciMonLinear caches are still written by
+// setAfLinear / setMonLinear so test code that pokes them keeps working,
+// but they are NOT read back -- the live source is authoritative.  Setters
+// also forward to the live model so TCI clients writing AF/MON actually
+// affect the radio (parity with Thetis handleVolume / handleMONVolume).
+void RadioModel::setAfLinear(int v)
+{
+    m_tciAfLinear = v;
+    if (m_audioEngine) {
+        m_audioEngine->setVolume(static_cast<float>(qBound(0, v, 100)) / 100.0f);
+    }
+}
+int  RadioModel::afLinear() const
+{
+    if (m_audioEngine) {
+        const float vol = m_audioEngine->volume();
+        return qBound(0, static_cast<int>(vol * 100.0f + 0.5f), 100);
+    }
+    return m_tciAfLinear;
+}
+void RadioModel::setMonLinear(int v)
+{
+    m_tciMonLinear = v;
+    m_transmitModel.setMonitorVolume(
+        static_cast<float>(qBound(0, v, 100)) / 100.0f);
+}
+int  RadioModel::monLinear() const
+{
+    const float vol = m_transmitModel.monitorVolume();
+    return qBound(0, static_cast<int>(vol * 100.0f + 0.5f), 100);
+}
 
 // ── IQ rate ─────────────────────────────────────────────────────────────────
+//
+// Review P1 #1 fix (2026-05-22): prefer the live connection sample rate.
+// Thetis reads consoleThreadSafe.SampleRateRX1 via getPublishedIQSampleRate
+// (TCIServer.cs:2642 [v2.10.3.15]).  NereusSDR exposes the same via
+// connectionSampleRateHz().  Falls back to the cached m_tciIqSampleRate
+// only when no connection is active (matches Thetis behaviour: pre-
+// connect probes see whatever the user/setup defaults left in the field).
 void RadioModel::setIqSampleRate(int sr) { m_tciIqSampleRate = sr; }
-int  RadioModel::iqSampleRate() const    { return m_tciIqSampleRate; }
+int  RadioModel::iqSampleRate() const
+{
+    const int liveRate = connectionSampleRateHz();
+    if (liveRate > 0) { return liveRate; }
+    return m_tciIqSampleRate;
+}
 
 // ── Audio stream config (parity-only; TciServer intercepts) ─────────────────
 void RadioModel::setAudioSampleRate(int sr)          { m_tciAudioSampleRate = sr; }

@@ -25,6 +25,10 @@
 #include "LogCategories.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"  // Phase 3J-1 closeout: SliceModel signal wireup for local broadcast.
+#include "models/TransmitModel.h"  // Phase 3J-1 closeout (review P2): MON / TUN broadcast wireup.
+#include "MoxController.h"         // Phase 3J-1 closeout (review P2): MOX broadcast wireup.
+#include "AudioEngine.h"           // Phase 3J-1 closeout (review P1 #1): volume change broadcast.
+#include "TciVolume.h"             // tciLinearToDbVolume / tciAudioGainToDb for volume frames.
 #include "WdspEngine.h"
 #include "wdsp_api.h"   // Phase 3J-1 closeout Item 15 (2026-05-12) — GetTXAMeter direct call
 #include "RxChannel.h"
@@ -449,6 +453,12 @@ TciServer::TciServer(RadioModel* model, QObject* parent)
     // From Thetis TCIServer.cs:6730-6790 [v2.10.3.15] -- the +40 Console
     // event subscriptions that drive sendXxx on every property change.
     hookSliceBroadcasts();
+
+    // Radio-global ChangedHandlers (MOX, TUN, MON, AF volume, IQ sample
+    // rate, connection state, RX2 enable) -- the slice-agnostic counterparts
+    // to hookSliceBroadcasts above.  See hookGlobalBroadcasts implementation
+    // for the per-handler Thetis cite chain.
+    hookGlobalBroadcasts();
 }
 
 // ── hookAudioAndIqTaps() ─────────────────────────────────────────────────────
@@ -633,9 +643,12 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int rxIndex)
 
     // ── AGC mode (agc_mode: line) ───────────────────────────────────────────
     // Source: Thetis AGCModeChangedHandlers at TCIServer.cs:6763 [v2.10.3.15]
-    // routed to OnAGCModeChanged.  We re-read via the RadioModel Q_INVOKABLE
-    // shim so the canonical TCI string ("OFF"/"LONG"/"SLOW"/"MED"/"FAST"/
-    // "CUSTOM") matches what handleAgcMode + sendAgcMode produce.
+    // routed to OnAGCModeChanged.  Re-read via the RadioModel Q_INVOKABLE
+    // shim then run through TciProtocol::tciAgcModeForWire to produce the
+    // lowercase wire token Thetis emits via agcModeToTciMode
+    // (TCIServer.cs:2260-2279 [v2.10.3.15]).  Review P2 #2 fix (2026-05-22):
+    // without the normalize step, broadcasts read "agc_mode:0,MED;" instead
+    // of "agc_mode:0,normal;".
     connect(slice, &SliceModel::agcModeChanged, this,
             [this, rxIndex](NereusSDR::AGCMode) {
                 QString modeStr;
@@ -644,7 +657,9 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int rxIndex)
                                           Q_RETURN_ARG(QString, modeStr),
                                           Q_ARG(int, rxIndex));
                 m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("agc_mode:%1,%2;").arg(rxIndex).arg(modeStr));
+                    QStringLiteral("agc_mode:%1,%2;")
+                        .arg(rxIndex)
+                        .arg(TciProtocol::tciAgcModeForWire(modeStr)));
             });
 
     // ── AGC gain / threshold (agc_gain: line) ───────────────────────────────
@@ -739,6 +754,330 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int rxIndex)
                 m_protocol->enqueueLocalBroadcast(
                     QStringLiteral("xit_offset:%1,%2;").arg(rxIndex).arg(hz));
             });
+
+    // ── Balance / audio pan (rx_balance: line) ─────────────────────────────
+    // Source: Thetis BalanceChangedHandlers at TCIServer.cs:6747 [v2.10.3.15]
+    // routed to OnBalanceChanged.  Thetis emits two frames per slice (chan 0
+    // and chan 1) via sendRxBalance at TCIServer.cs:2187-2191 [v2.10.3.13]
+    // with the 40.0 - (pan * 0.8) transform.  NereusSDR's audioPan is already
+    // F2 dB in TCI space (mock + production parity); emit both channels.
+    connect(slice, &SliceModel::audioPanChanged, this,
+            [this, rxIndex](double pan) {
+                const QString balStr = QString::number(pan, 'f', 2);
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_balance:%1,0,%2;").arg(rxIndex).arg(balStr));
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_balance:%1,1,%2;").arg(rxIndex).arg(balStr));
+            });
+
+    // ── NB (Noise Blanker) -- rx_nb_enable ─────────────────────────────────
+    // Source: Thetis NBChangedHandlers at TCIServer.cs:6760 [v2.10.3.15]
+    // routed to OnNbChanged.  NereusSDR's nbModeChanged carries a NbMode enum
+    // (None / NB / NB2 / SNB); any non-None mode reports "enabled" to TCI per
+    // sendRxNbEnable at TCIServer.cs:1901-1905 [v2.10.3.13].  Production
+    // SliceModel exposes the enum directly; treat None as off.
+    connect(slice, &SliceModel::nbModeChanged, this,
+            [this, rxIndex](NereusSDR::NbMode mode) {
+                const bool on = (mode != NereusSDR::NbMode::Off);
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_nb_enable:%1,%2;")
+                        .arg(rxIndex)
+                        .arg(on ? QStringLiteral("true") : QStringLiteral("false")));
+            });
+
+    // ── NR (Noise Reduction) + ANF (Automatic Notch) -- single signal ──────
+    // Source: Thetis NRChangedHandlers + ANFChangedHandlers at
+    // TCIServer.cs:6759 + 6761 [v2.10.3.15].  NereusSDR collapses NR1/NR2/
+    // NR3/NR4/ANF into a single NrSlot enum on SliceModel; activeNrChanged
+    // fires for ALL of them.  We re-read the RadioModel rxNr / rxNrIndex /
+    // rxAnf shims to emit Thetis-faithful tri-frame (rx_nr_enable +
+    // rx_nr_enable_ex + rx_anf_enable) so the wire format matches the init
+    // burst exactly.  Each emit uses tciAgcModeForWire-style normalisation:
+    // any active NR slot is "on" via the Thetis "0 = off" collapse already
+    // applied in buildInitialRadioStateLines.
+    connect(slice, &SliceModel::activeNrChanged, this,
+            [this, rxIndex](NereusSDR::NrSlot /*slot*/) {
+                bool nrOn = false;
+                int  nrIdx = 0;
+                bool anfOn = false;
+                QMetaObject::invokeMethod(m_model, "rxNr",
+                                          Qt::DirectConnection,
+                                          Q_RETURN_ARG(bool, nrOn),
+                                          Q_ARG(int, rxIndex));
+                if (nrOn) {
+                    QMetaObject::invokeMethod(m_model, "rxNrIndex",
+                                              Qt::DirectConnection,
+                                              Q_RETURN_ARG(int, nrIdx),
+                                              Q_ARG(int, rxIndex));
+                }
+                QMetaObject::invokeMethod(m_model, "rxAnf",
+                                          Qt::DirectConnection,
+                                          Q_RETURN_ARG(bool, anfOn),
+                                          Q_ARG(int, rxIndex));
+                const QString trueStr  = QStringLiteral("true");
+                const QString falseStr = QStringLiteral("false");
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_nr_enable:%1,%2;")
+                        .arg(rxIndex).arg(nrOn ? trueStr : falseStr));
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_nr_enable_ex:%1,%2,%3;")
+                        .arg(rxIndex).arg(nrOn ? trueStr : falseStr).arg(nrIdx));
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_anf_enable:%1,%2;")
+                        .arg(rxIndex).arg(anfOn ? trueStr : falseStr));
+            });
+
+    // ── APF (Audio Peak Filter) -- rx_apf_enable ───────────────────────────
+    // Source: Thetis APFChangedHandlers at TCIServer.cs:6770 [v2.10.3.15]
+    // routed to OnApfChanged.  SliceModel exposes apfEnabledChanged directly.
+    connect(slice, &SliceModel::apfEnabledChanged, this,
+            [this, rxIndex](bool on) {
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_apf_enable:%1,%2;")
+                        .arg(rxIndex)
+                        .arg(on ? QStringLiteral("true") : QStringLiteral("false")));
+            });
+
+    // ── BIN (Binaural) -- rx_bin_enable ────────────────────────────────────
+    // Source: Thetis BINChangedHandlers at TCIServer.cs:6762 [v2.10.3.15]
+    // routed to OnBinChanged.  SliceModel exposes binauralEnabledChanged.
+    connect(slice, &SliceModel::binauralEnabledChanged, this,
+            [this, rxIndex](bool on) {
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_bin_enable:%1,%2;")
+                        .arg(rxIndex)
+                        .arg(on ? QStringLiteral("true") : QStringLiteral("false")));
+            });
+
+    // ── DIGL / DIGU click-tune offsets ─────────────────────────────────────
+    // Source: Thetis DIGLOffsetChangedHandlers + DIGUOffsetChangedHandlers at
+    // TCIServer.cs:6772-6773 [v2.10.3.15].  Thetis treats these as radio-
+    // global (DIGLClickTuneOffset / DIGUClickTuneOffset Console properties);
+    // NereusSDR stores per-slice on SliceModel.  Broadcast only the active
+    // slice's change to match the init-burst active-slice semantic; per-slice
+    // changes on the inactive slice are silently dropped (operator only sees
+    // one DIGL value at a time in UI).
+    connect(slice, &SliceModel::diglOffsetHzChanged, this,
+            [this, slice](int hz) {
+                if (m_model && m_model->activeSlice() == slice) {
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("digl_offset:%1;").arg(hz));
+                }
+            });
+    connect(slice, &SliceModel::diguOffsetHzChanged, this,
+            [this, slice](int hz) {
+                if (m_model && m_model->activeSlice() == slice) {
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("digu_offset:%1;").arg(hz));
+                }
+            });
+}
+
+// ── hookGlobalBroadcasts() ───────────────────────────────────────────────────
+//
+// Radio-global ChangedHandlers from Thetis TCIServer.cs:6727-6788 [v2.10.3.15]
+// that hookSliceBroadcasts doesn't cover.  Each Thetis Console.XxxChangedHandlers
+// += OnXxxChanged subscription maps to one Qt connect() here.
+//
+// Production wiring: TciServer outlives RadioModel inside MainWindow but
+// stop() severs every RadioModel -> this connection via the wholesale
+// QObject::disconnect(m_model, nullptr, this, nullptr) call.  So this method
+// is callable on every start() and resets the m_globalBroadcastsWired flag.
+
+void TciServer::hookGlobalBroadcasts()
+{
+    if (!m_model || !m_protocol || m_globalBroadcastsWired) {
+        return;
+    }
+
+    // ── MOX (trx: line) ────────────────────────────────────────────────────
+    // Source: Thetis MoxChangeHandlers at TCIServer.cs:6727 [v2.10.3.15]
+    // routed to OnMoxChangeHandler -> sendMOX.  MoxController is the
+    // authoritative MOX state holder; moxStateChanged fires at the END of
+    // the TX/RX walk (Codex P1: TXEnable boundary).  Format from
+    // sendMOX at TCIServer.cs:2207-2211 [v2.10.3.13].
+    if (auto* mox = m_model->moxController()) {
+        connect(mox, &MoxController::moxStateChanged, this,
+                [this](bool on) {
+                    const QString boolStr =
+                        on ? QStringLiteral("true") : QStringLiteral("false");
+                    // Thetis sendMOX(0, ...) + sendMOX(1, MOX && VFOBTX &&
+                    // bRX2Enabled).  Until VFOBTX state plumbing lands the
+                    // rx==1 channel is always false (the !VFOBTX path of
+                    // sendInitialRadioState matches this).
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("trx:0,%1;").arg(boolStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("trx:1,false;"));
+                    // MOX gates rx_enable / tx_enable per Thetis sendRXEnable
+                    // / sendTXEnable at TCIServer.cs:2515-2516 + 2618-2619
+                    // [v2.10.3.15].  Re-emit both to mirror the init burst
+                    // when MOX flips.
+                    bool rx2en = false;
+                    QMetaObject::invokeMethod(m_model, "rx2Enabled",
+                                              Qt::DirectConnection,
+                                              Q_RETURN_ARG(bool, rx2en));
+                    const QString notMox =
+                        on ? QStringLiteral("false") : QStringLiteral("true");
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_enable:0,%1;").arg(notMox));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_enable:1,%1;")
+                            .arg((rx2en && !on) ? QStringLiteral("true")
+                                                 : QStringLiteral("false")));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("tx_enable:0,%1;").arg(notMox));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("tx_enable:1,%1;")
+                            .arg((rx2en && !on) ? QStringLiteral("true")
+                                                 : QStringLiteral("false")));
+                });
+    }
+
+    // ── TUNE (tune: line) ──────────────────────────────────────────────────
+    // Source: Thetis TuneChangedHandlers at TCIServer.cs:6737 [v2.10.3.15]
+    // routed to OnTuneChanged -> sendTune.  NereusSDR's TUN state lives on
+    // TransmitModel as the m_tune bool + tuneChanged signal (mirrors Thetis
+    // chkTUN.Checked at console.cs:18677-18684 [v2.10.3.15]).
+    connect(&m_model->transmitModel(), &TransmitModel::tuneChanged, this,
+            [this](bool on) {
+                const QString boolStr =
+                    on ? QStringLiteral("true") : QStringLiteral("false");
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("tune:0,%1;").arg(boolStr));
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("tune:1,false;"));  // !VFOBTX path
+            });
+
+    // ── MON enable + volume (mon_enable: / mon_volume: lines) ──────────────
+    // Source: Thetis MONChangedHandlers + MONVolumeChangedHandlers at
+    // TCIServer.cs:6744-6745 [v2.10.3.15] routed to OnMONChanged /
+    // OnMONVolumeChanged.  TransmitModel holds both.
+    connect(&m_model->transmitModel(), &TransmitModel::monEnabledChanged, this,
+            [this](bool on) {
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("mon_enable:%1;")
+                        .arg(on ? QStringLiteral("true")
+                                : QStringLiteral("false")));
+            });
+    connect(&m_model->transmitModel(), &TransmitModel::monitorVolumeChanged, this,
+            [this](float volume) {
+                // sendMONVolume uses linearToDbVolume(TXAF) where TXAF is the
+                // 0..100 linear slider (TCIServer.cs:2655 [v2.10.3.15]).
+                // monitorVolume is float [0..1]; scale before passing.
+                const int linear =
+                    qBound(0, static_cast<int>(volume * 100.0f + 0.5f), 100);
+                const double db = tciLinearToDbVolume(linear);
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("mon_volume:%1;")
+                        .arg(QString::number(db, 'f', 1)));
+            });
+
+    // ── AF volume (volume: + rx_volume: lines) ─────────────────────────────
+    // Source: Thetis VolumeChangedHandlers at TCIServer.cs:6746 [v2.10.3.15]
+    // routed to OnVolumeChanged -> sendVolume.  AudioEngine is the live
+    // volume holder.  Thetis emits sendVolume (linearToDbVolume, LINEAR
+    // curve) AND sendRxVolume for each rx (audioGainToDb, LOG curve) per
+    // TCIServer.cs:2554-2557 + 2652 [v2.10.3.15].  Both curves required
+    // (review P1 #1, 2026-05-22).
+    if (auto* audio = m_model->audioEngine()) {
+        connect(audio, &AudioEngine::volumeChanged, this,
+                [this](float volume) {
+                    const int linear =
+                        qBound(0, static_cast<int>(volume * 100.0f + 0.5f), 100);
+                    // volume: line uses LINEAR curve (linearToDbVolume).
+                    const double volDb = tciLinearToDbVolume(linear);
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("volume:%1;")
+                            .arg(QString::number(volDb, 'f', 1)));
+                    // rx_volume: lines use LOG curve (audioGainToDb).  Until
+                    // sub-RX / per-RX gain modeling lands (Phase 3F multi-pan)
+                    // all four rx_volume slots reflect the same afLinear value
+                    // -- matches the init burst's collapsed-volume strategy.
+                    const double gainDb = tciAudioGainToDb(linear / 100.0);
+                    const QString gainStr = QString::number(gainDb, 'f', 2);
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:0,0,%1;").arg(gainStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:0,1,%1;").arg(gainStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:1,0,%1;").arg(gainStr));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("rx_volume:1,1,%1;").arg(gainStr));
+                });
+    }
+
+    // ── HW sample rate (iq_samplerate: + audio_samplerate: implicit) ───────
+    // Source: Thetis HWSampleRateChangedHandlers at TCIServer.cs:6739
+    // [v2.10.3.15] routed to OnHWSampleRateChanged.  Thetis emits
+    // sendIQSampleRate + the IF limits update.  NereusSDR fires
+    // RadioModel::wireSampleRateChanged with a double.
+    connect(m_model, &RadioModel::wireSampleRateChanged, this,
+            [this](double rateHz) {
+                const int rateInt = static_cast<int>(rateHz);
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("iq_samplerate:%1;").arg(rateInt));
+                // sendIFLimits follows in Thetis (TCIServer.cs:2535-2536
+                // [v2.10.3.13]).  halfSample = SampleRateRX1 / 2.
+                const int halfSample = rateInt / 2;
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("if_limits:%1,%2;")
+                        .arg(-halfSample).arg(halfSample));
+            });
+
+    // ── Power (start; / stop; line) ────────────────────────────────────────
+    // Source: Thetis PowerChangeHanders at TCIServer.cs:6735 [v2.10.3.15]
+    // routed to OnPowerChangeHander -> sendStartStop.  NereusSDR collapses
+    // Power-on and connection-up into a single concept; emit start; on
+    // connect, stop; on disconnect.  Architectural divergence already
+    // documented in RadioModel::powerOn() shim and the buildInitialRadioState
+    // start;/stop; emission site.
+    connect(m_model, &RadioModel::connectionStateChanged, this,
+            [this](NereusSDR::ConnectionState newState) {
+                // Mirror buildInitialRadioStateLines: emit one or the other
+                // (never both).  ConnectionState::Connected -> start; any
+                // other state -> stop;.  Format from sendStart / sendStop in
+                // TCIServer.cs:5786-5792 [v2.10.3.15].
+                if (newState == NereusSDR::ConnectionState::Connected) {
+                    m_protocol->enqueueLocalBroadcast(QStringLiteral("start;"));
+                } else {
+                    m_protocol->enqueueLocalBroadcast(QStringLiteral("stop;"));
+                }
+            });
+
+    // ── RX2 enabled (rx_enable:1 + rx_channel_enable:1,0 + lock:1) ────────
+    // Source: Thetis RX2EnabledChangedHandlers at TCIServer.cs:6741
+    // [v2.10.3.15] routed to OnRX2EnabledChanged.  Thetis re-emits the
+    // initial state for the rx==1 lines that depend on bRX2Enabled.
+    connect(m_model, &RadioModel::activeRxCountChanged, this,
+            [this](int newCount) {
+                const bool en = (newCount >= 2);
+                const QString boolStr =
+                    en ? QStringLiteral("true") : QStringLiteral("false");
+                bool mox = false;
+                QMetaObject::invokeMethod(m_model, "mox",
+                                          Qt::DirectConnection,
+                                          Q_RETURN_ARG(bool, mox));
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_enable:1,%1;")
+                        .arg((en && !mox) ? QStringLiteral("true")
+                                          : QStringLiteral("false")));
+                m_protocol->enqueueLocalBroadcast(
+                    QStringLiteral("rx_channel_enable:1,0,%1;").arg(boolStr));
+                if (en) {
+                    bool lock1 = false;
+                    QMetaObject::invokeMethod(m_model, "lock",
+                                              Qt::DirectConnection,
+                                              Q_RETURN_ARG(bool, lock1),
+                                              Q_ARG(int, 1));
+                    m_protocol->enqueueLocalBroadcast(
+                        QStringLiteral("lock:1,%1;")
+                            .arg(lock1 ? QStringLiteral("true")
+                                        : QStringLiteral("false")));
+                }
+            });
+
+    m_globalBroadcastsWired = true;
 }
 
 TciServer::~TciServer()
@@ -828,6 +1167,18 @@ bool TciServer::start(const QHostAddress& bindAddress, quint16 port)
     // the constructor already called hookAudioAndIqTaps).
     hookAudioAndIqTaps();
 
+    // Review P2 #5 fix (2026-05-22): re-hook slice broadcasts on every start().
+    // stop()'s QObject::disconnect(m_model, nullptr, this, nullptr) severs ALL
+    // RadioModel -> TciServer connections, including the sliceAdded subscriber
+    // wired by hookSliceBroadcasts.  Without re-hooking, slices added between
+    // a stop()/start() cycle never get broadcast wiring (operator tunes after
+    // server restart go un-broadcast).  hookSliceBroadcasts is idempotent --
+    // it skips slices already in m_broadcastWiredSlices and the new
+    // sliceAdded connect is a fresh wire each call.  Same reasoning applies
+    // to hookGlobalBroadcasts (MOX, TUN, MON, AF volume, sample rate, etc.).
+    hookSliceBroadcasts();
+    hookGlobalBroadcasts();
+
     return true;
 }
 
@@ -856,6 +1207,11 @@ void TciServer::stop()
     if (m_model) {
         QObject::disconnect(m_model, nullptr, this, nullptr);
         m_iqTapConnected = false;  // P2.3: reset so start() can reconnect
+        // Review P2 #5 fix (2026-05-22): the wholesale disconnect above
+        // severs hookGlobalBroadcasts' MOX / TUN / MON / volume / sample-rate
+        // / connection-state subscribers (all rooted on m_model and its
+        // sub-models).  Reset the guard so start() re-arms them.
+        m_globalBroadcastsWired = false;
     }
     // 2026-05-17 crash fix: m_audioTapSources is now QSet<QPointer<RxChannel>>
     // (see TciServer.h).  Skip entries whose underlying RxChannel was
