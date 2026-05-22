@@ -94,6 +94,64 @@ void TciProtocol::drainCoalescedNotifications()
     }
 }
 
+// Phase 3J-1 closeout (2026-05-22): bench bug fix.  See header comment for
+// the full divergence rationale.  Both methods run on the main thread per
+// the m_pendingNotifications thread-safety contract documented at the
+// member declaration -- callers are responsible for ensuring the connecting
+// signal fires on the same Qt thread.
+void TciProtocol::enqueueLocalBroadcast(const QString& frame)
+{
+    if (!frame.isEmpty()) {
+        m_pendingNotifications.append(frame);
+    }
+}
+
+// VFO push routes through the coalescer (Layer 3 of the Thetis 3-layer
+// throttle, TCIServer.cs:1722-1727 [v2.10.3.13]).  Emits the same triplet
+// that buildInitialRadioStateLines produces for the same rx, so the live
+// client sees identical wire format after operator tuning.  TX frequency
+// follows TXFreq's single-RX !VFOBTX path (mirrors RX1 VFO A); full
+// VFOBTX/multi-RX logic lands with Phase 3F (see TXFreq cite in
+// buildInitialRadioStateLines).
+void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz)
+{
+    // Per-rx (vfo:rx,chan,hz) covers both channels; Thetis sendVFO at
+    // TCIServer.cs:2061-2093 [v2.10.3.13] -- format string.  NereusSDR
+    // collapses VFO A/B onto the slice, so both channels read the same hz.
+    {
+        const QString vfoKey0   = QStringLiteral("vfo:%1,0").arg(rxIndex);
+        const QString vfoFrame0 = QStringLiteral("vfo:%1,0,%2;").arg(rxIndex).arg(hz);
+        m_vfoCoalescer.update(vfoKey0, vfoFrame0);
+        const QString vfoKey1   = QStringLiteral("vfo:%1,1").arg(rxIndex);
+        const QString vfoFrame1 = QStringLiteral("vfo:%1,1,%2;").arg(rxIndex).arg(hz);
+        m_vfoCoalescer.update(vfoKey1, vfoFrame1);
+    }
+    // dds:rx,hz (no chan).  Thetis sendDDS at TCIServer.cs:2334-2348
+    // [v2.10.3.13].  Same coalesce key shape so a rapid burst dedups.
+    {
+        const QString ddsKey   = QStringLiteral("dds:%1").arg(rxIndex);
+        const QString ddsFrame = QStringLiteral("dds:%1,%2;").arg(rxIndex).arg(hz);
+        m_vfoCoalescer.update(ddsKey, ddsFrame);
+    }
+    // TX frequency: emit only for rxIndex==0 (the single-RX !VFOBTX path).
+    // When 3F multi-pan lands the full TXFreq logic, the caller (or this
+    // method) will decide which rx drives TX based on VFOBTX/VFOATX/split.
+    // From Thetis sendTXFrequencyChanged at TCIServer.cs:2246-2259 [v2.10.3.13].
+    if (rxIndex == 0) {
+        const QString txKey   = QStringLiteral("tx_frequency");
+        const QString txFrame = QStringLiteral("tx_frequency:%1;").arg(hz);
+        m_vfoCoalescer.update(txKey, txFrame);
+        // bespoke tx_frequency_thetis (Phase 4 Task 4.2 format).  Band label
+        // and bRX2Enabled / VFOBTX gates match the init burst.
+        const QString band = bandLabel(bandFromFrequency(static_cast<double>(hz)));
+        const QString txThetisKey = QStringLiteral("tx_frequency_thetis");
+        const QString txThetisFrame =
+            QStringLiteral("tx_frequency_thetis:%1,%2,false,false;")
+                .arg(hz).arg(band);
+        m_vfoCoalescer.update(txThetisKey, txThetisFrame);
+    }
+}
+
 // From Thetis TCIServer.cs:2512-2552 [v2.10.3.13] — sendInitialisationData
 // emits 8 wrapper lines + buildInitialRadioState() + ready;.
 QStringList TciProtocol::buildInitBurst() const
