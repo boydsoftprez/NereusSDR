@@ -88,7 +88,6 @@ warren@wpratt.com
 
 */
 
-#include "WdspTypes.h"
 #include "dsp/ChannelConfig.h"
 
 #include <QObject>
