@@ -212,6 +212,30 @@ public:
     // for the full Thetis-faithful sequence ported from setup.cs:7003-7159.
     bool setRxChannelRate(int channelId, int newRateHz);
 
+    // --- Per-board ChannelMaster-layer WDSP calls (Phase B4'/B5') ---
+    //
+    // These wrap ChannelMaster-exported symbols that Thetis calls at connect
+    // time from clsHardwareSpecific.cs:85-191 [v2.10.3.15].  In NereusSDR,
+    // the symbols resolve to glue stubs in netinterface_stub.c until the
+    // ChannelMaster module is ported.
+    //
+    // Call both at connect time (RadioModel::connectToRadio) using values from
+    // HardwareProfile — see the §B6' wiring block in RadioModel.cpp.
+
+    // From Thetis cmaster.SetADCSupply / txgain.c:164 [v2.10.3.15] —
+    // per-board PA over-drive protection scaling.  v is 33 or 50 (volts).
+    // txid is the transmitter index (always 0 for current OpenHPSDR boards).
+    // Skips the call when v == 0 (sentinel "not set / use WDSP default").
+    // Thread safety: call on main thread only, before DSP is running.
+    void setAdcSupply(int txid, int v);
+
+    // From Thetis NetworkIO.LRAudioSwap / netInterface.c:1409 [v2.10.3.15] —
+    // per-board L/R audio stream stereo-pair swap for the outbound P2/ETH
+    // audio path (sendOutbound()).  swap is 0 (no swap, modern boards) or
+    // 1 (swap, Hermes-family boards).
+    // Thread safety: call on main thread only, before DSP is running.
+    void setLRAudioSwap(int swap);
+
     // --- RADE Channel management (Phase 3R Task J2) ---
     //
     // RADE (Radio Autoencoder) is a neural-codec digital voice mode

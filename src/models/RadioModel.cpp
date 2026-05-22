@@ -3682,6 +3682,29 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     m_connection = conn.release();
     m_connection->setHardwareProfile(m_hardwareProfile);
 
+    // Phase B6' — per-board WDSP ChannelMaster-layer calls.
+    //
+    // From Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] — called at
+    // connect time per SKU.  HardwareProfile values were populated by
+    // HardwareProfile::forModel() (Phase B1) from the same Thetis table.
+    // Upstream inline attribution preserved per CLAUDE.md §"Inline comment preservation":
+    //   :129 //N1GP G2E added
+    //   :171 // G8NJJ: likely to need further changes for PA
+    //   :185 //DH1KLM
+    //   :187 // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
+    //
+    // SetADCSupply: PA over-drive protection scaling in xtxgain().
+    //   Case 33: ptn = 1/10^(adc_value/2730.0) — Hermes-family boards.
+    //   Case 50: ptn = 1/10^(adc_value/1802.0) — OrionMKII/Saturn-family.
+    //   adcSupplyVoltage == 0 sentinel → setAdcSupply skips the call.
+    //
+    // LRAudioSwap: L/R stereo-pair swap for the outbound P2/ETH audio stream
+    //   (sendOutbound() at ChannelMaster/netInterface.c:1277 [v2.10.3.15]).
+    //   Hermes-family (HERMES/ANAN10/ANAN10E/ANAN100/ANAN100B/HERMESLITE):
+    //     swap=1. All modern boards (Angelia/Orion/Saturn-family): swap=0.
+    m_wdspEngine->setAdcSupply(/*txid=*/0, m_hardwareProfile.adcSupplyVoltage);
+    m_wdspEngine->setLRAudioSwap(m_hardwareProfile.lrAudioSwap ? 1 : 0);
+
     // 3M-1a bench fix: TX channel creation was previously inside the WDSP-
     // init lambda, which fires synchronously inside m_wdspEngine->initialize()
     // (above, line ~1152) — BEFORE m_connection was assigned.  Result: the

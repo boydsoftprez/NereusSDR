@@ -2,7 +2,6 @@
 // against Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] table.
 // NereusSDR-original test structure; logic values sourced from Thetis.
 #include <QtTest/QtTest>
-#include <algorithm>
 #include "core/HardwareProfile.h"
 #include "core/HpsdrModel.h"
 

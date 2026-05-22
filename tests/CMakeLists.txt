@@ -2413,6 +2413,21 @@ nereus_add_test(tst_wdsp_engine_tx_channel)
 #   wdsp/dexp.c:230-239    - destroy_dexp impl: frees, but does NOT null pdexp[id].
 nereus_add_test(tst_wdsp_engine_dexp_init)
 
+# ── Phase B4'/B5': WdspEngine::setAdcSupply / setLRAudioSwap wrappers ────────
+# Pins the per-board ChannelMaster-layer WDSP call wrappers introduced during
+# the ANAN-G2E port (Phase B4'/B5').  The stubs in netinterface_stub.c always
+# resolve SetADCSupply / LRAudioSwap, so these tests run in both HAVE_WDSP
+# and non-HAVE_WDSP builds.
+# Verifies:
+#   setAdcSupply with v==0 sentinel skips the call (guard exists);
+#   setAdcSupply with v==33 and v==50 call through without crashing;
+#   setLRAudioSwap with swap==0 and swap==1 call through without crashing.
+# Source map (all v2.10.3.15):
+#   ChannelMaster/txgain.c:164        — SetADCSupply impl
+#   ChannelMaster/netInterface.c:1409 — LRAudioSwap impl
+#   Console/clsHardwareSpecific.cs:85-191 — per-SKU call sites
+nereus_add_test(tst_wdsp_engine_board_init)
+
 # ── Phase 3R Task J2: WdspEngine RadeChannel lifecycle ──────────────────────
 # Pins the createRadeChannel / destroyRadeChannel / radeChannel(id) contract:
 #   - first create returns a non-null RadeChannel*;
