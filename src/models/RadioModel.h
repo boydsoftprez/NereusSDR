@@ -105,6 +105,8 @@
 #include <QList>
 #include <QThread>
 
+#include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
+
 // 3M-1a G.1: TxMicRouter is a plain (non-QObject) strategy interface.
 // Include required directly so unique_ptr destructor is available here.
 #include "core/TxMicRouter.h"
@@ -1859,6 +1861,14 @@ private:
     class FFTEngine*          m_fftEngine{nullptr};
     class ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
+
+    // 2026-05-22 spectrum-calibration fix: cache of the last rxMeterOffsetDb
+    // value we emitted via rxMeterOffsetChanged. NaN sentinel forces the
+    // first call to compare unequal so subscribers always get the initial
+    // value (matches the MoxController NaN-sentinel pattern). Updated only
+    // by setStepAttController's recompute lambda; rxMeterOffsetDb itself
+    // stays const and recomputes on every call.
+    mutable double m_lastEmittedRxMeterOffsetDb{std::numeric_limits<double>::quiet_NaN()};
 
     // Radio info
     QString m_name;

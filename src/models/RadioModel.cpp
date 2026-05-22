@@ -2243,6 +2243,36 @@ void RadioModel::setStepAttController(StepAttenuatorController* c)
     // false unconditionally per Phase 3A).
     m_stepAttController = c;
     m_transmitModel.setStepAttenuatorController(c);
+
+    // 2026-05-22 spectrum-calibration fix: rxMeterOffsetDb() depends on
+    // the StepAttenuatorController state (preamp mode + step-att enable +
+    // attenuator dB). Wire the three controller signals through to a
+    // recompute-and-emit lambda so subscribers (MeterPoller, the spectrum
+    // widget's dbmCalOffset) refresh whenever any of those change. Without
+    // this the spectrum was stuck at whatever offset was current at startup
+    // and never tracked preamp / step-att changes.
+    //
+    // Idempotent first-emit guard: only emit when the computed offset
+    // actually changed from the cached value, so we don't fire redundant
+    // updates on every controller tick.
+    if (c) {
+        auto recompute = [this]() {
+            const double v = rxMeterOffsetDb();
+            if (!qFuzzyCompare(1.0 + v, 1.0 + m_lastEmittedRxMeterOffsetDb)) {
+                m_lastEmittedRxMeterOffsetDb = v;
+                emit rxMeterOffsetChanged(v);
+            }
+        };
+        connect(c, &StepAttenuatorController::attenuationChanged,
+                this, [recompute](int) { recompute(); });
+        connect(c, &StepAttenuatorController::preampModeChanged,
+                this, [recompute](PreampMode) { recompute(); });
+        connect(c, &StepAttenuatorController::stepAttEnabledChanged,
+                this, [recompute](bool) { recompute(); });
+        // Initial emit so subscribers seed their cache with the current
+        // value rather than waiting for the first controller change.
+        recompute();
+    }
 }
 
 // ── 4O3A master toggle (Settings -> CAT & Network -> 4O3A General tab) ──────

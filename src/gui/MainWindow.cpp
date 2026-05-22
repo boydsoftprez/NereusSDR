@@ -2106,6 +2106,35 @@ void MainWindow::populateDefaultMeter()
         });
     }
 
+    // 2026-05-22 spectrum-calibration fix (Fix 1 from the S-meter / spectrum
+    // alignment research). FFTEngine bins ship in raw dBFS (window-coherent
+    // gain compensated against the digital I/Q full-scale reference). The
+    // S-meter path adds the same RXPreampOffset + RXCalibrationOffset chain
+    // Thetis applies at console.cs:21040 to land at antenna-referenced dBm,
+    // but the spectrum path never got that calibration step. Result: the
+    // S-meter and the spectrum trace lived in different reference frames
+    // (38 dB gap on the bench at preamp Off; 18 dB at preamp On). Forward
+    // the SAME rxMeterOffsetDb value to SpectrumWidget::setDbmCalOffset so
+    // both views share the antenna reference. Per the calibration research,
+    // carriers will then agree to ~1 dB between meter and spectrum. Noise
+    // floor will still differ by 10*log10(NBP_BW/bin_BW) which is physics
+    // (S-meter is passband-integrated; spectrum is per-bin) and matches
+    // Thetis behavior.
+    if (m_spectrumWidget && m_radioModel) {
+        auto pushSpectrumCal = [this](double db) {
+            if (m_spectrumWidget) {
+                m_spectrumWidget->setDbmCalOffset(static_cast<float>(db));
+            }
+        };
+        connect(m_radioModel, &RadioModel::rxMeterOffsetChanged,
+                this, pushSpectrumCal);
+        // Initial push so the cal lands at startup before any controller
+        // change. setStepAttController already calls the recompute lambda
+        // once on attach, but that may have run before this connect was
+        // wired -- push the current value here defensively.
+        pushSpectrumCal(m_radioModel->rxMeterOffsetDb());
+    }
+
     // Refresh MaxBin's CTUN slice offset whenever the DDC center moves.
     // The frequencyChanged lambda in wireSliceToSpectrum pushes the
     // offset on slice retune, but a spectrum pan moves the DDC NCO
