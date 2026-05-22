@@ -5,6 +5,16 @@
 
 using namespace NereusSDR;
 
+// Phase A1 — pin G2E enum values per Thetis network.h [v2.10.3.15] //N1GP G2E added
+static_assert(static_cast<int>(HPSDRHW::HermesC10) == 20,
+              "HermesC10 must be 20 per Thetis network.h:425 [v2.10.3.15]");
+static_assert(static_cast<int>(HPSDRHW::Andromeda) == 21,
+              "Andromeda relocated to 21 to free Thetis byte 20 for HermesC10");
+static_assert(static_cast<int>(HPSDRModel::ANAN_G2E) == 16,
+              "ANAN_G2E must be 16 per Thetis network.h:446 [v2.10.3.15]");
+static_assert(static_cast<int>(HPSDRModel::LAST) == 17,
+              "LAST sentinel bumped from 16 to 17 when ANAN_G2E added");
+
 class TestBoardCapabilities : public QObject {
     Q_OBJECT
 private slots:
