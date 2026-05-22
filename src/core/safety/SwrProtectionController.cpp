@@ -127,6 +127,7 @@ void SwrProtectionController::setTunePowerSliderValue(int value) noexcept
 void SwrProtectionController::ingest(float fwdW, float revW, bool tuneActive) noexcept
 {
     // From Thetis console.cs:25933-26120 [v2.10.3.13] (PollPAPWR loop)
+    // Upstream tags preserved: //N1GP (from cited console.cs:26006) [v2.10.3.15]
     // Verbatim inline tags from the cited range preserved per CLAUDE.md:
     //   console.cs:25961  case HPSDRModel.REDPITAYA: //DH1KLM
     //   console.cs:25980  //[2.10.3.6]MW0LGE modifications to use setup config for swr

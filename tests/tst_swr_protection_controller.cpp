@@ -122,6 +122,7 @@ void TestSwrProtectionController::moxOffClearsLatch()
 
 // Open antenna: fwd > 10W and (fwd-rev) < 1W → swr=50, factor=0.01
 // From Thetis console.cs:25989-26009 [v2.10.3.6] //[2.10.3.6]MW0LGE (verbatim inline tag)
+// Upstream tags preserved: //DH1KLM //N1GP (from cited upstream lines) [v2.10.3.15]
 // Tags preserved: //K2UE (console.cs:25985 — open-antenna check bypass for ANAN8000D)
 //                 //-W2PA (console.cs:25987 — changed fwd threshold to allow 35W for amp tuners)
 void TestSwrProtectionController::openAntennaDetected_swr50_factor0_01()
@@ -148,6 +149,7 @@ void TestSwrProtectionController::lowPowerClampedToSwr1_0()
 // Tune-time bypass: disableOnTune=true + tuneActive=true + fwd in [1, tunePowerSwrIgnore]
 // → factor stays 1.0, highSwr stays false
 // From Thetis console.cs:26020-26057 [v2.10.3.13]
+// Upstream tags preserved: //K2UE //MW0LGE //W2PA (from cited upstream lines) [v2.10.3.15]
 void TestSwrProtectionController::disableOnTune_bypassesProtection()
 {
     m_ctrl->setDisableOnTune(true);

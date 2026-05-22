@@ -172,6 +172,7 @@ private slots:
 
     // ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA share a row.
     // From Thetis clsHardwareSpecific.cs:685-716 [v2.10.3.13]
+    // Upstream tags preserved: //N1GP (from cited clsHardwareSpecific.cs:699) [v2.10.3.15]
     void anan7000d_hf_byteForByte() {
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN7000D,    Band::Band160m), 47.9f);
         QCOMPARE(defaultPaGainsForBand(HPSDRModel::ANAN7000D,    Band::Band80m),  50.5f);

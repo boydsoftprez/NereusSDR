@@ -207,6 +207,7 @@ struct CodecContext {
     // From Thetis ChannelMaster/networkproto1.c:597-598 [v2.10.3.13+501e3f51]:
     //   C1 = ... | ((prn->mic.mic_ptt & 1) << 6);
     // From Thetis console.cs:19757-19764 [v2.10.3.13+501e3f51]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
     //   private bool mic_ptt_disabled = false;
     //   NetworkIO.SetMicPTT(Convert.ToInt32(mic_ptt_disabled));
     //

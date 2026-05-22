@@ -190,6 +190,7 @@ namespace NereusSDR {
 // primaryRxDdcForBoard — see header.
 //
 // From Thetis console.cs:8554-8632 GetDDC() P2 branch [v2.10.3.13].
+// Upstream tags preserved: //N1GP (from cited console.cs:8612) [v2.10.3.15]
 //
 // Upstream inline attribution preserved verbatim (console.cs:8559):
 //   case HPSDRHW.Saturn:        // ANAN-G2, G21K    (G8NJJ)
@@ -650,6 +651,7 @@ void P2RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
 
     // Update Alex HPF/LPF based on new frequency
     // From Thetis console.cs:6830-7234 [@501e3f5] — auto-select band filters
+    // Upstream tags preserved: //N1GP (from cited console.cs:6830) [v2.10.3.15]
     // Upstream inline attribution preserved verbatim:
     //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
     double freqMhz = frequencyHz / 1e6;
@@ -1339,6 +1341,7 @@ void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
 // Wire byte: transmit_specific_buffer[50] bit 2 (mask 0x04), direct polarity.
 //
 // From Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]:
+// Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
 //   private bool mic_ptt_disabled = false;        // default PTT enabled
 //   public bool MicPTTDisabled {
 //       set {

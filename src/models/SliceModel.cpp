@@ -1244,6 +1244,7 @@ QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
     // From Thetis console.cs:14636 [v2.10.3.13]
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14671 [v2.10.3.13]
+    // Upstream tags preserved: //W4TME (from cited console.cs:14669) [v2.10.3.15]
     static constexpr int kDiglOffset = 2210;
 
     switch (mode) {

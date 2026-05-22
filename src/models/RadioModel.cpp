@@ -1237,6 +1237,7 @@ RadioModel::RadioModel(QObject* parent)
     //
     //   iq_gain   = audio_volume * Audio.HighSWRScale
     //               From Thetis cmaster.cs:1115-1119 [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
     //               HighSWRScale is set to 1.0 once at console.cs:29194
     //               [v2.10.3.13] and never reassigned anywhere in
     //               baseline Thetis — IQ-side path is effectively no-op.
@@ -7368,6 +7369,7 @@ void RadioModel::setTune(bool on)
         //               From Thetis audio.cs:262-271 [v2.10.3.13]. NO SWR.
         //   iq_gain   = audio_volume * swrProtect
         //               From Thetis cmaster.cs:1115-1119 [v2.10.3.13].
+        // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
         //               SWR factor lives HERE — DO NOT add to wire byte.
         //
         // Pre-hotfix linear formula at this site:

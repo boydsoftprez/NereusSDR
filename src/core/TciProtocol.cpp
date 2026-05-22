@@ -180,6 +180,7 @@ QStringList TciProtocol::buildInitBurst() const
 }
 
 // From Thetis TCIServer.cs:2363-2510 [v2.10.3.13] — sendInitialRadioState body.
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2412) [v2.10.3.15]
 // Emits up to 97 wire frames (subset depending on bSend + bRX2Enabled flags).
 // Phase 4 Task 4.2 ports the source order, 6 inline comments verbatim, and
 // the typo-fix divergence (design doc §7 row 1). Value args are hardcoded
@@ -351,6 +352,7 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildRxBinEnableLine(1, false);
 
     // From Thetis TCIServer.cs:2405-2413 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2412) [v2.10.3.15]
     lines << buildRxAnfEnableLine(0, false);
     lines << buildRxAnfEnableLine(1, false);
     // Gate on !IsSetupFormNull; Phase 4 Task 4.2 always emits (no Setup form yet).
@@ -360,6 +362,7 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildRxNfEnableLine(1, false);
 
     // From Thetis TCIServer.cs:2415-2430 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2412) [v2.10.3.15]
     lines << buildRxVolumeLine(0, 0, rx1vol);
     lines << buildRxVolumeLine(0, 1, rx1Subvol);
     lines << buildRxVolumeLine(1, 0, rx2vol);
@@ -531,12 +534,14 @@ QString TciProtocol::buildRxEnableLine(int rx, bool en)
 }
 
 // From Thetis TCIServer.cs:4472-4480 [v2.10.3.13] — sendNrEnable (non-extended form).
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
 QString TciProtocol::buildRxNrEnableLine(int rx, bool en)
 {
     return QStringLiteral("rx_nr_enable:%1,%2;").arg(rx).arg(en ? QStringLiteral("true") : QStringLiteral("false"));
 }
 
 // From Thetis TCIServer.cs:4472-4480 [v2.10.3.13] — sendNrEnable (extended form).
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
 QString TciProtocol::buildRxNrEnableExLine(int rx, bool en, int nrIndex)
 {
     return QStringLiteral("rx_nr_enable_ex:%1,%2,%3;")
@@ -558,6 +563,7 @@ QString TciProtocol::buildRxBinEnableLine(int rx, bool en)
 }
 
 // From Thetis TCIServer.cs:4482-4487 [v2.10.3.13] — sendAnfEnable.
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
 QString TciProtocol::buildRxAnfEnableLine(int rx, bool en)
 {
     return QStringLiteral("rx_anf_enable:%1,%2;").arg(rx).arg(en ? QStringLiteral("true") : QStringLiteral("false"));
@@ -842,6 +848,7 @@ QString TciProtocol::buildTxStreamAudioBufferingLine(int ms)
 // ── Mute / volume / MON helpers ───────────────────────────────────────────────
 
 // From Thetis TCIServer.cs:2158-2162 [v2.10.3.13] — sendMute.
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2154) [v2.10.3.15]
 QString TciProtocol::buildMuteLine(bool muted)
 {
     return QStringLiteral("mute:%1;").arg(muted ? QStringLiteral("true") : QStringLiteral("false"));
@@ -1305,6 +1312,7 @@ QString TciProtocol::handleModulationCommand(const QStringList& args)
                                   Q_ARG(int, rx), Q_ARG(QString, modeOut));
         // MW0LGE_22b mods are uppcase on the sun, replicate
         // From Thetis TCIServer.cs:2155 [v2.10.3.13] — sendMode format string.
+        // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2154) [v2.10.3.15]
         m_pendingNotifications << QStringLiteral("modulation:%1,%2;").arg(rx).arg(modeOut);
         return {};
     }

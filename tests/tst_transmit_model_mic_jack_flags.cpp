@@ -89,6 +89,7 @@ private slots:
 
     void default_micPttDisabled_isFalse() {
         // From Thetis console.cs:19757 [v2.10.3.13]:
+        // Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
         //   private bool mic_ptt_disabled = false;
         // PTT enabled by default (sensible safety default).
         TransmitModel t;

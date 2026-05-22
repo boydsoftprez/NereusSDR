@@ -178,6 +178,7 @@ PaCalBoardClass paCalBoardClassFor(HPSDRModel model) noexcept {
 
         // 100 W class — Thetis falls these through `default: interval = 10.0f`.
         // From Thetis console.cs:6749-6751 [v2.10.3.13] —
+        // Upstream tags preserved: //DH1KLM //G8NJJ (from cited upstream lines) [v2.10.3.15]
         //   default: interval = 10.0f; break;
         // The full set of HPSDRModel values that hit `default` is: HERMES,
         // ANAN100, ANAN100B, ANAN200D, ORIONMKII (everything not explicitly

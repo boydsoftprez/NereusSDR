@@ -1350,6 +1350,7 @@ void VfoWidget::buildDspTab()
     // NB cycling button (row 0, col 0) — tri-state Off → NB → NB2 → Off.
     // Mirrors Thetis chkNB — label switches "NB"/"NB2"; checked = active.
     // From Thetis console.cs:43513-43560 [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:43545) [v2.10.3.15]
     m_nbButton = makeToggle(QStringLiteral("NB"));
     m_nbButton->setToolTip(tr(
         "Noise blanker — left-click cycles Off \u2192 NB \u2192 NB2 \u2192 Off,\n"

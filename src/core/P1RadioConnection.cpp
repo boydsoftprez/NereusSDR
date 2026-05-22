@@ -826,6 +826,7 @@ void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     m_rxFreqHz[receiverIndex] = frequencyHz;
     // RX0 drives the Alex HPF bank — recompute on every change.
     // Source: console.cs:6830-6942 [@501e3f5]
+    // Upstream tags preserved: //N1GP (from cited console.cs:6830) [v2.10.3.15]
     // Upstream inline attribution preserved verbatim:
     //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
     //
@@ -1740,6 +1741,7 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
 // This is the SAME C1 byte as G.3 (bit 4) + G.4 (bit 5) — all OR'd in.
 //
 // From Thetis console.cs:19757-19766 [v2.10.3.13+501e3f51]:
+// Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
 //   private bool mic_ptt_disabled = false;        // default PTT enabled
 //   public bool MicPTTDisabled {
 //       set {
@@ -3363,6 +3365,7 @@ void P1RadioConnection::hl2ProbeAdvance(quint8 retAddr, quint8 retSubAddr)
             }
             // Mi0bot writes REG_CONTROL=1 to enable the board after version check.
             // Source: console.cs:25831 — `ioBoard.writeRequest(REG_CONTROL, 1);`
+            // Upstream tags preserved: //N1GP (from cited console.cs:25833) [v2.10.3.15]
             qCInfo(lcConnection) << "HL2: FW minor received — writing REG_CONTROL=1 (init)";
             enqueueWrite(IoBoardHl2::kI2cAddrGeneral,
                          static_cast<quint8>(Reg::REG_CONTROL), 1);
