@@ -986,17 +986,19 @@ public:
     //
     // From Thetis setup.cs:19921 [v2.10.3.15] //N1GP G2E added:
     //   chkBypassANANPASettings.Visible = true;  (in ANAN_G2E case)
-    // setup.designer.cs:49237-49245 [v2.10.3.15]: tooltip "BP PA".
-    // Thetis stores this via its generic control-name XML serializer; no
-    // CheckedChanged handler exists in Thetis v2.10.3.15.  NereusSDR persists
-    // it explicitly under the per-MAC hardware/<mac>/tx/ prefix, key
-    // "PaSettingsBypass".
+    // From Thetis setup.designer.cs:49237-49245 [v2.10.3.15] //N1GP G2E added:
+    //   chkBypassANANPASettings declaration + tooltip "BP PA".
+    //
+    // Thetis ground-truth: chkBypassANANPASettings is a UI-only declaration in
+    // Thetis v2.10.3.15 — no _CheckedChanged handler dispatches any behavior
+    // when the checkbox is toggled.  NereusSDR mirrors this exactly: the
+    // checkbox surface + this property + AppSettings persistence are all wired,
+    // but no consumer currently alters PA gain dispatch when toggled.  If a
+    // future Thetis release adds the dispatch, NereusSDR should match.
     //
     // false (default) = use the board-specific PA calibration table (normal
     //   operation for all SKUs, including G2E out of the box).
-    // true  = bypass the board-specific table and fall back to the generic
-    //   Hermes 41.x dB HF row (chkBypassANANPASettings.Checked in Thetis),
-    //   allowing operators to run the radio without a board-specific PA profile.
+    // true  = operator override; intended future semantic mirrors Thetis intent.
     //
     // The checkbox is only shown when BoardCapabilities::showsBypassPaSettingsUi
     // is true (G2E-group SKUs).  On all other boards the property is still
