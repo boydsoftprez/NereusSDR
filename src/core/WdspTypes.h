@@ -243,6 +243,7 @@ enum class NrMode      : int { Off = 0, ANR = 1, EMNR = 2 };
 
 // Noise-blanker mode.
 // From Thetis console.cs:43513-43560 [v2.10.3.13] — chkNB tri-state mapping:
+// Upstream tags preserved: //MW0LGE (from cited console.cs:43545) [v2.10.3.15]
 //   CheckState.Unchecked    → Off (0)
 //   CheckState.Checked      → NB  (1)  ≡ nob.c (Whitney blanker)
 //   CheckState.Indeterminate→ NB2 (2)  ≡ nobII.c (second-gen blanker)

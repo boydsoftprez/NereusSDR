@@ -274,6 +274,7 @@ namespace {
 
 // ─── Atlas / HPSDR kit ──────────────────────────────────────────────────────
 // Source: network.h:448 (Atlas=0), clsHardwareSpecific.cs Model→Hardware map
+// Upstream tags preserved: //N1GP (from cited network.h:446) [v2.10.3.15]
 // ADC: single (clsHardwareSpecific.cs: no explicit SetRxADC for HPSDR model,
 //      defaults to 1). Metis/Atlas board is Protocol 1 only.
 // No Alex port on bare Atlas kit; OC outputs via Penny board (not addressable
@@ -326,6 +327,7 @@ const BoardCapabilities kAtlas = {
 
 // ─── Hermes (ANAN-10 / ANAN-100) ────────────────────────────────────────────
 // Source: network.h:449 (Hermes=1), clsHardwareSpecific.cs:87-93
+// Upstream tags preserved: //N1GP (from cited network.h:446) [v2.10.3.15]
 // ADC: SetRxADC(1) — single ADC. Protocol 1.
 // Attenuator: 0..31 dB step 1 (Setup.cs:16099 standard path).
 // Alex: present on ANAN-100; optional accessory on ANAN-10.
@@ -390,6 +392,7 @@ const BoardCapabilities kHermes = {
 
 // ─── HermesII (ANAN-10E / ANAN-100B) ────────────────────────────────────────
 // Source: network.h:450 (HermesII=2), clsHardwareSpecific.cs:108-127
+// Upstream tags preserved: //N1GP (from cited network.h:446) [v2.10.3.15]
 // ADC: SetRxADC(1) — single ADC. Protocol 1.
 // HermesII supports PureSignal (console.cs:30276-30277 ANAN10E psform.PSEnabled).
 // No diversity (single ADC). Step attenuator cal: present on HermesII.
@@ -446,6 +449,7 @@ const BoardCapabilities kHermesII = {
 
 // ─── Angelia (ANAN-100D) ────────────────────────────────────────────────────
 // Source: network.h:451 (Angelia=3), clsHardwareSpecific.cs:129-134
+// Upstream tags preserved: //N1GP (from cited network.h:446) [v2.10.3.15]
 // ADC: SetRxADC(2) — dual ADC. Protocol 1.
 // Diversity + PureSignal: yes (2 ADCs, console.cs GetDDC P1 Angelia branch:8680)
 // maxReceivers: 7 (P1 dual-ADC limit, console.cs GetDDC Angelia branch)

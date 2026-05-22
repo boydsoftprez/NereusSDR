@@ -4449,6 +4449,7 @@ void TxChannel::setTxFixedGain(double level)
     m_lastFixedGain = level;
 #ifdef HAVE_WDSP
     // From Thetis cmaster.cs:1115-1119 [v2.10.3.13] CMSetTXOutputLevel —
+    // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
     // cmaster.SetTXFixedGain(0, level, level).  cmaster.SetTXFixedGain is
     // the C# P/Invoke at cmaster.cs:273-274 [v2.10.3.13]; the native impl
     // is Thetis ChannelMaster/txgain.c:127-134 [v2.10.3.13] —

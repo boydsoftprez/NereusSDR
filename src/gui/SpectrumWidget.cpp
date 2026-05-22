@@ -721,6 +721,7 @@ void SpectrumWidget::loadSettings()
     m_dispNormalize = s.value(QStringLiteral("DisplayDispNormalize"),
                               QStringLiteral("False")).toString() == QStringLiteral("True");
     // From Thetis console.cs:20073 [v2.10.3.13] peak_text_delay=500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     m_showPeakValueOverlay = s.value(QStringLiteral("DisplayShowPeakValueOverlay"),
                                      QStringLiteral("False")).toString() == QStringLiteral("True");
     {
@@ -894,6 +895,7 @@ void SpectrumWidget::saveSettings()
     s.setValue(QStringLiteral("DisplayDispNormalize"),
                m_dispNormalize ? QStringLiteral("True") : QStringLiteral("False"));
     // From Thetis console.cs:20073 [v2.10.3.13] peak_text_delay=500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     s.setValue(QStringLiteral("DisplayShowPeakValueOverlay"),
                m_showPeakValueOverlay ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("DisplayPeakValuePosition"),
@@ -1755,6 +1757,7 @@ void SpectrumWidget::setDispNormalize(bool on)
 }
 
 // From Thetis console.cs:20073-20080 [v2.10.3.13] PeakTextDelay / timer_peak_text.
+// Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
 // ShowPeakValueOverlay creates or destroys the throttle timer as needed.
 void SpectrumWidget::setShowPeakValueOverlay(bool on)
 {
@@ -1818,6 +1821,7 @@ void SpectrumWidget::setPeakValuePosition(OverlayPosition pos)
 }
 
 // From Thetis console.cs:20073-20080 [v2.10.3.13] PeakTextDelay default=500.
+// Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
 void SpectrumWidget::setPeakTextDelayMs(int ms)
 {
     ms = qBound(50, ms, 10000);
@@ -2801,6 +2805,7 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
 
     // ShowPeakValueOverlay — render cached peak text (refreshed by timer).
     // From Thetis console.cs:20073 PeakTextDelay=500ms [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     if (m_showPeakValueOverlay && !m_peakTextCache.isEmpty()) {
         drawTextOverlay(p, specRect, m_peakValuePosition,
                         m_peakTextCache, m_peakValueColor);
@@ -4514,6 +4519,7 @@ void SpectrumWidget::setDisplayDuplex(bool on)
 }
 
 // From Thetis display.cs:4840 [v2.10.3.13]:
+// Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
 //   if (!local_mox) fOffset += rx1_preamp_offset;
 // The RX cal offset is only added in RX mode; during TX, the TX path uses
 // its own calibration. NereusSDR models this by storing the TX ATT offset

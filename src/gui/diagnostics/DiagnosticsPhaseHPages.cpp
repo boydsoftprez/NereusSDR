@@ -45,8 +45,13 @@ ConnectionQualityPage::ConnectionQualityPage(RadioModel* model, QWidget* parent)
 
 void ConnectionQualityPage::buildUI()
 {
+    // addSection() already installs a QVBoxLayout on `group` (and on
+    // `histGroup` below). Creating a second `new QVBoxLayout(group)` here
+    // triggers the QLayout "already has a layout" runtime warning — #272
+    // captured 7 of these in the W4ORS May 16 log, all from this file.
+    // Reuse the layout addSection() already installed instead.
     auto* group = addSection(QStringLiteral("Live Counters"));
-    auto* form = new QVBoxLayout(group);
+    auto* form = qobject_cast<QVBoxLayout*>(group->layout());
 
     auto addRow = [&](const QString& label, QLabel*& out) {
         auto* row = new QHBoxLayout();
@@ -64,7 +69,7 @@ void ConnectionQualityPage::buildUI()
     addRow(QStringLiteral("EP6 sequence gaps:"),   m_seqGapLabel);
 
     auto* histGroup = addSection(QStringLiteral("60 s History"));
-    auto* histLayout = new QVBoxLayout(histGroup);
+    auto* histLayout = qobject_cast<QVBoxLayout*>(histGroup->layout());
     m_historyPlaceholder = new QLabel(
         QStringLiteral("60 s history graph — wired in follow-up phase."));
     m_historyPlaceholder->setStyleSheet(QStringLiteral("color: #888;"));
@@ -103,8 +108,10 @@ SettingsValidationPage::SettingsValidationPage(RadioModel* model, QWidget* paren
 
 void SettingsValidationPage::buildUI()
 {
+    // Reuse the layout addSection() installs (see ConnectionQualityPage::buildUI
+    // for context — #272).
     auto* group = addSection(QStringLiteral("Validation Issues"));
-    auto* layout = new QVBoxLayout(group);
+    auto* layout = qobject_cast<QVBoxLayout*>(group->layout());
 
     m_issueList = new QListWidget;
     m_issueList->setStyleSheet(
@@ -190,8 +197,10 @@ ExportImportConfigPage::ExportImportConfigPage(RadioModel* model, QWidget* paren
 
 void ExportImportConfigPage::buildUI()
 {
+    // Reuse the layout addSection() installs (see ConnectionQualityPage::buildUI
+    // for context — #272). Same pattern applies to allGroup + radioGroup below.
     auto* fileGroup = addSection(QStringLiteral("Settings File"));
-    auto* fileLayout = new QVBoxLayout(fileGroup);
+    auto* fileLayout = qobject_cast<QVBoxLayout*>(fileGroup->layout());
     m_settingsPathLabel = new QLabel(
         QStringLiteral("Path: %1").arg(AppSettings::instance().filePath()));
     m_settingsPathLabel->setStyleSheet(QStringLiteral("color: #c8d8e8;"));
@@ -199,7 +208,7 @@ void ExportImportConfigPage::buildUI()
     fileLayout->addWidget(m_settingsPathLabel);
 
     auto* allGroup = addSection(QStringLiteral("Full Configuration (XML)"));
-    auto* allLayout = new QVBoxLayout(allGroup);
+    auto* allLayout = qobject_cast<QVBoxLayout*>(allGroup->layout());
     auto* btnRow = new QHBoxLayout;
     m_exportAllBtn = new QPushButton(QStringLiteral("Export All Settings…"));
     m_importAllBtn = new QPushButton(QStringLiteral("Import All Settings…"));
@@ -209,7 +218,7 @@ void ExportImportConfigPage::buildUI()
     allLayout->addLayout(btnRow);
 
     auto* radioGroup = addSection(QStringLiteral("Per-Radio Configuration"));
-    auto* radioLayout = new QVBoxLayout(radioGroup);
+    auto* radioLayout = qobject_cast<QVBoxLayout*>(radioGroup->layout());
     m_radioSummaryLabel = new QLabel(
         QStringLiteral("Per-radio export will copy only the hardware/<mac>/* "
                        "subtree for the connected radio."));
@@ -290,8 +299,10 @@ LogsPage::LogsPage(QWidget* parent)
 
 void LogsPage::buildUI()
 {
+    // Reuse the layout addSection() installs (see ConnectionQualityPage::buildUI
+    // for context — #272).
     auto* group = addSection(QStringLiteral("Recent Log"));
-    auto* layout = new QVBoxLayout(group);
+    auto* layout = qobject_cast<QVBoxLayout*>(group->layout());
     m_logView = new QPlainTextEdit;
     m_logView->setReadOnly(true);
     m_logView->setStyleSheet(QStringLiteral(

@@ -87,8 +87,21 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QShowEvent>
+#include <QElapsedTimer>
+#include <QLoggingCategory>
 
 namespace NereusSDR {
+
+// Timing instrumentation added in response to #272, where a ~3-second build
+// + ~40-second click-time freeze stalled the audio engine long enough for
+// the HL2 ep6 watchdog (2011 ms) to fire and the unclean audio teardown to
+// cascade into a CLOCK_WATCHDOG_TIMEOUT BSOD on a legacy Realtek driver.
+// Per-section + per-page-switch deltas let the next repro identify which
+// page or interaction is blocking the UI thread, without needing a profiler.
+//
+// Disabled by default. Enable with:
+//   QT_LOGGING_RULES="nereus.setup.timing.debug=true"
+Q_LOGGING_CATEGORY(lcSetupTiming, "nereus.setup.timing")
 
 // ── Construction ──────────────────────────────────────────────────────────────
 
@@ -132,15 +145,31 @@ SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
     layout->addWidget(splitter, 1);
 
     // ── Build the tree and pages ──────────────────────────────────────────────
+    // #272 instrumentation: track total buildTree() cost. Per-category
+    // deltas are emitted from inside buildTree() via a local tick helper.
+    QElapsedTimer buildTimer;
+    buildTimer.start();
     buildTree();
+    qCDebug(lcSetupTiming)
+        << "buildTree() total elapsed (ms):" << buildTimer.elapsed()
+        << "pages:" << m_stack->count();
 
-    // Connect tree selection → stack page
+    // Connect tree selection → stack page.
+    // #272 instrumentation: time the page-switch path. The QStackedWidget
+    // setCurrentIndex() will fire showEvent() on the destination page, which
+    // is where any deferred / click-time work would surface.
     connect(m_tree, &QTreeWidget::currentItemChanged,
             this, [this](QTreeWidgetItem* current, QTreeWidgetItem* /*previous*/) {
                 if (current == nullptr) { return; }
                 const int index = current->data(0, Qt::UserRole).toInt();
                 if (index >= 0) {
+                    QElapsedTimer switchTimer;
+                    switchTimer.start();
                     m_stack->setCurrentIndex(index);
+                    qCDebug(lcSetupTiming)
+                        << "page switch ->" << current->text(0)
+                        << "(stack index" << index << ") elapsed (ms):"
+                        << switchTimer.elapsed();
                 }
             });
 
@@ -212,6 +241,18 @@ void SetupDialog::setTciServer(NereusSDR::TciServer* server)
 
 void SetupDialog::buildTree()
 {
+    // #272 instrumentation: per-category construction-time tick. Each call
+    // logs the elapsed time since the previous tick, so a slow category's
+    // delta will stand out in the log. Resets the timer on each call.
+    QElapsedTimer sectionTimer;
+    sectionTimer.start();
+    auto tick = [&sectionTimer](const char* label) {
+        const qint64 ms = sectionTimer.elapsed();
+        qCDebug(lcSetupTiming) << "buildTree section" << label
+                               << "elapsed (ms):" << ms;
+        sectionTimer.restart();
+    };
+
     // ── Helper: create a category (top-level, non-selectable) ─────────────────
     auto addCategory = [this](const QString& label) -> QTreeWidgetItem* {
         auto* item = new QTreeWidgetItem(m_tree, QStringList{label});
@@ -257,6 +298,8 @@ void SetupDialog::buildTree()
         return item;
     };
 
+    tick("helpers");
+
     // ── General ──────────────────────────────────────────────────────────────
     QTreeWidgetItem* general = addCategory("General");
     add(general, "Startup & Preferences", new StartupPrefsPage(m_model));
@@ -286,6 +329,8 @@ void SetupDialog::buildTree()
                 this,    &SetupDialog::cpuMeterRateChanged);
         add(general, "Options", genOpts);
     }
+
+    tick("General");
 
     // ── Hardware ─────────────────────────────────────────────────────────────
     QTreeWidgetItem* hardware = addCategory("Hardware");
@@ -319,6 +364,8 @@ void SetupDialog::buildTree()
     // dialog was already open) with a live capability subscription.
     // From Thetis comboRadioModel_SelectedIndexChanged (setup.cs:19812-20310
     // [v2.10.3.13+501e3f51]) — per-SKU PA tab visibility.
+    tick("Hardware");
+
     m_paCategoryItem  = addCategory("PA");
     m_paGainPage      = new PaGainByBandPage(m_model);
     m_paWattMeterPage = new PaWattMeterPage(m_model);
@@ -338,6 +385,8 @@ void SetupDialog::buildTree()
     // PA Values readout was promoted to its own dedicated page.
     connect(m_paWattMeterPage, &PaWattMeterPage::resetPaValuesRequested,
             m_paValuesPage,    &PaValuesPage::resetPaValues);
+
+    tick("PA");
 
     // ── Audio ─────────────────────────────────────────────────────────────────
     QTreeWidgetItem* audio = addCategory("Audio");
@@ -360,6 +409,8 @@ void SetupDialog::buildTree()
             m_model,
             m_model ? m_model->micProfileManager() : nullptr,
             m_model ? &m_model->transmitModel() : nullptr));
+
+    tick("Audio");
 
     // ── DSP ───────────────────────────────────────────────────────────────────
     QTreeWidgetItem* dsp = addCategory("DSP");
@@ -394,6 +445,8 @@ void SetupDialog::buildTree()
     // Mirrors Thetis tpDSPOptions tab (design Section 4A).
     add(dsp, "Options",  new DspOptionsPage(m_model));
 
+    tick("DSP");
+
     // ── Display ───────────────────────────────────────────────────────────────
     QTreeWidgetItem* display = addCategory("Display");
 
@@ -426,6 +479,8 @@ void SetupDialog::buildTree()
 
     add(display, "RX2 Display",        new Rx2DisplayPage(m_model));
     add(display, "TX Display",         new TxDisplayPage(m_model));
+
+    tick("Display");
 
     // ── Transmit ──────────────────────────────────────────────────────────────
     QTreeWidgetItem* transmit = addCategory("Transmit");
@@ -461,6 +516,8 @@ void SetupDialog::buildTree()
     // Setup -> CAT & Network -> 4O3A -> General as an embedded section
     // (FourO3APage owns the PgxlInterlockPage instance).
 
+    tick("Transmit");
+
     // ── Appearance ────────────────────────────────────────────────────────────
     QTreeWidgetItem* appearance = addCategory("Appearance");
     add(appearance, "Colors & Theme",       new ColorsThemePage(m_model));
@@ -468,6 +525,8 @@ void SetupDialog::buildTree()
     add(appearance, "Gradients",            new GradientsPage(m_model));
     add(appearance, "Skins",               new SkinsPage(m_model));
     add(appearance, "Collapsible Display",  new CollapsibleDisplayPage(m_model));
+
+    tick("Appearance");
 
     // ── CAT & Network ─────────────────────────────────────────────────────────
     QTreeWidgetItem* cat = addCategory("CAT & Network");
@@ -517,14 +576,20 @@ void SetupDialog::buildTree()
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);
 
+    tick("CAT & Network");
+
     // ── Keyboard ──────────────────────────────────────────────────────────────
     QTreeWidgetItem* keyboard = addCategory("Keyboard");
     add(keyboard, "Shortcuts", new KeyboardShortcutsPage);
+
+    tick("Keyboard");
 
     // ── Test ──────────────────────────────────────────────────────────────────
     // Phase 3M-1c H.1: top-level Test category for the Two-Tone IMD page.
     QTreeWidgetItem* test = addCategory("Test");
     add(test, "Two-Tone IMD", new TestTwoTonePage(m_model));
+
+    tick("Test");
 
     // ── Diagnostics ───────────────────────────────────────────────────────────
     QTreeWidgetItem* diagnostics = addCategory("Diagnostics");
@@ -537,7 +602,10 @@ void SetupDialog::buildTree()
     add(diagnostics, "Hardware Tests",     new DiagHardwareTestsPage);
     add(diagnostics, "Logging & Performance", new DiagLoggingPage);
 
+    tick("Diagnostics");
+
     m_tree->expandAll();
+    tick("expandAll");
 }
 
 // ── Phase 8 of #167: PA category visibility wiring ─────────────────────────────

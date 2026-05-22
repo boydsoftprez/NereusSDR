@@ -2934,6 +2934,7 @@ private:
     // minimal.
     //
     // From Thetis cmaster.cs:1115-1119 [v2.10.3.13] — CMSetTXOutputLevel:
+    // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
     //   double level = Audio.RadioVolume * Audio.HighSWRScale;
     //   cmaster.SetTXFixedGain(0, level, level);
     double m_lastFixedGain = std::numeric_limits<double>::quiet_NaN();

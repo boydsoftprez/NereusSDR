@@ -352,6 +352,7 @@ private slots:
 
     // Phase 3P-A Task 13: setReceiverFrequency must update Alex HPF bits.
     // Source: console.cs:6830-6942 [@501e3f5]
+    // Upstream tags preserved: //N1GP (from cited console.cs:6830) [v2.10.3.15]
     // Upstream inline attribution preserved verbatim:
     //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
     void setReceiverFrequency_updates_alex_hpf_bits() {

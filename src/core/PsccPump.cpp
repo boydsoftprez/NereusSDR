@@ -80,6 +80,7 @@ void PsccPump::setActive(bool active, int txMonDdc, int psFbDdc)
 void PsccPump::onDdcConfigChanged(const PsDdcConfig& cfg)
 {
     // From Thetis console.cs:8186-8538 UpdateDDCs [v2.10.3.13] +
+    // Upstream tags preserved: //N1GP (from cited console.cs:8388) [v2.10.3.15]
     // P2CodecOrionMkII::applyPureSignalDdcConfig:469-488 [v2.10.3.13 port].
     //MW0LGE   [console.cs:8238 + 8268 inline `// [2.10.3.13]MW0LGE p1 !`
     //          attribution on the P1 rate-fixup `if (p1) Rate[0] = rx1_rate`]

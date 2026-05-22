@@ -455,6 +455,7 @@ private:
     // From Thetis TCIServer.cs:1906-1910 [v2.10.3.13] — sendRxBinEnable.
     static QString buildRxBinEnableLine(int rx, bool en);
     // From Thetis TCIServer.cs:4482-4487 [v2.10.3.13] — sendAnfEnable.
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
     static QString buildRxAnfEnableLine(int rx, bool en);
     // From Thetis TCIServer.cs:1911-1915 [v2.10.3.13] — sendRxApfEnable.
     static QString buildRxApfEnableLine(int rx, bool en);
@@ -560,6 +561,7 @@ private:
 
     // ── Mute / volume / MON helpers ───────────────────────────────────────────
     // From Thetis TCIServer.cs:2158-2162 [v2.10.3.13] — sendMute.
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2154) [v2.10.3.15]
     static QString buildMuteLine(bool muted);
     // From Thetis TCIServer.cs:2163-2167 [v2.10.3.13] — sendMuteRX.
     static QString buildRxMuteLine(int rx, bool muted);

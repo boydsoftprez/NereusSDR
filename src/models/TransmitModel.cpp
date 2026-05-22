@@ -2845,6 +2845,7 @@ void TransmitModel::setCpdrLevelDb(int dB)
     const int clamped = std::clamp(dB, kCpdrLevelDbMin, kCpdrLevelDbMax);
     if (clamped == m_cpdrLevelDb) { return; }
     // From Thetis setup.cs:9307 [v2.10.3.13]:
+    // Upstream tags preserved: //MW0LGE (from cited setup.cs:9309) [v2.10.3.15]
     //   console.CPDRLevel = (int)dr["CompanderLevel"];
     m_cpdrLevelDb = clamped;
     persistOne(QStringLiteral("CompanderLevel"), QString::number(clamped));

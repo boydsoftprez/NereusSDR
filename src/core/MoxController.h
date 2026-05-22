@@ -596,6 +596,7 @@ public slots:
     //   PollPTT: bool cat_ptt = (_ptt_bit_bang_enabled && ...) | _cat_ptt;
     //   _current_ptt_mode = PTTMode.CAT;                    [v2.10.3.13]
     //   From Thetis console.cs:25469 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     //
     // Full CAT integration is Phase 3K.  Wiring deferred to 3K; this slot
     // establishes the API.
@@ -659,6 +660,7 @@ public slots:
     //   PollPTT: bool cw_ptt = CWInput.KeyerPTT && ...;
     //   _current_ptt_mode = PTTMode.CW;                     [v2.10.3.13]
     //   From Thetis console.cs:25475 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     //
     // 3M-2 will implement the CW keyer, sidetone, and QSK/break-in state
     // machine.  This slot logs and returns without driving MOX.
@@ -685,6 +687,7 @@ public slots:
     // emitted rx argument is always 1 until RadioModel calls these setters.
     //
     // From Thetis console.cs:29324 [v2.10.3.13] — MoxPreChangeHandlers and
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //                console.cs:29677 [v2.10.3.13] — MoxChangeHandlers:
     //   rx2_enabled && VFOBTX ? 2 : 1
     void setRx2Enabled(bool enabled);
@@ -929,6 +932,7 @@ signals:
     //   RX2 alone without VFOBTX still yields rx==1 — TX comes off VFO-A.
     //
     // From Thetis console.cs:29324 [v2.10.3.13] — Pre emit point:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //   MoxPreChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, _mox,
     //                                chkMOX.Checked); // MW0LGE_21k8
     // From Thetis console.cs:29677 [v2.10.3.13] — Post emit point:
@@ -1150,6 +1154,7 @@ private:
     // activeRxForTx() returns 2 iff (m_rx2Enabled && m_vfobTx), else 1.
     //
     // From Thetis console.cs:29324 [v2.10.3.13] — MoxPreChangeHandlers and
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //                console.cs:29677 [v2.10.3.13] — MoxChangeHandlers:
     //   rx2_enabled && VFOBTX ? 2 : 1
     bool     m_rx2Enabled{false};

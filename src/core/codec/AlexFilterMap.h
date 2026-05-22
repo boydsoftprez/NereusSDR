@@ -80,6 +80,7 @@ namespace NereusSDR::codec::alex {
 // or bytes 1432-1435 in the P2 CmdHighPriority packet).
 //
 // From Thetis console.cs:6830-6942 [@501e3f5]
+// Upstream tags preserved: //N1GP (from cited console.cs:6830) [v2.10.3.15]
 // Upstream inline attribution preserved verbatim:
 //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
 quint8 computeHpf(double freqMhz);

@@ -92,6 +92,7 @@ private slots:
 
     // PS-on, no diversity, MOX, with non-zero adcCtrl1 — verify mask preserved
     // Source: console.cs:8264 [v2.10.3.13]: cntrl1 = (rx_adc_ctrl1 & 0xf3) | 0x08
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:8260) [v2.10.3.15]
     void p2_orionmkii_psOn_mox_adcCtrl1Mask() {
         P2CodecOrionMkII codec;
         // adcCtrl1 = 0xff → (0xff & 0xf3) | 0x08 = 0xfb
@@ -191,6 +192,7 @@ private slots:
 
     // Hermes PS-off, no MOX, no diversity → p1DdcConfig=4, DDCEnable=DDC0
     // Source: console.cs:8385-8398 [v2.10.3.13]
+    // Upstream tags preserved: //N1GP (from cited console.cs:8388) [v2.10.3.15]
     void p2_hermes_psOff_noMox_noDivers() {
         P2CodecOrionMkII codec;
         auto cfg = codec.applyPureSignalDdcConfig(
@@ -462,6 +464,7 @@ private slots:
 
     // ANAN10 no MOX → p1DdcConfig=4
     // Source: console.cs:8385-8398 [v2.10.3.13]
+    // Upstream tags preserved: //N1GP (from cited console.cs:8388) [v2.10.3.15]
     void p1_standard_anan10_noMox() {
         P1CodecStandard codec;
         auto cfg = codec.applyPureSignalDdcConfig(

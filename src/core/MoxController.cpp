@@ -252,6 +252,7 @@ void MoxController::onAmpSwrUpdated(float swr)
 // scheduled for Phase 3F).
 //
 // From Thetis console.cs:29324 [v2.10.3.13] (MoxPreChangeHandlers) and
+// Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
 //                console.cs:29677 [v2.10.3.13] (MoxChangeHandlers):
 //   rx2_enabled && VFOBTX ? 2 : 1
 // ---------------------------------------------------------------------------
@@ -528,6 +529,7 @@ void MoxController::setMox(bool on)
 
     // ── C.2: Pre signal (multicast, before m_mox commit) ─────────────────────
     // From Thetis console.cs:29322-29324 [v2.10.3.13]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:29326) [v2.10.3.15]
     //   bool bOldMox = _mox; //MW0LGE_21b used for state change delgates at end of fn
     //   MoxPreChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, _mox, chkMOX.Checked); // MW0LGE_21k8
     //
@@ -724,6 +726,7 @@ void MoxController::onSpaceDelayElapsed()
 // onKeyUpDelayElapsed — fires after keyUpDelay (10ms) on TX→RX path.
 //
 // From Thetis console.cs:29617-29618 [v2.10.3.13]:
+// Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
 //   if (mox_delay > 0)
 //       Thread.Sleep(mox_delay); // default 10, allows in-flight samples to clear
 //
@@ -744,6 +747,7 @@ void MoxController::onKeyUpDelayElapsed()
 // onPttOutElapsed — fires after ptt_out_delay (20ms) on TX→RX path.
 //
 // From Thetis console.cs:29627-29628 [v2.10.3.13]:
+// Upstream tags preserved: //MW0LGE (from cited console.cs:29627) [v2.10.3.15]
 //   if (ptt_out_delay > 0)
 //       Thread.Sleep(ptt_out_delay);  //wcp:  added 2018-12-24, time for HW to switch
 //
@@ -1215,10 +1219,12 @@ void MoxController::onMicPttFromRadio(bool pressed)
 void MoxController::onCatPtt(bool pressed)
 {
     // From Thetis console.cs:25469 [v2.10.3.13]: _current_ptt_mode = PTTMode.CAT;
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     if (pressed) {
         setPttMode(PttMode::Cat);
     }
     // From Thetis console.cs:25471 [v2.10.3.13]: chkMOX.Checked = true;
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:25473) [v2.10.3.15]
     setMox(pressed);
 }
 

@@ -100,6 +100,7 @@ namespace NereusSDR {
 /// PaCalProfile (per-board cal table).
 ///
 /// From Thetis console.cs:25008 [v2.10.3.13] — computeAlexFwdPower entry
+// Upstream tags preserved: //N1GP (from cited console.cs:25007) [v2.10.3.15]
 /// point.  The full per-board switch + post-switch math (with `//DH1KLM`
 /// tag preserved on REDPITAYA) lives in PaTelemetryScaling.cpp.
 double scaleFwdPowerWatts(HPSDRModel model, quint16 raw) noexcept;

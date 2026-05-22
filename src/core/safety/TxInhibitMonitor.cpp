@@ -155,6 +155,7 @@ TxInhibitMonitor::Source TxInhibitMonitor::lastSource() const noexcept
 void TxInhibitMonitor::recompute()
 {
     // From Thetis console.cs:25801-25839 [v2.10.3.13] (PollTXInhibit loop)
+    // Upstream tags preserved: //N1GP (from cited upstream lines) [v2.10.3.15]
     // Tag preserved: //DH1KLM (console.cs:25814 — REDPITAYA/ANAN7000D/8000D use getUserI02 in P1)
 
     // Step 1 — read the UserIO pin if a reader is installed.
@@ -166,6 +167,7 @@ void TxInhibitMonitor::recompute()
     if (m_userIoReader) {
         bool pinAsserted = m_userIoReader();
         // From Thetis console.cs:25830 [v2.10.3.13]:
+        // Upstream tags preserved: //N1GP (from cited console.cs:25833) [v2.10.3.15]
         //   if (_reverseTxInhibit) inhibit_input = !inhibit_input;
         if (m_reverseLogic) {
             pinAsserted = !pinAsserted;
@@ -201,6 +203,7 @@ void TxInhibitMonitor::recompute()
 
     // Step 5 — emit only on transitions (state change OR source change).
     // From Thetis console.cs:25832 [v2.10.3.13]:
+    // Upstream tags preserved: //DH1KLM //N1GP (from cited upstream lines) [v2.10.3.15]
     //   if (TXInhibit != inhibit_input) TXInhibitChangedHandlers?.Invoke(...)
     if (newInhibited != m_currentInhibited || newSource != m_lastSource) {
         m_currentInhibited = newInhibited;

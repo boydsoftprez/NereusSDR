@@ -1077,6 +1077,7 @@ void SpectrumDefaultsPage::buildUI()
 
     // ShowPeakValueOverlay + position + delay.
     // From Thetis console.cs:20073-20080 [v2.10.3.13] PeakTextDelay default=500ms.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     // Color default DodgerBlue from console.cs:20278 [v2.10.3.13].
     m_showPeakValueOverlayToggle = new QCheckBox(
         QStringLiteral("Show peak value overlay"), overlayGroup);
@@ -1090,6 +1091,7 @@ void SpectrumDefaultsPage::buildUI()
     m_peakTextDelaySpin->setSingleStep(50);
     m_peakTextDelaySpin->setSuffix(QStringLiteral(" ms"));
     // From Thetis console.cs:20073 [v2.10.3.13]: peak_text_delay = 500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     m_peakTextDelaySpin->setValue(500);
     m_peakTextDelaySpin->setToolTip(QStringLiteral(
         "Refresh interval for the peak value overlay in milliseconds."));

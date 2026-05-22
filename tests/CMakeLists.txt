@@ -2096,6 +2096,14 @@ target_compile_definitions(tst_pa_setup_per_sku_visibility PRIVATE NEREUS_BUILD_
 nereus_add_test(tst_setup_dialog_pa_reset_wiring)
 target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD_TESTS)
 
+# ── #272 regression: zero Qt programming-error warnings during SetupDialog ──
+# construction. Pre-fix the W4ORS May 16 log captured 7× "QLayout: Attempting
+# to add QLayout" warnings (DeviceCard double setLayout) and 1× "unique
+# connections require a pointer to member function" warning
+# (Hl2OptionsTab lambda + Qt::UniqueConnection). Both fixed; this test
+# pins them at zero.
+nereus_add_test(tst_setup_dialog_qt_warnings)
+
 # ── Phase 3M-0 Task 14: MainWindow status-bar TX Inhibit + PA Status badge ───
 # Tests the label-state logic for the two safety indicator widgets added to
 # the MainWindow status bar:
@@ -4316,6 +4324,22 @@ nereus_add_test(tst_tci_init_burst_typo_divergence TestMockRadioModel.cpp)
 nereus_add_test(tst_tci_init_burst_golden TestMockRadioModel.cpp)
 target_compile_definitions(tst_tci_init_burst_golden PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# ── Phase 3J-1 closeout: init burst live RadioModel state regression ──────────
+# Seeds TestMockRadioModel via the same Q_INVOKABLE setters that production
+# TciProtocol calls during a real client connect, then asserts the init burst
+# carries the seeded state instead of the Phase 4 Task 4.2 hardcoded
+# placeholders. Catches re-introduced placeholders that the byte-for-byte
+# golden cannot, because the golden is captured WITH placeholders.
+nereus_add_test(tst_tci_init_burst_live_state TestMockRadioModel.cpp)
+
+# ── Phase 3J-1 closeout: init burst golden regenerator ────────────────────────
+# Standalone helper that prints buildInitBurst() output between
+# ===BEGIN===/===END=== markers.  Used to regenerate
+# tests/data/tci/init_burst_anan_g2_rx1.txt after intentional changes to the
+# init burst contents.  Not a regression check; the trivial QVERIFY exists
+# only so ctest reports a pass/fail.
+nereus_add_test(tst_tci_init_burst_regen TestMockRadioModel.cpp)
 
 # ── Phase 3J-1 closeout Item 2: TciLogWindow append + filter + clear + pause ──
 # Verifies the log view widget honors direction filter, pause toggle, and

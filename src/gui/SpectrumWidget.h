@@ -527,6 +527,7 @@ public:
     // Issue #230 fix — Thetis-faithful split between persistent user
     // thresholds (above) and runtime render-active thresholds (below).
     // From Thetis display.cs:6575-6594 [v2.10.3.13]: the render path
+    // Upstream tags preserved: //MW0LGE (from cited display.cs:6588) [v2.10.3.15]
     // seeds per-draw locals from the persistent fields then lets AGC /
     // NF-AGC / "Use spectrum min/max" / Clarity override the locals.
     // Active getters are exposed for the regression test; no public
@@ -778,6 +779,7 @@ public:
     // ShowPeakValueOverlay — scan visible bins, render "Peak: X.X dBm @ Y.YYYY MHz"
     // as corner text. Refreshed on a timer throttled by m_peakTextDelayMs.
     // From Thetis console.cs:20073 PeakTextDelay default=500ms [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     // PeakTextColor default DodgerBlue from console.cs:20278 [v2.10.3.13].
     void setShowPeakValueOverlay(bool on);
     bool showPeakValueOverlay() const { return m_showPeakValueOverlay; }
@@ -833,6 +835,7 @@ public slots:
     // Slot fed from StepAttenuatorController::txAttenuatorOffsetDbChanged.
     // Shifts the dBm calibration display during TX-active ATT-on-TX.
     // From Thetis display.cs:4840 [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
     void setTxAttenuatorOffsetDb(float offsetDb);
 
     // Slot driven from DisplayPage DrawTXFilter checkbox.
@@ -1794,6 +1797,7 @@ private:
     bool  m_moxOverlay{false};
     // TX attenuator cal offset — applied as an additional dBm shift during TX.
     // From Thetis display.cs:4840 [v2.10.3.13]: if (!local_mox) fOffset += rx1_preamp_offset;
+    // Upstream tags preserved: //MW0LGE (from cited upstream lines) [v2.10.3.15]
     float m_txAttOffsetDb{0.0f};
     // TX filter visibility in spectrum panel.
     // From Thetis display.cs:2481 [v2.10.3.13]: DrawTXFilter flag.
