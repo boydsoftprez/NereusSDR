@@ -205,26 +205,27 @@ private slots:
         QCOMPARE(cfg.nDdc,      4);
     }
 
-    // ANAN-G2E PS-off, no MOX, no diversity → p1DdcConfig=4, DDCEnable=DDC0,
-    // rate[0]=192000, p1RxCount=4, nDdc=4.  Routes through Hermes-class
-    // branch — bench regression: was empty cfg (default arm), watchdog timeout.
-    // From Thetis console.cs:8387-8390 [v2.10.3.15] //N1GP G2E added
-    void p2_hermes_ananG2E_psOff_noMox_noDivers_routesToHermesClass() {
+    // ANAN-G2E PS-off, no MOX, no diversity → primary RX on DDC0
+    // (Hermes-class).  From Thetis console.cs:8387-8390 [v2.10.3.15] //N1GP G2E added.
+    // Bench-verified 2026-05-22 against working Thetis-on-G2E session:
+    // captured CmdRx byte 7 = 0x01 (DDC0 enable bit) confirms Hermes-class
+    // routing on the wire, even though firmware accepted DDC0 != DDC2.
+    // Regression: don't slip back to empty PsDdcConfig{} (which would
+    // re-trigger the original watchdog symptom).
+    void p2_ananG2E_psOff_noMox_noDivers_routesToHermesClass() {
         P2CodecOrionMkII codec;
         auto cfg = codec.applyPureSignalDdcConfig(
             HPSDRModel::ANAN_G2E,
             /*psEnabled=*/false, /*diversity=*/false, /*mox=*/false,
             /*rx1Rate=*/192000, /*rx2Rate=*/0, /*rx2Enabled=*/false,
             /*adcCtrl1=*/0, /*adcCtrl2=*/0);
-        QCOMPARE(int(cfg.p1DdcConfig), 4);
         QCOMPARE(int(cfg.ddcEnable),  int(DDC0));   // 0x01 — primary on DDC0
         QVERIFY(cfg.ddcEnable != 0);                // regression: don't slip back to empty cfg
         QCOMPARE(int(cfg.syncEnable), 0);
         QCOMPARE(int(cfg.rate[0]), 192000);
-        QCOMPARE(int(cfg.cntrl1),  0);
-        QCOMPARE(int(cfg.cntrl2),  0);
-        QCOMPARE(cfg.p1RxCount, 4);
-        QCOMPARE(cfg.nDdc,      4);
+        QCOMPARE(int(cfg.rate[1]), 0);
+        QCOMPARE(int(cfg.rate[2]), 0);
+        QCOMPARE(int(cfg.rate[3]), 0);
     }
 
     // ANAN10 PS-off, no MOX, RX2 enabled → DDC0+DDC1

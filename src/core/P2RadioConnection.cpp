@@ -200,10 +200,14 @@ int P2RadioConnection::primaryRxDdcForBoard(HPSDRHW board) noexcept
     case HPSDRHW::Hermes:
     case HPSDRHW::HermesII:
     case HPSDRHW::HermesC10:  // ANAN-G2E //N1GP G2E added (HermesC10)
-        // ANAN-10 / ANAN-100 / ANAN-10E / ANAN-100B / ANAN-G2E running community P2
-        // firmware: rx1 = DDC0 (console.cs:8600-8632 [v2.10.3.13]).
-        // From Thetis console.cs:8607-8620 [v2.10.3.15] //N1GP G2E added (HermesC10) —
-        // case HPSDRHW.HermesC10 joins Hermes + HermesII for the DDC0 family.
+        // ANAN-10 / ANAN-100 / ANAN-10E / ANAN-100B / ANAN-G2E running
+        // community P2 firmware: rx1 = DDC0 (console.cs:8600-8632 [v2.10.3.13]).
+        // Empirically confirmed 2026-05-22 by wire-byte capture of working
+        // Thetis-on-G2E session (MAC 40:84:32:B0:B0:8D, N1GP community P2
+        // firmware v110): CmdRx byte 7 = 0x01 (DDC0 enable bit) when RX
+        // active.  An earlier intermediate fix tried DDC2 — that was wrong;
+        // Thetis stays with Hermes-class DDC0 per console.cs:8615-8620
+        // [v2.10.3.15] //N1GP G2E added.
         return 0;
     default:
         // Angelia / Orion / OrionMKII / Saturn / SaturnMKII and any future
@@ -1803,10 +1807,16 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.p2NumAdc   = m_numAdc;
     ctx.p2NumDac   = m_numDac;
 
-    // Per-ADC dither + random
+    // Per-ADC dither + random.
+    //
+    // 2026-05-22 bench-finding: NereusSDR was emitting dither/random = 0x07
+    // (all 3 ADC bits set) regardless of board ADC count.  Saturn (num_adc=2)
+    // firmware accepted this; ANAN-G2E (num_adc=1, N1GP community P2 firmware)
+    // silently dropped CmdRx, presumably because bits for non-existent ADCs
+    // are invalid.  Mask the bits to only ACTIVE ADCs (i < num_adc).
     for (int i = 0; i < 3; ++i) {
-        ctx.dither[i] = (m_adc[i].dither != 0);
-        ctx.random[i] = (m_adc[i].random != 0);
+        ctx.dither[i] = (i < m_numAdc) && (m_adc[i].dither != 0);
+        ctx.random[i] = (i < m_numAdc) && (m_adc[i].random != 0);
     }
 
     // Per-ADC step attenuators
