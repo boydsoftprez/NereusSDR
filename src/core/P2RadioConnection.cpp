@@ -632,31 +632,29 @@ void P2RadioConnection::disconnect()
     }
 
     if (m_running && m_socket && !m_radioInfo.address.isNull()) {
-        // 2026-05-22 bench-finding: Thetis wire-byte capture against working
-        // session (192.168.109.247 → ANAN-G2E .196, see g2e-tzsp.pcap)
-        // shows Thetis NEVER sends a run=0 CmdHighPriority.  Source comment
-        // at network.c:372 (`SendStop: prn->run=0; CmdHighPriority()`) is
-        // misleading.  Actual on-wire disconnect pattern:
-        //   - Stop sending CmdRx/CmdTx/CmdHighPriority entirely
-        //   - Keep sending CmdGeneral at ~4 Hz indefinitely (host-alive
-        //     heartbeat that lets the radio gateware know we're still here)
+        // 2026-05-22 bench-finding (second pcap capture, clean Power-Off
+        // event): Thetis's actual disconnect signal is ONE CmdHighPriority
+        // frame with byte 4 = 0x00 (run=0), then total radio silence.  Per
+        // captured frame 29900 at t=9.595 in g2e-tzsp.pcap (Power button
+        // off click).
         //
-        // NereusSDR previously sent 3x CmdHighPriority(run=0) then closed
-        // the socket cold.  G2E (N1GP community P2 firmware) interprets the
-        // sudden frame cessation as host-gone, hangs gateware until power
-        // cycle.  Saturn tolerates it; G2E does not.
+        // Frame content: byte 4 = 0x00, freqs (bytes 9-16) preserved from
+        // active state — NOT zeroed.  This is what composeCmdHighPriority()
+        // already does when m_running=false (run bit clears, other state
+        // carried forward), matching Thetis byte-for-byte.
         //
-        // Mimic Thetis's graceful winddown: with m_running=false, all
-        // composeCmd* paths emit run=0 bytes, but we only need a brief
-        // CmdGeneral burst (not CmdHighPriority/Rx/Tx) to let the radio
-        // see "host idle, frames stopping" before we drop the socket.
+        // Earlier intermediate guess (5x CmdGeneral burst) was based on a
+        // misread of the first pcap, which actually contained only a
+        // partial session, not a true disconnect.  Reverting to the
+        // Thetis-faithful single CmdHighPriority(run=0) pattern.
+        //
+        // Defensive: flush + 20 ms sleep before close so the run=0 frame
+        // is actually on the wire before the socket goes away.
         m_running = false;       // prn->run = 0;
-        for (int i = 0; i < 5; ++i) {
-            sendCmdGeneral();    // port 1024 — Thetis's "host still here" heartbeat
-            m_socket->flush();
-            QThread::msleep(40); // 5x40ms = 200ms winddown — matches Thetis ~4Hz cadence
-        }
-        qCDebug(lcConnection) << "P2: graceful winddown — 5x CmdGeneral sent (Thetis-faithful disconnect)";
+        sendCmdHighPriority();   // From Thetis SendStop() network.c:372-376
+        m_socket->flush();
+        QThread::msleep(20);
+        qCDebug(lcConnection) << "P2: SendStop complete (1x CmdHighPriority run=0, Thetis-faithful)";
     }
 
     m_running = false;
