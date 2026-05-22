@@ -107,6 +107,7 @@ private slots:
     void smoke_listenerAcceptsClientAndSendsBanner();
     void c1_localClientHandleIsStableAndDistinctFromBanners();
     void c2_pttRequestedIsOneFrameWithCanonicalFields();
+    void c2b_localInitTunePicksFirstTgxlAsInitiator();
     void c3_transmittingIsOneFrameWithCommaSeparatedAmpList();
     void c4_transmittingIsDelayed30msAfterLastAck();
     void c5_unkeyEmitsUnkeyRequestedThenTwoReadyFrames();
@@ -241,6 +242,43 @@ void SmartSdrApiListenerPttChainTest::c2_pttRequestedIsOneFrameWithCanonicalFiel
              qPrintable(QStringLiteral("expected tx_allowed=1 in: ") + frame));
     QVERIFY2(frame.endsWith(QStringLiteral("amplifier=")),
              qPrintable(QStringLiteral("expected empty amplifier= in: ") + frame));
+}
+
+// C2 follow-up: when the operator presses TUNE in the local NereusSDR UI
+// (NOT a remote TGXL hardware button press), no `transmit tune on` command
+// arrives on the wire to populate m_lastTuneInitiator. The PTT_REQUESTED
+// frame must still carry reason=AMP:<TGXL-name> via the
+// initiatingAmpName(TUNE) first-TunerGeniusXL fallback, matching canonical
+// pcap T+167.678. Bench-confirmed 2026-05-21 19:38:51: without the
+// fallback the wire emits reason= empty.
+void SmartSdrApiListenerPttChainTest::c2b_localInitTunePicksFirstTgxlAsInitiator()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const quint16 port = listener.serverPort();
+
+    QTcpSocket tgxl, pgxl;
+    tgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(tgxl.waitForConnected(1000));
+    pgxl.connectToHost(QHostAddress::LocalHost, port);
+    QVERIFY(pgxl.waitForConnected(1000));
+    drain(&tgxl); drain(&pgxl);
+
+    registerFakeAmp(&tgxl, QStringLiteral("TunerGeniusXL"), QStringLiteral("TG"));
+    registerFakeAmp(&pgxl, QStringLiteral("PowerGeniusXL"), QStringLiteral("PG-XL"));
+    drain(&tgxl); drain(&pgxl);
+
+    // NO `transmit tune on` over the wire. RadioModel invokes the listener
+    // directly (the local-UI TUNE path).
+    listener.setInterlockTransmitting(true, QStringLiteral("TUNE"));
+
+    const QByteArray bytes = drain(&tgxl);
+    const QStringList frames =
+        findS0InterlockFrames(bytes, QStringLiteral("PTT_REQUESTED"));
+    QCOMPARE(frames.size(), 1);
+    const QString frame = frames.first();
+    QVERIFY2(frame.contains(QStringLiteral("reason=AMP:TG ")),
+             qPrintable(QStringLiteral("expected reason=AMP:TG fallback, got: ") + frame));
 }
 
 // Task 3 (C3): TRANSMITTING is exactly one frame with

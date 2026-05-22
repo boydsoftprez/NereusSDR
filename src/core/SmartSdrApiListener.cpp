@@ -1099,13 +1099,28 @@ QString SmartSdrApiListener::generateHandle() const
 QString SmartSdrApiListener::initiatingAmpName(const QString& wireSource) const
 {
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C2:
-    // - source=TUNE: name of the amp that sent `transmit tune on`. Falls
-    //   back to empty if no tune initiator recorded.
+    // - source=TUNE: name of the amp that sent `transmit tune on`.
+    //   Falls back to first TunerGeniusXL-class amp when the operator
+    //   pressed TUNE locally (NereusSDR UI button) and no remote amp
+    //   recorded itself as initiator. Bench-confirmed 2026-05-21: without
+    //   this fallback local TUNE emits reason= empty on PTT_REQUESTED
+    //   instead of canonical reason=AMP:TG, matching pcap T+167.678.
     // - source=MIC : first amp registered with model=PowerGeniusXL (the
     //   power amp in the chain). Falls back to empty if no PGXL-class amp
     //   is connected, which is acceptable per the design doc Definitions.
     if (wireSource == QStringLiteral("TUNE")) {
-        return m_lastTuneInitiator;
+        if (!m_lastTuneInitiator.isEmpty()) {
+            return m_lastTuneInitiator;
+        }
+        // Local-TUNE fallback: first TunerGeniusXL-class amp, symmetric
+        // to the MIC branch picking first PowerGeniusXL.
+        for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+            if (it->ampModel == QStringLiteral("TunerGeniusXL")
+                && !it->interlockName.isEmpty()) {
+                return it->interlockName;
+            }
+        }
+        return QString();
     }
     if (wireSource == QStringLiteral("MIC")) {
         for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
