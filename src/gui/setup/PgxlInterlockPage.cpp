@@ -77,9 +77,10 @@ void PgxlInterlockPage::buildUi()
     m_graceSpinbox->setSuffix(" ms");
     m_graceSpinbox->setToolTip(
         "Grace period (ms) after the amplifier transitions to OPERATE before\n"
-        "the SWR gate is enforced. Ignores SWR spikes during PA warm-up.\n"
-        "Grace period application is reserved for a bench-verification follow-up.\n"
-        "The value is persisted and will take effect when the grace logic is wired.\n"
+        "the SWR gate is enforced. Ignores SWR spikes during PA warm-up so\n"
+        "the gate does not nuisance-trip on PSU current ramps. Applied by\n"
+        "TxInterlockPolicy::evaluateTxRequest against the OPERATE rising\n"
+        "edge timestamp. Persisted as PGXL_TxInterlockGraceMs.\n"
         "Range: 0..30000 ms.  Default: 3000 ms.");
     graceForm->addRow("Grace Period:", m_graceSpinbox);
 

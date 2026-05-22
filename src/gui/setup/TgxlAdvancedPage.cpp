@@ -275,7 +275,12 @@ TgxlAdvancedPage::TgxlAdvancedPage(RadioModel* model, QWidget* parent)
     buildNetworkSection(topLay);
     buildTuneMemorySection(topLay);
     buildDiagnosticsSection(topLay);
-    buildFaultHistorySection(topLay);
+    // 2026-05-22 menu cleanup: Fault History section removed. TGXL has
+    // no documented fault taxonomy and nothing in the codebase ever
+    // appends to tgxlFaultLog, so the table was always empty. The
+    // RadioModel-owned FaultLog instance and its accessor remain in
+    // place for symmetry with PGXL and as a hook for future TGXL fault
+    // events if 4O3A publishes a taxonomy.
     buildFooter(topLay);
     topLay->addStretch();
 
@@ -544,44 +549,13 @@ void TgxlAdvancedPage::buildDiagnosticsSection(QVBoxLayout* topLay)
     topLay->addWidget(box);
 }
 
-void TgxlAdvancedPage::buildFaultHistorySection(QVBoxLayout* topLay)
-{
-    auto* box = new QGroupBox(QStringLiteral("Fault History"));
-    auto* lay = new QVBoxLayout(box);
-
-    // Note: TGXL has no documented FAULT taxonomy (design §4.7), so this
-    // table will often be empty. The same shape is used as PGXL for
-    // consistency and future extensibility.
-    auto* noteLabel = new QLabel(
-        QStringLiteral("TGXL fault taxonomy is undocumented; this table "
-                       "records any state transitions to FAULT-prefixed values."));
-    noteLabel->setWordWrap(true);
-    noteLabel->setStyleSheet(QStringLiteral("color: #999; font-style: italic;"));
-    lay->addWidget(noteLabel);
-
-    m_faultTable = new QTableView;
-    m_faultTable->setModel(m_faultTableModel);
-    m_faultTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_faultTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_faultTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_faultTable->setAlternatingRowColors(true);
-    m_faultTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    m_faultTable->verticalHeader()->setVisible(false);
-    m_faultTable->setMinimumHeight(120);
-    lay->addWidget(m_faultTable);
-
-    auto* btnRow = new QHBoxLayout;
-    btnRow->addStretch();
-    auto* clearAllBtn = new QPushButton(QStringLiteral("Clear All"));
-    btnRow->addWidget(clearAllBtn);
-    lay->addLayout(btnRow);
-
-    topLay->addWidget(box);
-
-    connect(clearAllBtn, &QPushButton::clicked, this, [this]() {
-        m_faultLog->clear();
-    });
-}
+// 2026-05-22 menu cleanup: buildFaultHistorySection() removed. The
+// section was always empty because nothing in the codebase populates
+// tgxlFaultLog (TGXL has no documented fault taxonomy per design §4.7).
+// The FaultLog and TgxlFaultLogTableModel instances and the header
+// declarations are kept as no-op state in case 4O3A publishes a TGXL
+// fault taxonomy later; restoring the UI would just need to re-add the
+// build method and the buildFaultHistorySection(topLay) call.
 
 void TgxlAdvancedPage::buildFooter(QVBoxLayout* topLay)
 {

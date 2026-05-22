@@ -129,8 +129,16 @@ private:
     QLineEdit* m_gatewayEdit{nullptr};
     QPushButton* m_applyIfconfBtn{nullptr};
 
-    // Pairing section (5.6.4)
-    QComboBox*    m_pairModeCombo{nullptr};
+    // Pairing section (5.6.4).
+    // 2026-05-22 menu cleanup: was QComboBox with 3 entries (flexradio /
+    // amplifier / none). RadioModel only ever read the derived
+    // PGXL_PairAttempt boolean (lines 9654-9655) -- "flexradio" and
+    // "amplifier" were functionally identical, only "none" actually did
+    // anything different. Replaced with a single Auto-pair checkbox
+    // backed by PGXL_PairAttempt directly. PGXL_PairMode is no longer
+    // written; the stored key is left in place for backward compat (any
+    // existing settings file values are ignored on read).
+    QCheckBox*    m_pairAttemptCheckbox{nullptr};
     QRadioButton* m_txAntAnt1{nullptr};
     QRadioButton* m_txAntAnt2{nullptr};
     QRadioButton* m_sliceA{nullptr};

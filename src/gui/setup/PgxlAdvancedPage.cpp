@@ -419,14 +419,18 @@ void PgxlAdvancedPage::buildPairingSection(QVBoxLayout* topLay)
     auto* form = new QFormLayout;
     form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-    m_pairModeCombo = new QComboBox;
-    m_pairModeCombo->addItem(QStringLiteral("flexradio (LAN PTT & band)"),
-                             QStringLiteral("flexradio"));
-    m_pairModeCombo->addItem(QStringLiteral("amplifier create (no PTT, manual band)"),
-                             QStringLiteral("amplifier"));
-    m_pairModeCombo->addItem(QStringLiteral("None"),
-                             QStringLiteral("none"));
-    form->addRow(QStringLiteral("Pair Mode:"), m_pairModeCombo);
+    // 2026-05-22 menu cleanup: was a 3-way combo (flexradio / amplifier
+    // / none) but RadioModel only ever consumed the derived
+    // PGXL_PairAttempt boolean; "flexradio" and "amplifier" were
+    // functionally identical. Replaced with a single Auto-pair checkbox.
+    m_pairAttemptCheckbox = new QCheckBox(
+        QStringLiteral("Auto-pair on connect"));
+    m_pairAttemptCheckbox->setToolTip(
+        QStringLiteral("When enabled, NereusSDR sends the flexradio "
+                       "pairing handshake to PGXL on every successful "
+                       "9008 connect. Disable only if pairing is "
+                       "managed externally."));
+    form->addRow(QStringLiteral("Pairing:"), m_pairAttemptCheckbox);
 
     // TX antenna
     auto* antWidget = new QWidget;
@@ -467,12 +471,16 @@ void PgxlAdvancedPage::buildPairingSection(QVBoxLayout* topLay)
 
     topLay->addWidget(box);
 
-    // Persist defaults from AppSettings
+    // Persist defaults from AppSettings.
+    // 2026-05-22 menu cleanup: PGXL_PairMode is no longer the source of
+    // truth; PGXL_PairAttempt is the canonical persisted key. Default
+    // True matches the prior behavior (combo defaulted to "flexradio"
+    // which set PairAttempt=True).
     auto& s = AppSettings::instance();
-    QString pairMode = s.value(QStringLiteral("PGXL_PairMode"),
-                               QStringLiteral("flexradio")).toString();
-    int modeIdx = m_pairModeCombo->findData(pairMode);
-    m_pairModeCombo->setCurrentIndex(modeIdx >= 0 ? modeIdx : 0);
+    const bool pairAttempt = s.value(QStringLiteral("PGXL_PairAttempt"),
+                                     QStringLiteral("True"))
+                                .toString() == QStringLiteral("True");
+    m_pairAttemptCheckbox->setChecked(pairAttempt);
 
     QString txAnt = s.value(QStringLiteral("PGXL_TxAnt"),
                             QStringLiteral("ANT1")).toString();
@@ -490,7 +498,7 @@ void PgxlAdvancedPage::buildPairingSection(QVBoxLayout* topLay)
         m_sliceA->setChecked(true);
     }
 
-    connect(m_pairModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(m_pairAttemptCheckbox, &QCheckBox::toggled,
             this, &PgxlAdvancedPage::onPairModeChanged);
     connect(m_txAntAnt1,  &QRadioButton::toggled, this, &PgxlAdvancedPage::onTxAntChanged);
     connect(m_txAntAnt2,  &QRadioButton::toggled, this, &PgxlAdvancedPage::onTxAntChanged);
@@ -854,15 +862,13 @@ void PgxlAdvancedPage::onPairModeChanged(int /*index*/)
     if (m_updatingFromDevice) {
         return;
     }
-    QString mode = m_pairModeCombo->currentData().toString();
-    auto& s = AppSettings::instance();
-    s.setValue(QStringLiteral("PGXL_PairMode"), mode);
-
-    // PGXL_PairAttempt is true for both flexradio and amplifier modes
-    bool attempt = (mode == QStringLiteral("flexradio")
-                    || mode == QStringLiteral("amplifier"));
-    s.setValue(QStringLiteral("PGXL_PairAttempt"),
-               attempt ? QStringLiteral("True") : QStringLiteral("False"));
+    // 2026-05-22 menu cleanup: checkbox drives PGXL_PairAttempt directly.
+    // PGXL_PairMode is no longer written (was unread by RadioModel).
+    const bool attempt = m_pairAttemptCheckbox
+                         && m_pairAttemptCheckbox->isChecked();
+    AppSettings::instance().setValue(
+        QStringLiteral("PGXL_PairAttempt"),
+        attempt ? QStringLiteral("True") : QStringLiteral("False"));
 }
 
 void PgxlAdvancedPage::onTxAntChanged()

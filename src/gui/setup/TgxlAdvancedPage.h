@@ -93,7 +93,8 @@ private:
     void buildNetworkSection(QVBoxLayout* topLay);
     void buildTuneMemorySection(QVBoxLayout* topLay);
     void buildDiagnosticsSection(QVBoxLayout* topLay);
-    void buildFaultHistorySection(QVBoxLayout* topLay);
+    // 2026-05-22 menu cleanup: buildFaultHistorySection removed (always-
+    // empty table; no producer ever populated tgxlFaultLog).
     void buildFooter(QVBoxLayout* topLay);
 
     // Helpers

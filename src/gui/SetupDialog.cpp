@@ -70,10 +70,9 @@
 #include "setup/TgxlAdvancedPage.h"
 // 4O3A integration page (Settings -> CAT & Network -> 4O3A).  Hosts the
 // QTabWidget that folds the former Peripherals / PGXL Advanced / TGXL
-// Advanced entries into a single tree node under a master toggle.
+// Advanced / PGXL Interlock entries into a single tree node under a
+// master toggle.  PgxlInterlockPage's include lives inside FourO3APage.cpp.
 #include "setup/FourO3APage.h"
-// Phase 3P-II Task 86: PGXL Interlock page (Setup -> Transmit -> PGXL Interlock)
-#include "setup/PgxlInterlockPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -457,10 +456,10 @@ void SetupDialog::buildTree()
     // the Thetis tpDSPVOX tab IA.
     add(transmit, "DEXP/VOX",           new DexpVoxPage(m_model));
 
-    // Phase 3P-II Task 86: PGXL Interlock policy page under Transmit.
-    // Registered as "PGXL Interlock"; key used by Task 90 openSetup navigation.
-    // addWrapped() is used because PgxlInterlockPage is a plain QWidget.
-    addWrapped(transmit, "PGXL Interlock", new PgxlInterlockPage(m_model));
+    // 2026-05-22 menu cleanup: the standalone "PGXL Interlock" entry that
+    // previously lived here is removed. The same controls live under
+    // Setup -> CAT & Network -> 4O3A -> General as an embedded section
+    // (FourO3APage owns the PgxlInterlockPage instance).
 
     // ── Appearance ────────────────────────────────────────────────────────────
     QTreeWidgetItem* appearance = addCategory("Appearance");

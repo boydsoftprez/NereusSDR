@@ -50,34 +50,15 @@ FourO3ADiagnosticsTab::FourO3ADiagnosticsTab(RadioModel* model, QWidget* parent)
     stateLayout->addWidget(m_connectionStateLabel);
     root->addWidget(stateBox);
 
-    // ── Section 2: Recent FlexAPI Commands ────────────────────────
-    auto* cmdBox = new QGroupBox(
-        tr("Recent FlexAPI Commands (last %1)").arg(kMaxCommandLines),
-        this);
-    auto* cmdLayout = new QVBoxLayout(cmdBox);
-    m_commandLog = new QPlainTextEdit(cmdBox);
-    m_commandLog->setReadOnly(true);
-    m_commandLog->setMaximumBlockCount(kMaxCommandLines);
-    m_commandLog->setStyleSheet(
-        QStringLiteral("font-family: monospace; font-size: 11px;"));
-    m_commandLog->setPlaceholderText(
-        tr("No FlexAPI commands yet -- waiting for PGXL/TGXL traffic."));
-    cmdLayout->addWidget(m_commandLog);
-    root->addWidget(cmdBox, /*stretch=*/1);
+    // 2026-05-22 menu cleanup: the Recent FlexAPI Commands + Fault
+    // History (all amps) panels were removed. Neither had a wired
+    // producer (appendCommand() was defined but never called, and the
+    // aggregator fault widget was a placeholder distinct from the
+    // per-tab Fault History tables in PGXL/TGXL pages). The
+    // Connection State and Disconnect/Reconnect Log sections below
+    // are the live surfaces.
 
-    // ── Section 3: Fault History ──────────────────────────────────
-    auto* faultBox = new QGroupBox(tr("Fault History (all amps)"), this);
-    auto* faultLayout = new QVBoxLayout(faultBox);
-    m_faultHistory = new QPlainTextEdit(faultBox);
-    m_faultHistory->setReadOnly(true);
-    m_faultHistory->setStyleSheet(
-        QStringLiteral("font-family: monospace; font-size: 11px;"));
-    m_faultHistory->setPlaceholderText(tr("No faults logged yet."));
-    m_faultHistory->setFixedHeight(80);
-    faultLayout->addWidget(m_faultHistory);
-    root->addWidget(faultBox);
-
-    // ── Section 4: Disconnect / Reconnect Log ─────────────────────
+    // ── Section 2 (was Section 4): Disconnect / Reconnect Log ─────
     auto* dropBox = new QGroupBox(tr("Disconnect / Reconnect Log"), this);
     auto* dropLayout = new QVBoxLayout(dropBox);
     m_disconnectLog = new QPlainTextEdit(dropBox);
@@ -154,12 +135,9 @@ void FourO3ADiagnosticsTab::refreshConnectionState()
     m_connectionStateLabel->setText(lines.join('\n'));
 }
 
-void FourO3ADiagnosticsTab::appendCommand(const QString& line)
-{
-    if (!m_commandLog) { return; }
-    const QString stamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
-    m_commandLog->appendPlainText(stamp + "  " + line);
-}
+// 2026-05-22 menu cleanup: appendCommand() previously appended to the
+// removed Recent FlexAPI Commands panel. It was declared in the header
+// and defined here but never called by any producer. Removed entirely.
 
 void FourO3ADiagnosticsTab::appendConnectionEvent(const QString& line)
 {
