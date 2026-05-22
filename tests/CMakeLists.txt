@@ -154,6 +154,11 @@ nereus_add_test(tst_clarity_nf_grid_coexistence)
 nereus_add_test(tst_hpsdr_enums)
 nereus_add_test(tst_board_capabilities)
 
+# ── ANAN-G2E port Phase B: HardwareProfile per-board init parity ──────────
+# Data-driven test pinning all 15 SKUs (Hermes through REDPITAYA + new
+# ANAN_G2E) against Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+nereus_add_test(tst_hardware_profile)
+
 # ── Phase 3M-4 Task 1: PureSignal cap fields (psDefaultPeak + psSampleRate) ──
 # 3 tests covering ANAN-G2 (P2 default 0.2899, psSampleRate=192000),
 # HermesLite (mi0bot HL2 override 0.233, psSampleRate=0 sentinel for
