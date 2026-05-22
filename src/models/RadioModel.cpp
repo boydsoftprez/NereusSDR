@@ -9693,15 +9693,55 @@ void RadioModel::startTgxlAutotune(bool fromHardware)
         return;
     }
 
-    // Snapshot PGXL state. m_ampOperate is the radio's view of PGXL's
-    // operate-family state (IDLE / OPERATE / TRANSMIT_A / TRANSMIT_B).
+    // 2026-05-22 bench-fix + pcap-confirmed: for the hardware-initiated
+    // TUNE path (TGXL hardware button press), canonical FLEX does NOT
+    // standby PGXL. Both amps stay in OPERATE and in the interlock
+    // chain. Pcap evidence from flex-tgxl-direct-CONTROL.pcapng:
+    //
+    //   T+167.735 TRANSMITTING ... amplifier=0x096016A4,0x22E8213A
+    //                                          ^^^^^^^^^^ PGXL still keyed
+    //
+    // FLEX broadcasts NO `operate=0` to PGXL during the whole TUNE
+    // cycle (verified by full pcap sweep of FLEX -> PGXL traffic
+    // T+167.6..168.95). PGXL has its own protection against TGXL's
+    // swept-load VSWR transients; the interlock state machine
+    // (PTT_REQUESTED -> TRANSMITTING -> UNKEY_REQUESTED -> READY) is
+    // the only coordination needed.
+    //
+    // Bench evidence 2026-05-22 15:36:18: sending operate=0 on the
+    // hardware path caused PGXL to disable its interlock (C33|interlock
+    // disable 2), which excluded PGXL from our TRANSMITTING frame's
+    // amplifier= list (we emitted amplifier=0x<TGXL> alone instead of
+    // the canonical 0x<TGXL>,0x<PGXL>). TGXL's display saw a single-
+    // amp chain instead of the full chain and showed "no PTT in", and
+    // PGXL stayed STANDBY so could not amplify.
+    //
+    // The app-initiated TUNE path (fromHardware=false, TunerApplet
+    // click) keeps the existing pre-standby orchestration for now;
+    // a separate bench cycle will verify whether it can be simplified
+    // the same way once the hardware path is bench-green.
+    if (fromHardware) {
+        m_pgxlSavedOperate = false;       // not changed, no restore needed
+        m_pgxlStandbyPending = false;
+        m_tgxlAutotuneInProgress = true;
+        m_tgxlAutotuneFromHardware = true;
+        qCInfo(lcConnection)
+            << "TGXL autotune starting (hardware TUNE; PGXL stays in OPERATE"
+               " per canonical pcap)";
+        continueTgxlAutotuneAfterStandby();
+        return;
+    }
+
+    // App-initiated path: snapshot PGXL state. m_ampOperate is the
+    // radio's view of PGXL's operate-family state (IDLE / OPERATE /
+    // TRANSMIT_A / TRANSMIT_B).
     m_pgxlSavedOperate = m_hasAmplifier && m_ampOperate;
     m_tgxlAutotuneInProgress = true;
     m_tgxlAutotuneFromHardware = fromHardware;
     m_pgxlStandbyPending = m_pgxlSavedOperate;  // need to await STANDBY confirm?
 
     qCInfo(lcConnection)
-        << "TGXL autotune starting. fromHardware=" << fromHardware
+        << "TGXL autotune starting (app TUNE). fromHardware=" << fromHardware
         << "pgxlSavedOperate=" << m_pgxlSavedOperate;
 
     if (!m_pgxlSavedOperate) {
