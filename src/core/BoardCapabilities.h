@@ -394,6 +394,26 @@ struct BoardCapabilities {
     bool hasAlex{false};
     bool hasPennyLane{false};
 
+    // From Thetis HasVolts (clsHardwareSpecific.cs:245-254 [v2.10.3.15]).
+    // True for boards with on-board PA voltage telemetry sensor.
+    // SKU set: ANAN7000D, ANAN8000D, ANVELINAPRO3, ANAN_G2, ANAN_G2_1K, REDPITAYA, ANAN_G2E. //N1GP G2E added
+    bool hasPaVoltsTelemetry{false};
+
+    // From Thetis HasAmps (clsHardwareSpecific.cs:255-264 [v2.10.3.15]).
+    // True for boards with on-board PA current telemetry sensor.
+    // SKU set: same as HasVolts. //N1GP G2E added
+    bool hasPaAmpsTelemetry{false};
+
+    // From Thetis setup.cs:19918 [v2.10.3.15] //N1GP G2E added —
+    // chkAutoPACalibrate.Visible=false for G2E (auto-cal UI hidden).
+    // Defaults true so existing boards retain auto-cal visibility.
+    bool allowsAutoPaCalibrate{true};
+
+    // From Thetis setup.cs:19920 [v2.10.3.15] //N1GP G2E added —
+    // chkBypassANANPASettings.Visible=true for G2E ("Bypass ANAN PA Settings"
+    // checkbox visible). Defaults false; G2E opts in.
+    bool showsBypassPaSettingsUi{false};
+
     int  minFirmwareVersion;
     int  knownGoodFirmware;
 
