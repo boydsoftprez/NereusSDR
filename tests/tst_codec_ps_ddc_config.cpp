@@ -33,8 +33,6 @@
 #include <QtTest/QtTest>
 
 #include "core/codec/CodecContext.h"
-#include "core/codec/IP1Codec.h"
-#include "core/codec/IP2Codec.h"
 #include "core/codec/P1CodecAnvelinaPro3.h"
 #include "core/codec/P1CodecHl2.h"
 #include "core/codec/P1CodecRedPitaya.h"
