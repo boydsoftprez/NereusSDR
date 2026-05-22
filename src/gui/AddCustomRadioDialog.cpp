@@ -69,7 +69,6 @@ mw0lge@grange-lane.co.uk
 #include "StyleConstants.h"
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
-#include "core/LogCategories.h"
 
 #include <QDateTime>
 #include <QTimer>
