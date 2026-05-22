@@ -566,6 +566,12 @@ void AntennaAlexAntennaControlTab::applySkuProfile()
     // useTxAntForRx is always visible — it's a NereusSDR-native control that
     // maps to Thetis Alex.cs:66 TRxAnt (no per-SKU visibility override in Thetis).
 
+    // Per-SKU EXT1/EXT2-on-TX button text — From Thetis setup.cs:19928-19929
+    // [v2.10.3.15] — e.g. G2E re-labels chkEXT2OutOnTx to "Rx BYPASS on Tx".
+    // //N1GP G2E added
+    if (m_chkExt1OutOnTx) { m_chkExt1OutOnTx->setText(profile.ext1OutOnTxLabel); }
+    if (m_chkExt2OutOnTx) { m_chkExt2OutOnTx->setText(profile.ext2OutOnTxLabel); }
+
     // SKU-specific tooltip for Ext2OutOnTx — From Thetis setup.cs:6178/6198
     // [v2.10.3.13 @501e3f5].
     if (m_chkExt2OutOnTx) {
