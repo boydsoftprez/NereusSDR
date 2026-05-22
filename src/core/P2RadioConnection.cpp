@@ -180,6 +180,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "models/Band.h"
 
 #include <QNetworkDatagram>
+#include <QThread>
 #include <QVariant>
 #include <QtEndian>
 
@@ -633,8 +634,25 @@ void P2RadioConnection::disconnect()
     if (m_running && m_socket && !m_radioInfo.address.isNull()) {
         // From Thetis SendStop() network.c:372-376
         m_running = false;       // prn->run = 0;
-        sendCmdHighPriority();   // CmdHighPriority();
-        qCDebug(lcConnection) << "P2: SendStop complete (run=0)";
+        // 2026-05-22 bench-finding (G2E gateware lockup): NereusSDR previously
+        // sent ONE SendStop frame then immediately closed the socket.  Qt's
+        // writeDatagram queues to the OS socket buffer; close() can drop
+        // unsent datagrams before the kernel transmits them.  Result on
+        // G2E (N1GP community P2 firmware): the radio never receives run=0,
+        // its gateware stays in streaming state, and the only recovery is a
+        // power cycle.  Thetis avoids this by keeping listenSock open
+        // (network.c:362-369 — no close on SendStop).
+        //
+        // Defensive fix: send the SendStop frame 3 times with flush + small
+        // sleep between, so the kernel actually puts at least one on the
+        // wire even under transient socket-buffer pressure.  Total added
+        // latency on disconnect: ~30 ms (well under user-perceptible).
+        for (int i = 0; i < 3; ++i) {
+            sendCmdHighPriority();   // CmdHighPriority();
+            m_socket->flush();
+            QThread::msleep(10);
+        }
+        qCDebug(lcConnection) << "P2: SendStop complete (run=0, sent 3x w/ flush)";
     }
 
     m_running = false;
