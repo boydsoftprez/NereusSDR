@@ -85,8 +85,8 @@ struct PaFwdTriplet {
     int    adcCalOffset;   // adc_cal_offset — zero-offset correction
 };
 
-// From Thetis console.cs:25008 [v2.10.3.13] — computeAlexFwdPower entry,
-// Upstream tags preserved: //DH1KLM //N1GP (from cited upstream lines) [v2.10.3.15]
+// From Thetis console.cs:25053-25088 [v2.10.3.15] — computeAlexFwdPower entry,
+// Upstream tags preserved: //DH1KLM //N1GP G2E added (from cited upstream lines) [v2.10.3.15]
 // per-board switch body cited per case below.  Returns
 // {bridge_volt, refvoltage, adc_cal_offset}.
 //
@@ -99,8 +99,9 @@ struct PaFwdTriplet {
 //
 // Inline upstream attribution preserved verbatim:
 //   :25007  case HPSDRModel.ANAN_G1: //N1GP G1 added   (NereusSDR has no G1 enum)
-//   :25037  case HPSDRModel.ANAN_G2_1K:             // !K will need different scaling
-//   :25038  case HPSDRModel.REDPITAYA: //DH1KLM
+//   :25081  case HPSDRModel.ANAN_G2E: //N1GP G2E added
+//   :25083  case HPSDRModel.ANAN_G2_1K:             // !K will need different scaling
+//   :25084  case HPSDRModel.REDPITAYA: //DH1KLM
 PaFwdTriplet fwdTripletFor(HPSDRModel model) noexcept
 {
     switch (model) {
@@ -112,9 +113,11 @@ PaFwdTriplet fwdTripletFor(HPSDRModel model) noexcept
     // From Thetis console.cs:25029-25033 [v2.10.3.13]
     case HPSDRModel::ANAN200D:
         return { 0.108, 5.0, 4 };
-    // From Thetis console.cs:25034-25042 [v2.10.3.13]
+    // From Thetis console.cs:25079-25088 [v2.10.3.15] computeAlexFwdPower.
+    // Upstream tags preserved: //N1GP G2E added (console.cs:25081 [v2.10.3.15]) //DH1KLM
     case HPSDRModel::ANAN7000D:
     case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:             // !K will need different scaling
     case HPSDRModel::REDPITAYA: //DH1KLM
