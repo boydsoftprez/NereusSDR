@@ -6,7 +6,7 @@
 //
 // 4O3A integration setup page.  Settings -> CAT & Network -> 4O3A.
 //
-// Hosts a QTabWidget with four tabs:
+// Hosts a QTabWidget with three tabs:
 //   1. General        -- master toggle (FourO3A_Enabled), FlexAPI status
 //                        row, PGXL/TGXL connection (embedded PeripheralsPage),
 //                        PGXL interlock controls (embedded PgxlInterlockPage).
@@ -14,14 +14,18 @@
 //                        fault history).
 //   3. Tuner Genius XL-- embedded TgxlAdvancedPage (identity, antennas,
 //                        autotune memory, telemetry).
-//   4. Diagnostics    -- new FourO3ADiagnosticsTab (FlexAPI listener
-//                        state, recent commands, disconnect/reconnect log).
+//
+// 2026-05-22: the Diagnostics tab (FourO3ADiagnosticsTab) was removed.
+// Its Connection State block duplicated the FlexAPI status row on the
+// General tab and the per-peer status labels on the PGXL/TGXL tabs;
+// its Disconnect/Reconnect Log added no actionable bench information
+// beyond what the rolling NereusSDR log file already records.
 //
 // Master toggle behaviour:
 //   When OFF (default on first run):
 //     - TCP 4992 listener not started by RadioModel ctor.
 //     - PGXL/TGXL auto-connect skipped.
-//     - Tabs 2/3/4 disabled (greyed out) so the operator can still see
+//     - Tabs 2/3 disabled (greyed out) so the operator can still see
 //       the layout but can't interact until they opt in.
 //   When ON:
 //     - RadioModel::setFourO3AEnabled(true) starts the listener live.
@@ -52,7 +56,6 @@ class PeripheralsPage;
 class PgxlInterlockPage;
 class PgxlAdvancedPage;
 class TgxlAdvancedPage;
-class FourO3ADiagnosticsTab;
 
 class FourO3APage : public QWidget {
     Q_OBJECT
@@ -97,7 +100,6 @@ private:
     PgxlInterlockPage*    m_pgxlInterlockPage{nullptr};
     PgxlAdvancedPage*     m_pgxlAdvancedPage{nullptr};
     TgxlAdvancedPage*     m_tgxlAdvancedPage{nullptr};
-    FourO3ADiagnosticsTab* m_diagnosticsTab{nullptr};
 };
 
 }  // namespace NereusSDR

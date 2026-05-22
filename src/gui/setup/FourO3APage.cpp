@@ -30,7 +30,6 @@
 #include "PgxlInterlockPage.h"
 #include "PgxlAdvancedPage.h"
 #include "TgxlAdvancedPage.h"
-#include "FourO3ADiagnosticsTab.h"
 
 #include "core/SmartSdrApiListener.h"
 #include "models/RadioModel.h"
@@ -71,10 +70,12 @@ FourO3APage::FourO3APage(RadioModel* model, QWidget* parent)
     m_tgxlAdvancedPage = new TgxlAdvancedPage(m_model);
     m_tabs->addTab(m_tgxlAdvancedPage, tr("Tuner Genius XL"));
 
-    // Tab 4: Diagnostics.  New widget exposing FlexAPI listener
-    // state, recent commands, and disconnect/reconnect log.
-    m_diagnosticsTab = new FourO3ADiagnosticsTab(m_model);
-    m_tabs->addTab(m_diagnosticsTab, tr("Diagnostics"));
+    // 2026-05-22 menu cleanup: Diagnostics tab removed. Connection
+    // State duplicated the General tab's FlexAPI status row and the
+    // per-peer labels on PGXL/TGXL tabs; Disconnect/Reconnect Log
+    // duplicated the rolling NereusSDR log file. Both removed for
+    // bench-driven simplification (operator can read the log file or
+    // PGXL/TGXL detail tabs for the same data).
 
     // Apply current master-gate state to the detail tabs at
     // construction time so a cold-open with FourO3A_Enabled=False
