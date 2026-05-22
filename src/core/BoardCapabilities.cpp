@@ -943,14 +943,14 @@ const BoardCapabilities kSaturnMKII = {
     .hasDiversityReceiver = true,
     .hasStepAttenuatorCal = true,
     .hasPaProfile     = true,
-    .hasPaVoltsTelemetry = false,  // From Thetis HasVolts clsHardwareSpecific.cs:245-254 [v2.10.3.15] — SaturnMKII NOT in HasVolts SKU group
-    .hasPaAmpsTelemetry  = false,  // From Thetis HasAmps  clsHardwareSpecific.cs:255-264 [v2.10.3.15] — same
     .hasBandwidthMonitor = false,
     .hasIoBoardHl2    = false,
     .hasSidetoneGenerator = false,
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN_G2_1K (setup.cs:20256)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20254)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364); "OC Control"
+    .hasPaVoltsTelemetry = false,  // From Thetis HasVolts clsHardwareSpecific.cs:245-254 [v2.10.3.15] — SaturnMKII NOT in HasVolts SKU group
+    .hasPaAmpsTelemetry  = false,  // From Thetis HasAmps  clsHardwareSpecific.cs:255-264 [v2.10.3.15] — same
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     .displayName      = "ANAN-G2 MkII (SaturnMKII)",
