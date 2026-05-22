@@ -277,10 +277,14 @@ private slots:
         const auto& caps = BoardCapsTable::forBoard(HPSDRHW::HermesC10);
 
         QCOMPARE(caps.board, HPSDRHW::HermesC10);
-        QCOMPARE(int(caps.protocol), int(ProtocolVersion::Protocol1));
+        // Empirically verified 2026-05-22: N1GP community P2 firmware shipped
+        // with ANAN-G2E hardware responds to P2 discovery (byte 20) and uses
+        // P2 wire format end-to-end.  Setup.cs:849-850 [v2.10.3.15] grants
+        // any P2 board the full 6-rate list up to 1536 kHz (no per-board cap).
+        QCOMPARE(int(caps.protocol), int(ProtocolVersion::Protocol2));
         QCOMPARE(caps.adcCount, 1);           // SetRxADC(1)
         QCOMPARE(caps.maxReceivers, 4);       // 4-DDC (console.cs:8388)
-        QCOMPARE(caps.maxSampleRate, 192000);
+        QCOMPARE(caps.maxSampleRate, 1536000);
         QVERIFY(caps.hasAlex2);               // SetMKIIBPF(1)
         QVERIFY(caps.hasPureSignal);          // RX4 = PS feedback
         QCOMPARE(caps.psDefaultPeak, 0.2899); // P2 default

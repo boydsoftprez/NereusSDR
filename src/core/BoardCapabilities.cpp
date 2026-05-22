@@ -618,11 +618,21 @@ const BoardCapabilities kOrionMKII = {
 // PA telemetry: HasVolts=true, HasAmps=true (clsHardwareSpecific.cs:245-264 [v2.10.3.15]).
 const BoardCapabilities kHermesC10 = {
     .board            = HPSDRHW::HermesC10,
-    .protocol         = ProtocolVersion::Protocol1,
+    // ANAN-G2E ships with N1GP community P2 (ETH) firmware that responds to P2
+    // discovery and uses P2 wire format.  Thetis's static SKU classification
+    // (Hermes-class) is a logical grouping for DSP/UI purposes; the wire
+    // protocol is P2.  Empirically verified 2026-05-22 by discovery byte 20 ->
+    // HermesC10 arriving via P2 reply, and successful CmdRx → DDC0 I/Q
+    // streaming after the dither/mask fixes landed.
+    .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 1,                                  // SetRxADC(1) [v2.10.3.15]
     .maxReceivers     = 4,                                  // P1_rxcount=4 nddc=4 (console.cs:8388 [v2.10.3.15])
-    .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
-    .maxSampleRate    = 192000,
+    // Thetis setup.cs:849-850 [v2.10.3.15] — every P2/ETH board gets the
+    // full 6-rate list; Thetis has no per-board cap, only per-protocol.
+    // Pcap of working Thetis-on-G2E ran at 768 kHz (CmdRx byte 18-19 =
+    // 0x03 0x00 = 768 kHz big-endian).
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
     // RX1 stepped att: 0..31 dB, G2E in exclusion list (setup.cs:15810-15824 [v2.10.3.15]).
     // RX2: HasSteppedAttenuation(rx==2)==false (clsHardwareSpecific.cs:790-803 [v2.10.3.15]).
     .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
