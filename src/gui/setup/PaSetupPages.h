@@ -684,6 +684,12 @@ public slots:
     QString fwdCalibratedPeakForTest() const;
     QString fwdCalibratedMinForTest()  const;
     void    clickResetForTest();
+
+    // D5 (ANAN-G2E port): per-label visibility seams for amps/volts rows.
+    // From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15] HasVolts/HasAmps.
+    // //N1GP G2E added (lines 250/260 [v2.10.3.15])
+    bool isPaCurrentRowVisibleForTest()    const;
+    bool isSupplyVoltsRowVisibleForTest()  const;
 #endif
 
 private:

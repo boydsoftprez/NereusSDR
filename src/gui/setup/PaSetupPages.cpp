@@ -2380,6 +2380,28 @@ void PaValuesPage::applyCapabilityVisibility(const BoardCapabilities& caps)
     if (m_resetButton) {
         m_resetButton->setVisible(caps.hasPaProfile);
     }
+
+    // ── Per-label gating for volts/amps telemetry rows (D5) ──────────────
+    // From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15]:
+    //   HasVolts: ANAN7000D / ANAN8000D / ANVELINAPRO3 / ANAN_G2E //N1GP G2E added
+    //             / ANAN_G2 / ANAN_G2_1K / REDPITAYA
+    //   HasAmps:  same set
+    // Boards without on-board PA current/voltage sensors (e.g. ANAN100,
+    // ORIONMKII) hide these specific rows even when hasPaProfile=true.
+    // Applied after the hasPaProfile pass so the per-label gate narrows
+    // further for boards that have a PA but no volts/amps sensors.
+    if (caps.hasPaProfile) {
+        if (m_paCurrentLabel) {
+            // From Thetis clsHardwareSpecific.cs:255-264 [v2.10.3.15] HasAmps.
+            // //N1GP G2E added (line 260)
+            m_paCurrentLabel->setVisible(caps.hasPaAmpsTelemetry);
+        }
+        if (m_supplyVoltsLabel) {
+            // From Thetis clsHardwareSpecific.cs:245-254 [v2.10.3.15] HasVolts.
+            // //N1GP G2E added (line 250)
+            m_supplyVoltsLabel->setVisible(caps.hasPaVoltsTelemetry);
+        }
+    }
 }
 
 // Mirrors Thetis btnResetPAValues_Click semantic at setup.cs:16346-16357
@@ -2573,6 +2595,22 @@ void PaValuesPage::clickResetForTest()
         // didn't construct (model-less preview path).
         resetPaValues();
     }
+}
+
+// D5 (ANAN-G2E port): visibility seams for amps/volts rows.
+// From Thetis clsHardwareSpecific.cs:255-264 [v2.10.3.15] HasAmps.
+// //N1GP G2E added (line 260 [v2.10.3.15])
+bool PaValuesPage::isPaCurrentRowVisibleForTest() const
+{
+    return m_paCurrentLabel && m_paCurrentLabel->isVisibleTo(
+               const_cast<PaValuesPage*>(this));
+}
+// From Thetis clsHardwareSpecific.cs:245-254 [v2.10.3.15] HasVolts.
+// //N1GP G2E added (line 250 [v2.10.3.15])
+bool PaValuesPage::isSupplyVoltsRowVisibleForTest() const
+{
+    return m_supplyVoltsLabel && m_supplyVoltsLabel->isVisibleTo(
+               const_cast<PaValuesPage*>(this));
 }
 #endif
 
