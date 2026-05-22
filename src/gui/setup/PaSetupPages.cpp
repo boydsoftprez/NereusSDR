@@ -389,6 +389,12 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
         buildPhase8WarningRows(m_noPaSupportBanner, m_ganymedeWarning,
                                m_psWarning,
                                this, contentLayout());
+        // D3 test seam: create m_autoCalibrateCheck so
+        // applyCapabilityVisibility() / autoCalibrateCheckForTest() have a
+        // non-null target in the model-less path.
+        m_autoCalibrateCheck = new QCheckBox(
+            QStringLiteral("Auto-Calibrate (sweep)"), this);
+        m_autoCalibrateCheck->setVisible(true);
         return;
     }
     m_paProfileManager = model->paProfileManager();
@@ -851,6 +857,24 @@ void PaGainByBandPage::applyCapabilityVisibility(const BoardCapabilities& caps)
     // behaviour; the gate itself is dormant until the PS feedback DDC lands.
     if (m_psWarning) {
         m_psWarning->setVisible(caps.hasPureSignal);
+    }
+
+    // ── Auto-PA-Calibrate checkbox visibility (D3) ───────────────────────
+    // From Thetis setup.cs:19920 [v2.10.3.15] //N1GP G2E added:
+    //   chkAutoPACalibrate.Visible = false;  (in ANAN_G2E case)
+    // G2E sets allowsAutoPaCalibrate=false; all other boards default true.
+    // The auto-cal sub-panel inherits visibility from the checkbox.
+    if (m_autoCalibrateCheck) {
+        m_autoCalibrateCheck->setVisible(caps.allowsAutoPaCalibrate);
+    }
+    if (m_autoCalPanel) {
+        // Sub-panel hides when auto-calibrate is not available. If the
+        // checkbox is hidden, the panel must also be hidden regardless of
+        // its internal state machine (which manages show/hide during a live
+        // calibration sweep on supporting boards).
+        if (!caps.allowsAutoPaCalibrate) {
+            m_autoCalPanel->setVisible(false);
+        }
     }
 
     // ── ATT-on-TX informational row ─────────────────────────────────────

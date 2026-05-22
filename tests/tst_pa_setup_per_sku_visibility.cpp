@@ -22,6 +22,7 @@
 // was dropped in the v0.3.2 pre-tag cleanup pass (PR follow-up to 3M-4).
 
 #include <QtTest/QtTest>
+#include <QCheckBox>
 #include <QLabel>
 
 #include "core/BoardCapabilities.h"
@@ -59,6 +60,12 @@ private slots:
     void rxOnly_sku_disables_pa_page();
     void andromeda_sku_shows_ganymede_warning();
     void puresignal_radio_shows_ps_warning();
+
+    // ── D3: chkAutoPACalibrate visibility per allowsAutoPaCalibrate ────────
+    // From Thetis setup.cs:19920 [v2.10.3.15] //N1GP G2E added:
+    //   chkAutoPACalibrate.Visible = false  (G2E case)
+    void anan_g2e_hides_auto_calibrate_checkbox();
+    void standard_board_shows_auto_calibrate_checkbox();
 
     // ATT-on-TX warning dropped in v0.3.2 cleanup; see 3M-4 follow-up issue.
     // The corresponding test case (no_step_atten_cal_hides_att_on_tx_warning)
@@ -312,6 +319,47 @@ void TstPaSetupPerSkuVisibility::puresignal_radio_shows_ps_warning()
 // removed alongside the m_attOnTxWarning label. The ATT-on-TX UI surface
 // will be re-added when PureSignal lands in Phase 3M-4 and the predicate
 // gating the safety subsystem starts returning true.
+
+// ── D3: chkAutoPACalibrate visibility ─────────────────────────────────────
+//
+// From Thetis setup.cs:19920 [v2.10.3.15] //N1GP G2E added:
+//   chkAutoPACalibrate.Visible = false  (in the ANAN_G2E radio-model case)
+// G2E: allowsAutoPaCalibrate=false  → checkbox hidden.
+// Standard boards: allowsAutoPaCalibrate=true (default) → checkbox visible.
+
+// G2E-like caps (allowsAutoPaCalibrate=false) must hide the checkbox.
+void TstPaSetupPerSkuVisibility::anan_g2e_hides_auto_calibrate_checkbox()
+{
+    PaGainByBandPage page(/*model=*/nullptr);
+    BoardCapabilities caps = makeCapsForVisibility(/*hasPa=*/true, /*rxOnly=*/false,
+                                                    /*ganymede=*/false, /*ps=*/false,
+                                                    /*stepAttCal=*/true);
+    caps.allowsAutoPaCalibrate = false;  // G2E flag
+    page.applyCapabilityVisibility(caps);
+
+    auto* check = page.autoCalibrateCheckForTest();
+    QVERIFY2(check != nullptr, "m_autoCalibrateCheck must exist");
+    // Use isVisibleTo(&page) so we test visibility relative to the page
+    // widget rather than the full ancestor chain (page is unshown in tests).
+    QVERIFY2(!check->isVisibleTo(&page),
+             "G2E (allowsAutoPaCalibrate=false) must hide chkAutoPACalibrate");
+}
+
+// Standard board (allowsAutoPaCalibrate=true) must leave the checkbox visible.
+void TstPaSetupPerSkuVisibility::standard_board_shows_auto_calibrate_checkbox()
+{
+    PaGainByBandPage page(/*model=*/nullptr);
+    BoardCapabilities caps = makeCapsForVisibility(/*hasPa=*/true, /*rxOnly=*/false,
+                                                    /*ganymede=*/false, /*ps=*/false,
+                                                    /*stepAttCal=*/true);
+    caps.allowsAutoPaCalibrate = true;  // default for all non-G2E boards
+    page.applyCapabilityVisibility(caps);
+
+    auto* check = page.autoCalibrateCheckForTest();
+    QVERIFY2(check != nullptr, "m_autoCalibrateCheck must exist");
+    QVERIFY2(check->isVisibleTo(&page),
+             "Standard board (allowsAutoPaCalibrate=true) must show chkAutoPACalibrate");
+}
 
 QTEST_MAIN(TstPaSetupPerSkuVisibility)
 #include "tst_pa_setup_per_sku_visibility.moc"
