@@ -199,8 +199,11 @@ int P2RadioConnection::primaryRxDdcForBoard(HPSDRHW board) noexcept
     switch (board) {
     case HPSDRHW::Hermes:
     case HPSDRHW::HermesII:
-        // ANAN-10 / ANAN-100 / ANAN-10E / ANAN-100B running community P2
+    case HPSDRHW::HermesC10:  // ANAN-G2E //N1GP G2E added (HermesC10)
+        // ANAN-10 / ANAN-100 / ANAN-10E / ANAN-100B / ANAN-G2E running community P2
         // firmware: rx1 = DDC0 (console.cs:8600-8632 [v2.10.3.13]).
+        // From Thetis console.cs:8607-8620 [v2.10.3.15] //N1GP G2E added (HermesC10) —
+        // case HPSDRHW.HermesC10 joins Hermes + HermesII for the DDC0 family.
         return 0;
     default:
         // Angelia / Orion / OrionMKII / Saturn / SaturnMKII and any future
