@@ -131,6 +131,14 @@ public:
     int queryDispatchCount() const { return m_queryDispatchCount; }
     void resetDispatchCounters();
 
+    // From Thetis TCIServer.cs:2260-2279 [v2.10.3.15] -- agcModeToTciMode.
+    // Maps RadioModel::agcMode enum-style names ("OFF" / "LONG" / "SLOW" /
+    // "MED" / "FAST" / "CUSTOM" / "FIXD") to the lowercase TCI wire token
+    // Thetis sends ("off" / "long" / "slow" / "normal" / "fast" /
+    // "custom").  Public so the TciServer broadcast handler for
+    // SliceModel::agcModeChanged can match the init burst formatting.
+    static QString tciAgcModeForWire(const QString& enumName);
+
 private:
     // From Thetis TCIServer.cs:4924-5128 [v2.10.3.13] — 60-case set-command switch.
     // Phase 5+ adds individual cases via the matrix runner.

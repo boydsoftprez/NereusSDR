@@ -23,6 +23,30 @@
 
 namespace NereusSDR {
 
+// From Thetis TCIServer.cs:2260-2279 [v2.10.3.15] -- agcModeToTciMode.
+// Ported verbatim, including the default-falls-to-"normal" branch.  Input
+// is the upper-case enum-style name produced by RadioModel::agcMode()
+// ("OFF" / "LONG" / "SLOW" / "MED" / "FAST" / "CUSTOM" / "FIXD"); output
+// is the lowercase TCI wire token Thetis sends ("off" / "long" / "slow" /
+// "normal" / "fast" / "custom").  Accepts MED / NORMAL / MEDIUM as
+// synonyms for "normal" so client-set values that round-trip through the
+// shim layer come back unchanged (Thetis tciModeToAgcMode at
+// TCIServer.cs:2280-2303 normalises identically).
+QString TciProtocol::tciAgcModeForWire(const QString& enumName)
+{
+    const QString u = enumName.trimmed().toUpper();
+    if (u == QLatin1String("OFF")
+     || u == QLatin1String("FIXD")
+     || u == QLatin1String("FIXED")) { return QStringLiteral("off"); }
+    if (u == QLatin1String("LONG"))   { return QStringLiteral("long"); }
+    if (u == QLatin1String("SLOW"))   { return QStringLiteral("slow"); }
+    if (u == QLatin1String("FAST"))   { return QStringLiteral("fast"); }
+    if (u == QLatin1String("CUSTOM")) { return QStringLiteral("custom"); }
+    // MED / NORMAL / MEDIUM all map to "normal" per agcModeToTciMode +
+    // tciModeToAgcMode round-trip semantics.
+    return QStringLiteral("normal");
+}
+
 TciProtocol::TciProtocol(QObject* radio, QObject* parent)
     : QObject(parent)
     , m_radio(radio)
@@ -141,13 +165,25 @@ void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz)
         const QString txKey   = QStringLiteral("tx_frequency");
         const QString txFrame = QStringLiteral("tx_frequency:%1;").arg(hz);
         m_vfoCoalescer.update(txKey, txFrame);
-        // bespoke tx_frequency_thetis (Phase 4 Task 4.2 format).  Band label
-        // and bRX2Enabled / VFOBTX gates match the init burst.
+        // bespoke tx_frequency_thetis -- read the SAME rx2Enabled state used
+        // by buildInitialRadioStateLines so the live broadcast doesn't flip
+        // RX2 from true to false between init and the first VFO move (review
+        // P2 #3, 2026-05-22).  VFOBTX still hardcoded false until Phase 3F
+        // multi-pan lands the full TXFreq logic per console.cs:11345-11369
+        // [v2.10.3.15].  Format from sendTXFrequencyChanged at
+        // TCIServer.cs:2249-2254 [v2.10.3.15]: tx_frequency_thetis:hz,band,
+        // rx2en,txvfob.
+        bool rx2en = false;
+        QMetaObject::invokeMethod(m_radio, "rx2Enabled",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(bool, rx2en));
         const QString band = bandLabel(bandFromFrequency(static_cast<double>(hz)));
         const QString txThetisKey = QStringLiteral("tx_frequency_thetis");
         const QString txThetisFrame =
-            QStringLiteral("tx_frequency_thetis:%1,%2,false,false;")
-                .arg(hz).arg(band);
+            QStringLiteral("tx_frequency_thetis:%1,%2,%3,false;")
+                .arg(hz)
+                .arg(band)
+                .arg(rx2en ? QStringLiteral("true") : QStringLiteral("false"));
         m_vfoCoalescer.update(txThetisKey, txThetisFrame);
     }
 }
@@ -736,9 +772,15 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildRxBalanceLine(1, 0, bal[1][0]);
     lines << buildRxBalanceLine(1, 1, bal[1][1]);
 
-    // From Thetis TCIServer.cs:2427-2433 [v2.10.3.13]
-    lines << buildAgcModeLine(0, agcMode[0]);
-    lines << buildAgcModeLine(1, agcMode[1]);
+    // From Thetis TCIServer.cs:2427-2433 [v2.10.3.13].
+    // Normalise enum-style names to TCI wire tokens via tciAgcModeForWire
+    // (review P2 #2, 2026-05-22): RadioModel::agcMode returns "MED" / "FAST"
+    // etc., but Thetis emits the lowercase normalised form via
+    // agcModeToTciMode (TCIServer.cs:2260-2279 [v2.10.3.15]).  Without this
+    // pass real clients see frames like "agc_mode:0,MED;" instead of
+    // "agc_mode:0,normal;".
+    lines << buildAgcModeLine(0, tciAgcModeForWire(agcMode[0]));
+    lines << buildAgcModeLine(1, tciAgcModeForWire(agcMode[1]));
     lines << buildAgcGainLine(0, agcGain[0]);
     lines << buildAgcGainLine(1, agcGain[1]);
     lines << buildRxCtunExLine(0, ctun[0]);
@@ -1185,10 +1227,16 @@ QString TciProtocol::buildAudioSampleRateLine(int sr)
     return QStringLiteral("audio_samplerate:%1;").arg(sr);
 }
 
-// From Thetis TCIServer.cs:5377-5380 [v2.10.3.13] — sendAudioStreamSampleType.
-QString TciProtocol::buildAudioStreamSampleTypeLine(const QString& typeLower)
+// From Thetis TCIServer.cs:5782-5785 [v2.10.3.15] -- sendAudioStreamSampleType.
+// Thetis emits sampleType.ToString().ToLower() on the wire (TCIServer.cs:5784).
+// Review P1 #1 fix (2026-05-22): always force lowercase here so the caller
+// can pass either the enum-style name ("FLOAT32") or the wire form
+// ("float32") and get the canonical Thetis output regardless.  Without
+// this, the production RadioModel default of "Float32" capitalized was
+// reaching real clients verbatim.
+QString TciProtocol::buildAudioStreamSampleTypeLine(const QString& typeName)
 {
-    return QStringLiteral("audio_stream_sample_type:%1;").arg(typeLower);
+    return QStringLiteral("audio_stream_sample_type:%1;").arg(typeName.toLower());
 }
 
 // From Thetis TCIServer.cs:5382-5385 [v2.10.3.13] — sendAudioStreamChannels.
