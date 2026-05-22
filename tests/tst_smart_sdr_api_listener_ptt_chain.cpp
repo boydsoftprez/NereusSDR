@@ -105,6 +105,7 @@ class SmartSdrApiListenerPttChainTest : public QObject
 
 private slots:
     void smoke_listenerAcceptsClientAndSendsBanner();
+    void sliceOwner_isLocalClientHandleNotPerClientBanner();
     void c1_localClientHandleIsStableAndDistinctFromBanners();
     void c2_pttRequestedIsOneFrameWithCanonicalFields();
     void c2b_localInitTunePicksFirstTgxlAsInitiator();
@@ -138,6 +139,41 @@ void SmartSdrApiListenerPttChainTest::smoke_listenerAcceptsClientAndSendsBanner(
              qPrintable(QStringLiteral("expected V<ver>\\n prefix, got: ") + text));
     QVERIFY2(text.contains(QStringLiteral("\nH")),
              qPrintable(QStringLiteral("expected H<handle>\\n line, got: ") + text));
+}
+
+// 2026-05-22 bench-fix regression test: the slice 0 S-frame's
+// client_handle= body field carries the SLICE OWNER (the synthetic local
+// client handle), not the per-recipient banner handle. Canonical FLEX
+// uses the same owner handle on every recipient's copy of the frame.
+// Bench evidence pre-fix (16:02:39): amps refused interlock ready ACK
+// because slice.client_handle (per-client banner) != PTT_REQUESTED
+// .tx_client_handle (synthetic). After this fix the two match and amps
+// recognize the TX request as coming from the slice owner.
+void SmartSdrApiListenerPttChainTest::sliceOwner_isLocalClientHandleNotPerClientBanner()
+{
+    SmartSdrApiListener listener;
+    QVERIFY(listener.start(QHostAddress::LocalHost, 0));
+    const QString localHandle = listener.localClientHandle();
+    QVERIFY(!localHandle.isEmpty());
+
+    QTcpSocket a, b;
+    a.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(a.waitForConnected(1000));
+    b.connectToHost(QHostAddress::LocalHost, listener.serverPort());
+    QVERIFY(b.waitForConnected(1000));
+    const QString textA = QString::fromUtf8(drain(&a));
+    const QString textB = QString::fromUtf8(drain(&b));
+
+    // Both clients must see slice 0 with client_handle=0x<localHandle>.
+    // The slice owner is global, not per-recipient.
+    const QString expected =
+        QStringLiteral("client_handle=0x") + localHandle;
+    QVERIFY2(textA.contains(expected),
+             qPrintable(QStringLiteral("client A slice missing %1, body: %2")
+                            .arg(expected, textA.left(400))));
+    QVERIFY2(textB.contains(expected),
+             qPrintable(QStringLiteral("client B slice missing %1, body: %2")
+                            .arg(expected, textB.left(400))));
 }
 
 // Task 1 (C1): After start(), the listener owns a synthetic

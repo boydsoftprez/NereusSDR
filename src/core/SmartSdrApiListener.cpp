@@ -582,7 +582,28 @@ void SmartSdrApiListener::onNewConnection()
         // defaultFilterForMode). LSB requires negative; TGXL drops the socket
         // otherwise.
         const QPair<int, int> initialFilter = defaultFilterForMode(m_sliceMode);
-        // Push initial state so PGXL has band/mode data before any C-frames.
+        // 2026-05-22 bench-fix + pcap-confirmed: slice 0's client_handle=
+        // is the SLICE OWNER (the GUI client controlling the slice), NOT
+        // the per-recipient banner. Canonical FLEX uses the same owner
+        // handle on every recipient's slice frame (verified by tshark:
+        // flex-tgxl-direct-CONTROL.pcapng T+206.741 shows
+        //   S<radio>|slice 0 ... client_handle=0x66B137B7 ...
+        // identically broadcast to TGXL (192.168.109.234) AND SmartSDR-Win
+        // (192.168.109.19). The handle 0x66B137B7 is SmartSDR-Win's, the
+        // slice owner.
+        //
+        // Amps gate `interlock ready N` ACK on slice.client_handle ==
+        // PTT_REQUESTED.tx_client_handle. Before this fix we wrote each
+        // amp's own banner into client_handle= which made each amp think
+        // it owned slice 0; subsequent PTT_REQUESTED frames carried our
+        // synthetic local-client handle which differed, so amps refused
+        // to ACK (bench-confirmed 2026-05-22 16:02:39: "0 of 2 enabled
+        // amps acked; laggards=TG,PG-XL").
+        //
+        // Now uses m_localClientHandle (the synthetic local-client handle
+        // from C1) so the slice owner matches PTT_REQUESTED's
+        // tx_client_handle. Same change applied to broadcastSliceState
+        // for the 1 Hz periodic push.
         sendStatus(sock, state.handle,
                    QStringLiteral("slice 0 in_use=1 sample_rate=24000 RF_frequency=%1 "
                                       "client_handle=0x%2 index_letter=A rit_on=0 rit_freq=0 "
@@ -592,7 +613,7 @@ void SmartSdrApiListener::onNewConnection()
                                       "pan=0x40000000 txant=ANT1 loopa=0 loopb=0 qsk=0 "
                                       "lock=0 tx=1 active=1")
                        .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
-                       .arg(state.handle)
+                       .arg(m_localClientHandle)
                        .arg(m_sliceMode)
                        .arg(initialFilter.first)
                        .arg(initialFilter.second));
@@ -1064,6 +1085,9 @@ void SmartSdrApiListener::broadcastSliceState()
             .arg(m_txActive ? 1 : 0);
     // 2026-05-21 bench-fix: sign-correct filter passband per mode so TGXL
     // does not drop the SmartSDR API socket on LSB. See defaultFilterForMode.
+    // 2026-05-22 bench-fix: client_handle= in the slice body is the slice
+    // OWNER (m_localClientHandle), not the per-recipient banner. Required
+    // for amps to ACK PTT_REQUESTED; see onNewConnection() block above.
     const QPair<int, int> filterRange = defaultFilterForMode(m_sliceMode);
     for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
         const QString sliceBody =
@@ -1075,7 +1099,7 @@ void SmartSdrApiListener::broadcastSliceState()
                            "pan=0x40000000 txant=ANT1 loopa=0 loopb=0 qsk=0 "
                            "lock=0 tx=1 active=1")
                 .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
-                .arg(it.value().handle)
+                .arg(m_localClientHandle)
                 .arg(m_sliceMode)
                 .arg(filterRange.first)
                 .arg(filterRange.second);
