@@ -690,10 +690,23 @@ void P2RadioConnection::setActiveReceiverCount(int count)
 
 void P2RadioConnection::setSampleRate(int sampleRate)
 {
-    // From Thetis: sampling_rate stored as kHz value (48, 96, 192, 384)
+    // From Thetis: sampling_rate stored as kHz value (48, 96, 192, 384).
+    //
+    // Thetis console.cs:8537-8540 [v2.10.3.15] only writes Rate[i] for
+    // ENABLED DDCs in UpdateDDCs(); the per-board switch leaves disabled
+    // slots at the int[] default (0).  The final loop calls
+    // NetworkIO.SetDDCRate(i, Rate[i]) so disabled DDCs land on the wire
+    // as 0 kHz.
+    //
+    // Surfaced 2026-05-22 during ANAN-G2E bench: writing the active rate
+    // into every slot (including the 6 disabled DDCs) caused the G2E
+    // (N1GP community P2 firmware) to silently drop CmdRx and never start
+    // streaming I/Q — watchdog fired at 2 s.  Saturn firmware tolerates
+    // the non-zero rate on disabled DDCs; the stricter G2E firmware
+    // appears to validate `enable[i]==0 -> rate[i]==0`.
     int rateKhz = sampleRate / 1000;
     for (int i = 0; i < kMaxRxStreams; ++i) {
-        m_rx[i].samplingRate = rateKhz;
+        m_rx[i].samplingRate = m_rx[i].enable ? rateKhz : 0;
     }
     m_tx[0].samplingRate = rateKhz;
     if (m_running) {
