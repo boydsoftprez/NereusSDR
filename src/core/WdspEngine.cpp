@@ -1348,6 +1348,23 @@ void WdspEngine::setMaxBinSliceOffsetHz(int disp, double sliceOffsetHz)
     d.sliceOffsetHz = sliceOffsetHz;
 }
 
+// 2026-05-22 bench fix: direct override of the MaxBin detector value
+// from SpectrumWidget's post detector + avenger pixel peak. See header
+// doc for the rationale. Stamps active=true so the getter returns the
+// new value rather than the -400 sentinel. Skips the peak-hold-with-
+// decay smoothing the fftReady path does, because m_renderedPixels
+// already carries the avenger's time smoothing.
+void WdspEngine::setMaxBinDbmFromSpectrum(int disp, double dbm)
+{
+    if (disp < 0) { return; }
+    if (m_maxBinDetectors.size() <= disp) {
+        m_maxBinDetectors.resize(disp + 1);
+    }
+    auto& d = m_maxBinDetectors[disp];
+    d.active = true;
+    d.maxDb  = dbm;
+}
+
 // Slot: receive FFTEngine dBm bins and run the Max Bin scan + smoothing.
 //
 // Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]
@@ -1402,6 +1419,20 @@ void WdspEngine::onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& b
     const int    firstBin    = qBound(0, half + static_cast<int>(std::round(scanLowHz  / binSpacing)), N - 1);
     const int    lastBin     = qBound(0, half + static_cast<int>(std::round(scanHighHz / binSpacing)), N - 1);
     if (lastBin < firstBin) { return; }  // degenerate window
+
+    // 2026-05-22: this onSpectrumBinsForMaxBin path now serves only as
+    // the fallback source for MaxBin. Bench-confirmed that the raw FFT
+    // bin power scanned here reads ~12-17 dB below what the spectrum
+    // visually displays for the same carrier (the spectrum runs the
+    // FFT bins through a detector + windowEnb invEnb normalization +
+    // avenger time-smoothing that reconstructs window-spread integrated
+    // power a single bin can't show). SpectrumWidget::spectrumFrame-
+    // Rendered now feeds WdspEngine::setMaxBinDbmFromSpectrum each
+    // render frame which overrides d.maxDb with the post-pipeline value
+    // the operator actually sees. Keeping the per-frame raw-bin smoother
+    // here means MaxBin still has a value during early frames before
+    // SpectrumWidget has pushed its first override, but the steady
+    // state value comes from the spectrum pixel peak.
 
     // Scan: find max raw per-frame dBm in the window.
     //

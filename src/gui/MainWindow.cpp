@@ -1455,6 +1455,26 @@ void MainWindow::buildUI()
                 eng,         &WdspEngine::onSpectrumBinsForMaxBin);
     }
 
+    // 2026-05-22 bench fix: MaxBin meter accuracy. The raw FFT bin path
+    // above reads ~12-17 dB below what the spectrum visually displays
+    // because the spectrum runs the bins through a detector + invEnb
+    // window-normalization + avenger time-smoothing pipeline that
+    // reconstructs window-spread integrated power. After every spectrum
+    // render frame, push the slice's passband peak (from m_renderedPixels,
+    // post detector + avenger) into the MaxBin detector so the analog
+    // S-meter reads what the operator actually sees on the trace.
+    if (m_spectrumWidget && m_radioModel) {
+        connect(m_spectrumWidget, &SpectrumWidget::spectrumFrameRendered,
+                this, [this]() {
+            auto* eng = m_radioModel ? m_radioModel->wdspEngine() : nullptr;
+            if (!eng || !m_spectrumWidget) { return; }
+            const double dbm = m_spectrumWidget->peakDbmInSlicePassband();
+            if (dbm > -400.0) {
+                eng->setMaxBinDbmFromSpectrum(/*disp=*/0, dbm);
+            }
+        });
+    }
+
     // Fast-attack triggers — deferred until slice exists
     // From Thetis v2.10.3.13 display.cs:905 — freq change triggers fast attack
     // From Thetis v2.10.3.13 display.cs:880 — mode change triggers fast attack

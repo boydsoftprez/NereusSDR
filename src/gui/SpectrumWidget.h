@@ -382,6 +382,24 @@ public:
     const QVector<float>& renderedPixels()   const { return m_renderedPixels;   }
     const QVector<float>& wfRenderedPixels() const { return m_wfRenderedPixels; }
 
+    // 2026-05-22 bench fix for MaxBin meter accuracy.
+    // Returns the strongest dBm pixel inside the active slice's IF
+    // passband, computed from m_renderedPixels (post detector + avenger
+    // pipeline -- the same data the operator sees on the spectrum).
+    // Falls back to -400 sentinel when m_renderedPixels is empty (cold
+    // start) or when the slice passband falls entirely outside the
+    // visible spectrum window.
+    //
+    // The raw per-bin FFT power that MaxBin previously scanned (via
+    // WdspEngine::onSpectrumBinsForMaxBin reading FFTEngine::fftReady)
+    // can be ~12-17 dB below the spectrum's displayed pixel value
+    // because the spectrum's detector + invEnb window-normalization +
+    // avenger time-smoothing reconstructs the integrated signal power
+    // that a single FFT bin can't show on its own. Sourcing MaxBin
+    // from m_renderedPixels makes the meter read what the operator
+    // visually sees on the trace.
+    double peakDbmInSlicePassband() const;
+
     // Static helper for detector math. Exposed for unit tests.
     // Note: legacy bin-reduction helper, kept for tst_detector_modes;
     // production rendering uses applySpectrumDetector() (free function in
@@ -1064,6 +1082,15 @@ public:
     QColor spotBgColorForTest()         const { return m_spotBgColor; }
 
 signals:
+    // 2026-05-22 bench fix: emitted after each updateSpectrumLinear
+    // completes (m_renderedPixels populated). MainWindow consumes this
+    // to push peakDbmInSlicePassband() into WdspEngine's MaxBin detector
+    // so the analog S-meter reads what the operator visually sees on
+    // the spectrum instead of the raw per-bin FFT value (which can be
+    // ~12-17 dB lower due to window-spread power and missing detector
+    // pipeline). See peakDbmInSlicePassband doc.
+    void spectrumFrameRendered();
+
     // Phase 3Q-8: emitted on a left-click while not Connected.
     // MainWindow wires this to showConnectionPanel().
     void disconnectedClickRequest();

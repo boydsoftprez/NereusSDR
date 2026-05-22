@@ -447,7 +447,25 @@ public slots:
     // scan for max in configured [firstBin, lastBin] window; apply
     // slow-release smoothing (decay = exp(-1/(tau*fps))), fast peak attack.
     // NereusSDR-native: binsDbm already in dBm so no magnitude-to-dB step.
+    //
+    // 2026-05-22 bench fix: this path now serves as the fallback source
+    // for MaxBin. The primary source is setMaxBinDbmFromSpectrum below,
+    // which feeds the post detector + avenger pixel peak from
+    // SpectrumWidget so the meter matches what the operator sees on the
+    // spectrum trace. The raw per-bin FFT power scanned here can be
+    // ~12-17 dB below the spectrum's displayed pixel value because the
+    // detector pipeline reconstructs window-spread integrated power that
+    // a single bin can't show on its own.
     void onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& binsDbm);
+
+    // 2026-05-22 bench fix: direct override of the MaxBin detector's
+    // smoothed value from SpectrumWidget's m_renderedPixels (the post
+    // detector + avenger output that the operator sees). Called once per
+    // render frame; bypasses the per-frame peak-hold-with-decay smoothing
+    // because m_renderedPixels already includes the avenger's time
+    // smoothing. Stamps d.active=true so getMaxBinDbm returns the new
+    // value instead of the -400 sentinel before the first call.
+    void setMaxBinDbmFromSpectrum(int displayChannel, double dbm);
 
 signals:
     void initializedChanged(bool initialized);
