@@ -829,16 +829,19 @@ void ConnectionPanel::populateRow(int row, const RadioInfo& info)
     // Board string — HPSDRHW enum to friendly name
     QString boardStr;
     switch (info.boardType) {
-        case HPSDRHW::Atlas:      boardStr = QStringLiteral("Atlas");       break;
-        case HPSDRHW::Hermes:     boardStr = QStringLiteral("Hermes");      break;
-        case HPSDRHW::HermesII:   boardStr = QStringLiteral("Hermes II");   break;
-        case HPSDRHW::Angelia:    boardStr = QStringLiteral("Angelia");     break;
-        case HPSDRHW::Orion:      boardStr = QStringLiteral("Orion");       break;
-        case HPSDRHW::OrionMKII:  boardStr = QStringLiteral("Orion MkII"); break;
-        case HPSDRHW::HermesLite: boardStr = QStringLiteral("HL2");        break;
-        case HPSDRHW::Saturn:     boardStr = QStringLiteral("Saturn");      break;
-        case HPSDRHW::SaturnMKII: boardStr = QStringLiteral("Saturn MkII"); break;
-        default:                  boardStr = QStringLiteral("Unknown");     break;
+        case HPSDRHW::Atlas:             boardStr = QStringLiteral("Atlas");       break;
+        case HPSDRHW::Hermes:            boardStr = QStringLiteral("Hermes");      break;
+        case HPSDRHW::HermesII:          boardStr = QStringLiteral("Hermes II");   break;
+        case HPSDRHW::Angelia:           boardStr = QStringLiteral("Angelia");     break;
+        case HPSDRHW::Orion:             boardStr = QStringLiteral("Orion");       break;
+        case HPSDRHW::OrionMKII:         boardStr = QStringLiteral("Orion MkII");  break;
+        case HPSDRHW::HermesLite:        boardStr = QStringLiteral("HL2");         break;
+        case HPSDRHW::HermesLiteRxOnly:  boardStr = QStringLiteral("HL2 RX-only"); break;
+        case HPSDRHW::Saturn:            boardStr = QStringLiteral("Saturn");      break;
+        case HPSDRHW::SaturnMKII:        boardStr = QStringLiteral("Saturn MkII"); break;
+        case HPSDRHW::HermesC10:         boardStr = QStringLiteral("HermesC10");   break;  // From Thetis network.h:425 [v2.10.3.15] //N1GP G2E added (HermesC10) — within ±5 of cite: //MI0BOT (network.h:422 HermesLite) and //G8NJJ (network.h:423 Saturn) preserved per inline-tag-preservation rule
+        case HPSDRHW::Andromeda:         boardStr = QStringLiteral("Andromeda");   break;
+        default:                         boardStr = QStringLiteral("Unknown");     break;
     }
 
     // Protocol string — ucRadioList.cs:1342 "Protocol-1" / "Protocol-2"
