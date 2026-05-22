@@ -211,6 +211,33 @@ private slots:
         QVERIFY(!RadioDiscovery::parseP1Reply(
             bytes, QHostAddress(QStringLiteral("192.168.1.1")), info));
     }
+
+    // --- P1: ANAN-G2E (HermesC10) ---
+    // From Thetis ChannelMaster/network.h:420-425 [v2.10.3.15] — upstream enum context:
+    //   HermesLite = 6,     // MI0BOT
+    //   Saturn = 10,        // ANAN-G2: added G8NJJ
+    //   HermesC10 = 20      // ANAN-G2E //N1GP G2E added (HermesC10)
+    // Wire byte 0x14 (decimal 20) → HPSDRHW::HermesC10.
+    void parseP1HermesC10Reply()
+    {
+        const QByteArray bytes = loadFixture("p1_hermesc10_reply.hex");
+        QVERIFY2(bytes.size() >= 11,
+                 qPrintable(QStringLiteral("fixture size %1").arg(bytes.size())));
+
+        RadioInfo info;
+        const bool ok = RadioDiscovery::parseP1Reply(
+            bytes, QHostAddress(QStringLiteral("192.168.1.99")), info);
+
+        QVERIFY2(ok, "parseP1Reply returned false on valid HermesC10 reply");
+        // Upstream attribution carried from network.h:420-425 [v2.10.3.15]:
+        //   HermesLite = 6  //MI0BOT  |  Saturn = 10  //G8NJJ  |  HermesC10 = 20  //N1GP G2E added
+        // From Thetis network.h:425 [v2.10.3.15] //N1GP G2E added (HermesC10)
+        QCOMPARE(info.boardType,       HPSDRHW::HermesC10);  // wire byte 0x14 = 20
+        QCOMPARE(info.firmwareVersion, 10);
+        QCOMPARE(info.protocol,        ProtocolVersion::Protocol1);
+        QCOMPARE(info.macAddress,      QStringLiteral("AA:BB:CC:77:88:99"));
+        QCOMPARE(info.inUse,           false);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestRadioDiscoveryParse)

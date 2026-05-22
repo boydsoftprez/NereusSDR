@@ -228,7 +228,12 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
     out.firmwareVersion = static_cast<quint8>(bytes[9]);
 
     // From Thetis: r.DeviceType = mapP1DeviceType(data[10])
-    // mapP1DeviceType: 0=Atlas, 1=Hermes, 2=HermesII, 4=Angelia, 5=Orion, 6=HermesLite, 10=OrionMKII
+    // From Thetis ChannelMaster/network.h:420-425 [v2.10.3.15] — upstream enum context:
+    //   HermesLite = 6,     // MI0BOT
+    //   Saturn = 10,        // ANAN-G2: added G8NJJ
+    //   HermesC10 = 20      // ANAN-G2E //N1GP G2E added (HermesC10)
+    // mapP1DeviceType: 0=Atlas, 1=Hermes, 2=HermesII, 4=Angelia, 5=Orion,
+    //   6=HermesLite, 10=OrionMKII, 20=HermesC10
     quint8 boardByte = static_cast<quint8>(bytes[10]);
     switch (boardByte) {
     case 0:  out.boardType = HPSDRHW::Atlas;      break;
@@ -238,6 +243,8 @@ bool RadioDiscovery::parseP1Reply(const QByteArray& bytes, const QHostAddress& s
     case 5:  out.boardType = HPSDRHW::Orion;      break;
     case 6:  out.boardType = HPSDRHW::HermesLite; break;  // MI0BOT: HL2 added [Thetis clsRadioDiscovery.cs:1239]
     case 10: out.boardType = HPSDRHW::OrionMKII;  break;
+    // network.h:423 upstream context: Saturn = 10  //G8NJJ (ANAN-G2 added by G8NJJ)
+    case 20: out.boardType = HPSDRHW::HermesC10;  break;  // From Thetis network.h:425 [v2.10.3.15] //N1GP G2E added (HermesC10)
     default: out.boardType = static_cast<HPSDRHW>(boardByte); break;
     }
 

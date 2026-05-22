@@ -1,0 +1,21 @@
+# ANAN-G2E (HermesC10) P1 discovery reply — fw 10 (0x0A), free (0x02), MAC aa:bb:cc:77:88:99
+# Verified against:
+#   ChannelMaster/network.h:425 [v2.10.3.15] — HermesC10 = 20 //N1GP G2E added (HermesC10)
+#   clsRadioDiscovery.cs:1145-1195 (parseDiscoveryReply P1 branch)
+#
+# IMPORTANT: the P1 wire byte for HermesC10 is 0x14 (decimal 20).
+# mapP1DeviceType() maps wire byte 20 → HPSDRHW::HermesC10.
+# Also verifies that Andromeda did NOT change its enum value despite the
+# wire-space relocation: HermesC10=20 on-wire, Andromeda=21 on-wire.
+#
+# Byte layout (P1 reply = 60 bytes total):
+#   [0-1]  EF FE  — P1 sync / frame marker
+#   [2]    02     — status: 02 = available (clsRadioDiscovery.cs:1158)
+#   [3-8]  AA BB CC 77 88 99  — MAC (cs:1161)
+#   [9]    0A     — CodeVersion = 10 decimal (cs:1185)
+#   [10]   14     — board: 14 hex = 20 decimal → HermesC10 (network.h:425 [v2.10.3.15])
+#   [11-59] 00*49 — zero pad
+EFFE02AABBCC7788990A140000000000
+00000000000000000000000000000000
+00000000000000000000000000000000
+000000000000000000000000
