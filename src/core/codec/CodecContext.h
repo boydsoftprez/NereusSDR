@@ -24,6 +24,27 @@
 namespace NereusSDR {
 
 struct CodecContext {
+    // ADC supply voltage in volts (33 or 50).
+    // From Thetis cmaster.SetADCSupply(0, N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+    // Used by WDSP txgain.c:xtxgain() for PA over-drive protection scaling:
+    //   case 33: ptn = 1/10^(adc_value/2730.0)
+    //   case 50: ptn = 1/10^(adc_value/1802.0)
+    // Hermes-family boards: 33 V. OrionMKII/Saturn-family: 50 V.
+    // 0 = sentinel "not set / use WDSP default". Populated by buildCodecContext()
+    // from HardwareProfile::adcSupplyVoltage and forwarded to WDSP via
+    // WdspEngine::setADCSupply() on connect (not a network wire-frame byte).
+    int     adcSupplyVoltage{0};
+
+    // L/R audio channel swap flag.
+    // From Thetis NetworkIO.LRAudioSwap(N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+    // Applied in ChannelMaster/network.c:sendOutbound() (Protocol 2 path only):
+    //   if (prn->lr_audio_swap) { swap out[i], out[i+1] for each stereo pair }
+    // True for Hermes-family boards (HERMES/ANAN10/ANAN10E/ANAN100/ANAN100B);
+    // false for all modern boards (Angelia/Orion/OrionMKII/Saturn/HermesC10).
+    // Populated by buildCodecContext() from HardwareProfile::lrAudioSwap and
+    // forwarded to WDSP. NOT a C&C frame byte.
+    bool    lrAudioSwap{false};
+
     // MOX (transmit) bit — OR'd into low bit of C0.
     bool    mox{false};
 

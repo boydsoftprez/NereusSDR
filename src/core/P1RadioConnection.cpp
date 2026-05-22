@@ -2126,6 +2126,10 @@ CodecContext P1RadioConnection::buildCodecContext() const
         ctx.hl2PttHang   = 12;   // 5-bit field (bank 17 C3): 12 frames hang
         ctx.hl2TxLatency = 20;   // 7-bit field (bank 17 C4): 20 sample latency
     }
+    // From Thetis cmaster.SetADCSupply / NetworkIO.LRAudioSwap [v2.10.3.15]
+    // Per clsHardwareSpecific.cs:85-191 — forwarded to WDSP, not a P1 wire byte.
+    ctx.adcSupplyVoltage = m_hardwareProfile.adcSupplyVoltage;
+    ctx.lrAudioSwap      = m_hardwareProfile.lrAudioSwap;
     return ctx;
 }
 

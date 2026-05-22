@@ -1921,6 +1921,11 @@ CodecContext P2RadioConnection::buildCodecContext() const
         ctx.ocByte = 0;
     }
 
+    // From Thetis cmaster.SetADCSupply / NetworkIO.LRAudioSwap [v2.10.3.15]
+    // Per clsHardwareSpecific.cs:85-191 — forwarded to WDSP, not a P2 wire byte.
+    ctx.adcSupplyVoltage = m_hardwareProfile.adcSupplyVoltage;
+    ctx.lrAudioSwap      = m_hardwareProfile.lrAudioSwap;
+
     return ctx;
 }
 
