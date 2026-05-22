@@ -195,6 +195,11 @@ void AmpApplet::setState(const QString& state)
     bool operating = (state == QStringLiteral("IDLE")
                       || state == QStringLiteral("OPERATE")
                       || state.startsWith(QStringLiteral("TRANSMIT")));
+
+    // 2026-05-22 bench fix: cache the keyed sub-state for
+    // isTransmitting() so the PGXL status handler in MainWindow can
+    // gate the latched peakfwd / swr writes.
+    m_isTransmitting = state.startsWith(QStringLiteral("TRANSMIT"));
     if (operating) {
         m_operateBtn->setText(QStringLiteral("OPERATE"));
         m_operateBtn->setStyleSheet(

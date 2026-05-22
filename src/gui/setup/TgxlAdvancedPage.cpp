@@ -299,6 +299,24 @@ TgxlAdvancedPage::TgxlAdvancedPage(RadioModel* model, QWidget* parent)
             connect(tgxl, &TgxlConnection::ifconfResponse,
                     this, &TgxlAdvancedPage::onIfconfResponse);
 
+            // 2026-05-22 bench fix: the firmware + serial labels populate
+            // from TgxlConnection::statusUpdated keys (version, serial),
+            // which fires when TgxlConnection sees the R-frame body for
+            // its initial `info` query. That query runs on the V-frame
+            // handshake (TgxlConnection.cpp:191) -- typically minutes
+            // before the operator opens this page. By the time we attach
+            // the slot here, the signal has long since fired with no
+            // subscribers, and the labels stay at "--".
+            //
+            // Re-issue `info` when the page opens with an already-
+            // connected TGXL so the response triggers our newly-wired
+            // slot and the labels populate immediately. No-op if not
+            // connected; onTgxlConnected will fire if a future connect
+            // happens.
+            if (tgxl->isConnected()) {
+                tgxl->sendCommand(QStringLiteral("info"));
+            }
+
             // Bind diagnostics helper to the TGXL connection
             m_diagnostics->bindTo(tgxl);
         }

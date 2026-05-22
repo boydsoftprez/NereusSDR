@@ -6334,39 +6334,52 @@ void MainWindow::onConnectionStateChanged()
                 if (kvs.contains(QStringLiteral("meffa")))
                     m_ampApplet->setMeff(kvs.value(QStringLiteral("meffa")));
 
-                // 2026-05-20 bench fix: when PGXL leaves TRANSMIT_A/B,
-                // force the fwd power + SWR gauges back to idle values.
-                // PGXL stops pushing peakfwd / swr on unkey (state goes
-                // IDLE / OPERATE) so without an explicit reset the
-                // AmpApplet gauges latch at the last transmit-time value
-                // and look like the amp is still keying. User: "tx power
-                // on the applet stays at the last value after we unkey".
+                // 2026-05-22 bench fix: PGXL's `peakfwd` and `swr`
+                // status fields are HOLD values that latch the last TX
+                // peak and DO NOT decay back to 0 when the amp leaves
+                // TRANSMIT_A/B (PGXL's intent is "show the last QSO's
+                // peak on the front panel"). For our applet gauges we
+                // want the live keyed value during TX and a clean zero
+                // between cycles, so we gate the peakfwd / swr writes
+                // on the transmitting state. Without this gate the
+                // previous bench-fix at this site (which forced fwd=0
+                // / swr=1 when state changed to IDLE) was overwritten
+                // 30 ms later by the next status response carrying the
+                // stale latched peakfwd.
+                //
+                // Inferred transmitting state: if the status update
+                // includes state=, use it; otherwise fall back to the
+                // last cached state (m_ampApplet tracks it via
+                // setState).
+                bool transmitting = false;
                 if (kvs.contains(QStringLiteral("state"))) {
                     const QString st = kvs.value(QStringLiteral("state"));
-                    const bool transmitting =
+                    transmitting =
                         (st == QStringLiteral("TRANSMIT_A")
                          || st == QStringLiteral("TRANSMIT_B"));
                     if (!transmitting) {
                         m_ampApplet->setFwdPower(0.0f);
                         m_ampApplet->setSwr(1.0f);
                     }
+                } else {
+                    transmitting = m_ampApplet->isTransmitting();
                 }
 
                 // 2026-05-20 bench fix: peakfwd is dBm (not watts) and swr
-                // is signed dB return loss (not an SWR ratio). The legacy
-                // raw passthrough fed an unconverted -24.5 to the SWR
-                // gauge (range 1.0-3.0; clamped to 1.0 always) and an
-                // unconverted dBm to the power gauge (range 0-200/2000 W;
-                // dBm values in [0, 60] mostly hit the low end of the
-                // scale). Convert here so the AmpApplet gauges read the
-                // same numbers the SMeterWidget already gets via
+                // is signed dB return loss (not an SWR ratio). Convert
+                // here so the AmpApplet gauges read the same numbers
+                // the SMeterWidget already gets via
                 // RadioModel::ampMetersChanged.
-                if (kvs.contains(QStringLiteral("peakfwd"))) {
+                // 2026-05-22 bench fix: only forward the converted
+                // peakfwd / swr when the amp is actually transmitting;
+                // otherwise the stale latched peak would overwrite the
+                // zero set by the state-edge block above.
+                if (transmitting && kvs.contains(QStringLiteral("peakfwd"))) {
                     const float dbm   = kvs.value(QStringLiteral("peakfwd")).toFloat();
                     const float watts = std::pow(10.0f, dbm / 10.0f) / 1000.0f;
                     m_ampApplet->setFwdPower(watts);
                 }
-                if (kvs.contains(QStringLiteral("swr"))) {
+                if (transmitting && kvs.contains(QStringLiteral("swr"))) {
                     const float rlDbWire =
                         kvs.value(QStringLiteral("swr")).toFloat();
                     float ratio;

@@ -96,6 +96,12 @@ public slots:
     void setState(const QString& state);
     void setMeff(const QString& meff);
 
+    // 2026-05-22: track last-seen state so MainWindow's PGXL status
+    // handler can gate peakfwd/swr writes on it. PGXL keeps reporting
+    // a latched peak value after the amp leaves TRANSMIT_A/B; without
+    // this query the AmpApplet gauges latched at the last TX peak.
+    bool isTransmitting() const { return m_isTransmitting; }
+
     // Phase 3P-II Phase 4 Task 88: update the connected flag so the
     // context menu shows "Disconnect" vs "Reconnect" appropriately.
     void setPgxlConnected(bool connected);
@@ -124,6 +130,11 @@ private:
 
     // Phase 3P-II Phase 4 Task 88: PGXL connection state for context menu label.
     bool m_pgxlConnected{false};
+
+    // 2026-05-22 bench fix: cached transmitting flag set by setState
+    // (true when state == TRANSMIT_A/B). Read by isTransmitting() so
+    // MainWindow's PGXL status handler can gate peakfwd/swr forwarding.
+    bool m_isTransmitting{false};
 };
 
 } // namespace NereusSDR
