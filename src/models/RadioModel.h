@@ -1145,6 +1145,66 @@ public slots:
     Q_INVOKABLE double calibrationSixMeter(int rx) const;
     Q_INVOKABLE double calibrationTxDisplay(int rx) const;
 
+    // ── Phase 3J-1 closeout (2026-05-22): init-burst live-state shims ───────
+    //
+    // Added so TciProtocol::buildInitialRadioStateLines can read live
+    // RadioModel state instead of emitting the Phase 4 Task 4.2 hardcoded
+    // placeholders.  Each shim is a thin Q_INVOKABLE wrapper over existing
+    // state or trivial derivation -- no new member variables, no behavior
+    // changes.  Architectural divergences (where NereusSDR's storage model
+    // differs from Thetis Console) are documented in each shim header AND
+    // mirrored in the TciProtocol.cpp call site so reviewers see the same
+    // story from both sides.
+
+    /// "RX2 enabled" -- derived from connectionActiveRxCount >= 2.
+    /// Thetis console.cs:37278 [v2.10.3.15] backs RX2Enabled with the
+    /// rx2_enabled member (chkRX2.Checked).  NereusSDR uses the active-
+    /// receiver count (set by RadioModel::setActiveRxCountLive) as the
+    /// authoritative source.
+    Q_INVOKABLE bool rx2Enabled() const;
+
+    /// TX monitor enable -- forwards to TransmitModel::monEnabled().
+    /// Thetis console.cs:18656-18663 [v2.10.3.15] -- MON = chkMON.Checked.
+    /// NereusSDR's m_transmitModel.m_monEnabled defaults false and is never
+    /// persisted (safety: MON loads OFF always, matching Thetis audio.cs:406).
+    Q_INVOKABLE bool monEnabled() const;
+
+    /// Tune state -- m_isTuning (latched true between setTune(true) and
+    /// completeTuneOff()).  Thetis console.cs:18677-18684 [v2.10.3.15] --
+    /// TUN = chkTUN.Checked.  Semantically identical.
+    ///
+    /// Separate from the existing isTune() accessor (which is noexcept and
+    /// cannot be Q_INVOKABLE).  Same backing field.
+    Q_INVOKABLE bool tune() const;
+
+    /// Power-on -- forwards to isConnected().
+    ///
+    /// Architectural divergence from Thetis console.cs:19799-19803
+    /// [v2.10.3.15] PowerOn = chkPower.Checked.  In Thetis PowerOn and
+    /// connection state are SEPARATE concepts: a user can "power off" the
+    /// radio while remaining connected.  NereusSDR has no such mode -- the
+    /// connection IS the power switch.  TCI clients see powerOn = true
+    /// while connected, false while disconnected (no "soft off" state).
+    Q_INVOKABLE bool powerOn() const;
+
+    /// DIGL click-tune offset -- active slice's diglOffsetHz.
+    ///
+    /// Architectural divergence from Thetis console.cs:14693-14749
+    /// [v2.10.3.15] DIGLClickTuneOffset (radio-global private member,
+    /// default 2210 Hz).  NereusSDR stores per-slice on SliceModel
+    /// (m_diglOffsetHz, default 0 Hz per SliceModel.h:928).  For TCI we
+    /// expose the active slice's value as the radio's "current" DIGL
+    /// offset; falls back to 0 when no slice is active (pre-connect probe).
+    Q_INVOKABLE int diglOffset() const;
+
+    /// DIGU click-tune offset -- active slice's diguOffsetHz.
+    ///
+    /// Same Thetis-vs-NereusSDR divergence as diglOffset.  Thetis
+    /// console.cs:14658-14691 [v2.10.3.15] -- DIGUClickTuneOffset
+    /// (radio-global, default 1500 Hz).  NereusSDR per-slice
+    /// (m_diguOffsetHz, default 0 Hz per SliceModel.h:929).
+    Q_INVOKABLE int diguOffset() const;
+
     // ── Phase 3R Task I5: RadeChannel signal-graph slots ────────────────────
     //
     // Public slots so Qt's auto-connection queues them correctly when the

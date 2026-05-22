@@ -8048,6 +8048,63 @@ double RadioModel::calibrationXvtr(int rx) const      { (void)rx; return 0.0; }
 double RadioModel::calibrationSixMeter(int rx) const  { (void)rx; return 0.0; }
 double RadioModel::calibrationTxDisplay(int rx) const { (void)rx; return 0.0; }
 
+// ── Init-burst live-state shims (Phase 3J-1 closeout 2026-05-22) ────────────
+// Documentation lives in RadioModel.h alongside the declarations; cite
+// summaries inline here for diff-readability.
+
+// rx2Enabled -- From Thetis RX2Enabled at console.cs:37278 [v2.10.3.15].
+// Derived from m_connectionActiveRxCount; setActiveRxCountLive is the
+// authoritative state writer.
+bool RadioModel::rx2Enabled() const
+{
+    return m_connectionActiveRxCount >= 2;
+}
+
+// monEnabled -- From Thetis MON at console.cs:18656-18663 [v2.10.3.15].
+// Forwards to TransmitModel::monEnabled (default false, never persisted).
+bool RadioModel::monEnabled() const
+{
+    return m_transmitModel.monEnabled();
+}
+
+// tune -- From Thetis TUN at console.cs:18677-18684 [v2.10.3.15].
+// Same backing field as the existing isTune() accessor; separate Q_INVOKABLE
+// surface because isTune() is noexcept and cannot carry Q_INVOKABLE.
+bool RadioModel::tune() const
+{
+    return m_isTuning;
+}
+
+// powerOn -- From Thetis PowerOn at console.cs:19799-19803 [v2.10.3.15].
+// Architectural divergence: NereusSDR has no separate Power button, so
+// connection IS power.  TCI clients see powerOn = isConnected().
+bool RadioModel::powerOn() const
+{
+    return isConnected();
+}
+
+// diglOffset -- From Thetis DIGLClickTuneOffset at console.cs:14693
+// [v2.10.3.15].  Architectural divergence: per-slice in NereusSDR; expose
+// active slice value (falls back to 0 when no active slice -- e.g. pre-
+// connect TCI client probe).
+int RadioModel::diglOffset() const
+{
+    if (m_activeSlice) {
+        return m_activeSlice->diglOffsetHz();
+    }
+    return 0;
+}
+
+// diguOffset -- From Thetis DIGUClickTuneOffset at console.cs:14658
+// [v2.10.3.15].  Same divergence as diglOffset.
+int RadioModel::diguOffset() const
+{
+    if (m_activeSlice) {
+        return m_activeSlice->diguOffsetHz();
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // completeTuneOff — Thetis-faithful TUN-off completion (issue #177).
 //
