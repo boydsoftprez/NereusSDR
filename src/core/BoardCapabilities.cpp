@@ -1164,7 +1164,13 @@ std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) no
 
     case HPSDRHW::OrionMKII:
     case HPSDRHW::Saturn:
-        // ANAN-7000D/8000D/OrionMkII/G2/G2-1K/AnvelinaPro3: always anan100d.
+    case HPSDRHW::HermesC10:  // ANAN-G2E //N1GP G2E added
+        // ANAN-7000D/8000D/OrionMkII/G2/G2-1K/AnvelinaPro3/G2E: always anan100d.
+        // From Thetis console.cs:40871-40879 [v2.10.3.15] //N1GP G2E added:
+        //   case HPSDRModel.ANAN_G2E: comboPreamp.Items.AddRange(anan100d_preamp_settings)
+        // NereusSDR dispatches by HPSDRHW; HermesC10 is the board for ANAN_G2E.
+        // Upstream comment preserved verbatim (console.cs:40878):
+        //   // case HPSDRModel.REDPITAYA: // DH1KLM: removed for compatibility reasons
         return items(kAnan100d);
 
     case HPSDRHW::HermesLite:
