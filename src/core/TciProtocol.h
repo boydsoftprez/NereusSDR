@@ -87,6 +87,32 @@ public:
     // From Thetis TCIServer.cs:1722-1727 [v2.10.3.13] — outbound-coalesced map.
     void drainCoalescedNotifications();
 
+    // ── Phase 3J-1 closeout (2026-05-22): local state-change broadcast ──────
+    //
+    // Push a TCI frame produced by the LOCAL operator (UI tuning, mode/filter
+    // change, mute toggle, etc.) into the outbound notification queue.  The
+    // 5ms drain timer in TciServer then broadcasts it to all connected
+    // clients.
+    //
+    // Mirrors Thetis TCIServer.cs:6730-6790 [v2.10.3.15]: TCIServer subscribes
+    // to ~40 Console events (FilterChangedHandlers, RX2EnabledChangedHandlers,
+    // VfoALockChangedHandlers, NRChangedHandlers, etc.) and routes each to an
+    // OnXxxChanged delegate that calls sendXxx (which enqueues the wire frame).
+    // Without this path, NereusSDR TCI clients only see state set BY a TCI
+    // client (the SET path in handleCommand wires the same coalescer + queue);
+    // local UI tunes / mode changes never propagate -- bench bug 2026-05-22.
+    //
+    // enqueueLocalBroadcast:    push directly to m_pendingNotifications.  Use
+    //                           for one-shot events (mode, filter, AGC, etc.).
+    // enqueueLocalBroadcastVfo: route through m_vfoCoalescer for rapid-fire
+    //                           VFO updates that need Layer-3 dedup (rotary
+    //                           encoder spin can fire dozens of frequency
+    //                           changes per second).  Emits the vfo:* +
+    //                           dds:* + tx_frequency:* triplet that
+    //                           sendInitialRadioState bundles.
+    void enqueueLocalBroadcast(const QString& frame);
+    void enqueueLocalBroadcastVfo(int rxIndex, qint64 hz);
+
     // Build the post-connect init burst. Stub returns empty list in Phase 3;
     // Phase 4 Task 4.1 replaces with the 8-line wrapper from
     // Thetis TCIServer.cs:2512-2552 [v2.10.3.13].
