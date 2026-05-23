@@ -176,17 +176,29 @@ private slots:
     }
 
     void af_linear_and_mon_linear_roundtrip() {
+        // Review P1 #1 fix (PR #278, 2026-05-22): the AF/MON shims now forward
+        // to live AudioEngine / TransmitModel state so a real TCI client write
+        // actually affects radio audio (parity with Thetis handleVolume /
+        // handleMONVolume).  Both forwarders clamp to the documented TCI
+        // linear-volume spec of [0..100] (mock shim doc-comment at
+        // TestMockRadioModel.h:406-410); values outside the range silently
+        // saturate.  The earlier 16384 / 8192 test arguments were leftovers
+        // from when the shims were decoupled no-op caches; they are not
+        // representative of the wire spec and would saturate to 100 / 100.
+        // Use 50 / 25 for the round-trip -- valid values that exercise both
+        // a mid-scale and a low-end conversion through the float [0..1]
+        // boundary in AudioEngine / TransmitModel.
         RadioModel m;
-        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 16384));
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 50));
         int out = 0;
         QMetaObject::invokeMethod(&m, "afLinear",
                                   Q_RETURN_ARG(int, out));
-        QCOMPARE(out, 16384);
+        QCOMPARE(out, 50);
 
-        QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 8192));
+        QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 25));
         QMetaObject::invokeMethod(&m, "monLinear",
                                   Q_RETURN_ARG(int, out));
-        QCOMPARE(out, 8192);
+        QCOMPARE(out, 25);
     }
 
     void iq_sample_rate_roundtrips() {
