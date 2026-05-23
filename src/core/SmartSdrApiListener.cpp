@@ -69,8 +69,37 @@ bool SmartSdrApiListener::start(QHostAddress bindAddr, quint16 port)
 
 void SmartSdrApiListener::stop()
 {
+    // PR #279 review #2 (2026-05-23): tear down accepted clients + cancel
+    // pending interlock state on stop().  Earlier this only stopped the
+    // periodic timer + closed the listening server; QTcpSockets already
+    // accepted remained in m_clients with their readyRead handlers wired,
+    // so an already-connected PGXL / TGXL could keep driving tune /
+    // interlock state after the operator toggled 4O3A off in Setup.
     m_periodicTimer.stop();
+    m_pttAckTimeout.stop();
     m_server.close();
+
+    // Disconnect signals from each socket so the dangling deleteLater()
+    // callbacks don't try to update m_clients while we're clearing it.
+    // Mirror onClientDisconnected's deleteLater() so Qt cleans up the
+    // socket after the event loop unwinds.
+    for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+        QTcpSocket* sock = it.key();
+        if (sock) {
+            QObject::disconnect(sock, nullptr, this, nullptr);
+            sock->abort();
+            sock->deleteLater();
+        }
+    }
+    m_clients.clear();
+
+    // Reset interlock-related local state.  m_localClientHandle is
+    // regenerated on the next start() (line ~61); clearing it here makes
+    // any post-stop frame-builder helper that fires from a deleteLater
+    // tail produce an obviously-empty client_handle= instead of a stale
+    // one.  m_lastTuneInitiator likewise.
+    m_localClientHandle.clear();
+    m_lastTuneInitiator.clear();
 }
 
 bool SmartSdrApiListener::isListening() const
