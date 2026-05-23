@@ -21,11 +21,17 @@
 #include <QNetworkInterface>
 #include <QLoggingCategory>
 
+#include <cstring>
+
+// BSD socket headers are only needed for the SO_BROADCAST setsockopt() path
+// gated on Q_OS_UNIX below.  Windows builds use QUdpSocket native API only
+// and have no sys/socket.h equivalent in the toolchain.
+#ifdef Q_OS_UNIX
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#include <cstring>
+#endif
 
 namespace NereusSDR {
 
