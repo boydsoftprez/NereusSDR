@@ -85,6 +85,46 @@ private slots:
         QCOMPARE(slice->filterHigh(), 2800);
     }
 
+    // PR #279 review P4 (2026-05-22): RadioModel::setFilterBand must use
+    // the atomic SliceModel::setFilter(low, high) so filterChanged emits
+    // exactly once with the final pair.  The earlier split path called
+    // setFilterLow then setFilterHigh sequentially, emitting two
+    // filterChanged events: first (newLow, oldHigh) -- a stale combo --
+    // and then (newLow, newHigh).  TCI clients tracking the broadcast
+    // saw an intermediate rx_filter_band frame with the old high cutoff
+    // before the final value.  Fix in 9ae5f135 routed through the atomic
+    // setter; this test pins that behaviour.
+    void set_filter_band_emits_filter_changed_once() {
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        // Seed a known starting filter so the change is unambiguous.
+        slice->setFilter(100, 3000);
+        QCOMPARE(slice->filterLow(),  100);
+        QCOMPARE(slice->filterHigh(), 3000);
+
+        QSignalSpy spy(slice, &SliceModel::filterChanged);
+        QVERIFY(spy.isValid());
+
+        // Now invoke the TCI shim, which used to call setFilterLow then
+        // setFilterHigh (two emits, intermediate stale combo).  Atomic
+        // path emits exactly once.
+        QMetaObject::invokeMethod(&m, "setFilterBand",
+                                  Q_ARG(int, 0),
+                                  Q_ARG(int, 400),
+                                  Q_ARG(int, 2800));
+        QCOMPARE(spy.count(), 1);
+        QList<QVariant> args = spy.takeFirst();
+        QCOMPARE(args.size(), 2);
+        // Crucially: the SINGLE emit carries the FINAL low + FINAL high,
+        // not (newLow, oldHigh) which was the stale-intermediate bug.
+        QCOMPARE(args.at(0).toInt(), 400);
+        QCOMPARE(args.at(1).toInt(), 2800);
+
+        QCOMPARE(slice->filterLow(),  400);
+        QCOMPARE(slice->filterHigh(), 2800);
+    }
+
     void agc_mode_string_maps_to_enum() {
         RadioModel m;
         SliceModel* slice = setupOneSlice(m);
