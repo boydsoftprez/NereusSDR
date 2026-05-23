@@ -125,6 +125,14 @@ private:
     quint32    m_seq{0};
     bool       m_connected{false};
     bool       m_gotVersion{false};
+    // PR #279 review #3 (2026-05-23): set true by disconnect() (user-
+    // initiated path), checked by onDisconnected() before calling
+    // scheduleReconnect().  Cleared by connectToPgxl() on the next
+    // intentional connect so a manual reconnect re-arms auto-reconnect.
+    // Without this flag, the Peripherals Disconnect button could not
+    // keep PGXL disconnected because PGXL_AutoReconnect defaults true
+    // and scheduleReconnect() fires unconditionally from onDisconnected.
+    bool       m_userInitiatedDisconnect{false};
     QString    m_version;
 
     // Tier 2 state.

@@ -77,6 +77,10 @@ void TgxlConnection::connectToTgxl(const QString& host, quint16 port)
     m_version.clear();
     m_readBuf.clear();
     m_seq = 0;
+    // PR #279 review #3 (2026-05-23): clear the user-initiated flag on
+    // every intentional connect so a manual reconnect re-arms
+    // auto-reconnect on subsequent network drops.
+    m_userInitiatedDisconnect = false;
     qCDebug(lcTgxl) << "TgxlConnection: connecting to" << host << ":" << port;
     m_socket.connectToHost(host, port);
 }
@@ -84,6 +88,12 @@ void TgxlConnection::connectToTgxl(const QString& host, quint16 port)
 // From AetherSDR src/core/TgxlConnection.cpp:32 [@0cd4559]
 void TgxlConnection::disconnect()
 {
+    // PR #279 review #3 (2026-05-23): mark this disconnect as
+    // user-initiated so onDisconnected() does not re-schedule a reconnect.
+    // Without this, the Peripherals Disconnect button could not keep TGXL
+    // disconnected because TGXL_AutoReconnect defaults true.  Flag is
+    // cleared in connectToTgxl() on the next intentional connect.
+    m_userInitiatedDisconnect = true;
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
     m_connected = false;
@@ -125,6 +135,17 @@ void TgxlConnection::onDisconnected()
     m_keepaliveTimer.stop();
     m_connected = false;
     emit disconnected();
+    // PR #279 review #3 (2026-05-23): only auto-reconnect on network
+    // drops, not user-initiated disconnects.  disconnect() (the
+    // Peripherals Disconnect button path) sets m_userInitiatedDisconnect
+    // before calling m_socket.disconnectFromHost(), and the flag is
+    // cleared by connectToTgxl() on the next intentional connect.
+    if (m_userInitiatedDisconnect) {
+        qCInfo(lcTgxl)
+            << "TGXL user-initiated disconnect; auto-reconnect suppressed";
+        m_userInitiatedDisconnect = false;
+        return;
+    }
     scheduleReconnect();
 }
 

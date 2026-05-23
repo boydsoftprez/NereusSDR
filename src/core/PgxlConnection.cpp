@@ -68,11 +68,23 @@ void PgxlConnection::connectToPgxl(const QString& host, quint16 port) {
     m_gotVersion = false;
     m_version.clear();
     m_readBuf.clear();
+    // PR #279 review #3 (2026-05-23): clear the user-initiated flag on
+    // every intentional connect so a manual reconnect re-arms
+    // auto-reconnect for subsequent network drops.
+    m_userInitiatedDisconnect = false;
     qCDebug(lcPgxl) << "connecting to" << host << ":" << port;
     m_socket.connectToHost(host, port);
 }
 
 void PgxlConnection::disconnect() {
+    // PR #279 review #3 (2026-05-23): mark this disconnect as
+    // user-initiated so onDisconnected() does not re-schedule a reconnect.
+    // Without this, the Peripherals Disconnect button could not keep PGXL
+    // disconnected because PGXL_AutoReconnect defaults true and
+    // scheduleReconnect() fires unconditionally from onDisconnected.
+    // The flag is cleared in connectToPgxl() so a fresh manual connect
+    // re-arms auto-reconnect on subsequent network drops.
+    m_userInitiatedDisconnect = true;
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
     m_connected = false;
@@ -124,6 +136,17 @@ void PgxlConnection::onDisconnected() {
     // Phase 3P-II Task 66: clear paired serial on disconnect so setBand() stays silent.
     m_pairedRadioSerial.clear();
     emit disconnected();
+    // PR #279 review #3 (2026-05-23): only auto-reconnect on network
+    // drops, not user-initiated disconnects.  disconnect() (the
+    // Peripherals Disconnect button path) sets m_userInitiatedDisconnect
+    // before calling m_socket.disconnectFromHost(), and the flag is
+    // cleared by connectToPgxl() on the next intentional connect.
+    if (m_userInitiatedDisconnect) {
+        qCInfo(lcPgxl)
+            << "PGXL user-initiated disconnect; auto-reconnect suppressed";
+        m_userInitiatedDisconnect = false;
+        return;
+    }
     scheduleReconnect();
 }
 

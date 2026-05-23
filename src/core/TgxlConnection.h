@@ -128,6 +128,10 @@ private:
     quint32    m_seq{0};
     bool       m_connected{false};
     bool       m_gotVersion{false};
+    // PR #279 review #3 (2026-05-23): set true by disconnect() so
+    // onDisconnected() suppresses the reconnect.  Cleared by
+    // connectToTgxl() so a fresh manual connect re-arms auto-reconnect.
+    bool       m_userInitiatedDisconnect{false};
     QString    m_version;
 
     // Tier 2 state.
