@@ -6461,11 +6461,21 @@ void MainWindow::onConnectionStateChanged()
                 if (pgxl->isConnected()) {
                     pgxl->disconnect();
                 } else {
-                    // Re-use the persisted IP and port from AppSettings.
+                    // PR #279 review #5 (2026-05-23): use the same
+                    // PGXL_ManualIp / PGXL_ManualPort keys that
+                    // auto-connect at line ~6331 + the Setup ->
+                    // CAT & Network -> PGXL page persist.  The
+                    // earlier reads of obsolete PGXL_IpAddress /
+                    // PGXL_Port (default 50001) returned empty
+                    // strings on every install that had only ever
+                    // written the canonical keys, so the AmpApplet
+                    // context-menu Connect did nothing.  AppSettings
+                    // canonical default 9008 per AppSettings.h:330.
                     const QString ip = AppSettings::instance()
-                        .value(QStringLiteral("PGXL_IpAddress"), QString{}).toString();
+                        .value(QStringLiteral("PGXL_ManualIp"), QString{})
+                        .toString();
                     const quint16 port = static_cast<quint16>(AppSettings::instance()
-                        .value(QStringLiteral("PGXL_Port"), 50001).toInt());
+                        .value(QStringLiteral("PGXL_ManualPort"), 9008).toInt());
                     if (!ip.isEmpty()) {
                         pgxl->connectToPgxl(ip, port);
                     }
