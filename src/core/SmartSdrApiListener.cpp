@@ -1020,6 +1020,14 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
         || cmd.startsWith(QStringLiteral("sub transmit"))
         || cmd.startsWith(QStringLiteral("sub radio"))) {
         const QString handle = m_clients.value(sock).handle;
+        // PR #279 review #1 (2026-05-23): the immediate push must use
+        // m_localClientHandle for the slice's client_handle= field, the
+        // same way onNewConnection() (line ~616) and broadcastSliceState()
+        // (line ~1102) do.  Earlier this path used the per-recipient
+        // banner handle, so an amp that subscribed AFTER initial connect
+        // would see slice.client_handle != PTT_REQUESTED.tx_client_handle
+        // and refuse the `interlock ready N` ACK -- same bench failure
+        // mode 2026-05-22 16:02:39 fixed for the other two paths.
         sendStatus(sock, handle,
                    QStringLiteral("slice 0 in_use=1 sample_rate=24000 RF_frequency=%1 "
                                       "client_handle=0x%2 index_letter=A rit_on=0 rit_freq=0 "
@@ -1029,7 +1037,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                                       "pan=0x40000000 txant=ANT1 loopa=0 loopb=0 qsk=0 "
                                       "lock=0 tx=1 active=1")
                        .arg(m_sliceFreqHz / 1.0e6, 0, 'f', 6)
-                       .arg(handle)
+                       .arg(m_localClientHandle)
                        .arg(m_sliceMode));
         sendStatus(sock, handle,
                    QStringLiteral("transmit freq=%1 rfpower=100 tunepower=10 tx_slice_mode=%2"
