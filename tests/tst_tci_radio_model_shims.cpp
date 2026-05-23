@@ -280,7 +280,7 @@ private slots:
     }
 
     void af_linear_and_mon_linear_roundtrip() {
-        // Thetis TCI volume range is 0..100 linear, NOT 0..32767. From
+        // Thetis TCI volume range is 0..100 linear (NOT 0..32767).  From
         // TCIServer.cs:4273-4294 [v2.10.3.15] linearToDbVolume /
         // dbToLinearVolume:
         //   double dbMin = -60f;  double dbMax = 0;
@@ -290,12 +290,21 @@ private slots:
         // tciDbToLinearVolume BEFORE calling setAfLinear, so values
         // arriving at this shim are always in 0..100.
         //
-        // Earlier versions of this test (commit c78ac725) sent 16384 / 8192
-        // because the shim was a pure pass-through cache. Commit 9ae5f135
-        // rewired the shim through AudioEngine::setVolume (which expects
-        // 0..1.0 float), and the shim correctly clamps inputs to 0..100 to
-        // match Thetis. The test is now updated to the Thetis-faithful
-        // range and also verifies the clamp for out-of-range inputs.
+        // Earlier versions of this test (c78ac725, May 13) sent 16384 / 8192
+        // because the AF/MON shims were decoupled no-op caches.  PR #278
+        // review P1 #1 fix (9ae5f135) rewired the shims to forward to live
+        // AudioEngine::setVolume / TransmitModel::setMonitorVolume so a
+        // real TCI client write actually affects radio audio (parity with
+        // Thetis handleVolume / handleMONVolume).  Both forwarders clamp
+        // to [0..100], so the legacy 16384 / 8192 args saturate to 100 / 100
+        // and the original test fails.
+        //
+        // PR #279 (this commit's history) restored the test by:
+        //  - merging JJ's main-branch 38c54e51 fix that swapped the args
+        //    to in-spec 50 / 25,
+        //  - and extending coverage to also exercise the boundary (100)
+        //    and the out-of-range clamp branches (16384 -> 100, -50 -> 0)
+        //    so the clamp semantic itself is locked.
         RadioModel m;
         int out = 0;
 
@@ -326,6 +335,13 @@ private slots:
         QCOMPARE(out, 0);
 
         // MON volume: same range + clamp semantics (TXAF mirrors AF).
+        // 25 is JJ's low-end main-branch value (38c54e51) preserved here.
+        QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 25));
+        QMetaObject::invokeMethod(&m, "monLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 25);
+
+        // MON in-range mid (75) + out-of-range clamp (8192 -> 100).
         QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 75));
         QMetaObject::invokeMethod(&m, "monLinear",
                                   Q_RETURN_ARG(int, out));
