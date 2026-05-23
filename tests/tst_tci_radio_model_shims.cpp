@@ -259,6 +259,74 @@ private slots:
         QCOMPARE(channels, 1);
     }
 
+    // PR #279 review P1 (2026-05-22): real-client connect was receiving
+    // muted volume / iq_samplerate:0 / non-canonical sample type because
+    // the prod RadioModel m_tciAfLinear / m_tciMonLinear / m_tciIqSampleRate
+    // / m_tciAudioStreamSampleType defaults didn't match the mock golden
+    // capture (0/0/0/"Float32" vs 50/50/192000/"float32").  CI passed on
+    // the mock but the bench bug only showed up on real clients.  This
+    // test exercises the production RadioModel pre-connect to lock in
+    // Thetis-faithful defaults.
+    void prod_init_burst_defaults_match_thetis_wire_expectations() {
+        // Fresh RadioModel, no connection, no slice setup.  This is the
+        // exact state TciProtocol::buildInitialRadioStateLines sees the
+        // first time a real client connects before any user state has
+        // been touched.
+        RadioModel m;
+
+        // AF volume range: 0..100 (Thetis TCIServer.cs:4273-4294
+        // [v2.10.3.15] linearMin/linearMax). AudioEngine m_masterVolume
+        // defaults to 0.5f -> 50 linear, so afLinear() returns 50 in
+        // practice.  Asserting > 0 catches any regression that drops
+        // the AudioEngine fallback and returns the m_tciAfLinear stub.
+        int afLin = -1;
+        QMetaObject::invokeMethod(&m, "afLinear", Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, afLin));
+        QVERIFY2(afLin > 0 && afLin <= 100,
+            qPrintable(QString("afLinear=%1, expected (0,100]; "
+                "0 emits muted volume:-60.0; on first connect")
+                .arg(afLin)));
+
+        // MON volume range identical (Thetis TXAF mirrors AF).
+        // TransmitModel m_monitorVolume defaults to 0.5f -> 50 linear.
+        int monLin = -1;
+        QMetaObject::invokeMethod(&m, "monLinear", Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, monLin));
+        QVERIFY2(monLin > 0 && monLin <= 100,
+            qPrintable(QString("monLinear=%1, expected (0,100]; "
+                "0 emits muted mon_volume:-60.0; on first connect")
+                .arg(monLin)));
+
+        // audioStreamSampleType wire format is lowercase per Thetis
+        // (TCIServer.cs audio_stream sample-type tokens float32/int16/
+        // int24/int32 are all lower-case in golden captures).  The
+        // mock-driven init-burst tests pass an already-normalized
+        // lowercase string; this assertion guarantees prod RadioModel
+        // ships the same casing so real clients get the canonical
+        // token on first connect.
+        QString sampleType;
+        QMetaObject::invokeMethod(&m, "audioStreamSampleType",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(QString, sampleType));
+        QVERIFY2(!sampleType.isEmpty(),
+            "audioStreamSampleType empty on fresh RadioModel");
+        QCOMPARE(sampleType, sampleType.toLower());
+
+        // iqSampleRate: prefers the live connection rate, falls back to
+        // m_tciIqSampleRate.  Pre-connect (no connection wired) it
+        // returns the m_tciIqSampleRate stub.  192000 is the canonical
+        // HPSDR P2 default (matches SampleRateCatalog::kDefaultSampleRate
+        // and the mock golden capture).  0 would emit iq_samplerate:0;
+        // which real clients reject.
+        int iqRate = -1;
+        QMetaObject::invokeMethod(&m, "iqSampleRate", Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, iqRate));
+        QVERIFY2(iqRate > 0,
+            qPrintable(QString("iqSampleRate=%1, expected > 0; "
+                "0 emits iq_samplerate:0; which real TCI clients reject")
+                .arg(iqRate)));
+    }
+
     void stub_dsp_toggles_roundtrip() {
         RadioModel m;
         setupOneSlice(m);

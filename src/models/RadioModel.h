@@ -2063,15 +2063,33 @@ private:
     // setter clamps the index so an out-of-range slice silently no-ops.
     static constexpr int kTciStubSliceMax = 4;
     bool        m_tciGlobalMute{false};
-    int         m_tciAfLinear{0};
-    int         m_tciMonLinear{0};
-    int         m_tciIqSampleRate{0};
+    // AF / MON volume fallback defaults match the live-source defaults
+    // they back-fill (AudioEngine::m_masterVolume{0.5f} and
+    // TransmitModel::m_monitorVolume{0.5f} both = 50 linear).  Live
+    // sources are non-null on a constructed RadioModel, so these stubs
+    // are only read in degenerate test paths -- but using 50 instead of
+    // 0 means a future change that drops the live-source guard won't
+    // silently emit `volume:-60.0;` (full mute) on first client connect.
+    // PR #279 review P1 (2026-05-22).
+    int         m_tciAfLinear{50};
+    int         m_tciMonLinear{50};
+    // iqSampleRate fallback: prefers live connectionSampleRateHz(); this
+    // stub is only read pre-connect.  Use the canonical HPSDR P2 baseline
+    // (192 kHz, matches SampleRateCatalog::kDefaultSampleRate) so first
+    // client connect doesn't see iq_samplerate:0; which real TCI clients
+    // reject.  PR #279 review P1 (2026-05-22).
+    int         m_tciIqSampleRate{192000};
     // Audio-stream config: per-client semantics live in TciClientSession;
     // these mirror "last value any client sent" for matrix-test parity.
     int         m_tciAudioSampleRate{48000};
     int         m_tciAudioStreamChannels{2};
     int         m_tciAudioStreamSamples{2048};
-    QString     m_tciAudioStreamSampleType{QStringLiteral("Float32")};
+    // audioStreamSampleType: Thetis TCI wire-format tokens (audio_stream
+    // sample-type field) are all lower-case in golden captures
+    // ("float32" / "int16" / "int24" / "int32").  Default "Float32"
+    // (capital F) made the first-connect frame non-canonical.
+    // PR #279 review P1 (2026-05-22).
+    QString     m_tciAudioStreamSampleType{QStringLiteral("float32")};
     // Per-slice DSP toggle stubs (set-and-read only; not wired to WDSP).
     std::array<bool, kTciStubSliceMax> m_tciStubRxBin{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxApf{};
