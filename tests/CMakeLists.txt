@@ -1856,6 +1856,14 @@ nereus_add_test(tst_spectrum_widget_mox_overlay)
 # Derives from Thetis dsp.cs:995-1050 [v2.10.3.13] CalculateTXMeter dispatch.
 nereus_add_test(tst_meter_poller_tx_bindings)
 
+# ── RX meter cal offset port (Thetis-faithful) ───────────────────────────────
+# Verifies the per-radio factory default lookup (rxMeterCalOffsetDefaultFor)
+# and the preamp-mode offset table (rxPreampOffsetDbFor) match Thetis byte-
+# for-byte, plus MeterPoller::setRxOffsetSource accepts a callable safely.
+# Derived from Thetis clsHardwareSpecific.cs:395-411 + console.cs:1991-2001
+# + console.cs:21040 RXOffset(rx) [v2.10.3.13].
+nereus_add_test(tst_rx_meter_offset)
+
 # ── Phase 3M-1a H.3: TxApplet wiring model-layer contracts ───────────────────
 # Verifies TransmitModel::setPower/tunePowerForBand round-trips, powerChanged
 # and tunePowerByBandChanged signals, MoxController default states,
@@ -4913,3 +4921,180 @@ nereus_add_test(tst_rade_channel_model_wiring)
 #                                     RadioConnection::sendTxIq.
 nereus_add_test(tst_rade_tx_pump)
 target_compile_definitions(tst_rade_tx_pump PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3P-II PGXL/TGXL networking ─────────────────────────────────────
+# Pins the parse contracts for PgxlConnection (4O3A Power Genius XL amp
+# TCP telemetry, port 9008). Ported from AetherSDR src/core/PgxlConnection.{h,cpp}
+# [@0cd4559]. Real assertions for V/R/S frame parsing land in Tasks 6+7.
+nereus_add_test(tst_pgxl_connection_parse)
+# Pins the parse contracts for TgxlConnection (4O3A Tuner Genius XL tuner
+# TCP telemetry, port 9010). Ported from AetherSDR src/core/TgxlConnection.{h,cpp}
+# [@0cd4559]. V/R/S frame parsing with state/status object discrimination.
+nereus_add_test(tst_tgxl_connection_parse)
+
+# Pins the UDP parser for LanDiscovery (4O3A PowerGeniusXL / TeragenXL
+# announcements on ports 9008 / 9010). NereusSDR-native FlexRadio regex
+# parsing. Tests: valid-announcement capture, malformed-line rejection,
+# deduplication by serial.
+nereus_add_test(tst_lan_discovery_regex)
+
+# ── Phase 3P-II TGXL tuner model ─────────────────────────────────────────
+# Pins the applyStatus contract for TunerModel (4O3A Tuner Genius XL state
+# model). Ported from AetherSDR src/models/TunerModel.{h,cpp} [@0cd4559].
+# Tests: relay values, operate/bypass, antenna-switch model, meters, presence.
+nereus_add_test(tst_tuner_model_apply_status)
+
+# ── Phase 3P-II Phase 2 (S-Meter port) ───────────────────────────────────
+# Smoke tests for WdspEngine::getRxaSignalAverage (Task 31, RXA_S_AV
+# wrapper), setupMaxBinDetector (Task 32, SetupDetectMaxBin wrapper), and
+# getMaxBinDbm (Task 32, GetDetectMaxBin wrapper).
+# All three wrappers guard on m_initialized so a default-constructed engine
+# is safe to call (no FFTW wisdom or CreateAnalyzer required).
+# Sources: Thetis Console/dsp.cs:387-388+846-850 [@501e3f5] (P/Invoke decls)
+#          wdsp/analyzer.c:775+830+1442 [@501e3f5] (C implementation + example)
+#          Console/console.cs:957+51150 [@501e3f5] (Thetis call sites)
+nereus_add_test(tst_wdsp_engine_max_bin)
+
+# Pins SMeterWidget::setPowerScale snap-logic across three brackets:
+# barefoot (<= 100W -> 120/100), Aurora (> 100W -> 600/500), and
+# PGXL amplifier (hasAmplifier=true -> 2000/1500).
+# Ported from AetherSDR src/gui/SMeterWidget.cpp:642-656 [@0cd4559].
+# Phase 3P-II Phase 2, Tasks 34/35/36.
+nereus_add_test(tst_smeter_widget_scale)
+
+# Verifies SMeterWidget peak hold decay rate logic across DecayRate::Fast,
+# Medium, and Slow.  Uses testAdvanceTime() + testPeakLevel() test seams to
+# inject synthetic time without real QTimer ticks.
+# Decay constants from AetherSDR src/gui/SMeterWidget.cpp:675-681 [@0cd4559]:
+#   Fast 20 dB/s -> 1 s of decay from -50 dBm yields -70 +/-1 dBm
+#   Medium 10 dB/s -> -60 +/-1 dBm
+#   Slow 5 dB/s -> -55 +/-1 dBm
+# Phase 3P-II Phase 2, Task 37.
+nereus_add_test(tst_smeter_widget_peak_hold)
+
+# Verifies SMeterWidget right-click context menu structure and AppSettings
+# persistence via the buildContextMenuForTesting() test seam (Task 38 refactor).
+# Tests:
+#   menuHasFourRxModes: RX Mode submenu contains Signal / Sig Avg /
+#     Signal Peak / Max Bin per design doc ss5.4.2.
+#   settingTxModePersistsToAppSettings: setTxMode("SWR") writes
+#     SMeter_TxSelect == 1 to AppSettings (Power=0, SWR=1, Level=2, Compression=3).
+# NereusSDR-native test; AetherSDR has no contextMenuEvent on SMeterWidget.
+# Phase 3P-II Phase 2, Task 39.
+nereus_add_test(tst_smeter_widget_context_menu)
+
+# ── Phase 3P-II Phase 3 (Connection robustness) ──────────────────────────
+# Tasks 55+56: amplifierCreate frame format + flexradioPair accept/reject.
+# Wire formats from FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
+# Tests: amplifierCreate emits correct frame via testFrameWrittenForTesting
+# seam; flexradioPair success (R|0|...) emits pairingResult(true);
+# flexradioPair failure (R|nonzero|...) emits pairingResult(false).
+nereus_add_test(tst_pgxl_connection_pairing)
+
+# Task 58: keepalive timer + enableKeepalive frame format.
+# Tests: enableKeepaliveSendsKeepaliveEnable (frame contains "keepalive enable");
+# keepaliveTimerStartsAfterEnable (testKeepaliveTimerActive() seam returns true).
+nereus_add_test(tst_pgxl_connection_keepalive)
+
+# Task 58: ping RTT measurement + timeout eviction.
+# Tests: pingEmitsPongReceivedOnReply (R-frame -> pongReceived with rttMs < 100 ms);
+# pingTimesOutViaFlushSeam (testFlushPingTimeouts() -> pingTimedOut signal).
+nereus_add_test(tst_pgxl_connection_ping)
+
+# Task 67: TGXL pong correlation + ping timeout (parallel to Task 58 above).
+# Tests: pingEmitsPongReceivedOnReply (V1.2.17 handshake + R-frame -> pongReceived);
+# pingTimesOutAfterFiveSeconds (testFlushPingTimeouts() -> pingTimedOut signal).
+nereus_add_test(tst_tgxl_connection_ping)
+
+# Task 59: auto-reconnect exponential backoff (1/2/5/10/30/60 s, cap at 60 s).
+# Test: backoffSequence verifies 8 calls to testForceDisconnect() produce
+# reconnectAttempt signals with delays 1000/2000/5000/10000/30000/60000/
+# 60000/60000 ms.
+nereus_add_test(tst_pgxl_connection_reconnect)
+
+# Task 61: ConnectionDiagnostics 1 Hz coalesced metrics aggregator.
+# Tests: tracksFrameCount (2 injectLineForTesting calls -> framesIn==2);
+# countsReconnectsFromSignal (3x testForceDisconnect -> reconnectCount==3);
+# rebindToTgxlClearsPgxlCounts (PGXL->TGXL rebind resets framesIn to 0).
+nereus_add_test(tst_connection_diagnostics)
+
+# ── Phase 3P-II Phase 4 (Advanced UI + helpers) ───────────────────────────
+# Three NereusSDR-native helper classes with ring-buffer / JSON persistence.
+# No upstream port; headers follow NereusSDR-native LanDiscovery.h style.
+
+# Task 75: FaultLog ring buffer.
+# AppSettings key: PGXL_FaultHistory / TGXL_FaultHistory (JSON arrays).
+# Tests: ringBufferKeepsNewestTen (12 events -> 10 kept, newest first);
+# likelyCauseSwrTrip (SWR 3.0 -> "SWR trip");
+# persistsAcrossInstances (JSON round-trip across two FaultLog instances).
+nereus_add_test(tst_fault_log)
+
+# Task 76: TuneMemoryStore per-(antenna,band) relay cache.
+# AppSettings keys: TGXL_TuneMemory_Ant<N>_Band<M> (JSON object per slot).
+# Tests: recallReturnsStoredValue; clearRemovesEntry; persistsAcrossInstances.
+nereus_add_test(tst_tune_memory_store)
+
+# Task 77: TxInterlockPolicy Disabled/Warn/Block gate.
+# AppSettings keys: PGXL_TxInterlockMode, PGXL_TxInterlockGraceMs,
+#   PGXL_TxSwrGate, PGXL_TxSwrGateMax.
+# Tests: disabledAlwaysAllows; blockDeniesWhenAmpStandby;
+#   warnAllowsButEmits.
+nereus_add_test(tst_tx_interlock_policy)
+
+# 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8: PTT chain pcap-alignment.
+# Drives SmartSdrApiListener on loopback + ephemeral port and asserts the
+# wire format of the handshake, PTT_REQUESTED, TRANSMITTING, UNKEY_REQUESTED,
+# and READY frames. Companion design doc commit: 559890a2.
+nereus_add_test(tst_smart_sdr_api_listener_ptt_chain)
+
+# Task 88: AmpApplet right-click context menu signal emission.
+# Uses buildContextMenuForTesting() seam (same pattern as Task 38/SMeterWidget).
+# Tests: menuOpensPgxlAdvanced (action 0 -> navigationRequested("pgxlAdvanced"));
+#   disconnectActionEmitsToggle (Disconnect action -> connectionToggleRequested());
+#   copyDiagnosticsActionEmitsSignal (copy action -> diagnosticsCopyRequested()).
+nereus_add_test(tst_amp_applet_context_menu)
+
+# Task 89: TunerApplet right-click context menu + TuneMemoryStore interactions.
+# Uses buildContextMenuForTesting() + testSetCurrentBandAndAntenna() +
+# testSetRelayValues() test seams. TuneMemoryStore is a local stack instance
+# passed to the TunerApplet constructor (non-owning; RadioModel owns the shared
+# instance in production).
+# Tests: saveCurrentMemoryStoresSlot (Save -> store.recall() has c1=42/l=199/c2=88);
+#   clearActionRemovesEntry (Clear -> store.recall() returns nullopt);
+#   menuOpensTgxlAdvanced (action 0 -> navigationRequested("tgxlAdvanced")).
+nereus_add_test(tst_tuner_applet_context_menu)
+
+# ── Phase 3P-II Phase 4 PGXL test polish (Tasks 91-93) ───────────────────────
+
+# Task 91: readSetup / writeSetup command coverage + R-frame parse routing.
+# Uses testFrameWrittenForTesting seam + injectLineForTesting (same pattern as
+# tst_pgxl_connection_pairing). Wire format: "setup read" / "setup k=v...".
+# Tests: readSetupSendsCommand (seq > 0, frame contains "setup read");
+#   writeSetupBuildsKvCommand (frame contains "setup" + all kv pairs);
+#   parsesSetupResponse (R-frame -> statusUpdated with parsed kv map);
+#   seqIncrementsBetweenCalls (second readSetup() returns seq > first).
+nereus_add_test(tst_pgxl_connection_setup)
+
+# Task 92: readIfconf / writeIfconf command coverage + R-frame parse routing.
+# Wire format: "ifconf read" / "ifconf address=<ip> netmask=... gateway=... dhcp=...".
+# Tests: readIfconfSendsCommand (seq > 0, frame contains "ifconf read");
+#   writeIfconfBuildsCommandWithIpFields (frame contains all 4 IP fields);
+#   parsesIfconfResponse (R-frame -> statusUpdated with 4 kv keys).
+nereus_add_test(tst_pgxl_connection_ifconf)
+
+# Task 93: save command lifecycle coverage.
+# Wire format: "save" -> R<seq>|0|saving -> saveAcknowledged signal.
+# Tests: saveSendsCommand (frame contains "save");
+#   saveResponseEmitsSaveAcknowledged (R<seq>|0|saving -> saveAcknowledged());
+#   saveSeqIsPositive (seq > 0).
+nereus_add_test(tst_pgxl_connection_save)
+
+# FlexRadio UDP 4992 discovery beacon — wire format verification.
+# Verifies 28-byte VITA-49-style header layout + ASCII payload content against
+# the FLEX-8600 discovery beacon captured 2026-05-19.
+# Tests: headerLayout (byte 0=0x38, byte1=0x5|count, size-words, Class ID,
+#   timestamp, zero-padding, payload prefix); payloadIsAscii (all bytes
+#   printable, required keys present, MAC normalised to dashed-uppercase);
+#   packetCountRolls (upper nibble=0x5, lower=count for 0..15);
+#   totalSizeIsMultipleOf4 (packet size and size-words field consistent).
+nereus_add_test(tst_flex_radio_discovery_broadcaster)

@@ -226,7 +226,8 @@ per-file NereusSDR-side diff).
 | `src/core/FirmwareStager.{h,cpp}` / `FirmwareUploader.{h,cpp}` | (none — different firmware model) | SmartSDR firmware updater. |
 | `src/core/FreeDvClient.{h,cpp}` | (none) | FreeDV Reporter. |
 | `src/core/DvkWavTransfer.{h,cpp}` | (none) | DVK file transfer. |
-| `src/core/PgxlConnection.{h,cpp}` / `TgxlConnection.{h,cpp}` | (none) | PGXL amp / TGXL tuner. |
+| `src/core/PgxlConnection.{h,cpp}` | `src/core/PgxlConnection.{h,cpp}` | PGXL amp. |
+| `src/core/TgxlConnection.{h,cpp}` | `src/core/TgxlConnection.{h,cpp}` | TGXL tuner. |
 | `src/core/LogManager.{h,cpp}` | (no direct counterpart — NereusSDR uses `qCWarning(lcCategory)` directly) | Qt logging category wrappers. |
 | `src/core/ShortcutManager.{h,cpp}` | (none yet) | Keyboard shortcuts. |
 | `src/core/SupportBundle.{h,cpp}` | (none yet — pending 3G-14) | Diagnostic bundle. |
@@ -244,7 +245,7 @@ per-file NereusSDR-side diff).
 | `src/models/PanadapterModel.{h,cpp}` | `src/models/PanadapterModel.{h,cpp}` | Per-pan display-state template. NereusSDR's PanadapterModel also holds per-band grid (added 3G-8) which is Thetis-derived, not AetherSDR-derived. |
 | `src/models/MeterModel.{h,cpp}` | (structurally split across MeterWidget/MeterPoller/MeterItem) | |
 | `src/models/TransmitModel.{h,cpp}` | (NereusSDR TX models pending 3M) | |
-| `src/models/TunerModel.{h,cpp}` | (none yet) | TGXL tuner state. |
+| `src/models/TunerModel.{h,cpp}` | `src/models/TunerModel.{h,cpp}` | TGXL tuner state. |
 | `src/models/EqualizerModel.{h,cpp}` | (none direct — EQ is in EqApplet) | |
 | `src/models/TnfModel.{h,cpp}` | (none yet) | Tracking notch filters. |
 | `src/models/SpotModel.{h,cpp}` | (none yet) | DX spot overlay. |
@@ -263,8 +264,9 @@ per-file NereusSDR-side diff).
 | `src/gui/PhoneApplet.{h,cpp}` / `PhoneCwApplet.{h,cpp}` | `src/gui/applets/PhoneCwApplet.cpp` | |
 | `src/gui/EqApplet.{h,cpp}` | `src/gui/applets/EqApplet.{h,cpp}` | |
 | `src/gui/CatApplet.{h,cpp}` | (pending 3K) | |
-| `src/gui/TunerApplet.{h,cpp}` | (pending) | |
-| `src/gui/AmpApplet.{h,cpp}` / `AntennaGeniusApplet.{h,cpp}` | (FlexRadio accessory-specific — not in NereusSDR) | |
+| `src/gui/TunerApplet.{h,cpp}` (inner `RelayBar` class) | `src/gui/RelayBar.{h,cpp}` | RelayBar widget extracted from AetherSDR inner class; supports mousewheel relay position adjustment. |
+| `src/gui/AmpApplet.{h,cpp}` | `src/gui/applets/AmpApplet.{h,cpp}` | PGXL amp telemetry applet (Phase 3P-II Task 15). |
+| `src/gui/AntennaGeniusApplet.{h,cpp}` | (FlexRadio accessory-specific, not in NereusSDR) | |
 | `src/gui/PanadapterApplet.{h,cpp}` / `PanadapterStack.{h,cpp}` / `PanLayoutDialog.{h,cpp}` | (pending Phase 3F) | Multi-pan management UI. |
 | `src/gui/RadioSetupDialog.{h,cpp}` | `src/gui/setup/*` pages + `HardwarePage.{h,cpp}` + `setup/hardware/*` tabs + `SetupPage.cpp` + `TransmitSetupPages.{h,cpp}` + `DspSetupPages.cpp` + `DisplaySetupPages.{h,cpp}` + `GeneralOptionsPage.{h,cpp}` | Pattern only; content is Thetis-feature-driven. AetherSDR's `RadioSetupDialog.cpp` §License Info block (lines 263-312) is SmartSDR-license-specific, has no NereusSDR counterpart. |
 | `src/gui/ProfileManagerDialog.{h,cpp}` | (none yet) | |
@@ -286,7 +288,7 @@ per-file NereusSDR-side diff).
 | `src/gui/MeterSlider.{h,cpp}` | `src/gui/widgets/MeterSlider.{h,cpp}` | Combined horizontal level-meter + gain-slider composite widget (pure paint + mouse; logic is header-inline, `.cpp` is the MOC trigger only). Faithful port — same visuals, same 0.0–1.0 gain/level range, same signal surface (`gainChanged(float)`). Rewrapped in `namespace NereusSDR`. Dependency of VaxApplet (Phase 3O Sub-Phase 9 Task 9.1). |
 | `src/gui/DaxApplet.{h,cpp}` | `src/gui/applets/VaxApplet.{h,cpp}` | Per-channel RX gain + mute + level meter applet. Renamed DAX → VAX (all identifiers + signals + settings keys) for NereusSDR's VAX routing (docs/architecture/2026-04-19-vax-design.md §6.4). Adapted to NereusSDR's `AppletWidget` base; AetherSDR's DaxApplet inherits QWidget directly. RX-gain slider wires to `AudioEngine::setVaxRxGain`; mute button wires to `setVaxMuted`; TX slider wires to `setVaxTxGain` (Task 9.2a setters). Level meter fed by a 50 ms QTimer polling `AudioEngine::vaxRxLevel`/`vaxTxLevel`. Device label is platform-hardcoded on Mac/Linux (`"NereusSDR VAX N"`) and AppSettings-driven on Windows. Tags label tracks `SliceModel::vaxChannelChanged` with AetherSDR's A..H slice-letter convention. Phase 3O Sub-Phase 9 Task 9.2b. |
 | `src/gui/PhaseKnob.{h,cpp}` | (none yet) | |
-| `src/gui/SMeterWidget.{h,cpp}` | (split into `MeterWidget` + S-meter `ItemGroup` preset) | |
+| `src/gui/SMeterWidget.{h,cpp}` | `src/gui/SMeterWidget.{h,cpp}` | Direct port with NereusSDR divergences: namespace AetherSDR -> NereusSDR; RxMode enum expanded from 2 entries (SMeter/SMeterPeak) to 4 entries (SMeter/SignalAverage/SMeterPeak/MaxBin) per design doc ss5.4.1; contextMenuEvent declared + stubbed (body deferred to Task 38); test-only accessors testPowerScaleMax/testPowerRedStart added. Peak hold configuration slots (setPeakHoldEnabled/setPeakHoldTimeMs/setPeakDecayRate/resetPeak) ported verbatim from upstream. All arc geometry constants, S-unit scale constants, needle timing constants, and power scale snap logic preserved verbatim from AetherSDR [@0cd4559]. Phase 3P-II Phase 2 Tasks 34/35/36. |
 | `src/gui/MeterApplet.{h,cpp}` | `src/gui/meters/MeterWidget.{h,cpp}` + `MeterPoller.{h,cpp}` + `MeterItem.{h,cpp}` + all the item subclasses + `ItemGroup.{h,cpp}` | NereusSDR's meter system is a **major divergence** — it's Thetis-MeterManager-ported (per NereusSDR CLAUDE.md, 3G-2/3G-3/3G-4/3G-5/3G-6), not AetherSDR-derived. Any `// From AetherSDR` comments on `src/gui/meters/*` items should be re-checked against Thetis `MeterManager.cs` — flag for 25b. |
 | `src/gui/DspParamPopup.{h,cpp}` / `AetherDspDialog.{h,cpp}` | (none — NereusSDR uses inline applet controls) | |
 | `src/gui/TitleBar.{h,cpp}` | `src/gui/TitleBar.{h,cpp}` | **Scoped-down port** (Phase 3O Sub-Phase 10 Task 10c, 2026-04-20). NereusSDR's TitleBar is a thin 32 px host strip hosting the menu bar + MasterOutputWidget only; AetherSDR's heartbeat / multiFLEX / PC-audio / headphone / minimal-mode / feature-request widgets are intentionally omitted (deferred to separate NereusSDR phases — 3G-14 plans the 💡 feature-request widget; headphone devices land in Sub-Phase 12 Setup → Audio → Devices). `setMenuBar()` is a line-for-line port of AetherSDR `TitleBar.cpp:282-295`. |

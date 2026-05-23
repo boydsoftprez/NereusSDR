@@ -995,6 +995,10 @@ void SpectrumWidget::setDdcCenterFrequency(double hz)
     if (!qFuzzyCompare(m_ddcCenterHz, hz)) {
         m_ddcCenterHz = hz;
         update();
+        // Notify listeners (MainWindow wires this to refresh MaxBin's
+        // slice-offset so its scan window follows the slice when the
+        // DDC NCO moves without a slice retune).
+        emit ddcCenterFrequencyChanged(hz);
     }
 }
 
@@ -1458,6 +1462,12 @@ void SpectrumWidget::setDbmCalOffset(float db)
     m_dbmCalOffset = db;
     scheduleSettingsSave();
     markOverlayDirty();  // dBm scale strip labels shift
+    // 2026-05-22 calibration fix: ensure FFT vertex VBO re-runs so the
+    // updated m_dbmCalOffset reaches the rendered trace position, not just
+    // the axis labels.  FFT data delivery normally triggers update() on its
+    // own, but this guards against the case where the cal pushes before any
+    // FFT frame has arrived (e.g. controller attaches before connection).
+    update();
 }
 
 void SpectrumWidget::setFillColor(const QColor& c)
@@ -2565,6 +2575,61 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // pixel).
     pushWaterfallRow(m_wfRenderedPixels);
     m_hasNewSpectrum = true;
+
+    // 2026-05-22 bench fix: signal that a fresh m_renderedPixels frame is
+    // available so MainWindow can push the slice's passband peak into the
+    // MaxBin detector. See peakDbmInSlicePassband for the rationale.
+    emit spectrumFrameRendered();
+}
+
+// 2026-05-22 bench fix: maxBin meter accuracy.
+//
+// Returns the strongest dBm pixel inside the active slice's IF passband,
+// using m_renderedPixels (the post detector + avenger pipeline that the
+// operator sees on the spectrum trace). MainWindow consumes this each
+// render and pushes the value into WdspEngine's MaxBin detector so the
+// analog S-meter reads what's visible on the spectrum.
+//
+// Hz range: [m_vfoHz + m_filterLowHz, m_vfoHz + m_filterHighHz]. For LSB
+// the filter range is negative so the passband is below the VFO; for USB
+// positive so the passband is above. Either way the absolute Hz bounds
+// land inside the visible window when the operator is parked on a signal
+// they can see.
+//
+// Pixel-to-Hz mapping: m_renderedPixels has displayWidth entries spanning
+// [m_centerHz - m_bandwidthHz/2, m_centerHz + m_bandwidthHz/2]. Out-of-
+// window pixel indices are clamped to the array bounds; if the passband
+// is entirely outside the visible window the clamp degenerates and we
+// return -400 sentinel.
+double SpectrumWidget::peakDbmInSlicePassband() const
+{
+    const int n = m_renderedPixels.size();
+    if (n < 2 || m_bandwidthHz <= 0.0) { return -400.0; }
+
+    const double loHz = m_vfoHz + static_cast<double>(m_filterLowHz);
+    const double hiHz = m_vfoHz + static_cast<double>(m_filterHighHz);
+    if (hiHz <= loHz) { return -400.0; }
+
+    const double leftHz  = m_centerHz - m_bandwidthHz / 2.0;
+    const double rightHz = m_centerHz + m_bandwidthHz / 2.0;
+    if (hiHz < leftHz || loHz > rightHz) { return -400.0; }
+
+    const double hzPerPx = m_bandwidthHz / static_cast<double>(n - 1);
+    if (hzPerPx <= 0.0) { return -400.0; }
+
+    auto hzToPx = [&](double hz) -> int {
+        const double idx = (hz - leftHz) / hzPerPx;
+        return qBound(0, static_cast<int>(std::round(idx)), n - 1);
+    };
+    const int firstPx = hzToPx(loHz);
+    const int lastPx  = hzToPx(hiHz);
+    if (lastPx < firstPx) { return -400.0; }
+
+    float peak = -400.0f;
+    for (int i = firstPx; i <= lastPx; ++i) {
+        if (m_renderedPixels[i] > peak) { peak = m_renderedPixels[i]; }
+    }
+    return static_cast<double>(peak);
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)

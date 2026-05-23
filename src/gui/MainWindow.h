@@ -195,6 +195,28 @@ private slots:
     // tciAction triggered + m_tciIndicator click + TciApplet::setupRequested.
     void openTciSetupPage();
 
+    // Phase 3P-II Phase 4 Task 90: generic navigation entry point for applet
+    // right-click menus. Maps a pageKey string to a SetupDialog tree label:
+    //   "pgxlAdvanced"  -> "PGXL Advanced"
+    //   "tgxlAdvanced"  -> "TGXL Advanced"
+    //   "pgxlInterlock" -> "PGXL Interlock"
+    //   "peripherals"   -> "Peripherals"
+    // Unknown keys are logged and ignored (current page unchanged).
+    void openSetup(const QString& pageKey);
+
+    // Phase 3P-II Phase 4 Task 97: soft-alert toast when peak forward power
+    // exceeds the PGXL cap.  Connected to RadioModel::ampMetersChanged.
+    // De-bounced: only one toast per exceedance event (re-arms when fwd drops
+    // back below cap).  Uses QStatusBar::showMessage (5-second duration).
+    // Guards: PGXL_PowerCapEnabled == "True" and fwd > PGXL_PowerCapW.
+    void onAmpMetersForPowerCap(float fwd, float swr);
+
+    // Phase 3P-II review fix C2: show TX interlock warning/denial on the
+    // status bar so bench rows 28/29/31 are visible to the operator.
+    // Connected to TxInterlockPolicy::warned / denied in buildUI().
+    void onTxInterlockWarning(const QString& reason);
+    void onTxInterlockDenial(const QString& reason);
+
 private:
     void buildUI();
     void buildMenuBar();
@@ -460,6 +482,12 @@ private:
     quint64 m_cpuSysPrevIdle{0};
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
 
+    // Bench-fix 2026-05-19: debounce token for within-band PGXL frequency push.
+    // frequencyChanged fires on every tune-wheel click; we coalesce into one
+    // setBand call per 200 ms burst. The token (timestamp in ms) lets the
+    // QTimer::singleShot callback drop stale invocations.
+    qint64 m_pgxlBandPushTokenMs{0};
+
     // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle)
     // m_txInhibitLabel — red "TX INHIBIT" pill, hidden by default,
     //   shown when TxInhibitMonitor::inhibited() asserts (wired Task 17).
@@ -487,6 +515,8 @@ private:
     class VfoWidget* m_vfoWidget{nullptr};
 
     // Applets (Phase 3-UI)
+    class AmpApplet*   m_ampApplet{nullptr};
+    bool               m_ampAppletWired{false};  // guards one-time AmpApplet signal connects
     class RxApplet* m_rxApplet{nullptr};
     // Phase 3M-3a-ii Batch 6: cached so SetupDialog instances can route
     // CfcSetupPage's [Configure CFC bands…] button to the same modeless
@@ -544,6 +574,16 @@ private:
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().
     TitleBar* m_titleBar{nullptr};
+
+    // Phase 3P-II Task 21: TGXL status bar chip.
+    // Shown when TunerModel::presenceChanged fires true; hidden otherwise.
+    // Text is "TGXL" / "TGXL OPER" / "TGXL BYPS" / "TGXL SBY".
+    QLabel* m_tgxlChip{nullptr};
+
+    // Phase 3P-II Phase 4 Task 97: de-bounce flag for power cap soft-alert
+    // toast.  Set true when the toast fires; reset false when fwd drops back
+    // below the cap so a new exceedance event re-arms.
+    bool m_powerCapToastShown{false};
 };
 
 } // namespace NereusSDR

@@ -317,11 +317,21 @@ TciServer::TciServer(RadioModel* model, QObject* parent)
         // -- single source of truth for the S-meter.  Falls back to -140 dBm
         // (WDSP noise floor convention) if WDSP isn't initialized or the
         // channel doesn't exist yet.
+        //
+        // RXOffset port (2026-05-20): apply the same Thetis-faithful offset
+        // MeterPoller uses for the SMeter/MeterWidget paths, so TCI clients
+        // see the same dBm number as the on-screen S-meter.  Cite: Thetis
+        // console.cs:46824 [v2.10.3.13] which adds `+ offset` to every
+        // CalculateRXMeter(SIGNAL_STRENGTH/AVG_SIGNAL_STRENGTH) read in
+        // the MultiMeter2UpdateRX1 loop (which also feeds TCIServer
+        // sensors via Display.tciRX1Sig).  Without this, NereusSDR's TCI
+        // clients would see raw ADC dBFS while the GUI shows antenna dBm.
         double rx1Dbm = -140.0;
         if (m_model) {
             if (auto* wdsp = m_model->wdspEngine()) {
                 if (auto* rx = wdsp->rxChannel(0)) {
-                    rx1Dbm = rx->getMeter(RxMeterType::SignalAvg);
+                    rx1Dbm = rx->getMeter(RxMeterType::SignalAvg)
+                           + m_model->rxMeterOffsetDb();
                 }
             }
         }

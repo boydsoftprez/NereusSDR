@@ -64,6 +64,15 @@
 #include "setup/AppearanceSetupPages.h"
 // CAT & Network
 #include "setup/CatNetworkSetupPages.h"
+// Phase 3P-II Phase 4 Task 78: PGXL Advanced page
+#include "setup/PgxlAdvancedPage.h"
+// Phase 3P-II Phase 4 Task 85: TGXL Advanced page
+#include "setup/TgxlAdvancedPage.h"
+// 4O3A integration page (Settings -> CAT & Network -> 4O3A).  Hosts the
+// QTabWidget that folds the former Peripherals / PGXL Advanced / TGXL
+// Advanced / PGXL Interlock entries into a single tree node under a
+// master toggle.  PgxlInterlockPage's include lives inside FourO3APage.cpp.
+#include "setup/FourO3APage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -502,6 +511,11 @@ void SetupDialog::buildTree()
     // the Thetis tpDSPVOX tab IA.
     add(transmit, "DEXP/VOX",           new DexpVoxPage(m_model));
 
+    // 2026-05-22 menu cleanup: the standalone "PGXL Interlock" entry that
+    // previously lived here is removed. The same controls live under
+    // Setup -> CAT & Network -> 4O3A -> General as an embedded section
+    // (FourO3APage owns the PgxlInterlockPage instance).
+
     tick("Transmit");
 
     // ── Appearance ────────────────────────────────────────────────────────────
@@ -536,6 +550,28 @@ void SetupDialog::buildTree()
         connect(tciPage, &CatTciServerPage::showLogRequested,
                 this,    &SetupDialog::tciShowLogRequested);
         add(cat, "TCI Server", tciPage);
+    }
+    // 4O3A integration page (replaces the previous standalone
+    // "Peripherals", "PGXL Advanced", and "TGXL Advanced" entries
+    // that lived side-by-side under CAT & Network).  FourO3APage
+    // hosts a QTabWidget with four tabs (General / PowerGenius XL /
+    // Tuner Genius XL / Diagnostics); the General tab carries the
+    // master toggle that gates the FlexAPI listener and auto-connect.
+    //
+    // The antennaLabelChanged forwarding from TgxlAdvancedPage moves
+    // inside FourO3APage's construction below so the SetupDialog
+    // signal still fires through to TunerApplet::onAntennaLabelChanged
+    // via wireSetupDialog().
+    {
+        auto* fourO3A = new FourO3APage(m_model);
+        addWrapped(cat, "4O3A", fourO3A);
+        // Phase 3P-II Phase 4 Task 95 forwarding lives on FourO3APage
+        // now; surface the embedded TGXL page's antennaLabelChanged
+        // signal so wireSetupDialog continues to bridge it to TunerApplet.
+        if (auto* tgxlAdv = fourO3A->findChild<TgxlAdvancedPage*>()) {
+            connect(tgxlAdv, &TgxlAdvancedPage::antennaLabelChanged,
+                    this, &SetupDialog::tgxlAntennaLabelChanged);
+        }
     }
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);

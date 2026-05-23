@@ -323,6 +323,86 @@ public:
     //   setHardwareValue("aa:bb:cc:11:22:33", "radioInfo/sampleRate", 192000)
     //   → stored as flat key "hardware/aa:bb:cc:11:22:33/radioInfo/sampleRate"
     // -------------------------------------------------------------------------
+
+    // PGXL/TGXL peripherals (Phase 3P-II baseline)
+    // Empty manualIp disables auto-connect; ports default per FlexRadio API
+    //   PGXL_ManualIp      string  ""     (default empty)
+    //   PGXL_ManualPort    int     9008
+    //   TGXL_ManualIp      string  ""
+    //   TGXL_ManualPort    int     9010
+
+    // PGXL/TGXL connection robustness (Phase 3P-II Phase 3, Tasks 58+59+60)
+    // Wire formats from FlexRadio PowerGenius Ethernet API wiki spec (design §6.4).
+    //   PGXL_KeepaliveSec   int     30    Cadence for keepalive status pokes.
+    //   PGXL_PingSec        int     10    Auto-ping interval (0 = disabled); used by Task 67+.
+    //   PGXL_AutoReconnect  bool   "True" Enable exponential-backoff auto-reconnect on drop.
+    //                                     Backoff sequence: 1/2/5/10/30/60 s (cap at 60 s).
+    //
+    // PGXL pairing-flow (Phase 3P-II Phase 3, Task 62)
+    // Used by RadioModel's connected-lambda to configure amplifierCreate + flexradioPair.
+    //   PGXL_AntMap        string "ANT1:PORTA,ANT2:PORTB"
+    //                                     Antenna port mapping passed to amplifierCreate;
+    //                                     comma-separated RADIO_ANT:AMP_PORT pairs.
+    //   PGXL_PairAttempt   bool   "True"  Gate for flexradioPair call after amplifierCreate.
+    //                                     Set to "False" to skip pairing (amp standalone).
+    //   PGXL_FlexAmpSlice  string "A"     Slice letter (A/B/C/D) passed to flexradioPair
+    //                                     and setBand.
+    //   PGXL_TxAnt         string "ANT1"  TX antenna name passed to flexradioPair.
+    //   PGXL_FlexRadioSerial string ""   (default: derived from MAC; format XXXX-XXXX-XXXX-XXXX)
+    //                                     Override when the auto-derived serial collides with
+    //                                     another NereusSDR installation on the same PGXL.
+    //   PGXL_BroadcastDiscovery string "True"       Toggle the 1 Hz UDP 4992 SmartSDR-format
+    //                                               discovery beacon. PGXL/TGXL listen for these
+    //                                               to populate their FlexRadio dropdown.
+    //   PGXL_BroadcastNickname  string "NereusSDR"  Nickname shown in PGXL UI.
+    //   PGXL_DiscoveryModel     string "FLEX-6400"  Model string in the SmartSDR discovery beacon;
+    //                                               must match a real Flex model for PGXL to
+    //                                               accept the broadcast and populate its dropdown.
+    //
+    // TGXL connection robustness (Phase 3P-II Phase 3, Task 60)
+    // Wire formats from design §4.2.1 + §6.4 (4O3A TGXL Ethernet API).
+    //   TGXL_KeepaliveSec   int     30    Cadence for keepalive status pokes.
+    //   TGXL_PingSec        int     10    Auto-ping interval (0 = disabled); wired in Task 67.
+    //   TGXL_AutoReconnect  bool   "True" Enable exponential-backoff auto-reconnect on drop.
+    //                                     Backoff sequence: 1/2/5/10/30/60 s (cap at 60 s).
+
+    // Phase 3P-II Phase 4 (Advanced UI + helpers)
+    //
+    // FaultLog ring buffer (Task 75). JSON arrays; newest entry first.
+    //   PGXL_FaultHistory   string  ""    Up to 10 FaultEvent JSON objects.
+    //   TGXL_FaultHistory   string  ""    Up to 10 FaultEvent JSON objects.
+    //   Each element: { "whenMs":<qint64>, "state":<str>,
+    //                   "fwdAtFaultW":<float>, "swrAtFault":<float>,
+    //                   "tempAtFaultC":<float>, "likelyCause":<str> }
+    //
+    // TuneMemoryStore per-(antenna,band) relay cache (Task 76).
+    //   TGXL_TuneMemory_Ant<N>_Band<M>  string  ""
+    //     One key per (antenna, band) pair. N is 1..3; M is Band::bandKeyName()
+    //     suffix (e.g. "20m", "160m", "GEN"). Value is a JSON object:
+    //     { "c1":<int>, "l":<int>, "c2":<int>, "savedAt":<qint64> }
+    //   TGXL_AutoTuneMemoryRecall  bool  "False"
+    //     When "True", SliceModel::bandChanged triggers auto-recall if a
+    //     memory slot exists for the new (antenna, band) combination.
+    //
+    // TgxlAdvancedPage identity + antenna labels (Task 85).
+    //   TGXL_Nickname   string  ""    Operator-assigned nickname for the TGXL device.
+    //   TGXL_Ant1_Label string  ""    User-defined label for ANT 1 (e.g. "80 m dipole").
+    //   TGXL_Ant2_Label string  ""    User-defined label for ANT 2 (e.g. "vertical").
+    //   TGXL_Ant3_Label string  ""    User-defined label for ANT 3 (e.g. "beverage").
+    //     Labels propagate to TunerApplet antenna buttons (Task 95).
+    //
+    // TxInterlockPolicy (Task 77).
+    //   PGXL_TxInterlockMode    string  "Disabled"  "Disabled" / "Warn" / "Block"
+    //   PGXL_TxInterlockGraceMs int     3000        Grace period (ms) after OPERATE-on
+    //                                               before SWR gate activates.
+    //   PGXL_TxSwrGate          bool    "False"     Gate TX when SWR exceeds swrGateMax.
+    //   PGXL_TxSwrGateMax       float   "3.0"       SWR limit for the gate (dimensionless).
+    //
+    // PGXL power-cap soft-alert (Task 97).
+    //   PGXL_PowerCapEnabled  string  "False"  Soft-alert only; TX is not blocked.
+    //   PGXL_PowerCapW        int     1500     Forward-power threshold (watts) for the
+    //                                          toast; de-bounced per exceedance event.
+
     void    setHardwareValue(const QString& mac, const QString& key, const QVariant& value);
     QVariant hardwareValue(const QString& mac, const QString& key,
                            const QVariant& defaultValue = QVariant()) const;

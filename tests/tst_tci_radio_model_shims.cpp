@@ -11,6 +11,7 @@
 // docs/architecture/2026-05-12-phase3j-1-loose-ends-plan.md Item 3.
 
 #include <QtTest/QtTest>
+#include "core/TciProtocol.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "core/WdspTypes.h"
@@ -84,6 +85,46 @@ private slots:
         QCOMPARE(slice->filterHigh(), 2800);
     }
 
+    // PR #279 review P4 (2026-05-22): RadioModel::setFilterBand must use
+    // the atomic SliceModel::setFilter(low, high) so filterChanged emits
+    // exactly once with the final pair.  The earlier split path called
+    // setFilterLow then setFilterHigh sequentially, emitting two
+    // filterChanged events: first (newLow, oldHigh) -- a stale combo --
+    // and then (newLow, newHigh).  TCI clients tracking the broadcast
+    // saw an intermediate rx_filter_band frame with the old high cutoff
+    // before the final value.  Fix in 9ae5f135 routed through the atomic
+    // setter; this test pins that behaviour.
+    void set_filter_band_emits_filter_changed_once() {
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        // Seed a known starting filter so the change is unambiguous.
+        slice->setFilter(100, 3000);
+        QCOMPARE(slice->filterLow(),  100);
+        QCOMPARE(slice->filterHigh(), 3000);
+
+        QSignalSpy spy(slice, &SliceModel::filterChanged);
+        QVERIFY(spy.isValid());
+
+        // Now invoke the TCI shim, which used to call setFilterLow then
+        // setFilterHigh (two emits, intermediate stale combo).  Atomic
+        // path emits exactly once.
+        QMetaObject::invokeMethod(&m, "setFilterBand",
+                                  Q_ARG(int, 0),
+                                  Q_ARG(int, 400),
+                                  Q_ARG(int, 2800));
+        QCOMPARE(spy.count(), 1);
+        QList<QVariant> args = spy.takeFirst();
+        QCOMPARE(args.size(), 2);
+        // Crucially: the SINGLE emit carries the FINAL low + FINAL high,
+        // not (newLow, oldHigh) which was the stale-intermediate bug.
+        QCOMPARE(args.at(0).toInt(), 400);
+        QCOMPARE(args.at(1).toInt(), 2800);
+
+        QCOMPARE(slice->filterLow(),  400);
+        QCOMPARE(slice->filterHigh(), 2800);
+    }
+
     void agc_mode_string_maps_to_enum() {
         RadioModel m;
         SliceModel* slice = setupOneSlice(m);
@@ -96,7 +137,70 @@ private slots:
         QMetaObject::invokeMethod(&m, "agcMode",
                                   Q_RETURN_ARG(QString, out),
                                   Q_ARG(int, 0));
+        // Note: RadioModel::agcMode() returns the upper-case enum-style
+        // token used internally; TciProtocol::tciAgcModeForWire() converts
+        // to the Thetis wire token at emit time (see prod_agc_mode_wire_
+        // token_thetis_faithful below).
         QCOMPARE(out, QStringLiteral("FAST"));
+    }
+
+    // PR #279 review P2 (2026-05-22): pin the wire-token conversion that
+    // bridges RadioModel's internal enum-style strings ("MED"/"FAST"/...)
+    // to Thetis's lowercase TCI wire tokens ("normal"/"fast"/...).
+    // Without this conversion the init burst emitted frames like
+    // "agc_mode:0,MED;" instead of "agc_mode:0,normal;", which real
+    // clients reject.  Mirrors Thetis agcModeToTciMode at TCIServer.cs:
+    // 2260-2279 [v2.10.3.15].
+    void prod_agc_mode_wire_token_thetis_faithful() {
+        // Direct enum -> wire mapping.
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("OFF")),
+                 QStringLiteral("off"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("LONG")),
+                 QStringLiteral("long"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("SLOW")),
+                 QStringLiteral("slow"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("FAST")),
+                 QStringLiteral("fast"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("CUSTOM")),
+                 QStringLiteral("custom"));
+        // MED -> normal special mapping (the bug reported in review P2).
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("MED")),
+                 QStringLiteral("normal"));
+
+        // Synonyms that tciModeToAgcMode normalises (TCIServer.cs:2280-
+        // 2303 [v2.10.3.15]) -- round-trip safety so a client that sent
+        // "medium" or "fixed" sees the canonical token come back.
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("MEDIUM")),
+                 QStringLiteral("normal"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("NORMAL")),
+                 QStringLiteral("normal"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("FIXD")),
+                 QStringLiteral("off"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("FIXED")),
+                 QStringLiteral("off"));
+
+        // Defensive default: unknown enum strings fall to "normal", same
+        // as Thetis's default branch.  Catches any future enum addition
+        // that forgets to extend the helper.
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("BOGUS")),
+                 QStringLiteral("normal"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QString()),
+                 QStringLiteral("normal"));
+
+        // Production-shaped end-to-end: SliceModel enum -> RadioModel
+        // shim -> wire helper.  Locks in the integration that the init
+        // burst exercises on real-client connect.
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        slice->setAgcMode(AGCMode::Med);
+        QString modeStr;
+        QMetaObject::invokeMethod(&m, "agcMode",
+                                  Q_RETURN_ARG(QString, modeStr),
+                                  Q_ARG(int, 0));
+        QCOMPARE(modeStr, QStringLiteral("MED"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(modeStr),
+                 QStringLiteral("normal"));
     }
 
     void agc_gain_routes_to_threshold() {
@@ -176,29 +280,77 @@ private slots:
     }
 
     void af_linear_and_mon_linear_roundtrip() {
-        // Review P1 #1 fix (PR #278, 2026-05-22): the AF/MON shims now forward
-        // to live AudioEngine / TransmitModel state so a real TCI client write
-        // actually affects radio audio (parity with Thetis handleVolume /
-        // handleMONVolume).  Both forwarders clamp to the documented TCI
-        // linear-volume spec of [0..100] (mock shim doc-comment at
-        // TestMockRadioModel.h:406-410); values outside the range silently
-        // saturate.  The earlier 16384 / 8192 test arguments were leftovers
-        // from when the shims were decoupled no-op caches; they are not
-        // representative of the wire spec and would saturate to 100 / 100.
-        // Use 50 / 25 for the round-trip -- valid values that exercise both
-        // a mid-scale and a low-end conversion through the float [0..1]
-        // boundary in AudioEngine / TransmitModel.
+        // Thetis TCI volume range is 0..100 linear (NOT 0..32767).  From
+        // TCIServer.cs:4273-4294 [v2.10.3.15] linearToDbVolume /
+        // dbToLinearVolume:
+        //   double dbMin = -60f;  double dbMax = 0;
+        //   double linearMax = 100f;  double linearMin = 0;
+        // The TciProtocol parser (src/core/TciProtocol.cpp:2769-2789)
+        // converts the wire-format dB value to 0..100 linear via
+        // tciDbToLinearVolume BEFORE calling setAfLinear, so values
+        // arriving at this shim are always in 0..100.
+        //
+        // Earlier versions of this test (c78ac725, May 13) sent 16384 / 8192
+        // because the AF/MON shims were decoupled no-op caches.  PR #278
+        // review P1 #1 fix (9ae5f135) rewired the shims to forward to live
+        // AudioEngine::setVolume / TransmitModel::setMonitorVolume so a
+        // real TCI client write actually affects radio audio (parity with
+        // Thetis handleVolume / handleMONVolume).  Both forwarders clamp
+        // to [0..100], so the legacy 16384 / 8192 args saturate to 100 / 100
+        // and the original test fails.
+        //
+        // PR #279 (this commit's history) restored the test by:
+        //  - merging JJ's main-branch 38c54e51 fix that swapped the args
+        //    to in-spec 50 / 25,
+        //  - and extending coverage to also exercise the boundary (100)
+        //    and the out-of-range clamp branches (16384 -> 100, -50 -> 0)
+        //    so the clamp semantic itself is locked.
         RadioModel m;
-        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 50));
         int out = 0;
+
+        // In-range round-trip (50 = -30 dB equivalent, mid-slider).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 50));
         QMetaObject::invokeMethod(&m, "afLinear",
                                   Q_RETURN_ARG(int, out));
         QCOMPARE(out, 50);
 
+        // Boundary round-trip (full volume).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 100));
+        QMetaObject::invokeMethod(&m, "afLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 100);
+
+        // Out-of-range positive clamps to 100 (matches Thetis
+        // dbToLinearVolume Math.Min(linearMax, ...)).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 16384));
+        QMetaObject::invokeMethod(&m, "afLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 100);
+
+        // Out-of-range negative clamps to 0 (matches Thetis
+        // dbToLinearVolume Math.Max(linearMin, ...)).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, -50));
+        QMetaObject::invokeMethod(&m, "afLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 0);
+
+        // MON volume: same range + clamp semantics (TXAF mirrors AF).
+        // 25 is JJ's low-end main-branch value (38c54e51) preserved here.
         QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 25));
         QMetaObject::invokeMethod(&m, "monLinear",
                                   Q_RETURN_ARG(int, out));
         QCOMPARE(out, 25);
+
+        // MON in-range mid (75) + out-of-range clamp (8192 -> 100).
+        QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 75));
+        QMetaObject::invokeMethod(&m, "monLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 75);
+
+        QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 8192));
+        QMetaObject::invokeMethod(&m, "monLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 100);
     }
 
     void iq_sample_rate_roundtrips() {
@@ -225,6 +377,74 @@ private slots:
         QCOMPARE(sr, 24000);
         QCOMPARE(samples, 1024);
         QCOMPARE(channels, 1);
+    }
+
+    // PR #279 review P1 (2026-05-22): real-client connect was receiving
+    // muted volume / iq_samplerate:0 / non-canonical sample type because
+    // the prod RadioModel m_tciAfLinear / m_tciMonLinear / m_tciIqSampleRate
+    // / m_tciAudioStreamSampleType defaults didn't match the mock golden
+    // capture (0/0/0/"Float32" vs 50/50/192000/"float32").  CI passed on
+    // the mock but the bench bug only showed up on real clients.  This
+    // test exercises the production RadioModel pre-connect to lock in
+    // Thetis-faithful defaults.
+    void prod_init_burst_defaults_match_thetis_wire_expectations() {
+        // Fresh RadioModel, no connection, no slice setup.  This is the
+        // exact state TciProtocol::buildInitialRadioStateLines sees the
+        // first time a real client connects before any user state has
+        // been touched.
+        RadioModel m;
+
+        // AF volume range: 0..100 (Thetis TCIServer.cs:4273-4294
+        // [v2.10.3.15] linearMin/linearMax). AudioEngine m_masterVolume
+        // defaults to 0.5f -> 50 linear, so afLinear() returns 50 in
+        // practice.  Asserting > 0 catches any regression that drops
+        // the AudioEngine fallback and returns the m_tciAfLinear stub.
+        int afLin = -1;
+        QMetaObject::invokeMethod(&m, "afLinear", Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, afLin));
+        QVERIFY2(afLin > 0 && afLin <= 100,
+            qPrintable(QString("afLinear=%1, expected (0,100]; "
+                "0 emits muted volume:-60.0; on first connect")
+                .arg(afLin)));
+
+        // MON volume range identical (Thetis TXAF mirrors AF).
+        // TransmitModel m_monitorVolume defaults to 0.5f -> 50 linear.
+        int monLin = -1;
+        QMetaObject::invokeMethod(&m, "monLinear", Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, monLin));
+        QVERIFY2(monLin > 0 && monLin <= 100,
+            qPrintable(QString("monLinear=%1, expected (0,100]; "
+                "0 emits muted mon_volume:-60.0; on first connect")
+                .arg(monLin)));
+
+        // audioStreamSampleType wire format is lowercase per Thetis
+        // (TCIServer.cs audio_stream sample-type tokens float32/int16/
+        // int24/int32 are all lower-case in golden captures).  The
+        // mock-driven init-burst tests pass an already-normalized
+        // lowercase string; this assertion guarantees prod RadioModel
+        // ships the same casing so real clients get the canonical
+        // token on first connect.
+        QString sampleType;
+        QMetaObject::invokeMethod(&m, "audioStreamSampleType",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(QString, sampleType));
+        QVERIFY2(!sampleType.isEmpty(),
+            "audioStreamSampleType empty on fresh RadioModel");
+        QCOMPARE(sampleType, sampleType.toLower());
+
+        // iqSampleRate: prefers the live connection rate, falls back to
+        // m_tciIqSampleRate.  Pre-connect (no connection wired) it
+        // returns the m_tciIqSampleRate stub.  192000 is the canonical
+        // HPSDR P2 default (matches SampleRateCatalog::kDefaultSampleRate
+        // and the mock golden capture).  0 would emit iq_samplerate:0;
+        // which real clients reject.
+        int iqRate = -1;
+        QMetaObject::invokeMethod(&m, "iqSampleRate", Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, iqRate));
+        QVERIFY2(iqRate > 0,
+            qPrintable(QString("iqSampleRate=%1, expected > 0; "
+                "0 emits iq_samplerate:0; which real TCI clients reject")
+                .arg(iqRate)));
     }
 
     void stub_dsp_toggles_roundtrip() {

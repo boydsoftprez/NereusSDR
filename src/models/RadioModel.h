@@ -68,6 +68,12 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "core/ConnectionState.h"
+#include "core/PgxlConnection.h"
+#include "core/TgxlConnection.h"
+#include "core/FaultLog.h"
+#include "core/TxInterlockPolicy.h"
+#include "core/TuneMemoryStore.h"
+#include "models/TunerModel.h"
 #include "Band.h"
 #include "BandPlanManager.h"
 #include "SliceModel.h"
@@ -98,6 +104,8 @@
 #include <QString>
 #include <QList>
 #include <QThread>
+
+#include <limits>   // 2026-05-22 NaN sentinel for m_lastEmittedRxMeterOffsetDb
 
 // 3M-1a G.1: TxMicRouter is a plain (non-QObject) strategy interface.
 // Include required directly so unique_ptr destructor is available here.
@@ -481,6 +489,55 @@ public:
     // Wired by 3M-1a Task G.1 (bench fix: TUNE carrier now reaches the radio).
     TxChannel* txChannel() const { return m_txChannel; }
 
+    // Phase 3P-II: PGXL / TGXL / Tuner accessors.
+    // PgxlConnection and TgxlConnection are QObject children of RadioModel
+    // (constructed once in the ctor with parent=this). TunerModel is likewise
+    // a QObject child that binds its connection once in the ctor.
+    // All three accessors return non-null pointers from construction time.
+    PgxlConnection* pgxlConnection() { return m_pgxlConnection; }
+    TgxlConnection* tgxlConnection() { return m_tgxlConnection; }
+    TunerModel*     tunerModel()     { return m_tunerModel;     }
+    // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
+    // Used by MainWindow to push slice/transmit state so PGXL/TGXL pull the
+    // current band/freq via the SmartSDR API rather than from a stale cache.
+    class SmartSdrApiListener* smartSdrListener() { return m_smartSdrListener; }
+
+    // Live toggle for the 4O3A master switch (Settings -> CAT & Network ->
+    // 4O3A -> General tab).  Starts or stops the TCP 4992 listener
+    // without requiring an app restart.  Persisted automatically via
+    // AppSettings key "FourO3A_Enabled".  Default OFF on first run.
+    //
+    // When false: TCP 4992 not bound, PGXL/TGXL auto-connect skipped,
+    // and the detail tabs (PowerGenius XL / Tuner Genius XL / Diagnostics)
+    // are disabled in the Setup UI.
+    //
+    // When true: listener starts (if not already running), AppSettings
+    // persisted, FourO3APage updates its enabled state.
+    void setFourO3AEnabled(bool enabled);
+    bool fourO3AEnabled() const;
+    bool hasAmplifier() const { return m_hasAmplifier; }
+    bool ampOperate()  const  { return m_ampOperate; }
+
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Constructed once in the ctor (Qt parent-ownership). Non-null from
+    // construction time. Shared with PgxlInterlockPage (non-owning read/write)
+    // and MoxController (non-owning gate via setInterlockPolicy).
+    TxInterlockPolicy* txInterlockPolicy() { return m_txInterlockPolicy; }
+
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared per-(antenna,band)
+    // TGXL relay position cache. Constructed once in the ctor (Qt parent-ownership).
+    // Non-null from construction time. Shared by TgxlAdvancedPage (non-owning
+    // view/edit) and TunerApplet (non-owning save/recall from context menu).
+    TuneMemoryStore* tuneMemoryStore() { return m_tuneMemoryStore; }
+
+    // Phase 3P-II Phase 4 Task 94: FaultLog -- shared PGXL / TGXL fault ring buffers.
+    // Constructed once in the ctor (Qt parent-ownership). Non-null from construction
+    // time. RadioModel captures PGXL FAULT state transitions into m_pgxlFaultLog.
+    // Shared (non-owning) with PgxlAdvancedPage and TgxlAdvancedPage so their
+    // Fault History tables reflect live captures.
+    FaultLog* pgxlFaultLog() { return m_pgxlFaultLog; }
+    FaultLog* tgxlFaultLog() { return m_tgxlFaultLog; }
+
     // Phase 3G-9b: one-shot profile that sets the 7 smooth-default recipe
     // values on SpectrumWidget. Called from the constructor exactly once
     // on first launch (gated by AppSettings key "DisplayProfileApplied").
@@ -503,6 +560,44 @@ public:
     // Phase 3P-A Task 15: exposes caps so RxApplet can set slider range at
     // construction time, not only after a connection is established.
     const BoardCapabilities& boardCapabilities() const;
+
+    // ── RX meter calibration offset (Thetis-faithful port) ────────────────
+    //
+    // Returns the cumulative dB offset applied to WDSP S-meter readings
+    // (RXA_S_PK, RXA_S_AV) and MaxBin readings before display.  Without
+    // this offset, raw WDSP meter values are in ADC dBFS rather than
+    // antenna dBm.
+    //
+    // Ported from Thetis console.cs:21040 [v2.10.3.13]:
+    //   public float RXOffset(int rx) {
+    //       return RXPreampOffset(rx) + RXCalibrationOffset(rx);
+    //   }
+    //
+    // RXPreampOffset (console.cs:20989) selects between attenuator_data
+    // (when step-att enabled) and preamp_offset[mode] (when disabled).
+    //
+    // RXCalibrationOffset (console.cs:21022) sums per-radio meter cal +
+    // XVTR + 6m offsets.  NereusSDR currently applies only the per-radio
+    // meter cal (defaults from rxMeterCalOffsetDefaultFor() and the user
+    // override AppSettings key RX1_MeterCalOffsetDb); XVTR/6m offsets
+    // ride a future XVTR/transverter epic.
+    //
+    // Consumed by MeterPoller::pollSMeter and MeterPoller::poll for the
+    // SignalPeak / SignalAvg / SIGNAL_MAX_BIN bindings only; matches
+    // Thetis console.cs:46824 + :46881 [v2.10.3.13] where +offset is
+    // applied to those exact reading types.  ADC_PK / ADC_AV / AGC_PK /
+    // AGC_AV / AGC_GAIN do NOT take the offset (Thetis line 46831-46835
+    // omit +offset for the same reason).
+    double rxMeterOffsetDb() const;
+
+signals:
+    // Emitted when rxMeterOffsetDb() changes (model swap, preamp change,
+    // step-att enable/disable, attenuator dB change, or AppSettings
+    // RX1_MeterCalOffsetDb override).  MeterPoller connects this to
+    // refresh its cached offset value.
+    void rxMeterOffsetChanged(double db);
+
+public:
 
     bool isConnected() const;
 
@@ -705,12 +800,6 @@ public:
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
-    // TUN state, exported for H.3 UI polling and for issue #177 tests.
-    // True between setTune(true) and the completion of the corresponding
-    // setTune(false) → completeTuneOff() chain.
-    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
-    // many UI/meter/PA paths in console.cs).
-    bool isTune() const noexcept { return m_isTuning; }
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
     // group box in AudioTxInputPage without a live radio connection.
     // Does not reset other test-cap flags — independent of hasMicJack.
@@ -828,6 +917,19 @@ public:
     }
 #endif
 
+    // TUN state, exported for H.3 UI polling and for issue #177 tests.
+    // True between setTune(true) and the completion of the corresponding
+    // setTune(false) → completeTuneOff() chain.
+    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
+    // many UI/meter/PA paths in console.cs).
+    //
+    // Lives OUTSIDE the NEREUS_BUILD_TESTS block because production code
+    // (TunerApplet::onTuneClicked at TunerApplet.cpp:183) uses it to gate
+    // local-tune carrier engage on hardware-TUNE entry.  Prior placement
+    // inside the test block compiled green on Linux (-DNEREUS_BUILD_TESTS=ON
+    // in CI) but broke macOS / Windows where the option defaults OFF.
+    bool isTune() const noexcept { return m_isTuning; }
+
     // Connection
     void connectToRadio(const RadioInfo& info);
     void disconnectFromRadio();
@@ -924,6 +1026,33 @@ public slots:
     //
     // Cite: Thetis console.cs:29978-30157 [v2.10.3.13] — chkTUN_CheckedChanged.
     void setTune(bool on);
+
+    // TGXL autotune orchestration (NereusSDR-native, no Thetis source).
+    //
+    // Bench-driven on 2026-05-20: TGXL refuses to run its relay sweep when
+    // PGXL is in OPERATE -- the amp is amplifying the radio's tune carrier
+    // and TGXL can't calibrate against an amplified signal. The operator
+    // workflow with real FlexRadio is: put PGXL in STANDBY, run TGXL
+    // autotune at radio tunepower (~10-25 W), then re-arm PGXL to OPERATE.
+    //
+    // This method orchestrates that sequence:
+    //   1. Save current PGXL operate-state (m_pgxlSavedOperate)
+    //   2. Send `operate=0` to PGXL if it was operating
+    //   3. Engage local CW tune carrier via setTune(true). Thetis-faithful
+    //      `chkTUN_CheckedChanged` already swaps rfpower -> tunepower for
+    //      the cycle (console.cs:30075 [v2.10.3.13]).
+    //   4. After 200 ms settle, send `autotune` to TGXL on :9010 (unless
+    //      fromHardware=true, in which case TGXL is already running its
+    //      own internal cycle and we only need to provide the carrier).
+    //   5. Wait for TGXL tuning=0 -> drop carrier (handled by the
+    //      TunerApplet tuningChanged path that calls setTune(false)).
+    //   6. On carrier drop, if m_pgxlSavedOperate was true, send
+    //      `operate=1` to restore PGXL.
+    //
+    // fromHardware: true when the cycle was initiated by a TGXL hardware
+    // TUNE button (we received `transmit tune on` via LAN PTT). Skips
+    // step 4 because TGXL is already running its own sweep internally.
+    void startTgxlAutotune(bool fromHardware);
 
     // ── Phase 3J-1 follow-up: TCI Q_INVOKABLE shims (bench wire-up) ──────────
     //
@@ -1409,6 +1538,17 @@ signals:
     // only on actual offset change.
     void radeFreqOffsetChanged(int sliceId, float hz);
 
+    // Phase 3P-II: PGXL amplifier presence / state / meter signals.
+    // amplifierChanged: fires once on the first statusUpdated from PgxlConnection
+    //   (m_hasAmplifier transitions false -> true). present=true only.
+    // ampStateChanged: fires whenever m_ampOperate changes (OPERATE-family vs not).
+    // ampMetersChanged: fires on each statusUpdated that carries peakfwd + swr keys.
+    //   fwd is forward power in watts (dBm input converted: watts = 10^(dbm/10)/1000).
+    //   swr is the SWR ratio (return-loss dB input: ratio = 10^(-rl/20), clamped >= 1.0).
+    void amplifierChanged(bool present);
+    void ampStateChanged();
+    void ampMetersChanged(float fwd, float swr);
+
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
 
@@ -1463,6 +1603,27 @@ private slots:
     void onFreeDvReporterSpotReceived(const NereusSDR::DxSpot& spot);
     void onPskReporterSpotReceived(const NereusSDR::DxSpot& spot);
 
+    // Phase 3P-II Task 19: PGXL status update handler.
+    // Called on every statusUpdated from PgxlConnection. On first call sets
+    // m_hasAmplifier and emits amplifierChanged(true). Parses the "state" key
+    // to update m_ampOperate and emits ampStateChanged() on transition. Parses
+    // "peakfwd" (dBm) and "swr" (return-loss dB) and emits ampMetersChanged.
+    void onPgxlStatus(const QMap<QString, QString>& kvs);
+
+    // Phase 3P-II Task 62: runs the amplifierCreate + flexradioPair +
+    // enableKeepalive sequence once PgxlConnection reports connected.
+    // Reads PGXL_PairAttempt / PGXL_FlexAmpSlice / PGXL_TxAnt / PGXL_AntMap
+    // from AppSettings. Serial is "NereusSDR-<macAddress>".
+    void onPgxlConnected();
+
+    // Phase 3P-II Phase 4 Task 96: auto-recall TGXL tune memory when the
+    // active slice crosses a band boundary.  Connected to
+    // SliceModel::bandChanged from addSlice().  Fires only when
+    // TGXL_AutoTuneMemoryRecall == "True" and a stored entry exists for
+    // (activeAntenna, newBand).  Falls back to issuing "tune start" per
+    // design bench-caveat (absolute relay-write API not yet confirmed).
+    void onSliceBandChanged(NereusSDR::Band band);
+
 private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
     // Guards against redundant transitions (no emit if state unchanged).
@@ -1495,6 +1656,14 @@ private:
     void wireConnectionSignals(int wdspInSize);
     void wireSliceSignals();
     void teardownConnection();
+
+    // Derives the 16-digit dashed FlexRadio-style serial number from the
+    // radio's MAC address. SHA-256(mac + salt) -> first 8 bytes -> uint64 ->
+    // mod 10^16 -> "XXXX-XXXX-XXXX-XXXX". Used by both onPgxlConnected() and
+    // connectToRadio() (FlexRadio discovery beacon) so the serial matches in
+    // both contexts. If PGXL_FlexRadioSerial is set in AppSettings, returns
+    // that override instead of the derived value.
+    QString derivedFlexSerial(const QString& mac) const;
 
     // Issue #182 — wire TransmitModel::micPttDisabledChanged →
     // RadioConnection::setMicPTTDisabled and prime the connection with the
@@ -1700,6 +1869,14 @@ private:
     class ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
 
+    // 2026-05-22 spectrum-calibration fix: cache of the last rxMeterOffsetDb
+    // value we emitted via rxMeterOffsetChanged. NaN sentinel forces the
+    // first call to compare unequal so subscribers always get the initial
+    // value (matches the MoxController NaN-sentinel pattern). Updated only
+    // by setStepAttController's recompute lambda; rxMeterOffsetDb itself
+    // stays const and recomputes on every call.
+    mutable double m_lastEmittedRxMeterOffsetDb{std::numeric_limits<double>::quiet_NaN()};
+
     // Radio info
     QString m_name;
     QString m_model;
@@ -1886,15 +2063,33 @@ private:
     // setter clamps the index so an out-of-range slice silently no-ops.
     static constexpr int kTciStubSliceMax = 4;
     bool        m_tciGlobalMute{false};
-    int         m_tciAfLinear{0};
-    int         m_tciMonLinear{0};
-    int         m_tciIqSampleRate{0};
+    // AF / MON volume fallback defaults match the live-source defaults
+    // they back-fill (AudioEngine::m_masterVolume{0.5f} and
+    // TransmitModel::m_monitorVolume{0.5f} both = 50 linear).  Live
+    // sources are non-null on a constructed RadioModel, so these stubs
+    // are only read in degenerate test paths -- but using 50 instead of
+    // 0 means a future change that drops the live-source guard won't
+    // silently emit `volume:-60.0;` (full mute) on first client connect.
+    // PR #279 review P1 (2026-05-22).
+    int         m_tciAfLinear{50};
+    int         m_tciMonLinear{50};
+    // iqSampleRate fallback: prefers live connectionSampleRateHz(); this
+    // stub is only read pre-connect.  Use the canonical HPSDR P2 baseline
+    // (192 kHz, matches SampleRateCatalog::kDefaultSampleRate) so first
+    // client connect doesn't see iq_samplerate:0; which real TCI clients
+    // reject.  PR #279 review P1 (2026-05-22).
+    int         m_tciIqSampleRate{192000};
     // Audio-stream config: per-client semantics live in TciClientSession;
     // these mirror "last value any client sent" for matrix-test parity.
     int         m_tciAudioSampleRate{48000};
     int         m_tciAudioStreamChannels{2};
     int         m_tciAudioStreamSamples{2048};
-    QString     m_tciAudioStreamSampleType{QStringLiteral("Float32")};
+    // audioStreamSampleType: Thetis TCI wire-format tokens (audio_stream
+    // sample-type field) are all lower-case in golden captures
+    // ("float32" / "int16" / "int24" / "int32").  Default "Float32"
+    // (capital F) made the first-connect frame non-canonical.
+    // PR #279 review P1 (2026-05-22).
+    QString     m_tciAudioStreamSampleType{QStringLiteral("float32")};
     // Per-slice DSP toggle stubs (set-and-read only; not wired to WDSP).
     std::array<bool, kTciStubSliceMax> m_tciStubRxBin{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxApf{};
@@ -2135,6 +2330,119 @@ private:
     quint64  m_freedvPendingHz{0};
     static constexpr int     kFreedvFreqDwellMs = 7000;
     static constexpr quint64 kFreedvFreqJumpHz  = 100'000;
+
+    // Phase 3P-II Task 19: PGXL / TGXL / Tuner ownership.
+    // All three are QObject children of RadioModel (parent=this, constructed
+    // once in the ctor). Raw pointer pattern follows m_moxController et al.
+    PgxlConnection* m_pgxlConnection{nullptr};
+    TgxlConnection* m_tgxlConnection{nullptr};
+    TunerModel*     m_tunerModel{nullptr};
+
+    // Amplifier presence and operate-state cache (driven by onPgxlStatus).
+    bool m_hasAmplifier{false};
+    bool m_ampOperate{false};
+
+    // TGXL autotune orchestration state (NereusSDR-native).
+    // Event-driven flow (mirrors the FlexAPI interlock handshake pattern):
+    //   1. startTgxlAutotune() snapshots PGXL state into m_pgxlSavedOperate
+    //      and sets m_tgxlAutotuneInProgress + m_pgxlStandbyPending
+    //   2. Send `operate=0` to PGXL (if it was operating)
+    //   3. Wait for ampStateChanged(false) confirmation (PGXL transitioned
+    //      to STANDBY), then call continueTgxlAutotuneAfterStandby()
+    //   4. Engage local TUN carrier; set m_awaitingInterlockForAutotune
+    //   5. Wait for interlockGranted from SmartSdrApiListener (TGXL has
+    //      now received S0|interlock state=TRANSMITTING and knows PTT is
+    //      live), then send `autotune` to TGXL on :9010
+    //   6. On tuningChanged(false) -> drop carrier -> manualMoxChanged(false)
+    //      -> restore PGXL to m_pgxlSavedOperate state
+    //
+    // m_tgxlAutotuneFromHardware: true if TGXL initiated (LAN PTT). Skips
+    //   the `autotune` cmd because TGXL is already sweeping. We also skip
+    //   the interlockGranted wait in that case.
+    // m_awaitingInterlockForAutotune: true between continueTgxlAutotune-
+    //   AfterStandby and the interlockGranted handler. Gates the autotune
+    //   command on TRANSMITTING actually being broadcast so TGXL sees PTT
+    //   before it gets the sweep command (previously a 200 ms fixed timer
+    //   raced the interlock chain and caused first-press "no PTT in"
+    //   aborts on cold caches).
+    // 1500 ms failsafe in case PGXL never confirms standby (e.g. amp
+    //   disconnected / unresponsive) -- proceed anyway and log a warning.
+    // 1500 ms failsafe also on the interlockGranted wait, for the same
+    //   degraded-amp case (e.g. amp disconnected mid-cycle before ACK).
+    bool m_pgxlSavedOperate{false};
+    bool m_tgxlAutotuneInProgress{false};
+    bool m_pgxlStandbyPending{false};
+    bool m_tgxlAutotuneFromHardware{false};
+    bool m_awaitingInterlockForAutotune{false};
+    void continueTgxlAutotuneAfterStandby();
+    void sendTgxlAutotuneCmd();
+
+    // RF-flow gate state (NereusSDR-native, deck item #3).
+    //
+    // When MoxController::txReady fires (rfDelay elapsed, radio ready to
+    // TX), we normally call TxChannel::setRunning(true) which causes the
+    // audio pump to start feeding samples to the radio. With an external
+    // amp like PGXL in the chain, this is too early: PGXL needs to ACK
+    // PTT_REQUESTED and switch its relays from bypass to amp path BEFORE
+    // the carrier arrives, or it sees ~250 ms of carrier through bypass
+    // into a (possibly unmatched) antenna and intermittently trips its
+    // own SWR protection.
+    //
+    // The fix: defer setRunning(true) until interlockGranted fires
+    // (TRANSMITTING was just broadcast to all amps; PGXL has ACKed or
+    // the 500 ms lenient grant has fired). The lambda in the ctor reads
+    // this flag and calls setRunning(true) when the grant arrives.
+    //
+    // 1500 ms failsafe (same budget as the autotune gate): if interlock-
+    // Granted doesn't fire, start the audio anyway so the operator isn't
+    // stuck with a silent TX.
+    bool m_awaitingInterlockForTx{false};
+    // RF-flow gate two-condition tracker (deck item #3, ordering fix
+    // 2026-05-20 21:19): TxChannel::setRunning(true) needs BOTH
+    //   (a) MoxController::txReady fired (radio is in TX mode), and
+    //   (b) SmartSdrApiListener::interlockGranted fired (amp in
+    //       TRANSMITTING state, relays switched to amp path).
+    // Whichever signal fires SECOND triggers setRunning. We track each
+    // independently because Qt event-queue ordering can race; we cannot
+    // rely on one always firing before the other when amp ACK is fast.
+    // m_txReadyReceived is set in the txReady wire, cleared on TX-off
+    // (moxStateChanged(false)). m_awaitingInterlockForTx is set in the
+    // txAboutToBegin wire (BEFORE PTT_REQUESTED is sent so the gate is
+    // armed before any interlockGranted can fire) and cleared by the
+    // grant handler.
+    bool m_txReadyReceived{false};
+
+    // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
+    // Qt parent-ownership (parent=this); non-null from construction time.
+    TxInterlockPolicy* m_txInterlockPolicy{nullptr};
+
+    // Phase 3P-II Phase 4 Task 89: TuneMemoryStore -- shared per-(antenna,band)
+    // TGXL relay position cache. Qt parent-ownership (parent=this); non-null from
+    // construction time. Shared (non-owning) with TgxlAdvancedPage and TunerApplet.
+    TuneMemoryStore* m_tuneMemoryStore{nullptr};
+
+    // Phase 3P-II Phase 4 Task 94: FaultLog ring buffers for PGXL and TGXL.
+    // Qt parent-ownership (parent=this); non-null from construction time.
+    // Shared (non-owning) with PgxlAdvancedPage and TgxlAdvancedPage.
+    FaultLog* m_pgxlFaultLog{nullptr};
+    FaultLog* m_tgxlFaultLog{nullptr};
+
+    // Phase 3P-II Phase 4 Task 94: last known PGXL state string.
+    // Tracks "previous state" so we capture only on FAULT *transitions*
+    // (not on every repeated FAULT status push).
+    QString m_lastPgxlState;
+
+    // FlexRadio UDP 4992 discovery beacon. Owned by RadioModel (Qt parent=this).
+    // Constructed once in the ctor; configured and started in connectToRadio()
+    // once m_lastRadioInfo.macAddress is known; stopped in teardownConnection().
+    // Allows PGXL/TGXL to auto-discover NereusSDR in their FlexRadio dropdown
+    // without any manual IP entry.
+    class FlexRadioDiscoveryBroadcaster* m_flexBroadcaster{nullptr};
+
+    // Passive SmartSDR API listener on TCP 4992. Bench-recon stub: logs every
+    // line PGXL sends so we can design the response layer in a follow-up.
+    // Phase 3P-II follow-up: replace with a full SmartSDR API server.
+    class SmartSdrApiListener* m_smartSdrListener{nullptr};
 };
 
 } // namespace NereusSDR

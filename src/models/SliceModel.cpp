@@ -204,6 +204,15 @@ void SliceModel::setFrequency(double freq)
     if (!qFuzzyCompare(m_frequency, freq)) {
         m_frequency = freq;
         emit frequencyChanged(freq);
+
+        // Phase 3P-II Task 64: emit bandChanged on band boundary cross.
+        // Uses Band::bandFromFrequency (IARU Region 2, GEN fallback).
+        // Guarded so the signal fires at most once per distinct Band change.
+        Band newBand = bandFromFrequency(freq);
+        if (newBand != m_currentBand) {
+            m_currentBand = newBand;
+            emit bandChanged(newBand);
+        }
     }
 }
 

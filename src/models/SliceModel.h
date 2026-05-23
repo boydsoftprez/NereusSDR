@@ -710,6 +710,10 @@ public slots:
 
 signals:
     void frequencyChanged(double freq);
+    // Phase 3P-II Task 64: emitted when frequency crosses a ham-band boundary.
+    // Uses Band::bandFromFrequency(freq) to detect crossings; emits once per
+    // distinct Band change. Consumed by MainWindow to notify PgxlConnection.
+    void bandChanged(NereusSDR::Band newBand);
     void dspModeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
     void agcModeChanged(NereusSDR::AGCMode mode);
@@ -818,6 +822,7 @@ private:
     QString radeModelPath() const;
 
     double  m_frequency{14225000.0};     // Default: 14.225 MHz (20m USB)
+    Band    m_currentBand{Band::Band20m}; // Phase 3P-II Task 64: tracks last emitted band
     DSPMode m_dspMode{DSPMode::USB};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};

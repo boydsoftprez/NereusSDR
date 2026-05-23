@@ -71,6 +71,12 @@ private slots:
     // RED #19 -- distinct mock state must produce distinct init-burst output
     // (catches any future re-introduction of hardcoded placeholders).
     void distinct_state_yields_distinct_burst();
+
+    // RED #20 (PR #279 review P3, 2026-05-22) -- enqueueLocalBroadcastVfo
+    // must read rx2Enabled live (not hard-code false) so a tx_frequency_
+    // thetis frame emitted after a VFO tune does not flip RX2 from
+    // true (init) to false (live) between the two frames.
+    void live_vfo_broadcast_reads_rx2_enabled_live();
 };
 
 void TestTciInitBurstLiveState::pinAppSettingsToCaptureConditions()
@@ -590,6 +596,80 @@ void TestTciInitBurstLiveState::distinct_state_yields_distinct_burst()
     QVERIFY(burstB.contains(QStringLiteral("modulation:0,CWU;")));
     QVERIFY(burstA.contains(QStringLiteral("agc_gain:0,40;")));
     QVERIFY(burstB.contains(QStringLiteral("agc_gain:0,80;")));
+}
+
+// PR #279 review P3 (2026-05-22): enqueueLocalBroadcastVfo previously
+// hard-coded ,false,false in the tx_frequency_thetis live frame for
+// every VFO move.  Init burst read the real rx2Enabled, so after the
+// first VFO tune, real TCI clients saw RX2 flip from true (init) to
+// false (live) inside the same connection.  Fix in 9ae5f135: read
+// rx2Enabled via QMetaObject::invokeMethod, same shim the init burst
+// uses.  This test pins the live broadcast path.
+void TestTciInitBurstLiveState::live_vfo_broadcast_reads_rx2_enabled_live()
+{
+    pinAppSettingsToCaptureConditions();
+
+    // RX2 enabled: live VFO frame must carry rx2en=true.
+    {
+        TestMockRadioModel mock;
+        mock.setRx2Enabled(true);
+        TciProtocol p(&mock);
+
+        // Trigger the live broadcast path (rotary tune simulated).
+        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/14250000LL);
+
+        // Drain the coalescer into the pending-notifications queue so
+        // we can inspect emitted frames.
+        p.drainCoalescedNotifications();
+
+        QStringList frames;
+        while (p.hasPendingNotification()) {
+            frames << p.takePendingNotification();
+        }
+
+        // tx_frequency_thetis format from sendTXFrequencyChanged
+        // (TCIServer.cs:2249-2254 [v2.10.3.15]):
+        //   tx_frequency_thetis:<hz>,<band>,<rx2en>,<txvfob>;
+        // Expect rx2en=true for this case.  VFOBTX stays false until
+        // 3F multi-pan lands the full TXFreq logic.
+        bool found = false;
+        for (const QString& f : frames) {
+            if (f.startsWith(QStringLiteral("tx_frequency_thetis:"))) {
+                QVERIFY2(f.contains(QStringLiteral(",true,false;")),
+                    qPrintable(QString("rx2_enabled=true must produce "
+                        "rx2en=true in live frame; got: %1").arg(f)));
+                found = true;
+                break;
+            }
+        }
+        QVERIFY2(found, "no tx_frequency_thetis frame in drained queue");
+    }
+
+    // RX2 disabled: live frame must carry rx2en=false (matches init).
+    {
+        TestMockRadioModel mock;
+        mock.setRx2Enabled(false);
+        TciProtocol p(&mock);
+        p.enqueueLocalBroadcastVfo(/*rxIndex=*/0, /*hz=*/7100000LL);
+        p.drainCoalescedNotifications();
+
+        QStringList frames;
+        while (p.hasPendingNotification()) {
+            frames << p.takePendingNotification();
+        }
+
+        bool found = false;
+        for (const QString& f : frames) {
+            if (f.startsWith(QStringLiteral("tx_frequency_thetis:"))) {
+                QVERIFY2(f.contains(QStringLiteral(",false,false;")),
+                    qPrintable(QString("rx2_enabled=false must produce "
+                        "rx2en=false in live frame; got: %1").arg(f)));
+                found = true;
+                break;
+            }
+        }
+        QVERIFY2(found, "no tx_frequency_thetis frame in drained queue");
+    }
 }
 
 QTEST_GUILESS_MAIN(TestTciInitBurstLiveState)

@@ -1,5 +1,382 @@
 # Changelog
 
+## [Unreleased]
+
+### Added (Phase 3P-II - PGXL/TGXL + analog S-Meter baseline, in progress)
+
+AetherSDR 1:1 baseline for PowerGenius XL amplifier telemetry and
+Tuner Genius XL antenna tuner control over Ethernet. 22 commits, Phase 1
+of the PGXL/TGXL + analog S-Meter epic. Phase 2 (analog S-Meter port
+from Thetis) follows in the next dispatch.
+
+**New classes:**
+
+- `PgxlConnection` (`src/core/PgxlConnection.{h,cpp}`): TCP client on
+  port 9008. Parses V (banner), R (request/reply key-value), and S
+  (unsolicited status push) frames per strict S-frame design (§6.1 of
+  the phase design doc). Port of `src/core/PgxlConnection.{h,cpp}` from
+  AetherSDR `[@a29ff40]`. 3 parse tests in `tst_pgxl_connection_parse`.
+
+- `TgxlConnection` (`src/core/TgxlConnection.{h,cpp}`): TCP client on
+  port 9010. V/R/S frame parsing with state/status object discrimination.
+  Port of `src/core/TgxlConnection.{h,cpp}` from AetherSDR `[@a29ff40]`.
+  3 parse tests in `tst_tgxl_connection_parse`.
+
+- `TunerModel` (`src/models/TunerModel.{h,cpp}`): TGXL state model with
+  13 Q_PROPERTYs (state, status, bypassMode, antennaPort, txPower,
+  reflectedPower, swr, inductance, capacitance, tuneTime,
+  isConnected, serialNumber, firmwareVersion). Wired to `TgxlConnection`
+  via `bindConnection`; `applyStatus` dispatches S-frame key-value maps.
+  11 applyStatus tests in `tst_tuner_model_apply_status`.
+
+- `RelayBar` (`src/gui/RelayBar.{h,cpp}`): horizontal relay-position
+  gauge widget extracted from AetherSDR's inner `TunerApplet::RelayBar`
+  class. Supports mousewheel stepping and emits `positionChangeRequested`.
+
+- `LanDiscovery` (`src/core/LanDiscovery.{h,cpp}`): NereusSDR-native
+  UDP broadcast listener on ports 9008 and 9010. Parses device model,
+  IP, version, serial, and nickname via the official FlexRadio LAN
+  discovery regex. Deduplicates by serial number before emitting
+  `deviceDiscovered`. Regex tests in `tst_lan_discovery_regex`.
+
+- `AmpApplet` (`src/gui/applets/AmpApplet.{h,cpp}`): PGXL telemetry
+  applet with three `HGauge` meters (forward power, reflected power,
+  SWR), state label, and OPERATE toggle. Port of `src/gui/AmpApplet.{h,cpp}`
+  from AetherSDR `[@a29ff40]`.
+
+- `LanScanDialog` (`src/gui/LanScanDialog.{h,cpp}`): NereusSDR-native
+  modeless 3-second LAN scan dialog. Shows discovered devices in a
+  6-column table (Model, IP, Port, Version, Serial, Nickname).
+  Double-click fills the Host and Port fields in the PeripheralsPage
+  row that launched the scan.
+
+**Modified classes:**
+
+- `TunerApplet` (`src/gui/applets/TunerApplet.{h,cpp}`): rewired for
+  TGXL. `RelayBar` replaces the capacitor/inductor position bars, single
+  Cycle button replaces the dual-step controls, `TunerModel` wired as
+  the data source, title updated to "Tuner Genius XL".
+
+- `RadioModel` (`src/models/RadioModel.{h,cpp}`): owns `PgxlConnection`,
+  `TgxlConnection`, and `TunerModel`. Emits `amplifierChanged` and
+  `ampMetersChanged` for `AmpApplet` data binding. Auto-connects PGXL
+  and TGXL when the radio connects.
+
+- `MainWindow` (`src/gui/MainWindow.{h,cpp}`): auto-connects PGXL and
+  TGXL on radio connect; routes `AmpApplet` meter signals; adds a TGXL
+  presence chip to the bottom status bar.
+
+- `SetupDialog` + `CatNetworkSetupPages` (`src/gui/setup/CatNetworkSetupPages.{h,cpp}`):
+  new Peripherals page under Setup > Network with PGXL and TGXL rows
+  (Host + Port + Scan LAN button for each). All 4 fields persist via
+  AppSettings keys `Pgxl/Host`, `Pgxl/Port`, `Tgxl/Host`, `Tgxl/Port`.
+
+**Tests added:** `tst_pgxl_connection_parse`, `tst_tgxl_connection_parse`,
+`tst_lan_discovery_regex`, `tst_tuner_model_apply_status`.
+
+**Phase 2 deferred:** analog S-Meter port from Thetis (per-band S-unit
+calibration, `RawSignalStrength` → dBm → S-unit conversion, S-Meter
+display surface on MeterWidget). Bench-verification matrix scaffold at
+`docs/architecture/phase3p-ii-verification/` (Task 98, planned for
+Phase 2 closeout).
+
+### Added (Phase 3P-II Phase 2 - analog S-Meter port)
+
+13 commits (Tasks 31-43). Ports the AetherSDR `SMeterWidget` analog
+S-Meter gauge into NereusSDR and wires 4 WDSP meter sources through
+`MeterPoller`, `SliceModel`, and `MainWindow`.
+
+**New WDSP wrappers (`src/core/WdspEngine.{h,cpp}`):**
+
+- `getRxaSignalAverage(int channel)` - reads `RXA_S_AV` (Thetis signal
+  average). Task 31.
+- `getRxaSignalPeak(int channel)` - reads `RXA_S_PK` (Thetis signal peak).
+  Task 31.
+- `setupMaxBinDetector(int channel, float freqHz, float bwHz)` - calls
+  Thetis `SetupDetectMaxBin` from `analyzer.c`. Task 32.
+- `getMaxBinDbm(int channel)` - calls Thetis `GetDetectMaxBin`. Task 32.
+
+**New class: `SMeterWidget` (`src/gui/SMeterWidget.{h,cpp}`):**
+
+Ported from AetherSDR `src/gui/SMeterWidget.{h,cpp}` `[@0cd4559]`
+(134 + 701 LOC). Analog gauge with 180-degree needle arc, S-unit scale
+(S0 = -127 dBm, 6 dB/S-unit, S9+60 = -13 dBm), animated needle
+(45 ms attack / 180 ms release), and configurable peak hold line.
+
+NereusSDR divergences from AetherSDR upstream:
+
+- `RxMode` enum expanded from 2 entries (SMeter / SMeterPeak) to 4:
+  adds `SignalAverage` (WDSP `RXA_S_AV`) and `MaxBin` (`GetDetectMaxBin`).
+- Right-click context menu replaces AetherSDR's inline settings strip;
+  covers TX Mode (Power / SWR / Level / Compression), RX Mode (Signal /
+  Sig Avg / Signal Peak / Max Bin), and Peak Hold (Enable toggle /
+  Decay Fast|Medium|Slow / Reset).
+- `AppSettings` persistence for `SMeter_TxSelect` (int 0-3),
+  `SMeter_RxSelect` (int 0-3), `PeakHoldEnabled` ("True"/"False"),
+  `PeakDecayRate` ("Fast"/"Medium"/"Slow"). Constructor loads these on
+  startup so the widget starts in the saved state.
+- PGXL-aware 2 kW power scale snap: `setPowerScale(2000, true)` triggers
+  the amplifier scale (120 W / 600 W / 2000 W snaps).
+- Test seams: `testAdvanceTime(int ms)`, `testSetPeakHoldTimeMs(int ms)`,
+  `testPeakLevel()` for synthetic peak-hold decay verification without
+  real timer ticks.
+
+Peak hold decay constants (verbatim from AetherSDR
+`src/gui/SMeterWidget.cpp:675-681 [@0cd4559]`): Fast = 20 dB/s,
+Medium = 10 dB/s, Slow = 5 dB/s.
+
+**Modified classes:**
+
+- `AppletPanelWidget` (`src/gui/AppletPanelWidget.{h,cpp}`) - header
+  widget swapped from composite `MeterWidget` to `SMeterWidget`. Task 40.
+
+- `MeterPoller` (`src/core/MeterPoller.{h,cpp}`) - 100 ms poll loop now
+  branches on `SMeterWidget::rxMode()`: Signal calls `getRxaSmeter`,
+  SignalAverage calls `getRxaSignalAverage`, SMeterPeak calls
+  `getRxaSmeter` (peak tracked inside `SMeterWidget`), MaxBin calls
+  `getMaxBinDbm`. Task 41.
+
+- `SliceModel` (`src/models/SliceModel.{h,cpp}`) - connects
+  `filterChanged` to `setupMaxBinDetector` with a 100 ms debounce so
+  the Max Bin detector recenters on the passband after every filter
+  change. Task 42.
+
+- `MainWindow` (`src/gui/MainWindow.{h,cpp}`) - PGXL-aware S-Meter feed
+  switch: connects amp forward/reflected power and radio S-meter signals
+  to `SMeterWidget`; on `amplifierChanged` snaps the power scale to
+  2 kW when a PGXL is connected; on `ampStateChanged` recomputes the
+  needle source between amp power and radio power. Task 43.
+
+**Tests added:** `tst_smeter_widget_scale` (3 slots),
+`tst_smeter_widget_peak_hold` (3 slots),
+`tst_smeter_widget_context_menu` (2 slots),
+`tst_wdsp_engine_max_bin` (2 slots). Total: 4 tests, 10 slots.
+
+### Added (Phase 3P-II Phase 3 - Connection Robustness)
+
+12 commits (Tasks 55-67). Adds exponential-backoff auto-reconnect, keepalive
+timers, RTT-correlated ping, the full PGXL pairing flow, band-change
+notifications, a live diagnostics model, and per-connection status labels on
+the Peripherals page. Bench-verification matrix: Tasks 68-74 (smoke-run deferred
+to hardware bench; code paths verified by 6 new test executables, 13 new slots).
+
+**PgxlConnection Tier 2 (Tasks 55-59, 62, 65-66):**
+
+- `amplifierCreate` (Task 55-56): sends `amplifier create serial=<s> name=<n>
+  antmap=<m>` to register this client with the amplifier. Parses
+  `amplifier_create_result=` R-frame ack. Antenna port map defaults via
+  `PGXL_AntMap` AppSettings key (default `"ANT1:PORTA,ANT2:PORTB"`).
+- `flexradioPair` (Tasks 55-56, 62): sends `flexradio pair serial=<s> slice=<x>
+  txant=<a> ptt_over_lan=<b> active=<b>` after a successful create. Captures
+  the paired radio serial from the R-frame ack for use by later `setBand` calls.
+  Gated by `PGXL_PairAttempt` AppSettings key (default `"True"`).
+- `enableKeepalive` (Task 57): sends `status` on a `PGXL_KeepaliveSec`
+  (default 30 s) timer. Timer starts after the connect handshake.
+- `ping` with RTT measurement (Task 58): sends `ping seq=<n>` on a
+  `PGXL_PingSec` (default 10 s) interval. Correlates the `pong=<n>` R-frame
+  reply to compute RTT. Emits `pingRttMs(quint32)`. Closes the connection on a
+  5 s unanswered-ping timeout.
+- `interlockCreate`, `interlockDisable` (Task 59): wire-level `interlock create`
+  and `interlock disable` commands; R-frame acks route through the existing
+  dispatch table.
+- `readSetup`, `writeSetup`, `readIfconf`, `writeIfconf`, `save` (Task 59):
+  full setup/ifconf round-trip. R-frame responses are deserialized into
+  `QVariantMap` and emitted via `setupReceived` / `ifconfReceived` signals.
+- Auto-reconnect with exponential backoff (Task 59): on disconnect, schedules
+  reconnect at 1 / 2 / 5 / 10 / 30 / 60 s (table saturates at 60 s). Gated by
+  `PGXL_AutoReconnect` AppSettings key (default `"True"`).
+- Frame counters: `m_framesIn`, `m_framesOut`, `m_bytesIn`, `m_bytesOut`
+  incremented in `sendCommand` and `onReadyRead`; exposed for
+  `ConnectionDiagnostics` binding.
+- `setBand` (Task 66): sends `flexradio ampslice=<x> serial=<paired>
+  band=<hz>` when a paired serial is known and no pairing R-frame is in flight.
+  Slice letter from `PGXL_FlexAmpSlice` AppSettings key (default `"A"`).
+- `RadioModel` pairing-flow runner (Task 62): on `PgxlConnection::connected`,
+  executes `amplifierCreate` (reading `PGXL_AntMap`) -> `flexradioPair` if
+  `PGXL_PairAttempt` is true (reading `PGXL_FlexAmpSlice` and `PGXL_TxAnt`,
+  default `"ANT1"`) -> `enableKeepalive`.
+
+**TgxlConnection Tier 2 parallel (Task 60):**
+
+- `enableKeepalive`, `ping`, `readSetup`, `writeSetup`, `readIfconf`,
+  `writeIfconf`, `save` added in parallel with the PGXL set. TGXL does not
+  have pairing commands (`amplifierCreate` / `flexradioPair` are PGXL-only).
+- Auto-reconnect with same 1/2/5/10/30/60 s exponential backoff. Gated by
+  `TGXL_AutoReconnect` (default `"True"`). Ping interval via `TGXL_PingSec`
+  (default 10 s); keepalive cadence via `TGXL_KeepaliveSec` (default 30 s).
+- Frame counters in parallel with PGXL.
+
+**ConnectionDiagnostics (Task 61):**
+
+- New `ConnectionDiagnostics` (`src/core/ConnectionDiagnostics.{h,cpp}`):
+  NereusSDR-native `QObject` with 10 `Q_PROPERTY`s: `uptimeSec`, `rttMs`,
+  `keepaliveMissed`, `reconnectCount`, `framesIn`, `framesOut`, `bytesIn`,
+  `bytesOut`, `lastFrameMs`, `faultsSession`. Two `bindTo` overloads:
+  `bindTo(PgxlConnection*)` and `bindTo(TgxlConnection*)`. On `bindTo`,
+  all counters reset and the object connects to the live connection's signals.
+  Emits coalesced `changed()` once per second via a 1 Hz coalesce timer.
+  `testFlushCoalesceTimer()` test seam for deterministic verification.
+
+**Band-change wiring (Tasks 64-65):**
+
+- `SliceModel::bandChanged(Band)` (Task 64): emits when the panadapter band
+  crosses a boundary, derived from `Band::bandFromFrequency()`.
+- `MainWindow` wires `SliceModel::bandChanged` to `PgxlConnection::setBand`
+  (Task 65): operator band changes trigger the amplifier to update its
+  bias/antenna profile without any user action.
+
+**UI: PeripheralsPage live status labels (Task 63):**
+
+- PGXL and TGXL rows on Setup -> Network -> Peripherals now show live
+  connection state. Four states via live signals: Disconnected (grey),
+  Connecting (yellow), Connected (green), Connected + paired (green bold for
+  PGXL), Error (red).
+
+**AppSettings keys documented (Tasks 68-69):**
+
+All Phase 3 persistence keys are documented in `AppSettings.h`: `PGXL_AutoReconnect`,
+`PGXL_KeepaliveSec`, `PGXL_PingSec`, `PGXL_PairAttempt`, `PGXL_FlexAmpSlice`,
+`PGXL_TxAnt`, `PGXL_AntMap`, `TGXL_AutoReconnect`, `TGXL_KeepaliveSec`,
+`TGXL_PingSec`.
+
+**Tests added (6 executables, 13 slots):**
+
+- `tst_pgxl_connection_pairing` (3 slots): amplifierCreate wire format, pairing
+  ack capture, early-exit when pairing is in flight.
+- `tst_pgxl_connection_keepalive` (2 slots): timer fires `status` command,
+  timer stops on disconnect.
+- `tst_pgxl_connection_ping` (2 slots): ping frame format, pong correlation +
+  RTT emit.
+- `tst_pgxl_connection_reconnect` (1 slot): auto-reconnect schedules on
+  disconnect with first backoff interval.
+- `tst_tgxl_connection_ping` (2 slots): parallel TGXL ping/pong coverage.
+- `tst_connection_diagnostics` (3 slots): bindTo resets counters, frame counter
+  increments, coalesce timer flush.
+
+Combined with the 7 pre-existing slots in `tst_pgxl_connection_parse` (3) and
+`tst_tgxl_connection_parse` (4): 8 executables, 20 slots total for the
+PGXL/TGXL connection family.
+
+**Phase 4 deferred:** smoke-run on live PGXL + TGXL hardware (bench-verification
+matrix row verification); PeripheralsPage paired/error state full-cycle test.
+
+### Added (Phase 3P-II Phase 4 - advanced UI, fault log, interlock policy, applet right-click nav)
+
+~20 commits (Tasks 75-97). Completes the Phase 3P-II epic with the full advanced
+Setup UI, fault history, TX interlock policy, tune memory management, antenna
+labels, power-cap toast, and right-click navigation from the operator applets.
+
+**New helper classes:**
+
+- `FaultLog` (`src/core/FaultLog.{h,cpp}`) - NereusSDR-native ring buffer of 10
+  `FaultEntry` records. Each entry carries a timestamp, fault code, and a
+  `likelyCause` string derived from heuristic pattern matching against PGXL
+  S-frame fault codes. JSON-persisted via `AppSettings` under `PGXL_FaultLog`.
+  Wired to `PgxlConnection::faultTransitionReceived`; `RadioModel` owns the
+  instance and exposes it to the Advanced page via accessor. 3 unit tests in
+  `tst_fault_log` (ring-buffer overflow, persist round-trip, likelyCause
+  heuristic).
+
+- `TuneMemoryStore` (`src/core/TuneMemoryStore.{h,cpp}`) - NereusSDR-native
+  per-(antenna, band) relay-position cache. Key is `(antennaPort, Band)`; value
+  is a `TuneMemoryEntry` with inductance, capacitance, and timestamp. JSON-
+  persisted under `TGXL_TuneMemory`. Auto-recall wired to
+  `SliceModel::bandChanged` when `TGXL_AutoTuneMemoryRecall` is enabled; on a
+  band change, the stored position is restored via `TgxlConnection::setRelayPosition`
+  (or a fresh tune triggers if the device does not support absolute-relay-write).
+  3 unit tests in `tst_tune_memory_store` (store/recall, persist round-trip,
+  band-change auto-recall).
+
+- `TxInterlockPolicy` (`src/core/TxInterlockPolicy.{h,cpp}`) - NereusSDR-native
+  TX interlock for PGXL-aware environments. Three modes: `Disabled` (default),
+  `Warn` (toast, TX proceeds), `Block` (toast, MOX is denied). Optional SWR
+  gate (enable + max-SWR threshold). Grace period (ms) starts counting when the
+  connection transitions to OPERATE; policy does not fire inside the window.
+  Wired via `MoxController::interlockCheck()`; emits `interlockDenied()` and
+  `interlockWarned()`. 3 unit tests in `tst_tx_interlock_policy` (Disabled pass,
+  Warn toast, Block deny).
+
+**New Setup pages:**
+
+- `TgxlAdvancedPage` (`src/gui/setup/TgxlAdvancedPage.{h,cpp}`) - Setup ->
+  Network -> TGXL Advanced. Five sections: Identity (serial, firmware, nickname),
+  Hardware (antenna port labels ANT 1/2/3), Network (static IP via `ifconf`),
+  Diagnostics (ConnectionDiagnostics live binding: uptime, RTT, frames, bytes,
+  reconnects), Tune Memory Management (per-band table with Save / Recall /
+  Clear All + auto-recall toggle). Antenna label edits persist under
+  `TGXL_AntLabel_1` / `_2` / `_3` and propagate to `TunerApplet` button text
+  via `TunerModel::antLabelChanged(int, QString)`.
+
+- `PgxlAdvancedPage` (previous Task 80-82 commits, closing here) - Setup ->
+  Network -> PGXL Advanced. Six sections: Identity, Hardware (bias mode, fan
+  mode, LED), Network (static IP, port), Pairing (slice, TX ant, ant map, PTT
+  mode), Diagnostics (ConnectionDiagnostics live binding), Fault History
+  (scrollable table with timestamp / code / likelyCause + Clear All button).
+
+- `PgxlInterlockPage` (`src/gui/setup/PgxlInterlockPage.{h,cpp}`) - Setup ->
+  Transmit -> PGXL Interlock. Three radio buttons (Disabled / Warn / Block) +
+  grace period spinbox (0-30 s) + SWR gate checkbox with max-SWR spinbox. All
+  fields persist via `AppSettings`: `PGXL_InterlockMode`, `PGXL_InterlockGraceMs`,
+  `PGXL_InterlockSwrGate`, `PGXL_InterlockMaxSwr`. Live-wired to
+  `TxInterlockPolicy` so changes take effect immediately without restart.
+
+**New dialog:**
+
+- `PgxlSaveRebootDialog` (`src/gui/PgxlSaveRebootDialog.{h,cpp}`) - modal
+  confirmation dialog launched from PGXL Advanced -> Save & Reboot. Shows a
+  two-sentence warning that the amplifier will reboot and auto-reconnect will
+  attempt recovery within 30 s. Two buttons: Cancel and Save & Reboot. On
+  confirm, calls `PgxlConnection::writeSetup()` then `PgxlConnection::save()`;
+  the connection drop triggers the existing auto-reconnect path.
+
+**Navigation API:**
+
+- `MainWindow::openSetup(QString pageKey)` - slot that opens the SetupDialog
+  and navigates to the page matching `pageKey`. Called by AmpApplet and
+  TunerApplet right-click context menu actions. Key strings: `"pgxl_advanced"`,
+  `"tgxl_advanced"`, `"pgxl_interlock"`.
+
+**Applet context menus:**
+
+- `AmpApplet` right-click context menu: Open PGXL Advanced (calls
+  `openSetup("pgxl_advanced")`), Disconnect / Reconnect, Copy diagnostics
+  (serialises `ConnectionDiagnostics` to JSON on the clipboard).
+- `TunerApplet` right-click context menu: Open TGXL Advanced (calls
+  `openSetup("tgxl_advanced")`), Disconnect / Reconnect, Save current tune
+  memory, Recall tune memory, Clear tune memory, Copy diagnostics.
+
+**Power-cap toast:**
+
+- `MainWindow` wires `PgxlConnection::forwardPowerExceededCap(float watt)` to
+  `showStatusBarToast(QString)`. Toast fires on the first sample that exceeds
+  the `PGXL_TxPowerCapWatts` limit (soft alert only; TX continues). Re-arms
+  after a 5 s cooldown so it does not spam during sustained high-power TX.
+
+**RadioModel additions:**
+
+- `faultLog()` accessor (non-owning view, `FaultLog*`).
+- `tuneMemoryStore()` accessor (non-owning view, `TuneMemoryStore*`).
+- `txInterlockPolicy()` accessor (non-owning view, `TxInterlockPolicy*`).
+- Wires `PgxlConnection::faultTransitionReceived` to `FaultLog::append()` so
+  FAULT-state transitions are captured without polling.
+
+**PgxlConnection unit tests (Tasks 91-94):**
+
+- `tst_pgxl_connection_setup` (3 slots): `readSetup` request wire format,
+  `writeSetup` with modified fields, R-frame deserialization into `QVariantMap`.
+- `tst_pgxl_connection_ifconf` (2 slots): `readIfconf` request format, static-IP
+  write round-trip.
+- `tst_pgxl_connection_save` (3 slots): save command wire format, reboot-detection
+  (connection drops within 5 s of save), auto-reconnect fires after reboot.
+
+Combined with the 20 pre-existing slots across the connection family: 11
+executables, 28 slots total for the PGXL/TGXL connection family.
+
+**Bench-verification matrix:** 36 rows at
+`docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`. Rows pending
+live PGXL + TGXL hardware (all non-deferred rows); Row 18 (HL2) gated on the
+open ATT/filter safety audit.
+
 ## [0.5.1] - 2026-05-15
 
 > [!NOTE]

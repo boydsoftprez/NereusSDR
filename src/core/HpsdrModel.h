@@ -215,6 +215,87 @@ constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
 }
 
 // =============================================================================
+// Per-SKU RX meter calibration offset (Thetis-faithful port)
+// =============================================================================
+//
+// Factory default cal offset (dB) added to WDSP S-meter readings + MaxBin
+// readings to convert ADC dBFS to antenna dBm.  Without this offset, raw
+// WDSP `GetRXAMeter(RXA_S_PK/AV)` and `GetDetectMaxBin` values are in
+// dBFS relative to the ADC full-scale point, not at-antenna dBm.
+//
+// Ported byte-for-byte from Thetis clsHardwareSpecific.cs:395-411 [v2.10.3.13]:
+//   case HPSDRModel.ANAN7000D:
+//   case HPSDRModel.ANAN8000D:
+//   case HPSDRModel.ORIONMKII:
+//   case HPSDRModel.ANVELINAPRO3:
+//   case HPSDRModel.REDPITAYA:      return 4.841644f;
+//   case HPSDRModel.ANAN_G2:
+//   case HPSDRModel.ANAN_G2_1K:     return -4.476f;
+//   default:                        return 0.98f;
+//
+// Applied by MeterPoller::pollSMeter and the SignalPeak/SignalAvg loop in
+// poll(), matching Thetis console.cs:46824 and :46881 [v2.10.3.13]:
+//   _RX1MeterValues[Reading.SIGNAL_STRENGTH] =
+//       WDSP.CalculateRXMeter(...) + offset;     // offset = RXOffset(1)
+//   _RX1MeterValues[Reading.SIGNAL_MAX_BIN] =
+//       WDSP.GetDetectMaxBin(0) + offset;
+//
+// User may override via the AppSettings key "RX1_MeterCalOffsetDb" (same
+// Thetis convention as RX1MeterCalOffset, console.cs:21051).  The default
+// is hidden from the UI in 0.4.x; only Setup -> Multimeter exposes it (no
+// page yet, deferred to follow-up).
+constexpr float rxMeterCalOffsetDefaultFor(HPSDRModel m) noexcept {
+    switch (m) {
+        case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN8000D:
+        case HPSDRModel::ORIONMKII:
+        case HPSDRModel::ANVELINAPRO3:
+        case HPSDRModel::REDPITAYA:    return  4.841644f;
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2_1K:   return -4.476f;
+        // From clsHardwareSpecific.cs:409 [v2.10.3.13] default branch.
+        // Covers HPSDR/Atlas, all ANAN-10/100/100B/100D/200D variants, HermesLite.
+        case HPSDRModel::HPSDR:
+        case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN10:
+        case HPSDRModel::ANAN10E:
+        case HPSDRModel::ANAN100:
+        case HPSDRModel::ANAN100B:
+        case HPSDRModel::ANAN100D:
+        case HPSDRModel::ANAN200D:
+        case HPSDRModel::HERMESLITE:
+        case HPSDRModel::FIRST:
+        case HPSDRModel::LAST:         return  0.98f;
+    }
+    return 0.98f;  // unreachable; matches Thetis default
+}
+
+// Per-preamp-mode RX offset (dB), applied when step-att is DISABLED.
+// Ported byte-for-byte from Thetis console.cs:1991-2001 [v2.10.3.13]:
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_OFF]      = 20.0f;  // atten inline
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_ON]       =  0.0f;  // no atten
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS10]  = 10.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS20]  = 20.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS30]  = 30.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS40]  = 40.0f;
+//   rx1_preamp_offset[(int)PreampMode.HPSDR_MINUS50]  = 50.0f;
+//
+// Called from RxMeterCalibration::computeOffsetDb in the
+// `!stepAttEnabled` branch of Thetis RXPreampOffset (console.cs:20989).
+constexpr float rxPreampOffsetDbFor(int preampModeIdx) noexcept {
+    switch (preampModeIdx) {
+        case 0: return 20.0f;   // PreampMode::Off       == HPSDR_OFF (atten inline)
+        case 1: return  0.0f;   // PreampMode::On        == HPSDR_ON
+        case 2: return 10.0f;   // PreampMode::Minus10
+        case 3: return 20.0f;   // PreampMode::Minus20
+        case 4: return 30.0f;   // PreampMode::Minus30
+        case 5: return 40.0f;   // PreampMode::Minus40
+        case 6: return 50.0f;   // PreampMode::Minus50
+        default: return 0.0f;
+    }
+}
+
+// =============================================================================
 // Per-SKU PA UI constants — mi0bot-Thetis HL2 parity
 // =============================================================================
 //

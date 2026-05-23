@@ -5,14 +5,18 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QVector>
+#include <QWidget>
 
 namespace NereusSDR { class TciServer; }
+namespace NereusSDR { class RadioModel; }
 
 namespace NereusSDR {
 
@@ -57,7 +61,7 @@ public:
     // Connect the TciServer reference so the Server group box title shows
     // the live client count (`TCI Server (N clients)`) and the Status label
     // reflects running/stopped state.  Modeled on Thetis
-    // Setup.cs:9491-9494 [v2.10.3.13] — TCIClientsConnectedChange setter
+    // Setup.cs:9491-9494 [v2.10.3.13] (TCIClientsConnectedChange setter
     // updates `grpTCIServer.Text`.
     //
     // Pass nullptr to detach (e.g. when the server is destroyed); the page
@@ -71,8 +75,8 @@ signals:
     // Phase 3J-1 review P2.4: MainWindow::wireSetupDialog connects this to
     // the live start/stop path so the server starts or stops immediately
     // without a disconnect/reconnect cycle.
-    // `on`   — true: start the server on the persisted port.
-    // `port` — the port currently shown in the Port spinbox (persisted at emit
+    // `on`:   true means start the server on the persisted port.
+    // `port`: the port currently shown in the Port spinbox (persisted at emit
     //          time; MainWindow should re-read AppSettings or accept the value
     //          directly to avoid a race with a concurrent port-spinbox change).
     void tciServerEnableToggled(bool on, quint16 port);
@@ -115,8 +119,8 @@ private:
     // Phase 3J-1 bench fix: live status state.  Updated by setTciServer
     // signal-connected lambdas.  m_clientCount tracks via increment on
     // clientConnected and decrement on clientDisconnected (TciServer
-    // exposes connect/disconnect signals but not a count getter — local
-    // tracking is the canonical pattern).
+    // exposes connect/disconnect signals but not a count getter; local
+    // tracking is the canonical pattern.
     QPointer<class NereusSDR::TciServer> m_tciServerRef;
     bool m_tciServerRunning{false};
     int  m_tciClientCount{0};
@@ -192,6 +196,48 @@ private:
     QPushButton* m_learnButton{nullptr};
 
     void buildUI();
+};
+
+// ---------------------------------------------------------------------------
+// Network > Peripherals
+// Two-row grid: TGXL (port 9010) and PGXL (port 9008).
+// Six columns per row: Name, Host IP, Port, Scan LAN, Connect, Status.
+// AppSettings keys: TGXL_ManualIp, TGXL_ManualPort, PGXL_ManualIp,
+//                   PGXL_ManualPort.
+// Phase 3P-II Task 17; Task 63 adds live status-label signal wiring.
+// ---------------------------------------------------------------------------
+class PeripheralsPage : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit PeripheralsPage(RadioModel* model, QWidget* parent = nullptr);
+
+private slots:
+    void onScanLan(int rowIdx);
+    void onConnect(int rowIdx);
+
+private:
+    // Build one device row into m_grid at the given row index.
+    // name        - display label ("Tuner Genius XL" / "Power Genius XL")
+    // ipKey       - AppSettings key for the host IP ("TGXL_ManualIp" / "PGXL_ManualIp")
+    // portKey     - AppSettings key for the port ("TGXL_ManualPort" / "PGXL_ManualPort")
+    // defaultPort - factory default (9010 / 9008)
+    void buildRow(int row, const QString& name,
+                  const QString& ipKey, const QString& portKey,
+                  quint16 defaultPort);
+
+    // Phase 3P-II Task 63: connect PgxlConnection + TgxlConnection signals
+    // to m_statusLabels[1] (PGXL) and m_statusLabels[0] (TGXL) respectively.
+    // Called at end of constructor after both rows are built.
+    void wireStatusSignals();
+
+    RadioModel*   m_model{nullptr};
+    QGridLayout*  m_grid{nullptr};
+
+    // Per-row status labels; indexed by row (0 = TGXL, 1 = PGXL).
+    QVector<QLabel*>       m_statusLabels;
+    // Per-row Connect buttons; label toggles "Connect" / "Disconnect".
+    QVector<QPushButton*>  m_connectBtns;
 };
 
 } // namespace NereusSDR

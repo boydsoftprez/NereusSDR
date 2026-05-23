@@ -15,8 +15,21 @@
 #include <QUrl>
 
 #include "core/TciServer.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+// Test-only RadioModel subclass that exposes the protected
+// QObject::receivers() helper so we can observe how many subscribers
+// are wired to a given signal -- used by the P5 sliceAdded test below.
+class TestableRadioModel : public RadioModel {
+public:
+    using RadioModel::RadioModel;
+    int testReceiverCount(const char* signal) const {
+        return receivers(signal);
+    }
+};
 
 class TestTciServerLifecycle : public QObject {
     Q_OBJECT
@@ -29,6 +42,10 @@ private slots:
     // after a stop→start cycle (regression: previously reconnect was missing
     // so audio/IQ frames would never flow after the second start()).
     void stop_then_start_accepts_new_client();
+    // PR #279 review P5 (2026-05-22): stop() also severs the sliceAdded
+    // subscriber wired by hookSliceBroadcasts; start() must re-hook so
+    // slices added after a restart still get broadcast wiring.
+    void slice_added_hook_survives_stop_start_cycle();
 };
 
 void TestTciServerLifecycle::start_listens_and_emits_signal()
@@ -107,6 +124,87 @@ void TestTciServerLifecycle::stop_then_start_accepts_new_client()
     QCOMPARE(server.clientCount(), 1);
 
     client2.close();
+    server.stop();
+}
+
+// PR #279 review P5 (2026-05-22): stop() called QObject::disconnect(
+// m_model, nullptr, this, nullptr) which severs ALL RadioModel ->
+// TciServer connections including the sliceAdded subscriber that
+// hookSliceBroadcasts wires.  Without re-hooking, slices added between
+// a stop()/start() cycle never got broadcast wiring (operator tunes
+// after server restart went un-broadcast).
+//
+// Fix in 9ae5f135: start() now calls hookSliceBroadcasts() and
+// hookGlobalBroadcasts() too.  hookSliceBroadcasts is idempotent --
+// it skips slices already in m_broadcastWiredSlices and the new
+// sliceAdded connect is a fresh wire each call.  hookGlobalBroadcasts
+// uses an m_globalBroadcastsWired guard that start() resets implicitly
+// by calling the function (the function flips the flag).
+//
+// This test counts QObject::receivers() of RadioModel::sliceAdded
+// before stop() and after the subsequent start().  Pre-fix the count
+// dropped to 0 after stop() and stayed at 0 after the second start().
+// Post-fix the count is restored.
+void TestTciServerLifecycle::slice_added_hook_survives_stop_start_cycle()
+{
+    TestableRadioModel model;
+    TciServer          server(&model);
+
+    QVERIFY(server.start(0));
+
+    // Baseline: TciServer's constructor + start() both call
+    // hookSliceBroadcasts, so there are at least 1 receiver of
+    // sliceAdded (and currently 2 -- a minor leak that's still
+    // correct because wireSliceForBroadcast dedups via
+    // m_broadcastWiredSlices).
+    const int baselineReceivers =
+        model.testReceiverCount(SIGNAL(sliceAdded(int)));
+    QVERIFY2(baselineReceivers >= 1,
+        qPrintable(QString("Baseline sliceAdded receivers=%1, "
+            "expected >= 1 after start()").arg(baselineReceivers)));
+
+    // Add a slice on the first start.  This must trigger the
+    // sliceAdded hook -> wireSliceForBroadcast.
+    const int slice1Index = model.addSlice();
+    Q_UNUSED(slice1Index);
+    SliceModel* slice1 = model.activeSlice();
+    QVERIFY(slice1);
+
+    // Stop the server.  This severs RadioModel -> TciServer
+    // connections including sliceAdded.  Pre-fix, the count
+    // drops to 0 here AND stays at 0 after the restart.
+    server.stop();
+    QVERIFY(!server.isRunning());
+
+    // Restart.  start() now re-runs hookSliceBroadcasts +
+    // hookGlobalBroadcasts (review P5 fix).
+    QVERIFY(server.start(0));
+
+    // The actual P5 bug condition was "0 receivers after stop/start"
+    // (the slices added between stop/start never got broadcast
+    // wiring).  Post-fix we must have >= 1 receiver restored.
+    const int afterStartReceivers =
+        model.testReceiverCount(SIGNAL(sliceAdded(int)));
+    QVERIFY2(afterStartReceivers >= 1,
+        qPrintable(QString("After stop/start, sliceAdded "
+            "receivers=%1, expected >= 1 -- "
+            "hookSliceBroadcasts must be re-run from start() "
+            "so slices added post-restart get broadcast wiring")
+            .arg(afterStartReceivers)));
+
+    // Add a slice on the SECOND start.  Pre-fix this would NOT
+    // trigger wireSliceForBroadcast because the sliceAdded hook
+    // was lost.  Post-fix the sliceAdded signal must still reach
+    // the (idempotent) subscriber.  activeSlice() returns the
+    // FIRST slice (it stays active across subsequent adds), so
+    // look up the newly-added slice by index.
+    QSignalSpy sliceAddedSpy(&model, &RadioModel::sliceAdded);
+    const int slice2Index = model.addSlice();
+    QCOMPARE(sliceAddedSpy.count(), 1);
+    SliceModel* slice2 = model.sliceAt(slice2Index);
+    QVERIFY(slice2);
+    QVERIFY(slice2 != slice1);
+
     server.stop();
 }
 

@@ -495,6 +495,20 @@ set(CORE_SOURCES
     src/core/AdifParser.cpp
     src/core/DxccWorkedStatus.cpp
     src/core/DxccColorProvider.cpp
+    # Phase 3P-II PGXL/TGXL accessories
+    src/core/PgxlConnection.cpp
+    src/core/TgxlConnection.cpp
+    src/core/LanDiscovery.cpp
+    src/core/SmartSdrApiListener.cpp
+    src/core/ConnectionDiagnostics.cpp
+    # Phase 3P-II TGXL tuner model
+    src/models/TunerModel.cpp
+    # Phase 3P-II Phase 4 (Advanced UI + helpers)
+    src/core/FaultLog.cpp
+    src/core/TuneMemoryStore.cpp
+    src/core/TxInterlockPolicy.cpp
+    # FlexRadio UDP 4992 discovery beacon (PGXL/TGXL auto-detect)
+    src/core/FlexRadioDiscoveryBroadcaster.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
@@ -554,6 +568,8 @@ set(GUI_SOURCES
     src/gui/PsaIndicatorWidget.h
     src/gui/PsForm.cpp
     src/gui/TitleBar.cpp
+    src/gui/RelayBar.cpp
+    src/gui/SMeterWidget.cpp
     src/gui/ConnectionPanel.cpp
     src/gui/AddCustomRadioDialog.cpp
     src/gui/SupportDialog.cpp
@@ -612,6 +628,10 @@ set(GUI_SOURCES
     src/gui/SpotHubDialog.h
     src/gui/FreeDVReporterDialog.cpp
     src/gui/FreeDVReporterDialog.h
+    src/gui/LanScanDialog.cpp
+    src/gui/LanScanDialog.h
+    src/gui/PgxlSaveRebootDialog.cpp
+    src/gui/PgxlSaveRebootDialog.h
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
@@ -731,6 +751,10 @@ set(GUI_SOURCES
     src/gui/setup/TransmitSetupPages.cpp
     src/gui/setup/AppearanceSetupPages.cpp
     src/gui/setup/CatNetworkSetupPages.cpp
+    src/gui/setup/PgxlAdvancedPage.cpp
+    src/gui/setup/TgxlAdvancedPage.cpp
+    src/gui/setup/PgxlInterlockPage.cpp
+    src/gui/setup/FourO3APage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
@@ -755,6 +779,7 @@ set(GUI_SOURCES
     src/gui/applets/DvkApplet.cpp
     src/gui/applets/CatApplet.cpp
     src/gui/applets/TunerApplet.cpp
+    src/gui/applets/AmpApplet.cpp
     src/gui/applets/TciApplet.cpp
     src/gui/applets/ClientChainApplet.cpp
 )

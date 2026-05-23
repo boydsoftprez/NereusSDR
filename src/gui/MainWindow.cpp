@@ -278,7 +278,12 @@ warren@wpratt.com
 #include "meters/MeterPoller.h"
 #include "meters/VfoDisplayItem.h"  // 3M-1c L.3 — TX badge routing
 #include "applets/AppletPanelWidget.h"
+#include "SMeterWidget.h"            // Task 41 (Phase 3P-II): SMeterWidget header wiring
+#include "applets/AmpApplet.h"
 #include "applets/RxApplet.h"
+#include "core/PgxlConnection.h"
+#include "core/TgxlConnection.h"
+#include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
@@ -1438,6 +1443,38 @@ void MainWindow::buildUI()
         nfTracker->feed(binsDbm, kFrameIntervalMs);
     });
 
+    // Max Bin detector: feed FFTEngine dBm bins into WdspEngine's NereusSDR-native
+    // Max Bin pipeline.  See WdspEngine::setupMaxBinDetector for the algorithm
+    // cite and the divergence rationale (WDSP analyzer not wired; FFTEngine
+    // uses raw FFTW3 directly; NereusSDR runs the same Thetis algorithm against
+    // the dBm bins emitted here).
+    //
+    // Algorithm from Thetis wdsp/analyzer.c:800-822 [@501e3f5].
+    if (auto* eng = (m_radioModel ? m_radioModel->wdspEngine() : nullptr)) {
+        connect(m_fftEngine, &FFTEngine::fftReady,
+                eng,         &WdspEngine::onSpectrumBinsForMaxBin);
+    }
+
+    // 2026-05-22 bench fix: MaxBin meter accuracy. The raw FFT bin path
+    // above reads ~12-17 dB below what the spectrum visually displays
+    // because the spectrum runs the bins through a detector + invEnb
+    // window-normalization + avenger time-smoothing pipeline that
+    // reconstructs window-spread integrated power. After every spectrum
+    // render frame, push the slice's passband peak (from m_renderedPixels,
+    // post detector + avenger) into the MaxBin detector so the analog
+    // S-meter reads what the operator actually sees on the trace.
+    if (m_spectrumWidget && m_radioModel) {
+        connect(m_spectrumWidget, &SpectrumWidget::spectrumFrameRendered,
+                this, [this]() {
+            auto* eng = m_radioModel ? m_radioModel->wdspEngine() : nullptr;
+            if (!eng || !m_spectrumWidget) { return; }
+            const double dbm = m_spectrumWidget->peakDbmInSlicePassband();
+            if (dbm > -400.0) {
+                eng->setMaxBinDbmFromSpectrum(/*disp=*/0, dbm);
+            }
+        });
+    }
+
     // Fast-attack triggers — deferred until slice exists
     // From Thetis v2.10.3.13 display.cs:905 — freq change triggers fast attack
     // From Thetis v2.10.3.13 display.cs:880 — mode change triggers fast attack
@@ -2039,14 +2076,169 @@ void MainWindow::populateDefaultMeter()
         delete alc;
     }
 
-    // Build an AppletPanelWidget: MeterWidget on top, then all applets below.
-    // This is a single scrollable content widget per the v2 plan.
+    // Build an AppletPanelWidget: SMeterWidget header + scrollable applets.
+    // Task 40 (Phase 3P-II): AppletPanelWidget constructor now installs the
+    // analog SMeterWidget as the fixed header automatically.  The old
+    // setHeaderWidget(m_meterWidget, ...) call is removed; the composite
+    // MeterWidget (m_meterWidget) remains the Container #0 content for the
+    // traditional GroupBox-based meters and is not affected.
     m_appletPanel = new AppletPanelWidget();
     auto* panel = m_appletPanel;
-    // Fixed header: MeterWidget stays visible, never scrolls.
-    // Height scales dynamically with width. 1.3:1 gives the S-Meter arc
-    // enough vertical room to not look squished.
-    panel->setHeaderWidget(m_meterWidget, QStringLiteral("Meters"), 1.3f);
+
+    // Task 41 (Phase 3P-II): wire the SMeterWidget (installed by the
+    // AppletPanelWidget constructor) into MeterPoller.  WdspEngine is
+    // needed for getRxaSignalPeak() and getMaxBinDbm() (MaxBin mode).
+    if (m_meterPoller) {
+        if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+            m_meterPoller->setSMeter(sm);
+        }
+        m_meterPoller->setWdspEngine(m_radioModel->wdspEngine());
+
+        // RX meter cal offset source (Thetis-faithful port).
+        // RadioModel::rxMeterOffsetDb() returns RXPreampOffset(1) +
+        // RXCalibrationOffset(1) per Thetis console.cs:21040 [v2.10.3.13].
+        // The callable captures m_radioModel by raw pointer (lives for
+        // the lifetime of MainWindow); pollSMeter / poll invoke it
+        // once per tick.  Without this wire-up the WDSP S-meter readings
+        // sit in raw ADC dBFS instead of at-antenna dBm.
+        m_meterPoller->setRxOffsetSource([rm = m_radioModel]() -> double {
+            return rm ? rm->rxMeterOffsetDb() : 0.0;
+        });
+    }
+
+    // 2026-05-22 spectrum-calibration fix (Fix 1 from the S-meter / spectrum
+    // alignment research). FFTEngine bins ship in raw dBFS (window-coherent
+    // gain compensated against the digital I/Q full-scale reference). The
+    // S-meter path adds the same RXPreampOffset + RXCalibrationOffset chain
+    // Thetis applies at console.cs:21040 to land at antenna-referenced dBm,
+    // but the spectrum path never got that calibration step. Result: the
+    // S-meter and the spectrum trace lived in different reference frames
+    // (38 dB gap on the bench at preamp Off; 18 dB at preamp On). Forward
+    // the SAME rxMeterOffsetDb value to SpectrumWidget::setDbmCalOffset so
+    // both views share the antenna reference. Per the calibration research,
+    // carriers will then agree to ~1 dB between meter and spectrum. Noise
+    // floor will still differ by 10*log10(NBP_BW/bin_BW) which is physics
+    // (S-meter is passband-integrated; spectrum is per-bin) and matches
+    // Thetis behavior.
+    if (m_spectrumWidget && m_radioModel) {
+        auto pushSpectrumCal = [this](double db) {
+            if (m_spectrumWidget) {
+                m_spectrumWidget->setDbmCalOffset(static_cast<float>(db));
+            }
+        };
+        connect(m_radioModel, &RadioModel::rxMeterOffsetChanged,
+                this, pushSpectrumCal);
+        // Initial push so the cal lands at startup before any controller
+        // change. setStepAttController already calls the recompute lambda
+        // once on attach, but that may have run before this connect was
+        // wired -- push the current value here defensively.
+        pushSpectrumCal(m_radioModel->rxMeterOffsetDb());
+    }
+
+    // Refresh MaxBin's CTUN slice offset whenever the DDC center moves.
+    // The frequencyChanged lambda in wireSliceToSpectrum pushes the
+    // offset on slice retune, but a spectrum pan moves the DDC NCO
+    // without moving the slice -- without this hook, MaxBin's scan
+    // window stays at the OLD DDC-relative bin range until the next
+    // slice retune (or CTUN toggle).  Observable as "MaxBin meter
+    // drifts off the carrier when I pan the panadapter."
+    if (m_spectrumWidget) {
+        connect(m_spectrumWidget, &SpectrumWidget::ddcCenterFrequencyChanged,
+                this, [this](double ddcCenter) {
+            if (!m_radioModel) { return; }
+            auto* eng = m_radioModel->wdspEngine();
+            if (!eng) { return; }
+            SliceModel* slice = m_radioModel->activeSlice();
+            if (!slice) { return; }
+            eng->setMaxBinSliceOffsetHz(/*disp=*/0,
+                                        slice->frequency() - ddcCenter);
+        });
+    }
+
+    // Task 43 (Phase 3P-II): PGXL-aware power scale + TX meter feed.
+    //
+    // Four permanent connects (RadioModel persists across radio connects):
+    //
+    // 1. ampMetersChanged: when PGXL is OPERATE, forward the amp's
+    //    forward-power/SWR readings to the SMeterWidget TX display.
+    //    RadioModel::ampMetersChanged is fired by PgxlConnection on each
+    //    statusUpdated containing "peakfwd" and "swr" keys.
+    //
+    // 2. RadioStatus::powerChanged: when PGXL is absent or STANDBY, use the
+    //    radio's own PA telemetry (barefoot or Aurora) for the TX display.
+    //    fwd is forward power in watts; the third argument (swr) is used.
+    //
+    // 3. amplifierChanged: snap the power scale to 2 kW on PGXL connect.
+    //
+    // 4. ampStateChanged: re-evaluate scale whenever OPERATE/STANDBY toggles.
+    //    When returning to STANDBY (amp present but not OPERATE), the scale
+    //    reverts to barefoot by passing hasAmplifier()=false to setPowerScale.
+    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+        // Connect 1: PGXL amp meters (OPERATE path).
+        connect(m_radioModel, &RadioModel::ampMetersChanged, this,
+                [this, sm](float fwd, float swr) {
+            if (m_radioModel->hasAmplifier() && m_radioModel->ampOperate()) {
+                sm->setTxMeters(fwd, swr);
+            }
+        });
+
+        // Connect 2: radio barefoot/Aurora TX meters (STANDBY or no amp).
+        // RadioStatus::powerChanged carries (fwdWatts, revWatts, swr); we
+        // take fwdWatts (arg 1) and swr (arg 3) to match setTxMeters() signature.
+        connect(&m_radioModel->radioStatus(), &RadioStatus::powerChanged,
+                this, [this, sm](double fwd, double /*rev*/, double swr) {
+            if (!m_radioModel->hasAmplifier() || !m_radioModel->ampOperate()) {
+                sm->setTxMeters(static_cast<float>(fwd), static_cast<float>(swr));
+            }
+        });
+
+        // Connect 3: PGXL connect event snaps scale to 2 kW.
+        connect(m_radioModel, &RadioModel::amplifierChanged, this,
+                [sm](bool present) {
+            sm->setPowerScale(/*maxWatts=*/0, present);
+        });
+
+        // Connect 4: OPERATE/STANDBY state change re-evaluates scale.
+        // When STANDBY: hasAmplifier()=true but we want barefoot scale,
+        // so pass false (treat as absent) until OPERATE resumes.
+        connect(m_radioModel, &RadioModel::ampStateChanged, this,
+                [this, sm]() {
+            const bool amplifying = m_radioModel->hasAmplifier()
+                                    && m_radioModel->ampOperate();
+            sm->setPowerScale(/*maxWatts=*/0, amplifying);
+        });
+
+        // Connect 5: 2026-05-20 bench fix -- SMeterWidget::setTransmitting
+        // was implemented but never wired. m_transmitting stayed false so
+        // updateNeedleTarget() always fell through to the RX dBm path,
+        // even when ampMetersChanged was feeding watts via setTxMeters.
+        // The needle therefore showed an RX S-meter reading during TX
+        // even though PGXL was clearly delivering power. Wire MoxController
+        // so the needle switches to the TX-power scale on key, returns to
+        // RX scale on unkey. moxStateChanged fires at end of walk so the
+        // switch lines up with carrier-on-air.
+        if (MoxController* mox = m_radioModel->moxController()) {
+            connect(mox, &MoxController::moxStateChanged,
+                    sm, &SMeterWidget::setTransmitting);
+        }
+    }
+
+    // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
+    // Fires a 5-second status-bar toast when peak forward power exceeds the
+    // cap configured in Setup -> Peripherals -> PGXL Advanced -> Hardware.
+    // De-bounced: one toast per exceedance event (re-arms below cap).
+    connect(m_radioModel, &RadioModel::ampMetersChanged,
+            this, &MainWindow::onAmpMetersForPowerCap);
+
+    // Phase 3P-II review fix C2: surface TX interlock decisions to the
+    // operator via 5-second status-bar toasts.  Without these connections
+    // Block mode silently gates TX with no operator feedback.
+    if (TxInterlockPolicy* policy = m_radioModel->txInterlockPolicy()) {
+        connect(policy, &TxInterlockPolicy::warned,
+                this, &MainWindow::onTxInterlockWarning);
+        connect(policy, &TxInterlockPolicy::denied,
+                this, &MainWindow::onTxInterlockDenial);
+    }
 
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
@@ -2257,6 +2449,59 @@ void MainWindow::populateDefaultMeter()
     }
 #endif
 
+    // Phase 3P-II Task 20: AmpApplet (PGXL telemetry + OPERATE toggle).
+    // Added to the panel alongside the other applets. Signal routing to
+    // PgxlConnection is wired in onConnectionStateChanged() so every
+    // radio-connect gets a fresh binding without double-connects.
+    m_ampApplet = new AmpApplet(m_radioModel, nullptr);
+    panel->addApplet(m_ampApplet);
+
+    // Phase 3P-II Task 20: TunerApplet (TGXL controls + relay bars).
+    // Was previously commented out ("TODO ATU phase"). Now constructed
+    // with the TunerModel* owned by RadioModel so it tracks TGXL state
+    // from construction time.
+    // Phase 3P-II Phase 4 Task 89: pass RadioModel's shared TuneMemoryStore
+    // so saves from the context menu are visible in TgxlAdvancedPage and vice versa.
+    m_tunerApplet = new TunerApplet(m_radioModel,
+                                    m_radioModel->tunerModel(),
+                                    nullptr,
+                                    m_radioModel->tuneMemoryStore());
+    panel->addApplet(m_tunerApplet);
+
+    // 2026-05-20 bench fix: rescale TunerApplet's fwd-power bar when
+    // PGXL comes into the chain. TunerApplet defaults to 0-200 W
+    // (barefoot) which pegs out the moment PGXL pushes its amplified
+    // ~450-2000 W through the tuner. Mirror the same amplifierChanged
+    // + ampStateChanged wires we use for the SMeterWidget above.
+    if (m_tunerApplet) {
+        // Initial scale: match current PGXL state at construction time.
+        const bool amplifyingNow =
+            m_radioModel->hasAmplifier() && m_radioModel->ampOperate();
+        m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifyingNow);
+
+        // PGXL connect/disconnect snaps the scale to 2 kW or back to
+        // barefoot. maxWatts=0 means "use the standard barefoot/PGXL
+        // range from TunerApplet::setPowerScale defaults".
+        connect(m_radioModel, &RadioModel::amplifierChanged, this,
+                [this](bool present) {
+            if (m_tunerApplet) {
+                m_tunerApplet->setPowerScale(/*maxWatts=*/0, present);
+            }
+        });
+
+        // OPERATE/STANDBY edges re-evaluate scale. STANDBY -> barefoot
+        // until OPERATE resumes (pass amplifying=false to drop the
+        // 2 kW scale back to 200 W).
+        connect(m_radioModel, &RadioModel::ampStateChanged, this,
+                [this]() {
+            if (m_tunerApplet) {
+                const bool amplifying = m_radioModel->hasAmplifier()
+                                        && m_radioModel->ampOperate();
+                m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifying);
+            }
+        });
+    }
+
     // Ghost applets: constructed but not added to the panel or the Containers menu
     // until their feature phases ship. Uncomment the construction + addContainerToggle
     // call (in buildMenuBar) together when the feature lands.
@@ -2266,7 +2511,6 @@ void MainWindow::populateDefaultMeter()
     // m_cwxApplet        = new CwxApplet(m_radioModel, nullptr);        // TODO 3M-2 (CW TX)
     // m_dvkApplet        = new DvkApplet(m_radioModel, nullptr);        // TODO 3M-1 (DVK)
     // m_catApplet        = new CatApplet(m_radioModel, nullptr);        // TODO 3J/3K/3-VAX
-    // m_tunerApplet      = new TunerApplet(m_radioModel, nullptr);      // TODO ATU phase
 
     c0->setContent(panel);
     qCDebug(lcMeter) << "Installed default meter layout: S-Meter + Power/SWR + ALC";
@@ -3612,6 +3856,28 @@ void MainWindow::buildStatusBar()
     m_paVoltLabelSep->setVisible(false);
     hbox->addWidget(m_paVoltLabelSep);
 
+    // Phase 3P-II Task 21: TGXL presence chip.
+    // Hidden until TunerModel::presenceChanged fires true; text reflects
+    // operate/bypass/standby state via stateChanged.
+    m_tgxlChip = new QLabel(QStringLiteral("TGXL"), barWidget);
+    m_tgxlChip->setStyleSheet(QStringLiteral(
+        "QLabel { background:#1a3a5a; border:1px solid #205070; "
+        "padding:1px 8px; border-radius:3px; color:#88e0ff; }"));
+    m_tgxlChip->setVisible(false);
+    hbox->addWidget(m_tgxlChip);
+
+    connect(m_radioModel->tunerModel(), &TunerModel::presenceChanged,
+            m_tgxlChip, &QWidget::setVisible);
+    connect(m_radioModel->tunerModel(), &TunerModel::stateChanged,
+            this, [this]() {
+        TunerModel* t = m_radioModel->tunerModel();
+        QString s = t->isOperate()
+                    ? (t->isBypass() ? QStringLiteral("BYPS")
+                                     : QStringLiteral("OPER"))
+                    : QStringLiteral("SBY");
+        m_tgxlChip->setText(QStringLiteral("TGXL ") + s);
+    });
+
     // Helper: reflect current row visibility back onto the container, so
     // when both rows are hidden the trailing separator collapses too.
     auto refreshPaStackVisibility = [this]() {
@@ -4029,6 +4295,115 @@ void MainWindow::openTciSetupPage()
     dialog->show();
 }
 
+// openSetup(pageKey) -- Phase 3P-II Phase 4 Task 90
+//
+// Generic navigation entry point wired to applet right-click menus.
+// Maps a well-known key string to a SetupDialog tree label and opens the
+// dialog at that page. If the key is not recognised, logs a warning and
+// opens the dialog at the default page (first leaf).
+//
+// Key -> tree label mapping (Option 1 per plan Task 90):
+//   "pgxlAdvanced"  -> "PGXL Advanced"
+//   "tgxlAdvanced"  -> "TGXL Advanced"
+//   "pgxlInterlock" -> "PGXL Interlock"
+//   "peripherals"   -> "Peripherals"
+//
+// Pattern matches openTciSetupPage(): fresh SetupDialog with WA_DeleteOnClose
+// so geometry is not preserved across opens (consistent with all other Setup
+// entry points in this file).
+void MainWindow::openSetup(const QString& pageKey)
+{
+    static const QHash<QString, QString> kKeyToLabel = {
+        {QStringLiteral("pgxlAdvanced"),  QStringLiteral("PGXL Advanced")},
+        {QStringLiteral("tgxlAdvanced"),  QStringLiteral("TGXL Advanced")},
+        {QStringLiteral("pgxlInterlock"), QStringLiteral("PGXL Interlock")},
+        {QStringLiteral("peripherals"),   QStringLiteral("Peripherals")},
+    };
+
+    auto* dialog = new SetupDialog(m_radioModel, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    wireSetupDialog(dialog);
+
+    const QString label = kKeyToLabel.value(pageKey);
+    if (label.isEmpty()) {
+        qWarning("MainWindow::openSetup: unknown pageKey '%s' -- opening at default page",
+                 qUtf8Printable(pageKey));
+    } else {
+        dialog->selectPage(label);
+    }
+    dialog->show();
+    dialog->raise();
+}
+
+// Phase 3P-II Phase 4 Task 97: PGXL power cap soft-alert toast.
+//
+// Fires a 5-second QStatusBar toast when peak forward power exceeds the
+// operator-configured PGXL cap.  De-bounced: one toast per exceedance event
+// (re-armed when fwd drops back below the cap threshold so a subsequent
+// exceedance fires a fresh toast).
+//
+// Design reference:
+//   docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-plan.md
+//   Task 97 / design ss5.6.2 "TX power cap: soft alert only".
+//
+// Keys:
+//   PGXL_PowerCapEnabled  -- "True"/"False", default "False"
+//   PGXL_PowerCapW        -- int watts, default 1500
+//
+// Connected to RadioModel::ampMetersChanged in buildUI() near Task 43.
+void MainWindow::onAmpMetersForPowerCap(float fwd, float /*swr*/)
+{
+    const bool enabled = AppSettings::instance()
+        .value(QStringLiteral("PGXL_PowerCapEnabled"), QStringLiteral("False"))
+        .toString() == QStringLiteral("True");
+    if (!enabled) {
+        m_powerCapToastShown = false;   // keep re-arm state sane if feature toggled
+        return;
+    }
+
+    const float capW = AppSettings::instance()
+        .value(QStringLiteral("PGXL_PowerCapW"), 1500).toFloat();
+
+    if (fwd <= capW) {
+        m_powerCapToastShown = false;   // re-arm: fwd is back below cap
+        return;
+    }
+
+    if (m_powerCapToastShown) { return; }   // de-bounce: already toasted this exceedance
+    m_powerCapToastShown = true;
+
+    const QString msg = QStringLiteral("PGXL power %1 W exceeds cap %2 W")
+        .arg(static_cast<int>(fwd))
+        .arg(static_cast<int>(capW));
+    if (QStatusBar* sb = statusBar()) {
+        sb->showMessage(msg, 5000);
+    }
+    qCWarning(lcMeter) << msg;
+}
+
+// ── Phase 3P-II review fix C2: TX interlock warning/denial toasts ────────────
+// Both slots display a 5-second status-bar message so the operator knows why
+// TX was warned or blocked.  The distinction: warning allows TX to proceed;
+// denial means MOX was rejected.  Pattern mirrors onAmpMetersForPowerCap above
+// (QStatusBar::showMessage + qCWarning(lcMeter)).
+void MainWindow::onTxInterlockWarning(const QString& reason)
+{
+    const QString msg = QString("TX interlock warning: %1").arg(reason);
+    if (QStatusBar* sb = statusBar()) {
+        sb->showMessage(msg, 5000);
+    }
+    qCWarning(lcMeter) << msg;
+}
+
+void MainWindow::onTxInterlockDenial(const QString& reason)
+{
+    const QString msg = QString("TX interlock blocked: %1").arg(reason);
+    if (QStatusBar* sb = statusBar()) {
+        sb->showMessage(msg, 5000);
+    }
+    qCWarning(lcMeter) << msg;
+}
+
 // ── Task 3.6: CPU meter rate ─────────────────────────────────────────────────
 // Live-applies the CPU meter update interval from GeneralOptionsPage spinbox.
 // Restarts m_cpuTimer with the new period. hz is clamped to [1, 30] so a
@@ -4087,6 +4462,13 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
     if (m_txApplet) {
         connect(dialog, &SetupDialog::cfcDialogRequested,
                 m_txApplet, &TxApplet::requestOpenCfcDialog);
+    }
+    // Phase 3P-II Phase 4 Task 95: propagate TGXL antenna label edits from
+    // Setup -> Network -> TGXL Advanced -> Antenna Labels to the TunerApplet
+    // antenna buttons so they update live without restarting.
+    if (m_tunerApplet) {
+        connect(dialog, &SetupDialog::tgxlAntennaLabelChanged,
+                m_tunerApplet, &TunerApplet::onAntennaLabelChanged);
     }
     // Task 3.6: CPU meter rate live-apply.
     connect(dialog, &SetupDialog::cpuMeterRateChanged,
@@ -4325,7 +4707,7 @@ void MainWindow::wireSliceToSpectrum()
 
             m_handlingBandJump = false;
         } else {
-            // From Thetis radio.rs:1417 — WDSP shift = +(freq - center)
+            // From Thetis radio.rs:1417 -- WDSP shift = +(freq - center)
             double shiftHz = freq - center;
             RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
             if (rxCh) {
@@ -4334,11 +4716,64 @@ void MainWindow::wireSliceToSpectrum()
         }
         m_spectrumWidget->setVfoFrequency(freq);
         vfo->setFrequency(freq);
+
+        // Keep MaxBin's scan window aligned with the user's slice.  See
+        // WdspEngine::setMaxBinSliceOffsetHz for the architectural cite.
+        // sliceOffsetHz = sliceFreq - DDC center.  When CTUN is off the
+        // DDC NCO follows the slice and this term is zero; when CTUN is
+        // on the term is non-zero and the MaxBin scan range slides with
+        // the slice so the meter pumps on the user's modulation rather
+        // than the noise floor sitting at DDC center.
+        if (auto* eng = m_radioModel->wdspEngine()) {
+            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            eng->setMaxBinSliceOffsetHz(/*disp=*/0, freq - ddcCenter);
+        }
     });
 
     connect(slice, &SliceModel::filterChanged, this, [this, vfo](int low, int high) {
         m_spectrumWidget->setFilterOffset(low, high);
         vfo->setFilter(low, high);
+    });
+
+    // Task 42 (Phase 3P-II): reconfigure the Max Bin detector whenever the
+    // IF passband changes so the passband-strongest-bin reading follows the
+    // active filter window.
+    //
+    // 100 ms QTimer::singleShot debounce: rapid filter edge drags (e.g.
+    // VFO flag drag) would otherwise call SetupDetectMaxBin on every
+    // intermediate sample, which re-initialises the WDSP analyzer DSP
+    // block at display-interrupt rate and wastes CPU.
+    //
+    // WdspEngine::setupMaxBinDetector wraps Thetis Console/dsp.cs:846-847
+    // [@501e3f5] SetupDetectMaxBin; display channel = 0 (single panadapter).
+    // Sample rate: m_fftEngine->sampleRate() at call time, which reflects
+    // the currently active DDC bandwidth.
+    // Frame rate: m_fftEngine->outputFps() * 1.1 matches Thetis
+    //   console.cs:51150 [@501e3f5]: (int)Math.Max(1, _display_fps * 1.1f).
+    connect(slice, &SliceModel::filterChanged, this, [this, slice](int low, int high) {
+        QTimer::singleShot(100, this, [this, slice, low, high]() {
+            if (!m_radioModel || !m_fftEngine) { return; }
+            WdspEngine* eng = m_radioModel->wdspEngine();
+            if (!eng) { return; }
+            const double rate = m_fftEngine->sampleRate();
+            const int fps = qMax(1, static_cast<int>(m_fftEngine->outputFps() * 1.1f));
+            eng->setupMaxBinDetector(/*disp=*/0, /*ss=*/0, /*LO=*/0,
+                                     rate,
+                                     static_cast<double>(low),
+                                     static_cast<double>(high),
+                                     /*tauSeconds=*/0.5,
+                                     fps);
+            // Re-sync the CTUN slice offset after every setup call.  Filter
+            // changes don't move the slice, but they re-run setupMaxBinDetector
+            // and we want the offset to be authoritative against the current
+            // slice freq vs DDC center -- not whatever stale offset was last
+            // pushed by frequencyChanged.  Without this re-sync, a filter
+            // change immediately after a CTUN tune could leave the detector
+            // pointing at the wrong bins until the user nudges the VFO again.
+            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            const double sliceFreq = slice ? slice->frequency() : ddcCenter;
+            eng->setMaxBinSliceOffsetHz(/*disp=*/0, sliceFreq - ddcCenter);
+        });
     });
 
     // Plan 4 D9 (Cluster E): initial TX mode push so the overlay has the right
@@ -4860,6 +5295,83 @@ void MainWindow::wireSliceToSpectrum()
                 this, [this](const QString& name, double /*freqHz*/, const QString& /*mode*/) {
             m_radioModel->onBandButtonClicked(bandFromName(name));
         });
+    }
+
+    // Phase 3P-II Task 65: notify PGXL of band changes so the amplifier can
+    // switch its bias / antenna profile when the operator crosses a band boundary.
+    // Gate: no-op if PGXL is not connected at the time of the band change.
+    // Use the slice's actual frequency rather than a band center lookup because
+    // Band.h has no centerFreqHz() helper (not needed elsewhere).
+    connect(slice, &SliceModel::bandChanged,
+            this, [this](NereusSDR::Band /*b*/) {
+        PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+        if (!pgxl || !pgxl->isConnected()) { return; }
+        SliceModel* s = m_radioModel->activeSlice();
+        if (!s) { return; }
+        pgxl->setBand(static_cast<int>(s->frequency()));
+    });
+
+    // Bench-fix 2026-05-19: also push on within-band frequency changes so
+    // PGXL sees every tune, not just band-boundary crossings.
+    // bandChanged fires only when the slice crosses a band edge; within-band
+    // tunes (e.g. 7.200 -> 7.250 MHz) never trigger it, leaving PGXL's
+    // bandA field stale until the operator crosses into an adjacent band.
+    // Operator confirmed on-bench: after pairing PGXL via the serial field,
+    // frequency changes from the tune wheel were not visible in PGXL status.
+    // Debounced: a 200 ms QTimer::singleShot coalesces a burst of tune-wheel
+    // clicks into one outbound command. m_pgxlBandPushTokenMs is the last
+    // token; only the most recently scheduled callback fires the push.
+    connect(slice, &SliceModel::frequencyChanged,
+            this, [this](qint64 hz) {
+        Q_UNUSED(hz);
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        m_pgxlBandPushTokenMs = nowMs;
+        QTimer::singleShot(200, this, [this, nowMs]() {
+            if (m_pgxlBandPushTokenMs != nowMs) { return; }
+            PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+            if (!pgxl || !pgxl->isConnected()) { return; }
+            SliceModel* s = m_radioModel->activeSlice();
+            if (!s) { return; }
+            pgxl->setBand(static_cast<int>(s->frequency()));
+        });
+    });
+
+    // SmartSDR API responder: also push slice freq/mode and TX state into the
+    // TCP 4992 listener so PGXL/TGXL (acting as SmartSDR clients) pull current
+    // band data via the documented API path rather than relying solely on the
+    // explicit `flexradio band=N` push above. This is what `bsrcA=FLEX` on the
+    // PGXL status frame consumes: the FlexRadio's slice 0 RF_frequency, mode,
+    // and transmit MOX state.
+    if (auto* l = m_radioModel->smartSdrListener()) {
+        // Push current state immediately so the listener doesn't sit on
+        // the constructor default (14.250 MHz USB) until the operator first
+        // turns the dial. Without this, PGXL would see a misleading band
+        // until the first frequency change.
+        l->setSliceFrequencyHz(/*sliceId=*/0, slice->frequency());
+        l->setSliceMode(/*sliceId=*/0, SliceModel::modeName(slice->dspMode()));
+    }
+    connect(slice, &SliceModel::frequencyChanged,
+            this, [this](qint64 hz) {
+        if (auto* l = m_radioModel->smartSdrListener()) {
+            l->setSliceFrequencyHz(/*sliceId=*/0, hz);
+        }
+    });
+    connect(slice, &SliceModel::dspModeChanged,
+            this, [this](NereusSDR::DSPMode mode) {
+        if (auto* l = m_radioModel->smartSdrListener()) {
+            l->setSliceMode(/*sliceId=*/0, SliceModel::modeName(mode));
+        }
+    });
+
+    // Phase 3P-II review fix C1: keep TunerApplet m_currentBand in sync so
+    // right-click Save/Recall/Clear actions always address the actual current
+    // (antenna, band) slot rather than the Band::Band20m default.
+    if (m_tunerApplet) {
+        connect(slice, &SliceModel::bandChanged,
+                m_tunerApplet, &TunerApplet::setBand);
+        // Seed with the slice's current band so the first context-menu open
+        // before any band crossing is already correct.
+        m_tunerApplet->setBand(bandFromFrequency(slice->frequency()));
     }
 }
 
@@ -5809,6 +6321,233 @@ void MainWindow::onConnectionStateChanged()
                     m_connectionPanel->accept();
                 }
             });
+        }
+
+        // Phase 3P-II Task 20: auto-connect PGXL / TGXL when a Manual IP is
+        // configured and the peripheral is not already connected.
+        {
+            auto& s = AppSettings::instance();
+
+            QString pgxlIp = s.value(QStringLiteral("PGXL_ManualIp"),
+                                     QStringLiteral("")).toString();
+            if (!pgxlIp.isEmpty()
+                && !m_radioModel->pgxlConnection()->isConnected()) {
+                quint16 p = quint16(s.value(QStringLiteral("PGXL_ManualPort"),
+                                            QStringLiteral("9008")).toInt());
+                m_radioModel->pgxlConnection()->connectToPgxl(pgxlIp, p);
+            }
+
+            QString tgxlIp = s.value(QStringLiteral("TGXL_ManualIp"),
+                                     QStringLiteral("")).toString();
+            if (!tgxlIp.isEmpty()
+                && !m_radioModel->tgxlConnection()->isConnected()) {
+                quint16 p = quint16(s.value(QStringLiteral("TGXL_ManualPort"),
+                                            QStringLiteral("9010")).toInt());
+                m_radioModel->tgxlConnection()->connectToTgxl(tgxlIp, p);
+            }
+        }
+
+        // Phase 3P-II Task 20: wire AmpApplet controls to PgxlConnection.
+        // operateToggled: translate bool to "operate"/"standby" command string.
+        // statusUpdated: fan the k=v map into AmpApplet setter slots.
+        // These connects are made on every radio-connect. Qt lambda
+        // connects do not support UniqueConnection, so guard with a flag
+        // to avoid stacking connections across reconnects. The flag is
+        // instance-local; resetFlag is intentional (first time = wire).
+        if (m_ampApplet && !m_ampAppletWired) {
+            m_ampAppletWired = true;
+
+            connect(m_ampApplet, &AmpApplet::operateToggled,
+                    this, [this](bool wantOperate) {
+                // Bench-fix 2026-05-19: pcap stream 11 (.19 PowerGeniusDesktop
+                // -> .235 PGXL :9008) shows the actually-used wire command
+                // for OPERATE is `operate=1` (key=value), not bare `operate`.
+                // PGXL rejected `operate` / `standby` with error 50000016
+                // every click.
+                m_radioModel->pgxlConnection()->sendCommand(
+                    wantOperate ? QStringLiteral("operate=1")
+                                : QStringLiteral("operate=0"));
+            });
+
+            connect(m_radioModel->pgxlConnection(),
+                    &PgxlConnection::statusUpdated,
+                    this, [this](const QMap<QString, QString>& kvs) {
+                if (kvs.contains(QStringLiteral("temp")))
+                    m_ampApplet->setTemp(kvs.value(QStringLiteral("temp")).toFloat());
+                if (kvs.contains(QStringLiteral("id")))
+                    m_ampApplet->setDrainCurrent(kvs.value(QStringLiteral("id")).toFloat());
+                if (kvs.contains(QStringLiteral("vac")))
+                    m_ampApplet->setMainsVoltage(kvs.value(QStringLiteral("vac")).toInt());
+                if (kvs.contains(QStringLiteral("state")))
+                    m_ampApplet->setState(kvs.value(QStringLiteral("state")));
+                if (kvs.contains(QStringLiteral("meffa")))
+                    m_ampApplet->setMeff(kvs.value(QStringLiteral("meffa")));
+
+                // 2026-05-22 bench fix: PGXL's `peakfwd` and `swr`
+                // status fields are HOLD values that latch the last TX
+                // peak and DO NOT decay back to 0 when the amp leaves
+                // TRANSMIT_A/B (PGXL's intent is "show the last QSO's
+                // peak on the front panel"). For our applet gauges we
+                // want the live keyed value during TX and a clean zero
+                // between cycles, so we gate the peakfwd / swr writes
+                // on the transmitting state. Without this gate the
+                // previous bench-fix at this site (which forced fwd=0
+                // / swr=1 when state changed to IDLE) was overwritten
+                // 30 ms later by the next status response carrying the
+                // stale latched peakfwd.
+                //
+                // Inferred transmitting state: if the status update
+                // includes state=, use it; otherwise fall back to the
+                // last cached state (m_ampApplet tracks it via
+                // setState).
+                bool transmitting = false;
+                if (kvs.contains(QStringLiteral("state"))) {
+                    const QString st = kvs.value(QStringLiteral("state"));
+                    transmitting =
+                        (st == QStringLiteral("TRANSMIT_A")
+                         || st == QStringLiteral("TRANSMIT_B"));
+                    if (!transmitting) {
+                        m_ampApplet->setFwdPower(0.0f);
+                        m_ampApplet->setSwr(1.0f);
+                    }
+                } else {
+                    transmitting = m_ampApplet->isTransmitting();
+                }
+
+                // 2026-05-20 bench fix: peakfwd is dBm (not watts) and swr
+                // is signed dB return loss (not an SWR ratio). Convert
+                // here so the AmpApplet gauges read the same numbers
+                // the SMeterWidget already gets via
+                // RadioModel::ampMetersChanged.
+                // 2026-05-22 bench fix: only forward the converted
+                // peakfwd / swr when the amp is actually transmitting;
+                // otherwise the stale latched peak would overwrite the
+                // zero set by the state-edge block above.
+                if (transmitting && kvs.contains(QStringLiteral("peakfwd"))) {
+                    const float dbm   = kvs.value(QStringLiteral("peakfwd")).toFloat();
+                    const float watts = std::pow(10.0f, dbm / 10.0f) / 1000.0f;
+                    m_ampApplet->setFwdPower(watts);
+                }
+                if (transmitting && kvs.contains(QStringLiteral("swr"))) {
+                    const float rlDbWire =
+                        kvs.value(QStringLiteral("swr")).toFloat();
+                    float ratio;
+                    if (rlDbWire >= 0.0f) {
+                        ratio = 99.0f;  // RL>=0 -> open/short, cap display
+                    } else {
+                        const float gamma = std::pow(10.0f, rlDbWire / 20.0f);
+                        ratio = (gamma >= 0.999f)
+                            ? 99.0f
+                            : (1.0f + gamma) / (1.0f - gamma);
+                    }
+                    m_ampApplet->setSwr(ratio);
+                }
+            });
+
+            // Phase 3P-II Phase 4 Task 88: track PGXL connected state for the
+            // context menu Disconnect/Reconnect label.
+            connect(m_radioModel->pgxlConnection(), &PgxlConnection::connected,
+                    this, [this]() { m_ampApplet->setPgxlConnected(true); });
+            connect(m_radioModel->pgxlConnection(), &PgxlConnection::disconnected,
+                    this, [this]() { m_ampApplet->setPgxlConnected(false); });
+
+            // Phase 3P-II Phase 4 Task 88: context menu right-click signals.
+
+            // connectionToggleRequested: disconnect or reconnect PGXL.
+            connect(m_ampApplet, &AmpApplet::connectionToggleRequested,
+                    this, [this]() {
+                PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+                if (!pgxl) { return; }
+                if (pgxl->isConnected()) {
+                    pgxl->disconnect();
+                } else {
+                    // PR #279 review #5 (2026-05-23): use the same
+                    // PGXL_ManualIp / PGXL_ManualPort keys that
+                    // auto-connect at line ~6331 + the Setup ->
+                    // CAT & Network -> PGXL page persist.  The
+                    // earlier reads of obsolete PGXL_IpAddress /
+                    // PGXL_Port (default 50001) returned empty
+                    // strings on every install that had only ever
+                    // written the canonical keys, so the AmpApplet
+                    // context-menu Connect did nothing.  AppSettings
+                    // canonical default 9008 per AppSettings.h:330.
+                    const QString ip = AppSettings::instance()
+                        .value(QStringLiteral("PGXL_ManualIp"), QString{})
+                        .toString();
+                    const quint16 port = static_cast<quint16>(AppSettings::instance()
+                        .value(QStringLiteral("PGXL_ManualPort"), 9008).toInt());
+                    if (!ip.isEmpty()) {
+                        pgxl->connectToPgxl(ip, port);
+                    }
+                }
+            });
+
+            // diagnosticsCopyRequested: build a brief diagnostic string and copy to clipboard.
+            connect(m_ampApplet, &AmpApplet::diagnosticsCopyRequested,
+                    this, [this]() {
+                PgxlConnection* pgxl = m_radioModel->pgxlConnection();
+                const QString text = QStringLiteral(
+                    "PGXL Diagnostics\n"
+                    "Connected: %1\n"
+                    "IP: %2\n"
+                ).arg(pgxl && pgxl->isConnected() ? QStringLiteral("Yes") : QStringLiteral("No"))
+                 .arg(pgxl ? pgxl->peerAddress() : QStringLiteral("--"));
+                QGuiApplication::clipboard()->setText(text);
+            });
+
+            // Phase 3P-II Phase 4 Task 90: wire navigationRequested to openSetup().
+            connect(m_ampApplet, &AmpApplet::navigationRequested,
+                    this, &MainWindow::openSetup);
+        }
+
+        // Phase 3P-II Phase 4 Task 89: wire TunerApplet context menu signals to
+        // TgxlConnection. buildUI() runs once at startup, so no deduplication
+        // guard is needed. Qt::UniqueConnection is intentionally NOT used here:
+        // Qt6 silently no-ops UniqueConnection when the slot is a lambda (it
+        // requires a pointer-to-member-function of a QObject subclass), so
+        // all four connects below would have been dead on arrival.
+        if (m_tunerApplet) {
+            // Track TGXL connected state for Disconnect/Reconnect label.
+            connect(m_radioModel->tgxlConnection(), &TgxlConnection::connected,
+                    this, [this]() { m_tunerApplet->setTgxlConnected(true); });
+            connect(m_radioModel->tgxlConnection(), &TgxlConnection::disconnected,
+                    this, [this]() { m_tunerApplet->setTgxlConnected(false); });
+
+            // connectionToggleRequested: disconnect or reconnect TGXL.
+            connect(m_tunerApplet, &TunerApplet::connectionToggleRequested,
+                    this, [this]() {
+                TgxlConnection* tgxl = m_radioModel->tgxlConnection();
+                if (!tgxl) { return; }
+                if (tgxl->isConnected()) {
+                    tgxl->disconnect();
+                } else {
+                    const QString ip = AppSettings::instance()
+                        .value(QStringLiteral("TGXL_ManualIp"), QString{}).toString();
+                    const quint16 port = static_cast<quint16>(AppSettings::instance()
+                        .value(QStringLiteral("TGXL_ManualPort"), 9010).toInt());
+                    if (!ip.isEmpty()) {
+                        tgxl->connectToTgxl(ip, port);
+                    }
+                }
+            });
+
+            // diagnosticsCopyRequested: build diagnostic string and copy to clipboard.
+            connect(m_tunerApplet, &TunerApplet::diagnosticsCopyRequested,
+                    this, [this]() {
+                TgxlConnection* tgxl = m_radioModel->tgxlConnection();
+                const QString text = QStringLiteral(
+                    "TGXL Diagnostics\n"
+                    "Connected: %1\n"
+                    "IP: %2\n"
+                ).arg(tgxl && tgxl->isConnected() ? QStringLiteral("Yes") : QStringLiteral("No"))
+                 .arg(tgxl ? tgxl->peerAddress() : QStringLiteral("--"));
+                QGuiApplication::clipboard()->setText(text);
+            });
+
+            // Phase 3P-II Phase 4 Task 90: wire navigationRequested to openSetup().
+            connect(m_tunerApplet, &TunerApplet::navigationRequested,
+                    this, &MainWindow::openSetup,
+                    Qt::UniqueConnection);
         }
     } else {
         m_radioModelLabel->setText(QStringLiteral("—"));

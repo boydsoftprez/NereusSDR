@@ -93,6 +93,7 @@ warren@wpratt.com
 
 #include <QObject>
 #include <QString>
+#include <QVector>
 
 #include <map>
 #include <memory>
@@ -358,12 +359,117 @@ public:
     // Rebuild a TX channel in-place: capture state, destroy the existing
     // WDSP channel, recreate with new config, reapply state.
     //
-    // Returns elapsed milliseconds (≥ 0 on success). Returns -1 if the
+    // Returns elapsed milliseconds (>= 0 on success). Returns -1 if the
     // channel ID is not found or WdspEngine is not initialized.
     //
     // Thread safety: call on main thread only. The TX worker thread must not
     // be running (setRunning(false) + thread stop before calling this).
     qint64 rebuildTxChannel(int channelId, const ChannelConfig& cfg);
+
+    // --- Metering ---
+
+    // Returns the averaged S-meter reading (dBm) from the RXA pipeline.
+    // Reads WDSP RXA_S_AV via GetRXAMeter; the value is only meaningful
+    // after the channel has been activated with SetChannelState(channel, 1).
+    // Returns -140.0 sentinel when the engine is not yet initialized.
+    // Prefer RxChannel::getMeter(RxMeterType::SignalAvg) when a channel
+    // wrapper is available -- this helper is for callers that hold only
+    // the engine and a raw WDSP channel id (e.g. the Analog S-Meter path).
+    //
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
+    // From Thetis Console/dsp.cs:957 [@501e3f5] (RXA_S_AV selector inside
+    // CalculateRXMeter; the adjacent ADC_REAL case at dsp.cs:959 carries a
+    // //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution.)
+    double getRxaSignalAverage(int channel) const;
+
+    // Returns the peak S-meter reading (dBm) from the RXA pipeline.
+    // Reads WDSP RXA_S_PK via GetRXAMeter (enum value 0).
+    // Used by SMeterWidget RxMode::SMeter and RxMode::SMeterPeak paths
+    // in MeterPoller::pollSMeter() (Task 41, Phase 3P-II).
+    // Returns -140.0 sentinel when the engine is not yet initialized.
+    //
+    // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
+    // From Thetis Console/dsp.cs:889 [@501e3f5] (rxaMeterType enum: RXA_S_PK = 0)
+    // From Thetis Console/dsp.cs:954 [@501e3f5] (RXA_S_PK selector inside
+    // CalculateRXMeter; adjacent ADC_REAL case at dsp.cs:959 carries a
+    // //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution.)
+    double getRxaSignalPeak(int channel) const;
+
+    // Configure the strongest-bin-in-passband detector for a display channel.
+    // Pass the current DDC sample rate, the active filter edges (Hz, relative
+    // to DDC center), the smoothing tau (seconds), and the display frame rate.
+    // run is always 1 (detector enabled); call with run=0 via the raw WDSP
+    // API to disable.  Defaults match the Thetis developer example in
+    // wdsp/analyzer.c:1442 [@501e3f5]:
+    //   SetupDetectMaxBin(1, 0, 0, 0, 192000.0, -3000.0, -300.0, 0.5, 60)
+    //
+    // From Thetis Console/dsp.cs:846-847 [@501e3f5] (P/Invoke)
+    // From Thetis wdsp/analyzer.c:775 [@501e3f5] (DSP body)
+    // Call site: Thetis Console/console.cs:51150 [@501e3f5]
+    void setupMaxBinDetector(int displayChannel,
+                             int ss = 0, int LO = 0,
+                             double rateHz = 192000.0,
+                             double fLowHz = -3000.0,
+                             double fHighHz = -300.0,
+                             double tauSeconds = 0.5,
+                             int frameRate = 60);
+
+    // Returns the strongest-bin dBm value from the configured detector.
+    // Returns -400.0 (WDSP's dmb_max_dB initial value) if the detector
+    // has never processed a display frame.
+    //
+    // Algorithm ported from Thetis wdsp/analyzer.c:830 [@501e3f5].
+    // NereusSDR-native: runs against FFTEngine dBm bins; see
+    // setupMaxBinDetector docstring for the full rationale.
+    double getMaxBinDbm(int displayChannel) const;
+
+    // Set the CTUN slice-to-DDC frequency offset in Hz for a detector.
+    //
+    // FFTEngine bins are emitted in DDC baseband (bins[N/2] = DDC NCO
+    // freq).  With CTUN enabled (default), the user's tuned slice does
+    // NOT match DDC center; the slice sits at an offset within the DDC
+    // passband.  Without applying that offset to the bin scan range,
+    // MaxBin scans bins near DDC center (typically noise floor) instead
+    // of the user's signal, and the meter does not track modulation.
+    //
+    // sliceOffsetHz = sliceFreqHz - ddcCenterHz (signed; 0 when CTUN off
+    // because hardware DDC NCO follows the slice).  Re-call whenever
+    // either side moves.  Defaults to 0; thread-safe via the same
+    // m_maxBinDetectors store as setupMaxBinDetector / getMaxBinDbm.
+    //
+    // NereusSDR-only API: Thetis's WDSP analyzer subsystem (CreateAnalyzer
+    // + SetAnalyzer + Spectrum) is fed by the SHIFTED WDSP channel so its
+    // analyzer DC is always the slice DC.  NereusSDR taps FFTEngine ahead
+    // of the WDSP shift, so we apply the shift in our MaxBin scan.
+    void setMaxBinSliceOffsetHz(int displayChannel, double sliceOffsetHz);
+
+public slots:
+    // Fed by FFTEngine::fftReady.  binsDbm is FFT-shifted (negative freqs
+    // first, then positive).  Updates every active MaxBinDetector.
+    //
+    // Algorithm ported from Thetis wdsp/analyzer.c:800-822 [@501e3f5]:
+    // scan for max in configured [firstBin, lastBin] window; apply
+    // slow-release smoothing (decay = exp(-1/(tau*fps))), fast peak attack.
+    // NereusSDR-native: binsDbm already in dBm so no magnitude-to-dB step.
+    //
+    // 2026-05-22 bench fix: this path now serves as the fallback source
+    // for MaxBin. The primary source is setMaxBinDbmFromSpectrum below,
+    // which feeds the post detector + avenger pixel peak from
+    // SpectrumWidget so the meter matches what the operator sees on the
+    // spectrum trace. The raw per-bin FFT power scanned here can be
+    // ~12-17 dB below the spectrum's displayed pixel value because the
+    // detector pipeline reconstructs window-spread integrated power that
+    // a single bin can't show on its own.
+    void onSpectrumBinsForMaxBin(int receiverId, const QVector<float>& binsDbm);
+
+    // 2026-05-22 bench fix: direct override of the MaxBin detector's
+    // smoothed value from SpectrumWidget's m_renderedPixels (the post
+    // detector + avenger output that the operator sees). Called once per
+    // render frame; bypasses the per-frame peak-hold-with-decay smoothing
+    // because m_renderedPixels already includes the avenger's time
+    // smoothing. Stamps d.active=true so getMaxBinDbm returns the new
+    // value instead of the -400 sentinel before the first call.
+    void setMaxBinDbmFromSpectrum(int displayChannel, double dbm);
 
 signals:
     void initializedChanged(bool initialized);
@@ -398,6 +504,34 @@ private:
     // pipeline that WDSP constructs when OpenChannel(type=1) is called.
     // destroyTxChannel's erase() runs the unique_ptr destructor automatically.
     std::map<int, std::unique_ptr<TxChannel>> m_txChannels;
+
+    // NereusSDR-native strongest-bin-in-passband detector state.
+    //
+    // Algorithm from Thetis wdsp/analyzer.c:688-830 [@501e3f5]; implemented
+    // here because the WDSP analyzer pipeline (CreateAnalyzer + SetAnalyzer
+    // + Spectrum buffer feed) is not wired in NereusSDR -- FFTEngine uses raw
+    // FFTW3 directly.  The public API (setupMaxBinDetector / getMaxBinDbm)
+    // preserves the Thetis names; the implementation runs the same scan +
+    // slow-release smoothing on the dBm bins emitted by FFTEngine::fftReady
+    // via onSpectrumBinsForMaxBin.
+    struct MaxBinDetector {
+        bool   active{false};
+        double rate{192000.0};
+        double fLow{-3000.0};
+        double fHigh{-300.0};
+        // CTUN slice offset within DDC baseband (Hz).  Added to fLow/fHigh
+        // when computing the bin scan window so MaxBin tracks the user's
+        // tuned slice, not the DDC NCO center.  See setMaxBinSliceOffsetHz
+        // for the full rationale.  Defaults to 0 (CTUN off; DDC follows
+        // slice; offset is zero).
+        double sliceOffsetHz{0.0};
+        double tau{0.5};
+        int    frameRate{60};
+        double decay{0.0};      // exp(-1.0 / (tau * frameRate))
+        double maxDb{-400.0};   // smoothed max in dBm (Thetis dmb_max_dB sentinel)
+    };
+    // Indexed by display channel (disp).  Grown on demand in setupMaxBinDetector.
+    QVector<MaxBinDetector> m_maxBinDetectors;
 
     // Per-TX-channel DEXP in/out buffer (Phase 3M-3a-iii Task 20).
     //
