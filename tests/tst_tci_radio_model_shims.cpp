@@ -176,17 +176,61 @@ private slots:
     }
 
     void af_linear_and_mon_linear_roundtrip() {
+        // Thetis TCI volume range is 0..100 linear, NOT 0..32767. From
+        // TCIServer.cs:4273-4294 [v2.10.3.15] linearToDbVolume /
+        // dbToLinearVolume:
+        //   double dbMin = -60f;  double dbMax = 0;
+        //   double linearMax = 100f;  double linearMin = 0;
+        // The TciProtocol parser (src/core/TciProtocol.cpp:2769-2789)
+        // converts the wire-format dB value to 0..100 linear via
+        // tciDbToLinearVolume BEFORE calling setAfLinear, so values
+        // arriving at this shim are always in 0..100.
+        //
+        // Earlier versions of this test (commit c78ac725) sent 16384 / 8192
+        // because the shim was a pure pass-through cache. Commit 9ae5f135
+        // rewired the shim through AudioEngine::setVolume (which expects
+        // 0..1.0 float), and the shim correctly clamps inputs to 0..100 to
+        // match Thetis. The test is now updated to the Thetis-faithful
+        // range and also verifies the clamp for out-of-range inputs.
         RadioModel m;
-        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 16384));
         int out = 0;
+
+        // In-range round-trip (50 = -30 dB equivalent, mid-slider).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 50));
         QMetaObject::invokeMethod(&m, "afLinear",
                                   Q_RETURN_ARG(int, out));
-        QCOMPARE(out, 16384);
+        QCOMPARE(out, 50);
+
+        // Boundary round-trip (full volume).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 100));
+        QMetaObject::invokeMethod(&m, "afLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 100);
+
+        // Out-of-range positive clamps to 100 (matches Thetis
+        // dbToLinearVolume Math.Min(linearMax, ...)).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, 16384));
+        QMetaObject::invokeMethod(&m, "afLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 100);
+
+        // Out-of-range negative clamps to 0 (matches Thetis
+        // dbToLinearVolume Math.Max(linearMin, ...)).
+        QMetaObject::invokeMethod(&m, "setAfLinear", Q_ARG(int, -50));
+        QMetaObject::invokeMethod(&m, "afLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 0);
+
+        // MON volume: same range + clamp semantics (TXAF mirrors AF).
+        QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 75));
+        QMetaObject::invokeMethod(&m, "monLinear",
+                                  Q_RETURN_ARG(int, out));
+        QCOMPARE(out, 75);
 
         QMetaObject::invokeMethod(&m, "setMonLinear", Q_ARG(int, 8192));
         QMetaObject::invokeMethod(&m, "monLinear",
                                   Q_RETURN_ARG(int, out));
-        QCOMPARE(out, 8192);
+        QCOMPARE(out, 100);
     }
 
     void iq_sample_rate_roundtrips() {
