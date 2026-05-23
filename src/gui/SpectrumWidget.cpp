@@ -1462,6 +1462,12 @@ void SpectrumWidget::setDbmCalOffset(float db)
     m_dbmCalOffset = db;
     scheduleSettingsSave();
     markOverlayDirty();  // dBm scale strip labels shift
+    // 2026-05-22 calibration fix: ensure FFT vertex VBO re-runs so the
+    // updated m_dbmCalOffset reaches the rendered trace position, not just
+    // the axis labels.  FFT data delivery normally triggers update() on its
+    // own, but this guards against the case where the cal pushes before any
+    // FFT frame has arrived (e.g. controller attaches before connection).
+    update();
 }
 
 void SpectrumWidget::setFillColor(const QColor& c)
