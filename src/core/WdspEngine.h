@@ -377,7 +377,9 @@ public:
     // the engine and a raw WDSP channel id (e.g. the Analog S-Meter path).
     //
     // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
-    // From Thetis Console/console.cs:957 [@501e3f5] (RXA_S_AV selector)
+    // From Thetis Console/dsp.cs:957 [@501e3f5] (RXA_S_AV selector inside
+    // CalculateRXMeter; the adjacent ADC_REAL case at dsp.cs:959 carries a
+    // //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution.)
     double getRxaSignalAverage(int channel) const;
 
     // Returns the peak S-meter reading (dBm) from the RXA pipeline.
@@ -388,7 +390,9 @@ public:
     //
     // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
     // From Thetis Console/dsp.cs:889 [@501e3f5] (rxaMeterType enum: RXA_S_PK = 0)
-    // From Thetis Console/console.cs:954 [@501e3f5] (RXA_S_PK selector)
+    // From Thetis Console/dsp.cs:954 [@501e3f5] (RXA_S_PK selector inside
+    // CalculateRXMeter; adjacent ADC_REAL case at dsp.cs:959 carries a
+    // //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution.)
     double getRxaSignalPeak(int channel) const;
 
     // Configure the strongest-bin-in-passband detector for a display channel.

@@ -341,11 +341,13 @@ void MeterPoller::poll()
 //
 // Branches on SMeterWidget::rxMode() (Task 41, Phase 3P-II).
 //
-// Source mapping (Thetis Console/console.cs:952-957 [@501e3f5]):
+// Source mapping (Thetis Console/dsp.cs:952-957 [@501e3f5] inside
+// CalculateRXMeter; neighbouring ADC_REAL case at dsp.cs:959 carries a
+// //MW0LGE [2.9.0.7] inline tag that we preserve per GPL attribution):
 //   case MeterType.SIGNAL_STRENGTH:     RXA_S_PK  (peak S-unit reading)
 //   case MeterType.AVG_SIGNAL_STRENGTH: RXA_S_AV  (averaged S-unit reading)
 // MaxBin uses GetDetectMaxBin (wdsp/analyzer.c:830 [@501e3f5]) -- no direct
-// Thetis console.cs call site; the detector is always display-channel 0 in
+// Thetis dsp.cs call site; the detector is always display-channel 0 in
 // single-panadapter builds.
 void MeterPoller::pollSMeter()
 {
@@ -370,8 +372,10 @@ void MeterPoller::pollSMeter()
     switch (sm->rxMode()) {
     case SMeterWidget::RxMode::SMeter:
     case SMeterWidget::RxMode::SMeterPeak:
-        // From Thetis Console/console.cs:954 [@501e3f5]:
+        // From Thetis Console/dsp.cs:954 [@501e3f5] (CalculateRXMeter):
         //   case MeterType.SIGNAL_STRENGTH: val = GetRXAMeter(channel, RXA_S_PK);
+        // The adjacent ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
+        // attribution that we preserve verbatim per GPL inline-tag rule.
         // Display-side offset add per console.cs:46824 [v2.10.3.13]:
         //   _RX1MeterValues[Reading.SIGNAL_STRENGTH] = ... + offset;
         if (m_wdspEngine) {
@@ -382,8 +386,10 @@ void MeterPoller::pollSMeter()
         }
         break;
     case SMeterWidget::RxMode::SignalAverage:
-        // From Thetis Console/console.cs:957 [@501e3f5]:
+        // From Thetis Console/dsp.cs:957 [@501e3f5] (CalculateRXMeter):
         //   case MeterType.AVG_SIGNAL_STRENGTH: val = GetRXAMeter(channel, RXA_S_AV);
+        // The adjacent ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
+        // attribution that we preserve verbatim per GPL inline-tag rule.
         // Display-side offset add per console.cs:46828 [v2.10.3.13]:
         //   _RX1MeterValues[Reading.AVG_SIGNAL_STRENGTH] = ... + offset;
         dbm = static_cast<float>(m_rxChannel->getMeter(RxMeterType::SignalAvg)) + rxOffsetDb;

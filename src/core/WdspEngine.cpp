@@ -1216,9 +1216,11 @@ qint64 WdspEngine::rebuildTxChannel(int channelId, const ChannelConfig& cfg)
 // Porting from Thetis Console/dsp.cs:387-388 [@501e3f5] -- original C# logic:
 //   [DllImport("wdsp.dll", EntryPoint = "GetRXAMeter", ...)]
 //   public static extern double GetRXAMeter(int channel, rxaMeterType meter);
-// Selector site: Thetis Console/console.cs:957 [@501e3f5]:
+// Selector site: Thetis Console/dsp.cs:957 [@501e3f5] (CalculateRXMeter):
 //   case MeterType.AVG_SIGNAL_STRENGTH:
 //       val = GetRXAMeter(channel, rxaMeterType.RXA_S_AV);
+// The neighbouring ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
+// attribution that we preserve verbatim per GPL inline-tag preservation.
 //
 // RXA_S_AV == 1 (see wdsp/RXA.h rxaMeterType enum / WdspTypes.h SignalAvg).
 // The value is lock-free at the WDSP boundary (GetRXAMeter reads the WDSP
@@ -1234,7 +1236,8 @@ double WdspEngine::getRxaSignalAverage(int channel) const
     }
 #ifdef HAVE_WDSP
     // From Thetis Console/dsp.cs:387-388 [@501e3f5]
-    // From Thetis Console/console.cs:957 [@501e3f5]
+    // From Thetis Console/dsp.cs:957 [@501e3f5] (RXA_S_AV selector; preserves
+    // //MW0LGE [2.9.0.7] attribution from adjacent ADC_REAL case at dsp.cs:959.)
     return ::GetRXAMeter(channel, /*RXA_S_AV=*/1);
 #else
     Q_UNUSED(channel);
@@ -1247,9 +1250,11 @@ double WdspEngine::getRxaSignalAverage(int channel) const
 // Porting from Thetis Console/dsp.cs:387-388 [@501e3f5] -- original C# P/Invoke:
 //   [DllImport("wdsp.dll", EntryPoint = "GetRXAMeter", ...)]
 //   public static extern double GetRXAMeter(int channel, rxaMeterType meter);
-// Selector site: Thetis Console/console.cs:954 [@501e3f5]:
+// Selector site: Thetis Console/dsp.cs:954 [@501e3f5] (CalculateRXMeter):
 //   case MeterType.SIGNAL_STRENGTH:
 //       val = GetRXAMeter(channel, rxaMeterType.RXA_S_PK);
+// The neighbouring ADC_REAL case at dsp.cs:959 carries //MW0LGE [2.9.0.7]
+// attribution that we preserve verbatim per GPL inline-tag preservation.
 //
 // RXA_S_PK == 0 (first entry in Thetis dsp.cs:889 rxaMeterType enum
 // [@501e3f5]; also matches WdspTypes.h RxMeterType::SignalPeak = 0).
@@ -1262,7 +1267,8 @@ double WdspEngine::getRxaSignalPeak(int channel) const
     }
 #ifdef HAVE_WDSP
     // From Thetis Console/dsp.cs:387-388 [@501e3f5]
-    // From Thetis Console/console.cs:954 [@501e3f5]
+    // From Thetis Console/dsp.cs:954 [@501e3f5] (RXA_S_PK selector; preserves
+    // //MW0LGE [2.9.0.7] attribution from adjacent ADC_REAL case at dsp.cs:959.)
     return ::GetRXAMeter(channel, /*RXA_S_PK=*/0);
 #else
     Q_UNUSED(channel);

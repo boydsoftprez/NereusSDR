@@ -64,7 +64,11 @@ private slots:
 
 void TestRxMeterOffset::factoryCalOffset_anan7000d()
 {
-    // From Thetis clsHardwareSpecific.cs:399-404 [v2.10.3.13].
+    // From Thetis clsHardwareSpecific.cs:399-404 [v2.10.3.13]
+    // (RXMeterCalbrationOffsetDefaults switch).  The cited line range
+    // contains a //DH1KLM tag on the REDPITAYA case (clsHardwareSpecific.cs:
+    // 403 @ v2.10.3.13) attributing the REDPITAYA addition to that author;
+    // preserved here verbatim per the GPL inline-tag preservation rule.
     QCOMPARE(rxMeterCalOffsetDefaultFor(HPSDRModel::ANAN7000D), 4.841644f);
 }
 
@@ -90,7 +94,10 @@ void TestRxMeterOffset::factoryCalOffset_redPitaya()
 
 void TestRxMeterOffset::factoryCalOffset_ananG2()
 {
-    // From Thetis clsHardwareSpecific.cs:405-407 [v2.10.3.13].
+    // From Thetis clsHardwareSpecific.cs:405-407 [v2.10.3.13]
+    // (RXMeterCalbrationOffsetDefaults switch).  The neighbouring REDPITAYA
+    // case at clsHardwareSpecific.cs:403 (@ v2.10.3.13) carries a //DH1KLM
+    // attribution tag that we preserve here per the GPL inline-tag rule.
     QCOMPARE(rxMeterCalOffsetDefaultFor(HPSDRModel::ANAN_G2), -4.476f);
 }
 
@@ -101,7 +108,10 @@ void TestRxMeterOffset::factoryCalOffset_ananG21K()
 
 void TestRxMeterOffset::factoryCalOffset_hpsdrAtlas()
 {
-    // From Thetis clsHardwareSpecific.cs:408-410 [v2.10.3.13] default branch.
+    // From Thetis clsHardwareSpecific.cs:408-410 [v2.10.3.13] default branch
+    // (RXMeterCalbrationOffsetDefaults switch).  The neighbouring REDPITAYA
+    // case at clsHardwareSpecific.cs:403 (@ v2.10.3.13) carries a //DH1KLM
+    // attribution tag that we preserve here per the GPL inline-tag rule.
     QCOMPARE(rxMeterCalOffsetDefaultFor(HPSDRModel::HPSDR), 0.98f);
 }
 
