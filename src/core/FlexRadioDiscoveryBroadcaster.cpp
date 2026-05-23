@@ -241,14 +241,23 @@ void FlexRadioDiscoveryBroadcaster::onTick()
         return;
     }
 
-    // Try writing to 255.255.255.255 (limited broadcast) with SO_BROADCAST set.
-    // This is more portable than trying to compute and use subnet broadcast addresses.
+    // PR #279 review #4 (2026-05-23): use the subnet broadcast computed
+    // for the bound interface, NOT QHostAddress::Broadcast (255.255.255.255).
+    // computeBroadcastAddress() already falls back to limited broadcast when
+    // the interface lookup fails, so this stays robust on misconfigured
+    // hosts.  Sending to the subnet broadcast pins egress to the interface
+    // bound at m_ip; on multi-interface Macs the kernel's route table can
+    // pick the wrong interface for the limited broadcast and the beacon
+    // never reaches PGXL.  The comment block at computeBroadcastAddress()
+    // (line ~531) and start() / onTick() already document this assumption
+    // but the actual writeDatagram call was still using the limited form.
     qint64 written = m_socket.writeDatagram(pkt,
-                                            QHostAddress::Broadcast,
+                                            m_broadcastAddress,
                                             /*port=*/4992);
     if (written != pkt.size()) {
-        qCWarning(lcFlexDisc) << "broadcast write failed (fd=" << sockFd << "):"
-                              << m_socket.errorString();
+        qCWarning(lcFlexDisc) << "broadcast write failed (fd=" << sockFd
+                              << ", dst=" << m_broadcastAddress.toString()
+                              << "):" << m_socket.errorString();
     }
 
     m_packetCount = (m_packetCount + 1) & 0x0F; // 4-bit rolling counter 0..15
