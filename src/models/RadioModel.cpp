@@ -1237,6 +1237,7 @@ RadioModel::RadioModel(QObject* parent)
     //
     //   iq_gain   = audio_volume * Audio.HighSWRScale
     //               From Thetis cmaster.cs:1115-1119 [v2.10.3.13].
+    // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
     //               HighSWRScale is set to 1.0 once at console.cs:29194
     //               [v2.10.3.13] and never reassigned anywhere in
     //               baseline Thetis — IQ-side path is effectively no-op.
@@ -7368,6 +7369,7 @@ void RadioModel::setTune(bool on)
         //               From Thetis audio.cs:262-271 [v2.10.3.13]. NO SWR.
         //   iq_gain   = audio_volume * swrProtect
         //               From Thetis cmaster.cs:1115-1119 [v2.10.3.13].
+        // Upstream tags preserved: //MW0LGE (from cited cmaster.cs:1114) [v2.10.3.15]
         //               SWR factor lives HERE — DO NOT add to wire byte.
         //
         // Pre-hotfix linear formula at this site:
@@ -7740,11 +7742,21 @@ bool RadioModel::rxMute(int rx) const
 }
 
 // ── Filter ──────────────────────────────────────────────────────────────────
+//
+// Review P2 #4 fix (2026-05-22): use the atomic SliceModel::setFilter(low,
+// high) instead of the separate setFilterLow then setFilterHigh calls.  The
+// split path emitted filterChanged twice -- once with (newLow, oldHigh) and
+// again with (newLow, newHigh) -- so TCI clients tracking
+// SliceModel::filterChanged via the local-broadcast path received a stale
+// intermediate frame like "rx_filter_band:0,400,<oldHigh>;" before the
+// final value.  Atomic setFilter emits filterChanged exactly once with the
+// final pair, matching Thetis FilterChangedHandlers semantics
+// (TCIServer.cs:6732 [v2.10.3.15] -- single OnFilterChanged event per
+// FilterChanged delegate fire).
 void RadioModel::setFilterBand(int rx, int lowHz, int highHz)
 {
     if (auto* s = sliceAt(rx)) {
-        s->setFilterLow(lowHz);
-        s->setFilterHigh(highHz);
+        s->setFilter(lowHz, highHz);
     }
 }
 int RadioModel::filterLow(int rx) const
@@ -7992,14 +8004,63 @@ bool RadioModel::rxEnable(int rx) const
 }
 
 // ── Volume (radio-global) ───────────────────────────────────────────────────
-void RadioModel::setAfLinear(int v)   { m_tciAfLinear  = v; }
-int  RadioModel::afLinear() const     { return m_tciAfLinear; }
-void RadioModel::setMonLinear(int v)  { m_tciMonLinear = v; }
-int  RadioModel::monLinear() const    { return m_tciMonLinear; }
+//
+// Review P1 #1 fix (2026-05-22): forward to live AudioEngine / TransmitModel
+// state instead of the decoupled m_tciAfLinear / m_tciMonLinear caches.  The
+// caches defaulted to 0, so a fresh real-client connect saw "volume:-60.0;"
+// (muted) and "rx_volume:0,0,-60.00;" -- bench-bogus.  Thetis reads
+// consoleThreadSafe.AF / TXAF for the same fields (TCIServer.cs:2652+2655
+// [v2.10.3.15]), which are the actual UI slider positions.  NereusSDR's
+// equivalents:
+//   AF        -> AudioEngine::volume() (float [0..1]) scaled to int [0..100]
+//   TXAF/MON  -> TransmitModel::monitorVolume() (float [0..1]) same scale
+// The legacy m_tciAfLinear / m_tciMonLinear caches are still written by
+// setAfLinear / setMonLinear so test code that pokes them keeps working,
+// but they are NOT read back -- the live source is authoritative.  Setters
+// also forward to the live model so TCI clients writing AF/MON actually
+// affect the radio (parity with Thetis handleVolume / handleMONVolume).
+void RadioModel::setAfLinear(int v)
+{
+    m_tciAfLinear = v;
+    if (m_audioEngine) {
+        m_audioEngine->setVolume(static_cast<float>(qBound(0, v, 100)) / 100.0f);
+    }
+}
+int  RadioModel::afLinear() const
+{
+    if (m_audioEngine) {
+        const float vol = m_audioEngine->volume();
+        return qBound(0, static_cast<int>(vol * 100.0f + 0.5f), 100);
+    }
+    return m_tciAfLinear;
+}
+void RadioModel::setMonLinear(int v)
+{
+    m_tciMonLinear = v;
+    m_transmitModel.setMonitorVolume(
+        static_cast<float>(qBound(0, v, 100)) / 100.0f);
+}
+int  RadioModel::monLinear() const
+{
+    const float vol = m_transmitModel.monitorVolume();
+    return qBound(0, static_cast<int>(vol * 100.0f + 0.5f), 100);
+}
 
 // ── IQ rate ─────────────────────────────────────────────────────────────────
+//
+// Review P1 #1 fix (2026-05-22): prefer the live connection sample rate.
+// Thetis reads consoleThreadSafe.SampleRateRX1 via getPublishedIQSampleRate
+// (TCIServer.cs:2642 [v2.10.3.15]).  NereusSDR exposes the same via
+// connectionSampleRateHz().  Falls back to the cached m_tciIqSampleRate
+// only when no connection is active (matches Thetis behaviour: pre-
+// connect probes see whatever the user/setup defaults left in the field).
 void RadioModel::setIqSampleRate(int sr) { m_tciIqSampleRate = sr; }
-int  RadioModel::iqSampleRate() const    { return m_tciIqSampleRate; }
+int  RadioModel::iqSampleRate() const
+{
+    const int liveRate = connectionSampleRateHz();
+    if (liveRate > 0) { return liveRate; }
+    return m_tciIqSampleRate;
+}
 
 // ── Audio stream config (parity-only; TciServer intercepts) ─────────────────
 void RadioModel::setAudioSampleRate(int sr)          { m_tciAudioSampleRate = sr; }
@@ -8045,6 +8106,63 @@ double RadioModel::calibrationDisplay(int rx) const   { (void)rx; return 0.0; }
 double RadioModel::calibrationXvtr(int rx) const      { (void)rx; return 0.0; }
 double RadioModel::calibrationSixMeter(int rx) const  { (void)rx; return 0.0; }
 double RadioModel::calibrationTxDisplay(int rx) const { (void)rx; return 0.0; }
+
+// ── Init-burst live-state shims (Phase 3J-1 closeout 2026-05-22) ────────────
+// Documentation lives in RadioModel.h alongside the declarations; cite
+// summaries inline here for diff-readability.
+
+// rx2Enabled -- From Thetis RX2Enabled at console.cs:37278 [v2.10.3.15].
+// Derived from m_connectionActiveRxCount; setActiveRxCountLive is the
+// authoritative state writer.
+bool RadioModel::rx2Enabled() const
+{
+    return m_connectionActiveRxCount >= 2;
+}
+
+// monEnabled -- From Thetis MON at console.cs:18656-18663 [v2.10.3.15].
+// Forwards to TransmitModel::monEnabled (default false, never persisted).
+bool RadioModel::monEnabled() const
+{
+    return m_transmitModel.monEnabled();
+}
+
+// tune -- From Thetis TUN at console.cs:18677-18684 [v2.10.3.15].
+// Same backing field as the existing isTune() accessor; separate Q_INVOKABLE
+// surface because isTune() is noexcept and cannot carry Q_INVOKABLE.
+bool RadioModel::tune() const
+{
+    return m_isTuning;
+}
+
+// powerOn -- From Thetis PowerOn at console.cs:19799-19803 [v2.10.3.15].
+// Architectural divergence: NereusSDR has no separate Power button, so
+// connection IS power.  TCI clients see powerOn = isConnected().
+bool RadioModel::powerOn() const
+{
+    return isConnected();
+}
+
+// diglOffset -- From Thetis DIGLClickTuneOffset at console.cs:14693
+// [v2.10.3.15].  Architectural divergence: per-slice in NereusSDR; expose
+// active slice value (falls back to 0 when no active slice -- e.g. pre-
+// connect TCI client probe).
+int RadioModel::diglOffset() const
+{
+    if (m_activeSlice) {
+        return m_activeSlice->diglOffsetHz();
+    }
+    return 0;
+}
+
+// diguOffset -- From Thetis DIGUClickTuneOffset at console.cs:14658
+// [v2.10.3.15].  Same divergence as diglOffset.
+int RadioModel::diguOffset() const
+{
+    if (m_activeSlice) {
+        return m_activeSlice->diguOffsetHz();
+    }
+    return 0;
+}
 
 // ---------------------------------------------------------------------------
 // completeTuneOff — Thetis-faithful TUN-off completion (issue #177).

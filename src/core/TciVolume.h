@@ -1,11 +1,14 @@
 // no-port-check: NereusSDR utility wrapping Thetis volume math from
-// TCIServer.cs:4110-4132 [v2.10.3.13]. Pure inline functions; no state.
+// TCIServer.cs:4110-4132 [v2.10.3.13] + TCIServer.cs:4778-4787 [v2.10.3.15].
+// Pure inline functions; no state.
 
 // src/core/TciVolume.h  (NereusSDR)
 // NereusSDR-original utility — TCI AF/MON volume dB <-> linear conversion.
 //
 // Ports the private linearToDbVolume / dbToLinearVolume pair from:
 //   Thetis TCIServer.cs:4110-4132 [v2.10.3.13]
+// Also ports audioGainToDb (per-rx volume log curve) from:
+//   Thetis TCIServer.cs:4778-4787 [v2.10.3.15]
 //
 // These are pure free functions with no state. Placed in a separate header
 // so they can be unit-tested without pulling in TciProtocol or Qt::WebSockets.
@@ -13,8 +16,14 @@
 // Modification history (NereusSDR):
 //   2026-05-10 — Phase 3J-1 Task 10 (audio stream family) by J.J. Boyd (KG4VCF);
 //                AI-assisted transformation via Anthropic Claude Code.
+//   2026-05-22. Phase 3J-1 closeout (init burst live state) by J.J. Boyd
+//                (KG4VCF); added tciAudioGainToDb for the rx_volume: log curve
+//                separate from the volume: linear curve.  Bench-fix related.
+//                AI-assisted transformation via Anthropic Claude Code.
 
 #pragma once
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -48,6 +57,24 @@ inline int tciDbToLinearVolume(double dbLevel)
     if (linearValue < linearMin) { linearValue = linearMin; }
     if (linearValue > linearMax) { linearValue = linearMax; }
     return static_cast<int>(linearValue);
+}
+
+// From Thetis TCIServer.cs:4778-4787 [v2.10.3.15]: audioGainToDb.
+//   if (gain <= 0.0) return -60.0;
+//   if (gain >= 1.0) return 0.0;
+//   return 20.0 * Math.Log10(gain);
+// Used by sendRxVolume per-RX (TCIServer.cs:4788-4793 [v2.10.3.15]) where the
+// input is already a normalized gain (RX0Gain/100 etc.), distinct from the
+// linear volume slider above.  Different curve: log instead of linear.
+inline double tciAudioGainToDb(double gain)
+{
+    if (gain <= 0.0) {
+        return -60.0;
+    }
+    if (gain >= 1.0) {
+        return 0.0;
+    }
+    return 20.0 * std::log10(gain);
 }
 
 } // namespace NereusSDR

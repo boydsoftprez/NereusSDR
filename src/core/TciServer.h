@@ -50,6 +50,7 @@ namespace NereusSDR {
 
 class RadioModel;
 class RxChannel;
+class SliceModel;
 class TciProtocol;
 
 // TCI WebSocket server — exposes radio state over the ExpertSDR3 TCI protocol.
@@ -249,6 +250,34 @@ private slots:
     // / m_iqTapConnected true) this method is a no-op.
     void hookAudioAndIqTaps();
 
+    // ── Phase 3J-1 closeout (2026-05-22): SliceModel broadcast wireup ────────
+    //
+    // hookSliceBroadcasts wires each existing SliceModel signal into the
+    // TciProtocol broadcast queue, then subscribes to RadioModel::sliceAdded
+    // so future slices are wired automatically.  Idempotent via
+    // m_broadcastWiredSlices: re-calling on a slice already wired is a no-op.
+    //
+    // Mirrors Thetis TCIServer.cs:6730-6790 [v2.10.3.15]: TCIServer subscribes
+    // to ~40 Console events (FilterChangedHandlers, NRChangedHandlers,
+    // VfoALockChangedHandlers, ...) and routes each to OnXxxChanged which
+    // calls sendXxx.  NereusSDR per-slice signals route through SliceModel.
+    //
+    // wireSliceForBroadcast handles the per-slice signal-to-frame mapping.
+    // Bench bug fix 2026-05-22: without this, operator-side VFO/mode/filter
+    // changes never propagate to connected TCI clients.
+    void hookSliceBroadcasts();
+    void wireSliceForBroadcast(SliceModel* slice, int rxIndex);
+
+    // hookGlobalBroadcasts wires the radio-global signals that aren't tied to
+    // a specific slice: MOX, TUN, AF volume, MON enable/volume, IQ sample
+    // rate, connection state (Power on/off).  Mirrors the radio-global
+    // ChangedHandlers from Thetis TCIServer.cs:6727-6788 [v2.10.3.15] that
+    // hookSliceBroadcasts doesn't cover.  Called from constructor and start()
+    // (after stop() severs all RadioModel -> this connections).  Idempotency
+    // via m_globalBroadcastsWired -- re-calling is a no-op except after stop()
+    // which resets the flag.
+    void hookGlobalBroadcasts();
+
     // ── Phase 3J-1 bench fix (2026-05-10): TX_CHRONO frame senders ───────────
     //
     // Start/stop the TX_CHRONO timer when a TCI client acquires/releases the
@@ -380,6 +409,22 @@ private:
     // set is always 0 or 1 entry in practice (single RX channel until 3F),
     // so the linear-scan dedupe in hookAudioAndIqTaps is free.
     QVector<QPointer<RxChannel>> m_audioTapSources;
+
+    // Phase 3J-1 closeout (2026-05-22): tracks slices that have had their
+    // local-broadcast signals wired by wireSliceForBroadcast.  QPointer
+    // auto-nulls when the underlying SliceModel is destroyed, mirroring
+    // the safety guarantee on m_audioTapSources.  hookSliceBroadcasts
+    // skips slices already present in this set so re-calling on
+    // stop()/start() is a no-op (slice signals are also auto-disconnected
+    // when the SliceModel goes away, so no manual disconnect required).
+    QVector<QPointer<SliceModel>> m_broadcastWiredSlices;
+
+    // Review P2 #5 follow-up (2026-05-22): guard flag for hookGlobalBroadcasts.
+    // stop()'s QObject::disconnect(m_model, nullptr, this, nullptr) severs ALL
+    // RadioModel -> this connections including the global broadcast subscribers,
+    // so this flag is reset there and re-armed by hookGlobalBroadcasts on the
+    // next start().  Idempotent: if already true, hookGlobalBroadcasts no-ops.
+    bool m_globalBroadcastsWired{false};
 
     // Phase 3J-1 review P2.3: guard flag for the IQ tap connection.
     // hookAudioAndIqTaps() sets this to true after connecting

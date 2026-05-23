@@ -46,6 +46,7 @@ void TestTxInhibitMonitor::cleanup()
 // After startup with pin LOW (not asserted), no inhibit signal fires and
 // inhibited() returns false after the first poll tick at 100 ms.
 // From Thetis console.cs:25801-25839 [v2.10.3.13] (PollTXInhibit baseline state)
+// Upstream tags preserved: //N1GP (from cited upstream lines) [v2.10.3.15]
 // Tag preserved: //DH1KLM (console.cs:25814 — REDPITAYA/ANAN7000D/8000D use getUserI02 in P1)
 void TestTxInhibitMonitor::noInhibit_atStartup_signalsFalse()
 {
@@ -76,6 +77,7 @@ void TestTxInhibitMonitor::userIo01_assertedActiveLow_emitsWithSourceUserIo01()
 // setReverseLogic(true) inverts the pin's sense: pin LOW (reader returns false)
 // should now assert inhibit.
 // From Thetis console.cs:25830 [v2.10.3.13] (if (_reverseTxInhibit) inhibit_input = !inhibit_input)
+// Upstream tags preserved: //N1GP (from cited console.cs:25833) [v2.10.3.15]
 void TestTxInhibitMonitor::userIo01_reverseLogic_invertsActiveLow()
 {
     // Spy must be attached before setReverseLogic() because that call
@@ -125,6 +127,7 @@ void TestTxInhibitMonitor::blockTxAntenna_assertedTrue_emitsWithSourceBlockTxAnt
 // (highest-priority source takes over). Only when all sources are cleared does
 // inhibited() return false.
 // From Thetis console.cs:25801-25839 [v2.10.3.13] — priority ordering.
+// Upstream tags preserved: //N1GP (from cited upstream lines) [v2.10.3.15]
 // Tag preserved: //DH1KLM (console.cs:25814 — per-board model check for P1)
 void TestTxInhibitMonitor::multipleSourcesActive_inhibitedRemainsTrueUntilAllClear()
 {
@@ -148,6 +151,7 @@ void TestTxInhibitMonitor::multipleSourcesActive_inhibitedRemainsTrueUntilAllCle
 // The poll timer fires every 100 ms but must NOT emit duplicate signals when
 // the pin state has not changed between ticks.
 // From Thetis console.cs:25832 [v2.10.3.13] (if (TXInhibit != inhibit_input) fire)
+// Upstream tags preserved: //DH1KLM //N1GP (from cited upstream lines) [v2.10.3.15]
 void TestTxInhibitMonitor::pollCadence100ms_doesNotEmitDuplicates()
 {
     m_pinAsserted = true;

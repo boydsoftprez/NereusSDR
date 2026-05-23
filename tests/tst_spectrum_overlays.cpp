@@ -157,6 +157,7 @@ private slots:
     // ── ShowPeakValueOverlay ────────────────────────────────────────────────
 
     // From Thetis console.cs:20073 [v2.10.3.13] peak_text_delay default=500.
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
     void peak_value_overlay_roundtrip()
     {
         SpectrumWidget w;
@@ -170,6 +171,7 @@ private slots:
     void peak_text_delay_default_is_500ms()
     {
         // From Thetis console.cs:20073 [v2.10.3.13]: peak_text_delay = 500.
+        // Upstream tags preserved: //MW0LGE (from cited console.cs:20070) [v2.10.3.15]
         SpectrumWidget w;
         QCOMPARE(w.peakTextDelayMs(), 500);
     }

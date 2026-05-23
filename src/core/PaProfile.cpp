@@ -405,6 +405,7 @@ QString PaProfile::dataToString() const {
 // ── dataFromString ─────────────────────────────────────────────────────────
 //
 // From Thetis setup.cs:23835-23883 [v2.10.3.13] — DataFromString. NereusSDR
+// Upstream tags preserved: //MW0LGE (from cited setup.cs:23838) [v2.10.3.15]
 // uses the 14-band layout exclusively; we accept exactly kSerializedFieldCount
 // (171) fields. Thetis tolerates 45 / 423 / 507-field inputs as legacy
 // versions; that backward-compat path is intentionally NOT ported (a fresh

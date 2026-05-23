@@ -216,6 +216,7 @@ public:
     // such reservation.
     //
     // From Thetis console.cs:8554-8632 GetDDC() P2 branch [v2.10.3.13]:
+    // Upstream tags preserved: //N1GP (from cited console.cs:8612) [v2.10.3.15]
     //   case HPSDRHW.Angelia / Orion / OrionMKII / Saturn:   rx1 = DDC2, rx2 = DDC3
     //   case HPSDRHW.Hermes / HermesII:                       rx1 = DDC0, rx2 = DDC1
     //
@@ -582,6 +583,7 @@ private:
     //   bit 2 (0x04) CLEAR = PTT enabled at firmware (matches m_micPTTDisabled=false
     //     default in RadioConnection.h — direct polarity: false = 0 on wire).
     //     From Thetis console.cs:19757 [v2.10.3.13+501e3f51]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
     //       private bool mic_ptt_disabled = false;
     //   bit 5 (0x20) SET = XLR jack selected by default (matches m_micXlr=true
     //     default in RadioConnection.h — no inversion: true = 1 on wire).

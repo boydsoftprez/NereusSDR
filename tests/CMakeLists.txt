@@ -4317,6 +4317,22 @@ nereus_add_test(tst_tci_init_burst_golden TestMockRadioModel.cpp)
 target_compile_definitions(tst_tci_init_burst_golden PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
+# ── Phase 3J-1 closeout: init burst live RadioModel state regression ──────────
+# Seeds TestMockRadioModel via the same Q_INVOKABLE setters that production
+# TciProtocol calls during a real client connect, then asserts the init burst
+# carries the seeded state instead of the Phase 4 Task 4.2 hardcoded
+# placeholders. Catches re-introduced placeholders that the byte-for-byte
+# golden cannot, because the golden is captured WITH placeholders.
+nereus_add_test(tst_tci_init_burst_live_state TestMockRadioModel.cpp)
+
+# ── Phase 3J-1 closeout: init burst golden regenerator ────────────────────────
+# Standalone helper that prints buildInitBurst() output between
+# ===BEGIN===/===END=== markers.  Used to regenerate
+# tests/data/tci/init_burst_anan_g2_rx1.txt after intentional changes to the
+# init burst contents.  Not a regression check; the trivial QVERIFY exists
+# only so ctest reports a pass/fail.
+nereus_add_test(tst_tci_init_burst_regen TestMockRadioModel.cpp)
+
 # ── Phase 3J-1 closeout Item 2: TciLogWindow append + filter + clear + pause ──
 # Verifies the log view widget honors direction filter, pause toggle, and
 # clear button.  Headless: never show()s the dialog -- Qt's off-screen

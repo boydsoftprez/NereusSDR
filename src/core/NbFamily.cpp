@@ -380,6 +380,7 @@ void NbFamily::setNbTauMs(double ms)
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
     // From Thetis setup.cs:16222 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited setup.cs:16225) [v2.10.3.15]
     //   NBTau = 0.001 * (double)udDSPNBTransition.Value
     SetEXTANBTau(m_channelId, ms * kMsToSec);
 #endif
@@ -391,6 +392,7 @@ void NbFamily::setNbLeadMs(double advMs)
 #ifdef HAVE_WDSP
     if (m_skipWdsp) return;
     // From Thetis setup.cs:16229 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited setup.cs:16225) [v2.10.3.15]
     //   NBAdvTime = 0.001 * (double)udDSPNBLead.Value
     SetEXTANBAdvtime(m_channelId, advMs * kMsToSec);
 #endif

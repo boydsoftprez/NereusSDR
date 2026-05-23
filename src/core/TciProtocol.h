@@ -87,6 +87,32 @@ public:
     // From Thetis TCIServer.cs:1722-1727 [v2.10.3.13] — outbound-coalesced map.
     void drainCoalescedNotifications();
 
+    // ── Phase 3J-1 closeout (2026-05-22): local state-change broadcast ──────
+    //
+    // Push a TCI frame produced by the LOCAL operator (UI tuning, mode/filter
+    // change, mute toggle, etc.) into the outbound notification queue.  The
+    // 5ms drain timer in TciServer then broadcasts it to all connected
+    // clients.
+    //
+    // Mirrors Thetis TCIServer.cs:6730-6790 [v2.10.3.15]: TCIServer subscribes
+    // to ~40 Console events (FilterChangedHandlers, RX2EnabledChangedHandlers,
+    // VfoALockChangedHandlers, NRChangedHandlers, etc.) and routes each to an
+    // OnXxxChanged delegate that calls sendXxx (which enqueues the wire frame).
+    // Without this path, NereusSDR TCI clients only see state set BY a TCI
+    // client (the SET path in handleCommand wires the same coalescer + queue);
+    // local UI tunes / mode changes never propagate -- bench bug 2026-05-22.
+    //
+    // enqueueLocalBroadcast:    push directly to m_pendingNotifications.  Use
+    //                           for one-shot events (mode, filter, AGC, etc.).
+    // enqueueLocalBroadcastVfo: route through m_vfoCoalescer for rapid-fire
+    //                           VFO updates that need Layer-3 dedup (rotary
+    //                           encoder spin can fire dozens of frequency
+    //                           changes per second).  Emits the vfo:* +
+    //                           dds:* + tx_frequency:* triplet that
+    //                           sendInitialRadioState bundles.
+    void enqueueLocalBroadcast(const QString& frame);
+    void enqueueLocalBroadcastVfo(int rxIndex, qint64 hz);
+
     // Build the post-connect init burst. Stub returns empty list in Phase 3;
     // Phase 4 Task 4.1 replaces with the 8-line wrapper from
     // Thetis TCIServer.cs:2512-2552 [v2.10.3.13].
@@ -104,6 +130,14 @@ public:
     int setDispatchCount() const { return m_setDispatchCount; }
     int queryDispatchCount() const { return m_queryDispatchCount; }
     void resetDispatchCounters();
+
+    // From Thetis TCIServer.cs:2260-2279 [v2.10.3.15] -- agcModeToTciMode.
+    // Maps RadioModel::agcMode enum-style names ("OFF" / "LONG" / "SLOW" /
+    // "MED" / "FAST" / "CUSTOM" / "FIXD") to the lowercase TCI wire token
+    // Thetis sends ("off" / "long" / "slow" / "normal" / "fast" /
+    // "custom").  Public so the TciServer broadcast handler for
+    // SliceModel::agcModeChanged can match the init burst formatting.
+    static QString tciAgcModeForWire(const QString& enumName);
 
 private:
     // From Thetis TCIServer.cs:4924-5128 [v2.10.3.13] — 60-case set-command switch.
@@ -455,6 +489,7 @@ private:
     // From Thetis TCIServer.cs:1906-1910 [v2.10.3.13] — sendRxBinEnable.
     static QString buildRxBinEnableLine(int rx, bool en);
     // From Thetis TCIServer.cs:4482-4487 [v2.10.3.13] — sendAnfEnable.
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
     static QString buildRxAnfEnableLine(int rx, bool en);
     // From Thetis TCIServer.cs:1911-1915 [v2.10.3.13] — sendRxApfEnable.
     static QString buildRxApfEnableLine(int rx, bool en);
@@ -560,6 +595,7 @@ private:
 
     // ── Mute / volume / MON helpers ───────────────────────────────────────────
     // From Thetis TCIServer.cs:2158-2162 [v2.10.3.13] — sendMute.
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2154) [v2.10.3.15]
     static QString buildMuteLine(bool muted);
     // From Thetis TCIServer.cs:2163-2167 [v2.10.3.13] — sendMuteRX.
     static QString buildRxMuteLine(int rx, bool muted);

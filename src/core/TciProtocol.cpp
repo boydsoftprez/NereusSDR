@@ -19,8 +19,33 @@
 #include "LogCategories.h"
 #include "TciVolume.h"
 #include "TciVfoCoalescer.h"
+#include "models/Band.h"  // bandFromFrequency + bandLabel for tx_frequency_thetis
 
 namespace NereusSDR {
+
+// From Thetis TCIServer.cs:2260-2279 [v2.10.3.15] -- agcModeToTciMode.
+// Ported verbatim, including the default-falls-to-"normal" branch.  Input
+// is the upper-case enum-style name produced by RadioModel::agcMode()
+// ("OFF" / "LONG" / "SLOW" / "MED" / "FAST" / "CUSTOM" / "FIXD"); output
+// is the lowercase TCI wire token Thetis sends ("off" / "long" / "slow" /
+// "normal" / "fast" / "custom").  Accepts MED / NORMAL / MEDIUM as
+// synonyms for "normal" so client-set values that round-trip through the
+// shim layer come back unchanged (Thetis tciModeToAgcMode at
+// TCIServer.cs:2280-2303 normalises identically).
+QString TciProtocol::tciAgcModeForWire(const QString& enumName)
+{
+    const QString u = enumName.trimmed().toUpper();
+    if (u == QLatin1String("OFF")
+     || u == QLatin1String("FIXD")
+     || u == QLatin1String("FIXED")) { return QStringLiteral("off"); }
+    if (u == QLatin1String("LONG"))   { return QStringLiteral("long"); }
+    if (u == QLatin1String("SLOW"))   { return QStringLiteral("slow"); }
+    if (u == QLatin1String("FAST"))   { return QStringLiteral("fast"); }
+    if (u == QLatin1String("CUSTOM")) { return QStringLiteral("custom"); }
+    // MED / NORMAL / MEDIUM all map to "normal" per agcModeToTciMode +
+    // tciModeToAgcMode round-trip semantics.
+    return QStringLiteral("normal");
+}
 
 TciProtocol::TciProtocol(QObject* radio, QObject* parent)
     : QObject(parent)
@@ -90,6 +115,76 @@ void TciProtocol::drainCoalescedNotifications()
     m_vfoCoalescer.drainAll(&drained);
     for (const auto& frame : drained) {
         m_pendingNotifications.append(frame);
+    }
+}
+
+// Phase 3J-1 closeout (2026-05-22): bench bug fix.  See header comment for
+// the full divergence rationale.  Both methods run on the main thread per
+// the m_pendingNotifications thread-safety contract documented at the
+// member declaration -- callers are responsible for ensuring the connecting
+// signal fires on the same Qt thread.
+void TciProtocol::enqueueLocalBroadcast(const QString& frame)
+{
+    if (!frame.isEmpty()) {
+        m_pendingNotifications.append(frame);
+    }
+}
+
+// VFO push routes through the coalescer (Layer 3 of the Thetis 3-layer
+// throttle, TCIServer.cs:1722-1727 [v2.10.3.13]).  Emits the same triplet
+// that buildInitialRadioStateLines produces for the same rx, so the live
+// client sees identical wire format after operator tuning.  TX frequency
+// follows TXFreq's single-RX !VFOBTX path (mirrors RX1 VFO A); full
+// VFOBTX/multi-RX logic lands with Phase 3F (see TXFreq cite in
+// buildInitialRadioStateLines).
+void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz)
+{
+    // Per-rx (vfo:rx,chan,hz) covers both channels; Thetis sendVFO at
+    // TCIServer.cs:2061-2093 [v2.10.3.13] -- format string.  NereusSDR
+    // collapses VFO A/B onto the slice, so both channels read the same hz.
+    {
+        const QString vfoKey0   = QStringLiteral("vfo:%1,0").arg(rxIndex);
+        const QString vfoFrame0 = QStringLiteral("vfo:%1,0,%2;").arg(rxIndex).arg(hz);
+        m_vfoCoalescer.update(vfoKey0, vfoFrame0);
+        const QString vfoKey1   = QStringLiteral("vfo:%1,1").arg(rxIndex);
+        const QString vfoFrame1 = QStringLiteral("vfo:%1,1,%2;").arg(rxIndex).arg(hz);
+        m_vfoCoalescer.update(vfoKey1, vfoFrame1);
+    }
+    // dds:rx,hz (no chan).  Thetis sendDDS at TCIServer.cs:2334-2348
+    // [v2.10.3.13].  Same coalesce key shape so a rapid burst dedups.
+    {
+        const QString ddsKey   = QStringLiteral("dds:%1").arg(rxIndex);
+        const QString ddsFrame = QStringLiteral("dds:%1,%2;").arg(rxIndex).arg(hz);
+        m_vfoCoalescer.update(ddsKey, ddsFrame);
+    }
+    // TX frequency: emit only for rxIndex==0 (the single-RX !VFOBTX path).
+    // When 3F multi-pan lands the full TXFreq logic, the caller (or this
+    // method) will decide which rx drives TX based on VFOBTX/VFOATX/split.
+    // From Thetis sendTXFrequencyChanged at TCIServer.cs:2246-2259 [v2.10.3.13].
+    if (rxIndex == 0) {
+        const QString txKey   = QStringLiteral("tx_frequency");
+        const QString txFrame = QStringLiteral("tx_frequency:%1;").arg(hz);
+        m_vfoCoalescer.update(txKey, txFrame);
+        // bespoke tx_frequency_thetis -- read the SAME rx2Enabled state used
+        // by buildInitialRadioStateLines so the live broadcast doesn't flip
+        // RX2 from true to false between init and the first VFO move (review
+        // P2 #3, 2026-05-22).  VFOBTX still hardcoded false until Phase 3F
+        // multi-pan lands the full TXFreq logic per console.cs:11345-11369
+        // [v2.10.3.15].  Format from sendTXFrequencyChanged at
+        // TCIServer.cs:2249-2254 [v2.10.3.15]: tx_frequency_thetis:hz,band,
+        // rx2en,txvfob.
+        bool rx2en = false;
+        QMetaObject::invokeMethod(m_radio, "rx2Enabled",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(bool, rx2en));
+        const QString band = bandLabel(bandFromFrequency(static_cast<double>(hz)));
+        const QString txThetisKey = QStringLiteral("tx_frequency_thetis");
+        const QString txThetisFrame =
+            QStringLiteral("tx_frequency_thetis:%1,%2,%3,false;")
+                .arg(hz)
+                .arg(band)
+                .arg(rx2en ? QStringLiteral("true") : QStringLiteral("false"));
+        m_vfoCoalescer.update(txThetisKey, txThetisFrame);
     }
 }
 
@@ -180,6 +275,7 @@ QStringList TciProtocol::buildInitBurst() const
 }
 
 // From Thetis TCIServer.cs:2363-2510 [v2.10.3.13] — sendInitialRadioState body.
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2412) [v2.10.3.15]
 // Emits up to 97 wire frames (subset depending on bSend + bRX2Enabled flags).
 // Phase 4 Task 4.2 ports the source order, 6 inline comments verbatim, and
 // the typo-fix divergence (design doc §7 row 1). Value args are hardcoded
@@ -199,90 +295,364 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
                                QStringLiteral("True")).toString()
                        == QStringLiteral("True");
 
-    // Phase 4 Task 4.2 placeholder — single-RX default (bRX2Enabled = false).
-    // Phase 6+ reads RadioModel::rx2Enabled() via QMetaObject::invokeMethod.
-    const bool bRX2Enabled = false;
+    // bRX2Enabled -- From Thetis TCIServer.cs:2489 [v2.10.3.15] reads
+    // consoleThreadSafe.RX2Enabled (console.cs:37278 [v2.10.3.15] -- backed by
+    // chkRX2.Checked + the rx2_enabled member).  NereusSDR's equivalent is
+    // m_connectionActiveRxCount >= 2 (RadioModel::rx2Enabled() Q_INVOKABLE
+    // shim added alongside this commit reads exactly that).
+    bool bRX2Enabled = false;
+    QMetaObject::invokeMethod(m_radio, "rx2Enabled",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(bool, bRX2Enabled));
 
-    // Phase 4 Task 4.2 placeholder values.
-    // Phase 6+ wires each to the corresponding RadioModel property.
-    const qint64 rx1FreqHz  = 14250000;  // 14.250 MHz — 20m USB demo value
-    const qint64 rx2FreqHz  = 7100000;   // 7.100 MHz  — 40m USB demo value
-    const qint64 txFreqHz   = 14250000;  // 14.250 MHz — demo value
-    const QString txBand    = QStringLiteral("20m");
-    const QString modeUpper = QStringLiteral("USB");
+    // Helper: read a qint64 RadioModel accessor via QMetaObject::invokeMethod.
+    // Mirrors the query-path pattern at handleVfoCommand below (line ~1140).
+    // Qt::DirectConnection is safe because TciServer pumps on the same thread
+    // as RadioModel (main), and tests pin single-thread via QTEST_GUILESS_MAIN.
+    const auto readVfoHz = [this](int rx, int chan) -> qint64 {
+        qint64 hz = 0;
+        QMetaObject::invokeMethod(m_radio, "vfoHz",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(qint64, hz),
+                                  Q_ARG(int, rx),
+                                  Q_ARG(int, chan));
+        return hz;
+    };
 
-    // Filter: 200/2900 Hz — common SSB filter placeholder.
-    const int filterLow  = 200;
-    const int filterHigh = 2900;
+    // From Thetis TCIServer.cs:2493-2502 [v2.10.3.15] -- sendDDS/sendVFO read
+    // consoleThreadSafe.CentreFrequency / CentreRX2Frequency / VFOAFreq /
+    // VFOBFreq. NereusSDR collapses VFO B onto the slice's single VFO; both
+    // channels of a slice read the same value.
+    const qint64 rx1FreqHz  = readVfoHz(0, 0);
+    const qint64 rx2FreqHz  = readVfoHz(1, 0);
+    // From Thetis TCIServer.cs:2505 [v2.10.3.15] -- sendTXFrequencyChanged
+    // uses consoleThreadSafe.TXFreq.  Full TXFreq logic at
+    // console.cs:11345-11369 [v2.10.3.15]:
+    //   if (!rx2_enabled) {
+    //       tx_freq = chkVFOBTX.Checked ? VFOBFreq : VFOAFreq;
+    //   } else {
+    //       if      (chkVFOBTX.Checked)   tx_freq = VFOBFreq;
+    //       else if (chkVFOSplit.Checked) tx_freq = VFOASubFreq;
+    //       else if (chkVFOATX.Checked)   tx_freq = VFOAFreq;
+    //   }
+    //
+    // NereusSDR architectural divergence (deferred to Phase 3F multi-pan):
+    //   * VFOBTX and VFOATX checkboxes are not modeled yet
+    //   * VFOASubFreq (Thetis VFO B of RX1, used as sub-RX VFO in split) is
+    //     not modeled -- NereusSDR slice model has one freq per slice
+    //   * VFOSplit is per-slice (split(rx)) rather than radio-global like
+    //     Thetis's chkVFOSplit
+    //
+    // NereusSDR is single-RX in production today (rx2Enabled is only true
+    // once Phase 3F multi-pan ships).  In the single-RX (!rx2Enabled) case
+    // with no VFOBTX, Thetis's TXFreq reduces to VFOAFreq exactly --
+    // matching readVfoHz(0, 0).  This is the ONLY reachable Thetis path
+    // for NereusSDR today, ported byte-for-byte.  When 3F lands the
+    // multi-RX paths, this expression needs the full TXFreq port (and
+    // VFOBTX / VFOATX state on RadioModel).
+    const qint64 txFreqHz   = rx1FreqHz;
+    // Derive the band label from the TX frequency. Thetis reads
+    // consoleThreadSafe.TXBand directly; NereusSDR derives via
+    // Band::bandFromFrequency (IARU Region 2 lookup) + bandLabel ("20m"
+    // lowercase format), matching the golden capture format
+    // (tx_frequency_thetis:14250000,20m,false,false;).
+    const QString txBand    = bandLabel(bandFromFrequency(static_cast<double>(txFreqHz)));
 
-    // RX idle defaults — all off.
-    const bool mox  = false;
-    const bool tune = false;
+    // Per-rx mode reader -- From Thetis TCIServer.cs:2508-2509 [v2.10.3.15] --
+    // sendMode reads consoleThreadSafe.RX1DSPMode / RX2DSPMode and uppercases.
+    // NereusSDR's mode() shim already returns uppercase canonical names.
+    const auto readMode = [this](int rx) -> QString {
+        QString m;
+        QMetaObject::invokeMethod(m_radio, "mode",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(QString, m),
+                                  Q_ARG(int, rx));
+        return m;
+    };
+    const QString modeUpper[2] = { readMode(0), readMode(1) };
 
-    // NR off. Phase 6+ reads GetSelectedNR(1/2) via RadioModel.
-    const int rx1nr = 0;
-    const int rx2nr = 0;
+    // Per-rx filter readers -- From Thetis TCIServer.cs:2511-2512 [v2.10.3.15] --
+    // sendFilterBand reads RX1FilterLow/High and RX2FilterLow/High.
+    const auto readFilterLow = [this](int rx) -> int {
+        int v = 0;
+        QMetaObject::invokeMethod(m_radio, "filterLow",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, v),
+                                  Q_ARG(int, rx));
+        return v;
+    };
+    const auto readFilterHigh = [this](int rx) -> int {
+        int v = 0;
+        QMetaObject::invokeMethod(m_radio, "filterHigh",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, v),
+                                  Q_ARG(int, rx));
+        return v;
+    };
+    const int filterLow[2]  = { readFilterLow(0),  readFilterLow(1)  };
+    const int filterHigh[2] = { readFilterHigh(0), readFilterHigh(1) };
 
-    // RX volume: RX0Gain=100, RX1Gain=0, RX2Gain=100 (0-100 scale).
-    // audioGainToDb(100/100) = 0.0; audioGainToDb(0/100) = -60.0.
-    // From Thetis TCIServer.cs:4415-4417 variable naming conventions.
-    const double rx1vol    = 0.0;   // audioGainToDb(100/100) = 0.0
-    const double rx1Subvol = -60.0; // audioGainToDb(0/100) = -60.0
-    const double rx2vol    = 0.0;   // audioGainToDb(100/100) = 0.0
+    // MOX -- From Thetis TCIServer.cs:2515-2516 [v2.10.3.15] reads
+    // consoleThreadSafe.MOX.  NereusSDR's mox() shim mirrors this.
+    bool mox = false;
+    QMetaObject::invokeMethod(m_radio, "mox",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(bool, mox));
 
-    // Balance: GetBal(1/2, sub) = 0.0 → 40.0 - (0.0 * 0.8) = 40.0
-    const double bal = 40.0;
+    // TUNE -- From Thetis TCIServer.cs:2636-2637 [v2.10.3.15] reads
+    // consoleThreadSafe.TUN (console.cs:18677-18684 [v2.10.3.15] -- backed
+    // by chkTUN.Checked).  NereusSDR's equivalent is the m_isTuning latch
+    // (set true by setTune(true), cleared by completeTuneOff() after the
+    // tune-off settle delay; semantically identical to Thetis chkTUN).
+    // Exposed via RadioModel::tune() Q_INVOKABLE shim added alongside this
+    // commit.
+    bool tune = false;
+    QMetaObject::invokeMethod(m_radio, "tune",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(bool, tune));
 
-    // AGC: MED → "normal". From Thetis TCIServer.cs:2206-2207 [v2.10.3.13].
-    const QString agcMode = QStringLiteral("normal");
-    const int agcGain = 40;  // Thetis default AGC threshold
+    // NR -- From Thetis TCIServer.cs:2519-2526 [v2.10.3.15]:
+    //   for (int rx = 1; rx <= 2; rx++) {
+    //       int nr = consoleThreadSafe.GetSelectedNR(rx);  // 0 = off
+    //       sendNREnable(zeroBaseRx, nr > 0, false, nr);
+    //       sendNREnable(zeroBaseRx, nr > 0, true,  nr);
+    //   }
+    // Thetis collapses "off" -> 0 in GetSelectedNR.  NereusSDR splits the
+    // state in two: rxNr(rx) is the bool gate (true iff active), rxNrIndex(rx)
+    // is the preferred slot (1..N) even when NR is off.  To match Thetis
+    // semantics we read BOTH and collapse: if the gate is off the slot reads
+    // as 0; otherwise the stored slot.
+    const auto readRxNrSlot = [this](int rx) -> int {
+        bool on = false;
+        QMetaObject::invokeMethod(m_radio, "rxNr",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(bool, on),
+                                  Q_ARG(int, rx));
+        if (!on) {
+            return 0;  // collapse to Thetis "NR off" sentinel
+        }
+        int idx = 0;
+        QMetaObject::invokeMethod(m_radio, "rxNrIndex",
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, idx),
+                                  Q_ARG(int, rx));
+        return idx;
+    };
+    const int rx1nr = readRxNrSlot(0);
+    const int rx2nr = readRxNrSlot(1);
 
-    // CTUN off.
-    const bool ctun = false;
+    // ── invokeMethod readers (one per Q_INVOKABLE signature) ───────────
+    // Each lambda mirrors the query-path pattern in handleVfoCommand
+    // (Qt::DirectConnection; TciServer pumps on the same thread as
+    // RadioModel, so no cross-thread hop).  Lambdas exist purely to
+    // collapse the QMetaObject::invokeMethod ceremony to a single call
+    // site -- if a real RadioModel method renames, this is the only file
+    // that needs to learn the new name.
 
-    // TX profiles placeholder.
-    const QStringList txProfiles = { QStringLiteral("Default") };
-    const QString txProfile = QStringLiteral("Default");
+    const auto readIntPerRx = [this](const char* method, int rx) -> int {
+        int v = 0;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, v),
+                                  Q_ARG(int, rx));
+        return v;
+    };
+    const auto readBoolPerRx = [this](const char* method, int rx) -> bool {
+        bool v = false;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(bool, v),
+                                  Q_ARG(int, rx));
+        return v;
+    };
+    const auto readQStringPerRx = [this](const char* method, int rx) -> QString {
+        QString v;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(QString, v),
+                                  Q_ARG(int, rx));
+        return v;
+    };
+    const auto readDoublePerRxChan = [this](const char* method, int rx, int chan) -> double {
+        double v = 0.0;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(double, v),
+                                  Q_ARG(int, rx),
+                                  Q_ARG(int, chan));
+        return v;
+    };
+    const auto readDoublePerRx = [this](const char* method, int rx) -> double {
+        double v = 0.0;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(double, v),
+                                  Q_ARG(int, rx));
+        return v;
+    };
+    const auto readIntGlobal = [this](const char* method) -> int {
+        int v = 0;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(int, v));
+        return v;
+    };
+    const auto readBoolGlobal = [this](const char* method) -> bool {
+        bool v = false;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(bool, v));
+        return v;
+    };
+    const auto readQStringGlobal = [this](const char* method) -> QString {
+        QString v;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(QString, v));
+        return v;
+    };
+    const auto readQStringListGlobal = [this](const char* method) -> QStringList {
+        QStringList v;
+        QMetaObject::invokeMethod(m_radio, method,
+                                  Qt::DirectConnection,
+                                  Q_RETURN_ARG(QStringList, v));
+        return v;
+    };
 
-    // Calibration: all 0.0 (F6) — defaults.
-    const double calMeter   = 0.0;
-    const double calDisplay = 0.0;
-    const double calXvtr    = 0.0;
-    const double cal6m      = 0.0;
-    const double calTxDisp  = 0.0;
+    // ── Per-rx AGC reuses the existing per-method lambdas defined above. ──
+    // The four agcMode/agcGain values were wired in the earlier vfo/mode/
+    // filter pass.  Re-declared here using the generic readers so the
+    // earlier lambdas don't outlive their use site.
+    const QString agcMode[2] = { readQStringPerRx("agcMode", 0),
+                                  readQStringPerRx("agcMode", 1) };
+    const int     agcGain[2] = { readIntPerRx("agcGain", 0),
+                                  readIntPerRx("agcGain", 1) };
 
-    // RIT / XIT defaults.
-    const bool ritOn  = false;
-    const bool xitOn  = false;
-    const int ritVal  = 0;
-    const int xitVal  = 0;
+    // ── Per-rx volume (per Thetis TCIServer.cs:2554-2557 [v2.10.3.15]) ─────
+    //   rx1vol    = audioGainToDb(RX0Gain / 100f)  // main RX1 audio
+    //   rx1Subvol = audioGainToDb(RX1Gain / 100f)  // sub  RX1 audio
+    //   rx2vol    = audioGainToDb(RX2Gain / 100f)  // main RX2 audio
+    // Thetis uses three SEPARATE physical gain sliders (RX0Gain, RX1Gain,
+    // RX2Gain at console.cs:11464-11534 [v2.10.3.15]); each is an int [0..100]
+    // mapped via the LOG curve audioGainToDb (TCIServer.cs:4778-4787
+    // [v2.10.3.15]).
+    //
+    // NereusSDR architectural divergence: a single global AF gain (afLinear,
+    // 0..100) replaces the three Thetis sliders.  Per-RX-audio and per-sub-RX
+    // gains are deferred to Phase 3F multi-pan, which introduces the
+    // sub-receiver model.  Until then all three TCI rx_volume slots reflect
+    // the same afLinear value (operator sees a single AF knob in the UI).
+    // The bench impact: TCI clients see identical dB across rx_volume slots,
+    // but a single Volume control affects all of them -- semantically
+    // consistent with the single-knob UI.
+    const int afLinearVal = readIntGlobal("afLinear");
+    const double rx1vol    = tciAudioGainToDb(afLinearVal / 100.0);
+    const double rx1Subvol = tciAudioGainToDb(afLinearVal / 100.0);
+    const double rx2vol    = tciAudioGainToDb(afLinearVal / 100.0);
 
-    // VFO locks.
-    const bool vfoALock = false;
-    const bool vfoBLock = false;
+    // Per-rx per-chan balance via rxBalance(rx, chan) shim.  Thetis maps
+    // GetBal -> "40.0 - (pan * 0.8)" at sendInitialRadioState; the shim
+    // already stores in TCI's F2-dB space so we forward verbatim.
+    const double bal[2][2] = {
+        { readDoublePerRxChan("rxBalance", 0, 0), readDoublePerRxChan("rxBalance", 0, 1) },
+        { readDoublePerRxChan("rxBalance", 1, 0), readDoublePerRxChan("rxBalance", 1, 1) }
+    };
 
-    // Squelch off.
-    const bool sqlEn    = false;
-    const int  sqlLevel = -150;
+    // CTUN per-rx -- From Thetis TCIServer.cs:2578-2579 [v2.10.3.15] -- sendCTUN.
+    const bool ctun[2] = { readBoolPerRx("rxCtun", 0), readBoolPerRx("rxCtun", 1) };
 
-    // DIGL / DIGU click-tune offsets.
-    const int diglOffset = 0;
-    const int diguOffset = 0;
+    // TX profiles -- From Thetis TCIServer.cs:2581-2582 [v2.10.3.15] -- sendTXProfiles
+    // + sendTXProfile(consoleThreadSafe.TXProfile).
+    const QStringList txProfiles = readQStringListGlobal("txProfilesList");
+    const QString     txProfile  = readQStringGlobal("txProfile");
 
-    // CW macro defaults.
-    const int cwMacrosSpeed = 25;  // WPM
-    const int cwMacrosDelay = 0;   // ms
-    const int cwKeyerSpeed  = 25;  // WPM
+    // Per-rx calibration -- From Thetis TCIServer.cs:2584-2585 [v2.10.3.15] --
+    // CalibrationChanged(0/1) which fires sendCalibration with the
+    // five-value tuple.  RadioModel stores the same tuple per slice.
+    const double calMeter[2]   = { readDoublePerRx("calibrationMeter", 0),
+                                    readDoublePerRx("calibrationMeter", 1) };
+    const double calDisplay[2] = { readDoublePerRx("calibrationDisplay", 0),
+                                    readDoublePerRx("calibrationDisplay", 1) };
+    const double calXvtr[2]    = { readDoublePerRx("calibrationXvtr", 0),
+                                    readDoublePerRx("calibrationXvtr", 1) };
+    const double cal6m[2]      = { readDoublePerRx("calibrationSixMeter", 0),
+                                    readDoublePerRx("calibrationSixMeter", 1) };
+    const double calTxDisp[2]  = { readDoublePerRx("calibrationTxDisplay", 0),
+                                    readDoublePerRx("calibrationTxDisplay", 1) };
 
-    // Split off.
-    const bool split = false;
+    // RIT / XIT -- From Thetis TCIServer.cs:2587-2594 [v2.10.3.15] -- both
+    // emitted per-rx but driven by the single radio-global RITOn/XITOn/
+    // RITValue/XITValue values.  NereusSDR's shim signatures match.
+    const bool ritOn = readBoolGlobal("ritEnable");
+    const bool xitOn = readBoolGlobal("xitEnable");
+    const int  ritVal = readIntGlobal("ritOffset");
+    const int  xitVal = readIntGlobal("xitOffset");
 
-    // IQ / audio stream defaults.
-    const int iqSampleRate          = 192000;  // common HPSDR rate
-    const int audioSampleRate       = 48000;   // default
-    const QString audioSampleType   = QStringLiteral("float32");
-    const int audioStreamChannels   = 2;       // stereo
-    const int audioStreamSamples    = 2048;    // per design doc §10 default
+    // VFO locks -- From Thetis TCIServer.cs:2595-2599 [v2.10.3.15] -- lock(0)
+    // always emitted; lock(1) only when bRX2Enabled.  sendAllVFOLocks emits
+    // the four-line vfo_lock cross-product per Thetis sendAllVFOLocks.
+    const bool vfoALock = readBoolPerRx("lock", 0);
+    const bool vfoBLock = readBoolPerRx("lock", 1);
+
+    // Squelch per-rx -- From Thetis TCIServer.cs:2601-2604 [v2.10.3.15].
+    const bool sqlEn[2]    = { readBoolPerRx("sqlEnable", 0), readBoolPerRx("sqlEnable", 1) };
+    const int  sqlLevel[2] = { readIntPerRx("sqlLevel", 0),   readIntPerRx("sqlLevel", 1) };
+
+    // DIGL / DIGU click-tune offsets -- From Thetis TCIServer.cs:2605-2606
+    // [v2.10.3.15] -- sendDiglOffset(consoleThreadSafe.DIGLClickTuneOffset) /
+    // sendDiguOffset(consoleThreadSafe.DIGUClickTuneOffset).  Thetis stores
+    // these as radio-global Console private members (console.cs:14693 for
+    // digl_click_tune_offset default 2210 Hz; console.cs:14658 for
+    // digu_click_tune_offset default 1500 Hz).
+    //
+    // NereusSDR architectural divergence: per-slice storage on SliceModel
+    // (m_diglOffsetHz / m_diguOffsetHz; defaults 0 Hz per SliceModel.h:928-929)
+    // rather than radio-global.  Per-slice was chosen for the multi-slice
+    // future where each slice may run a different DIG profile.  For the TCI
+    // init burst we expose the ACTIVE slice's value as the radio's "current"
+    // offset.  When the operator switches active slices, sendInitialRadioState
+    // is not re-fired; client must read DIGL/DIGU changes via the dedicated
+    // notification stream (Phase 15 / coalescer).
+    //
+    // The Q_INVOKABLE shims RadioModel::diglOffset / diguOffset (added
+    // alongside this commit) return the active slice value, falling back to
+    // 0 when no slice is active (matches the SliceModel default; safe for
+    // pre-connect TCI client probes).
+    int diglOffset = 0;
+    QMetaObject::invokeMethod(m_radio, "diglOffset",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(int, diglOffset));
+    int diguOffset = 0;
+    QMetaObject::invokeMethod(m_radio, "diguOffset",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(int, diguOffset));
+
+    // CW macro defaults -- From Thetis TCIServer.cs:6950-6973 [v2.10.3.15]
+    // (GetCwMacrosSpeed / GetCwMacrosDelay / GetCwKeyerSpeed): each returns
+    // m_cwController's value when present, else a hardcoded default.
+    // The Thetis null-controller defaults are 30 / 0 / 30:
+    //   return m_cwController != null ? m_cwController.GetMacroSpeed() : 30;
+    //   return m_cwController != null ? m_cwController.GetMacroDelayMs() : 0;
+    //   return m_cwController != null ? m_cwController.GetKeyerSpeed()  : 30;
+    // NereusSDR has no CwController yet (Phase 3M-2 introduces it).  Until
+    // then we emit the same numeric defaults Thetis emits when its controller
+    // is absent -- this is the Thetis-faithful null-controller path, ported
+    // verbatim.  Phase 3M-2 replaces these with readIntGlobal calls to the
+    // CwController-backed shims.
+    const int cwMacrosSpeed = 30;  // WPM (Thetis null-controller default)
+    const int cwMacrosDelay = 0;   // ms  (Thetis null-controller default)
+    const int cwKeyerSpeed  = 30;  // WPM (Thetis null-controller default)
+
+    // Split per-rx -- From Thetis TCIServer.cs:2615-2616 [v2.10.3.15].
+    const bool split[2] = { readBoolPerRx("split", 0), readBoolPerRx("split", 1) };
+
+    // IQ / audio stream config -- From Thetis TCIServer.cs:2642-2647
+    // [v2.10.3.15].
+    const int     iqSampleRate        = readIntGlobal("iqSampleRate");
+    const int     audioSampleRate     = readIntGlobal("audioSampleRate");
+    const QString audioSampleType     = readQStringGlobal("audioStreamSampleType");
+    const int     audioStreamChannels = readIntGlobal("audioStreamChannels");
+    const int     audioStreamSamples  = readIntGlobal("audioStreamSamples");
 
     // Phase 3J-1 closeout Item 5 (2026-05-12): honor the
     // TciTxStreamBufferingMs AppSetting written by the Setup → Audio TCI
@@ -298,15 +668,46 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     if (txStreamBufferingMs < 10)  { txStreamBufferingMs = 10; }
     if (txStreamBufferingMs > 200) { txStreamBufferingMs = 200; }
 
-    // Mute / volume / MON defaults.
-    // linearToDbVolume(AF=100): ((100-0)/(100-0))*(0-(-60))+(-60) = 0.0 dB.
-    const bool globalMute = false;
-    const bool rx0Mute    = false;
-    const bool rx1Mute    = false;
-    const double volumeDb = 0.0;   // linearToDbVolume(AF=100)
-    const bool monEnable  = false;
-    const double monVolDb = 0.0;   // linearToDbVolume(TXAF=100)
-    const bool powerOn    = true;
+    // Mute / volume -- From Thetis TCIServer.cs:2649-2655 [v2.10.3.15].
+    // sendMute(MUT || (MUT2 && bRX2Enabled)).  We expose globalMute() and
+    // rxMute(rx) shims; the OR shape stays the same when bRX2Enabled
+    // toggles.  sendMuteRX(0, MUT) + sendMuteRX(1, MUT2).
+    const bool globalMute = readBoolGlobal("globalMute");
+    const bool rx0Mute    = readBoolPerRx("rxMute", 0);
+    const bool rx1Mute    = readBoolPerRx("rxMute", 1);
+    const double volumeDb = tciLinearToDbVolume(afLinearVal);
+
+    // monEnable -- From Thetis TCIServer.cs:2654 [v2.10.3.15] --
+    // sendMONEnable(consoleThreadSafe.MON) where MON = chkMON.Checked
+    // (console.cs:18656-18663 [v2.10.3.15]).  NereusSDR's equivalent lives
+    // on TransmitModel as the m_monEnabled bool (default false, never
+    // persisted -- safety: MON loads OFF always per Thetis audio.cs:406).
+    // The RadioModel::monEnabled() Q_INVOKABLE shim (added alongside this
+    // commit) forwards to TransmitModel::monEnabled.
+    bool monEnable = false;
+    QMetaObject::invokeMethod(m_radio, "monEnabled",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(bool, monEnable));
+
+    const double monVolDb = tciLinearToDbVolume(readIntGlobal("monLinear"));
+
+    // powerOn -- From Thetis TCIServer.cs:2657 [v2.10.3.15] --
+    // sendStartStop(consoleThreadSafe.PowerOn) where PowerOn = chkPower.Checked
+    // (console.cs:19799-19803 [v2.10.3.15]).  In Thetis these are two distinct
+    // concepts: chkPower toggles whether the radio is actively streaming
+    // (separate from "is the radio reachable / network-connected").
+    //
+    // NereusSDR architectural divergence: there is no separate Power button.
+    // Connection IS power -- the moment a radio is connected, it streams.
+    // RadioModel::powerOn() Q_INVOKABLE shim (added alongside this commit)
+    // therefore returns isConnected().  This is consistent with how the rest
+    // of the NereusSDR UI treats connection state (no Off-but-connected
+    // mode).  Bench impact: TCI clients see start; while connected, stop;
+    // would only be emitted if NereusSDR adds a "soft off" mode later.
+    bool powerOn = false;
+    QMetaObject::invokeMethod(m_radio, "powerOn",
+                              Qt::DirectConnection,
+                              Q_RETURN_ARG(bool, powerOn));
 
     // From Thetis TCIServer.cs:2368-2383 [v2.10.3.13] — bSend gate.
     if (bSend) {
@@ -331,10 +732,10 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     }
 
     // From Thetis TCIServer.cs:2385-2389 [v2.10.3.13]
-    lines << buildModulationLine(0, modeUpper);
-    lines << buildModulationLine(1, modeUpper);
-    lines << buildRxFilterBandLine(0, filterLow, filterHigh);
-    lines << buildRxFilterBandLine(1, filterLow, filterHigh);
+    lines << buildModulationLine(0, modeUpper[0]);
+    lines << buildModulationLine(1, modeUpper[1]);
+    lines << buildRxFilterBandLine(0, filterLow[0], filterHigh[0]);
+    lines << buildRxFilterBandLine(1, filterLow[1], filterHigh[1]);
 
     // From Thetis TCIServer.cs:2391-2392 [v2.10.3.13]
     lines << buildRxEnableLine(0, !mox);
@@ -345,43 +746,51 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildRxNrEnableLine(1, rx2nr > 0);
     lines << buildRxNrEnableExLine(0, rx1nr > 0, rx1nr);
     lines << buildRxNrEnableExLine(1, rx2nr > 0, rx2nr);
-    lines << buildRxNbEnableLine(0, false);
-    lines << buildRxNbEnableLine(1, false);
-    lines << buildRxBinEnableLine(0, false);
-    lines << buildRxBinEnableLine(1, false);
+    lines << buildRxNbEnableLine(0, readBoolPerRx("rxNb", 0));
+    lines << buildRxNbEnableLine(1, readBoolPerRx("rxNb", 1));
+    lines << buildRxBinEnableLine(0, readBoolPerRx("rxBin", 0));
+    lines << buildRxBinEnableLine(1, readBoolPerRx("rxBin", 1));
 
     // From Thetis TCIServer.cs:2405-2413 [v2.10.3.13]
-    lines << buildRxAnfEnableLine(0, false);
-    lines << buildRxAnfEnableLine(1, false);
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2412) [v2.10.3.15]
+    lines << buildRxAnfEnableLine(0, readBoolPerRx("rxAnf", 0));
+    lines << buildRxAnfEnableLine(1, readBoolPerRx("rxAnf", 1));
     // Gate on !IsSetupFormNull; Phase 4 Task 4.2 always emits (no Setup form yet).
-    lines << buildRxApfEnableLine(0, false);
-    lines << buildRxApfEnableLine(1, false);
-    lines << buildRxNfEnableLine(0, false);
-    lines << buildRxNfEnableLine(1, false);
+    lines << buildRxApfEnableLine(0, readBoolPerRx("rxApf", 0));
+    lines << buildRxApfEnableLine(1, readBoolPerRx("rxApf", 1));
+    lines << buildRxNfEnableLine(0, readBoolPerRx("rxNf", 0));
+    lines << buildRxNfEnableLine(1, readBoolPerRx("rxNf", 1));
 
     // From Thetis TCIServer.cs:2415-2430 [v2.10.3.13]
+    // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2412) [v2.10.3.15]
     lines << buildRxVolumeLine(0, 0, rx1vol);
     lines << buildRxVolumeLine(0, 1, rx1Subvol);
     lines << buildRxVolumeLine(1, 0, rx2vol);
     lines << buildRxVolumeLine(1, 1, rx2vol);
-    lines << buildRxBalanceLine(0, 0, bal);
-    lines << buildRxBalanceLine(0, 1, bal);
-    lines << buildRxBalanceLine(1, 0, bal);
-    lines << buildRxBalanceLine(1, 1, bal);
+    lines << buildRxBalanceLine(0, 0, bal[0][0]);
+    lines << buildRxBalanceLine(0, 1, bal[0][1]);
+    lines << buildRxBalanceLine(1, 0, bal[1][0]);
+    lines << buildRxBalanceLine(1, 1, bal[1][1]);
 
-    // From Thetis TCIServer.cs:2427-2433 [v2.10.3.13]
-    lines << buildAgcModeLine(0, agcMode);
-    lines << buildAgcModeLine(1, agcMode);
-    lines << buildAgcGainLine(0, agcGain);
-    lines << buildAgcGainLine(1, agcGain);
-    lines << buildRxCtunExLine(0, ctun);
-    lines << buildRxCtunExLine(1, ctun);
+    // From Thetis TCIServer.cs:2427-2433 [v2.10.3.13].
+    // Normalise enum-style names to TCI wire tokens via tciAgcModeForWire
+    // (review P2 #2, 2026-05-22): RadioModel::agcMode returns "MED" / "FAST"
+    // etc., but Thetis emits the lowercase normalised form via
+    // agcModeToTciMode (TCIServer.cs:2260-2279 [v2.10.3.15]).  Without this
+    // pass real clients see frames like "agc_mode:0,MED;" instead of
+    // "agc_mode:0,normal;".
+    lines << buildAgcModeLine(0, tciAgcModeForWire(agcMode[0]));
+    lines << buildAgcModeLine(1, tciAgcModeForWire(agcMode[1]));
+    lines << buildAgcGainLine(0, agcGain[0]);
+    lines << buildAgcGainLine(1, agcGain[1]);
+    lines << buildRxCtunExLine(0, ctun[0]);
+    lines << buildRxCtunExLine(1, ctun[1]);
 
     // From Thetis TCIServer.cs:2435-2439 [v2.10.3.13]
     lines << buildTxProfilesExLine(txProfiles);
     lines << buildTxProfileExLine(txProfile);
-    lines << buildCalibrationExLine(0, calMeter, calDisplay, calXvtr, cal6m, calTxDisp);
-    lines << buildCalibrationExLine(1, calMeter, calDisplay, calXvtr, cal6m, calTxDisp);
+    lines << buildCalibrationExLine(0, calMeter[0], calDisplay[0], calXvtr[0], cal6m[0], calTxDisp[0]);
+    lines << buildCalibrationExLine(1, calMeter[1], calDisplay[1], calXvtr[1], cal6m[1], calTxDisp[1]);
 
     //lock
     //TODO rx channel enable
@@ -405,10 +814,10 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines.append(buildAllVfoLocksLines(bRX2Enabled, vfoALock, vfoBLock));
 
     // From Thetis TCIServer.cs:2459-2464 [v2.10.3.13]
-    lines << buildSqlEnableLine(0, sqlEn);
-    lines << buildSqlEnableLine(1, sqlEn);
-    lines << buildSqlLevelLine(0, sqlLevel);
-    lines << buildSqlLevelLine(1, sqlLevel);
+    lines << buildSqlEnableLine(0, sqlEn[0]);
+    lines << buildSqlEnableLine(1, sqlEn[1]);
+    lines << buildSqlLevelLine(0, sqlLevel[0]);
+    lines << buildSqlLevelLine(1, sqlLevel[1]);
     lines << buildDiglOffsetLine(diglOffset);
     lines << buildDiguOffsetLine(diguOffset);
 
@@ -419,8 +828,8 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildCwKeyerSpeedLine(cwKeyerSpeed);
 
     // From Thetis TCIServer.cs:2472-2476 [v2.10.3.13]
-    lines << buildSplitEnableLine(0, split);
-    lines << buildSplitEnableLine(1, bRX2Enabled && split);
+    lines << buildSplitEnableLine(0, split[0]);
+    lines << buildSplitEnableLine(1, bRX2Enabled && split[1]);
     lines << buildTxEnableLine(0, !mox);
     lines << buildTxEnableLine(1, bRX2Enabled && !mox);
 
@@ -531,12 +940,14 @@ QString TciProtocol::buildRxEnableLine(int rx, bool en)
 }
 
 // From Thetis TCIServer.cs:4472-4480 [v2.10.3.13] — sendNrEnable (non-extended form).
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
 QString TciProtocol::buildRxNrEnableLine(int rx, bool en)
 {
     return QStringLiteral("rx_nr_enable:%1,%2;").arg(rx).arg(en ? QStringLiteral("true") : QStringLiteral("false"));
 }
 
 // From Thetis TCIServer.cs:4472-4480 [v2.10.3.13] — sendNrEnable (extended form).
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
 QString TciProtocol::buildRxNrEnableExLine(int rx, bool en, int nrIndex)
 {
     return QStringLiteral("rx_nr_enable_ex:%1,%2,%3;")
@@ -558,6 +969,7 @@ QString TciProtocol::buildRxBinEnableLine(int rx, bool en)
 }
 
 // From Thetis TCIServer.cs:4482-4487 [v2.10.3.13] — sendAnfEnable.
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:4482) [v2.10.3.15]
 QString TciProtocol::buildRxAnfEnableLine(int rx, bool en)
 {
     return QStringLiteral("rx_anf_enable:%1,%2;").arg(rx).arg(en ? QStringLiteral("true") : QStringLiteral("false"));
@@ -815,10 +1227,16 @@ QString TciProtocol::buildAudioSampleRateLine(int sr)
     return QStringLiteral("audio_samplerate:%1;").arg(sr);
 }
 
-// From Thetis TCIServer.cs:5377-5380 [v2.10.3.13] — sendAudioStreamSampleType.
-QString TciProtocol::buildAudioStreamSampleTypeLine(const QString& typeLower)
+// From Thetis TCIServer.cs:5782-5785 [v2.10.3.15] -- sendAudioStreamSampleType.
+// Thetis emits sampleType.ToString().ToLower() on the wire (TCIServer.cs:5784).
+// Review P1 #1 fix (2026-05-22): always force lowercase here so the caller
+// can pass either the enum-style name ("FLOAT32") or the wire form
+// ("float32") and get the canonical Thetis output regardless.  Without
+// this, the production RadioModel default of "Float32" capitalized was
+// reaching real clients verbatim.
+QString TciProtocol::buildAudioStreamSampleTypeLine(const QString& typeName)
 {
-    return QStringLiteral("audio_stream_sample_type:%1;").arg(typeLower);
+    return QStringLiteral("audio_stream_sample_type:%1;").arg(typeName.toLower());
 }
 
 // From Thetis TCIServer.cs:5382-5385 [v2.10.3.13] — sendAudioStreamChannels.
@@ -842,6 +1260,7 @@ QString TciProtocol::buildTxStreamAudioBufferingLine(int ms)
 // ── Mute / volume / MON helpers ───────────────────────────────────────────────
 
 // From Thetis TCIServer.cs:2158-2162 [v2.10.3.13] — sendMute.
+// Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2154) [v2.10.3.15]
 QString TciProtocol::buildMuteLine(bool muted)
 {
     return QStringLiteral("mute:%1;").arg(muted ? QStringLiteral("true") : QStringLiteral("false"));
@@ -1305,6 +1724,7 @@ QString TciProtocol::handleModulationCommand(const QStringList& args)
                                   Q_ARG(int, rx), Q_ARG(QString, modeOut));
         // MW0LGE_22b mods are uppcase on the sun, replicate
         // From Thetis TCIServer.cs:2155 [v2.10.3.13] — sendMode format string.
+        // Upstream tags preserved: //MW0LGE (from cited TCIServer.cs:2154) [v2.10.3.15]
         m_pendingNotifications << QStringLiteral("modulation:%1,%2;").arg(rx).arg(modeOut);
         return {};
     }

@@ -86,6 +86,7 @@ struct PaFwdTriplet {
 };
 
 // From Thetis console.cs:25008 [v2.10.3.13] — computeAlexFwdPower entry,
+// Upstream tags preserved: //DH1KLM //N1GP (from cited upstream lines) [v2.10.3.15]
 // per-board switch body cited per case below.  Returns
 // {bridge_volt, refvoltage, adc_cal_offset}.
 //

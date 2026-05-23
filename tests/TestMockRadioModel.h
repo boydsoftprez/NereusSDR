@@ -511,6 +511,39 @@ public:
         return (slice >= 0 && slice < 2) ? m_calibration[slice][4] : 0.0;
     }
 
+    // ── Phase 3J-1 closeout (2026-05-22) init-burst live-state shims ──────────
+    // Mock-side parity for the 6 new RadioModel Q_INVOKABLEs added to wire the
+    // TCI init burst.  Each is a trivial state-holder pair; production shim
+    // documentation lives in RadioModel.h.
+
+    // rx2Enabled -- From Thetis RX2Enabled at console.cs:37278 [v2.10.3.15].
+    // Mock stores directly; production derives from m_connectionActiveRxCount.
+    Q_INVOKABLE void setRx2Enabled(bool on) { m_rx2Enabled = on; }
+    Q_INVOKABLE bool rx2Enabled() const     { return m_rx2Enabled; }
+
+    // monEnabled -- From Thetis MON at console.cs:18656-18663 [v2.10.3.15].
+    Q_INVOKABLE void setMonEnabled(bool on) { m_monEnabled = on; }
+    Q_INVOKABLE bool monEnabled() const     { return m_monEnabled; }
+
+    // tune -- From Thetis TUN at console.cs:18677-18684 [v2.10.3.15].
+    Q_INVOKABLE void setTune(bool on) { m_tune = on; }
+    Q_INVOKABLE bool tune() const     { return m_tune; }
+
+    // powerOn -- From Thetis PowerOn at console.cs:19799-19803 [v2.10.3.15].
+    Q_INVOKABLE void setPowerOn(bool on) { m_powerOn = on; }
+    Q_INVOKABLE bool powerOn() const     { return m_powerOn; }
+
+    // diglOffset -- From Thetis DIGLClickTuneOffset at console.cs:14693
+    // [v2.10.3.15] (Thetis radio-global default 2210 Hz; mock default 0 to
+    // match NereusSDR SliceModel default and avoid surprising the golden).
+    Q_INVOKABLE void setDiglOffset(int hz) { m_diglOffset = hz; }
+    Q_INVOKABLE int  diglOffset() const    { return m_diglOffset; }
+
+    // diguOffset -- From Thetis DIGUClickTuneOffset at console.cs:14658
+    // [v2.10.3.15] (Thetis radio-global default 1500 Hz; mock default 0).
+    Q_INVOKABLE void setDiguOffset(int hz) { m_diguOffset = hz; }
+    Q_INVOKABLE int  diguOffset() const    { return m_diguOffset; }
+
     // Reset all state to baseline (zeros/empty). Called before each matrix row.
     void resetToBaseline()
     {
@@ -557,6 +590,13 @@ public:
         m_rxCtun     = {};
         m_txProfile  = QStringLiteral("Default");
         m_calibration = {};  // all 5 doubles per slice reset to 0.0
+        // Phase 3J-1 closeout (2026-05-22) init-burst live-state shims.
+        m_rx2Enabled = false;  // matches Thetis chkRX2 default
+        m_monEnabled = false;  // matches Thetis MON safety default (audio.cs:406)
+        m_tune       = false;  // matches Thetis chkTUN default
+        m_powerOn    = true;   // golden capture default (radio "on" while testing)
+        m_diglOffset = 0;      // matches NereusSDR SliceModel default
+        m_diguOffset = 0;      // matches NereusSDR SliceModel default
     }
 
 private:
@@ -605,6 +645,13 @@ private:
     std::array<bool, 2>    m_rxCtun{};
     QString                m_txProfile{QStringLiteral("Default")};
     std::array<std::array<double, 5>, 2> m_calibration{};  // [slice][meter,display,xvtr,6m,txdisp]
+    // Phase 3J-1 closeout (2026-05-22) init-burst live-state.
+    bool m_rx2Enabled{false};
+    bool m_monEnabled{false};
+    bool m_tune{false};
+    bool m_powerOn{true};
+    int  m_diglOffset{0};
+    int  m_diguOffset{0};
 };
 
 } // namespace NereusSDR

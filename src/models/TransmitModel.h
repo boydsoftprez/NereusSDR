@@ -848,6 +848,7 @@ public:
     /// Also counter-intuitive (Thetis-consistent): the flag name is "Disabled"
     /// but FALSE is the active/enabled state.
     /// From Thetis console.cs:19757 [v2.10.3.13]:
+    // Upstream tags preserved: //MW0LGE (from cited console.cs:19758) [v2.10.3.15]
     ///   private bool mic_ptt_disabled = false;
     ///   ... NetworkIO.SetMicPTT(Convert.ToInt32(value));
     /// Default FALSE: PTT enabled by default (sensible safety default).
@@ -1096,6 +1097,7 @@ public:
     /// in the Setup DEXP page and is deferred to Phase 3M-3a-iii.
     ///
     /// From Thetis console.cs:14707 [v2.10.3.13] / setup.cs:4865 [v2.10.3.13].
+    // Upstream tags preserved: //W4TME (from cited console.cs:14704) [v2.10.3.15]
     int voxHangTimeMs() const noexcept { return m_voxHangTimeMs; }
 
     // VOX threshold range constants.
