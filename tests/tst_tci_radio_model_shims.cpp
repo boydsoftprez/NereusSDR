@@ -11,6 +11,7 @@
 // docs/architecture/2026-05-12-phase3j-1-loose-ends-plan.md Item 3.
 
 #include <QtTest/QtTest>
+#include "core/TciProtocol.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "core/WdspTypes.h"
@@ -96,7 +97,70 @@ private slots:
         QMetaObject::invokeMethod(&m, "agcMode",
                                   Q_RETURN_ARG(QString, out),
                                   Q_ARG(int, 0));
+        // Note: RadioModel::agcMode() returns the upper-case enum-style
+        // token used internally; TciProtocol::tciAgcModeForWire() converts
+        // to the Thetis wire token at emit time (see prod_agc_mode_wire_
+        // token_thetis_faithful below).
         QCOMPARE(out, QStringLiteral("FAST"));
+    }
+
+    // PR #279 review P2 (2026-05-22): pin the wire-token conversion that
+    // bridges RadioModel's internal enum-style strings ("MED"/"FAST"/...)
+    // to Thetis's lowercase TCI wire tokens ("normal"/"fast"/...).
+    // Without this conversion the init burst emitted frames like
+    // "agc_mode:0,MED;" instead of "agc_mode:0,normal;", which real
+    // clients reject.  Mirrors Thetis agcModeToTciMode at TCIServer.cs:
+    // 2260-2279 [v2.10.3.15].
+    void prod_agc_mode_wire_token_thetis_faithful() {
+        // Direct enum -> wire mapping.
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("OFF")),
+                 QStringLiteral("off"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("LONG")),
+                 QStringLiteral("long"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("SLOW")),
+                 QStringLiteral("slow"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("FAST")),
+                 QStringLiteral("fast"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("CUSTOM")),
+                 QStringLiteral("custom"));
+        // MED -> normal special mapping (the bug reported in review P2).
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("MED")),
+                 QStringLiteral("normal"));
+
+        // Synonyms that tciModeToAgcMode normalises (TCIServer.cs:2280-
+        // 2303 [v2.10.3.15]) -- round-trip safety so a client that sent
+        // "medium" or "fixed" sees the canonical token come back.
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("MEDIUM")),
+                 QStringLiteral("normal"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("NORMAL")),
+                 QStringLiteral("normal"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("FIXD")),
+                 QStringLiteral("off"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("FIXED")),
+                 QStringLiteral("off"));
+
+        // Defensive default: unknown enum strings fall to "normal", same
+        // as Thetis's default branch.  Catches any future enum addition
+        // that forgets to extend the helper.
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QStringLiteral("BOGUS")),
+                 QStringLiteral("normal"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(QString()),
+                 QStringLiteral("normal"));
+
+        // Production-shaped end-to-end: SliceModel enum -> RadioModel
+        // shim -> wire helper.  Locks in the integration that the init
+        // burst exercises on real-client connect.
+        RadioModel m;
+        SliceModel* slice = setupOneSlice(m);
+        QVERIFY(slice);
+        slice->setAgcMode(AGCMode::Med);
+        QString modeStr;
+        QMetaObject::invokeMethod(&m, "agcMode",
+                                  Q_RETURN_ARG(QString, modeStr),
+                                  Q_ARG(int, 0));
+        QCOMPARE(modeStr, QStringLiteral("MED"));
+        QCOMPARE(TciProtocol::tciAgcModeForWire(modeStr),
+                 QStringLiteral("normal"));
     }
 
     void agc_gain_routes_to_threshold() {
