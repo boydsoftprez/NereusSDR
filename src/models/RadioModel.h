@@ -800,12 +800,6 @@ public:
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
-    // TUN state, exported for H.3 UI polling and for issue #177 tests.
-    // True between setTune(true) and the completion of the corresponding
-    // setTune(false) → completeTuneOff() chain.
-    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
-    // many UI/meter/PA paths in console.cs).
-    bool isTune() const noexcept { return m_isTuning; }
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
     // group box in AudioTxInputPage without a live radio connection.
     // Does not reset other test-cap flags — independent of hasMicJack.
@@ -922,6 +916,19 @@ public:
         applyHpsdrModel(m);
     }
 #endif
+
+    // TUN state, exported for H.3 UI polling and for issue #177 tests.
+    // True between setTune(true) and the completion of the corresponding
+    // setTune(false) → completeTuneOff() chain.
+    // Cite: Thetis console.cs:30010 [v2.10.3.13] — _tuning = true (read by
+    // many UI/meter/PA paths in console.cs).
+    //
+    // Lives OUTSIDE the NEREUS_BUILD_TESTS block because production code
+    // (TunerApplet::onTuneClicked at TunerApplet.cpp:183) uses it to gate
+    // local-tune carrier engage on hardware-TUNE entry.  Prior placement
+    // inside the test block compiled green on Linux (-DNEREUS_BUILD_TESTS=ON
+    // in CI) but broke macOS / Windows where the option defaults OFF.
+    bool isTune() const noexcept { return m_isTuning; }
 
     // Connection
     void connectToRadio(const RadioInfo& info);
