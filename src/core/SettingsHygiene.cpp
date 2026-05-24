@@ -1,3 +1,10 @@
+// no-port-check: NereusSDR-original AppSettings validator.  Registered as
+// NereusSDR-native in docs/attribution/THETIS-PROVENANCE.md.  The single
+// inline upstream reference further down (BPF1-algorithm board family
+// check for HermesC10 / ANAN-G2E) is a parity citation, not a port of
+// upstream logic into this file.  Author tags preserved verbatim at the
+// citation line.
+//
 // =================================================================
 // src/core/SettingsHygiene.cpp  (NereusSDR)
 // =================================================================
