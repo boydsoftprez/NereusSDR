@@ -2332,6 +2332,8 @@ void RadioModel::setFourO3AEnabled(bool enabled)
             qCInfo(lcConnection) << "4O3A disabled: SmartSDR API listener stopped";
         }
     }
+
+    emit fourO3AEnabledChanged(enabled);
 }
 
 bool RadioModel::fourO3AEnabled() const
