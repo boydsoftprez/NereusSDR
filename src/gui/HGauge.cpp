@@ -18,8 +18,23 @@ void HGauge::setRedStart(double val) { m_redStart = val; update(); }
 void HGauge::setReversed(bool rev) { m_reversed = rev; update(); }
 void HGauge::setTitle(const QString& t) { m_title = t; update(); }
 void HGauge::setUnit(const QString& u) { m_unit = u; update(); }
-void HGauge::setValue(double val) { m_value = val; update(); }
-void HGauge::setPeakValue(double val) { m_peak = val; update(); }
+void HGauge::setValue(double val) {
+    // Value-change guard: skip the repaint when the new sample matches the
+    // current one within FP noise.  HGauge is driven by many fast timers
+    // (TxApplet fwd / SWR at 20 Hz, PhoneCwApplet mic at 20 Hz, VaxApplet
+    // levels at 60 Hz aggregate, AudioTxInputPage VU at 100 Hz, etc.).  When
+    // the signal is quiet or steady, suppressing the redundant update() cuts
+    // a large chunk of the main-thread paint load that was driving the
+    // QCALayerBackingStore::recreateBackBufferIfNeeded thrash on macOS.
+    if (qFuzzyCompare(1.0 + m_value, 1.0 + val)) { return; }
+    m_value = val;
+    update();
+}
+void HGauge::setPeakValue(double val) {
+    if (qFuzzyCompare(1.0 + m_peak, 1.0 + val)) { return; }
+    m_peak = val;
+    update();
+}
 void HGauge::setTickLabels(const QStringList& labels) { m_tickLabels = labels; update(); }
 
 void HGauge::paintEvent(QPaintEvent*)
