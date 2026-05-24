@@ -2423,39 +2423,31 @@ void MainWindow::populateDefaultMeter()
         m_radioModel->boardCapabilities().hasPureSignal);
 
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
-    // Visibility default from AppSettings (TciApplet_Visible / ClientChainApplet_Visible).
+    // Visibility is now managed by AppletVisibilityController below
+    // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
+    // AppletClientChainVisible). Legacy keys TciApplet_Visible /
+    // ClientChainApplet_Visible from earlier versions become orphans on
+    // upgrade; existing users get TCI applets back to default-visible.
 #ifdef HAVE_WEBSOCKETS
     if (m_tciServer) {
-        {
-            auto& s = AppSettings::instance();
-            const bool vis = s.value(QStringLiteral("TciApplet_Visible"),
-                                     QStringLiteral("True")).toString()
-                             == QStringLiteral("True");
-            m_tciApplet = new TciApplet(m_tciServer, nullptr);
-            panel->addApplet(m_tciApplet);
-            m_tciApplet->setVisible(vis);
-            connect(m_tciApplet, &TciApplet::setupRequested,
-                    this, &MainWindow::openTciSetupPage);
-            // showClientsRequested: scroll/show the ClientChainApplet.
-            // ClientChainApplet is constructed immediately below, so capture
-            // by pointer — the lambda runs only after full construction.
-            connect(m_tciApplet, &TciApplet::showClientsRequested,
-                    this, [this]() {
-                        if (m_clientChainApplet) {
-                            m_clientChainApplet->setVisible(true);
-                            m_clientChainApplet->raise();
-                        }
-                    });
-        }
-        {
-            auto& s = AppSettings::instance();
-            const bool vis = s.value(QStringLiteral("ClientChainApplet_Visible"),
-                                     QStringLiteral("True")).toString()
-                             == QStringLiteral("True");
-            m_clientChainApplet = new ClientChainApplet(m_tciServer, nullptr);
-            panel->addApplet(m_clientChainApplet);
-            m_clientChainApplet->setVisible(vis);
-        }
+        m_tciApplet = new TciApplet(m_tciServer, nullptr);
+        panel->addApplet(m_tciApplet);
+        connect(m_tciApplet, &TciApplet::setupRequested,
+                this, &MainWindow::openTciSetupPage);
+        // showClientsRequested: scroll/show the ClientChainApplet.
+        // ClientChainApplet is constructed immediately below, so capture
+        // by pointer — the lambda runs only after full construction.
+        connect(m_tciApplet, &TciApplet::showClientsRequested,
+                this, [this]() {
+                    if (m_clientChainApplet && m_appletVis) {
+                        m_appletVis->setVisible(
+                            QStringLiteral("ClientChain"), true);
+                        m_clientChainApplet->raise();
+                    }
+                });
+
+        m_clientChainApplet = new ClientChainApplet(m_tciServer, nullptr);
+        panel->addApplet(m_clientChainApplet);
     }
 #endif
 
@@ -2513,40 +2505,74 @@ void MainWindow::populateDefaultMeter()
     }
 
     // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
-    // NereusSDR-original. Backs the show/hide menu surfaces. Registration
-    // order matches the order the applets were added above; toggle
-    // defaults are all true (existing layout preserved on first launch).
+    // NereusSDR-original. Backs the show/hide menu surfaces.
     //
-    // TCI applets (Phase 23, above) keep their own AppSettings keys
-    // (TciApplet_Visible / ClientChainApplet_Visible) and direct setVisible
-    // — they are not registered with this controller in v1.
+    // Registered applets get a checkable menu entry in Containers > Applets
+    // AND in the right-side panel's ☰ banner menu. Add new entries here as
+    // additional applets ship.
     //
-    // AmpApplet and TunerApplet (Phase 3P-II Task 20, just above) are also
-    // not yet registered with this controller — both shipped on main while
-    // this branch was in development. Integrating Amp, Tuner, and TCI under
-    // the controller's roof is a follow-up; the current split means the ☰
-    // banner menu and Containers > Applets section show only the original
-    // 5 wired applets, and the others are managed via their own controls.
+    // RadeApplet caveat: its visibility is mode-driven (auto-shown when
+    // the active slice is in DSPMode::RADE_U/_L; hidden otherwise) via
+    // the dspModeChanged lambda further down. The menu toggle here is a
+    // user override that lasts until the next mode change repopulates
+    // visibility. Acceptable for v1; tighter integration is a follow-up.
     m_appletVis = new AppletVisibilityController(this);
 
     m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
     m_appletsById[QStringLiteral("Tx")]         = m_txApplet;
     m_appletsById[QStringLiteral("PhoneCw")]    = m_phoneCwApplet;
+    m_appletsById[QStringLiteral("Rade")]       = m_radeApplet;
     m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
+    m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
+    m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
+#ifdef HAVE_WEBSOCKETS
+    if (m_tciApplet) {
+        m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
+    }
+    if (m_clientChainApplet) {
+        m_appletsById[QStringLiteral("ClientChain")] = m_clientChainApplet;
+    }
+#endif
 
     // Display names match each applet's appletTitle() — keep in sync if
     // an applet's title changes.
+    //
+    // PureSignal defaults to visible. The existing onConnectionStateChanged
+    // handler still calls m_pureSignalApplet->setVisible(caps.hasPureSignal)
+    // on radio connect, which can hide the inner widget on HL2/Atlas; the
+    // menu entry stays available for users who want to force-show or
+    // permanently hide it. Defaulting to true here means new G2 users see
+    // PS immediately without having to discover the menu toggle.
     m_appletVis->registerApplet(QStringLiteral("Rx"),
-                                QStringLiteral("RX"),         true);
+                                QStringLiteral("RX"),           true);
     m_appletVis->registerApplet(QStringLiteral("Tx"),
-                                QStringLiteral("TX"),         true);
+                                QStringLiteral("TX"),           true);
     m_appletVis->registerApplet(QStringLiteral("PhoneCw"),
-                                QStringLiteral("Phone / CW"), true);
+                                QStringLiteral("Phone / CW"),   true);
+    // RADE default is hidden: at startup the active mode is USB and the
+    // mode lambda will keep the applet hidden until the user switches
+    // to a RADE mode. Persisted state still wins if the user opted in.
+    m_appletVis->registerApplet(QStringLiteral("Rade"),
+                                QStringLiteral("RADE"),         false);
     m_appletVis->registerApplet(QStringLiteral("Vax"),
-                                QStringLiteral("VAX"),        true);
+                                QStringLiteral("VAX"),          true);
     m_appletVis->registerApplet(QStringLiteral("PureSignal"),
-                                QStringLiteral("PureSignal"), true);
+                                QStringLiteral("PureSignal"),   true);
+    m_appletVis->registerApplet(QStringLiteral("Amp"),
+                                QStringLiteral("Amplifier"),    true);
+    m_appletVis->registerApplet(QStringLiteral("Tuner"),
+                                QStringLiteral("Tuner Genius"), true);
+#ifdef HAVE_WEBSOCKETS
+    if (m_tciApplet) {
+        m_appletVis->registerApplet(QStringLiteral("Tci"),
+                                    QStringLiteral("TCI Server"),  true);
+    }
+    if (m_clientChainApplet) {
+        m_appletVis->registerApplet(QStringLiteral("ClientChain"),
+                                    QStringLiteral("TCI Clients"), true);
+    }
+#endif
 
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
