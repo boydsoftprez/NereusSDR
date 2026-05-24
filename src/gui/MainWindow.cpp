@@ -2550,11 +2550,14 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("TX"),           true);
     m_appletVis->registerApplet(QStringLiteral("PhoneCw"),
                                 QStringLiteral("Phone / CW"),   true);
-    // RADE default is hidden: at startup the active mode is USB and the
-    // mode lambda will keep the applet hidden until the user switches
-    // to a RADE mode. Persisted state still wins if the user opted in.
+    // RADE: defaultVisible=true (user pref). Actual visibility is gated
+    // on the active slice's mode via the availability axis — the
+    // dspModeChanged lambda below calls setAvailable(true) only when
+    // mode is DSPMode::RADE_U/_L. Initial availability set to false here
+    // since the default startup mode is USB; the mode lambda fires
+    // shortly after to correct it if needed.
     m_appletVis->registerApplet(QStringLiteral("Rade"),
-                                QStringLiteral("RADE"),         false);
+                                QStringLiteral("RADE"),         true);
     m_appletVis->registerApplet(QStringLiteral("Vax"),
                                 QStringLiteral("VAX"),          true);
     m_appletVis->registerApplet(QStringLiteral("PureSignal"),
@@ -2583,6 +2586,10 @@ void MainWindow::populateDefaultMeter()
     const bool fourO3AOn = m_radioModel && m_radioModel->fourO3AEnabled();
     m_appletVis->setAvailable(QStringLiteral("Amp"),   fourO3AOn);
     m_appletVis->setAvailable(QStringLiteral("Tuner"), fourO3AOn);
+    // RADE: available only in RADE_U / RADE_L modes. Startup mode is
+    // USB, so initial availability=false. The dspModeChanged lambda
+    // below updates this on every mode change.
+    m_appletVis->setAvailable(QStringLiteral("Rade"),  false);
 
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
@@ -2969,58 +2976,13 @@ void MainWindow::buildMenuBar()
         }
     }
 
-    viewMenu->addSeparator();
-
-    // Phase 23: View → Network Applets ▶ submenu.
-    // TCI Server and TCI Clients toggles are enabled; CAT + MIDI are greyed
-    // placeholders until phases 3K-1 and 3K-3 ship.
-    {
-        QMenu* netAppletsMenu = viewMenu->addMenu(QStringLiteral("&Network Applets"));
-
-        auto* tciServerToggle = netAppletsMenu->addAction(QStringLiteral("&TCI Server"));
-        tciServerToggle->setCheckable(true);
-        {
-            auto& s = AppSettings::instance();
-            const bool dflt = s.value(QStringLiteral("TciApplet_Visible"),
-                                      QStringLiteral("True")).toString() == QStringLiteral("True");
-            tciServerToggle->setChecked(dflt);
-        }
-        connect(tciServerToggle, &QAction::toggled, this, [this](bool show) {
-            auto& s = AppSettings::instance();
-            s.setValue(QStringLiteral("TciApplet_Visible"),
-                       show ? QStringLiteral("True") : QStringLiteral("False"));
-#ifdef HAVE_WEBSOCKETS
-            if (m_tciApplet) { m_tciApplet->setVisible(show); }
-#endif
-        });
-
-        auto* tciClientsToggle = netAppletsMenu->addAction(QStringLiteral("TCI &Clients"));
-        tciClientsToggle->setCheckable(true);
-        {
-            auto& s = AppSettings::instance();
-            const bool dflt = s.value(QStringLiteral("ClientChainApplet_Visible"),
-                                      QStringLiteral("True")).toString() == QStringLiteral("True");
-            tciClientsToggle->setChecked(dflt);
-        }
-        connect(tciClientsToggle, &QAction::toggled, this, [this](bool show) {
-            auto& s = AppSettings::instance();
-            s.setValue(QStringLiteral("ClientChainApplet_Visible"),
-                       show ? QStringLiteral("True") : QStringLiteral("False"));
-#ifdef HAVE_WEBSOCKETS
-            if (m_clientChainApplet) { m_clientChainApplet->setVisible(show); }
-#endif
-        });
-
-        netAppletsMenu->addSeparator();
-
-        auto* catItem = netAppletsMenu->addAction(QStringLiteral("&CAT"));
-        catItem->setEnabled(false);
-        catItem->setToolTip(QStringLiteral("Phase 3K-1 (post-3J)"));
-
-        auto* midiItem = netAppletsMenu->addAction(QStringLiteral("&MIDI"));
-        midiItem->setEnabled(false);
-        midiItem->setToolTip(QStringLiteral("Phase 3K-3 (post-3K-2)"));
-    }
+    // Phase 23 "View > Network Applets" submenu removed: TCI Server and
+    // TCI Clients are now driven by AppletVisibilityController, accessible
+    // via Containers > Applets and the panel's ☰ banner menu. Two
+    // independent controls (old direct-setVisible + new controller path)
+    // would drift out of sync. CAT + MIDI greyed placeholders deferred to
+    // their feature phases (3K-1 / 3K-3) — re-add at that time wired
+    // through the controller.
 
     viewMenu->addSeparator();
 
@@ -5000,8 +4962,12 @@ void MainWindow::wireSliceToSpectrum()
         // rides a USB/LSB carrier.
         const bool isRade = (mode == DSPMode::RADE_U
                              || mode == DSPMode::RADE_L);
-        if (m_radeApplet) {
-            m_radeApplet->setVisible(isRade);
+        // Route through the visibility controller so the wrapper (not
+        // just the inner widget) shows/hides AND the menu entries grey
+        // out when not in RADE mode. The user's persisted visibility
+        // preference is preserved across mode changes.
+        if (m_appletVis) {
+            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
         }
         if (m_phoneCwApplet) {
             m_phoneCwApplet->setVisible(true);  // always visible
