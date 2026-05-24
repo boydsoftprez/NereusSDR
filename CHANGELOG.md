@@ -4,6 +4,9 @@
 
 ## [0.5.2] - 2026-05-24
 
+> [!IMPORTANT]
+> 📖 **Alpha testers, start here:** [docs/debugging/v0.5.2-alpha-tester-smoketest.md](https://github.com/boydsoftprez/NereusSDR/blob/main/docs/debugging/v0.5.2-alpha-tester-smoketest.md)
+
 > [!NOTE]
 > **A substantial release on top of v0.5.1.** Three pieces of work land together: external RF accessories (4O3A Power Genius XL amplifier + Tuner Genius XL antenna tuner over Ethernet, plus the Thetis analog S-Meter widget on the operator banner), a new SKU port (Apache Labs ANAN-G2E / HermesC10), and a new UI control for showing or hiding right-side applets, plus a polish tail (4O3A integration cleanup, TCI live-state push to clients, PS-A persistence, PA quit handling). 268 commits since v0.5.1.
 >
