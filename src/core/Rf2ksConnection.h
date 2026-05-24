@@ -83,6 +83,12 @@ public:
     // a real network request. Production code never calls this.
     void injectJsonForTesting(const QString& path, const QByteArray& json);
 
+    // Test-only: drive the backoff calculation without waiting on real
+    // network failures or timers. Production code never calls these.
+    void testForceBackoffSequence();
+    void testForceBackoffReset();
+    int  testCurrentBackoffMs() const noexcept { return m_reconnectBackoffMs; }
+
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);
     void disconnect();
@@ -139,7 +145,10 @@ private:
     quint16 m_port               = 8080;
     bool    m_connected          = false;
     int     m_pollIntervalMs     = 1000;
-    int     m_reconnectBackoffMs = 1000;
+    // Half of the first real reconnect delay (500 ms).  scheduleReconnect()
+    // doubles before scheduling, so the first actual retry fires after 1 s,
+    // the second after 2 s, third after 4 s, capping at 60 s.
+    int     m_reconnectBackoffMs = 500;
 
     QString m_deviceName;
     QString m_softwareVersion;

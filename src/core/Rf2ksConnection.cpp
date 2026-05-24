@@ -191,7 +191,7 @@ void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
     m_host = host;
     m_port = port;
     m_consecutiveFailures = 0;
-    m_reconnectBackoffMs = 1000;
+    m_reconnectBackoffMs = 500;  // doubled to 1000 ms on first scheduleReconnect()
 
     connect(&m_pollTimer, &QTimer::timeout, this, &Rf2ksConnection::pollOnce,
             Qt::UniqueConnection);
@@ -290,6 +290,7 @@ void Rf2ksConnection::markPollSuccess(int rttMs)
 {
     m_pollsSucceeded++;
     m_consecutiveFailures = 0;
+    m_reconnectBackoffMs = 500;  // doubled to 1000 ms on next scheduleReconnect()
     m_lastPollMs = QDateTime::currentMSecsSinceEpoch();
     m_rttAvgMs = (m_rttAvgMs * 9 + rttMs) / 10;
 }
@@ -305,8 +306,36 @@ void Rf2ksConnection::markPollFailure()
     }
 }
 
-// Stubs for reconnect / control / IO - filled in Task 4+5.
-void Rf2ksConnection::scheduleReconnect() {}
+void Rf2ksConnection::scheduleReconnect()
+{
+    m_reconnectAttempts++;
+    // Double first, then schedule - so the member always holds the delay
+    // that was just used.  testCurrentBackoffMs() reads this value and the
+    // test verifies the 1 s / 2 s / 4 s / 8 s ... 60 s sequence.
+    m_reconnectBackoffMs = qMin(m_reconnectBackoffMs * 2, 60000);
+    m_reconnectTimer.singleShot(m_reconnectBackoffMs, this, [this]{
+        // Re-issue /info as the connection probe; success path will set
+        // m_connected back to true via onReplyFinished.
+        issueGet(QStringLiteral("/info"));
+        if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
+            m_pollTimer.start(m_pollIntervalMs);
+        }
+    });
+}
+
+void Rf2ksConnection::testForceBackoffSequence()
+{
+    scheduleReconnect();
+    m_reconnectTimer.stop();   // cancel actual reconnect; we only wanted the math
+}
+
+void Rf2ksConnection::testForceBackoffReset()
+{
+    m_reconnectBackoffMs = 1000;
+    m_consecutiveFailures = 0;
+}
+
+// Stubs for control / IO - filled in Task 5.
 void Rf2ksConnection::setActiveAntenna(RfKitAntenna::Type, int) {}
 void Rf2ksConnection::setOperateMode(const QString&) {}
 void Rf2ksConnection::setOperationalInterface(const QString&) {}

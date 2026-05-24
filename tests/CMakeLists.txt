@@ -5174,3 +5174,9 @@ target_link_libraries(tst_rf2ks_connection_parse PRIVATE Qt6::Network)
 #   pollIntervalConfigurable (200 ms interval -> at least 1 extra poll in 500 ms).
 nereus_add_test(tst_rf2ks_connection_poll)
 target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
+
+# Task 4: Exponential-backoff reconnect.
+# Test seams drive the backoff math without real network or timers.
+# Tests: backoffSequenceFollowsSchedule (1s->2s->4s->8s->...->cap 60s);
+#   successResetsBackoff (testForceBackoffReset resets to 1s).
+nereus_add_test(tst_rf2ks_connection_reconnect)
