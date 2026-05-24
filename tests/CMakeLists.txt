@@ -5198,3 +5198,4 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 #   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
 nereus_add_test(tst_rf2ks_applet_layout)
 nereus_add_test(tst_rf2ks_applet_context_menu)
+nereus_add_test(tst_rfkit_page_master_gate)

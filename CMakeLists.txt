@@ -757,6 +757,7 @@ set(GUI_SOURCES
     src/gui/setup/TgxlAdvancedPage.cpp
     src/gui/setup/PgxlInterlockPage.cpp
     src/gui/setup/FourO3APage.cpp
+    src/gui/setup/RfKitPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/KeyboardSetupPages.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
