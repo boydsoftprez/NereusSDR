@@ -19,6 +19,9 @@ private slots:
     void defaultsFalse();
     void setterPersistsAndEmits();
     void getterReadsFromAppSettings();
+    void exposesRf2ksConnection();
+    void enablingTriggersConnect();
+    void disablingTriggersDisconnect();
 };
 
 void RfKitEnabledTest::initTestCase() {
@@ -50,6 +53,40 @@ void RfKitEnabledTest::getterReadsFromAppSettings() {
         .setValue(QStringLiteral("RfKit_Enabled"), QStringLiteral("True"));
     NereusSDR::RadioModel m;
     QCOMPARE(m.rfKitEnabled(), true);
+}
+
+void RfKitEnabledTest::exposesRf2ksConnection() {
+    NereusSDR::RadioModel m;
+    QVERIFY(m.rfKitConnection() != nullptr);
+}
+
+void RfKitEnabledTest::enablingTriggersConnect() {
+    NereusSDR::AppSettings::instance().remove(QStringLiteral("RfKit_Enabled"));
+    NereusSDR::AppSettings::instance()
+        .setValue(QStringLiteral("RfKit_ManualIp"), QStringLiteral("127.0.0.1"));
+    NereusSDR::AppSettings::instance()
+        .setValue(QStringLiteral("RfKit_ManualPort"), QStringLiteral("12345"));
+    NereusSDR::RadioModel m;
+    m.setRfKitEnabled(true);
+    QCOMPARE(m.rfKitConnection()->peerAddress(), QString("127.0.0.1"));
+    QCOMPARE(m.rfKitConnection()->peerPort(),    quint16(12345));
+}
+
+void RfKitEnabledTest::disablingTriggersDisconnect() {
+    NereusSDR::AppSettings::instance().remove(QStringLiteral("RfKit_Enabled"));
+    NereusSDR::AppSettings::instance()
+        .setValue(QStringLiteral("RfKit_ManualIp"), QStringLiteral("127.0.0.1"));
+    NereusSDR::AppSettings::instance()
+        .setValue(QStringLiteral("RfKit_ManualPort"), QStringLiteral("12345"));
+    NereusSDR::RadioModel m;
+    // connectToAmp stores host/port but m_connected stays false until an HTTP
+    // reply arrives (no real server here).  Force the connected flag so that
+    // the subsequent disconnect() actually emits disconnected().
+    m.setRfKitEnabled(true);
+    m.rfKitConnection()->testForceConnectedForTesting();
+    QSignalSpy disSpy(m.rfKitConnection(), &NereusSDR::Rf2ksConnection::disconnected);
+    m.setRfKitEnabled(false);
+    QCOMPARE(disSpy.count(), 1);
 }
 
 QTEST_MAIN(RfKitEnabledTest)

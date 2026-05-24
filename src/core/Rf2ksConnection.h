@@ -88,6 +88,10 @@ public:
     void testForceBackoffSequence();
     void testForceBackoffReset();
     int  testCurrentBackoffMs() const noexcept { return m_reconnectBackoffMs; }
+    // Sets m_connected to true without going through the network stack,
+    // so tests that need disconnect() to emit disconnected() can arm the
+    // guard without spinning up a real HTTP server.
+    void testForceConnectedForTesting() { m_connected = true; }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);

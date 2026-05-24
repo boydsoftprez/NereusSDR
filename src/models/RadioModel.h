@@ -69,6 +69,7 @@
 
 #include "core/ConnectionState.h"
 #include "core/PgxlConnection.h"
+#include "core/Rf2ksConnection.h"
 #include "core/TgxlConnection.h"
 #include "core/FaultLog.h"
 #include "core/TxInterlockPolicy.h"
@@ -497,6 +498,7 @@ public:
     // a QObject child that binds its connection once in the ctor.
     // All three accessors return non-null pointers from construction time.
     PgxlConnection* pgxlConnection() { return m_pgxlConnection; }
+    Rf2ksConnection* rfKitConnection() const { return m_rfKitConnection.get(); }
     TgxlConnection* tgxlConnection() { return m_tgxlConnection; }
     TunerModel*     tunerModel()     { return m_tunerModel;     }
     // SmartSDR API server on TCP 4992. Owned by RadioModel; lifetime matches.
@@ -2357,6 +2359,11 @@ private:
     PgxlConnection* m_pgxlConnection{nullptr};
     TgxlConnection* m_tgxlConnection{nullptr};
     TunerModel*     m_tunerModel{nullptr};
+
+    // Phase 3P-III: RF-Kit RF2K-S connection. unique_ptr with Qt parent=this
+    // so destruction order is deterministic and QObject hierarchy is intact.
+    // Constructed once in the ctor; non-null from that point.
+    std::unique_ptr<Rf2ksConnection> m_rfKitConnection;
 
     // Amplifier presence and operate-state cache (driven by onPgxlStatus).
     bool m_hasAmplifier{false};

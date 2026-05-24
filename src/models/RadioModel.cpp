@@ -948,6 +948,11 @@ RadioModel::RadioModel(QObject* parent)
     m_tunerModel     = new TunerModel(this);
     m_tunerModel->bindConnection(m_tgxlConnection);
 
+    // Phase 3P-III: RF-Kit RF2K-S connection. Constructed unconditionally;
+    // the poller only starts when rfKitEnabled is set to true (reads
+    // RfKit_ManualIp / RfKit_ManualPort from AppSettings at that point).
+    m_rfKitConnection = std::make_unique<Rf2ksConnection>(this);
+
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Loads persisted mode/grace/SWR-gate values from AppSettings in its ctor.
     // Non-null from this point; shared (non-owning) with PgxlInterlockPage
@@ -2387,6 +2392,20 @@ void RadioModel::setRfKitEnabled(bool enabled)
     AppSettings::instance().setValue(
         QStringLiteral("RfKit_Enabled"),
         enabled ? QStringLiteral("True") : QStringLiteral("False"));
+
+    if (enabled) {
+        const QString host = AppSettings::instance()
+            .value(QStringLiteral("RfKit_ManualIp")).toString();
+        const quint16 port = static_cast<quint16>(AppSettings::instance()
+            .value(QStringLiteral("RfKit_ManualPort"), QStringLiteral("8080"))
+            .toUInt());
+        if (!host.isEmpty() && m_rfKitConnection) {
+            m_rfKitConnection->connectToAmp(host, port);
+        }
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->disconnect();
+    }
+
     emit rfKitEnabledChanged(enabled);
 }
 
