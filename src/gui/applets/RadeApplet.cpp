@@ -76,7 +76,9 @@ void RadeApplet::buildUI()
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    root->addWidget(appletTitleBar(appletTitle()));
+    // Do NOT add appletTitleBar() here — AppletPanelWidget::wrapWithTitleBar
+    // already prepends a host-side title bar from appletTitle(). Adding our
+    // own here results in a double header. Same fix in PureSignalApplet.
 
     auto* body = new QWidget(this);
     body->setStyleSheet(
