@@ -5165,3 +5165,12 @@ nereus_add_test(tst_rfkit_radiomodel_enabled)
 #   operationalInterfaceCapturesErrorField (error="No TCI available").
 nereus_add_test(tst_rf2ks_connection_parse)
 target_link_libraries(tst_rf2ks_connection_parse PRIVATE Qt6::Network)
+
+# Task 3: 1 Hz REST polling via QNetworkAccessManager.
+# FakeAmpServer (QTcpServer, ephemeral port 0) serves fixture JSON for 8
+# endpoints in-process; no real amp required.
+# Tests: connectsAndPollsOnce (connects, emits connected + powerUpdated +
+#   operateModeUpdated within 2s, pollsSucceeded >= 1);
+#   pollIntervalConfigurable (200 ms interval -> at least 1 extra poll in 500 ms).
+nereus_add_test(tst_rf2ks_connection_poll)
+target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)

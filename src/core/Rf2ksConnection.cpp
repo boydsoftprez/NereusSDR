@@ -186,23 +186,132 @@ void Rf2ksConnection::parseData(const QByteArray& body)
     emit dataUpdated(bandM, freqKHz, status);
 }
 
-// Stubs for polling / control / IO - filled in Task 3+5.
-void Rf2ksConnection::connectToAmp(const QString& host, quint16 port) {
-    m_host = host; m_port = port;
+void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
+{
+    m_host = host;
+    m_port = port;
+    m_consecutiveFailures = 0;
+    m_reconnectBackoffMs = 1000;
+
+    connect(&m_pollTimer, &QTimer::timeout, this, &Rf2ksConnection::pollOnce,
+            Qt::UniqueConnection);
+    m_pollTimer.start(m_pollIntervalMs);
+
+    // Probe /info immediately to establish connection.
+    issueGet(QStringLiteral("/info"));
 }
-void Rf2ksConnection::disconnect() { m_connected = false; emit disconnected(); }
-void Rf2ksConnection::setPollIntervalMs(int ms) { m_pollIntervalMs = ms; }
-void Rf2ksConnection::pollOnce() {}
+
+void Rf2ksConnection::disconnect()
+{
+    m_pollTimer.stop();
+    m_reconnectTimer.stop();
+    if (m_connected) {
+        m_connected = false;
+        emit disconnected();
+    }
+}
+
+void Rf2ksConnection::setPollIntervalMs(int ms)
+{
+    m_pollIntervalMs = qBound(250, ms, 5000);
+    if (m_pollTimer.isActive()) {
+        m_pollTimer.start(m_pollIntervalMs);
+    }
+}
+
+void Rf2ksConnection::pollOnce()
+{
+    static const QStringList kHotPaths{
+        QStringLiteral("/power"),
+        QStringLiteral("/tuner"),
+        QStringLiteral("/data"),
+        QStringLiteral("/antennas/active"),
+        QStringLiteral("/operate-mode"),
+        QStringLiteral("/operational-interface"),
+    };
+    for (const auto& p : kHotPaths) {
+        issueGet(p);
+    }
+    // Slow rotation: every 10 polls, refresh /antennas and /info.
+    static int tick = 0;
+    if (++tick % 10 == 0) {
+        issueGet(QStringLiteral("/antennas"));
+        issueGet(QStringLiteral("/info"));
+    }
+}
+
+void Rf2ksConnection::issueGet(const QString& path)
+{
+    if (m_host.isEmpty()) {
+        return;
+    }
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(m_host);
+    url.setPort(m_port);
+    url.setPath(path);
+    QNetworkRequest req(url);
+    auto* reply = m_nam->get(req);
+    reply->setProperty("rfkitPath", path);
+    reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    connect(reply, &QNetworkReply::finished,
+            this, &Rf2ksConnection::onReplyFinished);
+}
+
+void Rf2ksConnection::onReplyFinished()
+{
+    auto* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) {
+        return;
+    }
+    const QString path    = reply->property("rfkitPath").toString();
+    const qint64 started  = reply->property("startedMs").toLongLong();
+    const int rttMs       = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+
+    if (reply->error() != QNetworkReply::NoError) {
+        markPollFailure();
+        reply->deleteLater();
+        return;
+    }
+    const QByteArray body = reply->readAll();
+    reply->deleteLater();
+
+    handleResponse(path, body);
+    markPollSuccess(rttMs);
+
+    if (!m_connected) {
+        m_connected = true;
+        m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
+        emit connected();
+    }
+}
+
+void Rf2ksConnection::markPollSuccess(int rttMs)
+{
+    m_pollsSucceeded++;
+    m_consecutiveFailures = 0;
+    m_lastPollMs = QDateTime::currentMSecsSinceEpoch();
+    m_rttAvgMs = (m_rttAvgMs * 9 + rttMs) / 10;
+}
+
+void Rf2ksConnection::markPollFailure()
+{
+    m_pollsFailed++;
+    m_consecutiveFailures++;
+    if (m_consecutiveFailures >= 3 && m_connected) {
+        m_connected = false;
+        emit disconnected();
+        scheduleReconnect();
+    }
+}
+
+// Stubs for reconnect / control / IO - filled in Task 4+5.
 void Rf2ksConnection::scheduleReconnect() {}
-void Rf2ksConnection::onReplyFinished() {}
 void Rf2ksConnection::setActiveAntenna(RfKitAntenna::Type, int) {}
 void Rf2ksConnection::setOperateMode(const QString&) {}
 void Rf2ksConnection::setOperationalInterface(const QString&) {}
 void Rf2ksConnection::resetError() {}
-void Rf2ksConnection::issueGet(const QString&) {}
 void Rf2ksConnection::issuePut(const QString&, const QByteArray&) {}
 void Rf2ksConnection::issuePost(const QString&) {}
-void Rf2ksConnection::markPollSuccess(int) {}
-void Rf2ksConnection::markPollFailure() {}
 
 } // namespace NereusSDR
