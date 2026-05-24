@@ -5190,3 +5190,10 @@ nereus_add_test(tst_rf2ks_connection_reconnect)
 #   postErrorReset.
 nereus_add_test(tst_rf2ks_connection_control)
 target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
+
+# Task 7: Rf2ksApplet header section (Section A).
+# Tests: appletIdAndTitle (appletId=RfKit, appletTitle=RF-Kit RF2K-S);
+#   headerShowsDeviceName (device label constant, nickname+version composed);
+#   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
+#   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
+nereus_add_test(tst_rf2ks_applet_layout)
