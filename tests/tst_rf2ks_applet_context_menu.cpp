@@ -31,12 +31,11 @@ void Rf2ksAppletContextMenuTest::menuHasFourItems() {
     a.setConnectedState(true);
     QMenu* menu = a.buildContextMenuForTesting();
     const auto actions = menu->actions();
-    QCOMPARE(actions.size(), 5);   // 4 items + 1 separator
+    QCOMPARE(actions.size(), 4);   // 3 items + 1 separator
     QCOMPARE(actions[0]->text(), QString("Open RF-Kit Advanced..."));
     QVERIFY(actions[1]->isSeparator());
     QCOMPARE(actions[2]->text(), QString("Disconnect"));
-    QCOMPARE(actions[3]->text(), QString("Reconnect"));
-    QCOMPARE(actions[4]->text(), QString("Copy diagnostics to clipboard"));
+    QCOMPARE(actions[3]->text(), QString("Copy diagnostics to clipboard"));
     delete menu;
 }
 
@@ -67,7 +66,7 @@ void Rf2ksAppletContextMenuTest::copyDiagnosticsEmitsSignal() {
     Rf2ksApplet a(&m);
     QSignalSpy spy(&a, &Rf2ksApplet::diagnosticsCopyRequested);
     QMenu* menu = a.buildContextMenuForTesting();
-    menu->actions()[4]->trigger();
+    menu->actions()[3]->trigger();   // copy diagnostics is now index 3 not 4
     QCOMPARE(spy.count(), 1);
     delete menu;
 }

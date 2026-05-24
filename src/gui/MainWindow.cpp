@@ -2235,6 +2235,37 @@ void MainWindow::populateDefaultMeter()
         }
     }
 
+    // Phase 3P-III review fix C1: wire the production SMeterWidget to the
+    // cross-vendor RF-Kit aggregate signals.
+    //
+    // The displayed SMeterWidget is constructed via the QWidget-only ctor in
+    // AppletPanelWidget, so the SMeterWidget(RadioModel*, QWidget*) overload +
+    // connectToRadioModel() added in Task 13 are dead code in production.
+    // externalAmpOperateChanged and externalAmpFwdSwrUpdated fire correctly
+    // from RadioModel but the displayed widget never subscribed, leaving the
+    // 2 kW scale switch silent on RF-Kit OPERATE and the TX needle frozen.
+    //
+    // Wire here, immediately after the analogous PGXL SMeterWidget block,
+    // so all SMeterWidget signal connections live in one place. PGXL paths
+    // (Connect 1..5 above) remain unchanged; these two add RF-Kit on top.
+    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+        // RF-Kit Connect A: snap 2 kW scale on RF-Kit OPERATE.
+        // externalAmpOperateChanged is now transition-gated (fix I2) so this
+        // fires only when the amp enters or leaves OPERATE, not every poll.
+        connect(m_radioModel, &RadioModel::externalAmpOperateChanged, sm,
+                [sm](bool inOp) {
+            sm->setPowerScale(/*maxWatts=*/0, inOp);
+        });
+
+        // RF-Kit Connect B: feed RF-Kit forward power + SWR to the TX needle.
+        // externalAmpFwdSwrUpdated carries watts (int) and SWR (float);
+        // setTxMeters takes (float fwdPower, float swr).
+        connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, sm,
+                [sm](int fwd, float swr) {
+            sm->setTxMeters(static_cast<float>(fwd), swr);
+        });
+    }
+
     // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
     // Fires a 5-second status-bar toast when peak forward power exceeds the
     // cap configured in Setup -> Peripherals -> PGXL Advanced -> Hardware.

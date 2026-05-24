@@ -1465,7 +1465,16 @@ RadioModel::RadioModel(QObject* parent)
     // every state poll (even if unchanged) and powerUpdated on every power poll.
     connect(m_rfKitConnection.get(), &Rf2ksConnection::operateModeUpdated,
             this, [this](const QString& mode) {
-        emit externalAmpOperateChanged(mode == QStringLiteral("OPERATE"));
+        // Phase 3P-III review fix I2: only emit on actual transitions.
+        // Rf2ksConnection::parseOperateMode fires on every 1 Hz poll regardless
+        // of whether the mode changed; without this guard, externalAmpOperateChanged
+        // would spam once per second (conflicting with the PGXL path, which is
+        // already transition-only via statusUpdated frames).
+        const bool inOp = (mode == QStringLiteral("OPERATE"));
+        if (inOp != m_lastRfKitInOperate) {
+            m_lastRfKitInOperate = inOp;
+            emit externalAmpOperateChanged(inOp);
+        }
     });
     connect(m_rfKitConnection.get(), &Rf2ksConnection::powerUpdated,
             this, [this](const RfKitPowerSnapshot& snap) {

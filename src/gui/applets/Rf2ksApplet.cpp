@@ -283,14 +283,12 @@ QMenu* Rf2ksApplet::buildContextMenu(QObject* menuParent)
     auto* disco = menu->addAction(m_connected
                                     ? QStringLiteral("Disconnect")
                                     : QStringLiteral("Reconnect"));
-    auto* recon = menu->addAction(QStringLiteral("Reconnect"));
     auto* diag  = menu->addAction(QStringLiteral("Copy diagnostics to clipboard"));
 
     connect(openAdv, &QAction::triggered, this, [this] {
         emit navigationRequested(QStringLiteral("rfKit"));
     });
     connect(disco, &QAction::triggered, this, &Rf2ksApplet::connectionToggleRequested);
-    connect(recon, &QAction::triggered, this, &Rf2ksApplet::connectionToggleRequested);
     connect(diag,  &QAction::triggered, this, &Rf2ksApplet::diagnosticsCopyRequested);
     return menu;
 }

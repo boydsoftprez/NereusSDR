@@ -2380,6 +2380,11 @@ private:
     // Constructed once in the ctor; non-null from that point.
     std::unique_ptr<Rf2ksConnection> m_rfKitConnection;
 
+    // Phase 3P-III review fix I2: last-seen RF-Kit operate state, used to gate
+    // externalAmpOperateChanged so the cross-vendor signal fires only on actual
+    // transitions, not on every 1 Hz REST poll. Initialized false (STANDBY).
+    bool m_lastRfKitInOperate{false};
+
     // Amplifier presence and operate-state cache (driven by onPgxlStatus).
     bool m_hasAmplifier{false};
     bool m_ampOperate{false};
