@@ -2560,7 +2560,7 @@ void MainWindow::populateDefaultMeter()
     m_appletVis->registerApplet(QStringLiteral("PureSignal"),
                                 QStringLiteral("PureSignal"),   true);
     m_appletVis->registerApplet(QStringLiteral("Amp"),
-                                QStringLiteral("Amplifier"),    true);
+                                QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
 #ifdef HAVE_WEBSOCKETS

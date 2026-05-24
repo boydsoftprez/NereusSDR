@@ -55,7 +55,7 @@ public:
     explicit AmpApplet(RadioModel* model, QWidget* parent = nullptr);
 
     QString appletId()    const override { return QStringLiteral("amp"); }
-    QString appletTitle() const override { return QStringLiteral("AMP"); }
+    QString appletTitle() const override { return QStringLiteral("Power Genius"); }
     void    syncFromModel() override {}
 
     // Test seam: returns a heap-allocated QMenu* without exec()-ing it.
