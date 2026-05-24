@@ -5,629 +5,192 @@
 ## [0.5.2] - 2026-05-24
 
 > [!NOTE]
-> **Substantial release on top of v0.5.1 (and v0.5.0 underneath).** One major epic (Phase 3P-II: 4O3A PGXL/TGXL + analog S-Meter port) plus a new SKU port (ANAN-G2E / HermesC10), a new UI subsystem (applet visibility controller), and a polish tail (4O3A integration cleanup, TCI live-state fixes + 5 review issues, PS-A persistence + bench tail, PA profile / quit handling, G2E P2 RX unblock + crash fix). 268 commits since v0.5.1. The 3P-II bench-verification matrix (36 rows) is pending live PGXL + TGXL hardware; the ANAN-G2E matrix (12 rows) is pending live G2E hardware. Most of the rest of the surface is testable on any supported radio.
+> **A substantial release on top of v0.5.1.** Three pieces of work land together — external RF accessories (4O3A Power Genius XL amplifier + Tuner Genius XL antenna tuner over Ethernet, plus the Thetis analog S-Meter widget on the operator banner), a new SKU port (Apache Labs ANAN-G2E / HermesC10), and a new UI control for showing or hiding right-side applets — plus a polish tail (4O3A integration cleanup, TCI live-state push to clients, PS-A persistence, PA quit handling). 268 commits since v0.5.1.
+>
+> 1. **Phase 3P-II: 4O3A external RF accessories + analog S-Meter port.** If you run a Power Genius XL amplifier or a Tuner Genius XL antenna tuner on the same LAN as your radio, NereusSDR can now talk to both. AmpApplet shows live forward / reflected power, SWR, and PGXL state. TunerApplet shows relay positions, antenna selection, and the autotune cycle. Setup > Network > Peripherals discovers PGXL / TGXL on the LAN, configures their hosts and ports, and shows live connection status; PGXL Advanced and TGXL Advanced sub-pages cover identity, hardware, network, pairing, diagnostics, fault history, and per-band tune memory. Setup > Transmit > PGXL Interlock optionally blocks MOX when the amp says no. The S-Meter on the right panel is now the Thetis-style analog needle with four RX modes (Signal / Signal Average / Signal Peak / Max Bin) and configurable peak hold.
+> 2. **ANAN-G2E (HermesC10) SKU port.** Apache Labs' newest radio in the ANAN family is now a first-class SKU on par with the rest of the family. Discovery recognises it (P1 wire byte `0x14`), the ConnectionPanel knows about it, PA telemetry reads sensibly on TX, and the P2 RX path streams cleanly. Closes a gateware-lockup crash that surfaced in early G2E testing (zero-rate on disabled DDCs, `SendStop` retry with bounds-check on the I/Q batch, Thetis-faithful disconnect via `CmdGeneral` winddown). Verified against Thetis v2.10.3.15.
+> 3. **Applet visibility controller.** The right-side applet panel gained a hamburger menu on its banner. Click it to show or hide individual applets — RX, TX, Phone/CW, EQ, FM, Digital, PureSignal, Diversity, CWX, DVK, CAT, Tuner, Amp, RADE, TCI. The same toggles also live under View > Containers > Applets in the menu bar, and the two stay in sync. Your toggle state persists across launches. Applets that don't apply to your current radio or mode (e.g. PureSignal on a board that doesn't support it, RADE applet when the slice isn't in RADE_U / RADE_L, Amp + Tuner when the 4O3A master toggle is off) hide automatically.
+> 4. **Polish tail.** The 4O3A integration got a long bench-fix sweep (handshake timing, LAN discovery broadcast subnet, macOS PGXL IPv6 connect fix, master-toggle gating, "AMP" → "Power Genius" rebrand). TCI's live-state push to connected clients got five PR-review-issue fixes and the remaining `ChangedHandlers` ports. PS-A `autoCalEnabled` now actually persists to disk (three-bug stack closed). PA profile lookup falls back to manifest backfill if a profile is missing, and clean disconnect-on-quit + SIGTERM handling were both hardened.
 
 > [!IMPORTANT]
-> **Existing users: no action required.** Saved radios, mic profiles, DSP settings, container layout, spectrum/waterfall settings, PA cal points, per-band tune power, spot-system identity, FreeDV Reporter hidden state — all preserved. No SettingsSchemaVersion bump (last bump was v5 in v0.4.0).
-
-### Added (Phase 3P-II - PGXL/TGXL + analog S-Meter baseline)
-
-AetherSDR 1:1 baseline for PowerGenius XL amplifier telemetry and
-Tuner Genius XL antenna tuner control over Ethernet. 22 commits, Phase 1
-of the PGXL/TGXL + analog S-Meter epic. Phase 2 (analog S-Meter port
-from Thetis) follows in the next dispatch.
-
-**New classes:**
-
-- `PgxlConnection` (`src/core/PgxlConnection.{h,cpp}`): TCP client on
-  port 9008. Parses V (banner), R (request/reply key-value), and S
-  (unsolicited status push) frames per strict S-frame design (§6.1 of
-  the phase design doc). Port of `src/core/PgxlConnection.{h,cpp}` from
-  AetherSDR `[@a29ff40]`. 3 parse tests in `tst_pgxl_connection_parse`.
-
-- `TgxlConnection` (`src/core/TgxlConnection.{h,cpp}`): TCP client on
-  port 9010. V/R/S frame parsing with state/status object discrimination.
-  Port of `src/core/TgxlConnection.{h,cpp}` from AetherSDR `[@a29ff40]`.
-  3 parse tests in `tst_tgxl_connection_parse`.
-
-- `TunerModel` (`src/models/TunerModel.{h,cpp}`): TGXL state model with
-  13 Q_PROPERTYs (state, status, bypassMode, antennaPort, txPower,
-  reflectedPower, swr, inductance, capacitance, tuneTime,
-  isConnected, serialNumber, firmwareVersion). Wired to `TgxlConnection`
-  via `bindConnection`; `applyStatus` dispatches S-frame key-value maps.
-  11 applyStatus tests in `tst_tuner_model_apply_status`.
-
-- `RelayBar` (`src/gui/RelayBar.{h,cpp}`): horizontal relay-position
-  gauge widget extracted from AetherSDR's inner `TunerApplet::RelayBar`
-  class. Supports mousewheel stepping and emits `positionChangeRequested`.
-
-- `LanDiscovery` (`src/core/LanDiscovery.{h,cpp}`): NereusSDR-native
-  UDP broadcast listener on ports 9008 and 9010. Parses device model,
-  IP, version, serial, and nickname via the official FlexRadio LAN
-  discovery regex. Deduplicates by serial number before emitting
-  `deviceDiscovered`. Regex tests in `tst_lan_discovery_regex`.
-
-- `AmpApplet` (`src/gui/applets/AmpApplet.{h,cpp}`): PGXL telemetry
-  applet with three `HGauge` meters (forward power, reflected power,
-  SWR), state label, and OPERATE toggle. Port of `src/gui/AmpApplet.{h,cpp}`
-  from AetherSDR `[@a29ff40]`.
-
-- `LanScanDialog` (`src/gui/LanScanDialog.{h,cpp}`): NereusSDR-native
-  modeless 3-second LAN scan dialog. Shows discovered devices in a
-  6-column table (Model, IP, Port, Version, Serial, Nickname).
-  Double-click fills the Host and Port fields in the PeripheralsPage
-  row that launched the scan.
-
-**Modified classes:**
-
-- `TunerApplet` (`src/gui/applets/TunerApplet.{h,cpp}`): rewired for
-  TGXL. `RelayBar` replaces the capacitor/inductor position bars, single
-  Cycle button replaces the dual-step controls, `TunerModel` wired as
-  the data source, title updated to "Tuner Genius XL".
-
-- `RadioModel` (`src/models/RadioModel.{h,cpp}`): owns `PgxlConnection`,
-  `TgxlConnection`, and `TunerModel`. Emits `amplifierChanged` and
-  `ampMetersChanged` for `AmpApplet` data binding. Auto-connects PGXL
-  and TGXL when the radio connects.
-
-- `MainWindow` (`src/gui/MainWindow.{h,cpp}`): auto-connects PGXL and
-  TGXL on radio connect; routes `AmpApplet` meter signals; adds a TGXL
-  presence chip to the bottom status bar.
-
-- `SetupDialog` + `CatNetworkSetupPages` (`src/gui/setup/CatNetworkSetupPages.{h,cpp}`):
-  new Peripherals page under Setup > Network with PGXL and TGXL rows
-  (Host + Port + Scan LAN button for each). All 4 fields persist via
-  AppSettings keys `Pgxl/Host`, `Pgxl/Port`, `Tgxl/Host`, `Tgxl/Port`.
-
-**Tests added:** `tst_pgxl_connection_parse`, `tst_tgxl_connection_parse`,
-`tst_lan_discovery_regex`, `tst_tuner_model_apply_status`.
-
-**Phase 2 deferred:** analog S-Meter port from Thetis (per-band S-unit
-calibration, `RawSignalStrength` → dBm → S-unit conversion, S-Meter
-display surface on MeterWidget). Bench-verification matrix scaffold at
-`docs/architecture/phase3p-ii-verification/` (Task 98, planned for
-Phase 2 closeout).
-
-### Added (Phase 3P-II Phase 2 - analog S-Meter port)
-
-13 commits (Tasks 31-43). Ports the AetherSDR `SMeterWidget` analog
-S-Meter gauge into NereusSDR and wires 4 WDSP meter sources through
-`MeterPoller`, `SliceModel`, and `MainWindow`.
-
-**New WDSP wrappers (`src/core/WdspEngine.{h,cpp}`):**
-
-- `getRxaSignalAverage(int channel)` - reads `RXA_S_AV` (Thetis signal
-  average). Task 31.
-- `getRxaSignalPeak(int channel)` - reads `RXA_S_PK` (Thetis signal peak).
-  Task 31.
-- `setupMaxBinDetector(int channel, float freqHz, float bwHz)` - calls
-  Thetis `SetupDetectMaxBin` from `analyzer.c`. Task 32.
-- `getMaxBinDbm(int channel)` - calls Thetis `GetDetectMaxBin`. Task 32.
-
-**New class: `SMeterWidget` (`src/gui/SMeterWidget.{h,cpp}`):**
-
-Ported from AetherSDR `src/gui/SMeterWidget.{h,cpp}` `[@0cd4559]`
-(134 + 701 LOC). Analog gauge with 180-degree needle arc, S-unit scale
-(S0 = -127 dBm, 6 dB/S-unit, S9+60 = -13 dBm), animated needle
-(45 ms attack / 180 ms release), and configurable peak hold line.
-
-NereusSDR divergences from AetherSDR upstream:
-
-- `RxMode` enum expanded from 2 entries (SMeter / SMeterPeak) to 4:
-  adds `SignalAverage` (WDSP `RXA_S_AV`) and `MaxBin` (`GetDetectMaxBin`).
-- Right-click context menu replaces AetherSDR's inline settings strip;
-  covers TX Mode (Power / SWR / Level / Compression), RX Mode (Signal /
-  Sig Avg / Signal Peak / Max Bin), and Peak Hold (Enable toggle /
-  Decay Fast|Medium|Slow / Reset).
-- `AppSettings` persistence for `SMeter_TxSelect` (int 0-3),
-  `SMeter_RxSelect` (int 0-3), `PeakHoldEnabled` ("True"/"False"),
-  `PeakDecayRate` ("Fast"/"Medium"/"Slow"). Constructor loads these on
-  startup so the widget starts in the saved state.
-- PGXL-aware 2 kW power scale snap: `setPowerScale(2000, true)` triggers
-  the amplifier scale (120 W / 600 W / 2000 W snaps).
-- Test seams: `testAdvanceTime(int ms)`, `testSetPeakHoldTimeMs(int ms)`,
-  `testPeakLevel()` for synthetic peak-hold decay verification without
-  real timer ticks.
-
-Peak hold decay constants (verbatim from AetherSDR
-`src/gui/SMeterWidget.cpp:675-681 [@0cd4559]`): Fast = 20 dB/s,
-Medium = 10 dB/s, Slow = 5 dB/s.
-
-**Modified classes:**
-
-- `AppletPanelWidget` (`src/gui/AppletPanelWidget.{h,cpp}`) - header
-  widget swapped from composite `MeterWidget` to `SMeterWidget`. Task 40.
-
-- `MeterPoller` (`src/core/MeterPoller.{h,cpp}`) - 100 ms poll loop now
-  branches on `SMeterWidget::rxMode()`: Signal calls `getRxaSmeter`,
-  SignalAverage calls `getRxaSignalAverage`, SMeterPeak calls
-  `getRxaSmeter` (peak tracked inside `SMeterWidget`), MaxBin calls
-  `getMaxBinDbm`. Task 41.
-
-- `SliceModel` (`src/models/SliceModel.{h,cpp}`) - connects
-  `filterChanged` to `setupMaxBinDetector` with a 100 ms debounce so
-  the Max Bin detector recenters on the passband after every filter
-  change. Task 42.
-
-- `MainWindow` (`src/gui/MainWindow.{h,cpp}`) - PGXL-aware S-Meter feed
-  switch: connects amp forward/reflected power and radio S-meter signals
-  to `SMeterWidget`; on `amplifierChanged` snaps the power scale to
-  2 kW when a PGXL is connected; on `ampStateChanged` recomputes the
-  needle source between amp power and radio power. Task 43.
-
-**Tests added:** `tst_smeter_widget_scale` (3 slots),
-`tst_smeter_widget_peak_hold` (3 slots),
-`tst_smeter_widget_context_menu` (2 slots),
-`tst_wdsp_engine_max_bin` (2 slots). Total: 4 tests, 10 slots.
-
-### Added (Phase 3P-II Phase 3 - Connection Robustness)
-
-12 commits (Tasks 55-67). Adds exponential-backoff auto-reconnect, keepalive
-timers, RTT-correlated ping, the full PGXL pairing flow, band-change
-notifications, a live diagnostics model, and per-connection status labels on
-the Peripherals page. Bench-verification matrix: Tasks 68-74 (smoke-run deferred
-to hardware bench; code paths verified by 6 new test executables, 13 new slots).
-
-**PgxlConnection Tier 2 (Tasks 55-59, 62, 65-66):**
-
-- `amplifierCreate` (Task 55-56): sends `amplifier create serial=<s> name=<n>
-  antmap=<m>` to register this client with the amplifier. Parses
-  `amplifier_create_result=` R-frame ack. Antenna port map defaults via
-  `PGXL_AntMap` AppSettings key (default `"ANT1:PORTA,ANT2:PORTB"`).
-- `flexradioPair` (Tasks 55-56, 62): sends `flexradio pair serial=<s> slice=<x>
-  txant=<a> ptt_over_lan=<b> active=<b>` after a successful create. Captures
-  the paired radio serial from the R-frame ack for use by later `setBand` calls.
-  Gated by `PGXL_PairAttempt` AppSettings key (default `"True"`).
-- `enableKeepalive` (Task 57): sends `status` on a `PGXL_KeepaliveSec`
-  (default 30 s) timer. Timer starts after the connect handshake.
-- `ping` with RTT measurement (Task 58): sends `ping seq=<n>` on a
-  `PGXL_PingSec` (default 10 s) interval. Correlates the `pong=<n>` R-frame
-  reply to compute RTT. Emits `pingRttMs(quint32)`. Closes the connection on a
-  5 s unanswered-ping timeout.
-- `interlockCreate`, `interlockDisable` (Task 59): wire-level `interlock create`
-  and `interlock disable` commands; R-frame acks route through the existing
-  dispatch table.
-- `readSetup`, `writeSetup`, `readIfconf`, `writeIfconf`, `save` (Task 59):
-  full setup/ifconf round-trip. R-frame responses are deserialized into
-  `QVariantMap` and emitted via `setupReceived` / `ifconfReceived` signals.
-- Auto-reconnect with exponential backoff (Task 59): on disconnect, schedules
-  reconnect at 1 / 2 / 5 / 10 / 30 / 60 s (table saturates at 60 s). Gated by
-  `PGXL_AutoReconnect` AppSettings key (default `"True"`).
-- Frame counters: `m_framesIn`, `m_framesOut`, `m_bytesIn`, `m_bytesOut`
-  incremented in `sendCommand` and `onReadyRead`; exposed for
-  `ConnectionDiagnostics` binding.
-- `setBand` (Task 66): sends `flexradio ampslice=<x> serial=<paired>
-  band=<hz>` when a paired serial is known and no pairing R-frame is in flight.
-  Slice letter from `PGXL_FlexAmpSlice` AppSettings key (default `"A"`).
-- `RadioModel` pairing-flow runner (Task 62): on `PgxlConnection::connected`,
-  executes `amplifierCreate` (reading `PGXL_AntMap`) -> `flexradioPair` if
-  `PGXL_PairAttempt` is true (reading `PGXL_FlexAmpSlice` and `PGXL_TxAnt`,
-  default `"ANT1"`) -> `enableKeepalive`.
-
-**TgxlConnection Tier 2 parallel (Task 60):**
-
-- `enableKeepalive`, `ping`, `readSetup`, `writeSetup`, `readIfconf`,
-  `writeIfconf`, `save` added in parallel with the PGXL set. TGXL does not
-  have pairing commands (`amplifierCreate` / `flexradioPair` are PGXL-only).
-- Auto-reconnect with same 1/2/5/10/30/60 s exponential backoff. Gated by
-  `TGXL_AutoReconnect` (default `"True"`). Ping interval via `TGXL_PingSec`
-  (default 10 s); keepalive cadence via `TGXL_KeepaliveSec` (default 30 s).
-- Frame counters in parallel with PGXL.
-
-**ConnectionDiagnostics (Task 61):**
-
-- New `ConnectionDiagnostics` (`src/core/ConnectionDiagnostics.{h,cpp}`):
-  NereusSDR-native `QObject` with 10 `Q_PROPERTY`s: `uptimeSec`, `rttMs`,
-  `keepaliveMissed`, `reconnectCount`, `framesIn`, `framesOut`, `bytesIn`,
-  `bytesOut`, `lastFrameMs`, `faultsSession`. Two `bindTo` overloads:
-  `bindTo(PgxlConnection*)` and `bindTo(TgxlConnection*)`. On `bindTo`,
-  all counters reset and the object connects to the live connection's signals.
-  Emits coalesced `changed()` once per second via a 1 Hz coalesce timer.
-  `testFlushCoalesceTimer()` test seam for deterministic verification.
-
-**Band-change wiring (Tasks 64-65):**
-
-- `SliceModel::bandChanged(Band)` (Task 64): emits when the panadapter band
-  crosses a boundary, derived from `Band::bandFromFrequency()`.
-- `MainWindow` wires `SliceModel::bandChanged` to `PgxlConnection::setBand`
-  (Task 65): operator band changes trigger the amplifier to update its
-  bias/antenna profile without any user action.
-
-**UI: PeripheralsPage live status labels (Task 63):**
-
-- PGXL and TGXL rows on Setup -> Network -> Peripherals now show live
-  connection state. Four states via live signals: Disconnected (grey),
-  Connecting (yellow), Connected (green), Connected + paired (green bold for
-  PGXL), Error (red).
-
-**AppSettings keys documented (Tasks 68-69):**
-
-All Phase 3 persistence keys are documented in `AppSettings.h`: `PGXL_AutoReconnect`,
-`PGXL_KeepaliveSec`, `PGXL_PingSec`, `PGXL_PairAttempt`, `PGXL_FlexAmpSlice`,
-`PGXL_TxAnt`, `PGXL_AntMap`, `TGXL_AutoReconnect`, `TGXL_KeepaliveSec`,
-`TGXL_PingSec`.
-
-**Tests added (6 executables, 13 slots):**
-
-- `tst_pgxl_connection_pairing` (3 slots): amplifierCreate wire format, pairing
-  ack capture, early-exit when pairing is in flight.
-- `tst_pgxl_connection_keepalive` (2 slots): timer fires `status` command,
-  timer stops on disconnect.
-- `tst_pgxl_connection_ping` (2 slots): ping frame format, pong correlation +
-  RTT emit.
-- `tst_pgxl_connection_reconnect` (1 slot): auto-reconnect schedules on
-  disconnect with first backoff interval.
-- `tst_tgxl_connection_ping` (2 slots): parallel TGXL ping/pong coverage.
-- `tst_connection_diagnostics` (3 slots): bindTo resets counters, frame counter
-  increments, coalesce timer flush.
-
-Combined with the 7 pre-existing slots in `tst_pgxl_connection_parse` (3) and
-`tst_tgxl_connection_parse` (4): 8 executables, 20 slots total for the
-PGXL/TGXL connection family.
-
-**Phase 4 deferred:** smoke-run on live PGXL + TGXL hardware (bench-verification
-matrix row verification); PeripheralsPage paired/error state full-cycle test.
-
-### Added (Phase 3P-II Phase 4 - advanced UI, fault log, interlock policy, applet right-click nav)
-
-~20 commits (Tasks 75-97). Completes the Phase 3P-II epic with the full advanced
-Setup UI, fault history, TX interlock policy, tune memory management, antenna
-labels, power-cap toast, and right-click navigation from the operator applets.
-
-**New helper classes:**
-
-- `FaultLog` (`src/core/FaultLog.{h,cpp}`) - NereusSDR-native ring buffer of 10
-  `FaultEntry` records. Each entry carries a timestamp, fault code, and a
-  `likelyCause` string derived from heuristic pattern matching against PGXL
-  S-frame fault codes. JSON-persisted via `AppSettings` under `PGXL_FaultLog`.
-  Wired to `PgxlConnection::faultTransitionReceived`; `RadioModel` owns the
-  instance and exposes it to the Advanced page via accessor. 3 unit tests in
-  `tst_fault_log` (ring-buffer overflow, persist round-trip, likelyCause
-  heuristic).
-
-- `TuneMemoryStore` (`src/core/TuneMemoryStore.{h,cpp}`) - NereusSDR-native
-  per-(antenna, band) relay-position cache. Key is `(antennaPort, Band)`; value
-  is a `TuneMemoryEntry` with inductance, capacitance, and timestamp. JSON-
-  persisted under `TGXL_TuneMemory`. Auto-recall wired to
-  `SliceModel::bandChanged` when `TGXL_AutoTuneMemoryRecall` is enabled; on a
-  band change, the stored position is restored via `TgxlConnection::setRelayPosition`
-  (or a fresh tune triggers if the device does not support absolute-relay-write).
-  3 unit tests in `tst_tune_memory_store` (store/recall, persist round-trip,
-  band-change auto-recall).
-
-- `TxInterlockPolicy` (`src/core/TxInterlockPolicy.{h,cpp}`) - NereusSDR-native
-  TX interlock for PGXL-aware environments. Three modes: `Disabled` (default),
-  `Warn` (toast, TX proceeds), `Block` (toast, MOX is denied). Optional SWR
-  gate (enable + max-SWR threshold). Grace period (ms) starts counting when the
-  connection transitions to OPERATE; policy does not fire inside the window.
-  Wired via `MoxController::interlockCheck()`; emits `interlockDenied()` and
-  `interlockWarned()`. 3 unit tests in `tst_tx_interlock_policy` (Disabled pass,
-  Warn toast, Block deny).
-
-**New Setup pages:**
-
-- `TgxlAdvancedPage` (`src/gui/setup/TgxlAdvancedPage.{h,cpp}`) - Setup ->
-  Network -> TGXL Advanced. Five sections: Identity (serial, firmware, nickname),
-  Hardware (antenna port labels ANT 1/2/3), Network (static IP via `ifconf`),
-  Diagnostics (ConnectionDiagnostics live binding: uptime, RTT, frames, bytes,
-  reconnects), Tune Memory Management (per-band table with Save / Recall /
-  Clear All + auto-recall toggle). Antenna label edits persist under
-  `TGXL_AntLabel_1` / `_2` / `_3` and propagate to `TunerApplet` button text
-  via `TunerModel::antLabelChanged(int, QString)`.
-
-- `PgxlAdvancedPage` (previous Task 80-82 commits, closing here) - Setup ->
-  Network -> PGXL Advanced. Six sections: Identity, Hardware (bias mode, fan
-  mode, LED), Network (static IP, port), Pairing (slice, TX ant, ant map, PTT
-  mode), Diagnostics (ConnectionDiagnostics live binding), Fault History
-  (scrollable table with timestamp / code / likelyCause + Clear All button).
-
-- `PgxlInterlockPage` (`src/gui/setup/PgxlInterlockPage.{h,cpp}`) - Setup ->
-  Transmit -> PGXL Interlock. Three radio buttons (Disabled / Warn / Block) +
-  grace period spinbox (0-30 s) + SWR gate checkbox with max-SWR spinbox. All
-  fields persist via `AppSettings`: `PGXL_InterlockMode`, `PGXL_InterlockGraceMs`,
-  `PGXL_InterlockSwrGate`, `PGXL_InterlockMaxSwr`. Live-wired to
-  `TxInterlockPolicy` so changes take effect immediately without restart.
-
-**New dialog:**
-
-- `PgxlSaveRebootDialog` (`src/gui/PgxlSaveRebootDialog.{h,cpp}`) - modal
-  confirmation dialog launched from PGXL Advanced -> Save & Reboot. Shows a
-  two-sentence warning that the amplifier will reboot and auto-reconnect will
-  attempt recovery within 30 s. Two buttons: Cancel and Save & Reboot. On
-  confirm, calls `PgxlConnection::writeSetup()` then `PgxlConnection::save()`;
-  the connection drop triggers the existing auto-reconnect path.
-
-**Navigation API:**
-
-- `MainWindow::openSetup(QString pageKey)` - slot that opens the SetupDialog
-  and navigates to the page matching `pageKey`. Called by AmpApplet and
-  TunerApplet right-click context menu actions. Key strings: `"pgxl_advanced"`,
-  `"tgxl_advanced"`, `"pgxl_interlock"`.
-
-**Applet context menus:**
-
-- `AmpApplet` right-click context menu: Open PGXL Advanced (calls
-  `openSetup("pgxl_advanced")`), Disconnect / Reconnect, Copy diagnostics
-  (serialises `ConnectionDiagnostics` to JSON on the clipboard).
-- `TunerApplet` right-click context menu: Open TGXL Advanced (calls
-  `openSetup("tgxl_advanced")`), Disconnect / Reconnect, Save current tune
-  memory, Recall tune memory, Clear tune memory, Copy diagnostics.
-
-**Power-cap toast:**
-
-- `MainWindow` wires `PgxlConnection::forwardPowerExceededCap(float watt)` to
-  `showStatusBarToast(QString)`. Toast fires on the first sample that exceeds
-  the `PGXL_TxPowerCapWatts` limit (soft alert only; TX continues). Re-arms
-  after a 5 s cooldown so it does not spam during sustained high-power TX.
-
-**RadioModel additions:**
-
-- `faultLog()` accessor (non-owning view, `FaultLog*`).
-- `tuneMemoryStore()` accessor (non-owning view, `TuneMemoryStore*`).
-- `txInterlockPolicy()` accessor (non-owning view, `TxInterlockPolicy*`).
-- Wires `PgxlConnection::faultTransitionReceived` to `FaultLog::append()` so
-  FAULT-state transitions are captured without polling.
-
-**PgxlConnection unit tests (Tasks 91-94):**
-
-- `tst_pgxl_connection_setup` (3 slots): `readSetup` request wire format,
-  `writeSetup` with modified fields, R-frame deserialization into `QVariantMap`.
-- `tst_pgxl_connection_ifconf` (2 slots): `readIfconf` request format, static-IP
-  write round-trip.
-- `tst_pgxl_connection_save` (3 slots): save command wire format, reboot-detection
-  (connection drops within 5 s of save), auto-reconnect fires after reboot.
-
-Combined with the 20 pre-existing slots across the connection family: 11
-executables, 28 slots total for the PGXL/TGXL connection family.
-
-**Bench-verification matrix:** 36 rows at
-`docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`. Rows pending
-live PGXL + TGXL hardware (all non-deferred rows); Row 18 (HL2) gated on the
-open ATT/filter safety audit.
-
-### Added (ANAN-G2E / HermesC10 SKU port)
-
-New SKU support for the Apache Labs ANAN-G2E (HermesC10) board. 12 ANAN-G2E
-bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6) verified against
-Thetis v2.10.3.15. Bench-verification matrix at
-`docs/architecture/2026-05-21-anan-g2e-verification/README.md` (12 rows
-pending live G2E hardware; F2 / F3 / F4 / F6 documented as
-`DONE_WITH_CONCERNS` for follow-up).
-
-- **Board capabilities + enum:** new `HPSDRHW::HermesC10` board enum, new
-  `kHermesC10` capabilities row (`hasVolts` / `hasAmps` /
-  `allowsAutoPaCalibrate` / `bypassPaSettings` flags), `ANAN_G2E` enum slot
-  relocates Andromeda to 21 to keep the row stable. `kSaturnMKII`
-  designated-initializer order corrected to match struct declaration.
-- **Discovery + connection:** P1 wire byte `0x14` mapped to
-  `HPSDRHW::HermesC10`. ANAN-G2E added to `AddCustomRadioDialog` SKU list +
-  Board column switch in `ConnectionPanel`. Andromeda + HermesLiteRxOnly
-  also gained Board column switch entries during this audit.
-- **Codec wiring:** `SetADCSupply` and `LRAudioSwap` codec wrappers added
-  with B4' / B5' / B6' / B7' connect-time wiring. `HardwareProfile` gains
-  `adcSupplyVoltage` + `lrAudioSwap` plumbed through to `CodecContext`. All
-  SKUs verified against Thetis v2.10.3.15.
-- **DSP + DDC:** ANAN-G2E added to Hermes-class P1 DDC4 branch (E3) and
-  primaryRxDdcForBoard DDC0 family (E2). HermesC10 added to BPF1 algorithm
-  family for `setAlex1HPF` (E1). Codec/P2 PS-DDC config adds ANAN-G2E to
-  Hermes-class group (P2 watchdog timeout fix).
-- **PA + telemetry:** `kAnan7000dRow` case-group gains ANAN-G2E for PA
-  Gain (D1). Fwd-power triplet adds ANAN-G2E (D2). `chkAutoPACalibrate`
-  visibility gated on `allowsAutoPaCalibrate` (D3). New
-  `chkBypassANANPASettings` checkbox + `TransmitModel::paSettingsBypass`
-  (D4). PA current/supply-volts rows gated by `hasPaAmps` /
-  `hasPaVoltsTelemetry` (D5). `scaleExciterPowerMw` lifted into
-  `PaTelemetryScaling` namespace + wired for G2E (F1). HermesC10 explicit
-  case added to `preampItemsForBoard` (F5). ANAN_G2E added to
-  factoryProfileNames + `modelFromFactoryName`. `non_hl2_keeps_exciter_power`
-  test aligned with Thetis-faithful F1 scaling.
-- **SKU UI overlay:** `SkuUiProfile` EXT label overrides include ANAN-G2E.
-  Setup → Antenna pages consume the overlay.
-
-### Added (Applet visibility controller)
-
-New UI subsystem for showing/hiding applets in the right-side AppletPanel,
-with persistence across launches and capability-gated availability.
-Retires the prior View → Network Applets menu in favour of a unified
-View → Containers → Applets section that also surfaces a hamburger menu
-on the AppletPanel banner.
-
-- **`AppletVisibilityController`** (`src/gui/AppletVisibilityController.{h,cpp}`):
-  central controller for applet show/hide state with AppSettings round-trip.
-  Two-way sync between the menu and the hamburger button; capability-gated
-  `setAvailable(QString, bool)` axis hides applets that aren't applicable
-  to the current radio. RADE-aware routing toggles the RadeApplet when the
-  active mode enters/exits RADE_U / RADE_L. Registers all wired applets
-  including RADE on construction.
-- **Hamburger menu on AppletPanel banner:** `AppletPanelWidget` gains a
-  top banner row with a hamburger menu button (embedded inside the S-Meter
-  title bar). The menu mirrors the Containers > Applets menu — toggle from
-  either entry point, both stay in sync.
-- **View > Containers > Applets section restored** in the main menu bar
-  (was lost during the v0.5.0 menu refactor).
-- **MainWindow wires AppletVisibilityController** to the applet panel and
-  the menu; `setAppletVisible` preserves stack order so reordering survives
-  visibility toggles. Sweep across all applets to dedupe the double-header
-  bug from the prior banner row (redundant `appletTitleBar` calls removed).
-- **Capability gating:** Amp + Tuner applets gated on the 4O3A master
-  toggle, RADE applet gated on active mode, TCI applet gated on TCI server
-  enabled, etc. `fourO3AEnabledChanged` signal on `RadioModel` drives live
-  UI gating without requiring restart.
-- **Tests:** `tst_applet_visibility_controller` covers two-way menu sync.
-
-### Fixed (4O3A integration polish)
-
-Twenty-five-commit polish tail after the Phase 3P-II baseline, closing
-bench-found gaps in the PGXL/TGXL handshake, discovery, and applet behaviour.
-
-- **PGXL bar graph stays at zero post-TX + TGXL identity labels populate**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/062e79ae)):
-  AmpApplet meters reset cleanly when MOX drops; TGXL nickname / serial /
-  firmware fields populate from the V-frame on connect.
-- **PGXL Pre-Standby on TGXL hardware TUNE** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/3a8662c5)
-  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/6f89bb3f)):
-  pcap-canonical handshake — PGXL drops into Pre-Standby during TGXL
-  autotune cycle, restores on completion; UNKEY_REQUESTED is un-keyed
-  before drain.
-- **Event-driven FlexAPI interlock chain + MOX RF-flow gate**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/0f274ee0)):
-  PTT_REQUESTED → ready ACK → TRANSMITTING canonical sequence; broadcast
-  `amplifier= pttA + interlock TRANSMITTING` with handles; interlock is
-  event-driven, block-on-timeout per spec; don't roll back local MOX on
-  interlock-blocked.
-- **PGXL/TGXL TUNE end-to-end + operate=1 wire-format + LAN PTT bridge**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/dd082bec)):
-  TunerApplet TUNE orchestrates carrier + tune start + auto-drop;
-  TGXL antenna buttons now appear on 1x3 device; `3way` key parsed as
-  alias for `one_by_three` (bench-confirmed firmware variant).
-- **Route-aware FLEX-discovery broadcast IP** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/72d16ccb)):
-  broadcasts to the computed subnet address, not generic
-  255.255.255.255. Required for some LAN topologies where the generic
-  broadcast doesn't reach the PGXL. Default discovery model is now
-  FLEX-6400 (PGXL validates against the FlexRadio model list).
-- **Bind SmartSDR API listener IPv4 explicitly** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/ecf5ed42)):
-  macOS IPv6-only default blocked PGXL connect; explicit IPv4 bind fixes.
-  Passive TCP 4992 listener stub captures PGXL SmartSDR API queries.
-- **Power Genius rebrand** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/d29a4f1b)):
-  AmpApplet renamed "AMP" → "Power Genius" to match 4O3A's product line.
-- **Master-toggle auto-connect gating** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/10f11a78)):
-  PGXL + TGXL auto-connect properly gated on the 4O3A master toggle.
-- **Distinguish user-initiated disconnect from network drop** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2e06c586)):
-  auto-reconnect doesn't fire on intentional disconnect.
-- **`stop()` tears down accepted clients + cancels pending state** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/5795d943)):
-  clean shutdown of the SmartSDR responder.
-- **AmpApplet reconnect uses canonical `PGXL_Manual*` keys** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/0985345b)):
-  consistent AppSettings key naming.
-
-### Fixed (TCI live-state + 5 review-issue fixes)
-
-Six-commit tail on Phase 3J-1 closing live-state gaps that surfaced after
-v0.5.0 hit real clients on bench.
-
-- **Init burst defaults match Thetis wire format** (P1, [commit](https://github.com/boydsoftprez/NereusSDR/commit/d640d69b)):
-  P1 init burst now byte-for-byte parity with Thetis.
-- **agc_mode wire-token conversion** (P2, [commit](https://github.com/boydsoftprez/NereusSDR/commit/274a16cf)):
-  AGC mode tokens converted correctly between NereusSDR enum + TCI wire
-  format.
-- **Live VFO broadcast reads `rx2Enabled`** (P3, [commit](https://github.com/boydsoftprez/NereusSDR/commit/e2dd67d9)):
-  VFO broadcasts to TCI clients respect the active RX count.
-- **`setFilterBand` emits `filterChanged` exactly once** (P4, [commit](https://github.com/boydsoftprez/NereusSDR/commit/035b274c)):
-  no spurious double-emit on filter changes.
-- **`sliceAdded` hook restored after stop/start** (P5, [commit](https://github.com/boydsoftprez/NereusSDR/commit/f66884f5)):
-  server lifecycle correctly re-arms client subscriptions.
-- **TCI broadcast slice state changes to clients** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/73afe74d)
-  + [review fixes](https://github.com/boydsoftprez/NereusSDR/commit/9ae5f135)):
-  local slice state changes propagate to connected TCI clients; 5
-  PR-review issues + remaining ChangedHandlers ports.
-- **af/mon linear roundtrip uses Thetis-faithful 0..100 range**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/4ed377cb)).
-- **Spectrum + meters fixes:** trigger `update()` on `setDbmCalOffset` so
-  VBO re-renders ([commit](https://github.com/boydsoftprez/NereusSDR/commit/3e77e517));
-  meters forward Thetis RXOffset to spectrum so meter + trace share
-  antenna reference ([commit](https://github.com/boydsoftprez/NereusSDR/commit/b46513eb));
-  MaxBin reads spectrum's rendered pixels, not raw FFT bins
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/86e28d31)).
-- **FLEX discovery: guard BSD socket headers on Q_OS_UNIX** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/35802c69)).
-- **Build/test housekeeping:** isTune() moved out of NEREUS_BUILD_TESTS
-  block ([commit](https://github.com/boydsoftprez/NereusSDR/commit/0568cc91));
-  af/mon roundtrip test updated to in-spec values ([commit](https://github.com/boydsoftprez/NereusSDR/commit/38c54e51)).
-
-### Fixed (PS-A persistence + bench tail)
-
-Final pass on PureSignal persistence and pairing for ANAN-G2E and
-HermesC10 boards.
-
-- **PS-A direct AppSettings save** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/40d7260e)
-  + [review fixes](https://github.com/boydsoftprez/NereusSDR/commit/0384fac6)
-  + [direct save](https://github.com/boydsoftprez/NereusSDR/commit/c5cc303b)
-  + [persist toggle](https://github.com/boydsoftprez/NereusSDR/commit/147b123c)):
-  three-bug stack hiding PS-A persistence fixed end-to-end. PsForm
-  `autoCalEnabled` toggle now persists to disk via `scheduleSettingsSave`.
-- **Per-packet PS pairing (source-first port)** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/c73ae3eb)):
-  PS pairing now matches Thetis `sync.c InboundBlock(id=1)` per-packet
-  semantics.
-- **Bench-tail fixes** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/b47a557f)):
-  PsForm live `info[]` flow, FB readout, autoCal persistence, Alex1 +
-  TwoTone defaults.
-- **TwoTone defaults bumped to 10 W** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/e7367312)):
-  default power for two-tone test signal.
-
-### Fixed (G2E P2 RX unblock + crash)
-
-Five-commit set unblocking P2 RX on ANAN-G2E and closing a related crash.
-
-- **Mask dither/random + Hermes-class DDC0 for HermesC10** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/9ce61968)):
-  ANAN-G2E P2 RX path now produces I/Q samples cleanly.
-- **Zero rate on disabled DDCs** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/fa691dd1)):
-  G2E P2 connect unblock — disabled DDCs must explicitly carry rate=0.
-- **Retry SendStop + bounds-check I/Q batch** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2a798ca8)):
-  closes a G2E gateware lockup + crash mode.
-- **Thetis-faithful disconnect** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/b9d9b2aa)
-  + [revert](https://github.com/boydsoftprez/NereusSDR/commit/5d0c0f60)):
-  disconnect now uses CmdGeneral winddown (no `run=0` frame), matching
-  Thetis P2 sequence.
-- **HermesC10 codec PS-DDC config** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/781f3875)):
-  ANAN_G2E added to Hermes-class PS DDC config (P2 watchdog timeout fix).
-- **HermesC10 is a P2 board with full 6-rate sample-rate set** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/c087c354)).
-
-### Fixed (PA profile + quit handling)
-
-- **PA profile manifest backfill + disconnect-on-quit + SIGTERM handler**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/baf931a7)):
-  PA factory-profile lookup falls back to manifest backfill if a profile
-  is missing; clean disconnect on app quit; SIGTERM handled cleanly.
-- **`paSettingsBypass` comment reconciled with Thetis UI-only ground-truth**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/9647dddc)).
-- **PA-profile non-G2E factoryProfileNames + modelFromFactoryName**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/e82fa68e)).
+> **Existing users: no action required.** Saved radios, mic profiles, DSP settings, container layout, spectrum / waterfall settings, PA cal points, per-band tune power, spot-system identity, and FreeDV Reporter hidden state all carry forward. No `SettingsSchemaVersion` bump (last bump was v5 in v0.4.0). The new applet-visibility menu starts with every applet visible; toggle to taste and the state persists.
+
+> [!NOTE]
+> **No PGXL / TGXL or ANAN-G2E? Still useful.** v0.5.2's applet-visibility menu, TCI live-state fixes, PS-A persistence, PA quit handling, and the 4O3A discovery broadcast-subnet fix are all testable on any supported radio. The 3P-II bench-verification matrix (36 rows at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`) and the ANAN-G2E matrix (12 rows at `docs/architecture/2026-05-21-anan-g2e-verification/README.md`) gate the marquee features on live hardware; both are next on the bench.
+
+### Phase 3P-II: 4O3A external RF accessories + analog S-Meter port
+
+Four-phase epic. Ported source-first from AetherSDR (PGXL / TGXL baseline at `@a29ff40` — byte-for-byte where the protocol is unambiguous) and Thetis (analog S-Meter from `@501e3f5` + AetherSDR `SMeterWidget` at `@0cd4559`). NereusSDR-native FlexRadio API extensions are layered on top for the bits AetherSDR didn't cover (pairing handshake, keepalive, RTT-correlated ping, exponential auto-reconnect, setup / ifconf round-trip, interlock).
+
+**Power Genius XL amplifier (PGXL):**
+
+- **`PgxlConnection`** is a TCP client on port 9008 that speaks the FlexRadio amp protocol. V (banner), R (request / reply key-value), and S (unsolicited status push) frames all parse correctly. The full pairing flow is implemented: `amplifier create serial=... port=9008 antmap=...` and `flexradio pair serial=<paired> slice=A txant=ANT1` round-trip with the radio, the paired-serial is captured for later `setBand` calls, and slice band changes get pushed to the amp without any operator action.
+- **Connection robustness:** exponential auto-reconnect on transient drops (1 / 2 / 5 / 10 / 30 / 60 s ladder, gated by `PGXL_AutoReconnect`), 30 s keepalive (`status` command), 10 s RTT-correlated ping (`ping seq=N` / `pong=N` with 5 s unanswered-ping disconnect), full `readSetup` / `writeSetup` / `readIfconf` / `writeIfconf` / `save` round-trip.
+- **AmpApplet** (right-side panel) shows forward / reflected power as horizontal bar gauges, SWR as a single gauge, PGXL state, and a Power Genius badge. The OPERATE / STANDBY toggle and band selector both round-trip through the wire protocol.
+- **PGXL Advanced page** (Setup > Network > PGXL Advanced) exposes Identity (serial / firmware / nickname), Hardware (bias mode / fan mode / LED), Network (static IP via ifconf), Pairing (slice letter / TX antenna / antmap / PTT mode), Diagnostics (uptime / RTT / frames / bytes / reconnect count, live-bound at 1 Hz), and Fault History (10-entry ring buffer with a likelyCause heuristic, JSON-persisted under `PGXL_FaultLog`).
+- **PGXL Interlock page** (Setup > Transmit > PGXL Interlock) configures the TX interlock policy. Three modes: Disabled (default), Warn (toast on TX, MOX proceeds), Block (toast, MOX denied). Optional SWR gate with max-SWR threshold. Grace period (0..30 s) suppresses the policy during the OPERATE transition.
+- **Power-cap soft-alert toast** fires on the first sample that exceeds `PGXL_TxPowerCapWatts` (5 s rearm cooldown so it doesn't spam during sustained high-power TX).
+
+**Tuner Genius XL antenna tuner (TGXL):**
+
+- **`TgxlConnection`** is a TCP client on port 9010 that speaks the TGXL native protocol (the same one TunerGeniusDesktop uses). V / R / S frame parsing with state / status object discrimination.
+- **TunerApplet** (right-side panel) shows relay positions (C1 / L / C2 horizontal bars via `RelayBar`), antenna port selection, a TUNE button (orchestrates carrier + tune start + auto-drop), and current tuning state.
+- **TGXL Advanced page** (Setup > Network > TGXL Advanced) covers Identity, Hardware (antenna port labels ANT 1/2/3, persisted under `TGXL_AntLabel_N` and propagated live to the TunerApplet button text), Network (static IP), Diagnostics (parallel binding to PGXL's), and Tune Memory Management (per-band relay-position cache with Save / Recall / Clear All controls + an auto-recall toggle).
+- **Auto-recall:** on slice band change, `TuneMemoryStore` looks up the stored (antenna, band) relay positions and restores them. Falls back to a fresh tune if the device doesn't support absolute relay-write. Persisted under `TGXL_TuneMemory` as JSON; auto-recall gated by `TGXL_AutoTuneMemoryRecall`.
+
+**LAN discovery and Peripherals page:**
+
+- **`LanDiscovery`** is a UDP broadcast listener on ports 9008 and 9010. Parses the official FlexRadio LAN discovery regex, deduplicates by serial, and emits `deviceDiscovered`.
+- **Setup > Network > Peripherals** shows two rows (PGXL and TGXL) with Host + Port spinboxes, a Scan LAN button (opens `LanScanDialog`, a modeless 3-second LAN scan with a 6-column results table), and a live status label per row (Disconnected / Connecting / Connected / Connected + paired / Error).
+- **4O3A master toggle** (Setup > Network) gates auto-connect. With it off, AmpApplet and TunerApplet stay hidden and auto-connect doesn't fire. With it on, both applets appear and PGXL + TGXL connect on radio-connect. Changes apply live without restart via `RadioModel::fourO3AEnabledChanged`.
+
+**Analog S-Meter widget:**
+
+- **`SMeterWidget`** replaces the prior composite digital S-Meter on the AppletPanel header. 180-degree analog needle, S-unit scale (S0 = -127 dBm, 6 dB/S-unit, S9+60 = -13 dBm), animated needle (45 ms attack / 180 ms release). Ported from AetherSDR `@0cd4559` with two new Thetis RX modes layered on.
+- **Four RX modes via right-click context menu:** Signal (the existing `getRxaSmeter`), Signal Average (Thetis `RXA_S_AV`), Signal Peak (peak tracked inside the widget), Max Bin (Thetis `SetupDetectMaxBin` + `GetDetectMaxBin`, recenters on the passband after every filter change via a 100 ms debounce).
+- **Peak hold via right-click:** Enable toggle + Decay rate (Fast = 20 dB/s, Medium = 10 dB/s, Slow = 5 dB/s) + Reset.
+- **PGXL-aware 2 kW power scale:** when a PGXL is connected, `setPowerScale(2000, true)` triggers the amplifier power-scale snap (120 W / 600 W / 2000 W). Recomputes the needle source between amp power and radio power on `ampStateChanged`.
+- **AppSettings round-trip:** `SMeter_RxSelect`, `SMeter_TxSelect`, `PeakHoldEnabled`, `PeakDecayRate` all persist; constructor loads them on startup.
+
+**Right-click applet menus:**
+
+- **AmpApplet:** Open PGXL Advanced (jumps Setup to the right page via the new `MainWindow::openSetup(pageKey)` slot), Disconnect / Reconnect, Copy diagnostics (serialises `ConnectionDiagnostics` to JSON on the clipboard).
+- **TunerApplet:** Open TGXL Advanced, Disconnect / Reconnect, Save / Recall / Clear tune memory, Copy diagnostics.
+
+**Tests:** 11 executables, 28 slots covering parse, pairing handshake, keepalive, ping + RTT, auto-reconnect, setup / ifconf / save round-trip, fault log heuristic + persistence, tune memory store + auto-recall, TX interlock policy decisions, and ConnectionDiagnostics counters.
+
+**Bench verification:** 36-row matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`. All non-deferred rows pending live PGXL + TGXL hardware. Row 18 (HL2) gated on the open ATT / filter safety audit.
+
+### ANAN-G2E (HermesC10) SKU port
+
+Apache Labs' newest ANAN-family radio is now a first-class supported SKU, on par with the existing ANAN-G2 / 10E / 100B / 100D / 200D / 7000DLE / 8000DLE. Twelve bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6), all verified against Thetis v2.10.3.15.
+
+**Discovery and connection:**
+
+- P1 wire byte `0x14` maps to `HPSDRHW::HermesC10`.
+- ANAN-G2E appears in `AddCustomRadioDialog` and the ConnectionPanel's Board column switch. Andromeda and HermesLiteRxOnly also gained Board column switch entries during the audit.
+- Default settings, sample-rate set (P2 full 6-rate), and BPF1 algorithm family all match the Hermes-class P2 family.
+
+**Codec and DSP wiring:**
+
+- `SetADCSupply` and `LRAudioSwap` codec wrappers added with connect-time wiring; values flow from `HardwareProfile` through `CodecContext` onto the wire. All SKUs re-verified against Thetis v2.10.3.15.
+- ANAN-G2E uses the Hermes-class DDC4 + DDC0 family; PS-DDC config places it in the Hermes-class PureSignal group.
+- HermesC10 added to the BPF1 algorithm family for `setAlex1HPF`.
+
+**PA and telemetry:**
+
+- PA Gain uses `kAnan7000dRow` case-group; fwd-power scaling uses `PaTelemetryScaling::scaleExciterPowerMw` (lifted into its own namespace and wired for G2E).
+- PA current and supply-volts telemetry rows show in Setup > PA only when the board reports `hasPaAmps` / `hasPaVoltsTelemetry`.
+- New `chkBypassANANPASettings` checkbox under Setup > PA, backed by `TransmitModel::paSettingsBypass`. The Auto PA Calibrate checkbox is gated on `allowsAutoPaCalibrate`.
+- ANAN-G2E added to `factoryProfileNames` and `modelFromFactoryName`.
+
+**SKU UI overlay:**
+
+- `SkuUiProfile` EXT label overrides include ANAN-G2E so Setup > Antenna shows the correct per-product button labels.
+
+**P2 RX unblock and crash fix:**
+
+- Mask dither / random for HermesC10 — the P2 RX path now produces clean I/Q samples.
+- Disabled DDCs must carry rate=0 explicitly; otherwise the radio refuses the start command.
+- `SendStop` retries with bounds-checked I/Q batch; closes a G2E gateware lockup + crash mode observed in early bench testing.
+- Disconnect uses `CmdGeneral` winddown (no `run=0` frame), matching Thetis P2 sequence.
+
+**Bench verification:** 12-row matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md` pending live G2E hardware. Rows F2 / F3 / F4 / F6 are documented as `DONE_WITH_CONCERNS` for bench-time follow-up.
+
+### Applet visibility controller
+
+The right-side applet panel gains a hamburger menu on its banner and a corresponding View > Containers > Applets section in the menu bar. Both entry points toggle the same set of applets and stay in sync.
+
+- New **`AppletVisibilityController`** owns the master visibility state and rounds it through AppSettings (per-applet keys under `AppletVisibility/<name>`).
+- The hamburger menu lives in the AppletPanel banner row, embedded in the S-Meter title bar so it doesn't waste vertical space. Click it for the menu; tick boxes flip applets between visible and hidden.
+- **Capability gating** via `setAvailable(QString, bool)`: applets that don't apply to the current radio or mode hide automatically. Amp + Tuner gate on the 4O3A master toggle. RadeApplet gates on the active mode being RADE_U / RADE_L. TciApplet gates on TCI server being enabled.
+- **Live UI gating** via `RadioModel::fourO3AEnabledChanged` — flipping the master toggle reveals or hides Amp + Tuner without requiring a restart.
+- The earlier "double header" bug from the v0.5.0 banner row is closed: redundant `appletTitleBar` calls swept across all applets.
+- The pre-v0.5.2 View > Network Applets menu (TciApplet + ClientChainApplet show / hide) is retired in favour of the unified Applets section.
+- **Stack order is preserved** across show / hide cycles — toggling an applet off and back on keeps it where it was.
+
+### 4O3A integration polish
+
+Twenty-five-commit bench-fix sweep after the Phase 3P-II baseline. Grouped by theme:
+
+*Handshake and interlock:*
+
+- **PGXL pre-standby on TGXL hardware TUNE.** Mirrors the captured SmartSDR pcap: PGXL drops into pre-standby during a TGXL autotune cycle and restores on completion. `UNKEY_REQUESTED` is now un-keyed before drain so the amp doesn't get stuck.
+- **Event-driven FlexAPI interlock chain.** Canonical `PTT_REQUESTED → ready ACK → TRANSMITTING` sequence ported from the SmartSDR pcap; broadcasts `amplifier= pttA + interlock TRANSMITTING` with handles; blocks-on-timeout per the FlexAPI spec; local MOX no longer rolls back on interlock-blocked.
+- **PGXL / TGXL TUNE end-to-end.** TunerApplet TUNE orchestrates carrier + tune start + auto-drop. TGXL antenna buttons now appear on the 1x3 device variant. Parses `3way` key as an alias for `one_by_three` (bench-confirmed firmware variant).
+
+*Discovery and connection:*
+
+- **Route-aware FLEX discovery.** Broadcasts go to the computed subnet address now, not generic `255.255.255.255`. Required for some LAN topologies where the generic broadcast doesn't reach the PGXL.
+- **macOS PGXL connect fix.** PGXL SmartSDR API responder now binds IPv4 explicitly — the macOS IPv6-only default was blocking PGXL's connect attempt. A passive TCP 4992 listener stub also captures PGXL SmartSDR API queries for bench analysis.
+- **Default discovery model = FLEX-6400.** PGXL validates against the FlexRadio model list; the prior default was triggering a model-mismatch rejection.
+- **FlexRadio-format 16-digit serial from MAC.** PGXL expects a dashed 16-digit serial; NereusSDR now derives one from the radio's MAC.
+
+*Applet polish:*
+
+- **AmpApplet "AMP" → "Power Genius" rebrand.** Matches 4O3A's product line.
+- **Bar graph zero-on-post-TX.** AmpApplet meters reset cleanly when MOX drops.
+- **TGXL identity labels populate.** Nickname / serial / firmware fields populate from the V-frame on connect.
+- **Master-toggle auto-connect gating.** PGXL + TGXL only auto-connect when the 4O3A master toggle is on.
+- **Distinguish user-initiated disconnect from network drop.** Auto-reconnect doesn't fire on intentional disconnect.
+- **AmpApplet reconnect uses canonical `PGXL_Manual*` keys.** Consistent AppSettings key naming.
+
+### TCI live-state + 5 review-issue fixes
+
+Six-commit tail on Phase 3J-1. The TCI server core stabilized against real clients in v0.5.0; v0.5.2 closes the live-state push gap so operator-side mode / VFO / filter changes propagate to connected clients (WSJT-X, ESDR3, N1MM, Log4OM, etc.).
+
+- **Init burst defaults match Thetis wire format (P1).** Byte-for-byte parity.
+- **`agc_mode` wire-token conversion (P2).** Tokens convert correctly between the NereusSDR enum and the TCI wire format.
+- **Live VFO broadcast reads `rx2Enabled` (P3).** Broadcasts respect the active RX count.
+- **`setFilterBand` emits `filterChanged` exactly once (P4).** No spurious double-emit.
+- **`sliceAdded` hook restored after stop / start (P5).** Server lifecycle correctly re-arms client subscriptions.
+- **Broadcast slice state changes to TCI clients.** Operator-side mode / VFO / filter changes now propagate. Five PR-review issues and the remaining `ChangedHandlers` ports landed in the same change.
+- **`af` / `mon` linear roundtrip** uses Thetis-faithful 0..100 range.
+
+Spectrum and meter fixes that landed in the same sweep:
+
+- **`setDbmCalOffset` triggers VBO re-render** so the spectrum trace updates when the calibration changes.
+- **Meters forward Thetis RXOffset to spectrum** so the meter and trace share the antenna reference.
+- **MaxBin reads spectrum's rendered pixels** (not raw FFT bins) so it matches what the operator sees.
+- **FLEX discovery: guard BSD socket headers** on `Q_OS_UNIX`.
+
+### PS-A persistence + bench tail
+
+Final pass on PureSignal persistence for ANAN-G2E and HermesC10 boards.
+
+- **PS-A direct AppSettings save.** Three-bug stack hiding PS-A persistence fixed end-to-end. PsForm `autoCalEnabled` toggle now persists to disk via `scheduleSettingsSave`.
+- **Per-packet PS pairing.** Source-first port from Thetis `sync.c InboundBlock(id=1)`. The prior implementation was pairing per-frame, which lost sync against G2E gateware timing.
+- **PsForm live `info[]` flow + FB readout + autoCal persistence + Alex1 + TwoTone defaults.** Bench-found gaps closed.
+- **TwoTone power defaults** bumped to 10 W to match Thetis defaults.
+
+### PA profile + quit handling
+
+- **PA profile manifest backfill.** PA factory-profile lookup falls back to manifest backfill if a profile is missing.
+- **Disconnect-on-quit + SIGTERM handler.** Clean disconnect when the app quits or receives `SIGTERM`. No more orphaned UDP sockets after kill.
+- **`paSettingsBypass` comment** reconciled with Thetis UI-only ground-truth.
 
 ### Docs
 
-- **ANAN-G2E port plan + design** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/f7ea61c9)
-  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/73d5216e)):
-  full-parity port design (Thetis v2.10.3.15) + TDD task breakdown.
-- **ANAN-G2E 12-row bench verification matrix + 4 documented gaps**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2b48c619)):
-  pending live G2E hardware.
-- **Bump Thetis version reference to v2.10.3.15** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/f2db2524)):
-  CLAUDE.md + inline `// From Thetis` cites refreshed.
-- **Mark F2/F3/F4/F6 gaps with `DONE_WITH_CONCERNS` comments** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/6d4093cd)):
-  Phase F follow-up tracking.
-- **FLEX-8600 <-> PGXL/TGXL capture notes** (today's `docs(captures)`
-  commit): two analysis writeups paired with existing pcapng captures
-  for the 4O3A integration. Documents the FLEX discovery beacon on
-  255.255.255.255:4992 and the bidirectional pairing model
-  (amp client on FLEX:4992 SmartSDR API, radio client on TGXL:9010
-  native protocol).
-- **Applet visibility menu plan + design** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2be7d456)
-  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/5a8c6437)).
-- **CLAUDE.md forward-bring to v0.5.2 cadence** (this commit): "Current
-  Phase" block updated from v0.4.x-pending to v0.5.0/v0.5.1/v0.5.2;
-  status table rows for 3J-1 / 3J-2 / 3R / 3M-4 / 3P-II all marked
-  with their actual shipped-or-pending state.
-- **README.md IMPORTANT block** (this commit): v0.4.0-focused framing
-  replaced with v0.5.x cadence summary; smoketest link updated to the
-  new `docs/debugging/v0.5.2-alpha-tester-smoketest.md`.
+- **ANAN-G2E port plan + design.** Full-parity design (Thetis v2.10.3.15) + TDD task breakdown.
+- **ANAN-G2E 12-row bench verification matrix** with 4 documented `DONE_WITH_CONCERNS` gaps for follow-up.
+- **Thetis version reference bumped to v2.10.3.15** in CLAUDE.md and inline `// From Thetis` cites.
+- **FLEX-8600 ↔ PGXL / TGXL capture notes.** Two analysis writeups paired with existing pcapng captures for the 4O3A integration. Documents the FLEX discovery beacon on `255.255.255.255:4992` and the bidirectional pairing model (amp client on FLEX:4992 SmartSDR API, radio client on TGXL:9010 native protocol).
+- **Applet visibility menu plan + design.**
+- **CLAUDE.md brought forward** from the stale "Pending next 0.4.x release" framing to the v0.5.0 / v0.5.1 / v0.5.2 cadence; status table rows for 3J-1 / 3J-2 / 3R / 3M-4 / 3P-II re-flagged with their actual shipped-or-pending state.
+- **README.md IMPORTANT block** rewritten for v0.5.2; smoketest link updated to the new `docs/debugging/v0.5.2-alpha-tester-smoketest.md`.
+- **`docs/MASTER-PLAN.md`** "Up Next" header bumped to "after v0.5.2"; new "Shipped in v0.5.2" + "Shipped in v0.5.1" sections.
 
 ### Build + packaging
 
-- **CMakeLists.txt project VERSION bumped to 0.5.2** (this commit).
-- No new vendored dependencies in v0.5.2. The `third_party/rade/` +
-  `third_party/r8brain/` + `third_party/wdsp/` + `third_party/fftw3/`
-  set is unchanged from v0.5.0.
-- The artifact build matrix on `release.yml` is unchanged from v0.5.1:
-  Linux x86_64 AppImage (jammy) + ARM64 AppImage (focal), macOS Apple
-  Silicon DMG, Windows x64 portable ZIP + NSIS installer. All
-  GPG-signed.
+- **`CMakeLists.txt` project VERSION** bumped to 0.5.2.
+- No new vendored dependencies. The `third_party/rade/` + `third_party/r8brain/` + `third_party/wdsp/` + `third_party/fftw3/` set is unchanged from v0.5.0.
+- Artifact build matrix on `release.yml` is unchanged from v0.5.1: Linux x86_64 AppImage (jammy), Linux ARM64 AppImage (focal), macOS Apple Silicon + Intel DMG/PKG, Windows x64 portable ZIP + NSIS installer. All GPG-signed.
 
 ### Cleanup
 
-- **Remove unused includes flagged by clangd unused-includes** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/9032a2e1)
-  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/79654993)
-  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/322d7126)).
-- **Remove tracked CTest temp + gitignore Testing/Temporary/** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/e6b4fe3c)).
-- **MoxController header drift fixed re interlock denial signal source**
-  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/cb97a35e)).
+- Remove unused includes flagged by clangd `unused-includes`.
+- Remove tracked CTest temp + gitignore `Testing/Temporary/`.
+- `MoxController` header drift fixed re interlock denial signal source.
 
 ## [0.5.1] - 2026-05-15
 
