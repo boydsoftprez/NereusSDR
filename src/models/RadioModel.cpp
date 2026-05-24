@@ -389,6 +389,7 @@ double scaleRevPowerWatts(quint16 adcRaw, HPSDRModel model)
         break;
     case HPSDRModel::ANAN7000D:
     case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15]
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:                 // will need to be edited for scaling
     case HPSDRModel::REDPITAYA: //DH1KLM
@@ -436,6 +437,7 @@ double scalePaVolts(quint16 adcRaw, HPSDRModel model)
     case HPSDRModel::ORIONMKII:
     case HPSDRModel::ANAN8000D:
     case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:
     case HPSDRModel::ANVELINAPRO3: {
@@ -466,6 +468,7 @@ double scalePaAmps(quint16 adcRaw, HPSDRModel model)
     case HPSDRModel::ORIONMKII:
     case HPSDRModel::ANAN8000D:
     case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:
     case HPSDRModel::ANVELINAPRO3: {

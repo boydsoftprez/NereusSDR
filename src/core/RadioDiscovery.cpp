@@ -106,6 +106,8 @@ int RadioInfo::maxReceiversForBoard(HPSDRHW type)
     case HPSDRHW::Hermes:       return 4;
     case HPSDRHW::HermesII:     return 4;
     case HPSDRHW::HermesLite:   return 4;
+    case HPSDRHW::HermesC10:    return 4; // ANAN-G2E: HERMES-class single-ADC nrx=4
+                                          // [N1GP G2E added; Thetis network.h:425 v2.10.3.15]
     case HPSDRHW::Angelia:      return 7;
     case HPSDRHW::Orion:        return 7;
     case HPSDRHW::OrionMKII:    return 7;

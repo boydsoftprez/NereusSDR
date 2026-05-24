@@ -736,17 +736,24 @@ void P2RadioConnection::setSampleRate(int sampleRate)
     // perturbing the firmware's PS-engaged DDC validation.
     int rateKhz = sampleRate / 1000;
 
-    // Per-board active-DDC count.  Hermes-class (1-ADC, 4-DDC) covers
-    // G2E + plain HERMES + ANAN-10 + ANAN-100.  Other boards (Saturn /
-    // OrionMKII / Angelia) have nddc=5; their RX4 gets its rate from
-    // applyPsDdcConfig at PS-engage time so this loop bound is safe.
-    // TODO: lookup nddc from m_caps when BoardCapabilities exposes it.
-    constexpr int kHermesNddc = 4;
-    for (int i = 0; i < kHermesNddc; ++i) {
-        m_rx[i].samplingRate = m_rx[i].enable ? rateKhz : 0;
+    // 2026-05-23 review fix (PR #280 review): the prior bound at 4 only
+    // covered the Hermes-class nddc=4 boards.  Saturn / OrionMKII / Angelia
+    // have nddc up to 7, and setActiveReceiverCount() already enables up to
+    // m_caps->maxReceivers.  If the user enables RX4+ at, say, 192 kHz, the
+    // old loop left those slots advertising 48 kHz on the wire while the
+    // app-side receiver was configured for 192 kHz.
+    //
+    // Fix: walk all kMaxDdc (7) slots, write the requested rate ONLY to
+    // enabled slots, and leave disabled slots at their constructor-default
+    // 48 kHz so we don't reintroduce the zero-write regression noted above.
+    // This matches Thetis byte 43/49/55 = 48 kHz for inactive slots while
+    // correctly tracking the requested rate for any active RX4+ user.
+    for (int i = 0; i < kMaxDdc; ++i) {
+        if (m_rx[i].enable) {
+            m_rx[i].samplingRate = rateKhz;
+        }
+        // disabled slots: leave constructor 48 kHz default untouched
     }
-    // RX4..RX(kMaxRxStreams-1) intentionally untouched — preserves the
-    // constructor-default 48 kHz, matching Thetis wire bytes 43/49/55.
 
     m_tx[0].samplingRate = rateKhz;
     if (m_running) {
@@ -2689,6 +2696,7 @@ void P2RadioConnection::processHighPriorityStatus(const QByteArray& data)
         case HPSDRModel::ORIONMKII:
         case HPSDRModel::ANAN8000D:
         case HPSDRModel::ANAN7000D:
+        case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
         case HPSDRModel::ANAN_G2:
         case HPSDRModel::ANAN_G2_1K:
         case HPSDRModel::ANVELINAPRO3:

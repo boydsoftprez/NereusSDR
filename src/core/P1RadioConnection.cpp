@@ -2859,6 +2859,7 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             case HPSDRModel::ORIONMKII:
             case HPSDRModel::ANAN8000D:
             case HPSDRModel::ANAN7000D:
+            case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
             case HPSDRModel::ANAN_G2:
             case HPSDRModel::ANAN_G2_1K:
             case HPSDRModel::ANVELINAPRO3:
