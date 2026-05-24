@@ -4111,60 +4111,61 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             emit pureSignalCoordinatorReady(m_pureSignal.get());
 
             // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): per-MAC persistence
-            // for PS-A enabled (autoCalEnabled).  Without this, JJ had to
-            // re-arm PS-A on every app launch because the toggle lived
-            // only in memory.  Restore on coordinator creation, save on
-            // every toggle.  Key under the same per-MAC scope as the
-            // hardware/<mac>/... block used by AlexController.
+            // for PS-A enabled (autoCalEnabled).  Without this the toggle
+            // lives only in memory and resets on every app launch.  Key
+            // shares the same hardware/<mac>/... per-MAC scope as the
+            // AlexController TX-bypass flags landed alongside this fix.
+            //
+            // Three subtle gotchas the bench surfaced (2026-05-23):
+            //
+            //   1. MAC source: m_connection->radioInfo().macAddress is
+            //      populated asynchronously by the radio handshake and is
+            //      still EMPTY at the moment this WDSP-init lambda runs.
+            //      Use m_lastRadioInfo.macAddress (cached at the top of
+            //      connectToRadio when the user picked the radio from
+            //      discovery) instead.
+            //
+            //   2. Save flush: AppSettings::instance().setValue() updates
+            //      only the in-memory map.  scheduleSettingsSave() writes
+            //      per-slice + AlexController + TransmitModel state but
+            //      does NOT call AppSettings::instance().save(), so this
+            //      arbitrary key never reaches the XML.  Direct save() is
+            //      the right pattern for rare user-initiated writes (same
+            //      as SpotHubDialog / SpectrumWidget).
+            //
+            //   3. UniqueConnection vs lambda: Qt::UniqueConnection
+            //      requires a pointer-to-member-function slot and Qt
+            //      SILENTLY DROPS the connect when handed a lambda
+            //      (with only a runtime warning).  Idempotency across
+            //      reconnect re-wires is already safe here because
+            //      m_pureSignal is reset() on disconnect (line 6760),
+            //      so its outgoing connections die with it before the
+            //      next connect rebuilds them — no UniqueConnection
+            //      needed.
             {
-                const QString mac = m_connection
-                    ? m_connection->radioInfo().macAddress
-                    : QString();
+                const QString mac = m_lastRadioInfo.macAddress;
                 if (!mac.isEmpty()) {
                     auto& s = AppSettings::instance();
-                    const QString key = QStringLiteral("hardware/%1/pureSignal/autoCalEnabled").arg(mac);
+                    const QString key = QStringLiteral(
+                        "hardware/%1/pureSignal/autoCalEnabled").arg(mac);
                     const bool persisted =
                         (s.value(key, QStringLiteral("False")).toString()
                          == QStringLiteral("True"));
                     if (persisted) {
                         m_pureSignal->setAutoCalEnabled(true);
                     }
-                    // Save on every toggle.  Qt::UniqueConnection makes
-                    // this idempotent across reconnect re-wires.
-                    //
-                    // Bench-fix 2026-05-23 (JJ Boyd, third pass): direct
-                    // AppSettings::instance().save() flush.
-                    //
-                    // First pass called only AppSettings::setValue, which
-                    // updates the in-memory map but never flushes to disk.
-                    //
-                    // Second pass added scheduleSettingsSave() believing it
-                    // was the canonical flush path, but that helper only
-                    // writes per-slice state + AlexController + TransmitModel
-                    // (see RadioModel::saveSliceState 7395-7415).  It does
-                    // NOT call AppSettings::instance().save(), so my
-                    // hardware/<mac>/pureSignal/autoCalEnabled key never
-                    // reached the XML.  Bench-confirmed on G2E run
-                    // 21:54:00->21:54:05: user toggled PS-A on, then
-                    // disconnected; no close-event fired, settings file
-                    // never updated.
-                    //
-                    // Third pass calls AppSettings::instance().save() directly
-                    // (same pattern as SpotHubDialog / SpectrumWidget for
-                    // other rare user-action settings).  One disk write per
-                    // PS-A toggle is fine; user-initiated action, low
-                    // cadence.
                     connect(m_pureSignal.get(),
                             &PureSignal::autoCalEnabledChanged,
                             this,
                             [mac](bool on) {
                                 AppSettings::instance().setValue(
-                                    QStringLiteral("hardware/%1/pureSignal/autoCalEnabled").arg(mac),
+                                    QStringLiteral(
+                                        "hardware/%1/pureSignal/autoCalEnabled")
+                                        .arg(mac),
                                     on ? QStringLiteral("True")
                                        : QStringLiteral("False"));
                                 AppSettings::instance().save();
-                            },
-                            Qt::UniqueConnection);
+                            });
                 }
             }
 
