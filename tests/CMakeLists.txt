@@ -5180,3 +5180,13 @@ target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
 # Tests: backoffSequenceFollowsSchedule (1s->2s->4s->8s->...->cap 60s);
 #   successResetsBackoff (testForceBackoffReset resets to 1s).
 nereus_add_test(tst_rf2ks_connection_reconnect)
+
+# Task 5: REST control verbs (4 PUT/POST endpoints).
+# RecordingAmpServer (QTcpServer, ephemeral port 0) captures raw request bytes
+# so we can assert verb + path + JSON body.
+# Poll interval set to 5000 ms so the control verb is the only request in
+# the 200 ms wait window.
+# Tests: putAntennasActive, putOperateMode, putOperationalInterface,
+#   postErrorReset.
+nereus_add_test(tst_rf2ks_connection_control)
+target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)

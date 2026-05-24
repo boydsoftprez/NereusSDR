@@ -335,12 +335,76 @@ void Rf2ksConnection::testForceBackoffReset()
     m_consecutiveFailures = 0;
 }
 
-// Stubs for control / IO - filled in Task 5.
-void Rf2ksConnection::setActiveAntenna(RfKitAntenna::Type, int) {}
-void Rf2ksConnection::setOperateMode(const QString&) {}
-void Rf2ksConnection::setOperationalInterface(const QString&) {}
-void Rf2ksConnection::resetError() {}
-void Rf2ksConnection::issuePut(const QString&, const QByteArray&) {}
-void Rf2ksConnection::issuePost(const QString&) {}
+// Control / IO verbs (Task 5).
+
+void Rf2ksConnection::setActiveAntenna(RfKitAntenna::Type type, int number)
+{
+    const QString typeStr = (type == RfKitAntenna::Type::Internal)
+                              ? QStringLiteral("INTERNAL")
+                              : QStringLiteral("EXTERNAL");
+    const QJsonObject o{
+        { QStringLiteral("type"),   typeStr },
+        { QStringLiteral("number"), number  },
+    };
+    issuePut(QStringLiteral("/antennas/active"),
+             QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Rf2ksConnection::setOperateMode(const QString& mode)
+{
+    const QJsonObject o{ { QStringLiteral("operate_mode"), mode } };
+    issuePut(QStringLiteral("/operate-mode"),
+             QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Rf2ksConnection::setOperationalInterface(const QString& iface)
+{
+    const QJsonObject o{ { QStringLiteral("operational_interface"), iface } };
+    issuePut(QStringLiteral("/operational-interface"),
+             QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Rf2ksConnection::resetError()
+{
+    issuePost(QStringLiteral("/error/reset"));
+}
+
+void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
+{
+    if (m_host.isEmpty()) {
+        return;
+    }
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(m_host);
+    url.setPort(m_port);
+    url.setPath(path);
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader,
+                  QStringLiteral("application/json"));
+    auto* reply = m_nam->sendCustomRequest(req, "PUT", body);
+    reply->setProperty("rfkitPath", path);
+    reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    connect(reply, &QNetworkReply::finished,
+            this, &Rf2ksConnection::onReplyFinished);
+}
+
+void Rf2ksConnection::issuePost(const QString& path)
+{
+    if (m_host.isEmpty()) {
+        return;
+    }
+    QUrl url;
+    url.setScheme(QStringLiteral("http"));
+    url.setHost(m_host);
+    url.setPort(m_port);
+    url.setPath(path);
+    QNetworkRequest req(url);
+    auto* reply = m_nam->post(req, QByteArray());
+    reply->setProperty("rfkitPath", path);
+    reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    connect(reply, &QNetworkReply::finished,
+            this, &Rf2ksConnection::onReplyFinished);
+}
 
 } // namespace NereusSDR
