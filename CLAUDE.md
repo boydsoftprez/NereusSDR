@@ -67,7 +67,7 @@ interchangeable.
   summarize, or merge headers from different files.
 - If a NereusSDR file ports from **multiple** Thetis files, include **every**
   relevant header, separated by `// --- From [filename] ---` markers.
-- Include the Thetis version (`v2.10.3.13`) and commit (`501e3f5`) in the
+- Include the Thetis version (`v2.10.3.15`) and commit (`3759d09`) in the
   "Ported from" line.
 
 ### Inline comment preservation — SHIP-BLOCKING

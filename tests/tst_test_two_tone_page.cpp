@@ -77,7 +77,7 @@ private slots:
         QCOMPARE(page.freq1Spin()->value(), 700);
         QCOMPARE(page.freq2Spin()->value(), 1900);
         QCOMPARE(page.levelSpin()->value(), 0.0);  // Phase 3M-4 Task 17
-        QCOMPARE(page.powerSpin()->value(), 50);
+        QCOMPARE(page.powerSpin()->value(), 10);  // Thetis-faithful default (2026-05-23)
         QCOMPARE(page.freq2DelaySpin()->value(), 0);
         QCOMPARE(page.invertCheck()->isChecked(), true);
         QCOMPARE(page.pulsedCheck()->isChecked(), false);

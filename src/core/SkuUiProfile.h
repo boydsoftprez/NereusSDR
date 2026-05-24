@@ -85,6 +85,14 @@ struct SkuUiProfile {
                                              QStringLiteral("RX2"),
                                              QStringLiteral("XVTR")};
     QString                 antennaTabLabel {QStringLiteral("Alex")};
+
+    // Per-board label overrides for the EXT1/EXT2-on-TX checkboxes in the
+    // Antenna control tab. Default to "Ext 1 on Tx" / "Ext 2 on Tx" matching
+    // Thetis setup.cs default. Override per SKU when Thetis relabels (e.g.,
+    // G2E re-labels chkEXT2OutOnTx to "Rx BYPASS on Tx" at setup.cs:19929
+    // [v2.10.3.15] //N1GP G2E added).
+    QString                 ext1OutOnTxLabel {QStringLiteral("Ext 1 on Tx")};
+    QString                 ext2OutOnTxLabel {QStringLiteral("Ext 2 on Tx")};
 };
 
 SkuUiProfile skuUiProfileFor(HPSDRModel sku);

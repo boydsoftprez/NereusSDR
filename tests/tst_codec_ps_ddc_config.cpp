@@ -33,8 +33,6 @@
 #include <QtTest/QtTest>
 
 #include "core/codec/CodecContext.h"
-#include "core/codec/IP1Codec.h"
-#include "core/codec/IP2Codec.h"
 #include "core/codec/P1CodecAnvelinaPro3.h"
 #include "core/codec/P1CodecHl2.h"
 #include "core/codec/P1CodecRedPitaya.h"
@@ -205,6 +203,29 @@ private slots:
         QCOMPARE(int(cfg.cntrl1),  0);
         QCOMPARE(cfg.p1RxCount, 4);
         QCOMPARE(cfg.nDdc,      4);
+    }
+
+    // ANAN-G2E PS-off, no MOX, no diversity → primary RX on DDC0
+    // (Hermes-class).  From Thetis console.cs:8387-8390 [v2.10.3.15] //N1GP G2E added.
+    // Bench-verified 2026-05-22 against working Thetis-on-G2E session:
+    // captured CmdRx byte 7 = 0x01 (DDC0 enable bit) confirms Hermes-class
+    // routing on the wire, even though firmware accepted DDC0 != DDC2.
+    // Regression: don't slip back to empty PsDdcConfig{} (which would
+    // re-trigger the original watchdog symptom).
+    void p2_ananG2E_psOff_noMox_noDivers_routesToHermesClass() {
+        P2CodecOrionMkII codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN_G2E,
+            /*psEnabled=*/false, /*diversity=*/false, /*mox=*/false,
+            /*rx1Rate=*/192000, /*rx2Rate=*/0, /*rx2Enabled=*/false,
+            /*adcCtrl1=*/0, /*adcCtrl2=*/0);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));   // 0x01 — primary on DDC0
+        QVERIFY(cfg.ddcEnable != 0);                // regression: don't slip back to empty cfg
+        QCOMPARE(int(cfg.syncEnable), 0);
+        QCOMPARE(int(cfg.rate[0]), 192000);
+        QCOMPARE(int(cfg.rate[1]), 0);
+        QCOMPARE(int(cfg.rate[2]), 0);
+        QCOMPARE(int(cfg.rate[3]), 0);
     }
 
     // ANAN10 PS-off, no MOX, RX2 enabled → DDC0+DDC1
@@ -542,6 +563,49 @@ private slots:
         QCOMPARE(int(cfg.p1DdcConfig), 3);
         QCOMPARE(int(cfg.ddcEnable),  int(DDC0 + DDC2));
         QCOMPARE(int(cfg.cntrl1),  0x08);
+    }
+
+    // ANAN_G2E (HermesC10) routes to Hermes-class branch — same 4-DDC config
+    // as HERMES / ANAN10 / ANAN100.
+    //
+    // From Thetis console.cs:8386-8389 [v2.10.3.15] //N1GP G2E added:
+    //   case HPSDRModel.HERMES:
+    //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+    //   case HPSDRModel.ANAN10:
+    //   case HPSDRModel.ANAN100:
+    //       P1_rxcount = 4;  nddc = 4;
+    //
+    // PS-on MOX → identical wire bytes to ANAN100 (p1DdcConfig=6, cntrl1=4,
+    // rates=ps_rate, p1RxCount=4, nDdc=4).
+    void p1_standard_ananG2e_psOn_mox_routesToHermesClass() {
+        P1CodecStandard codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN_G2E,
+            /*psEnabled=*/true, /*diversityEnabled=*/false, /*moxState=*/true,
+            /*rx1Rate=*/48000, /*rx2Rate=*/0, /*rx2Enabled=*/false,
+            /*adcCtrl1=*/0x00, /*adcCtrl2=*/0x00);
+        QCOMPARE(int(cfg.p1DdcConfig), 6);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.syncEnable), int(DDC1));
+        QCOMPARE(int(cfg.rate[0]), kPsRate);
+        QCOMPARE(int(cfg.rate[1]), kPsRate);
+        QCOMPARE(int(cfg.cntrl1),  4);
+        QCOMPARE(cfg.p1RxCount, 4);
+        QCOMPARE(cfg.nDdc,      4);
+    }
+
+    // ANAN_G2E PS-off MOX → p1DdcConfig=4 (same as HERMES PS-off MOX).
+    // From Thetis console.cs:8413-8426 [v2.10.3.15] //N1GP G2E added
+    void p1_standard_ananG2e_psOff_mox() {
+        P1CodecStandard codec;
+        auto cfg = codec.applyPureSignalDdcConfig(
+            HPSDRModel::ANAN_G2E,
+            /*psEnabled=*/false, /*diversityEnabled=*/false, /*moxState=*/true,
+            /*rx1Rate=*/48000, /*rx2Rate=*/0, /*rx2Enabled=*/false,
+            /*adcCtrl1=*/0x00, /*adcCtrl2=*/0x00);
+        QCOMPARE(int(cfg.p1DdcConfig), 4);
+        QCOMPARE(int(cfg.ddcEnable),  int(DDC0));
+        QCOMPARE(int(cfg.cntrl1),  0);
     }
 
     // ====================================================================

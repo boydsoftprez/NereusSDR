@@ -683,6 +683,73 @@ bool WdspEngine::setRxChannelRate(int channelId, int newRateHz)
 }
 
 // ---------------------------------------------------------------------------
+// Per-board ChannelMaster-layer WDSP calls — Phase B4'/B5'
+//
+// Both wrappers call ChannelMaster-exported symbols provided by
+// third_party/wdsp/src/netinterface_stub.c (glue stubs) until the real
+// ChannelMaster module is ported.  The forward-declarations mirror the
+// TxChannel.cpp pattern used for SetTXFixedGain (txgain_stub.c).
+// ---------------------------------------------------------------------------
+
+#ifdef HAVE_WDSP
+extern "C" {
+    // From Thetis ChannelMaster/txgain.c:164 [v2.10.3.15]
+    void SetADCSupply(int txid, int v);
+    // From Thetis ChannelMaster/netInterface.c:1409 [v2.10.3.15]
+    void LRAudioSwap(int swap);
+}
+#endif
+
+// setAdcSupply
+//
+// Registers the per-board ADC supply voltage with the ChannelMaster TXGAIN
+// DSP path so xtxgain() can apply the correct PA over-drive protection scaling
+// (txgain.c:90-100 [v2.10.3.15]: case 33 uses adc_value/2730.0, case 50 uses
+// adc_value/1802.0).
+//
+// From Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] — called at connect
+// time per SKU (e.g. line 90: cmaster.SetADCSupply(0, 33)).
+// Upstream inline attribution preserved per CLAUDE.md §"Inline comment preservation":
+//   :129 //N1GP G2E added
+//   :171 // G8NJJ: likely to need further changes for PA
+//   :185 //DH1KLM
+//   :187 // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
+// Skips the call when v == 0 (sentinel "not set").
+void WdspEngine::setAdcSupply(int txid, int v)
+{
+    if (v == 0) {
+        return;  // sentinel: not set, leave WDSP default unchanged
+    }
+#ifdef HAVE_WDSP
+    // From Thetis ChannelMaster/txgain.c:164 [v2.10.3.15] — SetADCSupply
+    SetADCSupply(txid, v);
+#endif
+    qCInfo(lcDsp) << "setAdcSupply: txid=" << txid << "voltage=" << v << "V";
+}
+
+// setLRAudioSwap
+//
+// Registers the per-board L/R audio channel swap flag with the ChannelMaster
+// network layer so the outbound P2/ETH audio path (sendOutbound() at
+// netInterface.c:1277) swaps stereo pair order for Hermes-family boards.
+//
+// From Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] — called at connect
+// time per SKU (e.g. line 91: NetworkIO.LRAudioSwap(1) for HERMES/ANAN10/*).
+// Upstream inline attribution preserved per CLAUDE.md §"Inline comment preservation":
+//   :129 //N1GP G2E added
+//   :171 // G8NJJ: likely to need further changes for PA
+//   :185 //DH1KLM
+//   :187 // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
+void WdspEngine::setLRAudioSwap(int swap)
+{
+#ifdef HAVE_WDSP
+    // From Thetis ChannelMaster/netInterface.c:1409 [v2.10.3.15] — LRAudioSwap
+    LRAudioSwap(swap);
+#endif
+    qCInfo(lcDsp) << "setLRAudioSwap: swap=" << swap;
+}
+
+// ---------------------------------------------------------------------------
 // TX Channel management
 // ---------------------------------------------------------------------------
 

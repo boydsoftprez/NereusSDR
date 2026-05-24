@@ -69,7 +69,6 @@ mw0lge@grange-lane.co.uk
 #include "StyleConstants.h"
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
-#include "core/LogCategories.h"
 
 #include <QDateTime>
 #include <QTimer>
@@ -419,7 +418,8 @@ void AddCustomRadioDialog::buildUi()
 void AddCustomRadioDialog::populateModelCombo()
 {
     // Phase 3Q Task 4: model-based population with silicon-family headers.
-    // 16 SKUs from HPSDRModel (enums.cs:109 [v2.10.3.13]), FIRST+1..LAST-1.
+    // 17 SKUs from HPSDRModel (enums.cs:109 [v2.10.3.13] + ANAN_G2E [v2.10.3.15]),
+    // FIRST+1..LAST-1. //N1GP G2E added pushes LAST from 16 → 17.
     // Family grouping matches design §4.4.
     //
     // Uses disabled QStandardItems for family header rows so the user cannot
@@ -517,10 +517,11 @@ void AddCustomRadioDialog::populateModelCombo()
     addFamilyHeader(QStringLiteral("Hermes Lite 2"));
     addSku(HPSDRModel::HERMESLITE);      // "Hermes Lite 2"  //MI0BOT
 
-    // --- Saturn (ANAN-G2) ---  //G8NJJ
-    addFamilyHeader(QStringLiteral("Saturn (ANAN-G2)"));
+    // --- Saturn (ANAN-G2 / G2E) ---  //G8NJJ //N1GP G2E added
+    addFamilyHeader(QStringLiteral("Saturn (ANAN-G2 / G2E)"));
     addSku(HPSDRModel::ANAN_G2);         // "ANAN-G2"    //G8NJJ
     addSku(HPSDRModel::ANAN_G2_1K);      // "ANAN-G2 1K"  //G8NJJ
+    addSku(HPSDRModel::ANAN_G2E);        // "ANAN-G2E"   //N1GP G2E added [v2.10.3.15]
 
     m_modelCombo->setCurrentIndex(0);    // Auto-detect default
 }

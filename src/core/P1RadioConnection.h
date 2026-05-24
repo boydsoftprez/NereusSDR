@@ -527,6 +527,23 @@ private:
     // [v2.10.3.13-beta2]).
     int     m_psNDdc{2};
 
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): PureSignal DDC
+    // pair latched from applyPsDdcConfig().  Both default to -1 (no PS
+    // pair configured) so the parseEp6Frame paired-emit only fires when
+    // the codec has actually configured a pair.
+    //
+    // mi0bot networkproto1.c:549-553 [v2.10.3.13-beta2] HL2 case 4:
+    //   xrouter(0, 0, 0, spr, prn->RxBuff[0]);  // DDC0 → main RX
+    //   twist(spr, 2, 3, 1);                    // DDC2+DDC3 → PS pair
+    //   xrouter(0, 0, 2, spr, prn->RxBuff[1]);  // DDC1 → secondary RX
+    // The twist() call pairs slots 2+3 from the same RxBuff inside the
+    // same xrouter pass — mirrors what we do per-EP6-frame here.
+    //
+    // Mirrors Thetis cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx /
+    // SetPSTxIdx convention — the per-board codec is authoritative.
+    int     m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx)
+    int     m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx)
+
     // Phase 3P-A: per-board codec chosen at applyBoardQuirks() time.
     // Null when m_caps is null (pre-connect) or env var
     // NEREUS_USE_LEGACY_P1_CODEC=1 forces legacy compose path.

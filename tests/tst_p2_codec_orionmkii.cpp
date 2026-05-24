@@ -2,6 +2,7 @@
 #include <QtTest/QtTest>
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/CodecContext.h"
+#include "core/P2RadioConnection.h"
 
 #include <array>
 
@@ -414,6 +415,21 @@ private slots:
         QVERIFY(!(buf[1428] & 0x01));   // Alex1 bit 24 clear — not ANT1
         QVERIFY(!(buf[1428] & 0x02));   // Alex1 bit 25 clear — not ANT2
         QVERIFY( (buf[1428] & 0x04));   // Alex1 bit 26 set   —     ANT3
+    }
+
+    // HermesC10 (ANAN-G2E) uses DDC0 for RX1 on P2 (joins Hermes + HermesII family).
+    // From Thetis console.cs:8607-8620 [v2.10.3.15] //N1GP G2E added (HermesC10) —
+    // case HPSDRHW.HermesC10: rx1 = 0 (same branch as Hermes + HermesII, DDC0).
+    void hermesC10_primaryRxDdc_isDDC0()
+    {
+        // HermesC10 must return DDC0 (index 0) — same as Hermes and HermesII.
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::HermesC10), 0);
+        // Regression: Hermes and HermesII also return 0.
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::Hermes),    0);
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::HermesII),  0);
+        // Regression: Saturn (2-ADC boards) still returns 2.
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::Saturn),    2);
+        QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(HPSDRHW::OrionMKII), 2);
     }
 };
 

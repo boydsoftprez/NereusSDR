@@ -370,6 +370,14 @@ signals:
     // Emitted when ADC-linked state changes (both RX share same ADC).
     void adcLinkedChanged(bool linked);
 
+    // Emitted when the per-band ATT-on-TX dB value changes (either via
+    // setAttOnTxValue user-side, or via PureSignal::autoAttentionTick
+    // writing the new value back).  Bound by the Setup → Transmit → Power
+    // udATTOnTX spinbox so AutoAtt updates are reflected in the UI.  ANAN-G2E
+    // bench-fix 2026-05-23 (JJ Boyd): added so the new spinbox can mirror
+    // AutoAtt's adjustments without a polling timer.
+    void attOnTxValueChanged(int dB);
+
 private:
     static constexpr int kMaxAdcs = 3;
     // From Thetis console.cs:21366 — counter caps at 5.

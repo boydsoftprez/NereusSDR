@@ -113,6 +113,13 @@ private:
 
     // Shown when server is stopped or there are no connected clients.
     QWidget*     m_emptyStatePanel{nullptr};
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): re-entrancy guard for
+    // rebuildRows().  A 1Hz timer-driven rebuild that synchronously
+    // deletes QLabels can race with HarfBuzz text shaping on the prior
+    // tick's widgets, SIGSEGV'ing in hb_buffer_destroy.  See crash:
+    //   ~/Library/Logs/DiagnosticReports/NereusSDR-2026-05-23-130427.ips
+    bool         m_rebuildInProgress{false};
 };
 
 } // namespace NereusSDR

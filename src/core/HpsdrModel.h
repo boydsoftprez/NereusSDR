@@ -109,7 +109,9 @@ enum class HPSDRModel : int {
     ANVELINAPRO3 = 13,
     HERMESLITE   = 14,  // MI0BOT [Thetis enums.cs:128]
     REDPITAYA    = 15,  // DH1KLM contribution — enum slot preserved, impl deferred
-    LAST         = 16
+    // From Thetis network.h:446 [v2.10.3.15] //N1GP G2E added
+    ANAN_G2E     = 16,
+    LAST         = 17,  // was 16; bumped for ANAN_G2E
 };
 
 // Physical board — what's actually on the wire.
@@ -129,7 +131,11 @@ enum class HPSDRHW : int {
     // above the Thetis-defined range (0-11) and below Unknown(999).
     HermesLiteRxOnly = 12, // HL2 RX-only kit (no TX driver). Phase 3M-0.
     // 13..19 available for future NereusSDR-original SKU slots.
-    Andromeda        = 20, // Andromeda console (Ganymede PA trip). Phase 3M-0.
+    // From Thetis network.h:425 [v2.10.3.15] //N1GP G2E added (HermesC10)
+    HermesC10        = 20, // ANAN-G2E (formerly G1) single-ADC HERMES-class RX + OrionMKII TX
+    // NereusSDR-native; relocated from 20 to 21 on 2026-05-21 (G2E port) to free Thetis byte 20.
+    // See docs/architecture/2026-05-21-anan-g2e-port-design.md §4 for rationale.
+    Andromeda        = 21, // Andromeda console (Ganymede PA trip). Phase 3M-0.
     Unknown    = 999
 };
 
@@ -151,6 +157,7 @@ constexpr HPSDRHW boardForModel(HPSDRModel m) noexcept {
         case HPSDRModel::ANVELINAPRO3: return HPSDRHW::OrionMKII;
         case HPSDRModel::HERMESLITE:   return HPSDRHW::HermesLite;
         case HPSDRModel::REDPITAYA:    return HPSDRHW::OrionMKII;
+        case HPSDRModel::ANAN_G2E:     return HPSDRHW::HermesC10;  // //N1GP G2E added
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return HPSDRHW::Unknown;
     }
@@ -175,6 +182,7 @@ constexpr const char* displayName(HPSDRModel m) noexcept {
         case HPSDRModel::ANVELINAPRO3: return "Anvelina Pro 3";
         case HPSDRModel::HERMESLITE:   return "Hermes Lite 2";
         case HPSDRModel::REDPITAYA:    return "Red Pitaya";
+        case HPSDRModel::ANAN_G2E:     return "ANAN-G2E";  // From Thetis setup.designer.cs:8572 [v2.10.3.15] //N1GP G2E added
         case HPSDRModel::FIRST:
         case HPSDRModel::LAST:         return "Unknown";
     }
@@ -199,7 +207,8 @@ constexpr int paMaxWattsFor(HPSDRModel m) noexcept {
         case HPSDRModel::REDPITAYA:    return  10;
         case HPSDRModel::ANAN100:
         case HPSDRModel::ANAN100B:
-        case HPSDRModel::ANAN_G2:      return 100;
+        case HPSDRModel::ANAN_G2:
+        case HPSDRModel::ANAN_G2E:     return 100;  // ANAN-G2E is a 100 W class radio (same PA tier as G2)
         case HPSDRModel::ANAN100D:
         case HPSDRModel::ANAN200D:
         case HPSDRModel::ORIONMKII:
@@ -381,6 +390,7 @@ constexpr const char* boardCodeName(HPSDRHW hw) noexcept {
         case HPSDRHW::Saturn:           return "Saturn";
         case HPSDRHW::SaturnMKII:       return "SaturnMKII";
         case HPSDRHW::HermesLiteRxOnly: return "HL2-RX";
+        case HPSDRHW::HermesC10:       return "HermesC10";  // //N1GP G2E added (HermesC10)
         case HPSDRHW::Andromeda:        return "Andromeda";
         case HPSDRHW::Unknown:          return "Unknown";
     }

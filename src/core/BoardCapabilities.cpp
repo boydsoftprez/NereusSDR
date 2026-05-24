@@ -594,6 +594,8 @@ const BoardCapabilities kOrionMKII = {
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN7000D/8000D/AnvelinaPro3 (setup.cs:20100)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20098)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
+    .hasPaVoltsTelemetry = true,  // HasVolts (clsHardwareSpecific.cs:249 [v2.10.3.15])
+    .hasPaAmpsTelemetry  = true,  // HasAmps  (clsHardwareSpecific.cs:259 [v2.10.3.15])
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     // Phase 3P-B Task 6: OrionMKII family has independent per-ADC preamp control
@@ -602,6 +604,70 @@ const BoardCapabilities kOrionMKII = {
     .p2PreampPerAdc   = true,
     .displayName      = "ANAN-7000DLE/8000DLE (OrionMkII)",
     .sourceCitation   = "network.h:453, enums.cs:395, clsHardwareSpecific.cs:143-190",
+};
+
+// ─── HermesC10 (ANAN-G2E, formerly G1) ──────────────────────────────────────
+// From Thetis ChannelMaster/network.h:420-425 [v2.10.3.15] — upstream enum context:
+//   HermesLite = 6,     // MI0BOT
+//   Saturn = 10,        // ANAN-G2: added G8NJJ
+//   HermesC10 = 20      // ANAN-G2E //N1GP G2E added (HermesC10)
+// Source: network.h:425 (HermesC10=20) [v2.10.3.15], clsHardwareSpecific.cs:129-135 [v2.10.3.15]
+//   N1GP G2E added — single-ADC entry-level G2 SKU; HERMES-class 4-DDC RX.
+// Differs from ANAN_G2/G2_1K: no RX2 preamp, no RX2 stepped att, 1 ADC, no diversity.
+// Shares Alex-2 (MKII BPF) routing with G2 family; PA gain table shared with G2/7000D tier.
+// PA telemetry: HasVolts=true, HasAmps=true (clsHardwareSpecific.cs:245-264 [v2.10.3.15]).
+const BoardCapabilities kHermesC10 = {
+    .board            = HPSDRHW::HermesC10,
+    // ANAN-G2E ships with N1GP community P2 (ETH) firmware that responds to P2
+    // discovery and uses P2 wire format.  Thetis's static SKU classification
+    // (Hermes-class) is a logical grouping for DSP/UI purposes; the wire
+    // protocol is P2.  Empirically verified 2026-05-22 by discovery byte 20 ->
+    // HermesC10 arriving via P2 reply, and successful CmdRx → DDC0 I/Q
+    // streaming after the dither/mask fixes landed.
+    .protocol         = ProtocolVersion::Protocol2,
+    .adcCount         = 1,                                  // SetRxADC(1) [v2.10.3.15]
+    .maxReceivers     = 4,                                  // P1_rxcount=4 nddc=4 (console.cs:8388 [v2.10.3.15])
+    // Thetis setup.cs:849-850 [v2.10.3.15] — every P2/ETH board gets the
+    // full 6-rate list; Thetis has no per-board cap, only per-protocol.
+    // Pcap of working Thetis-on-G2E ran at 768 kHz (CmdRx byte 18-19 =
+    // 0x03 0x00 = 768 kHz big-endian).
+    .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
+    .maxSampleRate    = 1536000,
+    // RX1 stepped att: 0..31 dB, G2E in exclusion list (setup.cs:15810-15824 [v2.10.3.15]).
+    // RX2: HasSteppedAttenuation(rx==2)==false (clsHardwareSpecific.cs:790-803 [v2.10.3.15]).
+    .attenuator       = {0, 31, 1, true, 0x1F, 0x20, false},
+    // RX1 preamp present; RX2 preamp explicitly absent (console.cs:14835 [v2.10.3.15]).
+    .preamp           = {true, false},
+    .ocOutputCount    = 7,
+    .hasAlexFilters   = true,
+    .hasAlexTxRouting = true,
+    .xvtrJackCount    = 1,
+    .antennaInputCount = 3,
+    .hasAlex2         = true,   // SetMKIIBPF(1) (clsHardwareSpecific.cs:131 [v2.10.3.15])
+    .hasRxBypassRelay = true,
+    .rxOnlyAntennaCount = 3,
+    .hasPureSignal    = true,   // P1_rxcount=4 nddc=4; RX4 = PS feedback (console.cs:8388 [v2.10.3.15])
+    .psDefaultPeak    = 0.2899, // P2 default (clsHardwareSpecific.cs:307 [v2.10.3.15])
+    .psSampleRate     = 192000, // cmaster.cs:424 ps_rate=192000 [v2.10.3.15]
+    .hasDiversityReceiver = false, // 1 ADC — no diversity
+    .hasStepAttenuatorCal = true,  // RX1 stepped att present and calibratable
+    .hasPaProfile     = true,
+    .hasBandwidthMonitor = false,
+    .hasIoBoardHl2    = false,
+    .hasSidetoneGenerator = false,
+    .hasApollo        = false,  // chkApolloPresent.Enabled=false (setup.cs:19908 [v2.10.3.15])
+    .hasAlex          = true,   // chkAlexPresent.Checked=true (setup.cs:19905 [v2.10.3.15])
+    .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364)
+    .hasPaVoltsTelemetry = true,    // HasVolts true (clsHardwareSpecific.cs:250 [v2.10.3.15]) //N1GP G2E added
+    .hasPaAmpsTelemetry  = true,    // HasAmps  true (clsHardwareSpecific.cs:260 [v2.10.3.15]) //N1GP G2E added
+    .allowsAutoPaCalibrate = false, // chkAutoPACalibrate.Visible=false (setup.cs:19919 [v2.10.3.15]) //N1GP G2E added
+    .showsBypassPaSettingsUi = true, // chkBypassANANPASettings.Visible=true (setup.cs:19921 [v2.10.3.15]) //N1GP G2E added
+    .minFirmwareVersion = 0,
+    .knownGoodFirmware  = 0,
+    .p2PreampPerAdc   = false,  // 1 ADC; per-ADC control not applicable
+    .displayName      = "ANAN-G2E",
+    .sourceCitation   = "network.h:425, clsHardwareSpecific.cs:129-135 / 245-264 / 699-730 / 790-803, "
+                        "console.cs:8388/14835/25007 [v2.10.3.15]; //N1GP G2E added",
 };
 
 // ─── HermesLite (HL2) ───────────────────────────────────────────────────────
@@ -838,6 +904,8 @@ const BoardCapabilities kSaturn = {
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN_G2 (setup.cs:20203)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20201)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364); "OC Control"
+    .hasPaVoltsTelemetry = true,  // HasVolts (clsHardwareSpecific.cs:251 [v2.10.3.15])
+    .hasPaAmpsTelemetry  = true,  // HasAmps  (clsHardwareSpecific.cs:261 [v2.10.3.15])
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     .displayName      = "ANAN-G2 (Saturn)",
@@ -891,6 +959,8 @@ const BoardCapabilities kSaturnMKII = {
     .hasApollo        = false,  // chkApolloPresent.Enabled=false for ANAN_G2_1K (setup.cs:20256)
     .hasAlex          = true,   // chkAlexPresent.Checked=true, Enabled=true (setup.cs:20254)
     .hasPennyLane     = true,   // tpPennyCtrl added for all HPSDR models (setup.cs:6364); "OC Control"
+    .hasPaVoltsTelemetry = false,  // From Thetis HasVolts clsHardwareSpecific.cs:245-254 [v2.10.3.15] — SaturnMKII NOT in HasVolts SKU group
+    .hasPaAmpsTelemetry  = false,  // From Thetis HasAmps  clsHardwareSpecific.cs:255-264 [v2.10.3.15] — same
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     .displayName      = "ANAN-G2 MkII (SaturnMKII)",
@@ -996,10 +1066,11 @@ const BoardCapabilities kUnknown = {
 // const (not constexpr) because BoardCapabilities contains QList<SaturnBpf1Edge>
 // which is not constexpr-compatible.  Introduced in Phase 3P-B Task 6.
 // Size bumped from 10 → 12 in Phase 3M-0 Task 1 (added kHermesLiteRxOnly,
-// kAndromeda). kUnknown remains last as the forBoard() fallback.
-const std::array<BoardCapabilities, 12> kTable = {
+// kAndromeda). Bumped 12 → 13 in ANAN-G2E port (added kHermesC10). //N1GP G2E added
+// kUnknown remains last as the forBoard() fallback.
+const std::array<BoardCapabilities, 13> kTable = {
     kAtlas, kHermes, kHermesII, kAngelia, kOrion,
-    kOrionMKII, kHermesLite, kHermesLiteRxOnly,
+    kOrionMKII, kHermesC10, kHermesLite, kHermesLiteRxOnly,
     kSaturn, kSaturnMKII, kAndromeda, kUnknown
 };
 
@@ -1105,7 +1176,13 @@ std::span<const PreampItem> preampItemsForBoard(HPSDRHW hw, bool alexPresent) no
 
     case HPSDRHW::OrionMKII:
     case HPSDRHW::Saturn:
-        // ANAN-7000D/8000D/OrionMkII/G2/G2-1K/AnvelinaPro3: always anan100d.
+    case HPSDRHW::HermesC10:  // ANAN-G2E //N1GP G2E added
+        // ANAN-7000D/8000D/OrionMkII/G2/G2-1K/AnvelinaPro3/G2E: always anan100d.
+        // From Thetis console.cs:40871-40879 [v2.10.3.15] //N1GP G2E added:
+        //   case HPSDRModel.ANAN_G2E: comboPreamp.Items.AddRange(anan100d_preamp_settings)
+        // NereusSDR dispatches by HPSDRHW; HermesC10 is the board for ANAN_G2E.
+        // Upstream comment preserved verbatim (console.cs:40878):
+        //   // case HPSDRModel.REDPITAYA: // DH1KLM: removed for compatibility reasons
         return items(kAnan100d);
 
     case HPSDRHW::HermesLite:

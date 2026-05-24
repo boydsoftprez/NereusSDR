@@ -187,10 +187,40 @@ PsaIndicatorWidget::PsaIndicatorWidget(RadioModel* model, QWidget* parent)
     // pureSignalCoordinatorReady, added in Task 13 commit 2271f8a) so
     // we re-wire when the coordinator becomes available.  Mirrors the
     // PureSignalApplet pattern at PureSignalApplet.cpp:118-123.
+    //
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): handle disconnect /
+    // reconnect.  RadioModel emits pureSignalCoordinatorReady(nullptr)
+    // on disconnect (RadioModel.cpp:6800-6801) and a fresh non-null
+    // pointer on each reconnect (RadioModel.cpp:3438).  The original
+    // guard `if (m_pureSignal) { return; }` made m_pureSignal a stale
+    // pointer after disconnect and prevented re-wiring on reconnect —
+    // the badge stayed grey because no autoCalEnabledChanged signal
+    // from the new coordinator reached setPsEnabled.  Bench-confirmed
+    // on G2E PS run at 11:03-11:08 (log line 1278 reconnect was the
+    // failing case; corrApplied=1 in calcc engine, m_psEnabled stuck
+    // at false in the widget).
     if (m_radioModel) {
         connect(m_radioModel, &RadioModel::pureSignalCoordinatorReady,
-                this, [this](PureSignal* /*ps*/) {
-                    if (m_pureSignal) { return; }   // already wired
+                this, [this](PureSignal* ps) {
+                    if (!ps) {
+                        // Coordinator torn down — clear stale pointer
+                        // and grey the badge so the next reconnect can
+                        // re-wire cleanly.  The old PureSignal's signal
+                        // connections were auto-disconnected by Qt when
+                        // its unique_ptr destructor ran in RadioModel::
+                        // teardown, so no explicit disconnect needed.
+                        m_pureSignal = nullptr;
+                        m_psEnabled = false;
+                        m_correctionsApplied = false;
+                        m_calChangedSinceLastDraw = false;
+                        updateDisplay();
+                        updateTooltip();
+                        return;
+                    }
+                    // Fresh coordinator: force wireToModel to re-seed
+                    // m_pureSignal + (re)install signal hooks under
+                    // Qt::UniqueConnection against the new instance.
+                    m_pureSignal = nullptr;
                     wireToModel();
                     updateDisplay();
                     updateTooltip();

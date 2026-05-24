@@ -24,6 +24,45 @@
 namespace NereusSDR {
 
 struct CodecContext {
+    // ADC supply voltage in volts (33 or 50).
+    // From Thetis cmaster.SetADCSupply(0, N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+    //
+    // B3 WIRE FORMAT AUDIT (2026-05-22):
+    // SetADCSupply is a DLL P/Invoke into ChannelMaster.dll, defined at
+    // txgain.c:164 [v2.10.3.15]:
+    //   PORT void SetADCSupply(int txid, int v) { a->adc_supply = v; }
+    // It stores the value in a txgain DSP struct consumed by xtxgain() at
+    // txgain.c:90-100 for PA over-drive protection scaling:
+    //   case 33: ptn = 1/10^(adc_value/2730.0)
+    //   case 50: ptn = 1/10^(adc_value/1802.0)
+    // This is a WDSP-internal value — it does NOT encode into any P1 C&C byte
+    // or P2 command frame. No occurrence found in network.c, networkproto1.c,
+    // netInterface.c, or any frame-compose path.
+    // Hermes-family boards: 33 V. OrionMKII/Saturn-family: 50 V.
+    // 0 = sentinel "not set / use WDSP default". Populated by buildCodecContext()
+    // from HardwareProfile::adcSupplyVoltage; WDSP will be called at connect
+    // time when WdspEngine::setADCSupply() is added (planned post-B5).
+    int     adcSupplyVoltage{0};
+
+    // L/R audio channel swap flag.
+    // From Thetis NetworkIO.LRAudioSwap(N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+    //
+    // B3 WIRE FORMAT AUDIT (2026-05-22):
+    // LRAudioSwap is a DLL P/Invoke into ChannelMaster.dll
+    // (NetworkIOImports.cs:375 [v2.10.3.15]), defined at netInterface.c:1409:
+    //   void LRAudioSwap(int swap) { if (prn->lr_audio_swap != swap) prn->lr_audio_swap = swap; }
+    // The flag is consumed in sendOutbound() at network.c:1277 (Protocol 2 only,
+    // inside `if (RadioProtocol == ETH)` block):
+    //   if (prn->lr_audio_swap) { swap out[i+0] ↔ out[i+1] for each stereo pair }
+    // This swaps the L/R sample ORDER in the outbound audio stream — it is NOT
+    // a bit in any C&C bank byte or P2 command frame.
+    // True for Hermes-family boards (HERMES/ANAN10/ANAN10E/ANAN100/ANAN100B);
+    // false for all modern boards (Angelia/Orion/OrionMKII/Saturn/HermesC10).
+    // Populated by buildCodecContext() from HardwareProfile::lrAudioSwap;
+    // forwarded to WDSP audio path (not a frame byte — B4 as planned cannot
+    // be implemented; WDSP integration is the correct path).
+    bool    lrAudioSwap{false};
+
     // MOX (transmit) bit — OR'd into low bit of C0.
     bool    mox{false};
 

@@ -154,6 +154,11 @@ nereus_add_test(tst_clarity_nf_grid_coexistence)
 nereus_add_test(tst_hpsdr_enums)
 nereus_add_test(tst_board_capabilities)
 
+# ── ANAN-G2E port Phase B: HardwareProfile per-board init parity ──────────
+# Data-driven test pinning all 15 SKUs (Hermes through REDPITAYA + new
+# ANAN_G2E) against Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15].
+nereus_add_test(tst_hardware_profile)
+
 # ── Phase 3M-4 Task 1: PureSignal cap fields (psDefaultPeak + psSampleRate) ──
 # 3 tests covering ANAN-G2 (P2 default 0.2899, psSampleRate=192000),
 # HermesLite (mi0bot HL2 override 0.233, psSampleRate=0 sentinel for
@@ -423,6 +428,16 @@ target_compile_definitions(tst_p1_puresignal_ddc_freq PRIVATE NEREUS_BUILD_TESTS
 #                          + console.cs:8623 GetDDC P2 case 5
 nereus_add_test(tst_ps_ddc_indices_per_board)
 target_compile_definitions(tst_ps_ddc_indices_per_board PRIVATE NEREUS_BUILD_TESTS)
+
+# ── Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): per-packet ────────
+# paired PS streams via source-first sync.c InboundBlock(id=1) port.
+# Replaces the independent-rings architecture (m_txMonRing + m_psFbRing)
+# with a one-shot pscc() call per packet — the Thetis-faithful behavior
+# from router.c:91-102 + sync.c:53-58 [v2.10.3.15].  Bench-observed drift
+# on ANAN-G2E with the old rings was 189 samples / 985 us; the new path
+# eliminates drift by construction.
+nereus_add_test(tst_pscc_pump_paired)
+target_compile_definitions(tst_pscc_pump_paired PRIVATE NEREUS_BUILD_TESTS)
 
 # ── P1 full-parity Task 2.5: TransmitModel::pureSig → setPuresignalRun wiring ─
 # 8 tests pin the model-to-connection wiring installed in
@@ -744,6 +759,13 @@ nereus_add_test(tst_transmit_model_dexp)
 # Source: setup.designer.cs:44699-44728 [v2.10.3.13] (udAntiVoxGain -60..60);
 #         setup.cs:18986-18989 [v2.10.3.13] (SetAntiVOXGain dB→linear formula).
 nereus_add_test(tst_transmit_model_anti_vox)
+
+# ── D4 (ANAN-G2E port): TransmitModel paSettingsBypass property ──────────────
+# Verifies default (false), round-trip setter, signal emission, idempotent guard,
+# and AppSettings persistence via loadFromSettings(mac) + auto-persist.
+# Source: setup.cs:19921 [v2.10.3.15] — chkBypassANANPASettings.Visible = true
+#         (G2E case); setup.designer.cs:49237-49245 [v2.10.3.15] — tooltip "BP PA".
+nereus_add_test(tst_transmit_model_pa_settings_bypass)
 
 # ── Phase 3M-1b C.5: TransmitModel MON properties (2x) ──────────────────────
 # Verifies defaults (monEnabled=false matches Thetis audio.cs:406 [v2.10.3.13] /
@@ -2407,6 +2429,21 @@ nereus_add_test(tst_wdsp_engine_tx_channel)
 #   wdsp/dexp.c:187-227    - create_dexp impl: allocates DEXP, stores pdexp[id];
 #   wdsp/dexp.c:230-239    - destroy_dexp impl: frees, but does NOT null pdexp[id].
 nereus_add_test(tst_wdsp_engine_dexp_init)
+
+# ── Phase B4'/B5': WdspEngine::setAdcSupply / setLRAudioSwap wrappers ────────
+# Pins the per-board ChannelMaster-layer WDSP call wrappers introduced during
+# the ANAN-G2E port (Phase B4'/B5').  The stubs in netinterface_stub.c always
+# resolve SetADCSupply / LRAudioSwap, so these tests run in both HAVE_WDSP
+# and non-HAVE_WDSP builds.
+# Verifies:
+#   setAdcSupply with v==0 sentinel skips the call (guard exists);
+#   setAdcSupply with v==33 and v==50 call through without crashing;
+#   setLRAudioSwap with swap==0 and swap==1 call through without crashing.
+# Source map (all v2.10.3.15):
+#   ChannelMaster/txgain.c:164        — SetADCSupply impl
+#   ChannelMaster/netInterface.c:1409 — LRAudioSwap impl
+#   Console/clsHardwareSpecific.cs:85-191 — per-SKU call sites
+nereus_add_test(tst_wdsp_engine_board_init)
 
 # ── Phase 3R Task J2: WdspEngine RadeChannel lifecycle ──────────────────────
 # Pins the createRadeChannel / destroyRadeChannel / radeChannel(id) contract:

@@ -68,7 +68,12 @@ private slots:
     // initialized (m_initialized guard fires before any WDSP call).
     //
     // From Thetis Console/dsp.cs:387-388 [@501e3f5] (P/Invoke)
-    // From Thetis Console/console.cs:957 [@501e3f5] (RXA_S_AV selector)
+    // From Thetis Console/dsp.cs:957 [v2.10.3.15] (RXA_S_AV selector in
+    //   CalculateRXMeter; the adjacent ADC_REAL case at dsp.cs:959 carries a
+    //   //MW0LGE [2.9.0.7] attribution preserved from the same switch block.)
+    // (Path corrected here to match the upstream-clean cite landed by commit
+    // 6accd45c for the production WdspEngine + MeterPoller call sites; this
+    // test was missed in that pass.)
     void getRxaSignalAverage_doesNotCrash() {
         WdspEngine engine;
         double result = engine.getRxaSignalAverage(0);

@@ -5,6 +5,16 @@
 
 using namespace NereusSDR;
 
+// Phase A1 — pin G2E enum values per Thetis network.h [v2.10.3.15] //N1GP G2E added
+static_assert(static_cast<int>(HPSDRHW::HermesC10) == 20,
+              "HermesC10 must be 20 per Thetis network.h:425 [v2.10.3.15]");
+static_assert(static_cast<int>(HPSDRHW::Andromeda) == 21,
+              "Andromeda relocated to 21 to free Thetis byte 20 for HermesC10");
+static_assert(static_cast<int>(HPSDRModel::ANAN_G2E) == 16,
+              "ANAN_G2E must be 16 per Thetis network.h:446 [v2.10.3.15]");
+static_assert(static_cast<int>(HPSDRModel::LAST) == 17,
+              "LAST sentinel bumped from 16 to 17 when ANAN_G2E added");
+
 class TestBoardCapabilities : public QObject {
     Q_OBJECT
 private slots:
@@ -17,6 +27,7 @@ private slots:
         QTest::newRow("Angelia")    << int(HPSDRHW::Angelia);
         QTest::newRow("Orion")      << int(HPSDRHW::Orion);
         QTest::newRow("OrionMKII")  << int(HPSDRHW::OrionMKII);
+        QTest::newRow("HermesC10")  << int(HPSDRHW::HermesC10); // //N1GP G2E added
         QTest::newRow("HermesLite")       << int(HPSDRHW::HermesLite);
         QTest::newRow("HermesLiteRxOnly") << int(HPSDRHW::HermesLiteRxOnly);
         QTest::newRow("Saturn")           << int(HPSDRHW::Saturn);
@@ -248,6 +259,79 @@ private slots:
     void canDriveGanymede_StandardAnan_returnsFalse() {
         const auto& caps = BoardCapsTable::forBoard(HPSDRHW::Saturn);
         QVERIFY(!caps.canDriveGanymede);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase A3: kHermesC10 row assertions
+    // From Thetis ChannelMaster/network.h:420-425 [v2.10.3.15] — upstream enum context:
+    //   HermesLite = 6,     // MI0BOT
+    //   Saturn = 10,        // ANAN-G2: added G8NJJ
+    //   HermesC10 = 20      // ANAN-G2E //N1GP G2E added (HermesC10)
+    // Source: network.h:425 (HermesC10=20) [v2.10.3.15],
+    //   clsHardwareSpecific.cs:129-135 [v2.10.3.15] //N1GP G2E added
+    // -----------------------------------------------------------------------
+
+    void hermesC10Row()
+    {
+        // From Thetis clsHardwareSpecific.cs:129-135 [v2.10.3.15] //N1GP G2E added
+        const auto& caps = BoardCapsTable::forBoard(HPSDRHW::HermesC10);
+
+        QCOMPARE(caps.board, HPSDRHW::HermesC10);
+        // Empirically verified 2026-05-22: N1GP community P2 firmware shipped
+        // with ANAN-G2E hardware responds to P2 discovery (byte 20) and uses
+        // P2 wire format end-to-end.  Setup.cs:849-850 [v2.10.3.15] grants
+        // any P2 board the full 6-rate list up to 1536 kHz (no per-board cap).
+        QCOMPARE(int(caps.protocol), int(ProtocolVersion::Protocol2));
+        QCOMPARE(caps.adcCount, 1);           // SetRxADC(1)
+        QCOMPARE(caps.maxReceivers, 4);       // 4-DDC (console.cs:8388)
+        QCOMPARE(caps.maxSampleRate, 1536000);
+        QVERIFY(caps.hasAlex2);               // SetMKIIBPF(1)
+        QVERIFY(caps.hasPureSignal);          // RX4 = PS feedback
+        QCOMPARE(caps.psDefaultPeak, 0.2899); // P2 default
+        QCOMPARE(caps.psSampleRate, 192000);
+        QVERIFY(!caps.hasDiversityReceiver);  // 1 ADC — no diversity
+        QVERIFY(!caps.canDriveGanymede);      // not Andromeda console family
+        QVERIFY(caps.preamp.present);         // RX1 preamp present
+        QVERIFY(!caps.preamp.hasBypassAndPreamp); // RX2 preamp absent (console.cs:14835)
+        QCOMPARE(caps.attenuator.maxDb, 31);  // NOT 61; in G2E exclusion list (setup.cs:15810-15824)
+        QCOMPARE(caps.attenuator.minDb, 0);
+        QVERIFY(caps.attenuator.present);
+
+        // New fields per Task A2
+        QVERIFY(caps.hasPaVoltsTelemetry);      // HasVolts true (clsHardwareSpecific.cs:245-254 [v2.10.3.15])
+        QVERIFY(caps.hasPaAmpsTelemetry);       // HasAmps  true (clsHardwareSpecific.cs:255-264 [v2.10.3.15])
+        QVERIFY(!caps.allowsAutoPaCalibrate);   // chkAutoPACalibrate.Visible=false (setup.cs:19919 [v2.10.3.15])
+        QVERIFY(caps.showsBypassPaSettingsUi);  // chkBypassANANPASettings.Visible=true (setup.cs:19921 [v2.10.3.15])
+
+        QCOMPARE(QString(caps.displayName), QString("ANAN-G2E"));
+    }
+
+    void boardForModelAnanG2E()
+    {
+        // From Thetis network.h:446 [v2.10.3.15] //N1GP G2E added
+        QCOMPARE(boardForModel(HPSDRModel::ANAN_G2E), HPSDRHW::HermesC10);
+        QCOMPARE(QString(displayName(HPSDRModel::ANAN_G2E)), QString("ANAN-G2E"));
+        QCOMPARE(QString(boardCodeName(HPSDRHW::HermesC10)), QString("HermesC10"));
+    }
+
+    void hasVoltsAmps_perSkuGrouping()
+    {
+        // From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15] //N1GP G2E added
+        // HasVolts/HasAmps true SKUs (NereusSDR board mapping)
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::OrionMKII).hasPaVoltsTelemetry);  // ANAN7000D/8000D/AnvelinaPro3
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::OrionMKII).hasPaAmpsTelemetry);
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Saturn).hasPaVoltsTelemetry);     // ANAN-G2/G2_1K
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Saturn).hasPaAmpsTelemetry);
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::HermesC10).hasPaVoltsTelemetry); // ANAN-G2E
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::HermesC10).hasPaAmpsTelemetry);
+
+        // false SKUs (default)
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::Atlas).hasPaVoltsTelemetry);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::Hermes).hasPaVoltsTelemetry);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::HermesII).hasPaVoltsTelemetry);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::Angelia).hasPaVoltsTelemetry);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::Orion).hasPaVoltsTelemetry);
+        QVERIFY(!BoardCapsTable::forBoard(HPSDRHW::HermesLite).hasPaVoltsTelemetry);
     }
 };
 

@@ -9,6 +9,8 @@
 
 #include <QApplication>
 #include <QCommandLineOption>
+#include <QMetaObject>
+#include <csignal>
 #include <QCommandLineParser>
 #include <QIcon>
 #include <QStyleFactory>
@@ -135,6 +137,31 @@ int main(int argc, char* argv[])
     app.setApplicationVersion(NEREUSSDR_VERSION);
     app.setOrganizationName("NereusSDR");
     app.setWindowIcon(QIcon(":/icons/NereusSDR.png"));
+
+    // 2026-05-22 bench-finding: pkill / kill / system shutdown sends SIGTERM
+    // by default; the OS terminates the process without giving Qt a chance
+    // to run aboutToQuit handlers.  Without translation, this skips
+    // RadioConnection::disconnect, the radio gateware never sees run=0, and
+    // some community P2 firmwares require power-cycle to recover.  Install
+    // POSIX signal handlers that convert SIGTERM / SIGINT into
+    // QApplication::quit, which fires aboutToQuit and runs the graceful
+    // disconnect path.  SIGKILL (kill -9, Activity Monitor "Force Quit") is
+    // uncatchable — power-cycle is still the only recovery there.
+    std::signal(SIGTERM, [](int) {
+        // Async-signal-safe: only QCoreApplication::quit() is approximately
+        // safe to call.  Internally it just sets an atomic flag the event
+        // loop polls.
+        if (QCoreApplication::instance()) {
+            QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                      "quit", Qt::QueuedConnection);
+        }
+    });
+    std::signal(SIGINT, [](int) {
+        if (QCoreApplication::instance()) {
+            QMetaObject::invokeMethod(QCoreApplication::instance(),
+                                      "quit", Qt::QueuedConnection);
+        }
+    });
 
     // Trigger the macOS microphone permission dialog deterministically
     // (issue #203). The OS only prompts when something actually engages

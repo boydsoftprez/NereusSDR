@@ -256,7 +256,6 @@ warren@wpratt.com
 #include "core/PaProfile.h"
 #include "core/PaProfileManager.h"
 #include "core/PaTelemetryScaling.h"
-#include "core/PsFeedbackChannel.h"
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TwoToneController.h"
@@ -390,6 +389,7 @@ double scaleRevPowerWatts(quint16 adcRaw, HPSDRModel model)
         break;
     case HPSDRModel::ANAN7000D:
     case HPSDRModel::ANVELINAPRO3:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15]
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:                 // will need to be edited for scaling
     case HPSDRModel::REDPITAYA: //DH1KLM
@@ -437,6 +437,7 @@ double scalePaVolts(quint16 adcRaw, HPSDRModel model)
     case HPSDRModel::ORIONMKII:
     case HPSDRModel::ANAN8000D:
     case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:
     case HPSDRModel::ANVELINAPRO3: {
@@ -467,6 +468,7 @@ double scalePaAmps(quint16 adcRaw, HPSDRModel model)
     case HPSDRModel::ORIONMKII:
     case HPSDRModel::ANAN8000D:
     case HPSDRModel::ANAN7000D:
+    case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
     case HPSDRModel::ANAN_G2:
     case HPSDRModel::ANAN_G2_1K:
     case HPSDRModel::ANVELINAPRO3: {
@@ -495,6 +497,10 @@ double scalePaTemperatureCelsius(quint16 /*adcRaw*/, HPSDRModel /*model*/)
     // no-port-check: NereusSDR-original placeholder — see comment above.
     return 0.0;
 }
+
+// scaleExciterPowerMw() is the public free function in PaTelemetryScaling.h/cpp
+// (lifted there for testability — Phase F1 of the ANAN-G2E port).
+// No local copy needed here; PaTelemetryScaling.h is already included above.
 
 } // anonymous namespace
 
@@ -552,24 +558,35 @@ RadioModel::RadioModel(QObject* parent)
     // Phase 3P-I-b (T6): flag changes must re-fire composition for current band.
     // The isTx arg stays false in 3P-I-b — MOX trigger wiring lands in 3M-1.
     // Uses a local lambda so all six connects share one band-lookup path.
-    auto reapply = [this]() {
+    //
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): also dirty+schedule-save on
+    // every flag change so the per-MAC persistence in AlexController::save()
+    // actually fires.  Without this the six TX-bypass checkboxes (Rx
+    // BYPASS on Tx, Ext1 on Tx, Use TX antenna for RX, RX out override,
+    // XVTR active) reset to default on every app reload, forcing the
+    // user to re-check them every session — confirmed on the bench when
+    // "Rx BYPASS on Tx" (G2E label for ext2OutOnTx) dropped after a
+    // graceful close.
+    auto reapplyAndPersist = [this]() {
+        m_alexControllerDirty = true;
+        scheduleSettingsSave();
         Band b = m_activeSlice
                    ? bandFromFrequency(m_activeSlice->frequency())
                    : m_lastBand;
         applyAlexAntennaForBand(b);
     };
     connect(&m_alexController, &AlexController::ext1OutOnTxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::ext2OutOnTxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::rxOutOnTxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::rxOutOverrideChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::useTxAntForRxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::xvtrActiveChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
 
 
     // Connection starts null — created by connectToRadio() via factory.
@@ -3682,6 +3699,29 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     m_connection = conn.release();
     m_connection->setHardwareProfile(m_hardwareProfile);
 
+    // Phase B6' — per-board WDSP ChannelMaster-layer calls.
+    //
+    // From Thetis clsHardwareSpecific.cs:85-191 [v2.10.3.15] — called at
+    // connect time per SKU.  HardwareProfile values were populated by
+    // HardwareProfile::forModel() (Phase B1) from the same Thetis table.
+    // Upstream inline attribution preserved per CLAUDE.md §"Inline comment preservation":
+    //   :129 //N1GP G2E added
+    //   :171 // G8NJJ: likely to need further changes for PA
+    //   :185 //DH1KLM
+    //   :187 // DH1KLM: changed for compatibility reasons for OpenHPSDR compat. DIY PA/Filter boards
+    //
+    // SetADCSupply: PA over-drive protection scaling in xtxgain().
+    //   Case 33: ptn = 1/10^(adc_value/2730.0) — Hermes-family boards.
+    //   Case 50: ptn = 1/10^(adc_value/1802.0) — OrionMKII/Saturn-family.
+    //   adcSupplyVoltage == 0 sentinel → setAdcSupply skips the call.
+    //
+    // LRAudioSwap: L/R stereo-pair swap for the outbound P2/ETH audio stream
+    //   (sendOutbound() at ChannelMaster/netInterface.c:1277 [v2.10.3.15]).
+    //   Hermes-family (HERMES/ANAN10/ANAN10E/ANAN100/ANAN100B/HERMESLITE):
+    //     swap=1. All modern boards (Angelia/Orion/Saturn-family): swap=0.
+    m_wdspEngine->setAdcSupply(/*txid=*/0, m_hardwareProfile.adcSupplyVoltage);
+    m_wdspEngine->setLRAudioSwap(m_hardwareProfile.lrAudioSwap ? 1 : 0);
+
     // 3M-1a bench fix: TX channel creation was previously inside the WDSP-
     // init lambda, which fires synchronously inside m_wdspEngine->initialize()
     // (above, line ~1152) — BEFORE m_connection was assigned.  Result: the
@@ -4072,6 +4112,65 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // listen to this signal so they can wire their controls now
             // that the coordinator is live.
             emit pureSignalCoordinatorReady(m_pureSignal.get());
+
+            // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): per-MAC persistence
+            // for PS-A enabled (autoCalEnabled).  Without this the toggle
+            // lives only in memory and resets on every app launch.  Key
+            // shares the same hardware/<mac>/... per-MAC scope as the
+            // AlexController TX-bypass flags landed alongside this fix.
+            //
+            // Three subtle gotchas the bench surfaced (2026-05-23):
+            //
+            //   1. MAC source: m_connection->radioInfo().macAddress is
+            //      populated asynchronously by the radio handshake and is
+            //      still EMPTY at the moment this WDSP-init lambda runs.
+            //      Use m_lastRadioInfo.macAddress (cached at the top of
+            //      connectToRadio when the user picked the radio from
+            //      discovery) instead.
+            //
+            //   2. Save flush: AppSettings::instance().setValue() updates
+            //      only the in-memory map.  scheduleSettingsSave() writes
+            //      per-slice + AlexController + TransmitModel state but
+            //      does NOT call AppSettings::instance().save(), so this
+            //      arbitrary key never reaches the XML.  Direct save() is
+            //      the right pattern for rare user-initiated writes (same
+            //      as SpotHubDialog / SpectrumWidget).
+            //
+            //   3. UniqueConnection vs lambda: Qt::UniqueConnection
+            //      requires a pointer-to-member-function slot and Qt
+            //      SILENTLY DROPS the connect when handed a lambda
+            //      (with only a runtime warning).  Idempotency across
+            //      reconnect re-wires is already safe here because
+            //      m_pureSignal is reset() on disconnect (line 6760),
+            //      so its outgoing connections die with it before the
+            //      next connect rebuilds them — no UniqueConnection
+            //      needed.
+            {
+                const QString mac = m_lastRadioInfo.macAddress;
+                if (!mac.isEmpty()) {
+                    auto& s = AppSettings::instance();
+                    const QString key = QStringLiteral(
+                        "hardware/%1/pureSignal/autoCalEnabled").arg(mac);
+                    const bool persisted =
+                        (s.value(key, QStringLiteral("False")).toString()
+                         == QStringLiteral("True"));
+                    if (persisted) {
+                        m_pureSignal->setAutoCalEnabled(true);
+                    }
+                    connect(m_pureSignal.get(),
+                            &PureSignal::autoCalEnabledChanged,
+                            this,
+                            [mac](bool on) {
+                                AppSettings::instance().setValue(
+                                    QStringLiteral(
+                                        "hardware/%1/pureSignal/autoCalEnabled")
+                                        .arg(mac),
+                                    on ? QStringLiteral("True")
+                                       : QStringLiteral("False"));
+                                AppSettings::instance().save();
+                            });
+                }
+            }
 
             // ── 3M-1c L.2 fixup: 5 TransmitModel two-tone signal connects + ──
             //                   initial-state pushes to TxChannel TXPostGen
@@ -5531,23 +5630,38 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // Auto connection: m_connection is on its worker thread, this is on
     // main, so the slot is queued onto the main thread.
     //
-    // Phase 3M-4 Task 17 chunk D — also forks the same packet to the
-    // PsccPump driver inline.  An earlier attempt connected
-    // iqDataReceived directly to PsccPump::onIqData with a second
-    // Qt::QueuedConnection, but Qt6 dispatches multi-listener queued
-    // connections by registering each slot's argument types via
-    // QMetaType — and `QVector<float>` is NOT auto-metatyped (no
-    // Q_DECLARE_METATYPE), so the second consumer was silently
-    // dropping packets and starving the connection thread's read
-    // loop (bench observed 2 s of no DDC packets → connect watchdog
-    // timeout).  Folding the call into the existing lambda avoids
-    // the metatype bootstrap entirely; PsccPump runs synchronously
-    // on the main thread alongside ReceiverManager::feedIqData.
+    // Phase 3M-4 Task 17 chunk D — receiver routing only.
+    //
+    // PsccPump no longer subscribes here.  As of the 2026-05-23 source-first
+    // rewrite it consumes RadioConnection::psPairedIqDataReceived (a
+    // packet-paired signal emitted once per multi-stream UDP packet by
+    // P2RadioConnection's deinterleave loop), wired below.  The old
+    // per-DDC fork into PsccPump::onIqData drove the legacy independent-
+    // rings architecture and could drift by ~189 samples between TX
+    // monitor and PS feedback under Qt queued-connection scheduling.
     connect(m_connection, &RadioConnection::iqDataReceived,
             this, [this](int ddcIndex, const QVector<float>& samples) {
         m_receiverManager->feedIqData(ddcIndex, samples);
+    });
+
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): source-first
+    // PS pairing.  RadioConnection emits psPairedIqDataReceived once per
+    // packet that carries both PS DDCs (P2RadioConnection.cpp deinterleave
+    // loop + future P1RadioConnection EP6 deinterleave).  Both buffers
+    // are extracted in the same xrouter-equivalent pass, mirroring Thetis
+    // sync.c:53-58 [v2.10.3.15] InboundBlock(id=1) where pscc() takes two
+    // pointers that reference per-stream buffers from the same call.
+    //
+    // QVector<float> is NOT auto-metatyped (no Q_DECLARE_METATYPE), and
+    // the connection lives on the worker thread while PsccPump lives on
+    // main — so we go through a main-thread lambda for the same reason
+    // the iqDataReceived path does.
+    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
+            this, [this](int psFbDdc, const QVector<float>& psFbSamples,
+                         int txMonDdc, const QVector<float>& txMonSamples) {
         if (m_psccPump) {
-            m_psccPump->onIqData(ddcIndex, samples);
+            m_psccPump->onPsPairedIqData(psFbDdc, psFbSamples,
+                                         txMonDdc, txMonSamples);
         }
     });
 
@@ -6039,7 +6153,14 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     // RadioStatusPage don't show "exciter = 942 mW" when 942 is the
     // raw temp ADC count.  Other boards keep the existing semantic.
     if (model != HPSDRModel::HERMESLITE) {
-        m_radioStatus.setExciterPowerMw(inTx ? static_cast<int>(exciterRaw) : 0);
+        // From Thetis console.cs:26001-26013 [v2.10.3.15] — per-model exciter scaling.
+        // ANAN_G2E and OrionMKII family use computeOrionMkIIExciterPower(); others use
+        // computeExciterPower(). Logic lives in PaTelemetryScaling::scaleExciterPowerMw().
+        // Inline tags preserved verbatim from upstream:
+        //   console.cs:26004  case HPSDRModel.ANAN_G2E: //N1GP G2E added
+        //   console.cs:26010  case HPSDRModel.REDPITAYA: //DH1KLM
+        m_radioStatus.setExciterPowerMw(
+            inTx ? static_cast<int>(scaleExciterPowerMw(model, exciterRaw)) : 0);
     } else if (!inTx) {
         m_radioStatus.setExciterPowerMw(0);
     }

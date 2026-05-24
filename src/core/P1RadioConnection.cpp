@@ -1714,6 +1714,19 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
         changed = true;
     }
 
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): latch the PS DDC
+    // pair so parseEp6Frame can emit the source-first paired signal.
+    // PsDdcConfig stores -1 when no PS pair applies (RX-only steady state);
+    // a non-negative pair means PS-MOX is engaged on this connection.
+    if (cfg.psFbDdc != m_psFbDdc) {
+        m_psFbDdc = cfg.psFbDdc;
+        changed = true;
+    }
+    if (cfg.txMonDdc != m_psTxMonDdc) {
+        m_psTxMonDdc = cfg.txMonDdc;
+        changed = true;
+    }
+
     if (changed) {
         // Flush bank 0 (carries nddc encoding) + bank 4 (ADC routing).
         // Bank 0 has highest priority; bank 4 fires next round-robin.
@@ -1725,7 +1738,9 @@ void P1RadioConnection::applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg)
             << " activeRx=" << m_activeRxCount
             << " adcCtrl=0x" << QString::number(m_adcCtrl, 16)
             << " (cntrl1=" << cfg.cntrl1 << " cntrl2=" << cfg.cntrl2 << ")"
-            << " p1DdcConfig=" << cfg.p1DdcConfig;
+            << " p1DdcConfig=" << cfg.p1DdcConfig
+            << " psFbDdc=" << m_psFbDdc
+            << " psTxMonDdc=" << m_psTxMonDdc;
     }
 }
 
@@ -2126,6 +2141,10 @@ CodecContext P1RadioConnection::buildCodecContext() const
         ctx.hl2PttHang   = 12;   // 5-bit field (bank 17 C3): 12 frames hang
         ctx.hl2TxLatency = 20;   // 7-bit field (bank 17 C4): 20 sample latency
     }
+    // From Thetis cmaster.SetADCSupply / NetworkIO.LRAudioSwap [v2.10.3.15]
+    // Per clsHardwareSpecific.cs:85-191 — forwarded to WDSP, not a P1 wire byte.
+    ctx.adcSupplyVoltage = m_hardwareProfile.adcSupplyVoltage;
+    ctx.lrAudioSwap      = m_hardwareProfile.lrAudioSwap;
     return ctx;
 }
 
@@ -2840,6 +2859,7 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             case HPSDRModel::ORIONMKII:
             case HPSDRModel::ANAN8000D:
             case HPSDRModel::ANAN7000D:
+            case HPSDRModel::ANAN_G2E: //N1GP G2E added [Thetis console.cs:25007 v2.10.3.15 grouping]
             case HPSDRModel::ANAN_G2:
             case HPSDRModel::ANAN_G2_1K:
             case HPSDRModel::ANVELINAPRO3:
@@ -2889,19 +2909,52 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     // Each valid EP6 frame constitutes the inbound leg of the EP2→EP6 exchange.
     notePingReceived();
 
+    // Materialize per-RX QVectors once (used by both the paired-emit and
+    // the per-RX loop below).  Empty entries stay empty — same gate as the
+    // legacy emit loop.
+    std::vector<QVector<float>> perRxVecs(perRx.size());
+    for (int r = 0; r < static_cast<int>(perRx.size()); ++r) {
+        if (!perRx[static_cast<size_t>(r)].empty()) {
+            perRxVecs[static_cast<size_t>(r)] = QVector<float>(
+                perRx[static_cast<size_t>(r)].begin(),
+                perRx[static_cast<size_t>(r)].end());
+        }
+    }
+
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): source-first PS
+    // pairing per Thetis sync.c:53-58 InboundBlock(id=1) [v2.10.3.15] +
+    // mi0bot networkproto1.c:549-553 [v2.10.3.13-beta2] HL2 case 4
+    // (twist(spr, 2, 3, 1)).
+    //
+    // When this EP6 frame carries both PS DDC slots (latched from
+    // applyPsDdcConfig), emit them as a single paired signal so PsccPump
+    // can call pscc() once with both buffers from the SAME deinterleave
+    // pass — no host-side ring buffering, no cross-stream drift.
+    //
+    // Issued BEFORE the per-RX iqDataReceived loop so the order of
+    // observation matches Thetis: ChannelMaster fires the PS-paired
+    // call (xrouter case 2 → InboundBlock(1)) on the same frame that
+    // feeds the regular per-RX consumers.
+    if (m_psFbDdc >= 0 && m_psTxMonDdc >= 0
+        && m_psFbDdc < static_cast<int>(perRxVecs.size())
+        && m_psTxMonDdc < static_cast<int>(perRxVecs.size())
+        && !perRxVecs[m_psFbDdc].isEmpty()
+        && !perRxVecs[m_psTxMonDdc].isEmpty()) {
+        emit psPairedIqDataReceived(m_psFbDdc,    perRxVecs[m_psFbDdc],
+                                    m_psTxMonDdc, perRxVecs[m_psTxMonDdc]);
+    }
+
     // Emit iqDataReceived for each receiver
     // Contract: hwReceiverIndex (0-based), interleaved float I/Q pairs, [-1, 1]
     // Source: RadioConnection.h:82 iqDataReceived signal
-    for (int r = 0; r < static_cast<int>(perRx.size()); ++r) {
-        if (!perRx[static_cast<size_t>(r)].empty()) {
-            QVector<float> samples(perRx[static_cast<size_t>(r)].begin(),
-                                   perRx[static_cast<size_t>(r)].end());
+    for (int r = 0; r < static_cast<int>(perRxVecs.size()); ++r) {
+        if (!perRxVecs[static_cast<size_t>(r)].isEmpty()) {
             if (!m_firstEmitLogged) {
                 m_firstEmitLogged = true;
                 qCInfo(lcConnection) << "P1: first iqDataReceived emit; rx=" << r
-                                     << "samples=" << samples.size();
+                                     << "samples=" << perRxVecs[static_cast<size_t>(r)].size();
             }
-            emit iqDataReceived(r, samples);
+            emit iqDataReceived(r, perRxVecs[static_cast<size_t>(r)]);
         }
     }
 

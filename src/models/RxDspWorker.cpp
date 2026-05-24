@@ -163,6 +163,17 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     // of WDSP wiring so the chunkDrained signal can be observed in
     // tests that don't link a real WDSP build.
     const int numSamples = interleavedIQ.size() / 2;
+    // Defensive bounds check (2026-05-22, G2E gateware-lockup recovery):
+    // a stuck-gateware radio occasionally sends malformed I/Q packets with
+    // negative or absurd payload sizes.  Without this guard the reserve()
+    // below tries to allocate hundreds of MB and crashes via Apple's
+    // heap detector (EXC_BREAKPOINT in libsystem_malloc).  P2 frames are
+    // 238 samples typically; even 1536 kHz never exceeds a few thousand
+    // per packet.  Anything wildly larger is a corrupt stream — drop it.
+    constexpr int kMaxSaneSamplesPerBatch = 65536;
+    if (numSamples <= 0 || numSamples > kMaxSaneSamplesPerBatch) {
+        return;
+    }
     m_iqAccumI.reserve(m_iqAccumI.size() + numSamples);
     m_iqAccumQ.reserve(m_iqAccumQ.size() + numSamples);
     for (int i = 0; i < numSamples; ++i) {

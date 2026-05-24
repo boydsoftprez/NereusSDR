@@ -368,7 +368,7 @@ void P1CodecStandard::bank12(const CodecContext& ctx, quint8 out[5]) const
 // UpdateDDCs().  P1CodecStandard handles every model the codec selector
 // routes through it (P1RadioConnection.cpp:1626 default branch):
 //   - HPSDR (Atlas)                      -> no PS, return zeros
-//   - HERMES, ANAN10, ANAN100            -> psDdcConfigHermesClass
+//   - HERMES, ANAN_G2E, ANAN10, ANAN100  -> psDdcConfigHermesClass
 //   - ANAN10E, ANAN100B                  -> psDdcConfigHermesIIClass
 //   - ANAN100D, ANAN200D, ORIONMKII,
 //     ANAN7000D, ANAN8000D, ANAN_G2,
@@ -405,8 +405,14 @@ PsDdcConfig P1CodecStandard::applyPureSignalDdcConfig(
                                       rx1Rate, rx2Rate, rx2Enabled,
                                       adcCtrl1, adcCtrl2);
 
-        // From Thetis console.cs:8378-8380 [v2.10.3.13]
+        // From Thetis console.cs:8386-8389 [v2.10.3.15] //N1GP G2E added:
+        //   case HPSDRModel.HERMES:
+        //   case HPSDRModel.ANAN_G2E: //N1GP G2E added
+        //   case HPSDRModel.ANAN10:
+        //   case HPSDRModel.ANAN100:
+        //       P1_rxcount = 4; nddc = 4;  (4-DDC Hermes-class branch)
         case HPSDRModel::HERMES:
+        case HPSDRModel::ANAN_G2E:  // ANAN-G2E (HermesC10) //N1GP G2E added
         case HPSDRModel::ANAN10:
         case HPSDRModel::ANAN100:
             return psDdcConfigHermesClass(psEnabled, diversityEnabled, moxState,

@@ -812,7 +812,16 @@ MainWindow::MainWindow(QWidget* parent)
         // (SIGTERM, force-quit, debugger detach) where closeEvent
         // doesn't run. Idempotent when closeEvent already flushed.
         m_shuttingDown = true;
+        // 2026-05-22 bench-finding: graceful radio disconnect MUST happen
+        // before the process tears down so the SendStop frame (run=0
+        // CmdHighPriority) actually reaches the wire.  Without this,
+        // pkill / SIGTERM / closing the window via the dock all skip
+        // P2RadioConnection::disconnect, the radio gateware never sees
+        // run=0, and lockups on the G2E require power-cycle.  Call
+        // disconnectFromRadio FIRST so its 20 ms flush+sleep runs before
+        // any other shutdown cleanup.
         if (m_radioModel) {
+            m_radioModel->disconnectFromRadio();
             m_radioModel->flushPendingSettingsSave();
         }
         if (m_containerManager) {

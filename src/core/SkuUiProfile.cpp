@@ -161,6 +161,24 @@ SkuUiProfile skuUiProfileFor(HPSDRModel sku)
         p.antennaTabLabel = QStringLiteral("Ant/Filters");
         break;
 
+    case HPSDRModel::ANAN_G2E:
+        // From Thetis setup.cs:19904-19929 [v2.10.3.15] //N1GP G2E added —
+        // G2E shares the G2 / 7000D checkbox set with one override:
+        // chkEXT2OutOnTx.Text re-labeled to "Rx BYPASS on Tx" at setup.cs:19929.
+        // Both EXT1/EXT2 checkboxes are visible (G2E falls into the else branch
+        // at setup.cs:6299 — not the 7000D/G2/G2_1K block — so both are shown).
+        p.hasExt1OutOnTx  = true;
+        p.hasExt2OutOnTx  = true;
+        p.hasRxOutOnTx    = false;
+        p.hasRxBypassUi   = false;
+        p.rxOnlyLabels    = {QStringLiteral("BYPS"),   // setup.cs:19923
+                             QStringLiteral("EXT1"),   // setup.cs:19924
+                             QStringLiteral("XVTR")};  // setup.cs:19925
+        p.antennaTabLabel = QStringLiteral("Ant/Filters");
+        p.ext1OutOnTxLabel = QStringLiteral("Ext 1 on Tx");       // setup.cs:19928
+        p.ext2OutOnTxLabel = QStringLiteral("Rx BYPASS on Tx");   // setup.cs:19929 //N1GP G2E added
+        break;
+
     case HPSDRModel::ANAN8000D:
     case HPSDRModel::ANAN_G2_1K:
         // Thetis setup.cs:20148-20200, 20253-20303 — 8000D / G2 1K hide all

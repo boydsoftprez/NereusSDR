@@ -1,7 +1,8 @@
-// no-port-check: test file — verifies NereusSDR::scaleFwdPowerWatts() and
-// NereusSDR::scaleFwdRevVoltage() output values; the Thetis source reference
-// is a citation in the docstring, not a derivation claim. The ported
-// functions themselves are registered in THETIS-PROVENANCE.md.
+// no-port-check: test file — verifies NereusSDR::scaleFwdPowerWatts(),
+// NereusSDR::scaleFwdRevVoltage(), and NereusSDR::scaleExciterPowerMw()
+// output values; the Thetis source references are citations in the
+// docstrings, not derivation claims. The ported functions themselves are
+// registered in THETIS-PROVENANCE.md.
 // =================================================================
 // tests/tst_pa_telemetry_scaling.cpp  (NereusSDR)
 // =================================================================
@@ -37,11 +38,23 @@ private slots:
     void unknown_model_fwd_watts_uses_default_branch();
     void zero_raw_returns_zero_watts();
 
+    // ─── ANAN_G2E (D2: joins ANAN7000D/G2/ANVELINAPRO3/REDPITAYA fwd triplet) ─
+    void anan_g2e_fwd_uses_anan7000d_triplet();
+
     // ─── scaleFwdRevVoltage (FWD-side per-board curve) ───────────────────
     void hermes_fwd_rev_voltage_two_raw_values();
     void orionMkII_fwd_rev_voltage_two_raw_values();
     void ananG2_fwd_rev_voltage_two_raw_values();
     void hl2_fwd_rev_voltage_two_raw_values();
+
+    // ─── scaleExciterPowerMw (F1: ANAN_G2E joins OrionMKII family) ──────────
+    // From Thetis console.cs:25179-25237 (computeOrionMkIIExciterPower) and
+    // console.cs:25120-25178 (computeExciterPower) and dispatch switch
+    // at console.cs:26001-26013 [v2.10.3.15]. //N1GP G2E added //DH1KLM
+    void anan_g2e_exciter_uses_orion_mkii_curve();
+    void orionmkii_exciter_matches_anan_g2e();
+    void default_board_exciter_uses_low_power_curve();
+    void anan_g2e_exciter_at_zero_is_zero();
 
     // ─── scaleHermesLiteTempCelsius (port of mi0bot _MKIIHL2Temp formula) ─
     void hl2_temp_at_zero_raw_is_minus_fifty_c();
@@ -230,6 +243,106 @@ void TestPaTelemetryScaling::hl2_temp_at_full_scale_is_about_two_seventy_six_c()
     const double t = scaleHermesLiteTempCelsius(4095);
     QVERIFY2(t > 275.5 && t < 276.0,
              qPrintable(QString("HL2 raw=4095 temp=%1°C, expected ~275.92").arg(t)));
+}
+
+// ANAN_G2E joins the ANAN7000D / ANAN_G2 / ANVELINAPRO3 / REDPITAYA group.
+// Triplet: bridge_volt=0.12, refvoltage=5.0, adc_cal_offset=32.
+// Ported in PaTelemetryScaling.cpp; Thetis attribution there.
+//
+// Spot-check at raw=2048:
+//   volts = (2048-32)/4095*5.0 = 2.4615...
+//   watts = 2.4615^2 / 0.12   = 50.49 W (approx)
+//
+// Verify: result matches ANAN_G2 (both in same triplet group).
+void TestPaTelemetryScaling::anan_g2e_fwd_uses_anan7000d_triplet()
+{
+    // G2E and G2 share the {0.12, 5.0, 32} fwd triplet.
+    // Thetis cites are in PaTelemetryScaling.cpp (//N1GP G2E added //DH1KLM).
+    const double w_g2e  = scaleFwdPowerWatts(HPSDRModel::ANAN_G2E, 2048);
+    const double w_g2   = scaleFwdPowerWatts(HPSDRModel::ANAN_G2,  2048);
+    QCOMPARE(w_g2e, w_g2);
+
+    // Verify G2E does NOT fall through to the default {0.09, 3.3, 6} branch.
+    const double w_def = scaleFwdPowerWatts(HPSDRModel::FIRST, 2048);
+    QVERIFY2(qAbs(w_g2e - w_def) > 5.0,
+             qPrintable(QString("G2E (%1) should differ from default (%2) by >5 W")
+                        .arg(w_g2e).arg(w_def)));
+
+    // Pinned magnitude check: ~50.5 W at raw=2048.
+    QVERIFY2(w_g2e > 50.0 && w_g2e < 51.0,
+             qPrintable(QString("G2E raw=2048 watts=%1, expected ~50.5").arg(w_g2e)));
+}
+
+// ─── scaleExciterPowerMw ─────────────────────────────────────────────────
+//
+// F1 ANAN-G2E port: ANAN_G2E joins OrionMKII / ANAN7000D / ANAN8000D /
+// ANAN_G2 / ANAN_G2_1K / ANVELINAPRO3 / REDPITAYA in computeOrionMkIIExciterPower().
+// From Thetis console.cs:26001-26013 [v2.10.3.15] — dispatch switch.
+// //N1GP G2E added (console.cs:26004)  //DH1KLM (console.cs:26007)
+//
+// computeOrionMkIIExciterPower breakpoints (from console.cs:25179-25237
+// [v2.10.3.15]):
+//   adcCounts <= 60:   result = 0.0
+//   60 < adc <= 580:   result = (adc - 60) * 0.097656
+//   ...  (see PaTelemetryScaling.cpp for full table)
+//
+// Spot-check at adc=905 (boundary of first two inner segments):
+//   result = 50.0 + ((905-580) * 0.153846) = 50.0 + 50.0 = 100.0 mW exactly
+// Spot-check at adc=1340 (boundary of outer segments):
+//   result = 200.0 + ((1340-1340) * 0.294118) = 200.0 mW exactly
+
+void TestPaTelemetryScaling::anan_g2e_exciter_uses_orion_mkii_curve()
+{
+    // G2E should use the OrionMkII piecewise curve.
+    // At adc=905, result must be exactly 100 mW (segment boundary).
+    const float mw_g2e_905 = scaleExciterPowerMw(HPSDRModel::ANAN_G2E, 905);
+    QVERIFY2(qAbs(static_cast<double>(mw_g2e_905) - 100.0) < 0.1,
+             qPrintable(QString("G2E adc=905 mW=%1, expected ~100.0").arg(mw_g2e_905)));
+
+    // G2E must NOT equal the low-power (default) curve at the same point.
+    // computeExciterPower at adc=905: adc=905 is in the 874..1380 segment
+    //   result = 50.0 + ((905-874) * 0.098814) = 50.0 + 3.063 = 53.063 mW
+    const float mw_default_905 = scaleExciterPowerMw(HPSDRModel::FIRST, 905);
+    QVERIFY2(qAbs(static_cast<double>(mw_g2e_905 - mw_default_905)) > 40.0,
+             qPrintable(QString("G2E (%1) and default (%2) should differ by >40 mW at adc=905")
+                        .arg(mw_g2e_905).arg(mw_default_905)));
+}
+
+void TestPaTelemetryScaling::orionmkii_exciter_matches_anan_g2e()
+{
+    // OrionMKII and ANAN_G2E use the same curve; their outputs must be identical.
+    for (quint16 raw : {quint16(0), quint16(60), quint16(580), quint16(905),
+                        quint16(1340), quint16(1680), quint16(1950), quint16(4095)}) {
+        const float mw_orion = scaleExciterPowerMw(HPSDRModel::ORIONMKII, raw);
+        const float mw_g2e   = scaleExciterPowerMw(HPSDRModel::ANAN_G2E, raw);
+        QVERIFY2(qAbs(static_cast<double>(mw_orion - mw_g2e)) < 0.001,
+                 qPrintable(QString("OrionMKII (%1) != G2E (%2) at raw=%3")
+                            .arg(mw_orion).arg(mw_g2e).arg(raw)));
+    }
+}
+
+void TestPaTelemetryScaling::default_board_exciter_uses_low_power_curve()
+{
+    // HERMES / ANAN100 etc. fall to computeExciterPower (default branch).
+    // At adc=98, result=0 (dead-zone).
+    // At adc=874, boundary: result = (874-98)*0.065703 = 50.98... mW ≈ 51.0 mW.
+    const float mw_at_98 = scaleExciterPowerMw(HPSDRModel::HERMES, 98);
+    QCOMPARE(mw_at_98, 0.0f);
+
+    const float mw_at_874 = scaleExciterPowerMw(HPSDRModel::HERMES, 874);
+    // (874-98)*0.065703 = 776 * 0.065703 = 50.985... mW
+    QVERIFY2(mw_at_874 > 50.0f && mw_at_874 < 52.0f,
+             qPrintable(QString("HERMES adc=874 mW=%1, expected ~51.0").arg(mw_at_874)));
+}
+
+void TestPaTelemetryScaling::anan_g2e_exciter_at_zero_is_zero()
+{
+    // adc <= 60 → result=0 for OrionMkII curve.
+    QCOMPARE(scaleExciterPowerMw(HPSDRModel::ANAN_G2E, 0),   0.0f);
+    QCOMPARE(scaleExciterPowerMw(HPSDRModel::ANAN_G2E, 60),  0.0f);
+    QCOMPARE(scaleExciterPowerMw(HPSDRModel::ORIONMKII, 0),  0.0f);
+    QCOMPARE(scaleExciterPowerMw(HPSDRModel::ANAN_G2E, 61),
+             scaleExciterPowerMw(HPSDRModel::ORIONMKII, 61));
 }
 
 QTEST_GUILESS_MAIN(TestPaTelemetryScaling)

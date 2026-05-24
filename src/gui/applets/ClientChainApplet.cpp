@@ -36,6 +36,7 @@
 #include <QCheckBox>
 #include <QDateTime>
 #include <QFontDatabase>
+#include <QScopedValueRollback>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -381,8 +382,31 @@ void ClientChainApplet::rebuildRows()
         return;
     }
 
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): re-entrancy guard.  The 1Hz
+    // refresh timer used to race with widget destruction — if a second tick
+    // fires while the previous rebuild is still tearing down QLabels, the
+    // second teardown reads a half-destroyed QTextDocument's HarfBuzz
+    // buffer and SIGSEGVs in hb_buffer_destroy.  Crash report:
+    //   /Users/j.j.boyd/Library/Logs/DiagnosticReports/
+    //     NereusSDR-2026-05-23-130427.ips
+    if (m_rebuildInProgress) {
+        return;
+    }
+    QScopedValueRollback<bool> guard(m_rebuildInProgress, true);
+
     // Remove all items except m_emptyStatePanel and the trailing stretch.
     // Iterate in reverse so indices stay valid while we remove.
+    //
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): switch from synchronous
+    // `delete w` to `w->deleteLater()`.  Synchronous delete inside a timer
+    // slot tears down child QTextDocument / QTextLayout / HarfBuzz buffers
+    // while the same widget's text-shaping pipeline may still be in flight
+    // from a prior style-sheet / tooltip / focus update — the QLabel
+    // destructor calls QWidgetTextControl::~QWidgetTextControl() which
+    // walks the QTextDocumentPrivate fragment map and frees HarfBuzz
+    // buffers that another event-loop slot is concurrently shaping.
+    // deleteLater() defers the destruction to the next event-loop
+    // iteration when text shaping is quiescent.
     for (int i = m_rowsLayout->count() - 1; i >= 0; --i) {
         QLayoutItem* item = m_rowsLayout->itemAt(i);
         if (!item) {
@@ -393,7 +417,12 @@ void ClientChainApplet::rebuildRows()
             continue;
         }
         m_rowsLayout->removeItem(item);
-        delete w;
+        // Hide immediately so the user doesn't see a half-stale row until
+        // the deferred delete runs.  Detach from parent so the layout
+        // doesn't see the widget in subsequent insertWidget() calls.
+        w->setParent(nullptr);
+        w->hide();
+        w->deleteLater();
         delete item;
     }
 

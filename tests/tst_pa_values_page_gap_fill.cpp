@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 
+#include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
 #include "core/PaTelemetryScaling.h"
 #include "core/RadioConnection.h"
@@ -102,6 +103,13 @@ private slots:
     void reset_clears_peak_min_to_current();
     void reset_signal_subscription_clears_peak_min();
     void labels_show_default_text_with_no_telemetry();
+
+    // ── D5: PaValuesPage volts/amps label visibility per BoardCapabilities ──
+    // From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15] HasVolts/HasAmps.
+    // //N1GP G2E added (lines 250/260 [v2.10.3.15])
+    void pa_current_label_hidden_when_no_amps_telemetry();
+    void supply_volts_label_hidden_when_no_volts_telemetry();
+    void pa_current_and_supply_volts_visible_when_both_telemetry();
 };
 
 // ---------------------------------------------------------------------------
@@ -307,6 +315,86 @@ void TstPaValuesPageGapFill::labels_show_default_text_with_no_telemetry()
     QCOMPARE(page.fwdRawTextForTest(),     QStringLiteral("0.00 W"));
     QCOMPARE(page.fwdVoltageTextForTest(), QStringLiteral("0.00 V"));
     QCOMPARE(page.revVoltageTextForTest(), QStringLiteral("0.00 V"));
+}
+
+// ---------------------------------------------------------------------------
+// D5: PaValuesPage volts/amps label visibility per BoardCapabilities.
+//
+// From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15]:
+//   HasAmps: ANAN7000D / ANAN8000D / ANVELINAPRO3 / ANAN_G2E //N1GP G2E added
+//            / ANAN_G2 / ANAN_G2_1K / REDPITAYA
+//   HasVolts: same set
+// Boards with hasPaProfile=true but without the voltage/current sensors
+// (e.g. ANAN100, ORIONMKII) must hide those specific rows.
+// ---------------------------------------------------------------------------
+
+// Helper: build a BoardCapabilities with hasPaProfile=true and the volts/amps
+// flags set by the caller.  All other fields are safe defaults.
+namespace {
+BoardCapabilities makePaValuesCaps(bool hasPaAmpsTelemetry,
+                                    bool hasPaVoltsTelemetry)
+{
+    BoardCapabilities c{};
+    c.board               = HPSDRHW::Unknown;
+    c.protocol            = ProtocolVersion::Protocol1;
+    c.hasPaProfile        = true;       // required for any PA label to be shown
+    c.hasPaAmpsTelemetry  = hasPaAmpsTelemetry;
+    c.hasPaVoltsTelemetry = hasPaVoltsTelemetry;
+    return c;
+}
+} // namespace
+
+// Test D5-A: boards with hasPaAmpsTelemetry=false must hide the PA current row.
+// From Thetis clsHardwareSpecific.cs:255-264 [v2.10.3.15] HasAmps.
+// //N1GP G2E added (line 260)
+void TstPaValuesPageGapFill::pa_current_label_hidden_when_no_amps_telemetry()
+{
+    RadioModel model;
+    PaValuesPage page(&model);
+
+    const BoardCapabilities caps =
+        makePaValuesCaps(/*hasPaAmpsTelemetry=*/false,
+                         /*hasPaVoltsTelemetry=*/true);
+    page.applyCapabilityVisibility(caps);
+
+    QVERIFY2(!page.isPaCurrentRowVisibleForTest(),
+             "PA current row must be hidden when hasPaAmpsTelemetry=false");
+}
+
+// Test D5-B: boards with hasPaVoltsTelemetry=false must hide the supply volts row.
+// From Thetis clsHardwareSpecific.cs:245-254 [v2.10.3.15] HasVolts.
+// //N1GP G2E added (line 250)
+void TstPaValuesPageGapFill::supply_volts_label_hidden_when_no_volts_telemetry()
+{
+    RadioModel model;
+    PaValuesPage page(&model);
+
+    const BoardCapabilities caps =
+        makePaValuesCaps(/*hasPaAmpsTelemetry=*/true,
+                         /*hasPaVoltsTelemetry=*/false);
+    page.applyCapabilityVisibility(caps);
+
+    QVERIFY2(!page.isSupplyVoltsRowVisibleForTest(),
+             "Supply volts row must be hidden when hasPaVoltsTelemetry=false");
+}
+
+// Test D5-C: boards with both flags true (e.g. ANAN_G2E) must show both rows.
+// From Thetis clsHardwareSpecific.cs:245-264 [v2.10.3.15] HasVolts/HasAmps.
+// //N1GP G2E added (lines 250 and 260)
+void TstPaValuesPageGapFill::pa_current_and_supply_volts_visible_when_both_telemetry()
+{
+    RadioModel model;
+    PaValuesPage page(&model);
+
+    const BoardCapabilities caps =
+        makePaValuesCaps(/*hasPaAmpsTelemetry=*/true,
+                         /*hasPaVoltsTelemetry=*/true);
+    page.applyCapabilityVisibility(caps);
+
+    QVERIFY2(page.isPaCurrentRowVisibleForTest(),
+             "PA current row must be visible when hasPaAmpsTelemetry=true");
+    QVERIFY2(page.isSupplyVoltsRowVisibleForTest(),
+             "Supply volts row must be visible when hasPaVoltsTelemetry=true");
 }
 
 QTEST_MAIN(TstPaValuesPageGapFill)

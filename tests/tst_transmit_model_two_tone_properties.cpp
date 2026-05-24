@@ -26,9 +26,14 @@
 //     Checked default=false (no Checked= line in Designer)
 //
 // Pre-code review §2.3 + design spec §4.4 — NereusSDR-original safer
-// numeric defaults: TwoToneLevel=-6 dB, TwoTonePower=50% (vs Thetis Designer
-// 0 dB / 10%); ranges and TwoToneInvert default match Thetis Designer per
-// option C decision.
+// numeric defaults: TwoToneLevel=-6 dB; ranges and TwoToneInvert default
+// match Thetis Designer per option C decision.
+//
+// 2026-05-23 update: TwoTonePower default reverted from 50% to 10% per
+// Thetis setup.designer.cs:62236 [v2.10.3.13] udTwoToneLevel.DefaultValue=10
+// (bench-fix tail of the G2E PureSignal landing).  The earlier 50%
+// NereusSDR-original was a 5x over-drive on the first Two-tone press
+// relative to the Thetis baseline.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -69,13 +74,18 @@ private slots:
         QCOMPARE(t.twoToneLevel(), 0.0);
     }
 
-    void default_twoTonePower_is50() {
-        // NereusSDR-original default: 50%.
-        // Thetis Designer udTestIMDPower.Value = 10% at startup.
-        // NereusSDR uses 50% per design spec §4.4 / pre-code review §2.3
-        // (option C — typical IMD test power level).
+    void default_twoTonePower_is10() {
+        // Thetis Designer udTestIMDPower.Value = 10 at startup
+        // (setup.designer.cs:62236 [v2.10.3.13]).
+        //
+        // 2026-05-23 update: previously NereusSDR-original 50% per design
+        // spec §4.4 / pre-code review §2.3 (option C — "typical IMD test
+        // power level").  Reverted to Thetis-faithful 10 alongside the
+        // G2E PureSignal landing — the 50% default was a 5x over-drive
+        // on the first Two-tone press, which on a G2E + 100 W amp hit
+        // the PA hard before the user had a chance to back off.
         TransmitModel t;
-        QCOMPARE(t.twoTonePower(), 50);
+        QCOMPARE(t.twoTonePower(), 10);
     }
 
     void default_twoToneFreq2Delay_is0() {
@@ -197,7 +207,7 @@ private slots:
     void idempotent_twoTonePower_atDefault_noSignal() {
         TransmitModel t;
         QSignalSpy spy(&t, &TransmitModel::twoTonePowerChanged);
-        t.setTwoTonePower(50);  // matches default
+        t.setTwoTonePower(10);  // matches Thetis-faithful default (2026-05-23)
         QCOMPARE(spy.count(), 0);
     }
 

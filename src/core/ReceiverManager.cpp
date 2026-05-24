@@ -502,6 +502,24 @@ void ReceiverManager::updateDdcAssignment()
         return;
     }
 
+    // BENCH DIAG (G2E PS rate-flap): log every updateDdcAssignment fire with
+    // input state + output rates so we can see what's flipping rate[0] between
+    // PS rate (192k) and user rate (768k) during MOX-active windows.  Remove
+    // once PS lock works on G2E.
+    qCInfo(lcReceiver).nospace()
+        << "DDCAssign fire: psEn=" << m_psEnabled
+        << " mox=" << m_moxState
+        << " div=" << m_diversityEnabled
+        << " rx1Rate=" << m_rx1Rate
+        << " rx2Rate=" << m_rx2Rate
+        << " rx2En=" << m_rx2Enabled
+        << " adcCtrl1=" << static_cast<int>(m_rxAdcCtrl1)
+        << " → cfg.rate[0]=" << config.rate[0]
+        << " rate[1]=" << config.rate[1]
+        << " rate[2]=" << config.rate[2]
+        << " ddcEn=" << static_cast<int>(config.ddcEnable)
+        << " syncEn=" << static_cast<int>(config.syncEnable);
+
     emit ddcConfigChanged(config);
 }
 

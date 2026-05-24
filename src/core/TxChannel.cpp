@@ -2960,6 +2960,16 @@ void TxChannel::driveOneTxBlockFromInterleaved(const double* interleavedIn)
     // sendTxIq, which still uses the float* SPSC ring layout.
     // Without HAVE_WDSP, m_out stays all-zeros (silence stream) — keeps
     // the ring warm in stub builds.
+    //
+    // NOTE on xtxgain: Thetis cmaster.cs:1118-1122 [v2.10.3.13]
+    // CMSetTXOutputLevelRun sets `run = false` unconditionally (the
+    // commented-out original logic referenced PennyLanePresent which is
+    // legacy hardware not present on modern radios).  Therefore Thetis's
+    // xtxgain (ChannelMaster/txgain.c:66-77) takes the memcpy(out, in)
+    // branch and Igain/Qgain are NOT applied to the I/Q stream.  Only the
+    // CmdHighPriority drive_level byte (= int(255 * audio_volume * 1.02))
+    // attenuates output power.  Matching that behaviour here: pass-through
+    // double → float, no IQ scaling.
     for (int i = 0; i < outN; ++i) {
         m_outInterleavedFloat[static_cast<size_t>(2 * i + 0)] =
             static_cast<float>(m_out[static_cast<size_t>(2 * i + 0)]);
