@@ -207,19 +207,22 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
 } // namespace
 
 PortAudioBus::PortAudioBus() {
-    // 50 ms stereo float ring (2400 stereo frames * 2 channels = 4800 floats)
-    // at the nominal 48 kHz device rate.  Sized for lowest perceptible
-    // display-vs-audio latency while leaving roughly 5x headroom over the
-    // typical CoreAudio low-latency callback (~10 ms / 480 frames).  The
-    // writer modulo-wraps as before; the reader (paCallback) detects when
-    // the writer has stomped on its read position and skips forward to the
-    // oldest still-valid sample, producing drop-oldest overrun semantics.
-    // Audible result of a CPU stall or clock-drift overflow: a brief
-    // silence gap rather than scrambled bytes.  Pre-fix the ring was
-    // 48000 * 2 (1 second) with no overrun handling, which made the
-    // display drift up to a full second ahead of audio and produced the
-    // "audio replays" symptom on stall recovery.
-    m_ring.resize(2400 * 2);
+    // 200 ms stereo float ring (9600 stereo frames * 2 channels = 19200
+    // floats) at the nominal 48 kHz device rate.  Bumped from the initial
+    // 50 ms after bench showed audio jittered under CPU contention on
+    // the bench Mac: 50 ms left almost no headroom for scheduler
+    // hiccups, so drop-oldest fired audibly.  200 ms is still well
+    // below the 1-second pre-fix bug while giving enough cushion that
+    // routine paint spikes do not bleed into audio.  The writer
+    // modulo-wraps as before; the reader (paCallback) detects when the
+    // writer has stomped on its read position and skips forward to the
+    // oldest still-valid sample.  Drop-oldest overrun semantics: a
+    // CPU stall produces a brief silence gap rather than scrambled
+    // bytes.  Pre-fix the ring was 48000 * 2 (1 second) with no overrun
+    // handling, which made the display drift up to a full second ahead
+    // of audio and produced the "audio replays" symptom on stall
+    // recovery.
+    m_ring.resize(9600 * 2);
 }
 
 PortAudioBus::~PortAudioBus() {
