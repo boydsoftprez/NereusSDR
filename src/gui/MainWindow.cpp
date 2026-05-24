@@ -280,6 +280,7 @@ warren@wpratt.com
 #include "applets/AppletPanelWidget.h"
 #include "SMeterWidget.h"            // Task 41 (Phase 3P-II): SMeterWidget header wiring
 #include "applets/AmpApplet.h"
+#include "applets/AppletVisibilityController.h"
 #include "applets/RxApplet.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
@@ -2422,39 +2423,31 @@ void MainWindow::populateDefaultMeter()
         m_radioModel->boardCapabilities().hasPureSignal);
 
     // Phase 23: TCI applets — live in Container #0 below the existing applets.
-    // Visibility default from AppSettings (TciApplet_Visible / ClientChainApplet_Visible).
+    // Visibility is now managed by AppletVisibilityController below
+    // (registered as ids "Tci" + "ClientChain", keys AppletTciVisible +
+    // AppletClientChainVisible). Legacy keys TciApplet_Visible /
+    // ClientChainApplet_Visible from earlier versions become orphans on
+    // upgrade; existing users get TCI applets back to default-visible.
 #ifdef HAVE_WEBSOCKETS
     if (m_tciServer) {
-        {
-            auto& s = AppSettings::instance();
-            const bool vis = s.value(QStringLiteral("TciApplet_Visible"),
-                                     QStringLiteral("True")).toString()
-                             == QStringLiteral("True");
-            m_tciApplet = new TciApplet(m_tciServer, nullptr);
-            panel->addApplet(m_tciApplet);
-            m_tciApplet->setVisible(vis);
-            connect(m_tciApplet, &TciApplet::setupRequested,
-                    this, &MainWindow::openTciSetupPage);
-            // showClientsRequested: scroll/show the ClientChainApplet.
-            // ClientChainApplet is constructed immediately below, so capture
-            // by pointer — the lambda runs only after full construction.
-            connect(m_tciApplet, &TciApplet::showClientsRequested,
-                    this, [this]() {
-                        if (m_clientChainApplet) {
-                            m_clientChainApplet->setVisible(true);
-                            m_clientChainApplet->raise();
-                        }
-                    });
-        }
-        {
-            auto& s = AppSettings::instance();
-            const bool vis = s.value(QStringLiteral("ClientChainApplet_Visible"),
-                                     QStringLiteral("True")).toString()
-                             == QStringLiteral("True");
-            m_clientChainApplet = new ClientChainApplet(m_tciServer, nullptr);
-            panel->addApplet(m_clientChainApplet);
-            m_clientChainApplet->setVisible(vis);
-        }
+        m_tciApplet = new TciApplet(m_tciServer, nullptr);
+        panel->addApplet(m_tciApplet);
+        connect(m_tciApplet, &TciApplet::setupRequested,
+                this, &MainWindow::openTciSetupPage);
+        // showClientsRequested: scroll/show the ClientChainApplet.
+        // ClientChainApplet is constructed immediately below, so capture
+        // by pointer — the lambda runs only after full construction.
+        connect(m_tciApplet, &TciApplet::showClientsRequested,
+                this, [this]() {
+                    if (m_clientChainApplet && m_appletVis) {
+                        m_appletVis->setVisible(
+                            QStringLiteral("ClientChain"), true);
+                        m_clientChainApplet->raise();
+                    }
+                });
+
+        m_clientChainApplet = new ClientChainApplet(m_tciServer, nullptr);
+        panel->addApplet(m_clientChainApplet);
     }
 #endif
 
@@ -2509,6 +2502,171 @@ void MainWindow::populateDefaultMeter()
                 m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifying);
             }
         });
+    }
+
+    // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
+    // NereusSDR-original. Backs the show/hide menu surfaces.
+    //
+    // Registered applets get a checkable menu entry in Containers > Applets
+    // AND in the right-side panel's ☰ banner menu. Add new entries here as
+    // additional applets ship.
+    //
+    // RadeApplet caveat: its visibility is mode-driven (auto-shown when
+    // the active slice is in DSPMode::RADE_U/_L; hidden otherwise) via
+    // the dspModeChanged lambda further down. The menu toggle here is a
+    // user override that lasts until the next mode change repopulates
+    // visibility. Acceptable for v1; tighter integration is a follow-up.
+    m_appletVis = new AppletVisibilityController(this);
+
+    m_appletsById[QStringLiteral("Rx")]         = m_rxApplet;
+    m_appletsById[QStringLiteral("Tx")]         = m_txApplet;
+    m_appletsById[QStringLiteral("PhoneCw")]    = m_phoneCwApplet;
+    m_appletsById[QStringLiteral("Rade")]       = m_radeApplet;
+    m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
+    m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
+    m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
+    m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
+#ifdef HAVE_WEBSOCKETS
+    if (m_tciApplet) {
+        m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
+    }
+    if (m_clientChainApplet) {
+        m_appletsById[QStringLiteral("ClientChain")] = m_clientChainApplet;
+    }
+#endif
+
+    // Display names match each applet's appletTitle() — keep in sync if
+    // an applet's title changes.
+    //
+    // PureSignal defaults to visible. The existing onConnectionStateChanged
+    // handler still calls m_pureSignalApplet->setVisible(caps.hasPureSignal)
+    // on radio connect, which can hide the inner widget on HL2/Atlas; the
+    // menu entry stays available for users who want to force-show or
+    // permanently hide it. Defaulting to true here means new G2 users see
+    // PS immediately without having to discover the menu toggle.
+    m_appletVis->registerApplet(QStringLiteral("Rx"),
+                                QStringLiteral("RX"),           true);
+    m_appletVis->registerApplet(QStringLiteral("Tx"),
+                                QStringLiteral("TX"),           true);
+    m_appletVis->registerApplet(QStringLiteral("PhoneCw"),
+                                QStringLiteral("Phone / CW"),   true);
+    // RADE: defaultVisible=true (user pref). Actual visibility is gated
+    // on the active slice's mode via the availability axis — the
+    // dspModeChanged lambda below calls setAvailable(true) only when
+    // mode is DSPMode::RADE_U/_L. Initial availability set to false here
+    // since the default startup mode is USB; the mode lambda fires
+    // shortly after to correct it if needed.
+    m_appletVis->registerApplet(QStringLiteral("Rade"),
+                                QStringLiteral("RADE"),         true);
+    m_appletVis->registerApplet(QStringLiteral("Vax"),
+                                QStringLiteral("VAX"),          true);
+    m_appletVis->registerApplet(QStringLiteral("PureSignal"),
+                                QStringLiteral("PureSignal"),   true);
+    m_appletVis->registerApplet(QStringLiteral("Amp"),
+                                QStringLiteral("Power Genius"), true);
+    m_appletVis->registerApplet(QStringLiteral("Tuner"),
+                                QStringLiteral("Tuner Genius"), true);
+#ifdef HAVE_WEBSOCKETS
+    if (m_tciApplet) {
+        m_appletVis->registerApplet(QStringLiteral("Tci"),
+                                    QStringLiteral("TCI Server"),  true);
+    }
+    if (m_clientChainApplet) {
+        m_appletVis->registerApplet(QStringLiteral("ClientChain"),
+                                    QStringLiteral("TCI Clients"), true);
+    }
+#endif
+
+    // Capability gates: applets that depend on an external feature flag
+    // get their availability set here. When availability is false, the
+    // applet is hidden AND its menu entries are greyed out. The user's
+    // persisted visibility preference is preserved across availability
+    // changes (so re-enabling 4O3A pops the applet back if the user
+    // wanted it visible).
+    const bool fourO3AOn = m_radioModel && m_radioModel->fourO3AEnabled();
+    m_appletVis->setAvailable(QStringLiteral("Amp"),   fourO3AOn);
+    m_appletVis->setAvailable(QStringLiteral("Tuner"), fourO3AOn);
+    // RADE: available only in RADE_U / RADE_L modes. Startup mode is
+    // USB, so initial availability=false. The dspModeChanged lambda
+    // below updates this on every mode change.
+    m_appletVis->setAvailable(QStringLiteral("Rade"),  false);
+
+    // Apply initial visibility state from the controller (in case
+    // AppSettings already had values from a prior session).
+    // Uses effective visibility (user pref AND available).
+    for (const QString& id : m_appletVis->registeredIds()) {
+        if (auto* a = m_appletsById.value(id, nullptr)) {
+            panel->setAppletVisible(a, m_appletVis->isEffectivelyVisible(id));
+        }
+    }
+
+    // Pump future EFFECTIVE-visibility changes from the controller into
+    // the panel. effectiveVisibilityChanged fires when either the user
+    // toggle or the availability gate flips the net visibility, so we
+    // catch both menu clicks and external capability changes (e.g. 4O3A).
+    connect(m_appletVis, &AppletVisibilityController::effectiveVisibilityChanged,
+            this, [this](const QString& id, bool effective) {
+        if (auto* a = m_appletsById.value(id, nullptr)) {
+            if (m_appletPanel) {
+                m_appletPanel->setAppletVisible(a, effective);
+            }
+        }
+    });
+
+    // Live-track 4O3A master toggle so Amp/Tuner availability updates
+    // without an app restart. RadioModel::setFourO3AEnabled emits the
+    // signal whenever the persisted value changes.
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::fourO3AEnabledChanged,
+                this, [this](bool enabled) {
+            if (!m_appletVis) { return; }
+            m_appletVis->setAvailable(QStringLiteral("Amp"),   enabled);
+            m_appletVis->setAvailable(QStringLiteral("Tuner"), enabled);
+        });
+    }
+
+    // ── Banner ☰ menu on AppletPanelWidget ──────────────────────────────
+    if (m_appletVis && m_appletPanel) {
+        m_bannerAppletsMenu = new QMenu(this);
+
+        for (const QString& id : m_appletVis->registeredIds()) {
+            QAction* act = m_bannerAppletsMenu->addAction(
+                m_appletVis->displayName(id));
+            act->setCheckable(true);
+            act->setChecked(m_appletVis->isVisible(id));
+            // Grey out the entry when the applet is currently unavailable
+            // (e.g. Amp/Tuner when 4O3A is disabled). The check state still
+            // reflects the user preference so re-enabling restores it.
+            act->setEnabled(m_appletVis->isAvailable(id));
+            // User-visible tooltip — plain English.
+            act->setToolTip(QStringLiteral("Show or hide the %1 applet")
+                            .arg(m_appletVis->displayName(id)));
+
+            connect(act, &QAction::toggled, this, [this, id](bool checked) {
+                if (m_appletVis) { m_appletVis->setVisible(id, checked); }
+            });
+            m_bannerAppletActions.insert(id, act);
+        }
+
+        // Sync banner checkmarks when state changes elsewhere (top menu).
+        connect(m_appletVis, &AppletVisibilityController::visibilityChanged,
+                this, [this](const QString& id, bool visible) {
+            if (auto* act = m_bannerAppletActions.value(id, nullptr)) {
+                QSignalBlocker block(act);
+                act->setChecked(visible);
+            }
+        });
+
+        // Grey/un-grey banner entries when an applet's availability
+        // changes (e.g. 4O3A master toggle flipped).
+        connect(m_appletVis, &AppletVisibilityController::availabilityChanged,
+                this, [this](const QString& id, bool available) {
+            if (auto* act = m_bannerAppletActions.value(id, nullptr)) {
+                act->setEnabled(available);
+            }
+        });
+
+        m_appletPanel->setBannerMenu(m_bannerAppletsMenu);
     }
 
     // Ghost applets: constructed but not added to the panel or the Containers menu
@@ -2818,58 +2976,13 @@ void MainWindow::buildMenuBar()
         }
     }
 
-    viewMenu->addSeparator();
-
-    // Phase 23: View → Network Applets ▶ submenu.
-    // TCI Server and TCI Clients toggles are enabled; CAT + MIDI are greyed
-    // placeholders until phases 3K-1 and 3K-3 ship.
-    {
-        QMenu* netAppletsMenu = viewMenu->addMenu(QStringLiteral("&Network Applets"));
-
-        auto* tciServerToggle = netAppletsMenu->addAction(QStringLiteral("&TCI Server"));
-        tciServerToggle->setCheckable(true);
-        {
-            auto& s = AppSettings::instance();
-            const bool dflt = s.value(QStringLiteral("TciApplet_Visible"),
-                                      QStringLiteral("True")).toString() == QStringLiteral("True");
-            tciServerToggle->setChecked(dflt);
-        }
-        connect(tciServerToggle, &QAction::toggled, this, [this](bool show) {
-            auto& s = AppSettings::instance();
-            s.setValue(QStringLiteral("TciApplet_Visible"),
-                       show ? QStringLiteral("True") : QStringLiteral("False"));
-#ifdef HAVE_WEBSOCKETS
-            if (m_tciApplet) { m_tciApplet->setVisible(show); }
-#endif
-        });
-
-        auto* tciClientsToggle = netAppletsMenu->addAction(QStringLiteral("TCI &Clients"));
-        tciClientsToggle->setCheckable(true);
-        {
-            auto& s = AppSettings::instance();
-            const bool dflt = s.value(QStringLiteral("ClientChainApplet_Visible"),
-                                      QStringLiteral("True")).toString() == QStringLiteral("True");
-            tciClientsToggle->setChecked(dflt);
-        }
-        connect(tciClientsToggle, &QAction::toggled, this, [this](bool show) {
-            auto& s = AppSettings::instance();
-            s.setValue(QStringLiteral("ClientChainApplet_Visible"),
-                       show ? QStringLiteral("True") : QStringLiteral("False"));
-#ifdef HAVE_WEBSOCKETS
-            if (m_clientChainApplet) { m_clientChainApplet->setVisible(show); }
-#endif
-        });
-
-        netAppletsMenu->addSeparator();
-
-        auto* catItem = netAppletsMenu->addAction(QStringLiteral("&CAT"));
-        catItem->setEnabled(false);
-        catItem->setToolTip(QStringLiteral("Phase 3K-1 (post-3J)"));
-
-        auto* midiItem = netAppletsMenu->addAction(QStringLiteral("&MIDI"));
-        midiItem->setEnabled(false);
-        midiItem->setToolTip(QStringLiteral("Phase 3K-3 (post-3K-2)"));
-    }
+    // Phase 23 "View > Network Applets" submenu removed: TCI Server and
+    // TCI Clients are now driven by AppletVisibilityController, accessible
+    // via Containers > Applets and the panel's ☰ banner menu. Two
+    // independent controls (old direct-setVisible + new controller path)
+    // would drift out of sync. CAT + MIDI greyed placeholders deferred to
+    // their feature phases (3K-1 / 3K-3) — re-add at that time wired
+    // through the controller.
 
     viewMenu->addSeparator();
 
@@ -3335,37 +3448,60 @@ void MainWindow::buildMenuBar()
 
     containersMenu->addSeparator();
 
-    // Dynamic show/hide toggles for optional applets in Container #0.
-    // Checked = visible in panel; unchecked = hidden/removed.
-    // Currently commented out (ghost applets hidden per
-    // docs/superpowers/plans/2026-05-01-ui-polish-right-panel.md §Task 6).
-    // Re-enable by un-commenting the lambda AND the addContainerToggle calls below,
-    // alongside the construction block in buildDefaultContainerLayout().
+    // ── Containers > Applets section ─────────────────────────────────────
+    // Show/hide toggles for each currently-wired applet. Backed by
+    // m_appletVis (AppletVisibilityController). Two-way sync with the
+    // ☰ menu on AppletPanelWidget happens via the controller's
+    // visibilityChanged signal.
     //
-    // auto addContainerToggle = [&](const QString& name, AppletWidget* applet, bool defaultVisible) {
-    //     auto* action = containersMenu->addAction(name);
-    //     action->setCheckable(true);
-    //     action->setChecked(defaultVisible);
-    //     connect(action, &QAction::toggled, this, [this, applet](bool show) {
-    //         if (!m_appletPanel) { return; }
-    //         if (show) {
-    //             m_appletPanel->addApplet(applet);
-    //         } else {
-    //             m_appletPanel->removeApplet(applet);
-    //         }
-    //     });
-    // };
+    // Predecessor: dead lambda was disabled in 25597df because its 7
+    // entries were all ghost applets. The new section ships only
+    // currently-wired applets. Add new entries here as additional
+    // applets ship (default visible per design §5.2).
+    if (m_appletVis) {
+        // Section header. addSection is the idiomatic Qt API; falls back
+        // gracefully on platforms where it renders as a plain label.
+        containersMenu->addSection(QStringLiteral("Applets"));
 
-    // Ghost-applet Containers menu entries — disabled until feature phases ship.
-    // Re-enable alongside the construction block in buildDefaultContainerLayout().
-    //
-    // addContainerToggle(QStringLiteral("Digital / VAC"), m_digitalApplet,    false); // TODO 3-VAX
-    // addContainerToggle(QStringLiteral("PureSignal"),    m_pureSignalApplet, false); // TODO 3M-4
-    // addContainerToggle(QStringLiteral("Diversity"),     m_diversityApplet,  false); // TODO 3F
-    // addContainerToggle(QStringLiteral("CW Keyer"),      m_cwxApplet,        false); // TODO 3M-2
-    // addContainerToggle(QStringLiteral("Voice Keyer"),   m_dvkApplet,        false); // TODO 3M-1
-    // addContainerToggle(QStringLiteral("CAT / TCI"),     m_catApplet,        false); // TODO 3J/3K
-    // addContainerToggle(QStringLiteral("ATU Control"),   m_tunerApplet,      false); // TODO ATU
+        for (const QString& id : m_appletVis->registeredIds()) {
+            QAction* act = containersMenu->addAction(
+                m_appletVis->displayName(id));
+            act->setCheckable(true);
+            act->setChecked(m_appletVis->isVisible(id));
+            // Grey out when the applet is currently unavailable (e.g.
+            // Amp/Tuner when 4O3A is disabled). Check state still
+            // reflects the user preference.
+            act->setEnabled(m_appletVis->isAvailable(id));
+            // User-visible tooltip — plain English, no source cites.
+            act->setToolTip(QStringLiteral("Show or hide the %1 applet")
+                            .arg(m_appletVis->displayName(id)));
+
+            connect(act, &QAction::toggled, this, [this, id](bool checked) {
+                if (m_appletVis) { m_appletVis->setVisible(id, checked); }
+            });
+            m_topMenuAppletActions.insert(id, act);
+        }
+
+        // Sync checkmark when the controller's state changes (e.g. via
+        // the banner ☰ menu in Task 6). QSignalBlocker prevents
+        // recursive toggle.
+        connect(m_appletVis, &AppletVisibilityController::visibilityChanged,
+                this, [this](const QString& id, bool visible) {
+            if (auto* act = m_topMenuAppletActions.value(id, nullptr)) {
+                QSignalBlocker block(act);
+                act->setChecked(visible);
+            }
+        });
+
+        // Grey/un-grey top-menu entries when an applet's availability
+        // changes (e.g. 4O3A master toggle flipped in Setup).
+        connect(m_appletVis, &AppletVisibilityController::availabilityChanged,
+                this, [this](const QString& id, bool available) {
+            if (auto* act = m_topMenuAppletActions.value(id, nullptr)) {
+                act->setEnabled(available);
+            }
+        });
+    }
 
     // =========================================================================
     // TOOLS
@@ -4826,8 +4962,12 @@ void MainWindow::wireSliceToSpectrum()
         // rides a USB/LSB carrier.
         const bool isRade = (mode == DSPMode::RADE_U
                              || mode == DSPMode::RADE_L);
-        if (m_radeApplet) {
-            m_radeApplet->setVisible(isRade);
+        // Route through the visibility controller so the wrapper (not
+        // just the inner widget) shows/hides AND the menu entries grey
+        // out when not in RADE mode. The user's persisted visibility
+        // preference is preserved across mode changes.
+        if (m_appletVis) {
+            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
         }
         if (m_phoneCwApplet) {
             m_phoneCwApplet->setVisible(true);  // always visible
@@ -6334,7 +6474,15 @@ void MainWindow::onConnectionStateChanged()
 
         // Phase 3P-II Task 20: auto-connect PGXL / TGXL when a Manual IP is
         // configured and the peripheral is not already connected.
-        {
+        //
+        // Gated on FourO3A_Enabled: when the master toggle is off, skip the
+        // auto-connect entirely (matches the FourO3APage.h contract
+        // "PGXL/TGXL auto-connect skipped"). Without this gate, a saved
+        // PGXL_ManualIp would dial out even with 4O3A disabled, get a
+        // statusUpdated back, flip m_hasAmplifier=true, and snap the
+        // S-Meter to the 2 kW PGXL scale — surprising the operator who
+        // explicitly turned 4O3A off.
+        if (m_radioModel->fourO3AEnabled()) {
             auto& s = AppSettings::instance();
 
             QString pgxlIp = s.value(QStringLiteral("PGXL_ManualIp"),

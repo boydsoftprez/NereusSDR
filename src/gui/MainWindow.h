@@ -75,6 +75,7 @@
 #include <QActionGroup>
 #include <QPointer>
 #include <QTimer>
+#include <QHash>
 
 class QProgressDialog;
 class QThread;
@@ -107,6 +108,8 @@ class StatusBadge;
 class AdcOverloadBadge;
 class OverflowChip;
 class PsaIndicatorWidget;
+class AppletVisibilityController;
+class AppletWidget;
 
 // Phase 23: TCI server + applets forward declarations (all inside NereusSDR
 // namespace — TciServer only exists when HAVE_WEBSOCKETS is defined but we
@@ -570,6 +573,15 @@ private:
 
     // Applet panel — scrollable content widget inside Container #0
     class AppletPanelWidget* m_appletPanel{nullptr};
+
+    // Applet visibility controller (NereusSDR-original) — backs the
+    // Containers > Applets top menu and the panel banner ☰ menu.
+    // Constructed in the layout-build path after the panel is wired.
+    AppletVisibilityController* m_appletVis{nullptr};
+    QHash<QString, AppletWidget*> m_appletsById;
+    QHash<QString, QAction*> m_topMenuAppletActions;
+    QMenu* m_bannerAppletsMenu{nullptr};
+    QHash<QString, QAction*> m_bannerAppletActions;
 
     // Phase 3O Sub-Phase 10 Task 10c: host strip for the menu bar +
     // MasterOutputWidget. Owned by QMainWindow via setMenuWidget().

@@ -1407,6 +1407,12 @@ signals:
     // Task 1.7: emitted after setActiveRxCountLive() successfully applies
     // the new receiver count to both hardware and WDSP channels.
     void activeRxCountChanged(int newCount);
+
+    // Fires when the 4O3A master toggle flips (Setup → CAT & Network →
+    // 4O3A → General). Consumers (e.g., MainWindow's applet visibility
+    // wiring) react to grey out / hide the Amplifier and Tuner applets
+    // when 4O3A is off.
+    void fourO3AEnabledChanged(bool enabled);
     // Fires on each transition to Connected with the RadioInfo of the live
     // connection. HardwarePage (Phase 3I) listens to this to repopulate
     // sub-tabs with per-radio fields.

@@ -152,7 +152,9 @@ void TciApplet::buildUI()
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
-    root->addWidget(appletTitleBar(QStringLiteral("TCI Server")));
+    // Do NOT add appletTitleBar() here — AppletPanelWidget::wrapWithTitleBar
+    // already prepends a host-side title bar from appletTitle(). Adding our
+    // own here results in a double header. Same fix in PureSignalApplet.
 
     // ── Main content (header + slice + tx + footer) ───────────────────────────
     m_mainContent = new QWidget(this);

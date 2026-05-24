@@ -36,7 +36,10 @@ AmpApplet::AmpApplet(RadioModel* model, QWidget* parent)
     auto* topLayout = new QVBoxLayout(this);
     topLayout->setContentsMargins(0, 0, 0, 0);
     topLayout->setSpacing(0);
-    topLayout->addWidget(appletTitleBar(appletTitle()));
+    // Do NOT add appletTitleBar() here — AppletPanelWidget::wrapWithTitleBar
+    // (AppletPanelWidget.cpp:155) already prepends a host-side title bar from
+    // appletTitle(). Adding our own here results in a double header. Same fix
+    // applied to PureSignalApplet (PureSignalApplet.cpp:156-160 comment).
     topLayout->addWidget(root);
 
     auto* vbox = new QVBoxLayout(root);
