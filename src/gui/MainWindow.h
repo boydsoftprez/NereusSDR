@@ -543,6 +543,9 @@ private:
     class CatApplet*        m_catApplet{nullptr};
     class TunerApplet*      m_tunerApplet{nullptr};
 
+    // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
+    class Rf2ksApplet*      m_rfKitApplet{nullptr};
+
     // Phase 23: TCI server + applets.
     // m_tciServer is nullptr in non-WebSocket builds (HAVE_WEBSOCKETS not defined).
     TciServer*         m_tciServer{nullptr};

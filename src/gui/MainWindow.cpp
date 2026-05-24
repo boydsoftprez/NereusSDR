@@ -280,10 +280,12 @@ warren@wpratt.com
 #include "applets/AppletPanelWidget.h"
 #include "SMeterWidget.h"            // Task 41 (Phase 3P-II): SMeterWidget header wiring
 #include "applets/AmpApplet.h"
+#include "applets/Rf2ksApplet.h"
 #include "applets/AppletVisibilityController.h"
 #include "applets/RxApplet.h"
 #include "core/PgxlConnection.h"
 #include "core/TgxlConnection.h"
+#include "core/Rf2ksConnection.h"
 #include "core/SmartSdrApiListener.h"
 #include "applets/TxApplet.h"
 #include "applets/TxEqDialog.h"
@@ -2504,6 +2506,124 @@ void MainWindow::populateDefaultMeter()
         });
     }
 
+    // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
+    // Constructed unconditionally alongside the other peripheral applets.
+    // Visibility is gated on rfKitEnabled() via the AppletVisibilityController
+    // availability axis (set below, live-updated via rfKitEnabledChanged).
+    //
+    // Data-flow and context-menu signals are wired once here in buildUI()
+    // because rfKitConnection() returns the same permanent object for the
+    // app lifetime (RadioModel creates it in its ctor, never destroys it).
+    // This differs from the AmpApplet/TunerApplet pattern (wired in
+    // onConnectionStateChanged) because PGXL/TGXL use PGX-specific
+    // auto-connect logic gated on fourO3AEnabled; the RF-Kit connects
+    // independently at startup when rfKitEnabled is true.
+    m_rfKitApplet = new Rf2ksApplet(m_radioModel, nullptr);
+    panel->addApplet(m_rfKitApplet);
+
+    {
+        // Connection -> applet data flow.
+        Rf2ksConnection* rfKitConn = m_radioModel->rfKitConnection();
+        if (rfKitConn) {
+            connect(rfKitConn, &Rf2ksConnection::powerUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setPower);
+            connect(rfKitConn, &Rf2ksConnection::tunerUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setTuner);
+            connect(rfKitConn, &Rf2ksConnection::antennasUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setAntennas);
+            connect(rfKitConn, &Rf2ksConnection::activeAntennaUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setActiveAntenna);
+            connect(rfKitConn, &Rf2ksConnection::operateModeUpdated,
+                    m_rfKitApplet, &Rf2ksApplet::setOperateMode);
+            connect(rfKitConn, &Rf2ksConnection::connected,
+                    this, [this]() {
+                if (m_rfKitApplet) {
+                    m_rfKitApplet->setConnectedState(true);
+                }
+            });
+            connect(rfKitConn, &Rf2ksConnection::disconnected,
+                    this, [this]() {
+                if (m_rfKitApplet) {
+                    m_rfKitApplet->setConnectedState(false);
+                }
+            });
+            connect(rfKitConn, &Rf2ksConnection::infoUpdated,
+                    this, [this](const QString& /*deviceName*/,
+                                 const QString& softwareVersion,
+                                 const QString& nicknameFromAmp) {
+                if (m_rfKitApplet) {
+                    m_rfKitApplet->setNicknameAndVersion(nicknameFromAmp, softwareVersion);
+                }
+            });
+
+            // Applet -> connection (antenna click, operate toggle).
+            connect(m_rfKitApplet, &Rf2ksApplet::antennaRequested,
+                    rfKitConn, &Rf2ksConnection::setActiveAntenna);
+            connect(m_rfKitApplet, &Rf2ksApplet::operateToggled,
+                    this, [this](bool wantOperate) {
+                Rf2ksConnection* conn = m_radioModel->rfKitConnection();
+                if (!conn) { return; }
+                conn->setOperateMode(wantOperate
+                    ? QStringLiteral("OPERATE")
+                    : QStringLiteral("STANDBY"));
+            });
+        }
+
+        // Context menu signals (always wired regardless of connection state).
+        connect(m_rfKitApplet, &Rf2ksApplet::navigationRequested,
+                this, &MainWindow::openSetup);
+
+        connect(m_rfKitApplet, &Rf2ksApplet::connectionToggleRequested,
+                this, [this]() {
+            Rf2ksConnection* conn = m_radioModel->rfKitConnection();
+            if (!conn) { return; }
+            if (conn->isConnected()) {
+                conn->disconnect();
+            } else {
+                const QString host = AppSettings::instance()
+                    .value(QStringLiteral("RfKit_ManualIp")).toString();
+                const quint16 port = static_cast<quint16>(AppSettings::instance()
+                    .value(QStringLiteral("RfKit_ManualPort"),
+                           QStringLiteral("8080")).toInt());
+                if (!host.isEmpty()) {
+                    conn->connectToAmp(host, port);
+                }
+            }
+        });
+
+        connect(m_rfKitApplet, &Rf2ksApplet::diagnosticsCopyRequested,
+                this, [this]() {
+            Rf2ksConnection* conn = m_radioModel->rfKitConnection();
+            QString diag;
+            diag += QStringLiteral("RF-Kit RF2K-S diagnostics\n");
+            if (conn) {
+                diag += QStringLiteral("Host: %1:%2\n")
+                            .arg(conn->peerAddress()).arg(conn->peerPort());
+                diag += QStringLiteral("Version: %1\n")
+                            .arg(conn->softwareVersion());
+                diag += QStringLiteral("Polls OK/failed: %1/%2\n")
+                            .arg(conn->pollsSucceeded())
+                            .arg(conn->pollsFailed());
+                diag += QStringLiteral("RTT avg: %1 ms\n")
+                            .arg(conn->rttAvgLast10Ms());
+            } else {
+                diag += QStringLiteral("(connection unavailable)\n");
+            }
+            QGuiApplication::clipboard()->setText(diag);
+        });
+    }
+
+    // Antenna labels: load operator-set labels from AppSettings at startup.
+    // Keys: RfKit_Ant1_Label .. RfKit_Ant4_Label (stored by RfKitPage.cpp).
+    // If a key is absent or empty the applet already shows "ANT N" by default.
+    for (int i = 1; i <= 4; ++i) {
+        const QString label = AppSettings::instance()
+            .value(QStringLiteral("RfKit_Ant%1_Label").arg(i)).toString();
+        if (!label.isEmpty()) {
+            m_rfKitApplet->setAntennaLabel(i, label);
+        }
+    }
+
     // ── Applet visibility controller (Containers > Applets + ☰ menus) ──
     // NereusSDR-original. Backs the show/hide menu surfaces.
     //
@@ -2526,6 +2646,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
+    m_appletsById[QStringLiteral("RfKit")]      = m_rfKitApplet;
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletsById[QStringLiteral("Tci")]        = m_tciApplet;
@@ -2566,6 +2687,8 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
                                 QStringLiteral("Tuner Genius"), true);
+    m_appletVis->registerApplet(QStringLiteral("RfKit"),
+                                QStringLiteral("RF-Kit RF2K-S"), true);
 #ifdef HAVE_WEBSOCKETS
     if (m_tciApplet) {
         m_appletVis->registerApplet(QStringLiteral("Tci"),
@@ -2590,6 +2713,11 @@ void MainWindow::populateDefaultMeter()
     // USB, so initial availability=false. The dspModeChanged lambda
     // below updates this on every mode change.
     m_appletVis->setAvailable(QStringLiteral("Rade"),  false);
+
+    // RF-Kit RF2K-S: available only when the master toggle is enabled.
+    // Default OFF; live-updated via rfKitEnabledChanged below.
+    const bool rfKitOn = m_radioModel && m_radioModel->rfKitEnabled();
+    m_appletVis->setAvailable(QStringLiteral("RfKit"), rfKitOn);
 
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
@@ -2622,6 +2750,14 @@ void MainWindow::populateDefaultMeter()
             if (!m_appletVis) { return; }
             m_appletVis->setAvailable(QStringLiteral("Amp"),   enabled);
             m_appletVis->setAvailable(QStringLiteral("Tuner"), enabled);
+        });
+
+        // Phase 3P-III Task 14: live-track RF-Kit master toggle so the
+        // RfKit applet availability updates without an app restart.
+        connect(m_radioModel, &RadioModel::rfKitEnabledChanged,
+                this, [this](bool enabled) {
+            if (!m_appletVis) { return; }
+            m_appletVis->setAvailable(QStringLiteral("RfKit"), enabled);
         });
     }
 
@@ -4463,6 +4599,8 @@ void MainWindow::openSetup(const QString& pageKey)
         {QStringLiteral("tgxlAdvanced"),  QStringLiteral("TGXL Advanced")},
         {QStringLiteral("pgxlInterlock"), QStringLiteral("PGXL Interlock")},
         {QStringLiteral("peripherals"),   QStringLiteral("Peripherals")},
+        // Phase 3P-III Task 14: RF-Kit setup page (Setup > CAT & Network > RF-Kit).
+        {QStringLiteral("rfKit"),         QStringLiteral("RF-Kit")},
     };
 
     auto* dialog = new SetupDialog(m_radioModel, this);
