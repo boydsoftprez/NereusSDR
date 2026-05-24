@@ -1448,6 +1448,30 @@ RadioModel::RadioModel(QObject* parent)
     connect(m_pgxlConnection, &PgxlConnection::connected,
             this, &RadioModel::onPgxlConnected);
 
+    // Phase 3P-III Task 13: aggregate PGXL state into the cross-vendor signal.
+    // onPgxlStatus() already updates m_ampOperate on every statusUpdated frame;
+    // we re-emit the same operate decision through the brand-neutral signal so
+    // SMeterWidget (and any future consumer) does not need to know about PGXL.
+    connect(m_pgxlConnection, &PgxlConnection::statusUpdated,
+            this, [this](const QMap<QString, QString>& kvs) {
+        if (kvs.contains(QStringLiteral("state"))) {
+            const bool inOp = kvs.value(QStringLiteral("state")) == QStringLiteral("OPERATE");
+            emit externalAmpOperateChanged(inOp);
+        }
+    });
+
+    // Phase 3P-III Task 13: aggregate RF-Kit operate-mode and power into the
+    // cross-vendor signals. The RF-Kit REST poller emits operateModeUpdated on
+    // every state poll (even if unchanged) and powerUpdated on every power poll.
+    connect(m_rfKitConnection.get(), &Rf2ksConnection::operateModeUpdated,
+            this, [this](const QString& mode) {
+        emit externalAmpOperateChanged(mode == QStringLiteral("OPERATE"));
+    });
+    connect(m_rfKitConnection.get(), &Rf2ksConnection::powerUpdated,
+            this, [this](const RfKitPowerSnapshot& snap) {
+        emit externalAmpFwdSwrUpdated(snap.forwardW, snap.swr);
+    });
+
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //
     // View models first so the per-source adapter slots have live sinks the

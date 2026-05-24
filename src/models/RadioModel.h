@@ -1571,6 +1571,21 @@ signals:
     void ampStateChanged();
     void ampMetersChanged(float fwd, float swr);
 
+    // Phase 3P-III Task 13: cross-vendor external-amp aggregator signals.
+    // Both PgxlConnection state transitions and Rf2ksConnection::operateModeUpdated
+    // feed externalAmpOperateChanged so SMeterWidget and any other consumer can
+    // subscribe once rather than per-brand.
+    //
+    // externalAmpOperateChanged(bool inOperate):
+    //   true  when any connected external amp enters OPERATE.
+    //   false when all external amps leave OPERATE (or disconnect).
+    //
+    // externalAmpFwdSwrUpdated(int forwardW, float swr):
+    //   fired for every RF-Kit power snapshot so consumers can feed the TX
+    //   needle without knowing which amp brand supplied the reading.
+    void externalAmpOperateChanged(bool inOperate);
+    void externalAmpFwdSwrUpdated(int forwardW, float swr);
+
 private slots:
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
 

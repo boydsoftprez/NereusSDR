@@ -5199,3 +5199,9 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 nereus_add_test(tst_rf2ks_applet_layout)
 nereus_add_test(tst_rf2ks_applet_context_menu)
 nereus_add_test(tst_rfkit_page_master_gate)
+
+# Task 13: SMeterWidget subscribes to RadioModel::externalAmpOperateChanged
+# (cross-vendor aggregator) instead of the PGXL-specific statusUpdated signal.
+# Both PGXL and RF-Kit OPERATE states flip the meter to 2 kW scale; all-STANDBY
+# reverts to barefoot.  Test seam: txScaleIs2kWForTesting() reads m_powerScaleMax.
+nereus_add_test(tst_smeter_widget_external_amp)
