@@ -34,8 +34,11 @@
 #include <QWidget>
 
 class QCheckBox;
-class QTabWidget;
 class QLabel;
+class QLineEdit;
+class QPushButton;
+class QSpinBox;
+class QTabWidget;
 
 namespace NereusSDR {
 
@@ -48,13 +51,21 @@ public:
     explicit RfKitPage(RadioModel* model, QWidget* parent = nullptr);
 
     // Testing accessors (used by tst_rfkit_page_master_gate).
-    QCheckBox* masterCheckboxForTesting() const { return m_master; }
-    bool       detailTabIsEnabledForTesting() const;
+    QCheckBox*   masterCheckboxForTesting() const { return m_master; }
+    bool         detailTabIsEnabledForTesting() const;
+    void         setHostForTesting(const QString& host);
+    void         setPortForTesting(quint16 port);
+    void         setAntennaLabelForTesting(int n, const QString& label);
+    void         clickSaveForTesting();
+    QPushButton* testConnectionButtonForTesting() const;
 
 private slots:
     // Master toggle handler.  Persists the new state to AppSettings via
     // RadioModel::setRfKitEnabled, then gates the RF2K-S tab.
     void onMasterToggled(bool checked);
+
+    // Persist all RF2K-S tab fields to AppSettings.
+    void saveRf2ksSettings();
 
     // Refresh the live RF2K-S connection status row (1 Hz timer).
     void refreshLiveStatus();
@@ -82,6 +93,18 @@ private:
 
     // RF2K-S tab widget.  Kept so applyMasterGate can locate it by pointer.
     QWidget*     m_rf2ksTab{nullptr};
+
+    // RF2K-S tab controls (all owned by the tab widget tree).
+    QLineEdit*   m_hostEdit{nullptr};
+    QSpinBox*    m_portSpin{nullptr};
+    QCheckBox*   m_autoReconnect{nullptr};
+    QSpinBox*    m_pollIntervalSpin{nullptr};
+    QLineEdit*   m_antLabelEdits[4]{nullptr, nullptr, nullptr, nullptr};
+    QLabel*      m_diagnosticsLabel{nullptr};
+    QPushButton* m_testConnBtn{nullptr};
+    QPushButton* m_setTciBtn{nullptr};
+    QPushButton* m_resetErrBtn{nullptr};
+    QPushButton* m_saveBtn{nullptr};
 };
 
 } // namespace NereusSDR
