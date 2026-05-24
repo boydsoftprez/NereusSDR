@@ -99,7 +99,14 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    QWidget* wrapWithTitleBar(QWidget* child, const QString& title);
+    // Wrap a child widget with a 16 px title bar (grip dots + label).
+    // When `trailing` is non-null, the title bar is bumped to 22 px to
+    // accommodate the trailing widget (right-aligned, after the stretch).
+    // Used by setHeaderWidget to embed the ☰ menu button in the S-Meter
+    // title bar — keeps the button reachable without a dedicated row
+    // that competes with the master-volume strip above.
+    QWidget* wrapWithTitleBar(QWidget* child, const QString& title,
+                              QWidget* trailing = nullptr);
 
     QVBoxLayout* m_rootLayout = nullptr;     // top-level: header + scroll
     QVBoxLayout* m_headerLayout = nullptr;   // fixed header above scroll area
@@ -115,8 +122,10 @@ private:
     // Accessed by MainWindow via smeterWidget() for Task 41/43 wiring.
     SMeterWidget* m_sMeter        = nullptr;
 
-    QWidget*      m_bannerRow{nullptr};        // 22 px top header row
-    QPushButton*  m_bannerMenuButton{nullptr}; // ☰ button (right-aligned)
+    // ☰ menu button. Created in the constructor (hidden, parented to
+    // `this` for memory management). When setHeaderWidget runs it gets
+    // re-parented into the S-Meter title bar via wrapWithTitleBar.
+    QPushButton*  m_bannerMenuButton{nullptr};
 };
 
 } // namespace NereusSDR
