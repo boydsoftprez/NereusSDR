@@ -85,6 +85,23 @@ public:
     AudioFormat negotiatedFormat() const override { return m_negFormat; }
     QString     errorString() const override { return m_err; }
 
+    // Diagnostics: drop-oldest overrun accounting.  Output-mode push()
+    // counts the event + samples lost every time the writer outruns the
+    // reader by more than the ring's size.  paCallback then performs the
+    // catch-up jump on its next entry.  Reset by clearDropStats().  Both
+    // counters are loaded with relaxed semantics; they are observational
+    // only and not safety-critical.
+    quint32 ringOverrunEvents() const {
+        return m_dropEvents.load(std::memory_order_relaxed);
+    }
+    quint64 ringOverrunSamples() const {
+        return m_dropSamples.load(std::memory_order_relaxed);
+    }
+    void clearDropStats() {
+        m_dropEvents.store(0, std::memory_order_relaxed);
+        m_dropSamples.store(0, std::memory_order_relaxed);
+    }
+
 private:
     PaStream*       m_stream{nullptr};
     PortAudioConfig m_cfg;
@@ -101,6 +118,11 @@ private:
 
     std::atomic<float> m_rxLevel{0.0f};
     std::atomic<float> m_txLevel{0.0f};
+
+    // Drop-oldest accounting (see ringOverrunEvents above).  Producer-only
+    // writers (push() on the DSP thread); observers read.
+    std::atomic<quint32> m_dropEvents{0};
+    std::atomic<quint64> m_dropSamples{0};
 
     static int paCallback(const void* in, void* out,
                           unsigned long frames,

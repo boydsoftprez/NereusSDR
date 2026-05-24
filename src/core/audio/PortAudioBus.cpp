@@ -207,11 +207,19 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
 } // namespace
 
 PortAudioBus::PortAudioBus() {
-    // 1 second stereo float ring at the nominal default rate. The push
-    // path wraps modulo ring size, so a longer stream than 1 s simply
-    // overwrites the oldest unread samples (underruns surface as silence
-    // in paCallback, not overruns).
-    m_ring.resize(48000 * 2);
+    // 50 ms stereo float ring (2400 stereo frames * 2 channels = 4800 floats)
+    // at the nominal 48 kHz device rate.  Sized for lowest perceptible
+    // display-vs-audio latency while leaving roughly 5x headroom over the
+    // typical CoreAudio low-latency callback (~10 ms / 480 frames).  The
+    // writer modulo-wraps as before; the reader (paCallback) detects when
+    // the writer has stomped on its read position and skips forward to the
+    // oldest still-valid sample, producing drop-oldest overrun semantics.
+    // Audible result of a CPU stall or clock-drift overflow: a brief
+    // silence gap rather than scrambled bytes.  Pre-fix the ring was
+    // 48000 * 2 (1 second) with no overrun handling, which made the
+    // display drift up to a full second ahead of audio and produced the
+    // "audio replays" symptom on stall recovery.
+    m_ring.resize(2400 * 2);
 }
 
 PortAudioBus::~PortAudioBus() {
@@ -309,6 +317,24 @@ qint64 PortAudioBus::push(const char* data, qint64 bytes) {
     const qint64 ringSize = static_cast<qint64>(m_ring.size());
     qint64 w = m_ringWrite.load(std::memory_order_relaxed);
     const float* in = reinterpret_cast<const float*>(data);
+
+    // Drop-oldest accounting: if this push would put the writer more than
+    // one ring's worth ahead of the reader, the oldest unread samples
+    // about to be modulo-overwritten are effectively dropped.  We do NOT
+    // advance m_ringRead from here (that would race with paCallback's own
+    // store; only the audio thread writes to m_ringRead).  Instead the
+    // paCallback detects the same condition on its next entry and skips
+    // forward to the oldest still-valid sample.  Counting the event here
+    // gives diagnostics a single producer-side perspective.
+    const qint64 readPos = m_ringRead.load(std::memory_order_acquire);
+    const qint64 afterWrite = w + floatCount;
+    if (afterWrite - readPos > ringSize) {
+        m_dropEvents.fetch_add(1, std::memory_order_relaxed);
+        m_dropSamples.fetch_add(
+            static_cast<quint64>(afterWrite - readPos - ringSize),
+            std::memory_order_relaxed);
+    }
+
     float peak = 0.0f;
     for (int i = 0; i < floatCount; ++i) {
         m_ring[w % ringSize] = in[i];
@@ -383,6 +409,17 @@ int PortAudioBus::paCallback(const void* in, void* out,
 
         qint64 r = self->m_ringRead.load(std::memory_order_relaxed);
         const qint64 w = self->m_ringWrite.load(std::memory_order_acquire);
+
+        // Drop-oldest catch-up: if we have fallen so far behind that the
+        // writer stomped on our read position (w - r exceeds the ring
+        // size), the bytes at our current r have been overwritten with
+        // newer samples and reading them would produce scrambled audio.
+        // Jump forward to the oldest still-valid sample (w - ringSize)
+        // so we resume on contiguous, in-order audio.  Listener hears a
+        // brief silence/click rather than time-scrambled bytes.
+        if (w - r > ringSize) {
+            r = w - ringSize;
+        }
 
         for (int i = 0; i < want; ++i) {
             if (r < w) {

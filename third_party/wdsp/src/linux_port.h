@@ -1,3 +1,9 @@
+// no-port-check: WDSP upstream header (TAPR v1.29) carrying the
+// NR0V / G0ORX/N6LYT copyright line.  Vendored verbatim with only the
+// cross-platform shim macro tweaks documented in the modification
+// history below; not a Thetis port, attribution already lives in the
+// preserved header copyright block.
+
 /*  linux_port.h
 
 This file is part of a program that implements a Software-Defined Radio.
