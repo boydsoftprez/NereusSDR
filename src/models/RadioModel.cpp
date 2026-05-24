@@ -2371,6 +2371,25 @@ bool RadioModel::fourO3AEnabled() const
         .toString() == QStringLiteral("True");
 }
 
+bool RadioModel::rfKitEnabled() const
+{
+    return AppSettings::instance()
+        .value(QStringLiteral("RfKit_Enabled"), QStringLiteral("False"))
+        .toString() == QStringLiteral("True");
+}
+
+void RadioModel::setRfKitEnabled(bool enabled)
+{
+    const bool current = rfKitEnabled();
+    if (enabled == current) {
+        return;
+    }
+    AppSettings::instance().setValue(
+        QStringLiteral("RfKit_Enabled"),
+        enabled ? QStringLiteral("True") : QStringLiteral("False"));
+    emit rfKitEnabledChanged(enabled);
+}
+
 const BoardCapabilities& RadioModel::boardCapabilities() const
 {
 #ifdef NEREUS_BUILD_TESTS

@@ -205,6 +205,8 @@ class RadioModel : public QObject {
     Q_PROPERTY(QString model       READ model       NOTIFY infoChanged)
     Q_PROPERTY(QString version     READ version     NOTIFY infoChanged)
     Q_PROPERTY(bool    connected   READ isConnected NOTIFY connectionStateChanged)
+    Q_PROPERTY(bool rfKitEnabled READ rfKitEnabled WRITE setRfKitEnabled
+               NOTIFY rfKitEnabledChanged)
 
 public:
     explicit RadioModel(QObject* parent = nullptr);
@@ -515,6 +517,14 @@ public:
     // persisted, FourO3APage updates its enabled state.
     void setFourO3AEnabled(bool enabled);
     bool fourO3AEnabled() const;
+
+    // Phase 3P-III RF-Kit RF2K-S master toggle.
+    // Persisted under AppSettings key "RfKit_Enabled". Default OFF on
+    // first run. When true the Rf2ksApplet and Setup tab become active;
+    // when false the REST poller is idle and the applet is hidden.
+    void setRfKitEnabled(bool enabled);
+    bool rfKitEnabled() const;
+
     bool hasAmplifier() const { return m_hasAmplifier; }
     bool ampOperate()  const  { return m_ampOperate; }
 
@@ -1413,6 +1423,10 @@ signals:
     // wiring) react to grey out / hide the Amplifier and Tuner applets
     // when 4O3A is off.
     void fourO3AEnabledChanged(bool enabled);
+    // Fires when the RF-Kit master toggle flips (Setup -> CAT & Network ->
+    // RF-Kit -> General). Consumers (e.g. MainWindow applet visibility)
+    // react to show/hide the RF2K-S applet.
+    void rfKitEnabledChanged(bool enabled);
     // Fires on each transition to Connected with the RadioInfo of the live
     // connection. HardwarePage (Phase 3I) listens to this to repopulate
     // sub-tabs with per-radio fields.

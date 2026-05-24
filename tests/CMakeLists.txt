@@ -5144,3 +5144,10 @@ nereus_add_test(tst_pgxl_connection_save)
 #   packetCountRolls (upper nibble=0x5, lower=count for 0..15);
 #   totalSizeIsMultipleOf4 (packet size and size-words field consistent).
 nereus_add_test(tst_flex_radio_discovery_broadcaster)
+
+# ── Phase 3P-III RF-Kit RF2K-S amplifier applet ───────────────────────────
+# Task 1: RadioModel rfKitEnabled Q_PROPERTY + AppSettings persistence.
+# Tests: defaultsFalse (no key -> false); setterPersistsAndEmits (setter
+#   writes RfKit_Enabled="True" + emits rfKitEnabledChanged(true));
+#   getterReadsFromAppSettings (pre-seeded key -> getter returns true).
+nereus_add_test(tst_rfkit_radiomodel_enabled)
