@@ -73,6 +73,8 @@
 // Advanced / PGXL Interlock entries into a single tree node under a
 // master toggle.  PgxlInterlockPage's include lives inside FourO3APage.cpp.
 #include "setup/FourO3APage.h"
+// RF-Kit RF2K-S integration page (Settings -> CAT & Network -> RF-Kit).
+#include "setup/RfKitPage.h"
 // Keyboard
 #include "setup/KeyboardSetupPages.h"
 // Diagnostics
@@ -572,6 +574,10 @@ void SetupDialog::buildTree()
             connect(tgxlAdv, &TgxlAdvancedPage::antennaLabelChanged,
                     this, &SetupDialog::tgxlAntennaLabelChanged);
         }
+    }
+    {
+        auto* rfKit = new RfKitPage(m_model);
+        addWrapped(cat, "RF-Kit", rfKit);
     }
     add(cat, "TCP/IP CAT",   new CatTcpIpPage);
     add(cat, "MIDI Control", new CatMidiControlPage);
