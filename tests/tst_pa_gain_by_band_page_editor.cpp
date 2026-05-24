@@ -421,9 +421,14 @@ void TstPaGainByBandPageEditor::delete_button_removes_other_profile()
 
     // Manager-level manifest is unchanged-by-filter (profileNames returns
     // the full manifest; the page combo uses userVisibleProfileNames for
-    // filtering — Issue #202 deep-fix).  Manifest dropped 17 -> 16 after
-    // the delete.
-    QCOMPARE(mgr->profileNames().size(), 16);
+    // filtering — Issue #202 deep-fix).  Manifest dropped 18 -> 17 after
+    // the delete (bumped from 17 -> 18 baseline when commit e82fa68e added
+    // ANAN_G2E to factoryProfileNames; Bypass + 16 SKU factory defaults
+    // = 17 pre-delete, 16 after Default-ANAN8000D is removed).
+    //
+    // 2026-05-23 bench tail: ANAN_G2E added a new factory profile, so
+    // baseline grew by 1.  Test expectation updated to match.
+    QCOMPARE(mgr->profileNames().size(), 17);
     QVERIFY(!mgr->profileNames().contains(QStringLiteral("Default - ANAN8000D")));
     QVERIFY(!mgr->activeProfileName().isEmpty());
     QVERIFY(mgr->activeProfileName() != QStringLiteral("Default - ANAN8000D"));

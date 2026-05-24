@@ -361,10 +361,45 @@ private slots:
     //   b) Stored active is a deleted name -> fall back to Default-<connectedModel>
     //   c) No stored active -> fall back to Default-<connectedModel>
 
-    // 7a: stored active matches manifest -> restored on reconnect.
+    // 7a: stored active is a USER-CUSTOMISED profile in manifest -> restored on
+    // reconnect even when connectedModel differs.  Stored cross-model factory
+    // defaults are NOT respected (see 2026-05-22 visibility-gate fix landed in
+    // baf931a7 to stop G2E inheriting Hermes 41 dB gains from prior testing).
     void activeOnConnect_storedActiveExists()
     {
-        // First launch with ANAN8000D, then switch to G2 profile, then reconnect.
+        // First launch with ANAN8000D, create a user profile, then activate it.
+        // User profiles (non-factory-default) are always visible to the combo
+        // filter, so they survive a connectedModel switch on reconnect.
+        {
+            PaProfileManager mgr;
+            mgr.setMacAddress(kMacA);
+            mgr.load(HPSDRModel::ANAN8000D);
+            PaProfile custom(QStringLiteral("MyUserProfile"),
+                             HPSDRModel::ANAN8000D, /*isFactoryDefault=*/false);
+            QVERIFY(mgr.saveProfile(QStringLiteral("MyUserProfile"), custom));
+            mgr.setActiveProfile(QStringLiteral("MyUserProfile"));
+        }
+
+        // Reconnect with a different connectedModel than the stored active —
+        // user-customised stored active wins.
+        PaProfileManager mgr2;
+        mgr2.setMacAddress(kMacA);
+        mgr2.load(HPSDRModel::ANAN7000D);  // different model
+        QCOMPARE(mgr2.activeProfileName(),
+                 QStringLiteral("MyUserProfile"));
+    }
+
+    // 7a': stored active is a factory default for a DIFFERENT model than the
+    // current connectedModel -> falls back to Default-<connectedModel>.
+    //
+    // 2026-05-22 bench-finding (ANAN-G2E port, commit baf931a7): G2E user
+    // connecting after Hermes test session inherited "Default - HERMES" 41 dB
+    // gain rows; 1 W slider produced 29 W out.  The visibility gate added in
+    // PaProfileManager::resolveActiveOnConnect rejects an inherited factory
+    // default that the combo filter would have hidden anyway.
+    void activeOnConnect_storedActiveIsCrossModelFactoryDefault_fallsBack()
+    {
+        // First launch with ANAN8000D, switch to G2 factory profile.
         {
             PaProfileManager mgr;
             mgr.setMacAddress(kMacA);
@@ -372,13 +407,13 @@ private slots:
             mgr.setActiveProfile(QStringLiteral("Default - ANAN_G2"));
         }
 
-        // Reconnect with a different connectedModel than the stored active —
-        // stored active wins.
+        // Reconnect with ANAN7000D — stored "Default - ANAN_G2" is a factory
+        // default for a different model; visibility gate rejects it.
         PaProfileManager mgr2;
         mgr2.setMacAddress(kMacA);
-        mgr2.load(HPSDRModel::ANAN7000D);  // different model
+        mgr2.load(HPSDRModel::ANAN7000D);
         QCOMPARE(mgr2.activeProfileName(),
-                 QStringLiteral("Default - ANAN_G2"));
+                 QStringLiteral("Default - ANAN7000D"));
     }
 
     // 7b: stored active is a deleted name -> fall back to Default-<connectedModel>.

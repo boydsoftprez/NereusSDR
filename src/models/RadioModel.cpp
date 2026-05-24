@@ -4132,25 +4132,37 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                     // Save on every toggle.  Qt::UniqueConnection makes
                     // this idempotent across reconnect re-wires.
                     //
-                    // Bench-fix 2026-05-23 (JJ Boyd, second pass): the
-                    // earlier landing of this block called only
-                    // AppSettings::setValue, which updates the in-memory
-                    // map but never flushes to disk.  PS-A toggles
-                    // therefore did not survive an app reload.  Switch to
-                    // the same scheduleSettingsSave() coalesced flush that
-                    // the rest of RadioModel uses for per-MAC AppSettings
-                    // writes (mirrors the AlexController reapplyAndPersist
-                    // path landed today + the existing band/freq save
-                    // paths at lines 533 / 552 / 569 etc.).
+                    // Bench-fix 2026-05-23 (JJ Boyd, third pass): direct
+                    // AppSettings::instance().save() flush.
+                    //
+                    // First pass called only AppSettings::setValue, which
+                    // updates the in-memory map but never flushes to disk.
+                    //
+                    // Second pass added scheduleSettingsSave() believing it
+                    // was the canonical flush path, but that helper only
+                    // writes per-slice state + AlexController + TransmitModel
+                    // (see RadioModel::saveSliceState 7395-7415).  It does
+                    // NOT call AppSettings::instance().save(), so my
+                    // hardware/<mac>/pureSignal/autoCalEnabled key never
+                    // reached the XML.  Bench-confirmed on G2E run
+                    // 21:54:00->21:54:05: user toggled PS-A on, then
+                    // disconnected; no close-event fired, settings file
+                    // never updated.
+                    //
+                    // Third pass calls AppSettings::instance().save() directly
+                    // (same pattern as SpotHubDialog / SpectrumWidget for
+                    // other rare user-action settings).  One disk write per
+                    // PS-A toggle is fine; user-initiated action, low
+                    // cadence.
                     connect(m_pureSignal.get(),
                             &PureSignal::autoCalEnabledChanged,
                             this,
-                            [this, mac](bool on) {
+                            [mac](bool on) {
                                 AppSettings::instance().setValue(
                                     QStringLiteral("hardware/%1/pureSignal/autoCalEnabled").arg(mac),
                                     on ? QStringLiteral("True")
                                        : QStringLiteral("False"));
-                                scheduleSettingsSave();
+                                AppSettings::instance().save();
                             },
                             Qt::UniqueConnection);
                 }
