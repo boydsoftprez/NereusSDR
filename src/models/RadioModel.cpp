@@ -555,24 +555,35 @@ RadioModel::RadioModel(QObject* parent)
     // Phase 3P-I-b (T6): flag changes must re-fire composition for current band.
     // The isTx arg stays false in 3P-I-b — MOX trigger wiring lands in 3M-1.
     // Uses a local lambda so all six connects share one band-lookup path.
-    auto reapply = [this]() {
+    //
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): also dirty+schedule-save on
+    // every flag change so the per-MAC persistence in AlexController::save()
+    // actually fires.  Without this the six TX-bypass checkboxes (Rx
+    // BYPASS on Tx, Ext1 on Tx, Use TX antenna for RX, RX out override,
+    // XVTR active) reset to default on every app reload, forcing the
+    // user to re-check them every session — confirmed on the bench when
+    // "Rx BYPASS on Tx" (G2E label for ext2OutOnTx) dropped after a
+    // graceful close.
+    auto reapplyAndPersist = [this]() {
+        m_alexControllerDirty = true;
+        scheduleSettingsSave();
         Band b = m_activeSlice
                    ? bandFromFrequency(m_activeSlice->frequency())
                    : m_lastBand;
         applyAlexAntennaForBand(b);
     };
     connect(&m_alexController, &AlexController::ext1OutOnTxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::ext2OutOnTxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::rxOutOnTxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::rxOutOverrideChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::useTxAntForRxChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
     connect(&m_alexController, &AlexController::xvtrActiveChanged,
-            this, [reapply](bool) { reapply(); });
+            this, [reapplyAndPersist](bool) { reapplyAndPersist(); });
 
 
     // Connection starts null — created by connectToRadio() via factory.
@@ -4098,6 +4109,40 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // listen to this signal so they can wire their controls now
             // that the coordinator is live.
             emit pureSignalCoordinatorReady(m_pureSignal.get());
+
+            // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): per-MAC persistence
+            // for PS-A enabled (autoCalEnabled).  Without this, JJ had to
+            // re-arm PS-A on every app launch because the toggle lived
+            // only in memory.  Restore on coordinator creation, save on
+            // every toggle.  Key under the same per-MAC scope as the
+            // hardware/<mac>/... block used by AlexController.
+            {
+                const QString mac = m_connection
+                    ? m_connection->radioInfo().macAddress
+                    : QString();
+                if (!mac.isEmpty()) {
+                    auto& s = AppSettings::instance();
+                    const QString key = QStringLiteral("hardware/%1/pureSignal/autoCalEnabled").arg(mac);
+                    const bool persisted =
+                        (s.value(key, QStringLiteral("False")).toString()
+                         == QStringLiteral("True"));
+                    if (persisted) {
+                        m_pureSignal->setAutoCalEnabled(true);
+                    }
+                    // Save on every toggle.  Qt::UniqueConnection makes
+                    // this idempotent across reconnect re-wires.
+                    connect(m_pureSignal.get(),
+                            &PureSignal::autoCalEnabledChanged,
+                            this,
+                            [mac](bool on) {
+                                AppSettings::instance().setValue(
+                                    QStringLiteral("hardware/%1/pureSignal/autoCalEnabled").arg(mac),
+                                    on ? QStringLiteral("True")
+                                       : QStringLiteral("False"));
+                            },
+                            Qt::UniqueConnection);
+                }
+            }
 
             // ── 3M-1c L.2 fixup: 5 TransmitModel two-tone signal connects + ──
             //                   initial-state pushes to TxChannel TXPostGen

@@ -1115,10 +1115,44 @@ void PsForm::refreshSaveRestoreButtons()
 
 void PsForm::onCalibrationCountChanged(int count)
 {
-    // From Thetis PSForm.cs:568 timer1code [v2.10.3.13]:
-    //   lblPSInfo5.Text = puresignal.CalibrationCount.ToString();
+    // From Thetis PSForm.cs:561-571 timer1code [v2.10.3.13]:
+    //   lblPSInfo0.Text  = puresignal.Info[0].ToString();   // bldr.rx
+    //   lblPSInfo1.Text  = puresignal.Info[1].ToString();   // bldr.cm
+    //   lblPSInfo2.Text  = puresignal.Info[2].ToString();   // bldr.cc
+    //   lblPSInfo3.Text  = puresignal.Info[3].ToString();   // bldr.cs
+    //   lblPSfb2.Text    = puresignal.FeedbackLevel.ToString();    // info[4]
+    //   lblPSInfo5.Text  = puresignal.CalibrationCount.ToString(); // info[5]
+    //   lblPSInfo6.Text  = puresignal.Info[6].ToString();   // sln.chk
+    //   lblPSInfo13.Text = puresignal.Info[13].ToString();  // dg.cnt
+    //   lblPSInfo15.Text = puresignal.Info[15].ToString();  // state
+    //
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): pre-fix only lblPSInfo5
+    // was updated here.  The other 8 labels were created in
+    // buildCalibrationInfoGroup() but never bound to any data source —
+    // they sat at their initial "0" placeholder text even while calcc
+    // was actively cycling.  JJ noticed during a side-by-side Thetis vs
+    // NereusSDR PS bench run that Thetis's labels updated while ours
+    // were stuck.  Reading PureSignal::infoAt(i) here is safe because
+    // calibrationCountChanged fires AFTER pollTimerTick's m_info update
+    // (see PureSignal.cpp:1033 + 1287).
     if (m_lblInfo5) {
         m_lblInfo5->setText(QString::number(count));
+    }
+    if (!m_pureSignal) {
+        return;
+    }
+    if (m_lblInfo0)  { m_lblInfo0->setText(QString::number(m_pureSignal->infoAt(0)));  }
+    if (m_lblInfo1)  { m_lblInfo1->setText(QString::number(m_pureSignal->infoAt(1)));  }
+    if (m_lblInfo2)  { m_lblInfo2->setText(QString::number(m_pureSignal->infoAt(2)));  }
+    if (m_lblInfo3)  { m_lblInfo3->setText(QString::number(m_pureSignal->infoAt(3)));  }
+    if (m_lblInfo6)  { m_lblInfo6->setText(QString::number(m_pureSignal->infoAt(6)));  }
+    if (m_lblInfo13) { m_lblInfo13->setText(QString::number(m_pureSignal->infoAt(13))); }
+    if (m_lblInfo15) { m_lblInfo15->setText(QString::number(m_pureSignal->infoAt(15))); }
+    if (m_lblGetPSpeak) {
+        // From Thetis PSForm.cs:614 [v2.10.3.13]:
+        //   lblPSHWPeak.Text = puresignal.HWPeak.ToString("F4");
+        const double peak = m_pureSignal->getHwPeak();
+        m_lblGetPSpeak->setText(QString::number(peak, 'f', 4));
     }
 }
 

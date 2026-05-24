@@ -484,16 +484,48 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
 {
     quint32 reg = 0;
 
-    // 3M-1a (2026-04-27): bit 27 _TR_Relay + bit 18 _trx_status are
-    // unconditionally set in the Alex1 (TX-side) word.  deskhpsdr asserts
-    // both bits on every CmdHighPriority regardless of MOX state — Alex1
-    // is the TX antenna control register and these bits indicate the TX
-    // signal-chain readiness, not the per-cycle keying state.
-    // From deskhpsdr/src/new_protocol.c:998,1004 [@120188f]:
-    //   alex1 |= ALEX_TX_RELAY;
-    //   alex1 |= ALEX_PS_BIT;
-    reg |= (1u << 27);  // _TR_Relay   (ALEX_TX_RELAY = 0x08000000)
-    reg |= (1u << 18);  // _trx_status (ALEX_PS_BIT   = 0x00040000)
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): SOURCE-FIRST CORRECTION
+    // (strict diff against Thetis-locked G2E pcap).
+    //
+    // The prior body unconditionally set bit 27 (_TR_Relay) AND bit 18
+    // (_trx_status) on Alex1, citing deskhpsdr behavior.  Wire-byte diff
+    // against Thetis 2.10.3.15 on the SAME radio (G2E) during PS+MOX
+    // showed Alex1 = 0x01440100 (bits 8, 18, 22, 24 — NO bit 27).  Our
+    // code emitted Alex1 = 0x09241020 (bits 5, 12, 18, 21, 24, 27).
+    //
+    // The deskhpsdr citation does NOT match Thetis behavior on the G2E,
+    // and the project rule is Thetis-faithful porting.  Per Thetis
+    // ChannelMaster/netInterface.c:381 [v2.10.3.13]:
+    //   prbpfilter2->_trx_status = prbpfilter->_TR_Relay; // TXRX_STATUS for Alex1
+    // i.e. Alex1's bit 18 (_trx_status) MIRRORS Alex0's bit 27 (_TR_Relay)
+    // value, but Alex1 itself NEVER sets bit 27.  prbpfilter2->_TR_Relay
+    // does not exist in the Thetis setter chain.
+    //
+    // So Alex1 bit 18 follows the MOX state (because Alex0 bit 27 = MOX),
+    // and Alex1 bit 27 stays clear.  This was a critical latent bug — the
+    // extra bit 27 on Alex1 was driving the radio's TX antenna relay path
+    // in a way Thetis doesn't, which may have been causing the PS
+    // feedback DDC to receive garbage data on the G2E (calcc never
+    // reached LSTAYON regardless of every other fix we tried).
+    if (ctx.mox) {
+        reg |= (1u << 18);  // _trx_status mirrors Alex0's _TR_Relay
+
+        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): Alex1 bit 8 (_rx2_gnd)
+        // on MOX-on per Thetis console.cs:29091 HdwMOXChanged [v2.10.3.13]:
+        //   if (tx) { ...
+        //       if (bpf2_gnd) NetworkIO.SetBPF2Gnd(1);
+        //   }
+        // Default bpf2_gnd = true at console.cs:10903 [v2.10.3.13], so
+        // Alex1 bit 8 fires on every MOX engagement unless the user has
+        // explicitly disabled it.  Bench-confirmed in Thetis-locked G2E
+        // pcap (Alex1=0x01440100 during MOX has bit 8 set).  Without
+        // this, the Alex2 BPF chain doesn't ground the rx2 port during
+        // TX, which can affect the PS feedback path on Mk II BPF boards
+        // (G2E is mkiiBpf=true).
+        // NereusSDR-divergence: we don't yet expose a "bpf2_gnd" user
+        // checkbox.  Hard-coded to true (Thetis default).
+        reg |= (1u << 8);   // _rx2_gnd (BPF2 ground during TX)
+    }
 
     // TX antenna selection — same encoding as RX but in Alex1 [@501e3f5]
     int antBits = ctx.p2AlexTxAnt & 0x03;
@@ -514,14 +546,27 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
     if (ctx.alexLpfBits & 0x20) { reg |= (1u << 30); }
     if (ctx.alexLpfBits & 0x40) { reg |= (1u << 31); }
 
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): the HPF Bypass-on-PureSignal
+    // override that this commit landed on Alex0 (bit 12) must NOT leak
+    // into Alex1.  Per Thetis ChannelMaster/netInterface.c [v2.10.3.13]:
+    //   SetAlexHPFBits(0x20)  → prbpfilter->_Bypass  = 1   (Alex0 bit 12)
+    //   SetAlex2HPFBits(0x20) → prbpfilter2->_Bypass = 1   (Alex1 bit 12)
+    // Two SEPARATE setters write two SEPARATE storage fields; the PS-FB
+    // HPF bypass at console.cs:6957 setBPF1ForOrionIISaturn only fires
+    // SetAlexHPFBits (Alex0).  Wire-byte diff against Thetis-locked G2E
+    // pcap confirms: Thetis Alex1=0x01440100 (bit 12 CLEAR) while we
+    // emitted 0x09241020 (bit 12 SET).  Mask off the bypass bit from
+    // Alex1's HPF input before encoding.
+    const quint8 hpfBitsAlex1 = static_cast<quint8>(ctx.alexHpfBits & ~0x20u);
+
     // Same HPF bits [@501e3f5]
-    if (ctx.alexHpfBits & 0x01) { reg |= (1u << 1);  }
-    if (ctx.alexHpfBits & 0x02) { reg |= (1u << 2);  }
-    if (ctx.alexHpfBits & 0x04) { reg |= (1u << 4);  }
-    if (ctx.alexHpfBits & 0x08) { reg |= (1u << 5);  }
-    if (ctx.alexHpfBits & 0x10) { reg |= (1u << 6);  }
-    if (ctx.alexHpfBits & 0x20) { reg |= (1u << 12); }
-    if (ctx.alexHpfBits & 0x40) { reg |= (1u << 3);  }
+    if (hpfBitsAlex1 & 0x01) { reg |= (1u << 1);  }
+    if (hpfBitsAlex1 & 0x02) { reg |= (1u << 2);  }
+    if (hpfBitsAlex1 & 0x04) { reg |= (1u << 4);  }
+    if (hpfBitsAlex1 & 0x08) { reg |= (1u << 5);  }
+    if (hpfBitsAlex1 & 0x10) { reg |= (1u << 6);  }
+    // bit 12 (Bypass) deliberately omitted from Alex1 — see comment above.
+    if (hpfBitsAlex1 & 0x40) { reg |= (1u << 3);  }
 
     return reg;
 }
@@ -836,9 +881,19 @@ PsDdcConfig P2CodecOrionMkII::psDdcConfigHermesClass(
             cfg.cntrl1      = 4;
             cfg.cntrl2      = 0;
 
-            // P2 1-ADC PS pair on the wire: DDC0 (PS feedback) + DDC1 (TX monitor).
-            // Same DDC layout as G2-class on P2 because the P2 freq override at
-            // network.c:936-945 [v2.10.3.13] forces both DDCs to TX freq during MOX.
+            // P2 1-ADC PS pair on the wire: DDC0 (PS feedback) + DDC1 (TX
+            // monitor).  Per Thetis cmaster.cs:538-539 [v2.10.3.13]:
+            //   SetPSRxIdx(0, 0);   // Stream0 for RX feedback
+            //   SetPSTxIdx(0, 1);   // Stream1 for TX feedback
+            // Both Thetis and our radio actually send these as INTERLEAVED
+            // pair on port 1035 (sync byte = DDC1 bit; our deinterleave
+            // splits even-indexed samples → ddcIndex=0, odd-indexed →
+            // ddcIndex=1).  Verified by tshark conv on /tmp/nereus-g2e-ps
+            // .pcap.first (Thetis ref) and current pcap: radio sends only
+            // on port 1035 (not 1036/1037).  The earlier speculation
+            // (2026-05-23) about DDC2/DDC3 routing was wrong — that's the
+            // router CALLID config for a different processing path, not
+            // the on-wire DDC numbering.
             cfg.psFbDdc  = 0;
             cfg.txMonDdc = 1;
         }

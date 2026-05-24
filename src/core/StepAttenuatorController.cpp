@@ -367,8 +367,19 @@ void StepAttenuatorController::setAttOnTxValue(int dB)
     // strip the HL2 signed range.  Bypassing the clamp here is correct:
     // the value above is already validated against [m_minAttDb, 31].
     int idx = static_cast<int>(m_currentBand);
+    int oldValue = 0;
     if (idx >= 0 && idx < static_cast<int>(Band::SwlFirst)) {
+        oldValue = m_txAttByBand[static_cast<size_t>(idx)];
         m_txAttByBand[static_cast<size_t>(idx)] = dB;
+    }
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): emit attOnTxValueChanged so
+    // the Setup → Transmit → Power udATTOnTX spinbox (and any other UI
+    // surface) mirrors AutoAtt's adjustments + user-side changes.  Old/new
+    // guard prevents a feedback loop when the spinbox writes back to its
+    // own bound setter.
+    if (dB != oldValue) {
+        emit attOnTxValueChanged(dB);
     }
 
     // From Thetis console.cs:10613-10622 TxAttenData setter [v2.10.3.13]:

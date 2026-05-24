@@ -2331,7 +2331,18 @@ private:
     // converges on a fresh 2-Tone test.  See docs/architecture/
     // phase3m-4-handoff-bench-debug.md "Round 2 / Task 17 status".
     double m_twoToneLevel      =   0.0;
-    int    m_twoTonePower      =    50;   // NereusSDR-original; Designer = 10 %
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): default fixed from
+    // NereusSDR-original 50 to Thetis source-first 10.  From Thetis
+    // setup.designer.cs:62236 [v2.10.3.13]:
+    //   this.udTestIMDPower.Value = new decimal(new int[] { 10, 0, 0, 0 });
+    // and console.cs:22920 [v2.10.3.13]:
+    //   console.TwoToneTunePower = (int)udTestIMDPower.Value;
+    // Comment on the prior 50 default explicitly noted "Designer = 10 %"
+    // but the value never got corrected.  Setting our default to 50 made
+    // our PS test run at 5x Thetis's nominal test power, which along with
+    // the WDSP-side baseband amplitude factors caused FB ADC overload and
+    // prevented calcc from converging.
+    int    m_twoTonePower      =    10;   // Thetis setup.designer.cs:62236
     int    m_twoToneFreq2Delay =     0;   // matches Thetis Designer
     bool   m_twoToneInvert     =  true;   // setup.Designer.cs:61963 [v2.10.3.13]
     bool   m_twoTonePulsed     = false;   // setup.Designer.cs:61643-61653 (default)
