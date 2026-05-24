@@ -197,6 +197,12 @@ private:
     float   m_peakDbm{-127.0f};     // RX peak hold
     QString m_source{"S-Meter Peak"};
 
+    // Visual-change guard for animateNeedle's update() throttle.  Stores
+    // the needle fraction last drawn so we can skip the repaint when the
+    // physics tick produces sub-pixel movement.  Initialised to a value
+    // outside the valid 0..1 range so the first frame always paints.
+    float   m_lastDrawnNeedleFraction{-1.0f};
+
     // TX meter values (updated continuously, used when transmitting)
     // From AetherSDR src/gui/SMeterWidget.h:86-89 [@0cd4559]
     float   m_txPower{0.0f};

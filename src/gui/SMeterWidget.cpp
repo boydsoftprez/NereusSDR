@@ -120,6 +120,16 @@ SMeterWidget::SMeterWidget(QWidget* parent)
 
 void SMeterWidget::setLevel(float dbm)
 {
+    // Sub-perceivable change guard.  MeterPoller pushes this 10 times a
+    // second; radio noise causes the dBm reading to wiggle by a few tenths
+    // even on a quiet band.  Below 0.5 dB the needle position is the same
+    // pixel and the S-unit text doesn't change.  Skipping the animation
+    // rebuild + repaint for those sub-threshold ticks was the largest
+    // single contributor to the macOS paint-pipeline saturation observed
+    // in the 2026-05-24 bench profile.
+    if (std::abs(dbm - m_levelDbm) < 0.5f) {
+        return;
+    }
     m_levelDbm = dbm;
 
     // Peak hold (existing needle/triangle behavior)
@@ -313,7 +323,17 @@ void SMeterWidget::animateNeedle()
         m_needleAnimation.stop();
     }
 
-    update();
+    // Visual-change guard.  The animation tick computes a new needle
+    // fraction every 33 ms, but when the needle is settled or moving by
+    // sub-pixel amounts the repaint is wasted work (paintEvent is the
+    // single most expensive widget paint in the app per profile).  Skip
+    // the update() unless the needle moved by at least 0.005 (1 pixel
+    // on a 200 px arc) OR the peak hold marker is animating its decay.
+    if (std::abs(m_needleFraction - m_lastDrawnNeedleFraction) > 0.005f
+        || peakHoldAnimating) {
+        m_lastDrawnNeedleFraction = m_needleFraction;
+        update();
+    }
 }
 
 // From AetherSDR src/gui/SMeterWidget.cpp:214-231 [@0cd4559]
