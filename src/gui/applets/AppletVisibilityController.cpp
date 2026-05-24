@@ -51,6 +51,19 @@ bool AppletVisibilityController::isVisible(const QString& id) const
     return it != m_entries.end() ? it->visible : false;
 }
 
+bool AppletVisibilityController::isAvailable(const QString& id) const
+{
+    auto it = m_entries.find(id);
+    return it != m_entries.end() ? it->available : false;
+}
+
+bool AppletVisibilityController::isEffectivelyVisible(const QString& id) const
+{
+    auto it = m_entries.find(id);
+    if (it == m_entries.end()) { return false; }
+    return it->visible && it->available;
+}
+
 QStringList AppletVisibilityController::registeredIds() const
 {
     return m_order;
@@ -68,11 +81,33 @@ void AppletVisibilityController::setVisible(const QString& id, bool visible)
     if (it == m_entries.end()) { return; }
     if (it->visible == visible) { return; }
 
+    const bool wasEffective = it->visible && it->available;
     it->visible = visible;
+    const bool nowEffective = it->visible && it->available;
+
     AppSettings::instance().setValue(
         settingsKey(id),
         visible ? QStringLiteral("True") : QStringLiteral("False"));
     emit visibilityChanged(id, visible);
+    if (wasEffective != nowEffective) {
+        emit effectiveVisibilityChanged(id, nowEffective);
+    }
+}
+
+void AppletVisibilityController::setAvailable(const QString& id, bool available)
+{
+    auto it = m_entries.find(id);
+    if (it == m_entries.end()) { return; }
+    if (it->available == available) { return; }
+
+    const bool wasEffective = it->visible && it->available;
+    it->available = available;
+    const bool nowEffective = it->visible && it->available;
+
+    emit availabilityChanged(id, available);
+    if (wasEffective != nowEffective) {
+        emit effectiveVisibilityChanged(id, nowEffective);
+    }
 }
 
 } // namespace NereusSDR
