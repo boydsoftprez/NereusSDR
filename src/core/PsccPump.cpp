@@ -22,7 +22,6 @@
 
 #include <QLoggingCategory>
 
-#include <algorithm>
 #include <vector>
 
 // pscc() is exported from the WDSP static library (calcc.c:617
@@ -137,37 +136,92 @@ void PsccPump::onDdcConfigChanged(const PsDdcConfig& cfg)
     }
 }
 
-void PsccPump::onIqData(int ddcIndex, const QVector<float>& samples)
+void PsccPump::onIqData(int /*ddcIndex*/, const QVector<float>& /*samples*/)
 {
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF) — transitional
+    // no-op.  The legacy independent-rings architecture (m_txMonRing +
+    // m_psFbRing drained by tryPump) was replaced by onPsPairedIqData
+    // to honor Thetis sync.c InboundBlock(id=1)'s same-packet pairing
+    // invariant.  Keeping this slot stub-only avoids breaking the
+    // RadioModel::iqDataReceived wiring while the connection layer
+    // migrates to RadioConnection::psPairedIqDataReceived.  Drop the
+    // slot entirely once that migration is complete.
+}
+
+void PsccPump::onPsPairedIqData(int psFbDdc, const QVector<float>& psFbSamples,
+                                int txMonDdc, const QVector<float>& txMonSamples)
+{
+    // From Thetis ChannelMaster/sync.c:53-58 InboundBlock(id=1)
+    // [v2.10.3.15]:
+    //   pscc (chid (inid (1, 0), 0),
+    //         nsamples,
+    //         data[_InterlockedAnd (&psyn->xmtr[0].ps_tx_idx, 0xffffffff)],
+    //         data[_InterlockedAnd (&psyn->xmtr[0].ps_rx_idx, 0xffffffff)]);
+    //
+    // Both `data[ps_tx_idx]` and `data[ps_rx_idx]` are pointers into
+    // per-stream buffers populated by the SAME xrouter() call (see
+    // router.c:91-102 case 2 [v2.10.3.15]).  This slot's contract
+    // mirrors that: psFbSamples + txMonSamples are de-interleaved
+    // from the same packet, so cross-stream sample alignment is
+    // guaranteed by construction.  No ring buffers, no drain loop.
+
     if (!m_active) {
         return;
     }
-    if (samples.isEmpty()) {
+
+    // From cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx(0,0) + SetPSTxIdx(0,1):
+    // the codec layer is responsible for emitting on the configured PS
+    // pair.  Refuse the call if the connection emitted on a different
+    // pair (defensive guard against future connection-layer regressions).
+    if (psFbDdc != m_psFbDdc || txMonDdc != m_txMonDdc) {
         return;
     }
 
-    // Route to the correct ring.  iqDataReceived emits interleaved float
-    // I/Q pairs (samples.size() == 2 * sample_count).  Other DDC indices
-    // (RX1's audio path) fall through silently.
-    QVector<float>* ring = nullptr;
-    if (ddcIndex == m_txMonDdc) {
-        ring = &m_txMonRing;
-    } else if (ddcIndex == m_psFbDdc) {
-        ring = &m_psFbRing;
-    } else {
+    // Same-packet invariant: both per-stream buffers come from the same
+    // deinterleave pass and must have identical sample counts.  A
+    // mismatch indicates a bug upstream — drop and let the next packet
+    // through clean.
+    if (psFbSamples.size() != txMonSamples.size()) {
+        return;
+    }
+    if (psFbSamples.isEmpty()) {
         return;
     }
 
-    // Append to ring.  No upper bound — calcc consumes as fast as the
-    // network delivers, so the ring should stay shallow.  In a packet-
-    // burst scenario the ring might temporarily grow; the next tryPump
-    // call drains as many full blocks as possible.
-    const int prevSize = ring->size();
-    ring->resize(prevSize + samples.size());
-    std::copy(samples.constBegin(), samples.constEnd(),
-              ring->begin() + prevSize);
+    // QVector<float>::size() counts floats; interleaved I/Q means each
+    // sample is two floats.  sps = per-stream complex-sample count.
+    const int interleavedFloats = psFbSamples.size();
+    const int sps = interleavedFloats / 2;
 
-    tryPump();
+    // Build interleaved double buffers (pscc takes double*).  The
+    // float→double conversion is the same that psccF performs internally
+    // (calcc.c:849-855 [v2.10.3.13]); calling pscc directly skips that
+    // wrapper layer.
+    std::vector<double> tx(interleavedFloats);
+    std::vector<double> rx(interleavedFloats);
+    for (int j = 0; j < interleavedFloats; ++j) {
+        // TX-monitor input → pscc tx* (Thetis ps_tx_idx=1, cmaster.cs:534).
+        tx[j] = static_cast<double>(txMonSamples[j]);
+        // PS-feedback input → pscc rx* (Thetis ps_rx_idx=0, cmaster.cs:533).
+        rx[j] = static_cast<double>(psFbSamples[j]);
+    }
+
+#ifdef NEREUS_BUILD_TESTS
+    if (m_skipPsccForTests) {
+        m_lastPsccArgs.channel   = m_txChannelId;
+        m_lastPsccArgs.size      = sps;
+        m_lastPsccArgs.tx        = tx;
+        m_lastPsccArgs.rx        = rx;
+        m_lastPsccArgs.callCount += 1;
+    } else
+#endif
+    {
+        // pscc internally locks calcc.cs_update (calcc.c:621 [v2.10.3.13]),
+        // so this is safe to invoke from any thread that owns no calcc lock.
+        pscc(m_txChannelId, sps, tx.data(), rx.data());
+    }
+
+    ++m_totalBlocksPumped;
 }
 
 void PsccPump::tryPump()
@@ -206,28 +260,95 @@ void PsccPump::tryPump()
         pscc(m_txChannelId, m_blockSize, tx.data(), rx.data());
         ++m_totalBlocksPumped;
 
-        // Diagnostic — once every ~80 blocks (~one second at 192 kHz +
-        // 256 block) so the bench can confirm pumping is happening
-        // without flooding the log.  Also report TX + RX envelope max
-        // so we can see whether calcc has signal energy to work with.
+        // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): TX↔RX correlation
+        // diagnostic — proves/disproves the time-alignment hypothesis.
+        //
+        // calcc fits a polynomial through (env_TX[i], env_RX[i]) pairs.
+        // The AmpView bow-tie X pattern (vs Thetis's clean curve at same
+        // settings) suggests env_TX and env_RX may be misaligned in time,
+        // producing a Lissajous instead of a function.  Dump per-block
+        // envelope at 4 indices + cross-correlation lag estimate.
+        //
+        // Two-tone envelope period at f1=700, f2=1900: beat=600 Hz =>
+        // 320 samples at 192 kHz.  Sampling at i=0,64,128,192 within a
+        // 256-sample block gives 4 points across roughly 80% of one
+        // envelope cycle.  Expected (good) behaviour: env_TX and env_RX
+        // both rise and fall together; ratio env_RX/env_TX is roughly
+        // constant.  Bad behaviour (time skew): env_TX peak at i where
+        // env_RX is at trough or vice-versa.
+        //
+        // Cross-correlation lag: scan offset k in [-8, +8] samples;
+        // find k that maximises sum(env_TX[i] * env_RX[i+k]).  Non-zero
+        // lag means the rings are out of sync — fix is in deinterleave
+        // order or PsccPump ring draining.
+        //
+        // Fires every 80 blocks (~1 Hz at 192 kHz / 256 block size) to
+        // avoid log flood while still giving live cadence.  Remove once
+        // PS lock is achieved + verified.
         if ((m_totalBlocksPumped % 80) == 1) {
+            // Per-index envelope (4 points across block).
+            const int idx[4] = {0, 64, 128, 192};
+            double envTx[4], envRx[4];
+            for (int n = 0; n < 4; ++n) {
+                const int i = idx[n];
+                const double txI = tx[2 * i + 0], txQ = tx[2 * i + 1];
+                const double rxI = rx[2 * i + 0], rxQ = rx[2 * i + 1];
+                envTx[n] = std::sqrt(txI * txI + txQ * txQ);
+                envRx[n] = std::sqrt(rxI * rxI + rxQ * rxQ);
+            }
+
+            // Block-wide stats.
             double txEnvMax = 0.0, rxEnvMax = 0.0;
+            double txEnvSum = 0.0, rxEnvSum = 0.0;
             for (int i = 0; i < m_blockSize; ++i) {
-                const double txI = tx[2 * i + 0];
-                const double txQ = tx[2 * i + 1];
-                const double rxI = rx[2 * i + 0];
-                const double rxQ = rx[2 * i + 1];
-                const double txE = std::sqrt(txI * txI + txQ * txQ);
-                const double rxE = std::sqrt(rxI * rxI + rxQ * rxQ);
+                const double txE = std::sqrt(tx[2*i+0]*tx[2*i+0] + tx[2*i+1]*tx[2*i+1]);
+                const double rxE = std::sqrt(rx[2*i+0]*rx[2*i+0] + rx[2*i+1]*rx[2*i+1]);
                 if (txE > txEnvMax) txEnvMax = txE;
                 if (rxE > rxEnvMax) rxEnvMax = rxE;
+                txEnvSum += txE; rxEnvSum += rxE;
             }
+            const double txEnvAvg = txEnvSum / m_blockSize;
+            const double rxEnvAvg = rxEnvSum / m_blockSize;
+
+            // Cross-correlation lag: find best alignment k for which
+            // env_TX[i] correlates with env_RX[i+k].  Build envelope
+            // arrays once, then scan lags.
+            std::vector<double> eTx(m_blockSize), eRx(m_blockSize);
+            for (int i = 0; i < m_blockSize; ++i) {
+                eTx[i] = std::sqrt(tx[2*i+0]*tx[2*i+0] + tx[2*i+1]*tx[2*i+1]);
+                eRx[i] = std::sqrt(rx[2*i+0]*rx[2*i+0] + rx[2*i+1]*rx[2*i+1]);
+            }
+            // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): initial ±8 search
+            // returned bestLag=+8 on every block (hit max), so widen to
+            // ±200 to capture envelope-period-scale lags.  Two-tone beat
+            // period at 192kHz with default freqs is 320 samples — a lag
+            // in [0, 320] is the most likely range.
+            int bestLag = 0;
+            double bestCorr = -1e30;
+            for (int k = -200; k <= 200; ++k) {
+                double s = 0.0;
+                int n = 0;
+                for (int i = 0; i < m_blockSize; ++i) {
+                    const int j = i + k;
+                    if (j < 0 || j >= m_blockSize) { continue; }
+                    s += eTx[i] * eRx[j];
+                    ++n;
+                }
+                if (n > 0 && s / n > bestCorr) {
+                    bestCorr = s / n;
+                    bestLag = k;
+                }
+            }
+
             qCInfo(lcDsp).nospace()
-                << "PsccPump: pumped " << m_totalBlocksPumped
-                << " blocks (channel=" << m_txChannelId
-                << " blockSize=" << m_blockSize
-                << " txEnvMax=" << txEnvMax
-                << " rxEnvMax=" << rxEnvMax << ")";
+                << "PsccPump-corr: pumped=" << m_totalBlocksPumped
+                << " bs=" << m_blockSize
+                << " txAvg=" << txEnvAvg << " txMax=" << txEnvMax
+                << " rxAvg=" << rxEnvAvg << " rxMax=" << rxEnvMax
+                << " ratio_avg=" << (txEnvAvg > 1e-9 ? rxEnvAvg / txEnvAvg : 0.0)
+                << " bestLag=" << bestLag << " samples"
+                << "  envTX[0,64,128,192]=" << envTx[0] << "," << envTx[1] << "," << envTx[2] << "," << envTx[3]
+                << "  envRX[0,64,128,192]=" << envRx[0] << "," << envRx[1] << "," << envRx[2] << "," << envRx[3];
         }
     }
 }

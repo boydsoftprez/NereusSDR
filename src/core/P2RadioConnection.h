@@ -456,6 +456,24 @@ private:
     // existing pattern for setTxFrequency / setRxFrequency.
     bool m_mox{false};
 
+    // --- PureSignal DDC pair (Phase 3M-4 bench-fix 2026-05-23) ───────────
+    //
+    // Latched from applyPsDdcConfig() each time the per-board codec emits
+    // a new PsDdcConfig.  Both default to -1 (no PS pair configured) so
+    // the deinterleave loop in processIqPacket only emits the source-first
+    // paired signal psPairedIqDataReceived when the codec has actually
+    // configured a PS pair.
+    //
+    // Used to:
+    //   * map deinterleaved stream slots back to (psFbDdc, txMonDdc) for
+    //     RadioConnection::psPairedIqDataReceived emission;
+    //   * mirror Thetis cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx /
+    //     SetPSTxIdx convention — the per-board codec is authoritative.
+    //
+    // Read on the connection thread only (deinterleave runs there).
+    int m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx; default 0)
+    int m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx; default 1)
+
     // --- Hardware config (from Thetis _radionet) ---
     int m_numAdc{1};                 // prn->num_adc
     int m_numDac{1};                 // prn->num_dac

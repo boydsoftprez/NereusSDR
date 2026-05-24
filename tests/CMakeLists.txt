@@ -429,6 +429,16 @@ target_compile_definitions(tst_p1_puresignal_ddc_freq PRIVATE NEREUS_BUILD_TESTS
 nereus_add_test(tst_ps_ddc_indices_per_board)
 target_compile_definitions(tst_ps_ddc_indices_per_board PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): per-packet ────────
+# paired PS streams via source-first sync.c InboundBlock(id=1) port.
+# Replaces the independent-rings architecture (m_txMonRing + m_psFbRing)
+# with a one-shot pscc() call per packet — the Thetis-faithful behavior
+# from router.c:91-102 + sync.c:53-58 [v2.10.3.15].  Bench-observed drift
+# on ANAN-G2E with the old rings was 189 samples / 985 us; the new path
+# eliminates drift by construction.
+nereus_add_test(tst_pscc_pump_paired)
+target_compile_definitions(tst_pscc_pump_paired PRIVATE NEREUS_BUILD_TESTS)
+
 # ── P1 full-parity Task 2.5: TransmitModel::pureSig → setPuresignalRun wiring ─
 # 8 tests pin the model-to-connection wiring installed in
 # RadioModel::wireConnectionSignals + the initial-push pattern in

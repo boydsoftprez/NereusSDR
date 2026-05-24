@@ -329,6 +329,21 @@ public slots:
     /// Default false = PureSignal feedback DDC NOT routing.
     virtual void setPuresignalRun(bool run) = 0;
 
+    /// HPF Bypass on PureSignal feedback flag (G2E / OrionMKII / Saturn).
+    /// When set + MOX active + PureSignal active, the host emits Alex0 bit 12
+    /// (_Bypass) so the radio bypasses the HPF chain and feeds the post-PA
+    /// coupler tap directly to the ADC.  Default true — matches Thetis
+    /// chkDisableHPFonPSb.Checked=true [v2.10.3.13].  Storage-only on the
+    /// base class; the override actually surfaces the flag in buildCodec-
+    /// Context's alexHpfBits OR-in.  P1 path also stores for symmetric API
+    /// (P1 boards may not need it but the flag persists across protocol
+    /// switches).
+    /// ANAN-G2E bench-fix 2026-05-23 (JJ Boyd).
+    virtual void setHpfBypassOnPs(bool on) {
+        m_hpfBypassOnPs = on;
+    }
+    bool hpfBypassOnPs() const noexcept { return m_hpfBypassOnPs; }
+
     /// Hardware mic-jack PTT disable flag (Orion/ANAN front-panel PTT).
     ///
     /// Parameter and wire convention match Thetis NetworkIO.SetMicPTT exactly:
@@ -461,6 +476,34 @@ signals:
     // hwReceiverIndex: 0-based hardware receiver number.
     // samples: interleaved float I/Q pairs, normalized to [-1.0, 1.0].
     void iqDataReceived(int hwReceiverIndex, const QVector<float>& samples);
+
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): per-packet paired
+    // PureSignal I/Q streams.
+    //
+    // Emitted ONCE per inbound packet (P2 multi-stream UDP packet or P1
+    // EP6 frame) that carries BOTH the PS-feedback and TX-monitor DDCs.
+    // Both vectors are deinterleaved from the SAME packet, so cross-stream
+    // sample alignment is preserved by construction — no host-side ring
+    // buffering required.
+    //
+    // Mirrors Thetis ChannelMaster sync.c:53-58 [v2.10.3.15] InboundBlock
+    // (id=1), which calls pscc() with two pointers (`data[ps_tx_idx]` and
+    // `data[ps_rx_idx]`) that both reference per-stream buffers populated
+    // by the same xrouter() call (router.c:91-102 case 2 [v2.10.3.15]).
+    //
+    // PsccPump connects to this signal in place of iqDataReceived() so
+    // the calcc engine sees the streams already paired, eliminating the
+    // 189-sample / 985 us cross-stream drift that the prior
+    // independent-rings architecture allowed under Qt queued-connection
+    // scheduling (bench-measured on ANAN-G2E + HermesC10 effective
+    // board, 2026-05-23).
+    //
+    // psFbDdc / txMonDdc identify which DDC indices the buffers came
+    // from (per cmaster.cs:533-534 [v2.10.3.13] convention: ps_rx_idx=0,
+    // ps_tx_idx=1 on all current models — though per-board codecs can
+    // override via PsDdcConfig::psFbDdc / .txMonDdc).
+    void psPairedIqDataReceived(int psFbDdc, const QVector<float>& psFbSamples,
+                                int txMonDdc, const QVector<float>& txMonSamples);
 
     // Emitted when mic samples are available.
     void micDataReceived(const QVector<float>& samples);
@@ -649,6 +692,24 @@ protected:
     // From Thetis ChannelMaster/networkproto1.c:600 [v2.10.3.13]:
     //   C2 = (prn->mic.line_in_gain & 0b00011111) | ((prn->puresignal_run & 1) << 6);
     bool m_puresignalRun{false};
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): HPF Bypass during MOX+PS.
+    // From Thetis console.cs:6957 setBPF1ForOrionIISaturn [v2.10.3.13]:
+    //   if (_mox && (disable_hpf_on_tx || (disable_hpf_on_ps && PureSignalEnabled)))
+    //       NetworkIO.SetAlexHPFBits(0x20);  // Bypass — bit 12 of Alex0 (_Bypass)
+    // The G2E (HermesC10) uses this branch (setAlex1HPF dispatch at
+    // console.cs:6830 N1GP G2E added).  When MOX+PS is active and this flag
+    // is set, the host OR's 0x20 into alexHpfBits so the codec emits bit 12
+    // in the Alex0 word, telling the radio to bypass the HPF chain and feed
+    // the post-PA coupler tap straight to the ADC.  Without this on a
+    // single-ADC G2E the FB DDC sees HPF-attenuated signal which calcc
+    // can't fit, leaving PureSignal oscillating instead of locking.
+    // Bench-confirmed against Thetis-locked pcap 2026-05-22 (87 MB on .247):
+    // Alex0 0x09441C00 during MOX+PS has bit 12 set; without the flag we
+    // emit 0x09240C20 (bits 10+11 yes, bit 12 no).
+    // Default true — matches Thetis chkDisableHPFonPSb.Checked=true at
+    // setup.designer.cs:23676 [v2.10.3.13].
+    bool m_hpfBypassOnPs{true};
 
     // Shared state for setMicPTTDisabled (3M-1b G.5; renamed for issue #182
     // to match Thetis MicPTTDisabled / mic_ptt_disabled storage name exactly).

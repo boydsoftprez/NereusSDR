@@ -1,14 +1,30 @@
 // no-port-check: NereusSDR-original driver class.  Thetis pumps pscc()
 // from inside ChannelMaster.dll's xrouter → InboundBlock(id=1) chain
 // (Project Files/Source/ChannelMaster/router.c:71-108 +
-// sync.c:44-67 [v2.10.3.13]).  ChannelMaster receives multi-stream
-// packets and demultiplexes into per-stream double-pointer arrays
-// before calling pscc.  NereusSDR's network layer uses the OpenHPSDR
-// P2 protocol-native one-stream-per-UDP-port architecture, so the
-// pairing has to happen here in the host: this driver class buffers
-// per-DDC float-interleaved I/Q from RadioConnection::iqDataReceived,
-// pairs them block-by-block, and calls pscc() with the matched
-// double buffers.
+// sync.c:44-67 [v2.10.3.15]).  ChannelMaster receives multi-stream
+// packets, deinterleaves all streams into per-stream double-pointer
+// arrays in the SAME call, and immediately calls pscc with both
+// pointers from that same call.
+//
+// Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF) — source-first
+// rewrite to honor that invariant:
+//
+//   * onPsPairedIqData is the new entry point.  It takes both streams
+//     as paired buffers FROM THE SAME PACKET and calls pscc once
+//     per packet.  Mirrors sync.c:53-58 [v2.10.3.15] InboundBlock
+//     (id=1) where `data[ps_tx_idx]` and `data[ps_rx_idx]` both
+//     point into per-stream buffers populated by the same xrouter()
+//     call (router.c:91-102 case 2 [v2.10.3.15]).
+//
+//   * onIqData (legacy) buffered per-DDC float-interleaved I/Q in two
+//     independent rings and drained when both reached kBlockSize.
+//     That architecture introduced cross-stream drift whenever Qt's
+//     queued-connection scheduler delivered the two per-DDC signals
+//     out-of-step — bench-measured on ANAN-G2E as a 189-sample /
+//     985 us lag, which made calcc fit a Lissajous instead of a
+//     function and produced the AmpView bow-tie pattern seen on
+//     2026-05-23.  Retained as a transitional no-op while the
+//     connection layer migrates to the paired signal.
 //
 // =================================================================
 // src/core/PsccPump.h  (NereusSDR)
@@ -79,6 +95,8 @@
 #include <QObject>
 #include <QVector>
 
+#include <vector>
+
 #include "codec/CodecContext.h"   // PsDdcConfig
 
 namespace NereusSDR {
@@ -118,11 +136,64 @@ public:
     int  psFbDdc()            const { return m_psFbDdc; }
     qint64 totalBlocksPumped() const { return m_totalBlocksPumped; }
 
+#ifdef NEREUS_BUILD_TESTS
+    // ── Paired-call test seam (NEREUS_BUILD_TESTS only) ──────────────
+    //
+    // Captures the args that the production code WOULD have passed to
+    // extern pscc() so tests can verify alignment without dragging in a
+    // live WDSP TX channel.  When setSkipPsccForTests(true) is set, the
+    // pump skips the actual pscc invocation but still does all sample
+    // conversion + arg capture.  callCount lets tests pin the "exactly
+    // one pscc call per packet" contract from sync.c InboundBlock(id=1).
+    struct LastPsccArgs {
+        int channel{-1};
+        int size{0};                  // per-stream sample count (sps)
+        std::vector<double> tx;       // interleaved I/Q, size = 2 * sps
+        std::vector<double> rx;       // interleaved I/Q, size = 2 * sps
+        qint64 callCount{0};
+    };
+
+    void setSkipPsccForTests(bool skip) { m_skipPsccForTests = skip; }
+    const LastPsccArgs& lastPsccArgsForTests() const { return m_lastPsccArgs; }
+#endif
+
 public slots:
-    // Connect P2RadioConnection::iqDataReceived(ddcIndex, samples) here.
-    // Routes the block into the appropriate ring based on ddcIndex
-    // matching m_txMonDdc (TX-monitor) or m_psFbDdc (PS-feedback).
-    // Other DDC indices are ignored (RX1's audio path stays untouched).
+    // ── Phase 3M-4 bench-fix 2026-05-23 source-first slot ─────────────────
+    //
+    // Connect RadioConnection::psPairedIqDataReceived here.  Both buffers
+    // come from the SAME packet (P2 multi-stream deinterleave at
+    // P2RadioConnection.cpp:2469-2484 / P1 EP6 deinterleave at
+    // P1RadioConnection.cpp:2899-2910), so cross-stream sample alignment
+    // is guaranteed by construction.
+    //
+    // Mirrors Thetis sync.c:53-58 [v2.10.3.15] InboundBlock(id=1):
+    //   pscc (chid (inid (1, 0), 0), nsamples,
+    //         data[ps_tx_idx],      // → pscc tx*  = TX-monitor stream
+    //         data[ps_rx_idx]);     // → pscc rx*  = PS-feedback stream
+    // with cmaster.cs:533-534 [v2.10.3.13]: ps_rx_idx=0 = PS-FB,
+    //                                       ps_tx_idx=1 = TX-mon.
+    //
+    // Drops the call (without buffering) when:
+    //   * !m_active                                — PS not engaged
+    //   * (psFbDdc, txMonDdc) ≠ (m_psFbDdc, m_txMonDdc)  — DDC mismatch
+    //   * psFbSamples.size() ≠ txMonSamples.size()       — same-packet
+    //                                                      invariant broken
+    //   * psFbSamples.isEmpty()                          — degenerate
+    void onPsPairedIqData(int psFbDdc, const QVector<float>& psFbSamples,
+                          int txMonDdc, const QVector<float>& txMonSamples);
+
+    // ── Legacy per-DDC slot (deprecated; transitional no-op) ──────────────
+    //
+    // Was originally connected to RadioConnection::iqDataReceived and
+    // routed each block into m_txMonRing or m_psFbRing for later draining
+    // by tryPump().  Replaced by onPsPairedIqData above on 2026-05-23 to
+    // honor sync.c InboundBlock(id=1)'s same-packet pairing invariant.
+    //
+    // Retained as a no-op so existing RadioModel wiring keeps compiling
+    // during the migration window; the old rings are no longer drained.
+    // Slated for removal once every RadioConnection subclass emits the
+    // paired signal.  See PsccPump.h header comment for the architectural
+    // narrative.
     void onIqData(int ddcIndex, const QVector<float>& samples);
 
     // Connect ReceiverManager::ddcConfigChanged here so the pump
@@ -159,12 +230,21 @@ private:
     int m_psFbDdc{0};    // Thetis cmaster.cs:533 [v2.10.3.13]: Stream0 = RX
     int m_blockSize{256};
 
+    // Legacy independent-ring buffers (deprecated 2026-05-23 — see header
+    // comment).  Kept declared but no longer written; the old onIqData
+    // slot is a transitional no-op and will be removed once every
+    // RadioConnection subclass emits the source-first paired signal.
     QVector<float> m_txMonRing;  // interleaved I/Q (size = 2 * samples)
     QVector<float> m_psFbRing;   // interleaved I/Q
 
     MoxController* m_mox{nullptr};
 
     qint64 m_totalBlocksPumped{0};
+
+#ifdef NEREUS_BUILD_TESTS
+    bool m_skipPsccForTests{false};
+    LastPsccArgs m_lastPsccArgs;
+#endif
 };
 
 } // namespace NereusSDR

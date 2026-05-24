@@ -5557,23 +5557,38 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // Auto connection: m_connection is on its worker thread, this is on
     // main, so the slot is queued onto the main thread.
     //
-    // Phase 3M-4 Task 17 chunk D — also forks the same packet to the
-    // PsccPump driver inline.  An earlier attempt connected
-    // iqDataReceived directly to PsccPump::onIqData with a second
-    // Qt::QueuedConnection, but Qt6 dispatches multi-listener queued
-    // connections by registering each slot's argument types via
-    // QMetaType — and `QVector<float>` is NOT auto-metatyped (no
-    // Q_DECLARE_METATYPE), so the second consumer was silently
-    // dropping packets and starving the connection thread's read
-    // loop (bench observed 2 s of no DDC packets → connect watchdog
-    // timeout).  Folding the call into the existing lambda avoids
-    // the metatype bootstrap entirely; PsccPump runs synchronously
-    // on the main thread alongside ReceiverManager::feedIqData.
+    // Phase 3M-4 Task 17 chunk D — receiver routing only.
+    //
+    // PsccPump no longer subscribes here.  As of the 2026-05-23 source-first
+    // rewrite it consumes RadioConnection::psPairedIqDataReceived (a
+    // packet-paired signal emitted once per multi-stream UDP packet by
+    // P2RadioConnection's deinterleave loop), wired below.  The old
+    // per-DDC fork into PsccPump::onIqData drove the legacy independent-
+    // rings architecture and could drift by ~189 samples between TX
+    // monitor and PS feedback under Qt queued-connection scheduling.
     connect(m_connection, &RadioConnection::iqDataReceived,
             this, [this](int ddcIndex, const QVector<float>& samples) {
         m_receiverManager->feedIqData(ddcIndex, samples);
+    });
+
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): source-first
+    // PS pairing.  RadioConnection emits psPairedIqDataReceived once per
+    // packet that carries both PS DDCs (P2RadioConnection.cpp deinterleave
+    // loop + future P1RadioConnection EP6 deinterleave).  Both buffers
+    // are extracted in the same xrouter-equivalent pass, mirroring Thetis
+    // sync.c:53-58 [v2.10.3.15] InboundBlock(id=1) where pscc() takes two
+    // pointers that reference per-stream buffers from the same call.
+    //
+    // QVector<float> is NOT auto-metatyped (no Q_DECLARE_METATYPE), and
+    // the connection lives on the worker thread while PsccPump lives on
+    // main — so we go through a main-thread lambda for the same reason
+    // the iqDataReceived path does.
+    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
+            this, [this](int psFbDdc, const QVector<float>& psFbSamples,
+                         int txMonDdc, const QVector<float>& txMonSamples) {
         if (m_psccPump) {
-            m_psccPump->onIqData(ddcIndex, samples);
+            m_psccPump->onPsPairedIqData(psFbDdc, psFbSamples,
+                                         txMonDdc, txMonSamples);
         }
     });
 

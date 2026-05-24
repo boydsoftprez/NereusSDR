@@ -716,22 +716,38 @@ void P2RadioConnection::setSampleRate(int sampleRate)
 {
     // From Thetis: sampling_rate stored as kHz value (48, 96, 192, 384).
     //
-    // Thetis console.cs:8537-8540 [v2.10.3.15] only writes Rate[i] for
-    // ENABLED DDCs in UpdateDDCs(); the per-board switch leaves disabled
-    // slots at the int[] default (0).  The final loop calls
-    // NetworkIO.SetDDCRate(i, Rate[i]) so disabled DDCs land on the wire
-    // as 0 kHz.
+    // Thetis console.cs:8537-8540 [v2.10.3.15] writes Rate[0..3] only
+    // (`for (int i = 0; i < 4; i++) NetworkIO.SetDDCRate(i, Rate[i])`).
+    // RX4..RX6 are NEVER touched by UpdateDDCs so they stay at the
+    // `prn->rx[i].sampling_rate = 48` default set by create_rnet
+    // (netInterface.c:1488).  Wire-capture of Thetis-on-ANAN-G2E confirms
+    // RX4/5/6 sample_rate = 48 kHz throughout the session.
     //
-    // Surfaced 2026-05-22 during ANAN-G2E bench: writing the active rate
-    // into every slot (including the 6 disabled DDCs) caused the G2E
-    // (N1GP community P2 firmware) to silently drop CmdRx and never start
-    // streaming I/Q — watchdog fired at 2 s.  Saturn firmware tolerates
-    // the non-zero rate on disabled DDCs; the stricter G2E firmware
-    // appears to validate `enable[i]==0 -> rate[i]==0`.
+    // Within RX0..RX3: Thetis's Rate[] is a fresh int[8] (default 0) each
+    // UpdateDDCs call, then the per-board switch sets only the active
+    // entries.  So inactive-but-in-nddc slots end up at 0 on the wire.
+    //
+    // History note: a 2026-05-22 attempt to gate this on `m_rx[i].enable`
+    // and write 0 to disabled slots was a misdiagnosis — the G2E
+    // connect-unblock came from the primary-DDC fix, not the rate-zero
+    // gate.  G2E firmware accepts the Thetis-faithful 48 on RX4..6 fine
+    // (proven by Thetis wire capture on the same radio).  Writing 0 on
+    // RX4..6 may be what's blocking PureSignal calcc convergence by
+    // perturbing the firmware's PS-engaged DDC validation.
     int rateKhz = sampleRate / 1000;
-    for (int i = 0; i < kMaxRxStreams; ++i) {
+
+    // Per-board active-DDC count.  Hermes-class (1-ADC, 4-DDC) covers
+    // G2E + plain HERMES + ANAN-10 + ANAN-100.  Other boards (Saturn /
+    // OrionMKII / Angelia) have nddc=5; their RX4 gets its rate from
+    // applyPsDdcConfig at PS-engage time so this loop bound is safe.
+    // TODO: lookup nddc from m_caps when BoardCapabilities exposes it.
+    constexpr int kHermesNddc = 4;
+    for (int i = 0; i < kHermesNddc; ++i) {
         m_rx[i].samplingRate = m_rx[i].enable ? rateKhz : 0;
     }
+    // RX4..RX(kMaxRxStreams-1) intentionally untouched — preserves the
+    // constructor-default 48 kHz, matching Thetis wire bytes 43/49/55.
+
     m_tx[0].samplingRate = rateKhz;
     if (m_running) {
         sendCmdRx();
@@ -1357,13 +1373,31 @@ void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
         }
     }
 
+    // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): latch the PS DDC
+    // pair so the deinterleave loop can emit the source-first paired
+    // signal.  Mirrors Thetis cmaster.cs:533-534 [v2.10.3.13] SetPSRxIdx
+    // / SetPSTxIdx convention — the per-board codec is authoritative.
+    // PsDdcConfig stores -1 when no PS pair applies (RX-only steady
+    // state); a non-negative pair means PS-MOX is engaged on this
+    // connection.
+    if (cfg.psFbDdc != m_psFbDdc) {
+        m_psFbDdc = cfg.psFbDdc;
+        changed = true;
+    }
+    if (cfg.txMonDdc != m_psTxMonDdc) {
+        m_psTxMonDdc = cfg.txMonDdc;
+        changed = true;
+    }
+
     if (changed) {
         qCInfo(lcConnection) << "P2: applyPsDdcConfig — ddcEnable=" << cfg.ddcEnable
                              << "syncEnable=" << cfg.syncEnable
                              << "rate0=" << cfg.rate[0]
                              << "rate1=" << cfg.rate[1]
                              << "rate2=" << cfg.rate[2]
-                             << "rate3=" << cfg.rate[3];
+                             << "rate3=" << cfg.rate[3]
+                             << "psFbDdc=" << m_psFbDdc
+                             << "psTxMonDdc=" << m_psTxMonDdc;
         if (m_running) {
             sendCmdRx();
         }
@@ -1829,14 +1863,23 @@ CodecContext P2RadioConnection::buildCodecContext() const
 
     // Per-ADC dither + random.
     //
-    // 2026-05-22 bench-finding: NereusSDR was emitting dither/random = 0x07
-    // (all 3 ADC bits set) regardless of board ADC count.  Saturn (num_adc=2)
-    // firmware accepted this; ANAN-G2E (num_adc=1, N1GP community P2 firmware)
-    // silently dropped CmdRx, presumably because bits for non-existent ADCs
-    // are invalid.  Mask the bits to only ACTIVE ADCs (i < num_adc).
+    // From Thetis network.c:1078-1090 [v2.10.3.13/.15] CmdRx byte 5/6:
+    //   packetbuf[5] = (prn->adc[2].dither << 2 | prn->adc[1].dither << 1
+    //                  | prn->adc[0].dither) & 0x7;
+    //   packetbuf[6] = (prn->adc[2].random << 2 | prn->adc[1].random << 1
+    //                  | prn->adc[0].random) & 0x7;
+    //
+    // Thetis emits bits for ALL 3 ADC slots regardless of how many ADCs the
+    // board actually has — wire-capture of Thetis-on-ANAN-G2E (HermesC10,
+    // num_adc=1) confirms byte 5 = byte 6 = 0x07 throughout the session.
+    // The earlier "mask to num_adc" gate (2026-05-22) was based on a
+    // mis-diagnosis of the G2E connect bug; the real unblock was the
+    // primary-DDC + dither-fix combo and the enable-byte fix.  Reverted
+    // so we match Thetis on the wire — PS calcc convergence depends on
+    // it.
     for (int i = 0; i < 3; ++i) {
-        ctx.dither[i] = (i < m_numAdc) && (m_adc[i].dither != 0);
-        ctx.random[i] = (i < m_numAdc) && (m_adc[i].random != 0);
+        ctx.dither[i] = (m_adc[i].dither != 0);
+        ctx.random[i] = (m_adc[i].random != 0);
     }
 
     // Per-ADC step attenuators
@@ -1932,6 +1975,23 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // Alex HPF / LPF bits (recomputed by setReceiverFrequency on freq change)
     ctx.alexHpfBits = static_cast<quint8>(m_alex.hpfBits);
     ctx.alexLpfBits = static_cast<quint8>(m_alex.lpfBits);
+
+    // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): HPF Bypass during MOX+PS.
+    // From Thetis console.cs:6957 setBPF1ForOrionIISaturn [v2.10.3.13]:
+    //   if (_mox && (disable_hpf_on_tx || (disable_hpf_on_ps && PureSignalEnabled)))
+    //       NetworkIO.SetAlexHPFBits(0x20);   // Bypass — bit 12 of Alex0
+    // HermesC10 dispatches into this branch (console.cs:6830 //N1GP G2E
+    // added).  When MOX is on AND PureSignal is running AND the user has
+    // "HPF Bypass on PureSignal" enabled, OR 0x20 into alexHpfBits so the
+    // codec emits bit 12 (_Bypass) in Alex0.  Without this on a 1-ADC G2E
+    // the FB DDC sees HPF-attenuated coupler signal which calcc can't fit,
+    // and PureSignal oscillates instead of locking.
+    // Wire-confirmed by diffing Thetis-locked pcap (Alex0=0x09441C00, bit 12
+    // set) against our pre-fix pcap (Alex0=0x09240C20, bit 12 clear) on
+    // 2026-05-23 at /tmp/nereus-g2e-ps.pcap{.first, current}.
+    if (m_mox && m_puresignalRun && m_hpfBypassOnPs) {
+        ctx.alexHpfBits = static_cast<quint8>(ctx.alexHpfBits | 0x20);
+    }
 
     // Port / wideband config
     ctx.p2CustomPortBase     = m_p2CustomPortBase;
@@ -2424,21 +2484,56 @@ void P2RadioConnection::processIqPacket(const QByteArray& data, int ddcIndex)
 
         // Allocate fresh QVectors per stream to defeat any COW + queued-
         // copy weirdness that would let two emits share the same buffer.
+        QVector<float> streamBufs[8];
         for (int s = 0; s < nstreams; ++s) {
-            QVector<float> streamBuf(sps * 2);
+            streamBufs[s].resize(sps * 2);
             for (int i = 0; i < sps; ++i) {
                 const int packetSampleIdx = nstreams * i + s;
-                streamBuf[2 * i + 0] = buf[2 * packetSampleIdx + 0];
-                streamBuf[2 * i + 1] = buf[2 * packetSampleIdx + 1];
+                streamBufs[s][2 * i + 0] = buf[2 * packetSampleIdx + 0];
+                streamBufs[s][2 * i + 1] = buf[2 * packetSampleIdx + 1];
             }
             if (logThis) {
                 qCInfo(lcConnection).nospace()
                     << "P2 deint stream " << s << " (DDC" << streamDdc[s] << "): "
-                    << "first I/Q=" << streamBuf[0] << "," << streamBuf[1]
-                    << " mid I/Q=" << streamBuf[sps] << "," << streamBuf[sps+1]
-                    << " last I/Q=" << streamBuf[2*(sps-1)] << "," << streamBuf[2*(sps-1)+1];
+                    << "first I/Q=" << streamBufs[s][0] << "," << streamBufs[s][1]
+                    << " mid I/Q=" << streamBufs[s][sps] << "," << streamBufs[s][sps+1]
+                    << " last I/Q=" << streamBufs[s][2*(sps-1)] << "," << streamBufs[s][2*(sps-1)+1];
             }
-            emit iqDataReceived(streamDdc[s], streamBuf);
+        }
+
+        // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): source-first
+        // PS pairing per Thetis sync.c:53-58 InboundBlock(id=1)
+        // [v2.10.3.15] + router.c:91-102 case 2 [v2.10.3.15].
+        //
+        // When this packet carries both the PS-feedback and TX-monitor
+        // DDCs (latched from applyPsDdcConfig), emit them as a single
+        // paired signal so PsccPump can call pscc() once with both
+        // buffers from the SAME deinterleave pass — no host-side ring
+        // buffering, no cross-stream drift.
+        //
+        // Issued BEFORE the per-stream iqDataReceived loop so the order
+        // of observation matches Thetis: ChannelMaster fires the
+        // PS-paired call (xrouter case 2 → InboundBlock(1)) on the same
+        // packet that feeds the regular per-stream consumers.
+        if (m_psFbDdc >= 0 && m_psTxMonDdc >= 0) {
+            int psFbSlot   = -1;
+            int psTxMonSlot = -1;
+            for (int s = 0; s < nstreams; ++s) {
+                if (streamDdc[s] == m_psFbDdc)    { psFbSlot   = s; }
+                if (streamDdc[s] == m_psTxMonDdc) { psTxMonSlot = s; }
+            }
+            if (psFbSlot >= 0 && psTxMonSlot >= 0) {
+                emit psPairedIqDataReceived(m_psFbDdc,    streamBufs[psFbSlot],
+                                            m_psTxMonDdc, streamBufs[psTxMonSlot]);
+            }
+        }
+
+        // Per-stream emission for the legacy RX path (RX1 audio etc.).
+        // The PsccPump's old onIqData slot is now a no-op, so this loop
+        // no longer drives PS; it remains the source of truth for all
+        // non-PS DDC consumers.
+        for (int s = 0; s < nstreams; ++s) {
+            emit iqDataReceived(streamDdc[s], streamBufs[s]);
         }
     }
 }
