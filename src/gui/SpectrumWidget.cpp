@@ -333,7 +333,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
 
     // Timer-driven display repaint — decouples repaint rate from FFT data arrival
     // so updates are evenly spaced regardless of IQ buffer fill timing.
-    m_displayTimer.setInterval(33); // 30 fps default
+    // Bench-2026-05-24: bumped 33 ms (30 fps) -> 50 ms (20 fps).  Spectrum
+    // widget covers most of the window area; each repaint blits a large
+    // pixel region via the macOS raster composite path.  Profile showed
+    // this as a dominant contributor to QCALayerBackingStore activity.
+    // 20 fps is still smooth for waterfall + spectrum traces and cuts the
+    // per-frame blit budget by a third.
+    m_displayTimer.setInterval(50); // 20 fps default
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
         if (m_hasNewSpectrum) {

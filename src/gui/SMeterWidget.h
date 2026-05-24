@@ -242,11 +242,12 @@ private:
     static constexpr float DB_PER_S = 6.0f;
 
     // From AetherSDR src/gui/SMeterWidget.h:119-122 [@0cd4559]
-    // NereusSDR bench-2026-05-24: bumped 8 -> 16 ms (125 Hz -> 62.5 Hz).
+    // NereusSDR bench-2026-05-24: bumped 8 -> 33 ms (125 Hz -> 30 Hz).
     // The 8 ms tick was a primary contributor to macOS QCALayerBackingStore
-    // backing-store thrash; 60 Hz still looks smooth to the eye for needle
-    // motion and cuts the needle's paint load in half.
-    static constexpr int kNeedleAnimationIntervalMs = 16;
+    // backing-store thrash; first cut to 16 ms helped some but the bench
+    // was still jittery.  30 Hz still looks smooth for needle motion and
+    // matches our spectrum / waterfall display cadence.
+    static constexpr int kNeedleAnimationIntervalMs = 33;
     static constexpr float kNeedleAttackTimeSeconds = 0.045f;
     static constexpr float kNeedleReleaseTimeSeconds = 0.180f;
     static constexpr float kNeedleSnapEpsilon = 0.001f;
