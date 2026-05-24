@@ -176,13 +176,46 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 **RxApplet Tier 1 wired:** mode, AGC, AF gain, and filter presets fully wired to SliceModel
 
-### Up Next (after v0.5.1)
-- **Phase 3P-II - External RF accessories (PGXL + TGXL) + analog S-Meter port (with Thetis Max Bin / Sig Avg)** (new next-up, slotted before 3M-2 per `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` §13). AetherSDR 1:1 baseline (PgxlConnection, TgxlConnection, TunerModel, AmpApplet, TunerApplet rewire, RelayBar, LanDiscovery, SMeterWidget) plus NereusSDR-native FlexRadio API extensions (amplifier create, flexradio pairing with graceful fallback, keepalive, ping, auto-reconnect, setup read/write, ifconf, save, interlock). Two Thetis RX modes on the analog needle: Sig Avg via `GetRXAMeter(RXA_S_AV)` (`console.cs:957 [@501e3f5]`) and Max Bin via `SetupDetectMaxBin` / `GetDetectMaxBin` (`wdsp/analyzer.c:688..830 [@501e3f5]`). S-Meter settings move from inline strip to right-click context menu. New Setup pages: Setup -> Network -> Peripherals (Scan LAN), PGXL Advanced, TGXL Advanced (parallel), Setup -> Transmit -> PGXL Interlock. Right-click AmpApplet / TunerApplet opens its Advanced page. Fault history + tune memory + connection diagnostics + optional TX interlock. ~3000 LOC of production code plus 14 new unit tests + 36 bench-matrix rows, single PR. Detail in §"Phase 3P-II".
-- **Phase 3M-2 - CW TX** (after 3P-II). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
+### Up Next (after v0.5.2)
+- **Phase 3M-2 - CW TX** (next up). Sidetone, firmware keyer, QSK / break-in. Absorbs the HL2 CWX bit-3 follow-up (`networkproto1.c:1247-1252 [@c26a8a4]`). Detail in §"Phase 3M-2".
 - **Phase 3M-3b — FM pre-emphasis** (de-scoped from 3M-3a-ii during v0.3.1; runs after 3M-2).
 - **Phase 3F (Multi-panadapter)**, after 3M-2. Re-exposes the Active RX count widget (hidden in v0.4.0 because it was stuck-at-1 in single-RX) and finally exercises `RadioModel::setActiveRxCountLive`. Also lands the aamix anti-VOX path that the v0.4.0 single-RX direct pump deferred. Also unblocks RADE-on-A while SSB-on-B multi-slice scenarios (currently a known limitation per Row 12 of the Phase 3R bench matrix).
 - **HL2 RADE bench follow-up**, gated on closure of the HL2 ATT/filter safety audit. Tracked by Row 9 of `docs/architecture/phase3r-verification/README.md`.
 - **Phase 3H (Skin system)**, **Phase 3K (CAT / rigctld)**, **Phase 3M-recording (WAV + I/Q recording)** all remain not-started.
+
+### Shipped in v0.5.2 (2026-05-24)
+
+**One major epic + a new SKU port + a new UI subsystem + a polish tail, landing on top of v0.5.1.** 268 commits since v0.5.1.
+
+- **Phase 3P-II (External RF accessories + analog S-Meter port).** Four-phase epic shipped (slotted before 3M-2 per `docs/architecture/2026-05-18-pgxl-tgxl-and-analog-smeter-design.md` §13). Phase 1 PGXL/TGXL baseline (AetherSDR 1:1: `PgxlConnection` TCP 9008 V/R/S parser, `TgxlConnection` TCP 9010 V/R/S parser, `TunerModel` 13 Q_PROPERTYs, `LanDiscovery` UDP broadcast on 9008/9010, `AmpApplet`, `TunerApplet` rewire, `RelayBar`, Setup → Network → Peripherals with Scan LAN dialog). Phase 2 analog S-Meter port from Thetis (`SMeterWidget` 180° needle arc + S-unit scale, four RX modes: Signal / Sig Avg `RXA_S_AV` / Signal Peak / Max Bin `SetupDetectMaxBin`+`GetDetectMaxBin`, right-click context menu replaces inline strip, PGXL 2 kW snap, peak hold Fast/Medium/Slow, AppSettings round-trip). Phase 3 connection robustness (exponential auto-reconnect 1/2/5/10/30/60 s, keepalive 30 s, RTT-correlated ping 10 s, full PGXL pairing flow `amplifier create` + `flexradio pair` with paired-serial capture, band-change notifications, `ConnectionDiagnostics` 10 Q_PROPERTYs at 1 Hz coalesce, PeripheralsPage live status). Phase 4 advanced UI (`PgxlAdvancedPage` + `TgxlAdvancedPage` Setup pages, `FaultLog` 10-entry ring buffer with likelyCause heuristic, `TuneMemoryStore` per-(antenna, band) auto-recall, `TxInterlockPolicy` Disabled/Warn/Block + SWR gate + grace, `PgxlInterlockPage` under Setup → Transmit, antenna label persistence, power-cap soft-alert toast, applet right-click navigation). Bench verification matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md` (36 rows pending live PGXL + TGXL hardware; Row 18 HL2 gated on ATT/filter audit).
+
+- **ANAN-G2E (HermesC10) SKU port.** New board enum + capability row, hardware profile init verified against Thetis v2.10.3.15, codec wrappers (`SetADCSupply` + `LRAudioSwap`), discovery byte 0x14 → `HPSDRHW::HermesC10`, BPF1 algorithm family (`setAlex1HPF`), Hermes-class DDC4 + DDC0 + PS-DDC, PA telemetry (fwd-power triplet, current / supply-volts), per-model preamp items, `SkuUiProfile` EXT label overrides, `AddCustomRadioDialog` wiring. 12 ANAN-G2E bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6). G2E P2 RX unblock (mask dither/random for HermesC10, zero rate on disabled DDCs, retry SendStop + bounds-check I/Q batch) + Thetis-faithful disconnect (CmdGeneral winddown, no `run=0` frame). Bench-verification matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md` (12 rows; F2/F3/F4/F6 documented as `DONE_WITH_CONCERNS`; pending live G2E hardware).
+
+- **Applet visibility controller.** New `AppletVisibilityController` + AppSettings round-trip, hamburger menu embedded in the AppletPanel banner / S-Meter title bar, View → Containers → Applets show/hide section, two-way menu sync, capability-gated `setAvailable` axis, RADE-aware routing, master-toggle live UI gating via `RadioModel::fourO3AEnabledChanged`. Retires View → Network Applets. `setAppletVisible` preserves stack order so reordering survives visibility toggles. Sweep across all applets dedupes the double-header bug from the prior banner row.
+
+- **4O3A integration polish tail.** PGXL bar-graph zero-on-post-TX, TGXL identity labels populate, PGXL pre-standby on TGXL hardware TUNE (pcap-canonical), event-driven FlexAPI interlock chain + MOX RF-flow gate (PTT_REQUESTED → ready ACK → TRANSMITTING), PGXL/TGXL TUNE end-to-end + `operate=1` wire format + LAN PTT bridge, route-aware FLEX discovery (computed subnet address, not 255.255.255.255), canonical FlexRadio-format 16-digit serial from MAC, PGXL SmartSDR API responder explicit-IPv4 bind (macOS IPv6 default blocked PGXL connect), AmpApplet renamed "AMP" → "Power Genius", master-toggle auto-connect gating, distinguish user-initiated disconnect from network drop.
+
+- **TCI live-state + 5 review-issue fixes** (six-commit tail on Phase 3J-1). Init burst defaults wire-aligned with Thetis (P1), broadcast slice state changes to connected clients, ChangedHandlers port, af/mon roundtrip in-spec, sliceAdded hook restored after stop/start, setFilterBand single-emit, live VFO broadcast reads `rx2Enabled`, agc_mode wire-token conversion. Plus spectrum / meter fixes: setDbmCalOffset triggers VBO re-render, meters forward Thetis RXOffset to spectrum, MaxBin reads rendered pixels.
+
+- **PS-A persistence + bench tail.** PS-A direct AppSettings save (three-bug stack fixed end-to-end), per-packet PS pairing source-first ported from Thetis `sync.c InboundBlock(id=1)`, PsForm live `info[]` / FB readout / autoCal persistence, TwoTone power defaults bumped to 10 W.
+
+- **PA profile + quit handling.** Manifest backfill on factory-profile lookup, disconnect-on-quit, SIGTERM handler.
+
+**Build + packaging:** no new vendored dependencies. CMakeLists.txt project VERSION 0.5.1 → 0.5.2. Artifact build matrix on `release.yml` is unchanged from v0.5.1.
+
+**Deferred / known limitations in v0.5.2:**
+- Live PGXL + TGXL hardware bench (36-row matrix at `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`).
+- Live ANAN-G2E hardware bench (12-row matrix at `docs/architecture/2026-05-21-anan-g2e-verification/README.md`; 4 documented `DONE_WITH_CONCERNS` gaps F2/F3/F4/F6).
+- HL2 RADE bench verification still gated on HL2 ATT/filter audit closure (Row 9 of the Phase 3R bench matrix).
+- RADE multi-slice (RADE on A while SSB on B); Phase 3F future.
+
+### Shipped in v0.5.1 (2026-05-15)
+
+**Patch release on top of v0.5.0.** Eight fix-only PRs.
+
+- **Three release-artifact ship-blockers fixed:** Windows installer + portable ZIP were missing `rade.dll` (PR #250); macOS x86_64 DMG silently shipped without `Qt6::WebSockets` so FreeDV Reporter / PSK Reporter / TCI were disabled (PR #251 — also promotes `Qt6::WebSockets` to REQUIRED in `CMakeLists.txt`); HL2 + Windows 11 waterfall sliders did not stick across launches (PR #243 closes issue #230 reported by Chris W4ORS) — root-caused to `m_wfLow/HighThreshold` doing double duty as both persisted user setting and per-frame runtime AGC/Clarity output. Source-first re-aligned with Thetis `display.cs:2522 + 2536 + 6575-6594 [v2.10.3.13]`.
+- **Three persistence / connection-state correctness fixes:** VOX needed juggling to prime on radio connect (PR #253 — `MoxController::primeWdspState` re-emits load-time signals after late-wired TxChannel connect); connection state stuck `Connected` on failed initial connect (PR #242 closes #239 — both P1 and P2 now stay `Connecting` until first frame promotes to `Connected`); orphan `.bak` data-loss gap closed (PR #249 follow-up to #241 — `AppSettings::load` falls through `Missing` to `.bak` if `.bak` exists, no longer silently goes to defaults).
+- **Two CodeQL pipeline maintenance fixes:** CodeQL required Qt 6.8 + `qt6-websockets-dev` (PRs #252 / #254). Replaces apt `qt6-*` with `jurplel/install-qt-action@v4` matching `ci.yml` and `release.yml`. Drops the stale `-DNEREUS_GPU_SPECTRUM=OFF` workaround (Qt 6.8 has `QRhiWidget`).
 
 ### Shipped in v0.5.0 (2026-05-13)
 

@@ -2,7 +2,15 @@
 
 ## [Unreleased]
 
-### Added (Phase 3P-II - PGXL/TGXL + analog S-Meter baseline, in progress)
+## [0.5.2] - 2026-05-24
+
+> [!NOTE]
+> **Substantial release on top of v0.5.1 (and v0.5.0 underneath).** One major epic (Phase 3P-II: 4O3A PGXL/TGXL + analog S-Meter port) plus a new SKU port (ANAN-G2E / HermesC10), a new UI subsystem (applet visibility controller), and a polish tail (4O3A integration cleanup, TCI live-state fixes + 5 review issues, PS-A persistence + bench tail, PA profile / quit handling, G2E P2 RX unblock + crash fix). 268 commits since v0.5.1. The 3P-II bench-verification matrix (36 rows) is pending live PGXL + TGXL hardware; the ANAN-G2E matrix (12 rows) is pending live G2E hardware. Most of the rest of the surface is testable on any supported radio.
+
+> [!IMPORTANT]
+> **Existing users: no action required.** Saved radios, mic profiles, DSP settings, container layout, spectrum/waterfall settings, PA cal points, per-band tune power, spot-system identity, FreeDV Reporter hidden state — all preserved. No SettingsSchemaVersion bump (last bump was v5 in v0.4.0).
+
+### Added (Phase 3P-II - PGXL/TGXL + analog S-Meter baseline)
 
 AetherSDR 1:1 baseline for PowerGenius XL amplifier telemetry and
 Tuner Genius XL antenna tuner control over Ethernet. 22 commits, Phase 1
@@ -376,6 +384,250 @@ executables, 28 slots total for the PGXL/TGXL connection family.
 `docs/architecture/phase-pgxl-tgxl-smeter-verification/README.md`. Rows pending
 live PGXL + TGXL hardware (all non-deferred rows); Row 18 (HL2) gated on the
 open ATT/filter safety audit.
+
+### Added (ANAN-G2E / HermesC10 SKU port)
+
+New SKU support for the Apache Labs ANAN-G2E (HermesC10) board. 12 ANAN-G2E
+bench tasks (A3 / A4 / B4'-B7' / D1-D5 / E1-E5 / F1-F6) verified against
+Thetis v2.10.3.15. Bench-verification matrix at
+`docs/architecture/2026-05-21-anan-g2e-verification/README.md` (12 rows
+pending live G2E hardware; F2 / F3 / F4 / F6 documented as
+`DONE_WITH_CONCERNS` for follow-up).
+
+- **Board capabilities + enum:** new `HPSDRHW::HermesC10` board enum, new
+  `kHermesC10` capabilities row (`hasVolts` / `hasAmps` /
+  `allowsAutoPaCalibrate` / `bypassPaSettings` flags), `ANAN_G2E` enum slot
+  relocates Andromeda to 21 to keep the row stable. `kSaturnMKII`
+  designated-initializer order corrected to match struct declaration.
+- **Discovery + connection:** P1 wire byte `0x14` mapped to
+  `HPSDRHW::HermesC10`. ANAN-G2E added to `AddCustomRadioDialog` SKU list +
+  Board column switch in `ConnectionPanel`. Andromeda + HermesLiteRxOnly
+  also gained Board column switch entries during this audit.
+- **Codec wiring:** `SetADCSupply` and `LRAudioSwap` codec wrappers added
+  with B4' / B5' / B6' / B7' connect-time wiring. `HardwareProfile` gains
+  `adcSupplyVoltage` + `lrAudioSwap` plumbed through to `CodecContext`. All
+  SKUs verified against Thetis v2.10.3.15.
+- **DSP + DDC:** ANAN-G2E added to Hermes-class P1 DDC4 branch (E3) and
+  primaryRxDdcForBoard DDC0 family (E2). HermesC10 added to BPF1 algorithm
+  family for `setAlex1HPF` (E1). Codec/P2 PS-DDC config adds ANAN-G2E to
+  Hermes-class group (P2 watchdog timeout fix).
+- **PA + telemetry:** `kAnan7000dRow` case-group gains ANAN-G2E for PA
+  Gain (D1). Fwd-power triplet adds ANAN-G2E (D2). `chkAutoPACalibrate`
+  visibility gated on `allowsAutoPaCalibrate` (D3). New
+  `chkBypassANANPASettings` checkbox + `TransmitModel::paSettingsBypass`
+  (D4). PA current/supply-volts rows gated by `hasPaAmps` /
+  `hasPaVoltsTelemetry` (D5). `scaleExciterPowerMw` lifted into
+  `PaTelemetryScaling` namespace + wired for G2E (F1). HermesC10 explicit
+  case added to `preampItemsForBoard` (F5). ANAN_G2E added to
+  factoryProfileNames + `modelFromFactoryName`. `non_hl2_keeps_exciter_power`
+  test aligned with Thetis-faithful F1 scaling.
+- **SKU UI overlay:** `SkuUiProfile` EXT label overrides include ANAN-G2E.
+  Setup → Antenna pages consume the overlay.
+
+### Added (Applet visibility controller)
+
+New UI subsystem for showing/hiding applets in the right-side AppletPanel,
+with persistence across launches and capability-gated availability.
+Retires the prior View → Network Applets menu in favour of a unified
+View → Containers → Applets section that also surfaces a hamburger menu
+on the AppletPanel banner.
+
+- **`AppletVisibilityController`** (`src/gui/AppletVisibilityController.{h,cpp}`):
+  central controller for applet show/hide state with AppSettings round-trip.
+  Two-way sync between the menu and the hamburger button; capability-gated
+  `setAvailable(QString, bool)` axis hides applets that aren't applicable
+  to the current radio. RADE-aware routing toggles the RadeApplet when the
+  active mode enters/exits RADE_U / RADE_L. Registers all wired applets
+  including RADE on construction.
+- **Hamburger menu on AppletPanel banner:** `AppletPanelWidget` gains a
+  top banner row with a hamburger menu button (embedded inside the S-Meter
+  title bar). The menu mirrors the Containers > Applets menu — toggle from
+  either entry point, both stay in sync.
+- **View > Containers > Applets section restored** in the main menu bar
+  (was lost during the v0.5.0 menu refactor).
+- **MainWindow wires AppletVisibilityController** to the applet panel and
+  the menu; `setAppletVisible` preserves stack order so reordering survives
+  visibility toggles. Sweep across all applets to dedupe the double-header
+  bug from the prior banner row (redundant `appletTitleBar` calls removed).
+- **Capability gating:** Amp + Tuner applets gated on the 4O3A master
+  toggle, RADE applet gated on active mode, TCI applet gated on TCI server
+  enabled, etc. `fourO3AEnabledChanged` signal on `RadioModel` drives live
+  UI gating without requiring restart.
+- **Tests:** `tst_applet_visibility_controller` covers two-way menu sync.
+
+### Fixed (4O3A integration polish)
+
+Twenty-five-commit polish tail after the Phase 3P-II baseline, closing
+bench-found gaps in the PGXL/TGXL handshake, discovery, and applet behaviour.
+
+- **PGXL bar graph stays at zero post-TX + TGXL identity labels populate**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/062e79ae)):
+  AmpApplet meters reset cleanly when MOX drops; TGXL nickname / serial /
+  firmware fields populate from the V-frame on connect.
+- **PGXL Pre-Standby on TGXL hardware TUNE** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/3a8662c5)
+  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/6f89bb3f)):
+  pcap-canonical handshake — PGXL drops into Pre-Standby during TGXL
+  autotune cycle, restores on completion; UNKEY_REQUESTED is un-keyed
+  before drain.
+- **Event-driven FlexAPI interlock chain + MOX RF-flow gate**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/0f274ee0)):
+  PTT_REQUESTED → ready ACK → TRANSMITTING canonical sequence; broadcast
+  `amplifier= pttA + interlock TRANSMITTING` with handles; interlock is
+  event-driven, block-on-timeout per spec; don't roll back local MOX on
+  interlock-blocked.
+- **PGXL/TGXL TUNE end-to-end + operate=1 wire-format + LAN PTT bridge**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/dd082bec)):
+  TunerApplet TUNE orchestrates carrier + tune start + auto-drop;
+  TGXL antenna buttons now appear on 1x3 device; `3way` key parsed as
+  alias for `one_by_three` (bench-confirmed firmware variant).
+- **Route-aware FLEX-discovery broadcast IP** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/72d16ccb)):
+  broadcasts to the computed subnet address, not generic
+  255.255.255.255. Required for some LAN topologies where the generic
+  broadcast doesn't reach the PGXL. Default discovery model is now
+  FLEX-6400 (PGXL validates against the FlexRadio model list).
+- **Bind SmartSDR API listener IPv4 explicitly** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/ecf5ed42)):
+  macOS IPv6-only default blocked PGXL connect; explicit IPv4 bind fixes.
+  Passive TCP 4992 listener stub captures PGXL SmartSDR API queries.
+- **Power Genius rebrand** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/d29a4f1b)):
+  AmpApplet renamed "AMP" → "Power Genius" to match 4O3A's product line.
+- **Master-toggle auto-connect gating** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/10f11a78)):
+  PGXL + TGXL auto-connect properly gated on the 4O3A master toggle.
+- **Distinguish user-initiated disconnect from network drop** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2e06c586)):
+  auto-reconnect doesn't fire on intentional disconnect.
+- **`stop()` tears down accepted clients + cancels pending state** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/5795d943)):
+  clean shutdown of the SmartSDR responder.
+- **AmpApplet reconnect uses canonical `PGXL_Manual*` keys** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/0985345b)):
+  consistent AppSettings key naming.
+
+### Fixed (TCI live-state + 5 review-issue fixes)
+
+Six-commit tail on Phase 3J-1 closing live-state gaps that surfaced after
+v0.5.0 hit real clients on bench.
+
+- **Init burst defaults match Thetis wire format** (P1, [commit](https://github.com/boydsoftprez/NereusSDR/commit/d640d69b)):
+  P1 init burst now byte-for-byte parity with Thetis.
+- **agc_mode wire-token conversion** (P2, [commit](https://github.com/boydsoftprez/NereusSDR/commit/274a16cf)):
+  AGC mode tokens converted correctly between NereusSDR enum + TCI wire
+  format.
+- **Live VFO broadcast reads `rx2Enabled`** (P3, [commit](https://github.com/boydsoftprez/NereusSDR/commit/e2dd67d9)):
+  VFO broadcasts to TCI clients respect the active RX count.
+- **`setFilterBand` emits `filterChanged` exactly once** (P4, [commit](https://github.com/boydsoftprez/NereusSDR/commit/035b274c)):
+  no spurious double-emit on filter changes.
+- **`sliceAdded` hook restored after stop/start** (P5, [commit](https://github.com/boydsoftprez/NereusSDR/commit/f66884f5)):
+  server lifecycle correctly re-arms client subscriptions.
+- **TCI broadcast slice state changes to clients** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/73afe74d)
+  + [review fixes](https://github.com/boydsoftprez/NereusSDR/commit/9ae5f135)):
+  local slice state changes propagate to connected TCI clients; 5
+  PR-review issues + remaining ChangedHandlers ports.
+- **af/mon linear roundtrip uses Thetis-faithful 0..100 range**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/4ed377cb)).
+- **Spectrum + meters fixes:** trigger `update()` on `setDbmCalOffset` so
+  VBO re-renders ([commit](https://github.com/boydsoftprez/NereusSDR/commit/3e77e517));
+  meters forward Thetis RXOffset to spectrum so meter + trace share
+  antenna reference ([commit](https://github.com/boydsoftprez/NereusSDR/commit/b46513eb));
+  MaxBin reads spectrum's rendered pixels, not raw FFT bins
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/86e28d31)).
+- **FLEX discovery: guard BSD socket headers on Q_OS_UNIX** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/35802c69)).
+- **Build/test housekeeping:** isTune() moved out of NEREUS_BUILD_TESTS
+  block ([commit](https://github.com/boydsoftprez/NereusSDR/commit/0568cc91));
+  af/mon roundtrip test updated to in-spec values ([commit](https://github.com/boydsoftprez/NereusSDR/commit/38c54e51)).
+
+### Fixed (PS-A persistence + bench tail)
+
+Final pass on PureSignal persistence and pairing for ANAN-G2E and
+HermesC10 boards.
+
+- **PS-A direct AppSettings save** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/40d7260e)
+  + [review fixes](https://github.com/boydsoftprez/NereusSDR/commit/0384fac6)
+  + [direct save](https://github.com/boydsoftprez/NereusSDR/commit/c5cc303b)
+  + [persist toggle](https://github.com/boydsoftprez/NereusSDR/commit/147b123c)):
+  three-bug stack hiding PS-A persistence fixed end-to-end. PsForm
+  `autoCalEnabled` toggle now persists to disk via `scheduleSettingsSave`.
+- **Per-packet PS pairing (source-first port)** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/c73ae3eb)):
+  PS pairing now matches Thetis `sync.c InboundBlock(id=1)` per-packet
+  semantics.
+- **Bench-tail fixes** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/b47a557f)):
+  PsForm live `info[]` flow, FB readout, autoCal persistence, Alex1 +
+  TwoTone defaults.
+- **TwoTone defaults bumped to 10 W** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/e7367312)):
+  default power for two-tone test signal.
+
+### Fixed (G2E P2 RX unblock + crash)
+
+Five-commit set unblocking P2 RX on ANAN-G2E and closing a related crash.
+
+- **Mask dither/random + Hermes-class DDC0 for HermesC10** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/9ce61968)):
+  ANAN-G2E P2 RX path now produces I/Q samples cleanly.
+- **Zero rate on disabled DDCs** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/fa691dd1)):
+  G2E P2 connect unblock — disabled DDCs must explicitly carry rate=0.
+- **Retry SendStop + bounds-check I/Q batch** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2a798ca8)):
+  closes a G2E gateware lockup + crash mode.
+- **Thetis-faithful disconnect** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/b9d9b2aa)
+  + [revert](https://github.com/boydsoftprez/NereusSDR/commit/5d0c0f60)):
+  disconnect now uses CmdGeneral winddown (no `run=0` frame), matching
+  Thetis P2 sequence.
+- **HermesC10 codec PS-DDC config** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/781f3875)):
+  ANAN_G2E added to Hermes-class PS DDC config (P2 watchdog timeout fix).
+- **HermesC10 is a P2 board with full 6-rate sample-rate set** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/c087c354)).
+
+### Fixed (PA profile + quit handling)
+
+- **PA profile manifest backfill + disconnect-on-quit + SIGTERM handler**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/baf931a7)):
+  PA factory-profile lookup falls back to manifest backfill if a profile
+  is missing; clean disconnect on app quit; SIGTERM handled cleanly.
+- **`paSettingsBypass` comment reconciled with Thetis UI-only ground-truth**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/9647dddc)).
+- **PA-profile non-G2E factoryProfileNames + modelFromFactoryName**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/e82fa68e)).
+
+### Docs
+
+- **ANAN-G2E port plan + design** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/f7ea61c9)
+  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/73d5216e)):
+  full-parity port design (Thetis v2.10.3.15) + TDD task breakdown.
+- **ANAN-G2E 12-row bench verification matrix + 4 documented gaps**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2b48c619)):
+  pending live G2E hardware.
+- **Bump Thetis version reference to v2.10.3.15** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/f2db2524)):
+  CLAUDE.md + inline `// From Thetis` cites refreshed.
+- **Mark F2/F3/F4/F6 gaps with `DONE_WITH_CONCERNS` comments** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/6d4093cd)):
+  Phase F follow-up tracking.
+- **FLEX-8600 <-> PGXL/TGXL capture notes** (today's `docs(captures)`
+  commit): two analysis writeups paired with existing pcapng captures
+  for the 4O3A integration. Documents the FLEX discovery beacon on
+  255.255.255.255:4992 and the bidirectional pairing model
+  (amp client on FLEX:4992 SmartSDR API, radio client on TGXL:9010
+  native protocol).
+- **Applet visibility menu plan + design** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/2be7d456)
+  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/5a8c6437)).
+- **CLAUDE.md forward-bring to v0.5.2 cadence** (this commit): "Current
+  Phase" block updated from v0.4.x-pending to v0.5.0/v0.5.1/v0.5.2;
+  status table rows for 3J-1 / 3J-2 / 3R / 3M-4 / 3P-II all marked
+  with their actual shipped-or-pending state.
+- **README.md IMPORTANT block** (this commit): v0.4.0-focused framing
+  replaced with v0.5.x cadence summary; smoketest link updated to the
+  new `docs/debugging/v0.5.2-alpha-tester-smoketest.md`.
+
+### Build + packaging
+
+- **CMakeLists.txt project VERSION bumped to 0.5.2** (this commit).
+- No new vendored dependencies in v0.5.2. The `third_party/rade/` +
+  `third_party/r8brain/` + `third_party/wdsp/` + `third_party/fftw3/`
+  set is unchanged from v0.5.0.
+- The artifact build matrix on `release.yml` is unchanged from v0.5.1:
+  Linux x86_64 AppImage (jammy) + ARM64 AppImage (focal), macOS Apple
+  Silicon DMG, Windows x64 portable ZIP + NSIS installer. All
+  GPG-signed.
+
+### Cleanup
+
+- **Remove unused includes flagged by clangd unused-includes** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/9032a2e1)
+  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/79654993)
+  + [commit](https://github.com/boydsoftprez/NereusSDR/commit/322d7126)).
+- **Remove tracked CTest temp + gitignore Testing/Temporary/** ([commit](https://github.com/boydsoftprez/NereusSDR/commit/e6b4fe3c)).
+- **MoxController header drift fixed re interlock denial signal source**
+  ([commit](https://github.com/boydsoftprez/NereusSDR/commit/cb97a35e)).
 
 ## [0.5.1] - 2026-05-15
 
