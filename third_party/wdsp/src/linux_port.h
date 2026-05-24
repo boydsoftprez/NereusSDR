@@ -66,8 +66,8 @@ typedef pthread_mutex_t *LPCRITICAL_SECTION;
 #define __forceinline
 #define _beginthread wdsp_beginthread
 #define _int64 long long
-#define _aligned_malloc(x,y) malloc(x);
-#define _aligned_free(x) free(x);
+#define _aligned_malloc(x,y) malloc(x)
+#define _aligned_free(x) do { free(x); } while(0)
 // Windows freopen_s to "conout$" is a no-op on POSIX — stdout works as-is
 #define freopen_s(pFile, name, mode, stream) ((void)0)
 #define min(x,y) (x<y?x:y)
