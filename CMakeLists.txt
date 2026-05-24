@@ -498,6 +498,8 @@ set(CORE_SOURCES
     # Phase 3P-II PGXL/TGXL accessories
     src/core/PgxlConnection.cpp
     src/core/TgxlConnection.cpp
+    # Phase 3P-III RF-Kit RF2K-S amplifier
+    src/core/Rf2ksConnection.cpp
     src/core/LanDiscovery.cpp
     src/core/SmartSdrApiListener.cpp
     src/core/ConnectionDiagnostics.cpp
