@@ -2331,6 +2331,33 @@ void RadioModel::setFourO3AEnabled(bool enabled)
             m_smartSdrListener->stop();
             qCInfo(lcConnection) << "4O3A disabled: SmartSDR API listener stopped";
         }
+
+        // Tear down any live PGXL / TGXL TCP socket. Without this, an
+        // already-connected PGXL keeps sending statusUpdated frames,
+        // m_hasAmplifier stays true, and the S-Meter keeps showing the
+        // 2 kW PGXL scale even though the operator just disabled 4O3A.
+        if (m_pgxlConnection && m_pgxlConnection->isConnected()) {
+            m_pgxlConnection->disconnect();
+            qCInfo(lcConnection) << "4O3A disabled: PGXL TCP disconnected";
+        }
+        if (m_tgxlConnection && m_tgxlConnection->isConnected()) {
+            m_tgxlConnection->disconnect();
+            qCInfo(lcConnection) << "4O3A disabled: TGXL TCP disconnected";
+        }
+
+        // Reset amp-presence cache. m_hasAmplifier is sticky-true after
+        // any PGXL statusUpdated (see onPgxlStatus); resetting it here
+        // lets the SMeterWidget / TunerApplet revert their power scales
+        // to barefoot via the amplifierChanged(false) + ampStateChanged
+        // emissions below. m_ampOperate also clears so STANDBY/OPERATE
+        // consumers see the amp gone.
+        if (m_hasAmplifier || m_ampOperate) {
+            m_hasAmplifier = false;
+            const bool wasOperate = m_ampOperate;
+            m_ampOperate = false;
+            emit amplifierChanged(false);
+            if (wasOperate) { emit ampStateChanged(); }
+        }
     }
 
     emit fourO3AEnabledChanged(enabled);

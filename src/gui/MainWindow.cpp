@@ -6474,7 +6474,15 @@ void MainWindow::onConnectionStateChanged()
 
         // Phase 3P-II Task 20: auto-connect PGXL / TGXL when a Manual IP is
         // configured and the peripheral is not already connected.
-        {
+        //
+        // Gated on FourO3A_Enabled: when the master toggle is off, skip the
+        // auto-connect entirely (matches the FourO3APage.h contract
+        // "PGXL/TGXL auto-connect skipped"). Without this gate, a saved
+        // PGXL_ManualIp would dial out even with 4O3A disabled, get a
+        // statusUpdated back, flip m_hasAmplifier=true, and snap the
+        // S-Meter to the 2 kW PGXL scale — surprising the operator who
+        // explicitly turned 4O3A off.
+        if (m_radioModel->fourO3AEnabled()) {
             auto& s = AppSettings::instance();
 
             QString pgxlIp = s.value(QStringLiteral("PGXL_ManualIp"),
