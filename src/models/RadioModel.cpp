@@ -4131,14 +4131,26 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                     }
                     // Save on every toggle.  Qt::UniqueConnection makes
                     // this idempotent across reconnect re-wires.
+                    //
+                    // Bench-fix 2026-05-23 (JJ Boyd, second pass): the
+                    // earlier landing of this block called only
+                    // AppSettings::setValue, which updates the in-memory
+                    // map but never flushes to disk.  PS-A toggles
+                    // therefore did not survive an app reload.  Switch to
+                    // the same scheduleSettingsSave() coalesced flush that
+                    // the rest of RadioModel uses for per-MAC AppSettings
+                    // writes (mirrors the AlexController reapplyAndPersist
+                    // path landed today + the existing band/freq save
+                    // paths at lines 533 / 552 / 569 etc.).
                     connect(m_pureSignal.get(),
                             &PureSignal::autoCalEnabledChanged,
                             this,
-                            [mac](bool on) {
+                            [this, mac](bool on) {
                                 AppSettings::instance().setValue(
                                     QStringLiteral("hardware/%1/pureSignal/autoCalEnabled").arg(mac),
                                     on ? QStringLiteral("True")
                                        : QStringLiteral("False"));
+                                scheduleSettingsSave();
                             },
                             Qt::UniqueConnection);
                 }
