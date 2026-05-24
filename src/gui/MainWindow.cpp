@@ -2574,23 +2574,49 @@ void MainWindow::populateDefaultMeter()
     }
 #endif
 
+    // Capability gates: applets that depend on an external feature flag
+    // get their availability set here. When availability is false, the
+    // applet is hidden AND its menu entries are greyed out. The user's
+    // persisted visibility preference is preserved across availability
+    // changes (so re-enabling 4O3A pops the applet back if the user
+    // wanted it visible).
+    const bool fourO3AOn = m_radioModel && m_radioModel->fourO3AEnabled();
+    m_appletVis->setAvailable(QStringLiteral("Amp"),   fourO3AOn);
+    m_appletVis->setAvailable(QStringLiteral("Tuner"), fourO3AOn);
+
     // Apply initial visibility state from the controller (in case
     // AppSettings already had values from a prior session).
+    // Uses effective visibility (user pref AND available).
     for (const QString& id : m_appletVis->registeredIds()) {
         if (auto* a = m_appletsById.value(id, nullptr)) {
-            panel->setAppletVisible(a, m_appletVis->isVisible(id));
+            panel->setAppletVisible(a, m_appletVis->isEffectivelyVisible(id));
         }
     }
 
-    // Pump future visibility changes from the controller into the panel.
-    connect(m_appletVis, &AppletVisibilityController::visibilityChanged,
-            this, [this](const QString& id, bool visible) {
+    // Pump future EFFECTIVE-visibility changes from the controller into
+    // the panel. effectiveVisibilityChanged fires when either the user
+    // toggle or the availability gate flips the net visibility, so we
+    // catch both menu clicks and external capability changes (e.g. 4O3A).
+    connect(m_appletVis, &AppletVisibilityController::effectiveVisibilityChanged,
+            this, [this](const QString& id, bool effective) {
         if (auto* a = m_appletsById.value(id, nullptr)) {
             if (m_appletPanel) {
-                m_appletPanel->setAppletVisible(a, visible);
+                m_appletPanel->setAppletVisible(a, effective);
             }
         }
     });
+
+    // Live-track 4O3A master toggle so Amp/Tuner availability updates
+    // without an app restart. RadioModel::setFourO3AEnabled emits the
+    // signal whenever the persisted value changes.
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::fourO3AEnabledChanged,
+                this, [this](bool enabled) {
+            if (!m_appletVis) { return; }
+            m_appletVis->setAvailable(QStringLiteral("Amp"),   enabled);
+            m_appletVis->setAvailable(QStringLiteral("Tuner"), enabled);
+        });
+    }
 
     // ── Banner ☰ menu on AppletPanelWidget ──────────────────────────────
     if (m_appletVis && m_appletPanel) {
@@ -2601,6 +2627,10 @@ void MainWindow::populateDefaultMeter()
                 m_appletVis->displayName(id));
             act->setCheckable(true);
             act->setChecked(m_appletVis->isVisible(id));
+            // Grey out the entry when the applet is currently unavailable
+            // (e.g. Amp/Tuner when 4O3A is disabled). The check state still
+            // reflects the user preference so re-enabling restores it.
+            act->setEnabled(m_appletVis->isAvailable(id));
             // User-visible tooltip — plain English.
             act->setToolTip(QStringLiteral("Show or hide the %1 applet")
                             .arg(m_appletVis->displayName(id)));
@@ -2617,6 +2647,15 @@ void MainWindow::populateDefaultMeter()
             if (auto* act = m_bannerAppletActions.value(id, nullptr)) {
                 QSignalBlocker block(act);
                 act->setChecked(visible);
+            }
+        });
+
+        // Grey/un-grey banner entries when an applet's availability
+        // changes (e.g. 4O3A master toggle flipped).
+        connect(m_appletVis, &AppletVisibilityController::availabilityChanged,
+                this, [this](const QString& id, bool available) {
+            if (auto* act = m_bannerAppletActions.value(id, nullptr)) {
+                act->setEnabled(available);
             }
         });
 
@@ -3467,6 +3506,10 @@ void MainWindow::buildMenuBar()
                 m_appletVis->displayName(id));
             act->setCheckable(true);
             act->setChecked(m_appletVis->isVisible(id));
+            // Grey out when the applet is currently unavailable (e.g.
+            // Amp/Tuner when 4O3A is disabled). Check state still
+            // reflects the user preference.
+            act->setEnabled(m_appletVis->isAvailable(id));
             // User-visible tooltip — plain English, no source cites.
             act->setToolTip(QStringLiteral("Show or hide the %1 applet")
                             .arg(m_appletVis->displayName(id)));
@@ -3485,6 +3528,15 @@ void MainWindow::buildMenuBar()
             if (auto* act = m_topMenuAppletActions.value(id, nullptr)) {
                 QSignalBlocker block(act);
                 act->setChecked(visible);
+            }
+        });
+
+        // Grey/un-grey top-menu entries when an applet's availability
+        // changes (e.g. 4O3A master toggle flipped in Setup).
+        connect(m_appletVis, &AppletVisibilityController::availabilityChanged,
+                this, [this](const QString& id, bool available) {
+            if (auto* act = m_topMenuAppletActions.value(id, nullptr)) {
+                act->setEnabled(available);
             }
         });
     }
