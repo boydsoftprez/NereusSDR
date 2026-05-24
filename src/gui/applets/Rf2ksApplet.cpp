@@ -10,8 +10,10 @@
 #include "gui/HGauge.h"
 #include "models/RadioModel.h"
 
+#include <QContextMenuEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -270,5 +272,34 @@ QString Rf2ksApplet::tunerStatusTextForTesting()    const { return m_tunerStatus
 bool    Rf2ksApplet::tuneButtonIsEnabledForTesting()   const { return m_tuneBtn->isEnabled(); }
 bool    Rf2ksApplet::bypassButtonIsEnabledForTesting() const { return m_bypassBtn->isEnabled(); }
 QString Rf2ksApplet::tuneButtonTooltipForTesting()  const { return m_tuneBtn->toolTip(); }
+
+// ---------- Section D: right-click context menu ----------
+
+QMenu* Rf2ksApplet::buildContextMenu(QObject* menuParent)
+{
+    auto* menu = new QMenu(qobject_cast<QWidget*>(menuParent));
+    auto* openAdv = menu->addAction(QStringLiteral("Open RF-Kit Advanced..."));
+    menu->addSeparator();
+    auto* disco = menu->addAction(m_connected
+                                    ? QStringLiteral("Disconnect")
+                                    : QStringLiteral("Reconnect"));
+    auto* recon = menu->addAction(QStringLiteral("Reconnect"));
+    auto* diag  = menu->addAction(QStringLiteral("Copy diagnostics to clipboard"));
+
+    connect(openAdv, &QAction::triggered, this, [this] {
+        emit navigationRequested(QStringLiteral("rfKit"));
+    });
+    connect(disco, &QAction::triggered, this, &Rf2ksApplet::connectionToggleRequested);
+    connect(recon, &QAction::triggered, this, &Rf2ksApplet::connectionToggleRequested);
+    connect(diag,  &QAction::triggered, this, &Rf2ksApplet::diagnosticsCopyRequested);
+    return menu;
+}
+
+void Rf2ksApplet::contextMenuEvent(QContextMenuEvent* ev)
+{
+    auto* menu = buildContextMenu(this);
+    menu->exec(ev->globalPos());
+    delete menu;
+}
 
 } // namespace NereusSDR

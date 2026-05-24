@@ -55,6 +55,9 @@ public:
     QString operateButtonTextForTesting()  const;
     void    clickOperateButtonForTesting();
 
+    // Test seam (Section D - Task 9).
+    QMenu*  buildContextMenuForTesting() { return buildContextMenu(this); }
+
     // Test seams (Sections B+C - Task 8).
     int     fwdGaugeValueForTesting()                  const;
     float   swrGaugeValueForTesting()                  const;
@@ -97,7 +100,12 @@ public slots:
     void setActiveAntenna(const RfKitAntenna& a);
     void setAntennaLabel(int number, const QString& label);
 
+protected:
+    void contextMenuEvent(QContextMenuEvent* ev) override;
+
 private:
+    QMenu* buildContextMenu(QObject* menuParent);
+
     // Section A widgets.
     QLabel*      m_deviceLabel{nullptr};
     QLabel*      m_nicknameLabel{nullptr};
