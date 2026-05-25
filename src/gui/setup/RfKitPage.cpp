@@ -175,6 +175,14 @@ QWidget* RfKitPage::buildRf2ksTab()
     labelsFm->addRow(note);
     for (int i = 0; i < 4; ++i) {
         m_antLabelEdits[i] = new QLineEdit(labelsBox);
+        // Bench feedback 2026-05-25 KG4VCF: cap antenna label length so
+        // the saved name fits in the applet's 4-button antenna row
+        // without truncation or overrun. 12 chars covers typical names
+        // ("80m dipole", "20m beam", "vertical", "Hexbeam", "MagLoop")
+        // with headroom; longer labels are uncommon and would crowd the
+        // button regardless.
+        m_antLabelEdits[i]->setMaxLength(12);
+        m_antLabelEdits[i]->setPlaceholderText(QStringLiteral("e.g. 80m dipole"));
         m_antLabelEdits[i]->setText(AppSettings::instance()
             .value(QStringLiteral("RfKit_Ant%1_Label").arg(i + 1)).toString());
         labelsFm->addRow(tr("ANT %1:").arg(i + 1), m_antLabelEdits[i]);
