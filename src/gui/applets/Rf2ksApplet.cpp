@@ -165,6 +165,25 @@ void Rf2ksApplet::setOperateMode(const QString& mode)
 {
     m_operateMode = mode;
     m_operateBtn->setText(mode);
+
+    // 2026-05-25 KG4VCF bench fix: button styling did not change on
+    // mode flip ("standby operate button does not change the color of
+    // the glowing dot on mode change").  Mirror AmpApplet::setState
+    // styling: green pill on OPERATE, neutral blue-grey on STANDBY.
+    const bool operating = (mode == QStringLiteral("OPERATE"));
+    if (operating) {
+        m_operateBtn->setStyleSheet(
+            QStringLiteral(
+                "QPushButton { background: #006030; border: 1px solid #008040; "
+                "border-radius: 3px; color: #ffffff; font-size: 10px; font-weight: bold; }"
+                "QPushButton:hover { background: #007040; }"));
+    } else {
+        m_operateBtn->setStyleSheet(
+            QStringLiteral(
+                "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
+                "border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; }"
+                "QPushButton:hover { background: #204060; }"));
+    }
 }
 
 void Rf2ksApplet::setConnectedState(bool connected)
