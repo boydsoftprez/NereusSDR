@@ -1532,6 +1532,16 @@ private:
     // Rate-limit waterfall pushes per m_wfUpdatePeriodMs.
     qint64 m_wfLastPushMs{0};
 
+    // 2026-05-25 KG4VCF bench fix: timer-driven waterfall row push.
+    // Decouples row push cadence from FFT arrival cadence so network-
+    // burst FFT delivery (multiple FFTs in 10 ms then nothing for
+    // 50 ms) does not produce visible scroll stutter.  FFT arrivals
+    // overwrite m_pendingWfPixelsDbm; the timer fires at
+    // m_wfUpdatePeriodMs and consumes the latest cached value.
+    QVector<float> m_pendingWfPixelsDbm;
+    bool           m_pendingWfPixelsDbmDirty{false};
+    QTimer         m_wfPushTimer;
+
     // 1 Hz overlay repaint tick for the waterfall timestamp; started on
     // demand when the user selects a non-None timestamp position.
     QTimer* m_wfTimestampTicker{nullptr};

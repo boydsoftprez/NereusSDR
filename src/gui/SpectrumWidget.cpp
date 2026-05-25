@@ -384,6 +384,26 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     });
     m_displayTimer.start();
 
+    // 2026-05-25 KG4VCF bench fix: timer-driven waterfall row push.
+    // Bench symptom: "waterfall scroll still appears to jitter,
+    // occasional stutter".  Root cause: pushWaterfallRow was called
+    // directly from updateSpectrumLinear at FFT-arrival timing.
+    // Network-burst UDP delivery clusters multiple FFTs into a few ms
+    // followed by a gap; the previous rate-limit-by-drop in
+    // pushWaterfallRow coalesced the burst into one push, then left
+    // a visible gap until the next FFT arrived.  Move the push to a
+    // dedicated QTimer so the texture write happens at strictly
+    // m_wfUpdatePeriodMs cadence regardless of FFT arrival pattern.
+    m_wfPushTimer.setInterval(m_wfUpdatePeriodMs);
+    m_wfPushTimer.setSingleShot(false);
+    connect(&m_wfPushTimer, &QTimer::timeout, this, [this]() {
+        if (m_pendingWfPixelsDbmDirty) {
+            m_pendingWfPixelsDbmDirty = false;
+            pushWaterfallRow(m_pendingWfPixelsDbm);
+        }
+    });
+    m_wfPushTimer.start();
+
     // Sub-epic E: debounce timer for waterfall history re-allocation
     // From AetherSDR SpectrumWidget.cpp:158-168 [@2bb3b5c]
     // (debounce timer added by unmerged AetherSDR PR #1478 — see plan §authoring-time #2)
@@ -2032,6 +2052,11 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     m_wfUpdatePeriodMs = ms;
     scheduleSettingsSave();
 
+    // 2026-05-25 KG4VCF bench fix: retune the timer-driven waterfall
+    // push to the new period so a slider drag actually changes scroll
+    // rate immediately (rather than waiting for the next ctor).
+    m_wfPushTimer.setInterval(m_wfUpdatePeriodMs);
+
     // Sub-epic E: capacity may have changed — debounce history rebuild
     // so slider drag doesn't trash history mid-drag.
     if (m_historyResizeTimer) {
@@ -2637,7 +2662,13 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // threshold compute now operate on display pixels per Thetis
     // Display.cs:6713-6738 [v2.10.3.13] (waterfall_data[i] indexed by
     // pixel).
-    pushWaterfallRow(m_wfRenderedPixels);
+    //
+    // 2026-05-25 KG4VCF bench fix: cache the latest row instead of
+    // pushing immediately.  m_wfPushTimer (started in the ctor) drains
+    // the cache at strictly m_wfUpdatePeriodMs cadence so network-burst
+    // FFT delivery does not produce visible scroll stutter.
+    m_pendingWfPixelsDbm = m_wfRenderedPixels;
+    m_pendingWfPixelsDbmDirty = true;
     m_hasNewSpectrum = true;
 
     // 2026-05-22 bench fix: signal that a fresh m_renderedPixels frame is
@@ -4220,12 +4251,14 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
         return;
     }
 
-    // Rate-limit per configured update period.
+    // 2026-05-25 KG4VCF bench fix: cadence is now driven by
+    // m_wfPushTimer (set up in the ctor) at strictly m_wfUpdatePeriodMs
+    // intervals, decoupled from FFT arrival.  The legacy inline rate-
+    // limit ("drop if too soon since last push") is removed because it
+    // could clip an occasional timer tick due to QTimer / wall-clock
+    // drift, leaving a visible gap in the waterfall scroll.  m_wfLastPushMs
+    // is still updated for any observability (paint debug, telemetry).
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_wfUpdatePeriodMs > 0 && m_wfLastPushMs != 0 &&
-        now - m_wfLastPushMs < m_wfUpdatePeriodMs) {
-        return;
-    }
     m_wfLastPushMs = now;
 
     // Issue #230 fix: threshold composition moved out — writes go to
