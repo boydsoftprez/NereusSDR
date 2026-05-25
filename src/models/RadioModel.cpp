@@ -5882,6 +5882,25 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // panel via SetRXAPanelBinaural).
     m_dspWorker->setBufferSizes(wdspInSize, 64);
     m_dspWorker->moveToThread(m_dspThread);
+
+    // 2026-05-25 KG4VCF bench fix: elevate the DSP thread to real-time
+    // audio scheduling so heavy system load (parallel compiles, Spotlight
+    // indexing, Time Machine snapshots) does not preempt the audio
+    // feeder and cause ring underruns / audible jitter.  Wired on
+    // started()/finished() so the elevation runs ON the DSP thread,
+    // which is what pthread_set_qos / os_workgroup_join require.
+    //
+    // Order matters: connect onThreadFinished BEFORE the deleteLater
+    // below so Qt fires onThreadFinished first (signals fire slots in
+    // connect order).  deleteLater is deferred to the next event loop
+    // pass so it would not actually destroy m_dspWorker before
+    // onThreadFinished runs, but the explicit order makes the
+    // dependency obvious to future readers.
+    connect(m_dspThread, &QThread::started,
+            m_dspWorker, &RxDspWorker::onThreadStarted);
+    connect(m_dspThread, &QThread::finished,
+            m_dspWorker, &RxDspWorker::onThreadFinished);
+
     connect(m_dspThread, &QThread::finished,
             m_dspWorker, &QObject::deleteLater);
     connect(m_receiverManager, &ReceiverManager::iqDataForReceiver,

@@ -478,6 +478,7 @@ set(CORE_SOURCES
     src/core/audio/CompositeTxMicRouter.cpp
     src/core/audio/PortAudioBus.cpp
     src/core/audio/QAudioSinkAdapter.cpp
+    src/core/audio/RealtimeAudioPriority.cpp
     src/core/audio/TxMicSource.cpp
     src/core/audio/VirtualCableDetector.cpp
     src/core/safety/BandPlanGuard.cpp
@@ -895,6 +896,20 @@ if(APPLE)
     # AVFoundation provides AVCaptureDevice for the launch-time mic-permission
     # prompt (src/core/MacMicPermission.mm, issue #203).
     target_link_libraries(NereusSDRObjs PUBLIC "-framework AVFoundation")
+
+    # CoreAudio framework for AudioObjectGetPropertyData +
+    # kAudioDevicePropertyIOThreadOSWorkgroup used by
+    # src/core/audio/RealtimeAudioPriority.cpp.  The os_workgroup_*
+    # APIs themselves come from libSystem (already linked) but the
+    # property-query helpers and AudioDeviceID type live in CoreAudio.
+    target_link_libraries(NereusSDRObjs PUBLIC "-framework CoreAudio")
+endif()
+
+if(WIN32)
+    # avrt provides AvSetMmThreadCharacteristicsW + AvRevertMmThreadCharacteristics
+    # used by src/core/audio/RealtimeAudioPriority.cpp to join the
+    # "Pro Audio" MMCSS task class.
+    target_link_libraries(NereusSDRObjs PUBLIC avrt)
 endif()
 
 if(Qt6SerialPort_FOUND)

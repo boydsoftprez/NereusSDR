@@ -69,6 +69,7 @@
 #include "core/WdspEngine.h"
 #include "core/RadeChannel.h"
 #include "core/Resampler.h"
+#include "core/audio/RealtimeAudioPriority.h"
 
 namespace NereusSDR {
 
@@ -80,6 +81,32 @@ RxDspWorker::RxDspWorker(QObject* parent)
 }
 
 RxDspWorker::~RxDspWorker() = default;
+
+void RxDspWorker::onThreadStarted()
+{
+    // 2026-05-25 KG4VCF bench fix: real-time audio priority for the
+    // DSP feeder.  Runs on the DSP thread (signal-emitted on this
+    // thread by QThread::started after Qt has spun the thread up).
+    // Calling on this thread is the requirement for both
+    // pthread_set_qos_class_self_np and os_workgroup_join (macOS)
+    // as well as pthread_setschedparam (Linux) and
+    // AvSetMmThreadCharacteristics (Windows).
+    if (m_audioPrioToken != nullptr) {
+        // Defensive: started() should fire only once per thread
+        // lifecycle.  If it fires twice (e.g. a future requeue path),
+        // release the prior token before allocating a new one.
+        leaveAudioThreadPriority(m_audioPrioToken);
+    }
+    m_audioPrioToken = elevateAudioThreadPriority();
+}
+
+void RxDspWorker::onThreadFinished()
+{
+    // Released on the DSP thread before it exits.  Required for
+    // os_workgroup_leave to match the join on the correct thread.
+    leaveAudioThreadPriority(m_audioPrioToken);
+    m_audioPrioToken = nullptr;
+}
 
 void RxDspWorker::setEngines(WdspEngine* wdsp, AudioEngine* audio)
 {

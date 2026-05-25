@@ -77,6 +77,7 @@ class WdspEngine;
 class AudioEngine;
 class RadeChannel;
 class Resampler;
+struct AudioPriorityToken;   // src/core/audio/RealtimeAudioPriority.h
 
 // RxDspWorker runs the per-receiver I/Q → WDSP → audio processing step
 // on a dedicated DSP thread, off the GUI main thread.
@@ -172,6 +173,21 @@ public slots:
     // remains with WdspEngine::m_radeChannels.
     void setRadeChannel(RadeChannel* channel);
 
+    // 2026-05-25 KG4VCF bench fix: real-time scheduling priority for
+    // audio DSP work.  Connected by RadioModel to m_dspThread's
+    // started() / finished() signals so the elevation runs ON the
+    // DSP thread (a prerequisite of pthread_set_qos_class_self_np
+    // and os_workgroup_join, which both act on the calling thread).
+    //
+    // Without these, the DSP feeder runs at default Qt priority and
+    // gets preempted during heavy system load (parallel compiles
+    // etc), draining the audio ring buffer and producing severe
+    // jitter on the listening end.  PortAudio's own callback thread
+    // is unaffected (it runs SCHED_FIFO via PortAudio's internal
+    // priority setup); this slot fixes the FEEDER thread.
+    void onThreadStarted();
+    void onThreadFinished();
+
 signals:
     // Emitted at the end of every processIqBatch invocation, on the
     // DSP thread. Used by tests to observe that work happens off the
@@ -241,6 +257,13 @@ signals:
 private:
     WdspEngine*      m_wdspEngine{nullptr};
     AudioEngine*     m_audioEngine{nullptr};
+
+    // 2026-05-25 KG4VCF bench fix: opaque token returned by
+    // elevateAudioThreadPriority().  Allocated on the DSP thread
+    // from onThreadStarted() and released from onThreadFinished()
+    // (also on the DSP thread, before the thread exits).  See
+    // src/core/audio/RealtimeAudioPriority.h.
+    AudioPriorityToken* m_audioPrioToken{nullptr};
     QVector<float>   m_iqAccumI;
     QVector<float>   m_iqAccumQ;
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
