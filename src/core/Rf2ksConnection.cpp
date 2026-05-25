@@ -278,6 +278,14 @@ void Rf2ksConnection::issueGet(const QString& path)
     url.setPort(m_port);
     url.setPath(path);
     QNetworkRequest req(url);
+    // Disable HTTP keep-alive on the polling path.  Without this, QNAM caches
+    // the TCP connection for ~120 s; when the amp closes a kept-alive socket
+    // after its idle timeout, Qt's macOS CFSocket source can fire into a
+    // QSocketNotifier whose private has already been torn down, crashing in
+    // qt_mac_socket_callback -> QCoreApplication::sendEvent with a wild
+    // receiver pointer.  Forcing connection close after each reply costs ~1
+    // ms on LAN and eliminates the stale-socket race.
+    req.setRawHeader("Connection", "close");
     auto* reply = m_nam->get(req);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
@@ -410,6 +418,8 @@ void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader,
                   QStringLiteral("application/json"));
+    // See issueGet() for the rationale on disabling HTTP keep-alive.
+    req.setRawHeader("Connection", "close");
     auto* reply = m_nam->sendCustomRequest(req, "PUT", body);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
@@ -428,6 +438,8 @@ void Rf2ksConnection::issuePost(const QString& path)
     url.setPort(m_port);
     url.setPath(path);
     QNetworkRequest req(url);
+    // See issueGet() for the rationale on disabling HTTP keep-alive.
+    req.setRawHeader("Connection", "close");
     auto* reply = m_nam->post(req, QByteArray());
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
