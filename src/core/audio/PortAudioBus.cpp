@@ -207,11 +207,30 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
 } // namespace
 
 PortAudioBus::PortAudioBus() {
-    // 1 second stereo float ring at the nominal default rate. The push
-    // path wraps modulo ring size, so a longer stream than 1 s simply
-    // overwrites the oldest unread samples (underruns surface as silence
-    // in paCallback, not overruns).
-    m_ring.resize(48000 * 2);
+    // 100 ms stereo float ring (4800 stereo frames * 2 channels = 9600
+    // floats) at the nominal 48 kHz device rate.  Sized as the
+    // capacity ceiling, NOT the typical fill: with the DSP-thread
+    // producer (RxDspWorker via DirectConnection lambda, see
+    // RadioModel) and a 128-frame PortAudio callback, steady-state
+    // ring level oscillates around 10-40 ms.  We sat at 200 ms
+    // briefly while diagnosing crackle on the wrong-binary bench
+    // (a missing-rebuild artifact); the underlying jitter was always
+    // a main-thread / signal-routing problem fixed by Lever 2
+    // (DirectConnection lambdas in RadioModel), not a buffer-size
+    // problem, so dropping back to 100 ms reclaims latency that the
+    // larger ring was hiding.  Worst-case audio latency through this
+    // ring is now ~100 ms (totally full) instead of ~200 ms; typical
+    // is unchanged because steady-state fill is well below either
+    // cap.  Writer modulo-wraps as before; reader (paCallback)
+    // detects when the writer has stomped on the read position and
+    // skips forward to the oldest still-valid sample.  Drop-oldest
+    // overrun semantics: a CPU stall produces a brief silence gap
+    // rather than scrambled bytes, smoothed by the kCrossfadeFrames
+    // ramp on the resume sample (see paCallback below).  Pre-fix the
+    // ring was 48000 * 2 (1 second) with no overrun handling, which
+    // made the display drift up to a full second ahead of audio and
+    // produced the "audio replays" symptom on stall recovery.
+    m_ring.resize(4800 * 2);
 }
 
 PortAudioBus::~PortAudioBus() {
@@ -300,6 +319,11 @@ void PortAudioBus::close() {
     Pa_StopStream(m_stream);
     Pa_CloseStream(m_stream);
     m_stream = nullptr;
+    // Cumulative drop / underrun / PA-flag counters remain queryable
+    // via ringOverrunEvents() / ringOverrunSamples() /
+    // ringUnderrunEvents() and the m_paOutputUnderflowEvents /
+    // m_paOutputOverflowEvents members.  Used by future support
+    // tooling; no per-close log spam.
 }
 
 qint64 PortAudioBus::push(const char* data, qint64 bytes) {
@@ -309,6 +333,28 @@ qint64 PortAudioBus::push(const char* data, qint64 bytes) {
     const qint64 ringSize = static_cast<qint64>(m_ring.size());
     qint64 w = m_ringWrite.load(std::memory_order_relaxed);
     const float* in = reinterpret_cast<const float*>(data);
+
+    // Drop-oldest accounting: if this push would put the writer more than
+    // one ring's worth ahead of the reader, the oldest unread samples
+    // about to be modulo-overwritten are effectively dropped.  We do NOT
+    // advance m_ringRead from here (that would race with paCallback's own
+    // store; only the audio thread writes to m_ringRead).  Instead the
+    // paCallback detects the same condition on its next entry and skips
+    // forward to the oldest still-valid sample.  Counting the event here
+    // gives diagnostics a single producer-side perspective.
+    const qint64 readPos = m_ringRead.load(std::memory_order_acquire);
+    const qint64 afterWrite = w + floatCount;
+    if (afterWrite - readPos > ringSize) {
+        m_dropEvents.fetch_add(1, std::memory_order_relaxed);
+        m_dropSamples.fetch_add(
+            static_cast<quint64>(afterWrite - readPos - ringSize),
+            std::memory_order_relaxed);
+        // Counters are observable via ringOverrunEvents() /
+        // ringOverrunSamples().  paCallback performs the catch-up jump
+        // on its next entry; the crossfade ramp on resume keeps the
+        // event inaudible to the listener.
+    }
+
     float peak = 0.0f;
     for (int i = 0; i < floatCount; ++i) {
         m_ring[w % ringSize] = in[i];
@@ -372,10 +418,29 @@ qint64 PortAudioBus::pull(char* data, qint64 maxBytes) {
 int PortAudioBus::paCallback(const void* in, void* out,
                              unsigned long frames,
                              const PaStreamCallbackTimeInfo* /*timeInfo*/,
-                             unsigned long /*flags*/,
+                             unsigned long flags,
                              void* userData) {
     PortAudioBus* self = static_cast<PortAudioBus*>(userData);
     const qint64 ringSize = static_cast<qint64>(self->m_ring.size());
+
+    // PortAudio reports backend-level anomalies via the callback's
+    // `flags` parameter.  paOutputUnderflow = the OS audio device
+    // played silence because we did not supply samples fast enough
+    // at the host-API layer (independent of our internal ring);
+    // paOutputOverflow = data we supplied was discarded.  We count
+    // both into atomic event counters that are queryable through the
+    // PortAudioBus public API for support tooling.
+    if (flags & paOutputUnderflow) {
+        self->m_paOutputUnderflowEvents.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if (flags & paOutputOverflow) {
+        self->m_paOutputOverflowEvents.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if (flags & paPrimingOutput) {
+        // Expected during stream startup; not a problem.
+    }
 
     if (self->m_cfg.direction == AudioDirection::Output) {
         float* o = static_cast<float*>(out);
@@ -384,15 +449,86 @@ int PortAudioBus::paCallback(const void* in, void* out,
         qint64 r = self->m_ringRead.load(std::memory_order_relaxed);
         const qint64 w = self->m_ringWrite.load(std::memory_order_acquire);
 
+        // Drop-oldest catch-up: if we have fallen so far behind that the
+        // writer stomped on our read position (w - r exceeds the ring
+        // size), the bytes at our current r have been overwritten with
+        // newer samples and reading them would produce scrambled audio.
+        // Jump forward to the oldest still-valid sample (w - ringSize)
+        // so we resume on contiguous, in-order audio.  The crossfade
+        // counter below smooths the discontinuity so the listener hears
+        // a brief volume dip instead of a hard click.
+        bool startCrossfade = false;
+        if (w - r > ringSize) {
+            r = w - ringSize;
+            startCrossfade = true;
+        }
+
+        // Crossfade between the previous sample value and the new ring
+        // sample over kCrossfadeFrames stereo frames.  Triggered on
+        // drop-oldest catch-up AND on underrun-to-resume transitions.
+        // ~3 ms at 48 kHz / 2 channels — short enough to be inaudible as
+        // a "dip" but long enough to mask the click that a hard jump or
+        // silence-to-signal transition would otherwise produce.
+        const int channels = self->m_negFormat.channels;
+        float lastL = self->m_lastOutL;
+        float lastR = self->m_lastOutR;
+        int crossfadeRem = self->m_crossfadeFramesRem;
+        if (startCrossfade && crossfadeRem == 0) {
+            crossfadeRem = kCrossfadeFrames;
+        }
+
+        bool wasUnderrun = (r >= w);
+        // Track underrun leading edge so we count distinct events, not
+        // every silent frame in a run.  Initial state (callback fired
+        // with an empty ring) counts as one event.
+        bool sawSilenceStart = false;
+        if (wasUnderrun) {
+            self->m_underrunEvents.fetch_add(
+                1, std::memory_order_relaxed);
+            sawSilenceStart = true;
+        }
         for (int i = 0; i < want; ++i) {
+            float target;
             if (r < w) {
-                o[i] = self->m_ring[r % ringSize];
+                target = self->m_ring[r % ringSize];
                 r++;
+                // Underrun-to-resume edge: start a fresh crossfade to
+                // bring the listener gently from silence (or stale
+                // last-sample) up to the live signal.
+                if (wasUnderrun && crossfadeRem == 0) {
+                    crossfadeRem = kCrossfadeFrames;
+                }
+                wasUnderrun = false;
             } else {
-                o[i] = 0.0f;  // underrun -> silence
+                target = 0.0f;  // underrun -> silence (with crossfade below)
+                if (!wasUnderrun && !sawSilenceStart) {
+                    // Transitioned from "had data" to "empty" mid-callback.
+                    self->m_underrunEvents.fetch_add(1, std::memory_order_relaxed);
+                    sawSilenceStart = true;
+                }
+                wasUnderrun = true;
             }
+
+            // Per-channel last-sample tracking (stereo only path is
+            // exercised in practice; mono falls through cleanly).
+            float& last = ((i & 1) && channels >= 2) ? lastR : lastL;
+            if (crossfadeRem > 0) {
+                const float t = 1.0f - (static_cast<float>(crossfadeRem)
+                                        / static_cast<float>(kCrossfadeFrames));
+                o[i] = last + (target - last) * t;
+                // Decrement once per stereo frame (after the R sample).
+                if (channels < 2 || (i & 1) == 1) {
+                    crossfadeRem--;
+                }
+            } else {
+                o[i] = target;
+            }
+            last = o[i];
         }
         self->m_ringRead.store(r, std::memory_order_release);
+        self->m_lastOutL = lastL;
+        self->m_lastOutR = lastR;
+        self->m_crossfadeFramesRem = crossfadeRem;
     } else {
         // Input mode: read captured samples from `in`, write to ring,
         // update m_txLevel (the audio here is destined for transmit).

@@ -128,7 +128,9 @@ SpectrumDefaultsPage::SpectrumDefaultsPage(RadioModel* model, QWidget* parent)
 }
 
 // Maps SpectrumDefaultsPage FPS slider (10-60) to FFTEngine output FPS
-// and the SpectrumWidget display timer so both stay in sync.
+// and the SpectrumWidget display timer so both stay in sync.  Persisted
+// so the value survives restart — MainWindow reads
+// DisplaySpectrumFps at startup and applies to both via the same path.
 void SpectrumDefaultsPage::pushFps(int fps)
 {
     if (!model() || !model()->fftEngine()) { return; }
@@ -136,6 +138,8 @@ void SpectrumDefaultsPage::pushFps(int fps)
     if (auto* sw = model()->spectrumWidget()) {
         sw->setDisplayFps(fps);
     }
+    AppSettings::instance().setValue(
+        QStringLiteral("DisplaySpectrumFps"), QString::number(fps));
     // Defensive: explicitly mirror to the spin readout.  makeSliderRow
     // wires a bidirectional slider<->spin connect that should already do
     // this, but JJ reported the spin readout sticking at 30 even when the

@@ -1093,6 +1093,12 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
                     static_cast<qint64>(stereoFloats) * sizeof(float));
             }
         }
+        // A contending writer holding m_speakersBusMutex
+        // (setSpeakersConfig, master-mute flush) silently drops the
+        // current block.  The try_to_lock scope is narrowed to just
+        // the push specifically to keep that drop window short and
+        // bounded; we no longer trace mutex misses since the bench
+        // confirmed the contention is rare enough to be inaudible.
     }
 }
 

@@ -180,6 +180,23 @@ void MeterWidget::clearItems()
 
 void MeterWidget::updateMeterValue(int bindingId, double value)
 {
+    // Fuzzy guard: MeterPoller cascades a value push for every binding
+    // every 100 ms whether or not the WDSP reading actually moved.  On
+    // a quiet RX signal (typical between QSOs) the same -120 dBm /
+    // 0 dB ALC / 0 W power values walk through the loop 10x per second
+    // per binding × per target widget, each triggering a full meter
+    // repaint into IOSurface.  qFuzzyCompare against the last pushed
+    // value drops the redundant work without affecting any meter that
+    // actually moved.  Note: item-side attack/decay smoothing already
+    // converges on its own once value is settled, so suppressing the
+    // unchanged-input update() is safe.
+    auto it = m_lastBindingValue.find(bindingId);
+    if (it != m_lastBindingValue.end()
+        && qFuzzyCompare(1.0 + it.value(), 1.0 + value)) {
+        return;
+    }
+    m_lastBindingValue[bindingId] = value;
+
     for (MeterItem* item : m_items) {
         if (item->bindingId() == bindingId) {
             item->setValue(value);

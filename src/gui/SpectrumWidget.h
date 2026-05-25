@@ -157,6 +157,7 @@ mw0lge@grange-lane.co.uk
 #include <QPoint>
 #include <QMap>
 #include <QHash>
+#include <QStaticText>
 #include <QTimer>
 #include <QPropertyAnimation>
 
@@ -1623,6 +1624,26 @@ private:
     // drives this via setSpotSourceVisible.
     QHash<QString, bool> m_spotSourceVisible;
 
+    // ── QStaticText label cache ──────────────────────────────────────────
+    // Pre-shaped (HarfBuzz-run-once) labels for the high-rate paint
+    // loops in drawDbmScale and drawFreqScale.  Without this, each
+    // paint reshapes every label string from scratch — AetherSDR
+    // measured ~5% main-thread CPU on a single DSP curve widget from
+    // shapeText, and our SpectrumWidget has 23+ drawText sites firing
+    // at 20 fps.  Cache keys are the formatted label strings ("-100",
+    // "14.230" etc.), values are QStaticText with AggressiveCaching.
+    // Strings repeat heavily in steady state (dBm scale labels never
+    // change between paints; freq labels cycle through a small set as
+    // the user pans), so the cache hits >99% after the first paint.
+    // mutable because drawDbm/Freq are non-const but the cache is hidden
+    // state — keeping the helper signatures clean.  Lifetime: widget
+    // lifetime; no invalidation needed at this font size since both
+    // strips set a fixed pointSize per-paint.
+    // Inspired by AetherSDR [@3503ae98] PR #2556 perf(gui): cache axis
+    // labels as QStaticText.
+    mutable QHash<QString, QStaticText> m_dbmLabelCache;
+    mutable QHash<QString, QStaticText> m_freqLabelCache;
+
     // ---- Task 2.3: Spectrum text overlay state ----
 
     // (m_showMHzOnCursor retired in 2026-05 — see formatCursorFreq comment.)
@@ -1868,6 +1889,14 @@ private:
     QImage m_overlayStatic;
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
+
+    // 2026-05-25 perf fix: timestamp of the last per-frame "dynamic
+    // overlay" force-dirty in updateSpectrumLinear.  Rate-limits the
+    // overlay rebuild for Active Peak Hold / Peak Blobs / Noise Floor
+    // (all features that previously rebuilt the FULL overlay on every
+    // 30 Hz spectrum frame, defeating the cache).  See the rationale
+    // at SpectrumWidget.cpp around the "perf fix" comment block.
+    qint64 m_overlayDynamicDirtyMs{0};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};

@@ -216,6 +216,12 @@ private:
     float   m_peakDbm{-127.0f};     // RX peak hold
     QString m_source{"S-Meter Peak"};
 
+    // Visual-change guard for animateNeedle's update() throttle.  Stores
+    // the needle fraction last drawn so we can skip the repaint when the
+    // physics tick produces sub-pixel movement.  Initialised to a value
+    // outside the valid 0..1 range so the first frame always paints.
+    float   m_lastDrawnNeedleFraction{-1.0f};
+
     // TX meter values (updated continuously, used when transmitting)
     // From AetherSDR src/gui/SMeterWidget.h:86-89 [@0cd4559]
     float   m_txPower{0.0f};
@@ -261,7 +267,12 @@ private:
     static constexpr float DB_PER_S = 6.0f;
 
     // From AetherSDR src/gui/SMeterWidget.h:119-122 [@0cd4559]
-    static constexpr int kNeedleAnimationIntervalMs = 8;
+    // NereusSDR bench-2026-05-24: bumped 8 -> 33 ms (125 Hz -> 30 Hz).
+    // The 8 ms tick was a primary contributor to macOS QCALayerBackingStore
+    // backing-store thrash; first cut to 16 ms helped some but the bench
+    // was still jittery.  30 Hz still looks smooth for needle motion and
+    // matches our spectrum / waterfall display cadence.
+    static constexpr int kNeedleAnimationIntervalMs = 33;
     static constexpr float kNeedleAttackTimeSeconds = 0.045f;
     static constexpr float kNeedleReleaseTimeSeconds = 0.180f;
     static constexpr float kNeedleSnapEpsilon = 0.001f;
