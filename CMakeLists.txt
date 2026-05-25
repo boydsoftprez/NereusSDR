@@ -587,6 +587,7 @@ set(GUI_SOURCES
     src/gui/ImdOverlay.cpp
     src/gui/dbm_strip_math.cpp
     src/gui/SpectrumOverlayMenu.cpp
+    src/gui/spectrum/WaterfallTicker.cpp
     src/gui/widgets/CenterMarkSlider.h
     src/gui/widgets/DexpPeakMeter.h
     src/gui/widgets/DexpPeakMeter.cpp

@@ -191,6 +191,7 @@ class BandPlanManager;
 class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
+class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
 
 // Waterfall color scheme presets.
 // Default matches AetherSDR/SmartSDR style.
@@ -1536,11 +1537,20 @@ private:
     // Decouples row push cadence from FFT arrival cadence so network-
     // burst FFT delivery (multiple FFTs in 10 ms then nothing for
     // 50 ms) does not produce visible scroll stutter.  FFT arrivals
-    // overwrite m_pendingWfPixelsDbm; the timer fires at
-    // m_wfUpdatePeriodMs and consumes the latest cached value.
-    QVector<float> m_pendingWfPixelsDbm;
-    bool           m_pendingWfPixelsDbmDirty{false};
-    QTimer         m_wfPushTimer;
+    // overwrite m_pendingWfPixelsDbm; the ticker fires at
+    // m_wfUpdatePeriodMs and the consumer slot consumes the latest
+    // cached value.
+    //
+    // The ticker lives on its own thread (m_waterfallTickerThread) so
+    // any main-thread delay (focus event, layout pass, system
+    // notification) cannot delay the tick firing -- only the
+    // queued-slot delivery into the main thread's event queue.  This
+    // is the "first-class waterfall" option-A fix from the 2026-05-25
+    // bench session.
+    QVector<float>     m_pendingWfPixelsDbm;
+    bool               m_pendingWfPixelsDbmDirty{false};
+    QThread*           m_waterfallTickerThread{nullptr};
+    WaterfallTicker*   m_waterfallTicker{nullptr};
 
     // 1 Hz overlay repaint tick for the waterfall timestamp; started on
     // demand when the user selects a non-None timestamp position.

@@ -115,9 +115,11 @@
 #include "SpectrumWidget.h"
 #include "SpectrumOverlayMenu.h"
 #include "ImdOverlay.h"
+#include "spectrum/WaterfallTicker.h"
 #include "widgets/VfoWidget.h"
 #include "ColorSwatchButton.h"
 #include "core/AppSettings.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/LogCategories.h"   // Phase 3M-4 bench-fix Round 2: lcSpectrum
 #include "dbm_strip_math.h"
 #include "models/BandPlanManager.h"
@@ -400,27 +402,43 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // of nominal.  CoarseTimer's ~5% slop on a 33 ms interval
     // accumulates ~50 ms = one missed frame per second, which matches
     // the operator's report of a ~1 Hz scroll hitch.
-    m_wfPushTimer.setTimerType(Qt::PreciseTimer);
-    m_wfPushTimer.setInterval(m_wfUpdatePeriodMs);
-    m_wfPushTimer.setSingleShot(false);
-    connect(&m_wfPushTimer, &QTimer::timeout, this, [this]() {
-        // 2026-05-25 KG4VCF bench fix #2: ALWAYS push on tick.  Earlier
-        // version gated on m_pendingWfPixelsDbmDirty and skipped ticks
-        // when no fresh FFT had arrived since the last push.  With
-        // displayFps=30 (FFT emit ~33.3 ms) and wfPushTimer=30 ms (or
-        // 33 ms after PR #286 alignment), every ~10 ticks the timer
-        // fires slightly before FFT data lands -> skip -> next tick
-        // catches up -> visible "surge in speed".  Repeating the last
-        // cached row on a no-data tick is invisible (a single row stays
-        // at the same vertical position for 60 ms once every few seconds);
-        // the previous skip pattern was very visible.  Empty-cache guard
-        // remains so we do nothing before the very first FFT.
+    // 2026-05-25 KG4VCF bench fix #4 (Option A): WaterfallTicker on a
+    // dedicated worker thread.  The QTimer used to live here on the
+    // main thread (PreciseTimer + always-push + correctly-synced cadence
+    // were already in place from fixes #1-#3), but any momentary main-
+    // thread block (focus event, layout pass, system notification)
+    // could still delay the tick firing.  Move the timer onto its own
+    // QThread so the tick fires regardless of main-thread state; the
+    // queued signal then lands in the main thread's event loop and the
+    // pushWaterfallRow callback runs ASAP -- if main is busy, the queued
+    // ticks accumulate and drain in a burst, which the eye reads as
+    // continuous scroll instead of the long-pause-then-jump pattern.
+    m_waterfallTickerThread = new QThread(this);
+    m_waterfallTickerThread->setObjectName(QStringLiteral("WaterfallTickerThread"));
+    m_waterfallTicker = new WaterfallTicker();  // no parent -- moved to thread
+    m_waterfallTicker->moveToThread(m_waterfallTickerThread);
+    connect(m_waterfallTickerThread, &QThread::finished,
+            m_waterfallTicker, &QObject::deleteLater);
+    // Elevate the ticker thread to USER_INITIATED QoS so its event loop
+    // (which carries the PreciseTimer) does not get preempted by
+    // typical build / index jobs.
+    connect(m_waterfallTickerThread, &QThread::started,
+            m_waterfallTicker,
+            []() { NereusSDR::elevateComputeThreadPriority(); });
+    // Queued connection (default for cross-thread): tick fires on the
+    // ticker thread, slot runs on the main thread when the event loop
+    // is free.  See WaterfallTicker.h for the cadence-isolation rationale.
+    connect(m_waterfallTicker, &WaterfallTicker::tick, this, [this]() {
+        // ALWAYS push on tick.  Empty-cache guard so we do nothing
+        // before the very first FFT.
         m_pendingWfPixelsDbmDirty = false;
         if (!m_pendingWfPixelsDbm.isEmpty()) {
             pushWaterfallRow(m_pendingWfPixelsDbm);
         }
-    });
-    m_wfPushTimer.start();
+    }, Qt::QueuedConnection);
+    m_waterfallTickerThread->start();
+    m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    m_waterfallTicker->start();
 
     // Sub-epic E: debounce timer for waterfall history re-allocation
     // From AetherSDR SpectrumWidget.cpp:158-168 [@2bb3b5c]
@@ -452,7 +470,20 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_imdOverlay = new ImdOverlay(this);
 }
 
-SpectrumWidget::~SpectrumWidget() = default;
+SpectrumWidget::~SpectrumWidget()
+{
+    // 2026-05-25 KG4VCF bench fix #4: shut down the waterfall ticker
+    // thread cleanly so its QTimer + event loop are torn down before
+    // m_waterfallTicker is deleted (which happens via the finished ->
+    // deleteLater wire).
+    if (m_waterfallTicker) {
+        m_waterfallTicker->stop();
+    }
+    if (m_waterfallTickerThread != nullptr) {
+        m_waterfallTickerThread->quit();
+        m_waterfallTickerThread->wait(2000);
+    }
+}
 
 // ---- Settings persistence ----
 // Per-pan keys use AetherSDR pattern: "DisplayFftSize" for pan 0, "DisplayFftSize_1" for pan 1
@@ -2073,7 +2104,9 @@ void SpectrumWidget::setWfUpdatePeriodMs(int ms)
     // 2026-05-25 KG4VCF bench fix: retune the timer-driven waterfall
     // push to the new period so a slider drag actually changes scroll
     // rate immediately (rather than waiting for the next ctor).
-    m_wfPushTimer.setInterval(m_wfUpdatePeriodMs);
+    if (m_waterfallTicker) {
+        m_waterfallTicker->setUpdatePeriodMs(m_wfUpdatePeriodMs);
+    }
 
     // Sub-epic E: capacity may have changed — debounce history rebuild
     // so slider drag doesn't trash history mid-drag.
@@ -4610,12 +4643,15 @@ void SpectrumWidget::setDisplayFps(int fps)
     // operator as stuttery scroll.  Matching the periods makes the
     // ratio exactly 1:1 regardless of upstream packet bursts.
     m_wfUpdatePeriodMs = periodMs;
-    // 2026-05-25 KG4VCF bench fix: also retune the actual push timer.
-    // Prior code only updated m_wfUpdatePeriodMs (the rate-limit value)
-    // but m_wfPushTimer was set once at ctor and kept its old interval,
-    // so the displayFps slider's promise of "lock waterfall cadence to
-    // paint cadence" was only half-delivered.
-    m_wfPushTimer.setInterval(periodMs);
+    // 2026-05-25 KG4VCF bench fix: also retune the actual push timer
+    // (via the WaterfallTicker on its worker thread).  Prior code only
+    // updated m_wfUpdatePeriodMs (the rate-limit value) but the underlying
+    // QTimer was set once at ctor and kept its old interval, so the
+    // displayFps slider's promise of "lock waterfall cadence to paint
+    // cadence" was only half-delivered.
+    if (m_waterfallTicker) {
+        m_waterfallTicker->setUpdatePeriodMs(periodMs);
+    }
     // Averaging alphas depend on fps via Thetis α = exp(-1/(fps×τ)).
     // Recompute so the smoothing time constants stay correct after a rate change.
     recomputeAverageAlphas();
