@@ -2604,14 +2604,37 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // overlay is toggled off — saves a cold-start visual jump on toggle on.
     processNoiseFloor();
 
-    // Per-frame force-dirty for any overlay that updates every spectrum
-    // frame (APH trace decay, peak blobs, NF lerp position).  GPU-only
-    // optimization — CPU paint path repaints the overlay every frame
-    // anyway, so the dirty flag has no analogue.
+    // 2026-05-25 perf fix: this block USED to force the ENTIRE GPU
+    // overlay texture (freq scale, dBm strip, bandplan, time scale,
+    // VFO marker, spots, waterfall chrome, peak hold trace, peak blobs,
+    // NF text/line — ~16 paint ops + a full window-size QImage fill
+    // and GPU texture upload) to rebuild on EVERY spectrum frame
+    // whenever any of three features were enabled.
+    //
+    // At 30 fps with default DisplayPeakBlobsEnabled=True /
+    // DisplayShowNoiseFloor=True that was:
+    //   * 30 × ~16 paint ops/sec = ~480 paint ops/sec for the overlay
+    //   * 30 × full window QImage fill (memset transparent)
+    //   * 30 × full overlay texture upload to GPU
+    // and defeated the m_overlayStaticDirty cache entirely — instead
+    // of "rebuild on state change" it became "rebuild every frame".
+    // Profile showed the overlay rebuild dominating main-thread CPU
+    // and saturating the 6-core raster thread pool at ~120% total.
+    //
+    // Rate-limit to ~10 Hz instead of 30 Hz.  Active peak hold trace,
+    // peak blobs and noise floor all have visible motion much slower
+    // than 30 Hz; 10 Hz overlay refresh is indistinguishable to the
+    // operator's eye but cuts the overlay rebuild work by ~67%.
+    // Other dirty-triggering setters (bandwidth, refLevel, etc.) still
+    // mark dirty immediately, so user interaction stays snappy.
 #ifdef NEREUS_GPU_SPECTRUM
     if (m_activePeakHold.enabled() || m_peakBlobs.enabled()
         || m_showNoiseFloor) {
-        m_overlayStaticDirty = true;
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs - m_overlayDynamicDirtyMs >= 100) {  // 10 Hz cap
+            m_overlayStaticDirty = true;
+            m_overlayDynamicDirtyMs = nowMs;
+        }
     }
 #endif
 

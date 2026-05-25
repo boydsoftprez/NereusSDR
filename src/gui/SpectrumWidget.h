@@ -1890,6 +1890,14 @@ private:
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
+    // 2026-05-25 perf fix: timestamp of the last per-frame "dynamic
+    // overlay" force-dirty in updateSpectrumLinear.  Rate-limits the
+    // overlay rebuild for Active Peak Hold / Peak Blobs / Noise Floor
+    // (all features that previously rebuilt the FULL overlay on every
+    // 30 Hz spectrum frame, defeating the cache).  See the rationale
+    // at SpectrumWidget.cpp around the "perf fix" comment block.
+    qint64 m_overlayDynamicDirtyMs{0};
+
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};
     QRhiGraphicsPipeline*       m_fftFillPipeline{nullptr};
