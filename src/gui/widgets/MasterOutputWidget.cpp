@@ -138,7 +138,15 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
         m_audio->setVolume(savedVolume);
         m_audio->setMasterMuted(savedMuted);
         if (!savedDevice.isEmpty()) {
-            AudioDeviceConfig cfg;
+            // Load the full persisted speakers config (sampleRate,
+            // bufferSamples, exclusiveMode, etc.) and override only the
+            // device name with the title-bar picker's value.  Without
+            // loadFromSettings here, every restart-time seed reverted
+            // the bus to AudioDeviceConfig{}'s struct defaults and
+            // silently discarded everything the user had tuned via
+            // Setup → Devices.
+            AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(
+                QStringLiteral("audio/Speakers"));
             cfg.deviceName = savedDevice;
             m_audio->setSpeakersConfig(cfg);
         }

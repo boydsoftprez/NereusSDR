@@ -39,7 +39,16 @@ struct PortAudioConfig {
     AudioDirection direction = AudioDirection::Output;  // Output = render; Input = capture
     int     hostApiIndex  = -1;     // -1 = PortAudio default
     QString deviceName;             // empty = default
-    int     bufferSamples = 256;
+    // 128 frames @ 48 kHz = 2.67 ms per callback. On macOS this maps
+    // to a CoreAudio HAL output latency of ~10-12 ms (CoreAudio
+    // queues ~4 buffers).  Was 256 (22 ms PA latency); reduced to
+    // shave ~11 ms off the end-to-end RX path now that the upstream
+    // jitter (main-thread I/Q dispatch) has been fixed by Lever 2.
+    // 128 is still well above any sensible Apple Silicon minimum and
+    // doubles callback rate vs. 256, but Apple's audio I/O thread is
+    // RT-prio and trivially handles this.  If a slower platform
+    // shows stress here, the call site can override via setConfig().
+    int     bufferSamples = 128;
     bool    exclusiveMode = false;  // WASAPI only
 };
 
@@ -133,6 +142,15 @@ private:
     // Counts distinct events, not silent frames.  Bench diagnostic for
     // the audio jitter / crackle hunt.
     std::atomic<quint32> m_underrunEvents{0};
+
+    // PortAudio backend-reported anomalies via the callback's flags
+    // parameter.  paOutputUnderflow = the OS audio device ran out of
+    // samples; paOutputOverflow = data we supplied was discarded.
+    // Distinct from m_underrunEvents (our ring-side check) — these
+    // come from the OS/CoreAudio layer regardless of what our ring
+    // looks like.
+    std::atomic<quint32> m_paOutputUnderflowEvents{0};
+    std::atomic<quint32> m_paOutputOverflowEvents{0};
 
     // Crossfade state for discontinuity smoothing in paCallback.  Only
     // read / written from the audio callback (single-threaded by

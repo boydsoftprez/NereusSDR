@@ -487,11 +487,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Wire the MasterOutputWidget device picker → AudioEngine so picking
     // an output device rebuilds the speakers bus. Task 10b exposes only
-    // the deviceName; AudioEngine::makeBus fills in sensible defaults
-    // (sample rate 48 kHz stereo, default buffer) per AudioEngine.h:165.
+    // the deviceName; we load the rest of the persisted speakers config
+    // (sampleRate / channels / bufferSamples / exclusiveMode / etc.) so
+    // the user's tuned values are preserved across a device change.  A
+    // bare default-constructed AudioDeviceConfig with only deviceName
+    // set would otherwise clobber persisted fields, defeating the
+    // Setup → Devices page entirely.
     connect(m_titleBar->masterOutput(), &MasterOutputWidget::outputDeviceChanged,
             this, [this](const QString& name) {
-        AudioDeviceConfig cfg;
+        AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(
+            QStringLiteral("audio/Speakers"));
         cfg.deviceName = name;
         if (auto* engine = m_radioModel->audioEngine()) {
             engine->setSpeakersConfig(cfg);

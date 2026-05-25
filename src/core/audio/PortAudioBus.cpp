@@ -208,22 +208,30 @@ PaDeviceIndex resolveDevice(const PortAudioConfig& inCfg,
 } // namespace
 
 PortAudioBus::PortAudioBus() {
-    // 200 ms stereo float ring (9600 stereo frames * 2 channels = 19200
-    // floats) at the nominal 48 kHz device rate.  Bumped from the initial
-    // 50 ms after bench showed audio jittered under CPU contention on
-    // the bench Mac: 50 ms left almost no headroom for scheduler
-    // hiccups, so drop-oldest fired audibly.  200 ms is still well
-    // below the 1-second pre-fix bug while giving enough cushion that
-    // routine paint spikes do not bleed into audio.  The writer
-    // modulo-wraps as before; the reader (paCallback) detects when the
-    // writer has stomped on its read position and skips forward to the
-    // oldest still-valid sample.  Drop-oldest overrun semantics: a
-    // CPU stall produces a brief silence gap rather than scrambled
-    // bytes.  Pre-fix the ring was 48000 * 2 (1 second) with no overrun
-    // handling, which made the display drift up to a full second ahead
-    // of audio and produced the "audio replays" symptom on stall
-    // recovery.
-    m_ring.resize(9600 * 2);
+    // 100 ms stereo float ring (4800 stereo frames * 2 channels = 9600
+    // floats) at the nominal 48 kHz device rate.  Sized as the
+    // capacity ceiling, NOT the typical fill: with the DSP-thread
+    // producer (RxDspWorker via DirectConnection lambda, see
+    // RadioModel) and a 128-frame PortAudio callback, steady-state
+    // ring level oscillates around 10-40 ms.  We sat at 200 ms
+    // briefly while diagnosing crackle on the wrong-binary bench
+    // (a missing-rebuild artifact); the underlying jitter was always
+    // a main-thread / signal-routing problem fixed by Lever 2
+    // (DirectConnection lambdas in RadioModel), not a buffer-size
+    // problem, so dropping back to 100 ms reclaims latency that the
+    // larger ring was hiding.  Worst-case audio latency through this
+    // ring is now ~100 ms (totally full) instead of ~200 ms; typical
+    // is unchanged because steady-state fill is well below either
+    // cap.  Writer modulo-wraps as before; reader (paCallback)
+    // detects when the writer has stomped on the read position and
+    // skips forward to the oldest still-valid sample.  Drop-oldest
+    // overrun semantics: a CPU stall produces a brief silence gap
+    // rather than scrambled bytes, smoothed by the kCrossfadeFrames
+    // ramp on the resume sample (see paCallback below).  Pre-fix the
+    // ring was 48000 * 2 (1 second) with no overrun handling, which
+    // made the display drift up to a full second ahead of audio and
+    // produced the "audio replays" symptom on stall recovery.
+    m_ring.resize(4800 * 2);
 }
 
 PortAudioBus::~PortAudioBus() {
@@ -293,6 +301,25 @@ bool PortAudioBus::open(const AudioFormat& format) {
     m_negFormat = format;
     m_negFormat.channels = effectiveChannels;
 
+    // Bench diagnostic 2026-05-24: dump what we actually negotiated with
+    // PortAudio so we can confirm there is no rate / buffer / device-name
+    // surprise that would explain continuous audio crackle that the
+    // sample-discontinuity detectors do not catch.
+    if (wantOutput) {
+        const PaStreamInfo* si = Pa_GetStreamInfo(m_stream);
+        std::fprintf(stderr,
+            "[audio] PortAudioBus OPEN (output) device=\"%s\" hostApi=%d "
+            "format.sampleRate=%d (requested) actualOutLatency=%.4f "
+            "negotiated_sampleRate=%.1f bufferSamples=%d channels=%d\n",
+            (di && di->name) ? di->name : "?",
+            di ? di->hostApi : -1,
+            format.sampleRate,
+            si ? si->outputLatency : -1.0,
+            si ? si->sampleRate : -1.0,
+            m_cfg.bufferSamples,
+            effectiveChannels);
+    }
+
     // Defensive null-check on host-API lookup. With a device handed back
     // by Pa_GetDefault{Output,Input}Device this should never be null, but
     // keep the backend name well-defined if it ever is.
@@ -331,6 +358,14 @@ void PortAudioBus::close() {
         std::fprintf(stderr, "[audio] PortAudioBus close: clean (no drops "
                              "or underruns)\n");
     }
+    const quint32 paUf = m_paOutputUnderflowEvents.load(std::memory_order_relaxed);
+    const quint32 paOf = m_paOutputOverflowEvents.load(std::memory_order_relaxed);
+    if (paUf != 0 || paOf != 0) {
+        std::fprintf(stderr,
+                     "[audio] PortAudioBus PA flag stats: "
+                     "paOutputUnderflow=%u paOutputOverflow=%u\n",
+                     paUf, paOf);
+    }
 }
 
 qint64 PortAudioBus::push(const char* data, qint64 bytes) {
@@ -352,10 +387,18 @@ qint64 PortAudioBus::push(const char* data, qint64 bytes) {
     const qint64 readPos = m_ringRead.load(std::memory_order_acquire);
     const qint64 afterWrite = w + floatCount;
     if (afterWrite - readPos > ringSize) {
-        m_dropEvents.fetch_add(1, std::memory_order_relaxed);
+        const quint32 prior = m_dropEvents.fetch_add(1, std::memory_order_relaxed);
         m_dropSamples.fetch_add(
             static_cast<quint64>(afterWrite - readPos - ringSize),
             std::memory_order_relaxed);
+        if (prior == 0) {
+            // One-shot marker so the bench operator can correlate
+            // crackle-onset with the first drop-oldest event.  fprintf
+            // is async-signal-safe; qCWarning would allocate.
+            std::fprintf(stderr, "[audio] PortAudioBus first drop-oldest "
+                                 "event (writer outran reader by more "
+                                 "than ring size)\n");
+        }
     }
 
     float peak = 0.0f;
@@ -421,10 +464,38 @@ qint64 PortAudioBus::pull(char* data, qint64 maxBytes) {
 int PortAudioBus::paCallback(const void* in, void* out,
                              unsigned long frames,
                              const PaStreamCallbackTimeInfo* /*timeInfo*/,
-                             unsigned long /*flags*/,
+                             unsigned long flags,
                              void* userData) {
     PortAudioBus* self = static_cast<PortAudioBus*>(userData);
     const qint64 ringSize = static_cast<qint64>(self->m_ring.size());
+
+    // Bench diagnostic 2026-05-24: PortAudio reports backend-level
+    // anomalies via the `flags` parameter.  We previously ignored these
+    // entirely.  paOutputUnderflow = the audio device played silence
+    // because we did not supply samples fast enough at the OS layer
+    // (independent of our internal ring); paOutputOverflow = data we
+    // pushed was discarded.  Either would produce continuous audible
+    // clicks that none of our ring-side diagnostics catch.
+    if (flags & paOutputUnderflow) {
+        const quint32 prior = self->m_paOutputUnderflowEvents.fetch_add(
+            1, std::memory_order_relaxed);
+        if (prior == 0) {
+            std::fprintf(stderr, "[audio] PortAudioBus FIRST paOutputUnderflow "
+                                 "flag from device (CoreAudio reported it ran "
+                                 "out of samples to play)\n");
+        }
+    }
+    if (flags & paOutputOverflow) {
+        const quint32 prior = self->m_paOutputOverflowEvents.fetch_add(
+            1, std::memory_order_relaxed);
+        if (prior == 0) {
+            std::fprintf(stderr, "[audio] PortAudioBus FIRST paOutputOverflow "
+                                 "flag from device\n");
+        }
+    }
+    if (flags & paPrimingOutput) {
+        // Expected during stream startup; not a problem.
+    }
 
     if (self->m_cfg.direction == AudioDirection::Output) {
         float* o = static_cast<float*>(out);
