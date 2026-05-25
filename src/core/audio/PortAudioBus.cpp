@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace NereusSDR {
@@ -311,6 +312,25 @@ void PortAudioBus::close() {
     Pa_StopStream(m_stream);
     Pa_CloseStream(m_stream);
     m_stream = nullptr;
+
+    // Bench diagnostic: dump cumulative drop / underrun counts at close.
+    // Gives the operator an objective post-session check on whether the
+    // jitter / crackle came from ring overrun (drops), underrun, or
+    // neither.
+    const quint32 drops      = m_dropEvents.load(std::memory_order_relaxed);
+    const quint64 dropSamps  = m_dropSamples.load(std::memory_order_relaxed);
+    const quint32 underruns  = m_underrunEvents.load(std::memory_order_relaxed);
+    if (drops != 0 || underruns != 0) {
+        std::fprintf(stderr,
+                     "[audio] PortAudioBus close stats: drop_events=%u "
+                     "drop_samples=%llu underrun_events=%u\n",
+                     drops,
+                     static_cast<unsigned long long>(dropSamps),
+                     underruns);
+    } else {
+        std::fprintf(stderr, "[audio] PortAudioBus close: clean (no drops "
+                             "or underruns)\n");
+    }
 }
 
 qint64 PortAudioBus::push(const char* data, qint64 bytes) {
@@ -442,6 +462,24 @@ int PortAudioBus::paCallback(const void* in, void* out,
         }
 
         bool wasUnderrun = (r >= w);
+        // Track underrun leading edge so we count distinct events, not
+        // every silent frame in a run.  Initial state (callback fired
+        // with an empty ring) counts as one event.
+        bool sawSilenceStart = false;
+        if (wasUnderrun) {
+            const quint32 prior = self->m_underrunEvents.fetch_add(
+                1, std::memory_order_relaxed);
+            if (prior == 0) {
+                // One-shot leading-edge marker so the bench operator can
+                // see in the log whether the audio crackle correlates
+                // with ring-underrun events at all.  fprintf is async-
+                // signal-safe and OK here; qCWarning would allocate.
+                std::fprintf(stderr, "[audio] PortAudioBus first underrun "
+                             "detected (ring empty when device asked for "
+                             "samples)\n");
+            }
+            sawSilenceStart = true;
+        }
         for (int i = 0; i < want; ++i) {
             float target;
             if (r < w) {
@@ -456,6 +494,11 @@ int PortAudioBus::paCallback(const void* in, void* out,
                 wasUnderrun = false;
             } else {
                 target = 0.0f;  // underrun -> silence (with crossfade below)
+                if (!wasUnderrun && !sawSilenceStart) {
+                    // Transitioned from "had data" to "empty" mid-callback.
+                    self->m_underrunEvents.fetch_add(1, std::memory_order_relaxed);
+                    sawSilenceStart = true;
+                }
                 wasUnderrun = true;
             }
 

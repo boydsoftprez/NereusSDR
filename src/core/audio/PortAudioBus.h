@@ -97,9 +97,13 @@ public:
     quint64 ringOverrunSamples() const {
         return m_dropSamples.load(std::memory_order_relaxed);
     }
+    quint32 ringUnderrunEvents() const {
+        return m_underrunEvents.load(std::memory_order_relaxed);
+    }
     void clearDropStats() {
         m_dropEvents.store(0, std::memory_order_relaxed);
         m_dropSamples.store(0, std::memory_order_relaxed);
+        m_underrunEvents.store(0, std::memory_order_relaxed);
     }
 
 private:
@@ -123,6 +127,12 @@ private:
     // writers (push() on the DSP thread); observers read.
     std::atomic<quint32> m_dropEvents{0};
     std::atomic<quint64> m_dropSamples{0};
+
+    // Underrun accounting: paCallback increments on the leading edge of
+    // every silence run (ring empty when audio device asked for samples).
+    // Counts distinct events, not silent frames.  Bench diagnostic for
+    // the audio jitter / crackle hunt.
+    std::atomic<quint32> m_underrunEvents{0};
 
     // Crossfade state for discontinuity smoothing in paCallback.  Only
     // read / written from the audio callback (single-threaded by
