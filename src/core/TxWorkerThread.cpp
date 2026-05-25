@@ -85,6 +85,7 @@
 #include "AudioEngine.h"
 #include "RadeChannel.h"
 #include "TxChannel.h"
+#include "audio/RealtimeAudioPriority.h"
 #include "audio/TxMicSource.h"
 
 #include <QCoreApplication>
@@ -338,6 +339,20 @@ void TxWorkerThread::run()
     // P/Invoke regardless of which managed thread is calling.
     // NereusSDR's setters are Qt slots dispatched via signals, so we
     // have to give the worker an event pump.
+    // 2026-05-25 KG4VCF bench fix: elevate the TX DSP thread to real-time
+    // audio scheduling, parity with RxDspWorker::onThreadStarted.  Runs on
+    // the worker thread, which is what pthread_set_qos_class_self_np and
+    // os_workgroup_join require (macOS).  Token lifetime matches run()'s
+    // stack frame; leaveAudioThreadPriority just below the loop releases
+    // before the QThread exits, satisfying os_workgroup_leave's "on the
+    // joining thread" requirement.
+    //
+    // Without this elevation, a heavy compile / Spotlight / Time Machine
+    // pass during active TX can preempt the mic-feeder loop and produce
+    // audible glitches on the air -- the same failure mode RX-side
+    // elevation fixed for the receiver path.
+    AudioPriorityToken* txAudioPrio = elevateAudioThreadPriority();
+
     while (m_micSource && m_micSource->isRunning()) {
         // INFINITE wait — mirrors `WaitForSingleObject(..., INFINITE)`.
         // Returns false when stop() releases the poison semaphore AND
@@ -403,6 +418,12 @@ void TxWorkerThread::run()
     if (m_txChannel) {
         m_txChannel->moveToThread(this->thread());
     }
+
+    // Release the TX audio-priority token from the same thread that
+    // joined the workgroup (the worker thread we are about to exit).
+    // Mirrors RxDspWorker::onThreadFinished's leaveAudioThreadPriority.
+    leaveAudioThreadPriority(txAudioPrio);
+    txAudioPrio = nullptr;
 
     qCInfo(lcTxWorker) << "run: worker thread loop exited";
 }
