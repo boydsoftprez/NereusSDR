@@ -418,21 +418,67 @@ int PortAudioBus::paCallback(const void* in, void* out,
         // size), the bytes at our current r have been overwritten with
         // newer samples and reading them would produce scrambled audio.
         // Jump forward to the oldest still-valid sample (w - ringSize)
-        // so we resume on contiguous, in-order audio.  Listener hears a
-        // brief silence/click rather than time-scrambled bytes.
+        // so we resume on contiguous, in-order audio.  The crossfade
+        // counter below smooths the discontinuity so the listener hears
+        // a brief volume dip instead of a hard click.
+        bool startCrossfade = false;
         if (w - r > ringSize) {
             r = w - ringSize;
+            startCrossfade = true;
         }
 
+        // Crossfade between the previous sample value and the new ring
+        // sample over kCrossfadeFrames stereo frames.  Triggered on
+        // drop-oldest catch-up AND on underrun-to-resume transitions.
+        // ~3 ms at 48 kHz / 2 channels — short enough to be inaudible as
+        // a "dip" but long enough to mask the click that a hard jump or
+        // silence-to-signal transition would otherwise produce.
+        const int channels = self->m_negFormat.channels;
+        float lastL = self->m_lastOutL;
+        float lastR = self->m_lastOutR;
+        int crossfadeRem = self->m_crossfadeFramesRem;
+        if (startCrossfade && crossfadeRem == 0) {
+            crossfadeRem = kCrossfadeFrames;
+        }
+
+        bool wasUnderrun = (r >= w);
         for (int i = 0; i < want; ++i) {
+            float target;
             if (r < w) {
-                o[i] = self->m_ring[r % ringSize];
+                target = self->m_ring[r % ringSize];
                 r++;
+                // Underrun-to-resume edge: start a fresh crossfade to
+                // bring the listener gently from silence (or stale
+                // last-sample) up to the live signal.
+                if (wasUnderrun && crossfadeRem == 0) {
+                    crossfadeRem = kCrossfadeFrames;
+                }
+                wasUnderrun = false;
             } else {
-                o[i] = 0.0f;  // underrun -> silence
+                target = 0.0f;  // underrun -> silence (with crossfade below)
+                wasUnderrun = true;
             }
+
+            // Per-channel last-sample tracking (stereo only path is
+            // exercised in practice; mono falls through cleanly).
+            float& last = ((i & 1) && channels >= 2) ? lastR : lastL;
+            if (crossfadeRem > 0) {
+                const float t = 1.0f - (static_cast<float>(crossfadeRem)
+                                        / static_cast<float>(kCrossfadeFrames));
+                o[i] = last + (target - last) * t;
+                // Decrement once per stereo frame (after the R sample).
+                if (channels < 2 || (i & 1) == 1) {
+                    crossfadeRem--;
+                }
+            } else {
+                o[i] = target;
+            }
+            last = o[i];
         }
         self->m_ringRead.store(r, std::memory_order_release);
+        self->m_lastOutL = lastL;
+        self->m_lastOutR = lastR;
+        self->m_crossfadeFramesRem = crossfadeRem;
     } else {
         // Input mode: read captured samples from `in`, write to ring,
         // update m_txLevel (the audio here is destined for transmit).

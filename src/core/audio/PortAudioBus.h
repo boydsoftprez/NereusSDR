@@ -124,6 +124,19 @@ private:
     std::atomic<quint32> m_dropEvents{0};
     std::atomic<quint64> m_dropSamples{0};
 
+    // Crossfade state for discontinuity smoothing in paCallback.  Only
+    // read / written from the audio callback (single-threaded by
+    // PortAudio contract), so plain non-atomic floats are safe.
+    // m_lastOutL / m_lastOutR hold the last sample emitted to each
+    // channel; the crossfade ramps from those values up to the next
+    // ring sample over kCrossfadeFrames stereo frames whenever a
+    // drop-oldest catch-up OR an underrun-to-resume transition is
+    // detected.
+    static constexpr int kCrossfadeFrames = 128;  // ~2.7 ms at 48 kHz
+    float m_lastOutL{0.0f};
+    float m_lastOutR{0.0f};
+    int   m_crossfadeFramesRem{0};
+
     static int paCallback(const void* in, void* out,
                           unsigned long frames,
                           const PaStreamCallbackTimeInfo* timeInfo,
