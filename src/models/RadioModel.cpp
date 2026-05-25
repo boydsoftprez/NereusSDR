@@ -268,6 +268,7 @@ warren@wpratt.com
 // 3M-1b L.1: concrete mic-source strategy objects.
 #include "core/audio/PcMicSource.h"
 #include "core/audio/RadioMicSource.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/audio/VaxTxMicSource.h"
 #include "core/audio/CompositeTxMicRouter.h"
 #include "core/audio/TxMicSource.h"
@@ -5571,6 +5572,18 @@ void RadioModel::connectToRadio(const RadioInfo& info)
 
     // Start thread — init() will be called on the worker thread
     connect(m_connThread, &QThread::started, m_connection, &RadioConnection::init);
+
+    // 2026-05-25 KG4VCF bench fix: elevate the connection thread to
+    // USER_INITIATED QoS.  It runs recvfrom() in a tight loop pulling
+    // UDP I/Q packets off the wire and parsing them; if it gets
+    // preempted by a heavy compile, the kernel UDP receive queue can
+    // overflow and packets get dropped, producing audible glitches
+    // upstream of the DSP feeder.  USER_INITIATED is the right level
+    // for bursty I/O work -- less aggressive than USER_INTERACTIVE
+    // (DSP / GUI) but firmly above DEFAULT (compile jobs).
+    connect(m_connThread, &QThread::started, m_connection,
+            []() { NereusSDR::elevateComputeThreadPriority(); });
+
     m_connThread->start();
 
     // CRITICAL: push sample rate + VFO frequency to the connection BEFORE
