@@ -380,10 +380,14 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_displayTimer.setTimerType(Qt::PreciseTimer);  // sub-ms accuracy
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
-        if (m_hasNewSpectrum) {
-            m_hasNewSpectrum = false;
-            update();
-        }
+        // 2026-05-25 KG4VCF Option B: always repaint at display cadence
+        // (dropped the m_hasNewSpectrum gate) so the GPU waterfall's
+        // sub-row interpolation animates between row pushes instead of
+        // sitting frozen on the most recent FFT.  Cost is at most ~1%
+        // CPU on idle frames; benefit is the waterfall now slides
+        // continuously even when the FFT arrival timing jitters.
+        m_hasNewSpectrum = false;
+        update();
     });
     m_displayTimer.start();
 
@@ -6715,8 +6719,42 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     }
 
     // ---- Waterfall UBO (ring buffer offset) ----
+    //
+    // 2026-05-25 KG4VCF Option B: GPU sub-row scroll interpolation.
+    //
+    // The waterfall is a ring-buffer texture: each row push decrements
+    // m_wfWriteRow and writes new dBm data at that index.  Sampling the
+    // texture at v_uv.y = 0 with rowOffset = m_wfWriteRow/H places the
+    // newest row at the top of the viewport.
+    //
+    // Before Option B, rowOffset jumped by 1/H on every push.  Even with
+    // PreciseTimer + WaterfallTicker on its own thread, small drift
+    // between the push cadence and the display cadence let the eye see a
+    // ~1 Hz hitch in the scroll.
+    //
+    // Option B turns rowOffset into a CONTINUOUS function of time by
+    // having the displayed top row LAG the most recent push by exactly
+    // one push period.  At each display frame between push N and push
+    // N+1, we blend texel m_wfWriteRow (newest, just pushed at N) with
+    // texel (m_wfWriteRow + 1) mod H (the previously-newest, pushed at
+    // N-1).  Both texels hold valid data, so the bilinear sampler
+    // produces a clean gradient with no garbage-row artifacts.  At the
+    // push moment, frac saturates to 1.0 and effectiveRow reaches
+    // m_wfWriteRow exactly; immediately after the push m_wfWriteRow has
+    // decremented by one and frac has reset to 0, so the formula
+    // effectiveRow = m_wfWriteRow + (1 - frac) holds continuous across
+    // the boundary (no visible step on push).
+    //
+    // The visual lag is one push period (~33 ms at the default 30 Hz
+    // cadence) -- imperceptible to the operator and the price for not
+    // having to invent data that doesn't exist yet.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const float pushPeriodMs = static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
+    const float elapsedMs = static_cast<float>(qMax<qint64>(0, nowMs - m_wfLastPushMs));
+    const float pushFrac = qBound(0.0f, elapsedMs / pushPeriodMs, 1.0f);
+    const float effectiveRow = static_cast<float>(m_wfWriteRow) + (1.0f - pushFrac);
     float rowOffset = (m_wfGpuTexH > 0)
-        ? static_cast<float>(m_wfWriteRow) / m_wfGpuTexH : 0.0f;
+        ? effectiveRow / static_cast<float>(m_wfGpuTexH) : 0.0f;
     float uniforms[] = {rowOffset, 0.0f, 0.0f, 0.0f};
     batch->updateDynamicBuffer(m_wfUbo, 0, sizeof(uniforms), uniforms);
 
