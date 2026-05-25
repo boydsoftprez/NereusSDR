@@ -127,9 +127,6 @@
 #include <portaudio.h>
 
 #include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdio>
 #include <vector>
 
 namespace NereusSDR {
@@ -934,86 +931,6 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         return;
     }
 
-    // Bench diagnostic 2026-05-24: per-slice sample-level discontinuity
-    // detector.  Compares the first sample of this block with the last
-    // sample of the previous block; a large step in a single sample is
-    // a click in the audio data ARRIVING at AudioEngine (i.e. coming
-    // out of WDSP or whatever upstream component produced this block).
-    // Confirms or rules out whether the user-reported crackle is in
-    // the data before our ring path or introduced later.
-    {
-        static thread_local std::array<float, 16> s_lastSample{};
-        static thread_local std::array<bool, 16>  s_haveLast{};
-        static thread_local int s_boundaryDiscCount = 0;
-        static thread_local int s_midBlockSpikeCount = 0;
-        // Block-boundary check (first sample of this block vs last of
-        // previous).  Mid-block spike scan looks for any sample-to-sample
-        // step within the block that significantly exceeds the running
-        // average step size in this block.  Threshold raised 0.05 → 0.20
-        // after bench (2026-05-24) showed 0.05 fires ~2-8 times/sec on
-        // normal SSB voice content (peak-to-peak swings around 0.05-0.10
-        // are routine for a full-scale signal at 1-3 kHz).  0.20 is a
-        // 20%-full-scale single-sample jump — that IS a real click and
-        // does not occur from normal modulation envelopes.  Threshold
-        // is a sensitivity dial only; the underlying drop-oldest and
-        // PortAudio underflow counters remain the authoritative signal.
-        constexpr float kStepThreshold = 0.20f;
-        if (sliceId >= 0 && static_cast<size_t>(sliceId) < s_lastSample.size()) {
-            if (s_haveLast[sliceId]) {
-                const float step = std::abs(samples[0] - s_lastSample[sliceId]);
-                if (step > kStepThreshold) {
-                    const int prior = s_boundaryDiscCount++;
-                    if (prior == 0) {
-                        std::fprintf(stderr,
-                            "[audio] AudioEngine INPUT boundary discontinuity "
-                            "(slice=%d step=%.4f) — click is at block "
-                            "boundaries in data from WDSP\n", sliceId, step);
-                    }
-                }
-            }
-            // Mid-block spike scan.  Stereo interleaved.  Compute
-            // adjacent-sample step deltas for both channels; if any one
-            // exceeds threshold AND is > 4x the median step in this
-            // block, treat as a spike.  4x heuristic avoids false-flagging
-            // normal audio waveform peaks (which have smooth slope) vs
-            // genuine clicks (sudden anomaly).
-            const int channels = 2;
-            const int sampleCount = frames * channels;
-            if (sampleCount > 16) {
-                // Pass 1: compute median step (approx via mean for cheapness).
-                float sumStep = 0.0f;
-                float maxStep = 0.0f;
-                int   maxIdx  = -1;
-                for (int i = channels; i < sampleCount; i += channels) {
-                    // Compare same-channel samples (skip channel interleave).
-                    const float s = std::abs(samples[i] - samples[i - channels]);
-                    sumStep += s;
-                    if (s > maxStep) { maxStep = s; maxIdx = i; }
-                }
-                const float avgStep = sumStep / static_cast<float>(frames - 1);
-                if (maxStep > kStepThreshold && maxStep > 4.0f * avgStep) {
-                    const int prior = s_midBlockSpikeCount++;
-                    if (prior == 0) {
-                        std::fprintf(stderr,
-                            "[audio] AudioEngine INPUT mid-block spike "
-                            "(slice=%d maxStep=%.4f avgStep=%.4f idx=%d/%d) "
-                            "— click is INSIDE a WDSP audio block, not "
-                            "at boundaries\n",
-                            sliceId, maxStep, avgStep, maxIdx, sampleCount);
-                    } else if ((prior % 20) == 0) {
-                        std::fprintf(stderr,
-                            "[audio] AudioEngine mid-block spike count=%d "
-                            "latest maxStep=%.4f avgStep=%.4f\n",
-                            prior + 1, maxStep, avgStep);
-                    }
-                }
-            }
-            // Last sample of this block (R channel of last frame).
-            s_lastSample[sliceId] = samples[sampleCount - 1];
-            s_haveLast[sliceId]   = true;
-        }
-    }
-
     // SliceModel exposes muted() / setMuted() plus vaxChannel(). The
     // design spec uses audioMuted() as shorthand for the same property;
     // the alias is intentionally not introduced here (design-decision D5,
@@ -1171,58 +1088,17 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         if (speakersLk.owns_lock()) {
             IAudioBus* speakersBus = m_speakersBus.get();
             if (speakersBus != nullptr && speakersBus->isOpen()) {
-                // Output-side discontinuity detector + drop-block counter.
-                // Confirms whether the final mix delivered to the speakers
-                // bus already contains the rhythmic click the user reports.
-                static thread_local float s_lastMixOutSample = 0.0f;
-                static thread_local bool  s_haveLastMixOut   = false;
-                static thread_local int   s_outDiscontCount  = 0;
-                if (s_haveLastMixOut && stereoFloats > 0) {
-                    const float step = std::abs(mix[0] - s_lastMixOutSample);
-                    // Match input-side threshold (0.20f, see kStepThreshold
-                    // comment above) — 0.05 was firing on normal SSB voice
-                    // peaks.  A real audible click is 20%+ full scale.
-                    if (step > 0.20f) {
-                        const int prior = s_outDiscontCount++;
-                        if (prior == 0) {
-                            std::fprintf(stderr,
-                                "[audio] AudioEngine OUTPUT first sample "
-                                "discontinuity at speakers-bus push "
-                                "(step=%.4f) — click is in the post-mix "
-                                "data before PortAudioBus\n", step);
-                        } else if ((prior % 50) == 0) {
-                            std::fprintf(stderr,
-                                "[audio] AudioEngine OUTPUT discontinuity "
-                                "count=%d latest step=%.4f\n", prior + 1, step);
-                        }
-                    }
-                }
-                s_lastMixOutSample = mix[stereoFloats - 1];
-                s_haveLastMixOut   = true;
-
                 speakersBus->push(
                     reinterpret_cast<const char*>(mix.data()),
                     static_cast<qint64>(stereoFloats) * sizeof(float));
             }
-        } else {
-            // Mutex contention dropped this block.  Track and one-shot-log.
-            // A contending writer holds m_speakersBusMutex (setSpeakersConfig,
-            // master-mute flush).  If this fires periodically it's an
-            // audible click source: the listener gets a silent gap where
-            // a full audio block should have been.
-            static thread_local int s_lockMissCount = 0;
-            const int prior = s_lockMissCount++;
-            if (prior == 0) {
-                std::fprintf(stderr,
-                    "[audio] AudioEngine FIRST speakers-bus mutex miss "
-                    "(block dropped silently) — m_speakersBusMutex was "
-                    "held by another caller\n");
-            } else if ((prior % 50) == 0) {
-                std::fprintf(stderr,
-                    "[audio] AudioEngine speakers-bus mutex miss count=%d "
-                    "(blocks dropped silently)\n", prior + 1);
-            }
         }
+        // A contending writer holding m_speakersBusMutex
+        // (setSpeakersConfig, master-mute flush) silently drops the
+        // current block.  The try_to_lock scope is narrowed to just
+        // the push specifically to keep that drop window short and
+        // bounded; we no longer trace mutex misses since the bench
+        // confirmed the contention is rare enough to be inaudible.
     }
 }
 

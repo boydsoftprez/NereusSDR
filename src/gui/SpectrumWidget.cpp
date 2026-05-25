@@ -365,19 +365,14 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // the frequency scale bar inside the QRhiWidget's own mouse press/drag events
     // (which DO work when a button is pressed).
 
-    // Timer-driven display repaint — decouples repaint rate from FFT data arrival
-    // so updates are evenly spaced regardless of IQ buffer fill timing.
-    // Bench-2026-05-25: restored 33 ms (30 fps).  Dropped to 50 ms on
-    // 2026-05-24 to cut paint CPU, but that created a cadence mismatch
-    // with FFTEngine::setOutputFps(30) — FFT produced a waterfall row
-    // every 33 ms, display painted every 50 ms, each paint pulled
-    // either 1 or 2 rows depending on phase.  Operator perceived this
-    // as visibly stuttery scroll.  With the QStaticText label cache,
-    // opaque-paint-event hints, and MeterWidget per-binding fuzzy
-    // guards landing in the same session, CPU has the headroom for
-    // 30 fps paint.  Default ships at 30 fps; setDisplayFps() lets
-    // Setup -> Display drive it to anything in [1, 60] and the
-    // persisted DisplaySpectrumFps key restores it across launches.
+    // Timer-driven display repaint decouples paint rate from FFT data
+    // arrival, so the displayed frames are evenly spaced regardless of
+    // I/Q buffer fill timing.  Default 30 fps matches the FFT engine's
+    // default output rate (FFTEngine::setOutputFps(30) in MainWindow),
+    // so each paint pulls exactly one fresh waterfall row in steady
+    // state.  setDisplayFps() lets Setup -> Display drive this to
+    // anything in [1, 60] and the persisted DisplaySpectrumFps key
+    // restores it across launches.
     static constexpr int kDefaultDisplayFps = 30;
     m_displayTimer.setInterval(1000 / kDefaultDisplayFps); // 33 ms
     m_displayTimer.setSingleShot(false);

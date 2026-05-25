@@ -10,7 +10,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 
 namespace NereusSDR {
@@ -301,25 +300,6 @@ bool PortAudioBus::open(const AudioFormat& format) {
     m_negFormat = format;
     m_negFormat.channels = effectiveChannels;
 
-    // Bench diagnostic 2026-05-24: dump what we actually negotiated with
-    // PortAudio so we can confirm there is no rate / buffer / device-name
-    // surprise that would explain continuous audio crackle that the
-    // sample-discontinuity detectors do not catch.
-    if (wantOutput) {
-        const PaStreamInfo* si = Pa_GetStreamInfo(m_stream);
-        std::fprintf(stderr,
-            "[audio] PortAudioBus OPEN (output) device=\"%s\" hostApi=%d "
-            "format.sampleRate=%d (requested) actualOutLatency=%.4f "
-            "negotiated_sampleRate=%.1f bufferSamples=%d channels=%d\n",
-            (di && di->name) ? di->name : "?",
-            di ? di->hostApi : -1,
-            format.sampleRate,
-            si ? si->outputLatency : -1.0,
-            si ? si->sampleRate : -1.0,
-            m_cfg.bufferSamples,
-            effectiveChannels);
-    }
-
     // Defensive null-check on host-API lookup. With a device handed back
     // by Pa_GetDefault{Output,Input}Device this should never be null, but
     // keep the backend name well-defined if it ever is.
@@ -339,33 +319,11 @@ void PortAudioBus::close() {
     Pa_StopStream(m_stream);
     Pa_CloseStream(m_stream);
     m_stream = nullptr;
-
-    // Bench diagnostic: dump cumulative drop / underrun counts at close.
-    // Gives the operator an objective post-session check on whether the
-    // jitter / crackle came from ring overrun (drops), underrun, or
-    // neither.
-    const quint32 drops      = m_dropEvents.load(std::memory_order_relaxed);
-    const quint64 dropSamps  = m_dropSamples.load(std::memory_order_relaxed);
-    const quint32 underruns  = m_underrunEvents.load(std::memory_order_relaxed);
-    if (drops != 0 || underruns != 0) {
-        std::fprintf(stderr,
-                     "[audio] PortAudioBus close stats: drop_events=%u "
-                     "drop_samples=%llu underrun_events=%u\n",
-                     drops,
-                     static_cast<unsigned long long>(dropSamps),
-                     underruns);
-    } else {
-        std::fprintf(stderr, "[audio] PortAudioBus close: clean (no drops "
-                             "or underruns)\n");
-    }
-    const quint32 paUf = m_paOutputUnderflowEvents.load(std::memory_order_relaxed);
-    const quint32 paOf = m_paOutputOverflowEvents.load(std::memory_order_relaxed);
-    if (paUf != 0 || paOf != 0) {
-        std::fprintf(stderr,
-                     "[audio] PortAudioBus PA flag stats: "
-                     "paOutputUnderflow=%u paOutputOverflow=%u\n",
-                     paUf, paOf);
-    }
+    // Cumulative drop / underrun / PA-flag counters remain queryable
+    // via ringOverrunEvents() / ringOverrunSamples() /
+    // ringUnderrunEvents() and the m_paOutputUnderflowEvents /
+    // m_paOutputOverflowEvents members.  Used by future support
+    // tooling; no per-close log spam.
 }
 
 qint64 PortAudioBus::push(const char* data, qint64 bytes) {
@@ -387,18 +345,14 @@ qint64 PortAudioBus::push(const char* data, qint64 bytes) {
     const qint64 readPos = m_ringRead.load(std::memory_order_acquire);
     const qint64 afterWrite = w + floatCount;
     if (afterWrite - readPos > ringSize) {
-        const quint32 prior = m_dropEvents.fetch_add(1, std::memory_order_relaxed);
+        m_dropEvents.fetch_add(1, std::memory_order_relaxed);
         m_dropSamples.fetch_add(
             static_cast<quint64>(afterWrite - readPos - ringSize),
             std::memory_order_relaxed);
-        if (prior == 0) {
-            // One-shot marker so the bench operator can correlate
-            // crackle-onset with the first drop-oldest event.  fprintf
-            // is async-signal-safe; qCWarning would allocate.
-            std::fprintf(stderr, "[audio] PortAudioBus first drop-oldest "
-                                 "event (writer outran reader by more "
-                                 "than ring size)\n");
-        }
+        // Counters are observable via ringOverrunEvents() /
+        // ringOverrunSamples().  paCallback performs the catch-up jump
+        // on its next entry; the crossfade ramp on resume keeps the
+        // event inaudible to the listener.
     }
 
     float peak = 0.0f;
@@ -469,29 +423,20 @@ int PortAudioBus::paCallback(const void* in, void* out,
     PortAudioBus* self = static_cast<PortAudioBus*>(userData);
     const qint64 ringSize = static_cast<qint64>(self->m_ring.size());
 
-    // Bench diagnostic 2026-05-24: PortAudio reports backend-level
-    // anomalies via the `flags` parameter.  We previously ignored these
-    // entirely.  paOutputUnderflow = the audio device played silence
-    // because we did not supply samples fast enough at the OS layer
-    // (independent of our internal ring); paOutputOverflow = data we
-    // pushed was discarded.  Either would produce continuous audible
-    // clicks that none of our ring-side diagnostics catch.
+    // PortAudio reports backend-level anomalies via the callback's
+    // `flags` parameter.  paOutputUnderflow = the OS audio device
+    // played silence because we did not supply samples fast enough
+    // at the host-API layer (independent of our internal ring);
+    // paOutputOverflow = data we supplied was discarded.  We count
+    // both into atomic event counters that are queryable through the
+    // PortAudioBus public API for support tooling.
     if (flags & paOutputUnderflow) {
-        const quint32 prior = self->m_paOutputUnderflowEvents.fetch_add(
+        self->m_paOutputUnderflowEvents.fetch_add(
             1, std::memory_order_relaxed);
-        if (prior == 0) {
-            std::fprintf(stderr, "[audio] PortAudioBus FIRST paOutputUnderflow "
-                                 "flag from device (CoreAudio reported it ran "
-                                 "out of samples to play)\n");
-        }
     }
     if (flags & paOutputOverflow) {
-        const quint32 prior = self->m_paOutputOverflowEvents.fetch_add(
+        self->m_paOutputOverflowEvents.fetch_add(
             1, std::memory_order_relaxed);
-        if (prior == 0) {
-            std::fprintf(stderr, "[audio] PortAudioBus FIRST paOutputOverflow "
-                                 "flag from device\n");
-        }
     }
     if (flags & paPrimingOutput) {
         // Expected during stream startup; not a problem.
@@ -538,17 +483,8 @@ int PortAudioBus::paCallback(const void* in, void* out,
         // with an empty ring) counts as one event.
         bool sawSilenceStart = false;
         if (wasUnderrun) {
-            const quint32 prior = self->m_underrunEvents.fetch_add(
+            self->m_underrunEvents.fetch_add(
                 1, std::memory_order_relaxed);
-            if (prior == 0) {
-                // One-shot leading-edge marker so the bench operator can
-                // see in the log whether the audio crackle correlates
-                // with ring-underrun events at all.  fprintf is async-
-                // signal-safe and OK here; qCWarning would allocate.
-                std::fprintf(stderr, "[audio] PortAudioBus first underrun "
-                             "detected (ring empty when device asked for "
-                             "samples)\n");
-            }
             sawSilenceStart = true;
         }
         for (int i = 0; i < want; ++i) {
