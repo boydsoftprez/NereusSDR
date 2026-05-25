@@ -397,8 +397,19 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_wfPushTimer.setInterval(m_wfUpdatePeriodMs);
     m_wfPushTimer.setSingleShot(false);
     connect(&m_wfPushTimer, &QTimer::timeout, this, [this]() {
-        if (m_pendingWfPixelsDbmDirty) {
-            m_pendingWfPixelsDbmDirty = false;
+        // 2026-05-25 KG4VCF bench fix #2: ALWAYS push on tick.  Earlier
+        // version gated on m_pendingWfPixelsDbmDirty and skipped ticks
+        // when no fresh FFT had arrived since the last push.  With
+        // displayFps=30 (FFT emit ~33.3 ms) and wfPushTimer=30 ms (or
+        // 33 ms after PR #286 alignment), every ~10 ticks the timer
+        // fires slightly before FFT data lands -> skip -> next tick
+        // catches up -> visible "surge in speed".  Repeating the last
+        // cached row on a no-data tick is invisible (a single row stays
+        // at the same vertical position for 60 ms once every few seconds);
+        // the previous skip pattern was very visible.  Empty-cache guard
+        // remains so we do nothing before the very first FFT.
+        m_pendingWfPixelsDbmDirty = false;
+        if (!m_pendingWfPixelsDbm.isEmpty()) {
             pushWaterfallRow(m_pendingWfPixelsDbm);
         }
     });
@@ -4592,6 +4603,12 @@ void SpectrumWidget::setDisplayFps(int fps)
     // operator as stuttery scroll.  Matching the periods makes the
     // ratio exactly 1:1 regardless of upstream packet bursts.
     m_wfUpdatePeriodMs = periodMs;
+    // 2026-05-25 KG4VCF bench fix: also retune the actual push timer.
+    // Prior code only updated m_wfUpdatePeriodMs (the rate-limit value)
+    // but m_wfPushTimer was set once at ctor and kept its old interval,
+    // so the displayFps slider's promise of "lock waterfall cadence to
+    // paint cadence" was only half-delivered.
+    m_wfPushTimer.setInterval(periodMs);
     // Averaging alphas depend on fps via Thetis α = exp(-1/(fps×τ)).
     // Recompute so the smoothing time constants stay correct after a rate change.
     recomputeAverageAlphas();
