@@ -5687,10 +5687,18 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // per-DDC fork into PsccPump::onIqData drove the legacy independent-
     // rings architecture and could drift by ~189 samples between TX
     // monitor and PS feedback under Qt queued-connection scheduling.
+    // Lever 2 (2026-05-24): DirectConnection so this lambda runs on the
+    // Connection thread, not main.  feedIqData has a recursive mutex
+    // covering the receiver-map reads; the downstream emit of
+    // iqDataForReceiver then drops into either a DirectConnection lambda
+    // (Step 2a below where rawIqData is re-emitted) or a QueuedConnection
+    // to the DSP worker (Step 2b).  Net result: I/Q packets reach FFT and
+    // DSP without ever sitting in the main thread's event queue, so a
+    // paint-busy main thread no longer stalls audio + waterfall together.
     connect(m_connection, &RadioConnection::iqDataReceived,
             this, [this](int ddcIndex, const QVector<float>& samples) {
         m_receiverManager->feedIqData(ddcIndex, samples);
-    });
+    }, Qt::DirectConnection);
 
     // Phase 3M-4 bench-fix 2026-05-23 (J.J. Boyd KG4VCF): source-first
     // PS pairing.  RadioConnection emits psPairedIqDataReceived once per
@@ -5775,15 +5783,19 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         }
     }
 
-    // Step 2a: ReceiverManager → spectrum fork (main thread, fast).
-    // Kept on the main thread so rawIqData → FFTEngine routing stays
-    // unchanged. FFTEngine lives on its own SpectrumThread and the
-    // signal already crosses threads via queued connection.
+    // Step 2a: ReceiverManager → spectrum fork.
+    // Lever 2 (2026-05-24): DirectConnection so this lambda runs on the
+    // Connection thread (same thread that just emitted iqDataForReceiver
+    // from feedIqData).  emit rawIqData() is itself thread-safe; its
+    // subscribers (FFTEngine on SpectrumThread) use QueuedConnection and
+    // run on their own threads, so the cross-thread queueing happens at
+    // the FFT consumer boundary, not here.  Main thread never sees the
+    // I/Q packet.
     connect(m_receiverManager, &ReceiverManager::iqDataForReceiver,
             this, [this](int receiverIndex, const QVector<float>& samples) {
         Q_UNUSED(receiverIndex);
         emit rawIqData(samples);
-    });
+    }, Qt::DirectConnection);
 
     // Step 2b: ReceiverManager → DSP worker (queued, off the main thread).
     // RxDspWorker accumulates samples into in_size chunks, runs each

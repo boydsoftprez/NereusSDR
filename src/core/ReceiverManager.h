@@ -68,6 +68,7 @@
 #include <QObject>
 #include <QVector>
 #include <QMap>
+#include <QMutex>
 
 #include "codec/CodecContext.h"   // PsDdcConfig + Q_DECLARE_METATYPE
 #include "HpsdrModel.h"           // HPSDRModel
@@ -268,6 +269,16 @@ private:
 
     // Mapping from hardware DDC index to logical receiver index
     QMap<int, int> m_hwToLogical;
+
+    // Audio-rate-fix 2026-05-24 (Lever 2): feedIqData runs on the radio
+    // Connection thread via Qt::DirectConnection so the I/Q packet path
+    // never touches the main thread.  Main-thread mutations of m_receivers
+    // and m_hwToLogical (createReceiver, destroyReceiver, setMaxReceivers,
+    // rebuildHardwareMapping) need to be serialized against the Connection-
+    // thread read in feedIqData.  Recursive so internal call paths like
+    // destroyReceiver -> rebuildHardwareMapping do not deadlock.  Mutable
+    // so the reader can take it.
+    mutable QRecursiveMutex m_routingMutex;
 
     // Diagnostic: one-shot logging of first successful and first dropped feedIqData
     bool m_firstForwardLogged{false};

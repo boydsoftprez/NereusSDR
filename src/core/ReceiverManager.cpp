@@ -87,6 +87,7 @@ void ReceiverManager::setMaxReceivers(int max)
 
 int ReceiverManager::createReceiver()
 {
+    QMutexLocker locker(&m_routingMutex);
     if (m_receivers.size() >= m_maxReceivers) {
         qCWarning(lcReceiver) << "Cannot create receiver: at maximum" << m_maxReceivers;
         return -1;
@@ -107,6 +108,7 @@ int ReceiverManager::createReceiver()
 
 void ReceiverManager::destroyReceiver(int receiverIndex)
 {
+    QMutexLocker locker(&m_routingMutex);
     if (!m_receivers.contains(receiverIndex)) {
         return;
     }
@@ -124,6 +126,7 @@ void ReceiverManager::destroyReceiver(int receiverIndex)
 
 void ReceiverManager::reset()
 {
+    QMutexLocker locker(&m_routingMutex);
     const int priorCount = m_receivers.size();
     const QList<int> indices = m_receivers.keys();
 
@@ -286,6 +289,15 @@ void ReceiverManager::setAdcForReceiver(int receiverIndex, int adcIndex)
 
 void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samples)
 {
+    // Lever 2 (2026-05-24): this function now runs on the Connection thread
+    // via Qt::DirectConnection from RadioConnection::iqDataReceived (see the
+    // wire-up in RadioModel.cpp).  Main-thread writers of m_hwToLogical /
+    // m_receivers (createReceiver / destroyReceiver / reset / rebuildHardwareMapping)
+    // serialize through m_routingMutex; the read here takes the same lock so
+    // the hash structure can not flip mid-lookup.  Hot-path cost: one
+    // uncontended mutex acquire per packet (~100 ns) plus the existing
+    // hash lookups + emit setup.
+    QMutexLocker locker(&m_routingMutex);
     auto it = m_hwToLogical.constFind(hwReceiverIndex);
     if (it == m_hwToLogical.constEnd()) {
         if (!m_firstDropLogged) {
@@ -321,6 +333,7 @@ void ReceiverManager::feedIqData(int hwReceiverIndex, const QVector<float>& samp
 
 void ReceiverManager::rebuildHardwareMapping()
 {
+    QMutexLocker locker(&m_routingMutex);
     m_hwToLogical.clear();
 
     // Assign hardware DDC indices to active receivers.
