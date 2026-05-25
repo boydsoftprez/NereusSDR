@@ -6,11 +6,22 @@
 // =================================================================
 #include "WaterfallTicker.h"
 
+#include <QThread>
+
 namespace NereusSDR {
 
 WaterfallTicker::WaterfallTicker(QObject* parent)
     : QObject(parent)
 {
+    // NOTE on threading: `QTimer m_timer;` is a value member, not a
+    // QObject child of `this`, so when SpectrumWidget calls
+    // moveToThread(workerThread) on us, m_timer stays pinned to the
+    // thread it was constructed on (main).  Configuring the timer here
+    // is fine -- setTimerType/setInterval/setSingleShot don't start
+    // it -- but the first start() must run on m_timer's owning thread.
+    // ensureTimerOnCurrentThread() (called from the invokeMethod
+    // lambdas below) re-parents m_timer onto the worker the first time
+    // start()/setUpdatePeriodMs()/stop() lands there.
     m_timer.setTimerType(Qt::PreciseTimer);
     m_timer.setInterval(m_periodMs.load());
     m_timer.setSingleShot(false);
@@ -18,6 +29,13 @@ WaterfallTicker::WaterfallTicker(QObject* parent)
 }
 
 WaterfallTicker::~WaterfallTicker() = default;
+
+void WaterfallTicker::ensureTimerOnCurrentThread()
+{
+    if (m_timer.thread() != QThread::currentThread()) {
+        m_timer.moveToThread(QThread::currentThread());
+    }
+}
 
 void WaterfallTicker::setUpdatePeriodMs(int ms)
 {
@@ -28,6 +46,7 @@ void WaterfallTicker::setUpdatePeriodMs(int ms)
     // Hop to worker thread to mutate the QTimer state.  QTimer is not
     // thread-safe; setInterval / start must run on the object's thread.
     QMetaObject::invokeMethod(this, [this, ms]() {
+        ensureTimerOnCurrentThread();
         m_timer.setInterval(ms);
         if (m_running.load()) {
             m_timer.start();
@@ -41,6 +60,7 @@ void WaterfallTicker::start()
         return;  // already running
     }
     QMetaObject::invokeMethod(this, [this]() {
+        ensureTimerOnCurrentThread();
         m_timer.start();
     }, Qt::QueuedConnection);
 }
@@ -51,6 +71,7 @@ void WaterfallTicker::stop()
         return;  // already stopped
     }
     QMetaObject::invokeMethod(this, [this]() {
+        ensureTimerOnCurrentThread();
         m_timer.stop();
     }, Qt::QueuedConnection);
 }

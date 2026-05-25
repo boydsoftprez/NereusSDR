@@ -67,6 +67,13 @@ private slots:
     void onTimerTick();   // runs on worker thread
 
 private:
+    // Lazily re-parent m_timer (a value member, so moveToThread on
+    // `this` does not bring it along) onto the worker thread the first
+    // time a control slot lands here.  Must be called only from a
+    // worker-thread context (e.g. inside the invokeMethod lambdas in
+    // start / stop / setUpdatePeriodMs).
+    void ensureTimerOnCurrentThread();
+
     QTimer            m_timer;
     std::atomic<int>  m_periodMs{33};
     std::atomic<bool> m_running{false};
