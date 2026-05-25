@@ -65,6 +65,13 @@ SMeterWidget::SMeterWidget(QWidget* parent)
     setMinimumSize(minimumSizeHint());
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
+    // Performance: paintEvent fills rect() opaquely as the first step
+    // (line ~443).  Tell Qt this widget needs no transparent compositing
+    // pass under it — Qt skips the parent backing-store rebuild and saves
+    // one IOSurface memmove per paint.  SMeterWidget paints at 30 Hz
+    // (needle animation) + on peak decay (20 Hz), so this fires frequently.
+    setAttribute(Qt::WA_OpaquePaintEvent);
+
     m_needleFraction = dbmToFraction(m_levelDbm);
     m_targetNeedleFraction = m_needleFraction;
     m_peakHoldDecayStartDbm = m_peakHoldDbm;

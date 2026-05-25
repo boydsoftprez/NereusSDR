@@ -154,6 +154,40 @@
 
 namespace NereusSDR {
 
+// Visual-equality helper for the spot-marker repaint guard.  Drops a
+// redundant overlay repaint whenever a spot-client poll lands on an
+// unchanged set (frequent in steady state — DX cluster + WSJT-X +
+// FreeDV Reporter all repeat the same active station entries every
+// few seconds, and the drawSpotMarkers path is the most expensive
+// item on the overlay canvas).
+//
+// From AetherSDR src/gui/SpectrumWidget.cpp [@a173272d] PR #2474
+// ("Avoid unchanged spot overlay repaints").  Same comparison fields
+// (callsign / freqMhz / color / dxccColor / source) — non-visual
+// fields like spotterCallsign / comment / timestampMs intentionally
+// excluded so a comment-only update does not force a repaint.
+static bool spotMarkersVisuallyEqual(const QVector<SpectrumWidget::SpotMarker>& lhs,
+                                     const QVector<SpectrumWidget::SpotMarker>& rhs)
+{
+    constexpr double kFrequencyEpsilonMhz = 1.0e-6;
+
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (qsizetype i = 0; i < lhs.size(); ++i) {
+        const SpectrumWidget::SpotMarker& a = lhs.at(i);
+        const SpectrumWidget::SpotMarker& b = rhs.at(i);
+        if (a.callsign != b.callsign
+            || std::abs(a.freqMhz - b.freqMhz) > kFrequencyEpsilonMhz
+            || a.color != b.color
+            || a.dxccColor != b.dxccColor
+            || a.source != b.source) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ---- Default waterfall gradient stops (AetherSDR style) ----
 // From AetherSDR SpectrumWidget.cpp:43-51
 static const WfGradientStop kDefaultStops[] = {
@@ -3398,8 +3432,30 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
             label = QString::number(mhz, 'f', 3);
         }
 
-        QRect textRect(x - 30, r.top() + 2, 60, r.height() - 2);
-        p.drawText(textRect, baseFlags, label);
+        // Cached QStaticText render — see m_freqLabelCache comment in
+        // SpectrumWidget.h.  Working set grows as the user pans but
+        // converges quickly because the format strings repeat.
+        auto cit = m_freqLabelCache.find(label);
+        if (cit == m_freqLabelCache.end()) {
+            QStaticText st(label);
+            st.setPerformanceHint(QStaticText::AggressiveCaching);
+            cit = m_freqLabelCache.insert(label, std::move(st));
+        }
+        cit.value().prepare(p.transform(), font);
+
+        // Position the cached text inside the same 60-wide rect that
+        // drawText was using, honoring the configured alignment.  The
+        // rect itself isn't drawn; it's only used to anchor the label.
+        const QRectF textRect(x - 30, r.top() + 2, 60, r.height() - 2);
+        const QSizeF labelSize = cit.value().size();
+        qreal lx = textRect.left();   // AlignLeft default
+        if (baseFlags & Qt::AlignHCenter) {
+            lx = textRect.center().x() - labelSize.width() / 2.0;
+        } else if (baseFlags & Qt::AlignRight) {
+            lx = textRect.right() - labelSize.width();
+        }
+        const qreal ly = textRect.center().y() - labelSize.height() / 2.0;
+        p.drawStaticText(QPointF(lx, ly), cit.value());
     }
 }
 
@@ -3452,6 +3508,12 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
     const float bottomDbm  = m_refLevel - m_dynamicRange;
     const float firstLabel = std::ceil(bottomDbm / stepDb) * stepDb;
 
+    // drawStaticText anchors at the top-left of the glyph run; drawText
+    // anchors at the baseline.  The original baseline-y was
+    // (y + ascent/2); to keep visual-identical placement, drawStaticText
+    // takes y = (y + ascent/2) - ascent = y - ascent/2.
+    const qreal staticAscent = fm.ascent();
+
     for (float dbm = firstLabel; dbm <= m_refLevel; dbm += stepDb) {
         // Route through dbmToY() so m_dbmCalOffset is applied consistently with
         // the grid/trace/peak-hold paths — otherwise a non-zero cal offset would
@@ -3463,10 +3525,24 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
         p.setPen(QColor(0x50, 0x70, 0x80));
         p.drawLine(strip.left(), y, strip.left() + 4, y);
 
-        // Label
+        // Label — QStaticText cache: HarfBuzz shapes each unique string
+        // exactly once over the widget lifetime.  See m_dbmLabelCache
+        // comment in SpectrumWidget.h for rationale + AetherSDR cite.
         const QString label = QString::number(static_cast<int>(dbm));
+        auto cit = m_dbmLabelCache.find(label);
+        if (cit == m_dbmLabelCache.end()) {
+            QStaticText st(label);
+            st.setPerformanceHint(QStaticText::AggressiveCaching);
+            cit = m_dbmLabelCache.insert(label, std::move(st));
+        }
+        // prepare() with the painter's actual transform avoids a
+        // first-paint rebuild on HiDPI displays.
+        cit.value().prepare(p.transform(), f);
+
         p.setPen(QColor(0x80, 0xa0, 0xb0));
-        p.drawText(strip.left() + 6, y + fm.ascent() / 2, label);
+        p.drawStaticText(
+            QPointF(strip.left() + 6, y - staticAscent / 2.0),
+            cit.value());
     }
 }
 
@@ -4715,9 +4791,14 @@ std::pair<int,int> SpectrumWidget::txAudioToIq(int audioLow, int audioHigh,
 // ---------------------------------------------------------------------------
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4303-4307 [@0cd4559]
+// Repaint guard added per AetherSDR [@a173272d] PR #2474.
 void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
 {
+    const bool visualChange = !spotMarkersVisuallyEqual(m_spotMarkers, markers);
     m_spotMarkers = markers;
+    if (!visualChange) {
+        return;
+    }
     update();
 }
 
