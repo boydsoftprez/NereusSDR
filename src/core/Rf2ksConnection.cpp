@@ -195,7 +195,12 @@ void Rf2ksConnection::connectToAmp(const QString& host, quint16 port)
 
     connect(&m_pollTimer, &QTimer::timeout, this, &Rf2ksConnection::pollOnce,
             Qt::UniqueConnection);
-    m_pollTimer.start(m_pollIntervalMs);
+    // 2026-05-25 KG4VCF bench fix: pollOnce now staggers one path per
+    // tick (was: 6 parallel GETs per tick).  Run the timer at one-sixth
+    // of m_pollIntervalMs so each path is still sampled at the same
+    // overall rate, but the reply burst on the main thread is spread
+    // out instead of producing a visible ~1 Hz hitch in the waterfall.
+    m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
 
     // Probe /info immediately to establish connection.
     issueGet(QStringLiteral("/info"));
@@ -215,12 +220,30 @@ void Rf2ksConnection::setPollIntervalMs(int ms)
 {
     m_pollIntervalMs = qBound(250, ms, 5000);
     if (m_pollTimer.isActive()) {
-        m_pollTimer.start(m_pollIntervalMs);
+        // See connectToAmp(): the timer fires per-path, not per-cycle,
+        // so the interval is one-sixth of the configured cycle period.
+        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
     }
 }
 
 void Rf2ksConnection::pollOnce()
 {
+    // 2026-05-25 KG4VCF bench fix: stagger the 6 hot-path GETs across
+    // the poll interval instead of firing them all at once.
+    //
+    // Original behavior: 6 parallel GETs every 1000 ms.  All 6 QNetworkReply
+    // finished callbacks deliver back to the main thread within a few ms;
+    // the resulting paint-event starvation produced a visible ~1 Hz hitch
+    // in the waterfall scroll (bench report: "still seems to have about a
+    // 1 second hitch in the flow").
+    //
+    // New behavior: pollOnce fires ONE path per tick, round-robin.  The
+    // timer interval is divided by 6 so each path still gets sampled at
+    // the same overall rate.  Replies arrive spread out -> no
+    // main-thread spike.
+    //
+    // The slow-rotation /antennas + /info refresh now also rides this
+    // schedule (counter wraps every 60 hot-path ticks).
     static const QStringList kHotPaths{
         QStringLiteral("/power"),
         QStringLiteral("/tuner"),
@@ -229,14 +252,18 @@ void Rf2ksConnection::pollOnce()
         QStringLiteral("/operate-mode"),
         QStringLiteral("/operational-interface"),
     };
-    for (const auto& p : kHotPaths) {
-        issueGet(p);
-    }
-    // Slow rotation: every 10 polls, refresh /antennas and /info.
-    static int tick = 0;
-    if (++tick % 10 == 0) {
-        issueGet(QStringLiteral("/antennas"));
-        issueGet(QStringLiteral("/info"));
+    static int hotIdx = 0;
+    static int slowTick = 0;
+    issueGet(kHotPaths.at(hotIdx));
+    hotIdx = (hotIdx + 1) % kHotPaths.size();
+    // Slow rotation: once per full hot-path cycle (~ once per poll
+    // interval), advance the slow-tick counter and refresh /antennas
+    // + /info every 10 cycles.
+    if (hotIdx == 0) {
+        if (++slowTick % 10 == 0) {
+            issueGet(QStringLiteral("/antennas"));
+            issueGet(QStringLiteral("/info"));
+        }
     }
 }
 
@@ -318,7 +345,8 @@ void Rf2ksConnection::scheduleReconnect()
         // m_connected back to true via onReplyFinished.
         issueGet(QStringLiteral("/info"));
         if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
-            m_pollTimer.start(m_pollIntervalMs);
+            // See connectToAmp(): timer fires per-path, one-sixth of cycle.
+            m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
         }
     });
 }
