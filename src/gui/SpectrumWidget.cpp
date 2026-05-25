@@ -3149,6 +3149,18 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
 
     p.setRenderHint(QPainter::Antialiasing, true);
 
+    // 2026-05-25 KG4VCF bench fix: PR #286's QStaticText cache for the
+    // dBm and frequency scale labels stopped calling QPainter::setFont
+    // (drawStaticText carries its own font); the painter is left at
+    // whatever the previous section set, which under the old code was
+    // 11 px from paintDbmScale's drawText calls.  Post-cache the
+    // painter inherits Qt's default ~9 pt fallback, so the blob dBm
+    // labels rendered visibly smaller than they used to.  Set the
+    // canonical 11 px explicitly here.
+    QFont blobFont = p.font();
+    blobFont.setPixelSize(11);
+    p.setFont(blobFont);
+
     for (const auto& blob : m_peakBlobs.blobs()) {
         // Skip disabled slots in the persistent blob array (post-Phase 2
         // PeakBlobDetector rewrite mirrors Thetis's fixed-size m_RX1Maximums
