@@ -2219,9 +2219,16 @@ void MainWindow::populateDefaultMeter()
         // Connect 2: radio barefoot/Aurora TX meters (STANDBY or no amp).
         // RadioStatus::powerChanged carries (fwdWatts, revWatts, swr); we
         // take fwdWatts (arg 1) and swr (arg 3) to match setTxMeters() signature.
+        //
+        // 2026-05-25 KG4VCF bench fix: gate on isAnyExternalAmpInOperate
+        // (cross-vendor) instead of just PGXL state.  RadioStatus::powerChanged
+        // fires much faster than RF-Kit's 1 Hz REST poll, so when RF-Kit
+        // (without PGXL) is in OPERATE, the radio's barefoot reading was
+        // overwriting the RF-Kit amp reading at ~20 Hz.  Now barefoot only
+        // feeds when no external amp is amplifying.
         connect(&m_radioModel->radioStatus(), &RadioStatus::powerChanged,
                 this, [this, sm](double fwd, double /*rev*/, double swr) {
-            if (!m_radioModel->hasAmplifier() || !m_radioModel->ampOperate()) {
+            if (!m_radioModel->isAnyExternalAmpInOperate()) {
                 sm->setTxMeters(static_cast<float>(fwd), static_cast<float>(swr));
             }
         });
@@ -2235,11 +2242,14 @@ void MainWindow::populateDefaultMeter()
         // Connect 4: OPERATE/STANDBY state change re-evaluates scale.
         // When STANDBY: hasAmplifier()=true but we want barefoot scale,
         // so pass false (treat as absent) until OPERATE resumes.
+        //
+        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
+        // PGXL going STANDBY does not flip the SMeterWidget back to
+        // barefoot scale if RF-Kit is still amplifying (and vice versa).
         connect(m_radioModel, &RadioModel::ampStateChanged, this,
                 [this, sm]() {
-            const bool amplifying = m_radioModel->hasAmplifier()
-                                    && m_radioModel->ampOperate();
-            sm->setPowerScale(/*maxWatts=*/0, amplifying);
+            sm->setPowerScale(/*maxWatts=*/0,
+                              m_radioModel->isAnyExternalAmpInOperate());
         });
 
         // Connect 5: 2026-05-20 bench fix -- SMeterWidget::setTransmitting
@@ -2274,17 +2284,29 @@ void MainWindow::populateDefaultMeter()
         // RF-Kit Connect A: snap 2 kW scale on RF-Kit OPERATE.
         // externalAmpOperateChanged is now transition-gated (fix I2) so this
         // fires only when the amp enters or leaves OPERATE, not every poll.
-        connect(m_radioModel, &RadioModel::externalAmpOperateChanged, sm,
-                [sm](bool inOp) {
-            sm->setPowerScale(/*maxWatts=*/0, inOp);
+        //
+        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
+        // RF-Kit going STANDBY does not flip back to barefoot scale if
+        // PGXL is still amplifying.
+        connect(m_radioModel, &RadioModel::externalAmpOperateChanged, this,
+                [this, sm](bool /*inOp*/) {
+            sm->setPowerScale(/*maxWatts=*/0,
+                              m_radioModel->isAnyExternalAmpInOperate());
         });
 
         // RF-Kit Connect B: feed RF-Kit forward power + SWR to the TX needle.
         // externalAmpFwdSwrUpdated carries watts (int) and SWR (float);
         // setTxMeters takes (float fwdPower, float swr).
-        connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, sm,
-                [sm](int fwd, float swr) {
-            sm->setTxMeters(static_cast<float>(fwd), swr);
+        //
+        // 2026-05-25 KG4VCF bench fix: gate on isAnyExternalAmpInOperate so
+        // a STANDBY amp doesn't push 0 W into the needle while the radio's
+        // barefoot reading is also wanting the meter.  Only fire when at
+        // least one external amp is actually amplifying.
+        connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, this,
+                [this, sm](int fwd, float swr) {
+            if (m_radioModel->isAnyExternalAmpInOperate()) {
+                sm->setTxMeters(static_cast<float>(fwd), swr);
+            }
         });
     }
 

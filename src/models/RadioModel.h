@@ -530,6 +530,15 @@ public:
     bool hasAmplifier() const { return m_hasAmplifier; }
     bool ampOperate()  const  { return m_ampOperate; }
 
+    // Cross-vendor "is any external amp currently amplifying?" predicate.
+    // True if PGXL is connected + in OPERATE OR if the RF-Kit RF2K-S is in
+    // OPERATE.  Used by MainWindow's SMeterWidget wiring to decide whether
+    // to feed the TX needle from the radio's barefoot meters or from an
+    // external amp's telemetry.  Phase 3P-III bench fix 2026-05-25 KG4VCF:
+    // without this gate, PGXL Connect 2 (radio TX power) was overwriting
+    // RF-Kit Connect B (amp forward power) at the radio's higher emit rate.
+    bool isAnyExternalAmpInOperate() const;
+
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Constructed once in the ctor (Qt parent-ownership). Non-null from
     // construction time. Shared with PgxlInterlockPage (non-owning read/write)

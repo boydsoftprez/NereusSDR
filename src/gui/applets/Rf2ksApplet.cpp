@@ -61,12 +61,23 @@ Rf2ksApplet::Rf2ksApplet(RadioModel* model, QWidget* parent)
     auto* gaugesLay  = new QVBoxLayout(gaugesWrap);
     gaugesLay->setContentsMargins(8, 6, 8, 6);
 
+    // Gauge thresholds and tick labels mirror src/gui/applets/AmpApplet.cpp
+    // exactly so RF-Kit operators have the same visual language PGXL
+    // operators already know.  Bench feedback 2026-05-25 KG4VCF: without
+    // tick labels the bar reads as "about 1/4 scale" with no power context.
     m_fwdGauge  = new HGauge(gaugesWrap);
     m_fwdGauge->setRange(0.0, 2000.0);
-    m_fwdGauge->setYellowStart(1500.0);
-    m_fwdGauge->setRedStart(1800.0);
-    m_fwdGauge->setTitle(QStringLiteral("Fwd"));
+    m_fwdGauge->setYellowStart(1000.0);
+    m_fwdGauge->setRedStart(1500.0);
+    m_fwdGauge->setTitle(QStringLiteral("Fwd Pwr"));
     m_fwdGauge->setUnit(QStringLiteral("W"));
+    m_fwdGauge->setTickLabels({
+        QStringLiteral("0"),
+        QStringLiteral("500"),
+        QStringLiteral("1000"),
+        QStringLiteral("1.5k"),
+        QStringLiteral("2k")
+    });
     gaugesLay->addWidget(m_fwdGauge);
 
     // SWR stored as x100 fixed-point (1.0 -> 100, 3.0 -> 300) so we can
@@ -76,14 +87,29 @@ Rf2ksApplet::Rf2ksApplet(RadioModel* model, QWidget* parent)
     m_swrGauge->setYellowStart(200.0);
     m_swrGauge->setRedStart(250.0);
     m_swrGauge->setTitle(QStringLiteral("SWR"));
+    m_swrGauge->setValue(100.0);   // start at 1.0:1
+    m_swrGauge->setTickLabels({
+        QStringLiteral("1"),
+        QStringLiteral("1.5"),
+        QStringLiteral("2"),
+        QStringLiteral("2.5"),
+        QStringLiteral("3")
+    });
     gaugesLay->addWidget(m_swrGauge);
 
     m_tempGauge = new HGauge(gaugesWrap);
-    m_tempGauge->setRange(0.0, 80.0);
-    m_tempGauge->setYellowStart(60.0);
-    m_tempGauge->setRedStart(70.0);
+    m_tempGauge->setRange(0.0, 100.0);
+    m_tempGauge->setYellowStart(55.0);
+    m_tempGauge->setRedStart(80.0);
     m_tempGauge->setTitle(QStringLiteral("Temp"));
-    m_tempGauge->setUnit(QStringLiteral("C"));
+    m_tempGauge->setUnit(QStringLiteral("°C"));
+    m_tempGauge->setTickLabels({
+        QStringLiteral("0"),
+        QStringLiteral("30"),
+        QStringLiteral("55"),
+        QStringLiteral("80"),
+        QStringLiteral("100")
+    });
     gaugesLay->addWidget(m_tempGauge);
 
     m_telemetryLabel = new QLabel(gaugesWrap);
@@ -159,7 +185,12 @@ void Rf2ksApplet::setPower(const RfKitPowerSnapshot& snap)
     // SWR stored x100 so the gauge range (100..300) maps to 1.0..3.0.
     m_swrGauge->setValue(static_cast<double>(snap.swr) * 100.0);
     m_tempGauge->setValue(static_cast<double>(snap.temperatureC));
-    m_telemetryLabel->setText(QStringLiteral("%1 V  %2 A")
+    // Bench feedback 2026-05-25 KG4VCF: include numeric forward power +
+    // SWR in the telemetry strip so the operator has a concrete reading
+    // alongside the bar graph (the bar alone reads as "about 1/4 scale").
+    m_telemetryLabel->setText(QStringLiteral("Fwd %1 W  SWR %2  %3 V  %4 A")
+        .arg(snap.forwardW)
+        .arg(static_cast<double>(snap.swr), 0, 'f', 2)
         .arg(snap.voltageV, 0, 'f', 0)
         .arg(snap.currentA, 0, 'f', 1));
 }

@@ -2442,6 +2442,21 @@ void RadioModel::setRfKitEnabled(bool enabled)
     emit rfKitEnabledChanged(enabled);
 }
 
+bool RadioModel::isAnyExternalAmpInOperate() const
+{
+    // PGXL: explicit booleans set by PgxlConnection::statusUpdated handler.
+    if (m_hasAmplifier && m_ampOperate) {
+        return true;
+    }
+    // RF-Kit: poll the last-known operate_mode from Rf2ksConnection.  The
+    // connection caches it in m_operateMode and refreshes once per second.
+    if (m_rfKitConnection
+        && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE")) {
+        return true;
+    }
+    return false;
+}
+
 const BoardCapabilities& RadioModel::boardCapabilities() const
 {
 #ifdef NEREUS_BUILD_TESTS
