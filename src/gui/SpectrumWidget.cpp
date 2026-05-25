@@ -375,6 +375,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // restores it across launches.
     static constexpr int kDefaultDisplayFps = 30;
     m_displayTimer.setInterval(1000 / kDefaultDisplayFps); // 33 ms
+    m_displayTimer.setTimerType(Qt::PreciseTimer);  // sub-ms accuracy
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
         if (m_hasNewSpectrum) {
@@ -394,6 +395,12 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // a visible gap until the next FFT arrived.  Move the push to a
     // dedicated QTimer so the texture write happens at strictly
     // m_wfUpdatePeriodMs cadence regardless of FFT arrival pattern.
+    // 2026-05-25 KG4VCF bench fix #3: PreciseTimer (vs Qt's default
+    // CoarseTimer with 5% drift) keeps the push cadence within ~1 ms
+    // of nominal.  CoarseTimer's ~5% slop on a 33 ms interval
+    // accumulates ~50 ms = one missed frame per second, which matches
+    // the operator's report of a ~1 Hz scroll hitch.
+    m_wfPushTimer.setTimerType(Qt::PreciseTimer);
     m_wfPushTimer.setInterval(m_wfUpdatePeriodMs);
     m_wfPushTimer.setSingleShot(false);
     connect(&m_wfPushTimer, &QTimer::timeout, this, [this]() {
