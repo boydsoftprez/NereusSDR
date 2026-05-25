@@ -30,8 +30,26 @@ WaterfallTicker::WaterfallTicker(QObject* parent)
 
 WaterfallTicker::~WaterfallTicker() = default;
 
+void WaterfallTicker::moveToWorkerThread(QThread* target)
+{
+    // Order matters: m_timer must be moved BEFORE this, because Qt
+    // requires the move to be issued from the object's current thread
+    // and m_timer currently shares this object's thread (the caller's
+    // thread).  Once we moveToThread(target) on `this`, future calls
+    // would be issued from `this`'s new thread, which is wrong for
+    // m_timer until it has been moved too.  Doing both here, in order,
+    // keeps the two QObjects co-located and avoids the "Cannot move to
+    // target thread" warning that fired before this hop existed.
+    m_timer.moveToThread(target);
+    moveToThread(target);
+}
+
 void WaterfallTicker::ensureTimerOnCurrentThread()
 {
+    // Belt-and-braces safety net.  After moveToWorkerThread() this
+    // should always be a no-op, but if a caller ever forgets to use
+    // moveToWorkerThread() we'll log a warning (Qt will print one of
+    // its own) rather than silently swallowing the failed move.
     if (m_timer.thread() != QThread::currentThread()) {
         m_timer.moveToThread(QThread::currentThread());
     }

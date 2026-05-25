@@ -53,6 +53,17 @@ signals:
     // handler runs on the main thread when the event loop is free.
     void tick();
 
+public:
+    // Move both *this* and m_timer onto the given worker thread.  Must
+    // be called from the calling-construction thread BEFORE
+    // m_workerThread->start() so that m_timer (a value member that
+    // moveToThread() would otherwise strand on the construction
+    // thread) ends up on the same thread as *this*.  After this call
+    // the worker thread owns both objects and the existing
+    // m_timer.timeout -> onTimerTick DirectConnection continues to
+    // work on the worker thread.
+    void moveToWorkerThread(QThread* target);
+
 public slots:
     // Reschedule the timer.  Called from any thread; the internal
     // QMetaObject::invokeMethod hop ensures the start() lands on the

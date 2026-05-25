@@ -416,7 +416,10 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_waterfallTickerThread = new QThread(this);
     m_waterfallTickerThread->setObjectName(QStringLiteral("WaterfallTickerThread"));
     m_waterfallTicker = new WaterfallTicker();  // no parent -- moved to thread
-    m_waterfallTicker->moveToThread(m_waterfallTickerThread);
+    // moveToWorkerThread() moves m_timer (a value member, hence not a
+    // QObject child) along with *this. moveToThread() alone strands
+    // m_timer on main, which then refuses start() from the worker.
+    m_waterfallTicker->moveToWorkerThread(m_waterfallTickerThread);
     connect(m_waterfallTickerThread, &QThread::finished,
             m_waterfallTicker, &QObject::deleteLater);
     // Elevate the ticker thread to USER_INITIATED QoS so its event loop
