@@ -954,6 +954,33 @@ RadioModel::RadioModel(QObject* parent)
     // RfKit_ManualIp / RfKit_ManualPort from AppSettings at that point).
     m_rfKitConnection = std::make_unique<Rf2ksConnection>(this);
 
+    // 2026-05-25 KG4VCF bench fix: auto-connect at startup if the master
+    // toggle is persisted On and a host is configured.  Without this the
+    // operator has to flip Enable Off -> On after every launch because
+    // setRfKitEnabled() only invokes connectToAmp on a value TRANSITION,
+    // and at startup the value is already True (no transition).
+    {
+        auto& s = AppSettings::instance();
+        const bool rfKitOn = s.value(QStringLiteral("RfKit_Enabled"),
+                                      QStringLiteral("False"))
+            .toString() == QStringLiteral("True");
+        if (rfKitOn) {
+            const QString host = s.value(QStringLiteral("RfKit_ManualIp"))
+                                  .toString();
+            const quint16 port = static_cast<quint16>(
+                s.value(QStringLiteral("RfKit_ManualPort"),
+                        QStringLiteral("8080")).toUInt());
+            if (!host.isEmpty()) {
+                m_rfKitConnection->connectToAmp(host, port);
+                qCInfo(lcConnection) << "RF-Kit auto-connect at startup:"
+                                      << host << ":" << port;
+            } else {
+                qCInfo(lcConnection) << "RF-Kit enabled but no host configured;"
+                                      << "skipping auto-connect.";
+            }
+        }
+    }
+
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Loads persisted mode/grace/SWR-gate values from AppSettings in its ctor.
     // Non-null from this point; shared (non-owning) with PgxlInterlockPage
