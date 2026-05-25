@@ -367,13 +367,19 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
 
     // Timer-driven display repaint — decouples repaint rate from FFT data arrival
     // so updates are evenly spaced regardless of IQ buffer fill timing.
-    // Bench-2026-05-24: bumped 33 ms (30 fps) -> 50 ms (20 fps).  Spectrum
-    // widget covers most of the window area; each repaint blits a large
-    // pixel region via the macOS raster composite path.  Profile showed
-    // this as a dominant contributor to QCALayerBackingStore activity.
-    // 20 fps is still smooth for waterfall + spectrum traces and cuts the
-    // per-frame blit budget by a third.
-    m_displayTimer.setInterval(50); // 20 fps default
+    // Bench-2026-05-25: restored 33 ms (30 fps).  Dropped to 50 ms on
+    // 2026-05-24 to cut paint CPU, but that created a cadence mismatch
+    // with FFTEngine::setOutputFps(30) — FFT produced a waterfall row
+    // every 33 ms, display painted every 50 ms, each paint pulled
+    // either 1 or 2 rows depending on phase.  Operator perceived this
+    // as visibly stuttery scroll.  With the QStaticText label cache,
+    // opaque-paint-event hints, and MeterWidget per-binding fuzzy
+    // guards landing in the same session, CPU has the headroom for
+    // 30 fps paint.  Default ships at 30 fps; setDisplayFps() lets
+    // Setup -> Display drive it to anything in [1, 60] and the
+    // persisted DisplaySpectrumFps key restores it across launches.
+    static constexpr int kDefaultDisplayFps = 30;
+    m_displayTimer.setInterval(1000 / kDefaultDisplayFps); // 33 ms
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
         if (m_hasNewSpectrum) {
@@ -4512,7 +4518,17 @@ void SpectrumWidget::setHighSwrOverlay(bool active, bool foldback) noexcept
 void SpectrumWidget::setDisplayFps(int fps)
 {
     const int clamped = qBound(1, fps, 60);
-    m_displayTimer.setInterval(1000 / clamped);
+    const int periodMs = 1000 / clamped;
+    m_displayTimer.setInterval(periodMs);
+    // Lock the waterfall-row throttle to the same period so a burst of
+    // FFT results arriving within one paint frame coalesces to exactly
+    // one new row.  Without this sync, paint cadence and waterfall
+    // cadence drift relative to each other (e.g. paint=33 ms but
+    // m_wfUpdatePeriodMs=30 ms left over from a prior setting), so
+    // some paints see 1 new row and others see 2 — perceived by the
+    // operator as stuttery scroll.  Matching the periods makes the
+    // ratio exactly 1:1 regardless of upstream packet bursts.
+    m_wfUpdatePeriodMs = periodMs;
     // Averaging alphas depend on fps via Thetis α = exp(-1/(fps×τ)).
     // Recompute so the smoothing time constants stay correct after a rate change.
     recomputeAverageAlphas();
