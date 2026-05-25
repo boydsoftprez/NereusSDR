@@ -153,6 +153,28 @@ void leaveAudioThreadPriority(AudioPriorityToken* token)
     delete token;
 }
 
+void elevateGuiMainThreadPriority()
+{
+    const int err = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    if (err == 0) {
+        qCInfo(lcRtAudio) << "GUI main thread elevated to USER_INTERACTIVE QoS";
+    } else {
+        qCWarning(lcRtAudio) << "Failed to elevate GUI main thread (errno"
+                             << err << "); continuing at default QoS.";
+    }
+}
+
+void elevateComputeThreadPriority()
+{
+    const int err = pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+    if (err == 0) {
+        qCInfo(lcRtAudio) << "Compute thread elevated to USER_INITIATED QoS";
+    } else {
+        qCWarning(lcRtAudio) << "Failed to elevate compute thread (errno"
+                             << err << "); continuing at default QoS.";
+    }
+}
+
 } // namespace NereusSDR
 
 #endif  // Q_OS_MAC
@@ -163,6 +185,7 @@ void leaveAudioThreadPriority(AudioPriorityToken* token)
 
 #include <pthread.h>
 #include <sched.h>
+#include <unistd.h>   // nice()
 #include <cerrno>
 #include <cstring>
 
@@ -211,6 +234,28 @@ void leaveAudioThreadPriority(AudioPriorityToken* token)
     delete token;
 }
 
+void elevateGuiMainThreadPriority()
+{
+    // Linux without rtprio caps: nice the calling thread.  Less
+    // effective than SCHED_FIFO but available without privilege.
+    // Caller can set rtprio rlimit / CAP_SYS_NICE to get a stronger
+    // effect.
+    if (nice(-5) == -1 && errno != 0) {
+        qCInfo(lcRtAudio) << "nice(-5) for GUI main thread failed (errno"
+                          << errno << strerror(errno) << "); continuing"
+                          << "at default.";
+    }
+}
+
+void elevateComputeThreadPriority()
+{
+    if (nice(-3) == -1 && errno != 0) {
+        qCInfo(lcRtAudio) << "nice(-3) for compute thread failed (errno"
+                          << errno << strerror(errno) << "); continuing"
+                          << "at default.";
+    }
+}
+
 } // namespace NereusSDR
 
 #endif  // Q_OS_LINUX
@@ -249,6 +294,22 @@ void leaveAudioThreadPriority(AudioPriorityToken* token)
     delete token;
 }
 
+void elevateGuiMainThreadPriority()
+{
+    if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST)) {
+        qCWarning(lcRtAudio) << "SetThreadPriority(HIGHEST) for GUI failed"
+                             << "(GetLastError=" << GetLastError() << ").";
+    }
+}
+
+void elevateComputeThreadPriority()
+{
+    if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL)) {
+        qCWarning(lcRtAudio) << "SetThreadPriority(ABOVE_NORMAL) for compute failed"
+                             << "(GetLastError=" << GetLastError() << ").";
+    }
+}
+
 } // namespace NereusSDR
 
 #endif  // Q_OS_WIN
@@ -261,6 +322,8 @@ namespace NereusSDR {
 
 AudioPriorityToken* elevateAudioThreadPriority() { return nullptr; }
 void leaveAudioThreadPriority(AudioPriorityToken*) {}
+void elevateGuiMainThreadPriority() {}
+void elevateComputeThreadPriority() {}
 
 } // namespace NereusSDR
 

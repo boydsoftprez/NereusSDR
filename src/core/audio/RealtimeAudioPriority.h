@@ -61,4 +61,26 @@ AudioPriorityToken* elevateAudioThreadPriority();
 // nullptr.  Must be called on the same thread that called elevate().
 void leaveAudioThreadPriority(AudioPriorityToken* token);
 
+// Elevate the calling thread to USER_INTERACTIVE QoS for GUI work.
+// Intended for the main GUI / UI thread so heavy user-initiated
+// background work (parallel compiles, mdworker indexing, Time Machine
+// snapshots, etc.) does not preempt the UI refresh cycle.  No workgroup
+// join, no cleanup token: QoS is a per-thread attribute that resets
+// when the thread exits.  Soft-fails to default priority if the OS
+// refuses (e.g. Linux without rtprio rlimit).
+//
+// Bench symptom 2026-05-25 KG4VCF: "whole program stutters when a
+// build happens".  Audio-thread elevation alone was not enough; the
+// main thread was still being preempted by the build's compile jobs
+// at the same QoS class, producing visibly choppy spectrum / waterfall
+// rendering.
+void elevateGuiMainThreadPriority();
+
+// Elevate the calling thread to USER_INITIATED QoS for spectrum / FFT
+// compute work.  Less aggressive than audio (USER_INTERACTIVE) or GUI
+// (USER_INTERACTIVE); avoids fighting the GUI thread for the highest
+// scheduling class while still beating typical compile jobs which run
+// at DEFAULT.
+void elevateComputeThreadPriority();
+
 } // namespace NereusSDR

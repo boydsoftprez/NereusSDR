@@ -3,6 +3,7 @@
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/MacMicPermission.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/RadioConnection.h"
 #include "core/mmio/ExternalVariableEngine.h"
 #include "core/LogCategories.h"
@@ -137,6 +138,22 @@ int main(int argc, char* argv[])
     app.setApplicationVersion(NEREUSSDR_VERSION);
     app.setOrganizationName("NereusSDR");
     app.setWindowIcon(QIcon(":/icons/NereusSDR.png"));
+
+    // 2026-05-25 KG4VCF bench fix: elevate the main GUI thread to
+    // USER_INTERACTIVE QoS so heavy user-initiated background work
+    // (parallel compiles, mdworker indexing, Time Machine snapshots,
+    // etc.) does not preempt the Qt event loop and produce visibly
+    // choppy spectrum / waterfall rendering.  The audio DSP thread
+    // already gets a stronger elevation (see RxDspWorker::onThreadStarted)
+    // but the GUI thread runs the spectrum paint cycle and was still
+    // being preempted at DEFAULT QoS.  Bench symptom: "whole program
+    // stutters when a build happens".
+    //
+    // Cross-platform via src/core/audio/RealtimeAudioPriority.cpp:
+    //   macOS:   pthread_set_qos_class_self_np(USER_INTERACTIVE)
+    //   Linux:   nice(-5)  (soft-fail without privilege)
+    //   Windows: SetThreadPriority(HIGHEST)
+    NereusSDR::elevateGuiMainThreadPriority();
 
     // 2026-05-22 bench-finding: pkill / kill / system shutdown sends SIGTERM
     // by default; the OS terminates the process without giving Qt a chance

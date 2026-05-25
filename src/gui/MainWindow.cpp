@@ -342,6 +342,7 @@ warren@wpratt.com
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/VirtualCableDetector.h"
+#include "core/audio/RealtimeAudioPriority.h"
 
 #include <QApplication>
 #include <QGuiApplication>
@@ -1278,6 +1279,16 @@ void MainWindow::buildUI()
     m_fftThread = new QThread(this);
     m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
     m_fftEngine->moveToThread(m_fftThread);
+
+    // 2026-05-25 KG4VCF bench fix: elevate the spectrum FFT thread to
+    // USER_INITIATED QoS so heavy build jobs do not starve spectrum
+    // rendering.  Mirrors the DSP thread elevation in
+    // RxDspWorker::onThreadStarted but at a lower priority class --
+    // USER_INITIATED rather than USER_INTERACTIVE -- so the FFT thread
+    // does not fight the GUI thread for the highest scheduling class.
+    // See src/core/audio/RealtimeAudioPriority.h.
+    connect(m_fftThread, &QThread::started, m_fftEngine,
+            []() { NereusSDR::elevateComputeThreadPriority(); });
 
     // Clean up FFTEngine when thread finishes
     connect(m_fftThread, &QThread::finished, m_fftEngine, &QObject::deleteLater);
