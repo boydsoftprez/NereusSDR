@@ -376,7 +376,7 @@ private slots:
         QCOMPARE(s.value(base + QStringLiteral("SampleRate"),   QString()).toString().toInt(), 48000);
         QCOMPARE(s.value(base + QStringLiteral("BitDepth"),     QString()).toString().toInt(), 32);
         QCOMPARE(s.value(base + QStringLiteral("Channels"),     QString()).toString().toInt(), 2);
-        QCOMPARE(s.value(base + QStringLiteral("BufferSamples"),QString()).toString().toInt(), 256);
+        QCOMPARE(s.value(base + QStringLiteral("BufferSamples"),QString()).toString().toInt(), 128);  // PR #286 lowered default 256 -> 128
         QVERIFY(s.value(base + QStringLiteral("DriverApi"),     QString()).toString().isEmpty());
         QCOMPARE(s.value(base + QStringLiteral("ExclusiveMode"),QString()).toString(),
                  QStringLiteral("False"));
