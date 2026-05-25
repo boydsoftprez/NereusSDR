@@ -218,6 +218,13 @@ void RfKitPage::saveRf2ksSettings()
             QStringLiteral("RfKit_Ant%1_Label").arg(i + 1),
             m_antLabelEdits[i]->text());
     }
+    // 2026-05-25 KG4VCF bench fix: persist NOW.  AppSettings::setValue
+    // only updates the in-memory dict; the disk flush waits for the
+    // aboutToQuit handler.  A non-graceful exit (or a crash) between
+    // Save click and quit silently loses the IP/port.  Mirror the
+    // explicit flush pattern used by AudioVaxPage, DeviceCard, and
+    // HardwarePage.
+    AppSettings::instance().save();
 }
 
 // --- Test seams ---
