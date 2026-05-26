@@ -9,6 +9,7 @@
 #include "core/LogCategories.h"
 
 #include <QApplication>
+#include <QThreadPool>
 #include <QCommandLineOption>
 #include <QMetaObject>
 #include <csignal>
@@ -133,6 +134,34 @@ int main(int argc, char* argv[])
         }
     }
 
+    // 2026-05-26 KG4VCF jitter investigation finding.  Profiled with
+    // macOS `sample` during a stress build: the main thread was
+    // repeatedly blocking in QLatch::waitInternal -> __ulock_wait2,
+    // adding up to ~300 samples (~58 ms over 8 s) just waiting for
+    // QThreadPool::globalInstance() workers to finish parallel span-
+    // blend operations dispatched from QRasterPaintEngine.
+    //
+    // Those pool workers run at DEFAULT QoS.  Under heavy compile
+    // load they get starved, and the main thread sits blocked on
+    // their completion -- visible as 60-138 ms paint-event gaps even
+    // though our hot buffers are mlock'd and our own threads are at
+    // USER_INTERACTIVE.
+    //
+    // Disable Qt's parallel rasterization globally.  Our paint
+    // operations (3 small ellipses, polylines, ~16 chrome ops) are
+    // all tiny -- well below the threshold where parallel dispatch
+    // beats single-threaded raster.  The dispatch + latch wait is
+    // pure overhead for our workload, and the wait becomes a hard
+    // failure mode when the pool can't be scheduled.  Single-threaded
+    // raster has zero latch waits.
+    //
+    // Env var name from Qt 6 qrasterizer.cpp.  Setting both the
+    // "_PARALLEL=0" and "_NO_PARALLEL=1" forms because Qt's check
+    // logic has varied between minor versions; one of them will
+    // always be the one Qt looks for.
+    qputenv("QT_RASTER_PARALLEL", "0");
+    qputenv("QT_NO_RASTER_PARALLEL", "1");
+
     QApplication app(argc, argv);
     app.setApplicationName("NereusSDR");
     app.setApplicationVersion(NEREUSSDR_VERSION);
@@ -154,6 +183,17 @@ int main(int argc, char* argv[])
     //   Linux:   nice(-5)  (soft-fail without privilege)
     //   Windows: SetThreadPriority(HIGHEST)
     NereusSDR::elevateGuiMainThreadPriority();
+
+    // 2026-05-26 KG4VCF backup for the parallel-raster fix above.  Even
+    // with QT_RASTER_PARALLEL=0 set, other Qt internals occasionally
+    // dispatch work to QThreadPool::globalInstance() (e.g. style
+    // pixmap caching, layout computations).  Reduce the worst-case
+    // scheduling damage by clamping the global pool to a small thread
+    // count -- so a runaway parallel dispatch can't spin up 12 default-
+    // QoS workers that all compete with our latency-critical threads.
+    // Two workers is enough for the rare legitimate uses without
+    // starving the rest of the system.
+    QThreadPool::globalInstance()->setMaxThreadCount(2);
 
     // 2026-05-22 bench-finding: pkill / kill / system shutdown sends SIGTERM
     // by default; the OS terminates the process without giving Qt a chance
