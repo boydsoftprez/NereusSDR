@@ -5783,16 +5783,18 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     // Start thread — init() will be called on the worker thread
     connect(m_connThread, &QThread::started, m_connection, &RadioConnection::init);
 
-    // 2026-05-25 KG4VCF bench fix: elevate the connection thread to
-    // USER_INITIATED QoS.  It runs recvfrom() in a tight loop pulling
-    // UDP I/Q packets off the wire and parsing them; if it gets
-    // preempted by a heavy compile, the kernel UDP receive queue can
-    // overflow and packets get dropped, producing audible glitches
-    // upstream of the DSP feeder.  USER_INITIATED is the right level
-    // for bursty I/O work -- less aggressive than USER_INTERACTIVE
-    // (DSP / GUI) but firmly above DEFAULT (compile jobs).
+    // 2026-05-25 KG4VCF bench fix: elevate the connection thread.
+    // It runs recvfrom() in a tight loop pulling UDP I/Q packets off
+    // the wire and parsing them; if it gets preempted by a heavy
+    // compile, the kernel UDP receive queue can overflow and packets
+    // get dropped, producing audible glitches upstream of the DSP
+    // feeder.  2026-05-26 bench: USER_INITIATED was not enough -- under
+    // heavy build load compile workers still scheduled in and the
+    // connect thread missed packet wake-ups long enough to drop frames.
+    // Bumped to USER_INTERACTIVE so it sits in the same scheduling
+    // class as the audio + GUI threads.
     connect(m_connThread, &QThread::started, m_connection,
-            []() { NereusSDR::elevateComputeThreadPriority(); });
+            []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
 
     m_connThread->start();
 

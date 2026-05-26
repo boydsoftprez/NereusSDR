@@ -83,4 +83,18 @@ void elevateGuiMainThreadPriority();
 // at DEFAULT.
 void elevateComputeThreadPriority();
 
+// Elevate the calling thread to USER_INTERACTIVE QoS for latency-
+// critical work that needs audio/GUI-tier scheduling but doesn't own
+// an audio device (so no workgroup to join).
+//
+// Bench symptom 2026-05-26 KG4VCF: USER_INITIATED on ConnectionThread
+// + FFTEngine thread + WaterfallTickerThread still let those threads
+// be preempted by parallel compile workers under heavy build load,
+// producing waterfall stutter and occasional audio underruns (UDP
+// packet drops on the I/Q recv socket).  Promoting them to
+// USER_INTERACTIVE puts them in the same scheduling class as the GUI
+// and DSP threads -- compile workers (DEFAULT QoS) consistently lose
+// the time slice race.
+void elevateLatencyCriticalThreadPriority();
+
 } // namespace NereusSDR

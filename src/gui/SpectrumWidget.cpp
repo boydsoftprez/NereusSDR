@@ -433,12 +433,16 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_waterfallTicker->moveToWorkerThread(m_waterfallTickerThread);
     connect(m_waterfallTickerThread, &QThread::finished,
             m_waterfallTicker, &QObject::deleteLater);
-    // Elevate the ticker thread to USER_INITIATED QoS so its event loop
-    // (which carries the PreciseTimer) does not get preempted by
-    // typical build / index jobs.
+    // Elevate the ticker thread to USER_INTERACTIVE QoS so its event
+    // loop (which carries the PreciseTimer) sits in the same scheduling
+    // class as the GUI + DSP threads and is consistently preferred over
+    // compile workers (DEFAULT QoS) under heavy build load.  Earlier
+    // revisions used USER_INITIATED here; 2026-05-26 KG4VCF bench
+    // showed that tier still let the ticker get preempted by ninja
+    // workers, producing visible waterfall stutter on build kickoff.
     connect(m_waterfallTickerThread, &QThread::started,
             m_waterfallTicker,
-            []() { NereusSDR::elevateComputeThreadPriority(); });
+            []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
     // Queued connection (default for cross-thread): tick fires on the
     // ticker thread, slot runs on the main thread when the event loop
     // is free.  See WaterfallTicker.h for the cadence-isolation rationale.

@@ -599,10 +599,17 @@ void P1RadioConnection::init()
         return;
     }
 
+    // 2026-05-26 KG4VCF bench fix: bumped recv buffer from Thetis's
+    // 1000 KB (0xfa000) to 4 MB.  See the matching block in
+    // P2RadioConnection::init() for the full rationale -- short
+    // summary: even with the ConnectionThread elevated to
+    // USER_INTERACTIVE QoS, brief preemption windows under heavy
+    // build load can stall the kernel-to-userspace handoff long
+    // enough to drop I/Q frames at the smaller buffer size.
     m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
-                              QVariant(0xfa000));
+                              QVariant(0x400000));  // 4 MB requested; kernel may cap
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P1RadioConnection::onReadyRead);
 

@@ -175,6 +175,17 @@ void elevateComputeThreadPriority()
     }
 }
 
+void elevateLatencyCriticalThreadPriority()
+{
+    const int err = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    if (err == 0) {
+        qCInfo(lcRtAudio) << "Latency-critical thread elevated to USER_INTERACTIVE QoS";
+    } else {
+        qCWarning(lcRtAudio) << "Failed to elevate latency-critical thread (errno"
+                             << err << "); continuing at default QoS.";
+    }
+}
+
 } // namespace NereusSDR
 
 #endif  // Q_OS_MAC
@@ -256,6 +267,18 @@ void elevateComputeThreadPriority()
     }
 }
 
+void elevateLatencyCriticalThreadPriority()
+{
+    // Same -5 nice as the GUI main thread on Linux -- USER_INTERACTIVE
+    // tier equivalent.  Requires CAP_SYS_NICE or rtprio rlimit for
+    // strongest effect; soft-fails to current nice otherwise.
+    if (nice(-5) == -1 && errno != 0) {
+        qCInfo(lcRtAudio) << "nice(-5) for latency-critical thread failed (errno"
+                          << errno << strerror(errno) << "); continuing"
+                          << "at default.";
+    }
+}
+
 } // namespace NereusSDR
 
 #endif  // Q_OS_LINUX
@@ -310,6 +333,17 @@ void elevateComputeThreadPriority()
     }
 }
 
+void elevateLatencyCriticalThreadPriority()
+{
+    // HIGHEST sits one step above ABOVE_NORMAL -- same tier as the
+    // GUI main thread; below TIME_CRITICAL which is reserved for
+    // SCHED_FIFO-equivalent audio callback work (AvSetMmThread...).
+    if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST)) {
+        qCWarning(lcRtAudio) << "SetThreadPriority(HIGHEST) for latency-critical thread failed"
+                             << "(GetLastError=" << GetLastError() << ").";
+    }
+}
+
 } // namespace NereusSDR
 
 #endif  // Q_OS_WIN
@@ -324,6 +358,7 @@ AudioPriorityToken* elevateAudioThreadPriority() { return nullptr; }
 void leaveAudioThreadPriority(AudioPriorityToken*) {}
 void elevateGuiMainThreadPriority() {}
 void elevateComputeThreadPriority() {}
+void elevateLatencyCriticalThreadPriority() {}
 
 } // namespace NereusSDR
 

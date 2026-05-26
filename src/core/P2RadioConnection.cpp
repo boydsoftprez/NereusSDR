@@ -291,10 +291,22 @@ void P2RadioConnection::init()
 
     // From Thetis nativeInitMetis:163-194 — socket buffer sizing
     // const int sndbuf_bytes = 0xfa000; const int rcvbuf_bytes = 0xfa000;
+    //
+    // 2026-05-26 KG4VCF bench fix: bumped recv buffer from Thetis's
+    // 1000 KB (0xfa000) to 4 MB so the kernel can soak up a brief
+    // preemption window without dropping I/Q packets.  Under heavy
+    // build load on macOS, even with the ConnectionThread elevated to
+    // USER_INTERACTIVE QoS, the kernel-to-userspace handoff can stall
+    // a few ms when ninja workers saturate all cores; the original
+    // 1 MB buffer held ~100 ms of P2 I/Q which was enough for the
+    // occasional miss to drop frames.  macOS kern.ipc.maxsockbuf
+    // typically caps at 2 MB on stock systems, so the actual size is
+    // min(4 MB, sysctl cap) -- both numbers headroom for build-load
+    // stalls.
     m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
-                              QVariant(0xfa000));
+                              QVariant(0x400000));  // 4 MB requested; kernel may cap
 
     connect(m_socket, &QUdpSocket::readyRead, this, &P2RadioConnection::onReadyRead);
 

@@ -1306,15 +1306,17 @@ void MainWindow::buildUI()
     m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
     m_fftEngine->moveToThread(m_fftThread);
 
-    // 2026-05-25 KG4VCF bench fix: elevate the spectrum FFT thread to
-    // USER_INITIATED QoS so heavy build jobs do not starve spectrum
-    // rendering.  Mirrors the DSP thread elevation in
-    // RxDspWorker::onThreadStarted but at a lower priority class --
-    // USER_INITIATED rather than USER_INTERACTIVE -- so the FFT thread
-    // does not fight the GUI thread for the highest scheduling class.
-    // See src/core/audio/RealtimeAudioPriority.h.
+    // 2026-05-25 KG4VCF bench fix: elevate the spectrum FFT thread.
+    // 2026-05-26 KG4VCF revisit: bumped from USER_INITIATED to
+    // USER_INTERACTIVE -- the INITIATED tier still let compile workers
+    // preempt the FFT pass during build kickoff, producing visible
+    // waterfall stutter even though the WaterfallTicker had its own
+    // worker thread.  USER_INTERACTIVE puts the FFT thread in the
+    // same scheduling class as audio + GUI so compile workers (DEFAULT)
+    // consistently lose the time-slice race.  See
+    // src/core/audio/RealtimeAudioPriority.h.
     connect(m_fftThread, &QThread::started, m_fftEngine,
-            []() { NereusSDR::elevateComputeThreadPriority(); });
+            []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
 
     // Clean up FFTEngine when thread finishes
     connect(m_fftThread, &QThread::finished, m_fftEngine, &QObject::deleteLater);
