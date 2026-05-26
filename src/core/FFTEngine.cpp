@@ -60,6 +60,7 @@
 
 #include "FFTEngine.h"
 #include "LogCategories.h"
+#include "MemoryLock.h"
 #include "PerfMonitor.h"
 
 #include <QElapsedTimer>
@@ -81,13 +82,21 @@ FFTEngine::~FFTEngine()
     if (m_plan) {
         fftwf_destroy_plan(m_plan);
     }
+    // Unlock BEFORE free so the kernel doesn't carry a stale lock
+    // past the lifetime of the page (paired with the lockMemory calls
+    // in replanFft).
+    const std::size_t fftBytes =
+        sizeof(fftwf_complex) * m_currentFftSize;
     if (m_iqRaw) {
+        unlockMemory(m_iqRaw, fftBytes);
         fftwf_free(m_iqRaw);
     }
     if (m_fftIn) {
+        unlockMemory(m_fftIn, fftBytes);
         fftwf_free(m_fftIn);
     }
     if (m_fftOut) {
+        unlockMemory(m_fftOut, fftBytes);
         fftwf_free(m_fftOut);
     }
 #endif
@@ -281,20 +290,24 @@ void FFTEngine::replanFft()
     int size = m_fftSize.load();
     qCInfo(lcDsp) << "FFTEngine: replanning FFT size" << size;
 
-    // Destroy old plan and buffers
+    // Destroy old plan and buffers.  Unlock memory BEFORE free so the
+    // kernel doesn't carry a stale lock past the lifetime of the page.
     if (m_plan) {
         fftwf_destroy_plan(m_plan);
         m_plan = nullptr;
     }
     if (m_iqRaw) {
+        unlockMemory(m_iqRaw, sizeof(fftwf_complex) * m_currentFftSize);
         fftwf_free(m_iqRaw);
         m_iqRaw = nullptr;
     }
     if (m_fftIn) {
+        unlockMemory(m_fftIn, sizeof(fftwf_complex) * m_currentFftSize);
         fftwf_free(m_fftIn);
         m_fftIn = nullptr;
     }
     if (m_fftOut) {
+        unlockMemory(m_fftOut, sizeof(fftwf_complex) * m_currentFftSize);
         fftwf_free(m_fftOut);
         m_fftOut = nullptr;
     }
@@ -305,6 +318,15 @@ void FFTEngine::replanFft()
     m_iqRaw  = fftwf_alloc_complex(size);
     m_fftIn  = fftwf_alloc_complex(size);
     m_fftOut = fftwf_alloc_complex(size);
+
+    // 2026-05-26 KG4VCF: pin the FFT scratch buffers so heavy memory
+    // pressure under build load can not compress them.  These get
+    // touched every FFT frame; a compression stall here would block
+    // the spectrum thread and starve the waterfall ticker.
+    const std::size_t fftBytes = sizeof(fftwf_complex) * size;
+    lockMemory(m_iqRaw,  fftBytes, "FFTEngine::m_iqRaw");
+    lockMemory(m_fftIn,  fftBytes, "FFTEngine::m_fftIn");
+    lockMemory(m_fftOut, fftBytes, "FFTEngine::m_fftOut");
 
     // FFTW_ESTIMATE: fast plan without measurement (avoids global FFTW mutex
     // contention with WDSP audio thread). Startup wisdom covers common sizes.

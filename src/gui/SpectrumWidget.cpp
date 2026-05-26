@@ -138,6 +138,7 @@
 #include <QElapsedTimer>
 #include <QTimeZone>
 
+#include "core/MemoryLock.h"
 #include "core/MemoryPressure.h"
 #include "core/PerfMonitor.h"
 #include <QMap>
@@ -2874,8 +2875,22 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     int wfH = static_cast<int>(h * (1.0f - m_spectrumFrac)) - kFreqScaleH - kDividerH;
     if (wfW > 0 && wfH > 0 && (m_waterfall.isNull() ||
         m_waterfall.width() != wfW || m_waterfall.height() != wfH)) {
+        // 2026-05-26 KG4VCF: unlock the previous waterfall before
+        // QImage replacement frees it.  Aligned no-op when m_waterfall
+        // was null.
+        if (!m_waterfall.isNull()) {
+            unlockMemory(m_waterfall.constBits(),
+                         m_waterfall.sizeInBytes());
+        }
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
         m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
+        // Pin the new waterfall buffer.  Touched every push (write
+        // one row's worth of pixels) and every paint (full incremental
+        // texture upload to GPU); compression stalls here cause the
+        // visible waterfall stutter under build load.
+        lockMemory(m_waterfall.constBits(),
+                   m_waterfall.sizeInBytes(),
+                   "SpectrumWidget::m_waterfall");
         m_wfWriteRow = 0;
 #ifdef NEREUS_GPU_SPECTRUM
         m_wfTexFullUpload = true;
@@ -6611,6 +6626,15 @@ void SpectrumWidget::initOverlayPipeline()
 
     m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
     m_overlayStatic.setDevicePixelRatio(dpr);
+    // 2026-05-26 KG4VCF: pin the overlay texture so the per-paint
+    // QImage::fill + 16 paint ops + GPU upload don't touch a
+    // compressed page when the system is under memory pressure.
+    // This is the biggest single buffer in the render path (~1.6 MB
+    // at default window size) and is hit on every overlay-rebuild
+    // tick (10 Hz when blob / peak-hold / NF are enabled).
+    lockMemory(m_overlayStatic.constBits(),
+               m_overlayStatic.sizeInBytes(),
+               "SpectrumWidget::m_overlayStatic (init)");
 }
 
 void SpectrumWidget::initSpectrumPipeline()
@@ -6836,8 +6860,19 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
         if (m_overlayStatic.size() != QSize(pw, ph)) {
+            // 2026-05-26 KG4VCF: unlock the previous overlay before
+            // replacement frees it.  Aligned no-op when null.
+            if (!m_overlayStatic.isNull()) {
+                unlockMemory(m_overlayStatic.constBits(),
+                             m_overlayStatic.sizeInBytes());
+            }
             m_overlayStatic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
             m_overlayStatic.setDevicePixelRatio(dpr);
+            // Pin the resized overlay (resize trigger fires on
+            // window-size change; tag for log clarity).
+            lockMemory(m_overlayStatic.constBits(),
+                       m_overlayStatic.sizeInBytes(),
+                       "SpectrumWidget::m_overlayStatic (resize)");
             m_ovGpuTex->setPixelSize(QSize(pw, ph));
             m_ovGpuTex->create();
             m_ovSrb->setBindings({
@@ -7032,7 +7067,11 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                             .arg(stats.memFootprintMb, 0, 'f', 0)
                             .arg(stats.memCompressing
                                  ? QStringLiteral(" COMPRESSING")
-                                 : QString{});
+                                 : QString{})
+                      << QStringLiteral("mlock  %1 regions / %2 MB pinned")
+                            .arg(memoryLockStats().regionsLocked)
+                            .arg(memoryLockStats().bytesLocked
+                                 / (1024.0 * 1024.0), 0, 'f', 1);
                 QFont pf = p.font();
                 pf.setPixelSize(11);
                 pf.setFamily(QStringLiteral("Menlo"));

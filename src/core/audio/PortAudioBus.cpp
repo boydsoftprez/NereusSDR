@@ -5,6 +5,7 @@
 // =================================================================
 
 #include "PortAudioBus.h"
+#include "../MemoryLock.h"
 #include "../PerfMonitor.h"
 
 #include <portaudio.h>
@@ -232,9 +233,22 @@ PortAudioBus::PortAudioBus() {
     // made the display drift up to a full second ahead of audio and
     // produced the "audio replays" symptom on stall recovery.
     m_ring.resize(4800 * 2);
+
+    // 2026-05-26 KG4VCF: pin the audio ring so heavy memory pressure
+    // (parallel builds, Spotlight indexing) can not compress / page
+    // it out.  Any access to a compressed page costs a decompression
+    // stall on the audio thread -- one of the dominant causes of
+    // under-load audio jitter we measured.  Lock failure is logged
+    // by MemoryLock and the ring continues to work as pageable
+    // memory, so this is best-effort.
+    NereusSDR::lockMemory(m_ring.data(),
+                          m_ring.size() * sizeof(float),
+                          "PortAudioBus::m_ring");
 }
 
 PortAudioBus::~PortAudioBus() {
+    NereusSDR::unlockMemory(m_ring.data(),
+                            m_ring.size() * sizeof(float));
     close();
 }
 

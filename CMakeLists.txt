@@ -519,6 +519,10 @@ set(CORE_SOURCES
     # memory-pressure poll; used to ground-truth jitter investigations)
     src/core/PerfMonitor.cpp
     src/core/MemoryPressure.cpp
+    # mlock() helper -- pins hot buffers (waterfall, overlay, FFT
+    # scratch, audio ring) so the kernel can not compress / page them
+    # under heavy memory pressure (parallel builds, Spotlight, etc.).
+    src/core/MemoryLock.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the
