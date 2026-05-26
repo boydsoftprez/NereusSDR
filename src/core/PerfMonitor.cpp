@@ -79,7 +79,17 @@ PerfMonitor::Snapshot PerfMonitor::snapshotAndClearDeltas()
         s.memCompressing = m_memCompressing;
         s.memFootprintMb = m_memFootprintMb;
     }
+    {
+        QMutexLocker lock(&m_lastSnapshotMtx);
+        m_lastSnapshot = s;
+    }
     return s;
+}
+
+PerfMonitor::Snapshot PerfMonitor::lastSnapshot() const
+{
+    QMutexLocker lock(&m_lastSnapshotMtx);
+    return m_lastSnapshot;
 }
 
 void PerfMonitor::resetAll()

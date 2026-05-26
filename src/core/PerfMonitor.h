@@ -108,8 +108,15 @@ public:
 
     // Snapshot is destructive on the *delta* counters (it resets them
     // to zero so the next snapshot's delta is wrt this one).  The
-    // total counters keep accumulating.
+    // total counters keep accumulating.  Caches the result in
+    // m_lastSnapshot so lastSnapshot() can return it non-destructively.
     Snapshot snapshotAndClearDeltas();
+
+    // Return the most recent snapshot taken by snapshotAndClearDeltas
+    // without consuming the deltas.  Used by readers that need the
+    // current numbers but don't want to fight the 1 Hz log /
+    // overlay-paint pipeline for delta ownership.
+    Snapshot lastSnapshot() const;
 
     // Reset all stats (e.g. operator clicks a "reset" affordance).
     void resetAll();
@@ -182,6 +189,11 @@ private:
     mutable QMutex m_memMtx;
     bool m_memCompressing{false};
     double m_memFootprintMb{0.0};
+
+    // Cached most-recent snapshot.  Written by snapshotAndClearDeltas;
+    // read by lastSnapshot() for non-destructive consumers.
+    mutable QMutex m_lastSnapshotMtx;
+    Snapshot m_lastSnapshot;
 };
 
 } // namespace NereusSDR

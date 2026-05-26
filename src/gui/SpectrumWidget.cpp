@@ -487,6 +487,31 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         const auto sample = pollMemoryPressure();
         PerfMonitor::instance().setMemoryStats(
             sample.compressing, sample.footprintMb);
+        // 2026-05-26 KG4VCF: snapshot + cache + log a single line per
+        // second so the operator (and anyone reading the launch log)
+        // can grep "perf:" for ground-truth numbers without staring at
+        // the overlay.  snapshotAndClearDeltas consumes the deltas
+        // here; the overlay paint reads via lastSnapshot() to avoid
+        // double-clearing.
+        const auto s = PerfMonitor::instance().snapshotAndClearDeltas();
+        const auto ml = memoryLockStats();
+        qInfo().noquote() << QString(
+            "perf: paint %1/%2 ms gap %3/%4 ms fft %5/%6 ms ovly %7/%8 ms"
+            " audio_fill %9/%10 ms underruns %11 (+%12/s) udp %13 (+%14/s)"
+            " mem %15 MB%16 mlock %17 regions / %18 MB")
+            .arg(s.paintMsAvg, 0, 'f', 1).arg(s.paintMsMax, 0, 'f', 1)
+            .arg(s.gapMsAvg,   0, 'f', 1).arg(s.gapMsMax,   0, 'f', 1)
+            .arg(s.fftMsAvg,   0, 'f', 1).arg(s.fftMsMax,   0, 'f', 1)
+            .arg(s.ovlyMsAvg,  0, 'f', 1).arg(s.ovlyMsMax,  0, 'f', 1)
+            .arg(s.audioFillAvgMs, 0, 'f', 1)
+            .arg(s.audioFillMinMs, 0, 'f', 1)
+            .arg(s.audioUnderrunsTotal).arg(s.audioUnderrunsDelta)
+            .arg(s.udpDropsTotal).arg(s.udpDropsDelta)
+            .arg(s.memFootprintMb, 0, 'f', 0)
+            .arg(s.memCompressing ? QStringLiteral(" COMPRESSING")
+                                  : QString{})
+            .arg(ml.regionsLocked)
+            .arg(ml.bytesLocked / (1024.0 * 1024.0), 0, 'f', 1);
         markOverlayDirty();
         update();
     });
@@ -7038,8 +7063,12 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // SpectrumWidget ctor).  Operator toggles via View ->
             // Performance Overlay; persisted under "ShowPerfOverlay".
             if (m_showPerfOverlay) {
+                // Read the cached snapshot (the 1 Hz poll timer is the
+                // sole snapshotAndClearDeltas() consumer; reading
+                // here non-destructively avoids double-clearing the
+                // delta counters).
                 const auto stats =
-                    PerfMonitor::instance().snapshotAndClearDeltas();
+                    PerfMonitor::instance().lastSnapshot();
                 QStringList lines;
                 lines << QStringLiteral("paint  avg %1 max %2 ms")
                             .arg(stats.paintMsAvg, 0, 'f', 1)
