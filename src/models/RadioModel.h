@@ -521,11 +521,49 @@ public:
     bool fourO3AEnabled() const;
 
     // Phase 3P-III RF-Kit RF2K-S master toggle.
-    // Persisted under AppSettings key "RfKit_Enabled". Default OFF on
-    // first run. When true the Rf2ksApplet and Setup tab become active;
-    // when false the REST poller is idle and the applet is hidden.
+    // Persisted per-MAC under hardware/<mac>/peripherals/RfKit_Enabled.
+    // Default OFF on first run. When true the Rf2ksApplet and Setup tab
+    // become active; when false the REST poller is idle and the applet
+    // is hidden. No-op when not connected (no MAC scope to write under).
     void setRfKitEnabled(bool enabled);
     bool rfKitEnabled() const;
+
+    // ── Per-radio peripherals scope (RF-Kit / 4O3A / PGXL / TGXL) ────────
+    //
+    // The four external-amp accessories used to read GLOBAL AppSettings
+    // keys so they fired on every radio regardless of which one was
+    // connected.  As of this refactor each accessory's enable + connection
+    // info is scoped under hardware/<mac>/peripherals/<key>.
+    //
+    // Storage format:
+    //   hardware/<mac>/peripherals/RfKit_Enabled       "True" | "False"
+    //   hardware/<mac>/peripherals/RfKit_ManualIp      string
+    //   hardware/<mac>/peripherals/RfKit_ManualPort    int (string-encoded)
+    //   hardware/<mac>/peripherals/FourO3A_Enabled     "True" | "False"
+    //   hardware/<mac>/peripherals/PGXL_ManualIp       string
+    //   hardware/<mac>/peripherals/PGXL_ManualPort     int (string-encoded)
+    //   hardware/<mac>/peripherals/TGXL_ManualIp       string
+    //   hardware/<mac>/peripherals/TGXL_ManualPort     int (string-encoded)
+    //
+    // peripheralValue(key, default):
+    //   Returns the per-MAC value when connected, defaultValue otherwise.
+    //   Use this for every read of the keys listed above.
+    //
+    // setPeripheralValue(key, value):
+    //   Writes the per-MAC value when connected.  When NOT connected this
+    //   is a no-op + qCWarning(lcConnection) so a Setup page that fires
+    //   before a radio is selected can't silently lose data.  Setup pages
+    //   should gray themselves out via connectionStateChanged().
+    //
+    // currentRadioMac():
+    //   Returns m_lastRadioInfo.macAddress when connected, empty otherwise.
+    //   Setup pages use this to populate the "Editing peripherals for ..."
+    //   banner.  Tests reach for setLastRadioInfoForTest() to drive the
+    //   per-MAC scope without a live RadioConnection.
+    QString peripheralValue(const QString& key,
+                            const QString& defaultValue = QString{}) const;
+    void    setPeripheralValue(const QString& key, const QString& value);
+    QString currentRadioMac() const;
 
     bool hasAmplifier() const { return m_hasAmplifier; }
     bool ampOperate()  const  { return m_ampOperate; }
@@ -742,6 +780,25 @@ public:
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
 
+    // Test-only: walk the FULL Connected/Disconnected handler so tests
+    // can drive the peripherals lifecycle (applyPeripheralsForCurrentMac
+    // / teardownPeripherals) without standing up a RadioConnection.
+    // Mirrors the production signal-driven path -- equivalent to wiring
+    // a fake RadioConnection and emitting its connectionStateChanged
+    // signal, but without the QObject overhead.
+    void onConnectionStateChangedForTest(ConnectionState s) {
+        onConnectionStateChanged(s);
+    }
+
+    // Test-only: targeted seams for the peripherals lifecycle.  Tests
+    // that don't want the full onConnectionStateChanged side-effects
+    // (settings-hygiene validation, currentRadioChanged emit, etc.)
+    // can drive applyPeripheralsForCurrentMac / teardownPeripherals
+    // directly after setting the connection state via
+    // setConnectionStateForTest + setLastRadioInfoForTest.
+    void applyPeripheralsForTest() { applyPeripheralsForCurrentMac(); }
+    void teardownPeripheralsForTest() { teardownPeripherals(); }
+
 #ifdef NEREUS_BUILD_TESTS
 public:
     // Test-only: inject board caps without a live radio connection.
@@ -834,6 +891,14 @@ public:
         emit currentRadioChanged(NereusSDR::RadioInfo{});
     }
     NereusSDR::Band lastBand() const { return m_lastBand; }
+
+    // Per-radio peripherals scope: tests pin m_lastRadioInfo without
+    // standing up a fake RadioConnection so peripheralValue / setPeripheralValue
+    // can resolve their per-MAC scope.  Production code populates this via
+    // the connection-thread handshake.
+    void setLastRadioInfoForTest(const NereusSDR::RadioInfo& info) {
+        m_lastRadioInfo = info;
+    }
 
     // P1 full-parity §3.4 test hook — invoke the per-sample PA telemetry
     // handler directly without spinning up the full wireConnectionSignals
@@ -1674,6 +1739,21 @@ private:
     // Phase 3Q-1: drives the RadioModel-level connection state machine.
     // Guards against redundant transitions (no emit if state unchanged).
     void setConnectionState(ConnectionState s);
+
+    // ── Per-radio peripherals lifecycle ────────────────────────────────────
+    // Drive the RF-Kit / 4O3A / PGXL / TGXL connections from the connection
+    // state machine.  applyPeripheralsForCurrentMac() runs after the radio
+    // reports Connected (and m_lastRadioInfo.macAddress is populated);
+    // teardownPeripherals() runs on Disconnected / LinkLost.
+    //
+    // migratePeripheralGlobalsIfNeeded() is a one-shot that folds the legacy
+    // GLOBAL RfKit_* / FourO3A_Enabled / PGXL_Manual* / TGXL_Manual* keys
+    // into the currently connected radio's hardware/<mac>/peripherals/
+    // scope on the FIRST Connected event after this code lands.  Subsequent
+    // launches see PeripheralsMigrationDone="True" and skip.
+    void applyPeripheralsForCurrentMac();
+    void teardownPeripherals();
+    void migratePeripheralGlobalsIfNeeded();
 
     // v0.4.1 hotfix: single point that fans the connected hardware
     // HPSDRModel out to every sub-model that needs it.  Updates

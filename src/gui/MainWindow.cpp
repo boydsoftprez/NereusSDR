@@ -2666,11 +2666,16 @@ void MainWindow::populateDefaultMeter()
             if (conn->isConnected()) {
                 conn->disconnect();
             } else {
-                const QString host = AppSettings::instance()
-                    .value(QStringLiteral("RfKit_ManualIp")).toString();
-                const quint16 port = static_cast<quint16>(AppSettings::instance()
-                    .value(QStringLiteral("RfKit_ManualPort"),
-                           QStringLiteral("8080")).toInt());
+                // Per-radio peripherals refactor (2026-05-26): host/port
+                // live under hardware/<mac>/peripherals/.  When no radio
+                // is connected, peripheralValue() returns the default and
+                // the empty-host gate below makes this a safe no-op.
+                const QString host = m_radioModel->peripheralValue(
+                    QStringLiteral("RfKit_ManualIp"));
+                const quint16 port = static_cast<quint16>(
+                    m_radioModel->peripheralValue(
+                        QStringLiteral("RfKit_ManualPort"),
+                        QStringLiteral("8080")).toUInt());
                 if (!host.isEmpty()) {
                     conn->connectToAmp(host, port);
                 }
@@ -6732,37 +6737,13 @@ void MainWindow::onConnectionStateChanged()
             });
         }
 
-        // Phase 3P-II Task 20: auto-connect PGXL / TGXL when a Manual IP is
-        // configured and the peripheral is not already connected.
-        //
-        // Gated on FourO3A_Enabled: when the master toggle is off, skip the
-        // auto-connect entirely (matches the FourO3APage.h contract
-        // "PGXL/TGXL auto-connect skipped"). Without this gate, a saved
-        // PGXL_ManualIp would dial out even with 4O3A disabled, get a
-        // statusUpdated back, flip m_hasAmplifier=true, and snap the
-        // S-Meter to the 2 kW PGXL scale — surprising the operator who
-        // explicitly turned 4O3A off.
-        if (m_radioModel->fourO3AEnabled()) {
-            auto& s = AppSettings::instance();
-
-            QString pgxlIp = s.value(QStringLiteral("PGXL_ManualIp"),
-                                     QStringLiteral("")).toString();
-            if (!pgxlIp.isEmpty()
-                && !m_radioModel->pgxlConnection()->isConnected()) {
-                quint16 p = quint16(s.value(QStringLiteral("PGXL_ManualPort"),
-                                            QStringLiteral("9008")).toInt());
-                m_radioModel->pgxlConnection()->connectToPgxl(pgxlIp, p);
-            }
-
-            QString tgxlIp = s.value(QStringLiteral("TGXL_ManualIp"),
-                                     QStringLiteral("")).toString();
-            if (!tgxlIp.isEmpty()
-                && !m_radioModel->tgxlConnection()->isConnected()) {
-                quint16 p = quint16(s.value(QStringLiteral("TGXL_ManualPort"),
-                                            QStringLiteral("9010")).toInt());
-                m_radioModel->tgxlConnection()->connectToTgxl(tgxlIp, p);
-            }
-        }
+        // Per-radio peripherals refactor (2026-05-26): the PGXL / TGXL
+        // auto-connect-on-Connected block previously lived here in
+        // MainWindow but read GLOBAL AppSettings keys.  The lifecycle
+        // (gated on the per-MAC FourO3A flag) now lives in
+        // RadioModel::applyPeripheralsForCurrentMac(), which is driven
+        // from onConnectionStateChanged so MainWindow doesn't need to
+        // touch the peripheral wires here.
 
         // Phase 3P-II Task 20: wire AmpApplet controls to PgxlConnection.
         // operateToggled: translate bool to "operate"/"standby" command string.
@@ -6886,13 +6867,18 @@ void MainWindow::onConnectionStateChanged()
                     // PGXL_Port (default 50001) returned empty
                     // strings on every install that had only ever
                     // written the canonical keys, so the AmpApplet
-                    // context-menu Connect did nothing.  AppSettings
-                    // canonical default 9008 per AppSettings.h:330.
-                    const QString ip = AppSettings::instance()
-                        .value(QStringLiteral("PGXL_ManualIp"), QString{})
-                        .toString();
-                    const quint16 port = static_cast<quint16>(AppSettings::instance()
-                        .value(QStringLiteral("PGXL_ManualPort"), 9008).toInt());
+                    // context-menu Connect did nothing.
+                    //
+                    // Per-radio peripherals refactor (2026-05-26):
+                    // the keys are scoped under
+                    // hardware/<mac>/peripherals/.  Default 9008
+                    // matches the AppSettings.h documented default.
+                    const QString ip = m_radioModel->peripheralValue(
+                        QStringLiteral("PGXL_ManualIp"));
+                    const quint16 port = static_cast<quint16>(
+                        m_radioModel->peripheralValue(
+                            QStringLiteral("PGXL_ManualPort"),
+                            QStringLiteral("9008")).toUInt());
                     if (!ip.isEmpty()) {
                         pgxl->connectToPgxl(ip, port);
                     }
@@ -6938,10 +6924,14 @@ void MainWindow::onConnectionStateChanged()
                 if (tgxl->isConnected()) {
                     tgxl->disconnect();
                 } else {
-                    const QString ip = AppSettings::instance()
-                        .value(QStringLiteral("TGXL_ManualIp"), QString{}).toString();
-                    const quint16 port = static_cast<quint16>(AppSettings::instance()
-                        .value(QStringLiteral("TGXL_ManualPort"), 9010).toInt());
+                    // Per-radio peripherals refactor (2026-05-26): keys
+                    // scoped under hardware/<mac>/peripherals/.
+                    const QString ip = m_radioModel->peripheralValue(
+                        QStringLiteral("TGXL_ManualIp"));
+                    const quint16 port = static_cast<quint16>(
+                        m_radioModel->peripheralValue(
+                            QStringLiteral("TGXL_ManualPort"),
+                            QStringLiteral("9010")).toUInt());
                     if (!ip.isEmpty()) {
                         tgxl->connectToTgxl(ip, port);
                     }

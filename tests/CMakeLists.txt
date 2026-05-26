@@ -5145,10 +5145,22 @@ nereus_add_test(tst_pgxl_connection_save)
 #   totalSizeIsMultipleOf4 (packet size and size-words field consistent).
 nereus_add_test(tst_flex_radio_discovery_broadcaster)
 
+# ── Per-radio peripherals refactor (2026-05-26) ──────────────────────────
+# Verifies the RadioModel::peripheralValue / setPeripheralValue helpers
+# and the one-shot migration that folds legacy globals (RfKit_* /
+# FourO3A_Enabled / PGXL_Manual* / TGXL_Manual*) into the connected
+# radio's hardware/<mac>/peripherals/ scope.
+# Tests: peripheralValueReturnsDefaultWhenNotConnected; peripheralValueReturnsStoredValueWhenConnected;
+#   setPeripheralValueRoundTrips; setPeripheralValueIsNoOpWhenNotConnected;
+#   migrationFoldsGlobalsToPerMacAndSetsSentinel; migrationRunsOnlyOnce;
+#   macSwitchIsolatesScope.
+nereus_add_test(tst_peripherals_settings)
+
 # ── Phase 3P-III RF-Kit RF2K-S amplifier applet ───────────────────────────
-# Task 1: RadioModel rfKitEnabled Q_PROPERTY + AppSettings persistence.
+# Task 1: RadioModel rfKitEnabled Q_PROPERTY + per-MAC persistence.
 # Tests: defaultsFalse (no key -> false); setterPersistsAndEmits (setter
-#   writes RfKit_Enabled="True" + emits rfKitEnabledChanged(true));
+#   writes peripherals/RfKit_Enabled="True" under hardware/<mac>/ +
+#   emits rfKitEnabledChanged(true));
 #   getterReadsFromAppSettings (pre-seeded key -> getter returns true).
 nereus_add_test(tst_rfkit_radiomodel_enabled)
 

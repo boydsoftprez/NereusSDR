@@ -951,35 +951,19 @@ RadioModel::RadioModel(QObject* parent)
 
     // Phase 3P-III: RF-Kit RF2K-S connection. Constructed unconditionally;
     // the poller only starts when rfKitEnabled is set to true (reads
-    // RfKit_ManualIp / RfKit_ManualPort from AppSettings at that point).
+    // RfKit_ManualIp / RfKit_ManualPort from per-MAC peripherals scope at
+    // that point).
     m_rfKitConnection = std::make_unique<Rf2ksConnection>(this);
 
-    // 2026-05-25 KG4VCF bench fix: auto-connect at startup if the master
-    // toggle is persisted On and a host is configured.  Without this the
-    // operator has to flip Enable Off -> On after every launch because
-    // setRfKitEnabled() only invokes connectToAmp on a value TRANSITION,
-    // and at startup the value is already True (no transition).
-    {
-        auto& s = AppSettings::instance();
-        const bool rfKitOn = s.value(QStringLiteral("RfKit_Enabled"),
-                                      QStringLiteral("False"))
-            .toString() == QStringLiteral("True");
-        if (rfKitOn) {
-            const QString host = s.value(QStringLiteral("RfKit_ManualIp"))
-                                  .toString();
-            const quint16 port = static_cast<quint16>(
-                s.value(QStringLiteral("RfKit_ManualPort"),
-                        QStringLiteral("8080")).toUInt());
-            if (!host.isEmpty()) {
-                m_rfKitConnection->connectToAmp(host, port);
-                qCInfo(lcConnection) << "RF-Kit auto-connect at startup:"
-                                      << host << ":" << port;
-            } else {
-                qCInfo(lcConnection) << "RF-Kit enabled but no host configured;"
-                                      << "skipping auto-connect.";
-            }
-        }
-    }
+    // Per-radio peripherals refactor (2026-05-26): the ctor-time RF-Kit
+    // auto-connect from globals was removed.  The lifecycle now runs in
+    // applyPeripheralsForCurrentMac(), driven from onConnectionStateChanged
+    // when the radio reports Connected and m_lastRadioInfo.macAddress is
+    // populated.  Existing single-radio installs are preserved by
+    // migratePeripheralGlobalsIfNeeded(), which folds the legacy global
+    // RfKit_* / FourO3A_Enabled / PGXL_Manual* / TGXL_Manual* keys into the
+    // first-connected MAC's hardware/<mac>/peripherals/ scope and sets
+    // PeripheralsMigrationDone="True" so subsequent launches skip.
 
     // Phase 3P-II Task 86: TxInterlockPolicy -- NereusSDR-native TX gate.
     // Loads persisted mode/grace/SWR-gate values from AppSettings in its ctor.
@@ -1014,27 +998,15 @@ RadioModel::RadioModel(QObject* parent)
     // (`transmit tune on/off`) to RadioModel::setTune so a TGXL hardware
     // TUNE press actually engages the local CW tune carrier.
     //
-    // Gated by the 4O3A master toggle (AppSettings key FourO3A_Enabled).
-    // Default OFF on first run so the TCP 4992 port isn't bound until the
-    // operator explicitly opts in via Setup -> CAT & Network -> 4O3A.
-    // setFourO3AEnabled(bool) provides the live start/stop path used by
-    // the General tab's master toggle.
+    // Per-radio peripherals refactor (2026-05-26): construction is
+    // unconditional but the listener is NOT started here.  Start/stop is
+    // driven from applyPeripheralsForCurrentMac() / teardownPeripherals()
+    // based on the per-MAC FourO3A_Enabled flag.  setFourO3AEnabled(bool)
+    // still provides the live toggle path used by the General tab's
+    // master toggle.
     m_smartSdrListener = new SmartSdrApiListener(this);
-    const bool fourO3AEnabled =
-        AppSettings::instance().value(QStringLiteral("FourO3A_Enabled"),
-                                      QStringLiteral("False"))
-            .toString() == QStringLiteral("True");
-    if (fourO3AEnabled) {
-        if (m_smartSdrListener->start()) {
-            qCInfo(lcConnection) << "SmartSDR API listener started on TCP 4992";
-        } else {
-            qCWarning(lcConnection) << "SmartSDR API listener failed to bind TCP 4992";
-        }
-    } else {
-        qCInfo(lcConnection) << "SmartSDR API listener NOT started"
-                              << "(FourO3A_Enabled=False; toggle on via Setup"
-                              << "-> CAT & Network -> 4O3A)";
-    }
+    qCInfo(lcConnection) << "SmartSDR API listener constructed; start deferred"
+                          << "to Connected handler (per-MAC FourO3A_Enabled gate)";
     // LAN PTT wiring: TGXL emits `C<seq>|transmit tune on` when its
     // hardware TUNE button (or its native app TUNE button) is pressed; the
     // listener parses + ACKs the frame then emits tuneRequested(true).
@@ -2360,23 +2332,24 @@ void RadioModel::setStepAttController(StepAttenuatorController* c)
 
 // ── 4O3A master toggle (Settings -> CAT & Network -> 4O3A General tab) ──────
 //
-// Persists to AppSettings key "FourO3A_Enabled" (True / False string,
-// matching the rest of NereusSDR's boolean convention).  Default OFF on
-// first run so the TCP 4992 port is not bound until the operator opts in.
-// Live-applies: starts/stops the SmartSdrApiListener immediately so the
-// UI toggle doesn't require an app restart.
+// Persists per-MAC under hardware/<mac>/peripherals/FourO3A_Enabled
+// (True / False string).  Default OFF on first run so the TCP 4992 port
+// is not bound until the operator opts in.  Live-applies: starts/stops
+// the SmartSdrApiListener immediately so the UI toggle doesn't require
+// an app restart.
+//
+// No-op when no radio is connected (no MAC scope to write under).  The
+// Setup page grays out under the same condition so the operator can't
+// reach this entry point.
 void RadioModel::setFourO3AEnabled(bool enabled)
 {
-    auto& s = AppSettings::instance();
-    const bool current = s.value(QStringLiteral("FourO3A_Enabled"),
-                                 QStringLiteral("False"))
-        .toString() == QStringLiteral("True");
+    const bool current = fourO3AEnabled();
     if (current == enabled) {
         return;  // idempotent
     }
-    s.setValue(QStringLiteral("FourO3A_Enabled"),
-               enabled ? QStringLiteral("True") : QStringLiteral("False"));
-    s.save();
+    setPeripheralValue(QStringLiteral("FourO3A_Enabled"),
+                       enabled ? QStringLiteral("True") : QStringLiteral("False"));
+    AppSettings::instance().save();
 
     if (!m_smartSdrListener) {
         return;  // ctor should always create it; defensive null guard
@@ -2431,17 +2404,16 @@ void RadioModel::setFourO3AEnabled(bool enabled)
 
 bool RadioModel::fourO3AEnabled() const
 {
-    return AppSettings::instance()
-        .value(QStringLiteral("FourO3A_Enabled"),
-               QStringLiteral("False"))
-        .toString() == QStringLiteral("True");
+    return peripheralValue(QStringLiteral("FourO3A_Enabled"),
+                           QStringLiteral("False"))
+        == QStringLiteral("True");
 }
 
 bool RadioModel::rfKitEnabled() const
 {
-    return AppSettings::instance()
-        .value(QStringLiteral("RfKit_Enabled"), QStringLiteral("False"))
-        .toString() == QStringLiteral("True");
+    return peripheralValue(QStringLiteral("RfKit_Enabled"),
+                           QStringLiteral("False"))
+        == QStringLiteral("True");
 }
 
 void RadioModel::setRfKitEnabled(bool enabled)
@@ -2450,16 +2422,14 @@ void RadioModel::setRfKitEnabled(bool enabled)
     if (enabled == current) {
         return;
     }
-    AppSettings::instance().setValue(
-        QStringLiteral("RfKit_Enabled"),
-        enabled ? QStringLiteral("True") : QStringLiteral("False"));
+    setPeripheralValue(QStringLiteral("RfKit_Enabled"),
+                       enabled ? QStringLiteral("True") : QStringLiteral("False"));
 
     if (enabled) {
-        const QString host = AppSettings::instance()
-            .value(QStringLiteral("RfKit_ManualIp")).toString();
-        const quint16 port = static_cast<quint16>(AppSettings::instance()
-            .value(QStringLiteral("RfKit_ManualPort"), QStringLiteral("8080"))
-            .toUInt());
+        const QString host = peripheralValue(QStringLiteral("RfKit_ManualIp"));
+        const quint16 port = static_cast<quint16>(
+            peripheralValue(QStringLiteral("RfKit_ManualPort"),
+                            QStringLiteral("8080")).toUInt());
         if (!host.isEmpty() && m_rfKitConnection) {
             m_rfKitConnection->connectToAmp(host, port);
         }
@@ -2468,6 +2438,219 @@ void RadioModel::setRfKitEnabled(bool enabled)
     }
 
     emit rfKitEnabledChanged(enabled);
+}
+
+// ── Per-radio peripherals helpers ──────────────────────────────────────────
+//
+// Resolve the "current MAC" via m_lastRadioInfo.macAddress.  When empty
+// (no radio connected, or a probe/discovery entry without MAC), peripheral
+// reads return the caller's default and peripheral writes are a no-op +
+// qCWarning.  Setup pages must gray themselves out under the same condition
+// so the operator can't reach the write path with an unbound MAC.
+QString RadioModel::currentRadioMac() const
+{
+    return m_lastRadioInfo.macAddress;
+}
+
+QString RadioModel::peripheralValue(const QString& key,
+                                    const QString& defaultValue) const
+{
+    const QString mac = currentRadioMac();
+    if (mac.isEmpty()) {
+        return defaultValue;
+    }
+    return AppSettings::instance()
+        .hardwareValue(mac, QStringLiteral("peripherals/") + key, defaultValue)
+        .toString();
+}
+
+void RadioModel::setPeripheralValue(const QString& key, const QString& value)
+{
+    const QString mac = currentRadioMac();
+    if (mac.isEmpty()) {
+        qCWarning(lcConnection)
+            << "setPeripheralValue('" << key << "',...) ignored:"
+            << "no radio connected; no MAC scope to write under";
+        return;
+    }
+    AppSettings::instance().setHardwareValue(
+        mac, QStringLiteral("peripherals/") + key, value);
+}
+
+// ── Per-radio peripherals lifecycle ─────────────────────────────────────────
+//
+// applyPeripheralsForCurrentMac runs when the radio reports Connected and
+// m_lastRadioInfo.macAddress is populated.  Reads the per-MAC enable +
+// host/port slots and dials out for each accessory that's switched On.
+// teardownPeripherals runs on Disconnected / LinkLost and tears every
+// live socket / TCP listener down so we never leave them attached to the
+// previous radio's scope when the user switches to a different rig.
+void RadioModel::applyPeripheralsForCurrentMac()
+{
+    // One-shot fold of legacy globals into the currently connected MAC's
+    // scope.  Idempotent across launches via PeripheralsMigrationDone.
+    migratePeripheralGlobalsIfNeeded();
+
+    const QString mac = currentRadioMac();
+    if (mac.isEmpty()) {
+        qCWarning(lcConnection)
+            << "applyPeripheralsForCurrentMac: no MAC available, skipping";
+        return;
+    }
+
+    int started = 0;
+
+    // ── 4O3A SmartSDR API listener on TCP 4992 ──────────────────────────
+    // Must come before PGXL/TGXL because the live socket dials are gated
+    // on the same per-MAC flag.
+    const bool fourO3AOn = fourO3AEnabled();
+    if (fourO3AOn) {
+        if (m_smartSdrListener && !m_smartSdrListener->isListening()) {
+            if (m_smartSdrListener->start()) {
+                qCInfo(lcConnection) << "4O3A SmartSDR API listener started"
+                                      << "for MAC" << mac;
+                ++started;
+            } else {
+                qCWarning(lcConnection)
+                    << "4O3A enabled but TCP 4992 bind failed for MAC" << mac;
+            }
+        }
+        // Re-emit fourO3AEnabledChanged so views that cache the value
+        // refresh against the now-known per-MAC scope (the value may
+        // differ from the previously connected radio).
+        emit fourO3AEnabledChanged(true);
+    } else {
+        emit fourO3AEnabledChanged(false);
+    }
+
+    // ── RF-Kit RF2K-S ───────────────────────────────────────────────────
+    if (rfKitEnabled() && m_rfKitConnection) {
+        const QString host =
+            peripheralValue(QStringLiteral("RfKit_ManualIp"));
+        const quint16 port = static_cast<quint16>(
+            peripheralValue(QStringLiteral("RfKit_ManualPort"),
+                            QStringLiteral("8080")).toUInt());
+        if (!host.isEmpty()) {
+            m_rfKitConnection->connectToAmp(host, port);
+            qCInfo(lcConnection)
+                << "RF-Kit auto-connect for MAC" << mac
+                << ":" << host << ":" << port;
+            ++started;
+        } else {
+            qCInfo(lcConnection)
+                << "RF-Kit enabled for MAC" << mac
+                << "but no host configured; skipping auto-connect";
+        }
+        emit rfKitEnabledChanged(true);
+    } else {
+        emit rfKitEnabledChanged(false);
+    }
+
+    // ── PGXL / TGXL (gated on 4O3A master) ──────────────────────────────
+    // Without the 4O3A gate, a saved PGXL_ManualIp would dial out even
+    // with 4O3A disabled, get a statusUpdated back, flip m_hasAmplifier
+    // = true, and snap the S-Meter to the 2 kW PGXL scale -- surprising
+    // the operator who explicitly turned 4O3A off (see MainWindow's
+    // earlier auto-connect block where this gate was first established).
+    if (fourO3AOn) {
+        const QString pgxlIp =
+            peripheralValue(QStringLiteral("PGXL_ManualIp"));
+        if (!pgxlIp.isEmpty() && m_pgxlConnection
+            && !m_pgxlConnection->isConnected()) {
+            const quint16 p = static_cast<quint16>(
+                peripheralValue(QStringLiteral("PGXL_ManualPort"),
+                                QStringLiteral("9008")).toUInt());
+            m_pgxlConnection->connectToPgxl(pgxlIp, p);
+            qCInfo(lcConnection) << "PGXL auto-connect for MAC" << mac
+                                  << ":" << pgxlIp << ":" << p;
+            ++started;
+        }
+
+        const QString tgxlIp =
+            peripheralValue(QStringLiteral("TGXL_ManualIp"));
+        if (!tgxlIp.isEmpty() && m_tgxlConnection
+            && !m_tgxlConnection->isConnected()) {
+            const quint16 p = static_cast<quint16>(
+                peripheralValue(QStringLiteral("TGXL_ManualPort"),
+                                QStringLiteral("9010")).toUInt());
+            m_tgxlConnection->connectToTgxl(tgxlIp, p);
+            qCInfo(lcConnection) << "TGXL auto-connect for MAC" << mac
+                                  << ":" << tgxlIp << ":" << p;
+            ++started;
+        }
+    }
+
+    if (started == 0) {
+        qCInfo(lcConnection)
+            << "No peripherals enabled for MAC" << mac;
+    }
+}
+
+void RadioModel::teardownPeripherals()
+{
+    if (m_rfKitConnection && m_rfKitConnection->isConnected()) {
+        m_rfKitConnection->disconnect();
+        qCInfo(lcConnection) << "Peripherals teardown: RF-Kit disconnected";
+    }
+    if (m_smartSdrListener && m_smartSdrListener->isListening()) {
+        m_smartSdrListener->stop();
+        qCInfo(lcConnection) << "Peripherals teardown: SmartSDR API stopped";
+    }
+    if (m_pgxlConnection && m_pgxlConnection->isConnected()) {
+        m_pgxlConnection->disconnect();
+        qCInfo(lcConnection) << "Peripherals teardown: PGXL disconnected";
+    }
+    if (m_tgxlConnection && m_tgxlConnection->isConnected()) {
+        m_tgxlConnection->disconnect();
+        qCInfo(lcConnection) << "Peripherals teardown: TGXL disconnected";
+    }
+}
+
+void RadioModel::migratePeripheralGlobalsIfNeeded()
+{
+    auto& s = AppSettings::instance();
+    if (s.value(QStringLiteral("PeripheralsMigrationDone"))
+            .toString() == QStringLiteral("True")) {
+        return;
+    }
+    const QString mac = currentRadioMac();
+    if (mac.isEmpty()) {
+        // Defer migration until we know a MAC.  Without a target scope
+        // there's nowhere to write the folded values.
+        return;
+    }
+
+    static constexpr const char* kKeys[] = {
+        "RfKit_Enabled", "RfKit_ManualIp", "RfKit_ManualPort",
+        "FourO3A_Enabled",
+        "PGXL_ManualIp", "PGXL_ManualPort",
+        "TGXL_ManualIp", "TGXL_ManualPort",
+    };
+
+    int migrated = 0;
+    for (const char* k : kKeys) {
+        const QString key = QString::fromLatin1(k);
+        if (!s.contains(key)) {
+            continue;
+        }
+        const QString v = s.value(key).toString();
+        if (v.isEmpty()) {
+            // Remove empty leftovers so they don't linger as ghost keys.
+            s.remove(key);
+            continue;
+        }
+        s.setHardwareValue(mac,
+                           QStringLiteral("peripherals/") + key, v);
+        s.remove(key);
+        ++migrated;
+    }
+
+    s.setValue(QStringLiteral("PeripheralsMigrationDone"),
+               QStringLiteral("True"));
+    s.save();
+    qCInfo(lcConnection)
+        << "Peripherals migration: folded" << migrated
+        << "global key(s) into hardware/" << mac << "/peripherals/";
 }
 
 bool RadioModel::isAnyExternalAmpInOperate() const
@@ -5726,9 +5909,19 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // hosts (e.g. macOS with feth* virtual ethernets alongside en0) the
         // beacon can advertise one local IP while the TCP control connection
         // uses another, and PGXL's SmartSDR-API pull silently fails.
-        const QString pgxlIpStr =
-            as.value(QStringLiteral("PGXL_ManualIp"),
-                     QStringLiteral("")).toString();
+        //
+        // Per-radio peripherals refactor (2026-05-26): pull PGXL_ManualIp
+        // from the per-MAC peripherals scope.  We use the raw hardwareValue
+        // lookup here (not peripheralValue) because m_lastRadioInfo isn't
+        // populated yet at this point in connectToRadio -- the local `info`
+        // is the source of truth for this branch.
+        const QString pgxlMac = info.macAddress.isEmpty()
+                                    ? QStringLiteral("00:00:00:00:00:00")
+                                    : info.macAddress;
+        const QString pgxlIpStr = as.hardwareValue(
+            pgxlMac,
+            QStringLiteral("peripherals/PGXL_ManualIp"),
+            QString{}).toString();
         if (!pgxlIpStr.isEmpty()) {
             m_flexBroadcaster->setPeerHint(QHostAddress(pgxlIpStr));
         }
@@ -8050,6 +8243,11 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         if (!m_lastRadioInfo.macAddress.isEmpty()) {
             m_settingsHygiene.validate(m_lastRadioInfo.macAddress, boardCapabilities());
         }
+        // Per-radio peripherals refactor (2026-05-26): now that the MAC
+        // is known and settings have been validated, fire the
+        // peripherals lifecycle (one-shot global migration on first run,
+        // then start RF-Kit / 4O3A / PGXL / TGXL per the per-MAC flags).
+        applyPeripheralsForCurrentMac();
         // Task 10 (#175): push the connected hardware model into TransmitModel
         // so the m_hpsdrModel field (added in Task 6) is non-FIRST before any
         // user TX action fires.  This activates the HL2 polymorphic clamp in
@@ -8070,6 +8268,12 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         break;
     case ConnectionState::Disconnected:
         qCDebug(lcConnection) << "Disconnected from" << m_name;
+        // Per-radio peripherals refactor (2026-05-26): tear down RF-Kit /
+        // 4O3A listener / PGXL / TGXL so they're not still attached to the
+        // previous radio's scope when the user reconnects to a different
+        // rig.  Done BEFORE clearConnectedMac so the helpers still see the
+        // MAC if they need to log diagnostic context.
+        teardownPeripherals();
         m_discovery->clearConnectedMac();
         // 3M-1c L.2: drop the TwoToneController power-on gate so any
         // subsequent setActive(true) is refused with a qCWarning until
@@ -8086,6 +8290,10 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         break;
     case ConnectionState::LinkLost:
         qCWarning(lcConnection) << "Link lost to" << m_name;
+        // Per-radio peripherals refactor (2026-05-26): same teardown as
+        // Disconnected so peripheral sockets don't stay attached across a
+        // link-loss event.
+        teardownPeripherals();
         m_discovery->clearConnectedMac();
         // 3M-1c L.2: same as Disconnected — drop the power-on gate.
         if (m_twoToneController) {
