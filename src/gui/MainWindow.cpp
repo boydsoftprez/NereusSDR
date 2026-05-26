@@ -4274,49 +4274,57 @@ void MainWindow::buildStatusBar()
             //
             // 2026-05-25 KG4VCF G2E bench finding: ANAN-G2E (HermesC10)
             // firmware leaves user_adc0 (AIN3 / status bytes 53-54) dark.
-            // Bench reading was 0.1 V against an actual 13.4 V supply with
-            // the regular convertMkiiPaVolts path.  Source-first audit of
-            // Thetis confirmed that Thetis applies the same single
-            // convertToVolts(user_adc0) formula to G2E as to G2 with no
-            // per-board scaling -- Thetis would presumably show the same
-            // wrong reading.  Our fix on the NereusSDR side: route the
-            // already-emitted supply_volts (AIN6 / status bytes 45-46)
-            // to the tile for G2E and rename "PA" to "PSU" so the tile
-            // reflects what is actually being measured (input supply
-            // rail, not PA drain).  On all other MKII-class boards the
-            // existing user_adc0 path -- which IS the PA drain on those
-            // SKUs -- continues unchanged.
-            const bool isG2E = (m_radioModel &&
-                m_radioModel->hardwareProfile().model == HPSDRModel::ANAN_G2E);
-            if (isG2E) {
-                m_paVoltLabel->setLabel(QStringLiteral("PSU"));
-                connect(conn, &RadioConnection::supplyVoltsChanged, this,
-                        [this, refreshPaStackVisibility](float v) {
-                    m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
-                    m_paVoltLabel->setVisible(true);
-                    refreshPaStackVisibility();
-                });
-            } else {
+            // Bench reading was 0.1 V against an actual 13.4 V supply.
+            // Route supply_volts (AIN6 / bytes 45-46) to the tile on G2E
+            // and rename "PA" to "PSU".  Other MKII boards keep the
+            // existing user_adc0 path -- on those SKUs user_adc0 IS the
+            // PA drain sense, which is what the "PA" label means.
+            //
+            // Implementation note: we bind BOTH signals unconditionally
+            // and gate inside each slot on the CURRENT model.  The outer
+            // lambda fires on every connectionStateChanged transition
+            // (Connecting / Probing / Connected), and at Connecting time
+            // hardwareProfile.model may not yet be set to ANAN_G2E -- so
+            // a branch-at-bind-time approach picked the wrong slot and
+            // the tile stayed dark.  Gating inside the slot reads the
+            // model at each signal emission, when it is guaranteed to be
+            // set (status frames only arrive after the Connected handler
+            // has populated the profile).
+            connect(conn, &RadioConnection::userAdc0Changed, this,
+                    [this, refreshPaStackVisibility](float v) {
+                const auto model = m_radioModel->hardwareProfile().model;
+                if (model == HPSDRModel::ANAN_G2E) {
+                    return;  // G2E uses supply_volts; ignore user_adc0.
+                }
+                // Task 3.6: ANAN-8000DLE user preference gate.
+                // For ANAN-8000D radios, consult the "Show volts/amps in title
+                // bar" AppSettings key (default true). For other MKII-class
+                // boards (7000DLE, AnvelinaPro3) the gate is always open —
+                // those boards don't have the per-SKU preference checkbox.
+                const bool is8000D = (model == HPSDRModel::ANAN8000D);
+                const bool showVolts = !is8000D ||
+                    AppSettings::instance().value(
+                        QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),
+                        QStringLiteral("True")).toString() == QStringLiteral("True");
+                if (!showVolts) { return; }
                 m_paVoltLabel->setLabel(QStringLiteral("PA"));
-                connect(conn, &RadioConnection::userAdc0Changed, this,
-                        [this, refreshPaStackVisibility](float v) {
-                    // Task 3.6: ANAN-8000DLE user preference gate.
-                    // For ANAN-8000D radios, consult the "Show volts/amps in title
-                    // bar" AppSettings key (default true). For other MKII-class
-                    // boards (7000DLE, AnvelinaPro3) the gate is always open —
-                    // those boards don't have the per-SKU preference checkbox.
-                    const bool is8000D = (m_radioModel &&
-                        m_radioModel->hardwareProfile().model == HPSDRModel::ANAN8000D);
-                    const bool showVolts = !is8000D ||
-                        AppSettings::instance().value(
-                            QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),
-                            QStringLiteral("True")).toString() == QStringLiteral("True");
-                    if (!showVolts) { return; }
-                    m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
-                    m_paVoltLabel->setVisible(true);
-                    refreshPaStackVisibility();
-                });
-            }
+                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+                m_paVoltLabel->setVisible(true);
+                refreshPaStackVisibility();
+                qInfo() << "PA tile updated via userAdc0:" << v << "V";
+            });
+            connect(conn, &RadioConnection::supplyVoltsChanged, this,
+                    [this, refreshPaStackVisibility](float v) {
+                const auto model = m_radioModel->hardwareProfile().model;
+                if (model != HPSDRModel::ANAN_G2E) {
+                    return;  // Non-G2E uses user_adc0 path.
+                }
+                m_paVoltLabel->setLabel(QStringLiteral("PSU"));
+                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+                m_paVoltLabel->setVisible(true);
+                refreshPaStackVisibility();
+                qInfo() << "PSU tile updated via supplyVolts:" << v << "V";
+            });
         }
     });
 
