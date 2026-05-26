@@ -7043,10 +7043,18 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 const int padY = 4;
                 const int boxW = maxW + 2 * padX;
                 const int boxH = lines.size() * lineH + 2 * padY;
-                // Top-left corner of the spectrum region; below freq
-                // scale would clip on small windows.
-                const int boxX = specRect.left() + 8;
-                const int boxY = specRect.top() + 8;
+                // 2026-05-26 KG4VCF: top-right of the spectrum region.
+                // The SpectrumOverlayPanel (10-button panel) lives in
+                // the top-left of the spectrum, so a left-anchored
+                // box slips behind those controls.  Top-right is
+                // shared with the FPS counter (single line); push the
+                // perf overlay down by ~22 px when FPS is on so they
+                // do not collide.  specRect already excludes the
+                // dBm strip column so we do not need to subtract
+                // effectiveStripW() again.
+                const int boxX = specRect.right() - boxW - 8;
+                const int fpsOffset = m_showFps ? 22 : 0;
+                const int boxY = specRect.top() + 8 + fpsOffset;
                 // Health-coloured background: red if underruns/drops/
                 // compressing OR paint/gap exceeds 33 ms; amber if any
                 // metric is hot but functional; green when clean.
