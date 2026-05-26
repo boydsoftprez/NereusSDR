@@ -8,12 +8,14 @@
 
 #include "Rf2ksApplet.h"
 #include "gui/HGauge.h"
+#include "gui/StyleConstants.h"
 #include "models/RadioModel.h"
 
 #include <QContextMenuEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QStyle>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -122,9 +124,31 @@ Rf2ksApplet::Rf2ksApplet(RadioModel* model, QWidget* parent)
     auto* tunerLay  = new QVBoxLayout(tunerWrap);
     tunerLay->setContentsMargins(8, 6, 8, 6);
 
+    // 2026-05-25 KG4VCF bench fix: green-on-active styling.  Each antenna
+    // button carries a dynamic `active` property (set in setAntennas /
+    // setActiveAntenna based on what the amp reports); a QSS attribute
+    // selector on the button itself paints active=true buttons green --
+    // same palette as the band / mode / filter buttons elsewhere in the
+    // app (kGreenBg / kGreenText / kGreenBorder).  We use a property
+    // selector instead of QPushButton:checked + setCheckable() because
+    // we don't want the user's click to flip the visual state until the
+    // amp confirms via its /antennas/active response; the property is
+    // written exclusively from amp-driven setters.
+    const QString activeStyle = QStringLiteral(
+        "QPushButton[active=\"true\"] {"
+        "  background: %1; color: %2; border: 1px solid %3;"
+        "  border-radius: 3px; font-weight: bold;"
+        "}"
+    ).arg(Style::kGreenBg, Style::kGreenText, Style::kGreenBorder);
+
     auto* antennaRow = new QHBoxLayout();
     for (int i = 1; i <= 4; ++i) {
         auto* btn = new QPushButton(QStringLiteral("ANT %1").arg(i), tunerWrap);
+        btn->setStyleSheet(activeStyle);
+        // Seed the property so the QSS selector has something to match
+        // before the first amp poll lands.  Defaults to inactive (no
+        // green) until setActiveAntenna() flips one on.
+        btn->setProperty("active", false);
         connect(btn, &QPushButton::clicked, this, [this, i]() {
             emit antennaRequested(RfKitAntenna::Type::Internal, i);
         });
@@ -244,6 +268,22 @@ void Rf2ksApplet::setTuner(const RfKitTunerSnapshot& snap)
     m_tunerStatusLabel->setText(text);
 }
 
+// QSS attribute selectors only re-evaluate when the widget is
+// unpolish'd + polish'd; setProperty alone is not enough to trigger
+// a repaint.  This helper bundles both so we never forget.
+static void setButtonActive(QPushButton* btn, bool active)
+{
+    if (!btn) {
+        return;
+    }
+    btn->setProperty("active", active);
+    if (auto* s = btn->style()) {
+        s->unpolish(btn);
+        s->polish(btn);
+    }
+    btn->update();
+}
+
 void Rf2ksApplet::setAntennas(const QList<RfKitAntenna>& list)
 {
     for (const auto& a : list) {
@@ -258,14 +298,14 @@ void Rf2ksApplet::setAntennas(const QList<RfKitAntenna>& list)
             QStringLiteral("ANT %1").arg(a.number));
         btn->setText(label);
         btn->setEnabled(a.state != RfKitAntenna::State::Disabled);
-        btn->setProperty("active", a.state == RfKitAntenna::State::Active);
+        setButtonActive(btn, a.state == RfKitAntenna::State::Active);
     }
 }
 
 void Rf2ksApplet::setActiveAntenna(const RfKitAntenna& a)
 {
     for (auto it = m_antennaButtons.begin(); it != m_antennaButtons.end(); ++it) {
-        it.value()->setProperty("active", it.key() == a.number);
+        setButtonActive(it.value(), it.key() == a.number);
     }
 }
 
