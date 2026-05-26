@@ -512,6 +512,9 @@ set(CORE_SOURCES
     src/core/TxInterlockPolicy.cpp
     # FlexRadio UDP 4992 discovery beacon (PGXL/TGXL auto-detect)
     src/core/FlexRadioDiscoveryBroadcaster.cpp
+    # Multi-homed-host source-IP picker (PGXL/TGXL/broadcaster per-peer
+    # route probe + socket source bind)
+    src/core/RouteProbe.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

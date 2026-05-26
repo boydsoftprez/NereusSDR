@@ -5156,6 +5156,15 @@ nereus_add_test(tst_flex_radio_discovery_broadcaster)
 #   macSwitchIsolatesScope.
 nereus_add_test(tst_peripherals_settings)
 
+# ── Multi-homed-host source-IP picker (route probe) ───────────────────────
+# Tests for src/core/RouteProbe.cpp -- the shared helper PgxlConnection,
+# TgxlConnection, and FlexRadioDiscoveryBroadcaster use to ask the kernel
+# which local source IP it would pick to reach a given peer.  Tests are
+# host-portable: they assert the API contract (null input -> null result;
+# loopback / AnyIPv4 input -> null result for the "real LAN" guard) rather
+# than any specific local IP.
+nereus_add_test(tst_route_probe)
+
 # ── Phase 3P-III RF-Kit RF2K-S amplifier applet ───────────────────────────
 # Task 1: RadioModel rfKitEnabled Q_PROPERTY + per-MAC persistence.
 # Tests: defaultsFalse (no key -> false); setterPersistsAndEmits (setter
