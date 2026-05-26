@@ -453,6 +453,28 @@ int PortAudioBus::paCallback(const void* in, void* out,
         qint64 r = self->m_ringRead.load(std::memory_order_relaxed);
         const qint64 w = self->m_ringWrite.load(std::memory_order_acquire);
 
+        // 2026-05-26 KG4VCF perf instrumentation: report the ring fill
+        // level (ms of unread audio still in the producer->consumer
+        // ring) BEFORE this callback drains its samples.  This is the
+        // speakers-output path on every platform (CoreAudioHalBus
+        // covers only the VAX digital-app channels); the perf overlay
+        // surfaces avg / min over a 2 s window.  If min craters
+        // toward 0 we are about to underrun even when paOutputUnderflow
+        // is still 0.
+        {
+            const qint64 fillSamples = w - r;  // total samples (interleaved)
+            const int    rateHz      = self->m_negFormat.sampleRate;
+            const int    fillChans   = self->m_negFormat.channels;
+            if (rateHz > 0 && fillChans > 0) {
+                const double samplesPerMs =
+                    static_cast<double>(rateHz)
+                    * static_cast<double>(fillChans) / 1000.0;
+                const double fillMs =
+                    static_cast<double>(fillSamples) / samplesPerMs;
+                NereusSDR::PerfMonitor::instance().recordAudioFillMs(fillMs);
+            }
+        }
+
         // Drop-oldest catch-up: if we have fallen so far behind that the
         // writer stomped on our read position (w - r exceeds the ring
         // size), the bytes at our current r have been overwritten with
