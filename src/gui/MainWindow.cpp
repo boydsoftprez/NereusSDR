@@ -3256,6 +3256,27 @@ void MainWindow::buildMenuBar()
         minimalAction->setToolTip(QStringLiteral("NYI — Phase X"));
     }
 
+    // 2026-05-26 KG4VCF perf instrumentation: toggle the in-spectrum
+    // perf overlay (paint/gap/fft/overlay timings + audio underruns
+    // + UDP drops + memory pressure).  Persisted via AppSettings
+    // "ShowPerfOverlay" by SpectrumWidget::setShowPerfOverlay; the
+    // menu item just exposes the toggle.
+    {
+        QAction* perfAction = viewMenu->addAction(
+            QStringLiteral("&Performance Overlay"));
+        perfAction->setCheckable(true);
+        perfAction->setChecked(m_spectrumWidget && m_spectrumWidget->showPerfOverlay());
+        perfAction->setToolTip(QStringLiteral(
+            "Show paint/gap/fft/overlay timings + audio underruns + UDP drops"
+            " + memory pressure in a corner of the spectrum panel."
+            "  Useful for diagnosing jitter under system load."));
+        connect(perfAction, &QAction::toggled, this, [this](bool on) {
+            if (m_spectrumWidget) {
+                m_spectrumWidget->setShowPerfOverlay(on);
+            }
+        });
+    }
+
     viewMenu->addSeparator();
 
     {

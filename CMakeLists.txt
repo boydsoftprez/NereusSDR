@@ -515,6 +515,10 @@ set(CORE_SOURCES
     # Multi-homed-host source-IP picker (PGXL/TGXL/broadcaster per-peer
     # route probe + socket source bind)
     src/core/RouteProbe.cpp
+    # Perf instrumentation (toggleable in-spectrum overlay + 1 Hz
+    # memory-pressure poll; used to ground-truth jitter investigations)
+    src/core/PerfMonitor.cpp
+    src/core/MemoryPressure.cpp
 )
 
 # CoreAudioHalBus — macOS-only IAudioBus implementation bridging to the

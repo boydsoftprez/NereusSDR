@@ -618,6 +618,13 @@ public:
     void setShowFps(bool on);
     bool showFps() const { return m_showFps; }
 
+    // 2026-05-26 KG4VCF perf instrumentation: toggle the in-spectrum
+    // perf overlay (paint/gap/fft/overlay timings + audio underruns
+    // + UDP drops + memory pressure).  Persisted via AppSettings
+    // "ShowPerfOverlay"; View -> Performance Overlay wires here.
+    void setShowPerfOverlay(bool on);
+    bool showPerfOverlay() const { return m_showPerfOverlay; }
+
     // B8 Task 21: cursor frequency readout visibility.
     // Default true (matches the previously always-on behavior).
     void setCursorFreqVisible(bool on);
@@ -1917,6 +1924,21 @@ private:
     // 30 Hz spectrum frame, defeating the cache).  See the rationale
     // at SpectrumWidget.cpp around the "perf fix" comment block.
     qint64 m_overlayDynamicDirtyMs{0};
+
+    // 2026-05-26 KG4VCF perf instrumentation: wall-clock timestamp
+    // of the previous renderGpuFrame entry.  Used to feed
+    // PerfMonitor::recordInterFrameGap(now - m_lastPaintWallMs) so the
+    // perf overlay can show if paint events are arriving on time.
+    // A gap > the display period == main thread was blocked.
+    qint64 m_lastPaintWallMs{0};
+    // Toggle for the in-spectrum perf overlay (drawn in a corner
+    // showing paint/gap/fft/overlay-rebuild timings + audio underruns
+    // + memory pressure).  Persisted via AppSettings key
+    // "ShowPerfOverlay"; View menu wires the setter.
+    bool m_showPerfOverlay{false};
+    // 1 Hz timer that polls memory pressure + drives perf overlay
+    // refresh.  Owned by SpectrumWidget via Qt parent ownership.
+    QTimer* m_perfPollTimer{nullptr};
 
     // ---- FFT spectrum GPU resources ----
     QRhiGraphicsPipeline*       m_fftLinePipeline{nullptr};

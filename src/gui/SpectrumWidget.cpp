@@ -135,7 +135,11 @@
 #include <QUrl>
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QTimeZone>
+
+#include "core/MemoryPressure.h"
+#include "core/PerfMonitor.h"
 #include <QMap>
 #include <QMenu>
 #include <QPainter>
@@ -470,6 +474,33 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             rebuildWaterfallViewport();
         }
     });
+
+    // 2026-05-26 KG4VCF perf instrumentation: 1 Hz poll that updates
+    // PerfMonitor's memory-pressure sample and forces the overlay
+    // texture to rebuild so the perf overlay (drawn into m_overlayStatic)
+    // refreshes with the current stats.  Started only when the perf
+    // overlay is toggled on (setShowPerfOverlay).
+    m_perfPollTimer = new QTimer(this);
+    m_perfPollTimer->setInterval(1000);
+    connect(m_perfPollTimer, &QTimer::timeout, this, [this]() {
+        const auto sample = pollMemoryPressure();
+        PerfMonitor::instance().setMemoryStats(
+            sample.compressing, sample.footprintMb);
+        markOverlayDirty();
+        update();
+    });
+    // Restore persisted toggle (default off).  setShowPerfOverlay
+    // handles the timer-start side effect.
+    {
+        const bool persisted =
+            AppSettings::instance()
+                .value(QStringLiteral("ShowPerfOverlay"),
+                       QStringLiteral("False")).toString()
+            == QStringLiteral("True");
+        if (persisted) {
+            setShowPerfOverlay(true);
+        }
+    }
 
     // Phase 3Q-8: child label for the disconnect overlay. Composites in both
     // CPU and GPU paint paths (QRhi early-returns from paintEvent so a QPainter
@@ -2267,6 +2298,28 @@ void SpectrumWidget::setShowFps(bool on)
     m_fpsLastUpdateMs = 0;
     m_fpsDisplayValue = 0.0f;
     scheduleSettingsSave();
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setShowPerfOverlay(bool on)
+{
+    if (m_showPerfOverlay == on) { return; }
+    m_showPerfOverlay = on;
+    // Reset the perf counters when toggled on so stats reflect the
+    // operator's current question, not stale residue from before.
+    if (on) {
+        PerfMonitor::instance().resetAll();
+    }
+    if (m_perfPollTimer) {
+        if (on) {
+            m_perfPollTimer->start();
+        } else {
+            m_perfPollTimer->stop();
+        }
+    }
+    AppSettings::instance().setValue(
+        QStringLiteral("ShowPerfOverlay"),
+        on ? QStringLiteral("True") : QStringLiteral("False"));
     markOverlayDirty();
 }
 
@@ -6656,6 +6709,22 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
 
 void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 {
+    // 2026-05-26 KG4VCF perf instrumentation: time the whole GPU
+    // render path (texture uploads + draw-call submission) so the
+    // in-spectrum overlay can show avg/max paint cost and the gap
+    // between consecutive paints (proxy for main-thread starvation).
+    // ns/1e6 -> ms; perf snapshot averages over the last ~1 s.
+    QElapsedTimer paintTimer;
+    paintTimer.start();
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_lastPaintWallMs > 0) {
+            PerfMonitor::instance().recordInterFrameGap(
+                static_cast<double>(nowMs - m_lastPaintWallMs));
+        }
+        m_lastPaintWallMs = nowMs;
+    }
+
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
@@ -6788,6 +6857,15 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_overlayStaticDirty = true;
         }
 
+        // 2026-05-26 KG4VCF perf instrumentation: time the overlay-
+        // rebuild block (QImage fill + ~16 paint ops + GPU texture
+        // upload) so the perf overlay can show avg/max cost and
+        // confirm whether this is the dominant per-paint expense.
+        QElapsedTimer ovlyTimer;
+        const bool needsOverlayRebuild = m_overlayStaticDirty;
+        if (needsOverlayRebuild) {
+            ovlyTimer.start();
+        }
         if (m_overlayStaticDirty) {
             m_overlayStatic.fill(Qt::transparent);
             QPainter p(&m_overlayStatic);
@@ -6919,12 +6997,94 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 drawCursorInfo(p, specRect);
             }
 
+            // 2026-05-26 KG4VCF perf instrumentation overlay.  Painted
+            // into the static cache so the cost is only paid when the
+            // 1 Hz perf-poll timer invalidates the overlay (see
+            // SpectrumWidget ctor).  Operator toggles via View ->
+            // Performance Overlay; persisted under "ShowPerfOverlay".
+            if (m_showPerfOverlay) {
+                const auto stats =
+                    PerfMonitor::instance().snapshotAndClearDeltas();
+                QStringList lines;
+                lines << QStringLiteral("paint  avg %1 max %2 ms")
+                            .arg(stats.paintMsAvg, 0, 'f', 1)
+                            .arg(stats.paintMsMax, 0, 'f', 1)
+                      << QStringLiteral("gap    avg %1 max %2 ms")
+                            .arg(stats.gapMsAvg, 0, 'f', 1)
+                            .arg(stats.gapMsMax, 0, 'f', 1)
+                      << QStringLiteral("fft    avg %1 max %2 ms")
+                            .arg(stats.fftMsAvg, 0, 'f', 1)
+                            .arg(stats.fftMsMax, 0, 'f', 1)
+                      << QStringLiteral("ovly   avg %1 max %2 ms")
+                            .arg(stats.ovlyMsAvg, 0, 'f', 1)
+                            .arg(stats.ovlyMsMax, 0, 'f', 1)
+                      << QStringLiteral("audio  underruns %1 (+%2/s)")
+                            .arg(stats.audioUnderrunsTotal)
+                            .arg(stats.audioUnderrunsDelta)
+                      << QStringLiteral("udp    drops %1 (+%2/s)")
+                            .arg(stats.udpDropsTotal)
+                            .arg(stats.udpDropsDelta)
+                      << QStringLiteral("mem    %1 MB%2")
+                            .arg(stats.memFootprintMb, 0, 'f', 0)
+                            .arg(stats.memCompressing
+                                 ? QStringLiteral(" COMPRESSING")
+                                 : QString{});
+                QFont pf = p.font();
+                pf.setPixelSize(11);
+                pf.setFamily(QStringLiteral("Menlo"));
+                p.setFont(pf);
+                const QFontMetrics fm(pf);
+                const int lineH = fm.height();
+                int maxW = 0;
+                for (const QString& s : lines) {
+                    maxW = qMax(maxW, fm.horizontalAdvance(s));
+                }
+                const int padX = 8;
+                const int padY = 4;
+                const int boxW = maxW + 2 * padX;
+                const int boxH = lines.size() * lineH + 2 * padY;
+                // Top-left corner of the spectrum region; below freq
+                // scale would clip on small windows.
+                const int boxX = specRect.left() + 8;
+                const int boxY = specRect.top() + 8;
+                // Health-coloured background: red if underruns/drops/
+                // compressing OR paint/gap exceeds 33 ms; amber if any
+                // metric is hot but functional; green when clean.
+                bool red   = stats.audioUnderrunsDelta > 0
+                          || stats.udpDropsDelta > 0
+                          || stats.memCompressing
+                          || stats.paintMsMax > 33.0
+                          || stats.gapMsMax   > 50.0;
+                bool amber = !red && (stats.paintMsMax > 20.0
+                                   || stats.gapMsMax   > 40.0
+                                   || stats.ovlyMsMax  > 15.0);
+                const QColor bg = red   ? QColor(80, 20, 20, 220)
+                                : amber ? QColor(80, 60, 20, 220)
+                                        : QColor(20, 40, 20, 220);
+                const QColor border = red   ? QColor(200, 80, 80)
+                                    : amber ? QColor(200, 160, 60)
+                                            : QColor(80, 200, 80);
+                p.setPen(QPen(border, 1));
+                p.setBrush(bg);
+                p.drawRect(boxX, boxY, boxW, boxH);
+                p.setPen(QColor(220, 220, 220));
+                for (int i = 0; i < lines.size(); ++i) {
+                    p.drawText(boxX + padX,
+                               boxY + padY + fm.ascent() + i * lineH,
+                               lines.at(i));
+                }
+            }
+
             // HIGH SWR / PA safety overlay — painted last so it sits on top
             // of all other chrome. From Thetis display.cs:4183-4201 [v2.10.3.13].
             paintHighSwrOverlay(p);
 
             m_overlayStaticDirty = false;
             m_overlayNeedsUpload = true;
+        }
+        if (needsOverlayRebuild) {
+            PerfMonitor::instance().recordOverlayRebuild(
+                static_cast<double>(ovlyTimer.nsecsElapsed()) / 1e6);
         }
 
         if (m_overlayNeedsUpload) {
@@ -7119,6 +7279,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     }
 
     cb->endPass();
+
+    // 2026-05-26 KG4VCF perf instrumentation: record total render
+    // cost (texture uploads + draw-call submission, both main-thread).
+    // Excludes GPU-side execution because that completes asynchronously
+    // after this function returns -- this is purely the CPU-side
+    // command-build cost the main thread paid.
+    PerfMonitor::instance().recordPaintFrame(
+        static_cast<double>(paintTimer.nsecsElapsed()) / 1e6);
 }
 
 void SpectrumWidget::render(QRhiCommandBuffer* cb)

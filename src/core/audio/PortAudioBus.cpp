@@ -5,6 +5,7 @@
 // =================================================================
 
 #include "PortAudioBus.h"
+#include "../PerfMonitor.h"
 
 #include <portaudio.h>
 
@@ -433,6 +434,9 @@ int PortAudioBus::paCallback(const void* in, void* out,
     if (flags & paOutputUnderflow) {
         self->m_paOutputUnderflowEvents.fetch_add(
             1, std::memory_order_relaxed);
+        // 2026-05-26 KG4VCF: mirror to PerfMonitor so the in-spectrum
+        // perf overlay can show "audio underruns: N in last 1 s".
+        NereusSDR::PerfMonitor::instance().incAudioUnderrun();
     }
     if (flags & paOutputOverflow) {
         self->m_paOutputOverflowEvents.fetch_add(

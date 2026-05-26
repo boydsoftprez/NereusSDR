@@ -60,6 +60,9 @@
 
 #include "FFTEngine.h"
 #include "LogCategories.h"
+#include "PerfMonitor.h"
+
+#include <QElapsedTimer>
 
 #include <cmath>
 #include <cstring>
@@ -504,6 +507,13 @@ void FFTEngine::processFrame()
         return;  // buffer stays full; next feedIQ call retries
     }
 
+    // 2026-05-26 KG4VCF perf instrumentation: time the FFT compute
+    // path (window apply -> fftwf_execute -> dBm conversion ->
+    // post-FFT detector/avenger) so the in-spectrum perf overlay can
+    // report avg/max FFT cost per frame.
+    QElapsedTimer perfTimer;
+    perfTimer.start();
+
     // Window-recompute pending?  Set by setWindowFunction or setKaiserPi
     // since the last FFT frame.  Without this check, window changes via
     // the combo are silently ignored until the FFT size also changes.
@@ -599,6 +609,13 @@ void FFTEngine::processFrame()
     } else {
         m_iqWritePos = 0;
     }
+
+    // 2026-05-26 KG4VCF: record FFT compute time after all per-frame
+    // post-processing (detector / avenger / overlap-shift).  ns to ms
+    // via nsecsElapsed() for sub-millisecond precision; the perf
+    // overlay rounds for display.
+    NereusSDR::PerfMonitor::instance().recordFftCompute(
+        static_cast<double>(perfTimer.nsecsElapsed()) / 1e6);
 #endif
 }
 
