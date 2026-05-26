@@ -2698,29 +2698,30 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // VFO marker, spots, waterfall chrome, peak hold trace, peak blobs,
     // NF text/line — ~16 paint ops + a full window-size QImage fill
     // and GPU texture upload) to rebuild on EVERY spectrum frame
-    // whenever any of three features were enabled.
+    // whenever any of three features were enabled.  Rate-limited to
+    // 10 Hz to keep CPU sane, which made blob decay / peak-hold drop
+    // look chunky.
     //
-    // At 30 fps with default DisplayPeakBlobsEnabled=True /
-    // DisplayShowNoiseFloor=True that was:
-    //   * 30 × ~16 paint ops/sec = ~480 paint ops/sec for the overlay
-    //   * 30 × full window QImage fill (memset transparent)
-    //   * 30 × full overlay texture upload to GPU
-    // and defeated the m_overlayStaticDirty cache entirely — instead
-    // of "rebuild on state change" it became "rebuild every frame".
-    // Profile showed the overlay rebuild dominating main-thread CPU
-    // and saturating the 6-core raster thread pool at ~120% total.
-    //
-    // Rate-limit to ~10 Hz instead of 30 Hz.  Active peak hold trace,
-    // peak blobs and noise floor all have visible motion much slower
-    // than 30 Hz; 10 Hz overlay refresh is indistinguishable to the
-    // operator's eye but cuts the overlay rebuild work by ~67%.
-    // Other dirty-triggering setters (bandwidth, refLevel, etc.) still
-    // mark dirty immediately, so user interaction stays snappy.
+    // 2026-05-26 KG4VCF revisit: bumped the cap from 10 Hz to ~30 Hz
+    // (one tick per display frame at default fps) so blob decay,
+    // peak-hold drop, and noise-floor line motion animate at display
+    // rate instead of stepped 100 ms snapshots.  The previous "120%
+    // across 6 cores" measurement that motivated the 10 Hz cap was
+    // taken before the latency-critical-thread QoS bump landed
+    // (ConnectionThread / FFTEngine / WaterfallTickerThread now at
+    // USER_INTERACTIVE); raster work has more scheduling headroom.
+    // If a future bench finds the overlay rebuild still saturating
+    // under heavy load, the next step is a true static/dynamic layer
+    // split (two QRhi textures: static chrome cached on state change,
+    // dynamic overlays rebuilt every frame at a smaller pixmap size).
 #ifdef NEREUS_GPU_SPECTRUM
     if (m_activePeakHold.enabled() || m_peakBlobs.enabled()
         || m_showNoiseFloor) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        if (nowMs - m_overlayDynamicDirtyMs >= 100) {  // 10 Hz cap
+        // 33 ms ≈ 30 Hz at the default DisplaySpectrumFps.  When fps
+        // drops below 30 we naturally fall back to the display rate
+        // because updateSpectrumLinear only fires on new FFT frames.
+        if (nowMs - m_overlayDynamicDirtyMs >= 33) {
             m_overlayStaticDirty = true;
             m_overlayDynamicDirtyMs = nowMs;
         }
