@@ -12,6 +12,7 @@
 #include <mach/mach.h>
 #include <mach/mach_host.h>
 #include <mach/host_info.h>
+#include <sys/sysctl.h>
 #endif
 
 #ifdef Q_OS_LINUX
@@ -45,37 +46,54 @@ MemoryPressureSample pollMemoryPressure()
                               / (1024.0 * 1024.0);
     }
 
-    // Host-level compression activity via HOST_VM_INFO64.  The
-    // "compressions" + "decompressions" counters monotonically tick
-    // whenever the kernel pages something through the compressor.  A
-    // non-zero delta over our sample window means the OS is under
-    // memory pressure and is paging *something* somewhere on the
-    // system (not necessarily our process).  Even other processes
-    // paging hurts us because it contends for memory bandwidth.
-    static natural_t s_prevCompressions   = 0;
-    static natural_t s_prevDecompressions = 0;
-    static bool      s_primed             = false;
-
-    vm_statistics64_data_t vmStats;
-    mach_msg_type_number_t vmCount = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(),
-                          HOST_VM_INFO64,
-                          reinterpret_cast<host_info64_t>(&vmStats),
-                          &vmCount) == KERN_SUCCESS) {
-        if (!s_primed) {
-            s_primed = true;
-            s_prevCompressions   = vmStats.compressions;
-            s_prevDecompressions = vmStats.decompressions;
-            // First call has no baseline; report not-compressing.
-            sample.compressing = false;
-        } else {
-            const natural_t dCompress =
-                vmStats.compressions   - s_prevCompressions;
-            const natural_t dDecompress =
-                vmStats.decompressions - s_prevDecompressions;
-            sample.compressing = (dCompress + dDecompress) > 0;
-            s_prevCompressions   = vmStats.compressions;
-            s_prevDecompressions = vmStats.decompressions;
+    // 2026-05-26 KG4VCF: Primary signal is the OS-classified memory
+    // pressure level (kern.memorystatus_vm_pressure_level sysctl).
+    // Values per <kern_memorystatus.h>:
+    //   1 = NORMAL  (steady-state, no app should change behaviour)
+    //   2 = WARN    (kernel signalling apps to free memory; back off
+    //                optional work here)
+    //   4 = CRITICAL (kernel killing low-priority processes; user
+    //                is in active pain)
+    //
+    // Earlier revisions of this function used a delta-of-
+    // (compressions + decompressions) heuristic that flagged
+    // "compressing" on any non-zero activity in the last sample
+    // window.  Bench finding 2026-05-26: that heuristic fires
+    // continuously even at idle because modern macOS treats
+    // compressed memory as a *tier*, not an emergency response.
+    // The compressor runs constantly to manage the memory hierarchy
+    // regardless of whether the system has any actual pressure.
+    // Using the kernel's own classification gives a much cleaner
+    // signal: only flag when the OS itself is signalling distress.
+    int pressureLevel = 1;  // normal default if sysctl unavailable
+    size_t plSize = sizeof(pressureLevel);
+    if (sysctlbyname("kern.memorystatus_vm_pressure_level",
+                     &pressureLevel, &plSize, nullptr, 0) == 0) {
+        sample.compressing = (pressureLevel >= 2);
+    } else {
+        // Sysctl missing (e.g. some sandbox configurations).  Fall
+        // back to a conservative compression-delta heuristic with a
+        // high threshold so background tiering doesn't trip it.
+        static natural_t s_prevCompressions = 0;
+        static bool      s_primed           = false;
+        vm_statistics64_data_t vmStats;
+        mach_msg_type_number_t vmCount = HOST_VM_INFO64_COUNT;
+        if (host_statistics64(mach_host_self(),
+                              HOST_VM_INFO64,
+                              reinterpret_cast<host_info64_t>(&vmStats),
+                              &vmCount) == KERN_SUCCESS) {
+            if (!s_primed) {
+                s_primed = true;
+                s_prevCompressions = vmStats.compressions;
+                sample.compressing = false;
+            } else {
+                const natural_t dCompress =
+                    vmStats.compressions - s_prevCompressions;
+                // > 500 compressions/sec = real pressure, not idle
+                // tiering (idle macOS typically shows < 50/sec).
+                sample.compressing = dCompress > 500;
+                s_prevCompressions = vmStats.compressions;
+            }
         }
     }
 

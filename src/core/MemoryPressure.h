@@ -5,12 +5,18 @@
 //
 // Cross-platform memory-pressure poll.  Returns a snapshot of:
 //
-//   * `compressing` -- true when the OS appears to be compressing or
-//     paging memory (macOS: any compressions/decompressions in the
-//     last sample window; Linux: swap-out delta > 0; Windows: working
-//     set trimmed by the kernel).  When this is true, any large
-//     allocation or memory touch is variable-latency and contributes
-//     to jitter independently of CPU scheduling.
+//   * `compressing` -- true when the OS is signalling real memory
+//     distress, NOT just background tiering.  On macOS this reads
+//     kern.memorystatus_vm_pressure_level (1=Normal, 2=Warning,
+//     4=Critical) and only flags when >= 2.  An earlier revision
+//     used the compression-counter delta which fired constantly
+//     because modern macOS treats compressed memory as a tier
+//     and runs the compressor continuously regardless of system
+//     pressure -- the kernel's own classification is the right
+//     signal.  Linux: swap-out delta > 0.  Windows: working set
+//     trimmed by the kernel.  When this is true, large allocations
+//     or memory touches become variable-latency and contribute to
+//     jitter independently of CPU scheduling.
 //
 //   * `footprintMb` -- current process RSS / phys_footprint in MiB.
 //     Less actionable but useful for spotting runaway growth.
