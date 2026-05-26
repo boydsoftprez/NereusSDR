@@ -1917,6 +1917,29 @@ private:
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
+    // 2026-05-26 KG4VCF dual-layer overlay split.
+    //
+    // The static texture above carries chrome (grid, scales, bandplan,
+    // VFO marker, spot markers, freq/time scale, waterfall chrome,
+    // perf overlay, etc.) that only changes on operator interaction.
+    // The dynamic texture below carries the per-frame features --
+    // peak hold trace, peak blobs, noise-floor line + text -- so
+    // those can animate at display rate without forcing a full chrome
+    // repaint each tick.
+    //
+    // Both textures alpha-composite onto the spectrum trace.  Same
+    // pipeline + sampler + UBO + VBO as the static layer -- only the
+    // SRB and texture differ.  The dynamic image is the SAME size as
+    // the static one (full window) for code simplicity; in practice
+    // it stays mostly transparent except for the spectrum-area
+    // overlays, so the GPU sampler reads through to spectrum
+    // un-tinted for the rest of the widget.
+    QRhiShaderResourceBindings* m_ovDynSrb{nullptr};
+    QRhiTexture*                m_ovDynGpuTex{nullptr};
+    QImage m_overlayDynamic;
+    bool   m_overlayDynamicDirty{true};
+    bool   m_overlayDynamicNeedsUpload{true};
+
     // 2026-05-25 perf fix: timestamp of the last per-frame "dynamic
     // overlay" force-dirty in updateSpectrumLinear.  Rate-limits the
     // overlay rebuild for Active Peak Hold / Peak Blobs / Noise Floor

@@ -2793,8 +2793,17 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     if (m_activePeakHold.enabled() || m_peakBlobs.enabled()
         || m_showNoiseFloor) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        if (nowMs - m_overlayDynamicDirtyMs >= 100) {  // 10 Hz cap
-            m_overlayStaticDirty = true;
+        // 2026-05-26 KG4VCF dual-layer overlay split: peak-hold trace
+        // + peak blobs + noise-floor line/text live in their own GPU
+        // texture (m_overlayDynamic).  We only mark *that* layer
+        // dirty here -- chrome stays cached in m_overlayStatic and is
+        // invalidated separately by setters that actually change
+        // chrome state (band change, zoom, theme, etc.).  Rate-limit
+        // raised to 30 Hz because the dynamic layer is dramatically
+        // cheaper than the previous full-overlay rebuild (no chrome
+        // paint ops, smaller GPU upload bandwidth).
+        if (nowMs - m_overlayDynamicDirtyMs >= 33) {  // 30 Hz cap
+            m_overlayDynamicDirty = true;
             m_overlayDynamicDirtyMs = nowMs;
         }
     }
@@ -6660,6 +6669,26 @@ void SpectrumWidget::initOverlayPipeline()
     lockMemory(m_overlayStatic.constBits(),
                m_overlayStatic.sizeInBytes(),
                "SpectrumWidget::m_overlayStatic (init)");
+
+    // 2026-05-26 KG4VCF dual-layer split: dynamic overlay texture.
+    // Same dimensions, format, sampler, pipeline as the static
+    // layer -- only the texture handle + SRB binding differ.  This
+    // is the layer that carries peak-hold trace / peak blobs /
+    // noise-floor overlays.  Chrome stays in the static layer.
+    m_ovDynGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
+    m_ovDynGpuTex->create();
+    m_ovDynSrb = r->newShaderResourceBindings();
+    m_ovDynSrb->setBindings({
+        QRhiShaderResourceBinding::sampledTexture(1,
+            QRhiShaderResourceBinding::FragmentStage,
+            m_ovDynGpuTex, m_ovSampler),
+    });
+    m_ovDynSrb->create();
+    m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
+    m_overlayDynamic.setDevicePixelRatio(dpr);
+    lockMemory(m_overlayDynamic.constBits(),
+               m_overlayDynamic.sizeInBytes(),
+               "SpectrumWidget::m_overlayDynamic (init)");
 }
 
 void SpectrumWidget::initSpectrumPipeline()
@@ -6985,22 +7014,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // VFO/filter changes via setVfoFrequency/setFilterOffset.
             drawWaterfallChrome(p, wfRect);
 
-            // Per-frame dynamic overlays — Active Peak Hold trace + Peak
-            // Blobs (Tasks 2.5/2.6) + Noise-floor line/text. The CPU
-            // paintEvent path calls these from drawSpectrum() every frame;
-            // the GPU path needs them baked into the overlay texture.
-            // updateSpectrumLinear() forces m_overlayStaticDirty=true when
-            // any of them is enabled so this block runs every frame.
-            if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
-                !m_renderedPixels.isEmpty()) {
-                if (m_activePeakHold.enabled() && m_activePeakHold.size() > 0) {
-                    paintActivePeakHoldTrace(p, specRect);
-                }
-                if (m_peakBlobs.enabled() && !m_peakBlobs.blobs().isEmpty()) {
-                    paintPeakBlobs(p, specRect);
-                }
-            }
-            paintNoiseFloorOverlay(p, specRect);
+            // 2026-05-26 KG4VCF dual-layer overlay split: peak-hold
+            // trace + peak blobs + noise floor are NO LONGER painted
+            // here.  They live in m_overlayDynamic which rebuilds at
+            // 30 Hz (cheap) -- this static texture only rebuilds on
+            // state change, so the expensive chrome work (grid,
+            // scales, bandplan, freq/time scale, VFO marker, spot
+            // markers, waterfall chrome) amortises to ~zero per
+            // frame.
 
             // Bin width corner readout — Thetis lblDisplayBinWidth
             // (setup.cs:7061 [v2.10.3.13]).  Mirrors the CPU drawSpectrum
@@ -7183,6 +7204,72 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 QRhiTextureSubresourceUploadDescription(m_overlayStatic)));
             m_overlayNeedsUpload = false;
         }
+
+        // ---- Dynamic overlay (peak-hold trace + peak blobs + NF) ----
+        // 2026-05-26 KG4VCF dual-layer split: rebuild ONLY this small
+        // set of per-frame features.  Chrome stays cached in
+        // m_overlayStatic.  No chrome paint ops here = cheap rebuild
+        // even under heavy system load.
+        //
+        // Sizing follows the static layer (full window) so the GPU
+        // composite can use the same quad geometry + UBO.  Bytes
+        // touched per rebuild are dominated by the QImage::fill -- a
+        // memset over ~1.6 MB pinned memory, which under our mlock
+        // pass is deterministic-latency regardless of system memory
+        // pressure.  The per-frame paint ops themselves (3 ellipses
+        // + 3 small text labels + 1 polyline + 1 dashed line) are
+        // < 1 ms even under contention.
+        if (m_overlayDynamic.size() != QSize(pw, ph)) {
+            if (!m_overlayDynamic.isNull()) {
+                unlockMemory(m_overlayDynamic.constBits(),
+                             m_overlayDynamic.sizeInBytes());
+            }
+            m_overlayDynamic = QImage(pw, ph, QImage::Format_RGBA8888_Premultiplied);
+            m_overlayDynamic.setDevicePixelRatio(dpr);
+            lockMemory(m_overlayDynamic.constBits(),
+                       m_overlayDynamic.sizeInBytes(),
+                       "SpectrumWidget::m_overlayDynamic (resize)");
+            m_ovDynGpuTex->setPixelSize(QSize(pw, ph));
+            m_ovDynGpuTex->create();
+            m_ovDynSrb->setBindings({
+                QRhiShaderResourceBinding::sampledTexture(1,
+                    QRhiShaderResourceBinding::FragmentStage,
+                    m_ovDynGpuTex, m_ovSampler),
+            });
+            m_ovDynSrb->create();
+            m_overlayDynamicDirty = true;
+        }
+
+        if (m_overlayDynamicDirty) {
+            QElapsedTimer dynTimer;
+            dynTimer.start();
+
+            m_overlayDynamic.fill(Qt::transparent);
+            QPainter pd(&m_overlayDynamic);
+            pd.setRenderHint(QPainter::Antialiasing, false);
+
+            if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
+                !m_renderedPixels.isEmpty()) {
+                if (m_activePeakHold.enabled() && m_activePeakHold.size() > 0) {
+                    paintActivePeakHoldTrace(pd, specRect);
+                }
+                if (m_peakBlobs.enabled() && !m_peakBlobs.blobs().isEmpty()) {
+                    paintPeakBlobs(pd, specRect);
+                }
+            }
+            paintNoiseFloorOverlay(pd, specRect);
+
+            // Reuse PerfMonitor's ovly metric for the *dynamic* rebuild
+            // cost since that's now the per-frame variable; chrome
+            // rebuilds are rare and their cost amortises out of the
+            // 1 s perf window.
+            PerfMonitor::instance().recordOverlayRebuild(
+                static_cast<double>(dynTimer.nsecsElapsed()) / 1e6);
+
+            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0,
+                QRhiTextureSubresourceUploadDescription(m_overlayDynamic)));
+            m_overlayDynamicDirty = false;
+        }
     }
 
     // ---- FFT spectrum vertices ----
@@ -7357,16 +7444,28 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         cb->draw(m_visibleBinCount);
     }
 
-    // Draw overlay
+    // Draw overlay -- static chrome layer first, then dynamic
+    // overlays on top.  Same pipeline + VBO; only the SRB / texture
+    // binding differs.  Order matters: chrome includes the
+    // freq/dBm/time scales which need to read clean from the
+    // spectrum; dynamic overlays (peak blobs / peak hold / NF) sit
+    // on top of chrome.
     if (m_ovPipeline) {
         cb->setGraphicsPipeline(m_ovPipeline);
-        cb->setShaderResources(m_ovSrb);
         cb->setViewport({0, 0,
             static_cast<float>(outputSize.width()),
             static_cast<float>(outputSize.height())});
         const QRhiCommandBuffer::VertexInput vbuf(m_ovVbo, 0);
         cb->setVertexInput(0, 1, &vbuf);
+        // Chrome layer.
+        cb->setShaderResources(m_ovSrb);
         cb->draw(4);
+        // Dynamic layer (peak hold / peak blobs / noise floor).
+        // 2026-05-26 KG4VCF dual-layer overlay split.
+        if (m_ovDynSrb) {
+            cb->setShaderResources(m_ovDynSrb);
+            cb->draw(4);
+        }
     }
 
     cb->endPass();
@@ -7400,6 +7499,16 @@ void SpectrumWidget::releaseResources()
     delete m_ovVbo;           m_ovVbo = nullptr;
     delete m_ovGpuTex;        m_ovGpuTex = nullptr;
     delete m_ovSampler;       m_ovSampler = nullptr;
+    // 2026-05-26 KG4VCF dual-layer overlay split: tear down the
+    // dynamic-overlay resources.  Pipeline + VBO + sampler are
+    // shared with the static layer; only SRB + texture are
+    // separate.
+    delete m_ovDynSrb;        m_ovDynSrb = nullptr;
+    delete m_ovDynGpuTex;     m_ovDynGpuTex = nullptr;
+    if (!m_overlayDynamic.isNull()) {
+        unlockMemory(m_overlayDynamic.constBits(),
+                     m_overlayDynamic.sizeInBytes());
+    }
 
     delete m_fftLinePipeline;  m_fftLinePipeline = nullptr;
     delete m_fftFillPipeline;  m_fftFillPipeline = nullptr;
