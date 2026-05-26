@@ -4271,24 +4271,52 @@ void MainWindow::buildStatusBar()
         if (auto* conn = m_radioModel->connection()) {
             // conn is a new object on each reconnect — no deduplication needed.
             // Qt::UniqueConnection is not supported for lambda connects anyway.
-            connect(conn, &RadioConnection::userAdc0Changed, this,
-                    [this, refreshPaStackVisibility](float v) {
-                // Task 3.6: ANAN-8000DLE user preference gate.
-                // For ANAN-8000D radios, consult the "Show volts/amps in title
-                // bar" AppSettings key (default true). For other MKII-class
-                // boards (7000DLE, AnvelinaPro3) the gate is always open —
-                // those boards don't have the per-SKU preference checkbox.
-                const bool is8000D = (m_radioModel &&
-                    m_radioModel->hardwareProfile().model == HPSDRModel::ANAN8000D);
-                const bool showVolts = !is8000D ||
-                    AppSettings::instance().value(
-                        QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),
-                        QStringLiteral("True")).toString() == QStringLiteral("True");
-                if (!showVolts) { return; }
-                m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
-                m_paVoltLabel->setVisible(true);
-                refreshPaStackVisibility();
-            });
+            //
+            // 2026-05-25 KG4VCF G2E bench finding: ANAN-G2E (HermesC10)
+            // firmware leaves user_adc0 (AIN3 / status bytes 53-54) dark.
+            // Bench reading was 0.1 V against an actual 13.4 V supply with
+            // the regular convertMkiiPaVolts path.  Source-first audit of
+            // Thetis confirmed that Thetis applies the same single
+            // convertToVolts(user_adc0) formula to G2E as to G2 with no
+            // per-board scaling -- Thetis would presumably show the same
+            // wrong reading.  Our fix on the NereusSDR side: route the
+            // already-emitted supply_volts (AIN6 / status bytes 45-46)
+            // to the tile for G2E and rename "PA" to "PSU" so the tile
+            // reflects what is actually being measured (input supply
+            // rail, not PA drain).  On all other MKII-class boards the
+            // existing user_adc0 path -- which IS the PA drain on those
+            // SKUs -- continues unchanged.
+            const bool isG2E = (m_radioModel &&
+                m_radioModel->hardwareProfile().model == HPSDRModel::ANAN_G2E);
+            if (isG2E) {
+                m_paVoltLabel->setLabel(QStringLiteral("PSU"));
+                connect(conn, &RadioConnection::supplyVoltsChanged, this,
+                        [this, refreshPaStackVisibility](float v) {
+                    m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+                    m_paVoltLabel->setVisible(true);
+                    refreshPaStackVisibility();
+                });
+            } else {
+                m_paVoltLabel->setLabel(QStringLiteral("PA"));
+                connect(conn, &RadioConnection::userAdc0Changed, this,
+                        [this, refreshPaStackVisibility](float v) {
+                    // Task 3.6: ANAN-8000DLE user preference gate.
+                    // For ANAN-8000D radios, consult the "Show volts/amps in title
+                    // bar" AppSettings key (default true). For other MKII-class
+                    // boards (7000DLE, AnvelinaPro3) the gate is always open —
+                    // those boards don't have the per-SKU preference checkbox.
+                    const bool is8000D = (m_radioModel &&
+                        m_radioModel->hardwareProfile().model == HPSDRModel::ANAN8000D);
+                    const bool showVolts = !is8000D ||
+                        AppSettings::instance().value(
+                            QStringLiteral("HardwareAnan8000DleShowVoltsAmps"),
+                            QStringLiteral("True")).toString() == QStringLiteral("True");
+                    if (!showVolts) { return; }
+                    m_paVoltLabel->setValue(QString::asprintf("%.1fV", static_cast<double>(v)));
+                    m_paVoltLabel->setVisible(true);
+                    refreshPaStackVisibility();
+                });
+            }
         }
     });
 
