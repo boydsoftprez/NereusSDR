@@ -2702,26 +2702,19 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     // 10 Hz to keep CPU sane, which made blob decay / peak-hold drop
     // look chunky.
     //
-    // 2026-05-26 KG4VCF revisit: bumped the cap from 10 Hz to ~30 Hz
-    // (one tick per display frame at default fps) so blob decay,
-    // peak-hold drop, and noise-floor line motion animate at display
-    // rate instead of stepped 100 ms snapshots.  The previous "120%
-    // across 6 cores" measurement that motivated the 10 Hz cap was
-    // taken before the latency-critical-thread QoS bump landed
-    // (ConnectionThread / FFTEngine / WaterfallTickerThread now at
-    // USER_INTERACTIVE); raster work has more scheduling headroom.
-    // If a future bench finds the overlay rebuild still saturating
-    // under heavy load, the next step is a true static/dynamic layer
-    // split (two QRhi textures: static chrome cached on state change,
-    // dynamic overlays rebuilt every frame at a smaller pixmap size).
+    // 2026-05-26 KG4VCF first attempt: bumped 10 Hz -> 30 Hz to fix
+    // chunky blob decay.  Bench: under heavy build load (parallel
+    // ninja) the system became unusable -- the 30 Hz full-overlay
+    // rebuild saturated the raster pool exactly as the earlier
+    // measurement warned.  Reverted to 10 Hz here; the next commit
+    // does the proper fix (static/dynamic layer split: chrome cached
+    // on state change, dynamic overlays in a smaller spectrum-area
+    // texture rebuilt every frame).
 #ifdef NEREUS_GPU_SPECTRUM
     if (m_activePeakHold.enabled() || m_peakBlobs.enabled()
         || m_showNoiseFloor) {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        // 33 ms ≈ 30 Hz at the default DisplaySpectrumFps.  When fps
-        // drops below 30 we naturally fall back to the display rate
-        // because updateSpectrumLinear only fires on new FFT frames.
-        if (nowMs - m_overlayDynamicDirtyMs >= 33) {
+        if (nowMs - m_overlayDynamicDirtyMs >= 100) {  // 10 Hz cap
             m_overlayStaticDirty = true;
             m_overlayDynamicDirtyMs = nowMs;
         }
