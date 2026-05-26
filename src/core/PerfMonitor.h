@@ -179,10 +179,19 @@ private:
     Ring<double> m_ovlyRing;
     Ring<double> m_audioFillRing;
 
-    std::atomic<uint64_t> m_audioUnderrunsTotal{0};
-    std::atomic<uint64_t> m_audioUnderrunsDelta{0};
-    std::atomic<uint64_t> m_udpDropsTotal{0};
-    std::atomic<uint64_t> m_udpDropsDelta{0};
+    // 2026-05-26 KG4VCF perf polish: cross-thread atomic counters get
+    // 64-byte alignment so adjacent counters never share a cache line.
+    // Without padding, the audio thread incrementing
+    // m_audioUnderrunsTotal could cause a coherence stall on the main
+    // thread reading m_udpDropsTotal in the same cache line (false
+    // sharing).  64 bytes is the de-facto cache line size on x86; ARM
+    // Apple Silicon uses 128 but 64 is sufficient to ensure each atomic
+    // lives in its own 64-byte slot, which avoids the worst case on
+    // either architecture.
+    alignas(64) std::atomic<uint64_t> m_audioUnderrunsTotal{0};
+    alignas(64) std::atomic<uint64_t> m_audioUnderrunsDelta{0};
+    alignas(64) std::atomic<uint64_t> m_udpDropsTotal{0};
+    alignas(64) std::atomic<uint64_t> m_udpDropsDelta{0};
 
     // Memory pressure; only the main-thread poller writes, snapshot
     // reads.  Plain double + bool under a mutex.

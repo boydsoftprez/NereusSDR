@@ -153,6 +153,8 @@ mw0lge@grange-lane.co.uk
 #include <QWidget>
 #include <QVector>
 #include <QImage>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QColor>
 #include <QPoint>
 #include <QMap>
@@ -1503,6 +1505,30 @@ private:
     QColor m_peakBlobColor{0xFF, 0x45, 0x00, 0xFF};
     // From Thetis display.cs:8435 [v2.10.3.13] m_bDX2_PeakBlobText = Color.Chartreuse
     QColor m_peakBlobTextColor{0x7F, 0xFF, 0x00, 0xFF};
+    // 2026-05-26 KG4VCF perf polish: pre-rendered blob marker pixmap.
+    // paintPeakBlobs blits this instead of calling QPainter::drawEllipse
+    // each blob; drawEllipse went through Qt's parallel raster span
+    // path and the main thread blocked in QLatch::waitInternal waiting
+    // for QThreadPool workers (starved under build load).  Pixmap blit
+    // is a memcpy-style operation that skips the raster engine.
+    // Rebuilt when m_peakBlobColor changes.
+    QPixmap m_blobMarkerPixmap;
+    void rebuildBlobMarkerPixmap();
+
+    // 2026-05-26 KG4VCF perf polish: pre-allocated scratch vectors
+    // for the CPU spectrum / peak-hold paint paths.  Previously
+    // drawSpectrum() allocated `QVector<QPointF> points(n)` (~16 KB)
+    // and `QVector<QPointF> peakPoints(n)` (~16 KB) per paint.  GPU
+    // path is hot on macOS so these don't run there, but on CPU
+    // fallback they are the dominant per-paint allocation source.
+    // Hoisted to members; drawSpectrum resizes (no-op when same n).
+    QVector<QPointF> m_specPointsScratch;
+    QVector<QPointF> m_specPeakPointsScratch;
+    // QPainterPath is also re-constructed per paint in the fill +
+    // peak-hold blocks; caching as a member + clear()-and-reuse
+    // amortises its internal QVector allocation.
+    QPainterPath m_specFillPathScratch;
+    QPainterPath m_specPeakPathScratch;
 
     float       m_lineWidth{1.5f};
     bool        m_gradientEnabled{false};

@@ -35,6 +35,49 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # --------------------------------------------------------------------------
+# Performance build flags (2026-05-26 KG4VCF jitter investigation)
+# --------------------------------------------------------------------------
+# Bench finding: spectrum + DSP hot paths benefit measurably from -O3 over
+# the default -O2 (RelWithDebInfo).  Apple Silicon also benefits from LTO
+# (link-time optimization) because cross-TU inlining unlocks NEON
+# vectorisation that O3-per-TU misses.  Both opt-in via CMake options so
+# operators or CI can disable if a specific build hits an optimizer bug.
+#
+# These apply only to Release / RelWithDebInfo; Debug builds stay
+# unoptimised so single-step debugging still works.
+option(NEREUSSDR_AGGRESSIVE_OPT "Use -O3 (instead of -O2) for release builds" ON)
+option(NEREUSSDR_ENABLE_LTO     "Enable link-time optimization for release builds" ON)
+
+if(NEREUSSDR_AGGRESSIVE_OPT)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        # Replace any pre-existing -O2 with -O3 so RelWithDebInfo gets
+        # the upgrade (CMake's default for RelWithDebInfo on most
+        # platforms is "-O2 -g").
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_CXX_FLAGS_RELWITHDEBINFO
+               "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_C_FLAGS_RELWITHDEBINFO
+               "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_CXX_FLAGS_RELEASE
+               "${CMAKE_CXX_FLAGS_RELEASE}")
+        string(REGEX REPLACE "-O[0-9s]" "-O3" CMAKE_C_FLAGS_RELEASE
+               "${CMAKE_C_FLAGS_RELEASE}")
+        message(STATUS "NereusSDR: -O3 enabled for ${CMAKE_BUILD_TYPE}")
+    endif()
+endif()
+
+if(NEREUSSDR_ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _lto_ok OUTPUT _lto_err)
+    if(_lto_ok)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+        message(STATUS "NereusSDR: link-time optimization enabled")
+    else()
+        message(WARNING "NereusSDR: LTO requested but unsupported -- ${_lto_err}")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
 # Qt6 components
 # --------------------------------------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS

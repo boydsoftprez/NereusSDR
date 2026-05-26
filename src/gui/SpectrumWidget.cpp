@@ -352,6 +352,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     setApi(QRhiWidget::Api::Direct3D11);
     setAttribute(Qt::WA_NativeWindow);
 #endif
+    // 2026-05-26 KG4VCF perf polish: SpectrumWidget paints every pixel
+    // of its rect every frame (GPU clears + draws spectrum + waterfall
+    // + overlay + dynamic overlay; CPU fallback also paints full area).
+    // Tell Qt to skip its default pre-paint alpha-channel clear --
+    // small per-paint win, no visual difference.
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    setAttribute(Qt::WA_NoSystemBackground);
 #else
     // CPU fallback: dark background
     setAutoFillBackground(true);
@@ -1585,7 +1592,41 @@ void SpectrumWidget::setPeakBlobsFallDbPerSec(double r)
 void SpectrumWidget::setPeakBlobColor(const QColor& c)
 {
     m_peakBlobColor = c;
+    rebuildBlobMarkerPixmap();
     update();
+}
+
+void SpectrumWidget::rebuildBlobMarkerPixmap()
+{
+    // 2026-05-26 KG4VCF perf polish: bake the blob marker (a small
+    // unfilled ellipse, 1 px stroke, radius 3 in logical pixels)
+    // into a QPixmap once.  paintPeakBlobs drawPixmap()'s this at
+    // each blob position instead of calling QPainter::drawEllipse.
+    //
+    // Why: drawEllipse routes through QRasterPaintEnginePrivate::
+    // rasterize -> blend_color_generic -> QLatch::waitInternal, which
+    // dispatches span-blend work to QThreadPool::globalInstance()
+    // and waits.  Under build-load contention those pool workers
+    // (DEFAULT QoS) get starved and the main thread sits in
+    // __ulock_wait2.  Profile showed 88 samples / 8 s of main-thread
+    // time stuck there from just our blob ellipses.  A pixmap blit
+    // is a tight memcpy + alpha-blend that doesn't enter the parallel
+    // raster path at all.
+    //
+    // Size: 8x8 logical pixels (radius 3 + 1 px stroke margin + 1 px
+    // safety).  Drawn with the current device pixel ratio so we get
+    // crisp rendering on Retina without aliasing.
+    const qreal dpr = devicePixelRatioF();
+    const int side = 8;  // logical pixels
+    m_blobMarkerPixmap = QPixmap(side * dpr, side * dpr);
+    m_blobMarkerPixmap.setDevicePixelRatio(dpr);
+    m_blobMarkerPixmap.fill(Qt::transparent);
+    QPainter pm(&m_blobMarkerPixmap);
+    pm.setRenderHint(QPainter::Antialiasing, true);
+    pm.setPen(QPen(m_peakBlobColor, 1));
+    pm.setBrush(Qt::NoBrush);
+    // Center at (side/2, side/2), radius 3.
+    pm.drawEllipse(QPointF(side / 2.0, side / 2.0), 3.0, 3.0);
 }
 
 void SpectrumWidget::setPeakBlobTextColor(const QColor& c)
@@ -3174,7 +3215,13 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
                       / static_cast<float>(n - 1);
 
     // Build polyline across display pixels.
-    QVector<QPointF> points(n);
+    // 2026-05-26 KG4VCF perf polish: use member scratch vectors
+    // (m_specPointsScratch / m_specPeakPointsScratch / m_specFillPathScratch
+    // / m_specPeakPathScratch) so the per-paint allocations don't
+    // churn the heap.  QVector::resize is a no-op when n hasn't
+    // changed; QPainterPath::clear keeps the internal element buffer.
+    QVector<QPointF>& points = m_specPointsScratch;
+    points.resize(n);
     for (int j = 0; j < n; ++j) {
         const float x = specRect.left() + static_cast<float>(j) * xStep;
         const float y = dbmToYf(m_renderedPixels[j], specRect);
@@ -3184,7 +3231,8 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
     // Fill under the trace (if enabled).
     // From AetherSDR: fill alpha 0.70, cyan color.
     if (m_panFill) {
-        QPainterPath fillPath;
+        QPainterPath& fillPath = m_specFillPathScratch;
+        fillPath.clear();
         fillPath.moveTo(points.first().x(), specRect.bottom());
         for (const QPointF& pt : points) {
             fillPath.lineTo(pt);
@@ -3211,7 +3259,8 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
 
     // Legacy per-pixel peak hold trace, drawn underneath the live trace.
     if (m_peakHoldEnabled && m_pxPeakHold.size() == n) {
-        QVector<QPointF> peakPoints(n);
+        QVector<QPointF>& peakPoints = m_specPeakPointsScratch;
+        peakPoints.resize(n);
         for (int j = 0; j < n; ++j) {
             const float x = specRect.left() + static_cast<float>(j) * xStep;
             const float y = dbmToYf(m_pxPeakHold[j], specRect);
@@ -3287,7 +3336,9 @@ void SpectrumWidget::paintActivePeakHoldTrace(QPainter& p, const QRect& specRect
                       / static_cast<float>(n - 1);
 
     // Build polyline for the peak trace (same x mapping as main trace).
-    QVector<QPointF> peakPoints(n);
+    // 2026-05-26 KG4VCF perf polish: reuse member-cached scratch.
+    QVector<QPointF>& peakPoints = m_specPeakPointsScratch;
+    peakPoints.resize(n);
     for (int j = 0; j < n; ++j) {
         const float x = specRect.left() + static_cast<float>(j) * xStep;
         float peakDbm = m_activePeakHold.peak(j);
@@ -3301,7 +3352,8 @@ void SpectrumWidget::paintActivePeakHoldTrace(QPainter& p, const QRect& specRect
 
     // Optional fill between peak trace and current live trace.
     if (m_activePeakHold.fill()) {
-        QPainterPath fillPath;
+        QPainterPath& fillPath = m_specPeakPathScratch;
+        fillPath.clear();
         fillPath.moveTo(peakPoints.first());
         for (int j = 1; j < n; ++j) {
             fillPath.lineTo(peakPoints[j]);
@@ -3387,9 +3439,19 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
         // on Thetis's typical Windows 1x-DPI display does not. Radius 3 in
         // logical pixels yields a visual size matching Thetis's 5-radius
         // physical-pixel render on a 1x display.
-        p.setPen(QPen(m_peakBlobColor, 1));
-        p.setBrush(Qt::NoBrush);
-        p.drawEllipse(QPoint(x, y), 3, 3);
+        //
+        // 2026-05-26 KG4VCF perf polish: drawEllipse replaced with
+        // drawPixmap(pre-rendered blob marker) to skip Qt's parallel
+        // raster span-blend path.  Lazy first-build: rebuild the
+        // pixmap if it's null (e.g. when peakBlobs gets enabled
+        // before any color setter fires).  Subsequent calls hit the
+        // cached pixmap.
+        if (m_blobMarkerPixmap.isNull()) {
+            rebuildBlobMarkerPixmap();
+        }
+        // Pixmap is 8x8 logical; center is (4,4).  Draw at top-left so
+        // the center lands at (x, y).
+        p.drawPixmap(x - 4, y - 4, m_blobMarkerPixmap);
 
         // Draw dBm text label — From Thetis display.cs:5508 [v2.10.3.13]
         //   _d2dRenderTarget.DrawText(..., new RectangleF(
