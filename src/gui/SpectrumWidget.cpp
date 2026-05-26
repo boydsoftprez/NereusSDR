@@ -380,14 +380,21 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_displayTimer.setTimerType(Qt::PreciseTimer);  // sub-ms accuracy
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
-        // 2026-05-25 KG4VCF Option B: always repaint at display cadence
-        // (dropped the m_hasNewSpectrum gate) so the GPU waterfall's
-        // sub-row interpolation animates between row pushes instead of
-        // sitting frozen on the most recent FFT.  Cost is at most ~1%
-        // CPU on idle frames; benefit is the waterfall now slides
-        // continuously even when the FFT arrival timing jitters.
-        m_hasNewSpectrum = false;
-        update();
+        // 2026-05-25 KG4VCF Option B revisit: the original Option B drop
+        // of this gate ("always repaint at display cadence") looked great
+        // on a healthy system but pegged a CPU core under macOS low-power
+        // mode + high system load (load average ~8, 99% on one core)
+        // because every display tick unconditionally pumped the GPU
+        // pipeline.  Restore the gate; the sub-row interpolation still
+        // helps because paint timing within a push period varies, so
+        // effectiveRow varies sample-to-sample even with the gate in.
+        // Trade-off: animation cadence is tied to FFT-arrival cadence
+        // (not display cadence), but FFT arrival drives push too, so the
+        // two stay locked in steady state.
+        if (m_hasNewSpectrum) {
+            m_hasNewSpectrum = false;
+            update();
+        }
     });
     m_displayTimer.start();
 
