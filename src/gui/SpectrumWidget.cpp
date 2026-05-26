@@ -4648,24 +4648,22 @@ void SpectrumWidget::setDisplayFps(int fps)
     const int clamped = qBound(1, fps, 60);
     const int periodMs = 1000 / clamped;
     m_displayTimer.setInterval(periodMs);
-    // Lock the waterfall-row throttle to the same period so a burst of
-    // FFT results arriving within one paint frame coalesces to exactly
-    // one new row.  Without this sync, paint cadence and waterfall
-    // cadence drift relative to each other (e.g. paint=33 ms but
-    // m_wfUpdatePeriodMs=30 ms left over from a prior setting), so
-    // some paints see 1 new row and others see 2 — perceived by the
-    // operator as stuttery scroll.  Matching the periods makes the
-    // ratio exactly 1:1 regardless of upstream packet bursts.
-    m_wfUpdatePeriodMs = periodMs;
-    // 2026-05-25 KG4VCF bench fix: also retune the actual push timer
-    // (via the WaterfallTicker on its worker thread).  Prior code only
-    // updated m_wfUpdatePeriodMs (the rate-limit value) but the underlying
-    // QTimer was set once at ctor and kept its old interval, so the
-    // displayFps slider's promise of "lock waterfall cadence to paint
-    // cadence" was only half-delivered.
-    if (m_waterfallTicker) {
-        m_waterfallTicker->setUpdatePeriodMs(periodMs);
-    }
+    // 2026-05-26 KG4VCF bench fix: DO NOT overwrite m_wfUpdatePeriodMs
+    // here.  Earlier revisions tried to "lock the waterfall throttle to
+    // the same period as paint" by force-writing m_wfUpdatePeriodMs =
+    // periodMs on every setDisplayFps call.  Problem: setDisplayFps
+    // runs once at startup from MainWindow's persistence-restore (with
+    // the persisted DisplaySpectrumFps), so the loaded
+    // DisplayWfUpdatePeriodMs got clobbered to 1000/fps every launch.
+    // Operator's saved waterfall period (e.g. 33 ms when FPS=20 forces
+    // 50 ms) was silently lost.
+    //
+    // Waterfall update period now lives independently in AppSettings
+    // under DisplayWfUpdatePeriodMs and is mutated only by an explicit
+    // setWfUpdatePeriodMs() call (Setup -> Display slider).  If the
+    // operator wants them locked, both controls expose the value and
+    // either can be set to match the other.
+    //
     // Averaging alphas depend on fps via Thetis α = exp(-1/(fps×τ)).
     // Recompute so the smoothing time constants stay correct after a rate change.
     recomputeAverageAlphas();

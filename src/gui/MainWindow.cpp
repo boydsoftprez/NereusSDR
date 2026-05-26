@@ -1270,6 +1270,32 @@ void MainWindow::buildUI()
             m_spectrumWidget->setDisplayFps(persistedFps);
         }
     }
+    // 2026-05-26 KG4VCF bench fix: persist FFT size + window function.
+    // Previously the Setup -> Display sliders/combo drove the engine
+    // but never wrote to AppSettings, so launch always reverted to the
+    // FFTEngine ctor defaults (4096 / Kaiser).  Apply the persisted
+    // values here in the same MainWindow init block that already
+    // restores DisplaySpectrumFps so all four display knobs (FPS,
+    // FFT size, window, Hz/bin target) come up consistently.
+    //
+    // The default value passed to AppSettings::value is the current
+    // FFTEngine value, so an unset key keeps the ctor default rather
+    // than silently mutating to a hard-coded fallback.
+    {
+        auto& s = AppSettings::instance();
+        const int persistedFftSize = s.value(
+            QStringLiteral("DisplayFftSize"),
+            QString::number(m_fftEngine->fftSize())).toString().toInt();
+        m_fftEngine->setFftSizeBaseline(persistedFftSize);
+        m_fftEngine->setFftSize(persistedFftSize);
+
+        const int defaultWin = static_cast<int>(m_fftEngine->windowFunction());
+        const int persistedWin = qBound(0,
+            s.value(QStringLiteral("DisplayFftWindow"),
+                    QString::number(defaultWin)).toString().toInt(),
+            static_cast<int>(WindowFunction::Count) - 1);
+        m_fftEngine->setWindowFunction(static_cast<WindowFunction>(persistedWin));
+    }
     // Hz/bin target — persisted in Setup → Display → Spectrum Defaults.
     // 0 = bins-in-window default (2026-05-08 Option 3).
     m_fftEngine->setHzPerBinTarget(
