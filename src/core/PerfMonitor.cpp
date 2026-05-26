@@ -34,6 +34,11 @@ void PerfMonitor::recordOverlayRebuild(double ms)
     m_ovlyRing.push(ms);
 }
 
+void PerfMonitor::recordAudioFillMs(double ms)
+{
+    m_audioFillRing.push(ms);
+}
+
 void PerfMonitor::incAudioUnderrun()
 {
     m_audioUnderrunsTotal.fetch_add(1, std::memory_order_relaxed);
@@ -56,10 +61,13 @@ void PerfMonitor::setMemoryStats(bool compressing, double footprintMb)
 PerfMonitor::Snapshot PerfMonitor::snapshotAndClearDeltas()
 {
     Snapshot s;
-    m_paintRing.stats(s.paintMsAvg, s.paintMsMax, s.paintSamples);
-    m_gapRing.stats(s.gapMsAvg, s.gapMsMax, s.gapSamples);
-    m_fftRing.stats(s.fftMsAvg, s.fftMsMax, s.fftSamples);
-    m_ovlyRing.stats(s.ovlyMsAvg, s.ovlyMsMax, s.ovlySamples);
+    double dummyMin = 0.0;
+    m_paintRing.stats(s.paintMsAvg, s.paintMsMax, dummyMin, s.paintSamples);
+    m_gapRing.stats(s.gapMsAvg, s.gapMsMax, dummyMin, s.gapSamples);
+    m_fftRing.stats(s.fftMsAvg, s.fftMsMax, dummyMin, s.fftSamples);
+    m_ovlyRing.stats(s.ovlyMsAvg, s.ovlyMsMax, dummyMin, s.ovlySamples);
+    m_audioFillRing.stats(s.audioFillAvgMs, s.audioFillMaxMs,
+                          s.audioFillMinMs, s.audioFillSamples);
 
     s.audioUnderrunsTotal = m_audioUnderrunsTotal.load(std::memory_order_relaxed);
     s.audioUnderrunsDelta = m_audioUnderrunsDelta.exchange(0, std::memory_order_relaxed);
@@ -80,6 +88,7 @@ void PerfMonitor::resetAll()
     m_gapRing.clear();
     m_fftRing.clear();
     m_ovlyRing.clear();
+    m_audioFillRing.clear();
     m_audioUnderrunsTotal.store(0, std::memory_order_relaxed);
     m_audioUnderrunsDelta.store(0, std::memory_order_relaxed);
     m_udpDropsTotal.store(0, std::memory_order_relaxed);

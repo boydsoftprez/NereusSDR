@@ -48,6 +48,15 @@ public:
     void recordFftCompute(double ms);     // called from FFTEngine's spectrum thread
     void recordOverlayRebuild(double ms); // called from main thread (overlay path)
 
+    // ── Audio ring-fill level (call from the audio bus's push path) ─
+    // Reports the unread sample count remaining in the producer->
+    // consumer ring at the moment of the push, expressed in
+    // milliseconds of audio.  Healthy steady-state should be tens of
+    // ms; the min over the window is the actionable signal -- if it
+    // drops near zero we are about to underrun even when the
+    // underrun counter is still at 0.
+    void recordAudioFillMs(double ms);
+
     // ── Counter writers (atomic; safe on any thread) ───────────────
     void incAudioUnderrun();
     void incUdpDrop();
@@ -82,12 +91,19 @@ public:
         bool memCompressing{false};
         double memFootprintMb{0.0};
 
+        // Audio ring-fill (ms of unread audio at push time).  Min is
+        // the actionable signal; avg shows steady-state margin.
+        double audioFillMinMs{0.0};
+        double audioFillAvgMs{0.0};
+        double audioFillMaxMs{0.0};
+
         // Sample population (how many timing samples each metric
         // contributed; if 0 the metric is N/A).
         int paintSamples{0};
         int gapSamples{0};
         int fftSamples{0};
         int ovlySamples{0};
+        int audioFillSamples{0};
     };
 
     // Snapshot is destructive on the *delta* counters (it resets them
@@ -122,24 +138,26 @@ private:
                 ++size;
             }
         }
-        void stats(double& avg, double& max, int& samples) const {
+        void stats(double& avg, double& max, double& min, int& samples) const {
             QMutexLocker lock(&mtx);
             samples = size;
             if (size == 0) {
                 avg = 0.0;
                 max = 0.0;
+                min = 0.0;
                 return;
             }
             double sum = 0.0;
+            double mn = values[0];
             double mx = values[0];
             for (int i = 0; i < size; ++i) {
                 sum += values[i];
-                if (values[i] > mx) {
-                    mx = values[i];
-                }
+                if (values[i] < mn) { mn = values[i]; }
+                if (values[i] > mx) { mx = values[i]; }
             }
             avg = sum / size;
             max = mx;
+            min = mn;
         }
         void clear() {
             QMutexLocker lock(&mtx);
@@ -152,6 +170,7 @@ private:
     Ring<double> m_gapRing;
     Ring<double> m_fftRing;
     Ring<double> m_ovlyRing;
+    Ring<double> m_audioFillRing;
 
     std::atomic<uint64_t> m_audioUnderrunsTotal{0};
     std::atomic<uint64_t> m_audioUnderrunsDelta{0};

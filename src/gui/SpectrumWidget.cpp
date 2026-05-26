@@ -7018,6 +7018,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                       << QStringLiteral("ovly   avg %1 max %2 ms")
                             .arg(stats.ovlyMsAvg, 0, 'f', 1)
                             .arg(stats.ovlyMsMax, 0, 'f', 1)
+                      << QStringLiteral("audio  fill avg %1 min %2 ms (%3 samp)")
+                            .arg(stats.audioFillAvgMs, 0, 'f', 1)
+                            .arg(stats.audioFillMinMs, 0, 'f', 1)
+                            .arg(stats.audioFillSamples)
                       << QStringLiteral("audio  underruns %1 (+%2/s)")
                             .arg(stats.audioUnderrunsTotal)
                             .arg(stats.audioUnderrunsDelta)
@@ -7058,14 +7062,25 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 // Health-coloured background: red if underruns/drops/
                 // compressing OR paint/gap exceeds 33 ms; amber if any
                 // metric is hot but functional; green when clean.
+                // 2026-05-26 KG4VCF: factor audio ring-fill into the
+                // health colour.  audioFillMinMs < 5 ms means the
+                // plugin only had 5 ms of audio left at the worst
+                // point in the last window -- a hair away from
+                // underrun even if the underrun counter is still 0.
+                const bool audioTight = stats.audioFillSamples > 0
+                                     && stats.audioFillMinMs < 5.0;
+                const bool audioWarn  = stats.audioFillSamples > 0
+                                     && stats.audioFillMinMs < 15.0;
                 bool red   = stats.audioUnderrunsDelta > 0
                           || stats.udpDropsDelta > 0
                           || stats.memCompressing
                           || stats.paintMsMax > 33.0
-                          || stats.gapMsMax   > 50.0;
+                          || stats.gapMsMax   > 50.0
+                          || audioTight;
                 bool amber = !red && (stats.paintMsMax > 20.0
                                    || stats.gapMsMax   > 40.0
-                                   || stats.ovlyMsMax  > 15.0);
+                                   || stats.ovlyMsMax  > 15.0
+                                   || audioWarn);
                 const QColor bg = red   ? QColor(80, 20, 20, 220)
                                 : amber ? QColor(80, 60, 20, 220)
                                         : QColor(20, 40, 20, 220);
