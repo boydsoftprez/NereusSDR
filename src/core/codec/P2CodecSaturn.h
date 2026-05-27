@@ -138,6 +138,12 @@ namespace NereusSDR {
 // switch case as the OrionMkII family, so no Saturn-specific PS DDC
 // override is needed.
 class P2CodecSaturn : public P2CodecOrionMkII {
+    // Phase 3F Sub-Epic B Task 2: stub. Real implementation in Task 4
+    // per Thetis UpdateDDCs Saturn branch.
+    DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const override;
+
 protected:
     // Override the Alex1 (RX) byte builder to optionally substitute
     // Saturn BPF1 bits for the standard Alex HPF bits.

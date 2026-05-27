@@ -1031,4 +1031,12 @@ PsDdcConfig P2CodecOrionMkII::psDdcConfigHermesIIClass(
     return cfg;
 }
 
+DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
+    const CodecContext& /*ctx*/,
+    const std::array<SliceConfig, 5>& /*slices*/) const
+{
+    // TODO Sub-Epic B Task 7: real implementation per Thetis UpdateDDCs OrionMkII branch
+    return DdcAssignment{};
+}
+
 } // namespace NereusSDR

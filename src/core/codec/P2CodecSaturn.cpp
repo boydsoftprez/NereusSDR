@@ -187,4 +187,12 @@ quint32 P2CodecSaturn::buildAlex1(const CodecContext& ctx) const
     return reg;
 }
 
+DdcAssignment P2CodecSaturn::applyDdcAssignment(
+    const CodecContext& /*ctx*/,
+    const std::array<SliceConfig, 5>& /*slices*/) const
+{
+    // TODO Sub-Epic B Task 4: real implementation per Thetis UpdateDDCs Saturn branch
+    return DdcAssignment{};
+}
+
 } // namespace NereusSDR
