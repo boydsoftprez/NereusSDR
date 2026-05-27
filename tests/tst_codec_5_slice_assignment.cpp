@@ -218,6 +218,61 @@ private slots:
         QCOMPARE(a.rate[1], 192000);
         QCOMPARE(a.rate[2], 192000);
     }
+
+    // ── Task 6: 3-slice + 5-slice coverage ───────────────────────────────────
+    //
+    // Verifies the NereusSDR-extension path that fills Thetis's idle DDC4-6
+    // slots for Slices C, D, E on Saturn-class (7-DDC) hardware.
+    // The kSliceToDdc[] table in Task 4's loop maps:
+    //   Slice C (index 2) -> DDC4  [NereusSDR extension; idle in Thetis UpdateDDCs]
+    //   Slice D (index 3) -> DDC5  [NereusSDR extension]
+    //   Slice E (index 4) -> DDC6  [NereusSDR extension]
+
+    void saturn_3_slice_no_ps_no_div_enables_ddc2_3_4()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 3; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = (14000000 + i * 1000000);
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // DDC2+3+4 = bits 2+3+4 = 0x1c
+        QCOMPARE(a.ddcEnable & 0x1c, 0x1c);
+        QCOMPARE(a.rate[2], 192000);
+        QCOMPARE(a.rate[3], 192000);
+        QCOMPARE(a.rate[4], 192000);
+        QCOMPARE(a.nDdc, 3);
+    }
+
+    void saturn_5_slice_max_enables_ddc2_through_ddc6()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = (7000000 + i * 3000000);
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // DDC2 through DDC6 = bits 2-6 = 0x7c
+        QCOMPARE(a.ddcEnable & 0x7c, 0x7c);
+        QCOMPARE(a.nDdc, 5);
+        for (int ddc = 2; ddc <= 6; ++ddc) {
+            QCOMPARE(a.rate[ddc], 192000);
+        }
+    }
 };
 
 QTEST_MAIN(TestCodec5SliceAssignment)
