@@ -249,6 +249,9 @@ warren@wpratt.com
 // Phase 3F Sub-Epic D Task 10: +PAN bottom-bar dropdown reads slice
 // state + drives PanadapterStack layout/float actions.
 #include "PanadapterStack.h"
+#include "PanadapterApplet.h"
+#include "PanLayoutDialog.h"
+#include "core/FFTRouter.h"
 #include "StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -752,8 +755,8 @@ MainWindow::MainWindow(QWidget* parent)
     // inside openSpotHub() is now a defensive guard kept for the case
     // where the spectrum widget races construction; see lines below.
     QTimer::singleShot(0, this, [this] {
-        if (m_spectrumWidget) {
-            m_spectrumWidget->loadSpotDisplaySettings();
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->loadSpotDisplaySettings();
         }
         if (m_radioModel) {
             m_radioModel->restoreSpotClientAutoStartState();
@@ -852,6 +855,18 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
+// Phase 3F Sub-Epic D Task 12: resolve the active pan's SpectrumWidget.
+// Used as a backward-compat shim for call sites that still address "the"
+// spectrum widget; long-term these should migrate to per-pan addressing.
+// Returns nullptr if m_panStack isn't constructed yet (during early init)
+// or if the active pan has no widget.
+SpectrumWidget* MainWindow::activeSpectrumWidget() const
+{
+    if (!m_panStack) { return nullptr; }
+    auto* applet = m_panStack->panadapter(m_panStack->activePanId());
+    return applet ? applet->spectrumWidget() : nullptr;
+}
+
 // Issue #206 — main-window geometry persistence. Qt's saveGeometry()
 // returns a versioned QByteArray that already encodes position, size,
 // AND window state (Normal/Maximized/FullScreen) plus screen identity
@@ -933,13 +948,33 @@ void MainWindow::buildUI()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    m_spectrumWidget = new SpectrumWidget(spectrumPane);
-    m_spectrumWidget->loadSettings();
-    m_spectrumWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    layout->addWidget(m_spectrumWidget, 1);
+    // Phase 3F Sub-Epic D Task 12: replace the single SpectrumWidget with
+    // a PanadapterStack. PanadapterStack's constructor pre-creates
+    // "pan-0" containing a PanadapterApplet whose embedded SpectrumWidget
+    // becomes the new single-pan default. activeSpectrumWidget() resolves
+    // to that widget for backward-compat call sites.
+    m_panStack = new PanadapterStack(spectrumPane);
+    m_panStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    layout->addWidget(m_panStack, 1);
 
-    // Left overlay panel (SpectrumOverlayPanel) — child of spectrum widget
-    m_overlayPanel = new SpectrumOverlayPanel(m_spectrumWidget);
+    SpectrumWidget* const initialSpectrum = activeSpectrumWidget();
+    if (initialSpectrum) {
+        initialSpectrum->loadSettings();
+    }
+
+    // Task 13 wires per-pan rebinding when the active pan changes; for
+    // now we just log/no-op.  Future polish: re-attach overlay panel,
+    // peak-detector, spot bridges, etc. to the new active pan's widget.
+    connect(m_panStack, &PanadapterStack::activePanChanged, this,
+            [](const QString& panId) {
+        Q_UNUSED(panId);
+    });
+
+    // Left overlay panel (SpectrumOverlayPanel) — child of the active
+    // pan's SpectrumWidget. Construction is deferred when the active
+    // pan has no widget (shouldn't happen because the stack ctor
+    // creates pan-0, but be defensive).
+    m_overlayPanel = new SpectrumOverlayPanel(initialSpectrum);
     m_overlayPanel->move(4, 4);
     m_overlayPanel->show();
 
@@ -980,7 +1015,7 @@ void MainWindow::buildUI()
     // DxccColorProvider the SpotTableModel queries.
     if (auto* spotModel = m_radioModel->spotModel()) {
         auto refreshSpots = [this]() {
-            if (!m_spectrumWidget || !m_radioModel) { return; }
+            if (!activeSpectrumWidget() || !m_radioModel) { return; }
             auto* spotModel = m_radioModel->spotModel();
             if (!spotModel) { return; }
             auto* dxccColor = m_radioModel->dxccColorProvider();
@@ -1015,7 +1050,7 @@ void MainWindow::buildUI()
                 }
                 markers.append(m);
             }
-            m_spectrumWidget->setSpotMarkers(markers);
+            activeSpectrumWidget()->setSpotMarkers(markers);
         };
 
         connect(spotModel, &SpotModel::spotAdded,
@@ -1033,7 +1068,7 @@ void MainWindow::buildUI()
         // Spot on the panadapter emits spotRemoveRequested(idx) → purge
         // the spot from SpotModel → spotRemoved fires → refreshSpots
         // above repaints the overlay without it.
-        connect(m_spectrumWidget, &SpectrumWidget::spotRemoveRequested,
+        connect(activeSpectrumWidget(), &SpectrumWidget::spotRemoveRequested,
                 spotModel, &SpotModel::removeSpot);
     }
 
@@ -1050,8 +1085,8 @@ void MainWindow::buildUI()
     layout->addWidget(zoomBar);
     connect(zoomBar, &QSlider::valueChanged, this, [this](int val) {
         double bwHz = val * 1000.0;
-        m_spectrumWidget->setFrequencyRange(m_spectrumWidget->centerFrequency(), bwHz);
-        emit m_spectrumWidget->bandwidthChangeRequested(bwHz);
+        activeSpectrumWidget()->setFrequencyRange(activeSpectrumWidget()->centerFrequency(), bwHz);
+        emit activeSpectrumWidget()->bandwidthChangeRequested(bwHz);
     });
 
     m_mainSplitter->addWidget(spectrumPane);
@@ -1237,7 +1272,7 @@ void MainWindow::buildUI()
     // display" step on power-on.
     connect(m_radioModel, &RadioModel::sliceStateRestored, this,
             [this](int index) {
-        if (index != 0 || !m_spectrumWidget) {
+        if (index != 0 || !activeSpectrumWidget()) {
             return;
         }
         SliceModel* slice = m_radioModel->activeSlice();
@@ -1245,10 +1280,10 @@ void MainWindow::buildUI()
             return;
         }
         const double freq = slice->frequency();
-        m_spectrumWidget->setCenterFrequency(freq);
-        m_spectrumWidget->setDdcCenterFrequency(freq);
-        m_spectrumWidget->setVfoFrequency(freq);
-        m_spectrumWidget->setFilterOffset(slice->filterLow(), slice->filterHigh());
+        activeSpectrumWidget()->setCenterFrequency(freq);
+        activeSpectrumWidget()->setDdcCenterFrequency(freq);
+        activeSpectrumWidget()->setVfoFrequency(freq);
+        activeSpectrumWidget()->setFilterOffset(slice->filterLow(), slice->filterHigh());
         if (m_vfoWidget) {
             m_vfoWidget->setFrequency(freq);
             m_vfoWidget->setMode(slice->dspMode());
@@ -1277,16 +1312,16 @@ void MainWindow::buildUI()
                 engine->setSampleRate(rateHz);
             });
         }
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setSampleRate(rateHz);
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->setSampleRate(rateHz);
             // Phase 3G-12: preserve the user's current zoom level across
             // sample rate changes. Only reset the visible span if the
             // current bandwidth would now exceed the new DDC sample rate
             // (in which case we clamp to full-span).
-            const double freq = m_spectrumWidget->centerFrequency();
-            const double currentBw = m_spectrumWidget->bandwidth();
+            const double freq = activeSpectrumWidget()->centerFrequency();
+            const double currentBw = activeSpectrumWidget()->bandwidth();
             const double clampedBw = (currentBw > rateHz) ? rateHz : currentBw;
-            m_spectrumWidget->setFrequencyRange(freq, clampedBw);
+            activeSpectrumWidget()->setFrequencyRange(freq, clampedBw);
         }
     });
     m_fftEngine->setFftSize(4096);
@@ -1304,8 +1339,8 @@ void MainWindow::buildUI()
                 QStringLiteral("30")).toString().toInt(),
             60);
         m_fftEngine->setOutputFps(persistedFps);
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setDisplayFps(persistedFps);
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->setDisplayFps(persistedFps);
         }
     }
     // 2026-05-26 KG4VCF bench fix: persist FFT size + window function.
@@ -1371,11 +1406,11 @@ void MainWindow::buildUI()
     // (full-bin dBm) is kept as a separate signal for chrome / AGC consumers
     // (ClarityController, NoiseFloorTracker) wired below.
     connect(m_fftEngine, &FFTEngine::fftReadyLinear,
-            m_spectrumWidget, &SpectrumWidget::updateSpectrumLinear);
+            activeSpectrumWidget(), &SpectrumWidget::updateSpectrumLinear);
 
     // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
     // reach the renderer / FFT engine without depending on MainWindow.
-    m_radioModel->setSpectrumWidget(m_spectrumWidget);
+    m_radioModel->setSpectrumWidget(activeSpectrumWidget());
     m_radioModel->setFftEngine(m_fftEngine);
 
     // Sub-epic E: flush the rewind ring buffer when the radio disconnects so
@@ -1383,19 +1418,19 @@ void MainWindow::buildUI()
     // did this implicitly; NereusSDR has no equivalent single-call reset, so
     // we plumb the connection-state signal through here. See
     // docs/architecture/phase3g-rx-epic-e-waterfall-scrollback-plan.md task 4.
-    connect(m_radioModel, &RadioModel::connectionStateChanged, m_spectrumWidget,
+    connect(m_radioModel, &RadioModel::connectionStateChanged, activeSpectrumWidget(),
             [this]() {
-        if (!m_radioModel->isConnected() && m_spectrumWidget) {
-            m_spectrumWidget->clearWaterfallHistory();
+        if (!m_radioModel->isConnected() && activeSpectrumWidget()) {
+            activeSpectrumWidget()->clearWaterfallHistory();
         }
     });
 
     // Phase 3Q-8: clicking the spectrum while disconnected opens ConnectionPanel.
-    connect(m_spectrumWidget, &SpectrumWidget::disconnectedClickRequest,
+    connect(activeSpectrumWidget(), &SpectrumWidget::disconnectedClickRequest,
             this, &MainWindow::showConnectionPanel);
 
     // Wire BandPlanManager → SpectrumWidget so the bandplan strip renders on launch.
-    m_spectrumWidget->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
+    activeSpectrumWidget()->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
 
     // Phase 3G-9b: no first-launch auto-apply of smooth defaults. Per
     // user decision 2026-04-15, the out-of-box waterfall stays on
@@ -1435,9 +1470,9 @@ void MainWindow::buildUI()
         // Qt::QueuedConnection: MoxController and SpectrumWidget both live on
         // the main thread but a queued connection is used to match the deferred
         // pattern established for the hardwareFlipped connect above.
-        if (m_spectrumWidget) {
+        if (activeSpectrumWidget()) {
             connect(mox, &MoxController::moxStateChanged,
-                    m_spectrumWidget, &SpectrumWidget::setMoxOverlay,
+                    activeSpectrumWidget(), &SpectrumWidget::setMoxOverlay,
                     Qt::QueuedConnection);
         }
 
@@ -1454,10 +1489,10 @@ void MainWindow::buildUI()
         //                              (mirrors Thetis Display.ShowIMDMeasurments,
         //                              display.cs:304-311 [v2.10.3.13])
         // displayduplex stays at SpectrumWidget's default (true) — see header.
-        if (m_spectrumWidget) {
+        if (activeSpectrumWidget()) {
             if (auto* tt = m_radioModel->twoToneController()) {
                 connect(tt, &TwoToneController::twoToneActiveChanged,
-                        m_spectrumWidget, &SpectrumWidget::setTestingIMD);
+                        activeSpectrumWidget(), &SpectrumWidget::setTestingIMD);
             }
             // Phase 3M-4 bench-fix: PureSignal coordinator is late-bound
             // during WDSP-init — at MainWindow build time it's typically
@@ -1469,9 +1504,9 @@ void MainWindow::buildUI()
             // Mirrors the pattern in PureSignalApplet.cpp:118-123 +
             // PsaIndicatorWidget bench-fix.
             auto wireSpectrumToPs = [this](PureSignal* ps) {
-                if (!ps || !m_spectrumWidget) { return; }
+                if (!ps || !activeSpectrumWidget()) { return; }
                 connect(ps, &PureSignal::show2ToneMeasurementsChanged,
-                        m_spectrumWidget,
+                        activeSpectrumWidget(),
                         &SpectrumWidget::setShowIMDMeasurements,
                         Qt::UniqueConnection);
             };
@@ -1535,7 +1570,7 @@ void MainWindow::buildUI()
         bool clarityOn = s.value(QStringLiteral("ClarityEnabled"), QStringLiteral("True"))
                             .toString() == QStringLiteral("True");
         m_clarityController->setEnabled(clarityOn);
-        m_spectrumWidget->setClarityActive(clarityOn);
+        activeSpectrumWidget()->setClarityActive(clarityOn);
     }
 
     // Feed FFT bins to Clarity (auto-queued: spectrum thread → main)
@@ -1574,12 +1609,12 @@ void MainWindow::buildUI()
     // render frame, push the slice's passband peak (from m_renderedPixels,
     // post detector + avenger) into the MaxBin detector so the analog
     // S-meter reads what the operator actually sees on the trace.
-    if (m_spectrumWidget && m_radioModel) {
-        connect(m_spectrumWidget, &SpectrumWidget::spectrumFrameRendered,
+    if (activeSpectrumWidget() && m_radioModel) {
+        connect(activeSpectrumWidget(), &SpectrumWidget::spectrumFrameRendered,
                 this, [this]() {
             auto* eng = m_radioModel ? m_radioModel->wdspEngine() : nullptr;
-            if (!eng || !m_spectrumWidget) { return; }
-            const double dbm = m_spectrumWidget->peakDbmInSlicePassband();
+            if (!eng || !activeSpectrumWidget()) { return; }
+            const double dbm = activeSpectrumWidget()->peakDbmInSlicePassband();
             if (dbm > -400.0) {
                 eng->setMaxBinDbmFromSpectrum(/*disp=*/0, dbm);
             }
@@ -1623,13 +1658,13 @@ void MainWindow::buildUI()
     // Plan 4 D9 (Cluster E): TX filter audio range → spectrum overlay.
     // TransmitModel::filterChanged carries (low, high) audio Hz; SpectrumWidget
     // converts to IQ-space at draw time using m_txMode (set below via slice).
-    if (m_spectrumWidget) {
+    if (activeSpectrumWidget()) {
         connect(&m_radioModel->transmitModel(), &TransmitModel::filterChanged,
-                m_spectrumWidget, &SpectrumWidget::setTxFilterRange);
+                activeSpectrumWidget(), &SpectrumWidget::setTxFilterRange);
 
         // Initial sync from current TransmitModel state.
         const auto& txModel = m_radioModel->transmitModel();
-        m_spectrumWidget->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
+        activeSpectrumWidget()->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
     }
 
     // Clarity → SpectrumWidget threshold update + clarityActive flag.
@@ -1641,9 +1676,9 @@ void MainWindow::buildUI()
     // calls were silently overwriting the user's saved thresholds via
     // scheduleSettingsSave() on every Clarity tick.
     connect(m_clarityController, &ClarityController::waterfallThresholdsChanged,
-            m_spectrumWidget, [this](float low, float high) {
-        m_spectrumWidget->setClarityActive(true);
-        m_spectrumWidget->setClarityWaterfallThresholds(low, high);
+            activeSpectrumWidget(), [this](float low, float high) {
+        activeSpectrumWidget()->setClarityActive(true);
+        activeSpectrumWidget()->setClarityWaterfallThresholds(low, high);
     });
 
     // Clarity → SpectrumWidget NF-aware grid (Task 2.9).
@@ -1651,7 +1686,7 @@ void MainWindow::buildUI()
     // noiseFloorChanged fires after EWMA smoothing but before the deadband
     // gate so the grid tracks the floor at every cadence tick.
     connect(m_clarityController, &ClarityController::noiseFloorChanged,
-            m_spectrumWidget, &SpectrumWidget::onNoiseFloorChanged);
+            activeSpectrumWidget(), &SpectrumWidget::onNoiseFloorChanged);
 
     // Task 2.10: per-band NF priming — settle detector.
     // NereusSDR-original — no Thetis equivalent.
@@ -1730,10 +1765,10 @@ void MainWindow::buildUI()
             // still settling.  Auto-clear is internal to the setter (see
             // SpectrumWidget::setNoiseFloorFastAttack — 1000ms timer
             // matching Thetis display.cs:5906 minimum delay).
-            if (m_spectrumWidget) {
+            if (activeSpectrumWidget()) {
                 connect(pan0, &PanadapterModel::bandChanged,
                         this, [this](NereusSDR::Band) {
-                    m_spectrumWidget->setNoiseFloorFastAttack(true);
+                    activeSpectrumWidget()->setNoiseFloorFastAttack(true);
                 });
             }
         }
@@ -1747,7 +1782,7 @@ void MainWindow::buildUI()
     // Stores the last-trigger frequency as a QObject dynamic property on
     // the slice itself — Qt cleans it up when the slice is destroyed, and
     // the same wiring works for slices added later via RadioModel::sliceAdded.
-    if (m_spectrumWidget) {
+    if (activeSpectrumWidget()) {
         // 500 kHz threshold matches Thetis display.cs:905: > 0.5 MHz.
         constexpr double kFastAttackFreqJumpHz = 500000.0;
         constexpr const char* kLastFreqProp = "nfLastFastAttackFreq";
@@ -1760,7 +1795,7 @@ void MainWindow::buildUI()
                 const double last =
                     slice->property(kLastFreqProp).toDouble();
                 if (std::abs(last - freq) > kFastAttackFreqJumpHz) {
-                    m_spectrumWidget->setNoiseFloorFastAttack(true);
+                    activeSpectrumWidget()->setNoiseFloorFastAttack(true);
                 }
                 slice->setProperty(kLastFreqProp, freq);
             });
@@ -1817,18 +1852,18 @@ void MainWindow::buildUI()
     //   if (rx == 1) FastAttackNoiseFloorRX1 = true;
     // Fires on both RX→TX and TX→RX transitions; the buffer-clear pulse on
     // either edge resets the noise-floor settling window.
-    if (m_spectrumWidget) {
+    if (activeSpectrumWidget()) {
         connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
                 this, [this](bool) {
-            m_spectrumWidget->setNoiseFloorFastAttack(true);
+            activeSpectrumWidget()->setNoiseFloorFastAttack(true);
         });
     }
 
     // When Clarity pauses or is disabled, let legacy AGC resume.
     connect(m_clarityController, &ClarityController::pausedChanged,
-            m_spectrumWidget, [this](bool paused) {
+            activeSpectrumWidget(), [this](bool paused) {
         if (paused) {
-            m_spectrumWidget->setClarityActive(false);
+            activeSpectrumWidget()->setClarityActive(false);
         }
     });
 
@@ -1851,31 +1886,31 @@ void MainWindow::buildUI()
         // These three signals were emitted but never connected — moving the
         // WF Gain / WF Black Level sliders and the Scheme combo did nothing.
         connect(m_overlayPanel, &SpectrumOverlayPanel::wfColorGainChanged,
-                m_spectrumWidget, &SpectrumWidget::setWfColorGain);
+                activeSpectrumWidget(), &SpectrumWidget::setWfColorGain);
         connect(m_overlayPanel, &SpectrumOverlayPanel::wfBlackLevelChanged,
-                m_spectrumWidget, &SpectrumWidget::setWfBlackLevel);
+                activeSpectrumWidget(), &SpectrumWidget::setWfBlackLevel);
         connect(m_overlayPanel, &SpectrumOverlayPanel::colorSchemeChanged,
-                m_spectrumWidget, [this](int idx) {
+                activeSpectrumWidget(), [this](int idx) {
             // colorSchemeChanged carries a raw combo index (int); setWfColorScheme
             // takes the WfColorScheme enum — adapt with a bounds-checked cast.
             const int schemeCount = static_cast<int>(WfColorScheme::Count);
-            m_spectrumWidget->setWfColorScheme(
+            activeSpectrumWidget()->setWfColorScheme(
                 static_cast<WfColorScheme>(qBound(0, idx, schemeCount - 1)));
         });
 
         // B8 Task 21: wire Cursor Freq toggle to SpectrumWidget visibility guard.
         connect(m_overlayPanel, &SpectrumOverlayPanel::cursorFreqVisibleChanged,
-                m_spectrumWidget, &SpectrumWidget::setCursorFreqVisible);
+                activeSpectrumWidget(), &SpectrumWidget::setCursorFreqVisible);
 
         // B8 Task 22: wire Fill Color button to SpectrumWidget::setFillColor.
         connect(m_overlayPanel, &SpectrumOverlayPanel::fillColorChanged,
-                m_spectrumWidget, &SpectrumWidget::setFillColor);
+                activeSpectrumWidget(), &SpectrumWidget::setFillColor);
 
         // B8 fix-up: wire Fill Alpha slider to SpectrumWidget::setFillAlpha.
         // The slider emitted fillAlphaChanged but had no connect — opacity
         // never reached the renderer.
         connect(m_overlayPanel, &SpectrumOverlayPanel::fillAlphaChanged,
-                m_spectrumWidget, &SpectrumWidget::setFillAlpha);
+                activeSpectrumWidget(), &SpectrumWidget::setFillAlpha);
 
         // B8 Task 24: wire "More Display Options →" link to Setup → Display.
         connect(m_overlayPanel, &SpectrumOverlayPanel::openSetupRequested,
@@ -1913,10 +1948,10 @@ void MainWindow::buildUI()
     // Hysteresis: only replan when computed/current is outside
     // [0.66, 1.5].  Avoids replan thrash on smooth zoom drag.
     constexpr int kAutoZoomMaxFftSize = 65536;
-    connect(m_spectrumWidget, &SpectrumWidget::bandwidthChangeRequested,
+    connect(activeSpectrumWidget(), &SpectrumWidget::bandwidthChangeRequested,
             this, [this, kAutoZoomMaxFftSize](double bwHz) {
-        if (!m_fftEngine || !m_spectrumWidget) { return; }
-        const double sampleRate = m_spectrumWidget->sampleRate();
+        if (!m_fftEngine || !activeSpectrumWidget()) { return; }
+        const double sampleRate = activeSpectrumWidget()->sampleRate();
         if (sampleRate <= 0.0 || bwHz <= 0.0) { return; }
 
         const int baseline = m_fftEngine->fftSizeBaseline();
@@ -2267,10 +2302,10 @@ void MainWindow::populateDefaultMeter()
     // floor will still differ by 10*log10(NBP_BW/bin_BW) which is physics
     // (S-meter is passband-integrated; spectrum is per-bin) and matches
     // Thetis behavior.
-    if (m_spectrumWidget && m_radioModel) {
+    if (activeSpectrumWidget() && m_radioModel) {
         auto pushSpectrumCal = [this](double db) {
-            if (m_spectrumWidget) {
-                m_spectrumWidget->setDbmCalOffset(static_cast<float>(db));
+            if (activeSpectrumWidget()) {
+                activeSpectrumWidget()->setDbmCalOffset(static_cast<float>(db));
             }
         };
         connect(m_radioModel, &RadioModel::rxMeterOffsetChanged,
@@ -2289,8 +2324,8 @@ void MainWindow::populateDefaultMeter()
     // window stays at the OLD DDC-relative bin range until the next
     // slice retune (or CTUN toggle).  Observable as "MaxBin meter
     // drifts off the carrier when I pan the panadapter."
-    if (m_spectrumWidget) {
-        connect(m_spectrumWidget, &SpectrumWidget::ddcCenterFrequencyChanged,
+    if (activeSpectrumWidget()) {
+        connect(activeSpectrumWidget(), &SpectrumWidget::ddcCenterFrequencyChanged,
                 this, [this](double ddcCenter) {
             if (!m_radioModel) { return; }
             auto* eng = m_radioModel->wdspEngine();
@@ -3251,8 +3286,8 @@ void MainWindow::buildMenuBar()
             bpGroup->addAction(a);
             const int pt = opt.pt;
             connect(a, &QAction::triggered, this, [this, pt]() {
-                if (m_spectrumWidget) {
-                    m_spectrumWidget->setBandPlanFontSize(pt);
+                if (activeSpectrumWidget()) {
+                    activeSpectrumWidget()->setBandPlanFontSize(pt);
                 }
                 AppSettings::instance().setValue(QStringLiteral("BandPlanFontSize"),
                                                  QString::number(pt));
@@ -3339,14 +3374,14 @@ void MainWindow::buildMenuBar()
         QAction* perfAction = viewMenu->addAction(
             QStringLiteral("&Performance Overlay"));
         perfAction->setCheckable(true);
-        perfAction->setChecked(m_spectrumWidget && m_spectrumWidget->showPerfOverlay());
+        perfAction->setChecked(activeSpectrumWidget() && activeSpectrumWidget()->showPerfOverlay());
         perfAction->setToolTip(QStringLiteral(
             "Show paint/gap/fft/overlay timings + audio underruns + UDP drops"
             " + memory pressure in a corner of the spectrum panel."
             "  Useful for diagnosing jitter under system load."));
         connect(perfAction, &QAction::toggled, this, [this](bool on) {
-            if (m_spectrumWidget) {
-                m_spectrumWidget->setShowPerfOverlay(on);
+            if (activeSpectrumWidget()) {
+                activeSpectrumWidget()->setShowPerfOverlay(on);
             }
         });
     }
@@ -5155,7 +5190,7 @@ void MainWindow::showTciLogWindow() {}  // no-op in non-WebSocket builds
 void MainWindow::wireSliceToSpectrum()
 {
     SliceModel* slice = m_radioModel->activeSlice();
-    if (!slice || !m_spectrumWidget) {
+    if (!slice || !activeSpectrumWidget()) {
         return;
     }
 
@@ -5166,18 +5201,18 @@ void MainWindow::wireSliceToSpectrum()
     // (between 10 kHz and the DDC sample rate), keep it; otherwise
     // fall back to the full-span default (768 kHz = sample rate).
     double freq = slice->frequency();
-    const double loadedBw = m_spectrumWidget->bandwidth();
+    const double loadedBw = activeSpectrumWidget()->bandwidth();
     const double initialBw = (loadedBw >= 10000.0 && loadedBw <= 768000.0)
                              ? loadedBw : 768000.0;
-    m_spectrumWidget->setFrequencyRange(freq, initialBw);
-    m_spectrumWidget->setDdcCenterFrequency(freq);
-    m_spectrumWidget->setSampleRate(768000.0);
-    m_spectrumWidget->setVfoFrequency(freq);
-    m_spectrumWidget->setFilterOffset(slice->filterLow(), slice->filterHigh());
-    m_spectrumWidget->setStepSize(slice->stepHz());
+    activeSpectrumWidget()->setFrequencyRange(freq, initialBw);
+    activeSpectrumWidget()->setDdcCenterFrequency(freq);
+    activeSpectrumWidget()->setSampleRate(768000.0);
+    activeSpectrumWidget()->setVfoFrequency(freq);
+    activeSpectrumWidget()->setFilterOffset(slice->filterLow(), slice->filterHigh());
+    activeSpectrumWidget()->setStepSize(slice->stepHz());
 
     // --- Create floating VFO flag widget (AetherSDR pattern) ---
-    VfoWidget* vfo = m_spectrumWidget->addVfoWidget(0);
+    VfoWidget* vfo = activeSpectrumWidget()->addVfoWidget(0);
     m_vfoWidget = vfo;
     vfo->setSlice(slice);
     vfo->setFrequency(freq);
@@ -5268,24 +5303,24 @@ void MainWindow::wireSliceToSpectrum()
             return;
         }
 
-        double center = m_spectrumWidget->centerFrequency();
-        double halfBw = m_spectrumWidget->bandwidth() / 2.0;
+        double center = activeSpectrumWidget()->centerFrequency();
+        double halfBw = activeSpectrumWidget()->bandwidth() / 2.0;
         bool offScreen = (freq < center - halfBw) || (freq > center + halfBw);
 
-        if (!m_spectrumWidget->ctunEnabled() || offScreen) {
+        if (!activeSpectrumWidget()->ctunEnabled() || offScreen) {
             m_handlingBandJump = true;
 
-            bool wasCTUN = m_spectrumWidget->ctunEnabled();
+            bool wasCTUN = activeSpectrumWidget()->ctunEnabled();
             m_radioModel->receiverManager()->setDdcFrequencyLocked(false);
 
-            m_spectrumWidget->setCenterFrequency(freq);
+            activeSpectrumWidget()->setCenterFrequency(freq);
 
             int rxIdx = slice->receiverIndex();
             if (rxIdx >= 0) {
                 m_radioModel->receiverManager()->forceHardwareFrequency(
                     rxIdx, static_cast<quint64>(freq));
             }
-            m_spectrumWidget->setDdcCenterFrequency(freq);
+            activeSpectrumWidget()->setDdcCenterFrequency(freq);
 
             RxChannel* rxCh = m_radioModel->wdspEngine()->rxChannel(0);
             if (rxCh) {
@@ -5305,7 +5340,7 @@ void MainWindow::wireSliceToSpectrum()
                 rxCh->setShiftFrequency(shiftHz);
             }
         }
-        m_spectrumWidget->setVfoFrequency(freq);
+        activeSpectrumWidget()->setVfoFrequency(freq);
         vfo->setFrequency(freq);
 
         // Keep MaxBin's scan window aligned with the user's slice.  See
@@ -5316,13 +5351,13 @@ void MainWindow::wireSliceToSpectrum()
         // the slice so the meter pumps on the user's modulation rather
         // than the noise floor sitting at DDC center.
         if (auto* eng = m_radioModel->wdspEngine()) {
-            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            const double ddcCenter = activeSpectrumWidget()->ddcCenterFrequency();
             eng->setMaxBinSliceOffsetHz(/*disp=*/0, freq - ddcCenter);
         }
     });
 
     connect(slice, &SliceModel::filterChanged, this, [this, vfo](int low, int high) {
-        m_spectrumWidget->setFilterOffset(low, high);
+        activeSpectrumWidget()->setFilterOffset(low, high);
         vfo->setFilter(low, high);
     });
 
@@ -5361,7 +5396,7 @@ void MainWindow::wireSliceToSpectrum()
             // pushed by frequencyChanged.  Without this re-sync, a filter
             // change immediately after a CTUN tune could leave the detector
             // pointing at the wrong bins until the user nudges the VFO again.
-            const double ddcCenter = m_spectrumWidget->ddcCenterFrequency();
+            const double ddcCenter = activeSpectrumWidget()->ddcCenterFrequency();
             const double sliceFreq = slice ? slice->frequency() : ddcCenter;
             eng->setMaxBinSliceOffsetHz(/*disp=*/0, sliceFreq - ddcCenter);
         });
@@ -5369,21 +5404,21 @@ void MainWindow::wireSliceToSpectrum()
 
     // Plan 4 D9 (Cluster E): initial TX mode push so the overlay has the right
     // IQ-space sign convention before the first paint.
-    if (m_spectrumWidget) {
-        m_spectrumWidget->setTxMode(slice->dspMode());
+    if (activeSpectrumWidget()) {
+        activeSpectrumWidget()->setTxMode(slice->dspMode());
         // Initial XIT offset push + signal wires below so the TX overlay
         // centers on the actual TX frequency (RX VFO + XIT) rather than the
         // RX VFO alone.  Codex review feedback on PR #166.
         const int initialXitOffset = slice->xitEnabled() ? slice->xitHz() : 0;
-        m_spectrumWidget->setTxVfoOffsetHz(initialXitOffset);
+        activeSpectrumWidget()->setTxVfoOffsetHz(initialXitOffset);
     }
 
     // XIT-enabled toggle and XIT-Hz changes both feed the spectrum's TX
     // overlay center.  When enabled flips off, the offset goes to zero;
     // when on, the offset tracks xitHz.
     auto pushXitOffset = [this, slice]() {
-        if (!m_spectrumWidget) { return; }
-        m_spectrumWidget->setTxVfoOffsetHz(slice->xitEnabled() ? slice->xitHz() : 0);
+        if (!activeSpectrumWidget()) { return; }
+        activeSpectrumWidget()->setTxVfoOffsetHz(slice->xitEnabled() ? slice->xitHz() : 0);
     };
     connect(slice, &SliceModel::xitEnabledChanged, this,
             [pushXitOffset](bool /*enabled*/) { pushXitOffset(); });
@@ -5393,8 +5428,8 @@ void MainWindow::wireSliceToSpectrum()
     connect(slice, &SliceModel::dspModeChanged, this, [this, vfo](DSPMode mode) {
         // Plan 4 D9 (Cluster E): keep TX mode in sync so drawTxFilterOverlay
         // maps audio Hz to the correct IQ-space sideband.
-        if (m_spectrumWidget) {
-            m_spectrumWidget->setTxMode(mode);
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->setTxMode(mode);
         }
         vfo->setMode(mode);
         // Phase 3R L2: gate RADE applet visibility on either RADE
@@ -5450,7 +5485,7 @@ void MainWindow::wireSliceToSpectrum()
     });
 
     connect(slice, &SliceModel::stepHzChanged, this, [this, vfo](int hz) {
-        m_spectrumWidget->setStepSize(hz);
+        activeSpectrumWidget()->setStepSize(hz);
         vfo->setStepHz(hz);
     });
 
@@ -5720,7 +5755,7 @@ void MainWindow::wireSliceToSpectrum()
             }
         }
         // setStepHz emits stepHzChanged which the :1626-1629 handler uses to
-        // propagate to m_spectrumWidget->setStepSize and vfo->setStepHz.
+        // propagate to activeSpectrumWidget()->setStepSize and vfo->setStepHz.
         slice->setStepHz(next);
     });
 
@@ -5745,13 +5780,13 @@ void MainWindow::wireSliceToSpectrum()
     });
 
     // --- Spectrum click-to-tune → slice ---
-    connect(m_spectrumWidget, &SpectrumWidget::frequencyClicked,
+    connect(activeSpectrumWidget(), &SpectrumWidget::frequencyClicked,
             this, [slice](double hz) {
         slice->setFrequency(hz);
     });
 
     // --- Spectrum filter edge drag → slice ---
-    connect(m_spectrumWidget, &SpectrumWidget::filterEdgeDragged,
+    connect(activeSpectrumWidget(), &SpectrumWidget::filterEdgeDragged,
             this, [slice](int low, int high) {
         slice->setFilter(low, high);
     });
@@ -5761,12 +5796,12 @@ void MainWindow::wireSliceToSpectrum()
     // demodulating at VFO frequency. This lets the spectrum show real data
     // across the full pan range.
     // Traditional mode: pan drag retunes the VFO (DDC follows VFO naturally).
-    connect(m_spectrumWidget, &SpectrumWidget::centerChanged,
+    connect(activeSpectrumWidget(), &SpectrumWidget::centerChanged,
             this, [this, slice](double centerHz) {
         if (m_handlingBandJump) {
             return;
         }
-        if (!m_spectrumWidget->ctunEnabled()) {
+        if (!activeSpectrumWidget()->ctunEnabled()) {
             slice->setFrequency(centerHz);
         } else {
             // CTUN: retune DDC to pan center (bypasses lock) so spectrum shows correct data
@@ -5775,7 +5810,7 @@ void MainWindow::wireSliceToSpectrum()
                 m_radioModel->receiverManager()->forceHardwareFrequency(
                     rxIdx, static_cast<quint64>(centerHz));
             }
-            m_spectrumWidget->setDdcCenterFrequency(centerHz);
+            activeSpectrumWidget()->setDdcCenterFrequency(centerHz);
             // Offset WDSP shift so audio stays on VFO frequency
             // From Thetis radio.cs:1417 — SetRXAShiftFreq receives +(freq - center)
             double shiftHz = slice->frequency() - centerHz;
@@ -5787,7 +5822,7 @@ void MainWindow::wireSliceToSpectrum()
     });
 
     // --- CTUN mode toggled → lock/unlock DDC ---
-    connect(m_spectrumWidget, &SpectrumWidget::ctunEnabledChanged,
+    connect(activeSpectrumWidget(), &SpectrumWidget::ctunEnabledChanged,
             this, [this](bool enabled) {
         m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
         if (!enabled) {
@@ -5799,7 +5834,7 @@ void MainWindow::wireSliceToSpectrum()
     });
 
     // --- dBm range strip → PanadapterModel (per-band grid storage + AppSettings) ---
-    connect(m_spectrumWidget, &SpectrumWidget::dbmRangeChangeRequested,
+    connect(activeSpectrumWidget(), &SpectrumWidget::dbmRangeChangeRequested,
             this, [this](float minDbm, float maxDbm) {
         if (m_radioModel && !m_radioModel->panadapters().isEmpty()) {
             PanadapterModel* pan = m_radioModel->panadapters().first();
@@ -5810,10 +5845,10 @@ void MainWindow::wireSliceToSpectrum()
 
     // Set initial lock state
     m_radioModel->receiverManager()->setDdcFrequencyLocked(
-        m_spectrumWidget->ctunEnabled());
+        activeSpectrumWidget()->ctunEnabled());
 
     // Position the VFO flag
-    m_spectrumWidget->updateVfoPositions();
+    activeSpectrumWidget()->updateVfoPositions();
 
     // --- S-meter → VfoWidget level bar ---
     // MeterPoller emits smeterUpdated(double dbm) on each poll tick (100ms).
@@ -6580,8 +6615,8 @@ void MainWindow::openSpotHub()
         // (see tst_spothub_display_knobs).
         connect(m_spotHubDialog.data(), &SpotHubDialog::settingsChanged,
                 this, [this] {
-                    if (m_spectrumWidget) {
-                        m_spectrumWidget->loadSpotDisplaySettings();
+                    if (activeSpectrumWidget()) {
+                        activeSpectrumWidget()->loadSpotDisplaySettings();
                     }
                 });
         // Defensive re-seed.  The primary seed runs at MainWindow startup
@@ -6594,8 +6629,8 @@ void MainWindow::openSpotHub()
         // is now -- loadSpotDisplaySettings re-reads AppSettings and the
         // setter is no-op when the value is unchanged, so the cost is
         // bounded and the behaviour is correct either way.
-        if (m_spectrumWidget) {
-            m_spectrumWidget->loadSpotDisplaySettings();
+        if (activeSpectrumWidget()) {
+            activeSpectrumWidget()->loadSpotDisplaySettings();
         }
 
         // Phase 3R K-bench (bench feedback): wire the FreeDV tab's
@@ -6732,13 +6767,13 @@ void MainWindow::openSpotHub()
         // Spot List hover paints a halo on the matching panadapter
         // label.  Lazy-wired here because both widgets are needed; the
         // dialog is constructed on first open.
-        if (m_spectrumWidget) {
-            connect(m_spectrumWidget, &SpectrumWidget::spotHoverIndexChanged,
+        if (activeSpectrumWidget()) {
+            connect(activeSpectrumWidget(), &SpectrumWidget::spotHoverIndexChanged,
                     m_spotHubDialog.data(),
                     &SpotHubDialog::setHoveredPanadapterSpot);
             connect(m_spotHubDialog.data(),
                     &SpotHubDialog::spotListHoverChanged,
-                    m_spectrumWidget,
+                    activeSpectrumWidget(),
                     &SpectrumWidget::setHoverSpotIndexExternal);
         }
     }
@@ -6931,8 +6966,8 @@ void MainWindow::showAudioDiagnoseDialog()
 void MainWindow::onConnectionStateChanged()
 {
     // Phase 3Q-8: forward state to the spectrum widget for the disconnect overlay.
-    if (m_spectrumWidget) {
-        m_spectrumWidget->setConnectionState(m_radioModel->connectionState());
+    if (activeSpectrumWidget()) {
+        activeSpectrumWidget()->setConnectionState(m_radioModel->connectionState());
     }
 
     if (m_radioModel->isConnected()) {
@@ -7643,8 +7678,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
 
     // Save display settings before shutdown
-    if (m_spectrumWidget) {
-        m_spectrumWidget->saveSettings();
+    if (activeSpectrumWidget()) {
+        activeSpectrumWidget()->saveSettings();
     }
 
     // Tear down connection (sends stop command, closes sockets, joins thread)

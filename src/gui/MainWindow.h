@@ -144,6 +144,15 @@ public:
     // Non-null after construction.
     StatusBadge* paStatusBadge() const noexcept { return m_paStatusBadge; }
 
+    /// Phase 3F Sub-Epic D Task 12: backward-compat accessor that returns
+    /// the SpectrumWidget owned by the currently-active pan (via
+    /// m_panStack->panadapter(activePanId())->spectrumWidget()).
+    /// Returns nullptr during early init before m_panStack is constructed,
+    /// or if the active pan has no widget. Long-term migration target:
+    /// callers should thread through per-pan PanadapterApplet rather than
+    /// reaching for the active pan.
+    SpectrumWidget* activeSpectrumWidget() const;
+
 public slots:
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
     // Update PA status badge state. Wired by Task 17 to
@@ -333,11 +342,15 @@ private:
     QProgressDialog* m_wisdomDialog{nullptr};
 
     // Spectrum display
-    SpectrumWidget*     m_spectrumWidget{nullptr};
-    /// Phase 3F Sub-Epic D: forward member for the multi-pan layout
-    /// manager. Declared here in Task 10/11 so the +PAN dropdown menu
-    /// and per-chain CH 0 / CH 1 status indicators can null-guard until
-    /// Task 12 instantiates the stack and migrates m_spectrumWidget.
+    //
+    // Phase 3F Sub-Epic D Task 12: the single m_spectrumWidget has been
+    // removed and replaced by m_panStack (PanadapterStack), which owns
+    // 1..N PanadapterApplet instances, each containing its own
+    // SpectrumWidget. Existing call sites that still need a single
+    // SpectrumWidget* go through activeSpectrumWidget() below, which
+    // resolves to m_panStack->panadapter(activePanId())->spectrumWidget().
+    // The accessor returns nullptr during early init before m_panStack
+    // is constructed, so callers must null-guard.
     PanadapterStack*    m_panStack{nullptr};
     FFTEngine*          m_fftEngine{nullptr};
     QThread*            m_fftThread{nullptr};
