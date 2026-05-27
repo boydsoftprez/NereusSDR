@@ -20,9 +20,12 @@
 #include "core/IAudioBus.h"
 
 #include <atomic>
+#include <memory>
 #include <vector>
 
 #include <QVector>
+
+namespace NereusSDR { class Resampler; }
 
 // Forward declarations so consumers of this header don't have to drag
 // in <portaudio.h>. The concrete type is typedef'd the same way by
@@ -121,6 +124,22 @@ private:
     AudioFormat     m_negFormat;
     QString         m_backendName;
     QString         m_err;
+
+    // macOS mic-input quality fix (2026-05-26):
+    // When the device's native sample rate differs from the requested
+    // 48 kHz, we open the PortAudio stream at the device's native rate
+    // so CoreAudio's AUHAL sample-rate converter is bypassed entirely
+    // (under load that converter delivers bursty / sub-rate samples,
+    // which manifests as audible "digital jitter" on TX).  paCallback
+    // then runs the captured native-rate frames through this r8brain
+    // resampler before pushing to the ring.  Downstream consumers
+    // continue to see the negotiated rate (m_negFormat.sampleRate),
+    // not the actual hardware rate.  m_resampleScratch is sized for
+    // the worst-case per-callback output count and reused between
+    // callbacks (no per-call allocation).
+    int                                  m_nativeSampleRate{0};
+    std::unique_ptr<NereusSDR::Resampler> m_inputResampler;
+    std::vector<float>                   m_resampleScratch;
 
     // Ring buffer for push/pull. SPSC, lock-free via std::atomic.
     // Output mode: push() (DSP thread) writes, audio callback reads.

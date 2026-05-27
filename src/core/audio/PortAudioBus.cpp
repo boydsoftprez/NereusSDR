@@ -2,11 +2,20 @@
 // src/core/audio/PortAudioBus.cpp  (NereusSDR)
 // =================================================================
 // See PortAudioBus.h for contract. NereusSDR-original.
+//
+// no-port-check: This file is NereusSDR-original (PortAudio v19.7.0
+// backend for the IAudioBus interface).  An inline comment in open()
+// references Thetis ChannelMaster/ivac.c:311-340 [v2.10.3.15] for
+// PHILOSOPHICAL context only (Thetis uses paWinWasapiExclusive on
+// Windows for OS-side SRC bypass; we use device-native-rate open on
+// macOS for the same end), not as a port.  No Thetis bytes ported.
 // =================================================================
 
 #include "PortAudioBus.h"
+#include "../LogCategories.h"
 #include "../MemoryLock.h"
 #include "../PerfMonitor.h"
+#include "../Resampler.h"
 
 #include <portaudio.h>
 
@@ -296,11 +305,42 @@ bool PortAudioBus::open(const AudioFormat& format) {
                                                   : di->defaultLowInputLatency;
     params.hostApiSpecificStreamInfo = nullptr;
 
+    // ---- Capture (mic) path: open at device native rate, resample on our side. ----
+    //
+    // From Thetis ChannelMaster/ivac.c:311-340 [v2.10.3.15] — Thetis sets
+    // paWinWasapiExclusive on the WASAPI host API specifically to bypass the
+    // Windows shared-mixer sample-rate converter when the configured rate
+    // differs from the device's native rate.  CoreAudio has no public
+    // exclusive-mode equivalent, but opening the PortAudio stream at the
+    // device's native rate accomplishes the same thing: CoreAudio's AUHAL
+    // does not insert a sample-rate-converter unit when the requested rate
+    // already matches the device.  Under load that AUHAL SRC delivers
+    // bursty / sub-rate samples which manifests as audible "digital
+    // jitter" on on-air TX -- the exact bench symptom we are fixing.
+    //
+    // We then resample on our own clock with the r8brain wrapper that
+    // already serves the RADE 48->16 TX path (third_party/r8brain,
+    // src/core/Resampler.h).  Downstream consumers continue to see the
+    // requested rate via negotiatedFormat() so this is invisible above
+    // PortAudioBus.
+    //
+    // Output (speaker) path keeps the existing behaviour -- the on-air
+    // jitter we are chasing is mic-input specific and the speaker side
+    // already has its own well-behaved path.
+    const int requestedRate    = format.sampleRate;
+    const int deviceNativeRate = static_cast<int>(di->defaultSampleRate);
+    int       openRate         = requestedRate;
+    bool      needResample     = false;
+    if (!wantOutput && deviceNativeRate > 0 && deviceNativeRate != requestedRate) {
+        openRate     = deviceNativeRate;
+        needResample = true;
+    }
+
     err = Pa_OpenStream(
         &m_stream,
         wantOutput ? nullptr : &params,
         wantOutput ? &params : nullptr,
-        format.sampleRate, m_cfg.bufferSamples,
+        static_cast<double>(openRate), m_cfg.bufferSamples,
         paClipOff, &PortAudioBus::paCallback, this);
 
     if (err != paNoError) {
@@ -308,12 +348,52 @@ bool PortAudioBus::open(const AudioFormat& format) {
         m_stream = nullptr;
         m_negFormat = {};
         m_backendName.clear();
+        m_inputResampler.reset();
+        m_resampleScratch.clear();
+        m_nativeSampleRate = 0;
         return false;
     }
 
     Pa_StartStream(m_stream);
-    m_negFormat = format;
+    m_negFormat = format;            // report the *requested* rate upstream
     m_negFormat.channels = effectiveChannels;
+    m_nativeSampleRate = openRate;
+
+    if (needResample) {
+        // Worst-case per-callback input frames at the native rate:
+        // bufferSamples (PA callback frames) * effectiveChannels.  At the
+        // output side that produces roughly bufferSamples * (req / native)
+        // frames; we add 4x slack to absorb r8brain's startup-priming
+        // burst and any per-call output-length variance.
+        const int worstInputSamples =
+            m_cfg.bufferSamples * std::max(1, effectiveChannels);
+        const int worstOutputSamples =
+            static_cast<int>(
+                static_cast<double>(worstInputSamples)
+                * static_cast<double>(requestedRate)
+                / static_cast<double>(openRate))
+            * 4 + 256;
+        m_resampleScratch.assign(static_cast<size_t>(worstOutputSamples), 0.0f);
+        m_inputResampler = std::make_unique<Resampler>(
+            static_cast<double>(openRate),
+            static_cast<double>(requestedRate),
+            worstInputSamples);
+        qCInfo(lcAudio).noquote()
+            << QStringLiteral("PortAudioBus: mic opened at native %1 Hz, "
+                              "resampling to %2 Hz via r8brain "
+                              "(Thetis paWinWasapiExclusive analogue, "
+                              "bypasses CoreAudio AUHAL SRC).")
+                .arg(openRate).arg(requestedRate);
+    } else {
+        m_inputResampler.reset();
+        m_resampleScratch.clear();
+        qCInfo(lcAudio).noquote()
+            << QStringLiteral("PortAudioBus: %1 opened at %2 Hz (native), "
+                              "no resampler needed.")
+                .arg(wantOutput ? QStringLiteral("output")
+                                : QStringLiteral("mic"))
+                .arg(openRate);
+    }
 
     // Defensive null-check on host-API lookup. With a device handed back
     // by Pa_GetDefault{Output,Input}Device this should never be null, but
@@ -334,6 +414,12 @@ void PortAudioBus::close() {
     Pa_StopStream(m_stream);
     Pa_CloseStream(m_stream);
     m_stream = nullptr;
+    // Release the input resampler + its scratch buffer.  Safe here
+    // because Pa_StopStream above has joined the audio thread, so no
+    // more paCallback invocations can be in flight.
+    m_inputResampler.reset();
+    m_resampleScratch.clear();
+    m_nativeSampleRate = 0;
     // Cumulative drop / underrun / PA-flag counters remain queryable
     // via ringOverrunEvents() / ringOverrunSamples() /
     // ringUnderrunEvents() and the m_paOutputUnderflowEvents /
@@ -572,20 +658,75 @@ int PortAudioBus::paCallback(const void* in, void* out,
     } else {
         // Input mode: read captured samples from `in`, write to ring,
         // update m_txLevel (the audio here is destined for transmit).
+        //
+        // When m_inputResampler is non-null, PortAudio is delivering at
+        // the device's native rate and we resample to m_negFormat.sampleRate
+        // before pushing to the ring.  This is the Thetis-pattern
+        // paWinWasapiExclusive-equivalent for CoreAudio AUHAL SRC bypass
+        // (see open() for the full source-first rationale).  Resampler is
+        // owned by this bus and only this callback writes to its state,
+        // so the call is thread-safe.
         const float* i_in = static_cast<const float*>(in);
-        const int have = static_cast<int>(frames) * self->m_negFormat.channels;
+        const int channels = self->m_negFormat.channels;
+        const int have = static_cast<int>(frames) * channels;
 
         qint64 w = self->m_ringWrite.load(std::memory_order_relaxed);
         float peak = 0.0f;
-        if (i_in != nullptr) {
+
+        if (i_in == nullptr) {
+            self->m_txLevel.store(0.0f, std::memory_order_release);
+        } else if (self->m_inputResampler) {
+            // Resample at native rate to negotiated rate.  Resampler::
+            // processInto expects mono float input; for stereo input we
+            // downmix to mono first into a small stack-alloc scratch.
+            // Most macOS built-in mics are 1-channel anyway, so the
+            // stereo branch is the rare path.
+            //
+            // The output of processInto goes through the ring at the
+            // negotiated (requested) rate -- downstream sees the same
+            // 48 kHz cadence it has always seen, just without the AUHAL
+            // SRC artifacts.
+            const float* monoIn = i_in;
+            std::vector<float>& mono = self->m_resampleScratch;  // reuse
+            (void)mono; // scratch is for OUTPUT; mono downmix uses a
+                        // small stack buffer below.
+            float monoBuf[1024];     // PA bufferSamples typ. 128; far under 1024
+            const int monoCap = static_cast<int>(sizeof(monoBuf) / sizeof(float));
+            int monoN = static_cast<int>(frames);
+            if (channels >= 2) {
+                if (monoN > monoCap) { monoN = monoCap; }
+                for (int i = 0; i < monoN; ++i) {
+                    // Average channels into mono.
+                    float acc = 0.0f;
+                    for (int c = 0; c < channels; ++c) {
+                        acc += i_in[i * channels + c];
+                    }
+                    monoBuf[i] = acc / static_cast<float>(channels);
+                }
+                monoIn = monoBuf;
+            }
+            const int outN = self->m_inputResampler->processInto(
+                monoIn, monoN,
+                self->m_resampleScratch.data(),
+                static_cast<int>(self->m_resampleScratch.size()));
+            for (int i = 0; i < outN; ++i) {
+                self->m_ring[w % ringSize] = self->m_resampleScratch[i];
+                w++;
+                peak = std::max(peak, std::abs(self->m_resampleScratch[i]));
+            }
+            self->m_txLevel.store(peak, std::memory_order_release);
+        } else {
+            // No resampler -- device opened at the requested rate, push
+            // bytes straight through.  This is the original path,
+            // unchanged.
             for (int i = 0; i < have; ++i) {
                 self->m_ring[w % ringSize] = i_in[i];
                 w++;
                 peak = std::max(peak, std::abs(i_in[i]));
             }
+            self->m_txLevel.store(peak, std::memory_order_release);
         }
         self->m_ringWrite.store(w, std::memory_order_release);
-        self->m_txLevel.store(peak, std::memory_order_release);
     }
     return paContinue;
 }
