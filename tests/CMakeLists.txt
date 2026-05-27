@@ -5346,3 +5346,14 @@ nereus_add_test(tst_vfo_widget_tx_badge_click)
 # Source: NereusSDR-original test driving a Thetis-cited port.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 1.
 nereus_add_test(tst_p2_wideband_enable_byte)
+
+# Phase 3F Sub-Epic F Task 2: WidebandFrameAccumulator assembles 32-packet
+# (32 x 512 samples = 16384 floats) wideband ADC frames. Test 1 covers the
+# happy path (32 in-order packets -> one frameReady). Test 2 covers Thetis's
+# sequence-error recovery: zero-pad the remainder of the partial frame,
+# emit it, then reset to wait for the next seq=0 packet
+# (network.c:591-597 [v2.10.3.15]).
+# Source: NereusSDR-original test for a NereusSDR-original class with
+# Thetis-equivalent behaviour.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 2.
+nereus_add_test(tst_wideband_frame_accumulator)
