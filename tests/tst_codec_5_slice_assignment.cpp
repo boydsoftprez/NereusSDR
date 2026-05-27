@@ -12,6 +12,7 @@
 #include <QtTest/QtTest>
 #include "core/DdcAssignment.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/P1CodecStandard.h"
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
 
@@ -336,6 +337,79 @@ private slots:
         // From console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate
         QCOMPARE(a.rate[2], 192000);
         QCOMPARE(a.nDdc, 1);
+    }
+    // ── Task 8: P1CodecStandard (Hermes / ANAN10 / ANAN100 / ANAN_G2E) ─────────
+    //
+    // Porting from Thetis console.cs:8387-8455 [v2.10.3.15] UpdateDDCs() Hermes-class
+    // branch (HPSDRModel.HERMES / ANAN_G2E / ANAN10 / ANAN100).
+    //
+    // Key constants from Thetis console.cs:8196-8198 [v2.10.3.15]:
+    //   DDC0 = 1, DDC1 = 2  (bitmask values)
+    //   ps_rate = cmaster.PSrate = 192000 (cmaster.cs:425 [v2.10.3.15])
+    //
+    // Inline author tags from cited source region:
+    //   console.cs:8388: //N1GP G2E added  (ANAN_G2E case label)
+
+    void hermes_1_slice_no_ps_assigns_ddc0()
+    {
+        // Porting from console.cs:8393-8407 [v2.10.3.15]:
+        //   if (!_mox) {
+        //     if (!diversity_enabled) {
+        //       P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+        //       Rate[0] = rx1_rate; cntrl1 = 0; cntrl2 = 0; }
+        //   }
+        // //N1GP G2E added  [original tag from console.cs:8388 - ANAN_G2E case label]
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.mox = false;
+        ctx.puresignalRun = false;
+        ctx.diversity = false;
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].sampleRateHz = 96000;
+        slices[0].antennaIndex = 1;
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // From console.cs:8394 [v2.10.3.15]: DDCEnable = DDC0 (bit 0 = 0x01)
+        QCOMPARE(a.ddcEnable & 0x01, 0x01);
+        // From console.cs:8396 [v2.10.3.15]: Rate[0] = rx1_rate
+        QCOMPARE(a.rate[0], 96000);
+        // From console.cs:8393 [v2.10.3.15]: P1_DDCConfig = 4
+        QCOMPARE(a.p1DdcConfig, 4);
+        // SyncEnable = 0 (no diversity)
+        QCOMPARE(a.syncEnable, 0);
+        QCOMPARE(a.nDdc, 1);
+    }
+
+    void hermes_4_slice_enables_ddc0_through_ddc3()
+    {
+        // Porting from console.cs:8393-8407 [v2.10.3.15] (no-mox no-diversity path):
+        //   DDCEnable = DDC0 + DDC1 (Thetis adds rx2 when rx2_enabled).
+        //   Phase 3F extends to slices C+D → DDC2+DDC3 additively.
+        P1CodecStandard codec;
+        CodecContext ctx{};
+        ctx.mox = false;
+        ctx.puresignalRun = false;
+        ctx.diversity = false;
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 4; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = (7000000 + i * 3000000);
+            slices[i].sampleRateHz = 96000;
+            slices[i].antennaIndex = 1;
+        }
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // DDC0-3 = bits 0-3 = 0x0f
+        QCOMPARE(a.ddcEnable & 0x0f, 0x0f);
+        QCOMPARE(a.nDdc, 4);
+        // From console.cs:8393 [v2.10.3.15]: P1_DDCConfig = 4 (no diversity)
+        QCOMPARE(a.p1DdcConfig, 4);
     }
 };
 
