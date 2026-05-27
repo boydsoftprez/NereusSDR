@@ -18,6 +18,40 @@ private slots:
         PanadapterApplet applet(QStringLiteral("pan-0"));
         QCOMPARE(applet.panId(), QStringLiteral("pan-0"));
     }
+
+    void add_slice_makes_it_active_when_no_active_yet()
+    {
+        PanadapterApplet applet(QStringLiteral("pan-0"));
+        QCOMPARE(applet.activeSliceIndex(), -1);
+        applet.addSlice(2);
+        QCOMPARE(applet.activeSliceIndex(), 2);
+    }
+
+    void add_second_slice_does_not_change_active()
+    {
+        PanadapterApplet applet(QStringLiteral("pan-0"));
+        applet.addSlice(0);
+        applet.addSlice(1);
+        QCOMPARE(applet.activeSliceIndex(), 0);
+        QCOMPARE(applet.associatedSlices().size(), 2);
+    }
+
+    void remove_active_slice_promotes_another()
+    {
+        PanadapterApplet applet(QStringLiteral("pan-0"));
+        applet.addSlice(0);
+        applet.addSlice(1);
+        applet.removeSlice(0);
+        QCOMPARE(applet.activeSliceIndex(), 1);
+    }
+
+    void remove_last_slice_sets_active_to_minus_1()
+    {
+        PanadapterApplet applet(QStringLiteral("pan-0"));
+        applet.addSlice(0);
+        applet.removeSlice(0);
+        QCOMPARE(applet.activeSliceIndex(), -1);
+    }
 };
 
 QTEST_MAIN(TestPanadapterAppletSliceAssoc)
