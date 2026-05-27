@@ -970,6 +970,26 @@ void MainWindow::buildUI()
         Q_UNUSED(panId);
     });
 
+    // Phase 3F Sub-Epic D Task 15: restore persisted pan layout + splitter
+    // sizes. Reads PanLayoutId from AppSettings (default "1") and asks the
+    // stack to materialise that many pans before restoring per-splitter
+    // QByteArray state. Operators get their last layout back on launch.
+    {
+        auto& s = AppSettings::instance();
+        const QString restoredLayout = s.value(QStringLiteral("PanLayoutId"),
+                                                QStringLiteral("1")).toString();
+        const int needed = (restoredLayout == QStringLiteral("1")) ? 1
+                         : (restoredLayout == QStringLiteral("12h")) ? 3
+                         : (restoredLayout == QStringLiteral("2x2")) ? 4
+                         : 2;
+        QStringList ids;
+        for (int i = 0; i < needed; ++i) {
+            ids << QStringLiteral("pan-%1").arg(i);
+        }
+        m_panStack->applyLayout(restoredLayout, ids);
+        m_panStack->restoreSplitterState();
+    }
+
     // Left overlay panel (SpectrumOverlayPanel) — child of the active
     // pan's SpectrumWidget. Construction is deferred when the active
     // pan has no widget (shouldn't happen because the stack ctor
@@ -7759,6 +7779,14 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Save container layout
     if (m_containerManager) {
         m_containerManager->saveState();
+    }
+
+    // Phase 3F Sub-Epic D Task 15: persist pan layout id + per-splitter
+    // sizes. PanadapterStack::saveSplitterState writes PanLayoutId +
+    // PanLayoutSplitter_* keys to AppSettings; the matching restore runs
+    // during MainWindow init.
+    if (m_panStack) {
+        m_panStack->saveSplitterState();
     }
 
     // Issue #206 — persist window geometry + maximized/fullscreen
