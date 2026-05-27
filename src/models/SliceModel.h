@@ -118,6 +118,7 @@
 
 #include "Band.h"
 #include "core/NbFamily.h"
+#include "core/SampleRateCatalog.h"
 #include "core/WdspTypes.h"
 
 #include <QList>
@@ -180,6 +181,9 @@ class SliceModel : public QObject {
     Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
     // Phase 3F: codec-assigned DDC index. -1 = unassigned. Read-only from operator perspective.
     Q_PROPERTY(int ddcIndex READ ddcIndex WRITE setDdcIndex NOTIFY ddcIndexChanged)
+    // Phase 3F: per-slice DDC sample rate. Default = SampleRateCatalog::kDefaultSampleRate (192 kHz).
+    // Operator-owned, no mode-derived defaults. Persisted per-band per-slice.
+    Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -408,6 +412,9 @@ public:
 
     int ddcIndex() const { return m_ddcIndex; }
     void setDdcIndex(int ddc);
+
+    int sampleRateHz() const { return m_sampleRateHz; }
+    void setSampleRateHz(int hz);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -747,6 +754,7 @@ signals:
     void sliceLetterChanged(QChar letter);
     void chainIndexChanged(int idx);
     void ddcIndexChanged(int ddc);
+    void sampleRateHzChanged(int hz);
 
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
@@ -866,6 +874,7 @@ private:
     QChar   m_sliceLetter{'A'};  // Phase 3F: default A for backward-compat single-slice
     int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
     int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
+    int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed

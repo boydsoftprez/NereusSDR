@@ -113,6 +113,38 @@ private slots:
         slice.setDdcIndex(2);  // same value
         QCOMPARE(spy.count(), 0);
     }
+
+    // ── Task 7: sampleRateHz ────────────────────────────────────────────
+    void sample_rate_default_is_192000()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.sampleRateHz(), 192000);
+    }
+
+    void sample_rate_setter_round_trips()
+    {
+        SliceModel slice;
+        slice.setSampleRateHz(1536000);
+        QCOMPARE(slice.sampleRateHz(), 1536000);
+    }
+
+    void sample_rate_setter_emits_signal()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::sampleRateHzChanged);
+        slice.setSampleRateHz(384000);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().first().toInt(), 384000);
+    }
+
+    void sample_rate_setter_idempotent()
+    {
+        SliceModel slice;
+        slice.setSampleRateHz(96000);
+        QSignalSpy spy(&slice, &SliceModel::sampleRateHzChanged);
+        slice.setSampleRateHz(96000);
+        QCOMPARE(spy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

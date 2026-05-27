@@ -620,6 +620,14 @@ void SliceModel::setDdcIndex(int ddc)
     }
 }
 
+void SliceModel::setSampleRateHz(int hz)
+{
+    if (m_sampleRateHz != hz) {
+        m_sampleRateHz = hz;
+        emit sampleRateHzChanged(hz);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)
@@ -1566,6 +1574,11 @@ void SliceModel::saveToSettings(Band band)
     // SliceModel.h for the 2026-04-22 removal note.
     s.setValue(bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode));
 
+    // Phase 3F: per-slice DDC sample rate, persisted per-band so each band
+    // can independently remember its preferred rate (e.g. 192 kHz on 40m,
+    // 1536 kHz on 10m for a wider pan). NereusSDR-original (no Thetis cite).
+    s.setValue(bp + QStringLiteral("SampleRate"), m_sampleRateHz);
+
     // ── Session state (band-agnostic) ─────────────────────────────────────────
     // NR active slot + tuning — session-level only, no per-band suffix.
     // Per user directive Q10: no band suffix on NR keys.
@@ -1717,6 +1730,12 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(bp + QStringLiteral("NbMode"))) {
         setNbMode(static_cast<NereusSDR::NbMode>(
             s.value(bp + QStringLiteral("NbMode")).toInt()));
+    }
+
+    // Phase 3F: per-slice DDC sample rate (per-band). Default 192000 when key
+    // absent (new install or pre-3F settings file).
+    if (s.contains(bp + QStringLiteral("SampleRate"))) {
+        setSampleRateHz(s.value(bp + QStringLiteral("SampleRate")).toInt());
     }
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────
