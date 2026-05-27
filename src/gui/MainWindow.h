@@ -90,6 +90,12 @@ class SupportDialog;
 class WdspEngine;
 class FFTEngine;
 class SpectrumWidget;
+// Phase 3F Sub-Epic D: forward declarations for the multi-pan layout
+// manager. Member m_panStack is introduced (nullptr) in Task 10/11 so the
+// +PAN dropdown menu and per-chain status indicators can guard against
+// not-yet-wired state; Task 12 instantiates m_panStack and migrates
+// m_spectrumWidget references.
+class PanadapterStack;
 class ClarityController;
 class ContainerManager;
 class MeterWidget;
@@ -179,6 +185,11 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
+    /// Phase 3F Sub-Epic D Task 10: +PAN dropdown handler.
+    /// Builds a context menu with three sections (add slice / pick layout
+    /// template / float active pan), driven by RadioModel::slices() /
+    /// maxSlices() and (when wired by Task 12) m_panStack.
+    void showPanMenu();
     // Phase 3M-4 bench-fix: gate m_psaIndicator visibility on
     // caps.hasPureSignal && PureSignal::isAutoCalEnabled.  Called from
     // PureSignal::autoCalEnabledChanged + RadioModel::pureSignalCoordinator-
@@ -323,10 +334,19 @@ private:
 
     // Spectrum display
     SpectrumWidget*     m_spectrumWidget{nullptr};
+    /// Phase 3F Sub-Epic D: forward member for the multi-pan layout
+    /// manager. Declared here in Task 10/11 so the +PAN dropdown menu
+    /// and per-chain CH 0 / CH 1 status indicators can null-guard until
+    /// Task 12 instantiates the stack and migrates m_spectrumWidget.
+    PanadapterStack*    m_panStack{nullptr};
     FFTEngine*          m_fftEngine{nullptr};
     QThread*            m_fftThread{nullptr};
     ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
+    /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the
+    /// bottom status bar. Shown only on 2-ADC SKUs (gated by
+    /// BoardCapabilities::adcCount in the currentRadioChanged handler).
+    QWidget*            m_chain1IndicatorWidget{nullptr};
     // Right-side strip wrapper widget — the inner QWidget hosting the
     // QHBoxLayout that the buildStatusBar() routine populates. Stored
     // as a member so reapplyRightStripDropPriority() can read its

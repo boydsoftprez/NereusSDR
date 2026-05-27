@@ -246,6 +246,10 @@ warren@wpratt.com
 #include "SupportDialog.h"
 #include "AboutDialog.h"
 #include "SpectrumWidget.h"
+// Phase 3F Sub-Epic D Task 10: +PAN bottom-bar dropdown reads slice
+// state + drives PanadapterStack layout/float actions.
+#include "PanadapterStack.h"
+#include "StyleConstants.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
@@ -374,6 +378,7 @@ warren@wpratt.com
 #include <QThread>
 #include <QFile>          // /proc/stat reader for Linux system-CPU path
 #include <QPushButton>
+#include <QCursor>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QUrl>
@@ -4033,13 +4038,25 @@ void MainWindow::buildStatusBar()
     bandStackLabel->setCursor(Qt::PointingHandCursor);
     hbox->addWidget(bandStackLabel);
 
-    // +PAN icon (NYI)
-    auto* panLabel = new QLabel(QStringLiteral("+PAN"), barWidget);
-    panLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: #404858; font-weight: bold; font-size: 11px; }"));
-    panLabel->setToolTip(QStringLiteral("+PAN (NYI — Phase 3F)"));
-    panLabel->setCursor(Qt::PointingHandCursor);
-    hbox->addWidget(panLabel);
+    // Phase 3F Sub-Epic D Task 10: activated +PAN button. Replaces the
+    // long-dormant grey "NYI" label with a real dropdown that drives the
+    // PanadapterStack (add slice on active pan, pick layout template, or
+    // float the active pan into its own top-level window). The actual
+    // PanadapterStack instance is wired by Task 12; until then,
+    // showPanMenu's m_panStack-dependent actions no-op safely.
+    auto* panBtn = new QPushButton(QStringLiteral("+PAN"), barWidget);
+    panBtn->setFlat(true);
+    panBtn->setCursor(Qt::PointingHandCursor);
+    panBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { color: %1; font-weight: bold; font-size: 11px;"
+        " border: 1px solid %2; border-radius: 3px; padding: 2px 7px;"
+        " background: %3; }"
+        "QPushButton:hover { background: %4; }")
+        .arg(Style::kAccent, Style::kBorder, Style::kButtonBg,
+             Style::kButtonAltHover));
+    panBtn->setToolTip(QStringLiteral("Add slice / change layout / float pan"));
+    connect(panBtn, &QPushButton::clicked, this, &MainWindow::showPanMenu);
+    hbox->addWidget(panBtn);
 
     // Panel toggle (☰) — wired to QSplitter right pane visibility
     auto* panelToggleLabel = new QLabel(QStringLiteral("☰"), barWidget);
@@ -6723,6 +6740,96 @@ void MainWindow::openFreeDVReporter()
     m_freeDVReporterDialog->show();
     m_freeDVReporterDialog->raise();
     m_freeDVReporterDialog->activateWindow();
+}
+
+// Phase 3F Sub-Epic D Task 10: build and exec the +PAN dropdown menu.
+// Three sections, top to bottom:
+//
+//   1. "Add slice on active pan" -- one row per Slice letter (A..N) up
+//      to maxSlices(); the next-available row triggers addSliceOnPan
+//      on m_panStack's currently active pan id. Already-active letters
+//      are greyed out so the operator can read at a glance which slice
+//      is "next".
+//   2. "Layout" -- one row per supported template (1 / 2v / 2h /
+//      12h / 2x2). Current layout is checkmarked. Selecting one calls
+//      PanadapterStack::applyLayout with a synthesized pan-id list
+//      sized to that template's pan count.
+//   3. "Float active pan..." -- detaches the active pan into its own
+//      top-level window via PanadapterStack::floatPanadapter.
+//
+// All m_panStack-dependent actions guard on null so the menu opens
+// cleanly even before Task 12 wires the stack. Add-slice's first
+// triggerable row uses "pan-0" as a fallback active pan id pre-Task-12,
+// matching the convention PanadapterStack uses for its bootstrap pan.
+void MainWindow::showPanMenu()
+{
+    QMenu menu(this);
+
+    // -- Add slice section --------------------------------------------
+    menu.addSection(QStringLiteral("Add slice on active pan"));
+    if (m_radioModel) {
+        const int currentSlices = m_radioModel->slices().size();
+        const int maxS          = m_radioModel->maxSlices();
+        for (int i = 0; i < maxS; ++i) {
+            const QChar letter = QChar(QLatin1Char('A' + i));
+            QAction* act = menu.addAction(QStringLiteral("Slice %1").arg(letter));
+            // Already-active letters: grey. Next-available letter:
+            // wired. Beyond next-available: also grey (one click ->
+            // one slice).
+            act->setEnabled(i == currentSlices);
+            if (i == currentSlices) {
+                connect(act, &QAction::triggered, this, [this]() {
+                    if (!m_radioModel) { return; }
+                    const QString activePan = m_panStack
+                                                 ? m_panStack->activePanId()
+                                                 : QStringLiteral("pan-0");
+                    m_radioModel->addSliceOnPan(activePan);
+                });
+            }
+        }
+    }
+
+    // -- Layout section -----------------------------------------------
+    menu.addSeparator();
+    menu.addSection(QStringLiteral("Layout"));
+    const QStringList layouts = {
+        QStringLiteral("1"),
+        QStringLiteral("2v"),
+        QStringLiteral("2h"),
+        QStringLiteral("12h"),
+        QStringLiteral("2x2"),
+    };
+    for (const QString& layoutId : layouts) {
+        QAction* act = menu.addAction(layoutId);
+        if (m_panStack && m_panStack->currentLayoutId() == layoutId) {
+            act->setCheckable(true);
+            act->setChecked(true);
+        }
+        connect(act, &QAction::triggered, this, [this, layoutId]() {
+            if (!m_panStack) { return; }
+            // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
+            const int needed = (layoutId == QStringLiteral("1"))   ? 1
+                             : (layoutId == QStringLiteral("12h")) ? 3
+                             : (layoutId == QStringLiteral("2x2")) ? 4
+                                                                   : 2;
+            QStringList ids;
+            for (int i = 0; i < needed; ++i) {
+                ids << QStringLiteral("pan-%1").arg(i);
+            }
+            m_panStack->applyLayout(layoutId, ids);
+        });
+    }
+
+    // -- Float active pan section -------------------------------------
+    menu.addSeparator();
+    QAction* floatAct = menu.addAction(QStringLiteral("Float active pan..."));
+    floatAct->setEnabled(m_panStack != nullptr);
+    connect(floatAct, &QAction::triggered, this, [this]() {
+        if (!m_panStack) { return; }
+        m_panStack->floatPanadapter(m_panStack->activePanId());
+    });
+
+    menu.exec(QCursor::pos());
 }
 
 // Phase 3M-4 bench-fix: PSA bottom-banner indicator visibility
