@@ -791,6 +791,7 @@ set(GUI_SOURCES
     src/gui/setup/GeneralSetupPages.cpp
     src/gui/setup/GeneralOptionsPage.cpp
     src/gui/setup/HardwarePage.cpp
+    src/gui/setup/HardwareDdcRoutingPage.cpp
     src/gui/setup/PaSetupPages.cpp
     src/gui/setup/hardware/RadioInfoTab.cpp
     src/gui/setup/hardware/AntennaAlexTab.cpp

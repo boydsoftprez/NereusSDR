@@ -39,6 +39,7 @@
 #include "setup/GeneralOptionsPage.h"
 // Hardware
 #include "setup/HardwarePage.h"
+#include "setup/HardwareDdcRoutingPage.h"
 // PA (Setup IA reshape Phase 2 — placeholder pages, content lands in Phase 3+)
 #include "setup/PaSetupPages.h"
 // Phase 8 of #167: per-SKU PA visibility wiring needs RadioInfo
@@ -346,6 +347,11 @@ void SetupDialog::buildTree()
         connect(hwPage, &HardwarePage::anan8000DleVoltsAmpsChanged,
                 this,   &SetupDialog::anan8000DleVoltsAmpsChanged);
     }
+
+    // Phase 3F Sub-Epic E Tasks 8-10: DDC Routing power-user override page.
+    // Skeleton-only landing; per-DDC table + override schema follow once
+    // codec layer (Sub-Epic B) is in place.
+    add(hardware, "DDC Routing", new HardwareDdcRoutingPage(m_model));
 
     // ── PA ────────────────────────────────────────────────────────────────────
     // Top-level PA category mirrors Thetis tpPowerAmplifier
