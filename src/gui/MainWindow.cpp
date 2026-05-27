@@ -1142,6 +1142,24 @@ void MainWindow::buildUI()
                 spotModel, &SpotModel::removeSpot);
     }
 
+    // Phase 3F Sub-Epic F Tasks 7-10: forward extended-mode toggle to
+    // the active slice so AlexController can auto-bypass BPF and the
+    // P2 wideband stream (CmdGeneral byte 23) flips on. The slice-side
+    // chain is in place from Sub-Epic F Task 11; this wire closes the
+    // loop from SpectrumWidget zoom state -> SliceModel property.
+    // Per-pan routing (when m_panStack exposes activeSliceFor(panId)) is
+    // a Sub-Epic G follow-up; today we land on slice 0 for the active
+    // pan.
+    if (auto* sw = activeSpectrumWidget()) {
+        connect(sw, &SpectrumWidget::widebandExtensionStateChanged, this,
+                [this](bool on) {
+            if (!m_radioModel) { return; }
+            const auto& slices = m_radioModel->slices();
+            if (slices.isEmpty()) { return; }
+            slices.first()->setWidebandExtensionRequested(on);
+        });
+    }
+
     // Zoom slider bar below spectrum
     auto* zoomBar = new QSlider(Qt::Horizontal, spectrumPane);
     zoomBar->setRange(1, 768);

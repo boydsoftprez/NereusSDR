@@ -1170,6 +1170,16 @@ void SpectrumWidget::setFrequencyRange(double centerHz, double bandwidthHz)
     if (bwChanged) {
         scheduleSettingsSave();
     }
+
+    // Phase 3F Sub-Epic F Tasks 7-10: auto-derive extendedMode from zoom.
+    // When the visible bandwidth exceeds the DDC sample rate (operator
+    // zoomed a 192 kHz DDC out to e.g. 5 MHz visible), set extended mode
+    // so the wideband ADC stream can fill the wings via the Task 11
+    // chain. The "off" direction also fires here when the operator
+    // zooms back inside the listenable island.
+    if (m_sampleRateHz > 0.0) {
+        setExtendedMode(m_bandwidthHz > m_sampleRateHz);
+    }
 }
 
 void SpectrumWidget::setCenterFrequency(double centerHz)
@@ -1199,6 +1209,12 @@ void SpectrumWidget::setSampleRate(double hz)
     if (!qFuzzyCompare(m_sampleRateHz, hz)) {
         m_sampleRateHz = hz;
         update();
+        // Phase 3F Sub-Epic F Tasks 7-10: sample-rate change rebases the
+        // extended-mode derivation (operator may have e.g. switched a
+        // radio from 192 kHz to 384 kHz, shrinking the wing).
+        if (m_sampleRateHz > 0.0) {
+            setExtendedMode(m_bandwidthHz > m_sampleRateHz);
+        }
     }
 }
 
@@ -4338,6 +4354,25 @@ void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins
     // No update() call: paint is gated behind m_extendedMode (wired in
     // F polish).  Triggering a repaint here would cost a GPU pass per
     // wideband frame on hardware that isn't yet rendering the bins.
+}
+
+// Phase 3F Sub-Epic F Tasks 7-10: extended-mode setter + signal.
+// Flips m_extendedMode and notifies consumers so they can flip
+// SliceModel::widebandExtensionRequested, which triggers the Task 11
+// chain (Alex BPF bypass + P2 CmdGeneral byte 23 wideband-enable +
+// radio starts streaming wideband packets). The actual paint hook
+// for rendering the stored wideband bins as a background fill is
+// deferred to a post-bench polish iteration; for now the flag drives
+// the data-flow side only.
+void SpectrumWidget::setExtendedMode(bool on)
+{
+    if (m_extendedMode == on) { return; }
+    m_extendedMode = on;
+    emit widebandExtensionStateChanged(on);
+    // Schedule a repaint so the future paint impl picks up the state
+    // change. Today this is a no-op in the visual pipeline beyond the
+    // stored bool — cheap.
+    update();
 }
 
 // From AetherSDR SpectrumWidget.cpp:951-1000 [@0cd4559]

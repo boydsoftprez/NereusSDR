@@ -989,6 +989,16 @@ public slots:
     /// confirm the wideband data path is flowing without UI rendering.
     void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
 
+    /// Phase 3F Sub-Epic F Tasks 7-10: enable extended-pan rendering.
+    /// When on AND visible bandwidth exceeds DDC sample rate, paintEvent
+    /// will render wideband bins as a background fill behind the
+    /// listenable DDC island. Full visual polish (dashed boundary lines,
+    /// palette-aware bin draw) lands in a post-bench iteration; for now
+    /// extendedMode is a state-only flag that drives the auto-derive +
+    /// signal pair below.
+    void setExtendedMode(bool on);
+    bool extendedMode() const { return m_extendedMode; }
+
 public:
     // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
     // Public structs + setters re-declared under a fresh `public:` access
@@ -1142,6 +1152,13 @@ signals:
     void centerChanged(double centerHz);
     // Emitted when user scrolls to change bandwidth
     void bandwidthChangeRequested(double newBandwidthHz);
+
+    /// Phase 3F Sub-Epic F Task 10: emitted when zoom-state or operator
+    /// toggle changes extended-mode. Consumers (RadioModel via MainWindow)
+    /// flip the active slice's widebandExtensionRequested property,
+    /// which in turn auto-bypasses Alex BPF + enables the wideband
+    /// stream (Task 11 wiring already in place).
+    void widebandExtensionStateChanged(bool extensionRequested);
 
     // Emitted when user-visible dBm range changes via the scale strip
     // (arrow click, drag-pan on strip body, wheel zoom). Args are the
