@@ -1340,6 +1340,13 @@ target_compile_definitions(tst_antenna_control_tab PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_rxapplet_antenna_buttons)
 target_compile_definitions(tst_rxapplet_antenna_buttons PRIVATE NEREUS_BUILD_TESTS)
 
+# ── Phase 3F Sub-Epic B Task 11: AlexController per-ADC BPF nested types ─────
+# Verifies that AlexAdcState struct, BpfMode enum, and BpfEffective enum
+# exist as nested public types on AlexController, with correct default
+# initialization. Tasks 12-13 add the state members and recomputeBpf logic.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_controller_per_adc_bpf)
+
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
 # signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.

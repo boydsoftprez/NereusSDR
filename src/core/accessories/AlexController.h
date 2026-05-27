@@ -71,6 +71,32 @@ class AlexController : public QObject {
 public:
     explicit AlexController(QObject* parent = nullptr);
 
+    // ── Phase 3F: per-ADC BPF state types ────────────────────────────────────
+    // NereusSDR-original; no Thetis port.
+    // Per docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §4.
+
+    /// Operator preference for BPF state on this ADC.
+    enum class BpfMode {
+        Auto,        ///< default: filter when single-band, bypass on multi-band
+        ForceBand,   ///< always filter to TX-bound slice's band (warn OOB attenuation)
+        ForceBypass  ///< always bypass BPF (operator wideband or noise hunting)
+    };
+
+    /// Effective BPF state (what's actually on the wire).
+    enum class BpfEffective {
+        Filtered,         ///< BPF engaged at currentBpfBand
+        Bypass,           ///< BPF in bypass (no per-band rejection)
+        WidebandLocked    ///< BPF bypassed due to wideband stream active on this ADC
+    };
+
+    /// Per-ADC state computed by recomputeBpf().
+    struct AlexAdcState {
+        BpfMode      mode {BpfMode::Auto};
+        BpfEffective effective {BpfEffective::Filtered};
+        Band         currentBpfBand {Band::Band20m};
+        QString      reasonText;  ///< for WIDE badge tooltip + bottom-bar status
+    };
+
     // ── Per-band antenna selection (1, 2, or 3) ──────────────────────────────
     // Source: HPSDR/Alex.cs:56-58 TxAnt/RxAnt/RxOnlyAnt fields [@501e3f5]
     int  txAnt(Band band) const;
