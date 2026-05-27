@@ -383,6 +383,13 @@ void AlexController::load()
     m_ext2OutOnTx   = (s.value(QStringLiteral("%1/ext2OutOnTx").arg(base),   QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_rxOutOverride = (s.value(QStringLiteral("%1/rxOutOverride").arg(base), QStringLiteral("False")).toString() == QStringLiteral("True"));
     m_useTxAntForRx = (s.value(QStringLiteral("%1/useTxAntForRx").arg(base), QStringLiteral("False")).toString() == QStringLiteral("True"));
+    // Phase 3F: per-ADC BPF mode restore
+    m_perAdcState[0].mode = static_cast<BpfMode>(
+        s.value(QStringLiteral("%1/Alex0_BpfMode").arg(base), QStringLiteral("0")).toInt());
+    m_perAdcState[1].mode = static_cast<BpfMode>(
+        s.value(QStringLiteral("%1/Alex1_BpfMode").arg(base), QStringLiteral("0")).toInt());
+    recomputeBpf(0);
+    recomputeBpf(1);
     emit blockTxChanged();
     emit rxOutOnTxChanged(m_rxOutOnTx);
     emit ext1OutOnTxChanged(m_ext1OutOnTx);
@@ -410,6 +417,9 @@ void AlexController::save()
     s.setValue(QStringLiteral("%1/ext2OutOnTx").arg(base),   m_ext2OutOnTx   ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/rxOutOverride").arg(base), m_rxOutOverride ? QStringLiteral("True") : QStringLiteral("False"));
     s.setValue(QStringLiteral("%1/useTxAntForRx").arg(base), m_useTxAntForRx ? QStringLiteral("True") : QStringLiteral("False"));
+    // Phase 3F: per-ADC BPF mode persistence
+    s.setValue(QStringLiteral("%1/Alex0_BpfMode").arg(base), QString::number(int(m_perAdcState[0].mode)));
+    s.setValue(QStringLiteral("%1/Alex1_BpfMode").arg(base), QString::number(int(m_perAdcState[1].mode)));
 }
 
 } // namespace NereusSDR

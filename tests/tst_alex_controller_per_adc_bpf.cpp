@@ -75,6 +75,25 @@ private slots:
         QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Bypass);
         QVERIFY(alex.adcState(0).reasonText.contains("multi-band"));
     }
+
+    void bpf_mode_persists_per_adc_per_mac()
+    {
+        const QString testMac = QStringLiteral("00:11:22:33:44:55");
+        {
+            AlexController alex;
+            alex.setMacAddress(testMac);
+            alex.setBpfMode(0, AlexController::BpfMode::ForceBypass);
+            alex.setBpfMode(1, AlexController::BpfMode::ForceBand);
+            alex.save();
+        }
+        {
+            AlexController alex2;
+            alex2.setMacAddress(testMac);
+            alex2.load();
+            QCOMPARE(alex2.bpfMode(0), AlexController::BpfMode::ForceBypass);
+            QCOMPARE(alex2.bpfMode(1), AlexController::BpfMode::ForceBand);
+        }
+    }
 };
 
 QTEST_MAIN(TestAlexControllerPerAdcBpf)
