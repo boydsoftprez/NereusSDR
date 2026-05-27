@@ -936,6 +936,32 @@ Sub-Epic E (UI atlas surfaces: SpectrumStatusOverlay, antenna picker per pan, Fi
 
 ---
 
+## Sub-Epic E implementation note (landed 2026-05-27)
+
+Implemented per `docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md`. 16 tasks across 11 commits (T16 PR open deferred per single-PR strategy; T8-T13 bundled into 2 commits per plan's condensed format).
+
+Operator-visible changes:
+- `SpectrumStatusOverlay` paint-based per-pan badge widget (slice letter A/B/C/D color-coded, freq.kHz + mode, CH N tag, optional pills TX/WIDE/DIV/PS HOLD). Embedded in every `PanadapterApplet` top-right corner via `resizeEvent` positioning.
+- Right-click VFO flag opens a 5-section context menu: Make TX (emits txHandoffRequested), Antenna >, Sample rate > (48k to 1.5M), Diversity > (disabled until Sub-Epic G), Filter policy... (opens FilterPolicyDialog), Remove slice.
+- `FilterPolicyDialog` modal accessible via WIDE badge click or CH tag click. Shows current `AlexController::adcState(chainIndex)` effective + reasonText. Operator can override BPF mode (Auto / ForceBand / ForceBypass). HPF checkbox scaffolded for Sub-Epic G.
+- `AntennaPickerMenu` right-click submenu with chain-consequence hints ("Chain N - current", "(switches chain)"). Limits options by `BoardCapabilities::antennaInputCount`. RX-only EXT1/EXT2/BYPS rows after separator.
+- `AntennaSwitchToast` non-blocking bottom-right widget for auto-switch notification with 8-second auto-dismiss + UNDO button.
+- `TxBoundConfirmDialog` modal shown when adding a slice would force re-routing the TX-bound chain to a different antenna. Three outcomes: Cancelled / UseExistingAntenna / ConfirmReroute.
+- New Setup -> Hardware -> DDC Routing page (skeleton; per-DDC override table lands in a polish iteration when AppSettings override schema is finalized).
+- Existing Setup -> Hardware Config -> Antenna/ALEX -> Antenna Control tab gains a Conflict policy group (3 radio buttons + AppSettings `Antenna_ConflictPolicy` persistence; Auto / Warn / Block).
+
+Discovered during implementation:
+- `VfoWidget` doesn't hold `m_currentSlice` / `m_alexController` / `m_caps` members; the AntennaPickerMenu integration into VfoWidget right-click is deferred. Menu is standalone-constructible today; full wire-up is a separate refactor (out of Sub-Epic E scope).
+- `RadioModel::antennaAutoSwitched` signal doesn't exist yet; AntennaSwitchToast consumer wire-up deferred. Toast is standalone-constructible.
+- `SliceModel` has no public `bandLabel()` accessor (private member only); AntennaPickerMenu derives band label from `Band::bandFromFrequency()` + `Band::bandLabel()` free functions instead.
+- `RadioModel::alexControllerMutable()` returns a non-const ref, so dialogs that need to call `setBpfMode` use that accessor (no const_cast needed).
+- The "AntennaControlPage" referenced by the plan is actually `AntennaAlexAntennaControlTab` (a nested sub-sub-tab under Hardware Config). New conflict policy group landed via a `buildConflictPolicyGroup(QVBoxLayout*)` private builder matching the existing UI build pattern.
+- DDC Routing setup-page registration uses `add(category, label, SetupPage*)` lambda inside SetupDialog ctor.
+
+Sub-Epic F (Wideband extended pan: real-IQ tuning within the wideband DDC, see-beyond ddc-dial rendering) can now begin.
+
+---
+
 ## End
 
 Spec ready for review. After approval, transitions to `superpowers:writing-plans` for implementation plan generation, then sub-epic-by-sub-epic implementation in `superpowers:subagent-driven-development` mode.
