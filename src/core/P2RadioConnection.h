@@ -173,6 +173,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "RadioConnection.h"
 #include "BoardCapabilities.h"
+#include "WidebandFrameAccumulator.h"
 
 #include <QDateTime>
 #include <QUdpSocket>
@@ -360,6 +361,13 @@ signals:
     // and forwards p2Codec() into ReceiverManager::setP2Codec so the
     // ddcConfigChanged dispatch path becomes live.
     void p2CodecChanged();
+
+    // Phase 3F Sub-Epic F Task 3: emitted once a full 32-packet wideband
+    // frame (16384 normalized samples) has been assembled for the given
+    // ADC index by the matching per-ADC WidebandFrameAccumulator. Consumed
+    // by WidebandFftEngine (Task 4) / SpectrumWidget extended-pan view
+    // (Task 5+).
+    void widebandFrameReady(int adcIndex, QVector<float> samples);
 
 private slots:
     void onReadyRead();
@@ -663,6 +671,17 @@ private:
     // by P2CodecOrionMkII::composeCmdGeneral. See Thetis network.c:879
     // [v2.10.3.15].
     quint8 m_wbEnableMask{0};
+
+    // Phase 3F Sub-Epic F Task 3: per-ADC wideband frame accumulators
+    // (up to 8 ADCs). Constructed in the P2RadioConnection ctor and
+    // parented to this. Each entry owns the 32-packet state machine
+    // that converts raw UDP wideband packets (1028 bytes, port indices
+    // 2..9 → ADC 0..7 per Thetis network.c:550-602 [v2.10.3.15]) into
+    // 16384-sample float frames. The matching frameReady signal is
+    // re-emitted as P2RadioConnection::widebandFrameReady(adcIndex, ...)
+    // by a lambda installed in the ctor. Only ADCs whose bit is set
+    // in m_wbEnableMask will actually receive packets from the radio.
+    std::array<WidebandFrameAccumulator*, 8> m_wbAccumulators{};
 
     // --- Alex filter/antenna state ---
     // From Thetis ChannelMaster/network.h bpfilter struct

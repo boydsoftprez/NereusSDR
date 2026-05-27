@@ -266,6 +266,20 @@ P2RadioConnection::P2RadioConnection(QObject* parent)
         m_tx[i].epwmMax = 0;
         m_tx[i].epwmMin = 0;
     }
+
+    // Phase 3F Sub-Epic F Task 3: construct per-ADC wideband frame
+    // accumulators. Eight max (one per possible ADC index 0..7 — port
+    // indices 2..9 / UDP ports 1027..1034 per Thetis network.c:550-602
+    // [v2.10.3.15]). Only those whose bit is set in m_wbEnableMask will
+    // actually receive packets. The lambda captures `i` by value so the
+    // forwarded widebandFrameReady carries the correct ADC index.
+    for (int i = 0; i < 8; ++i) {
+        m_wbAccumulators[i] = new WidebandFrameAccumulator(this);
+        connect(m_wbAccumulators[i], &WidebandFrameAccumulator::frameReady,
+                this, [this, i](const QVector<float>& samples) {
+            emit widebandFrameReady(i, samples);
+        });
+    }
 }
 
 P2RadioConnection::~P2RadioConnection()
@@ -1759,16 +1773,40 @@ void P2RadioConnection::onReadyRead()
             }
             break;
 
-        case 2:  // 1027: wideband ADC data
-        case 3:
-        case 4:
-        case 5:
-        case 6:
-        case 7:
-        case 8:
-        case 9:
-            // From Thetis ReadUDPFrame:550-603 (wideband, not used yet)
+        case 2:  // 1027: wideband ADC0
+        case 3:  // 1028: wideband ADC1
+        case 4:  // 1029: wideband ADC2
+        case 5:  // 1030: wideband ADC3
+        case 6:  // 1031: wideband ADC4
+        case 7:  // 1032: wideband ADC5
+        case 8:  // 1033: wideband ADC6
+        case 9:  // 1034: wideband ADC7
+        {
+            // From Thetis network.c:550-603 [v2.10.3.15] (wideband ADC).
+            // Wire format: 1028 bytes total = 4 byte BE sequence number
+            // + 1024 byte payload (512 × 16-bit BE samples). The matching
+            // network.c block decodes `(readbuf[jj]<<24 | readbuf[jj+1]<<16)
+            // * const_1_div_2147483648_` per sample. Thetis dispatches
+            // adc_id = portIdx - 2 (network.c:561). Phase 3F Sub-Epic F
+            // Task 3 forwards (seq, payload) to the matching per-ADC
+            // WidebandFrameAccumulator, which folds the same state
+            // machine (wait-for-seq-0 / zero-pad-on-mismatch / emit at
+            // seq=31) into a 16384-sample frame and emits frameReady.
+            if (data.size() != 1028) {
+                break;  // check for malformed packet
+            }
+            const int adcId = portIdx - 2;
+            if (adcId < 0 || adcId >= 8) {
+                break;
+            }
+            const quint32 seq = (quint32(quint8(data[0])) << 24) |
+                                (quint32(quint8(data[1])) << 16) |
+                                (quint32(quint8(data[2])) << 8)  |
+                                 quint32(quint8(data[3]));
+            const QByteArray payload = data.mid(4);
+            m_wbAccumulators[adcId]->pushPacket(int(seq), payload);
             break;
+        }
 
         case 10: // 1035: DDC0 I/Q
         case 11: // 1036: DDC1
