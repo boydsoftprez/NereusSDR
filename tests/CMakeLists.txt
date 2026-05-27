@@ -1374,6 +1374,13 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
 nereus_add_test(tst_panadapter_stack_layouts)
 
+# ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
+# NereusSDR-original core class. One receiver (DDC) fans out to N pans
+# (different zoom levels of the same I/Q data) per AetherSDR overlay model.
+# Test covers basic subscription topology (single, multi-pan-per-receiver,
+# remove).
+nereus_add_test(tst_fft_router_fanout)
+
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
 # signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.
