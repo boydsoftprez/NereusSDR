@@ -1231,15 +1231,15 @@ public slots:
     /// From Thetis TCIServer.cs:3942-3954 [v2.10.3.13] — handleModulation, query.
     Q_INVOKABLE QString mode(int rx) const;
 
-    /// Set split-TX enable for receiver `rx`.  NereusSDR does not yet
-    /// implement per-slice split; this shim accepts the value, broadcasts the
-    /// confirmation notification (handled by TciProtocol), but does not yet
-    /// change radio state.  WSJT-X "Split Operation: None/Fake It" is the
-    /// supported configuration until proper split lands in Phase 3F.
-    /// From Thetis TCIServer.cs:3091-3127 [v2.10.3.13] — handleSplitEnableMessage.
-    Q_INVOKABLE void setSplit(int rx, bool on);
-
-    /// Query split-TX state.  Currently returns false (see setSplit note).
+    /// Query split-TX state.  Always returns false: Phase 3F deletes the
+    /// `setSplit` stub per design §3 ("split is replaced with XIT for plus
+    /// or minus 10 kHz tuning offset, or addSliceOnPan to create a second
+    /// slice for full retune"). The query stays so TciProtocol's init burst
+    /// can still emit `split_enable:rx,false;` for wire-protocol stability
+    /// with WSJT-X / N1MM / Log4OM clients ("Split Operation: None/Fake It"
+    /// is the supported configuration).
+    /// See `docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md`
+    /// §3 ("VFO A/B / split: not implemented").
     Q_INVOKABLE bool split(int rx) const;
 
     // ── Phase 3J-1 closeout Item 3 (2026-05-12): TCI Q_INVOKABLE long tail ──

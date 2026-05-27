@@ -9072,20 +9072,16 @@ QString RadioModel::mode(int rx) const
     return SliceModel::modeName(slice->dspMode());
 }
 
-void RadioModel::setSplit(int rx, bool on)
-{
-    // Per-slice split-TX is not yet modeled in NereusSDR; arriving here means
-    // TciProtocol parsed `split_enable:rx,true;` and dispatched it.  We accept
-    // the value silently — TciProtocol still broadcasts the confirmation
-    // notification so WSJT-X sees the round-trip — but the radio does not
-    // change state.  Wire this up properly when Phase 3F multi-panadapter
-    // lands the per-slice VFO B / split TX model.
-    (void)rx;
-    (void)on;
-}
-
 bool RadioModel::split(int rx) const
 {
+    // Phase 3F deletes the `setSplit` stub per design §3: split is replaced
+    // with XIT for plus or minus 10 kHz tuning offset, or addSliceOnPan to
+    // create a second slice for full retune. The query stays at false so
+    // TciProtocol's init burst can still emit `split_enable:rx,false;` for
+    // wire-protocol stability with WSJT-X / N1MM / Log4OM ("Split Operation:
+    // None/Fake It").  See
+    // docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md
+    // section 3 ("VFO A/B / split: not implemented").
     (void)rx;
     return false;
 }

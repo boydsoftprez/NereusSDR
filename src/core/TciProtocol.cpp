@@ -1921,10 +1921,16 @@ QString TciProtocol::handleSplitEnableCommand(const QStringList& args)
             return {};
         }
         const bool split = (boolStr == QStringLiteral("true"));
-        QMetaObject::invokeMethod(m_radio, "setSplit",
-                                  Qt::DirectConnection,
-                                  Q_ARG(int, rx),
-                                  Q_ARG(bool, split));
+        // Phase 3F deletes RadioModel::setSplit per design §3: split is
+        // replaced with XIT (plus or minus 10 kHz) or addSliceOnPan (full
+        // retune via a second slice).  No dispatch to the model on the set
+        // path; we just broadcast the confirmation so WSJT-X / N1MM /
+        // Log4OM see the wire-protocol round-trip ("Split Operation:
+        // None/Fake It" remains the supported configuration).  The query
+        // path below still calls RadioModel::split() which always returns
+        // false, keeping init-burst output stable.  See
+        // docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md
+        // section 3 ("VFO A/B / split: not implemented").
         // From Thetis sendSplit at TCIServer.cs:1878 [v2.10.3.13] — broadcast format.
         m_pendingNotifications << QStringLiteral("split_enable:%1,%2;")
                                       .arg(rx)
