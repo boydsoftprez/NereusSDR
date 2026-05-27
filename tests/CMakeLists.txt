@@ -5228,3 +5228,12 @@ nereus_add_test(tst_rfkit_page_master_gate)
 # Both PGXL and RF-Kit OPERATE states flip the meter to 2 kW scale; all-STANDBY
 # reverts to barefoot.  Test seam: txScaleIs2kWForTesting() reads m_powerScaleMax.
 nereus_add_test(tst_smeter_widget_external_amp)
+
+# ── Phase 3F Sub-Epic A Tasks 4-6: SliceModel new Q_PROPERTYs ───────────────
+# Verifies three new Q_PROPERTYs added for multi-panadapter/multi-slice support:
+#   Task 4: sliceLetter (QChar, default 'A') - per-slice letter ID for badge color
+#   Task 5: chainIndex  (int,   default 0)   - which Alex chain (ADC) hosts slice DDC
+#   Task 6: ddcIndex    (int,   default -1)  - codec-assigned DDC index; -1=unassigned
+# Source: NereusSDR-original (no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §3.
+nereus_add_test(tst_slice_model_phase3f_properties)

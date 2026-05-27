@@ -594,6 +594,16 @@ void SliceModel::setTxSlice(bool tx)
     }
 }
 
+// ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+
+void SliceModel::setSliceLetter(QChar letter)
+{
+    if (m_sliceLetter != letter) {
+        m_sliceLetter = letter;
+        emit sliceLetterChanged(letter);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)

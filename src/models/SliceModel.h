@@ -173,6 +173,10 @@ class SliceModel : public QObject {
     Q_PROPERTY(bool       active       READ isActive     NOTIFY activeChanged)
     Q_PROPERTY(bool       txSlice      READ isTxSlice    NOTIFY txSliceChanged)
 
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    // Phase 3F: per-slice letter identifier A-E. Drives badge color via VfoWidget::sliceColor().
+    Q_PROPERTY(QChar sliceLetter READ sliceLetter WRITE setSliceLetter NOTIFY sliceLetterChanged)
+
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
     Q_PROPERTY(bool   muted           READ muted           WRITE setMuted           NOTIFY mutedChanged)
@@ -390,6 +394,10 @@ public:
 
     int wdspChannelId() const { return m_wdspChannelId; }
     void setWdspChannelId(int id) { m_wdspChannelId = id; }
+
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    QChar sliceLetter() const { return m_sliceLetter; }
+    void setSliceLetter(QChar letter);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -725,6 +733,9 @@ signals:
     void activeChanged(bool active);
     void txSliceChanged(bool tx);
 
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    void sliceLetterChanged(QChar letter);
+
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
     void mutedChanged(bool v);
@@ -838,6 +849,9 @@ private:
     int     m_panId{-1};
     int     m_receiverIndex{-1};
     int     m_wdspChannelId{-1};
+
+    // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
+    QChar   m_sliceLetter{'A'};  // Phase 3F: default A for backward-compat single-slice
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed
