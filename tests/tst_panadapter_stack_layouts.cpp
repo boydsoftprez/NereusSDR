@@ -7,6 +7,7 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include "gui/PanadapterStack.h"
+#include "core/AppSettings.h"
 
 using namespace NereusSDR;
 
@@ -54,6 +55,62 @@ private slots:
         stack.applyLayout(QStringLiteral("2x2"), ids);
         QCOMPARE(stack.count(), 4);
         QCOMPARE(stack.currentLayoutId(), QStringLiteral("2x2"));
+    }
+
+    void splitter_state_round_trips_via_app_settings()
+    {
+        // AppSettings is process-global; clear it so the persistence keys
+        // start clean and the round-trip assertion is deterministic.
+        AppSettings::instance().clear();
+
+        // Test the wire-format round trip: what saveSplitterState writes to
+        // AppSettings must come back through restoreSplitterState as the same
+        // sizes the splitter actually held at save time. We deliberately do
+        // NOT assert that those sizes are an exact match for what was passed
+        // to rootSplitterSetSizesForTest, because QSplitter normalizes the
+        // requested sizes against the widget's actual geometry and the
+        // splitter handle width. The contract this test pins down is:
+        //   saved_sizes == restored_sizes (within the same geometry).
+        // The exact pixel values are an implementation detail of Qt.
+        const QSize kStackSize(800, 800);
+
+        QList<int> savedSizes;
+        QString savedLayoutId;
+        {
+            PanadapterStack stack;
+            stack.resize(kStackSize);
+            stack.applyLayout(QStringLiteral("2v"),
+                              {QStringLiteral("p0"), QStringLiteral("p1")});
+            stack.show();
+            QTest::qWait(10);
+            stack.rootSplitterSetSizesForTest({300, 500});
+            savedSizes = stack.rootSplitterSizes();
+            savedLayoutId = stack.currentLayoutId();
+            stack.saveSplitterState();
+        }
+
+        // Verify the wire format landed in AppSettings.
+        auto& s = AppSettings::instance();
+        const QString raw = s.value(QStringLiteral("PanSplitter0Sizes"), QString()).toString();
+        QVERIFY(!raw.isEmpty());
+        QCOMPARE(s.value(QStringLiteral("PanLayoutId"), QString()).toString(), savedLayoutId);
+
+        {
+            PanadapterStack stack2;
+            stack2.resize(kStackSize);
+            stack2.applyLayout(QStringLiteral("2v"),
+                               {QStringLiteral("p0"), QStringLiteral("p1")});
+            stack2.show();
+            QTest::qWait(10);
+            stack2.restoreSplitterState();
+            const QList<int> sizes = stack2.rootSplitterSizes();
+            QCOMPARE(sizes.size(), savedSizes.size());
+            // Round-trip equality: the second stack must hold the same sizes
+            // the first stack saved.
+            for (int i = 0; i < sizes.size(); ++i) {
+                QCOMPARE(sizes[i], savedSizes[i]);
+            }
+        }
     }
 };
 

@@ -21,9 +21,11 @@
 
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
+#include "core/AppSettings.h"
 #include <QVBoxLayout>
 #include <QSplitter>
 #include <QSet>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -172,6 +174,53 @@ void PanadapterStack::clearSplitters()
     }
     m_rootSplitter = new QSplitter(Qt::Vertical, this);
     layout()->addWidget(m_rootSplitter);
+}
+
+// Phase 3F Sub-Epic D Task 6: persist splitter geometry across launches.
+// Storage layout: PanLayoutId + PanSplitter0Sizes (root) + PanSplitter1Sizes /
+// PanSplitter2Sizes (nested splitters for 12h / 2x2). Sub-Epic D ships only
+// root-splitter persistence; nested splitter persistence may be wired in
+// Sub-Epic H polish if bench feedback demands it.
+void PanadapterStack::saveSplitterState()
+{
+    if (!m_rootSplitter) { return; }
+    auto& s = AppSettings::instance();
+    QStringList parts;
+    const QList<int> sizes = m_rootSplitter->sizes();
+    for (int sz : sizes) {
+        parts << QString::number(sz);
+    }
+    s.setValue(QStringLiteral("PanSplitter0Sizes"), parts.join(QStringLiteral(",")));
+    s.setValue(QStringLiteral("PanLayoutId"), m_currentLayoutId);
+}
+
+void PanadapterStack::restoreSplitterState()
+{
+    if (!m_rootSplitter) { return; }
+    auto& s = AppSettings::instance();
+    const QString raw = s.value(QStringLiteral("PanSplitter0Sizes"), QString()).toString();
+    if (raw.isEmpty()) { return; }
+    QList<int> sizes;
+    const QStringList parts = raw.split(QStringLiteral(","), Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        sizes << part.toInt();
+    }
+    if (!sizes.isEmpty()) {
+        m_rootSplitter->setSizes(sizes);
+    }
+}
+
+QList<int> PanadapterStack::rootSplitterSizes() const
+{
+    if (!m_rootSplitter) { return {}; }
+    return m_rootSplitter->sizes();
+}
+
+void PanadapterStack::rootSplitterSetSizesForTest(const QList<int>& sizes)
+{
+    if (m_rootSplitter) {
+        m_rootSplitter->setSizes(sizes);
+    }
 }
 
 } // namespace NereusSDR

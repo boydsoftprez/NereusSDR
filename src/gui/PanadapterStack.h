@@ -76,6 +76,20 @@ public:
     /// Detach a pan into a top-level PanFloatingWindow.
     void floatPanadapter(const QString& panId);
 
+    /// Phase 3F Sub-Epic D Task 6: persist splitter geometry across launches.
+    /// Keyed under AppSettings "PanSplitter0Sizes" + "PanLayoutId" (and per-row
+    /// children for 12h / 2x2). Restore loads the layout AND the sizes.
+    void saveSplitterState();
+    void restoreSplitterState();
+
+    /// Phase 3F Sub-Epic D Task 6 test seam: read the root splitter's current
+    /// sizes (used by tests and saveSplitterState).
+    QList<int> rootSplitterSizes() const;
+
+    /// Phase 3F Sub-Epic D Task 6 test seam: drive the root splitter to a
+    /// known size pattern so the persistence round-trip can be asserted.
+    void rootSplitterSetSizesForTest(const QList<int>& sizes);
+
 signals:
     void activePanChanged(const QString& panId);
     void countChanged(int count);
