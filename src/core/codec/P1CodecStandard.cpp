@@ -813,4 +813,12 @@ PsDdcConfig P1CodecStandard::psDdcConfigHermesIIClass(
     return cfg;
 }
 
+DdcAssignment P1CodecStandard::applyDdcAssignment(
+    const CodecContext& /*ctx*/,
+    const std::array<SliceConfig, 5>& /*slices*/) const
+{
+    // TODO Sub-Epic B Task 8: real implementation per Thetis UpdateDDCs Hermes branch
+    return DdcAssignment{};
+}
+
 } // namespace NereusSDR

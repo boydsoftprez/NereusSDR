@@ -72,6 +72,10 @@ public:
         quint8 adcCtrl2
     ) const override;
 
+    DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const override;
+
 protected:
     // Helpers exposed so subclasses can call into specific banks they
     // don't override.

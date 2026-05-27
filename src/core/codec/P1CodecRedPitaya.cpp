@@ -37,6 +37,7 @@
 // =================================================================
 
 #include "P1CodecRedPitaya.h"
+#include "core/DdcAssignment.h"
 
 namespace NereusSDR {
 
@@ -183,6 +184,14 @@ PsDdcConfig P1CodecRedPitaya::applyPureSignalDdcConfig(
     }
 
     return cfg;
+}
+
+DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
+    const CodecContext& /*ctx*/,
+    const std::array<SliceConfig, 5>& /*slices*/) const
+{
+    // TODO Sub-Epic B Task 10: real implementation per Thetis UpdateDDCs Hermes-class branch (P1 mode); 384k via include_extra_p1_rate
+    return DdcAssignment{};
 }
 
 } // namespace NereusSDR

@@ -38,6 +38,7 @@
 // =================================================================
 
 #include "P1CodecHl2.h"
+#include "core/DdcAssignment.h"
 #include "core/IoBoardHl2.h"
 
 namespace NereusSDR {
@@ -673,6 +674,14 @@ PsDdcConfig P1CodecHl2::applyPureSignalDdcConfig(
     }
 
     return cfg;
+}
+
+DdcAssignment P1CodecHl2::applyDdcAssignment(
+    const CodecContext& /*ctx*/,
+    const std::array<SliceConfig, 5>& /*slices*/) const
+{
+    // TODO Sub-Epic B Task 9: real implementation per mi0bot UpdateDDCs HL2 branch (rx1_rate carveout)
+    return DdcAssignment{};
 }
 
 } // namespace NereusSDR

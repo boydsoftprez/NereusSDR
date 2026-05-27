@@ -18,8 +18,10 @@
 
 #pragma once
 
+#include <array>
 #include <QtGlobal>
 #include "CodecContext.h"
+#include "../DdcAssignment.h"
 #include "../HpsdrModel.h"
 
 namespace NereusSDR {
@@ -75,6 +77,16 @@ public:
         quint8 adcCtrl1,
         quint8 adcCtrl2
     ) const = 0;
+
+    /// Phase 3F: produce a DDC assignment for up to 5 user slices.
+    /// SliceConfig[0] = Slice A, [1] = B, [2] = C, [3] = D, [4] = E.
+    /// Slices with .live=false are skipped. Backward compat: when only 1-2 slices
+    /// are live and PS state matches, output is byte-faithful to Thetis console.cs:8186-8538
+    /// (the existing applyPureSignalDdcConfig path remains for codec-internal use).
+    /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §4.
+    virtual DdcAssignment applyDdcAssignment(
+        const CodecContext& ctx,
+        const std::array<SliceConfig, 5>& slices) const = 0;
 };
 
 } // namespace NereusSDR

@@ -37,6 +37,7 @@
 // =================================================================
 
 #include "P1CodecAnvelinaPro3.h"
+#include "core/DdcAssignment.h"
 
 namespace NereusSDR {
 
@@ -54,6 +55,14 @@ void P1CodecAnvelinaPro3::composeCcForBank(int bank, const CodecContext& ctx,
         return;
     }
     P1CodecStandard::composeCcForBank(bank, ctx, out);
+}
+
+DdcAssignment P1CodecAnvelinaPro3::applyDdcAssignment(
+    const CodecContext& /*ctx*/,
+    const std::array<SliceConfig, 5>& /*slices*/) const
+{
+    // TODO Sub-Epic B Task 10: real implementation per Thetis UpdateDDCs Hermes-class branch
+    return DdcAssignment{};
 }
 
 } // namespace NereusSDR
