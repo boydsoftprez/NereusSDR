@@ -687,6 +687,8 @@ set(GUI_SOURCES
     src/gui/widgets/RxDashboard.h
     src/gui/widgets/StationBlock.cpp
     src/gui/widgets/StationBlock.h
+    src/gui/widgets/SpectrumStatusOverlay.cpp
+    src/gui/widgets/SpectrumStatusOverlay.h
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/NetworkDiagnosticsDialog.h
     src/gui/SpotHubDialog.cpp

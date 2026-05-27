@@ -1374,6 +1374,12 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
 nereus_add_test(tst_panadapter_stack_layouts)
 
+# ── Phase 3F Sub-Epic E Task 1: SpectrumStatusOverlay widget ────────────────
+# Top-right per-pan overlay widget for the Phase 3F multi-slice UI atlas.
+# NereusSDR-original (no upstream port). See
+# docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md Task 1.
+nereus_add_test(tst_spectrum_status_overlay)
+
 # ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
 # NereusSDR-original core class. One receiver (DDC) fans out to N pans
 # (different zoom levels of the same I/Q data) per AetherSDR overlay model.
