@@ -302,6 +302,8 @@ nereus_add_test(tst_applet_ps_wiring)
 # Source: pre-code review §11.3 per-board table.
 nereus_add_test(tst_board_capabilities_mic_jack)
 
+nereus_add_test(tst_board_capabilities_phase3f)
+
 nereus_add_test(tst_radio_discovery_parse)
 # TEST_DATA_DIR lets the fixture loader resolve paths relative to the tests/
 # source directory regardless of where the build tree lives.

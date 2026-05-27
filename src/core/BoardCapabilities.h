@@ -230,6 +230,17 @@ struct BoardCapabilities {
 
     int  adcCount;
     int  maxReceivers;
+
+    // Phase 3F: user-facing slice cap, distinct from maxReceivers (= total DDC count).
+    // For 2-ADC boards this is typically maxReceivers - 2 (DDC0/1 reserved for PS + diversity).
+    // For 1-ADC boards this often equals maxReceivers, except HL2 which is force-capped to 1.
+    // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+    int  maxSlices {0};
+
+    // Phase 3F: number of ADCs that support the wideband (real-sample) stream.
+    // P2 boards: typically equals adcCount. P1 boards: 0 (different mechanism, deferred to 3F-W).
+    int  widebandAdcs {0};
+
     std::array<int, 6> sampleRates;  // zero-pad unused slots; up to 6 for P2 boards
     int  maxSampleRate;
 
