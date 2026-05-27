@@ -689,6 +689,8 @@ set(GUI_SOURCES
     src/gui/widgets/StationBlock.h
     src/gui/widgets/SpectrumStatusOverlay.cpp
     src/gui/widgets/SpectrumStatusOverlay.h
+    src/gui/widgets/FilterPolicyDialog.cpp
+    src/gui/widgets/FilterPolicyDialog.h
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/NetworkDiagnosticsDialog.h
     src/gui/SpotHubDialog.cpp

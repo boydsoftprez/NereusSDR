@@ -257,6 +257,7 @@ warren@wpratt.com
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
 #include "widgets/RxDashboard.h"
+#include "widgets/FilterPolicyDialog.h"
 #include "core/RxChannel.h"
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
@@ -1010,6 +1011,33 @@ void MainWindow::buildUI()
         }
         m_panStack->applyLayout(restoredLayout, ids);
         m_panStack->restoreSplitterState();
+    }
+
+    // Phase 3F Sub-Epic E Task 3: WIDE badge + CH tag both open
+    // FilterPolicyDialog. We wire the initial pan-0 PanadapterApplet
+    // here; per-applet dynamic wiring (one wire per pan created by
+    // future layout switches / floating-window pop-outs) lands when
+    // PanadapterStack exposes a per-applet-created signal in a later
+    // sub-epic.
+    if (m_panStack) {
+        if (auto* defaultApplet = m_panStack->panadapter(QStringLiteral("pan-0"))) {
+            connect(defaultApplet, &PanadapterApplet::wideBadgeClicked, this,
+                    [this](const QString&) {
+                if (!m_radioModel) { return; }
+                const auto& slices = m_radioModel->slices();
+                if (slices.isEmpty()) { return; }
+                auto* alex = &m_radioModel->alexControllerMutable();
+                FilterPolicyDialog dlg(slices.first()->chainIndex(), alex, this);
+                dlg.exec();
+            });
+            connect(defaultApplet, &PanadapterApplet::chainTagClicked, this,
+                    [this](int chainIdx) {
+                if (!m_radioModel) { return; }
+                auto* alex = &m_radioModel->alexControllerMutable();
+                FilterPolicyDialog dlg(chainIdx, alex, this);
+                dlg.exec();
+            });
+        }
     }
 
     // Left overlay panel (SpectrumOverlayPanel) — child of the active
