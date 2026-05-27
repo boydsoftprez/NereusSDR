@@ -1158,6 +1158,21 @@ void MainWindow::buildUI()
             if (slices.isEmpty()) { return; }
             slices.first()->setWidebandExtensionRequested(on);
         });
+
+        // Phase 3F Sub-Epic F Task 12: click-in-wing routes the clicked
+        // Hz into setFrequency on the active slice. That propagates
+        // through ReceiverManager + RadioConnection to a DDC NCO retune,
+        // which moves the listenable island so the operator's click
+        // lands inside it on the next frame. Click-in-island flows
+        // through the existing frequencyClicked → slice retune path
+        // (untouched).
+        connect(sw, &SpectrumWidget::ddcRetuneRequested, this,
+                [this](double freqHz) {
+            if (!m_radioModel) { return; }
+            const auto& slices = m_radioModel->slices();
+            if (slices.isEmpty()) { return; }
+            slices.first()->setFrequency(freqHz);
+        });
     }
 
     // Zoom slider bar below spectrum

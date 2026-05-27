@@ -6521,7 +6521,29 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
                 QRect specRect(0, 0, w - effectiveStripW(), specH);
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
-                emit frequencyClicked(hz);
+
+                // Phase 3F Sub-Epic F Task 12: click-in-wing vs click-in-island
+                // disambiguation. Only engages when extended-mode is on
+                // (operator zoomed past the DDC's listenable range). When
+                // off, this falls through to the existing single-path
+                // frequencyClicked behavior — no regression to non-extended
+                // pan tuning.
+                if (m_extendedMode && m_sampleRateHz > 0.0) {
+                    const double halfBwHz = m_sampleRateHz * 0.5;
+                    if (std::abs(hz - m_ddcCenterHz) <= halfBwHz) {
+                        // Click landed inside the listenable island —
+                        // standard slice retune.
+                        emit frequencyClicked(hz);
+                    } else {
+                        // Click landed in a wing — operator wants the
+                        // clicked Hz to become the new DDC center.
+                        // MainWindow forwards this to slice frequency,
+                        // which propagates to the codec / DDC NCO retune.
+                        emit ddcRetuneRequested(hz);
+                    }
+                } else {
+                    emit frequencyClicked(hz);
+                }
             }
         }
 

@@ -1160,6 +1160,14 @@ signals:
     /// stream (Task 11 wiring already in place).
     void widebandExtensionStateChanged(bool extensionRequested);
 
+    /// Phase 3F Sub-Epic F Task 12: emitted when the operator clicks
+    /// in the extended-pan "wing" (outside the DDC listenable island).
+    /// Consumer (MainWindow) retunes the active slice's frequency so
+    /// the clicked Hz becomes the new DDC center. Only ever fires when
+    /// m_extendedMode is true; click-inside-island routes through the
+    /// existing frequencyClicked signal (slice retune in place).
+    void ddcRetuneRequested(double frequencyHz);
+
     // Emitted when user-visible dBm range changes via the scale strip
     // (arrow click, drag-pan on strip body, wheel zoom). Args are the
     // new floor (min) and ceiling (max) in dBm.
