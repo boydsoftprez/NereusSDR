@@ -489,6 +489,8 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/TwoToneController.cpp
+    src/core/TxSliceArbiter.cpp
+    src/core/TxSliceArbiter.h
     src/core/FFTEngine.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp

@@ -1355,6 +1355,11 @@ nereus_add_test(tst_alex_controller_per_adc_bpf)
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_controller_event_matrix)
 
+# ── Phase 3F Sub-Epic C Task 1: TxSliceArbiter skeleton ─────────────────────
+# Skeleton smoke test: default txBoundSliceIndex == 0. Full handoff coverage
+# lands in Task 3. NereusSDR-original: no Thetis port.
+nereus_add_test(tst_tx_slice_arbiter)
+
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
 # signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.
