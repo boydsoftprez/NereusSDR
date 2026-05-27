@@ -64,12 +64,60 @@ void PanadapterStack::removePanadapter(const QString& panId)
 }
 
 void PanadapterStack::removeAll() { /* TODO Task 5 */ }
-void PanadapterStack::applyLayout(const QString&, const QStringList&) { /* TODO Task 4 */ }
+
+void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& panIds)
+{
+    clearSplitters();
+    m_currentLayoutId = layoutId;
+
+    if (layoutId == QStringLiteral("1") && !panIds.isEmpty()) {
+        auto* applet = addPanadapter(panIds[0]);
+        m_rootSplitter->setOrientation(Qt::Vertical);
+        m_rootSplitter->addWidget(applet);
+        applet->show();
+    }
+    else if (layoutId == QStringLiteral("2v") && panIds.size() >= 2) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+        auto* a = addPanadapter(panIds[0]);
+        auto* b = addPanadapter(panIds[1]);
+        m_rootSplitter->addWidget(a);
+        m_rootSplitter->addWidget(b);
+        a->show();
+        b->show();
+    }
+    else if (layoutId == QStringLiteral("2h") && panIds.size() >= 2) {
+        m_rootSplitter->setOrientation(Qt::Horizontal);
+        auto* a = addPanadapter(panIds[0]);
+        auto* b = addPanadapter(panIds[1]);
+        m_rootSplitter->addWidget(a);
+        m_rootSplitter->addWidget(b);
+        a->show();
+        b->show();
+    }
+    // 12h + 2x2 implemented in Task 5.
+}
+
 PanadapterApplet* PanadapterStack::panadapter(const QString& id) const { return m_pans.value(id, nullptr); }
 QList<PanadapterApplet*> PanadapterStack::allApplets() const { return m_pans.values(); }
 void PanadapterStack::setActivePan(const QString& id) { if (m_activePanId != id) { m_activePanId = id; emit activePanChanged(id); } }
 void PanadapterStack::floatPanadapter(const QString&) { /* TODO Task 8 */ }
 void PanadapterStack::rebuildSplitters(const QString&, const QStringList&) {}
-void PanadapterStack::clearSplitters() {}
+
+void PanadapterStack::clearSplitters()
+{
+    // Detach all applets from the current splitter tree but do not delete them
+    // (they live in m_pans and may be re-attached by the new layout).
+    for (auto* applet : m_pans.values()) {
+        applet->setParent(this);
+        applet->hide();
+    }
+    // Tear down the splitter tree and rebuild from scratch.
+    if (m_rootSplitter) {
+        layout()->removeWidget(m_rootSplitter);
+        m_rootSplitter->deleteLater();
+    }
+    m_rootSplitter = new QSplitter(Qt::Vertical, this);
+    layout()->addWidget(m_rootSplitter);
+}
 
 } // namespace NereusSDR
