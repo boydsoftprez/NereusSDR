@@ -166,6 +166,28 @@ private slots:
         slice.setDiversityEnabled(true);
         QCOMPARE(spy.count(), 1);
     }
+
+    // ── Task 9: widebandExtensionRequested ──────────────────────────────
+    void wideband_extension_default_is_false()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.widebandExtensionRequested(), false);
+    }
+
+    void wideband_extension_setter_round_trips()
+    {
+        SliceModel slice;
+        slice.setWidebandExtensionRequested(true);
+        QCOMPARE(slice.widebandExtensionRequested(), true);
+    }
+
+    void wideband_extension_emits_signal()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::widebandExtensionRequestedChanged);
+        slice.setWidebandExtensionRequested(true);
+        QCOMPARE(spy.count(), 1);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

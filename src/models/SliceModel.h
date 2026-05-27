@@ -187,6 +187,9 @@ class SliceModel : public QObject {
     // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
     // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.
     Q_PROPERTY(bool diversityEnabled READ diversityEnabled WRITE setDiversityEnabled NOTIFY diversityEnabledChanged)
+    // Phase 3F: derived from pan zoom state. When true, this slice's pan is zoomed beyond DDC bandwidth
+    // and needs wideband wing data. Triggers Alex BPF bypass on this slice's chain.
+    Q_PROPERTY(bool widebandExtensionRequested READ widebandExtensionRequested WRITE setWidebandExtensionRequested NOTIFY widebandExtensionRequestedChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -421,6 +424,9 @@ public:
 
     bool diversityEnabled() const { return m_diversityEnabled; }
     void setDiversityEnabled(bool on);
+
+    bool widebandExtensionRequested() const { return m_widebandExtensionRequested; }
+    void setWidebandExtensionRequested(bool on);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -762,6 +768,7 @@ signals:
     void ddcIndexChanged(int ddc);
     void sampleRateHzChanged(int hz);
     void diversityEnabledChanged(bool on);
+    void widebandExtensionRequestedChanged(bool on);
 
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
@@ -883,6 +890,7 @@ private:
     int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
     int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
     bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
+    bool    m_widebandExtensionRequested{false};  // Phase 3F: true when pan zoom exceeds DDC bandwidth; triggers Alex BPF bypass
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed

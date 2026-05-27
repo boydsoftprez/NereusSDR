@@ -636,6 +636,14 @@ void SliceModel::setDiversityEnabled(bool on)
     }
 }
 
+void SliceModel::setWidebandExtensionRequested(bool on)
+{
+    if (m_widebandExtensionRequested != on) {
+        m_widebandExtensionRequested = on;
+        emit widebandExtensionRequestedChanged(on);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)
