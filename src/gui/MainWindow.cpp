@@ -1739,6 +1739,18 @@ void MainWindow::buildUI()
         });
     }
 
+    // Phase 3F Sub-Epic C Task 8: status-bar toast on slice-add rejection.
+    // RadioModel::addSliceOnPan() emits sliceAddRejected(reason) when the
+    // SKU cap blocks a +RX click (e.g. "Hermes Lite 2 supports a maximum
+    // of 1 slices"). Surface that as a 4-second status-bar message so the
+    // operator sees why the click did nothing.
+    connect(m_radioModel, &RadioModel::sliceAddRejected, this,
+            [this](const QString& reason) {
+        if (QStatusBar* sb = statusBar()) {
+            sb->showMessage(reason, 4000);
+        }
+    });
+
     // MOX transition fast-attack trigger — Thetis display.cs:889-892:
     //   if (rx == 1) FastAttackNoiseFloorRX1 = true;
     // Fires on both RX→TX and TX→RX transitions; the buffer-clear pulse on
