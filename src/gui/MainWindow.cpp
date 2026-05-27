@@ -1752,6 +1752,30 @@ void MainWindow::buildUI()
         }
     });
 
+    // Phase 3F Sub-Epic C Task 10: TxSliceArbiter state → UI updates.
+    // When the TX-bound slice flips (via VfoWidget badge click in T9, or
+    // any future programmatic path), update the matching VfoWidget badge
+    // and post a 2-second "TX > Slice X" status toast.
+    //
+    // Sub-Epic D expands this single-VfoWidget update to iterate the full
+    // per-pan flag collection (one VfoWidget per slice on multi-pan
+    // layouts). Today MainWindow tracks exactly one m_vfoWidget bound to
+    // Slice A (index 0); the if/else still correctly clears the badge if
+    // the bound slice is anything other than 0.
+    if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
+        connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
+                [this](int /*oldIdx*/, int newIdx) {
+            if (m_vfoWidget) {
+                m_vfoWidget->setTxSlice(m_vfoWidget->sliceIndex() == newIdx);
+            }
+            if (QStatusBar* sb = statusBar()) {
+                sb->showMessage(QStringLiteral("TX > Slice %1")
+                                    .arg(QChar(QLatin1Char('A' + newIdx))),
+                                2000);
+            }
+        });
+    }
+
     // MOX transition fast-attack trigger — Thetis display.cs:889-892:
     //   if (rx == 1) FastAttackNoiseFloorRX1 = true;
     // Fires on both RX→TX and TX→RX transitions; the buffer-clear pulse on
