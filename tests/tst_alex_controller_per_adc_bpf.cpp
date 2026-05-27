@@ -55,6 +55,26 @@ private slots:
         alex.setWidebandActive(0, true);
         QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::WidebandLocked);
     }
+
+    void auto_mode_single_band_filters_to_that_band()
+    {
+        AlexController alex;
+        std::array<Band, 5> slicesOnAdc {Band::Band20m, Band::Count, Band::Count, Band::Count, Band::Count};
+        alex.notifySlicesOnAdc(0, slicesOnAdc);
+        alex.recomputeBpf(0);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(alex.adcState(0).currentBpfBand, Band::Band20m);
+    }
+
+    void auto_mode_multi_band_bypasses()
+    {
+        AlexController alex;
+        std::array<Band, 5> slicesOnAdc {Band::Band20m, Band::Band40m, Band::Count, Band::Count, Band::Count};
+        alex.notifySlicesOnAdc(0, slicesOnAdc);
+        alex.recomputeBpf(0);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Bypass);
+        QVERIFY(alex.adcState(0).reasonText.contains("multi-band"));
+    }
 };
 
 QTEST_MAIN(TestAlexControllerPerAdcBpf)

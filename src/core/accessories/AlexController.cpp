@@ -47,6 +47,8 @@
 
 #include "AlexController.h"
 #include "core/AppSettings.h"
+#include <set>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -59,6 +61,8 @@ AlexController::AlexController(QObject* parent) : QObject(parent)
     m_txAnt.fill(1);
     m_rxAnt.fill(1);
     m_rxOnlyAnt.fill(0);  // 0 = none selected — matches Thetis Alex.cs:59 [v2.10.3.13 @501e3f5]
+    // Phase 3F: initialize slice-per-ADC arrays to Band::Count sentinel ("no slice in slot")
+    for (auto& perAdc : m_slicesPerAdc) { perAdc.fill(Band::Count); }
 }
 
 // ── Per-ADC BPF mode mutators + recompute ──────────────────────────────────
@@ -93,6 +97,15 @@ void AlexController::setWidebandActive(int adc, bool on)
     recomputeBpf(adc);
 }
 
+// Phase 3F: slice-aware recompute trigger.
+// Band::Count is the sentinel for "no slice in this position".
+void AlexController::notifySlicesOnAdc(int adc, const std::array<Band, 5>& slicesOnAdc)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    m_slicesPerAdc[adc] = slicesOnAdc;
+    recomputeBpf(adc);
+}
+
 void AlexController::recomputeBpf(int adc)
 {
     if (adc < 0 || adc >= 2) { return; }
@@ -111,10 +124,29 @@ void AlexController::recomputeBpf(int adc)
         s.effective = BpfEffective::Filtered;
         s.reasonText = QStringLiteral("%1 (forced)").arg(bandLabel(s.currentBpfBand));
     } else {
-        // Auto mode placeholder (Task 13 will inspect slice list and decide
-        // Filtered-single-band vs Bypass-multi-band).
-        s.effective = BpfEffective::Filtered;
-        s.reasonText = QStringLiteral("%1 (idle)").arg(bandLabel(s.currentBpfBand));
+        // Auto mode: inspect slice bands on this ADC.
+        // 0 bands -> idle/filtered; 1 band -> Filtered at that band;
+        // 2+ distinct bands -> BYPASS (multi-band attenuation trade-off).
+        // Phase 3F Task 13 — NereusSDR-original; no Thetis port.
+        std::set<Band> uniqueBands;
+        for (Band b : m_slicesPerAdc[adc]) {
+            if (b != Band::Count) { uniqueBands.insert(b); }
+        }
+
+        if (uniqueBands.empty()) {
+            s.effective = BpfEffective::Filtered;
+            s.reasonText = QStringLiteral("%1 (idle)").arg(bandLabel(s.currentBpfBand));
+        } else if (uniqueBands.size() == 1) {
+            s.currentBpfBand = *uniqueBands.begin();
+            s.effective = BpfEffective::Filtered;
+            s.reasonText = bandLabel(s.currentBpfBand);
+        } else {
+            // 2+ distinct bands on this ADC -> BYPASS
+            s.effective = BpfEffective::Bypass;
+            QStringList bandList;
+            for (Band b : uniqueBands) { bandList << bandLabel(b); }
+            s.reasonText = QStringLiteral("BYPASS (multi-band: %1)").arg(bandList.join(QStringLiteral(" + ")));
+        }
     }
 
     if (s.effective != prev.effective || s.reasonText != prev.reasonText) {

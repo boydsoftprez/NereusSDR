@@ -112,6 +112,11 @@ public:
     /// Recomputes BPF (wideband forces effective=WidebandLocked).
     void setWidebandActive(int adc, bool on);
 
+    /// Phase 3F: called by RadioModel when the slice list on this ADC changes
+    /// (slice add/remove/retune-cross-band). Drives the auto-mode recompute.
+    /// Use Band::Count as the sentinel for "no slice in this position".
+    void notifySlicesOnAdc(int adc, const std::array<Band, 5>& slicesOnAdc);
+
     // ── Per-band antenna selection (1, 2, or 3) ──────────────────────────────
     // Source: HPSDR/Alex.cs:56-58 TxAnt/RxAnt/RxOnlyAnt fields [@501e3f5]
     int  txAnt(Band band) const;
@@ -211,6 +216,9 @@ private:
 
     std::array<AlexAdcState, 2> m_perAdcState{};
     std::array<bool, 2> m_widebandActive {false, false};
+    // Phase 3F: slice band per ADC — sentinel Band::Count means "no slice in this slot".
+    // Initialized in ctor so all slots start at Band::Count (not Band::Band160m = 0).
+    std::array<std::array<Band, 5>, 2> m_slicesPerAdc;
 
     QString m_mac;
 
