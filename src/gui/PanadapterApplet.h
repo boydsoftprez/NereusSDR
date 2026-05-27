@@ -40,6 +40,8 @@
 #include <QString>
 #include <QSet>
 
+class QContextMenuEvent;
+
 namespace NereusSDR {
 
 class SpectrumWidget;
@@ -81,6 +83,15 @@ public:
     /// Phase 3F Sub-Epic E Task 2: refresh per-pan overlay from active slice state.
     void updateStatusOverlay(SliceModel* activeSlice);
 
+    /// Phase 3F Sub-Epic F Task 13: per-pan Extended view toggle.
+    /// Operator override of the zoom-driven auto-derive on SpectrumWidget.
+    /// Default true (on); persisted per-pan via AppSettings under
+    /// "Pan_<panId>_ExtendedView". When false, the embedded SpectrumWidget
+    /// is held at extendedMode == false regardless of zoom (forced off);
+    /// when true, the zoom auto-derive decides extendedMode dynamically.
+    bool extendedViewEnabled() const { return m_extendedViewEnabled; }
+    void setExtendedViewEnabled(bool on);
+
 signals:
     void activated(const QString& panId);  // emitted on any click within applet
     void closeRequested(const QString& panId);
@@ -95,6 +106,7 @@ signals:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     QString                 m_panId;
@@ -104,6 +116,7 @@ private:
     QSet<int>               m_associatedSlices;
     double                  m_centerMhz {14.225};
     double                  m_bandwidthMhz {0.192};
+    bool                    m_extendedViewEnabled {true};  // Phase 3F Sub-Epic F Task 13
 };
 
 } // namespace NereusSDR

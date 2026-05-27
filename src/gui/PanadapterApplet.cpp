@@ -22,7 +22,11 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/widgets/SpectrumStatusOverlay.h"
 #include "models/SliceModel.h"
+#include "core/AppSettings.h"
 
+#include <QAction>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QResizeEvent>
 #include <QVBoxLayout>
 
@@ -51,6 +55,20 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
             [this]() { emit wideBadgeClicked(m_panId); });
     connect(m_statusOverlay, &SpectrumStatusOverlay::chainTagClicked, this,
             &PanadapterApplet::chainTagClicked);
+
+    // Phase 3F Sub-Epic F Task 13: restore persisted extended-view
+    // toggle (default true). The SpectrumWidget's own auto-derive
+    // decides extendedMode dynamically when this is true; when this
+    // is false the auto-derive is overridden to off (see
+    // setExtendedViewEnabled). We avoid pushing the state to
+    // m_spectrum here because setFrequencyRange / setSampleRate run
+    // their own auto-derive on first wire; we only force the override
+    // when the operator explicitly toggles off via the right-click
+    // menu below.
+    auto& s = AppSettings::instance();
+    const QString stored = s.value(QStringLiteral("Pan_%1_ExtendedView").arg(m_panId),
+                                   QStringLiteral("True")).toString();
+    m_extendedViewEnabled = (stored == QStringLiteral("True"));
 }
 
 PanadapterApplet::~PanadapterApplet() = default;
@@ -105,6 +123,41 @@ void PanadapterApplet::updateStatusOverlay(SliceModel* slice)
     m_statusOverlay->setTxBound(slice->isTxSlice());
     m_statusOverlay->setDiversityActive(slice->diversityEnabled());
     m_statusOverlay->setPsPaused(slice->psPaused());
+}
+
+// Phase 3F Sub-Epic F Task 13: operator-toggleable Extended view.
+// Default is true so the SpectrumWidget zoom auto-derive (Task 7-10)
+// gets to decide extendedMode based on bandwidth vs DDC sample rate.
+// When false, we force m_spectrum->setExtendedMode(false) so the
+// wideband stream stays off regardless of zoom; future toggles back
+// to true let the next setFrequencyRange / setSampleRate call re-run
+// the auto-derive and pick the right state for the current zoom.
+void PanadapterApplet::setExtendedViewEnabled(bool on)
+{
+    if (m_extendedViewEnabled == on) { return; }
+    m_extendedViewEnabled = on;
+    auto& s = AppSettings::instance();
+    s.setValue(QStringLiteral("Pan_%1_ExtendedView").arg(m_panId),
+               on ? QStringLiteral("True") : QStringLiteral("False"));
+    if (m_spectrum && !on) {
+        // Force extended mode off (operator override). Turning the
+        // toggle back on doesn't immediately push true because the
+        // auto-derive should re-decide based on current zoom; the next
+        // setFrequencyRange call inside the widget will rebase it.
+        m_spectrum->setExtendedMode(false);
+    }
+}
+
+// Phase 3F Sub-Epic F Task 13: right-click context menu with a single
+// checkable Extended view entry. Pops at the global cursor position.
+void PanadapterApplet::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+    QAction* extAct = menu.addAction(tr("Extended view (wideband wings)"));
+    extAct->setCheckable(true);
+    extAct->setChecked(m_extendedViewEnabled);
+    connect(extAct, &QAction::toggled, this, &PanadapterApplet::setExtendedViewEnabled);
+    menu.exec(event->globalPos());
 }
 
 } // namespace NereusSDR
