@@ -1032,11 +1032,130 @@ PsDdcConfig P2CodecOrionMkII::psDdcConfigHermesIIClass(
 }
 
 DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
-    const CodecContext& /*ctx*/,
-    const std::array<SliceConfig, 5>& /*slices*/) const
+    const CodecContext& ctx,
+    const std::array<SliceConfig, 5>& slices) const
 {
-    // TODO Sub-Epic B Task 7: real implementation per Thetis UpdateDDCs OrionMkII branch
-    return DdcAssignment{};
+    // OrionMkII / ANAN7000D / ANAN8000D / ANAN100D / ANAN200D / ANVELINAPRO3 /
+    // ANAN_G2 / ANAN_G2_1K DDC assignment.
+    //
+    // Mirrors Thetis console.cs:8220-8303 [v2.10.3.15] UpdateDDCs() G2-class
+    // branch.  These models all fall through to the same case body as Saturn
+    // (HPSDRModel.ANAN_G2 / ANAN_G2_1K) — the logic is byte-for-byte
+    // identical; only the dispatch shim differs.
+    //
+    // Slice-to-DDC mapping for G2-class (2-ADC, 7 DDCs):
+    //   Slice A (index 0) -> DDC2    [Thetis: DDCEnable = DDC2 at line 8244]
+    //   Slice B (index 1) -> DDC3    [Thetis: DDCEnable += DDC3 at line 8301]
+    //   Slice C (index 2) -> DDC4    [NereusSDR extension: idle Thetis DDC4 slot]
+    //   Slice D (index 3) -> DDC5    [NereusSDR extension: idle Thetis DDC5 slot]
+    //   Slice E (index 4) -> DDC6    [NereusSDR extension: idle Thetis DDC6 slot]
+    // DDC0/DDC1 reserved for PS feedback pair or Diversity sync pair.
+    //
+    // From Thetis console.cs:8199 [v2.10.3.15]:
+    //   int DDC0 = 1, DDC1 = 2, DDC2 = 4, DDC3 = 8;
+    // [2.10.3.13]MW0LGE p1 !  [original inline comment from console.cs:8247 — P1-only branch on
+    // the same RX state; P2 codec does not set Rate[0] here, but tag preserved per
+    // CLAUDE.md inline-comment-preservation rule (author tag within +-5 of cite)]
+    // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header — adjacent to the
+    // rx2_enabled addendum at console.cs:8301/8302; preserved per CLAUDE.md rule]
+
+    DdcAssignment a{};
+
+    // PS feedback DDC rate from Thetis cmaster.cs:425 [v2.10.3.15]:
+    //   private static int ps_rate = 192000;
+    // From Thetis console.cs:8205 [v2.10.3.15]: int ps_rate = cmaster.PSrate;
+    static constexpr int kPsRate = 192000;
+
+    // Slice-to-DDC index table. DDC0 and DDC1 are reserved.
+    // From Thetis console.cs:8244-8247 [v2.10.3.15] (DDC2 = Slice A) and
+    // console.cs:8301 [v2.10.3.15] (DDC3 = Slice B / rx2_enabled).
+    // [2.10.3.13]MW0LGE p1 !  [verbatim from console.cs:8247 — P1-only Rate[0] path]
+    static constexpr int kSliceToDdc[5] = {2, 3, 4, 5, 6};
+
+    // Populate DDC assignments for live slices.
+    // For Slice A (index 0) -> DDC2: matches Thetis's rx1 on DDC2.
+    // For Slice B (index 1) -> DDC3: matches Thetis's rx2_enabled DDC3 addendum.
+    // For Slices C-E -> DDC4-6: NereusSDR extension into Thetis's idle slots.
+    for (int i = 0; i < 5; ++i) {
+        if (!slices[i].live) { continue; }
+        const int ddc = kSliceToDdc[i];
+        a.ddcEnable |= (1 << ddc);
+        // From Thetis console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate;
+        // [2.10.3.13]MW0LGE p1 !  [original inline comment from console.cs:8247]
+        // From Thetis console.cs:8302 [v2.10.3.15]: Rate[3] = rx2_rate;
+        // //DH1KLM  [verbatim from console.cs:8305 — tag on REDPITAYA case header
+        // adjacent to the rx2_enabled addendum at 8302; preserved per CLAUDE.md rule]
+        a.rate[ddc] = slices[i].sampleRateHz;
+        ++a.nDdc;
+    }
+
+    // ADC control from Thetis console.cs:8249 [v2.10.3.15]:
+    //   cntrl1 = rx_adc_ctrl1 & 0xff;  (default rx_adc_ctrl1=4, console.cs:15099)
+    //   cntrl2 = rx_adc_ctrl2 & 0x3f;  (default rx_adc_ctrl2=0, console.cs:15135)
+    // ctx.adcCtrl carries rx_adc_ctrl1 in low byte, rx_adc_ctrl2 in high byte.
+    a.adcCtrl1 = static_cast<int>(ctx.adcCtrl & 0xff);
+    a.adcCtrl2 = static_cast<int>((ctx.adcCtrl >> 8) & 0x3f);
+
+    // PureSignal override. Thetis console.cs:8265-8274 [v2.10.3.15]:
+    //   if (!diversity_enabled && puresignal_enabled)  {  // mox path
+    //       DDCEnable = DDC0 + DDC2;
+    //       SyncEnable = DDC1;
+    //       Rate[0] = ps_rate;
+    //       Rate[1] = ps_rate;
+    //       Rate[2] = rx1_rate;   (Slice A rate preserved)
+    //       cntrl1 = (rx_adc_ctrl1 & 0xf3) | 0x08;  // DDC1 -> ADC2 (PA-feedback)
+    //   }
+    //   Also: console.cs:8276-8285 (diversity + PS): same cntrl1 formula, PS wins.
+    if (ctx.puresignalRun && ctx.mox) {
+        // PS pair occupies DDC0 (fwd/TX monitor) + DDC1 (rev/PA-feedback).
+        a.ddcEnable |= 0x03;                        // set DDC0 + DDC1
+        a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
+        a.rate[0] = kPsRate;
+        a.rate[1] = kPsRate;
+        // From Thetis console.cs:8273 [v2.10.3.15]:
+        //   cntrl1 = (rx_adc_ctrl1 & 0xf3) | 0x08;
+        //   Clears DDC1 ADC bits (bits 3:2 = 0xf3 mask) and sets DDC1 -> ADC2 (0x08)
+        a.adcCtrl1 = (a.adcCtrl1 & 0xf3) | 0x08;
+        a.psFwdDdc = 0;
+        a.psRevDdc = 1;
+        a.nDdc += 2;
+    }
+    // Diversity migration (PS wins over diversity if both engaged).
+    // Thetis console.cs:8232-8240 [v2.10.3.15] (no-mox, diversity path):
+    //   DDCEnable = DDC0;
+    //   SyncEnable = DDC1;
+    //   Rate[0] = rx1_rate;
+    //   Rate[1] = rx1_rate;
+    //   cntrl1 = rx_adc_ctrl1 & 0xff;
+    // Thetis console.cs:8287-8295 [v2.10.3.15] (mox, diversity && !PS):
+    //   DDCEnable = DDC0;
+    //   SyncEnable = DDC1;
+    //   Rate[0] = rx1_rate;
+    //   Rate[1] = rx1_rate;
+    //   cntrl1 = rx_adc_ctrl1 & 0xff;  // same as no-mox: no PS active
+    else if (ctx.diversity) {
+        // Slice A migrates: DDC2 is disabled, DDC0+DDC1 sync pair takes over.
+        a.ddcEnable &= ~0x04;                       // clear DDC2
+        a.ddcEnable |= 0x03;                        // set DDC0 + DDC1
+        a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
+        if (slices[0].live) {
+            // From Thetis console.cs:8237-8238 [v2.10.3.15]: Rate[0]=Rate[1]=rx1_rate
+            a.rate[0] = slices[0].sampleRateHz;
+            a.rate[1] = slices[0].sampleRateHz;
+            a.rate[2] = 0;
+        }
+        // adcCtrl1 stays as rx_adc_ctrl1 & 0xff (no PS override here)
+        // nDdc: was incremented for DDC2 above; swap to DDC0+DDC1 (net delta = +1)
+        // Remove DDC2 count, add DDC0+DDC1 count.
+        if (slices[0].live) {
+            --a.nDdc;    // remove the DDC2 slot counted for Slice A
+            a.nDdc += 2; // add DDC0 + DDC1
+        } else {
+            a.nDdc += 2;
+        }
+    }
+
+    return a;
 }
 
 } // namespace NereusSDR

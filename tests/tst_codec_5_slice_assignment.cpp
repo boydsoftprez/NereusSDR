@@ -12,6 +12,7 @@
 #include <QtTest/QtTest>
 #include "core/DdcAssignment.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
 
 using namespace NereusSDR;
@@ -272,6 +273,69 @@ private slots:
         for (int ddc = 2; ddc <= 6; ++ddc) {
             QCOMPARE(a.rate[ddc], 192000);
         }
+    }
+
+    // ── Task 7: P2CodecOrionMkII DDC assignment ───────────────────────────────
+    //
+    // ORIONMKII / ANAN7000D / ANAN8000D / ANAN100D / ANAN200D / ANVELINAPRO3 /
+    // G2 / G2-1K all fall through to the same Thetis case block as Saturn.
+    //
+    // Porting from Thetis console.cs:8220-8303 [v2.10.3.15] UpdateDDCs()
+    // G2-class branch (same case labels as Saturn, byte-for-byte identical logic).
+    //
+    // Inline author tags from cited source region (CLAUDE.md inline-comment-preservation):
+    //   console.cs:8247  [2.10.3.13]MW0LGE p1 !  (within +-5 of the Rate[2] and DDCEnable cites)
+    //   console.cs:8305  //DH1KLM                 (within +-5 of the DDCEnable += DDC3 cite at 8301/8302)
+    //
+    // [2.10.3.13]MW0LGE p1 !  [original tag from console.cs:8247 — P1-only; P2 path omits Rate[0]]
+    // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header; adjacent to rx2_enabled addendum]
+
+    void orion_mkii_5_slice_enables_ddc2_through_ddc6()
+    {
+        // From Thetis console.cs:8220-8303 [v2.10.3.15]: ORIONMKII / G2-class
+        // 5-slice: DDC2 through DDC6 all enabled (idle Thetis slots 4-6 filled
+        // by NereusSDR extension; Thetis fills only DDC2 + DDC3 for rx1/rx2).
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = (7000000 + i * 3000000);
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // DDC2-6 = bits 2-6 = 0x7c (same as Saturn 5-slice)
+        QCOMPARE(a.ddcEnable & 0x7c, 0x7c);
+        QCOMPARE(a.nDdc, 5);
+    }
+
+    void orion_mkii_1_slice_no_ps_no_div_assigns_ddc2()
+    {
+        // From Thetis console.cs:8244-8249 [v2.10.3.15]: ORIONMKII single-RX
+        // no-mox no-diversity path: DDCEnable = DDC2; Rate[2] = rx1_rate.
+        // [2.10.3.13]MW0LGE p1 !  [original tag from console.cs:8247 — P1-only path]
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 1;
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // From console.cs:8244 [v2.10.3.15]: DDCEnable = DDC2 (bit 2 = 0x04)
+        QCOMPARE(a.ddcEnable & 0x04, 0x04);
+        // DDC0 and DDC1 must not be set (no PS, no diversity)
+        QCOMPARE(a.ddcEnable & 0x03, 0x00);
+        // From console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate
+        QCOMPARE(a.rate[2], 192000);
+        QCOMPARE(a.nDdc, 1);
     }
 };
 
