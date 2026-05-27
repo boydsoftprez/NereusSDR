@@ -1347,6 +1347,14 @@ target_compile_definitions(tst_rxapplet_antenna_buttons PRIVATE NEREUS_BUILD_TES
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_controller_per_adc_bpf)
 
+# ── Phase 3F Sub-Epic B Task 17: AlexController event-matrix coverage ─────────
+# Verifies the 16-row event trigger matrix from design §10:
+#   - cross-band retune emits bpfStateChanged
+#   - same-band retune is idempotent (no spurious emit)
+#   - wideband active overrides operator ForceBand mode
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_controller_event_matrix)
+
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
 # signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.
