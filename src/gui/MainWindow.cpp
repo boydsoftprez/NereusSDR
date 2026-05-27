@@ -3275,34 +3275,58 @@ void MainWindow::buildMenuBar()
     // =========================================================================
     QMenu* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
 
+    // Phase 3F Sub-Epic D Task 14: live Pan Layout / Add slice / Float
+    // entries. Replace the NYI submenu and disabled Add/Remove placeholders
+    // with the working stack actions. The bottom-bar +PAN dropdown
+    // (Task 10) is kept as the operator-facing primary; these menu items
+    // are for operators who prefer the menubar / keyboard shortcuts.
     {
-        QMenu* panLayoutMenu = viewMenu->addMenu(QStringLiteral("Pan &Layout"));
-        QActionGroup* layoutGroup = new QActionGroup(this);
-        layoutGroup->setExclusive(true);
-        const struct { const char* label; } layouts[] = {
-            { "&Single" }, { "2 &Vertical" }, { "2 &Horizontal" },
-            { "2×&2" }, { "1+2 &Horizontal" }
-        };
-        bool first = true;
-        for (const auto& l : layouts) {
-            QAction* a = panLayoutMenu->addAction(QString::fromUtf8(l.label));
-            a->setCheckable(true);
-            a->setEnabled(false);
-            a->setToolTip(QStringLiteral("NYI — Phase 3F"));
-            if (first) { a->setChecked(true); first = false; }
-            layoutGroup->addAction(a);
-        }
+        QAction* panLayoutAct = viewMenu->addAction(QStringLiteral("Pan &Layout…"));
+        panLayoutAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
+        panLayoutAct->setToolTip(QStringLiteral(
+            "Pick a panadapter layout template (1 / 2v / 2h / 12h / 2x2)"));
+        connect(panLayoutAct, &QAction::triggered, this, [this]() {
+            if (!m_panStack) { return; }
+            PanLayoutDialog dialog(this);
+            if (dialog.exec() == QDialog::Accepted) {
+                const QString layoutId = dialog.selectedLayout();
+                // Pan-count per template: 1=1, 2v/2h=2, 12h=3, 2x2=4.
+                const int needed = (layoutId == QStringLiteral("1"))   ? 1
+                                 : (layoutId == QStringLiteral("12h")) ? 3
+                                 : (layoutId == QStringLiteral("2x2")) ? 4
+                                                                       : 2;
+                QStringList ids;
+                for (int i = 0; i < needed; ++i) {
+                    ids << QStringLiteral("pan-%1").arg(i);
+                }
+                m_panStack->applyLayout(layoutId, ids);
+            }
+        });
     }
 
     {
-        QAction* addPanAction = viewMenu->addAction(QStringLiteral("&Add Panadapter"));
-        addPanAction->setEnabled(false);
-        addPanAction->setToolTip(QStringLiteral("NYI — Phase 3F"));
+        QAction* addSliceAct = viewMenu->addAction(
+            QStringLiteral("&Add slice on active pan"));
+        addSliceAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+R")));
+        addSliceAct->setToolTip(QStringLiteral(
+            "Create a new slice on the active panadapter (up to maxSlices())"));
+        connect(addSliceAct, &QAction::triggered, this, [this]() {
+            if (m_panStack && m_radioModel) {
+                m_radioModel->addSliceOnPan(m_panStack->activePanId());
+            }
+        });
     }
+
     {
-        QAction* rmPanAction = viewMenu->addAction(QStringLiteral("&Remove Panadapter"));
-        rmPanAction->setEnabled(false);
-        rmPanAction->setToolTip(QStringLiteral("NYI — Phase 3F"));
+        QAction* floatAct = viewMenu->addAction(
+            QStringLiteral("&Float active pan…"));
+        floatAct->setToolTip(QStringLiteral(
+            "Detach the active panadapter into its own floating window"));
+        connect(floatAct, &QAction::triggered, this, [this]() {
+            if (m_panStack) {
+                m_panStack->floatPanadapter(m_panStack->activePanId());
+            }
+        });
     }
 
     viewMenu->addSeparator();
