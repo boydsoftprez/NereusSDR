@@ -81,6 +81,38 @@ private slots:
         slice.setChainIndex(1);  // same value
         QCOMPARE(spy.count(), 0);
     }
+
+    // ── Task 6: ddcIndex (read-only from operator perspective; setter for codec) ──
+    void ddc_index_default_is_negative_1()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.ddcIndex(), -1);  // unassigned
+    }
+
+    void ddc_index_setter_emits_signal()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::ddcIndexChanged);
+        slice.setDdcIndex(2);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(slice.ddcIndex(), 2);
+    }
+
+    void ddc_index_setter_round_trips()
+    {
+        SliceModel slice;
+        slice.setDdcIndex(3);
+        QCOMPARE(slice.ddcIndex(), 3);
+    }
+
+    void ddc_index_setter_idempotent()
+    {
+        SliceModel slice;
+        slice.setDdcIndex(2);
+        QSignalSpy spy(&slice, &SliceModel::ddcIndexChanged);
+        slice.setDdcIndex(2);  // same value
+        QCOMPARE(spy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

@@ -178,6 +178,8 @@ class SliceModel : public QObject {
     Q_PROPERTY(QChar sliceLetter READ sliceLetter WRITE setSliceLetter NOTIFY sliceLetterChanged)
     // Phase 3F: which Alex chain (ADC) hosts this slice's DDC. 0 or 1 on 2-ADC boards, always 0 on 1-ADC.
     Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
+    // Phase 3F: codec-assigned DDC index. -1 = unassigned. Read-only from operator perspective.
+    Q_PROPERTY(int ddcIndex READ ddcIndex WRITE setDdcIndex NOTIFY ddcIndexChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -403,6 +405,9 @@ public:
 
     int chainIndex() const { return m_chainIndex; }
     void setChainIndex(int idx);
+
+    int ddcIndex() const { return m_ddcIndex; }
+    void setDdcIndex(int ddc);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -741,6 +746,7 @@ signals:
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     void sliceLetterChanged(QChar letter);
     void chainIndexChanged(int idx);
+    void ddcIndexChanged(int ddc);
 
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
@@ -859,6 +865,7 @@ private:
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     QChar   m_sliceLetter{'A'};  // Phase 3F: default A for backward-compat single-slice
     int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
+    int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed

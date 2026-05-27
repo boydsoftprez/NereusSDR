@@ -612,6 +612,14 @@ void SliceModel::setChainIndex(int idx)
     }
 }
 
+void SliceModel::setDdcIndex(int ddc)
+{
+    if (m_ddcIndex != ddc) {
+        m_ddcIndex = ddc;
+        emit ddcIndexChanged(ddc);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)
