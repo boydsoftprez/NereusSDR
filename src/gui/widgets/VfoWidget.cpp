@@ -623,6 +623,11 @@ void VfoWidget::buildHeaderRow()
     m_txBadge->setToolTip(QStringLiteral("Indicates this slice is the TX slice"));
     hdr->addWidget(m_txBadge);
 
+    // Phase 3F Sub-Epic C Task 9: TX badge click requests handoff to this slice.
+    // The QPushButton stays checkable so it visually echoes setTxSlice() updates
+    // pushed back from TxSliceArbiter::txBoundSliceChanged.
+    connect(m_txBadge, &QPushButton::clicked, this, &VfoWidget::onTxBadgeClicked);
+
     // Split badge — hidden in Stage 1; wired in Stage 2 when split semantics land
     m_splitBadge = new QLabel(QStringLiteral("SPLIT"), this);
     m_splitBadge->setFixedSize(36, 18);
@@ -2159,6 +2164,12 @@ void VfoWidget::setStepHz(int hz)
     if (m_stepCycleBtn) {
         m_stepCycleBtn->setText(QStringLiteral("%1 Hz").arg(hz));
     }
+}
+
+// Phase 3F Sub-Epic C Task 9: emit handoff request to MainWindow for forwarding.
+void VfoWidget::onTxBadgeClicked()
+{
+    emit txHandoffRequested(m_sliceIndex);
 }
 
 void VfoWidget::setSliceIndex(int index)

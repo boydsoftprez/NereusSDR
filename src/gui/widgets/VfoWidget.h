@@ -423,6 +423,12 @@ public:
 
     int sliceIndex() const { return m_sliceIndex; }
 
+    // Phase 3F Sub-Epic C Task 9: test-only seam to fire the TX-badge click
+    // path without bringing up a QApplication + QPushButton event loop.
+    // Always built (no NEREUSSDR_TESTING flag); cost is one indirect call
+    // and the seam is undocumented in user-facing API.
+    void simulateTxBadgeClick() { onTxBadgeClicked(); }
+
 public slots:
     // Phase 3P-I-a T15 — hide Blue/Red ANT buttons when the connected
     // board has no Alex filter (HL2 / Atlas). Called by MainWindow on
@@ -498,6 +504,17 @@ signals:
 
     // --- Setup dialog request (e.g. AGC-T right-click → open settings) ---
     void openSetupRequested();
+
+    // Phase 3F Sub-Epic C Task 9: emitted when operator clicks the TX badge
+    // on this slice's flag. MainWindow forwards to
+    // RadioModel::txSliceArbiter()->requestHandoff(sliceIndex), which drops
+    // MOX (RF-safe) before flipping the TX-bound slice.
+    void txHandoffRequested(int sliceIndex);
+
+private slots:
+    // Phase 3F Sub-Epic C Task 9: TX badge click slot. Emits
+    // txHandoffRequested with the slice this flag represents.
+    void onTxBadgeClicked();
 
 protected:
     void paintEvent(QPaintEvent* event) override;

@@ -265,6 +265,7 @@ warren@wpratt.com
 #include "core/MoxController.h"  // 3M-1a G.1: F.2 connect (hardwareFlipped → onMoxHardwareFlipped)
 #include "core/NoiseFloorTracker.h"
 #include "core/BoardCapabilities.h"
+#include "core/TxSliceArbiter.h"  // Phase 3F Sub-Epic C Task 9: TX-handoff routing
 #include "models/PanadapterModel.h"
 #include "models/Band.h"
 #include "models/TransmitModel.h"
@@ -5092,6 +5093,17 @@ void MainWindow::wireSliceToSpectrum()
             [this, vfo]() {
         vfo->setBoardCapabilities(m_radioModel->boardCapabilities());
         vfo->setHpsdrSku(m_radioModel->hardwareProfile().model);
+    });
+
+    // Phase 3F Sub-Epic C Task 9: VFO TX badge click → arbiter handoff.
+    // VfoWidget emits txHandoffRequested(sliceIndex); MainWindow forwards to
+    // RadioModel::txSliceArbiter()->requestHandoff(), which drops MOX before
+    // flipping the TX-bound slice (RF-safe). Sub-Epic D wires the matching
+    // reverse path (txBoundSliceChanged then updates all flag badges) in T10.
+    connect(vfo, &VfoWidget::txHandoffRequested, this, [this](int sliceIndex) {
+        if (m_radioModel && m_radioModel->txSliceArbiter()) {
+            m_radioModel->txSliceArbiter()->requestHandoff(sliceIndex);
+        }
     });
 
     // Phase 3P-I-b T9 — VFO BYPS button ↔ AlexController::rxOutOnTx

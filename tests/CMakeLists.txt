@@ -5295,3 +5295,11 @@ nereus_add_test(tst_p2_radio_connection_apply_ddc_assignment)
 # Source: NereusSDR-original (AetherSDR-pattern port, no Thetis upstream).
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 7.
 nereus_add_test(tst_radio_model_slice_lifecycle)
+
+# Phase 3F Sub-Epic C Task 9: VfoWidget TX badge click emits
+# txHandoffRequested(sliceIndex). MainWindow forwards this signal to
+# RadioModel::txSliceArbiter()->requestHandoff() which performs the
+# MOX-safe TX-slice flip.
+# Source: NereusSDR-original (VfoWidget itself is NereusSDR-original).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 9.
+nereus_add_test(tst_vfo_widget_tx_badge_click)
