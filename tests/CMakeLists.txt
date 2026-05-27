@@ -5151,3 +5151,32 @@ nereus_add_test(tst_flex_radio_discovery_broadcaster)
 #   writes RfKit_Enabled="True" + emits rfKitEnabledChanged(true));
 #   getterReadsFromAppSettings (pre-seeded key -> getter returns true).
 nereus_add_test(tst_rfkit_radiomodel_enabled)
+
+# Task 2: Rf2ksConnection skeleton - 8 REST endpoint parsers.
+# Fixture JSON captured live from RF2K-S firmware G200C267 (GUI=200, ctl=267).
+# Tests: parsesInfo (custom_device_name + G200C267 version compose);
+#   parsesPower (RfKitPowerSnapshot fields including forwardW/reflectedW/swr);
+#   parsesTuner (RfKitTunerSnapshot mode enum + L/C/freq/segment);
+#   parsesAntennas (QList<RfKitAntenna> 5-element, type/number/state);
+#   parsesActiveAntenna (single antenna object, state=Active);
+#   parsesOperateMode (operate_mode string);
+#   parsesOperationalInterface (iface + empty errorField);
+#   parsesData (bandM/freqKHz/status);
+#   operationalInterfaceCapturesErrorField (error="No TCI available").
+nereus_add_test(tst_rf2ks_connection_parse)
+target_link_libraries(tst_rf2ks_connection_parse PRIVATE Qt6::Network)
+
+# Task 3: 1 Hz REST polling via QNetworkAccessManager.
+# FakeAmpServer (QTcpServer, ephemeral port 0) serves fixture JSON for 8
+# endpoints in-process; no real amp required.
+# Tests: connectsAndPollsOnce (connects, emits connected + powerUpdated +
+#   operateModeUpdated within 2s, pollsSucceeded >= 1);
+#   pollIntervalConfigurable (200 ms interval -> at least 1 extra poll in 500 ms).
+nereus_add_test(tst_rf2ks_connection_poll)
+target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
+
+# Task 4: Exponential-backoff reconnect.
+# Test seams drive the backoff math without real network or timers.
+# Tests: backoffSequenceFollowsSchedule (1s->2s->4s->8s->...->cap 60s);
+#   successResetsBackoff (testForceBackoffReset resets to 1s).
+nereus_add_test(tst_rf2ks_connection_reconnect)
