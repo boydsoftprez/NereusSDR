@@ -640,6 +640,7 @@ set(GUI_SOURCES
     src/gui/spectrum/SpectrumAvenger.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/PanadapterApplet.cpp
+    src/gui/PanadapterStack.cpp
     src/gui/ImdOverlay.h
     src/gui/ImdOverlay.cpp
     src/gui/dbm_strip_math.cpp
