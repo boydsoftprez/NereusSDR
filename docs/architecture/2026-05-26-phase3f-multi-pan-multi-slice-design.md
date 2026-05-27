@@ -873,6 +873,32 @@ Sub-Epic B (Codec + Chain) can now begin per `docs/architecture/2026-05-26-phase
 
 ---
 
+## Sub-Epic C implementation note (landed 2026-05-27)
+
+Implemented per `docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md`. Single-slice operation unchanged.
+
+Operator-visible changes:
+
+- `RadioModel::addSliceOnPan(QString panId)` creates slices up to `maxSlices`, emits `sliceAdded(int)` on success or `sliceAddRejected(QString reason)` when the cap is hit. The reason string is SKU-aware ("`<SKU>` supports a maximum of N slices").
+- `RadioModel::removeSlice(int)` refuses to remove the last surviving slice, hands TX off to the fallback slice if the victim is TX-bound, then removes.
+- `VfoWidget` TX badge is now clickable. Click emits `txHandoffRequested(int sliceIndex)`; MainWindow forwards to `RadioModel::txSliceArbiter()->requestHandoff()`.
+- MainWindow status bar shows `"TX > Slice X"` toast on a successful handoff and the SKU-aware reject reason on overflow.
+- `TxSliceArbiter` drops MOX (RF-safe) before flipping the TX-bound slice and persists the current index under `hardware/<mac>/TxBoundSliceIndex`.
+
+Discovered during implementation:
+
+- **`MoxController::setMox(false)` is synchronous in the Qt event-loop sense**; the arbiter does not need a `QEventLoop`-based wait around the MOX drop.
+- **`VfoWidget` already had `setSliceIndex` / `sliceIndex` from 3G-10 Stage 1**; the Sub-Epic C plan's inline-setter spec was redundant. Only `simulateTxBadgeClick`, `txHandoffRequested`, and `onTxBadgeClicked` were genuinely new.
+- **`RadioModel::sliceAdded` / `sliceRemoved` already existed with `int` signatures** (not `SliceModel*`); only `sliceAddRejected(QString)` was added.
+- **`RadioModel::addSlice()` already existed**; `addSliceOnPan` delegates to it to keep MoxController VOX hookup + active-slice bookkeeping in one place.
+- **The deprecated `RadioModel::setSplit(int, bool)` stub had one production caller** (TciProtocol's `handleSplitEnableCommand` dispatcher) and two mock callers (TestMockRadioModel still implements its own `setSplit` for the init-burst test). Task 11 dropped the `QMetaObject::invokeMethod(m_radio, "setSplit", ...)` call from the dispatcher; the broadcast notification still fires so WSJT-X / N1MM / Log4OM see the wire-protocol round-trip ("Split Operation: None/Fake It" remains the supported configuration). `RadioModel::split(int) const` stays at false so init-burst output is stable.
+
+### Sub-Epic D readiness
+
+Sub-Epic D (Pan layouts + multi-pan UI) can now begin: `PanadapterStack`, `PanadapterApplet`, `FFTRouter`, `+RX` button on `SpectrumOverlayPanel`. The slice lifecycle plumbing it depends on (addSliceOnPan, removeSlice, TX handoff, persistence) is all in place.
+
+---
+
 ## End
 
 Spec ready for review. After approval, transitions to `superpowers:writing-plans` for implementation plan generation, then sub-epic-by-sub-epic implementation in `superpowers:subagent-driven-development` mode.
