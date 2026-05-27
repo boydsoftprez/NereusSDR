@@ -37,6 +37,24 @@ private slots:
         QCOMPARE(stack.count(), 2);
         QCOMPARE(stack.currentLayoutId(), QStringLiteral("2h"));
     }
+
+    void apply_layout_12h_creates_3_pans_with_wide_top()
+    {
+        PanadapterStack stack;
+        QStringList ids = {QStringLiteral("pan-0"), QStringLiteral("pan-1"), QStringLiteral("pan-2")};
+        stack.applyLayout(QStringLiteral("12h"), ids);
+        QCOMPARE(stack.count(), 3);
+        QCOMPARE(stack.currentLayoutId(), QStringLiteral("12h"));
+    }
+
+    void apply_layout_2x2_creates_4_pans_in_grid()
+    {
+        PanadapterStack stack;
+        QStringList ids = {QStringLiteral("p0"), QStringLiteral("p1"), QStringLiteral("p2"), QStringLiteral("p3")};
+        stack.applyLayout(QStringLiteral("2x2"), ids);
+        QCOMPARE(stack.count(), 4);
+        QCOMPARE(stack.currentLayoutId(), QStringLiteral("2x2"));
+    }
 };
 
 QTEST_MAIN(TestPanadapterStackLayouts)

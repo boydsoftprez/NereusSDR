@@ -23,6 +23,7 @@
 #include "gui/PanadapterApplet.h"
 #include <QVBoxLayout>
 #include <QSplitter>
+#include <QSet>
 
 namespace NereusSDR {
 
@@ -68,6 +69,20 @@ void PanadapterStack::removeAll() { /* TODO Task 5 */ }
 void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& panIds)
 {
     clearSplitters();
+
+    // Retire orphan pans not referenced by the new layout. Without this,
+    // switching from a layout that uses "pan-0" to one keyed on different ids
+    // (e.g. "p0..p3" in 2x2 tests) would leak the prior pans into m_pans and
+    // distort count(). NereusSDR-specific addition; AetherSDR's layout swap
+    // assumes the caller passes the canonical id set.
+    const QSet<QString> wanted(panIds.constBegin(), panIds.constEnd());
+    const QList<QString> existing = m_pans.keys();
+    for (const QString& id : existing) {
+        if (!wanted.contains(id)) {
+            removePanadapter(id);
+        }
+    }
+
     m_currentLayoutId = layoutId;
 
     if (layoutId == QStringLiteral("1") && !panIds.isEmpty()) {
@@ -94,7 +109,46 @@ void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& pa
         a->show();
         b->show();
     }
-    // 12h + 2x2 implemented in Task 5.
+    else if (layoutId == QStringLiteral("12h") && panIds.size() >= 3) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+        auto* top = addPanadapter(panIds[0]);
+        m_rootSplitter->addWidget(top);
+        top->show();
+
+        auto* bottomSplitter = new QSplitter(Qt::Horizontal, m_rootSplitter);
+        auto* bl = addPanadapter(panIds[1]);
+        auto* br = addPanadapter(panIds[2]);
+        bottomSplitter->addWidget(bl);
+        bottomSplitter->addWidget(br);
+        bl->show();
+        br->show();
+        m_rootSplitter->addWidget(bottomSplitter);
+
+        m_rootSplitter->setStretchFactor(0, 2);  // wide top gets 2x weight
+        m_rootSplitter->setStretchFactor(1, 1);
+    }
+    else if (layoutId == QStringLiteral("2x2") && panIds.size() >= 4) {
+        m_rootSplitter->setOrientation(Qt::Vertical);
+
+        auto* topRow = new QSplitter(Qt::Horizontal, m_rootSplitter);
+        auto* tl = addPanadapter(panIds[0]);
+        auto* tr = addPanadapter(panIds[1]);
+        topRow->addWidget(tl);
+        topRow->addWidget(tr);
+        tl->show();
+        tr->show();
+
+        auto* bottomRow = new QSplitter(Qt::Horizontal, m_rootSplitter);
+        auto* bl = addPanadapter(panIds[2]);
+        auto* br = addPanadapter(panIds[3]);
+        bottomRow->addWidget(bl);
+        bottomRow->addWidget(br);
+        bl->show();
+        br->show();
+
+        m_rootSplitter->addWidget(topRow);
+        m_rootSplitter->addWidget(bottomRow);
+    }
 }
 
 PanadapterApplet* PanadapterStack::panadapter(const QString& id) const { return m_pans.value(id, nullptr); }
