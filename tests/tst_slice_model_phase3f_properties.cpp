@@ -188,6 +188,28 @@ private slots:
         slice.setWidebandExtensionRequested(true);
         QCOMPARE(spy.count(), 1);
     }
+
+    // ── Task 10: psPaused ───────────────────────────────────────────────
+    void ps_paused_default_is_false()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.psPaused(), false);
+    }
+
+    void ps_paused_setter_round_trips()
+    {
+        SliceModel slice;
+        slice.setPsPaused(true);
+        QCOMPARE(slice.psPaused(), true);
+    }
+
+    void ps_paused_emits_signal()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::psPausedChanged);
+        slice.setPsPaused(true);
+        QCOMPARE(spy.count(), 1);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

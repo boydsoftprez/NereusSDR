@@ -190,6 +190,9 @@ class SliceModel : public QObject {
     // Phase 3F: derived from pan zoom state. When true, this slice's pan is zoomed beyond DDC bandwidth
     // and needs wideband wing data. Triggers Alex BPF bypass on this slice's chain.
     Q_PROPERTY(bool widebandExtensionRequested READ widebandExtensionRequested WRITE setWidebandExtensionRequested NOTIFY widebandExtensionRequestedChanged)
+    // Phase 3F: true when this slice's DDC is reclaimed by PureSignal during MOX.
+    // Driven by PureSignal coordinator + MoxController. UI greys the pan + shows "PS HOLD" pill.
+    Q_PROPERTY(bool psPaused READ psPaused WRITE setPsPaused NOTIFY psPausedChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -427,6 +430,9 @@ public:
 
     bool widebandExtensionRequested() const { return m_widebandExtensionRequested; }
     void setWidebandExtensionRequested(bool on);
+
+    bool psPaused() const { return m_psPaused; }
+    void setPsPaused(bool paused);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -769,6 +775,7 @@ signals:
     void sampleRateHzChanged(int hz);
     void diversityEnabledChanged(bool on);
     void widebandExtensionRequestedChanged(bool on);
+    void psPausedChanged(bool paused);
 
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
@@ -891,6 +898,7 @@ private:
     int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
     bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
     bool    m_widebandExtensionRequested{false};  // Phase 3F: true when pan zoom exceeds DDC bandwidth; triggers Alex BPF bypass
+    bool    m_psPaused{false};  // Phase 3F: true when DDC reclaimed by PureSignal during MOX; UI shows "PS HOLD" pill
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed

@@ -644,6 +644,14 @@ void SliceModel::setWidebandExtensionRequested(bool on)
     }
 }
 
+void SliceModel::setPsPaused(bool paused)
+{
+    if (m_psPaused != paused) {
+        m_psPaused = paused;
+        emit psPausedChanged(paused);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)
