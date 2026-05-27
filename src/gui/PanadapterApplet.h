@@ -44,6 +44,7 @@ namespace NereusSDR {
 
 class SpectrumWidget;
 class SliceModel;
+class SpectrumStatusOverlay;
 
 /// Container for a single panadapter view: spectrum + waterfall (via SpectrumWidget)
 /// + associated slice overlays. AetherSDR overlay model: a pan picks one DDC for
@@ -77,18 +78,32 @@ public:
     double bandwidthMhz() const { return m_bandwidthMhz; }
     void setBandwidthMhz(double bw);
 
+    /// Phase 3F Sub-Epic E Task 2: refresh per-pan overlay from active slice state.
+    void updateStatusOverlay(SliceModel* activeSlice);
+
 signals:
     void activated(const QString& panId);  // emitted on any click within applet
     void closeRequested(const QString& panId);
     void activeSliceChanged(const QString& panId, int sliceIndex);
 
+    // Phase 3F Sub-Epic E Task 2: forwarded from SpectrumStatusOverlay
+    // so MainWindow can wire TX-arbiter handoff, FilterPolicyDialog,
+    // and chain-swap menu (later tasks).
+    void txBadgeClicked(const QString& panId);
+    void wideBadgeClicked(const QString& panId);
+    void chainTagClicked(int chainIdx);
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
-    QString          m_panId;
-    SpectrumWidget*  m_spectrum {nullptr};
-    int              m_activeSliceIndex {-1};
-    QSet<int>        m_associatedSlices;
-    double           m_centerMhz {14.225};
-    double           m_bandwidthMhz {0.192};
+    QString                 m_panId;
+    SpectrumWidget*         m_spectrum {nullptr};
+    SpectrumStatusOverlay*  m_statusOverlay {nullptr};
+    int                     m_activeSliceIndex {-1};
+    QSet<int>               m_associatedSlices;
+    double                  m_centerMhz {14.225};
+    double                  m_bandwidthMhz {0.192};
 };
 
 } // namespace NereusSDR
