@@ -1099,6 +1099,38 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::currentRadioChanged, this,
             rescaleAllPowerMeters);
 
+    // Phase 3F Sub-Epic D Task 11: gate the bottom-bar CH 1 stacked
+    // indicator widget on the connected radio's adcCount (visible only
+    // on 2-ADC SKUs). buildStatusBar() ships chain1Widget hidden by
+    // default; this slot toggles it on/off as the user switches radios.
+    auto updateChain1Visibility = [this]() {
+        if (!m_chain1IndicatorWidget) { return; }
+        const auto caps = m_radioModel->boardCapabilities();
+        m_chain1IndicatorWidget->setVisible(caps.adcCount >= 2);
+    };
+    connect(m_radioModel, &RadioModel::currentRadioChanged, this,
+            updateChain1Visibility);
+
+    // Phase 3F Sub-Epic D Task 11: drive the CH 0 / CH 1 bottom-bar
+    // indicator text + colour from AlexController's per-ADC BPF state.
+    // Filtered = green; WidebandLocked / Bypass = amber. reasonText
+    // (set by AlexController::recomputeBpf) drives the body label.
+    connect(&m_radioModel->alexController(),
+            &AlexController::bpfStateChanged, this,
+            [this](int adc, const AlexController::AlexAdcState& state) {
+                auto* lbl = findChild<QLabel*>(
+                    QStringLiteral("chainIndicator%1").arg(adc));
+                if (!lbl) { return; }
+                lbl->setText(state.reasonText);
+                const QString color =
+                    (state.effective == AlexController::BpfEffective::Filtered)
+                        ? Style::kGreenText
+                        : Style::kAmberWarn;
+                lbl->setStyleSheet(
+                    QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
+                        .arg(color));
+            });
+
     // Issue #118 — helper: wire a container's bandClicked signal through
     // the RadioModel handler. Invoked from the containerAdded callback,
     // which fires for every container materialized by ContainerManager
@@ -4057,6 +4089,41 @@ void MainWindow::buildStatusBar()
     panBtn->setToolTip(QStringLiteral("Add slice / change layout / float pan"));
     connect(panBtn, &QPushButton::clicked, this, &MainWindow::showPanMenu);
     hbox->addWidget(panBtn);
+
+    // Phase 3F Sub-Epic D Task 11: per-chain (ADC) BPF state indicators
+    // in the bottom status bar. Two stacked labels per chain ("CH N"
+    // header + reasonText body), wired to AlexController::bpfStateChanged
+    // below so the body text + colour reflect the live per-ADC BPF
+    // state. CH 0 is always shown; CH 1 is shown only when the
+    // connected radio's BoardCapabilities reports adcCount >= 2 (gated
+    // in the currentRadioChanged handler below).
+    auto makeChainIndicator = [&](int adc) -> QWidget* {
+        auto* w  = new QWidget(barWidget);
+        auto* vl = new QVBoxLayout(w);
+        vl->setContentsMargins(0, 0, 0, 0);
+        vl->setSpacing(0);
+
+        auto* topLbl = new QLabel(QStringLiteral("CH %1").arg(adc), w);
+        topLbl->setStyleSheet(
+            QStringLiteral("color: %1; font-size: 10px; font-weight: bold;")
+                .arg(Style::kTextScale));
+        vl->addWidget(topLbl);
+
+        auto* botLbl = new QLabel(QStringLiteral("idle"), w);
+        botLbl->setObjectName(QStringLiteral("chainIndicator%1").arg(adc));
+        botLbl->setStyleSheet(
+            QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
+                .arg(Style::kTextInactive));
+        vl->addWidget(botLbl);
+
+        return w;
+    };
+
+    hbox->addWidget(makeChainIndicator(0));
+    auto* chain1Widget = makeChainIndicator(1);
+    chain1Widget->setVisible(false);  // shown only on 2-ADC SKUs
+    hbox->addWidget(chain1Widget);
+    m_chain1IndicatorWidget = chain1Widget;
 
     // Panel toggle (☰) — wired to QSplitter right pane visibility
     auto* panelToggleLabel = new QLabel(QStringLiteral("☰"), barWidget);
