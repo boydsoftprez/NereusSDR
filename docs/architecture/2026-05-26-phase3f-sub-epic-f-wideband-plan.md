@@ -26,14 +26,16 @@
 | `src/core/WidebandFrameAccumulator.{h,cpp}` | Buffer 32 packets/frame, sequence-error handling |
 | `tests/tst_wideband_frame_accumulator.cpp` | Frame assembly + sequence-error padding |
 | `tests/tst_wideband_fft_engine.cpp` | FFT output bin count + Nyquist verification |
-| `tests/tst_p2_wideband_enable_byte.cpp` | composeCmdRx writes packetbuf[23] correctly |
+| `tests/tst_p2_wideband_enable_byte.cpp` | composeCmdGeneral writes packetbuf[23] correctly |
 
 ### Files to modify
 
 | File | Purpose |
 |---|---|
 | `src/core/P2RadioConnection.h` | Add `m_wbEnableMask`, `setWidebandEnabled(adc, on)`, `widebandFrameReady(adc, samples)` signal |
-| `src/core/P2RadioConnection.cpp` | Write `packetbuf[23]` in composeCmdRx; replace stub at line 1608 with real packet decode |
+| `src/core/P2RadioConnection.cpp` | Write `packetbuf[23]` in composeCmdGeneralLegacy; replace stub at line 1608 with real packet decode |
+| `src/core/codec/CodecContext.h` | Add `p2WbEnableMask` field threaded from `P2RadioConnection::wbEnableMask()` |
+| `src/core/codec/P2CodecOrionMkII.cpp` | Read `ctx.p2WbEnableMask` for `buf[23]` in `composeCmdGeneral` |
 | `src/gui/SpectrumWidget.{h,cpp}` | `paintExtendedPan()` method with listenable island + wing rendering; zoom-state derives wideband-extension-requested |
 | `src/models/SliceModel.{h,cpp}` | `widebandExtensionRequested` setter wired via zoom signal |
 | `src/core/accessories/AlexController.cpp` | `setWidebandActive(adc, on)` propagates BPF bypass |
@@ -41,11 +43,13 @@
 
 ---
 
-## Task 1: Add `packetbuf[23]` wideband enable byte plumbing
+## Task 1: Add CmdGeneral byte 23 (wb_enable) wideband enable plumbing
 
-**Files:** Modify `src/core/P2RadioConnection.{h,cpp}`
+**Files:** Modify `src/core/P2RadioConnection.{h,cpp}` (composeCmdGeneralLegacy + the codec-driven composeCmdGeneral), `src/core/codec/CodecContext.h`, `src/core/codec/P2CodecOrionMkII.cpp`
 
-The design identifies this gap explicitly (`composeCmdRx` writes [24..28] but never [23]).
+> **Plan revision note (2026-05-27):** Task 1 originally targeted composeCmdRx byte 23. That was wrong: CmdRx byte 23 is rx[1].rx_adc (RX1 ADC selector) per Thetis network.c:1118, not the wideband enable mask. The mask lives in CmdGeneral byte 23 per Thetis network.c:879. Caught by source-first audit during implementation.
+
+The design identifies this gap explicitly: NereusSDR's composeCmdGeneralLegacy + the codec-driven composeCmdGeneral both hardcode buf[23]=0 with a // wb_enable placeholder. This task wires it to the real per-ADC mask. Thetis network.c:879 [v2.10.3.15] defines the byte; CmdRx byte 23 is unrelated (rx[1].rx_adc).
 
 - [ ] **Step 1: Write failing test**
 
@@ -60,23 +64,23 @@ using namespace NereusSDR;
 class TestP2WidebandEnableByte : public QObject {
     Q_OBJECT
 private slots:
-    void compose_cmd_rx_writes_packetbuf_23_when_wideband_enabled()
+    void compose_cmd_general_writes_packetbuf_23_when_wideband_enabled()
     {
         P2RadioConnection conn;
         conn.setWidebandEnabled(0, true);  // enable ADC0 wideband
 
-        QByteArray buf(1444, '\0');
-        conn.composeCmdRx(buf);
+        quint8 buf[60] = {0};
+        conn.composeCmdGeneralForTest(buf);
 
-        // packetbuf[23] should have bit 0 set (ADC0 enabled)
-        QCOMPARE(quint8(buf[23]) & 0x01, quint8(0x01));
+        // packetbuf[23] should have bit 0 set (ADC0 enabled).
+        QCOMPARE(quint8(buf[23] & 0x01), quint8(0x01));
     }
 
-    void compose_cmd_rx_writes_0_when_no_wideband()
+    void compose_cmd_general_writes_0_when_no_wideband()
     {
         P2RadioConnection conn;
-        QByteArray buf(1444, '\0');
-        conn.composeCmdRx(buf);
+        quint8 buf[60] = {0};
+        conn.composeCmdGeneralForTest(buf);
         QCOMPARE(quint8(buf[23]), quint8(0x00));
     }
 
@@ -85,9 +89,9 @@ private slots:
         P2RadioConnection conn;
         conn.setWidebandEnabled(0, true);
         conn.setWidebandEnabled(1, true);
-        QByteArray buf(1444, '\0');
-        conn.composeCmdRx(buf);
-        QCOMPARE(quint8(buf[23]) & 0x03, quint8(0x03));  // both bits set
+        quint8 buf[60] = {0};
+        conn.composeCmdGeneralForTest(buf);
+        QCOMPARE(quint8(buf[23] & 0x03), quint8(0x03));  // both bits set
     }
 };
 
@@ -105,13 +109,18 @@ Expected: `'setWidebandEnabled' is not a member of 'P2RadioConnection'`.
 
 ```cpp
 public slots:
-    /// Phase 3F: enable the wideband ADC stream for the given ADC index.
-    /// Bit N of m_wbEnableMask corresponds to ADCN. Triggers CmdRx send.
-    /// See Thetis network.c:880-882 [v2.10.3.15] for the wire format.
+    /// Phase 3F Sub-Epic F Task 1: enable the wideband ADC stream for the
+    /// given ADC index. Bit N of m_wbEnableMask corresponds to ADCN.
+    /// See Thetis network.c:879 [v2.10.3.15] for the wire format (CmdGeneral
+    /// byte 23). Triggers CmdGeneral send when in Connected state.
     void setWidebandEnabled(int adcIndex, bool on);
 
+public:
+    /// Phase 3F Sub-Epic F Task 1: read current mask (for CodecContext threading).
+    quint8 wbEnableMask() const { return m_wbEnableMask; }
+
 private:
-    quint8 m_wbEnableMask {0};
+    quint8 m_wbEnableMask {0};  // Phase 3F Sub-Epic F Task 1
 ```
 
 - [ ] **Step 4: Implement in P2RadioConnection.cpp**
@@ -125,23 +134,33 @@ void P2RadioConnection::setWidebandEnabled(int adcIndex, bool on)
     if (newMask == m_wbEnableMask) { return; }
     m_wbEnableMask = newMask;
     if (m_state == ConnectionState::Connected) {
-        sendCmdRx();
+        sendCmdGeneral();
     }
 }
 ```
 
-In `composeCmdRx` (find line ~2141 where buf[24..28] are written), add immediately before:
+In `composeCmdGeneralLegacy` (currently `buf[23] = 0; // wb_enable` at line ~2261), replace with:
 
 ```cpp
-    buf[23] = m_wbEnableMask;  // Phase 3F: wideband per-ADC enable mask
+    // From Thetis network.c:879 [v2.10.3.15] - wb_enable mask, bit N = ADCN.
+    buf[23] = char(m_wbEnableMask);
 ```
+
+In `P2CodecOrionMkII::composeCmdGeneral` (currently `buf[23] = 0; // wb_enable` at line ~170), replace with:
+
+```cpp
+    // From Thetis network.c:879 [v2.10.3.15] - wb_enable mask, bit N = ADCN.
+    buf[23] = quint8(ctx.p2WbEnableMask);
+```
+
+Extend `CodecContext` with `quint8 p2WbEnableMask {0};` and populate it in `P2RadioConnection::buildCodecContext` from `m_wbEnableMask`.
 
 - [ ] **Step 5: Run + commit**
 
 ```bash
 cmake --build build --target tst_p2_wideband_enable_byte && ctest --test-dir build -R tst_p2_wideband_enable_byte -V 2>&1 | tail -10
-git add src/core/P2RadioConnection.{h,cpp} tests/tst_p2_wideband_enable_byte.cpp tests/CMakeLists.txt
-git commit -m "feat(3f-f): P2 wideband enable byte (packetbuf[23]) plumbing"
+git add src/core/P2RadioConnection.{h,cpp} src/core/codec/CodecContext.h src/core/codec/P2CodecOrionMkII.cpp tests/tst_p2_wideband_enable_byte.cpp tests/CMakeLists.txt
+git commit -m "feat(3f-f): P2 wideband enable byte (CmdGeneral byte 23) plumbing"
 ```
 
 ---
