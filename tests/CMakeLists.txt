@@ -5252,3 +5252,10 @@ nereus_add_test(tst_radio_model_max_slices)
 # Source: NereusSDR-original (no Thetis upstream).
 # Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §12.
 nereus_add_test(tst_settings_schema_v6_migration)
+
+# Phase 3F Sub-Epic B Task 1: SliceConfig + DdcAssignment shared structs.
+# 2 tests: slice_config_struct_has_required_fields,
+#          ddc_assignment_struct_has_required_fields.
+# Source: NereusSDR-original (structs derived from Thetis UpdateDDCs output shape).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 1.
+nereus_add_test(tst_codec_5_slice_assignment)

@@ -23,6 +23,20 @@
 
 namespace NereusSDR {
 
+/// Operator-driven per-slice configuration that the codec consumes to produce
+/// a DdcAssignment. One per user slice (up to 5 on 2-ADC boards).
+/// Phase 3F Sub-Epic B Task 1.
+/// Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md §Task 1.
+struct SliceConfig {
+    qint64 frequencyHz {0};            ///< slice's current freq
+    int    bandIndex {-1};             ///< 0..13 for HF bands + WWV/GEN/XVTR, see Band enum
+    int    sampleRateHz {192000};      ///< per-slice DDC rate (SampleRateCatalog::kDefaultSampleRate default)
+    int    antennaIndex {1};           ///< ANT1=1, ANT2=2, ANT3=3, EXT1=4, EXT2=5, BYPS=6
+    bool   txBound {false};            ///< only one slice is txBound at any moment
+    bool   diversityRequested {false}; ///< slice-A-only on hasDiversityReceiver SKUs
+    bool   live {false};               ///< false = dormant placeholder, codec skips
+};
+
 struct CodecContext {
     // ADC supply voltage in volts (33 or 50).
     // From Thetis cmaster.SetADCSupply(0, N) — clsHardwareSpecific.cs:85-191 [v2.10.3.15].
