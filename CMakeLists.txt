@@ -46,7 +46,14 @@ endif()
 # These apply only to Release / RelWithDebInfo; Debug builds stay
 # unoptimised so single-step debugging still works.
 option(NEREUSSDR_AGGRESSIVE_OPT "Use -O3 (instead of -O2) for release builds" ON)
-option(NEREUSSDR_ENABLE_LTO     "Enable link-time optimization for release builds" ON)
+# 2026-05-26 KG4VCF: LTO default flipped to OFF.  With LTO enabled on
+# the shared NereusSDRObjs object library, every test binary (526 of
+# them) inherits the LTO bitcode and triggers a multi-minute LTO link
+# of its own.  Net effect on a clean build: 1+ hour, load avg 250+,
+# unusable while building.  Per-target IPO=FALSE on tests doesn't
+# undo the bitcode embed.  Default LTO off makes dev builds fast;
+# release artifacts can opt in via `cmake -DNEREUSSDR_ENABLE_LTO=ON`.
+option(NEREUSSDR_ENABLE_LTO     "Enable link-time optimization (slow build; release artifacts only)" OFF)
 
 if(NEREUSSDR_AGGRESSIVE_OPT)
     if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -69,9 +76,17 @@ if(NEREUSSDR_ENABLE_LTO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT _lto_ok OUTPUT _lto_err)
     if(_lto_ok)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
-        message(STATUS "NereusSDR: link-time optimization enabled")
+        # 2026-05-26 KG4VCF: LTO is applied PER-TARGET below (only the
+        # main NereusSDR executable + the parallel NereusSDRObjs_LTO
+        # object library it links).  We deliberately do NOT set the
+        # global CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO
+        # flag, because that would make the shared NereusSDRObjs (used
+        # by 526 test executables) produce LTO bitcode, and every test
+        # link would then trigger a multi-minute LTO pass.  Net effect
+        # of the old global setting on a clean build: ~1 hour, load
+        # avg 250+, dev-loop unusable while building.
+        set(NEREUSSDR_LTO_AVAILABLE TRUE)
+        message(STATUS "NereusSDR: link-time optimization enabled (main app only)")
     else()
         message(WARNING "NereusSDR: LTO requested but unsupported -- ${_lto_err}")
     endif()
@@ -893,8 +908,46 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(NereusSDRObjs PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
 endif()
 
+# 2026-05-26 KG4VCF: parallel LTO-enabled object library, ONLY built
+# when NEREUSSDR_ENABLE_LTO=ON.  Same sources as NereusSDRObjs above,
+# but compiled with LTO bitcode so the main NereusSDR app's link can
+# do cross-translation-unit optimization.  Tests continue to link the
+# plain NereusSDRObjs (no bitcode), so test link times stay fast.
+#
+# This is more work to build a release artifact (sources compile
+# twice) but it keeps the dev loop fast while preserving the LTO perf
+# benefit for shipped binaries.
+if(NEREUSSDR_LTO_AVAILABLE)
+    add_library(NereusSDRObjs_LTO OBJECT
+        ${CORE_SOURCES}
+        ${MODEL_SOURCES}
+        ${GUI_SOURCES}
+        ${RESOURCES}
+    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(NereusSDRObjs_LTO PRIVATE src/gui/VaxLinuxFirstRunDialog.cpp)
+    endif()
+    set_target_properties(NereusSDRObjs_LTO PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+endif()
+
 add_executable(NereusSDR src/main.cpp ${APP_ICON_SOURCES})
-target_link_libraries(NereusSDR PRIVATE NereusSDRObjs)
+if(NEREUSSDR_LTO_AVAILABLE)
+    # Main app + its OBJECT-lib link both get LTO when enabled.  The
+    # IPO property on the executable arranges -flto on the link line;
+    # the IPO property on NereusSDRObjs_LTO above puts -flto on every
+    # compile.  Together: full cross-TU optimization for the shipped
+    # binary.
+    target_link_libraries(NereusSDR PRIVATE NereusSDRObjs_LTO)
+    set_target_properties(NereusSDR PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+else()
+    target_link_libraries(NereusSDR PRIVATE NereusSDRObjs)
+endif()
 
 set_target_properties(NereusSDR PROPERTIES
     WIN32_EXECUTABLE TRUE

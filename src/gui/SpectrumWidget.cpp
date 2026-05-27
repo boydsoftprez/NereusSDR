@@ -7306,7 +7306,31 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             QElapsedTimer dynTimer;
             dynTimer.start();
 
-            m_overlayDynamic.fill(Qt::transparent);
+            // 2026-05-26 KG4VCF perf polish: partial-region rebuild.
+            // The dynamic-overlay features (peak hold trace, peak blobs,
+            // noise floor) ONLY paint into the spectrum portion of the
+            // widget; the waterfall portion below is always transparent.
+            // Bench under load 279 showed 75 / 82 samples of paint cost
+            // were stuck in QRhiMetal::enqueueResourceUpdates -- the
+            // Metal command queue was contended.  Halving the texture
+            // upload bandwidth (only spectrum area, not full window)
+            // proportionally reduces Metal queue pressure.
+            //
+            // Clear + upload only the spectrum region in device pixels.
+            // CompositionMode_Source replaces the existing pixels with
+            // transparent (vs Alpha-blend which would leave them).
+            // The waterfall portion of the texture stays transparent
+            // from the first full-window init -- the partial upload
+            // never touches it.
+            const QRect dynRectDevPx(0, 0, pw,
+                qMax(1, static_cast<int>(specH * dpr)));
+
+            {
+                QPainter clearP(&m_overlayDynamic);
+                clearP.setCompositionMode(QPainter::CompositionMode_Source);
+                clearP.fillRect(dynRectDevPx, Qt::transparent);
+            }
+
             QPainter pd(&m_overlayDynamic);
             pd.setRenderHint(QPainter::Antialiasing, false);
 
@@ -7328,8 +7352,16 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             PerfMonitor::instance().recordOverlayRebuild(
                 static_cast<double>(dynTimer.nsecsElapsed()) / 1e6);
 
-            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0,
-                QRhiTextureSubresourceUploadDescription(m_overlayDynamic)));
+            // Partial-region upload.  setSourceTopLeft / setSourceSize
+            // tell QRhi to copy only the spectrum portion of the QImage
+            // into the matching region of the texture; the rest of the
+            // texture is untouched.  Cuts Metal command-buffer payload
+            // by 30-50% depending on spectrum / waterfall split.
+            QRhiTextureSubresourceUploadDescription desc(m_overlayDynamic);
+            desc.setSourceTopLeft(QPoint(0, 0));
+            desc.setSourceSize(dynRectDevPx.size());
+            desc.setDestinationTopLeft(QPoint(0, 0));
+            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0, desc));
             m_overlayDynamicDirty = false;
         }
     }
