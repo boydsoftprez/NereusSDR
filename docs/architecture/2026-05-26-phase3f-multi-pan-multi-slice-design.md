@@ -817,6 +817,62 @@ All divergences are explicit, documented above, and either AetherSDR-faithful (w
 
 ---
 
+## Sub-Epic A implementation note (landed 2026-05-26)
+
+Implemented per `docs/architecture/2026-05-26-phase3f-sub-epic-a-foundation-plan.md`. The foundation tasks shipped with no operator-visible behaviour change (single-slice operation unchanged). Additions:
+
+- `BoardCapabilities.maxSlices` (per-SKU user-facing slice cap, distinct from existing `maxReceivers` = DDC count)
+- `BoardCapabilities.widebandAdcs` (per-ADC wideband support count)
+- `SliceModel` 7 new Q_PROPERTYs: `sliceLetter`, `chainIndex`, `ddcIndex`, `sampleRateHz` (with per-band persistence), `diversityEnabled`, `widebandExtensionRequested`, `psPaused`
+- `RadioModel::maxSlices()` accessor (BoardCapabilities-driven, returns 1 when disconnected)
+- `SettingsSchemaVersion` v5 → v6 (additive, no key renames; main.cpp:279 bumped)
+
+### Commits (12 task boundaries, all GPG-signed)
+
+| SHA | Task | Summary |
+|---|---|---|
+| 8a98eb55 | 1 | add maxSlices + widebandAdcs to BoardCapabilities struct |
+| af39fc70 | 2 | populate maxSlices per SKU per design §2 |
+| 85322883 | 3 | populate widebandAdcs per SKU (2 for P2, 0 for P1) |
+| 86a116fc | 4 | add SliceModel::sliceLetter Q_PROPERTY (A-E slice ID) |
+| 8371e2f4 | 5 | add SliceModel::chainIndex Q_PROPERTY (which Alex chain hosts slice) |
+| fc7390a0 | 6 | add SliceModel::ddcIndex Q_PROPERTY (codec-assigned, -1=unassigned) |
+| 4498fdd3 | 7 | add SliceModel::sampleRateHz Q_PROPERTY with per-band persistence |
+| b8378474 | 8 | add SliceModel::diversityEnabled Q_PROPERTY (Slice-A only) |
+| 099fb03a | 9 | add SliceModel::widebandExtensionRequested Q_PROPERTY (zoom-derived) |
+| 191f1c75 | 10 | add SliceModel::psPaused Q_PROPERTY (driven by PureSignal during MOX) |
+| d548692e | 11 | add RadioModel::maxSlices() accessor (BoardCapabilities-driven) |
+| 8f0fa417 | 12 | bump SettingsSchemaVersion v5 to v6 (additive, no key renames) |
+
+### Test coverage
+
+4 new test files / 32 test cases. All green at Sub-Epic A close.
+
+- `tst_board_capabilities_phase3f.cpp` (Tasks 1-3)
+- `tst_slice_model_phase3f_properties.cpp` (Tasks 4-10)
+- `tst_radio_model_max_slices.cpp` (Task 11)
+- `tst_settings_schema_v6_migration.cpp` (Task 12)
+
+### Discovered during implementation
+
+- **`WdspEngine` is already N-channel-capable** via `std::map<int, std::unique_ptr<RxChannel>>` so no "growth" required. Design originally said "grow from 2 to maxSlices"; the audit found N-capable already. Sub-Epic B and beyond can allocate channels at any index without WdspEngine changes.
+- **`BoardCapabilities.maxReceivers` is intentionally distinct from `maxSlices`.** maxReceivers = total DDC count (e.g. 7 on G2). maxSlices = user-facing cap after PS+diversity reservation (e.g. 5 on G2). Both fields coexist; downstream code reads whichever fits its purpose.
+- **`BoardCapabilities.hasDiversityReceiver` already exists per SKU** (`true` for 2-ADC boards, `false` for 1-ADC). Design doc references to `hasDiversity` should be read as `hasDiversityReceiver`; no new field needed.
+- **`ReceiverManager.m_hwToLogical` map growth** (design §4 file touches) is deferred to Sub-Epic B where the codec first emits multi-slice DDC assignments. The map is a `QMap` that grows naturally as entries are added; no Sub-Epic A change required to keep single-slice operation working.
+- **AnvelinaPro3 SKU clarification.** Initial Task 2 dispatch prompt mistakenly listed AnvelinaPro3 as P1 4-slice; design §2 (correct) lists it as 5-slice because AnvelinaPro3 maps to `kOrionMkII` at the wire layer (P2 dual-ADC). The implementer subagent caught the discrepancy via source-first audit and used the correct value 5. Good demonstration of source-first discipline overriding a noisy dispatch prompt.
+- **`kDefaultSampleRate` lives in `namespace NereusSDR`, not in a `SampleRateCatalog` namespace.** `SampleRateCatalog` is the filename, not a namespace. `SliceModel::m_sampleRateHz` initializer uses the bare unqualified name.
+- **Settings schema v6 migration is purely additive.** No key renames, no defaults to populate at migration time. The migration block is empty (placeholder) and the existing `setValue(versionKey, ...)` at the tail of `ensureSettingsAtVersion` handles the version bump itself. New per-slice per-band keys populate lazily on first write via SliceModel's existing per-band save path.
+
+### Clangd stale-index notes
+
+During implementation, the operator's LSP server (clangd) surfaced numerous false-positive `'X' is not a member of 'BoardCapabilities/SliceModel/RadioModel'` errors after each commit because clangd's compile_commands.json index hadn't refreshed. Every diagnostic was verified by grep + ctest before being dismissed. No actual code issues. Reload of the LSP server picks them up on the operator's side.
+
+### Sub-Epic B readiness
+
+Sub-Epic B (Codec + Chain) can now begin per `docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md`. Foundation pieces it depends on are all in place: BoardCapabilities maxSlices + widebandAdcs, SliceModel chainIndex / ddcIndex / sampleRateHz / diversityEnabled for codec to read, RadioModel::maxSlices() for codec to consume cap, schema v6 ready for additional keys.
+
+---
+
 ## End
 
 Spec ready for review. After approval, transitions to `superpowers:writing-plans` for implementation plan generation, then sub-epic-by-sub-epic implementation in `superpowers:subagent-driven-development` mode.
