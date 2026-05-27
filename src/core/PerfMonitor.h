@@ -61,6 +61,30 @@ public:
     void incAudioUnderrun();
     void incUdpDrop();
 
+    // TX I/Q ring-underrun telemetry.  Called from the connection-thread
+    // drain path (P1 fillTxZone return-false branch; P2 m_txIqTimer inner
+    // loop) when the ring is short and we must zero-pad the wire payload.
+    // The unit is INDIVIDUAL SAMPLES that would have carried mic-derived
+    // I/Q but were silently filled with zeros (deskhpsdr-faithful
+    // underrun behaviour at P1 old_protocol.c:545-549 [@120188f] and
+    // P2 new_protocol.c:1950-1956 [@120188f]).
+    //
+    // Hearable artifact: each zero-injected sample is a brief I/Q hole the
+    // exciter modulates onto the air -- listeners describe it as
+    // "digital jitter" / "ticking" / "low-level grain" in TX audio.
+    // The counter is the actionable signal: any non-zero delta means
+    // the user's TX is leaking zero-pad holes.
+    void incTxIqUnderrun(int samples = 1);
+
+    // TX I/Q producer telemetry.  Called from sendTxIq when real
+    // (non-prime, non-zero-padded) sample-pairs are pushed onto the wire
+    // ring.  Compared against the wire rate (192 kHz P2 / 48 kHz P1)
+    // diagnoses whether the producer (WDSP TXA + mic source path) is
+    // keeping up with the consumer.  Producer-side rate < wire rate is
+    // the actual root cause when the underrun counter shows holes that
+    // bandaids (cushion, PreciseTimer) cannot fix.
+    void incTxIqProduced(int samples);
+
     // ── Memory-pressure setter (call from a 1 Hz timer on main) ────
     // compressing == true when macOS vm_stat shows non-zero
     // compressions / decompressions in the last sample window.
@@ -86,6 +110,14 @@ public:
         uint64_t audioUnderrunsDelta{0};
         uint64_t udpDropsTotal{0};
         uint64_t udpDropsDelta{0};
+
+        // TX I/Q ring underrun (samples that got zero-padded into the wire).
+        uint64_t txIqUnderrunsTotal{0};
+        uint64_t txIqUnderrunsDelta{0};
+
+        // TX I/Q producer-side push count (real samples enqueued).
+        uint64_t txIqProducedTotal{0};
+        uint64_t txIqProducedDelta{0};
 
         // Memory pressure.
         bool memCompressing{false};
@@ -192,6 +224,10 @@ private:
     alignas(64) std::atomic<uint64_t> m_audioUnderrunsDelta{0};
     alignas(64) std::atomic<uint64_t> m_udpDropsTotal{0};
     alignas(64) std::atomic<uint64_t> m_udpDropsDelta{0};
+    alignas(64) std::atomic<uint64_t> m_txIqUnderrunsTotal{0};
+    alignas(64) std::atomic<uint64_t> m_txIqUnderrunsDelta{0};
+    alignas(64) std::atomic<uint64_t> m_txIqProducedTotal{0};
+    alignas(64) std::atomic<uint64_t> m_txIqProducedDelta{0};
 
     // Memory pressure; only the main-thread poller writes, snapshot
     // reads.  Plain double + bool under a mutex.

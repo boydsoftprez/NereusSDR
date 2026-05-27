@@ -505,7 +505,8 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         qInfo().noquote() << QString(
             "perf: paint %1/%2 ms gap %3/%4 ms fft %5/%6 ms ovly %7/%8 ms"
             " audio_fill %9/%10 ms underruns %11 (+%12/s) udp %13 (+%14/s)"
-            " mem %15 MB%16 mlock %17 regions / %18 MB")
+            " tx_iq_under %15 (+%16/s)"
+            " mem %17 MB%18 mlock %19 regions / %20 MB")
             .arg(s.paintMsAvg, 0, 'f', 1).arg(s.paintMsMax, 0, 'f', 1)
             .arg(s.gapMsAvg,   0, 'f', 1).arg(s.gapMsMax,   0, 'f', 1)
             .arg(s.fftMsAvg,   0, 'f', 1).arg(s.fftMsMax,   0, 'f', 1)
@@ -514,6 +515,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             .arg(s.audioFillMinMs, 0, 'f', 1)
             .arg(s.audioUnderrunsTotal).arg(s.audioUnderrunsDelta)
             .arg(s.udpDropsTotal).arg(s.udpDropsDelta)
+            .arg(s.txIqUnderrunsTotal).arg(s.txIqUnderrunsDelta)
             .arg(s.memFootprintMb, 0, 'f', 0)
             .arg(s.memCompressing ? QStringLiteral(" COMPRESSING")
                                   : QString{})
@@ -7175,6 +7177,12 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                       << QStringLiteral("udp    drops %1 (+%2/s)")
                             .arg(stats.udpDropsTotal)
                             .arg(stats.udpDropsDelta)
+                      << QStringLiteral("tx iq  underruns %1 (+%2/s)")
+                            .arg(stats.txIqUnderrunsTotal)
+                            .arg(stats.txIqUnderrunsDelta)
+                      << QStringLiteral("tx iq  produced  %1 (+%2/s)")
+                            .arg(stats.txIqProducedTotal)
+                            .arg(stats.txIqProducedDelta)
                       << QStringLiteral("mem    %1 MB%2")
                             .arg(stats.memFootprintMb, 0, 'f', 0)
                             .arg(stats.memCompressing
@@ -7224,6 +7232,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                                      && stats.audioFillMinMs < 15.0;
                 bool red   = stats.audioUnderrunsDelta > 0
                           || stats.udpDropsDelta > 0
+                          || stats.txIqUnderrunsDelta > 0
                           || stats.memCompressing
                           || stats.paintMsMax > 33.0
                           || stats.gapMsMax   > 50.0

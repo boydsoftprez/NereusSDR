@@ -264,6 +264,7 @@ mw0lge@grange-lane.co.uk
 #include "OcMatrix.h"
 #include "IoBoardHl2.h"
 #include "HermesLiteBandwidthMonitor.h"
+#include "PerfMonitor.h"
 #include "audio/TxMicSource.h"
 #include "codec/P1CodecStandard.h"
 #include "codec/P1CodecAnvelinaPro3.h"
@@ -1156,6 +1157,12 @@ void P1RadioConnection::setMox(bool enabled)
     if (m_mox == enabled) {
         return;  // idempotent — state unchanged, flush flag already set above
     }
+    // On MOX engage, arm the TX I/Q ring pre-prime flag.  See P1 header
+    // m_txIqPrimePending declaration + P2RadioConnection.h cushion
+    // rationale.  At P1's 48 kHz wire rate, 20 ms cushion = 960 samples.
+    if (enabled) {
+        m_txIqPrimePending.store(true, std::memory_order_release);
+    }
     m_mox = enabled;
 }
 // ---------------------------------------------------------------------------
@@ -1264,6 +1271,31 @@ void P1RadioConnection::sendTxIq(const float* iq, int n)
 
     static constexpr int kBufBytes = kTxIqBufSamples * kTxIqBytesPerSample;
 
+    // First call after MOX engage: push a 20 ms cushion of zero samples
+    // into the ring (960 samples at the P1 48 kHz wire rate, each sample
+    // is a pre-zeroed 8-byte slot: mic L/R + I/Q all zero).  Gives
+    // fillTxZone's 63-sample-per-zone drain headroom while the producer
+    // settles.  Single-writer safety: only sendTxIq mutates the ring;
+    // setMox sets the flag.  See header m_txIqPrimePending declaration.
+    if (m_txIqPrimePending.exchange(false, std::memory_order_acq_rel)) {
+        constexpr int kPrimeSamples = 960;  // 20 ms at 48 kHz wire rate
+        int wp = m_txIqWritePos.load(std::memory_order_relaxed);
+        for (int i = 0; i < kPrimeSamples; ++i) {
+            // Zero all 8 bytes of this slot: mic_L hi/lo, mic_R hi/lo, I hi/lo, Q hi/lo.
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            m_txIqBuf[wp++] = 0;
+            if (wp >= kBufBytes) { wp = 0; }
+        }
+        m_txIqWritePos.store(wp, std::memory_order_relaxed);
+        m_txIqCount.fetch_add(kPrimeSamples, std::memory_order_release);
+    }
+
     // HL2 CWX firmware workaround: clear LSB of I/Q low bytes to avoid
     // the CWX activation-while-key-asserted misbehavior. Per
     // deskhpsdr/src/old_protocol.c:2441-2453 [@120188f]. Cost: 1 LSB of
@@ -1348,6 +1380,16 @@ bool P1RadioConnection::fillTxZone(quint8* zone63) noexcept
     if (m_txIqCount.load(std::memory_order_acquire) < kSamplesPerZone) {
         // Underrun — zero-fill the zone (silence).  zone63 is already zeroed
         // by sendCommandFrame()'s memset, so no explicit fill is needed.
+        // Count the 63 sample slots that would have carried mic-derived I/Q
+        // but ended up zero-padded on the wire, but ONLY while MOX is
+        // engaged.  P1 EP2 emits TX zones continuously alongside command
+        // banks even when not transmitting; the radio ignores those zones
+        // when PA is off, so idle underrun is expected and not the bug
+        // we're chasing.  Counting only during MOX makes the metric
+        // directly answer "how much silence leaked into the transmission".
+        if (m_mox) {
+            PerfMonitor::instance().incTxIqUnderrun(kSamplesPerZone);
+        }
         return false;
     }
 

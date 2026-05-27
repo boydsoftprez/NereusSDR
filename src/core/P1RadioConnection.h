@@ -618,6 +618,16 @@ private:
     std::atomic<int> m_txIqReadPos{0};   // connection thread writes; relaxed store
     std::atomic<int> m_txIqCount{0};     // both threads: fetch_add (audio, release) / fetch_sub (conn)
 
+    // TX I/Q ring pre-prime flag.  setMox(true) sets it on the connection
+    // thread; sendTxIq consumes it on the TX worker thread (single-writer
+    // invariant preserved).  When consumed, sendTxIq pushes a 20 ms
+    // cushion of zero samples (960 samples = 7680 bytes at the P1 48 kHz
+    // wire rate) into the ring BEFORE the real first-block samples, so
+    // fillTxZone's 63-sample-per-zone drain has headroom while the
+    // producer settles.  Same mechanism as the P2 cushion; see
+    // P2RadioConnection.h for the architectural rationale.
+    std::atomic<bool> m_txIqPrimePending{false};
+
     // Float→int16 + EP2 zone fill helper.
     // Returns true if 63 samples were available and written, false if underrun.
     bool fillTxZone(quint8* zone63) noexcept;
