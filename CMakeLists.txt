@@ -693,6 +693,8 @@ set(GUI_SOURCES
     src/gui/widgets/FilterPolicyDialog.h
     src/gui/widgets/AntennaPickerMenu.cpp
     src/gui/widgets/AntennaPickerMenu.h
+    src/gui/widgets/AntennaSwitchToast.cpp
+    src/gui/widgets/AntennaSwitchToast.h
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/NetworkDiagnosticsDialog.h
     src/gui/SpotHubDialog.cpp
