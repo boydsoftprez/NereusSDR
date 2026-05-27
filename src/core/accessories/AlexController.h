@@ -97,6 +97,21 @@ public:
         QString      reasonText;  ///< for WIDE badge tooltip + bottom-bar status
     };
 
+    // ── Per-ADC BPF mode mutators + recompute ────────────────────────────────
+    // NereusSDR-original; no Thetis port.
+
+    BpfMode bpfMode(int adc) const;
+    void    setBpfMode(int adc, BpfMode mode);
+    const AlexAdcState& adcState(int adc) const;
+
+    /// Recompute BPF state for the given ADC based on current slice list, wideband
+    /// state, and operator mode. Emits bpfStateChanged when effective state changes.
+    void recomputeBpf(int adc);
+
+    /// Mark that a wideband stream is active on this ADC.
+    /// Recomputes BPF (wideband forces effective=WidebandLocked).
+    void setWidebandActive(int adc, bool on);
+
     // ── Per-band antenna selection (1, 2, or 3) ──────────────────────────────
     // Source: HPSDR/Alex.cs:56-58 TxAnt/RxAnt/RxOnlyAnt fields [@501e3f5]
     int  txAnt(Band band) const;
@@ -157,6 +172,7 @@ public:
     void save();   // persist current state to AppSettings
 
 signals:
+    void bpfStateChanged(int adc, const AlexController::AlexAdcState& state);
     void antennaChanged(Band band);  // fires on any per-band assignment mutation
     void blockTxChanged();           // fires when blockTxAnt2 or blockTxAnt3 changes
     void rxOutOnTxChanged(bool on);
@@ -192,6 +208,9 @@ private:
     bool m_rxOutOverride {false};
     bool m_useTxAntForRx {false};
     bool m_xvtrActive    {false};
+
+    std::array<AlexAdcState, 2> m_perAdcState{};
+    std::array<bool, 2> m_widebandActive {false, false};
 
     QString m_mac;
 

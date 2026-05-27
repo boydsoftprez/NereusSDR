@@ -61,6 +61,67 @@ AlexController::AlexController(QObject* parent) : QObject(parent)
     m_rxOnlyAnt.fill(0);  // 0 = none selected — matches Thetis Alex.cs:59 [v2.10.3.13 @501e3f5]
 }
 
+// ── Per-ADC BPF mode mutators + recompute ──────────────────────────────────
+// NereusSDR-original; no Thetis port.
+
+AlexController::BpfMode AlexController::bpfMode(int adc) const
+{
+    if (adc < 0 || adc >= 2) { return BpfMode::Auto; }
+    return m_perAdcState[adc].mode;
+}
+
+void AlexController::setBpfMode(int adc, BpfMode mode)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    if (m_perAdcState[adc].mode == mode) { return; }
+    m_perAdcState[adc].mode = mode;
+    recomputeBpf(adc);  // emits bpfStateChanged when effective changes
+}
+
+const AlexController::AlexAdcState& AlexController::adcState(int adc) const
+{
+    static const AlexAdcState empty{};
+    if (adc < 0 || adc >= 2) { return empty; }
+    return m_perAdcState[adc];
+}
+
+void AlexController::setWidebandActive(int adc, bool on)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    if (m_widebandActive[adc] == on) { return; }
+    m_widebandActive[adc] = on;
+    recomputeBpf(adc);
+}
+
+void AlexController::recomputeBpf(int adc)
+{
+    if (adc < 0 || adc >= 2) { return; }
+
+    AlexAdcState& s = m_perAdcState[adc];
+    AlexAdcState prev = s;
+
+    // Priority order: wideband > operator force-bypass > operator force-band > auto.
+    if (m_widebandActive[adc]) {
+        s.effective = BpfEffective::WidebandLocked;
+        s.reasonText = QStringLiteral("BYPASS (wideband active)");
+    } else if (s.mode == BpfMode::ForceBypass) {
+        s.effective = BpfEffective::Bypass;
+        s.reasonText = QStringLiteral("BYPASS (operator override)");
+    } else if (s.mode == BpfMode::ForceBand) {
+        s.effective = BpfEffective::Filtered;
+        s.reasonText = QStringLiteral("%1 (forced)").arg(bandLabel(s.currentBpfBand));
+    } else {
+        // Auto mode placeholder (Task 13 will inspect slice list and decide
+        // Filtered-single-band vs Bypass-multi-band).
+        s.effective = BpfEffective::Filtered;
+        s.reasonText = QStringLiteral("%1 (idle)").arg(bandLabel(s.currentBpfBand));
+    }
+
+    if (s.effective != prev.effective || s.reasonText != prev.reasonText) {
+        emit bpfStateChanged(adc, s);
+    }
+}
+
 // Source: HPSDR/Alex.cs:setTxAnt / TxAnt[] accessor [@501e3f5]
 int AlexController::txAnt(Band band) const
 {
