@@ -12,6 +12,7 @@
 #include <QtTest/QtTest>
 #include "core/DdcAssignment.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/P1CodecHl2.h"
 #include "core/codec/P1CodecStandard.h"
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
@@ -382,6 +383,43 @@ private slots:
         // SyncEnable = 0 (no diversity)
         QCOMPARE(a.syncEnable, 0);
         QCOMPARE(a.nDdc, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 9: P1CodecHl2::applyDdcAssignment
+    // Source: mi0bot-Thetis console.cs:8409-8488 [v2.10.3.13-beta2]
+    // -----------------------------------------------------------------------
+
+    void hl2_1_slice_assigns_ddc0_at_slice_rate()
+    {
+        // From mi0bot console.cs:8409-8429 [v2.10.3.13-beta2] (no-mox no-diversity):
+        //   case HPSDRModel.HERMESLITE: // MI0BOT: HL2
+        //   P1_DDCConfig = 4; DDCEnable = DDC0; Rate[0] = rx1_rate;
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 384000;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        QCOMPARE(a.ddcEnable & 0x01, 0x01);
+        QCOMPARE(a.rate[0], 384000);
+    }
+
+    void hl2_ps_mox_uses_rx1_rate_not_ps_rate()
+    {
+        // mi0bot console.cs:8476-8479 [v2.10.3.13-beta2] divergence:
+        // MI0BOT: HL2 can work at a high sample rate; keeps rx1_rate under PS-MOX.
+        // ramdor uses ps_rate=192000; mi0bot branches to rx1_rate for HL2.
+        P1CodecHl2 codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 384000; slices[0].txBound = true;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        // MI0BOT: HL2 can work at a high sample rate. Rate[0]=Rate[1]=rx1_rate (384000),
+        // NOT ps_rate (192000). From mi0bot console.cs:8476-8479 [v2.10.3.13-beta2].
+        QCOMPARE(a.rate[0], 384000);
+        QCOMPARE(a.rate[1], 384000);
     }
 
     void hermes_4_slice_enables_ddc0_through_ddc3()
