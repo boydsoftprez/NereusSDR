@@ -448,6 +448,7 @@ set(CORE_SOURCES
     src/core/BoardCapabilities.cpp
     src/core/FFTRouter.cpp
     src/core/WidebandFrameAccumulator.cpp
+    src/core/WidebandFftEngine.cpp
     src/core/AudioDeviceConfig.cpp
     src/core/SampleRateCatalog.cpp
     src/core/SkuUiProfile.cpp

@@ -5357,3 +5357,9 @@ nereus_add_test(tst_p2_wideband_enable_byte)
 # Thetis-equivalent behaviour.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 2.
 nereus_add_test(tst_wideband_frame_accumulator)
+
+# Phase 3F Sub-Epic F Task 4: WidebandFftEngine wraps an FFTW3 16384-pt
+# real-to-complex plan. Output is 8192 dBm-style bins (N/2+1 less DC).
+# Source: NereusSDR-original test for a NereusSDR-original class.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 4.
+nereus_add_test(tst_wideband_fft_engine)
