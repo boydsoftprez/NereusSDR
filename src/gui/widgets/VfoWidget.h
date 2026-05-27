@@ -511,6 +511,15 @@ signals:
     // MOX (RF-safe) before flipping the TX-bound slice.
     void txHandoffRequested(int sliceIndex);
 
+    // Phase 3F Sub-Epic E Task 4: right-click context menu intent signals.
+    // MainWindow listens and routes to SliceModel / FilterPolicyDialog /
+    // RadioModel::removeSlice. antennaChangeRequested lands when
+    // AntennaPickerMenu (Task 5) replaces the stubbed antenna submenu.
+    void sampleRateRequested(int sliceIndex, int hz);
+    void filterPolicyRequested(int chainIndex);
+    void removeSliceRequested(int sliceIndex);
+    void antennaChangeRequested(int sliceIndex, int antIdx);
+
 private slots:
     // Phase 3F Sub-Epic C Task 9: TX badge click slot. Emits
     // txHandoffRequested with the slice this flag represents.
@@ -520,6 +529,10 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    // Phase 3F Sub-Epic E Task 4: right-click pops the multi-pan context
+    // menu (Make TX, Antenna >, Sample rate >, Diversity >, Filter policy,
+    // Remove slice).
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void buildUI();

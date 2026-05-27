@@ -5390,6 +5390,31 @@ void MainWindow::wireSliceToSpectrum()
         }
     });
 
+    // Phase 3F Sub-Epic E Task 4: VfoWidget context-menu intent signals.
+    // Routes to SliceModel::setSampleRateHz / FilterPolicyDialog /
+    // RadioModel::removeSlice. antennaChangeRequested wires in when
+    // AntennaPickerMenu (Task 5) replaces the stubbed antenna submenu.
+    connect(vfo, &VfoWidget::sampleRateRequested, this,
+            [this](int sliceIdx, int hz) {
+        if (!m_radioModel) { return; }
+        const auto& slices = m_radioModel->slices();
+        if (sliceIdx >= 0 && sliceIdx < slices.size()) {
+            slices.at(sliceIdx)->setSampleRateHz(hz);
+        }
+    });
+    connect(vfo, &VfoWidget::filterPolicyRequested, this,
+            [this](int chainIdx) {
+        if (!m_radioModel) { return; }
+        auto* alex = &m_radioModel->alexControllerMutable();
+        FilterPolicyDialog dlg(chainIdx, alex, this);
+        dlg.exec();
+    });
+    connect(vfo, &VfoWidget::removeSliceRequested, this,
+            [this](int sliceIdx) {
+        if (!m_radioModel) { return; }
+        m_radioModel->removeSlice(sliceIdx);
+    });
+
     // Phase 3P-I-b T9 — VFO BYPS button ↔ AlexController::rxOutOnTx
     connect(vfo, &VfoWidget::rxBypassToggled,
             &m_radioModel->alexControllerMutable(), &AlexController::setRxOutOnTx);

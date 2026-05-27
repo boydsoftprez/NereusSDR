@@ -281,6 +281,7 @@ warren@wpratt.com
 #include <QEvent>
 #include <QGuiApplication>
 #include <QPainter>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QVBoxLayout>
@@ -2807,6 +2808,64 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
         updateFreqLabel();
         emit frequencyChanged(newFreq);
     }
+}
+
+// Phase 3F Sub-Epic E Task 4: right-click context menu.
+// Per docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md
+// Task 4. Antenna submenu is stubbed; AntennaPickerMenu (Task 5) lands
+// the SKU-aware antenna list with chain-consequence hints. Diversity
+// is greyed pending Sub-Epic G enable on Slice A + 2-ADC SKUs. Filter
+// policy currently routes through chainIndex=0; once slice-to-chain
+// mapping is exposed on VfoWidget, switch to the real chainIndex.
+void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+
+    // Make this the TX slice
+    QAction* makeTxAct = menu.addAction(QStringLiteral("Make this the TX slice"));
+    connect(makeTxAct, &QAction::triggered, this, [this]() {
+        emit txHandoffRequested(m_sliceIndex);
+    });
+
+    menu.addSeparator();
+
+    // Antenna submenu (stub; Task 5 implements AntennaPickerMenu).
+    QMenu* antMenu = menu.addMenu(QStringLiteral("Antenna >"));
+    antMenu->addAction(QStringLiteral("ANT1"));
+    antMenu->addAction(QStringLiteral("ANT2"));
+
+    // Sample rate submenu (48k..1536k).
+    QMenu* rateMenu = menu.addMenu(QStringLiteral("Sample rate >"));
+    const int rates[] = {48000, 96000, 192000, 384000, 768000, 1536000};
+    for (int hz : rates) {
+        QAction* act = rateMenu->addAction(QStringLiteral("%1 kHz").arg(hz / 1000));
+        act->setCheckable(true);
+        // Mark the slice's current rate when the SliceModel hook lands.
+        connect(act, &QAction::triggered, this, [this, hz]() {
+            emit sampleRateRequested(m_sliceIndex, hz);
+        });
+    }
+
+    menu.addSeparator();
+
+    // Diversity submenu (placeholder; Sub-Epic G enables on Slice A + 2-ADC SKU).
+    QAction* divAct = menu.addAction(QStringLiteral("Diversity >"));
+    divAct->setEnabled(false);
+
+    // Filter policy (opens FilterPolicyDialog via chainIndex=0 default).
+    QAction* filterAct = menu.addAction(QStringLiteral("Filter policy..."));
+    connect(filterAct, &QAction::triggered, this, [this]() {
+        emit filterPolicyRequested(0);
+    });
+
+    menu.addSeparator();
+
+    QAction* removeAct = menu.addAction(QStringLiteral("Remove slice"));
+    connect(removeAct, &QAction::triggered, this, [this]() {
+        emit removeSliceRequested(m_sliceIndex);
+    });
+
+    menu.exec(event->globalPos());
 }
 
 // ---- Helpers ----
