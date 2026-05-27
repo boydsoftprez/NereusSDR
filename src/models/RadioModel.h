@@ -319,6 +319,15 @@ public:
     void removeSlice(int index);
     void setActiveSlice(int index);
 
+    /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry
+    /// point.  Creates a new SliceModel (delegates to addSlice) and tags it
+    /// with the supplied pan id as a dynamic property for Sub-Epic D wiring.
+    /// Enforces the maxSlices() cap and emits sliceAddRejected with a human
+    /// readable reason on overflow.
+    /// Pattern from AetherSDR MainWindow.cpp:6849-6859 [@0cd4559a]
+    /// (+RX button handler).
+    Q_INVOKABLE void addSliceOnPan(const QString& panId);
+
     // Band-button click handler. Routes both SpectrumOverlayPanel::bandSelected
     // and ContainerWidget::bandClicked through one code path. On first
     // visit to `band`, applies BandDefaults::seedFor(band) and persists;
@@ -1541,6 +1550,10 @@ signals:
     void pureSignalCoordinatorReady(NereusSDR::PureSignal* coordinator);
     void sliceAdded(int index);
     void sliceRemoved(int index);
+    // Phase 3F Sub-Epic C Task 7: emitted when addSliceOnPan rejects a
+    // request because the maxSlices() cap has been reached.  Status-bar /
+    // toast subscribers wire to this signal in Sub-Epic C Tasks 8-9.
+    void sliceAddRejected(QString reason);
     void activeSliceChanged(int index);
     // Emitted once at the end of loadSliceState() after the slice has been
     // restored from AppSettings. Mirrors Thetis console.cs:27204 [v2.10.3.13]

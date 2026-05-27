@@ -5286,3 +5286,12 @@ nereus_add_test(tst_codec_5_slice_assignment)
 # Source: NereusSDR-original (bridge slot, no Thetis upstream).
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 15.
 nereus_add_test(tst_p2_radio_connection_apply_ddc_assignment)
+
+# Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
+# 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
+# the first successful add), removeSlice_refuses_to_remove_last_slice
+# (last-slice guard).  Pattern adapted from AetherSDR MainWindow.cpp:6849-6859
+# (+RX button handler) to NereusSDR's RadioModel + SliceModel hub.
+# Source: NereusSDR-original (AetherSDR-pattern port, no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 7.
+nereus_add_test(tst_radio_model_slice_lifecycle)

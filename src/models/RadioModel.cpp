@@ -2867,6 +2867,23 @@ void RadioModel::removeSlice(int index)
         return;
     }
 
+    // Phase 3F Sub-Epic C Task 7: never remove the last remaining slice.
+    // RadioModel always carries at least one SliceModel once any have been
+    // created; the AetherSDR +RX/-RX UI relies on this invariant.
+    if (m_slices.size() == 1) {
+        return;
+    }
+
+    // Phase 3F Sub-Epic C Task 7: if the victim is currently TX-bound, hand
+    // TX off to another slice BEFORE removal so the arbiter never observes
+    // a torn slice list.  Fallback target is slice 0, unless slice 0 is the
+    // victim itself, in which case fall back to slice 1.
+    SliceModel* victim = m_slices.at(index);
+    if (victim->isTxSlice() && m_txSliceArbiter) {
+        const int fallbackIndex = (index == 0) ? 1 : 0;
+        m_txSliceArbiter->requestHandoff(fallbackIndex);
+    }
+
     SliceModel* slice = m_slices.takeAt(index);
     if (m_activeSlice == slice) {
         // Clear the active flag before reassigning. The deleted slice's flag
@@ -2879,8 +2896,42 @@ void RadioModel::removeSlice(int index)
         emit activeSliceChanged(m_activeSlice ? 0 : -1);
     }
 
-    delete slice;
+    // Phase 3F Sub-Epic C Task 7: deleteLater() rather than delete to keep
+    // any in-flight queued signals targeting this slice safe.
+    slice->deleteLater();
     emit sliceRemoved(index);
+}
+
+// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful +RX entry point.
+// Pattern from AetherSDR MainWindow.cpp:6849-6859 [@0cd4559a]
+// (+RX button handler).
+void RadioModel::addSliceOnPan(const QString& panId)
+{
+    if (m_slices.size() >= maxSlices()) {
+        // Surface a human-readable cap reason for the status-bar / toast
+        // wiring landing in Sub-Epic C Tasks 8-9.  RadioInfo.name carries
+        // the friendly product label (e.g. "ANAN-G2"); fall back to a
+        // generic phrase when disconnected.
+        const QString radioLabel = m_lastRadioInfo.name.isEmpty()
+                                       ? QStringLiteral("This radio")
+                                       : m_lastRadioInfo.name;
+        const QString reason = QStringLiteral("%1 supports a maximum of %2 slices")
+                                   .arg(radioLabel)
+                                   .arg(maxSlices());
+        emit sliceAddRejected(reason);
+        return;
+    }
+
+    // Delegate the actual create + wire + sliceAdded emit to the existing
+    // addSlice() path so we keep the MoxController VOX hookup, band-change
+    // wiring, and active-slice bookkeeping in one place.
+    const int newIndex = addSlice();
+
+    // Stash the pan id on the new slice as a dynamic property; Sub-Epic D
+    // wires the full pan-slice association layer.
+    if (SliceModel* slice = sliceAt(newIndex)) {
+        slice->setProperty("initialPanId", panId);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
