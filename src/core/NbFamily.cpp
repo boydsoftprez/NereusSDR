@@ -409,6 +409,34 @@ void NbFamily::setNbLagMs(double hangMs)
 #endif
 }
 
+// Live sample-rate change. Re-ports the receiver branch of Thetis
+// cmaster.c:464-470 SetXcmInrate [v2.10.3.13]:
+//   SetRCVRANBBuffsize  (0, rx, pcm->xcm_insize[in_id]);
+//   SetRCVRANBSamplerate(0, rx, rate);
+//   SetRCVRNOBBuffsize  (0, rx, pcm->xcm_insize[in_id]);
+//   SetRCVRNOBSamplerate(0, rx, rate);
+// Ordering preserved (buffsize before samplerate) per upstream. The EXT
+// setters are bodily identical to the RCVR setters (nob.c:240-255 vs
+// nob.c:357-373; nobII.c same) — they take a critical section, write the
+// field, call init_nob/initBlanker, release.
+void NbFamily::setSampleRate(int newRateHz, int newBufferSize)
+{
+    if (newRateHz == m_sampleRate && newBufferSize == m_bufferSize) {
+        return;
+    }
+    m_sampleRate = newRateHz;
+    m_bufferSize = newBufferSize;
+#ifdef HAVE_WDSP
+    if (m_skipWdsp) return;
+    // NB1 (anb)
+    SetEXTANBBuffsize  (m_channelId, m_bufferSize);
+    SetEXTANBSamplerate(m_channelId, m_sampleRate);
+    // NB2 (nob)
+    SetEXTNOBBuffsize  (m_channelId, m_bufferSize);
+    SetEXTNOBSamplerate(m_channelId, m_sampleRate);
+#endif
+}
+
 void NbFamily::pushAllTuning()
 {
 #ifdef HAVE_WDSP

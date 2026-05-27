@@ -562,6 +562,14 @@ void SetEXTANBAdvtime(int id, double time);
 void SetEXTANBBacktau(int id, double tau);
 void SetEXTANBThreshold(int id, double thresh);
 
+// Live buffer/rate setters — called from the SetXcmInrate-equivalent path
+// (NbFamily::setSampleRate) when the channel input rate or buffer size
+// changes without re-create. Each updates the internal field then calls
+// initBlanker() to recompute time-domain constants.
+// From Thetis specHPSDR.cs (declared) + WDSP nob.c:354-373.
+void SetEXTANBBuffsize(int id, int size);
+void SetEXTANBSamplerate(int id, int rate);
+
 // ---------------------------------------------------------------------------
 // Noise blanker II — external (nobII.h, nobII.c)
 // ---------------------------------------------------------------------------
@@ -612,6 +620,12 @@ void SetEXTNOBThreshold(int id, double thresh);
 // From Thetis specHPSDR.cs:931 — SetEXTNOBBacktau(int id, double tau)
 // WDSP: third_party/wdsp/src/nobII.c
 void SetEXTNOBBacktau(int id, double tau);
+
+// Live buffer/rate setters — companion to the NB1 pair above.
+// From Thetis specHPSDR.cs (declared) + WDSP nobII.c:666-683. Each updates
+// the internal field then calls init_nob() to recompute time-domain constants.
+void SetEXTNOBBuffsize(int id, int size);
+void SetEXTNOBSamplerate(int id, int rate);
 
 // ---------------------------------------------------------------------------
 // APF — Audio Peak Filter (apfshadow.c / apfshadow.h)
