@@ -108,6 +108,40 @@ private slots:
         QCOMPARE(caps.maxSlices, 5);
     }
 
+    // Phase 3F Task 3: per-SKU widebandAdcs population tests.
+    // P1 single-ADC boards: widebandAdcs = 0 (P1 mechanism deferred to 3F-W).
+    // P2 dual-ADC boards: widebandAdcs = 2 (ADC0 + ADC1 both support wideband stream).
+
+    void hl2_wideband_adcs_is_0()
+    {
+        const auto caps = capabilitiesFor(HPSDRModel::HERMESLITE);
+        QCOMPARE(caps.widebandAdcs, 0);  // P1 mechanism, deferred to 3F-W
+    }
+
+    void hermes_wideband_adcs_is_0()
+    {
+        const auto caps = capabilitiesFor(HPSDRModel::HERMES);
+        QCOMPARE(caps.widebandAdcs, 0);  // P1 mechanism
+    }
+
+    void anan_g2_wideband_adcs_is_2()
+    {
+        const auto caps = capabilitiesFor(HPSDRModel::ANAN_G2);
+        QCOMPARE(caps.widebandAdcs, 2);  // 2-ADC P2 board
+    }
+
+    void anan_g2e_wideband_adcs_is_2()
+    {
+        const auto caps = capabilitiesFor(HPSDRModel::ANAN_G2E);
+        QCOMPARE(caps.widebandAdcs, 2);
+    }
+
+    void anan_7000d_wideband_adcs_is_2()
+    {
+        const auto caps = capabilitiesFor(HPSDRModel::ANAN7000D);
+        QCOMPARE(caps.widebandAdcs, 2);
+    }
+
 private:
     static BoardCapabilities capabilitiesFor(HPSDRModel m)
     {
