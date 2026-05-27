@@ -274,9 +274,10 @@ int main(int argc, char* argv[])
     // moved to per-side millisecond time constants; v5 splits the shared
     // DspOptionsBufferSize<Mode> / DspOptionsFilterSize<Mode> keys into
     // <Mode>Rx + <Mode>Tx variants so the UI can expose Thetis-faithful
-    // per-channel combos.  See AppSettings::ensureSettingsAtVersion for the
-    // upstream Thetis cites.
-    NereusSDR::AppSettings::instance().ensureSettingsAtVersion(5);
+    // per-channel combos; v6 (Phase 3F) is additive only — new per-slice
+    // per-band keys populate lazily on first write.
+    // See AppSettings::ensureSettingsAtVersion for the upstream Thetis cites.
+    NereusSDR::AppSettings::instance().ensureSettingsAtVersion(6);
 
     // Restore logging category toggles from settings
     NereusSDR::LogManager::instance().loadSettings();

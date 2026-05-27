@@ -5244,3 +5244,11 @@ nereus_add_test(tst_slice_model_phase3f_properties)
 # Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
 # Source: NereusSDR-original (no Thetis upstream).
 nereus_add_test(tst_radio_model_max_slices)
+
+# Phase 3F Sub-Epic A Task 12: SettingsSchemaVersion v5 -> v6 migration.
+# v6 is additive only (no key renames). Migration block is intentionally empty;
+# the version bump itself is the only observable change.
+# 2 tests: v5_to_v6_bumps_version_key, v6_to_v6_is_noop.
+# Source: NereusSDR-original (no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §12.
+nereus_add_test(tst_settings_schema_v6_migration)
