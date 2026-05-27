@@ -2867,6 +2867,23 @@ int RadioModel::addSlice()
     connect(slice, &SliceModel::bandChanged,
             this, &RadioModel::onSliceBandChanged);
 
+    // Phase 3F Sub-Epic F Task 11: when the operator flips this slice's
+    // wideband-extension flag (e.g. zoom-out past DDC bandwidth, or
+    // explicit Extended-view request from F Task 13), bypass the Alex
+    // BPF on the slice's ADC (Sub-Epic B Task 14-15 effective-state
+    // machine drives the BpfMode::WidebandLocked branch) AND flip the
+    // matching CmdGeneral byte 23 wb_enable bit on the P2 connection
+    // (Sub-Epic F Task 1 wiring) so the radio starts streaming the
+    // wideband packets.  Off-flip restores both.
+    connect(slice, &SliceModel::widebandExtensionRequestedChanged, this,
+            [this, slice](bool on) {
+        const int chainIdx = slice->chainIndex();
+        m_alexController.setWidebandActive(chainIdx, on);
+        if (auto* p2 = qobject_cast<NereusSDR::P2RadioConnection*>(m_connection)) {
+            p2->setWidebandEnabled(chainIdx, on);
+        }
+    });
+
     if (!m_activeSlice) {
         m_activeSlice = slice;
         // Mark the first slice as active so isActiveSlice() returns true for it.
