@@ -983,6 +983,12 @@ public slots:
     // From AetherSDR SpectrumWidget.cpp:740-756 [@0cd4559]
     void clearWaterfallHistory();
 
+    /// Phase 3F Sub-Epic F Task 6: receive wideband bins for the active-ADC
+    /// extended pan. Bins are stored per-ADC; actual painting wires in F
+    /// polish (T7-T10). Setter alone enables Sub-Epic H bench operators to
+    /// confirm the wideband data path is flowing without UI rendering.
+    void setWidebandBins(int adcIndex, const QVector<float>& dbmBins);
+
 public:
     // ── Spot overlay (Phase 3J-2 Task E1) ─────────────────────────────────
     // Public structs + setters re-declared under a fresh `public:` access
@@ -1175,6 +1181,15 @@ protected:
     void leaveEvent(QEvent* event) override;
 
 private:
+    // Phase 3F Sub-Epic F Task 6: latest wideband bins per ADC.  Each entry
+    // is sized 8192 (kOutputBins from WidebandFftEngine) when populated;
+    // empty until the first widebandSpectrumReady arrives.  m_extendedMode
+    // gates whether the bins are actually painted; the storage is silent
+    // until F polish (T7-T10) wires the paint path.
+    QVector<float> m_widebandBinsAdc0;
+    QVector<float> m_widebandBinsAdc1;
+    bool           m_extendedMode{false};
+
     // ---- Phase 3Q-8: disconnect overlay state ----
     // The CPU paintEvent path can paint a QPainter overlay, but the GPU
     // (QRhi) path early-returns and refuses QPainter. To work in both modes

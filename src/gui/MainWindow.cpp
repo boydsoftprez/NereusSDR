@@ -1417,6 +1417,19 @@ void MainWindow::buildUI()
         }
     });
 
+    // Phase 3F Sub-Epic F Task 6: route wideband bins from RadioModel into
+    // the active pan's SpectrumWidget.  RadioModel emits one
+    // widebandSpectrumReady per ADC per assembled frame; we forward the
+    // bins to the currently-active SpectrumWidget which silently stores
+    // them per ADC.  Per-pan ADC routing (so extended-pan views on the
+    // correct ADC's bins) lands in Sub-Epic F polish (T7-T10).
+    connect(m_radioModel, &RadioModel::widebandSpectrumReady, this,
+            [this](int adcIdx, const QVector<float>& dbmBins) {
+        if (auto* sw = activeSpectrumWidget()) {
+            sw->setWidebandBins(adcIdx, dbmBins);
+        }
+    });
+
     // Create FFTEngine on a worker thread (spectrum thread from architecture).
     // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
     // updates it to the actual wire rate on each connect (P1=192k, P2=768k).

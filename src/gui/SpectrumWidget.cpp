@@ -4322,6 +4322,24 @@ void SpectrumWidget::clearWaterfallHistory()
     markOverlayDirty();
 }
 
+// Phase 3F Sub-Epic F Task 6: store the latest per-ADC wideband bins.
+// Sub-Epic F polish (T7-T10) will paint these as a background layer when
+// m_extendedMode is true and the pan's visible frequency range exceeds
+// the active DDC bandwidth.  For now this is silent storage so the
+// FFT pipeline stays warm and bench operators can confirm data is
+// flowing without UI churn.
+void SpectrumWidget::setWidebandBins(int adcIndex, const QVector<float>& dbmBins)
+{
+    if (adcIndex == 0) {
+        m_widebandBinsAdc0 = dbmBins;
+    } else if (adcIndex == 1) {
+        m_widebandBinsAdc1 = dbmBins;
+    }
+    // No update() call: paint is gated behind m_extendedMode (wired in
+    // F polish).  Triggering a repaint here would cost a GPU pass per
+    // wideband frame on hardware that isn't yet rendering the bins.
+}
+
 // From AetherSDR SpectrumWidget.cpp:951-1000 [@0cd4559]
 //   adapter: NereusSDR uses Hz throughout (upstream uses MHz). Both the
 //   live waterfall ring buffer and the long-history ring buffer are
