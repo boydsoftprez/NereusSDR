@@ -305,6 +305,12 @@ public:
     QList<SliceModel*> slices() const { return m_slices; }
     SliceModel* sliceAt(int index) const;
     SliceModel* activeSlice() const { return m_activeSlice; }
+
+    /// Phase 3F: hardware-capped user-facing slice count. Reads BoardCapabilities.maxSlices
+    /// for the currently connected SKU. Returns 1 when disconnected (safe default).
+    /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+    int maxSlices() const;
+
     int addSlice();
     void removeSlice(int index);
     void setActiveSlice(int index);

@@ -5237,3 +5237,10 @@ nereus_add_test(tst_smeter_widget_external_amp)
 # Source: NereusSDR-original (no Thetis upstream).
 # Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §3.
 nereus_add_test(tst_slice_model_phase3f_properties)
+
+# Phase 3F Sub-Epic A Task 11: RadioModel::maxSlices() accessor.
+# Returns 1 when disconnected (safe single-slice default); returns
+# BoardCapabilities.maxSlices for the current SKU when connected.
+# Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+# Source: NereusSDR-original (no Thetis upstream).
+nereus_add_test(tst_radio_model_max_slices)

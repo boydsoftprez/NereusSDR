@@ -2690,6 +2690,27 @@ const BoardCapabilities& RadioModel::boardCapabilities() const
     return BoardCapsTable::forBoard(HPSDRHW::Unknown);
 }
 
+// ── Phase 3F: maxSlices() accessor ──────────────────────────────────────────
+//
+// Returns 1 when disconnected (safe single-slice default so callers never
+// see zero and attempt to create slices with no radio present).
+//
+// When connected, delegates to boardCapabilities().maxSlices for the active
+// SKU.  A zero value there is also clamped to 1 — it signals that the
+// BoardCapabilities row has not yet been populated for that SKU (Task 1-3),
+// which should be treated as "at least one slice".
+//
+// NereusSDR-original — no Thetis upstream.
+// Design: docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+int RadioModel::maxSlices() const
+{
+    if (!isConnected()) {
+        return 1;
+    }
+    const int n = boardCapabilities().maxSlices;
+    return n > 0 ? n : 1;
+}
+
 // ── RX meter calibration offset (Thetis-faithful port) ──────────────────────
 //
 // Ported from Thetis console.cs:21040 RXOffset(rx) + :20989 RXPreampOffset
