@@ -29,6 +29,13 @@ bool TxSliceArbiter::requestHandoff(int newSliceIndex)
         return true;  // already TX-bound, no-op
     }
 
+    // RF-safe handoff: drop MOX before changing TX-bound slice.
+    if (m_mox && m_mox->isMox()) {
+        m_mox->setMox(false);
+        // MoxController::setMox is synchronous on the moxChanged side; if it ever
+        // becomes async, switch to a QEventLoop wait on moxChanged here.
+    }
+
     const int oldIndex = m_txBoundIndex;
 
     // Flip txSlice flags on the affected slices.
