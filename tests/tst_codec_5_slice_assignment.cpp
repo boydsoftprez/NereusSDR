@@ -12,7 +12,9 @@
 #include <QtTest/QtTest>
 #include "core/DdcAssignment.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/P1CodecAnvelinaPro3.h"
 #include "core/codec/P1CodecHl2.h"
+#include "core/codec/P1CodecRedPitaya.h"
 #include "core/codec/P1CodecStandard.h"
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
@@ -448,6 +450,134 @@ private slots:
         QCOMPARE(a.nDdc, 4);
         // From console.cs:8393 [v2.10.3.15]: P1_DDCConfig = 4 (no diversity)
         QCOMPARE(a.p1DdcConfig, 4);
+    }
+    // ── Task 10a: P1CodecAnvelinaPro3 (OrionMkII-class P1, nddc=5) ─────────────
+    //
+    // AnvelinaPro3 falls in the ANAN100D/ORIONMKII/ANVELINAPRO3 case in Thetis
+    // console.cs:8218-8303 [v2.10.3.15]; NOT the Hermes-class branch.
+    // nddc=5, DDC2=RX1, DDC3=RX2, DDC0+DDC1 for PS/diversity.
+    //
+    // Inline author tags from cited source region:
+    //   console.cs:8247  [2.10.3.13]MW0LGE p1 !  (within +-5 of Rate[2] assign)
+    //
+    // [2.10.3.13]MW0LGE p1 !  [original tag from console.cs:8247; P1-only Rate[0] path]
+
+    void anvelina_pro3_1_slice_compiles_and_returns_nonzero()
+    {
+        // From Thetis console.cs:8243-8250 [v2.10.3.15] (no-mox, no-diversity):
+        //   P1_DDCConfig = 1; DDCEnable = DDC2;
+        //   if (p1) Rate[0] = rx1_rate; // [2.10.3.13]MW0LGE p1 !
+        //   Rate[2] = rx1_rate;
+        // [2.10.3.13]MW0LGE p1 !  [original tag from console.cs:8247; P1 path sets Rate[0] too]
+        P1CodecAnvelinaPro3 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 96000;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        // DDC2 enabled (OrionMkII-class, not DDC0 like Hermes)
+        QCOMPARE(a.ddcEnable & 0x04, 0x04);
+        QVERIFY(a.nDdc >= 1);
+        // From console.cs:8244 [v2.10.3.15]: P1_DDCConfig = 1 (OrionMkII-class plain RX)
+        QCOMPARE(a.p1DdcConfig, 1);
+        // From console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate
+        QCOMPARE(a.rate[2], 96000);
+    }
+
+    void anvelina_pro3_2_slice_enables_ddc2_and_ddc3()
+    {
+        // From Thetis console.cs:8299-8303 [v2.10.3.15] (rx2_enabled addendum):
+        //   DDCEnable += DDC3; Rate[3] = rx2_rate;
+        // Adjacent case header from console.cs:8305: case HPSDRModel.REDPITAYA: //DH1KLM
+        // //DH1KLM  [original inline tag from console.cs:8305, adjacent to rx2 addendum]
+        P1CodecAnvelinaPro3 codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 96000; slices[0].txBound = true;
+        slices[1].live = true; slices[1].sampleRateHz = 48000;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        QCOMPARE(a.ddcEnable & 0x0c, 0x0c);  // DDC2 + DDC3
+        QCOMPARE(a.rate[2], 96000);
+        QCOMPARE(a.rate[3], 48000);
+        QCOMPARE(a.nDdc, 2);
+    }
+
+    // ── Task 10b: P1CodecRedPitaya (own case, //DH1KLM, nddc=5) ───────────────
+    //
+    // RedPitaya has its OWN case in Thetis console.cs:8305-8385 [v2.10.3.15]
+    // (//DH1KLM). Same DDC layout as OrionMkII-class but Rate[0] and Rate[1]
+    // are ALWAYS set to rx1_rate even in non-diversity/non-PS mode
+    // (// REDPITAYA PAVEL inline notes). 384k allowed via include_extra_p1_rate
+    // (setup.cs:847-849 [v2.10.3.15] //DH1KLM).
+    //
+    // Inline author tags from cited source region (MUST be preserved):
+    //   console.cs:8305  //DH1KLM
+    //   console.cs:8312  // REDPITAYA PAVEL   (P1_DDCConfig diversity override)
+    //   console.cs:8317  // REDPITAYA PAVEL   (Rate[2] in diversity)
+    //   console.cs:8326  // REDPITAYA PAVEL   (Rate[0] in plain mode)
+    //   console.cs:8327  // REDPITAYA PAVEL   (Rate[1] in plain mode)
+    //   console.cs:8375  // REDPITAYA PAVEL   (Rate[2] in diversity-mox)
+    //
+    // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header, verbatim]
+    // // REDPITAYA PAVEL  [original inline from console.cs:8326, verbatim - Rate[0] always set]
+
+    void redpitaya_1_slice_at_384k_supported()
+    {
+        // From Thetis setup.cs:847-849 [v2.10.3.15]:
+        //   bool include_extra_p1_rate = HardwareSpecific.Model == HPSDRModel.REDPITAYA; //DH1KLM
+        //   p1_rates = include_extra_p1_rate ? new int[] { 48000,96000,192000,384000 } : ...
+        // And from console.cs:8321-8330 [v2.10.3.15] (no-mox, no-diversity):
+        //   Rate[0] = rx1_rate; // REDPITAYA PAVEL
+        //   Rate[1] = rx1_rate; // REDPITAYA PAVEL
+        //   Rate[2] = rx1_rate;
+        // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8326]
+        P1CodecRedPitaya codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 384000;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        // Rate[0], Rate[1], Rate[2] all get rx1_rate on RedPitaya (REDPITAYA PAVEL)
+        QCOMPARE(a.rate[0], 384000);
+        QCOMPARE(a.rate[1], 384000);
+        QCOMPARE(a.rate[2], 384000);
+    }
+
+    void redpitaya_1_slice_ddc2_enabled()
+    {
+        // From Thetis console.cs:8323-8324 [v2.10.3.15] (no-mox, no-diversity):
+        //   P1_DDCConfig = 1; DDCEnable = DDC2;
+        // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+        P1CodecRedPitaya codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 192000;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        QCOMPARE(a.ddcEnable & 0x04, 0x04);  // DDC2 bit
+        QCOMPARE(a.p1DdcConfig, 1);
+        QCOMPARE(a.nDdc, 1);
+    }
+
+    void redpitaya_diversity_sets_rate2_too()
+    {
+        // From Thetis console.cs:8310-8319 [v2.10.3.15] (no-mox, diversity):
+        //   P1_DDCConfig = 2; // REDPITAYA PAVEL
+        //   DDCEnable = DDC0; SyncEnable = DDC1;
+        //   Rate[0] = Rate[1] = Rate[2] = rx1_rate; // REDPITAYA PAVEL
+        // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8312]
+        // // REDPITAYA PAVEL  [original inline tag from console.cs:8317]
+        P1CodecRedPitaya codec;
+        CodecContext ctx{};
+        ctx.diversity = true;
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 192000; slices[0].diversityRequested = true;
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        QCOMPARE(a.p1DdcConfig, 2);    // REDPITAYA PAVEL P1_DDCConfig
+        QCOMPARE(a.ddcEnable & 0x01, 0x01);   // DDC0
+        QCOMPARE(a.syncEnable & 0x02, 0x02);  // DDC1 synced
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        QCOMPARE(a.rate[2], 192000);  // REDPITAYA PAVEL - extra rate[2]
     }
 };
 
