@@ -5336,3 +5336,13 @@ nereus_add_test(tst_radio_model_slice_lifecycle)
 # Source: NereusSDR-original (VfoWidget itself is NereusSDR-original).
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 9.
 nereus_add_test(tst_vfo_widget_tx_badge_click)
+
+# Phase 3F Sub-Epic F Task 1: P2 composeCmdGeneral writes packetbuf[23]
+# wideband per-ADC enable mask per Thetis network.c:879 [v2.10.3.15].
+# 3 tests: bit0 set when ADC0 enabled, default 0 when none, per-ADC
+# bits independent. Validates both P2RadioConnection::setWidebandEnabled
+# plumbing and the buf[23] write in composeCmdGeneralLegacy +
+# P2CodecOrionMkII::composeCmdGeneral (via CodecContext::p2WbEnableMask).
+# Source: NereusSDR-original test driving a Thetis-cited port.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md Task 1.
+nereus_add_test(tst_p2_wideband_enable_byte)

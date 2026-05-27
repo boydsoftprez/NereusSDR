@@ -939,6 +939,39 @@ void P2RadioConnection::setWatchdogEnabled(bool enabled)
 }
 
 // ---------------------------------------------------------------------------
+// setWidebandEnabled — Phase 3F Sub-Epic F Task 1
+//
+// Toggle the wideband ADC stream for a specific ADC. The radio reads
+// CmdGeneral byte 23 to learn which ADCs have wideband enabled; bit N
+// corresponds to ADCN.
+//
+// Source: Thetis ChannelMaster/network.c:879 [v2.10.3.15]
+//   packetbuf[23] = (char)_InterlockedAnd(&prn->wb_enable, 0xff);
+//
+// Idempotent: if the resulting mask is unchanged we skip the CmdGeneral
+// send. When connected, the new mask is pushed to the radio via
+// sendCmdGeneral so the wideband stream goes live without waiting for the
+// next periodic emit.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setWidebandEnabled(int adcIndex, bool on)
+{
+    if (adcIndex < 0 || adcIndex >= 8) {
+        return;
+    }
+    const quint8 bit = static_cast<quint8>(1u << adcIndex);
+    const quint8 newMask = on
+        ? static_cast<quint8>(m_wbEnableMask | bit)
+        : static_cast<quint8>(m_wbEnableMask & static_cast<quint8>(~bit));
+    if (newMask == m_wbEnableMask) {
+        return;
+    }
+    m_wbEnableMask = newMask;
+    if (m_state == ConnectionState::Connected) {
+        sendCmdGeneral();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // sendTxIq — 3M-1a Task E.6
 //
@@ -2127,6 +2160,10 @@ CodecContext P2RadioConnection::buildCodecContext() const
     ctx.p2WbSampleSize       = m_wbSampleSize;
     ctx.p2WbUpdateRate       = m_wbUpdateRate;
     ctx.p2WbPacketsPerFrame  = m_wbPacketsPerFrame;
+    // Phase 3F Sub-Epic F Task 1: thread the wideband per-ADC enable mask
+    // through to the codec for CmdGeneral byte 23 (Thetis network.c:879
+    // [v2.10.3.15]).
+    ctx.p2WbEnableMask       = m_wbEnableMask;
 
     // Watchdog timer
     ctx.p2Wdt = m_wdt;
@@ -2258,7 +2295,10 @@ void P2RadioConnection::composeCmdGeneralLegacy(char buf[60]) const
     buf[21] = tmp >> 8; buf[22] = tmp & 0xff;
 
     // From Thetis network.c:878-888 — Wideband settings
-    buf[23] = 0;    // wb_enable
+    // From Thetis network.c:879 [v2.10.3.15] - wb_enable mask, bit N = ADCN.
+    // Phase 3F Sub-Epic F Task 1 wired this from a hardcoded 0 placeholder to
+    // m_wbEnableMask. Driven by setWidebandEnabled().
+    buf[23] = static_cast<char>(m_wbEnableMask);
     buf[24] = (m_wbSamplesPerPacket >> 8) & 0xff;
     buf[25] = m_wbSamplesPerPacket & 0xff;
     buf[26] = m_wbSampleSize;      // 16 bits

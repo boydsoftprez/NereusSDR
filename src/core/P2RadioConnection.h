@@ -341,6 +341,19 @@ public slots:
     // should listen to p2CodecChanged() to know when this becomes valid.
     NereusSDR::IP2Codec* p2Codec() const { return m_codec.get(); }
 
+    // Phase 3F Sub-Epic F Task 1: enable the wideband ADC stream for the
+    // given ADC index. Bit N of m_wbEnableMask corresponds to ADCN.
+    // See Thetis network.c:879 [v2.10.3.15] for the wire format (CmdGeneral
+    // byte 23). When in Connected state, triggers a CmdGeneral send so
+    // the radio learns the new mask promptly. No-op when adcIndex is out
+    // of range (0..7) or when the resulting mask is unchanged.
+    void setWidebandEnabled(int adcIndex, bool on);
+
+    // Phase 3F Sub-Epic F Task 1: read current wideband per-ADC enable
+    // mask. Used by buildCodecContext to thread the value into CodecContext
+    // for the codec-driven composeCmdGeneral path.
+    quint8 wbEnableMask() const { return m_wbEnableMask; }
+
 signals:
     // Phase 3M-4 Task 17 chunk B/E: emitted from selectCodec() once
     // m_codec is assigned.  RadioModel::wireConnectionSignals subscribes
@@ -641,6 +654,15 @@ private:
     int m_wbSampleSize{16};
     int m_wbUpdateRate{70};
     int m_wbPacketsPerFrame{32};
+
+    // Phase 3F Sub-Epic F Task 1: per-ADC wideband stream enable mask.
+    // Bit N corresponds to ADCN. Default 0 (all disabled) preserves
+    // pre-Phase-3F wire behaviour (composeCmdGeneral previously hardcoded
+    // buf[23] = 0). Driven by setWidebandEnabled(); read by
+    // composeCmdGeneralLegacy and (via CodecContext::p2WbEnableMask)
+    // by P2CodecOrionMkII::composeCmdGeneral. See Thetis network.c:879
+    // [v2.10.3.15].
+    quint8 m_wbEnableMask{0};
 
     // --- Alex filter/antenna state ---
     // From Thetis ChannelMaster/network.h bpfilter struct

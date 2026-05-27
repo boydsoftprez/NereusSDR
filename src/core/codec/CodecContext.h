@@ -180,6 +180,15 @@ struct CodecContext {
     int     p2WbUpdateRate{70};
     int     p2WbPacketsPerFrame{32};
 
+    // Phase 3F Sub-Epic F Task 1: P2 wideband per-ADC enable mask.
+    // Bit N corresponds to ADCN. From Thetis network.c:879 [v2.10.3.15]:
+    //   packetbuf[23] = (char)_InterlockedAnd(&prn->wb_enable, 0xff);
+    // Populated by buildCodecContext() from
+    // P2RadioConnection::wbEnableMask(); P2CodecOrionMkII::composeCmdGeneral
+    // emits it to buf[23]. Default 0 preserves pre-Phase-3F wire behaviour
+    // (no wideband streams active).
+    quint8  p2WbEnableMask{0};
+
     // P2 watchdog timer — prn->wdt. 0 = disabled. Byte 38 of CmdGeneral.
     int     p2Wdt{0};
 

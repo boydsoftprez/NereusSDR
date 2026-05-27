@@ -167,7 +167,11 @@ void P2CodecOrionMkII::composeCmdGeneral(const CodecContext& ctx, quint8 buf[60]
     buf[21] = tmp >> 8; buf[22] = tmp & 0xff;
 
     // From Thetis network.c:878-888 [@501e3f5] — Wideband settings
-    buf[23] = 0;    // wb_enable
+    // From Thetis network.c:879 [v2.10.3.15] - wb_enable mask, bit N = ADCN.
+    // Phase 3F Sub-Epic F Task 1 wired this from a hardcoded 0 placeholder to
+    // ctx.p2WbEnableMask. Threaded via CodecContext from
+    // P2RadioConnection::wbEnableMask() in buildCodecContext.
+    buf[23] = ctx.p2WbEnableMask;
     buf[24] = (ctx.p2WbSamplesPerPacket >> 8) & 0xff;
     buf[25] =  ctx.p2WbSamplesPerPacket        & 0xff;
     buf[26] =  ctx.p2WbSampleSize;      // 16 bits
