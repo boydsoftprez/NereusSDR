@@ -145,6 +145,27 @@ private slots:
         slice.setSampleRateHz(96000);
         QCOMPARE(spy.count(), 0);
     }
+    // ── Task 8: diversityEnabled ────────────────────────────────────────
+    void diversity_enabled_default_is_false()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.diversityEnabled(), false);
+    }
+
+    void diversity_enabled_setter_round_trips()
+    {
+        SliceModel slice;
+        slice.setDiversityEnabled(true);
+        QCOMPARE(slice.diversityEnabled(), true);
+    }
+
+    void diversity_enabled_emits_signal()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::diversityEnabledChanged);
+        slice.setDiversityEnabled(true);
+        QCOMPARE(spy.count(), 1);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

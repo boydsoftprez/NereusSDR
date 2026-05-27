@@ -628,6 +628,14 @@ void SliceModel::setSampleRateHz(int hz)
     }
 }
 
+void SliceModel::setDiversityEnabled(bool on)
+{
+    if (m_diversityEnabled != on) {
+        m_diversityEnabled = on;
+        emit diversityEnabledChanged(on);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)

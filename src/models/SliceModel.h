@@ -184,6 +184,9 @@ class SliceModel : public QObject {
     // Phase 3F: per-slice DDC sample rate. Default = SampleRateCatalog::kDefaultSampleRate (192 kHz).
     // Operator-owned, no mode-derived defaults. Persisted per-band per-slice.
     Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
+    // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
+    // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.
+    Q_PROPERTY(bool diversityEnabled READ diversityEnabled WRITE setDiversityEnabled NOTIFY diversityEnabledChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -415,6 +418,9 @@ public:
 
     int sampleRateHz() const { return m_sampleRateHz; }
     void setSampleRateHz(int hz);
+
+    bool diversityEnabled() const { return m_diversityEnabled; }
+    void setDiversityEnabled(bool on);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -755,6 +761,7 @@ signals:
     void chainIndexChanged(int idx);
     void ddcIndexChanged(int ddc);
     void sampleRateHzChanged(int hz);
+    void diversityEnabledChanged(bool on);
 
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
@@ -875,6 +882,7 @@ private:
     int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
     int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
     int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
+    bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed
