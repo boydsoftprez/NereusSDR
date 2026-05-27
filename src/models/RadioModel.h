@@ -94,6 +94,8 @@
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
 #include "core/HardwareProfile.h"
+#include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
+#include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
 #include "core/SkuUiProfile.h"  // issue #257 — setLastBandForTest passes the SKU into refreshAntennasFromAlex
 #include "core/safety/SwrProtectionController.h"
 #include "core/safety/TxInhibitMonitor.h"
@@ -1889,6 +1891,19 @@ public:
     // (Thetis seeds at mode-change only; we additionally re-seed at
     // MOX-engage so prior TUN-state desync cannot starve SSB MOX).
     void pushTxModeAndBandpass();
+
+    // ── Phase 3F Sub-Epic B Task 16: multi-slice codec glue ─────────────────
+    // Build a 5-element SliceConfig array from the current m_slices list.
+    // Slot [i] is marked live only when m_slices[i] is non-null.
+    // NereusSDR-original; no Thetis equivalent (Thetis builds UpdateDDCs
+    // inputs inline in console.cs:8186-8538 [v2.10.3.15]).
+    std::array<NereusSDR::SliceConfig, 5> buildSliceConfigsForCodec() const;
+
+    // Drive the connected codec's applyDdcAssignment() and forward the
+    // resulting DdcAssignment to P2RadioConnection (P1 integration deferred).
+    // No-op when disconnected. Called from slice-event handlers after
+    // Tasks 1-15 have wired the codec/connection interfaces.
+    void invokeCodecDdcAssignment();
 
 private:
     // Sub-components (owned, main thread)

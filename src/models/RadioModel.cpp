@@ -10602,4 +10602,70 @@ void RadioModel::onSliceBandChanged(NereusSDR::Band band)
                     << "absolute relay-write deferred pending bench confirmation";
 }
 
+// ── Phase 3F Sub-Epic B Task 16 ────────────────────────────────────────────
+
+std::array<NereusSDR::SliceConfig, 5>
+RadioModel::buildSliceConfigsForCodec() const
+{
+    // NereusSDR-original: assembles the per-slice input array the
+    // codec's applyDdcAssignment() needs. No Thetis equivalent; Thetis
+    // builds UpdateDDCs inputs inline in console.cs:8186-8538 [v2.10.3.15].
+    std::array<NereusSDR::SliceConfig, 5> configs{};
+
+    const int n = m_slices.size();
+    for (int i = 0; i < n && i < 5; ++i) {
+        SliceModel* s = m_slices.at(i);
+        if (!s) { continue; }
+
+        NereusSDR::SliceConfig& cfg = configs[i];
+        cfg.live              = true;
+        // SliceModel::frequency() returns Hz (double). Cast to qint64.
+        cfg.frequencyHz       = static_cast<qint64>(s->frequency());
+        cfg.bandIndex         = static_cast<int>(NereusSDR::bandFromFrequency(s->frequency()));
+        cfg.sampleRateHz      = s->sampleRateHz();
+        cfg.txBound           = s->isTxSlice();
+        cfg.diversityRequested = s->diversityEnabled();
+
+        // Map rxAntenna() string to the integer index used by CodecContext:
+        //   ANT1=1, ANT2=2, ANT3=3, EXT1=4, EXT2=5, BYPS=6, fallback=1.
+        const QString ant = s->rxAntenna();
+        if        (ant == QLatin1String("ANT1")) { cfg.antennaIndex = 1; }
+        else if (ant == QLatin1String("ANT2")) { cfg.antennaIndex = 2; }
+        else if (ant == QLatin1String("ANT3")) { cfg.antennaIndex = 3; }
+        else if (ant == QLatin1String("EXT1")) { cfg.antennaIndex = 4; }
+        else if (ant == QLatin1String("EXT2")) { cfg.antennaIndex = 5; }
+        else if (ant == QLatin1String("BYPS")) { cfg.antennaIndex = 6; }
+        else                                    { cfg.antennaIndex = 1; }
+    }
+
+    return configs;
+}
+
+void RadioModel::invokeCodecDdcAssignment()
+{
+    // NereusSDR-original glue. No Thetis equivalent at this abstraction layer.
+    if (!isConnected()) { return; }
+
+    NereusSDR::CodecContext ctx{};
+    ctx.mox           = m_moxController ? m_moxController->isMox() : false;
+    ctx.puresignalRun = (m_pureSignal && m_pureSignal->isAutoCalEnabled());
+    ctx.diversity     = m_slices.isEmpty() ? false : m_slices.first()->diversityEnabled();
+
+    const std::array<NereusSDR::SliceConfig, 5> slices = buildSliceConfigsForCodec();
+
+    if (auto* p2conn = qobject_cast<P2RadioConnection*>(m_connection)) {
+        if (NereusSDR::IP2Codec* codec = p2conn->p2Codec()) {
+            NereusSDR::DdcAssignment assignment = codec->applyDdcAssignment(ctx, slices);
+            p2conn->applyDdcAssignment(assignment);
+        }
+    } else if (auto* p1conn = qobject_cast<NereusSDR::P1RadioConnection*>(m_connection)) {
+        if (NereusSDR::IP1Codec* codec = p1conn->p1Codec()) {
+            // P1 path: codec produces a DdcAssignment but the existing
+            // applyPsDdcConfig flow handles P1 wire writes. Full P1
+            // integration is deferred to Phase 3F Sub-Epic C.
+            codec->applyDdcAssignment(ctx, slices);
+        }
+    }
+}
+
 } // namespace NereusSDR
