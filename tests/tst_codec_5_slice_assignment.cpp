@@ -126,6 +126,98 @@ private slots:
         // nDdc = 2 (DDC2 + DDC3)
         QCOMPARE(a.nDdc, 2);
     }
+
+    // ── Task 5: PS + Diversity override coverage ─────────────────────────────
+    //
+    // Exercises the two mutually-exclusive branches added in Task 4:
+    //   PS path   (ctx.puresignalRun && ctx.mox)  — console.cs:8265-8274 [v2.10.3.15]
+    //   Diversity path (!PS, ctx.diversity)        — console.cs:8232-8240 [v2.10.3.15]
+    // and the "PS wins over diversity" guard       — console.cs:8276-8285 [v2.10.3.15]
+
+    void saturn_2_slice_with_ps_mox_overrides_ddc0_ddc1()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].frequencyHz = 14225000; slices[0].sampleRateHz = 192000; slices[0].txBound = true;
+        slices[1].live = true; slices[1].frequencyHz = 7150000;  slices[1].sampleRateHz = 96000;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // PS-on MOX: DDC0+1+2+3 enabled, DDC1 synced, ps_rate on PS pair
+        // From Thetis console.cs:8265-8274 [v2.10.3.15]:
+        //   DDCEnable = DDC0 + DDC2;  (plus the existing DDC3 from rx2)
+        //   SyncEnable = DDC1;
+        //   Rate[0] = Rate[1] = ps_rate (192000)
+        // [2.10.3.13]MW0LGE p1 !  [original inline comment from console.cs:8260, within +-5 of cite]
+        QCOMPARE(a.ddcEnable & 0x0f, 0x0f);
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        QCOMPARE(a.rate[2], 192000);
+        QCOMPARE(a.rate[3], 96000);
+        QCOMPARE(a.syncEnable & 0x02, 0x02);
+        QCOMPARE(a.psFwdDdc, 0);
+        QCOMPARE(a.psRevDdc, 1);
+        // ADC override on DDC1: bit 3 set, bit 2 clear (DDC1 -> ADC2 PS-FB)
+        // From console.cs:8273 [v2.10.3.15]: cntrl1 = (rx_adc_ctrl1 & 0xf3) | 0x08
+        QCOMPARE(a.adcCtrl1 & 0x0c, 0x08);
+    }
+
+    void saturn_1_slice_diversity_migrates_to_ddc0_1_sync()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        ctx.diversity = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].diversityRequested = true;
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // Diversity: DDC0+1 enabled+synced at slice rate, DDC2 freed
+        // From Thetis console.cs:8232-8240 [v2.10.3.15]:
+        //   DDCEnable = DDC0; SyncEnable = DDC1;
+        //   Rate[0] = Rate[1] = rx1_rate; (DDC2 disabled)
+        QCOMPARE(a.ddcEnable & 0x07, 0x03);
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        QCOMPARE(a.rate[2], 0);
+        QCOMPARE(a.syncEnable & 0x02, 0x02);
+    }
+
+    void saturn_ps_wins_over_diversity_when_both_engaged()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+        ctx.diversity = true;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].diversityRequested = true;
+        slices[0].txBound = true;
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        // PS overrides: DDC0+1+2 enabled, DDC0+1 at ps_rate, DDC2 at slice rate.
+        // Slice A stays on DDC2 (not migrated to DDC0+1 sync) because PS wins.
+        // From Thetis console.cs:8276-8285 [v2.10.3.15] (diversity + PS): same
+        //   cntrl1 formula as pure-PS; DDC2 remains for rx1 at rx1_rate.
+        QCOMPARE(a.ddcEnable & 0x07, 0x07);
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        QCOMPARE(a.rate[2], 192000);
+    }
 };
 
 QTEST_MAIN(TestCodec5SliceAssignment)
