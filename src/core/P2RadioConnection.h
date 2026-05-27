@@ -184,6 +184,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "codec/IP2Codec.h"
 #include "codec/CodecContext.h"
+#include "DdcAssignment.h"
 
 namespace NereusSDR { class OcMatrix; }              // forward decl — full header in .cpp
 namespace NereusSDR { class CalibrationController; } // forward decl — Phase 3P-G
@@ -273,6 +274,22 @@ public slots:
     // m_rx[i] state).  Wired in RadioModel::wireConnectionSignals to
     // ReceiverManager::ddcConfigChanged.
     void applyPsDdcConfig(const NereusSDR::PsDdcConfig& cfg);
+
+    // Phase 3F Sub-Epic B Task 15: apply a multi-slice DDC assignment from
+    // the codec.  Updates m_rx[i].{enable, samplingRate, rxAdc, sync} from the
+    // struct, then re-sends CmdRx so the radio reconfigures its DDCs.
+    //
+    // Replaces the bulk applyPsDdcConfig path for the multi-slice 3F case;
+    // the existing PS-only path still works by constructing a DdcAssignment
+    // with only the PS DDC pair populated.
+    //
+    // Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.15]:
+    //   NetworkIO.EnableRxs(ddcEnable);
+    //   NetworkIO.EnableRxSync(0, syncEnable);
+    //   for (int i = 0; i < 4; i++) NetworkIO.SetDDCRate(i, rate[i]);
+    //   NetworkIO.SetADC_cntrl1(cntrl1);
+    //   NetworkIO.SetADC_cntrl2(cntrl2);
+    void applyDdcAssignment(const DdcAssignment& assignment);
 
     // Bench fix round 3 (Issue B): P2 TX I/Q output is always at 192 kHz.
     // This rate is used by WdspEngine::createTxChannel() to open the WDSP

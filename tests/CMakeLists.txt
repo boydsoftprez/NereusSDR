@@ -5266,3 +5266,10 @@ nereus_add_test(tst_settings_schema_v6_migration)
 # Source: NereusSDR-original (structs derived from Thetis UpdateDDCs output shape).
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 1.
 nereus_add_test(tst_codec_5_slice_assignment)
+
+# Phase 3F Sub-Epic B Task 15: P2RadioConnection::applyDdcAssignment slot.
+# 1 test: apply_ddc_assignment_populates_rx_state.
+# Verifies the CmdRx per-DDC region is non-zero after a DdcAssignment is applied.
+# Source: NereusSDR-original (bridge slot, no Thetis upstream).
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 15.
+nereus_add_test(tst_p2_radio_connection_apply_ddc_assignment)

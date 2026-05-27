@@ -1424,6 +1424,115 @@ void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
 }
 
 // ---------------------------------------------------------------------------
+// applyDdcAssignment (Phase 3F Sub-Epic B Task 15)
+//
+// Receives the wire-byte map computed by a per-board 5-slice codec
+// (P2CodecOrionMkII::computeDdcAssignment and friends), writes it into
+// m_rx[i] state, and re-sends CmdRx so the radio reconfigures its DDCs.
+//
+// Mirrors Thetis console.cs:8527-8534 UpdateDDCs() [v2.10.3.15]:
+//   NetworkIO.EnableRxs(ddcEnable);            // byte 7 of CmdRx
+//   NetworkIO.EnableRxSync(0, syncEnable);     // byte 1363 of CmdRx
+//   for (int i = 0; i < 4; i++)
+//       NetworkIO.SetDDCRate(i, rate[i]);      // bytes 18-19, 24-25, ... per RX
+//   NetworkIO.SetADC_cntrl1(cntrl1);          // ADC routing DDC0-3
+//   NetworkIO.SetADC_cntrl2(cntrl2);          // ADC routing DDC4-7
+//
+// ADC routing extraction mirrors applyPsDdcConfig which cites:
+//   Thetis netInterface.c:949-983 SetADC_cntrl1/SetADC_cntrl2 [v2.10.3.13].
+// ---------------------------------------------------------------------------
+void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
+{
+    bool changed = false;
+
+    // From Thetis console.cs:8527 [v2.10.3.15]: NetworkIO.EnableRxs(ddcEnable).
+    // ddcEnable bitmask: bit 0 = DDC0, ..., bit 6 = DDC6.
+    constexpr int kMaxDdcRoutes = 7;
+    for (int i = 0; i < kMaxDdcRoutes; ++i) {
+        const int wantEnable = (a.ddcEnable >> i) & 0x01;
+        if (m_rx[i].enable != wantEnable) {
+            m_rx[i].enable = wantEnable;
+            changed = true;
+        }
+    }
+
+    // From Thetis console.cs:8529-8530 [v2.10.3.15]:
+    //   for (int i = 0; i < 4; i++) NetworkIO.SetDDCRate(i, rate[i]);
+    // DdcAssignment.rate[] is in Hz; m_rx[i].samplingRate is in kHz
+    // (Thetis netInterface.c:1430-1450 [v2.10.3.15]).
+    // Iterate all 8 slots; leave existing kHz value when rate==0.
+    for (int i = 0; i < kMaxDdcRoutes; ++i) {
+        if (a.rate[i] > 0) {
+            const int wantKhz = a.rate[i] / 1000;
+            if (m_rx[i].samplingRate != wantKhz) {
+                m_rx[i].samplingRate = wantKhz;
+                changed = true;
+            }
+        }
+    }
+
+    // From Thetis console.cs:8528 [v2.10.3.15]:
+    //   NetworkIO.EnableRxSync(0, syncEnable);
+    // The sync byte (CmdRx byte 1363) carries the sync-enable mask.
+    // Store in m_rx[0].sync (composeCmdRx packs ctx.p2RxSync from there).
+    if (m_rx[0].sync != static_cast<int>(a.syncEnable)) {
+        m_rx[0].sync = static_cast<int>(a.syncEnable);
+        changed = true;
+    }
+
+    // From Thetis netInterface.c:949-983 SetADC_cntrl1/cntrl2 [v2.10.3.15]:
+    //   prn->rx[0].rx_adc = bits & 0x3;
+    //   prn->rx[1].rx_adc = (bits >> 2) & 0x3;
+    //   prn->rx[2].rx_adc = (bits >> 4) & 0x3;
+    //   prn->rx[3].rx_adc = (bits >> 6) & 0x3;
+    // adcCtrl1 covers DDC0-3, adcCtrl2 covers DDC4-6.
+    {
+        const int wantAdc[7] = {
+            (a.adcCtrl1 >> 0) & 0x3,
+            (a.adcCtrl1 >> 2) & 0x3,
+            (a.adcCtrl1 >> 4) & 0x3,
+            (a.adcCtrl1 >> 6) & 0x3,
+            (a.adcCtrl2 >> 0) & 0x3,
+            (a.adcCtrl2 >> 2) & 0x3,
+            (a.adcCtrl2 >> 4) & 0x3,
+        };
+        for (int i = 0; i < kMaxDdcRoutes; ++i) {
+            if (m_rx[i].rxAdc != wantAdc[i]) {
+                m_rx[i].rxAdc = wantAdc[i];
+                changed = true;
+            }
+        }
+    }
+
+    // Latch PS pair so the deinterleave loop can emit the source-first paired
+    // signal.  Mirrors applyPsDdcConfig and Thetis cmaster.cs:533-534
+    // [v2.10.3.15] SetPSRxIdx / SetPSTxIdx convention.
+    if (a.psFwdDdc != m_psFbDdc) {
+        m_psFbDdc = a.psFwdDdc;
+        changed = true;
+    }
+    if (a.psRevDdc != m_psTxMonDdc) {
+        m_psTxMonDdc = a.psRevDdc;
+        changed = true;
+    }
+
+    if (changed) {
+        qCInfo(lcConnection) << "P2: applyDdcAssignment — ddcEnable=" << a.ddcEnable
+                             << "syncEnable=" << a.syncEnable
+                             << "rate[0]=" << a.rate[0]
+                             << "rate[1]=" << a.rate[1]
+                             << "rate[2]=" << a.rate[2]
+                             << "rate[3]=" << a.rate[3]
+                             << "nDdc=" << a.nDdc
+                             << "psFwdDdc=" << m_psFbDdc
+                             << "psRevDdc=" << m_psTxMonDdc;
+        if (m_running) {
+            sendCmdRx();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // setMicPTTDisabled (issue #182 — renamed from setMicPTT for parameter parity
 // with Thetis MicPTTDisabled / mic_ptt_disabled storage name).
 //
