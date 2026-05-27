@@ -6,12 +6,13 @@
 // Phase 3F Sub-Epic B Tasks 1-7: verify per-board codec emits correct
 // multi-slice DDC assignments per design §4. Byte-faithful for the
 // RX1/RX2 case (1-2 slices) preserves Thetis console.cs:8186-8538 [v2.10.3.15]
-// behaviour; slices C/D/E fill Thetis's idle DDC4/5/6 slots additively.
+// behaviour; slices C/D/E fill Thetis's idle DDC4-6 slots additively.
 // =================================================================
 
 #include <QtTest/QtTest>
 #include "core/DdcAssignment.h"
 #include "core/codec/CodecContext.h"
+#include "core/codec/P2CodecSaturn.h"
 
 using namespace NereusSDR;
 
@@ -46,6 +47,84 @@ private slots:
         // Compile-only test: ensure the IP2Codec virtual exists with the right signature.
         // Actual behaviour tested in saturn_emits_*_for_5_slices below (Tasks 4-7).
         QVERIFY(true);
+    }
+
+    // ── Task 4: P2CodecSaturn 1-slice + 2-slice byte-faithful cases ──────────
+    //
+    // Porting from Thetis console.cs:8220-8303 [v2.10.3.15] UpdateDDCs() G2-class
+    // branch (HPSDRModel.ANAN_G2 / ANAN_G2_1K / ANAN100D / ANAN200D / ORIONMKII /
+    // ANAN7000D / ANAN8000D / ANVELINAPRO3).
+    //
+    // Inline author tags from cited source region (CLAUDE.md inline-comment-preservation):
+    //   console.cs:8247  [2.10.3.13]MW0LGE p1 !  (within +-5 of the Rate[2] and DDCEnable cites)
+    //   console.cs:8305  //DH1KLM                 (within +-5 of the DDCEnable += DDC3 cite at 8301/8302)
+    //
+    // [2.10.3.13]MW0LGE p1 !  [original tag from console.cs:8247 — P1-only; P2 path omits Rate[0]]
+    // //DH1KLM  [original tag from console.cs:8305 REDPITAYA case header; adjacent to rx2_enabled addendum]
+
+    void saturn_1_slice_no_ps_no_div_assigns_ddc2()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        ctx.mox = false;
+        ctx.puresignalRun = false;
+        ctx.diversity = false;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].bandIndex = 5;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 1;
+        slices[0].txBound = true;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // From Thetis console.cs:8244 [v2.10.3.15]: DDCEnable = DDC2; (DDC2=4, bit 2)
+        // [2.10.3.13]MW0LGE p1 !  [verbatim from console.cs:8247 — P1-only Rate[0] path]
+        QCOMPARE(a.ddcEnable & 0x04, 0x04);
+        // DDC0 and DDC1 must NOT be enabled (no PS, no diversity)
+        QCOMPARE(a.ddcEnable & 0x03, 0x00);
+        // From console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate;
+        QCOMPARE(a.rate[2], 192000);
+        // From console.cs:8246 [v2.10.3.15]: SyncEnable = 0;
+        QCOMPARE(a.syncEnable, 0);
+        // nDdc = 1 (only DDC2 enabled)
+        QCOMPARE(a.nDdc, 1);
+    }
+
+    void saturn_2_slice_no_ps_no_div_assigns_ddc2_and_ddc3()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        ctx.mox = false;
+        ctx.puresignalRun = false;
+        ctx.diversity = false;
+
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 14225000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 1;
+        slices[0].txBound = true;
+        slices[1].live = true;
+        slices[1].frequencyHz = 7150000;
+        slices[1].sampleRateHz = 96000;
+        slices[1].antennaIndex = 1;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // DDC2 + DDC3 both enabled (bits 2+3 = 0x0c)
+        // From console.cs:8244 [v2.10.3.15]: DDCEnable = DDC2;
+        // From console.cs:8301 [v2.10.3.15]: DDCEnable += DDC3;
+        QCOMPARE(a.ddcEnable & 0x0c, 0x0c);
+        QCOMPARE(a.ddcEnable & 0x03, 0x00);
+        // From console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate;
+        QCOMPARE(a.rate[2], 192000);
+        // From console.cs:8302 [v2.10.3.15]: Rate[3] = rx2_rate;
+        QCOMPARE(a.rate[3], 96000);
+        // nDdc = 2 (DDC2 + DDC3)
+        QCOMPARE(a.nDdc, 2);
     }
 };
 

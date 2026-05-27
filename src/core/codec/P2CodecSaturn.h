@@ -138,8 +138,9 @@ namespace NereusSDR {
 // switch case as the OrionMkII family, so no Saturn-specific PS DDC
 // override is needed.
 class P2CodecSaturn : public P2CodecOrionMkII {
-    // Phase 3F Sub-Epic B Task 2: stub. Real implementation in Task 4
-    // per Thetis UpdateDDCs Saturn branch.
+public:
+    // Phase 3F Sub-Epic B Task 4: real implementation per Thetis
+    // console.cs:8220-8303 [v2.10.3.15] UpdateDDCs() G2-class branch.
     DdcAssignment applyDdcAssignment(
         const CodecContext& ctx,
         const std::array<SliceConfig, 5>& slices) const override;
