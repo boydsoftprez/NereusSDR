@@ -49,6 +49,30 @@ private slots:
         QCOMPARE(blocked.count(), 1);
     }
 
+    void handoff_to_different_slice_flips_tx_flags_and_emits()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+
+        QSignalSpy spy(&arb, &TxSliceArbiter::txBoundSliceChanged);
+
+        QCOMPARE(slices[0]->isTxSlice(), true);
+        QCOMPARE(slices[1]->isTxSlice(), false);
+
+        const bool ok = arb.requestHandoff(1);
+        QCOMPARE(ok, true);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toInt(), 0);  // oldIndex
+        QCOMPARE(spy.first().at(1).toInt(), 1);  // newIndex
+
+        QCOMPARE(slices[0]->isTxSlice(), false);
+        QCOMPARE(slices[1]->isTxSlice(), true);
+        QCOMPARE(arb.txBoundSliceIndex(), 1);
+    }
+
 private:
     // Build a list of N SliceModel instances for testing. Each slice is parented
     // to `this` for automatic cleanup. Slice 0 is marked TX-bound to mirror the
