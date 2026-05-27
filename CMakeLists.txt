@@ -691,6 +691,8 @@ set(GUI_SOURCES
     src/gui/widgets/SpectrumStatusOverlay.h
     src/gui/widgets/FilterPolicyDialog.cpp
     src/gui/widgets/FilterPolicyDialog.h
+    src/gui/widgets/AntennaPickerMenu.cpp
+    src/gui/widgets/AntennaPickerMenu.h
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/NetworkDiagnosticsDialog.h
     src/gui/SpotHubDialog.cpp
