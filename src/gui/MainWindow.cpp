@@ -867,6 +867,28 @@ SpectrumWidget* MainWindow::activeSpectrumWidget() const
     return applet ? applet->spectrumWidget() : nullptr;
 }
 
+// Phase 3F Sub-Epic D Task 16: disconnect-before-removal for safe pan teardown.
+// AetherSDR issue #242: deleting a widget with active connections to lambdas
+// can race with queued signal delivery and crash. Disconnect first, then
+// remove.
+void MainWindow::disconnectPanadapter(const QString& panId)
+{
+    if (!m_panStack) { return; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return; }
+
+    if (auto* sw = applet->spectrumWidget()) {
+        sw->disconnect(this);
+    }
+    applet->disconnect(this);
+
+    if (m_radioModel) {
+        if (auto* router = m_radioModel->fftRouter()) {
+            router->removePan(panId);
+        }
+    }
+}
+
 // Issue #206 — main-window geometry persistence. Qt's saveGeometry()
 // returns a versioned QByteArray that already encodes position, size,
 // AND window state (Normal/Maximized/FullScreen) plus screen identity

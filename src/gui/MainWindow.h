@@ -248,6 +248,11 @@ private:
     void tryAutoReconnect();
     void wireSliceToSpectrum();
 
+    /// Phase 3F Sub-Epic D Task 16: clean disconnect-before-removal for pans
+    /// (AetherSDR issue #242 pattern - avoids lambda crashes during teardown).
+    /// Caller should immediately follow with m_panStack->removePanadapter(panId).
+    void disconnectPanadapter(const QString& panId);
+
     // Issue #206 — persist the main window's position, size, and
     // maximized/fullscreen state across launches. Stored in AppSettings
     // under MainWindowGeometry / MainWindowState (base64 of Qt's native
