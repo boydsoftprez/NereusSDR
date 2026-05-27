@@ -1381,6 +1381,12 @@ nereus_add_test(tst_panadapter_stack_layouts)
 # remove).
 nereus_add_test(tst_fft_router_fanout)
 
+# ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
+# Top-level QWidget wrapper for detaching a PanadapterApplet to a second
+# monitor. Structurally ported from AetherSDR src/gui/PanFloatingWindow.{h,cpp}
+# [@0cd4559]; see docs/attribution/aethersdr-reconciliation.md Bucket A.
+nereus_add_test(tst_pan_floating_window)
+
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
 # signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.

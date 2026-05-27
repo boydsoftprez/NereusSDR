@@ -21,6 +21,7 @@
 
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/PanFloatingWindow.h"
 #include "core/AppSettings.h"
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -156,7 +157,33 @@ void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& pa
 PanadapterApplet* PanadapterStack::panadapter(const QString& id) const { return m_pans.value(id, nullptr); }
 QList<PanadapterApplet*> PanadapterStack::allApplets() const { return m_pans.values(); }
 void PanadapterStack::setActivePan(const QString& id) { if (m_activePanId != id) { m_activePanId = id; emit activePanChanged(id); } }
-void PanadapterStack::floatPanadapter(const QString&) { /* TODO Task 8 */ }
+void PanadapterStack::floatPanadapter(const QString& panId)
+{
+    // Sub-Epic D Task 8: detach the pan into a top-level PanFloatingWindow
+    // (multi-monitor). The applet is reparented into the window's layout, so
+    // ownership transfers to the window for the duration of the float. On
+    // dockRequested (close or explicit redock), the layout is rebuilt from
+    // m_currentLayoutId so the applet is reparented back under the stack.
+    auto* applet = m_pans.value(panId, nullptr);
+    if (!applet || m_floating.contains(panId)) { return; }
+
+    auto* floater = new PanFloatingWindow(applet, nullptr);
+    m_floating[panId] = floater;
+
+    connect(floater, &PanFloatingWindow::dockRequested, this, [this, panId]() {
+        auto* taken = m_floating.take(panId);
+        if (!taken) { return; }
+        // Re-attach all currently-known applets to the current layout. The
+        // applyLayout path detaches every applet from its parent first
+        // (clearSplitters reparents back to `this` and hides) and then
+        // re-adds the ones listed in m_pans.keys(), so the floated applet
+        // is pulled out of the window's layout cleanly before we delete it.
+        applyLayout(m_currentLayoutId, m_pans.keys());
+        taken->deleteLater();
+    });
+
+    floater->show();
+}
 void PanadapterStack::rebuildSplitters(const QString&, const QStringList&) {}
 
 void PanadapterStack::clearSplitters()
