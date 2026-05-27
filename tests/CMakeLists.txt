@@ -1360,6 +1360,13 @@ nereus_add_test(tst_alex_controller_event_matrix)
 # lands in Task 3. NereusSDR-original: no Thetis port.
 nereus_add_test(tst_tx_slice_arbiter)
 
+# ── Phase 3F Sub-Epic D Task 1+2: PanadapterApplet skeleton + slice assoc ──
+# Skeleton + slice association API coverage for the per-pan container that
+# hosts SpectrumWidget. Structurally ported from AetherSDR
+# src/gui/PanadapterApplet.{h,cpp} [@0cd4559]; see
+# docs/attribution/aethersdr-reconciliation.md Bucket A.
+nereus_add_test(tst_panadapter_applet_slice_assoc)
+
 # ── Phase 3P-F Task 5a: ApolloController model ───────────────────────────────
 # Smoke test: defaults all-off (present/filter/tuner = false), individual setter
 # signal emission (idempotent no-fire), and per-MAC AppSettings persistence round-trip.

@@ -1333,3 +1333,22 @@ to copy verbatim). Bucket D.2 closed.
 | `src/gui/applets/AmpApplet.cpp` | `src/gui/AmpApplet.cpp` [@0cd4559] | Same as .h. Full UI layout preserved: 3 HGauge bars (FwdPwr 0-2000W, SWR 1-3, Temp 0-100C), stacked power/meff labels, OPERATE/STANDBY toggle button with green/blue state styling. | "Same as .h." |
 | `src/gui/SMeterWidget.h` | `src/gui/SMeterWidget.h` [@0cd4559] | Direct port: namespace AetherSDR -> NereusSDR; RxMode expanded to 4 entries (SMeter/SignalAverage/SMeterPeak/MaxBin) per design doc ss5.4.1; contextMenuEvent declared, stub body (Task 38 deferred); test accessors testPowerScaleMax/testPowerRedStart added. Phase 3P-II Phase 2 Tasks 34/35/36. | "Analog S-Meter gauge ported from AetherSDR src/gui/SMeterWidget.{h,cpp} [@0cd4559]. Namespace AetherSDR -> NereusSDR. RxMode 4-entry (SignalAverage + MaxBin added). contextMenuEvent stubbed (Task 38). Test accessors added. Peak hold config + arc rendering verbatim." |
 | `src/gui/SMeterWidget.cpp` | `src/gui/SMeterWidget.cpp` [@0cd4559] | Same as .h. Full constructor + setPowerScale + paintEvent arc/scale/tick/needle/label rendering. Peak hold config slots. contextMenuEvent stub. setRxMode extended to dispatch SignalAverage and MaxBin. | "Same as .h." |
+
+## Phase 3F Sub-Epic D - Pan layout skeletons
+
+Added 2026-05-27. AetherSDR-derived widgets land the pan-layout foundation
+for Phase 3F multi-panadapter. `PanadapterApplet` is the per-pan container that
+hosts a `SpectrumWidget` and tracks associated slices for overlay rendering
+(AetherSDR overlay model: a pan picks one DDC for FFT, any slice whose freq
+falls within visible range overlays as a flag). `PanadapterStack` (Task 3
+below) is the layout manager skeleton that constructs with one `pan-0` in a
+vertical `QSplitter` (the default "1" template); `applyLayout` /
+`floatPanadapter` / `rebuildSplitters` are stubbed for Tasks 4-8 of the
+Sub-Epic D plan. Files carry a `no-port-check:` head marker (HOW-TO-PORT.md
+rule 6 form - AetherSDR has no per-file GPL header to copy verbatim) naming
+the upstream source.
+
+| NereusSDR file | AetherSDR counterpart | Port notes | Mod-history wording |
+|---|---|---|---|
+| `src/gui/PanadapterApplet.h` | `src/gui/PanadapterApplet.{h,cpp}` [@0cd4559] | Structural port: namespace AetherSDR -> NereusSDR; per-pan container hosting one `SpectrumWidget` (default-construct, no extra params); slice association API (`addSlice` / `removeSlice` / `associatedSlices`); active-slice promotion semantics (first added slice auto-promotes, remove of active promotes from `QSet<int>::begin()`, remove of last sets to -1); display state `centerMhz` / `bandwidthMhz` with persistence deferred to AppSettings wiring in later tasks. Phase 3F Sub-Epic D Task 1. | "Per-pan container ported structurally from AetherSDR `src/gui/PanadapterApplet.{h,cpp}` [@0cd4559]. Hosts one `SpectrumWidget` + tracks associated slices for overlay rendering. NereusSDR preserves the existing single-output-device + per-slice pan from its own audio model. Phase 3F Sub-Epic D Task 1." |
+| `src/gui/PanadapterApplet.cpp` | `src/gui/PanadapterApplet.{h,cpp}` [@0cd4559] | Same as `.h`. Implementation body: `QVBoxLayout` with zero margin/spacing wrapping the `SpectrumWidget`; `setActiveSliceIndex` idempotency guard + signal emission; `removeSlice` promotes another slice from the set when removing the active one. | "Same as `.h`." |
