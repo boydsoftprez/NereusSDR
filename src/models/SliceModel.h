@@ -176,6 +176,8 @@ class SliceModel : public QObject {
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     // Phase 3F: per-slice letter identifier A-E. Drives badge color via VfoWidget::sliceColor().
     Q_PROPERTY(QChar sliceLetter READ sliceLetter WRITE setSliceLetter NOTIFY sliceLetterChanged)
+    // Phase 3F: which Alex chain (ADC) hosts this slice's DDC. 0 or 1 on 2-ADC boards, always 0 on 1-ADC.
+    Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     Q_PROPERTY(bool   locked          READ locked          WRITE setLocked          NOTIFY lockedChanged)
@@ -398,6 +400,9 @@ public:
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     QChar sliceLetter() const { return m_sliceLetter; }
     void setSliceLetter(QChar letter);
+
+    int chainIndex() const { return m_chainIndex; }
+    void setChainIndex(int idx);
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
@@ -735,6 +740,7 @@ signals:
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     void sliceLetterChanged(QChar letter);
+    void chainIndexChanged(int idx);
 
     // ── Phase 3G-10 Stage 1 stubs ──
     void lockedChanged(bool v);
@@ -852,6 +858,7 @@ private:
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     QChar   m_sliceLetter{'A'};  // Phase 3F: default A for backward-compat single-slice
+    int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
 
     // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
     bool   m_locked{false};           // Neutral default — no Thetis citation needed

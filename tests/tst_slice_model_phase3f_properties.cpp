@@ -49,6 +49,38 @@ private slots:
         slice.setSliceLetter(QChar('B'));  // same value
         QCOMPARE(spy.count(), 0);
     }
+
+    // ── Task 5: chainIndex ──────────────────────────────────────────────
+    void chain_index_default_is_0()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.chainIndex(), 0);
+    }
+
+    void chain_index_setter_round_trips()
+    {
+        SliceModel slice;
+        slice.setChainIndex(1);
+        QCOMPARE(slice.chainIndex(), 1);
+    }
+
+    void chain_index_setter_emits_signal()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::chainIndexChanged);
+        slice.setChainIndex(1);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().first().toInt(), 1);
+    }
+
+    void chain_index_setter_idempotent()
+    {
+        SliceModel slice;
+        slice.setChainIndex(1);
+        QSignalSpy spy(&slice, &SliceModel::chainIndexChanged);
+        slice.setChainIndex(1);  // same value
+        QCOMPARE(spy.count(), 0);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

@@ -604,6 +604,14 @@ void SliceModel::setSliceLetter(QChar letter)
     }
 }
 
+void SliceModel::setChainIndex(int idx)
+{
+    if (m_chainIndex != idx) {
+        m_chainIndex = idx;
+        emit chainIndexChanged(idx);
+    }
+}
+
 // ── Phase 3G-10 Stage 1 stubs (DSP state, Stage 2 wires to RxChannel) ──
 
 void SliceModel::setLocked(bool v)
