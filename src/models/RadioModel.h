@@ -128,6 +128,10 @@ class AudioEngine;
 class WdspEngine;
 class RxDspWorker;
 class NoiseFloorTracker;
+// Phase 3F Sub-Epic F Task 5: per-ADC wideband FFT engine. Forward decl
+// here; included in RadioModel.cpp so we don't pull fftw3.h into every
+// translation unit that touches RadioModel.h.
+class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
 class MoxController;
 class TxChannel;
@@ -224,6 +228,14 @@ public:
     ReceiverManager*  receiverManager()  { return m_receiverManager; }
     AudioEngine*      audioEngine()      { return m_audioEngine; }
     WdspEngine*       wdspEngine()       { return m_wdspEngine; }
+
+    /// Phase 3F Sub-Epic F Task 5: per-ADC wideband FFT engine accessor.
+    /// Returns nullptr if adcIndex out of range (valid: 0 or 1).  Used by
+    /// SpectrumWidget and bench rigs to inspect the wideband FFT pipeline
+    /// without going through the widebandSpectrumReady signal hop.
+    NereusSDR::WidebandFftEngine* widebandFftEngine(int adc) const {
+        return (adc >= 0 && adc < 2) ? m_widebandFftEngines[adc] : nullptr;
+    }
 
     // OC matrix — single instance shared between the OC Outputs UI and the
     // codec layer (P1/P2 buildCodecContext). Loaded per-MAC at connect time.
@@ -1558,6 +1570,12 @@ signals:
     void pureSignalCoordinatorReady(NereusSDR::PureSignal* coordinator);
     void sliceAdded(int index);
     void sliceRemoved(int index);
+
+    /// Phase 3F Sub-Epic F Task 5: emitted after the per-ADC wideband FFT
+    /// completes.  adcIndex is 0 or 1; dbmBins is 8192 entries (kOutputBins
+    /// from WidebandFftEngine).  SpectrumWidget consumes this in extended
+    /// pan rendering; visual paint wires in Sub-Epic F polish (T7-T10).
+    void widebandSpectrumReady(int adcIndex, QVector<float> dbmBins);
     // Phase 3F Sub-Epic C Task 7: emitted when addSliceOnPan rejects a
     // request because the maxSlices() cap has been reached.  Status-bar /
     // toast subscribers wire to this signal in Sub-Epic C Tasks 8-9.
@@ -2018,6 +2036,11 @@ private:
     // MAC and load() are called on connect, matching OcMatrix ownership pattern.
     // Phase 3P-F Task 3.
     AlexController m_alexController;
+
+    // Phase 3F Sub-Epic F Task 5: per-ADC WidebandFftEngine instances.
+    // Indexed by adcIndex (0 or 1). Constructed in the RadioModel ctor with
+    // a default 122.88 MHz ADC sample rate. Owned via QObject parent.
+    std::array<NereusSDR::WidebandFftEngine*, 2> m_widebandFftEngines{};
 
     // Band-plan overlay manager — app-global, loaded once from Qt resources.
     // Phase 3G RX Epic sub-epic D.

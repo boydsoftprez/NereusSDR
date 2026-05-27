@@ -280,6 +280,7 @@ warren@wpratt.com
 #include "core/P1RadioConnection.h"
 #include "core/P2RadioConnection.h"
 #include "core/PsccPump.h"   // Phase 3M-4 Task 17 chunk C — pscc() driver
+#include "core/WidebandFftEngine.h"  // Phase 3F Sub-Epic F Task 5 — per-ADC wb FFT
 #include "core/RadioDiscovery.h"
 #include "core/BoardCapabilities.h"
 #include "core/HardwareProfile.h"
@@ -1970,6 +1971,16 @@ RadioModel::RadioModel(QObject* parent)
             m_txSliceArbiter->load();
         }
     });
+
+    // ── Phase 3F Sub-Epic F Task 5: per-ADC WidebandFftEngine construction ─
+    // One engine per ADC slot (2-ADC ceiling for current SKUs).  Default
+    // 122.88 MHz ADC rate; updated when the P2 codec context updates
+    // (Sub-Epic F polish T7-T10).  Parented to RadioModel so they tear
+    // down with the model.
+    for (int i = 0; i < 2; ++i) {
+        m_widebandFftEngines[i] = new NereusSDR::WidebandFftEngine(this);
+        m_widebandFftEngines[i]->setAdcSampleRateHz(122880000.0);
+    }
 }
 
 RadioModel::~RadioModel()
@@ -6180,6 +6191,24 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
         if (auto* codec = p2->p2Codec()) {
             m_receiverManager->setP2Codec(codec);
         }
+
+        // ── Phase 3F Sub-Epic F Task 5: wideband frame -> per-ADC FFT ──
+        // P2RadioConnection::widebandFrameReady fires on the connection
+        // thread once a 32-packet frame (16384 normalized real samples)
+        // is assembled by WidebandFrameAccumulator (Sub-Epic F Task 3).
+        // We hop to the main thread (auto-connection: default) so the
+        // FFT runs out of the network hot path.  The 16k-pt real-to-
+        // complex FFT typically completes well under one frame period
+        // even at 153.6 MHz; if profiling later flags this as a stall,
+        // move WidebandFftEngine to a dedicated worker thread.
+        connect(p2, &P2RadioConnection::widebandFrameReady, this,
+                [this](int adcIdx, const QVector<float>& samples) {
+            if (adcIdx < 0 || adcIdx >= 2) { return; }
+            if (!m_widebandFftEngines[adcIdx]) { return; }
+            QVector<float> bins;
+            m_widebandFftEngines[adcIdx]->computeFft(samples, bins);
+            emit widebandSpectrumReady(adcIdx, bins);
+        });
     }
 
     // Phase 3M-4 Task 17 P1 follow-up: P1 mirror of the P2 block above.
