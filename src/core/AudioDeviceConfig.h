@@ -29,7 +29,13 @@ struct AudioDeviceConfig {
     QString deviceName;            // empty = platform default
     int     sampleRate    = 48000;
     int     channels      = 2;
-    int     bufferSamples = 256;
+    // 128 frames @ 48 kHz = 2.67 ms callback period.  Drops PortAudio
+    // / CoreAudio HAL output latency from ~22 ms (was 256) to ~11 ms
+    // on Apple Silicon.  Safe lower bound across CoreAudio / WASAPI /
+    // PulseAudio / PipeWire on modern hardware.  Persisted users may
+    // still see their saved value via loadFromSettings; new installs
+    // and unconfigured endpoints pick this default.
+    int     bufferSamples = 128;
     bool    exclusiveMode = false; // WASAPI only
     int     hostApiIndex  = -1;    // -1 = PortAudio default host API
 

@@ -487,11 +487,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Wire the MasterOutputWidget device picker → AudioEngine so picking
     // an output device rebuilds the speakers bus. Task 10b exposes only
-    // the deviceName; AudioEngine::makeBus fills in sensible defaults
-    // (sample rate 48 kHz stereo, default buffer) per AudioEngine.h:165.
+    // the deviceName; we load the rest of the persisted speakers config
+    // (sampleRate / channels / bufferSamples / exclusiveMode / etc.) so
+    // the user's tuned values are preserved across a device change.  A
+    // bare default-constructed AudioDeviceConfig with only deviceName
+    // set would otherwise clobber persisted fields, defeating the
+    // Setup → Devices page entirely.
     connect(m_titleBar->masterOutput(), &MasterOutputWidget::outputDeviceChanged,
             this, [this](const QString& name) {
-        AudioDeviceConfig cfg;
+        AudioDeviceConfig cfg = AudioDeviceConfig::loadFromSettings(
+            QStringLiteral("audio/Speakers"));
         cfg.deviceName = name;
         if (auto* engine = m_radioModel->audioEngine()) {
             engine->setSpeakersConfig(cfg);
@@ -1244,7 +1249,24 @@ void MainWindow::buildUI()
         }
     });
     m_fftEngine->setFftSize(4096);
-    m_fftEngine->setOutputFps(30);
+    // Spectrum/waterfall FPS — load persisted value (default 30), apply to
+    // BOTH the FFT engine (row production cadence) and the SpectrumWidget
+    // display timer (paint cadence) so the two stay locked.  Without this
+    // load, FFTEngine defaulted to 30 and SpectrumWidget defaulted to its
+    // own 30 fps constructor value, but Setup -> Display -> Spectrum
+    // changes did not survive restart.  Persistence write side is in
+    // SpectrumDefaultsPage::pushFps.
+    {
+        const int persistedFps = qBound(1,
+            AppSettings::instance().value(
+                QStringLiteral("DisplaySpectrumFps"),
+                QStringLiteral("30")).toString().toInt(),
+            60);
+        m_fftEngine->setOutputFps(persistedFps);
+        if (m_spectrumWidget) {
+            m_spectrumWidget->setDisplayFps(persistedFps);
+        }
+    }
     // Hz/bin target — persisted in Setup → Display → Spectrum Defaults.
     // 0 = bins-in-window default (2026-05-08 Option 3).
     m_fftEngine->setHzPerBinTarget(

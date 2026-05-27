@@ -42,6 +42,13 @@ FilterPassbandWidget::FilterPassbandWidget(QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);
     setCursor(Qt::SizeAllCursor);
+
+    // Performance: paintEvent fills rect() opaquely (line 74) before
+    // drawing the trapezoid.  Mark opaque so Qt skips compositing the
+    // parent backing-store underneath us — saves one IOSurface memmove
+    // per paint cycle.  Filter widget repaints on every filter / mode
+    // change, which is frequent during operator tuning.
+    setAttribute(Qt::WA_OpaquePaintEvent);
 }
 
 void FilterPassbandWidget::setFilter(int lo, int hi)

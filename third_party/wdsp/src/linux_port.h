@@ -1,3 +1,9 @@
+// no-port-check: WDSP upstream header (TAPR v1.29) carrying the
+// NR0V / G0ORX/N6LYT copyright line.  Vendored verbatim with only the
+// cross-platform shim macro tweaks documented in the modification
+// history below; not a Thetis port, attribution already lives in the
+// preserved header copyright block.
+
 /*  linux_port.h
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -66,8 +72,8 @@ typedef pthread_mutex_t *LPCRITICAL_SECTION;
 #define __forceinline
 #define _beginthread wdsp_beginthread
 #define _int64 long long
-#define _aligned_malloc(x,y) malloc(x);
-#define _aligned_free(x) free(x);
+#define _aligned_malloc(x,y) malloc(x)
+#define _aligned_free(x) do { free(x); } while(0)
 // Windows freopen_s to "conout$" is a no-op on POSIX — stdout works as-is
 #define freopen_s(pFile, name, mode, stream) ((void)0)
 #define min(x,y) (x<y?x:y)
