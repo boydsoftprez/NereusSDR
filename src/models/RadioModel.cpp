@@ -261,6 +261,7 @@ warren@wpratt.com
 #include "core/TwoToneController.h"
 // Phase 3F Sub-Epic C Task 6: TxSliceArbiter integration.
 #include "core/TxSliceArbiter.h"
+#include "core/FFTRouter.h"  // Phase 3F Sub-Epic D Task 13
 #include "models/FilterPresetStore.h"
 #include "core/accessories/N2adrPreset.h"
 #include "core/TxChannel.h"
@@ -700,6 +701,13 @@ RadioModel::RadioModel(QObject* parent)
     m_txSliceArbiter = new TxSliceArbiter(this);
     m_txSliceArbiter->setSliceList(&m_slices);
     m_txSliceArbiter->setMoxController(m_moxController);
+
+    // Phase 3F Sub-Epic D Task 13: FFT fan-out router. NereusSDR-original
+    // class (AetherSDR has no equivalent because it's a thin Flex API
+    // client; we own the FFT pipeline locally). MainWindow registers
+    // pan-to-receiver mappings in the sliceAdded handler; the per-
+    // receiver FFTEngine pump is wired in Sub-Epic E / F polish.
+    m_fftRouter = new FFTRouter(this);
 
     // MoxController::hardwareFlipped → RadioModel::onMoxHardwareFlipped (F.1).
     // Qt::QueuedConnection: both live on the main thread, but QueuedConnection

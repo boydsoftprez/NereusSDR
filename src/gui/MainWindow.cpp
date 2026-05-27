@@ -1300,6 +1300,53 @@ void MainWindow::buildUI()
         }
     });
 
+    // Phase 3F Sub-Epic D Task 13: bind newly-created slices to a pan
+    // and register pan-to-receiver routing in the FFTRouter.
+    //
+    // RadioModel::addSliceOnPan stashes the requested panId on the
+    // SliceModel as a dynamic property ("initialPanId") so this handler
+    // knows where to dock the slice. If the slice was added by some
+    // other path (no initialPanId), we fall back to the active pan.
+    // If the requested pan does not exist yet (e.g. Add Panadapter ran
+    // between addSliceOnPan emit and this slot), we create it on the
+    // fly via PanadapterStack::addPanadapter.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int sliceIndex) {
+        if (!m_panStack) { return; }
+        const auto& slices = m_radioModel->slices();
+        if (sliceIndex < 0 || sliceIndex >= slices.size()) { return; }
+        SliceModel* slice = slices.at(sliceIndex);
+        if (!slice) { return; }
+
+        const QString initialPan = slice->property("initialPanId").toString();
+        const QString targetPan = initialPan.isEmpty()
+                                      ? m_panStack->activePanId()
+                                      : initialPan;
+
+        auto* applet = m_panStack->panadapter(targetPan);
+        if (!applet) {
+            applet = m_panStack->addPanadapter(targetPan);
+        }
+        if (applet) {
+            applet->addSlice(sliceIndex);
+        }
+
+        if (auto* router = m_radioModel->fftRouter()) {
+            router->mapPanToReceiver(targetPan, slice->ddcIndex());
+        }
+    });
+
+    // Phase 3F Sub-Epic D Task 13: detach a removed slice index from
+    // every pan. The associatedSlices set is small (single-digit) so a
+    // linear scan across all applets is fine.
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [this](int sliceIndex) {
+        if (!m_panStack) { return; }
+        for (auto* applet : m_panStack->allApplets()) {
+            if (applet) { applet->removeSlice(sliceIndex); }
+        }
+    });
+
     // Create FFTEngine on a worker thread (spectrum thread from architecture).
     // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
     // updates it to the actual wire rate on each connect (P1=192k, P2=768k).

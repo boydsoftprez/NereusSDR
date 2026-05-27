@@ -396,6 +396,14 @@ public:
     // future code that needs the authoritative TX-bound slice index.
     TxSliceArbiter* txSliceArbiter() const { return m_txSliceArbiter; }
 
+    // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
+    // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
+    // multiple zoom levels of the same I/Q data. MainWindow registers
+    // pan-to-receiver mappings on sliceAdded; the per-receiver FFTEngine
+    // fan-out pump is wired in Sub-Epic E / F polish (the routing table
+    // is correct as soon as the mappings are populated).
+    class FFTRouter* fftRouter() const { return m_fftRouter; }
+
     // 3M-1c Phase L.1: expose MicProfileManager so MainWindow / SetupDialog
     // can hand the per-MAC profile bank to TxApplet (J.1 setter) and
     // TxProfileSetupPage (J.3 ctor).  Non-owning; lifetime is RadioModel's
@@ -2229,6 +2237,12 @@ private:
     // accessor and docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md
     // Task 6.
     TxSliceArbiter* m_txSliceArbiter{nullptr};
+
+    // Phase 3F Sub-Epic D Task 13: receiver -> pan FFT fan-out router.
+    // QObject child of RadioModel. Constructed in the ctor body after
+    // m_txSliceArbiter; the per-receiver FFTEngine pump and pan FFT
+    // subscriber wiring lands in Sub-Epic E / F polish.
+    class FFTRouter* m_fftRouter{nullptr};
 
     // Phase 3J-1 closeout Item 3 (2026-05-12): TCI Q_INVOKABLE long-tail
     // state.  See setGlobalMute / setAfLinear / setIqSampleRate / etc. for
