@@ -9,6 +9,7 @@
 #include "core/TxSliceArbiter.h"
 #include "models/SliceModel.h"
 #include "core/MoxController.h"
+#include "core/AppSettings.h"
 
 namespace NereusSDR {
 
@@ -47,6 +48,25 @@ bool TxSliceArbiter::requestHandoff(int newSliceIndex)
     m_txBoundIndex = newSliceIndex;
     emit txBoundSliceChanged(oldIndex, newSliceIndex);
     return true;
+}
+
+void TxSliceArbiter::save()
+{
+    if (m_mac.isEmpty()) { return; }
+    auto& s = AppSettings::instance();
+    const QString key = QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(m_mac);
+    s.setValue(key, m_txBoundIndex);
+}
+
+void TxSliceArbiter::load()
+{
+    if (m_mac.isEmpty()) { return; }
+    auto& s = AppSettings::instance();
+    const QString key = QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(m_mac);
+    const int restored = s.value(key, 0).toInt();
+    if (restored != m_txBoundIndex && restored >= 0 && m_slices && restored < m_slices->size()) {
+        requestHandoff(restored);
+    }
 }
 
 } // namespace NereusSDR

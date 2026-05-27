@@ -102,6 +102,32 @@ private slots:
         QCOMPARE(slices[1]->isTxSlice(), true);  // handoff completed
     }
 
+    void tx_bound_index_persists_per_mac()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:dd:ee:ff");
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 3);
+
+        {
+            TxSliceArbiter arb;
+            arb.setSliceList(&slices);
+            arb.setMacAddress(mac);
+            arb.requestHandoff(2);
+            arb.save();
+        }
+        // Reset slice flags so reconstruction is meaningful
+        for (auto* s : slices) { s->setTxSlice(false); }
+        slices[0]->setTxSlice(true);
+
+        {
+            TxSliceArbiter arb2;
+            arb2.setSliceList(&slices);
+            arb2.setMacAddress(mac);
+            arb2.load();
+            QCOMPARE(arb2.txBoundSliceIndex(), 2);
+        }
+    }
+
 private:
     // Build a list of N SliceModel instances for testing. Each slice is parented
     // to `this` for automatic cleanup. Slice 0 is marked TX-bound to mirror the

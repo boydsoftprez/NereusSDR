@@ -43,6 +43,19 @@ public:
     /// flags on SliceModel instances.
     void setSliceList(QVector<SliceModel*>* slices);
 
+    /// Set the MAC address used as the per-radio AppSettings scope key for
+    /// save()/load(). When unset (empty), save()/load() are no-ops.
+    void setMacAddress(const QString& mac) { m_mac = mac; }
+
+    /// Restore the persisted txBoundSliceIndex for the current MAC, performing
+    /// a real handoff if the restored value differs from the current bound
+    /// index. No-op if MAC unset or restored value is out of range.
+    void load();
+
+    /// Persist the current txBoundSliceIndex under hardware/<mac>/TxBoundSliceIndex.
+    /// No-op if MAC unset.
+    void save();
+
 public slots:
     /// Request TX handoff to the slice at newSliceIndex. RF-safe (drops MOX first).
     /// Returns true if handoff succeeded or was a no-op (already TX-bound).
@@ -60,6 +73,7 @@ private:
     int                       m_txBoundIndex {0};
     MoxController*            m_mox {nullptr};
     QVector<SliceModel*>*     m_slices {nullptr};  // non-owning pointer to RadioModel's list
+    QString                   m_mac;               // per-radio AppSettings scope key
 };
 
 } // namespace NereusSDR
