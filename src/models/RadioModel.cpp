@@ -259,6 +259,8 @@ warren@wpratt.com
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TwoToneController.h"
+// Phase 3F Sub-Epic C Task 6: TxSliceArbiter integration.
+#include "core/TxSliceArbiter.h"
 #include "models/FilterPresetStore.h"
 #include "core/accessories/N2adrPreset.h"
 #include "core/TxChannel.h"
@@ -679,6 +681,25 @@ RadioModel::RadioModel(QObject* parent)
     //udRX2StepAttData.Enabled = true; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29648]
     // Display.TXAttenuatorOffset = 0; //[2.10.3.6]MW0LGE att_fixes  [console.cs:29659]
     m_moxController = new MoxController(this);
+
+    // ── Phase 3F Sub-Epic C Task 6: TxSliceArbiter construction + wiring ──
+    // Owned QObject child of RadioModel (Qt parent semantics handle the
+    // destruction).  Sliced list pointer is non-owning; the arbiter reads
+    // m_slices lazily via the pointer, so wiring it now while m_slices is
+    // still empty is safe (the first slice gets appended later in
+    // connectToRadio() → addSlice(), and the arbiter only iterates the
+    // list inside requestHandoff() / load()).  MoxController is wired now
+    // so the arbiter can drop MOX synchronously before flipping txSlice
+    // flags on RF-safe handoff (see TxSliceArbiter::requestHandoff).
+    //
+    // MAC injection + load() runs later from the currentRadioChanged
+    // lambda at the bottom of this constructor, since the per-MAC
+    // AppSettings scope key isn't known until a radio actually connects.
+    // save() runs from teardownConnection() before the connection is
+    // destroyed.
+    m_txSliceArbiter = new TxSliceArbiter(this);
+    m_txSliceArbiter->setSliceList(&m_slices);
+    m_txSliceArbiter->setMoxController(m_moxController);
 
     // MoxController::hardwareFlipped → RadioModel::onMoxHardwareFlipped (F.1).
     // Qt::QueuedConnection: both live on the main thread, but QueuedConnection
@@ -1919,6 +1940,28 @@ RadioModel::RadioModel(QObject* parent)
             m_radioStatus.setPaCurrent(0.0);
         });
     }
+
+    // ── Phase 3F Sub-Epic C Task 6: TxSliceArbiter per-MAC scope wiring ───
+    // currentRadioChanged is emitted from onConnectionStateChanged once the
+    // hardware profile is loaded and m_lastRadioInfo is populated (see
+    // ConnectionState::Connected branch).  Push the MAC into the arbiter
+    // and call load() to restore the persisted TxBoundSliceIndex for this
+    // radio.  load() is a no-op if MAC is empty (default-constructed
+    // RadioInfo from setLastRadioInfoForTest path).
+    //
+    // The lambda runs on the main thread (RadioModel + arbiter both live
+    // here), so AppSettings access is safe.  load() may call
+    // requestHandoff() which flips txSlice flags on SliceModel instances;
+    // by the time currentRadioChanged fires, the slice list is already
+    // populated by addSlice() in onConnected() (which runs earlier on the
+    // same callstack inside onConnectionStateChanged).
+    connect(this, &RadioModel::currentRadioChanged, this,
+            [this](const NereusSDR::RadioInfo& info) {
+        if (m_txSliceArbiter) {
+            m_txSliceArbiter->setMacAddress(info.macAddress);
+            m_txSliceArbiter->load();
+        }
+    });
 }
 
 RadioModel::~RadioModel()
@@ -7880,6 +7923,16 @@ void RadioModel::teardownConnection()
     // Phase 3M-1b L.2.
     if (!m_lastRadioInfo.macAddress.isEmpty()) {
         m_transmitModel.persistToSettings(m_lastRadioInfo.macAddress);
+    }
+
+    // Phase 3F Sub-Epic C Task 6: persist TxBoundSliceIndex per-MAC before
+    // the connection tears down.  save() keys off the MAC the arbiter was
+    // last fed (currentRadioChanged lambda in the ctor), so it stays
+    // pinned across teardown for the no-op idempotent case.  Empty-MAC
+    // guard inside save() makes the test-mock setLastRadioInfoForTest
+    // path a no-op automatically.
+    if (m_txSliceArbiter) {
+        m_txSliceArbiter->save();
     }
 
     // Issue #259 — flush step-attenuator state to AppSettings BEFORE the

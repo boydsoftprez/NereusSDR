@@ -131,6 +131,8 @@ class NoiseFloorTracker;
 // 3M-1a G.1: forward declarations for TX-side components.
 class MoxController;
 class TxChannel;
+// Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe handoff).
+class TxSliceArbiter;
 // 3M-1b L.1: forward declarations for mic-source strategy objects.
 class PcMicSource;
 class RadioMicSource;
@@ -376,6 +378,14 @@ public:
     // both objects exist.  Non-owning; lifetime is RadioModel's lifetime.
     // Master design §5.1.1; pre-code review §1.6.
     MoxController* moxController() const { return m_moxController; }
+
+    // Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe
+    // handoff). Owned by RadioModel (Qt parent), wired to slice list +
+    // MoxController during construction. MAC injected + load() driven on
+    // every currentRadioChanged emit; save() runs from teardownConnection.
+    // Used by the upcoming VfoWidget TX-badge click handoff path and any
+    // future code that needs the authoritative TX-bound slice index.
+    TxSliceArbiter* txSliceArbiter() const { return m_txSliceArbiter; }
 
     // 3M-1c Phase L.1: expose MicProfileManager so MainWindow / SetupDialog
     // can hand the per-MAC profile bank to TxApplet (J.1 setter) and
@@ -2198,6 +2208,14 @@ private:
     // Thread.Sleep(space_mox_delay); // default 0 // from PSDR MW0LGE  [console.cs:29603]
     //[2.10.3.6]MW0LGE att_fixes  [original inline comment from console.cs:29647-29659]
     MoxController* m_moxController{nullptr};
+
+    // Phase 3F Sub-Epic C: TX-slice arbiter (single-TX invariant + RF-safe
+    // handoff). QObject child of RadioModel (Qt parent ownership). Wired
+    // to &m_slices + m_moxController in the constructor body, fed MAC +
+    // load() on every currentRadioChanged emit. See txSliceArbiter()
+    // accessor and docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md
+    // Task 6.
+    TxSliceArbiter* m_txSliceArbiter{nullptr};
 
     // Phase 3J-1 closeout Item 3 (2026-05-12): TCI Q_INVOKABLE long-tail
     // state.  See setGlobalMute / setAfLinear / setIqSampleRate / etc. for
