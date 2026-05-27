@@ -899,6 +899,43 @@ Sub-Epic D (Pan layouts + multi-pan UI) can now begin: `PanadapterStack`, `Panad
 
 ---
 
+## Sub-Epic D implementation note (landed 2026-05-27)
+
+Implemented per `docs/architecture/2026-05-26-phase3f-sub-epic-d-pan-layouts-plan.md`. 20 tasks across 19 commits (T17 manual smoke deferred to Sub-Epic H bench; T20 PR open deferred per single-PR strategy).
+
+Operator-visible changes:
+
+- `PanadapterStack` widget with 5 layout templates: "1" (Single), "2v" (Stacked), "2h" (Side-by-Side), "12h" (Wide + 2), "2x2" (Grid).
+- `PanadapterApplet` per-pan container that hosts one SpectrumWidget + tracks associated slices for overlay rendering.
+- `FFTRouter` core class fans out FFT frames from receivers to subscribed pans (1 receiver to N pans).
+- `PanFloatingWindow` detaches any pan to a top-level window for multi-monitor setups; dockRequested signal returns it to the stack.
+- `PanLayoutDialog` 5-tile visual picker dialog.
+- `+PAN` button in the bottom status bar (formerly NYI placeholder) opens a dropdown menu with Add Slice (per-letter cap-gated), Layout (5 templates with current checkmarked), and Float Active Pan.
+- View menu gains Pan Layout (Ctrl+L), Add slice (Ctrl+R), and Float active pan entries.
+- Per-chain CH 0 / CH 1 stacked indicators in the bottom bar reflect live AlexController BPF state (Filtered = green, WidebandLocked / Bypass = amber). CH 1 hidden on single-ADC SKUs.
+- Layout state (PanLayoutId + splitter sizes) persists across app launches via AppSettings.
+
+Architectural shift:
+
+- MainWindow's single `m_spectrumWidget` is replaced by `m_panStack` (PanadapterStack containing N PanadapterApplet instances).
+- `activeSpectrumWidget()` accessor provides backward compatibility for the 125 existing call sites; eventually callers should migrate to per-pan addressing via `m_panStack->panadapter(panId)->spectrumWidget()`.
+- RadioModel owns a `FFTRouter*` (`m_radioModel->fftRouter()`); MainWindow wires `sliceAdded` and `sliceRemoved` to bind slices to their initial pan + register pan-to-receiver in the router.
+- `disconnectPanadapter(panId)` helper on MainWindow follows the AetherSDR issue #242 pattern: disconnect signals before deletion to avoid lambda crashes during teardown. Consumers wire in Sub-Epic E (per-pan close button + right-click Remove).
+
+Discovered during implementation:
+
+- `m_spectrumWidget` had 125 references in MainWindow.cpp; a global `replace_all` to `activeSpectrumWidget()` worked because the field was never written outside its single constructor.
+- `PanadapterStack::addPanadapter` auto-attaches the first pan to the root splitter when `m_pans.size() == 1`; subsequent applyLayout calls handle the rest. Idempotent because Qt's `QSplitter::addWidget` on an already-attached child re-parents to end of the splitter.
+- The 2x2 test surfaced an orphan-cleanup gap: applyLayout with a different pan-id set leaves previous pans alive. Fixed by adding a QSet-based orphan sweep at the top of applyLayout that removePanadapter()s any existing id not in the new layout's id list.
+- `PanFloatingWindow` reparents the applet via QVBoxLayout::addWidget; the floating-window destructor cleans up the applet automatically, so test cleanup uses `delete w;` alone (not `delete applet;` after, which would double-free).
+- `setSplit` from Sub-Epic C cleanup had a real TCI dispatcher caller; preserved the wire-protocol broadcast while dropping the no-op method invocation. (Logged in Sub-Epic C retrospective.)
+
+### Sub-Epic E readiness
+
+Sub-Epic E (UI atlas surfaces: SpectrumStatusOverlay, antenna picker per pan, Filter Policy popup, Setup DDC Routing) can now begin.
+
+---
+
 ## End
 
 Spec ready for review. After approval, transitions to `superpowers:writing-plans` for implementation plan generation, then sub-epic-by-sub-epic implementation in `superpowers:subagent-driven-development` mode.
