@@ -493,6 +493,25 @@ jobs:
         shell: bash
         run: cmake --build build -j$NUMBER_OF_PROCESSORS
 
+      # Build the test executables explicitly.  Since commit 6ed89682
+      # (build: skip LTO by default, EXCLUDE_FROM_ALL on tests + all_tests
+      # aggregate) every tst_* executable is EXCLUDE_FROM_ALL so a routine
+      # `cmake --build build` builds only the main app (seconds, not
+      # minutes for the dev loop).  CI must explicitly build the
+      # `all_tests` aggregate target before invoking ctest, otherwise
+      # ctest finds the test definitions but no binaries and every test
+      # is reported as "Not Run".
+      #
+      # Gated on Linux only because macOS + Windows configure with
+      # NEREUS_BUILD_TESTS=OFF (the test suite uses Linux-specific
+      # PortAudio / Qt 6.4 fakes that haven't been ported to the macOS
+      # or mingw paths yet -- separate scope).  The `all_tests` target
+      # is created by tests/CMakeLists.txt:5247-5262 which is only
+      # add_subdirectory'd when NEREUS_BUILD_TESTS=ON.
+      - name: Build test executables (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build -j$(nproc) --target all_tests
+
       # ------------------------------------------------------------------
       # Test
       # ------------------------------------------------------------------

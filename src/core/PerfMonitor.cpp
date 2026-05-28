@@ -51,6 +51,22 @@ void PerfMonitor::incUdpDrop()
     m_udpDropsDelta.fetch_add(1, std::memory_order_relaxed);
 }
 
+void PerfMonitor::incTxIqUnderrun(int samples)
+{
+    if (samples <= 0) { return; }
+    const uint64_t n = static_cast<uint64_t>(samples);
+    m_txIqUnderrunsTotal.fetch_add(n, std::memory_order_relaxed);
+    m_txIqUnderrunsDelta.fetch_add(n, std::memory_order_relaxed);
+}
+
+void PerfMonitor::incTxIqProduced(int samples)
+{
+    if (samples <= 0) { return; }
+    const uint64_t n = static_cast<uint64_t>(samples);
+    m_txIqProducedTotal.fetch_add(n, std::memory_order_relaxed);
+    m_txIqProducedDelta.fetch_add(n, std::memory_order_relaxed);
+}
+
 void PerfMonitor::setMemoryStats(bool compressing, double footprintMb)
 {
     QMutexLocker lock(&m_memMtx);
@@ -73,6 +89,10 @@ PerfMonitor::Snapshot PerfMonitor::snapshotAndClearDeltas()
     s.audioUnderrunsDelta = m_audioUnderrunsDelta.exchange(0, std::memory_order_relaxed);
     s.udpDropsTotal = m_udpDropsTotal.load(std::memory_order_relaxed);
     s.udpDropsDelta = m_udpDropsDelta.exchange(0, std::memory_order_relaxed);
+    s.txIqUnderrunsTotal = m_txIqUnderrunsTotal.load(std::memory_order_relaxed);
+    s.txIqUnderrunsDelta = m_txIqUnderrunsDelta.exchange(0, std::memory_order_relaxed);
+    s.txIqProducedTotal = m_txIqProducedTotal.load(std::memory_order_relaxed);
+    s.txIqProducedDelta = m_txIqProducedDelta.exchange(0, std::memory_order_relaxed);
 
     {
         QMutexLocker lock(&m_memMtx);
@@ -103,6 +123,10 @@ void PerfMonitor::resetAll()
     m_audioUnderrunsDelta.store(0, std::memory_order_relaxed);
     m_udpDropsTotal.store(0, std::memory_order_relaxed);
     m_udpDropsDelta.store(0, std::memory_order_relaxed);
+    m_txIqUnderrunsTotal.store(0, std::memory_order_relaxed);
+    m_txIqUnderrunsDelta.store(0, std::memory_order_relaxed);
+    m_txIqProducedTotal.store(0, std::memory_order_relaxed);
+    m_txIqProducedDelta.store(0, std::memory_order_relaxed);
     QMutexLocker lock(&m_memMtx);
     m_memCompressing = false;
     m_memFootprintMb = 0.0;

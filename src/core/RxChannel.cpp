@@ -350,6 +350,17 @@ void RxChannel::setSampleRate(int newRateHz)
 
     m_sampleRate = newRateHz;
     m_bufferSize = bufferSizeForRate(newRateHz);
+
+    // Propagate to NB1/NB2 so initBlanker()/init_nob() recompute time
+    // constants for the new rate. Mirrors cmaster.c:464-470 [v2.10.3.13]
+    // SetXcmInrate case 0 (receiver):
+    //   SetRCVRANBBuffsize/Samplerate + SetRCVRNOBBuffsize/Samplerate.
+    // Without this, NB stays configured for the original rate and the
+    // blanker's slewtime/hangtime/advtime envelope is wrong after a
+    // setSampleRateLive — manifests as metallic ringing at higher rates.
+    if (m_nb) {
+        m_nb->setSampleRate(m_sampleRate, m_bufferSize);
+    }
 }
 
 // ---------------------------------------------------------------------------

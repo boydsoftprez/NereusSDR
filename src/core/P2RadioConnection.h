@@ -571,6 +571,23 @@ private:
     std::atomic<int> m_txIqRingRead{0};   // connection thread writes; relaxed store
     std::atomic<int> m_txIqRingCount{0};  // both threads: fetch_add (audio, release) / fetch_sub (conn)
 
+    // TX I/Q ring pre-prime flag.  setMox(true) sets it on the connection
+    // thread; sendTxIq consumes it on the TX worker thread (single-writer
+    // invariant preserved -- only the worker mutates the ring write index
+    // and count).  When consumed, sendTxIq pushes a 20 ms cushion of
+    // zero samples (3840 sample-pairs = 7680 floats) into the ring
+    // BEFORE the real first-block samples, so the consumer (5 ms QTimer)
+    // has ~4 ticks of headroom while the producer settles into steady
+    // state.  Bench evidence 2026-05-26: without this cushion, ~2% of
+    // a 10 s SSB TX gets zero-padded on the wire -- listeners hear it
+    // as "digital jitter".
+    //
+    // Thetis comparison: network.c:1259-1297 sendOutbound is producer-
+    // paced (no QTimer, no ring), so the equivalent failure mode does
+    // not exist upstream.  This cushion is a NereusSDR-specific patch
+    // for our QTimer-paced consumer divergence.
+    std::atomic<bool> m_txIqPrimePending{false};
+
     // --- RX state (from Thetis _radionet._rx, network.h:191-213) ---
     struct RxState {
         int id{0};

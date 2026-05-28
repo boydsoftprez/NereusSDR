@@ -173,6 +173,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "LogCategories.h"
 #include "OcMatrix.h"
 #include "CalibrationController.h"
+#include "PerfMonitor.h"
 #include "audio/TxMicSource.h"
 #include "codec/AlexFilterMap.h"
 #include "codec/P2CodecOrionMkII.h"
@@ -361,6 +362,17 @@ void P2RadioConnection::init()
         / kTxSamplesPerFrame;   // = ceil(960 / 240) = 4
     m_txIqTimer = new QTimer(this);
     m_txIqTimer->setInterval(kTxTimerIntervalMs);
+    // Qt::PreciseTimer (CFRunLoop / NSTimer with millisecond precision)
+    // instead of the default Qt::CoarseTimer.  CoarseTimer on macOS is
+    // documented as ±5% of interval to allow timer coalescing for power
+    // savings -- in practice it fires at ~4.9 ms instead of 5.0 ms,
+    // which makes the consumer pull at ~195.8 kHz while the WDSP
+    // producer outputs at exactly 192 kHz.  That ~2% deficit was the
+    // root cause of the bench-observed "digital jitter" on TX audio
+    // 2026-05-26 (75712 zero-padded sample-pairs in a 15-20 s TX).
+    // The heartbeat timer at line 472 already uses PreciseTimer;
+    // align the TX I/Q drain with the same precision.
+    m_txIqTimer->setTimerType(Qt::PreciseTimer);
     connect(m_txIqTimer, &QTimer::timeout, this, [this]() {
         if (!m_running || !m_socket) {
             return;
@@ -400,6 +412,7 @@ void P2RadioConnection::init()
             // zeros if the ring is empty (silence — matches deskhpsdr underrun).
             // Cite: deskhpsdr/src/new_protocol.c:1950-1956, 2811-2816 [@120188f]
             //   memcpy(&iqbuffer[4], &TXIQRINGBUF[txiq_outptr], 1440);
+            int underrunSamples = 0;
             for (int s = 0; s < 240; ++s) {
                 int i24 = 0;
                 int q24 = 0;
@@ -419,6 +432,11 @@ void P2RadioConnection::init()
 
                     i24 = toInt24(fI);
                     q24 = toInt24(fQ);
+                } else {
+                    // Ring-empty: zero-pad this sample (deskhpsdr-faithful).
+                    // Count it so the perf overlay surfaces underrun-driven
+                    // "digital jitter" before the operator hears about it.
+                    ++underrunSamples;
                 }
                 // Pack 3-byte BE I, then 3-byte BE Q.
                 // Cast via quint32 to guarantee arithmetic right-shift semantics
@@ -434,6 +452,16 @@ void P2RadioConnection::init()
                 buf[offset + 3] = static_cast<char>((uq >> 16) & 0xFF);
                 buf[offset + 4] = static_cast<char>((uq >>  8) & 0xFF);
                 buf[offset + 5] = static_cast<char>( uq        & 0xFF);
+            }
+
+            // Only count holes while MOX is engaged.  When not transmitting,
+            // the radio receives our TX I/Q packets on port 1029 and discards
+            // them (RX is the active state), so zero-padded drains while idle
+            // are expected and not the bug we're chasing.  Counting only
+            // during MOX makes the metric directly answer "how much silence
+            // leaked into my transmission".
+            if (underrunSamples > 0 && m_mox) {
+                PerfMonitor::instance().incTxIqUnderrun(underrunSamples);
             }
 
             QByteArray pkt(buf, sizeof(buf));
@@ -852,6 +880,16 @@ void P2RadioConnection::setMox(bool enabled)
     if (m_mox == enabled) {
         return;  // idempotent — periodic cadence covers any state drift
     }
+    // On MOX engage, arm the TX I/Q ring pre-prime flag.  The next sendTxIq
+    // (which runs on the TX worker thread) will push a 20 ms cushion of
+    // zero samples ahead of its real first-block data, giving the 5 ms
+    // QTimer drain consumer ~4 ticks of headroom before the producer needs
+    // to keep pace.  Closes the 2% zero-padded TX gap observed on the
+    // bench 2026-05-26.  Single-writer safety: only sendTxIq mutates the
+    // ring; the flag is the cross-thread handshake.
+    if (enabled) {
+        m_txIqPrimePending.store(true, std::memory_order_release);
+    }
     m_mox = enabled;
     if (m_running) {
         sendCmdHighPriority();  // immediate emit on state change for low latency
@@ -1027,6 +1065,27 @@ void P2RadioConnection::sendTxIq(const float* iq, int n)
 {
     if (n <= 0 || iq == nullptr) { return; }
 
+    // First call after MOX engage: push 20 ms of zero-sample cushion into
+    // the ring BEFORE the real first-block I/Q.  Sized so the 5 ms QTimer
+    // consumer has ~4 ticks of headroom while the producer settles into
+    // its 192 kHz steady-state cadence.  Safe to write here because
+    // sendTxIq is the single writer to m_txIqRingWrite / m_txIqRingCount;
+    // setMox(true) on the connection thread merely sets the flag.  See
+    // m_txIqPrimePending declaration in the header for the full rationale.
+    if (m_txIqPrimePending.exchange(false, std::memory_order_acq_rel)) {
+        constexpr int kPrimeFloats = 7680;  // 3840 sample-pairs = 20 ms at 192 kHz
+        int wp = m_txIqRingWrite.load(std::memory_order_relaxed);
+        for (int i = 0; i < kPrimeFloats; ++i) {
+            m_txIqRing[wp] = 0.0f;
+            wp = (wp + 1) % kTxIqRingCapacityFloats;
+        }
+        m_txIqRingWrite.store(wp, std::memory_order_relaxed);
+        // release: publishes the zero writes above before the count
+        // increment becomes visible to the connection-thread drain timer.
+        m_txIqRingCount.fetch_add(kPrimeFloats, std::memory_order_release);
+    }
+
+    int pushedPairs = 0;
     for (int k = 0; k < n * 2; k += 2) {
         // acquire: see the latest fetch_sub from the connection thread so we
         // don't overfill after a drain.  Pair count: each sample = 2 floats.
@@ -1046,6 +1105,14 @@ void P2RadioConnection::sendTxIq(const float* iq, int n)
         // release: publishes the float writes above before the count increment
         // is observed by the connection thread's acquire load.
         m_txIqRingCount.fetch_add(2, std::memory_order_release);
+        ++pushedPairs;
+    }
+    if (pushedPairs > 0 && m_mox) {
+        // Producer-side rate telemetry.  Compared against the 192 kHz
+        // P2 wire rate in the perf overlay, this tells us whether the
+        // upstream WDSP TXA + mic source path is keeping up.  Gated on
+        // m_mox so the metric reflects only TX-engaged samples.
+        PerfMonitor::instance().incTxIqProduced(pushedPairs);
     }
 }
 

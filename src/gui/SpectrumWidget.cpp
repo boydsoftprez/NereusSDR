@@ -505,7 +505,8 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         qInfo().noquote() << QString(
             "perf: paint %1/%2 ms gap %3/%4 ms fft %5/%6 ms ovly %7/%8 ms"
             " audio_fill %9/%10 ms underruns %11 (+%12/s) udp %13 (+%14/s)"
-            " mem %15 MB%16 mlock %17 regions / %18 MB")
+            " tx_iq_under %15 (+%16/s)"
+            " mem %17 MB%18 mlock %19 regions / %20 MB")
             .arg(s.paintMsAvg, 0, 'f', 1).arg(s.paintMsMax, 0, 'f', 1)
             .arg(s.gapMsAvg,   0, 'f', 1).arg(s.gapMsMax,   0, 'f', 1)
             .arg(s.fftMsAvg,   0, 'f', 1).arg(s.fftMsMax,   0, 'f', 1)
@@ -514,6 +515,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             .arg(s.audioFillMinMs, 0, 'f', 1)
             .arg(s.audioUnderrunsTotal).arg(s.audioUnderrunsDelta)
             .arg(s.udpDropsTotal).arg(s.udpDropsDelta)
+            .arg(s.txIqUnderrunsTotal).arg(s.txIqUnderrunsDelta)
             .arg(s.memFootprintMb, 0, 'f', 0)
             .arg(s.memCompressing ? QStringLiteral(" COMPRESSING")
                                   : QString{})
@@ -7250,6 +7252,12 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                       << QStringLiteral("udp    drops %1 (+%2/s)")
                             .arg(stats.udpDropsTotal)
                             .arg(stats.udpDropsDelta)
+                      << QStringLiteral("tx iq  underruns %1 (+%2/s)")
+                            .arg(stats.txIqUnderrunsTotal)
+                            .arg(stats.txIqUnderrunsDelta)
+                      << QStringLiteral("tx iq  produced  %1 (+%2/s)")
+                            .arg(stats.txIqProducedTotal)
+                            .arg(stats.txIqProducedDelta)
                       << QStringLiteral("mem    %1 MB%2")
                             .arg(stats.memFootprintMb, 0, 'f', 0)
                             .arg(stats.memCompressing
@@ -7299,6 +7307,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                                      && stats.audioFillMinMs < 15.0;
                 bool red   = stats.audioUnderrunsDelta > 0
                           || stats.udpDropsDelta > 0
+                          || stats.txIqUnderrunsDelta > 0
                           || stats.memCompressing
                           || stats.paintMsMax > 33.0
                           || stats.gapMsMax   > 50.0
@@ -7381,7 +7390,31 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             QElapsedTimer dynTimer;
             dynTimer.start();
 
-            m_overlayDynamic.fill(Qt::transparent);
+            // 2026-05-26 KG4VCF perf polish: partial-region rebuild.
+            // The dynamic-overlay features (peak hold trace, peak blobs,
+            // noise floor) ONLY paint into the spectrum portion of the
+            // widget; the waterfall portion below is always transparent.
+            // Bench under load 279 showed 75 / 82 samples of paint cost
+            // were stuck in QRhiMetal::enqueueResourceUpdates -- the
+            // Metal command queue was contended.  Halving the texture
+            // upload bandwidth (only spectrum area, not full window)
+            // proportionally reduces Metal queue pressure.
+            //
+            // Clear + upload only the spectrum region in device pixels.
+            // CompositionMode_Source replaces the existing pixels with
+            // transparent (vs Alpha-blend which would leave them).
+            // The waterfall portion of the texture stays transparent
+            // from the first full-window init -- the partial upload
+            // never touches it.
+            const QRect dynRectDevPx(0, 0, pw,
+                qMax(1, static_cast<int>(specH * dpr)));
+
+            {
+                QPainter clearP(&m_overlayDynamic);
+                clearP.setCompositionMode(QPainter::CompositionMode_Source);
+                clearP.fillRect(dynRectDevPx, Qt::transparent);
+            }
+
             QPainter pd(&m_overlayDynamic);
             pd.setRenderHint(QPainter::Antialiasing, false);
 
@@ -7403,8 +7436,16 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             PerfMonitor::instance().recordOverlayRebuild(
                 static_cast<double>(dynTimer.nsecsElapsed()) / 1e6);
 
-            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0,
-                QRhiTextureSubresourceUploadDescription(m_overlayDynamic)));
+            // Partial-region upload.  setSourceTopLeft / setSourceSize
+            // tell QRhi to copy only the spectrum portion of the QImage
+            // into the matching region of the texture; the rest of the
+            // texture is untouched.  Cuts Metal command-buffer payload
+            // by 30-50% depending on spectrum / waterfall split.
+            QRhiTextureSubresourceUploadDescription desc(m_overlayDynamic);
+            desc.setSourceTopLeft(QPoint(0, 0));
+            desc.setSourceSize(dynRectDevPx.size());
+            desc.setDestinationTopLeft(QPoint(0, 0));
+            batch->uploadTexture(m_ovDynGpuTex, QRhiTextureUploadEntry(0, 0, desc));
             m_overlayDynamicDirty = false;
         }
     }
