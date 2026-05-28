@@ -1028,6 +1028,56 @@ Post-bench follow-up backlog (sized for ~3-5 working days):
 
 ---
 
+## Phase 3F shipping note (2026-05-27)
+
+Phase 3F multi-pan + multi-slice landed across 8 sub-epics (A-G shipped, H bench verification pending). Single-PR strategy per user directive: ~100+ commits stacked on `feature/phase3f-sub-epic-a-foundation` for one comprehensive review pass + one merge commit.
+
+### What ships in 3F
+
+The headline operator-visible deliverables:
+
+1. **Multi-pan layout** with 5 templates (Single, Stacked, Side-by-Side, Wide+2, Grid 2x2). Pan layout persists across launches. Float any pan to a second monitor via Float Active Pan action.
+2. **Multi-slice (up to maxSlices per SKU)** with TxSliceArbiter enforcing the single-TX invariant. RF-safe handoff (MOX drop before TX-slice flip). Slice add/remove via +PAN dropdown or Ctrl+R.
+3. **Per-pan badges** showing slice letter, freq, mode, CH N, plus optional TX/WIDE/DIV/PS HOLD pills. Right-click VFO flag for context menu (TX/Antenna/Rate/Diversity/Filter/Remove).
+4. **Alex per-ADC BPF state machine** with operator override via FilterPolicyDialog (Auto / Force band / Force bypass). Bottom-bar CH 0 / CH 1 indicators reflect live BPF state.
+5. **Wideband data path** end-to-end (P2 wb packets -> per-ADC accumulator -> 16384-pt FFTW r2c -> SpectrumWidget bins). Operator zoom past DDC bandwidth auto-engages extended mode. Click-in-wing retunes DDC; click-in-island retunes slice.
+6. **Diversity (bench-minimum)** via Tools > Diversity Dialog (Ctrl+Shift+D). Enable checkbox + phase + gain sliders. Engages WDSP External Diversity on RXA channel 0 with DDC0+DDC1 sync pair.
+
+### What's explicitly deferred to post-bench
+
+- Wideband visual rendering polish (bins as background fill behind DDC island; dashed boundary indicators)
+- Full Diversity UI (DiversityRadarWidget polar plot, 8-memory slots, direction finding, auto-find-null, PS-pause UX, ~21 plan tasks remaining)
+- Sub-Epic E consumer wire-ups (AntennaPickerMenu in VfoWidget, AntennaSwitchToast/TxBoundConfirmDialog wires pending RadioModel signals, HardwareDdcRoutingPage per-DDC override table)
+- Latent unused-include warnings (DdcAssignment.h in RadioModel.h; SpotTableModel.h in MainWindow.cpp)
+
+### Discovered during implementation
+
+- The largest single bug caught by source-first audit: Sub-Epic F Task 1 plan targeted composeCmdRx byte 23 for the wideband enable mask, but Thetis network.c:879 puts the mask in CmdGeneral byte 23 (CmdRx byte 23 is rx[1].rx_adc per Thetis network.c:1118). Plan was corrected inline before implementation landed.
+- WDSP External Diversity pdiv[] is a 2-slot array keyed by an External Diversity id (NOT the RXA channel id). Sub-Epic G bench-minimum routes only Slice A through DivId 0; a proper DivId allocator is required for per-pan diversity to engage independent slots.
+- WidebandFftEngine uses FFTW_ESTIMATE (not MEASURE) per codebase convention to avoid the FFTW measurement-mutex contention with the WDSP audio thread.
+- MainWindow's single m_spectrumWidget had 125 references; refactor to m_panStack used a global replace_all to activeSpectrumWidget() because the field was never written outside its single constructor.
+- PanadapterStack::addPanadapter auto-attaches the first pan to the root splitter, and Qt's QSplitter::addWidget on an already-attached child is idempotent (reparents to end), so layout-template apply works without an explicit "is this pan already attached" guard.
+- 2x2 layout test surfaced an orphan-cleanup gap: applyLayout with a different pan-id set leaves previous pans alive. Fixed by adding a QSet-based orphan sweep at the top of applyLayout.
+
+### Bench priorities (Sub-Epic H Tasks 2-4)
+
+1. Multi-slice creation on G2 (Slice A through Slice E via +PAN dropdown).
+2. Layout switching at runtime (1 -> 2v -> 12h -> 2x2 -> 1) and persistence across launches.
+3. CH 0 / CH 1 BPF state indicators on band changes.
+4. TX handoff via VFO TX badge click drops MOX before flipping.
+5. Wideband activation: operator zoom-out past DDC bandwidth -> Alex BPF auto-bypass -> radio streams wb packets -> bins arrive in SpectrumWidget.
+6. Diversity engage on Slice A (G2 only) -> DDC0+DDC1 sync pair codec change -> WDSP External Diversity runs.
+7. HL2 single-slice operation unchanged (regression).
+
+### Follow-up PRs after 3F merge
+
+- Diversity full UI (radar widget, 8-memory, direction finding, auto-null, polish + PS-pause UX)
+- Wideband visual rendering polish
+- Sub-Epic E consumer wire-ups
+- Per-SKU bench follow-ups per matrix results
+
+---
+
 ## End
 
 Spec ready for review. After approval, transitions to `superpowers:writing-plans` for implementation plan generation, then sub-epic-by-sub-epic implementation in `superpowers:subagent-driven-development` mode.
