@@ -1,6 +1,47 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased] - Phase 3F multi-pan multi-slice
+
+### Added
+
+- **Phase 3F multi-pan + multi-slice foundation** (8 sub-epics, 97+ commits stacked on a single PR per single-PR strategy).
+- **Sub-Epic A**: SliceModel per-band persistence schema (sliceLetter, chainIndex, ddcIndex, sampleRateHz per-band, diversityEnabled, widebandExtensionRequested, psPaused), BoardCapabilities maxSlices + widebandAdcs per SKU, RadioModel::maxSlices accessor, AppSettings schema v5 to v6 migration, DdcAssignment shared struct.
+- **Sub-Epic B**: 5-slice codec chain (CodecContext SliceConfig array, IP1Codec + IP2Codec applyDdcAssignment, per-codec Thetis-faithful DDC topology including HL2 mi0bot PS rate carveout, AlexController per-ADC BPF state machine with BpfMode enum (Auto/ForceBand/ForceBypass) + BpfEffective enum (Filtered/Bypass/WidebandLocked) + recomputeBpf event matrix).
+- **Sub-Epic C**: TxSliceArbiter (single-TX invariant, RF-safe MOX-drop handoff, per-MAC TxBoundSliceIndex persistence) + RadioModel addSliceOnPan/removeSlice + VfoWidget TX badge click handler + MainWindow status-bar feedback + deprecated setSplit cleanup.
+- **Sub-Epic D**: PanadapterStack (5 layout templates: 1/2v/2h/12h/2x2) + PanadapterApplet + FFTRouter (receiver to pan fan-out) + PanFloatingWindow (multi-monitor detach) + PanLayoutDialog visual picker + +PAN bottom-bar dropdown + View menu shortcuts (Ctrl+L, Ctrl+R) + CH 0 / CH 1 BPF indicators + layout state persistence + disconnect-before-removal helper.
+- **Sub-Epic E**: SpectrumStatusOverlay per-pan badge (slice letter, freq, mode, CH, TX/WIDE/DIV/PS HOLD pills) + VfoWidget right-click context menu (TX/Antenna/Rate/Diversity/Filter/Remove) + FilterPolicyDialog (per-chain BPF override) + AntennaPickerMenu (chain-consequence hints) + AntennaSwitchToast (auto-switch notification with Undo) + TxBoundConfirmDialog (re-route confirm) + Setup -> Hardware -> DDC Routing page skeleton + Antenna Conflict Policy radio group on Setup.
+- **Sub-Epic F**: P2 wideband data path end-to-end (P2 wideband packet decode at UDP ports 1027-1034 -> WidebandFrameAccumulator -> WidebandFftEngine 16384-pt FFTW r2c -> SpectrumWidget setWidebandBins) + CmdGeneral byte 23 wb_enable wiring per Thetis network.c:879 + SpectrumWidget extendedMode state with zoom auto-derive + click-in-wing retunes DDC, click-in-island retunes slice + per-pan Extended view right-click toggle + wideband-extension-requested auto-bypasses Alex BPF.
+- **Sub-Epic G** (bench-minimum, 4/25 plan tasks): RxChannel WDSP setExtDivRun/Nr/Output/Rotate wrappers + SliceModel per-band diversity persistence (phase/gain/fine-null) + DiversityDialog stub (Tools > Diversity..., Ctrl+Shift+D, Enable checkbox + Phase slider + Gain slider) + Slice-A WDSP wire from SliceModel signals.
+
+### Changed
+
+- **MainWindow refactor**: m_spectrumWidget single-widget pointer replaced with m_panStack (PanadapterStack containing N PanadapterApplet instances). 125 call sites migrated to activeSpectrumWidget() helper for backward compatibility.
+- **RadioModel** gains TxSliceArbiter ownership + FFTRouter ownership + WidebandFftEngine instances (one per ADC, default 122.88 MHz).
+
+### Deferred (post-bench polish backlog)
+
+- Sub-Epic F T7-T10 visual rendering of wideband bins as background fill behind DDC island with dashed boundary indicators
+- Sub-Epic G T3 8-memory diversity slots
+- Sub-Epic G T5 DiversityRadarWidget (custom QPainter polar sensitivity pattern, ~500 lines)
+- Sub-Epic G T6-T10 full DiversityDialog UI
+- Sub-Epic G T11 direction-finding group (antenna spacing + calibration)
+- Sub-Epic G T12 wire radar widget to slice state
+- Sub-Epic G T14 auto-find-null gradient descent
+- Sub-Epic G T15-T20 DiversityDialog polish
+- Sub-Epic G T21 PS-active-during-MOX diversity pause UX
+- Sub-Epic E AntennaPickerMenu integration into VfoWidget context menu
+- Sub-Epic E AntennaSwitchToast consumer wire (pending RadioModel::antennaAutoSwitched signal)
+- Sub-Epic E TxBoundConfirmDialog consumer wire-up
+- Sub-Epic E HardwareDdcRoutingPage per-DDC override table
+
+### Bench verification
+
+- Targeted ctest sweep: 16/16 green throughout the epic (all Phase 3F unit tests + cross-epic regression checks)
+- Hardware bench (G2, HL2, G2E if available, HermesII if available): pending per docs/architecture/2026-05-26-phase3f-verification/README.md (47-row matrix x 4 SKUs)
+
+### Fixed
+
+- Source-first audit caught a wire-format bug in Sub-Epic F Task 1 plan: the wideband enable mask belongs in CmdGeneral byte 23 (Thetis network.c:879), not CmdRx byte 23 (which is rx[1].rx_adc per Thetis network.c:1118). Following the plan as written would have silently broken RX1 ADC routing the moment any user enabled an alternate ADC. Caught + fixed before implementation landed.
 
 ## [0.5.2] - 2026-05-24
 
