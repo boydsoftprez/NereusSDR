@@ -701,6 +701,8 @@ set(GUI_SOURCES
     src/gui/widgets/TxBoundConfirmDialog.h
     src/gui/NetworkDiagnosticsDialog.cpp
     src/gui/NetworkDiagnosticsDialog.h
+    src/gui/DiversityDialog.cpp
+    src/gui/DiversityDialog.h
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
     src/gui/FreeDVReporterDialog.cpp

@@ -301,6 +301,8 @@ warren@wpratt.com
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
 #include "FreeDVReporterDialog.h"
+// Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
+#include "DiversityDialog.h"
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
 #include "models/FreeDVStationModel.h"
@@ -4132,6 +4134,27 @@ void MainWindow::buildMenuBar()
             "Open the PureSignal pre-distortion control dialog."));
         connect(m_actPureSignal, &QAction::triggered,
                 this, &MainWindow::openPureSignalDialog);
+    }
+
+    // Phase 3F Sub-Epic G T4: Diversity dialog (bench minimum).
+    // Lazy-singleton: one dialog instance per RadioModel, kept alive
+    // across close so the dialog's own state survives a re-open
+    // (SliceModel persistence handles real settings round-trip in T2).
+    {
+        QAction* divDlgAct = toolsMenu->addAction(QStringLiteral("&Diversity..."));
+        divDlgAct->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+D")));
+        divDlgAct->setToolTip(QStringLiteral(
+            "Open the Diversity dialog (Slice A: enable, phase, gain)."));
+        connect(divDlgAct, &QAction::triggered, this, [this]() {
+            static DiversityDialog* dlg = nullptr;
+            if (!dlg) {
+                dlg = new DiversityDialog(m_radioModel, this);
+                dlg->setAttribute(Qt::WA_DeleteOnClose, false);
+            }
+            dlg->show();
+            dlg->raise();
+            dlg->activateWindow();
+        });
     }
 
     toolsMenu->addSeparator();
