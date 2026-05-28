@@ -982,6 +982,50 @@ Discovered during implementation:
 
 Sub-Epic G (Full Diversity port: DDC0+DDC1 sync pair, SetEXTDIVRun/Nr/Output/Rotate, AlexController gating) can now begin.
 
+## Sub-Epic G implementation note (landed 2026-05-27, bench-minimum)
+
+Implemented per `docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md`. **4 of 25 plan tasks landed** (T1 + T2 + T4-simplified + T13). The rest are explicitly deferred to post-bench polish per the user's "keep going until I can bench test" directive.
+
+What shipped (bench-minimum Diversity):
+- **T1 RxChannel WDSP External Diversity wrappers** (`setExtDivRun` / `setExtDivNr` / `setExtDivOutput` / `setExtDivRotate`). Ported from Thetis dsp.cs P/Invoke declarations. libwdsp confirmed exporting 5 EXTDIV symbols.
+- **T2 SliceModel per-band diversity persistence** for 3 properties: `diversityPhaseDeg`, `diversityGainDb`, `diversityFineNullEnabled`. Per-band per-slice per-MAC under hardware/<mac>/slice<idx>/<band>/Diversity<Field>.
+- **T4 (simplified) DiversityDialog skeleton** under Tools > Diversity... (Ctrl+Shift+D). Bench-minimum operator surface: Enable checkbox + Phase slider (0-360 deg, 0.1-deg precision) + Gain slider (-20 to +20 dB, 0.1-dB precision) + Status label.
+- **T13 SliceModel-to-RxChannel wire** routes diversityEnabledChanged / diversityPhaseDegChanged / diversityGainDbChanged on Slice A through to WDSP wrappers. Computes I/Q rotation: input 0 identity, input 1 rotated by phase + gain.
+
+What's explicitly DEFERRED to post-bench polish:
+- **T3 8-memory diversity slots** (operator quick-recall of saved phase/gain pairs)
+- **T5 DiversityRadarWidget** (custom QPainter polar sensitivity pattern, ~500 lines)
+- **T6-T10 full DiversityDialog UI** (radar embedded, memory buttons, fine-null toggle, cross-fire mode, lock angle)
+- **T11 Direction finding group** (antenna spacing input + calibration + derived direction label)
+- **T12 wire DiversityRadarWidget to SliceModel state**
+- **T14 auto-find-null** (simple gradient descent over phase/gain to minimize signal strength)
+- **T15-T20 polish** (status badges, error handling, restore-defaults button, etc.)
+- **T21 PS-active-during-MOX diversity pause UX** (PS HOLD overlay when PS engaged)
+- **T22-T25 final integration tests + bench verification matrix**
+
+Architectural constraints discovered:
+- **WDSP pdiv[] is a 2-slot array (MAX_EXT_DIVS=2) keyed by an External Diversity id, NOT the RXA channel id.** The bench-minimum wire routes ONLY Slice A through DivId 0. A proper DivId allocator is required before Slice B / per-pan diversity can engage independent pdiv[] slots without colliding. The T13 commit body flags this for follow-up.
+- **WDSP `pdiv[id]` derefs unallocated state for id >= 2 (crashes).** Bench-minimum wrappers route through m_channelId; the compile-only test (tst_rx_channel_ext_div_wrappers) uses method-pointer-take to verify signature without invoking, which sidesteps the crash. Real DSP behavior requires a live WDSP session.
+- **libwdsp on macOS/Linux confirmed exporting SetEXTDIVBuffsize / SetEXTDIVNr / SetEXTDIVOutput / SetEXTDIVRotate / SetEXTDIVRun.** No platform-specific gating needed.
+- **SliceModel persistence is implicit per-MAC via AppSettings singleton.** No `setMacAddress` API on SliceModel; per-MAC scope flows from the connection-state plumbing established in earlier sub-epics.
+
+**Sub-Epic H (bench verification + polish) is next.** Bench session priorities:
+1. Verify diversity engage/disengage on G2 (2-ADC SKU).
+2. Verify wideband stream activates on operator zoom-out past DDC bandwidth + Alex BPF auto-bypasses.
+3. Verify multi-slice add via +PAN dropdown (Slice B on G2; HL2 stays single-slice).
+4. Verify TX handoff via VfoWidget badge click drops MOX before flipping.
+5. Verify per-pan layout templates (1, 2v, 2h, 12h, 2x2) render correctly.
+6. Verify CH 0 / CH 1 BPF state badges reflect AlexController state on band changes.
+
+Post-bench follow-up backlog (sized for ~3-5 working days):
+- Sub-Epic G T3 + T5 + T6-T10 + T11 + T12 + T14 + T15-T20 + T21 (full Diversity UI)
+- Sub-Epic F T7-T10 visual polish (wideband bins rendered as background fill behind DDC island)
+- Sub-Epic E T5 (AntennaPickerMenu integration into VfoWidget)
+- Sub-Epic E T6 (RadioModel::antennaAutoSwitched signal + AntennaSwitchToast consumer wire)
+- Sub-Epic E T7 (TxBoundConfirmDialog consumer wire-up)
+- Sub-Epic E HardwareDdcRoutingPage table (per-DDC override controls)
+- Sub-Epic A pre-existing latent unused-include warnings (DdcAssignment.h in RadioModel.h, SpotTableModel.h in MainWindow.cpp)
+
 ---
 
 ## End
