@@ -46,8 +46,10 @@
 
 class QButtonGroup;
 class QCheckBox;
+class QResizeEvent;
 class QSlider;
 class QLabel;
+class QWidget;
 
 namespace NereusSDR {
 
@@ -79,11 +81,18 @@ public:
     explicit DiversityDialog(RadioModel* radioModel, QWidget* parent = nullptr);
     ~DiversityDialog() override;
 
+protected:
+    // Phase 3F Sub-Epic G Task 21: keep the PS HOLD overlay sized to
+    // the dialog client area on resize.
+    void resizeEvent(QResizeEvent* event) override;
+
 private slots:
     void onEnableToggled(bool on);
     void onPhaseChanged(int sliderValue);
     void onGainChanged(int sliderValue);
     void refreshFromSlice();
+    // Phase 3F Sub-Epic G Task 21: PS HOLD overlay state.
+    void refreshPauseState();
 
 private:
     SliceModel* sliceA() const;  // m_radioModel->slices().value(0), nullptr-safe
@@ -116,6 +125,11 @@ private:
     // Phase 3F Sub-Epic G Task 3: 8 per-band memory slots.
     QButtonGroup*              m_memButtons{nullptr};
     std::array<MemorySlot, 8>  m_memorySlots{};
+    // Phase 3F Sub-Epic G Task 21: translucent PS HOLD overlay shown
+    // when MOX is active and Slice A diversity is engaged.  Real
+    // PsccPump pause integration lands when the PS-during-MOX state
+    // machine is fleshed out post-bench.
+    QWidget*                   m_pauseOverlay{nullptr};
 };
 
 } // namespace NereusSDR

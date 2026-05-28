@@ -30,11 +30,18 @@
 //                per-band AppSettings persistence
 //                (Slice0/Band<key>/DiversityMemory<N>/{Phase,Gain,
 //                Populated}).
+//   2026-05-27 — Sub-Epic G Task 21: PS HOLD overlay; translucent
+//                "PS HOLD - PureSignal calibrating" label across the
+//                client area when MOX + Slice A diversity + PS are
+//                all engaged.  Operator visual cue only -- actual
+//                DSP pause integration with PsccPump deferred.
 // =================================================================
 
 #include "gui/DiversityDialog.h"
 #include "StyleConstants.h"
 #include "core/AppSettings.h"
+#include "core/MoxController.h"
+#include "core/PureSignal.h"
 #include "gui/widgets/DiversityRadarWidget.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
@@ -46,6 +53,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -174,6 +182,41 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
 
     // Hydrate memory slots from AppSettings for the current band.
     loadMemoryFromSettings();
+
+    // Phase 3F Sub-Epic G Task 21: PS HOLD overlay.  Hidden until MOX
+    // engages while Slice A diversity is on AND PureSignal is enabled.
+    // The overlay is a translucent child widget sized to the dialog
+    // client area; it intercepts mouse events so phase/gain edits go
+    // through.
+    m_pauseOverlay = new QWidget(this);
+    m_pauseOverlay->setStyleSheet(QStringLiteral(
+        "background: rgba(20, 30, 45, 220);"
+        "color: #ffb800; font-size: 18px; font-weight: bold;"));
+    auto* overlayLayout = new QVBoxLayout(m_pauseOverlay);
+    overlayLayout->setContentsMargins(0, 0, 0, 0);
+    auto* overlayLbl = new QLabel(
+        QStringLiteral("PS HOLD\nPureSignal calibrating"), m_pauseOverlay);
+    overlayLbl->setAlignment(Qt::AlignCenter);
+    overlayLbl->setStyleSheet(QStringLiteral("color: #ffb800;"));
+    overlayLayout->addWidget(overlayLbl);
+    m_pauseOverlay->setGeometry(rect());
+    m_pauseOverlay->hide();
+
+    if (m_radioModel) {
+        if (auto* mox = m_radioModel->moxController()) {
+            connect(mox, &MoxController::moxChanged, this,
+                    [this](int, bool, bool) { refreshPauseState(); });
+        }
+        if (auto* ps = m_radioModel->pureSignal()) {
+            connect(ps, &PureSignal::enabledChanged, this,
+                    [this](bool) { refreshPauseState(); });
+        }
+    }
+    if (auto* s = sliceA()) {
+        connect(s, &SliceModel::diversityEnabledChanged, this,
+                [this](bool) { refreshPauseState(); });
+    }
+    refreshPauseState();
 }
 
 DiversityDialog::~DiversityDialog() = default;
@@ -322,6 +365,41 @@ void DiversityDialog::loadMemoryFromSettings()
         }
     }
     refreshMemoryLabels();
+}
+
+// ---------- Phase 3F Sub-Epic G Task 21: PS HOLD overlay ----------
+
+void DiversityDialog::resizeEvent(QResizeEvent* event)
+{
+    QDialog::resizeEvent(event);
+    if (m_pauseOverlay) {
+        m_pauseOverlay->setGeometry(rect());
+    }
+}
+
+void DiversityDialog::refreshPauseState()
+{
+    if (!m_pauseOverlay) { return; }
+    const auto* slice = sliceA();
+    const bool diversityOn = slice && slice->diversityEnabled();
+    bool moxOn = false;
+    bool psOn  = false;
+    if (m_radioModel) {
+        if (auto* mox = m_radioModel->moxController()) {
+            moxOn = mox->isMox();
+        }
+        if (auto* ps = m_radioModel->pureSignal()) {
+            psOn = ps->isEnabled();
+        }
+    }
+    const bool shouldPause = moxOn && diversityOn && psOn;
+    if (m_pauseOverlay->isVisible() != shouldPause) {
+        m_pauseOverlay->setVisible(shouldPause);
+        if (shouldPause) {
+            m_pauseOverlay->setGeometry(rect());
+            m_pauseOverlay->raise();
+        }
+    }
 }
 
 } // namespace NereusSDR
