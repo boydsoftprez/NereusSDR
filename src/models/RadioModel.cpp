@@ -2971,6 +2971,22 @@ void RadioModel::addSliceOnPan(const QString& panId)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase 3F closeout — Sub-Epic E Task 6 consumer-side helper.
+// ─────────────────────────────────────────────────────────────────────────
+//
+// emitAntennaAutoSwitched provides a public emit shim for the
+// antennaAutoSwitched signal. Used today by the Tools menu test entry that
+// visually verifies the AntennaSwitchToast surface, and reserved for future
+// AlexController conflict-detection logic to call when it auto-rewrites a
+// slice's antenna assignment.
+void RadioModel::emitAntennaAutoSwitched(int sliceIndex,
+                                          const QString& oldAntenna,
+                                          const QString& newAntenna)
+{
+    emit antennaAutoSwitched(sliceIndex, oldAntenna, newAntenna);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Phase 3R Task I5: RadeChannel signal-graph wiring.
 // ─────────────────────────────────────────────────────────────────────────
 //

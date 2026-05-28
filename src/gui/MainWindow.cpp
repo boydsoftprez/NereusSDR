@@ -257,6 +257,7 @@ warren@wpratt.com
 #include "models/SliceModel.h"
 #include "widgets/VfoWidget.h"
 #include "widgets/RxDashboard.h"
+#include "widgets/AntennaSwitchToast.h"
 #include "widgets/FilterPolicyDialog.h"
 #include "core/RxChannel.h"
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
@@ -2153,6 +2154,32 @@ void MainWindow::buildUI()
         if (QStatusBar* sb = statusBar()) {
             sb->showMessage(reason, 4000);
         }
+    });
+
+    // Phase 3F closeout — Sub-Epic E Task 6 consumer wire-up.
+    // antennaAutoSwitched(sliceIdx, oldAnt, newAnt) is emitted when an
+    // AlexController conflict-policy re-route moves a slice off its old
+    // antenna onto a new one. MainWindow constructs an AntennaSwitchToast
+    // anchored to the MainWindow bottom-right corner, 8 s auto-dismiss,
+    // UNDO button logs (real undo wires when the conflict-detection state
+    // machine lands).
+    connect(m_radioModel, &RadioModel::antennaAutoSwitched, this,
+            [this](int sliceIdx, const QString& oldAnt, const QString& newAnt) {
+        const QString msg = QStringLiteral("Slice %1 moved from %2 to %3.")
+                                .arg(QChar(QLatin1Char('A' + sliceIdx)),
+                                     oldAnt, newAnt);
+        auto* toast = new AntennaSwitchToast(msg, this);
+        toast->setAttribute(Qt::WA_DeleteOnClose);
+        const QRect mwGeom = frameGeometry();
+        toast->move(mwGeom.right() - toast->width() - 20,
+                     mwGeom.bottom() - toast->height() - 50);
+        toast->show();
+        connect(toast, &AntennaSwitchToast::undoRequested, this,
+                [sliceIdx, oldAnt]() {
+            qCInfo(lcContainer) << "AntennaSwitchToast: undo requested for slice"
+                                 << sliceIdx << "(would revert to" << oldAnt
+                                 << ")  -  real undo wires when conflict-detection lands";
+        });
     });
 
     // Phase 3F Sub-Epic C Task 10: TxSliceArbiter state → UI updates.
@@ -4377,6 +4404,27 @@ void MainWindow::buildMenuBar()
     }
     toolsMenu->addAction(QStringLiteral("&Support Bundle..."), this,
                          &MainWindow::showSupportDialog);
+
+    // Phase 3F closeout — operator-visible test entries for Sub-Epic E
+    // consumer surfaces. Lets the user verify the toast and TX-bound
+    // re-route dialog render correctly without needing to trigger a real
+    // antenna conflict. Removed when full conflict-detection state machine
+    // lands and the test surfaces become unnecessary.
+    toolsMenu->addSeparator();
+    {
+        QAction* testToastAct = toolsMenu->addAction(
+            QStringLiteral("Test antenna switch &toast"));
+        testToastAct->setToolTip(
+            QStringLiteral("Phase 3F closeout: fire the AntennaSwitchToast surface "
+                            "for visual verification. Real auto-switch firing wires "
+                            "when the conflict-detection state machine ships."));
+        connect(testToastAct, &QAction::triggered, this, [this]() {
+            if (m_radioModel) {
+                m_radioModel->emitAntennaAutoSwitched(
+                    0, QStringLiteral("ANT1"), QStringLiteral("ANT2"));
+            }
+        });
+    }
 
     // =========================================================================
     // HELP

@@ -340,6 +340,14 @@ public:
     /// (+RX button handler).
     Q_INVOKABLE void addSliceOnPan(const QString& panId);
 
+    /// Phase 3F closeout — public helper for invoking the antennaAutoSwitched
+    /// signal from operator surfaces (Tools menu "Test antenna switch toast"
+    /// entry) and from future conflict-detection logic in AlexController.
+    /// Plain helper avoids the Qt private-signal access dance for callers.
+    Q_INVOKABLE void emitAntennaAutoSwitched(int sliceIndex,
+                                              const QString& oldAntenna,
+                                              const QString& newAntenna);
+
     // Band-button click handler. Routes both SpectrumOverlayPanel::bandSelected
     // and ContainerWidget::bandClicked through one code path. On first
     // visit to `band`, applies BandDefaults::seedFor(band) and persists;
@@ -1580,6 +1588,14 @@ signals:
     // request because the maxSlices() cap has been reached.  Status-bar /
     // toast subscribers wire to this signal in Sub-Epic C Tasks 8-9.
     void sliceAddRejected(QString reason);
+    // Phase 3F closeout — Sub-Epic E Task 6 consumer wire. Emitted when
+    // AlexController auto-switches an antenna due to a conflict-policy
+    // re-route (Sub-Epic E Tasks 11-13 will fill in the real detection;
+    // for now the signal surface exists so MainWindow can wire
+    // AntennaSwitchToast). Carries the slice that moved plus the old and
+    // new antenna names. UNDO action is consumer-defined.
+    void antennaAutoSwitched(int sliceIndex, QString oldAntenna,
+                              QString newAntenna);
     void activeSliceChanged(int index);
     // Emitted once at the end of loadSliceState() after the slice has been
     // restored from AppSettings. Mirrors Thetis console.cs:27204 [v2.10.3.13]
