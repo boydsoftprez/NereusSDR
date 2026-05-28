@@ -1299,6 +1299,33 @@ void PSRestoreCorr(int channel, char* filename);
 void SetPSRxIdx(int id, int idx);
 void SetPSTxIdx(int id, int idx);
 
+// =====================================================================
+// External Diversity (WDSP div.c, Warren Pratt NR0V).
+// From Thetis Project Files/Source/Console/dsp.cs:609-619 [v2.10.3.15]
+// P/Invoke declarations + wdsp/src/div.c:138-187 [v2.10.3.15] definitions.
+//
+// Keyed off pdiv[id] (MAX_EXT_DIVS=2) — create_divEXT() must run first.
+// id here is the External Diversity id, NOT the RXA channel id used
+// elsewhere in this header.  Caller is responsible for the lifetime.
+// =====================================================================
+
+// 0 - does nothing; 1 - operates
+// From Thetis wdsp/div.c:138 [v2.10.3.15].
+void SetEXTDIVRun(int id, int run);
+
+// Number of receivers being used for diversity.
+// From Thetis wdsp/div.c:158 [v2.10.3.15].
+void SetEXTDIVNr(int id, int nr);
+
+// Number of which receiver to output. If output == nr, mixing occurs.
+// From Thetis wdsp/div.c:169 [v2.10.3.15].
+void SetEXTDIVOutput(int id, int output);
+
+// I and Q "rotate" multipliers for each receiver. Can be set to
+// 1.0 / 0.0 for the "reference receiver".
+// From Thetis wdsp/div.c:180 [v2.10.3.15].
+void SetEXTDIVRotate(int id, int nr, double* Irotate, double* Qrotate);
+
 } // extern "C"
 
 #endif // HAVE_WDSP

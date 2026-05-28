@@ -366,6 +366,31 @@ public:
     void setEmnrAeRun(bool run);
     void setEmnrPosition(int position);
 
+    // --- External Diversity (Phase 3F Sub-Epic G) ---
+    //
+    // WDSP External Diversity wrappers. Ported from Thetis
+    // Project Files/Source/Console/dsp.cs:609-619 [v2.10.3.15] P/Invoke
+    // declarations against wdsp/src/div.c [v2.10.3.15].
+    //
+    // External Diversity is keyed off a separate pdiv[] array inside WDSP
+    // (MAX_EXT_DIVS=2 slots; create_divEXT() must run first), independent
+    // of the RXA channel id used by the rest of this class. Callers
+    // (RadioModel slice-property signal wiring in Sub-Epic G Task 13)
+    // pass the External Diversity id, not m_channelId — see the .cpp
+    // implementation. The wrappers exist here for API symmetry and so
+    // RxChannel remains the single C++ surface over WDSP for an RX
+    // pipeline.
+    //
+    // Engage when Slice A's diversityEnabled flips on; persistence
+    // (phase / gain / fine-null) lands on SliceModel in Task 2.
+    //
+    // outputMode: 0 = combined, 1 = primary, 2 = secondary (div.c:166-167).
+    void setExtDivRun(bool run);
+    void setExtDivNr(int numInputs);
+    void setExtDivOutput(int outputMode);
+    void setExtDivRotate(int numInputs, const double* iRotate,
+                         const double* qRotate);
+
     // ----- NR tuning structs (Sub-epic C-1) -----
     // From Thetis Setup → DSP → NR/ANF tab [v2.10.3.13] — one struct per
     // WDSP NR stage.  Defaults match Thetis radio.cs / RXA.c byte-for-byte.

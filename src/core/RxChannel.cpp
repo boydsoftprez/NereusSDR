@@ -759,6 +759,73 @@ void RxChannel::setEmnrPosition(int position)
 }
 
 // ---------------------------------------------------------------------------
+// External Diversity (Phase 3F Sub-Epic G)
+//
+// Wrappers over WDSP's external diversity API (div.c).  External Diversity
+// is keyed off a separate pdiv[id] array inside WDSP (MAX_EXT_DIVS=2;
+// create_divEXT() must run first) which is independent of the RXA channel
+// id used by every other method on this class.  Callers (RadioModel slice-
+// property signal wiring in Sub-Epic G Task 13) pass the External
+// Diversity id, not m_channelId.
+//
+// Ported from Thetis Project Files/Source/Console/dsp.cs:609-619
+// [v2.10.3.15] P/Invoke declarations and wdsp/src/div.c:138-187
+// [v2.10.3.15] definitions.
+// ---------------------------------------------------------------------------
+
+void RxChannel::setExtDivRun(bool run)
+{
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/div.c:138 [v2.10.3.15]
+    //   0 - does nothing; 1 - operates
+    SetEXTDIVRun(m_channelId, run ? 1 : 0);
+#else
+    Q_UNUSED(run);
+#endif
+}
+
+void RxChannel::setExtDivNr(int numInputs)
+{
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/div.c:158 [v2.10.3.15]
+    //   number of receivers being used for diversity
+    SetEXTDIVNr(m_channelId, numInputs);
+#else
+    Q_UNUSED(numInputs);
+#endif
+}
+
+void RxChannel::setExtDivOutput(int outputMode)
+{
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/div.c:169 [v2.10.3.15]
+    //   number of which receiver to output; if output == nr, mixing occurs
+    // outputMode: 0 = combined, 1 = primary, 2 = secondary.
+    SetEXTDIVOutput(m_channelId, outputMode);
+#else
+    Q_UNUSED(outputMode);
+#endif
+}
+
+void RxChannel::setExtDivRotate(int numInputs, const double* iRotate,
+                                const double* qRotate)
+{
+#ifdef HAVE_WDSP
+    // From Thetis wdsp/div.c:180 [v2.10.3.15]
+    //   I and Q "rotate" multipliers for each receiver
+    // WDSP signature takes non-const double*; the call is read-only on
+    // the buffers (memcpy source) per div.c:184-185, so const_cast is safe.
+    SetEXTDIVRotate(m_channelId, numInputs,
+                    const_cast<double*>(iRotate),
+                    const_cast<double*>(qRotate));
+#else
+    Q_UNUSED(numInputs);
+    Q_UNUSED(iRotate);
+    Q_UNUSED(qRotate);
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // NR1 — ANR tuning (Sub-epic C-1)
 // Porting from Thetis setup.cs:8539-8566, radio.cs:673-699 [v2.10.3.13]
 // Original C# logic:
