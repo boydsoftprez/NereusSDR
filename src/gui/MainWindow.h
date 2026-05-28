@@ -555,6 +555,16 @@ private:
     // VFO flag widget (Phase 3E)
     class VfoWidget* m_vfoWidget{nullptr};
 
+    // Phase 3F hotfix 2026-05-27: per-slice VfoWidget tracking. Slice 0
+    // (Slice A) maps to the existing m_vfoWidget for backward compat;
+    // additional slices created via +PAN / Ctrl+R get their own VfoWidget
+    // via SpectrumWidget::addVfoWidget(N) wired in the sliceAdded handler.
+    // Without this hash, multi-slice was invisible: the slice landed in
+    // the model and the codec recomputed the DDC assignment, but no flag
+    // appeared for the new slice and operators had no way to interact
+    // with it.
+    QHash<int, class VfoWidget*> m_vfoWidgetsBySlice;
+
     // Applets (Phase 3-UI)
     class AmpApplet*   m_ampApplet{nullptr};
     bool               m_ampAppletWired{false};  // guards one-time AmpApplet signal connects
