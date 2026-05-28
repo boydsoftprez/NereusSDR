@@ -24,10 +24,13 @@
 //                bench-minimum). NereusSDR-original code. J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-05-27 — Sub-Epic G Task 12: embed DiversityRadarWidget for
+//                polar lobe display; dialog re-titled "Diversity".
 // =================================================================
 
 #include "gui/DiversityDialog.h"
 #include "StyleConstants.h"
+#include "gui/widgets/DiversityRadarWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -40,27 +43,21 @@
 #include <QSlider>
 #include <QVBoxLayout>
 
+#include <cmath>
+
 namespace NereusSDR {
 
 DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
     : QDialog(parent)
     , m_radioModel(radioModel)
 {
-    setWindowTitle(QStringLiteral("Diversity (bench minimum)"));
+    setWindowTitle(QStringLiteral("Diversity"));
     setStyleSheet(QStringLiteral("background: %1; color: %2;")
                       .arg(Style::kPanelBg, Style::kTextPrimary));
-    setFixedWidth(440);
+    setFixedWidth(460);
 
     auto* main = new QVBoxLayout(this);
     main->setContentsMargins(14, 14, 14, 14);
-
-    auto* hint = new QLabel(QStringLiteral(
-        "Bench-minimum diversity surface. Full Thetis Diversity UI\n"
-        "(polar radar, 8-memory slots, direction finding, auto-null,\n"
-        "PS-pause UX) lands as polish after bench feedback."), this);
-    hint->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;")
-                            .arg(Style::kTextTertiary));
-    main->addWidget(hint);
 
     m_enableBox = new QCheckBox(
         QStringLiteral("Enable diversity on Slice A (DDC0 + DDC1 sync pair)"),
@@ -95,6 +92,27 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
     gainLayout->addWidget(m_gainLabel);
     main->addWidget(gainGroup);
 
+    // Phase 3F Sub-Epic G Task 12: polar sensitivity radar.
+    auto* radarGroup = new QGroupBox(QStringLiteral("Sensitivity pattern"), this);
+    auto* radarLayout = new QVBoxLayout(radarGroup);
+    m_radar = new DiversityRadarWidget(radarGroup);
+    m_radar->setMinimumSize(240, 240);
+    radarLayout->addWidget(m_radar);
+    main->addWidget(radarGroup);
+
+    // Mouse drag on the radar emits phaseAdjusted(radians); convert to
+    // degrees and write back to SliceModel.  refreshFromSlice() then
+    // echoes the value into the slider (signal-blocked) and the lobe
+    // re-renders.
+    connect(m_radar, &DiversityRadarWidget::phaseAdjusted,
+            this, [this](double rad) {
+                if (auto* s = sliceA()) {
+                    const double deg = rad * 180.0 / M_PI;
+                    const double normDeg = std::fmod(deg + 360.0, 360.0);
+                    s->setDiversityPhaseDeg(normDeg);
+                }
+            });
+
     m_statusLabel = new QLabel(QStringLiteral("Status: idle"), this);
     m_statusLabel->setStyleSheet(QStringLiteral("color: %1;")
                                      .arg(Style::kTextSecondary));
@@ -119,6 +137,8 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
         connect(s, &SliceModel::diversityPhaseDegChanged,
                 this, &DiversityDialog::refreshFromSlice);
         connect(s, &SliceModel::diversityGainDbChanged,
+                this, &DiversityDialog::refreshFromSlice);
+        connect(s, &SliceModel::frequencyChanged,
                 this, &DiversityDialog::refreshFromSlice);
     }
 }
@@ -175,6 +195,16 @@ void DiversityDialog::refreshFromSlice()
     m_statusLabel->setText(s->diversityEnabled()
         ? QStringLiteral("Status: engaged (DDC0+DDC1 sync; BPF auto-bypass)")
         : QStringLiteral("Status: idle"));
+
+    // Phase 3F Sub-Epic G Task 12: push slice phase/gain/VFO into radar
+    // for live lobe redraw.  Gain is stored in dB on the slice; the
+    // radar widget takes a linear ratio.
+    if (m_radar) {
+        m_radar->setPhase(s->diversityPhaseDeg() * M_PI / 180.0);
+        const double gainLin = std::pow(10.0, s->diversityGainDb() / 20.0);
+        m_radar->setGain(gainLin);
+        m_radar->setVfoFreqMhz(s->frequency() / 1e6);
+    }
 }
 
 } // namespace NereusSDR

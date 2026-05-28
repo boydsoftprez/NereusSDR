@@ -32,6 +32,11 @@
 //                surface needed to engage diversity at the bench.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                via Anthropic Claude Code.
+//   2026-05-27 — Sub-Epic G Tasks 12 / 3 / 21: embed
+//                DiversityRadarWidget (polar lobe), 8-memory slot row
+//                M1-M8 with per-band AppSettings persistence, and the
+//                MOX-active PS-HOLD overlay.  Still NereusSDR-original
+//                in structure (Qt6 dialog vs C# WinForms).
 // =================================================================
 
 #include <QDialog>
@@ -42,6 +47,7 @@ class QLabel;
 
 namespace NereusSDR {
 
+class DiversityRadarWidget;
 class RadioModel;
 class SliceModel;
 
@@ -80,12 +86,14 @@ private:
 
     RadioModel* m_radioModel{nullptr};
 
-    QCheckBox*  m_enableBox{nullptr};
-    QSlider*    m_phaseSlider{nullptr};
-    QSlider*    m_gainSlider{nullptr};
-    QLabel*     m_phaseLabel{nullptr};
-    QLabel*     m_gainLabel{nullptr};
-    QLabel*     m_statusLabel{nullptr};
+    QCheckBox*            m_enableBox{nullptr};
+    QSlider*              m_phaseSlider{nullptr};
+    QSlider*              m_gainSlider{nullptr};
+    QLabel*               m_phaseLabel{nullptr};
+    QLabel*               m_gainLabel{nullptr};
+    QLabel*               m_statusLabel{nullptr};
+    // Phase 3F Sub-Epic G Task 12: polar sensitivity radar embed.
+    DiversityRadarWidget* m_radar{nullptr};
 };
 
 } // namespace NereusSDR
