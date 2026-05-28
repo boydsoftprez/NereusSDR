@@ -32,15 +32,19 @@
 //                surface needed to engage diversity at the bench.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                via Anthropic Claude Code.
-//   2026-05-27 — Sub-Epic G Tasks 12 / 3 / 21: embed
-//                DiversityRadarWidget (polar lobe), 8-memory slot row
-//                M1-M8 with per-band AppSettings persistence, and the
-//                MOX-active PS-HOLD overlay.  Still NereusSDR-original
-//                in structure (Qt6 dialog vs C# WinForms).
+//   2026-05-27 — Sub-Epic G Task 12: embed DiversityRadarWidget
+//                (polar lobe).  Sub-Epic G Task 3: 8 per-band memory
+//                slot row M1-M8 with AppSettings persistence.
+//                Sub-Epic G Task 21: MOX-active PS-HOLD overlay.
+//                Still NereusSDR-original in structure (Qt6 dialog
+//                vs C# WinForms).
 // =================================================================
 
 #include <QDialog>
 
+#include <array>
+
+class QButtonGroup;
 class QCheckBox;
 class QSlider;
 class QLabel;
@@ -84,6 +88,21 @@ private slots:
 private:
     SliceModel* sliceA() const;  // m_radioModel->slices().value(0), nullptr-safe
 
+    // Phase 3F Sub-Epic G Task 3: 8 per-band memory slots.
+    // Left-click recalls slot N into Slice A; right-click stores
+    // Slice A's current phase/gain into slot N.  Slots persist per-
+    // band via AppSettings under
+    //   Slice0/Band<key>/DiversityMemory<N>/{Phase, Gain, Populated}.
+    struct MemorySlot {
+        double phaseDeg{0.0};
+        double gainDb{0.0};
+        bool   populated{false};
+    };
+    void storeMemory(int slot);
+    void recallMemory(int slot);
+    void refreshMemoryLabels();
+    void loadMemoryFromSettings();
+
     RadioModel* m_radioModel{nullptr};
 
     QCheckBox*            m_enableBox{nullptr};
@@ -94,6 +113,9 @@ private:
     QLabel*               m_statusLabel{nullptr};
     // Phase 3F Sub-Epic G Task 12: polar sensitivity radar embed.
     DiversityRadarWidget* m_radar{nullptr};
+    // Phase 3F Sub-Epic G Task 3: 8 per-band memory slots.
+    QButtonGroup*              m_memButtons{nullptr};
+    std::array<MemorySlot, 8>  m_memorySlots{};
 };
 
 } // namespace NereusSDR

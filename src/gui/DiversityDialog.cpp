@@ -26,14 +26,21 @@
 //                Anthropic Claude Code.
 //   2026-05-27 — Sub-Epic G Task 12: embed DiversityRadarWidget for
 //                polar lobe display; dialog re-titled "Diversity".
+//   2026-05-27 — Sub-Epic G Task 3: 8-memory slots M1-M8 with
+//                per-band AppSettings persistence
+//                (Slice0/Band<key>/DiversityMemory<N>/{Phase,Gain,
+//                Populated}).
 // =================================================================
 
 #include "gui/DiversityDialog.h"
 #include "StyleConstants.h"
+#include "core/AppSettings.h"
 #include "gui/widgets/DiversityRadarWidget.h"
+#include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -113,6 +120,25 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
                 }
             });
 
+    // Phase 3F Sub-Epic G Task 3: 8-memory slot row.
+    auto* memGroup = new QGroupBox(
+        QStringLiteral("Memory (left-click recall, right-click store)"), this);
+    auto* memLayout = new QHBoxLayout(memGroup);
+    m_memButtons = new QButtonGroup(this);
+    for (int i = 0; i < 8; ++i) {
+        auto* btn = new QPushButton(QStringLiteral("M%1").arg(i + 1), memGroup);
+        btn->setFixedSize(44, 28);
+        btn->setStyleSheet(Style::buttonBaseStyle());
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        m_memButtons->addButton(btn, i);
+        connect(btn, &QPushButton::clicked, this,
+                [this, i]() { recallMemory(i); });
+        connect(btn, &QPushButton::customContextMenuRequested, this,
+                [this, i](const QPoint&) { storeMemory(i); });
+        memLayout->addWidget(btn);
+    }
+    main->addWidget(memGroup);
+
     m_statusLabel = new QLabel(QStringLiteral("Status: idle"), this);
     m_statusLabel->setStyleSheet(QStringLiteral("color: %1;")
                                      .arg(Style::kTextSecondary));
@@ -140,7 +166,14 @@ DiversityDialog::DiversityDialog(RadioModel* radioModel, QWidget* parent)
                 this, &DiversityDialog::refreshFromSlice);
         connect(s, &SliceModel::frequencyChanged,
                 this, &DiversityDialog::refreshFromSlice);
+        // When the operator tunes across a band boundary, swap the
+        // memory bank to the new band.
+        connect(s, &SliceModel::bandChanged, this,
+                [this](Band) { loadMemoryFromSettings(); });
     }
+
+    // Hydrate memory slots from AppSettings for the current band.
+    loadMemoryFromSettings();
 }
 
 DiversityDialog::~DiversityDialog() = default;
@@ -205,6 +238,90 @@ void DiversityDialog::refreshFromSlice()
         m_radar->setGain(gainLin);
         m_radar->setVfoFreqMhz(s->frequency() / 1e6);
     }
+}
+
+// ---------- Phase 3F Sub-Epic G Task 3: memory slot helpers ----------
+
+namespace {
+
+QString memoryPrefix(Band band, int slot)
+{
+    return QStringLiteral("Slice0/Band%1/DiversityMemory%2")
+        .arg(bandKeyName(band))
+        .arg(slot + 1);
+}
+
+} // namespace
+
+void DiversityDialog::storeMemory(int slot)
+{
+    auto* s = sliceA();
+    if (!s || slot < 0 || slot >= 8) { return; }
+    const Band band = bandFromFrequency(s->frequency());
+    m_memorySlots[slot].phaseDeg  = s->diversityPhaseDeg();
+    m_memorySlots[slot].gainDb    = s->diversityGainDb();
+    m_memorySlots[slot].populated = true;
+
+    auto& settings = AppSettings::instance();
+    const QString prefix = memoryPrefix(band, slot);
+    settings.setValue(prefix + QStringLiteral("/Phase"),
+                      s->diversityPhaseDeg());
+    settings.setValue(prefix + QStringLiteral("/Gain"),
+                      s->diversityGainDb());
+    settings.setValue(prefix + QStringLiteral("/Populated"),
+                      QStringLiteral("True"));
+    refreshMemoryLabels();
+}
+
+void DiversityDialog::recallMemory(int slot)
+{
+    if (slot < 0 || slot >= 8) { return; }
+    if (!m_memorySlots[slot].populated) { return; }
+    auto* s = sliceA();
+    if (!s) { return; }
+    s->setDiversityPhaseDeg(m_memorySlots[slot].phaseDeg);
+    s->setDiversityGainDb(m_memorySlots[slot].gainDb);
+}
+
+void DiversityDialog::refreshMemoryLabels()
+{
+    if (!m_memButtons) { return; }
+    for (int i = 0; i < 8; ++i) {
+        auto* btn = m_memButtons->button(i);
+        if (!btn) { continue; }
+        btn->setStyleSheet(m_memorySlots[i].populated
+            ? Style::buttonBaseStyle()
+                  + QStringLiteral("QPushButton { color: #00d4ff; }")
+            : Style::buttonBaseStyle());
+    }
+}
+
+void DiversityDialog::loadMemoryFromSettings()
+{
+    auto* s = sliceA();
+    if (!s) { return; }
+    const Band band = bandFromFrequency(s->frequency());
+    auto& settings = AppSettings::instance();
+    for (int i = 0; i < 8; ++i) {
+        const QString prefix = memoryPrefix(band, i);
+        const bool populated =
+            settings.value(prefix + QStringLiteral("/Populated"),
+                           QStringLiteral("False"))
+                .toString() == QStringLiteral("True");
+        m_memorySlots[i].populated = populated;
+        if (populated) {
+            m_memorySlots[i].phaseDeg =
+                settings.value(prefix + QStringLiteral("/Phase"),
+                               0.0).toDouble();
+            m_memorySlots[i].gainDb =
+                settings.value(prefix + QStringLiteral("/Gain"),
+                               0.0).toDouble();
+        } else {
+            m_memorySlots[i].phaseDeg = 0.0;
+            m_memorySlots[i].gainDb = 0.0;
+        }
+    }
+    refreshMemoryLabels();
 }
 
 } // namespace NereusSDR
