@@ -2987,6 +2987,20 @@ void RadioModel::emitAntennaAutoSwitched(int sliceIndex,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Phase 3F closeout — Sub-Epic E Task 7 consumer-side helper.
+// ─────────────────────────────────────────────────────────────────────────
+//
+// requestTxBoundReRoute fires the txBoundReRouteRequested signal so the
+// MainWindow consumer can open TxBoundConfirmDialog. Today only the Tools
+// menu test entry calls this; real emission belongs in addSliceOnPan once
+// the conflict-detection state machine lands in a follow-up.
+void RadioModel::requestTxBoundReRoute(const QString& proposedAntenna,
+                                        const QString& existingAntenna)
+{
+    emit txBoundReRouteRequested(proposedAntenna, existingAntenna);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Phase 3R Task I5: RadeChannel signal-graph wiring.
 // ─────────────────────────────────────────────────────────────────────────
 //

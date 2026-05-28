@@ -348,6 +348,15 @@ public:
                                               const QString& oldAntenna,
                                               const QString& newAntenna);
 
+    /// Phase 3F closeout — Sub-Epic E Task 7 consumer wire surface. Emits
+    /// txBoundReRouteRequested(proposedAntenna, existingAntenna). Today this
+    /// is invoked only from the Tools menu test entry that exercises the
+    /// TxBoundConfirmDialog surface; real emission from addSliceOnPan when
+    /// the slice-add would force a TX-bound chain re-route lands when the
+    /// conflict-detection state machine ships.
+    Q_INVOKABLE void requestTxBoundReRoute(const QString& proposedAntenna,
+                                            const QString& existingAntenna);
+
     // Band-button click handler. Routes both SpectrumOverlayPanel::bandSelected
     // and ContainerWidget::bandClicked through one code path. On first
     // visit to `band`, applies BandDefaults::seedFor(band) and persists;
@@ -1596,6 +1605,13 @@ signals:
     // new antenna names. UNDO action is consumer-defined.
     void antennaAutoSwitched(int sliceIndex, QString oldAntenna,
                               QString newAntenna);
+    // Phase 3F closeout — Sub-Epic E Task 7 consumer wire. Emitted when
+    // adding a slice would force a TX-bound chain re-route to a different
+    // antenna. Consumer (MainWindow) opens TxBoundConfirmDialog. Real
+    // emission from addSliceOnPan lands when the conflict-policy state
+    // machine ships in a follow-up.
+    void txBoundReRouteRequested(QString proposedAntenna,
+                                  QString existingAntenna);
     void activeSliceChanged(int index);
     // Emitted once at the end of loadSliceState() after the slice has been
     // restored from AppSettings. Mirrors Thetis console.cs:27204 [v2.10.3.13]

@@ -259,6 +259,7 @@ warren@wpratt.com
 #include "widgets/RxDashboard.h"
 #include "widgets/AntennaSwitchToast.h"
 #include "widgets/FilterPolicyDialog.h"
+#include "widgets/TxBoundConfirmDialog.h"
 #include "core/RxChannel.h"
 #include "core/TxChannel.h"  // H.2: setTxChannel wiring
 #include "core/ReceiverManager.h"
@@ -2180,6 +2181,23 @@ void MainWindow::buildUI()
                                  << sliceIdx << "(would revert to" << oldAnt
                                  << ")  -  real undo wires when conflict-detection lands";
         });
+    });
+
+    // Phase 3F closeout — Sub-Epic E Task 7 consumer wire-up.
+    // txBoundReRouteRequested(proposedAntenna, existingAntenna) opens a
+    // modal TxBoundConfirmDialog with three outcomes (Cancelled /
+    // UseExistingAntenna / ConfirmReroute). Today we log the outcome;
+    // outcome routing to AlexController lands when the conflict-detection
+    // state machine in addSliceOnPan ships in a follow-up.
+    connect(m_radioModel, &RadioModel::txBoundReRouteRequested, this,
+            [this](const QString& proposed, const QString& existing) {
+        if (!m_radioModel) { return; }
+        TxBoundConfirmDialog dlg(proposed, existing,
+                                  m_radioModel->slices(), this);
+        dlg.exec();
+        qCInfo(lcContainer) << "TxBoundConfirmDialog: outcome="
+                             << int(dlg.outcome())
+                             << "(0=Cancelled, 1=UseExistingAntenna, 2=ConfirmReroute)";
     });
 
     // Phase 3F Sub-Epic C Task 10: TxSliceArbiter state → UI updates.
@@ -4422,6 +4440,20 @@ void MainWindow::buildMenuBar()
             if (m_radioModel) {
                 m_radioModel->emitAntennaAutoSwitched(
                     0, QStringLiteral("ANT1"), QStringLiteral("ANT2"));
+            }
+        });
+    }
+    {
+        QAction* testReRouteAct = toolsMenu->addAction(
+            QStringLiteral("Test TX-bound &re-route dialog"));
+        testReRouteAct->setToolTip(
+            QStringLiteral("Phase 3F closeout: open the TxBoundConfirmDialog surface "
+                            "for visual verification. Real emission from addSliceOnPan "
+                            "wires when the conflict-detection state machine ships."));
+        connect(testReRouteAct, &QAction::triggered, this, [this]() {
+            if (m_radioModel) {
+                m_radioModel->requestTxBoundReRoute(
+                    QStringLiteral("ANT2"), QStringLiteral("ANT1"));
             }
         });
     }
