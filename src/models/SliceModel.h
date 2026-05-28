@@ -187,6 +187,17 @@ class SliceModel : public QObject {
     // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
     // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.
     Q_PROPERTY(bool diversityEnabled READ diversityEnabled WRITE setDiversityEnabled NOTIFY diversityEnabledChanged)
+    // Phase 3F Sub-Epic G Task 2: per-band diversity controls. Persisted via
+    // saveToSettings/restoreFromSettings under Slice<N>/Band<key>/Diversity*.
+    //   phaseDeg          0..360 (default 0)
+    //   gainDb           -20..+20 (default 0)
+    //   fineNullEnabled  bool (default false)
+    // The 8-memory slots (T3) + direction-finding fields (T11) land in those
+    // tasks. The wire path (these properties -> RxChannel::setExtDivRotate)
+    // lands in Sub-Epic G Task 13.
+    Q_PROPERTY(double diversityPhaseDeg READ diversityPhaseDeg WRITE setDiversityPhaseDeg NOTIFY diversityPhaseDegChanged)
+    Q_PROPERTY(double diversityGainDb READ diversityGainDb WRITE setDiversityGainDb NOTIFY diversityGainDbChanged)
+    Q_PROPERTY(bool diversityFineNullEnabled READ diversityFineNullEnabled WRITE setDiversityFineNullEnabled NOTIFY diversityFineNullEnabledChanged)
     // Phase 3F: derived from pan zoom state. When true, this slice's pan is zoomed beyond DDC bandwidth
     // and needs wideband wing data. Triggers Alex BPF bypass on this slice's chain.
     Q_PROPERTY(bool widebandExtensionRequested READ widebandExtensionRequested WRITE setWidebandExtensionRequested NOTIFY widebandExtensionRequestedChanged)
@@ -427,6 +438,16 @@ public:
 
     bool diversityEnabled() const { return m_diversityEnabled; }
     void setDiversityEnabled(bool on);
+
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning.
+    double diversityPhaseDeg() const { return m_diversityPhaseDeg; }
+    void setDiversityPhaseDeg(double deg);
+
+    double diversityGainDb() const { return m_diversityGainDb; }
+    void setDiversityGainDb(double db);
+
+    bool diversityFineNullEnabled() const { return m_diversityFineNullEnabled; }
+    void setDiversityFineNullEnabled(bool on);
 
     bool widebandExtensionRequested() const { return m_widebandExtensionRequested; }
     void setWidebandExtensionRequested(bool on);
@@ -774,6 +795,9 @@ signals:
     void ddcIndexChanged(int ddc);
     void sampleRateHzChanged(int hz);
     void diversityEnabledChanged(bool on);
+    void diversityPhaseDegChanged(double deg);     // Phase 3F Sub-Epic G T2
+    void diversityGainDbChanged(double db);         // Phase 3F Sub-Epic G T2
+    void diversityFineNullEnabledChanged(bool on);  // Phase 3F Sub-Epic G T2
     void widebandExtensionRequestedChanged(bool on);
     void psPausedChanged(bool paused);
 
@@ -897,6 +921,11 @@ private:
     int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
     int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
     bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match
+    // a passive reference-receiver setup (no rotation, no gain bias).
+    double  m_diversityPhaseDeg{0.0};       // 0..360 deg
+    double  m_diversityGainDb{0.0};         // -20..+20 dB
+    bool    m_diversityFineNullEnabled{false};
     bool    m_widebandExtensionRequested{false};  // Phase 3F: true when pan zoom exceeds DDC bandwidth; triggers Alex BPF bypass
     bool    m_psPaused{false};  // Phase 3F: true when DDC reclaimed by PureSignal during MOX; UI shows "PS HOLD" pill
 

@@ -636,6 +636,38 @@ void SliceModel::setDiversityEnabled(bool on)
     }
 }
 
+// ── Phase 3F Sub-Epic G Task 2: per-band diversity tuning setters ────────────
+//
+// Behaviour mirrors the rest of the Sub-Epic A setters: emit-on-change so the
+// future DiversityDialog (T8-T10) and the RadioModel signal wire (T13) only
+// fire downstream work when the value actually moves. Domain clamping is the
+// caller's responsibility for now; the spinner ranges in DiversityDialog
+// will enforce 0..360 / -20..+20 at the UI edge.
+
+void SliceModel::setDiversityPhaseDeg(double deg)
+{
+    if (m_diversityPhaseDeg != deg) {
+        m_diversityPhaseDeg = deg;
+        emit diversityPhaseDegChanged(deg);
+    }
+}
+
+void SliceModel::setDiversityGainDb(double db)
+{
+    if (m_diversityGainDb != db) {
+        m_diversityGainDb = db;
+        emit diversityGainDbChanged(db);
+    }
+}
+
+void SliceModel::setDiversityFineNullEnabled(bool on)
+{
+    if (m_diversityFineNullEnabled != on) {
+        m_diversityFineNullEnabled = on;
+        emit diversityFineNullEnabledChanged(on);
+    }
+}
+
 void SliceModel::setWidebandExtensionRequested(bool on)
 {
     if (m_widebandExtensionRequested != on) {
@@ -1603,6 +1635,16 @@ void SliceModel::saveToSettings(Band band)
     // 1536 kHz on 10m for a wider pan). NereusSDR-original (no Thetis cite).
     s.setValue(bp + QStringLiteral("SampleRate"), m_sampleRateHz);
 
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. The 8-memory
+    // slots (T3) + direction-finding fields (T11) join this block when they
+    // ship. NereusSDR-original schema (Thetis persists diversity globally
+    // in DSP.console.dsp / Diversity.cs; we scope per-band per-slice so
+    // operators can keep distinct DF setups across bands).
+    s.setValue(bp + QStringLiteral("DiversityPhaseDeg"), m_diversityPhaseDeg);
+    s.setValue(bp + QStringLiteral("DiversityGainDb"), m_diversityGainDb);
+    s.setValue(bp + QStringLiteral("DiversityFineNullEnabled"),
+               boolStr(m_diversityFineNullEnabled));
+
     // ── Session state (band-agnostic) ─────────────────────────────────────────
     // NR active slot + tuning — session-level only, no per-band suffix.
     // Per user directive Q10: no band suffix on NR keys.
@@ -1760,6 +1802,23 @@ void SliceModel::restoreFromSettings(Band band)
     // absent (new install or pre-3F settings file).
     if (s.contains(bp + QStringLiteral("SampleRate"))) {
         setSampleRateHz(s.value(bp + QStringLiteral("SampleRate")).toInt());
+    }
+
+    // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match
+    // the SliceModel member-init values (0.0 deg, 0.0 dB, fine-null off) so
+    // absent keys leave the slice in the passive reference-receiver state.
+    if (s.contains(bp + QStringLiteral("DiversityPhaseDeg"))) {
+        setDiversityPhaseDeg(
+            s.value(bp + QStringLiteral("DiversityPhaseDeg")).toDouble());
+    }
+    if (s.contains(bp + QStringLiteral("DiversityGainDb"))) {
+        setDiversityGainDb(
+            s.value(bp + QStringLiteral("DiversityGainDb")).toDouble());
+    }
+    if (s.contains(bp + QStringLiteral("DiversityFineNullEnabled"))) {
+        setDiversityFineNullEnabled(
+            s.value(bp + QStringLiteral("DiversityFineNullEnabled")).toString()
+            == QLatin1String("True"));
     }
 
     // ── Session state (band-agnostic) ─────────────────────────────────────────

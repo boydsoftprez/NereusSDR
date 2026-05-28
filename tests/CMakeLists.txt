@@ -5370,3 +5370,10 @@ nereus_add_test(tst_wideband_fft_engine)
 # [v2.10.3.15] P/Invoke decls.
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 1.
 nereus_add_test(tst_rx_channel_ext_div_wrappers)
+
+# Phase 3F Sub-Epic G Task 2: per-band diversity persistence on SliceModel.
+# Round-trip phase/gain/fine-null through saveToSettings/restoreFromSettings
+# under the existing Slice<N>/Band<key>/ prefix.
+# Source: NereusSDR-original test infrastructure.
+# Design: docs/architecture/2026-05-26-phase3f-sub-epic-g-diversity-plan.md Task 2.
+nereus_add_test(tst_diversity_dialog_persistence)
