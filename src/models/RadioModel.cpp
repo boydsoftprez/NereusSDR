@@ -7666,6 +7666,53 @@ void RadioModel::wireSliceSignals()
         scheduleSettingsSave();
     });
 
+    // Phase 3F Sub-Epic G Task 13: route SliceModel diversity state to the
+    // WDSP RxChannel External Diversity wrappers (Task 1 plumbing).
+    //
+    // CRITICAL: WDSP pdiv[] is a 2-slot array (MAX_EXT_DIVS=2) keyed by
+    // External Diversity id (0 or 1), NOT the RXA channel id. For bench-
+    // minimum, route ONLY Slice A through DivId 0 via rxChannel(0). Slice
+    // B and per-pan diversity defer to a follow-up when a proper DivId
+    // allocator lands. The per-slice gate inside each lambda enforces the
+    // Slice-A-only path; downstream wrappers receive m_channelId == 0
+    // which is the safe pdiv[] index until expansion lands.
+    connect(slice, &SliceModel::diversityEnabledChanged, this,
+            [this, slice](bool on) {
+        if (slice != m_slices.value(0)) { return; }  // Slice A only
+        if (!m_wdspEngine) { return; }
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (!rxCh) { return; }
+        rxCh->setExtDivNr(2);        // DDC0 + DDC1 = 2 inputs
+        rxCh->setExtDivOutput(0);    // combined output
+        rxCh->setExtDivRun(on);
+    });
+    connect(slice, &SliceModel::diversityPhaseDegChanged, this,
+            [this, slice](double /*deg*/) {
+        if (slice != m_slices.value(0)) { return; }
+        if (!m_wdspEngine) { return; }
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (!rxCh) { return; }
+        // I/Q rotation: input 0 identity; input 1 phase + gain rotated.
+        // Gain stored as dB on SliceModel; convert to linear here.
+        const double gainLin = std::pow(10.0, slice->diversityGainDb() / 20.0);
+        const double rad = slice->diversityPhaseDeg() * M_PI / 180.0;
+        double iRot[2] = {1.0, gainLin * std::cos(rad)};
+        double qRot[2] = {0.0, gainLin * std::sin(rad)};
+        rxCh->setExtDivRotate(2, iRot, qRot);
+    });
+    connect(slice, &SliceModel::diversityGainDbChanged, this,
+            [this, slice](double /*db*/) {
+        if (slice != m_slices.value(0)) { return; }
+        if (!m_wdspEngine) { return; }
+        RxChannel* rxCh = m_wdspEngine->rxChannel(0);
+        if (!rxCh) { return; }
+        const double gainLin = std::pow(10.0, slice->diversityGainDb() / 20.0);
+        const double rad = slice->diversityPhaseDeg() * M_PI / 180.0;
+        double iRot[2] = {1.0, gainLin * std::cos(rad)};
+        double qRot[2] = {0.0, gainLin * std::sin(rad)};
+        rxCh->setExtDivRotate(2, iRot, qRot);
+    });
+
     // Send initial frequency to radio (after connection init completes).
     // XIT offset applied here too so on-connect TX NCO matches the stored
     // XIT state without needing a separate update trigger.
