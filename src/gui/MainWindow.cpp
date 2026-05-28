@@ -1487,6 +1487,10 @@ void MainWindow::buildUI()
         newFlag->setRxBypassActive(
             m_radioModel->alexController().rxOutOnTx());
         newFlag->setFilterPresetStore(m_radioModel->filterPresetStore());
+        // Phase 3F closeout — give the per-slice VfoWidget the RadioModel
+        // pointer so its right-click antenna submenu builds AntennaPickerMenu
+        // with live caps + alex + slice (instead of the stub ANT1/ANT2 list).
+        newFlag->setRadioModel(m_radioModel);
         if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
             newFlag->setTxSlice(arb->txBoundSliceIndex() == sliceIndex);
         }
@@ -1516,6 +1520,16 @@ void MainWindow::buildUI()
         connect(newFlag, &VfoWidget::removeSliceRequested, this,
                 [this](int idx) {
             if (m_radioModel) { m_radioModel->removeSlice(idx); }
+        });
+        // Phase 3F closeout — AntennaPickerMenu selection forwards to
+        // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
+        connect(newFlag, &VfoWidget::antennaChangeRequested, this,
+                [this](int idx, const QString& antName) {
+            if (!m_radioModel) { return; }
+            const auto sl = m_radioModel->slices();
+            if (idx >= 0 && idx < sl.size()) {
+                sl.at(idx)->setRxAntenna(antName);
+            }
         });
 
         // --- VfoWidget -> SliceModel (user click propagates to model) ---
@@ -5604,6 +5618,9 @@ void MainWindow::wireSliceToSpectrum()
     vfo->setBoardCapabilities(m_radioModel->boardCapabilities());
     vfo->setHpsdrSku(m_radioModel->hardwareProfile().model);
     vfo->setRxBypassActive(m_radioModel->alexController().rxOutOnTx());
+    // Phase 3F closeout — give Slice A's VfoWidget the RadioModel pointer so
+    // contextMenuEvent builds AntennaPickerMenu instead of the stub fallback.
+    vfo->setRadioModel(m_radioModel);
     connect(m_radioModel, &RadioModel::currentRadioChanged, vfo,
             [this, vfo]() {
         vfo->setBoardCapabilities(m_radioModel->boardCapabilities());
@@ -5623,8 +5640,8 @@ void MainWindow::wireSliceToSpectrum()
 
     // Phase 3F Sub-Epic E Task 4: VfoWidget context-menu intent signals.
     // Routes to SliceModel::setSampleRateHz / FilterPolicyDialog /
-    // RadioModel::removeSlice. antennaChangeRequested wires in when
-    // AntennaPickerMenu (Task 5) replaces the stubbed antenna submenu.
+    // RadioModel::removeSlice. Phase 3F closeout: antennaChangeRequested is
+    // now live, fired by AntennaPickerMenu (Sub-Epic E Task 5 consumer wire).
     connect(vfo, &VfoWidget::sampleRateRequested, this,
             [this](int sliceIdx, int hz) {
         if (!m_radioModel) { return; }
@@ -5644,6 +5661,15 @@ void MainWindow::wireSliceToSpectrum()
             [this](int sliceIdx) {
         if (!m_radioModel) { return; }
         m_radioModel->removeSlice(sliceIdx);
+    });
+    // Phase 3F closeout — AntennaPickerMenu pick forwards to SliceModel::setRxAntenna.
+    connect(vfo, &VfoWidget::antennaChangeRequested, this,
+            [this](int sliceIdx, const QString& antName) {
+        if (!m_radioModel) { return; }
+        const auto& slices = m_radioModel->slices();
+        if (sliceIdx >= 0 && sliceIdx < slices.size()) {
+            slices.at(sliceIdx)->setRxAntenna(antName);
+        }
     });
 
     // Phase 3P-I-b T9 — VFO BYPS button ↔ AlexController::rxOutOnTx

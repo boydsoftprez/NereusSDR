@@ -271,9 +271,12 @@ warren@wpratt.com
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
 #include "core/HpsdrModel.h"
+#include "core/accessories/AlexController.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
+#include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 
@@ -2829,10 +2832,35 @@ void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
 
     menu.addSeparator();
 
-    // Antenna submenu (stub; Task 5 implements AntennaPickerMenu).
-    QMenu* antMenu = menu.addMenu(QStringLiteral("Antenna >"));
-    antMenu->addAction(QStringLiteral("ANT1"));
-    antMenu->addAction(QStringLiteral("ANT2"));
+    // Phase 3F closeout — AntennaPickerMenu integration (Sub-Epic E Task 5
+    // consumer wire-up). The picker derives the live slice band, lists
+    // ANT1/ANT2/ANT3 limited by BoardCapabilities::antennaInputCount, marks
+    // the current antenna checked, and emits antennaSelected on user pick.
+    // We forward to antennaChangeRequested; MainWindow routes to
+    // SliceModel::setRxAntenna. Falls back to a stub ANT1/ANT2 submenu when
+    // no RadioModel / slice is wired (e.g. test contexts).
+    bool builtPicker = false;
+    if (m_radioModel) {
+        const auto& slices = m_radioModel->slices();
+        if (m_sliceIndex >= 0 && m_sliceIndex < slices.size()) {
+            SliceModel* slice = slices.at(m_sliceIndex);
+            AlexController* alex = &m_radioModel->alexControllerMutable();
+            const BoardCapabilities& caps = m_radioModel->boardCapabilities();
+            auto* picker = new AntennaPickerMenu(slice, alex, caps, &menu);
+            picker->setTitle(QStringLiteral("Antenna >"));
+            menu.addMenu(picker);
+            connect(picker, &AntennaPickerMenu::antennaSelected, this,
+                    [this](int sliceIdx, const QString& antName) {
+                emit antennaChangeRequested(sliceIdx, antName);
+            });
+            builtPicker = true;
+        }
+    }
+    if (!builtPicker) {
+        QMenu* antMenu = menu.addMenu(QStringLiteral("Antenna >"));
+        antMenu->addAction(QStringLiteral("ANT1"));
+        antMenu->addAction(QStringLiteral("ANT2"));
+    }
 
     // Sample rate submenu (48k..1536k).
     QMenu* rateMenu = menu.addMenu(QStringLiteral("Sample rate >"));
@@ -3053,6 +3081,15 @@ void VfoWidget::setRxBypassActive(bool on)
     m_updatingFromModel = true;
     m_rxBypassBtn->setChecked(on);
     m_updatingFromModel = prev;
+}
+
+// Phase 3F closeout — AntennaPickerMenu requires live slice + AlexController +
+// BoardCapabilities access. Storing the RadioModel pointer here lets the
+// contextMenuEvent build a real picker instead of the stub fallback. Pointer
+// is non-owning; lifetime is RadioModel-owned and MainWindow-scoped.
+void VfoWidget::setRadioModel(RadioModel* model)
+{
+    m_radioModel = model;
 }
 
 // --- Task 3.4: Small filter display mode (Appearance > Meter Styles) ---

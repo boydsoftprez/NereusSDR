@@ -315,6 +315,7 @@ warren@wpratt.com
 namespace NereusSDR {
 
 class VaxChannelSelector;  // forward declaration — full include in VfoWidget.cpp
+class RadioModel;          // forward declaration — Phase 3F closeout (AntennaPickerMenu wiring)
 enum class HPSDRModel : int;  // forward declaration — Phase 3P-I-b T9
 
 // Floating VFO flag widget — AetherSDR pattern.
@@ -442,6 +443,14 @@ public slots:
     // Phase 3P-I-b T9 — reflect AlexController::rxOutOnTx state into the BYPS button.
     void setRxBypassActive(bool on);
 
+    // Phase 3F closeout — non-owning RadioModel pointer used by contextMenuEvent
+    // to construct an AntennaPickerMenu with the live slice, AlexController, and
+    // BoardCapabilities. Without this set, the antenna submenu falls back to a
+    // stub ANT1/ANT2/ANT3 list (no chain-consequence hints). MainWindow calls
+    // this in wireSliceToSpectrum (Slice A) and in the sliceAdded handler
+    // (Slice B+).
+    void setRadioModel(NereusSDR::RadioModel* model);
+
 signals:
     void frequencyChanged(double hz);
     void modeChanged(NereusSDR::DSPMode mode);
@@ -513,12 +522,12 @@ signals:
 
     // Phase 3F Sub-Epic E Task 4: right-click context menu intent signals.
     // MainWindow listens and routes to SliceModel / FilterPolicyDialog /
-    // RadioModel::removeSlice. antennaChangeRequested lands when
-    // AntennaPickerMenu (Task 5) replaces the stubbed antenna submenu.
+    // RadioModel::removeSlice. antennaChangeRequested is fired by the
+    // AntennaPickerMenu (Task 5) integration shipped in Phase 3F closeout.
     void sampleRateRequested(int sliceIndex, int hz);
     void filterPolicyRequested(int chainIndex);
     void removeSliceRequested(int sliceIndex);
-    void antennaChangeRequested(int sliceIndex, int antIdx);
+    void antennaChangeRequested(int sliceIndex, const QString& antennaName);
 
 private slots:
     // Phase 3F Sub-Epic C Task 9: TX badge click slot. Emits
@@ -567,6 +576,12 @@ private:
     // Stage C2: optional user-override preset store.
     // Non-owning; lifetime managed by RadioModel.  Null until MainWindow wires it.
     class FilterPresetStore* m_filterPresetStore{nullptr};
+
+    // Phase 3F closeout — non-owning RadioModel pointer used by contextMenuEvent
+    // to build a live AntennaPickerMenu. Null until MainWindow calls
+    // setRadioModel(); the contextMenuEvent falls back to a stub antenna submenu
+    // when null. See setRadioModel() above for the wiring contract.
+    NereusSDR::RadioModel* m_radioModel{nullptr};
 
     // Internal helper — update m_locked + drive Close-strip lock button + emit lockChanged.
     // Called by the floating m_lockBtn toggled lambda.  X/RIT-tab Lock removed (B7).
