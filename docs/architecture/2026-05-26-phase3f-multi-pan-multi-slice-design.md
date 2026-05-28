@@ -960,6 +960,28 @@ Discovered during implementation:
 
 Sub-Epic F (Wideband extended pan: real-IQ tuning within the wideband DDC, see-beyond ddc-dial rendering) can now begin.
 
+## Sub-Epic F implementation note (landed 2026-05-27)
+
+Implemented per `docs/architecture/2026-05-26-phase3f-sub-epic-f-wideband-plan.md`. 16 tasks across 11 land commits + 1 plan-correction commit (T16 PR open deferred per single-PR strategy; T7-T10 visual rendering polish explicitly deferred to post-bench).
+
+Operator-visible changes:
+- Wideband ADC data path is live end-to-end: P2 wideband packet (UDP ports 1027 to 1034 = ADC0 to ADC7) -> WidebandFrameAccumulator (32 packets x 512 samples -> 16384 floats) -> RadioModel forwards per-ADC -> WidebandFftEngine (16384-pt FFTW r2c, 8192 dBm bins) -> RadioModel emits widebandSpectrumReady -> SpectrumWidget stores via setWidebandBins.
+- P2 CmdGeneral byte 23 (wb_enable mask) plumbing: setWidebandEnabled(adc, on) toggles the bit; in Connected state triggers sendCmdGeneral so the radio learns promptly. Codec-driven composeCmdGeneral (P2CodecOrionMkII) threads via new CodecContext::p2WbEnableMask.
+- SpectrumWidget extendedMode state: zoom-driven auto-derive when visible bandwidth > DDC sample rate, plus operator right-click toggle on the pan (default on, persisted per panId under AppSettings Pan_<panId>_ExtendedView).
+- Click-in-wing vs click-in-island disambiguation: when extendedMode is on, clicking inside the listenable island (|freq - ddcCenter| <= sampleRate/2) emits frequencyClicked (existing slice-retune path); clicking in the wing emits new ddcRetuneRequested which retunes the DDC center.
+- Wideband activation chain: SliceModel::widebandExtensionRequestedChanged -> AlexController::setWidebandActive (BPF bypass per the per-ADC state machine from Sub-Epic B) + P2RadioConnection::setWidebandEnabled (radio starts streaming wb packets).
+
+Discovered during implementation:
+- The plan had a critical wire-format error in T1: it targeted composeCmdRx byte 23 for the wideband mask, but Thetis network.c:879 puts the mask in CmdGeneral byte 23 (CmdRx byte 23 is rx[1].rx_adc per Thetis network.c:1118). Source-first audit during T1 caught it; plan was corrected inline (commit c167bd75) before T1 implementation (commit 0453b889). Following the plan as written would have silently broken RX1 ADC routing the moment any user enabled an alternate ADC.
+- Thetis line citations in the plan needed correction: T2 cited network.c:567-571 but the actual decode is at 566-571; T3 stub was at line 1762 not 1608 (plan was stale). Corrected in commit bodies.
+- WidebandFftEngine uses FFTW_ESTIMATE not FFTW_MEASURE per codebase convention (FFTEngine.cpp:333) to avoid FFTW measurement-mutex contention with the WDSP audio thread.
+- AlexController is stored by value (m_alexController) not by pointer in RadioModel, so the wideband-extension hook uses dot syntax.
+- P2 connection access from RadioModel is via qobject_cast on m_connection (no separate m_p2Connection member).
+- m_extendedMode auto-derive lands in BOTH setFrequencyRange (canonical bandwidth path) AND setSampleRate (DDC rate change), so any zoom or rate update rebases the decision.
+- Visual rendering of wideband bins as a background fill behind the DDC island (with dashed boundary indicators) is explicitly deferred. The data path is live and operator-observable via the right-click toggle, the auto-derive, and the AlexController BPF state badge from Sub-Epic E. Polish lands after bench feedback shapes the visual treatment.
+
+Sub-Epic G (Full Diversity port: DDC0+DDC1 sync pair, SetEXTDIVRun/Nr/Output/Rotate, AlexController gating) can now begin.
+
 ---
 
 ## End
