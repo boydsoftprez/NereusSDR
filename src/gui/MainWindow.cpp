@@ -306,7 +306,6 @@ warren@wpratt.com
 // Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
 #include "DiversityDialog.h"
 #include "models/SpotModel.h"
-#include "models/SpotTableModel.h"
 #include "models/FreeDVStationModel.h"
 #include "core/DxccColorProvider.h"
 #include "core/FreeDVReporterClient.h"
