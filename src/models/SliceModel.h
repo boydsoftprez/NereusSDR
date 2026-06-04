@@ -181,6 +181,8 @@ class SliceModel : public QObject {
     Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
     // Phase 3F: codec-assigned DDC index. -1 = unassigned. Read-only from operator perspective.
     Q_PROPERTY(int ddcIndex READ ddcIndex WRITE setDdcIndex NOTIFY ddcIndexChanged)
+    // Phase 3F: owning pan id ("pan-N"). Authoritative slice-to-pan binding.
+    Q_PROPERTY(QString panKey READ panKey WRITE setPanKey NOTIFY panKeyChanged)
     // Phase 3F: per-slice DDC sample rate. Default = SampleRateCatalog::kDefaultSampleRate (192 kHz).
     // Operator-owned, no mode-derived defaults. Persisted per-band per-slice.
     Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
@@ -412,9 +414,22 @@ public:
     int sliceIndex() const { return m_sliceIndex; }
     void setSliceIndex(int idx) { m_sliceIndex = idx; }
 
-    // Panadapter assignment (-1 = unassigned)
+    // Panadapter assignment (-1 = unassigned).
+    // Legacy int handle. Retained for any pre-3F callers; the authoritative
+    // pan association is panKey() below (a "pan-N" string addressable in
+    // PanadapterStack). Phase 3F multi-pan routing uses panKey exclusively.
     int panId() const { return m_panId; }
     void setPanId(int id) { m_panId = id; }
+
+    // Phase 3F multi-pan: the owning pan's string id ("pan-0", "pan-1", ...).
+    // This is the real source of truth for which SpectrumWidget hosts this
+    // slice's VfoWidget. setPanKey emits panKeyChanged so MainWindow can
+    // migrate the flag (remove from the old pan, re-add on the new one),
+    // mirroring AetherSDR's SliceModel::panId() string + panIdChanged.
+    // (AetherSDR uses the name "panId" for its string; NereusSDR keeps its
+    // existing int panId and names the string panKey to avoid the clash.)
+    QString panKey() const { return m_panKey; }
+    void setPanKey(const QString& key);
 
     // Which receiver/DDC this slice feeds (-1 = unassigned)
     int receiverIndex() const { return m_receiverIndex; }
@@ -793,6 +808,7 @@ signals:
     void sliceLetterChanged(QChar letter);
     void chainIndexChanged(int idx);
     void ddcIndexChanged(int ddc);
+    void panKeyChanged(const QString& key);  // Phase 3F multi-pan routing
     void sampleRateHzChanged(int hz);
     void diversityEnabledChanged(bool on);
     void diversityPhaseDegChanged(double deg);     // Phase 3F Sub-Epic G T2
@@ -912,6 +928,7 @@ private:
     bool    m_txSlice{false};
     int     m_sliceIndex{0};
     int     m_panId{-1};
+    QString m_panKey;                    // Phase 3F: owning pan id ("pan-N")
     int     m_receiverIndex{-1};
     int     m_wdspChannelId{-1};
 

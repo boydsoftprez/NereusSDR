@@ -620,6 +620,14 @@ void SliceModel::setDdcIndex(int ddc)
     }
 }
 
+void SliceModel::setPanKey(const QString& key)
+{
+    if (m_panKey != key) {
+        m_panKey = key;
+        emit panKeyChanged(key);
+    }
+}
+
 void SliceModel::setSampleRateHz(int hz)
 {
     if (m_sampleRateHz != hz) {

@@ -2849,13 +2849,17 @@ int RadioModel::addSlice(const QString& initialPanId)
     auto* slice = new SliceModel(this);
     int index = m_slices.size();
     slice->setSliceIndex(index);
-    // Phase 3F bench fix 2026-06-03: stamp the owning pan id BEFORE the
-    // sliceAdded() emit below, so the MainWindow handler routes the new
-    // VfoWidget to the correct pan's SpectrumWidget. Previously addSliceOnPan
-    // set this property AFTER addSlice() returned, i.e. after sliceAdded had
-    // already fired with an empty initialPanId, so every new flag fell back
-    // to the active pan and stacked on pan-0.
+    // Phase 3F: stamp the owning pan id BEFORE the sliceAdded() emit below,
+    // so the MainWindow handler routes the new VfoWidget to the correct
+    // pan's SpectrumWidget. Without this the handler would fall back to the
+    // active pan and stack every new flag on pan-0.
+    //
+    // panKey is the authoritative binding (a real string + panKeyChanged
+    // signal so later pan migrations re-route the flag). The "initialPanId"
+    // dynamic property is left in place as a transitional fallback for the
+    // sliceAdded handler; both carry the same value here.
     if (!initialPanId.isEmpty()) {
+        slice->setPanKey(initialPanId);
         slice->setProperty("initialPanId", initialPanId);
     }
     m_slices.append(slice);
@@ -3927,9 +3931,14 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     }
     m_receiverManager->setAdcForReceiver(rxIdx, 0); // ADC0
 
-    // Create slice 0 and load persisted VFO state from AppSettings
+    // Create slice 0 and load persisted VFO state from AppSettings.
+    // Slice A always lives on the default pan "pan-0"; seed its panKey so
+    // flag migration (panKeyChanged) routes symmetrically with Slice B+.
     if (m_slices.isEmpty()) {
         addSlice();
+        if (!m_slices.isEmpty()) {
+            m_slices.first()->setPanKey(QStringLiteral("pan-0"));
+        }
     }
     setActiveSlice(0);
     m_activeSlice->setReceiverIndex(rxIdx);
