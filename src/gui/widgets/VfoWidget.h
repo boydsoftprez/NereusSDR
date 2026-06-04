@@ -670,6 +670,11 @@ public:
     // callsign survives subsequent SNR pushes.
     void setRadeCallsign(const QString& callsign);
 
+    // Slice color table: A=cyan, B=magenta, C=green, D=yellow.
+    // From AetherSDR SliceColors.h. Public static so the RX applet's
+    // per-slice tab row (Phase 3F Bug 3) shares the exact flag palette.
+    static QColor sliceColor(int index);
+
 private:
 
     // --- Tab bar ---
@@ -745,9 +750,6 @@ private:
     bool m_onLeft{false};  // track flag side for button placement
     void buildFloatingButtons();
     void positionFloatingButtons();
-
-    // Slice color table: A=cyan, B=magenta, C=green, D=yellow
-    static QColor sliceColor(int index);
 };
 
 } // namespace NereusSDR

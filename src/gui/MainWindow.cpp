@@ -970,6 +970,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             [this](int idx) {
         if (m_radioModel) { m_radioModel->removeSlice(idx); }
     });
+    // Phase 3F (Bug 3): clicking this flag activates its slice so the RX
+    // applet (and active-slice surfaces) follow it. Slice A's flag has the
+    // matching wire in wireSliceToSpectrum. Mirrors AetherSDR's
+    // VfoWidget::sliceActivationRequested -> setActiveSlice (wireVfoWidget,
+    // MainWindow.cpp:14076 [@6a142807]).
+    connect(newFlag, &VfoWidget::sliceActivationRequested, this,
+            [this](int idx) {
+        if (m_radioModel) { m_radioModel->setActiveSlice(idx); }
+    });
     // Phase 3F closeout — AntennaPickerMenu selection forwards to
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
     connect(newFlag, &VfoWidget::antennaChangeRequested, this,
@@ -2957,6 +2966,53 @@ void MainWindow::populateDefaultMeter()
         m_rxApplet->setBoardCapabilities(m_radioModel->boardCapabilities());
         m_rxApplet->setHpsdrSku(m_radioModel->hardwareProfile().model);
     });
+
+    // ── Phase 3F (Bug 3): per-slice RX applet + active-slice switching ──────
+    //
+    // Clicking a slice tab in the RX applet, or clicking a VfoWidget flag,
+    // routes to RadioModel::setActiveSlice. RadioModel::activeSliceChanged
+    // then rebinds the RX applet to the new active slice, refreshes the tab
+    // row highlight, and updates the static badge. The slice tab row is also
+    // refreshed whenever the slice list changes (add/remove). Workflow ported
+    // from AetherSDR (RxApplet::sliceActivationRequested ->
+    // MainWindow::setActiveSlice at MainWindow.cpp:3277, and the
+    // setActiveSliceInternal rebind at MainWindow.cpp:12132 [@6a142807]).
+    connect(m_rxApplet, &RxApplet::sliceActivationRequested, this,
+            [this](int sliceIndex) {
+        if (m_radioModel) { m_radioModel->setActiveSlice(sliceIndex); }
+    });
+
+    auto refreshSliceTabs = [this]() {
+        if (m_rxApplet && m_radioModel) {
+            m_rxApplet->updateSliceButtons(
+                m_radioModel->slices(),
+                m_radioModel->activeSlice()
+                    ? m_radioModel->activeSlice()->sliceIndex()
+                    : -1);
+        }
+    };
+
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this,
+            [this, refreshSliceTabs](int sliceIndex) {
+        if (!m_radioModel) { return; }
+        SliceModel* active = m_radioModel->activeSlice();
+        // Rebind the RX applet to the new active slice + refresh its badge.
+        if (m_rxApplet) {
+            m_rxApplet->setSlice(active);
+            if (active) { m_rxApplet->setSliceIndex(active->sliceIndex()); }
+        }
+        // Refresh the tab row highlight (uses sliceIndex param for the
+        // checked state even if activeSlice() is briefly stale).
+        if (m_rxApplet) {
+            m_rxApplet->updateSliceButtons(m_radioModel->slices(), sliceIndex);
+        }
+    });
+
+    // Keep the tab row in sync with the slice population.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [refreshSliceTabs](int) { refreshSliceTabs(); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [refreshSliceTabs](int) { refreshSliceTabs(); });
 
     // TxApplet — NYI shell (Phase 3I-1)
     // 3M-3a-ii Batch 6: cache pointer in m_txApplet so SetupDialog
