@@ -871,6 +871,167 @@ SpectrumWidget* MainWindow::activeSpectrumWidget() const
     return applet ? applet->spectrumWidget() : nullptr;
 }
 
+// Phase 3F multi-pan: resolve the SpectrumWidget that owns this slice's
+// panadapter from the slice's panKey(), falling back to the active pan when
+// the key is empty (Slice A pre-seed) or the pan was removed.
+// Ported from AetherSDR MainWindow::spectrumForSlice (MainWindow.cpp:14856
+// [@6a142807]); AetherSDR uses s->panId() (a string), NereusSDR uses
+// s->panKey().
+SpectrumWidget* MainWindow::spectrumForSlice(SliceModel* s) const
+{
+    if (s && m_panStack) {
+        if (auto* sw = m_panStack->spectrum(s->panKey())) {
+            return sw;
+        }
+    }
+    return activeSpectrumWidget();  // fallback to active pan
+}
+
+// Phase 3F: create + fully wire a secondary slice's VfoWidget on the given
+// SpectrumWidget. Factored out of the sliceAdded handler so the same wiring
+// is reused on panKeyChanged migration. Slice A (index 0) keeps its own
+// dedicated path in wireSliceToSpectrum(); this helper is for B+ flags.
+//
+// What's intentionally NOT done here: per-slice rxChannel/CTUN/MaxBin/NR/ANF
+// DSP wiring (those hardcode rxChannel(0) today and are the actual Phase 3F
+// multi-slice DSP epic). This is "make the flag appear + let the operator
+// interact + keep it in sync with its SliceModel".
+//
+// Mirrors AetherSDR's addVfoWidget()+wireVfoWidget() pair (MainWindow.cpp:
+// 11583 + 13968 [@6a142807]).
+VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
+{
+    if (!slice || !sw || !m_radioModel) { return nullptr; }
+    const int sliceIndex = slice->sliceIndex();
+    if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
+        return m_vfoWidgetsBySlice.value(sliceIndex);
+    }
+
+    VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
+    if (!newFlag) { return nullptr; }
+    m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+
+    // Initial slice state push so the flag paints the right freq/mode/filter
+    // on first show (mirrors wireSliceToSpectrum for Slice A).
+    newFlag->setSlice(slice);
+    newFlag->setFrequency(slice->frequency());
+    newFlag->setMode(slice->dspMode());
+    newFlag->setFilter(slice->filterLow(), slice->filterHigh());
+    newFlag->setAgcMode(slice->agcMode());
+    newFlag->setAfGain(slice->afGain());
+    newFlag->setRfGain(slice->rfGain());
+    newFlag->setRxAntenna(slice->rxAntenna());
+    newFlag->setTxAntenna(slice->txAntenna());
+    newFlag->setStepHz(slice->stepHz());
+    newFlag->setBoardCapabilities(m_radioModel->boardCapabilities());
+    newFlag->setHpsdrSku(m_radioModel->hardwareProfile().model);
+    newFlag->setRxBypassActive(m_radioModel->alexController().rxOutOnTx());
+    newFlag->setFilterPresetStore(m_radioModel->filterPresetStore());
+    // Phase 3F closeout — give the per-slice VfoWidget the RadioModel pointer
+    // so its right-click antenna submenu builds AntennaPickerMenu with live
+    // caps + alex + slice (instead of the stub ANT1/ANT2 list).
+    newFlag->setRadioModel(m_radioModel);
+    if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
+        newFlag->setTxSlice(arb->txBoundSliceIndex() == sliceIndex);
+    }
+
+    // --- Intent signals (Sub-Epic C T9 + Sub-Epic E T4 mirror) ---
+    connect(newFlag, &VfoWidget::txHandoffRequested, this,
+            [this](int idx) {
+        if (m_radioModel && m_radioModel->txSliceArbiter()) {
+            m_radioModel->txSliceArbiter()->requestHandoff(idx);
+        }
+    });
+    connect(newFlag, &VfoWidget::sampleRateRequested, this,
+            [this](int idx, int hz) {
+        if (!m_radioModel) { return; }
+        const auto sl = m_radioModel->slices();
+        if (idx >= 0 && idx < sl.size()) {
+            sl.at(idx)->setSampleRateHz(hz);
+        }
+    });
+    connect(newFlag, &VfoWidget::filterPolicyRequested, this,
+            [this](int chainIdx) {
+        if (!m_radioModel) { return; }
+        auto* alex = &m_radioModel->alexControllerMutable();
+        FilterPolicyDialog dlg(chainIdx, alex, this);
+        dlg.exec();
+    });
+    connect(newFlag, &VfoWidget::removeSliceRequested, this,
+            [this](int idx) {
+        if (m_radioModel) { m_radioModel->removeSlice(idx); }
+    });
+    // Phase 3F closeout — AntennaPickerMenu selection forwards to
+    // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
+    connect(newFlag, &VfoWidget::antennaChangeRequested, this,
+            [this](int idx, const QString& antName) {
+        if (!m_radioModel) { return; }
+        const auto sl = m_radioModel->slices();
+        if (idx >= 0 && idx < sl.size()) {
+            sl.at(idx)->setRxAntenna(antName);
+        }
+    });
+
+    // --- VfoWidget -> SliceModel (user click propagates to model) ---
+    connect(newFlag, &VfoWidget::frequencyChanged, this,
+            [slice](double hz) { slice->setFrequency(hz); });
+    connect(newFlag, &VfoWidget::modeChanged, this,
+            [slice](DSPMode mode) { slice->setDspMode(mode); });
+    connect(newFlag, &VfoWidget::filterChanged, this,
+            [slice](int low, int high) { slice->setFilter(low, high); });
+    connect(newFlag, &VfoWidget::agcModeChanged, this,
+            [slice](AGCMode mode) { slice->setAgcMode(mode); });
+    connect(newFlag, &VfoWidget::afGainChanged, this,
+            [slice](int gain) { slice->setAfGain(gain); });
+    connect(newFlag, &VfoWidget::rfGainChanged, this,
+            [slice](int gain) { slice->setRfGain(gain); });
+    connect(newFlag, &VfoWidget::rxAntennaChanged, this,
+            [slice](const QString& ant) { slice->setRxAntenna(ant); });
+    connect(newFlag, &VfoWidget::txAntennaChanged, this,
+            [slice](const QString& ant) { slice->setTxAntenna(ant); });
+
+    // --- SliceModel -> VfoWidget (model updates repaint the flag) ---
+    QPointer<VfoWidget> flagPtr(newFlag);
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [flagPtr](double hz) {
+        if (flagPtr) { flagPtr->setFrequency(hz); }
+    });
+    connect(slice, &SliceModel::dspModeChanged, this,
+            [flagPtr](DSPMode mode) {
+        if (flagPtr) { flagPtr->setMode(mode); }
+    });
+    connect(slice, &SliceModel::filterChanged, this,
+            [flagPtr](int low, int high) {
+        if (flagPtr) { flagPtr->setFilter(low, high); }
+    });
+    connect(slice, &SliceModel::agcModeChanged, this,
+            [flagPtr](AGCMode mode) {
+        if (flagPtr) { flagPtr->setAgcMode(mode); }
+    });
+    connect(slice, &SliceModel::afGainChanged, this,
+            [flagPtr](int gain) {
+        if (flagPtr) { flagPtr->setAfGain(gain); }
+    });
+    connect(slice, &SliceModel::rfGainChanged, this,
+            [flagPtr](int gain) {
+        if (flagPtr) { flagPtr->setRfGain(gain); }
+    });
+    connect(slice, &SliceModel::stepHzChanged, this,
+            [flagPtr](int hz) {
+        if (flagPtr) { flagPtr->setStepHz(hz); }
+    });
+    connect(slice, &SliceModel::rxAntennaChanged, this,
+            [flagPtr](const QString& ant) {
+        if (flagPtr) { flagPtr->setRxAntenna(ant); }
+    });
+    connect(slice, &SliceModel::txAntennaChanged, this,
+            [flagPtr](const QString& ant) {
+        if (flagPtr) { flagPtr->setTxAntenna(ant); }
+    });
+
+    return newFlag;
+}
+
 // Phase 3F Sub-Epic D Task 16: disconnect-before-removal for safe pan teardown.
 // AetherSDR issue #242: deleting a widget with active connections to lambdas
 // can race with queued signal delivery and crash. Disconnect first, then
@@ -1409,13 +1570,12 @@ void MainWindow::buildUI()
     // Phase 3F Sub-Epic D Task 13: bind newly-created slices to a pan
     // and register pan-to-receiver routing in the FFTRouter.
     //
-    // RadioModel::addSliceOnPan stashes the requested panId on the
-    // SliceModel as a dynamic property ("initialPanId") so this handler
-    // knows where to dock the slice. If the slice was added by some
-    // other path (no initialPanId), we fall back to the active pan.
-    // If the requested pan does not exist yet (e.g. Add Panadapter ran
-    // between addSliceOnPan emit and this slot), we create it on the
-    // fly via PanadapterStack::addPanadapter.
+    // RadioModel::addSlice stamps the requested pan id on the SliceModel via
+    // setPanKey() (and the transitional initialPanId property) so this handler
+    // knows where to dock the slice. If the slice was added by some other path
+    // (no pan key), we fall back to the active pan. If the requested pan does
+    // not exist yet (e.g. Add Panadapter ran between addSliceOnPan emit and
+    // this slot), we create it on the fly via PanadapterStack::addPanadapter.
     connect(m_radioModel, &RadioModel::sliceAdded, this,
             [this](int sliceIndex) {
         if (!m_panStack) { return; }
@@ -1424,10 +1584,10 @@ void MainWindow::buildUI()
         SliceModel* slice = slices.at(sliceIndex);
         if (!slice) { return; }
 
-        const QString initialPan = slice->property("initialPanId").toString();
-        const QString targetPan = initialPan.isEmpty()
+        const QString panKey = slice->panKey();
+        const QString targetPan = panKey.isEmpty()
                                       ? m_panStack->activePanId()
-                                      : initialPan;
+                                      : panKey;
 
         auto* applet = m_panStack->panadapter(targetPan);
         if (!applet) {
@@ -1464,149 +1624,37 @@ void MainWindow::buildUI()
         if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
             return;
         }
-        // Phase 3F bench fix 2026-06-03: route the new flag to the
-        // SpectrumWidget that hosts the slice's pan (not the active pan).
-        // Sub-Epic D Task 13 handler stashes initialPanId as a dynamic
-        // property on the slice before sliceAdded emits; use it to find
-        // the owning PanadapterApplet -> its SpectrumWidget.
-        SpectrumWidget* sw = nullptr;
-        if (m_panStack) {
-            const QString initialPan = slice->property("initialPanId").toString();
-            const QString targetPan = initialPan.isEmpty()
-                                          ? m_panStack->activePanId()
-                                          : initialPan;
-            if (auto* applet = m_panStack->panadapter(targetPan)) {
-                sw = applet->spectrumWidget();
-            }
-            qCInfo(lcContainer) << "sliceAdded sliceIndex=" << sliceIndex
-                                 << "initialPan=" << initialPan
-                                 << "targetPan=" << targetPan
-                                 << "sw=" << (void*)sw;
-        }
-        if (!sw) { sw = activeSpectrumWidget(); }  // fallback
+        // Phase 3F: route the new flag to the SpectrumWidget that hosts the
+        // slice's pan (resolved from slice->panKey() by spectrumForSlice),
+        // NOT the active pan. This is Bug 1's fix: previously the flag landed
+        // on the active pan and stacked on pan-0 instead of the pan showing
+        // the slice's band. Ported from AetherSDR's sliceAdded path
+        // (MainWindow.cpp:11581 [@6a142807]).
+        SpectrumWidget* sw = spectrumForSlice(slice);
         if (!sw) { return; }
-        VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
-        if (!newFlag) { return; }
-        m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+        createSliceFlag(slice, sw);
 
-        // Initial slice state push so the flag paints the right
-        // freq/mode/filter on first show (mirrors lines 5428-5444 in
-        // wireSliceToSpectrum for Slice A).
-        newFlag->setSlice(slice);
-        newFlag->setFrequency(slice->frequency());
-        newFlag->setMode(slice->dspMode());
-        newFlag->setFilter(slice->filterLow(), slice->filterHigh());
-        newFlag->setAgcMode(slice->agcMode());
-        newFlag->setAfGain(slice->afGain());
-        newFlag->setRfGain(slice->rfGain());
-        newFlag->setRxAntenna(slice->rxAntenna());
-        newFlag->setTxAntenna(slice->txAntenna());
-        newFlag->setStepHz(slice->stepHz());
-        newFlag->setBoardCapabilities(m_radioModel->boardCapabilities());
-        newFlag->setHpsdrSku(m_radioModel->hardwareProfile().model);
-        newFlag->setRxBypassActive(
-            m_radioModel->alexController().rxOutOnTx());
-        newFlag->setFilterPresetStore(m_radioModel->filterPresetStore());
-        // Phase 3F closeout — give the per-slice VfoWidget the RadioModel
-        // pointer so its right-click antenna submenu builds AntennaPickerMenu
-        // with live caps + alex + slice (instead of the stub ANT1/ANT2 list).
-        newFlag->setRadioModel(m_radioModel);
-        if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
-            newFlag->setTxSlice(arb->txBoundSliceIndex() == sliceIndex);
-        }
-
-        // --- Intent signals (Sub-Epic C T9 + Sub-Epic E T4 mirror) ---
-        connect(newFlag, &VfoWidget::txHandoffRequested, this,
-                [this](int idx) {
-            if (m_radioModel && m_radioModel->txSliceArbiter()) {
-                m_radioModel->txSliceArbiter()->requestHandoff(idx);
+        // Phase 3F: migrate the flag when the slice's owning pan changes.
+        // Remove the VfoWidget from every pan's SpectrumWidget, then re-add
+        // + re-wire it on the new pan resolved by spectrumForSlice(). This
+        // is the panKeyChanged half of Bug 1's fix (the sliceAdded path
+        // above handles initial placement). Ported from AetherSDR's
+        // panIdChanged migration (MainWindow.cpp:11560 [@6a142807]).
+        connect(slice, &SliceModel::panKeyChanged, this,
+                [this, slice](const QString&) {
+            const int idx = slice->sliceIndex();
+            if (idx == 0) { return; }  // Slice A flag is the dedicated path
+            if (m_panStack) {
+                for (auto* applet : m_panStack->allApplets()) {
+                    if (applet && applet->spectrumWidget()) {
+                        applet->spectrumWidget()->removeVfoWidget(idx);
+                    }
+                }
             }
-        });
-        connect(newFlag, &VfoWidget::sampleRateRequested, this,
-                [this](int idx, int hz) {
-            if (!m_radioModel) { return; }
-            const auto sl = m_radioModel->slices();
-            if (idx >= 0 && idx < sl.size()) {
-                sl.at(idx)->setSampleRateHz(hz);
-            }
-        });
-        connect(newFlag, &VfoWidget::filterPolicyRequested, this,
-                [this](int chainIdx) {
-            if (!m_radioModel) { return; }
-            auto* alex = &m_radioModel->alexControllerMutable();
-            FilterPolicyDialog dlg(chainIdx, alex, this);
-            dlg.exec();
-        });
-        connect(newFlag, &VfoWidget::removeSliceRequested, this,
-                [this](int idx) {
-            if (m_radioModel) { m_radioModel->removeSlice(idx); }
-        });
-        // Phase 3F closeout — AntennaPickerMenu selection forwards to
-        // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
-        connect(newFlag, &VfoWidget::antennaChangeRequested, this,
-                [this](int idx, const QString& antName) {
-            if (!m_radioModel) { return; }
-            const auto sl = m_radioModel->slices();
-            if (idx >= 0 && idx < sl.size()) {
-                sl.at(idx)->setRxAntenna(antName);
-            }
-        });
-
-        // --- VfoWidget -> SliceModel (user click propagates to model) ---
-        connect(newFlag, &VfoWidget::frequencyChanged, this,
-                [slice](double hz) { slice->setFrequency(hz); });
-        connect(newFlag, &VfoWidget::modeChanged, this,
-                [slice](DSPMode mode) { slice->setDspMode(mode); });
-        connect(newFlag, &VfoWidget::filterChanged, this,
-                [slice](int low, int high) { slice->setFilter(low, high); });
-        connect(newFlag, &VfoWidget::agcModeChanged, this,
-                [slice](AGCMode mode) { slice->setAgcMode(mode); });
-        connect(newFlag, &VfoWidget::afGainChanged, this,
-                [slice](int gain) { slice->setAfGain(gain); });
-        connect(newFlag, &VfoWidget::rfGainChanged, this,
-                [slice](int gain) { slice->setRfGain(gain); });
-        connect(newFlag, &VfoWidget::rxAntennaChanged, this,
-                [slice](const QString& ant) { slice->setRxAntenna(ant); });
-        connect(newFlag, &VfoWidget::txAntennaChanged, this,
-                [slice](const QString& ant) { slice->setTxAntenna(ant); });
-
-        // --- SliceModel -> VfoWidget (model updates repaint the flag) ---
-        QPointer<VfoWidget> flagPtr(newFlag);
-        connect(slice, &SliceModel::frequencyChanged, this,
-                [flagPtr](double hz) {
-            if (flagPtr) { flagPtr->setFrequency(hz); }
-        });
-        connect(slice, &SliceModel::dspModeChanged, this,
-                [flagPtr](DSPMode mode) {
-            if (flagPtr) { flagPtr->setMode(mode); }
-        });
-        connect(slice, &SliceModel::filterChanged, this,
-                [flagPtr](int low, int high) {
-            if (flagPtr) { flagPtr->setFilter(low, high); }
-        });
-        connect(slice, &SliceModel::agcModeChanged, this,
-                [flagPtr](AGCMode mode) {
-            if (flagPtr) { flagPtr->setAgcMode(mode); }
-        });
-        connect(slice, &SliceModel::afGainChanged, this,
-                [flagPtr](int gain) {
-            if (flagPtr) { flagPtr->setAfGain(gain); }
-        });
-        connect(slice, &SliceModel::rfGainChanged, this,
-                [flagPtr](int gain) {
-            if (flagPtr) { flagPtr->setRfGain(gain); }
-        });
-        connect(slice, &SliceModel::stepHzChanged, this,
-                [flagPtr](int hz) {
-            if (flagPtr) { flagPtr->setStepHz(hz); }
-        });
-        connect(slice, &SliceModel::rxAntennaChanged, this,
-                [flagPtr](const QString& ant) {
-            if (flagPtr) { flagPtr->setRxAntenna(ant); }
-        });
-        connect(slice, &SliceModel::txAntennaChanged, this,
-                [flagPtr](const QString& ant) {
-            if (flagPtr) { flagPtr->setTxAntenna(ant); }
+            m_vfoWidgetsBySlice.remove(idx);
+            SpectrumWidget* dest = spectrumForSlice(slice);
+            if (!dest) { return; }
+            createSliceFlag(slice, dest);
         });
     });
 
@@ -1626,12 +1674,24 @@ void MainWindow::buildUI()
         // lifecycle; the cleanup path for it is fragile (m_vfoWidget is
         // referenced by lambdas captured in wireSliceToSpectrum), so
         // skip it here.  Only secondary slice flags are torn down.
+        //
+        // Phase 3F (Bug 1 follow-up): the flag may live on a non-active pan
+        // now that flags route to spectrumForSlice(). Remove from EVERY pan's
+        // SpectrumWidget (removeVfoWidget on a pan that doesn't host it is a
+        // no-op) instead of just the active pan, which would leak the flag.
         if (sliceIndex != 0 && m_vfoWidgetsBySlice.contains(sliceIndex)) {
             VfoWidget* victim = m_vfoWidgetsBySlice.take(sliceIndex);
             if (victim && victim != m_vfoWidget) {
-                if (auto* sw = activeSpectrumWidget()) {
-                    sw->removeVfoWidget(sliceIndex);
-                } else {
+                bool removed = false;
+                if (m_panStack) {
+                    for (auto* applet : m_panStack->allApplets()) {
+                        if (applet && applet->spectrumWidget()) {
+                            applet->spectrumWidget()->removeVfoWidget(sliceIndex);
+                            removed = true;
+                        }
+                    }
+                }
+                if (!removed) {
                     victim->deleteLater();
                 }
             }

@@ -156,6 +156,11 @@ void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& pa
 
 PanadapterApplet* PanadapterStack::panadapter(const QString& id) const { return m_pans.value(id, nullptr); }
 QList<PanadapterApplet*> PanadapterStack::allApplets() const { return m_pans.values(); }
+SpectrumWidget* PanadapterStack::spectrum(const QString& panId) const
+{
+    PanadapterApplet* applet = m_pans.value(panId, nullptr);
+    return applet ? applet->spectrumWidget() : nullptr;
+}
 void PanadapterStack::setActivePan(const QString& id) { if (m_activePanId != id) { m_activePanId = id; emit activePanChanged(id); } }
 void PanadapterStack::floatPanadapter(const QString& panId)
 {

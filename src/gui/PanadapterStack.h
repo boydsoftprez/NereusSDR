@@ -48,6 +48,7 @@ namespace NereusSDR {
 
 class PanadapterApplet;
 class PanFloatingWindow;
+class SpectrumWidget;
 
 /// 5-template pan layout manager. Templates: "1", "2v", "2h", "12h", "2x2".
 /// Ported structurally from AetherSDR PanadapterStack (12 templates; we use 5 of them).
@@ -67,6 +68,11 @@ public:
 
     PanadapterApplet* panadapter(const QString& panId) const;
     QList<PanadapterApplet*> allApplets() const;
+
+    /// Convenience: the SpectrumWidget hosted by pan `panId`, or nullptr if no
+    /// such pan exists. Mirrors AetherSDR's PanadapterStack::spectrum(panId)
+    /// so MainWindow::spectrumForSlice reads as a single lookup.
+    SpectrumWidget* spectrum(const QString& panId) const;
     int count() const { return m_pans.size(); }
     QString currentLayoutId() const { return m_currentLayoutId; }
 

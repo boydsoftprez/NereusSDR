@@ -90,6 +90,7 @@ class SupportDialog;
 class WdspEngine;
 class FFTEngine;
 class SpectrumWidget;
+class SliceModel;
 // Phase 3F Sub-Epic D: forward declarations for the multi-pan layout
 // manager. Member m_panStack is introduced (nullptr) in Task 10/11 so the
 // +PAN dropdown menu and per-chain status indicators can guard against
@@ -152,6 +153,13 @@ public:
     /// callers should thread through per-pan PanadapterApplet rather than
     /// reaching for the active pan.
     SpectrumWidget* activeSpectrumWidget() const;
+
+    /// The SpectrumWidget that hosts slice `s`'s panadapter, resolved from
+    /// the slice's panKey(). Falls back to the active pan's widget when the
+    /// slice has no pan key or the pan no longer exists. Phase 3F multi-pan
+    /// flag routing hub; mirrors AetherSDR MainWindow::spectrumForSlice
+    /// (MainWindow.cpp:14856 [@6a142807]).
+    SpectrumWidget* spectrumForSlice(SliceModel* s) const;
 
 public slots:
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
@@ -247,6 +255,16 @@ private:
     void applyDarkTheme();
     void tryAutoReconnect();
     void wireSliceToSpectrum();
+
+    /// Phase 3F: create the VfoWidget for a secondary slice (B+) on the
+    /// given SpectrumWidget, push initial state, wire all intent + bidi
+    /// signals, and register it in m_vfoWidgetsBySlice. Returns the new
+    /// flag (or nullptr). Used both at sliceAdded and on panKeyChanged
+    /// migration so the wiring lives in one place. Slice A keeps its own
+    /// dedicated path in wireSliceToSpectrum(). Mirrors AetherSDR's
+    /// addVfoWidget()+wireVfoWidget() pair (MainWindow.cpp:11583 +
+    /// 13968 [@6a142807]).
+    class VfoWidget* createSliceFlag(SliceModel* slice, SpectrumWidget* sw);
 
     /// Phase 3F Sub-Epic D Task 16: clean disconnect-before-removal for pans
     /// (AetherSDR issue #242 pattern - avoids lambda crashes during teardown).
