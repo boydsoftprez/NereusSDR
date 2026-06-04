@@ -1461,11 +1461,30 @@ void MainWindow::buildUI()
             // ran via the index==0 handler at the top of this file.
             return;
         }
-        auto* sw = activeSpectrumWidget();
-        if (!sw) { return; }
         if (m_vfoWidgetsBySlice.contains(sliceIndex)) {
             return;
         }
+        // Phase 3F bench fix 2026-06-03: route the new flag to the
+        // SpectrumWidget that hosts the slice's pan (not the active pan).
+        // Sub-Epic D Task 13 handler stashes initialPanId as a dynamic
+        // property on the slice before sliceAdded emits; use it to find
+        // the owning PanadapterApplet -> its SpectrumWidget.
+        SpectrumWidget* sw = nullptr;
+        if (m_panStack) {
+            const QString initialPan = slice->property("initialPanId").toString();
+            const QString targetPan = initialPan.isEmpty()
+                                          ? m_panStack->activePanId()
+                                          : initialPan;
+            if (auto* applet = m_panStack->panadapter(targetPan)) {
+                sw = applet->spectrumWidget();
+            }
+            qCInfo(lcContainer) << "sliceAdded sliceIndex=" << sliceIndex
+                                 << "initialPan=" << initialPan
+                                 << "targetPan=" << targetPan
+                                 << "sw=" << (void*)sw;
+        }
+        if (!sw) { sw = activeSpectrumWidget(); }  // fallback
+        if (!sw) { return; }
         VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
         if (!newFlag) { return; }
         m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
@@ -3632,7 +3651,25 @@ void MainWindow::buildMenuBar()
                 for (int i = 0; i < needed; ++i) {
                     ids << QStringLiteral("pan-%1").arg(i);
                 }
+                qCInfo(lcContainer) << "Pan Layout (View menu): applying"
+                                      << layoutId << "with ids" << ids;
                 m_panStack->applyLayout(layoutId, ids);
+                // Phase 3F bench fix 2026-06-03: auto-add slices for new pans
+                // so each pan gets its own VfoWidget + RX applet entry. Cap
+                // at maxSlices (HL2 = 1; G2 = 5 etc.).
+                if (m_radioModel) {
+                    const int existing = m_radioModel->slices().size();
+                    const int maxS = m_radioModel->maxSlices();
+                    const int target = qMin(needed, maxS);
+                    qCInfo(lcContainer) << "Auto-add slices for layout:"
+                                          << "existing=" << existing
+                                          << "target=" << target
+                                          << "maxS=" << maxS;
+                    for (int i = existing; i < target; ++i) {
+                        const QString panId = QStringLiteral("pan-%1").arg(i);
+                        m_radioModel->addSliceOnPan(panId);
+                    }
+                }
             }
         });
     }
@@ -7420,7 +7457,23 @@ void MainWindow::showPanMenu()
             for (int i = 0; i < needed; ++i) {
                 ids << QStringLiteral("pan-%1").arg(i);
             }
+            qCInfo(lcContainer) << "Pan Layout (+PAN dropdown): applying"
+                                 << layoutId << "with ids" << ids;
             m_panStack->applyLayout(layoutId, ids);
+            // Phase 3F bench fix 2026-06-03: auto-add slices for new pans.
+            if (m_radioModel) {
+                const int existing = m_radioModel->slices().size();
+                const int maxS = m_radioModel->maxSlices();
+                const int target = qMin(needed, maxS);
+                qCInfo(lcContainer) << "Auto-add slices for layout:"
+                                     << "existing=" << existing
+                                     << "target=" << target
+                                     << "maxS=" << maxS;
+                for (int i = existing; i < target; ++i) {
+                    const QString panId = QStringLiteral("pan-%1").arg(i);
+                    m_radioModel->addSliceOnPan(panId);
+                }
+            }
         });
     }
 

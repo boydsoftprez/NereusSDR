@@ -2844,11 +2844,20 @@ SliceModel* RadioModel::sliceAt(int index) const
     return nullptr;
 }
 
-int RadioModel::addSlice()
+int RadioModel::addSlice(const QString& initialPanId)
 {
     auto* slice = new SliceModel(this);
     int index = m_slices.size();
     slice->setSliceIndex(index);
+    // Phase 3F bench fix 2026-06-03: stamp the owning pan id BEFORE the
+    // sliceAdded() emit below, so the MainWindow handler routes the new
+    // VfoWidget to the correct pan's SpectrumWidget. Previously addSliceOnPan
+    // set this property AFTER addSlice() returned, i.e. after sliceAdded had
+    // already fired with an empty initialPanId, so every new flag fell back
+    // to the active pan and stacked on pan-0.
+    if (!initialPanId.isEmpty()) {
+        slice->setProperty("initialPanId", initialPanId);
+    }
     m_slices.append(slice);
 
     // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
@@ -2960,14 +2969,10 @@ void RadioModel::addSliceOnPan(const QString& panId)
 
     // Delegate the actual create + wire + sliceAdded emit to the existing
     // addSlice() path so we keep the MoxController VOX hookup, band-change
-    // wiring, and active-slice bookkeeping in one place.
-    const int newIndex = addSlice();
-
-    // Stash the pan id on the new slice as a dynamic property; Sub-Epic D
-    // wires the full pan-slice association layer.
-    if (SliceModel* slice = sliceAt(newIndex)) {
-        slice->setProperty("initialPanId", panId);
-    }
+    // wiring, and active-slice bookkeeping in one place. Pass the panId so
+    // it is stamped on the slice BEFORE sliceAdded() fires (bench fix
+    // 2026-06-03; previously set after the emit -> handler saw it empty).
+    addSlice(panId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

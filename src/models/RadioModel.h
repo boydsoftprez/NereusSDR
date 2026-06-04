@@ -327,7 +327,11 @@ public:
     /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
     int maxSlices() const;
 
-    int addSlice();
+    // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
+    // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
+    // MainWindow handler can route the VfoWidget to the owning pan. Passing
+    // an empty string preserves the legacy single-pan behaviour.
+    int addSlice(const QString& initialPanId = QString());
     void removeSlice(int index);
     void setActiveSlice(int index);
 

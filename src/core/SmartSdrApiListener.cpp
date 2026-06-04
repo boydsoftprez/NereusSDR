@@ -1088,8 +1088,11 @@ void SmartSdrApiListener::sendResponse(QTcpSocket* sock, quint32 seq,
     const QByteArray frame =
         QStringLiteral("R%1|%2|%3\n").arg(seq).arg(err).arg(body).toUtf8();
     sock->write(frame);
-    qCInfo(lcSmartSdr) << "TX R-frame seq=" << seq << "err=" << err
-                       << "body=" << body;
+    // qCDebug not qCInfo: R-frames fire every ~30ms in steady-state and were
+    // flooding the log + hammering disk I/O, contributing to stuttering on
+    // bench (Phase 3F bench triage 2026-06-03).
+    qCDebug(lcSmartSdr) << "TX R-frame seq=" << seq << "err=" << err
+                        << "body=" << body;
 }
 
 void SmartSdrApiListener::sendStatus(QTcpSocket* sock, const QString& handle,
