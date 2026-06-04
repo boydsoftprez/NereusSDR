@@ -961,6 +961,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             [this](int idx) {
         if (m_radioModel) { m_radioModel->removeSlice(idx); }
     });
+    // Phase 3F (Bug 2): the floating ✕ close button emits closeRequested.
+    // Wire it to removeSlice so operators can dismiss a flag they opened.
+    // (removeSliceRequested above is the right-click-menu path; this is the
+    // dedicated button. Both land on RadioModel::removeSlice, which refuses
+    // to remove the last remaining slice.)
+    connect(newFlag, &VfoWidget::closeRequested, this,
+            [this](int idx) {
+        if (m_radioModel) { m_radioModel->removeSlice(idx); }
+    });
     // Phase 3F closeout — AntennaPickerMenu selection forwards to
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
     connect(newFlag, &VfoWidget::antennaChangeRequested, this,
@@ -6370,9 +6379,14 @@ void MainWindow::wireSliceToSpectrum()
         vfo->setLocked(v);
     });
 
-    // closeRequested → removeSlice wiring deferred to S1.10 — Stage 1
-    // has no sliceRemoved cleanup path yet, so calling removeSlice leaves
-    // dangling VfoWidget + lambda captures. See code review findings.
+    // Phase 3F (Bug 2): wire Slice A's floating ✕ close button to removeSlice.
+    // Slice A's close button is hidden by VfoWidget (last-slice invariant), so
+    // this can only fire if a future change un-hides it; removeSlice refuses
+    // to remove the final slice regardless, so this is safe and consistent
+    // with the secondary-flag wiring in createSliceFlag().
+    connect(vfo, &VfoWidget::closeRequested, this, [this](int index) {
+        m_radioModel->removeSlice(index);
+    });
 
     connect(vfo, &VfoWidget::sliceActivationRequested, this, [this](int index) {
         m_radioModel->setActiveSlice(index);

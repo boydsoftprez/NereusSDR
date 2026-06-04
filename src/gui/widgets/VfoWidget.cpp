@@ -2573,6 +2573,15 @@ void VfoWidget::buildFloatingButtons()
     connect(m_closeBtn, &QPushButton::clicked, this, [this]() {
         emit closeRequested(m_sliceIndex);
     });
+    // Phase 3F (Bug 2): Slice A (index 0) is the last-slice invariant —
+    // RadioModel::removeSlice refuses to remove the final slice, and its flag
+    // (m_vfoWidget) is referenced by many wireSliceToSpectrum lambdas whose
+    // teardown is deliberately skipped on sliceRemoved. Hiding the close
+    // button on Slice A keeps the affordance honest (a button that does
+    // nothing reads as broken) and avoids the fragile slice-0 removal path.
+    if (m_sliceIndex == 0) {
+        m_closeBtn->hide();
+    }
 
     // Lock button — wired
     m_lockBtn = makeBtn(QStringLiteral("\U0001F513"), kFloatingBtn);
@@ -2687,11 +2696,22 @@ void VfoWidget::positionFloatingButtons()
 
     int btnY = y();
 
+    // Phase 3F (Bug 2): the close button is hidden on Slice A (index 0);
+    // keep it hidden here and let the remaining buttons fill the gap so the
+    // strip has no empty slot at the top.
+    const bool closeShown = (m_sliceIndex != 0);
+
     QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
+        const bool isCloseBtn = (btn == m_closeBtn);
+        const bool show = isVisible() && (closeShown || !isCloseBtn);
+        if (isCloseBtn && !closeShown) {
+            btn->hide();
+            continue;  // don't advance btnY — next button takes the top slot
+        }
         btn->move(btnX, btnY);
-        btn->setVisible(isVisible());
-        if (isVisible()) {
+        btn->setVisible(show);
+        if (show) {
             btn->raise();
         }
         btnY += 22;
