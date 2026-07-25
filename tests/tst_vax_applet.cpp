@@ -190,6 +190,14 @@ private slots:
         s->setSliceIndex(0);
         s->setVaxChannel(3);
 
+        // Phase 3F Sub-Epic C Task 7 added a "never remove the last
+        // remaining slice" invariant to RadioModel::removeSlice, which this
+        // test predates. Keep a second slice alive so the removal below is
+        // legal; it is routed nowhere, so it contributes no tag of its own.
+        const int keeper = h.radio->addSlice();
+        QVERIFY(h.radio->sliceById(keeper));
+        h.radio->sliceById(keeper)->setVaxChannel(0);
+
         auto hasSliceA = [&]() {
             for (QLabel* l : h.applet->findChildren<QLabel*>()) {
                 if (l->text().contains(QStringLiteral("Slice A"))) {

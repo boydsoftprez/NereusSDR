@@ -155,6 +155,14 @@ private slots:
         QVERIFY(first);
         first->setVaxChannel(2);
 
+        // Phase 3F Sub-Epic C Task 7 added a "never remove the last
+        // remaining slice" invariant to RadioModel::removeSlice, which this
+        // test predates. Keep a second slice alive so removing slice 0
+        // below is legal. It takes id 1, so sliceById(0) still returns
+        // nothing once A is gone, and the re-add reclaims id 0.
+        const int keeper = radio.addSlice();
+        QCOMPARE(keeper, 1);
+
         PanelHarness h;
         h.panel->setRadioModel(&radio);
 
