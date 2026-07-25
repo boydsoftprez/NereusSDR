@@ -96,7 +96,7 @@ SliceStreamAllocator::placeSlice(double frequencyHz) const
 
 SliceStreamAllocator::Placement
 SliceStreamAllocator::retuneSlice(int currentStream,
-                                  bool isSoleOccupant,
+                                  bool mayRetuneStream,
                                   double frequencyHz) const
 {
     Placement p;
@@ -111,10 +111,10 @@ SliceStreamAllocator::retuneSlice(int currentStream,
     // directions, not parked at an arbitrary offset left over from wherever
     // the stream happened to be claimed.
     //
-    // Callers that must NOT move the DDC pass isSoleOccupant = false to
+    // Callers that must NOT move the DDC pass mayRetuneStream = false to
     // withhold the permission (CTUN pins the window deliberately). See the
     // header: the flag is a permission, not an observation.
-    if (isSoleOccupant && haveStream) {
+    if (mayRetuneStream && haveStream) {
         p.outcome           = Outcome::RetunedStream;
         p.streamIndex       = currentStream;
         p.shiftOffsetHz     = 0.0;

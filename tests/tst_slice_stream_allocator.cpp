@@ -90,7 +90,7 @@ private slots:
         alloc.placeSlice(14225000.0);
 
         const auto r = alloc.retuneSlice(/*currentStream*/ 0,
-                                         /*isSoleOccupant*/ false,
+                                         /*mayRetuneStream*/ false,
                                          14180000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::JoinedExisting);
@@ -106,7 +106,7 @@ private slots:
 
         // Only slice on stream 0: cheaper to move the DDC than to burn
         // another one.
-        const auto r = alloc.retuneSlice(0, /*isSoleOccupant*/ true, 7150000.0);
+        const auto r = alloc.retuneSlice(0, /*mayRetuneStream*/ true, 7150000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::RetunedStream);
         QCOMPARE(r.streamIndex, 0);
@@ -120,7 +120,7 @@ private slots:
         alloc.activateStream(0, 14200000.0, 192000);
 
         // Another slice still needs stream 0 where it is, so this one moves.
-        const auto r = alloc.retuneSlice(0, /*isSoleOccupant*/ false, 7150000.0);
+        const auto r = alloc.retuneSlice(0, /*mayRetuneStream*/ false, 7150000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::NewStream);
         QCOMPARE(r.streamIndex, 1);

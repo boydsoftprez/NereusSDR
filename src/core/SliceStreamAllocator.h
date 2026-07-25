@@ -64,7 +64,7 @@ public:
 
     /// Where should an existing slice go after retuning to `frequencyHz`?
     ///
-    /// `isSoleOccupant` is a PERMISSION to move the stream's centre, not
+    /// `mayRetuneStream` is a PERMISSION to move the stream's centre, not
     /// merely an observation about occupancy. Granted, the DDC follows the
     /// slice (Outcome::RetunedStream) whether or not the new frequency
     /// still falls inside the old window, because a lone slice belongs on
@@ -76,7 +76,7 @@ public:
     /// window, or the DDC is pinned for CTUN (RadioModel reads
     /// ReceiverManager::ddcFrequencyLocked for exactly this).
     Placement retuneSlice(int currentStream,
-                          bool isSoleOccupant,
+                          bool mayRetuneStream,
                           double frequencyHz) const;
 
     int  streamCount() const { return m_streams.size(); }
