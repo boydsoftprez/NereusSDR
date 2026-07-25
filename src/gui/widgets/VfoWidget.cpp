@@ -2913,6 +2913,7 @@ void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
         emit removeSliceRequested(m_sliceIndex);
     });
 
+    menu.setStyleSheet(QString::fromLatin1(kPopupMenu));   // Phase 3P-I-a T15 — issue #98
     menu.exec(event->globalPos());
 }
 
