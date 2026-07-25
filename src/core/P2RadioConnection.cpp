@@ -1992,8 +1992,13 @@ void P2RadioConnection::selectCodec()
         // while connectToRadio seeded DDC0 from primaryRxDdcForBoard, so the
         // operator's first VFO turn recomputed the assignment, dropped DDC0
         // and receive stopped. Same defect class as issue #263, one layer up.
-        case HW::Hermes:
+        // HermesII (ANAN-10E / ANAN-100B) is Thetis's third 1-ADC branch:
+        // same DDC placement, but nddc=2 rather than 4
+        // (console.cs:8463-8464 [v2.10.3.15]).
         case HW::HermesII:
+            m_codec = std::make_unique<P2CodecHermesII>();
+            break;
+        case HW::Hermes:
         case HW::HermesC10:  // ANAN-G2E //N1GP G2E added (HermesC10)
             m_codec = std::make_unique<P2CodecHermes>();
             break;

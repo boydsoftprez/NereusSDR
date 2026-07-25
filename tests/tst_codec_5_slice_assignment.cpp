@@ -790,6 +790,90 @@ private slots:
         QCOMPARE(a.psFwdDdc, 0);
         QCOMPARE(a.psRevDdc, 1);
     }
+
+    // ── Task 7c: HermesII is its own upstream branch (nddc=2) ────────────────
+    //
+    // Thetis splits ANAN-10E / ANAN-100B out of the Hermes-class case into a
+    // third branch at console.cs:8461-8531 [v2.10.3.15]. It is identical to the
+    // Hermes-class branch on DDC placement (rx1 -> DDC0, rx2 -> DDC1) and
+    // differs in exactly two scalars:
+    //
+    //   console.cs:8463-8464  P1_rxcount = 2;  nddc = 2;   (Hermes: 4 and 4)
+    //   console.cs:8522       P1_DDCConfig = 5 on the PS branch (Hermes: 6)
+    //
+    // So HermesII must NOT receive the Hermes nddc=4 extension into DDC2/DDC3 —
+    // the board has two DDCs. kHermesII.maxSlices = 2 guards this today, but a
+    // codec that disagrees with the caps row is the same conflation that put
+    // stream 0 on DDC2 in the first place.
+
+    void hermes_ii_p2_caps_at_two_ddcs()
+    {
+        P2CodecHermesII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> streams{};
+        for (int i = 0; i < 5; ++i) {
+            streams[i].live = true;
+            streams[i].sampleRateHz = 96000;
+        }
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+        // rx1 -> DDC0, rx2 -> DDC1, per console.cs:8470 / 8478 [v2.10.3.15].
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.streamDdc[1], 1);
+        // nddc = 2 (console.cs:8464 [v2.10.3.15]) — DDC2 and DDC3 do not exist
+        // on this board and must stay unassigned and unenabled.
+        QCOMPARE(a.streamDdc[2], -1);
+        QCOMPARE(a.streamDdc[3], -1);
+        QCOMPARE(a.streamDdc[4], -1);
+        QCOMPARE(a.ddcEnable, 0x03);
+        QCOMPARE(a.nDdc, 2);
+        // From console.cs:8463 [v2.10.3.15]: P1_rxcount = 2
+        QCOMPARE(a.p1RxCount, 2);
+    }
+
+    void hermes_ii_p2_ps_uses_ddc_config_5_not_6()
+    {
+        // From Thetis console.cs:8520-8528 [v2.10.3.15]:
+        //   else // transmitting and PS is ON
+        //   {
+        //       P1_DDCConfig = 5; DDCEnable = DDC0; SyncEnable = DDC1;
+        //       Rate[0] = ps_rate; Rate[1] = ps_rate;
+        //       cntrl1 = 4; cntrl2 = 0;
+        //   }
+        // The Hermes-class branch uses 6 here (console.cs:8451); HermesII uses 5.
+        P2CodecHermesII codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+        std::array<SliceConfig, 5> streams{};
+        streams[0].live = true;
+        streams[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+        QCOMPARE(a.p1DdcConfig, 5);
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.ddcEnable, 1);
+        QCOMPARE(a.syncEnable, 2);
+        QCOMPARE(a.adcCtrl1, 4);
+    }
+
+    void hermes_ii_board_selects_hermes_ii_codec()
+    {
+        // Selection must route HermesII to the nddc=2 codec, not the nddc=4 one.
+        P2RadioConnection conn;
+        conn.setBoardForTest(HPSDRHW::HermesII);
+        QVERIFY(dynamic_cast<P2CodecHermesII*>(conn.p2Codec()) != nullptr);
+
+        // Hermes and HermesC10 stay on the nddc=4 Hermes-class codec.
+        for (HPSDRHW b : {HPSDRHW::Hermes, HPSDRHW::HermesC10}) {
+            P2RadioConnection c2;
+            c2.setBoardForTest(b);
+            QVERIFY(dynamic_cast<P2CodecHermes*>(c2.p2Codec()) != nullptr);
+            QVERIFY(dynamic_cast<P2CodecHermesII*>(c2.p2Codec()) == nullptr);
+        }
+    }
 };
 
 QTEST_MAIN(TestCodec5SliceAssignment)

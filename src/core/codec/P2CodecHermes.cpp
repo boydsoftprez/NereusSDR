@@ -225,8 +225,10 @@ DdcAssignment P2CodecHermes::applyDdcAssignment(
     // p1RxCount is P1-only and ignored by the P2 wire path (it feeds
     // NetworkIO.Protocol1DDCConfig at console.cs:8534); carried here so the
     // struct reports the same family shape the upstream branch does.
+    // Read through familyP1RxCount() so P2CodecHermesII reports 2 per
+    // console.cs:8463 [v2.10.3.15] without restating this branch.
     //N1GP G2E added  [original inline tag from console.cs:8388 — ANAN_G2E case label]
-    a.p1RxCount = 4;
+    a.p1RxCount = familyP1RxCount();
 
     // From Thetis console.cs:8396 / 8409 [v2.10.3.15]: Rate[0] = rx1_rate;
     // From Thetis console.cs:8400 / 8413 [v2.10.3.15]: Rate[1] = rx2_rate;
@@ -252,7 +254,9 @@ DdcAssignment P2CodecHermes::applyDdcAssignment(
         //       Rate[0] = ps_rate; Rate[1] = ps_rate;
         //       cntrl1 = 4; cntrl2 = 0;
         //   }
-        a.p1DdcConfig = 6;
+        // HermesII's PS branch uses P1_DDCConfig = 5 instead
+        // (console.cs:8522 [v2.10.3.15]); hence familyPsP1DdcConfig().
+        a.p1DdcConfig = familyPsP1DdcConfig();
         a.ddcEnable   = kDDC0;
         a.syncEnable  = kDDC1;
         a.rate[0]     = kPsRate;
@@ -311,18 +315,20 @@ DdcAssignment P2CodecHermes::applyDdcAssignment(
             ++a.nDdc;
         }
 
-        // Phase 3F extension: streams 2 and 3 fill Thetis's idle DDC2 and DDC3
-        // slots additively. Bounded by nddc=4 (console.cs:8392 [v2.10.3.15]);
-        // plain-RX path only, since PS and diversity reclaim DDC0+DDC1 above.
-        for (int i = 2; i <= 3; ++i) {
+        // Phase 3F extension: streams 2+ fill Thetis's idle DDC slots
+        // additively, bounded by the family's nddc — 4 for Hermes-class
+        // (console.cs:8392 [v2.10.3.15]), 2 for HermesII (console.cs:8464), so
+        // a 2-DDC board is never handed DDC2 or DDC3. Plain-RX path only, since
+        // PS and diversity reclaim DDC0+DDC1 above.
+        for (int i = 2; i < familyDdcCount() && i < 5; ++i) {
             if (!slices[i].live) { continue; }
             a.ddcEnable |= (1 << i);
             a.rate[i]    = slices[i].sampleRateHz;
             a.streamDdc[i] = i;
             ++a.nDdc;
         }
-        // Stream 4 is never assigned on Hermes-class: nddc=4 (console.cs:8392
-        // [v2.10.3.15]) leaves no fifth DDC for this family.
+        // Stream 4 is never assigned on either 1-ADC family: nddc caps at 4
+        // (console.cs:8392 [v2.10.3.15]), so no fifth DDC exists here.
     }
 
     return a;

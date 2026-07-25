@@ -163,6 +163,51 @@ public:
     DdcAssignment applyDdcAssignment(
         const CodecContext& ctx,
         const std::array<SliceConfig, 5>& slices) const override;
+
+protected:
+    // Family shape. Thetis carries the 1-ADC boards in two adjacent switch
+    // branches that agree on DDC placement (rx1 -> DDC0, rx2 -> DDC1) and
+    // differ only in these scalars, so P2CodecHermesII overrides them rather
+    // than restating the whole branch:
+    //
+    //   Hermes-class  console.cs:8391-8392 [v2.10.3.15]  P1_rxcount=4, nddc=4
+    //                 console.cs:8451                    PS P1_DDCConfig=6
+    //   HermesII      console.cs:8463-8464 [v2.10.3.15]  P1_rxcount=2, nddc=2
+    //                 console.cs:8522                    PS P1_DDCConfig=5
+    //
+    // familyDdcCount() bounds the Phase 3F extension of streams 2+ into
+    // Thetis's idle slots, so a 2-DDC board is never handed DDC2 or DDC3.
+    //
+    //N1GP G2E added  [original inline tag from console.cs:8388 — ANAN_G2E case label]
+
+    // From Thetis console.cs:8392 [v2.10.3.15]: nddc = 4;
+    virtual int familyDdcCount() const noexcept { return 4; }
+
+    // From Thetis console.cs:8391 [v2.10.3.15]: P1_rxcount = 4;
+    virtual int familyP1RxCount() const noexcept { return 4; }
+
+    // From Thetis console.cs:8451 [v2.10.3.15]: P1_DDCConfig = 6; (PS branch)
+    virtual int familyPsP1DdcConfig() const noexcept { return 6; }
+};
+
+// HermesII P2 codec — ANAN-10E / ANAN-100B on community Protocol 2 firmware.
+//
+// Thetis's third 1-ADC branch, at console.cs:8461-8531 [v2.10.3.15]. Identical
+// to the Hermes-class branch on DDC placement — GetDDC groups all three boards
+// together at console.cs:8610-8642 (rx1 = 0, rx2 = 1) — and differs only in
+// nddc / P1_rxcount (2 rather than 4) and the PureSignal P1_DDCConfig (5 rather
+// than 6). Both differences are expressed as overrides of the family-shape
+// accessors above; applyDdcAssignment itself is inherited.
+class P2CodecHermesII : public P2CodecHermes {
+protected:
+    // From Thetis console.cs:8464 [v2.10.3.15]: nddc = 2;
+    int familyDdcCount() const noexcept override { return 2; }
+
+    // From Thetis console.cs:8463 [v2.10.3.15]: P1_rxcount = 2;
+    int familyP1RxCount() const noexcept override { return 2; }
+
+    // From Thetis console.cs:8522 [v2.10.3.15]: P1_DDCConfig = 5; (PS branch)
+    int familyPsP1DdcConfig() const noexcept override { return 5; }
 };
 
 } // namespace NereusSDR
