@@ -2862,8 +2862,18 @@ QVector<int> RadioModel::slicesOnStream(int streamIndex) const
 {
     QVector<int> out;
     for (int i = 0; i < m_slices.size(); ++i) {
-        if (m_slices.at(i) && m_slices.at(i)->streamIndex() == streamIndex) {
-            out.append(i);
+        SliceModel* s = m_slices.at(i);
+        if (s && s->streamIndex() == streamIndex) {
+            // sliceIndex(), not the list position. RxDspWorker consumes this
+            // set as WDSP channel ids ("Invariant: WDSP channel id == slice
+            // index", RxDspWorker.cpp), and bindSliceToStream looks the
+            // channel up the same way. The two agree until a slice is
+            // removed from the middle of m_slices: removeSlice never
+            // renumbers the survivors (setSliceIndex is only ever called at
+            // creation), so list position and sliceIndex diverge from that
+            // point on and publishing positions would demodulate the wrong
+            // channel.
+            out.append(s->sliceIndex());
         }
     }
     return out;
@@ -2891,6 +2901,89 @@ void RadioModel::requestDdcAssignment()
 {
     emit ddcAssignmentRequested();
     invokeCodecDdcAssignment();
+}
+
+bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
+{
+    if (!slice) { return false; }
+
+    // No pool yet (disconnected, or connectToRadio has not reached
+    // configureStreamPool). There is no DDC to bind to, and an unsized
+    // allocator would reject every placement, which would surface as a
+    // spurious "all DDCs in use" toast on the very first slice.
+    if (m_streamAllocator.streamCount() <= 0) { return false; }
+
+    const int previousStream = slice->streamIndex();
+
+    // "Sole occupant" is the allocator's PERMISSION to move this stream's
+    // centre, not just an observation about occupancy. Two things withhold
+    // it: another slice depending on this window, and CTUN, which pins the
+    // DDC deliberately while the VFO moves inside it.
+    // ReceiverManager::ddcFrequencyLocked is exactly the CTUN flag
+    // (MainWindow sets it from SpectrumWidget::ctunEnabled), so a pinned
+    // DDC never re-centres and the panadapter never slides under the
+    // operator.
+    const bool ddcPinned =
+        m_receiverManager && m_receiverManager->ddcFrequencyLocked();
+    const bool soleOccupant =
+        !ddcPinned && previousStream >= 0
+        && slicesOnStream(previousStream).size() == 1;
+
+    const auto placement =
+        (previousStream < 0)
+            ? m_streamAllocator.placeSlice(frequencyHz)
+            : m_streamAllocator.retuneSlice(previousStream, soleOccupant,
+                                            frequencyHz);
+
+    using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
+
+    if (placement.outcome == Outcome::Rejected) {
+        emit sliceAddRejected(placement.reason);
+        return false;
+    }
+
+    if (placement.outcome == Outcome::NewStream
+        || placement.outcome == Outcome::RetunedStream) {
+        // Claim or move the DDC, then centre it on the slice.
+        m_streamAllocator.activateStream(
+            placement.streamIndex, placement.newStreamCentreHz,
+            m_connectionSampleRateHz > 0 ? m_connectionSampleRateHz
+                                         : m_streamDefaultRateHz);
+
+        if (m_receiverManager) {
+            m_receiverManager->setReceiverFrequency(
+                placement.streamIndex,
+                static_cast<quint64>(placement.newStreamCentreHz));
+        }
+        emit streamCentreChanged(
+            placement.streamIndex, placement.newStreamCentreHz,
+            m_streamAllocator.streamSampleRateHz(placement.streamIndex));
+    }
+
+    slice->setStreamIndex(placement.streamIndex);
+    slice->setShiftOffsetHz(placement.shiftOffsetHz);
+
+    // Push the offset into WDSP. RxChannel::setShiftFrequency is the Thetis
+    // RXOsc port (radio.cs:1409-1420 [v2.10.3.15]): SetRXAShiftFreq +
+    // RXANBPSetShiftFrequency.
+    if (m_wdspEngine) {
+        if (RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex())) {
+            ch->setShiftFrequency(placement.shiftOffsetHz);
+        }
+    }
+
+    // A stream the slice just left may now be empty.
+    if (previousStream >= 0 && previousStream != placement.streamIndex) {
+        if (slicesOnStream(previousStream).isEmpty()) {
+            m_streamAllocator.deactivateStream(previousStream);
+        }
+        republishStreamBindings(previousStream);
+    }
+    republishStreamBindings(placement.streamIndex);
+
+    // The active-DDC set may have changed, so the codec must recompute.
+    requestDdcAssignment();
+    return true;
 }
 
 // --- Slice Management ---
@@ -2922,6 +3015,31 @@ int RadioModel::addSlice(const QString& initialPanId)
         slice->setProperty("initialPanId", initialPanId);
     }
     m_slices.append(slice);
+
+    // ── Phase 3F Sub-Epic I: bind to a DDC stream ───────────────────────
+    //
+    // A fresh SliceModel carries the 14.225 MHz ctor default
+    // (SliceModel.h m_frequency), which on the bench read as "Slice C is
+    // stuck on 20 m". Seed from the active slice first so a new slice opens
+    // on the band the operator is working (and therefore usually shares the
+    // active slice's DDC, costing no extra hardware), then bind.
+    //
+    // Ordering: seed and bind both sit AFTER m_slices.append, because
+    // slicesOnStream() reads m_slices and republishStreamBindings must
+    // publish a set that already contains this slice. The frequencyChanged
+    // lambda is wired AFTER the bind, so the seed's setFrequency does not
+    // trigger a second, redundant placement.
+    if (m_activeSlice && m_activeSlice != slice) {
+        slice->setFrequency(m_activeSlice->frequency());
+        slice->setDspMode(m_activeSlice->dspMode());
+    }
+    bindSliceToStream(slice, slice->frequency());
+
+    // Retuning re-runs the allocator: the slice may stay on its stream
+    // (shift only), move its stream's centre if it is the sole occupant, or
+    // migrate to another DDC.
+    connect(slice, &SliceModel::frequencyChanged, this,
+            [this, slice](double freq) { bindSliceToStream(slice, freq); });
 
     // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
     // MoxController. The construction-time wire-up at line ~677 silently
@@ -2993,6 +3111,20 @@ void RadioModel::removeSlice(int index)
     }
 
     SliceModel* slice = m_slices.takeAt(index);
+
+    // Phase 3F Sub-Epic I: free the stream if this was its last slice, so
+    // the DDC drops out of the ddcEnable bitmask and the radio stops
+    // streaming it. The WDSP channel stays open for reuse.
+    const int freedStream = slice->streamIndex();
+    slice->setStreamIndex(-1);
+    if (freedStream >= 0 && slicesOnStream(freedStream).isEmpty()) {
+        m_streamAllocator.deactivateStream(freedStream);
+    }
+    if (freedStream >= 0) {
+        republishStreamBindings(freedStream);
+    }
+    requestDdcAssignment();
+
     if (m_activeSlice == slice) {
         // Clear the active flag before reassigning. The deleted slice's flag
         // is moot, but the new active slice needs to be marked.
@@ -4060,6 +4192,15 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     for (int st = 1; st < caps.userDdcCount; ++st) {
         if (m_receiverManager->receiverConfig(st).receiverIndex < 0) {
             m_receiverManager->createReceiver();
+        }
+    }
+
+    // Slice A is created earlier in this function, before the pool is sized,
+    // so its addSlice-time bind was a no-op against an empty allocator.
+    // Bind every still-unbound slice now that the pool exists.
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (s && s->streamIndex() < 0) {
+            bindSliceToStream(s, s->frequency());
         }
     }
 
@@ -6936,14 +7077,16 @@ void RadioModel::wireSliceSignals()
 
     SliceModel* slice = m_activeSlice;
 
-    // Frequency → ReceiverManager → radio hardware
-    // ReceiverManager handles DDC mapping (receiver 0 → DDC2 for ANAN-G2)
+    // Phase 3F Sub-Epic I: the frequency → ReceiverManager → radio hardware
+    // push that used to open this lambda has moved into bindSliceToStream,
+    // which addSlice wires for EVERY slice. This one ran only for
+    // m_activeSlice and only from connect time, which is why tuning Slice B
+    // or later never reached the radio.
+    //
+    // What stays here is genuinely active-slice-only: the operator's
+    // listening frequency (FreeDV Reporter), the simplex TX-follows-RX
+    // push, band tracking, and the settings save.
     connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double freq) {
-        int rxIdx = slice->receiverIndex();
-        if (rxIdx >= 0) {
-            m_receiverManager->setReceiverFrequency(rxIdx, static_cast<quint64>(freq));
-        }
-
         // Phase 3R K-bench: push the new freq to the FreeDV Reporter so
         // our station's listed freq tracks the VFO. Without this, the
         // reporter server has only the connect-time freq (or zero) and

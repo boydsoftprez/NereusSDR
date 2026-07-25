@@ -348,7 +348,9 @@ public:
     int streamPoolSize() const;
     int activeStreamCount() const;
 
-    /// Slice indices currently bound to a stream, ascending.
+    /// SliceModel::sliceIndex() of every slice currently bound to a stream,
+    /// ascending. These double as WDSP channel ids (Sub-Epic I invariant:
+    /// WDSP RX channel id == slice index).
     QVector<int> slicesOnStream(int streamIndex) const;
 
     // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
@@ -2030,6 +2032,14 @@ public:
     void invokeCodecDdcAssignment();
 
     // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────
+
+    /// Run the allocator for `slice` at `frequencyHz` and apply the result
+    /// (stream binding, shift offset, stream centre, codec recompute).
+    /// Returns false and emits sliceAddRejected when the hardware has no
+    /// room. Returns false silently when the pool has not been sized yet
+    /// (disconnected): there is no DDC to bind to, and a slice with
+    /// streamIndex() < 0 is unbound and feeds nothing.
+    bool bindSliceToStream(SliceModel* slice, double frequencyHz);
 
     /// Push the current slice set for `streamIndex` to RxDspWorker and emit
     /// streamBindingsChanged. Called after every bind / unbind.

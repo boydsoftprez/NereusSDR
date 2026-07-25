@@ -63,8 +63,18 @@ public:
     Placement placeSlice(double frequencyHz) const;
 
     /// Where should an existing slice go after retuning to `frequencyHz`?
-    /// `isSoleOccupant` decides whether moving the stream's centre is
-    /// allowed: if other slices depend on this window, it is not.
+    ///
+    /// `isSoleOccupant` is a PERMISSION to move the stream's centre, not
+    /// merely an observation about occupancy. Granted, the DDC follows the
+    /// slice (Outcome::RetunedStream) whether or not the new frequency
+    /// still falls inside the old window, because a lone slice belongs on
+    /// its DDC centre. Withheld, the stream's centre is fixed: the slice
+    /// carries a shift offset while it stays in the window and migrates to
+    /// another DDC when it leaves.
+    ///
+    /// Callers withhold it in two cases: other slices depend on this
+    /// window, or the DDC is pinned for CTUN (RadioModel reads
+    /// ReceiverManager::ddcFrequencyLocked for exactly this).
     Placement retuneSlice(int currentStream,
                           bool isSoleOccupant,
                           double frequencyHz) const;

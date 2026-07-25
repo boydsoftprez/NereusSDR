@@ -101,19 +101,20 @@ SliceStreamAllocator::retuneSlice(int currentStream,
 {
     Placement p;
 
-    // Still inside its own window: nothing moves but the shift oscillator.
-    if (currentStream >= 0 && currentStream < m_streams.size()
-        && windowContains(m_streams.at(currentStream), frequencyHz)) {
-        p.outcome       = Outcome::JoinedExisting;
-        p.streamIndex   = currentStream;
-        p.shiftOffsetHz = frequencyHz - m_streams.at(currentStream).centreHz;
-        return p;
-    }
+    const bool haveStream =
+        currentStream >= 0 && currentStream < m_streams.size();
 
-    // Sole occupant: moving the DDC is cheaper than burning another one,
-    // and no other slice depends on this window staying put.
-    if (isSoleOccupant && currentStream >= 0
-        && currentStream < m_streams.size()) {
+    // Sole occupant, and the caller has granted permission to move the
+    // centre: no other slice depends on this window, so the DDC follows the
+    // slice. Checked BEFORE the window test, because a lone slice belongs on
+    // its DDC centre where it has the full half-rate of headroom in both
+    // directions, not parked at an arbitrary offset left over from wherever
+    // the stream happened to be claimed.
+    //
+    // Callers that must NOT move the DDC pass isSoleOccupant = false to
+    // withhold the permission (CTUN pins the window deliberately). See the
+    // header: the flag is a permission, not an observation.
+    if (isSoleOccupant && haveStream) {
         p.outcome           = Outcome::RetunedStream;
         p.streamIndex       = currentStream;
         p.shiftOffsetHz     = 0.0;
@@ -121,7 +122,17 @@ SliceStreamAllocator::retuneSlice(int currentStream,
         return p;
     }
 
-    // Co-hosted: this slice must leave. Same policy as a fresh placement.
+    // Co-hosted and still inside its own window: nothing moves but the
+    // shift oscillator.
+    if (haveStream && windowContains(m_streams.at(currentStream), frequencyHz)) {
+        p.outcome       = Outcome::JoinedExisting;
+        p.streamIndex   = currentStream;
+        p.shiftOffsetHz = frequencyHz - m_streams.at(currentStream).centreHz;
+        return p;
+    }
+
+    // Co-hosted and outside it: this slice must leave. Same policy as a
+    // fresh placement.
     return placeSlice(frequencyHz);
 }
 
