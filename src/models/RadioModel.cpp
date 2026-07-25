@@ -11155,6 +11155,18 @@ void RadioModel::invokeCodecDdcAssignment()
         if (NereusSDR::IP2Codec* codec = p2conn->p2Codec()) {
             NereusSDR::DdcAssignment assignment = codec->applyDdcAssignment(ctx, slices);
             p2conn->applyDdcAssignment(assignment);
+
+            // Phase 3F Sub-Epic I Task 7: publish the codec's choice back
+            // onto each SliceModel. SliceModel::setDdcIndex had zero
+            // callers before this, so slice->ddcIndex() was permanently -1.
+            // Indexed by list position, matching buildSliceConfigsForCodec
+            // above (configs[i] <- m_slices.at(i)), so the codec's input
+            // and this publish-back agree on what "slot i" means.
+            for (int i = 0; i < m_slices.size() && i < 5; ++i) {
+                if (SliceModel* s = m_slices.at(i)) {
+                    s->setDdcIndex(assignment.sliceDdc[i]);
+                }
+            }
         }
     } else if (auto* p1conn = qobject_cast<NereusSDR::P1RadioConnection*>(m_connection)) {
         if (NereusSDR::IP1Codec* codec = p1conn->p1Codec()) {
@@ -11162,6 +11174,34 @@ void RadioModel::invokeCodecDdcAssignment()
             // applyPsDdcConfig flow handles P1 wire writes. Full P1
             // integration is deferred to Phase 3F Sub-Epic C.
             codec->applyDdcAssignment(ctx, slices);
+        }
+    }
+
+    // Phase 3F Sub-Epic I Task 7: reconcile ReceiverManager activation
+    // against the current slice bindings. bindSliceToStream / removeSlice
+    // (Task 6) maintain SliceStreamAllocator's own stream-active
+    // bookkeeping and call setReceiverFrequency, but neither touches
+    // ReceiverManager's per-receiver active flag, so a freshly-claimed
+    // stream's receiver stayed inactive forever and
+    // ReceiverManager::setReceiverFrequency silently stored the frequency
+    // without pushing hardwareFrequencyChanged: it only emits when active,
+    // and rebuildHardwareMapping() only assigns a hardwareRx to active
+    // receivers (ReceiverManager.cpp). activateReceiver() re-runs
+    // rebuildHardwareMapping(), which re-emits hardwareFrequencyChanged
+    // from the already-stored frequency, so activating here is sufficient
+    // even though setReceiverFrequency already ran earlier in
+    // bindSliceToStream. Runs for both P1 and P2: receiver activation is
+    // client-side bookkeeping, independent of whether the P1 DDC wire-byte
+    // path (deferred, see the P1 branch above) is implemented. Both
+    // activateReceiver/deactivateReceiver no-op when already in the target
+    // state, so this is cheap to run on every assignment change.
+    if (m_receiverManager) {
+        for (int st = 0; st < streamPoolSize(); ++st) {
+            if (slicesOnStream(st).isEmpty()) {
+                m_receiverManager->deactivateReceiver(st);
+            } else {
+                m_receiverManager->activateReceiver(st);
+            }
         }
     }
 }

@@ -891,6 +891,12 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
     const int rx2Rate = slices[1].live ? slices[1].sampleRateHz : 0;
     const bool rx2Live = slices[1].live;
 
+    // Phase 3F Sub-Epic I Task 7: Slice A always demodulates from DDC0 on
+    // this Hermes-class codec, in every branch below (PS/diversity/plain
+    // all set DDCEnable = kDDC0); only DDC1's role changes. Set once here
+    // rather than duplicated per branch.
+    if (slices[0].live) { a.sliceDdc[0] = 0; }
+
     if (ctx.puresignalRun && ctx.mox) {
         // From Thetis console.cs:8440-8449 [v2.10.3.15]:
         //   else // transmitting and PS is ON
@@ -945,6 +951,11 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
             a.ddcEnable += kDDC1;
             a.rate[1]    = rx2Rate;
             a.nDdc       = 2;
+            // Phase 3F Sub-Epic I Task 7: Slice B -> DDC1, plain-RX path
+            // only (PS/diversity branches reclaim DDC1 as a sync partner
+            // with no independent Slice B rate, so sliceDdc[1] stays -1
+            // there).
+            a.sliceDdc[1] = 1;
         }
 
         // Phase 3F extension: Slices C+D → DDC2+DDC3 additively (plain-RX path only).
@@ -953,11 +964,13 @@ DdcAssignment P1CodecStandard::applyDdcAssignment(
             a.ddcEnable |= (1 << 2);  // DDC2
             a.rate[2]    = slices[2].sampleRateHz;
             ++a.nDdc;
+            a.sliceDdc[2] = 2;  // Phase 3F Sub-Epic I Task 7
         }
         if (slices[3].live) {
             a.ddcEnable |= (1 << 3);  // DDC3
             a.rate[3]    = slices[3].sampleRateHz;
             ++a.nDdc;
+            a.sliceDdc[3] = 3;  // Phase 3F Sub-Epic I Task 7
         }
         // Slice E (index 4) always ignored on Hermes-class (maxSlices=4).
     }

@@ -1083,6 +1083,8 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     for (int i = 0; i < 5; ++i) {
         if (!slices[i].live) { continue; }
         const int ddc = kSliceToDdc[i];
+        // Phase 3F Sub-Epic I Task 7: publish the mapping explicitly.
+        a.sliceDdc[i] = ddc;
         a.ddcEnable |= (1 << ddc);
         // From Thetis console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate;
         // [2.10.3.13]MW0LGE p1 !  [original inline comment from console.cs:8247]
@@ -1147,6 +1149,11 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
             a.rate[0] = slices[0].sampleRateHz;
             a.rate[1] = slices[0].sampleRateHz;
             a.rate[2] = 0;
+            // Phase 3F Sub-Epic I Task 7: Slice A's DDC moved from DDC2 to
+            // the DDC0/DDC1 diversity sync pair set above; republish DDC0
+            // as the pair's primary so sliceDdc stays consistent with
+            // ddcEnable (same convention as psFwdDdc for the PS pair).
+            a.sliceDdc[0] = 0;
         }
         // adcCtrl1 stays as rx_adc_ctrl1 & 0xff (no PS override here)
         // nDdc: was incremented for DDC2 above; swap to DDC0+DDC1 (net delta = +1)

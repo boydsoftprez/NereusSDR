@@ -773,6 +773,12 @@ DdcAssignment P1CodecHl2::applyDdcAssignment(
     a.p1RxCount = 4;  // RX4 used for puresignal feedback
     a.nDdc = 4;
 
+    // Phase 3F Sub-Epic I Task 7: Slice A always demodulates from DDC0 on
+    // HL2 (maxSlices=1), in every branch below (mox/diversity/PS all keep
+    // DDCEnable = DDC0bit); only DDC1's role as a sync/PS partner changes.
+    // The early return above already guarantees slices[0].live here.
+    a.sliceDdc[0] = 0;
+
     const int rx1Rate = slices[0].sampleRateHz;
 
     if (!ctx.mox) {

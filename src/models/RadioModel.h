@@ -2029,6 +2029,11 @@ public:
     // resulting DdcAssignment to P2RadioConnection (P1 integration deferred).
     // No-op when disconnected. Called from slice-event handlers after
     // Tasks 1-15 have wired the codec/connection interfaces.
+    //
+    // Phase 3F Sub-Epic I Task 7: also publishes DdcAssignment::sliceDdc
+    // back onto each SliceModel via setDdcIndex(), and reconciles
+    // ReceiverManager's per-stream active flag against slicesOnStream() so
+    // a stream with a bound slice actually pushes frequency to hardware.
     void invokeCodecDdcAssignment();
 
     // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────

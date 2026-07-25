@@ -274,6 +274,9 @@ DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
         a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
         a.psFwdDdc    = 0;
         a.psRevDdc    = 1;
+        // Phase 3F Sub-Epic I Task 7: Slice A stays on DDC2 (rate[2] above
+        // is preserved, not reclaimed by the PS pair).
+        if (slices[0].live) { a.sliceDdc[0] = 2; }
     } else if (ctx.diversity) {
         // From Thetis console.cs:8310-8319 [v2.10.3.15] (no-mox, diversity):
         //   P1_DDCConfig = 2; // REDPITAYA PAVEL
@@ -296,6 +299,10 @@ DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
         a.adcCtrl1    = ctx.p1AdcCntrl & 0xff;
         a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
         a.p1Diversity = 1;
+        // Phase 3F Sub-Epic I Task 7: Slice A migrates to the DDC0/DDC1
+        // sync pair set above. ddcEnable carries only kDDC0 here (DDC2's
+        // rate[2] REDPITAYA PAVEL quirk above does not enable DDC2 itself).
+        if (slices[0].live) { a.sliceDdc[0] = 0; }
     } else {
         // From Thetis console.cs:8321-8330 [v2.10.3.15] (no-diversity, plain RX):
         //   P1_DDCConfig = 1; DDCEnable = DDC2; SyncEnable = 0;
@@ -317,6 +324,8 @@ DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
         a.adcCtrl1    = ctx.p1AdcCntrl & 0xff;
         a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
         a.nDdc        = 1;
+        // Phase 3F Sub-Epic I Task 7: Slice A -> DDC2, plain-RX path.
+        if (slices[0].live) { a.sliceDdc[0] = 2; }
 
         // Phase 3F extension: Slices C/D/E -> DDC4/5/6 in plain-RX path.
         // 384k flows through naturally via SliceConfig.sampleRateHz
@@ -327,6 +336,8 @@ DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
         for (int i = 2; i <= 4; ++i) {
             if (slices[i].live) {
                 const int ddc = i + 2;  // slice 2->DDC4, 3->DDC5, 4->DDC6
+                // Phase 3F Sub-Epic I Task 7: publish the mapping explicitly.
+                a.sliceDdc[i] = ddc;
                 a.ddcEnable |= (1 << ddc);
                 a.rate[ddc]  = slices[i].sampleRateHz;
                 ++a.nDdc;
@@ -342,6 +353,10 @@ DdcAssignment P1CodecRedPitaya::applyDdcAssignment(
     if (rx2Live) {
         a.ddcEnable |= kDDC3;
         a.rate[3]    = rx2Rate;
+        // Phase 3F Sub-Epic I Task 7: Slice B -> DDC3, in every branch (the
+        // rx2Live addendum runs unconditionally, same as ddcEnable/rate[3]
+        // above).
+        a.sliceDdc[1] = 3;
         if (!(ctx.puresignalRun && ctx.mox) && !ctx.diversity) {
             ++a.nDdc;
         }

@@ -579,6 +579,33 @@ private slots:
         QCOMPARE(a.rate[1], 192000);
         QCOMPARE(a.rate[2], 192000);  // REDPITAYA PAVEL - extra rate[2]
     }
+
+    // ── Phase 3F Sub-Epic I Task 7: per-slice DDC mapping publication ────────
+    //
+    // NOT to be confused with "Task 7" above (P2CodecOrionMkII), which is
+    // Sub-Epic B numbering. This is Sub-Epic I's own Task 7: DdcAssignment
+    // gains sliceDdc[5] so RadioModel can publish the codec's per-slice DDC
+    // choice onto each SliceModel via setDdcIndex(), which previously had
+    // zero callers. See docs/architecture/2026-07-24-phase3f-sub-epic-i-
+    // data-plane-plan.md Task 7.
+
+    void saturn_publishes_per_slice_ddc_mapping()
+    {
+        P2CodecSaturn codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true; slices[0].sampleRateHz = 192000;
+        slices[2].live = true; slices[2].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.sliceDdc[0], 2);    // Slice A -> DDC2
+        QCOMPARE(a.sliceDdc[1], -1);   // not live
+        QCOMPARE(a.sliceDdc[2], 4);    // Slice C -> DDC4
+        // Every published DDC must also be enabled in the bitmask.
+        QVERIFY((a.ddcEnable >> a.sliceDdc[0]) & 1);
+        QVERIFY((a.ddcEnable >> a.sliceDdc[2]) & 1);
+    }
 };
 
 QTEST_MAIN(TestCodec5SliceAssignment)
