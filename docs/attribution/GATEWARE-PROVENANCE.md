@@ -65,6 +65,7 @@ applies to it exactly as it does to Thetis tags.
 | NereusSDR file | Upstream file | Lines | Kind | Fact established |
 | --- | --- | --- | --- | --- |
 | src/core/BoardCapabilities.h | Orion.v | 632; 956-958; 964 | reference | Documents the five-layer distinction behind `maxSlices` / `userDdcCount`: fabric capacity 14, bootloader cap 10, shipped `NR = 8`, link-bound 8@192k/2@1536k, Thetis policy 5. Records that the table's values are Thetis policy, that `NR` moves between firmware releases, and that the usable count is rate-dependent. No value changed — the Phase 3F ceiling deliberately stays at 5 pending bench verification. |
+| tests/tst_alex_per_adc_bpf_wire.cpp | Orion.v; High_Priority_CC.v | 2346-2348; 257, 261 | reference | Establishes that the two Alex control words are *alternative sources for one* 16-bit TX filter word, not a redundant pair: `Alex_upper` takes `Alex_Tx_data` (bytes 1428-1429) while keyed with valid one-hot ANT bits, else `Alex_data[47:32]` (bytes 1432-1433). Also fixes the byte-to-bit mapping (`Alex_Tx_data[n]` is register bit `n+16`) via the ANT nibble the gateware validates. Justifies replacing the word-equality assertion in `lpf_bits_are_untouched_by_every_bpf_decision` with a per-word one. No value changed. |
 
 ## Open questions
 

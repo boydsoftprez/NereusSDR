@@ -94,6 +94,25 @@ constexpr quint32 kAlexLpfMask =
     (1u << 20) | (1u << 21) | (1u << 22) | (1u << 23) |
     (1u << 29) | (1u << 30) | (1u << 31);
 
+// Encode an Alex LPF mask into its register bit positions. Identical in both
+// words: Thetis ChannelMaster/network.h:263-307 (rbpfilter, Alex0) and
+// :312-356 (rbpfilter2, Alex1) [v2.10.3.15] declare the same seven fields at
+// the same offsets --
+//   _30_20_LPF bit 20, _60_40_LPF bit 21, _80_LPF bit 22, _160_LPF bit 23,
+//   _6_LPF bit 29, _12_10_LPF bit 30, _17_15_LPF bit 31.
+quint32 encodeLpf(quint8 bits)
+{
+    quint32 reg = 0;
+    if (bits & 0x01) { reg |= (1u << 20); }
+    if (bits & 0x02) { reg |= (1u << 21); }
+    if (bits & 0x04) { reg |= (1u << 22); }
+    if (bits & 0x08) { reg |= (1u << 23); }
+    if (bits & 0x10) { reg |= (1u << 29); }
+    if (bits & 0x20) { reg |= (1u << 30); }
+    if (bits & 0x40) { reg |= (1u << 31); }
+    return reg;
+}
+
 quint32 readBE32(const quint8* buf, int offset)
 {
     return (quint32(buf[offset])     << 24)
@@ -359,9 +378,39 @@ private slots:
 
     // The RX BPF decision must not move a single LPF bit: the LPF is TX-only
     // and protects the PA (design doc §4, "LPF: TX-only, never bypassed").
+    //
+    // This case used to assert `lpfInAlex0 == lpfInAlex1` as well. That held
+    // only because both words read one shared mask, which was itself the
+    // RF-safety defect fixed in 46e5390d: a receive retune onto a low band
+    // dragged the transmit low-pass down with it. Alex0 and Alex1 carry
+    // SEPARATE low-pass fields and are not required to agree.
+    //
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     void SetAlexLPFBits(int bits, bool isTX, bool isMox)
+    //     if (isMox || isTX)   -> prbpfilter2 (Alex1, bytes 1428-1431)
+    //     if (isMox || !isTX)  -> prbpfilter  (Alex0, bytes 1432-1435)
+    //
+    // so Alex1 always carries the transmit-derived selection while Alex0
+    // carries the receive-derived one until MOX, when the two converge. The
+    // hardware reads them as alternatives, not as a redundant pair:
+    //   From n1gp-Anvelina_PROIII Orion.v:2348 [@8e86a61]
+    //     wire [15:0] Alex_upper =
+    //         (FPGA_PTT && Alex_Tx_data_ok) ? Alex_Tx_data : Alex_data[47:32];
+    // where Alex_Tx_data is bytes 1428-1429 (High_Priority_CC.v:257
+    // [@8e86a61]) and Alex_data[47:32] is bytes 1432-1433
+    // (High_Priority_CC.v:261 [@8e86a61]).
+    //
+    // The equality assertion is therefore replaced with the stronger claim
+    // it was standing in for: each word's low-pass field is exactly the
+    // encoding of ITS OWN input, for every band-pass decision. Feeding the
+    // two inputs different values also makes a regression that re-merges
+    // them fail here rather than pass silently.
     void lpf_bits_are_untouched_by_every_bpf_decision()
     {
-        const quint8 lpf = codec::alex::computeLpf(14.2);   // 30/20 m LPF
+        const quint8 lpfRx = codec::alex::computeLpf(14.2);   // 30/20 m LPF
+        const quint8 lpfTx = codec::alex::computeLpf(3.7);    // 80 m LPF
+        QVERIFY(lpfRx != lpfTx);
+
         const QVector<int> adc0Decisions {
             int(codec::alex::computeHpf(1.9)),
             int(codec::alex::computeHpf(7.15)),
@@ -370,29 +419,24 @@ private slots:
         };
         const QVector<int> adc1Decisions { -1, 0x20, int(codec::alex::computeHpf(7.15)) };
 
-        quint32 reference = 0;
-        bool haveReference = false;
+        const quint32 expectedAlex0 = encodeLpf(lpfRx);
+        const quint32 expectedAlex1 = encodeLpf(lpfTx);
+        QVERIFY(expectedAlex0 != 0);   // the LPF really is asserted
+        QVERIFY(expectedAlex1 != 0);
 
         for (int hpf0 : adc0Decisions) {
             for (int hpf1 : adc1Decisions) {
                 CodecContext ctx;
                 ctx.alexHpfBits     = quint8(hpf0);
                 ctx.alexHpfBitsAdc1 = hpf1;
-                ctx.alexLpfBits     = lpf;
+                ctx.alexLpfBits     = lpfRx;
+                ctx.alexLpfBitsTx   = lpfTx;
 
                 quint32 alex0 = 0, alex1 = 0;
                 composeAlexRegisters(ctx, &alex0, &alex1);
 
-                const quint32 lpfInAlex0 = alex0 & kAlexLpfMask;
-                const quint32 lpfInAlex1 = alex1 & kAlexLpfMask;
-                QCOMPARE(lpfInAlex0, lpfInAlex1);
-                if (!haveReference) {
-                    reference = lpfInAlex0;
-                    haveReference = true;
-                    QVERIFY(reference != 0);   // the LPF really is asserted
-                } else {
-                    QCOMPARE(lpfInAlex0, reference);
-                }
+                QCOMPARE(alex0 & kAlexLpfMask, expectedAlex0);
+                QCOMPARE(alex1 & kAlexLpfMask, expectedAlex1);
             }
         }
     }
