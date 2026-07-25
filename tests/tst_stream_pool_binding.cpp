@@ -5,6 +5,7 @@
 //
 // Phase 3F Sub-Epic I Tasks 5-6: stream pool + slice binding.
 // Phase 3F Sub-Epic I Task 7b: per-stream DDC assignment + routing.
+// Phase 3F Sub-Epic I closeout, defect F1: bindings reach a late worker.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
@@ -12,9 +13,42 @@
 #include "core/codec/P1CodecRedPitaya.h"
 #include "core/codec/P2CodecSaturn.h"
 #include "models/RadioModel.h"
+#include "models/RxDspWorker.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+namespace {
+
+// One in_size chunk of interleaved I/Q, enough to make RxDspWorker drain
+// and fan the chunk out to whatever slices it believes are on the stream.
+QVector<float> oneChunk(int inSize)
+{
+    QVector<float> v;
+    v.reserve(inSize * 2);
+    for (int i = 0; i < inSize; ++i) {
+        v.append(0.1f);
+        v.append(0.2f);
+    }
+    return v;
+}
+
+// Slice indices the worker actually fanned a stream-`st` chunk out to.
+// This reads the worker's real binding map through its production drain
+// path rather than a test-only accessor, so it cannot pass on a map the
+// DSP thread would never consult.
+QVector<int> workerBindingsFor(RxDspWorker& w, int st, int inSize)
+{
+    QSignalSpy spy(&w, &RxDspWorker::sliceProcessed);
+    w.processIqBatch(st, oneChunk(inSize));
+    QVector<int> out;
+    for (int i = 0; i < spy.count(); ++i) {
+        out.append(spy.at(i).at(0).toInt());
+    }
+    return out;
+}
+
+} // namespace
 
 class TestStreamPoolBinding : public QObject {
     Q_OBJECT
@@ -249,6 +283,108 @@ private slots:
 
         QVERIFY(model.slices().at(b)->streamIndex() != 0);
         QCOMPARE(model.activeStreamCount(), 2);
+    }
+
+    // ── Phase 3F Sub-Epic I closeout, defect F1 ─────────────────────────
+    //
+    // connectToRadio sizes the pool and binds every slice BEFORE
+    // wireConnectionSignals constructs the RxDspWorker, so every bind-time
+    // republish hit the `if (m_dspWorker)` guard with a null pointer. The
+    // worker then started life knowing only its constructor seed
+    // ({stream 0: [slice 0]}) and anything on a non-zero stream demodulated
+    // nothing.
+
+    void bindings_reach_a_worker_constructed_after_the_binds()
+    {
+        constexpr int kInSize = 4;
+
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+
+        const int streamB = model.slices().at(b)->streamIndex();
+        const int idB     = model.slices().at(b)->sliceIndex();
+        QVERIFY(streamB > 0);
+
+        // Production ordering: the worker only exists now, well after every
+        // bind above already ran.
+        RxDspWorker worker;
+        worker.setBufferSizes(kInSize, 64);
+        model.attachDspWorkerForTest(&worker);
+        model.republishAllStreamBindings();
+        // republishStreamBindings posts a queued call; drain it.
+        QCoreApplication::processEvents();
+
+        QCOMPARE(workerBindingsFor(worker, streamB, kInSize), QVector<int>{idB});
+    }
+
+    // Teardown left every slice's streamIndex set, so connectToRadio's
+    // `streamIndex() < 0` bind loop skipped all of them, nothing
+    // republished, and the fresh worker was left with the constructor seed
+    // alone. A Slice B on stream 1 went silent until it was retuned.
+
+    void reconnect_rebinds_a_slice_that_was_on_a_non_zero_stream()
+    {
+        constexpr int kInSize = 4;
+
+        RadioModel model;
+
+        // ── connect #1 ──────────────────────────────────────────────────
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+
+        const int idB = model.slices().at(b)->sliceIndex();
+        QVERIFY(model.slices().at(b)->streamIndex() > 0);
+        QCOMPARE(model.activeStreamCount(), 2);
+
+        RxDspWorker firstWorker;
+        firstWorker.setBufferSizes(kInSize, 64);
+        model.attachDspWorkerForTest(&firstWorker);
+        model.republishAllStreamBindings();
+        QCoreApplication::processEvents();
+
+        // ── teardown ────────────────────────────────────────────────────
+        // teardownConnection destroys the worker, then releases the
+        // bindings so the next connect has something to re-bind.
+        model.attachDspWorkerForTest(nullptr);
+        model.releaseStreamBindings();
+
+        QCOMPARE(model.slices().at(b)->streamIndex(), -1);
+        QCOMPARE(model.slices().at(b)->ddcIndex(), -1);
+        QCOMPARE(model.activeStreamCount(), 0);
+
+        // ── connect #2 ──────────────────────────────────────────────────
+        model.configureStreamPool(5, 5, 192000);
+        model.bindUnboundSlices();
+
+        const int streamB = model.slices().at(b)->streamIndex();
+        QVERIFY(streamB > 0);
+        QCOMPARE(model.activeStreamCount(), 2);
+
+        RxDspWorker secondWorker;
+        secondWorker.setBufferSizes(kInSize, 64);
+        model.attachDspWorkerForTest(&secondWorker);
+        model.republishAllStreamBindings();
+        QCoreApplication::processEvents();
+
+        QCOMPARE(workerBindingsFor(secondWorker, streamB, kInSize),
+                 QVector<int>{idB});
+
+        // ...and the constructor seed must not have survived onto a stream
+        // that Slice A no longer occupies alone.
+        QCOMPARE(workerBindingsFor(secondWorker,
+                                   model.slices().at(a)->streamIndex(),
+                                   kInSize),
+                 QVector<int>{model.slices().at(a)->sliceIndex()});
+
+        model.attachDspWorkerForTest(nullptr);
     }
 };
 

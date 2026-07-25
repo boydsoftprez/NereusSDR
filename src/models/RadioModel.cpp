@@ -2859,6 +2859,39 @@ void RadioModel::configureStreamPool(int userDdcCount, int maxSlices,
     }
 }
 
+void RadioModel::bindUnboundSlices()
+{
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (s && s->streamIndex() < 0) {
+            bindSliceToStream(s, s->frequency());
+        }
+    }
+}
+
+void RadioModel::republishAllStreamBindings()
+{
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        republishStreamBindings(st);
+    }
+}
+
+void RadioModel::releaseStreamBindings()
+{
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (!s) { continue; }
+        s->setStreamIndex(-1);
+        s->setShiftOffsetHz(0.0);
+        // The DDC number came from the codec run for a stream that no longer
+        // hosts this slice. Leaving it would let the VFO flag keep reporting
+        // a DDC the radio has stopped streaming.
+        s->setDdcIndex(-1);
+    }
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        m_streamAllocator.deactivateStream(st);
+    }
+    m_streamDdc.fill(-1);
+}
+
 int RadioModel::streamPoolSize() const
 {
     return m_streamAllocator.streamCount();
@@ -4347,13 +4380,10 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     }
 
     // Slice A is created earlier in this function, before the pool is sized,
-    // so its addSlice-time bind was a no-op against an empty allocator.
-    // Bind every still-unbound slice now that the pool exists.
-    for (SliceModel* s : std::as_const(m_slices)) {
-        if (s && s->streamIndex() < 0) {
-            bindSliceToStream(s, s->frequency());
-        }
-    }
+    // so its addSlice-time bind was a no-op against an empty allocator. On a
+    // reconnect, teardownConnection released EVERY slice's binding, so this
+    // is also where Slice B and friends come back.
+    bindUnboundSlices();
 
     qCInfo(lcConnection) << "Sub-Epic I: streams=" << caps.userDdcCount
                          << "channels=" << poolSlices;
@@ -6763,6 +6793,28 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
             Qt::QueuedConnection);
     m_dspThread->start();
 
+    // ── Phase 3F Sub-Epic I closeout, defect F1 ─────────────────────────
+    //
+    // Retroactive stream-binding push, same lifecycle gotcha as the RADE
+    // wire-up immediately below. connectToRadio sizes the stream pool and
+    // binds every slice several thousand lines EARLIER than this function,
+    // so every one of those republishStreamBindings calls hit the
+    // `if (m_dspWorker)` guard while the pointer was still null. The worker
+    // therefore began life knowing only its constructor seed
+    // ({stream 0: [slice 0]}), and any slice on a non-zero stream was
+    // accumulated, drained and then demodulated by nobody.
+    //
+    // First connect survived on that seed alone. Reconnect did not: the
+    // slices kept their streamIndex across teardown, so connectToRadio's
+    // `streamIndex() < 0` bind loop skipped all of them and nothing
+    // republished at all. releaseStreamBindings() in teardownConnection is
+    // the other half of this fix.
+    //
+    // Publishes every stream, not just the occupied ones: an idle stream
+    // must be explicitly declared empty so the constructor seed cannot
+    // leave slice 0 attached to a stream it no longer sits on.
+    republishAllStreamBindings();
+
     // Phase 3R K-bench: retroactive RADE RX wire-up.
     //
     // Same lifecycle gotcha as the TxWorker retroactive create at
@@ -8768,6 +8820,20 @@ void RadioModel::teardownConnection()
     QObject::disconnect(m_connection, nullptr, this, nullptr);
     QObject::disconnect(m_connection, nullptr, m_receiverManager, nullptr);
     QObject::disconnect(m_receiverManager, nullptr, this, nullptr);
+
+    // ── Phase 3F Sub-Epic I closeout, defect F1 ─────────────────────────
+    //
+    // Unbind every slice so the next connect actually re-binds it. The DSP
+    // worker was destroyed a few dozen lines up, taking its stream->slice
+    // map with it, but the SliceModels kept their streamIndex; the reconnect
+    // bind loop in connectToRadio is guarded on `streamIndex() < 0`, so it
+    // skipped every slice, nothing republished, and the new worker had only
+    // its constructor seed. A Slice B that was on stream 1 demodulated
+    // nothing until the operator happened to retune it.
+    //
+    // Sits beside ReceiverManager::reset() because it is the same kind of
+    // step: drop the routing state so the next connect starts clean.
+    releaseStreamBindings();
 
     // Drop all logical receivers so the next connectToRadio() starts from
     // index 0 with a fresh wdspChannel counter. Without this, issue #75:

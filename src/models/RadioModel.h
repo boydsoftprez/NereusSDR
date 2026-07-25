@@ -354,6 +354,35 @@ public:
     /// Size the pool to the connected SKU and clear all bindings.
     void configureStreamPool(int userDdcCount, int maxSlices, int defaultRateHz);
 
+    /// Run the allocator for every slice that currently has no stream.
+    ///
+    /// Connect-time step: Slice A is created before the pool is sized, so its
+    /// addSlice-time bind was a no-op, and after a teardown every slice is
+    /// unbound (see releaseStreamBindings).
+    void bindUnboundSlices();
+
+    /// Push every stream's current slice set to the DSP worker.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect F1. connectToRadio sizes the pool
+    /// and binds every slice BEFORE wireConnectionSignals constructs
+    /// m_dspWorker, so each of those binds published into a null pointer and
+    /// the freshly-built worker started life knowing only its constructor's
+    /// seed ({stream 0: [slice 0]}). Anything on a non-zero stream then
+    /// demodulated nothing until the operator happened to retune it. Called
+    /// from wireConnectionSignals once the worker exists.
+    void republishAllStreamBindings();
+
+    /// Drop every slice's stream binding and idle the whole pool.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect F1. Teardown destroys the DSP
+    /// worker but the slices kept their streamIndex, so the reconnect bind
+    /// loop in connectToRadio (guarded on streamIndex() < 0) skipped them all
+    /// and nothing was ever republished to the new worker. Deactivating the
+    /// allocator's streams here keeps its bookkeeping consistent with the
+    /// slices that just became unbound, rather than leaving live streams that
+    /// no slice claims.
+    void releaseStreamBindings();
+
     int streamPoolSize() const;
     int activeStreamCount() const;
 
@@ -948,6 +977,12 @@ public:
     // state handler, and override board capabilities. Production code
     // must never use these.
     void injectConnectionForTest(RadioConnection* conn) { m_connection = conn; }
+    // Phase 3F Sub-Epic I closeout, defect F1: attach a DSP worker without
+    // standing up the connection / DSP-thread pipeline, so a test can
+    // reproduce connectToRadio's real ordering (pool sized and slices bound
+    // FIRST, worker constructed second) and assert the bindings still reach
+    // it. Non-owning, exactly like the production m_dspWorker.
+    void attachDspWorkerForTest(RxDspWorker* w) { m_dspWorker = w; }
     // B6 — XIT: allow tests to trigger wireSliceSignals() directly after
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
