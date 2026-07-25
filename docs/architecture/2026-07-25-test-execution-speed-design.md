@@ -228,6 +228,15 @@ indefinitely rather than failing. Correctness, not speed.
 
 ### Phase 1: Structural (the load-bearing change)
 
+> **SUPERSEDED 2026-07-25.** Measurement after Phase 0 showed the subsystem
+> split is both more expensive and less effective than simply building
+> `NereusSDRObjs` as a single shared library: measured 31.4 min -> **29.5 s**
+> for a touch-one-core-file rebuild, with no dependency untangling and no
+> layering decision required. The split is capped anyway, because 83% of
+> tests include a `core/` header. See
+> [2026-07-25-test-execution-speed-phase1-design.md](2026-07-25-test-execution-speed-phase1-design.md).
+> The text below is retained for the reasoning trail.
+
 Split `NereusSDRObjs` into subsystem libraries, built **shared**:
 
 1. Move `Band.h` and similar pure-data headers into a `nereus_common` leaf.
