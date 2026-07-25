@@ -1,0 +1,152 @@
+<style>
+.rt-bg { background:#0f0f1a; color:#c8d8e8; font-family:-apple-system,"Segoe UI","Helvetica Neue",sans-serif; padding:22px; border-radius:6px; }
+.rt-h1 { color:#00b4d8; font-size:16px; font-weight:bold; margin:0 0 4px 0; }
+.rt-sub { color:#8090a0; font-size:11px; font-style:italic; margin-bottom:22px; }
+.rt-hdr { color:#00b4d8; font-size:13px; font-weight:bold; margin:26px 0 6px 0; border-bottom:1px solid #205070; padding-bottom:4px; }
+.rt-note { color:#8090a0; font-size:11px; margin:4px 0 12px 0; line-height:1.5; }
+.rt-frame { background:#0a0a18; border:1px solid #205070; border-radius:4px; padding:12px; margin-bottom:14px; }
+.pill { display:inline-flex; align-items:center; justify-content:center; height:15px; padding:0 6px; border-radius:2px; font-size:9px; font-weight:bold; letter-spacing:.3px; }
+.pill-wide { background:#604000; color:#ffb800; border:1px solid #906000; }
+.pill-ch { background:#1a2a3a; color:#8aa8c0; border:1px solid #304050; }
+.pill-ok { background:#12331f; color:#5ad07a; border:1px solid #1f6034; }
+.sb { display:inline-flex; align-items:center; justify-content:center; width:17px; height:17px; border-radius:3px; font-size:10px; font-weight:bold; }
+.sA{background:#00d4ff;color:#001020}.sB{background:#ff40ff;color:#200020}.sC{background:#40ff40;color:#002010}.sD{background:#ffff00;color:#201000}
+table.rt { border-collapse:collapse; width:100%; font-size:11px; }
+table.rt th { text-align:left; color:#8aa8c0; font-weight:bold; padding:5px 8px; border-bottom:1px solid #205070; font-size:10px; text-transform:uppercase; letter-spacing:.4px;}
+table.rt td { padding:5px 8px; border-bottom:1px solid #182838; vertical-align:middle;}
+.mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
+.chain { border:1px solid #304050; border-radius:4px; padding:9px 11px; margin:7px 0; background:#0d1522; }
+.chain-hd { font-size:11px; font-weight:bold; color:#8aa8c0; margin-bottom:5px; display:flex; justify-content:space-between; align-items:center; gap:10px;}
+.flow { font-size:11px; color:#c8d8e8; }
+.arrow { color:#40607a; margin:0 5px; }
+.filt-ok { color:#5ad07a; font-weight:bold; }
+.filt-byp { color:#ffb800; font-weight:bold; }
+.pan { background:linear-gradient(180deg,#061730 0%,#040d1a 62%,#1a0830 100%); border:1px solid #205070; border-radius:3px; height:52px; position:relative; overflow:hidden; }
+.pan-ov { position:absolute; top:3px; right:4px; display:flex; gap:4px; align-items:center; }
+.pan-lbl { position:absolute; top:4px; left:6px; font-size:10px; color:#8aa8c0; font-weight:bold;}
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.lad { display:flex; gap:3px; flex-wrap:wrap; margin-top:6px;}
+.lad div { font-size:9px; padding:2px 6px; border:1px solid #304050; border-radius:2px; color:#8aa8c0; background:#111c2b; }
+.lad div.hit { border-color:#1f6034; color:#5ad07a; background:#12331f;}
+.lad div.byp { border-color:#906000; color:#ffb800; background:#3a2800;}
+.verdict { margin-top:8px; padding:7px 10px; border-radius:3px; font-size:11px; }
+.v-ok { background:#0f2417; border:1px solid #1f6034; color:#9fe0b4; }
+.v-wide { background:#2a1d00; border:1px solid #906000; color:#f0c987; }
+</style>
+
+<div class="rt-bg">
+
+<div class="rt-h1">ADC / DDC auto-routing and the WIDE indicator</div>
+<div class="rt-sub">Proposed rule. Filter ranges and behaviour sourced from deskhpsdr alex.h + new_protocol.c and Thetis console.cs. Colours are real StyleConstants / VfoWidget::sliceColor values.</div>
+
+<div class="rt-hdr">1. The unit of conflict is a filter range, not a band</div>
+<div class="rt-note">
+This is the correction that makes the whole thing work. The ANAN band-pass bank covers <b>frequency ranges spanning several bands</b>, so two slices only conflict when they fall in different ranges. Comparing band names (what we do today) needlessly bypasses pairs the hardware covers with one filter.
+</div>
+<div class="rt-frame">
+  <div class="lad">
+    <div>BYPASS &lt; 1.5</div><div>160m &lt; 2.1</div><div>80/60 &lt; 5.5</div><div>40/30 &lt; 11.0</div><div>20/15 &lt; 22.0</div><div>12/10 &lt; 35.0</div><div>6m PRE</div>
+  </div>
+  <div class="rt-note" style="margin-top:9px;margin-bottom:0">
+    So <b>20m + 15m share one filter</b> (both inside 11.0-22.0 MHz) and need no compromise at all. 40m + 30m likewise. But 20m + 40m land in different ranges and genuinely cannot share one chain.
+  </div>
+</div>
+
+<div class="rt-hdr">2. Three scenarios, same rule</div>
+
+<div class="rt-frame">
+  <div class="chain-hd"><span>Case A &nbsp;<span class="sb sA">A</span> 14.225 &nbsp;<span class="sb sB">B</span> 21.300 &nbsp;<span style="color:#708090">both on ANT1</span></span><span class="pill pill-ok">NO WIDE</span></div>
+  <div class="lad"><div>BYPASS</div><div>160m</div><div>80/60</div><div>40/30</div><div class="hit">20/15 &nbsp;A+B</div><div>12/10</div><div>6m</div></div>
+  <div class="chain" style="margin-top:9px">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="filt-ok">20/15 BPF</span> <span class="arrow">&rarr;</span> ADC0 <span class="arrow">&rarr;</span> DDC2 <span class="sb sA">A</span> &nbsp; DDC3 <span class="sb sB">B</span></div>
+  </div>
+  <div class="verdict v-ok">One filter range covers both. One chain, fully filtered. Chain 1 stays idle.</div>
+</div>
+
+<div class="rt-frame">
+  <div class="chain-hd"><span>Case B &nbsp;<span class="sb sA">A</span> 14.225 &nbsp;<span class="sb sB">B</span> 7.150 &nbsp;<span style="color:#708090">both on ANT1</span></span><span class="pill pill-ok">NO WIDE</span></div>
+  <div class="lad"><div>BYPASS</div><div>160m</div><div>80/60</div><div class="hit">40/30 &nbsp;B</div><div class="hit">20/15 &nbsp;A</div><div>12/10</div><div>6m</div></div>
+  <div class="chain" style="margin-top:9px">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="filt-ok">20/15 BPF</span> <span class="arrow">&rarr;</span> ADC0 <span class="arrow">&rarr;</span> DDC2 <span class="sb sA">A</span></div>
+  </div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 1</span><span class="pill pill-ch">ADC1</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex1 <span class="filt-ok">40/30 BPF</span> <span class="arrow">&rarr;</span> ADC1 <span class="arrow">&rarr;</span> DDC3 <span class="sb sB">B</span></div>
+  </div>
+  <div class="verdict v-ok"><b>This is the case that motivated the change.</b> Two ranges, two chains available, so both slices keep a real filter. The same antenna feeds both chains. Today this bypasses; it should not.</div>
+</div>
+
+<div class="rt-frame">
+  <div class="chain-hd"><span>Case C &nbsp;<span class="sb sA">A</span> 14.225 &nbsp;<span class="sb sB">B</span> 7.150 &nbsp;<span class="sb sC">C</span> 50.150</span><span class="pill pill-wide">WIDE</span></div>
+  <div class="lad"><div>BYPASS</div><div>160m</div><div>80/60</div><div class="hit">40/30 &nbsp;B</div><div class="byp">20/15 &nbsp;A</div><div>12/10</div><div class="byp">6m &nbsp;C</div></div>
+  <div class="chain" style="margin-top:9px">
+    <div class="chain-hd"><span>CHAIN 0</span><span class="pill pill-ch">ADC0</span> </div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex0 <span class="filt-byp">BYPASS</span> <span class="arrow">&rarr;</span> ADC0 <span class="arrow">&rarr;</span> DDC2 <span class="sb sA">A</span> &nbsp; DDC4 <span class="sb sC">C</span></div>
+  </div>
+  <div class="chain">
+    <div class="chain-hd"><span>CHAIN 1</span><span class="pill pill-ch">ADC1</span></div>
+    <div class="flow">ANT1 <span class="arrow">&rarr;</span> Alex1 <span class="filt-ok">40/30 BPF</span> <span class="arrow">&rarr;</span> ADC1 <span class="arrow">&rarr;</span> DDC3 <span class="sb sB">B</span></div>
+  </div>
+  <div class="verdict v-wide">Three ranges, two chains. Only then does a chain bypass, and only the chain that had to absorb two ranges. <b>Chain 1 keeps its filter.</b> WIDE is the last resort, not the first answer.</div>
+</div>
+
+<div class="rt-hdr">3. WIDE appears only on the pans fed by a bypassed chain</div>
+<div class="rt-note">
+Case C above. Slices A and C sit on the bypassed chain 0, so their pans carry WIDE. Slice B is on the filtered chain 1 and stays clean. The badge is per-pan because bypass is per-chain, not per-radio. Clicking WIDE opens the existing Filter Policy dialog.
+</div>
+<div class="rt-frame">
+  <div class="grid2">
+    <div>
+      <div class="pan">
+        <div class="pan-lbl"><span class="sb sA">A</span> &nbsp;14.225 USB</div>
+        <div class="pan-ov"><span class="pill pill-ch">CH 0</span><span class="pill pill-wide">WIDE</span></div>
+      </div>
+      <div class="rt-note" style="margin:5px 0 0 0">Chain 0, bypassed. Badge shown, tooltip names the reason.</div>
+    </div>
+    <div>
+      <div class="pan">
+        <div class="pan-lbl"><span class="sb sB">B</span> &nbsp;7.150 LSB</div>
+        <div class="pan-ov"><span class="pill pill-ch">CH 1</span></div>
+      </div>
+      <div class="rt-note" style="margin:5px 0 0 0">Chain 1, filtered at 40/30. No badge.</div>
+    </div>
+  </div>
+  <div class="rt-note" style="margin-top:10px;margin-bottom:0">
+    Hover text on the badge: <span class="mono" style="color:#f0c987">"BYPASS: chain 0 carries 20/15 + 6m. Move a slice to ANT2 or close one to restore filtering."</span> It says what to do, not just what happened.
+  </div>
+</div>
+
+<div class="rt-hdr">4. Setup shows the routing, and lets you pin it</div>
+<div class="rt-note">
+Thetis exposes this as per-DDC radio buttons the operator sets by hand. We keep that (the page already exists) and add an Auto row, so the operator can pin what they care about and let the router place the rest. Pins always win.
+</div>
+<div class="rt-frame">
+  <table class="rt">
+    <tr><th>DDC</th><th>Slice</th><th>Freq</th><th>Range</th><th>ADC</th><th>Chain filter</th></tr>
+    <tr><td class="mono">DDC2</td><td><span class="sb sA">A</span></td><td class="mono">14.225</td><td>20/15</td><td><span class="mono" style="color:#8090a0">auto &rarr;</span> <b>ADC0</b></td><td><span class="filt-byp">BYPASS</span></td></tr>
+    <tr><td class="mono">DDC3</td><td><span class="sb sB">B</span></td><td class="mono">7.150</td><td>40/30</td><td><span class="mono" style="color:#8090a0">auto &rarr;</span> <b>ADC1</b></td><td><span class="filt-ok">40/30 BPF</span></td></tr>
+    <tr><td class="mono">DDC4</td><td><span class="sb sC">C</span></td><td class="mono">50.150</td><td>6m</td><td><span class="mono" style="color:#5ad07a">pinned</span> <b>ADC0</b></td><td><span class="filt-byp">BYPASS</span></td></tr>
+    <tr><td class="mono">DDC5</td><td colspan="5" style="color:#54687c">idle</td></tr>
+    <tr><td class="mono">DDC6</td><td colspan="5" style="color:#54687c">idle</td></tr>
+    <tr><td class="mono" style="color:#54687c">DDC0/1</td><td colspan="5" style="color:#54687c">reserved: PureSignal + diversity pair</td></tr>
+  </table>
+  <div class="rt-note" style="margin-top:10px;margin-bottom:0">
+    The Chain filter column is the payoff: the operator can see <i>why</i> a chain bypassed and which slice caused it, then unpin C or move it to ANT2 and watch chain 0 go green.
+  </div>
+</div>
+
+<div class="rt-hdr">5. One rule, every SKU</div>
+<div class="rt-frame">
+  <table class="rt">
+    <tr><th>Radio</th><th>Chains</th><th>Case A 20+15</th><th>Case B 20+40</th><th>Case C 3 ranges</th></tr>
+    <tr><td>ANAN-G2 / 7000 / 8000</td><td class="mono">2</td><td class="filt-ok">filtered</td><td class="filt-ok">filtered, both</td><td class="filt-byp">1 chain WIDE</td></tr>
+    <tr><td>ANAN-G2E, Hermes, HL2</td><td class="mono">1</td><td class="filt-ok">filtered</td><td class="filt-byp">WIDE</td><td class="filt-byp">WIDE</td></tr>
+  </table>
+  <div class="rt-note" style="margin-top:10px;margin-bottom:0">
+    Not a special case per radio: the same algorithm with N chains. A 1-ADC radio is just N=1, where anything beyond a single filter range has to bypass. That is correct behaviour there, not a defect.
+  </div>
+</div>
+
+</div>
