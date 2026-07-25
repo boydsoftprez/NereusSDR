@@ -76,6 +76,7 @@
 #include <QPointer>
 #include <QTimer>
 #include <QHash>
+#include <QMap>
 
 class QProgressDialog;
 class QThread;
@@ -248,6 +249,14 @@ private slots:
     void onTxInterlockWarning(const QString& reason);
     void onTxInterlockDenial(const QString& reason);
 
+    /// Phase 3F Sub-Epic I Task 8: fan one stream's FFT frame out to every
+    /// pan subscribed to it. Connected to every pooled FFTEngine's
+    /// fftReadyLinear; the streamIndex argument is the engine's receiver id.
+    void dispatchFftFrameToPans(int streamIndex,
+                                const QVector<float>& binsLinear,
+                                double windowEnb,
+                                double dbmOffset);
+
 private:
     void buildUI();
     void buildMenuBar();
@@ -255,6 +264,26 @@ private:
     void applyDarkTheme();
     void tryAutoReconnect();
     void wireSliceToSpectrum();
+
+    /// Stream 0's engine. Back-compat accessor for call sites that still
+    /// address "the" FFT engine (display settings, Max Bin, auto-zoom).
+    FFTEngine* primaryFftEngine() const { return m_fftEngines.value(0, nullptr); }
+
+    /// Build and register one FFTEngine for `streamIndex`, configured as
+    /// the old single-engine path was, moved onto the shared FFT thread.
+    /// Returns the existing engine if one is already registered.
+    FFTEngine* createFftEngineForStream(int streamIndex);
+
+    /// Create any engine the current stream pool is missing. The pool is
+    /// sized by RadioModel::configureStreamPool at connect, long after
+    /// buildUI runs, so this is called again from the binding signals
+    /// rather than once at construction. Idempotent.
+    void ensureFftEnginePool();
+
+    /// Push the stream's cached DDC centre + sample rate onto one pan's
+    /// SpectrumWidget so visibleBinRange maps its bins against the right
+    /// window. No-op for a stream we have never seen a centre for.
+    void applyStreamWindowToPan(const QString& panId, int streamIndex);
 
     /// Phase 3F: create the VfoWidget for a secondary slice (B+) on the
     /// given SpectrumWidget, push initial state, wire all intent + bidi
@@ -375,8 +404,38 @@ private:
     // The accessor returns nullptr during early init before m_panStack
     // is constructed, so callers must null-guard.
     PanadapterStack*    m_panStack{nullptr};
-    FFTEngine*          m_fftEngine{nullptr};
+
+    // Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream, keyed by
+    // stream index. Before this there was a single FFTEngine(0) wired at
+    // construction to activeSpectrumWidget(), which resolves to pan 0
+    // permanently, so no secondary pan ever received a frame.
+    //
+    // One engine per STREAM, not per slice: the panadapter belongs to the
+    // DDC (ChannelMaster `_rcvr.run_pan`, cmaster.h:79 [v2.10.3.15]), so
+    // slices sharing a DDC share its spectrum and appear as separate flags
+    // on it.
+    //
+    // All engines share m_fftThread. If a 5-stream 1536 kHz bench shows
+    // the thread saturating, splitting to one thread per engine is a
+    // follow-up needing maintainer sign-off (thread architecture).
+    QMap<int, FFTEngine*> m_fftEngines;
     QThread*            m_fftThread{nullptr};
+
+    /// Last centre + sample rate RadioModel published for each stream, kept
+    /// so a pan that subscribes AFTER the stream was centred still learns
+    /// where its bins sit. RadioModel::bindSliceToStream emits
+    /// streamCentreChanged BEFORE SliceModel::streamIndex is updated and
+    /// before sliceAdded (plan discovery item 7), so at emit time the router
+    /// does not yet know which pan shows the stream and the direct push in
+    /// the streamCentreChanged handler reaches nobody. rebuildFftRouting
+    /// replays the cached value onto each pan as it (re)subscribes.
+    /// Without it SpectrumWidget::visibleBinRange maps a second pan's bins
+    /// against its ctor-default 14.225 MHz / 768 kHz window.
+    struct StreamWindow {
+        double centreHz{0.0};
+        int    sampleRateHz{0};
+    };
+    QHash<int, StreamWindow> m_streamWindows;
     ClarityController*  m_clarityController{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
     /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the

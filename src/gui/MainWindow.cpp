@@ -1050,6 +1050,129 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     return newFlag;
 }
 
+// ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────
+//
+// The panadapter belongs to the DDC, not to the sub-receiver: ChannelMaster
+// holds a single `volatile long run_pan` per `_rcvr` alongside
+// `audio[cmMAXSubRcvr]` (cmaster.h:75-82 [v2.10.3.15]).  So slices that share
+// a DDC share one spectrum and appear as separate flags on it, and the engine
+// pool is sized by stream, not by slice.
+FFTEngine* MainWindow::createFftEngineForStream(int streamIndex)
+{
+    if (streamIndex < 0) { return nullptr; }
+    if (FFTEngine* existing = m_fftEngines.value(streamIndex, nullptr)) {
+        return existing;
+    }
+    // m_fftThread must exist before an engine can be parked on it, and
+    // m_radioModel before the I/Q feed can be wired; buildUI has both in
+    // place ahead of the first createFftEngineForStream call.
+    if (!m_fftThread || !m_radioModel) { return nullptr; }
+
+    // No QObject parent: ownership is the deleteLater below, fired when the
+    // FFT thread finishes.  Matches the pre-pool single-engine lifecycle.
+    auto* engine = new FFTEngine(streamIndex);
+    engine->setSampleRate(768000.0);
+    engine->setFftSize(4096);
+
+    auto& s = AppSettings::instance();
+    const int persistedFps = qBound(1,
+        s.value(QStringLiteral("DisplaySpectrumFps"),
+                QStringLiteral("30")).toString().toInt(),
+        60);
+    engine->setOutputFps(persistedFps);
+
+    const int persistedFftSize = s.value(
+        QStringLiteral("DisplayFftSize"),
+        QString::number(engine->fftSize())).toString().toInt();
+    engine->setFftSizeBaseline(persistedFftSize);
+    engine->setFftSize(persistedFftSize);
+
+    const int defaultWin = static_cast<int>(engine->windowFunction());
+    const int persistedWin = qBound(0,
+        s.value(QStringLiteral("DisplayFftWindow"),
+                QString::number(defaultWin)).toString().toInt(),
+        static_cast<int>(WindowFunction::Count) - 1);
+    engine->setWindowFunction(static_cast<WindowFunction>(persistedWin));
+
+    engine->setHzPerBinTarget(
+        s.value(QStringLiteral("DisplayHzPerBinTarget"),
+                QStringLiteral("0")).toString().toDouble());
+
+    engine->moveToThread(m_fftThread);
+    connect(m_fftThread, &QThread::finished, engine, &QObject::deleteLater);
+
+    // Raw I/Q for this stream -> this engine.  The context object is the
+    // ENGINE, not MainWindow, deliberately: RadioModel emits
+    // rawIqDataForStream from the Connection thread (Lever 2, 2026-05-24,
+    // RadioModel.cpp Step 2a), and an engine-scoped connection resolves to a
+    // queued delivery straight onto the FFT thread.  Routing through a
+    // MainWindow-scoped lambda instead would put every I/Q packet through the
+    // main thread's event loop (~3200/s per stream at 768 kHz), silently
+    // undoing that fix.  The index filter costs one compare on the FFT
+    // thread; the alternative -- reading m_fftEngines from the Connection
+    // thread -- would need synchronisation AND lose Qt's automatic
+    // disconnect-on-destroy, which is what makes this safe at shutdown.
+    connect(m_radioModel, &RadioModel::rawIqDataForStream, engine,
+            [engine, streamIndex](int idx, const QVector<float>& samples) {
+        if (idx != streamIndex) { return; }
+        engine->feedIQ(samples);
+    });
+
+    // Linear-power frame -> every pan subscribed to this stream.
+    connect(engine, &FFTEngine::fftReadyLinear,
+            this, &MainWindow::dispatchFftFrameToPans);
+
+    m_fftEngines.insert(streamIndex, engine);
+    return engine;
+}
+
+void MainWindow::ensureFftEnginePool()
+{
+    // qMax(1, ...): the pool is unsized until RadioModel::configureStreamPool
+    // runs at connect (RadioModel.cpp:4195), and stream 0 must exist from
+    // buildUI onwards so pan 0 behaves exactly as it did pre-pool.
+    const int streamCount =
+        qMax(1, m_radioModel ? m_radioModel->streamPoolSize() : 1);
+    for (int st = 0; st < streamCount; ++st) {
+        createFftEngineForStream(st);
+    }
+}
+
+void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
+{
+    if (!m_panStack) { return; }
+    const auto it = m_streamWindows.constFind(streamIndex);
+    if (it == m_streamWindows.constEnd()) { return; }
+    SpectrumWidget* sw = m_panStack->spectrum(panId);
+    if (!sw) { return; }
+    sw->setDdcCenterFrequency(it->centreHz);
+    if (it->sampleRateHz > 0) {
+        sw->setSampleRate(static_cast<double>(it->sampleRateHz));
+    }
+}
+
+void MainWindow::dispatchFftFrameToPans(int streamIndex,
+                                        const QVector<float>& binsLinear,
+                                        double windowEnb,
+                                        double dbmOffset)
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    auto* router = m_radioModel->fftRouter();
+    if (!router) { return; }
+
+    // FFTRouter is the topology oracle rather than a signal hop:
+    // pansForReceiver is public and unit-tested, and routing through its
+    // own signal would add a queued hop on the render path for no gain.
+    // One stream can feed N pans (different zoom levels of the same I/Q),
+    // which is the AetherSDR overlay model the router was designed for.
+    for (const QString& panId : router->pansForReceiver(streamIndex)) {
+        if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
+            sw->updateSpectrumLinear(streamIndex, binsLinear,
+                                     windowEnb, dbmOffset);
+        }
+    }
+}
+
 // Phase 3F Sub-Epic D Task 16: disconnect-before-removal for safe pan teardown.
 // AetherSDR issue #242: deleting a widget with active connections to lambdas
 // can race with queued signal delivery and crash. Disconnect first, then
@@ -1729,15 +1852,27 @@ void MainWindow::buildUI()
         }
     });
 
-    // Create FFTEngine on a worker thread (spectrum thread from architecture).
-    // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
-    // updates it to the actual wire rate on each connect (P1=192k, P2=768k).
-    m_fftEngine = new FFTEngine(0);  // receiver 0
-    m_fftEngine->setSampleRate(768000.0);
+    // Create the FFTEngine pool on a worker thread (spectrum thread from
+    // architecture).  Sample rate starts at P2 default (768k);
+    // RadioModel::wireSampleRateChanged updates it to the actual wire rate on
+    // each connect (P1=192k, P2=768k).
+    //
+    // Phase 3F Sub-Epic I Task 8: the thread is created BEFORE the engines
+    // now, because createFftEngineForStream parks each engine on it.  The
+    // pool itself is filled by ensureFftEnginePool below (stream 0 only at
+    // this point -- the SKU's stream count is not known until connect).
+    m_fftThread = new QThread(this);
+    m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
+    ensureFftEnginePool();
+
     connect(m_radioModel, &RadioModel::wireSampleRateChanged,
             this, [this](double rateHz) {
-        if (m_fftEngine) {
-            QMetaObject::invokeMethod(m_fftEngine, [engine = m_fftEngine, rateHz]() {
+        // Every stream on a P1 radio shares the wire rate, and on P2 the
+        // per-stream rate published by streamCentreChanged is derived from
+        // the same value, so the whole pool follows this signal.
+        for (FFTEngine* engine : std::as_const(m_fftEngines)) {
+            if (!engine) { continue; }
+            QMetaObject::invokeMethod(engine, [engine, rateHz]() {
                 engine->setSampleRate(rateHz);
             });
         }
@@ -1753,7 +1888,6 @@ void MainWindow::buildUI()
             activeSpectrumWidget()->setFrequencyRange(freq, clampedBw);
         }
     });
-    m_fftEngine->setFftSize(4096);
     // Spectrum/waterfall FPS — load persisted value (default 30), apply to
     // BOTH the FFT engine (row production cadence) and the SpectrumWidget
     // display timer (paint cadence) so the two stay locked.  Without this
@@ -1761,52 +1895,22 @@ void MainWindow::buildUI()
     // own 30 fps constructor value, but Setup -> Display -> Spectrum
     // changes did not survive restart.  Persistence write side is in
     // SpectrumDefaultsPage::pushFps.
+    //
+    // Phase 3F Sub-Epic I Task 8: the engine half of this (setOutputFps),
+    // plus the persisted FFT size / window / Hz-per-bin target that used to
+    // follow it, now live in createFftEngineForStream so every pooled engine
+    // comes up on the same display knobs.  Only the SpectrumWidget half is
+    // left here.
     {
         const int persistedFps = qBound(1,
             AppSettings::instance().value(
                 QStringLiteral("DisplaySpectrumFps"),
                 QStringLiteral("30")).toString().toInt(),
             60);
-        m_fftEngine->setOutputFps(persistedFps);
         if (activeSpectrumWidget()) {
             activeSpectrumWidget()->setDisplayFps(persistedFps);
         }
     }
-    // 2026-05-26 KG4VCF bench fix: persist FFT size + window function.
-    // Previously the Setup -> Display sliders/combo drove the engine
-    // but never wrote to AppSettings, so launch always reverted to the
-    // FFTEngine ctor defaults (4096 / Kaiser).  Apply the persisted
-    // values here in the same MainWindow init block that already
-    // restores DisplaySpectrumFps so all four display knobs (FPS,
-    // FFT size, window, Hz/bin target) come up consistently.
-    //
-    // The default value passed to AppSettings::value is the current
-    // FFTEngine value, so an unset key keeps the ctor default rather
-    // than silently mutating to a hard-coded fallback.
-    {
-        auto& s = AppSettings::instance();
-        const int persistedFftSize = s.value(
-            QStringLiteral("DisplayFftSize"),
-            QString::number(m_fftEngine->fftSize())).toString().toInt();
-        m_fftEngine->setFftSizeBaseline(persistedFftSize);
-        m_fftEngine->setFftSize(persistedFftSize);
-
-        const int defaultWin = static_cast<int>(m_fftEngine->windowFunction());
-        const int persistedWin = qBound(0,
-            s.value(QStringLiteral("DisplayFftWindow"),
-                    QString::number(defaultWin)).toString().toInt(),
-            static_cast<int>(WindowFunction::Count) - 1);
-        m_fftEngine->setWindowFunction(static_cast<WindowFunction>(persistedWin));
-    }
-    // Hz/bin target — persisted in Setup → Display → Spectrum Defaults.
-    // 0 = bins-in-window default (2026-05-08 Option 3).
-    m_fftEngine->setHzPerBinTarget(
-        AppSettings::instance().value(QStringLiteral("DisplayHzPerBinTarget"),
-                                      QStringLiteral("0")).toString().toDouble());
-
-    m_fftThread = new QThread(this);
-    m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
-    m_fftEngine->moveToThread(m_fftThread);
 
     // 2026-05-25 KG4VCF bench fix: elevate the spectrum FFT thread.
     // 2026-05-26 KG4VCF revisit: bumped from USER_INITIATED to
@@ -1817,30 +1921,60 @@ void MainWindow::buildUI()
     // same scheduling class as audio + GUI so compile workers (DEFAULT)
     // consistently lose the time-slice race.  See
     // src/core/audio/RealtimeAudioPriority.h.
-    connect(m_fftThread, &QThread::started, m_fftEngine,
+    // The lambda elevates the thread it runs on, so it is thread-scoped, not
+    // engine-scoped: one connection using stream 0's engine as context is
+    // enough for the whole pool.  Engines created later (at connect, when the
+    // SKU's stream count is known) land on an already-elevated thread.
+    connect(m_fftThread, &QThread::started, primaryFftEngine(),
             []() { NereusSDR::elevateLatencyCriticalThreadPriority(); });
 
-    // Clean up FFTEngine when thread finishes
-    connect(m_fftThread, &QThread::finished, m_fftEngine, &QObject::deleteLater);
-
-    // Wire: RadioModel raw I/Q → FFTEngine (auto-queued: main → spectrum thread)
-    connect(m_radioModel, &RadioModel::rawIqData,
-            m_fftEngine, &FFTEngine::feedIQ);
-
-    // Wire: FFTEngine linear-power frame -> SpectrumWidget render pipeline
-    // (auto-queued: spectrum thread -> main thread).  fftReadyLinear carries
-    // the raw |X[k]|² bins plus windowEnb + dbmOffset metadata so the
+    // Per-engine cleanup (QThread::finished -> deleteLater) and the raw I/Q
+    // feed are wired inside createFftEngineForStream, so engines added after
+    // this point get both.
+    //
+    // The linear-power frame no longer goes straight to activeSpectrumWidget()
+    // -- that resolved to pan 0 permanently and was the reason a secondary pan
+    // never animated.  Each engine's fftReadyLinear now lands in
+    // MainWindow::dispatchFftFrameToPans, which consults the FFTRouter and
+    // pushes the frame to every pan subscribed to that stream.  fftReadyLinear
+    // carries the raw |X[k]|² bins plus windowEnb + dbmOffset metadata so the
     // detector + avenger pipeline reproduces the legacy fftReady dBm output
     // (FFTEngine.cpp:348 [v2.10.3.13]) at display-pixel resolution.  fftReady
     // (full-bin dBm) is kept as a separate signal for chrome / AGC consumers
-    // (ClarityController, NoiseFloorTracker) wired below.
-    connect(m_fftEngine, &FFTEngine::fftReadyLinear,
-            activeSpectrumWidget(), &SpectrumWidget::updateSpectrumLinear);
+    // (ClarityController, NoiseFloorTracker) wired below; those stay on the
+    // primary engine because each is a single global consumer.
 
     // Phase 3G-8: expose view hooks on RadioModel so Display setup pages can
     // reach the renderer / FFT engine without depending on MainWindow.
     m_radioModel->setSpectrumWidget(activeSpectrumWidget());
-    m_radioModel->setFftEngine(m_fftEngine);
+    m_radioModel->setFftEngine(primaryFftEngine());
+
+    // Phase 3F Sub-Epic I Task 8: follow each stream's DDC centre + rate.
+    //
+    // RadioModel::bindSliceToStream emits this whenever the allocator claims
+    // or moves a DDC.  The pans showing the stream must recentre with it, or
+    // SpectrumWidget::visibleBinRange maps the incoming bins against a stale
+    // window.  Also cached, because at emit time the router may not yet know
+    // which pan shows the stream (see m_streamWindows in the header).
+    connect(m_radioModel, &RadioModel::streamCentreChanged, this,
+            [this](int streamIndex, double centreHz, int sampleRateHz) {
+        m_streamWindows.insert(streamIndex, StreamWindow{centreHz, sampleRateHz});
+        // A stream that has just been claimed may not have an engine yet:
+        // the pool is unsized until connect.
+        ensureFftEnginePool();
+        if (FFTEngine* engine = m_fftEngines.value(streamIndex, nullptr)) {
+            QMetaObject::invokeMethod(engine, [engine, sampleRateHz]() {
+                engine->setSampleRate(static_cast<double>(sampleRateHz));
+            }, Qt::QueuedConnection);
+        }
+        if (m_radioModel) {
+            if (auto* router = m_radioModel->fftRouter()) {
+                for (const QString& panId : router->pansForReceiver(streamIndex)) {
+                    applyStreamWindowToPan(panId, streamIndex);
+                }
+            }
+        }
+    });
 
     // Sub-epic E: flush the rewind ring buffer when the radio disconnects so
     // a new session starts with a clean history. AetherSDR's clearDisplay()
@@ -2002,8 +2136,11 @@ void MainWindow::buildUI()
         activeSpectrumWidget()->setClarityActive(clarityOn);
     }
 
-    // Feed FFT bins to Clarity (auto-queued: spectrum thread → main)
-    connect(m_fftEngine, &FFTEngine::fftReady,
+    // Feed FFT bins to Clarity (auto-queued: spectrum thread → main).
+    // Primary engine only: ClarityController holds one adaptive-display
+    // state, so it tracks stream 0 rather than whichever stream last
+    // produced a frame. Per-stream Clarity is Phase 3F follow-up work.
+    connect(primaryFftEngine(), &FFTEngine::fftReady,
             m_clarityController, [this](int /*rxId*/, const QVector<float>& binsDbm) {
         m_clarityController->feedBins(binsDbm);
     });
@@ -2012,7 +2149,7 @@ void MainWindow::buildUI()
     auto* nfTracker = new NoiseFloorTracker;
     m_radioModel->setNoiseFloorTracker(nfTracker);
 
-    connect(m_fftEngine, &FFTEngine::fftReady,
+    connect(primaryFftEngine(), &FFTEngine::fftReady,
             this, [nfTracker](int /*rxId*/, const QVector<float>& binsDbm) {
         static constexpr float kFrameIntervalMs = 33.0f;
         nfTracker->feed(binsDbm, kFrameIntervalMs);
@@ -2025,9 +2162,12 @@ void MainWindow::buildUI()
     // the dBm bins emitted here).
     //
     // Algorithm from Thetis wdsp/analyzer.c:800-822 [@501e3f5].
+    //
+    // Primary engine only: setupMaxBinDetector is called with disp=0 (single
+    // display channel), so the detector reads stream 0's bins.
     if (auto* eng = (m_radioModel ? m_radioModel->wdspEngine() : nullptr)) {
-        connect(m_fftEngine, &FFTEngine::fftReady,
-                eng,         &WdspEngine::onSpectrumBinsForMaxBin);
+        connect(primaryFftEngine(), &FFTEngine::fftReady,
+                eng,               &WdspEngine::onSpectrumBinsForMaxBin);
     }
 
     // 2026-05-22 bench fix: MaxBin meter accuracy. The raw FFT bin path
@@ -2424,14 +2564,19 @@ void MainWindow::buildUI()
     //
     // Hysteresis: only replan when computed/current is outside
     // [0.66, 1.5].  Avoids replan thrash on smooth zoom drag.
+    //
+    // Phase 3F Sub-Epic I Task 8: the primary engine, because this lambda is
+    // wired to pan 0's SpectrumWidget (the signal is per-pan). Per-pan
+    // auto-zoom on secondary pans is Phase 3F follow-up work.
     constexpr int kAutoZoomMaxFftSize = 65536;
     connect(activeSpectrumWidget(), &SpectrumWidget::bandwidthChangeRequested,
             this, [this, kAutoZoomMaxFftSize](double bwHz) {
-        if (!m_fftEngine || !activeSpectrumWidget()) { return; }
+        FFTEngine* engine = primaryFftEngine();
+        if (!engine || !activeSpectrumWidget()) { return; }
         const double sampleRate = activeSpectrumWidget()->sampleRate();
         if (sampleRate <= 0.0 || bwHz <= 0.0) { return; }
 
-        const int baseline = m_fftEngine->fftSizeBaseline();
+        const int baseline = engine->fftSizeBaseline();
 
         // Hz/bin override (Option 3 from the 2026-05-08 design).  When the
         // user has set a non-zero target Hz/bin in
@@ -2443,7 +2588,7 @@ void MainWindow::buildUI()
         // still applies, so the FFT slider remains a minimum-FFT-size
         // knob.  When hzPerBinTarget == 0 we use the original
         // bins-in-window default (constant K = baseline).
-        const double hzPerBinTarget = m_fftEngine->hzPerBinTarget();
+        const double hzPerBinTarget = engine->hzPerBinTarget();
         double desired;
         if (hzPerBinTarget > 0.0) {
             desired = sampleRate / hzPerBinTarget;
@@ -2465,7 +2610,7 @@ void MainWindow::buildUI()
         targetSize = (std::min)(targetSize, (std::max)(baseline, kAutoZoomMaxFftSize));
 
         // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
-        const int currentSize = m_fftEngine->fftSize();
+        const int currentSize = engine->fftSize();
         if (currentSize > 0) {
             const double ratio = static_cast<double>(targetSize)
                                  / static_cast<double>(currentSize);
@@ -2474,7 +2619,7 @@ void MainWindow::buildUI()
             }
         }
 
-        m_fftEngine->setFftSize(targetSize);
+        engine->setFftSize(targetSize);
     });
 
     m_fftThread->start();
@@ -6036,17 +6181,19 @@ void MainWindow::wireSliceToSpectrum()
     //
     // WdspEngine::setupMaxBinDetector wraps Thetis Console/dsp.cs:846-847
     // [@501e3f5] SetupDetectMaxBin; display channel = 0 (single panadapter).
-    // Sample rate: m_fftEngine->sampleRate() at call time, which reflects
-    // the currently active DDC bandwidth.
-    // Frame rate: m_fftEngine->outputFps() * 1.1 matches Thetis
+    // Sample rate: primaryFftEngine()->sampleRate() at call time, which
+    // reflects the currently active DDC bandwidth.  Primary engine because
+    // the detector is set up with disp=0 (single display channel).
+    // Frame rate: primaryFftEngine()->outputFps() * 1.1 matches Thetis
     //   console.cs:51150 [@501e3f5]: (int)Math.Max(1, _display_fps * 1.1f).
     connect(slice, &SliceModel::filterChanged, this, [this, slice](int low, int high) {
         QTimer::singleShot(100, this, [this, slice, low, high]() {
-            if (!m_radioModel || !m_fftEngine) { return; }
+            FFTEngine* fft = primaryFftEngine();
+            if (!m_radioModel || !fft) { return; }
             WdspEngine* eng = m_radioModel->wdspEngine();
             if (!eng) { return; }
-            const double rate = m_fftEngine->sampleRate();
-            const int fps = qMax(1, static_cast<int>(m_fftEngine->outputFps() * 1.1f));
+            const double rate = fft->sampleRate();
+            const int fps = qMax(1, static_cast<int>(fft->outputFps() * 1.1f));
             eng->setupMaxBinDetector(/*disp=*/0, /*ss=*/0, /*LO=*/0,
                                      rate,
                                      static_cast<double>(low),

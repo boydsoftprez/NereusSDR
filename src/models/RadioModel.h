@@ -1688,6 +1688,13 @@ signals:
     // Raw interleaved I/Q for spectrum display (tapped before WDSP processing)
     void rawIqData(const QVector<float>& interleavedIQ);
 
+    // Phase 3F Sub-Epic I Task 8: stream-tagged companion to rawIqData,
+    // which is kept for existing single-slice subscribers. MainWindow's
+    // per-stream FFTEngine pool subscribes to this one so each DDC's bins
+    // reach its own engine (and from there its own panadapter).
+    // Emitted from the same Connection-thread fork as rawIqData.
+    void rawIqDataForStream(int streamIndex, const QVector<float>& samples);
+
     // Phase 3Q-6: forwarded from the active RadioConnection::frameReceived()
     // so TitleBar::ConnectionSegment can pulse its activity LED without
     // holding a reference to a connection that may be recreated on reconnect.

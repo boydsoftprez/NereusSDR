@@ -6565,10 +6565,15 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
     // run on their own threads, so the cross-thread queueing happens at
     // the FFT consumer boundary, not here.  Main thread never sees the
     // I/Q packet.
+    //
+    // Phase 3F Sub-Epic I Task 8: the logical receiver index IS the stream
+    // index (plan invariant 2), so it is republished as rawIqDataForStream
+    // for MainWindow's per-stream FFTEngine pool. rawIqData is kept
+    // untagged for the existing single-stream subscribers.
     connect(m_receiverManager, &ReceiverManager::iqDataForReceiver,
             this, [this](int receiverIndex, const QVector<float>& samples) {
-        Q_UNUSED(receiverIndex);
         emit rawIqData(samples);
+        emit rawIqDataForStream(receiverIndex, samples);
     }, Qt::DirectConnection);
 
     // Step 2b: ReceiverManager → DSP worker (queued, off the main thread).

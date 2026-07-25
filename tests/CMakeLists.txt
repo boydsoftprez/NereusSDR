@@ -1427,6 +1427,13 @@ nereus_add_test(tst_slice_stream_allocator)
 # hardware-exhaustion rejection path.
 nereus_add_test(tst_stream_pool_binding)
 
+# ── Phase 3F Sub-Epic I Tasks 8-9: per-stream FFT dispatch topology ────────
+# Pins the FFTRouter contract MainWindow's per-stream FFTEngine pool relies
+# on: distinct streams reach distinct pans, co-hosted slices subscribe their
+# shared pan once (not once per slice), one stream can feed several pans at
+# different zooms, and a wholesale rebuild drops stale subscriptions.
+nereus_add_test(tst_fft_engine_pool)
+
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
 # Top-level QWidget wrapper for detaching a PanadapterApplet to a second
 # monitor. Structurally ported from AetherSDR src/gui/PanFloatingWindow.{h,cpp}
