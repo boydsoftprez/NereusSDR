@@ -353,6 +353,12 @@ public:
     /// WDSP RX channel id == slice index).
     QVector<int> slicesOnStream(int streamIndex) const;
 
+    /// Phase 3F Sub-Epic I Task 7b: hardware DDC currently routed to
+    /// `streamIndex`, or -1 when that stream is idle (or no codec has run).
+    /// This is the codec's choice, republished; every slice on the stream
+    /// reports the same number through SliceModel::ddcIndex().
+    int ddcForStream(int streamIndex) const;
+
     // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
     // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
     // MainWindow handler can route the VfoWidget to the owning pan. Passing
@@ -1637,9 +1643,11 @@ signals:
     void streamCentreChanged(int streamIndex, double centreHz, int sampleRateHz);
 
     /// Phase 3F Sub-Epic I: emitted whenever the slice or stream set changes
-    /// such that the per-board codec must recompute the DDC assignment. Test
-    /// seam; invokeCodecDdcAssignment does the work and no-ops while
-    /// disconnected.
+    /// such that the per-board codec must recompute the DDC assignment.
+    /// Observation hook; invokeCodecDdcAssignment does the work. Task 7b: it
+    /// no longer no-ops while disconnected; only the wire push is gated on
+    /// a connection, because the client-side mapping has to be correct
+    /// before the first packet arrives.
     void ddcAssignmentRequested();
 
     // Phase 3F closeout — Sub-Epic E Task 6 consumer wire. Emitted when
@@ -2019,21 +2027,41 @@ public:
     void pushTxModeAndBandpass();
 
     // ── Phase 3F Sub-Epic B Task 16: multi-slice codec glue ─────────────────
-    // Build a 5-element SliceConfig array from the current m_slices list.
-    // Slot [i] is marked live only when m_slices[i] is non-null.
+    // Build the 5-element codec input array. Phase 3F Sub-Epic I Task 7b:
+    // indexed by DDC STREAM, not by slice. Slot [st] is live when the
+    // allocator reports stream `st` active; frequencyHz is the stream's
+    // window CENTRE (the DDC tunes there; slices sit at shift offsets inside
+    // it) and the per-slice flags are folded across slicesOnStream(st).
+    // Indexing by slice handed two co-hosted slices two different DDCs,
+    // contradicting the sharing model they were bound under.
     // NereusSDR-original; no Thetis equivalent (Thetis builds UpdateDDCs
     // inputs inline in console.cs:8186-8538 [v2.10.3.15]).
-    std::array<NereusSDR::SliceConfig, 5> buildSliceConfigsForCodec() const;
+    std::array<NereusSDR::SliceConfig, 5> buildStreamConfigsForCodec() const;
 
-    // Drive the connected codec's applyDdcAssignment() and forward the
-    // resulting DdcAssignment to P2RadioConnection (P1 integration deferred).
-    // No-op when disconnected. Called from slice-event handlers after
-    // Tasks 1-15 have wired the codec/connection interfaces.
+    // Phase 3F Sub-Epic I Task 7b: run the per-board codec over the current
+    // stream set and return its DdcAssignment. Pure: no wire I/O, no model
+    // mutation, safe to call while disconnected (returns an all-idle
+    // assignment when no codec has been selected yet). Split out of
+    // invokeCodecDdcAssignment so the mapping is testable without a socket.
     //
-    // Phase 3F Sub-Epic I Task 7: also publishes DdcAssignment::sliceDdc
-    // back onto each SliceModel via setDdcIndex(), and reconciles
-    // ReceiverManager's per-stream active flag against slicesOnStream() so
-    // a stream with a bound slice actually pushes frequency to hardware.
+    // Codec source: the RadioConnection owns the codec and is authoritative
+    // whenever a connection object exists; ReceiverManager holds the same
+    // non-owning pointer (wired at connect, cleared in reset()) and is the
+    // fallback when it does not.
+    NereusSDR::DdcAssignment computeDdcAssignment() const;
+
+    // Phase 3F Sub-Epic I Task 7b: publish a computed assignment onto the
+    // client-side model. Routes each stream's hardware DDC to its logical
+    // receiver via ReceiverManager::setDdcMapping, stamps every slice with
+    // the DDC of the stream hosting it, and reconciles ReceiverManager's
+    // per-stream active flag against slicesOnStream(). No wire I/O, so it
+    // runs whether or not a connection exists.
+    void publishDdcAssignment(const NereusSDR::DdcAssignment& assignment);
+
+    // Drive the per-board codec's applyDdcAssignment(), forward the result to
+    // P2RadioConnection (P1 wire integration deferred to Sub-Epic C), then
+    // publish the mapping client-side. The wire push is gated on an actual
+    // connection; the client-side publish is not.
     void invokeCodecDdcAssignment();
 
     // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────
@@ -2172,6 +2200,11 @@ private:
     // before m_connectionSampleRateHz has been set (Slice A binds during
     // connectToRadio, before wireConnectionSignals records the wire rate).
     int m_streamDefaultRateHz{192000};
+
+    // Phase 3F Sub-Epic I Task 7b: the codec's last per-stream DDC choice,
+    // indexed by stream. -1 = that stream is idle, so an emptied stream
+    // leaves no stale DDC behind. Backs ddcForStream().
+    std::array<int, 5> m_streamDdc{{-1, -1, -1, -1, -1}};
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
     class SpectrumWidget*     m_spectrumWidget{nullptr};

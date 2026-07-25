@@ -162,9 +162,9 @@ DdcAssignment P1CodecAnvelinaPro3::applyDdcAssignment(
         a.psRevDdc    = 1;
         // PS reclaims DDC0+1; no room for extra user slices C/D/E.
         // rx2 (DDC3) is still added if live.
-        // Phase 3F Sub-Epic I Task 7: Slice A stays on DDC2 (rate[2] above
+        // Phase 3F Sub-Epic I Task 7b: stream 0 stays on DDC2 (rate[2] above
         // is preserved, not reclaimed by the PS pair).
-        if (slices[0].live) { a.sliceDdc[0] = 2; }
+        if (slices[0].live) { a.streamDdc[0] = 2; }
     } else if (ctx.diversity) {
         // From Thetis console.cs:8232-8240 [v2.10.3.15] (no-mox, diversity):
         //   P1_DDCConfig = DDCEnable = DDC0;  (P1_DDCConfig = 1 via DDC0=1 bitmask)
@@ -182,9 +182,9 @@ DdcAssignment P1CodecAnvelinaPro3::applyDdcAssignment(
         a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
         a.p1Diversity = 1;
         // No room for extra user slices during diversity.
-        // Phase 3F Sub-Epic I Task 7: Slice A migrates to the DDC0/DDC1
+        // Phase 3F Sub-Epic I Task 7b: stream 0 migrates to the DDC0/DDC1
         // sync pair set above (no separate DDC2 rate in this branch).
-        if (slices[0].live) { a.sliceDdc[0] = 0; }
+        if (slices[0].live) { a.streamDdc[0] = 0; }
     } else {
         // From Thetis console.cs:8243-8250 [v2.10.3.15] (no-diversity plain RX):
         //   P1_DDCConfig = 1; DDCEnable = DDC2; SyncEnable = 0;
@@ -200,16 +200,16 @@ DdcAssignment P1CodecAnvelinaPro3::applyDdcAssignment(
         a.adcCtrl1    = ctx.p1AdcCntrl & 0xff;
         a.adcCtrl2    = ctx.p1AdcCntrl & 0x3f;
         a.nDdc        = 1;
-        // Phase 3F Sub-Epic I Task 7: Slice A -> DDC2, plain-RX path.
-        if (slices[0].live) { a.sliceDdc[0] = 2; }
+        // Phase 3F Sub-Epic I Task 7b: stream 0 -> DDC2, plain-RX path.
+        if (slices[0].live) { a.streamDdc[0] = 2; }
 
-        // Phase 3F extension: Slices C/D/E -> DDC4/5/6 in plain-RX path.
+        // Phase 3F extension: streams 2/3/4 -> DDC4/5/6 in plain-RX path.
         // Thetis nddc=5 cap applies; DDC4/5/6 are idle in Thetis's 2-slice max.
         for (int i = 2; i <= 4; ++i) {
             if (slices[i].live) {
-                const int ddc = i + 2;  // slice 2->DDC4, 3->DDC5, 4->DDC6
-                // Phase 3F Sub-Epic I Task 7: publish the mapping explicitly.
-                a.sliceDdc[i] = ddc;
+                const int ddc = i + 2;  // stream 2->DDC4, 3->DDC5, 4->DDC6
+                // Phase 3F Sub-Epic I Task 7b: publish the mapping explicitly.
+                a.streamDdc[i] = ddc;
                 a.ddcEnable |= (1 << ddc);
                 a.rate[ddc]  = slices[i].sampleRateHz;
                 ++a.nDdc;
@@ -224,10 +224,10 @@ DdcAssignment P1CodecAnvelinaPro3::applyDdcAssignment(
     if (rx2Live) {
         a.ddcEnable |= kDDC3;
         a.rate[3]    = rx2Rate;
-        // Phase 3F Sub-Epic I Task 7: Slice B -> DDC3, in every branch (the
+        // Phase 3F Sub-Epic I Task 7b: stream 1 -> DDC3, in every branch (the
         // rx2Live addendum runs unconditionally, same as ddcEnable/rate[3]
         // above).
-        a.sliceDdc[1] = 3;
+        a.streamDdc[1] = 3;
         if (!(ctx.puresignalRun && ctx.mox) && !ctx.diversity) {
             ++a.nDdc;  // already 1 in plain path, now 2
         }

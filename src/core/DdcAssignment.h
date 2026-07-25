@@ -65,12 +65,15 @@ struct DdcAssignment {
     /// PureSignal feedback reverse DDC index (-1 if PS not active).
     int psRevDdc {-1};
 
-    // Phase 3F Sub-Epic I Task 7: per-slice DDC choice. Index = slice
-    // index, value = DDC number, -1 when that slice is not live. The wire
-    // bytes above are derived from this; keeping it explicit lets
-    // RadioModel publish the mapping onto each SliceModel without
-    // re-deriving it from the enable bitmask.
-    int sliceDdc[5] = {-1, -1, -1, -1, -1};
+    // Phase 3F Sub-Epic I Task 7b: per-STREAM DDC choice. Index = DDC stream
+    // index, value = DDC number, -1 when that stream is idle. A stream is one
+    // DDC, and several slices may share it, so this is emphatically not
+    // per-slice: co-hosted slices all resolve to the same entry.
+    //
+    // The wire bytes above are derived from this; keeping it explicit lets
+    // RadioModel publish the mapping onto ReceiverManager and onto each
+    // SliceModel without re-deriving it from the enable bitmask.
+    int streamDdc[5] = {-1, -1, -1, -1, -1};
 };
 
 } // namespace NereusSDR

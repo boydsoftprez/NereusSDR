@@ -2879,6 +2879,14 @@ QVector<int> RadioModel::slicesOnStream(int streamIndex) const
     return out;
 }
 
+int RadioModel::ddcForStream(int streamIndex) const
+{
+    if (streamIndex < 0 || streamIndex >= static_cast<int>(m_streamDdc.size())) {
+        return -1;
+    }
+    return m_streamDdc[static_cast<size_t>(streamIndex)];
+}
+
 void RadioModel::republishStreamBindings(int streamIndex)
 {
     const QVector<int> bound = slicesOnStream(streamIndex);
@@ -11103,78 +11111,168 @@ void RadioModel::onSliceBandChanged(NereusSDR::Band band)
 // ── Phase 3F Sub-Epic B Task 16 ────────────────────────────────────────────
 
 std::array<NereusSDR::SliceConfig, 5>
-RadioModel::buildSliceConfigsForCodec() const
+RadioModel::buildStreamConfigsForCodec() const
 {
-    // NereusSDR-original: assembles the per-slice input array the
-    // codec's applyDdcAssignment() needs. No Thetis equivalent; Thetis
-    // builds UpdateDDCs inputs inline in console.cs:8186-8538 [v2.10.3.15].
+    // NereusSDR-original: assembles the input array the codec's
+    // applyDdcAssignment() needs. No Thetis equivalent; Thetis builds
+    // UpdateDDCs inputs inline in console.cs:8186-8538 [v2.10.3.15].
+    //
+    // Phase 3F Sub-Epic I Task 7b: indexed by DDC STREAM, not by slice. A
+    // DDC belongs to a stream and slices bind to streams many-to-one
+    // (ChannelMaster cmaster.h:75-82 [v2.10.3.15]: one `_rcvr` carries one
+    // noise blanker and one panadapter but `double* audio[cmMAXSubRcvr]`,
+    // so one receiver is one DDC is one stream). Indexing by slice handed
+    // two co-hosted slices DDC2 and DDC3, contradicting the sharing model
+    // they had just been bound under.
     std::array<NereusSDR::SliceConfig, 5> configs{};
 
-    const int n = m_slices.size();
-    for (int i = 0; i < n && i < 5; ++i) {
-        SliceModel* s = m_slices.at(i);
-        if (!s) { continue; }
+    const int streams = std::min(m_streamAllocator.streamCount(), 5);
+    for (int st = 0; st < streams; ++st) {
+        if (!m_streamAllocator.isStreamActive(st)) { continue; }
 
-        NereusSDR::SliceConfig& cfg = configs[i];
-        cfg.live              = true;
-        // SliceModel::frequency() returns Hz (double). Cast to qint64.
-        cfg.frequencyHz       = static_cast<qint64>(s->frequency());
-        cfg.bandIndex         = static_cast<int>(NereusSDR::bandFromFrequency(s->frequency()));
-        cfg.sampleRateHz      = s->sampleRateHz();
-        cfg.txBound           = s->isTxSlice();
-        cfg.diversityRequested = s->diversityEnabled();
+        NereusSDR::SliceConfig& cfg = configs[st];
+        cfg.live = true;
 
-        // Map rxAntenna() string to the integer index used by CodecContext:
-        //   ANT1=1, ANT2=2, ANT3=3, EXT1=4, EXT2=5, BYPS=6, fallback=1.
-        const QString ant = s->rxAntenna();
-        if        (ant == QLatin1String("ANT1")) { cfg.antennaIndex = 1; }
-        else if (ant == QLatin1String("ANT2")) { cfg.antennaIndex = 2; }
-        else if (ant == QLatin1String("ANT3")) { cfg.antennaIndex = 3; }
-        else if (ant == QLatin1String("EXT1")) { cfg.antennaIndex = 4; }
-        else if (ant == QLatin1String("EXT2")) { cfg.antennaIndex = 5; }
-        else if (ant == QLatin1String("BYPS")) { cfg.antennaIndex = 6; }
-        else                                    { cfg.antennaIndex = 1; }
+        // The DDC tunes to the window centre, not to any one slice: slices
+        // sit at shift offsets inside it (SliceModel::shiftOffsetHz, pushed
+        // into WDSP by RxChannel::setShiftFrequency).
+        const double centreHz = m_streamAllocator.streamCentreHz(st);
+        cfg.frequencyHz  = static_cast<qint64>(centreHz);
+        cfg.bandIndex    = static_cast<int>(NereusSDR::bandFromFrequency(centreHz));
+        cfg.sampleRateHz = m_streamAllocator.streamSampleRateHz(st);
+
+        // Fold the per-slice flags across the stream's members. Iterating
+        // m_slices directly rather than slicesOnStream(st): that returns
+        // sliceIndex() values (WDSP channel ids), which stop matching list
+        // positions once a slice is removed from the middle of the list.
+        bool first = true;
+        for (SliceModel* s : m_slices) {
+            if (!s || s->streamIndex() != st) { continue; }
+
+            // Any slice on the stream being TX-bound makes the stream's
+            // chain TX-bound; likewise for a diversity request.
+            cfg.txBound            = cfg.txBound || s->isTxSlice();
+            cfg.diversityRequested = cfg.diversityRequested || s->diversityEnabled();
+
+            if (first) {
+                first = false;
+                // Antenna comes from the first slice on the stream: they
+                // share one RF chain, so they share its antenna.
+                //
+                // Map rxAntenna() string to the integer index used by
+                // CodecContext:
+                //   ANT1=1, ANT2=2, ANT3=3, EXT1=4, EXT2=5, BYPS=6, fallback=1.
+                const QString ant = s->rxAntenna();
+                if      (ant == QLatin1String("ANT1")) { cfg.antennaIndex = 1; }
+                else if (ant == QLatin1String("ANT2")) { cfg.antennaIndex = 2; }
+                else if (ant == QLatin1String("ANT3")) { cfg.antennaIndex = 3; }
+                else if (ant == QLatin1String("EXT1")) { cfg.antennaIndex = 4; }
+                else if (ant == QLatin1String("EXT2")) { cfg.antennaIndex = 5; }
+                else if (ant == QLatin1String("BYPS")) { cfg.antennaIndex = 6; }
+                else                                   { cfg.antennaIndex = 1; }
+            }
+        }
     }
 
     return configs;
 }
 
-void RadioModel::invokeCodecDdcAssignment()
+NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
 {
     // NereusSDR-original glue. No Thetis equivalent at this abstraction layer.
-    if (!isConnected()) { return; }
-
     NereusSDR::CodecContext ctx{};
     ctx.mox           = m_moxController ? m_moxController->isMox() : false;
     ctx.puresignalRun = (m_pureSignal && m_pureSignal->isAutoCalEnabled());
     ctx.diversity     = m_slices.isEmpty() ? false : m_slices.first()->diversityEnabled();
 
-    const std::array<NereusSDR::SliceConfig, 5> slices = buildSliceConfigsForCodec();
+    const std::array<NereusSDR::SliceConfig, 5> streams = buildStreamConfigsForCodec();
 
+    // Codec source. The RadioConnection owns the codec and is authoritative
+    // whenever a connection object exists. ReceiverManager holds the same
+    // non-owning pointer (wired at connect from p1CodecChanged /
+    // p2CodecChanged, cleared in reset()) and is the fallback when there is
+    // no connection to ask. That is what lets the mapping be computed, and
+    // unit-tested, without standing up a UDP socket.
     if (auto* p2conn = qobject_cast<P2RadioConnection*>(m_connection)) {
         if (NereusSDR::IP2Codec* codec = p2conn->p2Codec()) {
-            NereusSDR::DdcAssignment assignment = codec->applyDdcAssignment(ctx, slices);
-            p2conn->applyDdcAssignment(assignment);
-
-            // Phase 3F Sub-Epic I Task 7: publish the codec's choice back
-            // onto each SliceModel. SliceModel::setDdcIndex had zero
-            // callers before this, so slice->ddcIndex() was permanently -1.
-            // Indexed by list position, matching buildSliceConfigsForCodec
-            // above (configs[i] <- m_slices.at(i)), so the codec's input
-            // and this publish-back agree on what "slot i" means.
-            for (int i = 0; i < m_slices.size() && i < 5; ++i) {
-                if (SliceModel* s = m_slices.at(i)) {
-                    s->setDdcIndex(assignment.sliceDdc[i]);
-                }
-            }
+            return codec->applyDdcAssignment(ctx, streams);
         }
     } else if (auto* p1conn = qobject_cast<NereusSDR::P1RadioConnection*>(m_connection)) {
         if (NereusSDR::IP1Codec* codec = p1conn->p1Codec()) {
-            // P1 path: codec produces a DdcAssignment but the existing
-            // applyPsDdcConfig flow handles P1 wire writes. Full P1
-            // integration is deferred to Phase 3F Sub-Epic C.
-            codec->applyDdcAssignment(ctx, slices);
+            return codec->applyDdcAssignment(ctx, streams);
         }
+    } else if (m_receiverManager) {
+        if (NereusSDR::IP2Codec* codec = m_receiverManager->p2Codec()) {
+            return codec->applyDdcAssignment(ctx, streams);
+        }
+        if (NereusSDR::IP1Codec* codec = m_receiverManager->p1Codec()) {
+            return codec->applyDdcAssignment(ctx, streams);
+        }
+    }
+
+    // No codec selected yet: no board, so no DDC numbers exist. Every
+    // streamDdc entry stays at the -1 idle sentinel.
+    return NereusSDR::DdcAssignment{};
+}
+
+void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment)
+{
+    // Phase 3F Sub-Epic I Task 7b: cache the codec's per-stream choice.
+    // Idle streams keep the -1 sentinel, so an emptied stream leaves no
+    // stale DDC behind for ddcForStream() to report.
+    m_streamDdc = {{assignment.streamDdc[0], assignment.streamDdc[1],
+                    assignment.streamDdc[2], assignment.streamDdc[3],
+                    assignment.streamDdc[4]}};
+
+    // Route each stream's hardware DDC to its logical receiver. Without
+    // this, ReceiverManager::rebuildHardwareMapping's fallback auto-assign
+    // hands stream 1 whatever nextAutoHw reaches (DDC0 on a G2, reserved for
+    // the PureSignal / diversity pair) while the codec enables DDC3, so
+    // every packet for that stream is dropped in feedIqData for want of an
+    // m_hwToLogical entry. setDdcMapping re-runs rebuildHardwareMapping for
+    // an already-active receiver; for an inactive one the activation
+    // reconcile below re-runs it, so the mapping is live either way.
+    //
+    // PROTOCOL 1 IS EXCLUDED, and this is not an optimisation. The codec's
+    // DDC number is the ReceiverManager routing key on Protocol 2 only:
+    // P2RadioConnection emits iqDataReceived keyed by the real DDC index
+    // (P2RadioConnection.cpp:2736 + :2809), but Protocol 1 packs the ACTIVE
+    // receivers sequentially into the EP6 frame and emits their frame-slot
+    // index (P1RadioConnection.cpp:2999-3007). Publishing DDC numbers onto a
+    // P1 receiver would route stream 0 to hw index 2 on Anvelina Pro 3 /
+    // RedPitaya and drop every EP6 packet: the exact regression recorded in
+    // connectToRadio's "P1 radios deliver samples on hardware receiver index
+    // 0" comment (issue #263). The sequential auto-assign that
+    // rebuildHardwareMapping already performs IS the correct P1 answer,
+    // because nth-active-receiver maps to nth frame slot by construction.
+    // The slice-level publish below still carries the codec's DDC number on
+    // P1: that is the wire-level truth, just not a routing key.
+    const bool protocol1 =
+        (qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr)
+        || (m_connection == nullptr && m_receiverManager
+            && m_receiverManager->p1Codec() != nullptr);
+
+    // Idle streams are skipped rather than cleared to -1: -1 restores the
+    // auto-assign fallback that caused the drop in the first place, and a
+    // deactivated receiver is excluded from m_hwToLogical anyway, so the
+    // last-known explicit DDC is the safer thing to leave behind.
+    if (m_receiverManager && !protocol1) {
+        const int streams = std::min(m_streamAllocator.streamCount(), 5);
+        for (int st = 0; st < streams; ++st) {
+            const int ddc = assignment.streamDdc[st];
+            if (ddc >= 0) {
+                m_receiverManager->setDdcMapping(st, ddc);
+            }
+        }
+    }
+
+    // Stamp every slice with the DDC of the stream hosting it, so co-hosted
+    // slices agree. SliceModel::setDdcIndex had zero callers before Task 7,
+    // so slice->ddcIndex() was permanently -1.
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (!s) { continue; }
+        const int st = s->streamIndex();
+        s->setDdcIndex((st >= 0 && st < 5) ? assignment.streamDdc[st] : -1);
     }
 
     // Phase 3F Sub-Epic I Task 7: reconcile ReceiverManager activation
@@ -11192,9 +11290,10 @@ void RadioModel::invokeCodecDdcAssignment()
     // even though setReceiverFrequency already ran earlier in
     // bindSliceToStream. Runs for both P1 and P2: receiver activation is
     // client-side bookkeeping, independent of whether the P1 DDC wire-byte
-    // path (deferred, see the P1 branch above) is implemented. Both
-    // activateReceiver/deactivateReceiver no-op when already in the target
-    // state, so this is cheap to run on every assignment change.
+    // path (deferred to Sub-Epic C, see invokeCodecDdcAssignment below) is
+    // implemented. Both activateReceiver/deactivateReceiver no-op when
+    // already in the target state, so this is cheap to run on every
+    // assignment change.
     if (m_receiverManager) {
         for (int st = 0; st < streamPoolSize(); ++st) {
             if (slicesOnStream(st).isEmpty()) {
@@ -11204,6 +11303,27 @@ void RadioModel::invokeCodecDdcAssignment()
             }
         }
     }
+}
+
+void RadioModel::invokeCodecDdcAssignment()
+{
+    const NereusSDR::DdcAssignment assignment = computeDdcAssignment();
+
+    // Wire push. P2 only: the P1 codec's DdcAssignment is computed above but
+    // the existing applyPsDdcConfig flow handles P1 wire writes, and full P1
+    // integration is deferred to Phase 3F Sub-Epic C. Gated on a live
+    // connection; the client-side publish below is not, because the mapping
+    // is model bookkeeping that has to be correct before the first packet
+    // arrives.
+    if (isConnected()) {
+        if (auto* p2conn = qobject_cast<P2RadioConnection*>(m_connection)) {
+            if (p2conn->p2Codec()) {
+                p2conn->applyDdcAssignment(assignment);
+            }
+        }
+    }
+
+    publishDdcAssignment(assignment);
 }
 
 } // namespace NereusSDR

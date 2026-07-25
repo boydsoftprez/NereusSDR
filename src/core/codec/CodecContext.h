@@ -23,9 +23,17 @@
 
 namespace NereusSDR {
 
-/// Operator-driven per-slice configuration that the codec consumes to produce
-/// a DdcAssignment. One per user slice (up to 5 on 2-ADC boards).
-/// Phase 3F Sub-Epic B Task 1.
+/// Operator-driven configuration that the codec consumes to produce a
+/// DdcAssignment. Phase 3F Sub-Epic B Task 1.
+///
+/// Phase 3F Sub-Epic I Task 7b: `applyDdcAssignment` takes an array of these
+/// indexed by DDC STREAM (up to 5 on 2-ADC boards), not by slice. A stream is
+/// one hardware DDC; slices bind to streams many-to-one, so `frequencyHz` is
+/// the stream's window CENTRE (slices sit at shift offsets inside it) and
+/// `txBound` / `diversityRequested` are the OR across the slices sharing it.
+/// The struct name predates the stream model and is kept to bound the rename's
+/// blast radius. The single-slice-per-stream case is unchanged.
+///
 /// Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md §Task 1.
 struct SliceConfig {
     qint64 frequencyHz {0};            ///< slice's current freq

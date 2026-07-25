@@ -186,6 +186,14 @@ public:
     void setP1Codec(IP1Codec* codec);
     void setP2Codec(IP2Codec* codec);
 
+    // Phase 3F Sub-Epic I Task 7b: non-owning read-back of the injected
+    // codec.  RadioModel::computeDdcAssignment reads the codec from here
+    // when there is no RadioConnection object to ask, which is what makes
+    // the per-stream DDC mapping computable (and unit-testable) without
+    // standing up a UDP socket.  Null before connect and after reset().
+    IP1Codec* p1Codec() const noexcept { return m_p1Codec; }
+    IP2Codec* p2Codec() const noexcept { return m_p2Codec; }
+
     // The connected radio's HPSDRModel — required because the codec layer
     // dispatches on this enum (e.g. P1CodecStandard maps multiple HpsdrModel
     // values to distinct UpdateDDCs branches).

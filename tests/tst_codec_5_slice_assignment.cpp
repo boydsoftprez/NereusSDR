@@ -228,7 +228,7 @@ private slots:
     //
     // Verifies the NereusSDR-extension path that fills Thetis's idle DDC4-6
     // slots for Slices C, D, E on Saturn-class (7-DDC) hardware.
-    // The kSliceToDdc[] table in Task 4's loop maps:
+    // The kStreamToDdc[] table in Task 4's loop maps:
     //   Slice C (index 2) -> DDC4  [NereusSDR extension; idle in Thetis UpdateDDCs]
     //   Slice D (index 3) -> DDC5  [NereusSDR extension]
     //   Slice E (index 4) -> DDC6  [NereusSDR extension]
@@ -580,31 +580,39 @@ private slots:
         QCOMPARE(a.rate[2], 192000);  // REDPITAYA PAVEL - extra rate[2]
     }
 
-    // ── Phase 3F Sub-Epic I Task 7: per-slice DDC mapping publication ────────
+    // ── Phase 3F Sub-Epic I Task 7b: per-STREAM DDC mapping publication ──────
     //
     // NOT to be confused with "Task 7" above (P2CodecOrionMkII), which is
-    // Sub-Epic B numbering. This is Sub-Epic I's own Task 7: DdcAssignment
-    // gains sliceDdc[5] so RadioModel can publish the codec's per-slice DDC
-    // choice onto each SliceModel via setDdcIndex(), which previously had
-    // zero callers. See docs/architecture/2026-07-24-phase3f-sub-epic-i-
-    // data-plane-plan.md Task 7.
+    // Sub-Epic B numbering. This is Sub-Epic I's own Task 7/7b: DdcAssignment
+    // gains streamDdc[5] so RadioModel can publish the codec's DDC choice
+    // onto ReceiverManager and onto each SliceModel via setDdcIndex(), which
+    // previously had zero callers. See docs/architecture/2026-07-24-phase3f-
+    // sub-epic-i-data-plane-plan.md Task 7b.
+    //
+    // Task 7 wrote this as saturn_publishes_per_slice_ddc_mapping and asserted
+    // per-SLICE semantics. That was written against the wrong model: a DDC
+    // belongs to a stream, and slices bind to streams many-to-one, so slice
+    // indexing would hand two co-hosted slices DDC2 and DDC3 and break the
+    // sharing they were bound under. Task 7b corrects the model; the
+    // assertions below are the same checks re-expressed against it, not a
+    // weakened version of them.
 
-    void saturn_publishes_per_slice_ddc_mapping()
+    void saturn_publishes_per_stream_ddc_mapping()
     {
         P2CodecSaturn codec;
         CodecContext ctx{};
-        std::array<SliceConfig, 5> slices{};
-        slices[0].live = true; slices[0].sampleRateHz = 192000;
-        slices[2].live = true; slices[2].sampleRateHz = 192000;
+        std::array<SliceConfig, 5> streams{};
+        streams[0].live = true; streams[0].sampleRateHz = 192000;
+        streams[2].live = true; streams[2].sampleRateHz = 192000;
 
-        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
 
-        QCOMPARE(a.sliceDdc[0], 2);    // Slice A -> DDC2
-        QCOMPARE(a.sliceDdc[1], -1);   // not live
-        QCOMPARE(a.sliceDdc[2], 4);    // Slice C -> DDC4
+        QCOMPARE(a.streamDdc[0], 2);    // stream 0 -> DDC2
+        QCOMPARE(a.streamDdc[1], -1);   // idle
+        QCOMPARE(a.streamDdc[2], 4);    // stream 2 -> DDC4
         // Every published DDC must also be enabled in the bitmask.
-        QVERIFY((a.ddcEnable >> a.sliceDdc[0]) & 1);
-        QVERIFY((a.ddcEnable >> a.sliceDdc[2]) & 1);
+        QVERIFY((a.ddcEnable >> a.streamDdc[0]) & 1);
+        QVERIFY((a.ddcEnable >> a.streamDdc[2]) & 1);
     }
 };
 

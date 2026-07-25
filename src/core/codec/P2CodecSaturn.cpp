@@ -195,12 +195,15 @@ DdcAssignment P2CodecSaturn::applyDdcAssignment(
     // Mirrors Thetis console.cs:8220-8304 [v2.10.3.15] UpdateDDCs() G2-class branch
     // for the 1-2 slice case (byte-faithful for RX1/RX2 + PS + diversity).
     //
-    // Slice-to-DDC mapping for Saturn-class (2-ADC, 7 DDCs):
-    //   Slice A (index 0) -> DDC2    [Thetis: DDCEnable = DDC2 at line 8245]
-    //   Slice B (index 1) -> DDC3    [Thetis: DDCEnable += DDC3 at line 8301]
-    //   Slice C (index 2) -> DDC4    [NereusSDR extension: idle Thetis DDC4 slot]
-    //   Slice D (index 3) -> DDC5    [NereusSDR extension: idle Thetis DDC5 slot]
-    //   Slice E (index 4) -> DDC6    [NereusSDR extension: idle Thetis DDC6 slot]
+    // Stream-to-DDC mapping for Saturn-class (2-ADC, 7 DDCs). Phase 3F
+    // Sub-Epic I Task 7b: the input array is indexed by DDC STREAM, not by
+    // slice. Slices bind to streams many-to-one, so co-hosted slices share
+    // one entry and therefore one DDC.
+    //   Stream 0 -> DDC2    [Thetis: DDCEnable = DDC2 at line 8245]
+    //   Stream 1 -> DDC3    [Thetis: DDCEnable += DDC3 at line 8301]
+    //   Stream 2 -> DDC4    [NereusSDR extension: idle Thetis DDC4 slot]
+    //   Stream 3 -> DDC5    [NereusSDR extension: idle Thetis DDC5 slot]
+    //   Stream 4 -> DDC6    [NereusSDR extension: idle Thetis DDC6 slot]
     // DDC0/DDC1 reserved for PS feedback pair or Diversity sync pair.
     //
     // From Thetis console.cs:8199 [v2.10.3.15]:
@@ -214,20 +217,20 @@ DdcAssignment P2CodecSaturn::applyDdcAssignment(
     // From Thetis console.cs:8205 [v2.10.3.15]: int ps_rate = cmaster.PSrate;
     static constexpr int kPsRate = 192000;
 
-    // Slice-to-DDC index table. DDC0 and DDC1 are reserved.
-    // From Thetis console.cs:8244-8245 [v2.10.3.15] (DDC2 = Slice A) and
-    // console.cs:8301 [v2.10.3.15] (DDC3 = Slice B / rx2_enabled).
-    static constexpr int kSliceToDdc[5] = {2, 3, 4, 5, 6};
+    // Stream-to-DDC index table. DDC0 and DDC1 are reserved.
+    // From Thetis console.cs:8244-8245 [v2.10.3.15] (DDC2 = stream 0) and
+    // console.cs:8301 [v2.10.3.15] (DDC3 = stream 1 / rx2_enabled).
+    static constexpr int kStreamToDdc[5] = {2, 3, 4, 5, 6};
 
-    // Populate DDC assignments for live slices.
-    // For Slice A (index 0) -> DDC2: matches Thetis's rx1 on DDC2.
-    // For Slice B (index 1) -> DDC3: matches Thetis's rx2_enabled DDC3 addendum.
-    // For Slices C-E -> DDC4-6: NereusSDR extension into Thetis's idle slots.
+    // Populate DDC assignments for active streams.
+    // For stream 0 -> DDC2: matches Thetis's rx1 on DDC2.
+    // For stream 1 -> DDC3: matches Thetis's rx2_enabled DDC3 addendum.
+    // For streams 2-4 -> DDC4-6: NereusSDR extension into Thetis's idle slots.
     for (int i = 0; i < 5; ++i) {
         if (!slices[i].live) { continue; }
-        const int ddc = kSliceToDdc[i];
-        // Phase 3F Sub-Epic I Task 7: publish the mapping explicitly.
-        a.sliceDdc[i] = ddc;
+        const int ddc = kStreamToDdc[i];
+        // Phase 3F Sub-Epic I Task 7b: publish the mapping explicitly.
+        a.streamDdc[i] = ddc;
         a.ddcEnable |= (1 << ddc);
         // From Thetis console.cs:8248 [v2.10.3.15]: Rate[2] = rx1_rate;
         // [2.10.3.13]MW0LGE p1 !  [verbatim from console.cs:8247 — P1-only branch on
@@ -285,7 +288,7 @@ DdcAssignment P2CodecSaturn::applyDdcAssignment(
     //   Rate[1] = rx1_rate;
     //   cntrl1 = rx_adc_ctrl1 & 0xff;  // same as no-mox: no PS active
     else if (ctx.diversity) {
-        // Slice A migrates: DDC2 is disabled, DDC0+DDC1 sync pair takes over.
+        // Stream 0 migrates: DDC2 is disabled, DDC0+DDC1 sync pair takes over.
         a.ddcEnable &= ~0x04;                       // clear DDC2
         a.ddcEnable |= 0x03;                        // set DDC0 + DDC1
         a.syncEnable |= 0x02;                       // DDC1 syncs to DDC0
@@ -294,11 +297,11 @@ DdcAssignment P2CodecSaturn::applyDdcAssignment(
             a.rate[0] = slices[0].sampleRateHz;
             a.rate[1] = slices[0].sampleRateHz;
             a.rate[2] = 0;
-            // Phase 3F Sub-Epic I Task 7: Slice A's DDC moved from DDC2 to
+            // Phase 3F Sub-Epic I Task 7b: stream 0's DDC moved from DDC2 to
             // the DDC0/DDC1 diversity sync pair set above; republish DDC0
-            // as the pair's primary so sliceDdc stays consistent with
+            // as the pair's primary so streamDdc stays consistent with
             // ddcEnable (same convention as psFwdDdc for the PS pair).
-            a.sliceDdc[0] = 0;
+            a.streamDdc[0] = 0;
         }
         // adcCtrl1 stays as rx_adc_ctrl1 & 0xff (no PS override here)
         // nDdc: was incremented for DDC2 above; swap to DDC0+DDC1 (net delta = +1)
