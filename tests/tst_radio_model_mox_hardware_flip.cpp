@@ -217,7 +217,7 @@ private slots:
         model.addSlice();
         model.setActiveSlice(0);
         // Tune to 40m (7.1 MHz) — Band::Band40m.
-        model.sliceAt(0)->setFrequency(7100000.0);
+        model.sliceById(0)->setFrequency(7100000.0);
 
         auto* mock = new MockConnection();
         model.injectConnectionForTest(mock);

@@ -84,7 +84,7 @@ private:
         // (E.4 RadioModel fix to propagate m_active).
         int addSlice(int vaxChannel = 0) {
             const int idx = radio->addSlice();
-            SliceModel* slice = radio->sliceAt(idx);
+            SliceModel* slice = radio->sliceById(idx);
             slice->setVaxChannel(vaxChannel);
             return idx;
         }
@@ -140,8 +140,8 @@ private slots:
         const int s = h.addSlice();
 
         // Verify slice 0 is the active slice.
-        QVERIFY(h.radio->sliceAt(s) != nullptr);
-        QVERIFY(h.radio->sliceAt(s)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(s) != nullptr);
+        QVERIFY(h.radio->sliceById(s)->isActiveSlice());
 
         // MOX off (default).
         QCOMPARE(h.engine->moxState(), false);
@@ -160,7 +160,7 @@ private slots:
         const int s = h.addSlice();
 
         // Verify slice 0 is the active slice.
-        QVERIFY(h.radio->sliceAt(s)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(s)->isActiveSlice());
 
         // Turn MOX on.
         h.engine->setMoxStateForTest(true);
@@ -179,8 +179,8 @@ private slots:
         h.addSlice();           // slice 0 — active
         const int s1 = h.addSlice();  // slice 1 — not active
 
-        QVERIFY(h.radio->sliceAt(0)->isActiveSlice());
-        QVERIFY(!h.radio->sliceAt(s1)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(0)->isActiveSlice());
+        QVERIFY(!h.radio->sliceById(s1)->isActiveSlice());
 
         // Turn MOX on.
         h.engine->setMoxStateForTest(true);
@@ -199,7 +199,7 @@ private slots:
         Harness h = makeHarness();
         const int s = h.addSlice();
 
-        QVERIFY(h.radio->sliceAt(s)->isActiveSlice());
+        QVERIFY(h.radio->sliceById(s)->isActiveSlice());
 
         // MOX on — block dropped.
         h.engine->setMoxStateForTest(true);

@@ -252,7 +252,7 @@ void DspOptionsPage::wireComboWithLiveApply(QComboBox* combo,
             if (!rm) {
                 return;
             }
-            const SliceModel* slice = rm->sliceAt(0);
+            const SliceModel* slice = rm->sliceById(0);
             if (!slice) {
                 return;
             }

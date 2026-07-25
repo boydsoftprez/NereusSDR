@@ -963,7 +963,7 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // the alias is intentionally not introduced here (design-decision D5,
     // plan §Sub-Phase 4 Task 4.1). A formal rename (if chosen) happens in
     // Sub-Phase 9 alongside per-slice volume / pan control surfaces.
-    SliceModel* slice = m_radio->sliceAt(sliceId);
+    SliceModel* slice = m_radio->sliceById(sliceId);
     if (slice == nullptr) {
         return;
     }

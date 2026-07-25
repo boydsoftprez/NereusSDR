@@ -115,7 +115,7 @@ class TestSliceModelRadeSwap : public QObject {
 
             const int sliceIdx = radio.addSlice();
             Q_ASSERT(sliceIdx == 0);
-            slice = radio.sliceAt(0);
+            slice = radio.sliceById(0);
             Q_ASSERT(slice != nullptr);
         }
     };

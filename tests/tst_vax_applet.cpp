@@ -159,7 +159,7 @@ private slots:
         Harness h = makeHarness();
 
         const int idx = h.radio->addSlice();
-        SliceModel* s = h.radio->sliceAt(idx);
+        SliceModel* s = h.radio->sliceById(idx);
         QVERIFY(s);
         s->setSliceIndex(0);        // letter 'A'
         s->setVaxChannel(2);        // route to VAX 2
@@ -185,7 +185,7 @@ private slots:
         Harness h = makeHarness();
 
         const int idx = h.radio->addSlice();
-        SliceModel* s = h.radio->sliceAt(idx);
+        SliceModel* s = h.radio->sliceById(idx);
         QVERIFY(s);
         s->setSliceIndex(0);
         s->setVaxChannel(3);

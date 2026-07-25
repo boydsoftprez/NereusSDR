@@ -72,7 +72,7 @@ private slots:
     void vaxComboWritesToSlice() {
         RadioModel radio;
         radio.addSlice();
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
 
         PanelHarness h;
@@ -92,7 +92,7 @@ private slots:
     void sliceUpdateEchoesToCombo() {
         RadioModel radio;
         radio.addSlice();
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
 
         PanelHarness h;
@@ -112,7 +112,7 @@ private slots:
     void noFeedbackLoopOnEcho() {
         RadioModel radio;
         radio.addSlice();
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
 
         PanelHarness h;
@@ -151,7 +151,7 @@ private slots:
     void sliceZeroReplacedRebindsCombo() {
         RadioModel radio;
         radio.addSlice();  // slice 0 (A)
-        SliceModel* first = radio.sliceAt(0);
+        SliceModel* first = radio.sliceById(0);
         QVERIFY(first);
         first->setVaxChannel(2);
 
@@ -172,7 +172,7 @@ private slots:
         // Add a replacement slice; the combo must rebind to the new
         // slice (Model→Widget) and route writes back (Widget→Model).
         radio.addSlice();
-        SliceModel* second = radio.sliceAt(0);
+        SliceModel* second = radio.sliceById(0);
         QVERIFY(second);
         QVERIFY(combo->isEnabled());
 
@@ -200,7 +200,7 @@ private slots:
         QVERIFY(combo->isEnabled());
 
         // Sanity: forward path works after the deferred bind.
-        SliceModel* s = radio.sliceAt(0);
+        SliceModel* s = radio.sliceById(0);
         QVERIFY(s);
         combo->setCurrentIndex(4);
         QCOMPARE(s->vaxChannel(), 4);

@@ -48,7 +48,7 @@ private slots:
 
         // Add a slice so RxApplet has a non-null slice.
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeRxAntennaForTest(), 2);
@@ -65,7 +65,7 @@ private slots:
         model.panadapters().first()->setBand(Band::Band20m);
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeTxAntennaForTest(), 3);
@@ -85,7 +85,7 @@ private slots:
         pan->setBand(Band::Band20m);
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeRxAntennaForTest(), 2);   // on 20m → Ant 2
@@ -108,7 +108,7 @@ private slots:
         model.panadapters().first()->setBand(Band::Band20m);
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         QCOMPARE(applet.activeRxAntennaForTest(), 1);
@@ -128,7 +128,7 @@ private slots:
         // No addPanadapter() call — model.panadapters() is empty.
 
         model.addSlice();
-        SliceModel* slice = model.sliceAt(0);
+        SliceModel* slice = model.sliceById(0);
 
         RxApplet applet(slice, &model);
         // Buttons default to whatever SliceModel initialises them to ("ANT1").

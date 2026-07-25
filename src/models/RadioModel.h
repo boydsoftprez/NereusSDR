@@ -320,7 +320,16 @@ public:
 
     // Slice management (client-side — radio has no slice concept)
     QList<SliceModel*> slices() const { return m_slices; }
-    SliceModel* sliceAt(int index) const;
+
+    /// The slice whose SliceModel::sliceIndex() equals `sliceId`, or nullptr.
+    ///
+    /// Slice ids are stable for the life of a slice and are NOT list
+    /// positions: addSlice hands out the lowest free id and removeSlice does
+    /// not renumber the survivors, so the two diverge after any mid-list
+    /// removal. The id doubles as the slice's WDSP RX channel id.
+    /// For positional access, index slices() directly.
+    SliceModel* sliceById(int sliceId) const;
+
     SliceModel* activeSlice() const { return m_activeSlice; }
 
     /// Phase 3F: hardware-capped user-facing slice count. Reads BoardCapabilities.maxSlices
@@ -379,8 +388,18 @@ public:
     // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
     // MainWindow handler can route the VfoWidget to the owning pan. Passing
     // an empty string preserves the legacy single-pan behaviour.
+    /// Returns the new slice's id — the lowest not currently in use, which
+    /// is also its WDSP RX channel id and its A-E display letter.
     int addSlice(const QString& initialPanId = QString());
-    void removeSlice(int index);
+
+    /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
+    /// carries the same id.
+    void removeSlice(int sliceId);
+
+    /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
+    /// Positional because TxSliceArbiter and the persisted
+    /// TxBoundSliceIndex key are positional too; converting the active /
+    /// TX-bound axis to ids is Sub-Epic C territory.
     void setActiveSlice(int index);
 
     /// Phase 3F Sub-Epic C Task 7: AetherSDR-faithful slice creation entry

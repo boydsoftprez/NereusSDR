@@ -593,9 +593,9 @@ void TciServer::hookSliceBroadcasts()
 
     // Connect once -- new slices added after TciServer construction get wired
     // via this lambda.  RadioModel::sliceAdded fires after the slice is
-    // pushed into m_slices, so sliceAt(index) returns the live pointer.
+    // pushed into m_slices, so sliceById(index) returns the live pointer.
     connect(m_model, &RadioModel::sliceAdded, this, [this](int index) {
-        if (auto* slice = m_model->sliceAt(index)) {
+        if (auto* slice = m_model->sliceById(index)) {
             wireSliceForBroadcast(slice, index);
         }
     });

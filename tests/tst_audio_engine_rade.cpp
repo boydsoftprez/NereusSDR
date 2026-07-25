@@ -116,7 +116,7 @@ private slots:
         engine->setSpeakersBusForTest(std::move(speakers));
 
         const int sliceId = radio->addSlice();
-        SliceModel* slice = radio->sliceAt(sliceId);
+        SliceModel* slice = radio->sliceById(sliceId);
         QVERIFY(slice != nullptr);
 
         // Wire the RADE channel.  J4's audio connection is added inside

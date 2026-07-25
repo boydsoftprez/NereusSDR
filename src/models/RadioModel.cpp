@@ -3089,10 +3089,27 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
 
 // --- Slice Management ---
 
-SliceModel* RadioModel::sliceAt(int index) const
+// Phase 3F Sub-Epic I closeout, defect C3.
+//
+// Was sliceAt(index), resolving positionally with m_slices.at(index). Every
+// caller passed a slice id -- addSlice's return value, a sliceAdded /
+// sliceRemoved payload, a WDSP channel id from AudioEngine::rxBlockReady, or
+// a literal 0 meaning "slice A" -- and removeSlice never renumbers
+// survivors, so the two diverge the moment a slice is removed from the
+// middle of the list. With A(0) B(1) C(2) and B removed, C's audio arrived
+// as id 2, m_slices.at(2) was out of range, and C went permanently silent;
+// remove A instead and B's block resolved to C's SliceModel, handing B
+// C's mute state, VAX channel and MOX gating.
+//
+// Renamed rather than re-documented so no future reader can mistake the
+// "At" for a position. Positional access is still available and used where
+// it is genuinely wanted, through slices().
+SliceModel* RadioModel::sliceById(int sliceId) const
 {
-    if (index >= 0 && index < m_slices.size()) {
-        return m_slices.at(index);
+    for (SliceModel* s : m_slices) {
+        if (s && s->sliceIndex() == sliceId) {
+            return s;
+        }
     }
     return nullptr;
 }
@@ -3100,7 +3117,30 @@ SliceModel* RadioModel::sliceAt(int index) const
 int RadioModel::addSlice(const QString& initialPanId)
 {
     auto* slice = new SliceModel(this);
-    int index = m_slices.size();
+
+    // Phase 3F Sub-Epic I closeout, defect C3: lowest id not currently in
+    // use, NOT m_slices.size().
+    //
+    // The size stamp collided after any mid-list removal, because
+    // removeSlice does not renumber survivors. A(0) B(1), remove index 0,
+    // list is [B(1)]; the next addSlice stamped size() == 1 and handed out
+    // 1 again. Two SliceModels then shared WDSP channel 1: slicesOnStream
+    // returned {1, 1}, the RxDspWorker fan-out ran rxChannel(1)->processIq
+    // twice per chunk and double-pushed its audio, and both slices wrote
+    // their shift offsets into the same channel so one demodulated the
+    // other's frequency.
+    //
+    // Lowest-free also keeps the slice-letter contract from the design doc
+    // §"Slice letter assignment" -- A..E in creation order, letter freed on
+    // destroy, re-creation takes the lowest available -- because the letter
+    // is derived as QChar('A' + sliceIndex()) at every display site
+    // (RxApplet::updateSliceButtons, VaxApplet::updateTagsLabels).
+    //
+    // The scan is O(n^2) over at most maxSlices (5), on a user action.
+    int index = 0;
+    while (sliceById(index) != nullptr) {
+        ++index;
+    }
     slice->setSliceIndex(index);
     // Phase 3F: stamp the owning pan id BEFORE the sliceAdded() emit below,
     // so the MainWindow handler routes the new VfoWidget to the correct
@@ -3188,9 +3228,17 @@ int RadioModel::addSlice(const QString& initialPanId)
     return index;
 }
 
-void RadioModel::removeSlice(int index)
+// Takes a slice ID (SliceModel::sliceIndex()), not a list position — the
+// counterpart of sliceById(). Every caller already passed an id: the VFO
+// flag's ✕ button and its context menu both send VfoWidget::sliceIndex(),
+// which MainWindow stamped from slice->sliceIndex(). sliceRemoved therefore
+// carries the id too, which is what the MainWindow handler has always
+// assumed (it keys m_vfoWidgetsBySlice and PanadapterApplet::associatedSlices
+// by sliceIndex()).
+void RadioModel::removeSlice(int sliceId)
 {
-    if (index < 0 || index >= m_slices.size()) {
+    const int position = m_slices.indexOf(sliceById(sliceId));
+    if (position < 0) {
         return;
     }
 
@@ -3205,13 +3253,16 @@ void RadioModel::removeSlice(int index)
     // TX off to another slice BEFORE removal so the arbiter never observes
     // a torn slice list.  Fallback target is slice 0, unless slice 0 is the
     // victim itself, in which case fall back to slice 1.
-    SliceModel* victim = m_slices.at(index);
+    //
+    // TxSliceArbiter indexes m_slices positionally (TxSliceArbiter.cpp
+    // requestHandoff), so the fallback stays a POSITION here.
+    SliceModel* victim = m_slices.at(position);
     if (victim->isTxSlice() && m_txSliceArbiter) {
-        const int fallbackIndex = (index == 0) ? 1 : 0;
-        m_txSliceArbiter->requestHandoff(fallbackIndex);
+        const int fallbackPosition = (position == 0) ? 1 : 0;
+        m_txSliceArbiter->requestHandoff(fallbackPosition);
     }
 
-    SliceModel* slice = m_slices.takeAt(index);
+    SliceModel* slice = m_slices.takeAt(position);
 
     // Phase 3F Sub-Epic I: free the stream if this was its last slice, so
     // the DDC drops out of the ddcEnable bitmask and the radio stops
@@ -3240,7 +3291,7 @@ void RadioModel::removeSlice(int index)
     // Phase 3F Sub-Epic C Task 7: deleteLater() rather than delete to keep
     // any in-flight queued signals targeting this slice safe.
     slice->deleteLater();
-    emit sliceRemoved(index);
+    emit sliceRemoved(sliceId);
 }
 
 // Phase 3F Sub-Epic C Task 7: AetherSDR-faithful +RX entry point.
@@ -3324,7 +3375,7 @@ void RadioModel::wireRadeChannel(int sliceId, RadeChannel* channel,
     // Adapt the channel's per-channel signals to the per-slice-ID
     // RadioModel slots. Captured-sliceId lambdas attach the slice
     // identity at wire time. The slot bodies look the slice up via
-    // sliceAt(sliceId) so a stale capture (slice removed between
+    // sliceById(sliceId) so a stale capture (slice removed between
     // emit and dispatch) lands as a safe no-op.
     connect(channel, &RadeChannel::snrChanged, this,
             [this, sliceId](float snr) {
@@ -3603,7 +3654,7 @@ void RadioModel::wireRadeChannel(int sliceId, RadeChannel* channel,
             });
 
     // The slice pointer is currently unused at wire time. Slot bodies
-    // dereference via sliceAt(sliceId), which is the safer route because
+    // dereference via sliceById(sliceId), which is the safer route because
     // it handles the slice-was-deleted race naturally. The parameter
     // remains in the signature so Phase J's call sites read with the
     // intended slice context.
@@ -3630,7 +3681,7 @@ void RadioModel::onRadeTextDecoded(int sliceId, const QString& callsign,
     // Pull the slice's current frequency for the freqMhz column when
     // the slice still exists. A removed slice is a safe no-op: freqMhz
     // defaults to 0.0 in the RxDecode struct.
-    if (auto* slice = sliceAt(sliceId)) {
+    if (auto* slice = sliceById(sliceId)) {
         decode.freqMhz = slice->frequency() / 1.0e6;
 
         // 2026-05-11 bench: also pin the speaker callsign on the slice
@@ -3663,7 +3714,7 @@ void RadioModel::onRadeTextDecoded(int sliceId, const QString& callsign,
     // once for both reporters below.
     int snrDb = 0;
     double freqMhz = 0.0;
-    if (auto* slice = sliceAt(sliceId)) {
+    if (auto* slice = sliceById(sliceId)) {
         const double snr = slice->snrDb();
         if (!std::isnan(snr)) {
             snrDb = static_cast<int>(snr);
@@ -3742,7 +3793,7 @@ void RadioModel::onRadeSyncChanged(int sliceId, bool synced)
             const qint64 elapsedMs =
                 it.value().msecsTo(QDateTime::currentDateTimeUtc());
             if (elapsedMs >= kRadeSyncDropClearDebounceMs) {
-                if (auto* slice = sliceAt(sliceId)) {
+                if (auto* slice = sliceById(sliceId)) {
                     if (!slice->lastRadeRxCallsign().isEmpty()) {
                         slice->setLastRadeRxCallsign(QString());
                         qCInfo(lcDsp)
@@ -3767,7 +3818,7 @@ void RadioModel::onRadeSnrChanged(int sliceId, float snrDb)
     // Forward to the slice's snrDb Q_PROPERTY (D5). SliceModel::setSnrDb
     // is NaN-aware: NaN -> NaN no-ops, numeric -> identical-numeric
     // no-ops, so no extra dedup is needed here.
-    if (auto* slice = sliceAt(sliceId)) {
+    if (auto* slice = sliceById(sliceId)) {
         slice->setSnrDb(static_cast<double>(snrDb));
     }
     emit radeSnrChanged(sliceId, snrDb);
@@ -9537,7 +9588,7 @@ void RadioModel::setVfoHz(int rx, int chan, qint64 hz)
     if (chan != 0) {
         return;
     }
-    SliceModel* slice = sliceAt(rx);
+    SliceModel* slice = sliceById(rx);
     if (!slice) {
         return;
     }
@@ -9549,7 +9600,7 @@ qint64 RadioModel::vfoHz(int rx, int chan) const
     // Both chan==0 and chan==1 return the slice frequency.  See setVfoHz note
     // — VFO B per slice is not modeled, so reads return the same value.
     (void)chan;
-    const SliceModel* slice = sliceAt(rx);
+    const SliceModel* slice = sliceById(rx);
     if (!slice) {
         return 0;
     }
@@ -9558,7 +9609,7 @@ qint64 RadioModel::vfoHz(int rx, int chan) const
 
 void RadioModel::setMode(int rx, QString modeStr)
 {
-    SliceModel* slice = sliceAt(rx);
+    SliceModel* slice = sliceById(rx);
     if (!slice) {
         return;
     }
@@ -9568,7 +9619,7 @@ void RadioModel::setMode(int rx, QString modeStr)
 
 QString RadioModel::mode(int rx) const
 {
-    const SliceModel* slice = sliceAt(rx);
+    const SliceModel* slice = sliceById(rx);
     if (!slice) {
         return QString();
     }
@@ -9597,7 +9648,7 @@ bool RadioModel::split(int rx) const
 // some are radio-global (RIT/XIT/AfLinear/etc.); a handful are stubs that
 // store-and-return until their underlying feature lands (rxBin/rxApf/etc.).
 //
-// All slice-indexed shims sanity-check sliceAt(rx) and silently no-op on
+// All slice-indexed shims sanity-check sliceById(rx) and silently no-op on
 // out-of-range so a misbehaving client can't crash NereusSDR.  Getters
 // return sensible defaults (false / 0 / "" / 0.0) when the slice doesn't
 // exist, matching the TestMockRadioModel convention.
@@ -9607,21 +9658,21 @@ bool RadioModel::split(int rx) const
 void RadioModel::setVfoLock(int rx, int chan, bool locked)
 {
     (void)chan;  // NereusSDR collapses VFOALock/VFOBLock to slice-level locked
-    if (auto* s = sliceAt(rx)) { s->setLocked(locked); }
+    if (auto* s = sliceById(rx)) { s->setLocked(locked); }
 }
 bool RadioModel::vfoLock(int rx, int chan) const
 {
     (void)chan;
-    if (const auto* s = sliceAt(rx)) { return s->locked(); }
+    if (const auto* s = sliceById(rx)) { return s->locked(); }
     return false;
 }
 void RadioModel::setLock(int rx, bool locked)
 {
-    if (auto* s = sliceAt(rx)) { s->setLocked(locked); }
+    if (auto* s = sliceById(rx)) { s->setLocked(locked); }
 }
 bool RadioModel::lock(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->locked(); }
+    if (const auto* s = sliceById(rx)) { return s->locked(); }
     return false;
 }
 
@@ -9630,11 +9681,11 @@ void RadioModel::setGlobalMute(bool on) { m_tciGlobalMute = on; }
 bool RadioModel::globalMute() const     { return m_tciGlobalMute; }
 void RadioModel::setRxMute(int rx, bool on)
 {
-    if (auto* s = sliceAt(rx)) { s->setMuted(on); }
+    if (auto* s = sliceById(rx)) { s->setMuted(on); }
 }
 bool RadioModel::rxMute(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->muted(); }
+    if (const auto* s = sliceById(rx)) { return s->muted(); }
     return false;
 }
 
@@ -9652,25 +9703,25 @@ bool RadioModel::rxMute(int rx) const
 // FilterChanged delegate fire).
 void RadioModel::setFilterBand(int rx, int lowHz, int highHz)
 {
-    if (auto* s = sliceAt(rx)) {
+    if (auto* s = sliceById(rx)) {
         s->setFilter(lowHz, highHz);
     }
 }
 int RadioModel::filterLow(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->filterLow(); }
+    if (const auto* s = sliceById(rx)) { return s->filterLow(); }
     return 0;
 }
 int RadioModel::filterHigh(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->filterHigh(); }
+    if (const auto* s = sliceById(rx)) { return s->filterHigh(); }
     return 0;
 }
 
 // ── AGC mode ────────────────────────────────────────────────────────────────
 void RadioModel::setAgcMode(int rx, const QString& mode)
 {
-    auto* s = sliceAt(rx);
+    auto* s = sliceById(rx);
     if (!s) { return; }
     const QString upper = mode.toUpper();
     AGCMode m = AGCMode::Med;
@@ -9685,7 +9736,7 @@ void RadioModel::setAgcMode(int rx, const QString& mode)
 }
 QString RadioModel::agcMode(int rx) const
 {
-    const auto* s = sliceAt(rx);
+    const auto* s = sliceById(rx);
     if (!s) { return QString(); }
     switch (s->agcMode()) {
         case AGCMode::Off:    return QStringLiteral("OFF");
@@ -9701,31 +9752,31 @@ QString RadioModel::agcMode(int rx) const
 // ── AGC gain (threshold) ────────────────────────────────────────────────────
 void RadioModel::setAgcGain(int rx, int gain)
 {
-    if (auto* s = sliceAt(rx)) { s->setAgcThreshold(gain); }
+    if (auto* s = sliceById(rx)) { s->setAgcThreshold(gain); }
 }
 int RadioModel::agcGain(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->agcThreshold(); }
+    if (const auto* s = sliceById(rx)) { return s->agcThreshold(); }
     return 0;
 }
 
 // ── Squelch ─────────────────────────────────────────────────────────────────
 void RadioModel::setSqlEnable(int rx, bool on)
 {
-    if (auto* s = sliceAt(rx)) { s->setSsqlEnabled(on); }
+    if (auto* s = sliceById(rx)) { s->setSsqlEnabled(on); }
 }
 bool RadioModel::sqlEnable(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->ssqlEnabled(); }
+    if (const auto* s = sliceById(rx)) { return s->ssqlEnabled(); }
     return false;
 }
 void RadioModel::setSqlLevel(int rx, int level)
 {
-    if (auto* s = sliceAt(rx)) { s->setSsqlThresh(static_cast<double>(level)); }
+    if (auto* s = sliceById(rx)) { s->setSsqlThresh(static_cast<double>(level)); }
 }
 int RadioModel::sqlLevel(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) {
+    if (const auto* s = sliceById(rx)) {
         return static_cast<int>(s->ssqlThresh());
     }
     return 0;
@@ -9773,12 +9824,12 @@ int RadioModel::xitOffset() const
 void RadioModel::setRxBalance(int rx, int chan, double balance)
 {
     (void)chan;
-    if (auto* s = sliceAt(rx)) { s->setAudioPan(balance); }
+    if (auto* s = sliceById(rx)) { s->setAudioPan(balance); }
 }
 double RadioModel::rxBalance(int rx, int chan) const
 {
     (void)chan;
-    if (const auto* s = sliceAt(rx)) { return s->audioPan(); }
+    if (const auto* s = sliceById(rx)) { return s->audioPan(); }
     return 0.0;
 }
 
@@ -9796,18 +9847,18 @@ bool RadioModel::rxCtun(int rx) const
 // ── NB / NR / ANF ───────────────────────────────────────────────────────────
 void RadioModel::setRxNb(int rx, bool on)
 {
-    if (auto* s = sliceAt(rx)) {
+    if (auto* s = sliceById(rx)) {
         s->setNbMode(on ? NbMode::NB : NbMode::Off);
     }
 }
 bool RadioModel::rxNb(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->nbMode() != NbMode::Off; }
+    if (const auto* s = sliceById(rx)) { return s->nbMode() != NbMode::Off; }
     return false;
 }
 void RadioModel::setRxNr(int rx, bool on, int nrIndex)
 {
-    auto* s = sliceAt(rx);
+    auto* s = sliceById(rx);
     if (!s) { return; }
     if (!on) {
         s->setActiveNr(NrSlot::Off);
@@ -9828,12 +9879,12 @@ void RadioModel::setRxNr(int rx, bool on, int nrIndex)
 }
 bool RadioModel::rxNr(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) { return s->activeNr() != NrSlot::Off; }
+    if (const auto* s = sliceById(rx)) { return s->activeNr() != NrSlot::Off; }
     return false;
 }
 int RadioModel::rxNrIndex(int rx) const
 {
-    if (const auto* s = sliceAt(rx)) {
+    if (const auto* s = sliceById(rx)) {
         switch (s->activeNr()) {
             case NrSlot::Off:  return 0;
             case NrSlot::NR1:  return 0;

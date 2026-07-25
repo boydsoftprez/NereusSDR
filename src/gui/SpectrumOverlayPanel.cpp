@@ -487,7 +487,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
             if (m_updatingFromModel || !m_radioModel || ant.isEmpty()) {
                 return;
             }
-            if (SliceModel* s = m_radioModel->sliceAt(0)) {
+            if (SliceModel* s = m_radioModel->sliceById(0)) {
                 s->setRxAntenna(ant);
             }
         });
@@ -514,7 +514,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
             if (m_updatingFromModel || !m_radioModel || ant.isEmpty()) {
                 return;
             }
-            if (SliceModel* s = m_radioModel->sliceAt(0)) {
+            if (SliceModel* s = m_radioModel->sliceById(0)) {
                 s->setTxAntenna(ant);
             }
         });
@@ -916,7 +916,7 @@ void SpectrumOverlayPanel::buildVaxFlyout()
             if (m_updatingFromModel || !m_radioModel) {
                 return;
             }
-            SliceModel* s = m_radioModel->sliceAt(0);
+            SliceModel* s = m_radioModel->sliceById(0);
             if (s) {
                 s->setVaxChannel(idx);
             }
@@ -1017,7 +1017,7 @@ void SpectrumOverlayPanel::bindToSliceZero()
     if (m_rxAntConn) { QObject::disconnect(m_rxAntConn); m_rxAntConn = {}; }
     if (m_txAntConn) { QObject::disconnect(m_txAntConn); m_txAntConn = {}; }
 
-    SliceModel* s = m_radioModel->sliceAt(0);
+    SliceModel* s = m_radioModel->sliceById(0);
     if (s) {
         // Seed the combo with the current model value before wiring up
         // the listener, using the flag pattern so no spurious setVaxChannel
@@ -1125,7 +1125,7 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
 
     // Reseed from slice 0 so the combo label matches the persisted state.
     if (show && m_radioModel) {
-        if (SliceModel* s = m_radioModel->sliceAt(0)) {
+        if (SliceModel* s = m_radioModel->sliceById(0)) {
             m_updatingFromModel = true;
             const int rxIdx = m_rxAntCmb->findText(s->rxAntenna());
             if (rxIdx >= 0) { m_rxAntCmb->setCurrentIndex(rxIdx); }
