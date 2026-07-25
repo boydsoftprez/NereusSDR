@@ -373,6 +373,29 @@ public:
     void openRxChannelPool(int poolSize, int inputBufferSize,
                            int inputSampleRateHz);
 
+    /// Switch on the WDSP channel of every slice that currently holds a stream.
+    ///
+    /// A pooled channel is opened stopped (WDSP `initial state = 0`, Thetis
+    /// ChannelMaster/cmaster.c:80 [v2.10.3.15]) and RxChannel::processIq
+    /// memsets its output to silence until setActive(true). Called at the tail
+    /// of openRxChannelPool so a reconnect, which re-binds every slice before
+    /// WDSP has any channels, still comes back with all of them audible.
+    void activateBoundSliceChannels();
+
+    /// Switch on one slice's WDSP channel, pushing its demodulation state
+    /// first. No-op when the slice has no stream, has no channel yet, or is
+    /// already live (Slice A, which connectToRadio activates after the full
+    /// state push).
+    ///
+    /// Mirrors Thetis's receiver-enable order: push the DSPRX state, then
+    /// SetChannelState(ch, 1, 0) (console.cs:37359-37361 [v2.10.3.15]).
+    void activateSliceChannel(SliceModel* slice);
+
+    /// Stop a slice's WDSP channel running. The channel object stays open for
+    /// whichever slice takes the id next. Thetis's disable half:
+    /// SetChannelState(ch, 0, 0) (console.cs:37398-37400 [v2.10.3.15]).
+    void deactivateSliceChannel(int sliceId);
+
     /// Run the allocator for every slice that currently has no stream.
     ///
     /// Connect-time step: Slice A is created before the pool is sized, so its

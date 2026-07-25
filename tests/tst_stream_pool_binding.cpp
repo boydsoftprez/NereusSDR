@@ -838,6 +838,202 @@ private slots:
         QCOMPARE(engine->rxChannel(a)->sampleRate(), 384000);
         QCOMPARE(engine->rxChannel(b)->sampleRate(), 384000);
     }
+
+    // ── Phase 3F: pooled channels have to be switched on ────────────────
+    //
+    // A pooled channel is opened stopped. WDSP's create_rcvr passes
+    // `0, // initial state` (Thetis ChannelMaster/cmaster.c:80
+    // [v2.10.3.15]) and RxChannel::m_active defaults false, and
+    // RxChannel::processIq short-circuits on exactly that flag:
+    //
+    //     if (!m_active.load()) {
+    //         std::memset(outI, 0, sampleCount * sizeof(float));
+    //         std::memset(outQ, 0, sampleCount * sizeof(float));
+    //         return;
+    //     }
+    //
+    // so an unactivated channel returns a zeroed buffer instead of
+    // reaching fexchange2, and its slice is silent while its flag,
+    // S-meter and mixer slot all look live.  isActive() IS that branch
+    // condition, which is why these assert on it.
+
+    // The short-circuit itself, on a bare channel that was never opened.
+    // Safe in any build: the inactive path never touches WDSP.
+    void an_inactive_channel_returns_silence_without_reaching_wdsp()
+    {
+        RxChannel ch(/*channelId=*/0, /*bufferSize=*/256,
+                     /*sampleRate=*/192000);
+        QVERIFY(!ch.isActive());
+
+        constexpr int n = 16;
+        float inI[n]{}, inQ[n]{};
+        float outI[n], outQ[n];
+        for (int i = 0; i < n; ++i) {
+            inI[i] = 0.5f;
+            inQ[i] = -0.5f;
+            outI[i] = 12345.0f;   // sentinel
+            outQ[i] = 12345.0f;
+        }
+
+        ch.processIq(inI, inQ, outI, outQ, n, n);
+
+        for (int i = 0; i < n; ++i) {
+            QCOMPARE(outI[i], 0.0f);
+            QCOMPARE(outQ[i], 0.0f);
+        }
+    }
+
+    // Slice A alone: its channel is live and no other pooled channel is,
+    // because nothing is bound to them.  This is the single-slice
+    // regression guard.
+    void single_slice_leaves_only_slice_as_channel_live()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        QVERIFY(model.sliceById(a)->streamIndex() >= 0);
+
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        QVERIFY(engine->rxChannel(a) != nullptr);
+        QVERIFY(engine->rxChannel(a)->isActive());
+        for (int ch = 1; ch < 5; ++ch) {
+            QVERIFY2(!engine->rxChannel(ch)->isActive(),
+                     qPrintable(QStringLiteral("unbound pool channel %1 is running")
+                                    .arg(ch)));
+        }
+    }
+
+    // Slice B on the same band as A: it shares A's DDC, so RxDspWorker
+    // hands it the same chunk.  Before the fix its channel stayed
+    // inactive and processIq zeroed the buffer, so B was permanently
+    // silent.
+    void a_second_slice_sharing_a_ddc_gets_a_live_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, 192000);
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(14210000.0);
+
+        // Same DDC — this is the co-hosted case, not a second stream.
+        QCOMPARE(model.sliceById(b)->streamIndex(),
+                 model.sliceById(a)->streamIndex());
+
+        QVERIFY(engine->rxChannel(b) != nullptr);
+        QVERIFY(engine->rxChannel(b)->isActive());
+    }
+
+    // Slice B on its own DDC, bound after the pool is already open: the
+    // bind is what switches its channel on.
+    void a_slice_on_a_second_ddc_gets_a_live_channel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, 192000);
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+
+        QVERIFY(model.sliceById(b)->streamIndex()
+                != model.sliceById(a)->streamIndex());
+        QVERIFY(engine->rxChannel(b)->isActive());
+    }
+
+    // Reconnect shape: slices are bound BEFORE the engine has any
+    // channels (connectToRadio calls bindUnboundSlices ahead of the
+    // WDSP-init lambda), so the pool open has to reconcile.  Without the
+    // reconcile every slice would come back silent.
+    void slices_bound_before_the_pool_exists_are_activated_by_the_pool()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+
+        // Nothing is open yet — the binds above had no channel to touch.
+        QVERIFY(engine->rxChannel(a) == nullptr);
+        QVERIFY(engine->rxChannel(b) == nullptr);
+
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        QVERIFY(engine->rxChannel(a)->isActive());
+        QVERIFY(engine->rxChannel(b)->isActive());
+    }
+
+    // Removing Slice A used to silence the radio outright: channel 0 was
+    // the only activated channel, and after the removal no slice was
+    // bound to it.  B must keep working, and A's channel must stop.
+    void removing_slice_a_leaves_slice_b_audible()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+        QVERIFY(engine->rxChannel(a)->isActive());
+        QVERIFY(engine->rxChannel(b)->isActive());
+
+        model.removeSlice(a);
+
+        QVERIFY2(engine->rxChannel(b)->isActive(),
+                 "removing slice A silenced slice B");
+        // A's channel stops running but stays open for reuse.
+        QVERIFY(engine->rxChannel(a) != nullptr);
+        QVERIFY(!engine->rxChannel(a)->isActive());
+    }
+
+    // A re-added slice takes the lowest free id, i.e. the channel the
+    // removed slice just vacated.  It has to come back live.
+    void a_reused_channel_id_comes_back_live()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+        model.openRxChannelPool(5, bufferSizeForRate(192000), 192000);
+
+        model.removeSlice(a);
+        QVERIFY(!engine->rxChannel(a)->isActive());
+
+        const int c = model.addSlice();
+        QCOMPARE(c, a);   // lowest free id
+        QVERIFY(engine->rxChannel(c)->isActive());
+    }
 };
 
 QTEST_MAIN(TestStreamPoolBinding)

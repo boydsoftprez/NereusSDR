@@ -2935,6 +2935,110 @@ void RadioModel::openRxChannelPool(int poolSize, int inputBufferSize,
                                           inputSampleRateHz, 48000, 48000);
         }
     }
+
+    // A channel that exists is not yet a channel that demodulates: WDSP opens
+    // with state = 0 and RxChannel::m_active defaults false. Every slice that
+    // is already bound when the pool comes up needs its channel switched on.
+    //
+    // This is the reconnect path as much as the connect path.
+    // teardownConnection releases every binding and WdspEngine::shutdown
+    // destroys every channel; connectToRadio then re-binds all slices BEFORE
+    // WDSP finishes initialising, so those binds ran against an engine with no
+    // channels at all. Without this loop only Slice A would come back audible
+    // after a reconnect.
+    activateBoundSliceChannels();
+}
+
+// ── Phase 3F Sub-Epic I: pooled-channel activation ──────────────────────────
+//
+// WDSP channels are opened stopped. create_rcvr passes `0, // initial state`
+// (From Thetis ChannelMaster/cmaster.c:80 [v2.10.3.15]) and the channel is
+// only switched on when the receiver it backs becomes a receiver the operator
+// actually has. Thetis does that at the enable, after pushing the DSPRX's
+// state:
+//
+//   From Thetis console.cs:37359-37361 [v2.10.3.15] — RX2 enable:
+//     radio.GetDSPRX(1, 0).Active = true;
+//
+//     WDSP.SetChannelState(WDSP.id(2, 0), 1, 0);
+//
+// with the mirror at console.cs:37398-37400 on disable (Active = false, then
+// SetChannelState(..., 0, 0)). The sub-receiver path does the same at
+// console.cs:36577-36583 / :36616.
+//
+// NereusSDR's equivalent of "this receiver now exists" is a slice binding to a
+// stream: before the bind the slice is not in RxDspWorker's stream -> slices
+// map, so no samples reach its channel; after it, every chunk on that stream
+// is fanned to it. So bind is where the channel is switched on, and unbind is
+// where it is switched off.
+//
+// Not at creation, deliberately. m_active is what keeps a channel from
+// processing before its state has been applied, and what keeps getMeter off a
+// WDSP channel that has never had SetChannelState called on it (see the
+// segfault note in RxChannel::getMeter). Activating the whole pool at open
+// would defeat both and leave up to five wdspmain threads dispatching for
+// slices that do not exist. Ordering here matches Thetis: push state, then
+// switch on.
+//
+// Not on first use either: setActive calls into WDSP, and processIq runs on
+// the DSP thread.
+void RadioModel::activateBoundSliceChannels()
+{
+    for (SliceModel* s : std::as_const(m_slices)) {
+        activateSliceChannel(s);
+    }
+}
+
+void RadioModel::activateSliceChannel(SliceModel* slice)
+{
+    if (!m_wdspEngine || !slice || slice->streamIndex() < 0) {
+        return;
+    }
+
+    // Sub-Epic I invariant: WDSP RX channel id == slice index.
+    RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex());
+    if (!ch || ch->isActive()) {
+        // Already live. Leave it alone: connectToRadio's WDSP-init lambda
+        // gives Slice A's channel the full state push (NR, SNB, APF, squelch,
+        // audio panel, the lot) and then activates it, and re-running the
+        // subset below on top of that would be a downgrade dressed as a
+        // refresh.
+        return;
+    }
+
+    // The demodulation-critical subset. Everything here decides whether the
+    // audio coming out of fexchange2 is the right signal at all; the rest of
+    // the per-slice DSP surface (NR, SNB, APF, squelch, binaural, pan) still
+    // follows the active slice and lands in a later sub-epic.
+    ch->setMode(slice->dspMode());
+    ch->setFilterFreqs(slice->filterLow(), slice->filterHigh());
+    ch->setAgcMode(slice->agcMode());
+    ch->setAgcTop(slice->rfGain());
+    // Seed AF gain before the channel runs a single block: WDSP initialises
+    // panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and setActive re-pushes
+    // m_afGain anyway, but seeding first means the default never reaches the
+    // mixer. Same reasoning as the Slice A block in connectToRadio.
+    ch->setAfGain(slice->afGain() / 100.0);
+    // The offset the allocator resolved for this slice. bindSliceToStream
+    // pushes it too, but a reconnect re-opens the channel underneath an
+    // already-bound slice, so it has to be re-seeded here as well.
+    ch->setShiftFrequency(slice->shiftOffsetHz());
+
+    ch->setActive(true);
+}
+
+// The disable half of the same Thetis pair (console.cs:37398-37400
+// [v2.10.3.15]: Active = false, then SetChannelState(..., 0, 0)). The channel
+// object stays open for whichever slice takes this id next; it just stops
+// running.
+void RadioModel::deactivateSliceChannel(int sliceId)
+{
+    if (!m_wdspEngine) {
+        return;
+    }
+    if (RxChannel* ch = m_wdspEngine->rxChannel(sliceId)) {
+        ch->setActive(false);
+    }
 }
 
 void RadioModel::bindUnboundSlices()
@@ -3447,6 +3551,17 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
         applyStreamDspGeometry();
     }
 
+    // The slice now has a stream, which means RxDspWorker is about to start
+    // fanning that stream's chunks at its WDSP channel. Switch the channel on
+    // (Thetis's SetChannelState(..., 1, 0) at the receiver enable) so those
+    // chunks reach fexchange2 instead of the inactive-channel memset. No-op
+    // for a slice whose channel is already live, i.e. every retune.
+    //
+    // After applyStreamDspGeometry, not before: the channel's in_size and
+    // input rate must agree with the stream feeding it before it runs its
+    // first block (defect H1).
+    activateSliceChannel(slice);
+
     // The active-DDC set may have changed, so the codec must recompute.
     requestDdcAssignment();
     return true;
@@ -3710,6 +3825,12 @@ void RadioModel::removeSlice(int sliceId)
     // streaming it. The WDSP channel stays open for reuse.
     const int freedStream = slice->streamIndex();
     slice->setStreamIndex(-1);
+    // ...and stop it running. Unbind is the counterpart of the bind-time
+    // activation: Thetis pairs its enable (SetChannelState(..., 1, 0)) with
+    // SetChannelState(..., 0, 0) on disable (console.cs:37398-37400
+    // [v2.10.3.15]). The channel object survives for whichever slice takes
+    // this id next; it just stops dispatching in the meantime.
+    deactivateSliceChannel(sliceId);
     if (freedStream >= 0 && slicesOnStream(freedStream).isEmpty()) {
         m_streamAllocator.deactivateStream(freedStream);
     }
