@@ -244,6 +244,19 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     // calls when engines aren't wired — chunkDrained still fires so the
     // chunking contract is observable).
     while (acc.i.size() >= inSize) {
+        // ── Phase 3F Sub-Epic I Task 4b: one blanking pass per chunk ─────
+        // The noise blanker belongs to the DDC stream, not the slice
+        // (ANB panb / NOB pnob live in `struct _rcvr` alongside
+        // `double* audio[cmMAXSubRcvr]`, cmaster.h:74-82 [v2.10.3.15]).
+        // This announces that the chunk about to be fanned out gets
+        // exactly one blanking pass, owned by this stream. It reports the
+        // topology, not whether NB happens to be switched on, and fires
+        // without engines wired so the contract stays observable in unit
+        // tests (same rule as chunkDrained / sliceProcessed).
+        if (!slices.isEmpty()) {
+            emit streamNoiseBlankerApplied(receiverIndex);
+        }
+
         if (m_wdspEngine != nullptr && m_audioEngine != nullptr) {
             // ── Phase 3F Sub-Epic I Task 4: one stream, many slices ──
             // Every slice bound to this stream demodulates the SAME I/Q
@@ -254,14 +267,17 @@ void RxDspWorker::processIqBatch(int receiverIndex,
             // audio[cmMAXSubRcvr]` outputs (cmaster.h:74-82
             // [v2.10.3.15]).
             //
-            // Note the aliasing that topology implies: RxChannel::processIq
-            // runs NB1 / NB2 in place on the input legs (xanbEXTF /
-            // xnobEXTF, RxChannel.cpp:1543-1545), so a slice with a noise
-            // blanker enabled blanks the chunk every later slice sees.
-            // Upstream agrees the blanker belongs to the receiver, not the
-            // sub-receiver (ANB panb / NOB pnob live in `struct _rcvr`);
-            // hoisting NB ownership from RxChannel to the stream is a
-            // separate change. Single-slice behaviour is unaffected.
+            // That topology dictates who blanks: RxChannel::processIq runs
+            // NB1 / NB2 in place on the input legs (xanbEXTF / xnobEXTF,
+            // RxChannel.cpp:1557-1562), so with every slice handed the same
+            // chunk, only ONE of them may blank it. The first slice to reach
+            // processIq owns the stream's blanker and runs with its own NB
+            // settings; the rest are bypassed via setNoiseBlankerBypassed so
+            // they cannot re-blank an already-blanked buffer. Matches
+            // upstream's one ANB / NOB per receiver. Single-slice behaviour
+            // is byte-identical to before (the sole slice is always first,
+            // so it is never bypassed).
+            bool streamBlankerClaimed = false;
             for (int sliceIdx : slices) {
                 // Invariant: WDSP channel id == slice index.
                 RxChannel* rxCh = m_wdspEngine->rxChannel(sliceIdx);
@@ -272,6 +288,14 @@ void RxDspWorker::processIqBatch(int receiverIndex,
                     // the chunk still drains below.
                     continue;
                 }
+
+                // Claim the stream's single blanking pass for the first
+                // slice that actually reaches processIq. Anchored on the
+                // processIq call rather than on position in `slices` so a
+                // skipped slice above cannot consume the pass and leave the
+                // chunk unblanked.
+                rxCh->setNoiseBlankerBypassed(streamBlankerClaimed);
+                streamBlankerClaimed = true;
 
                 // ── WDSP always runs ──────────────────────────────────────
                 // S-meter, spectrum, AGC, ADC-overflow detector all live

@@ -227,6 +227,12 @@ signals:
     // fan-out; fires even without engines wired, mirroring chunkDrained.
     void sliceProcessed(int sliceIndex, int samples);
 
+    /// Emitted once per drained chunk when the stream's noise blanker pass
+    /// runs. The blanker belongs to the DDC stream, not the slice
+    /// (ChannelMaster cmaster.h:79-81 [v2.10.3.15]), so exactly one pass
+    /// happens per chunk no matter how many slices share the stream.
+    void streamNoiseBlankerApplied(int streamIndex);
+
     // Phase 3M-3a-iv: fires whenever setBufferSizes() actually changes
     // the (inSize, outSize) pair. Consumed by
     // TxWorkerThread::setAntiVoxBlockGeometry to align WDSP DEXP's

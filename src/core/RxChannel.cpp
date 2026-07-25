@@ -663,6 +663,14 @@ NereusSDR::NbMode RxChannel::nbMode() const
     return m_nb ? m_nb->mode() : NereusSDR::NbMode::Off;
 }
 
+// Phase 3F Sub-Epic I Task 4b. Written by RxDspWorker's drain loop before
+// each slice's processIq; read inside processIq. Release/acquire matches the
+// pairing setActiveNr() uses for the other hot-path flags.
+void RxChannel::setNoiseBlankerBypassed(bool bypassed)
+{
+    m_nbBypassed.store(bypassed, std::memory_order_release);
+}
+
 // Per-slice NB tuning pass-through (setNbTuning / nbTuning / setNbThreshold
 // / setNbLagMs / setNbLeadMs / setNbTransitionMs) removed 2026-04-22. NB
 // tuning is global per-channel now; Setup → DSP → NB/SNB calls WDSP
@@ -1539,10 +1547,19 @@ void RxChannel::processIq(float* inI, float* inQ,
     // They operate in-place on separate I and Q buffers.
     // From Thetis wdsp-integration.md section 4.3
     // From design doc §sub-epic B — mutually exclusive NB/NB2 via one atomic.
-    switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
-        case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
-        case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
-        case NereusSDR::NbMode::Off: /* no-op */                      break;
+    //
+    // Phase 3F Sub-Epic I Task 4b: skipped on co-hosted slices. Because the
+    // blanker runs IN PLACE on the caller's legs, and every slice bound to a
+    // DDC stream is handed the same chunk, only the stream-owning slice may
+    // blank it; the rest would re-blank an already-blanked buffer. Upstream
+    // holds one ANB / NOB per receiver rather than per sub-receiver
+    // (ChannelMaster cmaster.h:79-81 [v2.10.3.15]).
+    if (!m_nbBypassed.load(std::memory_order_acquire)) {
+        switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
+            case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
+            case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
+            case NereusSDR::NbMode::Off: /* no-op */                      break;
+        }
     }
 
     // Main WDSP processing: demod, AGC, NR, ANF, filter, EQ, audio panel.

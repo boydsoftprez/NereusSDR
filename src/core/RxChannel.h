@@ -352,6 +352,17 @@ public:
     // HAVE_WDSP.
     NereusSDR::NbFamily* nb() { return m_nb.get(); }
 
+    /// Phase 3F Sub-Epic I Task 4b: when true, processIq skips its internal
+    /// noise-blanker pass because the caller has already blanked the shared
+    /// chunk for this DDC stream. Set on every slice EXCEPT the one that
+    /// owns the stream's blanker.
+    ///
+    /// Upstream keeps one ANB / NOB per receiver, not per sub-receiver
+    /// (ChannelMaster cmaster.h:79-81 [v2.10.3.15]), so blanking belongs to
+    /// the stream. Without this, each co-hosted slice would re-blank the
+    /// same in-place buffer, which is order-dependent and wrong.
+    void setNoiseBlankerBypassed(bool bypassed);
+
     // --- Noise reduction ---
 
     void setNrEnabled(bool enabled);
@@ -804,6 +815,12 @@ private:
     std::atomic<int> m_mode{static_cast<int>(DSPMode::LSB)};  // Must match WdspEngine::createRxChannel init
     std::atomic<int> m_agcMode{static_cast<int>(AGCMode::Med)};
     std::unique_ptr<NereusSDR::NbFamily> m_nb;
+    // Phase 3F Sub-Epic I Task 4b: NB bypass for co-hosted slices. Atomic
+    // because processIq reads it on the DSP thread; matches the convention
+    // of every other flag this hot path reads (m_active, m_dfnrActive,
+    // m_bnrActive, m_mnrActive). The carry-only plain bools further down
+    // (m_nbEnabled, m_eqEnabled) are never read here, hence not atomic.
+    std::atomic<bool> m_nbBypassed{false};
     std::atomic<bool> m_nrEnabled{false};
     std::atomic<bool> m_anfEnabled{false};
     // emnr: From Thetis radio.cs:2216 — rx_nr2_run default = 0

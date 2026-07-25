@@ -63,6 +63,24 @@ private slots:
         QCOMPARE(spy.at(2).at(0).toInt(), 3);
     }
 
+    void noise_blanker_runs_once_per_stream_not_once_per_slice()
+    {
+        RxDspWorker worker;
+        worker.setBufferSizes(4, 64);
+        worker.setStreamSlices(1, QVector<int>{0, 2, 3});
+
+        QSignalSpy spy(&worker, &RxDspWorker::streamNoiseBlankerApplied);
+
+        const QVector<float> four{0.1f, 0.1f, 0.2f, 0.2f,
+                                  0.3f, 0.3f, 0.4f, 0.4f};
+        worker.processIqBatch(1, four);
+
+        // Three slices share the chunk, but the blanker is a property of
+        // the DDC stream, so it must be applied exactly once.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);   // stream index
+    }
+
     void a_stream_with_no_slices_processes_nothing()
     {
         RxDspWorker worker;
