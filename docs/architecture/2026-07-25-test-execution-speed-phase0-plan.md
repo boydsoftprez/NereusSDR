@@ -205,7 +205,7 @@ with:
 EXCLUDE_FROM_ALL ${name}.cpp TestSandboxInit.cpp ${ARGN})`; keep
 `EXCLUDE_FROM_ALL` and swap only the `TestSandboxInit.cpp` token.)
 
-- [ ] **Step 3: Rebuild one test and confirm the sandbox still engages**
+- [ ] **Step 3: Rebuild one test and run it**
 
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DNEREUS_BUILD_TESTS=ON >/dev/null && cmake --build build --target tst_app_settings_profile -j 2>&1 | tail -2 && ctest --test-dir build -R '^tst_app_settings_profile$' --output-on-failure
@@ -213,26 +213,55 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DNEREUS_BUILD_TESTS=O
 
 Expected: `100% tests passed, 0 tests failed out of 1`.
 
-This test is the guard: it exercises `AppSettings` persistence, so if the
-sandbox constructor were dropped it would either fail or write outside the
-sandbox.
+**Do not treat this test as the guard.** Verified 2026-07-25:
+`tst_app_settings_profile` contains zero `save()`, `load()`, or
+`setValue()` calls, and its one `QStandardPaths` assertion computes the
+expected value by calling the same API that the code under test calls,
+so both sides agree whether or not the sandbox constructor ran. It cannot
+detect a dropped sandbox. Use the mechanical proof in Step 4 instead.
 
-- [ ] **Step 4: Confirm the sandbox path is still redirected**
+- [ ] **Step 4: Prove the sandbox object survived, mechanically**
+
+The settings file lives at a **platform-specific** path. On macOS
+`QStandardPaths::GenericConfigLocation` resolves to `~/Library/Preferences`
+(see `src/core/AppSettings.cpp:112-118`), NOT the `~/.config/...` path
+quoted in CLAUDE.md, which is Linux-only. Checking the wrong path yields a
+vacuous "unchanged" that proves nothing.
+
+Capture before the test run:
 
 ```bash
-./build/tests/tst_app_settings_profile -v2 2>&1 | grep -ci qttest || echo "NOTE: no qttest path logged; confirm manually with: ls ~/Library/Preferences/qttest"
+SETTINGS=~/Library/Preferences/NereusSDR/NereusSDR.settings   # macOS
+# SETTINGS=~/.config/NereusSDR/NereusSDR.settings             # Linux
+ls -la "$SETTINGS" && md5 -q "$SETTINGS"
 ```
 
-Expected: the real `~/.config/NereusSDR/NereusSDR.settings` must not have
-been modified. Verify with:
+Re-check after. Both mtime and checksum must be identical.
+
+Then confirm the object is genuinely linked in, which is the decisive test:
 
 ```bash
-ls -la ~/.config/NereusSDR/NereusSDR.settings
+nm build/tests/tst_app_settings_profile | grep -ci "SandboxInit"
 ```
 
-Expected: mtime unchanged from before the test run.
+Expected: nonzero. Zero means a static-library-style drop occurred; revert
+immediately.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Confirm the dedup actually happened**
+
+Count **compile rules**, not substring occurrences. A plain
+`grep -c TestSandboxInit build/build.ninja` returns ~515 even when the fix
+is working, because ninja expands `$<TARGET_OBJECTS:>` into the literal
+`.o` path on every consuming link edge. That is expected and harmless. The
+number that proves dedup is the compile-rule count:
+
+```bash
+grep -c "^build.*TestSandboxInit\.cpp\.o: CXX_COMPILER" build/build.ninja
+```
+
+Expected: `1`.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add tests/CMakeLists.txt
