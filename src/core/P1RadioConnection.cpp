@@ -2034,6 +2034,7 @@ void P1RadioConnection::setTxMicSource(TxMicSource* src)
     m_lastMicAt = QDateTime::currentDateTimeUtc();
 }
 
+
 // ---------------------------------------------------------------------------
 // parseI2cResponse — Phase 3P-E Task 2
 //
@@ -2314,7 +2315,7 @@ void P1RadioConnection::onWatchdogTick()
     if (!m_lastEp6At.isValid()) { return; }
 
     const qint64 silenceMs = m_lastEp6At.msecsTo(QDateTime::currentDateTimeUtc());
-    if (silenceMs > kWatchdogSilenceMs) {
+    if (silenceMs > m_watchdogSilenceMs) {
         qCWarning(lcConnection) << "P1: Watchdog — ep6 silent for" << silenceMs
                                 << "ms (state=" << static_cast<int>(cs)
                                 << "); transitioning to LinkLost and scheduling reconnect";
@@ -2331,7 +2332,7 @@ void P1RadioConnection::onWatchdogTick()
 
         // Arm the reconnect timer for the next retry attempt (or first if from Connected).
         // Source: NereusSDR design doc §3.6 — 5-second reconnect interval.
-        m_reconnectTimer->start(kReconnectIntervalMs);
+        m_reconnectTimer->start(m_reconnectIntervalMs);
     }
 }
 

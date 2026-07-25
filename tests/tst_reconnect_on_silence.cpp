@@ -42,19 +42,24 @@ private slots:
 
         P1RadioConnection conn;
         conn.init();
+        // Compress the reconnect timeline 100x: watchdog 2000ms -> 20ms,
+        // reconnect interval 5000ms -> 50ms. Without this the second test
+        // method sleeps 42 real seconds and sets the parallel floor for
+        // the entire suite.
+        conn.setReconnectTimingForTest(20, 50);
         conn.connectToRadio(makeInfo(fake));
         QTRY_VERIFY_WITH_TIMEOUT(
-            conn.state() == ConnectionState::Connected, 3000);
+            conn.state() == ConnectionState::Connected, 500);
 
         // Wait for the fake to see the metis-start and begin streaming.
-        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 500);
 
         // Kick the fake into silence — it stops replying to ep2 and stops ep6.
         fake.goSilent();
 
         // Watchdog should trip after 2s → LinkLost.
         QTRY_VERIFY_WITH_TIMEOUT(
-            conn.state() == ConnectionState::LinkLost, 5000);
+            conn.state() == ConnectionState::LinkLost, 500);
 
         // Resume the fake before the reconnect window closes.
         // The reconnect timer fires after 5s — resume immediately so the next
@@ -63,7 +68,7 @@ private slots:
 
         // Within the reconnect cycle (5s × up to 3 = 15s max), should recover.
         QTRY_VERIFY_WITH_TIMEOUT(
-            conn.state() == ConnectionState::Connected, 18000);
+            conn.state() == ConnectionState::Connected, 500);
 
         conn.disconnect();
         fake.stop();
@@ -75,6 +80,11 @@ private slots:
 
         P1RadioConnection conn;
         conn.init();
+        // Compress the reconnect timeline 100x: watchdog 2000ms -> 20ms,
+        // reconnect interval 5000ms -> 50ms. Without this the second test
+        // method sleeps 42 real seconds and sets the parallel floor for
+        // the entire suite.
+        conn.setReconnectTimingForTest(20, 50);
         conn.connectToRadio(makeInfo(fake));
         QTRY_VERIFY_WITH_TIMEOUT(
             conn.state() == ConnectionState::Connected, 3000);
@@ -82,26 +92,50 @@ private slots:
         // Wait for the fake to process metis-start.
         QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
 
+        // Watch every state transition from here on. The retry chain is
+        // asserted by transition COUNT rather than by sleeping past a
+        // hand-computed deadline: a fixed qWait races the timer chain and
+        // goes flaky under parallel ctest load, which is precisely the
+        // environment this test now runs in.
+        QSignalSpy transitions(&conn, &P1RadioConnection::connectionStateChanged);
+
         // Fake stops completely — no discovery reply, no nothing.
         fake.stop();
 
-        // Timeline (all times relative to fake.stop()):
-        //   ~2s:  watchdog trips → LinkLost (attempt 0)
-        //   ~7s:  reconnect timeout → attempt 1, Connecting
-        //   ~9s:  watchdog trips → LinkLost
-        //   ~14s: reconnect timeout → attempt 2, Connecting
-        //   ~16s: watchdog trips → LinkLost
-        //   ~21s: reconnect timeout → attempt 3, Connecting
-        //   ~23s: watchdog trips → LinkLost
-        //   ~28s: reconnect timeout → retries exhausted, stays in LinkLost
+        // Timeline is driven by two P1RadioConnection timing values that
+        // the test compresses 100x via setReconnectTimingForTest():
+        //   watchdog silence  2000ms -> 20ms
+        //   reconnect interval 5000ms -> 50ms
         //
-        // Wait 35s total — well past the 28s exhaust point — then verify LinkLost.
-        QTest::qWait(35000);
+        // kMaxReconnectAttempts is 3, so the bounded chain produces exactly
+        // 7 transitions after fake.stop() — LinkLost, then (Connecting,
+        // LinkLost) once per attempt:
+        //   LinkLost   (watchdog trips, attempt counter 0)
+        //   Connecting (reconnect timeout, attempt 1) → LinkLost (watchdog)
+        //   Connecting (reconnect timeout, attempt 2) → LinkLost (watchdog)
+        //   Connecting (reconnect timeout, attempt 3) → LinkLost (watchdog)
+        // The next reconnect timeout finds attempts == kMaxReconnectAttempts
+        // and returns without a transition, so the chain terminates here.
+        //
+        // Measured wall time for those 7 transitions on an idle machine is
+        // ~420ms (each cycle is the 50ms reconnect interval plus the
+        // watchdog re-trip, which costs a few 25ms kWatchdogTickMs ticks
+        // because onReconnectTimeout does not reset m_lastEp6At). The 4000ms
+        // ceiling is a generous upper bound only — QTRY returns as soon as
+        // the count is reached, so a healthy run still finishes in well
+        // under a second.
+        QTRY_VERIFY_WITH_TIMEOUT(transitions.count() >= 7, 4000);
+        QCOMPARE(transitions.count(), 7);
         QCOMPARE(conn.state(), ConnectionState::LinkLost);
 
-        // Wait another 7s to confirm no further state changes (reconnect timer
-        // would fire at 33s from exhaust point if unbounded — rules it out).
-        QTest::qWait(7000);
+        // Confirm the retries really are bounded: wait 250ms (5x the
+        // compressed reconnect interval) and require that NO further
+        // transition occurred. Asserting on the spy count rather than on
+        // state() alone is deliberate — an unbounded 4th retry would go
+        // Connecting → LinkLost and could leave state() reading LinkLost
+        // again by the time we sampled it.
+        QTest::qWait(250);
+        QCOMPARE(transitions.count(), 7);
         QCOMPARE(conn.state(), ConnectionState::LinkLost);
 
         conn.disconnect();
