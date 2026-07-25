@@ -272,18 +272,27 @@ private:
     /// Build and register one FFTEngine for `streamIndex`, configured as
     /// the old single-engine path was, moved onto the shared FFT thread.
     /// Returns the existing engine if one is already registered.
+    ///
+    /// Called on demand rather than once per pool slot: engines subscribe
+    /// to the shared RadioModel::rawIqDataForStream and filter by index, so
+    /// an engine for a stream that is never claimed would still take (and
+    /// discard) a queued event for every packet of every OTHER stream.
+    /// Building one only when the allocator actually claims the DDC keeps
+    /// that cost at zero for the single-stream case. Sizing off
+    /// streamPoolSize() at construction would not work anyway: the pool is
+    /// unsized until RadioModel::configureStreamPool runs at connect.
     FFTEngine* createFftEngineForStream(int streamIndex);
-
-    /// Create any engine the current stream pool is missing. The pool is
-    /// sized by RadioModel::configureStreamPool at connect, long after
-    /// buildUI runs, so this is called again from the binding signals
-    /// rather than once at construction. Idempotent.
-    void ensureFftEnginePool();
 
     /// Push the stream's cached DDC centre + sample rate onto one pan's
     /// SpectrumWidget so visibleBinRange maps its bins against the right
     /// window. No-op for a stream we have never seen a centre for.
     void applyStreamWindowToPan(const QString& panId, int streamIndex);
+
+    /// Re-derive the entire pan-to-stream topology from the current slice
+    /// set. Cheap (one pass) and called on slice add / remove / migration
+    /// / pan change. Chosen over incremental edits because a pan can host
+    /// several slices, so no single change maps onto one subscription.
+    void rebuildFftRouting();
 
     /// Phase 3F: create the VfoWidget for a secondary slice (B+) on the
     /// given SpectrumWidget, push initial state, wire all intent + bidi

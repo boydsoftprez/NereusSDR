@@ -1126,18 +1126,6 @@ FFTEngine* MainWindow::createFftEngineForStream(int streamIndex)
     return engine;
 }
 
-void MainWindow::ensureFftEnginePool()
-{
-    // qMax(1, ...): the pool is unsized until RadioModel::configureStreamPool
-    // runs at connect (RadioModel.cpp:4195), and stream 0 must exist from
-    // buildUI onwards so pan 0 behaves exactly as it did pre-pool.
-    const int streamCount =
-        qMax(1, m_radioModel ? m_radioModel->streamPoolSize() : 1);
-    for (int st = 0; st < streamCount; ++st) {
-        createFftEngineForStream(st);
-    }
-}
-
 void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
 {
     if (!m_panStack) { return; }
@@ -1148,6 +1136,81 @@ void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
     sw->setDdcCenterFrequency(it->centreHz);
     if (it->sampleRateHz > 0) {
         sw->setSampleRate(static_cast<double>(it->sampleRateHz));
+    }
+}
+
+void MainWindow::rebuildFftRouting()
+{
+    if (!m_radioModel) { return; }
+    auto* router = m_radioModel->fftRouter();
+    if (!router) { return; }
+
+    // Wholesale rebuild, not an incremental edit. A pan can host several
+    // slices and FFTRouter::removePan drops a pan from EVERY receiver, so a
+    // remove-then-add on one slice's migration would silently unsubscribe
+    // its co-hosted neighbours. Binding signals also fire before sliceAdded
+    // (plan discovery item 7), so only a rebuild-from-model consumer is
+    // safe.
+    //
+    // Snapshot the pre-rebuild topology first so a brand-new subscription
+    // can be told apart from one that merely survived. Only new ones get
+    // the stream window pushed: streamBindingsChanged fires on every bind,
+    // so on every VFO tick, and re-pushing the allocator's centre each time
+    // would yank a CTUN pan back after an operator pan-drag (that path
+    // retunes the DDC through forceHardwareFrequency without going through
+    // the allocator).
+    QHash<QString, QList<int>> before;
+    if (m_panStack) {
+        // PanadapterStack::allApplets (PanadapterStack.h:70) and
+        // PanadapterApplet::panId (PanadapterApplet.h:65) both already exist.
+        for (auto* applet : m_panStack->allApplets()) {
+            if (!applet) { continue; }
+            const QString panId = applet->panId();
+            before.insert(panId, router->receiversForPan(panId));
+            router->removePan(panId);
+        }
+    }
+
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (!slice) { continue; }
+        const int stream = slice->streamIndex();
+        if (stream < 0) { continue; }          // unbound slice feeds nothing
+
+        // Resolving the pan is not just slice->panKey(). Slice A never has
+        // one: RadioModel::addSlice stamps panKey only when it is given one
+        // and connectToRadio calls the no-argument overload
+        // (RadioModel.cpp:4137), so Slice A's panKey is permanently empty.
+        // Skipping empties (as the Task 9 spec had it) would leave pan 0
+        // with no subscription and no trace at all.
+        //
+        // Fall back to the pan that actually hosts the slice, recorded by
+        // the sliceAdded handler through PanadapterApplet::addSlice. That
+        // record is stable; activePanId() is not, and using it alone would
+        // migrate Slice A's subscription (and darken pan 0) the moment the
+        // operator made another pan active. activePanId() stays as the last
+        // resort, matching spectrumForSlice (MainWindow.cpp:880).
+        if (!m_panStack) { continue; }
+        QString panId = slice->panKey();
+        if (panId.isEmpty() || !m_panStack->panadapter(panId)) {
+            panId.clear();
+            for (auto* applet : m_panStack->allApplets()) {
+                if (applet
+                    && applet->associatedSlices().contains(slice->sliceIndex())) {
+                    panId = applet->panId();
+                    break;
+                }
+            }
+        }
+        if (panId.isEmpty()) { panId = m_panStack->activePanId(); }
+        if (panId.isEmpty()) { continue; }
+
+        const bool isNewSubscription = !before.value(panId).contains(stream);
+        // mapPanToReceiver de-duplicates (FFTRouter.cpp:17), so two slices
+        // sharing a stream and a pan produce one subscription, not two.
+        router->mapPanToReceiver(panId, stream);
+        if (isNewSubscription) {
+            applyStreamWindowToPan(panId, stream);
+        }
     }
 }
 
@@ -1738,9 +1801,15 @@ void MainWindow::buildUI()
             applet->addSlice(sliceIndex);
         }
 
-        if (auto* router = m_radioModel->fftRouter()) {
-            router->mapPanToReceiver(targetPan, slice->ddcIndex());
-        }
+        // Phase 3F Sub-Epic I Task 9: re-derive the whole topology instead
+        // of mapping this one pan. The old call keyed the router on
+        // slice->ddcIndex(), which is the hardware DDC number (2..6 on
+        // Saturn-class), while the FFTEngine pool is keyed on stream index
+        // (0..userDdcCount-1) -- plan invariant 3. It also ran too early for
+        // Slice A: the pool is not sized until connect, so Slice A's
+        // addSlice-time bind is a no-op and its streamIndex is still -1 here.
+        // The streamBindingsChanged rebuild picks it up once it binds.
+        rebuildFftRouting();
 
         // Phase 3F hotfix 2026-05-27: create a per-slice VfoWidget so
         // operators can see + interact with the new slice.  The existing
@@ -1794,8 +1863,12 @@ void MainWindow::buildUI()
             }
             m_vfoWidgetsBySlice.remove(idx);
             SpectrumWidget* dest = spectrumForSlice(slice);
-            if (!dest) { return; }
-            createSliceFlag(slice, dest);
+            if (dest) { createSliceFlag(slice, dest); }
+            // Phase 3F Sub-Epic I Task 9: the slice now feeds a different
+            // pan, so the FFT topology has to follow. Unconditional: the
+            // model changed even when the destination pan does not exist
+            // yet and no flag could be built.
+            rebuildFftRouting();
         });
     });
 
@@ -1837,6 +1910,11 @@ void MainWindow::buildUI()
                 }
             }
         }
+        // Phase 3F Sub-Epic I Task 9: the removed slice may have been the
+        // last one feeding its pan, or the last one on its stream. Rebuild
+        // from the surviving slice set rather than unsubscribing this pan,
+        // which would also drop any co-hosted slices still showing on it.
+        rebuildFftRouting();
     });
 
     // Phase 3F Sub-Epic F Task 6: route wideband bins from RadioModel into
@@ -1858,12 +1936,13 @@ void MainWindow::buildUI()
     // each connect (P1=192k, P2=768k).
     //
     // Phase 3F Sub-Epic I Task 8: the thread is created BEFORE the engines
-    // now, because createFftEngineForStream parks each engine on it.  The
-    // pool itself is filled by ensureFftEnginePool below (stream 0 only at
-    // this point -- the SKU's stream count is not known until connect).
+    // now, because createFftEngineForStream parks each engine on it.  Only
+    // stream 0's engine is built here: the SKU's stream count is not known
+    // until connect, and the rest are built on demand as the allocator
+    // claims their DDCs (see the streamCentreChanged handler below).
     m_fftThread = new QThread(this);
     m_fftThread->setObjectName(QStringLiteral("SpectrumThread"));
-    ensureFftEnginePool();
+    createFftEngineForStream(0);
 
     connect(m_radioModel, &RadioModel::wireSampleRateChanged,
             this, [this](double rateHz) {
@@ -1959,10 +2038,11 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::streamCentreChanged, this,
             [this](int streamIndex, double centreHz, int sampleRateHz) {
         m_streamWindows.insert(streamIndex, StreamWindow{centreHz, sampleRateHz});
-        // A stream that has just been claimed may not have an engine yet:
-        // the pool is unsized until connect.
-        ensureFftEnginePool();
-        if (FFTEngine* engine = m_fftEngines.value(streamIndex, nullptr)) {
+        // This signal is emitted exactly when the allocator claims or moves
+        // a DDC, which is the only way a stream starts producing I/Q, so it
+        // is also the right moment to build that stream's engine. No-op
+        // after the first time.
+        if (FFTEngine* engine = createFftEngineForStream(streamIndex)) {
             QMetaObject::invokeMethod(engine, [engine, sampleRateHz]() {
                 engine->setSampleRate(static_cast<double>(sampleRateHz));
             }, Qt::QueuedConnection);
@@ -1975,6 +2055,15 @@ void MainWindow::buildUI()
             }
         }
     });
+
+    // Phase 3F Sub-Epic I Task 9: any change to which slices sit on which
+    // stream re-derives the FFT topology. This is the authoritative trigger:
+    // it fires from bindSliceToStream AFTER SliceModel::streamIndex is set,
+    // including for Slice A's deferred bind at connect (the pool is not
+    // sized when Slice A is created, so its addSlice-time bind is a no-op
+    // and the sliceAdded rebuild sees streamIndex == -1).
+    connect(m_radioModel, &RadioModel::streamBindingsChanged, this,
+            [this](int, const QVector<int>&) { rebuildFftRouting(); });
 
     // Sub-epic E: flush the rewind ring buffer when the radio disconnects so
     // a new session starts with a clean history. AetherSDR's clearDisplay()
