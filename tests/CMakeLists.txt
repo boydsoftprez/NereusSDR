@@ -1016,6 +1016,9 @@ nereus_add_test(tst_vax_channel_selector)
 # ── Phase 3O Sub-Phase 2: MasterMixer ─────────────────────────────────────
 nereus_add_test(tst_master_mixer)
 
+# ── Phase 3F Sub-Epic I closeout C1: multi-slice audio reaches the mixer ──
+nereus_add_test(tst_audio_engine_multi_slice_mix)
+
 # ── Phase 3O Sub-Phase 3: PortAudioBus ────────────────────────────────────
 nereus_add_test(tst_port_audio_bus)
 

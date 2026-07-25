@@ -261,21 +261,48 @@ void AudioEngine::rescanLinuxBackend()
 }
 #endif
 
+void AudioEngine::preregisterSlices(int count)
+{
+    // Slice A always exists, so a caller that has no radio (unit tests, a
+    // disconnected engine) still gets id 0 — this is the behaviour the
+    // former slice-0-only pre-registration had.
+    const int wanted = std::max(1, count);
+    for (int id = m_preregisteredSlices; id < wanted; ++id) {
+        // Unity gain, centre pan: identical to the slice-0 registration
+        // this generalises, so slice A behaviour is unchanged and the
+        // extra ids are inert until a slice actually binds to them.
+        m_masterMix.setSliceGain(id, 1.0f, 0.0f);
+    }
+    if (wanted > m_preregisteredSlices) {
+        m_preregisteredSlices = wanted;
+    }
+}
+
 void AudioEngine::start()
 {
     if (m_running) {
         return;
     }
 
-    // Pre-register sliceId 0 with MasterMixer at startup, before any
-    // audio-thread accumulate() can race against a main-thread
+    // Pre-register every slice id this radio can host with MasterMixer,
+    // before any audio-thread accumulate() can race against a main-thread
     // unordered_map insert+rehash on first-block (design-decision D6,
-    // plan §Sub-Phase 4 Task 4.1). Multi-slice enrollment is a
-    // Sub-Phase 9+ concern; slice-0 covers the single-RX live path.
-    if (!m_slicePreregistered) {
-        m_masterMix.setSliceGain(0, 1.0f, 0.0f);
-        m_slicePreregistered = true;
-    }
+    // plan §Sub-Phase 4 Task 4.1).
+    //
+    // Only slice 0 was registered until Sub-Epic I connected the
+    // multi-slice data plane. MasterMixer::accumulate drops any id it has
+    // no entry for, so slices B-E were demodulated by RxDspWorker and then
+    // silently discarded here — the "secondary slices produce no audio"
+    // bench symptom. Enrolling a slice lazily on its first block is not an
+    // option: that is a main-thread insert into a map the DSP thread is
+    // already reading lock-free.
+    //
+    // boardCapabilities() rather than RadioModel::maxSlices(): start() runs
+    // from the WDSP-init lambda in connectToRadio, before m_connection is
+    // assigned, so the accessor would still report the disconnected default
+    // of 1. Same reason the WDSP RX channel pool is sized off caps directly
+    // (RadioModel.cpp §"open the WDSP channel pool").
+    preregisterSlices(m_radio ? m_radio->boardCapabilities().maxSlices : 1);
 
     ensureSpeakersOpen();
     ensureTxInputOpen();

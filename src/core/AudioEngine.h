@@ -205,6 +205,23 @@ public:
     void stop();
     bool isRunning() const { return m_running; }
 
+    /// Pre-register slice ids [0, count) with the master mixer.
+    ///
+    /// MasterMixer::accumulate() silently drops any id it has no entry for,
+    /// and its map must stay structurally frozen while audio streams: the
+    /// DSP thread does a lock-free find() on an unordered_map that a
+    /// main-thread insert would rehash underneath it (MasterMixer.h:52-56).
+    /// So every id a slice may ever be given is registered up front, at
+    /// connect, before the DSP thread starts feeding rxBlockReady().
+    ///
+    /// Idempotent and monotonic — repeated calls only top the map up, and
+    /// count is clamped to at least 1 so slice A is always present. An id
+    /// with no slice bound to it never receives an accumulate() call, so a
+    /// spare registration costs one map entry and nothing else.
+    ///
+    /// MUST NOT be called once audio is streaming.
+    void preregisterSlices(int count);
+
     // Task 1.6 — Sample-rate live-apply coordination hooks.
     //
     // pauseInput() / resumeInput() bracket the WDSP channel rebuild during a
@@ -755,10 +772,11 @@ private:
     // terminate.
     bool m_paInitialized{false};
     bool m_running{false};
-    // Was sliceId 0 registered with MasterMixer? startup-only invariant
-    // per design-decision D6 (plan); prevents a main-thread insert/rehash
-    // race against the audio thread's lock-free find().
-    bool m_slicePreregistered{false};
+    // High-water mark of slice ids registered with MasterMixer: ids
+    // [0, m_preregisteredSlices) have an entry. Startup-only invariant per
+    // design-decision D6 (plan); prevents a main-thread insert/rehash race
+    // against the audio thread's lock-free find(). See preregisterSlices().
+    int m_preregisteredSlices{0};
 
 #if defined(Q_OS_LINUX)
     // Cached Linux audio backend detected by detectLinuxBackend() in the

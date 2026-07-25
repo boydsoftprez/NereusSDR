@@ -2846,6 +2846,17 @@ void RadioModel::configureStreamPool(int userDdcCount, int maxSlices,
     m_streamAllocator.configure(userDdcCount, maxSlices);
     m_streamAllocator.setDefaultSampleRateHz(defaultRateHz);
     m_streamDefaultRateHz = defaultRateHz > 0 ? defaultRateHz : 192000;
+
+    // The master mixer needs one slot per slice id for the same reason the
+    // WDSP channel pool needs one channel per slice, and for the same
+    // reason both are sized here rather than on demand: MasterMixer's map
+    // must be structurally frozen once the DSP thread starts reading it
+    // lock-free. This runs at connect, well before m_dspThread->start().
+    // MasterMixer::accumulate drops unregistered ids outright, so without
+    // it every slice past A is demodulated and then thrown away.
+    if (m_audioEngine) {
+        m_audioEngine->preregisterSlices(maxSlices);
+    }
 }
 
 int RadioModel::streamPoolSize() const
