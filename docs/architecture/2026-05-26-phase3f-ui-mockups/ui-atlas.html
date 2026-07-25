@@ -1,0 +1,565 @@
+<style>
+.atlas-bg { background: #0f0f1a; color: #c8d8e8; font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; padding: 20px; border-radius: 6px; }
+.surf-header { color: #00b4d8; font-size: 13px; font-weight: bold; margin: 28px 0 6px 0; border-bottom: 1px solid #205070; padding-bottom: 4px; }
+.surf-meta { color: #8090a0; font-size: 11px; margin-bottom: 10px; font-style: italic; }
+.surf-tag { display: inline-block; background: #1a2a3a; border: 1px solid #205070; border-radius: 2px; padding: 1px 6px; font-size: 9px; color: #8aa8c0; font-weight: bold; margin-right: 6px; text-transform: uppercase; }
+.surf-tag-new { background: #1a6030; color: #80ff80; border-color: #20a040; }
+.surf-tag-mod { background: #604000; color: #ffb800; border-color: #906000; }
+.tb { background: linear-gradient(180deg, #3a4a5a 0%, #2a3a4a 50%, #1a2a38 100%); border-bottom: 1px solid #0a1a28; height: 22px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: bold; color: #8aa8c0; }
+.pan-tb { background: linear-gradient(180deg, #3a4a5a 0%, #2a3a4a 50%, #1a2a38 100%); border-bottom: 1px solid #0a1a28; height: 16px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-weight: bold; color: #8aa8c0; }
+.frame { background: #0a0a18; border: 1px solid #205070; border-radius: 4px; overflow: hidden; }
+.btn { background: #1a2a3a; border: 1px solid #205070; border-radius: 3px; color: #c8d8e8; font-size: 10px; font-weight: bold; padding: 3px 10px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.btn-blue { background: #0070c0; color: #fff; border-color: #0090e0; }
+.btn-green { background: #006040; color: #00ff88; border-color: #00a060; }
+.btn-amber { background: #604000; color: #ffb800; border-color: #906000; }
+.btn-red { background: #cc2222; color: #fff; border-color: #ff4444; }
+.btn-dsp { background: #1a6030; color: #80ff80; border-color: #20a040; }
+.pill { display: inline-flex; align-items: center; justify-content: center; height: 14px; padding: 0 5px; border-radius: 2px; font-size: 9px; font-weight: bold; letter-spacing: 0.3px; }
+.pill-tx { background: #cc2222; color: #fff; border: 1px solid #ff4444; }
+.pill-wide { background: #604000; color: #ffb800; border: 1px solid #906000; }
+.pill-chain { background: #1a2a3a; color: #8aa8c0; border: 1px solid #304050; }
+.pill-div { background: #006040; color: #00ff88; border: 1px solid #00a060; }
+.pill-ps { background: #604000; color: #ffb800; border: 1px solid #906000; font-style: italic; }
+.slice-badge { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 3px; font-size: 10px; font-weight: bold; }
+.slice-A { background: #00d4ff; color: #001020; }
+.slice-B { background: #ff40ff; color: #200020; }
+.slice-C { background: #40ff40; color: #002010; }
+.slice-D { background: #ffff00; color: #201000; }
+.menu { background: #0a0a18; border: 1px solid #205070; border-radius: 4px; padding: 4px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.6); min-width: 280px; }
+.menu-hdr { padding: 4px 12px; color: #8aa8c0; font-size: 9px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #203040; margin-bottom: 4px; }
+.menu-item { padding: 5px 12px; color: #c8d8e8; font-size: 11px; display: flex; justify-content: space-between; gap: 16px; cursor: pointer; }
+.menu-item:hover { background: #204060; }
+.menu-item-sel { background: rgba(0,180,216,0.18); color: #00ff88; font-weight: 600; }
+.menu-hint { color: #708090; font-size: 10px; font-style: italic; }
+.menu-hint-warn { color: #ffb800; font-size: 10px; font-style: italic; }
+.menu-div { height: 1px; background: #203040; margin: 4px 0; }
+.gb { border: 1px solid #304050; border-radius: 4px; margin-top: 10px; padding: 12px 10px 8px 10px; position: relative; }
+.gb-title { position: absolute; top: -8px; left: 10px; padding: 0 4px; background: #0f0f1a; color: #8aa8c0; font-size: 11px; font-weight: bold; }
+.combo { background: #1a2a3a; border: 1px solid #304050; border-radius: 3px; color: #c8d8e8; font-size: 11px; padding: 3px 6px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.spec { background: linear-gradient(180deg, #061730 0%, #040d1a 65%, #1a0830 100%); position: relative; }
+.spec-wf { background: linear-gradient(180deg, #040818 0%, #0a1a3a 30%, #1a2858 60%, #2a4080 90%); opacity: 0.7; }
+</style>
+
+<div class="atlas-bg">
+
+<h2 style="color:#c8d8e8;margin-top:0">Phase 3F UI Surface Atlas</h2>
+<p style="color:#8090a0;font-size:12px">Every UI surface this epic touches or adds, mocked with real <code>StyleConstants.h</code> values + actual slice colors from <code>VfoWidget::sliceColor()</code>. <span class="surf-tag surf-tag-new">NEW</span> = new widget, <span class="surf-tag surf-tag-mod">MOD</span> = existing widget gains additions.</p>
+
+<!-- ============================================================ -->
+<div class="surf-header">1. SpectrumStatusOverlay <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Mirror of SpectrumOverlayPanel on TOP-RIGHT of each SpectrumWidget. Per-pan immediate status cue. Clickable WIDE badge opens Filter Policy.</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+  <div>
+    <div style="font-size:10px;color:#8090a0;margin-bottom:4px">Filtered chain, no warnings</div>
+    <div class="frame">
+      <div style="position:relative;height:80px;background:linear-gradient(180deg,#061730 0%,#040d1a 100%)">
+        <div style="position:absolute;top:6px;left:6px;display:flex;flex-direction:column;gap:2px">
+          <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:56px;height:18px;display:flex;align-items:center;justify-content:center">◀</div>
+        </div>
+        <div style="position:absolute;top:6px;right:6px;background:rgba(20,30,45,0.94);border:1px solid #304050;border-radius:3px;padding:3px 6px;display:flex;align-items:center;gap:6px;height:18px">
+          <span class="slice-badge slice-A">A</span>
+          <span style="color:#c8d8e8;font-size:10px;font-family:monospace;font-weight:bold">14.225 USB</span>
+          <span class="pill pill-chain">CH 0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div style="font-size:10px;color:#8090a0;margin-bottom:4px">TX-bound + WIDE (multi-band conflict)</div>
+    <div class="frame">
+      <div style="position:relative;height:80px;background:linear-gradient(180deg,#061730 0%,#040d1a 100%)">
+        <div style="position:absolute;top:6px;left:6px;display:flex;flex-direction:column;gap:2px">
+          <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:56px;height:18px;display:flex;align-items:center;justify-content:center">◀</div>
+        </div>
+        <div style="position:absolute;top:6px;right:6px;background:rgba(20,30,45,0.94);border:1px solid #304050;border-radius:3px;padding:3px 6px;display:flex;align-items:center;gap:6px;height:18px">
+          <span class="slice-badge slice-A">A</span>
+          <span style="color:#c8d8e8;font-size:10px;font-family:monospace;font-weight:bold">14.225 USB</span>
+          <span class="pill pill-chain">CH 0</span>
+          <span class="pill pill-tx">TX</span>
+          <span class="pill pill-wide" title="click for filter policy">WIDE</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+  <div>
+    <div style="font-size:10px;color:#8090a0;margin-bottom:4px">Diversity active on Slice A</div>
+    <div class="frame">
+      <div style="position:relative;height:80px;background:linear-gradient(180deg,#061730 0%,#040d1a 100%)">
+        <div style="position:absolute;top:6px;right:6px;background:rgba(20,30,45,0.94);border:1px solid #304050;border-radius:3px;padding:3px 6px;display:flex;align-items:center;gap:6px;height:18px">
+          <span class="slice-badge slice-A">A</span>
+          <span style="color:#c8d8e8;font-size:10px;font-family:monospace;font-weight:bold">14.225 USB</span>
+          <span class="pill pill-chain">CH 0+1</span>
+          <span class="pill pill-div">DIV</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div style="font-size:10px;color:#8090a0;margin-bottom:4px">PS paused this slice during MOX</div>
+    <div class="frame">
+      <div style="position:relative;height:80px;background:linear-gradient(180deg,#061730 0%,#040d1a 100%);opacity:0.55">
+        <div style="position:absolute;top:6px;right:6px;background:rgba(20,30,45,0.94);border:1px solid #304050;border-radius:3px;padding:3px 6px;display:flex;align-items:center;gap:6px;height:18px">
+          <span class="slice-badge slice-B">B</span>
+          <span style="color:#c8d8e8;font-size:10px;font-family:monospace;font-weight:bold">7.150 LSB</span>
+          <span class="pill pill-chain">CH 0</span>
+          <span class="pill pill-ps">PS HOLD</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">2. SpectrumWidget extended-pan rendering <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">When zoom-out passes the DDC's ±768 kHz boundary, pan smoothly transitions: listenable I/Q in center, wideband data fills wings, dashed boundary lines mark the transition.</div>
+
+<div class="frame">
+  <div style="position:relative;height:150px;background:linear-gradient(180deg,#061730 0%,#040d1a 100%)">
+    <div style="position:absolute;top:4px;left:0;right:0;display:flex;font-size:8px;color:#607080">
+      <span style="position:absolute;left:3%">160m</span>
+      <span style="position:absolute;left:13%">80m</span>
+      <span style="position:absolute;left:22%">60m</span>
+      <span style="position:absolute;left:30%">40m</span>
+      <span style="position:absolute;left:38%">30m</span>
+      <span style="position:absolute;left:45%">20m</span>
+      <span style="position:absolute;left:52%">17m</span>
+      <span style="position:absolute;left:58%">15m</span>
+      <span style="position:absolute;left:64%">12m</span>
+      <span style="position:absolute;left:70%">10m</span>
+      <span style="position:absolute;left:92%">6m</span>
+    </div>
+    <div style="position:absolute;top:18px;left:0;right:0;bottom:30px">
+      <svg viewBox="0 0 800 100" preserveAspectRatio="none" style="width:100%;height:100%;opacity:0.55">
+        <path d="M0,82 L40,75 L80,68 L120,42 L160,55 L200,72 L240,68 L280,55 L320,72 L360,80 L400,68 L450,55 L500,68 L550,75 L600,42 L650,55 L700,72 L750,68 L800,80" stroke="#5a8a8a" stroke-width="1" fill="none" stroke-dasharray="2,2"/>
+      </svg>
+    </div>
+    <!-- Listenable island in center (15% wide) -->
+    <div style="position:absolute;top:18px;bottom:30px;left:42.5%;width:15%;background:linear-gradient(180deg,#0a2548 0%,#0d1218 100%);border-left:1px dashed #4a7a4a;border-right:1px dashed #4a7a4a">
+      <svg viewBox="0 0 120 100" preserveAspectRatio="none" style="position:absolute;top:0;left:0;width:100%;height:100%">
+        <path d="M0,82 L20,68 L40,72 L52,18 L60,32 L72,55 L80,72 L100,68 L120,82" stroke="#00d4ff" stroke-width="1.8" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;top:18px;bottom:30px;left:50%;width:1px;background:#00d4ff;box-shadow:0 0 4px #00d4ff"></div>
+    <div style="position:absolute;top:24px;left:42.5%;background:#5a8a8a;color:#001020;font-size:8px;font-weight:bold;padding:1px 4px;border-radius:2px;transform:translateX(-105%)">wideband ←</div>
+    <div style="position:absolute;top:24px;right:42.5%;background:#5a8a8a;color:#001020;font-size:8px;font-weight:bold;padding:1px 4px;border-radius:2px;transform:translateX(105%)">→ wideband</div>
+    <div style="position:absolute;top:24px;left:48%;background:#00d4ff;color:#001020;font-size:8px;font-weight:bold;padding:1px 4px;border-radius:2px">listenable</div>
+    <div style="position:absolute;top:6px;right:6px;background:rgba(20,30,45,0.94);border:1px solid #304050;border-radius:3px;padding:3px 6px;display:flex;align-items:center;gap:6px;height:18px">
+      <span class="slice-badge slice-A">A</span>
+      <span style="color:#c8d8e8;font-size:10px;font-family:monospace;font-weight:bold">14.225 ±30 MHz</span>
+      <span class="pill pill-chain">CH 0</span>
+      <span class="pill pill-wide" title="wideband extension active">WIDE</span>
+    </div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:30px" class="spec-wf"></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">3. Bottom status bar with +PAN cluster activated <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">Existing +PAN placeholder (NYI marker in MainWindow.cpp:3990) becomes interactive. Adds per-chain stacked indicators next to it, matching the existing right-side <code>makeIndicator()</code> pattern.</div>
+
+<div class="frame">
+  <div style="height:46px;background:#0a0a14;display:flex;align-items:center;gap:6px;padding:0 6px;font-size:11px;color:#8090a0;overflow:hidden">
+    <div style="display:flex;flex-direction:column;gap:1px"><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div></div>
+    <span style="color:#00b4d8;font-weight:bold;font-size:11px;border:1px solid #00b4d8;padding:2px 7px;border-radius:3px;background:#1a2a3a;cursor:pointer">+PAN ▾</span>
+    <div style="display:flex;flex-direction:column;gap:0;cursor:pointer;min-width:60px"><span style="color:#8aa8c0;font-size:10px;font-weight:bold">CH 0</span><span style="color:#ffb800;font-size:9px;font-weight:bold">WIDE 20+40</span></div>
+    <div style="display:flex;flex-direction:column;gap:0;cursor:pointer;min-width:60px"><span style="color:#8aa8c0;font-size:10px;font-weight:bold">CH 1</span><span style="color:#00ff88;font-size:9px;font-weight:bold">● 6m</span></div>
+    <span style="color:#8aa8c0;font-weight:bold;font-size:16px;cursor:pointer">☰</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">TNF</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">CWX</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">DVK</span>
+    <span style="color:#304050;font-size:18px;padding:0 2px">·</span>
+    <div style="display:flex;flex-direction:column;gap:0"><span style="color:#8aa8c0;font-size:11px">ANAN-G2</span><span style="color:#607080;font-size:11px">Saturn fw v0.51</span></div>
+    <span style="color:#304050;font-size:18px;padding:0 2px">·</span>
+    <div style="display:flex;gap:3px;align-items:center">
+      <span class="pill" style="background:#1a6030;color:#80ff80;border:1px solid #20a040;height:13px;font-size:8px">USB</span>
+      <span class="pill" style="background:#1a2a3a;color:#c8d8e8;border:1px solid #304050;height:13px;font-size:8px">2.8k</span>
+      <span class="pill" style="background:#1a2a3a;color:#c8d8e8;border:1px solid #304050;height:13px;font-size:8px">AGC-M</span>
+    </div>
+    <div style="flex:1"></div>
+    <div style="background:#1a2a3a;border:1px solid #205070;border-radius:3px;padding:3px 10px;color:#c8d8e8;font-size:11px;font-weight:bold">NereusSDR · 192.168.1.42</div>
+    <div style="flex:1"></div>
+    <div style="display:flex;flex-direction:column"><span style="color:#607080;font-size:11px">CAT</span><span style="color:#404858;font-size:11px">Off</span></div>
+    <div style="display:flex;flex-direction:column"><span style="color:#607080;font-size:11px">TCI</span><span style="color:#404858;font-size:11px">Off</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">4. +PAN dropdown menu (opens on +PAN click) <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Click +PAN ▾ → opens a menu for adding slices and changing layout. Capability-gated per SKU.</div>
+
+<div style="display:flex;justify-content:center;padding:20px 0">
+  <div class="menu" style="min-width:240px">
+    <div class="menu-hdr">Add slice on active pan</div>
+    <div class="menu-item"><span><span class="slice-badge slice-B" style="margin-right:6px">B</span>Slice B</span><span class="menu-hint">next available</span></div>
+    <div class="menu-item"><span><span class="slice-badge slice-C" style="margin-right:6px">C</span>Slice C</span><span class="menu-hint"></span></div>
+    <div class="menu-item"><span><span class="slice-badge slice-D" style="margin-right:6px">D</span>Slice D</span><span class="menu-hint"></span></div>
+    <div class="menu-item" style="color:#556070"><span>Slice E</span><span class="menu-hint">cap reached</span></div>
+    <div class="menu-div"></div>
+    <div class="menu-hdr">Layout</div>
+    <div class="menu-item menu-item-sel"><span>● Single (1)</span><span></span></div>
+    <div class="menu-item"><span>Stacked (2v)</span><span></span></div>
+    <div class="menu-item"><span>Side-by-side (2h)</span><span></span></div>
+    <div class="menu-item"><span>Wide + 2 (12h)</span><span class="menu-hint" style="color:#5cb85c">wideband</span></div>
+    <div class="menu-item"><span>Grid (2x2)</span><span></span></div>
+    <div class="menu-div"></div>
+    <div class="menu-item"><span>Float active pan…</span><span></span></div>
+    <div class="menu-item" style="color:#556070"><span>Equalize sizes</span><span></span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">5. SpectrumOverlayPanel — new +RX button <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">Existing 10-button overlay panel (top-left of each spectrum) gains an "+RX" button at the top. Click → adds a slice to this pan (calls <code>RadioModel::addSliceOnPan(panId)</code>). Capability-gated; greys when maxSlices reached.</div>
+
+<div class="frame" style="max-width:400px">
+  <div style="height:300px;background:linear-gradient(180deg,#061730 0%,#040d1a 100%);position:relative">
+    <div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:3px">
+      <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center">◀</div>
+      <div style="background:rgba(20,30,45,0.94);color:#00ff88;border:1px solid #00a060;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer">+ RX</div>
+      <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center">BAND</div>
+      <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center">ANT</div>
+      <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center">Display</div>
+      <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center">Filter</div>
+      <div style="background:rgba(20,30,45,0.94);color:#c8d8e8;border:1px solid #304050;border-radius:3px;font-size:10px;font-weight:bold;width:68px;height:22px;display:flex;align-items:center;justify-content:center">Noise</div>
+    </div>
+    <div style="position:absolute;top:90px;left:160px;color:#00ff88;font-size:11px;background:rgba(0,0,0,0.7);padding:3px 8px;border-radius:3px;font-weight:bold">← + RX button (NEW)<br><span style="color:#8090a0;font-weight:normal;font-size:10px">click → addSliceOnPan(panId)<br>green when available, grey when cap reached</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">6. Right-click VFO flag menu <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">Slice flag (existing VfoWidget) gains a right-click context menu with multi-slice operations. Antenna picker shows chain consequences inline.</div>
+
+<div style="display:flex;justify-content:center;padding:10px 0">
+  <div class="menu" style="min-width:280px">
+    <div class="menu-hdr">Slice C — context</div>
+    <div class="menu-item"><span>Make this the TX slice</span><span class="menu-hint">handoff from A</span></div>
+    <div class="menu-item"><span>Antenna &nbsp;▶</span><span class="menu-hint">ANT2</span></div>
+    <div class="menu-item"><span>Sample rate &nbsp;▶</span><span class="menu-hint">192 kHz</span></div>
+    <div class="menu-item"><span>Move to pan &nbsp;▶</span><span class="menu-hint">Pan 0</span></div>
+    <div class="menu-item"><span>Move to DDC &nbsp;▶</span><span class="menu-hint">DDC4 (auto)</span></div>
+    <div class="menu-div"></div>
+    <div class="menu-item"><span>Diversity &nbsp;▶</span><span class="menu-hint" style="color:#556070">Slice A only</span></div>
+    <div class="menu-item"><span>Filter policy…</span><span></span></div>
+    <div class="menu-div"></div>
+    <div class="menu-item" style="color:#cc4444"><span>Remove slice</span><span></span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">7. Antenna picker submenu (from right-click VFO) <span class="surf-tag surf-tag-new">NEW</span></div>
+
+<div style="display:flex;justify-content:center;padding:10px 0">
+  <div class="menu" style="min-width:340px">
+    <div class="menu-hdr">Slice C — antenna for 6 m</div>
+    <div class="menu-item"><span>ANT1</span><span class="menu-hint">Chain 0 — joins Slice A (bypass)</span></div>
+    <div class="menu-item menu-item-sel"><span>● ANT2</span><span class="menu-hint" style="color:#00ff88">Chain 1 — current</span></div>
+    <div class="menu-item"><span>ANT3</span><span class="menu-hint-warn">Auto-switches Chain 1 from ANT2</span></div>
+    <div class="menu-div"></div>
+    <div class="menu-item"><span>EXT1</span><span class="menu-hint">RX only</span></div>
+    <div class="menu-item"><span>EXT2</span><span class="menu-hint">RX only</span></div>
+    <div class="menu-item"><span>BYPS</span><span class="menu-hint">RX only, no Alex</span></div>
+    <div class="menu-div"></div>
+    <div class="menu-item" style="color:#88a"><span>Antenna policy…</span><span></span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">8. Antenna auto-switched toast <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Non-blocking, bottom-right. Auto-dismisses after 8s. Appears when codec auto-switches an RX-only chain's antenna to fit a new slice's request.</div>
+
+<div style="background:#0f0f1a;border:1px solid #205070;border-radius:4px;height:80px;position:relative">
+  <div style="position:absolute;bottom:10px;right:10px;background:#0a0a18;border:1px solid #205070;border-left:3px solid #00ff88;border-radius:3px;padding:8px 12px;display:flex;align-items:center;gap:10px;max-width:380px;box-shadow:0 4px 16px rgba(0,0,0,0.7)">
+    <div style="color:#00ff88;font-size:14px;line-height:1">✓</div>
+    <div style="flex:1">
+      <div style="color:#c8d8e8;font-size:11px;font-weight:bold;margin-bottom:2px">Antenna auto-switched</div>
+      <div style="color:#708090;font-size:10px;line-height:1.4">Slice B moved from ANT2 to ANT3 for Slice C.</div>
+    </div>
+    <button class="btn" style="height:18px;padding:0 8px;font-size:9px">UNDO</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">9. TX-bound antenna re-route confirmation dialog <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Modal. Only appears when re-route would affect the TX-bound slice. RX-only conflicts auto-resolve via the toast above.</div>
+
+<div style="background:#000a;padding:20px;border-radius:6px;display:flex;justify-content:center;min-height:260px">
+  <div class="frame" style="width:500px">
+    <div class="tb"><span style="color:#ffb800">⚠ TX-bound antenna re-route</span><span style="color:#607080;font-size:14px;cursor:pointer">×</span></div>
+    <div style="padding:14px 16px;color:#c8d8e8;font-size:12px;line-height:1.5">
+      <div style="margin-bottom:12px">Adding <span class="slice-badge slice-C" style="vertical-align:middle">C</span> on <strong>ANT3</strong> requires re-routing <strong>Chain 0</strong> from ANT1 to ANT3.</div>
+      <div class="gb">
+        <div class="gb-title">Chain 0 currently hosts</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+          <div style="display:flex;align-items:center;gap:8px"><span class="slice-badge slice-A">A</span><span style="font-family:monospace;font-size:11px">14.225 USB · 20m</span></div>
+          <span class="pill pill-tx">TX</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+          <div style="display:flex;align-items:center;gap:8px"><span class="slice-badge slice-D">D</span><span style="font-family:monospace;font-size:11px">21.300 USB · 15m</span></div>
+          <span style="color:#708090;font-size:10px">RX only</span>
+        </div>
+      </div>
+      <div style="color:#ffb800;font-size:11px;margin-top:10px">⚠ Slice A is TX-bound. Re-routing changes the antenna your transmit signal goes to.</div>
+      <div style="color:#8090a0;font-size:11px;margin-top:2px">Verify ANT3 is rated for the current band and TX power.</div>
+    </div>
+    <div style="padding:10px 16px;background:#0f0f1a;border-top:1px solid #203040;display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn">Cancel</button>
+      <button class="btn">Use ANT1 instead</button>
+      <button class="btn btn-blue">Re-route ANT3</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">10. Filter Policy popup (click WIDE badge or CH tag) <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Per-chain BPF policy override. Reachable from per-pan WIDE badge, bottom-bar chain tag, or right-click VFO → Filter policy…</div>
+
+<div style="background:#000a;padding:20px;border-radius:6px;display:flex;justify-content:center;min-height:330px">
+  <div class="frame" style="width:420px">
+    <div class="tb"><span>Chain 0 — Filter Policy</span><span style="color:#607080;font-size:14px;cursor:pointer">×</span></div>
+    <div style="padding:14px 16px;color:#c8d8e8;font-size:12px;line-height:1.5">
+      <div class="gb">
+        <div class="gb-title">Current state</div>
+        <div style="font-family:monospace;font-size:11px;line-height:1.6">
+          ANT1 → Alex0 (<span style="color:#ffb800;font-weight:bold">BYPASS</span>) → ADC0<br>
+          Slices: <span class="slice-badge slice-A" style="vertical-align:middle">A</span> 20m · <span class="slice-badge slice-B" style="vertical-align:middle">B</span> 40m · <span class="slice-badge slice-D" style="vertical-align:middle">D</span> 80m<br>
+          <span style="color:#8090a0">Reason: multi-band (20m + 40m + 80m)</span>
+        </div>
+      </div>
+      <div style="margin-top:14px;margin-bottom:8px;color:#8090a0;font-size:11px;font-weight:bold">BPF mode</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;background:rgba(0,180,216,0.12);border:1px solid #205070;border-radius:3px">
+          <input type="radio" name="bpf" checked style="margin-top:2px;accent-color:#00b4d8">
+          <div><div style="font-weight:bold">Auto</div><div style="color:#8090a0;font-size:10px">Filter when single-band, bypass when multi-band</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border:1px solid #203040;border-radius:3px">
+          <input type="radio" name="bpf" style="margin-top:2px;accent-color:#00b4d8">
+          <div><div style="font-weight:bold">Force filter (TX-bound band)</div><div style="color:#8090a0;font-size:10px">Keep BPF on 20m. B + D see ~30 dB OOB attenuation.</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border:1px solid #203040;border-radius:3px">
+          <input type="radio" name="bpf" style="margin-top:2px;accent-color:#00b4d8">
+          <div><div style="font-weight:bold">Force bypass</div><div style="color:#8090a0;font-size:10px">Always wideband. No BPF protection.</div></div>
+        </label>
+      </div>
+      <div style="border-top:1px solid #203040;margin-top:14px;padding-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px">
+          <input type="checkbox" checked style="accent-color:#00b4d8"> HPF (broadcast band reject) enabled
+        </label>
+      </div>
+    </div>
+    <div style="padding:10px 16px;background:#0f0f1a;border-top:1px solid #203040;display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn">Cancel</button>
+      <button class="btn btn-blue">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">11. Pan Layout picker dialog (View → Pan Layout) <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">5 layout templates. Each tile = scaled preview with placeholder spectrum content. "Wide + 2" tile highlighted as the wideband-friendly layout.</div>
+
+<div style="background:#000a;padding:20px;border-radius:6px;display:flex;justify-content:center;min-height:280px">
+  <div class="frame" style="width:760px">
+    <div class="tb"><span>Pan Layout</span><span style="color:#607080;font-size:14px;cursor:pointer">×</span></div>
+    <div style="padding:16px;color:#c8d8e8;font-size:11px">
+      <div style="color:#8090a0;margin-bottom:12px">Pick a layout. Per-pan source is set with right-click after applying.</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+        <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:6px;cursor:pointer">
+          <div style="aspect-ratio:1.4/1;background:linear-gradient(180deg,#061730 0%,#0a1538 100%);border:1px solid #334;border-radius:2px;position:relative">
+            <div style="position:absolute;bottom:30%;left:0;right:0;height:1px;background:#00d4ff"></div>
+          </div>
+          <div style="text-align:center;color:#8aa8c0;font-size:10px;font-weight:bold;margin-top:4px">Single</div>
+        </div>
+        <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:6px;cursor:pointer">
+          <div style="aspect-ratio:1.4/1;background:#0a1218;border:1px solid #334;border-radius:2px;display:flex;flex-direction:column;gap:1px">
+            <div style="flex:1;background:linear-gradient(180deg,#061730 0%,#0a1538 100%)"></div>
+            <div style="flex:1;background:linear-gradient(180deg,#1a0830 0%,#180828 100%)"></div>
+          </div>
+          <div style="text-align:center;color:#8aa8c0;font-size:10px;font-weight:bold;margin-top:4px">Stacked</div>
+        </div>
+        <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:6px;cursor:pointer">
+          <div style="aspect-ratio:1.4/1;background:#0a1218;border:1px solid #334;border-radius:2px;display:flex;gap:1px">
+            <div style="flex:1;background:linear-gradient(180deg,#061730 0%,#0a1538 100%)"></div>
+            <div style="flex:1;background:linear-gradient(180deg,#1a0830 0%,#180828 100%)"></div>
+          </div>
+          <div style="text-align:center;color:#8aa8c0;font-size:10px;font-weight:bold;margin-top:4px">Side-by-Side</div>
+        </div>
+        <div style="background:#1a2030;border:2px solid #20a040;border-radius:4px;padding:6px;cursor:pointer;position:relative">
+          <div style="position:absolute;top:-6px;right:-6px;background:#20a040;color:#001020;font-size:8px;font-weight:bold;padding:1px 5px;border-radius:8px">WIDEBAND</div>
+          <div style="aspect-ratio:1.4/1;background:#0a1218;border:1px solid #334;border-radius:2px;display:flex;flex-direction:column;gap:1px">
+            <div style="flex:1.6;background:linear-gradient(180deg,#1a2848 0%,#0d1f30 100%);position:relative">
+              <div style="position:absolute;bottom:25%;left:0;right:0;height:1px;background:linear-gradient(90deg,#5a8a5a,#fc9,#5a5a8a,#fc9,#5a8a5a)"></div>
+            </div>
+            <div style="flex:1;display:flex;gap:1px">
+              <div style="flex:1;background:linear-gradient(180deg,#061730 0%,#0a1538 100%)"></div>
+              <div style="flex:1;background:linear-gradient(180deg,#1a0830 0%,#180828 100%)"></div>
+            </div>
+          </div>
+          <div style="text-align:center;color:#8aa8c0;font-size:10px;font-weight:bold;margin-top:4px">Wide + 2</div>
+        </div>
+        <div style="background:#1a2030;border:2px solid #2a3548;border-radius:4px;padding:6px;cursor:pointer">
+          <div style="aspect-ratio:1.4/1;background:#0a1218;border:1px solid #334;border-radius:2px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:1px">
+            <div style="background:linear-gradient(180deg,#061730 0%,#0a1538 100%)"></div>
+            <div style="background:linear-gradient(180deg,#1a0830 0%,#180828 100%)"></div>
+            <div style="background:linear-gradient(180deg,#1a4848 0%,#0a1538 100%)"></div>
+            <div style="background:linear-gradient(180deg,#48481a 0%,#0a1538 100%)"></div>
+          </div>
+          <div style="text-align:center;color:#8aa8c0;font-size:10px;font-weight:bold;margin-top:4px">Grid</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:10px 16px;background:#0f0f1a;border-top:1px solid #203040;display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn">Cancel</button>
+      <button class="btn btn-blue">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">12. Setup → Hardware → DDC Routing page <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Power-user override of codec's auto-assigned slice↔DDC↔ADC mapping. Most operators never visit. Default = "Auto (codec decides)".</div>
+
+<div class="frame" style="max-width:760px">
+  <div class="tb"><span>Setup — Hardware — DDC Routing</span></div>
+  <div style="padding:14px 16px;color:#c8d8e8;font-size:12px">
+    <div style="color:#8090a0;margin-bottom:10px">Override the codec's auto-assignment of slices to DDCs and ADCs. Defaults work for 99% of operators.</div>
+
+    <div class="gb">
+      <div class="gb-title">ANAN-G2 — 2 ADCs, 7 DDCs</div>
+      <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;margin-top:4px">
+        <thead><tr style="color:#8aa8c0;font-size:10px;text-transform:uppercase">
+          <th style="padding:4px 6px;text-align:left;border-bottom:1px solid #304050">DDC</th>
+          <th style="padding:4px 6px;text-align:left;border-bottom:1px solid #304050">Reserved for</th>
+          <th style="padding:4px 6px;text-align:left;border-bottom:1px solid #304050">Assigned slice</th>
+          <th style="padding:4px 6px;text-align:left;border-bottom:1px solid #304050">ADC</th>
+          <th style="padding:4px 6px;text-align:left;border-bottom:1px solid #304050">Status</th>
+        </tr></thead>
+        <tbody style="color:#c8d8e8">
+          <tr><td style="padding:5px 6px">DDC0</td><td style="color:#8090a0">PS fwd / Div main</td><td style="color:#556070">—</td><td style="color:#556070">auto</td><td style="color:#cc4444">locked</td></tr>
+          <tr style="background:#0a0f18"><td style="padding:5px 6px">DDC1</td><td style="color:#8090a0">PS rev / Div sync</td><td style="color:#556070">—</td><td style="color:#556070">auto</td><td style="color:#cc4444">locked</td></tr>
+          <tr><td style="padding:5px 6px">DDC2</td><td style="color:#8090a0">user</td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:75px"><span class="slice-badge slice-A" style="width:13px;height:13px;font-size:9px">A</span>Slice A <span style="color:#708090">▾</span></div></td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:60px">ADC0 <span style="color:#708090">▾</span></div></td><td style="color:#00ff88">active</td></tr>
+          <tr style="background:#0a0f18"><td style="padding:5px 6px">DDC3</td><td style="color:#8090a0">user</td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:75px"><span class="slice-badge slice-B" style="width:13px;height:13px;font-size:9px">B</span>Slice B <span style="color:#708090">▾</span></div></td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:60px">ADC1 <span style="color:#708090">▾</span></div></td><td style="color:#00ff88">active</td></tr>
+          <tr><td style="padding:5px 6px">DDC4</td><td style="color:#8090a0">user</td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:75px"><span class="slice-badge slice-C" style="width:13px;height:13px;font-size:9px">C</span>Slice C <span style="color:#708090">▾</span></div></td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:60px">ADC0 <span style="color:#708090">▾</span></div></td><td style="color:#00ff88">active</td></tr>
+          <tr style="background:#0a0f18"><td style="padding:5px 6px">DDC5</td><td style="color:#8090a0">user</td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:75px">None <span style="color:#708090">▾</span></div></td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:60px">ADC1 <span style="color:#708090">▾</span></div></td><td style="color:#556070">idle</td></tr>
+          <tr><td style="padding:5px 6px">DDC6</td><td style="color:#8090a0">user</td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:75px">None <span style="color:#708090">▾</span></div></td><td><div class="combo" style="font-size:10px;padding:1px 6px;min-width:60px">ADC0 <span style="color:#708090">▾</span></div></td><td style="color:#556070">idle</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:8px;font-size:10px;color:#8090a0;font-style:italic">PureSignal will temporarily reclaim DDC0/DDC1 during TX.</div>
+    </div>
+
+    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn">Reset to auto</button>
+      <button class="btn btn-blue">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">13. Setup → Antenna Control — new "Conflict Policy" group <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">Existing Setup → Antenna Control page gains a new group at the bottom for antenna-conflict policy + diversity-related global settings.</div>
+
+<div class="frame" style="max-width:600px">
+  <div class="tb"><span>Setup — Antenna Control</span></div>
+  <div style="padding:14px 16px;color:#c8d8e8;font-size:12px">
+    <div style="color:#556070;font-style:italic;font-size:11px;margin-bottom:8px">(existing Antenna Control content above — RX/TX antenna per-band grid, RX-out-on-TX, Alex-2 filters, etc.)</div>
+
+    <div class="gb">
+      <div class="gb-title">Antenna conflict policy</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;background:rgba(0,180,216,0.12);border:1px solid #205070;border-radius:3px">
+          <input type="radio" name="conf" checked style="margin-top:2px;accent-color:#00b4d8">
+          <div><div style="font-weight:bold">Auto-switch (RX only safe)</div><div style="color:#8090a0;font-size:10px">Silently switch RX-only chains. Confirm if TX-bound slice affected.</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border:1px solid #203040;border-radius:3px">
+          <input type="radio" name="conf" style="margin-top:2px;accent-color:#00b4d8">
+          <div><div style="font-weight:bold">Always ask</div><div style="color:#8090a0;font-size:10px">Confirmation dialog for any antenna re-route.</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;padding:6px 10px;border:1px solid #203040;border-radius:3px">
+          <input type="radio" name="conf" style="margin-top:2px;accent-color:#00b4d8">
+          <div><div style="font-weight:bold">Auto-switch (any)</div><div style="color:#8090a0;font-size:10px">Silent re-route even for TX-bound. Use with care.</div></div>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">14. Diversity Dialog — full port <span class="surf-tag surf-tag-new">NEW</span></div>
+<div class="surf-meta">Tools → Diversity Dialog (Ctrl+Shift+D), modeless. Full Thetis parity — radar viz + direction finding + 8 memories per band + all controls. Capability-gated (2-ADC SKUs only).</div>
+
+<p style="color:#8090a0;font-size:11px;text-align:center">[Mockup shown in detail on diversity-full-port.html — every Thetis control present, radar widget center-left, controls right column, slice integration at bottom right.]</p>
+
+<!-- ============================================================ -->
+<div class="surf-header">15. View menu — new entries <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">View menu gains Pan Layout and Floating Panes entries. (Existing menu organization preserved.)</div>
+
+<div style="display:flex;justify-content:center;padding:10px 0">
+  <div class="menu" style="min-width:280px">
+    <div class="menu-hdr">View</div>
+    <div class="menu-item"><span>Pan Layout…</span><span class="menu-hint">Ctrl+L</span></div>
+    <div class="menu-item"><span>Add slice on active pan</span><span class="menu-hint">Ctrl+R</span></div>
+    <div class="menu-item"><span>Float active pan…</span><span></span></div>
+    <div class="menu-item"><span>Containers &nbsp;▶</span><span></span></div>
+    <div class="menu-item" style="color:#556070"><span>Spot Hub…</span><span class="menu-hint">Ctrl+Shift+S</span></div>
+    <div class="menu-item" style="color:#556070"><span>FreeDV Reporter…</span><span class="menu-hint">Ctrl+Shift+R</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">16. Tools menu — new entry <span class="surf-tag surf-tag-mod">MOD</span></div>
+
+<div style="display:flex;justify-content:center;padding:10px 0">
+  <div class="menu" style="min-width:240px">
+    <div class="menu-hdr">Tools</div>
+    <div class="menu-item" style="color:#556070"><span>PureSignal…</span><span></span></div>
+    <div class="menu-item"><span>Diversity Dialog…</span><span class="menu-hint">Ctrl+Shift+D</span></div>
+    <div class="menu-item" style="color:#556070"><span>TCI Server…</span><span></span></div>
+    <div class="menu-item" style="color:#556070"><span>CWX Keyer…</span><span></span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">17. VfoWidget — gains DIV badge + chain tag <span class="surf-tag surf-tag-mod">MOD</span></div>
+<div class="surf-meta">Existing slice flag widget unchanged in geometry. Adds: chain tag in header row (hidden on 1-ADC SKUs), DIV badge when diversity active on Slice A.</div>
+
+<div style="display:flex;gap:20px;justify-content:center;padding:14px 0">
+  <div>
+    <div style="font-size:10px;color:#8090a0;margin-bottom:4px;text-align:center">Slice A, TX, diversity ON</div>
+    <div class="frame" style="width:280px">
+      <div class="tb" style="height:18px"><div style="display:flex;align-items:center;gap:6px"><span class="slice-badge slice-A">A</span><span style="font-size:9px;color:#8aa8c0">SLICE A</span></div><div style="display:flex;gap:4px"><span class="pill pill-chain">CH 0+1</span><span class="pill pill-tx">TX</span><span class="pill pill-div">DIV</span></div></div>
+      <div style="padding:10px;background:#0a0a18;font-family:monospace">
+        <div style="display:flex;align-items:baseline;gap:4px"><span style="color:#3a5a7a;font-size:11px">14.</span><span style="color:#c8d8e8;font-size:22px;font-weight:bold">225</span><span style="color:#c8d8e8;font-size:16px">.</span><span style="color:#c8d8e8;font-size:16px">000</span><span style="color:#8090a0;font-size:9px;margin-left:6px">MHz</span></div>
+        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap"><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">20m</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">USB</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">2.8k</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">AGC-M</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">ANT1</div></div>
+        <div style="display:flex;gap:2px;margin-top:4px"><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">S 7</div><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">RIT</div><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">XIT</div><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">LOCK</div></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div style="font-size:10px;color:#8090a0;margin-bottom:4px;text-align:center">Slice B, Chain 1 (different antenna)</div>
+    <div class="frame" style="width:280px">
+      <div class="tb" style="height:18px"><div style="display:flex;align-items:center;gap:6px"><span class="slice-badge slice-B">B</span><span style="font-size:9px;color:#8aa8c0">SLICE B</span></div><div style="display:flex;gap:4px"><span class="pill pill-chain">CH 1</span></div></div>
+      <div style="padding:10px;background:#0a0a18;font-family:monospace">
+        <div style="display:flex;align-items:baseline;gap:4px"><span style="color:#3a5a7a;font-size:11px">7.</span><span style="color:#c8d8e8;font-size:22px;font-weight:bold">150</span><span style="color:#c8d8e8;font-size:16px">.</span><span style="color:#c8d8e8;font-size:16px">000</span><span style="color:#8090a0;font-size:9px;margin-left:6px">MHz</span></div>
+        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap"><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">40m</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">LSB</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">2.4k</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">AGC-S</div><div style="background:#0a0a14;border:1px solid #1e2e3e;border-radius:3px;padding:1px 5px;color:#c8d8e8;font-size:10px">ANT2</div></div>
+        <div style="display:flex;gap:2px;margin-top:4px"><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">S 3</div><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">RIT</div><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">XIT</div><div style="flex:1;background:#0a0a14;border:1px solid #1e2e3e;border-radius:2px;padding:2px;color:#aac;font-size:9px;text-align:center">LOCK</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="surf-header">Summary — every surface this Phase 3F touches</div>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:14px;font-size:11px;color:#c8d8e8;line-height:1.7">
+  <strong style="color:#00ff88">NEW widgets (10):</strong> SpectrumStatusOverlay, +PAN dropdown menu, +RX button on SpectrumOverlayPanel, Antenna picker submenu, Antenna auto-switch toast, TX-bound antenna re-route confirmation, Filter Policy popup, Pan Layout picker dialog, Setup → Hardware → DDC Routing page, Diversity Dialog (full port with radar widget)<br><br>
+
+  <strong style="color:#ffb800">MODIFIED widgets (7):</strong> Bottom status bar (+PAN cluster activated + chain indicators), VfoWidget (DIV badge + chain tag), SpectrumWidget (extended-pan rendering), SpectrumOverlayPanel (+RX button added), Setup → Antenna Control (conflict policy group), View menu (Pan Layout + Float entries), Tools menu (Diversity entry)<br><br>
+
+  All using <code>StyleConstants.h</code> palette + real slice colors from <code>VfoWidget::sliceColor()</code>.
+</div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px;text-align:center;color:#8090a0">Atlas done. Any surface here that you want re-mocked, simplified, or split? Or any surface I missed that 3F needs?</p>

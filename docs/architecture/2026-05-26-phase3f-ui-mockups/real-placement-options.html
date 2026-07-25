@@ -1,0 +1,231 @@
+<style>
+.real-app-bg { background: #0f0f1a; color: #c8d8e8; font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; }
+.real-spectrum-bg { background: linear-gradient(180deg, #061730 0%, #040d1a 65%, #1a0830 100%); }
+.real-waterfall-bg { background: linear-gradient(180deg, #040818 0%, #0a1a3a 30%, #1a2858 60%, #2a4080 90%); opacity: 0.85; }
+.real-statusbar {
+  height: 46px; background: #0a0a14; border-top: 1px solid #203040;
+  display: flex; align-items: center; gap: 6px; padding: 0 6px;
+  font-size: 11px;
+}
+.real-statussep { color: #304050; font-size: 18px; padding: 0 2px; }
+.real-overlay-btn {
+  background: rgba(20, 30, 45, 0.94); color: #c8d8e8; border: 1px solid #304050;
+  border-radius: 3px; font-size: 10px; font-weight: bold; padding: 4px 8px;
+  width: 68px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+}
+.slice-A-color { background: #00d4ff; color: #001020; }
+.slice-B-color { background: #ff40ff; color: #200020; }
+.real-slice-badge { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 3px; font-size: 11px; font-weight: bold; }
+.real-pill { display: inline-flex; align-items: center; justify-content: center; height: 14px; padding: 0 5px; border-radius: 2px; font-size: 9px; font-weight: bold; letter-spacing: 0.3px; }
+.pill-tx { background: #cc2222; color: #fff; border: 1px solid #ff4444; }
+.pill-wide { background: #604000; color: #ffb800; border: 1px solid #906000; }
+.pill-chain { background: #1a2a3a; color: #8aa8c0; border: 1px solid #304050; }
+.real-titletext { color: #8aa8c0; font-size: 10px; font-weight: bold; }
+</style>
+
+<div class="real-app-bg" style="padding:18px;border-radius:6px">
+
+<h2 style="color:#c8d8e8;margin-top:0">Source-first audit: where chain/WIDE indicators can actually live</h2>
+<p style="color:#8090a0;font-size:12px">I was drawing a pan title bar that doesn't exist. Here's what the app actually has, then three honest placement options that fit within the real chrome.</p>
+
+<h3 style="color:#8aa8c0;margin-top:24px">What's actually there in MainWindow today</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:14px;font-size:12px;color:#c8d8e8;line-height:1.7">
+  <strong style="color:#8aa8c0">SpectrumWidget</strong> — fills the pan area, NO title bar widget. Status text painted via <code>drawTextOverlay(p, specRect, OverlayPosition)</code> in corners:<br>
+  &nbsp;&nbsp;• FPS counter — top-right, painted text<br>
+  &nbsp;&nbsp;• Peak value display — bottom-right or operator-configurable position<br><br>
+
+  <strong style="color:#8aa8c0">SpectrumOverlayPanel</strong> — floating widget on TOP-LEFT of spectrum:<br>
+  &nbsp;&nbsp;• Collapse button (◀/▶) at <code>(kPad, kPad)</code><br>
+  &nbsp;&nbsp;• 10 stacked menu buttons (BAND, ANT, Display, Filter, Noise, Spots, Tools, VAX, etc.)<br>
+  &nbsp;&nbsp;• Flyout sub-panels that expand to the right when buttons click<br>
+  &nbsp;&nbsp;• Button size: <code>kOverlayBtnW=68 × kOverlayBtnH=22</code> from StyleConstants<br><br>
+
+  <strong style="color:#8aa8c0">VfoWidget</strong> — separate widget, the slice flag (frequency, mode, filter, AGC, RIT/XIT, slice color badge). Lives docked or floating, not on the pan.<br><br>
+
+  <strong style="color:#8aa8c0">Bottom status bar</strong> (46px, packed):<br>
+  &nbsp;&nbsp;LEFT: BandStack icon · <span style="color:#ffb800">+PAN (NYI Phase 3F placeholder)</span> · ☰ Panel toggle · TNF · CWX · DVK · FDX · | · Radio model/fw · | · RxDashboard (slice 0 badges) · PsaIndicator<br>
+  &nbsp;&nbsp;CENTER: StationBlock (connection status + name, click to open ConnectionPanel)<br>
+  &nbsp;&nbsp;RIGHT: stacked indicator pairs (CAT, etc.) via <code>makeIndicator()</code> helper, 60px wide each<br><br>
+
+  <strong style="color:#a66">No per-pan title bar exists.</strong> No corner widget for status badges. New visual surfaces for chain/WIDE/TX need to fit in one of the above spots or be a brand-new widget.
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:24px">Live screenshot reference (annotated, what each region actually is)</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;overflow:hidden">
+  <div style="height:260px;position:relative;background:linear-gradient(180deg,#040d1a 0%,#061730 100%);overflow:hidden">
+    <!-- top-left: overlay panel -->
+    <div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:3px">
+      <div class="real-overlay-btn">◀</div>
+      <div class="real-overlay-btn">BAND</div>
+      <div class="real-overlay-btn">ANT</div>
+      <div class="real-overlay-btn">Display</div>
+      <div class="real-overlay-btn">VAX</div>
+    </div>
+    <!-- top-right: existing painted text (FPS) -->
+    <div style="position:absolute;top:6px;right:8px;color:#8aa8c0;font-size:10px;font-family:monospace">60 fps</div>
+    <!-- spectrum trace -->
+    <div style="position:absolute;top:30px;left:90px;right:8px;bottom:80px">
+      <svg viewBox="0 0 600 100" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,82 L40,75 L80,80 L120,70 L160,45 L200,68 L240,72 L280,32 L290,42 L320,68 L360,75 L420,72 L460,68 L520,72 L580,78 L600,82" stroke="#00d4ff" stroke-width="1.4" fill="none"/>
+      </svg>
+    </div>
+    <!-- waterfall -->
+    <div style="position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(180deg,#040818 0%,#0a1a3a 30%,#1a2858 60%,#2a4080 90%);opacity:0.7"></div>
+    <!-- bottom-right: peak value -->
+    <div style="position:absolute;bottom:84px;right:8px;color:#ffb800;font-size:10px;font-family:monospace">Peak: -47.2 dBm</div>
+
+    <!-- callouts -->
+    <div style="position:absolute;top:8px;left:160px;color:#ffb800;font-size:10px;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px">← SpectrumOverlayPanel (top-left, exists)</div>
+    <div style="position:absolute;top:24px;right:60px;color:#ffb800;font-size:10px;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px">← painted FPS text (exists)</div>
+    <div style="position:absolute;bottom:86px;right:130px;color:#ffb800;font-size:10px;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:2px">← painted peak text (exists)</div>
+  </div>
+  <div class="real-statusbar" style="overflow-x:auto">
+    <div style="display:flex;flex-direction:column;gap:1px"><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div></div>
+    <span style="color:#ffb800;font-weight:bold;font-size:11px">+PAN</span>
+    <span style="color:#8aa8c0;font-weight:bold;font-size:16px">☰</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">TNF</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">CWX</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">DVK</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">FDX</span>
+    <span class="real-statussep">·</span>
+    <div style="display:flex;flex-direction:column;gap:0"><span style="color:#8aa8c0;font-size:11px">ANAN-G2</span><span style="color:#607080;font-size:11px">Saturn fw v0.51</span></div>
+    <span class="real-statussep">·</span>
+    <div style="display:flex;gap:3px;align-items:center">
+      <span class="real-pill" style="background:#1a6030;color:#80ff80;border:1px solid #20a040;height:13px;font-size:8px">USB</span>
+      <span class="real-pill" style="background:#1a2a3a;color:#c8d8e8;border:1px solid #304050;height:13px;font-size:8px">2.8k</span>
+      <span class="real-pill" style="background:#1a2a3a;color:#c8d8e8;border:1px solid #304050;height:13px;font-size:8px">AGC-M</span>
+    </div>
+    <div style="flex:1"></div>
+    <div style="background:#1a2a3a;border:1px dashed #cc4444;border-radius:3px;padding:3px 10px;font-style:italic;color:#cc4444;font-size:11px">Click to connect</div>
+    <div style="flex:1"></div>
+    <div style="display:flex;flex-direction:column"><span style="color:#607080;font-size:11px">CAT</span><span style="color:#404858;font-size:11px">Off</span></div>
+    <div style="display:flex;flex-direction:column"><span style="color:#607080;font-size:11px">TCI</span><span style="color:#404858;font-size:11px">Off</span></div>
+  </div>
+  <p style="margin:6px 12px;color:#607080;font-size:10px">This is approximately what one connected pan looks like in the real app today.</p>
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:30px">Three honest options for slice / chain / WIDE indicators</h3>
+
+<h4 style="color:#c8d8e8;margin-top:16px">Option A: Extend <code>drawTextOverlay</code> — paint badges as text in top-right corner</h4>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;overflow:hidden">
+  <div style="height:140px;position:relative;background:linear-gradient(180deg,#040d1a 0%,#061730 100%)">
+    <!-- top-left overlay panel (existing) -->
+    <div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:3px">
+      <div class="real-overlay-btn">◀</div>
+      <div class="real-overlay-btn">BAND</div>
+    </div>
+    <!-- top-right: now painted as text -->
+    <div style="position:absolute;top:6px;right:8px;display:flex;align-items:center;gap:6px;font-family:monospace">
+      <span style="color:#00d4ff;font-size:11px;font-weight:bold">A</span>
+      <span style="color:#c8d8e8;font-size:10px">14.225 USB · ANT1 · CH 0</span>
+      <span style="color:#ff6644;font-size:10px;font-weight:bold">TX</span>
+      <span style="color:#ffb800;font-size:10px;font-weight:bold">WIDE</span>
+      <span style="color:#8aa8c0;font-size:10px">60 fps</span>
+    </div>
+    <!-- spectrum trace -->
+    <div style="position:absolute;top:28px;left:90px;right:8px;bottom:30px">
+      <svg viewBox="0 0 600 80" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,68 L40,62 L80,68 L120,55 L160,32 L200,52 L240,60 L280,18 L290,28 L320,55 L360,62 L420,60 L460,55 L520,62 L580,68 L600,72" stroke="#00d4ff" stroke-width="1.4" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(180deg,#040818 0%,#1a2858 80%);opacity:0.7"></div>
+  </div>
+</div>
+<div style="background:#1a2030;padding:10px 14px;color:#c8d8e8;font-size:11px;line-height:1.5;border-radius:3px;margin:8px 0">
+  <strong style="color:#8aa8c0">Pros:</strong> Zero new widgets. Reuses existing <code>drawTextOverlay()</code> mechanism. No layout disruption. Operator's eye is already trained on top-right for FPS, status reads naturally there.<br>
+  <strong style="color:#8aa8c0">Cons:</strong> Painted text isn't clickable — operator can't click WIDE to open Filter Policy popup. Hover tooltips harder to wire. Visual treatment is bare text, no nice pill badges.<br>
+  <strong style="color:#8aa8c0">Fit:</strong> matches existing pattern (FPS, peak value already painted). Smallest implementation.
+</div>
+
+<h4 style="color:#c8d8e8;margin-top:24px">Option B: Mirror <code>SpectrumOverlayPanel</code> on TOP-RIGHT as a small status overlay widget</h4>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;overflow:hidden">
+  <div style="height:140px;position:relative;background:linear-gradient(180deg,#040d1a 0%,#061730 100%)">
+    <!-- top-left overlay panel (existing) -->
+    <div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:3px">
+      <div class="real-overlay-btn">◀</div>
+      <div class="real-overlay-btn">BAND</div>
+    </div>
+    <!-- top-right: new status overlay widget -->
+    <div style="position:absolute;top:8px;right:8px;background:rgba(20,30,45,0.94);border:1px solid #304050;border-radius:3px;padding:4px 8px;display:flex;align-items:center;gap:8px;height:22px">
+      <span class="real-slice-badge slice-A-color">A</span>
+      <span style="color:#c8d8e8;font-size:11px;font-family:monospace;font-weight:bold">14.225 USB</span>
+      <span class="real-pill pill-chain">CH 0</span>
+      <span class="real-pill pill-tx">TX</span>
+      <span class="real-pill pill-wide" style="cursor:pointer" title="Click → Filter Policy">WIDE</span>
+    </div>
+    <div style="position:absolute;top:34px;right:8px;color:#8aa8c0;font-size:10px;font-family:monospace">60 fps</div>
+    <!-- spectrum -->
+    <div style="position:absolute;top:50px;left:90px;right:8px;bottom:30px">
+      <svg viewBox="0 0 600 50" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,42 L40,38 L80,42 L120,32 L160,18 L200,32 L240,38 L280,10 L290,18 L320,32 L360,38 L420,38 L460,32 L520,38 L580,42 L600,45" stroke="#00d4ff" stroke-width="1.4" fill="none"/>
+      </svg>
+    </div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(180deg,#040818 0%,#1a2858 80%);opacity:0.7"></div>
+  </div>
+</div>
+<div style="background:#1a2030;padding:10px 14px;color:#c8d8e8;font-size:11px;line-height:1.5;border-radius:3px;margin:8px 0">
+  <strong style="color:#8aa8c0">Pros:</strong> Mirrors existing <code>SpectrumOverlayPanel</code> pattern (just on the other side). Clickable WIDE badge → opens Filter Policy popup. Real Qt widgets with hover/tooltip. Visual treatment matches existing chrome (rgba background, rounded border).<br>
+  <strong style="color:#8aa8c0">Cons:</strong> New widget class (<code>SpectrumStatusOverlay</code>?). Eats horizontal space when expanded (must collapse gracefully when pan is narrow). FPS text needs to relocate below or merge into the widget.<br>
+  <strong style="color:#8aa8c0">Fit:</strong> consistent with existing chrome. Most operator-friendly.
+</div>
+
+<h4 style="color:#c8d8e8;margin-top:24px">Option C: Don't put it on the pan at all — extend bottom status bar around <code>+PAN</code></h4>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;overflow:hidden">
+  <div style="height:60px;position:relative;background:linear-gradient(180deg,#040d1a 0%,#061730 100%)">
+    <div style="position:absolute;top:6px;left:8px;color:#607080;font-size:9px;font-family:monospace">No badges on pan — spectrum view is clean</div>
+    <div style="position:absolute;top:6px;right:8px;color:#8aa8c0;font-size:10px;font-family:monospace">60 fps</div>
+    <div style="position:absolute;top:24px;left:90px;right:8px;bottom:4px">
+      <svg viewBox="0 0 600 30" preserveAspectRatio="none" style="width:100%;height:100%">
+        <path d="M0,24 L80,22 L120,16 L200,22 L240,18 L290,8 L320,22 L380,20 L460,22 L580,24 L600,26" stroke="#00d4ff" stroke-width="1.2" fill="none"/>
+      </svg>
+    </div>
+  </div>
+  <div class="real-statusbar" style="overflow-x:auto">
+    <div style="display:flex;flex-direction:column;gap:1px"><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div><div style="width:9px;height:6px;background:#404858;border-radius:50%"></div></div>
+    <!-- +PAN cluster now active -->
+    <span style="color:#00b4d8;font-weight:bold;font-size:11px;border:1px solid #205070;padding:2px 6px;border-radius:3px;background:#1a2a3a;cursor:pointer">+PAN ▾</span>
+    <div style="display:flex;flex-direction:column;gap:0;cursor:pointer">
+      <span style="color:#8aa8c0;font-size:10px;font-weight:bold">CH 0</span>
+      <span style="color:#ffb800;font-size:9px;font-weight:bold">WIDE 20+40</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:0;cursor:pointer">
+      <span style="color:#8aa8c0;font-size:10px;font-weight:bold">CH 1</span>
+      <span style="color:#00ff88;font-size:9px;font-weight:bold">● 6m</span>
+    </div>
+    <span style="color:#8aa8c0;font-weight:bold;font-size:16px">☰</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">TNF</span>
+    <span style="color:#404858;font-weight:bold;font-size:11px">CWX</span>
+    <span class="real-statussep">·</span>
+    <div style="display:flex;flex-direction:column;gap:0"><span style="color:#8aa8c0;font-size:11px">ANAN-G2</span><span style="color:#607080;font-size:11px">Saturn fw v0.51</span></div>
+    <span class="real-statussep">·</span>
+    <div style="display:flex;gap:3px;align-items:center">
+      <span class="real-pill" style="background:#1a6030;color:#80ff80;border:1px solid #20a040;height:13px;font-size:8px">USB</span>
+      <span class="real-pill" style="background:#1a2a3a;color:#c8d8e8;border:1px solid #304050;height:13px;font-size:8px">AGC-M</span>
+    </div>
+    <div style="flex:1"></div>
+    <div style="background:#1a2a3a;border:1px solid #205070;border-radius:3px;padding:3px 10px;color:#c8d8e8;font-size:11px;font-weight:bold">NereusSDR · 192.168.1.42</div>
+  </div>
+</div>
+<div style="background:#1a2030;padding:10px 14px;color:#c8d8e8;font-size:11px;line-height:1.5;border-radius:3px;margin:8px 0">
+  <strong style="color:#8aa8c0">Pros:</strong> Spectrum stays clean (no chrome on pan). Uses the EXISTING <code>+PAN</code> placeholder (already there waiting for Phase 3F). Chain state visible from anywhere via status bar. Matches the stacked-indicator pattern already used for CAT/TCI.<br>
+  <strong style="color:#8aa8c0">Cons:</strong> Chain state isn't per-pan — operator sees CH 0 / CH 1 globally, not "this pan is on CH 0". Requires looking at status bar to know if your pan is filtered or WIDE. Less immediate than Option A or B.<br>
+  <strong style="color:#8aa8c0">Fit:</strong> uses existing Phase 3F placeholder. No new pan-side widget.
+</div>
+
+<h3 style="color:#8aa8c0;margin-top:24px">My honest recommendation</h3>
+<div style="background:#0a0a18;border:1px solid #205070;border-radius:3px;padding:14px;color:#c8d8e8;font-size:12px;line-height:1.6">
+  <strong style="color:#00ff88">Option B + Option C combined.</strong><br><br>
+
+  <strong style="color:#8aa8c0">On each pan (Option B):</strong> a small <code>SpectrumStatusOverlay</code> widget in the top-right of every SpectrumWidget. Shows: slice letter badge, freq, mode, CH N, TX (if TX-bound), WIDE (if BPF bypassed). Clickable. Mirrors the existing <code>SpectrumOverlayPanel</code> on the left.<br><br>
+
+  <strong style="color:#8aa8c0">In the bottom bar (Option C):</strong> the <code>+PAN</code> placeholder gets activated. Clicking <code>+PAN ▾</code> opens a menu to add a slice or change layout. Adjacent stacked indicators show per-chain summary (CH 0 / CH 1 with state). This is the "all chains at a glance" view for operators with multiple pans.<br><br>
+
+  Both surfaces. Per-pan badge for "this pan's state", bottom bar for "all chains overview". Different jobs, both useful.<br><br>
+
+  Option A alone (painted text only) loses too much (no clickability). The combined B+C is what fits the existing chrome best.
+</div>
+
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center;color:#8090a0">Push back on the placement honestly. If B is too much new widget surface, or if you'd rather all of this go in the bottom bar (C alone), say so. The source-first read shows where the real seams are.</p>

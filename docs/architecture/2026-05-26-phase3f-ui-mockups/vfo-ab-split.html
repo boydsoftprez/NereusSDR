@@ -1,0 +1,122 @@
+<h2>Q6: VFO A/B and split — per-slice, none, or via second slice?</h2>
+<p class="subtitle">SSB DX work depends on "TX up 5 kHz from RX". RIT/XIT handle Hz-scale shifts. Split handles kHz-scale shifts. Question: how do we expose the kHz-scale capability in a 5-slice world?</p>
+
+<h3>What's in place today (audited)</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7;font-family:monospace">
+  <strong style="color:#8aa8c0">NereusSDR SliceModel.h:</strong><br>
+  &nbsp;&nbsp;<code>Q_PROPERTY(double frequency ...)</code> &nbsp;<em style="color:#8aa">// one VFO per slice</em><br>
+  &nbsp;&nbsp;<code>Q_PROPERTY(int ritHz ...)</code> + <code>ritEnabled</code> &nbsp;<em style="color:#8aa">// already works, Hz-scale RX offset</em><br>
+  &nbsp;&nbsp;<code>Q_PROPERTY(int xitHz ...)</code> + <code>xitEnabled</code> &nbsp;<em style="color:#8aa">// already works, Hz-scale TX offset</em><br>
+  &nbsp;&nbsp;<em style="color:#fa6">// no vfoB, no splitEnabled</em><br><br>
+
+  <strong style="color:#8aa8c0">RadioModel.h:1213</strong><br>
+  &nbsp;&nbsp;<code>Q_INVOKABLE void setSplit(int rx, bool on);</code> &nbsp;<em style="color:#fa6">// stub, "currently returns false"</em><br><br>
+
+  <strong style="color:#8aa8c0">VfoWidget.h:</strong> no <code>vfoB</code> / <code>split</code> UI fields. Single-line freq display.<br><br>
+
+  <strong style="color:#8aa8c0">AetherSDR SliceModel.h:</strong> no <code>vfoB</code> / <code>split</code> properties. AetherSDR doesn't formalize split.<br><br>
+
+  <strong style="color:#8aa8c0">Thetis console.cs:</strong> global <code>chkVFOSplit</code> checkbox; VFOA = RX1 freq, VFOB = TX freq when split (dual-purpose: VFOB also = RX2 freq when multi-RX not in split).
+</div>
+
+<h3 style="margin-top:24px">Three approaches</h3>
+
+<div class="options">
+  <div class="option" data-choice="per-slice-ab" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Per-slice VFO A/B + per-slice split toggle (Thetis flag pattern, multi-slice)</h3>
+      <p style="margin-bottom:8px">Each slice gains <code>vfoBFrequency</code> + <code>splitEnabled</code>. When the slice is TX-bound AND split is on, TX uses VFOB. Other slices unaffected. Existing single-frequency users see no change (split off by default).</p>
+      <div class="mockup" style="margin:8px 0;background:#0d1218;padding:8px;border-radius:4px;font-family:monospace;font-size:10px;color:#cde">
+        <strong>Slice A:</strong> VFOA = 14.225 (RX) &nbsp; VFOB = 14.230 (TX, split) &nbsp;[SPLIT] &nbsp;<span style="color:#a33">[TX]</span><br>
+        <strong>Slice B:</strong> VFOA = 7.150 (RX only) &nbsp; VFOB = — &nbsp; (split off)<br>
+        <br>
+        <strong>VFO flag UI when split is on</strong> (compact two-line):<br>
+        &nbsp;&nbsp;┌──────────────────────────┐<br>
+        &nbsp;&nbsp;│ <span style="color:#fc9">A</span>&nbsp; 14.225.000 USB &nbsp; ↑R&nbsp;│<br>
+        &nbsp;&nbsp;│ <span style="color:#fa6">B</span>&nbsp; 14.230.000 USB &nbsp; ↑T&nbsp;│<br>
+        &nbsp;&nbsp;└──────────────────────────┘<br>
+        <br>
+        Right-click VFO flag → {Split toggle · Swap A/B · B = A · Clear B}
+      </div>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Operator muscle memory from Thetis (SSB DX work expects this). Per-slice split = different slices can be in split or not independently. SliceModel additions are clean (2 properties + signal). Wire format: TX-bound slice's effective TX freq = (split ? vfoB : frequency) + xitHz when xit on. No conflict with RIT/XIT.<br><strong>Cons:</strong> VFO flag UI grows (two-line when split) — needs careful design to not feel cluttered. Persistence schema gains <code>SliceX_VfoBFrequency</code> + <code>SliceX_SplitEnabled</code> per band.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="no-split" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>No formal split — operator creates a second slice for kHz-scale TX offset</h3>
+      <p style="margin-bottom:8px">Drop the split concept entirely. For SSB DX: operator creates Slice A (RX at 14.225) and Slice B (TX-bound at 14.230). TxSliceArbiter handoff between them. RIT/XIT continue to handle Hz-scale offsets within one slice.</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Zero new properties on SliceModel. AetherSDR-faithful (they don't formalize split either). Conceptually clean: each frequency is its own slice. TX handoff already in design (TxSliceArbiter).<br><strong>Cons:</strong> Breaks Thetis operator muscle memory. SSB DX needs frequent up/down adjustments; doing this by retuning the TX-bound slice (vs flipping VFO A↔B with one tap) is more friction. Consumes a slice budget for what's traditionally been "one knob". HL2 operators (1 slice cap) literally cannot do split.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="global-split" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Global split toggle using next-letter slice as TX (Thetis-faithful, hybrid)</h3>
+      <p style="margin-bottom:8px">One global Split mode. When active: TX-bound slice's freq = RX, the slice immediately after it (alphabetically) becomes the auto-TX freq. So Slice A in split → Slice B is the TX freq.</p>
+      <p style="font-size:11px;color:#8aa"><strong>Pros:</strong> Reuses slice infrastructure, no new properties.<br><strong>Cons:</strong> Couples TX behavior to slice ordering (confusing). Slice B can't be a normal RX slice while split is on (its role flips). Same HL2 problem as Option B. Worst of both worlds.</p>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Worked example — SSB DX pile-up workflow</h3>
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Option A (per-slice VFO A/B)</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:10px;line-height:1.6">
+      1. Tune Slice A to 14.225 (DX station)<br>
+      2. Right-click → Split → On<br>
+      3. Slice A's VFO B appears = 14.230<br>
+      4. Click VFO B → spin wheel → 14.232<br>
+      5. Push-to-talk → TX at 14.232<br>
+      6. DX moves to 14.227 — adjust VFO A only<br>
+      7. Right-click → "B = A + 5 kHz" macro → done<br>
+      <br>
+      <span style="color:#888"># 1-tap workflow, classic Thetis pattern</span>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Option B (no split — separate slices)</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:11px;color:#cde;padding:10px;line-height:1.6">
+      1. Tune Slice A to 14.225 (DX, RX)<br>
+      2. "+RX" → Slice B<br>
+      3. Tune Slice B to 14.230<br>
+      4. Right-click Slice B → "TX bind" (TxSliceArbiter)<br>
+      5. Adjust Slice B for TX freq via wheel<br>
+      6. Push-to-talk → TX at Slice B's freq<br>
+      7. DX moves to 14.227 → adjust Slice A only<br>
+      &nbsp;&nbsp; (Slice B's freq stays where you left it)<br>
+      <br>
+      <span style="color:#888"># 4-tap workflow per slice creation,<br>
+      # consumes one slice + slice-create churn each DX session</span>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">Per-band persistence under Option A</h3>
+<div style="background:#1a2030;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7;font-family:monospace">
+  <strong style="color:#8aa8c0">Per-slice per-band schema additions:</strong><br>
+  &nbsp;&nbsp;<code>SliceA_Band_20m_Frequency = 14225000</code> &nbsp;<em style="color:#8aa">// existing (VFO A)</em><br>
+  &nbsp;&nbsp;<code>SliceA_Band_20m_VfoBFrequency = 14230000</code> &nbsp;<em style="color:#8aa">// new</em><br>
+  &nbsp;&nbsp;<code>SliceA_Band_20m_SplitEnabled = True</code> &nbsp;<em style="color:#8aa">// new</em><br>
+  &nbsp;&nbsp;<code>SliceA_Band_40m_VfoBFrequency = 7180000</code> &nbsp;<em style="color:#8aa">// independent per band</em><br>
+  <br>
+  Effective TX freq when TX-bound + split on:<br>
+  &nbsp;&nbsp;<code>txFreq = vfoBFrequency + (xitEnabled ? xitHz : 0)</code><br>
+  Effective RX freq always:<br>
+  &nbsp;&nbsp;<code>rxFreq = frequency + (ritEnabled ? ritHz : 0)</code>
+</div>
+
+<h3 style="margin-top:24px">Edge cases for the spec</h3>
+<div style="background:#2a3548;padding:14px;border-radius:6px;font-size:12px;color:#cde;line-height:1.7">
+  <strong style="color:#fc9">E1.</strong> Slice A split-on, then operator binds TX to Slice B. Slice B's split state independently applies. Slice A still has split state but it's irrelevant until A is TX-bound again.<br><br>
+  <strong style="color:#fc9">E2.</strong> Split on, slice retunes VFO A across band boundary (20m → 40m). VFO B freq follows the per-band memory load — Slice A on 40m may have different VFOB stored.<br><br>
+  <strong style="color:#fc9">E3.</strong> XIT and split both on. XIT applies on top of VFO B (TX = vfoB + xitHz). Documented behavior, possibly belt-and-suspenders, operator's call.<br><br>
+  <strong style="color:#fc9">E4.</strong> Operator hits "B = A" macro mid-MOX. Drop MOX (RF safety), apply the change, allow re-key. Same MOX-drop guard pattern as TxSliceArbiter handoff.<br><br>
+  <strong style="color:#fc9">E5.</strong> Pan auto-center on VFO B as well as VFO A? Tracking the active slice freq we already do; in split mode there are two flag positions on the pan. Both should render (different colors? one solid, one outline).
+</div>
+
+<p class="subtitle" style="margin-top:24px;text-align:center">My recommendation: <strong>A (per-slice VFO A/B + per-slice split)</strong>. SSB DX work is the canonical use case for split, and the Thetis tactile pattern (tap to flip A↔B, dedicated VFO B knob) is muscle memory we shouldn't break. Existing RIT/XIT continue handling Hz-scale offsets — split fills the kHz-scale gap cleanly. Per-band persistence is symmetric.</p>
