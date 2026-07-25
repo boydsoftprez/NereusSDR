@@ -9,8 +9,6 @@
 
 #include "core/SliceStreamAllocator.h"
 
-#include <cmath>
-
 namespace NereusSDR {
 
 void SliceStreamAllocator::configure(int userDdcCount, int maxSlices)
