@@ -298,6 +298,7 @@ const BoardCapabilities kAtlas = {
     .adcCount         = 1,
     .maxReceivers     = 3,
     .maxSlices        = 3,   // Phase 3F: Atlas/Metis 3-slice cap (1-ADC, 3 DDCs, no PS support)
+    .userDdcCount     = 3,   // Phase 3F Sub-Epic I: Metis user DDCs = DDC0-2 (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
     .maxSampleRate    = 192000,
@@ -353,6 +354,7 @@ const BoardCapabilities kHermes = {
     .adcCount         = 1,
     .maxReceivers     = 4,
     .maxSlices        = 4,   // Phase 3F: Hermes 4-slice cap (1-ADC, 4 DDCs; PS reclaims DDC0+1 on TX)
+    .userDdcCount     = 4,   // Phase 3F Sub-Epic I: Hermes user DDCs = DDC0-3 (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
     .maxSampleRate    = 192000,
@@ -414,6 +416,7 @@ const BoardCapabilities kHermesII = {
     .adcCount         = 1,
     .maxReceivers     = 4,
     .maxSlices        = 2,   // Phase 3F: HermesII 2-slice cap (1-ADC, 2 DDCs)
+    .userDdcCount     = 2,   // Phase 3F Sub-Epic I: HermesII user DDCs = DDC0-1 (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 0, 0, 0},
     .maxSampleRate    = 192000,
@@ -471,6 +474,7 @@ const BoardCapabilities kAngelia = {
     .adcCount         = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Angelia 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Angelia user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: 2-ADC P1 board — ADC0 + ADC1 both support wideband stream
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
@@ -523,6 +527,7 @@ const BoardCapabilities kOrion = {
     .adcCount         = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Orion 5-slice cap (2-ADC, 7 DDCs; DDC0+1 reserved for PS+Div)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Orion user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: 2-ADC P1 board — ADC0 + ADC1 both support wideband stream
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
@@ -576,6 +581,7 @@ const BoardCapabilities kOrionMKII = {
     .adcCount         = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya 5-slice cap (2-ADC P2; DDC0+1 reserved)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: OrionMKII/7000D/8000D/AnvelinaPro3/RedPitaya user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
@@ -640,6 +646,7 @@ const BoardCapabilities kHermesC10 = {
     .adcCount         = 1,                                  // SetRxADC(1) [v2.10.3.15]
     .maxReceivers     = 4,                                  // P1_rxcount=4 nddc=4 (console.cs:8388 [v2.10.3.15])
     .maxSlices        = 5,   // Phase 3F: HermesC10/G2E 5-slice cap (2-ADC P2 class; DDC0+1 reserved per §2)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: HermesC10/G2E user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: P2 2-ADC class — ADC0 + ADC1 both support wideband stream (design §2 table)
     // Thetis setup.cs:849-850 [v2.10.3.15] — every P2/ETH board gets the
     // full 6-rate list; Thetis has no per-board cap, only per-protocol.
@@ -727,6 +734,7 @@ const BoardCapabilities kHermesLite = {
     .adcCount         = 1,
     .maxReceivers     = 4,
     .maxSlices        = 1,   // Phase 3F: HL2 single-slice cap (1-ADC; DDCs reserved for firmware quirks)
+    .userDdcCount     = 1,   // Phase 3F Sub-Epic I: HL2 user DDCs = DDC0 only (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
@@ -833,6 +841,7 @@ const BoardCapabilities kHermesLiteRxOnly = {
     .adcCount         = 1,
     .maxReceivers     = 4,
     .maxSlices        = 1,   // Phase 3F: HL2 RX-only 1-slice cap (mirrors kHermesLite; single-ADC firmware cap)
+    .userDdcCount     = 1,   // Phase 3F Sub-Epic I: HL2 RX-only user DDCs = DDC0 only (design doc §2)
     .widebandAdcs     = 0,   // Phase 3F: P1 board — wideband mechanism differs; deferred to 3F-W
     .sampleRates      = {48000, 96000, 192000, 384000, 0, 0},
     .maxSampleRate    = 384000,
@@ -894,6 +903,7 @@ const BoardCapabilities kSaturn = {
     .adcCount         = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Saturn/ANAN-G2/G2-1K 5-slice cap (2-ADC P2; DDC0+1 reserved)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Saturn/ANAN-G2/G2-1K user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
@@ -948,6 +958,7 @@ const BoardCapabilities kSaturnMKII = {
     .adcCount         = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: SaturnMKII 5-slice cap (2-ADC P2 Saturn variant; DDC0+1 reserved)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: SaturnMKII user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,
@@ -1004,6 +1015,7 @@ const BoardCapabilities kAndromeda = {
     .adcCount         = 2,
     .maxReceivers     = 7,
     .maxSlices        = 5,   // Phase 3F: Andromeda 5-slice cap (2-ADC P2; DDC0+1 reserved per Saturn class)
+    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: Andromeda user DDCs = DDC2-6 (design doc §2)
     .widebandAdcs     = 2,   // Phase 3F: 2-ADC P2 board — ADC0 + ADC1 both support wideband stream on ports 1027+1028
     .sampleRates      = {48000, 96000, 192000, 384000, 768000, 1536000},
     .maxSampleRate    = 1536000,

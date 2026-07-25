@@ -142,6 +142,31 @@ private slots:
         QCOMPARE(caps.widebandAdcs, 2);
     }
 
+    // Phase 3F Sub-Epic I Task 1: per-SKU userDdcCount population tests.
+    // Values from docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md
+    // §2 "Resolved values per SKU" (User DDCs column). User DDCs are the DDCs
+    // available for operator slices after PS/diversity reservations.
+
+    void user_ddc_count_matches_design_doc_table()
+    {
+        QCOMPARE(capabilitiesFor(HPSDRModel::ANAN_G2).userDdcCount, 5);     // DDC2-6
+        QCOMPARE(capabilitiesFor(HPSDRModel::HERMESLITE).userDdcCount, 1); // DDC0 only
+        QCOMPARE(capabilitiesFor(HPSDRModel::ANAN10E).userDdcCount, 2);    // HermesII: DDC0-1
+        QCOMPARE(capabilitiesFor(HPSDRModel::HERMES).userDdcCount, 4);     // DDC0-3
+        QCOMPARE(capabilitiesFor(HPSDRModel::HPSDR).userDdcCount, 3);      // Metis: DDC0-2
+    }
+
+    void user_ddc_count_never_exceeds_max_slices()
+    {
+        // A SKU may host more slices than DDCs (slices share a DDC), but
+        // never more DDCs than slices, since a stream with no slice is idle.
+        for (const auto& caps : BoardCapsTable::all()) {
+            QVERIFY2(caps.userDdcCount <= caps.maxSlices,
+                     qPrintable(QStringLiteral("userDdcCount must not exceed maxSlices: ")
+                                + caps.displayName));
+        }
+    }
+
 private:
     static BoardCapabilities capabilitiesFor(HPSDRModel m)
     {

@@ -237,6 +237,18 @@ struct BoardCapabilities {
     // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
     int  maxSlices {0};
 
+    // Phase 3F Sub-Epic I: DDCs available for operator slices, after the
+    // per-SKU PureSignal / diversity reservations. On 2-ADC P2 boards
+    // DDC0+DDC1 are reserved as a synced pair, so user DDCs are DDC2-6.
+    // Design doc §2 "Resolved values per SKU" is the authority; the
+    // per-board codec's slice-to-DDC table must agree (for example
+    // P2CodecSaturn::kSliceToDdc = {2,3,4,5,6}).
+    //
+    // This is a distinct axis from maxSlices: several slices can share one
+    // DDC when their frequencies fall inside its window, so maxSlices can
+    // legitimately exceed userDdcCount.
+    int  userDdcCount {0};
+
     // Phase 3F: number of ADCs that support the wideband (real-sample) stream.
     // P2 boards: typically equals adcCount. P1 boards: 0 (different mechanism, deferred to 3F-W).
     int  widebandAdcs {0};
