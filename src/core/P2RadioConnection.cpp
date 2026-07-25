@@ -616,6 +616,15 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     // rationale as m_rx[2].frequency above.)
     if (m_tx[0].frequency == 0) {
         m_tx[0].frequency = 3865000;
+        // Seed the transmit low-pass from the same number, exactly as the
+        // receive seed twenty lines up does for lpfBitsRx. Setting the TX NCO
+        // without it left the wire self-contradictory: TX frequency 3.865 MHz
+        // alongside m_alex.lpfBitsTx still at its 6 m default. Thetis never
+        // splits the two -- UpdateTXDDSFreq assigns the low-pass and the NCO
+        // from tx_dds_freq_mhz in one call (console.cs:15464-15468
+        // [v2.10.3.15]) -- so neither do we.
+        m_alex.lpfBitsTx = NereusSDR::codec::alex::computeLpf(
+            m_tx[0].frequency / 1.0e6);
     }
 
     setState(ConnectionState::Connecting);

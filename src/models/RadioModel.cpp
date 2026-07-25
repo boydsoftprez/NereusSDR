@@ -3728,14 +3728,26 @@ int RadioModel::addSlice(const QString& initialPanId)
     // Thetis has the same fan-out on the transmit VFO's own handler
     // (console.cs:32866-32869 [v2.10.3.15] assigns tx_dds_freq_mhz and calls
     // UpdateTXDDSFreq from the VFO B path when B transmits).
+    //
+    // The gate asks txBoundSlice() rather than SliceModel::isTxSlice(). The
+    // two are NOT interchangeable: isTxSlice() reads a flag that only
+    // TxSliceArbiter::requestHandoff ever raises, and a single-slice session
+    // never performs a handoff (m_txBoundIndex already defaults to 0), so the
+    // flag stays false on slice A forever. Gating on it therefore silenced
+    // every transmit-frequency push -- VFO retunes and XIT alike -- which
+    // left the TX NCO and the Alex TX low-pass frozen wherever they last
+    // landed. Asking txBoundSlice() gates on exactly the slice
+    // pushTxFrequencyFromTxSlice() is about to read, so the gate and the
+    // push can never disagree, and the RF-safety property still holds: a
+    // retune of a slice that is not the transmitter is still a no-op here.
     connect(slice, &SliceModel::frequencyChanged, this, [this, slice]() {
-        if (slice->isTxSlice()) { pushTxFrequencyFromTxSlice(); }
+        if (slice == txBoundSlice()) { pushTxFrequencyFromTxSlice(); }
     });
     connect(slice, &SliceModel::xitEnabledChanged, this, [this, slice]() {
-        if (slice->isTxSlice()) { pushTxFrequencyFromTxSlice(); }
+        if (slice == txBoundSlice()) { pushTxFrequencyFromTxSlice(); }
     });
     connect(slice, &SliceModel::xitHzChanged, this, [this, slice]() {
-        if (slice->isTxSlice()) { pushTxFrequencyFromTxSlice(); }
+        if (slice == txBoundSlice()) { pushTxFrequencyFromTxSlice(); }
     });
 
     // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
@@ -7929,7 +7941,11 @@ void RadioModel::wireSliceSignals()
         // pushTxFrequencyFromTxSlice re-reads the TX-bound slice rather than
         // trusting `freq`, so a retune of a non-TX slice is a no-op here
         // instead of a wrong-band transmit frequency.
-        if (slice->isTxSlice()) {
+        //
+        // Gated on txBoundSlice(), not SliceModel::isTxSlice() -- see the
+        // matching connects in addSlice for why the flag is not a usable
+        // gate in a session that never performs a TX handoff.
+        if (slice == txBoundSlice()) {
             pushTxFrequencyFromTxSlice();
         }
         // Track band from VFO frequency so per-band saves target the correct
@@ -8630,8 +8646,10 @@ void RadioModel::wireSliceSignals()
     // itself does not change — only the TX NCO offset.
     auto updateTxFrequency = [this, slice]() {
         // Same TX-bound gate as the frequencyChanged handler above: XIT on a
-        // slice that is not transmitting has nothing to offset.
-        if (slice->isTxSlice()) {
+        // slice that is not transmitting has nothing to offset. Gated on
+        // txBoundSlice() rather than SliceModel::isTxSlice() for the reason
+        // spelled out at the matching connects in addSlice.
+        if (slice == txBoundSlice()) {
             pushTxFrequencyFromTxSlice();
         }
     };
@@ -9765,6 +9783,33 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         // reconnect, so the fresh connection has to be told which chain is
         // filtered and which is wide before the first tune moves anything.
         republishAlexAdcSlices();
+        // RF-SAFETY: and the transmit low-pass, for the same reason. A fresh
+        // P2RadioConnection starts with m_alex.lpfBitsTx at its 6 m default
+        // and only setTxFrequency ever moves it, so without a push here the
+        // TX low-pass stays on the default until the operator happens to
+        // turn the VFO -- the transmitter would key up on the wrong filter
+        // on a radio that was connected and immediately keyed.
+        //
+        // Thetis re-drives the same state unconditionally rather than
+        // trusting that a tune has happened, and says so in as many words:
+        //   From Thetis console.cs:29095-29099 HdwMOXChanged [v2.10.3.15]
+        //     // make sure TX freq has been set
+        //     UpdateRX1DDSFreq();
+        //     UpdateRX2DDSFreq();
+        //     UpdateTXDDSFreq();
+        // (the MOX-off edge repeats it at console.cs:29146-29148), and
+        // UpdateTXDDSFreq is what selects the transmit low-pass:
+        //   From Thetis console.cs:15464-15468 UpdateTXDDSFreq [v2.10.3.15]
+        //     private void UpdateTXDDSFreq()
+        //     { if (initializing) return;
+        //       setAlexLPF(tx_dds_freq_mhz, true); ... }
+        // Upstream inline attribution preserved verbatim (console.cs:15471):
+        //   if (MOX)//[2.10.3.13]MW0LGE
+        // Doing it once on Connected covers the same hole here, because
+        // effectiveLpfBitsAlex0() already switches Alex0 over to the transmit
+        // mask at compose time on the MOX edge, so the mask only has to be
+        // correct, not re-sent.
+        pushTxFrequencyFromTxSlice();
         break;
     case ConnectionState::Disconnected:
         qCDebug(lcConnection) << "Disconnected from" << m_name;
