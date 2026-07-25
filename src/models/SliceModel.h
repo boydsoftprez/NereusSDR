@@ -452,8 +452,6 @@ public:
     void setPanKey(const QString& key);
 
     // Which receiver/DDC this slice feeds (-1 = unassigned)
-    int receiverIndex() const { return m_receiverIndex; }
-    void setReceiverIndex(int idx) { m_receiverIndex = idx; }
 
     int wdspChannelId() const { return m_wdspChannelId; }
     void setWdspChannelId(int id) { m_wdspChannelId = id; }
@@ -956,7 +954,6 @@ private:
     int     m_sliceIndex{0};
     int     m_panId{-1};
     QString m_panKey;                    // Phase 3F: owning pan id ("pan-N")
-    int     m_receiverIndex{-1};
     int     m_wdspChannelId{-1};
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────

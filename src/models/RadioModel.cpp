@@ -4140,7 +4140,6 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         }
     }
     setActiveSlice(0);
-    m_activeSlice->setReceiverIndex(rxIdx);
     loadSliceState(m_activeSlice);
 
     // ── 3M-1c L.2: TwoToneController active-slice mode source ────────────────
@@ -8028,7 +8027,7 @@ void RadioModel::wireSliceSignals()
     // XIT state without needing a separate update trigger.
     QTimer::singleShot(100, this, [this, slice]() {
         if (m_connection && m_connection->isConnected()) {
-            int rxIdx = slice->receiverIndex();
+            int rxIdx = slice->streamIndex();
             quint64 freqHz = static_cast<quint64>(slice->frequency());
             if (rxIdx >= 0) {
                 m_receiverManager->setReceiverFrequency(rxIdx, freqHz);

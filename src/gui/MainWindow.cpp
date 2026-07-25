@@ -6213,7 +6213,7 @@ void MainWindow::wireSliceToSpectrum()
 
             activeSpectrumWidget()->setCenterFrequency(freq);
 
-            int rxIdx = slice->receiverIndex();
+            int rxIdx = slice->streamIndex();
             if (rxIdx >= 0) {
                 m_radioModel->receiverManager()->forceHardwareFrequency(
                     rxIdx, static_cast<quint64>(freq));
@@ -6710,7 +6710,7 @@ void MainWindow::wireSliceToSpectrum()
             slice->setFrequency(centerHz);
         } else {
             // CTUN: retune DDC to pan center (bypasses lock) so spectrum shows correct data
-            int rxIdx = slice->receiverIndex();
+            int rxIdx = slice->streamIndex();
             if (rxIdx >= 0) {
                 m_radioModel->receiverManager()->forceHardwareFrequency(
                     rxIdx, static_cast<quint64>(centerHz));
