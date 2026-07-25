@@ -47,6 +47,24 @@ if(NEREUS_TEST_SHARDS GREATER 0)
         "// sharded-out test targets. Never compiled, never linked.\n")
 endif()
 
+# ── Shared sandbox-init object library (2026-07-25) ────────────────────
+# TestSandboxInit.cpp was previously listed as a source on all 519 test
+# executables, so it was compiled 519 times (0.10s each, ~50 CPU-s of
+# pure duplication).
+#
+# It MUST stay an OBJECT library, not a static library: its entire
+# payload is a file-scope static constructor (g_nereusTestSandboxInit)
+# with no referenced symbols, and a static-library link would drop it
+# as unused. $<TARGET_OBJECTS:> forces the object in unconditionally,
+# preserving the pre-main() QStandardPaths::setTestModeEnabled(true)
+# guarantee that keeps ctest runs from overwriting the developer's real
+# NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
+add_library(nereus_test_sandbox OBJECT TestSandboxInit.cpp)
+target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
+if(NEREUS_USE_PCH)
+    target_precompile_headers(nereus_test_sandbox REUSE_FROM NereusSDRObjs)
+endif()
+
 function(nereus_add_test name)
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
@@ -81,7 +99,7 @@ function(nereus_add_test name)
     # path instead of the real user config file. Without this, ctest
     # runs can (and have — see v0.1.1 alpha) silently wipe the
     # developer's NereusSDR.settings via P1FakeRadio-keyed test writes.
-    add_executable(${name} ${name}.cpp TestSandboxInit.cpp ${ARGN})
+    add_executable(${name} ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
     target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
 
     # Reuse the NereusSDRObjs precompiled header (CMakeLists.txt §PCH).
