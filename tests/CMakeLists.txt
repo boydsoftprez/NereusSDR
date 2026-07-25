@@ -1438,6 +1438,17 @@ nereus_add_test(tst_slice_stream_allocator)
 # hardware-exhaustion rejection path.
 nereus_add_test(tst_stream_pool_binding)
 
+# ── Phase 3F: WDSP channel-id allocation table ────────────────────────────
+# WDSP keys every channel off one global array (channel.c:29) and OpenChannel
+# overwrites a slot without closing it, so an id collision silently runs two
+# wdspmain threads on the same channel and leaks the first one's buffers.
+# Pins the upstream numbering (Thetis ChannelMaster/cmsetup.c:176-191 chid()
+# and dsp.cs:926-944 WDSP.id() [v2.10.3.15]): RX slices occupy the low block,
+# TX sits immediately above it, PS feedback above TX. Also pins the ceiling
+# against BoardCapsTable::all() and drives RadioModel::openRxChannelPool to
+# assert which ids it really opens.
+nereus_add_test(tst_wdsp_channel_id_map)
+
 # ── Phase 3F Sub-Epic I Tasks 8-9: per-stream FFT dispatch topology ────────
 # Pins the FFTRouter contract MainWindow's per-stream FFTEngine pool relies
 # on: distinct streams reach distinct pans, co-hosted slices subscribe their
@@ -2598,15 +2609,16 @@ nereus_add_test(tst_audio_engine_rade)
 # Verifies:
 #   Stage::kStageCount == 31 (authoritative from wdsp/TXA.c:31-479 [v2.10.3.13]);
 #   createTxChannel returns a non-null TxChannel* (C++ wrapper now constructed);
-#   txChannel(1)->channelId() == 1;
+#   txChannel(kTxChannelId)->channelId() == kTxChannelId;
 #   Default Run states match create_txa() first-argument for each of 31 stages:
 #     ON : Panel, MicMeter, EqMeter, LvlrMeter, CfcMeter, Bp0, CompMeter, Alc,
 #          AlcMeter, Sip1, Calcc, OutMeter;
 #     OFF: RsmpIn, Gen0, PhRot, AmSq, Eqp, PreEmph, Leveler, CfComp, Compressor,
 #          Bp1, OsCtrl, Bp2, AmMod, FmMod, Gen1, UsLew (no run param), Iqc, Cfir,
 #          RsmpOut;
-#   destroyTxChannel → txChannel(1) returns nullptr;
-#   RX channel 0 + TX channel 1 co-exist without aliasing.
+#   destroyTxChannel → txChannel(kTxChannelId) returns nullptr;
+#   RX channel 0 + the TX channel co-exist without aliasing (Phase 3F moved
+#   the TX id above the RX slice block; see tst_wdsp_channel_id_map).
 #   Stage count correction: pre-code review §8.1 said 25; actual source has 31
 #   (PreEmph, Leveler, LvlrMeter, CfComp, CfcMeter between EqMeter and Bp0).
 #   Tests run against stub path (no HAVE_WDSP in unit-test builds); stub returns

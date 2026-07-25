@@ -477,7 +477,7 @@ MainWindow::MainWindow(QWidget* parent)
                     // narrative on why the two-source race corrupts on-air
                     // audio at the I/Q ring buffer.
                     if (auto* wdsp = m_radioModel ? m_radioModel->wdspEngine() : nullptr) {
-                        if (auto* txCh = wdsp->txChannel(1)) {
+                        if (auto* txCh = wdsp->txChannel(WdspEngine::kTxChannelId)) {
                             txCh->setTciAudioActive(owner != nullptr);
                         }
                     }

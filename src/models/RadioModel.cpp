@@ -773,7 +773,7 @@ RadioModel::RadioModel(QObject* parent)
     // connectToRadio() once m_txChannel is live (see the "MoxController →
     // TxChannel queued connects" block inside the WDSP-init lambda).  We
     // cannot wire them here at construction time because m_txChannel is
-    // nullptr until createTxChannel(1) runs inside that lambda — Qt's
+    // nullptr until createTxChannel(kTxChannelId) runs inside that lambda — Qt's
     // AutoConnection thread-routing depends on the receiver having a valid
     // thread affinity (TxWorkerThread after moveToThread).
 
@@ -2881,6 +2881,50 @@ void RadioModel::configureStreamPool(int userDdcCount, int maxSlices,
     }
 }
 
+// ── Phase 3F Sub-Epic I: WDSP RX channel pool ───────────────────────────────
+//
+// One channel per slice, opened once at connect and reused. Thetis opens all
+// cmRCVR * cmSubRCVR RX channels in CreateRadio (create_rcvr's OpenChannel
+// loop, ChannelMaster/cmaster.c:69-85 [v2.10.3.15]); deskhpsdr opens every
+// receiver in one loop (radio.c:1259 [@f3d857c]). Neither opens a channel at
+// runtime, and neither do we: binding a slice to a stream only changes its
+// shift offset and its I/Q source.
+//
+// The upper bound is not cosmetic. WDSP keeps one global channel table,
+// `struct _ch ch[MAX_CHANNELS]` (third_party/wdsp/src/channel.c:29), and
+// OpenChannel overwrites `ch[channel]` and calls build_channel -> start_thread
+// without closing the previous occupant (channel.c:75-101). Before this clamp
+// existed the pool ran to maxSlices from channel 1, so on any SKU with
+// maxSlices > 1 it opened an RXA at the id createTxChannel would later reuse
+// for the TXA: two wdspmain threads served the same slot, the RX iobuffs and
+// critical sections leaked, and teardown was undefined. kMaxSliceChannels is
+// the reserved RX block; kTxChannelId sits immediately above it.
+void RadioModel::openRxChannelPool(int poolSize, int inputBufferSize,
+                                   int inputSampleRateHz)
+{
+    if (!m_wdspEngine) {
+        return;
+    }
+
+    const int requested = poolSize > 0 ? poolSize : 1;
+    const int clamped = std::min(requested, WdspEngine::kMaxSliceChannels);
+    if (clamped < requested) {
+        qCWarning(lcDsp) << "RX channel pool request" << requested
+                         << "exceeds the reserved block of"
+                         << WdspEngine::kMaxSliceChannels
+                         << "— clamping. Raising a SKU's maxSlices requires "
+                            "raising WdspEngine::kMaxSliceChannels too, which "
+                            "moves kTxChannelId and kPsFeedbackChannelId.";
+    }
+
+    for (int ch = WdspEngine::kFirstSliceChannelId; ch < clamped; ++ch) {
+        if (!m_wdspEngine->rxChannel(ch)) {
+            m_wdspEngine->createRxChannel(ch, inputBufferSize, 4096,
+                                          inputSampleRateHz, 48000, 48000);
+        }
+    }
+}
+
 void RadioModel::bindUnboundSlices()
 {
     for (SliceModel* s : std::as_const(m_slices)) {
@@ -4725,7 +4769,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
     // used with lambdas, so we rely on the matching disconnect there.
     // Without that disconnect, every connectToRadio() would add another copy
     // of this lambda; on the second connect, both copies would call
-    // createRxChannel + createTxChannel(1) (idempotent today, but doubled work).
+    // createRxChannel + createTxChannel(kTxChannelId) (idempotent today, but doubled work).
     connect(m_wdspEngine, &WdspEngine::initializedChanged, this,
             [this, wdspInputRate, wdspInSize](bool ok) {
         if (!ok) {
@@ -4747,33 +4791,13 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         RxChannel* rxCh = m_wdspEngine->createRxChannel(0, wdspInSize, 4096,
                                                          wdspInputRate, 48000, 48000);
 
-        // ── Phase 3F Sub-Epic I: open the WDSP channel pool ────────────────
-        //
-        // One channel per slice, opened once here and reused. Thetis opens
-        // all 10 RX channels in CreateRadio (cmaster.cs:516 [v2.10.3.15]);
-        // deskhpsdr opens every receiver in one loop (radio.c:1259
-        // [@f3d857c]). Neither opens a channel at runtime, and neither do we
-        // from here on: binding a slice to a stream only changes its shift
-        // offset and its I/Q source.
-        //
-        // Sized off BoardCapabilities directly, not the maxSlices() accessor,
-        // which returns 1 until m_connection is assigned (further down
-        // connectToRadio, after this lambda has already run).
-        const int channelPoolSize =
-            boardCapabilities().maxSlices > 0 ? boardCapabilities().maxSlices : 1;
-        for (int ch = 1; ch < channelPoolSize; ++ch) {
-            if (!m_wdspEngine->rxChannel(ch)) {
-                m_wdspEngine->createRxChannel(ch, wdspInSize, 4096,
-                                              wdspInputRate, 48000, 48000);
-            }
-        }
-
-        // 3M-1a G.1: create the WDSP TX channel (channel ID = 1 = WDSP.id(1, 0)).
+        // 3M-1a G.1: create the WDSP TX channel (channel ID = WDSP.id(1, 0)).
         // Parameters match Thetis cmaster.c:177-190 [v2.10.3.13] — create_xmtr().
         // WdspEngine owns the channel via m_txChannels; we take a non-owning view.
         // The channel starts stopped (setRunning(false) is the default); txReady
         // fires setRunning(true) after MOX engage + rfDelay.
-        // From Thetis dsp.cs:926-944 [v2.10.3.13] — WDSP.id(1, 0) = channel 1.
+        // From Thetis dsp.cs:926-944 [v2.10.3.15] — WDSP.id(1, 0) returns
+        // CMsubrcvr * CMrcvr, i.e. WdspEngine::kTxChannelId here.
         //
         // 3M-1a bench fix: the TX channel was previously created here, but
         // this lambda fires synchronously inside m_wdspEngine->initialize()
@@ -4934,6 +4958,19 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             }
             rxCh->setActive(true);
         }
+
+        // ── Phase 3F Sub-Epic I: open the WDSP RX channel pool ─────────────
+        //
+        // Runs AFTER the Slice A block above so channel 0 already carries
+        // its full state; openRxChannelPool skips channels that exist and
+        // leaves an already-live channel alone.
+        //
+        // Sized off BoardCapabilities directly, not the maxSlices()
+        // accessor, which returns 1 until m_connection is assigned (further
+        // down connectToRadio, after this lambda has already run).
+        openRxChannelPool(boardCapabilities().maxSlices, wdspInSize,
+                          wdspInputRate);
+
         // Master output volume (MasterOutputWidget) is the only writer to
         // AudioEngine::setVolume; the per-slice afGain seeded above lives
         // in WDSP, not in the post-DSP scalar.  Don't overwrite the master
@@ -5047,7 +5084,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 return;
             }
             m_txChannel = m_wdspEngine->createTxChannel(
-                /*channelId=*/1,
+                /*channelId=*/WdspEngine::kTxChannelId,
                 /*inputBufferSize=*/64,
                 /*dspBufferSize=*/WdspEngine::kTxDspBufferSize,
                 /*inputSampleRate=*/48000,
@@ -6676,7 +6713,7 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                                      "succeeded after WdspEngine::initializedChanged(true).";
                 }
             }, Qt::UniqueConnection);
-            qCWarning(lcDsp) << "Issue #153 sub-bug 1: createTxChannel(1) returned nullptr "
+            qCWarning(lcDsp) << "Issue #153 sub-bug 1: createTxChannel(kTxChannelId) returned nullptr "
                                 "at connect-time (WDSP not yet initialized — likely cold-"
                                 "start with no cached wisdom).  Registered one-shot retry "
                                 "on WdspEngine::initializedChanged.";
@@ -9046,7 +9083,7 @@ void RadioModel::teardownConnection()
     // 3M-1a G.1 fixup: drop any prior WdspEngine::initializedChanged subscribers
     // we registered in connectToRadio(). Without this, each reconnect cycle
     // accumulates another copy of the WDSP-init lambda, causing duplicate
-    // createRxChannel + createTxChannel(1) calls on the next initializedChanged.
+    // createRxChannel + createTxChannel(kTxChannelId) calls on the next initializedChanged.
     // Qt::UniqueConnection can't be used with lambdas, so we disconnect by hand
     // here, on the matching teardown path.
     if (m_wdspEngine != nullptr) {
@@ -9148,7 +9185,7 @@ void RadioModel::teardownConnection()
     //      completes before exit.
     //   2. Move TxChannel back to RadioModel's thread (main).  Required
     //      so TxChannel's destruction (via WdspEngine::shutdown →
-    //      destroyTxChannel(1)) runs on the right thread; Qt asserts
+    //      destroyTxChannel(kTxChannelId)) runs on the right thread; Qt asserts
     //      otherwise.
     //   3. unique_ptr.reset() — destroys the TxWorkerThread itself.
     //
@@ -9301,7 +9338,7 @@ void RadioModel::teardownConnection()
     // Clear the non-owning TX channel view before WdspEngine::shutdown()
     // destroys the underlying WDSP channel. Any in-flight txReady / txaFlushed
     // slot calls are queued and will see m_txChannel == nullptr after this clear.
-    // WdspEngine::shutdown() → destroyTxChannel(1) handles the actual WDSP teardown.
+    // WdspEngine::shutdown() → destroyTxChannel(kTxChannelId) handles the actual WDSP teardown.
     m_txChannel = nullptr;
 
     // Shutdown WDSP (destroys all channels, saves cache)

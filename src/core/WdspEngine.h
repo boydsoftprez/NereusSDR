@@ -118,6 +118,9 @@ class TestRadeApplet;
 // Phase 3F Sub-Epic I closeout, defect H1: the per-stream drain-geometry
 // test primes the engine so createRxChannel can seed real RX channels.
 class TestStreamPoolBinding;
+// Phase 3F: the channel-id map test primes the engine so it can watch
+// which ids openRxChannelPool actually opens.
+class TestWdspChannelIdMap;
 #endif
 
 namespace NereusSDR {
@@ -160,6 +163,55 @@ public:
     void shutdown();
 
     bool isInitialized() const { return m_initialized; }
+
+    // --- WDSP channel-id map (Phase 3F) --------------------------------
+    //
+    // WDSP keys every channel off one global array, `struct _ch
+    // ch[MAX_CHANNELS]` (third_party/wdsp/src/channel.c:29), and
+    // OpenChannel overwrites `ch[channel]` and starts a fresh wdspmain
+    // thread without closing whatever was there (channel.c:75-101).  Two
+    // subsystems that pick the same id therefore both "work" until the
+    // second one silently orphans the first one's thread, iobuffs,
+    // semaphores and critical sections.  The ids below are the single
+    // allocation table for the whole application.
+    //
+    // Numbering comes from upstream, not from convenience.
+    //
+    // From Thetis ChannelMaster/cmsetup.c:176-191 [v2.10.3.15] — chid():
+    //   case 0:  ch_id = pcm->cmSubRCVR * stream + subrx;          // rx
+    //   case 1:  ch_id = stream + (pcm->cmSubRCVR - 1) * pcm->cmRCVR;  // tx
+    // C# mirror, From Thetis dsp.cs:926-944 [v2.10.3.15] — WDSP.id():
+    //   case 2:  return cmaster.CMsubrcvr * cmaster.CMrcvr;        // txa
+    // Upstream's radio structure is cmRCVR = 5, cmSubRCVR = 2
+    // (From Thetis cmaster.cs:412,419 [v2.10.3.15]), cmXMTR = 1
+    // (cmaster.cs:502), so Thetis lays out ch[0..9] = RX and ch[10] = TX.
+    // Both counts are compile-time maxima: create_rcvr opens all
+    // cmRCVR * cmSubRCVR channels at CreateRadio time no matter how many
+    // receivers the connected radio actually has, so the TX id is a fixed
+    // constant rather than something that moves per radio.
+    //
+    // NereusSDR's radio structure is one WDSP channel per slice with no
+    // sub-receivers, i.e. cmSubRCVR = 1, cmRCVR = kMaxSliceChannels,
+    // cmXMTR = 1.  Substituting into chid() gives:
+    //   rx:  ch_id = 1 * slice + 0             = slice
+    //   tx:  ch_id = kMaxSliceChannels + 0     = kMaxSliceChannels
+    // The upstream formula therefore reproduces the Phase 3F invariant
+    // "WDSP channel id == slice index" exactly, and puts TX immediately
+    // above the RX block.  No reconciliation was needed.
+    //
+    // kMaxSliceChannels is the ceiling over every SKU's
+    // BoardCapabilities::maxSlices (largest today: 5, the Saturn /
+    // Angelia / Orion / HermesC10 class).  Sizing the reserved block off
+    // the maximum rather than off the connected radio is what keeps
+    // kTxChannelId a constant, exactly as cmRCVR does upstream.
+    // tst_wdsp_channel_id_map pins the ceiling against the caps table.
+    static constexpr int kMaxSliceChannels = 5;
+
+    // RX slice channels occupy [0, kMaxSliceChannels).
+    static constexpr int kFirstSliceChannelId = 0;
+
+    // TX channel id = cmSubRCVR * cmRCVR = 1 * kMaxSliceChannels.
+    static constexpr int kTxChannelId = kMaxSliceChannels;
 
     // --- RX Channel management ---
 
@@ -311,10 +363,17 @@ public:
 
     // Create a TX channel with the given parameters.
     //
-    // Channel ID convention: Thetis uses `chid(inid(1, 0), 0)`, which with
-    // NereusSDR's single-RX (CMsubrcvr=1, CMrcvr=1) layout resolves to
-    // channel 1.  C# equivalent: `WDSP.id(1, 0)` — dsp.cs:926-944 [v2.10.3.13]
-    // case 2 returns `CMsubrcvr * CMrcvr = 1 * 1 = 1`.
+    // Channel ID convention: pass kTxChannelId.  Thetis uses
+    // `chid(inid(1, 0), 0)`; with NereusSDR's radio structure
+    // (CMsubrcvr=1, CMrcvr=kMaxSliceChannels) that resolves to
+    // kMaxSliceChannels.  C# equivalent: `WDSP.id(1, 0)` —
+    // dsp.cs:926-944 [v2.10.3.15] case 2 returns `CMsubrcvr * CMrcvr`.
+    // See the channel-id map at the top of this class for why the RX
+    // block is sized off the ceiling rather than off the live radio.
+    //
+    // Phase 3F: this used to be a literal 1, which sat inside the RX
+    // slice pool.  On a 5-slice SKU the pool opened ch[1] as an RXA and
+    // txSetup then overwrote it with a TXA, orphaning the RX thread.
     //
     // Opens the WDSP TX channel (OpenChannel type=1) and constructs the
     // TxChannel C++ wrapper around the 31-stage TXA pipeline that WDSP built.
@@ -350,11 +409,21 @@ public:
     // --- PureSignal feedback channel management (Phase 3M-4 Task 4) ---
 
     // PS feedback channel id.  Type=0 (RX) per WDSP channel.c convention.
-    // Slot 5 per the wdsp-integration.md §11.1 documented channel-id design
-    // (0=RX1, 1-4 reserved for RX1-div / RX2 / RX2-div / TX, 5=PS feedback).
-    // Avoids collision with the current actual code (0=RX1, 1=TX) and leaves
-    // headroom for future RX2 / diversity slots without renumbering.
-    static constexpr int kPsFeedbackChannelId   = 5;
+    //
+    // Sits immediately above the TX channel.  PureSignal feedback has no
+    // WDSP-channel analogue upstream (Thetis runs it inside the TX
+    // channel via SetPSFeedbackRate(txch, ps_rate), cmaster.cs:539
+    // [v2.10.3.15]), so this is a NereusSDR extension.  Upstream's
+    // closest concept is a "special stream", and those are numbered after
+    // the transmitters — From Thetis ChannelMaster/cmsetup.c:86-89
+    // [v2.10.3.15]: `sp0id(stream) = stream - pcm->cmRCVR - pcm->cmXMTR`.
+    // Keeping the same rx / tx / special ordering puts PS at kTxChannelId
+    // + 1.
+    //
+    // Phase 3F: was a literal 5, which the RX slice pool now owns on
+    // 5-slice SKUs.  Derived from kTxChannelId so the block can never
+    // drift back into the pool.
+    static constexpr int kPsFeedbackChannelId   = kTxChannelId + 1;
     static constexpr int kPsFeedbackChannelType = 0;   // RX type (cmaster.c:184)
 
     // Default PS feedback rate for G2-class boards per cmaster.cs:424
@@ -620,6 +689,9 @@ private:
     // per-stream drain-geometry test, which seeds one real RX channel per
     // slice so it can watch setRxChannelRate follow a stream's rate change.
     friend class ::TestStreamPoolBinding;
+    // Phase 3F: same friendship for the channel-id map test, which drives
+    // RadioModel::openRxChannelPool and asserts on the ids it opened.
+    friend class ::TestWdspChannelIdMap;
 #endif
 };
 

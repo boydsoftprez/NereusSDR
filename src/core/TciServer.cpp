@@ -426,13 +426,15 @@ TciServer::TciServer(RadioModel* model, QObject* parent)
         // (TXA_MIC_AV) and console.cs PA-meter loop powerChanged.
         // TxChannel doesn't expose a getMeter() overload like RxChannel
         // does -- callers go through GetTXAMeter directly (see MeterPoller
-        // pattern at MeterPoller.cpp:321-323).  Channel ID 1 == WDSP.id(1,0)
-        // per Thetis dsp.cs:926-944.  Only call when the TX channel exists
-        // to avoid a WDSP nullptr deref against an unallocated stage.
+        // pattern at MeterPoller.cpp:321-323).  WdspEngine::kTxChannelId is
+        // WDSP.id(1,0) per Thetis dsp.cs:926-944.  Only call when the TX
+        // channel exists to avoid a WDSP nullptr deref against an
+        // unallocated stage.
         double micDbm = -140.0;
         if (auto* wdsp = m_model->wdspEngine()) {
-            if (wdsp->txChannel(1) != nullptr) {
-                micDbm = GetTXAMeter(1, static_cast<int>(TxMeterType::MicAvg));
+            if (wdsp->txChannel(WdspEngine::kTxChannelId) != nullptr) {
+                micDbm = GetTXAMeter(WdspEngine::kTxChannelId,
+                                     static_cast<int>(TxMeterType::MicAvg));
             }
         }
         const double fwdWatts  = m_model->radioStatus().forwardPowerWatts();
@@ -2211,13 +2213,13 @@ void TciServer::onBinaryMessageReceived(const QByteArray& data)
     if (m_model && frames > 0) {
         WdspEngine* wdsp = m_model->wdspEngine();
         if (wdsp && wdsp->isInitialized()) {
-            // TX channel uses WDSP channel ID 1 (== WDSP.id(kind=1=TX, instance=0))
-            // per Thetis dsp.cs:926-944 [v2.10.3.13].  Created by
-            // RadioModel::connectToRadio at src/models/RadioModel.cpp:1792-1798
-            // with channelId=1.  Calling txChannel(0) returns nullptr because
-            // ID 0 is the RX channel slot in WdspEngine::m_txChannels (the map
-            // is keyed by raw WDSP channel ID, not by TX-instance index).
-            TxChannel* txCh = wdsp->txChannel(1);
+            // TX channel uses WdspEngine::kTxChannelId (== WDSP.id(kind=1=TX,
+            // instance=0)) per Thetis dsp.cs:926-944 [v2.10.3.15].  Created by
+            // RadioModel::connectToRadio with that same constant.  Calling
+            // txChannel(0) returns nullptr because ID 0 is an RX slice channel
+            // (the map is keyed by raw WDSP channel ID, not by TX-instance
+            // index).
+            TxChannel* txCh = wdsp->txChannel(WdspEngine::kTxChannelId);
             if (txCh) {
                 const QByteArray payloadCopy(
                     reinterpret_cast<const char*>(decoded.data()),
@@ -2318,7 +2320,7 @@ void TciServer::setTciTxGainLinear(float lin)
 {
     if (!m_model) { return; }
     if (auto* wdsp = m_model->wdspEngine()) {
-        if (auto* tx = wdsp->txChannel(1)) {
+        if (auto* tx = wdsp->txChannel(WdspEngine::kTxChannelId)) {
             tx->setTciTxGainLinear(lin);
         }
     }
@@ -2328,7 +2330,7 @@ float TciServer::tciTxPeakAbs() const
 {
     if (!m_model) { return 0.0f; }
     if (auto* wdsp = m_model->wdspEngine()) {
-        if (auto* tx = wdsp->txChannel(1)) {
+        if (auto* tx = wdsp->txChannel(WdspEngine::kTxChannelId)) {
             return tx->tciTxPeakAbs();
         }
     }
@@ -2353,7 +2355,7 @@ void TciServer::stopTxChrono()
     // so this is safe to call from the main thread.
     if (m_model) {
         if (auto* wdsp = m_model->wdspEngine()) {
-            if (auto* txCh = wdsp->txChannel(1)) {
+            if (auto* txCh = wdsp->txChannel(WdspEngine::kTxChannelId)) {
                 txCh->clearTciAudio();
             }
         }

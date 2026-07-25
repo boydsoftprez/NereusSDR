@@ -374,7 +374,7 @@ public:
 
     // Phase 3J-1 closeout Items 11+13 (2026-05-12): forwarders to TxChannel
     // so TciApplet doesn't have to traverse RadioModel -> WdspEngine ->
-    // txChannel(1).  Safe before WDSP init; setter is a no-op, getter
+    // txChannel(kTxChannelId).  Safe before WDSP init; setter is a no-op, getter
     // returns 0 if the TX channel isn't up yet.
     void setTciTxGainLinear(float lin);
     float tciTxPeakAbs() const;

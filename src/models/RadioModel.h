@@ -354,6 +354,25 @@ public:
     /// Size the pool to the connected SKU and clear all bindings.
     void configureStreamPool(int userDdcCount, int maxSlices, int defaultRateHz);
 
+    /// Open the WDSP RX channel pool: one channel per slice the SKU allows.
+    ///
+    /// `poolSize` is BoardCapabilities::maxSlices; values below 1 are treated
+    /// as 1, and anything above WdspEngine::kMaxSliceChannels is CLAMPED, not
+    /// honoured. The clamp is the collision guard: WDSP's channel table is one
+    /// global array (channel.c:29) and OpenChannel overwrites whatever sits at
+    /// the id without closing it, so a pool that ran past kMaxSliceChannels
+    /// would silently take over kTxChannelId and orphan the TXA's thread. A SKU
+    /// that wants a bigger pool has to raise the reserved block, which moves TX
+    /// and PS with it.
+    ///
+    /// Already-open channels are left alone, so this is idempotent and safe to
+    /// re-run on reconnect.
+    ///
+    /// Called from the WdspEngine::initializedChanged lambda in
+    /// connectToRadio(), after Slice A's channel has its state.
+    void openRxChannelPool(int poolSize, int inputBufferSize,
+                           int inputSampleRateHz);
+
     /// Run the allocator for every slice that currently has no stream.
     ///
     /// Connect-time step: Slice A is created before the pool is sized, so its
@@ -1198,7 +1217,7 @@ public:
     // TxChannel pointer so the drive-slider / TUNE rewrite tests can spy on
     // setTxFixedGain() without standing up the full WdspEngine pipeline.
     // Production code never calls this — m_txChannel is wired by the
-    // WDSP-init lambda inside connectToRadio() (see "createTxChannel(1)"
+    // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
     void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
 
@@ -2706,9 +2725,10 @@ private:
     std::array<bool, kTciStubSliceMax> m_tciStubRxCtun{};
     std::array<bool, kTciStubSliceMax> m_tciStubRxEnable{ {true, false, false, false} };
 
-    // Non-owning view of the WDSP TX channel (channel ID = 1 = WDSP.id(1, 0)).
+    // Non-owning view of the WDSP TX channel (WdspEngine::kTxChannelId,
+    // == WDSP.id(1, 0)).
     // WdspEngine owns the channel via m_txChannels. This pointer is valid only
-    // after m_wdspEngine->initializedChanged fires and createTxChannel(1) is
+    // after m_wdspEngine->initializedChanged fires and createTxChannel(kTxChannelId) is
     // called inside the initializedChanged lambda. null before that.
     // Callers must guard: if (m_txChannel) { ... }.
     // Thread safety: read only from the main thread. WDSP TX processing happens
