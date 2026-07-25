@@ -128,8 +128,29 @@ struct CodecContext {
 
     // Alex HPF / LPF bits — recomputed by P1RadioConnection on freq change
     // via AlexFilterMap. Codec only emits them.
+    //
+    // alexHpfBits is the ADC0 / Alex0 chain. Phase 3F: when a slice set is
+    // live it carries AlexController's per-ADC decision for ADC0 rather than
+    // the last-retuned receiver's frequency.
     quint8  alexHpfBits{0};
     quint8  alexLpfBits{0};
+
+    // Alex1 / ADC1 chain HPF bits — Phase 3F.
+    //
+    // Thetis writes two independent Alex words, prbpfilter (Alex0, fed from
+    // setAlex1HPF(_rx1_dds_freq)) and prbpfilter2 (Alex1, fed from
+    // setAlex2HPF(rx2_dds_freq_mhz)).
+    //   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+    //   From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]
+    //   Upstream inline attribution preserved verbatim (console.cs:15441):
+    //     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //
+    // -1 means "no decision": nothing is receiving on ADC1, so buildAlex1
+    // keeps its pre-Phase-3F encoding (Alex0's bits mirrored across with the
+    // bypass bit masked off). Thetis reaches the same place from the other
+    // direction: setAlex2HPF is only called when RX2 exists, so on a radio
+    // with one receiver prbpfilter2's HPF nibble is simply never written.
+    int     alexHpfBitsAdc1{-1};
 
     // P2 run state — prn->run. Set by P2RadioConnection on start/stop.
     bool    p2Running{false};

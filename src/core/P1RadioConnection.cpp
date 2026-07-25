@@ -1193,6 +1193,41 @@ void P1RadioConnection::setAntennaRouting(AntennaRouting r)
 }
 
 // ---------------------------------------------------------------------------
+// setAlexRxBpf — Phase 3F. Per-ADC RX band-pass decision.
+//
+// Reported by CT1IQI on PR #293 (2026-05-31). Protocol 1 carries ONE Alex
+// filter word (bank 10 C3) for the whole radio — there is no per-ADC split on
+// the wire, so the single chain has to satisfy every slice that is receiving.
+// Thetis reaches the same conclusion from the other end: its only
+// multi-receiver filter logic runs precisely on the boards that have one
+// filter board, and widens the single HPF rather than picking one receiver.
+//   From Thetis console.cs:15500-15510 UpdateAlexRXFilter [v2.10.3.15]
+//
+// ADC0's decision is the one that applies: it is the chain every slice sits
+// behind. hpfBitsAdc1 is accepted and ignored, because a P1 board cannot
+// address a second filter chain even when it has a second ADC.
+//
+// The prior behaviour was not last-tune-wins on P1 (setReceiverFrequency
+// gates on receiverIndex == 0, matching Thetis's setAlex1HPF(_rx1_dds_freq)),
+// but it has the same defect: a slice on receiver 1 in another band was
+// filtered out by receiver 0's HPF with nothing anywhere saying so.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setAlexRxBpf(AlexRxBpf b)
+{
+    m_alexRxHpfOverride = b.hpfBitsAdc0;
+    // Same as setAntennaRouting: the next EP2 frame picks this up through
+    // buildCodecContext() → P1Codec::bank10.
+}
+
+// The effective bank-10 C3 HPF bits: AlexController's decision for the chain
+// when there is one, otherwise the RX0-frequency-derived value.
+quint8 P1RadioConnection::effectiveAlexHpfBits() const
+{
+    return m_alexRxHpfOverride >= 0 ? static_cast<quint8>(m_alexRxHpfOverride)
+                                    : m_alexHpfBits;
+}
+
+// ---------------------------------------------------------------------------
 // setWatchdogEnabled — 3M-1a Task E.5
 //
 // Records the requested watchdog enable state in the base-class
@@ -2168,7 +2203,10 @@ CodecContext P1RadioConnection::buildCodecContext() const
     }
     ctx.adcCtrl        = m_adcCtrl;
     ctx.p1AdcCntrl     = m_p1AdcCntrl;
-    ctx.alexHpfBits    = m_alexHpfBits;
+    // Phase 3F: the RX band-pass follows AlexController's decision over every
+    // slice on the chain when one exists (see setAlexRxBpf), else the
+    // RX0-frequency-derived value. LPF is untouched — it is TX-only.
+    ctx.alexHpfBits    = effectiveAlexHpfBits();
     ctx.alexLpfBits    = m_alexLpfBits;
     ctx.txFreqHz       = m_txFreqHz;
     for (int i = 0; i < 7; ++i) { ctx.rxFreqHz[i]   = m_rxFreqHz[i]; }
@@ -3158,7 +3196,7 @@ void P1RadioConnection::composeCcForBankLegacy(int bankIdx, quint8 out[5]) const
         // From Thetis ChannelMaster/networkproto1.c:581 [v2.10.3.13]
         //   C2 = ((prn->mic.mic_boost & 1) | ((prn->mic.line_in & 1) << 1) | ... | 0b01000000) & 0x7f;
         out[2] = static_cast<quint8>((m_micBoost ? 0x01 : 0x00) | (m_lineIn ? 0x02 : 0x00) | 0x40); // 3M-1b G.1+G.2
-        out[3] = m_alexHpfBits | (m_trxRelay ? 0x00 : 0x80); // 3M-1a E.4
+        out[3] = effectiveAlexHpfBits() | (m_trxRelay ? 0x00 : 0x80); // 3M-1a E.4
         out[4] = m_alexLpfBits;
         return;
 

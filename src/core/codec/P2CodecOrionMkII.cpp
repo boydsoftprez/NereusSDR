@@ -561,7 +561,22 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
     // pcap confirms: Thetis Alex1=0x01440100 (bit 12 CLEAR) while we
     // emitted 0x09241020 (bit 12 SET).  Mask off the bypass bit from
     // Alex1's HPF input before encoding.
-    const quint8 hpfBitsAlex1 = static_cast<quint8>(ctx.alexHpfBits & ~0x20u);
+    //
+    // Phase 3F: that mirror is the FALLBACK, used only when nothing is
+    // receiving on ADC1. When a slice set is live on ADC1, AlexController has
+    // an answer for that chain and it is the authoritative one — Alex1's HPF
+    // is a chain of its own, not a copy of Alex0's. Thetis feeds it from a
+    // separate source entirely (setAlex2HPF(rx2_dds_freq_mhz) →
+    // SetAlex2HPFBits → prbpfilter2, console.cs:15435-15442 [v2.10.3.15]),
+    // and in that case bit 12 IS Alex1's own bypass.
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //   From Thetis ChannelMaster/netInterface.c:634-651 [v2.10.3.15]
+    //     prbpfilter2->_Bypass = (bits & 0x20) != 0;
+    const bool haveAdc1Decision = (ctx.alexHpfBitsAdc1 >= 0);
+    const quint8 hpfBitsAlex1 =
+        haveAdc1Decision ? static_cast<quint8>(ctx.alexHpfBitsAdc1)
+                         : static_cast<quint8>(ctx.alexHpfBits & ~0x20u);
 
     // Same HPF bits [@501e3f5]
     if (hpfBitsAlex1 & 0x01) { reg |= (1u << 1);  }
@@ -569,7 +584,9 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
     if (hpfBitsAlex1 & 0x04) { reg |= (1u << 4);  }
     if (hpfBitsAlex1 & 0x08) { reg |= (1u << 5);  }
     if (hpfBitsAlex1 & 0x10) { reg |= (1u << 6);  }
-    // bit 12 (Bypass) deliberately omitted from Alex1 — see comment above.
+    // bit 12 (Bypass): never mirrored from Alex0 (see above), but emitted when
+    // ADC1's own decision is bypass.
+    if (haveAdc1Decision && (hpfBitsAlex1 & 0x20)) { reg |= (1u << 12); }
     if (hpfBitsAlex1 & 0x40) { reg |= (1u << 3);  }
 
     return reg;

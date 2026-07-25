@@ -243,6 +243,7 @@ public slots:
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
+    void setAlexRxBpf(AlexRxBpf bpf) override;
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
@@ -712,6 +713,14 @@ private:
         int hpfBits{0x20};  // HPF filter bits (default: bypass = 0x20)
         int lpfBits{0x10};  // LPF filter bits (default: 6m LPF = 0x10)
 
+        // Phase 3F: per-ADC RX band-pass decision from AlexController, which
+        // reviews every slice band on a chain instead of taking whichever
+        // receiver was retuned last. -1 = no slice on that ADC, fall back to
+        // the frequency-derived hpfBits above. See AlexRxBpf in
+        // RadioConnection.h for the full rationale and Thetis cites.
+        int rxHpfBitsAdc0{-1};
+        int rxHpfBitsAdc1{-1};
+
         // RX-only antenna mux — from Thetis ChannelMaster/network.h:279-281
         // [v2.10.3.13 @501e3f5]. Alex0 bits 8-10:
         //   0 = no RX-only path, 1 = _Rx_1_In (bit 10), 2 = _Rx_2_In (bit 9),
@@ -728,6 +737,10 @@ private:
     // Build Alex0 and Alex1 32-bit register values from current state.
     quint32 buildAlex0() const;
     quint32 buildAlex1() const;
+
+    // ADC0's effective RX HPF bits — AlexController's per-ADC decision when
+    // one exists, else the frequency-derived m_alex.hpfBits. Phase 3F.
+    quint8 effectiveRxHpfBitsAdc0() const;
 
     // --- DDC→ADC mapping register (from Thetis network.c rx_adc_ctrl1) ---
     quint32 m_rxAdcCtrl1{0};

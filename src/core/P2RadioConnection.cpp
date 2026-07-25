@@ -944,6 +944,53 @@ void P2RadioConnection::setAntennaRouting(AntennaRouting r)
 }
 
 // ---------------------------------------------------------------------------
+// setAlexRxBpf — Phase 3F. Per-ADC RX band-pass decision.
+//
+// Reported by CT1IQI on PR #293 (2026-05-31): a 2-ADC radio has two input
+// filter chains, and the filter for each has to be chosen over the set of
+// frequencies its ADC actually serves, not over one receiver's.
+//
+// Thetis solves this with two independent wire words. Alex0 (`prbpfilter`,
+// bytes 1432-1435) carries ADC0's RX filter and is fed from
+// setAlex1HPF(_rx1_dds_freq); Alex1 (`prbpfilter2`, bytes 1428-1431) carries
+// ADC1's and is fed from setAlex2HPF(rx2_dds_freq_mhz).
+//   From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//   From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
+//   From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]
+//   Upstream inline attribution preserved verbatim (console.cs:15441):
+//     HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+//
+// setReceiverFrequency still recomputes the frequency-derived m_alex.hpfBits
+// (it is the only source before any slice binds, and it is what an ADC with
+// no decision falls back to), but once AlexController has an answer for a
+// chain, that answer wins.
+// ---------------------------------------------------------------------------
+void P2RadioConnection::setAlexRxBpf(AlexRxBpf b)
+{
+    if (m_alex.rxHpfBitsAdc0 == b.hpfBitsAdc0
+        && m_alex.rxHpfBitsAdc1 == b.hpfBitsAdc1) {
+        return;
+    }
+    m_alex.rxHpfBitsAdc0 = b.hpfBitsAdc0;
+    m_alex.rxHpfBitsAdc1 = b.hpfBitsAdc1;
+
+    qCDebug(lcConnection) << "P2::setAlexRxBpf adc0=" << m_alex.rxHpfBitsAdc0
+                          << "adc1=" << m_alex.rxHpfBitsAdc1
+                          << "running=" << m_running;
+    if (m_running) {
+        sendCmdHighPriority();
+    }
+}
+
+// ADC0's effective RX HPF bits: AlexController's per-ADC decision when there
+// is one, otherwise the frequency-derived value setReceiverFrequency keeps.
+quint8 P2RadioConnection::effectiveRxHpfBitsAdc0() const
+{
+    return static_cast<quint8>(m_alex.rxHpfBitsAdc0 >= 0 ? m_alex.rxHpfBitsAdc0
+                                                         : m_alex.hpfBits);
+}
+
+// ---------------------------------------------------------------------------
 // setWatchdogEnabled — Phase 3M-0 Task 5
 //
 // Records the requested watchdog enable state in the base-class
@@ -2268,9 +2315,22 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // never actually reaches the receiver). Issue #257.
     ctx.mkiiBpf = m_hardwareProfile.mkiiBpf;
 
-    // Alex HPF / LPF bits (recomputed by setReceiverFrequency on freq change)
-    ctx.alexHpfBits = static_cast<quint8>(m_alex.hpfBits);
-    ctx.alexLpfBits = static_cast<quint8>(m_alex.lpfBits);
+    // Alex HPF / LPF bits.
+    //
+    // HPF: Phase 3F routes ADC0's chain through AlexController's per-ADC
+    // decision (see setAlexRxBpf); it falls back to the frequency-derived
+    // value setReceiverFrequency maintains when no slice is bound yet.
+    // ADC1's decision travels separately so buildAlex1 can write its own
+    // chain rather than mirroring Alex0 — Thetis feeds the two words from
+    // two different receivers (console.cs:15401 + 15435-15443 [v2.10.3.15]).
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //
+    // LPF: unchanged. It is TX-only and follows the transmit frequency, so
+    // the RX band-pass decision must never touch it.
+    ctx.alexHpfBits     = effectiveRxHpfBitsAdc0();
+    ctx.alexHpfBitsAdc1 = m_alex.rxHpfBitsAdc1;
+    ctx.alexLpfBits     = static_cast<quint8>(m_alex.lpfBits);
 
     // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): HPF Bypass during MOX+PS.
     // From Thetis console.cs:6957 setBPF1ForOrionIISaturn [v2.10.3.13]:
@@ -3090,13 +3150,15 @@ quint32 P2RadioConnection::buildAlex0() const
 
     // HPF bits — from Thetis netInterface.c:605-621
     // Bits map: 13MHz[1], 20MHz[2], 6M_preamp[3], 9.5MHz[4], 6.5MHz[5], 1.5MHz[6]
-    if (m_alex.hpfBits & 0x01) { reg |= (1 << 1); }   // 13 MHz
-    if (m_alex.hpfBits & 0x02) { reg |= (1 << 2); }   // 20 MHz
-    if (m_alex.hpfBits & 0x04) { reg |= (1 << 4); }   // 9.5 MHz
-    if (m_alex.hpfBits & 0x08) { reg |= (1 << 5); }   // 6.5 MHz
-    if (m_alex.hpfBits & 0x10) { reg |= (1 << 6); }   // 1.5 MHz
-    if (m_alex.hpfBits & 0x20) { reg |= (1 << 12); }  // Bypass
-    if (m_alex.hpfBits & 0x40) { reg |= (1 << 3); }   // 6M preamp
+    // Phase 3F: ADC0's chain, per AlexController's decision when there is one.
+    const quint8 hpf0 = effectiveRxHpfBitsAdc0();
+    if (hpf0 & 0x01) { reg |= (1 << 1); }   // 13 MHz
+    if (hpf0 & 0x02) { reg |= (1 << 2); }   // 20 MHz
+    if (hpf0 & 0x04) { reg |= (1 << 4); }   // 9.5 MHz
+    if (hpf0 & 0x08) { reg |= (1 << 5); }   // 6.5 MHz
+    if (hpf0 & 0x10) { reg |= (1 << 6); }   // 1.5 MHz
+    if (hpf0 & 0x20) { reg |= (1 << 12); }  // Bypass
+    if (hpf0 & 0x40) { reg |= (1 << 3); }   // 6M preamp
 
     return reg;
 }
@@ -3127,14 +3189,22 @@ quint32 P2RadioConnection::buildAlex1() const
     if (m_alex.lpfBits & 0x20) { reg |= (1 << 30); }
     if (m_alex.lpfBits & 0x40) { reg |= (1 << 31); }
 
-    // Same HPF bits
-    if (m_alex.hpfBits & 0x01) { reg |= (1 << 1); }
-    if (m_alex.hpfBits & 0x02) { reg |= (1 << 2); }
-    if (m_alex.hpfBits & 0x04) { reg |= (1 << 4); }
-    if (m_alex.hpfBits & 0x08) { reg |= (1 << 5); }
-    if (m_alex.hpfBits & 0x10) { reg |= (1 << 6); }
-    if (m_alex.hpfBits & 0x20) { reg |= (1 << 12); }
-    if (m_alex.hpfBits & 0x40) { reg |= (1 << 3); }
+    // HPF bits. Phase 3F: Alex1 is ADC1's own chain, so it takes ADC1's
+    // decision when one exists (Thetis feeds it from setAlex2HPF, a separate
+    // source from Alex0's setAlex1HPF — console.cs:15401 + 15435-15443 [v2.10.3.15]).
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    // With nothing on ADC1 this keeps the pre-Phase-3F mirror of Alex0.
+    const quint8 hpf1 = static_cast<quint8>(
+        m_alex.rxHpfBitsAdc1 >= 0 ? m_alex.rxHpfBitsAdc1
+                                  : effectiveRxHpfBitsAdc0());
+    if (hpf1 & 0x01) { reg |= (1 << 1); }
+    if (hpf1 & 0x02) { reg |= (1 << 2); }
+    if (hpf1 & 0x04) { reg |= (1 << 4); }
+    if (hpf1 & 0x08) { reg |= (1 << 5); }
+    if (hpf1 & 0x10) { reg |= (1 << 6); }
+    if (hpf1 & 0x20) { reg |= (1 << 12); }
+    if (hpf1 & 0x40) { reg |= (1 << 3); }
 
     return reg;
 }

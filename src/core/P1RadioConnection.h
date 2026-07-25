@@ -223,6 +223,7 @@ public slots:
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
     void setAntennaRouting(AntennaRouting routing) override;
+    void setAlexRxBpf(AlexRxBpf bpf) override;
     void setWatchdogEnabled(bool enabled) override;
     void sendTxIq(const float* iq, int n) override;
     void setTrxRelay(bool enabled) override;
@@ -581,6 +582,13 @@ private:
     // Alex filter state — computed from frequency
     quint8  m_alexHpfBits{0};     // Bank 10 C3: HPF select bits
     quint8  m_alexLpfBits{0};     // Bank 10 C4: LPF select bits
+
+    // Phase 3F: AlexController's decision for the single P1 filter chain.
+    // -1 = no decision yet, use the RX0-frequency-derived m_alexHpfBits.
+    int     m_alexRxHpfOverride{-1};
+
+    // Effective bank-10 C3 HPF bits (override when set, else m_alexHpfBits).
+    quint8  effectiveAlexHpfBits() const;
 
     // ── TX I/Q ring buffer (3M-1a E.2) ───────────────────────────────────────
     // Pre-allocated to hold kTxIqBufSamples×8 bytes.  Each slot is one
