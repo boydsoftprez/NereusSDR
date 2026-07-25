@@ -634,6 +634,14 @@ nereus_add_test(tst_rx_dsp_worker_thread)
 # other rate after PR #44 changed the default to 192 kHz.
 nereus_add_test(tst_rx_dsp_worker_buffer_sizing)
 
+# Phase 3F Sub-Epic I Task 4: RxDspWorker per-stream accumulation and
+# per-slice fan-out.  processIqBatch used to accept a receiverIndex and
+# ignore it, so a second DDC's samples landed in Slice A's accumulator and
+# corrupted its audio.  Pins: streams accumulate independently, each drains
+# at its own threshold, every slice bound to a stream is offered the drained
+# chunk, and an unbound stream processes nothing.
+nereus_add_test(tst_rx_dsp_worker_multi_slice)
+
 # ── Phase 3G-10 VFO DSP parity + AetherSDR flag port ─────────────────────
 nereus_add_test(tst_vfo_level_bar)
 nereus_add_test(tst_scrollable_label)

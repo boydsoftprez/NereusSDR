@@ -67,6 +67,7 @@
 
 #include <atomic>
 #include <memory>
+#include <unordered_map>
 
 #include <QObject>
 #include <QVector>
@@ -159,7 +160,22 @@ public slots:
     // Drop any partial accumulator state. Called from RadioModel
     // teardown via Qt::BlockingQueuedConnection so it executes on
     // the worker thread before the WDSP channel is destroyed.
+    //
+    // Phase 3F Sub-Epic I Task 4: clears every stream's partial I/Q.
+    // Slice bindings (m_streamSlices) deliberately survive: both live
+    // callers (RadioModel::setSampleRateLive / setActiveRxCountLive) are
+    // mid-flight reconfigures that resume feeding the same slices, and
+    // dropping the bindings here would silence every slice until
+    // something republished them.
     void resetAccumulator();
+
+    /// Declare which slice indices are bound to a DDC stream. Called from
+    /// the main thread on every slice bind / unbind / migration; queued,
+    /// so the map is only ever touched on the DSP thread.
+    ///
+    /// Phase 3F Sub-Epic I Task 4. A stream with no declared slices
+    /// accumulates and drains but demodulates nothing.
+    void setStreamSlices(int streamIndex, const QVector<int>& sliceIndices);
 
     // Phase 3R K-bench: set the active RadeChannel for I/Q routing.
     // When non-null AND WDSP rxChannel(0) returns null (slice is in
@@ -200,6 +216,16 @@ signals:
     // does not need to listen to this — it exists for the regression
     // test that pins the per-rate accumulator-drain contract.
     void chunkDrained(int sampleCount);
+
+    // Phase 3F Sub-Epic I Task 4: per-stream companion to chunkDrained,
+    // carrying the originating DDC stream. chunkDrained is kept unchanged
+    // for existing single-slice subscribers.
+    void chunkDrainedForStream(int streamIndex, int samples);
+
+    // Phase 3F Sub-Epic I Task 4: emitted once per slice per drained
+    // chunk, after that slice's WDSP channel has run. Test seam for the
+    // fan-out; fires even without engines wired, mirroring chunkDrained.
+    void sliceProcessed(int sliceIndex, int samples);
 
     // Phase 3M-3a-iv: fires whenever setBufferSizes() actually changes
     // the (inSize, outSize) pair. Consumed by
@@ -264,12 +290,52 @@ private:
     // (also on the DSP thread, before the thread exits).  See
     // src/core/audio/RealtimeAudioPriority.h.
     AudioPriorityToken* m_audioPrioToken{nullptr};
-    QVector<float>   m_iqAccumI;
-    QVector<float>   m_iqAccumQ;
+
+    // ── Phase 3F Sub-Epic I Task 4: per-stream accumulation ─────────────
+    //
+    // Before this, one shared accumulator pair served every caller and
+    // processIqBatch's receiverIndex argument was ignored, so a second
+    // DDC's samples were appended into Slice A's stream and corrupted its
+    // audio.
+    //
+    // Keyed by DDC stream index. Each stream's drained chunk is then fed
+    // to every slice bound to that stream, mirroring ChannelMaster's
+    // `struct _rcvr` which holds one I/Q input and one noise blanker but
+    // `double* audio[cmMAXSubRcvr]` outputs (cmaster.h:74-82
+    // [v2.10.3.15]).
+    //
+    // Touched only on the DSP thread, so no lock is needed. m_streamSlices
+    // is written via a queued setStreamSlices call, which lands on the DSP
+    // thread's event loop, so it is also DSP-thread-only at point of use.
+    struct StreamAccum {
+        QVector<float> i;
+        QVector<float> q;
+    };
+    std::unordered_map<int, StreamAccum>  m_accums;
+    std::unordered_map<int, QVector<int>> m_streamSlices;
+
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
     // Sized to outSize*2 on first use and reused in-place per batch so the
     // DSP thread never allocates in the hot path after warmup.
+    //
+    // Phase 3F Sub-Epic I Task 4: m_interleavedOut is reserved for SLICE 0.
+    // It doubles as the anti-VOX cancellation reference read after the
+    // drain, so secondary slices must not clobber it; they interleave
+    // through m_interleavedOutAux instead. AudioEngine::rxBlockReady
+    // consumes the pointer synchronously (AudioEngine.cpp:928), so one
+    // shared scratch per role is safe.
     QVector<float>   m_interleavedOut;
+    QVector<float>   m_interleavedOutAux;
+
+    // Phase 3F Sub-Epic I Task 4: reusable WDSP output scratch. Previously
+    // two QVectors were constructed per drained chunk; with N slices per
+    // chunk that would be 2N allocations on the audio path. Grown to
+    // max(inSize, outSize) on demand and reused. RxChannel::processIq
+    // writes sampleCount floats on the inactive-channel memset path
+    // (RxChannel.cpp:1532) and outSampleCount via fexchange2, so the
+    // buffer must cover the larger of the two.
+    QVector<float>   m_sliceOutI;
+    QVector<float>   m_sliceOutQ;
     // Written by setBufferSizes() (typically on the main thread when the
     // wire rate changes) and read by processIqBatch() on the DSP thread.
     // std::atomic<int> prevents the C++ data race that plain int reads
