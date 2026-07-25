@@ -2523,6 +2523,69 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
+## Discovered during implementation
+
+Things the plan got wrong or did not anticipate, found by implementers reading
+source. Recorded here so the retrospective and the final review have the
+honest record.
+
+1. **`fexchange2` does not always write its output buffers.** Its whole body
+   sits inside `if (_InterlockedAnd(&ch[channel].exchange, 1))` while `*error`
+   is set to 0 beforehand (`third_party/wdsp/src/iobuffs.c:519`). On flush and
+   restart transitions it returns leaving both output legs untouched. The
+   per-drain `QVector<float> outI(inSize)` the old code allocated was silently
+   zero-filling and hiding this. Task 4 hoisted those buffers for the per-slice
+   loop (2 allocations per chunk would have become 2N) and had to add an
+   explicit zero-fill to keep the behaviour, which is still cheaper than the
+   allocation it replaced.
+
+2. **The noise blanker aliases co-hosted slices.** `RxChannel::processIq` runs
+   `xanbEXTF` / `xnobEXTF` in place on the caller's input legs, so once slices
+   share a chunk one slice's blanker corrupts what every later slice sees.
+   Promoted to Task 4b. Upstream settles it: one `ANB` and one `NOB` per
+   `_rcvr` alongside `audio[cmMAXSubRcvr]` (`cmaster.h:79-81 [v2.10.3.15]`).
+
+3. **`retuneSlice` branch order was wrong in the Task 2 spec.** The plan
+   checked the window before the sole-occupant branch, which left a lone slice
+   parked at a stale stream centre and made the next slice to join compute its
+   shift against the wrong reference. Corrected during Task 6 to check the
+   permission first. That also changed the flag's meaning from an observation
+   into a permission, so it was renamed `isSoleOccupant` to `mayRetuneStream`
+   (commit `7318ae3a`). **The Task 2 code listing above is therefore stale on
+   this one point; the landed code is authoritative.**
+
+4. **Non-CTUN means the DDC follows the VFO.** The retired `wireSliceSignals`
+   push called `setReceiverFrequency` on every slice frequency change, so a
+   lone slice re-centres its DDC. CTUN is the case where the DDC is pinned and
+   the VFO moves inside the window. `RadioModel` withholds `mayRetuneStream`
+   when `ReceiverManager::ddcFrequencyLocked` is set, which is exactly the CTUN
+   flag. **Task 8 must confirm this gate is sufficient** once
+   `streamCentreChanged` drives `SpectrumWidget::setDdcCenterFrequency`, or a
+   lone slice will drag its own panadapter centre on every wheel tick while the
+   display centre stays put, breaking `visibleBinRange`'s bin mapping.
+
+5. **The WDSP `initializedChanged` lambda does not re-run on reconnect.**
+   `WdspEngine::initialize` early-returns without re-emitting when already
+   initialized. So the stream pool and the ReceiverManager receivers are
+   configured in `connectToRadio` proper; only the WDSP channel pool, which
+   genuinely needs the engine up, stays in the lambda. Both size off
+   `BoardCapabilities` directly rather than `maxSlices()`, which returns 1
+   until `isConnected()` is true.
+
+6. **`slicesOnStream` returns `sliceIndex()`, not list position.**
+   `removeSlice` never renumbers survivors (`setSliceIndex` is only called at
+   creation), so positions would address the wrong WDSP channels after a
+   middle removal. The invariant is WDSP channel id == slice index.
+
+7. **Binding signals fire before `sliceAdded`.** `bindSliceToStream` emits
+   `streamBindingsChanged` and `streamCentreChanged` before `addSlice` emits
+   `sliceAdded`, so a consumer can observe a binding for a slice it has not
+   been told about. `m_slices` is already consistent at that point, so a
+   rebuild-from-model consumer is safe; an incremental one would not be. This
+   is why Task 9 rebuilds the FFT topology wholesale instead of editing it.
+
+---
+
 ## Deferred, with reasons
 
 - **Per-stream DSP threads.** Every stream shares one `RxDspWorker` on one DSP thread, and all FFT engines share one FFT thread. Thetis runs a DSP thread per receiver. With N slices per stream the per-drain work is now N `processIq` calls, so this is the most likely place a 5-slice 1536 kHz G2 bench pushes back. Splitting is thread architecture and needs maintainer sign-off per CLAUDE.md.
