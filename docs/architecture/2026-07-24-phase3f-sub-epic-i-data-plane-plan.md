@@ -1880,6 +1880,184 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
+## Task 7b: Index the codec by stream, and route the DDC back to ReceiverManager
+
+**Found while reviewing Task 7. This blocks the whole feature: without it a
+second stream receives no I/Q at all, so the second pan cannot animate and a
+second slice cannot produce audio no matter what Tasks 8 and 9 do.**
+
+Two coupled defects.
+
+### Defect 1: the hardware DDC is never routed to the logical receiver
+
+`ReceiverManager::setDdcMapping` has exactly one caller, `RadioModel.cpp:4118`,
+which sets the primary DDC for receiver 0. Every other receiver keeps
+`ddcIndex = -1`, so `rebuildHardwareMapping` takes its fallback branch:
+
+```cpp
+        int hwIdx = (it->ddcIndex >= 0) ? it->ddcIndex : nextAutoHw++;
+        it->hardwareRx = hwIdx;
+        m_hwToLogical.insert(hwIdx, it->receiverIndex);
+```
+
+On a G2, receiver 0 has an explicit `ddcIndex = 2` and never touches
+`nextAutoHw`, so receiver 1 gets `hwIdx = 0`. DDC0 is reserved for the
+PureSignal / diversity sync pair and the codec never enables it for a user
+slice. The codec meanwhile enables DDC3. Packets arrive on DDC3,
+`feedIqData` finds no entry in `m_hwToLogical`, and drops them.
+
+### Defect 2: the codec is indexed by slice, but a DDC belongs to a stream
+
+`buildSliceConfigsForCodec` builds `configs[i]` from `m_slices.at(i)`, and each
+codec maps entry `i` to `kSliceToDdc[i]`. That was correct when one slice meant
+one DDC. It is wrong now: two slices co-hosted on stream 0 would be assigned
+DDC2 and DDC3, contradicting the sharing model they were just bound under.
+
+The codec's 5-element array is really "what does each DDC need to receive". It
+must be indexed by **stream**, not slice.
+
+**Files:**
+- Modify: `src/core/DdcAssignment.h` (rename `sliceDdc` to `streamDdc`)
+- Modify: `src/core/codec/*.cpp` (rename at each assignment site)
+- Modify: `src/models/RadioModel.h` / `.cpp` (`buildSliceConfigsForCodec` becomes stream-indexed; publish mapping to ReceiverManager)
+- Test: `tests/tst_stream_pool_binding.cpp` (extend)
+
+- [ ] **Step 1: Write the failing test**
+
+```cpp
+    void co_hosted_slices_share_one_ddc()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14225000.0);
+
+        // Both slices are on stream 0, so both must report the SAME DDC.
+        // Indexing the codec by slice would hand them DDC2 and DDC3.
+        QCOMPARE(model.slices().at(a)->streamIndex(),
+                 model.slices().at(b)->streamIndex());
+        QCOMPARE(model.slices().at(a)->ddcIndex(),
+                 model.slices().at(b)->ddcIndex());
+    }
+
+    void each_active_stream_routes_its_ddc_to_its_receiver()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+
+        // Two streams, two distinct DDCs, and each stream's logical receiver
+        // must carry the DDC the codec chose or its packets get dropped by
+        // ReceiverManager::feedIqData.
+        const int ddcA = model.slices().at(a)->ddcIndex();
+        const int ddcB = model.slices().at(b)->ddcIndex();
+        QVERIFY(ddcA >= 0);
+        QVERIFY(ddcB >= 0);
+        QVERIFY(ddcA != ddcB);
+        QCOMPARE(model.ddcForStream(0), ddcA);
+        QCOMPARE(model.ddcForStream(1), ddcB);
+    }
+```
+
+These require a connected codec to run for real. If `invokeCodecDdcAssignment`
+no-ops while disconnected (it early-returns on `!isConnected()`), the test
+needs a seam. Prefer exposing a testable pure step over faking a connection:
+split the mapping computation out of `invokeCodecDdcAssignment` into something
+callable without a live connection, and assert on that. Decide and explain.
+
+- [ ] **Step 2: Run it, confirm FAIL**
+
+- [ ] **Step 3: Rename `sliceDdc` to `streamDdc`**
+
+It was added in Task 7 one commit ago and is indexed by the codec's input array
+position, which this task redefines as the stream index. Rename in
+`DdcAssignment.h` and at every codec assignment site so the name stops lying:
+
+```cpp
+    // Phase 3F Sub-Epic I Task 7b: per-STREAM DDC choice. Index = DDC stream
+    // index, value = DDC number, -1 when that stream is idle. A stream is one
+    // DDC, and several slices may share it, so this is emphatically not
+    // per-slice: co-hosted slices all resolve to the same entry.
+    int streamDdc[5] = {-1, -1, -1, -1, -1};
+```
+
+- [ ] **Step 4: Build the codec input per stream**
+
+Rename `buildSliceConfigsForCodec` to `buildStreamConfigsForCodec` and index it
+by stream. For each stream index `st` in `0 .. streamPoolSize()-1`:
+
+- `live` = the allocator reports the stream active
+- `frequencyHz` = `m_streamAllocator.streamCentreHz(st)` (the DDC's centre, NOT any individual slice's frequency, because the DDC tunes to the window centre and slices sit at shift offsets inside it)
+- `bandIndex` = `bandFromFrequency(streamCentreHz)`
+- `sampleRateHz` = `m_streamAllocator.streamSampleRateHz(st)`
+- `txBound` = true when ANY slice on that stream is the TX slice
+- `diversityRequested` = from the stream's slices
+- `antennaIndex` = from the first slice on the stream (they share a chain, so they share an antenna)
+
+Use `slicesOnStream(st)` to find the members. Keep the existing antenna string
+to index mapping exactly as it is.
+
+- [ ] **Step 5: Publish the mapping to ReceiverManager and to the slices**
+
+In `invokeCodecDdcAssignment`, after the codec runs:
+
+```cpp
+            // Phase 3F Sub-Epic I Task 7b: route each stream's hardware DDC to
+            // its logical receiver. Without this, ReceiverManager's fallback
+            // auto-assign hands stream 1 whatever nextAutoHw reaches (DDC0 on
+            // a G2, which is reserved for the PureSignal / diversity pair)
+            // while the codec enables DDC3, so every packet for that stream is
+            // dropped in feedIqData for want of an m_hwToLogical entry.
+            for (int st = 0; st < m_streamAllocator.streamCount() && st < 5; ++st) {
+                const int ddc = assignment.streamDdc[st];
+                if (ddc >= 0 && m_receiverManager) {
+                    m_receiverManager->setDdcMapping(st, ddc);
+                }
+            }
+
+            // Each slice reports the DDC of the stream hosting it, so
+            // co-hosted slices agree.
+            for (SliceModel* s : m_slices) {
+                if (!s) { continue; }
+                const int st = s->streamIndex();
+                s->setDdcIndex((st >= 0 && st < 5) ? assignment.streamDdc[st] : -1);
+            }
+```
+
+Add a public accessor for the test:
+
+```cpp
+    /// Hardware DDC currently routed to `streamIndex`, or -1 when idle.
+    int ddcForStream(int streamIndex) const;
+```
+
+Confirm by reading `ReceiverManager::setDdcMapping` that it triggers a
+`rebuildHardwareMapping`, so `m_hwToLogical` actually updates. If it does not,
+say so and call whatever does.
+
+- [ ] **Step 6: Verify**
+
+```bash
+ctest --test-dir build -R "tst_stream_pool_binding|tst_codec_5_slice_assignment|tst_codec_ps_ddc_config|tst_receiver_manager|tst_radio_model_slice" --output-on-failure
+```
+
+The Task 7 test `saturn_publishes_per_slice_ddc_mapping` asserts per-slice
+semantics that this task deliberately changes. Rewrite it to assert per-stream
+semantics and rename it accordingly. That is a legitimate correction of a test
+written against the wrong model, not weakening it: say so explicitly in the
+commit message.
+
+- [ ] **Step 7: Commit** (GPG-signed)
+
+---
+
 ## Task 8: One FFTEngine per stream
 
 **Files:**
@@ -2605,6 +2783,7 @@ honest record.
 | 3 | `SliceModel::streamIndex` + `shiftOffsetHz` |
 | 4 | `RxDspWorker` per-stream accumulate, per-slice fan-out (corruption guard) |
 | 4b | Noise blanker runs once per stream, not once per slice (found during Task 4) |
+| 7b | Codec indexed by stream; DDC routed back to ReceiverManager (blocks 8+9) |
 | 5 | Stream pool + WDSP channel pool pre-allocated at connect |
 | 6 | Slices bound through the allocator; shift offsets pushed to WDSP |
 | 7 | Codec DDC assignment finally called; `ddcIndex` published |
