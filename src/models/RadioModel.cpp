@@ -1948,6 +1948,16 @@ RadioModel::RadioModel(QObject* parent)
             m_radioStatus.setExciterPowerMw(0);
             m_radioStatus.setPaCurrent(0.0);
         });
+
+        // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────
+        //
+        // MOX is a codec input (CodecContext::mox) but nothing recomputed
+        // the assignment when it moved, so on a PureSignal key-down the
+        // radio stopped streaming the extra DDCs while every slice went on
+        // reporting the ddcIndex it had before the key. Both edges, because
+        // un-keying is what restores them.
+        connect(m_moxController, &MoxController::moxStateChanged, this,
+                [this](bool) { refreshDdcAssignmentForRadioState(); });
     }
 
     // ── Phase 3F Sub-Epic C Task 6: TxSliceArbiter per-MAC scope wiring ───
@@ -4964,6 +4974,27 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // seams in this lambda.
             connect(m_pureSignal.get(), &PureSignal::psEnabledChanged,
                     m_receiverManager, &ReceiverManager::setPureSignalEnabled,
+                    Qt::UniqueConnection);
+
+            // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────
+            //
+            // PureSignal is a codec input (CodecContext::puresignalRun) but
+            // nothing recomputed the stream assignment when it moved, so a
+            // slice kept reporting a DDC the radio had already reclaimed.
+            //
+            // Both signals, deliberately. computeDdcAssignment reads
+            // isAutoCalEnabled() for puresignalRun, so autoCalEnabledChanged
+            // is the edge that actually changes the codec's answer;
+            // psEnabledChanged is the radio/DDC fan-out the wire side uses
+            // (Codex Fix C above). Subscribing to both means the model
+            // refreshes whichever flag the current path moves. The refresh is
+            // client-side only and its emit is change-gated, so the duplicate
+            // when they move together costs nothing.
+            connect(m_pureSignal.get(), &PureSignal::autoCalEnabledChanged,
+                    this, [this](bool) { refreshDdcAssignmentForRadioState(); },
+                    Qt::UniqueConnection);
+            connect(m_pureSignal.get(), &PureSignal::psEnabledChanged,
+                    this, [this](bool) { refreshDdcAssignmentForRadioState(); },
                     Qt::UniqueConnection);
 
             // Push the PS run flag through to the radio connection so
@@ -11391,13 +11422,28 @@ RadioModel::buildStreamConfigsForCodec() const
     return configs;
 }
 
-NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
+NereusSDR::CodecContext RadioModel::currentCodecContext() const
 {
-    // NereusSDR-original glue. No Thetis equivalent at this abstraction layer.
+    // Phase 3F Sub-Epic I closeout, defect F3: single read of the radio-state
+    // inputs, so computeDdcAssignment and describeSuspendedStreams cannot
+    // disagree about whether PureSignal is transmitting.
     NereusSDR::CodecContext ctx{};
+    if (m_ddcCtxForTest) {
+        ctx.mox           = m_ddcCtxMoxForTest;
+        ctx.puresignalRun = m_ddcCtxPsForTest;
+        ctx.diversity     = m_ddcCtxDivForTest;
+        return ctx;
+    }
     ctx.mox           = m_moxController ? m_moxController->isMox() : false;
     ctx.puresignalRun = (m_pureSignal && m_pureSignal->isAutoCalEnabled());
     ctx.diversity     = m_slices.isEmpty() ? false : m_slices.first()->diversityEnabled();
+    return ctx;
+}
+
+NereusSDR::DdcAssignment RadioModel::computeDdcAssignment() const
+{
+    // NereusSDR-original glue. No Thetis equivalent at this abstraction layer.
+    const NereusSDR::CodecContext ctx = currentCodecContext();
 
     const std::array<NereusSDR::SliceConfig, 5> streams = buildStreamConfigsForCodec();
 
@@ -11489,6 +11535,50 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
         s->setDdcIndex((st >= 0 && st < 5) ? assignment.streamDdc[st] : -1);
     }
 
+    // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────────
+    //
+    // A stream that still hosts slices but came back from the codec with no
+    // DDC has been suspended: the radio has stopped streaming it. Announce
+    // it, because until now it was completely silent.
+    //
+    // The suspension itself is CORRECT and stays. It is what Thetis does.
+    // On the 1-ADC HERMES class -- the family P2CodecHermes and
+    // P1CodecStandard implement -- UpdateDDCs collapses to a single synced
+    // pair the moment PureSignal transmits or diversity engages, dropping
+    // every user receiver including RX1:
+    //
+    //   From Thetis console.cs:8448-8456 [v2.10.3.15]:
+    //     else // transmitting and PS is ON
+    //     {
+    //         P1_DDCConfig = 6; DDCEnable = DDC0; SyncEnable = DDC1;
+    //         Rate[0] = ps_rate; Rate[1] = ps_rate; cntrl1 = 4; cntrl2 = 0;
+    //     }
+    //
+    // and there is no trailing `if (rx2_enabled) DDCEnable += DDC1;` on that
+    // branch, unlike the ORION class at console.cs:8299-8303 which keeps RX2
+    // on DDC3 through every PS and diversity state. Thetis's own GetDDC
+    // agrees: for Hermes / HermesII / HermesC10 on P2 the MOX+PS cases are
+    // literally empty, so rx1 and rx2 both come back -1
+    // (console.cs:8635-8636 and 8641-8642 [v2.10.3.15]).
+    //
+    // What Thetis does NOT do is tell the operator. Nothing unchecks RX2,
+    // nothing greys it, and the only trace is a label that quietly fails to
+    // repaint on the Setup ADC tab. That is the part worth improving on: the
+    // behaviour is upstream-faithful, the silence is not.
+    QVector<int> suspended;
+    {
+        const int streams = std::min(m_streamAllocator.streamCount(), 5);
+        for (int st = 0; st < streams; ++st) {
+            if (assignment.streamDdc[st] < 0 && !slicesOnStream(st).isEmpty()) {
+                suspended.append(st);
+            }
+        }
+    }
+    if (suspended != m_suspendedStreams) {
+        m_suspendedStreams = suspended;
+        emit streamsSuspended(suspended, describeSuspendedStreams(suspended));
+    }
+
     // Phase 3F Sub-Epic I Task 7: reconcile ReceiverManager activation
     // against the current slice bindings. bindSliceToStream / removeSlice
     // (Task 6) maintain SliceStreamAllocator's own stream-active
@@ -11517,6 +11607,68 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
             }
         }
     }
+}
+
+QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const
+{
+    if (streams.isEmpty()) {
+        return QString();
+    }
+
+    // Slice letters, not stream numbers: the operator sees A/B/C/D on the
+    // flags and the RX applet, never a stream index.
+    QStringList letters;
+    for (SliceModel* s : m_slices) {
+        if (!s || !streams.contains(s->streamIndex())) { continue; }
+        letters.append(QString(QChar('A' + s->sliceIndex())));
+    }
+    letters.sort();
+    if (letters.isEmpty()) {
+        return QString();
+    }
+
+    const QString who = letters.size() == 1
+                            ? QStringLiteral("Slice %1 has").arg(letters.first())
+                            : QStringLiteral("Slices %1 have").arg(letters.join(
+                                  QStringLiteral(", ")));
+
+    const NereusSDR::CodecContext ctx = currentCodecContext();
+    const bool mox = ctx.mox;
+    const bool ps  = ctx.puresignalRun;
+    const bool div = ctx.diversity;
+
+    if (ps && mox) {
+        return QStringLiteral("%1 no receiver while PureSignal is transmitting "
+                              "on this radio. Unkey to restore.").arg(who);
+    }
+    if (div) {
+        return QStringLiteral("%1 no receiver while diversity is on for this "
+                              "radio.").arg(who);
+    }
+    return QStringLiteral("%1 no receiver: this radio has no DDC free for "
+                          "them right now.").arg(who);
+}
+
+void RadioModel::refreshDdcAssignmentForRadioState()
+{
+    // Phase 3F Sub-Epic I closeout, defect F3.
+    //
+    // MOX and PureSignal are inputs to the codec (CodecContext::mox /
+    // ::puresignalRun) but nothing recomputed the assignment when either
+    // moved: requestDdcAssignment fires only from the three slice-binding
+    // sites. So when PureSignal reclaimed the DDCs at MOX, the radio really
+    // did stop streaming the extra ones while the model went on reporting
+    // each slice's pre-MOX ddcIndex, and nothing anywhere said so.
+    //
+    // Deliberately NOT routed through requestDdcAssignment /
+    // invokeCodecDdcAssignment: that pushes a P2 wire frame, and the DDC
+    // reconfiguration for PureSignal already has a wire owner in
+    // ReceiverManager::updateDdcAssignment -> applyPureSignalDdcConfig ->
+    // RadioConnection::applyPsDdcConfig (Phase 3M-4 Task 6). Adding a second
+    // writer on the same transition would have the two fighting over the
+    // enable mask mid-transmit. publishDdcAssignment is documented as
+    // client-side only, which is exactly the half that was missing.
+    publishDdcAssignment(computeDdcAssignment());
 }
 
 void RadioModel::invokeCodecDdcAssignment()

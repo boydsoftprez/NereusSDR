@@ -11,6 +11,7 @@
 #include <QSignalSpy>
 #include "core/ReceiverManager.h"
 #include "core/codec/P1CodecRedPitaya.h"
+#include "core/codec/P2CodecHermes.h"
 #include "core/codec/P2CodecSaturn.h"
 #include "models/RadioModel.h"
 #include "models/RxDspWorker.h"
@@ -385,6 +386,132 @@ private slots:
                  QVector<int>{model.slices().at(a)->sliceIndex()});
 
         model.attachDspWorkerForTest(nullptr);
+    }
+
+    // ── Phase 3F Sub-Epic I closeout, defect F3 ─────────────────────────
+    //
+    // On the 1-ADC HERMES class Thetis collapses to a single synced pair the
+    // moment PureSignal transmits, dropping every user receiver:
+    //
+    //   From Thetis console.cs:8448-8456 [v2.10.3.15]:
+    //     else // transmitting and PS is ON
+    //     { P1_DDCConfig = 6; DDCEnable = DDC0; SyncEnable = DDC1;
+    //       Rate[0] = ps_rate; Rate[1] = ps_rate; cntrl1 = 4; cntrl2 = 0; }
+    //
+    // with no trailing rx2_enabled clause, unlike the ORION class at
+    // console.cs:8299-8303 which keeps RX2 on DDC3 throughout. Thetis's own
+    // GetDDC confirms it: the P2 Hermes-class MOX+PS cases are empty, so rx1
+    // and rx2 both come back -1 (console.cs:8635-8636 [v2.10.3.15]).
+    //
+    // So the drop is correct and stays. What must not stay is the silence,
+    // and a slice reporting a DDC the radio has stopped streaming.
+
+    void puresignal_on_tx_suspends_the_extra_streams_visibly()
+    {
+        RadioModel model;
+        P2CodecHermes codec;   // ANAN-10 / ANAN-100 / ANAN-G2E on P2
+        model.receiverManager()->setP2Codec(&codec);
+        model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, 192000);
+        for (int st = 0; st < 4; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+
+        const int streamB = model.slices().at(b)->streamIndex();
+        QVERIFY(streamB > 0);
+
+        // Plain RX: both slices have a real DDC and nothing is suspended.
+        QVERIFY(model.slices().at(a)->ddcIndex() >= 0);
+        QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
+        QVERIFY(model.suspendedStreams().isEmpty());
+
+        QSignalSpy spy(&model, &RadioModel::streamsSuspended);
+
+        // Key MOX with PureSignal running.
+        model.setDdcContextForTest(/*mox*/ true, /*puresignalRun*/ true,
+                                   /*diversity*/ false);
+        model.refreshDdcAssignmentForRadioState();
+
+        // The drop itself: stream B has no DDC any more. Faithful to Thetis.
+        QCOMPARE(model.suspendedStreams(), QVector<int>{streamB});
+
+        // The model must say so rather than leaving the operator to notice
+        // the audio stopped. Slice B, not stream 1: the operator sees letters.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).value<QVector<int>>(), QVector<int>{streamB});
+        const QString reason = spy.at(0).at(1).toString();
+        QVERIFY(!reason.isEmpty());
+        QVERIFY(reason.contains(QLatin1String("B")));
+        QVERIFY(reason.contains(QLatin1String("PureSignal")));
+
+        // ...and slice B must not still be advertising the DDC it had before
+        // the key. That stale number is what made this invisible.
+        QCOMPARE(model.slices().at(b)->ddcIndex(), -1);
+    }
+
+    void unkeying_restores_the_suspended_streams()
+    {
+        RadioModel model;
+        P2CodecHermes codec;
+        model.receiverManager()->setP2Codec(&codec);
+        model.configureStreamPool(4, 4, 192000);
+        for (int st = 0; st < 4; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+        const int streamB = model.slices().at(b)->streamIndex();
+
+        model.setDdcContextForTest(true, true, false);
+        model.refreshDdcAssignmentForRadioState();
+        QCOMPARE(model.suspendedStreams(), QVector<int>{streamB});
+
+        QSignalSpy spy(&model, &RadioModel::streamsSuspended);
+
+        // Unkey.
+        model.setDdcContextForTest(false, true, false);
+        model.refreshDdcAssignmentForRadioState();
+
+        QVERIFY(model.suspendedStreams().isEmpty());
+        QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
+        // One transition out, carrying an empty list so the UI can clear the
+        // warning instead of leaving it up for its full timeout.
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(spy.at(0).at(0).value<QVector<int>>().isEmpty());
+    }
+
+    // The ORION class keeps its extra receivers through PureSignal
+    // (console.cs:8299-8303 [v2.10.3.15]: the `if (rx2_enabled) DDCEnable +=
+    // DDC3;` sits OUTSIDE the mox/PS/diversity chain and applies in every
+    // case). Nothing may be reported suspended there.
+    void orion_class_keeps_its_streams_through_puresignal()
+    {
+        RadioModel model;
+        P2CodecSaturn codec;
+        model.receiverManager()->setP2Codec(&codec);
+        model.configureStreamPool(5, 5, 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+
+        model.setDdcContextForTest(true, true, false);
+        model.refreshDdcAssignmentForRadioState();
+
+        QVERIFY(model.suspendedStreams().isEmpty());
+        QVERIFY(model.slices().at(a)->ddcIndex() >= 0);
+        QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
     }
 };
 

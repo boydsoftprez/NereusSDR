@@ -983,6 +983,17 @@ public:
     // FIRST, worker constructed second) and assert the bindings still reach
     // it. Non-owning, exactly like the production m_dspWorker.
     void attachDspWorkerForTest(RxDspWorker* w) { m_dspWorker = w; }
+    // Phase 3F Sub-Epic I closeout, defect F3: force the radio-state inputs
+    // the codec branches on, so the PureSignal and diversity branches are
+    // reachable without standing up a connection, a WDSP engine and a
+    // PureSignal coordinator. Sticky once set; production code must never
+    // call this.
+    void setDdcContextForTest(bool mox, bool puresignalRun, bool diversity) {
+        m_ddcCtxForTest    = true;
+        m_ddcCtxMoxForTest = mox;
+        m_ddcCtxPsForTest  = puresignalRun;
+        m_ddcCtxDivForTest = diversity;
+    }
     // B6 — XIT: allow tests to trigger wireSliceSignals() directly after
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
@@ -1708,6 +1719,18 @@ signals:
     /// FFT routing; RadioModel republishes the set to RxDspWorker.
     void streamBindingsChanged(int streamIndex, const QVector<int>& sliceIndices);
 
+    /// Phase 3F Sub-Epic I closeout, defect F3: streams that still host slices
+    /// but that the per-board codec left without a DDC, so the radio has
+    /// stopped streaming them. Emitted on transitions only (both into and out
+    /// of the suspended state; an empty list means everything is back).
+    ///
+    /// This happens legitimately on the 1-ADC HERMES class, where Thetis
+    /// collapses to a single synced pair whenever PureSignal transmits or
+    /// diversity engages (console.cs:8448-8456 [v2.10.3.15]). The behaviour is
+    /// upstream-faithful; the silence around it was not, which is what this
+    /// signal fixes. `reason` is plain English, ready for a status bar.
+    void streamsSuspended(const QVector<int>& streamIndices, const QString& reason);
+
     /// Phase 3F Sub-Epic I: a stream was activated or retuned; its FFTEngine
     /// and panadapter window must follow.
     void streamCentreChanged(int streamIndex, double centreHz, int sampleRateHz);
@@ -2127,6 +2150,11 @@ public:
     // fallback when it does not.
     NereusSDR::DdcAssignment computeDdcAssignment() const;
 
+    /// Phase 3F Sub-Epic I closeout, defect F3: single read of the radio-state
+    /// codec inputs (MOX / PureSignal / diversity), so computeDdcAssignment and
+    /// describeSuspendedStreams cannot disagree about them.
+    NereusSDR::CodecContext currentCodecContext() const;
+
     // Phase 3F Sub-Epic I Task 7b: publish a computed assignment onto the
     // client-side model. Routes each stream's hardware DDC to its logical
     // receiver via ReceiverManager::setDdcMapping, stamps every slice with
@@ -2140,6 +2168,10 @@ public:
     // publish the mapping client-side. The wire push is gated on an actual
     // connection; the client-side publish is not.
     void invokeCodecDdcAssignment();
+
+    /// Plain-English sentence naming the affected slice letters and why they
+    /// lost their receiver. Empty when nothing is suspended.
+    QString describeSuspendedStreams(const QVector<int>& streams) const;
 
     // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────
 
@@ -2157,6 +2189,17 @@ public:
 
     /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
     void requestDdcAssignment();
+
+    /// Phase 3F Sub-Epic I closeout, defect F3: re-run the codec and republish
+    /// client-side after a MOX or PureSignal transition, so a slice whose DDC
+    /// the radio just reclaimed stops reporting the one it had before. Does
+    /// NOT push to the wire; ReceiverManager::updateDdcAssignment already owns
+    /// that transition.
+    void refreshDdcAssignmentForRadioState();
+
+    /// Streams the codec left without a DDC while slices are still bound to
+    /// them. Empty in steady state.
+    QVector<int> suspendedStreams() const { return m_suspendedStreams; }
 
 private:
     // Sub-components (owned, main thread)
@@ -2288,6 +2331,19 @@ private:
     // indexed by stream. -1 = that stream is idle, so an emptied stream
     // leaves no stale DDC behind. Backs ddcForStream().
     std::array<int, 5> m_streamDdc{{-1, -1, -1, -1, -1}};
+
+    // Phase 3F Sub-Epic I closeout, defect F3: last-published set of streams
+    // that host slices but have no DDC. Change-gates the streamsSuspended
+    // emit so it fires on transitions rather than on every codec run.
+    QVector<int> m_suspendedStreams;
+
+    // Phase 3F Sub-Epic I closeout, defect F3: injected via
+    // setDdcContextForTest. Off in production; currentCodecContext() reads
+    // MoxController / PureSignal / the slice diversity flag as before.
+    bool m_ddcCtxForTest{false};
+    bool m_ddcCtxMoxForTest{false};
+    bool m_ddcCtxPsForTest{false};
+    bool m_ddcCtxDivForTest{false};
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
     class SpectrumWidget*     m_spectrumWidget{nullptr};

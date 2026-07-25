@@ -2482,6 +2482,29 @@ void MainWindow::buildUI()
         }
     });
 
+    // Phase 3F Sub-Epic I closeout, defect F3.
+    //
+    // The 1-ADC HERMES class drops every extra receiver the moment PureSignal
+    // transmits or diversity engages. That is what Thetis does and it stays,
+    // but Thetis says nothing about it either, so on the bench a slice simply
+    // stopped producing audio with no explanation. Same status-bar surface as
+    // the rejection message above; 6 s because it names slice letters the
+    // operator has to map back to their flags.
+    connect(m_radioModel, &RadioModel::streamsSuspended, this,
+            [this](const QVector<int>& streams, const QString& reason) {
+        QStatusBar* sb = statusBar();
+        if (!sb) { return; }
+        if (streams.isEmpty()) {
+            // Everything is back. Clear the warning rather than leaving a
+            // stale one on screen for its full timeout.
+            sb->clearMessage();
+            return;
+        }
+        if (!reason.isEmpty()) {
+            sb->showMessage(reason, 6000);
+        }
+    });
+
     // Phase 3F closeout — Sub-Epic E Task 6 consumer wire-up.
     // antennaAutoSwitched(sliceIdx, oldAnt, newAnt) is emitted when an
     // AlexController conflict-policy re-route moves a slice off its old
