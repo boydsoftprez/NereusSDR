@@ -87,6 +87,7 @@
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/RadioStatus.h"
 #include "core/SettingsHygiene.h"
+#include "core/SliceStreamAllocator.h"
 #include "core/accessories/AlexController.h"
 #include "core/accessories/ApolloController.h"
 #include "core/accessories/PennyLaneController.h"
@@ -326,6 +327,29 @@ public:
     /// for the currently connected SKU. Returns 1 when disconnected (safe default).
     /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
     int maxSlices() const;
+
+    // ── Phase 3F Sub-Epic I: DDC stream pool ────────────────────────────
+    //
+    // A stream is one hardware DDC plus its ReceiverManager receiver, its
+    // FFTEngine, its panadapter window, and its noise blanker. Streams are
+    // opened once at connect and reused, mirroring Thetis CreateRadio
+    // (cmaster.cs:516 [v2.10.3.15]) and deskhpsdr's create-all loop
+    // (radio.c:1259 [@f3d857c]). Neither upstream opens a WDSP channel at
+    // runtime.
+    //
+    // Slices bind many-to-one: several whose frequencies fall inside one
+    // window share it, differing only by shift offset. An idle stream costs
+    // memory; its DDC stays out of the ddcEnable bitmask so the radio never
+    // streams it.
+
+    /// Size the pool to the connected SKU and clear all bindings.
+    void configureStreamPool(int userDdcCount, int maxSlices, int defaultRateHz);
+
+    int streamPoolSize() const;
+    int activeStreamCount() const;
+
+    /// Slice indices currently bound to a stream, ascending.
+    QVector<int> slicesOnStream(int streamIndex) const;
 
     // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
     // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
@@ -1601,6 +1625,21 @@ signals:
     // request because the maxSlices() cap has been reached.  Status-bar /
     // toast subscribers wire to this signal in Sub-Epic C Tasks 8-9.
     void sliceAddRejected(QString reason);
+
+    /// Phase 3F Sub-Epic I: a stream's slice set changed. Consumers rebuild
+    /// FFT routing; RadioModel republishes the set to RxDspWorker.
+    void streamBindingsChanged(int streamIndex, const QVector<int>& sliceIndices);
+
+    /// Phase 3F Sub-Epic I: a stream was activated or retuned; its FFTEngine
+    /// and panadapter window must follow.
+    void streamCentreChanged(int streamIndex, double centreHz, int sampleRateHz);
+
+    /// Phase 3F Sub-Epic I: emitted whenever the slice or stream set changes
+    /// such that the per-board codec must recompute the DDC assignment. Test
+    /// seam; invokeCodecDdcAssignment does the work and no-ops while
+    /// disconnected.
+    void ddcAssignmentRequested();
+
     // Phase 3F closeout — Sub-Epic E Task 6 consumer wire. Emitted when
     // AlexController auto-switches an antenna due to a conflict-policy
     // re-route (Sub-Epic E Tasks 11-13 will fill in the real detection;
@@ -1990,6 +2029,15 @@ public:
     // Tasks 1-15 have wired the codec/connection interfaces.
     void invokeCodecDdcAssignment();
 
+    // ── Phase 3F Sub-Epic I: slice-to-stream binding ───────────────────────
+
+    /// Push the current slice set for `streamIndex` to RxDspWorker and emit
+    /// streamBindingsChanged. Called after every bind / unbind.
+    void republishStreamBindings(int streamIndex);
+
+    /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
+    void requestDdcAssignment();
+
 private:
     // Sub-components (owned, main thread)
     RadioDiscovery*  m_discovery{nullptr};
@@ -2099,6 +2147,16 @@ private:
     QList<SliceModel*> m_slices;
     QList<PanadapterModel*> m_panadapters;
     SliceModel* m_activeSlice{nullptr};
+
+    // Phase 3F Sub-Epic I: which DDC stream hosts which slice. Pure policy;
+    // sized by configureStreamPool at connect, empty (and therefore
+    // bind-refusing) while disconnected.
+    NereusSDR::SliceStreamAllocator m_streamAllocator;
+
+    // Rate handed to configureStreamPool, used when a stream is claimed
+    // before m_connectionSampleRateHz has been set (Slice A binds during
+    // connectToRadio, before wireConnectionSignals records the wire rate).
+    int m_streamDefaultRateHz{192000};
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c.
     class SpectrumWidget*     m_spectrumWidget{nullptr};

@@ -1420,6 +1420,13 @@ nereus_add_test(tst_fft_router_fanout)
 # disabling Multi-RX is a documented divergence (design doc §3).
 nereus_add_test(tst_slice_stream_allocator)
 
+# ── Phase 3F Sub-Epic I Tasks 5-6: DDC stream pool + slice binding ─────────
+# RadioModel-level coverage of the pool the allocator sizes: pool sizing per
+# SKU, first-slice activation, same-band sharing (shift offset only),
+# cross-band promotion to a second DDC, four slices on one DDC, and the
+# hardware-exhaustion rejection path.
+nereus_add_test(tst_stream_pool_binding)
+
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
 # Top-level QWidget wrapper for detaching a PanadapterApplet to a second
 # monitor. Structurally ported from AetherSDR src/gui/PanFloatingWindow.{h,cpp}

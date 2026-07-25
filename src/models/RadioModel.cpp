@@ -2834,6 +2834,65 @@ double RadioModel::rxMeterOffsetDb() const
     return static_cast<double>(preampOffset + meterCalOffset);
 }
 
+// ── Phase 3F Sub-Epic I: DDC stream pool ────────────────────────────────────
+//
+// NereusSDR-original glue over SliceStreamAllocator. Thetis has no
+// equivalent because it hard-codes RX1 -> DDC2 and RX2 -> DDC3; the pool
+// concept exists here so every user DDC the SKU exposes is reachable.
+
+void RadioModel::configureStreamPool(int userDdcCount, int maxSlices,
+                                     int defaultRateHz)
+{
+    m_streamAllocator.configure(userDdcCount, maxSlices);
+    m_streamAllocator.setDefaultSampleRateHz(defaultRateHz);
+    m_streamDefaultRateHz = defaultRateHz > 0 ? defaultRateHz : 192000;
+}
+
+int RadioModel::streamPoolSize() const
+{
+    return m_streamAllocator.streamCount();
+}
+
+int RadioModel::activeStreamCount() const
+{
+    return m_streamAllocator.activeStreamCount();
+}
+
+QVector<int> RadioModel::slicesOnStream(int streamIndex) const
+{
+    QVector<int> out;
+    for (int i = 0; i < m_slices.size(); ++i) {
+        if (m_slices.at(i) && m_slices.at(i)->streamIndex() == streamIndex) {
+            out.append(i);
+        }
+    }
+    return out;
+}
+
+void RadioModel::republishStreamBindings(int streamIndex)
+{
+    const QVector<int> bound = slicesOnStream(streamIndex);
+    if (m_dspWorker) {
+        // Lambda rather than the string-name invokeMethod overload: the
+        // slot takes QVector<int>, which Qt6 aliases to QList<int>, so a
+        // by-name lookup depends on how moc spelled the parameter. The
+        // capture form is compile-time checked and needs no metatype
+        // registration. Matches the existing queued-call pattern in this
+        // file (see connectMicPttDisabledSignal).
+        QMetaObject::invokeMethod(m_dspWorker,
+                                  [w = m_dspWorker, streamIndex, bound]() {
+            w->setStreamSlices(streamIndex, bound);
+        }, Qt::QueuedConnection);
+    }
+    emit streamBindingsChanged(streamIndex, bound);
+}
+
+void RadioModel::requestDdcAssignment()
+{
+    emit ddcAssignmentRequested();
+    invokeCodecDdcAssignment();
+}
+
 // --- Slice Management ---
 
 SliceModel* RadioModel::sliceAt(int index) const
@@ -3977,6 +4036,36 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                          << "inSize=" << wdspInSize
                          << "activeRxCount=" << activeRxCount;
 
+    // ── Phase 3F Sub-Epic I: open the stream pool ───────────────────────────
+    //
+    // Two pools with different sizes, because slices can share a DDC:
+    //   streams  = caps.userDdcCount   (one per hardware DDC we may use)
+    //   channels = caps.maxSlices      (one WDSP channel per slice; opened
+    //                                   in the WDSP-init lambda below, once
+    //                                   the engine is actually up)
+    //
+    // Thetis opens all 10 RX channels in CreateRadio (cmaster.cs:516
+    // [v2.10.3.15]); deskhpsdr opens every receiver in one loop
+    // (radio.c:1259 [@f3d857c]). Neither opens a channel at runtime.
+    //
+    // caps.maxSlices rather than the maxSlices() accessor: that accessor
+    // returns 1 until isConnected() is true, and m_connection is not
+    // assigned until further down this function.
+    const int poolSlices = caps.maxSlices > 0 ? caps.maxSlices : 1;
+    configureStreamPool(caps.userDdcCount, poolSlices, wdspInputRate);
+
+    // One ReceiverManager receiver per stream. Receiver 0 was created above
+    // with the board's primary-DDC mapping; the rest are auto-assigned and
+    // stay inactive until a slice binds to them.
+    for (int st = 1; st < caps.userDdcCount; ++st) {
+        if (m_receiverManager->receiverConfig(st).receiverIndex < 0) {
+            m_receiverManager->createReceiver();
+        }
+    }
+
+    qCInfo(lcConnection) << "Sub-Epic I: streams=" << caps.userDdcCount
+                         << "channels=" << poolSlices;
+
     // 3M-1a G.1 fixup: explicit disconnect in teardownConnection() prevents
     // accumulation across reconnect cycles.  Qt::UniqueConnection can't be
     // used with lambdas, so we rely on the matching disconnect there.
@@ -4003,6 +4092,27 @@ void RadioModel::connectToRadio(const RadioInfo& info)
         // audio is discarded and RADE owns the speaker path.
         RxChannel* rxCh = m_wdspEngine->createRxChannel(0, wdspInSize, 4096,
                                                          wdspInputRate, 48000, 48000);
+
+        // ── Phase 3F Sub-Epic I: open the WDSP channel pool ────────────────
+        //
+        // One channel per slice, opened once here and reused. Thetis opens
+        // all 10 RX channels in CreateRadio (cmaster.cs:516 [v2.10.3.15]);
+        // deskhpsdr opens every receiver in one loop (radio.c:1259
+        // [@f3d857c]). Neither opens a channel at runtime, and neither do we
+        // from here on: binding a slice to a stream only changes its shift
+        // offset and its I/Q source.
+        //
+        // Sized off BoardCapabilities directly, not the maxSlices() accessor,
+        // which returns 1 until m_connection is assigned (further down
+        // connectToRadio, after this lambda has already run).
+        const int channelPoolSize =
+            boardCapabilities().maxSlices > 0 ? boardCapabilities().maxSlices : 1;
+        for (int ch = 1; ch < channelPoolSize; ++ch) {
+            if (!m_wdspEngine->rxChannel(ch)) {
+                m_wdspEngine->createRxChannel(ch, wdspInSize, 4096,
+                                              wdspInputRate, 48000, 48000);
+            }
+        }
 
         // 3M-1a G.1: create the WDSP TX channel (channel ID = 1 = WDSP.id(1, 0)).
         // Parameters match Thetis cmaster.c:177-190 [v2.10.3.13] — create_xmtr().
