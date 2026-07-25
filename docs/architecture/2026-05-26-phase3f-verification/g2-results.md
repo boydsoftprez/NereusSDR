@@ -14,6 +14,7 @@ subjects.
 |---|---|---|---|
 | 1 | 2026-06-03 | `d564a772` | Bugs 1-3 found + fixed same session |
 | 2 | 2026-07-24 | `f2bfd383` | Bugs 4-7 found. Root cause: data plane never wired. |
+| 3 | 2026-07-25 | (desk) | Sub-Epic I implemented. Bugs 4-7 closed. Bench re-run pending. |
 
 ---
 
@@ -27,7 +28,7 @@ subjects.
 
 ---
 
-## Session 2 (2026-07-24): open
+## Session 2 (2026-07-24): findings, all closed in Session 3
 
 All four findings below share **one root cause**: Phase 3F landed the
 multi-pan/multi-slice UI layer and the supporting components, but the data
@@ -36,10 +37,10 @@ second audio path was never connected.
 
 | # | Symptom | Root cause | Status |
 |---|---|---|---|
-| 4 | Second pan never animates | Exactly one `FFTEngine(0)` exists (`MainWindow.cpp:1735`), statically connected at construction to `activeSpectrumWidget()` (`MainWindow.cpp:1838`), which resolves to pan 0 permanently. That `connect` is the only call site of `updateSpectrumLinear` in the tree. Pan 1+ has a fully built `SpectrumWidget` that is never handed a frame. | Open |
-| 5 | Slice C sits on 20 m and will not leave | `SliceModel::m_frequency{14225000.0}` (`SliceModel.h:916`) is the ctor default, 14.225 MHz USB. Nothing assigns a frequency to a new slice, and `wireSliceSignals()` binds only `m_activeSlice`'s `frequencyChanged` to hardware, at connect time. Slice B+ never reach `ReceiverManager::setReceiverFrequency`. | Open |
-| 6 | Slice C produces no audio | `RadioModel::addSlice()` creates a `SliceModel` and wires UI signals only. No `createReceiver()`, no DDC mapping, no WDSP channel. One RX channel is ever created (`createRxChannel(0, ...)`), and `RxDspWorker.cpp:216` hardcodes `rxChannel(0)`. `setActiveSlice()` only flips a bool. | Open |
-| 7 | Radio is never told to enable a second DDC | `RadioModel::invokeCodecDdcAssignment()` (`RadioModel.cpp:10889`) builds the 5-slice config, runs the per-board codec, and pushes wire bytes to `P2RadioConnection::applyDdcAssignment()`. It has **zero callers**. The whole Sub-Epic B codec layer is unreachable. | Open |
+| 4 | Second pan never animates | Exactly one `FFTEngine(0)` exists (`MainWindow.cpp:1735`), statically connected at construction to `activeSpectrumWidget()` (`MainWindow.cpp:1838`), which resolves to pan 0 permanently. That `connect` is the only call site of `updateSpectrumLinear` in the tree. Pan 1+ has a fully built `SpectrumWidget` that is never handed a frame. | Fixed (Session 3) |
+| 5 | Slice C sits on 20 m and will not leave | `SliceModel::m_frequency{14225000.0}` (`SliceModel.h:916`) is the ctor default, 14.225 MHz USB. Nothing assigns a frequency to a new slice, and `wireSliceSignals()` binds only `m_activeSlice`'s `frequencyChanged` to hardware, at connect time. Slice B+ never reach `ReceiverManager::setReceiverFrequency`. | Fixed (Session 3) |
+| 6 | Slice C produces no audio | `RadioModel::addSlice()` creates a `SliceModel` and wires UI signals only. No `createReceiver()`, no DDC mapping, no WDSP channel. One RX channel is ever created (`createRxChannel(0, ...)`), and `RxDspWorker.cpp:216` hardcodes `rxChannel(0)`. `setActiveSlice()` only flips a bool. | Fixed (Session 3) |
+| 7 | Radio is never told to enable a second DDC | `RadioModel::invokeCodecDdcAssignment()` (`RadioModel.cpp:10889`) builds the 5-slice config, runs the per-board codec, and pushes wire bytes to `P2RadioConnection::applyDdcAssignment()`. It has **zero callers**. The whole Sub-Epic B codec layer is unreachable. | Fixed (Session 3) |
 
 ### Supporting dead-code findings
 
@@ -56,21 +57,56 @@ audio.** Any work that enables a second DDC must fix this first.
 
 ---
 
-## Matrix rows blocked by the Session 2 root cause
+## Session 3 (2026-07-25): Sub-Epic I closes Bugs 4-7
 
-These cannot be ticked on any SKU until the data plane lands. They are not
-"fail" results; the feature has no implementation to test.
+Desk implementation, not a bench run. All four Session 2 findings are addressed
+in code with unit coverage; the bench re-run is what converts them to verified.
 
-- Row 1 (slice creation up to maxSlices): slices are created as UI objects only
+| # | Symptom | Fixed by | Commit |
+|---|---|---|---|
+| 4 | Second pan never animates | One `FFTEngine` per DDC stream, and frames dispatched to every pan subscribed to that stream via the (previously dead) `FFTRouter` topology | `f6a81666`, `7daadd6e` |
+| 5 | Slice C sits on 20 m and will not leave | New slices seed frequency and mode from the active slice instead of the 14.225 MHz ctor default, and every slice's tuning now reaches hardware through `bindSliceToStream` rather than only `m_activeSlice` at connect time | `7d589d10` |
+| 6 | Slice C produces no audio | Per-stream accumulation with per-slice fan-out through each slice's own WDSP channel, and `rxBlockReady(sliceIdx, ...)` instead of a hardcoded 0 | `f8241703` |
+| 7 | Radio is never told to enable a second DDC | `invokeCodecDdcAssignment` finally has a caller, the codec is indexed by stream rather than slice, and each stream's DDC is routed back to its logical receiver | `f2820e60`, `740deb06` |
+
+### Additional defects found and fixed while implementing
+
+| Symptom | Why it mattered | Commit |
+|---|---|---|
+| Noise blanker mutated the shared I/Q chunk in place | Once slices share a stream, one slice's blanker corrupts what every later slice sees. Upstream keeps one `ANB` / `NOB` per `_rcvr`. | `2588be39` |
+| `fexchange2` can return leaving output buffers untouched | Hoisting the per-slice output buffers would have leaked stale audio on flush and restart transitions. | `f8241703` |
+| Hermes-class boards asserted DDC2 on the first VFO turn | `P2CodecOrionMkII` was selected by `default:` for Hermes / HermesII / HermesC10, whose primary DDC is 0. Would have killed RX on a G2E. | `133c30bd`, `60ecfccc` |
+| Sole-occupant retune reset the stream to the connection default rate | Silently discarded any per-stream width the operator had set. | `b18cc391` |
+| `SliceModel::receiverIndex` became a stale duplicate of `streamIndex` | Three sites read it as the logical receiver index; it was never updated on migration and never set for Slice B+. | `414c164f` |
+
+---
+
+## Matrix rows unblocked by Sub-Epic I
+
+These were untestable in Session 2 because the feature had no implementation.
+They are now implemented and awaiting a bench run:
+
+- Row 1 (slice creation up to maxSlices)
 - Row 2 (slice removal restores chain BPF)
 - Rows 3-8 (per-slice sample rate 48 k through 1536 k)
 - Row 9 (slice band change / per-band memory load) for Slice B+
 - Rows 10-11 (AetherSDR overlay: same-band and cross-band slices)
 - Rows 12-14 (antenna routing) for Slice B+
-- Row 15 (TxSliceArbiter handoff): arbiter logic exists, but no second chain to hand off to
+- Row 15 (TxSliceArbiter handoff): a second stream now exists to hand off to
+- Rows 48-60 (new, added by Sub-Epic I)
 
 Rows covering Slice A only (single-slice regression, Alex policy on chain 0,
-click-in-island retune) remain valid and are unaffected.
+click-in-island retune) were valid throughout and are unaffected.
+
+### Bench walk to run first
+
+1. **Shared DDC:** Slice A on 14.200, then add B, C, D at 14.180 / 14.225 /
+   14.260. All four flags on one pan, all four produce audio, one active DDC.
+2. **Separate DDCs:** retune B to 7.150. B claims a second DDC and a second pan
+   animates on 40 m while A, C, D stay on 20 m.
+3. **Limit:** keep adding cross-band slices past `userDdcCount` and confirm the
+   rejection names the hardware limit rather than failing silently.
+4. **Regression:** single-slice operation on Slice A, unchanged.
 
 ---
 

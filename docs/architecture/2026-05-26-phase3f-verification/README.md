@@ -66,8 +66,26 @@ The per-SKU columns use empty `[ ]` checkboxes for testers to tick as rows pass.
 | 45 | Settings restore: TxBoundSliceIndex | [ ] | [ ] | [ ] | [ ] | |
 | 46 | Settings restore: per-slice per-band sample rate | [ ] | [ ] | [ ] | [ ] | |
 | 47 | Settings restore: diversity state + memories | [ ] | n/a | [ ] | n/a | memories deferred per Sub-Epic G; diversity Enable/Phase/Gain do restore |
+| 48 | Two same-band slices share one DDC (one active DDC reported) | [ ] | n/a (1-slice) | [ ] | [ ] | Sub-Epic I |
+| 49 | Four slices (A-D) share one DDC on one band | [ ] | n/a | [ ] | n/a (2-slice cap) | Sub-Epic I |
+| 50 | Co-hosted slices keep independent mode / filter / AGC / audio | [ ] | n/a | [ ] | [ ] | Sub-Epic I |
+| 51 | Co-hosted slices share one noise blanker (expected, not a bug) | [ ] | n/a | [ ] | [ ] | per cmaster.h `_rcvr.panb`; UI greying deferred |
+| 52 | Slice retuned out of window claims a second DDC | [ ] | n/a | [ ] | [ ] | Sub-Epic I |
+| 53 | Sole-occupant slice retunes its own DDC rather than claiming one | [ ] | [ ] | [ ] | [ ] | CTUN off; CTUN on must pin the DDC instead |
+| 54 | Widening a DDC rate re-admits an out-of-window slice | [ ] | [ ] | [ ] | n/a (192 cap) | Sub-Epic I Task 10 |
+| 55 | Narrowing a DDC rate evicts a slice to its own DDC | [ ] | [ ] | [ ] | n/a | Sub-Epic I Task 10 |
+| 56 | DDC exhaustion rejects with a message naming the limit | [ ] | [ ] | [ ] | [ ] | not a silent failure |
+| 57 | All `userDdcCount` DDCs usable simultaneously | [ ] | n/a (1) | [ ] | [ ] | G2 = 5 |
+| 58 | P1 rate change applies to every active receiver | n/a | [ ] | n/a | [ ] | P1 carries one rate in C&C bank 0 |
+| 59 | Second pan animates independently of the first | [ ] | n/a | [ ] | [ ] | the headline Sub-Epic I fix |
+| 60 | Hermes-class board keeps RX after the first VFO turn | n/a | n/a | [ ] | [ ] | G2E / ANAN-10E regression guard, Task 7c |
 
-Total: 47 rows x 4 SKUs (with a generous count of `n/a` and `deferred`) = approximately 100 actual ticks expected across the matrix.
+Total: 60 rows x 4 SKUs (with a generous count of `n/a` and `deferred`) = approximately 130 actual ticks expected across the matrix.
+
+Rows 48-60 were added by Sub-Epic I (data-plane completion). Rows 1-15 became
+testable for the first time with that sub-epic; before it, slices B+ were UI
+objects with no receiver, no WDSP channel and no DDC. See
+`docs/architecture/2026-07-24-phase3f-sub-epic-i-data-plane-plan.md`.
 
 ## How to use
 

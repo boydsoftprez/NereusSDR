@@ -90,9 +90,61 @@ Thetis reserves DDC0+DDC1 as a synced pair for PureSignal feedback (during TX) a
 
 ## 3. Slice Model
 
-### Lifecycle: on-demand (AetherSDR pattern)
+### Lifecycle: on-demand slices over a pre-allocated stream pool
 
-Slices are created and destroyed by operator action, not pre-allocated. Mechanics:
+**Amended 2026-07-25 (Sub-Epic I).** The original text read "Slices are created
+and destroyed by operator action, not pre-allocated," which conflated the
+operator-visible lifecycle with the implementation mechanics, and it assumed one
+slice per DDC. Both are corrected here.
+
+**Operator-visible lifecycle (unchanged, AetherSDR pattern):** slices are created
+and destroyed by operator action, letters are assigned in creation order and
+freed on destroy, and the cap check rejects past `maxSlices`.
+
+**Implementation (corrected, Thetis / deskhpsdr pattern).** Two pools open at
+connect and are never resized at runtime:
+
+- `userDdcCount` **DDC streams**, each one hardware DDC plus its ReceiverManager
+  receiver, FFTEngine, panadapter window, and noise blanker.
+- `maxSlices` **WDSP RX channels**, one per possible slice.
+
+Slices bind to streams **many-to-one**. A slice whose frequency falls inside an
+active stream's window joins it and is tuned by a shift offset
+(`RxChannel::setShiftFrequency`, the Thetis `RXOsc` port at
+`radio.cs:1409-1420 [v2.10.3.15]`). A slice that fits no active window claims a
+free DDC. When no DDC is free and none fits, the add is rejected with a message
+naming the limit.
+
+What slices sharing a stream share, and what they do not, is fixed by
+ChannelMaster's `struct _rcvr` (`cmaster.h:75-82 [v2.10.3.15]`): one I/Q input,
+one noise blanker (`panb` / `pnob`), one panadapter (`run_pan`), but
+`audio[cmMAXSubRcvr]`, an independent audio output per slice. So co-hosted
+slices share the spectrum window and the noise blanker, and keep their own mode,
+filter, AGC, shift and audio.
+
+Why pre-allocation: the original model has no upstream to port from. Thetis
+opens all 10 RX channels plus TX in `CreateRadio()` (`cmaster.cs:502-516`, with
+`cmRCVR=5` and `cmSubRCVR=2`), and deskhpsdr opens every receiver in one loop at
+startup (`radio.c:1256-1259 [@f3d857c]`, comment: "To be on the safe side, we
+create ALL receiver panels here"). Neither touches a WDSP channel at runtime.
+AetherSDR's on-demand model is right for AetherSDR because its slices live on
+the FlexRadio server; NereusSDR owns the DSP locally, so on-demand would mean
+opening a WDSP channel on a UI click. That is also the pattern that crashed in
+PR #219, where destroying live channels invalidated seven raw-pointer holders.
+
+**Documented divergences from Thetis:**
+
+| Aspect | Thetis | NereusSDR | Why |
+|---|---|---|---|
+| Slices per stream | 2 (`cmSubRCVR`) | up to `maxSlices` | Product requirement: A through D on one DDC. WDSP imposes no such cap (`MAX_CHANNELS 32`); `cmSubRCVR` is a Thetis structure choice. |
+| User DDC streams | 2 in practice (RX1 / RX2) | every user DDC the SKU exposes (5 on G2) | Thetis leaves DDC4-6 idle on Saturn-class; our codecs already map them. |
+| Slice leaves its window | disables Multi-RX (`console.cs:31924`) | promote to a free DDC; reject only when none free | Better operator outcome, and we have DDCs Thetis never uses. |
+
+Idle streams cost memory only. Their DDCs stay out of the `ddcEnable` bitmask,
+so the radio never streams them, exactly as Thetis's `UpdateDDCs` gates its
+pre-opened channels.
+
+Mechanics:
 
 - **Create**: `+RX` button on `SpectrumOverlayPanel` (top-left of any pan), or View > Add slice on active pan (Ctrl+R), or `RadioModel::addSliceOnPan(QString panId)`.
 - **Destroy**: right-click VFO flag > Remove slice, or operator dismisses the pan that hosts it (with confirmation if last slice on that pan).
