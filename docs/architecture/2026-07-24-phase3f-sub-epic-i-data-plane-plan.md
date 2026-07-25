@@ -1133,6 +1133,142 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
+## Task 4b: Run the noise blanker once per stream, not once per slice
+
+**Found during Task 4 implementation and verified against upstream. This is a
+correctness bug in the multi-slice path, not a polish item.**
+
+`RxChannel::processIq` runs the blanker **in place on the input legs**
+(`RxChannel.cpp:1543-1545`):
+
+```cpp
+    switch (m_nb ? m_nb->mode() : NereusSDR::NbMode::Off) {
+        case NereusSDR::NbMode::NB:  xanbEXTF(m_channelId, inI, inQ); break;
+        case NereusSDR::NbMode::NB2: xnobEXTF(m_channelId, inI, inQ); break;
+        case NereusSDR::NbMode::Off: /* no-op */                      break;
+    }
+```
+
+After Task 4, every slice on a stream receives the SAME `inI` / `inQ` chunk.
+So a slice with NB enabled blanks the chunk that every later slice then sees,
+and if several have it on the chunk is blanked repeatedly. The result is
+order-dependent and wrong.
+
+Upstream is unambiguous that the blanker belongs to the receiver, not the
+sub-receiver. `ChannelMaster/cmaster.h:79-81 [v2.10.3.15]`:
+
+```c
+        volatile long run_pan;                  // run panadapter
+        ANB panb;                               // noiseblanker, per receiver
+        NOB pnob;                               // noiseblanker II, per receiver
+```
+
+One `ANB` and one `NOB` per `_rcvr`, alongside `audio[cmMAXSubRcvr]`. So
+"blank the shared chunk once, then demodulate it N ways" is the correct
+semantic. Today's code accidentally does that only when exactly one slice
+has NB on.
+
+Single-slice behavior is unaffected either way, which is why Task 4 could
+land safely first.
+
+**Files:**
+- Modify: `src/core/RxChannel.h` / `src/core/RxChannel.cpp` (bypass control)
+- Modify: `src/models/RxDspWorker.cpp` (blank once before the slice loop)
+- Test: `tests/tst_rx_dsp_worker_multi_slice.cpp` (extend)
+
+- [ ] **Step 1: Read the upstream and the current code**
+
+Read `ChannelMaster/cmaster.h:74-82 [v2.10.3.15]` and `RxChannel::processIq`
+in full. Confirm for yourself that the blanker mutates the caller's buffers
+and that `fexchange2` is what consumes them afterwards.
+
+- [ ] **Step 2: Write the failing test**
+
+```cpp
+    void noise_blanker_runs_once_per_stream_not_once_per_slice()
+    {
+        RxDspWorker worker;
+        worker.setBufferSizes(4, 64);
+        worker.setStreamSlices(1, QVector<int>{0, 2, 3});
+
+        QSignalSpy spy(&worker, &RxDspWorker::streamNoiseBlankerApplied);
+
+        const QVector<float> four{0.1f, 0.1f, 0.2f, 0.2f,
+                                  0.3f, 0.3f, 0.4f, 0.4f};
+        worker.processIqBatch(1, four);
+
+        // Three slices share the chunk, but the blanker is a property of
+        // the DDC stream, so it must be applied exactly once.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 1);   // stream index
+    }
+```
+
+- [ ] **Step 3: Add an NB bypass to RxChannel**
+
+Give `RxChannel` a way to skip its internal blanker so the caller can own
+it. Match the file's existing atomic-parameter convention for cross-thread
+DSP flags (CLAUDE.md: "Atomic parameters for cross-thread DSP"):
+
+```cpp
+    /// Phase 3F Sub-Epic I Task 4b: when true, processIq skips its internal
+    /// noise-blanker pass because the caller has already blanked the shared
+    /// chunk for this DDC stream. Set on every slice EXCEPT the one that
+    /// owns the stream's blanker.
+    ///
+    /// Upstream keeps one ANB / NOB per receiver, not per sub-receiver
+    /// (ChannelMaster cmaster.h:79-81 [v2.10.3.15]), so blanking belongs to
+    /// the stream. Without this, each co-hosted slice would re-blank the
+    /// same in-place buffer.
+    void setNoiseBlankerBypassed(bool bypassed);
+```
+
+Guard the existing `switch` in `processIq` on it. Do not change the blanker
+logic itself.
+
+- [ ] **Step 4: Blank once in the drain loop**
+
+In `RxDspWorker`'s drain, before the per-slice loop, run the blanker once
+using the stream-owning slice (the first bound slice), then bypass it on
+every slice in the loop. Emit `streamNoiseBlankerApplied(streamIndex)` when
+a blanking pass actually runs, so the test can observe it.
+
+Declare the signal next to `sliceProcessed`:
+
+```cpp
+    /// Emitted once per drained chunk when the stream's noise blanker ran.
+    /// Test seam proving NB is per stream, not per slice.
+    void streamNoiseBlankerApplied(int streamIndex);
+```
+
+- [ ] **Step 5: Run the new test, confirm PASS, plus the two sibling suites**
+
+```bash
+ctest --test-dir build -R "tst_rx_dsp_worker" --output-on-failure
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/core/RxChannel.h src/core/RxChannel.cpp src/models/RxDspWorker.h src/models/RxDspWorker.cpp tests/tst_rx_dsp_worker_multi_slice.cpp
+git commit -S -m "fix(3f-i): run the noise blanker once per stream, not per slice
+
+RxChannel::processIq blanks in place on the caller's input legs. After the
+Task 4 fan-out every slice on a stream shares one chunk, so a slice with NB
+enabled blanked the chunk every later slice saw, and several with it on
+blanked repeatedly. Order-dependent and wrong.
+
+Upstream keeps one ANB and one NOB per _rcvr alongside audio[cmMAXSubRcvr]
+(ChannelMaster cmaster.h:79-81 [v2.10.3.15]), so the blanker belongs to the
+DDC stream. Blank the shared chunk once, then demodulate it N ways.
+
+Single-slice behaviour is unchanged.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
 ## Task 5: Pre-allocate streams and channels at connect
 
 **Files:**
@@ -2390,7 +2526,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ## Deferred, with reasons
 
 - **Per-stream DSP threads.** Every stream shares one `RxDspWorker` on one DSP thread, and all FFT engines share one FFT thread. Thetis runs a DSP thread per receiver. With N slices per stream the per-drain work is now N `processIq` calls, so this is the most likely place a 5-slice 1536 kHz G2 bench pushes back. Splitting is thread architecture and needs maintainer sign-off per CLAUDE.md.
-- **Per-slice noise blanker.** NB is per stream by hardware topology (`cmaster.h:79-81`), so co-hosted slices share NB settings. Giving each slice its own would mean giving each its own DDC, defeating the sharing. Surface it in the UI (grey the NB controls on co-hosted slices with a tooltip) rather than pretending it is per-slice.
+- **Per-slice noise blanker UI treatment.** NB is per stream by hardware topology (`cmaster.h:79-81`), so co-hosted slices share one blanker. The *correctness* half of this is Task 4b below and is NOT deferred. What is deferred is the UI: grey the NB controls on co-hosted slices with a tooltip rather than pretending they are per-slice.
 - **Multi-slice RADE.** Gated to slice 0, matching the v0.5.2 documented limitation.
 - **Anti-VOX aamix.** Stays single-slice. The real aamix port was always scoped to arrive with multi-pan; it is unblocked now but out of scope here.
 - **Sub-receiver audio panning.** Thetis pans sub-receivers left/right in the stereo field for dual-watch. `MasterMixer::setSliceGain(sliceId, gain, pan)` already supports it; wiring it to a UI control is a follow-up.
@@ -2405,6 +2541,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 | 2 | `SliceStreamAllocator` placement policy (share / claim / retune / reject) |
 | 3 | `SliceModel::streamIndex` + `shiftOffsetHz` |
 | 4 | `RxDspWorker` per-stream accumulate, per-slice fan-out (corruption guard) |
+| 4b | Noise blanker runs once per stream, not once per slice (found during Task 4) |
 | 5 | Stream pool + WDSP channel pool pre-allocated at connect |
 | 6 | Slices bound through the allocator; shift offsets pushed to WDSP |
 | 7 | Codec DDC assignment finally called; `ddcIndex` published |
