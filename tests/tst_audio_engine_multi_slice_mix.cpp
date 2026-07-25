@@ -33,7 +33,6 @@
 #include "core/IAudioBus.h"
 #include "core/audio/MasterMixer.h"
 #include "models/RadioModel.h"
-#include "models/SliceModel.h"
 
 #include "fakes/FakeAudioBus.h"
 

@@ -3227,7 +3227,7 @@ void MainWindow::populateDefaultMeter()
     };
 
     connect(m_radioModel, &RadioModel::activeSliceChanged, this,
-            [this, refreshSliceTabs](int sliceIndex) {
+            [this](int sliceIndex) {
         if (!m_radioModel) { return; }
         SliceModel* active = m_radioModel->activeSlice();
         // Rebind the RX applet to the new active slice + refresh its badge.
