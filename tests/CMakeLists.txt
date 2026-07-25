@@ -1404,6 +1404,14 @@ nereus_add_test(tst_spectrum_status_overlay)
 # remove).
 nereus_add_test(tst_fft_router_fanout)
 
+# ── Phase 3F Sub-Epic I Task 2: SliceStreamAllocator placement policy ──────
+# NereusSDR-original pure-policy class. Decides whether a slice shares an
+# active DDC stream's window (shift offset only) or claims a free DDC.
+# Window-fit rule ports the strict inequality from Thetis
+# console.cs:31913-31925 [v2.10.3.15]; promoting to a free DDC instead of
+# disabling Multi-RX is a documented divergence (design doc §3).
+nereus_add_test(tst_slice_stream_allocator)
+
 # ── Phase 3F Sub-Epic D Task 8: PanFloatingWindow (multi-monitor detach) ────
 # Top-level QWidget wrapper for detaching a PanadapterApplet to a second
 # monitor. Structurally ported from AetherSDR src/gui/PanFloatingWindow.{h,cpp}

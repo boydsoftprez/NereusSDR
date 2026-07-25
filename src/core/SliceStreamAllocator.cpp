@@ -1,0 +1,157 @@
+// =================================================================
+// src/core/SliceStreamAllocator.cpp  (NereusSDR)
+// =================================================================
+//
+// no-port-check: NereusSDR-original. See SliceStreamAllocator.h for
+// the full rationale and Modification history block.
+//
+// =================================================================
+
+#include "core/SliceStreamAllocator.h"
+
+#include <cmath>
+
+namespace NereusSDR {
+
+void SliceStreamAllocator::configure(int userDdcCount, int maxSlices)
+{
+    m_streams.clear();
+    m_streams.resize(qMax(0, userDdcCount));
+    m_maxSlices = qMax(0, maxSlices);
+}
+
+void SliceStreamAllocator::activateStream(int streamIndex, double centreHz,
+                                          int sampleRateHz)
+{
+    if (streamIndex < 0 || streamIndex >= m_streams.size()) { return; }
+    Stream& s = m_streams[streamIndex];
+    s.active       = true;
+    s.centreHz     = centreHz;
+    s.sampleRateHz = sampleRateHz;
+}
+
+void SliceStreamAllocator::deactivateStream(int streamIndex)
+{
+    if (streamIndex < 0 || streamIndex >= m_streams.size()) { return; }
+    m_streams[streamIndex].active = false;
+}
+
+bool SliceStreamAllocator::windowContains(const Stream& s,
+                                          double frequencyHz) const
+{
+    if (!s.active || s.sampleRateHz <= 0) { return false; }
+    const double halfWindow = static_cast<double>(s.sampleRateHz) / 2.0;
+    const double offset     = frequencyHz - s.centreHz;
+    // Strict both sides. From Thetis console.cs:31920 [v2.10.3.15]:
+    //   if (rx2_osc > -sample_rate_rx1 / 2 && rx2_osc < sample_rate_rx1 / 2)
+    // MW0LGE [2.7.0.9] only when RX'ing. Fixes issue where multirx would be
+    // outside sample area after a tx  [original inline comment from
+    // console.cs:31913]
+    return offset > -halfWindow && offset < halfWindow;
+}
+
+int SliceStreamAllocator::firstFreeStream() const
+{
+    for (int i = 0; i < m_streams.size(); ++i) {
+        if (!m_streams.at(i).active) { return i; }
+    }
+    return -1;
+}
+
+SliceStreamAllocator::Placement
+SliceStreamAllocator::placeSlice(double frequencyHz) const
+{
+    Placement p;
+
+    // 1. Prefer sharing: an active stream whose window already covers this
+    //    frequency costs no extra DDC and no extra bus bandwidth.
+    for (int i = 0; i < m_streams.size(); ++i) {
+        if (windowContains(m_streams.at(i), frequencyHz)) {
+            p.outcome       = Outcome::JoinedExisting;
+            p.streamIndex   = i;
+            p.shiftOffsetHz = frequencyHz - m_streams.at(i).centreHz;
+            return p;
+        }
+    }
+
+    // 2. Otherwise claim a free DDC and centre it on the slice.
+    const int free = firstFreeStream();
+    if (free >= 0) {
+        p.outcome           = Outcome::NewStream;
+        p.streamIndex       = free;
+        p.shiftOffsetHz     = 0.0;
+        p.newStreamCentreHz = frequencyHz;
+        return p;
+    }
+
+    // 3. Every DDC is in use and none covers this frequency. Thetis would
+    //    simply disable Multi-RX here (console.cs:31924); we surface the
+    //    hardware limit instead so the UI can explain it.
+    p.outcome = Outcome::Rejected;
+    p.reason  = QStringLiteral(
+        "All %1 receiver DDCs are in use and none covers %2 MHz. "
+        "Retune or remove a slice, or widen a DDC's sample rate.")
+        .arg(m_streams.size())
+        .arg(frequencyHz / 1.0e6, 0, 'f', 4);
+    return p;
+}
+
+SliceStreamAllocator::Placement
+SliceStreamAllocator::retuneSlice(int currentStream,
+                                  bool isSoleOccupant,
+                                  double frequencyHz) const
+{
+    Placement p;
+
+    // Still inside its own window: nothing moves but the shift oscillator.
+    if (currentStream >= 0 && currentStream < m_streams.size()
+        && windowContains(m_streams.at(currentStream), frequencyHz)) {
+        p.outcome       = Outcome::JoinedExisting;
+        p.streamIndex   = currentStream;
+        p.shiftOffsetHz = frequencyHz - m_streams.at(currentStream).centreHz;
+        return p;
+    }
+
+    // Sole occupant: moving the DDC is cheaper than burning another one,
+    // and no other slice depends on this window staying put.
+    if (isSoleOccupant && currentStream >= 0
+        && currentStream < m_streams.size()) {
+        p.outcome           = Outcome::RetunedStream;
+        p.streamIndex       = currentStream;
+        p.shiftOffsetHz     = 0.0;
+        p.newStreamCentreHz = frequencyHz;
+        return p;
+    }
+
+    // Co-hosted: this slice must leave. Same policy as a fresh placement.
+    return placeSlice(frequencyHz);
+}
+
+int SliceStreamAllocator::activeStreamCount() const
+{
+    int n = 0;
+    for (const Stream& s : m_streams) {
+        if (s.active) { ++n; }
+    }
+    return n;
+}
+
+bool SliceStreamAllocator::isStreamActive(int streamIndex) const
+{
+    if (streamIndex < 0 || streamIndex >= m_streams.size()) { return false; }
+    return m_streams.at(streamIndex).active;
+}
+
+double SliceStreamAllocator::streamCentreHz(int streamIndex) const
+{
+    if (streamIndex < 0 || streamIndex >= m_streams.size()) { return 0.0; }
+    return m_streams.at(streamIndex).centreHz;
+}
+
+int SliceStreamAllocator::streamSampleRateHz(int streamIndex) const
+{
+    if (streamIndex < 0 || streamIndex >= m_streams.size()) { return 0; }
+    return m_streams.at(streamIndex).sampleRateHz;
+}
+
+} // namespace NereusSDR
