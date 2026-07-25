@@ -142,15 +142,25 @@ change either fact, so the cost reappears in full the moment you build
 ### 4.1 Layering feasibility
 
 Splitting the object library requires the dependency graph to be close to
-layered. It is:
+layered. Full audit of the 26 upward includes from `src/core` into
+`models/`, plus the single `models` -> `gui` include:
 
-- `src/core` reaches up into `models/` **26 times**, but **14** are just
-  `models/Band.h`, a pure enum header that belongs in a lower shared layer.
-- `src/models` reaches into `gui/` exactly **once** (the `SpectrumWidget`
-  view hook described in CLAUDE.md).
+| Category | Count | Nature |
+| --- | --- | --- |
+| `models/Band.h` | 14 | Mechanical: move `Band.h` to a `common` leaf |
+| `models/SliceModel.h` in `dsp/RxChannelState.h` and `dsp/TxChannelState.h`, needed only for the `DSPMode` enum | 2 | Mechanical: move `DSPMode` to `common` |
+| Real model dependencies in `AudioEngine.cpp`, `SupportBundle.cpp`, `TwoToneController.{h,cpp}`, `TciServer.cpp`, `MicProfileManager.cpp` | 10 | **Not mechanical** |
+| `src/models/RadioModel.cpp:294` -> `gui/SpectrumWidget.h` | 1 | Single view hook; break with an interface |
 
-So roughly a dozen upward includes stand between the current state and a
-properly layered build graph.
+**The third row is the real finding.** Those five translation units live in
+`src/core` but depend on `RadioModel`, `SliceModel`, and `TransmitModel`.
+They are application-layer coordinators filed under `core`. Splitting the
+library cleanly means first deciding where they belong, most plausibly a
+`nereus_app` layer above `models`.
+
+That is a design question, not a refactor step, so **Phase 1 needs its own
+design pass before it can be planned.** Phase 0 is planned separately and
+does not depend on it.
 
 ### 4.2 Selectivity ceiling
 
