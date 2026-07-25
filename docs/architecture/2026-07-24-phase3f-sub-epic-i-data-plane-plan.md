@@ -2058,6 +2058,135 @@ commit message.
 
 ---
 
+## Task 7c: Hermes-class P2 stream table (SHIP-BLOCKER, do before Task 8)
+
+**This is a regression introduced by Sub-Epic I. It kills receive on
+ANAN-G2E, ANAN-10/100, and ANAN-10E/100B running community P2 firmware, on
+the operator's first VFO turn. Fix before any bench session.**
+
+### What happens
+
+`P2RadioConnection.cpp:1975` selects the codec:
+
+```cpp
+        default:
+            m_codec = std::make_unique<P2CodecOrionMkII>();
+```
+
+so Hermes, HermesII and HermesC10 all get `P2CodecOrionMkII`, whose table is
+
+```cpp
+    static constexpr int kStreamToDdc[5] = {2, 3, 4, 5, 6};
+```
+
+But `P2RadioConnection::primaryRxDdcForBoard` returns **0** for exactly those
+three boards, and says why:
+
+```cpp
+    case HPSDRHW::Hermes:
+    case HPSDRHW::HermesII:
+    case HPSDRHW::HermesC10:  // ANAN-G2E //N1GP G2E added (HermesC10)
+        // rx1 = DDC0 (console.cs:8600-8632 [v2.10.3.13]).
+        // Empirically confirmed 2026-05-22 by wire-byte capture of working
+        // Thetis-on-G2E session ... CmdRx byte 7 = 0x01 (DDC0 enable bit)
+        // ... An earlier intermediate fix tried DDC2 - that was wrong
+        return 0;
+```
+
+Until this sub-epic, `invokeCodecDdcAssignment` had zero callers, so the
+mismatch was inert. Task 6 gave it a caller on every frequency change and
+Task 7b made receiver routing follow it. So `connectToRadio` correctly opens
+DDC0, the operator turns the VFO once, the codec asserts DDC2, `ddcEnable`
+drops DDC0, and the radio stops streaming.
+
+### Why a separate codec, not a patch
+
+Thetis keeps two distinct branches, and we should mirror that rather than
+special-case inside the 2-ADC codec:
+
+- `console.cs:8556-8598 [v2.10.3.15]`: 2-ADC boards (Angelia / Orion /
+  OrionMkII / Saturn), rx1 on DDC2, DDC0+DDC1 reserved for the PureSignal and
+  diversity sync pair.
+- `console.cs:8600-8632 [v2.10.3.15]`: 1-ADC Hermes-class on community P2
+  firmware, rx1 on DDC0.
+
+READ BOTH before writing anything. The Hermes-class branch is the authority
+for the new table, including how many user DDCs it really exposes and what
+PureSignal reclaims.
+
+**Files:**
+- Create: `src/core/codec/P2CodecHermes.{h,cpp}`
+- Modify: `src/core/P2RadioConnection.cpp` (codec selection)
+- Modify: `CMakeLists.txt` (`CORE_SOURCES`)
+- Test: `tests/tst_codec_5_slice_assignment.cpp` (extend)
+
+- [ ] **Step 1: Write the failing test**
+
+```cpp
+    void hermes_class_puts_stream_zero_on_ddc0()
+    {
+        // ANAN-G2E / ANAN-10 / ANAN-10E on community P2 firmware. Wire-byte
+        // capture of a working Thetis-on-G2E session shows CmdRx byte 7 =
+        // 0x01, i.e. the DDC0 enable bit, and primaryRxDdcForBoard returns 0
+        // for this family. A codec that asserts DDC2 kills receive on the
+        // first VFO turn.
+        P2CodecHermes codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> streams{};
+        streams[0].live = true; streams[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+        QCOMPARE(a.streamDdc[0], 0);
+        QVERIFY((a.ddcEnable >> 0) & 1);
+    }
+
+    void hermes_class_selection_matches_primary_rx_ddc()
+    {
+        // The codec's stream-0 DDC and primaryRxDdcForBoard must agree for
+        // every board, or connectToRadio and the first frequency change
+        // disagree about which DDC carries RX.
+        for (HPSDRHW b : {HPSDRHW::Hermes, HPSDRHW::HermesII,
+                          HPSDRHW::HermesC10}) {
+            QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(b), 0);
+        }
+        for (HPSDRHW b : {HPSDRHW::Orion, HPSDRHW::Saturn}) {
+            QCOMPARE(P2RadioConnection::primaryRxDdcForBoard(b), 2);
+        }
+    }
+```
+
+- [ ] **Step 2: Run, confirm FAIL**
+
+- [ ] **Step 3: Port the Hermes-class branch**
+
+Create `P2CodecHermes` from `console.cs:8600-8632 [v2.10.3.15]`. Copy the
+byte-for-byte header per `docs/attribution/HOW-TO-PORT.md`, preserve every
+inline author tag (`//N1GP` in particular appears throughout the G2E work),
+and add a PROVENANCE row in the same commit. Model its structure on
+`P2CodecSaturn`, which is the closest sibling.
+
+**Do not guess the table.** Read what Thetis actually assigns in that branch
+and translate it. If the branch does not make the DDC count for slices C, D
+and E unambiguous, STOP AND ASK rather than extending the pattern by analogy.
+
+- [ ] **Step 4: Select it**
+
+In `P2RadioConnection.cpp` around line 1973, add the Hermes-class cases
+explicitly rather than leaving them on `default:`. Keep `default:` on
+`P2CodecOrionMkII` so future 2-ADC SKUs still land there, matching how
+`primaryRxDdcForBoard` is written.
+
+- [ ] **Step 5: Verify**
+
+```bash
+ctest --test-dir build -R "tst_codec|tst_stream_pool_binding|tst_p2" --output-on-failure
+```
+
+- [ ] **Step 6: Commit** (GPG-signed)
+
+---
+
 ## Task 8: One FFTEngine per stream
 
 **Files:**
