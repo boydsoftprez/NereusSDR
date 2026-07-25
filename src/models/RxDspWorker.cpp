@@ -191,8 +191,32 @@ void RxDspWorker::processIqBatch(int receiverIndex,
     // single drain across two values. The fields are std::atomic<int>
     // to avoid the C++ data race that a plain int read would hit; the
     // local snapshot then gives a stable pair for the rest of the batch.
-    const int inSize  = m_inSize.load(std::memory_order_relaxed);
-    const int outSize = m_outSize.load(std::memory_order_relaxed);
+    const int defaultInSize = m_inSize.load(std::memory_order_relaxed);
+    const int outSize       = m_outSize.load(std::memory_order_relaxed);
+
+    // ── Phase 3F Sub-Epic I closeout, defect H1 ──────────────────────────
+    // The drain threshold belongs to the DDC STREAM, not to the radio.
+    // Before this, one geometry served every stream: RadioModel called
+    // setBufferSizes() once with the connection-wide rate's in_size, and this
+    // loop used that single value for every accumulator. The moment a second
+    // stream ran at a rate the first does not share, the threshold was wrong
+    // for whichever stream it was not computed from, and fexchange2 was
+    // handed the wrong number of samples.
+    //
+    // That is a chunk-geometry error, not a cadence one. fexchange2 copies
+    // exactly ch[channel].in_size samples out of the caller's legs
+    // (iobuffs.c:532-536 [WDSP v1.29]) without consulting any count we pass,
+    // so a threshold BELOW the channel's configured in_size reads past the
+    // end of the accumulator. RadioModel keeps the two in step; see
+    // RadioModel::applyStreamDspGeometry for the ordering that guarantees it.
+    //
+    // Upstream keys the size per input stream for the same reason:
+    //   From Thetis cmaster.c:461 [v2.10.3.15]
+    //     pcm->xcm_insize[in_id] = getbuffsize (rate);
+    const auto sizeIt = m_streamInSize.find(receiverIndex);
+    const int inSize  = (sizeIt != m_streamInSize.end() && sizeIt->second > 0)
+                            ? sizeIt->second
+                            : defaultInSize;
 
     // Deinterleave and append to accumulation buffers. Done regardless
     // of WDSP wiring so the chunkDrained signal can be observed in
@@ -559,6 +583,14 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         // (RadioModel.cpp:6866 passes literal 64), so
         // inSize / inputRate == outSize / outRate: one block per
         // outSize/outRate seconds, which is what DEXP was configured for.
+        //
+        // Phase 3F Sub-Epic I closeout, defect H1: still exact once streams
+        // carry their own rates. `inSize` above is now resolved from the
+        // ORIGINATING stream, and it is derived from that stream's rate
+        // through the same 64 * rate / 48000 formula, so the identity
+        // inSize / inputRate == outSize / outRate holds per stream. Slice 0's
+        // host therefore delivers one block per outSize/outRate seconds no
+        // matter what width the operator gave it.
         if (hostsSliceZero) {
             QVector<float> antiVoxBuffer(outSize * 2, 0.0f);
             if (m_wdspEngine != nullptr && m_audioEngine != nullptr
@@ -579,6 +611,67 @@ void RxDspWorker::setStreamSlices(int streamIndex,
                                   const QVector<int>& sliceIndices)
 {
     m_streamSlices[streamIndex] = sliceIndices;
+}
+
+// ── Phase 3F Sub-Epic I closeout, defect H1 ─────────────────────────────────
+//
+// One stream's drain size. Runs on the DSP thread (queued from RadioModel),
+// which is the whole point: the size and that stream's accumulator have to
+// change together, and doing both here means no drain can observe one without
+// the other.
+void RxDspWorker::setStreamInputChunk(int streamIndex, int inSize)
+{
+    const int defaultInSize = m_inSize.load(std::memory_order_relaxed);
+
+    // Resolve both sides through the same "absent or <= 0 means default" rule
+    // the drain loop uses, so "set stream 1 to the value it already resolves
+    // to" is correctly seen as a no-op and does not punch a hole in the audio.
+    const auto it = m_streamInSize.find(streamIndex);
+    const int  previous = (it != m_streamInSize.end() && it->second > 0)
+                              ? it->second
+                              : defaultInSize;
+    const int  resolved = (inSize > 0) ? inSize : defaultInSize;
+
+    if (inSize > 0) {
+        m_streamInSize[streamIndex] = inSize;
+    } else if (it != m_streamInSize.end()) {
+        m_streamInSize.erase(it);
+    }
+
+    if (resolved == previous) {
+        return;
+    }
+
+    // The partial chunk was captured by the DDC at the OLD rate. A WDSP
+    // channel carries exactly ONE input rate (SetInputSamplerate,
+    // channel.c:197-208 [WDSP v1.29]), so a chunk assembled from both sides
+    // of the change cannot be described to it: the carried prefix would be
+    // demodulated against the wrong timebase, corrupting the whole chunk
+    // rather than clicking at the seam. Thetis reaches the same place from
+    // the other direction, draining the channel with SetChannelState(id,0,1)
+    // before SetXcmInrate (setup.cs:7010 / 7081 [v2.10.3.15]), and
+    // RadioModel::setSampleRateLive already drops every accumulator through
+    // resetAccumulator() for the radio-wide case.
+    //
+    // The cost is bounded by one drain interval, which the Thetis buffer
+    // formula pins at inSize / rate = 64 / 48000 s at EVERY rate, so under
+    // 1.4 ms of audio on a deliberate operator action.
+    auto accIt = m_accums.find(streamIndex);
+    if (accIt != m_accums.end()) {
+        accIt->second.i.clear();
+        accIt->second.q.clear();
+    }
+}
+
+void RxDspWorker::clearStreamInputChunks()
+{
+    m_streamInSize.clear();
+    // Same reasoning as setStreamInputChunk: every stream's partial chunk was
+    // captured against the geometry that just went away.
+    for (auto& entry : m_accums) {
+        entry.second.i.clear();
+        entry.second.q.clear();
+    }
 }
 
 void RxDspWorker::resetAccumulator()

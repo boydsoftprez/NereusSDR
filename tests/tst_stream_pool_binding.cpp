@@ -9,7 +9,11 @@
 // =================================================================
 #include <QtTest/QtTest>
 #include <QSignalSpy>
+#include "core/P1RadioConnection.h"
 #include "core/ReceiverManager.h"
+#include "core/RxChannel.h"
+#include "core/SampleRateCatalog.h"
+#include "core/WdspEngine.h"
 #include "core/codec/P1CodecRedPitaya.h"
 #include "core/codec/P2CodecHermes.h"
 #include "core/codec/P2CodecSaturn.h"
@@ -48,6 +52,15 @@ QVector<int> workerBindingsFor(RxDspWorker& w, int st, int inSize)
     }
     return out;
 }
+
+// Detaches a stack-injected RadioConnection on scope exit, however the scope
+// is left. QCOMPARE / QVERIFY return from the enclosing slot on failure, so a
+// trailing injectConnectionForTest(nullptr) is skipped on exactly the run
+// where it matters most.
+struct DetachConnection {
+    RadioModel* model{nullptr};
+    ~DetachConnection() { if (model) { model->injectConnectionForTest(nullptr); } }
+};
 
 } // namespace
 
@@ -688,6 +701,142 @@ private slots:
         model.requestSliceSampleRate(99, 768000);
 
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
+    }
+
+    // ── Phase 3F Sub-Epic I closeout, defect H1 ─────────────────────────
+    //
+    // A stream's rate IS its drain geometry, on both sides of the chunk:
+    //
+    //   From Thetis cmaster.c:461,473-475 [v2.10.3.15] (SetXcmInrate):
+    //     pcm->xcm_insize[in_id] = getbuffsize (rate);
+    //     for (i = 0; i < pcm->cmSubRCVR; i++) {
+    //         SetInputSamplerate (chid (in_id, i), rate);
+    //         SetInputBuffsize (chid (in_id, i), pcm->xcm_insize[in_id]);
+    //     }
+    //
+    // One size per input stream, pushed to EVERY sub-receiver channel bound to
+    // it. Changing a stream's rate without following it into that stream's
+    // WDSP channels leaves fexchange2 reading ch[].in_size samples
+    // (iobuffs.c:532-536) out of a chunk the drain loop sized differently.
+
+    void a_stream_rate_change_reaches_only_its_own_slices_wdsp_channels()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+
+        const int streamA = model.sliceById(a)->streamIndex();
+        const int streamB = model.sliceById(b)->streamIndex();
+        QVERIFY(streamA >= 0);
+        QVERIFY(streamB != streamA);
+
+        // Sub-Epic I invariant: WDSP RX channel id == slice index.
+        engine->createRxChannel(a, bufferSizeForRate(192000), 4096,
+                                192000, 48000, 48000);
+        engine->createRxChannel(b, bufferSizeForRate(192000), 4096,
+                                192000, 48000, 48000);
+        QVERIFY(engine->rxChannel(a) != nullptr);
+        QVERIFY(engine->rxChannel(b) != nullptr);
+
+        model.setStreamSampleRate(streamA, 768000);
+
+        // A's channel follows its stream, input rate AND input buffsize.
+        QCOMPARE(engine->rxChannel(a)->sampleRate(), 768000);
+        QCOMPARE(engine->rxChannel(a)->bufferSize(), bufferSizeForRate(768000));
+
+        // ...and only those. B lives on another DDC that nobody re-rated;
+        // dragging it along would make its chunk geometry disagree with the
+        // stream actually feeding it.
+        QCOMPARE(engine->rxChannel(b)->sampleRate(), 192000);
+        QCOMPARE(engine->rxChannel(b)->bufferSize(), bufferSizeForRate(192000));
+    }
+
+    // The other half of the same geometry: the DSP worker's drain threshold
+    // for that stream, computed with the one bufferSizeForRate() in the tree.
+    void a_stream_rate_change_publishes_that_streams_drain_chunk()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+
+        const int streamA = model.sliceById(a)->streamIndex();
+        const int streamB = model.sliceById(b)->streamIndex();
+        QVERIFY(streamB != streamA);
+
+        RxDspWorker worker;
+        worker.setBufferSizes(bufferSizeForRate(192000), 64);
+        model.attachDspWorkerForTest(&worker);
+        model.republishAllStreamBindings();
+        QCoreApplication::processEvents();
+
+        model.setStreamSampleRate(streamA, 768000);
+        QCoreApplication::processEvents();
+
+        QSignalSpy spy(&worker, &RxDspWorker::chunkDrainedForStream);
+
+        // Exactly one chunk each, at each stream's OWN size. With a single
+        // shared threshold, stream A's 1024 samples drained four 256-sample
+        // chunks and every one of them was the wrong count for fexchange2.
+        worker.processIqBatch(streamA, oneChunk(bufferSizeForRate(768000)));
+        worker.processIqBatch(streamB, oneChunk(bufferSizeForRate(192000)));
+
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(0).at(0).toInt(), streamA);
+        QCOMPARE(spy.at(0).at(1).toInt(), bufferSizeForRate(768000));
+        QCOMPARE(spy.at(1).at(0).toInt(), streamB);
+        QCOMPARE(spy.at(1).at(1).toInt(), bufferSizeForRate(192000));
+
+        model.attachDspWorkerForTest(nullptr);
+    }
+
+    // Protocol 1 carries one rate for the whole radio (composeCcBank0 takes a
+    // single sampleRate), so there the change has to reach every active
+    // stream's slices, not just the named stream's.
+    void on_protocol1_the_rate_change_reaches_every_active_streams_channels()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        // The injected connection lives on the stack and dies before the
+        // model does. A failing QCOMPARE returns from the slot immediately,
+        // so the detach has to be unconditional or the model is left holding
+        // a dangling pointer through its own destructor.
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(7150000.0);
+
+        const int streamA = model.sliceById(a)->streamIndex();
+        QVERIFY(model.sliceById(b)->streamIndex() != streamA);
+        QVERIFY(model.sampleRateIsRadioWide());
+
+        engine->createRxChannel(a, bufferSizeForRate(192000), 4096,
+                                192000, 48000, 48000);
+        engine->createRxChannel(b, bufferSizeForRate(192000), 4096,
+                                192000, 48000, 48000);
+
+        model.setStreamSampleRate(streamA, 384000);
+
+        QCOMPARE(engine->rxChannel(a)->sampleRate(), 384000);
+        QCOMPARE(engine->rxChannel(b)->sampleRate(), 384000);
     }
 };
 

@@ -2235,6 +2235,38 @@ public:
     /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
     void requestDdcAssignment();
 
+    /// Phase 3F Sub-Epic I closeout, defect H1: put the DSP side of the pool
+    /// back in step with the allocator after anything moves a stream's rate
+    /// or moves a slice between streams.
+    ///
+    /// Two halves of one geometry, both derived from the stream's rate
+    /// through the single bufferSizeForRate() in the tree:
+    ///   * RxDspWorker's accumulator drain threshold for that stream, and
+    ///   * SetInputSamplerate / SetInputBuffsize on the WDSP channel of every
+    ///     slice bound to it.
+    ///
+    /// This is ChannelMaster's SetXcmInrate, split across the two objects
+    /// NereusSDR keeps the state in:
+    ///   From Thetis cmaster.c:461,473-475 [v2.10.3.15]
+    ///     pcm->xcm_insize[in_id] = getbuffsize (rate);
+    ///     for (i = 0; i < pcm->cmSubRCVR; i++) {
+    ///         SetInputSamplerate (chid (in_id, i), rate);
+    ///         SetInputBuffsize (chid (in_id, i), pcm->xcm_insize[in_id]);
+    ///     }
+    ///
+    /// The two must never disagree while a drain can run: fexchange2 copies
+    /// ch[channel].in_size samples out of the buffer it is handed
+    /// (iobuffs.c:532-536 [WDSP v1.29]) and ignores any count we pass, so a
+    /// drain threshold below the channel's in_size reads past the end of the
+    /// accumulator. Rather than order the two writes (the safe order inverts
+    /// between widening and narrowing), this quiesces the I/Q feed for the
+    /// duration exactly as setSampleRateLive steps 2 and 10 do, so no drain
+    /// can observe a half-applied geometry at all.
+    ///
+    /// Cheap and side-effect-free when nothing is out of step, which is every
+    /// call on a single-rate radio.
+    void applyStreamDspGeometry();
+
     /// Phase 3F Sub-Epic I closeout, defect F3: re-run the codec and republish
     /// client-side after a MOX or PureSignal transition, so a slice whose DDC
     /// the radio just reclaimed stops reporting the one it had before. Does
@@ -2379,6 +2411,14 @@ private:
     // before m_connectionSampleRateHz has been set (Slice A binds during
     // connectToRadio, before wireConnectionSignals records the wire rate).
     int m_streamDefaultRateHz{192000};
+
+    // Phase 3F Sub-Epic I closeout, defect H1: the drain size last published
+    // to RxDspWorker for each stream, keyed by stream index. Seeded by
+    // configureStreamPool to bufferSizeForRate(defaultRateHz), which is
+    // exactly what the worker's global default already is, so a pool that
+    // never leaves its connect rate is recognised as already in step and
+    // applyStreamDspGeometry stays a no-op. Main thread only.
+    QHash<int, int> m_streamInSizePushed;
 
     // Phase 3F Sub-Epic I Task 7b: the codec's last per-stream DDC choice,
     // indexed by stream. -1 = that stream is idle, so an emptied stream

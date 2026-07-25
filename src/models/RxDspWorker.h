@@ -137,6 +137,14 @@ public:
     // when the (in, out) pair actually changes (idempotent re-calls are
     // suppressed). Consumed by TxWorkerThread::setAntiVoxBlockGeometry
     // to align WDSP DEXP detector dimensions with RX block geometry.
+    //
+    // Phase 3F Sub-Epic I closeout, defect H1: `inSize` here is the DEFAULT
+    // for streams that have not been given one of their own. A stream whose
+    // DDC runs at its own rate carries its own drain size through
+    // setStreamInputChunk() and ignores this value. `outSize` stays global:
+    // every WDSP RX channel decimates input_rate -> 48 kHz and hands back
+    // 64 samples per call regardless of its input rate, so there is nothing
+    // per-stream about it.
     void setBufferSizes(int inSize, int outSize);
 
     // Configure the post-decimation panel sample rate (Hz, default 48 kHz).
@@ -176,6 +184,46 @@ public slots:
     /// Phase 3F Sub-Epic I Task 4. A stream with no declared slices
     /// accumulates and drains but demodulates nothing.
     void setStreamSlices(int streamIndex, const QVector<int>& sliceIndices);
+
+    /// Give one DDC stream its own accumulator drain size, overriding the
+    /// global setBufferSizes() value for that stream alone. `inSize <= 0`
+    /// drops the override and returns the stream to the global default.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect H1. The drain size is a property
+    /// of the DDC stream's sample rate, not of the radio: ChannelMaster keys
+    /// it per input stream too.
+    ///
+    ///   From Thetis cmaster.c:461 [v2.10.3.15] (SetXcmInrate):
+    ///     pcm->xcm_insize[in_id] = getbuffsize (rate);
+    ///
+    /// with getbuffsize(rate) = 64 * rate / 48000 (cmsetup.c:106-111
+    /// [v2.10.3.15]). Callers must compute `inSize` with
+    /// SampleRateCatalog's bufferSizeForRate(), which is that formula and
+    /// the only copy of it in the tree. RxDspWorker stores what it is told
+    /// and never recomputes.
+    ///
+    /// Changing a stream's size DROPS that stream's partial accumulator. The
+    /// samples already in it were captured by the DDC at the old rate, and a
+    /// WDSP channel carries exactly one input rate (SetInputSamplerate,
+    /// channel.c:197-208), so a chunk straddling the change is demodulated
+    /// against the wrong timebase end to end rather than merely clicking at
+    /// the seam. The loss is bounded by one drain interval, which the Thetis
+    /// formula fixes at inSize / rate = 64 / 48000 seconds at every rate.
+    /// An idempotent re-push of the same size keeps the partial.
+    ///
+    /// Cross-thread queued slot, same contract as setStreamSlices: written
+    /// from the main thread, only ever touched on the DSP thread.
+    void setStreamInputChunk(int streamIndex, int inSize);
+
+    /// Drop every per-stream drain-size override, returning all streams to
+    /// the global setBufferSizes() value, and clear their accumulators.
+    ///
+    /// Phase 3F Sub-Epic I closeout, defect H1: paired with setBufferSizes()
+    /// whenever the connection-wide geometry moves (RadioModel::
+    /// setSampleRateLive), because overrides published against the previous
+    /// wire rate would otherwise outlive it and leave a stream draining a
+    /// chunk size no channel is configured for.
+    void clearStreamInputChunks();
 
     // Phase 3R K-bench: set the active RadeChannel for I/Q routing.
     // When non-null AND WDSP rxChannel(0) returns null (slice is in
@@ -327,6 +375,21 @@ private:
     };
     std::unordered_map<int, StreamAccum>  m_accums;
     std::unordered_map<int, QVector<int>> m_streamSlices;
+
+    // Phase 3F Sub-Epic I closeout, defect H1: per-stream drain size, keyed
+    // by DDC stream index. Absent = that stream follows the global m_inSize,
+    // which is what every stream does on a single-rate radio, so the
+    // single-rate path never consults this map at all.
+    //
+    // Mirrors ChannelMaster's `pcm->xcm_insize[in_id]` (cmaster.c:461
+    // [v2.10.3.15]): one buffer size per input stream, derived from that
+    // stream's own rate. Same threading contract as m_streamSlices: written
+    // through the queued setStreamInputChunk slot, so DSP-thread-only at
+    // point of use and no lock is needed. Deliberately NOT std::atomic like
+    // m_inSize: an atomic would only protect one scalar, and what has to
+    // stay coherent here is the (size, accumulator) pair, which only the DSP
+    // thread ever touches.
+    std::unordered_map<int, int>          m_streamInSize;
 
     // Reusable interleaved stereo scratch handed to AudioEngine::rxBlockReady.
     // Sized to outSize*2 on first use and reused in-place per batch so the

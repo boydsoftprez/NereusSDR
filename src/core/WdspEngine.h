@@ -115,6 +115,9 @@ class TestSliceModelRadeSwap;
 // Phase 3R Task L2: same friendship for the RadeApplet UI test which
 // constructs a real RadioModel + RadeChannel fixture.
 class TestRadeApplet;
+// Phase 3F Sub-Epic I closeout, defect H1: the per-stream drain-geometry
+// test primes the engine so createRxChannel can seed real RX channels.
+class TestStreamPoolBinding;
 #endif
 
 namespace NereusSDR {
@@ -613,6 +616,10 @@ private:
     friend class ::TestSliceModelRadeSwap;
     // Phase 3R Task L2: same friendship for the RadeApplet UI test.
     friend class ::TestRadeApplet;
+    // Phase 3F Sub-Epic I closeout, defect H1: same friendship for the
+    // per-stream drain-geometry test, which seeds one real RX channel per
+    // slice so it can watch setRxChannelRate follow a stream's rate change.
+    friend class ::TestStreamPoolBinding;
 #endif
 };
 

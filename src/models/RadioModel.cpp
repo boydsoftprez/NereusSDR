@@ -2857,6 +2857,17 @@ void RadioModel::configureStreamPool(int userDdcCount, int maxSlices,
     m_streamAllocator.setDefaultSampleRateHz(defaultRateHz);
     m_streamDefaultRateHz = defaultRateHz > 0 ? defaultRateHz : 192000;
 
+    // Phase 3F Sub-Epic I closeout, defect H1: every stream starts at the
+    // connect rate, and connectToRadio hands RxDspWorker exactly this size as
+    // its global default (setBufferSizes(bufferSizeForRate(wdspInputRate),
+    // 64)). Recording it here is what lets applyStreamDspGeometry recognise
+    // the untouched single-rate pool as already in step and do nothing at all.
+    m_streamInSizePushed.clear();
+    const int poolInSize = bufferSizeForRate(m_streamDefaultRateHz);
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        m_streamInSizePushed.insert(st, poolInSize);
+    }
+
     // The master mixer needs one slot per slice id for the same reason the
     // WDSP channel pool needs one channel per slice, and for the same
     // reason both are sized here rather than on demand: MasterMixer's map
@@ -2957,6 +2968,159 @@ void RadioModel::republishStreamBindings(int streamIndex)
         }, Qt::QueuedConnection);
     }
     emit streamBindingsChanged(streamIndex, bound);
+}
+
+// ── Phase 3F Sub-Epic I closeout, defect H1 ─────────────────────────────────
+//
+// Reconcile the DSP side of the pool with the allocator. See the declaration
+// in RadioModel.h for the Thetis SetXcmInrate mapping and the fexchange2
+// over-read this ordering exists to prevent.
+void RadioModel::applyStreamDspGeometry()
+{
+    const int streamCount = m_streamAllocator.streamCount();
+    if (streamCount <= 0) {
+        return;
+    }
+
+    // ── Targets ──────────────────────────────────────────────────────────
+    // One rate per stream, and the drain size derived from it through the
+    // single copy of the Thetis formula in the tree (bufferSizeForRate,
+    // SampleRateCatalog.h, from ChannelMaster cmsetup.c:106-111
+    // [v2.10.3.15]). An idle stream is given the connection rate so that a
+    // slice landing on it later finds the geometry already correct.
+    const int fallbackRateHz = m_connectionSampleRateHz > 0
+                                   ? m_connectionSampleRateHz
+                                   : m_streamDefaultRateHz;
+    QVector<int> rateFor(streamCount, fallbackRateHz);
+    QVector<int> inSizeFor(streamCount, bufferSizeForRate(fallbackRateHz));
+    for (int st = 0; st < streamCount; ++st) {
+        const int rate = m_streamAllocator.isStreamActive(st)
+                             ? m_streamAllocator.streamSampleRateHz(st)
+                             : 0;
+        if (rate > 0) {
+            rateFor[st]   = rate;
+            inSizeFor[st] = bufferSizeForRate(rate);
+        }
+    }
+
+    // ── Early out ────────────────────────────────────────────────────────
+    // Nothing below has an effect when every stream already carries the size
+    // we last published and every bound slice's channel already runs at its
+    // stream's rate. That is every call on a single-rate radio, so the
+    // single-stream path keeps its exact previous behaviour: no feed
+    // disconnect, no accumulator drop, no WDSP call.
+    bool outOfStep = false;
+    for (int st = 0; st < streamCount && !outOfStep; ++st) {
+        outOfStep = (m_streamInSizePushed.value(st, -1) != inSizeFor[st]);
+    }
+    if (!outOfStep && m_wdspEngine) {
+        for (SliceModel* s : std::as_const(m_slices)) {
+            if (!s || s->streamIndex() < 0 || s->streamIndex() >= streamCount) {
+                continue;
+            }
+            RxChannel* ch = m_wdspEngine->rxChannel(s->sliceIndex());
+            if (ch && ch->sampleRate() != rateFor[s->streamIndex()]) {
+                outOfStep = true;
+                break;
+            }
+        }
+    }
+    if (!outOfStep) {
+        return;
+    }
+
+    // ── Quiesce ──────────────────────────────────────────────────────────
+    // Mirrors setSampleRateLive steps 2 and 10. Disconnecting the feed and
+    // then reaching the worker through a BlockingQueuedConnection guarantees
+    // two things: any in-flight processIqBatch has finished, and every event
+    // already posted to the DSP thread (including the setStreamSlices calls
+    // the rebind loop just queued) has been consumed. From here until the
+    // reconnect no drain can run, so the two halves of the geometry below
+    // cannot be observed half-applied.
+    //
+    // Ordering the two writes instead would need opposite orders for the two
+    // directions -- widening must raise the drain threshold before the
+    // channel's in_size, narrowing must lower the channel's in_size before
+    // the threshold -- because the invariant fexchange2 imposes is one-sided:
+    // the threshold may exceed ch[].in_size (it reads a prefix) but must
+    // never fall below it (it would read past the end). Migration inverts the
+    // direction again per slice. Quiescing removes the window rather than
+    // threading it.
+    //
+    // The currentThread() term is not theoretical hygiene: a
+    // BlockingQueuedConnection whose sender and receiver threads are the same
+    // deadlocks outright. Every caller here is main-thread today, and this
+    // keeps it that way if one ever is not.
+    const bool quiesce = m_dspWorker != nullptr && m_receiverManager != nullptr
+                         && m_dspThread != nullptr && m_dspThread->isRunning()
+                         && QThread::currentThread() != m_dspThread;
+    if (quiesce) {
+        QObject::disconnect(m_receiverManager, &ReceiverManager::iqDataForReceiver,
+                            m_dspWorker, &RxDspWorker::processIqBatch);
+        QMetaObject::invokeMethod(m_dspWorker, &RxDspWorker::resetAccumulator,
+                                  Qt::BlockingQueuedConnection);
+    }
+
+    // ── Half 1: the worker's per-stream drain thresholds ─────────────────
+    // From Thetis cmaster.c:461 [v2.10.3.15]:
+    //   pcm->xcm_insize[in_id] = getbuffsize (rate);
+    //
+    // Queued, matching republishStreamBindings: the map is main-thread
+    // written but DSP-thread read. Posted before the feed is reconnected, and
+    // Qt delivers posted events to a thread in the order they were posted, so
+    // these always land ahead of the first batch that follows the reconnect.
+    //
+    // The record is only updated when a worker actually received the push.
+    // Claiming a delivery that went nowhere is the shape of defect F1, where
+    // bindings published before wireConnectionSignals built the worker were
+    // silently dropped and never re-sent. With no worker the sizes simply stay
+    // out of step, and the next bind or rate change publishes them for real.
+    if (m_dspWorker) {
+        for (int st = 0; st < streamCount; ++st) {
+            if (m_streamInSizePushed.value(st, -1) == inSizeFor[st]) {
+                continue;
+            }
+            m_streamInSizePushed.insert(st, inSizeFor[st]);
+            const int inSize = inSizeFor[st];
+            QMetaObject::invokeMethod(m_dspWorker,
+                                      [w = m_dspWorker, st, inSize]() {
+                w->setStreamInputChunk(st, inSize);
+            }, Qt::QueuedConnection);
+        }
+    }
+
+    // ── Half 2: the WDSP channel of every slice bound to a stream ────────
+    // From Thetis cmaster.c:473-475 [v2.10.3.15]:
+    //   for (i = 0; i < pcm->cmSubRCVR; i++) {
+    //       SetInputSamplerate (chid (in_id, i), rate);          // dsp channel input rate
+    //       SetInputBuffsize (chid (in_id, i), pcm->xcm_insize[in_id]);  // dsp channel input size
+    //   }
+    //
+    // Every sub-receiver on the stream, not just the first: co-hosted slices
+    // are handed the same chunk and each runs its own channel over it.
+    // setRxChannelRate is the live SetInputSamplerate / SetInputBuffsize path
+    // (WdspEngine.cpp), NOT a rebuild -- the RxChannel wrapper stays alive, so
+    // the seven raw-pointer holders that crashed PR #219 stay valid. It is
+    // idempotent, so slices whose stream did not move cost one comparison.
+    //
+    // Main thread, deliberately: SetInputBuffsize and SetInputSamplerate each
+    // go through pre_main_destroy, which sleeps 25 ms while it waits out any
+    // in-flight fexchange2 (channel.c:103-111 [WDSP v1.29]). Running that on
+    // the DSP thread would stall the audio feeder instead of the GUI.
+    if (m_wdspEngine) {
+        for (SliceModel* s : std::as_const(m_slices)) {
+            if (!s) { continue; }
+            const int st = s->streamIndex();
+            if (st < 0 || st >= streamCount) { continue; }
+            m_wdspEngine->setRxChannelRate(s->sliceIndex(), rateFor[st]);
+        }
+    }
+
+    if (quiesce) {
+        connect(m_receiverManager, &ReceiverManager::iqDataForReceiver,
+                m_dspWorker, &RxDspWorker::processIqBatch,
+                Qt::QueuedConnection);
+    }
 }
 
 void RadioModel::requestDdcAssignment()
@@ -3078,6 +3242,13 @@ void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
     }
     m_suppressDdcAssignment = false;
 
+    // Phase 3F Sub-Epic I closeout, defect H1: the rate IS the drain geometry
+    // on both sides of the chunk, so the DSP has to follow it. One
+    // reconciliation for the whole change, after the migrations above have
+    // settled -- an evicted slice must be re-rated for the stream it landed
+    // on, not the one it left.
+    applyStreamDspGeometry();
+
     // One recompute for the whole rate change. This is what actually pushes
     // the new rate to the wire on P2: the codec writes rate[] into the
     // assignment and P2RadioConnection::applyDdcAssignment converts it to
@@ -3198,6 +3369,19 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
         republishStreamBindings(previousStream);
     }
     republishStreamBindings(placement.streamIndex);
+
+    // Phase 3F Sub-Epic I closeout, defect H1: a migration re-rates the slice
+    // as surely as a rate change does. Moving from a 768 kHz stream to a
+    // 192 kHz one leaves the slice's WDSP channel configured for a 1024-sample
+    // input while its new stream drains 256, and fexchange2 would read the
+    // missing 768 off the end of the accumulator (iobuffs.c:532-536
+    // [WDSP v1.29]). Suppressed during setStreamSampleRate's rebind loop for
+    // the same reason requestDdcAssignment is: that loop coalesces to one
+    // reconciliation at the end rather than one per slice. No-op whenever
+    // everything already agrees, which is every retune on a single-rate radio.
+    if (!m_suppressDdcAssignment) {
+        applyStreamDspGeometry();
+    }
 
     // The active-DDC set may have changed, so the codec must recompute.
     requestDdcAssignment();
@@ -10728,12 +10912,55 @@ qint64 RadioModel::setSampleRateLive(int newRateHz)
     // m_rxChannel raw pointer (and every other holder) remains valid.
     m_wdspEngine->setRxChannelRate(0, newRateHz);
 
+    // Phase 3F Sub-Epic I closeout, defect H1: every slice's channel, not
+    // just channel 0. This is a radio-wide rate, and step 7 below gives the
+    // whole worker one drain size, so a channel left at the old rate would be
+    // handed a chunk sized for the new one. Upstream loops the same way:
+    //   From Thetis cmaster.c:473-475 [v2.10.3.15]
+    //     for (i = 0; i < pcm->cmSubRCVR; i++) {
+    //         SetInputSamplerate (chid (in_id, i), rate);
+    //         SetInputBuffsize (chid (in_id, i), pcm->xcm_insize[in_id]);
+    //     }
+    // Idempotent for channel 0, which the line above already moved.
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (s) {
+            m_wdspEngine->setRxChannelRate(s->sliceIndex(), newRateHz);
+        }
+    }
+
     // ── Step 7: Reconfigure AudioEngine and DSP worker for new rate ───────
     // WDSP always outputs 64 samples @ 48 kHz; AudioEngine's speakers bus
     // doesn't need reopening but the input geometry follows the wire rate.
     m_audioEngine->reinitForSampleRate(newRateHz);
     if (m_dspWorker) {
         m_dspWorker->setBufferSizes(newInSize, 64);
+        // Phase 3F Sub-Epic I closeout, defect H1: this is the radio-wide
+        // control, so it resets every stream's width. Per-stream overrides
+        // were published against the rate that just went away; leaving them
+        // would keep a stream draining a chunk size no channel is configured
+        // for any more. Queued to land on the DSP thread, and posted while
+        // the feed is still disconnected (step 2) so it is consumed before
+        // the first batch that follows the reconnect in step 10.
+        QMetaObject::invokeMethod(m_dspWorker,
+                                  &RxDspWorker::clearStreamInputChunks,
+                                  Qt::QueuedConnection);
+    }
+
+    // Keep the allocator and the published-size record agreeing with what was
+    // just pushed. Without this the next retune's applyStreamDspGeometry would
+    // read the allocator's stale per-stream rates and drag every channel back
+    // to the rate this call just left.
+    for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+        if (m_streamAllocator.isStreamActive(st)) {
+            m_streamAllocator.activateStream(
+                st, m_streamAllocator.streamCentreHz(st), newRateHz);
+        }
+        m_streamInSizePushed.insert(st, newInSize);
+    }
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (s && s->streamIndex() >= 0) {
+            s->setSampleRateHz(newRateHz);
+        }
     }
 
     // ── Step 8: Brief wait for samples at the new rate to arrive ─────────
