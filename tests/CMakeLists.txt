@@ -5407,6 +5407,18 @@ nereus_add_test(tst_codec_5_slice_assignment)
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-b-codec-chain-plan.md Task 15.
 nereus_add_test(tst_p2_radio_connection_apply_ddc_assignment)
 
+# ── Phase 3F Sub-Epic I closeout: who owns the P2 DDC enable mask ──────────
+# 7 tests. Section 1 pins the ownership invariant at the connection boundary
+# (codec mask survives a count-derived push, single-slice case, repeated
+# pushes, and the pre-codec seed that tests/data/p2_baseline_bytes.json is
+# frozen against). Section 2 runs the reported two-slice ANAN-G2 scenario end
+# to end through RadioModel, plus an unrelated rebuildHardwareMapping and a
+# single-slice regression guard.
+# Source: NereusSDR-original. Ownership established from Thetis
+# console.cs:8537 + ChannelMaster/netInterface.c:1229-1236 [v2.10.3.15];
+# no upstream logic ported.
+nereus_add_test(tst_p2_ddc_mask_ownership)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice

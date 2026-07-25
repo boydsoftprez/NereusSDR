@@ -578,6 +578,13 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     //   if (p1) Rate[0] = rx1_rate; // [2.10.3.13]MW0LGE p1 !
     const int primaryDdc = primaryRxDdcForBoard(info.boardType);
 
+    // New session: no codec has computed a mask yet, so the board-aware
+    // bootstrap on the next line plus setActiveReceiverCount hold byte 7
+    // until the first applyDdcAssignment / applyPsDdcConfig takes ownership.
+    // Reset here (not in disconnect) so a reconnect on the same object gets
+    // the same start state as a freshly constructed one.
+    m_ddcMaskOwnedByCodec = false;
+
     m_rx[primaryDdc].enable = 1;
     // Phase 3P-I-a bench-bug fix (KG4VCF 2026-04-22):
     // RadioModel::connectToRadio queues setReceiverFrequency BEFORE
@@ -813,6 +820,39 @@ void P2RadioConnection::setTxFrequency(quint64 frequencyHz)
 
 void P2RadioConnection::setActiveReceiverCount(int count)
 {
+    // ── Phase 3F Sub-Epic I closeout: the codec owns the enable mask ──────
+    //
+    // A receiver COUNT cannot name DDCs. The DDC0..N-1 range below is only
+    // ever right on a board whose user DDCs start at 0, and every 2-ADC P2
+    // SKU reserves DDC0/DDC1 for the PureSignal / diversity pair and puts
+    // slice A on DDC2 (P2CodecSaturn stream table; Thetis
+    // console.cs:8244-8245 [v2.10.3.15]). Once the per-board codec has
+    // computed a mask for this session it is the only writer, so this
+    // returns before touching a single enable bit.
+    //
+    // Upstream authority is quoted in full on m_ddcMaskOwnedByCodec's
+    // declaration: Thetis writes the mask in exactly one place,
+    // NetworkIO.EnableRxs(DDCEnable) at console.cs:8537 [v2.10.3.15], from
+    // UpdateDDCs's per-board switch, and DERIVES the receiver count from
+    // the mask inside EnableRxs (netInterface.c:1229-1236 [v2.10.3.15]).
+    //
+    // Ownership, not ordering: publishDdcAssignment's activateReceiver()
+    // reaches here through rebuildHardwareMapping ->
+    // hardwareReceiverCountChanged, but so does any other rebuild trigger
+    // (destroyReceiver, deactivateReceiver, setDdcMapping, reset). Gating
+    // on the owner rather than on call order is what makes every one of
+    // them safe.
+    //
+    // Before the codec speaks, the count-derived mask stays exactly as it
+    // was: that is the pre-connect seed the P2 wire-lock baseline
+    // (tests/data/p2_baseline_bytes.json, CmdRx byte 7) is frozen against,
+    // and on the live path connectToRadio's board-aware
+    // m_rx[primaryDdc].enable = 1 bootstrap is what actually starts the
+    // stream.
+    if (m_ddcMaskOwnedByCodec) {
+        return;
+    }
+
     // Clamp to board-reported maximum if caps are available.
     // kMaxRxStreams (12) is the wire-protocol ceiling; board caps may be lower.
     const int maxRx = m_caps ? m_caps->maxReceivers : kMaxRxStreams;
@@ -1565,6 +1605,11 @@ void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
 {
     bool changed = false;
 
+    // The per-board codec computed this mask, so from here on it owns byte 7
+    // and setActiveReceiverCount must not rewrite it. See
+    // m_ddcMaskOwnedByCodec for the upstream ownership evidence.
+    m_ddcMaskOwnedByCodec = true;
+
     // From Thetis console.cs:8527 [v2.10.3.13]: NetworkIO.EnableRxs(ddcEnable).
     // From Thetis ChannelMaster netInterface.c:1211-1226 EnableRxs() and
     // network.c:1097-1103 [v2.10.3.13]: byte 7 of CmdRx is built from
@@ -1697,6 +1742,13 @@ void P2RadioConnection::applyPsDdcConfig(const PsDdcConfig& cfg)
 void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
 {
     bool changed = false;
+
+    // The per-board codec computed this mask, so from here on it owns byte 7
+    // and setActiveReceiverCount must not rewrite it. Set before the writes
+    // below rather than after, so it holds even on the no-change path: a
+    // second slice that lands on an already-enabled DDC still transfers
+    // ownership. See m_ddcMaskOwnedByCodec for the upstream evidence.
+    m_ddcMaskOwnedByCodec = true;
 
     // From Thetis console.cs:8527 [v2.10.3.15]: NetworkIO.EnableRxs(ddcEnable).
     // ddcEnable bitmask: bit 0 = DDC0, ..., bit 6 = DDC6.

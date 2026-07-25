@@ -513,6 +513,40 @@ private:
     int m_psFbDdc{-1};       // PS-feedback DDC (Thetis ps_rx_idx; default 0)
     int m_psTxMonDdc{-1};    // TX-monitor DDC  (Thetis ps_tx_idx; default 1)
 
+    // --- DDC enable-mask ownership (Phase 3F Sub-Epic I closeout) ─────────
+    //
+    // False until a per-board codec has computed a mask for this session,
+    // true from the first applyDdcAssignment() / applyPsDdcConfig() onward.
+    // While true, setActiveReceiverCount() writes no enable bits.
+    //
+    // Upstream owns the mask in exactly one place. From Thetis
+    // console.cs:8537 [v2.10.3.15]:
+    //     NetworkIO.EnableRxs(DDCEnable);
+    // and DDCEnable is produced entirely by UpdateDDCs's per-board
+    // `switch (HardwareSpecific.Model)` (console.cs:8218-8534 [v2.10.3.15]).
+    // There is no count-to-mask direction anywhere upstream; the direction
+    // runs the other way. From Thetis ChannelMaster/netInterface.c:1229-1236
+    // [v2.10.3.15], inside EnableRxs itself:
+    //     if (RadioProtocol == USB)
+    //     {
+    //         sum = 0;
+    //         for (i = 0; i < 4; i++)
+    //         {
+    //             sum += (prn->rx[i].enable);
+    //         }
+    //         nreceivers = sum;
+    // i.e. the receiver COUNT is derived from the mask. The only other
+    // writer, EnableRx(id, enable) (netInterface.c:1200-1209 [v2.10.3.15]),
+    // takes an explicit DDC id from rxa.cs:54 and setup.cs:7054-7056, never
+    // a DDC0..N-1 range.
+    //
+    // Cleared in connectToRadio() so a reconnect on the same object starts
+    // a fresh session with the board-aware primary-DDC bootstrap in charge
+    // until the codec speaks.
+    //
+    // Written and read on the connection thread only.
+    bool m_ddcMaskOwnedByCodec{false};
+
     // --- Hardware config (from Thetis _radionet) ---
     int m_numAdc{1};                 // prn->num_adc
     int m_numDac{1};                 // prn->num_dac
