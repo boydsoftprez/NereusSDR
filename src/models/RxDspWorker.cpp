@@ -235,6 +235,18 @@ void RxDspWorker::processIqBatch(int receiverIndex,
                                     ? sliceIt->second
                                     : QVector<int>{};
 
+    // ── Phase 3F Sub-Epic I closeout, defect G1 ──────────────────────────
+    // The anti-VOX fork at the bottom of the drain loop is a per-RADIO feed,
+    // so it is gated on the stream that hosts slice 0 rather than raised by
+    // every draining stream. Computed here, once per batch, from the same
+    // binding snapshot the fan-out uses.
+    //
+    // Slice 0 is not pinned to stream 0 (a slice migrates streams as the
+    // operator retunes), so the gate asks "does this stream host slice 0",
+    // not "is this stream 0". See the emit site below for why the cadence
+    // matters.
+    const bool hostsSliceZero = slices.contains(0);
+
     // RxChannel::processIq writes sampleCount floats on the inactive-channel
     // memset path and outSampleCount via fexchange2, so the reusable output
     // scratch must cover the larger of the two.
@@ -510,15 +522,54 @@ void RxDspWorker::processIqBatch(int receiverIndex,
         // slices use m_interleavedOutAux), so a multi-slice drain cannot
         // leak whichever slice happened to run last into the DEXP
         // detector.
-        QVector<float> antiVoxBuffer(outSize * 2, 0.0f);
-        if (m_wdspEngine != nullptr && m_audioEngine != nullptr
-            && m_interleavedOut.size() >= outSize * 2) {
-            const float* src = m_interleavedOut.constData();
-            for (int i = 0; i < outSize * 2; ++i) {
-                antiVoxBuffer[i] = src[i];
+        //
+        // ── Phase 3F Sub-Epic I closeout, defect G1 ──────────────────────
+        // WHICH stream may raise it matters as much as which slice's audio
+        // it carries. This drain loop now runs once per DDC STREAM, not once
+        // per radio, and DEXP is configured with exactly one block geometry:
+        // TxWorkerThread::setAntiVoxBlockGeometry pushes SetAntiVOXSize
+        // (outSize) and SetAntiVOXRate (48 kHz panel rate) once, from
+        // RxDspWorker::bufferSizesChanged.
+        //
+        // The detector integrates one block per delivery and no faster.
+        // From Thetis wdsp/dexp.c:288-297 [v2.10.3.15]: on each xdexp() pass
+        // it walks antivox_size samples through a single-pole IIR whose
+        // coefficient is antivox_mult = exp(-1/(antivox_rate * antivox_tau)),
+        // then clears antivox_new. The IIR is therefore calibrated in
+        // SAMPLE steps at antivox_rate, and one block must represent
+        // antivox_size / antivox_rate seconds of wall clock.
+        //
+        // Delivery is destructive, not accumulating. From Thetis
+        // wdsp/dexp.c:708-715 [v2.10.3.15], SendAntiVOXData memcpys over
+        // antivox_data and re-raises antivox_new, so a second block arriving
+        // before the TXA pump consumes the first silently replaces it.
+        //
+        // With two streams draining at the same rate, an ungated emit hands
+        // the detector twice the block rate it was told about. Half of those
+        // blocks carry a stale repeat of slice 0's previous chunk, because
+        // only slice 0's branch above writes m_interleavedOut and a stream
+        // without slice 0 never touches it. antivox_level then drives
+        // `asig = avsig - antivox_gain * antivox_level` (dexp.c:313-316
+        // [v2.10.3.15]) either too hard or not hard enough, which is a false
+        // VOX trigger (unintended transmit) or a failure to cancel.
+        //
+        // Gating on the stream that hosts slice 0 restores the configured
+        // cadence exactly. The drain interval is inSize / inputRate seconds,
+        // and Thetis sizes inSize = 64 * inputRate / 48000 with outSize 64
+        // (RadioModel.cpp:6866 passes literal 64), so
+        // inSize / inputRate == outSize / outRate: one block per
+        // outSize/outRate seconds, which is what DEXP was configured for.
+        if (hostsSliceZero) {
+            QVector<float> antiVoxBuffer(outSize * 2, 0.0f);
+            if (m_wdspEngine != nullptr && m_audioEngine != nullptr
+                && m_interleavedOut.size() >= outSize * 2) {
+                const float* src = m_interleavedOut.constData();
+                for (int i = 0; i < outSize * 2; ++i) {
+                    antiVoxBuffer[i] = src[i];
+                }
             }
+            emit antiVoxSampleReady(0, antiVoxBuffer, outSize);
         }
-        emit antiVoxSampleReady(0, antiVoxBuffer, outSize);
     }
 
     emit batchProcessed();

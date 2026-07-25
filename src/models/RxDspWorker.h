@@ -262,6 +262,14 @@ signals:
     // engines are wired the buffer carries the WDSP-decoded interleaved
     // audio; when they are not, a zero-filled stereo buffer of the
     // correct size is emitted instead.
+    //
+    // Phase 3F Sub-Epic I closeout, defect G1: this is a per-RADIO feed,
+    // NOT a per-stream one. Exactly one emission happens per drain
+    // interval no matter how many DDC streams are draining, raised only by
+    // the stream that hosts slice 0 (whose audio the buffer carries). Any
+    // higher rate would overrun the single block geometry DEXP was given
+    // through setAntiVoxBlockGeometry. Rationale and the dexp.c cites are
+    // at the emit site in RxDspWorker.cpp.
     void antiVoxSampleReady(int sliceId, const QVector<float>& interleaved, int sampleCount);
 
     // Phase 3R K-bench: per-batch RADE feed.  Emitted from the DSP

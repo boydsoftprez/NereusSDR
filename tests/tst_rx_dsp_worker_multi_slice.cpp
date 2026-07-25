@@ -93,6 +93,77 @@ private slots:
 
         QCOMPARE(spy.count(), 0);
     }
+
+    // ── Phase 3F Sub-Epic I closeout, defect G1 ─────────────────────────────
+    // The anti-VOX cancellation feed is a per-RADIO feed, not a per-stream
+    // one. WDSP DEXP is told a single block geometry via SetAntiVOXSize /
+    // SetAntiVOXRate, and dexp.c:288-297 [v2.10.3.15] integrates exactly one
+    // antivox_size block per antivox_new flag. Emitting once per draining
+    // stream would hand DEXP twice the block rate it was configured for, and
+    // half of those blocks would be a stale repeat of slice 0's previous
+    // chunk (m_interleavedOut is only ever written by the slice-0 branch).
+    void anti_vox_fires_once_per_drain_interval_not_once_per_stream()
+    {
+        RxDspWorker worker;
+        worker.setBufferSizes(4, 64);
+        // Slice 0 lives on stream 0 (the constructor seed); stream 1 hosts a
+        // second slice on its own DDC.
+        worker.setStreamSlices(0, QVector<int>{0});
+        worker.setStreamSlices(1, QVector<int>{1});
+
+        QSignalSpy spy(&worker, &RxDspWorker::antiVoxSampleReady);
+
+        const QVector<float> four{0.1f, 0.1f, 0.2f, 0.2f,
+                                  0.3f, 0.3f, 0.4f, 0.4f};
+        worker.processIqBatch(0, four);   // stream 0 drains once
+        worker.processIqBatch(1, four);   // stream 1 drains once
+
+        // Two streams drained, but only the one hosting slice 0 may feed the
+        // detector: one block per drain interval, matching what
+        // setAntiVoxBlockGeometry told WDSP.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 0);    // sliceId
+        QCOMPARE(spy.at(0).at(2).toInt(), 64);   // sampleCount == outSize
+    }
+
+    void anti_vox_does_not_fire_for_a_stream_without_slice_zero()
+    {
+        RxDspWorker worker;
+        worker.setBufferSizes(4, 64);
+        // Slice 0 has migrated off stream 0; stream 2 carries slices 1 and 3.
+        worker.setStreamSlices(0, QVector<int>{});
+        worker.setStreamSlices(2, QVector<int>{1, 3});
+
+        QSignalSpy spy(&worker, &RxDspWorker::antiVoxSampleReady);
+
+        const QVector<float> four{0.1f, 0.1f, 0.2f, 0.2f,
+                                  0.3f, 0.3f, 0.4f, 0.4f};
+        worker.processIqBatch(2, four);
+        worker.processIqBatch(0, four);   // bound to nothing at all
+
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Slice 0 is not pinned to stream 0: a migration must take the anti-VOX
+    // feed with it, because the feed's identity is "the audio slice 0 puts on
+    // the speakers", not "whatever stream 0 happens to be doing".
+    void anti_vox_follows_slice_zero_when_it_migrates_streams()
+    {
+        RxDspWorker worker;
+        worker.setBufferSizes(4, 64);
+        worker.setStreamSlices(0, QVector<int>{2});
+        worker.setStreamSlices(1, QVector<int>{0});
+
+        QSignalSpy spy(&worker, &RxDspWorker::antiVoxSampleReady);
+
+        const QVector<float> four{0.1f, 0.1f, 0.2f, 0.2f,
+                                  0.3f, 0.3f, 0.4f, 0.4f};
+        worker.processIqBatch(0, four);
+        worker.processIqBatch(1, four);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), 0);
+    }
 };
 
 QTEST_MAIN(TestRxDspWorkerMultiSlice)
