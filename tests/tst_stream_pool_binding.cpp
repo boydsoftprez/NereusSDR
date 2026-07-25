@@ -129,7 +129,12 @@ private slots:
         // different band has nowhere to go.
         model.configureStreamPool(/*userDdcCount*/ 1, /*maxSlices*/ 5, 192000);
 
-        QSignalSpy spy(&model, &RadioModel::sliceAddRejected);
+        // Phase 3F Sub-Epic I closeout, defect F4: this spied
+        // sliceAddRejected, but nothing here adds a slice that fails -- B is
+        // seeded onto A's band and binds fine, then the setFrequency below
+        // RETUNES it off the only DDC. sliceRetuneRejected is the signal for
+        // that, and it is what the operator's status bar now shows.
+        QSignalSpy spy(&model, &RadioModel::sliceRetuneRejected);
 
         const int a = model.addSlice();
         model.slices().at(a)->setFrequency(14200000.0);
@@ -138,6 +143,8 @@ private slots:
         model.slices().at(b)->setFrequency(7150000.0);
 
         QVERIFY(spy.count() >= 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), model.slices().at(b)->sliceIndex());
+        QVERIFY(!spy.at(0).at(1).toString().isEmpty());
     }
 
     // ── Phase 3F Sub-Epic I Task 7b ─────────────────────────────────────
@@ -512,6 +519,79 @@ private slots:
         QVERIFY(model.suspendedStreams().isEmpty());
         QVERIFY(model.slices().at(a)->ddcIndex() >= 0);
         QVERIFY(model.slices().at(b)->ddcIndex() >= 0);
+    }
+
+    // ── Phase 3F Sub-Epic I closeout, defect F4 ─────────────────────────
+    //
+    // SliceModel::setFrequency commits and emits before the bind handler
+    // runs, so a rejected retune left the VFO reading the new frequency
+    // while the stream binding and the WDSP shift offset still described the
+    // old one. The flag said 7.150, the panadapter said 20 m, and WDSP kept
+    // demodulating 14.200.
+
+    void a_rejected_retune_leaves_vfo_and_dsp_agreeing()
+    {
+        RadioModel model;
+        // One DDC. A slice that leaves its window has nowhere to go.
+        model.configureStreamPool(/*userDdcCount*/ 1, /*maxSlices*/ 5, 192000);
+
+        const int a = model.addSlice();
+        SliceModel* slice = model.slices().at(a);
+        slice->setFrequency(14200000.0);
+
+        const int    boundStream = slice->streamIndex();
+        const double boundHz     = slice->frequency();
+        QVERIFY(boundStream >= 0);
+
+        // A second slice pins the DDC so the first cannot simply drag it.
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14225000.0);
+        QCOMPARE(model.slices().at(b)->streamIndex(), boundStream);
+
+        QSignalSpy spy(&model, &RadioModel::sliceRetuneRejected);
+
+        // Off the band entirely: no window covers it, no DDC is free.
+        slice->setFrequency(7150000.0);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toInt(), slice->sliceIndex());
+        // The message must talk about staying put, not about adding a slice.
+        const QString reason = spy.at(0).at(1).toString();
+        QVERIFY(reason.contains(QLatin1String("stayed on")));
+
+        // The invariant that actually matters: whatever the VFO reads, the
+        // DSP must be demodulating it. Reconstruct the demodulated frequency
+        // from the binding the way WDSP does -- stream centre plus shift --
+        // and require it to equal the frequency on the flag.
+        QCOMPARE(slice->streamIndex(), boundStream);
+        const double demodulatedHz =
+            model.streamCentreHzForTest(slice->streamIndex())
+            + slice->shiftOffsetHz();
+        QCOMPARE(slice->frequency(), demodulatedHz);
+        QCOMPARE(slice->frequency(), boundHz);
+    }
+
+    // An accepted retune must not be disturbed by the rollback machinery.
+    void an_accepted_retune_still_moves_the_slice()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        SliceModel* slice = model.slices().at(a);
+        slice->setFrequency(14200000.0);
+
+        QSignalSpy spy(&model, &RadioModel::sliceRetuneRejected);
+
+        slice->setFrequency(7150000.0);
+
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(slice->frequency(), 7150000.0);
+        QVERIFY(slice->streamIndex() >= 0);
+        const double demodulatedHz =
+            model.streamCentreHzForTest(slice->streamIndex())
+            + slice->shiftOffsetHz();
+        QCOMPARE(slice->frequency(), demodulatedHz);
     }
 };
 

@@ -1715,6 +1715,17 @@ signals:
     // toast subscribers wire to this signal in Sub-Epic C Tasks 8-9.
     void sliceAddRejected(QString reason);
 
+    /// Phase 3F Sub-Epic I closeout, defect F4: the operator retuned a slice
+    /// to a frequency no DDC can reach, and the frequency has been rolled
+    /// back to the last one that bound. Distinct from sliceAddRejected
+    /// because that one talks about adding a slice, which is not what
+    /// happened -- the operator turned the knob.
+    ///
+    /// After this fires, the slice's frequency, stream binding and shift
+    /// offset all agree again. `reason` is plain English, ready for a status
+    /// bar, and names the frequency the slice stayed on.
+    void sliceRetuneRejected(int sliceIndex, const QString& reason);
+
     /// Phase 3F Sub-Epic I: a stream's slice set changed. Consumers rebuild
     /// FFT routing; RadioModel republishes the set to RxDspWorker.
     void streamBindingsChanged(int streamIndex, const QVector<int>& sliceIndices);
@@ -2201,6 +2212,14 @@ public:
     /// them. Empty in steady state.
     QVector<int> suspendedStreams() const { return m_suspendedStreams; }
 
+    /// Phase 3F Sub-Epic I closeout, defect F4 test seam: a stream's window
+    /// centre, so a test can reconstruct the frequency WDSP is actually
+    /// demodulating (centre + the slice's shift offset) and require it to
+    /// match what the VFO reads.
+    double streamCentreHzForTest(int streamIndex) const {
+        return m_streamAllocator.streamCentreHz(streamIndex);
+    }
+
 private:
     // Sub-components (owned, main thread)
     RadioDiscovery*  m_discovery{nullptr};
@@ -2336,6 +2355,16 @@ private:
     // that host slices but have no DDC. Change-gates the streamsSuspended
     // emit so it fires on transitions rather than on every codec run.
     QVector<int> m_suspendedStreams;
+
+    // Phase 3F Sub-Epic I closeout, defect F4: guards the rollback
+    // setFrequency in the retune handler from re-entering the allocator.
+    // Everyone else still sees the rolled-back frequencyChanged.
+    bool m_rollingBackFrequency{false};
+
+    // Phase 3F Sub-Epic I closeout, defect F4: the allocator's own words for
+    // the last rejected placement, handed to the retune handler so its
+    // status-bar line can explain what the hardware ran out of.
+    QString m_lastPlacementRejectReason;
 
     // Phase 3F Sub-Epic I closeout, defect F3: injected via
     // setDdcContextForTest. Off in production; currentCodecContext() reads

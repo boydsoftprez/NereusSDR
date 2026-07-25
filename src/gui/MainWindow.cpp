@@ -2482,6 +2482,20 @@ void MainWindow::buildUI()
         }
     });
 
+    // Phase 3F Sub-Epic I closeout, defect F4.
+    //
+    // The operator turned the knob to somewhere no DDC can reach. The VFO has
+    // already snapped back to the last frequency that bound, so the message
+    // has to explain the snap rather than talk about adding a slice, which is
+    // what the rejection used to say. 6 s: it names a frequency the operator
+    // needs time to read.
+    connect(m_radioModel, &RadioModel::sliceRetuneRejected, this,
+            [this](int, const QString& reason) {
+        if (QStatusBar* sb = statusBar()) {
+            sb->showMessage(reason, 6000);
+        }
+    });
+
     // Phase 3F Sub-Epic I closeout, defect F3.
     //
     // The 1-ADC HERMES class drops every extra receiver the moment PureSignal

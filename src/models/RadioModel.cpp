@@ -3067,7 +3067,18 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
     using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
 
     if (placement.outcome == Outcome::Rejected) {
-        emit sliceAddRejected(placement.reason);
+        // Phase 3F Sub-Epic I closeout, defect F4: stash the reason for the
+        // retune handler, which owns the rollback and phrases the message.
+        m_lastPlacementRejectReason = placement.reason;
+
+        // Only the FIRST bind of a slice is an "add". A slice that already
+        // holds a stream is being retuned, and sliceAddRejected produces a
+        // status-bar line about adding a slice when all the operator did was
+        // turn the knob. The frequencyChanged handler emits
+        // sliceRetuneRejected instead, after it has rolled the VFO back.
+        if (previousStream < 0) {
+            emit sliceAddRejected(placement.reason);
+        }
         return false;
     }
 
@@ -3222,8 +3233,64 @@ int RadioModel::addSlice(const QString& initialPanId)
     // Retuning re-runs the allocator: the slice may stay on its stream
     // (shift only), move its stream's centre if it is the sole occupant, or
     // migrate to another DDC.
+    // ── Phase 3F Sub-Epic I closeout, defect F4 ─────────────────────────
+    //
+    // SliceModel::setFrequency commits m_frequency and emits before this
+    // handler runs, so by the time the allocator rejects the placement the
+    // VFO already reads the new frequency. Nothing rolled it back: the flag
+    // showed 7.150, the panadapter still showed 20 m, and WDSP kept
+    // demodulating at the old shift offset. The radio was lying about where
+    // it was listening.
+    //
+    // Rolled back rather than accepted-and-flagged. An accepted tune leaves
+    // the slice unbound, and an unbound slice feeds nothing: RxDspWorker
+    // never demodulates it, so the operator would be looking at a live-
+    // looking VFO attached to a dead receiver, with no UI anywhere in Phase
+    // 3F yet that says "unbound". Snapping back does fight the input, but it
+    // fights it the way a band-edge clamp does: the number visibly refuses,
+    // the status bar says why, and the constraint is learned immediately. A
+    // VFO readout that disagrees with the demodulator has on-air
+    // consequences; a knob that springs back does not.
+    //
+    // The last frequency that bound successfully is derived, not stored:
+    // bindSliceToStream returns early on rejection without touching
+    // streamIndex or shiftOffsetHz, so those two still describe the previous
+    // successful placement, and stream centre + shift offset IS that
+    // frequency by construction.
     connect(slice, &SliceModel::frequencyChanged, this,
-            [this, slice](double freq) { bindSliceToStream(slice, freq); });
+            [this, slice](double freq) {
+        // Re-entrancy: the rollback setFrequency below emits
+        // frequencyChanged again. Everyone else (VFO flag, persistence)
+        // must see it -- that is the point -- but re-running the allocator
+        // on it would be a pointless second placement.
+        if (m_rollingBackFrequency) { return; }
+
+        const int    previousStream = slice->streamIndex();
+        const double previousShift  = slice->shiftOffsetHz();
+
+        if (bindSliceToStream(slice, freq)) { return; }
+
+        // Not a rejection: either the pool is not sized yet (disconnected)
+        // or the slice has never been bound. Nothing to roll back to.
+        if (previousStream < 0
+            || !m_streamAllocator.isStreamActive(previousStream)) {
+            return;
+        }
+
+        const double lastGoodHz =
+            m_streamAllocator.streamCentreHz(previousStream) + previousShift;
+
+        m_rollingBackFrequency = true;
+        slice->setFrequency(lastGoodHz);
+        m_rollingBackFrequency = false;
+
+        emit sliceRetuneRejected(
+            slice->sliceIndex(),
+            QStringLiteral("Slice %1 stayed on %2 MHz. %3")
+                .arg(QChar('A' + slice->sliceIndex()))
+                .arg(lastGoodHz / 1.0e6, 0, 'f', 4)
+                .arg(m_lastPlacementRejectReason));
+    });
 
     // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
     // MoxController. The construction-time wire-up at line ~677 silently
