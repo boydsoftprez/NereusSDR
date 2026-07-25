@@ -697,6 +697,17 @@ nereus_add_test(tst_vfo_frequency_parser)
 nereus_add_test(tst_rxchannel_agc_advanced)
 nereus_add_test(tst_slice_agc_advanced)
 
+# ── SliceModel Auto AGC + fixed/hang/max-gain properties (model layer) ──
+# Ported from Thetis console.cs:45926 (m_bAutoAGCRX1) and
+# setup.designer.cs:38630/39320/39418/39245 [v2.10.3.13] (udRX1AutoAGCOffset,
+# udDSPAGCFixedGaindB, tbDSPAGCHangThreshold, udDSPAGCMaxGaindB defaults).
+# Sits alongside tst_slice_agc_advanced (same Q_PROPERTY block in
+# SliceModel.h) but covers the separate Auto-AGC + fixed/hang/max-gain
+# controls rather than threshold/hang/slope/attack/decay.
+# Audited 2026-07-25: had no nereus_add_test() call site; compiles and
+# passes against current SliceModel APIs, registered here.
+nereus_add_test(tst_slice_auto_agc)
+
 # ── Phase 3G-10 Stage 2: WDSP wiring — EMNR (NR2) ────────────────────────
 nereus_add_test(tst_rxchannel_emnr)
 nereus_add_test(tst_slice_emnr)
@@ -1069,6 +1080,13 @@ nereus_add_test(tst_port_audio_bus)
 if(APPLE)
     nereus_add_test(tst_core_audio_hal_bus)
 endif()
+
+# Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
+# and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
+# down, Phase 3O Sub-Phase 8 / Task 24) register only inside
+# `if(UNIX AND NOT APPLE)` guards by design, which is why a macOS `ctest -N`
+# shows 4 fewer tests than there are tst_*.cpp files on disk. Not a gap —
+# each has a real nereus_add_test() call site, just platform-gated.
 
 # ── Phase 3O Sub-Phase 6: LinuxPipeBus (Linux-only) ──────────────────────────
 # Exercises FIFO lifecycle + pactl module load/unload + push/pull round-trip +
