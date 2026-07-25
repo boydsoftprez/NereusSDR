@@ -71,7 +71,7 @@ Existing fields used as inputs: `adcCount`, `supportedSampleRates`, `defaultSamp
 | Orion (ANAN-200D) | 2 | 7 | DDC2-6 | **5** | 48, 96, 192 | true | 2 |
 | OrionMkII / 7000DLE / 8000DLE | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
 | Saturn / ANAN-G2 / G2_1K | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
-| HermesC10 / ANAN-G2E | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
+| HermesC10 / ANAN-G2E (see note) | 1 | 4 | DDC0-3 | **5** | 48, 96, 192, 384, 768, 1536 | false | 1 |
 | AnvelinaPro3 | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
 | Andromeda | 2 | 7 | DDC2-6 | **5** | 48, 96, 192, 384, 768, 1536 | true | 2 |
 | RedPitaya (P1 mode) | 1 | 4 | DDC0-3 | **4** | 48, 96, 192, 384 | false | 0 |
@@ -81,6 +81,22 @@ Source cites:
 - Sample rate ladders: Thetis `setup.cs:849-850 [v2.10.3.15]` (P1 base + P2 array), mi0bot `setup.cs:850-851 [v2.10.3.13]` (HL2 384k extension via `include_extra_p1_rate`)
 - DDC reservations: Thetis `console.cs:8186-8538 [v2.10.3.15]` (UpdateDDCs state machine)
 - HL2-specific PS rate carveout: mi0bot `console.cs:8409-8488 [v2.10.3.13]`
+
+#### Note: the ANAN-G2E is the one 1-ADC Protocol 2 SKU
+
+It sits between Saturn and AnvelinaPro3 in this table because it shares their sample-rate ladder and their MKII BPF filter bank, **not** because it shares their DDC map. Do not group it with its table neighbours.
+
+Until 2026-07-25 this row read `2 | 7 | DDC2-6 | 5 | true | 2`, copied wholesale from the rows around it on the reasoning that the G2E speaks Protocol 2 and therefore has the 2-ADC DDC map. That inference is wrong, and it propagated: it produced `userDdcCount = 5` and `widebandAdcs = 2` in `BoardCapabilities.cpp`, and it is the root of the Task 7c ship-blocker (commits `133c30bd`, `60ecfccc`), where `P2CodecOrionMkII::kStreamToDdc = {2,3,4,5,6}` was applied to a board whose `primaryRxDdcForBoard` returns DDC0.
+
+What the sources actually say:
+
+- **1 ADC.** Thetis `clsHardwareSpecific.cs:129-135 [v2.10.3.15]` model init calls `NetworkIO.SetRxADC(1)`. The 2-ADC boards in the adjacent cases (ANAN100D, ANAN200D, ORIONMKII) all call `SetRxADC(2)`. This makes `hasDiversity` false and caps `widebandAdcs` at 1, since an ADC that is not on the board cannot carry a wideband stream.
+- **4 DDCs, rx1 on DDC0.** Thetis `console.cs:8387-8392 [v2.10.3.15]` groups `ANAN_G2E` with HERMES / ANAN10 / ANAN100 on `P1_rxcount = 4; nddc = 4;`, and `console.cs:8610-8642` (P2) plus `:8704-8730` (P1) group `HermesC10` with Hermes and HermesII on `rx1 = 0; rx2 = 1;`. Across every MOX, diversity and PureSignal branch, that case never enables anything above DDC1.
+- The SKU's own authority, [2026-05-21-anan-g2e-port-design.md](2026-05-21-anan-g2e-port-design.md) §"Resolved values", recorded ADC count 1, Max RX 4 and Diversity **No** from the start. This table contradicted it for two months.
+
+**On `maxSlices = 5` over 4 user DDCs.** This is the only row where the two differ, and it is deliberate. Slices whose frequencies fall inside an existing DDC's window share that DDC (`SliceStreamAllocator::placeSlice`), so a slice cap above the DDC count is meaningful rather than an error. Per maintainer decision 2026-07-25 the ceiling holds at 5 across all SKUs until Phase 3F multi-slice is proven on a bench. A fifth G2E slice with no covering window is refused with an explanation, not silently dropped.
+
+**Standing caveat.** Every DDC count in this table is Thetis's client policy, not verified silicon. Receiver count is a compile-time Verilog parameter that has shipped as 2, 4, 7 and 8 on the same board. See the `maxSlices` comment in `src/core/BoardCapabilities.h` and `docs/attribution/GATEWARE-PROVENANCE.md`. The G2E has no public gateware at all, so its DDC count in particular is the best available evidence rather than hardware truth. The ADC count is different in kind: that is a physical part, and `SetRxADC(1)` is reliable.
 
 ### Why DDC0/DDC1 are reserved on 2-ADC boards
 

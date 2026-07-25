@@ -200,12 +200,14 @@ In `src/core/BoardCapabilities.cpp`, add `.userDdcCount` beside each existing `.
 | `kAngelia` | `5` |
 | `kOrion` | `5` |
 | `kOrionMkII` | `5` |
-| `kHermesC10` | `5` |
+| `kHermesC10` | `4` (corrected 2026-07-25, was `5`; see below) |
 | `kHermesLite` | `1` |
 | `kHermesLiteRxOnly` | `1` |
 | `kSaturn` | `5` |
 | `kSaturnMKII` | `5` |
 | `kAndromeda` | `5` |
+
+> **`kHermesC10` correction, 2026-07-25.** This table originally said `5`, taken from design doc §2, which had mis-filed the ANAN-G2E among the 2-ADC boards on the reasoning that it speaks Protocol 2. It does not have their DDC map: Thetis puts `ANAN_G2E` on the 1-ADC Hermes-class branch at `console.cs:8387-8392 [v2.10.3.15]` (`nddc = 4`) with rx1 on DDC0, not DDC2. `5` allocated a fifth stream that never got a DDC, so its slice was silently dead. Corrected in code by `30713e53`; design doc §2 corrected the same day, with the full source trail in the note under its per-SKU table. Anyone re-running this plan should use `4`.
 
 - [ ] **Step 5: Run test to verify it passes**
 

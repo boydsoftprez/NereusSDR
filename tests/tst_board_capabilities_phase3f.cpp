@@ -155,8 +155,10 @@ private slots:
     }
 
     // Phase 3F Task 3: per-SKU widebandAdcs population tests.
-    // P1 single-ADC boards: widebandAdcs = 0 (P1 mechanism deferred to 3F-W).
-    // P2 dual-ADC boards: widebandAdcs = 2 (ADC0 + ADC1 both support wideband stream).
+    // P1 boards: widebandAdcs = 0 (P1 mechanism deferred to 3F-W).
+    // P2 boards: widebandAdcs = adcCount, since an ADC that is not on the board
+    // cannot carry a wideband stream. 2 for the dual-ADC SKUs, 1 for the
+    // single-ADC ANAN-G2E (clsHardwareSpecific.cs:130 [v2.10.3.15] SetRxADC(1)).
 
     void hl2_wideband_adcs_is_0()
     {
@@ -176,10 +178,28 @@ private slots:
         QCOMPARE(caps.widebandAdcs, 2);  // 2-ADC P2 board
     }
 
-    void anan_g2e_wideband_adcs_is_2()
+    // The G2E is the one P2 SKU with a single ADC, so it is the one row where
+    // widebandAdcs is not 0 or 2. It read 2 until 2026-07-25, inherited from a
+    // design doc §2 table row that mis-filed the G2E among the 2-ADC boards.
+    void anan_g2e_wideband_adcs_is_1()
     {
         const auto caps = capabilitiesFor(HPSDRModel::ANAN_G2E);
-        QCOMPARE(caps.widebandAdcs, 2);
+        QCOMPARE(caps.widebandAdcs, 1);
+        // The bound that makes it 1, asserted alongside so the two cannot drift.
+        QCOMPARE(caps.adcCount, 1);
+    }
+
+    // Guards the rule rather than the row: no P2 board may claim more wideband
+    // ADCs than it has ADCs. This is what would have caught the G2E defect.
+    void wideband_adcs_never_exceeds_adc_count()
+    {
+        for (const auto& caps : BoardCapsTable::all()) {
+            QVERIFY2(caps.widebandAdcs <= caps.adcCount,
+                     qPrintable(QStringLiteral("%1: widebandAdcs %2 exceeds adcCount %3")
+                                    .arg(QString::fromLatin1(caps.displayName))
+                                    .arg(caps.widebandAdcs)
+                                    .arg(caps.adcCount)));
+        }
     }
 
     void anan_7000d_wideband_adcs_is_2()

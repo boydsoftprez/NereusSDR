@@ -652,16 +652,36 @@ const BoardCapabilities kHermesC10 = {
     // kind the 2-ADC rows describe.
     .maxSlices        = 5,   // Phase 3F: HermesC10/G2E 5-slice cap (1-ADC HERMES class; slices may share a DDC)
     // Phase 3F Sub-Epic I closeout, defect F2: was 5 with a "DDC2-6" comment.
-    // Both were wrong. This SKU runs P2CodecHermes, whose familyDdcCount() is
-    // 4 (P2CodecHermes.h:184, from Thetis console.cs:8392 nddc = 4), and which
-    // places streams on DDC0-3 starting at DDC0 -- DDC2 is explicitly NOT
-    // enabled on this family (tst_codec_5_slice_assignment.cpp). On P1 the
-    // same board runs P1CodecStandard, also 4 DDCs (DDC0-3). A fifth stream
-    // was allocatable but left at streamDdc[4] == -1, so it drew no enable bit
-    // and its slice was silently dead. maxReceivers=4 on the line above was
-    // already telling the truth.
-    .userDdcCount     = 4,   // Phase 3F Sub-Epic I: HermesC10/G2E user DDCs = DDC0-3 (console.cs:8391-8392 [v2.10.3.15]) (console.cs:8391-8392 [v2.10.3.15])
-    .widebandAdcs     = 2,   // Phase 3F: P2 2-ADC class — ADC0 + ADC1 both support wideband stream (design §2 table)
+    // Both were wrong. Thetis asks for 4 on this family (console.cs:8391-8392
+    // [v2.10.3.15]: P1_rxcount = 4; nddc = 4) and places rx1 on DDC0, not DDC2
+    // (console.cs:8610-8642 [v2.10.3.15] GetDDC groups HermesC10 with Hermes
+    // and HermesII on rx1 = 0). A fifth stream was allocatable but left at
+    // streamDdc[4] == -1, so it drew no enable bit and its slice was silently
+    // dead. maxReceivers=4 on the line above was already telling the truth.
+    //
+    // Per the header's policy-vs-hardware caveat: 4 is Thetis's client policy,
+    // not a verified hardware bound. The G2E has no public gateware to check it
+    // against (see docs/attribution/GATEWARE-PROVENANCE.md), so this is the
+    // best evidence available rather than silicon truth. Both codecs that serve
+    // this SKU agree at 4 (P2CodecHermes::familyDdcCount(), and P1CodecStandard
+    // on P1), so nothing downstream is currently reaching past it.
+    .userDdcCount     = 4,   // Phase 3F Sub-Epic I: HermesC10/G2E user DDCs = DDC0-3 (console.cs:8391-8392 [v2.10.3.15])
+    // Bounded by adcCount, and unlike the DDC counts above this one IS a
+    // hardware bound: ADC count is a physical part on the board, not a Verilog
+    // synthesis parameter that moves between firmware builds. The G2E has one
+    // ADC (clsHardwareSpecific.cs:130 [v2.10.3.15] SetRxADC(1)), so there is no
+    // ADC1 to carry a second wideband stream.
+    //
+    // Was 2 with a "P2 2-ADC class" comment inherited from the design doc §2
+    // table, which mis-filed the G2E among the 2-ADC boards. That contradicted
+    // the adcCount = 1 line at the top of this row.
+    //
+    // Note that Thetis only ever enables ADC0's wideband stream on any board:
+    // SetWBEnable(adc, enable) sets one bit per ADC in wb_enable (wire byte 23,
+    // ChannelMaster/network.c:879 [v2.10.3.15]), and both call sites pass 0
+    // (console.cs:43558 on, wideband.cs:52 off).
+    //N1GP G2E added  [original inline tag from clsHardwareSpecific.cs:129 — ANAN_G2E case label]
+    .widebandAdcs     = 1,   // Phase 3F: 1-ADC board — ADC0 only (SetRxADC(1), clsHardwareSpecific.cs:130 [v2.10.3.15])
     // Thetis setup.cs:849-850 [v2.10.3.15] — every P2/ETH board gets the
     // full 6-rate list; Thetis has no per-board cap, only per-protocol.
     // Pcap of working Thetis-on-G2E ran at 768 kHz (CmdRx byte 18-19 =
