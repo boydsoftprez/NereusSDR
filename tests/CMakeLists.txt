@@ -1375,6 +1375,14 @@ target_compile_definitions(tst_rxapplet_antenna_buttons PRIVATE NEREUS_BUILD_TES
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_controller_per_adc_bpf)
 
+# ── Phase 3F: per-ADC BPF decision reaches the wire (CT1IQI, PR #293) ─────────
+# Half 1: RadioModel feeds AlexController::notifySlicesOnAdc from the live
+#         slice set, grouped by the ADC each slice's stream sits on.
+# Half 2: the resulting per-ADC decision composes the Alex0 / Alex1 HPF bytes
+#         instead of the last-retuned receiver's frequency.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_per_adc_bpf_wire)
+
 # ── Phase 3F Sub-Epic B Task 17: AlexController event-matrix coverage ─────────
 # Verifies the 16-row event trigger matrix from design §10:
 #   - cross-band retune emits bpfStateChanged

@@ -264,6 +264,7 @@ warren@wpratt.com
 #include "core/FFTRouter.h"  // Phase 3F Sub-Epic D Task 13
 #include "models/FilterPresetStore.h"
 #include "core/accessories/N2adrPreset.h"
+#include "core/codec/AlexFilterMap.h"  // Phase 3F: per-ADC BPF -> HPF bits
 #include "core/TxChannel.h"
 // 3M-1c TX pump architecture redesign — dedicated worker thread for
 // TX DSP pump (replaces D.1/E.1/L.4 chain).
@@ -3135,6 +3136,13 @@ void RadioModel::requestDdcAssignment()
     }
     emit ddcAssignmentRequested();
     invokeCodecDdcAssignment();
+
+    // Phase 3F: the Alex band-pass per chain is a function of which slices are
+    // on which ADC, so it recomputes on exactly the events that change that
+    // set. This is the coalescing point for all three of them (slice bind,
+    // retune, removal) and it lines up with design §10's trigger matrix rows
+    // for slice created / destroyed / retuned-across-band.
+    republishAlexAdcSlices();
 }
 
 bool RadioModel::sampleRateIsRadioWide() const
@@ -8823,6 +8831,144 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
     });
 }
 
+// ---------------------------------------------------------------------------
+// republishAlexAdcSlices — Phase 3F. Feed the per-ADC BPF analysis, then push
+// its answer at the wire.
+//
+// Reported by CT1IQI on PR #293 (2026-05-31):
+//   "the Alex control system as now coded appears to be not aware that systems
+//    with dual ADCs like the Anan G2 also have dual input band pass filters
+//    [...] This has to be reviewed per ADC, its assigned DDCs, and filter
+//    chain."
+//
+// AlexController::recomputeBpf already performed exactly that review, but
+// nothing called notifySlicesOnAdc outside the unit tests, so the analysis
+// never ran against a live slice set and no wire byte was composed from it.
+// The HPF came from whichever receiver was retuned last, so slice A on 20 m
+// went deaf the moment slice B tuned 40 m.
+//
+// Upstream behaviour, for the record. Thetis has no bypass-on-multi-band
+// concept anywhere. It avoids the collision two ways:
+//   1. Two independent wire words. Alex0 (`prbpfilter`) is ADC0's chain, fed
+//      from setAlex1HPF(_rx1_dds_freq); Alex1 (`prbpfilter2`) is ADC1's, fed
+//      from setAlex2HPF(rx2_dds_freq_mhz).
+//        From Thetis console.cs:15401 + 15435-15443 [v2.10.3.15]
+//        From Thetis ChannelMaster/network.c:1040-1050 [v2.10.3.15]
+//        Upstream inline attribution preserved verbatim (console.cs:15441):
+//          HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+//      That half IS a port: it is what this function makes reachable.
+//   2. On boards with only one filter board (_rx2_preamp_present == false)
+//      it widens the single HPF to the LOWER of the two receiver frequencies
+//      rather than picking one:
+//        From Thetis console.cs:15500-15510 UpdateAlexRXFilter [v2.10.3.15]
+//          if (!_rx2_preamp_present && chkRX2.Checked)
+//          {
+//              if (rx1_dds_freq_mhz < rx2_dds_freq_mhz) setAlex1HPF(rx1_dds_freq_mhz);
+//              else setAlex1HPF(rx2_dds_freq_mhz);
+//          }
+//
+// NereusSDR DIVERGES on (2): the Auto policy bypasses instead of widening.
+// Rationale, per design doc §4 and the reporter's own description of the
+// hardware:
+//   - Thetis's widening is only sound on a high-pass ladder, where a lower
+//     corner still passes the higher slice. It runs exclusively on the legacy
+//     single-filter-board radios. On the Mk II BPF boards (ANAN-7000 / 8000 /
+//     G2), which the report is about, Thetis never runs it at all: those set
+//     _rx2_preamp_present = true, which makes UpdateAlexRXFilter a no-op
+//     (console.cs:14783-14857 [v2.10.3.15]). If those selections really are
+//     band-pass, widening would leave the higher slice attenuated, which is
+//     the reported bug again by another route. Bypass is correct under either
+//     reading of the hardware.
+//   - Thetis tops out at two receivers on two chains. NereusSDR puts up to
+//     five slices on two chains, so "two receivers, two filters" does not
+//     cover the case where three slices share one ADC across three bands.
+// Operators who prefer a filtered chain over a wide one keep BpfMode::
+// ForceBand.
+// ---------------------------------------------------------------------------
+void RadioModel::republishAlexAdcSlices()
+{
+    // Two chains: Alex0/ADC0 and Alex1/ADC1. AlexController is sized to match.
+    constexpr int kAdcCount  = 2;
+    constexpr int kSliceSlots = 5;
+
+    std::array<std::array<Band, kSliceSlots>, kAdcCount> bands;
+    for (auto& perAdc : bands) { perAdc.fill(Band::Count); }
+    std::array<int, kAdcCount>    counts   {0, 0};
+    std::array<double, kAdcCount> lowestHz {0.0, 0.0};
+
+    for (SliceModel* s : std::as_const(m_slices)) {
+        if (s == nullptr) { continue; }
+
+        // An unbound slice has no DDC, so it is not on any chain and must not
+        // drag a filter wide on behalf of a receiver that is not running.
+        const int stream = s->streamIndex();
+        if (stream < 0) { continue; }
+
+        // Stream to ADC. Every stream reports ADC0 today: setAdcForReceiver is
+        // called once (receiver 0 -> ADC 0) and everything else sits on the
+        // ReceiverConfig default. Distributing streams across both ADCs is the
+        // separate "codec routing (antenna-driven)" work in design §4; group by
+        // whatever adcIndex reports so this is already correct when it lands.
+        const int adc = m_receiverManager
+                            ? m_receiverManager->receiverConfig(stream).adcIndex
+                            : 0;
+        if (adc < 0 || adc >= kAdcCount) { continue; }
+        if (counts[adc] >= kSliceSlots)  { continue; }
+
+        const double hz = s->frequency();
+        bands[adc][counts[adc]] = bandFromFrequency(hz);
+        if (counts[adc] == 0 || hz < lowestHz[adc]) { lowestHz[adc] = hz; }
+        ++counts[adc];
+    }
+
+    for (int adc = 0; adc < kAdcCount; ++adc) {
+        m_alexController.notifySlicesOnAdc(adc, bands[adc]);
+    }
+
+    // Translate each chain's effective state into Thetis HPF bits.
+    // -1 = nothing receiving on this ADC, so the connection keeps whatever it
+    // had. Mirrors Thetis, which only calls setAlex2HPF when RX2 exists
+    // (console.cs:15435-15442 [v2.10.3.15]) and otherwise never writes
+    // prbpfilter2's HPF nibble.
+    // Upstream inline attribution preserved verbatim (console.cs:15441):
+    //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    auto hpfBitsFor = [this, &counts, &lowestHz](int adc) -> int {
+        if (counts[adc] == 0) { return -1; }
+
+        const AlexController::AlexAdcState& st = m_alexController.adcState(adc);
+        if (st.effective == AlexController::BpfEffective::Bypass
+            || st.effective == AlexController::BpfEffective::WidebandLocked) {
+            // 0x20 is the bypass encoding on both chains.
+            // From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]:
+            //   prbpfilter->_Bypass  = (bits & 0x20) != 0;
+            //   prbpfilter2->_Bypass = (bits & 0x20) != 0;
+            return 0x20;
+        }
+
+        // Filtered. Select from the LOWEST frequency on the chain, which is
+        // Thetis's own rule for a shared filter (UpdateAlexRXFilter above) and
+        // which, with a single band on the chain, returns byte-for-byte what
+        // the frequency-derived path returned before this change.
+        return int(codec::alex::computeHpf(lowestHz[adc] / 1.0e6));
+    };
+
+    AlexRxBpf bpf;
+    bpf.hpfBitsAdc0 = hpfBitsFor(0);
+    bpf.hpfBitsAdc1 = hpfBitsFor(1);
+
+    if (m_connection == nullptr) {
+        // Disconnected: AlexController's state still updated above, which is
+        // what the CH indicator and FilterPolicyDialog read. Nothing to send.
+        return;
+    }
+
+    // Marshal to the connection worker thread, same as applyAlexAntennaForBand.
+    RadioConnection* conn = m_connection;
+    QMetaObject::invokeMethod(conn, [conn, bpf]() {
+        conn->setAlexRxBpf(bpf);
+    });
+}
+
 // Coalesce settings saves to avoid writing on every scroll tick.
 void RadioModel::scheduleSettingsSave()
 {
@@ -9357,6 +9503,10 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         // fresh connection. Matches Thetis's initial UpdateAlexAntSelection
         // call path on radio startup (HPSDR/Alex.cs:310 [@501e3f5]).
         applyAlexAntennaForBand(m_lastBand);
+        // Phase 3F: same for the per-ADC band-pass. The slice set survives a
+        // reconnect, so the fresh connection has to be told which chain is
+        // filtered and which is wide before the first tune moves anything.
+        republishAlexAdcSlices();
         break;
     case ConnectionState::Disconnected:
         qCDebug(lcConnection) << "Disconnected from" << m_name;

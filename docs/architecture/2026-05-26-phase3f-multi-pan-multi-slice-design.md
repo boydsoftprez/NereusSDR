@@ -283,6 +283,57 @@ Decision tree (computed by `AlexController::recomputeBpf(int adc)`):
 
 Recompute triggers (16-row event matrix in §10).
 
+#### Producer and consumer (added 2026-06-01)
+
+The decision tree above shipped with neither. `AlexController::notifySlicesOnAdc` had no production caller, and nothing composed a wire byte from `BpfEffective`, so the HPF on the wire came from whichever receiver `P2RadioConnection::setReceiverFrequency` saw last. Slice A on 20 m went deaf the moment slice B tuned 40 m. Reported by CT1IQI on PR #293 (2026-05-31).
+
+Both halves now exist:
+
+- **Producer**: `RadioModel::republishAlexAdcSlices()` groups the bound slices by the ADC their stream sits on (`ReceiverManager::receiverConfig(stream).adcIndex`) and hands each group to `notifySlicesOnAdc`. It runs from `requestDdcAssignment()`, which is already the coalescing point for slice bind / retune / removal, and once more on `ConnectionState::Connected`.
+- **Consumer**: `RadioConnection::setAlexRxBpf(AlexRxBpf)` carries `{hpfBitsAdc0, hpfBitsAdc1}` in the Thetis HPF bit encoding, `-1` meaning "no slice on this ADC, keep the existing bits". P2 routes ADC0 into Alex0 and ADC1 into Alex1; P1 has one filter word on the wire and takes ADC0's decision only.
+
+`Filtered` selects from the **lowest** slice frequency on the chain. With a single band on the chain that is byte-for-byte what the old frequency-derived path produced, which is what keeps the single-slice wire locks green.
+
+Still open, and deliberately not built here: nothing distributes streams across both ADCs yet (`setAdcForReceiver` is called exactly once, receiver 0 to ADC 0), so ADC1 always reports "no decision" in practice. The grouping is written per-ADC so it is already correct the day the antenna-driven codec routing above lands.
+
+#### Divergence from Thetis: bypass, not widen
+
+Thetis has **no** bypass-on-multi-band concept anywhere in the codebase. It handles two receivers two ways, and NereusSDR ports one of them and diverges on the other.
+
+**Ported.** Two independent Alex wire words, one per chain. `prbpfilter` (Alex0, bytes 1432-1435) is ADC0 and is fed from `setAlex1HPF(_rx1_dds_freq)`; `prbpfilter2` (Alex1, bytes 1428-1431) is ADC1 and is fed from `setAlex2HPF(rx2_dds_freq_mhz)`.
+
+- `console.cs:15401 + 15435-15443 [v2.10.3.15]`
+- `ChannelMaster/network.c:1040-1050 [v2.10.3.15]`
+- `ChannelMaster/netInterface.c:604-651 [v2.10.3.15]`
+
+Upstream inline attribution preserved verbatim (`console.cs:15441`): `HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM`. The model gate on `setAlex2HPF` is `//N1GP`-adjacent in `setAlex1HPF` too (`console.cs:6830`, already carried in `AlexFilterMap.h`).
+
+**Diverged.** On boards with only one filter board, Thetis widens the single HPF to the lower of the two receiver frequencies rather than bypassing it:
+
+```csharp
+// console.cs:15500-15510 UpdateAlexRXFilter [v2.10.3.15]
+private void UpdateAlexRXFilter()
+{
+    if (!_mox)
+    {
+        if (!_rx2_preamp_present && chkRX2.Checked)
+        {
+            if (rx1_dds_freq_mhz < rx2_dds_freq_mhz) setAlex1HPF(rx1_dds_freq_mhz);
+            else setAlex1HPF(rx2_dds_freq_mhz);
+        }
+    }
+}
+```
+
+We bypass instead. Two reasons:
+
+1. **Widening is only sound on a high-pass ladder.** A lower corner still passes the higher slice, so `min(f)` works. Thetis runs that branch exclusively on the legacy single-filter-board radios, and never on the Mk II BPF boards this report is about: ANAN-7000D / 8000D / G2 / G2-1K set `_rx2_preamp_present = true` (`console.cs:14783-14857 [v2.10.3.15]`), which makes `UpdateAlexRXFilter` a no-op on exactly that hardware. If those selections really are band-pass rather than high-pass, widening would leave the higher slice attenuated, which is the reported bug again by another route. Bypass is correct under either reading of the hardware; widening is not.
+2. **Thetis tops out at two receivers on two chains.** NereusSDR puts up to five slices on two chains, so "two receivers, two filters" does not describe three slices sharing one ADC across three bands.
+
+Operators who would rather keep a filtered chain than a wide one have `BpfMode::ForceBand`; the `WIDE` badge and its `reasonText` exist so the trade is never silent.
+
+Note that Thetis's filter selection never consults ADC assignment at all: `GetADCInUse()` / `nRX1ADCinUse` / `nRX2ADCinUse` feed only the step attenuator, preamp linking, and ADC-overload paths. An RX2 placed on ADC0 in Thetis receives through the RX1-selected BPF1 with no compensation and no warning.
+
 ### LPF: TX-only, never bypassed
 
 LPF set on MOX-on to the TX-bound slice's band, released on MOX-off. Non-negotiable for FCC harmonic suppression. Per-chain (each Alex board has its own LPF, but only the TX-bound chain's LPF matters since TX is single-RF).

@@ -2235,6 +2235,16 @@ public:
     /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
     void requestDdcAssignment();
 
+    /// Phase 3F: group the live slices by the ADC their stream sits on, hand
+    /// each group to AlexController::notifySlicesOnAdc, and push the resulting
+    /// per-chain band-pass decision at the connection.
+    ///
+    /// Closes the gap CT1IQI reported on PR #293: the per-ADC analysis existed
+    /// but had no producer and no consumer, so the wire took its HPF from
+    /// whichever receiver was retuned last and a second slice on another band
+    /// made the first one deaf.
+    void republishAlexAdcSlices();
+
     /// Phase 3F Sub-Epic I closeout, defect H1: put the DSP side of the pool
     /// back in step with the allocator after anything moves a stream's rate
     /// or moves a slice between streams.
