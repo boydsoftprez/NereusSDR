@@ -10,9 +10,55 @@
 
 #include <QtTest/QtTest>
 #include "core/BoardCapabilities.h"
+#include "core/DdcAssignment.h"
 #include "core/HpsdrModel.h"
+#include "core/codec/CodecContext.h"
+#include "core/codec/P1CodecAnvelinaPro3.h"
+#include "core/codec/P1CodecHl2.h"
+#include "core/codec/P1CodecRedPitaya.h"
+#include "core/codec/P1CodecStandard.h"
+#include "core/codec/P2CodecHermes.h"
+#include "core/codec/P2CodecOrionMkII.h"
+#include "core/codec/P2CodecSaturn.h"
+
+#include <memory>
 
 using namespace NereusSDR;
+
+namespace {
+
+// Streams the codec will ACTUALLY assign, measured rather than asserted:
+// hand it five live plain-RX streams and count the ones that come back with
+// a real DDC. A stream the allocator can claim but the codec leaves at
+// streamDdc[st] == -1 gets no enable bit, so its slice is silently dead --
+// no I/Q, no rejection, nothing on screen.
+//
+// Plain RX (no MOX, no PureSignal, no diversity) is the right context: it is
+// the steady state userDdcCount describes, and it is the widest the codec
+// ever goes. The PS/diversity branches on the 1-ADC families collapse harder
+// still (Thetis console.cs:8448-8457 [v2.10.3.15]).
+template <typename Codec>
+int assignableStreams(const Codec& codec)
+{
+    CodecContext ctx{};
+    std::array<SliceConfig, 5> streams{};
+    for (int i = 0; i < 5; ++i) {
+        streams[i].live         = true;
+        streams[i].sampleRateHz = 192000;
+        streams[i].frequencyHz  = 14200000 + qint64(i) * 1000000;
+        streams[i].antennaIndex = 1;
+    }
+
+    const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+    int n = 0;
+    for (int st = 0; st < 5; ++st) {
+        if (a.streamDdc[st] >= 0) { ++n; }
+    }
+    return n;
+}
+
+} // namespace
 
 class TestBoardCapabilitiesPhase3F : public QObject {
     Q_OBJECT
@@ -156,6 +202,84 @@ private slots:
         QCOMPARE(capabilitiesFor(HPSDRModel::HPSDR).userDdcCount, 3);      // Metis: DDC0-2
     }
 
+    // ── Phase 3F Sub-Epic I closeout, defect F2 ─────────────────────────
+    //
+    // userDdcCount sizes the stream pool verbatim
+    // (SliceStreamAllocator::configure via RadioModel::configureStreamPool),
+    // so a value above what the board's codec will assign creates streams
+    // the allocator hands out and the codec then leaves at
+    // streamDdc[st] == -1. No enable bit, no I/Q, no rejection: the slice is
+    // silently dead and publishDdcAssignment skips setDdcMapping for it,
+    // leaving stale routing behind.
+    //
+    // user_ddc_count_never_exceeds_max_slices below masked all of this: 5
+    // <= 5 held on every over-counted board.
+    //
+    // Boards are named one by one rather than walked from
+    // BoardCapsTable::all(), because a caps row carries no board enum and
+    // the codec is selected from HPSDRHW (P2RadioConnection.cpp:1971-2008)
+    // or HPSDRModel (P1RadioConnection.cpp:1979-1984), not from the row.
+    // Naming them keeps this list visibly parallel to those two switches.
+
+    void user_ddc_count_never_exceeds_native_codec_capacity()
+    {
+        // P2-native boards, codec picked by HPSDRHW exactly as
+        // P2RadioConnection::selectCodec does.
+        expectFits(HPSDRHW::Saturn,     assignableStreams(P2CodecSaturn{}));
+        expectFits(HPSDRHW::SaturnMKII, assignableStreams(P2CodecSaturn{}));
+        expectFits(HPSDRHW::OrionMKII,  assignableStreams(P2CodecOrionMkII{}));
+        expectFits(HPSDRHW::Andromeda,  assignableStreams(P2CodecOrionMkII{}));
+        // ANAN-G2E. Was 5 against a 4-stream codec until defect F2.
+        expectFits(HPSDRHW::HermesC10,  assignableStreams(P2CodecHermes{}));
+
+        // P1-native boards, codec picked by HPSDRModel exactly as
+        // P1RadioConnection::selectCodec does.
+        expectFits(HPSDRHW::Atlas,      assignableStreams(P1CodecStandard{}));
+        expectFits(HPSDRHW::Hermes,     assignableStreams(P1CodecStandard{}));
+        expectFits(HPSDRHW::HermesII,   assignableStreams(P1CodecStandard{}));
+        expectFits(HPSDRHW::HermesLite, assignableStreams(P1CodecHl2{}));
+        // HermesLiteRxOnly has no HPSDRModel of its own, so
+        // HardwareProfile's model walk falls through to HERMES and P1
+        // selectCodec lands on P1CodecStandard. Asserting the codec that
+        // actually runs, not the one the name suggests.
+        expectFits(HPSDRHW::HermesLiteRxOnly,
+                   assignableStreams(P1CodecStandard{}));
+    }
+
+    // Angelia (ANAN-100D) and Orion (ANAN-200D) are P1-native 2-ADC boards
+    // that Thetis drives through its ORION-class branch: nddc = 5,
+    // P1_rxcount = 5, RX1 on DDC2 and RX2 on DDC3
+    // (console.cs:8220-8304 [v2.10.3.15]). userDdcCount = 5 is right for the
+    // hardware.
+    //
+    // P1CodecStandard, however, implements ONLY Thetis's HERMES-class branch
+    // (console.cs:8387-8459 [v2.10.3.15]): it hard-codes p1RxCount = 4,
+    // nDdc = 4 and streams 0-3 onto DDC0-3. The ORION-class P1 branch has
+    // never been ported, so on P1 these two boards are served by a codec
+    // that describes different hardware.
+    //
+    // Deliberately NOT closed by trimming userDdcCount to 4: that would
+    // record a codec scope gap in the hardware capability table, which is
+    // the wrong place for it, and would be wrong the moment the ORION-class
+    // P1 branch lands. Expected-fail instead, so the day it is ported this
+    // XPASSes and forces the row to be revisited.
+    void orion_class_p1_capacity_gap_is_known()
+    {
+        const int p1 = assignableStreams(P1CodecStandard{});
+
+        QEXPECT_FAIL("", "P1CodecStandard implements only Thetis's HERMES-class "
+                         "branch (nddc=4); the ORION-class P1 branch "
+                         "(console.cs:8220-8304, nddc=5) is not ported",
+                     Continue);
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Angelia).userDdcCount <= p1);
+
+        QEXPECT_FAIL("", "P1CodecStandard implements only Thetis's HERMES-class "
+                         "branch (nddc=4); the ORION-class P1 branch "
+                         "(console.cs:8220-8304, nddc=5) is not ported",
+                     Continue);
+        QVERIFY(BoardCapsTable::forBoard(HPSDRHW::Orion).userDdcCount <= p1);
+    }
+
     void user_ddc_count_never_exceeds_max_slices()
     {
         // A SKU may host more slices than DDCs (slices share a DDC), but
@@ -168,6 +292,22 @@ private slots:
     }
 
 private:
+    static void expectFits(HPSDRHW hw, int codecCapacity)
+    {
+        const BoardCapabilities& caps = BoardCapsTable::forBoard(hw);
+        QVERIFY2(caps.userDdcCount <= codecCapacity,
+                 qPrintable(QStringLiteral("%1: userDdcCount %2 exceeds the %3 "
+                                           "streams its codec will assign")
+                                .arg(QString::fromLatin1(caps.displayName))
+                                .arg(caps.userDdcCount)
+                                .arg(codecCapacity)));
+        // A pool smaller than the codec can drive is not a defect, but a pool
+        // of zero on a board that has DDCs means no slice can ever bind.
+        QVERIFY2(caps.userDdcCount >= 1,
+                 qPrintable(QStringLiteral("%1: userDdcCount must be at least 1")
+                                .arg(QString::fromLatin1(caps.displayName))));
+    }
+
     static BoardCapabilities capabilitiesFor(HPSDRModel m)
     {
         // forModel returns a const reference; copy it for comparison.

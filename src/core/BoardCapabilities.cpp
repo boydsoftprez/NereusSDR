@@ -645,8 +645,22 @@ const BoardCapabilities kHermesC10 = {
     .protocol         = ProtocolVersion::Protocol2,
     .adcCount         = 1,                                  // SetRxADC(1) [v2.10.3.15]
     .maxReceivers     = 4,                                  // P1_rxcount=4 nddc=4 (console.cs:8388 [v2.10.3.15])
-    .maxSlices        = 5,   // Phase 3F: HermesC10/G2E 5-slice cap (2-ADC P2 class; DDC0+1 reserved per §2)
-    .userDdcCount     = 5,   // Phase 3F Sub-Epic I: HermesC10/G2E user DDCs = DDC2-6 (design doc §2)
+    // 5 slices over 4 DDCs is legitimate: slices sharing a window share a DDC.
+    // The old comment here read "2-ADC P2 class", which contradicts adcCount=1
+    // two lines up; the G2E is Thetis's 1-ADC HERMES-class branch
+    // (console.cs:8388 [v2.10.3.15]) and has no DDC0/DDC1 reservation of the
+    // kind the 2-ADC rows describe.
+    .maxSlices        = 5,   // Phase 3F: HermesC10/G2E 5-slice cap (1-ADC HERMES class; slices may share a DDC)
+    // Phase 3F Sub-Epic I closeout, defect F2: was 5 with a "DDC2-6" comment.
+    // Both were wrong. This SKU runs P2CodecHermes, whose familyDdcCount() is
+    // 4 (P2CodecHermes.h:184, from Thetis console.cs:8392 nddc = 4), and which
+    // places streams on DDC0-3 starting at DDC0 -- DDC2 is explicitly NOT
+    // enabled on this family (tst_codec_5_slice_assignment.cpp). On P1 the
+    // same board runs P1CodecStandard, also 4 DDCs (DDC0-3). A fifth stream
+    // was allocatable but left at streamDdc[4] == -1, so it drew no enable bit
+    // and its slice was silently dead. maxReceivers=4 on the line above was
+    // already telling the truth.
+    .userDdcCount     = 4,   // Phase 3F Sub-Epic I: HermesC10/G2E user DDCs = DDC0-3 (console.cs:8391-8392 [v2.10.3.15]) (console.cs:8391-8392 [v2.10.3.15])
     .widebandAdcs     = 2,   // Phase 3F: P2 2-ADC class — ADC0 + ADC1 both support wideband stream (design §2 table)
     // Thetis setup.cs:849-850 [v2.10.3.15] — every P2/ETH board gets the
     // full 6-rate list; Thetis has no per-board cap, only per-protocol.
