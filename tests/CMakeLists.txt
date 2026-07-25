@@ -5419,6 +5419,15 @@ nereus_add_test(tst_p2_radio_connection_apply_ddc_assignment)
 # no upstream logic ported.
 nereus_add_test(tst_p2_ddc_mask_ownership)
 
+# ── Phase 3F Sub-Epic I closeout: DDC assignment crosses to the conn thread ─
+# 1 test: the_assignment_reaches_the_connection_through_its_own_thread.
+# RadioModel::invokeCodecDdcAssignment called applyDdcAssignment directly
+# from the GUI thread, tearing m_rx[] and writing the UDP socket off-thread
+# on every VFO tick. The connection is parked on a stopped QThread so a
+# direct call is distinguishable from a queued QMetaCallEvent.
+# Source: NereusSDR-original (marshalling glue, no Thetis upstream).
+nereus_add_test(tst_p2_ddc_assignment_marshalling)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice

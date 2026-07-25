@@ -12498,10 +12498,34 @@ void RadioModel::invokeCodecDdcAssignment()
     // connection; the client-side publish below is not, because the mapping
     // is model bookkeeping that has to be correct before the first packet
     // arrives.
+    //
+    // ── Phase 3F Sub-Epic I closeout: marshal to the connection thread ────
+    //
+    // applyDdcAssignment rewrites m_rx[] and calls sendCmdRx(), which writes
+    // the QUdpSocket. RadioModel runs on the GUI thread and the connection
+    // was moved onto m_connThread (see connectToRadio), so calling it
+    // directly tore m_rx[] against the connection thread's own frame
+    // composition and drove QUdpSocket::writeDatagram from a thread that
+    // does not own the socket or its notifier. requestDdcAssignment is wired
+    // to every slice's frequencyChanged, so this ran on every VFO tick.
+    //
+    // Same marshalling shape as the hardwareReceiverCountChanged and
+    // hardwareFrequencyChanged pushes in wireConnectionSignals: the functor
+    // overload of QMetaObject::invokeMethod with default Qt::AutoConnection,
+    // which is a plain call when the target already lives on this thread and
+    // a queued QMetaCallEvent when it does not.
+    //
+    // No qRegisterMetaType is needed. The functor overload packages the whole
+    // lambda into the event, so `assignment` travels as an ordinary by-value
+    // capture of a trivially copyable aggregate; the metatype system is only
+    // involved for the Q_ARG / string-name overload or for a queued
+    // signal-slot connection carrying DdcAssignment as a parameter.
     if (isConnected()) {
         if (auto* p2conn = qobject_cast<P2RadioConnection*>(m_connection)) {
             if (p2conn->p2Codec()) {
-                p2conn->applyDdcAssignment(assignment);
+                QMetaObject::invokeMethod(p2conn, [p2conn, assignment]() {
+                    p2conn->applyDdcAssignment(assignment);
+                });
             }
         }
     }
