@@ -359,6 +359,22 @@ public:
     /// reports the same number through SliceModel::ddcIndex().
     int ddcForStream(int streamIndex) const;
 
+    /// Phase 3F Sub-Epic I Task 10: change a DDC stream's sample rate.
+    ///
+    /// The rate IS the window width, so widening lets more slices share this
+    /// stream and narrowing can push slices out of it. Every slice bound to
+    /// the stream is therefore re-run through the allocator afterwards: an
+    /// evicted slice migrates to a free DDC rather than being left aliased
+    /// on a window that no longer contains it.
+    ///
+    /// Protocol 1 carries ONE rate for the whole radio in C&C bank 0
+    /// (P1RadioConnection::composeCcBank0 takes a single sampleRate and
+    /// encodes it as srBits), so on a P1 connection this applies the rate to
+    /// every active stream. Protocol 2 carries a per-DDC rate in
+    /// DdcAssignment::rate[], which the codecs populate per stream, so there
+    /// it applies only to the stream named.
+    void setStreamSampleRate(int streamIndex, int rateHz);
+
     // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
     // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
     // MainWindow handler can route the VfoWidget to the owning pan. Passing
@@ -2202,6 +2218,12 @@ private:
     // sized by configureStreamPool at connect, empty (and therefore
     // bind-refusing) while disconnected.
     NereusSDR::SliceStreamAllocator m_streamAllocator;
+
+    // Phase 3F Sub-Epic I Task 10: coalesces the codec recompute while
+    // setStreamSampleRate re-runs every slice on a stream through the
+    // allocator. Without it a rate change on a stream hosting N slices would
+    // run the codec N times and push N CmdRx frames. Main thread only.
+    bool m_suppressDdcAssignment{false};
 
     // Rate handed to configureStreamPool, used when a stream is claimed
     // before m_connectionSampleRateHz has been set (Slice A binds during

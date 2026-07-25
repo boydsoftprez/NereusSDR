@@ -209,6 +209,47 @@ private slots:
         // here would drop every EP6 packet (issue #263).
         QCOMPARE(model.receiverManager()->ddcIndex(0), 0);
     }
+
+    void widening_a_stream_rate_admits_a_previously_excluded_slice()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+
+        // 14.400 sits outside +-96 kHz but inside +-384 kHz, so it only
+        // fits once the window is widened.
+        model.setStreamSampleRate(0, 768000);
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14400000.0);
+
+        QCOMPARE(model.slices().at(b)->streamIndex(), 0);
+        QCOMPARE(model.activeStreamCount(), 1);
+    }
+
+    void narrowing_a_stream_rate_evicts_an_out_of_window_slice()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(14200000.0);
+        model.setStreamSampleRate(0, 768000);
+
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(14400000.0);
+        QCOMPARE(model.slices().at(b)->streamIndex(), 0);
+
+        // Narrowing to +-96 kHz puts B out of window. It must migrate to
+        // its own DDC, not be left silently aliased on a window that no
+        // longer contains it.
+        model.setStreamSampleRate(0, 192000);
+
+        QVERIFY(model.slices().at(b)->streamIndex() != 0);
+        QCOMPARE(model.activeStreamCount(), 2);
+    }
 };
 
 QTEST_MAIN(TestStreamPoolBinding)

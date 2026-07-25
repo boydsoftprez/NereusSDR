@@ -2907,8 +2907,75 @@ void RadioModel::republishStreamBindings(int streamIndex)
 
 void RadioModel::requestDdcAssignment()
 {
+    // Phase 3F Sub-Epic I Task 10: setStreamSampleRate re-runs every slice on
+    // the stream through bindSliceToStream, and each of those ends by asking
+    // for a recompute. Coalesce them into the single request the rate change
+    // issues at the end, so a rate change costs one codec run and one wire
+    // push rather than one per slice.
+    if (m_suppressDdcAssignment) {
+        return;
+    }
     emit ddcAssignmentRequested();
     invokeCodecDdcAssignment();
+}
+
+void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
+{
+    if (rateHz <= 0) {
+        return;
+    }
+
+    // Protocol 1 carries one rate for the whole radio in C&C bank 0:
+    // P1RadioConnection::composeCcBank0(cc0, sampleRate, mox, activeRxCount)
+    // takes a single sampleRate and encodes it as srBits, so there is no
+    // per-receiver rate to set. Protocol 2 carries a per-DDC rate through
+    // DdcAssignment::rate[], which the codecs populate per stream.
+    const bool isP1 =
+        qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr;
+
+    auto applyTo = [this, rateHz](int st) {
+        if (!m_streamAllocator.isStreamActive(st)) {
+            return;
+        }
+        const double centreHz = m_streamAllocator.streamCentreHz(st);
+        m_streamAllocator.activateStream(st, centreHz, rateHz);
+        if (m_receiverManager) {
+            m_receiverManager->setReceiverSampleRate(st, rateHz);
+        }
+        // The FFT engine's bin math and the panadapter's window both key off
+        // the stream's rate, so they have to follow it (Task 8 wires this).
+        emit streamCentreChanged(st, centreHz, rateHz);
+    };
+
+    if (isP1) {
+        for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
+            applyTo(st);
+        }
+    } else {
+        applyTo(streamIndex);
+    }
+
+    // Re-run every bound slice through the allocator. Widening may now admit
+    // slices that had to claim their own DDC; narrowing may have pushed a
+    // slice out of the window it was sharing, and it must migrate rather than
+    // stay aliased on a window that no longer contains it.
+    //
+    // This calls bindSliceToStream directly rather than moving any frequency,
+    // so no frequencyChanged fires and there is no recursion back into here.
+    // The suppression flag only coalesces the redundant codec requests.
+    m_suppressDdcAssignment = true;
+    for (SliceModel* s : m_slices) {
+        if (s && s->streamIndex() >= 0) {
+            bindSliceToStream(s, s->frequency());
+        }
+    }
+    m_suppressDdcAssignment = false;
+
+    // One recompute for the whole rate change. This is what actually pushes
+    // the new rate to the wire on P2: the codec writes rate[] into the
+    // assignment and P2RadioConnection::applyDdcAssignment converts it to
+    // m_rx[i].samplingRate in kHz and re-sends CmdRx.
+    requestDdcAssignment();
 }
 
 bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
@@ -2953,10 +3020,25 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
     if (placement.outcome == Outcome::NewStream
         || placement.outcome == Outcome::RetunedStream) {
         // Claim or move the DDC, then centre it on the slice.
+        //
+        // Preserve the stream's own rate when it is already live. A
+        // RetunedStream is a sole occupant dragging its existing DDC to a new
+        // centre, and that DDC keeps whatever width the operator gave it
+        // (Task 10). Only a freshly claimed DDC takes the connection default.
+        // Without this, every sole-occupant retune silently reset the stream
+        // back to the connection rate and threw away a per-stream width.
+        const bool streamAlreadyLive =
+            m_streamAllocator.isStreamActive(placement.streamIndex);
+        const int existingRateHz =
+            m_streamAllocator.streamSampleRateHz(placement.streamIndex);
+        const int rateForStream =
+            (streamAlreadyLive && existingRateHz > 0)
+                ? existingRateHz
+                : (m_connectionSampleRateHz > 0 ? m_connectionSampleRateHz
+                                                : m_streamDefaultRateHz);
+
         m_streamAllocator.activateStream(
-            placement.streamIndex, placement.newStreamCentreHz,
-            m_connectionSampleRateHz > 0 ? m_connectionSampleRateHz
-                                         : m_streamDefaultRateHz);
+            placement.streamIndex, placement.newStreamCentreHz, rateForStream);
 
         if (m_receiverManager) {
             m_receiverManager->setReceiverFrequency(
