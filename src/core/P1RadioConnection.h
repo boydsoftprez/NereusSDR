@@ -173,6 +173,12 @@ public:
     // zeros never reach fexchange0.
     void setTxMicSource(TxMicSource* src);
 
+    // Test-only seam: compress the silence-watchdog and reconnect-retry
+    // timeline so tst_reconnect_on_silence does not sleep for 42 real
+    // seconds (which set the parallel floor for the whole ctest run).
+    // Not called anywhere in production code.
+    void setReconnectTimingForTest(int watchdogSilenceMs, int reconnectIntervalMs);
+
 public slots:
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;
@@ -463,9 +469,16 @@ private:
     // tick covers 100+ ms; without it one tick could dump 40+ packets into
     // the socket and overrun the radio's UDP receive buffer.
     static constexpr int kEp2MaxBurstPerTick = 16;
+    // Defaults unchanged. As of 2026-07-25 the first two are seeded into
+    // instance members so tests can compress the reconnect timeline;
+    // nothing outside the test suite calls setReconnectTimingForTest(),
+    // so production timing is bit-identical to before.
     static constexpr int kWatchdogSilenceMs    = 2000;          // silence → Error threshold
     static constexpr int kReconnectIntervalMs  = 5000;          // delay between retry attempts
     static constexpr int kMaxReconnectAttempts = 3;             // max retries before staying in Error
+
+    int m_watchdogSilenceMs{kWatchdogSilenceMs};
+    int m_reconnectIntervalMs{kReconnectIntervalMs};
 
     quint32 m_epSendSeq{0};
     quint32 m_epRecvSeqExpected{0};

@@ -2035,6 +2035,21 @@ void P1RadioConnection::setTxMicSource(TxMicSource* src)
 }
 
 // ---------------------------------------------------------------------------
+// setReconnectTimingForTest — test-only seam
+//
+// Overrides the silence-watchdog threshold and the reconnect retry interval
+// so tst_reconnect_on_silence can exercise the full §3.6 bounded-retry
+// timeline in a few hundred milliseconds instead of 42 real seconds.
+// No production caller — defaults remain kWatchdogSilenceMs / kReconnectIntervalMs.
+// ---------------------------------------------------------------------------
+void P1RadioConnection::setReconnectTimingForTest(int watchdogSilenceMs,
+                                                  int reconnectIntervalMs)
+{
+    m_watchdogSilenceMs   = watchdogSilenceMs;
+    m_reconnectIntervalMs = reconnectIntervalMs;
+}
+
+// ---------------------------------------------------------------------------
 // parseI2cResponse — Phase 3P-E Task 2
 //
 // Called from the instance parseEp6Frame() when incoming C&C status byte C0
@@ -2314,7 +2329,7 @@ void P1RadioConnection::onWatchdogTick()
     if (!m_lastEp6At.isValid()) { return; }
 
     const qint64 silenceMs = m_lastEp6At.msecsTo(QDateTime::currentDateTimeUtc());
-    if (silenceMs > kWatchdogSilenceMs) {
+    if (silenceMs > m_watchdogSilenceMs) {
         qCWarning(lcConnection) << "P1: Watchdog — ep6 silent for" << silenceMs
                                 << "ms (state=" << static_cast<int>(cs)
                                 << "); transitioning to LinkLost and scheduling reconnect";
@@ -2331,7 +2346,7 @@ void P1RadioConnection::onWatchdogTick()
 
         // Arm the reconnect timer for the next retry attempt (or first if from Connected).
         // Source: NereusSDR design doc §3.6 — 5-second reconnect interval.
-        m_reconnectTimer->start(kReconnectIntervalMs);
+        m_reconnectTimer->start(m_reconnectIntervalMs);
     }
 }
 
