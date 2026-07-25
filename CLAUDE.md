@@ -682,3 +682,44 @@ preferences. OpenHPSDR radios don't store per-slice state.
 6. **r8brain-free-src** - `https://github.com/avaneev/r8brain-free-src`
    * MIT-licensed 24-bit polyphase resampler vendored at `third_party/r8brain/`
    * Used by the RADE 48-to-16 kHz TX audio chain and reserved for future general resampling needs
+7. **n1gp-Anvelina_PROIII (FPGA gateware)** - `https://github.com/n1gp/Anvelina_PROIII`
+   * **Clone to `../n1gp-Anvelina_PROIII/` relative to NereusSDR root.** Pinned at
+     SHA `8e86a61` ("Version 2.2.14 Final", 2026-07-06). Do not `git pull`.
+   * Verilog FPGA gateware for an OpenHPSDR Protocol 2 board. This is the
+     **hardware** authority for facts Thetis can only report second-hand:
+     receiver/DDC count, board-type identification byte, protocol version,
+     master clock. Added 2026-07-25 after discovering every row in
+     `BoardCapabilities.cpp` cited only Thetis client code.
+   * Key facts (`Orion.v` @ `8e86a61`):
+     - `Orion.v:958` — `localparam NR = 8; // number of receivers to implement`
+     - `Orion.v:956-957` — fabric fits up to 14 RX; bootloader's 2 MB file-size
+       limit caps the practical build at 10
+     - `Orion.v:964` — `board_type = 8'h05` with the authoritative ID list
+       (00 Metis, 01 Hermes, 02 Griffin, 03 Angelia, 05 Orion)
+     - `Orion.v:632` — NR=8 runs 8 receivers at 192 kHz, but only 2 at 1536 kHz
+   * **`NR` is a compile-time constant that changes between firmware releases**
+     (shipped as 2, 4, 7 and 8 at different times on the same board). No static
+     per-board DDC count can be correct across firmware versions — see the
+     Radio-Authoritative Settings Policy.
+
+### Gateware citations — cite facts, don't port logic
+
+The gateware is **GPLv3**, the same licence NereusSDR itself ships under (root
+`LICENSE`), so there is **no licence conflict** — unlike a GPLv2-only or
+proprietary upstream, this can be used freely. The constraint below is about
+scope and correctness, not legal risk:
+
+* **Normal use** — cite a *fact* the gateware establishes: a receiver count, a
+  board-type byte, a clock rate, a register width. A cite like
+  `// From n1gp-Anvelina_PROIII Orion.v:958 [@8e86a61] — NR = 8` records where a
+  hardware number actually came from, the same standing as citing a datasheet.
+  Prefer this over a Thetis cite whenever the claim is about *hardware*.
+* **Stop and ask first** — translating Verilog *logic* into NereusSDR. It is
+  licence-compatible but almost always the wrong move: gateware logic runs on
+  the radio, not in the client, so needing it usually means the design took a
+  wrong turn. If a task genuinely calls for it, the full port protocol applies
+  (verbatim header, PROVENANCE row as kind `port`, author tags preserved).
+* Fact-only citations use PROVENANCE kind `reference`, not `port`.
+* The gateware carries its own author tags (`Yurij-eu2av` in `Orion.v`). If a
+  gateware comment is ever quoted verbatim, the inline-comment-preservation rule
+  applies to it exactly as it does to Thetis tags.

@@ -235,14 +235,55 @@ struct BoardCapabilities {
     // For 2-ADC boards this is typically maxReceivers - 2 (DDC0/1 reserved for PS + diversity).
     // For 1-ADC boards this often equals maxReceivers, except HL2 which is force-capped to 1.
     // See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.
+    //
+    // ── This is a POLICY ceiling, not a hardware limit ──────────────────────
+    //
+    // "How many receivers does this board have" has five different answers, and
+    // every one of them is real. From the FPGA gateware for an Orion-class board
+    // (../n1gp-Anvelina_PROIII/Orion.v [@8e86a61], GPLv3 — cited for facts only,
+    // see CLAUDE.md "Gateware citations"):
+    //
+    //   14  fabric capacity            Orion.v:956  "can fit up to 14 RXs"
+    //   10  bootloader 2 MB file cap   Orion.v:957  ".rbf is over that when > 10"
+    //    8  what this build ships      Orion.v:958  "localparam NR = 8"
+    //    8 @ 192k / 2 @ 1536k          Orion.v:632  link-budget limit, N1GP's notes
+    //    5  what Thetis asks for       console.cs UpdateDDCs nddc
+    //
+    // The values in this table are currently the last row — Thetis's client
+    // policy — inherited wholesale because until 2026-07-25 every citation here
+    // pointed at Thetis client code and none at hardware.
+    //
+    // Two consequences worth keeping in mind before trusting these numbers:
+    //
+    //   1. NR is a compile-time Verilog constant that CHANGES BETWEEN FIRMWARE
+    //      RELEASES — shipped as 2, 4, 7 and 8 at different times on the same
+    //      board. So no static per-board integer can be correct for every
+    //      firmware a user might be running. The durable fix is to cap by what
+    //      the radio actually answers (a DDC that never delivers packets is
+    //      absent) rather than by a compiled-in table.
+    //   2. The usable count is RATE-DEPENDENT, because aggregate I/Q throughput
+    //      is link-bound (P2 I/Q is 24-bit I+Q = 6 bytes/sample). Eight
+    //      receivers at 192 kHz and two at 1536 kHz are the same hardware.
+    //      A single integer cannot express that.
+    //
+    // Deliberate decision 2026-07-25: hold the ceiling at 5 and get Phase 3F
+    // working there first, then revisit raising it toward NR once multi-slice is
+    // proven on a bench. Do NOT raise these values without either gateware
+    // evidence for the specific SKU or a probe against real hardware.
     int  maxSlices {0};
 
     // Phase 3F Sub-Epic I: DDCs available for operator slices, after the
     // per-SKU PureSignal / diversity reservations. On 2-ADC P2 boards
     // DDC0+DDC1 are reserved as a synced pair, so user DDCs are DDC2-6.
-    // Design doc §2 "Resolved values per SKU" is the authority; the
-    // per-board codec's stream-to-DDC table must agree (for example
-    // P2CodecSaturn::kStreamToDdc = {2,3,4,5,6}).
+    // The per-board codec's stream-to-DDC table must agree (for example
+    // P2CodecSaturn::kStreamToDdc = {2,3,4,5,6}, and P2CodecHermes putting
+    // stream 0 on DDC0 for the 1-ADC family).
+    //
+    // Design doc §2 "Resolved values per SKU" has been treated as the authority
+    // here, but note that the design doc is itself derived from Thetis, so it
+    // carries Thetis's client policy rather than hardware truth — the same
+    // caveat as maxSlices above. Where a SKU's value is contested, gateware or a
+    // hardware probe outranks both the design doc and Thetis.
     //
     // This is a distinct axis from maxSlices: several slices can share one
     // DDC when their frequencies fall inside its window, so maxSlices can
