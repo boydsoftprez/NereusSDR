@@ -181,6 +181,26 @@ class SliceModel : public QObject {
     Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
     // Phase 3F: codec-assigned DDC index. -1 = unassigned. Read-only from operator perspective.
     Q_PROPERTY(int ddcIndex READ ddcIndex WRITE setDdcIndex NOTIFY ddcIndexChanged)
+
+    // Phase 3F Sub-Epic I: which DDC stream hosts this slice. Many slices
+    // may share one stream when their frequencies fall inside its window
+    // (ChannelMaster cmaster.h:75-82 [v2.10.3.15], where one `_rcvr` drives
+    // N sub-receiver channels off one I/Q input). -1 = unbound, feeds nothing.
+    //
+    // Distinct from ddcIndex, which is the hardware DDC number the codec
+    // picked for this stream. streamIndex is the logical index shared by
+    // ReceiverManager, FFTEngine, and the FFTRouter topology.
+    Q_PROPERTY(int streamIndex READ streamIndex WRITE setStreamIndex
+               NOTIFY streamIndexChanged)
+
+    // Phase 3F Sub-Epic I: this slice's offset from its stream's centre,
+    // pushed into WDSP via RxChannel::setShiftFrequency (the Thetis RXOsc
+    // port, radio.cs:1409-1420 [v2.10.3.15]). Zero when the slice sits on
+    // the DDC centre. Always within +-sampleRate/2 by construction; the
+    // allocator never produces an out-of-window offset.
+    Q_PROPERTY(double shiftOffsetHz READ shiftOffsetHz WRITE setShiftOffsetHz
+               NOTIFY shiftOffsetHzChanged)
+
     // Phase 3F: owning pan id ("pan-N"). Authoritative slice-to-pan binding.
     Q_PROPERTY(QString panKey READ panKey WRITE setPanKey NOTIFY panKeyChanged)
     // Phase 3F: per-slice DDC sample rate. Default = SampleRateCatalog::kDefaultSampleRate (192 kHz).
@@ -447,6 +467,11 @@ public:
 
     int ddcIndex() const { return m_ddcIndex; }
     void setDdcIndex(int ddc);
+
+    int  streamIndex() const { return m_streamIndex; }
+    void setStreamIndex(int idx);
+    double shiftOffsetHz() const { return m_shiftOffsetHz; }
+    void setShiftOffsetHz(double hz);
 
     int sampleRateHz() const { return m_sampleRateHz; }
     void setSampleRateHz(int hz);
@@ -808,6 +833,8 @@ signals:
     void sliceLetterChanged(QChar letter);
     void chainIndexChanged(int idx);
     void ddcIndexChanged(int ddc);
+    void streamIndexChanged(int idx);      // Phase 3F Sub-Epic I
+    void shiftOffsetHzChanged(double hz);  // Phase 3F Sub-Epic I
     void panKeyChanged(const QString& key);  // Phase 3F multi-pan routing
     void sampleRateHzChanged(int hz);
     void diversityEnabledChanged(bool on);
@@ -936,6 +963,8 @@ private:
     QChar   m_sliceLetter{'A'};  // Phase 3F: default A for backward-compat single-slice
     int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
     int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
+    int    m_streamIndex{-1};     // Phase 3F Sub-Epic I: -1 = unbound
+    double m_shiftOffsetHz{0.0};  // offset from stream centre
     int     m_sampleRateHz{kDefaultSampleRate};  // Phase 3F: per-slice DDC sample rate; default 192 kHz (NereusSDR::kDefaultSampleRate)
     bool    m_diversityEnabled{false};  // Phase 3F: Slice-A-only diversity mode; gated on BoardCapabilities.hasDiversityReceiver
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match

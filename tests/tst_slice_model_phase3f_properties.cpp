@@ -210,6 +210,32 @@ private slots:
         slice.setPsPaused(true);
         QCOMPARE(spy.count(), 1);
     }
+
+    // ── Sub-Epic I Task 3: streamIndex / shiftOffsetHz ──────────────────
+    void stream_index_defaults_to_unbound()
+    {
+        SliceModel slice;
+        QCOMPARE(slice.streamIndex(), -1);
+    }
+
+    void stream_index_change_emits_once()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::streamIndexChanged);
+        slice.setStreamIndex(2);
+        slice.setStreamIndex(2);           // idempotent
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(slice.streamIndex(), 2);
+    }
+
+    void shift_offset_round_trips()
+    {
+        SliceModel slice;
+        QSignalSpy spy(&slice, &SliceModel::shiftOffsetHzChanged);
+        slice.setShiftOffsetHz(-25000.0);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(slice.shiftOffsetHz(), -25000.0);
+    }
 };
 
 QTEST_MAIN(TestSliceModelPhase3FProperties)

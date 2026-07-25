@@ -620,6 +620,24 @@ void SliceModel::setDdcIndex(int ddc)
     }
 }
 
+void SliceModel::setStreamIndex(int idx)
+{
+    if (m_streamIndex != idx) {
+        m_streamIndex = idx;
+        emit streamIndexChanged(idx);
+    }
+}
+
+void SliceModel::setShiftOffsetHz(double hz)
+{
+    // qFuzzyCompare is undefined when either arg is 0.0; use the subtraction-to-zero pattern.
+    if (qFuzzyIsNull(m_shiftOffsetHz - hz)) {
+        return;
+    }
+    m_shiftOffsetHz = hz;
+    emit shiftOffsetHzChanged(hz);
+}
+
 void SliceModel::setPanKey(const QString& key)
 {
     if (m_panKey != key) {
