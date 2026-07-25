@@ -10,6 +10,14 @@ project(NereusSDR VERSION 0.5.2 LANGUAGES C CXX)
 # Guarded on CMAKE_CXX_COMPILER_LAUNCHER being undefined so an explicit
 # -DCMAKE_CXX_COMPILER_LAUNCHER=... on the configure line always wins,
 # and so CI's own ccache setup is not double-applied.
+#
+# PREREQUISITE: ccache needs `sloppiness=pch_defines,time_macros` or it
+# bypasses every TU compiled with -include-pch, which here is nearly all
+# of them (see the §PCH block later in this file).  The symptom is a
+# cheerful "ccache enabled" followed by a 0% hit rate.  Set it once with:
+#     ccache --set-config sloppiness=pch_defines,time_macros
+# CI does this in its "Configure ccache" step; see docs/development/
+# fast-test-loop.md for the developer-side setup.
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
     set(CMAKE_C_COMPILER_LAUNCHER   "${CCACHE_PROGRAM}" CACHE STRING "C compiler launcher")

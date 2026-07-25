@@ -49,7 +49,7 @@ endif()
 
 # ── Subsystem label derivation (2026-07-25) ────────────────────────────
 # Scans a test's own #include lines and emits ctest LABELS for the
-# subsystems it touches, so `ctest -L core` works without editing 519
+# subsystems it touches, so `ctest -L core` works without editing 513
 # test files or hand-maintaining a mapping table.
 #
 # Matches both the common bare form (`#include "core/Foo.h"`, resolved
@@ -89,8 +89,8 @@ function(_nereus_derive_test_labels out_var src_file)
 endfunction()
 
 # ── Shared sandbox-init object library (2026-07-25) ────────────────────
-# TestSandboxInit.cpp was previously listed as a source on all 519 test
-# executables, so it was compiled 519 times (0.10s each, ~50 CPU-s of
+# TestSandboxInit.cpp was previously listed as a source on all 513 test
+# executables, so it was compiled 513 times (0.10s each, ~50 CPU-s of
 # pure duplication).
 #
 # It MUST stay an OBJECT library, not a static library: its entire
@@ -100,11 +100,16 @@ endfunction()
 # preserving the pre-main() QStandardPaths::setTestModeEnabled(true)
 # guarantee that keeps ctest runs from overwriting the developer's real
 # NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
-add_library(nereus_test_sandbox OBJECT TestSandboxInit.cpp)
+#
+# Deliberately does NOT reuse the NereusSDRObjs PCH.  This is one 50-line
+# TU whose only include is <QStandardPaths>, so the PCH buys nothing, and
+# reusing it means compiling with a different -D set than the PCH was
+# built with (this target links only Qt6::Core, not the HAVE_WDSP /
+# HAVE_FFTW3 / NEREUS_GPU_SPECTRUM PUBLIC defines the others inherit).
+# AppleClang tolerates the mismatch; GCC silently drops the PCH and MSVC
+# errors outright (C2855).
+add_library(nereus_test_sandbox OBJECT EXCLUDE_FROM_ALL TestSandboxInit.cpp)
 target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
-if(NEREUS_USE_PCH)
-    target_precompile_headers(nereus_test_sandbox REUSE_FROM NereusSDRObjs)
-endif()
 
 function(nereus_add_test name)
     # Sharding gate — when this test's hash bucket doesn't match the

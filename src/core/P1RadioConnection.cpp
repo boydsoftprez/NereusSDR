@@ -2034,20 +2034,6 @@ void P1RadioConnection::setTxMicSource(TxMicSource* src)
     m_lastMicAt = QDateTime::currentDateTimeUtc();
 }
 
-// ---------------------------------------------------------------------------
-// setReconnectTimingForTest — test-only seam
-//
-// Overrides the silence-watchdog threshold and the reconnect retry interval
-// so tst_reconnect_on_silence can exercise the full §3.6 bounded-retry
-// timeline in a few hundred milliseconds instead of 42 real seconds.
-// No production caller — defaults remain kWatchdogSilenceMs / kReconnectIntervalMs.
-// ---------------------------------------------------------------------------
-void P1RadioConnection::setReconnectTimingForTest(int watchdogSilenceMs,
-                                                  int reconnectIntervalMs)
-{
-    m_watchdogSilenceMs   = watchdogSilenceMs;
-    m_reconnectIntervalMs = reconnectIntervalMs;
-}
 
 // ---------------------------------------------------------------------------
 // parseI2cResponse — Phase 3P-E Task 2

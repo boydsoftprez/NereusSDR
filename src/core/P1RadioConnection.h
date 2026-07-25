@@ -173,12 +173,6 @@ public:
     // zeros never reach fexchange0.
     void setTxMicSource(TxMicSource* src);
 
-    // Test-only seam: compress the silence-watchdog and reconnect-retry
-    // timeline so tst_reconnect_on_silence does not sleep for 42 real
-    // seconds (which set the parallel floor for the whole ctest run).
-    // Not called anywhere in production code.
-    void setReconnectTimingForTest(int watchdogSilenceMs, int reconnectIntervalMs);
-
 public slots:
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;
@@ -756,6 +750,16 @@ public:
     }
     int currentAttenForTest() const { return m_stepAttn[0]; }
     bool hl2ThrottledForTest() const { return m_hl2Throttled; }
+    // Compress the silence-watchdog and reconnect-retry timeline so
+    // tst_reconnect_on_silence does not sleep for 42 real seconds (which
+    // set the parallel floor for the whole ctest run).  Guarded rather
+    // than merely "unused in production": this object is moveToThread'd
+    // onto the connection thread (RadioModel.cpp), so a public non-atomic
+    // setter would be a data race waiting for its first caller.
+    void setReconnectTimingForTest(int watchdogSilenceMs, int reconnectIntervalMs) {
+        m_watchdogSilenceMs   = watchdogSilenceMs;
+        m_reconnectIntervalMs = reconnectIntervalMs;
+    }
     // Expose private composeCcForBank for regression-freeze capture (Task 1) and
     // byte-table assertion tests (Task 16).
     void composeCcForBankForTest(int bankIdx, quint8 out[5]) const { composeCcForBank(bankIdx, out); }

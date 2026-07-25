@@ -41,6 +41,18 @@ test, and two that deliberately avoid instantiating GUI classes).
 Every test also carries `TIMEOUT 120`, so a hung test fails instead of
 blocking forever.
 
+### Labels narrow the run, not the dependency
+
+Labels are derived from each test's **direct** includes, so they are a
+triage aid, not a blast-radius calculation. **85 of the 513 tests carry no
+`core` label but still statically link all of `NereusSDRObjs`**, so a
+`src/core` edit genuinely affects them even though `ctest -L core` will not
+run them.
+
+Until the Phase 1 library split lands, every test depends on every source
+file. Use `-L` to get fast feedback while iterating; use the full suite
+before you call something done.
+
 ## Known wart on this branch: a plain build builds everything
 
 On this branch, test executables are **not** `EXCLUDE_FROM_ALL`, so:
