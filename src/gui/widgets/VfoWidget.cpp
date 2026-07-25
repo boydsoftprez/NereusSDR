@@ -2882,13 +2882,42 @@ void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
         antMenu->addAction(QStringLiteral("ANT2"));
     }
 
-    // Sample rate submenu (48k..1536k).
-    QMenu* rateMenu = menu.addMenu(QStringLiteral("Sample rate >"));
-    const int rates[] = {48000, 96000, 192000, 384000, 768000, 1536000};
+    // ── Sample rate submenu ─────────────────────────────────────────────
+    // Phase 3F Sub-Epic I closeout, defect G2. The rate is a property of the
+    // DDC stream this slice is hosted on, not of the slice, so co-hosted
+    // slices share it. On Protocol 1 one rate covers the WHOLE radio (the
+    // rate is srBits in C&C bank 0), so say so in the title rather than let a
+    // per-slice context menu imply a private rate.
+    const bool rateIsRadioWide =
+        m_radioModel != nullptr && m_radioModel->sampleRateIsRadioWide();
+    QMenu* rateMenu = menu.addMenu(
+        rateIsRadioWide ? QStringLiteral("Sample rate (whole radio) >")
+                        : QStringLiteral("Sample rate >"));
+
+    // Offer only what the connected board accepts. P1 saturates srBits at 3
+    // for anything >= 384 kHz, so a P2-only entry picked on a P1 radio would
+    // leave the client configured for a width the radio is not sending.
+    // Disconnected: fall back to the full P2 ladder so the menu is not empty.
+    QVector<int> rates =
+        m_radioModel ? m_radioModel->allowedStreamSampleRates() : QVector<int>{};
+    if (rates.isEmpty()) {
+        rates = {48000, 96000, 192000, 384000, 768000, 1536000};
+    }
+
+    // Check the rate the stream actually resolved to. SliceModel::sampleRateHz
+    // is RadioModel's mirror of that (see its Q_PROPERTY doc), so co-hosted
+    // flags agree and the checkmark cannot show a stale per-slice wish.
+    int resolvedRateHz = 0;
+    if (m_radioModel != nullptr) {
+        if (SliceModel* s = m_radioModel->sliceById(m_sliceIndex)) {
+            resolvedRateHz = s->sampleRateHz();
+        }
+    }
+
     for (int hz : rates) {
         QAction* act = rateMenu->addAction(QStringLiteral("%1 kHz").arg(hz / 1000));
         act->setCheckable(true);
-        // Mark the slice's current rate when the SliceModel hook lands.
+        act->setChecked(hz == resolvedRateHz);
         connect(act, &QAction::triggered, this, [this, hz]() {
             emit sampleRateRequested(m_sliceIndex, hz);
         });

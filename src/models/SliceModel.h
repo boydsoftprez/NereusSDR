@@ -203,8 +203,25 @@ class SliceModel : public QObject {
 
     // Phase 3F: owning pan id ("pan-N"). Authoritative slice-to-pan binding.
     Q_PROPERTY(QString panKey READ panKey WRITE setPanKey NOTIFY panKeyChanged)
-    // Phase 3F: per-slice DDC sample rate. Default = SampleRateCatalog::kDefaultSampleRate (192 kHz).
-    // Operator-owned, no mode-derived defaults. Persisted per-band per-slice.
+    // Phase 3F Sub-Epic I closeout, defect G2: the RESOLVED sample rate of the
+    // DDC stream currently hosting this slice. NOT a private per-slice width
+    // and NOT a request.
+    //
+    // The rate is a property of the stream (it IS the window width the DDC
+    // delivers), and slices bind to streams many-to-one, so co-hosted slices
+    // necessarily share it. RadioModel owns the value and mirrors it here from
+    // two places: setStreamSampleRate pushes a change to every slice on the
+    // stream, and bindSliceToStream re-mirrors a slice that migrates so it
+    // stops reporting the width it just left.
+    //
+    // Read it to display the rate (the VFO flag's rate menu checks against
+    // it). To CHANGE it, call RadioModel::requestSliceSampleRate, which routes
+    // to the stream. Writing the property directly moves the display only, and
+    // the next bind or rate change overwrites it.
+    //
+    // Default = SampleRateCatalog::kDefaultSampleRate (192 kHz). Persisted
+    // per-band per-slice; on reload the persisted value is a display seed that
+    // the first bind replaces with the stream's actual rate.
     Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
     // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
     // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.

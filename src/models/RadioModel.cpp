@@ -2973,19 +2973,62 @@ void RadioModel::requestDdcAssignment()
     invokeCodecDdcAssignment();
 }
 
+bool RadioModel::sampleRateIsRadioWide() const
+{
+    // Protocol 1 carries one rate for the whole radio in C&C bank 0:
+    // P1RadioConnection::composeCcBank0(cc0, sampleRate, mox, activeRxCount)
+    // takes a single sampleRate and encodes it as srBits, so there is no
+    // per-receiver rate to set. Protocol 2 carries a per-DDC rate through
+    // DdcAssignment::rate[], which the codecs populate per stream.
+    return qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr;
+}
+
+QVector<int> RadioModel::allowedStreamSampleRates() const
+{
+    // Disconnected: no board to ask, so no list. Callers decide what to show
+    // in the meantime rather than being handed a guess.
+    if (m_connection == nullptr) {
+        return {};
+    }
+    const NereusSDR::ProtocolVersion proto =
+        sampleRateIsRadioWide() ? NereusSDR::ProtocolVersion::Protocol1
+                                : NereusSDR::ProtocolVersion::Protocol2;
+    const std::vector<int> allowed = NereusSDR::allowedSampleRates(
+        proto, boardCapabilities(), m_hardwareProfile.model);
+    QVector<int> out;
+    out.reserve(static_cast<int>(allowed.size()));
+    for (int rate : allowed) {
+        out.append(rate);
+    }
+    return out;
+}
+
+void RadioModel::requestSliceSampleRate(int sliceId, int rateHz)
+{
+    // Phase 3F Sub-Epic I closeout, defect G2. Resolve by ID, not by list
+    // position: VfoWidget carries SliceModel::sliceIndex(), and addSlice /
+    // removeSlice never renumber survivors, so the two diverge after any
+    // mid-list removal (see sliceById).
+    SliceModel* slice = sliceById(sliceId);
+    if (slice == nullptr) {
+        return;
+    }
+    const int stream = slice->streamIndex();
+    if (stream < 0) {
+        // Not bound to a DDC yet, so there is nothing whose width to change.
+        // The slice picks up its stream's rate when it binds.
+        return;
+    }
+    setStreamSampleRate(stream, rateHz);
+}
+
 void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
 {
     if (rateHz <= 0) {
         return;
     }
 
-    // Protocol 1 carries one rate for the whole radio in C&C bank 0:
-    // P1RadioConnection::composeCcBank0(cc0, sampleRate, mox, activeRxCount)
-    // takes a single sampleRate and encodes it as srBits, so there is no
-    // per-receiver rate to set. Protocol 2 carries a per-DDC rate through
-    // DdcAssignment::rate[], which the codecs populate per stream.
-    const bool isP1 =
-        qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr;
+    const bool isP1 = sampleRateIsRadioWide();
 
     auto applyTo = [this, rateHz](int st) {
         if (!m_streamAllocator.isStreamActive(st)) {
@@ -2995,6 +3038,16 @@ void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
         m_streamAllocator.activateStream(st, centreHz, rateHz);
         if (m_receiverManager) {
             m_receiverManager->setReceiverSampleRate(st, rateHz);
+        }
+        // Phase 3F Sub-Epic I closeout, defect G2: SliceModel::sampleRateHz
+        // mirrors the RESOLVED rate of the hosting stream, so every slice on
+        // this stream follows it. Without this the flag that asked would show
+        // one rate and its co-hosts another, for a width they physically
+        // share. Migrants are re-mirrored by bindSliceToStream below.
+        for (SliceModel* s : m_slices) {
+            if (s && s->streamIndex() == st) {
+                s->setSampleRateHz(rateHz);
+            }
         }
         // The FFT engine's bin math and the panadapter's window both key off
         // the stream's rate, so they have to follow it (Task 8 wires this).
@@ -3117,6 +3170,16 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
 
     slice->setStreamIndex(placement.streamIndex);
     slice->setShiftOffsetHz(placement.shiftOffsetHz);
+
+    // Phase 3F Sub-Epic I closeout, defect G2: adopt the stream's rate.
+    // SliceModel::sampleRateHz is the resolved rate of whichever stream is
+    // hosting the slice, so a slice that migrates (evicted by a narrowing, or
+    // placed on a fresh DDC) must stop reporting the width it just left.
+    const int boundRateHz =
+        m_streamAllocator.streamSampleRateHz(placement.streamIndex);
+    if (boundRateHz > 0) {
+        slice->setSampleRateHz(boundRateHz);
+    }
 
     // Push the offset into WDSP. RxChannel::setShiftFrequency is the Thetis
     // RXOsc port (radio.cs:1409-1420 [v2.10.3.15]): SetRXAShiftFreq +

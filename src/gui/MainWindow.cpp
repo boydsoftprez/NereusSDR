@@ -942,13 +942,16 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             m_radioModel->txSliceArbiter()->requestHandoff(idx);
         }
     });
+    // Phase 3F Sub-Epic I closeout, defect G2: route to the slice's DDC
+    // stream. This used to write SliceModel::setSampleRateHz, which stopped
+    // reaching the wire once buildStreamConfigsForCodec began sourcing the
+    // rate from the allocator, so the menu did nothing. requestSliceSampleRate
+    // also resolves by slice ID rather than list position, which is what
+    // VfoWidget actually carries.
     connect(newFlag, &VfoWidget::sampleRateRequested, this,
-            [this](int idx, int hz) {
+            [this](int sliceId, int hz) {
         if (!m_radioModel) { return; }
-        const auto sl = m_radioModel->slices();
-        if (idx >= 0 && idx < sl.size()) {
-            sl.at(idx)->setSampleRateHz(hz);
-        }
+        m_radioModel->requestSliceSampleRate(sliceId, hz);
     });
     connect(newFlag, &VfoWidget::filterPolicyRequested, this,
             [this](int chainIdx) {
@@ -6151,16 +6154,18 @@ void MainWindow::wireSliceToSpectrum()
     });
 
     // Phase 3F Sub-Epic E Task 4: VfoWidget context-menu intent signals.
-    // Routes to SliceModel::setSampleRateHz / FilterPolicyDialog /
+    // Routes to RadioModel::requestSliceSampleRate / FilterPolicyDialog /
     // RadioModel::removeSlice. Phase 3F closeout: antennaChangeRequested is
     // now live, fired by AntennaPickerMenu (Sub-Epic E Task 5 consumer wire).
+    //
+    // Phase 3F Sub-Epic I closeout, defect G2: same rewire as the secondary
+    // flags in createSliceFlag. The rate belongs to the DDC stream, so the
+    // request goes to the stream rather than into a per-slice property
+    // nothing downstream reads.
     connect(vfo, &VfoWidget::sampleRateRequested, this,
-            [this](int sliceIdx, int hz) {
+            [this](int sliceId, int hz) {
         if (!m_radioModel) { return; }
-        const auto& slices = m_radioModel->slices();
-        if (sliceIdx >= 0 && sliceIdx < slices.size()) {
-            slices.at(sliceIdx)->setSampleRateHz(hz);
-        }
+        m_radioModel->requestSliceSampleRate(sliceId, hz);
     });
     connect(vfo, &VfoWidget::filterPolicyRequested, this,
             [this](int chainIdx) {

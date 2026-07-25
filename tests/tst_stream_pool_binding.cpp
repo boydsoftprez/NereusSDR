@@ -593,6 +593,102 @@ private slots:
             + slice->shiftOffsetHz();
         QCOMPARE(slice->frequency(), demodulatedHz);
     }
+
+    // ── Phase 3F Sub-Epic I closeout, defect G2 ─────────────────────────
+    //
+    // The VFO flag's "Sample rate >" submenu emits
+    // VfoWidget::sampleRateRequested(sliceId, hz). MainWindow used to route
+    // that to SliceModel::setSampleRateHz, and nothing downstream read the
+    // property once buildStreamConfigsForCodec started sourcing the rate
+    // from the allocator, so the control did nothing at all.
+    //
+    // requestSliceSampleRate is the handler body, factored out of the two
+    // MainWindow lambdas so it is reachable from a test. Proof that it
+    // reaches the allocator: widening the window admits a slice that the
+    // narrower window would have pushed onto its own DDC.
+    void the_slice_rate_request_reaches_the_stream_allocator()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int streamA = model.sliceById(a)->streamIndex();
+        QVERIFY(streamA >= 0);
+
+        // Slice IDs, not list positions: VfoWidget carries sliceIndex().
+        model.requestSliceSampleRate(a, 768000);
+
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(14400000.0);
+
+        // 200 kHz away: outside +-96 kHz, inside +-384 kHz. Sharing the
+        // stream is only possible if the rate change landed.
+        QCOMPARE(model.sliceById(b)->streamIndex(), streamA);
+        QCOMPARE(model.activeStreamCount(), 1);
+    }
+
+    // The rate is a property of the DDC stream, so SliceModel::sampleRateHz
+    // is the RESOLVED stream rate, not a private per-slice wish. Every slice
+    // co-hosted on the stream must report the same number, otherwise the
+    // checkmark on one flag's rate menu contradicts the other's.
+    void co_hosted_slices_report_the_streams_resolved_rate()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(14210000.0);
+        QCOMPARE(model.sliceById(b)->streamIndex(),
+                 model.sliceById(a)->streamIndex());
+
+        // Asked for on B's flag; both flags must follow.
+        model.requestSliceSampleRate(b, 768000);
+
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), 768000);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
+    }
+
+    // A slice evicted by a narrowing lands on a different stream at that
+    // stream's own rate, so its mirror must follow the migration rather than
+    // keep reporting the rate of the window it just left.
+    void an_evicted_slice_reports_its_new_streams_rate()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        model.requestSliceSampleRate(a, 768000);
+
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(14400000.0);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
+
+        // Narrowing to +-96 kHz evicts B onto its own DDC, which was never
+        // widened and still carries the pool default.
+        model.requestSliceSampleRate(a, 192000);
+
+        QVERIFY(model.sliceById(b)->streamIndex()
+                != model.sliceById(a)->streamIndex());
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 192000);
+    }
+
+    void a_rate_request_for_an_unknown_slice_is_ignored()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+
+        model.requestSliceSampleRate(99, 768000);
+
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
+    }
 };
 
 QTEST_MAIN(TestStreamPoolBinding)

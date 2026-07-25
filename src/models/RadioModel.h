@@ -413,6 +413,40 @@ public:
     /// it applies only to the stream named.
     void setStreamSampleRate(int streamIndex, int rateHz);
 
+    /// Phase 3F Sub-Epic I closeout, defect G2: the operator picked a sample
+    /// rate on one slice's VFO flag.
+    ///
+    /// Takes a slice ID (see sliceById), not a list position, because that is
+    /// what VfoWidget carries. Resolves the slice to its DDC stream and hands
+    /// off to setStreamSampleRate, so the request necessarily resolves to a
+    /// stream-wide rate: co-hosted slices share one DDC and cannot hold
+    /// different widths. Unknown or unbound slices are ignored.
+    ///
+    /// This is the body of MainWindow's sampleRateRequested handler, factored
+    /// out so both flag-wiring sites share it and so it is reachable from a
+    /// test without a MainWindow.
+    void requestSliceSampleRate(int sliceId, int rateHz);
+
+    /// True when one sample rate covers the whole radio rather than one DDC.
+    ///
+    /// Protocol 1 encodes the rate as srBits in C&C bank 0
+    /// (P1RadioConnection::composeCcBank0 takes a single sampleRate), so every
+    /// stream shares it and setStreamSampleRate fans a change across all of
+    /// them. Protocol 2 carries a per-DDC rate in DdcAssignment::rate[]. UI
+    /// that offers the rate from a per-slice surface has to disclose the P1
+    /// scope rather than imply a private rate. False when disconnected.
+    bool sampleRateIsRadioWide() const;
+
+    /// Sample rates the connected radio accepts, ascending; empty when
+    /// disconnected.
+    ///
+    /// Thin wrapper over SampleRateCatalog::allowedSampleRates with the live
+    /// protocol, board capabilities and SKU. Rate pickers must filter through
+    /// this: P1 saturates srBits at 3 for anything >= 384 kHz, so offering a
+    /// P2-only rate on a P1 board would leave the client configured for a
+    /// width the radio is not sending.
+    QVector<int> allowedStreamSampleRates() const;
+
     // Phase 3F bench fix 2026-06-03: optional initialPanId is stamped on the
     // new SliceModel as a dynamic property BEFORE sliceAdded() emits, so the
     // MainWindow handler can route the VfoWidget to the owning pan. Passing
