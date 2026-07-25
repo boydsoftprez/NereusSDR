@@ -47,6 +47,47 @@ if(NEREUS_TEST_SHARDS GREATER 0)
         "// sharded-out test targets. Never compiled, never linked.\n")
 endif()
 
+# ── Subsystem label derivation (2026-07-25) ────────────────────────────
+# Scans a test's own #include lines and emits ctest LABELS for the
+# subsystems it touches, so `ctest -L core` works without editing 519
+# test files or hand-maintaining a mapping table.
+#
+# Matches both the common bare form (`#include "core/Foo.h"`, resolved
+# via the include path) and the `../src/core/Foo.h` form used by the
+# handful of tests that reach into src/ with an explicit relative path
+# (e.g. tst_waterfall_scrollback.cpp, tst_parametric_eq_widget_*.cpp) —
+# the optional `(src/)?` group was added empirically after an initial
+# version without it mis-labelled all 6 of those tests "unclassified".
+#
+# Measured distribution across the suite: core ~83%, models ~38%,
+# gui ~30% (tests commonly touch more than one, so these do not sum
+# to 100).
+function(_nereus_derive_test_labels out_var src_file)
+    set(_labels "")
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}")
+        set(${out_var} "unclassified" PARENT_SCOPE)
+        return()
+    endif()
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}" _incs
+         REGEX "^[ \t]*#include[ \t]+\"")
+    foreach(_line IN LISTS _incs)
+        if(_line MATCHES "\"(\\.\\./)*(src/)?core/")
+            list(APPEND _labels "core")
+        endif()
+        if(_line MATCHES "\"(\\.\\./)*(src/)?models/")
+            list(APPEND _labels "models")
+        endif()
+        if(_line MATCHES "\"(\\.\\./)*(src/)?gui/")
+            list(APPEND _labels "gui")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _labels)
+    if(NOT _labels)
+        set(_labels "unclassified")
+    endif()
+    set(${out_var} "${_labels}" PARENT_SCOPE)
+endfunction()
+
 # ── Shared sandbox-init object library (2026-07-25) ────────────────────
 # TestSandboxInit.cpp was previously listed as a source on all 519 test
 # executables, so it was compiled 519 times (0.10s each, ~50 CPU-s of
@@ -114,6 +155,16 @@ function(nereus_add_test name)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})
+
+    # Labels let `ctest -L core` request a subset; TIMEOUT converts a hung
+    # test from an indefinite block into a failure. 120s is deliberately
+    # generous: the slowest test in the suite as of 2026-07-25 is
+    # tst_reconnect_on_silence at 53.5s, and a later task brings that
+    # under 1s.
+    _nereus_derive_test_labels(_test_labels "${name}.cpp")
+    set_tests_properties(${name} PROPERTIES
+        LABELS "${_test_labels}"
+        TIMEOUT 120)
 endfunction()
 
 # ── Pre-existing tests from main (smoke + 3G-9 meter suite) ────────────────
