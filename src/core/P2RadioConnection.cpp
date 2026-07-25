@@ -176,6 +176,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "PerfMonitor.h"
 #include "audio/TxMicSource.h"
 #include "codec/AlexFilterMap.h"
+#include "codec/P2CodecHermes.h"
 #include "codec/P2CodecOrionMkII.h"
 #include "codec/P2CodecSaturn.h"
 #include "models/Band.h"
@@ -1971,6 +1972,30 @@ void P2RadioConnection::selectCodec()
         case HW::Saturn:
         case HW::SaturnMKII:
             m_codec = std::make_unique<P2CodecSaturn>();
+            break;
+        // Phase 3F Sub-Epic I Task 7c: the 1-ADC Hermes-class family running
+        // community P2 firmware puts rx1 on DDC0, not DDC2. Named explicitly
+        // rather than left on `default:` so the dispatch reads the same way
+        // primaryRxDdcForBoard does, and so a future 2-ADC SKU still lands on
+        // P2CodecOrionMkII.
+        //
+        // From Thetis console.cs:8610-8642 [v2.10.3.15] GetDDC() P2 branch:
+        //   case HPSDRHW.Hermes: // ANAN-10 ANAN-100 Heremes
+        //   case HPSDRHW.HermesII: // ANAN-10E ANAN-100B HeremesII
+        //   case HPSDRHW.HermesC10: // ANAN-G2E //N1GP G2E added (HermesC10)
+        //       ... rx1 = 0; rx2 = 1;
+        // versus console.cs:8556-8608 [v2.10.3.15] for the 2-ADC family
+        // (rx1 = 2, rx2 = 3). Thetis keeps the two in separate switch cases;
+        // we keep them in separate codecs.
+        //
+        // Without this, applyDdcAssignment inherited the 2-ADC DDC2 layout
+        // while connectToRadio seeded DDC0 from primaryRxDdcForBoard, so the
+        // operator's first VFO turn recomputed the assignment, dropped DDC0
+        // and receive stopped. Same defect class as issue #263, one layer up.
+        case HW::Hermes:
+        case HW::HermesII:
+        case HW::HermesC10:  // ANAN-G2E //N1GP G2E added (HermesC10)
+            m_codec = std::make_unique<P2CodecHermes>();
             break;
         default:
             m_codec = std::make_unique<P2CodecOrionMkII>();

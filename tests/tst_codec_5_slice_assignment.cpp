@@ -11,11 +11,13 @@
 
 #include <QtTest/QtTest>
 #include "core/DdcAssignment.h"
+#include "core/P2RadioConnection.h"
 #include "core/codec/CodecContext.h"
 #include "core/codec/P1CodecAnvelinaPro3.h"
 #include "core/codec/P1CodecHl2.h"
 #include "core/codec/P1CodecRedPitaya.h"
 #include "core/codec/P1CodecStandard.h"
+#include "core/codec/P2CodecHermes.h"
 #include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
 
@@ -613,6 +615,180 @@ private slots:
         // Every published DDC must also be enabled in the bitmask.
         QVERIFY((a.ddcEnable >> a.streamDdc[0]) & 1);
         QVERIFY((a.ddcEnable >> a.streamDdc[2]) & 1);
+    }
+
+    // ── Task 7c: Hermes-class P2 stream table ────────────────────────────────
+    //
+    // Porting from Thetis console.cs:8610-8642 [v2.10.3.15] GetDDC() P2
+    // Hermes-class branch:
+    //
+    //   case HPSDRHW.Hermes: // ANAN-10 ANAN-100 Heremes
+    //   case HPSDRHW.HermesII: // ANAN-10E ANAN-100B HeremesII
+    //   case HPSDRHW.HermesC10: // ANAN-G2E //N1GP G2E added (HermesC10)
+    //       switch (tot) {
+    //           case 0: // off off off
+    //               rx1 = 0;
+    //               rx2 = 1;
+    //               break;
+    //           case 1: // off off on
+    //               rx1 = 0;   //MW0LGE_22b missed out
+    //               rx2 = 1;
+    //
+    // versus the 2-ADC branch at console.cs:8556-8608 [v2.10.3.15] which puts
+    // rx1 = 2, rx2 = 3.  Thetis keeps the two families in separate switch
+    // cases; NereusSDR keeps them in separate codecs.
+    //
+    // Inline author tags from the cited source region
+    // (CLAUDE.md inline-comment-preservation rule):
+    //   console.cs:8612  //N1GP G2E added (HermesC10)   (HermesC10 case label)
+    //   console.cs:8620  //MW0LGE_22b missed out        (rx1 = 0 on tot==1)
+
+    void hermes_class_p2_selection_matches_primary_rx_ddc()
+    {
+        // The codec's stream-0 DDC and primaryRxDdcForBoard must agree for
+        // every board, or connectToRadio and the first frequency change
+        // disagree about which DDC carries RX.  connectToRadio seeds
+        // m_rx[primaryRxDdcForBoard()].enable = 1; RadioModel::bindSliceToStream
+        // then recomputes the assignment on every SliceModel::frequencyChanged
+        // and P2RadioConnection::applyDdcAssignment writes the codec's
+        // ddcEnable bitmask verbatim into m_rx[i].enable.  A disagreement
+        // means the operator's first VFO turn drops the DDC that is actually
+        // streaming and receive stops.
+        //
+        // //N1GP G2E added (HermesC10)  [original tag from console.cs:8612]
+        // //MW0LGE_22b missed out  [original tag from console.cs:8620]
+        struct Case { HPSDRHW board; const char* name; };
+        const Case cases[] = {
+            // 1-ADC Hermes-class on community P2 firmware: rx1 = DDC0.
+            // From Thetis console.cs:8615-8617 [v2.10.3.15].
+            {HPSDRHW::Hermes,     "Hermes"},
+            {HPSDRHW::HermesII,   "HermesII"},
+            {HPSDRHW::HermesC10,  "HermesC10 (ANAN-G2E)"},
+            // 2-ADC family: rx1 = DDC2. From Thetis console.cs:8562-8565.
+            {HPSDRHW::Orion,      "Orion"},
+            {HPSDRHW::OrionMKII,  "OrionMKII"},
+            {HPSDRHW::Saturn,     "Saturn"},
+            {HPSDRHW::SaturnMKII, "SaturnMKII"},
+        };
+
+        for (const Case& c : cases) {
+            P2RadioConnection conn;
+            conn.setBoardForTest(c.board);
+            IP2Codec* codec = conn.p2Codec();
+            QVERIFY2(codec != nullptr, c.name);
+
+            CodecContext ctx{};
+            std::array<SliceConfig, 5> streams{};
+            streams[0].live = true;
+            streams[0].sampleRateHz = 192000;
+
+            const DdcAssignment a = codec->applyDdcAssignment(ctx, streams);
+
+            const int expected = P2RadioConnection::primaryRxDdcForBoard(c.board);
+            QCOMPARE(a.streamDdc[0], expected);
+            // The published DDC must also be asserted in the enable bitmask,
+            // since applyDdcAssignment writes that mask straight to m_rx[].
+            QVERIFY2((a.ddcEnable >> expected) & 1, c.name);
+        }
+    }
+
+    void hermes_class_p2_puts_stream_zero_on_ddc0()
+    {
+        // ANAN-10 / ANAN-100 / ANAN-10E / ANAN-100B / ANAN-G2E on community P2
+        // firmware. Wire-byte capture of a working Thetis-on-G2E session shows
+        // CmdRx byte 7 = 0x01, i.e. the DDC0 enable bit, and
+        // primaryRxDdcForBoard returns 0 for this family. A codec that asserts
+        // DDC2 kills receive on the first VFO turn.
+        //
+        // From Thetis console.cs:8394-8396 [v2.10.3.15]:
+        //   P1_DDCConfig = 4; DDCEnable = DDC0; SyncEnable = 0;
+        //   Rate[0] = rx1_rate;
+        // //N1GP G2E added  [original tag from console.cs:8388 - ANAN_G2E case label]
+        P2CodecHermes codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> streams{};
+        streams[0].live = true;
+        streams[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+        QCOMPARE(a.streamDdc[0], 0);
+        QVERIFY((a.ddcEnable >> 0) & 1);
+        // DDC2 must NOT be enabled — that is the 2-ADC layout this codec exists
+        // to avoid inheriting.
+        QCOMPARE((a.ddcEnable >> 2) & 1, 0);
+        // From console.cs:8396 [v2.10.3.15]: Rate[0] = rx1_rate
+        QCOMPARE(a.rate[0], 192000);
+        // From console.cs:8393 [v2.10.3.15]: P1_DDCConfig = 4
+        QCOMPARE(a.p1DdcConfig, 4);
+        QCOMPARE(a.syncEnable, 0);
+        QCOMPARE(a.nDdc, 1);
+    }
+
+    void hermes_class_p2_four_streams_fill_ddc0_through_ddc3()
+    {
+        // Thetis places rx1 on DDC0 (console.cs:8394) and rx2 on DDC1
+        // (console.cs:8399-8400 [v2.10.3.15]) and caps the family at nddc = 4
+        // (console.cs:8392). Streams 2-3 extend additively into Thetis's two
+        // idle slots; stream 4 has no DDC on this family and must stay
+        // unassigned rather than being invented.
+        P2CodecHermes codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> streams{};
+        for (int i = 0; i < 5; ++i) {
+            streams[i].live = true;
+            streams[i].sampleRateHz = 96000;
+        }
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.streamDdc[1], 1);
+        QCOMPARE(a.streamDdc[2], 2);
+        QCOMPARE(a.streamDdc[3], 3);
+        // nddc = 4 (console.cs:8392 [v2.10.3.15]) — no fifth DDC exists here.
+        QCOMPARE(a.streamDdc[4], -1);
+        QCOMPARE(a.ddcEnable & 0x0F, 0x0F);
+        QCOMPARE((a.ddcEnable >> 4) & 1, 0);
+        QCOMPARE(a.nDdc, 4);
+        // From console.cs:8391 [v2.10.3.15]: P1_rxcount = 4
+        QCOMPARE(a.p1RxCount, 4);
+    }
+
+    void hermes_class_p2_ps_mox_keeps_stream_zero_on_ddc0()
+    {
+        // From Thetis console.cs:8449-8456 [v2.10.3.15]:
+        //   else // transmitting and PS is ON
+        //   {
+        //       P1_DDCConfig = 6; DDCEnable = DDC0; SyncEnable = DDC1;
+        //       Rate[0] = ps_rate; Rate[1] = ps_rate;
+        //       cntrl1 = 4; cntrl2 = 0;
+        //   }
+        // Unlike the 2-ADC branch, DDCEnable = DDC0 is unconditional across
+        // every Hermes-class state, so stream 0 does NOT migrate when PS
+        // engages — only DDC1's role changes.
+        P2CodecHermes codec;
+        CodecContext ctx{};
+        ctx.mox = true;
+        ctx.puresignalRun = true;
+        std::array<SliceConfig, 5> streams{};
+        streams[0].live = true;
+        streams[0].sampleRateHz = 192000;
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, streams);
+
+        QCOMPARE(a.streamDdc[0], 0);
+        QCOMPARE(a.ddcEnable, 1);        // DDC0 only
+        QCOMPARE(a.syncEnable, 2);       // DDC1 syncs to DDC0
+        // ps_rate = 192000 (cmaster.cs:425 [v2.10.3.15])
+        QCOMPARE(a.rate[0], 192000);
+        QCOMPARE(a.rate[1], 192000);
+        // From console.cs:8455 [v2.10.3.15]: cntrl1 = 4
+        QCOMPARE(a.adcCtrl1, 4);
+        QCOMPARE(a.p1DdcConfig, 6);
+        // PS pair indices per cmaster.cs:538-539 [v2.10.3.15]
+        QCOMPARE(a.psFwdDdc, 0);
+        QCOMPARE(a.psRevDdc, 1);
     }
 };
 

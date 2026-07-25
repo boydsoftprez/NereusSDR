@@ -483,6 +483,7 @@ set(CORE_SOURCES
     src/core/codec/P1CodecAnvelinaPro3.cpp
     src/core/codec/P1CodecRedPitaya.cpp
     src/core/codec/P1CodecHl2.cpp
+    src/core/codec/P2CodecHermes.cpp
     src/core/codec/P2CodecOrionMkII.cpp
     src/core/codec/P2CodecSaturn.cpp
     src/core/P1RadioConnection.cpp
