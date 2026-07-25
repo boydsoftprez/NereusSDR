@@ -1,6 +1,31 @@
 cmake_minimum_required(VERSION 3.20)
 project(NereusSDR VERSION 0.5.2 LANGUAGES C CXX)
 
+# ── ccache compiler launcher (2026-07-25) ──────────────────────────────
+# CI has always configured ccache explicitly; local dev machines never
+# had it wired at all. Auto-detect and use it when present so branch
+# switches and reconfigures stop paying full compile cost (measured:
+# 1,537 CPU-s for a full compile, 313s app + 1,101s tests + 123s moc).
+#
+# Guarded on CMAKE_CXX_COMPILER_LAUNCHER being undefined so an explicit
+# -DCMAKE_CXX_COMPILER_LAUNCHER=... on the configure line always wins,
+# and so CI's own ccache setup is not double-applied.
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
+    set(CMAKE_C_COMPILER_LAUNCHER   "${CCACHE_PROGRAM}" CACHE STRING "C compiler launcher")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}" CACHE STRING "CXX compiler launcher")
+endif()
+# Report the resulting state, not the branch taken above. The set() calls
+# populate the CMake cache, so on every reconfigure after the first the
+# `NOT DEFINED` guard is false — reporting from inside that branch would
+# claim "not in use" on every run but the first, while ccache was in fact
+# working the whole time.
+if(CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "ccache enabled: ${CMAKE_CXX_COMPILER_LAUNCHER}")
+else()
+    message(STATUS "ccache not in use (not found on PATH)")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
