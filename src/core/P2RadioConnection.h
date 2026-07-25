@@ -711,7 +711,26 @@ private:
         int rxAnt{1};       // 1=ANT1, 2=ANT2, 3=ANT3
         int txAnt{1};       // 1=ANT1, 2=ANT2, 3=ANT3
         int hpfBits{0x20};  // HPF filter bits (default: bypass = 0x20)
-        int lpfBits{0x10};  // LPF filter bits (default: 6m LPF = 0x10)
+
+        // Two independent LPF masks, one per Alex word. Thetis keeps the
+        // same split (AlexLPFMask for Alex0, Alex1LPFMask for Alex1) and
+        // routes each write by whether it came from a transmit or a receive
+        // frequency:
+        //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+        //     void SetAlexLPFBits(int bits, bool isTX, bool isMox)
+        //     if (isMox || isTX)   -> Alex1LPFMask (prbpfilter2)
+        //     if (isMox || !isTX)  -> AlexLPFMask  (prbpfilter)
+        //
+        // Collapsing these into one mask is an RF-safety bug: a receive
+        // retune onto a low band drags the transmit low-pass down with it,
+        // so keying up on a high band drives full power into a low-pass
+        // well below the carrier. The two masks must stay separate.
+        //
+        // Defaults are 0x10 (6 m, the widest low-pass) rather than 0 —
+        // the LPF has no bypass encoding, and Thetis's fall-through arm
+        // picks 6 m too (console.cs:7237-7241 [v2.10.3.15]).
+        int lpfBitsRx{0x10};  // Alex0 LPF — from the receive frequency
+        int lpfBitsTx{0x10};  // Alex1 LPF — from the transmit frequency
 
         // Phase 3F: per-ADC RX band-pass decision from AlexController, which
         // reviews every slice band on a chain instead of taking whichever
@@ -741,6 +760,18 @@ private:
     // ADC0's effective RX HPF bits — AlexController's per-ADC decision when
     // one exists, else the frequency-derived m_alex.hpfBits. Phase 3F.
     quint8 effectiveRxHpfBitsAdc0() const;
+
+    // Alex0's effective LPF bits. Receiving, Alex0 carries the receive
+    // selection; transmitting, it carries the transmit selection, because
+    // on pre-4.3 hardware Alex0's low-pass is the one in the TX path.
+    // This is the compose-time form of Thetis's two write guards:
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || !isTX) -> AlexLPFMask = bits
+    // Thetis reaches the same state by re-driving on the MOX edges
+    // (console.cs:29083-29099 + 29140-29148 HdwMOXChanged [v2.10.3.15]
+    // both call UpdateTXDDSFreq, and UpdateAlexTXFilter is wrapped in
+    // `if (!_mox)` at console.cs:15487-15498), so the wire bytes match.
+    quint8 effectiveLpfBitsAlex0() const;
 
     // --- DDC→ADC mapping register (from Thetis network.c rx_adc_ctrl1) ---
     quint32 m_rxAdcCtrl1{0};

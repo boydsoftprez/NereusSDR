@@ -594,8 +594,8 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     if (m_rx[primaryDdc].frequency == 0) {
         m_rx[primaryDdc].frequency = 3865000;   // 80m LSB — first-boot default only
         double freqMhz = m_rx[primaryDdc].frequency / 1.0e6;
-        m_alex.hpfBits = NereusSDR::codec::alex::computeHpf(freqMhz);
-        m_alex.lpfBits = NereusSDR::codec::alex::computeLpf(freqMhz);
+        m_alex.hpfBits   = NereusSDR::codec::alex::computeHpf(freqMhz);
+        m_alex.lpfBitsRx = NereusSDR::codec::alex::computeLpf(freqMhz);
     }
     // The primary DDC's samplingRate is set by setSampleRate() which
     // RadioModel queues before connectToRadio in the FIFO (see
@@ -738,7 +738,31 @@ void P2RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
     double freqMhz = frequencyHz / 1e6;
     m_alex.hpfBits = NereusSDR::codec::alex::computeHpf(freqMhz);
-    m_alex.lpfBits = NereusSDR::codec::alex::computeLpf(freqMhz);
+
+    // RF-SAFETY: a receive frequency selects the RECEIVE low-pass only. It
+    // must never reach m_alex.lpfBitsTx, which is the transmit low-pass.
+    //
+    // This used to write a single shared mask that both Alex words read, so
+    // on a multi-slice radio the TX low-pass followed whichever DDC was
+    // retuned last. Adding a slice on 80 m while slice A transmits on 10 m
+    // left roughly 100 W of 28.4 MHz driving a ~4 MHz low-pass, presenting
+    // as an SWR alarm or power foldback on the high band that only appears
+    // when a low-band slice happens to exist.
+    //
+    // Thetis routes the write by intent instead:
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     SetAlexLPFBits(bits, isTX, isMox)
+    //     if (isMox || !isTX) -> AlexLPFMask  (Alex0)
+    //   and its receive-derived caller passes isTX = false:
+    //   From Thetis console.cs:15487-15498 UpdateAlexTXFilter [v2.10.3.15]
+    //     if (!_mox) { ... setAlexLPF(rx1_dds_freq_mhz, false); }
+    //
+    // That `if (!_mox)` wrapper is why this is gated on the transmit state:
+    // Thetis cannot reach the receive-derived write at all while keyed, so a
+    // retune arriving mid-transmission must leave both words untouched.
+    if (!m_mox) {
+        m_alex.lpfBitsRx = NereusSDR::codec::alex::computeLpf(freqMhz);
+    }
 
     if (m_running) {
         sendCmdHighPriority();
@@ -748,6 +772,31 @@ void P2RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
 void P2RadioConnection::setTxFrequency(quint64 frequencyHz)
 {
     m_tx[0].frequency = static_cast<int>(frequencyHz);
+
+    // The transmit low-pass, and the only thing allowed to select it.
+    //   From Thetis console.cs:15464-15468 UpdateTXDDSFreq [v2.10.3.15]
+    //     private void UpdateTXDDSFreq()
+    //     { if (initializing) return;
+    //       setAlexLPF(tx_dds_freq_mhz, true); ... }
+    // Upstream inline attribution preserved verbatim (console.cs:15471):
+    //   if (MOX)//[2.10.3.13]MW0LGE
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || isTX) -> Alex1LPFMask  (Alex1)
+    //
+    // tx_dds_freq_mhz is the TX VFO's frequency: VFO B under split
+    // (console.cs:32867, the chkVFOBTX arm) else VFO A (console.cs:31891,
+    // guarded by `!chkVFOBTX.Checked`), with XIT already folded in
+    // (console.cs:31782-31784 `if (chkXIT.Checked) tx_freq += udXIT`) and
+    // RIT deliberately excluded — RIT moves rx_freq only. NereusSDR's
+    // caller applies the same rule from the TX-bound slice.
+    //
+    // Unlike the receive path this is NOT gated on MOX: Thetis re-drives
+    // UpdateTXDDSFreq on both MOX edges (console.cs:29099 + 29148
+    // HdwMOXChanged [v2.10.3.15]), so the transmit selection is kept live
+    // whether the radio is keyed or not.
+    m_alex.lpfBitsTx =
+        NereusSDR::codec::alex::computeLpf(static_cast<double>(frequencyHz) / 1e6);
+
     if (m_running) {
         sendCmdHighPriority();
     }
@@ -988,6 +1037,39 @@ quint8 P2RadioConnection::effectiveRxHpfBitsAdc0() const
 {
     return static_cast<quint8>(m_alex.rxHpfBitsAdc0 >= 0 ? m_alex.rxHpfBitsAdc0
                                                          : m_alex.hpfBits);
+}
+
+// ---------------------------------------------------------------------------
+// effectiveLpfBitsAlex0 — which low-pass mask the Alex0 word carries.
+//
+// Alex1 is unambiguous: it is the transmit word and always carries the
+// transmit low-pass. Alex0 is dual-purpose. Thetis spells out why in
+// ChannelMaster/netInterface.c:686-690 [v2.10.3.15], preserved verbatim:
+//   // LPF bits can be used in older radioas as part of RX filtering too.
+//   // Change to protocol 2 from 4.3 onwards: TX settings are encoded in the
+//   // Alex1 word to remain comparible with older hardware, the logic will be:
+//   // if MOX, write settings to alex0 and alex1
+//   // if not MOX, write to alex1 if a TX setting else write to alex0
+//
+// So on pre-4.3 hardware Alex0's low-pass is the one physically in the TX
+// path, which is why it must switch to the transmit selection while keyed.
+// Dropping that would put the receive band's low-pass in front of the PA on
+// those radios — the same hazard this whole split exists to prevent.
+//
+// Thetis arrives here by re-driving on the MOX edges rather than by
+// selecting at compose time:
+//   From Thetis console.cs:29083-29099 HdwMOXChanged [v2.10.3.15]
+//     if (tx) { ... UpdateTXDDSFreq(); }        // isMox now true -> both words
+//   From Thetis console.cs:29140-29148 [v2.10.3.15]
+//     UpdateRX1DDSFreq(); ... UpdateTXDDSFreq(); // MOX off -> Alex0 back to RX
+// and the receive-derived write can never run while keyed because
+// UpdateAlexTXFilter is wrapped in `if (!_mox)` (console.cs:15487-15498).
+// Selecting here instead produces the identical wire bytes in every one of
+// those states, and cannot drift out of sync if a MOX edge is ever missed.
+// ---------------------------------------------------------------------------
+quint8 P2RadioConnection::effectiveLpfBitsAlex0() const
+{
+    return static_cast<quint8>(m_mox ? m_alex.lpfBitsTx : m_alex.lpfBitsRx);
 }
 
 // ---------------------------------------------------------------------------
@@ -2326,11 +2408,15 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
     //
-    // LPF: unchanged. It is TX-only and follows the transmit frequency, so
-    // the RX band-pass decision must never touch it.
+    // LPF: the RX band-pass decision must never touch it. The transmit
+    // low-pass (Alex1) follows the transmit frequency and nothing else;
+    // Alex0's low-pass follows the receive frequency while receiving and
+    // the transmit frequency while keyed.
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
     ctx.alexHpfBits     = effectiveRxHpfBitsAdc0();
     ctx.alexHpfBitsAdc1 = m_alex.rxHpfBitsAdc1;
-    ctx.alexLpfBits     = static_cast<quint8>(m_alex.lpfBits);
+    ctx.alexLpfBits     = effectiveLpfBitsAlex0();
+    ctx.alexLpfBitsTx   = static_cast<quint8>(m_alex.lpfBitsTx);
 
     // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): HPF Bypass during MOX+PS.
     // From Thetis console.cs:6957 setBPF1ForOrionIISaturn [v2.10.3.13]:
@@ -3140,13 +3226,17 @@ quint32 P2RadioConnection::buildAlex0() const
 
     // LPF bits — from Thetis netInterface.c:682-726
     // Bits map: 30_20[20], 60_40[21], 80[22], 160[23], 6[29], 12_10[30], 17_15[31]
-    if (m_alex.lpfBits & 0x01) { reg |= (1 << 20); }  // 30/20m
-    if (m_alex.lpfBits & 0x02) { reg |= (1 << 21); }  // 60/40m
-    if (m_alex.lpfBits & 0x04) { reg |= (1 << 22); }  // 80m
-    if (m_alex.lpfBits & 0x08) { reg |= (1 << 23); }  // 160m
-    if (m_alex.lpfBits & 0x10) { reg |= (1 << 29); }  // 6m
-    if (m_alex.lpfBits & 0x20) { reg |= (1 << 30); }  // 12/10m
-    if (m_alex.lpfBits & 0x40) { reg |= (1 << 31); }  // 17/15m
+    // Alex0's low-pass: the receive selection while receiving, the transmit
+    // selection while keyed. From Thetis netInterface.c:705-719 [v2.10.3.15]
+    //   if (isMox || !isTX) { ... AlexLPFMask = bits; }
+    const quint8 lpf0 = effectiveLpfBitsAlex0();
+    if (lpf0 & 0x01) { reg |= (1 << 20); }  // 30/20m
+    if (lpf0 & 0x02) { reg |= (1 << 21); }  // 60/40m
+    if (lpf0 & 0x04) { reg |= (1 << 22); }  // 80m
+    if (lpf0 & 0x08) { reg |= (1 << 23); }  // 160m
+    if (lpf0 & 0x10) { reg |= (1 << 29); }  // 6m
+    if (lpf0 & 0x20) { reg |= (1 << 30); }  // 12/10m
+    if (lpf0 & 0x40) { reg |= (1 << 31); }  // 17/15m
 
     // HPF bits — from Thetis netInterface.c:605-621
     // Bits map: 13MHz[1], 20MHz[2], 6M_preamp[3], 9.5MHz[4], 6.5MHz[5], 1.5MHz[6]
@@ -3180,14 +3270,21 @@ quint32 P2RadioConnection::buildAlex1() const
         reg |= (1 << 26);  // _TXANT_3
     }
 
-    // Same LPF bits as Alex0 (TX uses same LPF selection)
-    if (m_alex.lpfBits & 0x01) { reg |= (1 << 20); }
-    if (m_alex.lpfBits & 0x02) { reg |= (1 << 21); }
-    if (m_alex.lpfBits & 0x04) { reg |= (1 << 22); }
-    if (m_alex.lpfBits & 0x08) { reg |= (1 << 23); }
-    if (m_alex.lpfBits & 0x10) { reg |= (1 << 29); }
-    if (m_alex.lpfBits & 0x20) { reg |= (1 << 30); }
-    if (m_alex.lpfBits & 0x40) { reg |= (1 << 31); }
+    // Alex1's low-pass is the TRANSMIT low-pass, so it takes the mask
+    // derived from the transmit frequency — never Alex0's, which carries a
+    // receive selection whenever the radio is not keyed. Mirroring Alex0
+    // here is what let a receive retune onto a low band leave the
+    // transmitter driving a low-pass below its own carrier.
+    //   From Thetis ChannelMaster/netInterface.c:688-704 [v2.10.3.15]
+    //     if (isMox || isTX) { ... Alex1LPFMask = bits; }
+    const quint8 lpf1 = static_cast<quint8>(m_alex.lpfBitsTx);
+    if (lpf1 & 0x01) { reg |= (1 << 20); }
+    if (lpf1 & 0x02) { reg |= (1 << 21); }
+    if (lpf1 & 0x04) { reg |= (1 << 22); }
+    if (lpf1 & 0x08) { reg |= (1 << 23); }
+    if (lpf1 & 0x10) { reg |= (1 << 29); }
+    if (lpf1 & 0x20) { reg |= (1 << 30); }
+    if (lpf1 & 0x40) { reg |= (1 << 31); }
 
     // HPF bits. Phase 3F: Alex1 is ADC1's own chain, so it takes ADC1's
     // decision when one exists (Thetis feeds it from setAlex2HPF, a separate

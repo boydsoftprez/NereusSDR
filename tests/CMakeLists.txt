@@ -1383,6 +1383,23 @@ nereus_add_test(tst_alex_controller_per_adc_bpf)
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_per_adc_bpf_wire)
 
+# ── RF-safety: the Alex TX low-pass is selected from the TRANSMIT frequency ───
+# P2RadioConnection::setReceiverFrequency used to recompute the LPF from the
+# receive frequency it was handed, and both Alex words read that one mask, so
+# the TX low-pass tracked whichever DDC was retuned last. Thetis keeps two
+# masks and routes writes by intent (ChannelMaster/netInterface.c:682-726
+# SetAlexLPFBits(bits, isTX, isMox) [v2.10.3.15]).
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_tx_lpf_source)
+
+# ── RF-safety companion: the transmit frequency comes from the TX-bound slice ─
+# Splitting the LPF masks only holds if the transmit frequency itself is taken
+# from the slice bound to the transmitter, not from whichever slice happens to
+# be active. Thetis guards its VFO A arm with !chkVFOBTX.Checked for the same
+# reason (console.cs:31889-31893 [v2.10.3.15]).
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_tx_frequency_follows_tx_slice)
+
 # ── Phase 3F Sub-Epic B Task 17: AlexController event-matrix coverage ─────────
 # Verifies the 16-row event trigger matrix from design §10:
 #   - cross-band retune emits bpfStateChanged

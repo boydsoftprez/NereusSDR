@@ -704,6 +704,18 @@ RadioModel::RadioModel(QObject* parent)
     m_txSliceArbiter->setSliceList(&m_slices);
     m_txSliceArbiter->setMoxController(m_moxController);
 
+    // RF-SAFETY: handing the transmitter to another slice moves the transmit
+    // frequency, and with it the Alex TX low-pass. Push immediately rather
+    // than waiting for the next retune, otherwise the new TX slice sits
+    // behind the OLD slice's low-pass until something else happens to move
+    // — which on a 10 m / 80 m pair is exactly the wrong-filter condition
+    // the arbiter's RF-safe handoff exists to avoid.
+    //
+    // The arbiter drops MOX before it flips the binding, so this always runs
+    // with the transmitter unkeyed.
+    connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
+            this, [this](int, int) { pushTxFrequencyFromTxSlice(); });
+
     // Phase 3F Sub-Epic D Task 13: FFT fan-out router. NereusSDR-original
     // class (AetherSDR has no equivalent because it's a thin Flex API
     // client; we own the FFT pipeline locally). MainWindow registers
@@ -3589,6 +3601,26 @@ int RadioModel::addSlice(const QString& initialPanId)
                 .arg(QChar('A' + slice->sliceIndex()))
                 .arg(lastGoodHz / 1.0e6, 0, 'f', 4)
                 .arg(m_lastPlacementRejectReason));
+    });
+
+    // RF-SAFETY: when THIS slice holds the transmitter, its frequency and
+    // XIT are the transmit frequency, and the Alex TX low-pass is selected
+    // from that. wireSliceSignals only ever wired the ACTIVE slice, so a
+    // TX-bound slice that was not the active one could be retuned without
+    // the transmitter ever hearing about it — the TX NCO and TX low-pass
+    // stayed on the old band while the operator watched the VFO move.
+    //
+    // Thetis has the same fan-out on the transmit VFO's own handler
+    // (console.cs:32866-32869 [v2.10.3.15] assigns tx_dds_freq_mhz and calls
+    // UpdateTXDDSFreq from the VFO B path when B transmits).
+    connect(slice, &SliceModel::frequencyChanged, this, [this, slice]() {
+        if (slice->isTxSlice()) { pushTxFrequencyFromTxSlice(); }
+    });
+    connect(slice, &SliceModel::xitEnabledChanged, this, [this, slice]() {
+        if (slice->isTxSlice()) { pushTxFrequencyFromTxSlice(); }
+    });
+    connect(slice, &SliceModel::xitHzChanged, this, [this, slice]() {
+        if (slice->isTxSlice()) { pushTxFrequencyFromTxSlice(); }
     });
 
     // 3M-1b H.1: wire VOX mode-gate from THIS slice's dspModeChanged ->
@@ -7665,6 +7697,70 @@ void RadioModel::connectMicPttDisabledSignal()
     }, Qt::QueuedConnection);
 }
 
+// ---------------------------------------------------------------------------
+// txBoundSlice — the slice the transmitter is bound to.
+//
+// The transmit frequency must come from here and nowhere else. activeSlice()
+// is the slice the operator is looking at, which in multi-slice is routinely
+// a different slice; sourcing the transmit frequency from it means turning
+// the knob on a receive-only slice retunes the transmitter, and the Alex TX
+// low-pass follows it onto the wrong band.
+//
+// Thetis makes the same split. Its VFO A arm stands down when VFO B holds
+// the transmitter:
+//   From Thetis console.cs:31889-31893 [v2.10.3.15]
+//     if (!chkFullDuplex.Checked && !chkVFOBTX.Checked)
+//     { tx_dds_freq_mhz = tx_freq; UpdateTXDDSFreq(); }
+//   From Thetis console.cs:32866-32869 [v2.10.3.15]
+// Upstream inline attribution preserved verbatim (console.cs:31897):
+//   if (_click_tune_display) //-W2PA This was preventing proper receiver adjustment
+//     if (!rx1_sub_drag) { tx_dds_freq_mhz = tx_freq; UpdateTXDDSFreq(); }
+// ---------------------------------------------------------------------------
+SliceModel* RadioModel::txBoundSlice() const
+{
+    if (m_txSliceArbiter) {
+        if (auto* s = sliceById(m_txSliceArbiter->txBoundSliceIndex())) {
+            return s;
+        }
+    }
+    // No arbiter binding resolves (single-slice session, or the bound slice
+    // was removed and the arbiter has not re-homed yet). Falling back to the
+    // active slice keeps single-slice behaviour byte-identical.
+    return m_activeSlice;
+}
+
+// ---------------------------------------------------------------------------
+// pushTxFrequencyFromTxSlice — recompute and publish the transmit frequency.
+//
+// Mirrors Thetis UpdateTXDDSFreq (console.cs:15464-15485 [v2.10.3.15]), which
+// recomputes from tx_dds_freq_mhz and drives the Alex TX low-pass and the TX
+// NCO from the same value in the same call:
+//   setAlexLPF(tx_dds_freq_mhz, true);
+//   ...
+//   NetworkIO.VFOfreq(0, tx_dds_freq_mhz, 1);
+//
+// XIT is folded in, RIT is not:
+//   From Thetis console.cs:31782-31784 [v2.10.3.15]
+//     if (chkRIT.Checked && bRitOk) rx_freq += (int)udRIT.Value * 0.000001;
+//     if (chkXIT.Checked)           tx_freq += (int)udXIT.Value * 0.000001;
+// ---------------------------------------------------------------------------
+void RadioModel::pushTxFrequencyFromTxSlice()
+{
+    if (!m_connection) { return; }
+
+    SliceModel* slice = txBoundSlice();
+    if (!slice) { return; }
+
+    const qint64 xitOffset =
+        slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
+    const qint64 txHz = static_cast<qint64>(slice->frequency()) + xitOffset;
+    const quint64 txFreqHz = (txHz < 0) ? 0 : static_cast<quint64>(txHz);
+
+    QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
+        conn->setTxFrequency(txFreqHz);
+    });
+}
+
 // Wire active slice signals to WDSP channel and radio hardware.
 // Called from wireConnectionSignals after connection is established.
 void RadioModel::wireSliceSignals()
@@ -7698,15 +7794,22 @@ void RadioModel::wireSliceSignals()
         if (m_freeDvReporter && m_freeDvReporter->isConnected()) {
             publishFreedvFrequencyDwelled(static_cast<quint64>(freq));
         }
-        // TX follows RX (simplex), with XIT offset applied.
-        // XIT offsets the TX NCO without moving the RX DDC — mirroring Thetis
-        // console.cs VFO_Pots pattern where chkXIT shifts only the TX frequency.
-        if (m_connection) {
-            const qint64 xitOffset = slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
-            const quint64 txFreqHz = static_cast<quint64>(static_cast<qint64>(freq) + xitOffset);
-            QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
-                conn->setTxFrequency(txFreqHz);
-            });
+        // TX follows RX (simplex) — but only for the slice that actually
+        // holds the transmitter.
+        //
+        // This used to fire for whichever slice was ACTIVE, which is the
+        // same slice only in a single-slice session. With slice B TX-bound
+        // on 80 m and slice A merely active on 10 m, turning A's knob
+        // retuned the transmitter to 10 m and dragged the Alex TX low-pass
+        // along with it. Thetis guards the equivalent arm with
+        // `!chkVFOBTX.Checked` (console.cs:31889 [v2.10.3.15]) so the
+        // displayed VFO stands down when it is not the transmit VFO.
+        //
+        // pushTxFrequencyFromTxSlice re-reads the TX-bound slice rather than
+        // trusting `freq`, so a retune of a non-TX slice is a no-op here
+        // instead of a wrong-band transmit frequency.
+        if (slice->isTxSlice()) {
+            pushTxFrequencyFromTxSlice();
         }
         // Track band from VFO frequency so per-band saves target the correct
         // band even when the panadapter center hasn't crossed the boundary.
@@ -8405,12 +8508,11 @@ void RadioModel::wireSliceSignals()
     // changes, recompute and push the new TX NCO frequency.  The VFO frequency
     // itself does not change — only the TX NCO offset.
     auto updateTxFrequency = [this, slice]() {
-        if (!m_connection) { return; }
-        const qint64 xitOffset = slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
-        const quint64 txFreqHz = static_cast<quint64>(static_cast<qint64>(slice->frequency()) + xitOffset);
-        QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
-            conn->setTxFrequency(txFreqHz);
-        });
+        // Same TX-bound gate as the frequencyChanged handler above: XIT on a
+        // slice that is not transmitting has nothing to offset.
+        if (slice->isTxSlice()) {
+            pushTxFrequencyFromTxSlice();
+        }
     };
     connect(slice, &SliceModel::xitEnabledChanged, this, updateTxFrequency);
     connect(slice, &SliceModel::xitHzChanged,      this, updateTxFrequency);
@@ -8618,11 +8720,9 @@ void RadioModel::wireSliceSignals()
             if (rxIdx >= 0) {
                 m_receiverManager->setReceiverFrequency(rxIdx, freqHz);
             }
-            const qint64 xitOffset = slice->xitEnabled() ? static_cast<qint64>(slice->xitHz()) : 0LL;
-            const quint64 txFreqHz = static_cast<quint64>(static_cast<qint64>(freqHz) + xitOffset);
-            QMetaObject::invokeMethod(m_connection, [conn = m_connection, txFreqHz]() {
-                conn->setTxFrequency(txFreqHz);
-            });
+            // Seed the transmit frequency from the TX-bound slice, which on
+            // connect is usually but not necessarily this one.
+            pushTxFrequencyFromTxSlice();
         }
     });
 }
@@ -9992,9 +10092,14 @@ void RadioModel::setTune(bool on)
         //   LSB/DIGL/CWL              → signedFreq = −cw_pitch → TX_VFO = dial + cw_pitch
         // After the radio's TX DDC mixes audio tone onto TX_VFO, the carrier
         // at RF = TX_VFO + signedFreq = dial.
-        if (m_activeSlice && m_connection) {
+        // The dial comes from the TX-bound slice, not the active one: TUNE
+        // keys the PA, so it must key on the frequency the transmitter is
+        // actually bound to. Reading the active slice here would put the
+        // tune carrier on whichever slice the operator was looking at.
+        SliceModel* const tuneSlice = txBoundSlice();
+        if (tuneSlice && m_connection) {
             const quint64 dialHz =
-                static_cast<quint64>(m_activeSlice->frequency());
+                static_cast<quint64>(tuneSlice->frequency());
             const qint64 adjustedTxHz =
                 static_cast<qint64>(dialHz) - static_cast<qint64>(signedFreq);
             const quint64 wireHz =
@@ -10811,9 +10916,11 @@ void RadioModel::completeTuneOff()
     // applies the ±cw_pitch tx_freq offset while chkTUN.Checked == true.
     // Once TUNE drops, txtVFOAFreq_LostFocus recomputes tx_freq without
     // the offset so the carrier returns to dial freq.
-    if (m_activeSlice && m_connection) {
+    // Same TX-bound source as the setTune arm above — the carrier returns to
+    // the transmitter's own dial, not to whichever slice is on screen.
+    if (SliceModel* const tuneSlice = txBoundSlice(); tuneSlice && m_connection) {
         const quint64 dialHz =
-            static_cast<quint64>(m_activeSlice->frequency());
+            static_cast<quint64>(tuneSlice->frequency());
         auto* conn = m_connection;
         QMetaObject::invokeMethod(conn, [conn, dialHz]() {
             conn->setTxFrequency(dialHz);

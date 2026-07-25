@@ -133,7 +133,34 @@ struct CodecContext {
     // live it carries AlexController's per-ADC decision for ADC0 rather than
     // the last-retuned receiver's frequency.
     quint8  alexHpfBits{0};
+
+    // alexLpfBits is the Alex0 word's low-pass. Alex0's LPF is a RECEIVE
+    // selection while the radio is receiving, and the TRANSMIT selection
+    // while it is transmitting, because on older hardware Alex0's LPF is
+    // the one physically in the TX path.
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || !isTX)  -> write Alex0 (AlexLPFMask)
     quint8  alexLpfBits{0};
+
+    // alexLpfBitsTx is the Alex1 word's low-pass — the TX low-pass proper.
+    // It is ALWAYS derived from the transmit frequency and must never take a
+    // receive frequency: on a multi-slice radio a receive retune onto a low
+    // band would otherwise leave the transmitter keying into a low-pass far
+    // below its own carrier.
+    //   From Thetis ChannelMaster/netInterface.c:682-726 [v2.10.3.15]
+    //     if (isMox || isTX)   -> write Alex1 (Alex1LPFMask)
+    //   From Thetis console.cs:15464-15468 UpdateTXDDSFreq [v2.10.3.15]
+    //     setAlexLPF(tx_dds_freq_mhz, true);   // the only isTX=true caller
+    // Upstream inline attribution preserved verbatim (console.cs:15471):
+    //   if (MOX)//[2.10.3.13]MW0LGE
+    //   Upstream comment preserved verbatim (netInterface.c:686-690):
+    //     // LPF bits can be used in older radioas as part of RX filtering too.
+    //     // Change to protocol 2 from 4.3 onwards: TX settings are encoded in
+    //     // the Alex1 word to remain comparible with older hardware, the logic
+    //     // will be:
+    //     // if MOX, write settings to alex0 and alex1
+    //     // if not MOX, write to alex1 if a TX setting else write to alex0
+    quint8  alexLpfBitsTx{0};
 
     // Alex1 / ADC1 chain HPF bits — Phase 3F.
     //

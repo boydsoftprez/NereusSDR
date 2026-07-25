@@ -541,14 +541,30 @@ quint32 P2CodecOrionMkII::buildAlex1(const CodecContext& ctx) const
         reg |= (1u << 26);  // _TXANT_3
     }
 
-    // Same LPF bits as Alex0 (TX uses same LPF selection) [@501e3f5]
-    if (ctx.alexLpfBits & 0x01) { reg |= (1u << 20); }
-    if (ctx.alexLpfBits & 0x02) { reg |= (1u << 21); }
-    if (ctx.alexLpfBits & 0x04) { reg |= (1u << 22); }
-    if (ctx.alexLpfBits & 0x08) { reg |= (1u << 23); }
-    if (ctx.alexLpfBits & 0x10) { reg |= (1u << 29); }
-    if (ctx.alexLpfBits & 0x20) { reg |= (1u << 30); }
-    if (ctx.alexLpfBits & 0x40) { reg |= (1u << 31); }
+    // LPF bits — the TRANSMIT low-pass, from the transmit frequency.
+    //
+    // This used to read ctx.alexLpfBits ("Same LPF bits as Alex0 (TX uses
+    // same LPF selection)"), which is wrong: Alex0's low-pass is a RECEIVE
+    // selection whenever the radio is not keyed. Mirroring it here meant a
+    // receive retune onto a low band silently moved the transmit low-pass
+    // below the carrier, so keying a high band drove the PA into a low-pass
+    // several octaves down.
+    //
+    // Thetis keeps the two words on separate masks and only ever feeds this
+    // one from the transmit frequency:
+    //   From Thetis ChannelMaster/netInterface.c:688-704 [v2.10.3.15]
+    //     if (isMox || isTX) { ... Alex1LPFMask = bits; }
+    //   From Thetis console.cs:15464-15468 UpdateTXDDSFreq [v2.10.3.15]
+    //     setAlexLPF(tx_dds_freq_mhz, true);
+    // Upstream inline attribution preserved verbatim (console.cs:15471):
+    //   if (MOX)//[2.10.3.13]MW0LGE
+    if (ctx.alexLpfBitsTx & 0x01) { reg |= (1u << 20); }
+    if (ctx.alexLpfBitsTx & 0x02) { reg |= (1u << 21); }
+    if (ctx.alexLpfBitsTx & 0x04) { reg |= (1u << 22); }
+    if (ctx.alexLpfBitsTx & 0x08) { reg |= (1u << 23); }
+    if (ctx.alexLpfBitsTx & 0x10) { reg |= (1u << 29); }
+    if (ctx.alexLpfBitsTx & 0x20) { reg |= (1u << 30); }
+    if (ctx.alexLpfBitsTx & 0x40) { reg |= (1u << 31); }
 
     // ANAN-G2E bench-fix 2026-05-23 (JJ Boyd): the HPF Bypass-on-PureSignal
     // override that this commit landed on Alex0 (bit 12) must NOT leak

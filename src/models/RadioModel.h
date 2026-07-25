@@ -578,6 +578,21 @@ public:
     // future code that needs the authoritative TX-bound slice index.
     TxSliceArbiter* txSliceArbiter() const { return m_txSliceArbiter; }
 
+    // The slice bound to the transmitter — the source of every transmit
+    // frequency. NOT activeSlice(), which is only the slice the operator is
+    // looking at; in multi-slice those diverge, and taking the transmit
+    // frequency from the wrong one puts the PA on the wrong band (and, via
+    // the Alex low-pass, behind the wrong filter).
+    //
+    // Thetis draws the same distinction: its VFO A arm is guarded by
+    // `!chkVFOBTX.Checked` so it stands down when VFO B is transmitting
+    // (console.cs:31889-31893 [v2.10.3.15]), and the VFO B handler assigns
+    // tx_dds_freq_mhz itself in that case (console.cs:32866-32869).
+    //
+    // Falls back to activeSlice() when no arbiter binding resolves, so a
+    // single-slice session behaves exactly as before.
+    SliceModel* txBoundSlice() const;
+
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
     // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
     // multiple zoom levels of the same I/Q data. MainWindow registers
@@ -2087,6 +2102,20 @@ private:
 
     void wireConnectionSignals(int wdspInSize);
     void wireSliceSignals();
+
+    // Recomputes the transmit frequency from the TX-bound slice and pushes it
+    // at the connection. The single place that answers "what frequency is the
+    // radio transmitting on", so the Alex TX low-pass, the TX NCO and the
+    // drive-level band gate cannot disagree about it.
+    //
+    // Mirrors Thetis UpdateTXDDSFreq(), which likewise recomputes from
+    // tx_dds_freq_mhz and fans out to setAlexLPF(..., true) and
+    // NetworkIO.VFOfreq(0, tx_dds_freq_mhz, 1) together
+    // (console.cs:15464-15485 [v2.10.3.15]).
+    //
+    // XIT is included and RIT is not, per Thetis console.cs:31782-31784
+    // [v2.10.3.15]: udXIT lands on tx_freq, udRIT on rx_freq.
+    void pushTxFrequencyFromTxSlice();
     void teardownConnection();
 
     // Derives the 16-digit dashed FlexRadio-style serial number from the
