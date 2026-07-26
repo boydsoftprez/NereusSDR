@@ -180,6 +180,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QVector>
 
 #include <array>
+#include <atomic>
 #include <memory>
 
 #include "codec/IP2Codec.h"
@@ -449,12 +450,23 @@ private:
     //   high_priority_buffer_to_radio[4] = P2running;   // bit 0 = run
     //   if (xmit) { high_priority_buffer_to_radio[4] |= 0x02; }  // bit 1 = MOX
     //
-    // THREAD SAFETY: m_mox must only be written from the connection thread.
-    // All compose functions read it on the connection thread.  Cross-thread
+    // THREAD SAFETY: m_mox is written only from the connection thread.  All
+    // compose functions read it on the connection thread.  Cross-thread
     // callers (e.g., MoxController on main thread post-F.1) must dispatch via
     // QMetaObject::invokeMethod with Qt::QueuedConnection, matching the
     // existing pattern for setTxFrequency / setRxFrequency.
-    bool m_mox{false};
+    //
+    // Atomic because of one genuine cross-thread READER: sendTxIq() runs on
+    // the TX/audio producer thread (it is the producer side of the SPSC ring
+    // below, using explicit acquire/release on m_txIqRingCount) and gates its
+    // producer-rate telemetry on m_mox.  A plain bool there is a data race
+    // with setMox() on the connection thread.  Review blocker [P2] on PR
+    // #291.  Matches the existing pattern for AudioEngine::m_moxActive.
+    //
+    // Default seq_cst ordering is deliberate: this is read once per
+    // sendTxIq() call, not once per sample, so the ordering cost is
+    // irrelevant next to the surrounding ring arithmetic.
+    std::atomic<bool> m_mox{false};
 
     // --- PureSignal DDC pair (Phase 3M-4 bench-fix 2026-05-23) ───────────
     //
