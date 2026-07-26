@@ -5663,11 +5663,26 @@ void RadioModel::connectToRadio(const RadioInfo& info)
             // refreshes whichever flag the current path moves. The refresh is
             // client-side only and its emit is change-gated, so the duplicate
             // when they move together costs nothing.
+            //
+            // Target the member function, NOT a lambda wrapping it.
+            // Qt::UniqueConnection is only implemented for pointer-to-member
+            // slots: with any other callable, qobject.h:263-269 leaves pSlot
+            // null, connectImpl warns "unique connections require a pointer to
+            // member function of a QObject subclass" and returns an INVALID
+            // connection -- the slot is never called at all, and a debug build
+            // asserts outright. Both of these were lambdas, so neither
+            // connection existed and the DDC assignment never refreshed when
+            // PureSignal claimed or released its DDCs. The unit coverage could
+            // not see it: those tests drive the model API directly rather than
+            // through the signal.
+            //
+            // The signals carry a bool the slot does not take, which is fine --
+            // a slot may accept fewer arguments than its signal.
             connect(m_pureSignal.get(), &PureSignal::autoCalEnabledChanged,
-                    this, [this](bool) { refreshDdcAssignmentForRadioState(); },
+                    this, &RadioModel::refreshDdcAssignmentForRadioState,
                     Qt::UniqueConnection);
             connect(m_pureSignal.get(), &PureSignal::psEnabledChanged,
-                    this, [this](bool) { refreshDdcAssignmentForRadioState(); },
+                    this, &RadioModel::refreshDdcAssignmentForRadioState,
                     Qt::UniqueConnection);
 
             // Push the PS run flag through to the radio connection so
@@ -7065,7 +7080,18 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                     qCInfo(lcDsp) << "Issue #153 sub-bug 1: TxChannel deferred-create "
                                      "succeeded after WdspEngine::initializedChanged(true).";
                 }
-            }, Qt::UniqueConnection);
+            });
+            // No Qt::UniqueConnection here: it is only implemented for
+            // pointer-to-member slots, and with a lambda Qt returns an INVALID
+            // connection instead (qobject.h:263-269 leaves pSlot null, then
+            // connectImpl warns and bails). This retry carried it, so it was
+            // never connected -- meaning the whole Issue #153 sub-bug 1 fix was
+            // inert and a cold-start connect never got its TxChannel.
+            //
+            // Nothing is lost by dropping it. The capture list makes a member
+            // pointer impossible, and duplicates are already harmless: the body
+            // early-returns on m_txChannel and self-disconnects on the first
+            // success.
             qCWarning(lcDsp) << "Issue #153 sub-bug 1: createTxChannel(kTxChannelId) returned nullptr "
                                 "at connect-time (WDSP not yet initialized — likely cold-"
                                 "start with no cached wisdom).  Registered one-shot retry "
