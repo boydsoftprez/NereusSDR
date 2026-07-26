@@ -273,6 +273,13 @@ checked at each step, three defects found and fixed in the loop.
 - `CH 0: BYPASS (multi-band: 40m + 20m)` reported correctly while both streams
   share ADC0.
 
+### Human smoke-test checklist (SUPERSEDED — see Session 6)
+
+The Session 5 list below predates the Session 6 fix pass. Roughly half its
+rows now have different expectations (per-pan strips exist, `+RX` works,
+click-to-tune works on every pan, the WIDE badge is visible). Kept for the
+record; run the Session 6 list instead.
+
 ### Human smoke-test checklist
 
 Run in order. Each row is one observable; stop and report at the first failure
@@ -305,6 +312,93 @@ rather than continuing, because later rows assume the earlier ones.
   dark.
 - `Cannot create receiver: at maximum 4` at startup on a 5-stream pool: a fifth
   slice would have no receiver behind it.
+
+---
+
+---
+
+## Session 6 (2026-07-26): driven fix pass, 18 defects
+
+Driven through the UI against a live ANAN-G2, screenshot-verified at each
+step. Nearly every defect was one root shape: **a subsystem wired once to
+whatever `activeSpectrumWidget()` returned at startup, or to `m_activeSlice`.**
+`connect()` binds the OBJECT, not the expression, so it captured pan-0 / Slice A
+permanently and never re-resolved.
+
+### Fixed and verified on hardware
+
+| # | Defect | Commit |
+|---|---|---|
+| 1 | P1 stream rate never reached the wire (HL2) | `ddf42130` |
+| 2 | RxDashboard bound by list position, not slice id | `2f63f59e` |
+| 3 | Active pan id left naming a destroyed pan | `d190c580` |
+| 4 | Three `Qt::UniqueConnection` lambda connects that never connected | `4fb68621` |
+| 5 | Slice letters read A, A, A | `f4329373` |
+| 6 | Panadapters could not be made active (no click-to-activate) | `f4329373` |
+| 7 | Pan display window never followed its stream (red waterfall) | `6c5fc58c` |
+| 8 | Pan VFO marker stuck at 0 Hz, flag positioned off-screen | `6c5fc58c` |
+| 9 | Mouse input dead on every pan but pan-0 | `0ca75c34` |
+| 10 | Interaction signals bound to pan-0's object only | `0ca75c34` |
+| 11 | Only pan-0 had a control strip | `0ca75c34` |
+| 12 | Flag removal orphaned its close / lock / rec / play buttons | `0ca75c34` |
+| 13 | Status strip invisible (no `sizeHint`), so WIDE looked unwired | `6a2f2584` |
+| 14 | Band plan drew on pan-0 only | `6a2f2584` |
+| 15 | Status strip overlapped the dBm range arrows | `8face243` |
+| 16 | Spot remove / hover, disconnect click, DDC centre, stale waterfall | `867945b7` |
+| 17 | Floated pan froze (`QRhiWidget: No QRhi`) | `5da4beaa` |
+
+### Landed but NOT verified on hardware
+
+| Defect | Commit | Bench check |
+|---|---|---|
+| Per-slice S-meter (slices B+ had none) | `9c70e153` | two slices, both flag level bars move independently |
+| Per-slice DSP controls (65 handlers were Slice A only, all writing `rxChannel(0)`) | `ea2ccbc0` | change AGC or NR on B: A unaffected, B actually changes |
+
+The DSP one is 970 lines through the live control path and the suite does not
+cover per-slice DSP behaviour. Green means it compiles and does not regress
+what IS covered. Treat it as unproven until the bench row passes.
+
+### Bench checklist
+
+Run in order; stop at the first failure, since later rows assume the earlier
+ones.
+
+| # | Action | Expect |
+|---|---|---|
+| 1 | Connect, Slice A only | Audio, spectrum, S-meter, tuning all normal. Highest-risk path. |
+| 2 | Tune A to 40 m, then 15 m | Correct preselector on both (wrong until `3a2d7038`). |
+| 3 | `+PAN` -> `2v` | Two pans, each with its own left strip (`+RX / BAND / ANT / Display`). |
+| 4 | Click pan-1's spectrum | Its slice tunes. Pointer does NOT need to be over the flag. |
+| 5 | `+RX` on **pan-1's own strip** | New slice appears **on pan-1**, flag placed, live waterfall. |
+| 6 | Band-change that slice to 20 m | Pan-1 follows to 20 m, stays live, a second DDC appears. |
+| 7 | Both pans' status strips | Show `CH 0` plus `WIDE`, clear of the dBm range arrows. |
+| 8 | Bottom bar | `CH 0: BYPASS (multi-band: 40m + 20m)`. **Correct** — one antenna reaches one ADC. |
+| 9 | **S-meter, unverified** | Both flags' level bars move, independently. |
+| 10 | **AGC/NR on Slice B, unverified** | B changes; **A's audio is unaffected**. The one to watch. |
+| 11 | Audio on each slice | Each independently audible. |
+| 12 | Close a slice, then close a pan | Survivors keep working; no leftover button columns; radio not silent. |
+| 13 | `+PAN` -> `12h` | Three pans, letters A / B / C, all live. |
+| 14 | **Do not transmit** on two bands until row 1 is clean | TX low-pass fix is unverified on hardware. |
+
+### Known-imperfect, do not file as new
+
+- **Float active pan**: the floated pan renders, but the pan left behind goes
+  black. Pulling a widget out of the QSplitter costs its siblings their QRhi
+  context. Diagnosed, not fixed; likely needs to stop reparenting the
+  QRhiWidget at all.
+- Every slice lands on ADC0, so cross-band pairs share a chain and it bypasses.
+  Hardware on a single antenna; see the G2 vs G2E table above.
+- Zoom replan is pan-0 only: zoom works everywhere, but only pan-0 gains FFT
+  resolution.
+- 38 one-shot `activeSpectrumWidget()->set...` pushes remain pan-0 only
+  (spot markers, cal offset, TX filter range, clarity, noise-floor attack,
+  step size, display FPS).
+- `Cannot create receiver: at maximum 4` at startup on a 5-stream pool: a fifth
+  slice would have no receiver behind it.
+- A pan whose slice was removed keeps rendering its stream rather than going
+  dark.
+- A refused TX handoff is silent (`TxSliceArbiter::handoffBlocked` unconsumed).
+- Slice B+ still come up with default NR / SNB / APF / squelch values.
 
 ---
 
