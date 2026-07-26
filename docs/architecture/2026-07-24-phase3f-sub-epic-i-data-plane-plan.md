@@ -2893,6 +2893,23 @@ honest record.
    rebuild-from-model consumer is safe; an incremental one would not be. This
    is why Task 9 rebuilds the FFT topology wholesale instead of editing it.
 
+8. **Task 10's P1 clamp moved the client but not the radio.** The task as
+   written fans the rate across every active stream on a P1 connection, which
+   is the right *placement* policy, but nothing in that path writes
+   `P1RadioConnection::m_sampleRate`. P1 encodes the rate as a 2-bit code in
+   C&C bank 0 byte C1 (`composeCcBank0Full`), so the allocator window, the WDSP
+   channel rates, the drain chunk sizes and the FFT bin math all moved to the
+   new rate while the radio kept streaming the old one. Reachable from the UI:
+   the VFO flag's "Sample rate >" submenu routes here through
+   `requestSliceSampleRate`, so on an HL2 that menu silently desynchronised the
+   client from the radio. A radio-wide rate change *is* `setSampleRateLive`
+   (stop, set, restart, quiesce, restore), so `setStreamSampleRate` now
+   delegates to it rather than growing a second copy of that 12-step sequence,
+   and refuses the client-side half when the wire half does not land. Covered
+   by `on_protocol1_the_rate_change_reaches_the_wire` and
+   `a_refused_radio_wide_rate_change_leaves_the_geometry_alone`, both asserting
+   on the composed bank-0 wire byte rather than on model state.
+
 ---
 
 ## Deferred, with reasons

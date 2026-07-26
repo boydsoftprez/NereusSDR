@@ -3405,6 +3405,32 @@ void RadioModel::setStreamSampleRate(int streamIndex, int rateHz)
 
     const bool isP1 = sampleRateIsRadioWide();
 
+    // Phase 3F Sub-Epic I closeout, defect G3: on P1 the rate has to reach the
+    // wire before any of the client-side geometry moves.
+    //
+    // P1 carries one rate for the whole radio, encoded as a 2-bit code in C&C
+    // bank 0 byte C1 (P1RadioConnection::composeCcBank0Full). Nothing below
+    // touches that: the allocator, the WDSP channel rates, the drain chunk
+    // sizes and the FFT bin math would all move to the new rate while the
+    // radio kept streaming the old one. The VFO flag's "Sample rate >" submenu
+    // reaches here through requestSliceSampleRate, so on an HL2 that menu
+    // silently desynchronised the client from the radio.
+    //
+    // A radio-wide rate change IS setSampleRateLive: stop the stream, set the
+    // rate, restart, quiesce the DSP across the gap, then restore. Delegating
+    // avoids a second copy of that 12-step sequence going out of step with the
+    // one the Setup rate combo uses.
+    //
+    // If it refuses (returns < 0 -- no connection, or WDSP torn down
+    // mid-change) then nothing reached the wire, and applying the client half
+    // regardless would manufacture the very desync this closes. Leaving both
+    // halves at the old rate is the consistent outcome.
+    if (isP1) {
+        if (setSampleRateLive(rateHz) < 0) {
+            return;
+        }
+    }
+
     auto applyTo = [this, rateHz](int st) {
         if (!m_streamAllocator.isStreamActive(st)) {
             return;

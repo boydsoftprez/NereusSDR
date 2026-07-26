@@ -839,6 +839,83 @@ private slots:
         QCOMPARE(engine->rxChannel(b)->sampleRate(), 384000);
     }
 
+    // ...and it has to reach the wire, not only the client-side geometry.
+    //
+    // P1 carries the rate in C&C bank 0 byte C1 as a 2-bit code
+    // (P1RadioConnection::composeCcBank0Full: 0/1/2/3 for 48/96/192/384 kHz).
+    // setStreamSampleRate moved the allocator window, the WDSP channel rates,
+    // the drain geometry and the FFT bin math, but nothing in that path
+    // touches P1RadioConnection::m_sampleRate. The radio therefore kept
+    // sending 192 kHz into a client that had reconfigured itself for 384 kHz.
+    //
+    // The wire push for a radio-wide rate is the 12-step setSampleRateLive
+    // coordinator (stop, set, start, requiesce, restore), so this delegates to
+    // it rather than growing a second copy of the same dance.
+    void on_protocol1_the_rate_change_reaches_the_wire()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        // Seed the connection at 192 kHz. Not running, so restartStreamWithRate
+        // records the rate without a stop/start burst.
+        conn.restartStreamWithRate(192000);
+        QCOMPARE(static_cast<quint8>(conn.captureBank0ForTest().at(1)),
+                 quint8(2));   // srBits 2 == 192 kHz
+
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int streamA = model.sliceById(a)->streamIndex();
+        QVERIFY(streamA >= 0);
+        engine->createRxChannel(a, bufferSizeForRate(192000), 4096,
+                                192000, 48000, 48000);
+
+        QVERIFY(model.sampleRateIsRadioWide());
+        model.setStreamSampleRate(streamA, 384000);
+
+        // setSampleRateLive marshals the wire write to the connection with a
+        // queued invocation; in production the connection thread's event loop
+        // delivers it. conn lives on this thread here, so drain it by hand.
+        QCoreApplication::processEvents();
+
+        QCOMPARE(static_cast<quint8>(conn.captureBank0ForTest().at(1)),
+                 quint8(3));   // srBits 3 == 384 kHz
+    }
+
+    // The client-side half of a radio-wide rate change is only safe once the
+    // wire half is known to have landed. If setSampleRateLive refuses (WDSP
+    // down, engine torn down mid-change) and we widened the allocator window
+    // anyway, we would manufacture exactly the desync the test above closes:
+    // a client configured for 384 kHz reading a 192 kHz stream. Refusing
+    // leaves both halves consistent at the old rate.
+    void a_refused_radio_wide_rate_change_leaves_the_geometry_alone()
+    {
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        // WDSP deliberately left uninitialised: setSampleRateLive's guard
+        // fires and it returns -1 without touching the wire.
+        model.configureStreamPool(5, 5, 192000);
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int streamA = model.sliceById(a)->streamIndex();
+        QVERIFY(streamA >= 0);
+        QVERIFY(model.sampleRateIsRadioWide());
+
+        QSignalSpy spy(&model, &RadioModel::streamCentreChanged);
+        model.setStreamSampleRate(streamA, 384000);
+
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
+    }
+
     // ── Phase 3F: pooled channels have to be switched on ────────────────
     //
     // A pooled channel is opened stopped. WDSP's create_rcvr passes

@@ -142,6 +142,8 @@ Still desk work. Nothing below has touched a radio.
 | TX mic-source attach unmarshalled on the cold-start retry | `824c2b78` |
 | WIDE badge never lit | `00ab9522` |
 | Pan status overlay showing hardcoded placeholders | `0896b4f3` |
+| Status-overlay badges responding to clicks on pan-0 only | `a976fc46` |
+| P1 stream rate change never reaching the wire (HL2) | pending |
 
 ### What to expect on a G2, honestly
 
@@ -155,7 +157,8 @@ Still desk work. Nothing below has touched a radio.
 - TX low-pass following the transmit frequency rather than the last RX retune
 - WIDE badge lighting on any pan whose chain is bypassed, with a tooltip naming
   the conflicting ranges and what to do about it
-- Pan status overlay showing that pan's real slice letter, frequency, mode and CH tag
+- Pan status overlay showing that pan's real slice letter, frequency, mode and CH tag,
+  with its badges clickable on every pan rather than only pan-0
 - Filter Policy changes taking effect immediately instead of at the next VFO tick
 
 **Expected to be imperfect, by design:**
@@ -165,9 +168,9 @@ Still desk work. Nothing below has touched a radio.
   different filter ranges share one chain and that chain bypasses, where the
   hardware could have given each its own filter. The WIDE badge will correctly
   report this. This is the single biggest gap between current behaviour and §16.
-- Only pan-0's badges are clickable. The pills show live data on every pan, but
-  `txBadgeClicked` / `wideBadgeClicked` / `chainTagClicked` are wired for pan-0
-  only (pre-existing).
+- The TX pill is only hit-testable on a pan whose slice is already TX-bound, so
+  it reads as a state indicator rather than a way to grab TX from another slice.
+  Use the flag's TX button for the handoff.
 - Slice B+ come up with default NR / SNB / APF / squelch / pan, because those
   remain active-slice-only from Sub-Epic A. Slice B will sound different from A.
 - Anti-VOX cancellation references Slice A's audio only. Upstream mixes all
@@ -202,6 +205,23 @@ Still desk work. Nothing below has touched a radio.
 The most informative single observation is whether a symptom appears with one
 slice or only with two. Everything in this epic that broke, broke on the second
 slice; the single-slice path was byte-identical throughout.
+
+### One extra step for the HL2 run
+
+Protocol 1 carries a single rate for the whole radio, so a per-slice rate
+request is a radio-wide change there. Until this pass, the client moved its
+allocator window, WDSP channel rates, drain chunk sizes and FFT bin math to the
+new rate while the radio kept sending the old one, and the VFO flag's
+"Sample rate >" submenu is a direct route into that path. On the HL2, after the
+G2 walkthrough:
+
+- Set a rate from a flag's "Sample rate >" submenu with two slices up. Both
+  flags must show the new rate, both pans must keep animating, and audio must
+  stay clean. A rate that lands on the client but not the radio shows up as
+  audio that survives but sounds wrong, and a spectrum whose bins sit at the
+  wrong frequencies.
+- Repeat with the Setup rate combo to confirm the two entry points agree; they
+  now run the same 12-step `setSampleRateLive` sequence.
 
 ## Next
 
