@@ -57,6 +57,64 @@ private slots:
         QCOMPARE(stack.currentLayoutId(), QStringLiteral("2x2"));
     }
 
+    // activePanId() feeds "Add slice on active pan" (Ctrl+R),
+    // "Float active pan..." and rebuildFftRouting's last-resort pan
+    // resolution. removePanadapter took the applet out of m_pans and
+    // deleted it without touching m_activePanId, so after the active pan
+    // was closed every one of those resolved to a destroyed pan.
+    //
+    // Nothing re-seeded it either: setActivePan's only caller is guarded on
+    // m_activePanId.isEmpty(), so a stale non-empty id is permanent.
+    void removing_the_active_pan_reseats_the_active_id()
+    {
+        PanadapterStack stack;
+        QStringList ids = {QStringLiteral("pan-0"), QStringLiteral("pan-1")};
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        QCOMPARE(stack.activePanId(), QStringLiteral("pan-0"));
+
+        QSignalSpy spy(&stack, &PanadapterStack::activePanChanged);
+        stack.removePanadapter(QStringLiteral("pan-0"));
+
+        // Must name a pan that still exists, and must say so.
+        QCOMPARE(stack.activePanId(), QStringLiteral("pan-1"));
+        QVERIFY(stack.panadapter(stack.activePanId()) != nullptr);
+        QCOMPARE(spy.count(), 1);
+    }
+
+    // Removing a pan that is not the active one must leave the active id
+    // alone -- re-seating on every removal would move the operator's
+    // working pan out from under them.
+    void removing_a_non_active_pan_leaves_the_active_id_alone()
+    {
+        PanadapterStack stack;
+        QStringList ids = {QStringLiteral("pan-0"), QStringLiteral("pan-1")};
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        QCOMPARE(stack.activePanId(), QStringLiteral("pan-0"));
+
+        QSignalSpy spy(&stack, &PanadapterStack::activePanChanged);
+        stack.removePanadapter(QStringLiteral("pan-1"));
+
+        QCOMPARE(stack.activePanId(), QStringLiteral("pan-0"));
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Removing the last pan clears the id rather than leaving it naming a
+    // destroyed pan. Empty is also what re-arms setActivePan's isEmpty
+    // guard, so the next pan created becomes active.
+    void removing_the_last_pan_clears_the_active_id()
+    {
+        PanadapterStack stack;
+        QCOMPARE(stack.count(), 1);
+        const QString only = stack.activePanId();
+        QVERIFY(!only.isEmpty());
+
+        stack.removePanadapter(only);
+        QCOMPARE(stack.activePanId(), QString());
+
+        stack.addPanadapter(QStringLiteral("pan-fresh"));
+        QCOMPARE(stack.activePanId(), QStringLiteral("pan-fresh"));
+    }
+
     void splitter_state_round_trips_via_app_settings()
     {
         // AppSettings is process-global; clear it so the persistence keys

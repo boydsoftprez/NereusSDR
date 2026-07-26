@@ -64,6 +64,27 @@ void PanadapterStack::removePanadapter(const QString& panId)
     auto* applet = m_pans.take(panId);
     if (!applet) { return; }
     applet->deleteLater();
+
+    // Re-seat the active id if it named the pan just destroyed. activePanId()
+    // feeds "Add slice on active pan" (Ctrl+R), "Float active pan..." and
+    // rebuildFftRouting's last-resort pan resolution, so a stale id points all
+    // three at a pan that no longer exists. Nothing would ever repair it:
+    // setActivePan's only caller is guarded on m_activePanId.isEmpty(), so a
+    // stale NON-empty id is permanent.
+    //
+    // Clearing on the last removal is what re-arms that guard, so the next
+    // pan created becomes active. Untouched when some other pan was removed --
+    // re-seating on every removal would move the operator's working pan out
+    // from under them.
+    //
+    // m_pans is a QMap, so constBegin() is the lowest surviving pan id rather
+    // than an arbitrary one -- "pan-0" before "pan-1". Deterministic on
+    // purpose: which pan Ctrl+R targets after a close should not depend on
+    // hash ordering.
+    if (m_activePanId == panId) {
+        setActivePan(m_pans.isEmpty() ? QString() : m_pans.constBegin().key());
+    }
+
     emit countChanged(m_pans.size());
 }
 
