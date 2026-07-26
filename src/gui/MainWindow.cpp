@@ -1202,6 +1202,92 @@ void MainWindow::wirePanStatusOverlayTriggers()
     }
 }
 
+// Phase 3F: badge-click fan-out. Third sibling of refreshPanWideBadges and
+// wirePanStatusOverlayTriggers above, on the same hook and for the same
+// reason: a pan that comes into existence after startup has to be wired
+// without anyone remembering to wire it.
+//
+// The connects name member slots rather than lambdas on purpose. This runs
+// again on every countChanged, so it has to be idempotent, and
+// Qt::UniqueConnection is silently ignored for lambda targets in Qt6 -- a
+// lambda here would stack one extra connection per layout switch and open
+// that many FilterPolicyDialogs on a single click.
+void MainWindow::wirePanBadgeHandlers()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        connect(applet, &PanadapterApplet::wideBadgeClicked,
+                this, &MainWindow::onPanWideBadgeClicked,
+                Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::chainTagClicked,
+                this, &MainWindow::onPanChainTagClicked,
+                Qt::UniqueConnection);
+        connect(applet, &PanadapterApplet::txBadgeClicked,
+                this, &MainWindow::onPanTxBadgeClicked,
+                Qt::UniqueConnection);
+    }
+}
+
+int MainWindow::panChainIndex(const QString& panId) const
+{
+    if (!m_panStack || !m_radioModel) { return -1; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return -1; }
+
+    const int chain = m_radioModel->sliceChainIndex(applet->activeSliceIndex());
+    if (chain >= 0) { return chain; }
+
+    // The slice is bound to no stream, so the model has no chain to give.
+    // updateStatusOverlay holds the CH tag at its last known-good value in
+    // exactly this case rather than claiming chain 0, so following it keeps
+    // the dialog on the chain the operator can see. statusChainIndex() is the
+    // read-back 0896b4f3 added for the overlay.
+    return applet->statusChainIndex();
+}
+
+void MainWindow::onPanWideBadgeClicked(const QString& panId)
+{
+    onPanChainTagClicked(panId, -1);
+}
+
+// chainIdx is what the CH tag was painting when it was clicked; it is passed
+// so the two entry points stay one function, but the live resolution wins.
+// The tag is refreshed from the same call panChainIndex makes, so they agree
+// in every case except a stale repaint, and the live answer is the honest one
+// to open a dialog on.
+void MainWindow::onPanChainTagClicked(const QString& panId, int chainIdx)
+{
+    if (!m_radioModel) { return; }
+
+    int chain = panChainIndex(panId);
+    if (chain < 0) { chain = chainIdx; }
+    if (chain < 0) { return; }
+
+    auto* alex = &m_radioModel->alexControllerMutable();
+    FilterPolicyDialog dlg(chain, alex, this);
+    dlg.exec();
+}
+
+// The TX pill hands the transmitter to the slice THIS pan is showing, which
+// is the pan's own activeSliceIndex -- a slice ID, so it goes through
+// RadioModel::requestTxHandoffToSlice, which converts to the list position
+// TxSliceArbiter indexes by and drops MOX before flipping. The MOX drop stays
+// the arbiter's; nothing here reproduces or bypasses it.
+//
+// Reachable only while this pan's slice already holds TX, because
+// SpectrumStatusOverlay paints and hit-tests the pill on m_txBound. The
+// handoff is therefore a no-op today, and is wired to the correct target so
+// that it stays correct if the pill is ever given an unlit clickable state --
+// a visual decision, not one to make here.
+void MainWindow::onPanTxBadgeClicked(const QString& panId)
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return; }
+    m_radioModel->requestTxHandoffToSlice(applet->activeSliceIndex());
+}
+
 void MainWindow::wireSliceStatusOverlayTriggers(SliceModel* slice)
 {
     if (!slice) { return; }
@@ -1483,9 +1569,11 @@ void MainWindow::buildUI()
     // pan-0. Re-arming is safe: the connects inside are UniqueConnection.
     connect(m_panStack, &PanadapterStack::countChanged, this, [this](int) {
         wirePanStatusOverlayTriggers();
+        wirePanBadgeHandlers();
         refreshPanStatusOverlays();
     });
     wirePanStatusOverlayTriggers();
+    wirePanBadgeHandlers();
 
     // Phase 3F Sub-Epic D Task 15: restore persisted pan layout + splitter
     // sizes. Reads PanLayoutId from AppSettings (default "1") and asks the
@@ -1507,32 +1595,9 @@ void MainWindow::buildUI()
         m_panStack->restoreSplitterState();
     }
 
-    // Phase 3F Sub-Epic E Task 3: WIDE badge + CH tag both open
-    // FilterPolicyDialog. We wire the initial pan-0 PanadapterApplet
-    // here; per-applet dynamic wiring (one wire per pan created by
-    // future layout switches / floating-window pop-outs) lands when
-    // PanadapterStack exposes a per-applet-created signal in a later
-    // sub-epic.
-    if (m_panStack) {
-        if (auto* defaultApplet = m_panStack->panadapter(QStringLiteral("pan-0"))) {
-            connect(defaultApplet, &PanadapterApplet::wideBadgeClicked, this,
-                    [this](const QString&) {
-                if (!m_radioModel) { return; }
-                const auto& slices = m_radioModel->slices();
-                if (slices.isEmpty()) { return; }
-                auto* alex = &m_radioModel->alexControllerMutable();
-                FilterPolicyDialog dlg(slices.first()->chainIndex(), alex, this);
-                dlg.exec();
-            });
-            connect(defaultApplet, &PanadapterApplet::chainTagClicked, this,
-                    [this](int chainIdx) {
-                if (!m_radioModel) { return; }
-                auto* alex = &m_radioModel->alexControllerMutable();
-                FilterPolicyDialog dlg(chainIdx, alex, this);
-                dlg.exec();
-            });
-        }
-    }
+    // Phase 3F Sub-Epic E Task 3: the badge clicks are armed for every pan
+    // from the countChanged hook above, alongside the status-overlay
+    // triggers. See wirePanBadgeHandlers.
 
     // Left overlay panel (SpectrumOverlayPanel) — child of the active
     // pan's SpectrumWidget. Construction is deferred when the active

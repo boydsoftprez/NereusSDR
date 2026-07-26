@@ -1482,6 +1482,17 @@ nereus_add_test(tst_pan_wide_badge)
 # NereusSDR-original: no upstream port.
 nereus_add_test(tst_pan_status_overlay)
 
+# ── Phase 3F Sub-Epic E Task 3: per-pan status-overlay badge clicks ─────────
+# The badges paint on every pan (00ab9522 lit WIDE, 0896b4f3 drove the whole
+# overlay from live state) but MainWindow connected txBadgeClicked /
+# wideBadgeClicked / chainTagClicked for pan-0 alone, so on a multi-pan
+# layout they displayed correctly everywhere and responded nowhere else.
+# Covers reachability (every pan, including ones a layout switch creates),
+# target (the clicked pan's chain, not slice 0's), and the slice-ID to
+# list-POSITION conversion the TX handoff needs.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_badge_click_wiring)
+
 # ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
 # NereusSDR-original core class. One receiver (DDC) fans out to N pans
 # (different zoom levels of the same I/Q data) per AetherSDR overlay model.

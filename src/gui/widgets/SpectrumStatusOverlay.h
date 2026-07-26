@@ -29,6 +29,7 @@
 
 #include <QWidget>
 #include <QChar>
+#include <QRect>
 #include <QString>
 
 namespace NereusSDR {
@@ -84,6 +85,26 @@ public:
 
     void setPsPaused(bool paused);
     bool psPaused() const { return m_psPaused; }
+
+    /// The clickable badges, in the order paintEvent lays them out.
+    enum class Badge { ChainTag, Tx, Wide };
+
+    /// Hit region of `badge` in widget coordinates, or an invalid QRect when
+    /// the badge is not currently clickable.
+    ///
+    /// The optional pills are laid out sequentially, so an unlit one occupies
+    /// no space and is not hit-testable at all -- TX in particular only
+    /// exists while this pan's slice already holds the transmitter.
+    /// mousePressEvent resolves clicks through this same function, so the
+    /// geometry a caller reads back is by construction the geometry that
+    /// responds. Added for the badge-click wiring: the layout constants live
+    /// in the .cpp, so without it a test could only guess coordinates and
+    /// would silently start clicking empty background whenever the layout
+    /// moved. Same reasoning as the wideBpf() / chainIndex() read-backs.
+    ///
+    /// Only the horizontal extent is meaningful; the region spans the full
+    /// widget height, which is exactly what mousePressEvent tests.
+    QRect badgeRect(Badge badge) const;
 
 signals:
     void txBadgeClicked();

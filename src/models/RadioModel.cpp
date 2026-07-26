@@ -3637,6 +3637,22 @@ SliceModel* RadioModel::sliceById(int sliceId) const
     return nullptr;
 }
 
+bool RadioModel::requestTxHandoffToSlice(int sliceId)
+{
+    if (m_txSliceArbiter == nullptr) { return false; }
+
+    SliceModel* target = sliceById(sliceId);
+    if (target == nullptr) { return false; }
+
+    // The conversion this function exists for. removeSlice does the same
+    // indexOf to find the position of an id, and txBoundSlice() resolves the
+    // arbiter's index positionally for the same reason.
+    const int position = m_slices.indexOf(target);
+    if (position < 0) { return false; }
+
+    return m_txSliceArbiter->requestHandoff(position);
+}
+
 int RadioModel::addSlice(const QString& initialPanId)
 {
     auto* slice = new SliceModel(this);

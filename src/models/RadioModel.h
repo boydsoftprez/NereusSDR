@@ -383,6 +383,28 @@ public:
 
     SliceModel* activeSlice() const { return m_activeSlice; }
 
+    /// Hand the transmitter to the slice with this ID, RF-safely.
+    ///
+    /// Takes a slice ID (see sliceById), not a list position, and converts.
+    /// TxSliceArbiter::requestHandoff is positional, but every per-slice UI
+    /// surface carries the stable id -- PanadapterApplet::activeSliceIndex()
+    /// is resolved through sliceById by the status-overlay refresh -- so
+    /// handing one straight to the other picks the wrong slice, or none at
+    /// all, as soon as a mid-list removal makes ids and positions diverge.
+    /// With A(0) B(1) C(2), removing B leaves C at id 2 / position 1: the
+    /// unconverted call asks for position 2 and is rejected, so the
+    /// transmitter silently stays where it was.
+    ///
+    /// Returns false without moving anything when the id resolves to no
+    /// slice, or when there is no arbiter. Delegates the MOX drop to
+    /// TxSliceArbiter::requestHandoff rather than reproducing it: that
+    /// sequence is the whole reason the arbiter owns this.
+    ///
+    /// Factored out of the MainWindow badge handler so both the pan TX badge
+    /// and a test can reach it without standing up a MainWindow, the same way
+    /// requestSliceSampleRate is.
+    bool requestTxHandoffToSlice(int sliceId);
+
     /// Phase 3F: hardware-capped user-facing slice count. Reads BoardCapabilities.maxSlices
     /// for the currently connected SKU. Returns 1 when disconnected (safe default).
     /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §2.

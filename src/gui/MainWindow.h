@@ -204,6 +204,35 @@ private slots:
     /// frequency actually moved.
     void refreshPanStatusOverlays();
 
+    /// Phase 3F: connect the status-overlay badge clicks on EVERY pan.
+    ///
+    /// Armed from PanadapterStack::countChanged, the same hook
+    /// wirePanStatusOverlayTriggers uses, so pans created after startup by a
+    /// layout switch or an Add Panadapter action are wired too -- which is
+    /// every pan except pan-0. Before this, MainWindow connected the three
+    /// signals for the single applet it could name at construction, so on a
+    /// multi-pan layout the badges painted correctly everywhere (00ab9522,
+    /// 0896b4f3) and responded nowhere else.
+    ///
+    /// Idempotent, because re-arming on every countChanged would otherwise
+    /// stack duplicate connections and open one dialog per layout switch the
+    /// operator had ever made. The handlers below are SLOTS, not lambdas,
+    /// specifically so Qt::UniqueConnection actually dedups: Qt6 silently
+    /// no-ops UniqueConnection when the target is a lambda (see the notes at
+    /// the SpotModel and applet-visibility connect sites).
+    void wirePanBadgeHandlers();
+
+    /// Phase 3F: WIDE pill / CH tag both open FilterPolicyDialog on the chain
+    /// feeding the CLICKED pan, and the TX pill asks the arbiter to hand the
+    /// transmitter to that pan's active slice.
+    ///
+    /// Each takes the pan id rather than assuming the active pan: an operator
+    /// looking at a WIDE pill on pan 1 is asking about pan 1's chain whether
+    /// or not pan 1 is the pan with focus.
+    void onPanWideBadgeClicked(const QString& panId);
+    void onPanChainTagClicked(const QString& panId, int chainIdx);
+    void onPanTxBadgeClicked(const QString& panId);
+
     void onConnectionStateChanged();
     void showConnectionPanel();
     void showSupportDialog();
@@ -322,6 +351,19 @@ private:
     /// destroys and rebuilds applets, and a pan created after startup would
     /// otherwise never be wired.
     void wirePanStatusOverlayTriggers();
+
+    /// Phase 3F: the ADC chain feeding `panId`, or -1 when it resolves to
+    /// none.
+    ///
+    /// Deliberately the SAME resolution refreshPanStatusOverlays paints with
+    /// -- the pan's own activeSliceIndex through
+    /// RadioModel::sliceChainIndex -- so the dialog a badge opens is on the
+    /// chain the CH tag beside it is showing. The shipped pan-0 handler used
+    /// slices.first()->chainIndex() instead, which was wrong twice over: the
+    /// first slice rather than the clicked pan's, and through a SliceModel
+    /// property with no production writer. Both errors return 0, so every
+    /// click on every pan opened chain 0.
+    int panChainIndex(const QString& panId) const;
 
     /// Phase 3F: connect one slice's overlay triggers. Drives the connects
     /// off PanadapterApplet::statusOverlaySliceProperties through the

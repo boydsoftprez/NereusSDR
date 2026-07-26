@@ -144,7 +144,12 @@ signals:
     // and chain-swap menu (later tasks).
     void txBadgeClicked(const QString& panId);
     void wideBadgeClicked(const QString& panId);
-    void chainTagClicked(int chainIdx);
+    /// Carries the pan id as well as the chain the tag was showing. The id is
+    /// what lets MainWindow resolve the chain the same way the WIDE pill
+    /// beside it does -- live, through RadioModel::sliceChainIndex on this
+    /// pan's active slice -- rather than trusting a second, cached answer
+    /// that can disagree with the one on screen.
+    void chainTagClicked(const QString& panId, int chainIdx);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

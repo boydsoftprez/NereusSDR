@@ -194,33 +194,62 @@ void SpectrumStatusOverlay::paintEvent(QPaintEvent*)
     setMinimumWidth(x + kRightPad);
 }
 
-void SpectrumStatusOverlay::mousePressEvent(QMouseEvent* event)
+QRect SpectrumStatusOverlay::badgeRect(Badge badge) const
 {
-    // Hit-test the badges. Layout mirrors paintEvent.
-    const int clickX = event->pos().x();
+    // Layout mirrors paintEvent. Only the horizontal extent is tested, so the
+    // region spans the full height; that is the hit rule, stated rather than
+    // narrowed. Kept as the single source of the hit geometry so
+    // mousePressEvent and any caller reading a region back cannot drift.
 
     // CH tag starts after: left margin + badge + gap + freq width.
     int hitX = kLeftMargin + kBadgeSize + kBadgeGap + kFreqWidth;
-    if (clickX >= hitX && clickX < hitX + kChTagWidth) {
-        emit chainTagClicked(m_chainIndex);
-        return;
+    if (badge == Badge::ChainTag) {
+        return QRect(hitX, 0, kChTagWidth, height());
     }
     hitX += kChTagWidth + kInterPillGap;
 
-    // Optional pills in paint order: TX, WIDE, DIV, PS HOLD.
+    // Optional pills in paint order: TX, WIDE, DIV, PS HOLD. An unlit pill is
+    // not painted and takes no width, so everything after it shifts left --
+    // and the pill itself has no region at all.
     if (m_txBound) {
-        if (clickX >= hitX && clickX < hitX + kPillWidth) {
-            emit txBadgeClicked();
-            return;
+        if (badge == Badge::Tx) {
+            return QRect(hitX, 0, kPillWidth, height());
         }
         hitX += kPillWidth + kInterPillGap;
+    } else if (badge == Badge::Tx) {
+        return QRect();
     }
     if (m_wideBpf) {
-        if (clickX >= hitX && clickX < hitX + kPillWidth) {
-            emit wideBadgeClicked();
-            return;
+        if (badge == Badge::Wide) {
+            return QRect(hitX, 0, kPillWidth, height());
         }
         hitX += kPillWidth + kInterPillGap;
+    } else if (badge == Badge::Wide) {
+        return QRect();
+    }
+    return QRect();
+}
+
+void SpectrumStatusOverlay::mousePressEvent(QMouseEvent* event)
+{
+    // Hit-test the badges through badgeRect so the regions that respond are
+    // the regions callers can read back.
+    const int clickX = event->pos().x();
+    const auto hits = [clickX](const QRect& r) {
+        return r.isValid() && clickX >= r.left() && clickX < r.left() + r.width();
+    };
+
+    if (hits(badgeRect(Badge::ChainTag))) {
+        emit chainTagClicked(m_chainIndex);
+        return;
+    }
+    if (hits(badgeRect(Badge::Tx))) {
+        emit txBadgeClicked();
+        return;
+    }
+    if (hits(badgeRect(Badge::Wide))) {
+        emit wideBadgeClicked();
+        return;
     }
     // DIV / PS HOLD currently informational; no click handlers wired.
     QWidget::mousePressEvent(event);

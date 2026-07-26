@@ -54,7 +54,7 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
     connect(m_statusOverlay, &SpectrumStatusOverlay::wideBadgeClicked, this,
             [this]() { emit wideBadgeClicked(m_panId); });
     connect(m_statusOverlay, &SpectrumStatusOverlay::chainTagClicked, this,
-            &PanadapterApplet::chainTagClicked);
+            [this](int chainIdx) { emit chainTagClicked(m_panId, chainIdx); });
 
     // Phase 3F Sub-Epic F Task 13: restore persisted extended-view
     // toggle (default true). The SpectrumWidget's own auto-derive
