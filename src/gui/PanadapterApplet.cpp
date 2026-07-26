@@ -111,18 +111,70 @@ void PanadapterApplet::resizeEvent(QResizeEvent* event)
     }
 }
 
-void PanadapterApplet::updateStatusOverlay(SliceModel* slice)
+QByteArrayList PanadapterApplet::statusOverlaySliceProperties()
+{
+    // Every SliceModel property updateStatusOverlay reads below. Keep the two
+    // in step: a field painted with no entry here is a field that goes stale.
+    //
+    // streamIndex earns its place even though the overlay never paints it --
+    // it is what the caller's chain resolution keys off, so a slice moving
+    // between DDC streams changes the CH tag without touching any painted
+    // property.
+    //
+    // sliceLetter is deliberately absent: the letter is derived from the
+    // stable slice id, which cannot change for the life of the slice.
+    return QByteArrayList{
+        QByteArrayLiteral("frequency"),
+        QByteArrayLiteral("dspMode"),
+        QByteArrayLiteral("txSlice"),
+        QByteArrayLiteral("diversityEnabled"),
+        QByteArrayLiteral("psPaused"),
+        QByteArrayLiteral("streamIndex"),
+    };
+}
+
+void PanadapterApplet::updateStatusOverlay(SliceModel* slice, int chainIndex)
 {
     if (!m_statusOverlay || !slice) { return; }
-    m_statusOverlay->setSliceLetter(slice->sliceLetter());
+    // Derived from the stable slice id, the same way every other display site
+    // derives it (RadioModel.cpp:12796, RxApplet.cpp:1298). Reading
+    // SliceModel::sliceLetter() instead would report 'A' for every slice,
+    // because setSliceLetter has no production caller -- so on a two-pan
+    // layout both pans claimed to be slice A.
+    m_statusOverlay->setSliceLetter(QChar(QLatin1Char('A' + slice->sliceIndex())));
     // SliceModel::frequency() returns double Hz (default 14225000.0 = 14.225 MHz).
     // Cast directly; no MHz->Hz conversion.
     m_statusOverlay->setFrequencyHz(static_cast<qint64>(slice->frequency()));
     m_statusOverlay->setMode(SliceModel::modeName(slice->dspMode()));
-    m_statusOverlay->setChainIndex(slice->chainIndex());
+    // An unbound slice (chainIndex < 0) is on no chain at all. Holding the
+    // last tag is honest about "unknown"; writing 0 would assert it is on
+    // chain 0, which is the failure mode this parameter exists to stop.
+    if (chainIndex >= 0) {
+        m_statusOverlay->setChainIndex(chainIndex);
+    }
     m_statusOverlay->setTxBound(slice->isTxSlice());
     m_statusOverlay->setDiversityActive(slice->diversityEnabled());
     m_statusOverlay->setPsPaused(slice->psPaused());
+}
+
+QChar PanadapterApplet::statusSliceLetter() const
+{
+    return m_statusOverlay ? m_statusOverlay->sliceLetter() : QChar();
+}
+
+qint64 PanadapterApplet::statusFrequencyHz() const
+{
+    return m_statusOverlay ? m_statusOverlay->frequencyHz() : 0;
+}
+
+QString PanadapterApplet::statusMode() const
+{
+    return m_statusOverlay ? m_statusOverlay->mode() : QString();
+}
+
+int PanadapterApplet::statusChainIndex() const
+{
+    return m_statusOverlay ? m_statusOverlay->chainIndex() : 0;
 }
 
 // Phase 3F: WIDE pill forwarder. Kept separate from updateStatusOverlay

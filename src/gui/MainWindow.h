@@ -188,6 +188,22 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
+    /// Phase 3F: repaint every pan's status overlay from the slice that pan
+    /// is showing (its own activeSliceIndex), with the ADC chain resolved
+    /// through RadioModel::sliceChainIndex so the CH tag agrees with the WIDE
+    /// pill beside it.
+    ///
+    /// A slot rather than a plain method because the per-slice triggers are
+    /// connected through QMetaMethod, driven by
+    /// PanadapterApplet::statusOverlaySliceProperties, so that adding an
+    /// overlay field never means remembering to add a connect here.
+    ///
+    /// Every pan is refreshed on every pass, matching refreshPanWideBadges.
+    /// Cheap: single-digit pans, and each overlay setter drops a no-op write
+    /// before it repaints, so a VFO detent repaints exactly the one pan whose
+    /// frequency actually moved.
+    void refreshPanStatusOverlays();
+
     void onConnectionStateChanged();
     void showConnectionPanel();
     void showSupportDialog();
@@ -299,6 +315,20 @@ private:
     /// RadioModel::panBypassState query per pan; the decision (and the
     /// operator-facing reason) lives there, not here.
     void refreshPanWideBadges();
+
+    /// Phase 3F: arm the status-overlay triggers that are not per-slice --
+    /// each pan's own activeSliceChanged. Idempotent (Qt::UniqueConnection),
+    /// so it can be re-run whenever the pan set changes; a layout switch
+    /// destroys and rebuilds applets, and a pan created after startup would
+    /// otherwise never be wired.
+    void wirePanStatusOverlayTriggers();
+
+    /// Phase 3F: connect one slice's overlay triggers. Drives the connects
+    /// off PanadapterApplet::statusOverlaySliceProperties through the
+    /// metaobject rather than naming signals here, so the trigger set has a
+    /// single definition and cannot silently fall behind the fields
+    /// updateStatusOverlay paints.
+    void wireSliceStatusOverlayTriggers(SliceModel* slice);
 
     /// Phase 3F: create the VfoWidget for a secondary slice (B+) on the
     /// given SpectrumWidget, push initial state, wire all intent + bidi

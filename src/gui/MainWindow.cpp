@@ -1162,6 +1162,78 @@ void MainWindow::refreshPanWideBadges()
     }
 }
 
+// Phase 3F: status-overlay fan-out. Sibling of refreshPanWideBadges above,
+// and deliberately the same shape: ask the model per pan, push the answer at
+// that pan, never reach into the widget tree.
+//
+// Which slice a pan shows is its OWN activeSliceIndex, not the globally
+// active slice -- per Sub-Epic E plan Task 2 Step 4. A pan hosting several
+// slices has one of them active (PanadapterApplet::addSlice seeds it,
+// removeSlice re-picks), and a global read would make every pan on a
+// multi-pan layout paint identical text, which is the one thing a per-pan
+// overlay exists not to do.
+//
+// updateStatusOverlay had zero callers before this, so every pan painted the
+// widget's construction-time placeholders -- slice "A", "0.000", "USB",
+// "CH 0" -- on a live radio.
+void MainWindow::refreshPanStatusOverlays()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        const int sliceId = applet->activeSliceIndex();
+        SliceModel* slice = m_radioModel->sliceById(sliceId);
+        // A pan with no slices keeps whatever it last painted rather than
+        // being blanked: the operator is mid-drag between pans and a flash
+        // to placeholder text reads as a fault.
+        if (!slice) { continue; }
+        applet->updateStatusOverlay(slice, m_radioModel->sliceChainIndex(sliceId));
+    }
+}
+
+void MainWindow::wirePanStatusOverlayTriggers()
+{
+    if (!m_panStack) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        connect(applet, &PanadapterApplet::activeSliceChanged,
+                this, &MainWindow::refreshPanStatusOverlays,
+                Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::wireSliceStatusOverlayTriggers(SliceModel* slice)
+{
+    if (!slice) { return; }
+
+    // Connect the NOTIFY signal of every property the overlay reads, resolved
+    // through the metaobject from the list PanadapterApplet publishes. Naming
+    // the signals here instead would put the trigger set in a second place
+    // that has to be remembered -- which is how updateStatusOverlay came to
+    // have no callers at all.
+    const QMetaObject* sliceMeta = slice->metaObject();
+    const int refreshIdx =
+        MainWindow::staticMetaObject.indexOfSlot("refreshPanStatusOverlays()");
+    if (refreshIdx < 0) {
+        // Renaming the slot without updating this string would otherwise
+        // strand every overlay silently -- the exact failure this change
+        // exists to fix. tst_pan_status_overlay pins the lookup so it cannot
+        // reach a release, and this keeps a debug build loud if it ever does.
+        qWarning("MainWindow: refreshPanStatusOverlays() slot not found; "
+                 "per-pan status overlays will not follow slice state");
+        return;
+    }
+    const QMetaMethod refresh = MainWindow::staticMetaObject.method(refreshIdx);
+
+    for (const QByteArray& name : PanadapterApplet::statusOverlaySliceProperties()) {
+        const int propIdx = sliceMeta->indexOfProperty(name.constData());
+        if (propIdx < 0) { continue; }
+        const QMetaProperty prop = sliceMeta->property(propIdx);
+        if (!prop.hasNotifySignal()) { continue; }
+        connect(slice, prop.notifySignal(), this, refresh, Qt::UniqueConnection);
+    }
+}
+
 void MainWindow::rebuildFftRouting()
 {
     if (!m_radioModel) { return; }
@@ -1175,6 +1247,15 @@ void MainWindow::rebuildFftRouting()
     // 596-601). Ahead of the router guard on purpose: the badge is a model
     // question and stays correct with no FFTRouter present.
     refreshPanWideBadges();
+
+    // The status overlay rides the same pass, for the same reason: every
+    // topology trigger (slice add / remove, pan migration, stream rebind,
+    // chain reassignment) moves which slice a pan shows and which chain feeds
+    // it, so hanging the refresh here means present and future triggers reach
+    // the overlay by construction rather than by remembering. The per-slice
+    // frequency / mode triggers and each pan's activeSliceChanged are wired
+    // separately, since those move the overlay without moving the topology.
+    refreshPanStatusOverlays();
 
     auto* router = m_radioModel->fftRouter();
     if (!router) { return; }
@@ -1394,6 +1475,17 @@ void MainWindow::buildUI()
             [](const QString& panId) {
         Q_UNUSED(panId);
     });
+
+    // Phase 3F: the status overlay's non-slice trigger. countChanged fires
+    // from addPanadapter / removePanadapter, including the ones applyLayout
+    // makes when the operator switches template, so this catches every pan
+    // that comes into existence after startup -- which is every pan except
+    // pan-0. Re-arming is safe: the connects inside are UniqueConnection.
+    connect(m_panStack, &PanadapterStack::countChanged, this, [this](int) {
+        wirePanStatusOverlayTriggers();
+        refreshPanStatusOverlays();
+    });
+    wirePanStatusOverlayTriggers();
 
     // Phase 3F Sub-Epic D Task 15: restore persisted pan layout + splitter
     // sizes. Reads PanLayoutId from AppSettings (default "1") and asks the
@@ -1826,6 +1918,25 @@ void MainWindow::buildUI()
             m_rxDashboard->bindSlice(m_radioModel->slices().at(0));
         }
     });
+
+    // Phase 3F: the status overlay's per-slice triggers. Topology changes
+    // reach the overlay through rebuildFftRouting, but a retune or a mode
+    // change moves no topology at all, so those need their own wire -- and
+    // they are the ones an operator exercises on every VFO detent.
+    //
+    // Resolved by id, not list position: sliceAdded carries the stable slice
+    // id (RadioModel.cpp addSlice hands out the lowest free one), which is a
+    // position only until the operator removes a slice from the middle.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int sliceId) {
+        wireSliceStatusOverlayTriggers(m_radioModel->sliceById(sliceId));
+        refreshPanStatusOverlays();
+    });
+    // Slices that already exist. RadioModel creates Slice A at connect, so on
+    // a reconnect this loop is what re-arms it; sliceAdded has already fired.
+    for (SliceModel* existing : m_radioModel->slices()) {
+        wireSliceStatusOverlayTriggers(existing);
+    }
 
     // Phase 3F Sub-Epic D Task 13: bind newly-created slices to a pan
     // and register pan-to-receiver routing in the FFTRouter.

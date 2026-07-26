@@ -9494,19 +9494,16 @@ RadioModel::panBypassState(const QSet<int>& sliceIndices) const
     std::array<bool, kAdcCount> feeds{};
     feeds.fill(false);
 
-    for (int sliceIndex : sliceIndices) {
-        SliceModel* s = m_slices.value(sliceIndex, nullptr);
-        if (s == nullptr) { continue; }
-
-        // An unbound slice has no DDC, so it is on no chain and the pan
-        // showing it is being fed by nothing. Not wide, not filtered.
-        // Matches republishAlexAdcSlices, which skips it for the same reason.
-        const int stream = s->streamIndex();
-        if (stream < 0) { continue; }
-
-        const int adc = m_receiverManager
-                            ? m_receiverManager->receiverConfig(stream).adcIndex
-                            : 0;
+    for (int sliceId : sliceIndices) {
+        // sliceChainIndex is the shared resolver: the CH tag the overlay
+        // paints beside this pill reads the same call, so a pan can never
+        // name one chain and report the other's bypass state.
+        //
+        // It also returns -1 for an unbound slice, which is the case this
+        // loop already wanted to skip: no DDC means no chain, so the pan
+        // showing it is fed by nothing. Not wide, not filtered. Matches
+        // republishAlexAdcSlices, which skips it for the same reason.
+        const int adc = sliceChainIndex(sliceId);
         if (adc < 0 || adc >= kAdcCount) { continue; }
         feeds[adc] = true;
     }
@@ -9526,6 +9523,38 @@ RadioModel::panBypassState(const QSet<int>& sliceIndices) const
     }
 
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// sliceChainIndex: the one place slice -> stream -> ADC is resolved.
+//
+// Extracted from panBypassState when the per-pan status overlay needed the
+// same answer for its CH tag. Two copies of this hop would have been two
+// answers that could drift, and they sit side by side in the same overlay:
+// a pan naming CH 0 while its WIDE pill reported chain 1's bypass state is
+// worse than either being wrong alone.
+//
+// Resolves by slice ID, not list position. sliceById is the documented
+// lookup (RadioModel.h:358-366): addSlice hands out the lowest FREE id and
+// removeSlice does not renumber the survivors, so after any mid-list removal
+// an id and a position name different slices. PanadapterApplet::
+// associatedSlices is keyed by id, so a positional lookup here reads a
+// neighbouring slice's chain -- silently, and only for operators who had
+// removed a slice.
+// ---------------------------------------------------------------------------
+int RadioModel::sliceChainIndex(int sliceId) const
+{
+    SliceModel* s = sliceById(sliceId);
+    if (s == nullptr) { return -1; }
+
+    // No DDC stream means no chain. Distinct from chain 0: callers have to be
+    // able to tell "fed by nothing" from "fed by the first ADC".
+    const int stream = s->streamIndex();
+    if (stream < 0) { return -1; }
+
+    return m_receiverManager
+               ? m_receiverManager->receiverConfig(stream).adcIndex
+               : 0;
 }
 
 // ---------------------------------------------------------------------------

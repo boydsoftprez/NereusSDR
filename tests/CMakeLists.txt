@@ -1467,6 +1467,21 @@ nereus_add_test(tst_spectrum_status_overlay)
 # NereusSDR-original: no upstream port.
 nereus_add_test(tst_pan_wide_badge)
 
+# ── Phase 3F: the per-pan status overlay paints its own slice's state ───────
+# PanadapterApplet::updateStatusOverlay shipped with zero production callers
+# (Sub-Epic E plan Task 2 Step 4 was written and never executed), so every
+# pan painted the widget's construction-time placeholders -- slice "A",
+# "0.000", "USB", "CH 0" -- regardless of what it was tuned to, right next
+# to the WIDE pill that went live in 00ab9522.
+# Locks: the per-pan routing (a pan shows its own activeSliceIndex, so two
+# pans differ), the retune trigger, the slice-letter derivation shared with
+# every other display site, and above all that the CH tag resolves the ADC
+# chain through the SAME RadioModel::sliceChainIndex the WIDE badge uses --
+# including the stable-slice-id case a positional lookup gets wrong after a
+# mid-list removal.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_status_overlay)
+
 # ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
 # NereusSDR-original core class. One receiver (DDC) fans out to N pans
 # (different zoom levels of the same I/Q data) per AetherSDR overlay model.

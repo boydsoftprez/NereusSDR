@@ -53,7 +53,18 @@ public:
     void setMode(const QString& mode);
     void setChainIndex(int chainIdx);
 
+    /// Read-backs for the fields driven by PanadapterApplet::
+    /// updateStatusOverlay. Same reasoning as wideBpf() below: the setters
+    /// were write-only, so nothing could assert that a pan painted its own
+    /// slice rather than the construction-time placeholders, and the whole
+    /// surface shipped unverified. Narrow accessors rather than exposing the
+    /// widget to callers.
+    qint64 frequencyHz() const { return m_frequencyHz; }
+    QString mode() const { return m_mode; }
+    int chainIndex() const { return m_chainIndex; }
+
     void setTxBound(bool tx);
+    bool txBound() const { return m_txBound; }
 
     /// Light (or clear) the WIDE pill. `reason` is the operator-facing
     /// sentence naming the cause of the bypass; it becomes this overlay's
@@ -69,7 +80,10 @@ public:
     QString wideReason() const { return m_wideReason; }
 
     void setDiversityActive(bool div);
+    bool diversityActive() const { return m_diversityActive; }
+
     void setPsPaused(bool paused);
+    bool psPaused() const { return m_psPaused; }
 
 signals:
     void txBadgeClicked();

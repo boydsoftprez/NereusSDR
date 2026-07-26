@@ -310,6 +310,22 @@ public:
     /// resolve the model themselves.
     PanBypassState panBypassState(const QSet<int>& sliceIndices) const;
 
+    /// The ADC chain feeding one slice, or -1 when it is on none.
+    ///
+    ///     slice -> its stream -> that stream's ADC
+    ///
+    /// The single resolver for that hop. panBypassState calls it to decide
+    /// the WIDE pill, and MainWindow calls it to paint the CH tag sitting
+    /// beside that pill, so the two cannot report different chains for one
+    /// pan. Do not reach for SliceModel::chainIndex() instead: nothing in
+    /// production writes it, so it answers 0 for every slice.
+    ///
+    /// Takes a slice ID (see sliceById), not a list position -- the same key
+    /// PanadapterApplet::associatedSlices holds. Returns -1 for an unknown id
+    /// and for a slice that has not bound a stream; an unbound slice feeds
+    /// off nothing, which is not the same as being on chain 0.
+    int sliceChainIndex(int sliceId) const;
+
     /// Operator-facing sentence naming WHY the given chain is bypassed.
     /// One string per cause, per design doc §16.4.4. Public so the Filter
     /// Policy dialog can show the same wording the badge tooltip carries.

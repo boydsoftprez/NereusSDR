@@ -38,6 +38,8 @@
 
 #include <QWidget>
 #include <QString>
+#include <QByteArrayList>
+#include <QChar>
 #include <QSet>
 
 class QContextMenuEvent;
@@ -81,7 +83,38 @@ public:
     void setBandwidthMhz(double bw);
 
     /// Phase 3F Sub-Epic E Task 2: refresh per-pan overlay from active slice state.
-    void updateStatusOverlay(SliceModel* activeSlice);
+    ///
+    /// `chainIndex` is the ADC chain feeding the slice and must come from
+    /// RadioModel::sliceChainIndex, which is also what RadioModel::
+    /// panBypassState groups by. It is a parameter rather than something read
+    /// off the slice because SliceModel::chainIndex() has no production
+    /// writer: reading it painted "CH 0" on every pan and would have let the
+    /// CH tag disagree with the WIDE pill sitting beside it. Pass -1 for a
+    /// slice bound to no stream; the tag then holds its last value rather
+    /// than claiming chain 0.
+    void updateStatusOverlay(SliceModel* activeSlice, int chainIndex);
+
+    /// The SliceModel properties updateStatusOverlay reads, by name.
+    ///
+    /// The overlay is rebuilt wholesale from the model, so it is correct only
+    /// while every field it paints has a refresh trigger. MainWindow connects
+    /// the NOTIFY signal of each property named here instead of listing
+    /// individual signals at the call site, so a new overlay field means
+    /// adding its property to this one list and nowhere else. Kept next to
+    /// updateStatusOverlay because that is its only reader.
+    ///
+    /// tst_pan_status_overlay asserts every name resolves to a real
+    /// SliceModel property with a NOTIFY signal, so an upstream rename fails
+    /// a test rather than silently stranding the overlay.
+    static QByteArrayList statusOverlaySliceProperties();
+
+    /// Read-backs for the status overlay, mirroring wideBpf() / wideReason().
+    /// The overlay was write-only, so nothing could assert a pan painted its
+    /// own slice rather than the placeholders.
+    QChar   statusSliceLetter() const;
+    qint64  statusFrequencyHz() const;
+    QString statusMode() const;
+    int     statusChainIndex() const;
 
     /// Phase 3F: light (or clear) this pan's WIDE pill.
     /// A pan shows WIDE when the RX preselector chain feeding it is bypassed
