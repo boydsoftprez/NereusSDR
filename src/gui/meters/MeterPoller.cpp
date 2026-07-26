@@ -423,6 +423,24 @@ void MeterPoller::pollSMeter()
     // so the analog widget sees the value first (matches the order
     // VfoWidget::setSmeter listeners expect for cross-meter alignment).
     emit smeterUpdated(static_cast<double>(dbm));
+
+    // Per-slice pass. The value above is the ACTIVE slice's, which is all the
+    // single-slice UI ever needed; slices B+ had no S-meter at all, because
+    // this poller owns one m_rxChannel and emitted one unqualified signal.
+    //
+    // Read each slice's own WDSP channel and emit a slice-qualified value so a
+    // flag can filter for its own. SignalAvg only: the analog SMeter's
+    // peak / MaxBin modes are a property of that one widget, while every flag
+    // bar wants the same averaged reading.
+    if (m_wdspEngine) {
+        for (int sliceId : m_sliceChannels) {
+            RxChannel* ch = m_wdspEngine->rxChannel(sliceId);
+            if (!ch) { continue; }
+            const double v =
+                ch->getMeter(RxMeterType::SignalAvg) + rxOffsetDb;
+            emit sliceSmeterUpdated(sliceId, v);
+        }
+    }
 }
 
 // Poll the four WDSP TX meters active in 3M-1a and push to meter widget targets.

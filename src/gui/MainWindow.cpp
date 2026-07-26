@@ -924,6 +924,18 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // Bench-caught 2026-07-26: looked exactly like the flag was never created.
     sw->setVfoFrequency(slice->frequency());
     newFlag->setMode(slice->dspMode());
+
+    // Per-slice S-meter. The unqualified MeterPoller::smeterUpdated is wired
+    // to Slice A's flag only (wireSliceToSpectrum), because the poller reads
+    // one channel; every other flag's level bar sat dead. Filter the
+    // slice-qualified signal for this flag's own slice.
+    if (m_meterPoller) {
+        const int myIdx = sliceIndex;
+        connect(m_meterPoller, &MeterPoller::sliceSmeterUpdated, newFlag,
+                [flagRef = QPointer<VfoWidget>(newFlag), myIdx](int idx, double dbm) {
+            if (flagRef && idx == myIdx) { flagRef->setSmeter(dbm); }
+        });
+    }
     newFlag->setFilter(slice->filterLow(), slice->filterHigh());
     newFlag->setAgcMode(slice->agcMode());
     newFlag->setAfGain(slice->afGain());
@@ -1412,6 +1424,17 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 void MainWindow::ensureOverlayPanels()
 {
     if (!m_panStack || !m_radioModel) { return; }
+
+    // Keep the S-meter poller's channel list in step with the live slices.
+    // Slice id == WDSP RX channel id, so this is also the set of channels it
+    // reads for the per-slice pass that drives each flag's level bar.
+    if (m_meterPoller) {
+        QList<int> ids;
+        for (SliceModel* s : m_radioModel->slices()) {
+            if (s) { ids << s->sliceIndex(); }
+        }
+        m_meterPoller->setSliceChannels(ids);
+    }
 
     // Drop entries whose pan (and therefore whose parent widget) is gone.
     for (auto it = m_overlayPanels.begin(); it != m_overlayPanels.end(); ) {
