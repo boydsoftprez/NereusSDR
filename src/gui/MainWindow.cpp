@@ -1226,6 +1226,18 @@ void MainWindow::wirePanBadgeHandlers()
         connect(applet, &PanadapterApplet::txBadgeClicked,
                 this, &MainWindow::onPanTxBadgeClicked,
                 Qt::UniqueConnection);
+        // Phase 3F: clicking a pan makes it the active pan. Straight to the
+        // stack's setter, exactly as AetherSDR MainWindow.cpp:12964 [@6a142807]
+        // does it:
+        //   connect(applet, &PanadapterApplet::activated,
+        //           m_panStack, &PanadapterStack::setActivePan);
+        // Member-pointer target on both ends, so Qt::UniqueConnection is
+        // actually honoured here (it is silently dropped for lambdas -- see
+        // RadioModel.cpp:5666), which matters because this re-runs on every
+        // countChanged.
+        connect(applet, &PanadapterApplet::activated,
+                m_panStack, &PanadapterStack::setActivePan,
+                Qt::UniqueConnection);
     }
 }
 

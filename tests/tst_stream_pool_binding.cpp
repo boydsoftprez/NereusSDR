@@ -607,6 +607,37 @@ private slots:
         QCOMPARE(slice->frequency(), demodulatedHz);
     }
 
+    // Slice letters must track the slice id, so the RX applet's buttons read
+    // A, B, C rather than A, A, A.
+    //
+    // sliceLetter() used to return a stored member that defaulted to 'A' and
+    // whose setter had no production caller. Readers guarded with
+    //     sliceLetter().isNull() ? QChar('A' + sliceIndex()) : sliceLetter()
+    // never took the fallback, because a defaulted QChar is 'A' and not null.
+    // Bench-caught on a two-pan G2 layout, 2026-07-26.
+    void slice_letters_follow_the_slice_id()
+    {
+        RadioModel model;
+        model.configureStreamPool(5, 5, 192000);
+
+        const int a = model.addSlice();
+        const int b = model.addSlice();
+        const int c = model.addSlice();
+        QCOMPARE(model.sliceById(a)->sliceLetter(), QChar('A'));
+        QCOMPARE(model.sliceById(b)->sliceLetter(), QChar('B'));
+        QCOMPARE(model.sliceById(c)->sliceLetter(), QChar('C'));
+
+        // Ids are not renumbered on removal, so the survivors keep their
+        // letters and a recycled id gets the letter that goes with it.
+        model.removeSlice(b);
+        QCOMPARE(model.sliceById(a)->sliceLetter(), QChar('A'));
+        QCOMPARE(model.sliceById(c)->sliceLetter(), QChar('C'));
+
+        const int d = model.addSlice();     // reuses the lowest free id, 1
+        QCOMPARE(d, b);
+        QCOMPARE(model.sliceById(d)->sliceLetter(), QChar('B'));
+    }
+
     // ── Phase 3F Sub-Epic I closeout, defect G2 ─────────────────────────
     //
     // The VFO flag's "Sample rate >" submenu emits

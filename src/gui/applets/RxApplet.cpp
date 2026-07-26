@@ -1294,10 +1294,12 @@ void RxApplet::updateSliceButtons(const QVector<SliceModel*>& slices,
         if (!s || !btn) { continue; }
 
         const int sliceIdx = s->sliceIndex();
-        const QChar letter = (s->sliceLetter().isNull())
-                                 ? QChar('A' + sliceIdx)
-                                 : s->sliceLetter();
-        btn->setText(QString(letter));
+        // sliceLetter() derives from the slice id. The guard that used to sit
+        // here -- isNull() ? QChar('A' + sliceIdx) : sliceLetter() -- never took
+        // its fallback, because the stored letter defaulted to 'A' and a
+        // defaulted QChar is not null. That is why the slice buttons read
+        // A, A, A instead of A, B, C.
+        btn->setText(QString(s->sliceLetter()));
         // Re-key the button-group id to this slice's index on every refresh
         // (a mid-list removal can shift which slice sits at position i).
         m_sliceGroup->removeButton(btn);
@@ -1309,7 +1311,7 @@ void RxApplet::updateSliceButtons(const QVector<SliceModel*>& slices,
             " border-radius: 3px; font-weight: bold; font-size: 10px; padding: 0; }"
             "QToolButton:checked { background: %1; color: #000000; }")
             .arg(c.name()));
-        btn->setToolTip(QStringLiteral("Slice %1").arg(letter));
+        btn->setToolTip(QStringLiteral("Slice %1").arg(s->sliceLetter()));
         btn->setChecked(sliceIdx == activeSliceIndex);
     }
 

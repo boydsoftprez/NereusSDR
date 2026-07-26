@@ -176,7 +176,9 @@ class SliceModel : public QObject {
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
     // Phase 3F: per-slice letter identifier A-E. Drives badge color via VfoWidget::sliceColor().
-    Q_PROPERTY(QChar sliceLetter READ sliceLetter WRITE setSliceLetter NOTIFY sliceLetterChanged)
+    // Read-only: derived from sliceIndex, so there is nothing to write and
+    // nothing that can change independently of the slice's identity.
+    Q_PROPERTY(QChar sliceLetter READ sliceLetter CONSTANT)
     // Phase 3F: which Alex chain (ADC) hosts this slice's DDC. 0 or 1 on 2-ADC boards, always 0 on 1-ADC.
     Q_PROPERTY(int chainIndex READ chainIndex WRITE setChainIndex NOTIFY chainIndexChanged)
     // Phase 3F: codec-assigned DDC index. -1 = unassigned. Read-only from operator perspective.
@@ -474,8 +476,24 @@ public:
     void setWdspChannelId(int id) { m_wdspChannelId = id; }
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
-    QChar sliceLetter() const { return m_sliceLetter; }
-    void setSliceLetter(QChar letter);
+    /// A for slice 0, B for slice 1, and so on -- DERIVED from sliceIndex, not
+    /// stored.
+    ///
+    /// It used to return m_sliceLetter, which defaults to 'A' and had no
+    /// production caller for its setter, so every slice reported 'A'. Readers
+    /// guarded with `sliceLetter().isNull() ? QChar('A' + sliceIndex()) : ...`
+    /// (RxApplet.cpp:1297) never took the fallback, because a defaulted QChar
+    /// is 'A' and not null -- so the slice buttons read A, A, A instead of
+    /// A, B, C. PanadapterApplet.cpp:141 documented the same trap and worked
+    /// around it locally; AntennaPickerMenu.cpp:36 did not and mislabelled
+    /// every slice.
+    ///
+    /// Deriving makes all three correct by construction. Slice ids are stable
+    /// for the life of a slice and are never renumbered, so there is nothing
+    /// for a stored copy to add.
+    QChar sliceLetter() const {
+        return QChar(QLatin1Char(static_cast<char>('A' + m_sliceIndex)));
+    }
 
     int chainIndex() const { return m_chainIndex; }
     void setChainIndex(int idx);
@@ -845,7 +863,6 @@ signals:
     void txSliceChanged(bool tx);
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
-    void sliceLetterChanged(QChar letter);
     void chainIndexChanged(int idx);
     void ddcIndexChanged(int ddc);
     void streamIndexChanged(int idx);      // Phase 3F Sub-Epic I
@@ -974,7 +991,6 @@ private:
     int     m_wdspChannelId{-1};
 
     // ── Phase 3F Sub-Epic A: multi-panadapter / multi-slice identity ────────────
-    QChar   m_sliceLetter{'A'};  // Phase 3F: default A for backward-compat single-slice
     int     m_chainIndex{0};     // Phase 3F: 0 or 1 on 2-ADC boards; always 0 on 1-ADC
     int     m_ddcIndex{-1};      // Phase 3F: codec-assigned DDC; -1 = unassigned sentinel
     int    m_streamIndex{-1};     // Phase 3F Sub-Epic I: -1 = unbound

@@ -154,6 +154,11 @@ signals:
 protected:
     void resizeEvent(QResizeEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+    /// Emits activated(panId) on any press in this pan, so clicking a pan makes
+    /// it the active one. Watches the spectrum host and overlay too -- they take
+    /// the press before this widget sees it. AetherSDR PanadapterApplet.cpp:628
+    /// [@6a142807] does the same in its own eventFilter.
+    bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private:
     QString                 m_panId;

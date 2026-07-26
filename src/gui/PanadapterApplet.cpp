@@ -49,6 +49,26 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
     m_statusOverlay = new SpectrumStatusOverlay(this);
     m_statusOverlay->raise();
 
+    // Phase 3F: clicking anywhere in this pan makes it the active pan.
+    //
+    // `activated` was declared with the comment "emitted on any click within
+    // applet" and had no emitter, so PanadapterStack::setActivePan was only
+    // ever called for the first pan created. Every consumer of activePanId()
+    // was therefore pinned to pan-0 for the session -- including "Add slice on
+    // active pan", which is the ONLY route that puts a slice on a pan (the
+    // per-pan +RX button is still disabled, NYI). A second pan could be
+    // created but never given a slice, so it showed no VFO flag, no dial
+    // frequency, and no FFT subscription.
+    //
+    // Ported from AetherSDR PanadapterApplet.cpp:629 [@6a142807]:
+    //     if (ev->type() == QEvent::MouseButtonPress)
+    //         emit activated(m_panId);
+    // in eventFilter rather than mousePressEvent, because the spectrum host
+    // and the overlay consume presses before they ever reach this widget.
+    m_spectrum->installEventFilter(this);
+    m_statusOverlay->installEventFilter(this);
+    installEventFilter(this);
+
     connect(m_statusOverlay, &SpectrumStatusOverlay::txBadgeClicked, this,
             [this]() { emit txBadgeClicked(m_panId); });
     connect(m_statusOverlay, &SpectrumStatusOverlay::wideBadgeClicked, this,
@@ -100,6 +120,25 @@ void PanadapterApplet::setActiveSliceIndex(int sliceIndex)
 void PanadapterApplet::setCenterMhz(double mhz) { m_centerMhz = mhz; }
 void PanadapterApplet::setBandwidthMhz(double bw) { m_bandwidthMhz = bw; }
 
+// Phase 3F: any press inside this pan claims active-pan status. Watches the
+// spectrum host and the overlay as well as the applet itself, because both sit
+// on top of it and accept the press first.
+//
+// Ported from AetherSDR PanadapterApplet.cpp:628-630 [@6a142807]:
+//     if (ev->type() == QEvent::MouseButtonPress)
+//         emit activated(m_panId);
+//     return QWidget::eventFilter(obj, ev);
+//
+// Observing, not intercepting: always falls through to the base implementation
+// so the spectrum keeps its own click handling (tune, drag, zoom).
+bool PanadapterApplet::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (ev->type() == QEvent::MouseButtonPress) {
+        emit activated(m_panId);
+    }
+    return QWidget::eventFilter(obj, ev);
+}
+
 void PanadapterApplet::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
@@ -136,12 +175,10 @@ QByteArrayList PanadapterApplet::statusOverlaySliceProperties()
 void PanadapterApplet::updateStatusOverlay(SliceModel* slice, int chainIndex)
 {
     if (!m_statusOverlay || !slice) { return; }
-    // Derived from the stable slice id, the same way every other display site
-    // derives it (RadioModel.cpp:12796, RxApplet.cpp:1298). Reading
-    // SliceModel::sliceLetter() instead would report 'A' for every slice,
-    // because setSliceLetter has no production caller -- so on a two-pan
-    // layout both pans claimed to be slice A.
-    m_statusOverlay->setSliceLetter(QChar(QLatin1Char('A' + slice->sliceIndex())));
+    // SliceModel::sliceLetter() now derives from the stable slice id, so the
+    // local workaround this used to carry is gone. (It reported 'A' for every
+    // slice while the letter was a stored member no one ever set.)
+    m_statusOverlay->setSliceLetter(slice->sliceLetter());
     // SliceModel::frequency() returns double Hz (default 14225000.0 = 14.225 MHz).
     // Cast directly; no MHz->Hz conversion.
     m_statusOverlay->setFrequencyHz(static_cast<qint64>(slice->frequency()));
