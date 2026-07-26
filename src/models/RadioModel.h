@@ -526,6 +526,9 @@ public:
     // become active; when false the REST poller is idle and the applet
     // is hidden. No-op when not connected (no MAC scope to write under).
     void setRfKitEnabled(bool enabled);
+    // Pushes RfKit_AutoReconnect + RfKit_PollIntervalMs from AppSettings into
+    // the live connection. Called before every connectToAmp().
+    void applyRfKitOperatorSettings();
     bool rfKitEnabled() const;
 
     // ── Per-radio peripherals scope (RF-Kit / 4O3A / PGXL / TGXL) ────────

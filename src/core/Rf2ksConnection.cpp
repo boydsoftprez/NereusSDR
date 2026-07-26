@@ -364,6 +364,12 @@ void Rf2ksConnection::markPollFailure()
 
 void Rf2ksConnection::scheduleReconnect()
 {
+    // Review blocker [P2] on PR #291: the operator's "Auto-reconnect" choice
+    // was persisted by RfKitPage and never consulted here, so the connection
+    // retried unconditionally regardless of the checkbox.
+    if (!m_autoReconnect) {
+        return;
+    }
     m_reconnectAttempts++;
     // Double first, then schedule - so the member always holds the delay
     // that was just used.  testCurrentBackoffMs() reads this value and the

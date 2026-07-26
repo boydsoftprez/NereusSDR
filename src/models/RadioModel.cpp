@@ -2416,6 +2416,36 @@ bool RadioModel::rfKitEnabled() const
         == QStringLiteral("True");
 }
 
+// Push the operator's RF-Kit preferences into the live connection.
+//
+// Review blocker [P2] on PR #291: RfKitPage persisted RfKit_AutoReconnect
+// and RfKit_PollIntervalMs to AppSettings, but nothing ever read them back.
+// scheduleReconnect() retried unconditionally and the poll cadence stayed at
+// the 1000 ms default, so both controls were inert -- the checkbox and the
+// spinbox moved, saved, reloaded into the UI, and changed nothing.
+//
+// Called immediately before every connectToAmp() so the settings apply to
+// both the Setup-toggle path and the per-MAC auto-connect path.
+void RadioModel::applyRfKitOperatorSettings()
+{
+    if (!m_rfKitConnection) {
+        return;
+    }
+    const bool autoRe = AppSettings::instance()
+        .value(QStringLiteral("RfKit_AutoReconnect"), QStringLiteral("True"))
+        .toString() == QStringLiteral("True");
+    m_rfKitConnection->setAutoReconnect(autoRe);
+
+    bool ok = false;
+    const int pollMs = AppSettings::instance()
+        .value(QStringLiteral("RfKit_PollIntervalMs"), QStringLiteral("1000"))
+        .toString().toInt(&ok);
+    if (ok) {
+        // setPollIntervalMs clamps to 250..5000 itself.
+        m_rfKitConnection->setPollIntervalMs(pollMs);
+    }
+}
+
 void RadioModel::setRfKitEnabled(bool enabled)
 {
     const bool current = rfKitEnabled();
@@ -2431,6 +2461,7 @@ void RadioModel::setRfKitEnabled(bool enabled)
             peripheralValue(QStringLiteral("RfKit_ManualPort"),
                             QStringLiteral("8080")).toUInt());
         if (!host.isEmpty() && m_rfKitConnection) {
+            applyRfKitOperatorSettings();
             m_rfKitConnection->connectToAmp(host, port);
         }
     } else if (m_rfKitConnection) {
@@ -2531,6 +2562,7 @@ void RadioModel::applyPeripheralsForCurrentMac()
             peripheralValue(QStringLiteral("RfKit_ManualPort"),
                             QStringLiteral("8080")).toUInt());
         if (!host.isEmpty()) {
+            applyRfKitOperatorSettings();
             m_rfKitConnection->connectToAmp(host, port);
             qCInfo(lcConnection)
                 << "RF-Kit auto-connect for MAC" << mac

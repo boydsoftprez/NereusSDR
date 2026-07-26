@@ -9,6 +9,7 @@ private slots:
     void backoffSequenceFollowsSchedule();
     void successResetsBackoff();
     void disconnectCancelsPendingReconnect();
+    void autoReconnectOffSuppressesRetry();
 };
 
 void Rf2ksConnectionReconnectTest::backoffSequenceFollowsSchedule() {
@@ -55,6 +56,25 @@ void Rf2ksConnectionReconnectTest::disconnectCancelsPendingReconnect() {
     conn.disconnect();
     QVERIFY2(!conn.testReconnectPending(),
              "disconnect() left a reconnect pending");
+}
+
+// Review blocker [P2] on PR #291: RfKitPage saved an "Auto-reconnect"
+// checkbox to AppSettings that nothing ever read back, so scheduleReconnect()
+// retried unconditionally whatever the operator chose.
+void Rf2ksConnectionReconnectTest::autoReconnectOffSuppressesRetry() {
+    Rf2ksConnection conn;
+    QVERIFY2(conn.autoReconnect(), "default must stay on (prior behaviour)");
+
+    conn.setAutoReconnect(false);
+    conn.testScheduleReconnect();
+    QVERIFY2(!conn.testReconnectPending(),
+             "auto-reconnect is off but a retry was still armed");
+
+    // And back on again, so the gate is not a one-way latch.
+    conn.setAutoReconnect(true);
+    conn.testScheduleReconnect();
+    QVERIFY(conn.testReconnectPending());
+    conn.disconnect();
 }
 
 QTEST_MAIN(Rf2ksConnectionReconnectTest)
