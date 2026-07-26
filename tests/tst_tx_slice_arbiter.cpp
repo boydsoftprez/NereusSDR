@@ -9,6 +9,7 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QVector>
+#include "core/AppSettings.h"
 #include "core/TxSliceArbiter.h"
 #include "core/MoxController.h"
 #include "models/SliceModel.h"
@@ -128,17 +129,195 @@ private slots:
         }
     }
 
+    // ── The initial binding ────────────────────────────────────────────
+    //
+    // requestHandoff is the only writer of SliceModel::txSlice and it
+    // early-returns on a no-op, so with m_txBoundIndex defaulting to 0 a
+    // session that never hands TX to another slice never raised the flag on
+    // anything. syncToSliceList is the arm that establishes the binding the
+    // first time a slice exists, without requiring an operator handoff.
+    void sync_binds_slice_zero_when_nothing_is_flagged()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2, /*flagFirst*/ false);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+
+        QSignalSpy spy(&arb, &TxSliceArbiter::txBoundSliceChanged);
+        arb.syncToSliceList();
+
+        QCOMPARE(slices[0]->isTxSlice(), true);
+        QCOMPARE(slices[1]->isTxSlice(), false);
+        QCOMPARE(arb.txBoundSliceIndex(), 0);
+        QCOMPARE(arb.txBoundSlice(), slices[0]);
+        // oldIndex is -1: there was no previous binding to hand off from.
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().at(0).toInt(), -1);
+        QCOMPARE(spy.first().at(1).toInt(), 0);
+    }
+
+    // An existing binding is left alone. In particular the initial-bind arm
+    // must not fire on every later add, or adding slice B would silently
+    // yank the transmitter back to slice A.
+    void sync_is_a_noop_when_a_binding_already_exists()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 3, /*flagFirst*/ false);
+        slices[1]->setTxSlice(true);
+
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        QVERIFY(arb.requestHandoff(1));
+
+        QSignalSpy spy(&arb, &TxSliceArbiter::txBoundSliceChanged);
+        arb.syncToSliceList();
+
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(arb.txBoundSliceIndex(), 1);
+        QCOMPARE(slices[1]->isTxSlice(), true);
+    }
+
+    // RF-SAFETY: the initial bind arm is the only one that can raise a flag
+    // outside requestHandoff, so it carries the same MOX-drop guard. It can
+    // only ever fire with nothing bound, which on the true first bind means
+    // nothing could have been keyed either -- but a keyed transmitter with
+    // no bound slice is exactly the state you do not want to flip a binding
+    // underneath, so the guard stays.
+    void sync_drops_mox_before_an_initial_bind()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2, /*flagFirst*/ false);
+
+        MoxController mox;
+        mox.setMox(true);
+
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+
+        arb.syncToSliceList();
+
+        QCOMPARE(mox.isMox(), false);
+        QCOMPARE(slices[0]->isTxSlice(), true);
+    }
+
+    // ...and conversely, a sync that has nothing to bind must not unkey the
+    // operator. Adding a slice mid-transmission is not a reason to drop RF.
+    void sync_does_not_drop_mox_when_a_binding_exists()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2);  // slice 0 flagged
+
+        MoxController mox;
+        mox.setMox(true);
+
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMoxController(&mox);
+
+        arb.syncToSliceList();
+
+        QCOMPARE(mox.isMox(), true);
+    }
+
+    // The flag lives on the SliceModel, so it survives a list mutation that
+    // moves the object. m_txBoundIndex is a cache of its POSITION and has to
+    // be re-derived, or the arbiter's index and the flag name two different
+    // slices after any removal below the bound one.
+    void sync_readopts_the_flagged_slices_new_position()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 3, /*flagFirst*/ false);
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        QVERIFY(arb.requestHandoff(2));
+        QCOMPARE(arb.txBoundSliceIndex(), 2);
+
+        SliceModel* bound = slices[2];
+        slices.removeAt(0);  // everything above shifts down one
+
+        QSignalSpy spy(&arb, &TxSliceArbiter::txBoundSliceChanged);
+        arb.syncToSliceList();
+
+        QCOMPARE(arb.txBoundSliceIndex(), 1);
+        QCOMPARE(arb.txBoundSlice(), bound);
+        QCOMPARE(bound->isTxSlice(), true);
+        // The transmitter did not move -- only its position in the list did.
+        // Announcing a handoff that did not happen would tell every
+        // subscriber to re-badge and re-push for nothing.
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Never two. Nothing outside the arbiter writes the flag today, so this
+    // is a guard against a future second writer rather than a live path.
+    void sync_normalises_two_flagged_slices_to_one()
+    {
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 3);  // slice 0 flagged
+        slices[2]->setTxSlice(true);
+
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.syncToSliceList();
+
+        int flagged = 0;
+        for (SliceModel* s : slices) { if (s->isTxSlice()) { ++flagged; } }
+        QCOMPARE(flagged, 1);
+        QCOMPARE(slices[0]->isTxSlice(), true);  // the one the index named
+        QCOMPARE(arb.txBoundSliceIndex(), 0);
+    }
+
+    // Design §6 "Restore on launch": a persisted index naming a slice that
+    // does not exist this session falls back to Slice A. What it must not do
+    // is leave the transmitter unbound.
+    void load_with_out_of_range_index_still_leaves_one_slice_bound()
+    {
+        const QString mac = QStringLiteral("de:ad:be:ef:00:01");
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/TxBoundSliceIndex").arg(mac), 7);
+
+        QVector<SliceModel*> slices;
+        buildSlices(slices, 2, /*flagFirst*/ false);
+
+        TxSliceArbiter arb;
+        arb.setSliceList(&slices);
+        arb.setMacAddress(mac);
+        arb.load();
+
+        QCOMPARE(slices[0]->isTxSlice(), true);
+        QCOMPARE(slices[1]->isTxSlice(), false);
+        QCOMPARE(arb.txBoundSliceIndex(), 0);
+    }
+
+    // txBoundSlice resolves the same POSITION requestHandoff writes, so
+    // `arb.txBoundSlice() == s` and `s->isTxSlice()` are one predicate.
+    void tx_bound_slice_resolves_the_flagged_slice()
+    {
+        QVector<SliceModel*> slices;
+        TxSliceArbiter arb;
+        QCOMPARE(arb.txBoundSlice(), nullptr);  // no list wired yet
+
+        buildSlices(slices, 2, /*flagFirst*/ false);
+        arb.setSliceList(&slices);
+        arb.syncToSliceList();
+        QVERIFY(arb.requestHandoff(1));
+
+        QCOMPARE(arb.txBoundSlice(), slices[1]);
+        QCOMPARE(arb.txBoundSlice()->isTxSlice(), true);
+    }
+
 private:
     // Build a list of N SliceModel instances for testing. Each slice is parented
     // to `this` for automatic cleanup. Slice 0 is marked TX-bound to mirror the
-    // RadioModel default state.
-    void buildSlices(QVector<SliceModel*>& outSlices, int n)
+    // RadioModel default state; pass flagFirst = false to build a list with no
+    // binding at all, which is what the arbiter sees before its first sync.
+    void buildSlices(QVector<SliceModel*>& outSlices, int n, bool flagFirst = true)
     {
         for (int i = 0; i < n; ++i) {
             auto* s = new SliceModel(this);
             outSlices.append(s);
         }
-        if (!outSlices.isEmpty()) {
+        if (flagFirst && !outSlices.isEmpty()) {
             outSlices[0]->setTxSlice(true);
         }
     }

@@ -3637,6 +3637,24 @@ int RadioModel::addSlice(const QString& initialPanId)
     }
     m_slices.append(slice);
 
+    // ── The transmitter needs a home the moment one exists ───────────────
+    //
+    // TxSliceArbiter::requestHandoff is the only writer of
+    // SliceModel::txSlice and it early-returns on a no-op handoff, so with
+    // m_txBoundIndex defaulting to 0 nothing ever raised the flag in a
+    // session where the operator did not explicitly move TX. Every consumer
+    // that asks which slice transmits was reading a flag that was false on
+    // every slice: the TX-bound branch of removeSlice below, the codec's
+    // SliceConfig::txBound, the panadapter TX badge, the VAX TX tags, and
+    // the transmit-frequency push.
+    //
+    // Before bindSliceToStream (so the DDC assignment this triggers already
+    // carries txBound) and before the sliceAdded emit (so the VfoWidget the
+    // MainWindow handler builds reads a settled binding).
+    if (m_txSliceArbiter) {
+        m_txSliceArbiter->syncToSliceList();
+    }
+
     // ── Phase 3F Sub-Epic I: bind to a DDC stream ───────────────────────
     //
     // A fresh SliceModel carries the 14.225 MHz ctor default
@@ -3729,17 +3747,21 @@ int RadioModel::addSlice(const QString& initialPanId)
     // (console.cs:32866-32869 [v2.10.3.15] assigns tx_dds_freq_mhz and calls
     // UpdateTXDDSFreq from the VFO B path when B transmits).
     //
-    // The gate asks txBoundSlice() rather than SliceModel::isTxSlice(). The
-    // two are NOT interchangeable: isTxSlice() reads a flag that only
-    // TxSliceArbiter::requestHandoff ever raises, and a single-slice session
-    // never performs a handoff (m_txBoundIndex already defaults to 0), so the
-    // flag stays false on slice A forever. Gating on it therefore silenced
-    // every transmit-frequency push -- VFO retunes and XIT alike -- which
-    // left the TX NCO and the Alex TX low-pass frozen wherever they last
-    // landed. Asking txBoundSlice() gates on exactly the slice
-    // pushTxFrequencyFromTxSlice() is about to read, so the gate and the
-    // push can never disagree, and the RF-safety property still holds: a
-    // retune of a slice that is not the transmitter is still a no-op here.
+    // The gate asks txBoundSlice() rather than SliceModel::isTxSlice().
+    // Since TxSliceArbiter::syncToSliceList establishes the binding at the
+    // append above, the two now agree by construction whenever a binding
+    // resolves -- the arbiter resolves the same position it wrote the flag
+    // to. They differ only where no binding resolves at all (no arbiter, no
+    // slices yet), and there the two fail in opposite directions:
+    // isTxSlice() goes silent, which is the failure this chain cannot
+    // afford (setTxFrequency is the only writer of m_alex.lpfBitsTx, so a
+    // silent gate freezes the Alex TX low-pass wherever it last landed),
+    // while txBoundSlice() falls back to the active slice and keeps the
+    // low-pass following the transmit frequency. Asking txBoundSlice() also
+    // gates on exactly the slice pushTxFrequencyFromTxSlice() is about to
+    // read, so gate and push cannot disagree. The RF-safety property is
+    // unchanged either way: a retune of a slice that is not the transmitter
+    // is still a no-op here.
     connect(slice, &SliceModel::frequencyChanged, this, [this, slice]() {
         if (slice == txBoundSlice()) { pushTxFrequencyFromTxSlice(); }
     });
@@ -3831,6 +3853,19 @@ void RadioModel::removeSlice(int sliceId)
     }
 
     SliceModel* slice = m_slices.takeAt(position);
+
+    // Removing a slice shifts every position above it down by one, and the
+    // arbiter's index is a POSITION. Re-derive it from the flag, which rode
+    // the SliceModel object through the mutation. Without this the arbiter
+    // and the flag name two different slices after any removal below the
+    // bound one -- and txBoundSlice(), which gates the transmit-frequency
+    // push, would follow the arbiter onto the wrong slice.
+    //
+    // After takeAt, so the victim is already out of the list and cannot be
+    // re-adopted as the binding.
+    if (m_txSliceArbiter) {
+        m_txSliceArbiter->syncToSliceList();
+    }
 
     // Phase 3F Sub-Epic I: free the stream if this was its last slice, so
     // the DDC drops out of the ddcEnable bitmask and the radio stops
@@ -7851,14 +7886,24 @@ void RadioModel::connectMicPttDisabledSignal()
 // ---------------------------------------------------------------------------
 SliceModel* RadioModel::txBoundSlice() const
 {
+    // Asks the arbiter to resolve its own index rather than resolving it
+    // here. The index is a LIST POSITION -- requestHandoff writes the
+    // txSlice flag positionally -- so resolving it through sliceById()
+    // picked a different slice than the one carrying the flag as soon as a
+    // mid-list removal made ids and positions diverge: with A(0) B(1) C(2),
+    // removing B and handing TX to C leaves the flag on C at position 1
+    // while sliceById(1) resolves nothing at all, and the fallback below
+    // then handed the transmit frequency to whichever slice was active.
+    // Going through TxSliceArbiter::txBoundSlice() makes
+    // `slice == txBoundSlice()` and `slice->isTxSlice()` one predicate.
     if (m_txSliceArbiter) {
-        if (auto* s = sliceById(m_txSliceArbiter->txBoundSliceIndex())) {
+        if (auto* s = m_txSliceArbiter->txBoundSlice()) {
             return s;
         }
     }
-    // No arbiter binding resolves (single-slice session, or the bound slice
-    // was removed and the arbiter has not re-homed yet). Falling back to the
-    // active slice keeps single-slice behaviour byte-identical.
+    // No arbiter binding resolves (no slices yet, or no arbiter at all).
+    // Falling back to the active slice keeps single-slice behaviour
+    // byte-identical.
     return m_activeSlice;
 }
 
@@ -7943,8 +7988,9 @@ void RadioModel::wireSliceSignals()
         // instead of a wrong-band transmit frequency.
         //
         // Gated on txBoundSlice(), not SliceModel::isTxSlice() -- see the
-        // matching connects in addSlice for why the flag is not a usable
-        // gate in a session that never performs a TX handoff.
+        // matching connects in addSlice for why. The two agree wherever a
+        // binding resolves; where none does, only txBoundSlice() keeps the
+        // TX low-pass following the transmit frequency.
         if (slice == txBoundSlice()) {
             pushTxFrequencyFromTxSlice();
         }
@@ -8648,7 +8694,9 @@ void RadioModel::wireSliceSignals()
         // Same TX-bound gate as the frequencyChanged handler above: XIT on a
         // slice that is not transmitting has nothing to offset. Gated on
         // txBoundSlice() rather than SliceModel::isTxSlice() for the reason
-        // spelled out at the matching connects in addSlice.
+        // spelled out at the matching connects in addSlice (they agree
+        // wherever a binding resolves; only txBoundSlice() has a fallback
+        // where none does).
         if (slice == txBoundSlice()) {
             pushTxFrequencyFromTxSlice();
         }

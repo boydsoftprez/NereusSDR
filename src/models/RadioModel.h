@@ -1164,6 +1164,15 @@ public:
     }
     NereusSDR::Band lastBand() const { return m_lastBand; }
 
+    // Phase 3F: expose the codec's input array so tests can assert what the
+    // per-board codec is actually handed (SliceConfig::txBound in
+    // particular, which is the OR of SliceModel::isTxSlice across the slices
+    // sharing a DDC stream). Production callers reach the same builder
+    // through requestDdcAssignment.
+    std::array<NereusSDR::SliceConfig, 5> buildStreamConfigsForCodecForTest() const {
+        return buildStreamConfigsForCodec();
+    }
+
     // Per-radio peripherals scope: tests pin m_lastRadioInfo without
     // standing up a fake RadioConnection so peripheralValue / setPeripheralValue
     // can resolve their per-MAC scope.  Production code populates this via

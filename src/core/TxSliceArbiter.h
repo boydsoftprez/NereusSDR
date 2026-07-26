@@ -32,7 +32,21 @@ class TxSliceArbiter : public QObject {
 public:
     explicit TxSliceArbiter(QObject* parent = nullptr);
 
+    /// LIST POSITION of the TX-bound slice, not a SliceModel::sliceIndex().
+    /// requestHandoff writes the flag positionally, so every reader that
+    /// resolves this back to a SliceModel must index positionally too --
+    /// resolving it as an id picks a different slice than the one carrying
+    /// the flag as soon as a mid-list removal makes ids and positions
+    /// diverge (removeSlice does not renumber survivors). Use
+    /// txBoundSlice() rather than resolving it yourself.
     int txBoundSliceIndex() const { return m_txBoundIndex; }
+
+    /// The slice bound to the transmitter, or nullptr when no binding
+    /// resolves (no slice list wired, empty list, index out of range).
+    /// Guaranteed to be the slice carrying SliceModel::isTxSlice() whenever
+    /// it is non-null: `arb.txBoundSlice() == s` and `s->isTxSlice()` are the
+    /// same predicate. Design ref §6 (Public API).
+    SliceModel* txBoundSlice() const;
 
     /// Inject the MoxController (called by RadioModel during construction wiring).
     /// Arbiter calls mox->setMox(false) and waits for moxChanged confirmation
@@ -55,6 +69,28 @@ public:
     /// Persist the current txBoundSliceIndex under hardware/<mac>/TxBoundSliceIndex.
     /// No-op if MAC unset.
     void save();
+
+    /// Re-establish the single-TX invariant against the current slice list.
+    /// RadioModel calls this after every mutation of the list it handed to
+    /// setSliceList (add and remove), and load() calls it after a restore.
+    /// Idempotent, and cheap enough to call unconditionally.
+    ///
+    /// Three arms:
+    ///   - one slice flagged: adopt its POSITION into m_txBoundIndex. The
+    ///     transmitter has not moved, so nothing is emitted; only the cached
+    ///     position changed, which a removal below the bound slice shifts.
+    ///   - none flagged: INITIAL BIND. Raises the flag on the persisted /
+    ///     current index when it is in range, else on slice A, and emits
+    ///     txBoundSliceChanged(-1, target). This is the arm that makes a
+    ///     session with no operator handoff have a transmitter at all.
+    ///   - more than one flagged: defensive normalisation back to one.
+    ///
+    /// RF-SAFETY: the initial-bind arm drops MOX first, exactly as
+    /// requestHandoff does. On the true first bind nothing can be keyed yet
+    /// (there was no slice to transmit from), so it never fires there; the
+    /// guard exists for the degenerate keyed-but-unbound state, which is the
+    /// last state you want to raise a binding underneath.
+    void syncToSliceList();
 
 public slots:
     /// Request TX handoff to the slice at newSliceIndex. RF-safe (drops MOX first).

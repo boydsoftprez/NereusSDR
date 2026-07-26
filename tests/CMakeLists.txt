@@ -1413,6 +1413,15 @@ nereus_add_test(tst_alex_controller_event_matrix)
 # lands in Task 3. NereusSDR-original: no Thetis port.
 nereus_add_test(tst_tx_slice_arbiter)
 
+# ── The single-TX invariant, end to end through RadioModel ──────────────────
+# requestHandoff was the only writer of SliceModel::txSlice and it early-
+# returns on a no-op, so a session that never handed TX to another slice left
+# every slice unflagged and silently disabled every consumer that asks which
+# slice transmits. Pins: exactly one slice flagged from the first addSlice,
+# across add / remove / handoff, and SliceConfig::txBound reaching the codec.
+# NereusSDR-original: no Thetis port (Thetis has a fixed VFO A/B TX model).
+nereus_add_test(tst_tx_slice_binding_invariant)
+
 # ── Phase 3F Sub-Epic D Task 1+2: PanadapterApplet skeleton + slice assoc ──
 # Skeleton + slice association API coverage for the per-pan container that
 # hosts SpectrumWidget. Structurally ported from AetherSDR

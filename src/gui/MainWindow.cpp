@@ -2578,7 +2578,7 @@ void MainWindow::buildUI()
     // to reflect the arbiter's current bound slice.
     if (TxSliceArbiter* arb = m_radioModel->txSliceArbiter()) {
         connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
-                [this](int /*oldIdx*/, int newIdx) {
+                [this](int oldIdx, int newIdx) {
             for (auto it = m_vfoWidgetsBySlice.constBegin();
                  it != m_vfoWidgetsBySlice.constEnd(); ++it) {
                 VfoWidget* flag = it.value();
@@ -2586,6 +2586,12 @@ void MainWindow::buildUI()
                     flag->setTxSlice(flag->sliceIndex() == newIdx);
                 }
             }
+            // oldIdx < 0 is the arbiter's initial bind (TxSliceArbiter::
+            // syncToSliceList), not an operator handoff: the transmitter
+            // did not move, it acquired its first home when the first slice
+            // appeared. Announcing "TX > Slice A" on every connect would be
+            // noise about something that did not happen.
+            if (oldIdx < 0) { return; }
             if (QStatusBar* sb = statusBar()) {
                 sb->showMessage(QStringLiteral("TX > Slice %1")
                                     .arg(QChar(QLatin1Char('A' + newIdx))),
