@@ -1161,7 +1161,7 @@ public:
     // B6 — XIT: allow tests to trigger wireSliceSignals() directly after
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
-    void wireSliceSignalsForTest() { wireSliceSignals(); }
+    void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
     // Issue #182 — invoke the mic_ptt_disabled wiring helper directly so
     // tst_radio_model_mic_ptt_wire can verify the signal/slot bind + prime
     // path without spinning up the full wireConnectionSignals pipeline.
@@ -2206,7 +2206,15 @@ private:
     void applyAlexAntennaForBand(NereusSDR::Band band, bool isTx = false);
 
     void wireConnectionSignals(int wdspInSize);
-    void wireSliceSignals();
+    /// Wire one slice's property changes to its OWN WDSP channel and to the
+    /// radio. Call for every slice, not just the active one: this used to
+    /// read m_activeSlice and run once, leaving 65 per-slice DSP handlers
+    /// (AGC, filter, mode, NB, SNB, APF, RIT/XIT, squelch, mute, pan and the
+    /// whole NR parameter set) wired for Slice A alone -- and every one of
+    /// them writing rxChannel(0). Idempotent per slice: the handlers use
+    /// Qt::UniqueConnection-safe member targets or are wired once at
+    /// addSlice time.
+    void wireSliceSignals(SliceModel* slice);
 
     // Recomputes the transmit frequency from the TX-bound slice and pushes it
     // at the connection. The single place that answers "what frequency is the
