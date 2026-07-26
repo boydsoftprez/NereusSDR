@@ -54,6 +54,17 @@ Rf2ksConnection::Rf2ksConnection(QObject* parent)
     qRegisterMetaType<RfKitTunerSnapshot>("NereusSDR::RfKitTunerSnapshot");
     qRegisterMetaType<RfKitAntenna>("NereusSDR::RfKitAntenna");
     qRegisterMetaType<QList<RfKitAntenna>>("QList<NereusSDR::RfKitAntenna>");
+
+    // Own the reconnect timer so disconnect() can cancel a pending retry.
+    // Review blocker [P1] on PR #291: scheduleReconnect() previously called
+    // m_reconnectTimer.singleShot(...), which is the STATIC
+    // QTimer::singleShot invoked through an instance.  That compiles and
+    // reads as if it arms this timer, but it creates a detached one-shot,
+    // so m_reconnectTimer.stop() in disconnect() was a no-op and a queued
+    // reconnect could fire after the operator disabled RF-Kit.
+    m_reconnectTimer.setSingleShot(true);
+    connect(&m_reconnectTimer, &QTimer::timeout,
+            this, &Rf2ksConnection::onReconnectTimeout);
 }
 
 Rf2ksConnection::~Rf2ksConnection() = default;
@@ -348,15 +359,18 @@ void Rf2ksConnection::scheduleReconnect()
     // that was just used.  testCurrentBackoffMs() reads this value and the
     // test verifies the 1 s / 2 s / 4 s / 8 s ... 60 s sequence.
     m_reconnectBackoffMs = qMin(m_reconnectBackoffMs * 2, 60000);
-    m_reconnectTimer.singleShot(m_reconnectBackoffMs, this, [this]{
-        // Re-issue /info as the connection probe; success path will set
-        // m_connected back to true via onReplyFinished.
-        issueGet(QStringLiteral("/info"));
-        if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
-            // See connectToAmp(): timer fires per-path, one-sixth of cycle.
-            m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
-        }
-    });
+    m_reconnectTimer.start(m_reconnectBackoffMs);
+}
+
+void Rf2ksConnection::onReconnectTimeout()
+{
+    // Re-issue /info as the connection probe; success path will set
+    // m_connected back to true via onReplyFinished.
+    issueGet(QStringLiteral("/info"));
+    if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
+        // See connectToAmp(): timer fires per-path, one-sixth of cycle.
+        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
+    }
 }
 
 void Rf2ksConnection::testForceBackoffSequence()

@@ -2588,7 +2588,14 @@ void RadioModel::applyPeripheralsForCurrentMac()
 
 void RadioModel::teardownPeripherals()
 {
-    if (m_rfKitConnection && m_rfKitConnection->isConnected()) {
+    // Deliberately NOT gated on isConnected(). Review blocker [P1] on PR
+    // #291: when the link has dropped and a reconnect is pending,
+    // isConnected() is false, so the gate skipped disconnect() and left the
+    // retry armed -- it would then fire after the operator disabled RF-Kit,
+    // re-issue /info and restart polling. disconnect() is idempotent: it
+    // stops both timers and only emits disconnected() if it had been
+    // connected.
+    if (m_rfKitConnection) {
         m_rfKitConnection->disconnect();
         qCInfo(lcConnection) << "Peripherals teardown: RF-Kit disconnected";
     }

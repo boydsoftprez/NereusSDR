@@ -92,6 +92,12 @@ public:
     // so tests that need disconnect() to emit disconnected() can arm the
     // guard without spinning up a real HTTP server.
     void testForceConnectedForTesting() { m_connected = true; }
+    // Arms a real reconnect (unlike testForceBackoffSequence, which cancels
+    // it immediately because it only wants the backoff arithmetic), and
+    // reports whether one is currently pending.  Together these let a test
+    // assert that disconnect() actually cancels a scheduled reconnect.
+    void testScheduleReconnect() { scheduleReconnect(); }
+    bool testReconnectPending() const { return m_reconnectTimer.isActive(); }
 
 public slots:
     void connectToAmp(const QString& host, quint16 port = 8080);
@@ -124,6 +130,9 @@ private slots:
     void pollOnce();
     void scheduleReconnect();
     void onReplyFinished();
+    // Fired by the owned m_reconnectTimer. Was an inline lambda passed to
+    // the static QTimer::singleShot, which disconnect() could not cancel.
+    void onReconnectTimeout();
 
 private:
     void   handleResponse(const QString& path, const QByteArray& body);
