@@ -64,6 +64,7 @@
 
 #include "AntennaAlexAlex1Tab.h"
 
+#include "core/AlexSettingsKeys.h"
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
@@ -99,12 +100,12 @@ namespace NereusSDR {
 const std::vector<AntennaAlexAlex1Tab::HpfBandEntry>& AntennaAlexAlex1Tab::hpfBands()
 {
     static const std::vector<HpfBandEntry> bands = {
-        { "1.5 MHz HPF",  "1_5MHz",   1.8,      6.499999 },  // udAlex1_5HPF*  [@501e3f5:23784-23825]
-        { "6.5 MHz HPF",  "6_5MHz",   6.5,      9.499999 },  // udAlex6_5HPF*  [@501e3f5:23866-23907]
-        { "9.5 MHz HPF",  "9_5MHz",   9.5,     12.999999 },  // udAlex9_5HPF*  [@501e3f5:23948-23989]
-        { "13 MHz HPF",   "13MHz",   13.0,     19.999999 },  // udAlex13HPF*   [@501e3f5:24243-24049]
-        { "20 MHz HPF",   "20MHz",   20.0,     49.999999 },  // udAlex20HPF*   [@501e3f5:24079-24019]
-        { "6m Bypass",    "6mBP",    50.0,     61.44     },  // udAlex6BPF*    [@501e3f5:24272-24340]
+        { "1.5 MHz HPF",  alexKeys::kPreselector1_5MHz,   1.8,      6.499999 },  // udAlex1_5HPF*  [@501e3f5:23784-23825]
+        { "6.5 MHz HPF",  alexKeys::kPreselector6_5MHz,   6.5,      9.499999 },  // udAlex6_5HPF*  [@501e3f5:23866-23907]
+        { "9.5 MHz HPF",  alexKeys::kPreselector9_5MHz,   9.5,     12.999999 },  // udAlex9_5HPF*  [@501e3f5:23948-23989]
+        { "13 MHz HPF",   alexKeys::kPreselector13MHz,   13.0,     19.999999 },  // udAlex13HPF*   [@501e3f5:24243-24049]
+        { "20 MHz HPF",   alexKeys::kPreselector20MHz,   20.0,     49.999999 },  // udAlex20HPF*   [@501e3f5:24079-24019]
+        { "6m Bypass",    alexKeys::kPreselector6mBP,    50.0,     61.44     },  // udAlex6BPF*    [@501e3f5:24272-24340]
     };
     return bands;
 }
@@ -130,16 +131,18 @@ const std::vector<AntennaAlexAlex1Tab::HpfBandEntry>& AntennaAlexAlex1Tab::hpfBa
 //
 // The slugs deliberately match hpfBands() so that BPF1 edges already persisted
 // under hardware/<mac>/alex/bpf1/<slug>/{start,end} keep loading; only the
-// labels and the shipped defaults change.
+// labels and the shipped defaults change.  Both tables take the slugs from
+// core/AlexSettingsKeys.h, which is also what SettingsHygiene sweeps.  The two
+// sides carried independent spellings until 2026-07-25 and never matched.
 const std::vector<AntennaAlexAlex1Tab::HpfBandEntry>& AntennaAlexAlex1Tab::bpf1Bands()
 {
     static const std::vector<HpfBandEntry> bands = {
-        { "160m BPF",     "1_5MHz",   1.5,      2.099999  },  // ud1_5BPF1*  [v2.10.3.15:24982-25023]
-        { "80/60m BPF",   "6_5MHz",   2.1,      5.499999  },  // ud6_5BPF1*  [v2.10.3.15:25064-25105]
-        { "40/30m BPF",   "9_5MHz",   5.5,     10.999999  },  // ud9_5BPF1*  [v2.10.3.15:25146-25187]
-        { "20/17/15m BPF","13MHz",   11.0,     21.999999  },  // ud13BPF1*   [v2.10.3.15:25440-25247]
-        { "12/10m BPF",   "20MHz",   22.0,     34.999999  },  // ud20BPF1*   [v2.10.3.15:25277-25217]
-        { "6m BPF/LNA",   "6mBP",    35.0,     61.44      },  // ud6BPF1*    [v2.10.3.15:25481-25522]
+        { "160m BPF",     alexKeys::kPreselector1_5MHz,   1.5,      2.099999  },  // ud1_5BPF1*  [v2.10.3.15:24982-25023]
+        { "80/60m BPF",   alexKeys::kPreselector6_5MHz,   2.1,      5.499999  },  // ud6_5BPF1*  [v2.10.3.15:25064-25105]
+        { "40/30m BPF",   alexKeys::kPreselector9_5MHz,   5.5,     10.999999  },  // ud9_5BPF1*  [v2.10.3.15:25146-25187]
+        { "20/17/15m BPF",alexKeys::kPreselector13MHz,   11.0,     21.999999  },  // ud13BPF1*   [v2.10.3.15:25440-25247]
+        { "12/10m BPF",   alexKeys::kPreselector20MHz,   22.0,     34.999999  },  // ud20BPF1*   [v2.10.3.15:25277-25217]
+        { "6m BPF/LNA",   alexKeys::kPreselector6mBP,    35.0,     61.44      },  // ud6BPF1*    [v2.10.3.15:25481-25522]
     };
     return bands;
 }

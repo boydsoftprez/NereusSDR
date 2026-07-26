@@ -20,10 +20,28 @@
 // =================================================================
 
 #include "SettingsHygiene.h"
+#include "AlexSettingsKeys.h"
 #include "AppSettings.h"
 #include "codec/AlexFilterMap.h"
 
 namespace NereusSDR {
+
+namespace {
+
+// hardware/<mac>/alex/bpf1/<slug>/<leaf>: the flat-map form, which is what
+// AppSettings::contains / remove take.  The Setup tab writes the same key via
+// setHardwareValue(mac, "alex/bpf1/<slug>/<leaf>", v), which prepends
+// hardware/<mac>/ for you.
+QString bpf1Key(const QString& mac, const char* slug, const char* leaf)
+{
+    return QStringLiteral("hardware/%1/%2/%3/%4")
+        .arg(mac,
+             QLatin1String(alexKeys::kAlex1Bpf1Prefix),
+             QLatin1String(slug),
+             QLatin1String(leaf));
+}
+
+} // namespace
 
 SettingsHygiene::SettingsHygiene(QObject* parent)
     : QObject(parent)
@@ -85,17 +103,20 @@ void SettingsHygiene::resetSettingsToDefaults(const QString& mac,
     // discarded as if they belonged to a board that had no such filters.
     const bool usesBpf1 = codec::alex::usesBpf1Preselector(caps.board);
     if (!usesBpf1) {
-        const QString bpf1Base = QStringLiteral("hardware/%1/alex/bpf1").arg(mac);
-        // Walk known band keys and remove.
-        const QStringList bands = {
-            QStringLiteral("160m"), QStringLiteral("80m"), QStringLiteral("60m"),
-            QStringLiteral("40m"), QStringLiteral("30m"), QStringLiteral("20m"),
-            QStringLiteral("17m"), QStringLiteral("15m"), QStringLiteral("12m"),
-            QStringLiteral("10m"), QStringLiteral("6m")
-        };
-        for (const QString& band : bands) {
-            s.remove(QStringLiteral("%1/%2/start").arg(bpf1Base, band));
-            s.remove(QStringLiteral("%1/%2/end").arg(bpf1Base, band));
+        // Walk the rows the Setup tab actually writes.  This loop used to
+        // iterate eleven ham-band names (160m, 80m, … 6m) that AntennaAlexAlex1Tab
+        // has never written: it persists six crossover slugs (1_5MHz, 6_5MHz,
+        // 9_5MHz, 13MHz, 20MHz, 6mBP).  The two name sets did not overlap, so
+        // the removal was a silent no-op for every user.  Both sides now read
+        // the slugs out of alexKeys so they cannot drift apart again.
+        //
+        // "enabled" is swept alongside the two edges.  The old loop skipped it,
+        // which would have stranded the per-band bypass flag even on a slug it
+        // did know.
+        for (const char* slug : alexKeys::kPreselectorSlugs) {
+            for (const char* leaf : alexKeys::kPreselectorLeaves) {
+                s.remove(bpf1Key(mac, slug, leaf));
+            }
         }
     }
 
@@ -162,8 +183,23 @@ void SettingsHygiene::checkSaturnBpf1(const QString& mac,
     if (codec::alex::usesBpf1Preselector(caps.board)) { return; }
 
     auto& s = AppSettings::instance();
-    const QString bpf1Key = QStringLiteral("hardware/%1/alex/bpf1/160m/start").arg(mac);
-    if (!s.contains(bpf1Key)) { return; }
+
+    // Probe every row the Setup tab can write, not just the first one.  This
+    // used to test the single key hardware/<mac>/alex/bpf1/160m/start, which
+    // AntennaAlexAlex1Tab never writes under that name.  It writes six
+    // crossover slugs, and only for rows the operator actually touched.  So
+    // the probe never fired, and stray BPF1 data was never reported.
+    bool anyBpf1KeyExists = false;
+    for (const char* slug : alexKeys::kPreselectorSlugs) {
+        for (const char* leaf : alexKeys::kPreselectorLeaves) {
+            if (s.contains(bpf1Key(mac, slug, leaf))) {
+                anyBpf1KeyExists = true;
+                break;
+            }
+        }
+        if (anyBpf1KeyExists) { break; }
+    }
+    if (!anyBpf1KeyExists) { return; }
 
     // no-port-check: NereusSDR-original rule.
     Issue issue;
