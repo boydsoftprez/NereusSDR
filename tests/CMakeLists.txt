@@ -5449,6 +5449,20 @@ nereus_add_test(tst_p2_ddc_mask_ownership)
 # Source: NereusSDR-original (marshalling glue, no Thetis upstream).
 nereus_add_test(tst_p2_ddc_assignment_marshalling)
 
+# ── Phase 3F Sub-Epic I closeout: wideband enable crosses to the conn thread ─
+# 2 tests: the_wideband_enable_reaches_the_connection_through_its_own_thread,
+#          the_wideband_disable_travels_the_same_route.
+# The widebandExtensionRequestedChanged handler wired by addSlice called
+# P2RadioConnection::setWidebandEnabled directly from the GUI thread, tearing
+# m_wbEnableMask (CmdGeneral byte 23, Thetis ChannelMaster/network.c:879
+# [v2.10.3.15]) against the connection thread's frame composition and writing
+# the UDP socket off-thread. Third instance of the pattern fixed for
+# applyDdcAssignment in tst_p2_ddc_assignment_marshalling; same technique, the
+# connection is parked on a stopped QThread so a direct call is
+# distinguishable from a queued QMetaCallEvent.
+# Source: NereusSDR-original (marshalling glue, no Thetis upstream).
+nereus_add_test(tst_p2_wideband_marshalling)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice

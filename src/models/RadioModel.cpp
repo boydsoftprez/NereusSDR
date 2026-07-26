@@ -3843,8 +3843,37 @@ int RadioModel::addSlice(const QString& initialPanId)
             [this, slice](bool on) {
         const int chainIdx = slice->chainIndex();
         m_alexController.setWidebandActive(chainIdx, on);
+        //
+        // ── Phase 3F Sub-Epic I closeout: marshal to the connection thread ──
+        //
+        // Third instance of the pattern fixed for applyDdcAssignment in
+        // invokeCodecDdcAssignment, and already done correctly by the
+        // setAlexRxBpf push in republishAlexAdcSlices.
+        //
+        // setWidebandEnabled writes m_wbEnableMask and, when connected,
+        // calls sendCmdGeneral(), which writes the QUdpSocket. RadioModel
+        // runs on the GUI thread and the connection was moved onto
+        // m_connThread (see connectToRadio), so calling it directly tore the
+        // mask against the connection thread's own frame composition -- byte
+        // 23 of CmdGeneral is that mask (Thetis ChannelMaster/network.c:879
+        // [v2.10.3.15]) -- and drove QUdpSocket::writeDatagram from a thread
+        // that owns neither the socket nor its notifier.
+        //
+        // Same marshalling shape as the neighbouring pushes: the functor
+        // overload of QMetaObject::invokeMethod with default
+        // Qt::AutoConnection, which is a plain call when the target already
+        // lives on this thread (tests, and the pre-thread window at
+        // construction) and a queued QMetaCallEvent when it does not.
+        //
+        // No qRegisterMetaType is needed. The functor overload packages the
+        // whole lambda into the event, so chainIdx and on travel as ordinary
+        // by-value captures; the metatype system is only involved for the
+        // Q_ARG / string-name overload or for a queued signal-slot
+        // connection carrying them as parameters.
         if (auto* p2 = qobject_cast<NereusSDR::P2RadioConnection*>(m_connection)) {
-            p2->setWidebandEnabled(chainIdx, on);
+            QMetaObject::invokeMethod(p2, [p2, chainIdx, on]() {
+                p2->setWidebandEnabled(chainIdx, on);
+            });
         }
     });
 
