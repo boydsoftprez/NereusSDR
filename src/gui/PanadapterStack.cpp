@@ -193,6 +193,17 @@ void PanadapterStack::floatPanadapter(const QString& panId)
     auto* applet = m_pans.value(panId, nullptr);
     if (!applet || m_floating.contains(panId)) { return; }
 
+    // Reparent while hidden, and re-show only once the new window is up.
+    //
+    // The applet hosts a SpectrumWidget, which is a QRhiWidget: its render
+    // context belongs to the window it lives in. Reparenting a live, visible
+    // one straight into a not-yet-shown window left Qt unable to re-acquire an
+    // RHI for it, and the pan froze while logging "QRhiWidget: No QRhi" once
+    // per frame forever. Hiding first lets the old context tear down cleanly
+    // (releaseResources clears m_rhiInitialized), so the show below drives a
+    // fresh initialize() against the floating window's own surface.
+    applet->hide();
+
     auto* floater = new PanFloatingWindow(applet, nullptr);
     m_floating[panId] = floater;
 
@@ -209,6 +220,30 @@ void PanadapterStack::floatPanadapter(const QString& panId)
     });
 
     floater->show();
+    // Now that the floating window exists and is mapped, bring the pan back up
+    // so its QRhiWidget initializes against that window's surface.
+    applet->show();
+
+    // Re-establish the pans that stayed behind.
+    //
+    // Pulling a widget out of a QSplitter costs its siblings their render
+    // context too: floating one pan turned the OTHER pan black and logged
+    // "QRhiWidget: No QRhi" once per frame. A hide/show cycle makes Qt tear
+    // the context down cleanly (releaseResources clears m_rhiInitialized) and
+    // build a fresh one against the main window.
+    //
+    // Deliberately NOT applyLayout() here: its clearSplitters() reparents
+    // EVERY applet in m_pans back under the stack, floated ones included --
+    // which is exactly what the dockRequested handler above relies on, and
+    // exactly wrong while a float is being set up. Doing that emptied the
+    // floating window and the main window at once.
+    for (auto it = m_pans.cbegin(); it != m_pans.cend(); ++it) {
+        if (it.key() == panId || m_floating.contains(it.key())) { continue; }
+        if (auto* other = it.value()) {
+            other->hide();
+            other->show();
+        }
+    }
 }
 void PanadapterStack::rebuildSplitters(const QString&, const QStringList&) {}
 
