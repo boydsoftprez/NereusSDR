@@ -915,6 +915,14 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // on first show (mirrors wireSliceToSpectrum for Slice A).
     newFlag->setSlice(slice);
     newFlag->setFrequency(slice->frequency());
+    // Seed the HOSTING widget's VFO marker too, not just the flag's own text.
+    // These are separate state: the flag paints the digits, but the pan places
+    // the flag from its own VFO frequency. setVfoFrequency was only ever
+    // called on activeSpectrumWidget(), so a slice on any other pan left that
+    // pan's marker at its 0 Hz default -- the flag was positioned off the left
+    // edge and the pan showed the "<| 0.0000" off-screen-VFO chevron instead.
+    // Bench-caught 2026-07-26: looked exactly like the flag was never created.
+    sw->setVfoFrequency(slice->frequency());
     newFlag->setMode(slice->dspMode());
     newFlag->setFilter(slice->filterLow(), slice->filterHigh());
     newFlag->setAgcMode(slice->agcMode());
@@ -1014,8 +1022,14 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // --- SliceModel -> VfoWidget (model updates repaint the flag) ---
     QPointer<VfoWidget> flagPtr(newFlag);
     connect(slice, &SliceModel::frequencyChanged, this,
-            [flagPtr](double hz) {
+            [this, flagPtr, slice](double hz) {
         if (flagPtr) { flagPtr->setFrequency(hz); }
+        // Keep the hosting pan's VFO marker on this slice as it tunes.
+        // Resolved per-call rather than captured, because a slice can migrate
+        // to another pan and the flag follows it there.
+        if (SpectrumWidget* host = spectrumForSlice(slice)) {
+            host->setVfoFrequency(hz);
+        }
     });
     connect(slice, &SliceModel::dspModeChanged, this,
             [flagPtr](DSPMode mode) {
@@ -1139,6 +1153,35 @@ void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
     sw->setDdcCenterFrequency(it->centreHz);
     if (it->sampleRateHz > 0) {
         sw->setSampleRate(static_cast<double>(it->sampleRateHz));
+    }
+
+    // Move the DISPLAY window onto the stream too, not just the DDC centre.
+    //
+    // setDdcCenterFrequency only tells the widget where the DDC sits for
+    // bin-to-frequency mapping; the visible span is separate state, and a pan
+    // created after startup keeps SliceModel's 14.225 MHz default. Bench-caught
+    // 2026-07-26 on a 2v layout: pan-1 was correctly subscribed to a 7.265 MHz
+    // stream while still displaying 14.2258 MHz, which
+    //   - made visibleBinRange() select bins entirely outside the stream, so
+    //     the waterfall rendered saturated (solid red), and
+    //   - put the slice's flag at an x position far off the left edge, so the
+    //     pan looked like it had no flag at all.
+    //
+    // Both symptoms are the same missing line. Recentre, preserving the pan's
+    // current span so an operator's zoom is not thrown away -- only a pan that
+    // has never been placed is actually moved, because pan-0 already sits on
+    // its stream and this is a no-op there.
+    // Span is clamped to the stream's own width. Preserving a wider one would
+    // reintroduce the same failure at the edges: a pan left at the 192 kHz
+    // default over a 48 kHz DDC has three quarters of its window outside the
+    // data, which is exactly the out-of-range saturation this is fixing.
+    const double streamWidthHz = static_cast<double>(it->sampleRateHz);
+    double spanHz = sw->bandwidth();
+    if (spanHz <= 0.0 || (streamWidthHz > 0.0 && spanHz > streamWidthHz)) {
+        spanHz = streamWidthHz;
+    }
+    if (spanHz > 0.0) {
+        sw->setFrequencyRange(it->centreHz, spanHz);
     }
 }
 
