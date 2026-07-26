@@ -25,8 +25,6 @@ namespace {
 constexpr int kOverlayHeight  = 22;
 constexpr int kBadgeSize      = 16;
 constexpr int kLeftMargin     = 4;
-constexpr int kBadgeGap       = 6;   // gap between slice badge and freq text
-constexpr int kFreqWidth      = 180;
 constexpr int kChTagWidth     = 36;
 constexpr int kPillWidth      = 60;
 constexpr int kInterPillGap   = 4;
@@ -37,12 +35,21 @@ constexpr int kRightPad       = 4;
 SpectrumStatusOverlay::SpectrumStatusOverlay(QWidget* parent) : QWidget(parent)
 {
     setFixedHeight(kOverlayHeight);
-    // Default minimum width covers: left pad + badge + gap + freq text + ch tag + right pad.
-    setMinimumWidth(kLeftMargin + kBadgeSize + kBadgeGap + kFreqWidth + kChTagWidth + kRightPad);
+    // Default minimum width covers the no-pill case: left pad + ch tag + right
+    // pad. The slice badge and freq/mode text are no longer painted, so
+    // reserving their width here would leave a wide empty strip on every pan.
+    setMinimumWidth(kLeftMargin + kChTagWidth + kRightPad);
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
 }
 
 SpectrumStatusOverlay::~SpectrumStatusOverlay() = default;
+
+QSize SpectrumStatusOverlay::sizeHint() const
+{
+    // See the header: a -1 hint pushed this strip off the right edge of the
+    // pan, which is what made the WIDE badge look like it was never wired.
+    return QSize(minimumWidth(), kOverlayHeight);
+}
 
 void SpectrumStatusOverlay::setSliceLetter(QChar letter)
 {
@@ -121,33 +128,18 @@ void SpectrumStatusOverlay::paintEvent(QPaintEvent*)
     int x = kLeftMargin;
     const int y = (height() - kBadgeSize) / 2;
 
-    // Slice letter badge.
-    QColor sliceColor;
-    switch (m_sliceLetter.toLatin1()) {
-        case 'A': sliceColor = QColor(0x00, 0xd4, 0xff); break;
-        case 'B': sliceColor = QColor(0xff, 0x40, 0xff); break;
-        case 'C': sliceColor = QColor(0x40, 0xff, 0x40); break;
-        case 'D': sliceColor = QColor(0xff, 0xff, 0x00); break;
-        default:  sliceColor = QColor(0x00, 0xd4, 0xff); break;
-    }
-    p.setBrush(sliceColor);
-    p.setPen(Qt::NoPen);
-    p.drawRoundedRect(x, y, kBadgeSize, kBadgeSize, 2, 2);
-    p.setPen(Qt::black);
-    p.setFont(QFont(QStringLiteral("monospace"), 10, QFont::Bold));
-    p.drawText(QRect(x, y, kBadgeSize, kBadgeSize), Qt::AlignCenter,
-               QString(m_sliceLetter));
-    x += kBadgeSize + kBadgeGap;
-
-    // Freq + mode text. Format: "MHz.kkk MODE" (e.g. "14.225 USB").
-    p.setPen(QColor(Style::kTextPrimary));
-    p.setFont(QFont(QStringLiteral("monospace"), 10, QFont::Bold));
-    const QString freqText = QStringLiteral("%1.%2 %3")
-        .arg(m_frequencyHz / 1000000)
-        .arg((m_frequencyHz / 1000) % 1000, 3, 10, QChar('0'))
-        .arg(m_mode);
-    p.drawText(x, y, kFreqWidth, kBadgeSize, Qt::AlignVCenter, freqText);
-    x += kFreqWidth;
+    // Slice letter, frequency and mode are deliberately NOT painted here.
+    //
+    // They restated the VFO flag sitting a few pixels away on the same pan:
+    // flag and strip both showed "A", both showed 7.244, both showed LSB. The
+    // strip's only unique content is the chain tag and the bypass / diversity
+    // / PureSignal pills, so that is all it carries now. It also stops a pan
+    // with no slice from asserting a meaningless "A 0.000 USB".
+    //
+    // The setters (setSliceLetter / setFrequencyHz / setMode) are kept: they
+    // are cheap, PanadapterApplet already calls them, and the values are the
+    // obvious source for a tooltip or a compact mode if either is wanted
+    // later. Only the painting is gone.
 
     // CH tag (always visible).
     p.setBrush(QColor(0x1a, 0x2a, 0x3a));
@@ -201,8 +193,10 @@ QRect SpectrumStatusOverlay::badgeRect(Badge badge) const
     // narrowed. Kept as the single source of the hit geometry so
     // mousePressEvent and any caller reading a region back cannot drift.
 
-    // CH tag starts after: left margin + badge + gap + freq width.
-    int hitX = kLeftMargin + kBadgeSize + kBadgeGap + kFreqWidth;
+    // CH tag is first now: the slice badge and freq/mode text they used to sit
+    // behind are no longer painted (see paintEvent). This offset MUST track
+    // paintEvent's `x` or every pill becomes unclickable or hits its neighbour.
+    int hitX = kLeftMargin;
     if (badge == Badge::ChainTag) {
         return QRect(hitX, 0, kChTagWidth, height());
     }

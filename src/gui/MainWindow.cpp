@@ -1307,6 +1307,11 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     // state change, and its disconnected guard swallows every mouse press.
     sw->setConnectionState(m_radioModel->connectionState());
 
+    // Band plan too: setBandPlanManager was another activeSpectrumWidget()
+    // one-shot, so the band-segment bar ("PHONE General" and friends) drew on
+    // pan-0 only and every other pan showed a bare spectrum.
+    sw->setBandPlanManager(&m_radioModel->bandPlanManagerMutable());
+
     // Click on the spectrum tunes this pan's slice.
     connect(sw, &SpectrumWidget::frequencyClicked, this,
             [this, panId](double hz) {

@@ -111,6 +111,22 @@ signals:
     void wideBadgeClicked();
     void chainTagClicked(int chainIdx);
 
+public:
+    /// Valid size for the strip, so a parent can place it.
+    ///
+    /// Without this, QWidget::sizeHint() returns QSize(-1, -1) for a widget
+    /// with no layout. PanadapterApplet::resizeEvent positions the strip as
+    /// `width() - hint.width() - 8`, so a -1 hint put it 7px from the right
+    /// edge with all but a sliver of its 246px hanging off the pan -- which is
+    /// why the status strip, and with it the WIDE badge, appeared to be
+    /// missing entirely. Bench-caught 2026-07-26.
+    ///
+    /// Width tracks minimumWidth(), which paintEvent keeps at the true content
+    /// extent (`setMinimumWidth(x + kRightPad)`), so the hint self-corrects as
+    /// pills light and go dark. The constructor seeds it with the no-pill
+    /// width so the very first layout, before any paint, is already right.
+    QSize sizeHint() const override;
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
