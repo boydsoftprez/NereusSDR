@@ -321,6 +321,14 @@ public:
     double centerFrequency() const { return m_centerHz; }
     double bandwidth() const { return m_bandwidthHz; }
 
+    /// Width the dBm scale strip reserves along the right edge, 0 when hidden.
+    ///
+    /// Public so a parent laying widgets over this one can keep clear of it.
+    /// PanadapterApplet's status strip is pinned to the top-right and was
+    /// landing on top of the strip's range up/down arrows, which made them
+    /// hard to see and hard to hit.
+    int reservedRightEdgeWidth() const { return effectiveStripW(); }
+
     // Re-fire the auto-zoom replan with the current bandwidth.  Used by
     // setup pages (e.g. when the user changes the Hz/bin target) to kick
     // the FFTEngine into recomputing targetSize without a zoom action.

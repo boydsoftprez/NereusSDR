@@ -144,8 +144,12 @@ void PanadapterApplet::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     if (m_statusOverlay) {
         const QSize hint = m_statusOverlay->sizeHint();
-        // 8px inset from top + right edge.
-        m_statusOverlay->setGeometry(width() - hint.width() - 8, 8,
+        // Inset from the top, and clear of the dBm scale strip on the right.
+        // Pinned to the bare right edge, the strip sat on top of the dBm
+        // range up/down arrows: they were hard to read under it and hard to
+        // hit, because this widget accepts mouse events for its own badges.
+        const int reserved = m_spectrum ? m_spectrum->reservedRightEdgeWidth() : 0;
+        m_statusOverlay->setGeometry(width() - hint.width() - 8 - reserved, 8,
                                      hint.width(), hint.height());
     }
 }
