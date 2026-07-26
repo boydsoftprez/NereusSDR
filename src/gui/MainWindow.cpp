@@ -1290,10 +1290,15 @@ void MainWindow::pushConnectionStateToPans()
 {
     if (!m_radioModel || !m_panStack) { return; }
     const ConnectionState st = m_radioModel->connectionState();
+    const bool live = m_radioModel->isConnected();
     for (auto* applet : m_panStack->allApplets()) {
         if (!applet) { continue; }
         if (SpectrumWidget* sw = m_panStack->spectrum(applet->panId())) {
             sw->setConnectionState(st);
+            // Clearing stale history on disconnect was pan-0 only, so every
+            // other pan kept painting the waterfall it had when the radio went
+            // away -- indistinguishable from live data.
+            if (!live) { sw->clearWaterfallHistory(); }
         }
     }
 }
@@ -1365,12 +1370,43 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
         }
     });
 
+    // Right-click a spot on THIS pan to remove it. Was pan-0 only, so spots
+    // could be dismissed from one pan and were inert on every other.
+    if (SpotModel* spots = m_radioModel->spotModel()) {
+        connect(sw, &SpectrumWidget::spotRemoveRequested,
+                spots, &SpotModel::removeSpot);
+    }
+
+    // Hovering a spot on any pan drives the Spot Hub highlight.
+    if (m_spotHubDialog) {
+        connect(sw, &SpectrumWidget::spotHoverIndexChanged,
+                m_spotHubDialog.data(),
+                &SpotHubDialog::setHoveredPanadapterSpot);
+    }
+
+    // Clicking a disconnected pan opens the connection panel, from any pan.
+    connect(sw, &SpectrumWidget::disconnectedClickRequest,
+            this, &MainWindow::showConnectionPanel);
+
+    // CTUN max-bin offset follows THIS pan's slice rather than the globally
+    // active one, so a max-bin readout on a background pan is not measured
+    // against a slice sitting on some other pan's stream.
+    connect(sw, &SpectrumWidget::ddcCenterFrequencyChanged, this,
+            [this, panId](double ddcCenter) {
+        if (!m_radioModel || !m_radioModel->wdspEngine()) { return; }
+        if (SliceModel* s = sliceForPan(panId)) {
+            m_radioModel->wdspEngine()->setMaxBinSliceOffsetHz(
+                /*disp=*/0, s->frequency() - ddcCenter);
+        }
+    });
+
     // NOT wired here: bandwidthChangeRequested. Zoom itself already works on
     // every pan (SpectrumWidget narrows its own visible bin range), but the
-    // auto-replan that keeps bins-per-pixel constant across zoom levels is a
-    // single global handler keyed to pan-0. Making it per-stream is a larger
-    // change than this function, so on other pans a deep zoom stays visually
-    // correct but does not gain FFT resolution.
+    // auto-replan that keeps bins-per-pixel constant across zoom levels runs
+    // against primaryFftEngine() -- one engine, pan-0's. Routing it per pan
+    // needs the FFT engine looked up by the pan's stream, which is a bigger
+    // change than this function. Until then a deep zoom on another pan stays
+    // visually correct but does not gain FFT resolution.
 }
 
 void MainWindow::ensureOverlayPanels()
