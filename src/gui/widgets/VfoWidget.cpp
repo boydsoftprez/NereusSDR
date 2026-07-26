@@ -448,6 +448,19 @@ VfoWidget::VfoWidget(QWidget* parent)
 // regressed by ff94942.
 VfoWidget::~VfoWidget() = default;
 
+// See the header for why this is a separate call rather than destructor work.
+// Deleting the buttons while both this flag and its SpectrumWidget parent are
+// still alive keeps the ordering ours, so it cannot reproduce issue #113.
+void VfoWidget::destroyFloatingButtons()
+{
+    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_recBtn, &m_playBtn}) {
+        if (*btn) {
+            delete *btn;
+            *btn = nullptr;
+        }
+    }
+}
+
 void VfoWidget::buildUI()
 {
     auto* mainLayout = new QVBoxLayout(this);

@@ -422,6 +422,20 @@ public:
     // specTop is the y of the spectrum widget's top edge.
     void updatePosition(int vfoX, int specTop, FlagDir dir = FlagDir::Auto);
 
+    /// Destroy the four floating buttons (close / lock / record / play).
+    ///
+    /// They are parented to the SpectrumWidget, not to this flag, so deleting
+    /// the flag alone leaves them painted on the pan forever -- visible as a
+    /// second orphaned button column after a slice is removed. The destructor
+    /// deliberately does NOT free them (issue #113: Qt's deleteChildren walked
+    /// SpectrumWidget's children in an order that freed a button before
+    /// ~VfoWidget ran, and the explicit delete then SIGSEGV'd on a dangling
+    /// pointer). Calling this BEFORE the flag is destroyed avoids that
+    /// entirely, because both objects are still alive and the order is ours.
+    ///
+    /// Idempotent; safe when the buttons were never built.
+    void destroyFloatingButtons();
+
     int sliceIndex() const { return m_sliceIndex; }
 
     // Phase 3F Sub-Epic C Task 9: test-only seam to fire the TX-badge click

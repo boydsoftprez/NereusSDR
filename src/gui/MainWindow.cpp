@@ -1255,6 +1255,213 @@ void MainWindow::wirePanStatusOverlayTriggers()
 // Qt::UniqueConnection is silently ignored for lambda targets in Qt6 -- a
 // lambda here would stack one extra connection per layout switch and open
 // that many FilterPolicyDialogs on a single click.
+// ---------------------------------------------------------------------------
+// ensureOverlayPanels — one control strip per panadapter.
+//
+// The strip used to be a single instance parented to pan-0's SpectrumWidget,
+// so every other pan had no BAND / ANT / Display / +RX at all, and the one
+// button that did exist had to guess which pan the operator meant. A control
+// drawn on a pan acts on that pan: each strip now owns its panId and emits it,
+// the same shape as AetherSDR's SpectrumOverlayMenu (SpectrumOverlayMenu.cpp:
+// 292-315 [@c6481cbf], where +RX emits addRxClicked(m_panId)).
+//
+// Idempotent and re-armed from PanadapterStack::countChanged, so pans created
+// by a layout switch or an Add Panadapter get their strip by construction
+// rather than by remembering. Panels for pans that went away are dropped --
+// the widget itself dies with its parent SpectrumWidget.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// wireSpectrumForPan — mouse interaction for one panadapter.
+//
+// Every SpectrumWidget signal used to be connected exactly once, to whatever
+// activeSpectrumWidget() returned during startup -- pan-0's widget. The connect
+// binds the OBJECT, not the expression, so it never re-resolved: on any other
+// pan, click-to-tune, filter-edge drag, pan drag, zoom-replan and the dBm strip
+// were all inert. The flag stayed live because it is wired per slice, which is
+// why tuning appeared to work only with the pointer over the flag's digits.
+//
+// Resolves the slice per call through sliceForPan, so each pan drives its own
+// slice, and uses that slice's WDSP channel rather than the hardcoded
+// rxChannel(0) the single-pan path used.
+// ---------------------------------------------------------------------------
+// Push the live connection state into every pan's spectrum widget. Safe to
+// call at any time; a pan created later is seeded by wireSpectrumForPan.
+void MainWindow::pushConnectionStateToPans()
+{
+    if (!m_radioModel || !m_panStack) { return; }
+    const ConnectionState st = m_radioModel->connectionState();
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        if (SpectrumWidget* sw = m_panStack->spectrum(applet->panId())) {
+            sw->setConnectionState(st);
+        }
+    }
+}
+
+void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
+{
+    if (!sw || !m_radioModel) { return; }
+
+    // Seed the new pan with the CURRENT connection state. Without this a pan
+    // created after connect sits at the Disconnected default until the next
+    // state change, and its disconnected guard swallows every mouse press.
+    sw->setConnectionState(m_radioModel->connectionState());
+
+    // Click on the spectrum tunes this pan's slice.
+    connect(sw, &SpectrumWidget::frequencyClicked, this,
+            [this, panId](double hz) {
+        if (SliceModel* s = sliceForPan(panId)) { s->setFrequency(hz); }
+    });
+
+    // Drag a filter edge on this pan.
+    connect(sw, &SpectrumWidget::filterEdgeDragged, this,
+            [this, panId](int low, int high) {
+        if (SliceModel* s = sliceForPan(panId)) { s->setFilter(low, high); }
+    });
+
+    // Drag the pan. Non-CTUN moves the VFO; CTUN pins the DDC to the pan centre
+    // and offsets WDSP so audio stays on the VFO (Thetis radio.cs:1417 --
+    // SetRXAShiftFreq receives +(freq - center)).
+    connect(sw, &SpectrumWidget::centerChanged, this,
+            [this, panId, sw](double centerHz) {
+        if (m_handlingBandJump) { return; }
+        SliceModel* s = sliceForPan(panId);
+        if (!s) { return; }
+        if (!sw->ctunEnabled()) {
+            s->setFrequency(centerHz);
+            return;
+        }
+        const int stream = s->streamIndex();
+        if (stream >= 0 && m_radioModel->receiverManager()) {
+            m_radioModel->receiverManager()->forceHardwareFrequency(
+                stream, static_cast<quint64>(centerHz));
+        }
+        sw->setDdcCenterFrequency(centerHz);
+        if (m_radioModel->wdspEngine()) {
+            if (RxChannel* ch =
+                    m_radioModel->wdspEngine()->rxChannel(s->sliceIndex())) {
+                ch->setShiftFrequency(s->frequency() - centerHz);
+            }
+        }
+    });
+
+    // CTUN toggle clears this pan's slice shift rather than channel 0's.
+    connect(sw, &SpectrumWidget::ctunEnabledChanged, this,
+            [this, panId](bool enabled) {
+        if (m_radioModel->receiverManager()) {
+            m_radioModel->receiverManager()->setDdcFrequencyLocked(enabled);
+        }
+        if (enabled || !m_radioModel->wdspEngine()) { return; }
+        if (SliceModel* s = sliceForPan(panId)) {
+            if (RxChannel* ch =
+                    m_radioModel->wdspEngine()->rxChannel(s->sliceIndex())) {
+                ch->setShiftFrequency(0.0);
+            }
+        }
+    });
+
+    // NOT wired here: bandwidthChangeRequested. Zoom itself already works on
+    // every pan (SpectrumWidget narrows its own visible bin range), but the
+    // auto-replan that keeps bins-per-pixel constant across zoom levels is a
+    // single global handler keyed to pan-0. Making it per-stream is a larger
+    // change than this function, so on other pans a deep zoom stays visually
+    // correct but does not gain FFT resolution.
+}
+
+void MainWindow::ensureOverlayPanels()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+
+    // Drop entries whose pan (and therefore whose parent widget) is gone.
+    for (auto it = m_overlayPanels.begin(); it != m_overlayPanels.end(); ) {
+        if (it.value().isNull() || !m_panStack->panadapter(it.key())) {
+            it = m_overlayPanels.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        const QString panId = applet->panId();
+        if (m_overlayPanels.contains(panId)) { continue; }
+
+        SpectrumWidget* sw = m_panStack->spectrum(panId);
+        if (!sw) { continue; }
+
+        // Same one-shot-per-pan guard as the strip below: this loop only runs
+        // for pans that have no entry yet, so the interaction connects cannot
+        // stack on a layout switch.
+        if (panId != QStringLiteral("pan-0")) {
+            // pan-0 keeps its existing wiring from wireSliceToSpectrum(), which
+            // also sets the initial CTUN lock state and positions the flag.
+            // Wiring it twice here would double every click.
+            wireSpectrumForPan(sw, panId);
+        }
+
+        auto* panel = new SpectrumOverlayPanel(sw);
+        panel->setPanId(panId);
+        panel->move(4, 4);
+        panel->show();
+        m_overlayPanels.insert(panId, panel);
+
+        // Phase 3O Sub-Phase 9 Task 9.2c — bind the VAX Ch combo to the model.
+        panel->setRadioModel(m_radioModel);
+
+        // Phase 3P-I-a T18 — board caps drive the antenna combos, and are
+        // re-pushed on every radio swap.
+        panel->setBoardCapabilities(m_radioModel->boardCapabilities());
+        connect(m_radioModel, &RadioModel::currentRadioChanged, panel,
+                [this, panel]() {
+            panel->setBoardCapabilities(m_radioModel->boardCapabilities());
+        });
+
+        // +RX adds a slice on the pan this strip belongs to. The id comes from
+        // the signal, so this never consults an "active" pan.
+        connect(panel, &SpectrumOverlayPanel::addRxClicked, this,
+                [this](const QString& id) {
+            if (!m_radioModel || id.isEmpty()) { return; }
+            m_radioModel->addSliceOnPan(id);
+        });
+
+        // Band clicks act on this pan's active slice rather than the globally
+        // active one, for the same reason (#118 fixed the mode-vs-frequency
+        // half of this; the pan-targeting half arrives with per-pan strips).
+        connect(panel, &SpectrumOverlayPanel::bandSelected, this,
+                [this, panId](const QString& name, double, const QString&) {
+            if (!m_radioModel) { return; }
+            if (SliceModel* s = sliceForPan(panId)) {
+                m_radioModel->setActiveSlice(s->sliceIndex());
+            }
+            m_radioModel->onBandButtonClicked(bandFromName(name));
+        });
+
+        // Pan-0's strip stays the one the display-settings wiring targets.
+        if (m_overlayPanel == nullptr || panId == QStringLiteral("pan-0")) {
+            m_overlayPanel = panel;
+        }
+    }
+}
+
+// The slice this pan hosts: its own active slice if it has one, else the first
+// slice associated with it. Returns nullptr for a pan with no slices.
+SliceModel* MainWindow::sliceForPan(const QString& panId) const
+{
+    if (!m_panStack || !m_radioModel) { return nullptr; }
+    auto* applet = m_panStack->panadapter(panId);
+    if (!applet) { return nullptr; }
+    const int active = applet->activeSliceIndex();
+    if (active >= 0) {
+        if (SliceModel* s = m_radioModel->sliceById(active)) { return s; }
+    }
+    for (SliceModel* s : m_radioModel->slices()) {
+        if (s && applet->associatedSlices().contains(s->sliceIndex())) {
+            return s;
+        }
+    }
+    return nullptr;
+}
+
 void MainWindow::wirePanBadgeHandlers()
 {
     if (!m_panStack) { return; }
@@ -1625,6 +1832,7 @@ void MainWindow::buildUI()
     connect(m_panStack, &PanadapterStack::countChanged, this, [this](int) {
         wirePanStatusOverlayTriggers();
         wirePanBadgeHandlers();
+        ensureOverlayPanels();
         refreshPanStatusOverlays();
     });
     wirePanStatusOverlayTriggers();
@@ -1658,24 +1866,11 @@ void MainWindow::buildUI()
     // pan's SpectrumWidget. Construction is deferred when the active
     // pan has no widget (shouldn't happen because the stack ctor
     // creates pan-0, but be defensive).
-    m_overlayPanel = new SpectrumOverlayPanel(initialSpectrum);
-    m_overlayPanel->move(4, 4);
-    m_overlayPanel->show();
-
-    // Phase 3O Sub-Phase 9 Task 9.2c — bind the overlay's VAX Ch combo to
-    // the RadioModel. The combo stays disabled until slice 0 exists
-    // (setRadioModel listens to sliceAdded), then flips live.
-    m_overlayPanel->setRadioModel(m_radioModel);
-
-    // Phase 3P-I-a T18 — push board caps into the overlay's antenna
-    // combos on connect and on every radio swap. Hides both RX/TX
-    // rows on HL2/Atlas and reseeds from slice 0's rxAntenna/txAntenna
-    // so persisted per-band state is visible in the combo label.
-    m_overlayPanel->setBoardCapabilities(m_radioModel->boardCapabilities());
-    connect(m_radioModel, &RadioModel::currentRadioChanged, m_overlayPanel,
-            [this]() {
-        m_overlayPanel->setBoardCapabilities(m_radioModel->boardCapabilities());
-    });
+    // One strip per pan, created here for the pans that exist at startup and
+    // re-armed from the countChanged hook for every pan created later.
+    // m_overlayPanel stays pointing at pan-0's so the display-settings and
+    // band wiring further down keeps a stable target.
+    ensureOverlayPanels();
 
     // ── 2026-05-12 bench fix: SpotModel → SpectrumWidget bridge ───────────
     //
@@ -2201,6 +2396,10 @@ void MainWindow::buildUI()
                     }
                 }
                 if (!removed) {
+                    // Same orphan hazard as removeVfoWidget: the flag's
+                    // floating buttons belong to the SpectrumWidget, so they
+                    // outlive a bare delete and stay painted on the pan.
+                    victim->destroyFloatingButtons();
                     victim->deleteLater();
                 }
             }
@@ -7165,12 +7364,10 @@ void MainWindow::wireSliceToSpectrum()
     // Previously this lambda called setFrequency and silently discarded
     // the mode arg, which was the #118 reproducer (80m click moved VFO
     // but left mode stale).
-    if (m_overlayPanel) {
-        connect(m_overlayPanel, &SpectrumOverlayPanel::bandSelected,
-                this, [this](const QString& name, double /*freqHz*/, const QString& /*mode*/) {
-            m_radioModel->onBandButtonClicked(bandFromName(name));
-        });
-    }
+    // Wired per strip in ensureOverlayPanels() now, so a band click acts on the
+    // pan it was clicked on rather than on whichever slice happens to be
+    // active. The handler there keeps this one's semantics (name only; the
+    // legacy freqHz / mode args stay for SpectrumOverlayPanel's kBands table).
 
     // Phase 3P-II Task 65: notify PGXL of band changes so the amplifier can
     // switch its bias / antenna profile when the operator crosses a band boundary.
@@ -8226,10 +8423,18 @@ void MainWindow::showAudioDiagnoseDialog()
 
 void MainWindow::onConnectionStateChanged()
 {
-    // Phase 3Q-8: forward state to the spectrum widget for the disconnect overlay.
-    if (activeSpectrumWidget()) {
-        activeSpectrumWidget()->setConnectionState(m_radioModel->connectionState());
-    }
+    // Phase 3Q-8: forward state to the spectrum widgets for the disconnect
+    // overlay.
+    //
+    // EVERY pan, not just the active one. SpectrumWidget::mousePressEvent
+    // opens with a disconnected guard that emits disconnectedClickRequest()
+    // and returns, so a widget left at its Disconnected default swallows every
+    // press: no click-to-tune, no filter-edge drag, no pan drag. Only
+    // mouseMoveEvent is ungated, which is why a second pan still tracked the
+    // cursor readout and looked alive while being completely unclickable --
+    // and why tuning appeared to work only with the pointer over the flag,
+    // which is a separate widget with its own handlers.
+    pushConnectionStateToPans();
 
     if (m_radioModel->isConnected()) {
         // Board widget top line: show model code ("Saturn") not marketing name

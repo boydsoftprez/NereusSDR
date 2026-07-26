@@ -60,6 +60,15 @@ class SpectrumOverlayPanel : public QWidget {
 public:
     explicit SpectrumOverlayPanel(QWidget* parent = nullptr);
 
+    /// The panadapter this strip is drawn on. A control rendered on a pan acts
+    /// on THAT pan -- the id travels with the signals rather than the consumer
+    /// resolving an implicit "active" pan, so what a visible button does never
+    /// depends on hidden state. Same shape as AetherSDR's SpectrumOverlayMenu,
+    /// which carries m_panId and emits addRxClicked(m_panId)
+    /// (SpectrumOverlayMenu.cpp:315 [@c6481cbf]).
+    void setPanId(const QString& panId) { m_panId = panId; }
+    QString panId() const { return m_panId; }
+
     // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo
     // and wires it bidirectionally to slice 0's vaxChannel(). Safe to
     // call multiple times — each rebind drops prior SliceModel connections.
@@ -102,8 +111,11 @@ signals:
     // Clarity adaptive tuning (Phase 3G-9c)
     void clarityRetuneRequested();
 
-    // NYI placeholders
-    void addRxClicked();
+    /// Add an RX slice on the pan this strip belongs to. Carries the pan id so
+    /// the consumer never has to guess which pan the operator meant.
+    void addRxClicked(const QString& panId);
+
+    // NYI placeholder
     void addTnfClicked();
 
 protected:
@@ -122,6 +134,9 @@ public:
     void setClarityStatus(bool active, bool paused);
 
 private:
+    /// Which panadapter this strip is drawn on; see setPanId.
+    QString m_panId;
+
     // Layout
     void updateLayout();
     void toggle();

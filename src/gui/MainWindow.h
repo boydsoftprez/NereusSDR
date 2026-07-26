@@ -222,6 +222,28 @@ private slots:
     /// the SpotModel and applet-visibility connect sites).
     void wirePanBadgeHandlers();
 
+    /// Give every panadapter its own control strip (+RX / BAND / ANT /
+    /// Display). Idempotent and re-armed from PanadapterStack::countChanged,
+    /// so pans created later get one by construction. Each strip carries its
+    /// own panId and its controls act on that pan.
+    void ensureOverlayPanels();
+
+    /// Wire one panadapter's mouse interaction (click-to-tune, filter-edge
+    /// drag, pan drag, CTUN toggle) to the slice that pan hosts. Every one of
+    /// these used to be connected once to pan-0's widget, leaving other pans
+    /// inert to everything except the flag.
+    void wireSpectrumForPan(class SpectrumWidget* sw, const QString& panId);
+
+    /// Push the live connection state into every pan's spectrum widget.
+    /// SpectrumWidget::mousePressEvent returns early when it believes the
+    /// radio is disconnected, so a widget that never receives this is inert to
+    /// every mouse press.
+    void pushConnectionStateToPans();
+
+    /// The slice a pan hosts -- its own active slice if it has one, else the
+    /// first slice associated with it. nullptr when the pan has no slices.
+    SliceModel* sliceForPan(const QString& panId) const;
+
     /// Phase 3F: WIDE pill / CH tag both open FilterPolicyDialog on the chain
     /// feeding the CLICKED pan, and the TX pill asks the arbiter to hand the
     /// transmitter to that pan's active slice.
@@ -784,7 +806,14 @@ private:
     bool m_tciHasTxClient{false};
 
     // Spectrum overlay panel
+    /// Pan-0's strip. Kept as a stable target for the display-settings and
+    /// clarity wiring, which is still global rather than per-pan.
     class SpectrumOverlayPanel* m_overlayPanel{nullptr};
+
+    /// One control strip per pan, keyed by pan id. QPointer because the widget
+    /// is parented to its pan's SpectrumWidget and dies with it when a layout
+    /// switch retires the pan.
+    QHash<QString, QPointer<class SpectrumOverlayPanel>> m_overlayPanels;
 
     // Applet panel — scrollable content widget inside Container #0
     class AppletPanelWidget* m_appletPanel{nullptr};

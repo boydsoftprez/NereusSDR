@@ -7798,7 +7798,15 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
 void SpectrumWidget::removeVfoWidget(int sliceIndex)
 {
     if (auto* w = m_vfoWidgets.take(sliceIndex)) {
+        // The flag's close / lock / record / play buttons are parented to THIS
+        // widget, not to the flag, so deleting the flag alone orphans them and
+        // they stay painted on the pan. Bench-caught 2026-07-26: creating and
+        // removing slices left a stack of dead button columns behind. Cleared
+        // here rather than in ~VfoWidget because doing it while both objects
+        // are alive keeps the destruction order ours (issue #113).
+        w->destroyFloatingButtons();
         delete w;
+        update();
     }
 }
 

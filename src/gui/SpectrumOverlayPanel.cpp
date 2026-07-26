@@ -208,9 +208,15 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
 
     // Button 2: +RX (NYI Phase 3F)
     {
-        auto* btn = makeDisabledBtn("+RX", this);
-        btn->setToolTip("Add RX slice (NYI Phase 3F)");
-        connect(btn, &QPushButton::clicked, this, &SpectrumOverlayPanel::addRxClicked);
+        // Adds a slice on THIS pan -- the one this strip is drawn on -- not on
+        // whichever pan happens to be active. A control rendered on a pan acts
+        // on that pan; anything else makes the operator track hidden state to
+        // predict what a visible button will do.
+        auto* btn = makeMenuBtn("+RX", this);
+        btn->setToolTip("Add an RX slice on this panadapter");
+        connect(btn, &QPushButton::clicked, this, [this]() {
+            emit addRxClicked(m_panId);
+        });
         m_menuBtns.append(btn);
     }
 
