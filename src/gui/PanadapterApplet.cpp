@@ -142,16 +142,7 @@ bool PanadapterApplet::eventFilter(QObject* obj, QEvent* ev)
 void PanadapterApplet::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    if (m_statusOverlay) {
-        const QSize hint = m_statusOverlay->sizeHint();
-        // Inset from the top, and clear of the dBm scale strip on the right.
-        // Pinned to the bare right edge, the strip sat on top of the dBm
-        // range up/down arrows: they were hard to read under it and hard to
-        // hit, because this widget accepts mouse events for its own badges.
-        const int reserved = m_spectrum ? m_spectrum->reservedRightEdgeWidth() : 0;
-        m_statusOverlay->setGeometry(width() - hint.width() - 8 - reserved, 8,
-                                     hint.width(), hint.height());
-    }
+    repositionStatusOverlay();
 }
 
 QByteArrayList PanadapterApplet::statusOverlaySliceProperties()
@@ -196,6 +187,8 @@ void PanadapterApplet::updateStatusOverlay(SliceModel* slice, int chainIndex)
     m_statusOverlay->setTxBound(slice->isTxSlice());
     m_statusOverlay->setDiversityActive(slice->diversityEnabled());
     m_statusOverlay->setPsPaused(slice->psPaused());
+    // TX / DIV / PS pills all change the strip's width; re-anchor.
+    repositionStatusOverlay();
 }
 
 QChar PanadapterApplet::statusSliceLetter() const
@@ -224,10 +217,34 @@ int PanadapterApplet::statusChainIndex() const
 // a property of the chain feeding this pan and changes on band crossings,
 // slice add/remove, wideband toggles and Filter Policy edits -- none of
 // which need be the active slice, or any slice on this pan at all.
+// Right-align the status strip, clear of the dBm scale strip.
+//
+// Must re-run whenever a pill lights or goes dark, not only on resize.
+// SpectrumStatusOverlay::paintEvent grows minimumWidth() to fit the pills it
+// just drew, and setGeometry clamps a narrower request up to that minimum --
+// expanding the widget RIGHTWARD from its fixed x. So a strip positioned while
+// only "CH 0" was showing crept back under the dBm range arrows the moment the
+// TX or WIDE pill appeared. Re-anchoring from the current hint puts the right
+// edge back where it belongs.
+void PanadapterApplet::repositionStatusOverlay()
+{
+    if (!m_statusOverlay) { return; }
+    const QSize hint = m_statusOverlay->sizeHint();
+    // Clear of the dBm scale strip: its range up/down arrows sit at the top of
+    // that column, and the status strip accepts mouse events for its own
+    // badges, so any overlap makes the arrows both hard to read and hard to
+    // hit.
+    const int reserved = m_spectrum ? m_spectrum->reservedRightEdgeWidth() : 0;
+    m_statusOverlay->setGeometry(width() - hint.width() - 8 - reserved, 8,
+                                 hint.width(), hint.height());
+}
+
 void PanadapterApplet::setWideBpf(bool wide, const QString& reason)
 {
     if (!m_statusOverlay) { return; }
     m_statusOverlay->setWideBpf(wide, reason);
+    // The WIDE pill changes the strip's width; re-anchor its right edge.
+    repositionStatusOverlay();
 }
 
 bool PanadapterApplet::wideBpf() const

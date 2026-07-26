@@ -152,6 +152,11 @@ signals:
     void chainTagClicked(const QString& panId, int chainIdx);
 
 protected:
+    /// Right-align the status strip clear of the dBm scale strip. Re-run
+    /// whenever a pill lights or goes dark: the strip's minimum width grows to
+    /// fit its pills, and setGeometry clamps up to that minimum by expanding
+    /// rightward, which walks the strip back under the dBm range arrows.
+    void repositionStatusOverlay();
     void resizeEvent(QResizeEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     /// Emits activated(panId) on any press in this pan, so clicking a pan makes
