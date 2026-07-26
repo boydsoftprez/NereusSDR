@@ -143,7 +143,9 @@ Still desk work. Nothing below has touched a radio.
 | WIDE badge never lit | `00ab9522` |
 | Pan status overlay showing hardcoded placeholders | `0896b4f3` |
 | Status-overlay badges responding to clicks on pan-0 only | `a976fc46` |
-| P1 stream rate change never reaching the wire (HL2) | pending |
+| P1 stream rate change never reaching the wire (HL2) | `ddf42130` |
+| RxDashboard bound by list position rather than slice id | `2f63f59e` |
+| Active pan id left naming a destroyed pan after its pan closed | `d190c580` |
 
 ### What to expect on a G2, honestly
 
@@ -171,6 +173,23 @@ Still desk work. Nothing below has touched a radio.
 - The TX pill is only hit-testable on a pan whose slice is already TX-bound, so
   it reads as a state indicator rather than a way to grab TX from another slice.
   Use the flag's TX button for the handoff.
+- **The active pan cannot be changed.** `PanadapterApplet::activated` is declared
+  ("emitted on any click within applet") but never emitted -- there is no
+  `mousePressEvent` or `eventFilter` on the applet -- so nothing ever calls
+  `PanadapterStack::setActivePan` after the first pan is created. Consequence
+  for the bench: **"Add slice on active pan" (Ctrl+R) and "Float active pan..."
+  always target pan-0**, whichever pan you are actually working in. Use the
+  layout templates to add pans (that path passes explicit `pan-N` ids and is
+  unaffected) and the per-slice flag controls for everything else.
+  `closeRequested(panId)` is unemitted in the same way, so a pan cannot be
+  closed from the pan itself. AetherSDR wires all three: `PanadapterApplet.cpp:629`
+  emits `activated` from `eventFilter` on `MouseButtonPress`, `MainWindow.cpp:12964`
+  connects it straight to `setActivePan`, and `MainWindow.cpp:12076` auto-activates
+  the pan owning a slice when that slice becomes active. Left for maintainer
+  review because it is UX behaviour, not a defect with one correct answer.
+- A refused TX handoff is silent. `TxSliceArbiter::handoffBlocked` is emitted but
+  has no production consumer, so if the arbiter declines a handoff the flag
+  button appears to do nothing.
 - Slice B+ come up with default NR / SNB / APF / squelch / pan, because those
   remain active-slice-only from Sub-Epic A. Slice B will sound different from A.
 - Anti-VOX cancellation references Slice A's audio only. Upstream mixes all
@@ -195,7 +214,9 @@ Still desk work. Nothing below has touched a radio.
 5. **Filter policy.** Click the WIDE badge on pan-0, choose Force band, Apply.
    The preselector should change immediately, without needing a VFO nudge.
 6. **Removal.** Close Slice A while B exists. B must keep working and the radio
-   must not go silent (this was a real defect until `30a2efae`).
+   must not go silent (this was a real defect until `30a2efae`). Then close a
+   whole pan: whatever survives must still take Ctrl+R without the app
+   targeting the pan that just went away (`d190c580`).
 7. **Do not transmit with two slices on different bands until step 1 has been
    confirmed clean.** The TX low-pass fix is unverified on hardware, and the
    failure mode it corrects was full power through a filter for the wrong band.
