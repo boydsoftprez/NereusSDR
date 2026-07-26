@@ -1383,6 +1383,18 @@ nereus_add_test(tst_alex_controller_per_adc_bpf)
 # NereusSDR-original: no Thetis port.
 nereus_add_test(tst_alex_per_adc_bpf_wire)
 
+# ── Phase 3F: an effective-BPF change pushes on its OWN trigger ───────────────
+# republishAlexAdcSlices is the only producer of AlexRxBpf, and it used to be
+# reachable only from requestDdcAssignment and ConnectionState::Connected.
+# Neither of the two state changes that flip AlexAdcState::effective (operator
+# override via FilterPolicyDialog, and wideband) went through either, so the
+# bottom-bar CH label went amber while the preselector stayed where it was
+# until the next VFO nudge. Thetis pushes from the setter with no deferral
+# (console.cs:18793-18806 AlexHPFBypass [v2.10.3.15]).
+# Also locks the re-entrancy guard: one band-crossing retune, one push.
+# NereusSDR-original: no Thetis port.
+nereus_add_test(tst_alex_bpf_policy_push)
+
 # ── RF-safety: the Alex TX low-pass is selected from the TRANSMIT frequency ───
 # P2RadioConnection::setReceiverFrequency used to recompute the LPF from the
 # receive frequency it was handed, and both Alex words read that one mask, so

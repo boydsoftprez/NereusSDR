@@ -342,6 +342,7 @@ warren@wpratt.com
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QMetaObject>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -559,6 +560,48 @@ RadioModel::RadioModel(QObject* parent)
             [this]() {
         m_alexControllerDirty = true;
         scheduleSettingsSave();
+    });
+
+    // Phase 3F: an effective-BPF change pushes on its OWN trigger.
+    //
+    // republishAlexAdcSlices is the only producer of AlexRxBpf, and it was
+    // reachable only from requestDdcAssignment (a slice bound / retuned /
+    // removed) and from the Connected handler. Neither of the two state
+    // changes that actually flip AlexAdcState::effective went through
+    // either of them:
+    //   1. Wideband. SliceModel::widebandExtensionRequestedChanged ->
+    //      setWidebandActive -> recomputeBpf sets WidebandLocked.
+    //   2. Operator override. FilterPolicyDialog's Apply -> setBpfMode ->
+    //      recomputeBpf.
+    // Both repainted the bottom-bar CH label, which was bpfStateChanged's
+    // only consumer, and left the preselector on the band it already had
+    // until the operator happened to nudge the VFO. The UI asserted a
+    // state the hardware was not in, for an unbounded time.
+    //
+    // Upstream does not defer. Thetis's operator bypass pushes from inside
+    // its own setter:
+    //   From Thetis console.cs:18793-18806 [v2.10.3.15]
+    //     public bool AlexHPFBypass {
+    //         set { alex_hpf_bypass = value;
+    //               double freq = VFOAFreq;
+    //               setAlex1HPF(freq);      // <- on the wire, right here
+    //     ...
+    // and setAlexHPF issues NetworkIO.SetAlexHPFBits(0x20) on the spot
+    // (console.cs:6838-6855 [v2.10.3.15]). Thetis's wideband window drives
+    // that same setter when it opens and wbClosing() restores it
+    // (console.cs:43552-43566 [v2.10.3.15]).
+    // Upstream inline attribution preserved verbatim (console.cs:43545):
+    //   private bool _wb_caused_alex_hpf_bypass = false; //[2.10.3.7]MW0LGE fixes #529
+    //
+    // Hung off bpfStateChanged rather than off the two trigger sites on
+    // purpose. recomputeBpf is the only writer of AlexAdcState::effective
+    // and bpfStateChanged is its only exit, so every present and future
+    // trigger has to pass through here to change the state at all. A third
+    // trigger cannot forget to push; it would have to bypass the state
+    // machine entirely to avoid it.
+    connect(&m_alexController, &AlexController::bpfStateChanged, this,
+            [this](int, const AlexController::AlexAdcState&) {
+        republishAlexAdcSlices();
     });
 
     // Phase 3P-I-b (T6): flag changes must re-fire composition for current band.
@@ -9211,6 +9254,30 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 // ---------------------------------------------------------------------------
 void RadioModel::republishAlexAdcSlices()
 {
+    // Re-entrancy guard. notifySlicesOnAdc below recomputes, and a recompute
+    // that lands on a new answer emits bpfStateChanged, which is wired back
+    // here (see the connect in the constructor) so that an operator override
+    // or a wideband toggle reaches the wire on its own trigger.
+    //
+    // recomputeBpf's change-only emit (AlexController.cpp:152-154) is not by
+    // itself enough to stop that becoming a loop: reasonText is part of the
+    // change test and it carries the band label, so in Auto mode every band
+    // crossing re-emits. The re-entry arrives midway through the ADC loop,
+    // where ADC1 has not been notified yet, so the nested pass would compose
+    // and push ADC1 from stale state before the outer pass corrects it.
+    //
+    // Dropping the nested call is safe: the outer call has not read any
+    // AlexController state yet at the point the emit fires. It goes on to
+    // notify every remaining ADC and then reads all of them, so the single
+    // push it makes is composed from state that already includes whatever
+    // change triggered the emit.
+    if (m_republishingAlexBpf) {
+        return;
+    }
+    m_republishingAlexBpf = true;
+    const QScopeGuard clearReentrancyGuard(
+        [this]() { m_republishingAlexBpf = false; });
+
     // Two chains: Alex0/ADC0 and Alex1/ADC1. AlexController is sized to match.
     constexpr int kAdcCount  = 2;
     constexpr int kSliceSlots = 5;

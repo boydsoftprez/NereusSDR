@@ -2601,6 +2601,16 @@ private:
     // write at flush time. Set from the antennaChanged/blockTxChanged
     // handlers in wireSlice<Slot>, cleared by saveSliceState().
     bool m_alexControllerDirty{false};
+    // Phase 3F re-entrancy guard for republishAlexAdcSlices().
+    // republishAlexAdcSlices feeds AlexController::notifySlicesOnAdc, which
+    // recomputes and can emit bpfStateChanged, which is wired back to
+    // republishAlexAdcSlices so an operator override or a wideband toggle
+    // reaches the wire on its own trigger. The re-entry lands between the
+    // ADC0 and ADC1 notifications, so the inner pass would compose ADC1
+    // from state the outer pass has not refreshed yet. The guard drops the
+    // nested call; the outer one finishes the loop and pushes once, from
+    // fully-updated state.
+    bool m_republishingAlexBpf{false};
 
 #ifdef NEREUS_BUILD_TESTS
     bool     m_testCapsOverride{false};
