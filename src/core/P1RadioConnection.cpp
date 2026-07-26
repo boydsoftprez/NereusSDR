@@ -2108,13 +2108,21 @@ void P1RadioConnection::setBandwidthMonitor(HermesLiteBandwidthMonitor* monitor)
 void P1RadioConnection::setTxMicSource(TxMicSource* src)
 {
     // Caller contract: invoked on this connection's affinity thread.
-    // Today that is the main thread, because RadioModel::connectToRadio
-    // calls setTxMicSource at line 1764-1767 BEFORE the connection is
-    // moved to its worker thread at line 1842.  The assignment + the
-    // m_lastMicAt arming below therefore race-free with the connection-
-    // thread reads in onWatchdogTick / parseEp6Frame mic16 extraction.
-    // If a future refactor reorders these RadioModel calls, this
-    // function will need atomic / mutex protection.
+    // Both callers now satisfy that by construction rather than by
+    // ordering: RadioModel::connectToRadio marshals the attach through
+    // QMetaObject::invokeMethod and RadioModel::teardownConnection
+    // marshals the detach.  The assignment and the m_lastMicAt arming
+    // below are therefore race-free with the connection-thread reads in
+    // onWatchdogTick / parseEp6Frame mic16 extraction whether or not the
+    // connection has already been moved to its worker thread.
+    //
+    // This used to rest on ordering alone (the attach ran before the
+    // moveToThread in connectToRadio).  That held on the hot path only.
+    // The issue #153 sub-bug 1 cold-start retry re-runs the same attach
+    // from a WdspEngine::initializedChanged handler on the main thread,
+    // long after the move, which is what made marshalling necessary.
+    // A future caller that reaches this setter without marshalling will
+    // need atomic / mutex protection.
     m_txMicSource = src;
 
     // Stage-2 review fix I3: arm the LOS timer at attach time so the

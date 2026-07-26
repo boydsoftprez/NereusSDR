@@ -6665,10 +6665,49 @@ void RadioModel::connectToRadio(const RadioInfo& info)
                 m_txMicSource = std::make_unique<TxMicSource>(this);
                 m_txMicSource->start();
 
+                // ── The attach has to travel the same way the detach does ──
+                //
+                // Both P1RadioConnection::setTxMicSource and the P2 one carry
+                // an explicit caller contract in their own bodies ("invoked on
+                // this connection's affinity thread ... if a future refactor
+                // reorders these RadioModel calls, this function will need
+                // atomic / mutex protection"). They write m_txMicSource, which
+                // the connection thread dereferences in decodeMicFrame132 /
+                // the EP6 mic16 extraction, and m_lastMicAt, which the
+                // connection thread reads on every keep-alive / watchdog tick.
+                //
+                // The contract holds on the hot path, where this runs before
+                // the moveToThread further down connectToRadio. It does NOT
+                // hold on the cold-start path: issue #153 sub-bug 1 captures
+                // this whole txSetup lambda into a one-shot
+                // WdspEngine::initializedChanged handler, and that handler
+                // runs on the main thread long after the connection has been
+                // moved to m_connThread and started. On a first launch with no
+                // cached FFTW wisdom that window is the length of the wisdom
+                // build, so it is the common case rather than a corner.
+                //
+                // teardownConnection already marshals its detachMicSource for
+                // exactly this reason (Codex P1 fix, PR #152). Default
+                // Qt::AutoConnection keeps the hot path byte-for-byte what it
+                // was, because invokeMethod on an object that already lives on
+                // this thread is a plain synchronous call, and only the
+                // deferred retry becomes a queued QMetaCallEvent.
+                //
+                // Non-blocking is safe here where the detach needed
+                // BlockingQueuedConnection: the detach had to complete before
+                // RadioModel destroyed the TxMicSource, whereas this attach
+                // hands over a source that was constructed immediately above
+                // and outlives the call. The two stay correctly ordered
+                // because they land in the same connection-thread FIFO.
+                auto* const micSrc = m_txMicSource.get();
                 if (auto* p1 = qobject_cast<P1RadioConnection*>(m_connection)) {
-                    p1->setTxMicSource(m_txMicSource.get());
+                    QMetaObject::invokeMethod(p1, [p1, micSrc]() {
+                        p1->setTxMicSource(micSrc);
+                    });
                 } else if (auto* p2 = qobject_cast<P2RadioConnection*>(m_connection)) {
-                    p2->setTxMicSource(m_txMicSource.get());
+                    QMetaObject::invokeMethod(p2, [p2, micSrc]() {
+                        p2->setTxMicSource(micSrc);
+                    });
                 }
 
                 // PC mic override gate (Thetis cmaster.c:379 [v2.10.3.13]).
