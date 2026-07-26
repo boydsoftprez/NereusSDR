@@ -20,8 +20,17 @@ Run a subsystem. Labels are derived automatically at configure time from
 each test's own `#include` lines, so they never need hand-maintenance:
 
 ```bash
-ctest --test-dir build -L core
+cmake --build build --target tests_core && ctest --test-dir build -L core
 ```
+
+**Always build the matching `tests_<label>` target first.** Test
+executables are `EXCLUDE_FROM_ALL`, so a plain `cmake --build build` does
+not rebuild them. Running `ctest -L core` on its own is unsafe: on a clean
+tree every selected test reports "Not Run", and on an already-populated
+tree it silently executes **stale binaries built from your previous code**
+and returns a false green. There is one `tests_<label>` target per label,
+generated from the same derivation that produces the labels, so the two
+cannot drift apart.
 
 Current distribution:
 
@@ -53,32 +62,27 @@ Until the Phase 1 library split lands, every test depends on every source
 file. Use `-L` to get fast feedback while iterating; use the full suite
 before you call something done.
 
-## Known wart on this branch: a plain build builds everything
+## Building tests is opt-in
 
-On this branch, test executables are **not** `EXCLUDE_FROM_ALL`, so:
-
-```bash
-cmake --build build        # builds the app AND all 513 test binaries
-```
-
-That is the 32-minute path, and it triggers on any source change. Until the
-fix lands, name your target explicitly:
+Test executables are `EXCLUDE_FROM_ALL`, so a routine build only builds the
+app. Measured after touching `src/core/AppSettings.cpp`:
 
 ```bash
-cmake --build build --target NereusSDR              # app only
-cmake --build build --target tst_slice_auto_agc     # one test
+cmake --build build        # 1.64 s, links 0 test binaries
 ```
 
-The fix already exists in commit `6ed89682` (`EXCLUDE_FROM_ALL` on tests
-plus an `all_tests` aggregate target) but is not yet on `main`. It lives on
-`feature/rfkit-rf2ks-applet`, `feature/phase3f-sub-epic-a-foundation`, and
-`claude/adoring-elgamal-24e14e`. Once merged, a plain
-`cmake --build build` builds only the app, and the full suite becomes an
-explicit opt-in:
+Everything that runs tests must therefore name a target first:
 
 ```bash
-cmake --build build --target all_tests && ctest --test-dir build
+cmake --build build --target tst_slice_auto_agc   # one test
+cmake --build build --target tests_core           # one subsystem
+cmake --build build --target all_tests            # the lot (~32 min cold)
 ```
+
+Then run `ctest`. **Skipping the build step is the one real footgun here**:
+`ctest` on its own will happily run whatever binaries are already on disk,
+which after a source change means testing your previous code and getting a
+green that means nothing.
 
 ## macOS: the first-run scan
 
