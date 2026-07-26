@@ -100,13 +100,9 @@ click-in-island retune) were valid throughout and are unaffected.
 
 ### Bench walk to run first
 
-1. **Shared DDC:** Slice A on 14.200, then add B, C, D at 14.180 / 14.225 /
-   14.260. All four flags on one pan, all four produce audio, one active DDC.
-2. **Separate DDCs:** retune B to 7.150. B claims a second DDC and a second pan
-   animates on 40 m while A, C, D stay on 20 m.
-3. **Limit:** keep adding cross-band slices past `userDdcCount` and confirm the
-   rejection names the hardware limit rather than failing silently.
-4. **Regression:** single-slice operation on Slice A, unchanged.
+Superseded by the Session 4 walkthrough below, which reflects what the code
+actually does after the adversarial-review fix pass. The steps here assumed
+ADC distribution, which is still specification-only.
 
 ---
 
@@ -119,6 +115,93 @@ Confirmed on the bench across both sessions:
   state sync with their `SliceModel`
 - Per-slice RX applet tab row and active-slice switching
 - Single-slice (Slice A) operation, unchanged from v0.5.2
+
+---
+
+## Session 4 (2026-07-25): adversarial review and fix pass
+
+A falsification pass against Thetis, deskhpsdr and the Anvelina Pro III FPGA
+gateware produced 16 findings that survived independent refutation, six of them
+critical. All six are fixed, plus several found while fixing them. Suite 556/556.
+
+Still desk work. Nothing below has touched a radio.
+
+### Fixed since Session 3
+
+| Defect | Commit |
+|---|---|
+| TX low-pass selected from the last RX retune, not the transmit frequency | `46e5390d`, `f3e2f53f` |
+| WDSP channel-id collision: RX pool claimed the TX channel's id | `f0a632f4` |
+| Pooled RX channels opened but never activated (slices B+ silent) | `30a2efae` |
+| Codec's DDC enable mask overwritten by a receiver count | `8b02c5a5` |
+| `applyDdcAssignment` mutating connection state from the GUI thread | `40c14144` |
+| Wrong filter ladder on Saturn-class boards (80/60/40/15 m) | `3a2d7038` |
+| `TxSliceArbiter` never establishing an initial binding | `1f536cd1` |
+| Filter-policy changes never reaching the wire on their own trigger | `b7bd01bf` |
+| `setWidebandEnabled` written from the GUI thread | `0f7e3055` |
+| TX mic-source attach unmarshalled on the cold-start retry | `824c2b78` |
+| WIDE badge never lit | `00ab9522` |
+| Pan status overlay showing hardcoded placeholders | `0896b4f3` |
+
+### What to expect on a G2, honestly
+
+**Should work now:**
+
+- Two pans animating independently, each fed by its own DDC stream
+- Slices B+ audible (WDSP channel activated, mixer slot registered, per-slice fan-out)
+- Per-slice tuning reaching hardware
+- Correct band-pass filter on every band, including 80/60/40/15 m which were
+  wrong before `3a2d7038` even on a single slice
+- TX low-pass following the transmit frequency rather than the last RX retune
+- WIDE badge lighting on any pan whose chain is bypassed, with a tooltip naming
+  the conflicting ranges and what to do about it
+- Pan status overlay showing that pan's real slice letter, frequency, mode and CH tag
+- Filter Policy changes taking effect immediately instead of at the next VFO tick
+
+**Expected to be imperfect, by design:**
+
+- **Every slice lands on ADC0.** ADC distribution is specification-only (design
+  doc §16); `setAdcForReceiver` is still called once. So on a G2, two slices in
+  different filter ranges share one chain and that chain bypasses, where the
+  hardware could have given each its own filter. The WIDE badge will correctly
+  report this. This is the single biggest gap between current behaviour and §16.
+- Only pan-0's badges are clickable. The pills show live data on every pan, but
+  `txBadgeClicked` / `wideBadgeClicked` / `chainTagClicked` are wired for pan-0
+  only (pre-existing).
+- Slice B+ come up with default NR / SNB / APF / squelch / pan, because those
+  remain active-slice-only from Sub-Epic A. Slice B will sound different from A.
+- Anti-VOX cancellation references Slice A's audio only. Upstream mixes all
+  receivers (`cmaster.c:372 [v2.10.3.15]`); the aamix port is in flight.
+
+### Walkthrough
+
+1. **Single-slice regression first.** Connect, Slice A only. Audio, spectrum,
+   S-meter, tuning. This is the path most at risk from the epic and the one
+   worth the most attention. Also worth an ear on 40 m and 15 m specifically:
+   the preselector was choosing the wrong filter there until `3a2d7038`.
+2. **Same-range pair.** Add Slice B at 14.180 while A is at 14.225. Both inside
+   11.0 to 22.0 MHz, so one filter serves both. Expect: both audible, both flags
+   on one pan, one active DDC, **no WIDE badge**.
+3. **Cross-range pair.** Retune B to 7.150. Expect: B claims a second DDC and a
+   second pan animates on 40 m, both slices audible. Because both streams sit on
+   ADC0 today, expect the chain to bypass and **WIDE to appear on both pans**.
+   Under §16 with ADC distribution this case would keep both filters; it does
+   not yet.
+4. **Overlay check.** Each pan's status strip should show its own slice letter,
+   frequency and mode, not `A / 0.000 / USB`.
+5. **Filter policy.** Click the WIDE badge on pan-0, choose Force band, Apply.
+   The preselector should change immediately, without needing a VFO nudge.
+6. **Removal.** Close Slice A while B exists. B must keep working and the radio
+   must not go silent (this was a real defect until `30a2efae`).
+7. **Do not transmit with two slices on different bands until step 1 has been
+   confirmed clean.** The TX low-pass fix is unverified on hardware, and the
+   failure mode it corrects was full power through a filter for the wrong band.
+
+### If something is wrong
+
+The most informative single observation is whether a symptom appears with one
+slice or only with two. Everything in this epic that broke, broke on the second
+slice; the single-slice path was byte-identical throughout.
 
 ## Next
 
