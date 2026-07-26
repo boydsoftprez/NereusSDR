@@ -493,6 +493,23 @@ jobs:
         shell: bash
         run: cmake --build build -j$NUMBER_OF_PROCESSORS
 
+      # Build the test executables explicitly.  Every tst_* executable is
+      # now EXCLUDE_FROM_ALL, so a routine `cmake --build build` builds
+      # only the main app (seconds, not the ~32 minutes it takes to link
+      # 513 test binaries).  CI must therefore ask for the `all_tests`
+      # aggregate before invoking ctest, or ctest finds the registered
+      # test definitions but no binaries and reports every one as
+      # "Not Run" -- which exits 0 and would silently pass.
+      #
+      # Gated on Linux to match the configure step: only the Linux job
+      # passes -DNEREUS_BUILD_TESTS=ON (ci.yml:458), and `all_tests` is
+      # created by tests/CMakeLists.txt, which is only add_subdirectory'd
+      # when that option is ON.  Asking for the target elsewhere would
+      # fail with "No rule to make target".
+      - name: Build test executables (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build -j$(nproc) --target all_tests
+
       # ------------------------------------------------------------------
       # Test
       # ------------------------------------------------------------------

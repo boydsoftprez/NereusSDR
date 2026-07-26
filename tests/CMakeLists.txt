@@ -145,8 +145,25 @@ function(nereus_add_test name)
     # path instead of the real user config file. Without this, ctest
     # runs can (and have — see v0.1.1 alpha) silently wipe the
     # developer's NereusSDR.settings via P1FakeRadio-keyed test writes.
-    add_executable(${name} ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
+    # 2026-05-26 KG4VCF: EXCLUDE_FROM_ALL makes test executables NOT
+    # part of the default `cmake --build build` target.  513 test
+    # binaries × non-trivial link time = real dev-loop pain when a
+    # single source change forces all of them to relink.  Devs who
+    # want to run tests use:
+    #
+    #   cmake --build build --target tst_specific_name  # one test
+    #   cmake --build build --target all_tests          # the lot
+    #
+    # CI uses `all_tests` followed by `ctest`.  Pre-commit hooks
+    # currently don't invoke ctest (they're verification scripts,
+    # not test runs), so nothing in the existing workflow breaks.
+    #
+    # The aggregate `all_tests` target is created at the bottom of
+    # this file from a global property each nereus_add_test() call
+    # appends to.
+    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
     target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
     # Reuse the NereusSDRObjs precompiled header (CMakeLists.txt §PCH).
     # 451 test executables × per-target PCH compile would burn the wins;
@@ -5272,3 +5289,20 @@ target_link_libraries(tst_rf2ks_connection_poll PRIVATE Qt6::Network)
 # Tests: backoffSequenceFollowsSchedule (1s->2s->4s->8s->...->cap 60s);
 #   successResetsBackoff (testForceBackoffReset resets to 1s).
 nereus_add_test(tst_rf2ks_connection_reconnect)
+
+# --------------------------------------------------------------------------
+# Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
+# --------------------------------------------------------------------------
+# All individual tst_* executables are EXCLUDE_FROM_ALL so a routine
+# `cmake --build build` builds only the main NereusSDR app (seconds,
+# not minutes).  When the operator -- or CI, or pre-merge -- needs to
+# build the full test suite, they invoke:
+#
+#   cmake --build build --target all_tests
+#   ctest
+#
+# The GLOBAL property NEREUS_ALL_TESTS is appended to by every
+# nereus_add_test() call above.  add_custom_target then bundles them
+# into a single buildable target.
+get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
+add_custom_target(all_tests DEPENDS ${_all_tests})
