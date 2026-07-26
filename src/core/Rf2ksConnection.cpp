@@ -312,6 +312,7 @@ void Rf2ksConnection::onReplyFinished()
     }
     const QString path    = reply->property("rfkitPath").toString();
     const qint64 started  = reply->property("startedMs").toLongLong();
+    const bool isWrite    = reply->property("rfkitIsWrite").toBool();
     const int rttMs       = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
 
     if (reply->error() != QNetworkReply::NoError) {
@@ -322,7 +323,16 @@ void Rf2ksConnection::onReplyFinished()
     const QByteArray body = reply->readAll();
     reply->deleteLater();
 
-    handleResponse(path, body);
+    // Review blocker [P2] on PR #291: only GET replies carry state.  The amp
+    // answers a write with Content-Length: 0, and QJsonDocument::fromJson("")
+    // yields an empty object -- so parsing a write ack as state published
+    // operateModeUpdated("") and antenna number 0, clobbering the cached
+    // values with the reply to the very command that had just changed them.
+    // A write ack is still proof of liveness, so it keeps feeding
+    // markPollSuccess() and the connected transition below.
+    if (!isWrite) {
+        handleResponse(path, body);
+    }
     markPollSuccess(rttMs);
 
     if (!m_connected) {
@@ -437,6 +447,9 @@ void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
     auto* reply = m_nam->sendCustomRequest(req, "PUT", body);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): write acks carry no state body and must not be
+    // fed to handleResponse().
+    reply->setProperty("rfkitIsWrite", true);
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
@@ -457,6 +470,9 @@ void Rf2ksConnection::issuePost(const QString& path)
     auto* reply = m_nam->post(req, QByteArray());
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): write acks carry no state body and must not be
+    // fed to handleResponse().
+    reply->setProperty("rfkitIsWrite", true);
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
