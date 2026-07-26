@@ -21,6 +21,7 @@
 
 #include "SettingsHygiene.h"
 #include "AppSettings.h"
+#include "codec/AlexFilterMap.h"
 
 namespace NereusSDR {
 
@@ -76,9 +77,13 @@ void SettingsHygiene::resetSettingsToDefaults(const QString& mac,
     // Clear Saturn BPF1 settings if not a BPF1-algorithm board.
     // HermesC10 (ANAN-G2E) uses the BPF1 algorithm path alongside Saturn/SaturnMKII.
     // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM
-    const bool usesBpf1 = (caps.board == HPSDRHW::Saturn
-                        || caps.board == HPSDRHW::SaturnMKII
-                        || caps.board == HPSDRHW::HermesC10);  //N1GP G2E added (HermesC10) //DK1HLM
+    //
+    // Routed through the single canonical predicate rather than an open-coded
+    // board list.  The list here used to omit OrionMKII (ANAN-7000DLE /
+    // 8000DLE / Anvelina Pro 3 / Red Pitaya), which Thetis DOES dispatch to
+    // setBPF1ForOrionIISaturn, so a 7000DLE owner's BPF1 band edges were being
+    // discarded as if they belonged to a board that had no such filters.
+    const bool usesBpf1 = codec::alex::usesBpf1Preselector(caps.board);
     if (!usesBpf1) {
         const QString bpf1Base = QStringLiteral("hardware/%1/alex/bpf1").arg(mac);
         // Walk known band keys and remove.
@@ -150,9 +155,11 @@ void SettingsHygiene::checkSaturnBpf1(const QString& mac,
     // Saturn BPF1 per-band edges are only meaningful on BPF1-algorithm boards.
     // HermesC10 (ANAN-G2E) uses the BPF1 algorithm alongside Saturn/SaturnMKII.
     // From Thetis console.cs:6829-6834 [v2.10.3.15] //N1GP G2E added (HermesC10) //DK1HLM
-    if (caps.board == HPSDRHW::Saturn
-     || caps.board == HPSDRHW::SaturnMKII
-     || caps.board == HPSDRHW::HermesC10) { return; }  //N1GP G2E added (HermesC10) //DK1HLM
+    //
+    // Same canonical predicate as resetSettingsToDefaults. The open-coded
+    // list this replaced omitted OrionMKII, so a 7000DLE's stored BPF1 edges
+    // were reported as stray data for a board that does not use them.
+    if (codec::alex::usesBpf1Preselector(caps.board)) { return; }
 
     auto& s = AppSettings::instance();
     const QString bpf1Key = QStringLiteral("hardware/%1/alex/bpf1/160m/start").arg(mac);

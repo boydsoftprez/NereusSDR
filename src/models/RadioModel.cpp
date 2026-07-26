@@ -9225,7 +9225,15 @@ void RadioModel::republishAlexAdcSlices()
         // Thetis's own rule for a shared filter (UpdateAlexRXFilter above) and
         // which, with a single band on the chain, returns byte-for-byte what
         // the frequency-derived path returned before this change.
-        return int(codec::alex::computeHpf(lowestHz[adc] / 1.0e6));
+        //
+        // Route through the board-appropriate ladder: Orion MkII / Saturn /
+        // HermesC10 carry a band-pass bank on these bits, not the legacy
+        // high-pass ladder.
+        // From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+        // Upstream inline attribution preserved verbatim (console.cs:6830):
+        //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+        return int(codec::alex::computeRxPreselector(lowestHz[adc] / 1.0e6,
+                                                     boardCapabilities().board));
     };
 
     AlexRxBpf bpf;

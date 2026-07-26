@@ -846,10 +846,25 @@ void P1RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     // T/R relay flutters.  Compute the bits for HL2 too, gated on the
     // hardware profile so other "no Alex" boards (Atlas, basic Hermes)
     // remain byte-identical to pre-fix behavior.
+    //
+    // Ladder selection is a property of the RF board, not of the protocol:
+    // Thetis's setAlex1HPF dispatches purely on HardwareSpecific.Hardware with
+    // no protocol test anywhere in it, and an ANAN-7000DLE running P1 has the
+    // same band-pass front end it has on P2.  So P1 routes through
+    // computeRxPreselector exactly like P2 does.
+    // From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim (console.cs:6830):
+    //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+    //
+    // HL2 keeps the legacy ladder: HermesLite is not one of the three boards
+    // Thetis names, and mi0bot's HL2 path drives the N2ADR filter board from
+    // the same high-pass selection it always did.
     if (receiverIndex == 0
         && (   (m_caps && m_caps->hasAlexFilters)
             || m_hardwareProfile.model == HPSDRModel::HERMESLITE)) {
-        m_alexHpfBits = codec::alex::computeHpf(double(frequencyHz) / 1e6);
+        m_alexHpfBits = codec::alex::computeRxPreselector(
+            double(frequencyHz) / 1e6,
+            m_caps ? m_caps->board : HPSDRHW::Unknown);
     }
 }
 

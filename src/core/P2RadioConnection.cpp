@@ -601,8 +601,28 @@ void P2RadioConnection::connectToRadio(const RadioInfo& info)
     if (m_rx[primaryDdc].frequency == 0) {
         m_rx[primaryDdc].frequency = 3865000;   // 80m LSB — first-boot default only
         double freqMhz = m_rx[primaryDdc].frequency / 1.0e6;
-        m_alex.hpfBits   = NereusSDR::codec::alex::computeHpf(freqMhz);
+        m_alex.hpfBits   = NereusSDR::codec::alex::computeRxPreselector(
+            freqMhz, m_caps ? m_caps->board : HPSDRHW::Unknown);
         m_alex.lpfBitsRx = NereusSDR::codec::alex::computeLpf(freqMhz);
+    } else {
+        // Same FIFO ordering as above, with a consequence the original fix did
+        // not have to think about: setReceiverFrequency ran BEFORE us, and at
+        // that point m_caps was still null (it is assigned at the top of this
+        // method), so its preselector call fell back to the legacy high-pass
+        // ladder.  On a Saturn-class board that is the wrong bank, and nothing
+        // would correct it until the operator retuned by hand.  m_caps is
+        // valid now, so redo the selection from the frequency already stored.
+        //
+        // The LPF is deliberately not recomputed: it has one board-independent
+        // ladder (Thetis console.cs:7177-7270 [v2.10.3.15] has no
+        // HardwareSpecific branch), so what setReceiverFrequency computed for
+        // it is already correct.
+        // From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+        // Upstream inline attribution preserved verbatim (console.cs:6830):
+        //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+        const double freqMhz = m_rx[primaryDdc].frequency / 1.0e6;
+        m_alex.hpfBits = NereusSDR::codec::alex::computeRxPreselector(
+            freqMhz, m_caps ? m_caps->board : HPSDRHW::Unknown);
     }
     // The primary DDC's samplingRate is set by setSampleRate() which
     // RadioModel queues before connectToRadio in the FIFO (see
@@ -752,8 +772,16 @@ void P2RadioConnection::setReceiverFrequency(int receiverIndex, quint64 frequenc
     // Upstream tags preserved: //N1GP (from cited console.cs:6830) [v2.10.3.15]
     // Upstream inline attribution preserved verbatim:
     //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
+    //
+    // Saturn-class boards (Orion MkII / Saturn / HermesC10) carry a BAND-PASS
+    // bank on these same relay bits rather than the legacy high-pass ladder,
+    // so the ladder has to be chosen by board.  Selecting the wrong one is
+    // silent on the air: the radio still hears the band, just through the
+    // neighbouring filter.
+    // From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
     double freqMhz = frequencyHz / 1e6;
-    m_alex.hpfBits = NereusSDR::codec::alex::computeHpf(freqMhz);
+    m_alex.hpfBits = NereusSDR::codec::alex::computeRxPreselector(
+        freqMhz, m_caps ? m_caps->board : HPSDRHW::Unknown);
 
     // RF-SAFETY: a receive frequency selects the RECEIVE low-pass only. It
     // must never reach m_alex.lpfBitsTx, which is the transmit low-pass.

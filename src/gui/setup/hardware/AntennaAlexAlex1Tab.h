@@ -266,6 +266,11 @@ private:
     // Static band tables
     static const std::vector<HpfBandEntry>& hpfBands();
     static const std::vector<LpfBandEntry>& lpfBands();
+
+    // Saturn / Orion MkII BPF1 band rows.  Separate from hpfBands() because
+    // the MkII boards carry a BAND-PASS bank on the same relay bits, with
+    // entirely different crossovers (see AlexFilterMap).
+    static const std::vector<HpfBandEntry>& bpf1Bands();
 };
 
 } // namespace NereusSDR

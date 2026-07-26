@@ -617,8 +617,24 @@ const BoardCapabilities kOrionMKII = {
     .minFirmwareVersion = 0,   // floor check removed; see file header
     .knownGoodFirmware  = 0,
     // Phase 3P-B Task 6: OrionMKII family has independent per-ADC preamp control
-    // (ANAN-7000DLE / 8000DLE / AnvelinaPro3). p2SaturnBpf1Edges stays empty
-    // (OrionMKII uses standard Alex HPF/LPF; Saturn BPF1 override is G2/G2-1K only).
+    // (ANAN-7000DLE / 8000DLE / AnvelinaPro3).
+    //
+    // CORRECTION (2026-07-25): this comment used to read "OrionMKII uses
+    // standard Alex HPF/LPF; Saturn BPF1 override is G2/G2-1K only".  That is
+    // wrong, and it is where the wrong-ladder defect on 80m / 60m / 40m / 15m
+    // came from.  Thetis dispatches OrionMKII to setBPF1ForOrionIISaturn right
+    // alongside Saturn and HermesC10 (console.cs:6827-6837 [v2.10.3.15]), and
+    // deskhpsdr independently groups NEW_DEVICE_ORION2 with NEW_DEVICE_SATURN
+    // for the band-pass bank (new_protocol.c:1288-1290 [@f3d857c]).  OrionMKII
+    // carries the MkII BAND-PASS front end, not the legacy high-pass ladder.
+    // The ladder is selected by codec::alex::usesBpf1Preselector, which is the
+    // single source of truth for the board split.
+    //
+    // p2SaturnBpf1Edges stays empty on every board: it is the per-band USER
+    // OVERRIDE channel (populated from the Setup > Antenna > Alex-1 Filters
+    // page, persisted under hardware/<mac>/alex/bpf1/<band>/{start,end}).
+    // Empty means "use the shipped Thetis defaults", which now live in
+    // codec::alex::computeBpf1 rather than being absent entirely.
     .p2PreampPerAdc   = true,
     .displayName      = "ANAN-7000DLE/8000DLE (OrionMkII)",
     .sourceCitation   = "network.h:453, enums.cs:395, clsHardwareSpecific.cs:143-190",

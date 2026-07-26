@@ -234,6 +234,98 @@ private slots:
         }
     }
 
+    // The per-ADC path must pick the ladder the BOARD has, not always the
+    // legacy high-pass one.  Orion MkII / Saturn / HermesC10 carry a BAND-PASS
+    // bank on the same relay bits, so the same frequency answers differently.
+    // From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+    // Upstream inline attribution preserved verbatim (console.cs:6830):
+    //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+    //
+    // 21.2 MHz (15 m) is the sharpest discriminator: band-pass answers 0x01
+    // (the 11.0-22.0 MHz row), high-pass answers 0x02 (the 20 MHz HPF row).
+    void per_adc_path_uses_board_appropriate_ladder_data()
+    {
+        QTest::addColumn<int>("board");
+        QTest::addColumn<int>("expectedBits");
+
+        // Saturn-class -> MkII band-pass bank.
+        QTest::newRow("OrionMKII")  << int(HPSDRHW::OrionMKII)  << 0x01;
+        QTest::newRow("Saturn")     << int(HPSDRHW::Saturn)     << 0x01;
+        QTest::newRow("SaturnMKII") << int(HPSDRHW::SaturnMKII) << 0x01;
+        QTest::newRow("HermesC10")  << int(HPSDRHW::HermesC10)  << 0x01;
+
+        // Legacy boards must stay bit-identical to pre-fix behaviour.
+        QTest::newRow("Hermes")     << int(HPSDRHW::Hermes)     << 0x02;
+        QTest::newRow("HermesII")   << int(HPSDRHW::HermesII)   << 0x02;
+        QTest::newRow("Angelia")    << int(HPSDRHW::Angelia)    << 0x02;
+        QTest::newRow("Orion")      << int(HPSDRHW::Orion)      << 0x02;
+    }
+
+    void per_adc_path_uses_board_appropriate_ladder()
+    {
+        QFETCH(int, board);
+        QFETCH(int, expectedBits);
+
+        RadioModel model;
+        model.setBoardForTest(static_cast<HPSDRHW>(board));
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(21200000.0);   // 15 m
+
+        QVERIFY(!mock->bpfCalls.isEmpty());
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, expectedBits);
+
+        // And it must agree with the shared helper for that board, so the two
+        // cannot drift apart.
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0,
+                 int(codec::alex::computeRxPreselector(
+                     21.2, static_cast<HPSDRHW>(board))));
+
+        delete mock;
+    }
+
+    // Every ham band, on one Saturn-class board, through the per-ADC path.
+    // These four bands are the ones an operator actually hears the difference
+    // on: 80 m, 60 m, 40 m and 15 m used to engage the neighbouring filter.
+    void per_adc_saturn_matches_bpf1_across_bands()
+    {
+        struct Row { double hz; double mhz; };
+        const QVector<Row> rows {
+            {  1850000.0,  1.85 },   // 160 m
+            {  3700000.0,  3.70 },   //  80 m, was wrong
+            {  5350000.0,  5.35 },   //  60 m, was wrong
+            {  7150000.0,  7.15 },   //  40 m, was wrong
+            { 10100000.0, 10.10 },   //  30 m
+            { 14200000.0, 14.20 },   //  20 m
+            { 18100000.0, 18.10 },   //  17 m
+            { 21200000.0, 21.20 },   //  15 m, was wrong
+            { 24900000.0, 24.90 },   //  12 m
+        };
+
+        for (const Row& r : rows) {
+            RadioModel model;
+            model.setBoardForTest(HPSDRHW::Saturn);
+            model.configureStreamPool(5, 5, 192000);
+            auto* mock = new MockConnection();
+            model.injectConnectionForTest(mock);
+
+            const int a = model.addSlice();
+            model.slices().at(a)->setFrequency(r.hz);
+
+            QVERIFY2(!mock->bpfCalls.isEmpty(),
+                     qPrintable(QStringLiteral("no push at %1 MHz").arg(r.mhz)));
+            QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0,
+                     int(codec::alex::computeBpf1(r.mhz)));
+
+            model.injectConnectionForTest(nullptr);
+            delete mock;
+        }
+    }
+
     // Nothing on ADC1 means no decision for ADC1: the sentinel keeps the
     // existing Alex1 behaviour rather than forcing a filter onto an idle
     // chain. Mirrors Thetis, which only calls setAlex2HPF when RX2 exists

@@ -90,8 +90,111 @@ quint8 computeHpf(double freqMhz)
     return 0x40;                             // 6m preamp
 }
 
+// From Thetis console.cs:6953-7067 setBPF1ForOrionIISaturn [v2.10.3.15]
+//
+// The Orion MkII / Saturn boards replaced the high-pass ladder above with a
+// band-pass bank wired to the SAME relay bits, so the byte values are
+// unchanged and only the crossovers move.  Getting this wrong is silent: the
+// radio still hears the band, it just does it behind the neighbouring filter,
+// so adjacent-band energy that the hardware could have rejected reaches the
+// front end instead.
+//
+// Thetis reads each edge from a user-editable Setup spinner via the BPF1_*
+// getters at setup.cs:5193-5251 [v2.10.3.15]; the values below are those
+// spinners' shipped defaults, decoded from setup.designer.cs [v2.10.3.15]:
+//
+//   ud1_5BPF1Start :24982 = 1.5        ud1_5BPF1End :25023 =  2.099999
+//   ud6_5BPF1Start :25064 = 2.1        ud6_5BPF1End :25105 =  5.499999
+//   ud9_5BPF1Start :25146 = 5.5        ud9_5BPF1End :25187 = 10.999999
+//   ud13BPF1Start  :25440 = 11.0       ud13BPF1End  :25247 = 21.999999
+//   ud20BPF1Start  :25277 = 22.0       ud20BPF1End  :25217 = 34.999999
+//   ud6BPF1Start   :25481 = 35.0       ud6BPF1End   :25522 = 61.44
+//
+// Thetis writes each range as `freq >= Start && freq <= End`, and its End
+// defaults sit one microhertz below the next Start purely so the Setup rows
+// read as non-overlapping.  Collapsing that into a strict `<` chain (as the
+// legacy ladder above already does) closes a sub-Hz window that would
+// otherwise fall through to bypass.  deskhpsdr's independent implementation
+// makes exactly the same call, and lands on exactly the same crossovers, at
+// new_protocol.c:1314-1327 [@f3d857c]:
+//     if      (BPFfreq <  1500000LL) alex0 |= ALEX_ANAN7000_RX_BYPASS_BPF;
+//     else if (BPFfreq <  2100000LL) alex0 |= ALEX_ANAN7000_RX_160_BPF;
+//     else if (BPFfreq <  5500000LL) alex0 |= ALEX_ANAN7000_RX_80_60_BPF;
+//     else if (BPFfreq < 11000000LL) alex0 |= ALEX_ANAN7000_RX_40_30_BPF;
+//     else if (BPFfreq < 22000000LL) alex0 |= ALEX_ANAN7000_RX_20_15_BPF;
+//     else if (BPFfreq < 35000000LL) alex0 |= ALEX_ANAN7000_RX_12_10_BPF;
+//     else                           alex0 |= ALEX_ANAN7000_RX_6_PRE_BPF;
+//
+// The one place the two upstreams differ is the top: Thetis stops the 6 m
+// row at BPF1_6End (61.44 MHz) and bypasses above it, deskhpsdr has no upper
+// bound.  Thetis is the port source, so the 61.44 ceiling is honoured here.
+quint8 computeBpf1(double freqMhz)
+{
+    if (freqMhz < 1.5)    { return 0x20; }   // below the bank: bypass
+    if (freqMhz < 2.1)    { return 0x10; }   // 160m BPF
+    if (freqMhz < 5.5)    { return 0x08; }   // 80/60m BPF
+    if (freqMhz < 11.0)   { return 0x04; }   // 40/30m BPF
+    if (freqMhz < 22.0)   { return 0x01; }   // 20/17/15m BPF
+    if (freqMhz < 35.0)   { return 0x02; }   // 12/10m BPF
+    if (freqMhz <= 61.44) { return 0x40; }   // 6m BPF + LNA
+    return 0x20;                              // above the bank: bypass
+}
+
+// From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15], original C#:
+//
+//     private void setAlex1HPF(double freq)
+//     {
+//         if ((HardwareSpecific.Hardware == HPSDRHW.OrionMKII) || (HardwareSpecific.Hardware == HPSDRHW.Saturn)
+//            || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+//         {
+//             setBPF1ForOrionIISaturn(freq);
+//         }
+//         else
+//         {
+//             setAlexHPF(freq);
+//         }
+//     }
+//
+// Board coverage note (NereusSDR divergence, deliberate):
+//   Thetis names OrionMKII / Saturn / HermesC10.  NereusSDR additionally
+//   routes SaturnMKII here.  Thetis carries SaturnMKII as an enum slot only:
+//   enums.cs:399 [v2.10.3.15] "SaturnMKII = 11,  // ANAN-G2: MKII board?" and
+//   ChannelMaster/network.h:424 [v2.10.3.15] are its ONLY two occurrences in
+//   the entire upstream tree, with no behaviour attached anywhere.  It is an
+//   ANAN-G2 board revision (NereusSDR maps it to HPSDRModel::ANAN_G2 at
+//   P2RadioConnection.h:825), so it physically carries the G2 band-pass bank;
+//   routing it to the legacy high-pass ladder would reintroduce the very
+//   defect this function exists to fix.  SettingsHygiene.cpp already
+//   classified SaturnMKII as a BPF1 board before this function existed, so
+//   this also keeps one answer to the question in the codebase.
+bool usesBpf1Preselector(NereusSDR::HPSDRHW board) noexcept
+{
+    switch (board) {
+        case NereusSDR::HPSDRHW::OrionMKII:   // ANAN-7000DLE / 8000DLE / AnvelinaPro3 / RedPitaya
+        case NereusSDR::HPSDRHW::Saturn:      // ANAN-G2 / ANAN-G2-1K
+        case NereusSDR::HPSDRHW::SaturnMKII:  // ANAN-G2 MkII board revision (see note above)
+        case NereusSDR::HPSDRHW::HermesC10:   // ANAN-G2E  //N1GP G2E added (HermesC10) //DK1HLM
+            return true;
+        default:
+            return false;
+    }
+}
+
+// From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board)
+{
+    return usesBpf1Preselector(board) ? computeBpf1(freqMhz)
+                                      : computeHpf(freqMhz);
+}
+
 // From Thetis console.cs:7168-7234 [@501e3f5]
 // Decision rationale: spec §6.3.1
+//
+// TX low-pass only, and board-independent by design. Thetis has a single
+// setAlexLPF with no HardwareSpecific branch (console.cs:7177-7270
+// [v2.10.3.15]) and deskhpsdr agrees at alex.h:110 [@f3d857c]: "The TX bits
+// are just as for the generic case."  The MkII boards changed the RX front
+// end, not this bank, so there is no BPF1 equivalent to add here.
 quint8 computeLpf(double freqMhz)
 {
     if (freqMhz < 2.0)   { return 0x08; }   // 160m LPF

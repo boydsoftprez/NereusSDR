@@ -109,6 +109,41 @@ const std::vector<AntennaAlexAlex1Tab::HpfBandEntry>& AntennaAlexAlex1Tab::hpfBa
     return bands;
 }
 
+// Saturn / Orion MkII BPF1 band rows, 6 entries.
+//
+// The MkII boards (ANAN-7000DLE / 8000DLE / Anvelina Pro 3 / ANAN-G2 /
+// ANAN-G2-1K / ANAN-G2E) put a BAND-PASS bank on the same relay bits the
+// ANAN-100/200 boards use for the high-pass ladder above, so these rows need
+// their own edges and their own labels.  This table used to be hpfBands(),
+// which showed a G2 owner "1.5 MHz HPF / 1.8 - 6.499999" for what is really
+// the 160m band-pass at 1.5 - 2.1 MHz.
+//
+// Source: Thetis panelBPF1Control BPF1 spinboxes, read through the BPF1_*
+// getters at setup.cs:5193-5251 [v2.10.3.15].  Defaults derived from
+// NumericUpDownTS.Value initialisation in setup.designer.cs [v2.10.3.15]:
+//   160m   BPF start: {15,0,0,65536}       = 1.5 MHz;  end: {2099999,0,0,393216}  =  2.099999 MHz
+//   80/60m BPF start: {21,0,0,65536}       = 2.1 MHz;  end: {5499999,0,0,393216}  =  5.499999 MHz
+//   40/30m BPF start: {55,0,0,65536}       = 5.5 MHz;  end: {10999999,0,0,393216} = 10.999999 MHz
+//   20/15m BPF start: {11,0,0,0}           = 11.0 MHz; end: {21999999,0,0,393216} = 21.999999 MHz
+//   12/10m BPF start: {22,0,0,0}           = 22.0 MHz; end: {34999999,0,0,393216} = 34.999999 MHz
+//   6m BPF/LNA start: {35,0,0,0}           = 35.0 MHz; end: {6144,0,0,131072}     = 61.44 MHz
+//
+// The slugs deliberately match hpfBands() so that BPF1 edges already persisted
+// under hardware/<mac>/alex/bpf1/<slug>/{start,end} keep loading; only the
+// labels and the shipped defaults change.
+const std::vector<AntennaAlexAlex1Tab::HpfBandEntry>& AntennaAlexAlex1Tab::bpf1Bands()
+{
+    static const std::vector<HpfBandEntry> bands = {
+        { "160m BPF",     "1_5MHz",   1.5,      2.099999  },  // ud1_5BPF1*  [v2.10.3.15:24982-25023]
+        { "80/60m BPF",   "6_5MHz",   2.1,      5.499999  },  // ud6_5BPF1*  [v2.10.3.15:25064-25105]
+        { "40/30m BPF",   "9_5MHz",   5.5,     10.999999  },  // ud9_5BPF1*  [v2.10.3.15:25146-25187]
+        { "20/17/15m BPF","13MHz",   11.0,     21.999999  },  // ud13BPF1*   [v2.10.3.15:25440-25247]
+        { "12/10m BPF",   "20MHz",   22.0,     34.999999  },  // ud20BPF1*   [v2.10.3.15:25277-25217]
+        { "6m BPF/LNA",   "6mBP",    35.0,     61.44      },  // ud6BPF1*    [v2.10.3.15:25481-25522]
+    };
+    return bands;
+}
+
 // Alex LPF band rows — 7 entries.
 // Source: Thetis tpAlexFilterControl LPF spinboxes (setup.designer.cs:23414-23435) [@501e3f5]
 // Defaults:
@@ -519,8 +554,8 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
     bpf1FormLayout->setHorizontalSpacing(6);
     bpf1FormLayout->setVerticalSpacing(4);
 
-    m_bpf1Rows.reserve(hpfBands().size());
-    for (const HpfBandEntry& band : hpfBands()) {
+    m_bpf1Rows.reserve(bpf1Bands().size());
+    for (const HpfBandEntry& band : bpf1Bands()) {
         HpfRowWidgets w;
         w.bypass = new QCheckBox(bpf1FormWidget);
         w.start  = makeFreqSpin(band.startMhz, bpf1FormWidget);
@@ -817,9 +852,13 @@ void AntennaAlexAlex1Tab::restoreSettings(const QString& macAddress)
         }
     }
 
-    // Restore BPF1 band rows (uses same band slugs as HPF)
-    for (std::size_t i = 0; i < m_bpf1Rows.size() && i < hpf.size(); ++i) {
-        const QString slug = QString::fromLatin1(hpf[i].slug);
+    // Restore BPF1 band rows.  Slugs deliberately match the HPF rows so that
+    // edges persisted before bpf1Bands() existed still load; the defaults,
+    // however, come from the BPF1 table, because the MkII band-pass bank has
+    // entirely different crossovers to the legacy high-pass ladder.
+    const auto& bpf1 = bpf1Bands();
+    for (std::size_t i = 0; i < m_bpf1Rows.size() && i < bpf1.size(); ++i) {
+        const QString slug = QString::fromLatin1(bpf1[i].slug);
         {
             QSignalBlocker b(m_bpf1Rows[i].bypass);
             const bool v = settings.hardwareValue(macAddress,
@@ -831,14 +870,14 @@ void AntennaAlexAlex1Tab::restoreSettings(const QString& macAddress)
             QSignalBlocker b(m_bpf1Rows[i].start);
             const double v = settings.hardwareValue(macAddress,
                 QStringLiteral("alex/bpf1/%1/start").arg(slug),
-                hpf[i].startMhz).toDouble();
+                bpf1[i].startMhz).toDouble();
             m_bpf1Rows[i].start->setValue(v);
         }
         {
             QSignalBlocker b(m_bpf1Rows[i].end);
             const double v = settings.hardwareValue(macAddress,
                 QStringLiteral("alex/bpf1/%1/end").arg(slug),
-                hpf[i].endMhz).toDouble();
+                bpf1[i].endMhz).toDouble();
             m_bpf1Rows[i].end->setValue(v);
         }
     }

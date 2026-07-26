@@ -73,11 +73,36 @@
 #pragma once
 
 #include <QtGlobal>
+#include "../HpsdrModel.h"
 
 namespace NereusSDR::codec::alex {
 
-// Frequency → Alex HPF select bits (bank 10 C3 in the P1 packet,
+// ── Two RX preselector designs, one set of relay bits ────────────────────────
+//
+// The Alex RX preselector comes in two physically different flavours that
+// share the same relay bit positions, so the same byte engages a different
+// filter depending on which board is on the other end of the cable:
+//
+//   * Legacy HIGH-PASS ladder: ANAN-100/200 class (Hermes, HermesII,
+//     Angelia, Orion).  Each relay selects a high-pass corner.
+//   * MkII BAND-PASS bank: Orion MkII / Saturn class (ANAN-7000DLE,
+//     ANAN-8000DLE, Anvelina Pro 3, ANAN-G2, ANAN-G2-1K, ANAN-G2E).  Each
+//     relay selects a band-pass filter with entirely different corners.
+//
+// deskhpsdr states it outright at alex.h:78 [@f3d857c]:
+//   "NOTE: Anan-7000/8000 use band-pass filters here"
+// and defines both banks over the same bits (alex.h:80-86 vs 116-122
+// [@f3d857c]), in the same relay order.
+//
+// Thetis keeps the two apart by dispatching on board model in setAlex1HPF;
+// see computeRxPreselector below.  Call THAT, not computeHpf, from anything
+// that selects a receive filter for a real radio.
+
+// Frequency → legacy Alex HIGH-PASS select bits (bank 10 C3 in the P1 packet,
 // or bytes 1432-1435 in the P2 CmdHighPriority packet).
+//
+// ANAN-100/200 class only.  Saturn-class boards must go through
+// computeBpf1 / computeRxPreselector instead.
 //
 // From Thetis console.cs:6830-6942 [@501e3f5]
 // Upstream tags preserved: //N1GP (from cited console.cs:6830) [v2.10.3.15]
@@ -85,8 +110,35 @@ namespace NereusSDR::codec::alex {
 //   :6830  || (HardwareSpecific.Hardware == HPSDRHW.HermesIII)) //DK1HLM
 quint8 computeHpf(double freqMhz);
 
-// Frequency → Alex LPF select bits (bank 10 C4 in the P1 packet,
+// Frequency → MkII BAND-PASS (BPF1) select bits, for Orion MkII / Saturn
+// class boards.  Same wire encoding as computeHpf, different crossovers.
+//
+// From Thetis console.cs:6953-7067 setBPF1ForOrionIISaturn [v2.10.3.15]
+quint8 computeBpf1(double freqMhz);
+
+// True when `board` carries the MkII band-pass bank rather than the legacy
+// high-pass ladder.
+//
+// From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+// Upstream inline attribution preserved verbatim:
+//   :6829  || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
+bool usesBpf1Preselector(NereusSDR::HPSDRHW board) noexcept;
+
+// Frequency + board → RX preselector select bits.  This is the entry point
+// every receive-filter call site should use; it picks the ladder the board
+// actually has.
+//
+// From Thetis console.cs:6827-6837 setAlex1HPF [v2.10.3.15]
+quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board);
+
+// Frequency → Alex TRANSMIT low-pass select bits (bank 10 C4 in the P1 packet,
 // or bytes 1428-1431 in the P2 CmdHighPriority packet).
+//
+// Deliberately board-independent, unlike the RX preselector above: Thetis has
+// a single setAlexLPF with no HardwareSpecific branch inside it
+// (console.cs:7177-7270 [v2.10.3.15]), and deskhpsdr says so explicitly at
+// alex.h:110 [@f3d857c]: "The TX bits are just as for the generic case."
+// The MkII boards changed the RX front end, not the TX low-pass bank.
 //
 // From Thetis console.cs:7168-7234 [@501e3f5]
 quint8 computeLpf(double freqMhz);
