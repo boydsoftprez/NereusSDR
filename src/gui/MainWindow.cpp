@@ -1978,9 +1978,17 @@ void MainWindow::buildUI()
     // Phase 3Q Sub-PR-6 (F.1): bind RxDashboard to slice(0) once it exists.
     // buildStatusBar() runs before connectToRadio() so slices().isEmpty() at
     // construction time; defer binding to sliceAdded.
-    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int index) {
-        if (index == 0 && m_rxDashboard) {
-            m_rxDashboard->bindSlice(m_radioModel->slices().at(0));
+    // Resolved by id, not list position. sliceAdded carries the stable slice
+    // id and addSlice reuses the lowest free one, so after Slice A is closed
+    // and a new slice takes id 0 it is APPENDED to m_slices -- id 0 at some
+    // other position. slices().at(0) then bound the dashboard to whichever
+    // slice happened to be first. Same class of defect as the one closed in
+    // requestSliceSampleRate (Sub-Epic I closeout, defect G2).
+    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
+        if (sliceId == 0 && m_rxDashboard) {
+            if (SliceModel* s = m_radioModel->sliceById(0)) {
+                m_rxDashboard->bindSlice(s);
+            }
         }
     });
 
