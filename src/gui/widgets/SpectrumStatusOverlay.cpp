@@ -46,9 +46,22 @@ SpectrumStatusOverlay::~SpectrumStatusOverlay() = default;
 
 QSize SpectrumStatusOverlay::sizeHint() const
 {
-    // See the header: a -1 hint pushed this strip off the right edge of the
-    // pan, which is what made the WIDE badge look like it was never wired.
-    return QSize(minimumWidth(), kOverlayHeight);
+    // Computed from the pill FLAGS, not read back from minimumWidth().
+    //
+    // minimumWidth() is only updated at the end of paintEvent, so a hint that
+    // read it was always one repaint stale: lighting the TX pill set the flag,
+    // the parent re-anchored using the OLD narrower width, and only then did
+    // paintEvent grow the minimum -- at which point setGeometry's clamp
+    // expanded the widget rightward from its fixed x and walked it straight
+    // back under the dBm range arrows. Deriving from the flags means the hint
+    // is right the instant a pill changes, before anything paints.
+    //
+    // Mirrors paintEvent's and badgeRect's layout; all three must agree.
+    int w = kLeftMargin + kChTagWidth;
+    const int lit = (m_txBound ? 1 : 0) + (m_wideBpf ? 1 : 0)
+                  + (m_diversityActive ? 1 : 0) + (m_psPaused ? 1 : 0);
+    w += lit * (kInterPillGap + kPillWidth);
+    return QSize(w + kRightPad, kOverlayHeight);
 }
 
 void SpectrumStatusOverlay::setSliceLetter(QChar letter)
@@ -183,7 +196,11 @@ void SpectrumStatusOverlay::paintEvent(QPaintEvent*)
                  QColor(0x90, 0x60, 0x00));
     }
 
-    setMinimumWidth(x + kRightPad);
+    // NOT setMinimumWidth(x + kRightPad) any more. Growing the minimum here
+    // let setGeometry's clamp expand the widget rightward from its fixed x
+    // after the parent had already placed it, which is how the strip crept
+    // back over the dBm range arrows. sizeHint() derives the same width from
+    // the pill flags instead, so the parent can place it correctly up front.
 }
 
 QRect SpectrumStatusOverlay::badgeRect(Badge badge) const
