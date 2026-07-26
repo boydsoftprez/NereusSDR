@@ -244,6 +244,70 @@ G2 walkthrough:
 - Repeat with the Setup rate combo to confirm the two entry points agree; they
   now run the same 12-step `setSampleRateLive` sequence.
 
+---
+
+## Session 5 (2026-07-26): driven smoke run on a live ANAN-G2
+
+First session where the multi-pan path was actually exercised against hardware
+rather than reasoned about. Driven through the UI (automation), screenshots
+checked at each step, three defects found and fixed in the loop.
+
+### Found and fixed
+
+| Defect | Symptom on the bench | Commit |
+|---|---|---|
+| Pan display window never moved to its stream | Second pan rendered a saturated (solid red) waterfall, and its scale showed a different band than its own flag | `6c5fc58c` |
+| Pan display span not clamped to stream width | Same saturation at the window edges: a 192 kHz default span over a 48 kHz DDC leaves three quarters of the window outside the data | `6c5fc58c` |
+| `setVfoFrequency` only ever pushed to the ACTIVE pan | Any other pan kept a 0 Hz marker, so its flag was positioned off the left edge and the pan drew its `<\| 0.0000` off-screen-VFO chevron. Indistinguishable from "the flag was never created", and the reason scrolling a dead pan appeared to conjure one | `6c5fc58c` |
+| `PanadapterApplet::activated` never emitted | No way to change the active pan, so "Add slice on active pan" always targeted pan-0 | `f4329373` |
+
+### Verified working on the G2
+
+- Two pans, Slice A on 40 m and Slice B on 20 m: both flags placed, both
+  waterfalls live, `ddcEnable=12 nDdc=2` on the wire.
+- Band-changing a slice migrates it to its own DDC and its pan follows.
+- Three-pan `12h` layout: A / B / C, correct letters, all three live, the
+  auto-added slice landing on the newly created pan.
+- Removing a slice leaves the remaining slices running and does not silence
+  the radio.
+- `CH 0: BYPASS (multi-band: 40m + 20m)` reported correctly while both streams
+  share ADC0.
+
+### Human smoke-test checklist
+
+Run in order. Each row is one observable; stop and report at the first failure
+rather than continuing, because later rows assume the earlier ones.
+
+| # | Action | Expect |
+|---|---|---|
+| 1 | Connect, Slice A only | Audio, spectrum, S-meter, tuning all normal. This is the path most at risk from the epic. |
+| 2 | Tune A to 40 m, then 15 m | Correct preselector on both. These two bands were selecting the wrong filter until `3a2d7038`. |
+| 3 | `+PAN` -> `2v` | Two pans. Pan-0 keeps Slice A and stays live. |
+| 4 | Click pan-1, then `+PAN` -> `Slice B` | Flag B appears **on pan-1**, pan-1's scale matches A's band, waterfall live. B is seeded on A's frequency, so sharing one DDC here is correct. |
+| 5 | With B selected, `Band` -> `HF` -> `20m` | Pan-1's scale follows to 20 m, waterfall stays live, a second DDC appears. No `<\| 0.0000` chevron at pan-1's left edge. |
+| 6 | Check the bottom bar | `CH 0` reports `BYPASS (multi-band: 40m + 20m)`. Expected: every slice is still on ADC0 (§16 ADC distribution is specification-only). |
+| 7 | Check both pans' status overlays | Each shows its OWN slice letter, frequency and mode. |
+| 8 | `+PAN` -> `12h` | Three pans, letters A / B / C, all live, the new slice on the new pan. |
+| 9 | Close Slice C (x on its flag) | C disappears from the RX applet; A and B keep working; radio does not go silent. |
+| 10 | Close a whole pan | A surviving pan takes `Ctrl+R` without targeting the pan that just went away. |
+| 11 | Audio check on each slice | Each slice is independently audible. |
+| 12 | **Do not transmit** with two slices on different bands until row 1 is clean | TX low-pass fix is still unverified on hardware; the failure it corrects was full power through the wrong band's filter. |
+
+### Known-imperfect, do not file as new
+
+- Every slice lands on ADC0; cross-band pairs share a chain and it bypasses.
+- The per-pan `+RX` button is a disabled `NYI` stub and its `addRxClicked`
+  signal has no consumer. Use `+PAN` -> `Slice N` instead.
+- A refused TX handoff is silent (`TxSliceArbiter::handoffBlocked` has no
+  consumer).
+- Slice B+ come up with default NR / SNB / APF / squelch.
+- A pan whose slice was removed keeps rendering its stream rather than going
+  dark.
+- `Cannot create receiver: at maximum 4` at startup on a 5-stream pool: a fifth
+  slice would have no receiver behind it.
+
+---
+
 ## Next
 
 Data-plane completion is tracked as Sub-Epic I. See
