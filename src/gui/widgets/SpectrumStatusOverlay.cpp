@@ -84,6 +84,13 @@ void SpectrumStatusOverlay::setWideBpf(bool wide, const QString& reason)
     if (m_wideBpf == wide && m_wideReason == reason) { return; }
     m_wideBpf = wide;
     m_wideReason = reason;
+    // The reason was stored and never read: AlexAdcState::reasonText is
+    // documented "for WIDE badge tooltip" (AlexController.h:97) but nothing
+    // surfaced it, so the pill said WIDE and nothing said why. This overlay
+    // carries no other tooltip, so hanging it on the widget is the whole
+    // disambiguation surface: the badge states the RF fact (the preselector
+    // is bypassed) and the tooltip names which of the causes produced it.
+    setToolTip(wide ? reason : QString());
     update();
 }
 

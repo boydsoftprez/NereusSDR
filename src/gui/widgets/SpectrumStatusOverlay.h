@@ -54,7 +54,20 @@ public:
     void setChainIndex(int chainIdx);
 
     void setTxBound(bool tx);
+
+    /// Light (or clear) the WIDE pill. `reason` is the operator-facing
+    /// sentence naming the cause of the bypass; it becomes this overlay's
+    /// tooltip while the pill is lit, and is cleared with it. Composed by
+    /// RadioModel::panBypassState, wording per design doc §16.4.4.
     void setWideBpf(bool wide, const QString& reason);
+
+    /// Narrow accessors for the WIDE pill. The pill state was write-only
+    /// until Phase 3F wired it, so nothing could assert that it lit and the
+    /// badge shipped inspection-only. Mirrors the existing sliceLetter()
+    /// accessor rather than exposing the whole widget to callers.
+    bool wideBpf() const { return m_wideBpf; }
+    QString wideReason() const { return m_wideReason; }
+
     void setDiversityActive(bool div);
     void setPsPaused(bool paused);
 

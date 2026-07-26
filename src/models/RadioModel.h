@@ -105,6 +105,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QObject>
+#include <QSet>     // Phase 3F: panBypassState takes PanadapterApplet::associatedSlices
 #include <QString>
 #include <QList>
 #include <QThread>
@@ -280,6 +281,40 @@ public:
     // (AntennaAlexAntennaControlTab — Phase 3P-F Task 3).
     const AlexController& alexController()        const { return m_alexController; }
     AlexController&       alexControllerMutable()       { return m_alexController; }
+
+    // ── Phase 3F: per-panadapter RX preselector bypass state (WIDE badge) ────
+    // NereusSDR-original; no upstream port. Design doc
+    // 2026-05-26-phase3f-multi-pan-multi-slice-design.md §16.4.
+    //
+    // WIDE means one thing: the RX preselector chain feeding this pan is
+    // bypassed on the wire right now. It reports an effect, not a cause;
+    // the cause is named in `reason` (§16.4.3, §16.4.4).
+    struct PanBypassState {
+        bool    bypassed {false};
+        QString reason;   ///< operator-facing sentence; empty unless bypassed
+    };
+
+    /// Resolve the WIDE state for the slices one panadapter is showing.
+    ///
+    /// Routing, per §16.4.2:
+    ///     pan -> its slices -> their stream -> that stream's ADC -> effective
+    ///
+    /// The answer is per chain, not global: on a 2-chain SKU with the bypass
+    /// on chain 1 only, pans on chain 0 come back clear. That is the whole
+    /// point of the badge -- it tells the operator WHICH of their receivers
+    /// is exposed. A pan with no slices, or whose slices have not bound a
+    /// stream, feeds off nothing and reports nothing.
+    ///
+    /// Takes slice indices (the keys PanadapterApplet::associatedSlices
+    /// hands out) rather than SliceModel pointers so callers never have to
+    /// resolve the model themselves.
+    PanBypassState panBypassState(const QSet<int>& sliceIndices) const;
+
+    /// Operator-facing sentence naming WHY the given chain is bypassed.
+    /// One string per cause, per design doc §16.4.4. Public so the Filter
+    /// Policy dialog can show the same wording the badge tooltip carries.
+    QString bypassReasonForAdc(int adc,
+                               const AlexController::AlexAdcState& st) const;
 
     // Band-plan overlay manager — loaded once on construction from bundled
     // Qt resource JSON files. Active plan persists in AppSettings under

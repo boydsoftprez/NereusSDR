@@ -9436,6 +9436,171 @@ void RadioModel::republishAlexAdcSlices()
     });
 }
 
+// ---------------------------------------------------------------------------
+// panBypassState — Phase 3F. Resolve the WIDE badge for one panadapter.
+//
+// NereusSDR-original; no upstream port. Thetis has no per-pan bypass
+// indicator because it has no multi-pan layout: its single wideband-window
+// bypass is reported by the window itself (console.cs:43545-43566
+// [v2.10.3.15]). The routing below is the multi-pan generalisation, per
+// design doc 2026-05-26-phase3f-multi-pan-multi-slice-design.md §16.4.
+//
+// The badge answers one question -- "is the RX preselector feeding THIS pan
+// bypassed right now?" -- and the routing is the only honest way to answer
+// it, because bypass is a property of the ADC chain while a pan is a
+// property of the display:
+//
+//     pan -> its slices -> their stream -> that stream's ADC -> effective
+//
+// Grouping by adcIndex (rather than assuming chain 0) is deliberate even
+// though setAdcForReceiver is called exactly once in production today, at
+// requestDdcAssignment, so every stream currently reports ADC0. Distributing
+// streams across both ADCs is the separate "codec routing (antenna-driven)"
+// work in design §4; reading whatever adcIndex reports means this is already
+// correct when that lands, and means the per-chain unit cases can drive it
+// directly today.
+//
+// Deliberately a pure query with no caching. It runs once per pan on the
+// same triggers as rebuildFftRouting (single-digit slices, single-digit
+// pans), and a cache would need invalidating on every one of the six events
+// that can move the answer.
+// ---------------------------------------------------------------------------
+namespace {
+
+// "20m and 40m", "20m, 40m and 6m". Plain prose: this text is read by an
+// operator mid-QSO, not parsed.
+QString joinRangeNames(const QStringList& names)
+{
+    if (names.isEmpty())    { return QString(); }
+    if (names.size() == 1)  { return names.first(); }
+    QStringList head = names;
+    const QString last = head.takeLast();
+    return QStringLiteral("%1 and %2").arg(head.join(QStringLiteral(", ")), last);
+}
+
+} // namespace
+
+RadioModel::PanBypassState
+RadioModel::panBypassState(const QSet<int>& sliceIndices) const
+{
+    PanBypassState result;
+
+    // Chain count matches AlexController's own sizing (AlexController.h:217).
+    constexpr int kAdcCount = 2;
+
+    // Which chains feed this pan. A pan usually sits on one, but nothing
+    // stops an operator hosting two slices from different chains on it, so
+    // collect the set rather than taking the first.
+    std::array<bool, kAdcCount> feeds{};
+    feeds.fill(false);
+
+    for (int sliceIndex : sliceIndices) {
+        SliceModel* s = m_slices.value(sliceIndex, nullptr);
+        if (s == nullptr) { continue; }
+
+        // An unbound slice has no DDC, so it is on no chain and the pan
+        // showing it is being fed by nothing. Not wide, not filtered.
+        // Matches republishAlexAdcSlices, which skips it for the same reason.
+        const int stream = s->streamIndex();
+        if (stream < 0) { continue; }
+
+        const int adc = m_receiverManager
+                            ? m_receiverManager->receiverConfig(stream).adcIndex
+                            : 0;
+        if (adc < 0 || adc >= kAdcCount) { continue; }
+        feeds[adc] = true;
+    }
+
+    for (int adc = 0; adc < kAdcCount; ++adc) {
+        if (!feeds[adc]) { continue; }
+
+        const AlexController::AlexAdcState& st = m_alexController.adcState(adc);
+        if (st.effective == AlexController::BpfEffective::Filtered) { continue; }
+
+        result.bypassed = true;
+        result.reason   = bypassReasonForAdc(adc, st);
+        // First offending chain wins the tooltip. A pan straddling a wide and
+        // a filtered chain is wide either way; naming the exposed one is what
+        // the operator needs.
+        break;
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// bypassReasonForAdc — the operator-facing sentence behind the WIDE badge.
+//
+// One sentence per cause, per design doc §16.4.4. WIDE itself is a single
+// unambiguous statement about the RF path (§16.4.3): extended view is one of
+// the CAUSES of bypass, not a second meaning of the word. So the badge never
+// changes and the cause is named here.
+//
+// AlexAdcState::reasonText is not reused verbatim. It is the compact chain
+// summary the bottom-bar CH label wants ("BYPASS (multi-band: 20m + 40m)");
+// the badge tooltip has to tell the operator what to DO about it.
+//
+// Project rule: no source citations inside user-visible strings.
+// ---------------------------------------------------------------------------
+QString RadioModel::bypassReasonForAdc(
+    int adc, const AlexController::AlexAdcState& st) const
+{
+    if (st.effective == AlexController::BpfEffective::WidebandLocked) {
+        // Design doc §16.4.4, "extended view" row, verbatim.
+        return tr("Preselector bypassed because this panadapter is showing "
+                  "more spectrum than the receiver's own bandwidth. Zoom back "
+                  "in, or turn off extended view for this pan, to restore "
+                  "filtering.");
+    }
+
+    if (m_alexController.bpfMode(adc) == AlexController::BpfMode::ForceBypass) {
+        // Design doc §16.4.4, "operator override" row, verbatim.
+        return tr("Preselector bypassed by your Filter Policy setting for this "
+                  "chain. Click to change it.");
+    }
+
+    // Auto policy on a multi-range chain. Name the ranges actually in
+    // conflict: told only that the receiver is wide, the operator has no way
+    // to work out which two slices caused it or what to change.
+    //
+    // Read the live slice set rather than parsing AlexAdcState::reasonText,
+    // which is a display string and not a contract. Same grouping rule as
+    // republishAlexAdcSlices so the two can never disagree.
+    QStringList rangeNames;
+    QSet<Band> seen;
+    for (SliceModel* s : m_slices) {
+        if (s == nullptr) { continue; }
+        const int stream = s->streamIndex();
+        if (stream < 0) { continue; }
+        const int sliceAdc = m_receiverManager
+                                 ? m_receiverManager->receiverConfig(stream).adcIndex
+                                 : 0;
+        if (sliceAdc != adc) { continue; }
+        const Band b = bandFromFrequency(s->frequency());
+        if (seen.contains(b)) { continue; }
+        seen.insert(b);
+        rangeNames << bandLabel(b);
+    }
+
+    if (rangeNames.size() < 2) {
+        // Bypassed with fewer than two ranges on the chain means something
+        // other than the multi-range rule put it there (a mode we do not
+        // model yet). Say the true thing and stop.
+        return tr("Preselector bypassed for this receiver chain. Click to "
+                  "change the filter policy for this chain.");
+    }
+
+    // Design doc §16.4.4, "multi-range auto" row, with the live range names
+    // substituted and the remedy the operator can act on themselves added
+    // ahead of the Filter Policy pointer.
+    return tr("Preselector bypassed. This receiver chain is serving %1 at "
+              "once, and the band-pass filter can only pass one of them. "
+              "Bypassing keeps both slices hearing. Retune or close a slice "
+              "to restore filtering, or click to change the filter policy for "
+              "this chain.")
+        .arg(joinRangeNames(rangeNames));
+}
+
 // Coalesce settings saves to avoid writing on every scroll tick.
 void RadioModel::scheduleSettingsSave()
 {

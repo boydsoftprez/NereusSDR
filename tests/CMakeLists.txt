@@ -1454,6 +1454,19 @@ nereus_add_test(tst_panadapter_stack_layouts)
 # docs/architecture/2026-05-26-phase3f-sub-epic-e-ui-atlas-plan.md Task 1.
 nereus_add_test(tst_spectrum_status_overlay)
 
+# ── Phase 3F: the WIDE badge lights per bypassed chain, and only there ──────
+# SpectrumStatusOverlay::setWideBpf was painted but had zero callers, so an
+# operator whose RX preselector had gone wide (multi-range auto-bypass,
+# extended view, or their own Filter Policy override) had no per-pan
+# indication of it. The bottom-bar CH label was the only surface and it
+# cannot say WHICH pan is exposed on a multi-pan layout.
+# Locks the routing (pan -> slices -> stream -> ADC -> BpfEffective), the
+# per-chain contract (a filtered chain's pan stays dark while another chain
+# is wide), the single-slice no-regression case, and the per-cause reason
+# strings fixed by design doc §16.4.4.
+# NereusSDR-original: no upstream port.
+nereus_add_test(tst_pan_wide_badge)
+
 # ── Phase 3F Sub-Epic D Task 7: FFTRouter receiver-to-pan fan-out ───────────
 # NereusSDR-original core class. One receiver (DDC) fans out to N pans
 # (different zoom levels of the same I/Q data) per AetherSDR overlay model.

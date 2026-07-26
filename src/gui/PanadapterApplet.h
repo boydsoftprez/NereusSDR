@@ -83,6 +83,15 @@ public:
     /// Phase 3F Sub-Epic E Task 2: refresh per-pan overlay from active slice state.
     void updateStatusOverlay(SliceModel* activeSlice);
 
+    /// Phase 3F: light (or clear) this pan's WIDE pill.
+    /// A pan shows WIDE when the RX preselector chain feeding it is bypassed
+    /// on the wire. The decision is per chain and is made by
+    /// RadioModel::panBypassState; this is the forwarder that keeps
+    /// MainWindow out of the pan's widget tree.
+    void setWideBpf(bool wide, const QString& reason);
+    bool wideBpf() const;
+    QString wideReason() const;
+
     /// Phase 3F Sub-Epic F Task 13: per-pan Extended view toggle.
     /// Operator override of the zoom-driven auto-derive on SpectrumWidget.
     /// Default true (on); persisted per-pan via AppSettings under

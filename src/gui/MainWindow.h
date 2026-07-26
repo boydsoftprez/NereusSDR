@@ -294,6 +294,12 @@ private:
     /// several slices, so no single change maps onto one subscription.
     void rebuildFftRouting();
 
+    /// Phase 3F: light the WIDE pill on every pan fed by a bypassed RX
+    /// preselector chain, and clear it on the rest. One
+    /// RadioModel::panBypassState query per pan; the decision (and the
+    /// operator-facing reason) lives there, not here.
+    void refreshPanWideBadges();
+
     /// Phase 3F: create the VfoWidget for a secondary slice (B+) on the
     /// given SpectrumWidget, push initial state, wire all intent + bidi
     /// signals, and register it in m_vfoWidgetsBySlice. Returns the new

@@ -1142,9 +1142,40 @@ void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
     }
 }
 
+// Phase 3F: WIDE badge fan-out. See RadioModel::panBypassState for the
+// routing (pan -> slices -> stream -> ADC -> BpfEffective) and for the
+// per-cause reason strings.
+//
+// Every pan is refreshed on every pass, not just the ones that changed. A
+// bypass is a property of the CHAIN, so one slice crossing a band edge can
+// flip the badge on pans that do not host it and never saw an event of
+// their own. Rechecking all of them is one query per pan against
+// single-digit slice and pan counts.
+void MainWindow::refreshPanWideBadges()
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    for (auto* applet : m_panStack->allApplets()) {
+        if (!applet) { continue; }
+        const RadioModel::PanBypassState st =
+            m_radioModel->panBypassState(applet->associatedSlices());
+        applet->setWideBpf(st.bypassed, st.reason);
+    }
+}
+
 void MainWindow::rebuildFftRouting()
 {
     if (!m_radioModel) { return; }
+
+    // The WIDE badges ride this pass rather than getting their own connects
+    // at each of the four call sites. The trigger set is identical -- any
+    // change to which slices feed which pan through which stream moves both
+    // answers -- so hanging the refresh here means every present and future
+    // topology trigger reaches the badge by construction. Same reasoning the
+    // Alex republish uses for hanging off bpfStateChanged (RadioModel.cpp:
+    // 596-601). Ahead of the router guard on purpose: the badge is a model
+    // question and stays correct with no FFTRouter present.
+    refreshPanWideBadges();
+
     auto* router = m_radioModel->fftRouter();
     if (!router) { return; }
 
@@ -1638,6 +1669,28 @@ void MainWindow::buildUI()
                 lbl->setStyleSheet(
                     QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
                         .arg(color));
+            });
+
+    // Phase 3F: and drive the per-pan WIDE pill from the same signal.
+    //
+    // A separate connect rather than a line inside the lambda above: the two
+    // surfaces answer different questions. The bottom-bar label reports one
+    // chain by number, and this reports every pan that chain happens to feed,
+    // which on a multi-pan layout is what tells the operator WHICH of their
+    // receivers is exposed.
+    //
+    // The signal's own adc argument is deliberately unused. A recompute on
+    // chain 1 can leave a pan straddling both chains bypassed for a reason
+    // that now belongs to chain 0, so the refresh re-asks per pan rather than
+    // trying to patch only the pans on the chain that moved.
+    //
+    // This covers the state-change half of the trigger set (band crossings,
+    // wideband toggles, Filter Policy edits); rebuildFftRouting covers the
+    // topology half (slice add / remove / pan migration / stream rebind).
+    connect(&m_radioModel->alexController(),
+            &AlexController::bpfStateChanged, this,
+            [this](int, const AlexController::AlexAdcState&) {
+                refreshPanWideBadges();
             });
 
     // Issue #118 — helper: wire a container's bandClicked signal through

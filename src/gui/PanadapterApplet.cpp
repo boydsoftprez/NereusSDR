@@ -125,6 +125,28 @@ void PanadapterApplet::updateStatusOverlay(SliceModel* slice)
     m_statusOverlay->setPsPaused(slice->psPaused());
 }
 
+// Phase 3F: WIDE pill forwarder. Kept separate from updateStatusOverlay
+// because the two have different triggers and different sources: the slice
+// fields refresh when the active slice changes, whereas the bypass state is
+// a property of the chain feeding this pan and changes on band crossings,
+// slice add/remove, wideband toggles and Filter Policy edits -- none of
+// which need be the active slice, or any slice on this pan at all.
+void PanadapterApplet::setWideBpf(bool wide, const QString& reason)
+{
+    if (!m_statusOverlay) { return; }
+    m_statusOverlay->setWideBpf(wide, reason);
+}
+
+bool PanadapterApplet::wideBpf() const
+{
+    return m_statusOverlay && m_statusOverlay->wideBpf();
+}
+
+QString PanadapterApplet::wideReason() const
+{
+    return m_statusOverlay ? m_statusOverlay->wideReason() : QString();
+}
+
 // Phase 3F Sub-Epic F Task 13: operator-toggleable Extended view.
 // Default is true so the SpectrumWidget zoom auto-derive (Task 7-10)
 // gets to decide extendedMode based on bandwidth vs DDC sample rate.
