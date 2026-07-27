@@ -2322,6 +2322,16 @@ private:
     QHash<int, QDateTime> m_radeSyncDropAt;
     static constexpr int kRadeSyncDropClearDebounceMs = 2000;
 
+    // 2026-07-27 (ANAN-G2E lockup): discovery quiet period after any
+    // teardown.  Must outlast (a) the radio's stop-transition settling
+    // (observed death window: up to ~1 s after run=0 in the 2026-07-27 TZSP
+    // captures) and (b) the gateware's ~2 s C&C deadman edge
+    // (Hermes.v:398-414, HW_TIMEOUT at 250e6 cycles @ 125 MHz), so the first
+    // probe a stopped radio hears arrives with its state machines fully
+    // settled.  Thetis's post-stop behaviour is total silence; 3 s of quiet
+    // approximates that without making the reopened panel feel dead.
+    static constexpr std::chrono::milliseconds kPostDisconnectScanQuietMs{3000};
+
     // 2026-05-12 bench: FreeDV Reporter freq-publish throttle.
     //
     // Spinning the VFO would otherwise fire a Socket.IO freq_change

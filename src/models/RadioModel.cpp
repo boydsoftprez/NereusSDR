@@ -7496,6 +7496,18 @@ void RadioModel::teardownConnection()
         return;
     }
 
+    // 2026-07-27 (ANAN-G2E lockup): quiet period for discovery.  Disconnect
+    // reopens the ConnectionPanel, whose ctor auto-scans — wire captures show
+    // the broadcast probe burst landing 7-15 ms after our run=0 frame, and
+    // both observed G2E lockups happened inside that window.  Thetis sends
+    // nothing after its stop frame and never wedges the same radio.  Hold
+    // discovery off (defer, not drop) until the radio's stop transition and
+    // its ~2 s firmware deadman window have passed.  Applies to every
+    // teardown flavor: user disconnect, failed-connect watchdog, quit.
+    if (m_discovery) {
+        m_discovery->holdOffScans(kPostDisconnectScanQuietMs);
+    }
+
     // Flush any pending coalesced slice save FIRST so the user's last
     // AF / step / freq / lock / RIT tweak isn't lost to the 500 ms
     // debounce in scheduleSettingsSave(). The QTimer there can't fire

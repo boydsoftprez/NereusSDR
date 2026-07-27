@@ -155,18 +155,89 @@ period and it is what feeds the board's 2 s deadman.
 
 ---
 
-## Status
+## Second change: the P1 discovery probe
 
-**Unproven.** Cadence is the last wire-level difference standing after the others
-were eliminated against the gateware, not a demonstrated cause. The mechanism by
-which excess C&C traffic would leave the board's Ethernet path dead is not
-established; `sdr_send.v:138` (`if (!run && state > SEND) state <= IDLE`) is the
-only escape from a stalled send state and ARP shares a single TX arbiter with UDP
-(`network.v:341-344, 416-421`), which would explain total layer-2 silence, but
-that remains a hypothesis.
+Found after the cadence work, and the stronger suspect of the two.
 
-Next bench run: connect, use, disconnect, then confirm the radio still answers
-ARP and accepts a reconnect without a power cycle.
+Our P1 probe is broadcast to UDP 1024, which is also the P2 General command
+port. `General_CC.v:90/106` claims any port-1024 datagram whose byte 4 is zero
+and parses the rest as a General command. Our probe is `EF FE 02` followed by 60
+zero bytes, so a P2 radio accepts it and latches the padding as config: byte 38
+clears `HW_timer_enable` (freezing the ~2 s deadman), bytes 58/59 clear
+`PA_enable` and `Alex_enable`. `RadioDiscovery.cpp:441-445` sends it to both the
+directed subnet broadcast and 255.255.255.255 on every scan, and the app log
+shows a scan immediately precedes every connect, so it fired **every time** —
+matching the 100%-reproducible symptom far better than cadence does.
+
+Fix: byte 4 = `0x02`, so `General_CC` bails at its command check. Verified that
+no P1 gateware reads byte 4 (Hermes v3.3, Angelia, Orion, ANAN-10E/100B,
+HermesC10 all match only the command byte in `Rx_MAC.v`).
+
+This one was invisible in every capture we took: the mirror filter was
+`filter-ip-address=192.168.109.198/32`, which cannot match a broadcast
+destination. It was found in the application log instead. **If you are hunting a
+discovery-related problem, do not trust an IP-filtered capture.**
+
+---
+
+## Status: NOT FIXED — but the failure window is now pinned
+
+Bench run 2026-07-27 with both changes in. One cycle survived, the next did not,
+so the bug is **not deterministic** as originally believed, and neither change
+is sufficient.
+
+| session | duration | I/Q packets | outcome |
+|---|---|---|---|
+| 16:38:44 → 16:38:54 | 10 s | 2087 | reconnect OK |
+| 16:39:03 → 16:39:51 | 48 s | 9568 | **locked up** |
+
+### The important new fact
+
+**The radio survives the disconnect and dies roughly one second later, while
+idle, during the post-disconnect scan.** It is not dying at the disconnect.
+
+```
+16:39:51.448  P2: Disconnected. I/Q packets: 9568
+16:39:51.455  Scanning NIC "feth3169"
+16:39:51.497  P2 response from .198  ANAN-G2E fw: 110    <- alive, replies x4
+16:39:52.325  P2 response from .45   (Saturn only)       <- G2E gone
+16:39:53.141  P2 response from .45   (Saturn only)       <- G2E gone
+```
+
+The surviving cycle looks identical through the first scan attempt (four G2E
+replies) and then keeps answering attempts 2 and 3. The failing one answers
+attempt 1 and is dead by attempt 2. So the kill happens in a sub-second window
+after `run=0`, with the radio otherwise idle and only discovery traffic on the
+wire.
+
+This retires every "the stop frame is malformed" theory for good: the stop frame
+is byte-correct, the radio acts on it, answers discovery afterwards, and *then*
+dies.
+
+### A regression this run introduced, since fixed
+
+The first version of the probe pad used byte 4 = `0x02`. Byte 4 is also the P2
+*command* byte in `sdr_receive.v`, and `2` is the discovery command, so every P1
+probe became a second discovery request. Verified in the app log: 2 replies per
+scan attempt on the old build, 4 on the new one. Now `0xFF`, which falls through
+to `ST_WAIT`.
+
+Note for anyone touching this byte: `0x03` on a broadcast probe reaches
+`ST_SETIP`, which writes the radio's IP to EEPROM. The safe range excludes
+`0x00` and `0x02`-`0x06`.
+
+### Still unexplained
+
+Why an idle radio, one second after a clean stop, stops answering ARP entirely.
+`sdr_send.v:138` (`if (!run && state > SEND) state <= IDLE`) is the only escape
+from a stalled send state, and ARP shares a single TX arbiter with UDP
+(`network.v:341-344, 416-421`), which would explain total layer-2 silence — but
+that is still a hypothesis, and the trigger inside that one-second window is not
+identified.
+
+Next evidence needed: a capture filtered on the **router IP** (so broadcast is
+visible) spanning disconnect through the following scan, to see the last frames
+the radio emits and exactly which probe it fails to answer.
 
 ---
 

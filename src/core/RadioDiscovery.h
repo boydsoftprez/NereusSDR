@@ -179,6 +179,22 @@ public:
     void startDiscovery();
     void stopDiscovery();
 
+    // Post-disconnect quiet period (2026-07-27, ANAN-G2E lockup).
+    //
+    // Wire captures show NereusSDR fires a broadcast discovery burst 7-15 ms
+    // after sending run=0 (disconnect reopens the ConnectionPanel, whose ctor
+    // auto-scans) and both observed G2E lockups happened inside that window,
+    // while Thetis goes completely silent after its stop frame and never
+    // wedges the same radio.  Probing a radio while its stop-transition state
+    // machines are still settling is a race Thetis never enters.
+    //
+    // Calling holdOffScans() defers — never drops — any startDiscovery() or
+    // probeAddress() issued before the deadline: the work runs when the quiet
+    // period expires, so the panel still populates and Connect flows still
+    // probe, just after the radio has finished stopping.
+    void holdOffScans(std::chrono::milliseconds quiet);
+    qint64 holdOffRemainingMs() const;
+
     DiscoveryProfile profile() const { return m_profile; }
     void setProfile(DiscoveryProfile profile) { m_profile = profile; }
 
@@ -259,6 +275,12 @@ private:
 
     QTimer m_continuousTimer;   // drives ongoing NIC re-scans while monitoring
     QTimer m_staleTimer;
+
+    // holdOffScans deadline (ms since epoch, 0 = none).  Deferred-scan flag
+    // stops a burst of startDiscovery() calls during the quiet period from
+    // queueing multiple delayed scans.
+    qint64 m_scanHoldOffUntilMs{0};
+    bool m_deferredScanPending{false};
     QMap<QString, RadioInfo> m_radios;   // keyed by MAC address
     QMap<QString, qint64> m_lastSeen;    // MAC -> timestamp
     QString m_connectedMac;              // MAC currently in use by a RadioConnection; exempt from stale-removal

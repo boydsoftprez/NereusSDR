@@ -147,8 +147,38 @@ RadioDiscovery::~RadioDiscovery()
     stopDiscovery();
 }
 
+void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
+{
+    const qint64 until =
+        QDateTime::currentMSecsSinceEpoch() + qint64(quiet.count());
+    if (until > m_scanHoldOffUntilMs) {
+        m_scanHoldOffUntilMs = until;
+    }
+}
+
+// Remaining quiet time, 0 when scans may run now.  See holdOffScans() decl
+// for the ANAN-G2E rationale.
+qint64 RadioDiscovery::holdOffRemainingMs() const
+{
+    const qint64 remaining =
+        m_scanHoldOffUntilMs - QDateTime::currentMSecsSinceEpoch();
+    return remaining > 0 ? remaining : 0;
+}
+
 void RadioDiscovery::startDiscovery()
 {
+    // Post-disconnect quiet period: defer, never drop.  One pending deferred
+    // scan is enough — the scan that eventually runs walks every NIC anyway.
+    if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+        if (!m_deferredScanPending) {
+            m_deferredScanPending = true;
+            QTimer::singleShot(int(waitMs), this, [this]() {
+                m_deferredScanPending = false;
+                startDiscovery();
+            });
+        }
+        return;
+    }
     // Phase 3I rewrote discovery to walk all NICs per scan with ephemeral
     // per-NIC sockets (mi0bot clsRadioDiscovery pattern). Main's older
     // single-persistent-m_socket path was replaced entirely in Task 4;
@@ -383,12 +413,28 @@ bool RadioDiscovery::parseP2Reply(const QByteArray& bytes, const QHostAddress& s
 // (ANAN-G2E) -- all are `if (PHY_output[47:40] == 8'h02) // check for Metis
 // Discovery` in Rx_MAC.v, which then captures only the requester's IP/MAC/port.
 //
-// Value 0x02 mirrors the P1 command byte so the frame reads as deliberate
-// rather than corrupt on the wire.
+// Choosing the value: byte 4 is also the *P2 command* byte, decoded in
+// sdr_receive.v (same archive) as
+//
+//     3: case (udp_rx_data)          // packet byte 4
+//         2: state <= ST_DISCOVERY;
+//         3: if (broadcast)  state <= ST_SETIP;          // writes IP to EEPROM
+//         4: if (!broadcast) state <= ST_ERASE;
+//         5: if (!broadcast) state <= ST_PROGRAM_FIFO;
+//         6: if (!broadcast) state <= ST_RESET;          // resets the FPGA
+//         default: state <= ST_WAIT;
+//
+// so the pad must avoid 0x00 (General_CC claims it) *and* 0x02..0x06. These
+// probes go to the subnet broadcast, which is exactly the case ST_SETIP is
+// gated on. An earlier revision used 0x02 to "mirror the P1 command byte";
+// that made every P1 probe read as a second discovery request and doubled the
+// discovery replies each radio emits per scan (verified in the app log: 2 per
+// attempt before, 4 after). 0xFF falls through to ST_WAIT and is claimed by
+// nothing.
 //
 // Gateware cited as hardware fact only, per CLAUDE.md; no gateware logic is
 // translated here.
-static constexpr char kP1ProbeByte4Pad = 0x02;
+static constexpr char kP1ProbeByte4Pad = static_cast<char>(0xFF);
 
 static QByteArray buildP1DiscoveryProbe()
 {
@@ -593,6 +639,17 @@ void RadioDiscovery::probeAddress(const QHostAddress& addr,
                                   quint16 port,
                                   std::chrono::milliseconds timeout)
 {
+    // Same post-disconnect quiet period as startDiscovery(): a unicast probe
+    // at a radio mid-stop-transition is the same race as a broadcast one.
+    // Defer the whole call; the caller's timeout starts when the probe is
+    // actually sent, so Connect flows just see a slightly longer probe.
+    if (const qint64 waitMs = holdOffRemainingMs(); waitMs > 0) {
+        QTimer::singleShot(int(waitMs), this, [this, addr, port, timeout]() {
+            probeAddress(addr, port, timeout);
+        });
+        return;
+    }
+
     auto* sock = new QUdpSocket(this);
     sock->bind(QHostAddress::AnyIPv4, 0);
 

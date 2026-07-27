@@ -157,9 +157,48 @@ private slots:
         QCOMPARE(static_cast<quint8>(probe[2]), quint8(0x02));
         // ...but byte 4 is non-zero, so P2 General_CC bails at its command
         // check instead of latching our padding as a config write.
-        QVERIFY2(static_cast<quint8>(probe[4]) != 0x00,
+        const quint8 b4 = static_cast<quint8>(probe[4]);
+        QVERIFY2(b4 != 0x00,
                  "P1 probe byte 4 is zero — P2 gateware will accept this frame "
                  "as a General command and disarm its watchdog");
+        // Byte 4 is also the P2 *command* byte (sdr_receive.v): 2=discovery,
+        // 3=set-IP (broadcast-gated, writes EEPROM), 4=erase, 5=program,
+        // 6=FPGA reset. Our probes are broadcast, so the pad must not collide
+        // with any of them or a plain LAN scan starts issuing P2 commands.
+        QVERIFY2(b4 < 0x02 || b4 > 0x06,
+                 "P1 probe byte 4 collides with a P2 command (2..6) — a "
+                 "broadcast scan would issue discovery/set-IP/erase/reset");
+    }
+
+    // Regression guard, 2026-07-27 (ANAN-G2E disconnect lockup).
+    //
+    // After a disconnect the radio's stop-transition and ~2 s firmware
+    // deadman must settle before any probe reaches it (Thetis is silent
+    // after its stop; our auto-scan fired 7-15 ms after run=0 and both
+    // observed G2E lockups happened in that window).  holdOffScans() must
+    // DEFER a probe — it still completes, but only after the quiet period.
+    void probeDuringHoldOffIsDeferredNotDropped() {
+        FakeP1Probe radio;
+        RadioDiscovery disc;
+        QSignalSpy spy(&disc, &RadioDiscovery::radioDiscovered);
+
+        constexpr int kQuietMs = 400;
+        disc.holdOffScans(std::chrono::milliseconds(kQuietMs));
+
+        QElapsedTimer clock;
+        clock.start();
+        disc.probeAddress(QHostAddress::LocalHost, radio.port(),
+                          std::chrono::milliseconds(500));
+
+        // Not dropped: the reply still arrives...
+        QVERIFY(spy.wait(2000));
+        QCOMPARE(spy.count(), 1);
+        // ...and not early: the probe waited out the quiet period first.
+        QVERIFY2(clock.elapsed() >= kQuietMs,
+                 qPrintable(QStringLiteral(
+                     "probe completed %1 ms after holdOffScans(%2) — it was "
+                     "sent inside the post-disconnect quiet period")
+                     .arg(clock.elapsed()).arg(kQuietMs)));
     }
 
     void timeoutEmitsProbeFailed() {
