@@ -274,6 +274,7 @@ mw0lge@grange-lane.co.uk
 #include "models/Band.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>    // memset
 #include <vector>
@@ -1279,21 +1280,39 @@ void P1RadioConnection::sendTxIq(const float* iq, int n)
     // setMox sets the flag.  See header m_txIqPrimePending declaration.
     if (m_txIqPrimePending.exchange(false, std::memory_order_acq_rel)) {
         constexpr int kPrimeSamples = 960;  // 20 ms at 48 kHz wire rate
-        int wp = m_txIqWritePos.load(std::memory_order_relaxed);
-        for (int i = 0; i < kPrimeSamples; ++i) {
-            // Zero all 8 bytes of this slot: mic_L hi/lo, mic_R hi/lo, I hi/lo, Q hi/lo.
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            m_txIqBuf[wp++] = 0;
-            if (wp >= kBufBytes) { wp = 0; }
+        // Clamp the cushion to what the ring can actually take.  The loop
+        // below is the only write in this function that did not check the
+        // count first: toggle MOX off and back on before the consumer has
+        // drained the previous transmission and the unconditional
+        // fetch_add pushed m_txIqCount past kTxIqBufSamples.  The write
+        // pointer wraps and overwrites unread samples while fillTxZone()
+        // trusts the inflated count and transmits the clobbered slots as
+        // valid I/Q.  Codex review, PR #291; same clamp as the P2 path.
+        const int used = m_txIqCount.load(std::memory_order_acquire);
+        const int primeSamples =
+            std::min(kPrimeSamples, std::max(0, kTxIqBufSamples - used));
+        if (primeSamples > 0) {
+            int wp = m_txIqWritePos.load(std::memory_order_relaxed);
+            for (int i = 0; i < primeSamples; ++i) {
+                // Zero all 8 bytes of this slot: mic_L hi/lo, mic_R hi/lo, I hi/lo, Q hi/lo.
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                m_txIqBuf[wp++] = 0;
+                if (wp >= kBufBytes) { wp = 0; }
+            }
+            m_txIqWritePos.store(wp, std::memory_order_relaxed);
+            m_txIqCount.fetch_add(primeSamples, std::memory_order_release);
         }
-        m_txIqWritePos.store(wp, std::memory_order_relaxed);
-        m_txIqCount.fetch_add(kPrimeSamples, std::memory_order_release);
+        if (primeSamples < kPrimeSamples) {
+            qCDebug(lcConnection)
+                << "P1 TX I/Q pre-prime truncated to" << primeSamples
+                << "samples (ring already held" << used << ")";
+        }
     }
 
     // HL2 CWX firmware workaround: clear LSB of I/Q low bytes to avoid

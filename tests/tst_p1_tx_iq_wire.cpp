@@ -315,6 +315,56 @@ private slots:
         // Q lo must be 0x01 (unmasked)
         QCOMPARE(quint8(frame[23]), quint8(0x01));
     }
+
+    // ── 12. MOX pre-prime respects ring capacity ─────────────────────────────
+    // Codex review [P1] on PR #291.  setMox(true) arms a 20 ms cushion
+    // (960 samples at the P1 48 kHz wire rate) that sendTxIq pushes ahead
+    // of its first real block.  That push was the only write in sendTxIq
+    // that did not check the count first.
+    //
+    // Toggle MOX off and back on before the consumer has drained the
+    // previous transmission and the unconditional fetch_add drove
+    // m_txIqCount past the 4032-sample capacity.  The write pointer wraps
+    // and overwrites unread samples while fillTxZone() trusts the inflated
+    // count and transmits the clobbered slots as valid I/Q -- garbled
+    // audio on the air, which is the symptom the cushion was added to fix.
+    void preprimeIsClampedToAvailableRingSpace() {
+        P1RadioConnection conn;
+        // kTxIqBufSamples = 126 * 32; private, so spelled out here the way
+        // this file already spells out wire offsets.
+        constexpr int kCapacity = 126 * 32;   // 4032 samples
+
+        // Fill the ring right up to capacity: a transmission in flight that
+        // the connection-thread drain has not caught up with.
+        std::vector<float> iq(static_cast<size_t>(kCapacity) * 2, 0.25f);
+        conn.sendTxIq(iq.data(), kCapacity);
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), kCapacity);
+
+        // Operator drops and re-engages MOX; the cushion re-arms.
+        conn.setMox(true);
+
+        // Next producer call consumes the prime flag.
+        float oneSample[2] = {0.0f, 0.0f};
+        conn.sendTxIq(oneSample, 1);
+
+        QVERIFY2(conn.txIqBufferedSamplesForTest() <= kCapacity,
+                 "pre-prime pushed m_txIqCount past the ring capacity; "
+                 "fillTxZone will transmit overwritten slots as valid I/Q");
+    }
+
+    // The cushion must still be delivered in full when the ring is empty,
+    // which is the normal MOX-engage case the pre-prime exists to serve.
+    // A clamp that over-corrects would silently remove the fix.
+    void preprimeDeliversFullCushionOnEmptyRing() {
+        P1RadioConnection conn;
+        conn.setMox(true);
+
+        float oneSample[2] = {0.0f, 0.0f};
+        conn.sendTxIq(oneSample, 1);
+
+        // 960 zero cushion samples + the 1 real sample just pushed.
+        QCOMPARE(conn.txIqBufferedSamplesForTest(), 961);
+    }
 };
 
 QTEST_APPLESS_MAIN(TestP1TxIqWire)
