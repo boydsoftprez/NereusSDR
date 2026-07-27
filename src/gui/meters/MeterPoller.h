@@ -249,6 +249,13 @@ private slots:
     void poll();
 
 private:
+    /// Emit sliceSmeterUpdated for each slice in m_sliceChannels. Independent
+    /// of pollSMeter's analog-widget and m_rxChannel guards.
+    void pollSliceSMeters();
+
+private slots:
+
+private:
     // ── TX poll helper ────────────────────────────────────────────────────────
     // Reads the 4 WDSP TX meters gated for 3M-1a and pushes them to all
     // registered MeterWidget targets.

@@ -1421,20 +1421,31 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
     // visually correct but does not gain FFT resolution.
 }
 
+// Keep the S-meter poller's channel list in step with the live slices.
+//
+// Slice id == WDSP RX channel id, so this is also the set of channels it reads
+// for the per-slice pass that drives each flag's level bar.
+//
+// Hung off sliceAdded / sliceRemoved, NOT off the pan-count hook. It first
+// lived inside ensureOverlayPanels, which only runs on
+// PanadapterStack::countChanged -- so adding a slice to an EXISTING pan never
+// refreshed the list and that slice's flag bar stayed dead. Bench-caught
+// 2026-07-26.
+void MainWindow::refreshMeterPollerSlices()
+{
+    if (!m_meterPoller || !m_radioModel) { return; }
+    QList<int> ids;
+    for (SliceModel* s : m_radioModel->slices()) {
+        if (s) { ids << s->sliceIndex(); }
+    }
+    m_meterPoller->setSliceChannels(ids);
+}
+
 void MainWindow::ensureOverlayPanels()
 {
     if (!m_panStack || !m_radioModel) { return; }
 
-    // Keep the S-meter poller's channel list in step with the live slices.
-    // Slice id == WDSP RX channel id, so this is also the set of channels it
-    // reads for the per-slice pass that drives each flag's level bar.
-    if (m_meterPoller) {
-        QList<int> ids;
-        for (SliceModel* s : m_radioModel->slices()) {
-            if (s) { ids << s->sliceIndex(); }
-        }
-        m_meterPoller->setSliceChannels(ids);
-    }
+    refreshMeterPollerSlices();
 
     // Drop entries whose pan (and therefore whose parent widget) is gone.
     for (auto it = m_overlayPanels.begin(); it != m_overlayPanels.end(); ) {
@@ -1899,6 +1910,14 @@ void MainWindow::buildUI()
         ensureOverlayPanels();
         refreshPanStatusOverlays();
     });
+
+    // The S-meter poller's slice list keys off SLICE lifetime, not pan count.
+    // Adding a slice to an existing pan moves no pan count, so hanging this on
+    // countChanged alone left the new slice's flag bar dead.
+    connect(m_radioModel, &RadioModel::sliceAdded, this,
+            [this](int) { refreshMeterPollerSlices(); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [this](int) { refreshMeterPollerSlices(); });
     wirePanStatusOverlayTriggers();
     wirePanBadgeHandlers();
 

@@ -228,6 +228,11 @@ private slots:
     /// own panId and its controls act on that pan.
     void ensureOverlayPanels();
 
+    /// Push the live slice-id list to MeterPoller so every flag's S-meter bar
+    /// is fed. Must be called on slice add/remove, not just on pan-count
+    /// change: a slice added to an existing pan moves no pan count.
+    void refreshMeterPollerSlices();
+
     /// Wire one panadapter's mouse interaction (click-to-tune, filter-edge
     /// drag, pan drag, CTUN toggle) to the slice that pan hosts. Every one of
     /// these used to be connected once to pan-0's widget, leaving other pans
