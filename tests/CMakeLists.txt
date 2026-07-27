@@ -5373,6 +5373,16 @@ nereus_add_test(tst_port_audio_capture_resample)
 #   doubleUnlockDecrementsOnlyOnce; unlockWithMismatchedLengthStillBalances.
 nereus_add_test(tst_memory_lock_accounting)
 
+# PerfMonitor rolling-stats ring.  Rewritten from a QMutex-guarded array
+# to a lock-free one because recordAudioFillMs() runs on the PortAudio
+# real-time callback; PerfMonitor shipped with no tests, so the rewrite
+# touched avg/max/min arithmetic with nothing guarding it.
+# Tests: avgMaxMinOverAFullWindow; oldSamplesFallOutOfTheWindow;
+#   concurrentPushesStayInRange (two writers is a supported case --
+#   speakers + VAX can both be live); txIqCountersAccumulateAndDeltasReset;
+#   txIqUnderrunIgnoresNonPositive.
+nereus_add_test(tst_perf_monitor_ring)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix)
 # --------------------------------------------------------------------------
