@@ -1054,20 +1054,82 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     connect(slice, &SliceModel::frequencyChanged, this,
             [this, flagPtr, slice](double hz) {
         if (flagPtr) { flagPtr->setFrequency(hz); }
+        if (m_handlingBandJump) { return; }
         // Keep the hosting pan's VFO marker on this slice as it tunes.
         // Resolved per-call rather than captured, because a slice can migrate
         // to another pan and the flag follows it there.
+        SpectrumWidget* host = spectrumForSlice(slice);
+        if (!host) { return; }
+
+        // Band jump: the slice moved outside what this pan is showing, so the
+        // pan has to follow it. Restored after the flag-path unification
+        // dropped the handler that carried it -- nothing set m_handlingBandJump
+        // afterwards, so a slice tuned to another band left its pan behind.
+        //
+        // Per pan now, and using this slice's own WDSP channel rather than the
+        // hardcoded rxChannel(0) the single-pan version used. The DDC retune
+        // itself lives in RadioModel::bindSliceToStream (Sub-Epic I) and is not
+        // duplicated here; this is the DISPLAY half.
+        const double center = host->centerFrequency();
+        const double halfBw = host->bandwidth() / 2.0;
+        const bool offScreen = (hz < center - halfBw) || (hz > center + halfBw);
+        if (!host->ctunEnabled() || offScreen) {
+            m_handlingBandJump = true;
+            const bool wasCtun = host->ctunEnabled();
+            if (m_radioModel->receiverManager()) {
+                m_radioModel->receiverManager()->setDdcFrequencyLocked(false);
+            }
+            host->setCenterFrequency(hz);
+            host->setDdcCenterFrequency(hz);
+            if (m_radioModel->wdspEngine()) {
+                if (RxChannel* ch =
+                        m_radioModel->wdspEngine()->rxChannel(slice->sliceIndex())) {
+                    ch->setShiftFrequency(0.0);
+                }
+            }
+            if (wasCtun && m_radioModel->receiverManager()) {
+                m_radioModel->receiverManager()->setDdcFrequencyLocked(true);
+            }
+            m_handlingBandJump = false;
+        } else {
+            // CTUN, still on-screen: the DDC stays put and WDSP shifts.
+            if (m_radioModel->wdspEngine()) {
+                if (RxChannel* ch =
+                        m_radioModel->wdspEngine()->rxChannel(slice->sliceIndex())) {
+                    ch->setShiftFrequency(hz - center);
+                }
+            }
+        }
+        host->setVfoFrequency(hz);
+    });
+    // Mode and filter drive the flag's LABELS and this pan's PASSBAND.
+    //
+    // The passband half was lost when the two flag-wiring paths were unified:
+    // wireSliceToSpectrum had `activeSpectrumWidget()->setFilterOffset(low,
+    // high)` and `setTxMode(mode)`, and the shared path only ever set the
+    // flag's text -- so the shaded passband stopped following the filter and
+    // never flipped to the other side of the dial on a USB/LSB change.
+    // Bench-caught immediately, 2026-07-26.
+    //
+    // Resolved through spectrumForSlice per call, so the passband lands on the
+    // pan hosting this slice rather than on whichever pan is active.
+    connect(slice, &SliceModel::dspModeChanged, this,
+            [this, flagPtr, slice](DSPMode mode) {
+        if (flagPtr) { flagPtr->setMode(mode); }
         if (SpectrumWidget* host = spectrumForSlice(slice)) {
-            host->setVfoFrequency(hz);
+            // TX filter overlay maps audio Hz to the right sideband from this.
+            host->setTxMode(mode);
+            // Re-push the passband: the sideband, and therefore the sign of
+            // the offsets, changes with the mode.
+            host->setFilterOffset(slice->filterLow(), slice->filterHigh());
         }
     });
-    connect(slice, &SliceModel::dspModeChanged, this,
-            [flagPtr](DSPMode mode) {
-        if (flagPtr) { flagPtr->setMode(mode); }
-    });
     connect(slice, &SliceModel::filterChanged, this,
-            [flagPtr](int low, int high) {
+            [this, flagPtr, slice](int low, int high) {
         if (flagPtr) { flagPtr->setFilter(low, high); }
+        if (SpectrumWidget* host = spectrumForSlice(slice)) {
+            host->setFilterOffset(low, high);
+        }
     });
     connect(slice, &SliceModel::agcModeChanged, this,
             [flagPtr](AGCMode mode) {
@@ -6895,6 +6957,44 @@ void MainWindow::wireSliceToSpectrum()
     VfoWidget* vfo = createSliceFlag(slice, activeSpectrumWidget());
     if (!vfo) { return; }
     m_vfoWidget = vfo;
+
+    // Mode-driven applet surfaces. These are SINGLE global widgets (one RADE
+    // applet, one PhoneCw applet), so they follow the ACTIVE slice's mode and
+    // stay here rather than moving into the per-flag path.
+    //
+    // Restored after the flag-path unification deleted the handler that
+    // carried them alongside the flag's own setMode: switching to CW or FM
+    // stopped changing the PhoneCw page, and RADE stopped revealing its
+    // applet. The passband and TX-mode half of that handler now lives in
+    // createSliceFlag, per pan.
+    connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
+        // Phase 3R L2: RADE applet shows for either RADE sideband, IN ADDITION
+        // to PhoneCwApplet -- bench feedback showed PhoneCw hosts the mic gain
+        // slider, which RADE TX still needs. Routed through the visibility
+        // controller so the wrapper and the menu entry agree, and the user's
+        // persisted preference survives the mode change.
+        const bool isRade = (mode == DSPMode::RADE_U
+                             || mode == DSPMode::RADE_L);
+        if (m_appletVis) {
+            m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
+        }
+        if (m_phoneCwApplet) {
+            m_phoneCwApplet->setVisible(true);  // always visible
+            switch (mode) {
+                case DSPMode::CWL:
+                case DSPMode::CWU:
+                    m_phoneCwApplet->showPage(1);  // CW page
+                    break;
+                case DSPMode::FM:
+                    m_phoneCwApplet->showPage(2);  // FM page
+                    break;
+                default:
+                    m_phoneCwApplet->showPage(0);  // Phone page
+                                                   // (incl. RADE_U / RADE_L)
+                    break;
+            }
+        }
+    });
     vfo->setSlice(slice);
     vfo->setFrequency(freq);
     vfo->setMode(slice->dspMode());
