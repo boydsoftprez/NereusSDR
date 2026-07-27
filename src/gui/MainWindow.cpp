@@ -1151,6 +1151,22 @@ FFTEngine* MainWindow::createFftEngineForStream(int streamIndex)
     connect(engine, &FFTEngine::fftReadyLinear,
             this, &MainWindow::dispatchFftFrameToPans);
 
+    // One NoiseFloorTracker per stream, fed by that stream's own FFT.
+    //
+    // Auto AGC-T derives its threshold from the noise floor, so a slice must
+    // measure the band it is actually on. There used to be a single tracker
+    // fed only by primaryFftEngine(), i.e. stream 0 -- fine while one slice
+    // existed, but it would set a 20m slice's threshold from 40m's noise
+    // floor once auto-AGC ran for every slice.
+    auto* nf = new NoiseFloorTracker;
+    m_streamNoiseFloors.insert(streamIndex, nf);
+    if (m_radioModel) { m_radioModel->setStreamNoiseFloorTracker(streamIndex, nf); }
+    connect(engine, &FFTEngine::fftReady, this,
+            [nf](int, const QVector<float>& binsDbm) {
+        static constexpr float kFrameIntervalMs = 33.0f;
+        nf->feed(binsDbm, kFrameIntervalMs);
+    });
+
     m_fftEngines.insert(streamIndex, engine);
     return engine;
 }

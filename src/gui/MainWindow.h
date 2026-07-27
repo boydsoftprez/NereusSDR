@@ -533,6 +533,11 @@ private:
     // the thread saturating, splitting to one thread per engine is a
     // follow-up needing maintainer sign-off (thread architecture).
     QMap<int, FFTEngine*> m_fftEngines;
+
+    /// One NoiseFloorTracker per stream, fed by that stream's FFT engine.
+    /// Auto AGC-T needs the noise floor of the band a slice is actually on;
+    /// a single tracker fed from stream 0 would mis-set every other slice.
+    QMap<int, class NoiseFloorTracker*> m_streamNoiseFloors;
     QThread*            m_fftThread{nullptr};
 
     /// Last centre + sample rate RadioModel published for each stream, kept

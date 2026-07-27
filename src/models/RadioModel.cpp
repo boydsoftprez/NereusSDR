@@ -8443,10 +8443,6 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     m_autoAgcTimer = new QTimer(this);
     m_autoAgcTimer->setInterval(500);
     connect(m_autoAgcTimer, &QTimer::timeout, this, [this]() {
-        SliceModel* slice = m_activeSlice;
-        if (!slice || !slice->autoAgcEnabled()) {
-            return;
-        }
         // From Thetis v2.10.3.13 console.cs:46059 — guard: skip if not connected or MOX
         if (!m_connection || !m_connection->isConnected()) {
             return;
@@ -8455,12 +8451,25 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (m_transmitModel.isMox()) {
             return;
         }
-        if (!m_noiseFloorTracker || !m_noiseFloorTracker->isGood()) {
-            return;
+
+        // EVERY slice with auto-AGC on, not just the active one. The tick used
+        // to open `SliceModel* slice = m_activeSlice;`, so arming AUTO on a
+        // flag other than the active slice's did nothing at all -- bench-caught
+        // 2026-07-26 as auto AGC not working on flags B-D.
+        for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice || !slice->autoAgcEnabled()) {
+            continue;
+        }
+
+        // This slice's OWN stream noise floor. A shared tracker (stream 0's)
+        // would set a 20m slice's threshold from 40m's noise floor.
+        NoiseFloorTracker* nfTracker = noiseFloorTrackerForSlice(slice);
+        if (!nfTracker || !nfTracker->isGood()) {
+            continue;
         }
 
         // From Thetis v2.10.3.13 console.cs:46107-46115
-        const double noiseFloor = static_cast<double>(m_noiseFloorTracker->noiseFloor());
+        const double noiseFloor = static_cast<double>(nfTracker->noiseFloor());
 
         // From Thetis v2.10.3.13 console.cs:33292-33319 — agcCalOffset(rx)
         // Full Thetis formula:
@@ -8515,6 +8524,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             slice->setAgcThreshold(threshInt);
             m_syncingAgc = false;
         }
+        }  // for each slice with auto-AGC
     });
     m_autoAgcTimer->start();
     }

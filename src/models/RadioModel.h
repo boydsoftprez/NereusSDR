@@ -105,6 +105,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QObject>
+#include <QMap>
 #include <QSet>     // Phase 3F: panBypassState takes PanadapterApplet::associatedSlices
 #include <QString>
 #include <QList>
@@ -646,6 +647,29 @@ public:
     void setStepAttController(class StepAttenuatorController* c);
     NoiseFloorTracker* noiseFloorTracker() const { return m_noiseFloorTracker; }
     void setNoiseFloorTracker(NoiseFloorTracker* t) { m_noiseFloorTracker = t; }
+
+    /// Register the tracker measuring one DDC stream's band.
+    ///
+    /// Auto AGC-T derives its threshold from the noise floor, so a slice has
+    /// to measure the band it is on. With one shared tracker (stream 0's), a
+    /// 20m slice would take its threshold from 40m's noise floor.
+    void setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* t) {
+        if (t) { m_streamNoiseFloors.insert(streamIndex, t); }
+    }
+
+    /// The tracker for this slice's stream, falling back to the global one
+    /// when the slice is unbound or its stream has no tracker yet.
+    NoiseFloorTracker* noiseFloorTrackerForSlice(const SliceModel* s) const {
+        if (s) {
+            const int stream = s->streamIndex();
+            if (stream >= 0) {
+                if (NoiseFloorTracker* t = m_streamNoiseFloors.value(stream, nullptr)) {
+                    return t;
+                }
+            }
+        }
+        return m_noiseFloorTracker;
+    }
     // Task 3.1: MeterPoller view hook so MultimeterPage can apply live
     // polling-interval and averaging-window changes without a MainWindow
     // round-trip.  Non-owning; MainWindow calls setMeterPoller() after
@@ -2731,6 +2755,7 @@ private:
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
+    QMap<int, NoiseFloorTracker*> m_streamNoiseFloors;
     // Task 3.1 view hook — non-owning, set by MainWindow.
     class MeterPoller*      m_meterPoller{nullptr};
     // Task 3.2 view hook — non-owning, set by MainWindow.
