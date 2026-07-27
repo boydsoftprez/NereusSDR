@@ -357,6 +357,13 @@ void Rf2ksConnection::markPollFailure()
     m_consecutiveFailures++;
     if (m_consecutiveFailures >= 3 && m_connected) {
         m_connected = false;
+        // Stop polling the amp we just declared down.  Without this the
+        // poll timer kept firing at the configured cadence against a dead
+        // endpoint, which made the exponential backoff decorative -- the
+        // retry schedule stretched to 60 s while the poller carried on
+        // hammering every few hundred ms.  onReconnectTimeout() restarts
+        // the timer when a probe succeeds.  Codex review, PR #291.
+        m_pollTimer.stop();
         emit disconnected();
         scheduleReconnect();
     }

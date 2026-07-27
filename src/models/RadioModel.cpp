@@ -1480,6 +1480,18 @@ RadioModel::RadioModel(QObject* parent)
             this, [this](const RfKitPowerSnapshot& snap) {
         emit externalAmpFwdSwrUpdated(snap.forwardW, snap.swr);
     });
+    // Publish the OPERATE -> not-OPERATE transition when the amp drops.
+    // operateModeUpdated only fires from a successful poll, so a
+    // disconnect while the amp was in OPERATE left m_lastRfKitInOperate
+    // latched true and no consumer ever heard otherwise: the S-Meter kept
+    // the 2 kW scale indefinitely.  Codex review, PR #291.
+    connect(m_rfKitConnection.get(), &Rf2ksConnection::disconnected,
+            this, [this]() {
+        if (m_lastRfKitInOperate) {
+            m_lastRfKitInOperate = false;
+            emit externalAmpOperateChanged(false);
+        }
+    });
 
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //
@@ -2700,7 +2712,13 @@ bool RadioModel::isAnyExternalAmpInOperate() const
     }
     // RF-Kit: poll the last-known operate_mode from Rf2ksConnection.  The
     // connection caches it in m_operateMode and refreshes once per second.
+    // Require a live connection: m_operateMode is a cache with no
+    // disconnect invalidation, so an amp last seen in OPERATE kept this
+    // predicate true forever after it dropped, pinning MainWindow to the
+    // 2 kW scale and suppressing the radio's barefoot power updates.
+    // Codex review, PR #291.
     if (m_rfKitConnection
+        && m_rfKitConnection->isConnected()
         && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE")) {
         return true;
     }
