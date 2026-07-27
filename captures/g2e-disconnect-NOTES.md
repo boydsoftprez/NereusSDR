@@ -241,6 +241,46 @@ the radio emits and exactly which probe it fails to answer.
 
 ---
 
+## Update, 2026-07-27 evening: post-disconnect quiet period. Bench result GOOD.
+
+The delta analysis (Thetis is totally silent after its stop; NereusSDR fired a
+broadcast discovery burst 7-15 ms after run=0, and both deaths landed in that
+window) led to `RadioDiscovery::holdOffScans()`: every teardown now defers all
+discovery, broadcast and unicast, for 3 s. Probing a radio while its
+stop-transition state machines are settling is a race Thetis never enters, and
+now neither do we.
+
+Bench, same G2E, same network, one power cycle to clear the prior wedge:
+
+| | cycle 1 | cycle 2 |
+|---|---|---|
+| session length | ~7 s | 54 s (longer than the 48 s fatal session) |
+| scan after run=0 | +2.3 s | +2.3 s |
+| discovery after stop | answers | answers |
+| reconnect | clean | clean |
+
+Two consecutive clean cycles. The pre-fix build never survived two in a row
+(best observed: one). Attribution note: this build also carries the 0xFF probe
+pad and the MOX-gated cadence, but both fatal runs already had the cadence fix
+and death #2 involved no mid-session scan, so the quiet period is the change
+that separates wedge from no-wedge.
+
+Still true and worth remembering:
+
+* The underlying gateware race presumably still exists. Any OTHER host that
+  broadcasts discovery at the wrong instant (another PC running an SDR console,
+  a scanner) could in principle wedge a stopping radio. Client-side silence
+  narrows the trigger; it does not fix the firmware. Candidate upstream report
+  to TAPR / N1GP once more cycles confirm.
+* The exact wedged state machine inside the C10 gateware was never pinned.
+  udp_send / ip_send / mac_send / the TX arbiter all read orphan-tolerant;
+  arp.v and the icmp sending_sync handshake remain unread.
+* Confidence: two cycles is strong but not proof against a ~25% survival rate
+  observed pre-fix (P of 2 clean by luck is roughly 6%). A day of normal use
+  without a power cycle closes this for good.
+
+---
+
 ## Prior art
 
 - `a0514cb1` (2026-05-22) 3x SendStop retry — superseded
