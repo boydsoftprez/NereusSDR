@@ -67,6 +67,10 @@ public:
     // calls this.
     void testForceDisconnect();
 
+    /// Test seam: is a reconnect retry currently armed?  Reads the owned
+    /// m_reconnectTimer, which is the only timer disconnect() can cancel.
+    bool testReconnectPending() const { return m_reconnectTimer.isActive(); }
+
     // Test-only: returns true if the keepalive timer is active.
     bool testKeepaliveTimerActive() const { return m_keepaliveTimer.isActive(); }
 
@@ -118,6 +122,10 @@ private slots:
     void onKeepaliveTimeout();
     void onPingTimeoutCheck();
     void scheduleReconnect();
+    // Fires the retry that scheduleReconnect() armed on m_reconnectTimer.
+    // Holds what used to be the body of a detached QTimer::singleShot
+    // lambda; moving it here is what makes the retry cancellable.
+    void onReconnectTimeout();
 
 private:
     void processLine(const QString& line);
@@ -139,6 +147,13 @@ private:
     QTimer  m_pingTimer;          // periodic auto-ping (TGXL_PingSec); wired in Task 67.
     QTimer  m_pingTimeoutTimer;
     QTimer  m_reconnectTimer;
+    // Target latched by scheduleReconnect() and used by
+    // onReconnectTimeout().  Separate from m_lastHost / m_lastPort so a
+    // connectToTgxl() to a different host while a retry is pending does
+    // not redirect the in-flight retry -- preserving the capture-by-value
+    // semantics of the lambda this replaced.
+    QString m_reconnectHost;
+    quint16 m_reconnectPort{0};
     int     m_reconnectAttempts{0};
     // Dedup window for scheduleReconnect: when Qt fires BOTH errorOccurred
     // and disconnected for the same socket failure (happens on most

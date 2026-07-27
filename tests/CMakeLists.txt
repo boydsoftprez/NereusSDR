@@ -5178,7 +5178,16 @@ nereus_add_test(tst_tgxl_connection_ping)
 # Test: backoffSequence verifies 8 calls to testForceDisconnect() produce
 # reconnectAttempt signals with delays 1000/2000/5000/10000/30000/60000/
 # 60000/60000 ms.
+# Plus the reconnect-cancellation contract: scheduleReconnectArmsTheOwnedTimer
+# and disconnectCancelsPendingReconnect.  scheduleReconnect() used the STATIC
+# QTimer::singleShot, so a retry armed before the operator hit Disconnect
+# still fired against the peripheral they had just turned off.
 nereus_add_test(tst_pgxl_connection_reconnect)
+
+# TGXL counterpart to the above: same backoff schedule, same
+# reconnect-cancellation contract.  TgxlConnection carried an identical
+# uncancellable-reconnect defect and had no reconnect test at all.
+nereus_add_test(tst_tgxl_connection_reconnect)
 
 # Task 61: ConnectionDiagnostics 1 Hz coalesced metrics aggregator.
 # Tests: tracksFrameCount (2 injectLineForTesting calls -> framesIn==2);

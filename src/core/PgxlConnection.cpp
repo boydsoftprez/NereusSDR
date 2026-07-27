@@ -48,6 +48,18 @@ PgxlConnection::PgxlConnection(QObject* parent)
     m_pingTimeoutTimer.setSingleShot(false);
     connect(&m_pingTimeoutTimer, &QTimer::timeout, this, &PgxlConnection::onPingTimeoutCheck);
     m_pingTimeoutTimer.start();
+
+    // Own the reconnect timer so disconnect() can cancel a pending retry.
+    // scheduleReconnect() previously armed the retry with the STATIC
+    // QTimer::singleShot(delayMs, this, lambda), which creates a detached
+    // one-shot with no handle -- m_reconnectTimer was declared here but
+    // never referenced, so nothing could cancel an in-flight retry.  A
+    // reconnect scheduled before the operator hit Disconnect (or turned
+    // off 4O3A) still fired afterwards and reconnected to a peripheral
+    // they had just turned off.  Same defect as Rf2ksConnection (PR #291).
+    m_reconnectTimer.setSingleShot(true);
+    connect(&m_reconnectTimer, &QTimer::timeout,
+            this, &PgxlConnection::onReconnectTimeout);
 }
 
 void PgxlConnection::connectToPgxl(const QString& host, quint16 port) {
@@ -87,6 +99,11 @@ void PgxlConnection::disconnect() {
     m_userInitiatedDisconnect = true;
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
+    // Cancel any retry already in flight.  The flag above only stops
+    // onDisconnected() from scheduling a NEW one; without this stop(), a
+    // retry armed before the operator hit Disconnect still fires and
+    // reconnects to the peripheral they just turned off.
+    m_reconnectTimer.stop();
     m_connected = false;
     m_socket.disconnectFromHost();
 }
@@ -381,24 +398,31 @@ void PgxlConnection::scheduleReconnect() {
     // The singleShot only fires the actual socket reconnect.
     ++m_reconnectAttempts;
     emit reconnectAttempt(m_reconnectAttempts, delayMs);
-    QString host = m_lastHost;
-    quint16 port = m_lastPort;
+    // Latch the target at schedule time.  The old lambda captured host
+    // and port by value; keeping dedicated members preserves that exactly,
+    // so a connectToPgxl() to a different host while a retry is pending
+    // does not redirect the in-flight retry.
+    m_reconnectHost = m_lastHost;
+    m_reconnectPort = m_lastPort;
     qCInfo(lcPgxl) << "scheduleReconnect: attempt #" << m_reconnectAttempts
-                   << "scheduled in" << delayMs << "ms to" << host << ":" << port;
-    QTimer::singleShot(delayMs, this, [this, host, port] {
-        // Reset to UnconnectedState first; Qt sometimes leaves the socket
-        // in BoundState or ClosingState after a remote close, which causes
-        // connectToHost to no-op silently. abort() forces it back to
-        // UnconnectedState so connectToHost can proceed.
-        if (m_socket.state() != QAbstractSocket::UnconnectedState) {
-            qCDebug(lcPgxl) << "scheduleReconnect lambda: socket in state"
-                            << m_socket.state() << "before reconnect, aborting";
-            m_socket.abort();
-        }
-        qCInfo(lcPgxl) << "scheduleReconnect lambda: firing connectToHost"
-                       << host << ":" << port;
-        m_socket.connectToHost(host, port);
-    });
+                   << "scheduled in" << delayMs << "ms to"
+                   << m_reconnectHost << ":" << m_reconnectPort;
+    m_reconnectTimer.start(delayMs);
+}
+
+void PgxlConnection::onReconnectTimeout() {
+    // Reset to UnconnectedState first; Qt sometimes leaves the socket
+    // in BoundState or ClosingState after a remote close, which causes
+    // connectToHost to no-op silently. abort() forces it back to
+    // UnconnectedState so connectToHost can proceed.
+    if (m_socket.state() != QAbstractSocket::UnconnectedState) {
+        qCDebug(lcPgxl) << "onReconnectTimeout: socket in state"
+                        << m_socket.state() << "before reconnect, aborting";
+        m_socket.abort();
+    }
+    qCInfo(lcPgxl) << "onReconnectTimeout: firing connectToHost"
+                   << m_reconnectHost << ":" << m_reconnectPort;
+    m_socket.connectToHost(m_reconnectHost, m_reconnectPort);
 }
 
 void PgxlConnection::testForceDisconnect() {

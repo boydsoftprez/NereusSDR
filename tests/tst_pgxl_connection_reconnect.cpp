@@ -22,6 +22,8 @@ class PgxlConnectionReconnectTest : public QObject {
     Q_OBJECT
 private slots:
     void backoffSequence();
+    void scheduleReconnectArmsTheOwnedTimer();
+    void disconnectCancelsPendingReconnect();
 };
 
 void PgxlConnectionReconnectTest::backoffSequence() {
@@ -67,6 +69,47 @@ void PgxlConnectionReconnectTest::backoffSequence() {
     QCOMPARE(delays.value(5), 60000);
     QCOMPARE(delays.value(6), 60000);
     QCOMPARE(delays.value(7), 60000);
+}
+
+// The same defect Codex/review found in Rf2ksConnection (PR #291,
+// fixed there by 7202d393) is present here and in TgxlConnection.
+//
+// scheduleReconnect() arms the retry with the STATIC
+// QTimer::singleShot(delayMs, this, lambda).  That creates a detached
+// one-shot with no handle, so nothing can cancel it -- m_reconnectTimer
+// is declared in the header but never referenced in the .cpp at all.
+//
+// The consequence: the link drops, onDisconnected() schedules a retry
+// up to 60 s out, and the operator then hits Disconnect (or turns off
+// 4O3A).  disconnect() sets m_userInitiatedDisconnect so no NEW retry
+// gets scheduled, but the one already in flight still fires and calls
+// connectToHost() against the peripheral they just turned off.
+void PgxlConnectionReconnectTest::scheduleReconnectArmsTheOwnedTimer() {
+    NereusSDR::PgxlConnection conn;
+    NereusSDR::AppSettings::instance().setValue("PGXL_AutoReconnect", "True");
+    conn.connectToPgxl("192.0.2.1", 9008);  // TEST-NET-1, never routes
+
+    conn.testForceDisconnect();
+
+    QVERIFY2(conn.testReconnectPending(),
+             "scheduleReconnect() did not arm the owned m_reconnectTimer, "
+             "so disconnect() cannot cancel the pending retry");
+}
+
+void PgxlConnectionReconnectTest::disconnectCancelsPendingReconnect() {
+    NereusSDR::PgxlConnection conn;
+    NereusSDR::AppSettings::instance().setValue("PGXL_AutoReconnect", "True");
+    conn.connectToPgxl("192.0.2.1", 9008);
+
+    conn.testForceDisconnect();
+    QVERIFY2(conn.testReconnectPending(),
+             "precondition: a retry should be armed before we cancel it");
+
+    conn.disconnect();
+
+    QVERIFY2(!conn.testReconnectPending(),
+             "disconnect() left a reconnect armed; it will fire against a "
+             "peripheral the operator just disconnected");
 }
 
 QTEST_GUILESS_MAIN(PgxlConnectionReconnectTest)

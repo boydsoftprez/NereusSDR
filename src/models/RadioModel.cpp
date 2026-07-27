@@ -2336,11 +2336,20 @@ void RadioModel::setFourO3AEnabled(bool enabled)
         // already-connected PGXL keeps sending statusUpdated frames,
         // m_hasAmplifier stays true, and the S-Meter keeps showing the
         // 2 kW PGXL scale even though the operator just disabled 4O3A.
-        if (m_pgxlConnection && m_pgxlConnection->isConnected()) {
+        //
+        // Deliberately NOT gated on isConnected().  isConnected() is false
+        // precisely when the link has dropped and an auto-reconnect retry
+        // is pending -- which is the case this teardown most needs to
+        // cover.  Skipping disconnect() there left the retry armed, and it
+        // then reconnected to a peripheral the operator had just disabled.
+        // disconnect() is idempotent: it stops the poll / keepalive /
+        // reconnect timers, clears m_connected, and disconnectFromHost()
+        // on an already-unconnected socket is a no-op.
+        if (m_pgxlConnection) {
             m_pgxlConnection->disconnect();
             qCInfo(lcConnection) << "4O3A disabled: PGXL TCP disconnected";
         }
-        if (m_tgxlConnection && m_tgxlConnection->isConnected()) {
+        if (m_tgxlConnection) {
             m_tgxlConnection->disconnect();
             qCInfo(lcConnection) << "4O3A disabled: TGXL TCP disconnected";
         }
