@@ -509,6 +509,7 @@ preferences. OpenHPSDR radios don't store per-slice state.
 | --- | --- |
 | [docs/MASTER-PLAN.md](docs/MASTER-PLAN.md) | Full phased roadmap, menu bar layout, GUI container mapping (Thetis → NereusSDR), skin system design, progress tracking |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines, coding conventions, PR process |
+| [docs/development/fast-test-loop.md](docs/development/fast-test-loop.md) | **Read before running tests.** Per-test builds, `ctest -L` subsystem labels, macOS first-run-scan exemption, ccache setup, and how to write tests that stay fast. Building the whole suite costs ~32 min; almost nothing needs it. |
 | [STYLEGUIDE.md](STYLEGUIDE.md) | Applet color palette, button states, gauge zones, slider/combo styling |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and per-phase feature additions |
 

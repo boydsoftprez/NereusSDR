@@ -40,7 +40,17 @@ that matches our conventions.
 1. **Fork the repo** and create a feature branch from `main`.
 2. **One issue per PR.** Keep changes focused and reviewable.
 3. **Follow the coding conventions** below.
-4. **Test your changes** against a real OpenHPSDR radio if possible.
+4. **Test your changes** against a real OpenHPSDR radio if possible. For the
+   unit-test suite, read
+   [docs/development/fast-test-loop.md](docs/development/fast-test-loop.md)
+   first: every test executable statically links the whole application, so
+   building all of them costs about 32 minutes. Test binaries are
+   `EXCLUDE_FROM_ALL`, so always build a target before running `ctest` --
+   otherwise you are testing stale binaries:
+
+   ```bash
+   cmake --build build --target tests_core && ctest --test-dir build -L core
+   ```
 5. **Sign your commits** with GPG when contributing back to this repository's `main` branch (required by this repo's branch protection — not a license obligation; downstream forks and redistributions are not required to sign).
 6. **Open a pull request** against `main` with a clear description.
 
