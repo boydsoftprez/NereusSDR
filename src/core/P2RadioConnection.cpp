@@ -438,11 +438,37 @@ void P2RadioConnection::init()
     //
     // Dispatch table over an 8-cycle wheel (0..7) — matches deskhpsdr's
     // `switch (cycling)` cases 1..8 (we're 0-indexed).
+    //
+    // 2026-07-27 (ANAN-G2E lockup): the wheel is now gated on MOX, so it
+    // only runs while transmitting.  Rationale, from a TZSP wire capture of
+    // Thetis and NereusSDR against the same ANAN-G2E (analysis in
+    // captures/g2e-disconnect-NOTES.md):
+    //
+    //   command          Thetis            NereusSDR (before)
+    //   CmdHighPriority  1 per session     12.47/s
+    //   CmdTx            1 per session     5.11/s
+    //   CmdRx            1.28/s bursty     5.70/s
+    //
+    // Thetis never polls.  From Thetis network.c [v2.10.3.15], CmdHighPriority()
+    // is reached only from SendStart():362-369, SendStop():372-376, and
+    // per-control state changes; only CmdGeneral() is periodic, from
+    // KeepAliveLoop():1428-1437 (`if (prn->run && prn->wdt) CmdGeneral();`),
+    // whose job is feeding the board's ~2 s deadman.
+    //
+    // NereusSDR already pushes every state change immediately (11 change-driven
+    // sendCmdHighPriority sites, 4 for CmdRx, 10 for CmdTx), so the wheel was
+    // purely additive polling.  The original 3M-1a rationale above is a TX
+    // concern ("keep TX state fresh ... never engages the PA"), so it is
+    // preserved verbatim for the transmit case and simply not run during RX,
+    // where there is no PA state to keep fresh.  On MOX transitions
+    // setMox() already emits an immediate CmdHighPriority (see below), so the
+    // first TX frame does not wait on this timer.
     m_p2HeartbeatTimer = new QTimer(this);
     m_p2HeartbeatTimer->setInterval(100);
     m_p2HeartbeatTimer->setTimerType(Qt::PreciseTimer);
     connect(m_p2HeartbeatTimer, &QTimer::timeout, this, [this]() {
         if (!m_running) { return; }
+        if (!m_mox) { return; }               // RX: Thetis-faithful, event-driven only
         sendCmdHighPriority();                // every 100 ms (every cycle)
         switch (m_p2HeartbeatCycle) {
             case 0: case 2: case 4: case 6:   // odd-numbered cycles → TX-spec
@@ -650,11 +676,26 @@ void P2RadioConnection::disconnect()
         //
         // Defensive: flush + 20 ms sleep before close so the run=0 frame
         // is actually on the wire before the socket goes away.
+        // 2026-07-27: quiesce before the stop frame.  A TZSP capture of a
+        // NereusSDR disconnect showed a CmdRx leaving 4.4 ms ahead of the
+        // run=0 frame — the last 100 ms heartbeat tick firing between the
+        // timer stops above and the send below.  Each CmdRx re-latches
+        // EnableRx0_7 and the per-DDC rates in the gateware
+        // (Hermes.v:717/741 hold a DDC FIFO in reset from its enable bit),
+        // so landing one immediately before the stop reconfigures the DDCs
+        // as they are being shut down.  Thetis never does this: its capture
+        // shows the stop frame arriving with no other command traffic near
+        // it.  The heartbeat is now MOX-gated so this cannot happen on an RX
+        // disconnect, and the settle covers a disconnect taken during TX.
+        QThread::msleep(kStopQuiesceMs);
+
         m_running = false;       // prn->run = 0;
         sendCmdHighPriority();   // From Thetis SendStop() network.c:372-376
         m_socket->flush();
-        QThread::msleep(20);
-        qCDebug(lcConnection) << "P2: SendStop complete (1x CmdHighPriority run=0, Thetis-faithful)";
+        QThread::msleep(kStopDrainMs);
+        qCDebug(lcConnection)
+            << "P2: SendStop sent (1x CmdHighPriority run=0, Thetis-faithful);"
+            << "any send failure is logged separately above";
     }
 
     m_running = false;
@@ -2332,7 +2373,17 @@ void P2RadioConnection::sendCmdHighPriority()
     // From Thetis network.c:1062
     // sendPacket(listenSock, packetbuf, BUFLEN, prn->base_outbound_port + 3);
     QByteArray pkt(buf, sizeof(buf));
-    m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 3);
+    // 2026-07-27: check the send result.  Previously the return was discarded,
+    // so disconnect() logged "SendStop complete" whether or not the run=0 frame
+    // ever reached the wire — three rounds of ANAN-G2E lockup debugging trusted
+    // that line as evidence the stop had been sent.  It was not evidence.
+    const qint64 written =
+        m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 3);
+    if (written != pkt.size()) {
+        qCWarning(lcConnection)
+            << "P2: CmdHighPriority send failed — wrote" << written
+            << "of" << pkt.size() << "bytes:" << m_socket->errorString();
+    }
     // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
     recordBytesSent(static_cast<qint64>(pkt.size()));
     // Shell-chrome sub-PR-2 B.2: bracket C&C round-trip for ping RTT.

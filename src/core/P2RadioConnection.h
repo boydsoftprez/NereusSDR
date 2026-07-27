@@ -382,6 +382,16 @@ private:
     static constexpr int kBufLen = 1444;      // Thetis BUFLEN
     static constexpr int kKeepAliveIntervalMs = 500; // network.c:1428
 
+    // Disconnect timing (2026-07-27, ANAN-G2E lockup investigation).
+    // kStopQuiesceMs: settle after stopping the command timers and before
+    //   emitting run=0, so no CmdRx/CmdTx lands on top of the stop frame.
+    //   One 100 ms heartbeat period covers the worst-case in-flight tick.
+    // kStopDrainMs: let the kernel put the run=0 datagram on the wire before
+    //   close(); Thetis keeps listenSock open across SendStop
+    //   (network.c:398-404 StopReadThread) so it needs no equivalent.
+    static constexpr int kStopQuiesceMs = 100;
+    static constexpr int kStopDrainMs   = 20;
+
     // --- Board capabilities (set in connectToRadio, used for clamp/dispatch) ---
     const BoardCapabilities* m_caps{nullptr};
 
