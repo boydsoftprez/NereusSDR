@@ -90,7 +90,8 @@ private slots:
         alloc.placeSlice(14225000.0);
 
         const auto r = alloc.retuneSlice(/*currentStream*/ 0,
-                                         /*mayRetuneStream*/ false,
+                                         /*soleOccupant*/ false,
+                                         /*ddcPinned*/ false,
                                          14180000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::JoinedExisting);
@@ -106,7 +107,8 @@ private slots:
 
         // Only slice on stream 0: cheaper to move the DDC than to burn
         // another one.
-        const auto r = alloc.retuneSlice(0, /*mayRetuneStream*/ true, 7150000.0);
+        const auto r = alloc.retuneSlice(0, /*soleOccupant*/ true,
+                                         /*ddcPinned*/ false, 7150000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::RetunedStream);
         QCOMPARE(r.streamIndex, 0);
@@ -120,7 +122,72 @@ private slots:
         alloc.activateStream(0, 14200000.0, 192000);
 
         // Another slice still needs stream 0 where it is, so this one moves.
-        const auto r = alloc.retuneSlice(0, /*mayRetuneStream*/ false, 7150000.0);
+        const auto r = alloc.retuneSlice(0, /*soleOccupant*/ false,
+                                         /*ddcPinned*/ false, 7150000.0);
+
+        QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::NewStream);
+        QCOMPARE(r.streamIndex, 1);
+    }
+
+    // ── Bench defect, ANAN-G2E 2026-07-26 ────────────────────────────────
+    //
+    // Two pans, Slice A on 40 m (stream 0) and Slice B on 20 m (stream 1) at
+    // 48 kHz, so B's window is only +-24 kHz. CTUN was on, which pinned the
+    // DDC. Tuning B a little way inside 20 m put it outside that narrow
+    // window, and because the pin withheld permission to re-centre, B
+    // MIGRATED to stream 2 -- while stream 1, whose only occupant had just
+    // left, went idle. The enable mask became DDC0 + DDC2 with a hole at
+    // DDC1, the radio was still streaming the DDC the client had stopped
+    // listening to, and the second pan went dead.
+    //
+    // The pin is meant to stop the panadapter sliding under the operator
+    // while the VFO moves INSIDE the window. Once the slice leaves, the pan
+    // has to jump regardless -- MainWindow's band-jump handler drops the
+    // lock and re-centres for exactly this case -- so honouring the pin here
+    // buys nothing and costs a DDC.
+    void a_pinned_sole_occupant_leaving_its_window_keeps_its_own_stream()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(4, 5);
+        alloc.activateStream(0, 7245000.0, 48000);   // Slice A, 40 m
+        alloc.activateStream(1, 14200000.0, 48000);  // Slice B, 20 m
+
+        // B tunes 40 kHz up: still 20 m, but outside a +-24 kHz window.
+        const auto r = alloc.retuneSlice(/*currentStream*/ 1,
+                                         /*soleOccupant*/ true,
+                                         /*ddcPinned*/ true,
+                                         14240000.0);
+
+        QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::RetunedStream);
+        QCOMPARE(r.streamIndex, 1);       // NOT 2 -- no migration, no hole
+        QCOMPARE(r.shiftOffsetHz, 0.0);
+        QCOMPARE(r.newStreamCentreHz, 14240000.0);
+    }
+
+    // The pin still does its job for the case it exists for.
+    void a_pinned_sole_occupant_inside_its_window_still_only_shifts()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(4, 5);
+        alloc.activateStream(1, 14200000.0, 48000);
+
+        const auto r = alloc.retuneSlice(1, /*soleOccupant*/ true,
+                                         /*ddcPinned*/ true, 14210000.0);
+
+        QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::JoinedExisting);
+        QCOMPARE(r.streamIndex, 1);
+        QCOMPARE(r.shiftOffsetHz, 10000.0);
+    }
+
+    // A slice someone else is sharing a window with still has to leave.
+    void a_pinned_co_hosted_slice_leaving_its_window_still_migrates()
+    {
+        SliceStreamAllocator alloc;
+        alloc.configure(4, 5);
+        alloc.activateStream(0, 14200000.0, 48000);
+
+        const auto r = alloc.retuneSlice(0, /*soleOccupant*/ false,
+                                         /*ddcPinned*/ true, 7150000.0);
 
         QCOMPARE(r.outcome, SliceStreamAllocator::Outcome::NewStream);
         QCOMPARE(r.streamIndex, 1);

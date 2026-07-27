@@ -96,25 +96,33 @@ SliceStreamAllocator::placeSlice(double frequencyHz) const
 
 SliceStreamAllocator::Placement
 SliceStreamAllocator::retuneSlice(int currentStream,
-                                  bool mayRetuneStream,
+                                  bool soleOccupant,
+                                  bool ddcPinned,
                                   double frequencyHz) const
 {
     Placement p;
 
     const bool haveStream =
         currentStream >= 0 && currentStream < m_streams.size();
+    const bool inWindow =
+        haveStream && windowContains(m_streams.at(currentStream), frequencyHz);
 
-    // Sole occupant, and the caller has granted permission to move the
-    // centre: no other slice depends on this window, so the DDC follows the
-    // slice. Checked BEFORE the window test, because a lone slice belongs on
-    // its DDC centre where it has the full half-rate of headroom in both
-    // directions, not parked at an arbitrary offset left over from wherever
-    // the stream happened to be claimed.
+    // Sole occupant: no other slice depends on this window, so the DDC
+    // follows the slice. Checked BEFORE the window test, because a lone
+    // slice belongs on its DDC centre where it has the full half-rate of
+    // headroom in both directions, not parked at an arbitrary offset left
+    // over from wherever the stream happened to be claimed.
     //
-    // Callers that must NOT move the DDC pass mayRetuneStream = false to
-    // withhold the permission (CTUN pins the window deliberately). See the
-    // header: the flag is a permission, not an observation.
-    if (mayRetuneStream && haveStream) {
+    // The CTUN pin holds this back only while the slice is still inside the
+    // window -- which is exactly what CTUN is for. Once the slice leaves,
+    // the panadapter has to jump regardless (MainWindow's band-jump handler
+    // drops the lock and re-centres for precisely this case), so keeping the
+    // stream parked achieves nothing and costs a DDC: the slice would
+    // migrate away and leave its old stream with no occupants at all.
+    //
+    // Bench defect, ANAN-G2E 2026-07-26: that migration left the enable mask
+    // as DDC0 + DDC2 with a hole at DDC1, and the second pan went dead.
+    if (haveStream && soleOccupant && (!ddcPinned || !inWindow)) {
         p.outcome           = Outcome::RetunedStream;
         p.streamIndex       = currentStream;
         p.shiftOffsetHz     = 0.0;
@@ -122,17 +130,16 @@ SliceStreamAllocator::retuneSlice(int currentStream,
         return p;
     }
 
-    // Co-hosted and still inside its own window: nothing moves but the
-    // shift oscillator.
-    if (haveStream && windowContains(m_streams.at(currentStream), frequencyHz)) {
+    // Still inside its own window: nothing moves but the shift oscillator.
+    if (inWindow) {
         p.outcome       = Outcome::JoinedExisting;
         p.streamIndex   = currentStream;
         p.shiftOffsetHz = frequencyHz - m_streams.at(currentStream).centreHz;
         return p;
     }
 
-    // Co-hosted and outside it: this slice must leave. Same policy as a
-    // fresh placement.
+    // Outside it, and the window belongs to someone else too: this slice
+    // must leave. Same policy as a fresh placement.
     return placeSlice(frequencyHz);
 }
 

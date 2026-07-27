@@ -64,19 +64,29 @@ public:
 
     /// Where should an existing slice go after retuning to `frequencyHz`?
     ///
-    /// `mayRetuneStream` is a PERMISSION to move the stream's centre, not
-    /// merely an observation about occupancy. Granted, the DDC follows the
-    /// slice (Outcome::RetunedStream) whether or not the new frequency
-    /// still falls inside the old window, because a lone slice belongs on
-    /// its DDC centre. Withheld, the stream's centre is fixed: the slice
-    /// carries a shift offset while it stays in the window and migrates to
-    /// another DDC when it leaves.
+    /// Two separate facts decide whether the stream's centre may move, and
+    /// they are NOT interchangeable -- they were a single `mayRetuneStream`
+    /// flag until the 2026-07-26 G2E bench, and conflating them cost a DDC.
+    ///
+    /// `soleOccupant`: no other slice depends on this window. A lone slice
+    /// belongs on its DDC centre, so the DDC follows it
+    /// (Outcome::RetunedStream). A shared window cannot move, so a slice
+    /// leaving it must migrate to another DDC.
+    ///
+    /// `ddcPinned`: CTUN is holding the window still deliberately. This
+    /// applies only while the slice stays INSIDE the window -- that is the
+    /// whole point of CTUN, the panadapter must not slide under the
+    /// operator as the VFO moves. Once the slice leaves the window the pan
+    /// has to jump regardless, so the pin is moot: honouring it there would
+    /// migrate a lone slice off a stream that is about to go idle anyway,
+    /// leaving a hole in the DDC enable mask.
     ///
     /// Callers withhold it in two cases: other slices depend on this
     /// window, or the DDC is pinned for CTUN (RadioModel reads
     /// ReceiverManager::ddcFrequencyLocked for exactly this).
     Placement retuneSlice(int currentStream,
-                          bool mayRetuneStream,
+                          bool soleOccupant,
+                          bool ddcPinned,
                           double frequencyHz) const;
 
     int  streamCount() const { return m_streams.size(); }

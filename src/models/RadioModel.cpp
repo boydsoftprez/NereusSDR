@@ -3505,25 +3505,28 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz)
 
     const int previousStream = slice->streamIndex();
 
-    // "Sole occupant" is the allocator's PERMISSION to move this stream's
-    // centre, not just an observation about occupancy. Two things withhold
-    // it: another slice depending on this window, and CTUN, which pins the
-    // DDC deliberately while the VFO moves inside it.
+    // Occupancy and the CTUN pin are handed to the allocator SEPARATELY.
+    // They were AND-ed into one "may retune" permission until the 2026-07-26
+    // G2E bench, where that cost a DDC: a lone slice on a pinned stream
+    // tuned out of its 48 kHz window, and because the pin looked identical
+    // to "someone else needs this window", the slice migrated to a fresh DDC
+    // and left its old one idle -- a hole in the enable mask, and a dead
+    // second pan.
+    //
     // ReceiverManager::ddcFrequencyLocked is exactly the CTUN flag
-    // (MainWindow sets it from SpectrumWidget::ctunEnabled), so a pinned
-    // DDC never re-centres and the panadapter never slides under the
-    // operator.
+    // (MainWindow sets it from SpectrumWidget::ctunEnabled). The allocator
+    // applies it only while the slice stays inside the window, which is the
+    // case CTUN exists for; see SliceStreamAllocator::retuneSlice.
     const bool ddcPinned =
         m_receiverManager && m_receiverManager->ddcFrequencyLocked();
     const bool soleOccupant =
-        !ddcPinned && previousStream >= 0
-        && slicesOnStream(previousStream).size() == 1;
+        previousStream >= 0 && slicesOnStream(previousStream).size() == 1;
 
     const auto placement =
         (previousStream < 0)
             ? m_streamAllocator.placeSlice(frequencyHz)
             : m_streamAllocator.retuneSlice(previousStream, soleOccupant,
-                                            frequencyHz);
+                                            ddcPinned, frequencyHz);
 
     using Outcome = NereusSDR::SliceStreamAllocator::Outcome;
 
