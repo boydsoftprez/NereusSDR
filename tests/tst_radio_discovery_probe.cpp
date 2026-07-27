@@ -201,6 +201,32 @@ private slots:
                      .arg(clock.elapsed()).arg(kQuietMs)));
     }
 
+    // Codex review, PR #306.  teardownConnection() arms the quiet period
+    // twice: once on entry (so nothing scans during teardown) and again after
+    // the protocol disconnect completes (so the window is measured from the
+    // stop frame, not from teardown entry, which cost 680 ms on the bench).
+    // That is only safe because holdOffScans keeps the LATER deadline — a
+    // second, shorter arm must never pull the deadline in.
+    void holdOffScansExtendsButNeverShortens() {
+        RadioDiscovery disc;
+
+        disc.holdOffScans(std::chrono::milliseconds(5000));
+        const qint64 afterLong = disc.holdOffRemainingMs();
+        QVERIFY(afterLong > 4000);
+
+        // Shorter arm must not shorten the window.
+        disc.holdOffScans(std::chrono::milliseconds(50));
+        QVERIFY2(disc.holdOffRemainingMs() > 4000,
+                 "a shorter holdOffScans() pulled the deadline in — the "
+                 "second arm in teardownConnection() would truncate the "
+                 "post-stop quiet period");
+
+        // Longer arm must extend it.
+        disc.holdOffScans(std::chrono::milliseconds(9000));
+        QVERIFY2(disc.holdOffRemainingMs() > 8000,
+                 "holdOffScans() failed to extend the deadline");
+    }
+
     void timeoutEmitsProbeFailed() {
         RadioDiscovery disc;
         QSignalSpy spy(&disc, &RadioDiscovery::probeFailed);
