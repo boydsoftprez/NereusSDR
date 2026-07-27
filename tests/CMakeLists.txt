@@ -47,6 +47,70 @@ if(NEREUS_TEST_SHARDS GREATER 0)
         "// sharded-out test targets. Never compiled, never linked.\n")
 endif()
 
+# ── Subsystem label derivation (2026-07-25) ────────────────────────────
+# Scans a test's own #include lines and emits ctest LABELS for the
+# subsystems it touches, so `ctest -L core` works without editing 513
+# test files or hand-maintaining a mapping table.
+#
+# Matches both the common bare form (`#include "core/Foo.h"`, resolved
+# via the include path) and the `../src/core/Foo.h` form used by the
+# handful of tests that reach into src/ with an explicit relative path
+# (e.g. tst_waterfall_scrollback.cpp, tst_parametric_eq_widget_*.cpp) —
+# the optional `(src/)?` group was added empirically after an initial
+# version without it mis-labelled all 6 of those tests "unclassified".
+#
+# Measured distribution across the suite: core ~83%, models ~38%,
+# gui ~30% (tests commonly touch more than one, so these do not sum
+# to 100).
+function(_nereus_derive_test_labels out_var src_file)
+    set(_labels "")
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}")
+        set(${out_var} "unclassified" PARENT_SCOPE)
+        return()
+    endif()
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${src_file}" _incs
+         REGEX "^[ \t]*#include[ \t]+\"")
+    foreach(_line IN LISTS _incs)
+        if(_line MATCHES "\"(\\.\\./)*(src/)?core/")
+            list(APPEND _labels "core")
+        endif()
+        if(_line MATCHES "\"(\\.\\./)*(src/)?models/")
+            list(APPEND _labels "models")
+        endif()
+        if(_line MATCHES "\"(\\.\\./)*(src/)?gui/")
+            list(APPEND _labels "gui")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _labels)
+    if(NOT _labels)
+        set(_labels "unclassified")
+    endif()
+    set(${out_var} "${_labels}" PARENT_SCOPE)
+endfunction()
+
+# ── Shared sandbox-init object library (2026-07-25) ────────────────────
+# TestSandboxInit.cpp was previously listed as a source on all 513 test
+# executables, so it was compiled 513 times (0.10s each, ~50 CPU-s of
+# pure duplication).
+#
+# It MUST stay an OBJECT library, not a static library: its entire
+# payload is a file-scope static constructor (g_nereusTestSandboxInit)
+# with no referenced symbols, and a static-library link would drop it
+# as unused. $<TARGET_OBJECTS:> forces the object in unconditionally,
+# preserving the pre-main() QStandardPaths::setTestModeEnabled(true)
+# guarantee that keeps ctest runs from overwriting the developer's real
+# NereusSDR.settings (see the header comment in TestSandboxInit.cpp).
+#
+# Deliberately does NOT reuse the NereusSDRObjs PCH.  This is one 50-line
+# TU whose only include is <QStandardPaths>, so the PCH buys nothing, and
+# reusing it means compiling with a different -D set than the PCH was
+# built with (this target links only Qt6::Core, not the HAVE_WDSP /
+# HAVE_FFTW3 / NEREUS_GPU_SPECTRUM PUBLIC defines the others inherit).
+# AppleClang tolerates the mismatch; GCC silently drops the PCH and MSVC
+# errors outright (C2855).
+add_library(nereus_test_sandbox OBJECT EXCLUDE_FROM_ALL TestSandboxInit.cpp)
+target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
+
 function(nereus_add_test name)
     # Sharding gate — when this test's hash bucket doesn't match the
     # active shard, register a stub OBJECT library (EXCLUDE_FROM_ALL,
@@ -82,7 +146,7 @@ function(nereus_add_test name)
     # runs can (and have — see v0.1.1 alpha) silently wipe the
     # developer's NereusSDR.settings via P1FakeRadio-keyed test writes.
     # 2026-05-26 KG4VCF: EXCLUDE_FROM_ALL makes test executables NOT
-    # part of the default `cmake --build build` target.  526 test
+    # part of the default `cmake --build build` target.  513 test
     # binaries × non-trivial link time = real dev-loop pain when a
     # single source change forces all of them to relink.  Devs who
     # want to run tests use:
@@ -97,7 +161,7 @@ function(nereus_add_test name)
     # The aggregate `all_tests` target is created at the bottom of
     # this file from a global property each nereus_add_test() call
     # appends to.
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp TestSandboxInit.cpp ${ARGN})
+    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${ARGN})
     target_link_libraries(${name} PRIVATE NereusSDRObjs Qt6::Test)
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
@@ -113,6 +177,29 @@ function(nereus_add_test name)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})
+
+    # Labels let `ctest -L core` request a subset; TIMEOUT converts a hung
+    # test from an indefinite block into a failure. 120s is deliberately
+    # generous: the slowest test in the suite as of 2026-07-25 is
+    # tst_ps_feedback_channel at ~30s.
+    _nereus_derive_test_labels(_test_labels "${name}.cpp")
+    set_tests_properties(${name} PROPERTIES
+        LABELS "${_test_labels}"
+        TIMEOUT 120)
+
+    # Per-label build aggregates, so `ctest -L core` has a matching
+    # `tests_core` target that actually builds what it is about to run.
+    #
+    # Without these, the documented subset workflow is unsafe: test
+    # executables are EXCLUDE_FROM_ALL, so a routine `cmake --build build`
+    # does not rebuild them.  On a clean tree `ctest -L core` then reports
+    # every selected test as Not Run, and -- worse -- on an already
+    # populated build tree it silently runs STALE binaries and returns a
+    # false green after a source change.  Codex review, PR #305.
+    foreach(_label IN LISTS _test_labels)
+        set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_${_label} ${name})
+        set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES ${_label})
+    endforeach()
 endfunction()
 
 # ── Pre-existing tests from main (smoke + 3G-9 meter suite) ────────────────
@@ -645,6 +732,17 @@ nereus_add_test(tst_vfo_frequency_parser)
 nereus_add_test(tst_rxchannel_agc_advanced)
 nereus_add_test(tst_slice_agc_advanced)
 
+# ── SliceModel Auto AGC + fixed/hang/max-gain properties (model layer) ──
+# Ported from Thetis console.cs:45926 (m_bAutoAGCRX1) and
+# setup.designer.cs:38630/39320/39418/39245 [v2.10.3.13] (udRX1AutoAGCOffset,
+# udDSPAGCFixedGaindB, tbDSPAGCHangThreshold, udDSPAGCMaxGaindB defaults).
+# Sits alongside tst_slice_agc_advanced (same Q_PROPERTY block in
+# SliceModel.h) but covers the separate Auto-AGC + fixed/hang/max-gain
+# controls rather than threshold/hang/slope/attack/decay.
+# Audited 2026-07-25: had no nereus_add_test() call site; compiles and
+# passes against current SliceModel APIs, registered here.
+nereus_add_test(tst_slice_auto_agc)
+
 # ── Phase 3G-10 Stage 2: WDSP wiring — EMNR (NR2) ────────────────────────
 nereus_add_test(tst_rxchannel_emnr)
 nereus_add_test(tst_slice_emnr)
@@ -1017,6 +1115,13 @@ nereus_add_test(tst_port_audio_bus)
 if(APPLE)
     nereus_add_test(tst_core_audio_hal_bus)
 endif()
+
+# Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
+# and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
+# down, Phase 3O Sub-Phase 8 / Task 24) register only inside
+# `if(UNIX AND NOT APPLE)` guards by design, which is why a macOS `ctest -N`
+# shows 4 fewer tests than there are tst_*.cpp files on disk. Not a gap —
+# each has a real nereus_add_test() call site, just platform-gated.
 
 # ── Phase 3O Sub-Phase 6: LinuxPipeBus (Linux-only) ──────────────────────────
 # Exercises FIFO lifecycle + pactl module load/unload + push/pull round-trip +
@@ -5260,3 +5365,27 @@ nereus_add_test(tst_smeter_widget_external_amp)
 # into a single buildable target.
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})
+
+# --------------------------------------------------------------------------
+# Per-label build aggregates: tests_core / tests_models / tests_gui / ...
+# --------------------------------------------------------------------------
+# One buildable target per derived ctest label, so the documented subset
+# workflow builds what it runs:
+#
+#   cmake --build build --target tests_core && ctest -L core
+#
+# Without these, `ctest -L core` after a routine `cmake --build build`
+# either reports Not Run (clean tree) or silently executes STALE test
+# binaries and returns a false green (populated tree), because every
+# tst_* target is EXCLUDE_FROM_ALL.  Raised by Codex review on PR #305.
+get_property(_label_names GLOBAL PROPERTY NEREUS_TEST_LABEL_NAMES)
+if(_label_names)
+    list(REMOVE_DUPLICATES _label_names)
+    foreach(_label IN LISTS _label_names)
+        get_property(_label_tests GLOBAL PROPERTY NEREUS_TESTS_LABEL_${_label})
+        if(_label_tests)
+            add_custom_target(tests_${_label} DEPENDS ${_label_tests})
+        endif()
+    endforeach()
+    message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
+endif()
