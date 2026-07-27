@@ -197,6 +197,11 @@ AudioEngine::AudioEngine(QObject* parent)
     // Plan: 3M-1b E.3. Pre-code review §4.3.
     m_masterMix.setSliceGain(kTxMonitorSlotId, m_txMonitorVolume.load(std::memory_order_relaxed), 0.0f);
 
+    // The monitor only feeds during MOX, so it must never join the
+    // mixer's readiness barrier: an intermittent member would stall the
+    // drain for kStallTolerance periods on every TX transition.
+    m_masterMix.setSliceOpportunistic(kTxMonitorSlotId, true);
+
     // (Phase 3M-1c bench-fix-A added an m_micPumpTimer here that drove
     //  pullTxMic at 5 ms cadence to keep the D.1 720-sample accumulator
     //  ticking after the E.1 push-slot refactor dropped TxChannel's
@@ -980,9 +985,15 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
         return;  // silenced — active TX slice's RX audio gated during MOX
     }
 
-    if (!slice->muted()) {
-        m_masterMix.accumulate(sliceId, samples, frames);
-    }
+    // Always queue, even when muted. MasterMixer treats mute as a ramp
+    // TARGET rather than a gate, so the slice fades out over ~5 ms
+    // instead of clicking. Withholding the feed here would defeat that
+    // and also drop the slice out of the readiness barrier, which is
+    // what the mute path used to do.
+    // Mute rides in as an argument rather than through setSliceMuted(),
+    // which takes the slice-map mutex: this is the audio thread, and
+    // CLAUDE.md's rule is that it never holds a lock.
+    m_masterMix.accumulate(sliceId, samples, frames, slice->muted());
 
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume — matching Thetis VAC behavior and the spec §3.4
@@ -1074,11 +1085,24 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // per thread. Channel count = 2 is intentionally hard-coded here:
     // the MasterMixer contract and the DSP pipeline both emit stereo.
     static thread_local std::vector<float> mix;
-    const int stereoFloats = frames * 2;
-    if (static_cast<int>(mix.size()) < stereoFloats) {
-        mix.resize(static_cast<size_t>(stereoFloats));
+    if (static_cast<int>(mix.size()) < frames * 2) {
+        mix.resize(static_cast<size_t>(frames) * 2);
     }
-    m_masterMix.mixInto(mix.data(), frames);
+
+    // Phase 3F: the mixer decides whether a block leaves, not us. It
+    // returns 0 until every slice feeding the mix this period has
+    // delivered, so N slices produce ONE push instead of N. Draining
+    // unconditionally here is what handed the sink two blocks per period
+    // on the 2026-07-26 G2E bench and distorted the audio.
+    //
+    // With a single slice the barrier is satisfied by this very call, so
+    // the push happens in the same call stack at the same instant it
+    // always did: no added latency on the common path.
+    const int mixed = m_masterMix.tryDrain(mix.data(), frames);
+    if (mixed <= 0) {
+        return;
+    }
+    const int stereoFloats = mixed * 2;
 
     const float vol = m_masterVolume.load(std::memory_order_acquire);
     if (vol != 1.0f) {

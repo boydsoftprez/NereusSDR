@@ -1,12 +1,61 @@
 // =================================================================
 // src/core/audio/MasterMixer.cpp  (NereusSDR)
 // =================================================================
-// See MasterMixer.h for contract. NereusSDR-original.
+// See MasterMixer.h for contract, and for the Thetis ChannelMaster
+// structure this follows plus the three divergences from it.
+//
+// Ported from Thetis sources (structural derivation, not a line-by-line
+// translation -- the architecture is upstream's, the semantics are ours):
+//   Project Files/Source/ChannelMaster/aamix.c [v2.10.3.15]
+//     (per-producer ring + readiness barrier + one summed output)
+//
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-07-27 -- Per-slice mute / volume / pan mixer reworked from a
+//                 single shared accumulator into per-slice rings behind
+//                 a readiness barrier, so N slices produce ONE mixed
+//                 block per audio period instead of N pushes. The ring
+//                 + barrier + single-summed-output STRUCTURE is Warren
+//                 Pratt's from aamix.c; the per-slice gain / pan / mute
+//                 semantics and the anti-click gain ramp are
+//                 NereusSDR-original. Three divergences from the
+//                 upstream structure are argued in MasterMixer.h.
+//                 Authored by J.J. Boyd (KG4VCF), with AI-assisted
+//                 transformation via Anthropic Claude Code.
+// =================================================================
+
+// --- From aamix.c ---
+/*  aamix.c
+
+This file is part of a program that implements a Software-Defined Radio.
+
+Copyright (C) 2014 Warren Pratt, NR0V
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at  
+
+warren@wpratt.com
+
+*/
+
 
 #include "MasterMixer.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -28,50 +77,170 @@ void MasterMixer::removeSlice(int sliceId) {
     m_slices.erase(sliceId);
 }
 
-void MasterMixer::accumulate(int sliceId, const float* samples, int frames) {
+void MasterMixer::setSliceOpportunistic(int sliceId, bool opportunistic) {
+    std::lock_guard<std::mutex> lk(m_sliceMapMutex);
+    m_slices[sliceId].opportunistic.store(opportunistic,
+                                          std::memory_order_release);
+}
+
+void MasterMixer::setRampFrames(int frames) {
+    std::lock_guard<std::mutex> lk(m_sliceMapMutex);
+    m_rampFrames = std::max(1, frames);
+}
+
+int MasterMixer::producingSliceCount() const {
+    std::lock_guard<std::mutex> lk(m_sliceMapMutex);
+    int n = 0;
+    for (const auto& kv : m_slices) {
+        if (kv.second.producing) { ++n; }
+    }
+    return n;
+}
+
+void MasterMixer::ensureRing(SliceState& st, int frames) {
+    const int want = frames * kRingBlocks;
+    if (st.capFrames >= want) { return; }
+    // Growing discards whatever was queued. This only happens on the
+    // first block, or on a block-size change, and both are already
+    // discontinuities; the ramp covers the seam.
+    st.ring.assign(static_cast<size_t>(want) * 2, 0.0f);
+    st.capFrames = want;
+    st.rd = 0;
+    st.wr = 0;
+    st.avail = 0;
+}
+
+void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
+                             bool muted) {
     // Audio-thread hot path. No lock; rely on startup/connect-time
     // invariant that the map is stable while audio is streaming.
     auto it = m_slices.find(sliceId);
     if (it == m_slices.end()) { return; }
+    if (samples == nullptr || frames <= 0) { return; }
 
-    const SliceState& st = it->second;
-    if (st.muted.load(std::memory_order_acquire)) { return; }
+    SliceState& st = it->second;
+    // Audio-thread write to the same atomic the UI-side setSliceMuted()
+    // writes; the store is lock-free either way.
+    st.muted.store(muted, std::memory_order_release);
+    ensureRing(st, frames);
+    if (st.capFrames <= 0) { return; }
 
-    const float gain = st.gain.load(std::memory_order_acquire);
-    const float pan  = st.pan.load(std::memory_order_acquire);
-
-    // Linear pan law: pan ∈ [-1..+1].
-    // At pan=0 both channels pass through at full gain (unity).
-    // At pan=-1 only the left channel passes; at pan=+1 only right.
-    const float lGain = gain * (pan <= 0.0f ? 1.0f : 1.0f - pan);
-    const float rGain = gain * (pan >= 0.0f ? 1.0f : 1.0f + pan);
-
-    const int neededFloats = frames * 2;
-    if (static_cast<int>(m_acc.size()) < neededFloats) {
-        m_acc.resize(static_cast<size_t>(neededFloats), 0.0f);
+    // Enrol as a barrier member and clear any stall history: this slice
+    // is demonstrably producing again. Opportunistic slots (the TX
+    // monitor) are mixed in but never enrol, so they cannot hold a drain.
+    if (!st.opportunistic.load(std::memory_order_acquire)) {
+        st.producing = true;
+        st.stalls    = 0;
     }
-    for (int i = 0; i < frames; ++i) {
-        m_acc[i * 2 + 0] += samples[i * 2 + 0] * lGain;
-        m_acc[i * 2 + 1] += samples[i * 2 + 1] * rGain;
-    }
-}
 
-void MasterMixer::mixInto(float* out, int frames) {
-    const int n = frames * 2;
-    const int have = static_cast<int>(m_acc.size());
-    if (have < n) {
-        // Block size shrank (or no one accumulated yet) — output silence
-        // AND drain whatever the accumulator does have so a stale tail
-        // from a prior larger block cannot leak into a future mixInto
-        // call.
-        std::fill(out, out + n, 0.0f);
-        if (have > 0) {
-            std::fill(m_acc.begin(), m_acc.end(), 0.0f);
-        }
+    // Drop-oldest on overflow, matching PortAudioBus's ring policy. A
+    // producer that outruns the drain loses its oldest frames rather
+    // than corrupting the read position.
+    if (frames >= st.capFrames) {
+        // Block bigger than the whole ring: keep only the newest tail.
+        const int keep = st.capFrames;
+        const float* tail = samples + static_cast<size_t>(frames - keep) * 2;
+        std::copy(tail, tail + static_cast<size_t>(keep) * 2, st.ring.begin());
+        st.rd = 0;
+        st.wr = 0;
+        st.avail = keep;
         return;
     }
-    std::copy(m_acc.begin(), m_acc.begin() + n, out);
-    std::fill(m_acc.begin(), m_acc.begin() + n, 0.0f);
+    if (st.avail + frames > st.capFrames) {
+        const int overflow = st.avail + frames - st.capFrames;
+        st.rd = (st.rd + overflow) % st.capFrames;
+        st.avail -= overflow;
+    }
+    for (int i = 0; i < frames; ++i) {
+        const size_t w = static_cast<size_t>(st.wr) * 2;
+        st.ring[w + 0] = samples[static_cast<size_t>(i) * 2 + 0];
+        st.ring[w + 1] = samples[static_cast<size_t>(i) * 2 + 1];
+        st.wr = (st.wr + 1) % st.capFrames;
+    }
+    st.avail += frames;
+}
+
+int MasterMixer::tryDrain(float* out, int maxFrames) {
+    if (out == nullptr || maxFrames <= 0) { return 0; }
+
+    // ── Barrier ──────────────────────────────────────────────────────
+    // From Thetis aamix.c:43 [v2.10.3.15]:
+    //   WaitForMultipleObjects (a->nactive, a->Aready, TRUE, INFINITE);
+    // Same rule, expressed as a poll because our producers are already
+    // serialised on one thread and there is nothing to block on: take
+    // the smallest frame count every member can satisfy.
+    int  n         = std::numeric_limits<int>::max();
+    int  maxAvail  = 0;
+    bool anyMember = false;
+
+    for (auto& kv : m_slices) {
+        SliceState& st = kv.second;
+        maxAvail = std::max(maxAvail, st.avail);
+        if (!st.producing) { continue; }
+        anyMember = true;
+        n = std::min(n, st.avail);
+    }
+
+    if (!anyMember) {
+        // Only opportunistic contributors (the TX monitor slot). Nothing
+        // to wait for, so drain whatever is queued.
+        n = maxAvail;
+    } else if (n == 0) {
+        // A member has gone quiet. Charge it a stall, and once it has
+        // missed kStallTolerance drains demote it so the rest of the mix
+        // keeps flowing. It re-enrols on its next block, fading back in.
+        // This is our replacement for Thetis's explicit release at
+        // aamix.c:486 -- see the header for why membership is implicit.
+        bool demoted = false;
+        for (auto& kv : m_slices) {
+            SliceState& st = kv.second;
+            if (!st.producing || st.avail > 0) { continue; }
+            if (++st.stalls >= kStallTolerance) {
+                st.producing = false;
+                st.stalls    = 0;
+                demoted      = true;
+            }
+        }
+        if (!demoted) { return 0; }
+        return tryDrain(out, maxFrames);  // retry with the survivors
+    }
+
+    if (n <= 0) { return 0; }
+    n = std::min(n, maxFrames);
+
+    // ── Sum ──────────────────────────────────────────────────────────
+    std::fill(out, out + static_cast<size_t>(n) * 2, 0.0f);
+
+    const float step = 1.0f / static_cast<float>(std::max(1, m_rampFrames));
+
+    for (auto& kv : m_slices) {
+        SliceState& st = kv.second;
+        const int take = std::min(n, st.avail);
+        if (take <= 0) { continue; }
+
+        // Target gains. Mute is a ramp target, not a hard gate, so a
+        // muted slice fades out over m_rampFrames instead of clicking.
+        // Linear pan law, unchanged: at pan=0 both channels pass at
+        // unity, at -1 only left, at +1 only right.
+        const float g    = st.muted.load(std::memory_order_acquire)
+                               ? 0.0f
+                               : st.gain.load(std::memory_order_acquire);
+        const float pan  = st.pan.load(std::memory_order_acquire);
+        const float tgtL = g * (pan <= 0.0f ? 1.0f : 1.0f - pan);
+        const float tgtR = g * (pan >= 0.0f ? 1.0f : 1.0f + pan);
+
+        for (int i = 0; i < take; ++i) {
+            st.curL += std::clamp(tgtL - st.curL, -step, step);
+            st.curR += std::clamp(tgtR - st.curR, -step, step);
+            const size_t r = static_cast<size_t>(st.rd) * 2;
+            out[static_cast<size_t>(i) * 2 + 0] += st.ring[r + 0] * st.curL;
+            out[static_cast<size_t>(i) * 2 + 1] += st.ring[r + 1] * st.curR;
+            st.rd = (st.rd + 1) % st.capFrames;
+        }
+        st.avail -= take;
+    }
+
+    return n;
 }
 
 } // namespace NereusSDR

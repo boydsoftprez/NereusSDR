@@ -146,15 +146,22 @@ private slots:
     {
         Harness h = makeHarness(/*maxSlices*/ 4);
         MasterMixer& mix = h.engine->masterMixForTest();
+        mix.setRampFrames(1);   // assert steady-state gain, not the fade-in
 
+        // Feed every id, THEN drain once. Draining after each id in turn
+        // would deadlock against the readiness barrier by design: an id
+        // that has already delivered is a member with an empty ring, so
+        // it holds the next drain until the rest catch up.
+        const std::array<float, 2> in = {0.5f, 0.5f};  // 1 frame stereo
         for (int id = 0; id < 4; ++id) {
-            const std::array<float, 2> in = {0.5f, 0.5f};  // 1 frame stereo
             mix.accumulate(id, in.data(), 1);
-            std::array<float, 2> out{};
-            mix.mixInto(out.data(), 1);
-            QCOMPARE(out[0], 0.5f);
-            QCOMPARE(out[1], 0.5f);
         }
+        QCOMPARE(mix.producingSliceCount(), 4);   // all four ids registered
+
+        std::array<float, 2> out{};
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 4 * 0.5f);               // every id contributed
+        QCOMPARE(out[1], 4 * 0.5f);
     }
 
     // ── Reconnecting to a wider SKU tops the map up rather than skipping
@@ -164,13 +171,14 @@ private slots:
     {
         Harness h = makeHarness(/*maxSlices*/ 1);   // e.g. Hermes Lite 2
         MasterMixer& mix = h.engine->masterMixForTest();
+        mix.setRampFrames(1);
 
         h.radio->configureStreamPool(5, /*maxSlices*/ 5, 192000);  // e.g. ANAN-G2
 
         const std::array<float, 2> in = {0.5f, 0.5f};
         mix.accumulate(4, in.data(), 1);
         std::array<float, 2> out{};
-        mix.mixInto(out.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
         QCOMPARE(out[0], 0.5f);
     }
 
@@ -182,11 +190,49 @@ private slots:
         engine.preregisterSlices(0);
 
         MasterMixer& mix = engine.masterMixForTest();
+        mix.setRampFrames(1);
         const std::array<float, 2> in = {0.5f, 0.5f};
         mix.accumulate(0, in.data(), 1);
         std::array<float, 2> out{};
-        mix.mixInto(out.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
         QCOMPARE(out[0], 0.5f);
+    }
+
+    // ── Bench defect, ANAN-G2E 2026-07-26: audio distorted as soon as a
+    //    second pan came up. ────────────────────────────────────────────────
+    //
+    // AudioEngine::rxBlockReady ends with an unconditional
+    // MasterMixer::mixInto + speakers push, so it drains once per SLICE
+    // rather than once per audio period. One slice: accumulate -> drain ->
+    // push, correct. Two slices: A accumulates and is drained and pushed
+    // ALONE, then B accumulates and is drained and pushed ALONE.
+    //
+    // Two consequences, both audible. The sink is handed two 48 kHz blocks
+    // per period and can only consume one, and the slices never actually
+    // sum -- mixInto zeroes the accumulator, so each block leaves on its own
+    // and the output alternates between receivers instead of mixing them.
+    void two_slices_in_one_period_produce_one_summed_push()
+    {
+        Harness h = makeHarness();
+
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+        QCOMPARE(a, 0);
+        QCOMPARE(b, 1);
+
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(b, kTestSamples.data(), kTestFrames);
+
+        // One audio period in, one block out. Two pushes here means the sink
+        // is being overrun at 2x the rate it drains.
+        QCOMPARE(h.speakers->pushCount(), 1);
+
+        // And the one block that leaves carries real audio rather than
+        // the silence a mis-ordered barrier would emit. That both slices
+        // sum linearly is pinned by tst_master_mixer's twoSlicesSumLinearly;
+        // asserting an exact 2x here would fight the production fade-in,
+        // which deliberately holds frame 0 below full gain.
+        QVERIFY(bufferHasSignal(h.speakers->buffer()));
     }
 };
 
