@@ -77,6 +77,19 @@ void MasterMixer::removeSlice(int sliceId) {
     m_slices.erase(sliceId);
 }
 
+void MasterMixer::setSliceStreaming(int sliceId, bool streaming) {
+    std::lock_guard<std::mutex> lk(m_sliceMapMutex);
+    auto& st = m_slices[sliceId];
+    st.streaming.store(streaming, std::memory_order_release);
+    if (!streaming) {
+        // Drop it from the wait set now rather than waiting for the audio
+        // thread to notice, so a drain already in flight stops blocking on
+        // it. From Thetis aamix.c:522 [v2.10.3.15], where clearing the
+        // stream's a->active bit rebuilds Aready in the same call.
+        st.producing.store(false, std::memory_order_release);
+    }
+}
+
 void MasterMixer::setSliceOpportunistic(int sliceId, bool opportunistic) {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     m_slices[sliceId].opportunistic.store(opportunistic,
@@ -92,7 +105,7 @@ int MasterMixer::producingSliceCount() const {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     int n = 0;
     for (const auto& kv : m_slices) {
-        if (kv.second.producing) { ++n; }
+        if (kv.second.producing.load(std::memory_order_acquire)) { ++n; }
     }
     return n;
 }
@@ -112,11 +125,25 @@ void MasterMixer::ensureRing(SliceState& st, int frames) {
 
 void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
                              bool muted) {
+    if (samples == nullptr) { return; }
+    queueBlock(sliceId, samples, frames, muted);
+}
+
+void MasterMixer::accumulateSilence(int sliceId, int frames) {
+    // Queued as muted so the gain ramps to silence at key-down and back up
+    // at key-up. The block is already zeros, so the ramp costs nothing
+    // going in; it earns its keep coming out, where it stops the gated
+    // slice from stepping back to full gain in one sample.
+    queueBlock(sliceId, nullptr, frames, /*muted*/ true);
+}
+
+void MasterMixer::queueBlock(int sliceId, const float* samples, int frames,
+                             bool muted) {
     // Audio-thread hot path. No lock; rely on startup/connect-time
     // invariant that the map is stable while audio is streaming.
     auto it = m_slices.find(sliceId);
     if (it == m_slices.end()) { return; }
-    if (samples == nullptr || frames <= 0) { return; }
+    if (frames <= 0) { return; }
 
     SliceState& st = it->second;
     // Audio-thread write to the same atomic the UI-side setSliceMuted()
@@ -125,12 +152,14 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
     ensureRing(st, frames);
     if (st.capFrames <= 0) { return; }
 
-    // Enrol as a barrier member and clear any stall history: this slice
-    // is demonstrably producing again. Opportunistic slots (the TX
-    // monitor) are mixed in but never enrol, so they cannot hold a drain.
-    if (!st.opportunistic.load(std::memory_order_acquire)) {
-        st.producing = true;
-        st.stalls    = 0;
+    // Enrol as a barrier member: this slice is demonstrably delivering.
+    // Opportunistic slots (the TX monitor) are mixed in but never enrol,
+    // so they cannot hold up a drain. A slice the lifecycle has withdrawn
+    // stays out until it is re-admitted, so a late straggler arriving
+    // after withdrawal cannot silently rejoin the wait set.
+    if (!st.opportunistic.load(std::memory_order_acquire)
+        && st.streaming.load(std::memory_order_acquire)) {
+        st.producing.store(true, std::memory_order_release);
     }
 
     // Drop-oldest on overflow, matching PortAudioBus's ring policy. A
@@ -139,8 +168,14 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
     if (frames >= st.capFrames) {
         // Block bigger than the whole ring: keep only the newest tail.
         const int keep = st.capFrames;
-        const float* tail = samples + static_cast<size_t>(frames - keep) * 2;
-        std::copy(tail, tail + static_cast<size_t>(keep) * 2, st.ring.begin());
+        if (samples != nullptr) {
+            const float* tail = samples + static_cast<size_t>(frames - keep) * 2;
+            std::copy(tail, tail + static_cast<size_t>(keep) * 2,
+                      st.ring.begin());
+        } else {
+            std::fill(st.ring.begin(),
+                      st.ring.begin() + static_cast<size_t>(keep) * 2, 0.0f);
+        }
         st.rd = 0;
         st.wr = 0;
         st.avail = keep;
@@ -153,8 +188,8 @@ void MasterMixer::accumulate(int sliceId, const float* samples, int frames,
     }
     for (int i = 0; i < frames; ++i) {
         const size_t w = static_cast<size_t>(st.wr) * 2;
-        st.ring[w + 0] = samples[static_cast<size_t>(i) * 2 + 0];
-        st.ring[w + 1] = samples[static_cast<size_t>(i) * 2 + 1];
+        st.ring[w + 0] = samples ? samples[static_cast<size_t>(i) * 2 + 0] : 0.0f;
+        st.ring[w + 1] = samples ? samples[static_cast<size_t>(i) * 2 + 1] : 0.0f;
         st.wr = (st.wr + 1) % st.capFrames;
     }
     st.avail += frames;
@@ -176,7 +211,7 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
     for (auto& kv : m_slices) {
         SliceState& st = kv.second;
         maxAvail = std::max(maxAvail, st.avail);
-        if (!st.producing) { continue; }
+        if (!st.producing.load(std::memory_order_acquire)) { continue; }
         anyMember = true;
         n = std::min(n, st.avail);
     }
@@ -185,25 +220,21 @@ int MasterMixer::tryDrain(float* out, int maxFrames) {
         // Only opportunistic contributors (the TX monitor slot). Nothing
         // to wait for, so drain whatever is queued.
         n = maxAvail;
-    } else if (n == 0) {
-        // A member has gone quiet. Charge it a stall, and once it has
-        // missed kStallTolerance drains demote it so the rest of the mix
-        // keeps flowing. It re-enrols on its next block, fading back in.
-        // This is our replacement for Thetis's explicit release at
-        // aamix.c:486 -- see the header for why membership is implicit.
-        bool demoted = false;
-        for (auto& kv : m_slices) {
-            SliceState& st = kv.second;
-            if (!st.producing || st.avail > 0) { continue; }
-            if (++st.stalls >= kStallTolerance) {
-                st.producing = false;
-                st.stalls    = 0;
-                demoted      = true;
-            }
-        }
-        if (!demoted) { return 0; }
-        return tryDrain(out, maxFrames);  // retry with the survivors
     }
+
+    // A member with nothing queued is LATE, not gone, and the barrier
+    // holds until it delivers. n == 0 falls through to the guard below
+    // and no block leaves. Two DDCs deliver in clumps, so treating a
+    // clumped-but-live slice as dead is what produced the 2026-07-27
+    // G2E "scratchy with two pans" defect.
+    //
+    // There is deliberately no timeout here. Upstream has none either:
+    // mix_main waits on every active stream with no bound, and a stream
+    // leaves the mix only through an explicit state change.
+    // From Thetis aamix.c:43 [v2.10.3.15]:
+    //   WaitForMultipleObjects (a->nactive, a->Aready, TRUE, INFINITE);
+    // The explicit leave is setSliceStreaming(), which mirrors
+    // SetAAudioMixState (aamix.c:522).
 
     if (n <= 0) { return 0; }
     n = std::min(n, maxFrames);

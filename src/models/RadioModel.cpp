@@ -3038,6 +3038,16 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
         return;
     }
 
+    // Re-admit it to the mixer's readiness barrier, the counterpart of the
+    // withdrawal in deactivateSliceChannel. Ahead of the already-active
+    // early return below, so a slice whose channel is still live but whose
+    // barrier membership was withdrawn is admitted again rather than left
+    // out of the mix. Re-admission does not enrol it on its own: it rejoins
+    // on its next delivered block, fading in over the mixer's ramp.
+    if (m_audioEngine) {
+        m_audioEngine->setSliceStreaming(slice->sliceIndex(), true);
+    }
+
     // Sub-Epic I invariant: WDSP RX channel id == slice index.
     RxChannel* ch = m_wdspEngine->rxChannel(slice->sliceIndex());
     if (!ch || ch->isActive()) {
@@ -3076,6 +3086,20 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 // running.
 void RadioModel::deactivateSliceChannel(int sliceId)
 {
+    // Withdraw it from the mixer's readiness barrier FIRST, before the
+    // channel stops producing. The mixer waits for every member with no
+    // timeout, so a slice that stops feeding while still enrolled wedges
+    // the whole mix. Counterpart of the re-admission in
+    // activateSliceChannel; mirrors Thetis SetAAudioMixState, which is the
+    // only way a stream leaves the mix upstream (aamix.c:522 [v2.10.3.15]).
+    //
+    // Unconditional, and ahead of the m_wdspEngine guard: the barrier entry
+    // outlives the WDSP channel, so an engine-less teardown must still
+    // release it.
+    if (m_audioEngine) {
+        m_audioEngine->setSliceStreaming(sliceId, false);
+    }
+
     if (!m_wdspEngine) {
         return;
     }
@@ -3110,6 +3134,15 @@ void RadioModel::releaseStreamBindings()
         // hosts this slice. Leaving it would let the VFO flag keep reporting
         // a DDC the radio has stopped streaming.
         s->setDdcIndex(-1);
+        // An unbound slice has no stream to be fed from, so it must not go
+        // on holding the mixer's readiness barrier. Whichever slices the
+        // next connect re-binds are re-admitted by activateSliceChannel;
+        // any that are not (reconnecting to a radio with fewer DDCs, say)
+        // would otherwise wait forever and silence the whole mix, because
+        // the barrier has no timeout that would release them.
+        if (m_audioEngine) {
+            m_audioEngine->setSliceStreaming(s->sliceIndex(), false);
+        }
     }
     for (int st = 0; st < m_streamAllocator.streamCount(); ++st) {
         m_streamAllocator.deactivateStream(st);

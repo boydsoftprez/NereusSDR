@@ -139,6 +139,119 @@ private slots:
         QVERIFY(bufferHasSignal(h.speakers->buffer()));
     }
 
+    // ── Closing a pan must not wedge the mix. ─────────────────────────────
+    //
+    // The removed slice was a barrier member on its last block. The mixer
+    // has no timeout that will notice it is gone (deliberately: that
+    // timeout is what made a merely-late slice look stopped and produced
+    // the 2026-07-27 G2E scratchy-audio defect). So the slice lifecycle
+    // has to withdraw it, exactly as SetAAudioMixState does upstream when
+    // a stream leaves the mix. From Thetis aamix.c:522 [v2.10.3.15].
+    //
+    // Without that withdrawal the drain waits forever on a slice that will
+    // never deliver again, and ALL audio stops.
+
+    void closingAPanDoesNotWedgeTheMix()
+    {
+        Harness h = makeHarness();
+
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+
+        // Slice A drains alone (B has not delivered yet, so it is not yet a
+        // member); B's block then joins it to the barrier and holds it.
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(b, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), 1);
+
+        // One more A block completes the period and drains BOTH rings, so
+        // B has nothing queued when it goes away. Without this the leftover
+        // block in B's ring satisfies the barrier on its own and hides the
+        // wedge this test exists to catch.
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), 2);
+
+        // Operator closes the second pan.
+        h.radio->removeSlice(b);
+
+        // Slice A alone must keep feeding the speakers.
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        QCOMPARE(h.speakers->pushCount(), 3);
+        QVERIFY(bufferHasSignal(h.speakers->buffer()));
+    }
+
+    // ── Keying up must not silence the slices that are still receiving. ───
+    //
+    // The active TX slice's RX audio is gated during MOX. Because the
+    // barrier waits on every member and has no timeout, a gated slice that
+    // simply stopped feeding would hold the drain for the entire
+    // transmission and take the whole mix down with it.
+    //
+    // Thetis avoids this by dropping the stream from the mix outright on
+    // every MOX transition: console.cs:27650-27771 [v2.10.3.15] calls
+    // SetAAudioMixStates, and with PureSignal on it goes all the way down
+    // to MON alone. We cannot follow it literally, because our gate is
+    // evaluated on the audio thread and setSliceStreaming() takes the
+    // slice-map mutex. The gated slice therefore keeps its membership and
+    // contributes silence, which lands the same audible result: it adds
+    // nothing to the mix, and everyone else keeps playing.
+
+    void aGatedTxSliceDoesNotSilenceTheOtherSlice()
+    {
+        Harness h = makeHarness();
+
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+
+        // The gate keys off isActiveSlice(), so the test is only meaningful
+        // if A is in fact the active slice.
+        QVERIFY(h.radio->sliceById(a)->isActiveSlice());
+
+        // Both enrolled, and one more A block empties both rings.
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(b, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        const int before = h.speakers->pushCount();
+
+        // Key up. Slice A's RX audio is now gated; slice B keeps receiving.
+        h.engine->setMoxStateForTest(true);
+
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);  // gated
+        h.engine->rxBlockReady(b, kTestSamples.data(), kTestFrames);
+
+        QVERIFY(h.speakers->pushCount() > before);
+        QVERIFY(bufferHasSignal(h.speakers->buffer()));
+    }
+
+    // ── Dropping the stream bindings must release every slice. ────────────
+    //
+    // teardownConnection calls releaseStreamBindings(), which unbinds every
+    // slice from every stream. Whichever slices the next connect does not
+    // re-bind can never deliver again, and with no timeout in the barrier a
+    // single one of them holds the mix down forever. Reconnecting to a radio
+    // with fewer DDCs is enough to reach that.
+
+    void releasingStreamBindingsWithdrawsEverySlice()
+    {
+        Harness h = makeHarness();
+
+        const int a = h.radio->addSlice();
+        const int b = h.radio->addSlice();
+
+        // Both enrolled, rings drained.
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(b, kTestSamples.data(), kTestFrames);
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        const int before = h.speakers->pushCount();
+
+        h.radio->releaseStreamBindings();
+
+        // Slice A alone resumes. Slice B, which never comes back, must not
+        // still be holding the barrier.
+        h.engine->rxBlockReady(a, kTestSamples.data(), kTestFrames);
+        QVERIFY(h.speakers->pushCount() > before);
+    }
+
     // ── Every id in [0, maxSlices) is registered up front, so no slice ever
     //    needs a mid-stream insert into the mixer's map. ───────────────────
 

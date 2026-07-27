@@ -283,6 +283,11 @@ void AudioEngine::preregisterSlices(int count)
     }
 }
 
+void AudioEngine::setSliceStreaming(int sliceId, bool streaming)
+{
+    m_masterMix.setSliceStreaming(sliceId, streaming);
+}
+
 void AudioEngine::start()
 {
     if (m_running) {
@@ -981,9 +986,31 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // m_moxActive acquire load provides the ordering barrier before the
     // non-atomic isActiveSlice() read on slice. A stale read of isActiveSlice
     // is harmless: worst case one ~10 ms block leaks before the next barrier.
-    if (m_moxActive.load(std::memory_order_acquire) && slice->isActiveSlice()) {
-        return;  // silenced — active TX slice's RX audio gated during MOX
-    }
+    // Silenced: active TX slice's RX audio gated during MOX.
+    //
+    // This queues silence rather than returning outright, and the slice
+    // keeps its place in the mixer's readiness barrier. The barrier has no
+    // timeout that would give up on a member, so withholding the feed
+    // would hold the drain for the whole transmission and silence every
+    // other slice along with it.
+    //
+    // Thetis takes the stream out of the mix instead, on every MOX
+    // transition (console.cs:27650-27771 [v2.10.3.15], via
+    // SetAAudioMixStates). We cannot call the equivalent from here: this
+    // is the audio thread and setSliceStreaming() takes the slice-map
+    // mutex. Same audible result, since the slice contributes nothing.
+    //
+    // Execution still falls through to the drain below. That matters in
+    // the single-slice case, where nothing else would drive it: returning
+    // here would let the queued silence pile up until drop-oldest, leaving
+    // a ring's worth of backlog as permanent added latency after every
+    // transmission.
+    const bool moxGated =
+        m_moxActive.load(std::memory_order_acquire) && slice->isActiveSlice();
+
+    if (moxGated) {
+        m_masterMix.accumulateSilence(sliceId, frames);
+    } else {
 
     // Always queue, even when muted. MasterMixer treats mute as a ramp
     // TARGET rather than a gate, so the slice fades out over ~5 ms
@@ -994,6 +1021,7 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // which takes the slice-map mutex: this is the audio thread, and
     // CLAUDE.md's rule is that it never holds a lock.
     m_masterMix.accumulate(sliceId, samples, frames, slice->muted());
+    }
 
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume — matching Thetis VAC behavior and the spec §3.4
@@ -1002,7 +1030,9 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // the master-mix `mix` scratch below) so the unity-gain fast path
     // stays zero-copy. See docs/architecture/2026-04-19-vax-design.md
     // §3.4 and §6.4.
-    const int vaxCh = slice->vaxChannel();
+    // A MOX-gated slice feeds nothing downstream, exactly as it did when
+    // this gate was an early return: no mixer contribution and no VAX tap.
+    const int vaxCh = moxGated ? -1 : slice->vaxChannel();
     if (vaxCh >= 1 && vaxCh <= 4) {
         const int vaxIdx = vaxCh - 1;
 

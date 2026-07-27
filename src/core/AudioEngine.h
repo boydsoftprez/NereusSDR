@@ -222,6 +222,24 @@ public:
     /// MUST NOT be called once audio is streaming.
     void preregisterSlices(int count);
 
+    /// Admit a slice to the mixer's readiness barrier, or withdraw it.
+    ///
+    /// The mixer waits for every member before it releases a block, and it
+    /// has no timeout that will give up on one (a timeout cannot tell a
+    /// slice that is merely late from one that has stopped, and trying
+    /// produced the 2026-07-27 G2E scratchy-audio defect). So a slice that
+    /// stops being fed while its mixer entry lives on MUST be withdrawn
+    /// here, or the barrier waits forever and all audio stops.
+    ///
+    /// Callers are RadioModel's activateSliceChannel / deactivateSliceChannel
+    /// pair, which is the same place the WDSP RX channel starts and stops
+    /// producing. Mirrors Thetis SetAAudioMixState (aamix.c:522
+    /// [v2.10.3.15]).
+    ///
+    /// Safe to call while audio is streaming: it only flips atomics on an
+    /// entry preregisterSlices() already created.
+    void setSliceStreaming(int sliceId, bool streaming);
+
     // Task 1.6 — Sample-rate live-apply coordination hooks.
     //
     // pauseInput() / resumeInput() bracket the WDSP channel rebuild during a

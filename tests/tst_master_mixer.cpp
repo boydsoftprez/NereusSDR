@@ -1,3 +1,15 @@
+// =================================================================
+// tests/tst_master_mixer.cpp  (NereusSDR)
+// =================================================================
+// no-port-check: NereusSDR-original test infrastructure. The Thetis
+// aamix.c citations below are rationale, not ported code: they record
+// WHY the barrier waits without a timeout and why a slice leaves the mix
+// only when told to, so that a future reader does not reintroduce the
+// stall-demotion heuristic these tests exist to prevent. The ported
+// logic itself lives in src/core/audio/MasterMixer.{h,cpp}, which carry
+// the verbatim Warren Pratt NR0V header and the PROVENANCE rows.
+// =================================================================
+
 #include <QtTest/QtTest>
 #include "core/audio/MasterMixer.h"
 #include <array>
@@ -89,9 +101,61 @@ private slots:
         QCOMPARE(mix.tryDrain(out.data(), 1), 0);
     }
 
-    // A member that stops delivering must not wedge the mix forever.
-    // This is our stand-in for Thetis's explicit release at aamix.c:486.
-    void aStalledMemberIsDemotedAndTheMixResumes() {
+    // Two DDCs deliver in clumps, not alternating. A burst from one slice
+    // must never evict the other: the slice is late, not gone.
+    //
+    // This is the 2026-07-27 ANAN-G2E bench defect ("scratchy and robo
+    // digitized as soon as the second pan is up, clears when it is
+    // removed"). The old 2-block stall demotion mistook a clumped-but-live
+    // slice for a dead one, emitted blocks carrying one receiver instead of
+    // the sum, and pushed more blocks than periods had elapsed.
+    //
+    // Upstream has no such rule to port: mix_main blocks on
+    // WaitForMultipleObjects(nactive, Aready, TRUE, INFINITE) with no
+    // timeout at all, and a stream leaves the mix only through an explicit
+    // SetAAudioMixState. From Thetis aamix.c:43 and aamix.c:522
+    // [v2.10.3.15].
+    void aBurstFromOneSliceNeverEvictsTheOther() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        mix.setSliceGain(2, 1.0f, 0.0f);
+        std::array<float, 2> a = {0.3f, 0.3f};
+        std::array<float, 2> b = {0.4f, 0.4f};
+        std::array<float, 2> out{};
+
+        // Both deliver, so both are members.
+        mix.accumulate(1, a.data(), 1);
+        mix.accumulate(2, b.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(mix.producingSliceCount(), 2);
+
+        // Slice 1 bursts three blocks with nothing from slice 2 in flight.
+        // The barrier must hold every time: no block may leave without 2.
+        for (int i = 0; i < 3; ++i) {
+            mix.accumulate(1, a.data(), 1);
+            QCOMPARE(mix.tryDrain(out.data(), 1), 0);
+        }
+        QCOMPARE(mix.producingSliceCount(), 2);  // nobody evicted
+
+        // Slice 2's clump arrives. Every block that leaves carries BOTH,
+        // and the backlog drains one block per period, not all at once.
+        for (int i = 0; i < 3; ++i) {
+            mix.accumulate(2, b.data(), 1);
+            QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+            QCOMPARE(out[0], 0.7f);
+        }
+    }
+
+    // What replaces stall demotion. A member that stops delivering holds
+    // the barrier for as long as it stays a member: the mixer cannot tell
+    // "late" from "gone", so the slice lifecycle tells it instead.
+    //
+    // From Thetis aamix.c:522 [v2.10.3.15], SetAAudioMixState is the only
+    // way a stream leaves the mix: it stops the mixer, clears the stream's
+    // bit in a->active, drops it from the Aready wait set, resets its
+    // accept[] gate, and restarts. Nothing times out.
+    void aSliceHoldsTheBarrierUntilExplicitlyWithdrawn() {
         MasterMixer mix;
         mix.setRampFrames(1);
         mix.setSliceGain(1, 1.0f, 0.0f);
@@ -102,17 +166,51 @@ private slots:
         mix.accumulate(1, blk.data(), 1);
         mix.accumulate(2, blk.data(), 1);
         QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(mix.producingSliceCount(), 2);
 
-        // Slice 2 goes quiet. Slice 1 keeps producing.
-        mix.accumulate(1, blk.data(), 1);
-        QCOMPARE(mix.tryDrain(out.data(), 1), 0);   // stall 1, still waiting
-        QCOMPARE(mix.tryDrain(out.data(), 1), 1);   // stall 2 -> demote, drain
+        // Slice 2 goes quiet. No elapsed number of periods rescues this:
+        // while slice 2 is still a member the barrier holds, every time.
+        for (int i = 0; i < 50; ++i) {
+            mix.accumulate(1, blk.data(), 1);
+            QCOMPARE(mix.tryDrain(out.data(), 1), 0);
+        }
+        QCOMPARE(mix.producingSliceCount(), 2);
+
+        // The slice lifecycle withdraws it, and the mix flows again with
+        // slice 1 alone.
+        mix.setSliceStreaming(2, false);
         QCOMPARE(mix.producingSliceCount(), 1);
-        QCOMPARE(out[0], 0.5f);                     // slice 1 alone
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 0.5f);
 
-        // Slice 2 comes back and re-enrols on its own.
+        // It rejoins once the lifecycle re-admits it and it delivers.
+        mix.setSliceStreaming(2, true);
         mix.accumulate(2, blk.data(), 1);
         QCOMPARE(mix.producingSliceCount(), 2);
+    }
+
+    // Withdrawing a slice must not strand what it already queued, and must
+    // not let a withdrawn slice keep contributing audio.
+    void aWithdrawnSliceStopsContributing() {
+        MasterMixer mix;
+        mix.setRampFrames(1);
+        mix.setSliceGain(1, 1.0f, 0.0f);
+        mix.setSliceGain(2, 1.0f, 0.0f);
+        std::array<float, 2> a = {0.3f, 0.3f};
+        std::array<float, 2> b = {0.4f, 0.4f};
+        std::array<float, 2> out{};
+
+        mix.accumulate(1, a.data(), 1);
+        mix.accumulate(2, b.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 0.7f);
+
+        // Slice 2 is withdrawn while slice 1 keeps running. Output is
+        // slice 1 alone from here on.
+        mix.setSliceStreaming(2, false);
+        mix.accumulate(1, a.data(), 1);
+        QCOMPARE(mix.tryDrain(out.data(), 1), 1);
+        QCOMPARE(out[0], 0.3f);
     }
 
     // The TX monitor feeds only during MOX. If it enrolled as a barrier
