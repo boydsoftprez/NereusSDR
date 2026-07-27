@@ -468,7 +468,10 @@ void P2RadioConnection::init()
     m_p2HeartbeatTimer->setTimerType(Qt::PreciseTimer);
     connect(m_p2HeartbeatTimer, &QTimer::timeout, this, [this]() {
         if (!m_running) { return; }
-        if (!m_mox) { return; }               // RX: Thetis-faithful, event-driven only
+        // RX: Thetis-faithful, event-driven only.  The MOX-off grace window
+        // keeps the wheel turning briefly after unkey so a lost MOX-off frame
+        // is retransmitted rather than leaving the radio keyed — see setMox().
+        if (!m_mox && !withinMoxOffGrace()) { return; }
         sendCmdHighPriority();                // every 100 ms (every cycle)
         switch (m_p2HeartbeatCycle) {
             case 0: case 2: case 4: case 6:   // odd-numbered cycles → TX-spec
@@ -865,12 +868,36 @@ void P2RadioConnection::setMox(bool enabled)
     // m_tx[0].pttOut remains for the rear-panel PTT-out relay (TX-confirmation
     // output, deferred to 3M-3 per the plan); it is NOT the MOX source here.
     if (m_mox == enabled) {
-        return;  // idempotent — periodic cadence covers any state drift
+        return;  // idempotent — see the MOX-off grace window below
     }
     m_mox = enabled;
+    if (!enabled) {
+        // 2026-07-27 (Codex review, PR #306): open a bounded grace window so
+        // the heartbeat keeps re-emitting MOX-off for a short while after
+        // unkey.
+        //
+        // The idempotent early-return above was justified by the 100 ms
+        // cadence "already re-emitting the current m_mox state on every tick"
+        // — but that cadence is now gated on m_mox, so it stops the instant
+        // MOX drops.  Without this window a single lost MOX-off datagram
+        // leaves the radio keyed: repeat setMox(false) calls early-return
+        // without sending, and the CmdGeneral keepalive keeps feeding the
+        // firmware deadman so it will not self-clear either.  A stuck
+        // transmitter is a PA and interference hazard, so cover transient
+        // loss with retransmissions rather than a single unacknowledged frame.
+        m_moxOffGraceUntilMs =
+            QDateTime::currentMSecsSinceEpoch() + kMoxOffGraceMs;
+    }
     if (m_running) {
         sendCmdHighPriority();  // immediate emit on state change for low latency
     }
+}
+
+// True while the post-unkey grace window is open.  See setMox().
+bool P2RadioConnection::withinMoxOffGrace() const
+{
+    return m_moxOffGraceUntilMs != 0
+           && QDateTime::currentMSecsSinceEpoch() < m_moxOffGraceUntilMs;
 }
 
 // ---------------------------------------------------------------------------

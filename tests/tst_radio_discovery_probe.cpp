@@ -111,6 +111,10 @@ private:
 class TstRadioDiscoveryProbe : public QObject {
     Q_OBJECT
 private slots:
+    // The post-disconnect quiet deadline is process-wide, so an arm in one
+    // test function would otherwise defer probes in every later one.
+    void init() { RadioDiscovery::clearHoldOffForTest(); }
+
     void probeReplyFillsRadioInfo() {
         FakeP1Probe radio;
         RadioDiscovery disc;
@@ -225,6 +229,21 @@ private slots:
         disc.holdOffScans(std::chrono::milliseconds(9000));
         QVERIFY2(disc.holdOffRemainingMs() > 8000,
                  "holdOffScans() failed to extend the deadline");
+    }
+
+    // Codex review, PR #306.  RadioModel::discovery() is not the only
+    // RadioDiscovery in the process — AddCustomRadioDialog.cpp:589 builds its
+    // own.  A per-object deadline would let that dialog probe a
+    // just-disconnected radio inside the quiet window, re-entering the
+    // post-stop race.  The deadline must be process-wide.
+    void holdOffIsSharedAcrossInstances() {
+        RadioDiscovery armer;
+        armer.holdOffScans(std::chrono::milliseconds(5000));
+
+        RadioDiscovery other;   // e.g. the one AddCustomRadioDialog creates
+        QVERIFY2(other.holdOffRemainingMs() > 4000,
+                 "a second RadioDiscovery instance ignored the quiet period — "
+                 "the Add Radio dialog could probe a stopping radio");
     }
 
     void timeoutEmitsProbeFailed() {

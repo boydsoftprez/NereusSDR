@@ -224,6 +224,11 @@ public:
         m_lastSeen.insert(mac, lastSeenMs);
     }
     void forceStaleCheckForTest() { onStaleCheck(); }
+
+    // The holdOffScans deadline is process-wide (see s_scanHoldOffUntilMs),
+    // so it survives across test functions and would defer probes in
+    // unrelated cases. Call from a QTest init() for a clean slate.
+    static void clearHoldOffForTest() { s_scanHoldOffUntilMs = 0; }
 #endif
 
     // Public static parsers — exposed for unit-testing in Task 5.
@@ -276,10 +281,18 @@ private:
     QTimer m_continuousTimer;   // drives ongoing NIC re-scans while monitoring
     QTimer m_staleTimer;
 
-    // holdOffScans deadline (ms since epoch, 0 = none).  Deferred-scan flag
-    // stops a burst of startDiscovery() calls during the quiet period from
-    // queueing multiple delayed scans.
-    qint64 m_scanHoldOffUntilMs{0};
+    // holdOffScans deadline (ms since epoch, 0 = none).
+    //
+    // PROCESS-WIDE, not per-instance (Codex review, PR #306).  The constraint
+    // belongs to the radio and the wire, not to any one RadioDiscovery object,
+    // and RadioModel::discovery() is not the only instance: e.g.
+    // AddCustomRadioDialog.cpp:589 constructs its own.  A per-object deadline
+    // would let that dialog probe a just-disconnected radio inside the quiet
+    // window and re-enter the post-stop race this exists to prevent.
+    static qint64 s_scanHoldOffUntilMs;
+
+    // Per-instance: stops a burst of startDiscovery() calls on THIS object
+    // from queueing multiple delayed scans.
     bool m_deferredScanPending{false};
     QMap<QString, RadioInfo> m_radios;   // keyed by MAC address
     QMap<QString, qint64> m_lastSeen;    // MAC -> timestamp

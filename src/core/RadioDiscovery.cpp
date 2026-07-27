@@ -147,12 +147,16 @@ RadioDiscovery::~RadioDiscovery()
     stopDiscovery();
 }
 
+// Process-wide quiet deadline — see the declaration for why this is not
+// per-instance.
+qint64 RadioDiscovery::s_scanHoldOffUntilMs = 0;
+
 void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 {
     const qint64 until =
         QDateTime::currentMSecsSinceEpoch() + qint64(quiet.count());
-    if (until > m_scanHoldOffUntilMs) {
-        m_scanHoldOffUntilMs = until;
+    if (until > s_scanHoldOffUntilMs) {
+        s_scanHoldOffUntilMs = until;
     }
 }
 
@@ -161,7 +165,7 @@ void RadioDiscovery::holdOffScans(std::chrono::milliseconds quiet)
 qint64 RadioDiscovery::holdOffRemainingMs() const
 {
     const qint64 remaining =
-        m_scanHoldOffUntilMs - QDateTime::currentMSecsSinceEpoch();
+        s_scanHoldOffUntilMs - QDateTime::currentMSecsSinceEpoch();
     return remaining > 0 ? remaining : 0;
 }
 

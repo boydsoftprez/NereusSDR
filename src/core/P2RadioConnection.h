@@ -392,6 +392,16 @@ private:
     static constexpr int kStopQuiesceMs = 100;
     static constexpr int kStopDrainMs   = 20;
 
+    // MOX-off grace window (2026-07-27, Codex review PR #306).  After unkey
+    // the 100 ms heartbeat keeps running this long so the MOX-off state is
+    // retransmitted ~10 times instead of once; a single lost datagram would
+    // otherwise leave the radio keyed indefinitely.  Only ever active
+    // immediately after a transmission, so it does not reintroduce RX-idle
+    // polling.  See setMox() for the full rationale.
+    static constexpr qint64 kMoxOffGraceMs = 1000;
+    qint64 m_moxOffGraceUntilMs{0};
+    bool withinMoxOffGrace() const;
+
     // --- Board capabilities (set in connectToRadio, used for clamp/dispatch) ---
     const BoardCapabilities* m_caps{nullptr};
 
