@@ -1566,6 +1566,18 @@ RadioModel::RadioModel(QObject* parent)
             this, [this](const RfKitPowerSnapshot& snap) {
         emit externalAmpFwdSwrUpdated(snap.forwardW, snap.swr);
     });
+    // Publish the OPERATE -> not-OPERATE transition when the amp drops.
+    // operateModeUpdated only fires from a successful poll, so a
+    // disconnect while the amp was in OPERATE left m_lastRfKitInOperate
+    // latched true and no consumer ever heard otherwise: the S-Meter kept
+    // the 2 kW scale indefinitely.  Codex review, PR #291.
+    connect(m_rfKitConnection.get(), &Rf2ksConnection::disconnected,
+            this, [this]() {
+        if (m_lastRfKitInOperate) {
+            m_lastRfKitInOperate = false;
+            emit externalAmpOperateChanged(false);
+        }
+    });
 
     // ── Phase 3J-2 H2: spot-system construction + wiring ──────────────────────
     //
@@ -2544,6 +2556,36 @@ bool RadioModel::rfKitEnabled() const
         == QStringLiteral("True");
 }
 
+// Push the operator's RF-Kit preferences into the live connection.
+//
+// Review blocker [P2] on PR #291: RfKitPage persisted RfKit_AutoReconnect
+// and RfKit_PollIntervalMs to AppSettings, but nothing ever read them back.
+// scheduleReconnect() retried unconditionally and the poll cadence stayed at
+// the 1000 ms default, so both controls were inert -- the checkbox and the
+// spinbox moved, saved, reloaded into the UI, and changed nothing.
+//
+// Called immediately before every connectToAmp() so the settings apply to
+// both the Setup-toggle path and the per-MAC auto-connect path.
+void RadioModel::applyRfKitOperatorSettings()
+{
+    if (!m_rfKitConnection) {
+        return;
+    }
+    const bool autoRe = AppSettings::instance()
+        .value(QStringLiteral("RfKit_AutoReconnect"), QStringLiteral("True"))
+        .toString() == QStringLiteral("True");
+    m_rfKitConnection->setAutoReconnect(autoRe);
+
+    bool ok = false;
+    const int pollMs = AppSettings::instance()
+        .value(QStringLiteral("RfKit_PollIntervalMs"), QStringLiteral("1000"))
+        .toString().toInt(&ok);
+    if (ok) {
+        // setPollIntervalMs clamps to 250..5000 itself.
+        m_rfKitConnection->setPollIntervalMs(pollMs);
+    }
+}
+
 void RadioModel::setRfKitEnabled(bool enabled)
 {
     const bool current = rfKitEnabled();
@@ -2559,6 +2601,7 @@ void RadioModel::setRfKitEnabled(bool enabled)
             peripheralValue(QStringLiteral("RfKit_ManualPort"),
                             QStringLiteral("8080")).toUInt());
         if (!host.isEmpty() && m_rfKitConnection) {
+            applyRfKitOperatorSettings();
             m_rfKitConnection->connectToAmp(host, port);
         }
     } else if (m_rfKitConnection) {
@@ -2659,6 +2702,7 @@ void RadioModel::applyPeripheralsForCurrentMac()
             peripheralValue(QStringLiteral("RfKit_ManualPort"),
                             QStringLiteral("8080")).toUInt());
         if (!host.isEmpty()) {
+            applyRfKitOperatorSettings();
             m_rfKitConnection->connectToAmp(host, port);
             qCInfo(lcConnection)
                 << "RF-Kit auto-connect for MAC" << mac
@@ -2716,7 +2760,14 @@ void RadioModel::applyPeripheralsForCurrentMac()
 
 void RadioModel::teardownPeripherals()
 {
-    if (m_rfKitConnection && m_rfKitConnection->isConnected()) {
+    // Deliberately NOT gated on isConnected(). Review blocker [P1] on PR
+    // #291: when the link has dropped and a reconnect is pending,
+    // isConnected() is false, so the gate skipped disconnect() and left the
+    // retry armed -- it would then fire after the operator disabled RF-Kit,
+    // re-issue /info and restart polling. disconnect() is idempotent: it
+    // stops both timers and only emits disconnected() if it had been
+    // connected.
+    if (m_rfKitConnection) {
         m_rfKitConnection->disconnect();
         qCInfo(lcConnection) << "Peripherals teardown: RF-Kit disconnected";
     }
@@ -2789,7 +2840,13 @@ bool RadioModel::isAnyExternalAmpInOperate() const
     }
     // RF-Kit: poll the last-known operate_mode from Rf2ksConnection.  The
     // connection caches it in m_operateMode and refreshes once per second.
+    // Require a live connection: m_operateMode is a cache with no
+    // disconnect invalidation, so an amp last seen in OPERATE kept this
+    // predicate true forever after it dropped, pinning MainWindow to the
+    // 2 kW scale and suppressing the radio's barefoot power updates.
+    // Codex review, PR #291.
     if (m_rfKitConnection
+        && m_rfKitConnection->isConnected()
         && m_rfKitConnection->operateMode() == QStringLiteral("OPERATE")) {
         return true;
     }

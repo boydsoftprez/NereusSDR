@@ -162,46 +162,66 @@ private:
     // in case the display fps is higher than the paint cadence.
     static constexpr int kRingSize = 120;
 
+    // Lock-free by construction.
+    //
+    // m_audioFillRing is pushed from PortAudioBus::paCallback -- the
+    // PortAudio real-time audio callback -- and from the CoreAudioHalBus
+    // shm push path.  This used to hold a QMutex, which CLAUDE.md
+    // forbids in the audio callback for good reason: the perf overlay's
+    // stats() reader takes the same lock on the GUI thread and holds it
+    // while summing 120 doubles, so once a second the RT thread could
+    // block behind a lower-priority thread.  That is textbook priority
+    // inversion, and it sat directly in the path of the audio jitter
+    // this branch was chasing.  Review of PR #291.
+    //
+    // Every slot is an individually atomic double (lock-free on every
+    // target we build for), so a reader can never observe a torn value.
+    // Indices are relaxed atomics and stay in range by construction.
+    // The ring accepts more than one writer -- speakers and VAX can both
+    // be live -- in which case two pushes may land in the same slot and
+    // size may briefly undercount.  That is fine: this is observational
+    // telemetry for an overlay, exactly like the relaxed counters below.
     template <typename T>
     struct Ring {
-        std::array<double, kRingSize> values{};
-        int size{0};       // populated count (clamped to kRingSize)
-        int head{0};       // next-write index
-        mutable QMutex mtx;
+        std::array<std::atomic<double>, kRingSize> values{};
+        std::atomic<int> size{0};   // populated count (clamped to kRingSize)
+        std::atomic<int> head{0};   // next-write index
 
         void push(double v) {
-            QMutexLocker lock(&mtx);
-            values[head] = v;
-            head = (head + 1) % kRingSize;
-            if (size < kRingSize) {
-                ++size;
+            const int h = head.load(std::memory_order_relaxed);
+            values[static_cast<size_t>(h)].store(v, std::memory_order_relaxed);
+            head.store((h + 1) % kRingSize, std::memory_order_relaxed);
+            const int s = size.load(std::memory_order_relaxed);
+            if (s < kRingSize) {
+                size.store(s + 1, std::memory_order_relaxed);
             }
         }
         void stats(double& avg, double& max, double& min, int& samples) const {
-            QMutexLocker lock(&mtx);
-            samples = size;
-            if (size == 0) {
+            const int n = size.load(std::memory_order_relaxed);
+            samples = n;
+            if (n == 0) {
                 avg = 0.0;
                 max = 0.0;
                 min = 0.0;
                 return;
             }
             double sum = 0.0;
-            double mn = values[0];
-            double mx = values[0];
-            for (int i = 0; i < size; ++i) {
-                sum += values[i];
-                if (values[i] < mn) { mn = values[i]; }
-                if (values[i] > mx) { mx = values[i]; }
+            double mn = values[0].load(std::memory_order_relaxed);
+            double mx = mn;
+            for (int i = 0; i < n; ++i) {
+                const double v = values[static_cast<size_t>(i)]
+                                     .load(std::memory_order_relaxed);
+                sum += v;
+                if (v < mn) { mn = v; }
+                if (v > mx) { mx = v; }
             }
-            avg = sum / size;
+            avg = sum / n;
             max = mx;
             min = mn;
         }
         void clear() {
-            QMutexLocker lock(&mtx);
-            size = 0;
-            head = 0;
+            size.store(0, std::memory_order_relaxed);
+            head.store(0, std::memory_order_relaxed);
         }
     };
 

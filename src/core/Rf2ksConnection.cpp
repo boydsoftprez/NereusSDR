@@ -54,6 +54,17 @@ Rf2ksConnection::Rf2ksConnection(QObject* parent)
     qRegisterMetaType<RfKitTunerSnapshot>("NereusSDR::RfKitTunerSnapshot");
     qRegisterMetaType<RfKitAntenna>("NereusSDR::RfKitAntenna");
     qRegisterMetaType<QList<RfKitAntenna>>("QList<NereusSDR::RfKitAntenna>");
+
+    // Own the reconnect timer so disconnect() can cancel a pending retry.
+    // Review blocker [P1] on PR #291: scheduleReconnect() previously called
+    // m_reconnectTimer.singleShot(...), which is the STATIC
+    // QTimer::singleShot invoked through an instance.  That compiles and
+    // reads as if it arms this timer, but it creates a detached one-shot,
+    // so m_reconnectTimer.stop() in disconnect() was a no-op and a queued
+    // reconnect could fire after the operator disabled RF-Kit.
+    m_reconnectTimer.setSingleShot(true);
+    connect(&m_reconnectTimer, &QTimer::timeout,
+            this, &Rf2ksConnection::onReconnectTimeout);
 }
 
 Rf2ksConnection::~Rf2ksConnection() = default;
@@ -301,6 +312,7 @@ void Rf2ksConnection::onReplyFinished()
     }
     const QString path    = reply->property("rfkitPath").toString();
     const qint64 started  = reply->property("startedMs").toLongLong();
+    const bool isWrite    = reply->property("rfkitIsWrite").toBool();
     const int rttMs       = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
 
     if (reply->error() != QNetworkReply::NoError) {
@@ -311,7 +323,16 @@ void Rf2ksConnection::onReplyFinished()
     const QByteArray body = reply->readAll();
     reply->deleteLater();
 
-    handleResponse(path, body);
+    // Review blocker [P2] on PR #291: only GET replies carry state.  The amp
+    // answers a write with Content-Length: 0, and QJsonDocument::fromJson("")
+    // yields an empty object -- so parsing a write ack as state published
+    // operateModeUpdated("") and antenna number 0, clobbering the cached
+    // values with the reply to the very command that had just changed them.
+    // A write ack is still proof of liveness, so it keeps feeding
+    // markPollSuccess() and the connected transition below.
+    if (!isWrite) {
+        handleResponse(path, body);
+    }
     markPollSuccess(rttMs);
 
     if (!m_connected) {
@@ -336,6 +357,13 @@ void Rf2ksConnection::markPollFailure()
     m_consecutiveFailures++;
     if (m_consecutiveFailures >= 3 && m_connected) {
         m_connected = false;
+        // Stop polling the amp we just declared down.  Without this the
+        // poll timer kept firing at the configured cadence against a dead
+        // endpoint, which made the exponential backoff decorative -- the
+        // retry schedule stretched to 60 s while the poller carried on
+        // hammering every few hundred ms.  onReconnectTimeout() restarts
+        // the timer when a probe succeeds.  Codex review, PR #291.
+        m_pollTimer.stop();
         emit disconnected();
         scheduleReconnect();
     }
@@ -343,20 +371,29 @@ void Rf2ksConnection::markPollFailure()
 
 void Rf2ksConnection::scheduleReconnect()
 {
+    // Review blocker [P2] on PR #291: the operator's "Auto-reconnect" choice
+    // was persisted by RfKitPage and never consulted here, so the connection
+    // retried unconditionally regardless of the checkbox.
+    if (!m_autoReconnect) {
+        return;
+    }
     m_reconnectAttempts++;
     // Double first, then schedule - so the member always holds the delay
     // that was just used.  testCurrentBackoffMs() reads this value and the
     // test verifies the 1 s / 2 s / 4 s / 8 s ... 60 s sequence.
     m_reconnectBackoffMs = qMin(m_reconnectBackoffMs * 2, 60000);
-    m_reconnectTimer.singleShot(m_reconnectBackoffMs, this, [this]{
-        // Re-issue /info as the connection probe; success path will set
-        // m_connected back to true via onReplyFinished.
-        issueGet(QStringLiteral("/info"));
-        if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
-            // See connectToAmp(): timer fires per-path, one-sixth of cycle.
-            m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
-        }
-    });
+    m_reconnectTimer.start(m_reconnectBackoffMs);
+}
+
+void Rf2ksConnection::onReconnectTimeout()
+{
+    // Re-issue /info as the connection probe; success path will set
+    // m_connected back to true via onReplyFinished.
+    issueGet(QStringLiteral("/info"));
+    if (!m_pollTimer.isActive() && !m_host.isEmpty()) {
+        // See connectToAmp(): timer fires per-path, one-sixth of cycle.
+        m_pollTimer.start(qMax(1, m_pollIntervalMs / 6));
+    }
 }
 
 void Rf2ksConnection::testForceBackoffSequence()
@@ -423,6 +460,9 @@ void Rf2ksConnection::issuePut(const QString& path, const QByteArray& body)
     auto* reply = m_nam->sendCustomRequest(req, "PUT", body);
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): write acks carry no state body and must not be
+    // fed to handleResponse().
+    reply->setProperty("rfkitIsWrite", true);
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }
@@ -443,6 +483,9 @@ void Rf2ksConnection::issuePost(const QString& path)
     auto* reply = m_nam->post(req, QByteArray());
     reply->setProperty("rfkitPath", path);
     reply->setProperty("startedMs", QDateTime::currentMSecsSinceEpoch());
+    // See onReplyFinished(): write acks carry no state body and must not be
+    // fed to handleResponse().
+    reply->setProperty("rfkitIsWrite", true);
     connect(reply, &QNetworkReply::finished,
             this, &Rf2ksConnection::onReplyFinished);
 }

@@ -1,4 +1,5 @@
 #include <QtTest/QtTest>
+#include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include "core/Rf2ksConnection.h"
@@ -33,6 +34,7 @@ private slots:
     void putOperateMode();
     void putOperationalInterface();
     void postErrorReset();
+    void writeAcksAreNotParsedAsState();
 };
 
 // Find the first captured request that starts with the given prefix.
@@ -98,6 +100,43 @@ void Rf2ksConnectionControlTest::postErrorReset() {
     QVERIFY(!server.requests().isEmpty());
     const QByteArray req = findRequest(server.requests(), "POST /error/reset ");
     QVERIFY2(!req.isEmpty(), "No POST /error/reset request captured");
+}
+
+// Review blocker [P2] on PR #291: successful write acknowledgements were
+// routed back through onReplyFinished() -> handleResponse() using the same
+// state paths as GET polling.  The amp answers a write with
+// "Content-Length: 0" (see RecordingAmpServer above, which mirrors it), and
+// QJsonDocument::fromJson("") yields an empty object -- so a successful
+// PUT /operate-mode published operateModeUpdated("") and wiped the cached
+// mode, and PUT /antennas/active published antenna number 0.
+void Rf2ksConnectionControlTest::writeAcksAreNotParsedAsState() {
+    RecordingAmpServer server;
+    Rf2ksConnection conn;
+    // High poll interval keeps GET polling out of the observation window, so
+    // any emission below can only have come from the write acknowledgement.
+    conn.setPollIntervalMs(5000);
+    conn.connectToAmp("127.0.0.1", server.port());
+
+    QSignalSpy modeSpy(&conn, &Rf2ksConnection::operateModeUpdated);
+    QSignalSpy antSpy(&conn, &Rf2ksConnection::activeAntennaUpdated);
+
+    conn.setOperateMode(QStringLiteral("operate"));
+    conn.setActiveAntenna(RfKitAntenna::Type::Internal, 2);
+    QTest::qWait(300);
+
+    // The writes must have reached the wire...
+    QVERIFY2(!findRequest(server.requests(), "PUT /operate-mode ").isEmpty(),
+             "PUT /operate-mode never sent");
+    QVERIFY2(!findRequest(server.requests(), "PUT /antennas/active ").isEmpty(),
+             "PUT /antennas/active never sent");
+
+    // ...without their empty-bodied acks being mistaken for state.
+    QVERIFY2(modeSpy.isEmpty(),
+             "write ack parsed as state: operateModeUpdated emitted from a "
+             "Content-Length: 0 PUT reply");
+    QVERIFY2(antSpy.isEmpty(),
+             "write ack parsed as state: activeAntennaUpdated emitted from a "
+             "Content-Length: 0 PUT reply");
 }
 
 QTEST_MAIN(Rf2ksConnectionControlTest)

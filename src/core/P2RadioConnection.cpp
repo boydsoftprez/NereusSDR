@@ -186,6 +186,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QVariant>
 #include <QtEndian>
 
+#include <algorithm>
 #include <bit>
 
 namespace NereusSDR {
@@ -1349,15 +1350,36 @@ void P2RadioConnection::sendTxIq(const float* iq, int n)
     // m_txIqPrimePending declaration in the header for the full rationale.
     if (m_txIqPrimePending.exchange(false, std::memory_order_acq_rel)) {
         constexpr int kPrimeFloats = 7680;  // 3840 sample-pairs = 20 ms at 192 kHz
-        int wp = m_txIqRingWrite.load(std::memory_order_relaxed);
-        for (int i = 0; i < kPrimeFloats; ++i) {
-            m_txIqRing[wp] = 0.0f;
-            wp = (wp + 1) % kTxIqRingCapacityFloats;
+        // Clamp the cushion to whatever the ring can actually take.
+        // Every other write in this function checks the count first;
+        // this one used to add all 7680 floats unconditionally, so any
+        // residue left by a fast MOX off/on cycle (the 5 ms drain timer
+        // normally keeps the ring at ~0, but nothing guarantees it)
+        // would push m_txIqRingCount past kTxIqRingCapacityFloats and
+        // hand the drain timer a count for samples the producer had
+        // already overwritten -- garbled I/Q on the air.  Review of
+        // PR #291.
+        const int used = m_txIqRingCount.load(std::memory_order_acquire);
+        const int primeFloats =
+            std::min(kPrimeFloats,
+                     std::max(0, kTxIqRingCapacityFloats - used - 2));
+        if (primeFloats > 0) {
+            int wp = m_txIqRingWrite.load(std::memory_order_relaxed);
+            for (int i = 0; i < primeFloats; ++i) {
+                m_txIqRing[wp] = 0.0f;
+                wp = (wp + 1) % kTxIqRingCapacityFloats;
+            }
+            m_txIqRingWrite.store(wp, std::memory_order_relaxed);
+            // release: publishes the zero writes above before the count
+            // increment becomes visible to the connection-thread drain
+            // timer.
+            m_txIqRingCount.fetch_add(primeFloats, std::memory_order_release);
         }
-        m_txIqRingWrite.store(wp, std::memory_order_relaxed);
-        // release: publishes the zero writes above before the count
-        // increment becomes visible to the connection-thread drain timer.
-        m_txIqRingCount.fetch_add(kPrimeFloats, std::memory_order_release);
+        if (primeFloats < kPrimeFloats) {
+            qCDebug(lcConnection)
+                << "P2 TX I/Q pre-prime truncated to" << primeFloats
+                << "floats (ring already held" << used << ")";
+        }
     }
 
     int pushedPairs = 0;

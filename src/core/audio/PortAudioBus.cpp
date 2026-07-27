@@ -350,14 +350,26 @@ bool PortAudioBus::open(const AudioFormat& format) {
         m_backendName.clear();
         m_inputResampler.reset();
         m_resampleScratch.clear();
+        m_monoScratch.clear();
+        m_inputStreamChannels = 0;
         m_nativeSampleRate = 0;
         return false;
     }
 
-    Pa_StartStream(m_stream);
+    // Everything paCallback reads must be published BEFORE the stream
+    // starts.  Pa_StartStream() hands the stream to the host API's
+    // audio thread, which can invoke the callback immediately -- so
+    // building the resampler and its scratch buffers after the start
+    // call (as this did when first written) let a first callback race
+    // the writes: it could see a half-constructed unique_ptr, a
+    // zero-length scratch vector, or take the no-resampler branch and
+    // push native-rate samples straight into the ring.  Codex review,
+    // PR #291.
     m_negFormat = format;            // report the *requested* rate upstream
-    m_negFormat.channels = effectiveChannels;
+    m_negFormat.channels = reportedCaptureChannels(effectiveChannels,
+                                                   !wantOutput && needResample);
     m_nativeSampleRate = openRate;
+    m_inputStreamChannels = wantOutput ? 0 : effectiveChannels;
 
     if (needResample) {
         // Worst-case per-callback input frames at the native rate:
@@ -374,6 +386,15 @@ bool PortAudioBus::open(const AudioFormat& format) {
                 / static_cast<double>(openRate))
             * 4 + 256;
         m_resampleScratch.assign(static_cast<size_t>(worstOutputSamples), 0.0f);
+        // Downmix destination for the multi-channel case.  Sized from
+        // the configured callback block, not a fixed 1024-float stack
+        // array -- the Audio setup page offers buffer sizes up to 2048,
+        // and the old cap silently discarded every frame past 1024,
+        // starving the TX producer by half or more.  Codex review,
+        // PR #291.  x2 headroom in case a host API hands us a larger
+        // block than we asked for.
+        m_monoScratch.assign(
+            static_cast<size_t>(std::max(1, m_cfg.bufferSamples) * 2), 0.0f);
         m_inputResampler = std::make_unique<Resampler>(
             static_cast<double>(openRate),
             static_cast<double>(requestedRate),
@@ -382,17 +403,36 @@ bool PortAudioBus::open(const AudioFormat& format) {
             << QStringLiteral("PortAudioBus: mic opened at native %1 Hz, "
                               "resampling to %2 Hz via r8brain "
                               "(Thetis paWinWasapiExclusive analogue, "
-                              "bypasses CoreAudio AUHAL SRC).")
-                .arg(openRate).arg(requestedRate);
+                              "bypasses CoreAudio AUHAL SRC); "
+                              "%3-channel stream reported as %4-channel.")
+                .arg(openRate).arg(requestedRate)
+                .arg(effectiveChannels).arg(m_negFormat.channels);
     } else {
         m_inputResampler.reset();
         m_resampleScratch.clear();
+        m_monoScratch.clear();
         qCInfo(lcAudio).noquote()
             << QStringLiteral("PortAudioBus: %1 opened at %2 Hz (native), "
                               "no resampler needed.")
                 .arg(wantOutput ? QStringLiteral("output")
                                 : QStringLiteral("mic"))
                 .arg(openRate);
+    }
+
+    // Callback-visible state is now fully published; safe to start.
+    err = Pa_StartStream(m_stream);
+    if (err != paNoError) {
+        m_err = QString::fromUtf8(Pa_GetErrorText(err));
+        Pa_CloseStream(m_stream);
+        m_stream = nullptr;
+        m_negFormat = {};
+        m_backendName.clear();
+        m_inputResampler.reset();
+        m_resampleScratch.clear();
+        m_monoScratch.clear();
+        m_inputStreamChannels = 0;
+        m_nativeSampleRate = 0;
+        return false;
     }
 
     // Defensive null-check on host-API lookup. With a device handed back
@@ -667,7 +707,13 @@ int PortAudioBus::paCallback(const void* in, void* out,
         // owned by this bus and only this callback writes to its state,
         // so the call is thread-safe.
         const float* i_in = static_cast<const float*>(in);
-        const int channels = self->m_negFormat.channels;
+        // Deinterleave against the ACTUAL stream layout.  While the
+        // resampler is engaged m_negFormat.channels reports 1 (the ring
+        // carries downmixed mono), so reading the stride from there
+        // would misparse a multi-channel device.  Codex review, PR #291.
+        const int channels = (self->m_inputStreamChannels > 0)
+                                 ? self->m_inputStreamChannels
+                                 : self->m_negFormat.channels;
         const int have = static_cast<int>(frames) * channels;
 
         qint64 w = self->m_ringWrite.load(std::memory_order_relaxed);
@@ -685,25 +731,32 @@ int PortAudioBus::paCallback(const void* in, void* out,
             // The output of processInto goes through the ring at the
             // negotiated (requested) rate -- downstream sees the same
             // 48 kHz cadence it has always seen, just without the AUHAL
-            // SRC artifacts.
+            // SRC artifacts.  Because we downmix here, the ring carries
+            // ONE float per output frame and negotiatedFormat() reports
+            // 1 channel to match (see reportedCaptureChannels).
             const float* monoIn = i_in;
-            std::vector<float>& mono = self->m_resampleScratch;  // reuse
-            (void)mono; // scratch is for OUTPUT; mono downmix uses a
-                        // small stack buffer below.
-            float monoBuf[1024];     // PA bufferSamples typ. 128; far under 1024
-            const int monoCap = static_cast<int>(sizeof(monoBuf) / sizeof(float));
             int monoN = static_cast<int>(frames);
             if (channels >= 2) {
-                if (monoN > monoCap) { monoN = monoCap; }
-                for (int i = 0; i < monoN; ++i) {
-                    // Average channels into mono.
-                    float acc = 0.0f;
-                    for (int c = 0; c < channels; ++c) {
-                        acc += i_in[i * channels + c];
-                    }
-                    monoBuf[i] = acc / static_cast<float>(channels);
+                // m_monoScratch is preallocated in open() from
+                // m_cfg.bufferSamples; downmixToMono clamps to its
+                // capacity and returns what it actually wrote, so a
+                // host API handing us an oversized block truncates
+                // visibly (counter below) instead of silently.
+                const int cap = static_cast<int>(self->m_monoScratch.size());
+                monoN = downmixToMono(i_in, monoN, channels,
+                                      self->m_monoScratch.data(), cap);
+                const int dropped = static_cast<int>(frames) - monoN;
+                if (dropped > 0) {
+                    self->m_downmixDroppedFrames.fetch_add(
+                        static_cast<quint64>(dropped),
+                        std::memory_order_relaxed);
                 }
-                monoIn = monoBuf;
+                monoIn = self->m_monoScratch.data();
+            }
+            if (monoN <= 0) {
+                self->m_txLevel.store(0.0f, std::memory_order_release);
+                self->m_ringWrite.store(w, std::memory_order_release);
+                return paContinue;
             }
             const int outN = self->m_inputResampler->processInto(
                 monoIn, monoN,
@@ -729,6 +782,30 @@ int PortAudioBus::paCallback(const void* in, void* out,
         self->m_ringWrite.store(w, std::memory_order_release);
     }
     return paContinue;
+}
+
+int PortAudioBus::downmixToMono(const float* interleaved, int frames,
+                                int channels, float* out, int outCapacity)
+{
+    if (interleaved == nullptr || out == nullptr
+        || frames <= 0 || outCapacity <= 0) {
+        return 0;
+    }
+    const int ch = std::max(1, channels);
+    const int n  = std::min(frames, outCapacity);
+    if (ch == 1) {
+        std::copy(interleaved, interleaved + n, out);
+        return n;
+    }
+    const float inv = 1.0f / static_cast<float>(ch);
+    for (int i = 0; i < n; ++i) {
+        float acc = 0.0f;
+        for (int c = 0; c < ch; ++c) {
+            acc += interleaved[i * ch + c];
+        }
+        out[i] = acc * inv;
+    }
+    return n;
 }
 
 QVector<PortAudioBus::HostApiInfo> PortAudioBus::hostApis() {

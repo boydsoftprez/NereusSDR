@@ -112,11 +112,44 @@ public:
     quint32 ringUnderrunEvents() const {
         return m_underrunEvents.load(std::memory_order_relaxed);
     }
+    /// Capture frames discarded because a callback block exceeded the
+    /// preallocated downmix scratch.  Expected to stay 0; non-zero
+    /// means the host API is handing us blocks larger than the
+    /// configured buffer size and the mic path is losing audio.
+    quint64 downmixDroppedFrames() const {
+        return m_downmixDroppedFrames.load(std::memory_order_relaxed);
+    }
     void clearDropStats() {
         m_dropEvents.store(0, std::memory_order_relaxed);
         m_dropSamples.store(0, std::memory_order_relaxed);
         m_underrunEvents.store(0, std::memory_order_relaxed);
     }
+
+    // ---- Capture-path helpers (pure; unit-tested directly) ----
+    //
+    // Both exist so the native-rate resampling path in paCallback is
+    // testable without a physical device whose native rate differs
+    // from the requested one.  Codex review, PR #291.
+
+    /// Channel count we REPORT through negotiatedFormat() for a capture
+    /// stream.  When the resampler is engaged the callback downmixes to
+    /// mono before pushing to the ring, so the ring holds one float per
+    /// output frame regardless of how many channels the device delivers.
+    /// AudioEngine::pullTxMic() strides by negotiatedFormat().channels,
+    /// so reporting the device's channel count here would make it read
+    /// two samples per frame out of a mono ring -- half-rate, choppy
+    /// TX audio.  Report mono whenever we are downmixing.
+    static int reportedCaptureChannels(int streamChannels, bool resampling) {
+        if (streamChannels < 1) { return 1; }
+        return resampling ? 1 : streamChannels;
+    }
+
+    /// Average `channels` interleaved floats per frame down to mono.
+    /// Writes at most `outCapacity` samples and returns the count
+    /// written, so a caller in a real-time callback can never overrun
+    /// its preallocated scratch.  channels <= 1 is a straight copy.
+    static int downmixToMono(const float* interleaved, int frames,
+                             int channels, float* out, int outCapacity);
 
 private:
     PaStream*       m_stream{nullptr};
@@ -137,9 +170,33 @@ private:
     // not the actual hardware rate.  m_resampleScratch is sized for
     // the worst-case per-callback output count and reused between
     // callbacks (no per-call allocation).
+    //
+    // All four members below are read by paCallback on the PortAudio
+    // audio thread, so open() must finish writing them BEFORE it calls
+    // Pa_StartStream() -- the callback can fire the instant the stream
+    // starts (Codex review, PR #291).
     int                                  m_nativeSampleRate{0};
     std::unique_ptr<NereusSDR::Resampler> m_inputResampler;
     std::vector<float>                   m_resampleScratch;
+
+    // Actual channel count of the open capture stream.  Distinct from
+    // m_negFormat.channels, which reports 1 while the resampler is
+    // engaged because the callback downmixes before it hits the ring
+    // (see reportedCaptureChannels above).  paCallback needs the real
+    // stream layout to deinterleave.
+    int                m_inputStreamChannels{0};
+
+    // Preallocated downmix destination, sized from m_cfg.bufferSamples
+    // in open().  Replaces a fixed 1024-float stack array that silently
+    // discarded every frame past 1024 when the operator selected a
+    // buffer size above that (the UI offers 2048).
+    std::vector<float> m_monoScratch;
+
+    // Frames the capture callback had to discard because they exceeded
+    // m_monoScratch's capacity.  Should stay 0 -- PortAudio is opened
+    // with a fixed framesPerBuffer -- but a host API that hands us a
+    // larger block must be visible rather than silently truncating.
+    std::atomic<quint64> m_downmixDroppedFrames{0};
 
     // Ring buffer for push/pull. SPSC, lock-free via std::atomic.
     // Output mode: push() (DSP thread) writes, audio callback reads.
