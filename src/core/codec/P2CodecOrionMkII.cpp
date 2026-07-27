@@ -1111,6 +1111,18 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     // [2.10.3.13]MW0LGE p1 !  [verbatim from console.cs:8247 — P1-only Rate[0] path]
     static constexpr int kStreamToDdc[5] = {2, 3, 4, 5, 6};
 
+    // ADC control from Thetis console.cs:8249 [v2.10.3.15]:
+    //   cntrl1 = rx_adc_ctrl1 & 0xff;  (default rx_adc_ctrl1=4, console.cs:15099)
+    //   cntrl2 = rx_adc_ctrl2 & 0x3f;  (default rx_adc_ctrl2=0, console.cs:15135)
+    // ctx.adcCtrl carries rx_adc_ctrl1 in low byte, rx_adc_ctrl2 in high byte.
+    //
+    // Seeded BEFORE the stream loop, because the loop overwrites the 2-bit
+    // field of every DDC it assigns (Phase 3F design doc §16, below). Fields
+    // belonging to DDCs we do not assign -- notably DDC1's, which the
+    // PureSignal override further down rewrites -- keep the incoming value.
+    a.adcCtrl1 = static_cast<int>(ctx.adcCtrl & 0xff);
+    a.adcCtrl2 = static_cast<int>((ctx.adcCtrl >> 8) & 0x3f);
+
     // Populate DDC assignments for active streams.
     // For stream 0 -> DDC2: matches Thetis's rx1 on DDC2.
     // For stream 1 -> DDC3: matches Thetis's rx2_enabled DDC3 addendum.
@@ -1127,15 +1139,50 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
         // //DH1KLM  [verbatim from console.cs:8305 — tag on REDPITAYA case header
         // adjacent to the rx2_enabled addendum at 8302; preserved per CLAUDE.md rule]
         a.rate[ddc] = slices[i].sampleRateHz;
+
+        // Phase 3F design doc §16: antenna-driven ADC chain assignment.
+        //
+        // NereusSDR-original policy, NOT a Thetis port. Thetis exposes the
+        // DDC->ADC map as a manual Setup control (setup.cs:16935-16944
+        // [v2.10.3.15] builds RXADCCtrl1 from radDDCnADCn radio buttons) and
+        // never derives it from the antenna. We derive it, because a slice's
+        // antenna already determines which physical chain can hear it.
+        //
+        // The bit layout IS Thetis's, verbatim from that same setup.cs block:
+        //   DDC0 bits 1&0, DDC1 bits 3&2, DDC2 bits 5&4, DDC3 bits 7&6
+        //   00 = ADC0, 01 = ADC1, 10 = ADC2 (PS feedback)
+        // and console.cs:15117-15131 [v2.10.3.15] decodes it the same way
+        // (`mask = 3 << (ddc * 2)`), with adcCtrl2 covering DDC4-7 as DDC(n-4).
+        //
+        // Mapping: the RX-only inputs are the ones wired to the second
+        // chain's front end -- on an ANAN-G2 the block diagram shows ADC1 fed
+        // from the RX2 ant jack while the Ant/TR switch feeds ADC0 only. So
+        // EXT1/EXT2 land a slice on ADC1; ANT1/2/3 stay on ADC0.
+        //
+        // BYPS deliberately stays on ADC0: it is a bypass relay rather than a
+        // distinct feed, and putting it on the second chain is a guess this
+        // code should not make.
+        //
+        // No adcCount gate is needed: this codec serves only the 2-ADC
+        // boards (Saturn / OrionMkII / AnvelinaPro3 / RedPitaya).
+        // P2CodecHermes overrides applyDdcAssignment for the 1-ADC
+        // Hermes class, HermesC10 / G2E included, so those stay pinned to
+        // ADC0 by construction rather than by a runtime check here.
+        //
+        // The field is CLEARED and then written, not OR-ed: the antenna is
+        // authoritative for a DDC we assign, so a stale ADC1 bit left in the
+        // incoming rx_adc_ctrl1 must not survive a move back to ANT1.
+        const int ant = slices[i].antennaIndex;
+        const int adc = (ant == 4 || ant == 5) ? 1 : 0;  // EXT1/EXT2 -> chain 1
+        if (ddc < 4) {
+            a.adcCtrl1 = (a.adcCtrl1 & ~(3 << (ddc * 2))) | (adc << (ddc * 2));
+        } else {
+            const int sh = (ddc - 4) * 2;
+            a.adcCtrl2 = (a.adcCtrl2 & ~(3 << sh)) | (adc << sh);
+        }
+
         ++a.nDdc;
     }
-
-    // ADC control from Thetis console.cs:8249 [v2.10.3.15]:
-    //   cntrl1 = rx_adc_ctrl1 & 0xff;  (default rx_adc_ctrl1=4, console.cs:15099)
-    //   cntrl2 = rx_adc_ctrl2 & 0x3f;  (default rx_adc_ctrl2=0, console.cs:15135)
-    // ctx.adcCtrl carries rx_adc_ctrl1 in low byte, rx_adc_ctrl2 in high byte.
-    a.adcCtrl1 = static_cast<int>(ctx.adcCtrl & 0xff);
-    a.adcCtrl2 = static_cast<int>((ctx.adcCtrl >> 8) & 0x3f);
 
     // PureSignal override. Thetis console.cs:8265-8274 [v2.10.3.15]:
     //   if (!diversity_enabled && puresignal_enabled)  {  // mox path

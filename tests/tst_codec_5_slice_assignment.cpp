@@ -874,6 +874,90 @@ private slots:
             QVERIFY(dynamic_cast<P2CodecHermesII*>(c2.p2Codec()) == nullptr);
         }
     }
+
+    // ── Phase 3F design doc §16: antenna-driven ADC chain assignment ──────
+    //
+    // Bit layout is Thetis's, verbatim from setup.cs:16935-16944 [v2.10.3.15]:
+    //   DDC0 bits 1&0, DDC1 bits 3&2, DDC2 bits 5&4, DDC3 bits 7&6
+    //   00 = ADC0, 01 = ADC1, 10 = ADC2 (PS feedback)
+    // console.cs:15117-15131 decodes it as `mask = 3 << (ddc * 2)`.
+    //
+    // The POLICY (antenna decides the chain) is NereusSDR-original: Thetis
+    // exposes the map as a manual Setup control and never derives it.
+    void slices_on_main_antennas_all_stay_on_adc0()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 2; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = 14225000 - i * 7000000;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;   // ANT1
+        }
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // Stream 0 -> DDC2 (bits 5&4), stream 1 -> DDC3 (bits 7&6). Both ADC0,
+        // so neither pair is set. This is the single-antenna case that must
+        // keep bypassing: one preselector cannot serve two bands.
+        QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
+        QCOMPARE(a.adcCtrl1 & 0xc0, 0x00);
+    }
+
+    void a_slice_on_ext1_moves_to_adc1()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].frequencyHz = 7150000;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 1;   // ANT1 -> ADC0
+        slices[1].live = true;
+        slices[1].frequencyHz = 14225000;
+        slices[1].sampleRateHz = 192000;
+        slices[1].antennaIndex = 4;   // EXT1 -> ADC1
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // Stream 0 -> DDC2, bits 5&4 clear (ADC0).
+        QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
+        // Stream 1 -> DDC3, bits 7&6 == 01 -> ADC1, i.e. 1 << 6.
+        QCOMPARE(a.adcCtrl1 & 0xc0, 1 << 6);
+    }
+
+    void ext2_also_selects_the_second_chain()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 5;   // EXT2
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        // Stream 0 -> DDC2, bits 5&4 == 01 -> ADC1.
+        QCOMPARE(a.adcCtrl1 & 0x30, 1 << 4);
+    }
+
+    // BYPS is a bypass relay rather than a distinct feed, so it must NOT be
+    // treated as the second chain. Stated as a test so the choice is
+    // deliberate rather than an omission someone later "fixes".
+    void byps_stays_on_adc0()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        std::array<SliceConfig, 5> slices{};
+        slices[0].live = true;
+        slices[0].sampleRateHz = 192000;
+        slices[0].antennaIndex = 6;   // BYPS
+
+        const DdcAssignment a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.adcCtrl1 & 0x30, 0x00);
+    }
 };
 
 QTEST_MAIN(TestCodec5SliceAssignment)
