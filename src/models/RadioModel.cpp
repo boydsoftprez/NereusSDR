@@ -9837,6 +9837,22 @@ void RadioModel::teardownConnection()
         return;
     }
 
+    // 2026-07-27 (ANAN-G2E lockup): quiet period for discovery.  Disconnect
+    // reopens the ConnectionPanel, whose ctor auto-scans — wire captures show
+    // the broadcast probe burst landing 7-15 ms after our run=0 frame, and
+    // both observed G2E lockups happened inside that window.  Thetis sends
+    // nothing after its stop frame and never wedges the same radio.  Hold
+    // discovery off (defer, not drop) until the radio's stop transition and
+    // its ~2 s firmware deadman window have passed.  Applies to every
+    // teardown flavor: user disconnect, failed-connect watchdog, quit.
+    //
+    // Armed here so nothing scans *during* teardown, and armed again after
+    // the protocol disconnect completes below — that second arm is the one
+    // that guarantees a full quiet period measured from the stop frame.
+    if (m_discovery) {
+        m_discovery->holdOffScans(kPostDisconnectScanQuietMs);
+    }
+
     // Flush any pending coalesced slice save FIRST so the user's last
     // AF / step / freq / lock / RIT tweak isn't lost to the 500 ms
     // debounce in scheduleSettingsSave(). The QTimer there can't fire
@@ -10149,6 +10165,23 @@ void RadioModel::teardownConnection()
     // are thread-affined to the worker and destroying them on any other
     // thread emits cross-thread warnings and can crash on Windows.
     teardownWorkerThreadedConnection(m_connection, m_connThread);
+
+    // Re-arm the discovery quiet period now that the protocol disconnect has
+    // actually completed.  The arm at the top of this function starts the
+    // clock at teardown *entry*, but run=0 does not leave until
+    // teardownWorkerThreadedConnection() dispatches
+    // P2RadioConnection::disconnect() onto the connection thread — after the
+    // audio/WDSP/TX shutdown above.  Measured on the 2026-07-27 bench that
+    // cost 680 ms of the intended 3 s window (SendStop 17:31:38.149, scan
+    // 17:31:40.473), and teardownWorkerThreadedConnection alone may block up
+    // to kDispatchTimeoutMs (3000 ms) if the connection thread is stuck in
+    // onReadyRead — which would expire the whole holdoff before the stop
+    // frame is even sent, re-entering the exact window this guards.
+    // holdOffScans() keeps the later deadline, so arming twice only extends.
+    // Codex review, PR #306.
+    if (m_discovery) {
+        m_discovery->holdOffScans(kPostDisconnectScanQuietMs);
+    }
 
     // Phase 3Q polish: above disconnect() severed connectionStateChanged
     // before the RadioConnection's own setState(Disconnected) ran, so the

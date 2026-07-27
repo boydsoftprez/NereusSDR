@@ -76,6 +76,8 @@ public:
         connect(m_socket, &QUdpSocket::readyRead, this, &FakeP1Probe::onReadyRead);
     }
     quint16 port() const { return m_socket->localPort(); }
+    // Raw P1 probe as it arrived on the wire, for byte-level assertions.
+    QByteArray lastP1Probe() const { return m_lastP1Probe; }
 private slots:
     void onReadyRead() {
         while (m_socket->hasPendingDatagrams()) {
@@ -89,6 +91,7 @@ private slots:
             if (buf.size() >= 3 && static_cast<quint8>(buf[0]) == 0xEF
                 && static_cast<quint8>(buf[1]) == 0xFE
                 && static_cast<quint8>(buf[2]) == 0x02) {
+                m_lastP1Probe = buf;
                 QByteArray reply(63, 0);
                 reply[0] = char(0xEF); reply[1] = char(0xFE); reply[2] = 0x02;
                 // MAC bytes 3..8
@@ -102,11 +105,16 @@ private slots:
     }
 private:
     QUdpSocket* m_socket;
+    QByteArray  m_lastP1Probe;
 };
 
 class TstRadioDiscoveryProbe : public QObject {
     Q_OBJECT
 private slots:
+    // The post-disconnect quiet deadline is process-wide, so an arm in one
+    // test function would otherwise defer probes in every later one.
+    void init() { RadioDiscovery::clearHoldOffForTest(); }
+
     void probeReplyFillsRadioInfo() {
         FakeP1Probe radio;
         RadioDiscovery disc;
@@ -121,6 +129,121 @@ private slots:
         QCOMPARE(info.firmwareVersion, 75);
         QCOMPARE(info.macAddress, QStringLiteral("00:1C:C0:A2:14:8B"));
         QCOMPARE(info.protocol, ProtocolVersion::Protocol1);
+    }
+
+    // Regression guard, 2026-07-27 (ANAN-G2E disconnect lockup).
+    //
+    // The P1 discovery probe goes to UDP 1024, which is also the Protocol 2
+    // "General" command port.  P2 gateware claims any port-1024 datagram whose
+    // byte 4 is zero and parses the remainder as a General command
+    // (General_CC.v:90/106, TAPR Hermes_Protocol_2_C10_v11.0.5 for ANAN-G2E).
+    // With an all-zero tail that write clears HW_timer_enable (byte 38),
+    // freezing the board's ~2 s deadman, plus PA_enable and Alex_enable
+    // (bytes 58/59) — so a plain LAN scan reconfigures every P2 radio on the
+    // subnet and disarms its watchdog.
+    //
+    // Byte 4 must therefore stay non-zero.  P1 discovery is unaffected: every
+    // P1 gateware matches only the command byte and never reads byte 4.
+    void p1ProbeDoesNotImpersonateP2GeneralCommand() {
+        FakeP1Probe radio;
+        RadioDiscovery disc;
+        QSignalSpy spy(&disc, &RadioDiscovery::radioDiscovered);
+
+        disc.probeAddress(QHostAddress::LocalHost, radio.port(),
+                          std::chrono::milliseconds(500));
+        QVERIFY(spy.wait(1000));
+
+        const QByteArray probe = radio.lastP1Probe();
+        // Still a well-formed P1 discovery frame.
+        QCOMPARE(probe.size(), 63);
+        QCOMPARE(static_cast<quint8>(probe[0]), quint8(0xEF));
+        QCOMPARE(static_cast<quint8>(probe[1]), quint8(0xFE));
+        QCOMPARE(static_cast<quint8>(probe[2]), quint8(0x02));
+        // ...but byte 4 is non-zero, so P2 General_CC bails at its command
+        // check instead of latching our padding as a config write.
+        const quint8 b4 = static_cast<quint8>(probe[4]);
+        QVERIFY2(b4 != 0x00,
+                 "P1 probe byte 4 is zero — P2 gateware will accept this frame "
+                 "as a General command and disarm its watchdog");
+        // Byte 4 is also the P2 *command* byte (sdr_receive.v): 2=discovery,
+        // 3=set-IP (broadcast-gated, writes EEPROM), 4=erase, 5=program,
+        // 6=FPGA reset. Our probes are broadcast, so the pad must not collide
+        // with any of them or a plain LAN scan starts issuing P2 commands.
+        QVERIFY2(b4 < 0x02 || b4 > 0x06,
+                 "P1 probe byte 4 collides with a P2 command (2..6) — a "
+                 "broadcast scan would issue discovery/set-IP/erase/reset");
+    }
+
+    // Regression guard, 2026-07-27 (ANAN-G2E disconnect lockup).
+    //
+    // After a disconnect the radio's stop-transition and ~2 s firmware
+    // deadman must settle before any probe reaches it (Thetis is silent
+    // after its stop; our auto-scan fired 7-15 ms after run=0 and both
+    // observed G2E lockups happened in that window).  holdOffScans() must
+    // DEFER a probe — it still completes, but only after the quiet period.
+    void probeDuringHoldOffIsDeferredNotDropped() {
+        FakeP1Probe radio;
+        RadioDiscovery disc;
+        QSignalSpy spy(&disc, &RadioDiscovery::radioDiscovered);
+
+        constexpr int kQuietMs = 400;
+        disc.holdOffScans(std::chrono::milliseconds(kQuietMs));
+
+        QElapsedTimer clock;
+        clock.start();
+        disc.probeAddress(QHostAddress::LocalHost, radio.port(),
+                          std::chrono::milliseconds(500));
+
+        // Not dropped: the reply still arrives...
+        QVERIFY(spy.wait(2000));
+        QCOMPARE(spy.count(), 1);
+        // ...and not early: the probe waited out the quiet period first.
+        QVERIFY2(clock.elapsed() >= kQuietMs,
+                 qPrintable(QStringLiteral(
+                     "probe completed %1 ms after holdOffScans(%2) — it was "
+                     "sent inside the post-disconnect quiet period")
+                     .arg(clock.elapsed()).arg(kQuietMs)));
+    }
+
+    // Codex review, PR #306.  teardownConnection() arms the quiet period
+    // twice: once on entry (so nothing scans during teardown) and again after
+    // the protocol disconnect completes (so the window is measured from the
+    // stop frame, not from teardown entry, which cost 680 ms on the bench).
+    // That is only safe because holdOffScans keeps the LATER deadline — a
+    // second, shorter arm must never pull the deadline in.
+    void holdOffScansExtendsButNeverShortens() {
+        RadioDiscovery disc;
+
+        disc.holdOffScans(std::chrono::milliseconds(5000));
+        const qint64 afterLong = disc.holdOffRemainingMs();
+        QVERIFY(afterLong > 4000);
+
+        // Shorter arm must not shorten the window.
+        disc.holdOffScans(std::chrono::milliseconds(50));
+        QVERIFY2(disc.holdOffRemainingMs() > 4000,
+                 "a shorter holdOffScans() pulled the deadline in — the "
+                 "second arm in teardownConnection() would truncate the "
+                 "post-stop quiet period");
+
+        // Longer arm must extend it.
+        disc.holdOffScans(std::chrono::milliseconds(9000));
+        QVERIFY2(disc.holdOffRemainingMs() > 8000,
+                 "holdOffScans() failed to extend the deadline");
+    }
+
+    // Codex review, PR #306.  RadioModel::discovery() is not the only
+    // RadioDiscovery in the process — AddCustomRadioDialog.cpp:589 builds its
+    // own.  A per-object deadline would let that dialog probe a
+    // just-disconnected radio inside the quiet window, re-entering the
+    // post-stop race.  The deadline must be process-wide.
+    void holdOffIsSharedAcrossInstances() {
+        RadioDiscovery armer;
+        armer.holdOffScans(std::chrono::milliseconds(5000));
+
+        RadioDiscovery other;   // e.g. the one AddCustomRadioDialog creates
+        QVERIFY2(other.holdOffRemainingMs() > 4000,
+                 "a second RadioDiscovery instance ignored the quiet period — "
+                 "the Add Radio dialog could probe a stopping radio");
     }
 
     void timeoutEmitsProbeFailed() {
